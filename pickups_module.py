@@ -191,6 +191,146 @@ def register_pickup_routes(app, ctx):
 
     ensure_reminder_columns()
 
+    # ════════════════════════════════════════════════════════════════════
+    #  MIGRACIÓN CRÍTICA — pickup_request_docs + pickup_doc_lineas
+    #  Daniel 2026-05-23: en producción la BD no tiene estas tablas porque
+    #  ILUS_SKIP_MIGRATIONS=1 saltea init_pickup_tables(). Esta función SE
+    #  EJECUTA AL REGISTRAR EL MÓDULO (no depende de la flag), de manera
+    #  que siempre garantizamos que las tablas multidocumento existan.
+    #
+    #  Idempotente — todos los CREATE/ALTER tienen IF NOT EXISTS o
+    #  try/except. Sin riesgo de duplicar.
+    # ════════════════════════════════════════════════════════════════════
+    def ensure_multidoc_tables_runtime():
+        """Garantiza pickup_request_docs + pickup_doc_lineas + columnas nuevas.
+
+        Se llama al boot del módulo (siempre) y también desde dentro de los
+        endpoints como auto-heal por si la tabla cae por algún motivo
+        (recreate manual de BD, restore, etc.).
+        """
+        # 1. Tabla pickup_request_docs (multidocumento)
+        try:
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS pickup_request_docs (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id      INT NOT NULL,
+                    document_type   VARCHAR(30) NOT NULL,
+                    document_number VARCHAR(60) NOT NULL,
+                    cliente_rut     VARCHAR(30),
+                    cliente_nombre  VARCHAR(200),
+                    observaciones_erp TEXT,
+                    peso_real_kg    DECIMAL(12,3) DEFAULT 0,
+                    peso_vol_kg     DECIMAL(12,3) DEFAULT 0,
+                    volumen_m3      DECIMAL(12,4) DEFAULT 0,
+                    n_lineas        INT DEFAULT 0,
+                    erp_snapshot    LONGTEXT,
+                    added_by        VARCHAR(190),
+                    added_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_request_doc (request_id, document_type, document_number),
+                    INDEX idx_request (request_id),
+                    INDEX idx_cliente (cliente_rut),
+                    FOREIGN KEY (request_id) REFERENCES `pickup_requests`(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        except Exception as e:
+            print(f"[ensure_multidoc_tables] pickup_request_docs: {e}", flush=True)
+
+        # 2. Columnas extra de pickup_request_docs (cada una try/except)
+        for col_sql in [
+            "ALTER TABLE pickup_request_docs ADD COLUMN con_saldo TINYINT NULL DEFAULT NULL "
+            "COMMENT 'NULL=no verificado, 0=sin saldo, 1=con saldo'",
+            "ALTER TABLE pickup_request_docs ADD COLUMN saldo_zz DECIMAL(12,2) NULL DEFAULT NULL "
+            "COMMENT 'Saldo monetario ZZ al momento de asociar'",
+            "ALTER TABLE pickup_request_docs ADD COLUMN saldo_checked_at DATETIME NULL DEFAULT NULL "
+            "COMMENT 'Cuándo se verificó el saldo'",
+            "ALTER TABLE pickup_request_docs ADD COLUMN email_cliente_erp VARCHAR(180) NULL "
+            "COMMENT 'Email del cliente del doc capturado desde ERP al asociar'",
+            "ALTER TABLE pickup_request_docs ADD COLUMN has_seleccion_lineas TINYINT(1) "
+            "NOT NULL DEFAULT 0 "
+            "COMMENT 'Si 1, solo se retiran las líneas marcadas en pickup_doc_lineas'",
+            "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_cliente_rut (cliente_rut)",
+            "ALTER TABLE pickup_request_docs ADD INDEX idx_prd_doc (document_type, document_number)",
+        ]:
+            try: mysql_execute(col_sql)
+            except Exception: pass
+
+        # 3. Columnas extra de pickup_requests
+        for col_sql in [
+            f"ALTER TABLE `{REQ}` ADD COLUMN extra_emails VARCHAR(800) NULL "
+            f"COMMENT 'Emails adicionales separados por coma'",
+            f"ALTER TABLE `{REQ}` ADD COLUMN doc_validation_status VARCHAR(30) NULL DEFAULT 'pendiente'",
+            f"ALTER TABLE `{REQ}` ADD COLUMN doc_validated_at DATETIME NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN doc_validated_by VARCHAR(190) NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN doc_erp_data MEDIUMTEXT NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN doc_validation_notes TEXT NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN peso_real_kg DECIMAL(10,2) DEFAULT NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN peso_vol_kg DECIMAL(10,2) DEFAULT NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN tiempo_estimado_min INT DEFAULT NULL",
+        ]:
+            try: mysql_execute(col_sql)
+            except Exception: pass
+
+        # 4. Tabla pickup_doc_lineas (selección granular)
+        try:
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS pickup_doc_lineas (
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id            INT NOT NULL,
+                    doc_id                INT NOT NULL,
+                    sku                   VARCHAR(80) NOT NULL,
+                    descripcion           VARCHAR(300),
+                    cantidad_doc          DECIMAL(12,3) DEFAULT 0,
+                    cantidad_seleccionada DECIMAL(12,3) DEFAULT 0,
+                    peso_unit_kg          DECIMAL(10,3) DEFAULT 0,
+                    peso_vol_unit_kg      DECIMAL(10,3) DEFAULT 0,
+                    vol_unit_m3           DECIMAL(10,5) DEFAULT 0,
+                    peso_total_kg         DECIMAL(12,3) DEFAULT 0,
+                    peso_vol_total_kg     DECIMAL(12,3) DEFAULT 0,
+                    vol_total_m3          DECIMAL(12,5) DEFAULT 0,
+                    incluida              TINYINT(1) NOT NULL DEFAULT 1,
+                    nota_linea            VARCHAR(300) NULL,
+                    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_doc_sku (doc_id, sku),
+                    INDEX idx_request (request_id),
+                    INDEX idx_doc (doc_id),
+                    INDEX idx_doc_incluida (doc_id, incluida)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Foreign keys separadas (algunos hosts no aceptan en CREATE)
+            for fk_sql in [
+                "ALTER TABLE pickup_doc_lineas ADD CONSTRAINT fk_pdl_req "
+                f"FOREIGN KEY (request_id) REFERENCES `{REQ}`(id) ON DELETE CASCADE",
+                "ALTER TABLE pickup_doc_lineas ADD CONSTRAINT fk_pdl_doc "
+                "FOREIGN KEY (doc_id) REFERENCES pickup_request_docs(id) ON DELETE CASCADE",
+            ]:
+                try: mysql_execute(fk_sql)
+                except Exception: pass
+        except Exception as e:
+            print(f"[ensure_multidoc_tables] pickup_doc_lineas: {e}", flush=True)
+
+        # 5. Tabla pickup_blocks (bloqueos de fechas) — si tampoco existe
+        try:
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS pickup_blocks (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    fecha        DATE NOT NULL,
+                    hora_inicio  TIME NULL,
+                    hora_fin     TIME NULL,
+                    motivo       VARCHAR(200) DEFAULT '',
+                    created_by   VARCHAR(190) DEFAULT NULL,
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_fecha (fecha)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        except Exception:
+            pass
+
+        print("[ensure_multidoc_tables] OK", flush=True)
+
+    # Ejecutar al boot del módulo
+    ensure_multidoc_tables_runtime()
+
     # ── Migración horarios v3 (Daniel 2026-05-23) ──────────────────────
     # Daniel pidió horarios reales de la bodega:
     #   Mañana: 09:00 – 12:30 (último FIN admitido 12:30)
@@ -2986,6 +3126,47 @@ def register_pickup_routes(app, ctx):
             print(f"[_pickup_fetch_doc_minimal_via_sql] error: {e}", flush=True)
             return None
 
+    # ══════════════════════════════════════════════════════════════════
+    #  ENDPOINT ADMIN — Forzar migraciones de retiros (Daniel 2026-05-23)
+    #  Si producción tiene ILUS_SKIP_MIGRATIONS=1 y faltan tablas, este
+    #  endpoint las crea sin necesidad de redeploy.
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/admin/migrate-now", methods=["POST", "GET"])
+    @require_permission("retiros")
+    def pickup_admin_migrate_now():
+        """Ejecuta TODAS las migraciones idempotentes del módulo retiros.
+        Útil cuando Railway tiene ILUS_SKIP_MIGRATIONS=1 y faltan tablas
+        nuevas (multidocumento, líneas, extra_emails, etc.).
+        Solo superadmin/admin/retiros con permiso.
+        """
+        if not (g.user and (g.permissions.get("superadmin") or g.permissions.get("admin"))):
+            return jsonify({"ok": False, "error": "Solo admin/superadmin"}), 403
+
+        resultados = {
+            "multidoc_tables": "ok",
+            "errores": [],
+        }
+        try:
+            ensure_multidoc_tables_runtime()
+        except Exception as e:
+            resultados["multidoc_tables"] = "error"
+            resultados["errores"].append(f"multidoc: {str(e)[:200]}")
+
+        # Verificar que las tablas existan ahora
+        verif = {}
+        for tabla in ("pickup_requests", "pickup_request_docs", "pickup_doc_lineas",
+                      "pickup_blocks", "pickup_packages", "pickup_proposals"):
+            try:
+                row = mysql_fetchone(f"SELECT COUNT(*) AS n FROM `{tabla}` LIMIT 1")
+                verif[tabla] = {"existe": True, "filas": int(row["n"] if row else 0)}
+            except Exception as e:
+                verif[tabla] = {"existe": False, "error": str(e)[:100]}
+
+        resultados["verificacion_tablas"] = verif
+        resultados["timestamp"] = datetime.now().isoformat()
+
+        return jsonify({"ok": True, "resultados": resultados})
+
     @app.route("/retiros/<int:rid>/docs/agregar", methods=["POST"])
     @require_permission("edit")
     def pickup_doc_agregar(rid):
@@ -3032,6 +3213,14 @@ def register_pickup_routes(app, ctx):
     def _pickup_doc_agregar_impl(rid):
         """Implementación real de pickup_doc_agregar. Separada para que el
         wrapper pueda atrapar cualquier excepción y devolver JSON."""
+        # AUTO-HEAL: asegurar que las tablas existan antes de operar.
+        # Daniel 2026-05-23: en producción la tabla pickup_request_docs no
+        # existía → error 1146. Ahora se garantiza al primer call.
+        try:
+            ensure_multidoc_tables_runtime()
+        except Exception as _e_ensure:
+            print(f"[pickup_doc_agregar] ensure tables falló: {_e_ensure}", flush=True)
+
         req = mysql_fetchone(f"SELECT id, code FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
             return jsonify({"ok": False, "error": "Retiro no existe"}), 404
