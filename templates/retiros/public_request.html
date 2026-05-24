@@ -2304,10 +2304,22 @@ function spartanShowStep(n, text){
   }
 }
 
-document.getElementById('form-solicitud').addEventListener('submit', function(e){
+// ═════════════════════════════════════════════════════════════════════
+//  SUBMIT FIRE-AND-FORGET (Daniel 2026-05-24)
+//  Antes: form.submit() nativo → browser esperaba SMTP (~15 s) → overlay
+//  artificialmente largo. Ahora: fetch() AJAX → backend responde en
+//  ~150 ms con el código RET-XXX. SMTP/notificaciones corren en thread
+//  daemon del server. El overlay muestra el código GRANDE como
+//  protagonista y redirige al tracking.
+// ═════════════════════════════════════════════════════════════════════
+document.getElementById('form-solicitud').addEventListener('submit', async function(e){
   if (e.defaultPrevented) return; // Validación falló — no entrar en loading
+  e.preventDefault();             // Tomamos control: enviamos por fetch()
 
+  const form = e.currentTarget;
   const btn = document.getElementById('submitBtn');
+  const overlay = document.getElementById('spartanOverlay');
+
   if (btn){
     btn.classList.add('is-loading', 'pulse');
     const txt = btn.querySelector('.submit-btn-text');
@@ -2316,29 +2328,114 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
     setTimeout(() => btn.classList.remove('pulse'), 700);
   }
 
-  // Overlay premium — mostrar
-  const overlay = document.getElementById('spartanOverlay');
+  // Mostrar overlay (visual feedback inmediato)
   if (overlay){
     overlay.hidden = false;
-    // Force reflow para que la transición de opacity funcione desde 0
     void overlay.offsetWidth;
     requestAnimationFrame(() => overlay.classList.add('active'));
-
-    // Bloquear scroll del body mientras carga
     document.body.style.overflow = 'hidden';
 
-    // Animar steps con stagger — sincronizado con tiempo típico de POST (~1.5-2.5s)
+    // Animaciones RÁPIDAS (~600 ms total) — solo para que el ojo perciba
+    // los 3 pasos. El cliente ya tiene su código en <1 s.
     spartanShowStep(1, 'Validando tus datos…');
-    setTimeout(() => spartanShowStep(2, 'Reservando bodega…'), 850);
-    setTimeout(() => spartanShowStep(3, 'Notificando al equipo…'), 1700);
+    setTimeout(() => spartanShowStep(2, 'Reservando tu slot…'), 200);
+    setTimeout(() => spartanShowStep(3, 'Generando código…'), 400);
+  }
 
-    // Failsafe: si el POST tarda más de 12s, mensaje calmante
-    setTimeout(() => {
+  // Helper para mostrar error + cerrar overlay + reactivar botón
+  function _onError(msg){
+    if (overlay){
+      overlay.classList.remove('active');
+      setTimeout(() => { overlay.hidden = true; }, 280);
+      document.body.style.overflow = '';
+    }
+    if (btn){
+      btn.classList.remove('is-loading');
+      btn.disabled = false;
+      const txt = btn.querySelector('.submit-btn-text');
+      if (txt) txt.textContent = 'Enviar solicitud';
+    }
+    if (typeof ilusAlert === 'function'){
+      ilusAlert({
+        title: 'No pudimos enviar tu solicitud',
+        message: msg || 'Revisa tu conexión e inténtalo nuevamente.',
+        type: 'error',
+      });
+    } else if (typeof ilusToast === 'function'){
+      ilusToast(msg || 'Error al enviar', { type: 'error', duration: 5000 });
+    } else {
+      alert(msg || 'Error al enviar');
+    }
+  }
+
+  // Helper: pintar el código RET-XXX GRANDE como protagonista
+  function _showSuccess(code, trackingUrl){
+    spartanShowStep(3, '¡Solicitud enviada!');
+    if (overlay){
+      overlay.classList.add('done');
+      const fill = document.getElementById('spFill');
+      if (fill) fill.style.width = '100%';
+
+      // Reemplazar el sub por el código GRANDE + CTA
       const sub = document.getElementById('spartanSub');
       if (sub){
-        sub.innerHTML = '<i class="bi bi-hourglass-split"></i>Casi listo, tardando un poco más de lo normal…';
+        sub.innerHTML =
+          '<div style="text-align:center;width:100%">' +
+          '  <div style="font-size:.78rem;color:#6b7280;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Tu código de retiro</div>' +
+          '  <div style="font-family:\'Bebas Neue\',\'Inter\',sans-serif;font-size:2.4rem;font-weight:900;color:#0a0a0a;letter-spacing:.04em;line-height:1">' + (code || 'RET-XXXXXX') + '</div>' +
+          '  <div style="font-size:.82rem;color:#374151;margin-top:10px;line-height:1.45">Recibirás un email de confirmación en los próximos minutos.</div>' +
+          '  <div style="font-size:.74rem;color:#9ca3af;margin-top:8px">Redirigiendo al seguimiento…</div>' +
+          '</div>';
       }
-    }, 12000);
+      // Reemplazar el texto principal por un check
+      const t = document.getElementById('spartanText');
+      if (t) t.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a;margin-right:6px"></i>Recibido';
+    }
+
+    // Redirigir al tracking después de mostrar el código (~1.5 s para que se lea)
+    setTimeout(() => {
+      window.location.href = trackingUrl || '/retiros';
+    }, 1500);
+  }
+
+  // Enviar por fetch — el backend detecta X-Requested-With y responde JSON
+  try {
+    const fd = new FormData(form);
+    const t0 = Date.now();
+    const resp = await fetch(form.action || window.location.pathname, {
+      method: 'POST',
+      body: fd,
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json',
+      },
+      credentials: 'same-origin',
+    });
+    const elapsed = Date.now() - t0;
+    console.log('[ILUS submit] backend respondió en ' + elapsed + 'ms');
+
+    // Parsear JSON defensivamente (si por algún motivo viene HTML)
+    let data = null;
+    try {
+      data = await resp.json();
+    } catch(_je){
+      _onError('Respuesta inválida del servidor. Inténtalo nuevamente.');
+      return;
+    }
+
+    if (!resp.ok || !data || !data.ok){
+      const errs = (data && Array.isArray(data.errors)) ? data.errors.join(' · ')
+                 : (data && data.error) ? data.error
+                 : 'No pudimos procesar tu solicitud.';
+      _onError(errs);
+      return;
+    }
+
+    // ÉXITO — mostrar código RET-XXX
+    _showSuccess(data.code, data.tracking_url);
+  } catch (err){
+    console.error('[ILUS submit] fetch error', err);
+    _onError('Sin conexión o el servidor no responde. Verifica tu internet.');
   }
 });
 
