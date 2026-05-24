@@ -266,6 +266,35 @@
   .smart-hint.is-success i{color:#15803d}
 
   /* ════════════════════════════════════════════════════════════════
+     CHIPS SUGERENCIA DE DÍAS — Daniel 2026-05-24
+     ─────────────────────────────────────────────────────────────────
+     Cuando un día no tiene cupos, sugerimos los próximos 3 con
+     disponibilidad como chips pill clickeables (blanco + borde rojo).
+     ════════════════════════════════════════════════════════════════ */
+  .iw-suggest-chip{
+    display:inline-flex;align-items:center;gap:6px;
+    background:#fff;color:#0a0a0a;
+    border:1.5px solid var(--ilus-red);border-radius:50px;
+    padding:5px 12px;font-size:.82rem;font-weight:700;
+    cursor:pointer;transition:all .15s ease;
+    box-shadow:0 1px 2px rgba(220,38,38,.08);
+  }
+  .iw-suggest-chip:hover{
+    background:var(--ilus-red);color:#fff;
+    transform:translateY(-1px);
+    box-shadow:0 3px 8px rgba(220,38,38,.25);
+  }
+  .iw-suggest-chip:active{transform:translateY(0)}
+  .iw-suggest-chip i{color:var(--ilus-red);font-size:.92rem;transition:color .15s ease}
+  .iw-suggest-chip:hover i{color:#fff}
+  .iw-suggest-chip .iw-suggest-libres{
+    background:#f3f4f6;color:#374151;border-radius:50px;
+    padding:1px 8px;font-size:.7rem;font-weight:700;
+    transition:all .15s ease;
+  }
+  .iw-suggest-chip:hover .iw-suggest-libres{background:#fff;color:var(--ilus-red)}
+
+  /* ════════════════════════════════════════════════════════════════
      DOC PICKER — Cards de factura con líneas expandibles
      ════════════════════════════════════════════════════════════════ */
   .doc-search-bar{
@@ -384,34 +413,42 @@
      BOTÓN PRINCIPAL — ASOCIAR DOCUMENTOS (Daniel 2026-05-24)
      Reemplaza al buscador manual + lo "¿No aparece la factura?".
      Punto de entrada ÚNICO al modal con 2 motores (rbaOpen).
+     ─────────────────────────────────────────────────────────────────
+     Daniel 2026-05-24 v2: lo quiere MÁS DISCRETO. Era gradiente rojo
+     con shadow grande, ahora es pill blanco con borde rojo + icono
+     pequeño + altura ~50% menor. Mantiene la intención (CTA) sin
+     robar protagonismo a las tablas y al paso 4.
      ════════════════════════════════════════════════════════════════ */
   .btn-asociar-docs{
-    width:100%;background:linear-gradient(135deg,#dc2626 0%, #b91c1c 100%);
-    color:#fff;border:none;border-radius:14px;padding:18px 22px;margin-top:18px;
-    display:flex;align-items:center;gap:16px;cursor:pointer;
-    box-shadow:0 4px 14px rgba(220,38,38,.32), inset 0 1px 0 rgba(255,255,255,.18);
-    transition:transform .15s cubic-bezier(.34,1.56,.64,1), box-shadow .15s;
+    width:100%;background:#fff;
+    color:#0a0a0a;border:1.5px solid var(--ilus-red);border-radius:10px;
+    padding:9px 14px;margin-top:14px;
+    display:flex;align-items:center;gap:10px;cursor:pointer;
+    box-shadow:0 1px 2px rgba(220,38,38,.08);
+    transition:background .15s ease, border-color .15s ease, box-shadow .15s ease;
     text-align:left;
   }
   .btn-asociar-docs:hover{
-    transform:translateY(-2px);
-    box-shadow:0 8px 22px rgba(220,38,38,.42), inset 0 1px 0 rgba(255,255,255,.22);
+    background:#fff7f7;
+    border-color:#b91c1c;
+    box-shadow:0 2px 6px rgba(220,38,38,.14);
   }
-  .btn-asociar-docs:active{transform:translateY(0) scale(.98)}
+  .btn-asociar-docs:active{background:#fde8e8}
   .btn-asociar-docs .ba-icon{
-    width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,.22);
+    width:28px;height:28px;border-radius:7px;
+    background:var(--ilus-red);color:#fff;
     display:flex;align-items:center;justify-content:center;flex-shrink:0;
-    font-size:1.4rem;
+    font-size:.95rem;
   }
-  .btn-asociar-docs .ba-text{flex:1;display:flex;flex-direction:column;gap:2px;line-height:1.2}
-  .btn-asociar-docs .ba-text strong{font-size:1rem;font-weight:800;letter-spacing:.01em}
-  .btn-asociar-docs .ba-text small{font-size:.78rem;opacity:.92;font-weight:500}
+  .btn-asociar-docs .ba-text{flex:1;display:flex;flex-direction:column;gap:1px;line-height:1.15}
+  .btn-asociar-docs .ba-text strong{font-size:.88rem;font-weight:700;color:#0a0a0a;letter-spacing:.01em}
+  .btn-asociar-docs .ba-text small{font-size:.75rem;color:#6b7280;font-weight:500}
   .btn-asociar-docs .ba-cta{
-    width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.18);
+    width:24px;height:24px;border-radius:50%;background:#f3f4f6;color:var(--ilus-red);
     display:flex;align-items:center;justify-content:center;flex-shrink:0;
-    font-size:1.1rem;transition:transform .2s;
+    font-size:.85rem;transition:transform .15s ease, background .15s ease, color .15s ease;
   }
-  .btn-asociar-docs:hover .ba-cta{transform:translateX(3px);background:rgba(255,255,255,.28)}
+  .btn-asociar-docs:hover .ba-cta{transform:translateX(2px);background:var(--ilus-red);color:#fff}
 
   /* ════════════════════════════════════════════════════════════════
      TABLAS ILUS — Daniel 2026-05-24
@@ -555,10 +592,11 @@
     .ilus-tabla-foot td::before{color:#9ca3af}
     .ilus-tabla-foot-sub td{justify-content:center !important}
     .ilus-tabla-foot-sub td::before{content:none !important}
-    .btn-asociar-docs{padding:14px 16px;gap:12px;border-radius:12px}
-    .btn-asociar-docs .ba-icon{width:38px;height:38px;font-size:1.2rem}
-    .btn-asociar-docs .ba-text strong{font-size:.94rem}
+    .btn-asociar-docs{padding:10px 14px;gap:10px;border-radius:10px}
+    .btn-asociar-docs .ba-icon{width:30px;height:30px;font-size:1rem;border-radius:7px}
+    .btn-asociar-docs .ba-text strong{font-size:.86rem}
     .btn-asociar-docs .ba-text small{font-size:.72rem}
+    .btn-asociar-docs .ba-cta{width:24px;height:24px;font-size:.85rem}
   }
 
   /* ════════════════════════════════════════════════════════════════
@@ -933,7 +971,7 @@
     position:relative;
   }
   .rba-head h4{
-    margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;
+    margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.75rem;
     color:#0a0a0a;letter-spacing:.01em;line-height:1;
     display:flex;align-items:center;gap:10px;
   }
@@ -956,7 +994,7 @@
   }
   .rba-tab{
     flex:1;padding:14px 18px;background:transparent;border:none;
-    font-size:.86rem;font-weight:800;color:#6b7280;cursor:pointer;
+    font-size:.94rem;font-weight:800;color:#6b7280;cursor:pointer;
     border-bottom:3px solid transparent;
     transition:all .2s var(--ease-out);
     display:inline-flex;align-items:center;justify-content:center;gap:7px;
@@ -987,7 +1025,7 @@
   }
   .rba-search-row select, .rba-search-row input{
     border:1.5px solid var(--gray-2);border-radius:10px;padding:11px 14px;
-    font-size:.92rem;font-weight:600;background:#fff;
+    font-size:.98rem;font-weight:600;background:#fff;
     transition:border-color .2s var(--ease-out), box-shadow .2s var(--ease-out);
   }
   .rba-search-row select:focus, .rba-search-row input:focus{
@@ -999,7 +1037,7 @@
   }
   .rba-search-row .rba-btn-search{
     background:linear-gradient(180deg,#0a0a0a 0%, #1c1c1c 100%);color:#fff;border:none;
-    padding:11px 22px;border-radius:10px;font-size:.88rem;font-weight:800;cursor:pointer;
+    padding:11px 22px;border-radius:10px;font-size:.94rem;font-weight:800;cursor:pointer;
     display:inline-flex;align-items:center;gap:6px;
     box-shadow:var(--shadow-soft-1);
     transition:all .2s var(--ease-out);
@@ -1030,22 +1068,22 @@
     cursor:pointer;user-select:none;
   }
   .rba-doc-num{
-    font-family:monospace;font-weight:900;color:var(--ilus-red);font-size:1rem;
+    font-family:monospace;font-weight:900;color:var(--ilus-red);font-size:1.08rem;
     flex-shrink:0;min-width:140px;
     display:flex;align-items:center;gap:6px;
   }
   .rba-doc-num .badge-tipo{
-    background:#0a0a0a;color:#fff;border-radius:50px;padding:2px 9px;
-    font-size:.62rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    background:#0a0a0a;color:#fff;border-radius:50px;padding:3px 10px;
+    font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
   }
   .rba-doc-info{flex:1;min-width:180px;display:flex;flex-direction:column;gap:3px}
-  .rba-doc-info .rd-cli{font-size:.88rem;font-weight:700;color:#0a0a0a;line-height:1.2}
-  .rba-doc-info .rd-meta{font-size:.74rem;color:#6b7280;display:flex;gap:10px;flex-wrap:wrap}
-  .rba-doc-info .rd-meta .rd-rut{font-family:monospace;font-weight:600}
-  .rba-doc-totals{display:flex;gap:6px;flex-wrap:wrap;font-size:.7rem}
+  .rba-doc-info .rd-cli{font-size:.96rem;font-weight:700;color:#0a0a0a;line-height:1.25}
+  .rba-doc-info .rd-meta{font-size:.82rem;color:#6b7280;display:flex;gap:10px;flex-wrap:wrap}
+  .rba-doc-info .rd-meta .rd-rut{font-family:monospace;font-weight:600;font-size:.86rem}
+  .rba-doc-totals{display:flex;gap:6px;flex-wrap:wrap;font-size:.78rem}
   .rba-doc-totals .badge-pill{
     background:#f3f4f6;color:#374151;border:1px solid var(--gray-2);
-    border-radius:50px;padding:4px 10px;font-weight:700;font-size:.68rem;
+    border-radius:50px;padding:4px 11px;font-weight:700;font-size:.74rem;
     text-transform:uppercase;letter-spacing:.04em;display:inline-flex;align-items:center;gap:4px;
   }
   .rba-doc-totals .badge-pill.ok{background:#dcfce7;color:#166534;border-color:#86efac}
@@ -1085,7 +1123,7 @@
     display:grid;grid-template-columns:32px 110px 1fr 110px 80px;
     gap:10px;align-items:center;
     padding:10px 12px;background:#fff;border:1px solid var(--gray-2);border-radius:10px;
-    margin-bottom:6px;font-size:.84rem;
+    margin-bottom:6px;font-size:.92rem;
     transition:all .2s var(--ease-out);
   }
   .rba-line:hover{border-color:#9ca3af;background:#fdfdfd}
@@ -1098,30 +1136,30 @@
   .rba-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
   .rba-line-tag-zero{
     display:inline-flex;align-items:center;gap:3px;
-    font-size:.66rem;font-weight:700;color:#16a34a;
+    font-size:.74rem;font-weight:700;color:#16a34a;
     background:#dcfce7;border:1px solid #86efac;
-    padding:1px 7px;border-radius:50px;margin-left:6px;
+    padding:2px 8px;border-radius:50px;margin-left:6px;
     letter-spacing:.02em;text-transform:uppercase;cursor:help;
   }
-  .rba-line-tag-zero i{font-size:.78rem}
+  .rba-line-tag-zero i{font-size:.86rem}
   @media(max-width:600px){
     .rba-line{grid-template-columns:32px 1fr;gap:8px}
     .rba-line .ln-sku,.rba-line .ln-qty,.rba-line .ln-qty-input{grid-column:2}
   }
-  .rba-line .ln-sku{font-family:monospace;font-size:.72rem;color:#6b7280;font-weight:600}
-  .rba-line .ln-desc{color:#0f172a;font-weight:600;line-height:1.3}
+  .rba-line .ln-sku{font-family:monospace;font-size:.86rem;color:#6b7280;font-weight:700}
+  .rba-line .ln-desc{color:#0f172a;font-weight:600;line-height:1.35;font-size:.95rem}
   .rba-line .ln-qty{
     text-align:center;font-weight:800;color:#0a0a0a;
-    font-variant-numeric:tabular-nums;font-size:.82rem;
+    font-variant-numeric:tabular-nums;font-size:.92rem;
     display:flex;flex-direction:column;gap:1px;align-items:center;
   }
-  .rba-line .ln-qty .ln-qty-saldo{color:#16a34a;font-size:.76rem}
-  .rba-line .ln-qty .ln-qty-saldo-zero{color:#9ca3af;font-size:.7rem;text-decoration:line-through}
+  .rba-line .ln-qty .ln-qty-saldo{color:#16a34a;font-size:.84rem}
+  .rba-line .ln-qty .ln-qty-saldo-zero{color:#9ca3af;font-size:.78rem;text-decoration:line-through}
   .rba-line .ln-qty-input{
     border:1.5px solid var(--gray-2);border-radius:8px;padding:6px 8px;
-    font-size:.82rem;font-weight:700;text-align:center;
+    font-size:.92rem;font-weight:700;text-align:center;
     font-variant-numeric:tabular-nums;
-    width:100%;max-width:78px;
+    width:100%;max-width:82px;
   }
   .rba-line .ln-qty-input:focus{outline:none;border-color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.12)}
   .rba-line .ln-qty-input:disabled{background:#f3f4f6;color:#9ca3af;cursor:not-allowed}
@@ -1162,8 +1200,8 @@
   }
   @keyframes rbaEmptyFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
   @media(prefers-reduced-motion:reduce){.rba-empty .rba-empty-icon{animation:none}}
-  .rba-empty h6{font-size:1rem;font-weight:800;color:#0a0a0a;margin:0 0 4px}
-  .rba-empty p{font-size:.84rem;margin:0;line-height:1.5}
+  .rba-empty h6{font-size:1.1rem;font-weight:800;color:#0a0a0a;margin:0 0 4px}
+  .rba-empty p{font-size:.92rem;margin:0;line-height:1.5}
 
   /* Skeleton premium para resultados */
   .rba-skel{display:flex;flex-direction:column;gap:10px;padding:6px 0}
@@ -2128,20 +2166,40 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="row g-2 mb-3">
               <div class="col-md-6">
-                <label class="form-label small fw-bold mb-1">Día del retiro</label>
+                <label class="form-label fw-bold mb-1" style="font-size:.92rem">Día del retiro</label>
                 <input type="date" id="iwProposeDate" class="form-control form-control-sm" required>
-                <small class="text-muted">Mínimo 24h de anticipación.</small>
+                <small class="text-muted" style="font-size:.82rem">Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (12:30–14:00) para facturas grandes.</small>
               </div>
               <div class="col-md-6">
-                <label class="form-label small fw-bold mb-1">Motivo (opcional)</label>
-                <input type="text" id="iwProposeReason" class="form-control form-control-sm" placeholder="Disponibilidad, flujo, cierre..." maxlength="200">
+                <label class="form-label fw-bold mb-1" style="font-size:.92rem">Motivo (opcional)</label>
+                <input type="text" id="iwProposeReason" class="form-control form-control-sm" placeholder="Disponibilidad, flujo, cierre..." maxlength="200" style="font-size:.95rem">
+              </div>
+            </div>
+
+            {# ════════════════════════════════════════════════════════
+               SUGERENCIAS DE DÍAS CON CUPOS — Daniel 2026-05-24
+               ─────────────────────────────────────────────────────
+               Si el día seleccionado tiene TODOS los cupos ocupados,
+               mostramos chips clickeables con los próximos 3 días con
+               disponibilidad real para que el operador no tenga que
+               navegar a ciegas. Se llena dinámicamente vía JS leyendo
+               el payload del calendario.
+               ════════════════════════════════════════════════════════ #}
+            <div id="iwSuggestedDays" class="smart-hint is-warn" style="display:none; margin-bottom:10px;">
+              <i class="bi bi-calendar2-week"></i>
+              <div style="flex:1">
+                <strong style="font-size:.92rem">El día seleccionado tiene todos los cupos ocupados.</strong>
+                <div class="small mt-1" style="font-size:.82rem;color:#555">
+                  Considera estos días con disponibilidad:
+                </div>
+                <div id="iwSuggestedDaysChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
               </div>
             </div>
 
             <div class="ilus-cal-wrap mb-2">
               <div class="ilus-cal-head">
-                <strong style="font-size:.82rem">Bloque horario</strong>
-                <div class="legend">
+                <strong style="font-size:.92rem">Bloque horario</strong>
+                <div class="legend" style="font-size:.78rem">
                   <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
                   <span><span class="dot" style="background:var(--ilus-red)"></span>Propuesto</span>
                   <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>Parcial</span>
@@ -2376,7 +2434,7 @@
   <div class="rba-foot">
     <div class="rba-counter" id="rbaCounter">
       <span class="rba-counter-pill" id="rbaCounterPill">0</span>
-      productos seleccionados · <strong id="rbaCounterKg">0 kg</strong> · <strong id="rbaCounterM3">0 m³</strong>
+      <span id="rbaCounterLabel">productos seleccionados</span> · <strong id="rbaCounterKg">0 u.</strong> · <strong id="rbaCounterM3">0 líneas</strong>
     </div>
     <div class="d-flex gap-2 flex-wrap">
       <button type="button" class="pa1-edit-btn btn-2027" onclick="rbaClose()">Cancelar</button>
@@ -3775,13 +3833,98 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState){
 // ════════════════════════════════════════════════════════════════════
 //  PASO 4 — CALENDARIO INTELIGENTE PARA PROPUESTA
 // ════════════════════════════════════════════════════════════════════
+
+// Daniel 2026-05-24: si el día actual está sin cupos libres, busca los
+// próximos 3 días futuros con al menos 4 slots libres y muestra chips
+// clickeables. Se llama desde onChange del calendario + en el init.
+function _refreshSuggestedDays(){
+  try {
+    const wrap   = document.getElementById('iwSuggestedDays');
+    const chips  = document.getElementById('iwSuggestedDaysChips');
+    const dateIn = document.getElementById('iwProposeDate');
+    const inst   = window._proposeCalInstance;
+    if (!wrap || !chips || !dateIn || !inst) return;
+    const st = inst._state ? inst._state() : null;
+    const payload = st && st.payload;
+    if (!payload || !payload.dias){
+      wrap.style.display = 'none';
+      return;
+    }
+    const fecha = dateIn.value;
+    if (!fecha){
+      wrap.style.display = 'none';
+      return;
+    }
+    const dia = payload.dias[fecha];
+    if (!dia){
+      wrap.style.display = 'none';
+      return;
+    }
+    // Contar slots LIBRES (no colación / no completo / no bloqueado) en el día actual
+    const slotsLibres = (dia.slots || []).filter(s => {
+      const st = s.estado || (s.lunch ? 'colacion' : (!s.disponible ? 'completo' : 'disponible'));
+      return st === 'disponible' || st === 'ocupado';
+    }).length;
+    if (slotsLibres > 0){
+      wrap.style.display = 'none';
+      return;
+    }
+    // Día seleccionado SIN cupos → buscar próximos 3 días con ≥4 slots libres
+    const todasFechas = Object.keys(payload.dias).sort();
+    const sugeridos = [];
+    for (const f of todasFechas){
+      if (f <= fecha) continue;
+      const d = payload.dias[f];
+      if (!d || !d.disponible) continue;
+      const libres = (d.slots || []).filter(s => {
+        const st = s.estado || (s.lunch ? 'colacion' : (!s.disponible ? 'completo' : 'disponible'));
+        return st === 'disponible' || st === 'ocupado';
+      }).length;
+      if (libres >= 4){
+        sugeridos.push({ fecha: f, libres });
+        if (sugeridos.length >= 3) break;
+      }
+    }
+    if (sugeridos.length === 0){
+      // No hay sugerencias en 30 días — mensaje empático
+      chips.innerHTML = '<span style="color:#6b7280;font-size:.82rem">Sin disponibilidad en los próximos 30 días. Revisa con bodega.</span>';
+      wrap.style.display = 'flex';
+      return;
+    }
+    // Renderizar chips clickeables (paleta ILUS, pill blanco/rojo)
+    chips.innerHTML = sugeridos.map(s => {
+      const [yy, mm, dd] = s.fecha.split('-');
+      const label = `${dd}/${mm}`;
+      return `<button type="button" class="iw-suggest-chip" data-fecha="${s.fecha}" title="${s.fecha} — ${s.libres} bloques libres">
+        <i class="bi bi-calendar-event"></i>${label}
+        <span class="iw-suggest-libres">${s.libres} libres</span>
+      </button>`;
+    }).join('');
+    wrap.style.display = 'flex';
+    // Bind clicks
+    chips.querySelectorAll('.iw-suggest-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const f = btn.dataset.fecha;
+        if (!f) return;
+        dateIn.value = f;
+        // Trigger change para que el calendario recargue el día
+        dateIn.dispatchEvent(new Event('change'));
+        if (typeof ilusToast === 'function'){
+          ilusToast(`Día cambiado a ${f}`, { type: 'success' });
+        }
+      });
+    });
+  } catch(_){ /* defensivo */ }
+}
+
 function _mountProposeCalendar(){
   if (window._proposeCalInstance) return;
   if (typeof window.IlusRetirosCalendar === 'undefined') return;
   const dateInp = document.getElementById('iwProposeDate');
   if (dateInp && !dateInp.value){
-    const tomorrow = new Date(Date.now() + 24*3600*1000);
-    dateInp.value = tomorrow.toISOString().slice(0,10);
+    // Daniel 2026-05-24: operador puede agendar HOY. Default = hoy.
+    const today = new Date();
+    dateInp.value = today.toISOString().slice(0,10);
   }
   window._proposeCalInstance = window.IlusRetirosCalendar.mount({
     container:      '#iwProposeGrid',
@@ -3792,6 +3935,11 @@ function _mountProposeCalendar(){
     hiddenTimeFrom: '#iwProposeHidTf',
     hiddenTimeTo:   '#iwProposeHidTt',
     includeOwners:  true,
+    // Daniel 2026-05-24: el OPERADOR manda — puede agendar hoy mismo y
+    // cruzar colación si la factura es grande. El cliente público NO
+    // pasa estas flags (mantiene su 24h y bloque de colación).
+    allowToday:      true,
+    allowCrossLunch: true,
     suggestedDurationMin: {{ (req.tiempo_estimado_min or 30)|int }},
     onChange: (sel) => {
       const quick = document.getElementById('iwProposeQuick');
@@ -3804,6 +3952,8 @@ function _mountProposeCalendar(){
       if (fechaRes && fIn && fIn.value && tfIn && tfIn.value && ttIn && ttIn.value){
         fechaRes.textContent = `${fIn.value} · ${tfIn.value}–${ttIn.value}`;
       }
+      // Daniel 2026-05-24: chequear sugerencias de días con cupos
+      _refreshSuggestedDays();
     },
   });
 }
@@ -4129,6 +4279,11 @@ async function rbaBuscarPorDoc(){
   if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Buscando…</span>'; }
   cont.innerHTML = _rbaSkel() + _rbaLoadingText();
   _rbaCycleLoadingMsg();
+  // FIX Daniel 2026-05-24: limpiar selección del tab "Por documento" al re-buscar
+  // (antes el Map arrastraba basura de búsquedas previas → contador desincronizado).
+  _RBA.selDoc.clear();
+  rbaUpdateCounter();
+  console.log('[rba] buscar por doc:', tido, nudo, '— selDoc limpiado');
   const t0 = performance.now();
   try {
     const r = await fetch('/api/erp/documento', {
@@ -4230,10 +4385,13 @@ function rbaRenderDocLineas(lineas, fetchMs){
   // Daniel 2026-05-24: auto-poblar _RBA.selDoc con las líneas pre-marcadas
   // (las que tienen saldo) para que el contador y "Asociar al retiro"
   // funcionen sin requerir click manual del operador.
+  // IMPORTANTE: silent=true para NO disparar toast de "ya fue rebajado"
+  // (esos toasts solo deben salir cuando el operador marca manualmente).
   setTimeout(() => {
     document.querySelectorAll('#rbaDocResult input[type="checkbox"][data-line-key]:checked').forEach(cb => {
-      rbaToggleLineaDoc(cb);
+      rbaToggleLineaDoc(cb, /*silent=*/true);
     });
+    console.log('[rba] auto-poblado: selDoc.size =', _RBA.selDoc.size);
   }, 50);
 }
 
@@ -4252,14 +4410,25 @@ function _rbaSaldoLinea(l){
 }
 
 function rbaToggleAllDoc(checked){
+  // FIX Daniel 2026-05-24: el label dice "Seleccionar todas las líneas con
+  // saldo" → debemos respetarlo. Antes marcaba TODAS (incluso las sin saldo)
+  // y disparaba 5+ toasts en cascada de "ya fue rebajado". Ahora:
+  //   - Al marcar (checked=true): solo toca las con saldo (isZero=0).
+  //   - Al desmarcar (checked=false): desmarca TODAS (consistente con UX).
   const inputs = document.querySelectorAll('#rbaDocResult input[type="checkbox"][data-line-key]');
+  let nAffected = 0;
   inputs.forEach(inp => {
     if (inp.disabled) return;
+    const isZero = inp.dataset.isZero === '1';
+    if (checked && isZero) return;   // ← no marcar las sin saldo al usar "todas"
+    if (inp.checked === checked) return;  // ya está como queremos
     inp.checked = checked;
-    rbaToggleLineaDoc(inp);
+    rbaToggleLineaDoc(inp, /*silent=*/true);  // silent: este es un cambio masivo, no manual
+    nAffected++;
   });
+  console.log('[rba] toggleAll:', checked, '— líneas afectadas:', nAffected);
 }
-function rbaToggleLineaDoc(inp){
+function rbaToggleLineaDoc(inp, silent){
   const chkBox = inp.closest('.rba-chk');
   const row = inp.closest('.rba-line');
   const key = inp.dataset.lineKey;
@@ -4269,7 +4438,8 @@ function rbaToggleLineaDoc(inp){
   const qtyInp = document.querySelector(`#rbaDocResult input.ln-qty-input[data-line-key="${key}"]`);
   // Daniel 2026-05-24: si la línea NO tiene saldo y el operador la marca,
   // mostrar aviso amable y dejar marcado (no bloquear).
-  if (inp.checked && isZero){
+  // silent=true desactiva el toast (usado por auto-poblado post-render y toggleAll).
+  if (inp.checked && isZero && !silent){
     ilusToast(`ℹ "${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, {
       type: 'info', duration: 4500
     });
@@ -4287,21 +4457,27 @@ function rbaToggleLineaDoc(inp){
       saldo: parseFloat(inp.dataset.qty) || qty,
       doc_tido: h.tido, doc_nudo: h.nudo
     });
+    if (!silent) console.log('[rba] línea marcada: SKU=', sku, 'qty=', qty);
   } else {
     _RBA.selDoc.delete(key);
+    if (!silent) console.log('[rba] línea desmarcada: SKU=', sku);
   }
   rbaUpdateCounter();
 }
 function rbaCambiarQtyDoc(inp){
   const key = inp.dataset.lineKey;
-  const item = _RBA.selDoc.get(key);
-  if (!item) return;
   let v = parseFloat(inp.value || 0) || 0;
+  const maxDoc = parseFloat(inp.dataset.maxDoc || 0) || 0;
+  const maxSaldo = parseFloat(inp.dataset.maxSaldo || 0) || 0;
+  const max = Math.max(maxDoc, maxSaldo);  // permite cantidad histórica si saldo=0 pero el operador la marcó
   if (v < 0) v = 0;
-  if (v > item.saldo) v = item.saldo;
+  if (max > 0 && v > max) v = max;
   inp.value = v;
-  item.qty = v;
-  _RBA.selDoc.set(key, item);
+  const item = _RBA.selDoc.get(key);
+  if (item){
+    item.qty = v;
+    _RBA.selDoc.set(key, item);
+  }
   rbaUpdateCounter();
 }
 
@@ -4514,16 +4690,17 @@ async function rbaToggleDocCli(idx){
     body.innerHTML = html;
     body.dataset.loaded = '1';
     // Auto-poblar _RBA.selCli con las líneas pre-marcadas
+    // silent=true para evitar avalancha de toasts en docs con saldo cero
     setTimeout(() => {
       body.querySelectorAll('input[type="checkbox"][data-line-key]:checked').forEach(cb => {
-        rbaToggleLineaCli(cb);
+        rbaToggleLineaCli(cb, /*silent=*/true);
       });
     }, 50);
   } catch(e){
     body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_esc(e.message)}</div>`;
   }
 }
-function rbaToggleLineaCli(inp){
+function rbaToggleLineaCli(inp, silent){
   const chkBox = inp.closest('.rba-chk');
   if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
   const row = inp.closest('.rba-line');
@@ -4532,7 +4709,8 @@ function rbaToggleLineaCli(inp){
   const isZero = inp.dataset.isZero === '1';
   const nombre = inp.dataset.nombre;
   // Daniel 2026-05-24: aviso amable si marca una línea sin saldo (entregada)
-  if (inp.checked && isZero){
+  // silent=true desactiva el toast (usado por auto-poblado post-render)
+  if (inp.checked && isZero && !silent){
     ilusToast(`ℹ "${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, {
       type: 'info', duration: 4500
     });
@@ -4599,7 +4777,12 @@ async function rbaAsociarDocCompleto(idx){
 // Contador en vivo + bump animation
 // ──────────────────────────────────────────────────────────────
 function rbaUpdateCounter(){
-  const n = _RBA.selDoc.size + _RBA.selCli.size;
+  // FIX Daniel 2026-05-24: contar SOLO líneas con qty>0 (no las marcadas en cero).
+  // Antes el footer decía "0 productos seleccionados" siempre como texto fijo
+  // y el botón no se desactivaba correctamente si una línea estaba en qty=0.
+  const allSel = [..._RBA.selDoc.values(), ..._RBA.selCli.values()]
+    .filter(it => (it.qty || 0) > 0);
+  const n = allSel.length;
   const pill = document.getElementById('rbaCounterPill');
   if (pill){
     pill.textContent = n;
@@ -4607,14 +4790,15 @@ function rbaUpdateCounter(){
     void pill.offsetWidth;       // reflow para reiniciar animación
     pill.classList.add('is-bump');
   }
-  // Aproximación kg/m³ (no tenemos densidad por línea sin más datos)
-  const totalUnits = [..._RBA.selDoc.values(), ..._RBA.selCli.values()]
-    .reduce((s, it) => s + (it.qty || 0), 0);
+  const label = document.getElementById('rbaCounterLabel');
+  if (label) label.textContent = (n === 1) ? 'producto seleccionado' : 'productos seleccionados';
+  const totalUnits = allSel.reduce((s, it) => s + (it.qty || 0), 0);
   const kg = document.getElementById('rbaCounterKg');
   const m3 = document.getElementById('rbaCounterM3');
   if (kg) kg.textContent = `${totalUnits.toFixed(0)} u.`;
-  if (m3) m3.textContent = `${n} líneas`;
-  document.getElementById('rbaAssocBtn').disabled = n === 0;
+  if (m3) m3.textContent = `${n} línea${n===1?'':'s'}`;
+  const btn = document.getElementById('rbaAssocBtn');
+  if (btn) btn.disabled = n === 0;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -4635,14 +4819,20 @@ async function rbaAsociarSeleccion(){
     const key = `${h.tido}|${h.nudo}`;
     const lineas = [];
     _RBA.selDoc.forEach(it => {
-      lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo });
+      // Solo agregar líneas con qty > 0 (defensivo)
+      if ((it.qty || 0) > 0){
+        lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo });
+      }
     });
-    docsToAdd.set(key, { tido: h.tido, nudo: h.nudo, lineas });
+    if (lineas.length > 0){
+      docsToAdd.set(key, { tido: h.tido, nudo: h.nudo, lineas });
+    }
   }
 
   // Tab "Por cliente": múltiples docs posibles, cada línea sabe a qué doc va
   _RBA.selCli.forEach(it => {
     if (!it.tido || !it.nudo) return;
+    if ((it.qty || 0) <= 0) return;  // defensivo
     const key = `${it.tido}|${it.nudo}`;
     if (!docsToAdd.has(key)){
       docsToAdd.set(key, { tido: it.tido, nudo: it.nudo, lineas: [] });
@@ -4650,8 +4840,11 @@ async function rbaAsociarSeleccion(){
     docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty, saldo: it.saldo });
   });
 
+  console.log('[rba] asociando', docsToAdd.size, 'doc(s) — total líneas seleccionadas:',
+    [...docsToAdd.values()].reduce((s, d) => s + d.lineas.length, 0));
+
   if (docsToAdd.size === 0){
-    ilusToast('Selecciona al menos un producto', { type:'warning' });
+    ilusToast('Selecciona al menos un producto con cantidad mayor a 0', { type:'warning' });
     return;
   }
 
@@ -4704,16 +4897,20 @@ async function rbaAsociarSeleccion(){
 
       // PASO 2: guardar selección granular de líneas para este doc.
       // Solo las líneas en info.lineas (las que el operador marcó) van
-      // como incluida=true. El resto se mete como incluida=false.
+      // como incluida=true. El backend marca las restantes con incluida=0
+      // y setea has_seleccion_lineas=1 en el doc.
+      //
+      // FIX Daniel 2026-05-24: antes este try/catch silenciaba el error con
+      // console.warn → si fallaba, la tabla seguía mostrando todas las líneas.
+      // Ahora propagamos al errList para que el operador lo vea con detalle.
       if (docId && info.lineas && info.lineas.length > 0){
+        const lineas_payload = info.lineas.map(ln => ({
+          sku: ln.sku,
+          incluida: true,
+          cantidad_seleccionada: ln.qty
+        }));
+        console.log(`[rba] POST /docs/${docId}/lineas con`, lineas_payload.length, 'líneas:', lineas_payload);
         try {
-          // Backend solo necesita {sku, incluida:true, cantidad_seleccionada}
-          // Las líneas NO listadas quedan con incluida=0 por default.
-          const lineas_payload = info.lineas.map(ln => ({
-            sku: ln.sku,
-            incluida: true,
-            cantidad_seleccionada: ln.qty
-          }));
           const rl = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`, {
             method: 'POST',
             headers: {
@@ -4723,13 +4920,29 @@ async function rbaAsociarSeleccion(){
             },
             body: JSON.stringify({ lineas: lineas_payload })
           });
-          const dl = await rl.json();
-          if (!dl.ok){
-            console.warn('[rbaAsociar] selección granular falló:', dl.error);
+          let dl = null;
+          try { dl = await rl.json(); }
+          catch(_){
+            const txt = await rl.text().catch(()=> '');
+            console.error(`[rba] POST /lineas devolvió no-JSON status=${rl.status} preview=${txt.slice(0,140)}`);
+            errList.push({ label, motivo: `Selección granular: backend devolvió HTML (status ${rl.status}). ¿Sesión expirada?` });
+            continue;
           }
+          console.log(`[rba] POST /lineas status=${rl.status} ok=${dl.ok} guardadas=${dl.lineas_guardadas}`);
+          if (!dl.ok){
+            // Caso real: la línea agregar funcionó pero la granular no →
+            // el doc quedó asociado SIN selección → tabla mostraría todo.
+            errList.push({ label, motivo: `Selección granular falló: ${dl.error || 'error desconocido'}` });
+            continue;
+          }
+          console.log(`[rba] ✓ has_seleccion_lineas confirmado = 1 para doc ${docId}`);
         } catch(eg){
-          console.warn('[rbaAsociar] error red selección:', eg);
+          console.error('[rba] POST /lineas crash de red:', eg);
+          errList.push({ label, motivo: 'Selección granular: error de red — ' + (eg.message || 'desconocido') });
+          continue;
         }
+      } else if (docId){
+        console.warn(`[rba] doc ${docId} asociado SIN líneas marcadas (info.lineas vacío) → tabla mostrará todas las líneas del snapshot`);
       }
     } catch(e){
       errList.push({ label, motivo: 'Sin conexión: ' + (e.message || 'error de red') });

@@ -502,13 +502,18 @@ def register_pickup_routes(app, ctx):
                 return candidate.isoformat()
         return base.isoformat()
 
-    def time_allowed(time_from, time_to, cfg=None):
+    def time_allowed(time_from, time_to, cfg=None, bypass_lunch=False):
         """Valida que el rango horario solicitado caiga en el horario de
         atención y NO cruce la colación.
 
         Daniel mayo 2026: el horario v3 separa Mañana / Tarde con colación
         bloqueada en medio. Un rango que cruce la colación es inválido —
         debe ser SOLO mañana o SOLO tarde.
+
+        Daniel 2026-05-24 (operador interno): se agregó `bypass_lunch=True`
+        para permitir al operador agendar manualmente cruzando la colación
+        cuando la factura es grande y necesita más tiempo. El cliente
+        público sigue con la restricción intacta (bypass_lunch=False).
         """
         cfg = cfg or settings()
         open_t  = str(cfg.get("open_time")   or "09:00:00")[:5]
@@ -521,6 +526,8 @@ def register_pickup_routes(app, ctx):
             return False, f"El horario debe estar entre {open_t} y {close_t}."
         # Cruce de colación: el rango (time_from, time_to) se solapa con
         # (lunch_s, lunch_e) cuando NO se cumple: time_to <= lunch_s OR time_from >= lunch_e
+        if bypass_lunch:
+            return True, ""
         try:
             if not (time_to <= lunch_s or time_from >= lunch_e):
                 return False, (
@@ -645,12 +652,12 @@ def register_pickup_routes(app, ctx):
     #  VALIDACIÓN DE DISPONIBILIDAD REAL DE SLOT (cupos + bloqueos + colación)
     # ══════════════════════════════════════════════════════════════════
     def _validar_disponibilidad_slot(date, time_from, time_to, exclude_request_id=None,
-                                      extra_kg=0, extra_m3=0):
+                                      extra_kg=0, extra_m3=0, bypass_lunch=False):
         """Valida que un slot (date + time_from..time_to) pueda usarse.
 
         Chequea, en este orden:
           1) Día permitido (work_days + holidays) y horario dentro de open/close
-          2) Solape con colación (lunch_start/lunch_end)
+          2) Solape con colación (lunch_start/lunch_end) — saltado si bypass_lunch=True
           3) Solape con pickup_blocks (full day o franja específica)
           4) Capacidad: max_picks_per_slot, max_kg_per_slot, max_m3_per_slot
           5) Capacidad diaria: max_picks_per_day
@@ -662,6 +669,10 @@ def register_pickup_routes(app, ctx):
                                 (útil al revalidar la propia confirmación)
             extra_kg, extra_m3: peso/volumen del retiro que se está agregando
                                 (se suma al conteo actual del slot)
+            bypass_lunch: si True, permite que el rango cruce la colación.
+                          Solo el OPERADOR interno debe activar esta opción
+                          (factura grande que necesita más tiempo). El cliente
+                          público nunca pasa este flag → mantiene la regla.
 
         Returns:
             (ok: bool, motivo: str)
@@ -676,7 +687,7 @@ def register_pickup_routes(app, ctx):
         ok_d, msg_d = date_allowed(date_str, cfg)
         if not ok_d:
             return False, msg_d
-        ok_t, msg_t = time_allowed(time_from, time_to, cfg)
+        ok_t, msg_t = time_allowed(time_from, time_to, cfg, bypass_lunch=bypass_lunch)
         if not ok_t:
             return False, msg_t
 
@@ -710,19 +721,21 @@ def register_pickup_routes(app, ctx):
             pass
 
         # 2) Solape con colación (v4: 13:00 – 14:00 BLOQUEADA, Daniel 2026-05-24)
-        lunch_s_str = "13:00"
-        lunch_e_str = "14:00"
-        try:
-            lh, lm = [int(x) for x in lunch_s_str.split(":")]
-            leh, lem = [int(x) for x in lunch_e_str.split(":")]
-            lunch_s = lh * 60 + lm
-            lunch_e = leh * 60 + lem
-            if lunch_s < lunch_e:
-                # Solape si NO termina antes del almuerzo y NO empieza después
-                if not (slot_e <= lunch_s or slot_s >= lunch_e):
-                    return False, f"El horario solapa la colación ({lunch_s_str}-{lunch_e_str})."
-        except Exception:
-            pass
+        # bypass_lunch=True: operador puede pasarse de largo (factura grande).
+        if not bypass_lunch:
+            lunch_s_str = "13:00"
+            lunch_e_str = "14:00"
+            try:
+                lh, lm = [int(x) for x in lunch_s_str.split(":")]
+                leh, lem = [int(x) for x in lunch_e_str.split(":")]
+                lunch_s = lh * 60 + lm
+                lunch_e = leh * 60 + lem
+                if lunch_s < lunch_e:
+                    # Solape si NO termina antes del almuerzo y NO empieza después
+                    if not (slot_e <= lunch_s or slot_s >= lunch_e):
+                        return False, f"El horario solapa la colación ({lunch_s_str}-{lunch_e_str})."
+            except Exception:
+                pass
 
         # 3) Bloqueos manuales en pickup_blocks
         try:
@@ -1947,11 +1960,17 @@ def register_pickup_routes(app, ctx):
                     # ═══════════════════════════════════════════════════════════
 
                     # FASE 1: Validar condiciones estáticas (sin lock)
+                    # Daniel 2026-05-24: si la propuesta vino del operador
+                    # interno (proposed_by='internal'), respetamos su decisión
+                    # de cruzar colación. El cliente solo está aceptando un
+                    # horario que el equipo ILUS ya validó manualmente.
+                    _prop_bypass_lunch = (str(proposal.get("proposed_by") or "").lower() == "internal")
                     ok_slot, motivo = _validar_disponibilidad_slot(
                         proposal["date"], proposal["time_from"], proposal["time_to"],
                         exclude_request_id=req["id"],
                         extra_kg=float(req.get("total_weight_kg") or 0),
                         extra_m3=float(req.get("total_volume_m3") or 0),
+                        bypass_lunch=_prop_bypass_lunch,
                     )
                     if not ok_slot:
                         # Marcar la propuesta como declined y notificar al cliente
@@ -5587,16 +5606,23 @@ def register_pickup_routes(app, ctx):
             pass
 
         date, tf, tt = request.form.get("date"), request.form.get("time_from"), request.form.get("time_to")
-        okd, md = date_allowed(date); okt, mt = time_allowed(tf, tt)
+        # Daniel 2026-05-24: el OPERADOR (este endpoint está bajo
+        # @require_permission("edit") — sólo lo alcanza staff interno con
+        # permiso retiros/admin/superadmin) puede CRUZAR la colación si
+        # la factura es grande y necesita más tiempo. El cliente público
+        # NUNCA pasa por acá — el wizard interno es exclusivo del operador.
+        okd, md = date_allowed(date); okt, mt = time_allowed(tf, tt, bypass_lunch=True)
         if not okd or not okt:
             return _resp_err(md or mt)
 
-        # Validar capacidad real del slot (cupos, kg, m³, bloqueos, colación)
+        # Validar capacidad real del slot (cupos, kg, m³, bloqueos).
+        # bypass_lunch=True → el operador manda por encima del cliente.
         ok_slot, motivo = _validar_disponibilidad_slot(
             date, tf, tt,
             exclude_request_id=rid,
             extra_kg=float(req.get("total_weight_kg") or 0),
             extra_m3=float(req.get("total_volume_m3") or 0),
+            bypass_lunch=True,
         )
         if not ok_slot:
             log_event(rid, "propuesta_bloqueada", req["status"], req["status"],

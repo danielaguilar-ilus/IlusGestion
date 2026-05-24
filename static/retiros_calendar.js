@@ -95,6 +95,12 @@
       lunchStartFallback: '12:30',
       lunchEndFallback: '14:00',
       slotMinFallback: 30,
+      // Daniel 2026-05-24 (operador interno): el operador tiene libertad
+      // total — puede agendar para HOY (no solo desde mañana) y puede
+      // CRUZAR la colación si la factura es grande. Estas dos flags solo
+      // las activa el wizard interno; el cliente público las deja false.
+      allowToday: false,
+      allowCrossLunch: false,
     }, opts || {});
 
     const grid     = (typeof cfg.container === 'string') ? _qs(cfg.container) : cfg.container;
@@ -266,8 +272,15 @@
         if (estado === 'colacion'){
           const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
           const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
-          _toast(`Ese horario es de colación (${ls}-${le}). Elige antes o después.`, 'warning');
-          return;
+          if (cfg.allowCrossLunch){
+            // Daniel 2026-05-24: el operador puede tomar slots de colación
+            // (factura grande). Aviso amarillo no bloqueante.
+            _toast(`Estás tomando un slot de colación (${ls}-${le}). Confirma con bodega.`, 'warning');
+            // No return → seguimos al flujo de selección normal.
+          } else {
+            _toast(`Ese horario es de colación (${ls}-${le}). Elige antes o después.`, 'warning');
+            return;
+          }
         }
         if (estado === 'completo'){ _toast('Ese bloque está lleno. Elige otro horario.', 'warning'); return; }
         if (estado === 'bloqueado'){ _toast(s.razon || 'Esa franja está bloqueada.', 'warning'); return; }
@@ -281,9 +294,15 @@
         const from = Math.min(state.startIdx, i);
         const to   = Math.max(state.startIdx, i);
         let invalido = null;
+        let cruzaColacion = false;
         for (let k = from; k <= to; k++){
           const ek = _estadoDeSlot(state.slots[k]);
-          if (ek === 'colacion'){ invalido = 'colacion'; break; }
+          if (ek === 'colacion'){
+            // Daniel 2026-05-24: el operador con allowCrossLunch puede
+            // cruzar; en ese caso solo guardamos flag para avisar.
+            if (cfg.allowCrossLunch){ cruzaColacion = true; }
+            else { invalido = 'colacion'; break; }
+          }
           if (ek === 'completo'){ invalido = 'completo'; break; }
           if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
           // En vista pública, 'ocupado' tambien invalida el rango.
@@ -310,6 +329,14 @@
           state.startIdx = state.endIdx = i;
         } else {
           state.startIdx = from; state.endIdx = to;
+          // Daniel 2026-05-24: si el operador armó un rango que cruza la
+          // colación (permitido por allowCrossLunch), avisamos para que
+          // confirme con bodega — pero no bloqueamos.
+          if (cruzaColacion && cfg.allowCrossLunch){
+            const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
+            const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
+            _toast(`Este rango cruza la colación del equipo (${ls}-${le}). Confirma con bodega.`, 'warning');
+          }
         }
       }
       updateSummary();
@@ -418,9 +445,14 @@
         if (!r.ok) throw new Error('HTTP ' + r.status);
         state.payload = await r.json();
         if (dateInp){
+          // Daniel 2026-05-24: el operador interno (allowToday) puede agendar
+          // desde HOY; el cliente público sigue limitado a mañana en adelante.
+          const today = new Date();
+          const todayStr = today.toISOString().slice(0,10);
           const tomorrow = new Date(Date.now() + 24*3600*1000);
           const tomorrowStr = tomorrow.toISOString().slice(0,10);
-          dateInp.min = (state.payload.from < tomorrowStr) ? tomorrowStr : state.payload.from;
+          const minStr = cfg.allowToday ? todayStr : tomorrowStr;
+          dateInp.min = (state.payload.from < minStr) ? minStr : state.payload.from;
           dateInp.max = state.payload.to;
         }
         return state.payload;
@@ -441,10 +473,20 @@
       if (dateInp && dateInp.value !== fecha) dateInp.value = fecha || '';
 
       if (!fecha){ renderEmpty('Selecciona una fecha primero.'); return; }
-      // Defense in depth: no aceptar pasado/hoy
-      const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
+      // Defense in depth: el cliente público necesita ≥24h; el operador
+      // (allowToday=true) puede agendar para HOY mismo. Nadie agenda pasado.
+      const minDate = new Date();
+      if (cfg.allowToday){
+        minDate.setHours(0,0,0,0);
+      } else {
+        minDate.setTime(Date.now() + 24*3600*1000);
+        minDate.setHours(0,0,0,0);
+      }
       if (new Date(fecha + 'T00:00:00') < minDate){
-        renderEmpty('Necesitamos mínimo 24 horas de anticipación. Elige una fecha desde mañana.');
+        renderEmpty(cfg.allowToday
+          ? 'Esa fecha ya pasó. Elige hoy o una fecha futura.'
+          : 'Necesitamos mínimo 24 horas de anticipación. Elige una fecha desde mañana.'
+        );
         return;
       }
       if (!state.payload){
