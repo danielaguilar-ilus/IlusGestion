@@ -541,156 +541,206 @@
        Sin rotación 3D, sin partículas, sin confetti — sólo
        transiciones suaves, paleta ILUS limpia, máxima legibilidad.
        ════════════════════════════════════════════════════════════ */
+    /* Daniel 2026-05-24: overlay PREMIUM con logo grande pulsando +
+       halo orbital girando. El cliente espera, sí, pero con un visual
+       que dice "ILUS te está atendiendo". Modal grande, fondo dark con
+       gradiente sutil rojo en el centro detrás del logo. */
     .spartan-overlay{
       position:fixed;inset:0;z-index:10000;
-      background:rgba(10,10,10,.72);
-      -webkit-backdrop-filter:blur(10px) saturate(1.2);
-      backdrop-filter:blur(10px) saturate(1.2);
+      background:
+        radial-gradient(ellipse 70% 60% at 50% 45%, rgba(220,38,38,.18) 0%, transparent 60%),
+        rgba(10,10,10,.92);
+      -webkit-backdrop-filter:blur(14px) saturate(1.3);
+      backdrop-filter:blur(14px) saturate(1.3);
       display:flex;align-items:center;justify-content:center;
       padding:18px;opacity:0;pointer-events:none;
-      transition:opacity .25s ease-out;
+      transition:opacity .3s ease-out;
       contain:layout style;
       overflow:hidden;
     }
     .spartan-overlay[hidden]{display:none}
     .spartan-overlay.active{opacity:1;pointer-events:auto}
 
-    /* ─────── CARD CONTENEDOR SOBRIO ─────── */
+    /* ─────── CARD CONTENEDOR PREMIUM ─────── */
     .spartan-card{
       position:relative;
       width:100%;
-      max-width:380px;
-      padding:28px 26px 22px;
-      border-radius:16px;
-      background:#fff;
-      border:1px solid #e5e7eb;
+      max-width:520px;            /* Daniel pidió más grande */
+      padding:40px 36px 32px;
+      border-radius:24px;
+      background:linear-gradient(180deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.02) 100%);
+      border:1px solid rgba(255,255,255,.08);
       box-shadow:
-        0 24px 48px -12px rgba(0,0,0,.35),
-        0 8px 20px -8px rgba(0,0,0,.18);
-      animation:cardEntry .35s ease-out both;
+        0 60px 120px -20px rgba(0,0,0,.7),
+        0 0 0 1px rgba(220,38,38,.12) inset;
+      animation:cardEntry .45s cubic-bezier(.34,1.56,.64,1) both;
       transform-origin:50% 50%;
+      color:#fff;
     }
     @keyframes cardEntry{
-      from{opacity:0;transform:scale(.96) translateY(8px)}
+      from{opacity:0;transform:scale(.92) translateY(20px)}
       to  {opacity:1;transform:scale(1) translateY(0)}
     }
 
-    /* Header — logo pequeño + título centrado */
+    /* Header — logo GRANDE con halo orbital girando */
     .spartan-header{
       display:flex;flex-direction:column;align-items:center;
-      gap:10px;margin-bottom:20px;
+      gap:24px;margin-bottom:30px;
+      position:relative;
     }
+    .spartan-logo-wrap{
+      position:relative;
+      width:160px;height:160px;
+      display:flex;align-items:center;justify-content:center;
+    }
+    /* Halo orbital girando alrededor del logo */
+    .spartan-logo-wrap::before{
+      content:'';position:absolute;inset:-8px;
+      border-radius:50%;
+      border:2px solid transparent;
+      border-top-color:var(--ilus-red);
+      border-right-color:rgba(220,38,38,.4);
+      animation:spartanOrbit 1.8s linear infinite;
+    }
+    .spartan-logo-wrap::after{
+      content:'';position:absolute;inset:-22px;
+      border-radius:50%;
+      border:1px dashed rgba(220,38,38,.25);
+      animation:spartanOrbit 4s linear infinite reverse;
+    }
+    @keyframes spartanOrbit{
+      from{transform:rotate(0deg)}
+      to{transform:rotate(360deg)}
+    }
+    /* Logo principal — pulsando + glow rojo */
     .spartan-logo{
-      width:36px;height:36px;display:block;
+      width:120px;height:120px;display:block;
       object-fit:contain;
-      filter:drop-shadow(0 2px 4px rgba(0,0,0,.12));
+      filter:drop-shadow(0 0 24px rgba(220,38,38,.55))
+             drop-shadow(0 6px 12px rgba(0,0,0,.4));
+      animation:spartanPulse 1.4s ease-in-out infinite;
+      z-index:2;
+    }
+    @keyframes spartanPulse{
+      0%,100%{transform:scale(1)}
+      50%   {transform:scale(1.06)}
     }
     .spartan-text{
-      margin:0;color:#0a0a0a;
-      font-size:1rem;font-weight:800;
+      margin:0;color:#fff;
+      font-size:1.35rem;font-weight:800;
       letter-spacing:-.01em;text-align:center;
-      line-height:1.3;
-      min-height:1.3em;
-      transition:color .25s ease;
+      line-height:1.25;
+      min-height:1.25em;
+      transition:color .3s ease;
+      text-shadow:0 2px 8px rgba(0,0,0,.4);
     }
 
-    /* Barra de progreso horizontal lineal */
+    /* Barra de progreso horizontal lineal — más visible sobre fondo oscuro */
     .spartan-progress{
       width:100%;
-      display:flex;flex-direction:column;gap:18px;
+      display:flex;flex-direction:column;gap:22px;
     }
     .sp-bar{
-      height:8px;width:100%;
-      background:#f3f4f6;
+      height:10px;width:100%;
+      background:rgba(255,255,255,.08);
       border-radius:50px;overflow:hidden;
       position:relative;
+      border:1px solid rgba(255,255,255,.05);
     }
     .sp-fill{
       height:100%;width:0%;
-      background:var(--ilus-red);
+      background:linear-gradient(90deg, #dc2626 0%, #ef4444 100%);
       border-radius:50px;
-      transition:width .6s cubic-bezier(.4,0,.2,1), background-color .25s ease;
+      box-shadow:0 0 12px rgba(220,38,38,.6);
+      transition:width .6s cubic-bezier(.4,0,.2,1), background .25s ease;
     }
 
     /* Lista de 3 pasos */
     .sp-steps{
-      display:flex;flex-direction:column;gap:11px;
-      font-size:.88rem;font-weight:500;
-      margin-top:2px;
+      display:flex;flex-direction:column;gap:14px;
+      font-size:1.02rem;font-weight:500;
+      margin-top:6px;
     }
     .sp-step{
-      color:#9ca3af;
-      display:flex;align-items:center;gap:11px;
+      color:rgba(255,255,255,.45);
+      display:flex;align-items:center;gap:14px;
       transition:color .3s ease;
       line-height:1.3;
     }
     .sp-bullet{
-      width:22px;height:22px;border-radius:50%;
-      background:#f3f4f6;
-      border:1.5px solid #e5e7eb;
+      width:26px;height:26px;border-radius:50%;
+      background:rgba(255,255,255,.06);
+      border:1.5px solid rgba(255,255,255,.15);
       display:inline-flex;align-items:center;justify-content:center;
       flex-shrink:0;
       transition:all .3s ease;
       position:relative;
-      font-size:.75rem;
+      font-size:.78rem;
       color:transparent;
     }
-    /* Estado pendiente: bullet gris vacío */
     .sp-step.pending .sp-bullet{
-      background:#fff;border-color:#e5e7eb;
+      background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.15);
     }
-    /* Estado activo: bullet con spinner sutil azul/rojo ILUS */
-    .sp-step.active{color:#0a0a0a;font-weight:700}
+    .sp-step.active{color:#fff;font-weight:700}
     .sp-step.active .sp-bullet{
-      background:#fff;
+      background:rgba(220,38,38,.15);
       border-color:var(--ilus-red);
       border-top-color:transparent;
       animation:spSpin .8s linear infinite;
+      box-shadow:0 0 12px rgba(220,38,38,.4);
     }
     @keyframes spSpin{ to{ transform:rotate(360deg) } }
-    /* Estado completado: check verde */
-    .sp-step.done{color:#16a34a;font-weight:600}
+    .sp-step.done{color:#86efac;font-weight:600}
     .sp-step.done .sp-bullet{
       background:#16a34a;
       border-color:#16a34a;
       color:#fff;
       animation:none;
+      box-shadow:0 0 10px rgba(34,197,94,.45);
     }
     .sp-step.done .sp-bullet::before{
       content:'';
-      width:8px;height:4px;
-      border-left:2px solid #fff;
-      border-bottom:2px solid #fff;
+      width:9px;height:5px;
+      border-left:2.5px solid #fff;
+      border-bottom:2.5px solid #fff;
       transform:rotate(-45deg) translate(1px,-1px);
     }
 
-    /* Sub texto al pie del card */
     .spartan-sub{
-      display:flex;align-items:center;justify-content:center;gap:6px;
-      color:#6b7280;font-size:.78rem;font-weight:500;
-      margin-top:20px;padding-top:16px;
-      border-top:1px solid #f3f4f6;
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      color:rgba(255,255,255,.6);font-size:.88rem;font-weight:500;
+      margin-top:26px;padding-top:20px;
+      border-top:1px solid rgba(255,255,255,.08);
       text-align:center;
     }
-    .spartan-sub i{font-size:.92rem;color:#6b7280}
+    .spartan-sub i{font-size:1.1rem;color:rgba(255,255,255,.7)}
 
-    /* ─────── Estado final — check verde sobrio ─────── */
-    .spartan-overlay.done .spartan-text{color:#16a34a}
-    .spartan-overlay.done .sp-fill{background:#16a34a}
+    /* ─────── Estado final — check verde brillante ─────── */
+    .spartan-overlay.done .spartan-text{color:#86efac}
+    .spartan-overlay.done .sp-fill{background:#16a34a;box-shadow:0 0 14px rgba(34,197,94,.55)}
+    .spartan-overlay.done .spartan-logo-wrap::before{
+      border-top-color:#22c55e;border-right-color:rgba(34,197,94,.4);
+    }
 
     /* ─────── RESPONSIVE — mobile-first ─────── */
-    @media(max-width:360px){
-      .spartan-card{padding:24px 20px 20px;max-width:94vw}
-      .spartan-logo{width:32px;height:32px}
-      .spartan-text{font-size:.94rem}
-      .sp-steps{font-size:.82rem;gap:9px}
-      .sp-bullet{width:20px;height:20px}
+    @media(max-width:480px){
+      .spartan-card{padding:30px 22px 24px;max-width:94vw;border-radius:18px}
+      .spartan-logo-wrap{width:130px;height:130px}
+      .spartan-logo{width:96px;height:96px}
+      .spartan-text{font-size:1.1rem}
+      .sp-steps{font-size:.92rem;gap:11px}
+      .sp-bullet{width:22px;height:22px}
     }
-    @media(min-width:600px){
-      .spartan-card{max-width:420px;padding:32px 30px 24px}
-      .spartan-logo{width:40px;height:40px}
-      .spartan-text{font-size:1.08rem}
-      .sp-steps{font-size:.92rem}
+    @media(min-width:768px){
+      .spartan-card{max-width:560px;padding:46px 42px 36px}
+      .spartan-logo-wrap{width:180px;height:180px}
+      .spartan-logo{width:140px;height:140px}
+      .spartan-text{font-size:1.5rem}
+      .sp-steps{font-size:1.08rem}
+    }
+    @media(prefers-reduced-motion: reduce){
+      .spartan-logo{animation:none}
+      .spartan-logo-wrap::before, .spartan-logo-wrap::after{animation-duration:6s}
     }
 
     /* Accesibilidad — reduced motion */
@@ -1386,10 +1436,12 @@
     {# Card sobrio centrado — logo chico arriba, título, barra progreso, 3 pasos, footer #}
     <div class="spartan-card">
       <div class="spartan-header">
-        <picture>
-          <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
-          <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="spartan-logo" alt="ILUS" decoding="async" width="40" height="40">
-        </picture>
+        <div class="spartan-logo-wrap">
+          <picture>
+            <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+            <img src="{{ url_for('static', filename='Logo_optimized.png') }}" class="spartan-logo" alt="ILUS" decoding="async" width="140" height="140">
+          </picture>
+        </div>
         <div class="spartan-text" id="spartanText">Procesando tu solicitud…</div>
       </div>
 

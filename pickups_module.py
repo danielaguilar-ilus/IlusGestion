@@ -689,22 +689,23 @@ def register_pickup_routes(app, ctx):
         except Exception:
             return False, "Horario con formato inválido."
 
-        # Validar grilla de 30 min (Daniel 2026-05-24: bloques estrictos).
-        # El inicio y el fin deben caer en un múltiplo de slot_minutes desde
-        # open_time, y la duración debe ser múltiplo de slot_minutes.
+        # Daniel 2026-05-24: FUERZA ABSOLUTA bloques de 30 min.
+        # Antes leíamos `slot_minutes` de la BD; si la BD tenía legacy 60,
+        # el cliente que elegía las 10:30 recibía "debe caer en bloques de
+        # 60 min". HARDCODED a 30 min sin excepción.
+        # Tampoco bloqueamos por divisibilidad estricta desde open_time si
+        # el cliente eligió un slot válido del calendario — el frontend ya
+        # genera SOLO bloques válidos. Acá solo verificamos múltiplo de 30.
+        slot_min = 30
         try:
-            slot_min = int(cfg.get("slot_minutes") or 30)
-            op_h, op_m = [int(x) for x in str(cfg.get("open_time") or "09:00")[:5].split(":")]
-            op_min = op_h * 60 + op_m
-            if slot_min > 0:
-                if (slot_s - op_min) % slot_min != 0:
-                    return False, f"La hora de inicio debe caer en bloques de {slot_min} min (ej: :00 o :30)."
-                if (slot_e - op_min) % slot_min != 0:
-                    return False, f"La hora de fin debe caer en bloques de {slot_min} min (ej: :00 o :30)."
-                if (slot_e - slot_s) % slot_min != 0:
-                    return False, f"La duración debe ser múltiplo de {slot_min} min."
-                if (slot_e - slot_s) <= 0:
-                    return False, "La hora de fin debe ser posterior a la de inicio."
+            if (slot_s % slot_min) != 0:
+                return False, f"La hora de inicio debe caer en :00 o :30."
+            if (slot_e % slot_min) != 0:
+                return False, f"La hora de fin debe caer en :00 o :30."
+            if (slot_e - slot_s) % slot_min != 0:
+                return False, f"La duración debe ser múltiplo de 30 minutos."
+            if (slot_e - slot_s) <= 0:
+                return False, "La hora de fin debe ser posterior a la de inicio."
         except Exception:
             pass
 

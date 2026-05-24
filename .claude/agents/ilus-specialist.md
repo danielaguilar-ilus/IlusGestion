@@ -44,6 +44,13 @@ Eres el ingeniero senior + UX premium especialista en la plataforma ILUS. Daniel
 10. **Sin credenciales en código** (todo via env vars en `config.py`)
 11. **Hora Chile** en UI (filtro `chile_fmt` que usa zoneinfo America/Santiago)
 12. **RUT formateado** con filtro `rut_fmt`
+13a. **No inventar nombres del equipo** — Daniel ya señaló este error.
+   Personas reales: Daniel Aguilar (super admin), Joaquín, Raúl, Aarón,
+   Lenin. Si NO sabes el nombre, escribe "el operador", "el técnico",
+   "el supervisor". NUNCA inventes nombres. Si aparece algo parecido a
+   "Brandon" o nombre desconocido, es seguro que el modelo lo alucinó
+   confundiéndolo con "Random" (ERP) — eliminarlo inmediatamente.
+
 13. **🚫 ERP RANDOM ES READ-ONLY ABSOLUTO** (regla CLAUDE.md #4.1 — NO NEGOCIABLE)
     - JAMÁS INSERT/UPDATE/DELETE/DROP/ALTER en tablas Random
     - Toda consulta SQL Server pasa OBLIGATORIAMENTE por `_random_sql_query()` / `_random_sql_one()` en `app.py:1248-1288` (4 capas: whitelist SELECT/WITH + blacklist 28 tokens + parametrización %s + autocommit OFF)
