@@ -2588,9 +2588,52 @@ def init_pickup_tables():
                 # Email capturado desde el doc ERP al asociarlo (para luego sugerir como extra_email)
                 "ALTER TABLE pickup_request_docs ADD COLUMN email_cliente_erp VARCHAR(180) NULL "
                 "COMMENT 'Email del cliente del doc capturado desde ERP al asociar'",
+                # Daniel 2026-05-23: flag que indica si el operador hizo selección
+                # granular de líneas (true) o se retiran TODAS las líneas (default false).
+                "ALTER TABLE pickup_request_docs ADD COLUMN has_seleccion_lineas TINYINT(1) "
+                "NOT NULL DEFAULT 0 "
+                "COMMENT 'Si 1, solo se retiran las líneas marcadas en pickup_doc_lineas'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
+
+            # ─────────────────────────────────────────────────────────────
+            # Tabla NUEVA: selección granular de líneas por doc asociado.
+            # Daniel 2026-05-23: "de dos documentos, que tengan diez y diez
+            # productos, podría seleccionar dos y tres productos de cada
+            # factura. Eso es el dinamismo que te estoy pidiendo".
+            # ─────────────────────────────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pickup_doc_lineas (
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id            INT NOT NULL,
+                    doc_id                INT NOT NULL,
+                    sku                   VARCHAR(80) NOT NULL,
+                    descripcion           VARCHAR(300),
+                    cantidad_doc          DECIMAL(12,3) DEFAULT 0
+                                          COMMENT 'Cantidad original en MAEDDO',
+                    cantidad_seleccionada DECIMAL(12,3) DEFAULT 0
+                                          COMMENT 'Cantidad que el cliente va a retirar (≤ cantidad_doc)',
+                    peso_unit_kg          DECIMAL(10,3) DEFAULT 0,
+                    peso_vol_unit_kg      DECIMAL(10,3) DEFAULT 0,
+                    vol_unit_m3           DECIMAL(10,5) DEFAULT 0,
+                    peso_total_kg         DECIMAL(12,3) DEFAULT 0
+                                          COMMENT 'peso_unit_kg * cantidad_seleccionada',
+                    peso_vol_total_kg     DECIMAL(12,3) DEFAULT 0,
+                    vol_total_m3          DECIMAL(12,5) DEFAULT 0,
+                    incluida              TINYINT(1) NOT NULL DEFAULT 1
+                                          COMMENT '1 si el operador la marcó para retirar',
+                    nota_linea            VARCHAR(300) NULL,
+                    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (request_id) REFERENCES `pickup_requests`(id) ON DELETE CASCADE,
+                    FOREIGN KEY (doc_id)     REFERENCES pickup_request_docs(id) ON DELETE CASCADE,
+                    UNIQUE KEY uq_doc_sku (doc_id, sku),
+                    INDEX idx_request (request_id),
+                    INDEX idx_doc (doc_id),
+                    INDEX idx_doc_incluida (doc_id, incluida)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
             cur.execute(f"INSERT IGNORE INTO `{PICKUP_SETTINGS_TABLE}` (id) VALUES (1)")
             cur.execute(
                 f"""UPDATE `{PICKUP_SETTINGS_TABLE}`

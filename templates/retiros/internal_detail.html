@@ -1117,6 +1117,106 @@
   .inline-edit-indicator i{margin-right:3px}
   @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
+  /* ════════════════════════════════════════════════════════════════
+     SELECCIÓN GRANULAR DE PRODUCTOS POR DOC — Daniel 2026-05-23
+     Modal full-screen mobile-first con checkboxes + cantidad editable.
+     ════════════════════════════════════════════════════════════════ */
+  .da-actions{display:flex;gap:6px;flex-shrink:0}
+  .da-prods{
+    background:#fff;border:1px solid #cbd5e1;color:#0a0a0a;
+    padding:7px 12px;border-radius:8px;font-size:.78rem;font-weight:700;
+    display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+    transition:all .15s;
+  }
+  .da-prods:hover{background:#0a0a0a;color:#fff;border-color:#0a0a0a;transform:translateY(-1px)}
+  .da-prods i{font-size:.95rem;color:var(--ilus-red)}
+  .da-prods:hover i{color:#fff}
+
+  .sel-prod-overlay{
+    display:none;position:fixed;inset:0;background:rgba(10,10,10,.7);
+    backdrop-filter:blur(4px);z-index:9999;
+    align-items:center;justify-content:center;padding:20px;
+    animation:fadeIn .2s ease;
+  }
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  .sel-prod-card{
+    background:#fff;border-radius:16px;width:100%;max-width:900px;
+    max-height:90vh;display:flex;flex-direction:column;
+    box-shadow:0 30px 60px rgba(0,0,0,.4);
+    animation:slideUp .3s var(--ease-spring, cubic-bezier(.34,1.56,.64,1));
+  }
+  @keyframes slideUp{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}
+  .sel-prod-head{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:18px 22px;border-bottom:1px solid #e5e7eb;
+    background:linear-gradient(180deg,#fafafa 0%, #fff 100%);
+    border-radius:16px 16px 0 0;
+  }
+  .sel-prod-close{
+    background:#f1f5f9;border:none;width:36px;height:36px;border-radius:50%;
+    cursor:pointer;color:#475569;font-size:1.1rem;
+    display:flex;align-items:center;justify-content:center;
+    transition:all .15s;flex-shrink:0;
+  }
+  .sel-prod-close:hover{background:#dc2626;color:#fff}
+  .sel-prod-body{
+    flex:1;overflow-y:auto;padding:16px 22px;
+  }
+  .sel-prod-bulk{
+    display:flex;gap:8px;padding:8px 10px;background:#f8fafc;border-radius:8px;
+    margin-bottom:12px;align-items:center;flex-wrap:wrap;
+  }
+  .btn-bulk{
+    background:#fff;border:1px solid #cbd5e1;padding:5px 11px;border-radius:6px;
+    font-size:.74rem;font-weight:600;color:#475569;cursor:pointer;
+    transition:all .15s;display:inline-flex;align-items:center;gap:4px;
+  }
+  .btn-bulk:hover{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+  .sel-prod-row{
+    display:grid;grid-template-columns:42px 1fr 140px 110px;gap:12px;
+    align-items:center;padding:10px 12px;
+    background:#fff;border:1px solid #f1f5f9;border-radius:10px;
+    margin-bottom:6px;transition:all .15s;
+  }
+  .sel-prod-row:hover{border-color:#cbd5e1;background:#fafafa}
+  .sel-prod-row.is-excluded{opacity:.45;background:#fef2f2}
+  .sel-prod-check input[type="checkbox"]{width:22px;height:22px;cursor:pointer;accent-color:var(--ilus-red)}
+  .sel-prod-sku{font-family:monospace;font-size:.78rem;font-weight:700;color:#0a0a0a}
+  .sel-prod-desc{font-size:.86rem;color:#475569;margin-top:2px;line-height:1.3}
+  .sel-prod-qty-input{display:flex;align-items:center;gap:6px;margin-top:2px}
+  .sel-prod-qty-input input{
+    width:75px;font-size:.9rem;font-weight:700;
+    padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;
+    text-align:right;
+  }
+  .sel-prod-qty-input input:focus{outline:none;border-color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+  .sel-prod-totals{font-size:.78rem;color:#475569;text-align:right}
+  .sel-prod-totals i{color:#94a3b8;margin-right:2px}
+  .sel-prod-foot{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:14px 22px;border-top:1px solid #e5e7eb;background:#fafafa;
+    border-radius:0 0 16px 16px;
+  }
+  .sel-prod-resumen{font-size:.86rem;color:#475569}
+  .sel-prod-resumen strong{color:#0a0a0a}
+  @media (max-width: 700px){
+    .sel-prod-overlay{padding:0}
+    .sel-prod-card{max-width:100%;max-height:100dvh;height:100dvh;border-radius:0}
+    .sel-prod-head{border-radius:0;padding:14px 16px}
+    .sel-prod-body{padding:12px 14px}
+    .sel-prod-row{
+      grid-template-columns:38px 1fr;gap:8px;padding:10px;
+    }
+    .sel-prod-row .sel-prod-qty,
+    .sel-prod-row .sel-prod-totals{
+      grid-column:1 / -1;padding-left:46px;
+    }
+    .sel-prod-row .sel-prod-totals{font-size:.74rem;display:flex;gap:14px;justify-content:flex-end}
+    .sel-prod-foot{flex-direction:column;align-items:stretch;padding:12px 14px;gap:10px;border-radius:0}
+    .sel-prod-foot > div:last-child{display:flex !important;gap:8px}
+    .sel-prod-foot > div:last-child button{flex:1}
+  }
+
   /* Chip de email sugerido desde ERP */
   .sug-email-chip{
     display:inline-flex;align-items:center;gap:4px;
@@ -2624,6 +2724,8 @@ function _renderDocAsoCard(d){
     cls = 'no-saldo';
     badge = '<span class="badge-pill" style="background:#fef3c7;color:#92400e;border-color:#fde68a"><i class="bi bi-exclamation-triangle me-1"></i>Sin saldo</span>';
   }
+  // Daniel 2026-05-23: badge si tiene selección granular
+  const hasSel = d.has_seleccion_lineas ? `<span class="badge-pill" style="background:#fef3c7;color:#92400e;border-color:#fde68a" title="Solo retira líneas seleccionadas"><i class="bi bi-funnel-fill me-1"></i>Selección parcial</span>` : '';
   return `<div class="doc-aso ${cls}" data-doc-id="${d.id}">
     <div class="da-num">${_esc(d.document_type)} ${_esc(d.document_number)}</div>
     <div class="da-cli">
@@ -2632,13 +2734,194 @@ function _renderDocAsoCard(d){
     </div>
     <div class="da-totals">
       ${badge}
+      ${hasSel}
       <span class="badge-pill weight">${parseFloat(d.peso_real_kg||0).toFixed(1)} kg</span>
       <span class="badge-pill">${d.n_lineas || 0} líneas</span>
     </div>
-    <button type="button" class="da-quitar" onclick="quitarDoc(${_RID}, ${d.id}, '${_esc(d.document_type)} ${_esc(d.document_number)}')">
-      <i class="bi bi-x-lg"></i>Quitar
-    </button>
+    <div class="da-actions">
+      <button type="button" class="da-prods" onclick="abrirSeleccionProductos(${d.id}, '${_esc(d.document_type)}', '${_esc(d.document_number)}')" title="Seleccionar productos específicos a retirar">
+        <i class="bi bi-funnel"></i>Productos
+      </button>
+      <button type="button" class="da-quitar" onclick="quitarDoc(${_RID}, ${d.id}, '${_esc(d.document_type)} ${_esc(d.document_number)}')">
+        <i class="bi bi-x-lg"></i>Quitar
+      </button>
+    </div>
   </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SELECCIÓN GRANULAR DE PRODUCTOS POR DOC (Daniel 2026-05-23)
+//  "de dos documentos que tengan 10 y 10 productos, podría seleccionar
+//  2 y 3 productos de cada factura"
+// ════════════════════════════════════════════════════════════════════
+async function abrirSeleccionProductos(docId, tipo, numero){
+  let modal = document.getElementById('selProdModal');
+  if (!modal){
+    modal = document.createElement('div');
+    modal.id = 'selProdModal';
+    modal.className = 'sel-prod-overlay';
+    modal.innerHTML = `
+      <div class="sel-prod-card" onclick="event.stopPropagation()">
+        <div class="sel-prod-head">
+          <div>
+            <h5 id="selProdTitle" style="margin:0;font-weight:800">Productos del documento</h5>
+            <div id="selProdSub" style="font-size:.78rem;color:#94a3b8;margin-top:2px"></div>
+          </div>
+          <button type="button" class="sel-prod-close" onclick="cerrarSeleccionProductos()" title="Cerrar">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <div id="selProdBody" class="sel-prod-body">
+          <div class="text-center py-4 text-muted"><i class="bi bi-hourglass-split"></i> Cargando líneas...</div>
+        </div>
+        <div class="sel-prod-foot">
+          <div id="selProdResumen" class="sel-prod-resumen"></div>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="btn-2027" onclick="cerrarSeleccionProductos()" style="background:#fff;color:#0a0a0a">Cancelar</button>
+            <button type="button" class="btn-2027" id="selProdGuardar" onclick="guardarSeleccionProductos()" style="background:var(--ilus-red);color:#fff">
+              <i class="bi bi-check-circle me-1"></i>Guardar selección
+            </button>
+          </div>
+        </div>
+      </div>`;
+    modal.addEventListener('click', e => { if (e.target === modal) cerrarSeleccionProductos(); });
+    document.body.appendChild(modal);
+  }
+  document.getElementById('selProdTitle').textContent = `Productos de ${tipo} ${numero}`;
+  document.getElementById('selProdSub').textContent = 'Marca solo los productos que el cliente va a retirar';
+  document.getElementById('selProdBody').innerHTML = '<div class="text-center py-4 text-muted"><i class="bi bi-hourglass-split"></i> Cargando líneas...</div>';
+  modal.style.display = 'flex';
+  modal.dataset.docId = docId;
+  try {
+    const r = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`);
+    const d = await r.json();
+    if (!d.ok){
+      document.getElementById('selProdBody').innerHTML = `<div class="text-danger py-3">${_esc(d.error || 'Error al cargar')}</div>`;
+      return;
+    }
+    _renderSeleccionLineas(d.lineas || []);
+  } catch(e){
+    document.getElementById('selProdBody').innerHTML = `<div class="text-danger py-3">Error de red: ${_esc(e.message)}</div>`;
+  }
+}
+
+function cerrarSeleccionProductos(){
+  const m = document.getElementById('selProdModal');
+  if (m) m.style.display = 'none';
+}
+
+function _renderSeleccionLineas(lineas){
+  const body = document.getElementById('selProdBody');
+  if (!lineas.length){
+    body.innerHTML = '<div class="text-muted py-3 text-center">Sin productos (solo servicios).</div>';
+    document.getElementById('selProdGuardar').disabled = true;
+    return;
+  }
+  // Bulk actions
+  const head = `<div class="sel-prod-bulk">
+    <button type="button" class="btn-bulk" onclick="_selProdToggleAll(true)"><i class="bi bi-check-all"></i> Marcar todas</button>
+    <button type="button" class="btn-bulk" onclick="_selProdToggleAll(false)"><i class="bi bi-square"></i> Desmarcar todas</button>
+    <span style="flex:1"></span>
+    <span style="font-size:.74rem;color:#94a3b8">Editá la cantidad si quieres retirar menos que lo que está en el doc.</span>
+  </div>`;
+  const rows = lineas.map((ln, idx) => `
+    <div class="sel-prod-row" data-sku="${_esc(ln.sku)}" data-cantidad-doc="${ln.cantidad_doc}">
+      <label class="sel-prod-check">
+        <input type="checkbox" ${ln.incluida ? 'checked' : ''} onchange="_selProdRecalc()">
+      </label>
+      <div class="sel-prod-info">
+        <div class="sel-prod-sku">${_esc(ln.sku)}</div>
+        <div class="sel-prod-desc">${_esc(ln.descripcion || '(sin descripción)')}</div>
+      </div>
+      <div class="sel-prod-qty">
+        <label style="font-size:.66rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;font-weight:700">Cantidad</label>
+        <div class="sel-prod-qty-input">
+          <input type="number" min="0" max="${ln.cantidad_doc}" step="0.01"
+                 value="${ln.cantidad_seleccionada}"
+                 data-qty-input="${idx}"
+                 onchange="_selProdRecalc()"
+                 oninput="_selProdRecalc()">
+          <span style="color:#94a3b8;font-size:.74rem">/ ${ln.cantidad_doc}</span>
+        </div>
+      </div>
+      <div class="sel-prod-totals">
+        <div><i class="bi bi-box"></i> <span data-peso="${ln.peso_unit_kg}">0.0</span> kg</div>
+        <div><i class="bi bi-bounding-box"></i> <span data-vol="${ln.vol_unit_m3}">0.000</span> m³</div>
+      </div>
+    </div>
+  `).join('');
+  body.innerHTML = head + rows;
+  _selProdRecalc();
+  document.getElementById('selProdGuardar').disabled = false;
+}
+
+function _selProdToggleAll(checked){
+  document.querySelectorAll('.sel-prod-row input[type="checkbox"]').forEach(cb => cb.checked = checked);
+  _selProdRecalc();
+}
+
+function _selProdRecalc(){
+  let totPeso = 0, totVol = 0, nIncluidas = 0, nTotal = 0;
+  document.querySelectorAll('.sel-prod-row').forEach(row => {
+    nTotal++;
+    const cb = row.querySelector('input[type="checkbox"]');
+    const qtyInp = row.querySelector('input[type="number"]');
+    const qty = parseFloat(qtyInp.value || 0);
+    const incluida = cb.checked && qty > 0;
+    const pesoSpan = row.querySelector('[data-peso]');
+    const volSpan  = row.querySelector('[data-vol]');
+    const pesoUnit = parseFloat(pesoSpan.dataset.peso || 0);
+    const volUnit  = parseFloat(volSpan.dataset.vol || 0);
+    const pesoTot = incluida ? pesoUnit * qty : 0;
+    const volTot  = incluida ? volUnit * qty : 0;
+    pesoSpan.textContent = pesoTot.toFixed(1);
+    volSpan.textContent  = volTot.toFixed(3);
+    if (incluida){
+      totPeso += pesoTot;
+      totVol  += volTot;
+      nIncluidas++;
+    }
+    row.classList.toggle('is-excluded', !incluida);
+  });
+  const res = document.getElementById('selProdResumen');
+  res.innerHTML = `<strong>${nIncluidas}/${nTotal}</strong> incluidas · <strong>${totPeso.toFixed(1)} kg</strong> · <strong>${totVol.toFixed(3)} m³</strong>`;
+}
+
+async function guardarSeleccionProductos(){
+  const modal = document.getElementById('selProdModal');
+  const docId = modal.dataset.docId;
+  if (!docId) return;
+  const lineas = [];
+  document.querySelectorAll('.sel-prod-row').forEach(row => {
+    const sku = row.dataset.sku;
+    const cb = row.querySelector('input[type="checkbox"]');
+    const qtyInp = row.querySelector('input[type="number"]');
+    const qty = parseFloat(qtyInp.value || 0);
+    lineas.push({ sku, incluida: !!cb.checked, cantidad_seleccionada: qty });
+  });
+  const btn = document.getElementById('selProdGuardar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+  try {
+    const r = await fetch(`/retiros/${_RID}/docs/${docId}/lineas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ lineas }),
+    });
+    const d = await r.json();
+    if (!d.ok){
+      ilusAlert({ type:'error', title:'No se pudo guardar', message: d.error || `HTTP ${r.status}` });
+      return;
+    }
+    ilusToast(`✓ ${d.lineas_guardadas} líneas guardadas — totales actualizados`, { type:'success' });
+    cerrarSeleccionProductos();
+    await refrescarDocsAsociados(_RID);
+  } catch(e){
+    ilusAlert({ type:'error', title:'Sin conexión', message: e.message });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Guardar selección';
+  }
 }
 
 async function refrescarDocsAsociados(rid){

@@ -2724,17 +2724,48 @@ def register_pickup_routes(app, ctx):
         """Suma peso/vol/m³ de todos los docs asociados y actualiza pickup_requests.
         Si no quedan docs asociados, restablece los totales a 0 (Daniel pidió que
         sea coherente con la realidad — si quitas todo, el retiro no tiene carga).
+
+        DANIEL 2026-05-23: para docs con has_seleccion_lineas=1, sumamos
+        SOLO las líneas marcadas como incluidas en pickup_doc_lineas
+        (selección granular). Para docs sin selección, usamos los totales
+        completos del doc (comportamiento anterior).
+
         Devuelve dict con los totales actualizados.
         """
+        # 1) Suma de docs SIN selección granular (totales completos)
         agg = mysql_fetchone(
             """SELECT COALESCE(SUM(peso_real_kg),0)   AS peso_real,
                       COALESCE(SUM(peso_vol_kg),0)    AS peso_vol,
                       COALESCE(SUM(volumen_m3),0)     AS m3,
                       COALESCE(SUM(n_lineas),0)       AS lineas_total,
                       COUNT(*)                        AS n_docs
-                 FROM pickup_request_docs WHERE request_id=%s""",
+                 FROM pickup_request_docs
+                WHERE request_id=%s
+                  AND (has_seleccion_lineas IS NULL OR has_seleccion_lineas=0)""",
             (rid,)
         ) or {"peso_real": 0, "peso_vol": 0, "m3": 0, "lineas_total": 0, "n_docs": 0}
+
+        # 2) Suma de docs CON selección granular (solo líneas incluidas)
+        try:
+            sel_agg = mysql_fetchone(
+                """SELECT COALESCE(SUM(l.peso_total_kg),0)     AS peso_real_sel,
+                          COALESCE(SUM(l.peso_vol_total_kg),0) AS peso_vol_sel,
+                          COALESCE(SUM(l.vol_total_m3),0)      AS m3_sel,
+                          COUNT(*)                              AS lineas_sel,
+                          COUNT(DISTINCT l.doc_id)              AS n_docs_sel
+                     FROM pickup_doc_lineas l
+                    WHERE l.request_id=%s AND l.incluida=1""",
+                (rid,)
+            ) or {}
+            agg["peso_real"]    = float(agg.get("peso_real") or 0) + float(sel_agg.get("peso_real_sel") or 0)
+            agg["peso_vol"]     = float(agg.get("peso_vol") or 0) + float(sel_agg.get("peso_vol_sel") or 0)
+            agg["m3"]           = float(agg.get("m3") or 0) + float(sel_agg.get("m3_sel") or 0)
+            agg["lineas_total"] = int(agg.get("lineas_total") or 0) + int(sel_agg.get("lineas_sel") or 0)
+            agg["n_docs"]       = int(agg.get("n_docs") or 0) + int(sel_agg.get("n_docs_sel") or 0)
+        except Exception as _e_sel:
+            # Si la tabla pickup_doc_lineas aún no existe (migration pending),
+            # no rompemos — los totales completos siguen funcionando.
+            print(f"[recalc-totales] sin selecciones granulares: {_e_sel}", flush=True)
         peso_real = float(agg.get("peso_real") or 0)
         peso_vol  = float(agg.get("peso_vol") or 0)
         vol_m3    = float(agg.get("m3") or 0)
@@ -2797,7 +2828,8 @@ def register_pickup_routes(app, ctx):
             rows = mysql_fetchall(
                 """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
                           observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                          n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                          n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at,
+                          has_seleccion_lineas
                      FROM pickup_request_docs
                     WHERE request_id=%s
                     ORDER BY id ASC""",
@@ -2805,15 +2837,26 @@ def register_pickup_routes(app, ctx):
             ) or []
         except Exception:
             # Fallback sin las columnas nuevas (compat retroactiva)
-            rows = mysql_fetchall(
-                """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
-                          observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
-                          n_lineas, added_by, added_at
-                     FROM pickup_request_docs
-                    WHERE request_id=%s
-                    ORDER BY id ASC""",
-                (rid,)
-            ) or []
+            try:
+                rows = mysql_fetchall(
+                    """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                              observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                              n_lineas, added_by, added_at, con_saldo, saldo_zz, saldo_checked_at
+                         FROM pickup_request_docs
+                        WHERE request_id=%s
+                        ORDER BY id ASC""",
+                    (rid,)
+                ) or []
+            except Exception:
+                rows = mysql_fetchall(
+                    """SELECT id, document_type, document_number, cliente_rut, cliente_nombre,
+                              observaciones_erp, peso_real_kg, peso_vol_kg, volumen_m3,
+                              n_lineas, added_by, added_at
+                         FROM pickup_request_docs
+                        WHERE request_id=%s
+                        ORDER BY id ASC""",
+                    (rid,)
+                ) or []
         out = []
         for r in rows:
             d = dict(r)
@@ -2825,6 +2868,7 @@ def register_pickup_routes(app, ctx):
                 d["added_at"] = str(d["added_at"])[:19]
             if d.get("saldo_checked_at"):
                 d["saldo_checked_at"] = str(d["saldo_checked_at"])[:19]
+            d["has_seleccion_lineas"] = bool(d.get("has_seleccion_lineas"))
             out.append(d)
         totales = _pickup_recalc_totales(rid)
         # Conteo de docs con saldo (para habilitar el paso 4 del wizard)
@@ -3264,6 +3308,207 @@ def register_pickup_routes(app, ctx):
                   "interno")
         totales = _pickup_recalc_totales(rid)
         return jsonify({"ok": True, "totales": totales})
+
+    # ══════════════════════════════════════════════════════════════════
+    #  SELECCIÓN GRANULAR DE LÍNEAS POR DOC (Daniel 2026-05-23)
+    #
+    #  "de dos documentos, que tengan diez y diez productos, podría
+    #  seleccionar dos y tres productos de cada factura. Eso es el
+    #  dinamismo que te estoy pidiendo".
+    #
+    #  Modelo:
+    #  - GET  /retiros/<rid>/docs/<doc_id>/lineas
+    #    → lista líneas del doc (de erp_snapshot) + estado de selección
+    #      desde pickup_doc_lineas. Si nunca se guardó, devuelve TODAS
+    #      las líneas marcadas con incluida=1 y qty=cantidad_doc.
+    #
+    #  - POST /retiros/<rid>/docs/<doc_id>/lineas
+    #    Body: {lineas: [{sku, incluida, cantidad_seleccionada, nota}]}
+    #    → UPSERT en pickup_doc_lineas + has_seleccion_lineas=1 en doc.
+    #      Recalcula totales del retiro considerando solo líneas incluidas.
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/<int:rid>/docs/<int:doc_id>/lineas", methods=["GET"])
+    @require_permission("view")
+    def pickup_doc_lineas_listar(rid, doc_id):
+        """Devuelve líneas del doc + estado de selección granular."""
+        doc = mysql_fetchone(
+            "SELECT id, document_type, document_number, erp_snapshot, "
+            "       has_seleccion_lineas "
+            "FROM pickup_request_docs WHERE id=%s AND request_id=%s",
+            (doc_id, rid)
+        )
+        if not doc:
+            return jsonify({"ok": False, "error": "Doc no asociado a este retiro"}), 404
+
+        # Parsear erp_snapshot (líneas crudas guardadas al asociar)
+        try:
+            import json as _json_l
+            snap = _json_l.loads(doc.get("erp_snapshot") or "{}")
+        except Exception:
+            snap = {}
+        lineas_raw = snap.get("lineas") or []
+
+        # Selecciones guardadas (si las hay)
+        sel_rows = mysql_fetchall(
+            "SELECT sku, cantidad_seleccionada, incluida, nota_linea "
+            "FROM pickup_doc_lineas WHERE doc_id=%s",
+            (doc_id,)
+        ) or []
+        sel_map = {(r["sku"] or "").upper(): r for r in sel_rows}
+
+        out = []
+        for ln in lineas_raw:
+            if ln.get("es_zz"):
+                continue  # líneas ZZ son despachos, no productos
+            sku = (ln.get("sku") or "").strip()
+            if not sku:
+                continue
+            cantidad_doc = float(ln.get("cantidad") or 0)
+            peso_unit = float(ln.get("peso_kg_u") or 0)
+            peso_vol_unit = float(ln.get("peso_vol_u") or 0)
+            vol_unit_cm3 = float(ln.get("vol_u") or 0)
+            vol_unit_m3 = vol_unit_cm3 / 1_000_000.0 if vol_unit_cm3 else 0
+            sel = sel_map.get(sku.upper())
+            if sel:
+                incluida = bool(sel.get("incluida"))
+                qty_sel = float(sel.get("cantidad_seleccionada") or 0)
+                nota = sel.get("nota_linea") or ""
+            else:
+                # Default: TODA la línea seleccionada
+                incluida = True
+                qty_sel = cantidad_doc
+                nota = ""
+            out.append({
+                "sku":                   sku,
+                "descripcion":           (ln.get("descripcion_erp") or ln.get("nombre_app") or "").strip(),
+                "cantidad_doc":          cantidad_doc,
+                "cantidad_seleccionada": qty_sel,
+                "incluida":              incluida,
+                "peso_unit_kg":          peso_unit,
+                "peso_vol_unit_kg":      peso_vol_unit,
+                "vol_unit_m3":           vol_unit_m3,
+                "tiene_ficha":           bool(ln.get("tiene_ficha")),
+                "nota":                  nota,
+            })
+
+        return jsonify({
+            "ok": True,
+            "doc": {
+                "id": doc["id"],
+                "tipo": doc["document_type"],
+                "numero": doc["document_number"],
+                "has_seleccion_lineas": bool(doc.get("has_seleccion_lineas")),
+            },
+            "lineas": out,
+            "total_lineas": len(out),
+        })
+
+    @app.route("/retiros/<int:rid>/docs/<int:doc_id>/lineas", methods=["POST"])
+    @require_permission("edit")
+    def pickup_doc_lineas_guardar(rid, doc_id):
+        """Guarda selección granular de líneas. UPSERT en pickup_doc_lineas.
+
+        Body: {lineas: [{sku, incluida, cantidad_seleccionada, nota?}]}
+        """
+        doc = mysql_fetchone(
+            "SELECT id, document_type, document_number, erp_snapshot "
+            "FROM pickup_request_docs WHERE id=%s AND request_id=%s",
+            (doc_id, rid)
+        )
+        if not doc:
+            return jsonify({"ok": False, "error": "Doc no asociado"}), 404
+
+        body = request.get_json(silent=True) or {}
+        lineas_in = body.get("lineas") or []
+        if not isinstance(lineas_in, list):
+            return jsonify({"ok": False, "error": "lineas debe ser una lista"}), 400
+
+        # Reusamos los unitarios del erp_snapshot para calcular totales server-side
+        try:
+            import json as _json_g
+            snap = _json_g.loads(doc.get("erp_snapshot") or "{}")
+        except Exception:
+            snap = {}
+        snap_lineas = {(ln.get("sku") or "").upper(): ln for ln in (snap.get("lineas") or [])}
+
+        upsert_rows = []
+        for li in lineas_in:
+            sku = (li.get("sku") or "").strip()[:80]
+            if not sku:
+                continue
+            ln_snap = snap_lineas.get(sku.upper()) or {}
+            cantidad_doc = float(ln_snap.get("cantidad") or 0)
+            peso_unit    = float(ln_snap.get("peso_kg_u") or 0)
+            peso_vol_unit= float(ln_snap.get("peso_vol_u") or 0)
+            vol_unit_cm3 = float(ln_snap.get("vol_u") or 0)
+            vol_unit_m3  = vol_unit_cm3 / 1_000_000.0 if vol_unit_cm3 else 0
+            try:
+                qty_sel = float(li.get("cantidad_seleccionada") or 0)
+            except Exception:
+                qty_sel = 0
+            # Clamp: no se puede pedir más que lo que hay en el doc
+            qty_sel = max(0.0, min(qty_sel, cantidad_doc or qty_sel))
+            incluida = 1 if li.get("incluida") and qty_sel > 0 else 0
+            descripcion = (ln_snap.get("descripcion_erp") or ln_snap.get("nombre_app") or "").strip()[:300]
+            nota = (li.get("nota") or "").strip()[:300] or None
+            upsert_rows.append((
+                rid, doc_id, sku, descripcion,
+                cantidad_doc, qty_sel,
+                peso_unit, peso_vol_unit, vol_unit_m3,
+                peso_unit * qty_sel,
+                peso_vol_unit * qty_sel,
+                vol_unit_m3 * qty_sel,
+                incluida, nota,
+            ))
+
+        if not upsert_rows:
+            return jsonify({"ok": False, "error": "Sin líneas válidas"}), 400
+
+        # UPSERT batch — INSERT ... ON DUPLICATE KEY UPDATE (uq_doc_sku)
+        try:
+            conn = get_mysql_conn()
+            cur = conn.cursor()
+            cur.executemany(
+                """INSERT INTO pickup_doc_lineas
+                     (request_id, doc_id, sku, descripcion, cantidad_doc,
+                      cantidad_seleccionada, peso_unit_kg, peso_vol_unit_kg,
+                      vol_unit_m3, peso_total_kg, peso_vol_total_kg, vol_total_m3,
+                      incluida, nota_linea)
+                   VALUES (%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,%s, %s,%s)
+                   ON DUPLICATE KEY UPDATE
+                     descripcion=VALUES(descripcion),
+                     cantidad_doc=VALUES(cantidad_doc),
+                     cantidad_seleccionada=VALUES(cantidad_seleccionada),
+                     peso_unit_kg=VALUES(peso_unit_kg),
+                     peso_vol_unit_kg=VALUES(peso_vol_unit_kg),
+                     vol_unit_m3=VALUES(vol_unit_m3),
+                     peso_total_kg=VALUES(peso_total_kg),
+                     peso_vol_total_kg=VALUES(peso_vol_total_kg),
+                     vol_total_m3=VALUES(vol_total_m3),
+                     incluida=VALUES(incluida),
+                     nota_linea=VALUES(nota_linea),
+                     updated_at=NOW()""",
+                upsert_rows
+            )
+            mysql_execute(
+                "UPDATE pickup_request_docs "
+                "SET has_seleccion_lineas=1 WHERE id=%s",
+                (doc_id,)
+            )
+            conn.commit()
+            cur.close(); conn.close()
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"Error al guardar: {str(exc)[:200]}"}), 500
+
+        log_event(rid, "lineas_seleccion", None, None,
+                  f"Doc {doc['document_type']} {doc['document_number']}: "
+                  f"selección granular guardada ({len(upsert_rows)} líneas, "
+                  f"{sum(1 for r in upsert_rows if r[-2])} incluidas)",
+                  "interno")
+
+        # Recalcular totales del retiro tomando en cuenta selecciones
+        totales = _pickup_recalc_totales(rid)
+        return jsonify({"ok": True, "lineas_guardadas": len(upsert_rows), "totales": totales})
 
     # ══════════════════════════════════════════════════════════════════
     #  BORRADO TOTAL DE SOLICITUD — SOLO SUPERADMIN
