@@ -837,7 +837,14 @@ function fVol(n){
 }
 function fClp(n){
   if(n==null||isNaN(n)) return '—';
-  return '$'+fVol(Math.round(parseFloat(n)));
+  const v = Math.round(parseFloat(n));
+  const neg = v < 0, abs = Math.abs(v).toString();
+  let s='';
+  for(let i=0;i<abs.length;i++){
+    if(i>0&&(abs.length-i)%3===0) s+='.';
+    s+=abs[i];
+  }
+  return (neg?'-':'')+'$'+s;
 }
 
 // ════════════════════════════════════════════════════════════

@@ -14465,6 +14465,7 @@ def api_asignar_cotizar_couriers():
 
     def _macro_cotizacion_dict(cid, nombre, logo, slug, r):
         base, seguro, precio = r["base"], r["seguro"], r["precio"]
+        estimado = bool(r.get("estimado"))
         desglose = {
             "precio_costo": base, "precio_venta": precio,
             "margen_pct": 0, "margen_clp": 0, "iva_pct": 0, "iva_clp": 0,
@@ -14476,13 +14477,17 @@ def api_asignar_cotizar_couriers():
         formula += f" = ${precio:,}".replace(",", ".")
         return {
             "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
-            "tiene_cobertura": True, "fuente": "tabla",
+            "tiene_cobertura": True, "fuente": ("estimado" if estimado else "tabla"),
             "precio": precio, "precio_costo": base, "moneda": "CLP",
-            "tiempo_transito": _ETD_MACRO.get(slug, "—"), "servicio": "Standard",
+            "tiempo_transito": _ETD_MACRO.get(slug, "—"),
+            "servicio": ("Estimado (~FedEx −10%)" if estimado else "Standard"),
             "subtotal": precio, "desglose": desglose, "mensaje": None,
             "trace": {
                 "bracket": r["tramo"], "bracket_upper": None, "formula": formula,
-                "fuente": "tabla_macro", "validado": True, "advertencias": [],
+                "fuente": ("estimado" if estimado else "tabla_macro"),
+                "validado": (not estimado),
+                "advertencias": (["Tarifa estimada: aún sin tabla propia para esta comuna/peso"]
+                                 if estimado else []),
                 "json_brackets_disponibles": [], "peso_usado": peso_fact,
                 "comuna_db": r["comuna_tabla"], "desglose": desglose,
             },

@@ -37,6 +37,9 @@ TIERS = {
 }
 LIGHT_MAX = {"clickex": 130}  # resto = 100
 
+# Felca/Milling sin tabla propia → estimar como FedEx Directo un poco más barato.
+FALLBACK_FACTOR = 0.90
+
 # Etiqueta amigable por slug (para la UI / trace)
 NOMBRE = {
     "starken_enviame": "Starken (Envíame)",
@@ -113,6 +116,29 @@ def _parse_heavy(raw, peso):
 
 
 def cotizar(slug, comuna, peso, valor=0.0):
+    """Cotiza un courier. Si Felca/Milling no tienen tarifa propia para la
+    comuna/peso, ESTIMA como FedEx Directo un poco más barato (criterio Daniel,
+    cobertura hasta 20.000 kg)."""
+    r = _cotizar_tabla(slug, comuna, peso, valor)
+    if r is not None:
+        return r
+    if slug in ("felca", "milling"):
+        ref = _cotizar_tabla("fedex_directo", comuna, peso, valor)
+        if ref is not None:
+            seguro = round(float(valor or 0) * 0.012)
+            base_est = round(ref["base"] * FALLBACK_FACTOR)
+            pct = int(round((1 - FALLBACK_FACTOR) * 100))
+            return {
+                "precio": base_est + seguro, "base": base_est, "seguro": seguro,
+                "modo": "estimado_fedex", "factor": None,
+                "tramo": f"estimado (~{pct}% bajo FedEx Directo)",
+                "comuna_tabla": ref["comuna_tabla"], "fuente": "estimado",
+                "estimado": True,
+            }
+    return None
+
+
+def _cotizar_tabla(slug, comuna, peso, valor=0.0):
     """Calcula el precio de UN courier para una comuna y peso (predominante).
 
     Devuelve dict o None (sin cobertura):
