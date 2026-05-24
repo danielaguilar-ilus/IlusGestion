@@ -107,8 +107,9 @@ Procedimiento normado:
 - **Daniel Aguilar** — daniel.aguilar@sphs.cl — superadmin venezolano, NO programador, decide producto
 - **Aarón Urbina** — urbinaaaron65@gmail.com (user_id=11) — rol ejecutivo_sstt, gestiona OTs
 - **Lenin Urbina** — lenin.urbina@sphs.cl (user_id=16) — rol tecnico, ejecuta OTs
-- **Brandon** — mencionado por Daniel, hace marginación manual de saldos ERP
 - **Joaquín / Raúl** — DNS de ilusfitness.com (pendiente para emails con DKIM/SPF)
+
+⚠️ **No inventar nombres de personas del equipo**. Si Daniel menciona a alguien nuevo, agregar acá. Si no aparece acá, NO mencionarlo.
 
 ## Patrones de código importantes
 
