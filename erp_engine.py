@@ -643,12 +643,43 @@ class ERPClient:
         "DESLI", "DESCLI", "OBSLI", "REFLI",
     )
     LINE_ZONA_KEYS = ("NOKOZO", "ZONA", "NOKOZONA")
+    LINE_RUT_KEYS = (
+        "RTEN", "RUTEN", "RUTENDO", "RUTCLI",
+        "RTENDESP", "ENDOCLIESP", "RUTENDESP",
+    )
+
+    # RUTs/nombres de placeholder "consumidor final" en Random ERP
+    _CF_RUTS = frozenset({
+        "66666666", "666666666", "666666666 6",   # 66.666.666-6 y variantes
+        "55555555", "555555555",                   # variantes menos comunes
+        "77777777", "777777777",
+    })
+    _CF_NOMBRES = frozenset({
+        "CONSUMIDOR FINAL", "CONSUMIDORFINAL", "CONS FINAL", "C FINAL",
+        "C.FINAL", "CONSUMIDOR", "SIN NOMBRE", "CLIENTE FINAL", "CLIENTE",
+    })
 
     # ZZ — códigos de SKU que son servicio/flete (no productos físicos)
     ZZ_CODES = frozenset({
         "ZZENVIO", "ZZINGREPUESTO", "ZZSERVTEC",
         "ZZRETIRO", "ZZINSTALACION", "ZZINGARREQUIP",
     })
+
+    @classmethod
+    def _is_consumidor_final(cls, rut: str, nombre: str = "") -> bool:
+        """Detecta si el RUT/nombre corresponde al placeholder 'consumidor final'.
+
+        En Random ERP los documentos B2C usan ENDO = '66666666' y los datos
+        reales del cliente están en las líneas (maeddo) o en campos *DESP.
+        """
+        clean = str(rut).replace(".", "").replace("-", "").replace(" ", "").upper()
+        candidates = {clean}
+        if len(clean) > 1:
+            candidates.add(clean[:-1])   # sin DV
+        if candidates & cls._CF_RUTS:
+            return True
+        clean_nombre = str(nombre).upper().strip()
+        return any(cf in clean_nombre for cf in cls._CF_NOMBRES)
 
     def __init__(
         self,
@@ -922,7 +953,7 @@ class ERPClient:
         """
         out = {
             "nombre": "", "direccion": "", "comuna": "", "obs": "", "zona": "",
-            "tipo_operacion": "", "tipo_codigo": "",
+            "rut": "", "tipo_operacion": "", "tipo_codigo": "",
         }
         if not lines:
             return out
@@ -943,6 +974,8 @@ class ERPClient:
                 out["comuna"] = raw_c
             if not out["zona"]:
                 out["zona"] = cls._pick(ln, cls.LINE_ZONA_KEYS)
+            if not out["rut"]:
+                out["rut"] = cls._pick(ln, cls.LINE_RUT_KEYS)
             # OBSERVACIONES: recolectar TODAS las únicas
             obs_line = fix_yen_to_n(cls._pick(ln, cls.LINE_OBS_KEYS))
             if obs_line and obs_line not in obs_seen:
@@ -1173,6 +1206,72 @@ class ERPClient:
             cliente_cmen = self._pick(ent, ("CMEN", "COMUNA"))
             cliente_obs = fix_yen_to_n(self._pick(ent, ("OBEN", "OBSERVACIONES")))
             cliente_comuna_nombre = cmen_to_comuna(cliente_cien, cliente_cmen)
+
+        # ── Detectar "consumidor final" y buscar entidad real ────────
+        # Cuando ENDO es el placeholder 66.666.666-6, los datos del cliente
+        # real están en las líneas (maeddo) o en campos *DESP del header.
+        if self._is_consumidor_final(cliente_rut or endo, cliente_nombre):
+            diag["fallback_chain"].append(
+                f"consumidor final detectado (rut={cliente_rut or endo}) — buscando entidad real"
+            )
+            # Resetear datos de la entidad genérica
+            cliente_nombre = ""
+            cliente_rut    = ""
+            cliente_email  = ""
+            cliente_telefono  = ""
+            cliente_dir_base  = ""
+            cliente_obs       = ""
+            cliente_cien      = ""
+            cliente_cmen      = ""
+            cliente_comuna_nombre = ""
+
+            # Buscar entidad real: primero por RUT desde las líneas
+            rut_linea = line_data.get("rut", "")
+            ent_real = None
+            if rut_linea and not self._is_consumidor_final(rut_linea):
+                ent_real = self.fetch_entity(rut_linea)
+                if ent_real:
+                    diag["fallback_chain"].append(
+                        f"entidad real por RUT de línea: {rut_linea[:20]}"
+                    )
+
+            # Si no, buscar por nombre del destinatario (campos *DESP del header)
+            nombre_dest = (
+                fix_yen_to_n(
+                    self._pick(raw_header, ("NOKOENDESP", "NOMENDESP", "NOMENDE",
+                                            "NRAZONFINAL", "NRAZON"))
+                ).title()
+                or line_data.get("nombre", "")
+            )
+            if not ent_real and nombre_dest and not self._is_consumidor_final("", nombre_dest):
+                ent_real = self.fetch_entity_by_name(nombre_dest)
+                if ent_real:
+                    diag["fallback_chain"].append(
+                        f"entidad real por nombre destinatario: {nombre_dest[:30]}"
+                    )
+
+            if ent_real:
+                cliente_nombre   = fix_yen_to_n(
+                    self._pick(ent_real, ("NOKOEN", "NRAZON", "NOMBRE"))
+                ).title()
+                cliente_rut      = self._pick(ent_real, ("RTEN", "ENDO")) or rut_linea
+                cliente_email    = self._pick(ent_real, ("EMAIL", "EMAILCOMER", "MAIL"))
+                cliente_telefono = normalize_phone_cl(
+                    self._pick(ent_real, ("FOEN", "FAEN", "FONO", "CELULAR"))
+                )
+                cliente_dir_base = fix_yen_to_n(
+                    self._pick(ent_real, ("DIEN", "DIRECCION", "DIRECEN"))
+                ).title()
+                cliente_cien     = self._pick(ent_real, ("CIEN", "REGION"))
+                cliente_cmen     = self._pick(ent_real, ("CMEN", "COMUNA"))
+                cliente_obs      = fix_yen_to_n(
+                    self._pick(ent_real, ("OBEN", "OBSERVACIONES"))
+                )
+                cliente_comuna_nombre = cmen_to_comuna(cliente_cien, cliente_cmen)
+            elif nombre_dest and not self._is_consumidor_final("", nombre_dest):
+                # Al menos usar el nombre del destinatario aunque no encontremos entidad
+                cliente_nombre = nombre_dest
+                cliente_rut    = rut_linea or endo
 
         # ── Consolidar — la prioridad depende del campo ────────────────
         #
