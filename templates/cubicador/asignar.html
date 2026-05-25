@@ -1706,7 +1706,11 @@ function actualizarTarifas(){
 
 async function _actualizarCotizacionesReal(){
   if(!_docData) return;
-  const comuna = (_docData.header.comuna || document.getElementById('cli-comuna')?.value || '').trim();
+  // Prefiere la comuna VIVA del campo (editable a mano) → al dar "Actualizar"
+  // recalcula con la comuna que el operador escribió, no la (vacía) del ERP.
+  const _comInput = (document.getElementById('cli-comuna')?.value || '').trim();
+  const comuna = (_comInput || _docData.header.comuna || '').trim();
+  if(_docData.header) _docData.header.comuna = comuna;  // sincroniza para el resto del flujo
   if(!comuna){
     _cotizaciones = [];
     renderCouriers();

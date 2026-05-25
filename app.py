@@ -14214,6 +14214,27 @@ def api_asignar_documento():
                                     if l.get("cantidad_despachada") is not None else None),
         })
 
+    # ── Enriquecer header desde OBSERVACIONES (OBDO) cuando el ERP dejó campos
+    #    vacíos (típico en boletas a consumidor final: el contacto va en el OBDO,
+    #    ej. "Teniente Montt 1980 ñuñoa - 976787263 - correo@x.com"). Así la
+    #    factura SIEMPRE llega con datos y el cubicador puede cotizar la comuna.
+    try:
+        _parsed = _parse_obdo(hdr.get("observaciones") or "")
+        if not (hdr.get("email") or "").strip() and _parsed["email"]:
+            hdr["email"] = _parsed["email"]
+        if not (hdr.get("telefono") or "").strip() and _parsed["telefono"]:
+            hdr["telefono"] = _parsed["telefono"]
+        if not (hdr.get("direccion") or "").strip() and _parsed["direccion"]:
+            hdr["direccion"] = _parsed["direccion"]
+        if not (hdr.get("comuna") or "").strip():
+            _com = _parsed["comuna"] or _detect_comuna(hdr.get("direccion") or "")
+            if _com:
+                hdr["comuna"] = _com
+        if not (hdr.get("cliente_nombre") or "").strip():
+            hdr["cliente_nombre"] = "Consumidor final"
+    except Exception as _e_enrich:
+        print(f"[asignar_documento] enriquecer OBDO falló: {_e_enrich}", flush=True)
+
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
 
     return jsonify({
@@ -14721,12 +14742,33 @@ def _tr_log(entity_type, entity_id, accion, detalle=""):
         pass
 
 
+def _norm_comuna_key(s: str) -> str:
+    return (s or "").upper().replace("Ñ", "N").replace("Á", "A").replace("É", "E") \
+        .replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+
+
+def _detect_comuna(text: str) -> str:
+    """Detecta una comuna chilena conocida dentro de texto libre (OBDO/dirección).
+    Devuelve el nombre de la comuna (title-case) o '' si no encuentra."""
+    if not text:
+        return ""
+    norm = _norm_comuna_key(text)
+    best = ""
+    for key in _COMUNA_POSTAL:  # claves ya normalizadas (upper, sin acentos)
+        if len(key) < 4:
+            continue
+        if key in norm and len(key) > len(best):
+            best = key
+    return best.title() if best else ""
+
+
 def _parse_obdo(obdo: str) -> dict:
-    """Parsea texto libre OBDO: 'Dirección - teléfono - email'"""
+    """Parsea texto libre OBDO: 'Dirección [comuna] - teléfono - email'."""
     import re as _re
-    result = {"direccion": "", "telefono": "", "email": ""}
+    result = {"direccion": "", "telefono": "", "email": "", "comuna": ""}
     if not obdo:
         return result
+    original = obdo
     email_m = _re.search(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}', obdo)
     if email_m:
         result["email"] = email_m.group(0)
@@ -14736,6 +14778,7 @@ def _parse_obdo(obdo: str) -> dict:
         result["telefono"] = phone_m.group(0).strip()
         obdo = obdo.replace(phone_m.group(0), "")
     result["direccion"] = _re.sub(r'[-–]+\s*$', '', obdo).strip(' -–')
+    result["comuna"] = _detect_comuna(original)
     return result
 
 
@@ -14835,6 +14878,17 @@ def _tr_fetch_from_erp(tido, nudo):
     direccion      = (doc.get("direccion") or "").strip()
     telefono       = (doc.get("telefono") or "").strip()
     email          = (doc.get("email") or "").strip()
+    # Enriquecer desde OBDO si el ERP dejó vacíos (boletas a consumidor final:
+    # el contacto va en observaciones). Igual criterio que el cubicador.
+    _obs = (doc.get("observaciones") or "").strip()
+    if _obs:
+        _p = _parse_obdo(_obs)
+        if not direccion and _p["direccion"]: direccion = _p["direccion"]
+        if not telefono and _p["telefono"]:   telefono  = _p["telefono"]
+        if not email and _p["email"]:         email     = _p["email"]
+        if not comuna:                         comuna    = _p["comuna"] or _detect_comuna(direccion)
+    if not cliente_nombre:
+        cliente_nombre = "Consumidor final"
     valor_neto     = float(doc.get("valor_neto") or 0)
     valor_bruto    = float(doc.get("valor_bruto") or 0)
     fecha_em       = _parse_date(doc.get("fecha"))
