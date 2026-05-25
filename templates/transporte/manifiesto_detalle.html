@@ -3,49 +3,105 @@
 
 {% block content %}
 
-{# ── Encabezado ── #}
-<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-  <div>
-    <h4 class="font-monospace mb-0">
-      <i class="bi bi-clipboard-check me-2" style="color:var(--ilus-red)"></i>{{ manifiesto.correlativo }}
-    </h4>
-    <div class="sub">
-      {{ manifiesto.courier }} ·
-      {{ manifiesto.fecha.strftime('%d/%m/%Y') if manifiesto.fecha else '—' }} ·
-      {{ manifiesto.total_items or 0 }} items
-      {% if manifiesto.costo_total %} · ${{ "{:,.0f}".format(manifiesto.costo_total) }} total{% endif %}
-    </div>
-  </div>
-  <div class="d-flex gap-2 flex-wrap">
-    <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-outline-secondary">
-      <i class="bi bi-arrow-left me-1"></i>Manifiestos
-    </a>
-    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#estadoManModal">
-      <i class="bi bi-toggle-on me-1"></i>Estado
-    </button>
-    <a href="{{ url_for('tr_manifiesto_export', mid=manifiesto.id) }}" class="btn btn-sm btn-success fw-bold">
-      <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
-    </a>
-    <button class="btn btn-sm btn-ilus" onclick="window.print()">
-      <i class="bi bi-printer me-1"></i>Imprimir
-    </button>
-  </div>
-</div>
+{# ════════════════════════════════════════════════════════════════════
+   Helpers de presentación financiera (filtros locales)
+   ════════════════════════════════════════════════════════════════════ #}
+{% macro money(v) -%}
+  ${{ "{:,.0f}".format(v or 0)|replace(",", ".") }}
+{%- endmacro %}
 
-{# ── Badge de estado del manifiesto ── #}
+{# ── Color del badge de estado del manifiesto ── #}
 {% set mcolor = {
   'En preparación':'warning',
   'En curso':'primary',
   'Cerrado':'secondary',
   'Entregado completo':'success'
 }.get(manifiesto.estado, 'secondary') %}
-<div class="mb-3">
-  <span class="badge rounded-pill bg-{{ mcolor }} text-{{ 'dark' if mcolor=='warning' else 'white' }}" style="font-size:.85rem;padding:.4em .9em">
-    {{ manifiesto.estado }}
-  </span>
-  {% if manifiesto.notas %}
-  <span class="text-muted small ms-2">{{ manifiesto.notas }}</span>
-  {% endif %}
+
+{# ── Totales financieros del manifiesto ── #}
+{% set tot_cobrado = items|sum(attribute='zz_envio') %}
+{% set tot_costo   = items|sum(attribute='costo_courier') %}
+{% set tot_margen  = (tot_cobrado or 0) - (tot_costo or 0) %}
+{% set tot_pct     = ((tot_margen / tot_cobrado) * 100) if tot_cobrado and tot_cobrado > 0 else None %}
+{% set tot_bultos  = items|sum(attribute='n_bultos') %}
+{% set n_perdida   = items|selectattr('es_perdida')|list|length %}
+{% set n_sinprecio = items|selectattr('sin_precio')|list|length %}
+
+{# ════════════════════════════════════════════════════════════════════
+   HERO / cabecera
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="mfd-hero">
+  <div class="mfd-hero-info">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+      <h4 class="font-monospace mb-0 mfd-hero-title">
+        <i class="bi bi-clipboard-check"></i>{{ manifiesto.correlativo }}
+      </h4>
+      {# Badge de estado CLICKEABLE → abre modal de estado #}
+      <button type="button"
+              class="badge rounded-pill mfd-estado-badge bg-{{ mcolor }} text-{{ 'dark' if mcolor=='warning' else 'white' }}"
+              data-bs-toggle="modal" data-bs-target="#estadoManModal"
+              title="Cambiar estado del manifiesto">
+        <i class="bi bi-circle-fill mfd-estado-dot"></i>{{ manifiesto.estado }}
+        <i class="bi bi-pencil-fill mfd-estado-edit"></i>
+      </button>
+    </div>
+    <div class="mfd-hero-sub">
+      <span><i class="bi bi-truck me-1"></i>{{ manifiesto.courier or '—' }}</span>
+      <span class="mfd-dot">·</span>
+      <span><i class="bi bi-calendar3 me-1"></i>{{ manifiesto.fecha.strftime('%d/%m/%Y') if manifiesto.fecha else '—' }}</span>
+      <span class="mfd-dot">·</span>
+      <span><i class="bi bi-receipt me-1"></i>{{ items|length }} factura{{ 's' if items|length != 1 }}</span>
+      <span class="mfd-dot">·</span>
+      <span><i class="bi bi-box-seam me-1"></i>{{ tot_bultos or 0 }} bulto{{ 's' if (tot_bultos or 0) != 1 }}</span>
+    </div>
+    {% if manifiesto.notas %}
+    <div class="mfd-hero-notas"><i class="bi bi-sticky me-1"></i>{{ manifiesto.notas }}</div>
+    {% endif %}
+  </div>
+  <div class="mfd-hero-actions no-print">
+    <button class="btn btn-sm mfd-btn-labels"
+            onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas', '_blank')">
+      <i class="bi bi-tags-fill me-1"></i>Etiquetas del manifiesto
+    </button>
+    <a href="{{ url_for('tr_manifiesto_export', mid=manifiesto.id) }}" class="btn btn-sm btn-success fw-bold">
+      <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
+    </a>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   RESUMEN FINANCIERO del manifiesto (lo que Daniel quiere ver de primero)
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="mfd-fin-grid mb-3">
+  <div class="mfd-fin-card mfd-fin-cobrado">
+    <div class="mfd-fin-label"><i class="bi bi-arrow-down-circle me-1"></i>Total cobrado (ZZ Envío)</div>
+    <div class="mfd-fin-value">{{ money(tot_cobrado) }}</div>
+    <div class="mfd-fin-hint">Ingreso por despachos</div>
+  </div>
+  <div class="mfd-fin-card mfd-fin-costo">
+    <div class="mfd-fin-label"><i class="bi bi-arrow-up-circle me-1"></i>Total costo courier</div>
+    <div class="mfd-fin-value">{{ money(tot_costo) }}</div>
+    <div class="mfd-fin-hint">Egreso pagado al courier</div>
+  </div>
+  <div class="mfd-fin-card {{ 'mfd-fin-perdida' if tot_margen < 0 else 'mfd-fin-margen' }}">
+    <div class="mfd-fin-label">
+      {% if tot_margen < 0 %}<i class="bi bi-exclamation-octagon-fill me-1"></i>Pérdida total{% else %}<i class="bi bi-graph-up-arrow me-1"></i>Margen total{% endif %}
+    </div>
+    <div class="mfd-fin-value">{{ money(tot_margen) }}</div>
+    <div class="mfd-fin-hint">
+      {% if tot_pct is not none %}{{ "%.1f"|format(tot_pct) }}% global{% else %}Sin base de cobro{% endif %}
+    </div>
+  </div>
+  <div class="mfd-fin-card mfd-fin-meta">
+    <div class="mfd-fin-label"><i class="bi bi-box-seam-fill me-1"></i>Bultos · Facturas</div>
+    <div class="mfd-fin-value">{{ tot_bultos or 0 }} <span class="mfd-fin-sep">/</span> {{ items|length }}</div>
+    <div class="mfd-fin-hint">
+      {% if n_perdida %}<span class="text-danger fw-semibold">{{ n_perdida }} con pérdida</span>{% endif %}
+      {% if n_perdida and n_sinprecio %} · {% endif %}
+      {% if n_sinprecio %}<span class="mfd-amber-text fw-semibold">{{ n_sinprecio }} sin precio</span>{% endif %}
+      {% if not n_perdida and not n_sinprecio %}<span class="text-success">Todo cotizado</span>{% endif %}
+    </div>
+  </div>
 </div>
 
 {# ── Alerta: saldo ya consumido en el ERP (factura vieja / ya despachado) ── #}
@@ -70,12 +126,12 @@
     <strong>Hay destinatarios sin datos de contacto.</strong>
     {% if sin_tel %}<span class="badge bg-danger ms-1">{{ sin_tel }} sin teléfono</span>{% endif %}
     {% if sin_email %}<span class="badge bg-danger ms-1">{{ sin_email }} sin email</span>{% endif %}
-    <div class="text-muted">Sin estos datos el cliente no recibe información de seguimiento. Edita cada ítem para completarlos. El export igual se genera (resaltados en rojo).</div>
+    <div class="text-muted">Sin estos datos el cliente no recibe información de seguimiento. Edita cada factura para completarlos. El export igual se genera (resaltados en rojo).</div>
   </div>
 </div>
 {% endif %}
 
-{# ── Resumen rápido ── #}
+{# ── Resumen de estados de entrega ── #}
 {% set total_entregados = items|selectattr('estado_entrega','eq','Entregado')|list|length %}
 {% set total_fallidos   = items|selectattr('estado_entrega','eq','Entrega fallida')|list|length %}
 {% set total_ruta       = items|selectattr('estado_entrega','eq','En ruta')|list|length %}
@@ -84,7 +140,7 @@
   <div class="col-6 col-sm-3">
     <div class="ilus-card p-2 text-center">
       <div class="fw-bold fs-4" style="color:var(--ilus-red)">{{ total_items }}</div>
-      <div class="small text-muted">Total items</div>
+      <div class="small text-muted">Facturas</div>
     </div>
   </div>
   <div class="col-6 col-sm-3">
@@ -107,39 +163,33 @@
   </div>
 </div>
 
-{# ── Tabla de items ── #}
+{# ════════════════════════════════════════════════════════════════════
+   ÁRBOL manifiesto → facturas → productos
+   ════════════════════════════════════════════════════════════════════ #}
 <div class="ilus-card mb-3">
   <div class="ilus-card-header d-flex justify-content-between align-items-center">
-    <span><i class="bi bi-box-seam me-1"></i>Ítems del manifiesto</span>
+    <span><i class="bi bi-diagram-3 me-1"></i>Facturas del manifiesto</span>
+    <span class="small text-muted no-print">Haz clic en una factura para ver sus productos</span>
   </div>
 
-  {# Desktop #}
-  <div class="d-none d-md-block table-responsive">
-    <table class="table ilus-table mb-0" style="font-size:.81rem">
+  {# ─────────── Desktop ─────────── #}
+  <div class="d-none d-lg-block table-responsive">
+    <table class="table ilus-table mb-0 mfd-table" style="font-size:.81rem">
       <thead>
         <tr>
-          <th>#</th>
+          <th style="width:30px"></th>
           <th>Documento</th>
-          <th>Cliente</th>
-          <th>Dirección</th>
-          <th>Contacto</th>
-          <th>Tipo</th>
-          <th class="text-end">Valor</th>
-          <th class="text-end">Envío $</th>
-          <th style="min-width:190px">Estado entrega</th>
-          <th class="no-print"></th>
+          <th>Cliente / destino</th>
+          <th class="text-center">Bultos</th>
+          <th class="text-end">ZZ Envío</th>
+          <th class="text-end">Costo courier</th>
+          <th class="text-end">Diferencia</th>
+          <th style="min-width:185px">Estado entrega</th>
+          <th class="no-print text-end" style="min-width:118px">Acciones</th>
         </tr>
       </thead>
       <tbody id="itemsTableBody">
         {% for item in items %}
-        {% set ecolor = {
-          'En preparación':'warning',
-          'Entregado a transporte':'info',
-          'En ruta':'primary',
-          'Entregado':'success',
-          'Entrega fallida':'danger',
-          'Devolución':'secondary'
-        }.get(item.estado_entrega, 'secondary') %}
         {% set item_json = {
           'id': item.commitment_id,
           'cliente': item.cliente_nombre or '',
@@ -153,49 +203,78 @@
           'bultos': (item.n_bultos or 1)|int,
           'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
         } | tojson %}
-        <tr id="row-{{ item.id }}" class="{{ 'table-danger' if not item.tiene_saldo }}">
-          <td class="text-muted">{{ loop.index }}</td>
+        {% set nprod = item.productos|length %}
+        <tr id="row-{{ item.id }}"
+            class="mfd-frow {{ 'mfd-nosaldo' if not item.tiene_saldo }} {{ 'mfd-perdida-row' if item.es_perdida }}"
+            onclick="toggleProductos({{ item.id }})">
+          <td class="text-center">
+            <i class="bi bi-chevron-right mfd-chevron" id="chev-{{ item.id }}"></i>
+          </td>
           <td class="font-monospace fw-bold">
-            {{ item.tido }} {{ item.nudo }}
-            {% if not item.tiene_saldo %}
-            <span class="badge bg-danger d-inline-flex align-items-center gap-1 mt-1" title="El saldo ZZ de este documento ya fue consumido en el ERP Random">
-              <i class="bi bi-database-x"></i> sin saldo
-            </span>
-            {% endif %}
+            <div>{{ item.tido }} {{ item.nudo }}</div>
+            <div class="mt-1 d-flex flex-wrap gap-1">
+              {% if item.clasificacion == 'retiro' %}
+              <span class="badge bg-info-subtle text-info-emphasis mfd-mini-badge"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>
+              {% else %}
+              <span class="badge bg-dark-subtle text-dark mfd-mini-badge"><i class="bi bi-box-arrow-right me-1"></i>Despacho</span>
+              {% endif %}
+              {% if item.es_garantia %}
+              <span class="badge mfd-mini-badge mfd-badge-garantia" title="Pedido en garantía">
+                <i class="bi bi-shield-fill-exclamation me-1"></i>Garantía
+              </span>
+              {% endif %}
+              {% if not item.tiene_saldo %}
+              <span class="badge bg-danger mfd-mini-badge" title="El saldo ZZ de este documento ya fue consumido en el ERP Random">
+                <i class="bi bi-database-x"></i> sin saldo
+              </span>
+              {% endif %}
+            </div>
           </td>
           <td>
             <div class="fw-semibold">{{ item.cliente_nombre or '—' }}</div>
-            <div class="small text-muted">{{ item.comuna or '' }}</div>
+            <div class="small text-muted text-truncate" style="max-width:230px">
+              <i class="bi bi-geo-alt me-1"></i>{{ item.comuna or '' }}{% if item.direccion %} · {{ item.direccion }}{% endif %}
+            </div>
+            <div class="small mt-1">
+              {% if item.telefono %}<span class="text-success me-2"><i class="bi bi-telephone me-1"></i>{{ item.telefono }}</span>{% else %}<span class="text-danger me-2"><i class="bi bi-telephone-x me-1"></i>Sin tel</span>{% endif %}
+              {% if item.email %}<span class="text-success"><i class="bi bi-envelope-check me-1"></i>ok</span>{% else %}<span class="text-danger"><i class="bi bi-envelope-x me-1"></i>Sin email</span>{% endif %}
+            </div>
+            {% if item.sin_precio %}
+            <div class="mt-1">
+              <span class="badge mfd-badge-sinprecio"
+                    title="{{ ('Motivo: ' ~ item.motivo_envio) if item.motivo_envio else 'Envío sin cobro registrado' }}{{ ' · GARANTÍA' if item.es_garantia }}">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>SIN PRECIO{% if item.autorizado_por %} — autorizado por {{ item.autorizado_por }}{% endif %}
+              </span>
+              {% if item.motivo_envio %}<div class="small text-muted mt-1" style="max-width:230px"><i class="bi bi-chat-left-text me-1"></i>{{ item.motivo_envio }}</div>{% endif %}
+            </div>
+            {% endif %}
           </td>
-          <td class="small text-muted" style="max-width:180px">{{ (item.direccion or '—')[:60] }}</td>
-          <td class="small">
-            {% if item.telefono %}
-              <span class="d-block"><i class="bi bi-telephone text-success me-1"></i>{{ item.telefono }}</span>
-            {% else %}
-              <span class="d-block text-danger"><i class="bi bi-telephone-x me-1"></i>Sin teléfono</span>
-            {% endif %}
-            {% if item.email %}
-              <span class="d-block text-truncate" style="max-width:160px"><i class="bi bi-envelope text-success me-1"></i>{{ item.email }}</span>
-            {% else %}
-              <span class="d-block text-danger"><i class="bi bi-envelope-x me-1"></i>Sin email</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if item.clasificacion == 'retiro' %}
-            <span class="badge bg-info text-dark"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>
-            {% else %}
-            <span class="badge bg-dark"><i class="bi bi-box-arrow-right me-1"></i>Despacho</span>
-            {% endif %}
+          <td class="text-center">
+            <span class="mfd-bultos-chip">{{ item.n_bultos or 1 }}</span>
           </td>
           <td class="text-end">
-            {% if item.valor_bruto %}${{ "{:,.0f}".format(item.valor_bruto) }}{% else %}—{% endif %}
-          </td>
-          <td class="text-end">
-            {% if item.costo_zz %}
-            <span style="color:var(--ilus-red);font-weight:600">${{ "{:,.0f}".format(item.costo_zz) }}</span>
+            {% if item.zz_envio and item.zz_envio > 0 %}
+            <span class="mfd-cobrado">{{ money(item.zz_envio) }}</span>
             {% else %}<span class="text-muted">—</span>{% endif %}
           </td>
-          <td>
+          <td class="text-end">
+            {% if item.costo_courier and item.costo_courier > 0 %}
+            <span class="mfd-costo">{{ money(item.costo_courier) }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-end">
+            {% if item.sin_precio %}
+            <span class="text-muted">—</span>
+            {% else %}
+            <span class="fw-bold {{ 'mfd-perdida-text' if item.es_perdida else 'mfd-cobrado' }}">{{ money(item.margen_clp) }}</span>
+            {% if item.margen_pct is not none %}
+            <div class="mfd-pct-chip {{ 'mfd-pct-neg' if item.es_perdida else ('mfd-pct-ok' if item.margen_pct >= 25 else 'mfd-pct-low') }}">
+              {{ "%.1f"|format(item.margen_pct) }}%
+            </div>
+            {% endif %}
+            {% endif %}
+          </td>
+          <td onclick="event.stopPropagation()">
             <select class="form-select form-select-sm estado-select"
                     data-item="{{ item.id }}"
                     onchange="cambiarEstado({{ manifiesto.id }}, {{ item.id }}, this.value, this)">
@@ -204,39 +283,97 @@
               {% endfor %}
             </select>
           </td>
-          <td class="no-print text-nowrap">
-            <button class="btn btn-sm btn-outline-secondary" title="Editar contacto y medidas"
+          <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas de esta factura"
+                    onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
+              <i class="bi bi-tags"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary mfd-act-btn" title="Editar contacto, bultos y medidas"
                     onclick='abrirEditar({{ item_json }})'>
               <i class="bi bi-pencil-square"></i>
             </button>
-            <button class="btn btn-sm btn-outline-danger" title="Quitar del manifiesto"
+            <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Quitar del manifiesto"
                     onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
               <i class="bi bi-trash3"></i>
             </button>
           </td>
         </tr>
+        {# ── Sub-fila colapsable: productos de la factura ── #}
+        <tr class="mfd-prod-row" id="prodrow-{{ item.id }}" hidden>
+          <td></td>
+          <td colspan="8" class="mfd-prod-cell">
+            <div class="mfd-prod-wrap">
+              <div class="mfd-prod-head">
+                <i class="bi bi-box me-1"></i>Productos de la factura
+                <span class="mfd-prod-count">{{ nprod }} línea{{ 's' if nprod != 1 }}</span>
+              </div>
+              {% if nprod %}
+              <table class="mfd-prod-table">
+                <thead>
+                  <tr>
+                    <th style="width:120px">SKU</th>
+                    <th>Producto</th>
+                    <th class="text-center" style="width:80px">Cant.</th>
+                    <th class="text-center" style="width:100px">Despachado</th>
+                    <th class="text-center" style="width:110px">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for p in item.productos %}
+                  <tr>
+                    <td class="font-monospace">{{ p.koprct or '—' }}</td>
+                    <td>{{ p.nokopr or '—' }}</td>
+                    <td class="text-center">{{ p.cantidad|int if p.cantidad is not none else '—' }}</td>
+                    <td class="text-center text-muted">{{ p.cant_despachada|int if p.cant_despachada is not none else '—' }}</td>
+                    <td class="text-center">
+                      {% if p.saldo is not none and p.saldo > 0 %}
+                      <span class="mfd-saldo-chip mfd-saldo-ok"><i class="bi bi-check-circle-fill me-1"></i>{{ p.saldo|int }}</span>
+                      {% else %}
+                      <span class="mfd-saldo-chip mfd-saldo-no"><i class="bi bi-x-circle-fill me-1"></i>Sin saldo</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <div class="mfd-prod-empty"><i class="bi bi-inbox me-1"></i>Esta factura no tiene líneas de producto cargadas.</div>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
         {% else %}
         <tr>
-          <td colspan="10" class="text-center py-4 text-muted">
-            <i class="bi bi-box me-2"></i>Sin ítems en este manifiesto
+          <td colspan="9" class="text-center py-4 text-muted">
+            <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>Sin facturas en este manifiesto
           </td>
         </tr>
         {% endfor %}
       </tbody>
+      {% if items %}
+      <tfoot>
+        <tr class="mfd-tfoot">
+          <td></td>
+          <td colspan="2" class="fw-bold text-end">Totales del manifiesto</td>
+          <td class="text-center"><span class="mfd-bultos-chip mfd-bultos-total">{{ tot_bultos or 0 }}</span></td>
+          <td class="text-end fw-bold mfd-cobrado">{{ money(tot_cobrado) }}</td>
+          <td class="text-end fw-bold mfd-costo">{{ money(tot_costo) }}</td>
+          <td class="text-end">
+            <span class="fw-bold {{ 'mfd-perdida-text' if tot_margen < 0 else 'mfd-cobrado' }}">{{ money(tot_margen) }}</span>
+            {% if tot_pct is not none %}
+            <div class="mfd-pct-chip {{ 'mfd-pct-neg' if tot_margen < 0 else ('mfd-pct-ok' if tot_pct >= 25 else 'mfd-pct-low') }}">{{ "%.1f"|format(tot_pct) }}%</div>
+            {% endif %}
+          </td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+      {% endif %}
     </table>
   </div>
 
-  {# Mobile cards #}
-  <div class="d-md-none">
+  {# ─────────── Mobile / tablet cards ─────────── #}
+  <div class="d-lg-none">
     {% for item in items %}
-    {% set ecolor = {
-      'En preparación':'warning',
-      'Entregado a transporte':'info',
-      'En ruta':'primary',
-      'Entregado':'success',
-      'Entrega fallida':'danger',
-      'Devolución':'secondary'
-    }.get(item.estado_entrega, 'secondary') %}
     {% set item_json = {
       'id': item.commitment_id,
       'cliente': item.cliente_nombre or '',
@@ -250,36 +387,76 @@
       'bultos': (item.n_bultos or 1)|int,
       'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
     } | tojson %}
-    <div class="p-3 border-bottom {{ 'bg-danger-subtle' if not item.tiene_saldo }}" id="card-{{ item.id }}">
-      <div class="d-flex justify-content-between align-items-start mb-1">
-        <div class="font-monospace fw-bold" style="font-size:.88rem">
-          {{ item.tido }} {{ item.nudo }}
-          {% if not item.tiene_saldo %}
-          <span class="badge bg-danger d-inline-flex align-items-center gap-1" title="Saldo ZZ ya consumido en el ERP"><i class="bi bi-database-x"></i> sin saldo</span>
-          {% endif %}
+    {% set nprod = item.productos|length %}
+    <div class="mfd-mcard {{ 'mfd-mcard-nosaldo' if not item.tiene_saldo }} {{ 'mfd-mcard-perdida' if item.es_perdida }}" id="card-{{ item.id }}">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+          <div class="font-monospace fw-bold" style="font-size:.92rem">{{ item.tido }} {{ item.nudo }}</div>
+          <div class="d-flex flex-wrap gap-1 mt-1">
+            {% if item.clasificacion == 'retiro' %}
+            <span class="badge bg-info-subtle text-info-emphasis mfd-mini-badge"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>
+            {% else %}
+            <span class="badge bg-dark-subtle text-dark mfd-mini-badge"><i class="bi bi-box-arrow-right me-1"></i>Despacho</span>
+            {% endif %}
+            {% if item.es_garantia %}<span class="badge mfd-mini-badge mfd-badge-garantia"><i class="bi bi-shield-fill-exclamation me-1"></i>Garantía</span>{% endif %}
+            {% if not item.tiene_saldo %}<span class="badge bg-danger mfd-mini-badge"><i class="bi bi-database-x"></i> sin saldo</span>{% endif %}
+          </div>
         </div>
         <div class="d-flex gap-1 no-print">
-          <button class="btn btn-sm btn-outline-secondary" onclick='abrirEditar({{ item_json }})'>
+          <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Etiquetas de esta factura"
+                  onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
+            <i class="bi bi-tags"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-secondary mfd-act-btn" onclick='abrirEditar({{ item_json }})'>
             <i class="bi bi-pencil-square"></i>
           </button>
-          <button class="btn btn-sm btn-outline-danger" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
+          <button class="btn btn-sm btn-outline-danger mfd-act-btn" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
             <i class="bi bi-trash3"></i>
           </button>
         </div>
       </div>
+
       <div class="fw-semibold">{{ item.cliente_nombre or '—' }}</div>
-      <div class="small text-muted">{{ item.comuna or '' }} · {{ (item.direccion or '')[:50] }}</div>
+      <div class="small text-muted"><i class="bi bi-geo-alt me-1"></i>{{ item.comuna or '' }}{% if item.direccion %} · {{ (item.direccion or '')[:50] }}{% endif %}</div>
       <div class="small mt-1">
         {% if item.telefono %}<span class="text-success me-2"><i class="bi bi-telephone me-1"></i>{{ item.telefono }}</span>{% else %}<span class="text-danger me-2"><i class="bi bi-telephone-x me-1"></i>Sin tel</span>{% endif %}
-        {% if item.email %}<span class="text-success"><i class="bi bi-envelope me-1"></i>ok</span>{% else %}<span class="text-danger"><i class="bi bi-envelope-x me-1"></i>Sin email</span>{% endif %}
+        {% if item.email %}<span class="text-success"><i class="bi bi-envelope-check me-1"></i>ok</span>{% else %}<span class="text-danger"><i class="bi bi-envelope-x me-1"></i>Sin email</span>{% endif %}
       </div>
+
+      {% if item.sin_precio %}
       <div class="mt-2">
-        {% if item.costo_zz %}
-        <span class="small fw-semibold" style="color:var(--ilus-red)">
-          Envío: ${{ "{:,.0f}".format(item.costo_zz) }}
+        <span class="badge mfd-badge-sinprecio">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i>SIN PRECIO{% if item.autorizado_por %} — autorizado por {{ item.autorizado_por }}{% endif %}
         </span>
-        {% endif %}
+        {% if item.motivo_envio %}<div class="small text-muted mt-1"><i class="bi bi-chat-left-text me-1"></i>{{ item.motivo_envio }}</div>{% endif %}
       </div>
+      {% endif %}
+
+      {# Mini-panel financiero mobile #}
+      <div class="mfd-mfin mt-2 {{ 'mfd-mfin-perdida' if item.es_perdida }}">
+        <div class="mfd-mfin-cell">
+          <span class="mfd-mfin-k">Bultos</span>
+          <span class="mfd-mfin-v"><span class="mfd-bultos-chip">{{ item.n_bultos or 1 }}</span></span>
+        </div>
+        <div class="mfd-mfin-cell">
+          <span class="mfd-mfin-k">ZZ Envío</span>
+          <span class="mfd-mfin-v">{% if item.zz_envio and item.zz_envio > 0 %}<span class="mfd-cobrado">{{ money(item.zz_envio) }}</span>{% else %}—{% endif %}</span>
+        </div>
+        <div class="mfd-mfin-cell">
+          <span class="mfd-mfin-k">Costo</span>
+          <span class="mfd-mfin-v">{% if item.costo_courier and item.costo_courier > 0 %}<span class="mfd-costo">{{ money(item.costo_courier) }}</span>{% else %}—{% endif %}</span>
+        </div>
+        <div class="mfd-mfin-cell">
+          <span class="mfd-mfin-k">Margen</span>
+          <span class="mfd-mfin-v">
+            {% if item.sin_precio %}—{% else %}
+            <span class="fw-bold {{ 'mfd-perdida-text' if item.es_perdida else 'mfd-cobrado' }}">{{ money(item.margen_clp) }}</span>
+            {% if item.margen_pct is not none %}<span class="mfd-pct-chip {{ 'mfd-pct-neg' if item.es_perdida else ('mfd-pct-ok' if item.margen_pct >= 25 else 'mfd-pct-low') }}">{{ "%.1f"|format(item.margen_pct) }}%</span>{% endif %}
+            {% endif %}
+          </span>
+        </div>
+      </div>
+
       <div class="mt-2">
         <select class="form-select form-select-sm estado-select"
                 data-item="{{ item.id }}"
@@ -289,15 +466,62 @@
           {% endfor %}
         </select>
       </div>
+
+      {# Toggle productos mobile #}
+      <button type="button" class="mfd-mprod-toggle mt-2" onclick="toggleProductos({{ item.id }})">
+        <i class="bi bi-chevron-right mfd-chevron" id="mchev-{{ item.id }}"></i>
+        Ver productos <span class="mfd-prod-count">{{ nprod }}</span>
+      </button>
+      <div class="mfd-mprod-list" id="mprodrow-{{ item.id }}" hidden>
+        {% if nprod %}
+        {% for p in item.productos %}
+        <div class="mfd-mprod-item">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div class="flex-grow-1" style="min-width:0">
+              <div class="fw-semibold text-truncate">{{ p.nokopr or '—' }}</div>
+              <div class="font-monospace small text-muted">{{ p.koprct or '—' }}</div>
+            </div>
+            {% if p.saldo is not none and p.saldo > 0 %}
+            <span class="mfd-saldo-chip mfd-saldo-ok"><i class="bi bi-check-circle-fill me-1"></i>{{ p.saldo|int }}</span>
+            {% else %}
+            <span class="mfd-saldo-chip mfd-saldo-no"><i class="bi bi-x-circle-fill me-1"></i>Sin saldo</span>
+            {% endif %}
+          </div>
+          <div class="small text-muted mt-1">
+            Cantidad: <strong>{{ p.cantidad|int if p.cantidad is not none else '—' }}</strong> ·
+            Despachado: {{ p.cant_despachada|int if p.cant_despachada is not none else '—' }}
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="mfd-prod-empty"><i class="bi bi-inbox me-1"></i>Sin líneas de producto.</div>
+        {% endif %}
+      </div>
     </div>
     {% else %}
-    <div class="text-center py-4 text-muted">Sin ítems</div>
+    <div class="text-center py-4 text-muted"><i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>Sin facturas</div>
     {% endfor %}
+
+    {# Totales mobile #}
+    {% if items %}
+    <div class="mfd-mtotal {{ 'mfd-mtotal-perdida' if tot_margen < 0 }}">
+      <div class="mfd-mtotal-row"><span>Total cobrado</span><span class="mfd-cobrado fw-bold">{{ money(tot_cobrado) }}</span></div>
+      <div class="mfd-mtotal-row"><span>Total costo</span><span class="mfd-costo fw-bold">{{ money(tot_costo) }}</span></div>
+      <div class="mfd-mtotal-row mfd-mtotal-margen">
+        <span>{% if tot_margen < 0 %}Pérdida{% else %}Margen{% endif %} total</span>
+        <span class="fw-bold {{ 'mfd-perdida-text' if tot_margen < 0 else 'mfd-cobrado' }}">
+          {{ money(tot_margen) }}{% if tot_pct is not none %} <span class="mfd-pct-chip {{ 'mfd-pct-neg' if tot_margen < 0 else ('mfd-pct-ok' if tot_pct >= 25 else 'mfd-pct-low') }}">{{ "%.1f"|format(tot_pct) }}%</span>{% endif %}
+        </span>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 
-{# ── Historial ── #}
-<div class="ilus-card mb-4 no-print">
+{# ════════════════════════════════════════════════════════════════════
+   Historial
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="ilus-card mb-3 no-print">
   <div class="ilus-card-header">
     <i class="bi bi-clock-history me-1"></i>Trazabilidad del manifiesto
   </div>
@@ -316,7 +540,16 @@
   </div>
 </div>
 
-{# ── Modal cambio estado manifiesto ── #}
+{# ── Link volver, esquina inferior derecha ── #}
+<div class="d-flex justify-content-end mb-4 no-print">
+  <a href="{{ url_for('tr_manifiestos') }}" class="mfd-volver">
+    <i class="bi bi-arrow-left me-1"></i>Volver a manifiestos
+  </a>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal cambio estado manifiesto
+   ════════════════════════════════════════════════════════════════════ #}
 <div class="modal fade" id="estadoManModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered" style="max-width:360px">
     <div class="modal-content">
@@ -342,7 +575,9 @@
   </div>
 </div>
 
-{# ── Modal editar contacto + medidas del documento ── #}
+{# ════════════════════════════════════════════════════════════════════
+   Modal editar contacto + medidas del documento
+   ════════════════════════════════════════════════════════════════════ #}
 <div class="modal fade" id="editarItemModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -408,15 +643,174 @@
   </div>
 </div>
 
-{# ── Estilos impresión ── #}
+{# ════════════════════════════════════════════════════════════════════
+   Estilos
+   ════════════════════════════════════════════════════════════════════ #}
 <style>
+/* ── Hero ── */
+.mfd-hero{
+  display:flex; justify-content:space-between; align-items:flex-start;
+  flex-wrap:wrap; gap:1rem;
+  background:linear-gradient(135deg, #fff 0%, var(--ilus-red-50,#fef2f2) 100%);
+  border:1px solid var(--ilus-red-100,#fee2e2);
+  border-left:5px solid var(--ilus-red);
+  border-radius:14px; padding:1.1rem 1.25rem; margin-bottom:1rem;
+  box-shadow:0 1px 2px rgba(0,0,0,.04), 0 6px 18px -10px rgba(220,38,38,.18);
+}
+.mfd-hero-title{ font-size:1.4rem; letter-spacing:.5px; color:var(--ilus-black); }
+.mfd-hero-title i{ color:var(--ilus-red); margin-right:.45rem; }
+.mfd-hero-sub{ color:#6b7280; font-size:.85rem; display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; }
+.mfd-hero-sub .mfd-dot{ opacity:.4; }
+.mfd-hero-notas{ margin-top:.5rem; font-size:.82rem; color:#6b7280; background:rgba(0,0,0,.03); padding:.3rem .6rem; border-radius:8px; display:inline-block; }
+.mfd-hero-actions{ display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+
+/* Badge estado clickeable */
+.mfd-estado-badge{
+  border:none; cursor:pointer; font-size:.8rem; padding:.42em .85em;
+  display:inline-flex; align-items:center; gap:.4rem;
+  transition:transform .15s cubic-bezier(.34,1.56,.64,1), box-shadow .15s, filter .15s;
+}
+.mfd-estado-badge:hover{ transform:translateY(-1px) scale(1.03); box-shadow:0 4px 12px -4px rgba(0,0,0,.3); filter:brightness(1.05); }
+.mfd-estado-badge:active{ transform:scale(.97); }
+.mfd-estado-dot{ font-size:.5rem; }
+.mfd-estado-edit{ font-size:.62rem; opacity:.65; margin-left:.1rem; }
+
+/* Botón etiquetas */
+.mfd-btn-labels{
+  background:var(--ilus-black); color:#fff; border:none; font-weight:600; border-radius:6px;
+  transition:background .15s, transform .12s;
+}
+.mfd-btn-labels:hover{ background:#000; color:#fff; transform:translateY(-1px); }
+.mfd-btn-labels:active{ transform:scale(.97); }
+
+/* ── Resumen financiero ── */
+.mfd-fin-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:.75rem; }
+.mfd-fin-card{
+  border-radius:13px; padding:.85rem 1rem; border:1px solid #eef0f2; background:#fff;
+  box-shadow:0 1px 2px rgba(0,0,0,.04), 0 4px 14px -10px rgba(0,0,0,.12);
+  position:relative; overflow:hidden;
+}
+.mfd-fin-card::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; }
+.mfd-fin-cobrado::before{ background:#16a34a; }
+.mfd-fin-costo::before{ background:#6b7280; }
+.mfd-fin-margen::before{ background:var(--ilus-red); }
+.mfd-fin-perdida{ background:#fff5f5; border-color:#fecaca; }
+.mfd-fin-perdida::before{ background:#dc2626; }
+.mfd-fin-meta::before{ background:var(--ilus-black); }
+.mfd-fin-label{ font-size:.72rem; color:#6b7280; font-weight:600; text-transform:uppercase; letter-spacing:.3px; }
+.mfd-fin-value{ font-size:1.45rem; font-weight:800; color:var(--ilus-black); line-height:1.15; margin-top:.15rem; }
+.mfd-fin-cobrado .mfd-fin-value{ color:#15803d; }
+.mfd-fin-perdida .mfd-fin-value{ color:#dc2626; }
+.mfd-fin-hint{ font-size:.72rem; color:#9ca3af; margin-top:.1rem; }
+.mfd-fin-sep{ color:#d1d5db; font-weight:400; }
+.mfd-amber-text{ color:#d97706; }
+
+/* ── Tabla árbol ── */
+.mfd-table thead th{ font-size:.72rem; text-transform:uppercase; letter-spacing:.3px; color:#6b7280; }
+.mfd-frow{ cursor:pointer; transition:background .15s; }
+.mfd-frow:hover{ background:var(--ilus-red-50,#fef2f2)!important; }
+.mfd-frow.mfd-nosaldo{ background:#fff5f5; }
+.mfd-frow.mfd-nosaldo:hover{ background:#ffe9e9!important; }
+.mfd-frow.mfd-perdida-row td:first-child{ box-shadow:inset 3px 0 0 #dc2626; }
+.mfd-chevron{ transition:transform .25s cubic-bezier(.34,1.56,.64,1); color:var(--ilus-red); font-size:.85rem; }
+.mfd-chevron.open{ transform:rotate(90deg); }
+
+.mfd-mini-badge{ font-size:.66rem; font-weight:600; padding:.28em .5em; }
+.mfd-badge-garantia{ background:#fff8e1; color:#b45309; border:1px solid #fde68a; }
+.mfd-badge-sinprecio{
+  background:#fff8e1; color:#b45309; border:1px solid #fcd34d; font-size:.68rem; font-weight:700;
+  padding:.3em .6em; display:inline-flex; align-items:center; white-space:normal; text-align:left; line-height:1.25;
+}
+
+.mfd-bultos-chip{
+  display:inline-flex; align-items:center; justify-content:center; min-width:30px; height:26px;
+  padding:0 .5rem; border-radius:8px; background:var(--ilus-black); color:#fff; font-weight:700; font-size:.82rem;
+}
+.mfd-bultos-total{ background:var(--ilus-red); }
+
+.mfd-cobrado{ color:#16a34a; font-weight:700; }
+.mfd-costo{ color:#374151; font-weight:600; }
+.mfd-perdida-text{ color:#dc2626!important; }
+.mfd-pct-chip{
+  display:inline-block; margin-top:.15rem; font-size:.68rem; font-weight:700;
+  padding:.1em .5em; border-radius:20px;
+}
+.mfd-pct-ok{ background:#dcfce7; color:#15803d; }
+.mfd-pct-low{ background:#fff8e1; color:#b45309; }
+.mfd-pct-neg{ background:#fee2e2; color:#dc2626; }
+
+.mfd-act-btn{ border-radius:7px; }
+
+/* Sub-fila productos (desktop) */
+.mfd-prod-row > td{ background:#fafbfc; padding:0!important; border-top:none!important; }
+.mfd-prod-cell{ border-bottom:2px solid var(--ilus-red-100,#fee2e2)!important; }
+.mfd-prod-wrap{ padding:.75rem 1rem 1rem; animation:mfdSlideDown .28s cubic-bezier(.34,1.56,.64,1); }
+@keyframes mfdSlideDown{ from{ opacity:0; transform:translateY(-6px); } to{ opacity:1; transform:translateY(0); } }
+.mfd-prod-head{ font-size:.78rem; font-weight:700; color:var(--ilus-black); margin-bottom:.5rem; }
+.mfd-prod-count{ background:var(--ilus-red); color:#fff; font-size:.66rem; font-weight:700; padding:.1em .55em; border-radius:20px; margin-left:.35rem; }
+.mfd-prod-table{ width:100%; font-size:.78rem; border-collapse:collapse; }
+.mfd-prod-table thead th{ text-align:left; font-size:.68rem; text-transform:uppercase; letter-spacing:.3px; color:#9ca3af; border-bottom:1px solid #eef0f2; padding:.3rem .5rem; }
+.mfd-prod-table tbody td{ padding:.4rem .5rem; border-bottom:1px solid #f3f4f6; }
+.mfd-prod-table tbody tr:last-child td{ border-bottom:none; }
+.mfd-prod-empty{ font-size:.8rem; color:#9ca3af; padding:.5rem 0; }
+
+.mfd-saldo-chip{ display:inline-flex; align-items:center; font-size:.7rem; font-weight:700; padding:.15em .55em; border-radius:20px; }
+.mfd-saldo-ok{ background:#dcfce7; color:#15803d; }
+.mfd-saldo-no{ background:#fee2e2; color:#dc2626; }
+
+/* tfoot */
+.mfd-tfoot td{ background:#f8f9fa; border-top:2px solid #e5e7eb!important; padding-top:.7rem; padding-bottom:.7rem; }
+
+/* ── Mobile cards ── */
+.mfd-mcard{ padding:1rem; border:1px solid #eef0f2; border-radius:13px; margin:.75rem; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+.mfd-mcard-nosaldo{ background:#fff5f5; border-color:#fecaca; }
+.mfd-mcard-perdida{ border-left:4px solid #dc2626; }
+.mfd-mfin{ display:grid; grid-template-columns:repeat(2,1fr); gap:.5rem; background:#f8f9fa; border-radius:10px; padding:.6rem .7rem; }
+.mfd-mfin-perdida{ background:#fff5f5; }
+.mfd-mfin-cell{ display:flex; flex-direction:column; }
+.mfd-mfin-k{ font-size:.68rem; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; }
+.mfd-mfin-v{ font-size:.9rem; }
+.mfd-mprod-toggle{
+  width:100%; text-align:left; background:#f3f4f6; border:1px dashed #d1d5db; border-radius:9px;
+  padding:.55rem .75rem; font-size:.82rem; font-weight:600; color:var(--ilus-black); cursor:pointer; min-height:44px;
+  transition:background .15s;
+}
+.mfd-mprod-toggle:hover{ background:#e9ebee; }
+.mfd-mprod-list{ animation:mfdSlideDown .28s cubic-bezier(.34,1.56,.64,1); margin-top:.5rem; }
+.mfd-mprod-item{ background:#fafbfc; border:1px solid #f3f4f6; border-radius:9px; padding:.55rem .65rem; margin-bottom:.4rem; }
+
+.mfd-mtotal{ margin:.75rem; padding:.85rem 1rem; background:linear-gradient(135deg,#fff 0%, var(--ilus-red-50,#fef2f2) 100%); border:1px solid var(--ilus-red-100,#fee2e2); border-radius:13px; }
+.mfd-mtotal-perdida{ background:#fff5f5; border-color:#fecaca; }
+.mfd-mtotal-row{ display:flex; justify-content:space-between; align-items:center; padding:.25rem 0; font-size:.88rem; }
+.mfd-mtotal-margen{ border-top:1px solid var(--ilus-red-100,#fee2e2); margin-top:.3rem; padding-top:.5rem; font-size:.95rem; }
+
+/* ── Link volver ── */
+.mfd-volver{
+  display:inline-flex; align-items:center; font-size:.85rem; font-weight:600; color:#6b7280;
+  text-decoration:none; padding:.4rem .9rem; border-radius:8px; transition:all .15s; min-height:38px;
+}
+.mfd-volver:hover{ color:var(--ilus-red); background:var(--ilus-red-50,#fef2f2); }
+
+@media (max-width:991px){ .mfd-fin-grid{ grid-template-columns:repeat(2,1fr); } }
+@media (max-width:480px){
+  .mfd-hero{ padding:.95rem 1rem; }
+  .mfd-hero-title{ font-size:1.2rem; }
+  .mfd-hero-actions{ width:100%; }
+  .mfd-hero-actions .btn{ flex:1; }
+  .mfd-fin-value{ font-size:1.25rem; }
+}
+
+/* ── Impresión ── */
 @media print {
   .sidebar, .mobile-topbar, .sidebar-overlay, .no-print,
   .page-header .btn, .ilus-card-header .btn { display:none!important; }
   .main-content { margin:0!important; padding:0!important; }
   body { background:#fff!important; }
-  .ilus-card { box-shadow:none!important; border:1px solid #ccc!important; }
+  .ilus-card, .mfd-hero { box-shadow:none!important; border:1px solid #ccc!important; }
+  .mfd-hero{ background:#fff!important; }
   table { font-size:.75rem!important; }
+  .mfd-prod-row[hidden]{ display:table-row!important; }
+  .mfd-prod-row[hidden] .mfd-prod-wrap{ display:block!important; }
 }
 </style>
 
@@ -425,6 +819,26 @@
 {% block scripts %}
 <script>
 var MID = {{ manifiesto.id }};
+
+/* ── Expandir / colapsar productos de una factura (desktop + mobile) ── */
+function toggleProductos(itemId) {
+  // Desktop
+  var prow = document.getElementById('prodrow-' + itemId);
+  var chev = document.getElementById('chev-' + itemId);
+  if (prow) {
+    var open = prow.hasAttribute('hidden');
+    if (open) { prow.removeAttribute('hidden'); } else { prow.setAttribute('hidden',''); }
+    if (chev) chev.classList.toggle('open', open);
+  }
+  // Mobile
+  var mrow = document.getElementById('mprodrow-' + itemId);
+  var mchev = document.getElementById('mchev-' + itemId);
+  if (mrow) {
+    var mopen = mrow.hasAttribute('hidden');
+    if (mopen) { mrow.removeAttribute('hidden'); } else { mrow.setAttribute('hidden',''); }
+    if (mchev) mchev.classList.toggle('open', mopen);
+  }
+}
 
 function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
   selectEl.disabled = true;
@@ -445,22 +859,25 @@ function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
         row.style.background = '#e8f5e9';
         setTimeout(function(){ row.style.background = ''; }, 1000);
       }
+      if (window.ilusToast) ilusToast('✓ Estado actualizado', { type: 'success' });
       actualizarResumen();
     } else {
-      alert('Error: ' + (d.error||'No se pudo guardar'));
+      if (window.ilusToast) ilusToast(d.error || 'No se pudo guardar', { type: 'error' });
+      else alert('Error: ' + (d.error||'No se pudo guardar'));
       location.reload();
     }
   })
   .catch(function() {
     selectEl.disabled = false;
-    alert('Error de conexión');
+    if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
+    else alert('Error de conexión');
   });
 }
 
 async function quitarItem(mid, itemId) {
   const ok = await ilusConfirm({
-    title: 'Quitar ítem del manifiesto',
-    message: '¿Quitar este ítem del manifiesto?',
+    title: 'Quitar factura del manifiesto',
+    message: '¿Quitar esta factura del manifiesto?',
     sub: 'El compromiso volverá a estar disponible para asignar.',
     okLabel: 'Sí, quitar', danger: true,
   });
@@ -470,10 +887,15 @@ async function quitarItem(mid, itemId) {
     .then(function(d) {
       if (d.ok) {
         var row  = document.getElementById('row-' + itemId);
+        var prow = document.getElementById('prodrow-' + itemId);
         var card = document.getElementById('card-' + itemId);
         if (row)  row.remove();
+        if (prow) prow.remove();
         if (card) card.remove();
+        if (window.ilusToast) ilusToast('✓ Factura quitada del manifiesto', { type: 'success' });
         actualizarResumen();
+      } else {
+        if (window.ilusToast) ilusToast(d.error || 'No se pudo quitar', { type: 'error' });
       }
     });
 }

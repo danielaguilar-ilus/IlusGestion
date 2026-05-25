@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ titulo or 'Etiquetas de transporte' }}</title>
+<link rel="preload" as="style"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+      onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"></noscript>
+<style>
+:root {
+  --ilus-red:   #dc2626;
+  --ilus-black: #0a0a0a;
+  --ilus-white: #ffffff;
+  --ilus-gray:  #6b7280;
+  --label-w: 100mm;
+  --label-h: 150mm;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@page {
+  size: var(--label-w) var(--label-h);
+  margin: 0;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #e5e7eb;
+  font-family: Arial, Helvetica, sans-serif;
+  color: var(--ilus-black);
+}
+
+/* ── Barra de acciones (solo pantalla, NUNCA impresa) ── */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--ilus-black);
+  color: var(--ilus-white);
+}
+.toolbar .tb-title {
+  font-weight: 800;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar .tb-title .badge {
+  background: var(--ilus-red);
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.toolbar .tb-actions { display: flex; gap: 8px; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+}
+.btn-print { background: var(--ilus-red); color: #fff; }
+.btn-print:hover { background: #b91c1c; }
+.btn-back { background: #374151; color: #fff; }
+.btn-back:hover { background: #1f2937; }
+
+.empty {
+  max-width: 520px;
+  margin: 60px auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 28px;
+  text-align: center;
+  color: var(--ilus-gray);
+}
+.empty i { font-size: 38px; color: var(--ilus-red); }
+
+/* ── Hoja de etiquetas ── */
+.sheet {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+/* ── La ETIQUETA — premium ILUS ── */
+.etiqueta {
+  width: var(--label-w);
+  height: var(--label-h);
+  background: var(--ilus-white);
+  border: 1.6mm solid var(--ilus-black);
+  border-radius: 4mm;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  box-shadow: 0 4px 18px rgba(0,0,0,.18);
+}
+
+/* En impresión: una etiqueta por página, sin sombras de pantalla */
+@media print {
+  html, body { background: #fff; }
+  .toolbar { display: none !important; }
+  .sheet { padding: 0; gap: 0; }
+  .etiqueta {
+    box-shadow: none;
+    border-radius: 4mm;
+    page-break-after: always;
+    break-after: page;
+  }
+  .etiqueta:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
+
+/* HEADER de marca */
+.lbl-head {
+  background: var(--ilus-black);
+  color: var(--ilus-white);
+  padding: 2.4mm 3mm;
+  text-align: center;
+}
+.lbl-head .brand {
+  font-size: 3.4mm;
+  font-weight: 950;
+  letter-spacing: .2mm;
+  line-height: 1.15;
+}
+.lbl-head .brand .red { color: var(--ilus-red); }
+.lbl-head .brand .dot { color: var(--ilus-red); padding: 0 .6mm; }
+
+/* Fila remitente + fecha */
+.lbl-from {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 2mm;
+  padding: 2mm 3mm;
+  border-bottom: .4mm solid #000;
+  background: #f3f4f6;
+}
+.lbl-from .from-label {
+  font-size: 2.3mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .25mm;
+  color: var(--ilus-red);
+}
+.lbl-from .from-name {
+  font-size: 3mm;
+  font-weight: 900;
+  line-height: 1.1;
+}
+.lbl-from .from-addr {
+  font-size: 2.5mm;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.15;
+}
+.lbl-from .from-date {
+  text-align: right;
+  white-space: nowrap;
+}
+.lbl-from .from-date .dt-label {
+  font-size: 2.1mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--ilus-gray);
+}
+.lbl-from .from-date .dt-val {
+  font-size: 2.7mm;
+  font-weight: 800;
+}
+
+/* Bloque grande: N° DOCUMENTO + barcode */
+.lbl-doc {
+  border-bottom: .5mm solid #000;
+  padding: 2.2mm 3mm 2.6mm;
+  text-align: center;
+}
+.lbl-doc .doc-title {
+  font-size: 2.5mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .35mm;
+  color: var(--ilus-red);
+}
+.lbl-doc .doc-number {
+  font-size: 9mm;
+  font-weight: 950;
+  line-height: 1.02;
+  letter-spacing: .2mm;
+  color: var(--ilus-black);
+  word-break: break-all;
+}
+.lbl-doc .doc-type {
+  font-size: 2.6mm;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--ilus-gray);
+  margin-top: .3mm;
+}
+.barcode-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1.6mm;
+  min-height: 14mm;
+}
+.barcode {
+  width: 92%;
+  height: 14mm;
+  max-height: 14mm;
+}
+
+/* DESTINATARIO + caja BULTOS */
+.lbl-dest {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  border-bottom: .5mm solid #000;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.dest-info {
+  padding: 2.4mm 3mm;
+  border-right: .4mm solid #000;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1.6mm;
+}
+.dest-info .dest-label {
+  font-size: 2.5mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .3mm;
+  color: var(--ilus-red);
+}
+.dest-row .k {
+  font-size: 2.2mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--ilus-gray);
+  display: block;
+}
+.dest-row .v {
+  font-size: 3.4mm;
+  font-weight: 850;
+  line-height: 1.12;
+  word-break: break-word;
+}
+.dest-row .v.big {
+  font-size: 4mm;
+  font-weight: 950;
+}
+
+/* Caja BULTOS X de N — grande, rojo */
+.bultos-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2mm;
+  background: #fff;
+}
+.bultos-box .b-title {
+  font-size: 3mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .4mm;
+  color: var(--ilus-black);
+}
+.bultos-box .b-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 1mm;
+  margin-top: .5mm;
+}
+.bultos-box .b-x {
+  font-size: 18mm;
+  font-weight: 950;
+  line-height: .9;
+  color: var(--ilus-red);
+}
+.bultos-box .b-de {
+  font-size: 4mm;
+  font-weight: 800;
+  color: var(--ilus-gray);
+}
+.bultos-box .b-n {
+  font-size: 9mm;
+  font-weight: 950;
+  line-height: .9;
+  color: var(--ilus-black);
+}
+
+/* STATUS DE SALIDA (vacío para sello/firma) */
+.lbl-status {
+  border-bottom: .5mm solid #000;
+  padding: 2mm 3mm;
+  min-height: 16mm;
+}
+.lbl-status .st-title {
+  font-size: 2.4mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .35mm;
+  color: var(--ilus-red);
+}
+.lbl-status .st-hint {
+  font-size: 2.1mm;
+  font-weight: 600;
+  color: var(--ilus-gray);
+  font-style: italic;
+}
+
+/* Footer de íconos de cuidado */
+.lbl-foot {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  background: var(--ilus-black);
+  color: var(--ilus-white);
+}
+.foot-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .6mm;
+  padding: 1.8mm 1mm;
+  text-align: center;
+}
+.foot-icon + .foot-icon { border-left: .4mm solid #374151; }
+.foot-icon i { font-size: 6mm; line-height: 1; color: var(--ilus-red); }
+.foot-icon span {
+  font-size: 2.1mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .2mm;
+  line-height: 1.05;
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="tb-title">
+    <i class="bi bi-tags-fill"></i>
+    <span>{{ titulo or 'Etiquetas de transporte' }}</span>
+    {% if total_etiquetas %}<span class="badge">{{ total_etiquetas }} etiqueta{{ 's' if total_etiquetas != 1 else '' }}</span>{% endif %}
+  </div>
+  <div class="tb-actions">
+    <a class="btn btn-back" href="{{ url_for('transporte_index') }}"><i class="bi bi-arrow-left"></i> Volver</a>
+    <button type="button" class="btn btn-print" onclick="window.print()"><i class="bi bi-printer-fill"></i> Imprimir</button>
+  </div>
+</div>
+
+{% if not facturas %}
+  <div class="empty">
+    <i class="bi bi-inbox"></i>
+    <h2 style="margin:.4em 0 .2em">Sin etiquetas para generar</h2>
+    <p>No se encontraron facturas con bultos para imprimir.</p>
+  </div>
+{% else %}
+<div class="sheet">
+  {% for f in facturas %}
+    {% for b in f.bultos %}
+    <article class="etiqueta">
+
+      <header class="lbl-head">
+        <div class="brand">
+          SPORTS HEALTH SOLUTIONS<span class="dot">·</span>I Like you Strong<span class="dot">·</span>ILUS by <span class="red">MOTION</span>
+        </div>
+      </header>
+
+      <div class="lbl-from">
+        <div>
+          <div class="from-label">Remitente</div>
+          <div class="from-name">{{ remitente.nombre }}</div>
+          <div class="from-addr">{{ remitente.direccion }}</div>
+        </div>
+        <div class="from-date">
+          <div class="dt-label">Fecha</div>
+          <div class="dt-val">{{ fecha }}</div>
+        </div>
+      </div>
+
+      <div class="lbl-doc">
+        <div class="doc-title">N&deg; Documento / Orden</div>
+        <div class="doc-number">{{ f.doc_numero or '—' }}</div>
+        {% if f.doc_tipo %}<div class="doc-type">{{ f.doc_tipo }}</div>{% endif %}
+        <div class="barcode-wrap">
+          <svg class="barcode" data-code="{{ f.doc_numero }}"></svg>
+        </div>
+      </div>
+
+      <div class="lbl-dest">
+        <div class="dest-info">
+          <div class="dest-label">Destinatario</div>
+          <div class="dest-row"><span class="k">Cliente</span><span class="v big">{{ f.cliente or '—' }}</span></div>
+          <div class="dest-row"><span class="k">Fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
+          <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v">{{ f.direccion or '—' }}</span></div>
+          <div class="dest-row"><span class="k">Comuna</span><span class="v">{{ f.comuna or '—' }}</span></div>
+        </div>
+        <div class="bultos-box">
+          <div class="b-title">Bultos</div>
+          <div class="b-main">
+            <span class="b-x">{{ b.num }}</span>
+            <span class="b-de">de</span>
+            <span class="b-n">{{ b.total }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="lbl-status">
+        <div class="st-title">Status de salida</div>
+        <div class="st-hint">Sello / firma del transportista</div>
+      </div>
+
+      <footer class="lbl-foot">
+        <div class="foot-icon">
+          <i class="bi bi-cup-hot"></i>
+          <span>Fr&aacute;gil</span>
+        </div>
+        <div class="foot-icon">
+          <i class="bi bi-umbrella"></i>
+          <span>Mantener seco</span>
+        </div>
+        <div class="foot-icon">
+          <i class="bi bi-arrow-up-square"></i>
+          <span>Este lado arriba</span>
+        </div>
+      </footer>
+
+    </article>
+    {% endfor %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  function renderBarcode(barcode) {
+    const code = (barcode.dataset.code || "").trim();
+    if (!code) { return; }
+    const wrap = barcode.closest(".barcode-wrap");
+    const wrapWidth = wrap ? wrap.clientWidth : 280;
+    // Densidad similar a la del módulo de productos (CODE128, sin texto).
+    const lineWidth = Math.max(0.9, Math.min(2.6, wrapWidth / Math.max(code.length * 9.4, 1)));
+    try {
+      JsBarcode(barcode, code, {
+        format: "CODE128",
+        displayValue: true,
+        fontSize: 13,
+        textMargin: 1,
+        lineColor: "#000",
+        background: "#fff",
+        width: lineWidth,
+        height: 46,
+        margin: 0
+      });
+    } catch (e) {
+      // Código inválido: deja el SVG vacío sin romper la página.
+    }
+    barcode.dataset.rendered = "1";
+  }
+  document.querySelectorAll(".barcode").forEach(renderBarcode);
+});
+</script>
+</body>
+</html>

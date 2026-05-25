@@ -17561,6 +17561,163 @@ a{{color:#dc2626;font-weight:700;text-decoration:none}}</style></head>
 </div></body></html>""", 500)
 
 
+# ════════════════════════════════════════════════════════════════════════
+#  ETIQUETAS DE TRANSPORTE (bultos por manifiesto / por factura)
+#  ───────────────────────────────────────────────────────────────────────
+#  Replica la técnica del módulo de etiquetas de Productos (label_standalone.html):
+#    • Código de barras CODE128 vía JsBarcode (CDN) en el front.
+#    • Template standalone imprimible con @page + page-break-after por etiqueta.
+#  Una etiqueta por bulto: n_bultos por factura (mínimo 1), numeradas "X de N".
+#  Remitente FIJO. NO toca el ERP — solo lee tablas MySQL propias (transport_*).
+# ════════════════════════════════════════════════════════════════════════
+
+# Remitente fijo de todas las etiquetas (origen de los despachos).
+ILUS_REMITENTE = {
+    "nombre":    "SPORT AND HEALTH SOLUTIONS",
+    "direccion": "Eduardo Frei Montalva 9770, Bod 30, Quilicura",
+}
+
+
+def _tr_etiqueta_facturas(commitment_ids):
+    """Construye la estructura de etiquetas para una lista de commitment_ids.
+
+    Devuelve una lista de dicts (una por FACTURA), cada uno con sus N bultos
+    expandidos (n_bultos, mínimo 1). Lee SOLO de transport_commitments
+    (tablas propias MySQL). Mantiene el orden de entrada de los ids.
+    """
+    if not commitment_ids:
+        return []
+    _ph  = ",".join(["%s"] * len(commitment_ids))
+    rows = mysql_fetchall(
+        "SELECT id, tido, nudo, cliente_nombre, comuna, direccion, telefono, "
+        "       COALESCE(n_bultos, 1) AS n_bultos "
+        "FROM transport_commitments "
+        f"WHERE id IN ({_ph})",
+        tuple(commitment_ids),
+    ) or []
+    by_id = {r["id"]: r for r in rows}
+
+    facturas = []
+    for cid in commitment_ids:
+        c = by_id.get(cid)
+        if not c:
+            continue
+        total = int(c.get("n_bultos") or 1)
+        if total < 1:
+            total = 1
+        doc = (f"{(c.get('tido') or '').strip()} {(c.get('nudo') or '').strip()}").strip()
+        facturas.append({
+            "commitment_id": cid,
+            "doc_numero":    (c.get("nudo") or "").strip(),
+            "doc_tipo":      (c.get("tido") or "").strip(),
+            "doc_full":      doc,
+            "cliente":       (c.get("cliente_nombre") or "").strip(),
+            "telefono":      (c.get("telefono") or "").strip(),
+            "direccion":     (c.get("direccion") or "").strip(),
+            "comuna":        (c.get("comuna") or "").strip(),
+            "total_bultos":  total,
+            "bultos":        [{"num": n, "total": total} for n in range(1, total + 1)],
+        })
+    return facturas
+
+
+def _tr_upsert_labels(facturas, manifest_id=None, courier=""):
+    """UPSERT de filas en transport_labels (una por bulto) con estado 'generada'.
+
+    Alimenta el tracking aguas abajo. Idempotente por (commitment_id, manifest_id,
+    bulto_num) gracias a la UNIQUE KEY de la tabla. Si la tabla no existe todavía
+    (cold-start raro), no rompe la generación de etiquetas — solo loguea.
+    """
+    if not facturas:
+        return
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            for f in facturas:
+                for b in f["bultos"]:
+                    cur.execute(
+                        "INSERT INTO transport_labels "
+                        "  (commitment_id, manifest_id, bulto_num, bulto_total, courier, estado) "
+                        "VALUES (%s,%s,%s,%s,%s,'generada') "
+                        "ON DUPLICATE KEY UPDATE "
+                        "  bulto_total=VALUES(bulto_total), "
+                        "  courier=VALUES(courier), "
+                        "  updated_at=NOW()",
+                        (f["commitment_id"], manifest_id or 0, b["num"], b["total"], courier or ""),
+                    )
+        conn.commit()
+    except Exception as e_lbl:
+        print(f"[tr_labels] upsert falló (no bloquea impresión): {e_lbl}", flush=True)
+
+
+@app.route("/transporte/manifiestos/<int:mid>/etiquetas")
+@_tr_required
+def tr_manifiesto_etiquetas(mid):
+    """Etiquetas de bultos de TODAS las facturas de un manifiesto."""
+    manifiesto = mysql_fetchone(
+        "SELECT * FROM transport_manifests WHERE id=%s", (mid,)
+    )
+    if not manifiesto:
+        flash("Manifiesto no encontrado", "danger")
+        return redirect(url_for("tr_manifiestos"))
+
+    items = mysql_fetchall(
+        "SELECT commitment_id FROM transport_manifest_items "
+        "WHERE manifest_id=%s ORDER BY orden, id", (mid,)
+    ) or []
+    commitment_ids = [it["commitment_id"] for it in items]
+    facturas = _tr_etiqueta_facturas(commitment_ids)
+
+    courier = manifiesto.get("courier") or ""
+    _tr_upsert_labels(facturas, manifest_id=mid, courier=courier)
+
+    total_etiquetas = sum(f["total_bultos"] for f in facturas)
+    _tr_log("manifest", mid, "etiquetas generadas",
+            f"{len(facturas)} facturas, {total_etiquetas} bultos")
+
+    return render_template(
+        "transporte/etiquetas.html",
+        facturas    = facturas,
+        remitente   = ILUS_REMITENTE,
+        fecha       = _now_chile_str("%d-%m-%Y %H:%M"),
+        titulo      = f"Etiquetas · Manifiesto {manifiesto.get('correlativo') or mid}",
+        courier     = courier,
+        total_etiquetas = total_etiquetas,
+    )
+
+
+@app.route("/transporte/factura/<int:commitment_id>/etiquetas")
+@_tr_required
+def tr_factura_etiquetas(commitment_id):
+    """Etiquetas de bultos de UNA factura (commitment)."""
+    facturas = _tr_etiqueta_facturas([commitment_id])
+    if not facturas:
+        flash("Factura no encontrada", "danger")
+        return redirect(url_for("transporte_index"))
+
+    # Si la factura está asociada a un manifiesto, lo guardamos para el tracking.
+    mrow = mysql_fetchone(
+        "SELECT manifest_id FROM transport_manifest_items "
+        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1", (commitment_id,)
+    )
+    manifest_id = mrow["manifest_id"] if mrow else None
+    _tr_upsert_labels(facturas, manifest_id=manifest_id, courier="")
+
+    total_etiquetas = sum(f["total_bultos"] for f in facturas)
+    _tr_log("commitment", commitment_id, "etiquetas generadas",
+            f"{total_etiquetas} bultos")
+
+    return render_template(
+        "transporte/etiquetas.html",
+        facturas    = facturas,
+        remitente   = ILUS_REMITENTE,
+        fecha       = _now_chile_str("%d-%m-%Y %H:%M"),
+        titulo      = f"Etiquetas · {facturas[0]['doc_full'] or commitment_id}",
+        courier     = "",
+        total_etiquetas = total_etiquetas,
+    )
+
+
 @app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
 @_tr_required
 def tr_agregar_item(mid):
@@ -48981,6 +49138,32 @@ def _ensure_transporte_columns():
     return faltantes
 
 
+def _ensure_transporte_labels_table():
+    """Garantiza la tabla transport_labels AUNQUE ILUS_SKIP_MIGRATIONS esté activo.
+
+    Es la base de trazabilidad de las etiquetas de bultos (módulo de etiquetas
+    de transporte). Una fila por bulto. CREATE TABLE IF NOT EXISTS es idempotente
+    y barato — no hace nada si la tabla ya existe. Requiere app context
+    (mysql_execute usa get_db())."""
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_labels (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            commitment_id INT NOT NULL,
+            manifest_id   INT NULL,
+            bulto_num     INT NOT NULL,
+            bulto_total   INT NOT NULL,
+            courier       VARCHAR(80),
+            estado        VARCHAR(40)  DEFAULT 'generada',
+            tracking_code VARCHAR(60)  NULL,
+            created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+            updated_at    DATETIME     NULL,
+            UNIQUE KEY uq_label (commitment_id, manifest_id, bulto_num),
+            INDEX idx_lbl_commitment (commitment_id),
+            INDEX idx_lbl_manifest   (manifest_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -49025,6 +49208,15 @@ try:
               flush=True)
 except Exception as _ensure_err:
     print(f"[ILUS][WARN] _ensure_transporte_columns: {_ensure_err}", flush=True)
+
+# CRÍTICO: garantizar la tabla transport_labels SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1 (es la base de trazabilidad de las etiquetas de bultos).
+# CREATE TABLE IF NOT EXISTS es idempotente; no toca nada si ya existe.
+try:
+    with app.app_context():
+        _ensure_transporte_labels_table()
+except Exception as _lbl_err:
+    print(f"[ILUS][WARN] _ensure_transporte_labels_table: {_lbl_err}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #
