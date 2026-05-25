@@ -14514,158 +14514,32 @@ def api_asignar_cotizar_couriers():
                       "comuna_db": None},
         }
 
-    # 2) Función worker que cotiza UN courier
-    # FedEx hace I/O (API HTTP) → necesita su propio app_context para el token cache.
-    # Otros couriers leen del tarifa_map pre-cargado → puro CPU, no necesitan MySQL.
+    # 2) Función worker que cotiza UN courier — TODO con tabla del macro.
+    #    FedEx usa la tabla "FedEx Directo" (Daniel: sin API por ahora).
+    #    Solo se muestran: FedEx, Felca, Milling, Clickex (Envíame vendrá pronto).
     def _cotizar_uno(c):
-        cid       = c['id']
-        nombre    = c['nombre'] or ''
-        is_fedex  = (nombre.strip().lower() == 'fedex')
-        logo      = c.get('logo_url') or c.get('logo_square_url')
-        slug      = _ttar.slug_para_courier(nombre)
+        cid      = c['id']
+        nombre   = c['nombre'] or ''
+        is_fedex = ('fedex' in _ttar._strip(nombre).lower())
+        logo     = c.get('logo_url') or c.get('logo_square_url')
+        slug     = 'fedex_directo' if is_fedex else _ttar.slug_para_courier(nombre)
 
-        # ── Couriers con tabla del macro (Felca, Milling, Clickex): modelo nuevo ──
-        if not is_fedex and slug in ('felca', 'milling', 'clickex'):
-            r = _ttar.cotizar(slug, comuna, peso_fact, valor_neto)
-            return _macro_cotizacion_dict(cid, nombre, logo, slug, r) if r \
-                else _no_cobertura_dict(cid, nombre, logo)
-
-        # ── Resto (Starken, Blue, Envíame, etc.): por ahora NO se muestran.
-        #    Daniel: solo fedex / felca / milling / clickex (Envíame vendrá pronto).
-        if not is_fedex:
-            return None
+        if slug not in ('felca', 'milling', 'clickex', 'fedex_directo'):
+            return None  # Starken / Blue / Envíame / etc.: ocultos por ahora
 
         try:
-            if is_fedex:
-                postal = _comuna_to_postal(comuna)
-                if not postal:
-                    # Sin postal → intentar fallback a tabla si existe
-                    pass
-                else:
-                    try:
-                        with _flask_app.app_context():
-                            result = _fedex_calc_rate(peso_fact, postal, es_residencial=es_resid)
-                    except Exception as _ex_fedex:
-                        # API caída o timeout → fallback a tabla
-                        print(f"[cotizar fedex API] fallback: {_ex_fedex}", flush=True)
-                        result = {"error": "api_down"}
-
-                    if isinstance(result, dict) and not result.get("error"):
-                        costo_base = float(result.get("tarifa", 0))
-                        recargo_resid = 4200 if es_resid else 0
-                        costo_total = costo_base + recargo_resid
-                        # ── Aplicar margen + IVA (criterio Daniel 22/05/2026) ──
-                        desglose = _courier_aplicar_margen_iva(costo_total)
-                        precio_final = desglose["precio_venta"]
-                        # Trace para FedEx vía API
-                        trace_api = {
-                            "bracket": "API",
-                            "bracket_upper": None,
-                            "formula": f"FedEx API: costo=${int(costo_base)}"
-                                       + (f" + recargo residencial $4.200" if es_resid else "")
-                                       + f" + margen {desglose['margen_pct']:.0f}% (${int(desglose['margen_clp'])})"
-                                       + f" + IVA {desglose['iva_pct']:.0f}% (${int(desglose['iva_clp'])})"
-                                       + f" = venta ${int(precio_final)}",
-                            "fuente": "api",
-                            "validado": False,
-                            "advertencias": [],
-                            "json_brackets_disponibles": [],
-                            "peso_usado": peso_fact,
-                            "comuna_db": comuna,
-                            "desglose": desglose,
-                        }
-                        return {
-                            "courier_id": cid, "courier_nombre": nombre,
-                            "logo_url": logo,
-                            "tiene_cobertura": True,
-                            "fuente": "api",
-                            "precio":          round(precio_final, 0),    # PRECIO VENTA (con margen+IVA)
-                            "precio_costo":    desglose["precio_costo"],   # COSTO original
-                            "moneda":          result.get("moneda", "CLP"),
-                            "tiempo_transito": result.get("tiempo_transito", "24h"),
-                            "servicio":        result.get("servicio", "FedEx Standard"),
-                            "subtotal":        round(precio_final, 0),
-                            "desglose":        desglose,                   # detalle margen+IVA
-                            "recargos":        result.get("recargos", []),
-                            "mensaje":         None,
-                            "trace":           trace_api,
-                        }
-
-            # Tabla — usa el map pre-cargado, sin hit a MySQL
-            row_meta = tarifa_map.get(cid)
-            if not row_meta:
-                return {
-                    "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
-                    "tiene_cobertura": False, "fuente": "no_cobertura",
-                    "mensaje": f"Sin cobertura para {comuna}",
-                    "trace": {
-                        "bracket": None, "bracket_upper": None,
-                        "formula": f"Sin row en transport_courier_comunas para {comuna}",
-                        "fuente": "no_cobertura", "validado": False,
-                        "advertencias": [f"Sin cobertura para {comuna}"],
-                        "json_brackets_disponibles": [],
-                        "peso_usado": peso_fact, "comuna_db": None,
-                    },
-                }
-            tr = _resolve_precio_con_trace(row_meta.get('precios_json'), peso_fact)
-            if tr is None or tr.get('precio') is None:
-                return {
-                    "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
-                    "tiene_cobertura": False, "fuente": "no_cobertura",
-                    "mensaje": f"Sin cobertura para {comuna} con peso {peso_fact:.1f}kg",
-                    "trace": tr or {
-                        "bracket": None, "bracket_upper": None,
-                        "formula": "precios_json sin brackets válidos",
-                        "fuente": "no_cobertura", "validado": False,
-                        "advertencias": ["No hay brackets válidos en JSON"],
-                        "json_brackets_disponibles": [],
-                        "peso_usado": peso_fact, "comuna_db": comuna,
-                    },
-                }
-            fuente_final = "tabla_fallback" if is_fedex else "tabla"
-            costo_tabla = float(tr['precio'])
-            # ── Aplicar margen + IVA al costo del Excel (criterio Daniel 22/05/2026) ──
-            desglose = _courier_aplicar_margen_iva(costo_tabla)
-            precio_venta = desglose["precio_venta"]
-            # Extender fórmula del trace con margen + IVA
-            formula_completa = (
-                f"{tr['formula']} → costo ${int(costo_tabla):,} "
-                f"+ margen {desglose['margen_pct']:.0f}% (${int(desglose['margen_clp']):,}) "
-                f"+ IVA {desglose['iva_pct']:.0f}% (${int(desglose['iva_clp']):,}) "
-                f"= venta ${int(precio_venta):,}"
-            ).replace(',', '.')
-            return {
-                "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
-                "tiene_cobertura": True,
-                "fuente": fuente_final,
-                "precio":          round(precio_venta, 0),    # PRECIO VENTA (con margen+IVA)
-                "precio_costo":    desglose["precio_costo"],  # COSTO del Excel
-                "moneda":          "CLP",
-                "tiempo_transito": row_meta.get('dias_transito') or '2-3 días',
-                "servicio":        'Standard',
-                "subtotal":        round(precio_venta, 0),
-                "desglose":        desglose,                  # margen+IVA detallado
-                "mensaje":         None,
-                "trace": {
-                    "bracket":           tr['bracket_aplicado'],
-                    "bracket_upper":     tr['bracket_upper'],
-                    "formula":           formula_completa,
-                    "fuente":            fuente_final,
-                    "validado":          False,  # se resuelve abajo con check audit
-                    "advertencias":      tr['advertencias'],
-                    "json_brackets_disponibles": tr['json_brackets_disponibles'],
-                    "peso_usado":        peso_fact,
-                    "comuna_db":         comuna,
-                    "desglose":          desglose,
-                },
-            }
+            r = _ttar.cotizar(slug, comuna, peso_fact, valor_neto)
+            d = _macro_cotizacion_dict(cid, nombre, logo, slug, r) if r \
+                else _no_cobertura_dict(cid, nombre, logo)
         except Exception as ex_each:
             print(f"[cotizar courier {nombre}] error: {ex_each}", flush=True)
-            return {
+            d = {
                 "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
                 "tiene_cobertura": False, "fuente": "error",
                 "mensaje": "Error al cotizar",
             }
+        d["_slug"] = slug
+        return d
 
     # 3) Ejecutar TODAS las cotizaciones en paralelo
     cotizaciones = []
@@ -14699,21 +14573,23 @@ def api_asignar_cotizar_couriers():
                         "mensaje": "Tiempo de cotización excedido",
                     })
 
-    # Filtrar couriers excluidos (None) y agregar FedEx Directo (tabla) junto a la API.
-    # Daniel quiere ver AMBAS para FedEx (API en vivo + tabla del macro).
+    # Filtrar couriers excluidos (None) y DEDUPLICAR por servicio (_slug): si hay
+    # dos couriers en la BD que mapean al mismo servicio (ej. "Milling" y "Melling"),
+    # se conserva solo uno — preferimos el que tenga cobertura/logo.
     cotizaciones = [c for c in cotizaciones if c]
-    try:
-        fedex_c = next((cc for cc in couriers
-                        if (cc.get('nombre') or '').strip().lower() == 'fedex'), None)
-        if fedex_c:
-            rt = _ttar.cotizar('fedex_directo', comuna, peso_fact, valor_neto)
-            if rt:
-                cotizaciones.append(_macro_cotizacion_dict(
-                    fedex_c['id'], 'FedEx Directo (tabla)',
-                    fedex_c.get('logo_url') or fedex_c.get('logo_square_url'),
-                    'fedex_directo', rt))
-    except Exception as _ex_fxd:
-        print(f"[cotizar] fedex tabla error: {_ex_fxd}", flush=True)
+    _por_slug = {}
+    for c in cotizaciones:
+        sl = c.get("_slug") or c.get("courier_nombre")
+        prev = _por_slug.get(sl)
+        if prev is None:
+            _por_slug[sl] = c
+        else:
+            # preferir el que tiene cobertura; si empatan, el que tiene logo
+            mejor = c if (c.get("tiene_cobertura") and not prev.get("tiene_cobertura")) else prev
+            if mejor is prev and not prev.get("logo_url") and c.get("logo_url"):
+                mejor = c
+            _por_slug[sl] = mejor
+    cotizaciones = list(_por_slug.values())
 
     # 4) Ordenar (con cobertura primero, sin cobertura al final) y elegir recomendado
     con_cobertura = [c for c in cotizaciones if c.get('tiene_cobertura')]
@@ -14892,6 +14768,7 @@ def _tr_fetch_from_erp(tido, nudo):
         erp_tido = tido
 
     raw_header, raw_lineas = None, []
+    _last_err = None
     for nv in nudos:
         try:
             body = _erp_get("/documentos/render",
@@ -14903,9 +14780,12 @@ def _tr_fetch_from_erp(tido, nudo):
                 raw_lineas = data[0].get("maeddo") or []
                 break
         except Exception as e:
-            raise ConnectionError(f"ERP no responde: {e}")
+            _last_err = e
+            continue
 
     if not raw_header:
+        if _last_err is not None:
+            return None, f"ERP no responde: {_last_err}"
         return None, "No encontrado en ERP"
 
     # Filtrar sólo líneas ZZ
@@ -18017,9 +17897,15 @@ def tr_cubicador_enviar_manifiesto():
         return jsonify({"error": "Selecciona un courier antes de enviar"}), 400
 
     # 1) Upsert commitment desde ERP (helper existente, ya probado)
-    comm_id, err = _tr_fetch_from_erp(tido, nudo)
+    try:
+        comm_id, err = _tr_fetch_from_erp(tido, nudo)
+    except Exception as e_erp:
+        print(f"[cub_enviar_manif] _tr_fetch_from_erp reventó: {e_erp}", flush=True)
+        return jsonify({"error": f"No se pudo leer el documento del ERP: {e_erp}"}), 502
     if err:
         return jsonify({"error": f"ERP: {err}"}), 404
+    if not comm_id:
+        return jsonify({"error": "No se pudo registrar el documento en el sistema."}), 500
 
     # 2) Persistir costo cotizado (no es fatal si falla)
     try:
