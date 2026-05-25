@@ -1715,6 +1715,17 @@ def init_transporte_tables():
             ]:
                 try: cur.execute(_idx)
                 except Exception: pass
+            # Migración 2026-05-25: agregar cant_despachada si la tabla
+            # fue creada antes de que se añadiera esta columna al CREATE TABLE.
+            # La columna es leída por tr_manifiesto_detalle →
+            # SELECT cant_despachada FROM transport_commitment_lines.
+            try:
+                cur.execute(
+                    "ALTER TABLE transport_commitment_lines "
+                    "ADD COLUMN cant_despachada DECIMAL(12,3) DEFAULT 0"
+                )
+            except Exception:
+                pass  # columna ya existe → ignorar
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transport_manifests (
                     id              INT AUTO_INCREMENT PRIMARY KEY,

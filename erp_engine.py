@@ -919,19 +919,86 @@ class ERPClient:
     def _pick(d: dict, keys: Iterable[str]) -> str:
         """Devuelve el primer valor no-vacío entre las keys dadas.
 
-        Búsqueda 100% case-insensitive: construye un índice de las keys del
-        dict en lowercase y compara cada key buscada contra ese índice.
-        Esto evita fallar si el ERP devuelve "obdo", "Obdo" u "OBDO".
+        Búsqueda case-insensitive Y con strip automático de prefijos de tabla.
+        Random ERP devuelve campos con prefijo según la tabla de origen:
+          E_CAMPO  → MAEEDO (header/encabezado)
+          OB_CAMPO → MAEEDOOB (observaciones del documento)
+          D_CAMPO  → MAEDDO (detalle/líneas)
+          L_/LI_   → variantes de líneas en algunas versiones del ERP
+          H_/C_/M_ → variantes de header según versión
+
+        Esto permite encontrar "ENDO" aunque la API devuelva "E_ENDO",
+        y "OBDO" aunque devuelva "OB_OBDO". Transparente para el caller.
         """
         if not d:
             return ""
-        # Construir índice {lowercase: valor_real} para acceso CI
-        lower_index = {str(k).lower(): v for k, v in d.items()}
+        # Índice primario: lowercase exacto
+        lower_index: dict[str, Any] = {str(k).lower(): v for k, v in d.items()}
+        # Índice secundario: keys sin prefijo de tabla (para APIs que los agregan)
+        _PREFIXES = ("e_", "ob_", "d_", "l_", "li_", "h_", "c_", "m_")
+        stripped_index: dict[str, Any] = {}
+        for lk, v in lower_index.items():
+            for pfx in _PREFIXES:
+                if lk.startswith(pfx):
+                    bare = lk[len(pfx):]
+                    if bare and bare not in stripped_index:
+                        stripped_index[bare] = v
+                    break
         for k in keys:
-            v = lower_index.get(str(k).lower())
+            lk = str(k).lower()
+            v = lower_index.get(lk)
+            if v is None:
+                v = stripped_index.get(lk)
             if v is not None and str(v).strip():
                 return str(v).strip()
         return ""
+
+    @staticmethod
+    def _parse_obdo_contact(obdo: str) -> dict:
+        """Extrae teléfono, email y dirección de un texto OBDO libre.
+
+        Random ERP para boletas (BLV) y docs B2C guarda los datos del cliente
+        como texto concatenado en el campo OBDO, ej:
+          "Teniente Montt 1980 Ñuñoa - 976787263 - Elitamonec@gmail.com"
+
+        Devuelve dict {"telefono": str, "email": str, "direccion": str}.
+        Valores vacíos si no se puede extraer.
+        """
+        result: dict = {"telefono": "", "email": "", "direccion": ""}
+        if not obdo or len(str(obdo).strip()) < 4:
+            return result
+
+        text = str(obdo).strip()
+
+        # Email: patrón estándar
+        email_m = re.search(r'[\w.+%-]+@[\w.-]+\.[a-zA-Z]{2,}', text)
+        if email_m:
+            result["email"] = email_m.group(0).lower()
+
+        # Teléfono chileno: +569XXXXXXXX, 9XXXXXXXX, 56XXXXXXXXX
+        phone_m = re.search(
+            r'(?:\+?56\s?)?[92]\d{7,8}',
+            re.sub(r'[\s\-\.\(\)]', '', text)
+        )
+        if phone_m:
+            result["telefono"] = normalize_phone_cl(phone_m.group(0))
+
+        # Dirección: partes del texto que no son email ni teléfono
+        parts = [p.strip() for p in re.split(r'\s*[-–|]\s*', text) if p.strip()]
+        dir_parts = []
+        for part in parts:
+            if email_m and email_m.group(0).lower() in part.lower():
+                continue
+            digits_only = re.sub(r'[\s\+]', '', part)
+            if digits_only.isdigit() and len(digits_only) >= 7:
+                continue
+            if re.match(r'^[\+\d\s\(\)-]{7,16}$', part):
+                continue
+            dir_parts.append(part)
+        if dir_parts:
+            result["direccion"] = ", ".join(dir_parts)
+
+        return result
 
     @classmethod
     def _scan_lines(cls, lines: list[dict]) -> dict:
@@ -1420,6 +1487,30 @@ class ERPClient:
             "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
             "diagnostics":      diag,
         }
+
+        # ── Fallback OBDO: extraer teléfono/email/dirección del texto libre ──
+        # Para BLV y docs B2C, Random guarda el contacto en el campo OBDO como
+        # texto libre: "Calle 123 Ñuñoa - 976787263 - correo@gmail.com".
+        # Actualizamos el doc ya armado si faltan datos de contacto.
+        if cliente_obs and (not doc["telefono"] or not doc["email"] or not doc["direccion"]):
+            _obdo = ERPClient._parse_obdo_contact(cliente_obs)
+            changed = False
+            if not doc["telefono"] and _obdo["telefono"]:
+                doc["telefono"] = _obdo["telefono"]
+                changed = True
+                diag["fallback_chain"].append("tel extraído del OBDO")
+            if not doc["email"] and _obdo["email"]:
+                doc["email"] = _obdo["email"]
+                changed = True
+                diag["fallback_chain"].append("email extraído del OBDO")
+            if not doc["direccion"] and _obdo["direccion"]:
+                doc["direccion"] = _obdo["direccion"]
+                changed = True
+                diag["fallback_chain"].append("dir extraída del OBDO")
+            if changed:
+                doc["datos_completos"] = bool(
+                    doc["cliente_nombre"] and (doc["email"] or doc["telefono"])
+                )
 
         self._doc_store(cache_key, doc)
         self.log.info(
