@@ -17469,39 +17469,59 @@ def tr_crear_manifiesto():
 @app.route("/transporte/manifiestos/<int:mid>")
 @_tr_required
 def tr_manifiesto_detalle(mid):
-    manifiesto = mysql_fetchone(
-        "SELECT * FROM transport_manifests WHERE id=%s", (mid,)
-    )
-    if not manifiesto:
-        flash("Manifiesto no encontrado", "danger")
-        return redirect(url_for("tr_manifiestos"))
+    try:
+        manifiesto = mysql_fetchone(
+            "SELECT * FROM transport_manifests WHERE id=%s", (mid,)
+        )
+        if not manifiesto:
+            flash("Manifiesto no encontrado", "danger")
+            return redirect(url_for("tr_manifiestos"))
 
-    items = mysql_fetchall("""
-        SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
-               c.direccion, c.telefono, c.email, c.region, c.cod_postal,
-               c.tiene_saldo, COALESCE(c.cobertura_pct, 0) AS cobertura_pct,
-               COALESCE(c.peso_export, 0) AS peso_export,
-               COALESCE(c.n_bultos, 1) AS n_bultos,
-               c.valor_bruto, c.costo_zz, c.clasificacion
-        FROM transport_manifest_items mi
-        JOIN transport_commitments c ON c.id = mi.commitment_id
-        WHERE mi.manifest_id=%s
-        ORDER BY mi.orden, mi.id
-    """, (mid,))
+        items = mysql_fetchall("""
+            SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
+                   c.direccion, c.telefono, c.email, c.region, c.cod_postal,
+                   c.tiene_saldo, COALESCE(c.cobertura_pct, 0) AS cobertura_pct,
+                   COALESCE(c.peso_export, 0) AS peso_export,
+                   COALESCE(c.n_bultos, 1) AS n_bultos,
+                   c.valor_bruto, c.costo_zz, c.clasificacion
+            FROM transport_manifest_items mi
+            JOIN transport_commitments c ON c.id = mi.commitment_id
+            WHERE mi.manifest_id=%s
+            ORDER BY mi.orden, mi.id
+        """, (mid,))
 
-    logs = mysql_fetchall(
-        "SELECT * FROM transport_logs WHERE entity_type='manifest' AND entity_id=%s "
-        "ORDER BY created_at DESC LIMIT 30", (mid,)
-    )
-    return render_template(
-        "transporte/manifiesto_detalle.html",
-        manifiesto=manifiesto,
-        items=items,
-        logs=logs,
-        estados_entrega=ESTADOS_ENTREGA,
-        estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
-        couriers=COURIERS,
-    )
+        logs = mysql_fetchall(
+            "SELECT * FROM transport_logs WHERE entity_type='manifest' AND entity_id=%s "
+            "ORDER BY created_at DESC LIMIT 30", (mid,)
+        )
+        return render_template(
+            "transporte/manifiesto_detalle.html",
+            manifiesto=manifiesto,
+            items=items,
+            logs=logs,
+            estados_entrega=ESTADOS_ENTREGA,
+            estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
+            couriers=COURIERS,
+        )
+    except Exception as e:
+        import traceback, html as _htmlmod
+        tb = traceback.format_exc()
+        print(f"[manifiesto_detalle {mid}] ERROR:\n{tb}", flush=True)
+        # Página de error amigable (no extiende base.html para evitar fallos en cascada)
+        msg = _htmlmod.escape(f"{type(e).__name__}: {e}")
+        return (f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Error al cargar manifiesto</title>
+<style>body{{font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#fafafa;color:#0f172a;padding:32px;max-width:760px;margin:0 auto}}
+.card{{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,.05)}}
+h1{{color:#dc2626;font-size:1.2rem}} code{{background:#fee2e2;color:#991b1b;padding:8px 10px;border-radius:8px;display:block;white-space:pre-wrap;font-size:.82rem;margin-top:10px}}
+a{{color:#dc2626;font-weight:700;text-decoration:none}}</style></head>
+<body><div class="card">
+<h1>⚠️ No se pudo cargar el manifiesto #{mid}</h1>
+<p>El manifiesto se guardó, pero hubo un error al mostrar el detalle. Manda esta captura a soporte:</p>
+<code>{msg}</code>
+<p style="margin-top:16px"><a href="/transporte/manifiestos">← Volver a manifiestos</a></p>
+</div></body></html>""", 500)
 
 
 @app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
