@@ -2609,17 +2609,35 @@ async function enviarAManifiesto(){
   const costo      = _courierSel?.precio || 0;
 
   const _t = _docData?.totales || {};
+  const _h = _docData?.header   || {};
+  const _gv = id => (document.getElementById(id)?.value || '').trim();
+  // Productos declarados (lo que se ve en el cubicaje) → árbol del manifiesto
+  const _productos = (_docData?.lineas || []).map(l => ({
+    sku:      l.sku || '',
+    nombre:   l.descripcion_erp || l.nombre_app || '',
+    cantidad: l.cantidad || 0,
+    saldo:    (l.saldo === undefined ? null : l.saldo),
+  }));
   const payload = {
     tido, nudo,
     courier: courierNom,
     costo_cotizado: costo,
-    notas_entrega: (document.getElementById('cli-notas')?.value || '').trim(),
+    notas_entrega: _gv('cli-notas'),
     // Cubicaje declarado → se persiste en el commitment (no se pierde aguas abajo)
     peso_real:         _t.peso_kg   || 0,
     peso_vol:          _t.peso_pv   || 0,
     volumen_m3:        (_t.vol_cm3 || 0) / 1000000,
     peso_predominante: _t.peso_pred || 0,
-    n_bultos:          parseInt(document.getElementById('cli-bultos')?.value || _t.total_bultos || 0, 10) || null,
+    n_bultos:          parseInt(_gv('cli-bultos') || _t.total_bultos || 0, 10) || null,
+    // Header completo (lo que el operador VE/EDITA) → factura llega completa
+    cliente_nombre: _h.cliente_nombre || '',
+    cliente_rut:    _h.cliente_rut || '',
+    email:          _gv('cli-email') || _h.email || '',
+    telefono:       _gv('cli-tel')   || _h.telefono || '',
+    direccion:      _gv('cli-dir')   || _h.direccion || '',
+    comuna:         _gv('cli-comuna') || _h.comuna || '',
+    valor_neto:     _h.valor_neto || 0,
+    productos:      _productos,
   };
 
   if (modo === 'existente') {

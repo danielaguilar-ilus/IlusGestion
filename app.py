@@ -17503,7 +17503,8 @@ def tr_manifiesto_detalle(mid):
                        COALESCE(c.peso_real, 0)         AS peso_real,
                        COALESCE(c.peso_vol, 0)          AS peso_vol,
                        COALESCE(c.volumen_m3, 0)        AS volumen_m3,
-                       COALESCE(c.peso_predominante, 0) AS peso_predominante
+                       COALESCE(c.peso_predominante, 0) AS peso_predominante,
+                       c.productos_json
                 FROM transport_manifest_items mi
                 JOIN transport_commitments c ON c.id = mi.commitment_id
                 WHERE mi.manifest_id=%s
@@ -17556,7 +17557,16 @@ def tr_manifiesto_detalle(mid):
             it["margen_pct"] = round((cobrado - costo) / cobrado * 100, 1) if cobrado > 0 else None
             it["sin_precio"] = (cobrado <= 0)
             it["es_perdida"] = (cobrado > 0 and costo > cobrado)
-            it["productos"]  = prod_por_comm.get(it["commitment_id"], [])
+            # Productos: preferir los declarados desde el cubicador (productos_json,
+            # productos REALES); si no hay, caer a commitment_lines (líneas ZZ).
+            _prods = []
+            if it.get("productos_json"):
+                try:
+                    import json as _jp
+                    _prods = _jp.loads(it["productos_json"]) or []
+                except Exception:
+                    _prods = []
+            it["productos"] = _prods if _prods else prod_por_comm.get(it["commitment_id"], [])
 
         logs = mysql_fetchall(
             "SELECT * FROM transport_logs WHERE entity_type='manifest' AND entity_id=%s "
@@ -18206,6 +18216,58 @@ def tr_cubicador_enviar_manifiesto():
             )
     except Exception as e_cub:
         print(f"[cub_enviar_manif] no se pudo guardar cubicaje: {e_cub}", flush=True)
+
+    # 2e) Persistir DATOS DEL HEADER del frontend (lo que el operador VE/EDITA en
+    #     el cubicador). Garantiza que la factura llegue COMPLETA al manifiesto
+    #     sin depender de qué vía (REST/SQL) repobló el commitment, y conserva
+    #     las ediciones del operador. Solo campos no vacíos (no pisa con vacío).
+    try:
+        _hdr_map = {
+            "cliente_nombre": (data.get("cliente_nombre") or "").strip()[:200],
+            "cliente_rut":    (data.get("cliente_rut") or "").strip()[:20],
+            "email":          (data.get("email") or "").strip()[:150],
+            "telefono":       (data.get("telefono") or "").strip()[:50],
+            "direccion":      (data.get("direccion") or "").strip()[:300],
+            "comuna":         (data.get("comuna") or "").strip()[:100],
+        }
+        _hs, _hv = [], []
+        for col, val in _hdr_map.items():
+            if val:
+                _hs.append(f"{col}=%s"); _hv.append(val)
+        _vn = data.get("valor_neto")
+        if _vn not in (None, "") and float(_vn) > 0:
+            _hs.append("valor_neto=%s"); _hv.append(float(_vn))
+        if _hs:
+            _hv.append(comm_id)
+            mysql_execute(
+                f"UPDATE transport_commitments SET {', '.join(_hs)} WHERE id=%s",
+                tuple(_hv)
+            )
+    except Exception as e_hdr:
+        print(f"[cub_enviar_manif] no se pudo guardar header: {e_hdr}", flush=True)
+
+    # 2f) Productos declarados (árbol manifiesto → factura → productos). Se guardan
+    #     como JSON aparte de transport_commitment_lines (que alimenta el saldo).
+    try:
+        _prods = data.get("productos")
+        if isinstance(_prods, list) and _prods:
+            import json as _json_mod
+            _clean = []
+            for p in _prods[:200]:
+                if not isinstance(p, dict):
+                    continue
+                _clean.append({
+                    "koprct":   str(p.get("sku") or p.get("koprct") or "")[:40],
+                    "nokopr":   str(p.get("nombre") or p.get("descripcion_erp") or p.get("nokopr") or "")[:300],
+                    "cantidad": p.get("cantidad") or 0,
+                    "saldo":    p.get("saldo"),
+                })
+            mysql_execute(
+                "UPDATE transport_commitments SET productos_json=%s WHERE id=%s",
+                (_json_mod.dumps(_clean, ensure_ascii=False), comm_id)
+            )
+    except Exception as e_prod:
+        print(f"[cub_enviar_manif] no se pudo guardar productos: {e_prod}", flush=True)
 
     # 2b) Persistir notas de entrega (visible para el courier; alimenta la
     #     columna "Notas" del export SimplyRoute). No es fatal si falla.
@@ -49181,6 +49243,7 @@ def _ensure_transporte_columns():
         "peso_vol":           "DECIMAL(12,3) DEFAULT 0",  # kg volumétricos totales
         "volumen_m3":         "DECIMAL(12,4) DEFAULT 0",  # volumen total en m³
         "peso_predominante":  "DECIMAL(12,3) DEFAULT 0",  # max(real,vol) por línea, sumado
+        "productos_json":     "MEDIUMTEXT NULL",           # productos declarados del doc (árbol manifiesto)
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()
