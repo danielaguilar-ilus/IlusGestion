@@ -307,6 +307,14 @@
                 <i class="bi bi-box me-1"></i>Productos de la factura
                 <span class="mfd-prod-count">{{ nprod }} línea{{ 's' if nprod != 1 }}</span>
               </div>
+              {# Cubicaje declarado (peso real / vol / volumen / predominante) #}
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px;font-size:.74rem">
+                <span class="mfd-bultos-chip" title="Peso real total">⚖️ {{ "%.1f"|format(item.peso_real or 0) }} kg real</span>
+                <span class="mfd-bultos-chip" title="Peso volumétrico total">📦 {{ "%.1f"|format(item.peso_vol or 0) }} kg vol</span>
+                <span class="mfd-bultos-chip" title="Volumen total">🧊 {{ "%.3f"|format(item.volumen_m3 or 0) }} m³</span>
+                <span class="mfd-bultos-chip" style="background:var(--ilus-red);color:#fff" title="Peso predominante (mayor entre real y vol)">★ {{ "%.1f"|format(item.peso_predominante or 0) }} kg pred</span>
+                <span class="mfd-bultos-chip" title="Bultos">🧱 {{ item.n_bultos or 1 }} bultos</span>
+              </div>
               {% if nprod %}
               <table class="mfd-prod-table">
                 <thead>

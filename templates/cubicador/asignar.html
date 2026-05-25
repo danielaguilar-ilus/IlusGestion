@@ -2608,11 +2608,18 @@ async function enviarAManifiesto(){
   const courierNom = _courierSel?.nombre || '';
   const costo      = _courierSel?.precio || 0;
 
+  const _t = _docData?.totales || {};
   const payload = {
     tido, nudo,
     courier: courierNom,
     costo_cotizado: costo,
     notas_entrega: (document.getElementById('cli-notas')?.value || '').trim(),
+    // Cubicaje declarado → se persiste en el commitment (no se pierde aguas abajo)
+    peso_real:         _t.peso_kg   || 0,
+    peso_vol:          _t.peso_pv   || 0,
+    volumen_m3:        (_t.vol_cm3 || 0) / 1000000,
+    peso_predominante: _t.peso_pred || 0,
+    n_bultos:          parseInt(document.getElementById('cli-bultos')?.value || _t.total_bultos || 0, 10) || null,
   };
 
   if (modo === 'existente') {

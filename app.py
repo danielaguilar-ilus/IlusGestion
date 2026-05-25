@@ -17488,22 +17488,53 @@ def tr_manifiesto_detalle(mid):
             flash("Manifiesto no encontrado", "danger")
             return redirect(url_for("tr_manifiestos"))
 
-        items = mysql_fetchall("""
-            SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
-                   c.direccion, c.telefono, c.email, c.region, c.cod_postal,
-                   c.tiene_saldo, COALESCE(c.cobertura_pct, 0) AS cobertura_pct,
-                   COALESCE(c.peso_export, 0) AS peso_export,
-                   COALESCE(c.n_bultos, 1) AS n_bultos,
-                   c.valor_bruto, c.costo_zz, c.clasificacion,
-                   COALESCE(c.zz_envio, 0)      AS zz_envio,
-                   COALESCE(c.costo_courier, 0) AS costo_courier,
-                   c.autorizado_por, c.motivo_envio,
-                   COALESCE(c.es_garantia, 0)   AS es_garantia
-            FROM transport_manifest_items mi
-            JOIN transport_commitments c ON c.id = mi.commitment_id
-            WHERE mi.manifest_id=%s
-            ORDER BY mi.orden, mi.id
-        """, (mid,))
+        def _fetch_items():
+            return mysql_fetchall("""
+                SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
+                       c.direccion, c.telefono, c.email, c.region, c.cod_postal,
+                       c.tiene_saldo, COALESCE(c.cobertura_pct, 0) AS cobertura_pct,
+                       COALESCE(c.peso_export, 0) AS peso_export,
+                       COALESCE(c.n_bultos, 1) AS n_bultos,
+                       c.valor_bruto, c.costo_zz, c.clasificacion,
+                       COALESCE(c.zz_envio, 0)          AS zz_envio,
+                       COALESCE(c.costo_courier, 0)     AS costo_courier,
+                       c.autorizado_por, c.motivo_envio,
+                       COALESCE(c.es_garantia, 0)       AS es_garantia,
+                       COALESCE(c.peso_real, 0)         AS peso_real,
+                       COALESCE(c.peso_vol, 0)          AS peso_vol,
+                       COALESCE(c.volumen_m3, 0)        AS volumen_m3,
+                       COALESCE(c.peso_predominante, 0) AS peso_predominante
+                FROM transport_manifest_items mi
+                JOIN transport_commitments c ON c.id = mi.commitment_id
+                WHERE mi.manifest_id=%s
+                ORDER BY mi.orden, mi.id
+            """, (mid,))
+
+        items = _fetch_items()
+
+        # ── AUTO-SANE: items viejos sin datos financieros completos ──
+        # costo_courier viejo se guardaba en costo_zz; zz_envio (lo cobrado) se
+        # recupera del ERP por la vía SQL estable. Una sola vez por item.
+        _healed = False
+        for it in items:
+            cid = it["commitment_id"]
+            if (not it.get("costo_courier")) and float(it.get("costo_zz") or 0) > 0:
+                try:
+                    mysql_execute(
+                        "UPDATE transport_commitments SET costo_courier=%s "
+                        "WHERE id=%s AND COALESCE(costo_courier,0)=0",
+                        (float(it["costo_zz"]), cid))
+                    _healed = True
+                except Exception as e_h1:
+                    print(f"[manif heal costo] {e_h1}", flush=True)
+            if (not it.get("zz_envio")) and it.get("tido") and it.get("nudo"):
+                try:
+                    _tr_fetch_from_erp(it["tido"], str(it["nudo"]))  # repuebla zz_envio/peso/vol
+                    _healed = True
+                except Exception as e_h2:
+                    print(f"[manif heal zz_envio] {e_h2}", flush=True)
+        if _healed:
+            items = _fetch_items()  # releer con los datos ya sanados
 
         # Productos por factura (árbol manifiesto → factura → productos).
         # Una sola query batch para todos los commitments del manifiesto.
@@ -18150,6 +18181,31 @@ def tr_cubicador_enviar_manifiesto():
             )
         except Exception as e_auth:
             print(f"[cub_enviar_manif] no se pudo guardar autorización: {e_auth}", flush=True)
+
+    # 2d) Persistir cubicaje declarado (peso real/vol/volumen/predominante + bultos).
+    #     Datos que el operador VE en el cubicador → quedan declarados en el
+    #     commitment y corren aguas abajo (manifiesto, etiquetas, KPIs). No fatal.
+    try:
+        _pr = float(data.get("peso_real") or 0)
+        _pv = float(data.get("peso_vol") or 0)
+        _vm = float(data.get("volumen_m3") or 0)
+        _pp = float(data.get("peso_predominante") or 0)
+        _nb = data.get("n_bultos")
+        _sets, _vals = [], []
+        if _pr > 0: _sets.append("peso_real=%s");         _vals.append(_pr)
+        if _pv > 0: _sets.append("peso_vol=%s");          _vals.append(_pv)
+        if _vm > 0: _sets.append("volumen_m3=%s");        _vals.append(_vm)
+        if _pp > 0: _sets.append("peso_predominante=%s"); _vals.append(_pp)
+        if _nb not in (None, ""):
+            _sets.append("n_bultos=%s"); _vals.append(max(1, int(float(_nb))))
+        if _sets:
+            _vals.append(comm_id)
+            mysql_execute(
+                f"UPDATE transport_commitments SET {', '.join(_sets)} WHERE id=%s",
+                tuple(_vals)
+            )
+    except Exception as e_cub:
+        print(f"[cub_enviar_manif] no se pudo guardar cubicaje: {e_cub}", flush=True)
 
     # 2b) Persistir notas de entrega (visible para el courier; alimenta la
     #     columna "Notas" del export SimplyRoute). No es fatal si falla.
@@ -49120,6 +49176,11 @@ def _ensure_transporte_columns():
         "autorizado_por":     "VARCHAR(190) NULL",        # quién autoriza si va sin precio / a pérdida
         "motivo_envio":       "VARCHAR(500) NULL",        # motivo/observación obligatoria
         "es_garantia":        "TINYINT(1) DEFAULT 0",     # si el envío es por garantía
+        # Cubicaje declarado (máxima información, que corra aguas abajo y no se pierda)
+        "peso_real":          "DECIMAL(12,3) DEFAULT 0",  # kg reales totales del documento
+        "peso_vol":           "DECIMAL(12,3) DEFAULT 0",  # kg volumétricos totales
+        "volumen_m3":         "DECIMAL(12,4) DEFAULT 0",  # volumen total en m³
+        "peso_predominante":  "DECIMAL(12,3) DEFAULT 0",  # max(real,vol) por línea, sumado
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()
