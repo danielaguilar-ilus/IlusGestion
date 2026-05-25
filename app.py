@@ -14881,6 +14881,17 @@ def _tr_fetch_from_erp(tido, nudo):
                 (tido, str(nudo))
             )["id"]
 
+            # zz_envio = lo que SPHS COBRÓ por el despacho (= suma PPPRNE de líneas ZZ).
+            # Se preserva aparte de costo_zz (que el flujo de manifiesto sobrescribe
+            # con el costo del courier). Permite el match cobrado-vs-costo en el manifiesto.
+            try:
+                cur.execute(
+                    "UPDATE transport_commitments SET zz_envio=%s WHERE id=%s",
+                    (costo_zz, comm_id)
+                )
+            except Exception:
+                pass  # columna garantizada por _ensure_transporte_columns; no fatal
+
             # Líneas ZZ
             cur.execute("DELETE FROM transport_commitment_lines WHERE commitment_id=%s", (comm_id,))
             for l in zz_lines:
@@ -17483,12 +17494,38 @@ def tr_manifiesto_detalle(mid):
                    c.tiene_saldo, COALESCE(c.cobertura_pct, 0) AS cobertura_pct,
                    COALESCE(c.peso_export, 0) AS peso_export,
                    COALESCE(c.n_bultos, 1) AS n_bultos,
-                   c.valor_bruto, c.costo_zz, c.clasificacion
+                   c.valor_bruto, c.costo_zz, c.clasificacion,
+                   COALESCE(c.zz_envio, 0)      AS zz_envio,
+                   COALESCE(c.costo_courier, 0) AS costo_courier,
+                   c.autorizado_por, c.motivo_envio,
+                   COALESCE(c.es_garantia, 0)   AS es_garantia
             FROM transport_manifest_items mi
             JOIN transport_commitments c ON c.id = mi.commitment_id
             WHERE mi.manifest_id=%s
             ORDER BY mi.orden, mi.id
         """, (mid,))
+
+        # Productos por factura (árbol manifiesto → factura → productos).
+        # Una sola query batch para todos los commitments del manifiesto.
+        comm_ids = [it["commitment_id"] for it in items]
+        prod_por_comm = {}
+        if comm_ids:
+            _ph = ",".join(["%s"] * len(comm_ids))
+            for pl in (mysql_fetchall(
+                f"""SELECT commitment_id, koprct, nokopr, cantidad, cant_despachada, saldo
+                    FROM transport_commitment_lines
+                    WHERE commitment_id IN ({_ph})
+                    ORDER BY id""", tuple(comm_ids)) or []):
+                prod_por_comm.setdefault(pl["commitment_id"], []).append(pl)
+        # Enriquecer cada item con margen y sus productos
+        for it in items:
+            cobrado = float(it.get("zz_envio") or 0)
+            costo   = float(it.get("costo_courier") or 0)
+            it["margen_clp"] = round(cobrado - costo)
+            it["margen_pct"] = round((cobrado - costo) / cobrado * 100, 1) if cobrado > 0 else None
+            it["sin_precio"] = (cobrado <= 0)
+            it["es_perdida"] = (cobrado > 0 and costo > cobrado)
+            it["productos"]  = prod_por_comm.get(it["commitment_id"], [])
 
         logs = mysql_fetchall(
             "SELECT * FROM transport_logs WHERE entity_type='manifest' AND entity_id=%s "
@@ -17931,15 +17968,31 @@ def tr_cubicador_enviar_manifiesto():
     if not comm_id:
         return jsonify({"error": "No se pudo registrar el documento en el sistema."}), 500
 
-    # 2) Persistir costo cotizado (no es fatal si falla)
+    # 2) Persistir costo del courier (lo que paga SPHS). Se guarda en costo_courier
+    #    (para el match cobrado-vs-costo del manifiesto) y también en costo_zz (legacy).
     try:
         if costo_cot is not None and float(costo_cot) > 0:
             mysql_execute(
-                "UPDATE transport_commitments SET costo_zz=%s WHERE id=%s",
-                (float(costo_cot), comm_id)
+                "UPDATE transport_commitments SET costo_zz=%s, costo_courier=%s WHERE id=%s",
+                (float(costo_cot), float(costo_cot), comm_id)
             )
     except Exception as e_cost:
         print(f"[cub_enviar_manif] no se pudo guardar costo: {e_cost}", flush=True)
+
+    # 2c) Autorización / motivo / garantía (control financiero, visión Daniel).
+    #     Obligatorio cuando el envío va a pérdida o sin precio. No fatal si falla.
+    _autoriz = (data.get("autorizado_por") or "").strip()[:190]
+    _motivo  = (data.get("motivo_envio") or "").strip()[:500]
+    _garant  = 1 if data.get("es_garantia") else 0
+    if _autoriz or _motivo or _garant:
+        try:
+            mysql_execute(
+                "UPDATE transport_commitments SET autorizado_por=%s, motivo_envio=%s, "
+                "es_garantia=%s WHERE id=%s",
+                (_autoriz or None, _motivo or None, _garant, comm_id)
+            )
+        except Exception as e_auth:
+            print(f"[cub_enviar_manif] no se pudo guardar autorización: {e_auth}", flush=True)
 
     # 2b) Persistir notas de entrega (visible para el courier; alimenta la
     #     columna "Notas" del export SimplyRoute). No es fatal si falla.
@@ -48904,6 +48957,12 @@ def _ensure_transporte_columns():
         "cant_despachada_zz": "DECIMAL(12,3) DEFAULT 0",
         "observaciones":      "TEXT NULL",
         "zz_skus":            "VARCHAR(120) NULL",
+        # Finanzas/margen (visión Daniel 2026-05-25): control de ganancia/pérdida.
+        "zz_envio":           "DECIMAL(12,2) DEFAULT 0",  # lo que cobró SPHS por el despacho (ERP)
+        "costo_courier":      "DECIMAL(12,2) DEFAULT 0",  # lo que SPHS paga al courier (cotizado)
+        "autorizado_por":     "VARCHAR(190) NULL",        # quién autoriza si va sin precio / a pérdida
+        "motivo_envio":       "VARCHAR(500) NULL",        # motivo/observación obligatoria
+        "es_garantia":        "TINYINT(1) DEFAULT 0",     # si el envío es por garantía
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()
