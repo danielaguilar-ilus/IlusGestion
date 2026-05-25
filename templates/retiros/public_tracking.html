@@ -1262,6 +1262,11 @@
               const POST_URL    = '{{ url_for("pickup_public_tracking", token=req.public_token) }}';
               const TRACK_URL   = '{{ url_for("pickup_public_tracking", token=req.public_token) }}';
               const DISP_URL    = '{{ url_for("pickup_disponibilidad_publica") }}';
+              // Token del propio retiro: al re-verificar disponibilidad lo
+              // enviamos como exclude_token para que la PROPIA reserva del
+              // cliente no cuente como ocupación contra él mismo (bug
+              // "No encontramos tu bloque" — Daniel 2026-05-25).
+              const SELF_TOKEN  = '{{ req.public_token }}';
 
               const steps = Array.from(modalEl.querySelectorAll('.cs-step'));
               const summaryOk = document.getElementById('csSummarySuccess');
@@ -1328,7 +1333,10 @@
                 // ── PASO 1: re-verificar disponibilidad ───────────
                 _activate(1);
                 try {
-                  const r = await fetch(DISP_URL + '?date=' + encodeURIComponent(TARGET_DATE), {
+                  const _dispUrl = DISP_URL
+                    + '?date=' + encodeURIComponent(TARGET_DATE)
+                    + (SELF_TOKEN ? '&exclude_token=' + encodeURIComponent(SELF_TOKEN) : '');
+                  const r = await fetch(_dispUrl, {
                     headers: {'X-Requested-With': 'XMLHttpRequest'},
                     cache: 'no-store',
                     credentials: 'same-origin',
@@ -1344,13 +1352,16 @@
                   const slot = (dia.slots || []).find(s =>
                     (s.time_from || s.hora) === TARGET_TF
                   );
-                  if (!slot){
-                    _running = false;
-                    _fail(1, 'No encontramos tu bloque en el calendario del día.');
-                    return;
-                  }
-                  // Permitimos ocupado/disponible (puede haber 1/2 y aún caber yo)
-                  if (slot.estado === 'completo' || slot.estado === 'colacion' || slot.estado === 'bloqueado'){
+                  // El grid público solo muestra bloques estándar (09:00-12:30
+                  // y 14:00-17:00). Si ILUS propuso un horario que cruza el
+                  // buffer/colación (propuesta interna con bypass), ese bloque
+                  // NO aparece en el grid — pero ES válido. En ese caso NO
+                  // bloqueamos acá: dejamos que el POST confirm (paso 2), que
+                  // es la fuente de verdad y respeta la propuesta interna,
+                  // decida. Solo bloqueamos si el bloque SÍ está en el grid y
+                  // quedó realmente lleno por OTRO retiro (su propia reserva ya
+                  // viene excluida vía exclude_token).
+                  if (slot && (slot.estado === 'completo' || slot.estado === 'colacion' || slot.estado === 'bloqueado')){
                     _running = false;
                     _fail(1, 'Tu horario ya no está libre: ' + (slot.razon || slot.estado));
                     return;

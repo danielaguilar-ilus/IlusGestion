@@ -6536,13 +6536,43 @@ def register_pickup_routes(app, ctx):
             except Exception:
                 single_date_obj = None
 
+        # ── EXCLUIR el propio retiro del conteo de ocupación ──────────
+        # Daniel 2026-05-25 (bug "No encontramos tu bloque"):
+        # El stepper de confirmación re-verifica disponibilidad ANTES del
+        # POST. Pero el propio retiro YA ocupa su bloque propuesto, así que
+        # su propia reserva se contaba como ocupación y, con
+        # parallel_capacity bajo (o si comparte slot con otro), el bloque
+        # salía "completo"/"ocupado lleno" y el cliente NO podía confirmar
+        # SU PROPIA hora. La solución: si el caller envía el token público
+        # de su retiro (`exclude_token`), excluimos ese id del conteo —
+        # exactamente igual que hace `_validar_disponibilidad_slot` y la
+        # transacción FOR UPDATE del POST confirm (`id <> %s`).
+        #
+        # Seguridad: el token público solo lo conoce el dueño del retiro y
+        # solo puede excluir SU PROPIO id. La garantía real anti-doble-cupo
+        # vive en la transacción del POST confirm (FOR UPDATE), no en este
+        # pre-chequeo de UX.
+        exclude_token = (request.args.get("exclude_token") or "").strip()
+        exclude_request_id = None
+        if exclude_token and re.match(r"^[A-Za-z0-9_\-]{16,200}$", exclude_token):
+            try:
+                _own = mysql_fetchone(
+                    f"SELECT id FROM `{REQ}` WHERE public_token=%s LIMIT 1",
+                    (exclude_token,),
+                )
+                if _own and _own.get("id"):
+                    exclude_request_id = int(_own["id"])
+            except Exception:
+                exclude_request_id = None
+
         # Cache hit: SOLO sirve para la shape pública sin filtro de fecha
         # (el grid de 30 días es global y no cambia por cliente). Las
         # llamadas internas con owners o con date= bypasean cache para no
         # mezclar shapes — la frecuencia es mucho menor (un solo operador
-        # mirando un día).
+        # mirando un día). Si se pidió excluir un retiro propio NUNCA usamos
+        # cache (el conteo es específico de ese cliente).
         import time as _time_local
-        use_cache = (not include_owners) and (single_date_obj is None)
+        use_cache = (not include_owners) and (single_date_obj is None) and (exclude_request_id is None)
         if use_cache and _DISPO_CACHE["payload"] is not None and \
                 (_time_local.time() - _DISPO_CACHE["ts"]) < _DISPO_TTL:
             return jsonify(_DISPO_CACHE["payload"])
@@ -6643,6 +6673,13 @@ def register_pickup_routes(app, ctx):
         # Para vista interna seleccionamos id+code+customer_name para que el
         # operador vea quién ocupa cada slot. Para shape pública omitimos esos
         # campos (privacidad + payload más liviano para clientes externos).
+        # Cláusula opcional para excluir el propio retiro del conteo (ver
+        # bloque exclude_token más arriba). Mantiene la query parametrizada.
+        _excl_clause = ""
+        _excl_params = []
+        if exclude_request_id is not None:
+            _excl_clause = " AND id <> %s"
+            _excl_params = [exclude_request_id]
         if include_owners:
             rows = mysql_fetchall(
                 f"""SELECT id, code, customer_name, contact_name,
@@ -6654,8 +6691,8 @@ def register_pickup_routes(app, ctx):
                     WHERE (requested_date BETWEEN %s AND %s
                            OR confirmed_date BETWEEN %s AND %s
                            OR proposed_date  BETWEEN %s AND %s)
-                      AND status NOT IN ('rechazada','cerrada','fallida')""",
-                (d_from, d_to, d_from, d_to, d_from, d_to)
+                      AND status NOT IN ('rechazada','cerrada','fallida'){_excl_clause}""",
+                (d_from, d_to, d_from, d_to, d_from, d_to, *_excl_params)
             ) or []
         else:
             rows = mysql_fetchall(
@@ -6667,8 +6704,8 @@ def register_pickup_routes(app, ctx):
                     WHERE (requested_date BETWEEN %s AND %s
                            OR confirmed_date BETWEEN %s AND %s
                            OR proposed_date  BETWEEN %s AND %s)
-                      AND status NOT IN ('rechazada','cerrada','fallida')""",
-                (d_from, d_to, d_from, d_to, d_from, d_to)
+                      AND status NOT IN ('rechazada','cerrada','fallida'){_excl_clause}""",
+                (d_from, d_to, d_from, d_to, d_from, d_to, *_excl_params)
             ) or []
 
         ocupacion = {}  # {fecha_str: {slot_from: {ocupados, kg, m3, owners[]}}}
