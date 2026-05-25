@@ -39164,6 +39164,13 @@ def mant_ots_list():
                 tuple(params)
             ) or []
             ots = [dict(o) for o in ots]
+            for o in ots:
+                for k in ('fecha_programada','hora_inicio','hora_fin'):
+                    if o.get(k) is not None:
+                        o[k] = str(o[k])
+                if o.get('costo') is not None:
+                    try: o['costo'] = float(o['costo'])
+                    except Exception: o['costo'] = None
         except Exception as e2:
             fatal_error = f"{e} / fallback: {e2}"
             ots = []

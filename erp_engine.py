@@ -404,6 +404,16 @@ def rut_variants(rut: str) -> list[str]:
     _add(raw)
     _add(clean)
 
+    # Detectar "RUT(8 dígitos) + DV(1 dígito) pegados sin separador"
+    # Ej: "139372220" = "13937222" + DV "0". El ERP guarda RTEN sin DV ni puntos;
+    # si detectamos esta concatenación añadimos el número sin DV como variante
+    # prioritaria (lo que realmente está en RTEN dentro de MAEEN).
+    if not has_dv and clean.isdigit() and len(clean) == 9:
+        c_num, c_dv = clean[:8], clean[8]
+        if _compute_dv(c_num) == c_dv:
+            _add(c_num)               # sin DV → coincide con RTEN del ERP
+            _add(f"{c_num}-{c_dv}")   # con guión (variante adicional)
+
     if has_dv and len(clean) >= 2:
         num = clean[:-1]
         dv = clean[-1]
@@ -802,6 +812,21 @@ class ERPClient:
             except Exception as e:
                 self.log.warning("ERP entity timeout: %s", e)
 
+        # Fallback KOEN: si ninguna variante de RUT encontró la entidad, intentar
+        # búsqueda por código de entidad (koen). Resuelve el caso donde ENDO en el
+        # documento contiene un código interno de Random (KOEN) que difiere del RUT
+        # (RTEN) — ej: ENDO="10543" pero RTEN="13937222". Sin este fallback la
+        # búsqueda falla silenciosamente y se pierde teléfono/email del cliente.
+        if not winner:
+            try:
+                body = self._get("/entidades", {"koen": str(rut).strip()}, timeout=3)
+                data = body.get("data") or []
+                if data:
+                    winner = data[0]
+                    self.log.info("ERP entity HIT koen=%s", str(rut)[:20])
+            except Exception as e:
+                self.log.debug("ERP entity miss koen=%s: %s", str(rut)[:20], e)
+
         with self._lock:
             self._ent_cache[cache_key] = (time.time(), winner)
             if len(self._ent_cache) > 500:
@@ -814,17 +839,47 @@ class ERPClient:
     def fetch_entity_by_name(self, name: str) -> Optional[dict]:
         """Búsqueda secundaria por NRAZON cuando el RUT no resuelve.
         Útil para ventas web donde el ENDO es B2C placeholder.
+
+        Prueba múltiples variantes del nombre para cubrir diferencias de
+        capitalización y truncamiento:
+          1. Nombre tal cual (ej: "Elizabeth Montenegro Echeverría")
+          2. UPPERCASE (el ERP guarda NOKOEN en mayúsculas en muchos casos)
+          3. Truncado a 50 chars (límite de NOKOEN en Random) — original y UPPER
+          4. Solo primeras 2 palabras (apellidos o razones sociales largas)
         """
         if not name or len(name.strip()) < 4:
             return None
-        try:
-            body = self._get("/entidades", {"nrazon": name.strip()}, timeout=4)
-            data = body.get("data") or []
-            if data:
-                self.log.info("ERP entity HIT nrazon=%s", name[:40])
-                return data[0]
-        except Exception as e:
-            self.log.debug("ERP entity miss nrazon=%s: %s", name[:40], e)
+
+        name_clean = name.strip()
+        upper = name_clean.upper()
+
+        # Construir variantes sin repetir
+        variants: list[str] = []
+        def _nadd(v: str) -> None:
+            v = v.strip()
+            if v and len(v) >= 4 and v not in variants:
+                variants.append(v)
+
+        _nadd(name_clean)           # original (puede ser title-case)
+        _nadd(upper)                # UPPERCASE — formato habitual en Random
+        if len(name_clean) > 50:    # NOKOEN tiene máx 50 chars
+            _nadd(name_clean[:50])
+            _nadd(upper[:50])
+        # Primeras 2 palabras — útil si el ERP tiene nombre truncado por espacio
+        words = name_clean.split()
+        if len(words) > 2:
+            _nadd(" ".join(words[:2]))
+            _nadd(" ".join(words[:2]).upper())
+
+        for nv in variants:
+            try:
+                body = self._get("/entidades", {"nrazon": nv}, timeout=4)
+                data = body.get("data") or []
+                if data:
+                    self.log.info("ERP entity HIT nrazon=%s", nv[:40])
+                    return data[0]
+            except Exception as e:
+                self.log.debug("ERP entity miss nrazon=%s: %s", nv[:40], e)
         return None
 
     # ── Búsqueda de documento ───────────────────────────────────────
