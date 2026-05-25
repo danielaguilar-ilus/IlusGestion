@@ -127,32 +127,43 @@ Procedimiento normado:
 - `superadmin` (Daniel): todo
 - Borrar productos (`mant_maquinas`): SOLO superadmin
 
-### 🟡 Transporte / Cubicador / Couriers — PRODUCTION (próxima sesión a TRABAJAR)
-**ESTE ES EL ENFOQUE DE LA SIGUIENTE SESIÓN CON DANIEL** (acordado 2026-05-25).
+### 🟢 Transporte / Cubicador / Couriers / Manifiestos — PRODUCTION (trabajado a fondo 2026-05-25)
 
-Estado actual:
-- Sistema de cotización auditable con audit log (`courier_tariff_audit`)
-- Cascada: TomTom/HERE/Google fallback (sin tarjeta de crédito)
-- Margen 30% + IVA 19% configurable
-- Multi-courier paralelo (cold 2.5s, warm 1.2s)
-- Export Excel del audit log
-- Test FCV 10644 validado para Lo Barnechea
+**Pantalla principal:** `/asignar` ("Asignar y Cotizar", `templates/cubicador/asignar.html`).
+Busca doc ERP → cubica → cotiza couriers → arma manifiesto.
 
-**Cuando Daniel diga "vamos con transporte"**:
-1. Cargar contexto del módulo: `app.py` zona transporte (busca por `transp_`, `transport_`, `_transporte_scheduler_loop`)
-2. Tablas: `transp_*`, `transport_commitments` (ver columnas cobertura_pct/cant_total_zz/cant_despachada_zz)
-3. Archivos templates en `templates/transporte/`
-4. Cron daemon: `_transporte_scheduler_loop` (app.py ~14600)
-5. Patrón optimizado de batch SQL: 38× más rápido que el legacy (referencia para retiros también)
-6. Preguntar a Daniel qué quiere mejorar (UX, performance, features nuevas) antes de tocar nada — el módulo está en PRODUCTION
+**MOTOR DE PRECIOS — réplica EXACTA del macro VBA de SPHS** (`transporte_tarifas.py` + `tarifas/*.json`):
+- Origen: `Transporte_y_Distribucion_7.2.xlsm` (macro de Alison/Daniel). Tablas extraídas con openpyxl.
+- Modelo (validado al peso contra los números reales de Daniel):
+  - **≤100 kg (Clickex ≤130):** precio fijo de tabla por kg exacto × comuna.
+  - **>100 kg:** `factor_$/kg_del_tramo × peso`. Tramos POR COURIER, tomados del CÓDIGO VBA (no de las etiquetas de header). Ver `TIERS` en transporte_tarifas.py.
+  - **+ seguro = valor_declarado × 1,2%** (se SUMA, igual que la macro).
+  - **NO se aplica margen 30% ni IVA 19%** — las tablas YA son el precio final SPHS. (Esto reemplazó el viejo `_courier_aplicar_margen_iva`.)
+- Couriers MOSTRADOS hoy: **FedEx (tabla "FedEx Directo"), Felca, Milling, Clickex**. Starken/Blue ocultos; **Envíame pendiente** (datos ya empacados: starken_enviame/fedex_enviame/blue_enviame.json). Dedup por "slug" (si la BD tiene "Milling" y "Melling" → 1 sola tarjeta).
+- **Felca/Milling fallback:** sin tabla propia para comuna/peso → estiman como **FedEx Directo −10%** (`FALLBACK_FACTOR=0.90`), cobertura hasta 20.000 kg, marcado "Estimado".
+- Logo de cada tarjeta: sale de la ficha del courier (`logo_url`); placeholder de marca si vacío.
+- ⚠️ Antofagasta dio 1,30× la captura de Daniel (Temuco calzó exacto) — PENDIENTE confirmar si su captura era de un .xlsm viejo (huele al 30% no aplicado).
 
-**Reglas que aplican igualmente**:
-- ERP Random READ-ONLY ABSOLUTO
-- Mantenciones FROZEN (no tocar aunque parezca relacionado)
-- Helpers ilus*, paleta ILUS, mobile-first
-- Validar Python + Jinja antes de commit
-- NO inventar nombres de funciones (usar `get_db`, `mysql_*`, `_random_sql_query`)
-- NO inventar nombres de personas (si aparece "Brandon", eliminar — es alucinación de "Random" ERP)
+**Peso:** el predominante de ILUS = Σ por línea de MAX(peso_real_u, peso_vol_u) × cantidad. Daniel confirmó que el peso de ILUS está OK (su 1.123,92 fue error manual suyo). Volumen es SOLO informativo (en m³, filtro `fm3` / JS `fVol`). Divisor volumétrico del macro = /4000.
+
+**Tabla de cubicaje (asignar):** header sticky, botón papelera por fila (quita producto de la VISTA → recalcula totales/predominante → re-cotiza, NO toca ERP), badge de saldo por línea (verde con saldo / rojo sin saldo / gris s/d), vía `renderCubaje()`.
+
+**Manifiesto:** `_tr_fetch_from_erp` ahora usa la vía SQL estable (`_cubicador_fetch_doc_via_sql`), NO la REST `/documentos/render` (daba 502 Bad Gateway). Enviar-a-manifiesto siempre responde JSON. Detalle en `/transporte/manifiestos/<id>` (envuelto en try/except que muestra el error real).
+
+**⚠️ GOTCHA CRÍTICO — skip-migrations:** en prod está `ILUS_SKIP_MIGRATIONS=1` (cold-start rápido) que SALTA `init_db/init_transporte_tables`. **Las columnas nuevas agregadas en código NO se aplican en prod.** Causó un 500 "Unknown column 'region'". Solución: `_ensure_transporte_columns()` corre SIEMPRE al arranque (chequea `information_schema`, agrega solo lo faltante). **Cualquier columna nueva crítica debe garantizarse por esa vía, no solo en el bloque gateado.**
+
+**Archivos clave:** `transporte_tarifas.py`, `tarifas/*.json`, `templates/cubicador/asignar.html`, `templates/transporte/manifiesto_detalle.html`, `app.py` (`api_asignar_cotizar_couriers`, `tr_cubicador_enviar_manifiesto`, `_tr_fetch_from_erp`, `tr_manifiesto_detalle`).
+
+**VISIÓN / ROADMAP de Daniel (2026-05-25) — "el Ciber para ayudar a Alison":**
+1. **Manifiesto en ÁRBOL:** manifiesto → facturas → productos (cada factura con sus líneas de `transport_commitment_lines`), mostrando costos por factura.
+2. **Finanzas y control de costos por pedido:** margen objetivo ~30%. Margen = ZZ Envío (cobrado) − costo courier.
+   - Si es **PÉRDIDA** (costo > cobrado) → notificación.
+   - Si **NO se cobra / sin precio** → puede avanzar PERO exige **observación obligatoria + autorización (por quién) + motivo**, sobre todo si es **garantía**. Guardar para cálculo mensual de cuánto se va en garantías.
+   - No se puede trabajar a pérdida; tolerancias para pedidos de garantía.
+3. **KPIs de logística:** la macro guardaba en una hoja **"Respaldo"** datos para **OTIF, fill rate** y otros indicadores. ILUS debe capturar esos datos (margen, costo, fechas, estado) para métricas.
+4. Módulo intuitivo, inteligente, dinámico, **velocidades superóptimas**, hermoso.
+
+**Respaldo del macro (para KPIs):** la hoja `hjRespaldo` guarda por envío: destinatario, tel, email, bultos, courier, tarifa SPHS, tarifa costo (ZZ), dirección, comuna, valor declarado, peso, fecha, SKU, descripción, cantidad, UDM, peso unitario, % margen, peso vol, estado mail, status. La hoja `hjSimpliroute`/`FedEx` arma la carga masiva.
 
 ### 🟡 Productos / Etiquetas / IA — PRODUCTION
 - Módulo original. Generación etiquetas CODE128 + PDF + Excel masivo
@@ -170,14 +181,35 @@ Estado actual:
 
 ## Patrones de código importantes
 
-### Auto-merge a main (autorizado por Daniel 2026-05-22)
+### Auto-deploy a main (autorizado por Daniel) — prod despliega desde `main`
+La rama de trabajo cambia por sesión (ej. `claude/view-all-sessions-O6JEs`). Prod
+(Railway) despliega desde `main`. Flujo seguro con fast-forward (otra sesión puede
+estar pusheando a main, por eso el fetch+merge):
 ```bash
-git add <archivos>
-git commit -m "feat(...): descripción"  # incluir Co-Authored-By Claude Opus 4.7
-git push origin claude/sweet-perlman-8243a9
-git pull --rebase origin main
-git push origin HEAD:main
-git push --force-with-lease origin claude/sweet-perlman-8243a9
+git add <archivos> && git commit -m "fix(...): qué + por qué"   # SIN model id en el mensaje
+git fetch origin main && git merge origin/main --no-edit         # traer trabajo ajeno
+git push -u origin <rama-trabajo>
+git checkout main && git merge --ff-only <rama-trabajo> && git push origin main
+git checkout <rama-trabajo>
+```
+
+### Certificación antes de desplegar (Daniel lo pidió 2026-05-25)
+Como NO se puede probar en navegador desde el entorno remoto, **certificar cada
+cambio** con la skill `code-review` (alta exhaustividad) antes del push. Validar
+SIEMPRE `python -c "import ast; ast.parse(...)"` y el Jinja con `env.parse(...)`.
+
+### Columnas nuevas que SOBREVIVAN al skip-migrations (lección 2026-05-25)
+Prod corre con `ILUS_SKIP_MIGRATIONS=1`. Las columnas nuevas NO se aplican por el
+bloque gateado. Garantizarlas aparte (corre siempre, barato):
+```python
+existing = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mi_tabla'") or [])}
+for col, ddl in needed.items():
+    if col.lower() not in existing:
+        try: mysql_execute(f"ALTER TABLE mi_tabla ADD COLUMN {col} {ddl}")
+        except Exception as e: print(e, flush=True)
+# llamar con: with app.app_context(): _ensure_...()   (mysql_* usan get_db())
 ```
 
 ### Endpoint con respuesta JSON anti-HTML (lección del bug 2026-05-23)
