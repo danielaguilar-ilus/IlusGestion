@@ -48884,6 +48884,44 @@ try:
 except Exception as _wu_outer:
     print(f"[RANDOM SQL][warmup/keepalive] no se pudo agendar: {_wu_outer}", flush=True)
 
+
+def _ensure_transporte_columns():
+    """Garantiza las columnas nuevas de transport_commitments AUNQUE
+    ILUS_SKIP_MIGRATIONS esté activo.
+
+    Con el skip de migraciones (cold-start rápido), las columnas agregadas
+    en código nuevo NO se aplican en prod hasta correr migraciones manualmente.
+    Eso dejó el detalle del manifiesto con 500 ("Unknown column 'region'").
+    Esta función chequea information_schema (1 SELECT barato) y agrega solo las
+    columnas faltantes — idempotente y rápida (no toca nada si ya existen)."""
+    needed = {
+        "region":             "VARCHAR(80) NULL",
+        "cod_postal":         "VARCHAR(20) NULL",
+        "peso_export":        "DECIMAL(10,3) DEFAULT 0",
+        "n_bultos":           "INT DEFAULT 1",
+        "cobertura_pct":      "DECIMAL(5,1) DEFAULT 0",
+        "cant_total_zz":      "DECIMAL(12,3) DEFAULT 0",
+        "cant_despachada_zz": "DECIMAL(12,3) DEFAULT 0",
+        "observaciones":      "TEXT NULL",
+        "zz_skus":            "VARCHAR(120) NULL",
+    }
+    existing = {
+        (r.get("COLUMN_NAME") or "").lower()
+        for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_commitments'"
+        ) or [])
+    }
+    faltantes = [c for c in needed if c.lower() not in existing]
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE transport_commitments ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_tr_cols] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_tr_cols] no se pudo agregar {col}: {e_add}", flush=True)
+    return faltantes
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -48916,6 +48954,18 @@ else:
         print("[ILUS] Tablas de mantenciones OK.")
     except Exception as _mant_init_err:
         print(f"[ILUS][WARN] init_mantenciones_tables: {_mant_init_err}")
+
+# CRÍTICO: garantizar columnas del manifiesto/export SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1 (si no, el detalle del manifiesto da 500 por columnas
+# faltantes). Es 1 SELECT barato en cold-start; solo hace ALTER la 1ª vez.
+try:
+    with app.app_context():
+        _faltaron = _ensure_transporte_columns()
+    if _faltaron:
+        print(f"[ILUS] Columnas de transporte agregadas (skip-migrations): {_faltaron}",
+              flush=True)
+except Exception as _ensure_err:
+    print(f"[ILUS][WARN] _ensure_transporte_columns: {_ensure_err}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #
