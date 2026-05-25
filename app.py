@@ -14756,86 +14756,94 @@ def _tr_fetch_from_erp(tido, nudo):
     Retorna el id del commitment o None.
     """
     from datetime import datetime as _dt
-    TOKEN  = ERP_CONFIG.get("api_token", "")
-    nudos  = _nudo_variants(nudo)
 
-    # Mapear VD/WEB → NVV igual que cubicador
-    if tido in _ERP_TIDO_NUDO_MAP:
-        erp_tido, nudo_fn = _ERP_TIDO_NUDO_MAP[tido]
-        erp_nudo = nudo_fn(nudo)
-        nudos = _nudo_variants(erp_nudo)
-    else:
-        erp_tido = tido
-
-    raw_header, raw_lineas = None, []
-    _last_err = None
-    for nv in nudos:
+    def _parse_date(s):
+        if not s:
+            return None
         try:
-            body = _erp_get("/documentos/render",
-                            {"tido": erp_tido, "nudo": nv, "empresa": "01"},
-                            TOKEN, timeout=12)
-            data = body.get("data") or []
-            if data:
-                raw_header = data[0].get("maeedo") or {}
-                raw_lineas = data[0].get("maeddo") or []
-                break
-        except Exception as e:
-            _last_err = e
-            continue
+            return _dt.fromisoformat(str(s).replace("Z", "+00:00")).date()
+        except Exception:
+            return None
 
-    if not raw_header:
-        if _last_err is not None:
-            return None, f"ERP no responde: {_last_err}"
-        return None, "No encontrado en ERP"
+    # ── Obtener el documento por la MISMA vía confiable que el cubicador:
+    #    SQL-first (Random SQL Server). La REST /documentos/render estaba dando
+    #    502 Bad Gateway y reventaba este flujo. Fallback a REST solo si SQL falla.
+    doc = None
+    try:
+        doc = _cubicador_fetch_doc_via_sql(tido, nudo)
+    except Exception as e_sql:
+        print(f"[tr_fetch] SQL falló para {tido}/{nudo}: {e_sql}", flush=True)
+        doc = None
 
-    # Filtrar sólo líneas ZZ
+    if not doc:
+        TOKEN = ERP_CONFIG.get("api_token", "")
+        if tido in _ERP_TIDO_NUDO_MAP:
+            erp_tido, nudo_fn = _ERP_TIDO_NUDO_MAP[tido]
+            nudos = _nudo_variants(nudo_fn(nudo))
+        else:
+            erp_tido = tido
+            nudos = _nudo_variants(nudo)
+        _last_err = None
+        for nv in nudos:
+            try:
+                body = _erp_get("/documentos/render",
+                                {"tido": erp_tido, "nudo": nv, "empresa": "01"},
+                                TOKEN, timeout=12)
+                data = body.get("data") or []
+                if data:
+                    rh = data[0].get("maeedo") or {}
+                    obdo = _parse_obdo((rh.get("OBDO") or rh.get("TEXTO1") or "").strip())
+                    doc = {
+                        "cliente_nombre": (rh.get("NOKOEN") or "").strip(),
+                        "cliente_rut":    (rh.get("ENDO") or "").strip(),
+                        "comuna":         (rh.get("CMEN") or rh.get("NOKOZO") or
+                                           rh.get("NOKOCOMU") or "").strip(),
+                        "direccion":      obdo.get("direccion") or (rh.get("DIENDESP") or "").strip(),
+                        "telefono":       obdo.get("telefono") or "",
+                        "email":          obdo.get("email") or "",
+                        "valor_neto":     float(rh.get("VANEDO") or 0),
+                        "valor_bruto":    float(rh.get("VABRDO") or 0),
+                        "fecha":          rh.get("FEEMDO"),
+                        "fecha_entrega":  rh.get("FEER"),
+                        "guia_numero":    (rh.get("NUDO_GIA") or rh.get("NUDGIA") or "").strip() or None,
+                        "lineas_raw":     data[0].get("maeddo") or [],
+                    }
+                    break
+            except Exception as e:
+                _last_err = e
+                continue
+        if not doc:
+            return None, (f"ERP no responde: {_last_err}" if _last_err else "No encontrado en ERP")
+
+    # ── Líneas crudas (mismo shape que usa el cubicador) y filtro ZZ ──
+    raw_lineas = doc.get("lineas_raw") or []
     zz_lines = [l for l in raw_lineas
                 if (l.get("KOPRCT") or "").strip().upper() in {s.upper() for s in ZZ_SKUS}]
     if not zz_lines:
         return None, "Documento sin líneas ZZ"
 
-    # Calcular saldo
     saldo_total = sum(
         float(l.get("CAPRCO1") or 0) - float(l.get("CAPRAD1") or 0)
         for l in zz_lines
     )
     tiene_saldo = 1 if saldo_total > 0 else 0
 
-    # Parsear OBDO
-    obdo_str = (raw_header.get("OBDO") or raw_header.get("TEXTO1") or "").strip()
-    parsed   = _parse_obdo(obdo_str)
-    direccion = parsed["direccion"] or (raw_header.get("DIENDESP") or "").strip()
+    # ── Datos del header (campos friendly, ya enriquecidos por el motor/SQL) ──
+    cliente_nombre = (doc.get("cliente_nombre") or "").strip().title()
+    endo           = (doc.get("cliente_rut") or doc.get("endo") or "").strip()
+    comuna         = (doc.get("comuna") or "").strip()
+    direccion      = (doc.get("direccion") or "").strip()
+    telefono       = (doc.get("telefono") or "").strip()
+    email          = (doc.get("email") or "").strip()
+    valor_neto     = float(doc.get("valor_neto") or 0)
+    valor_bruto    = float(doc.get("valor_bruto") or 0)
+    fecha_em       = _parse_date(doc.get("fecha"))
+    fecha_ent      = _parse_date(doc.get("fecha_entrega"))
+    guia_numero    = doc.get("guia_numero")
 
-    # Nombre cliente
-    endo = (raw_header.get("ENDO") or "").strip()
-    cliente_nombre = (raw_header.get("NOKOEN") or "").strip().title()
-    if not cliente_nombre and endo:
-        try:
-            ent = _erp_get("/entidades", {"rten": endo}, TOKEN, timeout=6)
-            ed  = (ent.get("data") or [{}])[0]
-            cliente_nombre = (ed.get("NOKOEN") or "").strip().title()
-        except Exception:
-            pass
-
-    # Fecha
-    from datetime import datetime as _dt
-    def _parse_date(s):
-        if not s: return None
-        try: return _dt.fromisoformat(s.replace("Z", "+00:00")).date()
-        except: return None
-
-    fecha_em  = _parse_date(raw_header.get("FEEMDO"))
-    fecha_ent = _parse_date(raw_header.get("FEER"))
-
-    # Clasificación — basado en los SKUs ZZ predominantes
     skus_upper = [(l.get("KOPRCT") or "").strip().upper() for l in zz_lines]
     clasificacion = _clasif_from_skus(skus_upper)
-
-    # Costo ZZ (suma de PPPRNE de líneas ZZ)
     costo_zz = sum(float(l.get("PPPRNE") or 0) for l in zz_lines)
-
-    # Guía (si CAPRAD1 >= CAPRCO1 en todas → tiene guía)
-    guia_numero = (raw_header.get("NUDO_GIA") or raw_header.get("NUDGIA") or "").strip() or None
 
     # NOTA: get_db() devuelve conexión del pool via g. NO llamar conn.close()
     # al final — teardown_appcontext la cierra. Cerrar aquí deja g._db
@@ -14862,13 +14870,9 @@ def _tr_fetch_from_erp(tido, nudo):
             """, (
                 tido, str(nudo), endo, fecha_em, fecha_ent,
                 cliente_nombre, endo,
-                (raw_header.get("CMEN") or raw_header.get("NOKOZO") or
-                 raw_header.get("NOKOCOMU") or raw_header.get("NOKOCOMUNADE") or
-                 raw_header.get("NOKOMUENDE") or raw_header.get("NOKOMUNEN") or
-                 raw_header.get("NOKCOMENDESP") or "").strip(),
-                direccion, parsed["telefono"], parsed["email"],
-                float(raw_header.get("VANEDO") or 0),
-                float(raw_header.get("VABRDO") or 0),
+                comuna,
+                direccion, telefono, email,
+                valor_neto, valor_bruto,
                 costo_zz, tiene_saldo, guia_numero, clasificacion,
                 current_username(), current_username()
             ))
