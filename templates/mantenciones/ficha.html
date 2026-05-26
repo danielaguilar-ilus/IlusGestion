@@ -4496,15 +4496,15 @@ function docRender(arr) {
                  title="Este contrato no tiene archivo. Ir al tab Contratos para subirlo.">
            <i class="bi bi-arrow-up-right-square"></i> Subir archivo
          </button>`
+      // SEGURIDAD 2026-05-26: botones Descargar / Eliminar SOLO si superadmin.
+      // El visor pasa por el endpoint que valida server-side los permisos.
       : `<button type="button" class="btn btn-xs btn-outline-primary"
-                 onclick='docPreview(${JSON.stringify(d).replace(/'/g,"&#39;")})'
-                 title="Previsualizar dentro del sistema">
+                 onclick='docVisor(${JSON.stringify(d).replace(/'/g,"&#39;")})'
+                 title="Ver dentro del sistema">
            <i class="bi bi-eye"></i>
          </button>
-         <a href="${d.url}" download class="btn btn-xs btn-outline-secondary" title="Descargar">
-           <i class="bi bi-download"></i>
-         </a>
-         ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')" title="Eliminar"><i class="bi bi-trash"></i></button>` : ''}`;
+         ${d.downloadable ? `<a href="${d.url}?download=1" download class="btn btn-xs btn-outline-secondary" title="Descargar (solo superadmin)"><i class="bi bi-download"></i></a>` : ''}
+         ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')" title="Eliminar (solo superadmin)"><i class="bi bi-trash"></i></button>` : ''}`;
     return `
     <div class="doc-card">
       <div class="doc-icon doc-tipo-${d.tipo||'otro'}">
@@ -4641,6 +4641,41 @@ function _docPrevFallback(item, msg){
       <i class="bi bi-download me-1"></i>Descargar archivo
     </a>
   </div>`;
+}
+
+// NUEVO 2026-05-26: el visor unificado para CUALQUIER documento del cliente.
+// Usa el mismo UniversalDocumentViewer del tab Contratos para que TODO se vea
+// igual y con la misma robustez (proxy inline, PDF.js fallback, mensajes
+// claros, "Este contrato debe re-subirse" cuando corresponda).
+function docVisor(item){
+  if (!item || !item.url){
+    if (typeof ilusToast === 'function') ilusToast('Documento sin archivo', { type:'warning' });
+    return;
+  }
+  // El backend ya nos dio archivo_tipo + mime_type + has_cloud
+  const tipoHint = item.archivo_tipo || _udvTipoDesdeMime(item.mime_type || '') || '';
+  // Solo contratos principales pueden re-subirse desde el visor; los adjuntos
+  // se re-suben desde su propio flujo (Subir documento).
+  const esContrato = (item.kind === 'contrato_principal');
+  verArchivoUDV({
+    baseUrl:       item.url,
+    ctid:          esContrato ? item.id : null,
+    nombre:        item.nombre || 'Documento',
+    tipo:          tipoHint,
+    hasCloud:      !!item.has_cloud,
+    allowDownload: !!item.downloadable,
+    allowResubir:  esContrato,
+  });
+}
+// Helper: detecta tipo desde el mime type (fallback cuando no hay archivo_tipo)
+function _udvTipoDesdeMime(mime){
+  const m = (mime||'').toLowerCase();
+  if (m.includes('pdf')) return 'pdf';
+  if (m.startsWith('image/')) return 'imagen';
+  if (m.includes('msword') || m.includes('wordprocessing')) return 'docx';
+  if (m.includes('spreadsheet') || m.includes('excel')) return 'xlsx';
+  if (m.includes('presentation') || m.includes('powerpoint')) return 'pptx';
+  return '';
 }
 
 async function docPreview(item){
@@ -8224,7 +8259,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526d"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526e"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

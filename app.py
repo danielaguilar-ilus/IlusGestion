@@ -46575,9 +46575,147 @@ def mant_adjunto_subir(ctid):
         conn.close()
 
 
+@app.route("/mantenciones/api/adjuntos/<int:aid>/archivo")
+@_mant_required
+def mant_adjunto_archivo(aid):
+    """Sirve el archivo de un adjunto (anexo, externo, foto, etc).
+
+    PROXY 2026-05-26 (Daniel — visor universal en tab Documentos):
+      Antes el frontend abría la URL de Cloudinary directa y el browser
+      descargaba (Cloudinary fuerza Content-Disposition attachment en
+      recursos raw). Ahora proxeamos con headers inline para que el
+      visor del modal lo renderice correctamente.
+
+    Seguridad por rol:
+      - Cualquier rol con permiso mantenciones puede VER (preview inline).
+      - Solo SUPERADMIN puede DESCARGAR (?download=1).
+        Bloqueo server-side: roles inferiores reciben 403 si intentan
+        descargar, aunque el botón no aparezca en UI.
+    """
+    from flask import redirect as _redir, Response as _Resp
+
+    adj = mysql_fetchone(
+        "SELECT id, contrato_id, cliente_id, tipo, nombre, archivo_nombre, "
+        "       mime_type, cloudinary_url, cloudinary_public_id "
+        "  FROM mant_contrato_adjuntos WHERE id=%s",
+        (aid,)
+    )
+    if not adj:
+        return "Adjunto no encontrado", 404
+
+    as_dl = request.args.get("download") == "1"
+    if as_dl and not (g.permissions or {}).get("superadmin"):
+        return ("Solo el superadministrador puede descargar archivos "
+                "del módulo de mantenciones."), 403
+
+    nombre = adj.get("nombre") or adj.get("archivo_nombre") or f"adjunto_{aid}"
+    fname  = adj.get("archivo_nombre") or ""
+    ext    = (fname.rsplit(".", 1)[-1].lower() if "." in fname else "").strip()
+
+    # Map de MIME por extensión (para forzar Content-Type correcto cuando
+    # Cloudinary devuelve octet-stream).
+    mime_map = {
+        "pdf":  "application/pdf",
+        "jpg":  "image/jpeg", "jpeg": "image/jpeg",
+        "png":  "image/png", "gif": "image/gif", "webp": "image/webp",
+        "doc":  "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls":  "application/vnd.ms-excel",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt":  "application/vnd.ms-powerpoint",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+
+    # ── PRIORIDAD 1: Cloudinary (proxy con headers correctos) ──────────
+    cld_url = (adj.get("cloudinary_url") or "").strip()
+    if cld_url:
+        if as_dl:
+            sep = "&" if "?" in cld_url else "?"
+            return _redir(f"{cld_url}{sep}fl_attachment=true", code=302)
+        # Preview inline: proxy con headers reescritos
+        try:
+            import requests as _rq
+            upstream_headers = {}
+            if request.headers.get("Range"):
+                upstream_headers["Range"] = request.headers["Range"]
+            r_up = _rq.get(cld_url, headers=upstream_headers,
+                           stream=True, timeout=30, allow_redirects=True)
+            if r_up.status_code not in (200, 206):
+                r_up.close()
+                raise RuntimeError(f"Cloudinary HTTP {r_up.status_code}")
+
+            ctype = (mime_map.get(ext)
+                     or adj.get("mime_type")
+                     or r_up.headers.get("Content-Type")
+                     or "application/octet-stream")
+
+            def _stream():
+                try:
+                    for chunk in r_up.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            yield chunk
+                finally:
+                    r_up.close()
+
+            resp = _Resp(_stream(), status=r_up.status_code)
+            resp.headers["Content-Type"] = ctype
+            resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+            if r_up.headers.get("Content-Length"):
+                resp.headers["Content-Length"] = r_up.headers["Content-Length"]
+            if r_up.headers.get("Content-Range"):
+                resp.headers["Content-Range"] = r_up.headers["Content-Range"]
+            resp.headers["Accept-Ranges"] = r_up.headers.get("Accept-Ranges", "bytes")
+            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+            resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+            resp.headers["Cache-Control"] = "private, max-age=86400, immutable"
+            _etag = adj.get("cloudinary_public_id") or f"adj-{aid}"
+            resp.headers["ETag"] = f'"{_etag}"'
+            if request.headers.get("If-None-Match") == f'"{_etag}"':
+                _r304 = _Resp(status=304)
+                _r304.headers["ETag"] = f'"{_etag}"'
+                _r304.headers["Cache-Control"] = "private, max-age=86400, immutable"
+                return _r304
+            return resp
+        except Exception as _e_p:
+            print(f"[mant_adjunto_archivo] aid={aid} proxy FAIL: {_e_p}; "
+                  f"intentando disco", flush=True)
+
+    # ── PRIORIDAD 2: Filesystem local (fallback) ────────────────────────
+    if not fname:
+        return "Adjunto sin archivo en ningún canal", 404
+    full_path = os.path.join(MANT_UPLOADS, fname)
+    if not os.path.exists(full_path):
+        return "Adjunto no encontrado en disco", 404
+
+    from flask import send_from_directory, make_response
+    resp = make_response(send_from_directory(
+        MANT_UPLOADS, fname,
+        as_attachment=as_dl,
+        download_name=nombre if as_dl else None,
+    ))
+    if as_dl:
+        resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    else:
+        resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+    if mime_map.get(ext):
+        resp.headers["Content-Type"] = mime_map[ext]
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+    resp.headers["Cache-Control"] = "private, max-age=300"
+    return resp
+
+
 @app.route("/mantenciones/api/adjuntos/<int:aid>", methods=["DELETE"])
 @_mant_required
 def mant_adjunto_del(aid):
+    # SEGURIDAD 2026-05-26: solo superadmin puede eliminar adjuntos.
+    # Otros roles (ejecutivo, técnico) NO pueden destruir documentos del cliente.
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({
+            "error": ("Solo el superadministrador puede eliminar archivos "
+                      "del módulo de mantenciones."),
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
     adj = mysql_fetchone(
         "SELECT archivo_nombre, nombre, contrato_id, cliente_id, tipo, "
         "       cloudinary_public_id "
@@ -46843,8 +46981,15 @@ def mant_cliente_finanzas(cid):
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos")
 @_mant_required
 def mant_cliente_documentos(cid):
-    """Devuelve TODOS los documentos asociados al cliente (multi-fuente)."""
+    """Devuelve TODOS los documentos asociados al cliente (multi-fuente).
+
+    SEGURIDAD 2026-05-26: solo superadmin puede ver botón de descarga o
+    eliminar. Otros roles (ejecutivo, técnico) reciben deletable=false y
+    downloadable=false. El flag se respeta en frontend; además, los
+    endpoints destructivos validan server-side.
+    """
     items = []
+    es_super = bool((g.permissions or {}).get("superadmin"))
 
     # 1. Adjuntos (contratos + multi-archivo + externos + anexos)
     rows = mysql_fetchall(
@@ -46853,8 +46998,9 @@ def mant_cliente_documentos(cid):
         "  FROM mant_contrato_adjuntos WHERE cliente_id=%s", (cid,)
     )
     for r in rows:
-        # URL: Cloudinary primero (persistente), filesystem como fallback
-        url = r.get("cloudinary_url") or f"/static/uploads/mantenciones/{r['archivo_nombre']}"
+        # URL: SIEMPRE usar nuestro proxy (fuerza inline + valida superadmin
+        # en download). NO exponer la URL directa de Cloudinary.
+        url = f"/mantenciones/api/adjuntos/{r['id']}/archivo"
         fuente_label = "Adjunto"
         if r.get("tipo") == "externo":
             fuente_label = "Doc. Externo"
@@ -46862,6 +47008,25 @@ def mant_cliente_documentos(cid):
                 fuente_label += f" · {r['subtipo_externo'].replace('_',' ').title()}"
         elif r.get("tipo") == "anexo":
             fuente_label = "Anexo Contrato"
+        # Mime hint para que el visor decida estrategia rápido
+        _arch_nombre = r.get("archivo_nombre") or ""
+        _ext = _arch_nombre.rsplit(".", 1)[-1].lower() if "." in _arch_nombre else ""
+        _mime_hint = {
+            "pdf": "application/pdf",
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "doc": "application/msword",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls": "application/vnd.ms-excel",
+        }.get(_ext, r.get("mime_type") or "")
+        _archivo_tipo = {
+            "pdf": "pdf",
+            "jpg": "imagen", "jpeg": "imagen", "png": "imagen",
+            "gif": "imagen", "webp": "imagen",
+            "docx": "docx", "doc": "doc",
+            "xlsx": "xlsx", "xls": "xls",
+        }.get(_ext, "")
         items.append({
             "kind":   "adjunto",
             "id":     r["id"],
@@ -46869,12 +47034,16 @@ def mant_cliente_documentos(cid):
             "subtipo_externo": r.get("subtipo_externo"),
             "nombre": r["nombre"] or r.get("archivo_nombre"),
             "url":    url,
+            "mime_type":    _mime_hint,
+            "archivo_tipo": _archivo_tipo,
             "size_kb": round((r.get("tamaño_bytes") or 0)/1024) if r.get("tamaño_bytes") else None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "fuente": fuente_label,
             "persistente": bool(r.get("cloudinary_url")),
-            "deletable": True,
+            "deletable":    es_super,   # solo superadmin
+            "downloadable": es_super,   # solo superadmin
+            "has_cloud":    bool(r.get("cloudinary_url")),
         })
 
     # 2. Reportes con HTML guardado
@@ -46889,11 +47058,15 @@ def mant_cliente_documentos(cid):
             "tipo":   "reporte",
             "nombre": f"Informe {r.get('ticket_num') or r['id']} — {r.get('asunto') or 'Sin asunto'}",
             "url":    f"/static/{r['html_path']}",
+            "mime_type": "text/html",
+            "archivo_tipo": "html",
             "size_kb": None,
             "created_by": r.get("created_by"),
             "created_at": str(r["html_generated_at"])[:16] if r.get("html_generated_at") else "",
             "fuente": "Reporte (HTML)",
-            "deletable": False,
+            "deletable":    False,
+            "downloadable": es_super,
+            "has_cloud":    False,
         })
 
     # 3. Contratos — archivo principal de cada contrato del cliente.
@@ -46937,17 +47110,19 @@ def mant_cliente_documentos(cid):
             "id":     r["id"],
             "tipo":   "contrato",
             "nombre": nm,
-            # Si tiene archivo: usar endpoint /contratos/<id>/archivo (redirige a Cloudinary).
+            # Si tiene archivo: usar endpoint /contratos/<id>/archivo (proxy inline).
             # Si NO tiene: url null + flag sin_archivo para que el frontend muestre placeholder.
             "url":    (f"/mantenciones/api/contratos/{r['id']}/archivo" if tiene_archivo else None),
             "mime_type": _mime,
-            "archivo_tipo": _tipo_archivo_bd,  # hint para docTipoArchivo del frontend
+            "archivo_tipo": _tipo_archivo_bd,  # hint para el visor del frontend
             "size_kb": None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "fuente": "Contrato principal",
             "persistente": bool(r.get("cloudinary_url")),
-            "deletable": False,
+            "deletable":    es_super,
+            "downloadable": es_super,
+            "has_cloud":    bool(r.get("cloudinary_url")),
             "sin_archivo": (not tiene_archivo),
         })
 

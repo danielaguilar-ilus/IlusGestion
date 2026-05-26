@@ -4702,9 +4702,11 @@ function _udvShowError(opts) {
   // Botón Reintentar (solo si se pidió explícito)
   const btnRet = document.getElementById('btnReintentarUDV');
   if (btnRet) btnRet.style.display = mostrarReintentar ? '' : 'none';
-  // Botón Re-subir (solo superadmin, y solo si tiene sentido pedirlo)
+  // Botón Re-subir: solo si superadmin Y el archivo es re-subible (contrato),
+  // NO para adjuntos genéricos (esos se re-suben desde el tab Documentos).
   const btnRes = document.getElementById('btnUDVResubir');
-  if (btnRes) btnRes.style.display = (mostrarResubir && UDV.esSuperadmin) ? '' : 'none';
+  if (btnRes) btnRes.style.display =
+    (mostrarResubir && UDV.esSuperadmin && UDV.allowResubir) ? '' : 'none';
   const errTech = document.getElementById('udvErrorTech');
   if (errorTech) {
     errTech.textContent = errorTech + '\n\n' + UDV.logs.slice(-20).join('\n');
@@ -4717,8 +4719,17 @@ function _udvShowError(opts) {
 }
 
 function udvReintentar() {
-  if (UDV.ctid) {
-    verContrato(UDV.ctid, UDV.nombre, UDV.tipo, UDV.hasCloud);
+  // Re-ejecuta con el mismo estado actual del visor
+  if (UDV.baseUrl) {
+    verArchivoUDV({
+      baseUrl:  UDV.baseUrl,
+      ctid:     UDV.ctid,
+      nombre:   UDV.nombre,
+      tipo:     UDV.tipo,
+      hasCloud: UDV.hasCloud,
+      allowDownload: UDV.allowDownload,
+      allowResubir:  UDV.allowResubir,
+    });
   }
 }
 
@@ -4910,21 +4921,48 @@ function _udvLoadImage(url) {
   img.src = url;
 }
 
-// ─── ENTRY POINT: visualizar contrato ─────────────────────────────────
-// Descarga: SOLO superadmin (validación server-side adicional en /archivo?download=1)
-async function verContrato(ctid, nombre, tipo, hasCloud) {
-  // Reset estado
-  UDV.ctid     = ctid;
-  UDV.baseUrl  = `/mantenciones/api/contratos/${ctid}/archivo`;
-  UDV.nombre   = nombre || `Contrato #${ctid}`;
-  UDV.tipo     = tipo;
-  UDV.hasCloud = !!hasCloud;
+// ─── ENTRY POINT GENERICO: visualizar cualquier archivo en el UDV ─────
+// opts: { baseUrl, nombre, tipo, hasCloud, ctid (opcional), kind (opcional),
+//         allowDownload (bool), allowResubir (bool) }
+async function verArchivoUDV(opts) {
+  const o = opts || {};
+  UDV.ctid     = o.ctid || null;
+  UDV.baseUrl  = o.baseUrl;
+  UDV.nombre   = o.nombre || 'Documento';
+  UDV.tipo     = o.tipo || '';
+  UDV.hasCloud = !!o.hasCloud;
   UDV.esSuperadmin = !!DATA.is_superadmin;
+  // allowDownload: si el documento permite descarga server-side
+  UDV.allowDownload = (o.allowDownload === undefined) ? UDV.esSuperadmin : !!o.allowDownload;
+  // allowResubir: si tiene sentido ofrecer el botón "Re-subir" (solo contratos)
+  UDV.allowResubir  = (o.allowResubir === undefined) ? !!o.ctid : !!o.allowResubir;
   UDV.logs = [];
+  return _verArchivoInterno();
+}
+
+// Wrapper retro-compatible para contratos (mantiene la firma vieja)
+async function verContrato(ctid, nombre, tipo, hasCloud) {
+  return verArchivoUDV({
+    baseUrl:  `/mantenciones/api/contratos/${ctid}/archivo`,
+    ctid:     ctid,
+    nombre:   nombre || `Contrato #${ctid}`,
+    tipo:     tipo,
+    hasCloud: hasCloud,
+    allowDownload: !!DATA.is_superadmin,
+    allowResubir:  true,
+  });
+}
+
+async function _verArchivoInterno() {
+  const ctid   = UDV.ctid;
+  const nombre = UDV.nombre;
+  const tipo   = UDV.tipo;
+  const hasCloud = UDV.hasCloud;
   if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
   if (UDV.pdfDoc) { try { UDV.pdfDoc.destroy(); } catch(e){} UDV.pdfDoc = null; }
 
-  _udvLog('INFO', 'verContrato start', { ctid, nombre, tipo, hasCloud });
+  _udvLog('INFO', 'verArchivoUDV start', { ctid, nombre, tipo, hasCloud,
+          allowDownload: UDV.allowDownload, allowResubir: UDV.allowResubir });
 
   // Header del modal
   document.getElementById('modalVerContratoTitulo').innerHTML =
@@ -4933,7 +4971,12 @@ async function verContrato(ctid, nombre, tipo, hasCloud) {
   document.getElementById('btnAbrirNuevaFallback').href = UDV.baseUrl;
   const btnDl   = document.getElementById('btnDescargarContrato');
   const btnWord = document.getElementById('btnDescWord');
-  if (UDV.esSuperadmin) {
+  // SEGURIDAD: Botones de descarga solo si esSuperadmin Y allowDownload.
+  // Otros roles ni siquiera ven el botón "Abrir en pestaña nueva" para
+  // archivos donde no tienen autorización de descarga (cumple regla:
+  // solo superadmin puede bajar archivos del módulo mantenciones).
+  const puedeDescargar = !!UDV.allowDownload && !!UDV.esSuperadmin;
+  if (puedeDescargar) {
     btnDl.style.display = '';
     btnDl.href = UDV.baseUrl + '?download=1';
     btnWord.style.display = '';
@@ -4942,6 +4985,12 @@ async function verContrato(ctid, nombre, tipo, hasCloud) {
     btnDl.style.display = 'none';
     btnWord.style.display = 'none';
   }
+  // El botón "Abrir en pestaña nueva" también descarga, así que lo
+  // ocultamos si no es superadmin.
+  const btnOpen = document.getElementById('btnAbrirContratoNueva');
+  const btnOpenF = document.getElementById('btnAbrirNuevaFallback');
+  if (btnOpen)  btnOpen.style.display  = puedeDescargar ? '' : 'none';
+  if (btnOpenF) btnOpenF.style.display = puedeDescargar ? '' : 'none';
 
   // Abrir modal y mostrar loading
   _udvShowStage('loading');
@@ -5882,7 +5931,7 @@ function _repToggleExportBtns(enabled) {
   });
 })();
 
-// ─── Adjuntos del contrato ─────────────────────────────────────
+// ─── Adjuntos del contrato (lista compacta dentro del tab Contratos) ───
 async function cargarAdjuntos(ctid) {
   const cont = document.getElementById('adjuntosLista');
   if (!cont) return;
@@ -5894,16 +5943,41 @@ async function cargarAdjuntos(ctid) {
     return;
   }
   const iconos = {contrato:'file-earmark-pdf',imagen:'image',solicitud:'file-earmark-spreadsheet',otro:'paperclip'};
-  cont.innerHTML = data.map(a => `
-    <div class="adj-row">
-      <i class="bi bi-${iconos[a.tipo]||'paperclip'}" style="font-size:1.3rem;color:#6b7280;flex-shrink:0"></i>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.nombre}</div>
-        <div style="font-size:.68rem;color:#9ca3af">${a.tipo} · ${a.created_at} · ${a.created_by||''}</div>
-      </div>
-      <a href="${a.url}" target="_blank" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i></a>
-      <button class="btn btn-xs btn-outline-danger" onclick="eliminarAdjunto(${a.id},this)"><i class="bi bi-trash"></i></button>
-    </div>`).join('');
+  const esSuper = !!DATA.is_superadmin;
+  cont.innerHTML = data.map(a => {
+    // URL del proxy (fuerza inline + valida permisos server-side)
+    const urlProxy = `/mantenciones/api/adjuntos/${a.id}/archivo`;
+    // Botón eliminar SOLO si superadmin
+    const btnEliminar = esSuper
+      ? `<button class="btn btn-xs btn-outline-danger" onclick="eliminarAdjunto(${a.id},this)" title="Eliminar (solo superadmin)"><i class="bi bi-trash"></i></button>`
+      : '';
+    // Botón descargar SOLO si superadmin
+    const btnDescargar = esSuper
+      ? `<a href="${urlProxy}?download=1" download class="btn btn-xs btn-outline-secondary" title="Descargar (solo superadmin)"><i class="bi bi-download"></i></a>`
+      : '';
+    // Mime hint para el visor (extensión desde archivo_nombre)
+    const ext = (a.archivo_nombre||'').toLowerCase().split('.').pop();
+    const tipoVisor = ['pdf'].includes(ext) ? 'pdf'
+                     : ['jpg','jpeg','png','gif','webp'].includes(ext) ? 'imagen'
+                     : ['docx','doc'].includes(ext) ? 'docx'
+                     : ['xlsx','xls'].includes(ext) ? 'xlsx' : '';
+    const nombreEsc = (a.nombre||'').replace(/'/g,"\\'");
+    return `
+      <div class="adj-row">
+        <i class="bi bi-${iconos[a.tipo]||'paperclip'}" style="font-size:1.3rem;color:#6b7280;flex-shrink:0"></i>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.nombre}</div>
+          <div style="font-size:.68rem;color:#9ca3af">${a.tipo} · ${a.created_at} · ${a.created_by||''}</div>
+        </div>
+        <button class="btn btn-xs btn-outline-primary"
+                onclick="verArchivoUDV({baseUrl:'${urlProxy}',nombre:'${nombreEsc}',tipo:'${tipoVisor}',hasCloud:${!!a.persistente},allowDownload:${esSuper},allowResubir:false})"
+                title="Ver dentro del sistema">
+          <i class="bi bi-eye"></i>
+        </button>
+        ${btnDescargar}
+        ${btnEliminar}
+      </div>`;
+  }).join('');
 }
 
 function mostrarSubirAdjunto() {
