@@ -1080,16 +1080,18 @@ def _get_pool():
                 #                  en vez de 20s. Write se queda en 20s para
                 #                  queries grandes (inserts batch, etc).
                 # ─────────────────────────────────────────────────────────
-                mincached      = 0,
-                # ── FIX 2026-05-17 (perf) ────────────────────────────
-                # maxcached subió 5 → 10, maxconnections 10 → 20.
-                # Con gunicorn 2 workers × 8 threads = 16 concurrentes
-                # potenciales por worker; con maxconnections=10 había
-                # contención (threads esperando conexión). 20 deja margen
-                # sin estresar a Clever Cloud (límite plan típico 25-50).
-                # maxcached=10 reduce reconexiones en ráfagas de tráfico.
-                maxcached      = 10,
-                maxconnections = 20,
+                # ── FIX 2026-05-26 (Daniel — login 10s tras inactividad) ──
+                # mincached subió 0 → 2: mantiene 2 conexiones SIEMPRE vivas
+                # tras boot. Primer query tras inactividad NO paga el TCP+TLS+
+                # auth a Clever Cloud (~150-300ms). Antes, con mincached=0,
+                # se cerraban TODAS las conexiones al devolver al pool y la
+                # próxima query reabría desde cero.
+                mincached      = 2,
+                # maxcached 10 → 15: más conexiones reutilizables en ráfagas.
+                # maxconnections 20 → 30: más concurrencia con 4 workers × 8
+                # threads (Clever Cloud plan típico permite 25-50).
+                maxcached      = 15,
+                maxconnections = 30,
                 maxusage       = 200,
                 blocking       = False,
                 ping           = 7,
@@ -1098,7 +1100,9 @@ def _get_pool():
                 user           = MYSQL_CONFIG["user"],
                 password       = MYSQL_CONFIG["password"],
                 database       = MYSQL_CONFIG["database"],
-                connect_timeout= MYSQL_CONFIG.get("connect_timeout", 10),
+                # connect_timeout 10 → 5: fail-fast si MySQL no responde.
+                # Antes el usuario esperaba 10s para ver el error.
+                connect_timeout= MYSQL_CONFIG.get("connect_timeout", 5),
                 read_timeout   = 5,
                 write_timeout  = 20,
                 charset        = "utf8mb4",
@@ -6598,6 +6602,23 @@ def _redirect_to_first_accessible(perms):
     if perms.get("comunicaciones"): return redirect(url_for("comm_index"))
     flash("Tu rol no tiene permisos para ningún módulo. Contacta al administrador.", "warning")
     return redirect(url_for("mi_cuenta"))
+
+
+# ═════════════════════════════════════════════════════════════════════
+# /ping — endpoint ULTRA-LIVIANO para keep-alive externo
+# Daniel 2026-05-26: el cold start de Railway es lo que hace que el
+# login tarde 10s después de inactividad. Un servicio externo gratuito
+# (UptimeRobot.com, Cron-Job.org) pollea esta URL cada 5 min y mantiene
+# la app despierta. Respuesta: <5ms, sin DB, sin auth, sin queries.
+# Ejemplo: https://web-production-85732.up.railway.app/ping → "pong"
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/ping")
+def _keepalive_ping():
+    """Pong rápido — sin BD ni cómputo. Para keep-alive externo."""
+    resp = make_response("pong", 200)
+    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # ═════════════════════════════════════════════════════════════════════
