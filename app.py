@@ -32912,6 +32912,143 @@ ALLOWED_CONTRATO_LEGACY = {"pdf", "doc", "docx"}  # solo lectura — uploads exi
 MAX_CONTRATO_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
+# ════════════════════════════════════════════════════════════════════════
+# VALIDADOR + REPARADOR DE PDFs (2026-05-26 — Daniel: "que persista hasta
+# que esté bien y si es posible repararlo seria genial")
+#
+# Cuando el usuario sube un contrato, validamos INMEDIATAMENTE:
+#   1. Magic bytes — el archivo realmente empieza con %PDF-
+#   2. Estructura — pdfplumber puede abrirlo y leer al menos 1 página
+#   3. Si pdfplumber falla, intentamos REPARAR con pypdf (re-escribir el
+#      stream desde cero — recupera muchos PDFs con cross-reference dañado,
+#      objetos huérfanos, EOL incorrecto, etc.)
+#   4. Si tampoco se puede reparar, retornamos error claro.
+#
+# Devuelve dict con:
+#   ok:        bool
+#   problema:  str (mensaje accionable para el usuario) o None
+#   reparado:  bool (True si tuvimos que reescribir el PDF)
+#   stream:    BytesIO con el contenido válido (original o reparado),
+#              listo para subir a Cloudinary. None si falló.
+#   n_pages:   int (cantidad de páginas detectadas)
+# ════════════════════════════════════════════════════════════════════════
+def _validar_y_reparar_pdf(file_obj, filename: str = "") -> dict:
+    """Valida un PDF y trata de repararlo si está dañado."""
+    import io
+
+    try:
+        file_obj.seek(0)
+    except Exception:
+        pass
+
+    # 1. Magic bytes — primer chequeo barato
+    try:
+        head = file_obj.read(5)
+        file_obj.seek(0)
+    except Exception as e:
+        return {
+            "ok": False,
+            "problema": ("No se pudo leer el archivo subido. "
+                         "Inténtalo de nuevo o usa otro archivo."),
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    if head != b'%PDF-':
+        return {
+            "ok": False,
+            "problema": ("El archivo tiene extensión .pdf pero su contenido "
+                         "NO es un PDF real. Exporta el documento como PDF "
+                         "desde el programa original (Word: Archivo → "
+                         "Exportar → Crear PDF/XPS)."),
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    # 2. Leer todo el contenido en memoria
+    try:
+        content = file_obj.read()
+        file_obj.seek(0)
+    except Exception:
+        return {
+            "ok": False,
+            "problema": "No se pudo leer el archivo. Inténtalo de nuevo.",
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    if len(content) < 512:
+        return {
+            "ok": False,
+            "problema": ("El archivo PDF está incompleto (menos de 512 bytes). "
+                         "Vuelve a subirlo — probablemente se cortó la subida."),
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    # 3. Intentar abrir con pdfplumber (el visor real del navegador hace algo
+    #    similar; si pdfplumber lo abre, casi seguro el browser también).
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            n_pages = len(pdf.pages)
+            if n_pages == 0:
+                raise ValueError("PDF sin páginas")
+            # Tocar la primera página para detectar corrupción profunda
+            _ = pdf.pages[0]
+        # OK — devolvemos el stream original
+        return {
+            "ok": True,
+            "problema": None,
+            "reparado": False,
+            "stream": io.BytesIO(content),
+            "n_pages": n_pages,
+        }
+    except Exception as e_open:
+        problema_inicial = str(e_open)[:140]
+        # 4. PDF dañado — intentar reparar con pypdf
+        try:
+            from pypdf import PdfReader, PdfWriter
+            reader = PdfReader(io.BytesIO(content), strict=False)
+            if len(reader.pages) == 0:
+                raise ValueError("PDF sin páginas al reparar")
+            writer = PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
+            output = io.BytesIO()
+            writer.write(output)
+            output.seek(0)
+
+            # Verificar que el reparado es legible por pdfplumber
+            content_rep = output.getvalue()
+            with pdfplumber.open(io.BytesIO(content_rep)) as pdf_rep:
+                n_rep = len(pdf_rep.pages)
+                if n_rep == 0:
+                    raise ValueError("Reparado quedó sin páginas")
+                _ = pdf_rep.pages[0]
+
+            print(f"[validar_pdf] {filename!r} REPARADO "
+                  f"({len(content)} → {len(content_rep)} bytes, "
+                  f"{n_rep} págs)", flush=True)
+            return {
+                "ok": True,
+                "problema": None,
+                "reparado": True,
+                "stream": io.BytesIO(content_rep),
+                "n_pages": n_rep,
+            }
+        except Exception as e_rep:
+            print(f"[validar_pdf] {filename!r} no reparable: "
+                  f"open_err={problema_inicial!r}; rep_err={str(e_rep)[:140]!r}",
+                  flush=True)
+            return {
+                "ok": False,
+                "problema": ("El PDF está dañado y el sistema no lo pudo "
+                             "reparar automáticamente. Vuelve a exportarlo "
+                             "desde el programa original (Word, Excel, "
+                             "navegador, etc.) y súbelo de nuevo."),
+                "reparado": False,
+                "stream": None,
+                "n_pages": 0,
+            }
+
+
 @app.route("/mantenciones/api/contratos/<int:ctid>", methods=["DELETE"])
 @_mant_required
 def mant_contrato_delete(ctid):
@@ -33081,16 +33218,28 @@ def mant_contrato_subir(cid):
             "error_codigo": "ALMACENAMIENTO_NO_DISPONIBLE",
         }), 503
 
-    # Anti-duplicados v2: hash MD5 del contenido. Más robusto que nombre,
-    # porque detecta también re-envíos del browser por timeout/retry HTTP.
-    # Ventana ampliada a 5 min: si el mismo contenido se sube otra vez en
-    # ese rango, asumimos error y reusamos el existente.
+    # ── VALIDAR + REPARAR el PDF antes de hacer cualquier otra cosa ─────
+    # Si el archivo está dañado, devolvemos error claro AHORA. El usuario
+    # vuelve a subir otro y persistimos hasta que esté bien.
+    _val = _validar_y_reparar_pdf(f.stream, f.filename or "")
+    if not _val["ok"]:
+        return jsonify({
+            "error": _val["problema"],
+            "error_codigo": "PDF_INVALIDO",
+        }), 400
+    _upload_stream = _val["stream"]
+    _fue_reparado  = _val["reparado"]
+    _n_pages_pdf   = _val.get("n_pages", 0)
+
+    # Anti-duplicados v2: hash MD5 del contenido VALIDADO (post-reparación).
+    # Más robusto que nombre, porque detecta también re-envíos del browser
+    # por timeout/retry HTTP. Ventana 5 min.
     import hashlib
     try:
-        f.stream.seek(0)
-        _content = f.stream.read()
+        _upload_stream.seek(0)
+        _content = _upload_stream.read()
         archivo_hash = hashlib.md5(_content).hexdigest()
-        f.stream.seek(0)
+        _upload_stream.seek(0)
     except Exception as e_hash:
         archivo_hash = None
         print(f"[mant_contrato_subir] no se pudo calcular hash: {e_hash}", flush=True)
@@ -33180,9 +33329,9 @@ def mant_contrato_subir(cid):
     cloud_pid = None
     cloud_uploaded_at = None
     try:
-        f.stream.seek(0)
+        _upload_stream.seek(0)
         public_id = f"contrato_{cid}_{int(time.time())}"
-        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+        cloud_result = _cloud_upload_raw(_upload_stream, public_id, folder="ilus/contratos")
         cloud_url = cloud_result["url"]
         cloud_pid = cloud_result["public_id"]
         cloud_uploaded_at = datetime.utcnow()
@@ -33199,11 +33348,12 @@ def mant_contrato_subir(cid):
             "detalle": str(e_cld)[:200],
         }), 502
 
-    # Backup local opcional (no bloqueante)
+    # Backup local opcional (no bloqueante) — usa el stream validado/reparado
     try:
-        f.stream.seek(0)
+        _upload_stream.seek(0)
         fpath = os.path.join(MANT_UPLOADS, fname)
-        f.save(fpath)
+        with open(fpath, "wb") as _fh_loc:
+            _fh_loc.write(_upload_stream.read())
     except Exception as e_save:
         print(f"[mant_contrato] backup filesystem falló (no crítico): {e_save}", flush=True)
 
@@ -33252,14 +33402,19 @@ def mant_contrato_subir(cid):
                 )
             ctid = cur.lastrowid
         conn.commit()
-        _mant_log("contrato", ctid, "subido",
-                  f"{f.filename} (Cloudinary raw · {size_bytes/1024:.0f}KB)")
+        _detalle_log = f"{f.filename} (Cloudinary raw · {size_bytes/1024:.0f}KB"
+        if _fue_reparado:
+            _detalle_log += " · PDF reparado automáticamente"
+        _detalle_log += ")"
+        _mant_log("contrato", ctid, "subido", _detalle_log)
         return jsonify({
             "ok": True, "id": ctid,
             "persistente": True,
             "storage": "cloudinary",
             "url": cloud_url,
             "size_kb": int(size_bytes / 1024) if size_bytes else 0,
+            "reparado": _fue_reparado,
+            "n_pages": _n_pages_pdf,
         })
     finally:
         conn.close()
@@ -33390,7 +33545,24 @@ def mant_contrato_re_subir(ctid):
             "error_codigo": "FORMATO_NO_PERMITIDO",
         }), 400
 
-    # Borrar el archivo viejo si existe (cleanup local)
+    # ── VALIDAR + REPARAR el PDF antes de tocar Cloudinary ──────────────
+    # Si el archivo está dañado, fallamos LIMPIO sin destruir lo que ya había.
+    # El usuario verá el problema y volverá a subir otro.
+    _val = _validar_y_reparar_pdf(f.stream, f.filename or "")
+    if not _val["ok"]:
+        return jsonify({
+            "ok": False,
+            "error": _val["problema"],
+            "error_codigo": "PDF_INVALIDO",
+        }), 400
+
+    # Stream a usar de aquí en adelante (puede ser el original o el reparado)
+    _upload_stream = _val["stream"]
+    _fue_reparado = _val["reparado"]
+    _n_pages_pdf  = _val.get("n_pages", 0)
+
+    # Borrar el archivo viejo si existe (cleanup local) — recién ahora que
+    # sabemos que el nuevo es válido.
     if ct.get("archivo_path"):
         try:
             old_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
@@ -33424,9 +33596,9 @@ def mant_contrato_re_subir(ctid):
     cloud_pid = None
     cloud_uploaded_at = None
     try:
-        f.stream.seek(0)
+        _upload_stream.seek(0)
         public_id = f"contrato_{ct['cliente_id']}_{int(time.time())}"
-        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+        cloud_result = _cloud_upload_raw(_upload_stream, public_id, folder="ilus/contratos")
         cloud_url = cloud_result["url"]
         cloud_pid = cloud_result["public_id"]
         cloud_uploaded_at = datetime.utcnow()
@@ -33442,14 +33614,12 @@ def mant_contrato_re_subir(ctid):
         }), 502
 
     # ── 2. Backup local (no bloqueante) ──
-    try:
-        f.stream.seek(0)
-    except Exception:
-        pass
     fpath = os.path.join(MANT_UPLOADS, fname)
     saved_local = False
     try:
-        f.save(fpath)
+        _upload_stream.seek(0)
+        with open(fpath, "wb") as _fh_local:
+            _fh_local.write(_upload_stream.read())
         saved_local = True
     except Exception as e_save:
         # Cloudinary ya está OK — el archivo está seguro. Backup local fall
@@ -33470,12 +33640,18 @@ def mant_contrato_re_subir(ctid):
                       f"Re-subido por {current_username()}: {f.filename} "
                       f"({'Cloudinary' if cloud_url else 'filesystem'})")
         except Exception: pass
+        _msg = "Archivo re-subido correctamente."
+        if _fue_reparado:
+            _msg += (" El PDF estaba dañado y el sistema lo reparó "
+                     "automáticamente antes de guardarlo.")
         return jsonify({
             "ok": True,
-            "mensaje": "Archivo re-subido correctamente.",
+            "mensaje": _msg,
             "archivo_nombre": f.filename,
             "persistente": bool(cloud_url),
             "storage": "cloudinary" if cloud_url else "filesystem",
+            "reparado": _fue_reparado,
+            "n_pages": _n_pages_pdf,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"Error al actualizar BD: {e}"}), 500

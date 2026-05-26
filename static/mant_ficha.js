@@ -3321,10 +3321,31 @@ async function subirContrato() {
 
     if (r.ok && data && data.ok) {
       bootstrap.Modal.getInstance(document.getElementById('modalContrato')).hide();
-      if (typeof ilusToast === 'function') {
+      if (data.reparado) {
+        // El PDF estaba dañado y el sistema lo reparó — avisar explícito
+        await ilusAlert({
+          title: 'Contrato subido y reparado',
+          message: 'El PDF estaba dañado y el sistema lo reparó automáticamente antes de guardarlo. Ya está disponible para visualizar.',
+          type: 'success',
+        });
+      } else if (typeof ilusToast === 'function') {
         ilusToast('✓ Contrato subido correctamente (persistente)', { type: 'success' });
       }
       setTimeout(() => location.reload(), 900);
+      return;
+    }
+
+    // PDF inválido — el sistema validó server-side y rechazó. Mantener
+    // el modal abierto para que el usuario suba otro archivo de inmediato.
+    if (data && data.error_codigo === 'PDF_INVALIDO') {
+      await ilusAlert({
+        title: 'El archivo no se puede usar',
+        message: data.error,
+        type: 'warning',
+      });
+      // Limpiar el input file para que el usuario elija otro
+      const fInput = document.getElementById('ct_archivo');
+      if (fInput) fInput.value = '';
       return;
     }
 
@@ -3540,43 +3561,109 @@ async function vhGuardar() {
 }
 
 // ─── Re-subir archivo de contrato (cuando se perdió por deploy de Railway) ──
-function reSubirContrato(ctid, nombre) {
-  // Crear input file invisible y disparar el dialog del browser
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = '.pdf,.doc,.docx';
-  inp.style.display = 'none';
-  inp.onchange = async () => {
-    const f = inp.files[0];
-    if (!f) return;
-    const ok = await ilusConfirm({
-      title: 'Re-subir archivo del contrato',
-      message: `«${nombre}»`,
-      sub: `Archivo nuevo: ${f.name}\nEsto reemplaza el archivo anterior. Conserva los datos del contrato y el análisis IA actual.`,
-      okLabel: 'Sí, reemplazar',
-    });
-    if (!ok) return;
+// Bucle persistente de re-subida: si el archivo está mal (PDF dañado, no es
+// PDF real, etc.), el sistema muestra el problema y abre otra vez el picker
+// hasta que el usuario suba uno válido o cancele explícitamente.
+async function reSubirContrato(ctid, nombre) {
+  // Confirmación inicial — solo se pide una vez
+  const okStart = await ilusConfirm({
+    title: 'Re-subir archivo del contrato',
+    message: `«${nombre}»`,
+    sub: 'Esto reemplaza el archivo anterior. Conserva los datos del contrato y el análisis IA actual.',
+    okLabel: 'Elegir archivo',
+  });
+  if (!okStart) return;
 
+  let intento = 0;
+  let mensajeProblema = null;  // pasa de iteración a iteración
+
+  while (true) {
+    intento++;
+    // Mostrar el problema de la iteración anterior (si lo hubo)
+    if (mensajeProblema) {
+      await ilusAlert({
+        title: 'El archivo anterior no se pudo usar',
+        message: mensajeProblema,
+        type: 'warning',
+      });
+    }
+
+    // Abrir file picker (envuelto en Promise para esperar a la elección)
+    const f = await new Promise((resolve) => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = '.pdf';   // solo PDF — más estricto que antes
+      inp.style.display = 'none';
+      // Trick: si el usuario cancela el dialog, focus vuelve al body sin
+      // disparar onchange. Detectamos con un listener temporal.
+      const onCancel = () => {
+        // Pequeño delay para no ganarle a onchange
+        setTimeout(() => {
+          if (!inp.files || inp.files.length === 0) resolve(null);
+        }, 300);
+        window.removeEventListener('focus', onCancel);
+      };
+      window.addEventListener('focus', onCancel, { once: true });
+      inp.onchange = () => {
+        window.removeEventListener('focus', onCancel);
+        resolve(inp.files && inp.files[0] ? inp.files[0] : null);
+        setTimeout(() => inp.remove(), 100);
+      };
+      document.body.appendChild(inp);
+      inp.click();
+    });
+
+    if (!f) {
+      // Usuario canceló — preguntamos si quiere salir del proceso
+      const continuar = await ilusConfirm({
+        title: '¿Salir sin re-subir?',
+        message: 'El contrato sigue sin archivo válido. ¿Deseas cancelar el proceso?',
+        okLabel: 'Sí, cancelar',
+        cancelLabel: 'Volver a elegir',
+        danger: true,
+      });
+      if (continuar) return;   // usuario abortó del todo
+      mensajeProblema = null;   // no había problema, solo cerró el dialog
+      continue;
+    }
+
+    // Subir el archivo seleccionado
+    ilusToast(`Validando archivo (intento ${intento})…`, { type: 'info' });
     const fd = new FormData();
     fd.append('archivo', f);
+    let d;
     try {
       const r = await fetch(`/mantenciones/api/contratos/${ctid}/re-subir`, {
         method: 'POST', body: fd
       });
-      const d = await r.json();
-      if (d.ok) {
-        ilusToast(`Archivo re-subido: ${d.archivo_nombre}`, { type:'success' });
-        setTimeout(() => location.reload(), 1200);
-      } else {
-        ilusToast(d.error || 'Error al re-subir', { type:'error' });
-      }
-    } catch(e) {
-      ilusToast(`Error de red: ${e.message}`, { type:'error' });
+      d = await r.json();
+    } catch (e) {
+      mensajeProblema = `Error de red: ${e.message}. Verifica tu conexión e intenta de nuevo.`;
+      continue;   // vuelve a abrir el picker
     }
-  };
-  document.body.appendChild(inp);
-  inp.click();
-  setTimeout(() => inp.remove(), 1000);
+
+    if (d && d.ok) {
+      // ÉXITO — mostrar mensaje y recargar
+      const tituloOk = d.reparado
+        ? 'Archivo re-subido y reparado'
+        : 'Archivo re-subido correctamente';
+      const msgOk = d.reparado
+        ? `El PDF estaba dañado y el sistema lo reparó automáticamente antes de guardarlo. Ya está disponible (${d.n_pages || '—'} páginas).`
+        : `Archivo válido (${d.n_pages || '—'} páginas). La página se recargará para mostrar el contrato.`;
+      await ilusAlert({
+        title: tituloOk,
+        message: msgOk,
+        type: 'success',
+      });
+      location.reload();
+      return;   // salir del bucle
+    }
+
+    // FALLO — preparar mensaje para la siguiente iteración
+    mensajeProblema = (d && d.error) ||
+      'No se pudo procesar el archivo. Intenta con otro archivo PDF.';
+    // El bucle continúa y vuelve a abrir el picker
+  }
 }
 
 // Modal de eliminar contrato — Bootstrap custom, no confirm/prompt nativos
