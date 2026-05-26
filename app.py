@@ -29931,6 +29931,64 @@ def _mant_ficha_impl(cid):
         print(f"[ficha contratos] tiene_adjunto_visible flag failed: {_e_adj}", flush=True)
         for _ct in contratos_raw:
             _ct["tiene_adjunto_visible"] = False
+
+    # ── AUTO-SYNC CLOUDINARY 2026-05-26 (Daniel — "esto debe operar sí o sí") ──
+    # Cuando se carga la ficha, lanzamos un thread en background que sube a
+    # Cloudinary CUALQUIER contrato del cliente que tenga archivo en disco
+    # pero NO esté en cloud. Esto hace que la auto-cura sea invisible para el
+    # usuario: la próxima vez que abra el visor, el contrato estará en cloud
+    # y se previsualizará al instante.
+    #
+    # Idempotente: si ya está en cloud, se salta. Si no hay archivo en disco
+    # (Railway redeployó), no se puede recuperar — solo re-subiendo manualmente.
+    try:
+        _pending_sync = [
+            ct for ct in contratos_raw
+            if (ct.get("archivo_path") or "").strip()
+            and not (ct.get("cloudinary_url") or "").strip()
+        ]
+        if _pending_sync and _CLD_READY:
+            import threading as _th_sync
+
+            def _sync_cliente_silent(_ctlist, _cid):
+                """Sube en background los contratos del cliente que están en
+                disco pero no en cloud. Errores se loguean, no se propagan."""
+                for _ctp in _ctlist:
+                    try:
+                        _path = _ctp.get("archivo_path")
+                        if not _path:
+                            continue
+                        _full = os.path.join(MANT_UPLOADS, _path)
+                        if not os.path.exists(_full):
+                            continue
+                        with open(_full, "rb") as _fh:
+                            _pid = f"contrato_{_cid}_{int(time.time())}_{_ctp['id']}_autosync"
+                            _res = _cloud_upload_raw(_fh, _pid, folder="ilus/contratos")
+                        mysql_execute(
+                            "UPDATE mant_contratos "
+                            "   SET cloudinary_url=%s, cloudinary_public_id=%s, "
+                            "       cloudinary_uploaded_at=%s "
+                            " WHERE id=%s AND (cloudinary_url IS NULL OR cloudinary_url='')",
+                            (_res["url"], _res["public_id"], datetime.utcnow(), _ctp["id"])
+                        )
+                        print(f"[ficha autosync] ctid={_ctp['id']} → cloud OK",
+                              flush=True)
+                    except Exception as _e_si:
+                        print(f"[ficha autosync] ctid={_ctp.get('id')} FAIL: {_e_si}",
+                              flush=True)
+
+            _th_sync.Thread(
+                target=_sync_cliente_silent,
+                args=(list(_pending_sync), cid),
+                daemon=True
+            ).start()
+            print(f"[ficha autosync] cid={cid} lanzando sync silencioso de "
+                  f"{len(_pending_sync)} contrato(s)", flush=True)
+    except Exception as _e_autosync:
+        # Nunca bloquear el render de la ficha por una falla en el sync
+        print(f"[ficha autosync] no se pudo lanzar thread: {_e_autosync}",
+              flush=True)
+
     # PERF: LIMIT 200 en visitas (stats 12m + tab visitas no requieren más)
     visitas_raw   = mysql_fetchall(
         "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 200",
@@ -33421,103 +33479,6 @@ def mant_contrato_re_subir(ctid):
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"Error al actualizar BD: {e}"}), 500
-
-
-# ════════════════════════════════════════════════════════════════════════
-# AUDITORIA DE CONTRATOS 2026-05-26 (Daniel — "saas de primera, urgente")
-# Devuelve el estado de TODOS los contratos del sistema para que el
-# superadmin sepa exactamente cuáles están listos para previsualización
-# y cuáles están en riesgo (sin Cloudinary, sin disco, etc).
-# ════════════════════════════════════════════════════════════════════════
-@app.route("/mantenciones/api/contratos/audit", methods=["GET"])
-@_mant_required
-def mant_contratos_audit():
-    """Audit del estado de todos los contratos en la BD.
-
-    Devuelve:
-      {
-        "ok": true,
-        "total":           int,
-        "con_cloudinary":  int,   # listo para preview instantáneo
-        "solo_disco":      int,   # en riesgo (Railway efímero)
-        "huerfanos_adj":   int,   # contrato sin propio archivo pero con adjunto en cloud
-        "perdidos":        int,   # ni disco ni cloud ni adjunto = no se puede ver
-        "muestra_riesgo":  [...]  # primeros 20 contratos en riesgo
-      }
-    """
-    if not (g.permissions or {}).get("superadmin"):
-        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
-
-    # Totales por estado
-    row = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos") or {"n": 0}
-    total = int(row["n"])
-
-    row = mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_contratos "
-        " WHERE cloudinary_url IS NOT NULL AND cloudinary_url <> ''"
-    ) or {"n": 0}
-    con_cloud = int(row["n"])
-
-    row = mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_contratos "
-        " WHERE (cloudinary_url IS NULL OR cloudinary_url='') "
-        "   AND archivo_path IS NOT NULL AND archivo_path<>''"
-    ) or {"n": 0}
-    solo_disco = int(row["n"])
-
-    # Huérfanos con adjunto: contrato sin archivo propio pero con adjunto cloud disponible
-    row = mysql_fetchone(
-        "SELECT COUNT(DISTINCT c.id) AS n FROM mant_contratos c "
-        " JOIN mant_contrato_adjuntos a ON a.contrato_id=c.id "
-        " WHERE (c.cloudinary_url IS NULL OR c.cloudinary_url='') "
-        "   AND (c.archivo_path IS NULL OR c.archivo_path='') "
-        "   AND a.cloudinary_url IS NOT NULL AND a.cloudinary_url<>'' "
-        "   AND a.tipo IN ('contrato','anexo','externo','otro')"
-    ) or {"n": 0}
-    huerfanos_adj = int(row["n"])
-
-    # Perdidos: sin cloud, sin disco, sin adjunto
-    perdidos = total - con_cloud - solo_disco - huerfanos_adj
-    if perdidos < 0:
-        perdidos = 0  # no debería pasar, pero por seguridad
-
-    # Muestra de contratos en riesgo (solo_disco + perdidos) para que el
-    # superadmin sepa cuáles re-subir manualmente
-    muestra = mysql_fetchall(
-        "SELECT c.id, c.nombre, c.cliente_id, cli.razon_social, "
-        "       c.archivo_path, c.archivo_nombre, "
-        "       CASE "
-        "         WHEN c.cloudinary_url IS NOT NULL AND c.cloudinary_url<>'' THEN 'cloud_ok' "
-        "         WHEN c.archivo_path IS NOT NULL AND c.archivo_path<>'' THEN 'solo_disco' "
-        "         ELSE 'perdido' "
-        "       END AS estado "
-        "  FROM mant_contratos c "
-        "  LEFT JOIN mant_clientes cli ON cli.id=c.cliente_id "
-        " WHERE (c.cloudinary_url IS NULL OR c.cloudinary_url='') "
-        " ORDER BY c.id DESC LIMIT 50"
-    ) or []
-
-    return jsonify({
-        "ok": True,
-        "total":           total,
-        "con_cloudinary":  con_cloud,
-        "solo_disco":      solo_disco,
-        "huerfanos_adj":   huerfanos_adj,
-        "perdidos":        perdidos,
-        "porcentaje_ok":   round((con_cloud + huerfanos_adj) * 100.0 / total, 1) if total else 100.0,
-        "muestra_riesgo":  [
-            {
-                "id":            m["id"],
-                "nombre":        m.get("nombre") or "",
-                "cliente_id":    m.get("cliente_id"),
-                "cliente":       m.get("razon_social") or "",
-                "archivo_path":  m.get("archivo_path") or "",
-                "archivo_nombre":m.get("archivo_nombre") or "",
-                "estado":        m["estado"],
-            }
-            for m in muestra
-        ],
-    })
 
 
 # ════════════════════════════════════════════════════════════════════════

@@ -4596,11 +4596,12 @@ function _udvSetBadge(text, color) {
 }
 
 function _udvShowError(opts) {
-  const { titulo, mensaje, icono, iconColor, mostrarReintentar, metadata, errorTech } = opts || {};
+  const { titulo, mensaje, icono, iconColor, mostrarReintentar, mostrarResubir, metadata, errorTech } = opts || {};
   document.getElementById('contratoNoViewerIcon').className = icono || 'bi bi-file-earmark-x';
   document.getElementById('contratoNoViewerIcon').style.color = iconColor || '#dc2626';
-  document.getElementById('contratoNoViewerTitulo').textContent = titulo || 'No se pudo previsualizar';
-  document.getElementById('contratoNoViewerMsg').innerHTML = mensaje || 'Hubo un problema cargando el documento.';
+  document.getElementById('contratoNoViewerTitulo').textContent = titulo || 'Este contrato debe re-subirse';
+  document.getElementById('contratoNoViewerMsg').innerHTML = mensaje ||
+    'No se pudo mostrar el archivo. Re-súbelo para que vuelva a quedar disponible para todos.';
   const meta = document.getElementById('udvMetadata');
   const metaContent = document.getElementById('udvMetaContent');
   if (metadata) {
@@ -4611,8 +4612,12 @@ function _udvShowError(opts) {
   } else {
     meta.style.display = 'none';
   }
+  // Botón Reintentar (solo si se pidió explícito)
   const btnRet = document.getElementById('btnReintentarUDV');
-  btnRet.style.display = mostrarReintentar ? '' : 'none';
+  if (btnRet) btnRet.style.display = mostrarReintentar ? '' : 'none';
+  // Botón Re-subir (solo superadmin, y solo si tiene sentido pedirlo)
+  const btnRes = document.getElementById('btnUDVResubir');
+  if (btnRes) btnRes.style.display = (mostrarResubir && UDV.esSuperadmin) ? '' : 'none';
   const errTech = document.getElementById('udvErrorTech');
   if (errorTech) {
     errTech.textContent = errorTech + '\n\n' + UDV.logs.slice(-20).join('\n');
@@ -4628,6 +4633,15 @@ function udvReintentar() {
   if (UDV.ctid) {
     verContrato(UDV.ctid, UDV.nombre, UDV.tipo, UDV.hasCloud);
   }
+}
+
+// Re-sube el contrato actualmente abierto en el visor. Cierra el modal
+// y dispara el file picker — reSubirContrato() ya hace el resto.
+function udvResubirActual() {
+  if (!UDV.ctid) return;
+  const m = bootstrap.Modal.getInstance(document.getElementById('modalVerContrato'));
+  if (m) m.hide();
+  reSubirContrato(UDV.ctid, UDV.nombre || `Contrato #${UDV.ctid}`);
 }
 
 // ─── HEAD probe: detecta el Content-Type real del archivo ─────────────
@@ -4797,11 +4811,13 @@ function _udvLoadImage(url) {
   img.onerror = () => {
     _udvLog('ERROR', 'Image failed to load');
     _udvShowError({
-      titulo: 'No se pudo cargar la imagen',
-      mensaje: 'El servidor respondió pero la imagen no se pudo renderizar. Puedes descargarla o abrirla en pestaña nueva.',
-      icono: 'bi bi-image',
-      iconColor: '#3b82f6',
-      mostrarReintentar: true,
+      titulo: 'Este contrato debe re-subirse',
+      mensaje: UDV.esSuperadmin
+        ? 'La imagen no se pudo cargar. Súbela de nuevo y quedará disponible.'
+        : 'No se pudo cargar la imagen. Avisa al administrador para que la vuelva a subir.',
+      icono: 'bi bi-cloud-arrow-up',
+      iconColor: '#f59e0b',
+      mostrarResubir: true,
     });
   };
   img.src = url;
@@ -4868,15 +4884,13 @@ async function verContrato(ctid, nombre, tipo, hasCloud) {
     headInfo = await _udvHead(UDV.baseUrl);
     if (headInfo && headInfo.status >= 400) {
       _udvShowError({
-        titulo: 'Archivo no disponible',
-        mensaje: 'El servidor no tiene el contrato disponible (HTTP ' + headInfo.status + '). ' +
-                 (UDV.esSuperadmin
-                    ? 'Re-súbelo usando el botón <i class="bi bi-cloud-upload"></i> en la lista.'
-                    : 'Pide al superadministrador que lo re-suba.'),
-        icono: 'bi bi-cloud-slash',
-        iconColor: '#dc2626',
-        mostrarReintentar: true,
-        metadata: { 'HTTP': headInfo.status, 'Archivo': UDV.nombre, 'Contrato ID': ctid },
+        titulo: 'Este contrato debe re-subirse',
+        mensaje: UDV.esSuperadmin
+          ? 'El archivo ya no está disponible en el servidor. Súbelo de nuevo con el botón de abajo y quedará operando al instante.'
+          : 'El archivo ya no está disponible. Avisa al administrador para que lo vuelva a subir.',
+        icono: 'bi bi-cloud-arrow-up',
+        iconColor: '#f59e0b',
+        mostrarResubir: true,
       });
       return;
     }
@@ -4897,7 +4911,7 @@ async function verContrato(ctid, nombre, tipo, hasCloud) {
 
   // ── RUTA 1: Office docs con Cloudinary → Office Online Viewer ────────
   if (isOffice && UDV.hasCloud) {
-    _udvSetStep('Cargando Microsoft Office Online Viewer…');
+    _udvSetStep('Cargando documento Word/Excel…');
     _udvLoadIframe(UDV.baseUrl + '?viewer=office', {
       onLoaded: () => {
         _udvLog('INFO', 'Office Viewer cargado');
@@ -4905,11 +4919,13 @@ async function verContrato(ctid, nombre, tipo, hasCloud) {
       },
       onBlank: () => {
         _udvShowError({
-          titulo: 'Office Online Viewer no respondió',
-          mensaje: 'El visor de Microsoft no pudo cargar el archivo. Puedes descargarlo o intentar de nuevo.',
-          icono: 'bi bi-file-earmark-word',
-          iconColor: '#3b82f6',
-          mostrarReintentar: true,
+          titulo: 'Este contrato debe re-subirse',
+          mensaje: UDV.esSuperadmin
+            ? 'El visor de Word/Excel no pudo cargar el archivo. Súbelo de nuevo y volverá a quedar disponible.'
+            : 'No se pudo mostrar el archivo. Avisa al administrador para que lo vuelva a subir.',
+          icono: 'bi bi-cloud-arrow-up',
+          iconColor: '#f59e0b',
+          mostrarResubir: true,
         });
       },
       blankTimeoutMs: 10000,  // Office viewer es más lento
@@ -4920,17 +4936,13 @@ async function verContrato(ctid, nombre, tipo, hasCloud) {
   // ── RUTA 2: Office docs SIN Cloudinary → no se puede previsualizar ──
   if (isOffice && !UDV.hasCloud) {
     _udvShowError({
-      titulo: 'Documento Office sin Cloudinary',
+      titulo: 'Este contrato debe re-subirse',
       mensaje: UDV.esSuperadmin
-        ? '<strong>Re-súbelo:</strong> el sistema lo guardará en Cloudinary y entonces podrás previsualizarlo con Microsoft Office Online Viewer.'
-        : '<strong>Pide al superadministrador</strong> re-subir este contrato para previsualizarlo.',
-      icono: 'bi bi-file-earmark-word',
-      iconColor: '#3b82f6',
-      metadata: headInfo ? {
-        'MIME real': headInfo.contentType || '(sin detectar)',
-        'Tamaño': headInfo.length ? (Math.round(parseInt(headInfo.length)/1024) + ' KB') : '—',
-        'Contrato ID': ctid,
-      } : null,
+        ? 'Este documento Word/Excel todavía no está en la nube. Vuelve a subirlo y quedará disponible para todos al instante.'
+        : 'Este documento todavía no está disponible para preview. Avisa al administrador para que lo vuelva a subir.',
+      icono: 'bi bi-cloud-arrow-up',
+      iconColor: '#f59e0b',
+      mostrarResubir: true,
     });
     return;
   }
@@ -4961,39 +4973,37 @@ async function verContrato(ctid, nombre, tipo, hasCloud) {
           await _udvLoadPdfJs(UDV.baseUrl);
         } catch (e) {
           _udvShowError({
-            titulo: 'No se pudo renderizar el PDF',
-            mensaje: 'Probamos visor nativo y PDF.js sin éxito. Puedes descargar el archivo o abrirlo en pestaña nueva.',
-            icono: 'bi bi-file-earmark-pdf',
-            iconColor: '#dc2626',
-            mostrarReintentar: true,
-            errorTech: 'PDF.js error: ' + (e.message || e),
-            metadata: headInfo ? {
-              'MIME': headInfo.contentType || '—',
-              'Tamaño': headInfo.length ? (Math.round(parseInt(headInfo.length)/1024) + ' KB') : '—',
-              'Disposition': headInfo.disposition || '—',
-            } : null,
+            titulo: 'Este contrato debe re-subirse',
+            mensaje: UDV.esSuperadmin
+              ? 'El archivo está dañado o en un formato que no se puede mostrar. Súbelo de nuevo y quedará operando al instante.'
+              : 'No se pudo mostrar el archivo. Avisa al administrador para que lo vuelva a subir.',
+            icono: 'bi bi-cloud-arrow-up',
+            iconColor: '#f59e0b',
+            mostrarResubir: true,
+            errorTech: 'PDF.js: ' + (e.message || e),
           });
         }
       } else {
         _udvShowError({
-          titulo: 'Formato no previsualizable',
-          mensaje: 'El navegador no puede mostrar este tipo de archivo inline. Descárgalo para verlo localmente.',
-          icono: 'bi bi-file-earmark',
-          iconColor: '#94a3b8',
-          metadata: headInfo ? {
-            'MIME': headInfo.contentType || '—',
-            'Tamaño': headInfo.length ? (Math.round(parseInt(headInfo.length)/1024) + ' KB') : '—',
-          } : null,
+          titulo: 'Este contrato debe re-subirse',
+          mensaje: UDV.esSuperadmin
+            ? 'El archivo está en un formato que no se puede mostrar. Súbelo de nuevo (PDF o Word) y quedará disponible.'
+            : 'Este archivo no se puede mostrar. Avisa al administrador para que lo vuelva a subir.',
+          icono: 'bi bi-cloud-arrow-up',
+          iconColor: '#f59e0b',
+          mostrarResubir: true,
         });
       }
     },
     onError: (e) => {
       _udvShowError({
-        titulo: 'Error al cargar el contrato',
-        mensaje: 'Hubo un problema de red o el servidor no respondió. Puedes reintentar o descargar el archivo.',
-        icono: 'bi bi-wifi-off',
+        titulo: 'Este contrato debe re-subirse',
+        mensaje: UDV.esSuperadmin
+          ? 'Hubo un problema con el archivo. Súbelo de nuevo y quedará operando.'
+          : 'No se pudo cargar el archivo. Avisa al administrador para que lo vuelva a subir.',
+        icono: 'bi bi-cloud-arrow-up',
         iconColor: '#f59e0b',
-        mostrarReintentar: true,
+        mostrarResubir: true,
         errorTech: 'Iframe error: ' + (e.message || e),
       });
     },
@@ -5893,174 +5903,3 @@ async function bajaMasivaEquipos(cid) {
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════
-// AUDITORIA DE CONTRATOS — Dashboard de estado + sync masivo (superadmin)
-// ════════════════════════════════════════════════════════════════════════
-async function auditarContratos() {
-  // Modal de auditoría inline (lo construimos si no existe)
-  let modal = document.getElementById('modalAuditContratos');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'modalAuditContratos';
-    modal.className = 'modal fade';
-    modal.tabIndex = -1;
-    modal.innerHTML = `
-      <div class="modal-dialog modal-xl modal-fullscreen-md-down">
-        <div class="modal-content" style="border-radius:14px;overflow:hidden">
-          <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a,#1a1a2e);color:#fff">
-            <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>Auditoría de contratos del sistema</h5>
-            <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-          </div>
-          <div class="modal-body p-0" id="auditBody">
-            <div class="d-flex justify-content-center align-items-center" style="height:300px">
-              <div class="spinner-border text-danger" role="status"></div>
-            </div>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-  }
-  const bs = new bootstrap.Modal(modal);
-  bs.show();
-
-  // Cargar datos
-  let data;
-  try {
-    const r = await fetch('/mantenciones/api/contratos/audit');
-    data = await r.json();
-    if (!data.ok) throw new Error(data.error || 'Error desconocido');
-  } catch (e) {
-    document.getElementById('auditBody').innerHTML = `
-      <div class="alert alert-danger m-3">
-        <i class="bi bi-x-circle me-2"></i>No se pudo cargar la auditoría: ${e.message}
-      </div>`;
-    return;
-  }
-
-  // Render dashboard
-  const okPct = data.porcentaje_ok;
-  const okColor = okPct >= 90 ? '#16a34a' : okPct >= 70 ? '#f59e0b' : '#dc2626';
-  const muestraRows = (data.muestra_riesgo || []).map(m => {
-    const badge = m.estado === 'solo_disco'
-      ? '<span class="badge" style="background:#fef3c7;color:#92400e">Solo disco</span>'
-      : '<span class="badge" style="background:#fee2e2;color:#991b1b">Perdido</span>';
-    return `
-      <tr>
-        <td><a href="/mantenciones/clientes/${m.cliente_id}" target="_blank" class="text-decoration-none">#${m.id}</a></td>
-        <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${m.nombre}">${m.nombre || '<em class="text-muted">sin nombre</em>'}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${m.cliente}">${m.cliente || '—'}</td>
-        <td>${badge}</td>
-        <td><a href="/mantenciones/clientes/${m.cliente_id}" target="_blank" class="btn btn-sm btn-outline-primary" style="font-size:.7rem">
-          <i class="bi bi-arrow-right"></i> Ir a ficha
-        </a></td>
-      </tr>`;
-  }).join('');
-
-  document.getElementById('auditBody').innerHTML = `
-    <div style="padding:24px">
-      <!-- KPIs -->
-      <div class="row g-3 mb-4">
-        <div class="col-md-3 col-6">
-          <div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:12px;padding:16px;text-align:center">
-            <div style="font-size:2.2rem;font-weight:800;color:#16a34a">${data.con_cloudinary + data.huerfanos_adj}</div>
-            <div style="font-size:.78rem;color:#166534;font-weight:600">PREVIEW OK</div>
-            <div style="font-size:.68rem;color:#16a34a;margin-top:4px">En Cloudinary</div>
-          </div>
-        </div>
-        <div class="col-md-3 col-6">
-          <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:12px;padding:16px;text-align:center">
-            <div style="font-size:2.2rem;font-weight:800;color:#f59e0b">${data.solo_disco}</div>
-            <div style="font-size:.78rem;color:#92400e;font-weight:600">EN RIESGO</div>
-            <div style="font-size:.68rem;color:#92400e;margin-top:4px">Solo disco (efímero)</div>
-          </div>
-        </div>
-        <div class="col-md-3 col-6">
-          <div style="background:#fef2f2;border:2px solid #dc2626;border-radius:12px;padding:16px;text-align:center">
-            <div style="font-size:2.2rem;font-weight:800;color:#dc2626">${data.perdidos}</div>
-            <div style="font-size:.78rem;color:#991b1b;font-weight:600">PERDIDOS</div>
-            <div style="font-size:.68rem;color:#dc2626;margin-top:4px">Sin disco ni cloud</div>
-          </div>
-        </div>
-        <div class="col-md-3 col-6">
-          <div style="background:#f8fafc;border:2px solid #cbd5e1;border-radius:12px;padding:16px;text-align:center">
-            <div style="font-size:2.2rem;font-weight:800;color:${okColor}">${okPct}%</div>
-            <div style="font-size:.78rem;color:#475569;font-weight:600">SALUD GLOBAL</div>
-            <div style="font-size:.68rem;color:#475569;margin-top:4px">${data.total} contratos</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Acciones masivas -->
-      ${data.solo_disco > 0 ? `
-      <div class="alert d-flex align-items-center gap-3" style="background:#fffbeb;border-left:4px solid #f59e0b">
-        <i class="bi bi-cloud-arrow-up" style="font-size:1.6rem;color:#f59e0b"></i>
-        <div class="flex-grow-1">
-          <strong>${data.solo_disco} contrato${data.solo_disco !== 1 ? 's' : ''} en riesgo</strong> —
-          tienen el archivo en disco pero NO en Cloudinary. En el próximo redeploy de Railway se perderán.
-        </div>
-        <button class="btn btn-warning fw-bold" onclick="ejecutarBackfillCloud(this)">
-          <i class="bi bi-arrow-up-circle me-1"></i>Sincronizar a Cloudinary ahora
-        </button>
-      </div>` : `
-      <div class="alert alert-success">
-        <i class="bi bi-check-circle me-2"></i>Todos los contratos con archivo están sincronizados a Cloudinary.
-      </div>`}
-
-      ${data.perdidos > 0 ? `
-      <div class="alert" style="background:#fef2f2;border-left:4px solid #dc2626">
-        <i class="bi bi-exclamation-triangle me-2" style="color:#dc2626"></i>
-        <strong>${data.perdidos} contratos sin archivo</strong> — el sistema no los tiene en
-        ningún canal (ni Cloudinary, ni disco, ni adjuntos). Estos contratos necesitan ser
-        <strong>re-subidos manualmente</strong> desde cada ficha de cliente.
-      </div>` : ''}
-
-      <!-- Lista de muestra -->
-      ${muestraRows ? `
-      <h6 class="mt-4 mb-2"><i class="bi bi-list-ul me-2"></i>Contratos en riesgo o perdidos (top 50)</h6>
-      <div class="table-responsive" style="max-height:400px;overflow:auto">
-        <table class="table table-sm table-hover" style="font-size:.82rem">
-          <thead class="table-light" style="position:sticky;top:0;z-index:5">
-            <tr><th>ID</th><th>Contrato</th><th>Cliente</th><th>Estado</th><th></th></tr>
-          </thead>
-          <tbody>${muestraRows}</tbody>
-        </table>
-      </div>` : ''}
-    </div>`;
-}
-
-async function ejecutarBackfillCloud(btn) {
-  const ok = await ilusConfirm({
-    title: 'Sincronizar contratos a Cloudinary',
-    message: 'Esto subirá a Cloudinary todos los contratos que tienen archivo en disco pero no en cloud.',
-    sub: 'Es seguro: solo agrega, no borra nada. Puede tardar 1-3 minutos según la cantidad.',
-    okLabel: 'Sincronizar',
-    cancelLabel: 'Cancelar',
-  });
-  if (!ok) return;
-  const original = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sincronizando…';
-  try {
-    const r = await fetch('/mantenciones/api/contratos/backfill-cloudinary', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ limit: 500 }),
-    });
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'Error desconocido');
-    await ilusAlert({
-      title: 'Sincronización completada',
-      message: `Subidos a Cloudinary: <strong>${d.subidos_ok}</strong> contratos.<br>` +
-               (d.perdidos && d.perdidos.length ? `Sin archivo en disco (perdidos): <strong>${d.perdidos.length}</strong><br>` : '') +
-               (d.errores && d.errores.length ? `Con error: <strong>${d.errores.length}</strong>` : ''),
-      subHtml: true,
-      type: 'success',
-    });
-    // Refrescar dashboard
-    auditarContratos();
-  } catch (e) {
-    await ilusAlert({ title: 'Error', message: e.message, type: 'error' });
-    btn.disabled = false;
-    btn.innerHTML = original;
-  }
-}
