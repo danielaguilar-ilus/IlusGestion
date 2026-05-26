@@ -34,7 +34,19 @@
      versión se invalida automáticamente. Antes el navegador hacía un
      If-Modified-Since round-trip por cada visita; ahora 0 requests si la
      URL versionada ya está en cache. Subir _ASSET_V cuando cambie CSS/JS. #}
-  <link rel="preload" href="{{ url_for('static', filename='style.css') }}?v=20260526f" as="style">
+  <link rel="preload" href="{{ url_for('static', filename='style.css') }}?v=20260526f" as="style" fetchpriority="high">
+
+  {# ── PREFETCH 2026-05-26 (Daniel — "rapidez para la Sra Milagros") ──
+     Carga en background las rutas más visitadas DESPUÉS del login. Cuando
+     el usuario hace click, el HTML ya está en cache del browser → la
+     navegación se siente instantánea. low priority, no compite con la
+     descarga inicial; solo se activa cuando el browser está idle. #}
+  {% if session.get('user_id') %}
+  <link rel="prefetch" href="{{ url_for('index') }}" as="document">
+  {% if permissions and permissions.get('mantenciones') %}
+  <link rel="prefetch" href="{{ url_for('mant_index') }}" as="document">
+  {% endif %}
+  {% endif %}
   {% if has_logo %}
   {# Preload WebP (~27 KB) en lugar del PNG original (~945 KB). El <picture> de
      más abajo entrega el WebP a navegadores modernos (~96%) y el PNG optimizado
