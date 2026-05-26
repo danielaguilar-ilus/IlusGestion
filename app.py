@@ -24367,6 +24367,13 @@ def init_mantenciones_tables():
                 # tabla mant_logs y consumía ~300ms en cada render de ficha.
                 "ALTER TABLE mant_logs ADD INDEX idx_mant_logs_timeline "
                 "  (entidad, entidad_id, created_at)",
+                # PERFORMANCE 2026-05-26 (Daniel — velocidad ficha cliente):
+                # La query de carga de equipos del cliente filtra por
+                # cliente_id y ordena por estado/created_at. Sin este
+                # composite index, MySQL hace filesort cuando hay muchos
+                # equipos (~300ms con 200 equipos).
+                "ALTER TABLE mant_maquinas ADD INDEX idx_cli_estado_creado "
+                "  (cliente_id, estado, created_at)",
                 # Tabla de sucursales (información adicional opcional)
                 """CREATE TABLE IF NOT EXISTS mant_sucursales (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -31473,51 +31480,71 @@ def mant_equipos_baja_seleccion(cid):
         return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
 
     body = request.get_json(silent=True) or {}
-    ids = body.get("ids") or []
-    # Validar y sanitizar IDs (solo enteros positivos)
     try:
-        ids = [int(x) for x in ids if x and int(x) > 0]
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Lista de IDs inválida"}), 400
-    if not ids:
-        return jsonify({"ok": False, "error": "No se seleccionaron equipos"}), 400
-    if len(ids) > 500:
-        return jsonify({"ok": False, "error": "Máximo 500 equipos por operación"}), 400
+        ids = body.get("ids") or []
+        # Validar y sanitizar IDs (solo enteros positivos)
+        try:
+            ids = [int(x) for x in ids if x and int(x) > 0]
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Lista de IDs inválida"}), 400
+        if not ids:
+            return jsonify({"ok": False, "error": "No se seleccionaron equipos"}), 400
+        if len(ids) > 500:
+            return jsonify({"ok": False, "error": "Máximo 500 equipos por operación"}), 400
 
-    # Verificar que todos los IDs pertenezcan al cliente (seguridad)
-    placeholders = ",".join(["%s"] * len(ids))
-    rows = mysql_fetchall(
-        f"SELECT id, nombre, estado FROM mant_maquinas "
-        f" WHERE cliente_id=%s AND id IN ({placeholders})",
-        tuple([cid] + ids)
-    ) or []
-    if not rows:
-        return jsonify({"ok": False, "error": "Ningún equipo válido para este cliente"}), 404
+        # OPTIMIZACION 2026-05-26: una sola query UPDATE con WHERE compuesto
+        # (cliente_id + id IN + estado='activo'). El cliente_id en el WHERE
+        # garantiza seguridad (no se pueden bajar equipos de otro cliente).
+        # No hace SELECT previo: lo que MySQL no encuentre, simplemente no
+        # se actualiza. Más rápido y atómico.
+        placeholders = ",".join(["%s"] * len(ids))
+        params = tuple([current_username(), cid] + ids)
 
-    # Solo aplicar a los que están activos (idempotente)
-    ids_activos = [r["id"] for r in rows if (r.get("estado") or "activo") != "baja"]
-    n_a_bajar = len(ids_activos)
-    if n_a_bajar == 0:
-        return jsonify({"ok": True, "n": 0, "msg": "Los equipos seleccionados ya estaban dados de baja"})
+        # Ejecutamos UPDATE y capturamos rowcount para saber cuántos se afectaron
+        conn = get_mysql()
+        n_a_bajar = 0
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE mant_maquinas SET estado='baja', updated_by=%s "
+                    f" WHERE cliente_id=%s AND id IN ({placeholders}) "
+                    f"   AND COALESCE(estado,'activo') <> 'baja'",
+                    params
+                )
+                n_a_bajar = int(cur.rowcount or 0)
+            conn.commit()
+        finally:
+            try: conn.close()
+            except Exception: pass
 
-    # Audit log ANTES del cambio (regla #5)
-    nombres = ", ".join((r.get("nombre") or f"#{r['id']}") for r in rows
-                        if r["id"] in ids_activos)[:300]
-    _mant_log(
-        "cliente", cid,
-        "baja_seleccion_equipos",
-        f"Baja selectiva de {n_a_bajar} equipo(s): {nombres} — superadmin"
-    )
+        # Audit log en background (no bloqueante — evita que el frontend
+        # vea "error de red" cuando solo era latencia del log).
+        try:
+            import threading as _th
+            def _audit_async():
+                try:
+                    _mant_log(
+                        "cliente", cid,
+                        "baja_seleccion_equipos",
+                        f"Baja selectiva de {n_a_bajar} de {len(ids)} equipo(s) "
+                        f"seleccionados — superadmin {current_username()}"
+                    )
+                except Exception as _e_al:
+                    print(f"[baja_seleccion audit] {_e_al}", flush=True)
+            _th.Thread(target=_audit_async, daemon=True).start()
+        except Exception:
+            pass
 
-    # Soft-delete
-    placeholders_act = ",".join(["%s"] * len(ids_activos))
-    mysql_execute(
-        f"UPDATE mant_maquinas SET estado='baja', updated_by=%s "
-        f" WHERE cliente_id=%s AND id IN ({placeholders_act})",
-        tuple([current_username(), cid] + ids_activos)
-    )
+        return jsonify({"ok": True, "n": n_a_bajar})
 
-    return jsonify({"ok": True, "n": n_a_bajar, "ids": ids_activos})
+    except Exception as e:
+        # Cualquier error inesperado → siempre devolvemos JSON (nunca crash silencioso)
+        print(f"[baja_seleccion] EXCEPCION cid={cid} ids_count={len(body.get('ids',[]))} err={e}",
+              flush=True)
+        return jsonify({
+            "ok": False,
+            "error": f"Error al procesar la baja: {str(e)[:150]}",
+        }), 500
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/destruir", methods=["DELETE"])

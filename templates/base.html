@@ -34,7 +34,7 @@
      versión se invalida automáticamente. Antes el navegador hacía un
      If-Modified-Since round-trip por cada visita; ahora 0 requests si la
      URL versionada ya está en cache. Subir _ASSET_V cuando cambie CSS/JS. #}
-  <link rel="preload" href="{{ url_for('static', filename='style.css') }}?v=20260526f" as="style" fetchpriority="high">
+  <link rel="preload" href="{{ url_for('static', filename='style.css') }}?v=20260526h" as="style" fetchpriority="high">
 
   {# ── PREFETCH 2026-05-26 (Daniel — "rapidez para la Sra Milagros") ──
      Carga en background las rutas más visitadas DESPUÉS del login. Cuando
@@ -155,9 +155,9 @@
 
   {# CSS propio bloqueante (necesario para layout completo) — pero ya
      pre-cargado arriba, así que es esencialmente instantáneo. #}
-  <link href="{{ url_for('static', filename='style.css') }}?v=20260526f" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}?v=20260526h" rel="stylesheet">
   {# Mobile-first responsive overrides — debe cargarse DESPUÉS de style.css #}
-  <link href="{{ url_for('static', filename='mobile.css') }}?v=20260526f" rel="stylesheet">
+  <link href="{{ url_for('static', filename='mobile.css') }}?v=20260526h" rel="stylesheet">
   {# PWA Manifest — permite "agregar a pantalla de inicio" en iOS/Android #}
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 
@@ -650,7 +650,7 @@
 ══════════════════════════════════════════════════════════ #}
 <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-<script defer src="{{ url_for('static', filename='app.js') }}?v=20260526f"></script>
+<script defer src="{{ url_for('static', filename='app.js') }}?v=20260526h"></script>
 <script defer src="{{ url_for('static', filename='ilus_ui.js') }}?v=20260521"></script>
 
 {# ══════════════════════════════════════════════════════════
