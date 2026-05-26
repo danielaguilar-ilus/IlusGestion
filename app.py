@@ -16960,6 +16960,22 @@ def _mantenciones_cron_run_once(slot_str=""):
     except Exception as e:
         metricas["errores"].append(f"paso_pickup_reminders: {e}")
 
+    # ── Paso final: Resumen IA del día (Daniel 2026-05-26) ──────────────
+    # Si hubo actividad significativa (≥ 1 alerta), pedimos a Claude que
+    # genere un resumen accionable y lo enviamos como notificación al
+    # superadmin. Si no hubo nada relevante, saltamos (cero tokens).
+    try:
+        total_signals = (
+            metricas.get("notif_visita_proxima", 0)
+            + metricas.get("notif_visita_atrasada", 0)
+            + metricas.get("notif_garantia_por_vencer", 0)
+            + metricas.get("notif_contrato_por_vencer", 0)
+        )
+        if total_signals >= 1:
+            _ia_alertas_resumir_diario(metricas)
+    except Exception as _e_ia_res:
+        print(f"[mant-cron] resumen IA falló (no critico): {_e_ia_res}", flush=True)
+
     metricas["tiempo_ms"] = int((_time.time() - _t0) * 1000)
     print(
         f"[mant-cron] OK slot={slot_str or 'manual'} "
@@ -16977,6 +16993,147 @@ def _mantenciones_cron_run_once(slot_str=""):
         flush=True
     )
     return metricas
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA · ALERTAS PROACTIVAS DIARIAS — resumen accionable del estado
+# operativo del negocio (Daniel 2026-05-26: "que la app me diga cada
+# mañana qué tengo que mirar primero")
+# ══════════════════════════════════════════════════════════════════════
+def _ia_alertas_resumir_diario(metricas):
+    """Genera un resumen IA del estado de mantenciones del día y lo envía
+    como notificación al superadmin. 1 sola llamada a Claude (tier=sonnet)
+    con métricas + top de items críticos. Si la IA falla, igualmente envía
+    el resumen "crudo" (sin IA) — cero costo de oportunidad.
+
+    Se invoca al final de _mantenciones_cron_run_once.
+    """
+    from datetime import date as _d
+
+    # 1) Recolectar lista corta de items críticos (no todo, solo lo más urgente)
+    contratos_criticos = mysql_fetchall(
+        "SELECT ct.id, ct.nombre, ct.fecha_vencimiento, c.razon_social "
+        "  FROM mant_contratos ct "
+        "  JOIN mant_clientes c ON c.id=ct.cliente_id "
+        " WHERE ct.estado IN ('vigente','indefinido') "
+        "   AND ct.fecha_vencimiento IS NOT NULL "
+        "   AND ct.fecha_vencimiento BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) "
+        " ORDER BY ct.fecha_vencimiento ASC LIMIT 10"
+    ) or []
+
+    visitas_atrasadas = mysql_fetchall(
+        "SELECT v.id, v.fecha_programada, v.tipo, c.razon_social "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE v.estado='programada' AND v.fecha_programada < CURDATE() "
+        " ORDER BY v.fecha_programada ASC LIMIT 10"
+    ) or []
+
+    if not contratos_criticos and not visitas_atrasadas:
+        return  # nada urgente
+
+    # 2) Resumir con Claude (Sonnet — clasificación + redacción, no opus)
+    items_text = []
+    for ct in contratos_criticos:
+        dias = (ct["fecha_vencimiento"] - _d.today()).days if ct.get("fecha_vencimiento") else 0
+        items_text.append(
+            f"- Contrato '{ct.get('nombre') or ''}' de {ct.get('razon_social') or '#'+str(ct['id'])} "
+            f"vence en {dias}d ({ct['fecha_vencimiento']})"
+        )
+    for v in visitas_atrasadas:
+        dias = (_d.today() - v["fecha_programada"]).days if v.get("fecha_programada") else 0
+        items_text.append(
+            f"- Visita {v.get('tipo') or ''} de {v.get('razon_social') or '#'+str(v['id'])} "
+            f"atrasada {dias}d (era {v['fecha_programada']})"
+        )
+
+    items_block = "\n".join(items_text[:15])
+    metricas_block = (
+        f"Visitas próximas: {metricas.get('notif_visita_proxima',0)}, "
+        f"Visitas atrasadas: {metricas.get('notif_visita_atrasada',0)}, "
+        f"Garantías por vencer: {metricas.get('notif_garantia_por_vencer',0)}, "
+        f"Contratos por vencer: {metricas.get('notif_contrato_por_vencer',0)}"
+    )
+
+    prompt = (
+        "Te paso el estado operativo de mantenciones de hoy. "
+        "Genera un RESUMEN ACCIONABLE de máximo 5 bullets, ordenados por urgencia. "
+        "Cada bullet: <acción concreta> + <cliente/contrato afectado>. "
+        "Lenguaje claro español NEUTRO (no argentino, no chileno). "
+        "Devuelve JSON con campos: titulo (string corto), bullets (array de strings), "
+        "prioridad ('alta'|'media'|'baja').\n\n"
+        f"MÉTRICAS DEL DÍA: {metricas_block}\n\nITEMS CRÍTICOS:\n{items_block}"
+    )
+
+    data, err = _claude_call(
+        prompt_usuario=prompt,
+        prompt_sistema="Eres un asistente operativo de servicios técnicos. "
+                       "Generas resúmenes accionables, breves y priorizados.",
+        max_tokens=600, expect_json=True, tier='sonnet',
+        log_endpoint="ia_alertas_diarias",
+    )
+
+    if err or not data:
+        # Fallback: usar el block crudo sin IA, igual notificamos
+        titulo = "Resumen de mantenciones del día"
+        bullets = items_text[:5]
+        prioridad = "media"
+    else:
+        titulo = (data.get("titulo") or "Resumen IA del día").strip()[:120]
+        bullets = data.get("bullets") or []
+        prioridad = (data.get("prioridad") or "media").strip().lower()
+        if prioridad not in ("alta", "media", "baja"):
+            prioridad = "media"
+
+    cuerpo = "\n".join(["• " + b for b in bullets[:8] if b])
+    if not cuerpo:
+        cuerpo = items_block
+
+    # 3) Insertar notificación al superadmin (usuario 'admin' o 'daniel')
+    # Buscamos el primer usuario con rol superadmin para destinar la alerta.
+    try:
+        super_user = mysql_fetchone(
+            f"SELECT id FROM `{AUTH_TABLE}` "
+            f" WHERE role='superadmin' AND COALESCE(activo,1)=1 "
+            f" ORDER BY id ASC LIMIT 1"
+        )
+        super_id = int(super_user["id"]) if super_user else None
+    except Exception:
+        super_id = None
+
+    if super_id:
+        try:
+            _mant_notificar(
+                destino_user_id=super_id,
+                tipo="ia_alerta_proactiva",
+                titulo=titulo,
+                cuerpo=cuerpo,
+                url_accion="/mantenciones",
+                prioridad=prioridad,
+            )
+        except Exception as _e_not:
+            print(f"[ia_alertas_diarias] no se pudo notificar: {_e_not}", flush=True)
+
+    print(f"[ia_alertas_diarias] resumen generado, prioridad={prioridad}, "
+          f"bullets={len(bullets)}", flush=True)
+
+
+@app.route("/mantenciones/api/ia/alertas-diarias-run", methods=["POST"])
+@_mant_required
+def mant_ia_alertas_diarias_manual():
+    """Disparo manual del resumen IA diario (para testing y on-demand).
+    Solo superadmin. NO modifica nada del cron, solo invoca el helper."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+    try:
+        metricas_dummy = {
+            "notif_visita_proxima": 0, "notif_visita_atrasada": 0,
+            "notif_garantia_por_vencer": 0, "notif_contrato_por_vencer": 0,
+        }
+        _ia_alertas_resumir_diario(metricas_dummy)
+        return jsonify({"ok": True, "mensaje": "Resumen IA ejecutado. Revisa la campana de notificaciones."})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
 
 def _mantenciones_scheduler_run_now():
@@ -26671,6 +26828,65 @@ def init_mantenciones_tables():
                 except Exception:
                     pass  # idempotente
 
+            # ── J.2 MÉTRICAS DE CONSUMO IA 2026-05-26 (Daniel) ─────────
+            # Cada llamada a Claude se loguea acá para visibilidad de
+            # costo, latencia y patrones de uso. Permite dashboard
+            # "IA del mes: X llamadas, $Y, Z% cache hits".
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_ia_logs (
+                        id              INT AUTO_INCREMENT PRIMARY KEY,
+                        endpoint        VARCHAR(80) NOT NULL,
+                        entidad_tipo    VARCHAR(40) NULL,
+                        entidad_id      INT NULL,
+                        modelo          VARCHAR(60) NULL,
+                        tier_solicitado VARCHAR(10) NULL,
+                        tokens_in       INT NULL,
+                        tokens_out      INT NULL,
+                        costo_usd       DECIMAL(8,5) NULL,
+                        elapsed_ms      INT NULL,
+                        cache_hit       TINYINT NOT NULL DEFAULT 0,
+                        ok              TINYINT NOT NULL DEFAULT 1,
+                        error_msg       VARCHAR(255) NULL,
+                        usuario         VARCHAR(190) NULL,
+                        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_created (created_at),
+                        INDEX idx_endpoint_created (endpoint, created_at),
+                        INDEX idx_entidad (entidad_tipo, entidad_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception:
+                pass
+
+            # ── J.3 JOBS IA ASÍNCRONOS 2026-05-26 (Daniel — UX premium) ─
+            # Permite que análisis largos NO bloqueen al usuario.
+            # POST devuelve job_id en <300ms; el daemon thread llama a
+            # Claude; el frontend polea cada 2s mostrando barra de
+            # progreso multi-etapa.
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_ia_jobs (
+                        id              INT AUTO_INCREMENT PRIMARY KEY,
+                        endpoint        VARCHAR(80) NOT NULL,
+                        entidad_tipo    VARCHAR(40) NULL,
+                        entidad_id      INT NULL,
+                        estado          ENUM('pending','running','done','error') NOT NULL DEFAULT 'pending',
+                        paso_actual     VARCHAR(120) NULL COMMENT 'mensaje visible al usuario',
+                        progreso_pct    TINYINT NOT NULL DEFAULT 0,
+                        resultado_json  LONGTEXT NULL,
+                        error_msg       VARCHAR(500) NULL,
+                        creado_por      VARCHAR(190) NULL,
+                        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        started_at      DATETIME NULL,
+                        finished_at     DATETIME NULL,
+                        INDEX idx_estado (estado),
+                        INDEX idx_entidad (entidad_tipo, entidad_id),
+                        INDEX idx_creado (created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception:
+                pass
+
             # ════════════════════════════════════════════════════════════
             # K. (2026-05-21 Daniel) — mant_visita_equipos: trazabilidad
             # de la revisión de CADA equipo en una visita. El técnico ya
@@ -34199,10 +34415,146 @@ _CLAUDE_MODELS_BY_TIER = {
     ],
 }
 
+# Precios aproximados por 1M tokens (USD) — Anthropic 2025
+# Solo para estimación de costo en mant_ia_logs.
+_CLAUDE_PRICES_PER_MTOK = {
+    # Modelo: (input, output)
+    "claude-opus-4-5":            (15.0, 75.0),
+    "claude-opus-4-7":            (15.0, 75.0),
+    "claude-sonnet-4-5":          (3.0,  15.0),
+    "claude-3-5-sonnet-20241022": (3.0,  15.0),
+    "claude-haiku-4-5":           (0.80, 4.0),
+    "claude-3-5-haiku-20241022":  (0.80, 4.0),
+}
+
+
+def _ia_estimar_costo_usd(modelo: str, tokens_in: int, tokens_out: int) -> float:
+    """Estima costo USD de una llamada Claude segun el modelo."""
+    if not modelo or modelo not in _CLAUDE_PRICES_PER_MTOK:
+        return 0.0
+    p_in, p_out = _CLAUDE_PRICES_PER_MTOK[modelo]
+    return round(((tokens_in or 0) * p_in + (tokens_out or 0) * p_out) / 1_000_000, 5)
+
+
+def _ia_log(endpoint: str, *, entidad_tipo=None, entidad_id=None, modelo=None,
+            tier=None, tokens_in=0, tokens_out=0, elapsed_ms=0,
+            cache_hit=False, ok=True, error_msg=None):
+    """Registra una llamada a Claude en mant_ia_logs. Best-effort: si la
+    tabla no existe aún (migración no corrió), no rompe el caller."""
+    try:
+        costo = _ia_estimar_costo_usd(modelo, tokens_in, tokens_out)
+        mysql_execute(
+            "INSERT INTO mant_ia_logs (endpoint, entidad_tipo, entidad_id, "
+            " modelo, tier_solicitado, tokens_in, tokens_out, costo_usd, "
+            " elapsed_ms, cache_hit, ok, error_msg, usuario) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (endpoint[:80], entidad_tipo, entidad_id, (modelo or "")[:60],
+             (tier or "")[:10] or None,
+             int(tokens_in or 0), int(tokens_out or 0), costo,
+             int(elapsed_ms or 0), 1 if cache_hit else 0,
+             1 if ok else 0, (error_msg or "")[:255] or None,
+             current_username())
+        )
+    except Exception as _e:
+        print(f"[_ia_log] no se pudo loguear ({endpoint}): {_e}", flush=True)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# JOBS IA ASÍNCRONOS 2026-05-26 (Daniel — UX premium)
+# Permite ejecutar llamadas Claude largas sin bloquear al usuario.
+# El POST original devuelve job_id en <300ms; un thread daemon ejecuta
+# el análisis; el frontend polea GET /api/ai/jobs/<id> cada 2s para ver
+# avance. Cuando termina, descarga el resultado del job.
+# ═════════════════════════════════════════════════════════════════════
+def _ia_job_crear(endpoint: str, entidad_tipo=None, entidad_id=None) -> int:
+    """Crea un job en estado pending y devuelve su id."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_ia_jobs (endpoint, entidad_tipo, entidad_id, "
+                " estado, paso_actual, creado_por) "
+                "VALUES (%s,%s,%s,'pending','Esperando turno…',%s)",
+                (endpoint[:80], entidad_tipo, entidad_id, current_username())
+            )
+            jid = cur.lastrowid
+        conn.commit()
+        return int(jid)
+    finally:
+        conn.close()
+
+
+def _ia_job_update(job_id: int, *, estado=None, paso=None, progreso=None,
+                   resultado=None, error=None):
+    """Actualiza el estado de un job IA. Best-effort, no levanta excepciones."""
+    sets, vals = [], []
+    if estado is not None:
+        sets.append("estado=%s"); vals.append(estado)
+        if estado == "running":
+            sets.append("started_at=NOW()")
+        elif estado in ("done", "error"):
+            sets.append("finished_at=NOW()")
+    if paso is not None:
+        sets.append("paso_actual=%s"); vals.append(paso[:120])
+    if progreso is not None:
+        sets.append("progreso_pct=%s"); vals.append(max(0, min(100, int(progreso))))
+    if resultado is not None:
+        sets.append("resultado_json=%s")
+        vals.append(json.dumps(resultado, ensure_ascii=False) if not isinstance(resultado, str) else resultado)
+    if error is not None:
+        sets.append("error_msg=%s"); vals.append(error[:500])
+    if not sets:
+        return
+    vals.append(job_id)
+    try:
+        mysql_execute(f"UPDATE mant_ia_jobs SET {', '.join(sets)} WHERE id=%s", tuple(vals))
+    except Exception as _e:
+        print(f"[_ia_job_update] job={job_id} fail: {_e}", flush=True)
+
+
+def _ia_job_lanzar(endpoint: str, fn, *, entidad_tipo=None, entidad_id=None,
+                   etapas=None):
+    """Ejecuta `fn(job_actualizar)` en un daemon thread. Crea el job ANTES
+    de devolver, así el caller obtiene job_id en <300ms.
+
+    `fn` debe ser una función que recibe un callback:
+        def fn(reportar_paso):
+            reportar_paso('Etapa 1', 25)
+            ...
+            return {"clave": "valor"}     # o levanta Exception si falla
+
+    `etapas` (opcional): lista de strings — mensajes preset para usar.
+
+    Returns: job_id (int)
+    """
+    job_id = _ia_job_crear(endpoint, entidad_tipo, entidad_id)
+
+    def _runner():
+        def _reportar(paso, pct):
+            _ia_job_update(job_id, estado="running", paso=paso, progreso=pct)
+        try:
+            _ia_job_update(job_id, estado="running",
+                           paso=(etapas[0] if etapas else "Procesando…"),
+                           progreso=5)
+            resultado = fn(_reportar)
+            _ia_job_update(job_id, estado="done",
+                           paso="Listo", progreso=100,
+                           resultado=resultado)
+        except Exception as e:
+            print(f"[_ia_job_lanzar] job={job_id} ERROR: {e}", flush=True)
+            _ia_job_update(job_id, estado="error",
+                           paso="Error", progreso=100,
+                           error=str(e)[:500])
+
+    import threading as _th
+    _th.Thread(target=_runner, daemon=True).start()
+    return job_id
+
 
 def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                  expect_json=True, model=None, temperature=0.2,
-                 attachments=None, tier=None):
+                 attachments=None, tier=None,
+                 log_endpoint=None, log_entidad_tipo=None, log_entidad_id=None):
     """Llama a Claude API. Retorna (data, error) — data es dict si expect_json.
 
     - Maneja la limpieza de bloques ```json ... ```
@@ -34216,14 +34568,34 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
         de fallback apropiada. Si se omite, usa _CLAUDE_MODELS_FALLBACK
         (comportamiento histórico para no romper callers existentes).
         `model` explícito tiene prioridad sobre `tier`.
+    - log_endpoint (opcional): nombre del endpoint para registrar en
+        mant_ia_logs. Si no se pasa, intenta inferirlo de request.endpoint.
+    - log_entidad_tipo, log_entidad_id (opcional): para correlacionar
+        la llamada con la entidad afectada (cliente/contrato/máquina).
     """
+    _start_ts = time.time()
+    _endpoint_inferido = log_endpoint
+    if not _endpoint_inferido:
+        try:
+            _endpoint_inferido = request.endpoint or "ai_unknown"
+        except Exception:
+            _endpoint_inferido = "ai_background"
+
     ai_key = _get_ai_key()
     if not ai_key:
+        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                entidad_id=log_entidad_id, tier=tier, ok=False,
+                error_msg="API key no configurada",
+                elapsed_ms=int((time.time() - _start_ts) * 1000))
         return None, "ANTHROPIC_API_KEY no configurada. Agregala en Railway → Variables."
 
     try:
         import anthropic as _anthropic
     except ImportError:
+        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                entidad_id=log_entidad_id, tier=tier, ok=False,
+                error_msg="lib anthropic no instalada",
+                elapsed_ms=int((time.time() - _start_ts) * 1000))
         return None, "Librería anthropic no instalada. Agregar al requirements.txt"
 
     # Resolución del modelo:
@@ -34255,7 +34627,16 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                 messages=[{"role": "user", "content": content_blocks}]
             )
             raw = msg.content[0].text.strip()
+            # Captura tokens usados (la SDK devuelve usage.input_tokens/output_tokens)
+            _tok_in = getattr(msg.usage, "input_tokens", 0) if hasattr(msg, "usage") else 0
+            _tok_out = getattr(msg.usage, "output_tokens", 0) if hasattr(msg, "usage") else 0
+            _elapsed = int((time.time() - _start_ts) * 1000)
+
             if not expect_json:
+                _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                        entidad_id=log_entidad_id, modelo=m, tier=tier,
+                        tokens_in=_tok_in, tokens_out=_tok_out,
+                        elapsed_ms=_elapsed, ok=True)
                 return raw, None
             # Limpiar bloque ```json ... ```
             if raw.startswith("```"):
@@ -34264,14 +34645,24 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                     raw = raw[4:].lstrip()
                 raw = raw.split("```")[0].strip()
             try:
-                return json.loads(raw), None
+                _parsed = json.loads(raw)
+                _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                        entidad_id=log_entidad_id, modelo=m, tier=tier,
+                        tokens_in=_tok_in, tokens_out=_tok_out,
+                        elapsed_ms=_elapsed, ok=True)
+                return _parsed, None
             except json.JSONDecodeError:
                 # Intentar extraer JSON aunque haya texto adicional
                 idx_start = raw.find("{")
                 idx_end   = raw.rfind("}")
                 if idx_start >= 0 and idx_end > idx_start:
                     try:
-                        return json.loads(raw[idx_start:idx_end+1]), None
+                        _parsed = json.loads(raw[idx_start:idx_end+1])
+                        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                                entidad_id=log_entidad_id, modelo=m, tier=tier,
+                                tokens_in=_tok_in, tokens_out=_tok_out,
+                                elapsed_ms=_elapsed, ok=True)
+                        return _parsed, None
                     except Exception:
                         pass
                 last_err = f"Respuesta no parseable como JSON: {raw[:200]}"
@@ -34282,8 +34673,16 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
             if "model" in err_str.lower() or "not_found" in err_str.lower():
                 continue
             # Otros errores (auth, rate limit, etc.) → cortar acá
+            _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                    entidad_id=log_entidad_id, modelo=m, tier=tier,
+                    elapsed_ms=int((time.time() - _start_ts) * 1000),
+                    ok=False, error_msg=err_str[:255])
             return None, f"Error Claude API: {err_str}"
 
+    _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+            entidad_id=log_entidad_id, tier=tier,
+            elapsed_ms=int((time.time() - _start_ts) * 1000),
+            ok=False, error_msg=(last_err or "todos los modelos fallaron")[:255])
     return None, last_err or "Todos los modelos fallaron"
 
 
@@ -34326,6 +34725,178 @@ def mant_ai_health():
         status["error"] = f"Respuesta inesperada: {data}"
 
     return jsonify(status)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — JOBS ASÍNCRONOS (2026-05-26 Daniel — UX premium)
+# Endpoint de polling para el frontend. Permite mostrar barra de progreso
+# mientras Claude trabaja en background.
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/ai/jobs/<int:job_id>", methods=["GET"])
+@_mant_required
+def mant_ai_job_status(job_id):
+    """Devuelve el estado actual de un job IA. Frontend polea cada 2s.
+
+    Respuesta:
+      {
+        "ok": true,
+        "id": 123,
+        "estado": "pending" | "running" | "done" | "error",
+        "paso_actual": "Leyendo contrato…",
+        "progreso_pct": 45,
+        "resultado": {...} | null,   # solo cuando estado=done
+        "error_msg": null | str,
+        "elapsed_ms": 4530           # cuánto lleva corriendo
+      }
+    """
+    j = mysql_fetchone(
+        "SELECT id, endpoint, entidad_tipo, entidad_id, estado, paso_actual, "
+        "       progreso_pct, resultado_json, error_msg, creado_por, "
+        "       created_at, started_at, finished_at "
+        "  FROM mant_ia_jobs WHERE id=%s", (job_id,)
+    )
+    if not j:
+        return jsonify({"ok": False, "error": "Job no encontrado"}), 404
+
+    # Solo el creador o un superadmin/admin puede ver el job
+    es_super = bool((g.permissions or {}).get("superadmin") or (g.permissions or {}).get("admin"))
+    if not es_super and j.get("creado_por") != current_username():
+        return jsonify({"ok": False, "error": "Sin permiso"}), 403
+
+    resultado = None
+    if j.get("estado") == "done" and j.get("resultado_json"):
+        try:
+            resultado = json.loads(j["resultado_json"])
+        except Exception:
+            resultado = j["resultado_json"]  # texto crudo
+
+    # Calcular elapsed_ms desde started_at (o created_at si aún pending)
+    elapsed_ms = 0
+    try:
+        from datetime import datetime as _dt
+        ref = j.get("started_at") or j.get("created_at")
+        if ref:
+            elapsed_ms = int((_dt.utcnow() - ref).total_seconds() * 1000)
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "id": j["id"],
+        "endpoint": j.get("endpoint"),
+        "entidad_tipo": j.get("entidad_tipo"),
+        "entidad_id": j.get("entidad_id"),
+        "estado": j["estado"],
+        "paso_actual": j.get("paso_actual") or "",
+        "progreso_pct": int(j.get("progreso_pct") or 0),
+        "resultado": resultado,
+        "error_msg": j.get("error_msg"),
+        "elapsed_ms": elapsed_ms,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — MÉTRICAS DE CONSUMO (2026-05-26 Daniel)
+# Endpoint para que el superadmin vea cuánto se gasta en IA cada mes.
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/ai/metricas", methods=["GET"])
+@_mant_required
+def mant_ai_metricas():
+    """Devuelve métricas de consumo IA del último mes (o periodo elegido).
+
+    Query params:
+      ?dias=30      → ventana (default 30)
+      ?endpoint=X   → filtrar por endpoint específico
+
+    Respuesta:
+      {
+        ok: true,
+        periodo_dias: 30,
+        totales: {llamadas, costo_usd, tokens_in, tokens_out, errores, cache_hits},
+        por_endpoint: [{endpoint, llamadas, costo_usd, avg_ms}, ...],
+        por_dia: [{dia, llamadas, costo_usd}, ...]
+      }
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    try:
+        dias = max(1, min(365, int(request.args.get("dias", 30))))
+    except Exception:
+        dias = 30
+    ep_filter = (request.args.get("endpoint") or "").strip()[:80] or None
+
+    where = ["created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)"]
+    params = [dias]
+    if ep_filter:
+        where.append("endpoint = %s")
+        params.append(ep_filter)
+    where_sql = " AND ".join(where)
+
+    # Totales
+    try:
+        row = mysql_fetchone(
+            f"SELECT COUNT(*) AS n, "
+            f"       COALESCE(SUM(costo_usd),0) AS costo, "
+            f"       COALESCE(SUM(tokens_in),0)  AS toks_in, "
+            f"       COALESCE(SUM(tokens_out),0) AS toks_out, "
+            f"       COALESCE(SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END),0) AS errores, "
+            f"       COALESCE(SUM(cache_hit),0) AS cache_hits "
+            f"  FROM mant_ia_logs WHERE {where_sql}",
+            tuple(params)
+        ) or {}
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": "La tabla mant_ia_logs aún no se ha creado o está vacía. "
+                     "Después de la próxima llamada IA aparecerán métricas. "
+                     "Detalle: " + str(e)[:150]
+        }), 200
+
+    # Por endpoint
+    por_ep = mysql_fetchall(
+        f"SELECT endpoint, COUNT(*) AS n, "
+        f"       COALESCE(SUM(costo_usd),0) AS costo, "
+        f"       COALESCE(AVG(elapsed_ms),0) AS avg_ms "
+        f"  FROM mant_ia_logs WHERE {where_sql} "
+        f" GROUP BY endpoint ORDER BY costo DESC LIMIT 20",
+        tuple(params)
+    ) or []
+
+    # Por día
+    por_dia = mysql_fetchall(
+        f"SELECT DATE(created_at) AS dia, COUNT(*) AS n, "
+        f"       COALESCE(SUM(costo_usd),0) AS costo "
+        f"  FROM mant_ia_logs WHERE {where_sql} "
+        f" GROUP BY DATE(created_at) ORDER BY dia ASC",
+        tuple(params)
+    ) or []
+
+    return jsonify({
+        "ok": True,
+        "periodo_dias": dias,
+        "totales": {
+            "llamadas":   int(row.get("n", 0) or 0),
+            "costo_usd":  float(row.get("costo", 0) or 0),
+            "tokens_in":  int(row.get("toks_in", 0) or 0),
+            "tokens_out": int(row.get("toks_out", 0) or 0),
+            "errores":    int(row.get("errores", 0) or 0),
+            "cache_hits": int(row.get("cache_hits", 0) or 0),
+        },
+        "por_endpoint": [
+            {"endpoint": r["endpoint"],
+             "llamadas": int(r["n"]),
+             "costo_usd": float(r["costo"]),
+             "avg_ms": int(r["avg_ms"])}
+            for r in por_ep
+        ],
+        "por_dia": [
+            {"dia": str(r["dia"]),
+             "llamadas": int(r["n"]),
+             "costo_usd": float(r["costo"])}
+            for r in por_dia
+        ],
+    })
 
 
 # ══════════════════════════════════════════════════════════════════════
