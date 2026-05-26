@@ -944,44 +944,90 @@ body {
 .ilus-table tbody tr:hover { background: #fafafa; }
 .ilus-table tbody tr:last-child td { border-bottom: none; }
 
-/* ── Variante full-viewport (Daniel 2026-05-26 — estilo Linear/Notion) ──
-   Header sticky + scroll interno + altura ≈ viewport. Se aplica solo
-   cuando el contenedor `.table-responsive` está dentro de un wrapper
-   `.ilus-table-fullview` (clase añadida en index.html — opt-in).
-   Mobile NO se ve afectado (la lista usa cards). */
+/* ═══════════════════════════════════════════════════════════════════
+   LAYOUT FULL-VIEWPORT (Daniel 2026-05-26 — referencia soporteilus)
+   Toda la página de Etiquetas entra en pantalla sin scroll global.
+   Solo la tabla scrollea internamente, con header sticky y paginación
+   siempre visible al fondo del card.
+
+   Estructura:
+     .eti-fullpage         → altura = viewport, flex column
+       .eti-flex-shrink    → mod-hero, paginación (no se estiran)
+       .eti-flex-grow      → ocupa todo el espacio restante
+         .eti-table-flex   → el card de la tabla; también es flex column
+           .table-responsive.eti-flex-grow → único hijo con scroll
+═══════════════════════════════════════════════════════════════════ */
 @media (min-width: 768px) {
-  .ilus-table-fullview .table-responsive {
-    max-height: calc(100dvh - 320px);  /* viewport - header - KPIs - paginación */
-    min-height: 280px;
-    overflow-y: auto;
-    overflow-x: auto;
-    /* Scrollbar suave en webkit */
+  /* El .main-wrapper tiene padding-bottom 50px; descontamos eso + algo
+     de margen visual (10px) para que la página NO genere scroll global. */
+  .eti-fullpage {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - 60px);
+    min-height: 540px;
+    overflow: hidden;   /* evita scroll global; solo la tabla scrollea */
+  }
+  /* Compensar el padding-bottom del .main-wrapper cuando estamos en la
+     página de etiquetas. Selector neutro: si hay .eti-fullpage como
+     descendiente directo del wrapper, quitamos el espacio inferior. */
+  .main-wrapper:has(.eti-fullpage) {
+    padding-bottom: 10px !important;
+  }
+  .eti-fullpage .eti-flex-shrink { flex-shrink: 0; }
+  .eti-fullpage .eti-flex-grow {
+    flex: 1 1 auto;
+    min-height: 0;      /* CRÍTICO en flex para que el child pueda hacer overflow */
+  }
+
+  /* El card que contiene la tabla — flex column para sticky header + scroll body */
+  .eti-table-flex {
+    display: flex !important;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .eti-table-flex .table-responsive {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
     scrollbar-width: thin;
     scrollbar-color: #cbd5e1 transparent;
   }
-  .ilus-table-fullview .table-responsive::-webkit-scrollbar {
+  .eti-table-flex .table-responsive::-webkit-scrollbar {
     width: 10px; height: 10px;
   }
-  .ilus-table-fullview .table-responsive::-webkit-scrollbar-thumb {
+  .eti-table-flex .table-responsive::-webkit-scrollbar-thumb {
     background: #cbd5e1; border-radius: 6px;
   }
-  .ilus-table-fullview .table-responsive::-webkit-scrollbar-thumb:hover {
+  .eti-table-flex .table-responsive::-webkit-scrollbar-thumb:hover {
     background: #94a3b8;
   }
-  /* Header sticky — el thead negro queda fijo arriba del scroll */
+
+  /* Header sticky de la tabla */
   .ilus-table-fullview .ilus-table thead th {
     position: sticky;
     top: 0;
     z-index: 5;
-    /* Sombra sutil debajo cuando hay scroll para separar visualmente */
     box-shadow: 0 2px 4px rgba(0,0,0,.08);
   }
+
+  /* Paginación al fondo del card, fondo blanco para no pisar la última fila */
+  .eti-pagination-bar {
+    background: #fff;
+    border-top: 1px solid #f1f5f9;
+    padding: 8px 12px;
+  }
+  .eti-pagination-bar .pagination,
+  .eti-pagination-bar nav {
+    margin: 0 !important;
+  }
 }
-/* En pantallas grandes (≥1280px) damos un poco más de espacio porque
-   los KPIs ocupan menos altura relativa. */
-@media (min-width: 1280px) {
-  .ilus-table-fullview .table-responsive {
-    max-height: calc(100dvh - 280px);
+
+/* En mobile: layout natural con scroll normal (no flex viewport) */
+@media (max-width: 767.98px) {
+  .eti-fullpage {
+    display: block;
+    height: auto;
   }
 }
 .ilus-table tfoot td {
