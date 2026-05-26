@@ -33669,31 +33669,116 @@ def mant_contrato_archivo(ctid):
         return _redir(viewer_url, code=302)
 
     # ── PRIORIDAD 1: Cloudinary (persistente entre deploys) ────────────
-    # Estrategia REDIRECT 302 — el browser pide directo a Cloudinary.
-    # Ventajas vs proxy:
-    #   - No depende del backend de Railway estar despierto durante
-    #     la descarga (bandwidth y latencia van directos al CDN).
-    #   - Si Cloudinary devuelve 401 o 5xx, el browser muestra el error
-    #     nativo en el iframe y al menos sabemos qué falló (vs spinner
-    #     eterno en proxy).
-    #   - Cero egress de Railway.
+    # REFACTOR 2026-05-26 (Daniel — iframe en blanco):
+    #   Antes hacíamos 302 a Cloudinary con fl_inline=true. PROBLEMA: cuando
+    #   el recurso está como `raw` en Cloudinary (caso de PDFs subidos vía
+    #   upload_raw), Cloudinary devuelve `Content-Disposition: attachment;
+    #   filename="..."` ignorando fl_inline (esa flag solo aplica a recursos
+    #   `image` y `auto`). Resultado: el browser ve el header attachment,
+    #   descarga el PDF (aparece en la barra de descargas) y deja el iframe
+    #   COMPLETAMENTE EN BLANCO. Exactamente el bug que Daniel reportó.
+    #
+    #   Solución: PROXEAR el binario reescribiendo los headers. Forzamos
+    #   `Content-Disposition: inline` y `Content-Type: application/pdf` desde
+    #   nuestro propio servidor — el browser obedece y renderiza en iframe.
+    #
+    #   Para DOWNLOADS sí seguimos redirigiendo (más eficiente, el CDN sirve
+    #   directo, y como queremos descarga el header attachment es correcto).
     if ct.get("cloudinary_url"):
         cld_url = ct["cloudinary_url"]
-        # fl_attachment fuerza descarga; fl_inline sugiere visualizar inline.
-        # Para PDF inline en iframe queremos que NO baje como attachment.
         sep = "&" if "?" in cld_url else "?"
-        if as_dl:
-            target = f"{cld_url}{sep}fl_attachment=true"
-        else:
-            # Para PDFs raw/upload, Cloudinary por default agrega
-            # Content-Disposition: attachment. fl_inline lo neutraliza
-            # y el browser renderiza el PDF en el iframe.
-            target = f"{cld_url}{sep}fl_inline=true" if ext == "pdf" else cld_url
-        print(f"[mant_contrato_archivo] ctid={ctid} → REDIRECT Cloudinary "
-              f"(as_dl={as_dl}, ext={ext})", flush=True)
-        return _redir(target, code=302)
 
-    # ── PRIORIDAD 2: Filesystem local (sin Cloudinary) ──────────────────
+        if as_dl:
+            # Download: redirect directo al CDN (header attachment es lo deseado)
+            target = f"{cld_url}{sep}fl_attachment=true"
+            print(f"[mant_contrato_archivo] ctid={ctid} → REDIRECT download "
+                  f"(ext={ext})", flush=True)
+            return _redir(target, code=302)
+
+        # Preview inline: PROXY con headers reescritos
+        try:
+            import requests as _rq
+            # Range header passthrough para que el browser pueda hacer
+            # requests parciales de PDFs grandes (PDF.js los necesita).
+            upstream_headers = {}
+            if request.headers.get("Range"):
+                upstream_headers["Range"] = request.headers["Range"]
+
+            r_up = _rq.get(cld_url, headers=upstream_headers,
+                           stream=True, timeout=30,
+                           allow_redirects=True)
+
+            if r_up.status_code not in (200, 206):
+                print(f"[mant_contrato_archivo] ctid={ctid} Cloudinary "
+                      f"status={r_up.status_code}, intentando fallback "
+                      f"disco", flush=True)
+                # No retornamos aquí — caemos al fallback de disco abajo
+                r_up.close()
+                raise RuntimeError(f"Cloudinary HTTP {r_up.status_code}")
+
+            # Inferir Content-Type desde la extensión del nombre original
+            # (Cloudinary a veces devuelve application/octet-stream).
+            mime_inline = {
+                "pdf":  "application/pdf",
+                "jpg":  "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png":  "image/png",
+                "gif":  "image/gif",
+                "webp": "image/webp",
+                "doc":  "application/msword",
+                "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "xls":  "application/vnd.ms-excel",
+                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "ppt":  "application/vnd.ms-powerpoint",
+                "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            }
+            ctype = mime_inline.get(ext) or r_up.headers.get("Content-Type") or "application/octet-stream"
+
+            def _stream():
+                try:
+                    for chunk in r_up.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            yield chunk
+                finally:
+                    r_up.close()
+
+            from flask import Response as _Resp
+            resp = _Resp(_stream(), status=r_up.status_code)
+            resp.headers["Content-Type"] = ctype
+            resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+            # Passthrough de Content-Length y Accept-Ranges si vienen
+            if r_up.headers.get("Content-Length"):
+                resp.headers["Content-Length"] = r_up.headers["Content-Length"]
+            if r_up.headers.get("Content-Range"):
+                resp.headers["Content-Range"] = r_up.headers["Content-Range"]
+            resp.headers["Accept-Ranges"] = r_up.headers.get("Accept-Ranges", "bytes")
+            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+            resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+            resp.headers["Cache-Control"] = "private, max-age=300"
+            print(f"[mant_contrato_archivo] ctid={ctid} → PROXY Cloudinary "
+                  f"OK (ext={ext}, ctype={ctype}, status={r_up.status_code})",
+                  flush=True)
+            return resp
+        except Exception as _e_proxy:
+            print(f"[mant_contrato_archivo] ctid={ctid} → PROXY FALLO "
+                  f"({_e_proxy}), intentando disco", flush=True)
+            # Si el proxy falla, intentamos disco (sigue abajo). Si tampoco
+            # hay disco, caerá al 404 amigable.
+
+    # ── PRIORIDAD 2: Filesystem local (sin Cloudinary o tras fallo del proxy) ──
+    # Si no tenemos archivo_path (solo había cloudinary y el proxy falló),
+    # no hay nada que servir desde disco — caemos directo al 404 amigable.
+    if not ct.get("archivo_path"):
+        es_super = bool(g.permissions.get("superadmin"))
+        nombre_visible = ct.get("archivo_nombre") or f"contrato_{ctid}"
+        print(f"[mant_contrato_archivo] ctid={ctid} → SIN DISCO "
+              f"(proxy Cloudinary falló y no hay archivo_path)", flush=True)
+        return (
+            f"Contrato no disponible — el CDN no respondió y no hay copia local. "
+            f"{'Re-súbelo desde la ficha.' if es_super else 'Avisa al superadministrador.'}",
+            503
+        )
+
     # Verificar que el archivo existe en disco
     full_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
     if not os.path.exists(full_path):

@@ -6806,15 +6806,21 @@ async function vhGuardar(){
 }
 </script>
 
-{# ── Modal: Ver contrato (PDF viewer) ── #}
-<div class="modal fade" id="modalVerContrato" tabindex="-1">
+{# ── Modal: UniversalDocumentViewer (visor universal de contratos) ──
+   REESCRITO 2026-05-26 (Daniel — iframe en blanco): visor robusto con
+   cadena de fallback iframe→object→PDF.js→imagen→metadata, loading state
+   real, detección de iframe en blanco (timeout 6s) y mensajes elegantes.
+   Inspirado en Google Drive / Dropbox / DocuSign.
+#}
+<div class="modal fade" id="modalVerContrato" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
-    <div class="modal-content" style="height:90vh">
-      <div class="modal-header py-2" style="background:#1a1a2e">
-        <h6 class="modal-title text-white mb-0" id="modalVerContratoTitulo">
+    <div class="modal-content" style="height:90vh;border:none;border-radius:14px;overflow:hidden">
+      <div class="modal-header py-2 px-3" style="background:linear-gradient(135deg,#0a0a0a,#1a1a2e);border-bottom:1px solid #2a2a4a">
+        <h6 class="modal-title text-white mb-0 d-flex align-items-center" id="modalVerContratoTitulo" style="font-size:.92rem">
           <i class="bi bi-file-earmark-text me-2"></i>Contrato
         </h6>
         <div class="d-flex align-items-center gap-2 ms-auto">
+          <span id="udvStatusBadge" class="badge" style="display:none;background:#16a34a;font-weight:500;font-size:.7rem"></span>
           <a id="btnAbrirContratoNueva" class="btn btn-sm btn-outline-light"
              href="#" target="_blank" rel="noopener" title="Abrir en pestaña nueva">
             <i class="bi bi-box-arrow-up-right"></i>
@@ -6823,22 +6829,65 @@ async function vhGuardar(){
              href="#" target="_blank" download>
             <i class="bi bi-download me-1"></i>Descargar
           </a>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
       </div>
-      <div class="modal-body p-0" style="flex:1;overflow:hidden;background:#1a1a2e">
-        <iframe id="contratoFrame" src="" style="width:100%;height:100%;border:none;background:#fff"
-                title="Visor de contrato"></iframe>
+      <div class="modal-body p-0" style="flex:1;overflow:hidden;background:#1a1a2e;position:relative">
+
+        {# Stage 1: Loading state real (spinner + mensaje del paso actual) #}
+        <div id="udvLoading" class="d-flex flex-column align-items-center justify-content-center h-100 text-light gap-3 p-4 text-center" style="background:#1a1a2e">
+          <div class="spinner-border" role="status" style="width:3rem;height:3rem;color:#dc2626"></div>
+          <div class="fw-semibold" style="font-size:1rem">Cargando contrato…</div>
+          <div id="udvLoadingStep" style="font-size:.8rem;opacity:.7;max-width:480px">Conectando con el servidor</div>
+        </div>
+
+        {# Stage 2: Iframe nativo (PDF/imagen servida con Content-Type correcto) #}
+        <iframe id="contratoFrame" style="display:none;width:100%;height:100%;border:none;background:#fff"
+                title="Visor de contrato" allow="fullscreen"></iframe>
+
+        {# Stage 3: PDF.js canvas (fallback cuando iframe falla) #}
+        <div id="udvPdfjsContainer" style="display:none;width:100%;height:100%;overflow:auto;background:#525659;padding:16px 0">
+          <div id="udvPdfjsToolbar" style="position:sticky;top:0;z-index:10;background:rgba(26,26,46,.95);backdrop-filter:blur(8px);padding:8px 14px;display:flex;align-items:center;gap:10px;color:#fff;font-size:.78rem;border-radius:6px;margin:0 14px 12px">
+            <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsPrev()" id="udvBtnPrev"><i class="bi bi-chevron-left"></i></button>
+            <span id="udvPdfjsPageInfo" style="min-width:80px;text-align:center">— / —</span>
+            <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsNext()" id="udvBtnNext"><i class="bi bi-chevron-right"></i></button>
+            <div class="ms-auto d-flex align-items-center gap-2">
+              <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsZoomOut()"><i class="bi bi-zoom-out"></i></button>
+              <span id="udvPdfjsZoom" style="min-width:48px;text-align:center">100%</span>
+              <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsZoomIn()"><i class="bi bi-zoom-in"></i></button>
+              <span class="badge ms-2" style="background:#16a34a;font-size:.65rem">PDF.js</span>
+            </div>
+          </div>
+          <canvas id="udvPdfjsCanvas" style="display:block;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,.5);background:#fff"></canvas>
+        </div>
+
+        {# Stage 4: Imagen renderer dedicado #}
+        <div id="udvImageContainer" style="display:none;width:100%;height:100%;overflow:auto;background:#000;display:flex;align-items:center;justify-content:center">
+          <img id="udvImage" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain"/>
+        </div>
+
+        {# Stage 5: Fallback elegante con metadata + descarga (estilo Notion/Dropbox) #}
         <div id="contratoNoViewer" style="display:none" class="d-flex flex-column align-items-center justify-content-center h-100 text-light gap-3 p-4 text-center">
-          <i id="contratoNoViewerIcon" class="bi bi-file-earmark-word" style="font-size:3rem;color:#3b82f6"></i>
-          <div class="fw-semibold" id="contratoNoViewerTitulo">Archivo no previsualizable</div>
-          <div style="font-size:.85rem;max-width:480px;opacity:.85" id="contratoNoViewerMsg">—</div>
-          <a id="btnDescWord" href="#" class="btn btn-light fw-bold" download style="display:none">
-            <i class="bi bi-download me-1"></i>Descargar contrato
-          </a>
-          <a id="btnAbrirNuevaFallback" href="#" target="_blank" rel="noopener" class="btn btn-outline-light">
-            <i class="bi bi-box-arrow-up-right me-1"></i>Abrir en pestaña nueva
-          </a>
+          <div style="background:rgba(255,255,255,.05);border-radius:14px;padding:32px;max-width:520px;border:1px solid rgba(255,255,255,.1)">
+            <i id="contratoNoViewerIcon" class="bi bi-file-earmark-word" style="font-size:3.5rem;color:#3b82f6"></i>
+            <div class="fw-bold mt-3" style="font-size:1.05rem" id="contratoNoViewerTitulo">Archivo no previsualizable</div>
+            <div style="font-size:.85rem;max-width:440px;opacity:.85;margin:10px auto 0" id="contratoNoViewerMsg">—</div>
+            <div id="udvMetadata" style="display:none;margin-top:16px;padding:12px;background:rgba(0,0,0,.25);border-radius:8px;font-size:.78rem;text-align:left;font-family:'SF Mono',Consolas,monospace;opacity:.8">
+              <div id="udvMetaContent"></div>
+            </div>
+            <div class="d-flex gap-2 justify-content-center mt-3 flex-wrap">
+              <a id="btnDescWord" href="#" class="btn btn-light fw-bold" download style="display:none">
+                <i class="bi bi-download me-1"></i>Descargar contrato
+              </a>
+              <a id="btnAbrirNuevaFallback" href="#" target="_blank" rel="noopener" class="btn btn-outline-light">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Abrir en pestaña nueva
+              </a>
+              <button id="btnReintentarUDV" class="btn btn-outline-warning" onclick="udvReintentar()" style="display:none">
+                <i class="bi bi-arrow-clockwise me-1"></i>Reintentar
+              </button>
+            </div>
+            <div id="udvErrorTech" style="display:none;margin-top:14px;padding:8px 12px;background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.3);border-radius:6px;font-size:.7rem;color:#fca5a5;font-family:monospace;text-align:left;max-height:120px;overflow:auto"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -8156,7 +8205,21 @@ window.__FICHA_DATA = {
   can_create_tecnicos: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }}
 };
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260521"></script>
+<!-- PDF.js (Mozilla) — fallback canvas renderer para PDFs que el browser no
+     renderiza en iframe (caso: Cloudinary raw con Content-Disposition forzado,
+     PDFs escaneados con CSP estricto, etc.). Solo se inicializa si el visor
+     universal lo necesita; no impacta performance del resto de la página. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<script>
+  // Configurar worker de PDF.js apenas cargue
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  });
+</script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

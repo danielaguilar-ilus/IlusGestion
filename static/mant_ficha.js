@@ -4502,89 +4502,489 @@ function renderPlan(p, clienteNombre, envelope) {
   document.getElementById('planResultado').innerHTML = html;
 }
 
-// ─── Ver contrato (visor robusto multi-formato) ──────────────────────────
-// Estrategia:
-//   PDF                → iframe nativo del navegador
-//   Imagen (jpg/png)   → iframe (browser muestra imagen)
-//   DOC/DOCX/XLS/PPT   → Office Online Viewer (requiere Cloudinary HTTPS)
-//                        si no hay Cloudinary, fallback con mensaje + botón
+// ════════════════════════════════════════════════════════════════════════
+// UNIVERSAL DOCUMENT VIEWER — Visor universal de contratos (Google Drive-like)
+// ════════════════════════════════════════════════════════════════════════
+// REESCRITO 2026-05-26 (Daniel — iframe en blanco):
+//   Antes: iframe simple → falla cuando Cloudinary devuelve attachment header.
+//   Ahora: cadena de fallback resiliente:
+//     1. HEAD al endpoint → obtener Content-Type real + size
+//     2. Iframe nativo con detección de "iframe en blanco" a los 6 segundos
+//     3. <object> tag como segundo intento (algunos browsers prefieren object)
+//     4. PDF.js canvas — renderiza PDF página por página (NO depende de headers)
+//     5. Image renderer dedicado para JPG/PNG/WEBP
+//     6. Office Online Viewer para DOCX/XLSX/PPTX si hay Cloudinary HTTPS
+//     7. Metadata-only con descarga (último recurso, estilo Notion)
+//
+// Estado global del visor (singleton). Se resetea cada vez que se abre.
+const UDV = {
+  ctid:      null,
+  baseUrl:   '',
+  nombre:    '',
+  tipo:      '',
+  hasCloud:  false,
+  esSuperadmin: false,
+  // Detector de iframe en blanco
+  iframeLoadTimer: null,
+  iframeBlankTimer: null,
+  iframeFinishedLoading: false,
+  // PDF.js state
+  pdfDoc:       null,
+  pdfPageNum:   1,
+  pdfPagesTotal: 0,
+  pdfZoom:      1.0,
+  pdfRendering: false,
+  pdfPendingPage: null,
+  // Logs
+  logs: [],
+};
+
+function _udvLog(level, ...args) {
+  const ts = new Date().toISOString().slice(11, 23);
+  const msg = `[UDV ${ts}] [${level}] ` + args.map(a =>
+    typeof a === 'object' ? JSON.stringify(a) : String(a)
+  ).join(' ');
+  UDV.logs.push(msg);
+  if (level === 'ERROR') console.error(msg);
+  else if (level === 'WARN') console.warn(msg);
+  else console.log(msg);
+}
+
+function _udvSetStep(text) {
+  const el = document.getElementById('udvLoadingStep');
+  if (el) el.textContent = text;
+  _udvLog('INFO', 'Step:', text);
+}
+
+function _udvShowStage(stage) {
+  // stages: loading | iframe | pdfjs | image | error
+  const stages = {
+    loading:  'udvLoading',
+    iframe:   'contratoFrame',
+    pdfjs:    'udvPdfjsContainer',
+    image:    'udvImageContainer',
+    error:    'contratoNoViewer',
+  };
+  Object.entries(stages).forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (k === stage) ? '' : 'none';
+  });
+  if (stage === 'iframe') {
+    // Aseguramos display:block para iframe (no 'flex')
+    const f = document.getElementById('contratoFrame');
+    if (f) f.style.display = 'block';
+  }
+  if (stage === 'pdfjs') {
+    const p = document.getElementById('udvPdfjsContainer');
+    if (p) p.style.display = 'block';
+  }
+  if (stage === 'image') {
+    const im = document.getElementById('udvImageContainer');
+    if (im) im.style.display = 'flex';
+  }
+}
+
+function _udvSetBadge(text, color) {
+  const b = document.getElementById('udvStatusBadge');
+  if (!b) return;
+  if (!text) { b.style.display = 'none'; return; }
+  b.textContent = text;
+  b.style.background = color || '#16a34a';
+  b.style.display = '';
+}
+
+function _udvShowError(opts) {
+  const { titulo, mensaje, icono, iconColor, mostrarReintentar, metadata, errorTech } = opts || {};
+  document.getElementById('contratoNoViewerIcon').className = icono || 'bi bi-file-earmark-x';
+  document.getElementById('contratoNoViewerIcon').style.color = iconColor || '#dc2626';
+  document.getElementById('contratoNoViewerTitulo').textContent = titulo || 'No se pudo previsualizar';
+  document.getElementById('contratoNoViewerMsg').innerHTML = mensaje || 'Hubo un problema cargando el documento.';
+  const meta = document.getElementById('udvMetadata');
+  const metaContent = document.getElementById('udvMetaContent');
+  if (metadata) {
+    metaContent.innerHTML = Object.entries(metadata).map(([k,v]) =>
+      `<div><span style="opacity:.6">${k}:</span> <span>${v}</span></div>`
+    ).join('');
+    meta.style.display = '';
+  } else {
+    meta.style.display = 'none';
+  }
+  const btnRet = document.getElementById('btnReintentarUDV');
+  btnRet.style.display = mostrarReintentar ? '' : 'none';
+  const errTech = document.getElementById('udvErrorTech');
+  if (errorTech) {
+    errTech.textContent = errorTech + '\n\n' + UDV.logs.slice(-20).join('\n');
+    errTech.style.display = '';
+  } else {
+    errTech.style.display = 'none';
+  }
+  _udvShowStage('error');
+  _udvSetBadge('', '');
+}
+
+function udvReintentar() {
+  if (UDV.ctid) {
+    verContrato(UDV.ctid, UDV.nombre, UDV.tipo, UDV.hasCloud);
+  }
+}
+
+// ─── HEAD probe: detecta el Content-Type real del archivo ─────────────
+async function _udvHead(url) {
+  try {
+    const r = await fetch(url, { method: 'HEAD', credentials: 'same-origin' });
+    if (!r.ok) {
+      _udvLog('WARN', 'HEAD status', r.status);
+      return null;
+    }
+    const info = {
+      status:      r.status,
+      contentType: r.headers.get('Content-Type') || '',
+      length:      r.headers.get('Content-Length') || '',
+      disposition: r.headers.get('Content-Disposition') || '',
+    };
+    _udvLog('INFO', 'HEAD result:', info);
+    return info;
+  } catch (e) {
+    _udvLog('WARN', 'HEAD failed:', e.message);
+    return null;
+  }
+}
+
+// ─── Iframe loader con detección de "iframe en blanco" ─────────────────
+function _udvLoadIframe(url, opts) {
+  const { onLoaded, onBlank, onError, blankTimeoutMs = 6000 } = opts || {};
+  const frame = document.getElementById('contratoFrame');
+
+  // Limpiar timers anteriores
+  if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+  UDV.iframeFinishedLoading = false;
+
+  // Reset iframe
+  frame.src = 'about:blank';
+  _udvShowStage('iframe');
+
+  // Pequeño delay para asegurar reset
+  setTimeout(() => {
+    // Detector de iframe en blanco: si después de blankTimeoutMs no
+    // recibimos onload, asumimos que el browser descargó el archivo
+    // en lugar de renderizarlo (síntoma clásico de Content-Disposition
+    // attachment forzado por el CDN).
+    UDV.iframeBlankTimer = setTimeout(() => {
+      if (!UDV.iframeFinishedLoading) {
+        _udvLog('WARN', `Iframe blank after ${blankTimeoutMs}ms — switching to fallback`);
+        if (onBlank) onBlank();
+      }
+    }, blankTimeoutMs);
+
+    frame.onload = () => {
+      UDV.iframeFinishedLoading = true;
+      if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+      _udvLog('INFO', 'Iframe loaded:', url);
+      // Verificar si el iframe realmente cargó contenido (no about:blank ni error)
+      try {
+        // Acceso al contentDocument puede tirar SecurityError si es cross-origin
+        // (que con nuestro proxy NO es). Si es same-origin y document está vacío,
+        // entonces el browser descargó el archivo.
+        const doc = frame.contentDocument;
+        if (doc) {
+          const docUrl = doc.URL || '';
+          if (docUrl === 'about:blank' || docUrl === '') {
+            _udvLog('WARN', 'Iframe document is about:blank — likely downloaded');
+            if (onBlank) onBlank();
+            return;
+          }
+        }
+      } catch (e) {
+        // Cross-origin: no podemos inspeccionar, asumimos OK (Cloudinary, etc.)
+        _udvLog('INFO', 'Iframe is cross-origin (OK):', e.message);
+      }
+      if (onLoaded) onLoaded();
+    };
+
+    frame.onerror = (e) => {
+      UDV.iframeFinishedLoading = true;
+      if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+      _udvLog('ERROR', 'Iframe error:', e);
+      if (onError) onError(e);
+    };
+
+    frame.src = url;
+  }, 30);
+}
+
+// ─── PDF.js: render PDF en canvas (sin depender de headers) ───────────
+async function _udvLoadPdfJs(url) {
+  if (!window.pdfjsLib) {
+    _udvLog('ERROR', 'pdfjsLib no está cargado');
+    throw new Error('PDF.js no disponible — recarga la página');
+  }
+  _udvSetStep('Renderizando PDF con PDF.js (Mozilla)…');
+  _udvShowStage('loading');
+  try {
+    const loadingTask = window.pdfjsLib.getDocument({ url, withCredentials: true });
+    UDV.pdfDoc = await loadingTask.promise;
+    UDV.pdfPagesTotal = UDV.pdfDoc.numPages;
+    UDV.pdfPageNum = 1;
+    UDV.pdfZoom = 1.0;
+    _udvLog('INFO', 'PDF.js loaded', { pages: UDV.pdfPagesTotal });
+    _udvShowStage('pdfjs');
+    _udvSetBadge(`PDF.js · ${UDV.pdfPagesTotal} pág.`, '#16a34a');
+    await _udvRenderPdfPage();
+  } catch (e) {
+    _udvLog('ERROR', 'PDF.js failed:', e.message);
+    throw e;
+  }
+}
+
+async function _udvRenderPdfPage() {
+  if (!UDV.pdfDoc || UDV.pdfRendering) {
+    UDV.pdfPendingPage = UDV.pdfPageNum;
+    return;
+  }
+  UDV.pdfRendering = true;
+  try {
+    const page = await UDV.pdfDoc.getPage(UDV.pdfPageNum);
+    const canvas = document.getElementById('udvPdfjsCanvas');
+    const ctx = canvas.getContext('2d');
+    const viewport = page.getViewport({ scale: UDV.pdfZoom * 1.5 });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.width  = (viewport.width / 1.5) + 'px';
+    canvas.style.height = (viewport.height / 1.5) + 'px';
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    document.getElementById('udvPdfjsPageInfo').textContent =
+      `${UDV.pdfPageNum} / ${UDV.pdfPagesTotal}`;
+    document.getElementById('udvPdfjsZoom').textContent =
+      Math.round(UDV.pdfZoom * 100) + '%';
+    document.getElementById('udvBtnPrev').disabled = (UDV.pdfPageNum <= 1);
+    document.getElementById('udvBtnNext').disabled = (UDV.pdfPageNum >= UDV.pdfPagesTotal);
+  } finally {
+    UDV.pdfRendering = false;
+    if (UDV.pdfPendingPage !== null) {
+      const p = UDV.pdfPendingPage;
+      UDV.pdfPendingPage = null;
+      UDV.pdfPageNum = p;
+      _udvRenderPdfPage();
+    }
+  }
+}
+
+function udvPdfjsPrev() {
+  if (UDV.pdfPageNum > 1) { UDV.pdfPageNum--; _udvRenderPdfPage(); }
+}
+function udvPdfjsNext() {
+  if (UDV.pdfPageNum < UDV.pdfPagesTotal) { UDV.pdfPageNum++; _udvRenderPdfPage(); }
+}
+function udvPdfjsZoomIn() {
+  UDV.pdfZoom = Math.min(3.0, UDV.pdfZoom + 0.25); _udvRenderPdfPage();
+}
+function udvPdfjsZoomOut() {
+  UDV.pdfZoom = Math.max(0.5, UDV.pdfZoom - 0.25); _udvRenderPdfPage();
+}
+
+// ─── Image renderer dedicado ──────────────────────────────────────────
+function _udvLoadImage(url) {
+  _udvSetStep('Cargando imagen…');
+  const img = document.getElementById('udvImage');
+  img.src = '';
+  img.onload = () => {
+    _udvLog('INFO', 'Image loaded:', url);
+    _udvShowStage('image');
+    _udvSetBadge('Imagen', '#3b82f6');
+  };
+  img.onerror = () => {
+    _udvLog('ERROR', 'Image failed to load');
+    _udvShowError({
+      titulo: 'No se pudo cargar la imagen',
+      mensaje: 'El servidor respondió pero la imagen no se pudo renderizar. Puedes descargarla o abrirla en pestaña nueva.',
+      icono: 'bi bi-image',
+      iconColor: '#3b82f6',
+      mostrarReintentar: true,
+    });
+  };
+  img.src = url;
+}
+
+// ─── ENTRY POINT: visualizar contrato ─────────────────────────────────
 // Descarga: SOLO superadmin (validación server-side adicional en /archivo?download=1)
-function verContrato(ctid, nombre, tipo, hasCloud) {
-  const baseUrl = `/mantenciones/api/contratos/${ctid}/archivo`;
-  const titulo  = document.getElementById('modalVerContratoTitulo');
-  const frame   = document.getElementById('contratoFrame');
-  const noView  = document.getElementById('contratoNoViewer');
+async function verContrato(ctid, nombre, tipo, hasCloud) {
+  // Reset estado
+  UDV.ctid     = ctid;
+  UDV.baseUrl  = `/mantenciones/api/contratos/${ctid}/archivo`;
+  UDV.nombre   = nombre || `Contrato #${ctid}`;
+  UDV.tipo     = tipo;
+  UDV.hasCloud = !!hasCloud;
+  UDV.esSuperadmin = !!DATA.is_superadmin;
+  UDV.logs = [];
+  if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+  if (UDV.pdfDoc) { try { UDV.pdfDoc.destroy(); } catch(e){} UDV.pdfDoc = null; }
+
+  _udvLog('INFO', 'verContrato start', { ctid, nombre, tipo, hasCloud });
+
+  // Header del modal
+  document.getElementById('modalVerContratoTitulo').innerHTML =
+    `<i class="bi bi-file-earmark-text me-2"></i>${UDV.nombre}`;
+  document.getElementById('btnAbrirContratoNueva').href = UDV.baseUrl;
+  document.getElementById('btnAbrirNuevaFallback').href = UDV.baseUrl;
   const btnDl   = document.getElementById('btnDescargarContrato');
   const btnWord = document.getElementById('btnDescWord');
-  const btnOpen = document.getElementById('btnAbrirContratoNueva');
-  const btnFallbackOpen = document.getElementById('btnAbrirNuevaFallback');
-  const nvIcon  = document.getElementById('contratoNoViewerIcon');
-  const nvTit   = document.getElementById('contratoNoViewerTitulo');
-  const nvMsg   = document.getElementById('contratoNoViewerMsg');
-
-  const esSuperadmin = DATA.is_superadmin;
-  // FIX 2026-05-26: Python None se renderiza como string 'None' en el template.
-  // Normalizar a vacío para que caiga en la rama "tipo desconocido → intenta iframe".
-  const t = (tipo === 'None' ? '' : (tipo || '')).toLowerCase();
-  const isPdf   = (t === 'pdf');
-  const isImg   = ['imagen','jpg','jpeg','png','gif','webp'].includes(t);
-  const isOffice= ['word','doc','docx','xls','xlsx','ppt','pptx'].includes(t);
-  // Tipo desconocido o vacío → intentar iframe de todas formas. El endpoint
-  // tiene fallback multi-canal (Cloudinary → adjuntos → disco) y el browser
-  // renderizará si puede (PDF, imagen). Mejor intentar que bloquear al usuario.
-  const tipoDesconocido = !isPdf && !isImg && !isOffice;
-
-  titulo.innerHTML = `<i class="bi bi-file-earmark-text me-2"></i>${nombre || 'Contrato'}`;
-
-  // Botones de header
-  btnOpen.href = baseUrl;
-  btnFallbackOpen.href = baseUrl;
-  if (esSuperadmin) {
+  if (UDV.esSuperadmin) {
     btnDl.style.display = '';
-    btnDl.href = baseUrl + '?download=1';
-    btnDl.title = 'Descargar (solo superadmin)';
+    btnDl.href = UDV.baseUrl + '?download=1';
     btnWord.style.display = '';
-    btnWord.href = baseUrl + '?download=1';
+    btnWord.href = UDV.baseUrl + '?download=1';
   } else {
     btnDl.style.display = 'none';
     btnWord.style.display = 'none';
   }
 
-  // Reset frame
-  frame.src = 'about:blank';
-
-  if (isPdf || isImg || tipoDesconocido) {
-    // PDF, imágenes, o tipo desconocido: cargar en iframe y dejar que el browser decida.
-    // El endpoint hace redirect/serve multi-canal; si el archivo es un PDF real,
-    // el browser lo renderiza aunque el tipo en BD sea incorrecto.
-    frame.style.display = '';
-    noView.style.display = 'none';
-    setTimeout(() => { frame.src = baseUrl; }, 50);
-  } else if (isOffice && hasCloud) {
-    // Office Online Viewer — endpoint hace 302 al viewer.officeapps.live.com
-    frame.style.display = '';
-    noView.style.display = 'none';
-    setTimeout(() => { frame.src = baseUrl + '?viewer=office'; }, 50);
-  } else if (isOffice && !hasCloud) {
-    // Word/Excel/PPT pero NO está en Cloudinary — no podemos usar Office Viewer
-    frame.style.display = 'none';
-    noView.style.display = '';
-    nvIcon.className = 'bi bi-file-earmark-word';
-    nvIcon.style.color = '#3b82f6';
-    nvTit.textContent = 'Documento Office no previsualizable';
-    nvMsg.innerHTML = esSuperadmin
-      ? '<strong>Solución:</strong> re-súbelo. El sistema lo guardará en Cloudinary y entonces podrás previsualizarlo con Microsoft Office Online Viewer.'
-      : '<strong>Pide al superadministrador</strong> que re-suba este contrato. Cuando se guarde en Cloudinary, podrás verlo en línea sin descargarlo.';
-  } else {
-    // Caso inesperado — ofrecer apertura externa
-    frame.style.display = 'none';
-    noView.style.display = '';
-    nvIcon.className = 'bi bi-file-earmark';
-    nvIcon.style.color = '#94a3b8';
-    nvTit.textContent = `Formato no previsualizable (${t || 'desconocido'})`;
-    nvMsg.textContent = 'Intenta abrir el archivo en una pestaña nueva — el navegador puede manejarlo según el tipo.';
-  }
+  // Abrir modal y mostrar loading
+  _udvShowStage('loading');
+  _udvSetBadge('', '');
+  _udvSetStep('Conectando con el servidor…');
   new bootstrap.Modal(document.getElementById('modalVerContrato')).show();
+
+  // ── Normalizar tipo (Python None → string vacío) ─────────────────────
+  const t = (tipo === 'None' ? '' : (tipo || '')).toLowerCase();
+  const isPdfHint   = (t === 'pdf');
+  const isImgHint   = ['imagen','jpg','jpeg','png','gif','webp'].includes(t);
+  const isOfficeHint= ['word','doc','docx','xls','xlsx','ppt','pptx'].includes(t);
+
+  // ── HEAD probe: detectar el tipo MIME real del archivo ───────────────
+  _udvSetStep('Detectando tipo de archivo…');
+  const headInfo = await _udvHead(UDV.baseUrl);
+
+  // Si el HEAD falla con 404/500, mostrar error inmediato
+  if (headInfo && headInfo.status >= 400) {
+    _udvShowError({
+      titulo: 'Archivo no disponible',
+      mensaje: 'El servidor no tiene el contrato disponible (HTTP ' + headInfo.status + '). ' +
+               (UDV.esSuperadmin
+                  ? 'Re-súbelo usando el botón <i class="bi bi-cloud-upload"></i> en la lista.'
+                  : 'Pide al superadministrador que lo re-suba.'),
+      icono: 'bi bi-cloud-slash',
+      iconColor: '#dc2626',
+      mostrarReintentar: true,
+      metadata: { 'HTTP': headInfo.status, 'Archivo': UDV.nombre, 'Contrato ID': ctid },
+    });
+    return;
+  }
+
+  // Decidir el tipo efectivo: HEAD Content-Type tiene prioridad sobre el hint
+  const realMime = (headInfo && headInfo.contentType || '').toLowerCase();
+  const isPdf    = realMime.includes('pdf')        || isPdfHint;
+  const isImg    = realMime.startsWith('image/')   || isImgHint;
+  const isOffice = realMime.includes('msword') ||
+                   realMime.includes('officedocument') ||
+                   realMime.includes('ms-excel') ||
+                   realMime.includes('ms-powerpoint') ||
+                   isOfficeHint;
+
+  _udvLog('INFO', 'Tipo decidido', { realMime, isPdf, isImg, isOffice, hint: t });
+
+  // ── RUTA 1: Office docs con Cloudinary → Office Online Viewer ────────
+  if (isOffice && UDV.hasCloud) {
+    _udvSetStep('Cargando Microsoft Office Online Viewer…');
+    _udvLoadIframe(UDV.baseUrl + '?viewer=office', {
+      onLoaded: () => {
+        _udvLog('INFO', 'Office Viewer cargado');
+        _udvSetBadge('Office Online', '#3b82f6');
+      },
+      onBlank: () => {
+        _udvShowError({
+          titulo: 'Office Online Viewer no respondió',
+          mensaje: 'El visor de Microsoft no pudo cargar el archivo. Puedes descargarlo o intentar de nuevo.',
+          icono: 'bi bi-file-earmark-word',
+          iconColor: '#3b82f6',
+          mostrarReintentar: true,
+        });
+      },
+      blankTimeoutMs: 10000,  // Office viewer es más lento
+    });
+    return;
+  }
+
+  // ── RUTA 2: Office docs SIN Cloudinary → no se puede previsualizar ──
+  if (isOffice && !UDV.hasCloud) {
+    _udvShowError({
+      titulo: 'Documento Office sin Cloudinary',
+      mensaje: UDV.esSuperadmin
+        ? '<strong>Re-súbelo:</strong> el sistema lo guardará en Cloudinary y entonces podrás previsualizarlo con Microsoft Office Online Viewer.'
+        : '<strong>Pide al superadministrador</strong> re-subir este contrato para previsualizarlo.',
+      icono: 'bi bi-file-earmark-word',
+      iconColor: '#3b82f6',
+      metadata: headInfo ? {
+        'MIME real': headInfo.contentType || '(sin detectar)',
+        'Tamaño': headInfo.length ? (Math.round(parseInt(headInfo.length)/1024) + ' KB') : '—',
+        'Contrato ID': ctid,
+      } : null,
+    });
+    return;
+  }
+
+  // ── RUTA 3: Imagen → image renderer dedicado ────────────────────────
+  if (isImg) {
+    _udvLoadImage(UDV.baseUrl);
+    return;
+  }
+
+  // ── RUTA 4: PDF (o desconocido que probablemente sea PDF) ────────────
+  // Estrategia: intentar iframe primero (más rápido si funciona).
+  // Si el iframe queda en blanco a los 6s, switch a PDF.js canvas.
+  _udvSetStep('Cargando documento…');
+  _udvLoadIframe(UDV.baseUrl, {
+    onLoaded: () => {
+      _udvLog('INFO', 'Iframe OK');
+      _udvSetBadge('Visor nativo', '#16a34a');
+    },
+    onBlank: async () => {
+      _udvLog('WARN', 'Iframe blank → fallback a PDF.js');
+      // El iframe quedó en blanco. Si es un PDF (real o probable),
+      // intentamos PDF.js canvas. Para otros tipos, mostramos error.
+      const probablyPdf = isPdf || realMime.includes('pdf') ||
+                           (UDV.nombre || '').toLowerCase().endsWith('.pdf');
+      if (probablyPdf && window.pdfjsLib) {
+        try {
+          await _udvLoadPdfJs(UDV.baseUrl);
+        } catch (e) {
+          _udvShowError({
+            titulo: 'No se pudo renderizar el PDF',
+            mensaje: 'Probamos visor nativo y PDF.js sin éxito. Puedes descargar el archivo o abrirlo en pestaña nueva.',
+            icono: 'bi bi-file-earmark-pdf',
+            iconColor: '#dc2626',
+            mostrarReintentar: true,
+            errorTech: 'PDF.js error: ' + (e.message || e),
+            metadata: headInfo ? {
+              'MIME': headInfo.contentType || '—',
+              'Tamaño': headInfo.length ? (Math.round(parseInt(headInfo.length)/1024) + ' KB') : '—',
+              'Disposition': headInfo.disposition || '—',
+            } : null,
+          });
+        }
+      } else {
+        _udvShowError({
+          titulo: 'Formato no previsualizable',
+          mensaje: 'El navegador no puede mostrar este tipo de archivo inline. Descárgalo para verlo localmente.',
+          icono: 'bi bi-file-earmark',
+          iconColor: '#94a3b8',
+          metadata: headInfo ? {
+            'MIME': headInfo.contentType || '—',
+            'Tamaño': headInfo.length ? (Math.round(parseInt(headInfo.length)/1024) + ' KB') : '—',
+          } : null,
+        });
+      }
+    },
+    onError: (e) => {
+      _udvShowError({
+        titulo: 'Error al cargar el contrato',
+        mensaje: 'Hubo un problema de red o el servidor no respondió. Puedes reintentar o descargar el archivo.',
+        icono: 'bi bi-wifi-off',
+        iconColor: '#f59e0b',
+        mostrarReintentar: true,
+        errorTech: 'Iframe error: ' + (e.message || e),
+      });
+    },
+  });
 }
 
 // ─── ERP por RUT — sección Equipos ──────────────────────────
