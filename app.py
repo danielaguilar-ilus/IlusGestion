@@ -24374,6 +24374,11 @@ def init_mantenciones_tables():
                 # equipos (~300ms con 200 equipos).
                 "ALTER TABLE mant_maquinas ADD INDEX idx_cli_estado_creado "
                 "  (cliente_id, estado, created_at)",
+                # AUDITORIA 2026-05-26: tracking de quién hizo el último cambio.
+                # Idempotente — si ya existe, el ALTER falla y se ignora.
+                # Es opcional: los endpoints no dependen de esta columna.
+                "ALTER TABLE mant_maquinas ADD COLUMN updated_by VARCHAR(190) NULL "
+                "  COMMENT 'Username del último que modificó este equipo'",
                 # Tabla de sucursales (información adicional opcional)
                 """CREATE TABLE IF NOT EXISTS mant_sucursales (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -31454,10 +31459,12 @@ def mant_equipos_baja_masiva(cid):
     )
 
     # ── Soft-delete ────────────────────────────────────────────────────────
+    # FIX 2026-05-26: sin updated_by (columna puede no existir en bd vieja).
+    # La trazabilidad ya quedó en mant_logs via _mant_log más arriba.
     mysql_execute(
-        "UPDATE mant_maquinas SET estado='baja', updated_by=%s "
+        "UPDATE mant_maquinas SET estado='baja' "
         " WHERE cliente_id=%s AND estado='activo'",
-        (current_username(), cid)
+        (cid,)
     )
 
     return jsonify({"ok": True, "n": n_activos})
@@ -31497,8 +31504,12 @@ def mant_equipos_baja_seleccion(cid):
         # garantiza seguridad (no se pueden bajar equipos de otro cliente).
         # No hace SELECT previo: lo que MySQL no encuentre, simplemente no
         # se actualiza. Más rápido y atómico.
+        #
+        # FIX 2026-05-26: quitamos `updated_by` del UPDATE porque la columna
+        # no siempre existe en BDs viejas (error 1054). La trazabilidad
+        # queda en mant_logs vía _mant_log (audit_async más abajo).
         placeholders = ",".join(["%s"] * len(ids))
-        params = tuple([current_username(), cid] + ids)
+        params = tuple([cid] + ids)
 
         # Ejecutamos UPDATE y capturamos rowcount para saber cuántos se afectaron
         conn = get_mysql()
@@ -31506,7 +31517,7 @@ def mant_equipos_baja_seleccion(cid):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"UPDATE mant_maquinas SET estado='baja', updated_by=%s "
+                    f"UPDATE mant_maquinas SET estado='baja' "
                     f" WHERE cliente_id=%s AND id IN ({placeholders}) "
                     f"   AND COALESCE(estado,'activo') <> 'baja'",
                     params
