@@ -341,29 +341,74 @@ body {
     display: block !important;
   }
 
-  /* Tablas grid responsive — convertir a cards en mobile */
-  .table-mobile-cards thead {
-    display: none;
+  /* ── Tablas → Cards en mobile (Daniel 2026-05-26: vista bonita móvil)
+     Aplica a tablas con clase `.table-mobile-cards`. Cada <td> debe
+     llevar `data-label="..."` para mostrar el nombre de columna como
+     etiqueta. Cards estilo SaaS premium con sombra suave + hover. */
+  .table-mobile-cards {
+    display: block;
+    background: transparent !important;
   }
+  .table-mobile-cards thead { display: none; }
+  .table-mobile-cards tbody { display: block; }
   .table-mobile-cards tbody tr {
     display: block;
+    background: #fff;
     border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    padding: 10px;
-    margin-bottom: 8px;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    transition: box-shadow .12s, transform .12s;
+  }
+  .table-mobile-cards tbody tr:active {
+    transform: scale(.98);
+    box-shadow: 0 2px 6px rgba(220,38,38,.12);
   }
   .table-mobile-cards tbody td {
-    display: block;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     border: none;
-    padding: 4px 0;
+    padding: 5px 0;
+    font-size: .85rem;
   }
   .table-mobile-cards tbody td[data-label]::before {
-    content: attr(data-label) ": ";
-    font-weight: 700;
+    content: attr(data-label);
+    font-weight: 600;
     color: #6b7280;
     font-size: .72rem;
     text-transform: uppercase;
     letter-spacing: .3px;
+    flex-shrink: 0;
+    margin-right: 10px;
+  }
+  /* Acciones (última td) → fila completa y botones grandes */
+  .table-mobile-cards tbody td:last-child {
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px dashed #e5e7eb;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .table-mobile-cards tbody td:last-child::before { content: none; }
+
+  /* ── Scroll-hint: gradiente fade en bordes de tablas con overflow ── */
+  /* Wrapper opcional `.scroll-hint` indica visualmente que hay más
+     contenido a la derecha. Solo aplica si la tabla NO es card. */
+  .table-responsive:not(.scroll-hint-disabled) {
+    position: relative;
+    /* Fade derecho con gradient nativo */
+    background-image:
+      linear-gradient(to right, #fff, #fff),
+      linear-gradient(to right, #fff, #fff),
+      linear-gradient(to right, rgba(0,0,0,.08), rgba(0,0,0,0)),
+      linear-gradient(to left, rgba(0,0,0,.08), rgba(0,0,0,0));
+    background-position: left center, right center, left center, right center;
+    background-repeat: no-repeat;
+    background-color: #fff;
+    background-size: 18px 100%, 18px 100%, 8px 100%, 8px 100%;
+    background-attachment: local, local, scroll, scroll;
   }
 }
 

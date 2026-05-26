@@ -221,10 +221,13 @@
 
   {% if products %}
 
-  {# ── Tabla desktop ── #}
-  <div class="ilus-card d-none d-md-block">
+  {# ── Tabla desktop (full-viewport, sticky thead, scroll interno) ── #}
+  <div class="ilus-card d-none d-md-block ilus-table-fullview">
     <div class="ilus-card-header">
       <span><i class="bi bi-table me-2"></i>Productos</span>
+      <span class="text-muted ms-2" style="font-size:.72rem;font-weight:500">
+        Mostrando {{ products|length }} de {{ total }}
+      </span>
     </div>
     <div class="table-responsive">
       <table class="table ilus-table mb-0" id="productTable">

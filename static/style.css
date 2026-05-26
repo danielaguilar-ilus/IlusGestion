@@ -943,6 +943,47 @@ body {
 }
 .ilus-table tbody tr:hover { background: #fafafa; }
 .ilus-table tbody tr:last-child td { border-bottom: none; }
+
+/* ── Variante full-viewport (Daniel 2026-05-26 — estilo Linear/Notion) ──
+   Header sticky + scroll interno + altura ≈ viewport. Se aplica solo
+   cuando el contenedor `.table-responsive` está dentro de un wrapper
+   `.ilus-table-fullview` (clase añadida en index.html — opt-in).
+   Mobile NO se ve afectado (la lista usa cards). */
+@media (min-width: 768px) {
+  .ilus-table-fullview .table-responsive {
+    max-height: calc(100dvh - 320px);  /* viewport - header - KPIs - paginación */
+    min-height: 280px;
+    overflow-y: auto;
+    overflow-x: auto;
+    /* Scrollbar suave en webkit */
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .ilus-table-fullview .table-responsive::-webkit-scrollbar {
+    width: 10px; height: 10px;
+  }
+  .ilus-table-fullview .table-responsive::-webkit-scrollbar-thumb {
+    background: #cbd5e1; border-radius: 6px;
+  }
+  .ilus-table-fullview .table-responsive::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+  /* Header sticky — el thead negro queda fijo arriba del scroll */
+  .ilus-table-fullview .ilus-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    /* Sombra sutil debajo cuando hay scroll para separar visualmente */
+    box-shadow: 0 2px 4px rgba(0,0,0,.08);
+  }
+}
+/* En pantallas grandes (≥1280px) damos un poco más de espacio porque
+   los KPIs ocupan menos altura relativa. */
+@media (min-width: 1280px) {
+  .ilus-table-fullview .table-responsive {
+    max-height: calc(100dvh - 280px);
+  }
+}
 .ilus-table tfoot td {
   background: #f5f5f5;
   font-weight: 700;
