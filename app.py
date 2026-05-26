@@ -30144,10 +30144,16 @@ def _mant_ficha_impl(cid):
     # 2026-05-15: filtrar máquinas dadas de baja del listado principal de la ficha.
     # Las máquinas con estado='baja' siguen en BD pero NO se muestran aquí.
     # Para verlas/restaurarlas: GET /mantenciones/api/clientes/<cid>/maquinas-baja
+    # CAMBIO 2026-05-26 (Daniel — filtro "mostrar bajas"): traemos TODOS
+    # los equipos (activos + bajas) y el frontend oculta/muestra según el
+    # toggle "Mostrar bajas". Las filas dadas de baja se marcan con
+    # data-estado="baja" y CSS atenuado. Por default solo se ven activos.
     maquinas_raw  = mysql_fetchall(
         "SELECT * FROM mant_maquinas "
-        " WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
-        " ORDER BY created_at DESC",
+        " WHERE cliente_id=%s "
+        " ORDER BY "
+        "   CASE WHEN COALESCE(estado,'activo')='baja' THEN 1 ELSE 0 END ASC, "
+        "   created_at DESC",
         (cid,)
     ) or []
     # SELECT * para máxima compatibilidad con el template (revertido del SELECT
@@ -31448,6 +31454,70 @@ def mant_equipos_baja_masiva(cid):
     )
 
     return jsonify({"ok": True, "n": n_activos})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/equipos/baja-seleccion", methods=["POST"])
+@_mant_required
+def mant_equipos_baja_seleccion(cid):
+    """Soft-delete SELECTIVO: marca como 'baja' una lista específica de
+    equipos (no todos los del cliente). Solo superadmin.
+
+    Body JSON: { "ids": [12, 34, 56] }
+
+    Diferencia con baja-masiva (que baja TODOS los activos del cliente):
+    este recibe una lista explícita de IDs seleccionados por checkbox en
+    la UI. Permite al admin elegir granularmente qué equipos retirar
+    (ej: 3 trotadoras viejas pero NO las nuevas).
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
+
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids") or []
+    # Validar y sanitizar IDs (solo enteros positivos)
+    try:
+        ids = [int(x) for x in ids if x and int(x) > 0]
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Lista de IDs inválida"}), 400
+    if not ids:
+        return jsonify({"ok": False, "error": "No se seleccionaron equipos"}), 400
+    if len(ids) > 500:
+        return jsonify({"ok": False, "error": "Máximo 500 equipos por operación"}), 400
+
+    # Verificar que todos los IDs pertenezcan al cliente (seguridad)
+    placeholders = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        f"SELECT id, nombre, estado FROM mant_maquinas "
+        f" WHERE cliente_id=%s AND id IN ({placeholders})",
+        tuple([cid] + ids)
+    ) or []
+    if not rows:
+        return jsonify({"ok": False, "error": "Ningún equipo válido para este cliente"}), 404
+
+    # Solo aplicar a los que están activos (idempotente)
+    ids_activos = [r["id"] for r in rows if (r.get("estado") or "activo") != "baja"]
+    n_a_bajar = len(ids_activos)
+    if n_a_bajar == 0:
+        return jsonify({"ok": True, "n": 0, "msg": "Los equipos seleccionados ya estaban dados de baja"})
+
+    # Audit log ANTES del cambio (regla #5)
+    nombres = ", ".join((r.get("nombre") or f"#{r['id']}") for r in rows
+                        if r["id"] in ids_activos)[:300]
+    _mant_log(
+        "cliente", cid,
+        "baja_seleccion_equipos",
+        f"Baja selectiva de {n_a_bajar} equipo(s): {nombres} — superadmin"
+    )
+
+    # Soft-delete
+    placeholders_act = ",".join(["%s"] * len(ids_activos))
+    mysql_execute(
+        f"UPDATE mant_maquinas SET estado='baja', updated_by=%s "
+        f" WHERE cliente_id=%s AND id IN ({placeholders_act})",
+        tuple([current_username(), cid] + ids_activos)
+    )
+
+    return jsonify({"ok": True, "n": n_a_bajar, "ids": ids_activos})
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/destruir", methods=["DELETE"])

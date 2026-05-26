@@ -1984,6 +1984,12 @@ function _ftRender(d) {
 
   document.getElementById('ft_btn_ficha_full').href = d.ficha_url || '#';
 
+  // ── LEVANTAMIENTO INICIAL (Daniel 2026-05-26) ──
+  // El levantamiento es la PRIMERA revisión cronológica del equipo.
+  // Datos disponibles: revisiones_timeline (DESC) + fotos_galeria (DESC).
+  // La PRIMERA cronológicamente es la ÚLTIMA del array.
+  _ftRenderLevantamiento(d);
+
   // ── Alertas ──
   const alertasEl = document.getElementById('ft_alertas');
   if (alertas.length) {
@@ -2160,6 +2166,82 @@ function _ftRenderRevisiones(revisiones, counters) {
   }).join('');
 
   el.innerHTML = headerHtml + items;
+}
+
+// Renderiza la card "Levantamiento inicial" — fotó + fecha + estado +
+// daños + observaciones (extraído de la PRIMERA revisión cronológica).
+function _ftRenderLevantamiento(d) {
+  const card = document.getElementById('ft_levantamiento_card');
+  if (!card) return;
+  const revisiones = d.revisiones_timeline || [];
+  const fotos = d.fotos_galeria || [];
+
+  // Primera revisión cronológica = última del array (orden DESC)
+  const primeraRev = revisiones.length ? revisiones[revisiones.length - 1] : null;
+  // Primera foto cronológica = última del array
+  const primeraFoto = fotos.length ? fotos[fotos.length - 1] : null;
+
+  // Si no hay ni revisión ni foto, no mostramos la card
+  if (!primeraRev && !primeraFoto) {
+    card.style.display = 'none';
+    return;
+  }
+
+  // Foto
+  const fotoEl = document.getElementById('ft_lev_foto');
+  if (primeraFoto && primeraFoto.url) {
+    fotoEl.innerHTML = `<img src="${escAttr(primeraFoto.url)}" loading="lazy" decoding="async"
+                            style="width:100%;height:100%;object-fit:cover"
+                            onclick="window.open('${escAttr(primeraFoto.url)}','_blank')">`;
+  } else {
+    fotoEl.innerHTML = `<i class="bi bi-camera" style="font-size:1.6rem;color:#a8a29e"></i>`;
+  }
+
+  // Fecha — preferir la de la revisión, sino la de la foto
+  let fecha = '';
+  if (primeraRev && primeraRev.fecha) fecha = primeraRev.fecha;
+  else if (primeraFoto && primeraFoto.fecha) fecha = primeraFoto.fecha;
+  document.getElementById('ft_lev_fecha').textContent = fecha ? ('📅 ' + fecha) : '';
+
+  // Estado del equipo en ese momento
+  const estado = primeraRev ? (primeraRev.estado_revision || '').toLowerCase() : '';
+  const estadoBadgeEl = document.getElementById('ft_lev_estado_badge');
+  const estadosCfg = {
+    'operativo':         { bg: '#16a34a', label: 'OPERATIVO' },
+    'verificado':        { bg: '#16a34a', label: 'VERIFICADO' },
+    'con_falla':         { bg: '#dc2626', label: 'CON FALLA' },
+    'con_observaciones': { bg: '#f59e0b', label: 'CON OBSERVACIONES' },
+    'fuera_servicio':    { bg: '#7c2d12', label: 'FUERA DE SERVICIO' },
+    'saltado':           { bg: '#94a3b8', label: 'NO REVISADO' },
+  };
+  const cfg = estadosCfg[estado];
+  estadoBadgeEl.innerHTML = cfg
+    ? `<span class="badge" style="background:${cfg.bg};color:#fff;font-size:.68rem;padding:3px 8px">${cfg.label}</span>`
+    : '';
+
+  // Daños — si estado es con_falla / fuera_servicio, mostrar warning
+  const danosEl = document.getElementById('ft_lev_danos');
+  const conDanos = ['con_falla', 'fuera_servicio', 'con_observaciones'].includes(estado);
+  danosEl.style.display = conDanos ? 'block' : 'none';
+
+  // Observaciones del técnico
+  const obsEl = document.getElementById('ft_lev_observaciones');
+  let obs = '';
+  if (primeraRev) {
+    obs = primeraRev.observacion || primeraRev.razon_saltado || '';
+  }
+  if (!obs && primeraFoto && primeraFoto.descripcion) {
+    obs = primeraFoto.descripcion;
+  }
+  obsEl.textContent = obs || 'Sin observaciones registradas en el levantamiento.';
+
+  // Técnico que hizo el levantamiento
+  const tecEl = document.getElementById('ft_lev_tecnico');
+  let tec = '';
+  if (primeraFoto && primeraFoto.tomada_por) tec = primeraFoto.tomada_por;
+  tecEl.textContent = tec ? ('👤 Por: ' + tec) : '';
+
+  card.style.display = 'block';
 }
 
 function _ftRenderStat(key, val, label, cls) {

@@ -1718,7 +1718,16 @@
         <input type="text" class="eq-search" id="eqBuscar" placeholder="Buscar equipo, código, serie…"
                oninput="eqBuscar(this.value)">
       </div>
-      <div class="ms-auto d-flex gap-2 flex-wrap">
+      <div class="ms-auto d-flex gap-2 flex-wrap align-items-center">
+        {# Toggle "Mostrar dados de baja" — por default ocultos, click para ver papelera #}
+        <label class="d-flex align-items-center gap-1" style="font-size:.78rem;color:#475569;cursor:pointer;user-select:none"
+               title="Mostrar también los equipos dados de baja (papelera)">
+          <input type="checkbox" id="eqMostrarBajas" class="form-check-input" style="margin:0"
+                 onchange="eqAplicarFiltroBajas(this.checked)">
+          <i class="bi bi-archive me-1"></i>Mostrar bajas
+          <span id="eqBajasCount" class="badge"
+                style="background:#e2e8f0;color:#475569;font-size:.62rem;margin-left:3px">0</span>
+        </label>
         {% if not is_tecnico %}
         <button class="btn btn-sm fw-bold" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
                 onclick="abrirGenerarOT()"
@@ -1792,6 +1801,7 @@
           <tbody id="maqListado">
           {% for m in maquinas %}
           {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
+          {% set _es_baja = ((m.estado or 'activo') == 'baja') %}
           <tr id="maq-{{ m.id }}"
               data-maquina-id="{{ m.id }}"
               data-estado="{{ m.estado or 'activo' }}"
@@ -1799,7 +1809,8 @@
               data-sku="{{ m.sku or '' }}"
               data-serie="{{ m.serie or '' }}"
               data-cantidad="{{ m.cantidad or 1 }}"
-              data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}">
+              data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}"
+              {% if _es_baja %}style="display:none;opacity:.55;background:#f8f8f8" class="eq-row-baja"{% endif %}>
             <td style="text-align:center;vertical-align:middle">
               <input type="checkbox" class="form-check-input eq-row-chk"
                      data-id="{{ m.id }}"
@@ -2287,6 +2298,77 @@ function eqUpdateBarra() {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// FILTRO "MOSTRAR BAJAS" + BAJA MASIVA SELECTIVA (Daniel 2026-05-26)
+// ════════════════════════════════════════════════════════════════════
+function eqAplicarFiltroBajas(mostrar) {
+  document.querySelectorAll('tr.eq-row-baja').forEach(tr => {
+    tr.style.display = mostrar ? '' : 'none';
+  });
+}
+
+// Cuenta automática de bajas al cargar (para badge)
+(function _eqContarBajas(){
+  document.addEventListener('DOMContentLoaded', () => {
+    const n = document.querySelectorAll('tr.eq-row-baja').length;
+    const el = document.getElementById('eqBajasCount');
+    if (el) el.textContent = n;
+  });
+})();
+
+async function bajaMasivaSeleccionados() {
+  const seleccionados = Array.from(document.querySelectorAll('.eq-row-chk:checked'));
+  const ids = seleccionados.map(c => parseInt(c.dataset.id));
+  if (!ids.length) {
+    ilusToast('Selecciona al menos un equipo', { type: 'warning' });
+    return;
+  }
+  // Mostrar listado breve en confirmación
+  const nombres = seleccionados.slice(0, 5).map(c => '• ' + c.dataset.nombre).join('\n');
+  const sufijo = seleccionados.length > 5 ? `\n...y ${seleccionados.length - 5} más` : '';
+  const confirmText = await ilusPrompt({
+    title: `Dar de baja ${ids.length} equipo(s)`,
+    message: 'Los equipos seleccionados quedarán marcados como <strong>BAJA</strong> (papelera, no se eliminan).',
+    sub: nombres + sufijo + '\n\nEscribe <strong>BAJA</strong> para confirmar.',
+    subHtml: true,
+    placeholder: 'BAJA',
+    okLabel: 'Dar de baja',
+    cancelLabel: 'Cancelar',
+  });
+  if (!confirmText) return;
+  if (confirmText.trim().toUpperCase() !== 'BAJA') {
+    await ilusAlert({
+      title: 'Confirmación incorrecta',
+      message: 'Debes escribir exactamente <strong>BAJA</strong> para confirmar.',
+      subHtml: true,
+      type: 'warning',
+    });
+    return;
+  }
+  ilusToast('Procesando baja…', { type: 'info' });
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/equipos/baja-seleccion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await ilusAlert({
+        title: 'Baja completada',
+        message: `Se dieron de baja <strong>${d.n}</strong> equipo(s). La página se recargará.`,
+        subHtml: true,
+        type: 'success',
+      });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'Error', message: d.error || 'No se pudo completar la baja.', type: 'error' });
+    }
+  } catch (e) {
+    await ilusAlert({ title: 'Error de red', message: 'No se pudo conectar con el servidor.', type: 'error' });
+  }
+}
+
 function abrirVisitaMulti() {
   const seleccionados = Array.from(document.querySelectorAll('.eq-row-chk:checked'))
     .map(c => ({
@@ -2719,12 +2801,19 @@ async function confirmarVisitaMulti() {
                             color:#fff;padding:14px 22px;border-radius:50px;
                             box-shadow:0 8px 32px rgba(0,0,0,.35);
                             border:2px solid var(--ilus-red);
-                            align-items:center;gap:14px;font-weight:600;font-size:.92rem">
+                            align-items:center;gap:14px;font-weight:600;font-size:.92rem;
+                            flex-wrap:wrap;max-width:95vw">
   <i class="bi bi-check2-square" style="color:var(--ilus-red);font-size:1.3rem"></i>
   <span><strong id="eqBarraCount">0</strong> equipo(s) seleccionado(s)</span>
   <button class="btn btn-ilus fw-bold px-4" onclick="abrirVisitaMulti()" style="border-radius:50px">
     <i class="bi bi-calendar-plus me-1"></i>Agendar visita
   </button>
+  {% if permissions and permissions.superadmin %}
+  <button class="btn btn-warning fw-bold px-4" onclick="bajaMasivaSeleccionados()"
+          style="border-radius:50px" title="Dar de baja los equipos seleccionados (solo superadmin)">
+    <i class="bi bi-archive me-1"></i>Dar de baja
+  </button>
+  {% endif %}
   <button class="btn btn-sm btn-link text-white-50" onclick="eqToggleAll(false)" title="Limpiar selección">
     <i class="bi bi-x-lg"></i>
   </button>
@@ -7463,6 +7552,41 @@ async function vhGuardar(){
           {# Alertas dinámicas #}
           <div id="ft_alertas" style="padding:0 22px;margin-top:14px"></div>
 
+          {# ── LEVANTAMIENTO INICIAL (Daniel 2026-05-26) ──
+             Muestra la PRIMERA revisión cronológica del equipo: foto +
+             fecha + estado + observaciones + daños. Es la "primera
+             foto y diagnóstico" al ingresarlo al sistema. #}
+          <div id="ft_levantamiento_card" style="display:none;padding:6px 22px 0">
+            <div style="background:linear-gradient(135deg,#fefce8 0%,#fef9c3 100%);
+                        border:1px solid #fde68a;border-left:4px solid #ca8a04;
+                        border-radius:12px;padding:14px;display:flex;gap:14px;
+                        align-items:flex-start;flex-wrap:wrap">
+              <div id="ft_lev_foto"
+                   style="width:120px;height:120px;border-radius:10px;background:#fff;
+                          display:flex;align-items:center;justify-content:center;
+                          overflow:hidden;flex-shrink:0;border:1px solid #e7e5e4;cursor:zoom-in">
+                <i class="bi bi-camera" style="font-size:1.6rem;color:#a8a29e"></i>
+              </div>
+              <div style="flex:1;min-width:200px">
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                  <span class="badge" style="background:#ca8a04;color:#fff;font-size:.7rem;padding:4px 10px">
+                    <i class="bi bi-camera-fill me-1"></i>LEVANTAMIENTO INICIAL
+                  </span>
+                  <span id="ft_lev_fecha" style="font-size:.78rem;color:#78350f;font-weight:600"></span>
+                  <span id="ft_lev_estado_badge"></span>
+                </div>
+                <div id="ft_lev_danos" style="display:none;font-size:.8rem;color:#7c2d12;margin-bottom:6px">
+                  <i class="bi bi-exclamation-triangle-fill me-1" style="color:#dc2626"></i>
+                  <strong>Daños detectados</strong>
+                </div>
+                <div id="ft_lev_observaciones"
+                     style="font-size:.82rem;color:#451a03;line-height:1.55;
+                            white-space:pre-wrap;word-break:break-word">—</div>
+                <div id="ft_lev_tecnico" style="font-size:.72rem;color:#78350f;opacity:.85;margin-top:6px"></div>
+              </div>
+            </div>
+          </div>
+
           {# Stats cards #}
           <div class="ft-stats" style="padding:14px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">
             <div class="ft-stat" data-key="visitas"></div>
@@ -8339,7 +8463,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526e"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526g"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico
