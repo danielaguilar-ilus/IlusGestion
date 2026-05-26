@@ -17118,22 +17118,9 @@ def _ia_alertas_resumir_diario(metricas):
           f"bullets={len(bullets)}", flush=True)
 
 
-@app.route("/mantenciones/api/ia/alertas-diarias-run", methods=["POST"])
-@_mant_required
-def mant_ia_alertas_diarias_manual():
-    """Disparo manual del resumen IA diario (para testing y on-demand).
-    Solo superadmin. NO modifica nada del cron, solo invoca el helper."""
-    if not (g.permissions or {}).get("superadmin"):
-        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
-    try:
-        metricas_dummy = {
-            "notif_visita_proxima": 0, "notif_visita_atrasada": 0,
-            "notif_garantia_por_vencer": 0, "notif_contrato_por_vencer": 0,
-        }
-        _ia_alertas_resumir_diario(metricas_dummy)
-        return jsonify({"ok": True, "mensaje": "Resumen IA ejecutado. Revisa la campana de notificaciones."})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)[:300]}), 500
+# NOTA: el endpoint manual /api/ia/alertas-diarias-run vive más abajo,
+# después de la definición del decorador @_mant_required (línea ~23476).
+# Si se pone acá arriba, Python falla con NameError en boot.
 
 
 def _mantenciones_scheduler_run_now():
@@ -34897,6 +34884,32 @@ def mant_ai_metricas():
             for r in por_dia
         ],
     })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — ALERTAS PROACTIVAS DIARIAS (disparo manual)
+# El cron diario ya invoca _ia_alertas_resumir_diario() en el slot de
+# las 06:00 CL. Este endpoint permite disparo manual on-demand para
+# testing o uso bajo demanda. Solo superadmin.
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/ia/alertas-diarias-run", methods=["POST"])
+@_mant_required
+def mant_ia_alertas_diarias_manual():
+    """Disparo manual del resumen IA diario."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+    try:
+        metricas_dummy = {
+            "notif_visita_proxima": 0, "notif_visita_atrasada": 0,
+            "notif_garantia_por_vencer": 0, "notif_contrato_por_vencer": 0,
+        }
+        _ia_alertas_resumir_diario(metricas_dummy)
+        return jsonify({
+            "ok": True,
+            "mensaje": "Resumen IA ejecutado. Revisa la campana de notificaciones."
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
 
 # ══════════════════════════════════════════════════════════════════════
