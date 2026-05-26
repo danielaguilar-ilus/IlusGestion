@@ -2101,6 +2101,86 @@
     </div>
     {% endif %}
 
+    {# ── Resumen IA del contrato vigente ── (2026-05-26: aprovecha datos
+       ya analizados, cero costo IA, visible en 2 segundos para el operador) #}
+    {% set _ct_ia = (contratos|selectattr('estado','equalto','vigente')|list|first
+                     if contratos else none) %}
+    {% if not _ct_ia and contratos %}
+      {% set _ct_ia = contratos|selectattr('estado','equalto','indefinido')|list|first %}
+    {% endif %}
+    {% if not _ct_ia and contratos %}
+      {% set _ct_ia = contratos|first %}
+    {% endif %}
+    {% if _ct_ia and (_ct_ia.ai_resumen or _ct_ia.ai_alertas) %}
+    {% set _ia_score = _ct_ia.ai_score or 0 %}
+    {% set _ia_color = '#16a34a' if _ia_score >= 70 else '#f59e0b' if _ia_score >= 40 else '#dc2626' %}
+    {% set _ia_bg    = '#f0fdf4' if _ia_score >= 70 else '#fffbeb' if _ia_score >= 40 else '#fef2f2' %}
+    {% set _ia_border= '#bbf7d0' if _ia_score >= 70 else '#fde68a' if _ia_score >= 40 else '#fecaca' %}
+    <div class="f-card" style="border-left:3px solid {{ _ia_color }}">
+      <div class="f-card-header" style="background:{{ _ia_bg }};border-bottom-color:{{ _ia_border }}">
+        <span class="f-card-title" style="color:{{ _ia_color }}">
+          <i class="bi bi-stars me-1"></i>Resumen IA del contrato
+        </span>
+        {% if _ia_score %}
+        <span class="badge ms-auto" style="background:{{ _ia_color }};color:#fff;font-size:.65rem">
+          Score {{ _ia_score }}/100
+        </span>
+        {% endif %}
+      </div>
+      <div class="f-card-body" style="padding:12px 16px">
+        {% if _ct_ia.ai_resumen %}
+        <p style="font-size:.8rem;color:#374151;margin:0 0 10px;line-height:1.55">
+          {{ _ct_ia.ai_resumen | truncate(280, True, '…') }}
+        </p>
+        {% endif %}
+        {% if _ct_ia.ai_alertas %}
+          {% set _alertas = _ct_ia.ai_alertas|from_json if _ct_ia.ai_alertas is string else _ct_ia.ai_alertas %}
+          {% if _alertas and _alertas is iterable %}
+          <div style="font-size:.75rem;color:#6b7280">
+            <div style="font-weight:600;color:#374151;margin-bottom:4px">
+              <i class="bi bi-exclamation-triangle-fill me-1" style="color:{{ _ia_color }}"></i>Alertas:
+            </div>
+            <ul style="margin:0;padding-left:18px;line-height:1.5">
+              {% for alerta in _alertas[:3] %}
+              <li>{{ (alerta.mensaje if alerta is mapping else alerta) | truncate(120, True, '…') }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        {% endif %}
+        <div style="margin-top:10px;text-align:right">
+          <button class="btn btn-xs btn-link" style="font-size:.7rem;color:{{ _ia_color }};text-decoration:none"
+                  onclick="switchTab('contrato');setTimeout(()=>{const el=document.getElementById('ct-{{ _ct_ia.id }}');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});},150)">
+            Ver contrato completo <i class="bi bi-arrow-right ms-1"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+    {% elif _ct_ia and not _ct_ia.ai_resumen %}
+    {# Contrato existe pero NO analizado por IA — CTA para analizar #}
+    <div class="f-card" style="border-left:3px solid #94a3b8">
+      <div class="f-card-header" style="background:#f8fafc;border-bottom-color:#e2e8f0">
+        <span class="f-card-title" style="color:#475569">
+          <i class="bi bi-stars me-1"></i>Resumen IA del contrato
+        </span>
+        <span class="badge ms-auto" style="background:#cbd5e1;color:#475569;font-size:.65rem">
+          Pendiente
+        </span>
+      </div>
+      <div class="f-card-body" style="padding:12px 16px;text-align:center">
+        <p style="font-size:.78rem;color:#64748b;margin:0 0 8px">
+          El contrato aún no fue analizado. La IA puede extraer cláusulas, alertas y score de calidad.
+        </p>
+        {% if not is_tecnico %}
+        <button class="btn btn-sm btn-outline-secondary" style="font-size:.75rem"
+                onclick="analizarContrato({{ _ct_ia.id }}, this)">
+          <i class="bi bi-stars me-1"></i>Analizar con IA
+        </button>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
     {# Notas del cliente #}
     {% if cliente.notas %}
     <div class="f-card">
@@ -4939,7 +5019,7 @@ function renderEvidencias() {
   const ico = { ot:'bi-clipboard2-pulse', levantamiento:'bi-camera-fill', galeria:'bi-images' };
   cont.innerHTML = fotos.map((f, idx) => `
     <div class="ev-card" onclick="abrirEvLightbox(${idx})">
-      <img class="ev-img" src="${_evEsc(cloudTx(f.url, 'card'))}" alt="${_evEsc(f.descripcion||'')}"
+      <img class="ev-img" src="${_evEsc(cloudTx(f.url, 'card'))}" alt="${_evEsc(f.descripcion||'')}" loading="lazy" decoding="async"
            loading="lazy" decoding="async" onerror="this.style.display='none'">
       <div class="ev-meta">
         <div class="tt" title="${_evEsc(f.maquina_nombre||f.descripcion||'')}">

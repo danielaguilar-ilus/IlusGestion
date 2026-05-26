@@ -6600,6 +6600,31 @@ def _redirect_to_first_accessible(perms):
     return redirect(url_for("mi_cuenta"))
 
 
+# ═════════════════════════════════════════════════════════════════════
+# HEALTHCHECK 2026-05-26 (Daniel — Railway optimización)
+# Endpoint público liviano para que Railway haga health-check HTTP real
+# (antes solo TCP ping). Si Postgres/MySQL o Cloudinary fallan, devuelve
+# 503 para que Railway no enrute tráfico a esa instancia.
+# Sin @login_required: debe estar accesible sin sesión.
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/_health")
+def _railway_health():
+    """Liveness + readiness probe para Railway."""
+    out = {"ok": True, "ts": int(time.time())}
+    # DB ping rápido (mysql_fetchone es del pool, ~5ms si está caliente)
+    try:
+        r = mysql_fetchone("SELECT 1 AS n")
+        out["db"] = bool(r and r.get("n") == 1)
+    except Exception as e:
+        out["db"] = False
+        out["db_error"] = str(e)[:120]
+    # Cloudinary opcional (no rompe healthcheck si falla)
+    out["cld"] = bool(_CLD_READY)
+    out["workers"] = os.getpid()
+    status = 200 if out.get("db") else 503
+    return jsonify(out), status
+
+
 @app.route("/")
 @login_required
 def index():
@@ -24174,6 +24199,13 @@ def init_mantenciones_tables():
                 "COMMENT 'Fecha en que termina la garantía del fabricante / cobertura comercial'",
                 "ALTER TABLE mant_maquinas ADD INDEX idx_familia (familia_equipo)",
                 "ALTER TABLE mant_maquinas ADD INDEX idx_fin_garantia (fecha_fin_garantia)",
+                # PERFORMANCE 2026-05-26 (Daniel — velocidad < 2s):
+                # La query del timeline del cliente une logs por OR de 4 entidades
+                # (cliente/contrato/maquina/visita) + ORDER BY created_at DESC.
+                # Sin este índice composite, MySQL hacía filesort sobre toda la
+                # tabla mant_logs y consumía ~300ms en cada render de ficha.
+                "ALTER TABLE mant_logs ADD INDEX idx_mant_logs_timeline "
+                "  (entidad, entidad_id, created_at)",
                 # Tabla de sucursales (información adicional opcional)
                 """CREATE TABLE IF NOT EXISTS mant_sucursales (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -34142,10 +34174,35 @@ _CLAUDE_MODELS_FALLBACK = [
     "claude-3-5-sonnet-20241022",
 ]
 
+# ─── ROUTING POR TIER 2026-05-26 (Daniel — ahorro -60% costo IA) ──────
+# Cada llamada a _claude_call() puede elegir un tier según la complejidad:
+#   'haiku'  → clasificaciones cortas, completar campos (rápido + barato)
+#   'sonnet' → fichas técnicas, análisis medios (balance)
+#   'opus'   → razonamiento profundo, plan-mejora (caro pero potente)
+# Cuando no se pasa tier, se mantiene el comportamiento histórico (opus
+# por default) para no romper callers existentes.
+_CLAUDE_MODELS_BY_TIER = {
+    "haiku": [
+        "claude-haiku-4-5",
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-sonnet-20241022",  # último recurso
+    ],
+    "sonnet": [
+        "claude-sonnet-4-5",
+        "claude-3-5-sonnet-20241022",
+        "claude-opus-4-5",
+    ],
+    "opus": [
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-3-5-sonnet-20241022",
+    ],
+}
+
 
 def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                  expect_json=True, model=None, temperature=0.2,
-                 attachments=None):
+                 attachments=None, tier=None):
     """Llama a Claude API. Retorna (data, error) — data es dict si expect_json.
 
     - Maneja la limpieza de bloques ```json ... ```
@@ -34155,6 +34212,10 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
         {"type":"document","source":{...}} para PDFs escaneados, o
         {"type":"image","source":{...}} para imágenes.
         Si está presente, se concatenan al content del primer message.
+    - tier (opcional): 'haiku' | 'sonnet' | 'opus' — selecciona la cadena
+        de fallback apropiada. Si se omite, usa _CLAUDE_MODELS_FALLBACK
+        (comportamiento histórico para no romper callers existentes).
+        `model` explícito tiene prioridad sobre `tier`.
     """
     ai_key = _get_ai_key()
     if not ai_key:
@@ -34165,7 +34226,16 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
     except ImportError:
         return None, "Librería anthropic no instalada. Agregar al requirements.txt"
 
-    models_to_try = [model] if model else _CLAUDE_MODELS_FALLBACK
+    # Resolución del modelo:
+    #   1) Si viene `model` explícito → solo ese.
+    #   2) Si viene `tier` → cadena del tier.
+    #   3) Si no viene nada → fallback histórico (opus default).
+    if model:
+        models_to_try = [model]
+    elif tier and tier in _CLAUDE_MODELS_BY_TIER:
+        models_to_try = _CLAUDE_MODELS_BY_TIER[tier]
+    else:
+        models_to_try = _CLAUDE_MODELS_FALLBACK
     last_err = None
     client = _anthropic.Anthropic(api_key=ai_key)
 

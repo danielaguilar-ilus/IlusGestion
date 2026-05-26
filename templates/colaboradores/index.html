@@ -54,6 +54,7 @@
             {% if col.foto_filename %}
             <img src="{{ photo_src(col.foto_filename, 'uploads/colaboradores') }}"
                  alt="{{ col.nombre_completo }}"
+                 loading="lazy" decoding="async"
                  style="width:70px;height:70px;border-radius:50%;object-fit:cover;
                         border:3px solid {{ estado_color }};flex-shrink:0">
             {% else %}

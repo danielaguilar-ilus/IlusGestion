@@ -88,7 +88,8 @@
   <div class="ficha-hero">
     {% if c.foto_filename %}
     <img src="{{ photo_src(c.foto_filename, 'uploads/colaboradores') }}"
-         class="ficha-avatar" alt="{{ c.nombre_completo }}">
+         class="ficha-avatar" alt="{{ c.nombre_completo }}"
+         loading="lazy" decoding="async">
     {% else %}
     <div class="ficha-avatar-placeholder">{{ c.nombre_completo[0].upper() }}</div>
     {% endif %}
