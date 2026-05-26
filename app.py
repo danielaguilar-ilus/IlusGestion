@@ -6807,6 +6807,23 @@ def new_product():
             errors.append("El nombre es requerido.")
         if mysql_fetchone(f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE sku=%s", (sku,)):
             errors.append(f"El SKU <b>{sku}</b> ya existe.")
+        # ── SEGURIDAD 2026-05-26 (Daniel): solo se aceptan SKUs que existan
+        # en el ERP. Bloqueo server-side para que no se puedan inventar
+        # productos enviando POST con curl/cualquier herramienta. Esto va
+        # en CASCADA con el bloqueo de UI (input SKU readonly + selección
+        # solo desde el typeahead del ERP).
+        if sku and not errors:
+            try:
+                erp_match = get_erp_product_by_sku(sku)
+            except Exception as _e_erp:
+                erp_match = None
+                print(f"[new_product] error consultando ERP: {_e_erp}", flush=True)
+            if not erp_match:
+                errors.append(
+                    f"El SKU <b>{sku}</b> no existe en el ERP. "
+                    f"Solo se pueden crear productos asociados al ERP. "
+                    f"Usa el buscador de arriba para seleccionar uno válido."
+                )
         errors += validate_bultos_form(request.form)
 
         if errors:
