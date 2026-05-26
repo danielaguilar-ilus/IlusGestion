@@ -31094,6 +31094,52 @@ def mant_maquinas_baja_listar(cid):
     return jsonify({"ok": True, "maquinas_baja": out, "total": len(out)})
 
 
+@app.route("/mantenciones/api/clientes/<int:cid>/equipos/baja-masiva", methods=["POST"])
+@_mant_required
+def mant_equipos_baja_masiva(cid):
+    """Soft-delete masivo: marca como 'baja' todos los equipos activos de un cliente.
+    Solo superadmin. Requiere confirm_text='BAJA TOTAL' en el body JSON.
+    Registra audit-log ANTES de ejecutar el UPDATE (regla #5)."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
+
+    body = request.get_json(silent=True) or {}
+    if (body.get("confirm_text") or "").strip().upper() != "BAJA TOTAL":
+        return jsonify({"ok": False, "error": "Confirmación incorrecta"}), 400
+
+    # Verificar que el cliente existe
+    cli = mysql_fetchone("SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    # Contar equipos activos antes de actuar
+    row = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_maquinas WHERE cliente_id=%s AND estado='activo'",
+        (cid,)
+    )
+    n_activos = int(row["n"]) if row else 0
+
+    if n_activos == 0:
+        return jsonify({"ok": True, "n": 0, "msg": "No había equipos activos que dar de baja"})
+
+    # ── AUDIT LOG antes del cambio (regla #5) ──────────────────────────────
+    _mant_log(
+        "cliente", cid,
+        "baja_masiva_equipos",
+        f"Baja masiva de {n_activos} equipo(s) activo(s) del cliente "
+        f"'{cli.get('razon_social', cid)}' — superadmin"
+    )
+
+    # ── Soft-delete ────────────────────────────────────────────────────────
+    mysql_execute(
+        "UPDATE mant_maquinas SET estado='baja', updated_by=%s "
+        " WHERE cliente_id=%s AND estado='activo'",
+        (current_username(), cid)
+    )
+
+    return jsonify({"ok": True, "n": n_activos})
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/destruir", methods=["DELETE"])
 @_mant_required
 def mant_maquina_destruir(mid):

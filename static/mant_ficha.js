@@ -4523,10 +4523,16 @@ function verContrato(ctid, nombre, tipo, hasCloud) {
   const nvMsg   = document.getElementById('contratoNoViewerMsg');
 
   const esSuperadmin = DATA.is_superadmin;
-  const t = (tipo || '').toLowerCase();
+  // FIX 2026-05-26: Python None se renderiza como string 'None' en el template.
+  // Normalizar a vacío para que caiga en la rama "tipo desconocido → intenta iframe".
+  const t = (tipo === 'None' ? '' : (tipo || '')).toLowerCase();
   const isPdf   = (t === 'pdf');
   const isImg   = ['imagen','jpg','jpeg','png','gif','webp'].includes(t);
   const isOffice= ['word','doc','docx','xls','xlsx','ppt','pptx'].includes(t);
+  // Tipo desconocido o vacío → intentar iframe de todas formas. El endpoint
+  // tiene fallback multi-canal (Cloudinary → adjuntos → disco) y el browser
+  // renderizará si puede (PDF, imagen). Mejor intentar que bloquear al usuario.
+  const tipoDesconocido = !isPdf && !isImg && !isOffice;
 
   titulo.innerHTML = `<i class="bi bi-file-earmark-text me-2"></i>${nombre || 'Contrato'}`;
 
@@ -4547,8 +4553,10 @@ function verContrato(ctid, nombre, tipo, hasCloud) {
   // Reset frame
   frame.src = 'about:blank';
 
-  if (isPdf || isImg) {
-    // PDF e imágenes: el browser las renderiza nativamente vía iframe
+  if (isPdf || isImg || tipoDesconocido) {
+    // PDF, imágenes, o tipo desconocido: cargar en iframe y dejar que el browser decida.
+    // El endpoint hace redirect/serve multi-canal; si el archivo es un PDF real,
+    // el browser lo renderiza aunque el tipo en BD sea incorrecto.
     frame.style.display = '';
     noView.style.display = 'none';
     setTimeout(() => { frame.src = baseUrl; }, 50);
@@ -4568,7 +4576,7 @@ function verContrato(ctid, nombre, tipo, hasCloud) {
       ? '<strong>Solución:</strong> re-súbelo. El sistema lo guardará en Cloudinary y entonces podrás previsualizarlo con Microsoft Office Online Viewer.'
       : '<strong>Pide al superadministrador</strong> que re-suba este contrato. Cuando se guarde en Cloudinary, podrás verlo en línea sin descargarlo.';
   } else {
-    // Tipo desconocido — ofrecer apertura externa
+    // Caso inesperado — ofrecer apertura externa
     frame.style.display = 'none';
     noView.style.display = '';
     nvIcon.className = 'bi bi-file-earmark';
@@ -5424,5 +5432,50 @@ function _planTabActualizarStatus(ctAnalizado) {
   if (!el) return;
   if (ctAnalizado) {
     el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Contrato analizado — plan completo disponible</span>';
+  }
+}
+
+// ─── Dar de baja masiva todos los equipos de un cliente (solo superadmin) ──
+async function bajaMasivaEquipos(cid) {
+  const confirmText = await ilusPrompt({
+    title: 'Dar de baja TODOS los equipos',
+    message: 'Esta acción marcará como <strong style="color:#dc2626">BAJA</strong> todos los equipos activos de este cliente.',
+    sub: 'Para confirmar, escribe <strong>BAJA TOTAL</strong> en el campo de abajo.',
+    subHtml: true,
+    placeholder: 'BAJA TOTAL',
+    okLabel: 'Dar de baja',
+    cancelLabel: 'Cancelar',
+  });
+  if (!confirmText) return;
+  if (confirmText.trim().toUpperCase() !== 'BAJA TOTAL') {
+    await ilusAlert({
+      title: 'Confirmación incorrecta',
+      message: 'Debes escribir exactamente <strong>BAJA TOTAL</strong> para confirmar.',
+      subHtml: true,
+      type: 'warning',
+    });
+    return;
+  }
+  ilusToast('Procesando baja masiva…', { type: 'info' });
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${cid}/equipos/baja-masiva`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm_text: confirmText.trim() }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await ilusAlert({
+        title: 'Baja masiva completada',
+        message: `Se dieron de baja <strong>${d.n}</strong> equipo${d.n !== 1 ? 's' : ''}. La página se recargará.`,
+        subHtml: true,
+        type: 'success',
+      });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'Error', message: d.error || 'No se pudo completar la baja masiva.', type: 'error' });
+    }
+  } catch (e) {
+    await ilusAlert({ title: 'Error de red', message: 'No se pudo conectar con el servidor.', type: 'error' });
   }
 }
