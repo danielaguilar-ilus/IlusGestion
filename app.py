@@ -33424,6 +33424,103 @@ def mant_contrato_re_subir(ctid):
 
 
 # ════════════════════════════════════════════════════════════════════════
+# AUDITORIA DE CONTRATOS 2026-05-26 (Daniel — "saas de primera, urgente")
+# Devuelve el estado de TODOS los contratos del sistema para que el
+# superadmin sepa exactamente cuáles están listos para previsualización
+# y cuáles están en riesgo (sin Cloudinary, sin disco, etc).
+# ════════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/contratos/audit", methods=["GET"])
+@_mant_required
+def mant_contratos_audit():
+    """Audit del estado de todos los contratos en la BD.
+
+    Devuelve:
+      {
+        "ok": true,
+        "total":           int,
+        "con_cloudinary":  int,   # listo para preview instantáneo
+        "solo_disco":      int,   # en riesgo (Railway efímero)
+        "huerfanos_adj":   int,   # contrato sin propio archivo pero con adjunto en cloud
+        "perdidos":        int,   # ni disco ni cloud ni adjunto = no se puede ver
+        "muestra_riesgo":  [...]  # primeros 20 contratos en riesgo
+      }
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    # Totales por estado
+    row = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos") or {"n": 0}
+    total = int(row["n"])
+
+    row = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_contratos "
+        " WHERE cloudinary_url IS NOT NULL AND cloudinary_url <> ''"
+    ) or {"n": 0}
+    con_cloud = int(row["n"])
+
+    row = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_contratos "
+        " WHERE (cloudinary_url IS NULL OR cloudinary_url='') "
+        "   AND archivo_path IS NOT NULL AND archivo_path<>''"
+    ) or {"n": 0}
+    solo_disco = int(row["n"])
+
+    # Huérfanos con adjunto: contrato sin archivo propio pero con adjunto cloud disponible
+    row = mysql_fetchone(
+        "SELECT COUNT(DISTINCT c.id) AS n FROM mant_contratos c "
+        " JOIN mant_contrato_adjuntos a ON a.contrato_id=c.id "
+        " WHERE (c.cloudinary_url IS NULL OR c.cloudinary_url='') "
+        "   AND (c.archivo_path IS NULL OR c.archivo_path='') "
+        "   AND a.cloudinary_url IS NOT NULL AND a.cloudinary_url<>'' "
+        "   AND a.tipo IN ('contrato','anexo','externo','otro')"
+    ) or {"n": 0}
+    huerfanos_adj = int(row["n"])
+
+    # Perdidos: sin cloud, sin disco, sin adjunto
+    perdidos = total - con_cloud - solo_disco - huerfanos_adj
+    if perdidos < 0:
+        perdidos = 0  # no debería pasar, pero por seguridad
+
+    # Muestra de contratos en riesgo (solo_disco + perdidos) para que el
+    # superadmin sepa cuáles re-subir manualmente
+    muestra = mysql_fetchall(
+        "SELECT c.id, c.nombre, c.cliente_id, cli.razon_social, "
+        "       c.archivo_path, c.archivo_nombre, "
+        "       CASE "
+        "         WHEN c.cloudinary_url IS NOT NULL AND c.cloudinary_url<>'' THEN 'cloud_ok' "
+        "         WHEN c.archivo_path IS NOT NULL AND c.archivo_path<>'' THEN 'solo_disco' "
+        "         ELSE 'perdido' "
+        "       END AS estado "
+        "  FROM mant_contratos c "
+        "  LEFT JOIN mant_clientes cli ON cli.id=c.cliente_id "
+        " WHERE (c.cloudinary_url IS NULL OR c.cloudinary_url='') "
+        " ORDER BY c.id DESC LIMIT 50"
+    ) or []
+
+    return jsonify({
+        "ok": True,
+        "total":           total,
+        "con_cloudinary":  con_cloud,
+        "solo_disco":      solo_disco,
+        "huerfanos_adj":   huerfanos_adj,
+        "perdidos":        perdidos,
+        "porcentaje_ok":   round((con_cloud + huerfanos_adj) * 100.0 / total, 1) if total else 100.0,
+        "muestra_riesgo":  [
+            {
+                "id":            m["id"],
+                "nombre":        m.get("nombre") or "",
+                "cliente_id":    m.get("cliente_id"),
+                "cliente":       m.get("razon_social") or "",
+                "archivo_path":  m.get("archivo_path") or "",
+                "archivo_nombre":m.get("archivo_nombre") or "",
+                "estado":        m["estado"],
+            }
+            for m in muestra
+        ],
+    })
+
+
+# ════════════════════════════════════════════════════════════════════════
 # BACKFILL CLOUDINARY 2026-05-22
 # Recorre todos los contratos con cloudinary_url IS NULL, busca el archivo
 # en disco (si todavía está) y lo sube a Cloudinary. Idempotente: si un
@@ -33754,7 +33851,24 @@ def mant_contrato_archivo(ctid):
             resp.headers["Accept-Ranges"] = r_up.headers.get("Accept-Ranges", "bytes")
             resp.headers["X-Frame-Options"] = "SAMEORIGIN"
             resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
-            resp.headers["Cache-Control"] = "private, max-age=300"
+            # CACHE AGRESIVO 2026-05-26 (Daniel — saas de primera, velocidad):
+            # Los PDFs de contratos son inmutables (Cloudinary genera public_id
+            # único por subida). Cachear 24h en browser hace que segundas vistas
+            # del mismo contrato sean instantáneas (0 ms egress de Railway).
+            # ETag basado en public_id permite revalidación condicional.
+            resp.headers["Cache-Control"] = "private, max-age=86400, immutable"
+            _etag = ct.get("cloudinary_public_id") or f"ct-{ctid}"
+            resp.headers["ETag"] = f'"{_etag}"'
+            # Si el browser ya tiene esta versión, devuelve 304 (sin body)
+            if request.headers.get("If-None-Match") == f'"{_etag}"':
+                r_up.close()
+                from flask import Response as _Resp2
+                _resp304 = _Resp2(status=304)
+                _resp304.headers["ETag"] = f'"{_etag}"'
+                _resp304.headers["Cache-Control"] = "private, max-age=86400, immutable"
+                print(f"[mant_contrato_archivo] ctid={ctid} → 304 (etag hit)",
+                      flush=True)
+                return _resp304
             print(f"[mant_contrato_archivo] ctid={ctid} → PROXY Cloudinary "
                   f"OK (ext={ext}, ctype={ctype}, status={r_up.status_code})",
                   flush=True)

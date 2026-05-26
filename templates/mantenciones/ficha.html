@@ -2087,8 +2087,17 @@
           <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
         </div>
         {% if permissions.superadmin %}
+        <div class="eq-accion-item" onclick="auditarContratos()"
+             style="border-top:1px solid #e0e7ff;margin-top:4px;padding-top:10px">
+          <div class="eq-accion-icon" style="background:#dbeafe;color:#2563eb"><i class="bi bi-shield-check"></i></div>
+          <div>
+            <div class="eq-accion-title" style="color:#1e40af">Auditar contratos del sistema</div>
+            <div class="eq-accion-sub">Ver estado y sincronizar a Cloudinary</div>
+          </div>
+          <i class="bi bi-arrow-right ms-auto" style="color:#93c5fd;font-size:.8rem"></i>
+        </div>
         <div class="eq-accion-item" onclick="bajaMasivaEquipos({{ cliente.id }})"
-             style="border-top:1px solid #fee2e2;margin-top:4px;padding-top:10px">
+             style="border-top:1px solid #fee2e2;margin-top:2px;padding-top:10px">
           <div class="eq-accion-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-trash3-fill"></i></div>
           <div>
             <div class="eq-accion-title" style="color:#dc2626">Dar de baja todos los equipos</div>
@@ -8219,7 +8228,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526b"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico
