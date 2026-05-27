@@ -5025,45 +5025,58 @@ def login():
         # connect_timeout) que tener tracking roto para siempre.
         # Try/except envuelve para que un error de BD NO impida el login.
         # ─────────────────────────────────────────────────────────────
+        # ── FIX 2026-05-27 (Daniel — login 6s): UPDATE y audit van a
+        # daemon thread CON app.app_context() para que get_db() y mysql_*
+        # funcionen sin RuntimeError. Esto ahorra ~1-1.5s de latencia de
+        # red MySQL bloqueando el redirect del usuario.
+        #
+        # El bug previo (login_ok no se grababa) era porque NO se usaba
+        # app_context. Ahora SÍ se usa → audit + last_login_at se graban
+        # correctamente, pero asincrónicamente.
+        # ──────────────────────────────────────────────────────────────
         try:
             ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64]
-            try:
-                # Intento principal: actualiza también last_seen_at en el mismo UPDATE.
-                mysql_execute(
-                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
-                    f"last_seen_at=NOW(), login_count=COALESCE(login_count,0)+1 WHERE id=%s",
-                    (ip, user["id"])
-                )
-            except Exception as _e_lst:
-                # Fallback si last_seen_at aún no existe (migración no corrió):
-                # actualiza solo last_login_at + last_login_ip + login_count.
-                print(f"[login-track] fallback sin last_seen_at: {_e_lst}", flush=True)
-                mysql_execute(
-                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
-                    f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
-                    (ip, user["id"])
-                )
-            print(f"[login-track] OK uid={user['id']} username={user['username']} ip={ip}", flush=True)
+            _uid = user["id"]
+            _uname = user["username"]
+            _urole = user["role"]
+            import threading as _th_login
+            def _login_track_async():
+                with app.app_context():
+                    # Track last_login + audit en una sola llamada al thread.
+                    try:
+                        try:
+                            mysql_execute(
+                                f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), "
+                                f"last_login_ip=%s, last_seen_at=NOW(), "
+                                f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
+                                (ip, _uid)
+                            )
+                        except Exception as _e_lst:
+                            print(f"[login-track-async] fallback sin last_seen_at: {_e_lst}", flush=True)
+                            try:
+                                mysql_execute(
+                                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), "
+                                    f"last_login_ip=%s, login_count=COALESCE(login_count,0)+1 "
+                                    f"WHERE id=%s",
+                                    (ip, _uid)
+                                )
+                            except Exception as _e_lst2:
+                                print(f"[login-track-async] tracking falló: {_e_lst2}", flush=True)
+                        print(f"[login-track-async] OK uid={_uid} username={_uname}", flush=True)
+                    except Exception as _e_lt_outer:
+                        print(f"[login-track-async] outer error: {_e_lt_outer}", flush=True)
+
+                    try:
+                        _audit("login_ok",
+                               target_type="user", target_id=_uid,
+                               user_override={"id": _uid, "username": _uname, "role": _urole})
+                    except Exception as _e_au:
+                        print(f"[login-track-async] audit falló: {_e_au}", flush=True)
+            _th_login.Thread(target=_login_track_async, daemon=True,
+                             name=f"login-track-{_uid}").start()
         except Exception as _e_login_track:
-            # Log con traceback completo para forensia (antes solo el mensaje).
             import traceback as _tb_lt
-            print(f"[login-track] FAIL uid={user['id']}: {_e_login_track}\n{_tb_lt.format_exc()}", flush=True)
-        # ── FIX 2026-05-18 (revertido a síncrono) ─────────────────────
-        # El thread daemon anterior tenía el MISMO bug que _track_login_async:
-        # _audit() llama internamente a get_db() que requiere `g` (Flask
-        # request context). El thread NO tiene contexto → RuntimeError →
-        # excepción atrapada y solo printeada → la fila login_ok NUNCA se
-        # insertaba. Esto es por qué Daniel veía usuarios "Nunca conectados"
-        # incluso cuando sí se logueaban.
-        # Volver a síncrono: el INSERT es <50ms y el redirect no es crítico
-        # en ese rango. Try/except externo garantiza que un error de BD
-        # NO impide el login (el usuario igual recibe su cookie).
-        try:
-            _audit("login_ok",
-                   target_type="user", target_id=user["id"],
-                   user_override={"id": user["id"], "username": user["username"], "role": user["role"]})
-        except Exception as _e_au:
-            print(f"[login_ok audit] {_e_au}", flush=True)
+            print(f"[login-track] FAIL outer uid={user['id']}: {_e_login_track}\n{_tb_lt.format_exc()}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
     # FIX 2026-05-18 (perf): cache privado corto (30s) en GET /login.

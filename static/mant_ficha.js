@@ -2571,72 +2571,105 @@ function _ftRenderLevantamiento(d) {
   const card = document.getElementById('ft_levantamiento_card');
   if (!card) return;
   const revisiones = d.revisiones_timeline || [];
-  const fotos = d.fotos_galeria || [];
+  const fotos      = d.fotos_galeria || [];
+  const eq         = d.equipo || {};
 
-  // Primera revisión cronológica = última del array (orden DESC)
-  const primeraRev = revisiones.length ? revisiones[revisiones.length - 1] : null;
-  // Primera foto cronológica = última del array
-  const primeraFoto = fotos.length ? fotos[fotos.length - 1] : null;
+  // CAMBIO 2026-05-27 (Daniel): mostrar la ÚLTIMA revisión (más reciente),
+  // no la primera. Es lo que el operador necesita saber AHORA del equipo.
+  // El array viene ordenado DESC (más reciente primero) → index 0.
+  const ultRev  = revisiones.length ? revisiones[0] : null;
+  const ultFoto = fotos.length ? fotos[0] : null;  // foto más reciente
 
-  // Si no hay ni revisión ni foto, no mostramos la card
-  if (!primeraRev && !primeraFoto) {
+  // Mostrar SIEMPRE la card si tenemos al menos algo (revisiones u OTs o equipo)
+  // Mejor ver "sin foto + sin observaciones" que ocultar.
+  if (!ultRev && !ultFoto && !(d.historial_visitas||[]).length) {
     card.style.display = 'none';
     return;
   }
 
-  // Foto
+  // ── Foto: la MÁS RECIENTE del equipo. Si no, fallback foto principal del equipo ──
   const fotoEl = document.getElementById('ft_lev_foto');
-  if (primeraFoto && primeraFoto.url) {
-    fotoEl.innerHTML = `<img src="${escAttr(primeraFoto.url)}" loading="lazy" decoding="async"
-                            style="width:100%;height:100%;object-fit:cover"
-                            onclick="window.open('${escAttr(primeraFoto.url)}','_blank')">`;
+  const fotoUrlPrincipal = ultFoto?.url || eq.foto_principal_url || eq.foto_url || '';
+  if (fotoUrlPrincipal) {
+    fotoEl.innerHTML = `<img src="${escAttr(fotoUrlPrincipal)}" loading="lazy" decoding="async" alt="Foto del equipo">`;
+    fotoEl.classList.add('has-foto');
+    fotoEl.dataset.fullUrl = fotoUrlPrincipal;
   } else {
-    fotoEl.innerHTML = `<i class="bi bi-camera" style="font-size:1.6rem;color:#a8a29e"></i>`;
+    fotoEl.innerHTML = `<div class="ft-lev-foto-placeholder">
+        <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
+        <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
+        <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en la próxima visita</div>
+      </div>`;
+    fotoEl.classList.remove('has-foto');
+    delete fotoEl.dataset.fullUrl;
   }
 
-  // Fecha — preferir la de la revisión, sino la de la foto
+  // ── Fecha del último levantamiento ──
   let fecha = '';
-  if (primeraRev && primeraRev.fecha) fecha = primeraRev.fecha;
-  else if (primeraFoto && primeraFoto.fecha) fecha = primeraFoto.fecha;
-  document.getElementById('ft_lev_fecha').textContent = fecha ? ('📅 ' + fecha) : '';
+  if (ultRev && ultRev.revisado_at)      fecha = ultRev.revisado_at;
+  else if (ultRev && ultRev.fecha)       fecha = ultRev.fecha;
+  else if (ultFoto && ultFoto.fecha)     fecha = ultFoto.fecha;
+  document.getElementById('ft_lev_fecha').textContent = fecha ? ('📅 ' + fecha) : '— sin levantamientos registrados';
 
-  // Estado del equipo en ese momento
-  const estado = primeraRev ? (primeraRev.estado_revision || '').toLowerCase() : '';
+  // ── Estado capturado en la última revisión ──
+  const estado = ultRev ? (ultRev.estado_revision || '').toLowerCase() : '';
   const estadoBadgeEl = document.getElementById('ft_lev_estado_badge');
   const estadosCfg = {
-    'operativo':         { bg: '#16a34a', label: 'OPERATIVO' },
-    'verificado':        { bg: '#16a34a', label: 'VERIFICADO' },
-    'con_falla':         { bg: '#dc2626', label: 'CON FALLA' },
-    'con_observaciones': { bg: '#f59e0b', label: 'CON OBSERVACIONES' },
-    'fuera_servicio':    { bg: '#7c2d12', label: 'FUERA DE SERVICIO' },
-    'saltado':           { bg: '#94a3b8', label: 'NO REVISADO' },
+    'operativo':         { bg: '#16a34a', label: '✓ OPERATIVO' },
+    'verificado':        { bg: '#16a34a', label: '✓ VERIFICADO' },
+    'con_cambios':       { bg: '#3b82f6', label: '↻ CON CAMBIOS' },
+    'con_falla':         { bg: '#dc2626', label: '⚠ CON FALLA' },
+    'con_observaciones': { bg: '#f59e0b', label: '⚠ CON OBSERVACIONES' },
+    'falla_detectada':   { bg: '#dc2626', label: '⚠ FALLA DETECTADA' },
+    'fuera_servicio':    { bg: '#7c2d12', label: '✕ FUERA DE SERVICIO' },
+    'saltado':           { bg: '#94a3b8', label: '— NO REVISADO' },
   };
   const cfg = estadosCfg[estado];
   estadoBadgeEl.innerHTML = cfg
-    ? `<span class="badge" style="background:${cfg.bg};color:#fff;font-size:.68rem;padding:3px 8px">${cfg.label}</span>`
-    : '';
+    ? `<span class="badge" style="background:${cfg.bg};color:#fff;font-size:.68rem;padding:4px 9px;font-weight:700">${cfg.label}</span>`
+    : (ultRev ? `<span class="badge" style="background:#94a3b8;color:#fff;font-size:.68rem;padding:4px 9px">${escHtml(estado.toUpperCase()||'—')}</span>` : '');
 
-  // Daños — si estado es con_falla / fuera_servicio, mostrar warning
+  // ── Daños: warning visible si estado indica problema ──
   const danosEl = document.getElementById('ft_lev_danos');
-  const conDanos = ['con_falla', 'fuera_servicio', 'con_observaciones'].includes(estado);
-  danosEl.style.display = conDanos ? 'block' : 'none';
+  const conDanos = ['con_falla', 'fuera_servicio', 'con_observaciones', 'falla_detectada'].includes(estado);
+  danosEl.style.display = conDanos ? 'flex' : 'none';
 
-  // Observaciones del técnico
+  // ── Observaciones del técnico (de la última revisión) ──
   const obsEl = document.getElementById('ft_lev_observaciones');
   let obs = '';
-  if (primeraRev) {
-    obs = primeraRev.observacion || primeraRev.razon_saltado || '';
+  if (ultRev) {
+    obs = (ultRev.observacion || ultRev.razon_saltado || '').trim();
   }
-  if (!obs && primeraFoto && primeraFoto.descripcion) {
-    obs = primeraFoto.descripcion;
+  if (!obs && ultFoto && ultFoto.descripcion) {
+    obs = (ultFoto.descripcion || '').trim();
   }
-  obsEl.textContent = obs || 'Sin observaciones registradas en el levantamiento.';
+  if (!obs && eq.observaciones) {
+    obs = (eq.observaciones || '').trim();
+  }
+  if (obs) {
+    obsEl.textContent = obs;
+    obsEl.style.color = '#1f2937';
+    obsEl.style.fontStyle = 'normal';
+  } else {
+    obsEl.textContent = 'Sin observaciones registradas. Captura observaciones en la próxima visita técnica.';
+    obsEl.style.color = '#9ca3af';
+    obsEl.style.fontStyle = 'italic';
+  }
 
-  // Técnico que hizo el levantamiento
+  // ── Técnico responsable ──
   const tecEl = document.getElementById('ft_lev_tecnico');
   let tec = '';
-  if (primeraFoto && primeraFoto.tomada_por) tec = primeraFoto.tomada_por;
-  tecEl.textContent = tec ? ('👤 Por: ' + tec) : '';
+  if (ultRev && ultRev.revisado_por) tec = ultRev.revisado_por;
+  else if (ultFoto && ultFoto.tomada_por) tec = ultFoto.tomada_por;
+  tecEl.innerHTML = tec ? `<i class="bi bi-person-circle me-1"></i><strong>Técnico:</strong> ${escHtml(tec)}` : '';
+
+  // ── Contador de revisiones totales ──
+  const nRevEl = document.getElementById('ft_lev_n_revisiones');
+  if (revisiones.length > 1) {
+    nRevEl.innerHTML = `<i class="bi bi-clock-history me-1"></i><strong>${revisiones.length}</strong> revisiones totales`;
+  } else {
+    nRevEl.innerHTML = '';
+  }
 
   card.style.display = 'block';
 }

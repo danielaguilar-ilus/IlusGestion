@@ -7587,37 +7587,91 @@ async function vhGuardar(){
             </div>
           </div>
 
-          {# ── LEVANTAMIENTO INICIAL (Daniel 2026-05-26) ──
-             Muestra la PRIMERA revisión cronológica del equipo: foto +
-             fecha + estado + observaciones + daños. Es la "primera
-             foto y diagnóstico" al ingresarlo al sistema. #}
-          <div id="ft_levantamiento_card" style="display:none;padding:6px 22px 0">
-            <div style="background:linear-gradient(135deg,#fefce8 0%,#fef9c3 100%);
-                        border:1px solid #fde68a;border-left:4px solid #ca8a04;
-                        border-radius:12px;padding:14px;display:flex;gap:14px;
-                        align-items:flex-start;flex-wrap:wrap">
-              <div id="ft_lev_foto"
-                   style="width:120px;height:120px;border-radius:10px;background:#fff;
-                          display:flex;align-items:center;justify-content:center;
-                          overflow:hidden;flex-shrink:0;border:1px solid #e7e5e4;cursor:zoom-in">
-                <i class="bi bi-camera" style="font-size:1.6rem;color:#a8a29e"></i>
+          {# ── ÚLTIMO LEVANTAMIENTO (Daniel 2026-05-27 — ficha hero) ──
+             Foto GRANDE prominente + datos del levantamiento más RECIENTE
+             (no la primera). Vista dashboard pro CMMS. #}
+          <div id="ft_levantamiento_card" style="display:none;padding:8px 22px 0">
+            <style>
+              .ft-lev-hero {
+                background:linear-gradient(135deg,#ffffff 0%,#fafbff 100%);
+                border:1px solid #e5e7eb;border-left:5px solid #dc2626;
+                border-radius:14px;padding:18px;display:flex;gap:20px;
+                align-items:stretch;flex-wrap:wrap;
+                box-shadow:0 2px 8px rgba(0,0,0,.04);
+              }
+              .ft-lev-foto-wrap {
+                width:220px;min-height:220px;border-radius:12px;background:#f8fafc;
+                display:flex;align-items:center;justify-content:center;
+                overflow:hidden;flex-shrink:0;border:2px solid #e5e7eb;
+                position:relative;
+              }
+              .ft-lev-foto-wrap.has-foto { cursor:zoom-in; border-color:#16a34a; }
+              .ft-lev-foto-wrap img { width:100%;height:100%;object-fit:cover; }
+              .ft-lev-foto-placeholder {
+                display:flex;flex-direction:column;align-items:center;
+                justify-content:center;text-align:center;padding:14px;
+              }
+              .ft-lev-body { flex:1;min-width:260px;display:flex;flex-direction:column;gap:10px; }
+              .ft-lev-badge-tipo {
+                background:#dc2626;color:#fff;font-size:.7rem;padding:4px 10px;
+                font-weight:700;letter-spacing:.3px;
+              }
+              .ft-lev-danos {
+                background:#fef2f2;border:1px solid #fecaca;border-radius:8px;
+                padding:8px 12px;font-size:.82rem;color:#991b1b;
+                display:flex;align-items:center;gap:8px;
+              }
+              .ft-lev-danos i { color:#dc2626;font-size:1rem; }
+              .ft-lev-section {
+                background:#f8fafc;border-radius:8px;padding:10px 12px;
+                border-left:3px solid #e5e7eb;
+              }
+              .ft-lev-section-label {
+                font-size:.65rem;color:#94a3b8;font-weight:700;text-transform:uppercase;
+                letter-spacing:.6px;margin-bottom:4px;
+              }
+              .ft-lev-section-text {
+                font-size:.85rem;color:#1f2937;line-height:1.55;
+                white-space:pre-wrap;word-break:break-word;
+              }
+              .ft-lev-meta {
+                display:flex;gap:14px;flex-wrap:wrap;font-size:.72rem;
+                color:#64748b;margin-top:auto;padding-top:6px;border-top:1px dashed #e5e7eb;
+              }
+              .ft-lev-meta span { font-weight:500; }
+              @media (max-width:640px) {
+                .ft-lev-foto-wrap { width:100%; min-height:180px; }
+              }
+            </style>
+            <div class="ft-lev-hero">
+              <div id="ft_lev_foto" class="ft-lev-foto-wrap"
+                   onclick="if(this.dataset.fullUrl)window.open(this.dataset.fullUrl,'_blank')">
+                <div class="ft-lev-foto-placeholder">
+                  <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
+                  <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
+                  <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en la próxima visita</div>
+                </div>
               </div>
-              <div style="flex:1;min-width:200px">
-                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-                  <span class="badge" style="background:#ca8a04;color:#fff;font-size:.7rem;padding:4px 10px">
-                    <i class="bi bi-camera-fill me-1"></i>LEVANTAMIENTO INICIAL
+              <div class="ft-lev-body">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <span class="badge ft-lev-badge-tipo">
+                    <i class="bi bi-camera-fill me-1"></i>ÚLTIMO LEVANTAMIENTO
                   </span>
-                  <span id="ft_lev_fecha" style="font-size:.78rem;color:#78350f;font-weight:600"></span>
+                  <span id="ft_lev_fecha" style="font-size:.84rem;color:#374151;font-weight:600"></span>
                   <span id="ft_lev_estado_badge"></span>
                 </div>
-                <div id="ft_lev_danos" style="display:none;font-size:.8rem;color:#7c2d12;margin-bottom:6px">
-                  <i class="bi bi-exclamation-triangle-fill me-1" style="color:#dc2626"></i>
-                  <strong>Daños detectados</strong>
+                <div id="ft_lev_danos" class="ft-lev-danos" style="display:none">
+                  <i class="bi bi-exclamation-triangle-fill"></i>
+                  <span><strong>Daños detectados</strong> — revisar observaciones del técnico</span>
                 </div>
-                <div id="ft_lev_observaciones"
-                     style="font-size:.82rem;color:#451a03;line-height:1.55;
-                            white-space:pre-wrap;word-break:break-word">—</div>
-                <div id="ft_lev_tecnico" style="font-size:.72rem;color:#78350f;opacity:.85;margin-top:6px"></div>
+                <div class="ft-lev-section">
+                  <div class="ft-lev-section-label">Observaciones del técnico</div>
+                  <div id="ft_lev_observaciones" class="ft-lev-section-text">—</div>
+                </div>
+                <div class="ft-lev-meta">
+                  <span id="ft_lev_tecnico"></span>
+                  <span id="ft_lev_n_revisiones"></span>
+                </div>
               </div>
             </div>
           </div>
@@ -8506,7 +8560,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526i"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527a"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico
