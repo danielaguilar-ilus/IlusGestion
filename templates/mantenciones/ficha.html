@@ -7807,6 +7807,11 @@ async function vhGuardar(){
                 <i class="bi bi-file-earmark-text me-1"></i>Contratos <span class="badge bg-secondary ms-1" id="ft_bdg_contratos">0</span>
               </button>
             </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabAuditoria" type="button">
+                <i class="bi bi-clock-history me-1"></i>Auditoría
+              </button>
+            </li>
           </ul>
 
           <div class="tab-content" style="padding:16px 22px;background:#fff;min-height:280px">
@@ -7817,6 +7822,7 @@ async function vhGuardar(){
             <div class="tab-pane fade" id="ftTabSeriales" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabEstado" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabContratos" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabAuditoria" role="tabpanel"></div>
           </div>
 
           {# Sub-modal: Edición del equipo (inline dentro del modal padre) #}
@@ -7886,6 +7892,23 @@ async function vhGuardar(){
       </div>
     </div>
   </div>
+</div>
+
+{# ── LIGHTBOX para fotos del equipo (Daniel 2026-05-27 — galería pro) ── #}
+<div id="ftLightbox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:99999;cursor:zoom-out" onclick="ftLightboxCerrar()">
+  <button onclick="event.stopPropagation();ftLightboxPrev()" style="position:absolute;left:18px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:50%;width:48px;height:48px;font-size:1.4rem;cursor:pointer;z-index:2">
+    <i class="bi bi-chevron-left"></i>
+  </button>
+  <button onclick="event.stopPropagation();ftLightboxNext()" style="position:absolute;right:18px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:50%;width:48px;height:48px;font-size:1.4rem;cursor:pointer;z-index:2">
+    <i class="bi bi-chevron-right"></i>
+  </button>
+  <button onclick="event.stopPropagation();ftLightboxCerrar()" style="position:absolute;right:18px;top:18px;background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:50%;width:42px;height:42px;font-size:1.1rem;cursor:pointer;z-index:2">
+    <i class="bi bi-x-lg"></i>
+  </button>
+  <div style="height:100%;display:flex;align-items:center;justify-content:center;padding:60px 80px">
+    <img id="ftLightboxImg" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.4)" onclick="event.stopPropagation()">
+  </div>
+  <div id="ftLightboxInfo" style="position:absolute;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:#fff;padding:10px 18px;border-radius:24px;font-size:.84rem;backdrop-filter:blur(8px);text-align:center;max-width:600px"></div>
 </div>
 
 {# CSS específico del modal de ficha técnica #}
@@ -8672,7 +8695,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527c"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527d"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

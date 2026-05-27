@@ -2113,6 +2113,7 @@ function _ftRender(d) {
   _ftRenderEstado(d.historial_estado || []);
   _ftRenderContratos(d.contratos_relacionados || []);
   _ftRenderRevisiones(d.revisiones_timeline || [], d.revisiones_counters || {});
+  _ftRenderAuditoria(d);  // 2026-05-27 — timeline unificado de cambios
 
   // Mostrar botón "Sincronizar fotos" solo si el equipo tiene OTs con fotos
   // pero la galería tiene menos fotos (huérfanas en mant_levantamiento_fotos).
@@ -2768,26 +2769,123 @@ function _ftRenderVisitas(visitas) {
   }).join('');
 }
 
+// ── Galería tipo Facebook con lightbox (Daniel 2026-05-27) ──
+// Foto principal grande + grid de miniaturas + lightbox al hacer click.
+window._ftFotos = [];   // array de fotos para el lightbox
+window._ftFotoIdx = 0;  // index actual en el lightbox
+
 function _ftRenderFotos(fotos) {
   const el = document.getElementById('ftTabFotos');
   if (!fotos.length) {
-    el.innerHTML = `<div class="text-center text-muted py-4">
-      <i class="bi bi-image" style="font-size:2rem;opacity:.3"></i>
-      <div class="fw-semibold mt-2">Sin fotos</div>
-      <div class="small mt-1">Las fotos del levantamiento y de visitas posteriores aparecerán aquí.</div>
+    el.innerHTML = `<div class="text-center text-muted py-5">
+      <i class="bi bi-images" style="font-size:3rem;opacity:.25"></i>
+      <div class="fw-semibold mt-3" style="font-size:1rem">Aún no existen fotografías asociadas a este equipo</div>
+      <div class="small mt-2" style="max-width:420px;margin:0 auto;color:#94a3b8">Cuando un técnico capture fotos del equipo en una OT (levantamiento, antes/después, evidencia de daño, etc.), aparecerán aquí ordenadas por fecha.</div>
     </div>`;
     return;
   }
+  // Guardamos las fotos para el lightbox
+  window._ftFotos = fotos;
+  // Foto principal (la más reciente) + miniaturas
+  const principal = fotos[0];
+  const otras = fotos.slice(1);
   el.innerHTML = `
-    <div class="d-grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr))">
-      ${fotos.map(f => `
-        <div class="ft-photo-card" onclick="window.open('${escAttr(f.url)}','_blank')" title="${escAttr(f.descripcion || f.tomada_por || 'Foto')}">
-          <img src="${escAttr(f.url)}" alt="" loading="lazy">
+    <style>
+      .ft-gal-main {
+        width:100%;max-height:480px;border-radius:14px;background:#0f172a;
+        display:flex;align-items:center;justify-content:center;overflow:hidden;
+        cursor:zoom-in;position:relative;
+      }
+      .ft-gal-main img { max-width:100%;max-height:480px;object-fit:contain;display:block; }
+      .ft-gal-main-info {
+        position:absolute;left:0;right:0;bottom:0;
+        background:linear-gradient(to top, rgba(0,0,0,.85), transparent);
+        color:#fff;padding:18px 20px 14px;font-size:.84rem;
+      }
+      .ft-gal-grid {
+        display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));
+        gap:8px;margin-top:14px;
+      }
+      .ft-gal-thumb {
+        position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;
+        cursor:zoom-in;background:#f1f5f9;border:2px solid transparent;
+        transition:border-color .12s,transform .12s;
+      }
+      .ft-gal-thumb:hover { border-color:#dc2626;transform:scale(1.03); }
+      .ft-gal-thumb img { width:100%;height:100%;object-fit:cover; }
+      .ft-gal-thumb-label {
+        position:absolute;top:6px;left:6px;background:rgba(0,0,0,.7);color:#fff;
+        font-size:.62rem;padding:2px 7px;border-radius:10px;font-weight:600;
+        text-transform:uppercase;letter-spacing:.3px;
+      }
+    </style>
+    <div class="ft-gal-main" onclick="ftLightboxAbrir(0)">
+      <img src="${escAttr(principal.url)}" alt="${escAttr(principal.descripcion||'Foto principal')}" loading="lazy">
+      <div class="ft-gal-main-info">
+        <div style="font-weight:600">${escHtml(principal.descripcion || 'Foto del equipo')}</div>
+        <div style="opacity:.85;font-size:.74rem;margin-top:2px">
+          <i class="bi bi-camera-fill me-1"></i>${escHtml(principal.tipo_foto || 'principal')}
+          ${principal.fecha ? ' · <i class="bi bi-calendar3 me-1"></i>' + escHtml(principal.fecha) : ''}
+          ${principal.tomada_por ? ' · <i class="bi bi-person-circle me-1"></i>' + escHtml(principal.tomada_por) : ''}
         </div>
-      `).join('')}
+      </div>
     </div>
-    <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Click en una foto para abrir en pantalla completa.</div>
+    ${otras.length ? `
+      <div class="ft-gal-grid">
+        ${otras.map((f, i) => `
+          <div class="ft-gal-thumb" onclick="ftLightboxAbrir(${i + 1})" title="${escAttr(f.descripcion || f.tipo_foto || 'Foto')}">
+            <img src="${escAttr(f.url)}" alt="" loading="lazy">
+            ${f.tipo_foto && f.tipo_foto !== 'principal' ? `<div class="ft-gal-thumb-label">${escHtml(f.tipo_foto)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+    <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>${fotos.length} foto${fotos.length===1?'':'s'} · click para ampliar y navegar con flechas.</div>
   `;
+}
+
+// ── Lightbox: abrir, navegar, cerrar ──
+function ftLightboxAbrir(idx) {
+  const fotos = window._ftFotos || [];
+  if (!fotos.length) return;
+  window._ftFotoIdx = Math.max(0, Math.min(idx, fotos.length - 1));
+  ftLightboxRender();
+  document.getElementById('ftLightbox').style.display = 'block';
+  // Permitir cerrar con ESC + navegar con flechas
+  document.addEventListener('keydown', _ftLightboxKey);
+}
+function ftLightboxCerrar() {
+  document.getElementById('ftLightbox').style.display = 'none';
+  document.removeEventListener('keydown', _ftLightboxKey);
+}
+function ftLightboxPrev() {
+  const fotos = window._ftFotos || [];
+  if (!fotos.length) return;
+  window._ftFotoIdx = (window._ftFotoIdx - 1 + fotos.length) % fotos.length;
+  ftLightboxRender();
+}
+function ftLightboxNext() {
+  const fotos = window._ftFotos || [];
+  if (!fotos.length) return;
+  window._ftFotoIdx = (window._ftFotoIdx + 1) % fotos.length;
+  ftLightboxRender();
+}
+function ftLightboxRender() {
+  const fotos = window._ftFotos || [];
+  const f = fotos[window._ftFotoIdx];
+  if (!f) return;
+  document.getElementById('ftLightboxImg').src = f.url;
+  const partes = [`<strong>${escHtml(f.descripcion || 'Foto del equipo')}</strong>`];
+  if (f.tipo_foto)   partes.push(escHtml(f.tipo_foto));
+  if (f.fecha)       partes.push(escHtml(f.fecha));
+  if (f.tomada_por)  partes.push(escHtml(f.tomada_por));
+  partes.push(`${window._ftFotoIdx + 1} / ${fotos.length}`);
+  document.getElementById('ftLightboxInfo').innerHTML = partes.join(' · ');
+}
+function _ftLightboxKey(e) {
+  if (e.key === 'Escape') ftLightboxCerrar();
+  else if (e.key === 'ArrowLeft') ftLightboxPrev();
+  else if (e.key === 'ArrowRight') ftLightboxNext();
 }
 
 function _ftRenderSeriales(seriales) {
@@ -2851,6 +2949,125 @@ function _ftRenderEstado(estados) {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+// ── Auditoría / Movimientos: timeline unificado (Daniel 2026-05-27) ──
+// Combina revisiones + cambios de serial + cambios de estado + fotos
+// agregadas, todo en un solo timeline cronológico DESC.
+function _ftRenderAuditoria(d) {
+  const el = document.getElementById('ftTabAuditoria');
+  if (!el) return;
+  const eventos = [];
+
+  // Revisiones del técnico
+  (d.revisiones_timeline || []).forEach(r => {
+    eventos.push({
+      ts: r.revisado_at || r.fecha || '',
+      icono: 'bi-clipboard-pulse', color: '#3b82f6',
+      usuario: r.revisado_por || 'Sistema',
+      accion: `Revisó equipo en ${r.numero_ot || 'OT'}`,
+      detalle: r.observacion || r.razon_saltado || `Estado: ${r.estado_revision || '—'}`,
+      ot: r.numero_ot || '',
+    });
+  });
+  // Cambios de serial
+  (d.historial_seriales || []).forEach(s => {
+    eventos.push({
+      ts: s.fecha || '',
+      icono: 'bi-upc', color: '#dc2626',
+      usuario: s.usuario || 'Sistema',
+      accion: 'Cambió N° de serie',
+      detalle: `${escHtml(s.valor_anterior || '(vacío)')} → <strong style="color:#16a34a">${escHtml(s.valor_nuevo || '—')}</strong>${s.razon ? '<br><span style="opacity:.75">Motivo: ' + escHtml(s.razon) + '</span>' : ''}`,
+    });
+  });
+  // Cambios de estado
+  (d.historial_estado || []).forEach(s => {
+    eventos.push({
+      ts: s.fecha || '',
+      icono: 'bi-clipboard-check', color: '#f59e0b',
+      usuario: s.usuario || 'Sistema',
+      accion: 'Cambió estado del equipo',
+      detalle: `<span class="badge bg-secondary">${escHtml(s.estado_anterior || '—')}</span> → <span class="badge" style="background:#dc2626;color:#fff">${escHtml(s.estado_nuevo || '—')}</span>${s.razon ? '<br><span style="opacity:.75">' + escHtml(s.razon) + '</span>' : ''}`,
+    });
+  });
+  // Fotos agregadas (agrupadas por fecha+usuario para no inundar)
+  const fotosGrupos = {};
+  (d.fotos_galeria || []).forEach(f => {
+    const key = `${(f.fecha || '').slice(0,10)}__${f.tomada_por || ''}`;
+    if (!fotosGrupos[key]) {
+      fotosGrupos[key] = { ts: f.fecha || '', usuario: f.tomada_por || 'Técnico', count: 0 };
+    }
+    fotosGrupos[key].count++;
+  });
+  Object.values(fotosGrupos).forEach(g => {
+    eventos.push({
+      ts: g.ts,
+      icono: 'bi-camera-fill', color: '#16a34a',
+      usuario: g.usuario,
+      accion: `Adjuntó ${g.count} fotografía${g.count === 1 ? '' : 's'}`,
+      detalle: '',
+    });
+  });
+
+  // Ordenar DESC por timestamp
+  eventos.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+  if (!eventos.length) {
+    el.innerHTML = `<div class="text-center text-muted py-5">
+      <i class="bi bi-clock-history" style="font-size:3rem;opacity:.25"></i>
+      <div class="fw-semibold mt-3">Sin movimientos registrados</div>
+      <div class="small mt-2" style="max-width:420px;margin:0 auto;color:#94a3b8">
+        Cuando un técnico revise el equipo, cambie el serial, modifique el estado o adjunte fotos, todo quedará registrado acá con fecha, usuario y motivo.
+      </div>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <style>
+      .ft-audit-tl { position:relative;padding-left:30px; }
+      .ft-audit-tl::before {
+        content:'';position:absolute;left:14px;top:6px;bottom:6px;
+        width:2px;background:#e5e7eb;
+      }
+      .ft-audit-item {
+        position:relative;padding:10px 14px;margin-bottom:10px;
+        background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+      }
+      .ft-audit-item::before {
+        content:'';position:absolute;left:-23px;top:14px;
+        width:14px;height:14px;border-radius:50%;background:#fff;
+        border:3px solid currentColor;z-index:2;
+      }
+      .ft-audit-head {
+        display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+        font-size:.85rem;margin-bottom:3px;
+      }
+      .ft-audit-user { font-weight:700;color:#0f172a; }
+      .ft-audit-accion { color:#374151; }
+      .ft-audit-fecha {
+        font-size:.7rem;color:#94a3b8;margin-left:auto;white-space:nowrap;
+      }
+      .ft-audit-detalle {
+        font-size:.78rem;color:#475569;line-height:1.5;
+      }
+    </style>
+    <div class="ft-audit-tl">
+      ${eventos.slice(0, 40).map(ev => `
+        <div class="ft-audit-item" style="color:${ev.color}">
+          <div class="ft-audit-head">
+            <i class="bi ${ev.icono}" style="color:${ev.color};font-size:1rem"></i>
+            <span class="ft-audit-user">${escHtml(ev.usuario)}</span>
+            <span class="ft-audit-accion">${escHtml(ev.accion)}</span>
+            ${ev.ot ? `<span class="badge" style="background:#f1f5f9;color:#475569;font-size:.62rem">${escHtml(ev.ot)}</span>` : ''}
+            <span class="ft-audit-fecha">${escHtml(ev.ts || 'sin fecha')}</span>
+          </div>
+          ${ev.detalle ? `<div class="ft-audit-detalle">${ev.detalle}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>
+    ${eventos.length > 40 ? `<div class="text-center text-muted small mt-3">Mostrando los 40 movimientos más recientes de ${eventos.length} totales.</div>` : ''}
   `;
 }
 
