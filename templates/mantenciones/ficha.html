@@ -7539,13 +7539,19 @@ async function vhGuardar(){
               <div class="text-muted small mb-2" id="ft_eq_subtitulo">—</div>
               <div class="d-flex gap-2 flex-wrap" id="ft_eq_chips"></div>
             </div>
-            <div style="display:flex;gap:6px;flex-shrink:0">
+            <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
               <button class="btn btn-sm btn-outline-secondary" id="ft_btn_editar" onclick="ftAbrirEditar()" title="Editar campos del equipo">
                 <i class="bi bi-pencil-square me-1"></i>Editar
               </button>
-              <a class="btn btn-sm btn-ilus" id="ft_btn_ficha_full" href="#" target="_blank" title="Abrir ficha completa">
-                <i class="bi bi-box-arrow-up-right"></i>
+              <a class="btn btn-sm btn-outline-secondary" id="ft_btn_ficha_full" href="#" target="_blank" title="Abrir ficha completa en nueva pestaña">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Abrir ficha completa
               </a>
+              <button class="btn btn-sm btn-ilus" id="ft_btn_pdf" onclick="ftDescargarPDF()" title="Descargar ficha técnica en PDF">
+                <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
+              </button>
+              <button class="btn btn-sm btn-outline-warning" id="ft_btn_sync_fotos" onclick="ftSincronizarFotos()" title="Sincronizar fotos del levantamiento que no aparecen en la galería" style="display:none">
+                <i class="bi bi-arrow-repeat me-1"></i>Sincronizar fotos
+              </button>
             </div>
           </div>
 
@@ -7626,11 +7632,18 @@ async function vhGuardar(){
             <div class="ft-stat" data-key="garantia"></div>
           </div>
 
-          {# Tabs internos #}
+          {# Tabs internos — 2026-05-26 (Daniel) — Agregada tab "Resumen" como default
+             con vista consolidada estilo dashboard: datos del equipo + historial OTs
+             + contrato + galería de fotos, todo en una sola vista. #}
           <ul class="nav nav-pills mb-0 px-3 pt-2 ft-tabs" id="ftTabs" role="tablist" style="background:#fff;border-bottom:1px solid #e5e7eb;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap">
             <li class="nav-item" role="presentation">
-              <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#ftTabVisitas" type="button">
-                <i class="bi bi-list-check me-1"></i>Visitas <span class="badge bg-secondary ms-1" id="ft_bdg_visitas">0</span>
+              <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#ftTabResumen" type="button">
+                <i class="bi bi-grid-1x2 me-1"></i>Resumen
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabVisitas" type="button">
+                <i class="bi bi-list-check me-1"></i>Historial OT <span class="badge bg-secondary ms-1" id="ft_bdg_visitas">0</span>
               </button>
             </li>
             {# 2026-05-21 (Daniel) — Tab "Revisiones": timeline cronológico
@@ -7643,7 +7656,7 @@ async function vhGuardar(){
             </li>
             <li class="nav-item" role="presentation">
               <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabFotos" type="button">
-                <i class="bi bi-images me-1"></i>Fotos <span class="badge bg-secondary ms-1" id="ft_bdg_fotos">0</span>
+                <i class="bi bi-images me-1"></i>Fotografías <span class="badge bg-secondary ms-1" id="ft_bdg_fotos">0</span>
               </button>
             </li>
             <li class="nav-item" role="presentation">
@@ -7664,7 +7677,8 @@ async function vhGuardar(){
           </ul>
 
           <div class="tab-content" style="padding:16px 22px;background:#fff;min-height:280px">
-            <div class="tab-pane fade show active" id="ftTabVisitas" role="tabpanel"></div>
+            <div class="tab-pane fade show active" id="ftTabResumen" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabVisitas" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabRevisiones" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabFotos" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabSeriales" role="tabpanel"></div>
