@@ -29332,16 +29332,48 @@ def admin_mantenciones_clean_orphans():
 
 @app.route("/mantenciones")
 @_mant_required
+# ── CACHE de datos del dashboard /mantenciones (Daniel 2026-05-26) ──
+# Diagnóstico live (Chrome MCP): cada query SQL toma ~400-700ms de latencia
+# de red Railway → Clever Cloud MySQL. 7 queries × 400ms = 2800ms.
+# Los datos del dashboard (KPIs + listados) cambian con frecuencia DE
+# MINUTOS, no por segundo. Cache TTL 60s reduce 7 queries → 0 en cache hit.
+# Las visitas/contratos creados manualmente desde la UI invalidan via helper.
+_MANT_INDEX_CACHE = {}  # role -> (data_dict, ts)
+_MANT_INDEX_LOCK  = threading.Lock()
+_MANT_INDEX_TTL   = 60
+
+
+def _mant_index_cache_invalidar():
+    """Llamar tras crear/editar contrato/visita/cliente para refresh inmediato."""
+    with _MANT_INDEX_LOCK:
+        _MANT_INDEX_CACHE.clear()
+
+
 def mant_index():
-    # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos
-    # (módulo Mi día removido por decisión del producto). Los técnicos
-    # usan /mantenciones/ots que aplica filtro solo_mias=True automático
-    # según rol (ver mant_ots_list).
+    # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos.
     _mant_actualizar_estado_contratos()
     hoy   = datetime.now().date()
-    pronto = hoy + timedelta(days=60)
 
-    # KPIs
+    # Cache key por rol (todos los usuarios de un rol ven los mismos KPIs)
+    role = (g.user.get("role") if g.user else "anon") or "anon"
+    cache_key = role
+    _now = time.time()
+    with _MANT_INDEX_LOCK:
+        entry = _MANT_INDEX_CACHE.get(cache_key)
+    if entry and (_now - entry[1]) < _MANT_INDEX_TTL:
+        data = entry[0]
+        return render_template("mantenciones/index.html",
+            kpi_clientes   = data["kpi_clientes"],
+            kpi_contratos  = data["kpi_contratos"],
+            kpi_vencen     = data["kpi_vencen"],
+            kpi_ingresos   = data["kpi_ingresos"],
+            prox_visitas   = data["prox_visitas"],
+            alertas        = data["alertas"],
+            sin_visita     = data["sin_visita"],
+            hoy            = hoy,
+        )
+
+    # Cache miss — ejecutar las 7 queries
     clientes    = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_clientes WHERE estado='activo'", ()) or {}
     contratos   = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos WHERE estado IN ('vigente','indefinido')", ()) or {}
     vencen      = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos WHERE estado='por_vencer'", ()) or {}
@@ -29369,20 +29401,32 @@ def mant_index():
            ORDER BY ultima_visita LIMIT 6""",
         (hoy - timedelta(days=180),)
     )
-    # Ingresos del mes
     ingresos_mes = mysql_fetchone(
         "SELECT COALESCE(SUM(monto_mensual),0) AS total FROM mant_contratos "
         "WHERE estado IN ('vigente','indefinido')", ()
     ) or {}
 
+    data = {
+        "kpi_clientes":  clientes.get("n", 0),
+        "kpi_contratos": contratos.get("n", 0),
+        "kpi_vencen":    vencen.get("n", 0),
+        "kpi_ingresos":  float(ingresos_mes.get("total", 0)),
+        "prox_visitas":  [dict(r) for r in prox_visitas],
+        "alertas":       [dict(r) for r in alertas_contratos],
+        "sin_visita":    [dict(r) for r in sin_visita],
+    }
+    # Guardar en cache
+    with _MANT_INDEX_LOCK:
+        _MANT_INDEX_CACHE[cache_key] = (data, _now)
+
     return render_template("mantenciones/index.html",
-        kpi_clientes   = clientes.get("n", 0),
-        kpi_contratos  = contratos.get("n", 0),
-        kpi_vencen     = vencen.get("n", 0),
-        kpi_ingresos   = float(ingresos_mes.get("total", 0)),
-        prox_visitas   = [dict(r) for r in prox_visitas],
-        alertas        = [dict(r) for r in alertas_contratos],
-        sin_visita     = [dict(r) for r in sin_visita],
+        kpi_clientes   = data["kpi_clientes"],
+        kpi_contratos  = data["kpi_contratos"],
+        kpi_vencen     = data["kpi_vencen"],
+        kpi_ingresos   = data["kpi_ingresos"],
+        prox_visitas   = data["prox_visitas"],
+        alertas        = data["alertas"],
+        sin_visita     = data["sin_visita"],
         hoy            = hoy,
     )
 
