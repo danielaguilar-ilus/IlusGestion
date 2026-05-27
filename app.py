@@ -1302,35 +1302,82 @@ def _random_sql_one(sql: str, params=None):
     return rows[0] if rows else None
 
 
+# ── INSTRUMENTACIÓN SQL 2026-05-26 (Daniel — audit runtime) ──────────
+# Wrapper transparente que mide cada query: cuenta queries, suma tiempo,
+# y loguea las que duran > _SQL_SLOW_THRESHOLD_MS. Los stats se agregan
+# a flask.g para que el after_request los emita en Server-Timing y log.
+# Si no estamos en request context, no hace nada (sigue funcionando).
+_SQL_SLOW_THRESHOLD_MS = 250
+
+
+def _sql_track(query, elapsed_ms):
+    """Registra una query en el contador del request actual + log si lenta."""
+    try:
+        # Solo si estamos en request context (request real, no daemon/cron)
+        if not hasattr(g, "_sql_count"):
+            g._sql_count = 0
+            g._sql_ms = 0
+        g._sql_count += 1
+        g._sql_ms += elapsed_ms
+        if elapsed_ms > _SQL_SLOW_THRESHOLD_MS:
+            # Limita el SQL en log a 300 chars para no llenar logs
+            q_short = " ".join(query.split())[:300]
+            try:
+                ep = request.endpoint or request.path
+            except Exception:
+                ep = "?"
+            print(f"[sql-slow] endpoint={ep} duration_ms={elapsed_ms} sql={q_short}",
+                  flush=True)
+    except Exception:
+        # Fuera de request context o g no disponible — ignorar silenciosamente
+        pass
+
+
 def mysql_fetchone(query, params=None):
-    with get_db().cursor() as cur:
-        cur.execute(query, params or ())
-        return cur.fetchone()
+    _t0 = time.time()
+    try:
+        with get_db().cursor() as cur:
+            cur.execute(query, params or ())
+            return cur.fetchone()
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 def mysql_fetchall(query, params=None):
-    with get_db().cursor() as cur:
-        cur.execute(query, params or ())
-        return cur.fetchall()
+    _t0 = time.time()
+    try:
+        with get_db().cursor() as cur:
+            cur.execute(query, params or ())
+            return cur.fetchall()
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 def mysql_execute(query, params=None):
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(query, params or ())
-    conn.commit()
+    _t0 = time.time()
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+        conn.commit()
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 def mysql_execute_returning_rowcount(query, params=None):
     """Igual que mysql_execute pero devuelve cur.rowcount (cuántas filas
     fueron afectadas). Útil para backfills/migraciones donde el caller
     quiere reportar cuántas filas se tocaron."""
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(query, params or ())
-        n = cur.rowcount
-    conn.commit()
-    return n
+    _t0 = time.time()
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+            n = cur.rowcount
+        conn.commit()
+        return n
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 # ─────────────────────────────────────────────
@@ -6672,7 +6719,7 @@ def _perf_t0():
 
 @app.after_request
 def _perf_track(resp):
-    """Mide tiempo total, lo guarda en histograma por endpoint, agrega header."""
+    """Mide tiempo total + SQL + queries + agrega Server-Timing + log."""
     try:
         if getattr(g, "_perf_skip", True):
             return resp
@@ -6680,19 +6727,46 @@ def _perf_track(resp):
         if t0 is None:
             return resp
         elapsed_ms = int((time.time() - t0) * 1000)
-        endpoint = request.endpoint or request.path or "unknown"
-        # Server-Timing header (visible en DevTools → Network → Timing)
-        existing = resp.headers.get("Server-Timing", "")
-        new_st = f"total;dur={elapsed_ms}"
-        resp.headers["Server-Timing"] = f"{existing}, {new_st}".strip(", ")
-        # Guardar en histograma por endpoint (ring buffer 200 últimas mediciones)
+        sql_ms    = int(getattr(g, "_sql_ms", 0) or 0)
+        queries   = int(getattr(g, "_sql_count", 0) or 0)
+        endpoint  = request.endpoint or request.path or "unknown"
+        method    = request.method
+        status    = resp.status_code
+        size      = resp.calculate_content_length() or 0
+
+        # Server-Timing header (DevTools → Network → Timing)
+        st_parts = [f"total;dur={elapsed_ms}"]
+        if sql_ms > 0:
+            st_parts.append(f"sql;dur={sql_ms}")
+        if queries > 0:
+            st_parts.append(f"queries;desc=\"{queries}\"")
+        resp.headers["Server-Timing"] = ", ".join(st_parts)
+
+        # Guardar en histograma por endpoint (ring buffer 200 muestras)
+        # Cada entry: (total_ms, sql_ms, queries) para luego sacar p50/p95
         with _PERF_LOCK:
-            _PERF_STATS[endpoint].append(elapsed_ms)
-        # Log queries lentas (>250ms) para diagnóstico
-        if elapsed_ms > 250:
-            print(f"[perf-slow] {request.method} {endpoint} = {elapsed_ms}ms "
-                  f"path={request.path} status={resp.status_code}", flush=True)
-    except Exception as _e_perf:
+            _PERF_STATS[endpoint].append((elapsed_ms, sql_ms, queries))
+
+        # Log estructurado (siempre, para tener trazabilidad)
+        try:
+            user = getattr(g, "user", None) or {}
+            urole = user.get("role") or "anon" if isinstance(user, dict) else "anon"
+        except Exception:
+            urole = "?"
+        # Solo loguear si tarda > 100ms (evita spam en assets cacheados)
+        if elapsed_ms > 100:
+            print(
+                f"[perf] endpoint={endpoint} method={method} status={status} "
+                f"total_ms={elapsed_ms} sql_ms={sql_ms} queries={queries} "
+                f"size={size} role={urole}",
+                flush=True
+            )
+
+        # Log destacado si supera umbral lento global
+        if elapsed_ms > 1000:
+            print(f"[perf-very-slow] {method} {endpoint} = {elapsed_ms}ms "
+                  f"sql_ms={sql_ms} queries={queries}", flush=True)
+    except Exception:
         pass
     return resp
 
@@ -6760,29 +6834,46 @@ def admin_performance():
         for endpoint, samples in _PERF_STATS.items():
             if not samples:
                 continue
-            arr = sorted(samples)
-            n = len(arr)
-            def _pct(p):
-                idx = max(0, min(n - 1, int(round((p / 100.0) * (n - 1)))))
+            # samples es lista de tuplas (total_ms, sql_ms, queries)
+            # — Compatible con formato viejo (int simple) por si quedan
+            totals  = []
+            sql_acc = []
+            q_acc   = []
+            for s in samples:
+                if isinstance(s, tuple):
+                    totals.append(s[0])
+                    sql_acc.append(s[1])
+                    q_acc.append(s[2])
+                else:
+                    totals.append(int(s))
+                    sql_acc.append(0); q_acc.append(0)
+            n = len(totals)
+            arr_total = sorted(totals)
+            def _pct(arr, p):
+                idx = max(0, min(len(arr) - 1, int(round((p / 100.0) * (len(arr) - 1)))))
                 return arr[idx]
             out.append({
-                "endpoint": endpoint,
-                "n": n,
-                "min": arr[0],
-                "p50": _pct(50),
-                "p95": _pct(95),
-                "max": arr[-1],
-                "avg": int(sum(arr) / n),
+                "endpoint":     endpoint,
+                "n":            n,
+                "min_ms":       arr_total[0],
+                "p50_ms":       _pct(arr_total, 50),
+                "p95_ms":       _pct(arr_total, 95),
+                "max_ms":       arr_total[-1],
+                "avg_ms":       int(sum(arr_total) / n),
+                "avg_sql_ms":   int(sum(sql_acc) / n) if n else 0,
+                "avg_queries":  round(sum(q_acc) / n, 1) if n else 0,
+                "max_queries":  max(q_acc) if q_acc else 0,
             })
     # Ordenar por p95 descendente (los más lentos arriba)
-    out.sort(key=lambda x: x["p95"], reverse=True)
+    out.sort(key=lambda x: x["p95_ms"], reverse=True)
     return jsonify({
-        "ok": True,
-        "worker_pid": os.getpid(),
-        "endpoints": out,
+        "ok":           True,
+        "worker_pid":   os.getpid(),
+        "endpoints":    out,
         "total_endpoints": len(out),
+        "sql_slow_threshold_ms": _SQL_SLOW_THRESHOLD_MS,
         "note": "Cada worker tiene su propia ventana de 200 muestras. "
-                "Recarga varias veces para acumular datos.",
+                "Refresca esta URL varias veces para acumular datos en este worker.",
     })
 
 
