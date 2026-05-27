@@ -50502,10 +50502,29 @@ def mant_maquinas_ficha_tecnica_batch():
     return jsonify({"ok": True, "items": items, "count": len(items)})
 
 
+# ── Cache 60s del JSON ficha-tecnica por máquina (Daniel 2026-05-27) ──
+# Live audit: 7-9 queries × 400ms latencia red = 3.2s por click en ojo.
+# El dict completo es ~3KB. Cachear 60s por maquina_id corta esto a ~10ms.
+# Invalidación: llamar _ft_cache_invalidar(mid) tras editar el equipo.
+_FT_JSON_CACHE = {}  # mid -> (data_dict, ts)
+_FT_JSON_LOCK  = threading.Lock()
+_FT_JSON_TTL   = 60
+
+
+def _ft_cache_invalidar(mid=None):
+    """Llamar tras editar equipo / agregar foto / cambiar serie / nueva OT."""
+    with _FT_JSON_LOCK:
+        if mid is None:
+            _FT_JSON_CACHE.clear()
+        else:
+            _FT_JSON_CACHE.pop(int(mid), None)
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/ficha-tecnica")
 @_mant_required
 def mant_maquina_ficha_tecnica_json(mid):
     """Snapshot JSON profundo de la ficha técnica del equipo.
+    Cacheado 60s por maquina_id (audit DevTools: era 3.2s por click).
 
     Estructura devuelta:
       - equipo       → datos básicos + cliente + ubicación + garantía
@@ -50515,9 +50534,15 @@ def mant_maquina_ficha_tecnica_json(mid):
       - historial_estado     → audit log de cambios de estado
       - fotos_galeria        → galería permanente del equipo (mant_maquina_fotos)
       - contratos_relacionados → contratos vigentes del cliente
-      - alertas      → alertas dinámicas calculadas (garantía vence, sin preventiva,
-                       serial cambiado recientemente, etc.)
+      - alertas      → alertas dinámicas calculadas
     """
+    # Cache hit (rápido y seguro: la ficha cambia con frecuencia DE MINUTOS)
+    _now_ft = time.time()
+    with _FT_JSON_LOCK:
+        _entry_ft = _FT_JSON_CACHE.get(mid)
+    if _entry_ft and (_now_ft - _entry_ft[1]) < _FT_JSON_TTL:
+        return jsonify(_entry_ft[0])
+
     eq = mysql_fetchone(
         "SELECT m.*, c.razon_social, c.rut AS cli_rut, c.direccion AS cli_direccion, "
         "       c.comuna AS cli_comuna "
@@ -50948,7 +50973,7 @@ def mant_maquina_ficha_tecnica_json(mid):
         "pendientes": [c["criterio"] for c in _cal_checks if not c["cumple"]],
     }
 
-    return jsonify({
+    _ft_response = {
         "ok": True,
         "equipo": out_eq,
         "stats": stats,
@@ -50981,7 +51006,11 @@ def mant_maquina_ficha_tecnica_json(mid):
             for h in historial_visitas[:5]
         ],
         "ficha_url": f"/mantenciones/maquinas/{mid}",
-    })
+    }
+    # Guardar en cache (TTL 60s) — siguiente click en ese equipo es instantáneo
+    with _FT_JSON_LOCK:
+        _FT_JSON_CACHE[mid] = (_ft_response, time.time())
+    return jsonify(_ft_response)
 
 
 # ════════════════════════════════════════════════════════════════════════
