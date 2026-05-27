@@ -1984,6 +1984,9 @@ function _ftRender(d) {
 
   document.getElementById('ft_btn_ficha_full').href = d.ficha_url || '#';
 
+  // ── CALIDAD DE FICHA (Daniel 2026-05-26 — score 0-100 con criterios)
+  _ftRenderCalidad(d);
+
   // ── LEVANTAMIENTO INICIAL (Daniel 2026-05-26) ──
   // El levantamiento es la PRIMERA revisión cronológica del equipo.
   // Datos disponibles: revisiones_timeline (DESC) + fotos_galeria (DESC).
@@ -2166,6 +2169,55 @@ function _ftRenderRevisiones(revisiones, counters) {
   }).join('');
 
   el.innerHTML = headerHtml + items;
+}
+
+// Renderiza la card "Calidad de la ficha" — score visual + criterios pendientes.
+function _ftRenderCalidad(d) {
+  const card = document.getElementById('ft_calidad_card');
+  if (!card) return;
+  const cal = d.calidad_ficha;
+  if (!cal) { card.style.display = 'none'; return; }
+
+  const score = Math.max(0, Math.min(100, cal.score || 0));
+  const estado = cal.estado || 'incompleta';
+  const pendientes = cal.pendientes || [];
+
+  // Color según estado
+  const cfg = {
+    'completa':       { bg: '#16a34a', label: '✓ FICHA COMPLETA',  textCol: '#15803d' },
+    'buena':          { bg: '#3b82f6', label: 'BUENA',              textCol: '#1d4ed8' },
+    'revisar_datos':  { bg: '#f59e0b', label: '⚠ REVISAR DATOS',    textCol: '#b45309' },
+    'incompleta':     { bg: '#dc2626', label: '✕ INCOMPLETA',       textCol: '#991b1b' },
+  }[estado] || { bg: '#94a3b8', label: '—', textCol: '#64748b' };
+
+  // Barra + score grande
+  const bar = document.getElementById('ft_cal_bar');
+  if (bar) {
+    bar.style.width = score + '%';
+    bar.style.background = cfg.bg;
+  }
+  const scoreEl = document.getElementById('ft_cal_score');
+  if (scoreEl) {
+    scoreEl.textContent = score;
+    scoreEl.style.color = cfg.bg;
+  }
+  // Badge de estado
+  const badgeEl = document.getElementById('ft_cal_estado_badge');
+  if (badgeEl) {
+    badgeEl.innerHTML = `<span class="badge" style="background:${cfg.bg};color:#fff;font-size:.65rem;padding:3px 9px;font-weight:600">${cfg.label}</span>`;
+  }
+  // Pendientes (máx 4 visibles)
+  const pendEl = document.getElementById('ft_cal_pendientes');
+  if (pendEl) {
+    if (pendientes.length === 0) {
+      pendEl.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Todos los criterios cumplidos.';
+    } else {
+      const muestra = pendientes.slice(0, 4).map(p => `<span class="badge" style="background:#fef2f2;color:#991b1b;font-size:.62rem;padding:2px 7px;margin-right:4px;margin-top:3px">✕ ${p}</span>`).join('');
+      const extra = pendientes.length > 4 ? ` <span style="color:#94a3b8;font-size:.7rem">+${pendientes.length - 4} más</span>` : '';
+      pendEl.innerHTML = `<div style="margin-top:2px"><strong style="color:${cfg.textCol}">Pendientes:</strong> ${muestra}${extra}</div>`;
+    }
+  }
+  card.style.display = 'block';
 }
 
 // Renderiza la card "Levantamiento inicial" — fotó + fecha + estado +

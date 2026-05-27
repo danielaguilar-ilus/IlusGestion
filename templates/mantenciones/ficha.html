@@ -7552,6 +7552,35 @@ async function vhGuardar(){
           {# Alertas dinámicas #}
           <div id="ft_alertas" style="padding:0 22px;margin-top:14px"></div>
 
+          {# ── CALIDAD DE FICHA (Daniel 2026-05-26 — CMMS pro) ──
+             Score 0-100 calculado en backend con 12 criterios objetivos.
+             Muestra barra visual con color + estado + criterios pendientes. #}
+          <div id="ft_calidad_card" style="display:none;padding:8px 22px 0">
+            <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+                        padding:14px 16px;display:flex;gap:16px;align-items:center;
+                        flex-wrap:wrap">
+              <div style="flex:1;min-width:240px">
+                <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                  <span style="font-size:.7rem;font-weight:700;color:#475569;
+                               text-transform:uppercase;letter-spacing:.5px">
+                    <i class="bi bi-clipboard-check me-1"></i>Calidad de la ficha
+                  </span>
+                  <span id="ft_cal_estado_badge"></span>
+                </div>
+                {# Barra de progreso con color dinámico #}
+                <div style="background:#f1f5f9;height:10px;border-radius:6px;overflow:hidden;margin-top:6px">
+                  <div id="ft_cal_bar" style="height:100%;width:0%;transition:width .4s;background:#16a34a"></div>
+                </div>
+                <div style="font-size:.7rem;color:#64748b;margin-top:4px"
+                     id="ft_cal_pendientes">—</div>
+              </div>
+              <div style="text-align:center;min-width:88px">
+                <div id="ft_cal_score" style="font-size:2rem;font-weight:800;line-height:1;color:#16a34a">—</div>
+                <div style="font-size:.62rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.4px">/100</div>
+              </div>
+            </div>
+          </div>
+
           {# ── LEVANTAMIENTO INICIAL (Daniel 2026-05-26) ──
              Muestra la PRIMERA revisión cronológica del equipo: foto +
              fecha + estado + observaciones + daños. Es la "primera
@@ -8463,7 +8492,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526g"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260526i"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

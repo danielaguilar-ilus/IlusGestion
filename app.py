@@ -50557,6 +50557,45 @@ def mant_maquina_ficha_tecnica_json(mid):
     except Exception as _e_rev:
         print(f"[ficha-tecnica] revisiones load error: {_e_rev}", flush=True)
 
+    # ── CALIDAD DE FICHA 2026-05-26 (Daniel — Ficha técnica CMMS) ──
+    # Score 0-100 con criterios objetivos. Daniel quiere ver de un vistazo
+    # qué equipos tienen ficha completa vs incompleta para priorizar
+    # levantamientos pendientes. Cada criterio aporta puntos:
+    _cal_score = 0
+    _cal_checks = []
+    def _cal_add(criterio, puntos, cumple):
+        nonlocal _cal_score
+        if cumple:
+            _cal_score += puntos
+        _cal_checks.append({
+            "criterio": criterio, "puntos": puntos, "cumple": bool(cumple)
+        })
+    _cal_add("Foto principal cargada", 12, bool(foto_principal_url or fotos_galeria))
+    _cal_add("Número de serie informado", 10, bool(eq.get("serie")))
+    _cal_add("SKU informado", 8, bool(eq.get("sku")))
+    _cal_add("Categoría / familia", 8, bool(eq.get("familia_equipo") and eq.get("familia_equipo") != "otros"))
+    _cal_add("Ubicación informada", 8, bool(eq.get("ubicacion_sala") or eq.get("ubicacion_cliente")))
+    _cal_add("Marca / modelo", 8, bool(eq.get("marca") or eq.get("modelo")))
+    _cal_add("Año de fabricación", 6, bool(eq.get("anio_fabricacion")))
+    _cal_add("Contrato vigente asociado", 12, bool(contratos))
+    _cal_add("Al menos una foto en galería", 10, len(fotos_galeria) >= 1)
+    _cal_add("Al menos un levantamiento/revisión", 10, bool(revisiones_timeline) or bool(historial_visitas))
+    _cal_add("Observaciones registradas", 4, bool(eq.get("observaciones")))
+    _cal_add("Fecha de garantía conocida", 4, bool(eq.get("fecha_fin_garantia") or eq.get("fecha_instalacion")))
+    _cal_score = min(100, _cal_score)
+    _cal_estado = (
+        "completa" if _cal_score >= 80
+        else "buena" if _cal_score >= 60
+        else "revisar_datos" if _cal_score >= 40
+        else "incompleta"
+    )
+    calidad_ficha = {
+        "score": _cal_score,
+        "estado": _cal_estado,
+        "criterios": _cal_checks,
+        "pendientes": [c["criterio"] for c in _cal_checks if not c["cumple"]],
+    }
+
     return jsonify({
         "ok": True,
         "equipo": out_eq,
@@ -50567,6 +50606,8 @@ def mant_maquina_ficha_tecnica_json(mid):
         "fotos_galeria": fotos_galeria,
         "contratos_relacionados": contratos,
         "alertas": alertas,
+        # 2026-05-26 (Daniel — ficha CMMS) — calidad de información
+        "calidad_ficha": calidad_ficha,
         # 2026-05-21 (Daniel) — trazabilidad por equipo
         "ultima_revision": ultima_revision,
         "revisiones_timeline": revisiones_timeline,
