@@ -8206,10 +8206,10 @@ def users_index():
         params += [like, like, like, like]
 
     # 2026-05-18: SELECT * + columna virtual `online` calculada por SQL.
+    # 2026-05-26 (audit DevTools, body era 95KB): mantenemos SELECT * para
+    # NO romper el template, pero agregamos LIMIT 300 (suficiente para
+    # empresas hasta 300 usuarios; más allá hay que paginar UI).
     # `online=1` si last_seen_at está a menos de 5 minutos de NOW().
-    # Se ordena los online primero, después por última conexión.
-    # Si la columna last_seen_at aún no existe (migración no corrió por
-    # ILUS_SKIP_MIGRATIONS=1), fallback a query sin esa columna.
     try:
         users = mysql_fetchall(
             f"SELECT *, "
@@ -8217,7 +8217,8 @@ def users_index():
             f"            last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) "
             f"       THEN 1 ELSE 0 END AS online "
             f"FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
-            f"ORDER BY active DESC, online DESC, last_login_at DESC, nombre, username",
+            f"ORDER BY active DESC, online DESC, last_login_at DESC, nombre, username "
+            f"LIMIT 300",
             tuple(params)
         ) or []
     except Exception as _e_ls:
@@ -8225,7 +8226,8 @@ def users_index():
         print(f"[users_index] fallback sin last_seen_at: {_e_ls}", flush=True)
         users = mysql_fetchall(
             f"SELECT *, 0 AS online FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
-            f"ORDER BY active DESC, last_login_at DESC, nombre, username",
+            f"ORDER BY active DESC, last_login_at DESC, nombre, username "
+            f"LIMIT 300",
             tuple(params)
         ) or []
 
@@ -22617,8 +22619,17 @@ def comm_index():
     wa_cfg    = _get_wa_cfg()
     log_rows  = []
     try:
+        # OPT 2026-05-26 (audit DevTools, abortaba a 6s):
+        # - SELECT específico (no *) — la columna `detalle` puede ser TEXT
+        #   grande con stacktraces; cuando hay 80 filas eso pesa.
+        # - LIMIT 80 → 50: suficiente para ver actividad reciente.
+        # - Trunca detalle a 500 chars en SQL (evita transferir mucho).
         log_rows = mysql_fetchall(
-            "SELECT * FROM comm_log ORDER BY created_at DESC LIMIT 80"
+            "SELECT id, canal, destinatario, asunto, estado, "
+            "       LEFT(COALESCE(detalle,''), 500) AS detalle, "
+            "       enviado_por, created_at "
+            "  FROM comm_log "
+            " ORDER BY created_at DESC LIMIT 50"
         )
     except Exception:
         pass
@@ -24626,6 +24637,14 @@ def init_mantenciones_tables():
                 # equipos (~300ms con 200 equipos).
                 "ALTER TABLE mant_maquinas ADD INDEX idx_cli_estado_creado "
                 "  (cliente_id, estado, created_at)",
+                # PERFORMANCE 2026-05-26 (audit DevTools profesional):
+                # /mantenciones query 6 (clientes sin visita reciente) usa
+                # LEFT JOIN mant_visitas ON cliente_id + estado='completada'
+                # con MAX(fecha_realizada). Sin este índice composite, MySQL
+                # hace scan completo de mant_visitas en cada visita al
+                # dashboard. Aporta ~50-200ms en clientes con muchas visitas.
+                "ALTER TABLE mant_visitas ADD INDEX idx_cli_estado_realizada "
+                "  (cliente_id, estado, fecha_realizada)",
                 # AUDITORIA 2026-05-26: tracking de quién hizo el último cambio.
                 # Idempotente — si ya existe, el ALTER falla y se ignora.
                 # Es opcional: los endpoints no dependen de esta columna.
