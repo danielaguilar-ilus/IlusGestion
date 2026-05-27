@@ -485,6 +485,18 @@ def register_pickup_routes(app, ctx):
         _SETTINGS_CACHE["row"] = None
         _SETTINGS_CACHE["fetched_at"] = 0.0
 
+    def _td_to_hhmm(val):
+        """Convierte TIME de MySQL (timedelta de PyMySQL) o string a 'HH:MM' cero-relleno.
+        PyMySQL retorna timedelta para columnas TIME; comparar timedelta con str lanza TypeError."""
+        try:
+            if hasattr(val, "total_seconds"):  # timedelta
+                total = int(val.total_seconds())
+                h, m = divmod(total // 60, 60)
+                return f"{h:02d}:{m:02d}"
+            return str(val)[:5]
+        except Exception:
+            return str(val)[:5] if val else "00:00"
+
     def date_allowed(date_str, cfg=None):
         cfg = cfg or settings()
         try:
@@ -689,6 +701,10 @@ def register_pickup_routes(app, ctx):
             date_str = date.isoformat() if hasattr(date, "isoformat") else str(date)
         except Exception:
             return False, "Fecha inválida."
+        # Normalizar: PyMySQL devuelve timedelta para columnas TIME. Comparar
+        # timedelta con str (open_t="09:00") lanzaría TypeError en time_allowed.
+        time_from = _td_to_hhmm(time_from)
+        time_to   = _td_to_hhmm(time_to)
 
         # 1) Día permitido (work_days + holidays) y rango horario válido
         ok_d, msg_d = date_allowed(date_str, cfg)
@@ -1925,11 +1941,12 @@ def register_pickup_routes(app, ctx):
                 if payload: p.update(payload)
                 return jsonify(p), code
             # wrapper defensivo: cualquier excepción NO capturada por handlers
-            # internos devuelve flash legible al cliente en vez de 500. El
-            # tracking público NO debe mostrar stacktraces ni errores
-            # técnicos al cliente.
-            _post_failed = False
-            if action == "confirm":
+            # internos devuelve JSON legible (no HTML 500) al cliente.
+            # Root cause histórico: timedelta vs str en time_allowed → TypeError.
+            # Aunque ya fue corregido en _validar_disponibilidad_slot, este try
+            # atrapa cualquier excepción futura antes de que Flask la convierta en HTML.
+            try:
+              if action == "confirm":
                 proposal = mysql_fetchone(f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' ORDER BY id DESC LIMIT 1", (req["id"],))
                 if not proposal:
                     # No hay propuesta pendiente — el cliente vio el botón
@@ -2020,7 +2037,7 @@ def register_pickup_routes(app, ctx):
                             extra_kg = float(req.get("total_weight_kg") or 0)
                             extra_m3 = float(req.get("total_volume_m3") or 0)
                             date_str = str(proposal["date"])[:10]
-                            tf_str   = str(proposal["time_from"])[:5]
+                            tf_str   = _td_to_hhmm(proposal["time_from"])
 
                             cur_tx.execute(
                                 f"""SELECT COUNT(*) AS n,
@@ -2141,7 +2158,7 @@ def register_pickup_routes(app, ctx):
                         "Te enviamos un correo con todos los detalles.",
                         "success",
                     )
-            elif action == "reject":
+              elif action == "reject":
                 # Si la solicitud ya está cerrada/rechazada, no hacer nada
                 # (defensa contra doble-submit / refresh con resend POST).
                 if old in ("rechazada", "cerrada"):
@@ -2177,7 +2194,7 @@ def register_pickup_routes(app, ctx):
                     "Tu solicitud fue cancelada. Te enviamos un correo de confirmación y avisamos al equipo ILUS.",
                     "info",
                 )
-            elif action == "counter":
+              elif action == "counter":
                 date, tf, tt = request.form.get("counter_date"), request.form.get("counter_time_from"), request.form.get("counter_time_to")
                 # Validaciones backend (defense in depth — el frontend ya valida pero
                 # nunca confiamos en el cliente). El nuevo modal con calendario
@@ -2228,6 +2245,15 @@ def register_pickup_routes(app, ctx):
                         print(f"[pickup_tracking] COUNTER rechazada req_id={req['id']} okd={okd} okt={okt} motivo={md or mt}", flush=True)
                     except Exception: pass
                     flash(md or mt or "No se pudo registrar la propuesta. Intenta con otro horario.", "warning")
+            except Exception as _outer_err:
+                try:
+                    print(f"[pickup_tracking] CRASH req={req.get('id')} action={action}: {_outer_err}", flush=True)
+                    import traceback; traceback.print_exc()
+                except Exception:
+                    pass
+                if _is_ajax:
+                    return jsonify({"ok": False, "error": "Error interno del servidor. Intenta nuevamente."}), 500
+                flash("Error interno al procesar la acción. Intenta nuevamente.", "danger")
             # Invalidar cache de polling — el cliente verá su nuevo estado al instante
             try: _POLL_CACHE.pop(token, None)
             except Exception: pass
