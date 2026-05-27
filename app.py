@@ -29328,10 +29328,6 @@ def admin_mantenciones_clean_orphans():
 
 # ── DECORATOR de acceso ────────────────────────────────────────────────
 
-# ── RUTAS PRINCIPALES ─────────────────────────────────────────────────
-
-@app.route("/mantenciones")
-@_mant_required
 # ── CACHE de datos del dashboard /mantenciones (Daniel 2026-05-26) ──
 # Diagnóstico live (Chrome MCP): cada query SQL toma ~400-700ms de latencia
 # de red Railway → Clever Cloud MySQL. 7 queries × 400ms = 2800ms.
@@ -29349,6 +29345,10 @@ def _mant_index_cache_invalidar():
         _MANT_INDEX_CACHE.clear()
 
 
+# ── RUTAS PRINCIPALES ─────────────────────────────────────────────────
+
+@app.route("/mantenciones")
+@_mant_required
 def mant_index():
     # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos.
     _mant_actualizar_estado_contratos()
