@@ -6877,6 +6877,85 @@ def admin_performance():
     })
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# /admin/aplicar-indices-criticos — fix runtime sin tocar SKIP_MIGRATIONS
+# (Daniel 2026-05-26 audit live):
+#   Los ALTER TABLE que agregué al bloque migrations NO se aplican porque
+#   ILUS_SKIP_MIGRATIONS=1 los salta. Este endpoint corre SOLO los índices
+#   críticos identificados por audit, idempotente. Solo superadmin.
+#   Llamada UNA vez con curl o POST desde browser.
+# ═══════════════════════════════════════════════════════════════════════
+@app.route("/admin/aplicar-indices-criticos", methods=["POST", "GET"])
+@login_required
+def admin_aplicar_indices_criticos():
+    """Aplica los índices críticos identificados en el audit DevTools.
+
+    Idempotente (try/except por cada uno — si ya existe, se ignora).
+    Solo superadmin. Acepta GET para facilitar invocación desde browser.
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    indices = [
+        # /mantenciones query 6 (clientes sin visita reciente)
+        ("mant_visitas idx_cli_estado_realizada",
+         "ALTER TABLE mant_visitas ADD INDEX idx_cli_estado_realizada "
+         "(cliente_id, estado, fecha_realizada)"),
+        # Timeline de la ficha cliente
+        ("mant_logs idx_mant_logs_timeline",
+         "ALTER TABLE mant_logs ADD INDEX idx_mant_logs_timeline "
+         "(entidad, entidad_id, created_at)"),
+        # Listado de equipos de cliente
+        ("mant_maquinas idx_cli_estado_creado",
+         "ALTER TABLE mant_maquinas ADD INDEX idx_cli_estado_creado "
+         "(cliente_id, estado, created_at)"),
+        # /admin/users búsqueda por username
+        ("auth_users idx_au_username_active",
+         f"ALTER TABLE `{AUTH_TABLE}` ADD INDEX idx_au_username_active "
+         f"(active, last_login_at)"),
+    ]
+
+    resultados = []
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for nombre, sql in indices:
+                _t0 = time.time()
+                try:
+                    cur.execute(sql)
+                    elapsed = int((time.time() - _t0) * 1000)
+                    resultados.append({
+                        "indice": nombre, "ok": True,
+                        "estado": "aplicado", "ms": elapsed
+                    })
+                except Exception as e:
+                    elapsed = int((time.time() - _t0) * 1000)
+                    err_str = str(e)
+                    # Si el error es "Duplicate key name", el índice ya existe.
+                    # Esto es éxito en términos de idempotencia.
+                    ya_existe = ("Duplicate key" in err_str
+                                 or "already exists" in err_str.lower())
+                    resultados.append({
+                        "indice": nombre,
+                        "ok": ya_existe,
+                        "estado": "ya_existia" if ya_existe else "error",
+                        "error": None if ya_existe else err_str[:200],
+                        "ms": elapsed,
+                    })
+        conn.commit()
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    return jsonify({
+        "ok": True,
+        "indices_procesados": len(resultados),
+        "resultados": resultados,
+        "nota": "Idempotente. Estado 'ya_existia' significa que el índice "
+                "ya estaba aplicado anteriormente."
+    })
+
+
 @app.route("/")
 @login_required
 def index():
