@@ -3148,7 +3148,22 @@ def load_current_user():
     HEARTBEAT 2026-05-18: tras cargar el usuario (sea desde caché o BD),
     invoca _update_last_seen(uid) que asincrónicamente actualiza
     last_seen_at (throttle 60s). Esto alimenta el LED online/offline.
+
+    SHORT-CIRCUIT 2026-05-26 (Daniel — performance audit):
+    rutas ultra-livianas (/ping, /_health, /static, /favicon*) NO necesitan
+    session ni permisos. Salida temprana: cero lectura de cookie de sesión,
+    cero query a la BD. Ahorra ~5-15ms por request en rutas que muchas
+    veces se piden 5-15 veces por página (assets estáticos).
     """
+    # SHORT-CIRCUIT por path
+    _path = request.path or ""
+    if (_path.startswith("/static/") or _path == "/ping" or _path == "/_health"
+            or _path.startswith("/favicon") or _path == "/robots.txt"
+            or _path == "/manifest.json"):
+        g.user = None
+        g.permissions = permission_set(None)
+        return
+
     g.user = None
     g.permissions = permission_set(None)
     user_id = session.get("user_id")
@@ -5702,8 +5717,26 @@ def _get_brand_cfg() -> dict:
     }
 
 
+# ── CACHE 2026-05-26 (Daniel — performance audit) ─────────────────────
+# `_get_marca()` se invoca en TODOS los renders vía context_processor.
+# Antes: 2 queries SQL por cada render HTML. Con 30 navegaciones/min eso
+# son 60 queries/min innecesarias (la marca casi nunca cambia).
+# Cache TTL 300s (5 min): suficientemente fresco para cambios visibles
+# desde /comunicaciones y suficientemente largo para eliminar el costo.
+# Llamar a _marca_cache_clear() tras editar la marca para forzar refresh.
+_MARCA_CACHE = {"data": None, "ts": 0.0}
+_MARCA_CACHE_TTL = 300  # 5 minutos
+
+
+def _marca_cache_clear():
+    """Invalida el cache de marca. Llamar tras editar comm_client_config."""
+    _MARCA_CACHE["data"] = None
+    _MARCA_CACHE["ts"] = 0.0
+
+
 def _get_marca() -> dict:
     """Marca activa = mezcla de BD (`comm_client_config`) + env vars.
+    Cacheada 5 minutos en proceso (ver _MARCA_CACHE).
 
     FUENTE DE VERDAD: la BD para todo lo visible al cliente final (nombre,
     logo, color, soporte). Las env vars sólo rellenan campos que no están
@@ -5718,6 +5751,11 @@ def _get_marca() -> dict:
       dict con: name, from_name, from_email, reply_to, wa_name, logo_url,
       support_email, support_url, footer, corp_color, support_phone.
     """
+    # ── Cache hit (TTL 5 min) ──
+    _now = time.time()
+    if _MARCA_CACHE["data"] is not None and (_now - _MARCA_CACHE["ts"]) < _MARCA_CACHE_TTL:
+        return _MARCA_CACHE["data"]
+
     try:
         cc = _get_client_cfg() or {}
     except Exception:
@@ -5733,7 +5771,7 @@ def _get_marca() -> dict:
     if not logo:
         logo = "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
 
-    return {
+    _result = {
         "name":          name,
         # FIX 2026-05-21 (Daniel): `name` (campo "Nombre de empresa" editable
         # en /comunicaciones) tiene prioridad sobre be.get("from_name") que
@@ -5751,6 +5789,10 @@ def _get_marca() -> dict:
         "corp_color":    (cc.get("corp_color") or "#DC143C").strip(),
         "support_phone": (cc.get("support_phone") or "").strip(),
     }
+    # Guardar en cache TTL 5 min
+    _MARCA_CACHE["data"] = _result
+    _MARCA_CACHE["ts"]   = _now
+    return _result
 
 
 def _brand_subject(tema: str) -> str:
@@ -6605,6 +6647,57 @@ def _redirect_to_first_accessible(perms):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# INSTRUMENTACIÓN DE PERFORMANCE 2026-05-26 (Daniel — audit profundo)
+# Mide cada request: tiempo total + Server-Timing header. Agrupa stats
+# por endpoint para que /admin/performance muestre p50/p95.
+# Cero impacto en velocidad (solo time.time() y un dict en memoria).
+# ═════════════════════════════════════════════════════════════════════
+import collections as _collections_perf
+_PERF_STATS = _collections_perf.defaultdict(lambda: _collections_perf.deque(maxlen=200))
+_PERF_LOCK = threading.Lock()
+
+
+@app.before_request
+def _perf_t0():
+    """Marca timestamp de inicio del request (antes de cualquier handler)."""
+    # Saltar rutas ultra-livianas (no nos interesa medirlas)
+    _p = request.path or ""
+    if (_p.startswith("/static/") or _p == "/ping" or _p == "/_health"
+            or _p.startswith("/favicon") or _p == "/robots.txt"):
+        g._perf_skip = True
+        return
+    g._perf_skip = False
+    g._perf_t0 = time.time()
+
+
+@app.after_request
+def _perf_track(resp):
+    """Mide tiempo total, lo guarda en histograma por endpoint, agrega header."""
+    try:
+        if getattr(g, "_perf_skip", True):
+            return resp
+        t0 = getattr(g, "_perf_t0", None)
+        if t0 is None:
+            return resp
+        elapsed_ms = int((time.time() - t0) * 1000)
+        endpoint = request.endpoint or request.path or "unknown"
+        # Server-Timing header (visible en DevTools → Network → Timing)
+        existing = resp.headers.get("Server-Timing", "")
+        new_st = f"total;dur={elapsed_ms}"
+        resp.headers["Server-Timing"] = f"{existing}, {new_st}".strip(", ")
+        # Guardar en histograma por endpoint (ring buffer 200 últimas mediciones)
+        with _PERF_LOCK:
+            _PERF_STATS[endpoint].append(elapsed_ms)
+        # Log queries lentas (>250ms) para diagnóstico
+        if elapsed_ms > 250:
+            print(f"[perf-slow] {request.method} {endpoint} = {elapsed_ms}ms "
+                  f"path={request.path} status={resp.status_code}", flush=True)
+    except Exception as _e_perf:
+        pass
+    return resp
+
+
+# ═════════════════════════════════════════════════════════════════════
 # /ping — endpoint ULTRA-LIVIANO para keep-alive externo
 # Daniel 2026-05-26: el cold start de Railway es lo que hace que el
 # login tarde 10s después de inactividad. Un servicio externo gratuito
@@ -6644,6 +6737,53 @@ def _railway_health():
     out["workers"] = os.getpid()
     status = 200 if out.get("db") else 503
     return jsonify(out), status
+
+
+# ═════════════════════════════════════════════════════════════════════
+# /admin/performance — Dashboard de mediciones por endpoint (superadmin)
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/admin/performance")
+@login_required
+def admin_performance():
+    """Muestra p50/p95/max/min/n por endpoint en JSON.
+
+    Solo superadmin. Lee el ring buffer _PERF_STATS (en memoria del proceso).
+    Cada worker tiene su propia vista — recargar varias veces para ver más
+    datos. Para datos consolidados se requiere agregación cross-worker
+    (futuro: Prometheus o Redis).
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    out = []
+    with _PERF_LOCK:
+        for endpoint, samples in _PERF_STATS.items():
+            if not samples:
+                continue
+            arr = sorted(samples)
+            n = len(arr)
+            def _pct(p):
+                idx = max(0, min(n - 1, int(round((p / 100.0) * (n - 1)))))
+                return arr[idx]
+            out.append({
+                "endpoint": endpoint,
+                "n": n,
+                "min": arr[0],
+                "p50": _pct(50),
+                "p95": _pct(95),
+                "max": arr[-1],
+                "avg": int(sum(arr) / n),
+            })
+    # Ordenar por p95 descendente (los más lentos arriba)
+    out.sort(key=lambda x: x["p95"], reverse=True)
+    return jsonify({
+        "ok": True,
+        "worker_pid": os.getpid(),
+        "endpoints": out,
+        "total_endpoints": len(out),
+        "note": "Cada worker tiene su propia ventana de 200 muestras. "
+                "Recarga varias veces para acumular datos.",
+    })
 
 
 @app.route("/")
