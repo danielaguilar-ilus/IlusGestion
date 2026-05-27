@@ -1985,23 +1985,67 @@ function _ftRender(d) {
     delete fotoEl.dataset.fullUrl;
     fotoEl.style.cursor = 'default';
   }
-  document.getElementById('ft_eq_titulo').textContent = eq.nombre || '—';
-  const subParts = [];
-  if (eq.marca) subParts.push(eq.marca);
-  if (eq.modelo) subParts.push(eq.modelo);
-  if (eq.sku) subParts.push(`SKU ${eq.sku}`);
-  document.getElementById('ft_eq_subtitulo').textContent = subParts.join(' · ') || 'Sin datos';
+  // ── HEADER PRO (Daniel 2026-05-27 mockup) ──
+  // Título grande + SKU debajo + grid de datos clave + chips de estado
+  document.getElementById('ft_eq_titulo').textContent = eq.nombre || 'Equipo sin nombre';
+  document.getElementById('ft_eq_subtitulo').textContent = eq.sku ? `SKU ${eq.sku}` : 'SKU no asignado';
 
-  // Chips: serie, estado, ubicación
-  const chipsHtml = [];
-  if (eq.serie_actual || eq.serie) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:6px 10px;font-size:.74rem"><i class="bi bi-upc me-1"></i>Serie: <span style="font-family:monospace;font-weight:700">${escHtml(eq.serie_actual || eq.serie)}</span></span>`);
-  const estadoColor = {activo:'#16a34a', inactivo:'#6b7280', baja:'#dc2626'}[(eq.estado||'').toLowerCase()] || '#6b7280';
-  chipsHtml.push(`<span class="badge" style="background:${estadoColor}15;color:${estadoColor};border:1px solid ${estadoColor}50;padding:6px 10px;font-size:.74rem"><i class="bi bi-circle-fill me-1" style="font-size:.5rem"></i>${escHtml((eq.estado||'activo').toUpperCase())}</span>`);
-  if (eq.ubicacion_sala) chipsHtml.push(`<span class="badge" style="background:#dbeafe;color:#1e40af;padding:6px 10px;font-size:.74rem"><i class="bi bi-geo-alt me-1"></i>${escHtml(eq.ubicacion_sala)}</span>`);
-  if (eq.anio_fabricacion) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;padding:6px 10px;font-size:.74rem"><i class="bi bi-calendar3 me-1"></i>${eq.anio_fabricacion}</span>`);
-  document.getElementById('ft_eq_chips').innerHTML = chipsHtml.join('');
+  // Grid de datos (estilo "label / value" del mockup)
+  const dataGridEl = document.getElementById('ft_data_grid');
+  if (dataGridEl) {
+    const fechaInicio = (d.contratos_relacionados || d.contratos || []).find(c => c.fecha_inicio)?.fecha_inicio || '';
+    const estadoLower = (eq.estado || 'activo').toLowerCase();
+    const estadoClass = estadoLower === 'baja' ? 'baja' : '';
+    const estadoLabel = estadoLower === 'baja' ? 'BAJA' : (estadoLower === 'garantia' ? 'GARANTÍA' : 'ACTIVO');
+    const contratos = d.contratos_relacionados || d.contratos || [];
+    const ctActivo = contratos.find(c => c.estado === 'vigente' || c.estado === 'indefinido') || contratos[0];
+    const cliente = eq.razon_social || '—';
+    const marcaModelo = [eq.marca, eq.modelo].filter(Boolean).join(' / ') || '—';
+    const ultimaVisita = stats.ultima_visita_fecha || '';
+    const diasUlt = stats.dias_desde_ultima_visita;
 
-  document.getElementById('ft_btn_ficha_full').href = d.ficha_url || '#';
+    const blocks = [
+      {label:'<i class="bi bi-upc"></i> Serie / Nº de serie',
+       value: `<span style="font-family:monospace;font-size:.85rem">${escHtml(eq.serie_actual || eq.serie || '—')}</span>${(eq.serie_actual||eq.serie)?'<button class="btn btn-link p-0 ms-1" onclick="navigator.clipboard.writeText(\''+escAttr(eq.serie_actual||eq.serie)+'\');ilusToast(\'Copiado\',{type:\'success\'})" title="Copiar"><i class="bi bi-clipboard" style="font-size:.78rem;color:#94a3b8"></i></button>':''}`},
+      {label:'<i class="bi bi-circle-fill" style="font-size:.45rem"></i> Estado',
+       value: `<span class="estado-pill ${estadoClass}">${estadoLabel}</span>`},
+      {label:'<i class="bi bi-building"></i> Cliente / Contrato',
+       value: `<span>${escHtml(cliente)}${ctActivo?` <a href="/mantenciones/clientes/${eq.cliente_id}" class="text-decoration-none ms-1" target="_blank"><i class="bi bi-box-arrow-up-right" style="font-size:.78rem;color:#94a3b8"></i></a>`:''}</span>`},
+    ];
+    if (fechaInicio) blocks.push({label:'<i class="bi bi-calendar3"></i> Inicio contrato', value: escHtml(fechaInicio)});
+    if (eq.ubicacion_sala || eq.ubicacion_cliente) blocks.push({label:'<i class="bi bi-geo-alt"></i> Ubicación', value: escHtml(eq.ubicacion_sala || eq.ubicacion_cliente)});
+    if (eq.familia_equipo && eq.familia_equipo !== 'otros') blocks.push({label:'<i class="bi bi-grid-3x3"></i> Categoría', value: escHtml(eq.familia_equipo.charAt(0).toUpperCase()+eq.familia_equipo.slice(1))});
+    if (marcaModelo !== '—') blocks.push({label:'<i class="bi bi-tag"></i> Marca / Modelo', value: escHtml(marcaModelo)});
+
+    dataGridEl.innerHTML = blocks.map(b => `
+      <div class="ft-data-block">
+        <div class="ft-data-label">${b.label}</div>
+        <div class="ft-data-value">${b.value}</div>
+      </div>
+    `).join('');
+  }
+
+  // Chips de estado bajo el header (pills coloridas)
+  const chips = [];
+  const estLow = (eq.estado || 'activo').toLowerCase();
+  if (estLow === 'activo') chips.push('<span class="ft-chip-pro green"><i class="bi bi-check-circle"></i> Activo</span>');
+  else if (estLow === 'baja') chips.push('<span class="ft-chip-pro red"><i class="bi bi-x-circle"></i> Baja</span>');
+  else chips.push(`<span class="ft-chip-pro amber"><i class="bi bi-exclamation-circle"></i> ${escHtml(estLow)}</span>`);
+  if ((d.contratos_relacionados||d.contratos||[]).length) chips.push('<span class="ft-chip-pro blue"><i class="bi bi-file-text"></i> Con contrato</span>');
+  if ((d.fotos_galeria||[]).length) chips.push('<span class="ft-chip-pro blue"><i class="bi bi-images"></i> Con fotos</span>');
+  if (stats.ultima_visita_fecha) {
+    const dias = stats.dias_desde_ultima_visita;
+    const diasTxt = dias != null ? ` (${dias} día${dias===1?'':'s'})` : '';
+    chips.push(`<span class="ft-chip-pro blue"><i class="bi bi-calendar-check"></i> Última visita: ${escHtml(stats.ultima_visita_fecha)}${diasTxt}</span>`);
+  }
+  const chipsEl = document.getElementById('ft_eq_chips');
+  if (chipsEl) chipsEl.innerHTML = chips.join('');
+
+  // FIX 2026-05-27 (Daniel): los botones 'Abrir ficha completa', 'PDF',
+  // 'Sync fotos' fueron eliminados del HTML. Hacemos getElementById defensivo
+  // para que setear href NO explote con "Cannot set properties of null".
+  const _btnFichaFull = document.getElementById('ft_btn_ficha_full');
+  if (_btnFichaFull) _btnFichaFull.href = d.ficha_url || '#';
 
   // ── CALIDAD DE FICHA (Daniel 2026-05-26 — score 0-100 con criterios)
   _ftRenderCalidad(d);

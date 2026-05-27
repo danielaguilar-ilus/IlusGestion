@@ -7529,51 +7529,110 @@ async function vhGuardar(){
           <span class="spinner-border spinner-border-sm me-2"></span>Cargando ficha…
         </div>
         <div id="ft_content" style="display:none">
-          {# Header con FOTO GRANDE del levantamiento + datos clave + observaciones
-             (Daniel 2026-05-27: una sola foto, esquina superior izquierda,
-              datos del levantamiento integrados aquí, sin card duplicada) #}
-          <div class="ft-header" style="padding:18px 22px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-            <div id="ft_foto_principal"
-                 style="width:200px;height:200px;border-radius:14px;background:#f8fafc;
-                        display:flex;align-items:center;justify-content:center;
-                        overflow:hidden;flex-shrink:0;border:2px solid #e5e7eb;
-                        position:relative;"
+          {# ═══ HEADER PRO (Daniel 2026-05-27 mockup) ═══
+             Foto grande izq + datos en grid 2x3 derecha + botones acción
+             arriba a la derecha. Diseño limpio tipo SaaS. #}
+          <style>
+            .ft-hero-pro {
+              padding:22px 26px;background:#fff;border-bottom:1px solid #e5e7eb;
+              display:grid;grid-template-columns:auto 1fr auto;gap:24px;
+              align-items:start;
+            }
+            .ft-photo-big {
+              width:280px;height:240px;border-radius:14px;background:#f1f5f9;
+              display:flex;align-items:center;justify-content:center;
+              overflow:hidden;border:2px solid #e5e7eb;position:relative;
+            }
+            .ft-photo-big.has-foto { cursor:zoom-in;border-color:#dc2626; }
+            .ft-photo-big img { width:100%;height:100%;object-fit:cover; }
+            .ft-photo-placeholder-inner {
+              text-align:center;padding:18px;
+            }
+            .ft-eq-title {
+              font-size:1.4rem;font-weight:700;color:#0f172a;line-height:1.2;
+              margin-bottom:2px;
+            }
+            .ft-eq-sku { font-size:.86rem;color:#64748b;font-weight:500;margin-bottom:14px; }
+            .ft-data-grid {
+              display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+              gap:14px 18px;
+            }
+            .ft-data-block { display:flex;flex-direction:column;gap:4px; }
+            .ft-data-label {
+              font-size:.66rem;color:#94a3b8;font-weight:700;text-transform:uppercase;
+              letter-spacing:.4px;display:flex;align-items:center;gap:5px;
+            }
+            .ft-data-value {
+              font-size:.92rem;color:#0f172a;font-weight:600;
+              display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+            }
+            .ft-data-value .estado-pill {
+              background:#dcfce7;color:#166534;font-size:.75rem;padding:3px 10px;
+              border-radius:20px;font-weight:700;display:inline-flex;align-items:center;gap:4px;
+            }
+            .ft-data-value .estado-pill::before {
+              content:'';width:7px;height:7px;background:#16a34a;border-radius:50%;display:inline-block;
+            }
+            .ft-data-value .estado-pill.baja { background:#fee2e2;color:#991b1b; }
+            .ft-data-value .estado-pill.baja::before { background:#dc2626; }
+            .ft-actions-pro { display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end; }
+            .ft-chips-row {
+              padding:14px 26px 0;display:flex;gap:8px;flex-wrap:wrap;
+            }
+            .ft-chip-pro {
+              font-size:.74rem;font-weight:600;padding:6px 12px;border-radius:20px;
+              display:inline-flex;align-items:center;gap:5px;
+              border:1px solid transparent;
+            }
+            .ft-chip-pro.green { background:#f0fdf4;color:#15803d;border-color:#bbf7d0; }
+            .ft-chip-pro.blue  { background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe; }
+            .ft-chip-pro.amber { background:#fffbeb;color:#92400e;border-color:#fde68a; }
+            .ft-chip-pro.red   { background:#fef2f2;color:#991b1b;border-color:#fecaca; }
+            @media (max-width: 900px) {
+              .ft-hero-pro { grid-template-columns: 1fr; }
+              .ft-photo-big { width:100%;height:220px; }
+              .ft-actions-pro { justify-content:flex-start; }
+            }
+          </style>
+
+          <div class="ft-hero-pro">
+            {# Foto grande izq #}
+            <div id="ft_foto_principal" class="ft-photo-big"
                  onclick="if(this.dataset.fullUrl)window.open(this.dataset.fullUrl,'_blank')">
-              <div class="ft-foto-placeholder" style="text-align:center;padding:14px">
-                <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
-                <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
-                <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en próxima visita</div>
+              <div class="ft-photo-placeholder-inner">
+                <i class="bi bi-camera" style="font-size:3rem;color:#cbd5e1"></i>
+                <div style="font-size:.76rem;color:#94a3b8;margin-top:10px;font-weight:700">SIN FOTO PRINCIPAL</div>
+                <div style="font-size:.66rem;color:#cbd5e1;margin-top:3px">La foto se genera del último levantamiento</div>
               </div>
             </div>
-            <div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:8px">
-              <div>
-                <div style="font-size:1.25rem;font-weight:700;color:#0f172a;line-height:1.2" id="ft_eq_titulo">—</div>
-                <div class="text-muted small" id="ft_eq_subtitulo">—</div>
-              </div>
-              <div class="d-flex gap-2 flex-wrap" id="ft_eq_chips"></div>
-              {# Info del levantamiento integrada #}
-              <div id="ft_lev_info_inline" style="display:none;background:#f8fafc;border-radius:8px;padding:8px 12px;border-left:3px solid #dc2626;margin-top:4px">
-                <div class="d-flex align-items-center gap-2 flex-wrap" style="margin-bottom:4px">
-                  <span style="font-size:.66rem;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.5px">
-                    <i class="bi bi-camera-fill me-1"></i>Último levantamiento
-                  </span>
-                  <span id="ft_lev_fecha" style="font-size:.74rem;color:#374151;font-weight:600"></span>
-                  <span id="ft_lev_estado_badge"></span>
-                </div>
-                <div id="ft_lev_observaciones" style="font-size:.78rem;color:#1f2937;line-height:1.5;white-space:pre-wrap;word-break:break-word">—</div>
-                <div id="ft_lev_tecnico" style="font-size:.66rem;color:#64748b;margin-top:4px"></div>
-              </div>
-              <div id="ft_lev_danos" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:6px 10px;font-size:.78rem;color:#991b1b;align-items:center;gap:6px">
-                <i class="bi bi-exclamation-triangle-fill" style="color:#dc2626"></i>
-                <span><strong>Daños detectados</strong> — ver observaciones</span>
+
+            {# Datos derecha en grid #}
+            <div>
+              <div class="ft-eq-title" id="ft_eq_titulo">—</div>
+              <div class="ft-eq-sku" id="ft_eq_subtitulo">—</div>
+              <div class="ft-data-grid" id="ft_data_grid">
+                {# Llenado por JS — bloques: Serie, Estado, Cliente/Contrato,
+                   Inicio contrato, Ubicación, Categoría, Marca/Modelo, Última visita #}
               </div>
             </div>
-            <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
-              <button class="btn btn-sm btn-outline-secondary" id="ft_btn_editar" onclick="ftAbrirEditar()" title="Editar campos del equipo">
+
+            {# Botones acción arriba derecha #}
+            <div class="ft-actions-pro">
+              <button class="btn btn-sm btn-outline-secondary" id="ft_btn_editar" onclick="ftAbrirEditar()" title="Editar datos administrativos">
                 <i class="bi bi-pencil-square me-1"></i>Editar
+              </button>
+              <a class="btn btn-sm btn-outline-secondary" id="ft_btn_ficha_full" href="#" target="_blank" title="Abrir ficha completa en nueva pestaña">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Abrir ficha completa
+              </a>
+              <button class="btn btn-sm" id="ft_btn_pdf" onclick="ftDescargarPDF()" title="Descargar ficha técnica en PDF"
+                      style="background:#dc2626;color:#fff;font-weight:600;border:0">
+                <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
               </button>
             </div>
           </div>
+
+          {# Chips bajo el header #}
+          <div class="ft-chips-row" id="ft_eq_chips"></div>
 
           {# Alertas dinámicas #}
           <div id="ft_alertas" style="padding:0 22px;margin-top:14px"></div>
@@ -8613,7 +8672,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527b"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527c"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico
