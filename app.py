@@ -35654,40 +35654,54 @@ Devuelve SOLO el JSON solicitado."""
 # tokens. Frontend lo consume antes de POSTear para mostrar modal claro.
 # ══════════════════════════════════════════════════════════════════════
 
+# ── Cache TTL 10min de elegibilidad IA (Daniel 2026-05-26 audit) ──
+# DevTools: endpoint tarda ~4.5s. Hace múltiples queries para detectar
+# cambios desde la última generación. Como esos cambios ocurren con
+# frecuencia DIARIA (no por segundo), cachear 10 min es seguro y quita
+# 4.5s de la apertura de ficha cliente.
+_IA_ELIG_CACHE = {}  # cid -> (data, ts)
+_IA_ELIG_LOCK  = threading.Lock()
+_IA_ELIG_TTL   = 600  # 10 min
+
+
+def _ia_elig_cache_invalidar(cid=None):
+    """Invalida cache de elegibilidad. Llamar tras regenerar análisis IA."""
+    with _IA_ELIG_LOCK:
+        if cid is None:
+            _IA_ELIG_CACHE.clear()
+        else:
+            _IA_ELIG_CACHE.pop(int(cid), None)
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/ia/elegibilidad",
            methods=["GET"])
 @_mant_required
 def mant_cliente_ia_elegibilidad(cid):
     """Verifica si conviene regenerar el análisis IA para este cliente.
+    Cacheado 10 min (audit DevTools: era 4.5s por llamada)."""
+    # Cache hit
+    _now = time.time()
+    with _IA_ELIG_LOCK:
+        entry = _IA_ELIG_CACHE.get(cid)
+    if entry and (_now - entry[1]) < _IA_ELIG_TTL:
+        return jsonify(entry[0])
 
-    Útil para que el frontend muestre un modal con info ANTES de POST a
-    /ai-analisis (que sí gasta tokens si autoriza).
-
-    Returns JSON con:
-      puede_generar (bool)
-      motivo: 'nunca_analizado'|'cache_vigente'|'cambios_detectados'|
-              'ventana_abierta'|'fecha_indeterminada'
-      dias_desde_ultimo (int|None)
-      n_cambios (int)
-      cambios (list[{campo,delta,antes,ahora}])
-      plan_actual_id (int|None)
-      ultimo_resumen (str)
-      throttle_dias (int)
-      costo_estimado_tokens (int)
-      snapshot_actual, snapshot_anterior
-    """
     cliente = mysql_fetchone(
         "SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cid,)
     )
     if not cliente:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
     elig = _mant_ia_cliente_eligibilidad(cid)
-    return jsonify({
+    data = {
         "ok": True,
         "cliente": {"id": cliente["id"],
                     "razon_social": cliente.get("razon_social")},
-        **elig
-    })
+        **elig,
+        "_cached_ttl": _IA_ELIG_TTL,
+    }
+    with _IA_ELIG_LOCK:
+        _IA_ELIG_CACHE[cid] = (data, _now)
+    return jsonify(data)
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/ia/diferir",
@@ -39196,13 +39210,36 @@ def mant_notif_interna_archivar(nid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ── CACHE en memoria del contador de notificaciones por usuario ──
+# 2026-05-26 (Daniel — audit DevTools: 840ms × 5 llamadas/página = 4.2s).
+# La query agrega COUNT + SUM filtrando por destino_user_id NULL OR igual.
+# Resultado: cache TTL 45s por (es_admin, user_id). Quita 4 de 5 queries.
+# Llamar _mant_notif_cache_invalidar(user_id) tras INSERT/UPDATE de notif.
+_MANT_NOTIF_CONT_CACHE = {}   # key -> (data_dict, ts)
+_MANT_NOTIF_CONT_LOCK  = threading.Lock()
+_MANT_NOTIF_CONT_TTL   = 45   # segundos
+
+
+def _mant_notif_cache_invalidar(user_id=None):
+    """Invalida cache cuando se modifica una notificación. Si user_id es
+    None, invalida todo (caso: notificación broadcast). Llamar tras
+    INSERT/UPDATE/DELETE en mant_notificaciones."""
+    with _MANT_NOTIF_CONT_LOCK:
+        if user_id is None:
+            _MANT_NOTIF_CONT_CACHE.clear()
+        else:
+            for k in list(_MANT_NOTIF_CONT_CACHE.keys()):
+                # k es tupla (es_admin, user_id_o_None) — invalidamos
+                # tanto la del usuario específico como las admin
+                if k[0] or k[1] == user_id:
+                    _MANT_NOTIF_CONT_CACHE.pop(k, None)
+
+
 @app.route("/mantenciones/api/notif-interna/contador", methods=["GET"])
 @_mant_required
 def mant_notif_interna_contador():
     """Devuelve {no_leidas, urgentes} para el badge de la campana.
-
-    Endpoint ultra rápido — usa el índice idx_destino_no_leida.
-    Objetivo: <50ms en condiciones normales.
+    Cacheado 45s por usuario (DevTools audit: era 840ms x 5/página = 4.2s).
     """
     perms = g.get("permissions") or {}
     es_admin = bool(perms.get("admin") or perms.get("superadmin"))
@@ -39212,6 +39249,15 @@ def mant_notif_interna_contador():
     except Exception:
         user_id = None
 
+    # ── CACHE HIT ───────────────────────────────────────────────────
+    cache_key = (es_admin, user_id)
+    _now = time.time()
+    with _MANT_NOTIF_CONT_LOCK:
+        entry = _MANT_NOTIF_CONT_CACHE.get(cache_key)
+    if entry and (_now - entry[1]) < _MANT_NOTIF_CONT_TTL:
+        return jsonify(entry[0])
+
+    # ── CACHE MISS — Query original ────────────────────────────────
     sql = (
         "SELECT "
         "  COUNT(*) AS no_leidas, "
@@ -39227,11 +39273,16 @@ def mant_notif_interna_contador():
         sql += " AND destino_user_id IS NULL "
     try:
         row = mysql_fetchone(sql, tuple(params)) or {}
-        return jsonify({
+        data = {
             "ok": True,
             "no_leidas": int(row.get("no_leidas") or 0),
             "urgentes":  int(row.get("urgentes") or 0),
-        })
+            "_cached_ttl": _MANT_NOTIF_CONT_TTL,
+        }
+        # Guardar en cache
+        with _MANT_NOTIF_CONT_LOCK:
+            _MANT_NOTIF_CONT_CACHE[cache_key] = (data, _now)
+        return jsonify(data)
     except Exception as e:
         return jsonify({"ok": False, "no_leidas": 0, "urgentes": 0,
                         "error": str(e)}), 200
@@ -50154,6 +50205,136 @@ def mant_maquina_historial_ots(mid):
 # fichas con >20 OTs históricas, se usa paginación implícita (LIMIT 100
 # en historial + LIMIT 50 en seriales/estados).
 # ════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────
+# ENDPOINT BATCH FICHA TÉCNICA (Daniel 2026-05-26 audit DevTools):
+# El frontend mostraba 51 fetch (uno por máquina × 3.6s) = N+1 grave.
+# Este endpoint devuelve un dict {id: ficha_resumida} de muchos equipos
+# en UNA sola request, con datos LIGHT suficientes para la tabla.
+# El detalle profundo (todas las tabs) sigue en el endpoint individual.
+# ─────────────────────────────────────────────────────────────────────
+@app.route("/mantenciones/api/maquinas/ficha-tecnica-batch")
+@_mant_required
+def mant_maquinas_ficha_tecnica_batch():
+    """Versión LIGHT batch para la tabla de equipos del cliente.
+
+    Query: ?ids=1,2,3,4,5 (máximo 200 ids)
+
+    Devuelve { ok, items: { "1": {nombre, foto_url, score, ...}, ... } }
+
+    Para datos profundos (historial, alertas, revisiones), usar el
+    endpoint individual /api/maquinas/<mid>/ficha-tecnica.
+    """
+    ids_param = (request.args.get("ids") or "").strip()
+    if not ids_param:
+        return jsonify({"ok": True, "items": {}})
+    try:
+        ids = [int(x) for x in ids_param.split(",") if x.strip()]
+        ids = list(dict.fromkeys(ids))[:200]  # dedup + cap
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "ids inválidos"}), 400
+    if not ids:
+        return jsonify({"ok": True, "items": {}})
+
+    placeholders = ",".join(["%s"] * len(ids))
+
+    # 1 query — datos básicos de los equipos
+    eq_rows = mysql_fetchall(
+        f"SELECT id, cliente_id, nombre, sku, serie, marca, modelo, "
+        f"       estado, estado_op, foto_url, familia_equipo, "
+        f"       ubicacion_sala, anio_fabricacion, fecha_fin_garantia "
+        f"  FROM mant_maquinas WHERE id IN ({placeholders})",
+        tuple(ids)
+    ) or []
+
+    # 1 query — última foto por equipo (Cloudinary o disco)
+    fotos_map = {}
+    try:
+        rows_f = mysql_fetchall(
+            f"SELECT maquina_id, MAX(tomada_at) AS ultima, "
+            f"       COUNT(*) AS n_fotos "
+            f"  FROM mant_maquina_fotos WHERE maquina_id IN ({placeholders}) "
+            f" GROUP BY maquina_id",
+            tuple(ids)
+        ) or []
+        for r in rows_f:
+            fotos_map[r["maquina_id"]] = {
+                "ultima_foto": str(r["ultima"])[:10] if r.get("ultima") else "",
+                "n_fotos": int(r.get("n_fotos") or 0),
+            }
+    except Exception:
+        pass
+
+    # 1 query — última revisión por equipo (estado + fecha)
+    rev_map = {}
+    try:
+        rows_r = mysql_fetchall(
+            f"SELECT maquina_id, estado_revision, revisado_por, revisado_at "
+            f"  FROM mant_visita_equipos "
+            f" WHERE maquina_id IN ({placeholders}) "
+            f"   AND revisado_at IS NOT NULL "
+            f" ORDER BY revisado_at DESC",
+            tuple(ids)
+        ) or []
+        for r in rows_r:
+            mid_r = r["maquina_id"]
+            if mid_r not in rev_map:  # tomar solo la más reciente
+                rev_map[mid_r] = {
+                    "ultima_revision_fecha": str(r["revisado_at"])[:10] if r.get("revisado_at") else "",
+                    "ultima_revision_estado": r.get("estado_revision") or "",
+                    "ultima_revision_por": r.get("revisado_por") or "",
+                }
+    except Exception:
+        pass
+
+    items = {}
+    hoy = datetime.now().date()
+    for eq in eq_rows:
+        mid = eq["id"]
+        # Score de calidad LIGHT (criterios rápidos sin queries extras)
+        fotos_data = fotos_map.get(mid, {})
+        rev_data   = rev_map.get(mid, {})
+        score = 0
+        if eq.get("foto_url"):           score += 12
+        if eq.get("serie"):              score += 10
+        if eq.get("sku"):                score += 8
+        if eq.get("familia_equipo") and eq.get("familia_equipo") != "otros": score += 8
+        if eq.get("ubicacion_sala"):     score += 8
+        if eq.get("marca") or eq.get("modelo"): score += 8
+        if eq.get("anio_fabricacion"):   score += 6
+        if fotos_data.get("n_fotos", 0) > 0:    score += 10
+        if rev_data.get("ultima_revision_fecha"): score += 10
+        if eq.get("fecha_fin_garantia"): score += 4
+        # +16 puntos no calculables en batch (contrato, observaciones)
+        # se considera "perfecto" al 84 en batch
+        estado_calidad = (
+            "completa" if score >= 70
+            else "buena" if score >= 50
+            else "revisar_datos" if score >= 30
+            else "incompleta"
+        )
+        items[str(mid)] = {
+            "id":         mid,
+            "nombre":     eq.get("nombre") or "",
+            "sku":        eq.get("sku") or "",
+            "serie":      eq.get("serie") or "",
+            "marca":      eq.get("marca") or "",
+            "modelo":     eq.get("modelo") or "",
+            "familia":    eq.get("familia_equipo") or "",
+            "ubicacion":  eq.get("ubicacion_sala") or "",
+            "estado":     eq.get("estado") or "activo",
+            "foto_url":   eq.get("foto_url") or "",
+            "n_fotos":    fotos_data.get("n_fotos", 0),
+            "ultima_foto":          fotos_data.get("ultima_foto", ""),
+            "ultima_revision_fecha":  rev_data.get("ultima_revision_fecha", ""),
+            "ultima_revision_estado": rev_data.get("ultima_revision_estado", ""),
+            "ultima_revision_por":    rev_data.get("ultima_revision_por", ""),
+            "calidad_score":   score,
+            "calidad_estado":  estado_calidad,
+        }
+    return jsonify({"ok": True, "items": items, "count": len(items)})
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/ficha-tecnica")
 @_mant_required
 def mant_maquina_ficha_tecnica_json(mid):

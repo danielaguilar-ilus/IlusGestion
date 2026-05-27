@@ -822,8 +822,23 @@ document.addEventListener('DOMContentLoaded', function(){
     });
   }
 
-  // ── Polling del contador (ultra rápido) ─────────────────────
-  async function actualizarContador(){
+  // ── Polling del contador con DEDUP (Daniel 2026-05-26 audit DevTools) ──
+  // Antes: 5+ llamadas/página por re-uso del helper en distintos hooks.
+  // Ahora: rate-limit 30s + flag "en curso" para evitar concurrent fetch.
+  let _lastContadorCall = 0;
+  let _enCursoContador = false;
+  const _CONTADOR_MIN_INTERVAL_MS = 30 * 1000;  // 30s entre llamadas
+
+  async function actualizarContador(forzar){
+    const _now = Date.now();
+    // Dedup: si la última llamada fue hace < 30s y no es forzada, saltar
+    if (!forzar && (_now - _lastContadorCall) < _CONTADOR_MIN_INTERVAL_MS) {
+      return;
+    }
+    // Dedup: si hay una llamada en curso, no lanzar otra
+    if (_enCursoContador) return;
+    _enCursoContador = true;
+    _lastContadorCall = _now;
     try {
       const r = await fetch('/mantenciones/api/notif-interna/contador', {
         credentials: 'same-origin',
@@ -847,6 +862,8 @@ document.addEventListener('DOMContentLoaded', function(){
       // Error de red — degradar silencioso (no mostrar nada en consola para
       // no spamear si el usuario está offline)
       setBadge(0, 0);
+    } finally {
+      _enCursoContador = false;
     }
   }
 
@@ -1001,9 +1018,10 @@ document.addEventListener('DOMContentLoaded', function(){
     if (isOpen && e.key === 'Escape') cerrarDropdown();
   });
 
-  // Iniciar polling
-  actualizarContador();
-  pollTimer = setInterval(actualizarContador, 60000);
+  // Iniciar polling — primera carga forzada, después 90s entre intentos
+  // (con dedup interno de 30s, asegura una llamada efectiva cada 90s).
+  actualizarContador(true);
+  pollTimer = setInterval(() => actualizarContador(false), 90000);
 
   // Refrescar al recobrar visibilidad (volver al tab)
   document.addEventListener('visibilitychange', function(){
