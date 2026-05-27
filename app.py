@@ -24083,6 +24083,18 @@ def init_mantenciones_tables():
                 # fuera_servicio, en_reparacion). Migramos ENUM a VARCHAR para
                 # evitar futuros ALTER cuando se agregue otro estado operacional.
                 "ALTER TABLE mant_maquinas MODIFY COLUMN estado_op VARCHAR(40) DEFAULT 'operativo'",
+                # ════════════════════════════════════════════════════════
+                # 2026-05-26 (Daniel) — Datos físicos visibles en ficha técnica
+                # tab "Resumen". Antes no había forma de registrar peso real,
+                # dimensiones (alto×ancho×fondo) ni color del equipo. Hoy se
+                # ven en el dashboard del modal.
+                # ════════════════════════════════════════════════════════
+                "ALTER TABLE mant_maquinas ADD COLUMN peso_kg DECIMAL(8,2) NULL "
+                "COMMENT 'Peso del equipo en kilogramos'",
+                "ALTER TABLE mant_maquinas ADD COLUMN dimensiones VARCHAR(120) NULL "
+                "COMMENT 'Dimensiones físicas, ej: 170 x 80 x 50 cm'",
+                "ALTER TABLE mant_maquinas ADD COLUMN color VARCHAR(60) NULL "
+                "COMMENT 'Color principal del equipo, ej: Negro, Rojo, Acero'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -48260,6 +48272,10 @@ def mant_maquina_ficha_tecnica_json(mid):
         "visitas_count": int(eq.get("visitas_count") or 0),
         "doc_origen": eq.get("doc_origen") or "",
         "doc_fecha": str(eq["doc_fecha"])[:10] if eq.get("doc_fecha") else "",
+        # 2026-05-26 (Daniel) — Datos físicos visibles en tab Resumen
+        "peso_kg": float(eq["peso_kg"]) if eq.get("peso_kg") is not None else None,
+        "dimensiones": eq.get("dimensiones") or "",
+        "color": eq.get("color") or "",
     }
 
     # ── 9. (2026-05-21 Daniel) — Última revisión + timeline desde
@@ -48337,6 +48353,126 @@ def mant_maquina_ficha_tecnica_json(mid):
             for h in historial_visitas[:5]
         ],
         "ficha_url": f"/mantenciones/maquinas/{mid}",
+    })
+
+
+# ════════════════════════════════════════════════════════════════════════
+# SYNC fotos del levantamiento → galería del equipo (Daniel 2026-05-26)
+# Soluciona el caso histórico donde el INSERT a mant_maquina_fotos pudo
+# fallar silenciosamente (try/except en upload de foto del levantamiento)
+# y dejó las fotos huérfanas en mant_levantamiento_fotos.
+# Anti-duplicado por cloudinary_url. Idempotente.
+# ════════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/maquinas/<int:mid>/sync-fotos-lev", methods=["POST"])
+@_mant_required
+def mant_maquina_sync_fotos_lev(mid):
+    """Copia fotos huérfanas de mant_levantamiento_fotos → mant_maquina_fotos."""
+    eq = mysql_fetchone("SELECT id, cliente_id FROM mant_maquinas WHERE id=%s", (mid,))
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
+
+    # 1) Fotos del levantamiento que apuntan a este equipo
+    huerfanas = mysql_fetchall(
+        """
+        SELECT lf.id, lf.levantamiento_id, lf.cloudinary_url, lf.cloudinary_public_id,
+               lf.tipo_foto, lf.descripcion, lf.tomada_por, lf.tomada_at
+          FROM mant_levantamiento_fotos lf
+         WHERE lf.maquina_id = %s
+           AND lf.cloudinary_url IS NOT NULL
+           AND lf.cloudinary_url <> ''
+           AND NOT EXISTS (
+                 SELECT 1 FROM mant_maquina_fotos mf
+                  WHERE mf.maquina_id = lf.maquina_id
+                    AND mf.cloudinary_url = lf.cloudinary_url
+               )
+        """,
+        (mid,)
+    ) or []
+
+    # 2) Fotos de visitas que apuntan a este equipo (alternativo)
+    huerfanas_vis = mysql_fetchall(
+        """
+        SELECT vf.id, vf.visita_id, vf.cloudinary_url, vf.cloudinary_public_id,
+               vf.tipo_foto, vf.descripcion, vf.subida_por AS tomada_por, vf.created_at AS tomada_at
+          FROM mant_visita_fotos vf
+         WHERE vf.maquina_id = %s
+           AND vf.cloudinary_url IS NOT NULL
+           AND vf.cloudinary_url <> ''
+           AND NOT EXISTS (
+                 SELECT 1 FROM mant_maquina_fotos mf
+                  WHERE mf.maquina_id = vf.maquina_id
+                    AND mf.cloudinary_url = vf.cloudinary_url
+               )
+        """,
+        (mid,)
+    ) or []
+
+    copiadas = 0
+    errores = []
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for f in huerfanas:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO mant_maquina_fotos
+                          (maquina_id, archivo_path, cloudinary_url, cloudinary_public_id,
+                           levantamiento_id, tipo_foto, descripcion, tomada_por, tomada_at)
+                        VALUES (%s, '', %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            mid,
+                            f["cloudinary_url"],
+                            f.get("cloudinary_public_id") or "",
+                            f.get("levantamiento_id"),
+                            (f.get("tipo_foto") or "principal")[:30],
+                            (f.get("descripcion") or "")[:500],
+                            (f.get("tomada_por") or "sync")[:190],
+                            f.get("tomada_at"),
+                        )
+                    )
+                    copiadas += 1
+                except Exception as e_one:
+                    errores.append(f"lev_foto#{f['id']}: {str(e_one)[:120]}")
+            for f in huerfanas_vis:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO mant_maquina_fotos
+                          (maquina_id, archivo_path, cloudinary_url, cloudinary_public_id,
+                           visita_origen, tipo_foto, descripcion, tomada_por, tomada_at)
+                        VALUES (%s, '', %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            mid,
+                            f["cloudinary_url"],
+                            f.get("cloudinary_public_id") or "",
+                            f.get("visita_id"),
+                            (f.get("tipo_foto") or "principal")[:30],
+                            (f.get("descripcion") or "")[:500],
+                            (f.get("tomada_por") or "sync")[:190],
+                            f.get("tomada_at"),
+                        )
+                    )
+                    copiadas += 1
+                except Exception as e_one:
+                    errores.append(f"vis_foto#{f['id']}: {str(e_one)[:120]}")
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": f"Error en sync: {str(e)[:200]}"}), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    return jsonify({
+        "ok": True,
+        "copiadas": copiadas,
+        "candidatas_lev": len(huerfanas),
+        "candidatas_vis": len(huerfanas_vis),
+        "errores": errores[:5],   # primeros 5 errores si hubo
     })
 
 

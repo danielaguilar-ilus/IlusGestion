@@ -1927,12 +1927,14 @@ async function verFichaTecnicaEquipo(mid, nombre) {
   document.getElementById('ft_loading').style.display = 'block';
   document.getElementById('ft_content').style.display = 'none';
   document.getElementById('ft_edit_panel').style.display = 'none';
-  // Resetear tab activo a Visitas
+  // Resetear tab activo a Resumen (default, 2026-05-26)
   try {
     document.querySelectorAll('#ftTabs .nav-link').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('#modalFichaTecnica .tab-pane').forEach(p => p.classList.remove('show','active'));
-    document.querySelector('#ftTabs .nav-link[data-bs-target="#ftTabVisitas"]').classList.add('active');
-    document.getElementById('ftTabVisitas').classList.add('show','active');
+    const _btnRes = document.querySelector('#ftTabs .nav-link[data-bs-target="#ftTabResumen"]');
+    if (_btnRes) _btnRes.classList.add('active');
+    const _paneRes = document.getElementById('ftTabResumen');
+    if (_paneRes) _paneRes.classList.add('show','active');
   } catch(_){}
   _modalFichaTec.show();
 
@@ -2034,12 +2036,355 @@ function _ftRender(d) {
   if (_bdgRev) _bdgRev.textContent = (d.revisiones_timeline || []).length;
 
   // ── Contenido de tabs ──
+  _ftRenderResumen(d);
   _ftRenderVisitas(d.historial_visitas || []);
   _ftRenderFotos(d.fotos_galeria || []);
   _ftRenderSeriales(d.historial_seriales || []);
   _ftRenderEstado(d.historial_estado || []);
   _ftRenderContratos(d.contratos_relacionados || []);
   _ftRenderRevisiones(d.revisiones_timeline || [], d.revisiones_counters || {});
+
+  // Mostrar botón "Sincronizar fotos" solo si el equipo tiene OTs con fotos
+  // pero la galería tiene menos fotos (huérfanas en mant_levantamiento_fotos).
+  // 2026-05-26 (Daniel) — backfill de fotos del levantamiento.
+  try {
+    const visitas = d.historial_visitas || [];
+    const fotosEnVisitas = visitas.reduce((acc, v) => acc + (v.fotos_count || 0), 0);
+    const fotosEnGaleria = (d.fotos_galeria || []).length;
+    const btnSync = document.getElementById('ft_btn_sync_fotos');
+    if (btnSync) {
+      if (fotosEnVisitas > fotosEnGaleria) {
+        btnSync.style.display = '';
+        btnSync.dataset.huerfanas = fotosEnVisitas - fotosEnGaleria;
+        btnSync.title = `Hay ${fotosEnVisitas - fotosEnGaleria} foto(s) de OT que no aparecen en la galería. Click para sincronizar.`;
+      } else {
+        btnSync.style.display = 'none';
+      }
+    }
+  } catch(_) {}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 2026-05-26 (Daniel) — Tab "Resumen" — vista consolidada estilo dashboard
+// con: datos del equipo (izq) | historial OT corto (centro) | contrato (der)
+// + galería de fotografías abajo. Es el tab DEFAULT al abrir la ficha.
+// ════════════════════════════════════════════════════════════════════
+function _ftRenderResumen(d) {
+  const el = document.getElementById('ftTabResumen');
+  if (!el) return;
+  const eq = d.equipo || {};
+  const stats = d.stats || {};
+  const visitas = (d.historial_visitas || []).slice(0, 5);
+  const fotos = (d.fotos_galeria || []).slice(0, 10);
+  const contratos = d.contratos_relacionados || [];
+
+  // ── Helper para filas de datos
+  const _row = (label, val, mono) => {
+    const v = (val !== null && val !== undefined && val !== '') ? val : '—';
+    return `
+      <div class="ft-res-row">
+        <div class="ft-res-lbl">${escHtml(label)}</div>
+        <div class="ft-res-val${mono ? ' ft-res-mono' : ''}">${escHtml(String(v))}</div>
+      </div>`;
+  };
+
+  // ── Tipo familia legible
+  const familiaLabel = {
+    cardio: 'Cardio',
+    selectorizado: 'Selectorizado',
+    peso_libre: 'Peso libre',
+    funcional: 'Funcional',
+    fuerza: 'Fuerza',
+    accesorios: 'Accesorios',
+    cross: 'Cross training',
+    musculacion: 'Musculación',
+    otros: 'Otros',
+  }[(eq.familia_equipo || '').toLowerCase()] || (eq.familia_equipo || '—');
+
+  // ── Datos del equipo (columna izq)
+  const datosHtml = `
+    <div class="ft-res-card">
+      <div class="ft-res-card-hdr">
+        <i class="bi bi-clipboard-data me-1"></i>Datos del equipo
+      </div>
+      <div class="ft-res-card-body">
+        ${_row('SKU', eq.sku, true)}
+        ${_row('N° de serie', eq.serie_actual || eq.serie, true)}
+        ${_row('Marca / Modelo', [eq.marca, eq.modelo].filter(Boolean).join(' / '))}
+        ${_row('Categoría', familiaLabel)}
+        ${_row('Peso', eq.peso_kg ? `${eq.peso_kg} kg` : null)}
+        ${_row('Dimensiones', eq.dimensiones)}
+        ${_row('Año fabricación', eq.anio_fabricacion)}
+        ${_row('Color', eq.color)}
+        ${_row('Ubicación', eq.ubicacion_sala)}
+        ${_row('Voltaje', eq.voltaje)}
+        ${_row('Notas', eq.observaciones)}
+      </div>
+    </div>
+  `;
+
+  // ── Historial OT (columna centro)
+  let historialHtml;
+  if (!visitas.length) {
+    historialHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-list-check me-1"></i>Historial de OTs
+        </div>
+        <div class="ft-res-card-body text-center text-muted py-4">
+          <i class="bi bi-calendar-x" style="font-size:1.6rem;opacity:.3"></i>
+          <div class="small mt-1">Sin OTs aún</div>
+        </div>
+      </div>`;
+  } else {
+    const items = visitas.map(v => {
+      const tipoBadgeColor = {
+        levantamiento: '#dbeafe',
+        preventiva:    '#dcfce7',
+        correctiva:    '#fef3c7',
+      }[(v.tipo||'').toLowerCase()] || '#f3f4f6';
+      const tipoBadgeText = {
+        levantamiento: '#1e40af',
+        preventiva:    '#166534',
+        correctiva:    '#92400e',
+      }[(v.tipo||'').toLowerCase()] || '#374151';
+      const estadoChip = {
+        cerrada:    'Cerrada',
+        completada: 'Cerrada',
+        en_curso:   'En curso',
+        programada: 'Pendiente',
+      }[(v.estado||'').toLowerCase()] || (v.estado || '');
+      return `
+        <div class="ft-res-ot-item">
+          <div class="ft-res-ot-num">
+            <a href="${escAttr(v.url||'#')}" target="_blank" rel="noopener" class="text-decoration-none">
+              ${escHtml(v.numero_ot || '—')}
+            </a>
+          </div>
+          <div class="ft-res-ot-body">
+            <div class="ft-res-ot-title">
+              <span class="ft-res-ot-tipo" style="background:${tipoBadgeColor};color:${tipoBadgeText}">${escHtml(v.tipo || '—')}</span>
+              ${v.titulo ? escHtml(v.titulo) : 'Sin título'}
+              ${estadoChip ? `<span class="ft-res-ot-estado">${escHtml(estadoChip)}</span>` : ''}
+            </div>
+            <div class="ft-res-ot-meta">
+              <i class="bi bi-calendar3"></i> ${escHtml(v.fecha || '—')}
+              · <i class="bi bi-person"></i> ${escHtml(v.tecnico || '—')}
+              ${v.fotos_count ? ` · <span style="color:#dc2626;font-weight:600"><i class="bi bi-camera"></i> ${v.fotos_count} foto(s)</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    const totalOts = (d.historial_visitas || []).length;
+    historialHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-list-check me-1"></i>Historial de OTs</span>
+          ${totalOts > 5 ? `<span class="ft-res-card-link" onclick="document.querySelector('#ftTabs .nav-link[data-bs-target=&quot;#ftTabVisitas&quot;]').click()">Ver las ${totalOts} OTs <i class="bi bi-arrow-right"></i></span>` : ''}
+        </div>
+        <div class="ft-res-card-body" style="padding:6px 4px">
+          ${items}
+        </div>
+      </div>`;
+  }
+
+  // ── Contrato (columna derecha)
+  let contratoHtml;
+  if (!contratos.length) {
+    contratoHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-file-earmark-text me-1"></i>Contrato / Arriendo / Mantención
+        </div>
+        <div class="ft-res-card-body text-center text-muted py-4">
+          <i class="bi bi-file-earmark" style="font-size:1.6rem;opacity:.3"></i>
+          <div class="small mt-1">Sin contratos vigentes</div>
+        </div>
+      </div>`;
+  } else {
+    const c = contratos[0];
+    const dr = c.dias_restantes;
+    let estadoBadge = { color:'#6b7280', text: c.es_indefinido ? 'Indefinido' : 'Vigente' };
+    if (!c.es_indefinido && dr !== null && dr !== undefined) {
+      if (dr < 0) estadoBadge = { color:'#dc2626', text:'Vencido' };
+      else if (dr <= 30) estadoBadge = { color:'#f59e0b', text:`Vence en ${dr}d` };
+      else estadoBadge = { color:'#16a34a', text:'Vigente' };
+    }
+    contratoHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-file-earmark-text me-1"></i>Contrato / Arriendo / Mantención
+        </div>
+        <div class="ft-res-card-body">
+          ${_row('Tipo', c.tipo || 'Mantención')}
+          ${_row('N° de contrato', c.numero || c.nombre || `#${c.id}`, true)}
+          ${_row('Inicio', c.fecha_inicio)}
+          ${_row('Término', c.fecha_vencimiento || (c.es_indefinido ? 'Indefinido' : '—'))}
+          <div class="ft-res-row">
+            <div class="ft-res-lbl">Estado</div>
+            <div class="ft-res-val">
+              <span class="badge" style="background:${estadoBadge.color}15;color:${estadoBadge.color};border:1px solid ${estadoBadge.color}50;padding:4px 9px">
+                ${escHtml(estadoBadge.text)}
+              </span>
+            </div>
+          </div>
+          ${contratos.length > 1 ? `
+            <div class="ft-res-row" style="border-top:1px dashed #e5e7eb;margin-top:8px;padding-top:8px">
+              <div class="ft-res-lbl">Otros contratos</div>
+              <div class="ft-res-val">
+                <span class="ft-res-card-link" onclick="document.querySelector('#ftTabs .nav-link[data-bs-target=&quot;#ftTabContratos&quot;]').click()">
+                  ${contratos.length - 1} más <i class="bi bi-arrow-right"></i>
+                </span>
+              </div>
+            </div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // ── Galería de fotos (fila inferior)
+  let galeriaHtml;
+  if (!fotos.length) {
+    galeriaHtml = `
+      <div class="ft-res-card ft-res-card-wide">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-images me-1"></i>Fotografías del equipo
+        </div>
+        <div class="ft-res-card-body text-center text-muted py-4">
+          <i class="bi bi-image" style="font-size:1.6rem;opacity:.3"></i>
+          <div class="small mt-1">Sin fotografías cargadas todavía</div>
+          <div class="small mt-1" style="font-size:.7rem;opacity:.7">Las fotos del levantamiento y de visitas aparecerán acá.</div>
+        </div>
+      </div>`;
+  } else {
+    const totalFotos = (d.fotos_galeria || []).length;
+    galeriaHtml = `
+      <div class="ft-res-card ft-res-card-wide">
+        <div class="ft-res-card-hdr d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-images me-1"></i>Fotografías del equipo <span class="badge bg-light text-dark ms-1">${totalFotos}</span></span>
+          ${totalFotos > 10 ? `<span class="ft-res-card-link" onclick="document.querySelector('#ftTabs .nav-link[data-bs-target=&quot;#ftTabFotos&quot;]').click()">Ver todas <i class="bi bi-arrow-right"></i></span>` : ''}
+        </div>
+        <div class="ft-res-card-body">
+          <div class="ft-res-fotos">
+            ${fotos.map(f => `
+              <div class="ft-res-foto" onclick="window.open('${escAttr(f.url)}','_blank')" title="${escAttr(f.descripcion || f.tomada_por || 'Foto')}">
+                <img src="${escAttr(f.url)}" alt="" loading="lazy">
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ── Estilos del tab Resumen (inyectados una sola vez)
+  const styleId = 'ft-resumen-style';
+  if (!document.getElementById(styleId)) {
+    const st = document.createElement('style');
+    st.id = styleId;
+    st.textContent = `
+      .ft-res-grid{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:14px;align-items:start;margin-bottom:14px}
+      @media (max-width: 992px){.ft-res-grid{grid-template-columns:1fr}}
+      .ft-res-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+      .ft-res-card-wide{grid-column:1/-1}
+      .ft-res-card-hdr{padding:10px 14px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:700;font-size:.84rem;color:#0f172a}
+      .ft-res-card-body{padding:10px 14px}
+      .ft-res-row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed #f3f4f6;font-size:.82rem}
+      .ft-res-row:last-child{border-bottom:0}
+      .ft-res-lbl{color:#6b7280;font-weight:500;min-width:90px}
+      .ft-res-val{color:#0f172a;font-weight:600;text-align:right;flex:1;word-break:break-word}
+      .ft-res-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+      .ft-res-card-link{font-size:.74rem;color:#dc2626;font-weight:700;cursor:pointer}
+      .ft-res-card-link:hover{text-decoration:underline}
+      .ft-res-ot-item{display:flex;gap:10px;padding:9px 8px;border-bottom:1px solid #f3f4f6}
+      .ft-res-ot-item:last-child{border-bottom:0}
+      .ft-res-ot-num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.74rem;font-weight:700;background:#f3f4f6;padding:4px 6px;border-radius:6px;height:fit-content;white-space:nowrap;color:#0f172a}
+      .ft-res-ot-num a{color:#0f172a}
+      .ft-res-ot-body{flex:1;min-width:0}
+      .ft-res-ot-title{font-weight:600;font-size:.82rem;color:#0f172a;line-height:1.25;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+      .ft-res-ot-tipo{font-size:.66rem;font-weight:700;padding:2px 7px;border-radius:10px;text-transform:uppercase;letter-spacing:.02em}
+      .ft-res-ot-estado{font-size:.66rem;color:#6b7280;background:#f3f4f6;padding:2px 7px;border-radius:10px;font-weight:600}
+      .ft-res-ot-meta{font-size:.72rem;color:#6b7280;margin-top:3px}
+      .ft-res-fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:7px}
+      .ft-res-foto{aspect-ratio:1;border-radius:8px;overflow:hidden;cursor:pointer;background:#f3f4f6;border:1px solid #e5e7eb;transition:transform .15s ease, box-shadow .15s ease}
+      .ft-res-foto:hover{transform:scale(1.03);box-shadow:0 4px 14px rgba(0,0,0,.12)}
+      .ft-res-foto img{width:100%;height:100%;object-fit:cover}
+    `;
+    document.head.appendChild(st);
+  }
+
+  el.innerHTML = `
+    <div class="ft-res-grid">
+      ${datosHtml}
+      ${historialHtml}
+      ${contratoHtml}
+    </div>
+    ${galeriaHtml}
+  `;
+}
+
+// ── Descargar PDF de la ficha técnica (2026-05-26 Daniel) ────────────
+function ftDescargarPDF() {
+  if (!_ftCurrentMid) return;
+  // Endpoint genérico de PDF de ficha de equipo. Si no existe en backend,
+  // se cae al print() nativo del navegador con la URL de ficha completa.
+  const url = `/mantenciones/maquinas/${_ftCurrentMid}/ficha-tecnica.pdf`;
+  // Probamos primero el PDF directo; si 404, abrimos ficha completa para imprimir.
+  fetch(url, { method:'HEAD' }).then(r => {
+    if (r.ok) {
+      window.open(url, '_blank');
+    } else {
+      // Fallback: abre ficha completa en pestaña nueva y dispara print al cargar
+      const w = window.open(`/mantenciones/maquinas/${_ftCurrentMid}?print=1`, '_blank');
+      if (w) w.focus();
+    }
+  }).catch(() => {
+    const w = window.open(`/mantenciones/maquinas/${_ftCurrentMid}?print=1`, '_blank');
+    if (w) w.focus();
+  });
+}
+
+// ── Sincronizar fotos huérfanas del levantamiento → galería del equipo
+// 2026-05-26 (Daniel) — Si en alguna sesión vieja el INSERT a
+// mant_maquina_fotos falló silenciosamente, las fotos quedaron solo en
+// mant_levantamiento_fotos. Este botón llama al backfill para copiarlas.
+async function ftSincronizarFotos() {
+  if (!_ftCurrentMid) return;
+  const btn = document.getElementById('ft_btn_sync_fotos');
+  const ok = await ilusConfirm({
+    title: 'Sincronizar fotos del equipo',
+    message: 'Vamos a buscar fotos de las OT (levantamientos) de este equipo que no aparezcan todavía en la galería y copiarlas. ¿Continúo?',
+    sub: 'Es seguro — usa anti-duplicado por URL.',
+    okLabel: 'Sí, sincronizar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando…';
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${_ftCurrentMid}/sync-fotos-lev`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      await ilusAlert({ title:'Error', message: d.error || 'No se pudo sincronizar', type:'error' });
+    } else {
+      ilusToast(`✓ ${d.copiadas || 0} foto(s) copiada(s) a la galería`, { type:'success' });
+      // Refrescar ficha
+      if (_ftCurrentMid) {
+        const eq = _ftCurrentData ? _ftCurrentData.equipo : null;
+        await verFichaTecnicaEquipo(_ftCurrentMid, eq ? eq.nombre : '');
+      }
+    }
+  } catch(e) {
+    await ilusAlert({ title:'Error de red', message: e.message || 'No se pudo conectar', type:'error' });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sincronizar fotos';
+    }
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
