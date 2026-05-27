@@ -7529,28 +7529,48 @@ async function vhGuardar(){
           <span class="spinner-border spinner-border-sm me-2"></span>Cargando ficha…
         </div>
         <div id="ft_content" style="display:none">
-          {# Header con foto + datos clave #}
-          <div class="ft-header" style="padding:18px 22px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
-            <div id="ft_foto_principal" style="width:120px;height:120px;border-radius:12px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;border:2px solid #e5e7eb">
-              <i class="bi bi-image" style="font-size:2rem;color:#9ca3af"></i>
+          {# Header con FOTO GRANDE del levantamiento + datos clave + observaciones
+             (Daniel 2026-05-27: una sola foto, esquina superior izquierda,
+              datos del levantamiento integrados aquí, sin card duplicada) #}
+          <div class="ft-header" style="padding:18px 22px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+            <div id="ft_foto_principal"
+                 style="width:200px;height:200px;border-radius:14px;background:#f8fafc;
+                        display:flex;align-items:center;justify-content:center;
+                        overflow:hidden;flex-shrink:0;border:2px solid #e5e7eb;
+                        position:relative;"
+                 onclick="if(this.dataset.fullUrl)window.open(this.dataset.fullUrl,'_blank')">
+              <div class="ft-foto-placeholder" style="text-align:center;padding:14px">
+                <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
+                <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
+                <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en próxima visita</div>
+              </div>
             </div>
-            <div style="flex:1;min-width:240px">
-              <div style="font-size:1.1rem;font-weight:700;color:#0f172a" id="ft_eq_titulo">—</div>
-              <div class="text-muted small mb-2" id="ft_eq_subtitulo">—</div>
+            <div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:8px">
+              <div>
+                <div style="font-size:1.25rem;font-weight:700;color:#0f172a;line-height:1.2" id="ft_eq_titulo">—</div>
+                <div class="text-muted small" id="ft_eq_subtitulo">—</div>
+              </div>
               <div class="d-flex gap-2 flex-wrap" id="ft_eq_chips"></div>
+              {# Info del levantamiento integrada #}
+              <div id="ft_lev_info_inline" style="display:none;background:#f8fafc;border-radius:8px;padding:8px 12px;border-left:3px solid #dc2626;margin-top:4px">
+                <div class="d-flex align-items-center gap-2 flex-wrap" style="margin-bottom:4px">
+                  <span style="font-size:.66rem;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.5px">
+                    <i class="bi bi-camera-fill me-1"></i>Último levantamiento
+                  </span>
+                  <span id="ft_lev_fecha" style="font-size:.74rem;color:#374151;font-weight:600"></span>
+                  <span id="ft_lev_estado_badge"></span>
+                </div>
+                <div id="ft_lev_observaciones" style="font-size:.78rem;color:#1f2937;line-height:1.5;white-space:pre-wrap;word-break:break-word">—</div>
+                <div id="ft_lev_tecnico" style="font-size:.66rem;color:#64748b;margin-top:4px"></div>
+              </div>
+              <div id="ft_lev_danos" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:6px 10px;font-size:.78rem;color:#991b1b;align-items:center;gap:6px">
+                <i class="bi bi-exclamation-triangle-fill" style="color:#dc2626"></i>
+                <span><strong>Daños detectados</strong> — ver observaciones</span>
+              </div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
               <button class="btn btn-sm btn-outline-secondary" id="ft_btn_editar" onclick="ftAbrirEditar()" title="Editar campos del equipo">
                 <i class="bi bi-pencil-square me-1"></i>Editar
-              </button>
-              <a class="btn btn-sm btn-outline-secondary" id="ft_btn_ficha_full" href="#" target="_blank" title="Abrir ficha completa en nueva pestaña">
-                <i class="bi bi-box-arrow-up-right me-1"></i>Abrir ficha completa
-              </a>
-              <button class="btn btn-sm btn-ilus" id="ft_btn_pdf" onclick="ftDescargarPDF()" title="Descargar ficha técnica en PDF">
-                <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
-              </button>
-              <button class="btn btn-sm btn-outline-warning" id="ft_btn_sync_fotos" onclick="ftSincronizarFotos()" title="Sincronizar fotos del levantamiento que no aparecen en la galería" style="display:none">
-                <i class="bi bi-arrow-repeat me-1"></i>Sincronizar fotos
               </button>
             </div>
           </div>
@@ -7587,10 +7607,10 @@ async function vhGuardar(){
             </div>
           </div>
 
-          {# ── ÚLTIMO LEVANTAMIENTO (Daniel 2026-05-27 — ficha hero) ──
-             Foto GRANDE prominente + datos del levantamiento más RECIENTE
-             (no la primera). Vista dashboard pro CMMS. #}
-          <div id="ft_levantamiento_card" style="display:none;padding:8px 22px 0">
+          {# ── CARD LEVANTAMIENTO (DEPRECADA 2026-05-27: ahora va integrado
+             en el header de arriba con ft_lev_info_inline. Se mantiene
+             oculta para no romper referencias JS, pero NUNCA se muestra). #}
+          <div id="ft_levantamiento_card" style="display:none !important;padding:8px 22px 0">
             <style>
               .ft-lev-hero {
                 background:linear-gradient(135deg,#ffffff 0%,#fafbff 100%);
@@ -8325,27 +8345,60 @@ async function vhGuardar(){
         <div class="row g-3">
           <div class="col-12">
             <label class="form-label fw-semibold">Nombre del equipo <span class="text-danger">*</span></label>
-            <input type="text" id="mm_nombre" class="form-control" placeholder="Ej: Trotadora Life Fitness T3">
+            <input type="text" id="mm_nombre" class="form-control" placeholder="Ej: Trotadora ILUS Kairos">
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">SKU del modelo</label>
-            <input type="text" id="mm_sku" class="form-control font-monospace">
+            <label class="form-label fw-semibold">SKU del modelo <span class="text-muted small">(auto)</span></label>
+            <input type="text" id="mm_sku" class="form-control font-monospace" placeholder="Se genera al guardar">
+            <div class="form-text small">Si lo dejas vacío, se genera uno automático. Puedes editarlo.</div>
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">N° Serie</label>
-            <input type="text" id="mm_serie" class="form-control">
+            <label class="form-label fw-semibold">N° Serie <span class="text-muted small">(auto)</span></label>
+            <input type="text" id="mm_serie" class="form-control" placeholder="Se genera al guardar">
+            <div class="form-text small">Si lo dejas vacío, se asigna uno automático. El levantamiento lo sobrescribe.</div>
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">Cantidad</label>
+            <label class="form-label fw-semibold">Categoría / Familia</label>
+            <select id="mm_familia" class="form-select">
+              <option value="">— Sin especificar —</option>
+              <option value="cardio">Cardio (trotadora / elíptica / bici)</option>
+              <option value="selectorizado">Selectorizado</option>
+              <option value="carga_libre">Carga libre (mancuernas / discos)</option>
+              <option value="racks_estructuras">Racks / estructuras</option>
+              <option value="bancos">Bancos</option>
+              <option value="accesorios">Accesorios</option>
+              <option value="bicicletas">Bicicletas</option>
+              <option value="trotadoras">Trotadoras</option>
+              <option value="otros">Otros</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Marca <span class="text-muted small">(opc.)</span></label>
+            <input type="text" id="mm_marca" class="form-control" placeholder="Ej: ILUS">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Modelo <span class="text-muted small">(opc.)</span></label>
+            <input type="text" id="mm_modelo" class="form-control" placeholder="Ej: Kairos Row Machine">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Año fabricación <span class="text-muted small">(opc.)</span></label>
+            <input type="number" id="mm_anio" class="form-control" min="2000" max="2100" placeholder="Ej: 2024">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Ubicación <span class="text-muted small">(opc.)</span></label>
+            <input type="text" id="mm_ubicacion" class="form-control" placeholder="Ej: Sala cardio 2do piso">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Cantidad <span class="text-muted small">(opc.)</span></label>
             <input type="number" id="mm_cantidad" class="form-control" value="1" min="1">
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">Doc. origen</label>
+            <label class="form-label fw-semibold">Doc. origen <span class="text-muted small">(opc.)</span></label>
             <input type="text" id="mm_doc" class="form-control" placeholder="FCV-1234">
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold">Notas</label>
-            <textarea id="mm_notas" class="form-control" rows="2"></textarea>
+            <label class="form-label fw-semibold">Notas / observaciones <span class="text-muted small">(opc.)</span></label>
+            <textarea id="mm_notas" class="form-control" rows="2" placeholder="Color, voltaje, dimensiones, peso o cualquier observación inicial"></textarea>
           </div>
         </div>
       </div>
@@ -8560,7 +8613,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527a"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527b"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

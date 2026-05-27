@@ -31572,6 +31572,11 @@ def mant_maquina_add(cid):
     force        = bool(d.get("force", False))
     # SKU siempre en upper para que matchee con saldos y queries
     sku          = (d.get("sku","") or "").strip().upper()
+    # 2026-05-27 (Daniel — auto-SKU para creación manual):
+    # Si no viene SKU, generamos uno automático con formato "MAN-<cid>-<timestamp>"
+    # (MAN = manual). El usuario lo puede editar después desde la ficha.
+    if not sku and d.get("auto_sku"):
+        sku = f"MAN-{cid}-{int(time.time())}"[:80].upper()
     # doc_origen NORMALIZADO al formato canónico 'TIDO NUDO' (sin leading zeros)
     # Esto garantiza que _asignados_por_sku encuentre el match en futuras consultas.
     doc_origen   = _doc_origen_normalizar((d.get("doc_origen","") or "").strip())
@@ -31672,14 +31677,44 @@ def mant_maquina_add(cid):
                 mid_new, serie_efectiva = _insert_con_retry(cur, build, serie)
                 creadas.append({"id": mid_new, "serie": serie_efectiva})
         conn.commit()
+        # 2026-05-27 (Daniel): UPDATE post-INSERT con campos nuevos opcionales.
+        # Se hace por separado para no romper el INSERT principal si alguna
+        # columna no existe en BDs viejas. Cada campo en try independiente.
+        try:
+            _campos_extra = {
+                "familia_equipo":    (d.get("familia_equipo") or "").strip()[:30],
+                "marca":             (d.get("marca") or "").strip()[:120],
+                "modelo":            (d.get("modelo") or "").strip()[:120],
+                "anio_fabricacion":  d.get("anio_fabricacion"),
+                "ubicacion_sala":    (d.get("ubicacion_sala") or "").strip()[:200],
+            }
+            # Solo intentar UPDATE si al menos un campo extra tiene valor real
+            _hay_extra = any(v for v in _campos_extra.values() if v not in (None, "", 0))
+            if _hay_extra and creadas:
+                _ids_creados = [c["id"] for c in creadas]
+                for _id_eq in _ids_creados:
+                    for _col, _val in _campos_extra.items():
+                        if _val in (None, "", 0):
+                            continue
+                        try:
+                            mysql_execute(
+                                f"UPDATE mant_maquinas SET {_col}=%s WHERE id=%s",
+                                (_val, _id_eq)
+                            )
+                        except Exception as _e_col:
+                            # Columna no existe (BD vieja) → ignorar silencioso
+                            print(f"[maquina_add] columna {_col} no existe: {_e_col}", flush=True)
+                            break
+        except Exception as _e_xt:
+            print(f"[maquina_add] update campos extra falló: {_e_xt}", flush=True)
         # Log unificado
         for c in creadas:
             _mant_log("maquina", c["id"], "agregada", d.get("nombre",""))
         # Respuesta compatible con clientes existentes (1 fila → mismo shape antiguo)
         if len(creadas) == 1:
             return jsonify({"ok": True, "id": creadas[0]["id"], "serie": creadas[0]["serie"],
-                            "filas_creadas": 1})
-        return jsonify({"ok": True, "filas_creadas": len(creadas), "items": creadas})
+                            "sku": sku, "filas_creadas": 1})
+        return jsonify({"ok": True, "filas_creadas": len(creadas), "items": creadas, "sku": sku})
     finally:
         conn.close()
 

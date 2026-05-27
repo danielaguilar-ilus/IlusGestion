@@ -1961,12 +1961,29 @@ function _ftRender(d) {
   const stats = d.stats || {};
   const alertas = d.alertas || [];
 
-  // ── Header con foto + datos clave ──
+  // ── Header con foto GRANDE del último levantamiento (Daniel 2026-05-27)
+  // Prioridad: foto más reciente de galería > foto principal del equipo
+  // > placeholder. La galería viene ordenada DESC (más reciente primero).
   const fotoEl = document.getElementById('ft_foto_principal');
-  if (eq.foto_principal_url || eq.foto_url) {
-    fotoEl.innerHTML = `<img src="${escAttr(eq.foto_principal_url || eq.foto_url)}" style="width:100%;height:100%;object-fit:cover" alt="">`;
+  const fotosGal = d.fotos_galeria || [];
+  const fotoUrl = (fotosGal.length && fotosGal[0].url)
+                  || eq.foto_principal_url
+                  || eq.foto_url
+                  || '';
+  if (fotoUrl) {
+    fotoEl.innerHTML = `<img src="${escAttr(fotoUrl)}" loading="lazy" decoding="async"
+                            style="width:100%;height:100%;object-fit:cover;cursor:zoom-in"
+                            alt="Foto del equipo">`;
+    fotoEl.dataset.fullUrl = fotoUrl;
+    fotoEl.style.cursor = 'zoom-in';
   } else {
-    fotoEl.innerHTML = `<i class="bi bi-image" style="font-size:2rem;color:#9ca3af"></i>`;
+    fotoEl.innerHTML = `<div class="ft-foto-placeholder" style="text-align:center;padding:14px">
+        <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
+        <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
+        <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en próxima visita</div>
+      </div>`;
+    delete fotoEl.dataset.fullUrl;
+    fotoEl.style.cursor = 'default';
   }
   document.getElementById('ft_eq_titulo').textContent = eq.nombre || '—';
   const subParts = [];
@@ -2568,41 +2585,26 @@ function _ftRenderCalidad(d) {
 // Renderiza la card "Levantamiento inicial" — fotó + fecha + estado +
 // daños + observaciones (extraído de la PRIMERA revisión cronológica).
 function _ftRenderLevantamiento(d) {
-  const card = document.getElementById('ft_levantamiento_card');
-  if (!card) return;
+  // CAMBIO 2026-05-27 (Daniel): info levantamiento ahora va INTEGRADA en
+  // el header del modal (ft_lev_info_inline), no como card separada.
+  // La foto va ARRIBA con ft_foto_principal (manejado en _ftRender).
+  // Aquí solo poblamos los datos textuales del levantamiento.
+  const inline = document.getElementById('ft_lev_info_inline');
+  if (!inline) return;
   const revisiones = d.revisiones_timeline || [];
   const fotos      = d.fotos_galeria || [];
   const eq         = d.equipo || {};
 
-  // CAMBIO 2026-05-27 (Daniel): mostrar la ÚLTIMA revisión (más reciente),
-  // no la primera. Es lo que el operador necesita saber AHORA del equipo.
-  // El array viene ordenado DESC (más reciente primero) → index 0.
+  // Última revisión cronológica = index 0 (orden DESC)
   const ultRev  = revisiones.length ? revisiones[0] : null;
-  const ultFoto = fotos.length ? fotos[0] : null;  // foto más reciente
+  const ultFoto = fotos.length ? fotos[0] : null;
 
-  // Mostrar SIEMPRE la card si tenemos al menos algo (revisiones u OTs o equipo)
-  // Mejor ver "sin foto + sin observaciones" que ocultar.
-  if (!ultRev && !ultFoto && !(d.historial_visitas||[]).length) {
-    card.style.display = 'none';
+  // Mostrar solo si hay info de levantamiento real (revisión o foto)
+  if (!ultRev && !ultFoto) {
+    inline.style.display = 'none';
     return;
   }
-
-  // ── Foto: la MÁS RECIENTE del equipo. Si no, fallback foto principal del equipo ──
-  const fotoEl = document.getElementById('ft_lev_foto');
-  const fotoUrlPrincipal = ultFoto?.url || eq.foto_principal_url || eq.foto_url || '';
-  if (fotoUrlPrincipal) {
-    fotoEl.innerHTML = `<img src="${escAttr(fotoUrlPrincipal)}" loading="lazy" decoding="async" alt="Foto del equipo">`;
-    fotoEl.classList.add('has-foto');
-    fotoEl.dataset.fullUrl = fotoUrlPrincipal;
-  } else {
-    fotoEl.innerHTML = `<div class="ft-lev-foto-placeholder">
-        <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
-        <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
-        <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en la próxima visita</div>
-      </div>`;
-    fotoEl.classList.remove('has-foto');
-    delete fotoEl.dataset.fullUrl;
-  }
+  inline.style.display = 'block';
 
   // ── Fecha del último levantamiento ──
   let fecha = '';
@@ -2656,22 +2658,15 @@ function _ftRenderLevantamiento(d) {
     obsEl.style.fontStyle = 'italic';
   }
 
-  // ── Técnico responsable ──
+  // ── Técnico responsable + contador en una línea ──
   const tecEl = document.getElementById('ft_lev_tecnico');
   let tec = '';
   if (ultRev && ultRev.revisado_por) tec = ultRev.revisado_por;
   else if (ultFoto && ultFoto.tomada_por) tec = ultFoto.tomada_por;
-  tecEl.innerHTML = tec ? `<i class="bi bi-person-circle me-1"></i><strong>Técnico:</strong> ${escHtml(tec)}` : '';
-
-  // ── Contador de revisiones totales ──
-  const nRevEl = document.getElementById('ft_lev_n_revisiones');
-  if (revisiones.length > 1) {
-    nRevEl.innerHTML = `<i class="bi bi-clock-history me-1"></i><strong>${revisiones.length}</strong> revisiones totales`;
-  } else {
-    nRevEl.innerHTML = '';
-  }
-
-  card.style.display = 'block';
+  const partes = [];
+  if (tec) partes.push(`<i class="bi bi-person-circle me-1"></i>Técnico: <strong>${escHtml(tec)}</strong>`);
+  if (revisiones.length > 1) partes.push(`<i class="bi bi-clock-history ms-2 me-1"></i><strong>${revisiones.length}</strong> revisiones totales`);
+  tecEl.innerHTML = partes.join('');
 }
 
 function _ftRenderStat(key, val, label, cls) {
@@ -3603,23 +3598,45 @@ async function importarDesdeErp() {
 // ─── Agregar máquina manual ───────────────────────────────
 async function guardarMaquinaManual() {
   const nombre = document.getElementById('mm_nombre').value.trim();
-  if (!nombre) { alert('Nombre requerido'); return; }
+  if (!nombre) {
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({title:'Nombre requerido', message:'El nombre del equipo es obligatorio.', type:'warning'});
+    } else { alert('Nombre requerido'); }
+    return;
+  }
+  // 2026-05-27 (Daniel): SKU y N° Serie auto si vienen vacíos. Backend genera.
+  // Categoría/familia, marca, modelo, año, ubicación → todos opcionales.
+  const payload = {
+    nombre,
+    sku:      document.getElementById('mm_sku').value.trim(),
+    serie:    document.getElementById('mm_serie').value.trim(),
+    cantidad: parseInt(document.getElementById('mm_cantidad').value) || 1,
+    doc_origen: document.getElementById('mm_doc').value.trim(),
+    notas:    document.getElementById('mm_notas').value.trim(),
+    // Campos nuevos opcionales
+    familia_equipo: (document.getElementById('mm_familia')||{}).value || '',
+    marca:    (document.getElementById('mm_marca')||{}).value || '',
+    modelo:   (document.getElementById('mm_modelo')||{}).value || '',
+    anio_fabricacion: parseInt((document.getElementById('mm_anio')||{}).value) || null,
+    ubicacion_sala: (document.getElementById('mm_ubicacion')||{}).value || '',
+    auto_sku: true,    // pedirle al backend que rellene SKU si viene vacío
+    auto_serie: true,  // pedirle al backend que rellene serie si viene vacío
+  };
   const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      nombre,
-      sku:      document.getElementById('mm_sku').value.trim(),
-      serie:    document.getElementById('mm_serie').value.trim(),
-      cantidad: parseInt(document.getElementById('mm_cantidad').value) || 1,
-      doc_origen: document.getElementById('mm_doc').value.trim(),
-      notas:    document.getElementById('mm_notas').value.trim(),
-    })
+    body: JSON.stringify(payload)
   });
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('modalMaqManual')).hide();
     location.reload();
-  } else { alert('Error al guardar'); }
+  } else {
+    let err = 'Error al guardar';
+    try { const d = await r.json(); err = d.error || err; } catch(_){}
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({title:'No se pudo agregar', message:err, type:'error'});
+    } else { alert(err); }
+  }
 }
 
 // 2026-05-22 (Daniel): "Eliminar equipo" pasa a ser flujo confidencial.
