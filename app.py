@@ -4156,14 +4156,94 @@ def get_product_listing(search_query=""):
 
 
 def get_erp_product_by_sku(sku):
-    return mysql_fetchone(
-        f"""SELECT UPPER(TRIM(`SKU`)) AS sku,
-                   TRIM(COALESCE(`Nombre`,'')) AS nombre,
-                   TRIM(COALESCE(`Estado`,'Pendiente')) AS estado,
-                   TRIM(COALESCE(`Codigo`,'')) AS codigo
-            FROM `{ERP_TABLE}` WHERE UPPER(TRIM(`SKU`))=%s LIMIT 1""",
-        (sku.strip().upper(),),
-    )
+    """Valida si un SKU existe en el catálogo del ERP Random.
+
+    Cascada de fuentes (igual que el typeahead de búsqueda en /api/products/search):
+      1) Tabla local `etiquetas` (mirror de app_products) — instantáneo, sin red
+      2) REST API `/productos` del ERP Random — fuente en tiempo real
+      3) SQL Server directo a MAEPR — fallback cuando la REST cae o no devuelve el SKU
+
+    Devuelve dict {sku, nombre, estado, codigo} o None si NINGUNA fuente lo encuentra.
+
+    Bug fix 2026-05-28 (Daniel): antes solo consultaba (1) — un mirror de productos
+    YA creados en la app — por lo que TODO SKU nuevo del catálogo ERP era rechazado
+    al crear el producto. SKUs reportados: 1224100919, 1110100923, 1210100922,
+    1110101007, 1129100964.
+    """
+    sku_u = (sku or "").strip().upper()
+    if not sku_u:
+        return None
+
+    # ── Fuente 1: tabla local mirror (rápida, sin red) ────────────────
+    try:
+        local = mysql_fetchone(
+            f"""SELECT UPPER(TRIM(`SKU`)) AS sku,
+                       TRIM(COALESCE(`Nombre`,'')) AS nombre,
+                       TRIM(COALESCE(`Estado`,'Pendiente')) AS estado,
+                       TRIM(COALESCE(`Codigo`,'')) AS codigo
+                FROM `{ERP_TABLE}` WHERE UPPER(TRIM(`SKU`))=%s LIMIT 1""",
+            (sku_u,),
+        )
+        if local:
+            return local
+    except Exception as _e_local:
+        print(f"[get_erp_product_by_sku] local lookup failed: {_e_local}", flush=True)
+
+    # ── Fuente 2: REST API /productos del ERP Random ──────────────────
+    try:
+        TOKEN = ERP_CONFIG.get("api_token", "")
+        if TOKEN:
+            body = _erp_get(
+                "/productos",
+                {
+                    "search":  sku_u,
+                    "empresa": "01",
+                    "fields":  "KOPR,NOKOPR",
+                    "visible": "true",
+                    "limit":   "10",
+                },
+                TOKEN, timeout=6,
+            )
+            for p in (body.get("data") or []):
+                p_sku = (p.get("KOPR") or "").strip().upper()
+                if p_sku == sku_u:
+                    return {
+                        "sku":    p_sku,
+                        "nombre": (p.get("NOKOPR") or "").strip(),
+                        "estado": "Pendiente",
+                        "codigo": "",
+                    }
+    except Exception as _e_rest:
+        # No es fatal: caemos al SQL Server
+        print(f"[get_erp_product_by_sku] REST lookup failed for {sku_u}: "
+              f"{type(_e_rest).__name__}: {str(_e_rest)[:160]}", flush=True)
+
+    # ── Fuente 3: SQL Server directo a MAEPR ──────────────────────────
+    # Esto cubre el caso típico: SKU recién creado en el ERP que aún no
+    # aparece por la REST (cache de su lado, índice desactualizado, etc.)
+    try:
+        rows = _random_sql_query(
+            f"""SELECT TOP 1
+                       LTRIM(RTRIM(KOPR))   AS sku,
+                       LTRIM(RTRIM(NOKOPR)) AS nombre
+                  FROM {ERP_TABLE_PRODUCTS}
+                 WHERE UPPER(LTRIM(RTRIM(KOPR))) = %s""",
+            (sku_u,),
+            max_rows=1,
+        )
+        if rows:
+            r = rows[0]
+            return {
+                "sku":    (r.get("sku") or "").strip().upper(),
+                "nombre": (r.get("nombre") or "").strip(),
+                "estado": "Pendiente",
+                "codigo": "",
+            }
+    except Exception as _e_sql:
+        print(f"[get_erp_product_by_sku] SQL MAEPR lookup failed for {sku_u}: "
+              f"{type(_e_sql).__name__}: {str(_e_sql)[:160]}", flush=True)
+
+    return None
 
 
 def get_full(product_id):
