@@ -74,12 +74,29 @@ function _aiRenderError(err){
     const cfg = map[m] || map.fecha_indeterminada;
     sub.innerHTML = `<i class="bi ${cfg.icon} me-1" style="color:${cfg.color}"></i><span style="color:${cfg.color}">${cfg.text}</span>`;
   }
-  // Cargar una sola vez al boot
+  // 2026-05-28 (Daniel — FASE 3.4) Lazy load del hint IA al boot.
+  // ANTES: este fetch corría EAGER al cargar la ficha del cliente. El
+  //        endpoint /ia/elegibilidad toma ~4.5s en cache miss y los
+  //        ~6 queries SQL bloqueaban el first paint percibido del usuario.
+  // AHORA: usamos requestIdleCallback para diferir el call hasta que el
+  //        navegador esté idle (después del paint). Fallback setTimeout
+  //        para Safari < 17 que aún no implementa la API.
+  //        El hint aparece "auto" 1-3s después de cargar la ficha, sin
+  //        bloquear el render inicial. El cache 10min del backend sigue
+  //        intacto, así que en MISS solo paga la primera vista.
   if (window.__FICHA_DATA && window.__FICHA_DATA.cid) {
-    fetch(`/mantenciones/api/clientes/${window.__FICHA_DATA.cid}/ia/elegibilidad`)
-      .then(r => r.json())
-      .then(d => { if (d && d.ok) paintHint(d); })
-      .catch(()=>{});
+    const _loadEligibilidad = () => {
+      fetch(`/mantenciones/api/clientes/${window.__FICHA_DATA.cid}/ia/elegibilidad`)
+        .then(r => r.json())
+        .then(d => { if (d && d.ok) paintHint(d); })
+        .catch(()=>{});
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(_loadEligibilidad, { timeout: 3000 });
+    } else {
+      // Safari < 17 y navegadores viejos: fallback 800ms post-paint
+      setTimeout(_loadEligibilidad, 800);
+    }
   }
 })();
 
@@ -6711,13 +6728,18 @@ function _repToggleExportBtns(enabled) {
   document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('repId');
     if (el) obs.observe(el, {attributes:true, attributeFilter:['value']});
-    // Polling de respaldo cada 800ms cuando el modal está abierto
+    // 2026-05-28 (Daniel — FASE 3) Polling de respaldo: subido de 800ms
+    // a 5000ms. El MutationObserver de arriba ya detecta cambios en repId
+    // en tiempo real; este interval es solo paracaídas para edge cases
+    // raros donde se setea repId.value sin disparar el observer (assignar
+    // .value directo en algunos browsers). 800ms cada modal abierto era
+    // un waste innecesario de CPU; 5s es suficiente para el caso degradado.
     setInterval(() => {
       const modal = document.getElementById('modalReporte');
       if (modal && modal.classList.contains('show')) {
         _repToggleExportBtns(!!document.getElementById('repId')?.value);
       }
-    }, 800);
+    }, 5000);
   });
 })();
 

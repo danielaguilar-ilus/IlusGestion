@@ -6926,6 +6926,33 @@ def admin_aplicar_indices_criticos():
         ("auth_users idx_au_username_active",
          f"ALTER TABLE `{AUTH_TABLE}` ADD INDEX idx_au_username_active "
          f"(active, last_login_at)"),
+        # ════════════════════════════════════════════════════════════════
+        # 2026-05-28 (Daniel — FASE 3 perf):
+        # Auditoría detectó que /mantenciones (mant_index) hace ~2939ms de SQL
+        # principalmente por:
+        #   - FULL TABLE SCAN en mant_contratos cuando se cuentan los que
+        #     vencen en 30/60 días o están activos por cliente
+        #   - COUNT(*) en mant_notificaciones que el optimizer no resuelve
+        #     bien sin un composite que incluya prioridad
+        #   - ORDER BY razon_social en /mantenciones/clientes (300 filas)
+        # Los siguientes índices completan los que ya existen para cubrir
+        # estos hot paths.
+        # ════════════════════════════════════════════════════════════════
+        ("mant_contratos idx_cli_estado_fin",
+         "ALTER TABLE mant_contratos ADD INDEX idx_cli_estado_fin "
+         "(cliente_id, estado, fecha_fin)"),
+        # Para mant_notif_interna_contador: COUNT + SUM(CASE prioridad)
+        # con WHERE leida_at IS NULL AND archivada_at IS NULL.
+        # idx_destino_no_leida YA existe (destino_user_id, leida_at, archivada_at)
+        # pero no incluye prioridad — agregamos otro índice más específico
+        # para el COUNT global (admin) que no filtra por destino.
+        ("mant_notificaciones idx_unread_prio",
+         "ALTER TABLE mant_notificaciones ADD INDEX idx_unread_prio "
+         "(leida_at, archivada_at, prioridad)"),
+        # /mantenciones/clientes ORDER BY razon_social LIMIT 300
+        ("mant_clientes idx_razon_social",
+         "ALTER TABLE mant_clientes ADD INDEX idx_razon_social "
+         "(razon_social)"),
     ]
 
     resultados = []
@@ -23022,33 +23049,6 @@ def comm_email_status():
     })
 
 
-def _comm_smtp_test_send_legacy():
-    d  = request.get_json(silent=True) or {}
-    to = (d.get("to") or "").strip()
-    if not to:
-        return jsonify({"error": "Ingresa un destinatario"}), 400
-    html = _ilus_email_html(
-        titulo           = "✅ Prueba SMTP",
-        subtitulo        = "Verificación de conexión — ILUS Comunicaciones",
-        saludo           = "¡Conexión verificada!",
-        parrafos         = [
-            "Este correo confirma que la configuración SMTP está funcionando correctamente.",
-            "Si lo recibiste, la integración de email está activa y lista para usar.",
-        ],
-        info_lineas      = [
-            ("", "Enviado por", current_username()),
-            ("", "Servidor",    "SMTP dinámico — ILUS Comunicaciones"),
-        ],
-    )
-    try:
-        _send_ilus_email(to, "🧪 Prueba SMTP — ILUS Comunicaciones", html)
-        _comm_log_entry("email", to, "Prueba SMTP", "ok")
-        return jsonify({"ok": True})
-    except Exception as exc:
-        _comm_log_entry("email", to, "Prueba SMTP", "error", str(exc))
-        return jsonify({"error": str(exc)}), 500
-
-
 @app.route("/comunicaciones/email/enviar", methods=["POST"])
 @_require_superadmin
 def comm_email_enviar():
@@ -23771,44 +23771,6 @@ def comm_email_log():
     if qs:
         hash_part += "?" + "&".join(qs)
     return redirect(url_for("comm_index") + hash_part)
-
-
-@app.route("/comunicaciones/log/legacy")
-@require_permission("admin")
-def comm_email_log_legacy():
-    """Vista legacy del log (mantenida por compatibilidad con scripts/links viejos)."""
-    limit = min(int(request.args.get("limit") or 100), 500)
-    evento = request.args.get("evento","")
-    estado = request.args.get("estado","")
-    where, params = ["1=1"], []
-    if evento: where.append("evento=%s"); params.append(evento)
-    if estado: where.append("estado=%s"); params.append(estado)
-    rows = mysql_fetchall(
-        f"SELECT * FROM email_log WHERE {' AND '.join(where)} "
-        f"ORDER BY created_at DESC LIMIT {limit}",
-        tuple(params)
-    )
-    # Stats últimos 30 días
-    stats = mysql_fetchone("""
-        SELECT
-          COUNT(*) AS total,
-          SUM(CASE WHEN estado='enviado' THEN 1 ELSE 0 END) AS exitosos,
-          SUM(CASE WHEN estado='fallido' THEN 1 ELSE 0 END) AS fallidos,
-          COUNT(DISTINCT destinatario) AS destinatarios_unicos
-        FROM email_log
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-    """) or {}
-    eventos_top = mysql_fetchall("""
-        SELECT evento, COUNT(*) AS n FROM email_log
-        WHERE evento IS NOT NULL AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-        GROUP BY evento ORDER BY n DESC LIMIT 10
-    """)
-    return render_template("comunicaciones/log.html",
-        rows=[dict(r) for r in rows],
-        stats=dict(stats),
-        eventos_top=[dict(e) for e in eventos_top],
-        filtros={"evento":evento,"estado":estado},
-    )
 
 
 @app.route("/comunicaciones/log/<int:lid>/reintentar", methods=["POST"])
