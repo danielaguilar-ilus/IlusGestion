@@ -39,6 +39,61 @@ PICKUP_STATUS_COLORS = {
     "cerrada": "secondary",
 }
 
+# ── PIPELINE_GROUPS (2026-05-26 Daniel) ──────────────────────────────
+# Agrupación VISUAL del kanban del monitor de retiros: los 12 estados
+# de PICKUP_STATUS se consolidan en 6 columnas para reducir saturación.
+# Las cards mantienen su badge real (status_badge) dentro de cada columna
+# para no perder granularidad operacional.
+# La última columna SIEMPRE es "Retirada" (terminal exitosa) como acordó
+# Daniel — refuerza el foco del operador en el outcome positivo.
+#
+# IMPORTANTE: NO cambia los estados de BD ni los endpoints de transición.
+# Solo cambia cómo el template agrupa visualmente las columnas.
+PIPELINE_GROUPS = [
+    {
+        "key": "por_revisar",
+        "label": "Por revisar",
+        "statuses": ["solicitud_recibida", "en_revision", "informacion_incompleta"],
+        "accent": "#6b7280",   # gris neutro
+        "icon": "bi-inbox",
+    },
+    {
+        "key": "propuesta",
+        "label": "Propuesta",
+        "statuses": ["propuesta_enviada", "esperando_cliente"],
+        "accent": "#3b82f6",   # azul info
+        "icon": "bi-envelope-paper",
+    },
+    {
+        "key": "agendada",
+        "label": "Agendada",
+        "statuses": ["agenda_confirmada", "reagendada"],
+        "accent": "#8b5cf6",   # violeta
+        "icon": "bi-calendar-check",
+    },
+    {
+        "key": "preparacion",
+        "label": "En preparacion",
+        "statuses": ["en_preparacion"],
+        "accent": "#f59e0b",   # ambar
+        "icon": "bi-box-seam",
+    },
+    {
+        "key": "canceladas",
+        "label": "Canceladas",
+        "statuses": ["rechazada", "fallida", "cerrada"],
+        "accent": "#9ca3af",   # gris frio
+        "icon": "bi-x-octagon",
+    },
+    {
+        "key": "retirada",
+        "label": "Retirada",
+        "statuses": ["retirada"],
+        "accent": "#16a34a",   # verde exito (terminal final)
+        "icon": "bi-check2-circle",
+    },
+]
+
 PICKUP_RELATIONS = [
     ("dueno", "Dueno / titular"),
     ("comprador", "Comprador"),
@@ -2612,7 +2667,15 @@ def register_pickup_routes(app, ctx):
             (today, today),
         ) or {}
         templates = mysql_fetchall(f"SELECT id, code, title, body, channel, active FROM `{TPL}` WHERE active=1 ORDER BY title")
-        return render_template("retiros/internal_dashboard.html", rows=rows, filtros=filtros, statuses=PICKUP_STATUS, stats=stats, day=day, settings=settings(), templates=templates, status_badge=status_badge)
+        return render_template(
+            "retiros/internal_dashboard.html",
+            rows=rows, filtros=filtros, statuses=PICKUP_STATUS, stats=stats,
+            day=day, settings=settings(), templates=templates,
+            status_badge=status_badge,
+            # 2026-05-26 (Daniel) — Pipeline consolidada: 12 estados → 6 columnas
+            # visuales. El template usa pipeline_groups en el kanban del monitor.
+            pipeline_groups=PIPELINE_GROUPS,
+        )
 
     # ══════════════════════════════════════════════════════════════════
     #  BANDEJA "HACER HOY" — tareas prioritarias del equipo
