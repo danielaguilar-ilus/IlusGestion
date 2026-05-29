@@ -11236,6 +11236,336 @@ def erp_engine_peek():
     })
 
 
+# ═════════════════════════════════════════════════════════════════════
+# RESOLVER DE CLIENTE ERP (Daniel 2026-05-27 — Boleta 21577 "CF" bug)
+# ═════════════════════════════════════════════════════════════════════
+# El motor erp_engine ya tiene fallback chain (header → líneas → OBDO),
+# pero algunos casos siguen mostrando "Consumidor Final" cuando hay
+# datos reales. Este helper aplica fallbacks ADICIONALES sobre el dict
+# que ya devolvió ERPClient.fetch_document() y normaliza el resultado.
+# ═════════════════════════════════════════════════════════════════════
+_CF_PLACEHOLDERS = (
+    "consumidor final", "cons final", "sin nombre", "sin razon social",
+    "cliente generico", "cliente generico mostrador", "mostrador",
+)
+
+
+def _is_cf_name(name) -> bool:
+    """True si el nombre es un placeholder de consumidor final."""
+    n = (name or "").strip().lower()
+    if not n:
+        return True
+    return any(p in n for p in _CF_PLACEHOLDERS)
+
+
+def _is_cf_rut(rut) -> bool:
+    """True si el RUT es un placeholder genérico."""
+    r = (rut or "").replace(".", "").replace("-", "").replace(" ", "")
+    return r in {"66666666", "666666666", "55555555", "77777777", "11111111"}
+
+
+def resolve_erp_customer(doc, *, tido=None, nudo=None):
+    """Resolver de cliente con fallback chain auditable.
+
+    Recibe el dict devuelto por _ERP.fetch_document() y aplica fallbacks
+    adicionales si el cliente quedó como Consumidor Final aunque haya
+    datos reales en alguna parte del documento (líneas, OBDO, dispatch).
+
+    Returns dict normalizado con `source`, `confidence`, `warnings` y
+    `fallback_chain` (para diagnóstico interno, NO mostrar al usuario).
+    """
+    if not doc or not isinstance(doc, dict):
+        return {
+            "customer_name": "Documento no encontrado",
+            "customer_rut": "",
+            "customer_email": "",
+            "customer_phone": "",
+            "dispatch_address": "",
+            "dispatch_commune": "",
+            "source": "fallback",
+            "confidence": "low",
+            "warnings": ["Documento no devuelve datos del ERP"],
+            "fallback_chain": [],
+        }
+
+    out = {
+        "customer_name":  (doc.get("cliente_nombre") or "").strip(),
+        "customer_rut":   (doc.get("cliente_rut") or "").strip(),
+        "customer_email": (doc.get("email") or "").strip(),
+        "customer_phone": (doc.get("telefono") or "").strip(),
+        "dispatch_address": (doc.get("direccion") or "").strip(),
+        "dispatch_commune": (doc.get("comuna") or "").strip(),
+        "source": "header",
+        "confidence": "high",
+        "warnings": [],
+        "fallback_chain": ["header"],
+    }
+
+    name_is_cf = _is_cf_name(out["customer_name"])
+    rut_is_cf = _is_cf_rut(out["customer_rut"])
+
+    # CASO IDEAL: nombre y RUT reales → high confidence
+    if not name_is_cf and not rut_is_cf:
+        return out
+
+    # CASO 1: Nombre = CF pero RUT real → motor ya debería haber resuelto
+    # via fetch_entity. Si llegó así, marcar medium confidence.
+    if name_is_cf and not rut_is_cf:
+        out["source"] = "client_table"
+        out["confidence"] = "medium"
+        out["fallback_chain"].append("rut_real_pero_nombre_cf")
+        out["warnings"].append(f"RUT {out['customer_rut']} no resolvió nombre desde MAEEN")
+
+    # CASO 2: Buscar en LÍNEAS si hay datos de entidad (NOKOEN/RTENDESP)
+    if name_is_cf or rut_is_cf:
+        lineas = doc.get("lineas_raw") or doc.get("lineas") or []
+        for ln in lineas:
+            if not isinstance(ln, dict):
+                continue
+            # Nombre desde línea
+            for k in ("NOKOEN", "nokoen", "NOKOENDESP", "nokoendesp",
+                      "NRAZON", "nrazon", "NRAZONFINAL", "nrazonfinal"):
+                v = (ln.get(k) or "").strip()
+                if v and not _is_cf_name(v):
+                    out["customer_name"] = v
+                    out["source"] = "lineas_obdo"
+                    out["confidence"] = "medium"
+                    out["fallback_chain"].append(f"linea.{k}")
+                    name_is_cf = False
+                    break
+            # RUT desde línea
+            if rut_is_cf:
+                for k in ("RTENDESP", "rtendesp", "RUTENCLIESP", "rutencliesp",
+                          "RTEN", "rten"):
+                    v = (ln.get(k) or "").strip()
+                    if v and not _is_cf_rut(v):
+                        out["customer_rut"] = v
+                        out["fallback_chain"].append(f"linea.{k}_rut")
+                        rut_is_cf = False
+                        break
+            if not name_is_cf and not rut_is_cf:
+                break
+
+    # CASO 3: Si aún falta email/teléfono/dirección y hay OBSERVACIONES,
+    # intentar extraer del texto libre. El motor YA hace esto, pero
+    # reforzamos por si quedó vacío.
+    obs_text = (doc.get("observaciones") or "").strip()
+    if obs_text and (not out["customer_email"] or not out["customer_phone"] or not out["dispatch_address"]):
+        try:
+            # Reusar el método del ERPClient si está disponible
+            from erp_engine import ERPClient as _EC
+            parsed = _EC._parse_obdo_contact(obs_text) if hasattr(_EC, "_parse_obdo_contact") else {}
+        except Exception:
+            parsed = {}
+        if not out["customer_email"] and parsed.get("email"):
+            out["customer_email"] = parsed["email"]
+            out["fallback_chain"].append("obdo.email")
+        if not out["customer_phone"] and parsed.get("telefono"):
+            out["customer_phone"] = parsed["telefono"]
+            out["fallback_chain"].append("obdo.telefono")
+        if not out["dispatch_address"] and parsed.get("direccion"):
+            out["dispatch_address"] = parsed["direccion"]
+            out["fallback_chain"].append("obdo.direccion")
+        # Si el nombre aún es CF pero las observaciones traen un nombre
+        # comercial, lo extraemos como último recurso (heurística simple).
+        if name_is_cf:
+            # Buscar antes del primer separador `-` o `|` algo que parezca nombre
+            partes = [p.strip() for p in obs_text.replace("|", "-").split("-")]
+            for p in partes:
+                if (len(p) >= 6 and len(p) <= 80 and
+                        not _is_cf_name(p) and
+                        not any(c in p for c in "@") and  # no es email
+                        not p.startswith(("+", "9", "2"))):  # no es tel
+                    out["customer_name"] = p
+                    out["source"] = "obdo_inferido"
+                    out["confidence"] = "low"
+                    out["fallback_chain"].append("obdo.nombre_inferido")
+                    out["warnings"].append("Nombre inferido del texto libre OBDO — verificar")
+                    name_is_cf = False
+                    break
+
+    # CASO 4: Después de todo, si sigue siendo CF, dejar marcado pero
+    # SIN texto técnico para el usuario.
+    if name_is_cf:
+        if out["customer_name"] in ("", None):
+            out["customer_name"] = "Cliente sin razón social registrada"
+        out["source"] = "fallback"
+        out["confidence"] = "low"
+        out["fallback_chain"].append("agotado")
+
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Endpoint diagnóstico ERP (SUPERADMIN) — Daniel 2026-05-27
+# Muestra: fuente del dato, fallback chain, confidence, warnings.
+# URL ejemplo: /api/erp/diagnostico/BLV/21577
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/api/erp/diagnostico/<tido>/<nudo>")
+@login_required
+def erp_diagnostico(tido, nudo):
+    """Diagnóstico ERP completo para superadmin. Devuelve raw del motor +
+    resuelto + chain de fallbacks. Útil para depurar 'Consumidor Final'."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    tido = (tido or "").strip().upper()
+    nudo = (nudo or "").strip()
+    if not nudo:
+        return jsonify({"ok": False, "error": "Falta número documento"}), 400
+
+    import time as _t
+    _t0 = _t.time()
+    try:
+        _ERP.invalidate_doc(tido, nudo)  # forzar refetch
+        doc = _ERP.fetch_document(tido, nudo)
+        elapsed_motor = int((_t.time() - _t0) * 1000)
+    except Exception as e:
+        return jsonify({
+            "ok": False, "error": "ERP no respondió",
+            "detalle_debug": str(e)[:200], "tido": tido, "nudo": nudo
+        }), 502
+
+    if not doc:
+        return jsonify({"ok": False, "error": "Documento no encontrado en ERP",
+                        "tido": tido, "nudo": nudo}), 404
+
+    # Aplicar resolver
+    _t1 = _t.time()
+    resuelto = resolve_erp_customer(doc, tido=tido, nudo=nudo)
+    elapsed_resolver = int((_t.time() - _t1) * 1000)
+
+    return jsonify({
+        "ok": True,
+        "documento": {"tido": tido, "nudo": nudo},
+        "motor_raw": {
+            "cliente_nombre":  doc.get("cliente_nombre"),
+            "cliente_rut":     doc.get("cliente_rut"),
+            "email":           doc.get("email"),
+            "telefono":        doc.get("telefono"),
+            "direccion":       doc.get("direccion"),
+            "comuna":          doc.get("comuna"),
+            "observaciones":   (doc.get("observaciones") or "")[:300],
+            "n_lineas":        doc.get("n_lineas"),
+        },
+        "resuelto": resuelto,
+        "timings_ms": {
+            "motor":    elapsed_motor,
+            "resolver": elapsed_resolver,
+            "total":    elapsed_motor + elapsed_resolver,
+        },
+        "diagnostics_motor": doc.get("diagnostics", {}),
+    })
+
+
+# ═════════════════════════════════════════════════════════════════════
+# MOTOR UNIFICADO fetch_erp_document (Daniel 2026-05-27)
+# Una sola función para cubicador / asignar / transporte / retiros /
+# mantenciones. Devuelve un objeto NORMALIZADO con cliente resuelto.
+# ═════════════════════════════════════════════════════════════════════
+def fetch_erp_document(document_type, document_number):
+    """Motor unificado que orquesta:
+      1. ERPClient.fetch_document() (motor existente con REST + SQL fallback)
+      2. resolve_erp_customer() (resolver con fallback chain)
+      3. Devuelve formato normalizado para todos los módulos.
+
+    Returns:
+      {
+        "ok": bool,
+        "document": {
+          "type": "BLV", "number": "21577",
+          "date": "2026-05-27", "status": "...",
+          "customer": {...},      # del resolver
+          "totals": {...},        # neto/iva/bruto
+          "items": [...],         # SKU + cantidad + descripción
+          "packages": [...],      # bultos (si aplica)
+          "source": {
+            "engine": "random_sql",
+            "fallback_used": bool,
+            "customer_source": "header|client_table|obdo|fallback",
+            "customer_confidence": "high|medium|low",
+            "elapsed_ms": int
+          },
+          "warnings": [str]       # solo se muestran a superadmin
+        },
+        "error": str (si !ok)
+      }
+    """
+    import time as _t
+    _t0 = _t.time()
+
+    tido = (document_type or "").strip().upper()
+    nudo = (document_number or "").strip()
+    if not tido or not nudo:
+        return {"ok": False, "error": "Faltan tipo o número de documento"}
+
+    try:
+        doc = _ERP.fetch_document(tido, nudo)
+    except Exception as e:
+        print(f"[fetch_erp_document] tido={tido} nudo={nudo} error: {e}", flush=True)
+        return {"ok": False, "error": "El sistema ERP no respondió. Intenta nuevamente.",
+                "document": {"type": tido, "number": nudo}}
+
+    if not doc:
+        return {"ok": False, "error": f"Documento {tido}-{nudo} no encontrado en el ERP",
+                "document": {"type": tido, "number": nudo}}
+
+    # Resolver cliente con fallbacks
+    resuelto = resolve_erp_customer(doc, tido=tido, nudo=nudo)
+
+    # Normalizar items
+    items_raw = doc.get("lineas") or doc.get("lineas_raw") or []
+    items = []
+    for ln in items_raw:
+        if not isinstance(ln, dict):
+            continue
+        items.append({
+            "sku":         (ln.get("sku") or ln.get("KOPRCT") or ln.get("koprct") or "").strip().upper(),
+            "description": ln.get("descripcion") or ln.get("NOKOPR") or ln.get("nokopr") or "",
+            "qty":         float(ln.get("cantidad") or ln.get("CAPRCO1") or ln.get("caprco1") or 0),
+            "qty_ya_asignada": float(ln.get("CAPRAD1") or ln.get("caprad1") or 0),
+            "qty_pendiente":   float(ln.get("CAPREX1") or ln.get("caprex1") or 0),
+            "unit_price":  float(ln.get("VANELI") or ln.get("vaneli") or 0),
+        })
+
+    elapsed = int((_t.time() - _t0) * 1000)
+
+    return {
+        "ok": True,
+        "document": {
+            "type":   tido,
+            "number": nudo,
+            "date":   doc.get("fecha_emision") or "",
+            "status": doc.get("estado") or "",
+            "customer": {
+                "name":             resuelto["customer_name"],
+                "rut":              resuelto["customer_rut"],
+                "email":            resuelto["customer_email"],
+                "phone":            resuelto["customer_phone"],
+                "dispatch_address": resuelto["dispatch_address"],
+                "dispatch_commune": resuelto["dispatch_commune"],
+            },
+            "totals": {
+                "net":   float(doc.get("valor_neto") or 0),
+                "tax":   float(doc.get("valor_iva") or 0),
+                "gross": float(doc.get("valor_bruto") or 0),
+            },
+            "items":    items,
+            "packages": doc.get("bultos") or [],
+            "source": {
+                "engine":              "random_sql",
+                "fallback_used":       bool(resuelto["source"] not in ("header", "client_table")),
+                "customer_source":     resuelto["source"],
+                "customer_confidence": resuelto["confidence"],
+                "fallback_chain":      resuelto["fallback_chain"],
+                "elapsed_ms":          elapsed,
+            },
+            "warnings": resuelto["warnings"],
+        },
+    }
+
+
+
 @app.route("/api/erp/sql-test", methods=["GET"])
 @login_required
 def erp_sql_test():
