@@ -11346,13 +11346,50 @@ def resolve_erp_customer(doc, *, tido=None, nudo=None):
             if not name_is_cf and not rut_is_cf:
                 break
 
-    # CASO 3: Si aún falta email/teléfono/dirección y hay OBSERVACIONES,
-    # intentar extraer del texto libre. El motor YA hace esto, pero
-    # reforzamos por si quedó vacío.
+    # CASO 3 (CLAVE 2026-05-27): Si tenemos RUT real pero nombre CF,
+    # CONSULTAR MAEEN.NOKOEN por RTEN — la fuente correcta del nombre.
+    # Esto es lo que hace el motor REST y lo que el SQL directo del
+    # cubicador NO hacía. Resuelve "Cristian Rossi Medina" desde el RUT.
+    if name_is_cf and out["customer_rut"]:
+        try:
+            rut_limpio = (out["customer_rut"]
+                          .replace(".", "").replace("-", "").replace(" ", "").upper())
+            # MAEEN.RTEN puede venir con o sin DV. Probamos el numérico
+            # (sin DV) que es como Random guarda RTEN típicamente.
+            rut_num = rut_limpio[:-1] if (len(rut_limpio) > 1 and rut_limpio[-1] in "0123456789K") else rut_limpio
+            ent = _random_sql_one(
+                "SELECT TOP 1 LTRIM(RTRIM(NOKOEN)) AS nombre, "
+                "       LTRIM(RTRIM(GIEN)) AS giro, LTRIM(RTRIM(CMEN)) AS comuna, "
+                "       LTRIM(RTRIM(DIEN)) AS direccion, LTRIM(RTRIM(FOEN)) AS fono, "
+                "       LTRIM(RTRIM(EMAIL)) AS email "
+                "  FROM MAEEN "
+                " WHERE LTRIM(RTRIM(RTEN)) = %s OR LTRIM(RTRIM(RTEN)) = %s",
+                (rut_num, rut_limpio)
+            )
+            if ent and ent.get("nombre") and not _is_cf_name(ent["nombre"]):
+                out["customer_name"] = ent["nombre"]
+                out["source"] = "maeen_por_rut"
+                out["confidence"] = "high"
+                out["fallback_chain"].append("MAEEN.NOKOEN por RTEN")
+                name_is_cf = False
+                # Completar otros campos si faltan
+                if not out["customer_email"] and ent.get("email"):
+                    out["customer_email"] = ent["email"]
+                if not out["customer_phone"] and ent.get("fono"):
+                    out["customer_phone"] = ent["fono"]
+                if not out["dispatch_address"] and ent.get("direccion"):
+                    out["dispatch_address"] = ent["direccion"]
+                if not out["dispatch_commune"] and ent.get("comuna"):
+                    out["dispatch_commune"] = ent["comuna"]
+        except Exception as _e_maeen:
+            print(f"[resolve_erp_customer] MAEEN lookup falló: {_e_maeen}", flush=True)
+
+    # CASO 4: Completar email/teléfono/dirección del OBDO si faltan.
+    # IMPORTANTE: ya NO inferimos NOMBRE del OBDO (causaba tomar la
+    # dirección como nombre — bug confirmado en BLV 21577).
     obs_text = (doc.get("observaciones") or "").strip()
     if obs_text and (not out["customer_email"] or not out["customer_phone"] or not out["dispatch_address"]):
         try:
-            # Reusar el método del ERPClient si está disponible
             from erp_engine import ERPClient as _EC
             parsed = _EC._parse_obdo_contact(obs_text) if hasattr(_EC, "_parse_obdo_contact") else {}
         except Exception:
@@ -11366,29 +11403,11 @@ def resolve_erp_customer(doc, *, tido=None, nudo=None):
         if not out["dispatch_address"] and parsed.get("direccion"):
             out["dispatch_address"] = parsed["direccion"]
             out["fallback_chain"].append("obdo.direccion")
-        # Si el nombre aún es CF pero las observaciones traen un nombre
-        # comercial, lo extraemos como último recurso (heurística simple).
-        if name_is_cf:
-            # Buscar antes del primer separador `-` o `|` algo que parezca nombre
-            partes = [p.strip() for p in obs_text.replace("|", "-").split("-")]
-            for p in partes:
-                if (len(p) >= 6 and len(p) <= 80 and
-                        not _is_cf_name(p) and
-                        not any(c in p for c in "@") and  # no es email
-                        not p.startswith(("+", "9", "2"))):  # no es tel
-                    out["customer_name"] = p
-                    out["source"] = "obdo_inferido"
-                    out["confidence"] = "low"
-                    out["fallback_chain"].append("obdo.nombre_inferido")
-                    out["warnings"].append("Nombre inferido del texto libre OBDO — verificar")
-                    name_is_cf = False
-                    break
 
-    # CASO 4: Después de todo, si sigue siendo CF, dejar marcado pero
-    # SIN texto técnico para el usuario.
+    # CASO 5: Si después de TODO sigue siendo CF, dejar texto limpio.
     if name_is_cf:
-        if out["customer_name"] in ("", None):
-            out["customer_name"] = "Cliente sin razón social registrada"
+        if out["customer_name"] in ("", None) or _is_cf_name(out["customer_name"]):
+            out["customer_name"] = "Consumidor Final"  # legítimamente CF
         out["source"] = "fallback"
         out["confidence"] = "low"
         out["fallback_chain"].append("agotado")
