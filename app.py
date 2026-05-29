@@ -15122,10 +15122,36 @@ def api_asignar_documento():
             _com = _parsed["comuna"] or _detect_comuna(hdr.get("direccion") or "")
             if _com:
                 hdr["comuna"] = _com
-        if not (hdr.get("cliente_nombre") or "").strip():
-            hdr["cliente_nombre"] = "Consumidor final"
     except Exception as _e_enrich:
         print(f"[asignar_documento] enriquecer OBDO falló: {_e_enrich}", flush=True)
+
+    # ── RESOLVER DE CLIENTE 2026-05-27 (Daniel — fix CF en /asignar) ──
+    # MISMO resolver que usa el cubicador: si el nombre es CF pero hay RUT
+    # real, consulta MAEEN.NOKOEN por RTEN. Resuelve 'Cristian Rossi Medina'
+    # en BLV 21577 en vez de 'Consumidor final'.
+    try:
+        _hdr_res = dict(hdr)
+        _hdr_res["lineas_raw"] = lineas or []
+        _res = resolve_erp_customer(_hdr_res, tido=tido, nudo=nudo)
+        if _res and not _is_cf_name(_res.get("customer_name")):
+            hdr["cliente_nombre"] = _res["customer_name"]
+            if _res.get("customer_rut"):     hdr["cliente_rut"] = _res["customer_rut"]
+            if _res.get("customer_email"):   hdr["email"] = hdr.get("email") or _res["customer_email"]
+            if _res.get("customer_phone"):   hdr["telefono"] = hdr.get("telefono") or _res["customer_phone"]
+            if _res.get("dispatch_address"): hdr["direccion"] = hdr.get("direccion") or _res["dispatch_address"]
+            if _res.get("dispatch_commune"): hdr["comuna"] = hdr.get("comuna") or _res["dispatch_commune"]
+        hdr["_resolver_diag"] = {
+            "source": _res.get("source") if _res else "none",
+            "confidence": _res.get("confidence") if _res else "low",
+            "chain": _res.get("fallback_chain") if _res else [],
+        }
+        # Solo ahora, si SIGUE vacío, ponemos placeholder limpio
+        if not (hdr.get("cliente_nombre") or "").strip():
+            hdr["cliente_nombre"] = "Consumidor Final"
+    except Exception as _e_res2:
+        print(f"[asignar_documento] resolver falló: {_e_res2}", flush=True)
+        if not (hdr.get("cliente_nombre") or "").strip():
+            hdr["cliente_nombre"] = "Consumidor Final"
 
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
 
