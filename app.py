@@ -13891,6 +13891,32 @@ def _cubicador_fetch(tido, nudo):
     # _ERP_DOC_CACHE (legacy) se mantiene como dict vacío para compat con
     # cualquier código que pudiera consultarlo, pero no se usa aquí.
 
+    # ══ RESOLVER DE CLIENTE CENTRALIZADO 2026-05-27 (Daniel) ══════════
+    # ESTE es el punto único: _cubicador_fetch() lo usan los 8 endpoints
+    # (cubicador, asignar, retiros, mantenciones, multi-doc, etc). Al
+    # resolver el cliente AQUÍ, TODOS los módulos reciben el nombre real
+    # automáticamente. Un solo arreglo = todos los módulos cubiertos.
+    # Si el nombre es "Consumidor Final" pero hay RUT real, consulta
+    # MAEEN.NOKOEN por RUT. Idempotente y con try/except defensivo.
+    try:
+        _hc = dict(header)
+        _hc["lineas_raw"] = lineas or []
+        _rc = resolve_erp_customer(_hc, tido=tido, nudo=nudo)
+        if _rc and not _is_cf_name(_rc.get("customer_name")):
+            header["cliente_nombre"] = _rc["customer_name"]
+            if _rc.get("customer_rut"):     header["cliente_rut"] = _rc["customer_rut"]
+            if _rc.get("customer_email"):   header["email"]    = header.get("email") or _rc["customer_email"]
+            if _rc.get("customer_phone"):   header["telefono"] = header.get("telefono") or _rc["customer_phone"]
+            if _rc.get("dispatch_address"): header["direccion"] = header.get("direccion") or _rc["dispatch_address"]
+            if _rc.get("dispatch_commune"): header["comuna"]   = header.get("comuna") or _rc["dispatch_commune"]
+        header["_resolver_diag"] = {
+            "source":     _rc.get("source") if _rc else "none",
+            "confidence": _rc.get("confidence") if _rc else "low",
+            "chain":      _rc.get("fallback_chain") if _rc else [],
+        }
+    except Exception as _e_rc:
+        print(f"[_cubicador_fetch] resolver central falló (no crítico): {_e_rc}", flush=True)
+
     return header, lineas
 
 
