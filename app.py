@@ -5385,9 +5385,14 @@ def _get_resend_cfg() -> dict:
     # 1. Env var (Railway / Docker / local .env)
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
     if api_key:
+        # 2026-05-27 (Daniel): aceptar AMBOS nombres de variable.
+        # Algunos despliegues usan RESEND_FROM_EMAIL en vez de RESEND_FROM_ADDR.
+        _from = (os.environ.get("RESEND_FROM_ADDR", "").strip()
+                 or os.environ.get("RESEND_FROM_EMAIL", "").strip()
+                 or "onboarding@resend.dev")
         return {
             "api_key":   api_key,
-            "from_addr": os.environ.get("RESEND_FROM_ADDR", "onboarding@resend.dev").strip(),
+            "from_addr": _from,
             "_source":   "env",
         }
     # 2. BD
@@ -23652,13 +23657,39 @@ def comm_email_enviar():
             status_final = "failed"
             err_msg = ""
             try:
-                _send_email_dinamico(snap_to, snap_subject, snap_html)
-                status_final = "sent"
+                # FIX 2026-05-27 (Daniel): el envío manual ahora usa el MOTOR
+                # UNIFICADO _send_ilus_email_real (SMTP + fallback Resend según
+                # ILUS_EMAIL_PROVIDER). Antes usaba _send_email_dinamico que
+                # era SOLO SMTP — si Railway bloqueaba Gmail, el correo nunca
+                # salía aunque Resend estuviera configurado.
+                ok = _send_ilus_email_real(snap_to, snap_subject, snap_html)
+                if ok:
+                    status_final = "sent"
+                else:
+                    # Falló SIN excepción → capturar causa REAL de g (nunca vacío).
+                    # _send_ilus_email_real deja: g._last_email_error (str SMTP)
+                    # y g._last_resend_error (dict con 'message'/'http_code').
+                    status_final = "failed"
+                    _causa = []
+                    try:
+                        _se = getattr(g, "_last_email_error", "") or ""
+                        if _se:
+                            _causa.append(f"SMTP: {str(_se)[:300]}")
+                        _re = getattr(g, "_last_resend_error", None)
+                        if isinstance(_re, dict) and _re:
+                            _rmsg = _re.get("message") or _re.get("raw_body") or str(_re)
+                            _rcode = _re.get("http_code")
+                            _causa.append(f"Resend{f' {_rcode}' if _rcode else ''}: {str(_rmsg)[:300]}")
+                        elif _re:
+                            _causa.append(f"Resend: {str(_re)[:300]}")
+                    except Exception:
+                        pass
+                    err_msg = (" | ".join(_causa)
+                               or "Envio rechazado por SMTP y Resend. Revisa "
+                                  "/api/comm/diagnostico-completo para ver que "
+                                  "proveedor/variable corregir.")[:1900]
             except Exception as _exc:
-                err_msg = str(_exc)[:1900]
-                # _send_email_dinamico no expone fallback Resend. Para
-                # tests reales que requieran fallback, usar el endpoint
-                # /api/comm/diagnostico (que sí va por _send_ilus_email).
+                err_msg = (str(_exc) or "Error desconocido en el envio")[:1900]
 
             elapsed_ms = int((_t.time() - t0) * 1000)
             # Persistir resultado
