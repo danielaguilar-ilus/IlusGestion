@@ -128,13 +128,34 @@ def fase4(lines):
     return total
 
 
+def fase5(lines):
+    """5 endpoints muertos verificados (0 consumidores en templates/static)."""
+    total = 0
+    # comm: diagnostico-completo + test-rapido (contiguos), incl. comment header '# ════'
+    hdr = find(lines, "DIAGNÓSTICO COMPLETO DE COMUNICACIONES")
+    start = hdr - 1 if "═" in lines[hdr - 1] else hdr
+    end = find(lines, '@app.route("/api/erp/health"', hdr)
+    n = end - start
+    del lines[start:end]
+    total += n
+    print(f"[OK] comm diagnostico-completo + test-rapido: borradas {n} lineas")
+    # mantenciones: erp-rut, ultimo-cliente, buscar-erp
+    total += cut_range(lines, '@app.route("/mantenciones/api/erp-rut"',
+                       '@app.route("/mantenciones/api/agente-contrato"', "erp-rut")
+    total += cut_range(lines, '@app.route("/mantenciones/api/ultimo-cliente"',
+                       '@app.route("/mantenciones/clientes/<int:cid>")', "ultimo-cliente")
+    total += cut_range(lines, '@app.route("/mantenciones/api/buscar-erp"',
+                       '@app.route("/mantenciones/api/clientes/<int:cid>/documentos-erp")', "buscar-erp")
+    return total
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("2", "3", "4"):
-        raise SystemExit("Uso: python tools/archive/_cut_modules.py [2|3|4]")
+    if len(sys.argv) < 2 or sys.argv[1] not in ("2", "3", "4", "5"):
+        raise SystemExit("Uso: python tools/archive/_cut_modules.py [2|3|4|5]")
     fase = sys.argv[1]
     lines = load()
     before = len(lines)
-    total = {"2": fase2, "3": fase3, "4": fase4}[fase](lines)
+    total = {"2": fase2, "3": fase3, "4": fase4, "5": fase5}[fase](lines)
     save(lines)
     print(f"\nFASE {fase}: -{total} lineas | app.py {before} -> {len(lines)}")
 
