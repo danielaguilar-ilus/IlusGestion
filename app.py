@@ -11352,19 +11352,26 @@ def resolve_erp_customer(doc, *, tido=None, nudo=None):
     # cubicador NO hacía. Resuelve "Cristian Rossi Medina" desde el RUT.
     if name_is_cf and out["customer_rut"]:
         try:
-            rut_limpio = (out["customer_rut"]
-                          .replace(".", "").replace("-", "").replace(" ", "").upper())
-            # MAEEN.RTEN puede venir con o sin DV. Probamos el numérico
-            # (sin DV) que es como Random guarda RTEN típicamente.
-            rut_num = rut_limpio[:-1] if (len(rut_limpio) > 1 and rut_limpio[-1] in "0123456789K") else rut_limpio
+            # CUERPO del RUT = parte antes del guión (o todos los dígitos
+            # si no hay guión). NO asumir que el último char es DV — el RUT
+            # que llega del SQL directo ya viene como cuerpo "16606838".
+            _raw_rut = (out["customer_rut"] or "").replace(".", "").replace(" ", "").upper()
+            cuerpo = _raw_rut.split("-")[0] if "-" in _raw_rut else _raw_rut
+            # Quitar cualquier DV pegado al final (letra K o último dígito
+            # solo si el cuerpo tiene 9 chars = 8 cuerpo + 1 DV pegado).
+            if cuerpo.endswith("K"):
+                cuerpo = cuerpo[:-1]
+            # MAEEN.RTEN puede ser "16606838", "16606838-K", "16606838K".
+            # Usamos LIKE sobre el cuerpo para capturar todas las variantes.
             ent = _random_sql_one(
                 "SELECT TOP 1 LTRIM(RTRIM(NOKOEN)) AS nombre, "
                 "       LTRIM(RTRIM(GIEN)) AS giro, LTRIM(RTRIM(CMEN)) AS comuna, "
                 "       LTRIM(RTRIM(DIEN)) AS direccion, LTRIM(RTRIM(FOEN)) AS fono, "
                 "       LTRIM(RTRIM(EMAIL)) AS email "
                 "  FROM MAEEN "
-                " WHERE LTRIM(RTRIM(RTEN)) = %s OR LTRIM(RTRIM(RTEN)) = %s",
-                (rut_num, rut_limpio)
+                " WHERE LTRIM(RTRIM(RTEN)) LIKE %s "
+                "    OR LTRIM(RTRIM(RTEN)) = %s",
+                (cuerpo + "%", cuerpo)
             )
             if ent and ent.get("nombre") and not _is_cf_name(ent["nombre"]):
                 out["customer_name"] = ent["nombre"]
