@@ -10080,7 +10080,10 @@ def colab_eliminar(cid):
 
 
 # ══════════════════════════════════════════════════════════════
-#  MÓDULO: PREGUNTAS GENÉRICAS (solo superadmin)
+#  DECORADOR COMPARTIDO: solo superadmin
+#  (usado por ~16 rutas admin; el módulo Preguntas Genéricas que
+#   vivía aquí se eliminó el 2026-05-28 — tabla eval_preguntas_genericas
+#   preservada en BD)
 # ══════════════════════════════════════════════════════════════
 
 def _require_superadmin(view):
@@ -10096,105 +10099,6 @@ def _require_superadmin(view):
     return wrapped
 
 
-@app.route("/admin/preguntas-genericas/")
-@_require_superadmin
-def preg_gen_index():
-    rows = mysql_fetchall(f"""
-        SELECT * FROM `{PREG_GEN_TABLE}`
-        ORDER BY seccion, id ASC
-    """)
-    for r in rows:
-        _parse_opciones(r)
-    por_seccion = {s: [] for s in SECCIONES}
-    for r in rows:
-        sec = r.get("seccion", "tecnica")
-        if sec in por_seccion:
-            por_seccion[sec].append(r)
-    return render_template("admin/preguntas_genericas.html",
-                           por_seccion=por_seccion,
-                           secciones=SECCIONES, tipos=TIPOS_RESPUESTA)
-
-
-@app.route("/admin/preguntas-genericas/guardar", methods=["POST"])
-@_require_superadmin
-def preg_gen_guardar():
-    pid_raw        = request.form.get("preg_id", "").strip()
-    seccion        = request.form.get("seccion", "tecnica")
-    texto          = request.form.get("texto", "").strip()
-    tipo_respuesta = request.form.get("tipo_respuesta", "escala_1_5")
-    es_obligatoria = 1 if request.form.get("es_obligatoria") else 0
-    activa         = 1 if request.form.get("activa", "1") else 0
-    opciones_raw   = request.form.get("opciones", "").strip()
-
-    if not texto:
-        return jsonify({"ok": False, "error": "El texto es requerido"}), 400
-    if seccion not in SECCIONES:
-        return jsonify({"ok": False, "error": "Sección inválida"}), 400
-
-    opciones_json = None
-    if tipo_respuesta == "multiple" and opciones_raw:
-        items = [o.strip() for o in opciones_raw.split("\n") if o.strip()]
-        opciones_json = json.dumps(items, ensure_ascii=False)
-
-    conn = get_db()
-    if pid_raw:
-        # Editar
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                UPDATE `{PREG_GEN_TABLE}`
-                SET seccion=%s, texto=%s, tipo_respuesta=%s,
-                    opciones=%s, es_obligatoria=%s, activa=%s, updated_by=%s
-                WHERE id=%s
-            """, (seccion, texto, tipo_respuesta, opciones_json,
-                  es_obligatoria, activa, current_username(), int(pid_raw)))
-        conn.commit()
-        p = mysql_fetchone(f"SELECT * FROM `{PREG_GEN_TABLE}` WHERE id=%s", (int(pid_raw),))
-    else:
-        # Crear
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                INSERT INTO `{PREG_GEN_TABLE}`
-                    (seccion, texto, tipo_respuesta, opciones, es_obligatoria, activa, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-            """, (seccion, texto, tipo_respuesta, opciones_json,
-                  es_obligatoria, activa, current_username()))
-            pid_new = cur.lastrowid
-        conn.commit()
-        p = mysql_fetchone(f"SELECT * FROM `{PREG_GEN_TABLE}` WHERE id=%s", (pid_new,))
-
-    _parse_opciones(p)
-    return jsonify({"ok": True, "pregunta": dict(p)})
-
-
-@app.route("/admin/preguntas-genericas/<int:pid>/toggle", methods=["POST"])
-@_require_superadmin
-def preg_gen_toggle(pid):
-    """Activa / desactiva una pregunta genérica."""
-    p = mysql_fetchone(f"SELECT id, activa FROM `{PREG_GEN_TABLE}` WHERE id=%s", (pid,))
-    if not p:
-        return jsonify({"ok": False, "error": "No encontrada"}), 404
-    nuevo = 0 if p["activa"] else 1
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"UPDATE `{PREG_GEN_TABLE}` SET activa=%s, updated_by=%s WHERE id=%s",
-                    (nuevo, current_username(), pid))
-    conn.commit()
-    return jsonify({"ok": True, "activa": nuevo})
-
-
-@app.route("/admin/preguntas-genericas/<int:pid>/eliminar", methods=["POST"])
-@_require_superadmin
-def preg_gen_eliminar(pid):
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"DELETE FROM `{PREG_GEN_TABLE}` WHERE id=%s", (pid,))
-    conn.commit()
-    return jsonify({"ok": True})
-
-
-
-
-# ══════════════════════════════════════════════════════════════
 #  MÓDULO: GESTIÓN DE EVALUACIONES
 # ══════════════════════════════════════════════════════════════
 
