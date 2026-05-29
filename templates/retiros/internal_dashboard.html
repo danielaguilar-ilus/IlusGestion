@@ -305,7 +305,7 @@ async function abrirDescargaInformeDash(){
     <div class="col-md-3 d-flex gap-2"><button class="btn btn-sm btn-ilus">Filtrar</button><a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a></div>
   </div>
   <div class="btn-group btn-group-sm mt-3">
-    {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Pipeline','kanban'),('agenda','Agenda diaria','calendar-day'),('lista','Lista','list-ul')] %}
+    {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Kanban','kanban'),('agenda','Agenda diaria','calendar-day'),('lista','Lista','list-ul')] %}
     <a class="btn {% if filtros.view==view %}btn-dark{% else %}btn-outline-dark{% endif %}" href="{{ url_for('pickup_dashboard', view=view, q=filtros.q, status=filtros.status, date=filtros.date) }}"><i class="bi bi-{{ icon }} me-1"></i>{{ label }}</a>
     {% endfor %}
   </div>
