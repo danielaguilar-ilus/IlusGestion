@@ -13039,6 +13039,34 @@ def erp_documento_unificado():
     if not hdr:
         return jsonify({"error":"Documento no encontrado en ERP", "tido":tido, "nudo":nudo}), 404
 
+    # ── RESOLVER DE CLIENTE 2026-05-27 (Daniel — fix Consumidor Final) ──
+    # El cubicador a veces cae al SQL directo (cuando REST > timeout) que
+    # NO resuelve el nombre del cliente desde MAEEN. Aplicamos el resolver
+    # central SIEMPRE, sin importar la fuente (REST o SQL). El resolver
+    # busca en header → líneas → OBDO → fallback. Garantiza que NUNCA
+    # aparezca "Consumidor Final" si hay datos reales en cualquier parte.
+    try:
+        _hdr_para_resolver = dict(hdr)
+        # El resolver busca en lineas_raw; le pasamos las líneas crudas.
+        _hdr_para_resolver["lineas_raw"] = lineas or []
+        _resuelto = resolve_erp_customer(_hdr_para_resolver, tido=tido, nudo=nudo)
+        # Solo sobrescribimos si el resolver encontró algo mejor que CF
+        if _resuelto and not _is_cf_name(_resuelto.get("customer_name")):
+            hdr["cliente_nombre"] = _resuelto["customer_name"]
+            if _resuelto.get("customer_rut"):    hdr["cliente_rut"] = _resuelto["customer_rut"]
+            if _resuelto.get("customer_email"):  hdr["email"] = _resuelto["customer_email"]
+            if _resuelto.get("customer_phone"):  hdr["telefono"] = _resuelto["customer_phone"]
+            if _resuelto.get("dispatch_address"): hdr["direccion"] = hdr.get("direccion") or _resuelto["dispatch_address"]
+            if _resuelto.get("dispatch_commune"): hdr["comuna"] = hdr.get("comuna") or _resuelto["dispatch_commune"]
+        # Guardamos el diagnóstico del resolver para el panel superadmin
+        hdr["_resolver_diag"] = {
+            "source":     _resuelto.get("source") if _resuelto else "none",
+            "confidence": _resuelto.get("confidence") if _resuelto else "low",
+            "chain":      _resuelto.get("fallback_chain") if _resuelto else [],
+        }
+    except Exception as _e_res:
+        print(f"[cub-fetch] resolver falló (no crítico): {_e_res}", flush=True)
+
     # Como _cubicador_fetch YA hace todo el trabajo pesado (extracción
     # desde header + líneas + /entidades + resolución de comuna), aquí
     # solo pasamos esos campos al response. Mantiene compatibilidad
@@ -13059,6 +13087,8 @@ def erp_documento_unificado():
         "valor_neto":     hdr.get("valor_neto", 0),
         "valor_bruto":    hdr.get("valor_bruto", 0),
         "valor_iva":      hdr.get("valor_iva", 0),
+        # Diagnóstico del resolver (panel superadmin)
+        "_resolver_diag": hdr.get("_resolver_diag", {}),
         # Aliases para compatibilidad con código antiguo
         "razon_social":   hdr.get("cliente_nombre", ""),
         "rut":            hdr.get("cliente_rut", ""),
