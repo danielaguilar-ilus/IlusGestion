@@ -1949,6 +1949,7 @@ def init_transporte_tables():
                 ('%felca%',   'simplyroute'),
                 ('%milling%', 'simplyroute'),
                 ('%melling%', 'simplyroute'),  # alias legacy
+                ('%clickex%', 'clickex'),
             ]:
                 try:
                     cur.execute(
@@ -17972,7 +17973,22 @@ def tr_manifiesto_export(mid):
         "SELECT formato_export FROM transport_couriers WHERE LOWER(nombre)=LOWER(%s) LIMIT 1",
         (man.get("courier") or "",)
     )
-    formato = ((fmt_row or {}).get("formato_export") or "generic").strip().lower()
+    formato = ((fmt_row or {}).get("formato_export") or "").strip().lower()
+
+    # Auto-detección por nombre del courier (robusto: no depende del seed
+    # de init_transporte_tables, que en prod está skipeado). Daniel pidió que
+    # el export SIEMPRE produzca el formato correcto para cargar al sistema
+    # externo (SimplyRoute / FedEx Bulk / Clickex).
+    if not formato or formato == "generic":
+        _cname = (man.get("courier") or "").strip().lower()
+        if "fedex" in _cname:
+            formato = "fedex"
+        elif "clickex" in _cname:
+            formato = "clickex"
+        elif "felca" in _cname or "milling" in _cname or "melling" in _cname:
+            formato = "simplyroute"
+        else:
+            formato = "generic"
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -18056,6 +18072,38 @@ def tr_manifiesto_export(mid):
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 21).fill = MISS_FILL
 
+    elif formato == "clickex":
+        ws.title = "Clickex"
+        # Formato Clickex (11 cols, tomado del .xlsx que entrega Clickex).
+        _hdr([
+            "Cliente", "Direccion", "Depto/Casa", "Comuna", "Referencia",
+            "Telefono", "Correo", "Orden Seller", "Peso Total",
+            "Monto Declarado", "Bultos",
+        ])
+        s = _tr_sender_cfg()
+        seller = s.get("company") or "Sport and Health Solutions SPA"
+        for ri, it in enumerate(items, 2):
+            nbult = max(1, int(it.get("n_bultos") or 1))
+            peso  = round(float(it.get("peso_kg") or 0), 2)
+            valor = float(it.get("valor_bruto") or 0)
+            row = [
+                it.get("cliente_nombre") or "",
+                it.get("direccion") or "",
+                "",  # Depto/Casa (campo libre opcional)
+                it.get("comuna") or "",
+                it.get("nudo") or "",   # Referencia interna = nº documento
+                it.get("telefono") or "",
+                it.get("email") or "",
+                seller,
+                peso,
+                valor,
+                nbult,
+            ]
+            for ci, v in enumerate(row, 1):
+                ws.cell(ri, ci, v)
+            if _falta(it.get("telefono")): ws.cell(ri, 6).fill = MISS_FILL
+            if _falta(it.get("email")):    ws.cell(ri, 7).fill = MISS_FILL
+
     else:  # generic
         ws.title = "Manifiesto"
         _hdr(["Documento", "Cliente", "Comuna", "Dirección", "Teléfono", "Email",
@@ -18081,11 +18129,24 @@ def tr_manifiesto_export(mid):
     except Exception:
         pass
     safe_corr = (man.get("correlativo") or f"MAN{mid}").replace("/", "-")
+    # Nombre estilo macro de Daniel: "Felca_30052026_13.24.xlsx",
+    # "DocumentosFedEx_30052026_13.26.xlsx", "Clickex_..", "Milling_..".
+    from datetime import datetime as _dt_now
+    _stamp = _dt_now.now().strftime("%d%m%Y_%H.%M")
+    if formato == "fedex":
+        _fname = f"DocumentosFedEx_{_stamp}.xlsx"
+    elif formato in ("simplyroute", "clickex"):
+        # Para SimplyRoute usamos el nombre del courier (Felca/Milling); Clickex su propio.
+        _courier = (man.get("courier") or "").strip().split()[-1] or "Manifiesto"
+        _courier_clean = _courier.replace("/", "-").replace(" ", "_")
+        _fname = f"{_courier_clean}_{_stamp}.xlsx"
+    else:
+        _fname = f"{safe_corr}_{formato}.xlsx"
     return send_file(
         buf,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
-        download_name=f"{safe_corr}_{formato}.xlsx",
+        download_name=_fname,
     )
 
 
