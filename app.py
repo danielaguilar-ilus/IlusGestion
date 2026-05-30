@@ -23900,7 +23900,7 @@ def init_mantenciones_tables():
                 CREATE TABLE IF NOT EXISTS mant_reportes (
                     id                INT AUTO_INCREMENT PRIMARY KEY,
                     cliente_id        INT NOT NULL,
-                    tipo              ENUM('mantencion','instalacion','inspeccion','garantia','otro')
+                    tipo              ENUM('mantencion','instalacion','inspeccion','visita_tecnica','garantia','otro')
                                       DEFAULT 'mantencion',
                     estado            ENUM('borrador','emitido','entregado') DEFAULT 'borrador',
                     ticket_num        VARCHAR(30),
@@ -23932,6 +23932,18 @@ def init_mantenciones_tables():
             for _mig in [
                 "ALTER TABLE mant_reportes ADD COLUMN html_path VARCHAR(500)",
                 "ALTER TABLE mant_reportes ADD COLUMN html_generated_at DATETIME",
+                # Garantía transversal (Daniel 2026-05-30): flag a nivel de
+                # reporte, SEPARADO del tipo de servicio. 0 = no aplica (default,
+                # compatible con reportes viejos), 1 = aplica garantía.
+                "ALTER TABLE mant_reportes ADD COLUMN garantia_aplica TINYINT(1) "
+                "  NOT NULL DEFAULT 0 "
+                "  COMMENT 'Garantía: 1=aplica (cubierto), 0=no aplica (pago)'",
+                # Tipo separado de garantía: agregamos 'visita_tecnica'. Mantenemos
+                # 'garantia' en el ENUM por compat con reportes viejos (no romper
+                # datos existentes) — pero la UI ya no la ofrece como tipo.
+                "ALTER TABLE mant_reportes MODIFY tipo "
+                "  ENUM('mantencion','instalacion','inspeccion','visita_tecnica','garantia','otro') "
+                "  DEFAULT 'mantencion'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -31046,6 +31058,19 @@ def mant_visita_multi(cid):
     tipo_visita = d.get("tipo_visita") or "preventiva"
     if tipo_visita not in ("garantia","correctiva","preventiva","inspeccion"):
         tipo_visita = "preventiva"
+
+    # GARANTÍA TRANSVERSAL (Daniel 2026-05-30): interruptor Aplica/No aplica,
+    # independiente del tipo de visita. Si no llega el flag explícito, hacemos
+    # un fallback compatible: tipo_visita 'garantia' → aplica garantía.
+    _gar_aplica_mv = _parse_garantia_aplica(d.get("garantia_aplica"))
+    if _gar_aplica_mv is None and tipo_visita == "garantia":
+        _gar_aplica_mv = True
+    _cobertura_mv, _ = _mapear_garantia_a_cobertura(_gar_aplica_mv, tipo_visita)
+    # Defaults seguros si no se especifica garantía: servicio pagado pendiente.
+    mv_modalidad      = _cobertura_mv.get("modalidad_cobro", "pagado")
+    mv_cubierto_por   = _cobertura_mv.get("cubierto_por", "cliente")
+    mv_estado_factur  = _cobertura_mv.get("estado_facturacion", "sin_cotizar")
+
     estado_nuevo = d.get("estado_nuevo") or "operativo"
     if estado_nuevo not in ("critico","en_mantencion","operativo"):
         estado_nuevo = "operativo"
@@ -31191,14 +31216,18 @@ def mant_visita_multi(cid):
                     """INSERT INTO mant_visitas
                        (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
                         tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
-                        costo,created_by,created_by_user_id)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,%s)""",
+                        costo,modalidad_cobro,cubierto_por,estado_facturacion,
+                        created_by,created_by_user_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (numero_ot, cid, titulo, fecha_prog, hora_inicio, hora_fin,
                      tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
-                     costo, current_username(), _cre_uid_mv)
+                     costo, mv_modalidad, mv_cubierto_por, mv_estado_factur,
+                     current_username(), _cre_uid_mv)
                 )
             except Exception as _e_ins_mv:
                 print(f"[visita-multi] INSERT con created_by_user_id falló ({_e_ins_mv}); reintentando legacy", flush=True)
+                # Fallback (DB antigua sin created_by_user_id → tampoco tiene
+                # cubierto_por/estado_facturacion, agregadas después). Set mínimo.
                 cur.execute(
                     """INSERT INTO mant_visitas
                        (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
@@ -38594,6 +38623,72 @@ def _normalizar_modalidad_cobro(tipo, modalidad_raw):
     return (m, None)
 
 
+def _parse_garantia_aplica(raw):
+    """Interpreta el flag transversal `garantia_aplica` del request.
+
+    Acepta bool, int o string (json o form). Devuelve True/False/None:
+      - True   → el servicio está cubierto por garantía (no se cobra)
+      - False  → es un servicio PAGO (debe ligarse a factura para cerrar)
+      - None   → el campo no vino en el body (no tocar el estado actual)
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    s = str(raw).strip().lower()
+    if s in ("1", "true", "si", "sí", "yes", "aplica", "on"):
+        return True
+    if s in ("0", "false", "no", "no_aplica", "off", ""):
+        return False
+    return None
+
+
+def _mapear_garantia_a_cobertura(garantia_aplica, tipo):
+    """Mapeo CANÓNICO garantía → (cubierto_por, modalidad_cobro, estado_facturacion).
+
+    Modelo Daniel (2026-05-30): la garantía es un interruptor transversal,
+    independiente del TIPO de servicio (mantención/correctiva/inspección…).
+
+      - APLICA (True)  → cubierto_por='garantia', modalidad_cobro='garantia',
+                         estado_facturacion='no_aplica' (no se cobra, cerrable).
+      - NO APLICA (False) → cubierto_por='cliente', modalidad_cobro='pagado',
+                         estado_facturacion='sin_cotizar' (PENDIENTE DE FACTURAR
+                         hasta ligar una factura del ERP).
+
+    Regla dura: tipo='levantamiento' NUNCA puede ir a garantía. Si llega
+    APLICA con ese tipo, se degrada a servicio PAGO (consistente con
+    _normalizar_modalidad_cobro) y se devuelve un warning.
+
+    Devuelve (dict_de_campos, warning_or_None). El dict solo trae las
+    columnas a setear; el caller decide cómo aplicarlas (INSERT o UPDATE).
+    """
+    tipo_l = (tipo or "").strip().lower()
+    if garantia_aplica is None:
+        return ({}, None)
+    if garantia_aplica:
+        if tipo_l in _OT_TIPOS_SIN_GARANTIA:
+            # Levantamiento no admite garantía → cae a PAGO pendiente.
+            return ({
+                "cubierto_por": "cliente",
+                "modalidad_cobro": "pagado",
+                "estado_facturacion": "sin_cotizar",
+            }, "El levantamiento no admite garantía. Quedó como servicio pagado "
+               "(pendiente de facturar).")
+        return ({
+            "cubierto_por": "garantia",
+            "modalidad_cobro": "garantia",
+            "estado_facturacion": "no_aplica",
+        }, None)
+    # NO APLICA → servicio pagado pendiente de facturar.
+    return ({
+        "cubierto_por": "cliente",
+        "modalidad_cobro": "pagado",
+        "estado_facturacion": "sin_cotizar",
+    }, None)
+
+
 @app.route("/mantenciones/api/visitas", methods=["POST"])
 @_mant_required
 def mant_visita_crear():
@@ -38638,6 +38733,20 @@ def mant_visita_crear():
     if prioridad not in _OT_PRIORIDADES:
         prioridad = "media"
 
+    # GARANTÍA TRANSVERSAL (Daniel 2026-05-30): interruptor Aplica/No aplica
+    # independiente del tipo. Si llega `garantia_aplica`, MANDA sobre cualquier
+    # modalidad_cobro suelta que pudiera venir del frontend legacy.
+    cubierto_por_ins = "contrato"   # default histórico de la columna
+    estado_factur_ins = "sin_cotizar"
+    gar_aplica = _parse_garantia_aplica(d.get("garantia_aplica"))
+    cobertura_map, warn_gar = _mapear_garantia_a_cobertura(gar_aplica, tipo_ot)
+    if cobertura_map:
+        modalidad = cobertura_map["modalidad_cobro"]
+        cubierto_por_ins = cobertura_map["cubierto_por"]
+        estado_factur_ins = cobertura_map["estado_facturacion"]
+        if warn_gar:
+            warn_mod = warn_gar
+
     # 2026-05-22 (Aaron Urbina) — capturamos el user_id del creador como
     # FUENTE DE VERDAD para el filtro del listado. `created_by` queda como
     # texto display (puede ser email o nombre, según current_username()),
@@ -38660,8 +38769,9 @@ def mant_visita_crear():
                     """INSERT INTO mant_visitas
                        (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
                         tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
-                        modalidad_cobro,prioridad,created_by,created_by_user_id)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        modalidad_cobro,cubierto_por,estado_facturacion,
+                        prioridad,created_by,created_by_user_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (d["cliente_id"], d.get("contrato_id") or None,
                      d.get("titulo","Mantención"), d["fecha_programada"],
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
@@ -38669,10 +38779,16 @@ def mant_visita_crear():
                      tipo_ot,
                      d.get("estado","programada"), d.get("descripcion",""),
                      float(d.get("costo",0) or 0),
-                     modalidad, prioridad, current_username(), creador_user_id)
+                     modalidad, cubierto_por_ins, estado_factur_ins,
+                     prioridad, current_username(), creador_user_id)
                 )
             except Exception as _e_ins_full:
-                # Fallback (DB sin la migración nueva todavía)
+                # Fallback (DB sin la migración nueva todavía). Este path solo se
+                # alcanza en una DB tan antigua que ni siquiera tiene
+                # `created_by_user_id` — que se agregó ANTES que cubierto_por/
+                # estado_facturacion. Por eso aquí volvemos al set mínimo de
+                # columnas históricas (sin garantía): si las nuevas tampoco
+                # existen, este INSERT igual funciona y la OT queda creada.
                 print(f"[crear-ot] INSERT con created_by_user_id falló ({_e_ins_full}); reintentando sin la columna", flush=True)
                 cur.execute(
                     """INSERT INTO mant_visitas
@@ -38693,6 +38809,8 @@ def mant_visita_crear():
         conn.commit()
         _mant_log("visita", vid, "creada",
                   f"{d.get('titulo','')} · tipo={tipo_ot} · modalidad={modalidad}"
+                  + (f" · garantía={'aplica' if cubierto_por_ins=='garantia' else 'no aplica'}"
+                     if gar_aplica is not None else "")
                   + (f" · ⚠ {warn_mod}" if warn_mod else ""))
         # 2026-05-22 (Daniel) — si la OT se creó CON técnico ya asignado,
         # disparamos la notificación interna (campana) + el helper WA/SMS
@@ -38808,15 +38926,38 @@ def mant_visita_update(vid):
     # FASE 1 — validar modalidad_cobro contra la regla "levantamiento != garantia".
     # Se evalúa con el tipo nuevo (si llega en el body) o el tipo actual de la BD.
     warn_mod_upd = None
-    if "modalidad_cobro" in d or "tipo" in d:
-        tipo_actual = None
+    gar_aplica_upd = _parse_garantia_aplica(d.get("garantia_aplica"))
+    # tipo_final se reusa para validar modalidad y mapear garantía. Solo
+    # consultamos la BD cuando alguno de esos casos aplica (edits que solo
+    # tocan técnico/fecha no pagan la query extra).
+    tipo_final = ""
+    if "modalidad_cobro" in d or "tipo" in d or gar_aplica_upd is not None:
+        _tipo_actual = None
         if "tipo" not in d:
-            row = mysql_fetchone("SELECT tipo FROM mant_visitas WHERE id=%s", (vid,))
-            tipo_actual = (row or {}).get("tipo")
-        tipo_final = (d.get("tipo") or tipo_actual or "").lower()
-        if "modalidad_cobro" in d:
-            mod_norm, warn_mod_upd = _normalizar_modalidad_cobro(tipo_final, d.get("modalidad_cobro"))
-            d["modalidad_cobro"] = mod_norm
+            _row_tipo = mysql_fetchone("SELECT tipo FROM mant_visitas WHERE id=%s", (vid,))
+            _tipo_actual = (_row_tipo or {}).get("tipo")
+        tipo_final = (d.get("tipo") or _tipo_actual or "").lower()
+    if "modalidad_cobro" in d:
+        mod_norm, warn_mod_upd = _normalizar_modalidad_cobro(tipo_final, d.get("modalidad_cobro"))
+        d["modalidad_cobro"] = mod_norm
+
+    # GARANTÍA TRANSVERSAL (Daniel 2026-05-30): el interruptor Aplica/No aplica
+    # MANDA sobre modalidad_cobro suelta. Mapea a cubierto_por/modalidad_cobro/
+    # estado_facturacion según el modelo canónico.
+    if gar_aplica_upd is not None:
+        cobertura_upd, warn_gar_upd = _mapear_garantia_a_cobertura(gar_aplica_upd, tipo_final)
+        if cobertura_upd:
+            d["cubierto_por"]   = cobertura_upd["cubierto_por"]
+            d["modalidad_cobro"] = cobertura_upd["modalidad_cobro"]
+            # No degradar el pipeline si ya hay una factura ligada: un servicio
+            # ya 'facturado' marcado como "no aplica garantía" sigue facturado.
+            _ef_actual = mysql_fetchone(
+                "SELECT estado_facturacion FROM mant_visitas WHERE id=%s", (vid,))
+            _ef_now = (_ef_actual or {}).get("estado_facturacion")
+            if not (gar_aplica_upd is False and _ef_now == "facturado"):
+                d["estado_facturacion"] = cobertura_upd["estado_facturacion"]
+            if warn_gar_upd:
+                warn_mod_upd = warn_gar_upd
     # Validar prioridad si llega
     if "prioridad" in d:
         p = (d.get("prioridad") or "").lower()
@@ -38826,7 +38967,9 @@ def mant_visita_update(vid):
                "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
                "costo","contrato_id",
                # FASE 1 — modelo Fracttal
-               "modalidad_cobro","prioridad","diagnostico"]
+               "modalidad_cobro","prioridad","diagnostico",
+               # Garantía transversal (mapeada desde garantia_aplica)
+               "cubierto_por","estado_facturacion"]
     # tecnico_user_id: si llega, validar que sea un app_users con role='tecnico'
     if "tecnico_user_id" in d and d["tecnico_user_id"]:
         try:
@@ -45701,8 +45844,8 @@ def mant_reporte_crear(cid):
                     tecnico_junior,tecnico_senior,
                     fecha_solicitado,fecha_inicio,fecha_cierre,
                     antecedentes,objetivos,trabajos,observaciones,
-                    maquinas_json,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    maquinas_json,garantia_aplica,created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, d.get("tipo","mantencion"), d.get("estado","borrador"),
                  d.get("ticket_num",""), d.get("asunto",""),
                  d.get("tecnico_junior",""), d.get("tecnico_senior",""),
@@ -45713,6 +45856,7 @@ def mant_reporte_crear(cid):
                  json.dumps(d.get("trabajos",[]),     ensure_ascii=False),
                  json.dumps(d.get("observaciones",[]),ensure_ascii=False),
                  json.dumps(d.get("maquinas",[]),     ensure_ascii=False),
+                 1 if _parse_garantia_aplica(d.get("garantia_aplica")) else 0,
                  current_username())
             )
             rid = cur.lastrowid
@@ -45736,6 +45880,9 @@ def mant_reporte_get(rid):
         if d.get(k): d[k] = str(d[k])[:10]
     for k in ("objetivos","trabajos","observaciones","maquinas_json","fotos_json","ai_acciones"):
         d[k] = json.loads(d[k] or "[]")
+    # Garantía transversal → bool limpio para el frontend (default False si la
+    # columna aún no existe en esta instancia).
+    d["garantia_aplica"] = bool(d.get("garantia_aplica"))
     # Adjuntos
     fotos = mysql_fetchall(
         "SELECT id,nombre,archivo_path,tipo,created_at FROM mant_contrato_adjuntos "
@@ -45765,13 +45912,19 @@ def mant_reporte_update(rid):
     d = request.get_json(silent=True) or {}
     allowed = ["tipo","estado","ticket_num","asunto","tecnico_junior","tecnico_senior",
                "fecha_solicitado","fecha_inicio","fecha_cierre",
-               "antecedentes","objetivos","trabajos","observaciones","maquinas_json"]
+               "antecedentes","objetivos","trabajos","observaciones","maquinas_json",
+               # Garantía transversal (separada del tipo de servicio)
+               "garantia_aplica"]
     sets, vals = [], []
     for f in allowed:
         if f not in d: continue
         if f in ("objetivos","trabajos","observaciones","maquinas_json"):
             sets.append(f"{f}=%s")
             vals.append(json.dumps(d[f], ensure_ascii=False))
+        elif f == "garantia_aplica":
+            # Booleano: NO usar `or None` (False quedaría NULL). Coerción a 0/1.
+            sets.append(f"{f}=%s")
+            vals.append(1 if _parse_garantia_aplica(d[f]) else 0)
         else:
             sets.append(f"{f}=%s")
             vals.append(d[f] or None)
@@ -46226,12 +46379,21 @@ def _reporte_to_pdf_html(rep, cliente):
 
     tipo      = (rep.get("tipo") or "mantencion").lower()
     es_garantia = (tipo == "garantia")
+    # GARANTÍA TRANSVERSAL (Daniel 2026-05-30): flag SEPARADO del tipo. Fuente de
+    # verdad = columna garantia_aplica; fallback al tipo legacy 'garantia' para
+    # reportes viejos creados antes de la separación.
+    garantia_aplica = bool(rep.get("garantia_aplica")) or es_garantia
     tipo_lbl  = {"mantencion": "Mantención", "instalacion": "Instalación",
                  "inspeccion": "Inspección", "garantia": "Garantía",
                  "otro": "Servicio Técnico"}.get(tipo, "Servicio Técnico")
     titulo    = ("APLICACIÓN DE GARANTÍA" if es_garantia
                  else "INFORME TÉCNICO POST-SERVICIO")
     rut_fmt   = _formato_rut_chile(cliente.get("rut", "")) or "—"
+    # Badge de garantía para el encabezado del PDF.
+    if garantia_aplica:
+        gar_badge_html = ('<span class="rep-gar rep-gar-si">GARANTÍA: APLICA</span>')
+    else:
+        gar_badge_html = ('<span class="rep-gar rep-gar-no">GARANTÍA: NO APLICA</span>')
 
     # ── Tabla máquinas a intervenir (SKU, descripción, cantidad) ──────────
     maq = _as_list(rep.get("maquinas_json"))
@@ -46352,7 +46514,7 @@ def _reporte_to_pdf_html(rep, cliente):
           <tr><th>Fecha solicitado</th><td>{e(_fecha_str(rep.get('fecha_solicitado')))}</td>
               <th>Fecha inicio</th><td>{e(_fecha_str(rep.get('fecha_inicio')))}</td></tr>
           <tr><th>Fecha cierre</th><td>{e(_fecha_str(rep.get('fecha_cierre')))}</td>
-              <th>&nbsp;</th><td>&nbsp;</td></tr>
+              <th>Garantía</th><td>{e_raw(gar_badge_html)}</td></tr>
           <tr><th>Técnico Senior</th><td>{e(rep.get('tecnico_senior'))}</td>
               <th>Técnico Junior</th><td>{e(rep.get('tecnico_junior'))}</td></tr>
         </table>
@@ -46420,6 +46582,11 @@ def _reporte_to_pdf_html(rep, cliente):
   .rep-head-meta .rep-ticket{{ font-size:9px; font-weight:700; color:#fff;
               background:var(--ilus-red); border-radius:4px; padding:3px 10px;
               display:inline-block; letter-spacing:.5px; }}
+  .rep-gar{{ font-size:8.5px; font-weight:800; border-radius:4px; padding:3px 10px;
+              display:inline-block; letter-spacing:.5px; margin-top:6px;
+              border:1px solid transparent; }}
+  .rep-gar-si{{ background:#dcfce7; color:#166534; border-color:#86efac; }}
+  .rep-gar-no{{ background:#fee2e2; color:#991b1b; border-color:#fca5a5; }}
   .rep-asunto{{ font-size:12px; font-weight:700; color:var(--ilus-black);
               margin:10px 0 14px; padding:7px 12px; background:#f3f4f6;
               border-left:4px solid var(--ilus-red); border-radius:0 4px 4px 0; }}
@@ -46495,6 +46662,7 @@ def _reporte_to_pdf_html(rep, cliente):
       </div>
       <div class="rep-head-meta">
         <span class="rep-ticket">N° {ticket}</span>
+        <div>{gar_badge_html}</div>
       </div>
     </div>
     <div class="rep-asunto">Asunto: {asunto}</div>
@@ -50504,6 +50672,53 @@ def _ensure_transporte_labels_table():
     """)
 
 
+def _ensure_mant_reportes_columns():
+    """Garantiza columnas nuevas de mant_reportes AUNQUE ILUS_SKIP_MIGRATIONS=1.
+
+    Igual que _ensure_transporte_columns: con el skip de migraciones, las
+    columnas agregadas en init_mantenciones_tables NO se aplican en prod.
+    Sin esto, leer/escribir `garantia_aplica` en los reportes daría
+    'Unknown column'. 1 SELECT barato en cold-start; ALTER solo la 1ª vez."""
+    needed = {
+        # Garantía transversal a nivel de reporte (separada del tipo).
+        "garantia_aplica": "TINYINT(1) NOT NULL DEFAULT 0 "
+                           "COMMENT 'Garantía: 1=aplica (cubierto), 0=no aplica (pago)'",
+    }
+    existing = {
+        (r.get("COLUMN_NAME") or "").lower()
+        for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_reportes'"
+        ) or [])
+    }
+    faltantes = [c for c in needed if c.lower() not in existing]
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE mant_reportes ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_rep_cols] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_rep_cols] no se pudo agregar {col}: {e_add}", flush=True)
+
+    # Garantizar que el ENUM de `tipo` incluya 'visita_tecnica' (separación
+    # garantía↔tipo). Idempotente: solo hace MODIFY si falta el valor. Mantiene
+    # 'garantia' por compat con reportes viejos.
+    try:
+        _tipo_col = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_reportes' "
+            "  AND COLUMN_NAME='tipo'")
+        _ct = ((_tipo_col or {}).get("COLUMN_TYPE") or "").lower()
+        if _ct and "visita_tecnica" not in _ct:
+            mysql_execute(
+                "ALTER TABLE mant_reportes MODIFY tipo "
+                "ENUM('mantencion','instalacion','inspeccion','visita_tecnica',"
+                "'garantia','otro') DEFAULT 'mantencion'")
+            print("[ensure_rep_cols] ENUM tipo ampliado con 'visita_tecnica'", flush=True)
+    except Exception as e_enum:
+        print(f"[ensure_rep_cols] no se pudo ampliar ENUM tipo: {e_enum}", flush=True)
+    return faltantes
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -50557,6 +50772,18 @@ try:
         _ensure_transporte_labels_table()
 except Exception as _lbl_err:
     print(f"[ILUS][WARN] _ensure_transporte_labels_table: {_lbl_err}", flush=True)
+
+# CRÍTICO: garantizar mant_reportes.garantia_aplica SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1 (si no, crear/editar informes con el flag de garantía
+# daría 'Unknown column'). 1 SELECT barato en cold-start; ALTER solo la 1ª vez.
+try:
+    with app.app_context():
+        _faltaron_rep = _ensure_mant_reportes_columns()
+    if _faltaron_rep:
+        print(f"[ILUS] Columnas de mant_reportes agregadas (skip-migrations): "
+              f"{_faltaron_rep}", flush=True)
+except Exception as _ensure_rep_err:
+    print(f"[ILUS][WARN] _ensure_mant_reportes_columns: {_ensure_rep_err}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #

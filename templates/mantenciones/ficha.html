@@ -2408,6 +2408,10 @@ function abrirVisitaMulti() {
   document.getElementById('vm_hora_inicio').value = '';
   document.getElementById('vm_hora_fin').value = '';
   document.getElementById('vm_costo').value = '';
+  // Garantía: default "No aplica" (servicio pagado)
+  document.getElementById('vm_gar_no').checked = true;
+  document.getElementById('vm_gar_si').checked = false;
+  vmGarToggleNota();
   // Resumen de cantidad para el alert al pie
   const resumen = document.getElementById('vm_count_resumen');
   if (resumen) resumen.textContent = seleccionados.length + ' ';
@@ -2707,6 +2711,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// Muestra/oculta la nota "pendiente de facturar" según el toggle de garantía.
+// La nota aparece cuando NO aplica (servicio pago que exige factura para cerrar).
+function vmGarToggleNota() {
+  const noAplica = document.getElementById('vm_gar_no')?.checked;
+  document.getElementById('vm_gar_nota')?.classList.toggle('show', !!noAplica);
+}
+function viGarToggleNota() {
+  const noAplica = document.getElementById('vi_gar_no')?.checked;
+  document.getElementById('vi_gar_nota')?.classList.toggle('show', !!noAplica);
+}
+
 async function confirmarVisitaMulti() {
   const ids = window._vmIds || [];
   if (!ids.length) return;
@@ -2735,6 +2750,7 @@ async function confirmarVisitaMulti() {
       body: JSON.stringify({
         maquina_ids: ids,
         tipo_visita: document.getElementById('vm_tipo').value,
+        garantia_aplica: document.getElementById('vm_gar_si').checked,
         fecha_programada: fecha,
         hora_inicio: hi || null,
         hora_fin:    hf || null,
@@ -3433,7 +3449,7 @@ async function confirmarVisitaMulti() {
                 <option value="mantencion">Mantención</option>
                 <option value="instalacion">Instalación</option>
                 <option value="inspeccion">Inspección</option>
-                <option value="garantia">Garantía</option>
+                <option value="visita_tecnica">Visita técnica</option>
                 <option value="otro">Otro</option>
               </select>
             </div>
@@ -3472,6 +3488,22 @@ async function confirmarVisitaMulti() {
             <div class="col-4 col-md-2">
               <label class="form-label small fw-semibold">Fecha cierre</label>
               <input type="date" id="repFechaCie" class="form-control form-control-sm">
+            </div>
+            {# ── GARANTÍA (separada del tipo de servicio) ── #}
+            <div class="col-12 col-md-6">
+              <label class="form-label small fw-semibold d-flex align-items-center gap-2">
+                <i class="bi bi-shield-check" style="color:var(--ilus-red)"></i>Garantía
+              </label>
+              <div class="gar-seg" id="rep_gar_seg">
+                <input type="radio" name="rep_garantia" id="rep_gar_no" value="0" checked>
+                <label class="gar-opt gar-no" for="rep_gar_no">
+                  <i class="bi bi-cash-coin"></i>No aplica (pago)
+                </label>
+                <input type="radio" name="rep_garantia" id="rep_gar_si" value="1">
+                <label class="gar-opt gar-si" for="rep_gar_si">
+                  <i class="bi bi-shield-fill-check"></i>Aplica (cubierto)
+                </label>
+              </div>
             </div>
           </div>
           <hr class="my-2">
@@ -4114,6 +4146,24 @@ document.addEventListener('DOMContentLoaded', () => {
   .fin-tbl-wrap{overflow-x:auto;}
   .fin-tbl th, .fin-tbl td{font-size:.74rem;padding:7px 6px;}
 }
+/* ── Toggle Garantía (Aplica / No aplica) — reusable en modales de visita ── */
+.gar-seg{display:flex;gap:8px;}
+.gar-seg .gar-opt{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+  min-height:44px;padding:8px 10px;border:2px solid #e5e7eb;border-radius:10px;
+  background:#fff;cursor:pointer;font-weight:700;font-size:.82rem;color:#475569;
+  transition:all .18s cubic-bezier(.4,0,.2,1);user-select:none;text-align:center;line-height:1.1;}
+.gar-seg .gar-opt:hover{border-color:#cbd5e1;}
+.gar-seg .gar-opt:active{transform:scale(.97);}
+.gar-seg input[type=radio]{position:absolute;opacity:0;width:0;height:0;}
+.gar-seg input[type=radio]:checked + .gar-opt.gar-si{
+  border-color:#16a34a;background:#dcfce7;color:#166534;box-shadow:0 2px 8px rgba(22,163,74,.18);}
+.gar-seg input[type=radio]:checked + .gar-opt.gar-no{
+  border-color:var(--ilus-red);background:#fee2e2;color:#991b1b;box-shadow:0 2px 8px rgba(220,38,38,.18);}
+.gar-seg input[type=radio]:focus-visible + .gar-opt{outline:2px solid var(--ilus-red);outline-offset:2px;}
+.gar-note{margin-top:8px;font-size:.74rem;display:none;align-items:flex-start;gap:6px;
+  background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:7px 10px;}
+.gar-note.show{display:flex;}
+.gar-note i{flex-shrink:0;margin-top:1px;}
 </style>
 
 <div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
@@ -4258,10 +4308,17 @@ function _tipoBadge(t){
   return `<span style="background:${bg};color:${fg};padding:2px 7px;border-radius:50px;font-size:.65rem;font-weight:700">${lbl}</span>`;
 }
 
-function _estadoBadge(e, dias){
+function _estadoBadge(e, dias, s){
+  // Garantía que aplica → no se cobra: no hay nada que facturar.
+  if (e === 'no_aplica' || (s && s.cubierto_por === 'garantia'))
+    return `<span class="fin-est fin-est-fact" style="background:#dcfce7;color:#166534">🛡 Cubierto</span>`;
   if (e === 'facturado') return `<span class="fin-est fin-est-fact">✓ Facturado</span>`;
   if (e === 'con_oc')    return `<span class="fin-est fin-est-oc">🟠 Con OC${dias>7 ? ' · '+dias+'d' : ''}</span>`;
   if (e === 'cotizado')  return `<span class="fin-est fin-est-cot">🟡 Cotizado${dias>7 ? ' · '+dias+'d' : ''}</span>`;
+  // Servicio PAGO (cliente/mixto) sin factura → PENDIENTE DE FACTURAR (rojo).
+  const esPago = s && (s.cubierto_por === 'cliente' || s.cubierto_por === 'mixto');
+  if (esPago && !(s && s.factura))
+    return `<span class="fin-est fin-est-sin">🚨 Pendiente de facturar${dias>0 ? ' · '+dias+'d' : ''}</span>`;
   return `<span class="fin-est fin-est-sin">🚨 Sin cotizar${dias>0 ? ' · '+dias+'d' : ''}</span>`;
 }
 
@@ -4321,7 +4378,7 @@ function finRender(d){
         <td class="text-end font-monospace">${s.monto_repuestos ? _fmtMoney(s.monto_repuestos) : '<span class="text-muted">—</span>'}</td>
         <td>${_coverBadge(s.cubierto_por, garFlag)}</td>
         <td class="text-end font-monospace fw-bold">${s.monto_total ? _fmtMoney(s.monto_total) : '<span class="text-muted">—</span>'}</td>
-        <td>${_estadoBadge(s.estado_facturacion, s.dias_sin_facturar)}</td>
+        <td>${_estadoBadge(s.estado_facturacion, s.dias_sin_facturar, s)}</td>
       </tr>`;
     }).join('');
   }
@@ -8174,6 +8231,30 @@ async function vhGuardar(){
             <div class="form-text small">Se aplica a TODOS los equipos seleccionados</div>
           </div>
 
+          {# ── GARANTÍA (interruptor transversal, separado del tipo) ── #}
+          <div class="col-12">
+            <label class="form-label fw-semibold small d-flex align-items-center gap-2">
+              <i class="bi bi-shield-check" style="color:var(--ilus-red)"></i>Garantía
+            </label>
+            <div class="gar-seg" id="vm_gar_seg">
+              <input type="radio" name="vm_garantia" id="vm_gar_no" value="0" checked
+                     onchange="vmGarToggleNota()">
+              <label class="gar-opt gar-no" for="vm_gar_no">
+                <i class="bi bi-cash-coin"></i>No aplica (pago)
+              </label>
+              <input type="radio" name="vm_garantia" id="vm_gar_si" value="1"
+                     onchange="vmGarToggleNota()">
+              <label class="gar-opt gar-si" for="vm_gar_si">
+                <i class="bi bi-shield-fill-check"></i>Aplica (cubierto)
+              </label>
+            </div>
+            <div class="gar-note" id="vm_gar_nota">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <span>Deberás asociar una factura del ERP para cerrar; mientras tanto queda
+                <strong>Pendiente de facturar</strong>.</span>
+            </div>
+          </div>
+
           <div class="col-12 col-md-6">
             <label class="form-label fw-semibold small">
               Fecha programada <span class="text-danger">*</span>
@@ -8630,6 +8711,29 @@ async function vhGuardar(){
             <label class="form-label fw-semibold">Costo visita ($)</label>
             <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
           </div>
+          {# ── GARANTÍA (interruptor transversal, separado del tipo) ── #}
+          <div class="col-12">
+            <label class="form-label fw-semibold d-flex align-items-center gap-2">
+              <i class="bi bi-shield-check" style="color:var(--ilus-red)"></i>Garantía
+            </label>
+            <div class="gar-seg" id="vi_gar_seg">
+              <input type="radio" name="vi_garantia" id="vi_gar_no" value="0" checked
+                     onchange="viGarToggleNota()">
+              <label class="gar-opt gar-no" for="vi_gar_no">
+                <i class="bi bi-cash-coin"></i>No aplica (pago)
+              </label>
+              <input type="radio" name="vi_garantia" id="vi_gar_si" value="1"
+                     onchange="viGarToggleNota()">
+              <label class="gar-opt gar-si" for="vi_gar_si">
+                <i class="bi bi-shield-fill-check"></i>Aplica (cubierto)
+              </label>
+            </div>
+            <div class="gar-note" id="vi_gar_nota">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <span>Deberás asociar una factura del ERP para cerrar; mientras tanto queda
+                <strong>Pendiente de facturar</strong>.</span>
+            </div>
+          </div>
           <div class="col-12">
             <label class="form-label fw-semibold">Descripción / Notas</label>
             <textarea id="vi_descripcion" class="form-control" rows="2"></textarea>
@@ -8715,7 +8819,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530c"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530d"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

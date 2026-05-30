@@ -1451,8 +1451,19 @@ function abrirNuevaVisita(tipoPreset) {
   document.getElementById('vi_hora_inicio').value = '';
   document.getElementById('vi_hora_fin').value = '';
   document.getElementById('vi_costo').value = '';
+  // Garantía: default "No aplica" (servicio pagado) en visita nueva
+  _viSetGarantia(false);
   document.getElementById('btnEliminarVisita').style.display = 'none';
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+// Marca el toggle de garantía de la visita y refresca la nota.
+// `aplica` true → "Aplica (cubierto)"; false → "No aplica (pago)".
+function _viSetGarantia(aplica) {
+  const si = document.getElementById('vi_gar_si');
+  const no = document.getElementById('vi_gar_no');
+  if (si) si.checked = !!aplica;
+  if (no) no.checked = !aplica;
+  if (typeof viGarToggleNota === 'function') viGarToggleNota();
 }
 function editarVisita(v) {
   document.getElementById('vi_id').value = v.id;
@@ -1469,6 +1480,8 @@ function editarVisita(v) {
   document.getElementById('vi_tecnico').value = v.tecnico || '';
   document.getElementById('vi_costo').value = v.costo || '';
   document.getElementById('vi_descripcion').value = v.descripcion || '';
+  // Garantía: "Aplica" si la visita está cubierta por garantía.
+  _viSetGarantia(v.cubierto_por === 'garantia' || v.modalidad_cobro === 'garantia');
   document.getElementById('btnEliminarVisita').style.display = '';
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
 }
@@ -5073,7 +5086,7 @@ async function _ctaCopiarClausula(btn) {
 async function guardarVisita() {
   const vid = document.getElementById('vi_id').value;
   const fecha = document.getElementById('vi_fecha').value;
-  if (!fecha) { alert('Fecha requerida'); return; }
+  if (!fecha) { ilusToast('La fecha es requerida', { type:'warning' }); return; }
   const data = {
     cliente_id:      CID,
     titulo:          document.getElementById('vi_titulo').value.trim(),
@@ -5085,6 +5098,8 @@ async function guardarVisita() {
     tecnico:         document.getElementById('vi_tecnico').value.trim(),
     costo:           parseFloat(document.getElementById('vi_costo').value) || 0,
     descripcion:     document.getElementById('vi_descripcion').value.trim(),
+    // Garantía transversal (Aplica/No aplica) — independiente del tipo.
+    garantia_aplica: document.getElementById('vi_gar_si')?.checked || false,
   };
   let url = '/mantenciones/api/visitas', method = 'POST';
   if (vid) { url = `/mantenciones/api/visitas/${vid}`; method = 'PUT'; }
@@ -5094,7 +5109,7 @@ async function guardarVisita() {
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
     location.reload();
-  } else { alert('Error al guardar visita'); }
+  } else { ilusToast('Error al guardar la visita', { type:'error' }); }
 }
 
 async function eliminarVisita() {
@@ -6583,6 +6598,10 @@ function agendarDesdeProyeccion(fechaISO, ctid) {
   document.getElementById('vi_estado').value = 'programada';
   document.getElementById('vi_titulo').value = 'Mantención preventiva programada';
   document.getElementById('vi_descripcion').value = '';
+  // Garantía: default "No aplica" (visita nueva desde proyección de contrato)
+  _viSetGarantia(false);
+  const btnDel = document.getElementById('btnEliminarVisita');
+  if (btnDel) btnDel.style.display = 'none';
   const modal = new bootstrap.Modal(document.getElementById('modalVisita'));
   modal.show();
 }
@@ -6843,6 +6862,14 @@ async function cargarReportes() {
   }
 }
 
+// Marca el toggle de garantía del informe (Aplica/No aplica).
+function _repSetGarantia(aplica) {
+  const si = document.getElementById('rep_gar_si');
+  const no = document.getElementById('rep_gar_no');
+  if (si) si.checked = !!aplica;
+  if (no) no.checked = !aplica;
+}
+
 function abrirNuevoReporte() {
   _repCurrentId = null;
   _repMaquinas = [{sku:'',descripcion:'',cantidad:1,modelo:'',serie:'',repuesto:'',garantia:'',observacion:''}];
@@ -6862,6 +6889,8 @@ function abrirNuevoReporte() {
   document.getElementById('repFechaCie').value = '';
   document.getElementById('repAntecedentes').value = '';
   document.getElementById('repFotosGrid').innerHTML = '';
+  // Garantía: default "No aplica" en informe nuevo
+  _repSetGarantia(false);
   repRenderMaquinas();
   repRenderLista('Objetivos');
   repRenderLista('Trabajos');
@@ -6880,7 +6909,15 @@ async function editarReporte(rid) {
   _repTrabajos = data.trabajos?.length ? data.trabajos : [''];
   _repObservaciones = data.observaciones?.length ? data.observaciones : [''];
   document.getElementById('repId').value = rid;
-  document.getElementById('repTipo').value = data.tipo || 'mantencion';
+  // Compat: reportes viejos con tipo='garantia' (cuando garantía era un tipo).
+  // Ahora garantía es un flag aparte → mostramos el tipo como "Otro" y
+  // encendemos el toggle de garantía. La garantía explícita (columna
+  // garantia_aplica) tiene prioridad.
+  let _repTipoVal = data.tipo || 'mantencion';
+  let _repGarLegacy = false;
+  if (_repTipoVal === 'garantia') { _repTipoVal = 'otro'; _repGarLegacy = true; }
+  document.getElementById('repTipo').value = _repTipoVal;
+  _repSetGarantia(data.garantia_aplica === true || _repGarLegacy);
   document.getElementById('repEstado').value = data.estado || 'borrador';
   document.getElementById('repTicket').value = data.ticket_num || '';
   document.getElementById('repAsunto').value = data.asunto || '';
@@ -7024,6 +7061,8 @@ async function repGuardar(silencioso=false) {
     trabajos:        _repTrabajos.filter(v=>v.trim()),
     observaciones:   _repObservaciones.filter(v=>v.trim()),
     maquinas:        _repMaquinas,
+    // Garantía transversal a nivel de reporte (separada del tipo de servicio).
+    garantia_aplica: document.getElementById('rep_gar_si')?.checked || false,
   };
   const rid = document.getElementById('repId').value;
   let url = `/mantenciones/api/clientes/${CID}/reportes`, method = 'POST';
@@ -7041,7 +7080,7 @@ async function repGuardar(silencioso=false) {
       bootstrap.Modal.getInstance(document.getElementById('modalReporte'))?.hide();
     }
   } else {
-    alert('Error guardando: ' + (resp.error||'desconocido'));
+    ilusToast('Error guardando: ' + (resp.error||'desconocido'), { type:'error' });
   }
   return resp;
 }
@@ -7058,7 +7097,7 @@ async function eliminarReporte(rid) {
 
 async function repAnalizarIA() {
   const rid = document.getElementById('repId').value;
-  if (!rid) { alert('Guarda el informe primero'); return; }
+  if (!rid) { ilusToast('Guarda el informe primero', { type:'warning' }); return; }
   // Guardar primero
   await repGuardar(true);
   // Mostrar modal IA
