@@ -23611,6 +23611,7 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_contratos ADD COLUMN ai_mejoras TEXT",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_cobertura TEXT",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_editable TEXT COMMENT 'JSON campos editados por usuario'",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_analisis_json MEDIUMTEXT COMMENT 'Analisis IA 360 completo (JSON): exposicion, garantia, clausulas_sugeridas, propuestas, rentabilidad'",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_inicio DATE",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_fin DATE",
                 # v2 — trazabilidad y gestión avanzada
@@ -34894,20 +34895,10 @@ def mant_contrato_analizar(ctid):
             tipo_doc_detectado = precheck.get("tipo")
             razon_deteccion = precheck.get("razon")
             confianza = int(precheck.get("confianza") or 0)
-            # Si la IA está MUY segura que NO es contrato (>= 70) → bloquear
-            if (tipo_doc_detectado and
-                tipo_doc_detectado != "contrato_servicio" and
-                confianza >= 70):
-                return jsonify({
-                    "ok": False,
-                    "error_codigo": "NO_ES_CONTRATO",
-                    "error": (f"Este archivo NO es un contrato. Detectado como "
-                              f"'{tipo_doc_detectado}' (confianza {confianza}%). "
-                              f"{razon_deteccion or ''}"),
-                    "tipo_doc_detectado": tipo_doc_detectado,
-                    "razon_deteccion": razon_deteccion,
-                    "confianza": confianza,
-                }), 422  # 422 Unprocessable Entity
+            # Daniel 30/05/2026: NUNCA rechazar. La IA analiza CUALQUIER documento
+            # contractual (compraventa, leasing, servicio, garantía, comodato…) y
+            # entrega el análisis gerencial igual. El tipo detectado solo se informa
+            # al prompt (para contextualizar) y al usuario; jamás bloquea el análisis.
 
     # Datos del contrato para enriquecer el prompt
     datos_extra = (
@@ -34923,32 +34914,75 @@ def mant_contrato_analizar(ctid):
     if not texto_contrato:
         texto_contrato = "(Texto no extraíble — análisis visual del PDF)" if es_escaneado else "(Texto no extraíble — análisis basado en metadatos)"
 
-    prompt_sistema = """Eres un experto jurídico y técnico en contratos de mantención
-de equipos de fitness para gimnasios y centros deportivos en Chile (ILUS Fitness).
-Analiza el contrato con criterio profesional. Responde SIEMPRE en JSON con esta estructura EXACTA:
+    prompt_sistema = """Actúas como un COMITÉ DE EXPERTOS de ILUS Fitness (Chile) analizando
+un contrato para la GERENCIA. Combinas 4 roles a la vez:
+  - ABOGADO corporativo: detectas cláusulas débiles/ausentes y REDACTAS mejoras concretas.
+  - ESPECIALISTA EN SERVICIO TÉCNICO: equipos de fitness (treadmills, bikes, elípticas, fuerza).
+  - ANALISTA COMERCIAL: propones cómo subir el ingreso sin perder al cliente.
+  - ANALISTA FINANCIERO: cuantificas la EXPOSICIÓN (cuánto podemos perder) y la rentabilidad.
+
+OBJETIVO DE NEGOCIO (crítico): ILUS debe GANAR dinero y estar BLINDADO. El mayor riesgo que
+preocupa a la gerencia: clientes que usan el contrato SOLO para exigir/cobrar GARANTÍAS, pero
+contratan las mantenciones PAGAS con TERCEROS. Eso nos expone (cubrimos garantías sin ingreso
+por servicio). Tu análisis DEBE evidenciar esta y otras exposiciones y proponer blindaje:
+por ejemplo, condicionar la garantía a que TODA mantención se haga con ILUS (si la hace un
+tercero, se anula la garantía) y obligar mantención periódica exclusiva con ILUS.
+
+Analiza el documento SEA DEL TIPO QUE SEA (servicio, compraventa, leasing, comodato, garantía).
+Nunca te niegues a analizar. Responde SIEMPRE en JSON VÁLIDO con ESTA estructura EXACTA
+(sin texto fuera del JSON):
 {
-  "tipo_contrato": "Preventivo|Correctivo|Full|Garantía|Inspección|Otro",
-  "resumen": "2-3 oraciones resumiendo el contrato",
+  "tipo_contrato": "Servicio|Compraventa|Leasing|Comodato|Garantia|Mixto|Otro",
+  "resumen": "2-4 oraciones en tono gerencial: qué es y qué significa para ILUS",
   "score": 0-100,
   "nivel_riesgo": "alto|medio|bajo",
   "vigencia_inicio": "YYYY-MM-DD o null",
   "vigencia_fin": "YYYY-MM-DD o null",
   "es_indefinido": true_o_false,
-  "frecuencia_sugerida_meses": número_entero,
-  "sla_horas": número_entero_o_null,
+  "frecuencia_sugerida_meses": numero_entero,
+  "sla_horas": numero_entero_o_null,
   "incluye_mant_gratis": true_o_false,
   "incluye_repuestos": true_o_false,
-  "cobertura_descripcion": "descripción de qué cubre el contrato",
-  "costo_mensual": número_o_null,
-  "costo_por_mant": número_o_null,
-  "costo_total": número_o_null,
-  "clausulas_criticas": ["clausula1","clausula2",...],
-  "puntos_criticos": ["punto1","punto2",...],
-  "alertas": ["alerta1","alerta2",...],
-  "mejoras_prioritarias": ["mejora1","mejora2","mejora3"]
+  "cobertura_descripcion": "qué cubre y qué NO cubre el contrato",
+  "costo_mensual": numero_o_null,
+  "costo_por_mant": numero_o_null,
+  "costo_total": numero_o_null,
+  "clausulas_criticas": ["cláusula textual riesgosa o ausente", "..."],
+  "puntos_criticos": ["hallazgo clave", "..."],
+  "alertas": ["alerta accionable", "..."],
+  "mejoras_prioritarias": ["mejora 1", "mejora 2", "mejora 3"],
+  "exposicion": {
+    "nivel": "alto|medio|bajo",
+    "resumen": "en plata: a qué nos expone este contrato hoy",
+    "escenarios": [
+      {"riesgo": "ej: garantía sin mantención con ILUS", "impacto": "costo/efecto concreto",
+       "probabilidad": "alta|media|baja", "mitigacion": "qué cláusula o acción lo evita"}
+    ]
+  },
+  "analisis_garantia": {
+    "cubre_garantia": true_o_false,
+    "condicionada_a_mantencion_ilus": true_o_false,
+    "riesgo_terceros": "riesgo de que hagan mantenciones pagas con terceros y nos dejen solo la garantía",
+    "recomendacion": "cómo condicionar la garantía a mantención exclusiva con ILUS"
+  },
+  "clausulas_sugeridas": [
+    {"titulo": "nombre de la cláusula", "texto": "REDACCIÓN jurídica lista para pegar en el contrato",
+     "justificacion": "qué riesgo cubre / cuánto blinda a ILUS"}
+  ],
+  "propuestas_comerciales": [
+    {"titulo": "propuesta para subir ingreso", "descripcion": "cómo, sin perder al cliente",
+     "impacto_ingreso": "estimación CLP o cualitativo", "prioridad": "alta|media|baja"}
+  ],
+  "rentabilidad": {
+    "mrr_estimado_clp": numero_o_null,
+    "margen_estimado": "alto|medio|bajo|negativo + breve por qué",
+    "oportunidad_ingreso_clp": numero_o_null
+  }
 }
-Sé específico sobre equipos fitness (treadmills, bikes, elípticas, pesas, etc.).
-Detecta SLA, penalidades, cláusulas de exclusión y riesgos operativos para el prestador."""
+Sé concreto y chileno (CLP, RUT, equipos fitness). Las clausulas_sugeridas deben ser texto
+jurídico REAL listo para usar, enfocadas en: (1) mantención periódica OBLIGATORIA con ILUS,
+(2) garantía CONDICIONADA a esa mantención exclusiva, (3) cobro de toda visita/OT fuera de
+cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a ILUS."""
 
     if es_escaneado and pdf_b64_paginas:
         prompt_usuario = f"""Analiza este contrato de mantención. El PDF adjunto
@@ -34975,7 +35009,7 @@ Devuelve SOLO el JSON, sin texto adicional."""
     # mandamos el PDF como attachment para que Claude lo procese visualmente.
     resultado, err = _claude_call(
         prompt_usuario, prompt_sistema,
-        max_tokens=2000, expect_json=True,
+        max_tokens=4000, expect_json=True,
         attachments=pdf_b64_paginas if es_escaneado else None
     )
     if err:
@@ -34990,6 +35024,7 @@ Devuelve SOLO el JSON, sin texto adicional."""
             cur.execute(
                 """UPDATE mant_contratos SET
                    ai_analizado=1, ai_fecha=%s, ai_usuario=%s,
+                   ai_analisis_json=%s,
                    ai_resumen=%s,
                    ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
                    ai_clausulas=%s, ai_cobertura=%s, ai_tipo_contrato=%s,
@@ -35005,6 +35040,7 @@ Devuelve SOLO el JSON, sin texto adicional."""
                    WHERE id=%s""",
                 (datetime.now(),
                  current_username(),
+                 json.dumps(resultado, ensure_ascii=False),
                  resultado.get("resumen",""),
                  json.dumps(resultado.get("puntos_criticos",[]),    ensure_ascii=False),
                  json.dumps(resultado.get("alertas",[]),            ensure_ascii=False),

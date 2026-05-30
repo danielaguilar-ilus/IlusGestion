@@ -4677,29 +4677,44 @@ async function analizarContrato(ctid, btn) {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}/analizar`, { method:'POST' });
     const data = await r.json();
     if (data.ok) {
-      // Si la IA detectó que NO es un contrato, mostramos el aviso del tipo detectado
-      if (data.tipo_doc_detectado && data.tipo_doc_detectado !== 'contrato_servicio') {
-        alert(
-          `⚠️ Atención: la IA detectó que este documento NO es un contrato de servicio.\n\n` +
-          `Tipo detectado: ${data.tipo_doc_detectado}\n` +
-          `Razón: ${data.razon_deteccion || 'sin detalle'}\n\n` +
-          `El análisis se completó igual (con confianza baja). ` +
-          `Considera reemplazar el archivo por el contrato real.`
-        );
-      }
       _planTabActualizarStatus(true);
-      location.reload();
+      // Si la IA detectó que NO es un contrato, avisamos (modal ILUS, no alert nativo).
+      if (data.tipo_doc_detectado && data.tipo_doc_detectado !== 'contrato_servicio') {
+        await ilusAlert({
+          title: 'Este documento no parece un contrato',
+          message: 'La IA detectó que el archivo subido no es un contrato de servicio. '
+                 + 'El análisis se completó igual (con confianza baja). '
+                 + 'Considera reemplazar el archivo por el contrato real.',
+          sub: '<strong>Tipo detectado:</strong> ' + escHtml(data.tipo_doc_detectado)
+             + '<br><strong>Razón:</strong> ' + escHtml(data.razon_deteccion || 'sin detalle'),
+          subHtml: true,
+          type: 'warning',
+        });
+      }
+      // Mostramos el análisis 360° EN VIVO desde data.resultado.
+      // Al cerrar el modal recargamos para refrescar el dashboard persistido del servidor.
+      _mostrarAnalisisContrato360(data.resultado || {});
+      // El botón se restituye visualmente (igual va a recargar al cerrar el modal).
+      btn.disabled = false;
+      btn.innerHTML = orig;
     } else {
       // Si el documento fue RECHAZADO por la IA validadora
       if (data.error_codigo === 'NO_ES_CONTRATO') {
-        alert(
-          `❌ El archivo subido NO es un contrato de servicio.\n\n` +
-          `La IA detectó: ${data.tipo_doc_detectado || 'documento desconocido'}\n` +
-          `Razón: ${data.razon_deteccion || ''}\n\n` +
-          `Sube el contrato correcto y vuelve a intentar.`
-        );
+        await ilusAlert({
+          title: 'El archivo no es un contrato',
+          message: 'El documento subido no es un contrato de servicio. '
+                 + 'Sube el contrato correcto y vuelve a intentar.',
+          sub: '<strong>La IA detectó:</strong> ' + escHtml(data.tipo_doc_detectado || 'documento desconocido')
+             + (data.razon_deteccion ? '<br><strong>Razón:</strong> ' + escHtml(data.razon_deteccion) : ''),
+          subHtml: true,
+          type: 'error',
+        });
       } else {
-        alert('Error en análisis IA:\n' + (data.error || 'Error desconocido'));
+        await ilusAlert({
+          title: 'No se pudo analizar el contrato',
+          message: data.error || 'Error desconocido',
+          type: 'error',
+        });
       }
       btn.disabled = false;
       btn.innerHTML = orig;
@@ -4707,7 +4722,345 @@ async function analizarContrato(ctid, btn) {
   } catch(e) {
     btn.disabled = false;
     btn.innerHTML = orig;
-    alert('Error de conexión: ' + e.message);
+    await ilusAlert({
+      title: 'Error de conexión',
+      message: e.message || String(e),
+      type: 'error',
+    });
+  }
+}
+
+// ─── Análisis 360° del contrato (Comité de expertos IA) ──────────────────
+// Renderiza el JSON enriquecido (exposición, garantía, cláusulas sugeridas,
+// propuestas comerciales y rentabilidad) en el modal reusable #modalAIResult.
+// Todo el texto que viene del JSON se escapa con escHtml() antes de inyectarse.
+function _mostrarAnalisisContrato360(res) {
+  res = res || {};
+  const titleEl = document.getElementById('aiResultTitle');
+  const bodyEl  = document.getElementById('aiResultBody');
+  if (!bodyEl) { location.reload(); return; }   // sin modal → fallback al flujo viejo
+  if (titleEl) titleEl.textContent = 'Análisis 360° del contrato';
+  bodyEl.innerHTML = _ctaRenderHTML(res);
+
+  const modalEl = document.getElementById('modalAIResult');
+  const modal = new bootstrap.Modal(modalEl);
+  // Al cerrar, recargamos la ficha para que el dashboard persistido (Jinja) se actualice.
+  modalEl.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+  modal.show();
+}
+
+// Paleta semáforo reusable para niveles alto/medio/bajo.
+function _ctaSemaforo(nivel) {
+  const n = String(nivel || 'medio').toLowerCase();
+  if (n === 'alto')  return { color:'#dc2626', bg:'#fef2f2', border:'#fecaca', label:'ALTO',  icon:'bi-exclamation-octagon-fill' };
+  if (n === 'bajo')  return { color:'#16a34a', bg:'#f0fdf4', border:'#bbf7d0', label:'BAJO',  icon:'bi-shield-check' };
+  return                    { color:'#f59e0b', bg:'#fffbeb', border:'#fde68a', label:'MEDIO', icon:'bi-exclamation-triangle-fill' };
+}
+
+// Paleta para prioridad/probabilidad alta/media/baja.
+function _ctaPrioColor(p) {
+  const n = String(p || '').toLowerCase();
+  if (n === 'alta') return { color:'#dc2626', bg:'#fee2e2' };
+  if (n === 'baja') return { color:'#16a34a', bg:'#dcfce7' };
+  return                   { color:'#b45309', bg:'#fef3c7' };
+}
+
+// Formatea un número CLP con separador de miles (es-CL). Null/0 → null.
+function _ctaCLP(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!isFinite(n) || n === 0) return null;
+  return '$' + n.toLocaleString('es-CL');
+}
+
+// Encabezado de sección reusable.
+function _ctaHead(emoji, titulo, color) {
+  return `<div style="display:flex;align-items:center;gap:8px;margin:22px 0 12px">
+    <span style="font-size:1.15rem;line-height:1">${emoji}</span>
+    <h6 style="margin:0;font-size:.95rem;font-weight:800;color:${color || '#0f172a'}">${escHtml(titulo)}</h6>
+  </div>`;
+}
+
+// Construye TODO el HTML del análisis 360°.
+function _ctaRenderHTML(res) {
+  const score = Number(res.score) || 0;
+  const sc = score >= 70 ? '#16a34a' : score >= 40 ? '#f59e0b' : '#dc2626';
+  const scText = score >= 80 ? 'Excelente' : score >= 60 ? 'Bueno' : score >= 40 ? 'Regular' : 'Crítico';
+  const riesgo = _ctaSemaforo(res.nivel_riesgo);
+
+  let h = '';
+
+  // ── HERO: score + nivel de riesgo + resumen ──
+  h += `<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+        background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;
+        border-radius:14px;padding:20px 22px;margin-bottom:6px">
+    <div style="position:relative;flex-shrink:0">
+      <svg viewBox="0 0 100 100" style="width:104px;height:104px">
+        <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="8"></circle>
+        <circle cx="50" cy="50" r="44" fill="none" stroke="${sc}" stroke-width="8"
+                stroke-dasharray="${(score*2.764).toFixed(1)} ${(276.4-score*2.764).toFixed(1)}"
+                transform="rotate(-90 50 50)" stroke-linecap="round"
+                style="transition:stroke-dasharray .8s cubic-bezier(.34,1.56,.64,1)"></circle>
+        <text x="50" y="48" text-anchor="middle" style="font-size:26px;font-weight:900;fill:#fff">${score}</text>
+        <text x="50" y="63" text-anchor="middle" style="font-size:9px;font-weight:600;fill:rgba(255,255,255,.6)">de 100</text>
+      </svg>
+    </div>
+    <div style="flex:1;min-width:230px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:${sc}22;color:${sc};border:1px solid ${sc}55;
+              padding:3px 12px;border-radius:50px;font-size:.72rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.4px">${scText}</span>
+        <span style="background:${riesgo.color}22;color:${riesgo.color};border:1px solid ${riesgo.color}55;
+              padding:3px 12px;border-radius:50px;font-size:.72rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.4px">
+          <i class="bi ${riesgo.icon} me-1"></i>Riesgo ${riesgo.label}</span>
+        ${res.tipo_contrato ? `<span style="background:rgba(124,58,237,.25);color:#c4b5fd;
+              padding:3px 12px;border-radius:50px;font-size:.72rem;font-weight:700">
+              ${escHtml(res.tipo_contrato)}</span>` : ''}
+      </div>
+      ${res.resumen ? `<p style="margin:0;font-size:.88rem;line-height:1.55;color:#e2e8f0">${escHtml(res.resumen)}</p>` : ''}
+    </div>
+  </div>`;
+
+  // ── KPIs económicos rápidos ──
+  const kpis = [];
+  const mm = _ctaCLP(res.costo_mensual);
+  const ct = _ctaCLP(res.costo_total);
+  const cpm = _ctaCLP(res.costo_por_mant);
+  if (mm)  kpis.push(['bi-cash-stack', '#16a34a', '#dcfce7', mm,  'Monto mensual']);
+  if (ct)  kpis.push(['bi-wallet2',    '#1e40af', '#dbeafe', ct,  'Costo total']);
+  if (cpm) kpis.push(['bi-tools',      '#92400e', '#fef3c7', cpm, 'Por mantención']);
+  if (res.sla_horas) kpis.push(['bi-stopwatch', '#6d28d9', '#ede9fe', res.sla_horas + 'h', 'SLA respuesta']);
+  if (res.frecuencia_sugerida_meses) kpis.push(['bi-arrow-repeat', '#0e7490', '#cffafe', 'c/' + res.frecuencia_sugerida_meses + 'm', 'Frecuencia']);
+  if (kpis.length) {
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px">`;
+    kpis.forEach(([ic, fg, bg, val, lbl]) => {
+      h += `<div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #eef0f3;
+            border-radius:10px;padding:11px 13px;box-shadow:0 1px 2px rgba(0,0,0,.04)">
+        <div style="width:36px;height:36px;border-radius:9px;background:${bg};color:${fg};
+              display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.05rem">
+          <i class="bi ${ic}"></i></div>
+        <div style="min-width:0">
+          <div style="font-size:1rem;font-weight:800;color:#0f172a;line-height:1.1">${escHtml(val)}</div>
+          <div style="font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.3px">${escHtml(lbl)}</div>
+        </div></div>`;
+    });
+    h += `</div>`;
+  }
+
+  // ── ⚠️ EXPOSICIÓN (lo que más le importa a gerencia) ──
+  const exp = res.exposicion;
+  if (exp && (exp.nivel || exp.resumen || (exp.escenarios||[]).length)) {
+    const s = _ctaSemaforo(exp.nivel);
+    h += _ctaHead('⚠️', 'Exposición', '#0f172a');
+    h += `<div style="background:${s.bg};border:1px solid ${s.border};border-left:5px solid ${s.color};
+          border-radius:12px;padding:14px 16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:${exp.resumen ? '8px' : '0'}">
+        <span style="display:inline-flex;align-items:center;gap:6px;background:${s.color};color:#fff;
+              padding:4px 12px;border-radius:50px;font-size:.72rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.5px;flex-shrink:0">
+          <i class="bi ${s.icon}"></i>Nivel ${s.label}</span>
+        ${exp.resumen ? '' : `<span style="font-size:.8rem;color:#64748b">Sin resumen disponible</span>`}
+      </div>
+      ${exp.resumen ? `<p style="margin:0;font-size:.86rem;line-height:1.55;color:#334155">${escHtml(exp.resumen)}</p>` : ''}
+    </div>`;
+
+    const escenarios = exp.escenarios || [];
+    if (escenarios.length) {
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:12px">`;
+      escenarios.forEach(e => {
+        const pp = _ctaPrioColor(e.probabilidad);
+        h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 15px;
+              box-shadow:0 2px 8px rgba(0,0,0,.05);display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+            <div style="font-size:.86rem;font-weight:800;color:#0f172a;line-height:1.35">${escHtml(e.riesgo || 'Escenario de riesgo')}</div>
+            ${e.probabilidad ? `<span style="background:${pp.bg};color:${pp.color};padding:2px 9px;
+                  border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;
+                  letter-spacing:.3px;flex-shrink:0;white-space:nowrap">Prob. ${escHtml(e.probabilidad)}</span>` : ''}
+          </div>
+          ${e.impacto ? `<div style="font-size:.78rem;color:#475569;line-height:1.5">
+            <i class="bi bi-lightning-charge-fill me-1" style="color:#f59e0b"></i>
+            <strong>Impacto:</strong> ${escHtml(e.impacto)}</div>` : ''}
+          ${e.mitigacion ? `<div style="font-size:.78rem;color:#166534;background:#f0fdf4;border-radius:8px;
+                padding:8px 10px;line-height:1.5">
+            <i class="bi bi-shield-check me-1"></i>
+            <strong>Mitigación:</strong> ${escHtml(e.mitigacion)}</div>` : ''}
+        </div>`;
+      });
+      h += `</div>`;
+    }
+  }
+
+  // ── 🛡️ GARANTÍA ──
+  const gar = res.analisis_garantia;
+  if (gar && (gar.cubre_garantia !== undefined || gar.riesgo_terceros || gar.recomendacion)) {
+    h += _ctaHead('🛡️', 'Garantía', '#0f172a');
+    const cubre = !!gar.cubre_garantia;
+    const cond  = !!gar.condicionada_a_mantencion_ilus;
+    h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 16px;
+          box-shadow:0 2px 8px rgba(0,0,0,.05)">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:${(gar.riesgo_terceros||gar.recomendacion)?'12px':'0'}">
+        <span style="display:inline-flex;align-items:center;gap:6px;
+              background:${cubre?'#dcfce7':'#fee2e2'};color:${cubre?'#166534':'#991b1b'};
+              padding:4px 12px;border-radius:50px;font-size:.74rem;font-weight:800">
+          <i class="bi ${cubre?'bi-check-circle-fill':'bi-x-circle-fill'}"></i>
+          ${cubre?'Cubre garantía':'No cubre garantía'}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;
+              background:${cond?'#dcfce7':'#fee2e2'};color:${cond?'#166534':'#991b1b'};
+              padding:4px 12px;border-radius:50px;font-size:.74rem;font-weight:800">
+          <i class="bi ${cond?'bi-link-45deg':'bi-unlock'}"></i>
+          ${cond?'Condicionada a mantención ILUS':'No condicionada a ILUS'}</span>
+      </div>
+      ${gar.riesgo_terceros ? `<div style="font-size:.82rem;color:#475569;line-height:1.55;margin-bottom:${gar.recomendacion?'10px':'0'}">
+        <i class="bi bi-people-fill me-1" style="color:#dc2626"></i>
+        <strong>Riesgo de terceros:</strong> ${escHtml(gar.riesgo_terceros)}</div>` : ''}
+      ${gar.recomendacion ? `<div style="font-size:.82rem;color:#1e3a8a;background:#eff6ff;border-radius:8px;
+            padding:9px 11px;line-height:1.55">
+        <i class="bi bi-lightbulb-fill me-1" style="color:#3b82f6"></i>
+        <strong>Recomendación:</strong> ${escHtml(gar.recomendacion)}</div>` : ''}
+    </div>`;
+  }
+
+  // ── ⚖️ CLÁUSULAS SUGERIDAS (con botón copiar) ──
+  const cls = res.clausulas_sugeridas || [];
+  if (cls.length) {
+    h += _ctaHead('⚖️', 'Cláusulas sugeridas', '#0f172a');
+    cls.forEach((c, i) => {
+      const texto = c.texto || '';
+      h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 16px;
+            margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px">
+          <div style="font-size:.88rem;font-weight:800;color:#0f172a;line-height:1.35">
+            <i class="bi bi-bookmark-star-fill me-1" style="color:#dc2626"></i>${escHtml(c.titulo || ('Cláusula ' + (i+1)))}</div>
+          <button type="button" class="btn btn-sm btn-outline-secondary" style="flex-shrink:0;white-space:nowrap"
+                  onclick="_ctaCopiarClausula(this)" data-clausula="${escAttr(texto)}">
+            <i class="bi bi-clipboard me-1"></i>Copiar</button>
+        </div>
+        ${texto ? `<div style="font-size:.82rem;color:#334155;line-height:1.6;background:#f8fafc;
+              border-left:3px solid #dc2626;border-radius:6px;padding:11px 13px;
+              white-space:pre-wrap;font-family:Georgia,'Times New Roman',serif">${escHtml(texto)}</div>` : ''}
+        ${c.justificacion ? `<div style="font-size:.74rem;color:#6b7280;margin-top:8px;line-height:1.5">
+          <i class="bi bi-info-circle me-1"></i><strong>Por qué:</strong> ${escHtml(c.justificacion)}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  // ── 💼 PROPUESTAS COMERCIALES ──
+  const props = res.propuestas_comerciales || [];
+  if (props.length) {
+    h += _ctaHead('💼', 'Propuestas comerciales', '#0f172a');
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px">`;
+    props.forEach(p => {
+      const pp = _ctaPrioColor(p.prioridad);
+      h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 15px;
+            box-shadow:0 2px 8px rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px;
+            border-top:3px solid ${pp.color}">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+          <div style="font-size:.86rem;font-weight:800;color:#0f172a;line-height:1.35">${escHtml(p.titulo || 'Propuesta comercial')}</div>
+          ${p.prioridad ? `<span style="background:${pp.bg};color:${pp.color};padding:2px 9px;
+                border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;
+                letter-spacing:.3px;flex-shrink:0;white-space:nowrap">${escHtml(p.prioridad)}</span>` : ''}
+        </div>
+        ${p.descripcion ? `<div style="font-size:.79rem;color:#475569;line-height:1.5">${escHtml(p.descripcion)}</div>` : ''}
+        ${p.impacto_ingreso ? `<div style="font-size:.76rem;color:#166534;font-weight:700;margin-top:auto">
+          <i class="bi bi-graph-up-arrow me-1"></i>${escHtml(p.impacto_ingreso)}</div>` : ''}
+      </div>`;
+    });
+    h += `</div>`;
+  }
+
+  // ── 📊 RENTABILIDAD ──
+  const rent = res.rentabilidad;
+  if (rent && (rent.mrr_estimado_clp || rent.margen_estimado || rent.oportunidad_ingreso_clp)) {
+    h += _ctaHead('📊', 'Rentabilidad', '#0f172a');
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">`;
+    const mrr = _ctaCLP(rent.mrr_estimado_clp);
+    const opp = _ctaCLP(rent.oportunidad_ingreso_clp);
+    if (mrr) {
+      h += `<div style="background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;border-radius:12px;padding:15px 16px">
+        <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin-bottom:4px">
+          <i class="bi bi-cash-coin me-1"></i>MRR estimado</div>
+        <div style="font-size:1.5rem;font-weight:900;line-height:1">${escHtml(mrr)}</div>
+        <div style="font-size:.66rem;color:#64748b;margin-top:3px">ingreso mensual recurrente</div>
+      </div>`;
+    }
+    if (opp) {
+      h += `<div style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:12px;padding:15px 16px">
+        <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#bbf7d0;margin-bottom:4px">
+          <i class="bi bi-graph-up-arrow me-1"></i>Oportunidad de ingreso</div>
+        <div style="font-size:1.5rem;font-weight:900;line-height:1">${escHtml(opp)}</div>
+        <div style="font-size:.66rem;color:#dcfce7;margin-top:3px">potencial adicional detectado</div>
+      </div>`;
+    }
+    if (rent.margen_estimado) {
+      h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:15px 16px;
+            box-shadow:0 2px 8px rgba(0,0,0,.05)">
+        <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;margin-bottom:4px">
+          <i class="bi bi-pie-chart-fill me-1"></i>Margen estimado</div>
+        <div style="font-size:1.15rem;font-weight:800;color:#0f172a;line-height:1.25">${escHtml(rent.margen_estimado)}</div>
+      </div>`;
+    }
+    h += `</div>`;
+  }
+
+  // ── Listas clásicas (cláusulas críticas / puntos críticos / alertas / mejoras) ──
+  const _ctaLista = (emoji, titulo, items, color, bg, icon) => {
+    const arr = (items || []).filter(Boolean);
+    if (!arr.length) return '';
+    let out = _ctaHead(emoji, titulo, '#0f172a');
+    out += `<div style="display:flex;flex-direction:column;gap:7px">`;
+    arr.forEach(it => {
+      const txt = typeof it === 'string' ? it : (it.texto || it.titulo || it.descripcion || JSON.stringify(it));
+      out += `<div style="display:flex;align-items:flex-start;gap:9px;background:${bg};
+            border-radius:9px;padding:10px 12px;font-size:.82rem;color:#334155;line-height:1.5">
+        <i class="bi ${icon}" style="color:${color};flex-shrink:0;margin-top:2px"></i>
+        <span>${escHtml(txt)}</span></div>`;
+    });
+    out += `</div>`;
+    return out;
+  };
+  h += _ctaLista('📌', 'Cláusulas críticas', res.clausulas_criticas, '#dc2626', '#fef2f2', 'bi-exclamation-diamond-fill');
+  h += _ctaLista('🔎', 'Puntos críticos',    res.puntos_criticos,    '#b45309', '#fffbeb', 'bi-search');
+  h += _ctaLista('🔔', 'Alertas',            res.alertas,            '#dc2626', '#fef2f2', 'bi-bell-fill');
+  h += _ctaLista('🚀', 'Mejoras prioritarias', res.mejoras_prioritarias, '#16a34a', '#f0fdf4', 'bi-arrow-up-circle-fill');
+
+  // ── Cobertura (texto largo) ──
+  if (res.cobertura_descripcion) {
+    h += _ctaHead('📋', 'Cobertura', '#0f172a');
+    h += `<div style="font-size:.84rem;color:#334155;line-height:1.6;background:#f8fafc;
+          border:1px solid #eef0f3;border-radius:10px;padding:13px 15px;white-space:pre-wrap">${escHtml(res.cobertura_descripcion)}</div>`;
+  }
+
+  // ── Pie: aviso de que al cerrar se refresca ──
+  h += `<div style="margin-top:20px;padding-top:14px;border-top:1px dashed #e5e7eb;
+        font-size:.74rem;color:#9ca3af;text-align:center">
+    <i class="bi bi-stars me-1" style="color:#7c3aed"></i>
+    Análisis generado por el comité de expertos IA. Al cerrar, la ficha se actualizará con el resumen guardado.
+  </div>`;
+
+  return h;
+}
+
+// Copia la redacción jurídica de una cláusula al portapapeles (toast ILUS).
+async function _ctaCopiarClausula(btn) {
+  const texto = btn.getAttribute('data-clausula') || '';
+  try {
+    await navigator.clipboard.writeText(texto);
+    ilusToast('Copiado', { type:'success' });
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copiado';
+    setTimeout(() => { btn.innerHTML = orig; }, 1600);
+  } catch(e) {
+    // Fallback para navegadores sin clipboard API (o contexto no seguro)
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = texto; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      ilusToast('Copiado', { type:'success' });
+    } catch(_) {
+      ilusToast('No se pudo copiar', { type:'error' });
+    }
   }
 }
 
