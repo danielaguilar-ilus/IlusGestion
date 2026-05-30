@@ -9,6 +9,11 @@ const DATA = window.__FICHA_DATA || {};
 
 const CID = DATA.cid;
 
+// Solo el superadmin puede editar/eliminar reportes (regla de permisos).
+// El backend lo blinda con 403; aquí ocultamos los botones para el resto.
+const ES_SUPERADMIN = DATA.is_superadmin === true;
+window.ES_SUPERADMIN = ES_SUPERADMIN;
+
 // ════════════════════════════════════════════════════════════════════
 // ACCIONES DE IA (Claude)
 // ════════════════════════════════════════════════════════════════════
@@ -6816,15 +6821,19 @@ async function cargarReportes() {
               <a href="${rep.html_url}" download="informe_${rep.id}.html" class="btn btn-xs btn-outline-secondary" title="Descargar HTML">
                 <i class="bi bi-download"></i>
               </a>` : ''}
+            <a href="/mantenciones/api/reportes/${rep.id}/pdf" target="_blank" class="btn btn-xs btn-outline-danger" title="Descargar PDF">
+              <i class="bi bi-file-earmark-pdf"></i>
+            </a>
             <a href="/mantenciones/api/reportes/${rep.id}/word" class="btn btn-xs btn-outline-dark" title="Descargar Word">
               <i class="bi bi-file-earmark-word"></i>
             </a>
+            ${ES_SUPERADMIN ? `
             <button class="btn btn-xs btn-outline-primary" onclick="editarReporte(${rep.id})" title="Editar">
               <i class="bi bi-pencil"></i>
             </button>
             <button class="btn btn-xs btn-outline-danger" onclick="eliminarReporte(${rep.id})" title="Eliminar">
               <i class="bi bi-trash"></i>
-            </button>
+            </button>` : ''}
           </div>
         </div>
         ${rep.html_generated_at ? `<div class="mt-2" style="font-size:.66rem;color:#9ca3af;text-align:right"><i class="bi bi-clock me-1"></i>HTML generado ${rep.html_generated_at}</div>` : ''}
