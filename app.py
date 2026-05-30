@@ -45678,6 +45678,8 @@ def mant_reportes_list(cid):
 @_mant_required
 def mant_reporte_regenerar_html(rid):
     """Regenera snapshot HTML del reporte y devuelve la URL."""
+    if not (getattr(g, 'permissions', {}) or {}).get('superadmin'):
+        return jsonify({"error": "Solo el superadministrador puede editar o eliminar reportes."}), 403
     rel = _save_reporte_html_snapshot(rid)
     if not rel:
         return jsonify({"error":"No se pudo generar"}), 500
@@ -45686,7 +45688,9 @@ def mant_reporte_regenerar_html(rid):
 
 @app.route("/mantenciones/api/clientes/<int:cid>/reportes", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_reporte_crear(cid):
+    # Crear informe: superadmin + ejecutivo SSTT. Técnico bloqueado (@_no_tecnico).
     d = request.get_json(silent=True) or {}
     conn = get_mysql()
     try:
@@ -45745,6 +45749,19 @@ def mant_reporte_get(rid):
 @app.route("/mantenciones/api/reportes/<int:rid>", methods=["PUT"])
 @_mant_required
 def mant_reporte_update(rid):
+    # Permisos (Daniel 30/05/2026): el superadmin edita cualquier reporte. El
+    # EJECUTIVO (Aarón) puede COMPLETAR su propio reporte mientras está en
+    # 'borrador' (subir fotos, análisis IA, guardar contenido que él mismo creó).
+    # NO puede editar reportes de otros ni ya emitidos/entregados.
+    _rep_perm = mysql_fetchone("SELECT created_by, estado FROM mant_reportes WHERE id=%s", (rid,))
+    _es_super = bool((getattr(g, 'permissions', {}) or {}).get('superadmin'))
+    _es_creador_borrador = bool(
+        _rep_perm
+        and (_rep_perm.get('created_by') == current_username())
+        and (str(_rep_perm.get('estado') or 'borrador') == 'borrador')
+    )
+    if not (_es_super or _es_creador_borrador):
+        return jsonify({"error": "Solo el superadministrador puede editar reportes ya emitidos o de otros usuarios."}), 403
     d = request.get_json(silent=True) or {}
     allowed = ["tipo","estado","ticket_num","asunto","tecnico_junior","tecnico_senior",
                "fecha_solicitado","fecha_inicio","fecha_cierre",
@@ -45782,6 +45799,8 @@ def mant_reporte_update(rid):
 @app.route("/mantenciones/api/reportes/<int:rid>", methods=["DELETE"])
 @_mant_required
 def mant_reporte_del(rid):
+    if not (getattr(g, 'permissions', {}) or {}).get('superadmin'):
+        return jsonify({"error": "Solo el superadministrador puede editar o eliminar reportes."}), 403
     rep_info = mysql_fetchone("SELECT cliente_id, asunto, ticket_num FROM mant_reportes WHERE id=%s", (rid,))
     conn = get_mysql()
     try:
@@ -46139,6 +46158,420 @@ def _reporte_to_html(rep, cliente):
     Generado el {_now_chile_str('%d/%m/%Y %H:%M')} · ILUS Sport &amp; Health
   </div>
 </body></html>"""
+
+
+def _reporte_to_pdf_html(rep, cliente):
+    """Genera HTML corporativo ILUS (formato informe técnico ISO) listo para
+    imprimir a PDF desde el navegador (window.print()). NO requiere libs de
+    sistema (weasyprint/wkhtmltopdf): el propio navegador genera el PDF.
+
+    Replica las secciones de los informes oficiales ILUS:
+      - INFORME TÉCNICO POST-SERVICIO (mantención/instalación/inspección/otro)
+      - APLICACIÓN DE GARANTÍA (variante para tipo='garantia')
+
+    Todo el contenido dinámico se escapa (markupsafe) para evitar inyección
+    de HTML desde los campos del reporte.
+    """
+    from markupsafe import escape as _esc
+
+    def e(v):
+        """Escapa a HTML seguro. None/'' → '—'."""
+        if v is None:
+            return "—"
+        s = str(v).strip()
+        return str(_esc(s)) if s else "—"
+
+    def e_raw(v):
+        """Escapa sin placeholder (para concatenar)."""
+        return str(_esc("" if v is None else str(v)))
+
+    def _as_list(items):
+        if isinstance(items, str):
+            try: items = json.loads(items)
+            except Exception: items = []
+        return items or []
+
+    def _ul(items):
+        items = _as_list(items)
+        if not items:
+            return '<p class="rep-empty">Sin información registrada.</p>'
+        return ('<ul class="rep-list">'
+                + ''.join(f'<li>{e_raw(it)}</li>' for it in items if str(it).strip())
+                + '</ul>')
+
+    def _txt(v):
+        if v is None or not str(v).strip():
+            return '<p class="rep-empty">Sin información registrada.</p>'
+        # Respeta saltos de línea del texto plano
+        return '<p class="rep-text">' + e_raw(v).replace("\n", "<br>") + '</p>'
+
+    def _fecha_str(v):
+        """DATE/datetime/str → 'dd/mm/aaaa' (o vacío)."""
+        if not v:
+            return ""
+        try:
+            if hasattr(v, "strftime"):
+                return v.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+        s = str(v)[:10]
+        # Reordena 'aaaa-mm-dd' → 'dd/mm/aaaa'
+        if len(s) == 10 and s[4] == "-" and s[7] == "-":
+            return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
+        return s
+
+    def _dir_cliente(c):
+        partes = [c.get("direccion"), c.get("comuna"), c.get("ciudad")]
+        return ", ".join(p.strip() for p in partes if p and str(p).strip())
+
+    tipo      = (rep.get("tipo") or "mantencion").lower()
+    es_garantia = (tipo == "garantia")
+    tipo_lbl  = {"mantencion": "Mantención", "instalacion": "Instalación",
+                 "inspeccion": "Inspección", "garantia": "Garantía",
+                 "otro": "Servicio Técnico"}.get(tipo, "Servicio Técnico")
+    titulo    = ("APLICACIÓN DE GARANTÍA" if es_garantia
+                 else "INFORME TÉCNICO POST-SERVICIO")
+    rut_fmt   = _formato_rut_chile(cliente.get("rut", "")) or "—"
+
+    # ── Tabla máquinas a intervenir (SKU, descripción, cantidad) ──────────
+    maq = _as_list(rep.get("maquinas_json"))
+    maq_rows = ""
+    for m in maq:
+        maq_rows += (
+            "<tr>"
+            f"<td>{e(m.get('sku'))}</td>"
+            f"<td>{e(m.get('descripcion'))}</td>"
+            f"<td class='rep-center'>{e(m.get('cantidad') or 1)}</td>"
+            "</tr>"
+        )
+    if not maq_rows:
+        maq_rows = "<tr><td colspan='3' class='rep-empty'>Sin equipos registrados.</td></tr>"
+
+    # ── Tabla observaciones/recomendaciones por máquina ───────────────────
+    obs_rows = ""
+    for m in maq:
+        gar = (str(m.get("garantia") or "").strip())
+        gar_l = gar.lower()
+        if gar_l in ("si", "sí", "true", "1", "yes"):
+            gar_badge = '<span class="rep-badge rep-badge-si">SÍ</span>'
+        elif gar_l in ("no", "false", "0"):
+            gar_badge = '<span class="rep-badge rep-badge-no">NO</span>'
+        elif gar:
+            gar_badge = e(gar)
+        else:
+            gar_badge = '<span class="rep-badge rep-badge-na">—</span>'
+        obs_rows += (
+            "<tr>"
+            f"<td>{e(m.get('descripcion') or m.get('sku'))}</td>"
+            f"<td>{e(m.get('modelo'))}</td>"
+            f"<td>{e(m.get('serie'))}</td>"
+            f"<td>{e(m.get('repuesto'))}</td>"
+            f"<td class='rep-center'>{gar_badge}</td>"
+            f"<td>{e(m.get('observacion'))}</td>"
+            "</tr>"
+        )
+    if not obs_rows:
+        obs_rows = "<tr><td colspan='6' class='rep-empty'>Sin observaciones por máquina.</td></tr>"
+
+    # ── Registro fotográfico ──────────────────────────────────────────────
+    fotos = rep.get("fotos") or []
+    fotos_html = ""
+    if fotos:
+        cells = "".join(
+            f'<figure class="rep-foto"><img src="{e_raw(f.get("url"))}" alt="foto">'
+            f'<figcaption>{e(f.get("nombre"))}</figcaption></figure>'
+            for f in fotos
+        )
+        fotos_html = (
+            '<div class="rep-section"><div class="rep-section-bar">REGISTRO FOTOGRÁFICO</div>'
+            f'<div class="rep-foto-grid">{cells}</div></div>'
+        )
+
+    # ── Bloque IA (opcional) ──────────────────────────────────────────────
+    ai_html = ""
+    if rep.get("ai_diagnostico"):
+        ai_html = (
+            '<div class="rep-section"><div class="rep-section-bar rep-section-bar-soft">'
+            'DIAGNÓSTICO TÉCNICO (ANÁLISIS ASISTIDO)</div>'
+            f'{_txt(rep.get("ai_diagnostico"))}</div>'
+        )
+
+    # ── Cabecera: datos del solicitante / cliente ─────────────────────────
+    if es_garantia:
+        bloque_datos = f"""
+      <div class="rep-section">
+        <div class="rep-section-bar">INFORMACIÓN DEL SOLICITANTE</div>
+        <table class="rep-kv">
+          <tr><th>Razón Social</th><td>{e(cliente.get('razon_social'))}</td>
+              <th>RUT</th><td>{e_raw(rut_fmt)}</td></tr>
+          <tr><th>Contacto</th><td>{e(cliente.get('contacto_nombre'))}</td>
+              <th>Teléfono</th><td>{e(cliente.get('contacto_tel'))}</td></tr>
+          <tr><th>Correo</th><td>{e(cliente.get('contacto_email'))}</td>
+              <th>Dirección</th><td>{e(_dir_cliente(cliente))}</td></tr>
+        </table>
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-bar">INFORMACIÓN DEL PRODUCTO</div>
+        <table class="rep-kv">
+          <tr><th>N° Factura / Boleta / OT</th><td>{e(rep.get('ticket_num'))}</td>
+              <th>Fecha solicitud</th><td>{e(_fecha_str(rep.get('fecha_solicitado')))}</td></tr>
+        </table>
+        <table class="rep-table" style="margin-top:6px">
+          <thead><tr><th>SKU</th><th>Producto con falla</th><th>Cantidad</th></tr></thead>
+          <tbody>{maq_rows}</tbody>
+        </table>
+      </div>"""
+        bloque_narrativo = f"""
+      <div class="rep-section">
+        <div class="rep-section-bar">DESCRIPCIÓN DEL PROBLEMA</div>
+        {_txt(rep.get('antecedentes'))}
+        {_ul(rep.get('observaciones'))}
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-bar">GESTIÓN Y RESOLUCIÓN</div>
+        {_ul(rep.get('trabajos'))}
+      </div>"""
+    else:
+        bloque_datos = f"""
+      <div class="rep-section">
+        <div class="rep-section-bar">DATOS DEL CLIENTE</div>
+        <table class="rep-kv">
+          <tr><th>Razón Social</th><td>{e(cliente.get('razon_social'))}</td>
+              <th>RUT</th><td>{e_raw(rut_fmt)}</td></tr>
+          <tr><th>Contacto</th><td>{e(cliente.get('contacto_nombre'))}</td>
+              <th>Teléfono</th><td>{e(cliente.get('contacto_tel'))}</td></tr>
+          <tr><th>Correo</th><td>{e(cliente.get('contacto_email'))}</td>
+              <th>Dirección</th><td>{e(_dir_cliente(cliente))}</td></tr>
+        </table>
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-bar">DATOS DEL SERVICIO</div>
+        <table class="rep-kv">
+          <tr><th>Tipo de servicio</th><td>{e_raw(tipo_lbl)}</td>
+              <th>Estado</th><td>{e((rep.get('estado') or '').title())}</td></tr>
+          <tr><th>Fecha solicitado</th><td>{e(_fecha_str(rep.get('fecha_solicitado')))}</td>
+              <th>Fecha inicio</th><td>{e(_fecha_str(rep.get('fecha_inicio')))}</td></tr>
+          <tr><th>Fecha cierre</th><td>{e(_fecha_str(rep.get('fecha_cierre')))}</td>
+              <th>&nbsp;</th><td>&nbsp;</td></tr>
+          <tr><th>Técnico Senior</th><td>{e(rep.get('tecnico_senior'))}</td>
+              <th>Técnico Junior</th><td>{e(rep.get('tecnico_junior'))}</td></tr>
+        </table>
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-bar">MÁQUINAS A INTERVENIR</div>
+        <table class="rep-table">
+          <thead><tr><th>SKU</th><th>Descripción</th><th>Cantidad</th></tr></thead>
+          <tbody>{maq_rows}</tbody>
+        </table>
+      </div>"""
+        bloque_narrativo = f"""
+      <div class="rep-section">
+        <div class="rep-section-bar">OBJETIVOS DE LA VISITA</div>
+        {_ul(rep.get('objetivos'))}
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-bar">TRABAJOS REALIZADOS E INTERVENCIONES</div>
+        {_ul(rep.get('trabajos'))}
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-bar">OBSERVACIONES GENERALES POST-VISITA</div>
+        {_ul(rep.get('observaciones'))}
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-bar">OBSERVACIONES Y RECOMENDACIONES POR MÁQUINA</div>
+        <table class="rep-table">
+          <thead><tr><th>Máquina</th><th>Modelo</th><th>Serial</th><th>Repuesto</th>
+            <th>Garantía</th><th>Observación</th></tr></thead>
+          <tbody>{obs_rows}</tbody>
+        </table>
+      </div>"""
+
+    asunto    = e(rep.get("asunto"))
+    ticket    = e(rep.get("ticket_num"))
+    logo_url  = "/static/Logo.png"
+    gen_fecha = _now_chile_str("%d/%m/%Y %H:%M")
+    año       = _now_chile_str("%Y")
+
+    return f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{titulo} · {e(cliente.get('razon_social'))}</title>
+<style>
+  :root{{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; }}
+  *{{ box-sizing:border-box; }}
+  html,body{{ margin:0; padding:0; }}
+  body{{ font-family:Arial,Helvetica,'Segoe UI',sans-serif; color:#0a0a0a;
+         font-size:11px; line-height:1.45; background:#525659; }}
+  .rep-page{{ background:#fff; width:21.6cm; min-height:27.9cm; margin:18px auto;
+              padding:2cm; box-shadow:0 4px 24px rgba(0,0,0,.35); }}
+  /* Encabezado */
+  .rep-head{{ display:flex; align-items:center; gap:16px;
+              border-bottom:3px solid var(--ilus-red); padding-bottom:14px; margin-bottom:6px; }}
+  .rep-head .rep-logo{{ width:120px; height:auto; flex-shrink:0; }}
+  .rep-head .rep-logo-fallback{{ width:120px; height:46px; flex-shrink:0;
+              background:var(--ilus-black); color:#fff; border-radius:6px;
+              display:flex; align-items:center; justify-content:center;
+              font-weight:900; letter-spacing:1px; font-size:18px; }}
+  .rep-head-txt{{ flex:1; }}
+  .rep-head-txt .rep-title{{ font-size:18px; font-weight:900; color:var(--ilus-black);
+              letter-spacing:.5px; line-height:1.1; }}
+  .rep-head-txt .rep-sub{{ font-size:10px; color:#6b7280; margin-top:3px; }}
+  .rep-head-meta{{ text-align:right; flex-shrink:0; }}
+  .rep-head-meta .rep-ticket{{ font-size:9px; font-weight:700; color:#fff;
+              background:var(--ilus-red); border-radius:4px; padding:3px 10px;
+              display:inline-block; letter-spacing:.5px; }}
+  .rep-asunto{{ font-size:12px; font-weight:700; color:var(--ilus-black);
+              margin:10px 0 14px; padding:7px 12px; background:#f3f4f6;
+              border-left:4px solid var(--ilus-red); border-radius:0 4px 4px 0; }}
+  /* Secciones */
+  .rep-section{{ margin-bottom:14px; }}
+  .rep-section-bar{{ background:var(--ilus-black); color:#fff; font-size:10px;
+              font-weight:800; letter-spacing:.7px; text-transform:uppercase;
+              padding:5px 10px; border-radius:3px; position:relative; padding-left:14px; }}
+  .rep-section-bar::before{{ content:''; position:absolute; left:0; top:0; bottom:0;
+              width:5px; background:var(--ilus-red); border-radius:3px 0 0 3px; }}
+  .rep-section-bar-soft{{ background:#374151; }}
+  /* Tablas clave-valor */
+  table{{ border-collapse:collapse; width:100%; }}
+  .rep-kv{{ margin-top:6px; }}
+  .rep-kv th{{ background:#f8fafc; color:#374151; text-align:left; font-size:9.5px;
+              text-transform:uppercase; letter-spacing:.3px; font-weight:700;
+              padding:5px 8px; border:1px solid #e5e7eb; width:16%; vertical-align:top; }}
+  .rep-kv td{{ padding:5px 8px; border:1px solid #e5e7eb; width:34%; vertical-align:top; }}
+  /* Tablas de datos */
+  .rep-table{{ margin-top:6px; }}
+  .rep-table thead th{{ background:var(--ilus-black); color:#fff; font-size:9.5px;
+              text-transform:uppercase; letter-spacing:.3px; padding:6px 8px;
+              text-align:left; border:1px solid var(--ilus-black); }}
+  .rep-table tbody td{{ padding:5px 8px; border:1px solid #e5e7eb; vertical-align:top; }}
+  .rep-table tbody tr:nth-child(even) td{{ background:#fafbfc; }}
+  .rep-center{{ text-align:center; }}
+  .rep-badge{{ display:inline-block; font-size:9px; font-weight:800; padding:1px 8px;
+              border-radius:50px; letter-spacing:.3px; }}
+  .rep-badge-si{{ background:#dcfce7; color:#166534; }}
+  .rep-badge-no{{ background:#fee2e2; color:#991b1b; }}
+  .rep-badge-na{{ background:#f3f4f6; color:#6b7280; }}
+  /* Listas y texto */
+  .rep-list{{ margin:8px 0 4px; padding-left:20px; }}
+  .rep-list li{{ margin-bottom:4px; }}
+  .rep-text{{ margin:8px 0 4px; text-align:justify; }}
+  .rep-empty{{ color:#9ca3af; font-style:italic; margin:8px 0 4px; }}
+  /* Fotos */
+  .rep-foto-grid{{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:8px; }}
+  .rep-foto{{ margin:0; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;
+              background:#fff; }}
+  .rep-foto img{{ width:100%; height:150px; object-fit:cover; display:block; }}
+  .rep-foto figcaption{{ font-size:8.5px; color:#6b7280; padding:4px 6px;
+              text-align:center; border-top:1px solid #f3f4f6; }}
+  /* Pie */
+  .rep-foot{{ margin-top:22px; padding-top:12px; border-top:2px solid var(--ilus-red);
+              display:flex; justify-content:space-between; align-items:flex-end;
+              font-size:8.5px; color:#6b7280; }}
+  .rep-foot b{{ color:var(--ilus-black); }}
+  /* Botón imprimir (no se imprime) */
+  .rep-print-bar{{ position:fixed; top:14px; right:14px; z-index:50; }}
+  .rep-print-bar button{{ background:var(--ilus-red); color:#fff; border:none;
+              border-radius:8px; padding:10px 18px; font-weight:700; font-size:13px;
+              cursor:pointer; box-shadow:0 4px 14px rgba(220,38,38,.4); }}
+  @media print {{
+    body{{ background:#fff; }}
+    .rep-page{{ width:auto; min-height:auto; margin:0; padding:0; box-shadow:none; }}
+    .rep-print-bar{{ display:none !important; }}
+    .rep-section{{ page-break-inside:avoid; }}
+    .rep-foto{{ page-break-inside:avoid; }}
+    thead{{ display:table-header-group; }}
+  }}
+  @page {{ size:Letter; margin:2cm; }}
+</style></head>
+<body>
+  <div class="rep-print-bar"><button onclick="window.print()">Descargar / Imprimir PDF</button></div>
+  <div class="rep-page">
+    <div class="rep-head">
+      <img class="rep-logo" src="{logo_url}" alt="ILUS"
+           onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
+      <div class="rep-head-txt">
+        <div class="rep-title">{titulo}</div>
+        <div class="rep-sub">ILUS Sport &amp; Health Solution SPA · RUT 76.996.964-0</div>
+      </div>
+      <div class="rep-head-meta">
+        <span class="rep-ticket">N° {ticket}</span>
+      </div>
+    </div>
+    <div class="rep-asunto">Asunto: {asunto}</div>
+    {bloque_datos}
+    {bloque_narrativo}
+    {ai_html}
+    {fotos_html}
+    <div class="rep-foot">
+      <div>
+        <b>ILUS Sport &amp; Health Solution SPA</b><br>
+        Servicio Técnico · contacto@sphs.cl
+      </div>
+      <div style="text-align:right">
+        Documento generado el {gen_fecha}<br>
+        © {año} ILUS Sport &amp; Health
+      </div>
+    </div>
+  </div>
+  <script>
+    // Dispara el diálogo de impresión del navegador apenas cargan imágenes.
+    window.addEventListener('load', function(){{
+      setTimeout(function(){{ try{{ window.print(); }}catch(e){{}} }}, 350);
+    }});
+  </script>
+</body></html>"""
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>/pdf", methods=["GET"])
+@_mant_required
+def mant_reporte_pdf(rid):
+    """Vista imprimible del reporte (formato ILUS) — el navegador genera el PDF.
+
+    Accesible para todos los roles con permiso de mantenciones (incluido el
+    ejecutivo SSTT). No requiere libs de sistema: usa window.print().
+    """
+    r = mysql_fetchone(
+        "SELECT r.*, c.razon_social, c.rut, c.contacto_nombre, c.contacto_tel, "
+        "c.contacto_email, c.direccion, c.comuna, c.ciudad "
+        "FROM mant_reportes r JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s",
+        (rid,)
+    )
+    if not r:
+        return "Reporte no encontrado", 404
+    rep = dict(r)
+    cliente = {
+        "razon_social":    rep.pop("razon_social", ""),
+        "rut":             rep.pop("rut", ""),
+        "contacto_nombre": rep.pop("contacto_nombre", ""),
+        "contacto_tel":    rep.pop("contacto_tel", ""),
+        "contacto_email":  rep.pop("contacto_email", ""),
+        "direccion":       rep.pop("direccion", ""),
+        "comuna":          rep.pop("comuna", ""),
+        "ciudad":          rep.pop("ciudad", ""),
+    }
+    # Decodificar campos JSON
+    for k in ("objetivos", "trabajos", "observaciones", "maquinas_json", "ai_acciones"):
+        if rep.get(k):
+            try: rep[k] = json.loads(rep[k])
+            except Exception: rep[k] = []
+    # Fotos del registro fotográfico
+    try:
+        fotos = mysql_fetchall(
+            "SELECT id,nombre,archivo_path FROM mant_contrato_adjuntos "
+            "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
+        ) or []
+        rep["fotos"] = [
+            {"nombre": f.get("nombre"),
+             "url": f"/static/uploads/mantenciones/reportes/{f['archivo_path']}"}
+            for f in fotos
+        ]
+    except Exception:
+        rep["fotos"] = []
+    try:
+        _mant_log("reporte", rid, "exportar_pdf")
+    except Exception:
+        pass
+    return _reporte_to_pdf_html(rep, cliente)
 
 
 @app.route("/mantenciones/api/reportes/<int:rid>/word", methods=["GET"])
