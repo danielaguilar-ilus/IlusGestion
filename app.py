@@ -17396,6 +17396,14 @@ def tr_manifiesto_export(mid):
     def _falta(v):
         return not str(v or "").strip()
 
+    # Sanitiza strings para Excel: openpyxl lanza IllegalCharacterError si un
+    # texto trae caracteres de control (llegan desde el ERP en notas/dirección/
+    # observaciones). Los quitamos antes de escribir la celda. (Daniel 30/05/2026)
+    import re as _re_xc
+    _ILLEGAL_XLSX = _re_xc.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+    def _xc(v):
+        return _ILLEGAL_XLSX.sub("", v) if isinstance(v, str) else v
+
     if formato == "fedex":
         ws.title = "FedEx"
         s = _tr_sender_cfg()
@@ -17428,7 +17436,7 @@ def tr_manifiesto_export(mid):
                 "FEDEX_PRIORITY", "CLP", "Y", "Y", "Y", "ES", "Y",
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 15).fill = MISS_FILL
 
@@ -17458,7 +17466,7 @@ def tr_manifiesto_export(mid):
                 "", "", "", "", "",
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 21).fill = MISS_FILL
 
@@ -17490,7 +17498,7 @@ def tr_manifiesto_export(mid):
                 nbult,
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 6).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 7).fill = MISS_FILL
 
@@ -17507,7 +17515,7 @@ def tr_manifiesto_export(mid):
                 max(1, int(it.get("n_bultos") or 1)),
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 5).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 6).fill = MISS_FILL
 
@@ -18761,7 +18769,7 @@ def transporte_couriers_export():
             ] + [precios.get(k,'') for k in all_keys]
 
             for ci, v in enumerate(row_vals, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
 
     if not wb.sheetnames:
         ws = wb.create_sheet("Sin datos")
