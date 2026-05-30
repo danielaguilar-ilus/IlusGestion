@@ -15619,6 +15619,11 @@ def _mantenciones_cron_run_once(slot_str=""):
         "MANT_AUTO_CALENDAR_ENABLED", "0"
     ).strip().lower()
     auto_calendar_on = auto_calendar_flag in ("1", "true", "yes", "on")
+    # Daniel 30/05/2026: la creación AUTOMÁTICA de OTs queda DESACTIVADA de
+    # forma definitiva. El sistema solo SUGIERE (notificaciones/IA), nunca
+    # crea OTs por su cuenta. Se ignora MANT_AUTO_CALENDAR_ENABLED para evitar
+    # reactivaciones accidentales — la IA propondrá las OTs y el usuario decide.
+    auto_calendar_on = False
     metricas["auto_calendar_on"] = auto_calendar_on
     metricas["sugerencias_creadas"] = 0
 
@@ -28747,6 +28752,59 @@ Incluye: datos del cliente, condiciones contractuales, costos, equipos mencionad
 
     resultado["_erp_match"] = erp_data
     return jsonify({"ok": True, "resultado": resultado})
+
+
+@app.route("/mantenciones/api/ots/reset", methods=["POST"])
+@_mant_required
+def mant_ots_reset():
+    """Reseteo masivo de OTs (visitas) — SOLO superadmin, con respaldo previo.
+
+    Daniel 30/05/2026: limpiar el sistema para una ronda de prueba completa.
+    Seguridad (no negociable):
+      - Solo superadmin.
+      - Exige confirm_text == 'BORRAR OT' escrito a mano.
+      - Respalda TODAS las visitas a mant_visitas_backup ANTES de borrar
+        (red de seguridad → reversible).
+      - DELETE de mant_visitas (cascade limpia fotos/tareas/repuestos/tiempos).
+      - Audit log.
+    NO toca contratos, clientes ni equipos.
+    """
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"error": "Solo el superadministrador puede resetear las OTs."}), 403
+    d = request.get_json(silent=True) or {}
+    if (d.get("confirm_text") or "").strip().upper() != "BORRAR OT":
+        return jsonify({"error": "Confirmación inválida. Escribe exactamente: BORRAR OT"}), 400
+
+    try:
+        r = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_visitas")
+        total_n = int((r or {}).get("n") or 0)
+    except Exception:
+        total_n = 0
+    if total_n == 0:
+        return jsonify({"ok": True, "borradas": 0,
+                        "mensaje": "No había OTs registradas. El sistema ya estaba limpio."})
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Respaldo (reversible). Tabla espejo; INSERT IGNORE evita colisión
+            # de PK si se resetea más de una vez (los id son crecientes).
+            cur.execute("CREATE TABLE IF NOT EXISTS mant_visitas_backup LIKE mant_visitas")
+            cur.execute("INSERT IGNORE INTO mant_visitas_backup SELECT * FROM mant_visitas")
+            # Borrado: cascade limpia tablas hijas con FK ON DELETE CASCADE.
+            cur.execute("DELETE FROM mant_visitas")
+        conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        _mant_log("sistema", 0, "ots_reset",
+                  f"RESET OTs por {current_username()}: {total_n} visitas respaldadas "
+                  f"en mant_visitas_backup y borradas (cascade).")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "borradas": total_n,
+                    "mensaje": f"{total_n} OTs respaldadas y borradas. Sistema limpio para tu ronda de prueba."})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/generar-calendario", methods=["POST"])

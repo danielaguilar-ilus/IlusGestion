@@ -215,8 +215,54 @@
       <i class="bi bi-building-add me-1"></i>Generar OT desde cliente
     </a>
     {% endif %}
+    {% if permissions.superadmin %}
+    <button type="button" class="btn btn-sm btn-outline-danger" onclick="resetearOTs()"
+            title="Borrar TODAS las OTs (con respaldo automático) — solo superadmin">
+      <i class="bi bi-trash3 me-1"></i>Resetear OTs
+    </button>
+    {% endif %}
   </div>
 </div>
+
+{% if permissions.superadmin %}
+<script>
+// Reseteo masivo de OTs (superadmin). Respaldo + confirmación escrita.
+async function resetearOTs(){
+  if(typeof ilusPrompt !== 'function'){ return; }
+  const txt = await ilusPrompt({
+    title: 'Resetear todas las OTs',
+    message: 'Esto borra TODAS las órdenes de trabajo. Se guarda un respaldo automático (reversible). Para confirmar escribe exactamente:',
+    sub: '<strong style="color:#dc2626">BORRAR OT</strong>',
+    subHtml: true,
+    placeholder: 'BORRAR OT',
+    okLabel: 'Resetear sistema',
+    cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if(txt === null) return;
+  if((txt||'').trim().toUpperCase() !== 'BORRAR OT'){
+    ilusToast('Confirmación incorrecta — no se borró nada.', {type:'warning'});
+    return;
+  }
+  try{
+    const r = await fetch('/mantenciones/api/ots/reset', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text:'BORRAR OT'})
+    });
+    const d = await r.json();
+    if(r.ok && d.ok){
+      await ilusAlert({type:'success', title:'Sistema limpio',
+        message: d.mensaje || ((d.borradas||0)+' OTs respaldadas y borradas.')});
+      location.reload();
+    } else {
+      ilusToast(d.error || 'No se pudo resetear.', {type:'error'});
+    }
+  }catch(e){
+    ilusToast('Error de red al resetear.', {type:'error'});
+  }
+}
+</script>
+{% endif %}
 
 {% if fatal_error %}
 <div class="alert alert-danger" style="font-size:.85rem">
