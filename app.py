@@ -2631,6 +2631,13 @@ def init_pickup_tables():
                 # Nuevos (mayo 2026): capacidad paralela + buffer cierre
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN parallel_capacity INT DEFAULT 2 COMMENT 'Retiros simultaneos por bloque'",
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN buffer_cierre_min INT DEFAULT 30 COMMENT 'Minutos buffer antes de close_time'",
+                # ── FASE 2/3 negociación (Daniel 2026-05-29) ──
+                # min_notice_hours: anticipación mínima del cliente (default 24).
+                # proposal_expiry_hours: vencimiento de propuesta (default 48).
+                # expires_at: timestamp de vencimiento por propuesta (ping-pong).
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN min_notice_hours INT DEFAULT 24 COMMENT 'Anticipacion minima del cliente en horas'",
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN proposal_expiry_hours INT DEFAULT 48 COMMENT 'Horas hasta que una propuesta vence'",
+                f"ALTER TABLE `{PICKUP_PROPOSALS_TABLE}` ADD COLUMN expires_at DATETIME NULL DEFAULT NULL COMMENT 'Vencimiento de la propuesta (hora Chile)'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
