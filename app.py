@@ -28225,62 +28225,22 @@ def mant_index():
 @_mant_required
 @_no_tecnico
 def mant_clientes():
+    # ── Motor de filtros 100% client-side (multifiltro en vivo) ──────────
+    # El backend trae TODOS los clientes con sus datos (data-* en las cards)
+    # y el navegador filtra + pagina sin recargar. Los parámetros de la URL
+    # solo definen el ESTADO INICIAL de los filtros (deep-linking) y se pasan
+    # al template; el filtrado real ocurre en JS. Esto permite combinar
+    # tipo + estado + contrato + equipos + búsqueda simultáneamente sin que
+    # un filtro pise a otro (Daniel 30/05/2026 — "filtrado inteligente").
     q            = request.args.get("q", "").strip()
-    estado       = request.args.get("estado", "activo")
-    contrato_fil = request.args.get("contrato", "")
-    equipos_fil  = request.args.get("equipos", "")  # FASE 2026-05-16: con|sin
-    vista        = request.args.get("vista", "grid")
-    # Filtro tipo de contrato comercial: mantencion | arriendo | leasing.
-    # Cualquier valor fuera de esos 3 = sin filtro ("Todos"). El front
-    # (pills tipo-cliente) recarga con ?tipo=X esperando este filtro.
+    estado       = request.args.get("estado", "").strip().lower()
+    contrato_fil = request.args.get("contrato", "").strip().lower()
+    equipos_fil  = request.args.get("equipos", "").strip().lower()
     tipo_fil     = request.args.get("tipo", "").strip().lower()
-    if tipo_fil not in ("mantencion", "arriendo", "leasing"):
-        tipo_fil = ""
-
-    where, params = ["1=1"], []
-    # 'all' = NO filtrar por estado (incluye inactivos/suspendidos/prospectos).
-    # Caso de uso: vista "Clientes ocultos" para recuperar fichas perdidas.
-    if estado and estado != "all":
-        where.append("c.estado=%s"); params.append(estado)
-    if q:
-        # Búsqueda fuzzy: razón social, RUT, email + giro + comuna para casos como
-        # "sport francés" → busca por palabra clave en cualquiera de esos campos.
-        where.append(
-            "(c.razon_social LIKE %s OR c.rut LIKE %s OR c.contacto_email LIKE %s "
-            " OR c.email_empresa LIKE %s OR c.giro LIKE %s OR c.comuna LIKE %s)"
-        )
-        qp = f"%{q}%"; params += [qp, qp, qp, qp, qp, qp]
-    # Filtro contrato: con / sin contrato VIGENTE. Se alinea con el KPI
-    # "Con contrato" (global_stats.con_contrato cuenta solo vigentes), para
-    # que el número del KPI y lo que muestra el filtro al hacer clic coincidan
-    # exactamente. Daniel 30/05/2026.
-    if contrato_fil == "con":
-        where.append(
-            "EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id AND ct.estado='vigente')"
-        )
-    elif contrato_fil == "sin":
-        where.append(
-            "NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id AND ct.estado='vigente')"
-        )
-    # Filtro equipos: con (al menos 1 equipo activo) / sin (ninguno)
-    if equipos_fil == "con":
-        where.append(
-            "EXISTS (SELECT 1 FROM mant_maquinas m "
-            "WHERE m.cliente_id=c.id AND COALESCE(m.estado,'activo')<>'baja')"
-        )
-    elif equipos_fil == "sin":
-        where.append(
-            "NOT EXISTS (SELECT 1 FROM mant_maquinas m "
-            "WHERE m.cliente_id=c.id AND COALESCE(m.estado,'activo')<>'baja')"
-        )
-    # Filtro tipo de contrato comercial (mantencion/arriendo/leasing).
-    # NULL/'' se tratan como 'mantencion' (default histórico) para que el
-    # filtro Mantención incluya clientes antiguos sin tipo asignado.
-    if tipo_fil == "mantencion":
-        where.append("(c.tipo_cliente='mantencion' OR c.tipo_cliente IS NULL OR c.tipo_cliente='')")
-    elif tipo_fil in ("arriendo", "leasing"):
-        where.append("c.tipo_cliente=%s"); params.append(tipo_fil)
-    wstr = " AND ".join(where)
+    vista        = request.args.get("vista", "grid")
+    # Sin WHERE de filtros: traemos todo. LIMIT alto de seguridad (hoy ~165).
+    wstr   = "1=1"
+    params = []
 
     # Reescritura: 5 subqueries correlacionadas (N×5 ejecuciones) → 4 derived tables agregadas (1 ejecución cada una).
     # Resultado: pasa de ~1500 queries lógicas con 300 clientes a ~5 queries totales.
@@ -28326,17 +28286,12 @@ def mant_clientes():
             GROUP BY cliente_id
         ) v_next ON v_next.cliente_id = c.id
         WHERE {wstr}
-        ORDER BY c.razon_social LIMIT 300
+        ORDER BY c.razon_social LIMIT 500
     """, tuple(params))
     clientes = [dict(r) for r in rows]
 
-    # Post-filtro contrato — solo para los valores del select avanzado
-    # (vigente / vencido). 'con' y 'sin' YA se resolvieron en el WHERE por
-    # contrato vigente; re-filtrarlos aquí rompería la coherencia con el KPI.
-    if contrato_fil == 'vigente':
-        clientes = [c for c in clientes if c.get('contrato_estado') == 'vigente']
-    elif contrato_fil == 'vencido':
-        clientes = [c for c in clientes if c.get('contrato_estado') in ('vencido','por_vencer')]
+    # (Sin post-filtro server-side: el motor de filtros del navegador resuelve
+    #  tipo/estado/contrato/equipos/búsqueda combinados sobre las cards.)
 
     # Enriquecer cada cliente: completaje, badge, días a próx visita
     today_d = datetime.today().date()
