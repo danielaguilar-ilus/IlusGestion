@@ -332,7 +332,7 @@
                     <td class="font-monospace">{{ p.koprct or '—' }}</td>
                     <td>{{ p.nokopr or '—' }}</td>
                     <td class="text-center">{{ p.cantidad|int if p.cantidad is not none else '—' }}</td>
-                    <td class="text-center text-muted">{{ p.cant_despachada|int if p.cant_despachada is not none else '—' }}</td>
+                    <td class="text-center text-muted">{% set _cd = p.get('cant_despachada') %}{{ _cd|int if _cd is not none else '—' }}</td>
                     <td class="text-center">
                       {% if p.saldo is not none and p.saldo > 0 %}
                       <span class="mfd-saldo-chip mfd-saldo-ok"><i class="bi bi-check-circle-fill me-1"></i>{{ p.saldo|int }}</span>
@@ -497,7 +497,7 @@
           </div>
           <div class="small text-muted mt-1">
             Cantidad: <strong>{{ p.cantidad|int if p.cantidad is not none else '—' }}</strong> ·
-            Despachado: {{ p.cant_despachada|int if p.cant_despachada is not none else '—' }}
+            Despachado: {% set _cd = p.get('cant_despachada') %}{{ _cd|int if _cd is not none else '—' }}
           </div>
         </div>
         {% endfor %}
