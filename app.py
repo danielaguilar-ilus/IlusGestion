@@ -33773,7 +33773,7 @@ def mant_contrato_archivo(ctid):
 _CLAUDE_MODELS_FALLBACK = [
     "claude-opus-4-5",
     "claude-sonnet-4-5",
-    "claude-3-5-sonnet-20241022",
+    "claude-sonnet-4-6",   # reemplazo de claude-3-5-sonnet (retirado 28/10/2025)
 ]
 
 # ─── ROUTING POR TIER 2026-05-26 (Daniel — ahorro -60% costo IA) ──────
@@ -33786,18 +33786,17 @@ _CLAUDE_MODELS_FALLBACK = [
 _CLAUDE_MODELS_BY_TIER = {
     "haiku": [
         "claude-haiku-4-5",
-        "claude-3-5-haiku-20241022",
-        "claude-3-5-sonnet-20241022",  # último recurso
+        "claude-sonnet-4-6",   # último recurso (reemplaza 3-5-sonnet retirado)
     ],
     "sonnet": [
         "claude-sonnet-4-5",
-        "claude-3-5-sonnet-20241022",
+        "claude-sonnet-4-6",   # reemplaza claude-3-5-sonnet (retirado)
         "claude-opus-4-5",
     ],
     "opus": [
         "claude-opus-4-5",
         "claude-sonnet-4-5",
-        "claude-3-5-sonnet-20241022",
+        "claude-sonnet-4-6",   # reemplaza claude-3-5-sonnet (retirado)
     ],
 }
 
@@ -33807,10 +33806,12 @@ _CLAUDE_PRICES_PER_MTOK = {
     # Modelo: (input, output)
     "claude-opus-4-5":            (15.0, 75.0),
     "claude-opus-4-7":            (15.0, 75.0),
+    "claude-opus-4-8":            (15.0, 75.0),
     "claude-sonnet-4-5":          (3.0,  15.0),
-    "claude-3-5-sonnet-20241022": (3.0,  15.0),
-    "claude-haiku-4-5":           (0.80, 4.0),
-    "claude-3-5-haiku-20241022":  (0.80, 4.0),
+    "claude-sonnet-4-6":          (3.0,  15.0),
+    "claude-3-5-sonnet-20241022": (3.0,  15.0),   # retirado — mantener para lookup de logs históricos
+    "claude-haiku-4-5":           (1.0,  5.0),
+    "claude-3-5-haiku-20241022":  (0.80, 4.0),    # retirado — mantener para lookup de logs históricos
 }
 
 
