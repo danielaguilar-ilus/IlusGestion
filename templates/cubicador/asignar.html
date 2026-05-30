@@ -2568,19 +2568,45 @@ async function abrirEnvioManifiesto(){
     const d = await r.json();
     if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
     const items = d.manifiestos || [];
+    const radioExistente = document.querySelector('input[name=mfModo][value=existente]');
+    const labelExistente = document.getElementById('mfRadioExistenteLabel');
+    const subExistente   = document.getElementById('mfRadioExistenteSub');
+    const radioNuevo     = document.querySelector('input[name=mfModo][value=nuevo]');
     if (!items.length) {
-      sel.innerHTML = '<option value="">(no hay manifiestos abiertos)</option>';
-      document.getElementById('mfHintExistente').textContent =
-        'No hay manifiestos en preparación — crea uno nuevo.';
-      // Auto-cambiar a "Crear nuevo"
-      const radioNuevo = document.querySelector('input[name=mfModo][value=nuevo]');
+      // Sin manifiestos abiertos → bloquear visualmente "existente" y forzar "nuevo"
+      sel.innerHTML = '<option value="">— No hay manifiestos abiertos —</option>';
+      sel.disabled = true;
+      if (radioExistente) radioExistente.disabled = true;
+      if (labelExistente) {
+        labelExistente.style.opacity = '0.45';
+        labelExistente.style.cursor  = 'not-allowed';
+      }
+      if (subExistente)   subExistente.textContent = 'Ninguno en preparación para este courier';
+      document.getElementById('mfHintExistente').innerHTML =
+        '<i class="bi bi-info-circle"></i> No hay manifiestos en preparación — se creará uno nuevo.';
       if (radioNuevo) { radioNuevo.checked = true; _mfToggleModo(); }
     } else {
-      sel.innerHTML = items.map(m =>
-        `<option value="${m.id}" data-courier="${m.courier || ''}" data-estado="${m.estado || ''}">${m.correlativo} · ${m.courier || '—'} · ${m.fecha || ''} · ${m.total_items} ítems · ${m.estado}</option>`
-      ).join('');
-      document.getElementById('mfHintExistente').textContent =
-        `${items.length} manifiesto(s) abierto(s). Los de "${courierNom}" aparecen primero.`;
+      // Hay manifiestos → habilitar "existente" y mostrarlos formateados
+      sel.disabled = false;
+      if (radioExistente) radioExistente.disabled = false;
+      if (labelExistente) { labelExistente.style.opacity = ''; labelExistente.style.cursor = ''; }
+      if (subExistente)   subExistente.textContent = 'Selecciona uno en preparación';
+      // Padding fijo para alinear (es-CL date a 10 chars; correlativo MAN-AAAA-NNNN = 13)
+      sel.innerHTML = items.map(m => {
+        const corr   = (m.correlativo || '').padEnd(14, ' ');
+        const courier = (m.courier || '—').padEnd(20, ' ').slice(0,20);
+        const fecha  = (m.fecha || '').padEnd(10, ' ');
+        const items_ = String(m.total_items || 0).padStart(3, ' ');
+        const estado = m.estado || '';
+        return `<option value="${m.id}" data-courier="${m.courier || ''}" data-estado="${estado}">`
+             + `${corr} · ${courier} · ${fecha} · ${items_} ítems · ${estado}</option>`;
+      }).join('');
+      // Tipo monoespaciado para que las columnas se alineen
+      sel.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      sel.style.fontSize = '.82rem';
+      document.getElementById('mfHintExistente').innerHTML =
+        `<i class="bi bi-list-check"></i> <b>${items.length}</b> manifiesto(s) abierto(s). `
+        + `Los de <b>${courierNom}</b> aparecen primero.`;
     }
   } catch(e) {
     sel.innerHTML = '<option value="">(error cargando)</option>';
@@ -2745,11 +2771,11 @@ function setBuscarLoading(on){
       <div class="mf-resumen" id="mfResumen"></div>
 
       <div class="mf-opciones">
-        <label class="mf-radio">
+        <label class="mf-radio" id="mfRadioExistenteLabel">
           <input type="radio" name="mfModo" value="existente" checked onchange="_mfToggleModo()">
           <span>
             <b>Agregar a manifiesto existente</b>
-            <small>Selecciona uno en preparación</small>
+            <small id="mfRadioExistenteSub">Selecciona uno en preparación</small>
           </span>
         </label>
         <label class="mf-radio">

@@ -610,8 +610,13 @@
           </div>
         </div>
         <div class="mb-2 mt-2">
-          <label class="form-label small fw-semibold mb-1">Dirección</label>
-          <input type="text" id="edDireccion" class="form-control form-control-sm">
+          <label class="form-label small fw-semibold mb-1 d-flex justify-content-between align-items-center">
+            <span>Dirección</span>
+            <span id="edDirHint" class="text-muted" style="font-size:.72rem;font-weight:400">
+              <i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para autocompletar
+            </span>
+          </label>
+          <input type="text" id="edDireccion" class="form-control form-control-sm" autocomplete="off" placeholder="Empieza a escribir una dirección…">
         </div>
         <div class="row g-2">
           <div class="col-12 col-sm-4">
@@ -941,6 +946,53 @@ function guardarEstadoManifiesto() {
 
 // ── Editar contacto + medidas de un ítem (alimenta el export de carga masiva) ──
 var _edModal = null;
+
+// Parsea address_components de Google Places y rellena comuna/región/CP
+function _edParseComponentes(componentes) {
+  if (!Array.isArray(componentes)) return;
+  var comuna = '', region = '', cp = '';
+  componentes.forEach(function(c){
+    var t = c.types || [];
+    if (t.indexOf('locality') !== -1 || t.indexOf('administrative_area_level_3') !== -1) {
+      if (!comuna) comuna = c.long_name || '';
+    }
+    if (t.indexOf('administrative_area_level_1') !== -1) {
+      region = c.long_name || '';
+    }
+    if (t.indexOf('postal_code') !== -1) {
+      cp = c.long_name || '';
+    }
+  });
+  if (comuna) document.getElementById('edComuna').value    = comuna;
+  if (region) document.getElementById('edRegion').value    = region;
+  if (cp)     document.getElementById('edCodPostal').value = cp;
+}
+
+function _edInitPlaces() {
+  var input = document.getElementById('edDireccion');
+  var hint  = document.getElementById('edDirHint');
+  if (!input || input.dataset.placesInit === '1') return;
+  if (typeof ilusPlacesAutocomplete !== 'function') {
+    if (hint) hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe la dirección lo más completa posible';
+    return;
+  }
+  ilusPlacesAutocomplete(input, {
+    country: 'cl',
+    types: ['address'],
+    onPlaceSelected: function(place){
+      if (place && place.direccion) input.value = place.direccion;
+      if (place && place.componentes) _edParseComponentes(place.componentes);
+      if (hint) hint.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> '
+                               + '<span style="color:#16a34a">Dirección verificada en Google</span>';
+    },
+    onNoSelection: function(){
+      if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle" style="color:#f59e0b"></i> '
+                               + '<span style="color:#92400e">Elige una sugerencia para verificar la dirección</span>';
+    }
+  });
+  input.dataset.placesInit = '1';
+}
+
 function abrirEditar(data) {
   data = data || {};
   document.getElementById('edCid').value        = data.id || '';
@@ -955,8 +1007,13 @@ function abrirEditar(data) {
   document.getElementById('edPeso').value       = data.peso || '';
   document.getElementById('edBultos').value     = data.bultos || 1;
   document.getElementById('edMsg').innerHTML    = '';
+  // Reset visual hint
+  var hint = document.getElementById('edDirHint');
+  if (hint) hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para autocompletar';
   if (!_edModal) _edModal = new bootstrap.Modal(document.getElementById('editarItemModal'));
   _edModal.show();
+  // Inicializa Google Places (lazy — espera a que el modal esté visible)
+  setTimeout(_edInitPlaces, 150);
 }
 
 function guardarEdicion() {
