@@ -182,6 +182,32 @@ def _formato_rut_chile_impl(rut_str):
     return f"{cuerpo_fmt}-{dv}" if dv else cuerpo_fmt
 
 
+def _rut_cuerpo(raw):
+    """Devuelve SOLO el cuerpo del RUT (sin puntos, guion ni digito verificador).
+
+    El ERP Random guarda el RUT base en MAEEN.RTEN SIN digito verificador, asi que
+    TODA busqueda por RUT debe usar el cuerpo. Daniel 30/05/2026: buscar
+    '77.017.350-K' debe encontrar lo mismo que '77017350'.
+
+    Ejemplos:
+        '77.017.350-K' -> '77017350'   ;  '77017350-9' -> '77017350'
+        '77017350K'    -> '77017350'   ;  '770173509'  -> '77017350'
+        '77017350'     -> '77017350'   ;  '8827'       -> '8827'  (numero de doc)
+        '12.345.678-9' -> '12345678'
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip().upper()
+    if "-" in s:                              # con guion: cuerpo = antes del guion
+        return re.sub(r"[^0-9K]", "", s.split("-", 1)[0])
+    s = re.sub(r"[^0-9K]", "", s)             # limpiar separadores
+    if s.endswith("K"):                       # DV K pegado
+        return s[:-1]
+    if len(s) >= 9:                           # 9 digitos -> ultimo es DV
+        return s[:-1]
+    return s                                  # 8 o menos digitos -> ya es cuerpo
+
+
 # NOTA: el filtro Jinja "rut_fmt" se registra más abajo, después de que
 # `app = Flask(__name__)` esté definido (alrededor de la línea 171).
 # Buscar: @app.template_filter('rut_fmt')
@@ -657,7 +683,6 @@ except Exception as _e:
     print(f"[UPLOADS_BASE] No se pudo crear {UPLOADS_BASE}: {_e}")
 
 UPLOAD_FOLDER   = UPLOADS_BASE
-COLABS_FOLDER   = os.path.join(UPLOADS_BASE, "colaboradores")
 ERP_TABLE_PRODUCTS = ERP_CONFIG.get("table_products", "MAEPR")
 ALLOWED_EXT     = {"png", "jpg", "jpeg", "webp", "gif"}
 MAX_PHOTOS      = 2
@@ -694,7 +719,6 @@ else:
               "primera vez que se despliega.", flush=True)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(COLABS_FOLDER, exist_ok=True)
 
 # ─────────────────────────────────────────────
 #  Cloudinary — almacenamiento de fotos en la nube
@@ -1080,16 +1104,18 @@ def _get_pool():
                 #                  en vez de 20s. Write se queda en 20s para
                 #                  queries grandes (inserts batch, etc).
                 # ─────────────────────────────────────────────────────────
-                mincached      = 0,
-                # ── FIX 2026-05-17 (perf) ────────────────────────────
-                # maxcached subió 5 → 10, maxconnections 10 → 20.
-                # Con gunicorn 2 workers × 8 threads = 16 concurrentes
-                # potenciales por worker; con maxconnections=10 había
-                # contención (threads esperando conexión). 20 deja margen
-                # sin estresar a Clever Cloud (límite plan típico 25-50).
-                # maxcached=10 reduce reconexiones en ráfagas de tráfico.
-                maxcached      = 10,
-                maxconnections = 20,
+                # ── FIX 2026-05-26 (Daniel — login 10s tras inactividad) ──
+                # mincached subió 0 → 2: mantiene 2 conexiones SIEMPRE vivas
+                # tras boot. Primer query tras inactividad NO paga el TCP+TLS+
+                # auth a Clever Cloud (~150-300ms). Antes, con mincached=0,
+                # se cerraban TODAS las conexiones al devolver al pool y la
+                # próxima query reabría desde cero.
+                mincached      = 2,
+                # maxcached 10 → 15: más conexiones reutilizables en ráfagas.
+                # maxconnections 20 → 30: más concurrencia con 4 workers × 8
+                # threads (Clever Cloud plan típico permite 25-50).
+                maxcached      = 15,
+                maxconnections = 30,
                 maxusage       = 200,
                 blocking       = False,
                 ping           = 7,
@@ -1098,7 +1124,9 @@ def _get_pool():
                 user           = MYSQL_CONFIG["user"],
                 password       = MYSQL_CONFIG["password"],
                 database       = MYSQL_CONFIG["database"],
-                connect_timeout= MYSQL_CONFIG.get("connect_timeout", 10),
+                # connect_timeout 10 → 5: fail-fast si MySQL no responde.
+                # Antes el usuario esperaba 10s para ver el error.
+                connect_timeout= MYSQL_CONFIG.get("connect_timeout", 5),
                 read_timeout   = 5,
                 write_timeout  = 20,
                 charset        = "utf8mb4",
@@ -1298,35 +1326,82 @@ def _random_sql_one(sql: str, params=None):
     return rows[0] if rows else None
 
 
+# ── INSTRUMENTACIÓN SQL 2026-05-26 (Daniel — audit runtime) ──────────
+# Wrapper transparente que mide cada query: cuenta queries, suma tiempo,
+# y loguea las que duran > _SQL_SLOW_THRESHOLD_MS. Los stats se agregan
+# a flask.g para que el after_request los emita en Server-Timing y log.
+# Si no estamos en request context, no hace nada (sigue funcionando).
+_SQL_SLOW_THRESHOLD_MS = 250
+
+
+def _sql_track(query, elapsed_ms):
+    """Registra una query en el contador del request actual + log si lenta."""
+    try:
+        # Solo si estamos en request context (request real, no daemon/cron)
+        if not hasattr(g, "_sql_count"):
+            g._sql_count = 0
+            g._sql_ms = 0
+        g._sql_count += 1
+        g._sql_ms += elapsed_ms
+        if elapsed_ms > _SQL_SLOW_THRESHOLD_MS:
+            # Limita el SQL en log a 300 chars para no llenar logs
+            q_short = " ".join(query.split())[:300]
+            try:
+                ep = request.endpoint or request.path
+            except Exception:
+                ep = "?"
+            print(f"[sql-slow] endpoint={ep} duration_ms={elapsed_ms} sql={q_short}",
+                  flush=True)
+    except Exception:
+        # Fuera de request context o g no disponible — ignorar silenciosamente
+        pass
+
+
 def mysql_fetchone(query, params=None):
-    with get_db().cursor() as cur:
-        cur.execute(query, params or ())
-        return cur.fetchone()
+    _t0 = time.time()
+    try:
+        with get_db().cursor() as cur:
+            cur.execute(query, params or ())
+            return cur.fetchone()
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 def mysql_fetchall(query, params=None):
-    with get_db().cursor() as cur:
-        cur.execute(query, params or ())
-        return cur.fetchall()
+    _t0 = time.time()
+    try:
+        with get_db().cursor() as cur:
+            cur.execute(query, params or ())
+            return cur.fetchall()
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 def mysql_execute(query, params=None):
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(query, params or ())
-    conn.commit()
+    _t0 = time.time()
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+        conn.commit()
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 def mysql_execute_returning_rowcount(query, params=None):
     """Igual que mysql_execute pero devuelve cur.rowcount (cuántas filas
     fueron afectadas). Útil para backfills/migraciones donde el caller
     quiere reportar cuántas filas se tocaron."""
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(query, params or ())
-        n = cur.rowcount
-    conn.commit()
-    return n
+    _t0 = time.time()
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+            n = cur.rowcount
+        conn.commit()
+        return n
+    finally:
+        _sql_track(query, int((time.time() - _t0) * 1000))
 
 
 # ─────────────────────────────────────────────
@@ -1715,6 +1790,17 @@ def init_transporte_tables():
             ]:
                 try: cur.execute(_idx)
                 except Exception: pass
+            # Migración 2026-05-25: agregar cant_despachada si la tabla
+            # fue creada antes de que se añadiera esta columna al CREATE TABLE.
+            # La columna es leída por tr_manifiesto_detalle →
+            # SELECT cant_despachada FROM transport_commitment_lines.
+            try:
+                cur.execute(
+                    "ALTER TABLE transport_commitment_lines "
+                    "ADD COLUMN cant_despachada DECIMAL(12,3) DEFAULT 0"
+                )
+            except Exception:
+                pass  # columna ya existe → ignorar
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transport_manifests (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -2572,6 +2658,13 @@ def init_pickup_tables():
                 # Nuevos (mayo 2026): capacidad paralela + buffer cierre
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN parallel_capacity INT DEFAULT 2 COMMENT 'Retiros simultaneos por bloque'",
                 f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN buffer_cierre_min INT DEFAULT 30 COMMENT 'Minutos buffer antes de close_time'",
+                # ── FASE 2/3 negociación (Daniel 2026-05-29) ──
+                # min_notice_hours: anticipación mínima del cliente (default 24).
+                # proposal_expiry_hours: vencimiento de propuesta (default 48).
+                # expires_at: timestamp de vencimiento por propuesta (ping-pong).
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN min_notice_hours INT DEFAULT 24 COMMENT 'Anticipacion minima del cliente en horas'",
+                f"ALTER TABLE `{PICKUP_SETTINGS_TABLE}` ADD COLUMN proposal_expiry_hours INT DEFAULT 48 COMMENT 'Horas hasta que una propuesta vence'",
+                f"ALTER TABLE `{PICKUP_PROPOSALS_TABLE}` ADD COLUMN expires_at DATETIME NULL DEFAULT NULL COMMENT 'Vencimiento de la propuesta (hora Chile)'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -2703,8 +2796,6 @@ def init_pickup_tables():
 def init_db():
     """Inicializa el esquema MySQL. Sin SQLite — todo va a MySQL."""
     init_mysql_schema()
-    init_hrm_tables()
-    init_eval_tables()
     init_resets_table()
     init_security_tables()
     init_transporte_tables()
@@ -3134,7 +3225,22 @@ def load_current_user():
     HEARTBEAT 2026-05-18: tras cargar el usuario (sea desde caché o BD),
     invoca _update_last_seen(uid) que asincrónicamente actualiza
     last_seen_at (throttle 60s). Esto alimenta el LED online/offline.
+
+    SHORT-CIRCUIT 2026-05-26 (Daniel — performance audit):
+    rutas ultra-livianas (/ping, /_health, /static, /favicon*) NO necesitan
+    session ni permisos. Salida temprana: cero lectura de cookie de sesión,
+    cero query a la BD. Ahorra ~5-15ms por request en rutas que muchas
+    veces se piden 5-15 veces por página (assets estáticos).
     """
+    # SHORT-CIRCUIT por path
+    _path = request.path or ""
+    if (_path.startswith("/static/") or _path == "/ping" or _path == "/_health"
+            or _path.startswith("/favicon") or _path == "/robots.txt"
+            or _path == "/manifest.json"):
+        g.user = None
+        g.permissions = permission_set(None)
+        return
+
     g.user = None
     g.permissions = permission_set(None)
     user_id = session.get("user_id")
@@ -4080,14 +4186,94 @@ def get_product_listing(search_query=""):
 
 
 def get_erp_product_by_sku(sku):
-    return mysql_fetchone(
-        f"""SELECT UPPER(TRIM(`SKU`)) AS sku,
-                   TRIM(COALESCE(`Nombre`,'')) AS nombre,
-                   TRIM(COALESCE(`Estado`,'Pendiente')) AS estado,
-                   TRIM(COALESCE(`Codigo`,'')) AS codigo
-            FROM `{ERP_TABLE}` WHERE UPPER(TRIM(`SKU`))=%s LIMIT 1""",
-        (sku.strip().upper(),),
-    )
+    """Valida si un SKU existe en el catálogo del ERP Random.
+
+    Cascada de fuentes (igual que el typeahead de búsqueda en /api/products/search):
+      1) Tabla local `etiquetas` (mirror de app_products) — instantáneo, sin red
+      2) REST API `/productos` del ERP Random — fuente en tiempo real
+      3) SQL Server directo a MAEPR — fallback cuando la REST cae o no devuelve el SKU
+
+    Devuelve dict {sku, nombre, estado, codigo} o None si NINGUNA fuente lo encuentra.
+
+    Bug fix 2026-05-28 (Daniel): antes solo consultaba (1) — un mirror de productos
+    YA creados en la app — por lo que TODO SKU nuevo del catálogo ERP era rechazado
+    al crear el producto. SKUs reportados: 1224100919, 1110100923, 1210100922,
+    1110101007, 1129100964.
+    """
+    sku_u = (sku or "").strip().upper()
+    if not sku_u:
+        return None
+
+    # ── Fuente 1: tabla local mirror (rápida, sin red) ────────────────
+    try:
+        local = mysql_fetchone(
+            f"""SELECT UPPER(TRIM(`SKU`)) AS sku,
+                       TRIM(COALESCE(`Nombre`,'')) AS nombre,
+                       TRIM(COALESCE(`Estado`,'Pendiente')) AS estado,
+                       TRIM(COALESCE(`Codigo`,'')) AS codigo
+                FROM `{ERP_TABLE}` WHERE UPPER(TRIM(`SKU`))=%s LIMIT 1""",
+            (sku_u,),
+        )
+        if local:
+            return local
+    except Exception as _e_local:
+        print(f"[get_erp_product_by_sku] local lookup failed: {_e_local}", flush=True)
+
+    # ── Fuente 2: REST API /productos del ERP Random ──────────────────
+    try:
+        TOKEN = ERP_CONFIG.get("api_token", "")
+        if TOKEN:
+            body = _erp_get(
+                "/productos",
+                {
+                    "search":  sku_u,
+                    "empresa": "01",
+                    "fields":  "KOPR,NOKOPR",
+                    "visible": "true",
+                    "limit":   "10",
+                },
+                TOKEN, timeout=6,
+            )
+            for p in (body.get("data") or []):
+                p_sku = (p.get("KOPR") or "").strip().upper()
+                if p_sku == sku_u:
+                    return {
+                        "sku":    p_sku,
+                        "nombre": (p.get("NOKOPR") or "").strip(),
+                        "estado": "Pendiente",
+                        "codigo": "",
+                    }
+    except Exception as _e_rest:
+        # No es fatal: caemos al SQL Server
+        print(f"[get_erp_product_by_sku] REST lookup failed for {sku_u}: "
+              f"{type(_e_rest).__name__}: {str(_e_rest)[:160]}", flush=True)
+
+    # ── Fuente 3: SQL Server directo a MAEPR ──────────────────────────
+    # Esto cubre el caso típico: SKU recién creado en el ERP que aún no
+    # aparece por la REST (cache de su lado, índice desactualizado, etc.)
+    try:
+        rows = _random_sql_query(
+            f"""SELECT TOP 1
+                       LTRIM(RTRIM(KOPR))   AS sku,
+                       LTRIM(RTRIM(NOKOPR)) AS nombre
+                  FROM {ERP_TABLE_PRODUCTS}
+                 WHERE UPPER(LTRIM(RTRIM(KOPR))) = %s""",
+            (sku_u,),
+            max_rows=1,
+        )
+        if rows:
+            r = rows[0]
+            return {
+                "sku":    (r.get("sku") or "").strip().upper(),
+                "nombre": (r.get("nombre") or "").strip(),
+                "estado": "Pendiente",
+                "codigo": "",
+            }
+    except Exception as _e_sql:
+        print(f"[get_erp_product_by_sku] SQL MAEPR lookup failed for {sku_u}: "
+              f"{type(_e_sql).__name__}: {str(_e_sql)[:160]}", flush=True)
+
+    return None
 
 
 def get_full(product_id):
@@ -4949,45 +5135,58 @@ def login():
         # connect_timeout) que tener tracking roto para siempre.
         # Try/except envuelve para que un error de BD NO impida el login.
         # ─────────────────────────────────────────────────────────────
+        # ── FIX 2026-05-27 (Daniel — login 6s): UPDATE y audit van a
+        # daemon thread CON app.app_context() para que get_db() y mysql_*
+        # funcionen sin RuntimeError. Esto ahorra ~1-1.5s de latencia de
+        # red MySQL bloqueando el redirect del usuario.
+        #
+        # El bug previo (login_ok no se grababa) era porque NO se usaba
+        # app_context. Ahora SÍ se usa → audit + last_login_at se graban
+        # correctamente, pero asincrónicamente.
+        # ──────────────────────────────────────────────────────────────
         try:
             ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64]
-            try:
-                # Intento principal: actualiza también last_seen_at en el mismo UPDATE.
-                mysql_execute(
-                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
-                    f"last_seen_at=NOW(), login_count=COALESCE(login_count,0)+1 WHERE id=%s",
-                    (ip, user["id"])
-                )
-            except Exception as _e_lst:
-                # Fallback si last_seen_at aún no existe (migración no corrió):
-                # actualiza solo last_login_at + last_login_ip + login_count.
-                print(f"[login-track] fallback sin last_seen_at: {_e_lst}", flush=True)
-                mysql_execute(
-                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), last_login_ip=%s, "
-                    f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
-                    (ip, user["id"])
-                )
-            print(f"[login-track] OK uid={user['id']} username={user['username']} ip={ip}", flush=True)
+            _uid = user["id"]
+            _uname = user["username"]
+            _urole = user["role"]
+            import threading as _th_login
+            def _login_track_async():
+                with app.app_context():
+                    # Track last_login + audit en una sola llamada al thread.
+                    try:
+                        try:
+                            mysql_execute(
+                                f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), "
+                                f"last_login_ip=%s, last_seen_at=NOW(), "
+                                f"login_count=COALESCE(login_count,0)+1 WHERE id=%s",
+                                (ip, _uid)
+                            )
+                        except Exception as _e_lst:
+                            print(f"[login-track-async] fallback sin last_seen_at: {_e_lst}", flush=True)
+                            try:
+                                mysql_execute(
+                                    f"UPDATE `{AUTH_TABLE}` SET last_login_at=NOW(), "
+                                    f"last_login_ip=%s, login_count=COALESCE(login_count,0)+1 "
+                                    f"WHERE id=%s",
+                                    (ip, _uid)
+                                )
+                            except Exception as _e_lst2:
+                                print(f"[login-track-async] tracking falló: {_e_lst2}", flush=True)
+                        print(f"[login-track-async] OK uid={_uid} username={_uname}", flush=True)
+                    except Exception as _e_lt_outer:
+                        print(f"[login-track-async] outer error: {_e_lt_outer}", flush=True)
+
+                    try:
+                        _audit("login_ok",
+                               target_type="user", target_id=_uid,
+                               user_override={"id": _uid, "username": _uname, "role": _urole})
+                    except Exception as _e_au:
+                        print(f"[login-track-async] audit falló: {_e_au}", flush=True)
+            _th_login.Thread(target=_login_track_async, daemon=True,
+                             name=f"login-track-{_uid}").start()
         except Exception as _e_login_track:
-            # Log con traceback completo para forensia (antes solo el mensaje).
             import traceback as _tb_lt
-            print(f"[login-track] FAIL uid={user['id']}: {_e_login_track}\n{_tb_lt.format_exc()}", flush=True)
-        # ── FIX 2026-05-18 (revertido a síncrono) ─────────────────────
-        # El thread daemon anterior tenía el MISMO bug que _track_login_async:
-        # _audit() llama internamente a get_db() que requiere `g` (Flask
-        # request context). El thread NO tiene contexto → RuntimeError →
-        # excepción atrapada y solo printeada → la fila login_ok NUNCA se
-        # insertaba. Esto es por qué Daniel veía usuarios "Nunca conectados"
-        # incluso cuando sí se logueaban.
-        # Volver a síncrono: el INSERT es <50ms y el redirect no es crítico
-        # en ese rango. Try/except externo garantiza que un error de BD
-        # NO impide el login (el usuario igual recibe su cookie).
-        try:
-            _audit("login_ok",
-                   target_type="user", target_id=user["id"],
-                   user_override={"id": user["id"], "username": user["username"], "role": user["role"]})
-        except Exception as _e_au:
-            print(f"[login_ok audit] {_e_au}", flush=True)
+            print(f"[login-track] FAIL outer uid={user['id']}: {_e_login_track}\n{_tb_lt.format_exc()}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
         return redirect(next_url)
     # FIX 2026-05-18 (perf): cache privado corto (30s) en GET /login.
@@ -5216,9 +5415,14 @@ def _get_resend_cfg() -> dict:
     # 1. Env var (Railway / Docker / local .env)
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
     if api_key:
+        # 2026-05-27 (Daniel): aceptar AMBOS nombres de variable.
+        # Algunos despliegues usan RESEND_FROM_EMAIL en vez de RESEND_FROM_ADDR.
+        _from = (os.environ.get("RESEND_FROM_ADDR", "").strip()
+                 or os.environ.get("RESEND_FROM_EMAIL", "").strip()
+                 or "onboarding@resend.dev")
         return {
             "api_key":   api_key,
-            "from_addr": os.environ.get("RESEND_FROM_ADDR", "onboarding@resend.dev").strip(),
+            "from_addr": _from,
             "_source":   "env",
         }
     # 2. BD
@@ -5342,9 +5546,9 @@ def _email_log(destinatario, asunto, evento, estado, error_msg=None, metadata=No
 # Daniel dio de baja Twilio: WhatsApp y SMS quedan deshabilitados del
 # FLUJO automático del sistema (notificaciones de OT, accesos, etc.).
 # El CÓDIGO de _send_whatsapp / _send_sms permanece en app.py, los
-# endpoints admin de prueba (/api/twilio/test, /comunicaciones/whatsapp/test,
-# /api/comm/test-rapido) también — para que Daniel pueda re-activar el
-# canal en el futuro sin tocar código (solo env var + reinicio).
+# endpoints admin de prueba (/api/twilio/test, /comunicaciones/whatsapp/test)
+# también — para que Daniel pueda re-activar el canal en el futuro sin
+# tocar código (solo env var + reinicio).
 #
 # Default: "email" (sólo email vía Resend está activo).
 # Para reactivar WhatsApp: COMM_CANALES_ACTIVOS="email,whatsapp"
@@ -5688,8 +5892,26 @@ def _get_brand_cfg() -> dict:
     }
 
 
+# ── CACHE 2026-05-26 (Daniel — performance audit) ─────────────────────
+# `_get_marca()` se invoca en TODOS los renders vía context_processor.
+# Antes: 2 queries SQL por cada render HTML. Con 30 navegaciones/min eso
+# son 60 queries/min innecesarias (la marca casi nunca cambia).
+# Cache TTL 300s (5 min): suficientemente fresco para cambios visibles
+# desde /comunicaciones y suficientemente largo para eliminar el costo.
+# Llamar a _marca_cache_clear() tras editar la marca para forzar refresh.
+_MARCA_CACHE = {"data": None, "ts": 0.0}
+_MARCA_CACHE_TTL = 300  # 5 minutos
+
+
+def _marca_cache_clear():
+    """Invalida el cache de marca. Llamar tras editar comm_client_config."""
+    _MARCA_CACHE["data"] = None
+    _MARCA_CACHE["ts"] = 0.0
+
+
 def _get_marca() -> dict:
     """Marca activa = mezcla de BD (`comm_client_config`) + env vars.
+    Cacheada 5 minutos en proceso (ver _MARCA_CACHE).
 
     FUENTE DE VERDAD: la BD para todo lo visible al cliente final (nombre,
     logo, color, soporte). Las env vars sólo rellenan campos que no están
@@ -5704,6 +5926,11 @@ def _get_marca() -> dict:
       dict con: name, from_name, from_email, reply_to, wa_name, logo_url,
       support_email, support_url, footer, corp_color, support_phone.
     """
+    # ── Cache hit (TTL 5 min) ──
+    _now = time.time()
+    if _MARCA_CACHE["data"] is not None and (_now - _MARCA_CACHE["ts"]) < _MARCA_CACHE_TTL:
+        return _MARCA_CACHE["data"]
+
     try:
         cc = _get_client_cfg() or {}
     except Exception:
@@ -5719,7 +5946,7 @@ def _get_marca() -> dict:
     if not logo:
         logo = "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
 
-    return {
+    _result = {
         "name":          name,
         # FIX 2026-05-21 (Daniel): `name` (campo "Nombre de empresa" editable
         # en /comunicaciones) tiene prioridad sobre be.get("from_name") que
@@ -5737,6 +5964,10 @@ def _get_marca() -> dict:
         "corp_color":    (cc.get("corp_color") or "#DC143C").strip(),
         "support_phone": (cc.get("support_phone") or "").strip(),
     }
+    # Guardar en cache TTL 5 min
+    _MARCA_CACHE["data"] = _result
+    _MARCA_CACHE["ts"]   = _now
+    return _result
 
 
 def _brand_subject(tema: str) -> str:
@@ -6590,6 +6821,296 @@ def _redirect_to_first_accessible(perms):
     return redirect(url_for("mi_cuenta"))
 
 
+# ═════════════════════════════════════════════════════════════════════
+# INSTRUMENTACIÓN DE PERFORMANCE 2026-05-26 (Daniel — audit profundo)
+# Mide cada request: tiempo total + Server-Timing header. Agrupa stats
+# por endpoint para que /admin/performance muestre p50/p95.
+# Cero impacto en velocidad (solo time.time() y un dict en memoria).
+# ═════════════════════════════════════════════════════════════════════
+import collections as _collections_perf
+_PERF_STATS = _collections_perf.defaultdict(lambda: _collections_perf.deque(maxlen=200))
+_PERF_LOCK = threading.Lock()
+
+
+@app.before_request
+def _perf_t0():
+    """Marca timestamp de inicio del request (antes de cualquier handler)."""
+    # Saltar rutas ultra-livianas (no nos interesa medirlas)
+    _p = request.path or ""
+    if (_p.startswith("/static/") or _p == "/ping" or _p == "/_health"
+            or _p.startswith("/favicon") or _p == "/robots.txt"):
+        g._perf_skip = True
+        return
+    g._perf_skip = False
+    g._perf_t0 = time.time()
+
+
+@app.after_request
+def _perf_track(resp):
+    """Mide tiempo total + SQL + queries + agrega Server-Timing + log."""
+    try:
+        if getattr(g, "_perf_skip", True):
+            return resp
+        t0 = getattr(g, "_perf_t0", None)
+        if t0 is None:
+            return resp
+        elapsed_ms = int((time.time() - t0) * 1000)
+        sql_ms    = int(getattr(g, "_sql_ms", 0) or 0)
+        queries   = int(getattr(g, "_sql_count", 0) or 0)
+        endpoint  = request.endpoint or request.path or "unknown"
+        method    = request.method
+        status    = resp.status_code
+        size      = resp.calculate_content_length() or 0
+
+        # Server-Timing header (DevTools → Network → Timing)
+        st_parts = [f"total;dur={elapsed_ms}"]
+        if sql_ms > 0:
+            st_parts.append(f"sql;dur={sql_ms}")
+        if queries > 0:
+            st_parts.append(f"queries;desc=\"{queries}\"")
+        resp.headers["Server-Timing"] = ", ".join(st_parts)
+
+        # Guardar en histograma por endpoint (ring buffer 200 muestras)
+        # Cada entry: (total_ms, sql_ms, queries) para luego sacar p50/p95
+        with _PERF_LOCK:
+            _PERF_STATS[endpoint].append((elapsed_ms, sql_ms, queries))
+
+        # Log estructurado (siempre, para tener trazabilidad)
+        try:
+            user = getattr(g, "user", None) or {}
+            urole = user.get("role") or "anon" if isinstance(user, dict) else "anon"
+        except Exception:
+            urole = "?"
+        # Solo loguear si tarda > 100ms (evita spam en assets cacheados)
+        if elapsed_ms > 100:
+            print(
+                f"[perf] endpoint={endpoint} method={method} status={status} "
+                f"total_ms={elapsed_ms} sql_ms={sql_ms} queries={queries} "
+                f"size={size} role={urole}",
+                flush=True
+            )
+
+        # Log destacado si supera umbral lento global
+        if elapsed_ms > 1000:
+            print(f"[perf-very-slow] {method} {endpoint} = {elapsed_ms}ms "
+                  f"sql_ms={sql_ms} queries={queries}", flush=True)
+    except Exception:
+        pass
+    return resp
+
+
+# ═════════════════════════════════════════════════════════════════════
+# /ping — endpoint ULTRA-LIVIANO para keep-alive externo
+# Daniel 2026-05-26: el cold start de Railway es lo que hace que el
+# login tarde 10s después de inactividad. Un servicio externo gratuito
+# (UptimeRobot.com, Cron-Job.org) pollea esta URL cada 5 min y mantiene
+# la app despierta. Respuesta: <5ms, sin DB, sin auth, sin queries.
+# Ejemplo: https://web-production-85732.up.railway.app/ping → "pong"
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/ping")
+def _keepalive_ping():
+    """Pong rápido — sin BD ni cómputo. Para keep-alive externo."""
+    resp = make_response("pong", 200)
+    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ═════════════════════════════════════════════════════════════════════
+# HEALTHCHECK 2026-05-26 (Daniel — Railway optimización)
+# Endpoint público liviano para que Railway haga health-check HTTP real
+# (antes solo TCP ping). Si Postgres/MySQL o Cloudinary fallan, devuelve
+# 503 para que Railway no enrute tráfico a esa instancia.
+# Sin @login_required: debe estar accesible sin sesión.
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/_health")
+def _railway_health():
+    """Liveness + readiness probe para Railway."""
+    out = {"ok": True, "ts": int(time.time())}
+    # DB ping rápido (mysql_fetchone es del pool, ~5ms si está caliente)
+    try:
+        r = mysql_fetchone("SELECT 1 AS n")
+        out["db"] = bool(r and r.get("n") == 1)
+    except Exception as e:
+        out["db"] = False
+        out["db_error"] = str(e)[:120]
+    # Cloudinary opcional (no rompe healthcheck si falla)
+    out["cld"] = bool(_CLD_READY)
+    out["workers"] = os.getpid()
+    status = 200 if out.get("db") else 503
+    return jsonify(out), status
+
+
+# ═════════════════════════════════════════════════════════════════════
+# /admin/performance — Dashboard de mediciones por endpoint (superadmin)
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/admin/performance")
+@login_required
+def admin_performance():
+    """Muestra p50/p95/max/min/n por endpoint en JSON.
+
+    Solo superadmin. Lee el ring buffer _PERF_STATS (en memoria del proceso).
+    Cada worker tiene su propia vista — recargar varias veces para ver más
+    datos. Para datos consolidados se requiere agregación cross-worker
+    (futuro: Prometheus o Redis).
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    out = []
+    with _PERF_LOCK:
+        for endpoint, samples in _PERF_STATS.items():
+            if not samples:
+                continue
+            # samples es lista de tuplas (total_ms, sql_ms, queries)
+            # — Compatible con formato viejo (int simple) por si quedan
+            totals  = []
+            sql_acc = []
+            q_acc   = []
+            for s in samples:
+                if isinstance(s, tuple):
+                    totals.append(s[0])
+                    sql_acc.append(s[1])
+                    q_acc.append(s[2])
+                else:
+                    totals.append(int(s))
+                    sql_acc.append(0); q_acc.append(0)
+            n = len(totals)
+            arr_total = sorted(totals)
+            def _pct(arr, p):
+                idx = max(0, min(len(arr) - 1, int(round((p / 100.0) * (len(arr) - 1)))))
+                return arr[idx]
+            out.append({
+                "endpoint":     endpoint,
+                "n":            n,
+                "min_ms":       arr_total[0],
+                "p50_ms":       _pct(arr_total, 50),
+                "p95_ms":       _pct(arr_total, 95),
+                "max_ms":       arr_total[-1],
+                "avg_ms":       int(sum(arr_total) / n),
+                "avg_sql_ms":   int(sum(sql_acc) / n) if n else 0,
+                "avg_queries":  round(sum(q_acc) / n, 1) if n else 0,
+                "max_queries":  max(q_acc) if q_acc else 0,
+            })
+    # Ordenar por p95 descendente (los más lentos arriba)
+    out.sort(key=lambda x: x["p95_ms"], reverse=True)
+    return jsonify({
+        "ok":           True,
+        "worker_pid":   os.getpid(),
+        "endpoints":    out,
+        "total_endpoints": len(out),
+        "sql_slow_threshold_ms": _SQL_SLOW_THRESHOLD_MS,
+        "note": "Cada worker tiene su propia ventana de 200 muestras. "
+                "Refresca esta URL varias veces para acumular datos en este worker.",
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# /admin/aplicar-indices-criticos — fix runtime sin tocar SKIP_MIGRATIONS
+# (Daniel 2026-05-26 audit live):
+#   Los ALTER TABLE que agregué al bloque migrations NO se aplican porque
+#   ILUS_SKIP_MIGRATIONS=1 los salta. Este endpoint corre SOLO los índices
+#   críticos identificados por audit, idempotente. Solo superadmin.
+#   Llamada UNA vez con curl o POST desde browser.
+# ═══════════════════════════════════════════════════════════════════════
+@app.route("/admin/aplicar-indices-criticos", methods=["POST", "GET"])
+@login_required
+def admin_aplicar_indices_criticos():
+    """Aplica los índices críticos identificados en el audit DevTools.
+
+    Idempotente (try/except por cada uno — si ya existe, se ignora).
+    Solo superadmin. Acepta GET para facilitar invocación desde browser.
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    indices = [
+        # /mantenciones query 6 (clientes sin visita reciente)
+        ("mant_visitas idx_cli_estado_realizada",
+         "ALTER TABLE mant_visitas ADD INDEX idx_cli_estado_realizada "
+         "(cliente_id, estado, fecha_realizada)"),
+        # Timeline de la ficha cliente
+        ("mant_logs idx_mant_logs_timeline",
+         "ALTER TABLE mant_logs ADD INDEX idx_mant_logs_timeline "
+         "(entidad, entidad_id, created_at)"),
+        # Listado de equipos de cliente
+        ("mant_maquinas idx_cli_estado_creado",
+         "ALTER TABLE mant_maquinas ADD INDEX idx_cli_estado_creado "
+         "(cliente_id, estado, created_at)"),
+        # /admin/users búsqueda por username
+        ("auth_users idx_au_username_active",
+         f"ALTER TABLE `{AUTH_TABLE}` ADD INDEX idx_au_username_active "
+         f"(active, last_login_at)"),
+        # ════════════════════════════════════════════════════════════════
+        # 2026-05-28 (Daniel — FASE 3 perf):
+        # Auditoría detectó que /mantenciones (mant_index) hace ~2939ms de SQL
+        # principalmente por:
+        #   - FULL TABLE SCAN en mant_contratos cuando se cuentan los que
+        #     vencen en 30/60 días o están activos por cliente
+        #   - COUNT(*) en mant_notificaciones que el optimizer no resuelve
+        #     bien sin un composite que incluya prioridad
+        #   - ORDER BY razon_social en /mantenciones/clientes (300 filas)
+        # Los siguientes índices completan los que ya existen para cubrir
+        # estos hot paths.
+        # ════════════════════════════════════════════════════════════════
+        ("mant_contratos idx_cli_estado_fin",
+         "ALTER TABLE mant_contratos ADD INDEX idx_cli_estado_fin "
+         "(cliente_id, estado, fecha_fin)"),
+        # Para mant_notif_interna_contador: COUNT + SUM(CASE prioridad)
+        # con WHERE leida_at IS NULL AND archivada_at IS NULL.
+        # idx_destino_no_leida YA existe (destino_user_id, leida_at, archivada_at)
+        # pero no incluye prioridad — agregamos otro índice más específico
+        # para el COUNT global (admin) que no filtra por destino.
+        ("mant_notificaciones idx_unread_prio",
+         "ALTER TABLE mant_notificaciones ADD INDEX idx_unread_prio "
+         "(leida_at, archivada_at, prioridad)"),
+        # /mantenciones/clientes ORDER BY razon_social LIMIT 300
+        ("mant_clientes idx_razon_social",
+         "ALTER TABLE mant_clientes ADD INDEX idx_razon_social "
+         "(razon_social)"),
+    ]
+
+    resultados = []
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for nombre, sql in indices:
+                _t0 = time.time()
+                try:
+                    cur.execute(sql)
+                    elapsed = int((time.time() - _t0) * 1000)
+                    resultados.append({
+                        "indice": nombre, "ok": True,
+                        "estado": "aplicado", "ms": elapsed
+                    })
+                except Exception as e:
+                    elapsed = int((time.time() - _t0) * 1000)
+                    err_str = str(e)
+                    # Si el error es "Duplicate key name", el índice ya existe.
+                    # Esto es éxito en términos de idempotencia.
+                    ya_existe = ("Duplicate key" in err_str
+                                 or "already exists" in err_str.lower())
+                    resultados.append({
+                        "indice": nombre,
+                        "ok": ya_existe,
+                        "estado": "ya_existia" if ya_existe else "error",
+                        "error": None if ya_existe else err_str[:200],
+                        "ms": elapsed,
+                    })
+        conn.commit()
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    return jsonify({
+        "ok": True,
+        "indices_procesados": len(resultados),
+        "resultados": resultados,
+        "nota": "Idempotente. Estado 'ya_existia' significa que el índice "
+                "ya estaba aplicado anteriormente."
+    })
+
+
 @app.route("/")
 @login_required
 def index():
@@ -6772,6 +7293,23 @@ def new_product():
             errors.append("El nombre es requerido.")
         if mysql_fetchone(f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE sku=%s", (sku,)):
             errors.append(f"El SKU <b>{sku}</b> ya existe.")
+        # ── SEGURIDAD 2026-05-26 (Daniel): solo se aceptan SKUs que existan
+        # en el ERP. Bloqueo server-side para que no se puedan inventar
+        # productos enviando POST con curl/cualquier herramienta. Esto va
+        # en CASCADA con el bloqueo de UI (input SKU readonly + selección
+        # solo desde el typeahead del ERP).
+        if sku and not errors:
+            try:
+                erp_match = get_erp_product_by_sku(sku)
+            except Exception as _e_erp:
+                erp_match = None
+                print(f"[new_product] error consultando ERP: {_e_erp}", flush=True)
+            if not erp_match:
+                errors.append(
+                    f"El SKU <b>{sku}</b> no existe en el ERP. "
+                    f"Solo se pueden crear productos asociados al ERP. "
+                    f"Usa el buscador de arriba para seleccionar uno válido."
+                )
         errors += validate_bultos_form(request.form)
 
         if errors:
@@ -7902,10 +8440,10 @@ def users_index():
         params += [like, like, like, like]
 
     # 2026-05-18: SELECT * + columna virtual `online` calculada por SQL.
+    # 2026-05-26 (audit DevTools, body era 95KB): mantenemos SELECT * para
+    # NO romper el template, pero agregamos LIMIT 300 (suficiente para
+    # empresas hasta 300 usuarios; más allá hay que paginar UI).
     # `online=1` si last_seen_at está a menos de 5 minutos de NOW().
-    # Se ordena los online primero, después por última conexión.
-    # Si la columna last_seen_at aún no existe (migración no corrió por
-    # ILUS_SKIP_MIGRATIONS=1), fallback a query sin esa columna.
     try:
         users = mysql_fetchall(
             f"SELECT *, "
@@ -7913,7 +8451,8 @@ def users_index():
             f"            last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) "
             f"       THEN 1 ELSE 0 END AS online "
             f"FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
-            f"ORDER BY active DESC, online DESC, last_login_at DESC, nombre, username",
+            f"ORDER BY active DESC, online DESC, last_login_at DESC, nombre, username "
+            f"LIMIT 300",
             tuple(params)
         ) or []
     except Exception as _e_ls:
@@ -7921,7 +8460,8 @@ def users_index():
         print(f"[users_index] fallback sin last_seen_at: {_e_ls}", flush=True)
         users = mysql_fetchall(
             f"SELECT *, 0 AS online FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
-            f"ORDER BY active DESC, last_login_at DESC, nombre, username",
+            f"ORDER BY active DESC, last_login_at DESC, nombre, username "
+            f"LIMIT 300",
             tuple(params)
         ) or []
 
@@ -9159,425 +9699,10 @@ def admin_retiros_carousel_update(iid):
     return redirect(url_for("admin_retiros_carousel"))
 
 
-HRM_AREAS_TABLE  = "hrm_areas"
-HRM_CARGOS_TABLE = "hrm_cargos"
-HRM_COLAB_TABLE  = "hrm_colaboradores"
-PREG_GEN_TABLE   = "eval_preguntas_genericas"
-
-CHILE_REGIONES = [
-    "Arica y Parinacota",
-    "Tarapacá",
-    "Antofagasta",
-    "Atacama",
-    "Coquimbo",
-    "Valparaíso",
-    "Metropolitana de Santiago",
-    "O'Higgins",
-    "Maule",
-    "Ñuble",
-    "Biobío",
-    "La Araucanía",
-    "Los Ríos",
-    "Los Lagos",
-    "Aysén",
-    "Magallanes",
-]
-
 RESETS_TABLE = "app_password_resets"
 
-GENEROS = {
-    "masculino":        "Masculino",
-    "femenino":         "Femenino",
-    "otro":             "Otro",
-    "no_especificado":  "Prefiero no indicar",
-}
 
-ESTADOS_COLAB = {
-    "activo":   "Activo",
-    "inactivo": "Inactivo",
-    "licencia": "Con licencia",
-}
-
-
-def init_hrm_tables():
-    """Crea las tablas del módulo HRM si no existen."""
-    os.makedirs(COLABS_FOLDER, exist_ok=True)
-    conn = get_mysql()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS `{HRM_AREAS_TABLE}` (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    nombre      VARCHAR(120) NOT NULL UNIQUE,
-                    descripcion TEXT,
-                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """)
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS `{HRM_CARGOS_TABLE}` (
-                    id         INT AUTO_INCREMENT PRIMARY KEY,
-                    nombre     VARCHAR(120) NOT NULL,
-                    descriptor TEXT,
-                    area_id    INT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    CONSTRAINT fk_cargo_area FOREIGN KEY (area_id)
-                        REFERENCES `{HRM_AREAS_TABLE}`(id) ON DELETE SET NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """)
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS `{HRM_COLAB_TABLE}` (
-                    id              INT AUTO_INCREMENT PRIMARY KEY,
-                    nombre_completo VARCHAR(200) NOT NULL,
-                    rut             VARCHAR(20),
-                    email           VARCHAR(190),
-                    telefono        VARCHAR(30),
-                    direccion       TEXT,
-                    genero          ENUM('masculino','femenino','otro','no_especificado')
-                                    DEFAULT 'no_especificado',
-                    cargo_id        INT,
-                    area_id         INT,
-                    foto_filename   VARCHAR(255),
-                    fecha_ingreso   DATE,
-                    estado          ENUM('activo','inactivo','licencia') DEFAULT 'activo',
-                    created_by      VARCHAR(190),
-                    updated_by      VARCHAR(190),
-                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    CONSTRAINT fk_colab_cargo FOREIGN KEY (cargo_id)
-                        REFERENCES `{HRM_CARGOS_TABLE}`(id) ON DELETE SET NULL,
-                    CONSTRAINT fk_colab_area FOREIGN KEY (area_id)
-                        REFERENCES `{HRM_AREAS_TABLE}`(id) ON DELETE SET NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """)
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS `{PREG_GEN_TABLE}` (
-                    id             INT AUTO_INCREMENT PRIMARY KEY,
-                    seccion        ENUM('tecnica','operativa','conductual','cumplimiento') NOT NULL,
-                    texto          TEXT NOT NULL,
-                    tipo_respuesta ENUM('escala_1_5','texto_libre','multiple','si_no','porcentaje')
-                                   DEFAULT 'escala_1_5',
-                    opciones       JSON,
-                    es_obligatoria TINYINT(1) DEFAULT 1,
-                    activa         TINYINT(1) DEFAULT 1,
-                    created_by     VARCHAR(190),
-                    updated_by     VARCHAR(190),
-                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """)
-        conn.commit()
-        # ── Migración segura: agregar columnas región/comuna si no existen ──
-        for col, definition in [
-            ("region",  "VARCHAR(100)"),
-            ("comuna",  "VARCHAR(100)"),
-        ]:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(f"""
-                        ALTER TABLE `{HRM_COLAB_TABLE}`
-                        ADD COLUMN IF NOT EXISTS `{col}` {definition}
-                    """)
-                conn.commit()
-            except Exception:
-                pass  # MySQL <8 no soporta IF NOT EXISTS en ALTER; ignorar si ya existe
-    finally:
-        conn.close()
-
-
-def _get_or_create_area(nombre_raw, conn):
-    """Devuelve area_id. Si no existe, la crea."""
-    nombre = nombre_raw.strip()
-    if not nombre:
-        return None
-    row = mysql_fetchone(f"SELECT id FROM `{HRM_AREAS_TABLE}` WHERE nombre=%s", (nombre,))
-    if row:
-        return row["id"]
-    with conn.cursor() as cur:
-        cur.execute(f"INSERT INTO `{HRM_AREAS_TABLE}` (nombre) VALUES (%s)", (nombre,))
-        return cur.lastrowid
-
-
-def _get_or_create_cargo(nombre_raw, descriptor_raw, area_id, conn):
-    """Devuelve cargo_id. Si no existe, lo crea."""
-    nombre = nombre_raw.strip()
-    if not nombre:
-        return None
-    row = mysql_fetchone(
-        f"SELECT id FROM `{HRM_CARGOS_TABLE}` WHERE nombre=%s AND (area_id=%s OR area_id IS NULL)",
-        (nombre, area_id),
-    )
-    if row:
-        return row["id"]
-    desc = (descriptor_raw or "").strip() or None
-    with conn.cursor() as cur:
-        cur.execute(
-            f"INSERT INTO `{HRM_CARGOS_TABLE}` (nombre, descriptor, area_id) VALUES (%s,%s,%s)",
-            (nombre, desc, area_id),
-        )
-        return cur.lastrowid
-
-
-def _save_colab_foto(file, colab_id):
-    """Sube la foto a Cloudinary (o disco local) y devuelve filename/URL, o None."""
-    if not file or not file.filename:
-        return None
-    ext = file.filename.rsplit(".", 1)[-1].lower()
-    if ext not in ALLOWED_EXT:
-        return None
-    if _CLD_READY:
-        try:
-            return _cloud_upload(file, public_id=f"colab_{colab_id}", folder="ilus/colabs")
-        except Exception as exc:
-            print(f"[ILUS] Cloudinary colab upload error: {exc}")
-            return None
-    else:
-        fname = f"colab_{colab_id}.{ext}"
-        file.save(os.path.join(COLABS_FOLDER, fname))
-        return fname
-
-
-# ── Listado colaboradores ─────────────────────────────────────
-
-@app.route("/colaboradores/")
-@login_required
-def colab_index():
-    if not g.permissions.get("hrm") and not g.permissions.get("view"):
-        flash("Sin permisos.", "danger")
-        return redirect(url_for("index"))
-    rows = mysql_fetchall(f"""
-        SELECT c.*,
-               a.nombre AS area_nombre,
-               ca.nombre AS cargo_nombre
-        FROM `{HRM_COLAB_TABLE}` c
-        LEFT JOIN `{HRM_AREAS_TABLE}` a  ON a.id  = c.area_id
-        LEFT JOIN `{HRM_CARGOS_TABLE}` ca ON ca.id = c.cargo_id
-        ORDER BY c.nombre_completo ASC
-    """)
-    return render_template("colaboradores/index.html",
-                           colaboradores=rows, estados=ESTADOS_COLAB)
-
-
-# ── Nueva ficha ───────────────────────────────────────────────
-
-@app.route("/colaboradores/nuevo", methods=["GET", "POST"])
-@require_permission("hrm")
-def colab_nuevo():
-    areas  = mysql_fetchall(f"SELECT * FROM `{HRM_AREAS_TABLE}` ORDER BY nombre")
-    cargos = mysql_fetchall(f"SELECT c.*, a.nombre AS area_nombre FROM `{HRM_CARGOS_TABLE}` c LEFT JOIN `{HRM_AREAS_TABLE}` a ON a.id=c.area_id ORDER BY c.nombre")
-
-    if request.method == "POST":
-        nombre     = request.form.get("nombre_completo", "").strip()
-        if not nombre:
-            flash("El nombre completo es requerido.", "danger")
-            return render_template("colaboradores/form.html",
-                                   colab=None, fd=request.form,
-                                   areas=areas, cargos=cargos,
-                                   generos=GENEROS, estados=ESTADOS_COLAB,
-                                   regiones=CHILE_REGIONES)
-
-        conn = get_db()
-
-        # Área: id existente O nombre libre → auto-crear
-        area_id = request.form.get("area_id", "").strip()
-        area_nueva = request.form.get("area_nueva", "").strip()
-        if area_nueva:
-            area_id = _get_or_create_area(area_nueva, conn)
-        elif area_id:
-            area_id = int(area_id)
-        else:
-            area_id = None
-
-        # Cargo: id existente O nombre libre → auto-crear
-        cargo_id = request.form.get("cargo_id", "").strip()
-        cargo_nuevo  = request.form.get("cargo_nuevo", "").strip()
-        cargo_desc   = request.form.get("cargo_descriptor", "").strip()
-        if cargo_nuevo:
-            cargo_id = _get_or_create_cargo(cargo_nuevo, cargo_desc, area_id, conn)
-        elif cargo_id:
-            cargo_id = int(cargo_id)
-        else:
-            cargo_id = None
-
-        fecha_ing = request.form.get("fecha_ingreso") or None
-        region_val = request.form.get("region", "").strip() or None
-        comuna_val = request.form.get("comuna", "").strip() or None
-
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                INSERT INTO `{HRM_COLAB_TABLE}`
-                    (nombre_completo, rut, email, telefono, direccion,
-                     region, comuna, genero, cargo_id, area_id,
-                     fecha_ingreso, estado, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (
-                nombre,
-                request.form.get("rut", "").strip() or None,
-                request.form.get("email", "").strip() or None,
-                request.form.get("telefono", "").strip() or None,
-                request.form.get("direccion", "").strip() or None,
-                region_val, comuna_val,
-                request.form.get("genero", "no_especificado"),
-                cargo_id, area_id, fecha_ing,
-                request.form.get("estado", "activo"),
-                current_username(),
-            ))
-            cid = cur.lastrowid
-
-        # Foto (después de obtener el id)
-        foto = request.files.get("foto")
-        fname = _save_colab_foto(foto, cid)
-        if fname:
-            with conn.cursor() as cur:
-                cur.execute(f"UPDATE `{HRM_COLAB_TABLE}` SET foto_filename=%s WHERE id=%s",
-                            (fname, cid))
-        conn.commit()
-
-        flash(f"Colaborador {nombre} creado correctamente.", "success")
-        return redirect(url_for("colab_ficha", cid=cid))
-
-    return render_template("colaboradores/form.html",
-                           colab=None, fd={},
-                           areas=areas, cargos=cargos,
-                           generos=GENEROS, estados=ESTADOS_COLAB,
-                           regiones=CHILE_REGIONES)
-
-
-# ── Ficha de colaborador ──────────────────────────────────────
-
-@app.route("/colaboradores/<int:cid>/")
-@login_required
-def colab_ficha(cid):
-    row = mysql_fetchone(f"""
-        SELECT c.*,
-               a.nombre  AS area_nombre,
-               ca.nombre AS cargo_nombre,
-               ca.descriptor AS cargo_descriptor
-        FROM `{HRM_COLAB_TABLE}` c
-        LEFT JOIN `{HRM_AREAS_TABLE}`  a  ON a.id  = c.area_id
-        LEFT JOIN `{HRM_CARGOS_TABLE}` ca ON ca.id = c.cargo_id
-        WHERE c.id=%s
-    """, (cid,))
-    if not row:
-        flash("Colaborador no encontrado.", "danger")
-        return redirect(url_for("colab_index"))
-    return render_template("colaboradores/ficha.html",
-                           c=row, generos=GENEROS, estados=ESTADOS_COLAB)
-
-
-# ── Editar colaborador ────────────────────────────────────────
-
-@app.route("/colaboradores/<int:cid>/editar", methods=["GET", "POST"])
-@require_permission("hrm")
-def colab_editar(cid):
-    colab  = mysql_fetchone(f"SELECT * FROM `{HRM_COLAB_TABLE}` WHERE id=%s", (cid,))
-    if not colab:
-        flash("Colaborador no encontrado.", "danger")
-        return redirect(url_for("colab_index"))
-    areas  = mysql_fetchall(f"SELECT * FROM `{HRM_AREAS_TABLE}` ORDER BY nombre")
-    cargos = mysql_fetchall(f"SELECT c.*, a.nombre AS area_nombre FROM `{HRM_CARGOS_TABLE}` c LEFT JOIN `{HRM_AREAS_TABLE}` a ON a.id=c.area_id ORDER BY c.nombre")
-
-    if request.method == "POST":
-        nombre = request.form.get("nombre_completo", "").strip()
-        if not nombre:
-            flash("El nombre es requerido.", "danger")
-            return render_template("colaboradores/form.html",
-                                   colab=colab, fd=request.form,
-                                   areas=areas, cargos=cargos,
-                                   generos=GENEROS, estados=ESTADOS_COLAB,
-                                   regiones=CHILE_REGIONES)
-
-        conn = get_db()
-
-        area_id = request.form.get("area_id", "").strip()
-        area_nueva = request.form.get("area_nueva", "").strip()
-        if area_nueva:
-            area_id = _get_or_create_area(area_nueva, conn)
-        elif area_id:
-            area_id = int(area_id)
-        else:
-            area_id = None
-
-        cargo_id = request.form.get("cargo_id", "").strip()
-        cargo_nuevo = request.form.get("cargo_nuevo", "").strip()
-        cargo_desc  = request.form.get("cargo_descriptor", "").strip()
-        if cargo_nuevo:
-            cargo_id = _get_or_create_cargo(cargo_nuevo, cargo_desc, area_id, conn)
-        elif cargo_id:
-            cargo_id = int(cargo_id)
-        else:
-            cargo_id = None
-
-        fecha_ing  = request.form.get("fecha_ingreso") or None
-        region_val = request.form.get("region", "").strip() or None
-        comuna_val = request.form.get("comuna", "").strip() or None
-
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                UPDATE `{HRM_COLAB_TABLE}` SET
-                    nombre_completo=%s, rut=%s, email=%s, telefono=%s,
-                    direccion=%s, region=%s, comuna=%s,
-                    genero=%s, cargo_id=%s, area_id=%s,
-                    fecha_ingreso=%s, estado=%s, updated_by=%s
-                WHERE id=%s
-            """, (
-                nombre,
-                request.form.get("rut", "").strip() or None,
-                request.form.get("email", "").strip() or None,
-                request.form.get("telefono", "").strip() or None,
-                request.form.get("direccion", "").strip() or None,
-                region_val, comuna_val,
-                request.form.get("genero", "no_especificado"),
-                cargo_id, area_id, fecha_ing,
-                request.form.get("estado", "activo"),
-                current_username(), cid,
-            ))
-
-        # Foto nueva (opcional)
-        foto = request.files.get("foto")
-        fname = _save_colab_foto(foto, cid)
-        if fname:
-            with conn.cursor() as cur:
-                cur.execute(f"UPDATE `{HRM_COLAB_TABLE}` SET foto_filename=%s WHERE id=%s",
-                            (fname, cid))
-        conn.commit()
-
-        flash("Ficha actualizada.", "success")
-        return redirect(url_for("colab_ficha", cid=cid))
-
-    return render_template("colaboradores/form.html",
-                           colab=colab, fd={},
-                           areas=areas, cargos=cargos,
-                           generos=GENEROS, estados=ESTADOS_COLAB,
-                           regiones=CHILE_REGIONES)
-
-
-# ── Eliminar colaborador ──────────────────────────────────────
-
-@app.route("/colaboradores/<int:cid>/eliminar", methods=["POST"])
-@require_permission("delete")
-def colab_eliminar(cid):
-    colab = mysql_fetchone(f"SELECT foto_filename, nombre_completo FROM `{HRM_COLAB_TABLE}` WHERE id=%s", (cid,))
-    if not colab:
-        flash("Colaborador no encontrado.", "danger")
-        return redirect(url_for("colab_index"))
-    # Eliminar foto si existe
-    if colab.get("foto_filename"):
-        try:
-            os.remove(os.path.join(COLABS_FOLDER, colab["foto_filename"]))
-        except Exception:
-            pass
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"DELETE FROM `{HRM_COLAB_TABLE}` WHERE id=%s", (cid,))
-    conn.commit()
-    flash(f"Colaborador {colab['nombre_completo']} eliminado.", "warning")
-    return redirect(url_for("colab_index"))
-
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: PREGUNTAS GENÉRICAS (solo superadmin)
-# ══════════════════════════════════════════════════════════════
-
+# ── Decorador compartido: solo superadmin (usado por ~16 rutas admin) ──
 def _require_superadmin(view):
     @wraps(view)
     def wrapped(*a, **kw):
@@ -9589,509 +9714,6 @@ def _require_superadmin(view):
             return redirect(url_for("index"))
         return view(*a, **kw)
     return wrapped
-
-
-@app.route("/admin/preguntas-genericas/")
-@_require_superadmin
-def preg_gen_index():
-    rows = mysql_fetchall(f"""
-        SELECT * FROM `{PREG_GEN_TABLE}`
-        ORDER BY seccion, id ASC
-    """)
-    for r in rows:
-        _parse_opciones(r)
-    por_seccion = {s: [] for s in SECCIONES}
-    for r in rows:
-        sec = r.get("seccion", "tecnica")
-        if sec in por_seccion:
-            por_seccion[sec].append(r)
-    return render_template("admin/preguntas_genericas.html",
-                           por_seccion=por_seccion,
-                           secciones=SECCIONES, tipos=TIPOS_RESPUESTA)
-
-
-@app.route("/admin/preguntas-genericas/guardar", methods=["POST"])
-@_require_superadmin
-def preg_gen_guardar():
-    pid_raw        = request.form.get("preg_id", "").strip()
-    seccion        = request.form.get("seccion", "tecnica")
-    texto          = request.form.get("texto", "").strip()
-    tipo_respuesta = request.form.get("tipo_respuesta", "escala_1_5")
-    es_obligatoria = 1 if request.form.get("es_obligatoria") else 0
-    activa         = 1 if request.form.get("activa", "1") else 0
-    opciones_raw   = request.form.get("opciones", "").strip()
-
-    if not texto:
-        return jsonify({"ok": False, "error": "El texto es requerido"}), 400
-    if seccion not in SECCIONES:
-        return jsonify({"ok": False, "error": "Sección inválida"}), 400
-
-    opciones_json = None
-    if tipo_respuesta == "multiple" and opciones_raw:
-        items = [o.strip() for o in opciones_raw.split("\n") if o.strip()]
-        opciones_json = json.dumps(items, ensure_ascii=False)
-
-    conn = get_db()
-    if pid_raw:
-        # Editar
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                UPDATE `{PREG_GEN_TABLE}`
-                SET seccion=%s, texto=%s, tipo_respuesta=%s,
-                    opciones=%s, es_obligatoria=%s, activa=%s, updated_by=%s
-                WHERE id=%s
-            """, (seccion, texto, tipo_respuesta, opciones_json,
-                  es_obligatoria, activa, current_username(), int(pid_raw)))
-        conn.commit()
-        p = mysql_fetchone(f"SELECT * FROM `{PREG_GEN_TABLE}` WHERE id=%s", (int(pid_raw),))
-    else:
-        # Crear
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                INSERT INTO `{PREG_GEN_TABLE}`
-                    (seccion, texto, tipo_respuesta, opciones, es_obligatoria, activa, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-            """, (seccion, texto, tipo_respuesta, opciones_json,
-                  es_obligatoria, activa, current_username()))
-            pid_new = cur.lastrowid
-        conn.commit()
-        p = mysql_fetchone(f"SELECT * FROM `{PREG_GEN_TABLE}` WHERE id=%s", (pid_new,))
-
-    _parse_opciones(p)
-    return jsonify({"ok": True, "pregunta": dict(p)})
-
-
-@app.route("/admin/preguntas-genericas/<int:pid>/toggle", methods=["POST"])
-@_require_superadmin
-def preg_gen_toggle(pid):
-    """Activa / desactiva una pregunta genérica."""
-    p = mysql_fetchone(f"SELECT id, activa FROM `{PREG_GEN_TABLE}` WHERE id=%s", (pid,))
-    if not p:
-        return jsonify({"ok": False, "error": "No encontrada"}), 404
-    nuevo = 0 if p["activa"] else 1
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"UPDATE `{PREG_GEN_TABLE}` SET activa=%s, updated_by=%s WHERE id=%s",
-                    (nuevo, current_username(), pid))
-    conn.commit()
-    return jsonify({"ok": True, "activa": nuevo})
-
-
-@app.route("/admin/preguntas-genericas/<int:pid>/eliminar", methods=["POST"])
-@_require_superadmin
-def preg_gen_eliminar(pid):
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"DELETE FROM `{PREG_GEN_TABLE}` WHERE id=%s", (pid,))
-    conn.commit()
-    return jsonify({"ok": True})
-
-
-
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: GESTIÓN DE EVALUACIONES
-# ══════════════════════════════════════════════════════════════
-
-EVAL_TABLE = "eval_evaluaciones"
-PREG_TABLE = "eval_preguntas"
-
-SECCIONES = {
-    "tecnica":      {"label": "Evaluación Técnica",         "color": "#1a4a8a", "icon": "bi-tools"},
-    "operativa":    {"label": "Evaluación Operativa",        "color": "#1a7a1a", "icon": "bi-gear-fill"},
-    "conductual":   {"label": "Evaluación Conductual",       "color": "#7a4a00", "icon": "bi-person-check-fill"},
-    "cumplimiento": {"label": "Cumplimiento de Procesos",    "color": "#6a006a", "icon": "bi-clipboard2-check-fill"},
-}
-
-TIPOS_RESPUESTA = {
-    "escala_1_5":  "Escala 1 – 5",
-    "texto_libre": "Texto libre",
-    "multiple":    "Selección múltiple",
-    "si_no":       "Sí / No",
-    "porcentaje":  "Porcentaje (0–100)",
-}
-
-TIPOS_EVAL = {
-    "diagnostica": "Evaluación Diagnóstica",
-    "periodica":   "Evaluación Periódica",
-    "especial":    "Evaluación Especial",
-}
-
-
-def init_eval_tables():
-    """Crea las tablas del módulo de evaluaciones si no existen."""
-    conn = get_mysql()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS `{EVAL_TABLE}` (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    nombre      VARCHAR(200) NOT NULL,
-                    descripcion TEXT,
-                    tipo        ENUM('diagnostica','periodica','especial') DEFAULT 'diagnostica',
-                    estado      ENUM('borrador','publicada','archivada')   DEFAULT 'borrador',
-                    created_by  VARCHAR(190),
-                    updated_by  VARCHAR(190),
-                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """)
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS `{PREG_TABLE}` (
-                    id             INT AUTO_INCREMENT PRIMARY KEY,
-                    evaluacion_id  INT NOT NULL,
-                    seccion        ENUM('tecnica','operativa','conductual','cumplimiento') NOT NULL,
-                    orden          INT          DEFAULT 0,
-                    texto          TEXT         NOT NULL,
-                    tipo_respuesta ENUM('escala_1_5','texto_libre','multiple','si_no','porcentaje')
-                                               DEFAULT 'escala_1_5',
-                    opciones       JSON,
-                    es_obligatoria TINYINT(1)   DEFAULT 1,
-                    created_at     DATETIME     DEFAULT CURRENT_TIMESTAMP,
-                    updated_at     DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    CONSTRAINT fk_preg_eval FOREIGN KEY (evaluacion_id)
-                        REFERENCES `{EVAL_TABLE}`(id) ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# ── helpers internos ──────────────────────────────────────────
-
-def _parse_opciones(p):
-    """Convierte el campo opciones JSON→list en cada fila de pregunta."""
-    if p.get("opciones") and isinstance(p["opciones"], str):
-        try:
-            p["opciones"] = json.loads(p["opciones"])
-        except Exception:
-            p["opciones"] = []
-    elif not p.get("opciones"):
-        p["opciones"] = []
-    return p
-
-
-def _preguntas_por_seccion(eid):
-    rows = mysql_fetchall(
-        f"SELECT * FROM `{PREG_TABLE}` WHERE evaluacion_id=%s ORDER BY seccion, orden ASC",
-        (eid,),
-    )
-    por_seccion = {s: [] for s in SECCIONES}
-    for p in rows:
-        _parse_opciones(p)
-        sec = p.get("seccion", "tecnica")
-        if sec in por_seccion:
-            por_seccion[sec].append(p)
-    return por_seccion
-
-
-# ── Listado ───────────────────────────────────────────────────
-
-@app.route("/evaluaciones/")
-@login_required
-def eval_index():
-    evals = mysql_fetchall(f"""
-        SELECT e.*, COUNT(p.id) AS total_preguntas
-        FROM `{EVAL_TABLE}` e
-        LEFT JOIN `{PREG_TABLE}` p ON p.evaluacion_id = e.id
-        GROUP BY e.id
-        ORDER BY e.created_at DESC
-    """)
-    return render_template("evaluaciones/index.html",
-                           evals=evals, tipos=TIPOS_EVAL)
-
-
-# ── Crear evaluación ──────────────────────────────────────────
-
-@app.route("/evaluaciones/nueva", methods=["GET", "POST"])
-@require_permission("edit")
-def eval_nueva():
-    if request.method == "POST":
-        nombre = request.form.get("nombre", "").strip()
-        desc   = request.form.get("descripcion", "").strip()
-        tipo   = request.form.get("tipo", "diagnostica")
-        if not nombre:
-            flash("El nombre es requerido.", "danger")
-            return render_template("evaluaciones/form.html",
-                                   ev=None, fd=request.form, tipos=TIPOS_EVAL)
-        conn = get_db()
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                INSERT INTO `{EVAL_TABLE}` (nombre, descripcion, tipo, estado, created_by)
-                VALUES (%s, %s, %s, 'borrador', %s)
-            """, (nombre, desc, tipo, current_username()))
-            eid = cur.lastrowid
-        conn.commit()
-        flash("Evaluación creada. Ahora agrega las preguntas.", "success")
-        return redirect(url_for("eval_constructor", eid=eid))
-    return render_template("evaluaciones/form.html",
-                           ev=None, fd={}, tipos=TIPOS_EVAL)
-
-
-# ── Editar metadatos ──────────────────────────────────────────
-
-@app.route("/evaluaciones/<int:eid>/editar", methods=["GET", "POST"])
-@require_permission("edit")
-def eval_editar(eid):
-    ev = mysql_fetchone(f"SELECT * FROM `{EVAL_TABLE}` WHERE id=%s", (eid,))
-    if not ev:
-        flash("Evaluación no encontrada.", "danger")
-        return redirect(url_for("eval_index"))
-    if request.method == "POST":
-        nombre = request.form.get("nombre", "").strip()
-        desc   = request.form.get("descripcion", "").strip()
-        tipo   = request.form.get("tipo", "diagnostica")
-        if not nombre:
-            flash("El nombre es requerido.", "danger")
-            return render_template("evaluaciones/form.html",
-                                   ev=ev, fd=request.form, tipos=TIPOS_EVAL)
-        conn = get_db()
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                UPDATE `{EVAL_TABLE}`
-                SET nombre=%s, descripcion=%s, tipo=%s, updated_by=%s
-                WHERE id=%s
-            """, (nombre, desc, tipo, current_username(), eid))
-        conn.commit()
-        flash("Evaluación actualizada.", "success")
-        return redirect(url_for("eval_constructor", eid=eid))
-    return render_template("evaluaciones/form.html",
-                           ev=ev, fd={}, tipos=TIPOS_EVAL)
-
-
-# ── Constructor de preguntas ──────────────────────────────────
-
-@app.route("/evaluaciones/<int:eid>/constructor")
-@login_required
-def eval_constructor(eid):
-    ev = mysql_fetchone(f"SELECT * FROM `{EVAL_TABLE}` WHERE id=%s", (eid,))
-    if not ev:
-        flash("Evaluación no encontrada.", "danger")
-        return redirect(url_for("eval_index"))
-    por_seccion = _preguntas_por_seccion(eid)
-    total = sum(len(v) for v in por_seccion.values())
-    return render_template("evaluaciones/constructor.html",
-                           ev=ev, por_seccion=por_seccion,
-                           secciones=SECCIONES, tipos=TIPOS_RESPUESTA,
-                           tipos_eval=TIPOS_EVAL, total_preguntas=total)
-
-
-# ── API: Agregar pregunta ─────────────────────────────────────
-
-@app.route("/api/evaluaciones/<int:eid>/preguntas", methods=["POST"])
-@require_permission("edit")
-def api_agregar_pregunta(eid):
-    ev = mysql_fetchone(f"SELECT id, estado FROM `{EVAL_TABLE}` WHERE id=%s", (eid,))
-    if not ev:
-        return jsonify({"ok": False, "error": "Evaluación no encontrada"}), 404
-    if ev["estado"] == "archivada":
-        return jsonify({"ok": False, "error": "Evaluación archivada, no se puede modificar"}), 403
-
-    seccion        = request.form.get("seccion", "tecnica")
-    texto          = request.form.get("texto", "").strip()
-    tipo_respuesta = request.form.get("tipo_respuesta", "escala_1_5")
-    es_obligatoria = 1 if request.form.get("es_obligatoria") else 0
-    opciones_raw   = request.form.get("opciones", "").strip()
-
-    if not texto:
-        return jsonify({"ok": False, "error": "El texto de la pregunta es requerido"}), 400
-    if seccion not in SECCIONES:
-        return jsonify({"ok": False, "error": "Sección inválida"}), 400
-
-    max_ord = mysql_fetchone(
-        f"SELECT COALESCE(MAX(orden),0) AS mo FROM `{PREG_TABLE}` WHERE evaluacion_id=%s AND seccion=%s",
-        (eid, seccion),
-    )
-    nuevo_orden = int(max_ord["mo"]) + 1
-
-    opciones_json = None
-    if tipo_respuesta == "multiple" and opciones_raw:
-        items = [o.strip() for o in opciones_raw.split("\n") if o.strip()]
-        opciones_json = json.dumps(items, ensure_ascii=False)
-
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            INSERT INTO `{PREG_TABLE}`
-                (evaluacion_id, seccion, orden, texto, tipo_respuesta, opciones, es_obligatoria)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (eid, seccion, nuevo_orden, texto, tipo_respuesta, opciones_json, es_obligatoria))
-        pid = cur.lastrowid
-    conn.commit()
-
-    p = mysql_fetchone(f"SELECT * FROM `{PREG_TABLE}` WHERE id=%s", (pid,))
-    return jsonify({"ok": True, "pregunta": dict(_parse_opciones(p))})
-
-
-# ── API: Editar pregunta ──────────────────────────────────────
-
-@app.route("/api/preguntas/<int:pid>", methods=["POST"])
-@require_permission("edit")
-def api_editar_pregunta(pid):
-    p = mysql_fetchone(f"""
-        SELECT p.*, e.estado FROM `{PREG_TABLE}` p
-        JOIN `{EVAL_TABLE}` e ON e.id = p.evaluacion_id
-        WHERE p.id=%s
-    """, (pid,))
-    if not p:
-        return jsonify({"ok": False, "error": "Pregunta no encontrada"}), 404
-    if p["estado"] == "archivada":
-        return jsonify({"ok": False, "error": "Evaluación archivada, no editable"}), 403
-
-    texto          = request.form.get("texto", "").strip()
-    tipo_respuesta = request.form.get("tipo_respuesta", p["tipo_respuesta"])
-    es_obligatoria = 1 if request.form.get("es_obligatoria") else 0
-    opciones_raw   = request.form.get("opciones", "").strip()
-
-    if not texto:
-        return jsonify({"ok": False, "error": "El texto es requerido"}), 400
-
-    opciones_json = None
-    if tipo_respuesta == "multiple" and opciones_raw:
-        items = [o.strip() for o in opciones_raw.split("\n") if o.strip()]
-        opciones_json = json.dumps(items, ensure_ascii=False)
-
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            UPDATE `{PREG_TABLE}`
-            SET texto=%s, tipo_respuesta=%s, opciones=%s, es_obligatoria=%s
-            WHERE id=%s
-        """, (texto, tipo_respuesta, opciones_json, es_obligatoria, pid))
-    conn.commit()
-
-    updated = mysql_fetchone(f"SELECT * FROM `{PREG_TABLE}` WHERE id=%s", (pid,))
-    return jsonify({"ok": True, "pregunta": dict(_parse_opciones(updated))})
-
-
-# ── API: Eliminar pregunta ────────────────────────────────────
-
-@app.route("/api/preguntas/<int:pid>/eliminar", methods=["POST"])
-@require_permission("edit")
-def api_eliminar_pregunta(pid):
-    p = mysql_fetchone(f"""
-        SELECT p.*, e.estado FROM `{PREG_TABLE}` p
-        JOIN `{EVAL_TABLE}` e ON e.id = p.evaluacion_id
-        WHERE p.id=%s
-    """, (pid,))
-    if not p:
-        return jsonify({"ok": False, "error": "Pregunta no encontrada"}), 404
-    if p["estado"] == "archivada":
-        return jsonify({"ok": False, "error": "Evaluación archivada"}), 403
-
-    eid     = p["evaluacion_id"]
-    seccion = p["seccion"]
-
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"DELETE FROM `{PREG_TABLE}` WHERE id=%s", (pid,))
-        # reindexar posiciones en la sección
-        cur.execute(f"""
-            SELECT id FROM `{PREG_TABLE}`
-            WHERE evaluacion_id=%s AND seccion=%s
-            ORDER BY orden ASC
-        """, (eid, seccion))
-        for i, r in enumerate(cur.fetchall(), 1):
-            cur.execute(f"UPDATE `{PREG_TABLE}` SET orden=%s WHERE id=%s", (i, r["id"]))
-    conn.commit()
-    return jsonify({"ok": True})
-
-
-# ── API: Mover pregunta ↑ ↓ ──────────────────────────────────
-
-@app.route("/api/preguntas/<int:pid>/mover", methods=["POST"])
-@require_permission("edit")
-def api_mover_pregunta(pid):
-    direccion = request.form.get("direccion")   # "up" | "down"
-    p = mysql_fetchone(f"SELECT * FROM `{PREG_TABLE}` WHERE id=%s", (pid,))
-    if not p:
-        return jsonify({"ok": False, "error": "No encontrada"}), 404
-
-    eid, seccion, orden = p["evaluacion_id"], p["seccion"], p["orden"]
-
-    if direccion == "up":
-        otra = mysql_fetchone(f"""
-            SELECT id, orden FROM `{PREG_TABLE}`
-            WHERE evaluacion_id=%s AND seccion=%s AND orden<%s
-            ORDER BY orden DESC LIMIT 1
-        """, (eid, seccion, orden))
-    else:
-        otra = mysql_fetchone(f"""
-            SELECT id, orden FROM `{PREG_TABLE}`
-            WHERE evaluacion_id=%s AND seccion=%s AND orden>%s
-            ORDER BY orden ASC LIMIT 1
-        """, (eid, seccion, orden))
-
-    if not otra:
-        return jsonify({"ok": True, "moved": False})   # ya en el límite
-
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"UPDATE `{PREG_TABLE}` SET orden=%s WHERE id=%s", (otra["orden"], pid))
-        cur.execute(f"UPDATE `{PREG_TABLE}` SET orden=%s WHERE id=%s", (orden, otra["id"]))
-    conn.commit()
-    return jsonify({"ok": True, "moved": True, "swapped_with": otra["id"]})
-
-
-# ── API: Reordenar por drag-and-drop ─────────────────────────
-
-@app.route("/api/evaluaciones/<int:eid>/reordenar", methods=["POST"])
-@require_permission("edit")
-def api_reordenar(eid):
-    """Body JSON: {"seccion": "tecnica", "orden": [id1, id2, ...]}"""
-    data    = request.get_json(force=True) or {}
-    seccion = data.get("seccion", "")
-    orden   = data.get("orden", [])
-
-    if seccion not in SECCIONES:
-        return jsonify({"ok": False, "error": "Sección inválida"}), 400
-
-    conn = get_db()
-    with conn.cursor() as cur:
-        for i, preg_id in enumerate(orden, 1):
-            cur.execute(f"""
-                UPDATE `{PREG_TABLE}` SET orden=%s
-                WHERE id=%s AND evaluacion_id=%s AND seccion=%s
-            """, (i, preg_id, eid, seccion))
-    conn.commit()
-    return jsonify({"ok": True})
-
-
-# ── API: Cambiar estado evaluación ───────────────────────────
-
-@app.route("/api/evaluaciones/<int:eid>/estado", methods=["POST"])
-@require_permission("edit")
-def api_eval_estado(eid):
-    ev = mysql_fetchone(f"SELECT * FROM `{EVAL_TABLE}` WHERE id=%s", (eid,))
-    if not ev:
-        return jsonify({"ok": False, "error": "No encontrada"}), 404
-
-    nuevo = request.form.get("estado", "")
-    transiciones = {
-        "borrador":  ["publicada"],
-        "publicada": ["borrador", "archivada"],
-        "archivada": [],
-    }
-    if nuevo not in transiciones.get(ev["estado"], []):
-        return jsonify({"ok": False,
-                        "error": f"Transición inválida: {ev['estado']} → {nuevo}"}), 400
-
-    if nuevo == "publicada":
-        total = mysql_fetchone(
-            f"SELECT COUNT(*) AS c FROM `{PREG_TABLE}` WHERE evaluacion_id=%s", (eid,)
-        )
-        if int(total["c"]) == 0:
-            return jsonify({"ok": False,
-                            "error": "Agrega al menos una pregunta antes de publicar"}), 400
-
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"""
-            UPDATE `{EVAL_TABLE}` SET estado=%s, updated_by=%s WHERE id=%s
-        """, (nuevo, current_username(), eid))
-    conn.commit()
-    return jsonify({"ok": True, "estado": nuevo})
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -10731,6 +10353,362 @@ def erp_engine_peek():
     })
 
 
+# ═════════════════════════════════════════════════════════════════════
+# RESOLVER DE CLIENTE ERP (Daniel 2026-05-27 — Boleta 21577 "CF" bug)
+# ═════════════════════════════════════════════════════════════════════
+# El motor erp_engine ya tiene fallback chain (header → líneas → OBDO),
+# pero algunos casos siguen mostrando "Consumidor Final" cuando hay
+# datos reales. Este helper aplica fallbacks ADICIONALES sobre el dict
+# que ya devolvió ERPClient.fetch_document() y normaliza el resultado.
+# ═════════════════════════════════════════════════════════════════════
+_CF_PLACEHOLDERS = (
+    "consumidor final", "cons final", "sin nombre", "sin razon social",
+    "cliente generico", "cliente generico mostrador", "mostrador",
+)
+
+
+def _is_cf_name(name) -> bool:
+    """True si el nombre es un placeholder de consumidor final."""
+    n = (name or "").strip().lower()
+    if not n:
+        return True
+    return any(p in n for p in _CF_PLACEHOLDERS)
+
+
+def _is_cf_rut(rut) -> bool:
+    """True si el RUT es un placeholder genérico."""
+    r = (rut or "").replace(".", "").replace("-", "").replace(" ", "")
+    return r in {"66666666", "666666666", "55555555", "77777777", "11111111"}
+
+
+def resolve_erp_customer(doc, *, tido=None, nudo=None):
+    """Resolver de cliente con fallback chain auditable.
+
+    Recibe el dict devuelto por _ERP.fetch_document() y aplica fallbacks
+    adicionales si el cliente quedó como Consumidor Final aunque haya
+    datos reales en alguna parte del documento (líneas, OBDO, dispatch).
+
+    Returns dict normalizado con `source`, `confidence`, `warnings` y
+    `fallback_chain` (para diagnóstico interno, NO mostrar al usuario).
+    """
+    if not doc or not isinstance(doc, dict):
+        return {
+            "customer_name": "Documento no encontrado",
+            "customer_rut": "",
+            "customer_email": "",
+            "customer_phone": "",
+            "dispatch_address": "",
+            "dispatch_commune": "",
+            "source": "fallback",
+            "confidence": "low",
+            "warnings": ["Documento no devuelve datos del ERP"],
+            "fallback_chain": [],
+        }
+
+    out = {
+        "customer_name":  (doc.get("cliente_nombre") or "").strip(),
+        "customer_rut":   (doc.get("cliente_rut") or "").strip(),
+        "customer_email": (doc.get("email") or "").strip(),
+        "customer_phone": (doc.get("telefono") or "").strip(),
+        "dispatch_address": (doc.get("direccion") or "").strip(),
+        "dispatch_commune": (doc.get("comuna") or "").strip(),
+        "source": "header",
+        "confidence": "high",
+        "warnings": [],
+        "fallback_chain": ["header"],
+    }
+
+    name_is_cf = _is_cf_name(out["customer_name"])
+    rut_is_cf = _is_cf_rut(out["customer_rut"])
+
+    # CASO IDEAL: nombre y RUT reales → high confidence
+    if not name_is_cf and not rut_is_cf:
+        return out
+
+    # CASO 1: Nombre = CF pero RUT real → motor ya debería haber resuelto
+    # via fetch_entity. Si llegó así, marcar medium confidence.
+    if name_is_cf and not rut_is_cf:
+        out["source"] = "client_table"
+        out["confidence"] = "medium"
+        out["fallback_chain"].append("rut_real_pero_nombre_cf")
+        out["warnings"].append(f"RUT {out['customer_rut']} no resolvió nombre desde MAEEN")
+
+    # CASO 2: Buscar en LÍNEAS si hay datos de entidad (NOKOEN/RTENDESP)
+    if name_is_cf or rut_is_cf:
+        lineas = doc.get("lineas_raw") or doc.get("lineas") or []
+        for ln in lineas:
+            if not isinstance(ln, dict):
+                continue
+            # Nombre desde línea
+            for k in ("NOKOEN", "nokoen", "NOKOENDESP", "nokoendesp",
+                      "NRAZON", "nrazon", "NRAZONFINAL", "nrazonfinal"):
+                v = (ln.get(k) or "").strip()
+                if v and not _is_cf_name(v):
+                    out["customer_name"] = v
+                    out["source"] = "lineas_obdo"
+                    out["confidence"] = "medium"
+                    out["fallback_chain"].append(f"linea.{k}")
+                    name_is_cf = False
+                    break
+            # RUT desde línea
+            if rut_is_cf:
+                for k in ("RTENDESP", "rtendesp", "RUTENCLIESP", "rutencliesp",
+                          "RTEN", "rten"):
+                    v = (ln.get(k) or "").strip()
+                    if v and not _is_cf_rut(v):
+                        out["customer_rut"] = v
+                        out["fallback_chain"].append(f"linea.{k}_rut")
+                        rut_is_cf = False
+                        break
+            if not name_is_cf and not rut_is_cf:
+                break
+
+    # CASO 3 (CLAVE 2026-05-27): Si tenemos RUT real pero nombre CF,
+    # CONSULTAR MAEEN.NOKOEN por RTEN — la fuente correcta del nombre.
+    # Esto es lo que hace el motor REST y lo que el SQL directo del
+    # cubicador NO hacía. Resuelve "Cristian Rossi Medina" desde el RUT.
+    if name_is_cf and out["customer_rut"]:
+        try:
+            # CUERPO del RUT = parte antes del guión (o todos los dígitos
+            # si no hay guión). NO asumir que el último char es DV — el RUT
+            # que llega del SQL directo ya viene como cuerpo "16606838".
+            _raw_rut = (out["customer_rut"] or "").replace(".", "").replace(" ", "").upper()
+            cuerpo = _raw_rut.split("-")[0] if "-" in _raw_rut else _raw_rut
+            # Quitar cualquier DV pegado al final (letra K o último dígito
+            # solo si el cuerpo tiene 9 chars = 8 cuerpo + 1 DV pegado).
+            if cuerpo.endswith("K"):
+                cuerpo = cuerpo[:-1]
+            # MAEEN.RTEN puede ser "16606838", "16606838-K", "16606838K".
+            # Usamos LIKE sobre el cuerpo para capturar todas las variantes.
+            ent = _random_sql_one(
+                "SELECT TOP 1 LTRIM(RTRIM(NOKOEN)) AS nombre, "
+                "       LTRIM(RTRIM(GIEN)) AS giro, LTRIM(RTRIM(CMEN)) AS comuna, "
+                "       LTRIM(RTRIM(DIEN)) AS direccion, LTRIM(RTRIM(FOEN)) AS fono, "
+                "       LTRIM(RTRIM(EMAIL)) AS email "
+                "  FROM MAEEN "
+                " WHERE LTRIM(RTRIM(RTEN)) LIKE %s "
+                "    OR LTRIM(RTRIM(RTEN)) = %s",
+                (cuerpo + "%", cuerpo)
+            )
+            if ent and ent.get("nombre") and not _is_cf_name(ent["nombre"]):
+                out["customer_name"] = ent["nombre"]
+                out["source"] = "maeen_por_rut"
+                out["confidence"] = "high"
+                out["fallback_chain"].append("MAEEN.NOKOEN por RTEN")
+                name_is_cf = False
+                # Completar otros campos si faltan
+                if not out["customer_email"] and ent.get("email"):
+                    out["customer_email"] = ent["email"]
+                if not out["customer_phone"] and ent.get("fono"):
+                    out["customer_phone"] = ent["fono"]
+                if not out["dispatch_address"] and ent.get("direccion"):
+                    out["dispatch_address"] = ent["direccion"]
+                if not out["dispatch_commune"] and ent.get("comuna"):
+                    out["dispatch_commune"] = ent["comuna"]
+        except Exception as _e_maeen:
+            print(f"[resolve_erp_customer] MAEEN lookup falló: {_e_maeen}", flush=True)
+
+    # CASO 4: Completar email/teléfono/dirección del OBDO si faltan.
+    # IMPORTANTE: ya NO inferimos NOMBRE del OBDO (causaba tomar la
+    # dirección como nombre — bug confirmado en BLV 21577).
+    obs_text = (doc.get("observaciones") or "").strip()
+    if obs_text and (not out["customer_email"] or not out["customer_phone"] or not out["dispatch_address"]):
+        try:
+            from erp_engine import ERPClient as _EC
+            parsed = _EC._parse_obdo_contact(obs_text) if hasattr(_EC, "_parse_obdo_contact") else {}
+        except Exception:
+            parsed = {}
+        if not out["customer_email"] and parsed.get("email"):
+            out["customer_email"] = parsed["email"]
+            out["fallback_chain"].append("obdo.email")
+        if not out["customer_phone"] and parsed.get("telefono"):
+            out["customer_phone"] = parsed["telefono"]
+            out["fallback_chain"].append("obdo.telefono")
+        if not out["dispatch_address"] and parsed.get("direccion"):
+            out["dispatch_address"] = parsed["direccion"]
+            out["fallback_chain"].append("obdo.direccion")
+
+    # CASO 5: Si después de TODO sigue siendo CF, dejar texto limpio.
+    if name_is_cf:
+        if out["customer_name"] in ("", None) or _is_cf_name(out["customer_name"]):
+            out["customer_name"] = "Consumidor Final"  # legítimamente CF
+        out["source"] = "fallback"
+        out["confidence"] = "low"
+        out["fallback_chain"].append("agotado")
+
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Endpoint diagnóstico ERP (SUPERADMIN) — Daniel 2026-05-27
+# Muestra: fuente del dato, fallback chain, confidence, warnings.
+# URL ejemplo: /api/erp/diagnostico/BLV/21577
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/api/erp/diagnostico/<tido>/<nudo>")
+@login_required
+def erp_diagnostico(tido, nudo):
+    """Diagnóstico ERP completo para superadmin. Devuelve raw del motor +
+    resuelto + chain de fallbacks. Útil para depurar 'Consumidor Final'."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    tido = (tido or "").strip().upper()
+    nudo = (nudo or "").strip()
+    if not nudo:
+        return jsonify({"ok": False, "error": "Falta número documento"}), 400
+
+    import time as _t
+    _t0 = _t.time()
+    try:
+        _ERP.invalidate_doc(tido, nudo)  # forzar refetch
+        doc = _ERP.fetch_document(tido, nudo)
+        elapsed_motor = int((_t.time() - _t0) * 1000)
+    except Exception as e:
+        return jsonify({
+            "ok": False, "error": "ERP no respondió",
+            "detalle_debug": str(e)[:200], "tido": tido, "nudo": nudo
+        }), 502
+
+    if not doc:
+        return jsonify({"ok": False, "error": "Documento no encontrado en ERP",
+                        "tido": tido, "nudo": nudo}), 404
+
+    # Aplicar resolver
+    _t1 = _t.time()
+    resuelto = resolve_erp_customer(doc, tido=tido, nudo=nudo)
+    elapsed_resolver = int((_t.time() - _t1) * 1000)
+
+    return jsonify({
+        "ok": True,
+        "documento": {"tido": tido, "nudo": nudo},
+        "motor_raw": {
+            "cliente_nombre":  doc.get("cliente_nombre"),
+            "cliente_rut":     doc.get("cliente_rut"),
+            "email":           doc.get("email"),
+            "telefono":        doc.get("telefono"),
+            "direccion":       doc.get("direccion"),
+            "comuna":          doc.get("comuna"),
+            "observaciones":   (doc.get("observaciones") or "")[:300],
+            "n_lineas":        doc.get("n_lineas"),
+        },
+        "resuelto": resuelto,
+        "timings_ms": {
+            "motor":    elapsed_motor,
+            "resolver": elapsed_resolver,
+            "total":    elapsed_motor + elapsed_resolver,
+        },
+        "diagnostics_motor": doc.get("diagnostics", {}),
+    })
+
+
+# ═════════════════════════════════════════════════════════════════════
+# MOTOR UNIFICADO fetch_erp_document (Daniel 2026-05-27)
+# Una sola función para cubicador / asignar / transporte / retiros /
+# mantenciones. Devuelve un objeto NORMALIZADO con cliente resuelto.
+# ═════════════════════════════════════════════════════════════════════
+def fetch_erp_document(document_type, document_number):
+    """Motor unificado que orquesta:
+      1. ERPClient.fetch_document() (motor existente con REST + SQL fallback)
+      2. resolve_erp_customer() (resolver con fallback chain)
+      3. Devuelve formato normalizado para todos los módulos.
+
+    Returns:
+      {
+        "ok": bool,
+        "document": {
+          "type": "BLV", "number": "21577",
+          "date": "2026-05-27", "status": "...",
+          "customer": {...},      # del resolver
+          "totals": {...},        # neto/iva/bruto
+          "items": [...],         # SKU + cantidad + descripción
+          "packages": [...],      # bultos (si aplica)
+          "source": {
+            "engine": "random_sql",
+            "fallback_used": bool,
+            "customer_source": "header|client_table|obdo|fallback",
+            "customer_confidence": "high|medium|low",
+            "elapsed_ms": int
+          },
+          "warnings": [str]       # solo se muestran a superadmin
+        },
+        "error": str (si !ok)
+      }
+    """
+    import time as _t
+    _t0 = _t.time()
+
+    tido = (document_type or "").strip().upper()
+    nudo = (document_number or "").strip()
+    if not tido or not nudo:
+        return {"ok": False, "error": "Faltan tipo o número de documento"}
+
+    try:
+        doc = _ERP.fetch_document(tido, nudo)
+    except Exception as e:
+        print(f"[fetch_erp_document] tido={tido} nudo={nudo} error: {e}", flush=True)
+        return {"ok": False, "error": "El sistema ERP no respondió. Intenta nuevamente.",
+                "document": {"type": tido, "number": nudo}}
+
+    if not doc:
+        return {"ok": False, "error": f"Documento {tido}-{nudo} no encontrado en el ERP",
+                "document": {"type": tido, "number": nudo}}
+
+    # Resolver cliente con fallbacks
+    resuelto = resolve_erp_customer(doc, tido=tido, nudo=nudo)
+
+    # Normalizar items
+    items_raw = doc.get("lineas") or doc.get("lineas_raw") or []
+    items = []
+    for ln in items_raw:
+        if not isinstance(ln, dict):
+            continue
+        items.append({
+            "sku":         (ln.get("sku") or ln.get("KOPRCT") or ln.get("koprct") or "").strip().upper(),
+            "description": ln.get("descripcion") or ln.get("NOKOPR") or ln.get("nokopr") or "",
+            "qty":         float(ln.get("cantidad") or ln.get("CAPRCO1") or ln.get("caprco1") or 0),
+            "qty_ya_asignada": float(ln.get("CAPRAD1") or ln.get("caprad1") or 0),
+            "qty_pendiente":   float(ln.get("CAPREX1") or ln.get("caprex1") or 0),
+            "unit_price":  float(ln.get("VANELI") or ln.get("vaneli") or 0),
+        })
+
+    elapsed = int((_t.time() - _t0) * 1000)
+
+    return {
+        "ok": True,
+        "document": {
+            "type":   tido,
+            "number": nudo,
+            "date":   doc.get("fecha_emision") or "",
+            "status": doc.get("estado") or "",
+            "customer": {
+                "name":             resuelto["customer_name"],
+                "rut":              resuelto["customer_rut"],
+                "email":            resuelto["customer_email"],
+                "phone":            resuelto["customer_phone"],
+                "dispatch_address": resuelto["dispatch_address"],
+                "dispatch_commune": resuelto["dispatch_commune"],
+            },
+            "totals": {
+                "net":   float(doc.get("valor_neto") or 0),
+                "tax":   float(doc.get("valor_iva") or 0),
+                "gross": float(doc.get("valor_bruto") or 0),
+            },
+            "items":    items,
+            "packages": doc.get("bultos") or [],
+            "source": {
+                "engine":              "random_sql",
+                "fallback_used":       bool(resuelto["source"] not in ("header", "client_table")),
+                "customer_source":     resuelto["source"],
+                "customer_confidence": resuelto["confidence"],
+                "fallback_chain":      resuelto["fallback_chain"],
+                "elapsed_ms":          elapsed,
+            },
+            "warnings": resuelto["warnings"],
+        },
+    }
+
+
+
 @app.route("/api/erp/sql-test", methods=["GET"])
 @login_required
 def erp_sql_test():
@@ -11196,825 +11174,6 @@ def twilio_test_send():
         return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
 
-# ════════════════════════════════════════════════════════════════════
-# DIAGNÓSTICO COMPLETO DE COMUNICACIONES
-#   Endpoint admin que devuelve TODO el estado de los canales:
-#     - SMTP: conexión real con timeout 5s (HELO + AUTH probable)
-#     - Resend: ping a la API + verificación de dominio
-#     - Twilio: SMS + WhatsApp + detección de sandbox/trial
-#     - Kill switches: globales + por módulo
-#     - Últimos 10 envíos por canal
-#     - Lista de RECOMENDACIONES priorizadas (qué hacer YA)
-#
-#   Útil cuando Daniel dice "configuré todo pero no funciona": una sola
-#   llamada GET y aparece el problema con instrucciones de remedio.
-# ════════════════════════════════════════════════════════════════════
-@app.route("/api/comm/diagnostico-completo", methods=["GET"])
-def comm_diagnostico_completo():
-    """Diagnóstico exhaustivo de TODOS los canales de comunicación.
-
-    Sólo admin/superadmin. Devuelve JSON con estado real, errores
-    específicos y lista de acciones que el operador debe tomar.
-    """
-    u = getattr(g, "user", None) or {}
-    if (u.get("role") or "") not in ("admin", "superadmin"):
-        return jsonify({"ok": False, "error": "Solo admin"}), 403
-
-    import socket as _sock
-    import ssl as _ssl_d
-
-    recomendaciones = []  # acciones priorizadas para Daniel
-
-    # ── 1. SMTP — config + test real de conexión (timeout 5s) ────────
-    try:
-        smtp_cfg = _get_smtp_cfg()
-    except Exception as e:
-        smtp_cfg = {"smtp_user": "", "smtp_pass": "", "_source": f"error: {e}"}
-
-    smtp_pass = smtp_cfg.get("smtp_pass") or ""
-    # Detectar formato del password: App Password de Gmail tiene 16 chars
-    # sin espacios (aunque Google los muestra con espacios al copiar).
-    pass_clean = smtp_pass.replace(" ", "")
-    if not smtp_pass:
-        pass_format = "no_configurada"
-    elif len(pass_clean) == 16 and pass_clean.isalnum():
-        pass_format = "app_password_16ch"
-    elif " " in smtp_pass and len(pass_clean) == 16:
-        pass_format = "app_password_16ch_con_espacios"
-    else:
-        pass_format = "normal_password_o_inusual"
-
-    smtp_test = {"ok": False, "error": None, "ms": None, "stage": None}
-    if smtp_cfg.get("smtp_user") and smtp_cfg.get("smtp_pass"):
-        import time as _t_smtp
-        t0 = _t_smtp.time()
-        try:
-            host = smtp_cfg.get("smtp_host") or "smtp.gmail.com"
-            port = int(smtp_cfg.get("smtp_port") or 587)
-            secure = bool(smtp_cfg.get("secure"))
-            # Test ligero: sólo abrir socket + EHLO + STARTTLS (sin login real
-            # para no spammear Gmail con intentos cada vez que se carga el dashboard)
-            if secure:
-                ctx = _ssl_d.create_default_context()
-                with _open_smtp_client(host, port, True, timeout=5, context=ctx) as srv:
-                    srv.ehlo()
-                    smtp_test["stage"] = "ssl_connected"
-                    smtp_test["ok"] = True
-            else:
-                with _open_smtp_client(host, port, False, timeout=5) as srv:
-                    srv.ehlo()
-                    smtp_test["stage"] = "tcp_connected"
-                    if srv.has_extn("starttls"):
-                        smtp_test["stage"] = "starttls_available"
-                    smtp_test["ok"] = True
-        except _sock.timeout:
-            smtp_test["error"] = f"Timeout (>5s) — Railway probablemente bloquea puerto {smtp_cfg.get('smtp_port', 587)} SMTP saliente. Configura RESEND_API_KEY en Railway."
-            smtp_test["stage"] = "timeout"
-        except _sock.gaierror as e:
-            smtp_test["error"] = f"DNS no resuelve {host}: {e}"
-            smtp_test["stage"] = "dns"
-        except smtplib.SMTPAuthenticationError as e:
-            smtp_test["error"] = f"Credenciales rechazadas: {e}"
-            smtp_test["stage"] = "auth"
-        except Exception as e:
-            smtp_test["error"] = f"{type(e).__name__}: {str(e)[:200]}"
-            smtp_test["stage"] = "exception"
-        smtp_test["ms"] = int((_t_smtp.time() - t0) * 1000)
-
-    smtp_status = {
-        "host": smtp_cfg.get("smtp_host", ""),
-        "port": smtp_cfg.get("smtp_port", 587),
-        "user": smtp_cfg.get("smtp_user", ""),
-        "password_format": pass_format,
-        "password_length": len(pass_clean),
-        "from_email": smtp_cfg.get("from_addr", ""),
-        "from_name": smtp_cfg.get("from_name", ""),
-        "secure": bool(smtp_cfg.get("secure")),
-        "source": smtp_cfg.get("_source", ""),
-        "configurado": bool(smtp_cfg.get("smtp_user") and smtp_cfg.get("smtp_pass")),
-        "test_connection": smtp_test,
-    }
-
-    # Si SMTP es Gmail pero from_email NO es @gmail.com / @sphs.cl, alertar SPF
-    from_email = (smtp_cfg.get("from_addr") or "").lower()
-    smtp_user_lc = (smtp_cfg.get("smtp_user") or "").lower()
-    is_gmail = "gmail.com" in (smtp_cfg.get("smtp_host") or "").lower()
-    if is_gmail and from_email and "@" in from_email:
-        from_domain = from_email.split("@")[-1]
-        user_domain = smtp_user_lc.split("@")[-1] if "@" in smtp_user_lc else ""
-        # Gmail rechaza envíos donde el From es de un dominio distinto al user
-        # (a menos que el usuario configure "Send mail as..." con SMTP del dominio)
-        if from_domain and user_domain and from_domain != user_domain:
-            smtp_status["alerta_spf"] = (
-                f"El From ({from_domain}) NO coincide con el dominio SMTP user "
-                f"({user_domain}). Gmail puede rechazar o marcar como spam. "
-                f"Solución: usa Resend con dominio verificado, o cambia el From a tu cuenta Gmail."
-            )
-
-    # ── 2. RESEND — config + ping API ────────────────────────────────
-    try:
-        resend_cfg = _get_resend_cfg()
-    except Exception:
-        resend_cfg = {}
-
-    # Detección explícita pedida por Daniel: si RESEND_API_KEY NO está en
-    # env vars de Railway, el diagnóstico debe decirlo claro.
-    resend_env_var_present = bool((os.environ.get("RESEND_API_KEY") or "").strip())
-
-    resend_status = {
-        "api_key_configured": bool(resend_cfg.get("api_key")),
-        "api_key_source": resend_cfg.get("_source", ""),  # 'env' | 'db' | ''
-        "env_var_present": resend_env_var_present,
-        "from_addr": resend_cfg.get("from_addr", ""),
-        "source": resend_cfg.get("_source", ""),
-        "domain_verified": None,
-        "test_request": None,
-        "domains": [],
-    }
-
-    if resend_cfg.get("api_key"):
-        try:
-            ok, code, data = _resend_api_call("GET", "/domains")
-            resend_status["test_request"] = {"http": code, "ok": ok}
-            if ok and isinstance(data, dict):
-                doms = data.get("data") or []
-                if isinstance(doms, list):
-                    resend_status["domains"] = [
-                        {"name": d.get("name"), "status": d.get("status"),
-                         "region": d.get("region")}
-                        for d in doms if isinstance(d, dict)
-                    ]
-                    verified = [d for d in doms if isinstance(d, dict)
-                                and (d.get("status") or "").lower() == "verified"]
-                    resend_status["domain_verified"] = verified[0].get("name") if verified else None
-            elif not ok:
-                resend_status["test_error"] = (data.get("error")
-                                               or data.get("message")
-                                               or "ping fallido")
-        except Exception as e:
-            resend_status["test_error"] = f"{type(e).__name__}: {e}"
-
-    # ── 3. TWILIO — SMS + WhatsApp + detección sandbox/trial ─────────
-    try:
-        twilio_diag = _twilio_diagnostico()
-    except Exception:
-        twilio_diag = {"whatsapp": {}, "sms": {}}
-
-    wa = twilio_diag.get("whatsapp", {})
-    sms = twilio_diag.get("sms", {})
-
-    # Detectar si WhatsApp está usando el sandbox compartido
-    wa_from = wa.get("from_number") or ""
-    is_wa_sandbox = "+14155238886" in wa_from  # número público sandbox Twilio
-    sms_from = sms.get("from_number") or ""
-    # Trial accounts típicamente reciben números USA empezando con +1...
-    # No es 100% determinístico (compras pueden ser US también), pero +1507...
-    # es el rango típico de trial. Lo marcamos como advertencia.
-    sms_trial_warning = sms_from.startswith("+1") and len(sms_from) >= 11
-
-    twilio_status = {
-        "whatsapp": {
-            "configurado": wa.get("configurado", False),
-            "account_sid": wa.get("account_sid"),
-            "from_number": wa_from,
-            "sandbox": is_wa_sandbox,
-            "sandbox_join_code": "join finger-cry" if is_wa_sandbox else None,
-            "sandbox_join_number": "+1 415 523 8886" if is_wa_sandbox else None,
-        },
-        "sms": {
-            "configurado": sms.get("configurado", False),
-            "account_sid": sms.get("account_sid"),
-            "from_number": sms_from,
-            "trial_warning": sms_trial_warning,
-        },
-    }
-
-    # ── 4. KILL SWITCHES — global + por módulo ───────────────────────
-    try:
-        kill_global = {
-            "email": comm_is_enabled("email"),
-            "whatsapp": comm_is_enabled("whatsapp"),
-        }
-    except Exception:
-        kill_global = {"email": True, "whatsapp": True}
-
-    kill_modulos = {}
-    try:
-        estado = _comm_killswitch_estado() or {}
-        for mod, conf in estado.items():
-            kill_modulos[mod] = {
-                "email_bloqueado": bool(conf.get("email_bloqueado")),
-                "whatsapp_bloqueado": bool(conf.get("whatsapp_bloqueado")),
-                "sms_bloqueado": bool(conf.get("sms_bloqueado")),
-            }
-    except Exception:
-        pass
-
-    # ── 5. Últimos envíos por canal ──────────────────────────────────
-    ultimos_email = []
-    try:
-        rows = mysql_fetchall(
-            "SELECT destinatario, asunto, evento, estado, error_msg, creado_en "
-            "  FROM email_log ORDER BY id DESC LIMIT 10"
-        ) or []
-        for r in rows:
-            r = dict(r)
-            dest = r.get("destinatario") or ""
-            if "@" in dest:
-                local, _, dom = dest.partition("@")
-                if len(local) > 3:
-                    dest = local[:2] + "***@" + dom
-            r["destinatario"] = dest
-            if r.get("creado_en"):
-                r["creado_en"] = str(r["creado_en"])
-            ultimos_email.append(r)
-    except Exception:
-        pass
-
-    ultimos_wa = []
-    try:
-        rows = mysql_fetchall(
-            "SELECT canal, destinatario, asunto, estado, detalle, created_at "
-            "  FROM comm_log WHERE canal IN ('whatsapp','sms') "
-            "  ORDER BY created_at DESC LIMIT 10"
-        ) or []
-        for r in rows:
-            r = dict(r)
-            if r.get("created_at"):
-                r["created_at"] = str(r["created_at"])
-            ultimos_wa.append(r)
-    except Exception:
-        pass
-
-    # ── 6. RECOMENDACIONES ───────────────────────────────────────────
-    # Priorizadas: las primeras son las que más probablemente
-    # estén causando que las comunicaciones no funcionen ahora mismo.
-
-    # Email — si SMTP falla y no hay Resend
-    if not resend_status["api_key_configured"]:
-        if not smtp_status["configurado"]:
-            recomendaciones.append({
-                "canal": "email", "prioridad": "alta",
-                "titulo": "Email completamente inactivo",
-                "detalle": "No hay ni Resend ni SMTP configurados. Configura una de las dos opciones.",
-                "accion": "Ir a /comunicaciones → tab Email → guardar credenciales SMTP, o configurar RESEND_API_KEY en Railway.",
-            })
-        elif smtp_test.get("stage") == "timeout":
-            recomendaciones.append({
-                "canal": "email", "prioridad": "alta",
-                "titulo": "Railway bloquea SMTP saliente",
-                "detalle": "Railway bloquea el puerto SMTP de Gmail. Daniel debe configurar Resend (envío vía HTTPS).",
-                "accion": "1) Crear cuenta en resend.com (gratis 100/día). 2) Generar API Key. 3) Configurar RESEND_API_KEY en Railway Variables. 4) Verificar dominio ilusfitness.com en resend.com/domains.",
-                "url_externa": "https://resend.com/api-keys",
-            })
-        elif smtp_test.get("stage") == "auth":
-            recomendaciones.append({
-                "canal": "email", "prioridad": "alta",
-                "titulo": "Gmail rechazó las credenciales SMTP",
-                "detalle": "El email/password de Gmail no son válidos. Gmail desde 2022 requiere App Password de 16 caracteres (no la clave normal).",
-                "accion": "1) Activa verificación en 2 pasos en la cuenta Gmail. 2) Ve a myaccount.google.com/apppasswords. 3) Genera una App Password. 4) Pégala en /comunicaciones → SMTP password.",
-                "url_externa": "https://myaccount.google.com/apppasswords",
-            })
-        elif pass_format == "normal_password_o_inusual":
-            recomendaciones.append({
-                "canal": "email", "prioridad": "media",
-                "titulo": "El password Gmail no parece App Password",
-                "detalle": "Gmail desde 2022 requiere App Password (16 caracteres). Tu password actual tiene formato inusual.",
-                "accion": "Genera una App Password en https://myaccount.google.com/apppasswords y reemplázala en /comunicaciones.",
-                "url_externa": "https://myaccount.google.com/apppasswords",
-            })
-    else:
-        # Resend SÍ configurada — chequear si tiene dominio verificado
-        if resend_status["test_request"] and not resend_status["test_request"].get("ok"):
-            recomendaciones.append({
-                "canal": "email", "prioridad": "alta",
-                "titulo": "Resend rechaza la API Key",
-                "detalle": f"La API Key de Resend no es válida: {resend_status.get('test_error', '')}",
-                "accion": "Genera una nueva API Key en resend.com/api-keys y actualízala en Railway (RESEND_API_KEY).",
-                "url_externa": "https://resend.com/api-keys",
-            })
-        elif not resend_status["domain_verified"]:
-            recomendaciones.append({
-                "canal": "email", "prioridad": "media",
-                "titulo": "Resend sin dominio verificado",
-                "detalle": "Sin dominio verificado, Resend solo permite enviar al email REGISTRADO en la cuenta Resend (no a usuarios).",
-                "accion": "Verifica el dominio ilusfitness.com en resend.com/domains (5 min — añadir 3 registros DNS).",
-                "url_externa": "https://resend.com/domains",
-            })
-
-    # WhatsApp — sandbox issue
-    if twilio_status["whatsapp"]["configurado"] and twilio_status["whatsapp"]["sandbox"]:
-        recomendaciones.append({
-            "canal": "whatsapp", "prioridad": "alta",
-            "titulo": "WhatsApp Sandbox — cada destinatario debe 'opt-in'",
-            "detalle": ("Estás usando el sandbox compartido de Twilio (+14155238886). "
-                        "Antes de recibir mensajes, cada usuario destinatario DEBE enviar "
-                        "'join finger-cry' al +1 415 523 8886 desde su propio WhatsApp."),
-            "accion": ("1) Envía 'join finger-cry' desde tu WhatsApp al +1 415 523 8886. "
-                       "2) Espera confirmación de Twilio (texto 'Twilio Sandbox: You are all set!'). "
-                       "3) Repite para cada técnico/cliente que deba recibir mensajes. "
-                       "4) Para producción sin restricción de opt-in: registra un Sender Number aprobado por WhatsApp (paga, 1-2 semanas)."),
-            "url_externa": "https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn",
-        })
-
-    # SMS — trial warning
-    if twilio_status["sms"]["configurado"] and twilio_status["sms"]["trial_warning"]:
-        recomendaciones.append({
-            "canal": "sms", "prioridad": "media",
-            "titulo": "SMS desde número Twilio Trial — solo a verificados",
-            "detalle": ("El número SMS configurado parece ser de cuenta Trial. "
-                        "En Trial, Twilio solo permite enviar SMS a números VERIFICADOS en la console."),
-            "accion": ("1) Ve a console.twilio.com → Phone Numbers → Verified Caller IDs. "
-                       "2) Agrega y verifica tu número (+56 9 xxxx xxxx) por SMS o llamada. "
-                       "3) Para producción real: paga la cuenta Twilio (~USD 20 minimum) para quitar restricción."),
-            "url_externa": "https://console.twilio.com/us1/develop/phone-numbers/manage/verified",
-        })
-
-    # Kill switches encendidos
-    if not kill_global.get("email"):
-        recomendaciones.append({
-            "canal": "email", "prioridad": "alta",
-            "titulo": "Kill switch GLOBAL de email está OFF",
-            "detalle": "Todos los envíos de email están bloqueados por kill switch global.",
-            "accion": "Ve a /comunicaciones → Plantillas → re-activar email global.",
-        })
-    if not kill_global.get("whatsapp"):
-        recomendaciones.append({
-            "canal": "whatsapp", "prioridad": "alta",
-            "titulo": "Kill switch GLOBAL de WhatsApp está OFF",
-            "detalle": "Todos los envíos de WhatsApp están bloqueados por kill switch global.",
-            "accion": "Ve a /comunicaciones → Plantillas → re-activar WhatsApp global.",
-        })
-
-    # Si todo bien, dejar mensaje positivo
-    if not recomendaciones:
-        recomendaciones.append({
-            "canal": "todos", "prioridad": "info",
-            "titulo": "Todos los canales aparentan estar OK",
-            "detalle": "No detecté problemas obvios. Si aún así no llegan mensajes, prueba el envío real con el botón Test rápido.",
-            "accion": "POST /api/comm/test-rapido con tu número/email.",
-        })
-
-    # ── 7. CANALES ACTIVOS (env var COMM_CANALES_ACTIVOS) ────────────
-    # Daniel canceló Twilio en mayo 2026. El sistema sólo dispara WhatsApp/SMS
-    # automáticos si el canal está en esta lista. Esta info también ayuda al
-    # diagnóstico: si todo se ve OK pero los WhatsApps no salen, suele ser por
-    # acá (no en credenciales).
-    try:
-        canales_list = _canales_activos_lista()
-    except Exception:
-        canales_list = ["email"]
-    canales_activos_status = {
-        "raw_env":    (os.environ.get("COMM_CANALES_ACTIVOS") or "(no seteada — default 'email')").strip(),
-        "lista":      canales_list,
-        "email":      _canal_activo("email"),
-        "whatsapp":   _canal_activo("whatsapp"),
-        "sms":        _canal_activo("sms"),
-    }
-
-    # Si alguno está apagado por config, dejarlo como recomendación informativa
-    # (no como error — es una decisión deliberada de Daniel)
-    if not _canal_activo("whatsapp"):
-        recomendaciones.append({
-            "canal": "whatsapp", "prioridad": "info",
-            "titulo": "WhatsApp desactivado por configuración",
-            "detalle": ("Las notificaciones automáticas por WhatsApp están apagadas. "
-                        "El código sigue en el sistema, pero ningún flujo automático "
-                        "(asignación de OT, accesos, retiros) lo dispara."),
-            "accion": ("Para reactivar: en Railway → Variables setea "
-                       "COMM_CANALES_ACTIVOS=email,whatsapp y reinicia el servicio."),
-        })
-    if not _canal_activo("sms"):
-        recomendaciones.append({
-            "canal": "sms", "prioridad": "info",
-            "titulo": "SMS desactivado por configuración",
-            "detalle": ("Las notificaciones automáticas por SMS están apagadas. "
-                        "El código sigue en el sistema, pero ningún flujo automático lo dispara."),
-            "accion": ("Para reactivar: en Railway → Variables setea "
-                       "COMM_CANALES_ACTIVOS=email,sms y reinicia el servicio."),
-        })
-
-    # Recomendación crítica: RESEND_API_KEY faltante
-    if not resend_status.get("env_var_present"):
-        recomendaciones.insert(0, {
-            "canal": "email", "prioridad": "alta",
-            "titulo": "RESEND_API_KEY NO está en Railway",
-            "detalle": ("La variable de entorno RESEND_API_KEY no se detectó en Railway. "
-                        "Sin esta key, los emails no salen vía Resend y caen al fallback "
-                        "SMTP (que en Railway suele timear)."),
-            "accion": ("Railway → Settings → Variables → agrega "
-                       "RESEND_API_KEY=re_xxxxxxxxxxxxxxx y reinicia el servicio. "
-                       "Genera la API key en https://resend.com/api-keys."),
-            "url_externa": "https://resend.com/api-keys",
-        })
-
-    return jsonify({
-        "ok": True,
-        "smtp": smtp_status,
-        "resend": resend_status,
-        "twilio": twilio_status,
-        "canales_activos": canales_activos_status,
-        "kill_switch_global": kill_global,
-        "kill_switch_modulos": kill_modulos,
-        "ultimos_envios_email": ultimos_email,
-        "ultimos_envios_wa": ultimos_wa,
-        "recomendaciones": recomendaciones,
-        "env_vars_requeridas": {
-            "canales": ["COMM_CANALES_ACTIVOS (default 'email'; ej: 'email,whatsapp,sms')"],
-            "email": ["RESEND_API_KEY", "RESEND_FROM_ADDR (opcional)",
-                      "SMTP_USER", "SMTP_PASS (App Password)", "SMTP_HOST", "SMTP_PORT"],
-            "twilio": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
-                       "TWILIO_WHATSAPP_FROM", "TWILIO_PHONE_FROM"],
-            "branding": ["ILUS_BRAND_NAME", "ILUS_BRAND_FROM_EMAIL", "ILUS_BRAND_REPLY_TO"],
-        },
-    })
-
-
-@app.route("/api/comm/test-rapido", methods=["POST"])
-def comm_test_rapido():
-    """Envía 1 mensaje de prueba REAL por el canal indicado y reporta resultado.
-
-    Body JSON: { tipo: 'email'|'whatsapp'|'sms', destinatario: '...' }
-
-    A diferencia de /api/twilio/test, este endpoint:
-      - cubre los 3 canales (incluye email vía la pipeline real)
-      - devuelve mensajes de error específicos y accionables
-      - registra el intento en comm_log/email_log para trazabilidad
-    """
-    u = getattr(g, "user", None) or {}
-    if (u.get("role") or "") not in ("admin", "superadmin"):
-        return jsonify({"ok": False, "error": "Solo admin/superadmin"}), 403
-
-    d = request.get_json(silent=True) or {}
-    tipo = (d.get("tipo") or "").lower().strip()
-    dest = (d.get("destinatario") or "").strip()
-
-    if tipo not in ("email", "whatsapp", "sms"):
-        return jsonify({"ok": False, "error": "tipo debe ser email|whatsapp|sms"}), 400
-    if not dest:
-        return jsonify({"ok": False, "error": "Falta el destinatario"}), 400
-
-    # ── EMAIL ────────────────────────────────────────────────────────
-    if tipo == "email":
-        if "@" not in dest:
-            return jsonify({"ok": False, "error": "Destinatario inválido (debe ser un email)"}), 400
-        try:
-            html = _ilus_email_html(
-                titulo="Prueba de comunicaciones ILUS",
-                subtitulo="Test rápido — diagnóstico",
-                saludo=f"Hola, {dest}",
-                parrafos=[
-                    "Este es un mensaje de prueba enviado desde el panel de diagnóstico de comunicaciones ILUS.",
-                    f"Enviado por: <strong>{current_username() or 'sistema'}</strong>",
-                    f"Fecha: <strong>{_now_chile_str('%d/%m/%Y %H:%M')}</strong>",
-                    "Si recibiste este mensaje, el canal email está funcionando correctamente.",
-                ],
-            )
-            sent = _send_ilus_email(
-                dest, _brand_subject("Prueba de comunicaciones"),
-                html, evento="test_rapido", modulo="comunicacion_interna"
-            )
-            if sent:
-                return jsonify({
-                    "ok": True,
-                    "canal": "email",
-                    "destinatario": dest,
-                    "mensaje": f"Email enviado a {dest}. Revisa la bandeja (puede tardar 1-2 min).",
-                })
-            err = getattr(g, "_last_email_error", "") or "Envío fallido sin error específico"
-            return jsonify({
-                "ok": False, "canal": "email", "destinatario": dest,
-                "error": str(err)[:500],
-                "hint": "Revisa /api/comm/diagnostico-completo para ver SMTP/Resend status.",
-            }), 422
-        except Exception as e:
-            return jsonify({"ok": False, "canal": "email", "destinatario": dest,
-                            "error": f"{type(e).__name__}: {str(e)[:300]}"}), 500
-
-    # ── WHATSAPP ─────────────────────────────────────────────────────
-    if tipo == "whatsapp":
-        wa = _get_wa_cfg()
-        if not (wa.get("account_sid") and wa.get("auth_token") and wa.get("from_number")):
-            return jsonify({
-                "ok": False, "canal": "whatsapp",
-                "error": "WhatsApp Twilio no está configurado. Falta TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN o TWILIO_WHATSAPP_FROM.",
-            }), 400
-        body = (f"🔧 ILUS · Prueba de comunicaciones\n\n"
-                f"Este es un mensaje de prueba enviado a las "
-                f"{_now_chile_str('%H:%M')} del {_now_chile_str('%d/%m/%Y')}.\n\n"
-                f"Si recibes este mensaje, el canal WhatsApp está OK.")
-        try:
-            sid = _send_whatsapp(wa["account_sid"], wa["auth_token"],
-                                 wa["from_number"], dest, body,
-                                 modulo="comunicacion_interna")
-            try: _comm_log_entry("whatsapp", dest, "Test rápido", "ok", f"sid={sid}")
-            except Exception: pass
-            return jsonify({
-                "ok": True, "canal": "whatsapp", "destinatario": dest, "sid": sid,
-                "mensaje": (f"WhatsApp enviado. SID: {sid}. "
-                            f"IMPORTANTE: si usas el sandbox, el destinatario "
-                            f"debe haber enviado 'join finger-cry' a +1 415 523 8886 antes."),
-            })
-        except Exception as e:
-            err_str = str(e)[:400]
-            try: _comm_log_entry("whatsapp", dest, "Test rápido", "error", err_str)
-            except Exception: pass
-            hint = ""
-            if "63007" in err_str or "Channel" in err_str:
-                hint = "Error 63007: el número destinatario NO ha hecho opt-in al sandbox. Pídele que envíe 'join finger-cry' al +1 415 523 8886."
-            elif "21211" in err_str or "not a valid" in err_str.lower():
-                hint = "Error 21211: el número destinatario no es válido. Formato esperado: +56912345678."
-            elif "authenticate" in err_str.lower() or "20003" in err_str:
-                hint = "Credenciales Twilio inválidas. Revisa TWILIO_ACCOUNT_SID y TWILIO_AUTH_TOKEN en Railway."
-            return jsonify({
-                "ok": False, "canal": "whatsapp", "destinatario": dest,
-                "error": err_str, "hint": hint,
-            }), 422
-
-    # ── SMS ──────────────────────────────────────────────────────────
-    if tipo == "sms":
-        sms = _get_sms_cfg()
-        if not (sms.get("account_sid") and sms.get("auth_token") and sms.get("from_number")):
-            return jsonify({
-                "ok": False, "canal": "sms",
-                "error": "SMS Twilio no está configurado. Falta TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN o TWILIO_PHONE_FROM.",
-            }), 400
-        body = (f"ILUS · Prueba SMS {_now_chile_str('%H:%M')}. "
-                f"Si lees esto, el canal funciona.")
-        try:
-            sid = _send_sms(sms["account_sid"], sms["auth_token"],
-                            sms["from_number"], dest, body,
-                            modulo="comunicacion_interna")
-            try: _comm_log_entry("sms", dest, "Test rápido", "ok", f"sid={sid}")
-            except Exception: pass
-            return jsonify({
-                "ok": True, "canal": "sms", "destinatario": dest, "sid": sid,
-                "mensaje": f"SMS enviado. SID: {sid}.",
-            })
-        except Exception as e:
-            err_str = str(e)[:400]
-            try: _comm_log_entry("sms", dest, "Test rápido", "error", err_str)
-            except Exception: pass
-            hint = ""
-            if "21608" in err_str:
-                hint = "Error 21608: cuenta Trial → el destinatario debe estar VERIFICADO en console.twilio.com/us1/develop/phone-numbers/manage/verified."
-            elif "21211" in err_str:
-                hint = "Error 21211: número destinatario inválido. Formato esperado: +56912345678."
-            return jsonify({
-                "ok": False, "canal": "sms", "destinatario": dest,
-                "error": err_str, "hint": hint,
-            }), 422
-
-    return jsonify({"ok": False, "error": "Caso no esperado"}), 500
-
-
-def _notificar_ot_asignada(visita_id):
-    """Helper: cuando se asigna/crea una OT, intenta notificar al técnico
-    asignado y al contacto en sitio por WhatsApp/SMS (best-effort, async).
-    NO bloquea el endpoint. Solo dispara si Twilio está configurado Y el
-    canal está activo en env var COMM_CANALES_ACTIVOS.
-
-    Daniel dio de baja Twilio en mayo 2026, así que por default el cuerpo
-    de esta función sale temprano. El código queda en su sitio para que el
-    día que reactive Twilio sólo cambie la env var y reinicie.
-    """
-    # Corte temprano: si ni WhatsApp ni SMS están activos, no hay nada que hacer.
-    if not (_canal_activo("whatsapp") or _canal_activo("sms")):
-        print(f"[notif-ot-asignada] vid={visita_id} omitido — WhatsApp y SMS están "
-              f"apagados por COMM_CANALES_ACTIVOS",
-              flush=True)
-        return
-
-    import threading as _th_n
-    def _bg():
-        try:
-            v = mysql_fetchone(
-                "SELECT v.id, v.numero_ot, v.fecha_programada, v.hora_inicio, "
-                "       v.contacto_nombre, v.contacto_tel, "
-                "       c.razon_social, "
-                "       COALESCE(u.nombre, u.username) AS tecnico_nombre, "
-                "       u.telefono AS tecnico_tel "
-                "  FROM mant_visitas v "
-                "  JOIN mant_clientes c ON c.id = v.cliente_id "
-                "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
-                " WHERE v.id=%s",
-                (visita_id,)
-            )
-            if not v: return
-            wa = _get_wa_cfg()
-            sms = _get_sms_cfg()
-            # Sólo consideramos un canal "ok" si está configurado en Twilio Y
-            # activado por env var. Ambas condiciones deben cumplirse.
-            wa_ok = (_canal_activo("whatsapp") and
-                     bool(wa.get("account_sid") and wa.get("auth_token") and wa.get("from_number")))
-            sms_ok = (_canal_activo("sms") and
-                      bool(sms.get("account_sid") and sms.get("auth_token") and sms.get("from_number")))
-            if not (wa_ok or sms_ok):
-                return  # nada configurado o todo apagado por config
-            # 1) Notificar al técnico
-            if v.get("tecnico_tel"):
-                msg_t = (f"📋 ILUS · OT asignada\n\n"
-                         f"OT: {v['numero_ot']}\n"
-                         f"Cliente: {v['razon_social']}\n"
-                         f"Fecha: {v['fecha_programada']}"
-                         f"{' · ' + str(v['hora_inicio']) if v.get('hora_inicio') else ''}\n\n"
-                         f"Ingresa a la app para ver detalles y gestionar.")
-                try:
-                    if wa_ok:
-                        _send_whatsapp(wa["account_sid"], wa["auth_token"], wa["from_number"],
-                                       v["tecnico_tel"], msg_t, modulo="mantenciones")
-                    elif sms_ok:
-                        _send_sms(sms["account_sid"], sms["auth_token"], sms["from_number"],
-                                  v["tecnico_tel"], msg_t, modulo="mantenciones")
-                except Exception as e_t:
-                    print(f"[notif-ot-tec] {e_t}", flush=True)
-            # 2) Notificar al contacto en sitio (cliente)
-            if v.get("contacto_tel"):
-                msg_c = (f"🔧 ILUS Mantenciones\n\n"
-                         f"Hola {v.get('contacto_nombre') or ''},\n"
-                         f"Tu OT {v['numero_ot']} fue programada para "
-                         f"{v['fecha_programada']}"
-                         f"{' · ' + str(v['hora_inicio']) if v.get('hora_inicio') else ''}.\n\n"
-                         f"Técnico asignado: {v.get('tecnico_nombre') or 'por confirmar'}\n\n"
-                         f"Ante cualquier duda, responde este mensaje.")
-                try:
-                    if wa_ok:
-                        _send_whatsapp(wa["account_sid"], wa["auth_token"], wa["from_number"],
-                                       v["contacto_tel"], msg_c, modulo="mantenciones")
-                    elif sms_ok:
-                        _send_sms(sms["account_sid"], sms["auth_token"], sms["from_number"],
-                                  v["contacto_tel"], msg_c, modulo="mantenciones")
-                except Exception as e_c:
-                    print(f"[notif-ot-cli] {e_c}", flush=True)
-        except Exception as e_outer:
-            print(f"[notificar_ot_asignada] {e_outer}", flush=True)
-    _th_n.Thread(target=_bg, daemon=True, name=f"notif-ot-{visita_id}").start()
-
-
-# ══════════════════════════════════════════════════════════════════════
-# 2026-05-22 (Daniel) — NOTIFICACIÓN INTERNA cuando se asigna técnico a OT.
-# A diferencia de `_notificar_ot_asignada` (WhatsApp/SMS, casi siempre OFF),
-# esta SIEMPRE deja una fila en mant_notificaciones para que Lenin la vea en
-# su campana del header con deep link a /mantenciones/ot/<vid>/ejecutar.
-# Best-effort: nunca rompe el endpoint que la invocó.
-# ══════════════════════════════════════════════════════════════════════
-def _notificar_ot_asignada_interna(visita_id, tecnico_user_id, *, motivo="asignada"):
-    """Crea una notificación interna para el técnico recién asignado a una OT.
-
-    Args:
-        visita_id: id de mant_visitas
-        tecnico_user_id: id de app_users (rol técnico)
-        motivo: 'asignada' (default) | 'reasignada'
-
-    Idempotente vía `_mant_notificar` (no duplica si ya hay una abierta de
-    tipo='ot_asignada' para la misma (visita_id, destino_user_id)).
-    """
-    try:
-        if not visita_id or not tecnico_user_id:
-            return None
-        v = mysql_fetchone(
-            "SELECT v.numero_ot, v.fecha_programada, v.hora_inicio, v.titulo, "
-            "       c.razon_social, c.id AS cliente_id "
-            "  FROM mant_visitas v "
-            "  JOIN mant_clientes c ON c.id=v.cliente_id "
-            " WHERE v.id=%s",
-            (visita_id,)
-        )
-        if not v:
-            return None
-        numero = v.get("numero_ot") or f"OT #{visita_id}"
-        razon = v.get("razon_social") or "el cliente"
-        # Fecha + hora amigable
-        try:
-            fp = v.get("fecha_programada")
-            fecha_txt = fp.strftime("%d/%m") if hasattr(fp, "strftime") else str(fp or "")
-        except Exception:
-            fecha_txt = str(v.get("fecha_programada") or "")
-        try:
-            hi = v.get("hora_inicio")
-            hora_txt = str(hi)[:5] if hi else ""
-        except Exception:
-            hora_txt = ""
-        cuando = (fecha_txt + (" " + hora_txt if hora_txt else "")).strip() or "fecha por confirmar"
-        verbo = "Tienes una OT asignada" if motivo == "asignada" else "Te re-asignaron una OT"
-        titulo = f"{verbo} — {numero}"
-        cuerpo = (
-            f"{verbo} para {cuando} en {razon}.\n"
-            f"{(v.get('titulo') or '').strip()[:160]}"
-        ).strip()
-        return _mant_notificar(
-            destino_user_id=int(tecnico_user_id),
-            tipo="ot_asignada",
-            titulo=titulo,
-            cuerpo=cuerpo,
-            url_accion=f"/mantenciones/ot/{visita_id}/ejecutar",
-            prioridad="alta",
-            cliente_id=v.get("cliente_id"),
-            visita_id=visita_id,
-        )
-    except Exception as e:
-        try: print(f"[notif-ot-interna] vid={visita_id} tec={tecnico_user_id}: {e}", flush=True)
-        except Exception: pass
-        return None
-
-
-def _notificar_cierre_ot_async(vid, resultado="aprobada", motivo=None, host_url=""):
-    """Notifica al TÉCNICO (notif interna + email opcional) que su OT fue
-    aprobada o rechazada por el supervisor. Si está habilitado el envío al
-    cliente (env MANT_NOTIF_CLIENTE_EMAIL_ENABLED=1), también le envía email
-    al cliente. Best-effort, en hilo daemon.
-
-    resultado: 'aprobada' | 'rechazada'
-    motivo:    texto opcional con el comentario/motivo del supervisor.
-    """
-    import threading as _th_c
-    def _bg():
-        try:
-            v = mysql_fetchone(
-                "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.tecnico_user_id, "
-                "       v.cliente_id, c.razon_social, c.email_empresa AS cli_email, "
-                "       c.contacto_email AS cli_contacto_email, c.contacto_nombre, "
-                "       COALESCE(u.nombre, u.username) AS tecnico_nombre, "
-                "       u.username AS tecnico_username "
-                "  FROM mant_visitas v "
-                "  JOIN mant_clientes c ON c.id=v.cliente_id "
-                "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
-                " WHERE v.id=%s",
-                (vid,)
-            )
-            if not v: return
-            numero = v.get("numero_ot") or f"OT #{vid}"
-            razon = v.get("razon_social") or "Cliente"
-            tec_uid = v.get("tecnico_user_id")
-            es_aprobada = (resultado == "aprobada")
-            tipo_notif = "ot_aprobada" if es_aprobada else "ot_rechazada"
-            titulo = (f"{numero} aprobada" if es_aprobada
-                      else f"{numero} rechazada — debes corregir")
-            cuerpo_base = (
-                f"El supervisor aprobó el cierre de la OT en {razon}."
-                if es_aprobada else
-                f"El supervisor rechazó la OT en {razon}. Revisa y firma de nuevo."
-            )
-            if motivo:
-                cuerpo_base += f"\nMotivo: {motivo[:300]}"
-
-            # 1) Notificación interna al técnico (campana)
-            if tec_uid:
-                try:
-                    _mant_notificar(
-                        destino_user_id=int(tec_uid),
-                        tipo=tipo_notif,
-                        titulo=titulo,
-                        cuerpo=cuerpo_base,
-                        url_accion=f"/mantenciones/ot/{vid}/ejecutar",
-                        prioridad="alta" if not es_aprobada else "media",
-                        cliente_id=v.get("cliente_id"),
-                        visita_id=vid,
-                    )
-                except Exception as e_n:
-                    print(f"[notif-cierre-ot] interna fail vid={vid}: {e_n}", flush=True)
-
-            # 2) Email opcional al cliente (controlado por env var)
-            #    Default: OFF hasta que el DNS esté listo en producción.
-            cliente_email_enabled = os.environ.get(
-                "MANT_NOTIF_CLIENTE_EMAIL_ENABLED", "0").strip() in ("1", "true", "True", "yes")
-            if es_aprobada and cliente_email_enabled:
-                # Preferimos contacto_email; fallback al email_empresa
-                to = (v.get("cli_contacto_email") or v.get("cli_email") or "").strip()
-                if to and "@" in to:
-                    try:
-                        subject = _brand_subject(f"{numero} — Mantención completada en {razon}")
-                        cuerpo_html = _ilus_email_html(
-                            titulo="Mantención completada",
-                            subtitulo=f"{numero} · {razon}",
-                            saludo=(v.get("contacto_nombre") or "Equipo"),
-                            parrafos=[
-                                f"Te informamos que la orden de trabajo <strong>{numero}</strong> "
-                                f"fue completada y aprobada por nuestro supervisor.",
-                                "Si tienes alguna observación, responde este correo.",
-                            ],
-                            info_lineas=[
-                                ("", "OT", numero),
-                                ("", "Técnico", v.get("tecnico_nombre") or "—"),
-                                ("", "Cliente", razon),
-                            ],
-                        )
-                        _send_ilus_email(
-                            to, subject, cuerpo_html,
-                            evento="ot_aprobada",
-                            modulo="mantenciones",
-                        )
-                    except Exception as e_e:
-                        print(f"[notif-cierre-ot] email-cliente fail vid={vid}: {e_e}", flush=True)
-        except Exception as e_outer:
-            print(f"[notif-cierre-ot] outer vid={vid} {resultado}: {e_outer}", flush=True)
-
-    try:
-        _th_c.Thread(target=_bg, daemon=True, name=f"notif-cierre-ot-{vid}").start()
-    except Exception as e:
-        print(f"[notif-cierre-ot] no se pudo iniciar hilo vid={vid}: {e}", flush=True)
-
-
 @app.route("/api/erp/health", methods=["GET"])
 def erp_engine_health():
     """Health-check del motor ERP. Útil para verificar en producción si:
@@ -12204,6 +11363,34 @@ def erp_documento_unificado():
     if not hdr:
         return jsonify({"error":"Documento no encontrado en ERP", "tido":tido, "nudo":nudo}), 404
 
+    # ── RESOLVER DE CLIENTE 2026-05-27 (Daniel — fix Consumidor Final) ──
+    # El cubicador a veces cae al SQL directo (cuando REST > timeout) que
+    # NO resuelve el nombre del cliente desde MAEEN. Aplicamos el resolver
+    # central SIEMPRE, sin importar la fuente (REST o SQL). El resolver
+    # busca en header → líneas → OBDO → fallback. Garantiza que NUNCA
+    # aparezca "Consumidor Final" si hay datos reales en cualquier parte.
+    try:
+        _hdr_para_resolver = dict(hdr)
+        # El resolver busca en lineas_raw; le pasamos las líneas crudas.
+        _hdr_para_resolver["lineas_raw"] = lineas or []
+        _resuelto = resolve_erp_customer(_hdr_para_resolver, tido=tido, nudo=nudo)
+        # Solo sobrescribimos si el resolver encontró algo mejor que CF
+        if _resuelto and not _is_cf_name(_resuelto.get("customer_name")):
+            hdr["cliente_nombre"] = _resuelto["customer_name"]
+            if _resuelto.get("customer_rut"):    hdr["cliente_rut"] = _resuelto["customer_rut"]
+            if _resuelto.get("customer_email"):  hdr["email"] = _resuelto["customer_email"]
+            if _resuelto.get("customer_phone"):  hdr["telefono"] = _resuelto["customer_phone"]
+            if _resuelto.get("dispatch_address"): hdr["direccion"] = hdr.get("direccion") or _resuelto["dispatch_address"]
+            if _resuelto.get("dispatch_commune"): hdr["comuna"] = hdr.get("comuna") or _resuelto["dispatch_commune"]
+        # Guardamos el diagnóstico del resolver para el panel superadmin
+        hdr["_resolver_diag"] = {
+            "source":     _resuelto.get("source") if _resuelto else "none",
+            "confidence": _resuelto.get("confidence") if _resuelto else "low",
+            "chain":      _resuelto.get("fallback_chain") if _resuelto else [],
+        }
+    except Exception as _e_res:
+        print(f"[cub-fetch] resolver falló (no crítico): {_e_res}", flush=True)
+
     # Como _cubicador_fetch YA hace todo el trabajo pesado (extracción
     # desde header + líneas + /entidades + resolución de comuna), aquí
     # solo pasamos esos campos al response. Mantiene compatibilidad
@@ -12224,6 +11411,8 @@ def erp_documento_unificado():
         "valor_neto":     hdr.get("valor_neto", 0),
         "valor_bruto":    hdr.get("valor_bruto", 0),
         "valor_iva":      hdr.get("valor_iva", 0),
+        # Diagnóstico del resolver (panel superadmin)
+        "_resolver_diag": hdr.get("_resolver_diag", {}),
         # Aliases para compatibilidad con código antiguo
         "razon_social":   hdr.get("cliente_nombre", ""),
         "rut":            hdr.get("cliente_rut", ""),
@@ -12999,6 +12188,32 @@ def _cubicador_fetch(tido, nudo):
     # NOTA: La caché del documento la maneja erp_engine.ERPClient internamente.
     # _ERP_DOC_CACHE (legacy) se mantiene como dict vacío para compat con
     # cualquier código que pudiera consultarlo, pero no se usa aquí.
+
+    # ══ RESOLVER DE CLIENTE CENTRALIZADO 2026-05-27 (Daniel) ══════════
+    # ESTE es el punto único: _cubicador_fetch() lo usan los 8 endpoints
+    # (cubicador, asignar, retiros, mantenciones, multi-doc, etc). Al
+    # resolver el cliente AQUÍ, TODOS los módulos reciben el nombre real
+    # automáticamente. Un solo arreglo = todos los módulos cubiertos.
+    # Si el nombre es "Consumidor Final" pero hay RUT real, consulta
+    # MAEEN.NOKOEN por RUT. Idempotente y con try/except defensivo.
+    try:
+        _hc = dict(header)
+        _hc["lineas_raw"] = lineas or []
+        _rc = resolve_erp_customer(_hc, tido=tido, nudo=nudo)
+        if _rc and not _is_cf_name(_rc.get("customer_name")):
+            header["cliente_nombre"] = _rc["customer_name"]
+            if _rc.get("customer_rut"):     header["cliente_rut"] = _rc["customer_rut"]
+            if _rc.get("customer_email"):   header["email"]    = header.get("email") or _rc["customer_email"]
+            if _rc.get("customer_phone"):   header["telefono"] = header.get("telefono") or _rc["customer_phone"]
+            if _rc.get("dispatch_address"): header["direccion"] = header.get("direccion") or _rc["dispatch_address"]
+            if _rc.get("dispatch_commune"): header["comuna"]   = header.get("comuna") or _rc["dispatch_commune"]
+        header["_resolver_diag"] = {
+            "source":     _rc.get("source") if _rc else "none",
+            "confidence": _rc.get("confidence") if _rc else "low",
+            "chain":      _rc.get("fallback_chain") if _rc else [],
+        }
+    except Exception as _e_rc:
+        print(f"[_cubicador_fetch] resolver central falló (no crítico): {_e_rc}", flush=True)
 
     return header, lineas
 
@@ -14231,10 +13446,36 @@ def api_asignar_documento():
             _com = _parsed["comuna"] or _detect_comuna(hdr.get("direccion") or "")
             if _com:
                 hdr["comuna"] = _com
-        if not (hdr.get("cliente_nombre") or "").strip():
-            hdr["cliente_nombre"] = "Consumidor final"
     except Exception as _e_enrich:
         print(f"[asignar_documento] enriquecer OBDO falló: {_e_enrich}", flush=True)
+
+    # ── RESOLVER DE CLIENTE 2026-05-27 (Daniel — fix CF en /asignar) ──
+    # MISMO resolver que usa el cubicador: si el nombre es CF pero hay RUT
+    # real, consulta MAEEN.NOKOEN por RTEN. Resuelve 'Cristian Rossi Medina'
+    # en BLV 21577 en vez de 'Consumidor final'.
+    try:
+        _hdr_res = dict(hdr)
+        _hdr_res["lineas_raw"] = lineas or []
+        _res = resolve_erp_customer(_hdr_res, tido=tido, nudo=nudo)
+        if _res and not _is_cf_name(_res.get("customer_name")):
+            hdr["cliente_nombre"] = _res["customer_name"]
+            if _res.get("customer_rut"):     hdr["cliente_rut"] = _res["customer_rut"]
+            if _res.get("customer_email"):   hdr["email"] = hdr.get("email") or _res["customer_email"]
+            if _res.get("customer_phone"):   hdr["telefono"] = hdr.get("telefono") or _res["customer_phone"]
+            if _res.get("dispatch_address"): hdr["direccion"] = hdr.get("direccion") or _res["dispatch_address"]
+            if _res.get("dispatch_commune"): hdr["comuna"] = hdr.get("comuna") or _res["dispatch_commune"]
+        hdr["_resolver_diag"] = {
+            "source": _res.get("source") if _res else "none",
+            "confidence": _res.get("confidence") if _res else "low",
+            "chain": _res.get("fallback_chain") if _res else [],
+        }
+        # Solo ahora, si SIGUE vacío, ponemos placeholder limpio
+        if not (hdr.get("cliente_nombre") or "").strip():
+            hdr["cliente_nombre"] = "Consumidor Final"
+    except Exception as _e_res2:
+        print(f"[asignar_documento] resolver falló: {_e_res2}", flush=True)
+        if not (hdr.get("cliente_nombre") or "").strip():
+            hdr["cliente_nombre"] = "Consumidor Final"
 
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
 
@@ -16405,6 +15646,11 @@ def _mantenciones_cron_run_once(slot_str=""):
         "MANT_AUTO_CALENDAR_ENABLED", "0"
     ).strip().lower()
     auto_calendar_on = auto_calendar_flag in ("1", "true", "yes", "on")
+    # Daniel 30/05/2026: la creación AUTOMÁTICA de OTs queda DESACTIVADA de
+    # forma definitiva. El sistema solo SUGIERE (notificaciones/IA), nunca
+    # crea OTs por su cuenta. Se ignora MANT_AUTO_CALENDAR_ENABLED para evitar
+    # reactivaciones accidentales — la IA propondrá las OTs y el usuario decide.
+    auto_calendar_on = False
     metricas["auto_calendar_on"] = auto_calendar_on
     metricas["sugerencias_creadas"] = 0
 
@@ -16925,6 +16171,22 @@ def _mantenciones_cron_run_once(slot_str=""):
     except Exception as e:
         metricas["errores"].append(f"paso_pickup_reminders: {e}")
 
+    # ── Paso final: Resumen IA del día (Daniel 2026-05-26) ──────────────
+    # Si hubo actividad significativa (≥ 1 alerta), pedimos a Claude que
+    # genere un resumen accionable y lo enviamos como notificación al
+    # superadmin. Si no hubo nada relevante, saltamos (cero tokens).
+    try:
+        total_signals = (
+            metricas.get("notif_visita_proxima", 0)
+            + metricas.get("notif_visita_atrasada", 0)
+            + metricas.get("notif_garantia_por_vencer", 0)
+            + metricas.get("notif_contrato_por_vencer", 0)
+        )
+        if total_signals >= 1:
+            _ia_alertas_resumir_diario(metricas)
+    except Exception as _e_ia_res:
+        print(f"[mant-cron] resumen IA falló (no critico): {_e_ia_res}", flush=True)
+
     metricas["tiempo_ms"] = int((_time.time() - _t0) * 1000)
     print(
         f"[mant-cron] OK slot={slot_str or 'manual'} "
@@ -16942,6 +16204,134 @@ def _mantenciones_cron_run_once(slot_str=""):
         flush=True
     )
     return metricas
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA · ALERTAS PROACTIVAS DIARIAS — resumen accionable del estado
+# operativo del negocio (Daniel 2026-05-26: "que la app me diga cada
+# mañana qué tengo que mirar primero")
+# ══════════════════════════════════════════════════════════════════════
+def _ia_alertas_resumir_diario(metricas):
+    """Genera un resumen IA del estado de mantenciones del día y lo envía
+    como notificación al superadmin. 1 sola llamada a Claude (tier=sonnet)
+    con métricas + top de items críticos. Si la IA falla, igualmente envía
+    el resumen "crudo" (sin IA) — cero costo de oportunidad.
+
+    Se invoca al final de _mantenciones_cron_run_once.
+    """
+    from datetime import date as _d
+
+    # 1) Recolectar lista corta de items críticos (no todo, solo lo más urgente)
+    contratos_criticos = mysql_fetchall(
+        "SELECT ct.id, ct.nombre, ct.fecha_vencimiento, c.razon_social "
+        "  FROM mant_contratos ct "
+        "  JOIN mant_clientes c ON c.id=ct.cliente_id "
+        " WHERE ct.estado IN ('vigente','indefinido') "
+        "   AND ct.fecha_vencimiento IS NOT NULL "
+        "   AND ct.fecha_vencimiento BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) "
+        " ORDER BY ct.fecha_vencimiento ASC LIMIT 10"
+    ) or []
+
+    visitas_atrasadas = mysql_fetchall(
+        "SELECT v.id, v.fecha_programada, v.tipo, c.razon_social "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE v.estado='programada' AND v.fecha_programada < CURDATE() "
+        " ORDER BY v.fecha_programada ASC LIMIT 10"
+    ) or []
+
+    if not contratos_criticos and not visitas_atrasadas:
+        return  # nada urgente
+
+    # 2) Resumir con Claude (Sonnet — clasificación + redacción, no opus)
+    items_text = []
+    for ct in contratos_criticos:
+        dias = (ct["fecha_vencimiento"] - _d.today()).days if ct.get("fecha_vencimiento") else 0
+        items_text.append(
+            f"- Contrato '{ct.get('nombre') or ''}' de {ct.get('razon_social') or '#'+str(ct['id'])} "
+            f"vence en {dias}d ({ct['fecha_vencimiento']})"
+        )
+    for v in visitas_atrasadas:
+        dias = (_d.today() - v["fecha_programada"]).days if v.get("fecha_programada") else 0
+        items_text.append(
+            f"- Visita {v.get('tipo') or ''} de {v.get('razon_social') or '#'+str(v['id'])} "
+            f"atrasada {dias}d (era {v['fecha_programada']})"
+        )
+
+    items_block = "\n".join(items_text[:15])
+    metricas_block = (
+        f"Visitas próximas: {metricas.get('notif_visita_proxima',0)}, "
+        f"Visitas atrasadas: {metricas.get('notif_visita_atrasada',0)}, "
+        f"Garantías por vencer: {metricas.get('notif_garantia_por_vencer',0)}, "
+        f"Contratos por vencer: {metricas.get('notif_contrato_por_vencer',0)}"
+    )
+
+    prompt = (
+        "Te paso el estado operativo de mantenciones de hoy. "
+        "Genera un RESUMEN ACCIONABLE de máximo 5 bullets, ordenados por urgencia. "
+        "Cada bullet: <acción concreta> + <cliente/contrato afectado>. "
+        "Lenguaje claro español NEUTRO (no argentino, no chileno). "
+        "Devuelve JSON con campos: titulo (string corto), bullets (array de strings), "
+        "prioridad ('alta'|'media'|'baja').\n\n"
+        f"MÉTRICAS DEL DÍA: {metricas_block}\n\nITEMS CRÍTICOS:\n{items_block}"
+    )
+
+    data, err = _claude_call(
+        prompt_usuario=prompt,
+        prompt_sistema="Eres un asistente operativo de servicios técnicos. "
+                       "Generas resúmenes accionables, breves y priorizados.",
+        max_tokens=600, expect_json=True, tier='sonnet',
+        log_endpoint="ia_alertas_diarias",
+    )
+
+    if err or not data:
+        # Fallback: usar el block crudo sin IA, igual notificamos
+        titulo = "Resumen de mantenciones del día"
+        bullets = items_text[:5]
+        prioridad = "media"
+    else:
+        titulo = (data.get("titulo") or "Resumen IA del día").strip()[:120]
+        bullets = data.get("bullets") or []
+        prioridad = (data.get("prioridad") or "media").strip().lower()
+        if prioridad not in ("alta", "media", "baja"):
+            prioridad = "media"
+
+    cuerpo = "\n".join(["• " + b for b in bullets[:8] if b])
+    if not cuerpo:
+        cuerpo = items_block
+
+    # 3) Insertar notificación al superadmin (usuario 'admin' o 'daniel')
+    # Buscamos el primer usuario con rol superadmin para destinar la alerta.
+    try:
+        super_user = mysql_fetchone(
+            f"SELECT id FROM `{AUTH_TABLE}` "
+            f" WHERE role='superadmin' AND COALESCE(activo,1)=1 "
+            f" ORDER BY id ASC LIMIT 1"
+        )
+        super_id = int(super_user["id"]) if super_user else None
+    except Exception:
+        super_id = None
+
+    if super_id:
+        try:
+            _mant_notificar(
+                destino_user_id=super_id,
+                tipo="ia_alerta_proactiva",
+                titulo=titulo,
+                cuerpo=cuerpo,
+                url_accion="/mantenciones",
+                prioridad=prioridad,
+            )
+        except Exception as _e_not:
+            print(f"[ia_alertas_diarias] no se pudo notificar: {_e_not}", flush=True)
+
+    print(f"[ia_alertas_diarias] resumen generado, prioridad={prioridad}, "
+          f"bullets={len(bullets)}", flush=True)
+
+
+# NOTA: el endpoint manual /api/ia/alertas-diarias-run vive más abajo,
+# después de la definición del decorador @_mant_required (línea ~23476).
+# Si se pone acá arriba, Python falla con NameError en boot.
 
 
 def _mantenciones_scheduler_run_now():
@@ -22229,8 +21619,17 @@ def comm_index():
     wa_cfg    = _get_wa_cfg()
     log_rows  = []
     try:
+        # OPT 2026-05-26 (audit DevTools, abortaba a 6s):
+        # - SELECT específico (no *) — la columna `detalle` puede ser TEXT
+        #   grande con stacktraces; cuando hay 80 filas eso pesa.
+        # - LIMIT 80 → 50: suficiente para ver actividad reciente.
+        # - Trunca detalle a 500 chars en SQL (evita transferir mucho).
         log_rows = mysql_fetchall(
-            "SELECT * FROM comm_log ORDER BY created_at DESC LIMIT 80"
+            "SELECT id, canal, destinatario, asunto, estado, "
+            "       LEFT(COALESCE(detalle,''), 500) AS detalle, "
+            "       enviado_por, created_at "
+            "  FROM comm_log "
+            " ORDER BY created_at DESC LIMIT 50"
         )
     except Exception:
         pass
@@ -22531,33 +21930,6 @@ def comm_email_status():
     })
 
 
-def _comm_smtp_test_send_legacy():
-    d  = request.get_json(silent=True) or {}
-    to = (d.get("to") or "").strip()
-    if not to:
-        return jsonify({"error": "Ingresa un destinatario"}), 400
-    html = _ilus_email_html(
-        titulo           = "✅ Prueba SMTP",
-        subtitulo        = "Verificación de conexión — ILUS Comunicaciones",
-        saludo           = "¡Conexión verificada!",
-        parrafos         = [
-            "Este correo confirma que la configuración SMTP está funcionando correctamente.",
-            "Si lo recibiste, la integración de email está activa y lista para usar.",
-        ],
-        info_lineas      = [
-            ("", "Enviado por", current_username()),
-            ("", "Servidor",    "SMTP dinámico — ILUS Comunicaciones"),
-        ],
-    )
-    try:
-        _send_ilus_email(to, "🧪 Prueba SMTP — ILUS Comunicaciones", html)
-        _comm_log_entry("email", to, "Prueba SMTP", "ok")
-        return jsonify({"ok": True})
-    except Exception as exc:
-        _comm_log_entry("email", to, "Prueba SMTP", "error", str(exc))
-        return jsonify({"error": str(exc)}), 500
-
-
 @app.route("/comunicaciones/email/enviar", methods=["POST"])
 @_require_superadmin
 def comm_email_enviar():
@@ -22643,13 +22015,39 @@ def comm_email_enviar():
             status_final = "failed"
             err_msg = ""
             try:
-                _send_email_dinamico(snap_to, snap_subject, snap_html)
-                status_final = "sent"
+                # FIX 2026-05-27 (Daniel): el envío manual ahora usa el MOTOR
+                # UNIFICADO _send_ilus_email_real (SMTP + fallback Resend según
+                # ILUS_EMAIL_PROVIDER). Antes usaba _send_email_dinamico que
+                # era SOLO SMTP — si Railway bloqueaba Gmail, el correo nunca
+                # salía aunque Resend estuviera configurado.
+                ok = _send_ilus_email_real(snap_to, snap_subject, snap_html)
+                if ok:
+                    status_final = "sent"
+                else:
+                    # Falló SIN excepción → capturar causa REAL de g (nunca vacío).
+                    # _send_ilus_email_real deja: g._last_email_error (str SMTP)
+                    # y g._last_resend_error (dict con 'message'/'http_code').
+                    status_final = "failed"
+                    _causa = []
+                    try:
+                        _se = getattr(g, "_last_email_error", "") or ""
+                        if _se:
+                            _causa.append(f"SMTP: {str(_se)[:300]}")
+                        _re = getattr(g, "_last_resend_error", None)
+                        if isinstance(_re, dict) and _re:
+                            _rmsg = _re.get("message") or _re.get("raw_body") or str(_re)
+                            _rcode = _re.get("http_code")
+                            _causa.append(f"Resend{f' {_rcode}' if _rcode else ''}: {str(_rmsg)[:300]}")
+                        elif _re:
+                            _causa.append(f"Resend: {str(_re)[:300]}")
+                    except Exception:
+                        pass
+                    err_msg = (" | ".join(_causa)
+                               or "Envio rechazado por SMTP y Resend. Revisa "
+                                  "/api/comm/diagnostico-completo para ver que "
+                                  "proveedor/variable corregir.")[:1900]
             except Exception as _exc:
-                err_msg = str(_exc)[:1900]
-                # _send_email_dinamico no expone fallback Resend. Para
-                # tests reales que requieran fallback, usar el endpoint
-                # /api/comm/diagnostico (que sí va por _send_ilus_email).
+                err_msg = (str(_exc) or "Error desconocido en el envio")[:1900]
 
             elapsed_ms = int((_t.time() - t0) * 1000)
             # Persistir resultado
@@ -23280,44 +22678,6 @@ def comm_email_log():
     if qs:
         hash_part += "?" + "&".join(qs)
     return redirect(url_for("comm_index") + hash_part)
-
-
-@app.route("/comunicaciones/log/legacy")
-@require_permission("admin")
-def comm_email_log_legacy():
-    """Vista legacy del log (mantenida por compatibilidad con scripts/links viejos)."""
-    limit = min(int(request.args.get("limit") or 100), 500)
-    evento = request.args.get("evento","")
-    estado = request.args.get("estado","")
-    where, params = ["1=1"], []
-    if evento: where.append("evento=%s"); params.append(evento)
-    if estado: where.append("estado=%s"); params.append(estado)
-    rows = mysql_fetchall(
-        f"SELECT * FROM email_log WHERE {' AND '.join(where)} "
-        f"ORDER BY created_at DESC LIMIT {limit}",
-        tuple(params)
-    )
-    # Stats últimos 30 días
-    stats = mysql_fetchone("""
-        SELECT
-          COUNT(*) AS total,
-          SUM(CASE WHEN estado='enviado' THEN 1 ELSE 0 END) AS exitosos,
-          SUM(CASE WHEN estado='fallido' THEN 1 ELSE 0 END) AS fallidos,
-          COUNT(DISTINCT destinatario) AS destinatarios_unicos
-        FROM email_log
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-    """) or {}
-    eventos_top = mysql_fetchall("""
-        SELECT evento, COUNT(*) AS n FROM email_log
-        WHERE evento IS NOT NULL AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-        GROUP BY evento ORDER BY n DESC LIMIT 10
-    """)
-    return render_template("comunicaciones/log.html",
-        rows=[dict(r) for r in rows],
-        stats=dict(stats),
-        eventos_top=[dict(e) for e in eventos_top],
-        filtros={"evento":evento,"estado":estado},
-    )
 
 
 @app.route("/comunicaciones/log/<int:lid>/reintentar", methods=["POST"])
@@ -24224,6 +23584,33 @@ def init_mantenciones_tables():
                 "COMMENT 'Fecha en que termina la garantía del fabricante / cobertura comercial'",
                 "ALTER TABLE mant_maquinas ADD INDEX idx_familia (familia_equipo)",
                 "ALTER TABLE mant_maquinas ADD INDEX idx_fin_garantia (fecha_fin_garantia)",
+                # PERFORMANCE 2026-05-26 (Daniel — velocidad < 2s):
+                # La query del timeline del cliente une logs por OR de 4 entidades
+                # (cliente/contrato/maquina/visita) + ORDER BY created_at DESC.
+                # Sin este índice composite, MySQL hacía filesort sobre toda la
+                # tabla mant_logs y consumía ~300ms en cada render de ficha.
+                "ALTER TABLE mant_logs ADD INDEX idx_mant_logs_timeline "
+                "  (entidad, entidad_id, created_at)",
+                # PERFORMANCE 2026-05-26 (Daniel — velocidad ficha cliente):
+                # La query de carga de equipos del cliente filtra por
+                # cliente_id y ordena por estado/created_at. Sin este
+                # composite index, MySQL hace filesort cuando hay muchos
+                # equipos (~300ms con 200 equipos).
+                "ALTER TABLE mant_maquinas ADD INDEX idx_cli_estado_creado "
+                "  (cliente_id, estado, created_at)",
+                # PERFORMANCE 2026-05-26 (audit DevTools profesional):
+                # /mantenciones query 6 (clientes sin visita reciente) usa
+                # LEFT JOIN mant_visitas ON cliente_id + estado='completada'
+                # con MAX(fecha_realizada). Sin este índice composite, MySQL
+                # hace scan completo de mant_visitas en cada visita al
+                # dashboard. Aporta ~50-200ms en clientes con muchas visitas.
+                "ALTER TABLE mant_visitas ADD INDEX idx_cli_estado_realizada "
+                "  (cliente_id, estado, fecha_realizada)",
+                # AUDITORIA 2026-05-26: tracking de quién hizo el último cambio.
+                # Idempotente — si ya existe, el ALTER falla y se ignora.
+                # Es opcional: los endpoints no dependen de esta columna.
+                "ALTER TABLE mant_maquinas ADD COLUMN updated_by VARCHAR(190) NULL "
+                "  COMMENT 'Username del último que modificó este equipo'",
                 # Tabla de sucursales (información adicional opcional)
                 """CREATE TABLE IF NOT EXISTS mant_sucursales (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -24285,6 +23672,7 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_contratos ADD COLUMN ai_mejoras TEXT",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_cobertura TEXT",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_editable TEXT COMMENT 'JSON campos editados por usuario'",
+                "ALTER TABLE mant_contratos ADD COLUMN ai_analisis_json MEDIUMTEXT COMMENT 'Analisis IA 360 completo (JSON): exposicion, garantia, clausulas_sugeridas, propuestas, rentabilidad'",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_inicio DATE",
                 "ALTER TABLE mant_contratos ADD COLUMN ai_vigencia_fin DATE",
                 # v2 — trazabilidad y gestión avanzada
@@ -24789,6 +24177,18 @@ def init_mantenciones_tables():
                 # fuera_servicio, en_reparacion). Migramos ENUM a VARCHAR para
                 # evitar futuros ALTER cuando se agregue otro estado operacional.
                 "ALTER TABLE mant_maquinas MODIFY COLUMN estado_op VARCHAR(40) DEFAULT 'operativo'",
+                # ════════════════════════════════════════════════════════
+                # 2026-05-26 (Daniel) — Datos físicos visibles en ficha técnica
+                # tab "Resumen". Antes no había forma de registrar peso real,
+                # dimensiones (alto×ancho×fondo) ni color del equipo. Hoy se
+                # ven en el dashboard del modal.
+                # ════════════════════════════════════════════════════════
+                "ALTER TABLE mant_maquinas ADD COLUMN peso_kg DECIMAL(8,2) NULL "
+                "COMMENT 'Peso del equipo en kilogramos'",
+                "ALTER TABLE mant_maquinas ADD COLUMN dimensiones VARCHAR(120) NULL "
+                "COMMENT 'Dimensiones físicas, ej: 170 x 80 x 50 cm'",
+                "ALTER TABLE mant_maquinas ADD COLUMN color VARCHAR(60) NULL "
+                "COMMENT 'Color principal del equipo, ej: Negro, Rojo, Acero'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -26688,6 +26088,65 @@ def init_mantenciones_tables():
                     cur.execute(_mig_iap)
                 except Exception:
                     pass  # idempotente
+
+            # ── J.2 MÉTRICAS DE CONSUMO IA 2026-05-26 (Daniel) ─────────
+            # Cada llamada a Claude se loguea acá para visibilidad de
+            # costo, latencia y patrones de uso. Permite dashboard
+            # "IA del mes: X llamadas, $Y, Z% cache hits".
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_ia_logs (
+                        id              INT AUTO_INCREMENT PRIMARY KEY,
+                        endpoint        VARCHAR(80) NOT NULL,
+                        entidad_tipo    VARCHAR(40) NULL,
+                        entidad_id      INT NULL,
+                        modelo          VARCHAR(60) NULL,
+                        tier_solicitado VARCHAR(10) NULL,
+                        tokens_in       INT NULL,
+                        tokens_out      INT NULL,
+                        costo_usd       DECIMAL(8,5) NULL,
+                        elapsed_ms      INT NULL,
+                        cache_hit       TINYINT NOT NULL DEFAULT 0,
+                        ok              TINYINT NOT NULL DEFAULT 1,
+                        error_msg       VARCHAR(255) NULL,
+                        usuario         VARCHAR(190) NULL,
+                        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_created (created_at),
+                        INDEX idx_endpoint_created (endpoint, created_at),
+                        INDEX idx_entidad (entidad_tipo, entidad_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception:
+                pass
+
+            # ── J.3 JOBS IA ASÍNCRONOS 2026-05-26 (Daniel — UX premium) ─
+            # Permite que análisis largos NO bloqueen al usuario.
+            # POST devuelve job_id en <300ms; el daemon thread llama a
+            # Claude; el frontend polea cada 2s mostrando barra de
+            # progreso multi-etapa.
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS mant_ia_jobs (
+                        id              INT AUTO_INCREMENT PRIMARY KEY,
+                        endpoint        VARCHAR(80) NOT NULL,
+                        entidad_tipo    VARCHAR(40) NULL,
+                        entidad_id      INT NULL,
+                        estado          ENUM('pending','running','done','error') NOT NULL DEFAULT 'pending',
+                        paso_actual     VARCHAR(120) NULL COMMENT 'mensaje visible al usuario',
+                        progreso_pct    TINYINT NOT NULL DEFAULT 0,
+                        resultado_json  LONGTEXT NULL,
+                        error_msg       VARCHAR(500) NULL,
+                        creado_por      VARCHAR(190) NULL,
+                        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        started_at      DATETIME NULL,
+                        finished_at     DATETIME NULL,
+                        INDEX idx_estado (estado),
+                        INDEX idx_entidad (entidad_tipo, entidad_id),
+                        INDEX idx_creado (created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            except Exception:
+                pass
 
             # ════════════════════════════════════════════════════════════
             # K. (2026-05-21 Daniel) — mant_visita_equipos: trazabilidad
@@ -28752,20 +28211,52 @@ def admin_mantenciones_clean_orphans():
 
 # ── DECORATOR de acceso ────────────────────────────────────────────────
 
+# ── CACHE de datos del dashboard /mantenciones (Daniel 2026-05-26) ──
+# Diagnóstico live (Chrome MCP): cada query SQL toma ~400-700ms de latencia
+# de red Railway → Clever Cloud MySQL. 7 queries × 400ms = 2800ms.
+# Los datos del dashboard (KPIs + listados) cambian con frecuencia DE
+# MINUTOS, no por segundo. Cache TTL 60s reduce 7 queries → 0 en cache hit.
+# Las visitas/contratos creados manualmente desde la UI invalidan via helper.
+_MANT_INDEX_CACHE = {}  # role -> (data_dict, ts)
+_MANT_INDEX_LOCK  = threading.Lock()
+_MANT_INDEX_TTL   = 60
+
+
+def _mant_index_cache_invalidar():
+    """Llamar tras crear/editar contrato/visita/cliente para refresh inmediato."""
+    with _MANT_INDEX_LOCK:
+        _MANT_INDEX_CACHE.clear()
+
+
 # ── RUTAS PRINCIPALES ─────────────────────────────────────────────────
 
 @app.route("/mantenciones")
 @_mant_required
 def mant_index():
-    # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos
-    # (módulo Mi día removido por decisión del producto). Los técnicos
-    # usan /mantenciones/ots que aplica filtro solo_mias=True automático
-    # según rol (ver mant_ots_list).
+    # 2026-05-22 (Daniel) — eliminado redirect a "Mi día" para técnicos.
     _mant_actualizar_estado_contratos()
     hoy   = datetime.now().date()
-    pronto = hoy + timedelta(days=60)
 
-    # KPIs
+    # Cache key por rol (todos los usuarios de un rol ven los mismos KPIs)
+    role = (g.user.get("role") if g.user else "anon") or "anon"
+    cache_key = role
+    _now = time.time()
+    with _MANT_INDEX_LOCK:
+        entry = _MANT_INDEX_CACHE.get(cache_key)
+    if entry and (_now - entry[1]) < _MANT_INDEX_TTL:
+        data = entry[0]
+        return render_template("mantenciones/index.html",
+            kpi_clientes   = data["kpi_clientes"],
+            kpi_contratos  = data["kpi_contratos"],
+            kpi_vencen     = data["kpi_vencen"],
+            kpi_ingresos   = data["kpi_ingresos"],
+            prox_visitas   = data["prox_visitas"],
+            alertas        = data["alertas"],
+            sin_visita     = data["sin_visita"],
+            hoy            = hoy,
+        )
+
+    # Cache miss — ejecutar las 7 queries
     clientes    = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_clientes WHERE estado='activo'", ()) or {}
     contratos   = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos WHERE estado IN ('vigente','indefinido')", ()) or {}
     vencen      = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contratos WHERE estado='por_vencer'", ()) or {}
@@ -28793,20 +28284,32 @@ def mant_index():
            ORDER BY ultima_visita LIMIT 6""",
         (hoy - timedelta(days=180),)
     )
-    # Ingresos del mes
     ingresos_mes = mysql_fetchone(
         "SELECT COALESCE(SUM(monto_mensual),0) AS total FROM mant_contratos "
         "WHERE estado IN ('vigente','indefinido')", ()
     ) or {}
 
+    data = {
+        "kpi_clientes":  clientes.get("n", 0),
+        "kpi_contratos": contratos.get("n", 0),
+        "kpi_vencen":    vencen.get("n", 0),
+        "kpi_ingresos":  float(ingresos_mes.get("total", 0)),
+        "prox_visitas":  [dict(r) for r in prox_visitas],
+        "alertas":       [dict(r) for r in alertas_contratos],
+        "sin_visita":    [dict(r) for r in sin_visita],
+    }
+    # Guardar en cache
+    with _MANT_INDEX_LOCK:
+        _MANT_INDEX_CACHE[cache_key] = (data, _now)
+
     return render_template("mantenciones/index.html",
-        kpi_clientes   = clientes.get("n", 0),
-        kpi_contratos  = contratos.get("n", 0),
-        kpi_vencen     = vencen.get("n", 0),
-        kpi_ingresos   = float(ingresos_mes.get("total", 0)),
-        prox_visitas   = [dict(r) for r in prox_visitas],
-        alertas        = [dict(r) for r in alertas_contratos],
-        sin_visita     = [dict(r) for r in sin_visita],
+        kpi_clientes   = data["kpi_clientes"],
+        kpi_contratos  = data["kpi_contratos"],
+        kpi_vencen     = data["kpi_vencen"],
+        kpi_ingresos   = data["kpi_ingresos"],
+        prox_visitas   = data["prox_visitas"],
+        alertas        = data["alertas"],
+        sin_visita     = data["sin_visita"],
         hoy            = hoy,
     )
 
@@ -28815,46 +28318,22 @@ def mant_index():
 @_mant_required
 @_no_tecnico
 def mant_clientes():
+    # ── Motor de filtros 100% client-side (multifiltro en vivo) ──────────
+    # El backend trae TODOS los clientes con sus datos (data-* en las cards)
+    # y el navegador filtra + pagina sin recargar. Los parámetros de la URL
+    # solo definen el ESTADO INICIAL de los filtros (deep-linking) y se pasan
+    # al template; el filtrado real ocurre en JS. Esto permite combinar
+    # tipo + estado + contrato + equipos + búsqueda simultáneamente sin que
+    # un filtro pise a otro (Daniel 30/05/2026 — "filtrado inteligente").
     q            = request.args.get("q", "").strip()
-    estado       = request.args.get("estado", "activo")
-    contrato_fil = request.args.get("contrato", "")
-    equipos_fil  = request.args.get("equipos", "")  # FASE 2026-05-16: con|sin
+    estado       = request.args.get("estado", "").strip().lower()
+    contrato_fil = request.args.get("contrato", "").strip().lower()
+    equipos_fil  = request.args.get("equipos", "").strip().lower()
+    tipo_fil     = request.args.get("tipo", "").strip().lower()
     vista        = request.args.get("vista", "grid")
-
-    where, params = ["1=1"], []
-    # 'all' = NO filtrar por estado (incluye inactivos/suspendidos/prospectos).
-    # Caso de uso: vista "Clientes ocultos" para recuperar fichas perdidas.
-    if estado and estado != "all":
-        where.append("c.estado=%s"); params.append(estado)
-    if q:
-        # Búsqueda fuzzy: razón social, RUT, email + giro + comuna para casos como
-        # "sport francés" → busca por palabra clave en cualquiera de esos campos.
-        where.append(
-            "(c.razon_social LIKE %s OR c.rut LIKE %s OR c.contacto_email LIKE %s "
-            " OR c.email_empresa LIKE %s OR c.giro LIKE %s OR c.comuna LIKE %s)"
-        )
-        qp = f"%{q}%"; params += [qp, qp, qp, qp, qp, qp]
-    # Filtro contrato: con (al menos 1 contrato) / sin (ninguno)
-    if contrato_fil == "con":
-        where.append(
-            "EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id)"
-        )
-    elif contrato_fil == "sin":
-        where.append(
-            "NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id)"
-        )
-    # Filtro equipos: con (al menos 1 equipo activo) / sin (ninguno)
-    if equipos_fil == "con":
-        where.append(
-            "EXISTS (SELECT 1 FROM mant_maquinas m "
-            "WHERE m.cliente_id=c.id AND COALESCE(m.estado,'activo')<>'baja')"
-        )
-    elif equipos_fil == "sin":
-        where.append(
-            "NOT EXISTS (SELECT 1 FROM mant_maquinas m "
-            "WHERE m.cliente_id=c.id AND COALESCE(m.estado,'activo')<>'baja')"
-        )
-    wstr = " AND ".join(where)
+    # Sin WHERE de filtros: traemos todo. LIMIT alto de seguridad (hoy ~165).
+    wstr   = "1=1"
+    params = []
 
     # Reescritura: 5 subqueries correlacionadas (N×5 ejecuciones) → 4 derived tables agregadas (1 ejecución cada una).
     # Resultado: pasa de ~1500 queries lógicas con 300 clientes a ~5 queries totales.
@@ -28900,17 +28379,12 @@ def mant_clientes():
             GROUP BY cliente_id
         ) v_next ON v_next.cliente_id = c.id
         WHERE {wstr}
-        ORDER BY c.razon_social LIMIT 300
+        ORDER BY c.razon_social LIMIT 500
     """, tuple(params))
     clientes = [dict(r) for r in rows]
 
-    # Post-filtro contrato
-    if contrato_fil == 'vigente':
-        clientes = [c for c in clientes if c.get('contrato_estado') == 'vigente']
-    elif contrato_fil == 'vencido':
-        clientes = [c for c in clientes if c.get('contrato_estado') in ('vencido','por_vencer')]
-    elif contrato_fil == 'sin':
-        clientes = [c for c in clientes if not c.get('contratos_count')]
+    # (Sin post-filtro server-side: el motor de filtros del navegador resuelve
+    #  tipo/estado/contrato/equipos/búsqueda combinados sobre las cards.)
 
     # Enriquecer cada cliente: completaje, badge, días a próx visita
     today_d = datetime.today().date()
@@ -29003,7 +28477,7 @@ def mant_clientes():
     return render_template("mantenciones/clientes.html",
         clientes         = clientes,
         filtros          = {"q": q, "estado": estado, "contrato": contrato_fil,
-                            "equipos": equipos_fil, "vista": vista},
+                            "equipos": equipos_fil, "vista": vista, "tipo": tipo_fil},
         global_stats     = global_stats,
         orphans_detected = orphans_detected,
     )
@@ -29032,6 +28506,10 @@ def _erp_buscar_clientes(q, limit=20):
     q_like       = f"%{q_upper}%"
     q_sin_puntos = q.replace(".", "").replace(" ", "").replace("-", "")
     q_sin_like   = f"%{q_sin_puntos}%"
+    # RTEN del ERP = RUT base SIN dígito verificador. Si el usuario escribe el
+    # RUT con DV ('77.017.350-K'), buscamos también por el cuerpo ('77017350').
+    q_cuerpo      = _rut_cuerpo(q)
+    q_cuerpo_like = f"%{q_cuerpo}%" if (q_cuerpo and len(q_cuerpo) >= 6) else q_sin_like
     try:
         top_n = max(1, min(int(limit or 20), 200))
     except (TypeError, ValueError):
@@ -29052,7 +28530,7 @@ def _erp_buscar_clientes(q, limit=20):
                AND LTRIM(RTRIM(COALESCE(en.TIEN, ''))) IN ('C','A')
              ORDER BY razon_social
             """,
-            (q_like, q_like, q_like, q_sin_like),
+            (q_like, q_like, q_like, q_cuerpo_like),
             max_rows=top_n,
         )
         if not rows:
@@ -29163,56 +28641,6 @@ def mant_clientes_autocomplete():
     resultados.sort(key=lambda x: (0 if x["origen"]=="local" else 1, x["razon_social"].lower()))
     return jsonify(resultados[:20])
 
-
-@app.route("/mantenciones/api/erp-rut", methods=["POST"])
-@_mant_required
-def mant_erp_rut_lookup():
-    """Busca un cliente en el ERP/local por RUT y devuelve sus datos básicos."""
-    d   = request.get_json(silent=True) or {}
-    rut = d.get("rut", "").strip()
-    if not rut:
-        return jsonify({"error": "RUT requerido"}), 400
-
-    # 1) Buscar en clientes locales primero
-    local = mysql_fetchone(
-        "SELECT * FROM mant_clientes WHERE rut=%s OR rut LIKE %s LIMIT 1",
-        (rut, f"%{rut.split('-')[0]}%")
-    )
-    if local:
-        return jsonify({
-            "encontrado":    True,
-            "origen":        "local",
-            "id":            local["id"],
-            "razon_social":  local["razon_social"],
-            "rut":           local["rut"] or rut,
-            "direccion":     local.get("direccion",""),
-            "comuna":        local.get("comuna",""),
-            "ciudad":        local.get("ciudad",""),
-            "email":         local.get("contacto_email",""),
-            "contacto":      local.get("contacto_nombre",""),
-            "tel":           local.get("contacto_tel",""),
-        })
-
-    # 2) Buscar en ERP
-    rows = _erp_buscar_clientes(rut, limit=3)
-    if rows:
-        r = rows[0]
-        return jsonify({
-            "encontrado":   True,
-            "origen":       "erp",
-            "id":           None,
-            "razon_social": r["razon_social"],
-            "rut":          r["rut"],
-            "direccion":    "",
-            "comuna":       "",
-            "ciudad":       "",
-            "email":        "",
-        })
-
-    return jsonify({"encontrado": False})
-
-
-_MANT_IMG_EXTS = ("jpg", "jpeg", "png", "webp")
 
 @app.route("/mantenciones/api/agente-contrato", methods=["POST"])
 @_mant_required
@@ -29416,6 +28844,59 @@ Incluye: datos del cliente, condiciones contractuales, costos, equipos mencionad
 
     resultado["_erp_match"] = erp_data
     return jsonify({"ok": True, "resultado": resultado})
+
+
+@app.route("/mantenciones/api/ots/reset", methods=["POST"])
+@_mant_required
+def mant_ots_reset():
+    """Reseteo masivo de OTs (visitas) — SOLO superadmin, con respaldo previo.
+
+    Daniel 30/05/2026: limpiar el sistema para una ronda de prueba completa.
+    Seguridad (no negociable):
+      - Solo superadmin.
+      - Exige confirm_text == 'BORRAR OT' escrito a mano.
+      - Respalda TODAS las visitas a mant_visitas_backup ANTES de borrar
+        (red de seguridad → reversible).
+      - DELETE de mant_visitas (cascade limpia fotos/tareas/repuestos/tiempos).
+      - Audit log.
+    NO toca contratos, clientes ni equipos.
+    """
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"error": "Solo el superadministrador puede resetear las OTs."}), 403
+    d = request.get_json(silent=True) or {}
+    if (d.get("confirm_text") or "").strip().upper() != "BORRAR OT":
+        return jsonify({"error": "Confirmación inválida. Escribe exactamente: BORRAR OT"}), 400
+
+    try:
+        r = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_visitas")
+        total_n = int((r or {}).get("n") or 0)
+    except Exception:
+        total_n = 0
+    if total_n == 0:
+        return jsonify({"ok": True, "borradas": 0,
+                        "mensaje": "No había OTs registradas. El sistema ya estaba limpio."})
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Respaldo (reversible). Tabla espejo; INSERT IGNORE evita colisión
+            # de PK si se resetea más de una vez (los id son crecientes).
+            cur.execute("CREATE TABLE IF NOT EXISTS mant_visitas_backup LIKE mant_visitas")
+            cur.execute("INSERT IGNORE INTO mant_visitas_backup SELECT * FROM mant_visitas")
+            # Borrado: cascade limpia tablas hijas con FK ON DELETE CASCADE.
+            cur.execute("DELETE FROM mant_visitas")
+        conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        _mant_log("sistema", 0, "ots_reset",
+                  f"RESET OTs por {current_username()}: {total_n} visitas respaldadas "
+                  f"en mant_visitas_backup y borradas (cascade).")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "borradas": total_n,
+                    "mensaje": f"{total_n} OTs respaldadas y borradas. Sistema limpio para tu ronda de prueba."})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/generar-calendario", methods=["POST"])
@@ -29812,19 +29293,6 @@ def mant_enriquecer_cliente():
         return jsonify({"error": str(ex), "encontrado": False}), 503
 
 
-@app.route("/mantenciones/api/ultimo-cliente")
-@_mant_required
-def mant_ultimo_cliente():
-    """Devuelve el último cliente creado por el usuario actual (para el wizard)."""
-    row = mysql_fetchone(
-        "SELECT id, razon_social FROM mant_clientes WHERE created_by=%s ORDER BY created_at DESC LIMIT 1",
-        (current_username(),)
-    )
-    if not row:
-        return jsonify({"error": "No encontrado"}), 404
-    return jsonify({"id": row["id"], "razon_social": row["razon_social"]})
-
-
 @app.route("/mantenciones/clientes/<int:cid>")
 @_mant_required
 @_no_tecnico
@@ -29942,10 +29410,16 @@ def _mant_ficha_impl(cid):
     # 2026-05-15: filtrar máquinas dadas de baja del listado principal de la ficha.
     # Las máquinas con estado='baja' siguen en BD pero NO se muestran aquí.
     # Para verlas/restaurarlas: GET /mantenciones/api/clientes/<cid>/maquinas-baja
+    # CAMBIO 2026-05-26 (Daniel — filtro "mostrar bajas"): traemos TODOS
+    # los equipos (activos + bajas) y el frontend oculta/muestra según el
+    # toggle "Mostrar bajas". Las filas dadas de baja se marcan con
+    # data-estado="baja" y CSS atenuado. Por default solo se ven activos.
     maquinas_raw  = mysql_fetchall(
         "SELECT * FROM mant_maquinas "
-        " WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
-        " ORDER BY created_at DESC",
+        " WHERE cliente_id=%s "
+        " ORDER BY "
+        "   CASE WHEN COALESCE(estado,'activo')='baja' THEN 1 ELSE 0 END ASC, "
+        "   created_at DESC",
         (cid,)
     ) or []
     # SELECT * para máxima compatibilidad con el template (revertido del SELECT
@@ -29981,6 +29455,64 @@ def _mant_ficha_impl(cid):
         print(f"[ficha contratos] tiene_adjunto_visible flag failed: {_e_adj}", flush=True)
         for _ct in contratos_raw:
             _ct["tiene_adjunto_visible"] = False
+
+    # ── AUTO-SYNC CLOUDINARY 2026-05-26 (Daniel — "esto debe operar sí o sí") ──
+    # Cuando se carga la ficha, lanzamos un thread en background que sube a
+    # Cloudinary CUALQUIER contrato del cliente que tenga archivo en disco
+    # pero NO esté en cloud. Esto hace que la auto-cura sea invisible para el
+    # usuario: la próxima vez que abra el visor, el contrato estará en cloud
+    # y se previsualizará al instante.
+    #
+    # Idempotente: si ya está en cloud, se salta. Si no hay archivo en disco
+    # (Railway redeployó), no se puede recuperar — solo re-subiendo manualmente.
+    try:
+        _pending_sync = [
+            ct for ct in contratos_raw
+            if (ct.get("archivo_path") or "").strip()
+            and not (ct.get("cloudinary_url") or "").strip()
+        ]
+        if _pending_sync and _CLD_READY:
+            import threading as _th_sync
+
+            def _sync_cliente_silent(_ctlist, _cid):
+                """Sube en background los contratos del cliente que están en
+                disco pero no en cloud. Errores se loguean, no se propagan."""
+                for _ctp in _ctlist:
+                    try:
+                        _path = _ctp.get("archivo_path")
+                        if not _path:
+                            continue
+                        _full = os.path.join(MANT_UPLOADS, _path)
+                        if not os.path.exists(_full):
+                            continue
+                        with open(_full, "rb") as _fh:
+                            _pid = f"contrato_{_cid}_{int(time.time())}_{_ctp['id']}_autosync"
+                            _res = _cloud_upload_raw(_fh, _pid, folder="ilus/contratos")
+                        mysql_execute(
+                            "UPDATE mant_contratos "
+                            "   SET cloudinary_url=%s, cloudinary_public_id=%s, "
+                            "       cloudinary_uploaded_at=%s "
+                            " WHERE id=%s AND (cloudinary_url IS NULL OR cloudinary_url='')",
+                            (_res["url"], _res["public_id"], datetime.utcnow(), _ctp["id"])
+                        )
+                        print(f"[ficha autosync] ctid={_ctp['id']} → cloud OK",
+                              flush=True)
+                    except Exception as _e_si:
+                        print(f"[ficha autosync] ctid={_ctp.get('id')} FAIL: {_e_si}",
+                              flush=True)
+
+            _th_sync.Thread(
+                target=_sync_cliente_silent,
+                args=(list(_pending_sync), cid),
+                daemon=True
+            ).start()
+            print(f"[ficha autosync] cid={cid} lanzando sync silencioso de "
+                  f"{len(_pending_sync)} contrato(s)", flush=True)
+    except Exception as _e_autosync:
+        # Nunca bloquear el render de la ficha por una falla en el sync
+        print(f"[ficha autosync] no se pudo lanzar thread: {_e_autosync}",
+              flush=True)
+
     # PERF: LIMIT 200 en visitas (stats 12m + tab visitas no requieren más)
     visitas_raw   = mysql_fetchall(
         "SELECT * FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 200",
@@ -30287,6 +29819,7 @@ def mant_cliente_update(cid):
               "contacto_nombre","contacto_cargo","contacto_tel","contacto_email",
               "contacto2_nombre","contacto2_cargo","contacto2_tel","contacto2_email",
               "direccion","comuna","ciudad","region",
+              "direccion_lat","direccion_lng","direccion_place_id",
               "notas","notas_confidenciales","estado","tipo_cliente"]
     # Validación dura del ENUM tipo_cliente — si llega valor distinto, lo descartamos
     # silenciosamente para no romper el UPDATE.
@@ -30296,6 +29829,16 @@ def mant_cliente_update(cid):
             d.pop("tipo_cliente", None)
         else:
             d["tipo_cliente"] = _tc
+    # Geo (Google Places): sanitizar lat/lng a float|None y place_id a str|None.
+    # Las columnas son DECIMAL(10,7)/VARCHAR — un '' string rompería el UPDATE.
+    if "direccion_lat" in d:
+        try: d["direccion_lat"] = float(d["direccion_lat"]) if str(d.get("direccion_lat") or "").strip() else None
+        except (TypeError, ValueError): d["direccion_lat"] = None
+    if "direccion_lng" in d:
+        try: d["direccion_lng"] = float(d["direccion_lng"]) if str(d.get("direccion_lng") or "").strip() else None
+        except (TypeError, ValueError): d["direccion_lng"] = None
+    if "direccion_place_id" in d:
+        d["direccion_place_id"] = (str(d.get("direccion_place_id") or "").strip()[:200]) or None
     sets   = [f"{f}=%s" for f in fields if f in d]
     vals   = [d[f] for f in fields if f in d]
     if not sets:
@@ -30875,6 +30418,11 @@ def mant_maquina_add(cid):
     force        = bool(d.get("force", False))
     # SKU siempre en upper para que matchee con saldos y queries
     sku          = (d.get("sku","") or "").strip().upper()
+    # 2026-05-27 (Daniel — auto-SKU para creación manual):
+    # Si no viene SKU, generamos uno automático con formato "MAN-<cid>-<timestamp>"
+    # (MAN = manual). El usuario lo puede editar después desde la ficha.
+    if not sku and d.get("auto_sku"):
+        sku = f"MAN-{cid}-{int(time.time())}"[:80].upper()
     # doc_origen NORMALIZADO al formato canónico 'TIDO NUDO' (sin leading zeros)
     # Esto garantiza que _asignados_por_sku encuentre el match en futuras consultas.
     doc_origen   = _doc_origen_normalizar((d.get("doc_origen","") or "").strip())
@@ -30975,14 +30523,44 @@ def mant_maquina_add(cid):
                 mid_new, serie_efectiva = _insert_con_retry(cur, build, serie)
                 creadas.append({"id": mid_new, "serie": serie_efectiva})
         conn.commit()
+        # 2026-05-27 (Daniel): UPDATE post-INSERT con campos nuevos opcionales.
+        # Se hace por separado para no romper el INSERT principal si alguna
+        # columna no existe en BDs viejas. Cada campo en try independiente.
+        try:
+            _campos_extra = {
+                "familia_equipo":    (d.get("familia_equipo") or "").strip()[:30],
+                "marca":             (d.get("marca") or "").strip()[:120],
+                "modelo":            (d.get("modelo") or "").strip()[:120],
+                "anio_fabricacion":  d.get("anio_fabricacion"),
+                "ubicacion_sala":    (d.get("ubicacion_sala") or "").strip()[:200],
+            }
+            # Solo intentar UPDATE si al menos un campo extra tiene valor real
+            _hay_extra = any(v for v in _campos_extra.values() if v not in (None, "", 0))
+            if _hay_extra and creadas:
+                _ids_creados = [c["id"] for c in creadas]
+                for _id_eq in _ids_creados:
+                    for _col, _val in _campos_extra.items():
+                        if _val in (None, "", 0):
+                            continue
+                        try:
+                            mysql_execute(
+                                f"UPDATE mant_maquinas SET {_col}=%s WHERE id=%s",
+                                (_val, _id_eq)
+                            )
+                        except Exception as _e_col:
+                            # Columna no existe (BD vieja) → ignorar silencioso
+                            print(f"[maquina_add] columna {_col} no existe: {_e_col}", flush=True)
+                            break
+        except Exception as _e_xt:
+            print(f"[maquina_add] update campos extra falló: {_e_xt}", flush=True)
         # Log unificado
         for c in creadas:
             _mant_log("maquina", c["id"], "agregada", d.get("nombre",""))
         # Respuesta compatible con clientes existentes (1 fila → mismo shape antiguo)
         if len(creadas) == 1:
             return jsonify({"ok": True, "id": creadas[0]["id"], "serie": creadas[0]["serie"],
-                            "filas_creadas": 1})
-        return jsonify({"ok": True, "filas_creadas": len(creadas), "items": creadas})
+                            "sku": sku, "filas_creadas": 1})
+        return jsonify({"ok": True, "filas_creadas": len(creadas), "items": creadas, "sku": sku})
     finally:
         conn.close()
 
@@ -31142,6 +30720,142 @@ def mant_maquinas_baja_listar(cid):
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
         })
     return jsonify({"ok": True, "maquinas_baja": out, "total": len(out)})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/equipos/baja-masiva", methods=["POST"])
+@_mant_required
+def mant_equipos_baja_masiva(cid):
+    """Soft-delete masivo: marca como 'baja' todos los equipos activos de un cliente.
+    Solo superadmin. Requiere confirm_text='BAJA TOTAL' en el body JSON.
+    Registra audit-log ANTES de ejecutar el UPDATE (regla #5)."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
+
+    body = request.get_json(silent=True) or {}
+    if (body.get("confirm_text") or "").strip().upper() != "BAJA TOTAL":
+        return jsonify({"ok": False, "error": "Confirmación incorrecta"}), 400
+
+    # Verificar que el cliente existe
+    cli = mysql_fetchone("SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    # Contar equipos activos antes de actuar
+    row = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_maquinas WHERE cliente_id=%s AND estado='activo'",
+        (cid,)
+    )
+    n_activos = int(row["n"]) if row else 0
+
+    if n_activos == 0:
+        return jsonify({"ok": True, "n": 0, "msg": "No había equipos activos que dar de baja"})
+
+    # ── AUDIT LOG antes del cambio (regla #5) ──────────────────────────────
+    _mant_log(
+        "cliente", cid,
+        "baja_masiva_equipos",
+        f"Baja masiva de {n_activos} equipo(s) activo(s) del cliente "
+        f"'{cli.get('razon_social', cid)}' — superadmin"
+    )
+
+    # ── Soft-delete ────────────────────────────────────────────────────────
+    # FIX 2026-05-26: sin updated_by (columna puede no existir en bd vieja).
+    # La trazabilidad ya quedó en mant_logs via _mant_log más arriba.
+    mysql_execute(
+        "UPDATE mant_maquinas SET estado='baja' "
+        " WHERE cliente_id=%s AND estado='activo'",
+        (cid,)
+    )
+
+    return jsonify({"ok": True, "n": n_activos})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/equipos/baja-seleccion", methods=["POST"])
+@_mant_required
+def mant_equipos_baja_seleccion(cid):
+    """Soft-delete SELECTIVO: marca como 'baja' una lista específica de
+    equipos (no todos los del cliente). Solo superadmin.
+
+    Body JSON: { "ids": [12, 34, 56] }
+
+    Diferencia con baja-masiva (que baja TODOS los activos del cliente):
+    este recibe una lista explícita de IDs seleccionados por checkbox en
+    la UI. Permite al admin elegir granularmente qué equipos retirar
+    (ej: 3 trotadoras viejas pero NO las nuevas).
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
+
+    body = request.get_json(silent=True) or {}
+    try:
+        ids = body.get("ids") or []
+        # Validar y sanitizar IDs (solo enteros positivos)
+        try:
+            ids = [int(x) for x in ids if x and int(x) > 0]
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Lista de IDs inválida"}), 400
+        if not ids:
+            return jsonify({"ok": False, "error": "No se seleccionaron equipos"}), 400
+        if len(ids) > 500:
+            return jsonify({"ok": False, "error": "Máximo 500 equipos por operación"}), 400
+
+        # OPTIMIZACION 2026-05-26: una sola query UPDATE con WHERE compuesto
+        # (cliente_id + id IN + estado='activo'). El cliente_id en el WHERE
+        # garantiza seguridad (no se pueden bajar equipos de otro cliente).
+        # No hace SELECT previo: lo que MySQL no encuentre, simplemente no
+        # se actualiza. Más rápido y atómico.
+        #
+        # FIX 2026-05-26: quitamos `updated_by` del UPDATE porque la columna
+        # no siempre existe en BDs viejas (error 1054). La trazabilidad
+        # queda en mant_logs vía _mant_log (audit_async más abajo).
+        placeholders = ",".join(["%s"] * len(ids))
+        params = tuple([cid] + ids)
+
+        # Ejecutamos UPDATE y capturamos rowcount para saber cuántos se afectaron
+        conn = get_mysql()
+        n_a_bajar = 0
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE mant_maquinas SET estado='baja' "
+                    f" WHERE cliente_id=%s AND id IN ({placeholders}) "
+                    f"   AND COALESCE(estado,'activo') <> 'baja'",
+                    params
+                )
+                n_a_bajar = int(cur.rowcount or 0)
+            conn.commit()
+        finally:
+            try: conn.close()
+            except Exception: pass
+
+        # Audit log en background (no bloqueante — evita que el frontend
+        # vea "error de red" cuando solo era latencia del log).
+        try:
+            import threading as _th
+            def _audit_async():
+                try:
+                    _mant_log(
+                        "cliente", cid,
+                        "baja_seleccion_equipos",
+                        f"Baja selectiva de {n_a_bajar} de {len(ids)} equipo(s) "
+                        f"seleccionados — superadmin {current_username()}"
+                    )
+                except Exception as _e_al:
+                    print(f"[baja_seleccion audit] {_e_al}", flush=True)
+            _th.Thread(target=_audit_async, daemon=True).start()
+        except Exception:
+            pass
+
+        return jsonify({"ok": True, "n": n_a_bajar})
+
+    except Exception as e:
+        # Cualquier error inesperado → siempre devolvemos JSON (nunca crash silencioso)
+        print(f"[baja_seleccion] EXCEPCION cid={cid} ids_count={len(body.get('ids',[]))} err={e}",
+              flush=True)
+        return jsonify({
+            "ok": False,
+            "error": f"Error al procesar la baja: {str(e)[:150]}",
+        }), 500
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/destruir", methods=["DELETE"])
@@ -31605,32 +31319,6 @@ def mant_tecnicos_list_api():
         sql += " AND active=1"
     sql += " ORDER BY nombre"
     rows = mysql_fetchall(sql, ()) or []
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route("/mantenciones/api/colaboradores-search", methods=["GET"])
-@_mant_required
-def mant_colab_search():
-    """
-    Autocomplete de colaboradores (HR) para importarlos como técnicos.
-    Búsqueda por nombre o RUT, devuelve datos personales + dirección.
-    """
-    q = (request.args.get("q") or "").strip()
-    if len(q) < 2:
-        return jsonify([])
-    like = f"%{q}%"
-    rows = mysql_fetchall(
-        f"""SELECT c.id, c.nombre_completo, c.rut, c.email, c.telefono,
-                   c.direccion, c.comuna, c.region,
-                   cg.nombre AS cargo
-              FROM `{HRM_COLAB_TABLE}` c
-              LEFT JOIN `{HRM_CARGOS_TABLE}` cg ON cg.id = c.cargo_id
-             WHERE (c.nombre_completo LIKE %s OR c.rut LIKE %s)
-               AND c.estado='activo'
-             ORDER BY c.nombre_completo
-             LIMIT 12""",
-        (like, like)
-    ) or []
     return jsonify([dict(r) for r in rows])
 
 
@@ -32858,6 +32546,143 @@ ALLOWED_CONTRATO_LEGACY = {"pdf", "doc", "docx"}  # solo lectura — uploads exi
 MAX_CONTRATO_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
+# ════════════════════════════════════════════════════════════════════════
+# VALIDADOR + REPARADOR DE PDFs (2026-05-26 — Daniel: "que persista hasta
+# que esté bien y si es posible repararlo seria genial")
+#
+# Cuando el usuario sube un contrato, validamos INMEDIATAMENTE:
+#   1. Magic bytes — el archivo realmente empieza con %PDF-
+#   2. Estructura — pdfplumber puede abrirlo y leer al menos 1 página
+#   3. Si pdfplumber falla, intentamos REPARAR con pypdf (re-escribir el
+#      stream desde cero — recupera muchos PDFs con cross-reference dañado,
+#      objetos huérfanos, EOL incorrecto, etc.)
+#   4. Si tampoco se puede reparar, retornamos error claro.
+#
+# Devuelve dict con:
+#   ok:        bool
+#   problema:  str (mensaje accionable para el usuario) o None
+#   reparado:  bool (True si tuvimos que reescribir el PDF)
+#   stream:    BytesIO con el contenido válido (original o reparado),
+#              listo para subir a Cloudinary. None si falló.
+#   n_pages:   int (cantidad de páginas detectadas)
+# ════════════════════════════════════════════════════════════════════════
+def _validar_y_reparar_pdf(file_obj, filename: str = "") -> dict:
+    """Valida un PDF y trata de repararlo si está dañado."""
+    import io
+
+    try:
+        file_obj.seek(0)
+    except Exception:
+        pass
+
+    # 1. Magic bytes — primer chequeo barato
+    try:
+        head = file_obj.read(5)
+        file_obj.seek(0)
+    except Exception as e:
+        return {
+            "ok": False,
+            "problema": ("No se pudo leer el archivo subido. "
+                         "Inténtalo de nuevo o usa otro archivo."),
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    if head != b'%PDF-':
+        return {
+            "ok": False,
+            "problema": ("El archivo tiene extensión .pdf pero su contenido "
+                         "NO es un PDF real. Exporta el documento como PDF "
+                         "desde el programa original (Word: Archivo → "
+                         "Exportar → Crear PDF/XPS)."),
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    # 2. Leer todo el contenido en memoria
+    try:
+        content = file_obj.read()
+        file_obj.seek(0)
+    except Exception:
+        return {
+            "ok": False,
+            "problema": "No se pudo leer el archivo. Inténtalo de nuevo.",
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    if len(content) < 512:
+        return {
+            "ok": False,
+            "problema": ("El archivo PDF está incompleto (menos de 512 bytes). "
+                         "Vuelve a subirlo — probablemente se cortó la subida."),
+            "reparado": False, "stream": None, "n_pages": 0,
+        }
+
+    # 3. Intentar abrir con pdfplumber (el visor real del navegador hace algo
+    #    similar; si pdfplumber lo abre, casi seguro el browser también).
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            n_pages = len(pdf.pages)
+            if n_pages == 0:
+                raise ValueError("PDF sin páginas")
+            # Tocar la primera página para detectar corrupción profunda
+            _ = pdf.pages[0]
+        # OK — devolvemos el stream original
+        return {
+            "ok": True,
+            "problema": None,
+            "reparado": False,
+            "stream": io.BytesIO(content),
+            "n_pages": n_pages,
+        }
+    except Exception as e_open:
+        problema_inicial = str(e_open)[:140]
+        # 4. PDF dañado — intentar reparar con pypdf
+        try:
+            from pypdf import PdfReader, PdfWriter
+            reader = PdfReader(io.BytesIO(content), strict=False)
+            if len(reader.pages) == 0:
+                raise ValueError("PDF sin páginas al reparar")
+            writer = PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
+            output = io.BytesIO()
+            writer.write(output)
+            output.seek(0)
+
+            # Verificar que el reparado es legible por pdfplumber
+            content_rep = output.getvalue()
+            with pdfplumber.open(io.BytesIO(content_rep)) as pdf_rep:
+                n_rep = len(pdf_rep.pages)
+                if n_rep == 0:
+                    raise ValueError("Reparado quedó sin páginas")
+                _ = pdf_rep.pages[0]
+
+            print(f"[validar_pdf] {filename!r} REPARADO "
+                  f"({len(content)} → {len(content_rep)} bytes, "
+                  f"{n_rep} págs)", flush=True)
+            return {
+                "ok": True,
+                "problema": None,
+                "reparado": True,
+                "stream": io.BytesIO(content_rep),
+                "n_pages": n_rep,
+            }
+        except Exception as e_rep:
+            print(f"[validar_pdf] {filename!r} no reparable: "
+                  f"open_err={problema_inicial!r}; rep_err={str(e_rep)[:140]!r}",
+                  flush=True)
+            return {
+                "ok": False,
+                "problema": ("El PDF está dañado y el sistema no lo pudo "
+                             "reparar automáticamente. Vuelve a exportarlo "
+                             "desde el programa original (Word, Excel, "
+                             "navegador, etc.) y súbelo de nuevo."),
+                "reparado": False,
+                "stream": None,
+                "n_pages": 0,
+            }
+
+
 @app.route("/mantenciones/api/contratos/<int:ctid>", methods=["DELETE"])
 @_mant_required
 def mant_contrato_delete(ctid):
@@ -33027,16 +32852,28 @@ def mant_contrato_subir(cid):
             "error_codigo": "ALMACENAMIENTO_NO_DISPONIBLE",
         }), 503
 
-    # Anti-duplicados v2: hash MD5 del contenido. Más robusto que nombre,
-    # porque detecta también re-envíos del browser por timeout/retry HTTP.
-    # Ventana ampliada a 5 min: si el mismo contenido se sube otra vez en
-    # ese rango, asumimos error y reusamos el existente.
+    # ── VALIDAR + REPARAR el PDF antes de hacer cualquier otra cosa ─────
+    # Si el archivo está dañado, devolvemos error claro AHORA. El usuario
+    # vuelve a subir otro y persistimos hasta que esté bien.
+    _val = _validar_y_reparar_pdf(f.stream, f.filename or "")
+    if not _val["ok"]:
+        return jsonify({
+            "error": _val["problema"],
+            "error_codigo": "PDF_INVALIDO",
+        }), 400
+    _upload_stream = _val["stream"]
+    _fue_reparado  = _val["reparado"]
+    _n_pages_pdf   = _val.get("n_pages", 0)
+
+    # Anti-duplicados v2: hash MD5 del contenido VALIDADO (post-reparación).
+    # Más robusto que nombre, porque detecta también re-envíos del browser
+    # por timeout/retry HTTP. Ventana 5 min.
     import hashlib
     try:
-        f.stream.seek(0)
-        _content = f.stream.read()
+        _upload_stream.seek(0)
+        _content = _upload_stream.read()
         archivo_hash = hashlib.md5(_content).hexdigest()
-        f.stream.seek(0)
+        _upload_stream.seek(0)
     except Exception as e_hash:
         archivo_hash = None
         print(f"[mant_contrato_subir] no se pudo calcular hash: {e_hash}", flush=True)
@@ -33126,9 +32963,9 @@ def mant_contrato_subir(cid):
     cloud_pid = None
     cloud_uploaded_at = None
     try:
-        f.stream.seek(0)
+        _upload_stream.seek(0)
         public_id = f"contrato_{cid}_{int(time.time())}"
-        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+        cloud_result = _cloud_upload_raw(_upload_stream, public_id, folder="ilus/contratos")
         cloud_url = cloud_result["url"]
         cloud_pid = cloud_result["public_id"]
         cloud_uploaded_at = datetime.utcnow()
@@ -33145,11 +32982,12 @@ def mant_contrato_subir(cid):
             "detalle": str(e_cld)[:200],
         }), 502
 
-    # Backup local opcional (no bloqueante)
+    # Backup local opcional (no bloqueante) — usa el stream validado/reparado
     try:
-        f.stream.seek(0)
+        _upload_stream.seek(0)
         fpath = os.path.join(MANT_UPLOADS, fname)
-        f.save(fpath)
+        with open(fpath, "wb") as _fh_loc:
+            _fh_loc.write(_upload_stream.read())
     except Exception as e_save:
         print(f"[mant_contrato] backup filesystem falló (no crítico): {e_save}", flush=True)
 
@@ -33198,14 +33036,19 @@ def mant_contrato_subir(cid):
                 )
             ctid = cur.lastrowid
         conn.commit()
-        _mant_log("contrato", ctid, "subido",
-                  f"{f.filename} (Cloudinary raw · {size_bytes/1024:.0f}KB)")
+        _detalle_log = f"{f.filename} (Cloudinary raw · {size_bytes/1024:.0f}KB"
+        if _fue_reparado:
+            _detalle_log += " · PDF reparado automáticamente"
+        _detalle_log += ")"
+        _mant_log("contrato", ctid, "subido", _detalle_log)
         return jsonify({
             "ok": True, "id": ctid,
             "persistente": True,
             "storage": "cloudinary",
             "url": cloud_url,
             "size_kb": int(size_bytes / 1024) if size_bytes else 0,
+            "reparado": _fue_reparado,
+            "n_pages": _n_pages_pdf,
         })
     finally:
         conn.close()
@@ -33336,7 +33179,24 @@ def mant_contrato_re_subir(ctid):
             "error_codigo": "FORMATO_NO_PERMITIDO",
         }), 400
 
-    # Borrar el archivo viejo si existe (cleanup local)
+    # ── VALIDAR + REPARAR el PDF antes de tocar Cloudinary ──────────────
+    # Si el archivo está dañado, fallamos LIMPIO sin destruir lo que ya había.
+    # El usuario verá el problema y volverá a subir otro.
+    _val = _validar_y_reparar_pdf(f.stream, f.filename or "")
+    if not _val["ok"]:
+        return jsonify({
+            "ok": False,
+            "error": _val["problema"],
+            "error_codigo": "PDF_INVALIDO",
+        }), 400
+
+    # Stream a usar de aquí en adelante (puede ser el original o el reparado)
+    _upload_stream = _val["stream"]
+    _fue_reparado = _val["reparado"]
+    _n_pages_pdf  = _val.get("n_pages", 0)
+
+    # Borrar el archivo viejo si existe (cleanup local) — recién ahora que
+    # sabemos que el nuevo es válido.
     if ct.get("archivo_path"):
         try:
             old_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
@@ -33370,9 +33230,9 @@ def mant_contrato_re_subir(ctid):
     cloud_pid = None
     cloud_uploaded_at = None
     try:
-        f.stream.seek(0)
+        _upload_stream.seek(0)
         public_id = f"contrato_{ct['cliente_id']}_{int(time.time())}"
-        cloud_result = _cloud_upload_raw(f.stream, public_id, folder="ilus/contratos")
+        cloud_result = _cloud_upload_raw(_upload_stream, public_id, folder="ilus/contratos")
         cloud_url = cloud_result["url"]
         cloud_pid = cloud_result["public_id"]
         cloud_uploaded_at = datetime.utcnow()
@@ -33388,14 +33248,12 @@ def mant_contrato_re_subir(ctid):
         }), 502
 
     # ── 2. Backup local (no bloqueante) ──
-    try:
-        f.stream.seek(0)
-    except Exception:
-        pass
     fpath = os.path.join(MANT_UPLOADS, fname)
     saved_local = False
     try:
-        f.save(fpath)
+        _upload_stream.seek(0)
+        with open(fpath, "wb") as _fh_local:
+            _fh_local.write(_upload_stream.read())
         saved_local = True
     except Exception as e_save:
         # Cloudinary ya está OK — el archivo está seguro. Backup local fall
@@ -33416,12 +33274,18 @@ def mant_contrato_re_subir(ctid):
                       f"Re-subido por {current_username()}: {f.filename} "
                       f"({'Cloudinary' if cloud_url else 'filesystem'})")
         except Exception: pass
+        _msg = "Archivo re-subido correctamente."
+        if _fue_reparado:
+            _msg += (" El PDF estaba dañado y el sistema lo reparó "
+                     "automáticamente antes de guardarlo.")
         return jsonify({
             "ok": True,
-            "mensaje": "Archivo re-subido correctamente.",
+            "mensaje": _msg,
             "archivo_nombre": f.filename,
             "persistente": bool(cloud_url),
             "storage": "cloudinary" if cloud_url else "filesystem",
+            "reparado": _fue_reparado,
+            "n_pages": _n_pages_pdf,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"Error al actualizar BD: {e}"}), 500
@@ -33673,31 +33537,133 @@ def mant_contrato_archivo(ctid):
         return _redir(viewer_url, code=302)
 
     # ── PRIORIDAD 1: Cloudinary (persistente entre deploys) ────────────
-    # Estrategia REDIRECT 302 — el browser pide directo a Cloudinary.
-    # Ventajas vs proxy:
-    #   - No depende del backend de Railway estar despierto durante
-    #     la descarga (bandwidth y latencia van directos al CDN).
-    #   - Si Cloudinary devuelve 401 o 5xx, el browser muestra el error
-    #     nativo en el iframe y al menos sabemos qué falló (vs spinner
-    #     eterno en proxy).
-    #   - Cero egress de Railway.
+    # REFACTOR 2026-05-26 (Daniel — iframe en blanco):
+    #   Antes hacíamos 302 a Cloudinary con fl_inline=true. PROBLEMA: cuando
+    #   el recurso está como `raw` en Cloudinary (caso de PDFs subidos vía
+    #   upload_raw), Cloudinary devuelve `Content-Disposition: attachment;
+    #   filename="..."` ignorando fl_inline (esa flag solo aplica a recursos
+    #   `image` y `auto`). Resultado: el browser ve el header attachment,
+    #   descarga el PDF (aparece en la barra de descargas) y deja el iframe
+    #   COMPLETAMENTE EN BLANCO. Exactamente el bug que Daniel reportó.
+    #
+    #   Solución: PROXEAR el binario reescribiendo los headers. Forzamos
+    #   `Content-Disposition: inline` y `Content-Type: application/pdf` desde
+    #   nuestro propio servidor — el browser obedece y renderiza en iframe.
+    #
+    #   Para DOWNLOADS sí seguimos redirigiendo (más eficiente, el CDN sirve
+    #   directo, y como queremos descarga el header attachment es correcto).
     if ct.get("cloudinary_url"):
         cld_url = ct["cloudinary_url"]
-        # fl_attachment fuerza descarga; fl_inline sugiere visualizar inline.
-        # Para PDF inline en iframe queremos que NO baje como attachment.
         sep = "&" if "?" in cld_url else "?"
-        if as_dl:
-            target = f"{cld_url}{sep}fl_attachment=true"
-        else:
-            # Para PDFs raw/upload, Cloudinary por default agrega
-            # Content-Disposition: attachment. fl_inline lo neutraliza
-            # y el browser renderiza el PDF en el iframe.
-            target = f"{cld_url}{sep}fl_inline=true" if ext == "pdf" else cld_url
-        print(f"[mant_contrato_archivo] ctid={ctid} → REDIRECT Cloudinary "
-              f"(as_dl={as_dl}, ext={ext})", flush=True)
-        return _redir(target, code=302)
 
-    # ── PRIORIDAD 2: Filesystem local (sin Cloudinary) ──────────────────
+        if as_dl:
+            # Download: redirect directo al CDN (header attachment es lo deseado)
+            target = f"{cld_url}{sep}fl_attachment=true"
+            print(f"[mant_contrato_archivo] ctid={ctid} → REDIRECT download "
+                  f"(ext={ext})", flush=True)
+            return _redir(target, code=302)
+
+        # Preview inline: PROXY con headers reescritos
+        try:
+            import requests as _rq
+            # Range header passthrough para que el browser pueda hacer
+            # requests parciales de PDFs grandes (PDF.js los necesita).
+            upstream_headers = {}
+            if request.headers.get("Range"):
+                upstream_headers["Range"] = request.headers["Range"]
+
+            r_up = _rq.get(cld_url, headers=upstream_headers,
+                           stream=True, timeout=30,
+                           allow_redirects=True)
+
+            if r_up.status_code not in (200, 206):
+                print(f"[mant_contrato_archivo] ctid={ctid} Cloudinary "
+                      f"status={r_up.status_code}, intentando fallback "
+                      f"disco", flush=True)
+                # No retornamos aquí — caemos al fallback de disco abajo
+                r_up.close()
+                raise RuntimeError(f"Cloudinary HTTP {r_up.status_code}")
+
+            # Inferir Content-Type desde la extensión del nombre original
+            # (Cloudinary a veces devuelve application/octet-stream).
+            mime_inline = {
+                "pdf":  "application/pdf",
+                "jpg":  "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png":  "image/png",
+                "gif":  "image/gif",
+                "webp": "image/webp",
+                "doc":  "application/msword",
+                "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "xls":  "application/vnd.ms-excel",
+                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "ppt":  "application/vnd.ms-powerpoint",
+                "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            }
+            ctype = mime_inline.get(ext) or r_up.headers.get("Content-Type") or "application/octet-stream"
+
+            def _stream():
+                try:
+                    for chunk in r_up.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            yield chunk
+                finally:
+                    r_up.close()
+
+            from flask import Response as _Resp
+            resp = _Resp(_stream(), status=r_up.status_code)
+            resp.headers["Content-Type"] = ctype
+            resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+            # Passthrough de Content-Length y Accept-Ranges si vienen
+            if r_up.headers.get("Content-Length"):
+                resp.headers["Content-Length"] = r_up.headers["Content-Length"]
+            if r_up.headers.get("Content-Range"):
+                resp.headers["Content-Range"] = r_up.headers["Content-Range"]
+            resp.headers["Accept-Ranges"] = r_up.headers.get("Accept-Ranges", "bytes")
+            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+            resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+            # CACHE AGRESIVO 2026-05-26 (Daniel — saas de primera, velocidad):
+            # Los PDFs de contratos son inmutables (Cloudinary genera public_id
+            # único por subida). Cachear 24h en browser hace que segundas vistas
+            # del mismo contrato sean instantáneas (0 ms egress de Railway).
+            # ETag basado en public_id permite revalidación condicional.
+            resp.headers["Cache-Control"] = "private, max-age=86400, immutable"
+            _etag = ct.get("cloudinary_public_id") or f"ct-{ctid}"
+            resp.headers["ETag"] = f'"{_etag}"'
+            # Si el browser ya tiene esta versión, devuelve 304 (sin body)
+            if request.headers.get("If-None-Match") == f'"{_etag}"':
+                r_up.close()
+                from flask import Response as _Resp2
+                _resp304 = _Resp2(status=304)
+                _resp304.headers["ETag"] = f'"{_etag}"'
+                _resp304.headers["Cache-Control"] = "private, max-age=86400, immutable"
+                print(f"[mant_contrato_archivo] ctid={ctid} → 304 (etag hit)",
+                      flush=True)
+                return _resp304
+            print(f"[mant_contrato_archivo] ctid={ctid} → PROXY Cloudinary "
+                  f"OK (ext={ext}, ctype={ctype}, status={r_up.status_code})",
+                  flush=True)
+            return resp
+        except Exception as _e_proxy:
+            print(f"[mant_contrato_archivo] ctid={ctid} → PROXY FALLO "
+                  f"({_e_proxy}), intentando disco", flush=True)
+            # Si el proxy falla, intentamos disco (sigue abajo). Si tampoco
+            # hay disco, caerá al 404 amigable.
+
+    # ── PRIORIDAD 2: Filesystem local (sin Cloudinary o tras fallo del proxy) ──
+    # Si no tenemos archivo_path (solo había cloudinary y el proxy falló),
+    # no hay nada que servir desde disco — caemos directo al 404 amigable.
+    if not ct.get("archivo_path"):
+        es_super = bool(g.permissions.get("superadmin"))
+        nombre_visible = ct.get("archivo_nombre") or f"contrato_{ctid}"
+        print(f"[mant_contrato_archivo] ctid={ctid} → SIN DISCO "
+              f"(proxy Cloudinary falló y no hay archivo_path)", flush=True)
+        return (
+            f"Contrato no disponible — el CDN no respondió y no hay copia local. "
+            f"{'Re-súbelo desde la ficha.' if es_super else 'Avisa al superadministrador.'}",
+            503
+        )
+
     # Verificar que el archivo existe en disco
     full_path = os.path.join(MANT_UPLOADS, ct["archivo_path"])
     if not os.path.exists(full_path):
@@ -33810,10 +33776,171 @@ _CLAUDE_MODELS_FALLBACK = [
     "claude-3-5-sonnet-20241022",
 ]
 
+# ─── ROUTING POR TIER 2026-05-26 (Daniel — ahorro -60% costo IA) ──────
+# Cada llamada a _claude_call() puede elegir un tier según la complejidad:
+#   'haiku'  → clasificaciones cortas, completar campos (rápido + barato)
+#   'sonnet' → fichas técnicas, análisis medios (balance)
+#   'opus'   → razonamiento profundo, plan-mejora (caro pero potente)
+# Cuando no se pasa tier, se mantiene el comportamiento histórico (opus
+# por default) para no romper callers existentes.
+_CLAUDE_MODELS_BY_TIER = {
+    "haiku": [
+        "claude-haiku-4-5",
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-sonnet-20241022",  # último recurso
+    ],
+    "sonnet": [
+        "claude-sonnet-4-5",
+        "claude-3-5-sonnet-20241022",
+        "claude-opus-4-5",
+    ],
+    "opus": [
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-3-5-sonnet-20241022",
+    ],
+}
+
+# Precios aproximados por 1M tokens (USD) — Anthropic 2025
+# Solo para estimación de costo en mant_ia_logs.
+_CLAUDE_PRICES_PER_MTOK = {
+    # Modelo: (input, output)
+    "claude-opus-4-5":            (15.0, 75.0),
+    "claude-opus-4-7":            (15.0, 75.0),
+    "claude-sonnet-4-5":          (3.0,  15.0),
+    "claude-3-5-sonnet-20241022": (3.0,  15.0),
+    "claude-haiku-4-5":           (0.80, 4.0),
+    "claude-3-5-haiku-20241022":  (0.80, 4.0),
+}
+
+
+def _ia_estimar_costo_usd(modelo: str, tokens_in: int, tokens_out: int) -> float:
+    """Estima costo USD de una llamada Claude segun el modelo."""
+    if not modelo or modelo not in _CLAUDE_PRICES_PER_MTOK:
+        return 0.0
+    p_in, p_out = _CLAUDE_PRICES_PER_MTOK[modelo]
+    return round(((tokens_in or 0) * p_in + (tokens_out or 0) * p_out) / 1_000_000, 5)
+
+
+def _ia_log(endpoint: str, *, entidad_tipo=None, entidad_id=None, modelo=None,
+            tier=None, tokens_in=0, tokens_out=0, elapsed_ms=0,
+            cache_hit=False, ok=True, error_msg=None):
+    """Registra una llamada a Claude en mant_ia_logs. Best-effort: si la
+    tabla no existe aún (migración no corrió), no rompe el caller."""
+    try:
+        costo = _ia_estimar_costo_usd(modelo, tokens_in, tokens_out)
+        mysql_execute(
+            "INSERT INTO mant_ia_logs (endpoint, entidad_tipo, entidad_id, "
+            " modelo, tier_solicitado, tokens_in, tokens_out, costo_usd, "
+            " elapsed_ms, cache_hit, ok, error_msg, usuario) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (endpoint[:80], entidad_tipo, entidad_id, (modelo or "")[:60],
+             (tier or "")[:10] or None,
+             int(tokens_in or 0), int(tokens_out or 0), costo,
+             int(elapsed_ms or 0), 1 if cache_hit else 0,
+             1 if ok else 0, (error_msg or "")[:255] or None,
+             current_username())
+        )
+    except Exception as _e:
+        print(f"[_ia_log] no se pudo loguear ({endpoint}): {_e}", flush=True)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# JOBS IA ASÍNCRONOS 2026-05-26 (Daniel — UX premium)
+# Permite ejecutar llamadas Claude largas sin bloquear al usuario.
+# El POST original devuelve job_id en <300ms; un thread daemon ejecuta
+# el análisis; el frontend polea GET /api/ai/jobs/<id> cada 2s para ver
+# avance. Cuando termina, descarga el resultado del job.
+# ═════════════════════════════════════════════════════════════════════
+def _ia_job_crear(endpoint: str, entidad_tipo=None, entidad_id=None) -> int:
+    """Crea un job en estado pending y devuelve su id."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_ia_jobs (endpoint, entidad_tipo, entidad_id, "
+                " estado, paso_actual, creado_por) "
+                "VALUES (%s,%s,%s,'pending','Esperando turno…',%s)",
+                (endpoint[:80], entidad_tipo, entidad_id, current_username())
+            )
+            jid = cur.lastrowid
+        conn.commit()
+        return int(jid)
+    finally:
+        conn.close()
+
+
+def _ia_job_update(job_id: int, *, estado=None, paso=None, progreso=None,
+                   resultado=None, error=None):
+    """Actualiza el estado de un job IA. Best-effort, no levanta excepciones."""
+    sets, vals = [], []
+    if estado is not None:
+        sets.append("estado=%s"); vals.append(estado)
+        if estado == "running":
+            sets.append("started_at=NOW()")
+        elif estado in ("done", "error"):
+            sets.append("finished_at=NOW()")
+    if paso is not None:
+        sets.append("paso_actual=%s"); vals.append(paso[:120])
+    if progreso is not None:
+        sets.append("progreso_pct=%s"); vals.append(max(0, min(100, int(progreso))))
+    if resultado is not None:
+        sets.append("resultado_json=%s")
+        vals.append(json.dumps(resultado, ensure_ascii=False) if not isinstance(resultado, str) else resultado)
+    if error is not None:
+        sets.append("error_msg=%s"); vals.append(error[:500])
+    if not sets:
+        return
+    vals.append(job_id)
+    try:
+        mysql_execute(f"UPDATE mant_ia_jobs SET {', '.join(sets)} WHERE id=%s", tuple(vals))
+    except Exception as _e:
+        print(f"[_ia_job_update] job={job_id} fail: {_e}", flush=True)
+
+
+def _ia_job_lanzar(endpoint: str, fn, *, entidad_tipo=None, entidad_id=None,
+                   etapas=None):
+    """Ejecuta `fn(job_actualizar)` en un daemon thread. Crea el job ANTES
+    de devolver, así el caller obtiene job_id en <300ms.
+
+    `fn` debe ser una función que recibe un callback:
+        def fn(reportar_paso):
+            reportar_paso('Etapa 1', 25)
+            ...
+            return {"clave": "valor"}     # o levanta Exception si falla
+
+    `etapas` (opcional): lista de strings — mensajes preset para usar.
+
+    Returns: job_id (int)
+    """
+    job_id = _ia_job_crear(endpoint, entidad_tipo, entidad_id)
+
+    def _runner():
+        def _reportar(paso, pct):
+            _ia_job_update(job_id, estado="running", paso=paso, progreso=pct)
+        try:
+            _ia_job_update(job_id, estado="running",
+                           paso=(etapas[0] if etapas else "Procesando…"),
+                           progreso=5)
+            resultado = fn(_reportar)
+            _ia_job_update(job_id, estado="done",
+                           paso="Listo", progreso=100,
+                           resultado=resultado)
+        except Exception as e:
+            print(f"[_ia_job_lanzar] job={job_id} ERROR: {e}", flush=True)
+            _ia_job_update(job_id, estado="error",
+                           paso="Error", progreso=100,
+                           error=str(e)[:500])
+
+    import threading as _th
+    _th.Thread(target=_runner, daemon=True).start()
+    return job_id
+
 
 def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                  expect_json=True, model=None, temperature=0.2,
-                 attachments=None):
+                 attachments=None, tier=None,
+                 log_endpoint=None, log_entidad_tipo=None, log_entidad_id=None):
     """Llama a Claude API. Retorna (data, error) — data es dict si expect_json.
 
     - Maneja la limpieza de bloques ```json ... ```
@@ -33823,17 +33950,50 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
         {"type":"document","source":{...}} para PDFs escaneados, o
         {"type":"image","source":{...}} para imágenes.
         Si está presente, se concatenan al content del primer message.
+    - tier (opcional): 'haiku' | 'sonnet' | 'opus' — selecciona la cadena
+        de fallback apropiada. Si se omite, usa _CLAUDE_MODELS_FALLBACK
+        (comportamiento histórico para no romper callers existentes).
+        `model` explícito tiene prioridad sobre `tier`.
+    - log_endpoint (opcional): nombre del endpoint para registrar en
+        mant_ia_logs. Si no se pasa, intenta inferirlo de request.endpoint.
+    - log_entidad_tipo, log_entidad_id (opcional): para correlacionar
+        la llamada con la entidad afectada (cliente/contrato/máquina).
     """
+    _start_ts = time.time()
+    _endpoint_inferido = log_endpoint
+    if not _endpoint_inferido:
+        try:
+            _endpoint_inferido = request.endpoint or "ai_unknown"
+        except Exception:
+            _endpoint_inferido = "ai_background"
+
     ai_key = _get_ai_key()
     if not ai_key:
+        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                entidad_id=log_entidad_id, tier=tier, ok=False,
+                error_msg="API key no configurada",
+                elapsed_ms=int((time.time() - _start_ts) * 1000))
         return None, "ANTHROPIC_API_KEY no configurada. Agregala en Railway → Variables."
 
     try:
         import anthropic as _anthropic
     except ImportError:
+        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                entidad_id=log_entidad_id, tier=tier, ok=False,
+                error_msg="lib anthropic no instalada",
+                elapsed_ms=int((time.time() - _start_ts) * 1000))
         return None, "Librería anthropic no instalada. Agregar al requirements.txt"
 
-    models_to_try = [model] if model else _CLAUDE_MODELS_FALLBACK
+    # Resolución del modelo:
+    #   1) Si viene `model` explícito → solo ese.
+    #   2) Si viene `tier` → cadena del tier.
+    #   3) Si no viene nada → fallback histórico (opus default).
+    if model:
+        models_to_try = [model]
+    elif tier and tier in _CLAUDE_MODELS_BY_TIER:
+        models_to_try = _CLAUDE_MODELS_BY_TIER[tier]
+    else:
+        models_to_try = _CLAUDE_MODELS_FALLBACK
     last_err = None
     client = _anthropic.Anthropic(api_key=ai_key)
 
@@ -33853,7 +34013,16 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                 messages=[{"role": "user", "content": content_blocks}]
             )
             raw = msg.content[0].text.strip()
+            # Captura tokens usados (la SDK devuelve usage.input_tokens/output_tokens)
+            _tok_in = getattr(msg.usage, "input_tokens", 0) if hasattr(msg, "usage") else 0
+            _tok_out = getattr(msg.usage, "output_tokens", 0) if hasattr(msg, "usage") else 0
+            _elapsed = int((time.time() - _start_ts) * 1000)
+
             if not expect_json:
+                _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                        entidad_id=log_entidad_id, modelo=m, tier=tier,
+                        tokens_in=_tok_in, tokens_out=_tok_out,
+                        elapsed_ms=_elapsed, ok=True)
                 return raw, None
             # Limpiar bloque ```json ... ```
             if raw.startswith("```"):
@@ -33862,14 +34031,24 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                     raw = raw[4:].lstrip()
                 raw = raw.split("```")[0].strip()
             try:
-                return json.loads(raw), None
+                _parsed = json.loads(raw)
+                _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                        entidad_id=log_entidad_id, modelo=m, tier=tier,
+                        tokens_in=_tok_in, tokens_out=_tok_out,
+                        elapsed_ms=_elapsed, ok=True)
+                return _parsed, None
             except json.JSONDecodeError:
                 # Intentar extraer JSON aunque haya texto adicional
                 idx_start = raw.find("{")
                 idx_end   = raw.rfind("}")
                 if idx_start >= 0 and idx_end > idx_start:
                     try:
-                        return json.loads(raw[idx_start:idx_end+1]), None
+                        _parsed = json.loads(raw[idx_start:idx_end+1])
+                        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                                entidad_id=log_entidad_id, modelo=m, tier=tier,
+                                tokens_in=_tok_in, tokens_out=_tok_out,
+                                elapsed_ms=_elapsed, ok=True)
+                        return _parsed, None
                     except Exception:
                         pass
                 last_err = f"Respuesta no parseable como JSON: {raw[:200]}"
@@ -33880,8 +34059,16 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
             if "model" in err_str.lower() or "not_found" in err_str.lower():
                 continue
             # Otros errores (auth, rate limit, etc.) → cortar acá
+            _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                    entidad_id=log_entidad_id, modelo=m, tier=tier,
+                    elapsed_ms=int((time.time() - _start_ts) * 1000),
+                    ok=False, error_msg=err_str[:255])
             return None, f"Error Claude API: {err_str}"
 
+    _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+            entidad_id=log_entidad_id, tier=tier,
+            elapsed_ms=int((time.time() - _start_ts) * 1000),
+            ok=False, error_msg=(last_err or "todos los modelos fallaron")[:255])
     return None, last_err or "Todos los modelos fallaron"
 
 
@@ -33924,6 +34111,204 @@ def mant_ai_health():
         status["error"] = f"Respuesta inesperada: {data}"
 
     return jsonify(status)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — JOBS ASÍNCRONOS (2026-05-26 Daniel — UX premium)
+# Endpoint de polling para el frontend. Permite mostrar barra de progreso
+# mientras Claude trabaja en background.
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/ai/jobs/<int:job_id>", methods=["GET"])
+@_mant_required
+def mant_ai_job_status(job_id):
+    """Devuelve el estado actual de un job IA. Frontend polea cada 2s.
+
+    Respuesta:
+      {
+        "ok": true,
+        "id": 123,
+        "estado": "pending" | "running" | "done" | "error",
+        "paso_actual": "Leyendo contrato…",
+        "progreso_pct": 45,
+        "resultado": {...} | null,   # solo cuando estado=done
+        "error_msg": null | str,
+        "elapsed_ms": 4530           # cuánto lleva corriendo
+      }
+    """
+    j = mysql_fetchone(
+        "SELECT id, endpoint, entidad_tipo, entidad_id, estado, paso_actual, "
+        "       progreso_pct, resultado_json, error_msg, creado_por, "
+        "       created_at, started_at, finished_at "
+        "  FROM mant_ia_jobs WHERE id=%s", (job_id,)
+    )
+    if not j:
+        return jsonify({"ok": False, "error": "Job no encontrado"}), 404
+
+    # Solo el creador o un superadmin/admin puede ver el job
+    es_super = bool((g.permissions or {}).get("superadmin") or (g.permissions or {}).get("admin"))
+    if not es_super and j.get("creado_por") != current_username():
+        return jsonify({"ok": False, "error": "Sin permiso"}), 403
+
+    resultado = None
+    if j.get("estado") == "done" and j.get("resultado_json"):
+        try:
+            resultado = json.loads(j["resultado_json"])
+        except Exception:
+            resultado = j["resultado_json"]  # texto crudo
+
+    # Calcular elapsed_ms desde started_at (o created_at si aún pending)
+    elapsed_ms = 0
+    try:
+        from datetime import datetime as _dt
+        ref = j.get("started_at") or j.get("created_at")
+        if ref:
+            elapsed_ms = int((_dt.utcnow() - ref).total_seconds() * 1000)
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "id": j["id"],
+        "endpoint": j.get("endpoint"),
+        "entidad_tipo": j.get("entidad_tipo"),
+        "entidad_id": j.get("entidad_id"),
+        "estado": j["estado"],
+        "paso_actual": j.get("paso_actual") or "",
+        "progreso_pct": int(j.get("progreso_pct") or 0),
+        "resultado": resultado,
+        "error_msg": j.get("error_msg"),
+        "elapsed_ms": elapsed_ms,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — MÉTRICAS DE CONSUMO (2026-05-26 Daniel)
+# Endpoint para que el superadmin vea cuánto se gasta en IA cada mes.
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/ai/metricas", methods=["GET"])
+@_mant_required
+def mant_ai_metricas():
+    """Devuelve métricas de consumo IA del último mes (o periodo elegido).
+
+    Query params:
+      ?dias=30      → ventana (default 30)
+      ?endpoint=X   → filtrar por endpoint específico
+
+    Respuesta:
+      {
+        ok: true,
+        periodo_dias: 30,
+        totales: {llamadas, costo_usd, tokens_in, tokens_out, errores, cache_hits},
+        por_endpoint: [{endpoint, llamadas, costo_usd, avg_ms}, ...],
+        por_dia: [{dia, llamadas, costo_usd}, ...]
+      }
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    try:
+        dias = max(1, min(365, int(request.args.get("dias", 30))))
+    except Exception:
+        dias = 30
+    ep_filter = (request.args.get("endpoint") or "").strip()[:80] or None
+
+    where = ["created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)"]
+    params = [dias]
+    if ep_filter:
+        where.append("endpoint = %s")
+        params.append(ep_filter)
+    where_sql = " AND ".join(where)
+
+    # Totales
+    try:
+        row = mysql_fetchone(
+            f"SELECT COUNT(*) AS n, "
+            f"       COALESCE(SUM(costo_usd),0) AS costo, "
+            f"       COALESCE(SUM(tokens_in),0)  AS toks_in, "
+            f"       COALESCE(SUM(tokens_out),0) AS toks_out, "
+            f"       COALESCE(SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END),0) AS errores, "
+            f"       COALESCE(SUM(cache_hit),0) AS cache_hits "
+            f"  FROM mant_ia_logs WHERE {where_sql}",
+            tuple(params)
+        ) or {}
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": "La tabla mant_ia_logs aún no se ha creado o está vacía. "
+                     "Después de la próxima llamada IA aparecerán métricas. "
+                     "Detalle: " + str(e)[:150]
+        }), 200
+
+    # Por endpoint
+    por_ep = mysql_fetchall(
+        f"SELECT endpoint, COUNT(*) AS n, "
+        f"       COALESCE(SUM(costo_usd),0) AS costo, "
+        f"       COALESCE(AVG(elapsed_ms),0) AS avg_ms "
+        f"  FROM mant_ia_logs WHERE {where_sql} "
+        f" GROUP BY endpoint ORDER BY costo DESC LIMIT 20",
+        tuple(params)
+    ) or []
+
+    # Por día
+    por_dia = mysql_fetchall(
+        f"SELECT DATE(created_at) AS dia, COUNT(*) AS n, "
+        f"       COALESCE(SUM(costo_usd),0) AS costo "
+        f"  FROM mant_ia_logs WHERE {where_sql} "
+        f" GROUP BY DATE(created_at) ORDER BY dia ASC",
+        tuple(params)
+    ) or []
+
+    return jsonify({
+        "ok": True,
+        "periodo_dias": dias,
+        "totales": {
+            "llamadas":   int(row.get("n", 0) or 0),
+            "costo_usd":  float(row.get("costo", 0) or 0),
+            "tokens_in":  int(row.get("toks_in", 0) or 0),
+            "tokens_out": int(row.get("toks_out", 0) or 0),
+            "errores":    int(row.get("errores", 0) or 0),
+            "cache_hits": int(row.get("cache_hits", 0) or 0),
+        },
+        "por_endpoint": [
+            {"endpoint": r["endpoint"],
+             "llamadas": int(r["n"]),
+             "costo_usd": float(r["costo"]),
+             "avg_ms": int(r["avg_ms"])}
+            for r in por_ep
+        ],
+        "por_dia": [
+            {"dia": str(r["dia"]),
+             "llamadas": int(r["n"]),
+             "costo_usd": float(r["costo"])}
+            for r in por_dia
+        ],
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# IA — ALERTAS PROACTIVAS DIARIAS (disparo manual)
+# El cron diario ya invoca _ia_alertas_resumir_diario() en el slot de
+# las 06:00 CL. Este endpoint permite disparo manual on-demand para
+# testing o uso bajo demanda. Solo superadmin.
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/ia/alertas-diarias-run", methods=["POST"])
+@_mant_required
+def mant_ia_alertas_diarias_manual():
+    """Disparo manual del resumen IA diario."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+    try:
+        metricas_dummy = {
+            "notif_visita_proxima": 0, "notif_visita_atrasada": 0,
+            "notif_garantia_por_vencer": 0, "notif_contrato_por_vencer": 0,
+        }
+        _ia_alertas_resumir_diario(metricas_dummy)
+        return jsonify({
+            "ok": True,
+            "mensaje": "Resumen IA ejecutado. Revisa la campana de notificaciones."
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -34291,40 +34676,54 @@ Devuelve SOLO el JSON solicitado."""
 # tokens. Frontend lo consume antes de POSTear para mostrar modal claro.
 # ══════════════════════════════════════════════════════════════════════
 
+# ── Cache TTL 10min de elegibilidad IA (Daniel 2026-05-26 audit) ──
+# DevTools: endpoint tarda ~4.5s. Hace múltiples queries para detectar
+# cambios desde la última generación. Como esos cambios ocurren con
+# frecuencia DIARIA (no por segundo), cachear 10 min es seguro y quita
+# 4.5s de la apertura de ficha cliente.
+_IA_ELIG_CACHE = {}  # cid -> (data, ts)
+_IA_ELIG_LOCK  = threading.Lock()
+_IA_ELIG_TTL   = 600  # 10 min
+
+
+def _ia_elig_cache_invalidar(cid=None):
+    """Invalida cache de elegibilidad. Llamar tras regenerar análisis IA."""
+    with _IA_ELIG_LOCK:
+        if cid is None:
+            _IA_ELIG_CACHE.clear()
+        else:
+            _IA_ELIG_CACHE.pop(int(cid), None)
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/ia/elegibilidad",
            methods=["GET"])
 @_mant_required
 def mant_cliente_ia_elegibilidad(cid):
     """Verifica si conviene regenerar el análisis IA para este cliente.
+    Cacheado 10 min (audit DevTools: era 4.5s por llamada)."""
+    # Cache hit
+    _now = time.time()
+    with _IA_ELIG_LOCK:
+        entry = _IA_ELIG_CACHE.get(cid)
+    if entry and (_now - entry[1]) < _IA_ELIG_TTL:
+        return jsonify(entry[0])
 
-    Útil para que el frontend muestre un modal con info ANTES de POST a
-    /ai-analisis (que sí gasta tokens si autoriza).
-
-    Returns JSON con:
-      puede_generar (bool)
-      motivo: 'nunca_analizado'|'cache_vigente'|'cambios_detectados'|
-              'ventana_abierta'|'fecha_indeterminada'
-      dias_desde_ultimo (int|None)
-      n_cambios (int)
-      cambios (list[{campo,delta,antes,ahora}])
-      plan_actual_id (int|None)
-      ultimo_resumen (str)
-      throttle_dias (int)
-      costo_estimado_tokens (int)
-      snapshot_actual, snapshot_anterior
-    """
     cliente = mysql_fetchone(
         "SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cid,)
     )
     if not cliente:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
     elig = _mant_ia_cliente_eligibilidad(cid)
-    return jsonify({
+    data = {
         "ok": True,
         "cliente": {"id": cliente["id"],
                     "razon_social": cliente.get("razon_social")},
-        **elig
-    })
+        **elig,
+        "_cached_ttl": _IA_ELIG_TTL,
+    }
+    with _IA_ELIG_LOCK:
+        _IA_ELIG_CACHE[cid] = (data, _now)
+    return jsonify(data)
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/ia/diferir",
@@ -34557,20 +34956,10 @@ def mant_contrato_analizar(ctid):
             tipo_doc_detectado = precheck.get("tipo")
             razon_deteccion = precheck.get("razon")
             confianza = int(precheck.get("confianza") or 0)
-            # Si la IA está MUY segura que NO es contrato (>= 70) → bloquear
-            if (tipo_doc_detectado and
-                tipo_doc_detectado != "contrato_servicio" and
-                confianza >= 70):
-                return jsonify({
-                    "ok": False,
-                    "error_codigo": "NO_ES_CONTRATO",
-                    "error": (f"Este archivo NO es un contrato. Detectado como "
-                              f"'{tipo_doc_detectado}' (confianza {confianza}%). "
-                              f"{razon_deteccion or ''}"),
-                    "tipo_doc_detectado": tipo_doc_detectado,
-                    "razon_deteccion": razon_deteccion,
-                    "confianza": confianza,
-                }), 422  # 422 Unprocessable Entity
+            # Daniel 30/05/2026: NUNCA rechazar. La IA analiza CUALQUIER documento
+            # contractual (compraventa, leasing, servicio, garantía, comodato…) y
+            # entrega el análisis gerencial igual. El tipo detectado solo se informa
+            # al prompt (para contextualizar) y al usuario; jamás bloquea el análisis.
 
     # Datos del contrato para enriquecer el prompt
     datos_extra = (
@@ -34586,32 +34975,75 @@ def mant_contrato_analizar(ctid):
     if not texto_contrato:
         texto_contrato = "(Texto no extraíble — análisis visual del PDF)" if es_escaneado else "(Texto no extraíble — análisis basado en metadatos)"
 
-    prompt_sistema = """Eres un experto jurídico y técnico en contratos de mantención
-de equipos de fitness para gimnasios y centros deportivos en Chile (ILUS Fitness).
-Analiza el contrato con criterio profesional. Responde SIEMPRE en JSON con esta estructura EXACTA:
+    prompt_sistema = """Actúas como un COMITÉ DE EXPERTOS de ILUS Fitness (Chile) analizando
+un contrato para la GERENCIA. Combinas 4 roles a la vez:
+  - ABOGADO corporativo: detectas cláusulas débiles/ausentes y REDACTAS mejoras concretas.
+  - ESPECIALISTA EN SERVICIO TÉCNICO: equipos de fitness (treadmills, bikes, elípticas, fuerza).
+  - ANALISTA COMERCIAL: propones cómo subir el ingreso sin perder al cliente.
+  - ANALISTA FINANCIERO: cuantificas la EXPOSICIÓN (cuánto podemos perder) y la rentabilidad.
+
+OBJETIVO DE NEGOCIO (crítico): ILUS debe GANAR dinero y estar BLINDADO. El mayor riesgo que
+preocupa a la gerencia: clientes que usan el contrato SOLO para exigir/cobrar GARANTÍAS, pero
+contratan las mantenciones PAGAS con TERCEROS. Eso nos expone (cubrimos garantías sin ingreso
+por servicio). Tu análisis DEBE evidenciar esta y otras exposiciones y proponer blindaje:
+por ejemplo, condicionar la garantía a que TODA mantención se haga con ILUS (si la hace un
+tercero, se anula la garantía) y obligar mantención periódica exclusiva con ILUS.
+
+Analiza el documento SEA DEL TIPO QUE SEA (servicio, compraventa, leasing, comodato, garantía).
+Nunca te niegues a analizar. Responde SIEMPRE en JSON VÁLIDO con ESTA estructura EXACTA
+(sin texto fuera del JSON):
 {
-  "tipo_contrato": "Preventivo|Correctivo|Full|Garantía|Inspección|Otro",
-  "resumen": "2-3 oraciones resumiendo el contrato",
+  "tipo_contrato": "Servicio|Compraventa|Leasing|Comodato|Garantia|Mixto|Otro",
+  "resumen": "2-4 oraciones en tono gerencial: qué es y qué significa para ILUS",
   "score": 0-100,
   "nivel_riesgo": "alto|medio|bajo",
   "vigencia_inicio": "YYYY-MM-DD o null",
   "vigencia_fin": "YYYY-MM-DD o null",
   "es_indefinido": true_o_false,
-  "frecuencia_sugerida_meses": número_entero,
-  "sla_horas": número_entero_o_null,
+  "frecuencia_sugerida_meses": numero_entero,
+  "sla_horas": numero_entero_o_null,
   "incluye_mant_gratis": true_o_false,
   "incluye_repuestos": true_o_false,
-  "cobertura_descripcion": "descripción de qué cubre el contrato",
-  "costo_mensual": número_o_null,
-  "costo_por_mant": número_o_null,
-  "costo_total": número_o_null,
-  "clausulas_criticas": ["clausula1","clausula2",...],
-  "puntos_criticos": ["punto1","punto2",...],
-  "alertas": ["alerta1","alerta2",...],
-  "mejoras_prioritarias": ["mejora1","mejora2","mejora3"]
+  "cobertura_descripcion": "qué cubre y qué NO cubre el contrato",
+  "costo_mensual": numero_o_null,
+  "costo_por_mant": numero_o_null,
+  "costo_total": numero_o_null,
+  "clausulas_criticas": ["cláusula textual riesgosa o ausente", "..."],
+  "puntos_criticos": ["hallazgo clave", "..."],
+  "alertas": ["alerta accionable", "..."],
+  "mejoras_prioritarias": ["mejora 1", "mejora 2", "mejora 3"],
+  "exposicion": {
+    "nivel": "alto|medio|bajo",
+    "resumen": "en plata: a qué nos expone este contrato hoy",
+    "escenarios": [
+      {"riesgo": "ej: garantía sin mantención con ILUS", "impacto": "costo/efecto concreto",
+       "probabilidad": "alta|media|baja", "mitigacion": "qué cláusula o acción lo evita"}
+    ]
+  },
+  "analisis_garantia": {
+    "cubre_garantia": true_o_false,
+    "condicionada_a_mantencion_ilus": true_o_false,
+    "riesgo_terceros": "riesgo de que hagan mantenciones pagas con terceros y nos dejen solo la garantía",
+    "recomendacion": "cómo condicionar la garantía a mantención exclusiva con ILUS"
+  },
+  "clausulas_sugeridas": [
+    {"titulo": "nombre de la cláusula", "texto": "REDACCIÓN jurídica lista para pegar en el contrato",
+     "justificacion": "qué riesgo cubre / cuánto blinda a ILUS"}
+  ],
+  "propuestas_comerciales": [
+    {"titulo": "propuesta para subir ingreso", "descripcion": "cómo, sin perder al cliente",
+     "impacto_ingreso": "estimación CLP o cualitativo", "prioridad": "alta|media|baja"}
+  ],
+  "rentabilidad": {
+    "mrr_estimado_clp": numero_o_null,
+    "margen_estimado": "alto|medio|bajo|negativo + breve por qué",
+    "oportunidad_ingreso_clp": numero_o_null
+  }
 }
-Sé específico sobre equipos fitness (treadmills, bikes, elípticas, pesas, etc.).
-Detecta SLA, penalidades, cláusulas de exclusión y riesgos operativos para el prestador."""
+Sé concreto y chileno (CLP, RUT, equipos fitness). Las clausulas_sugeridas deben ser texto
+jurídico REAL listo para usar, enfocadas en: (1) mantención periódica OBLIGATORIA con ILUS,
+(2) garantía CONDICIONADA a esa mantención exclusiva, (3) cobro de toda visita/OT fuera de
+cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a ILUS."""
 
     if es_escaneado and pdf_b64_paginas:
         prompt_usuario = f"""Analiza este contrato de mantención. El PDF adjunto
@@ -34638,7 +35070,7 @@ Devuelve SOLO el JSON, sin texto adicional."""
     # mandamos el PDF como attachment para que Claude lo procese visualmente.
     resultado, err = _claude_call(
         prompt_usuario, prompt_sistema,
-        max_tokens=2000, expect_json=True,
+        max_tokens=4000, expect_json=True,
         attachments=pdf_b64_paginas if es_escaneado else None
     )
     if err:
@@ -34653,6 +35085,7 @@ Devuelve SOLO el JSON, sin texto adicional."""
             cur.execute(
                 """UPDATE mant_contratos SET
                    ai_analizado=1, ai_fecha=%s, ai_usuario=%s,
+                   ai_analisis_json=%s,
                    ai_resumen=%s,
                    ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
                    ai_clausulas=%s, ai_cobertura=%s, ai_tipo_contrato=%s,
@@ -34668,6 +35101,7 @@ Devuelve SOLO el JSON, sin texto adicional."""
                    WHERE id=%s""",
                 (datetime.now(),
                  current_username(),
+                 json.dumps(resultado, ensure_ascii=False),
                  resultado.get("resumen",""),
                  json.dumps(resultado.get("puntos_criticos",[]),    ensure_ascii=False),
                  json.dumps(resultado.get("alertas",[]),            ensure_ascii=False),
@@ -37833,13 +38267,36 @@ def mant_notif_interna_archivar(nid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ── CACHE en memoria del contador de notificaciones por usuario ──
+# 2026-05-26 (Daniel — audit DevTools: 840ms × 5 llamadas/página = 4.2s).
+# La query agrega COUNT + SUM filtrando por destino_user_id NULL OR igual.
+# Resultado: cache TTL 45s por (es_admin, user_id). Quita 4 de 5 queries.
+# Llamar _mant_notif_cache_invalidar(user_id) tras INSERT/UPDATE de notif.
+_MANT_NOTIF_CONT_CACHE = {}   # key -> (data_dict, ts)
+_MANT_NOTIF_CONT_LOCK  = threading.Lock()
+_MANT_NOTIF_CONT_TTL   = 45   # segundos
+
+
+def _mant_notif_cache_invalidar(user_id=None):
+    """Invalida cache cuando se modifica una notificación. Si user_id es
+    None, invalida todo (caso: notificación broadcast). Llamar tras
+    INSERT/UPDATE/DELETE en mant_notificaciones."""
+    with _MANT_NOTIF_CONT_LOCK:
+        if user_id is None:
+            _MANT_NOTIF_CONT_CACHE.clear()
+        else:
+            for k in list(_MANT_NOTIF_CONT_CACHE.keys()):
+                # k es tupla (es_admin, user_id_o_None) — invalidamos
+                # tanto la del usuario específico como las admin
+                if k[0] or k[1] == user_id:
+                    _MANT_NOTIF_CONT_CACHE.pop(k, None)
+
+
 @app.route("/mantenciones/api/notif-interna/contador", methods=["GET"])
 @_mant_required
 def mant_notif_interna_contador():
     """Devuelve {no_leidas, urgentes} para el badge de la campana.
-
-    Endpoint ultra rápido — usa el índice idx_destino_no_leida.
-    Objetivo: <50ms en condiciones normales.
+    Cacheado 45s por usuario (DevTools audit: era 840ms x 5/página = 4.2s).
     """
     perms = g.get("permissions") or {}
     es_admin = bool(perms.get("admin") or perms.get("superadmin"))
@@ -37849,6 +38306,15 @@ def mant_notif_interna_contador():
     except Exception:
         user_id = None
 
+    # ── CACHE HIT ───────────────────────────────────────────────────
+    cache_key = (es_admin, user_id)
+    _now = time.time()
+    with _MANT_NOTIF_CONT_LOCK:
+        entry = _MANT_NOTIF_CONT_CACHE.get(cache_key)
+    if entry and (_now - entry[1]) < _MANT_NOTIF_CONT_TTL:
+        return jsonify(entry[0])
+
+    # ── CACHE MISS — Query original ────────────────────────────────
     sql = (
         "SELECT "
         "  COUNT(*) AS no_leidas, "
@@ -37864,11 +38330,16 @@ def mant_notif_interna_contador():
         sql += " AND destino_user_id IS NULL "
     try:
         row = mysql_fetchone(sql, tuple(params)) or {}
-        return jsonify({
+        data = {
             "ok": True,
             "no_leidas": int(row.get("no_leidas") or 0),
             "urgentes":  int(row.get("urgentes") or 0),
-        })
+            "_cached_ttl": _MANT_NOTIF_CONT_TTL,
+        }
+        # Guardar en cache
+        with _MANT_NOTIF_CONT_LOCK:
+            _MANT_NOTIF_CONT_CACHE[cache_key] = (data, _now)
+        return jsonify(data)
     except Exception as e:
         return jsonify({"ok": False, "no_leidas": 0, "urgentes": 0,
                         "error": str(e)}), 200
@@ -39225,6 +39696,13 @@ def mant_ots_list():
                 tuple(params)
             ) or []
             ots = [dict(o) for o in ots]
+            for o in ots:
+                for k in ('fecha_programada','hora_inicio','hora_fin'):
+                    if o.get(k) is not None:
+                        o[k] = str(o[k])
+                if o.get('costo') is not None:
+                    try: o['costo'] = float(o['costo'])
+                    except Exception: o['costo'] = None
         except Exception as e2:
             fatal_error = f"{e} / fallback: {e2}"
             ots = []
@@ -44837,18 +45315,24 @@ def mant_buscar_erp_sql():
             "documentos": [], "sin_conexion": True
         }), 200
 
-    # Normalizar query
+    # Normalizar query. El ERP guarda el RUT base (MAEEN.RTEN / ENDO) SIN dígito
+    # verificador, así que para RUT buscamos por el CUERPO. Aceptamos RUT con DV
+    # numérico o K. Daniel 30/05/2026: '77.017.350-K' debe encontrar lo mismo
+    # que '77017350' (antes la K rompía la detección y caía a búsqueda por nombre).
     q_clean   = q.replace(".", "").replace(" ", "").replace("-", "").upper()
     is_digits = q_clean.isdigit()
+    rut_base  = _rut_cuerpo(q)            # cuerpo sin DV, ej '77017350'
+    # Parece RUT si el cuerpo es numérico y: tiene >=7 dígitos, o trae DV (guión/K).
+    parece_rut = rut_base.isdigit() and (
+        len(rut_base) >= 7 or (len(rut_base) >= 6 and ("-" in q or q_clean.endswith("K"))))
     tidos_in  = "','".join(_RANDOM_TIDOS_VENTA)
 
     docs = []
     modo = ""
     try:
-        # ── Modo 1: RUT (7-9 dígitos) ───────────────────────────
-        if is_digits and 7 <= len(q_clean) <= 9:
+        # ── Modo 1: RUT (busca todos los docs del cliente por su CUERPO) ──
+        if parece_rut:
             modo = "rut"
-            rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
             docs = _random_sql_query(f"""
                 SELECT TOP 100
                     e.IDMAEEDO, e.TIDO, e.NUDO, e.ENDO,
@@ -44863,7 +45347,7 @@ def mant_buscar_erp_sql():
                 WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
                   AND e.TIDO IN ('{tidos_in}')
                 ORDER BY e.FEEMDO DESC
-            """, (f"{rut_base}%", f"%{q_clean}%")) or []
+            """, (f"{rut_base}%", f"{rut_base}-%")) or []
 
         # ── Modo 2: Número de documento (1-6 dígitos) ──────────
         if not docs and is_digits and 1 <= len(q_clean) <= 7:
@@ -44968,322 +45452,6 @@ def mant_buscar_erp_sql():
     })
 
 
-@app.route("/mantenciones/api/buscar-erp", methods=["POST"])
-@_mant_required
-def mant_buscar_erp():
-    """Busca cliente/documentos en el ERP por RUT o razón social.
-
-    FIX 2026-05-19: el ERP Random es SQL Server (no MySQL); la tabla
-    HEBDOC no existe en su schema. Reescrito usando MAEEDO (header) +
-    MAEDDO (líneas) + MAEEN (entidad) vía `_random_sql_query`.
-    Estrategia:
-      1) Buscar RUTs candidatos en MAEEN por nombre/RUT (tabla chica).
-      2) Traer documentos del MAEEDO cuyos ENDO matchean esos RUTs.
-      3) Joinear con MAEDDO para las líneas (producto+sku+cantidad).
-    """
-    d   = request.get_json(silent=True) or {}
-    q   = d.get("q", "").strip()
-    if not q:
-        return jsonify({"error": "Término de búsqueda requerido"}), 400
-
-    # Normalizar query
-    q_clean    = q.replace(".", "").replace(" ", "")
-    q_sin_dv   = q_clean.split("-")[0] if "-" in q_clean else q_clean
-    q_like_up  = f"%{q.upper()}%"
-    q_like_cln = f"%{q_clean}%"
-    q_like_sdv = f"%{q_sin_dv}%"
-    tidos_list = list(ERP_TIDOS_DOCUMENTOS_CLIENTE)
-    tidos_in   = ",".join(["%s"] * len(tidos_list))
-
-    try:
-        # ── 1) RUTs candidatos en MAEEN ─────────────────────────────────
-        ent_rows = _random_sql_query(
-            """
-            SELECT TOP 50
-                   LTRIM(RTRIM(COALESCE(en.RTEN, '')))                 AS rut,
-                   LTRIM(RTRIM(COALESCE(en.NOKOENAMP, en.NOKOEN, ''))) AS razon_social
-              FROM MAEEN en
-             WHERE (
-                   UPPER(LTRIM(RTRIM(COALESCE(en.NOKOEN,    '')))) LIKE %s
-                OR UPPER(LTRIM(RTRIM(COALESCE(en.NOKOENAMP, '')))) LIKE %s
-                OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
-                OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
-             )
-            """,
-            (q_like_up, q_like_up, q_like_cln, q_like_sdv),
-            max_rows=50,
-        ) or []
-
-        if not ent_rows:
-            return jsonify({"ok": True, "documentos": []})
-
-        rut_map = {(r.get("rut") or "").strip(): (r.get("razon_social") or "").strip()
-                   for r in ent_rows
-                   if (r.get("rut") or "").strip()}
-        if not rut_map:
-            return jsonify({"ok": True, "documentos": []})
-
-        # ── 2) Documentos en MAEEDO + líneas en MAEDDO ─────────────────
-        rut_keys      = list(rut_map.keys())
-        like_clauses  = " OR ".join(["e.ENDO LIKE %s"] * len(rut_keys))
-        rut_params    = tuple(f"{rk}%" for rk in rut_keys)
-
-        rows = _random_sql_query(
-            f"""
-            SELECT TOP 200
-                   LTRIM(RTRIM(COALESCE(e.TIDO, '')))   AS tipo_doc,
-                   LTRIM(RTRIM(COALESCE(e.NUDO, '')))   AS num_doc,
-                   LTRIM(RTRIM(COALESCE(e.ENDO, '')))   AS endo,
-                   e.FEEMDO                              AS fecha,
-                   LTRIM(RTRIM(COALESCE(l.KOPRCT, ''))) AS sku,
-                   LTRIM(RTRIM(COALESCE(l.NOKOPR, ''))) AS producto,
-                   COALESCE(l.CAPRCO1, 0)               AS cantidad
-              FROM MAEEDO e
-              LEFT JOIN MAEDDO l ON l.IDMAEEDO = e.IDMAEEDO
-             WHERE ({like_clauses})
-               AND LTRIM(RTRIM(COALESCE(e.TIDO, ''))) IN ({tidos_in})
-               AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
-             ORDER BY e.FEEMDO DESC
-            """,
-            rut_params + tuple(tidos_list),
-            max_rows=2000,
-        ) or []
-
-        docs = {}
-        for r in rows:
-            tipo = (r.get("tipo_doc") or "").strip()
-            num  = (r.get("num_doc")  or "").strip()
-            if not tipo or not num:
-                continue
-            key = f"{tipo} {num}"
-            endo = (r.get("endo") or "").strip()
-            rut_base = endo.split("-")[0] if "-" in endo else endo
-            if key not in docs:
-                docs[key] = {
-                    "razon_social": rut_map.get(rut_base, ""),
-                    "rut":          endo or rut_base,
-                    "tipo_doc":     tipo,
-                    "num_doc":      num,
-                    "fecha":        str(r.get("fecha")) if r.get("fecha") else "",
-                    "lineas":       []
-                }
-            sku = (r.get("sku") or "").strip()
-            nom = (r.get("producto") or "").strip()
-            if sku or nom:
-                try:
-                    qty = int(float(r.get("cantidad") or 1))
-                except Exception:
-                    qty = 1
-                docs[key]["lineas"].append({
-                    "sku":      sku,
-                    "nombre":   nom or sku,
-                    "cantidad": qty,
-                })
-        return jsonify({"ok": True, "documentos": list(docs.values())})
-    except PermissionError as pe:
-        print(f"[mant-buscar-erp-sql] bloqueado por seguridad: {pe}", flush=True)
-        return jsonify({
-            "error": "Búsqueda bloqueada por seguridad.",
-            "documentos": [], "sin_conexion": True
-        }), 200
-    except Exception as e:
-        print(f"[mant-buscar-erp-sql] error: {e}", flush=True)
-        return jsonify({
-            "error": "No hay conexión directa al ERP. Usa la búsqueda por número de documento.",
-            "documentos": [], "sin_conexion": True
-        }), 200
-
-
-# ══════════════════════════════════════════════════════════════════════
-# DOCUMENTOS ERP — fallback REST API (cuando SQL directo no funciona)
-#
-# Random tiene una REST API que SÍ es accesible desde Railway.
-# Endpoint /documentos?rten=<RUT> y /documentos?nrazon=<nombre> permiten
-# búsqueda por RUT o nombre con varios formatos.
-# ══════════════════════════════════════════════════════════════════════
-
-def _docs_erp_consolidar_rest(items_raw, rut_input=None, nombre_input=None):
-    """Agrupa items raw del ERP por (TIDO, NUDO) y formatea para frontend."""
-    _ZZ_SKUS = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
-    docs = {}
-    for r in items_raw or []:
-        tido = (r.get("TIDO") or r.get("tipo_doc") or "").strip().upper()
-        nudo = str(r.get("NUDO") or r.get("num_doc") or "").strip()
-        if not tido or not nudo:
-            continue
-        if tido not in ERP_TIDOS_DOCUMENTOS_CLIENTE:
-            continue
-        sku  = (r.get("KOPRCT") or r.get("sku") or "").strip().upper()
-        nom  = (r.get("NOKOPR") or r.get("producto") or r.get("descripcion_erp") or "").strip()
-        # Excluir líneas ZZ (fletes/servicios)
-        if sku in _ZZ_SKUS:
-            continue
-        qty  = int(float(r.get("CANTD") or r.get("cantidad") or r.get("qty") or 1))
-        key  = f"{tido}|{nudo}"
-        if key not in docs:
-            docs[key] = {
-                "razon_social": (r.get("NRAZON") or r.get("razon_social") or nombre_input or "").strip(),
-                "rut":          (r.get("NRUC") or r.get("rut") or rut_input or "").strip(),
-                "tipo_doc":     tido,
-                "num_doc":      nudo.lstrip("0") or nudo,
-                "num_doc_raw":  nudo,
-                "fecha":        str(r.get("FEMIS") or r.get("fecha") or "")[:10],
-                "lineas":       [],
-            }
-        if nom or sku:
-            docs[key]["lineas"].append({
-                "sku":      sku,
-                "nombre":   nom or sku,
-                "cantidad": qty,
-            })
-    return list(docs.values())
-
-
-def _docs_erp_por_rut_rest(rut, razon_social, cid):
-    """Busca documentos del ERP via REST API por RUT con variantes.
-    Si no encuentra por RUT, hace fallback a búsqueda por nombre.
-    """
-    TOKEN = ERP_CONFIG.get("api_token", "")
-    rut_clean = re.sub(r"[^0-9kK]", "", rut or "").upper()
-    cuerpo    = rut_clean[:-1] if len(rut_clean) > 1 else rut_clean
-    dv        = rut_clean[-1] if len(rut_clean) > 1 else ""
-
-    # Variantes a probar (de más probable a menos)
-    variantes_rut = list(filter(None, [
-        cuerpo,
-        rut_clean,
-        f"{cuerpo}-{dv}" if dv else None,
-        (rut or "").strip(),
-    ]))
-
-    all_items = []
-    rut_que_funciono = None
-    for variante in variantes_rut:
-        try:
-            body = _erp_get("/documentos", {"rten": variante, "limit": 500}, TOKEN, timeout=10)
-            items = body.get("data") if isinstance(body, dict) else None
-            if items and isinstance(items, list) and len(items) > 0:
-                all_items = items
-                rut_que_funciono = variante
-                break
-        except Exception as e:
-            print(f"[_docs_erp_por_rut_rest] variante {variante!r} falló: {e}")
-            continue
-
-    # Si NO encontró por RUT → fallback por nombre
-    if not all_items and razon_social:
-        return _docs_erp_por_nombre_rest(razon_social, cid, rut_original=rut)
-
-    docs = _docs_erp_consolidar_rest(all_items, rut_input=rut, nombre_input=razon_social)
-    conteo_por_tipo = {}
-    for d in docs:
-        conteo_por_tipo[d["tipo_doc"]] = conteo_por_tipo.get(d["tipo_doc"], 0) + 1
-
-    return jsonify({
-        "ok":              True,
-        "rut":             rut,
-        "rut_usado":       rut_que_funciono,
-        "cliente":         razon_social or "",
-        "documentos":      docs,
-        "total":           len(docs),
-        "conteo_por_tipo": conteo_por_tipo,
-        "tipos_buscados":  list(ERP_TIDOS_DOCUMENTOS_CLIENTE),
-        "filas_erp":       len(all_items),
-        "fuente":          "rest_api",
-        "msg":             f"Búsqueda vía REST API (RUT='{rut_que_funciono or rut}')." if rut_que_funciono else
-                           ("Sin resultados por RUT — probando por nombre." if razon_social else "Sin resultados."),
-    })
-
-
-def _docs_erp_por_nombre_rest(nombre, cid, rut_original=None):
-    """Búsqueda por razón social (nombre del cliente) cuando el RUT no funciona.
-    Útil para clientes con RUTs inconsistentes en el ERP de Random.
-    Usa endpoint /entidades para buscar el RUT canónico, después documentos."""
-    TOKEN = ERP_CONFIG.get("api_token", "")
-    if not nombre:
-        return jsonify({"sin_resultados": True, "documentos": [],
-                        "msg": "Sin RUT ni nombre para buscar."})
-
-    nombre_clean = (nombre or "").strip()
-    if not nombre_clean:
-        return jsonify({"sin_resultados": True, "documentos": [],
-                        "msg": "Nombre vacío."})
-
-    # 1) Buscar entidad por nombre — devuelve el RUT canónico del ERP
-    candidatos_entidades = []
-    try:
-        # Probar primero coincidencia exacta + variantes
-        body = _erp_get("/entidades", {"nokoen": nombre_clean, "limit": 10}, TOKEN, timeout=10)
-        candidatos_entidades = body.get("data") if isinstance(body, dict) else []
-    except Exception as e:
-        print(f"[_docs_erp_por_nombre_rest] /entidades falló: {e}")
-
-    # Si no hubo match exacto, buscar con primeras 2-3 palabras del nombre (LIKE)
-    if not candidatos_entidades:
-        try:
-            palabras = nombre_clean.split()[:3]
-            q = " ".join(palabras)
-            body = _erp_get("/entidades", {"nokoen": q, "limit": 20}, TOKEN, timeout=10)
-            candidatos_entidades = body.get("data") if isinstance(body, dict) else []
-        except Exception:
-            pass
-
-    if not candidatos_entidades:
-        return jsonify({
-            "sin_resultados": True,
-            "documentos":     [],
-            "fuente":         "rest_api",
-            "buscado_por":    "nombre",
-            "nombre":         nombre,
-            "msg":            f"No se encontró ningún cliente en el ERP con nombre '{nombre}'.",
-        })
-
-    # 2) Buscar documentos de los RUTs encontrados (puede haber varios candidatos)
-    ruts_encontrados = []
-    for ent in candidatos_entidades[:5]:   # Top 5 matches
-        rut_ent = (ent.get("RTEN") or "").strip()
-        if rut_ent and rut_ent not in ruts_encontrados:
-            ruts_encontrados.append(rut_ent)
-
-    all_items = []
-    for rut_ent in ruts_encontrados:
-        try:
-            body = _erp_get("/documentos", {"rten": rut_ent, "limit": 500}, TOKEN, timeout=10)
-            items = body.get("data") if isinstance(body, dict) else None
-            if items and isinstance(items, list):
-                all_items.extend(items)
-        except Exception:
-            continue
-
-    docs = _docs_erp_consolidar_rest(all_items, rut_input=rut_original, nombre_input=nombre)
-    conteo_por_tipo = {}
-    for d in docs:
-        conteo_por_tipo[d["tipo_doc"]] = conteo_por_tipo.get(d["tipo_doc"], 0) + 1
-
-    candidatos_resumen = [{
-        "rut":          (e.get("RTEN") or "").strip(),
-        "razon_social": (e.get("NOKOEN") or "").strip(),
-    } for e in candidatos_entidades[:5]]
-
-    return jsonify({
-        "ok":                True,
-        "rut":               rut_original or "",
-        "cliente":           nombre,
-        "documentos":        docs,
-        "total":             len(docs),
-        "conteo_por_tipo":   conteo_por_tipo,
-        "tipos_buscados":    list(ERP_TIDOS_DOCUMENTOS_CLIENTE),
-        "filas_erp":         len(all_items),
-        "fuente":            "rest_api",
-        "buscado_por":       "nombre",
-        "ruts_encontrados":  ruts_encontrados,
-        "candidatos_entidades": candidatos_resumen,
-        "msg":               (f"Búsqueda por nombre — {len(ruts_encontrados)} RUT(s) "
-                              f"candidato(s) encontrado(s) en el ERP."),
-    })
-
-
-# ── DOCUMENTOS ERP POR RUT (auto-search en tab Equipos) ─────────────────
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos-erp")
 @_mant_required
 def mant_documentos_por_rut(cid):
@@ -46236,9 +46404,147 @@ def mant_adjunto_subir(ctid):
         conn.close()
 
 
+@app.route("/mantenciones/api/adjuntos/<int:aid>/archivo")
+@_mant_required
+def mant_adjunto_archivo(aid):
+    """Sirve el archivo de un adjunto (anexo, externo, foto, etc).
+
+    PROXY 2026-05-26 (Daniel — visor universal en tab Documentos):
+      Antes el frontend abría la URL de Cloudinary directa y el browser
+      descargaba (Cloudinary fuerza Content-Disposition attachment en
+      recursos raw). Ahora proxeamos con headers inline para que el
+      visor del modal lo renderice correctamente.
+
+    Seguridad por rol:
+      - Cualquier rol con permiso mantenciones puede VER (preview inline).
+      - Solo SUPERADMIN puede DESCARGAR (?download=1).
+        Bloqueo server-side: roles inferiores reciben 403 si intentan
+        descargar, aunque el botón no aparezca en UI.
+    """
+    from flask import redirect as _redir, Response as _Resp
+
+    adj = mysql_fetchone(
+        "SELECT id, contrato_id, cliente_id, tipo, nombre, archivo_nombre, "
+        "       mime_type, cloudinary_url, cloudinary_public_id "
+        "  FROM mant_contrato_adjuntos WHERE id=%s",
+        (aid,)
+    )
+    if not adj:
+        return "Adjunto no encontrado", 404
+
+    as_dl = request.args.get("download") == "1"
+    if as_dl and not (g.permissions or {}).get("superadmin"):
+        return ("Solo el superadministrador puede descargar archivos "
+                "del módulo de mantenciones."), 403
+
+    nombre = adj.get("nombre") or adj.get("archivo_nombre") or f"adjunto_{aid}"
+    fname  = adj.get("archivo_nombre") or ""
+    ext    = (fname.rsplit(".", 1)[-1].lower() if "." in fname else "").strip()
+
+    # Map de MIME por extensión (para forzar Content-Type correcto cuando
+    # Cloudinary devuelve octet-stream).
+    mime_map = {
+        "pdf":  "application/pdf",
+        "jpg":  "image/jpeg", "jpeg": "image/jpeg",
+        "png":  "image/png", "gif": "image/gif", "webp": "image/webp",
+        "doc":  "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls":  "application/vnd.ms-excel",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt":  "application/vnd.ms-powerpoint",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+
+    # ── PRIORIDAD 1: Cloudinary (proxy con headers correctos) ──────────
+    cld_url = (adj.get("cloudinary_url") or "").strip()
+    if cld_url:
+        if as_dl:
+            sep = "&" if "?" in cld_url else "?"
+            return _redir(f"{cld_url}{sep}fl_attachment=true", code=302)
+        # Preview inline: proxy con headers reescritos
+        try:
+            import requests as _rq
+            upstream_headers = {}
+            if request.headers.get("Range"):
+                upstream_headers["Range"] = request.headers["Range"]
+            r_up = _rq.get(cld_url, headers=upstream_headers,
+                           stream=True, timeout=30, allow_redirects=True)
+            if r_up.status_code not in (200, 206):
+                r_up.close()
+                raise RuntimeError(f"Cloudinary HTTP {r_up.status_code}")
+
+            ctype = (mime_map.get(ext)
+                     or adj.get("mime_type")
+                     or r_up.headers.get("Content-Type")
+                     or "application/octet-stream")
+
+            def _stream():
+                try:
+                    for chunk in r_up.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            yield chunk
+                finally:
+                    r_up.close()
+
+            resp = _Resp(_stream(), status=r_up.status_code)
+            resp.headers["Content-Type"] = ctype
+            resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+            if r_up.headers.get("Content-Length"):
+                resp.headers["Content-Length"] = r_up.headers["Content-Length"]
+            if r_up.headers.get("Content-Range"):
+                resp.headers["Content-Range"] = r_up.headers["Content-Range"]
+            resp.headers["Accept-Ranges"] = r_up.headers.get("Accept-Ranges", "bytes")
+            resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+            resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+            resp.headers["Cache-Control"] = "private, max-age=86400, immutable"
+            _etag = adj.get("cloudinary_public_id") or f"adj-{aid}"
+            resp.headers["ETag"] = f'"{_etag}"'
+            if request.headers.get("If-None-Match") == f'"{_etag}"':
+                _r304 = _Resp(status=304)
+                _r304.headers["ETag"] = f'"{_etag}"'
+                _r304.headers["Cache-Control"] = "private, max-age=86400, immutable"
+                return _r304
+            return resp
+        except Exception as _e_p:
+            print(f"[mant_adjunto_archivo] aid={aid} proxy FAIL: {_e_p}; "
+                  f"intentando disco", flush=True)
+
+    # ── PRIORIDAD 2: Filesystem local (fallback) ────────────────────────
+    if not fname:
+        return "Adjunto sin archivo en ningún canal", 404
+    full_path = os.path.join(MANT_UPLOADS, fname)
+    if not os.path.exists(full_path):
+        return "Adjunto no encontrado en disco", 404
+
+    from flask import send_from_directory, make_response
+    resp = make_response(send_from_directory(
+        MANT_UPLOADS, fname,
+        as_attachment=as_dl,
+        download_name=nombre if as_dl else None,
+    ))
+    if as_dl:
+        resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
+    else:
+        resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+    if mime_map.get(ext):
+        resp.headers["Content-Type"] = mime_map[ext]
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+    resp.headers["Cache-Control"] = "private, max-age=300"
+    return resp
+
+
 @app.route("/mantenciones/api/adjuntos/<int:aid>", methods=["DELETE"])
 @_mant_required
 def mant_adjunto_del(aid):
+    # SEGURIDAD 2026-05-26: solo superadmin puede eliminar adjuntos.
+    # Otros roles (ejecutivo, técnico) NO pueden destruir documentos del cliente.
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({
+            "error": ("Solo el superadministrador puede eliminar archivos "
+                      "del módulo de mantenciones."),
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
     adj = mysql_fetchone(
         "SELECT archivo_nombre, nombre, contrato_id, cliente_id, tipo, "
         "       cloudinary_public_id "
@@ -46504,8 +46810,15 @@ def mant_cliente_finanzas(cid):
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos")
 @_mant_required
 def mant_cliente_documentos(cid):
-    """Devuelve TODOS los documentos asociados al cliente (multi-fuente)."""
+    """Devuelve TODOS los documentos asociados al cliente (multi-fuente).
+
+    SEGURIDAD 2026-05-26: solo superadmin puede ver botón de descarga o
+    eliminar. Otros roles (ejecutivo, técnico) reciben deletable=false y
+    downloadable=false. El flag se respeta en frontend; además, los
+    endpoints destructivos validan server-side.
+    """
     items = []
+    es_super = bool((g.permissions or {}).get("superadmin"))
 
     # 1. Adjuntos (contratos + multi-archivo + externos + anexos)
     rows = mysql_fetchall(
@@ -46514,8 +46827,9 @@ def mant_cliente_documentos(cid):
         "  FROM mant_contrato_adjuntos WHERE cliente_id=%s", (cid,)
     )
     for r in rows:
-        # URL: Cloudinary primero (persistente), filesystem como fallback
-        url = r.get("cloudinary_url") or f"/static/uploads/mantenciones/{r['archivo_nombre']}"
+        # URL: SIEMPRE usar nuestro proxy (fuerza inline + valida superadmin
+        # en download). NO exponer la URL directa de Cloudinary.
+        url = f"/mantenciones/api/adjuntos/{r['id']}/archivo"
         fuente_label = "Adjunto"
         if r.get("tipo") == "externo":
             fuente_label = "Doc. Externo"
@@ -46523,6 +46837,25 @@ def mant_cliente_documentos(cid):
                 fuente_label += f" · {r['subtipo_externo'].replace('_',' ').title()}"
         elif r.get("tipo") == "anexo":
             fuente_label = "Anexo Contrato"
+        # Mime hint para que el visor decida estrategia rápido
+        _arch_nombre = r.get("archivo_nombre") or ""
+        _ext = _arch_nombre.rsplit(".", 1)[-1].lower() if "." in _arch_nombre else ""
+        _mime_hint = {
+            "pdf": "application/pdf",
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "doc": "application/msword",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls": "application/vnd.ms-excel",
+        }.get(_ext, r.get("mime_type") or "")
+        _archivo_tipo = {
+            "pdf": "pdf",
+            "jpg": "imagen", "jpeg": "imagen", "png": "imagen",
+            "gif": "imagen", "webp": "imagen",
+            "docx": "docx", "doc": "doc",
+            "xlsx": "xlsx", "xls": "xls",
+        }.get(_ext, "")
         items.append({
             "kind":   "adjunto",
             "id":     r["id"],
@@ -46530,12 +46863,16 @@ def mant_cliente_documentos(cid):
             "subtipo_externo": r.get("subtipo_externo"),
             "nombre": r["nombre"] or r.get("archivo_nombre"),
             "url":    url,
+            "mime_type":    _mime_hint,
+            "archivo_tipo": _archivo_tipo,
             "size_kb": round((r.get("tamaño_bytes") or 0)/1024) if r.get("tamaño_bytes") else None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "fuente": fuente_label,
             "persistente": bool(r.get("cloudinary_url")),
-            "deletable": True,
+            "deletable":    es_super,   # solo superadmin
+            "downloadable": es_super,   # solo superadmin
+            "has_cloud":    bool(r.get("cloudinary_url")),
         })
 
     # 2. Reportes con HTML guardado
@@ -46550,11 +46887,15 @@ def mant_cliente_documentos(cid):
             "tipo":   "reporte",
             "nombre": f"Informe {r.get('ticket_num') or r['id']} — {r.get('asunto') or 'Sin asunto'}",
             "url":    f"/static/{r['html_path']}",
+            "mime_type": "text/html",
+            "archivo_tipo": "html",
             "size_kb": None,
             "created_by": r.get("created_by"),
             "created_at": str(r["html_generated_at"])[:16] if r.get("html_generated_at") else "",
             "fuente": "Reporte (HTML)",
-            "deletable": False,
+            "deletable":    False,
+            "downloadable": es_super,
+            "has_cloud":    False,
         })
 
     # 3. Contratos — archivo principal de cada contrato del cliente.
@@ -46598,17 +46939,19 @@ def mant_cliente_documentos(cid):
             "id":     r["id"],
             "tipo":   "contrato",
             "nombre": nm,
-            # Si tiene archivo: usar endpoint /contratos/<id>/archivo (redirige a Cloudinary).
+            # Si tiene archivo: usar endpoint /contratos/<id>/archivo (proxy inline).
             # Si NO tiene: url null + flag sin_archivo para que el frontend muestre placeholder.
             "url":    (f"/mantenciones/api/contratos/{r['id']}/archivo" if tiene_archivo else None),
             "mime_type": _mime,
-            "archivo_tipo": _tipo_archivo_bd,  # hint para docTipoArchivo del frontend
+            "archivo_tipo": _tipo_archivo_bd,  # hint para el visor del frontend
             "size_kb": None,
             "created_by": r.get("created_by"),
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "fuente": "Contrato principal",
             "persistente": bool(r.get("cloudinary_url")),
-            "deletable": False,
+            "deletable":    es_super,
+            "downloadable": es_super,
+            "has_cloud":    bool(r.get("cloudinary_url")),
             "sin_archivo": (not tiene_archivo),
         })
 
@@ -48609,10 +48952,159 @@ def mant_maquina_historial_ots(mid):
 # fichas con >20 OTs históricas, se usa paginación implícita (LIMIT 100
 # en historial + LIMIT 50 en seriales/estados).
 # ════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────
+# ENDPOINT BATCH FICHA TÉCNICA (Daniel 2026-05-26 audit DevTools):
+# El frontend mostraba 51 fetch (uno por máquina × 3.6s) = N+1 grave.
+# Este endpoint devuelve un dict {id: ficha_resumida} de muchos equipos
+# en UNA sola request, con datos LIGHT suficientes para la tabla.
+# El detalle profundo (todas las tabs) sigue en el endpoint individual.
+# ─────────────────────────────────────────────────────────────────────
+@app.route("/mantenciones/api/maquinas/ficha-tecnica-batch")
+@_mant_required
+def mant_maquinas_ficha_tecnica_batch():
+    """Versión LIGHT batch para la tabla de equipos del cliente.
+
+    Query: ?ids=1,2,3,4,5 (máximo 200 ids)
+
+    Devuelve { ok, items: { "1": {nombre, foto_url, score, ...}, ... } }
+
+    Para datos profundos (historial, alertas, revisiones), usar el
+    endpoint individual /api/maquinas/<mid>/ficha-tecnica.
+    """
+    ids_param = (request.args.get("ids") or "").strip()
+    if not ids_param:
+        return jsonify({"ok": True, "items": {}})
+    try:
+        ids = [int(x) for x in ids_param.split(",") if x.strip()]
+        ids = list(dict.fromkeys(ids))[:200]  # dedup + cap
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "ids inválidos"}), 400
+    if not ids:
+        return jsonify({"ok": True, "items": {}})
+
+    placeholders = ",".join(["%s"] * len(ids))
+
+    # 1 query — datos básicos de los equipos
+    eq_rows = mysql_fetchall(
+        f"SELECT id, cliente_id, nombre, sku, serie, marca, modelo, "
+        f"       estado, estado_op, foto_url, familia_equipo, "
+        f"       ubicacion_sala, anio_fabricacion, fecha_fin_garantia "
+        f"  FROM mant_maquinas WHERE id IN ({placeholders})",
+        tuple(ids)
+    ) or []
+
+    # 1 query — última foto por equipo (Cloudinary o disco)
+    fotos_map = {}
+    try:
+        rows_f = mysql_fetchall(
+            f"SELECT maquina_id, MAX(tomada_at) AS ultima, "
+            f"       COUNT(*) AS n_fotos "
+            f"  FROM mant_maquina_fotos WHERE maquina_id IN ({placeholders}) "
+            f" GROUP BY maquina_id",
+            tuple(ids)
+        ) or []
+        for r in rows_f:
+            fotos_map[r["maquina_id"]] = {
+                "ultima_foto": str(r["ultima"])[:10] if r.get("ultima") else "",
+                "n_fotos": int(r.get("n_fotos") or 0),
+            }
+    except Exception:
+        pass
+
+    # 1 query — última revisión por equipo (estado + fecha)
+    rev_map = {}
+    try:
+        rows_r = mysql_fetchall(
+            f"SELECT maquina_id, estado_revision, revisado_por, revisado_at "
+            f"  FROM mant_visita_equipos "
+            f" WHERE maquina_id IN ({placeholders}) "
+            f"   AND revisado_at IS NOT NULL "
+            f" ORDER BY revisado_at DESC",
+            tuple(ids)
+        ) or []
+        for r in rows_r:
+            mid_r = r["maquina_id"]
+            if mid_r not in rev_map:  # tomar solo la más reciente
+                rev_map[mid_r] = {
+                    "ultima_revision_fecha": str(r["revisado_at"])[:10] if r.get("revisado_at") else "",
+                    "ultima_revision_estado": r.get("estado_revision") or "",
+                    "ultima_revision_por": r.get("revisado_por") or "",
+                }
+    except Exception:
+        pass
+
+    items = {}
+    hoy = datetime.now().date()
+    for eq in eq_rows:
+        mid = eq["id"]
+        # Score de calidad LIGHT (criterios rápidos sin queries extras)
+        fotos_data = fotos_map.get(mid, {})
+        rev_data   = rev_map.get(mid, {})
+        score = 0
+        if eq.get("foto_url"):           score += 12
+        if eq.get("serie"):              score += 10
+        if eq.get("sku"):                score += 8
+        if eq.get("familia_equipo") and eq.get("familia_equipo") != "otros": score += 8
+        if eq.get("ubicacion_sala"):     score += 8
+        if eq.get("marca") or eq.get("modelo"): score += 8
+        if eq.get("anio_fabricacion"):   score += 6
+        if fotos_data.get("n_fotos", 0) > 0:    score += 10
+        if rev_data.get("ultima_revision_fecha"): score += 10
+        if eq.get("fecha_fin_garantia"): score += 4
+        # +16 puntos no calculables en batch (contrato, observaciones)
+        # se considera "perfecto" al 84 en batch
+        estado_calidad = (
+            "completa" if score >= 70
+            else "buena" if score >= 50
+            else "revisar_datos" if score >= 30
+            else "incompleta"
+        )
+        items[str(mid)] = {
+            "id":         mid,
+            "nombre":     eq.get("nombre") or "",
+            "sku":        eq.get("sku") or "",
+            "serie":      eq.get("serie") or "",
+            "marca":      eq.get("marca") or "",
+            "modelo":     eq.get("modelo") or "",
+            "familia":    eq.get("familia_equipo") or "",
+            "ubicacion":  eq.get("ubicacion_sala") or "",
+            "estado":     eq.get("estado") or "activo",
+            "foto_url":   eq.get("foto_url") or "",
+            "n_fotos":    fotos_data.get("n_fotos", 0),
+            "ultima_foto":          fotos_data.get("ultima_foto", ""),
+            "ultima_revision_fecha":  rev_data.get("ultima_revision_fecha", ""),
+            "ultima_revision_estado": rev_data.get("ultima_revision_estado", ""),
+            "ultima_revision_por":    rev_data.get("ultima_revision_por", ""),
+            "calidad_score":   score,
+            "calidad_estado":  estado_calidad,
+        }
+    return jsonify({"ok": True, "items": items, "count": len(items)})
+
+
+# ── Cache 60s del JSON ficha-tecnica por máquina (Daniel 2026-05-27) ──
+# Live audit: 7-9 queries × 400ms latencia red = 3.2s por click en ojo.
+# El dict completo es ~3KB. Cachear 60s por maquina_id corta esto a ~10ms.
+# Invalidación: llamar _ft_cache_invalidar(mid) tras editar el equipo.
+_FT_JSON_CACHE = {}  # mid -> (data_dict, ts)
+_FT_JSON_LOCK  = threading.Lock()
+_FT_JSON_TTL   = 60
+
+
+def _ft_cache_invalidar(mid=None):
+    """Llamar tras editar equipo / agregar foto / cambiar serie / nueva OT."""
+    with _FT_JSON_LOCK:
+        if mid is None:
+            _FT_JSON_CACHE.clear()
+        else:
+            _FT_JSON_CACHE.pop(int(mid), None)
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/ficha-tecnica")
 @_mant_required
 def mant_maquina_ficha_tecnica_json(mid):
     """Snapshot JSON profundo de la ficha técnica del equipo.
+    Cacheado 60s por maquina_id (audit DevTools: era 3.2s por click).
 
     Estructura devuelta:
       - equipo       → datos básicos + cliente + ubicación + garantía
@@ -48622,9 +49114,15 @@ def mant_maquina_ficha_tecnica_json(mid):
       - historial_estado     → audit log de cambios de estado
       - fotos_galeria        → galería permanente del equipo (mant_maquina_fotos)
       - contratos_relacionados → contratos vigentes del cliente
-      - alertas      → alertas dinámicas calculadas (garantía vence, sin preventiva,
-                       serial cambiado recientemente, etc.)
+      - alertas      → alertas dinámicas calculadas
     """
+    # Cache hit (rápido y seguro: la ficha cambia con frecuencia DE MINUTOS)
+    _now_ft = time.time()
+    with _FT_JSON_LOCK:
+        _entry_ft = _FT_JSON_CACHE.get(mid)
+    if _entry_ft and (_now_ft - _entry_ft[1]) < _FT_JSON_TTL:
+        return jsonify(_entry_ft[0])
+
     eq = mysql_fetchone(
         "SELECT m.*, c.razon_social, c.rut AS cli_rut, c.direccion AS cli_direccion, "
         "       c.comuna AS cli_comuna "
@@ -48966,6 +49464,10 @@ def mant_maquina_ficha_tecnica_json(mid):
         "visitas_count": int(eq.get("visitas_count") or 0),
         "doc_origen": eq.get("doc_origen") or "",
         "doc_fecha": str(eq["doc_fecha"])[:10] if eq.get("doc_fecha") else "",
+        # 2026-05-26 (Daniel) — Datos físicos visibles en tab Resumen
+        "peso_kg": float(eq["peso_kg"]) if eq.get("peso_kg") is not None else None,
+        "dimensiones": eq.get("dimensiones") or "",
+        "color": eq.get("color") or "",
     }
 
     # ── 9. (2026-05-21 Daniel) — Última revisión + timeline desde
@@ -49012,7 +49514,46 @@ def mant_maquina_ficha_tecnica_json(mid):
     except Exception as _e_rev:
         print(f"[ficha-tecnica] revisiones load error: {_e_rev}", flush=True)
 
-    return jsonify({
+    # ── CALIDAD DE FICHA 2026-05-26 (Daniel — Ficha técnica CMMS) ──
+    # Score 0-100 con criterios objetivos. Daniel quiere ver de un vistazo
+    # qué equipos tienen ficha completa vs incompleta para priorizar
+    # levantamientos pendientes. Cada criterio aporta puntos:
+    _cal_score = 0
+    _cal_checks = []
+    def _cal_add(criterio, puntos, cumple):
+        nonlocal _cal_score
+        if cumple:
+            _cal_score += puntos
+        _cal_checks.append({
+            "criterio": criterio, "puntos": puntos, "cumple": bool(cumple)
+        })
+    _cal_add("Foto principal cargada", 12, bool(foto_principal_url or fotos_galeria))
+    _cal_add("Número de serie informado", 10, bool(eq.get("serie")))
+    _cal_add("SKU informado", 8, bool(eq.get("sku")))
+    _cal_add("Categoría / familia", 8, bool(eq.get("familia_equipo") and eq.get("familia_equipo") != "otros"))
+    _cal_add("Ubicación informada", 8, bool(eq.get("ubicacion_sala") or eq.get("ubicacion_cliente")))
+    _cal_add("Marca / modelo", 8, bool(eq.get("marca") or eq.get("modelo")))
+    _cal_add("Año de fabricación", 6, bool(eq.get("anio_fabricacion")))
+    _cal_add("Contrato vigente asociado", 12, bool(contratos))
+    _cal_add("Al menos una foto en galería", 10, len(fotos_galeria) >= 1)
+    _cal_add("Al menos un levantamiento/revisión", 10, bool(revisiones_timeline) or bool(historial_visitas))
+    _cal_add("Observaciones registradas", 4, bool(eq.get("observaciones")))
+    _cal_add("Fecha de garantía conocida", 4, bool(eq.get("fecha_fin_garantia") or eq.get("fecha_instalacion")))
+    _cal_score = min(100, _cal_score)
+    _cal_estado = (
+        "completa" if _cal_score >= 80
+        else "buena" if _cal_score >= 60
+        else "revisar_datos" if _cal_score >= 40
+        else "incompleta"
+    )
+    calidad_ficha = {
+        "score": _cal_score,
+        "estado": _cal_estado,
+        "criterios": _cal_checks,
+        "pendientes": [c["criterio"] for c in _cal_checks if not c["cumple"]],
+    }
+
+    _ft_response = {
         "ok": True,
         "equipo": out_eq,
         "stats": stats,
@@ -49022,6 +49563,8 @@ def mant_maquina_ficha_tecnica_json(mid):
         "fotos_galeria": fotos_galeria,
         "contratos_relacionados": contratos,
         "alertas": alertas,
+        # 2026-05-26 (Daniel — ficha CMMS) — calidad de información
+        "calidad_ficha": calidad_ficha,
         # 2026-05-21 (Daniel) — trazabilidad por equipo
         "ultima_revision": ultima_revision,
         "revisiones_timeline": revisiones_timeline,
@@ -49043,6 +49586,130 @@ def mant_maquina_ficha_tecnica_json(mid):
             for h in historial_visitas[:5]
         ],
         "ficha_url": f"/mantenciones/maquinas/{mid}",
+    }
+    # Guardar en cache (TTL 60s) — siguiente click en ese equipo es instantáneo
+    with _FT_JSON_LOCK:
+        _FT_JSON_CACHE[mid] = (_ft_response, time.time())
+    return jsonify(_ft_response)
+
+
+# ════════════════════════════════════════════════════════════════════════
+# SYNC fotos del levantamiento → galería del equipo (Daniel 2026-05-26)
+# Soluciona el caso histórico donde el INSERT a mant_maquina_fotos pudo
+# fallar silenciosamente (try/except en upload de foto del levantamiento)
+# y dejó las fotos huérfanas en mant_levantamiento_fotos.
+# Anti-duplicado por cloudinary_url. Idempotente.
+# ════════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/maquinas/<int:mid>/sync-fotos-lev", methods=["POST"])
+@_mant_required
+def mant_maquina_sync_fotos_lev(mid):
+    """Copia fotos huérfanas de mant_levantamiento_fotos → mant_maquina_fotos."""
+    eq = mysql_fetchone("SELECT id, cliente_id FROM mant_maquinas WHERE id=%s", (mid,))
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
+
+    # 1) Fotos del levantamiento que apuntan a este equipo
+    huerfanas = mysql_fetchall(
+        """
+        SELECT lf.id, lf.levantamiento_id, lf.cloudinary_url, lf.cloudinary_public_id,
+               lf.tipo_foto, lf.descripcion, lf.tomada_por, lf.tomada_at
+          FROM mant_levantamiento_fotos lf
+         WHERE lf.maquina_id = %s
+           AND lf.cloudinary_url IS NOT NULL
+           AND lf.cloudinary_url <> ''
+           AND NOT EXISTS (
+                 SELECT 1 FROM mant_maquina_fotos mf
+                  WHERE mf.maquina_id = lf.maquina_id
+                    AND mf.cloudinary_url = lf.cloudinary_url
+               )
+        """,
+        (mid,)
+    ) or []
+
+    # 2) Fotos de visitas que apuntan a este equipo (alternativo)
+    huerfanas_vis = mysql_fetchall(
+        """
+        SELECT vf.id, vf.visita_id, vf.cloudinary_url, vf.cloudinary_public_id,
+               vf.tipo_foto, vf.descripcion, vf.subida_por AS tomada_por, vf.created_at AS tomada_at
+          FROM mant_visita_fotos vf
+         WHERE vf.maquina_id = %s
+           AND vf.cloudinary_url IS NOT NULL
+           AND vf.cloudinary_url <> ''
+           AND NOT EXISTS (
+                 SELECT 1 FROM mant_maquina_fotos mf
+                  WHERE mf.maquina_id = vf.maquina_id
+                    AND mf.cloudinary_url = vf.cloudinary_url
+               )
+        """,
+        (mid,)
+    ) or []
+
+    copiadas = 0
+    errores = []
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for f in huerfanas:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO mant_maquina_fotos
+                          (maquina_id, archivo_path, cloudinary_url, cloudinary_public_id,
+                           levantamiento_id, tipo_foto, descripcion, tomada_por, tomada_at)
+                        VALUES (%s, '', %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            mid,
+                            f["cloudinary_url"],
+                            f.get("cloudinary_public_id") or "",
+                            f.get("levantamiento_id"),
+                            (f.get("tipo_foto") or "principal")[:30],
+                            (f.get("descripcion") or "")[:500],
+                            (f.get("tomada_por") or "sync")[:190],
+                            f.get("tomada_at"),
+                        )
+                    )
+                    copiadas += 1
+                except Exception as e_one:
+                    errores.append(f"lev_foto#{f['id']}: {str(e_one)[:120]}")
+            for f in huerfanas_vis:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO mant_maquina_fotos
+                          (maquina_id, archivo_path, cloudinary_url, cloudinary_public_id,
+                           visita_origen, tipo_foto, descripcion, tomada_por, tomada_at)
+                        VALUES (%s, '', %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            mid,
+                            f["cloudinary_url"],
+                            f.get("cloudinary_public_id") or "",
+                            f.get("visita_id"),
+                            (f.get("tipo_foto") or "principal")[:30],
+                            (f.get("descripcion") or "")[:500],
+                            (f.get("tomada_por") or "sync")[:190],
+                            f.get("tomada_at"),
+                        )
+                    )
+                    copiadas += 1
+                except Exception as e_one:
+                    errores.append(f"vis_foto#{f['id']}: {str(e_one)[:120]}")
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({"ok": False, "error": f"Error en sync: {str(e)[:200]}"}), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    return jsonify({
+        "ok": True,
+        "copiadas": copiadas,
+        "candidatas_lev": len(huerfanas),
+        "candidatas_vis": len(huerfanas_vis),
+        "errores": errores[:5],   # primeros 5 errores si hubo
     })
 
 

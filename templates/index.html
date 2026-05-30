@@ -2,7 +2,17 @@
 {% block title %}ILUS - Productos{% endblock %}
 
 {% block content %}
-<div class="mod-hero">
+{# ══════════════════════════════════════════════════════════════════
+   LAYOUT FULL-VIEWPORT (Daniel 2026-05-26):
+   Toda la página de Etiquetas entra en pantalla sin scroll global —
+   solo la tabla scrollea internamente. Estilo Linear / Notion / el
+   dashboard de soporte que Daniel compartió como referencia.
+   Wrapper .eti-fullpage usa flex column con altura = viewport.
+   La tabla recibe .eti-flex-grow (flex:1, min-height:0).
+   En mobile el comportamiento es el habitual (scroll natural).
+═══════════════════════════════════════════════════════════════════ #}
+<div class="eti-fullpage">
+<div class="mod-hero eti-flex-shrink">
   <div>
     <h4><i class="bi bi-boxes me-2"></i>Etiquetas</h4>
     <div class="mod-sub">Catálogo directo desde ERP — MySQL</div>
@@ -19,7 +29,7 @@
   </div>
 </div>
 
-<div class="px-2 px-md-0">
+<div class="px-2 px-md-0 eti-flex-grow d-flex flex-column">
   {# ── Stats: Cobertura fotográfica (vienen de Python, suman TODA la BD) ── #}
   {# total/foto0/foto1/foto2 ahora se calculan en backend para todo el universo #}
   {# de productos, no solo la página visible — así las estadísticas son reales. #}
@@ -221,12 +231,15 @@
 
   {% if products %}
 
-  {# ── Tabla desktop ── #}
-  <div class="ilus-card d-none d-md-block">
-    <div class="ilus-card-header">
+  {# ── Tabla desktop (full-viewport, sticky thead, scroll interno) ── #}
+  <div class="ilus-card d-none d-md-flex ilus-table-fullview eti-table-flex">
+    <div class="ilus-card-header eti-flex-shrink">
       <span><i class="bi bi-table me-2"></i>Productos</span>
+      <span class="text-muted ms-2" style="font-size:.72rem;font-weight:500">
+        Mostrando {{ products|length }} de {{ total }}
+      </span>
     </div>
-    <div class="table-responsive">
+    <div class="table-responsive eti-flex-grow">
       <table class="table ilus-table mb-0" id="productTable">
         <thead>
           <tr>
@@ -312,10 +325,10 @@
         </tbody>
       </table>
     </div>
-    {# ── Paginación SERVER-SIDE (Daniel 2026-05-24) ── #}
-    {# Antes: la lista TRAÍA TODO y JS ocultaba filas (lento al cargar). #}
-    {# Ahora: el backend devuelve solo 100/200/500 por página → carga rápida. #}
-    {% include "_partials/pagination.html" %}
+    {# ── Paginación SERVER-SIDE — siempre visible al fondo del card ── #}
+    <div class="eti-flex-shrink eti-pagination-bar">
+      {% include "_partials/pagination.html" %}
+    </div>
   </div>
 
   {# ── Cards mobile ── #}
@@ -471,6 +484,8 @@
     </div>
   </div>
 </div>
+
+</div>{# /.eti-fullpage #}
 
 {% endblock %}
 
@@ -898,7 +913,7 @@ function quickView(pid) {
         photos = '<div style="background:#111;padding:12px;display:flex;gap:10px;justify-content:center;align-items:center;min-height:180px;border-bottom:2px solid #CC0000">';
         d.photos.forEach(function(url) {
           photos += '<a href="' + url + '" target="_blank" style="display:block;flex:1;max-width:50%">'
-            + '<img src="' + url + '" style="width:100%;height:200px;object-fit:contain;border-radius:6px;cursor:zoom-in">'
+            + '<img src="' + url + '" loading="lazy" decoding="async" style="width:100%;height:200px;object-fit:contain;border-radius:6px;cursor:zoom-in">'
             + '</a>';
         });
         photos += '</div>';

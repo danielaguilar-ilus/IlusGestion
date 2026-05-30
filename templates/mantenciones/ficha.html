@@ -1718,7 +1718,16 @@
         <input type="text" class="eq-search" id="eqBuscar" placeholder="Buscar equipo, código, serie…"
                oninput="eqBuscar(this.value)">
       </div>
-      <div class="ms-auto d-flex gap-2 flex-wrap">
+      <div class="ms-auto d-flex gap-2 flex-wrap align-items-center">
+        {# Toggle "Mostrar dados de baja" — por default ocultos, click para ver papelera #}
+        <label class="d-flex align-items-center gap-1" style="font-size:.78rem;color:#475569;cursor:pointer;user-select:none"
+               title="Mostrar también los equipos dados de baja (papelera)">
+          <input type="checkbox" id="eqMostrarBajas" class="form-check-input" style="margin:0"
+                 onchange="eqAplicarFiltroBajas(this.checked)">
+          <i class="bi bi-archive me-1"></i>Mostrar bajas
+          <span id="eqBajasCount" class="badge"
+                style="background:#e2e8f0;color:#475569;font-size:.62rem;margin-left:3px">0</span>
+        </label>
         {% if not is_tecnico %}
         <button class="btn btn-sm fw-bold" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
                 onclick="abrirGenerarOT()"
@@ -1735,10 +1744,10 @@
       </div>
     </div>
 
-    {# Tabla #}
-    <div class="f-card" style="overflow:hidden">
+    {# Tabla — full-viewport: solo la tabla scrollea, sticky thead #}
+    <div class="f-card mant-eq-fullview" style="overflow:hidden">
       {% if maquinas %}
-      <div style="overflow-x:auto">
+      <div class="mant-eq-scroll" style="overflow:auto">
         <table class="eq-table" id="eqTabla">
           <thead>
             <tr>
@@ -1792,6 +1801,7 @@
           <tbody id="maqListado">
           {% for m in maquinas %}
           {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
+          {% set _es_baja = ((m.estado or 'activo') == 'baja') %}
           <tr id="maq-{{ m.id }}"
               data-maquina-id="{{ m.id }}"
               data-estado="{{ m.estado or 'activo' }}"
@@ -1799,7 +1809,8 @@
               data-sku="{{ m.sku or '' }}"
               data-serie="{{ m.serie or '' }}"
               data-cantidad="{{ m.cantidad or 1 }}"
-              data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}">
+              data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}"
+              {% if _es_baja %}style="display:none;opacity:.55;background:#f8f8f8" class="eq-row-baja"{% endif %}>
             <td style="text-align:center;vertical-align:middle">
               <input type="checkbox" class="form-check-input eq-row-chk"
                      data-id="{{ m.id }}"
@@ -2086,6 +2097,97 @@
           </div>
           <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
         </div>
+        {% if permissions.superadmin %}
+        <div class="eq-accion-item" onclick="bajaMasivaEquipos({{ cliente.id }})"
+             style="border-top:1px solid #fee2e2;margin-top:4px;padding-top:10px">
+          <div class="eq-accion-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-trash3-fill"></i></div>
+          <div>
+            <div class="eq-accion-title" style="color:#dc2626">Dar de baja todos los equipos</div>
+            <div class="eq-accion-sub">Solo superadmin · Requiere confirmación</div>
+          </div>
+          <i class="bi bi-arrow-right ms-auto" style="color:#dc2626;font-size:.8rem"></i>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Resumen IA del contrato vigente ── (2026-05-26: aprovecha datos
+       ya analizados, cero costo IA, visible en 2 segundos para el operador) #}
+    {% set _ct_ia = (contratos|selectattr('estado','equalto','vigente')|list|first
+                     if contratos else none) %}
+    {% if not _ct_ia and contratos %}
+      {% set _ct_ia = contratos|selectattr('estado','equalto','indefinido')|list|first %}
+    {% endif %}
+    {% if not _ct_ia and contratos %}
+      {% set _ct_ia = contratos|first %}
+    {% endif %}
+    {% if _ct_ia and (_ct_ia.ai_resumen or _ct_ia.ai_alertas) %}
+    {% set _ia_score = _ct_ia.ai_score or 0 %}
+    {% set _ia_color = '#16a34a' if _ia_score >= 70 else '#f59e0b' if _ia_score >= 40 else '#dc2626' %}
+    {% set _ia_bg    = '#f0fdf4' if _ia_score >= 70 else '#fffbeb' if _ia_score >= 40 else '#fef2f2' %}
+    {% set _ia_border= '#bbf7d0' if _ia_score >= 70 else '#fde68a' if _ia_score >= 40 else '#fecaca' %}
+    <div class="f-card" style="border-left:3px solid {{ _ia_color }}">
+      <div class="f-card-header" style="background:{{ _ia_bg }};border-bottom-color:{{ _ia_border }}">
+        <span class="f-card-title" style="color:{{ _ia_color }}">
+          <i class="bi bi-stars me-1"></i>Resumen IA del contrato
+        </span>
+        {% if _ia_score %}
+        <span class="badge ms-auto" style="background:{{ _ia_color }};color:#fff;font-size:.65rem">
+          Score {{ _ia_score }}/100
+        </span>
+        {% endif %}
+      </div>
+      <div class="f-card-body" style="padding:12px 16px">
+        {% if _ct_ia.ai_resumen %}
+        <p style="font-size:.8rem;color:#374151;margin:0 0 10px;line-height:1.55">
+          {{ _ct_ia.ai_resumen | truncate(280, True, '…') }}
+        </p>
+        {% endif %}
+        {% if _ct_ia.ai_alertas %}
+          {% set _alertas = _ct_ia.ai_alertas|from_json if _ct_ia.ai_alertas is string else _ct_ia.ai_alertas %}
+          {% if _alertas and _alertas is iterable %}
+          <div style="font-size:.75rem;color:#6b7280">
+            <div style="font-weight:600;color:#374151;margin-bottom:4px">
+              <i class="bi bi-exclamation-triangle-fill me-1" style="color:{{ _ia_color }}"></i>Alertas:
+            </div>
+            <ul style="margin:0;padding-left:18px;line-height:1.5">
+              {% for alerta in _alertas[:3] %}
+              <li>{{ (alerta.mensaje if alerta is mapping else alerta) | truncate(120, True, '…') }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        {% endif %}
+        <div style="margin-top:10px;text-align:right">
+          <button class="btn btn-xs btn-link" style="font-size:.7rem;color:{{ _ia_color }};text-decoration:none"
+                  onclick="switchTab('contrato');setTimeout(()=>{const el=document.getElementById('ct-{{ _ct_ia.id }}');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});},150)">
+            Ver contrato completo <i class="bi bi-arrow-right ms-1"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+    {% elif _ct_ia and not _ct_ia.ai_resumen %}
+    {# Contrato existe pero NO analizado por IA — CTA para analizar #}
+    <div class="f-card" style="border-left:3px solid #94a3b8">
+      <div class="f-card-header" style="background:#f8fafc;border-bottom-color:#e2e8f0">
+        <span class="f-card-title" style="color:#475569">
+          <i class="bi bi-stars me-1"></i>Resumen IA del contrato
+        </span>
+        <span class="badge ms-auto" style="background:#cbd5e1;color:#475569;font-size:.65rem">
+          Pendiente
+        </span>
+      </div>
+      <div class="f-card-body" style="padding:12px 16px;text-align:center">
+        <p style="font-size:.78rem;color:#64748b;margin:0 0 8px">
+          El contrato aún no fue analizado. La IA puede extraer cláusulas, alertas y score de calidad.
+        </p>
+        {% if not is_tecnico %}
+        <button class="btn btn-sm btn-outline-secondary" style="font-size:.75rem"
+                onclick="analizarContrato({{ _ct_ia.id }}, this)">
+          <i class="bi bi-stars me-1"></i>Analizar con IA
+        </button>
+        {% endif %}
       </div>
     </div>
     {% endif %}
@@ -2193,6 +2295,77 @@ function eqUpdateBarra() {
   if (master) {
     master.checked = (n > 0 && n === total);
     master.indeterminate = (n > 0 && n < total);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FILTRO "MOSTRAR BAJAS" + BAJA MASIVA SELECTIVA (Daniel 2026-05-26)
+// ════════════════════════════════════════════════════════════════════
+function eqAplicarFiltroBajas(mostrar) {
+  document.querySelectorAll('tr.eq-row-baja').forEach(tr => {
+    tr.style.display = mostrar ? '' : 'none';
+  });
+}
+
+// Cuenta automática de bajas al cargar (para badge)
+(function _eqContarBajas(){
+  document.addEventListener('DOMContentLoaded', () => {
+    const n = document.querySelectorAll('tr.eq-row-baja').length;
+    const el = document.getElementById('eqBajasCount');
+    if (el) el.textContent = n;
+  });
+})();
+
+async function bajaMasivaSeleccionados() {
+  const seleccionados = Array.from(document.querySelectorAll('.eq-row-chk:checked'));
+  const ids = seleccionados.map(c => parseInt(c.dataset.id));
+  if (!ids.length) {
+    ilusToast('Selecciona al menos un equipo', { type: 'warning' });
+    return;
+  }
+  // Mostrar listado breve en confirmación
+  const nombres = seleccionados.slice(0, 5).map(c => '• ' + c.dataset.nombre).join('\n');
+  const sufijo = seleccionados.length > 5 ? `\n...y ${seleccionados.length - 5} más` : '';
+  const confirmText = await ilusPrompt({
+    title: `Dar de baja ${ids.length} equipo(s)`,
+    message: 'Los equipos seleccionados quedarán marcados como <strong>BAJA</strong> (papelera, no se eliminan).',
+    sub: nombres + sufijo + '\n\nEscribe <strong>BAJA</strong> para confirmar.',
+    subHtml: true,
+    placeholder: 'BAJA',
+    okLabel: 'Dar de baja',
+    cancelLabel: 'Cancelar',
+  });
+  if (!confirmText) return;
+  if (confirmText.trim().toUpperCase() !== 'BAJA') {
+    await ilusAlert({
+      title: 'Confirmación incorrecta',
+      message: 'Debes escribir exactamente <strong>BAJA</strong> para confirmar.',
+      subHtml: true,
+      type: 'warning',
+    });
+    return;
+  }
+  ilusToast('Procesando baja…', { type: 'info' });
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/equipos/baja-seleccion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await ilusAlert({
+        title: 'Baja completada',
+        message: `Se dieron de baja <strong>${d.n}</strong> equipo(s). La página se recargará.`,
+        subHtml: true,
+        type: 'success',
+      });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'Error', message: d.error || 'No se pudo completar la baja.', type: 'error' });
+    }
+  } catch (e) {
+    await ilusAlert({ title: 'Error de red', message: 'No se pudo conectar con el servidor.', type: 'error' });
   }
 }
 
@@ -2628,12 +2801,19 @@ async function confirmarVisitaMulti() {
                             color:#fff;padding:14px 22px;border-radius:50px;
                             box-shadow:0 8px 32px rgba(0,0,0,.35);
                             border:2px solid var(--ilus-red);
-                            align-items:center;gap:14px;font-weight:600;font-size:.92rem">
+                            align-items:center;gap:14px;font-weight:600;font-size:.92rem;
+                            flex-wrap:wrap;max-width:95vw">
   <i class="bi bi-check2-square" style="color:var(--ilus-red);font-size:1.3rem"></i>
   <span><strong id="eqBarraCount">0</strong> equipo(s) seleccionado(s)</span>
   <button class="btn btn-ilus fw-bold px-4" onclick="abrirVisitaMulti()" style="border-radius:50px">
     <i class="bi bi-calendar-plus me-1"></i>Agendar visita
   </button>
+  {% if permissions and permissions.superadmin %}
+  <button class="btn btn-warning fw-bold px-4" onclick="bajaMasivaSeleccionados()"
+          style="border-radius:50px" title="Dar de baja los equipos seleccionados (solo superadmin)">
+    <i class="bi bi-archive me-1"></i>Dar de baja
+  </button>
+  {% endif %}
   <button class="btn btn-sm btn-link text-white-50" onclick="eqToggleAll(false)" title="Limpiar selección">
     <i class="bi bi-x-lg"></i>
   </button>
@@ -2740,7 +2920,7 @@ async function confirmarVisitaMulti() {
                hace fallback automático a esos adjuntos. #}
             {% if ct.archivo_path or ct.cloudinary_url or ct.tiene_adjunto_visible %}
             <button class="btn btn-sm btn-outline-primary"
-                    onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo }}', {{ 'true' if ct.cloudinary_url else 'false' }})"
+                    onclick="verContrato({{ ct.id }}, '{{ ct.nombre|e }}', '{{ ct.archivo_tipo or '' }}', {{ 'true' if (ct.cloudinary_url or ct.tiene_adjunto_visible) else 'false' }})"
                     title="Ver el contrato en el navegador">
               <i class="bi bi-eye me-1"></i>Ver PDF
             </button>
@@ -4485,15 +4665,15 @@ function docRender(arr) {
                  title="Este contrato no tiene archivo. Ir al tab Contratos para subirlo.">
            <i class="bi bi-arrow-up-right-square"></i> Subir archivo
          </button>`
+      // SEGURIDAD 2026-05-26: botones Descargar / Eliminar SOLO si superadmin.
+      // El visor pasa por el endpoint que valida server-side los permisos.
       : `<button type="button" class="btn btn-xs btn-outline-primary"
-                 onclick='docPreview(${JSON.stringify(d).replace(/'/g,"&#39;")})'
-                 title="Previsualizar dentro del sistema">
+                 onclick='docVisor(${JSON.stringify(d).replace(/'/g,"&#39;")})'
+                 title="Ver dentro del sistema">
            <i class="bi bi-eye"></i>
          </button>
-         <a href="${d.url}" download class="btn btn-xs btn-outline-secondary" title="Descargar">
-           <i class="bi bi-download"></i>
-         </a>
-         ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')" title="Eliminar"><i class="bi bi-trash"></i></button>` : ''}`;
+         ${d.downloadable ? `<a href="${d.url}?download=1" download class="btn btn-xs btn-outline-secondary" title="Descargar (solo superadmin)"><i class="bi bi-download"></i></a>` : ''}
+         ${d.deletable ? `<button class="btn btn-xs btn-outline-danger" onclick="docEliminar('${d.kind}','${d.id}')" title="Eliminar (solo superadmin)"><i class="bi bi-trash"></i></button>` : ''}`;
     return `
     <div class="doc-card">
       <div class="doc-icon doc-tipo-${d.tipo||'otro'}">
@@ -4630,6 +4810,41 @@ function _docPrevFallback(item, msg){
       <i class="bi bi-download me-1"></i>Descargar archivo
     </a>
   </div>`;
+}
+
+// NUEVO 2026-05-26: el visor unificado para CUALQUIER documento del cliente.
+// Usa el mismo UniversalDocumentViewer del tab Contratos para que TODO se vea
+// igual y con la misma robustez (proxy inline, PDF.js fallback, mensajes
+// claros, "Este contrato debe re-subirse" cuando corresponda).
+function docVisor(item){
+  if (!item || !item.url){
+    if (typeof ilusToast === 'function') ilusToast('Documento sin archivo', { type:'warning' });
+    return;
+  }
+  // El backend ya nos dio archivo_tipo + mime_type + has_cloud
+  const tipoHint = item.archivo_tipo || _udvTipoDesdeMime(item.mime_type || '') || '';
+  // Solo contratos principales pueden re-subirse desde el visor; los adjuntos
+  // se re-suben desde su propio flujo (Subir documento).
+  const esContrato = (item.kind === 'contrato_principal');
+  verArchivoUDV({
+    baseUrl:       item.url,
+    ctid:          esContrato ? item.id : null,
+    nombre:        item.nombre || 'Documento',
+    tipo:          tipoHint,
+    hasCloud:      !!item.has_cloud,
+    allowDownload: !!item.downloadable,
+    allowResubir:  esContrato,
+  });
+}
+// Helper: detecta tipo desde el mime type (fallback cuando no hay archivo_tipo)
+function _udvTipoDesdeMime(mime){
+  const m = (mime||'').toLowerCase();
+  if (m.includes('pdf')) return 'pdf';
+  if (m.startsWith('image/')) return 'imagen';
+  if (m.includes('msword') || m.includes('wordprocessing')) return 'docx';
+  if (m.includes('spreadsheet') || m.includes('excel')) return 'xlsx';
+  if (m.includes('presentation') || m.includes('powerpoint')) return 'pptx';
+  return '';
 }
 
 async function docPreview(item){
@@ -4893,7 +5108,7 @@ function renderEvidencias() {
   const ico = { ot:'bi-clipboard2-pulse', levantamiento:'bi-camera-fill', galeria:'bi-images' };
   cont.innerHTML = fotos.map((f, idx) => `
     <div class="ev-card" onclick="abrirEvLightbox(${idx})">
-      <img class="ev-img" src="${_evEsc(cloudTx(f.url, 'card'))}" alt="${_evEsc(f.descripcion||'')}"
+      <img class="ev-img" src="${_evEsc(cloudTx(f.url, 'card'))}" alt="${_evEsc(f.descripcion||'')}" loading="lazy" decoding="async"
            loading="lazy" decoding="async" onerror="this.style.display='none'">
       <div class="ev-meta">
         <div class="tt" title="${_evEsc(f.maquina_nombre||f.descripcion||'')}">
@@ -6795,15 +7010,21 @@ async function vhGuardar(){
 }
 </script>
 
-{# ── Modal: Ver contrato (PDF viewer) ── #}
-<div class="modal fade" id="modalVerContrato" tabindex="-1">
+{# ── Modal: UniversalDocumentViewer (visor universal de contratos) ──
+   REESCRITO 2026-05-26 (Daniel — iframe en blanco): visor robusto con
+   cadena de fallback iframe→object→PDF.js→imagen→metadata, loading state
+   real, detección de iframe en blanco (timeout 6s) y mensajes elegantes.
+   Inspirado en Google Drive / Dropbox / DocuSign.
+#}
+<div class="modal fade" id="modalVerContrato" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
-    <div class="modal-content" style="height:90vh">
-      <div class="modal-header py-2" style="background:#1a1a2e">
-        <h6 class="modal-title text-white mb-0" id="modalVerContratoTitulo">
+    <div class="modal-content" style="height:90vh;border:none;border-radius:14px;overflow:hidden">
+      <div class="modal-header py-2 px-3" style="background:linear-gradient(135deg,#0a0a0a,#1a1a2e);border-bottom:1px solid #2a2a4a">
+        <h6 class="modal-title text-white mb-0 d-flex align-items-center" id="modalVerContratoTitulo" style="font-size:.92rem">
           <i class="bi bi-file-earmark-text me-2"></i>Contrato
         </h6>
         <div class="d-flex align-items-center gap-2 ms-auto">
+          <span id="udvStatusBadge" class="badge" style="display:none;background:#16a34a;font-weight:500;font-size:.7rem"></span>
           <a id="btnAbrirContratoNueva" class="btn btn-sm btn-outline-light"
              href="#" target="_blank" rel="noopener" title="Abrir en pestaña nueva">
             <i class="bi bi-box-arrow-up-right"></i>
@@ -6812,22 +7033,70 @@ async function vhGuardar(){
              href="#" target="_blank" download>
             <i class="bi bi-download me-1"></i>Descargar
           </a>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
       </div>
-      <div class="modal-body p-0" style="flex:1;overflow:hidden;background:#1a1a2e">
-        <iframe id="contratoFrame" src="" style="width:100%;height:100%;border:none;background:#fff"
-                title="Visor de contrato"></iframe>
+      <div class="modal-body p-0" style="flex:1;overflow:hidden;background:#1a1a2e;position:relative">
+
+        {# Stage 1: Loading state real (spinner + mensaje del paso actual) #}
+        <div id="udvLoading" class="d-flex flex-column align-items-center justify-content-center h-100 text-light gap-3 p-4 text-center" style="background:#1a1a2e">
+          <div class="spinner-border" role="status" style="width:3rem;height:3rem;color:#dc2626"></div>
+          <div class="fw-semibold" style="font-size:1rem">Cargando contrato…</div>
+          <div id="udvLoadingStep" style="font-size:.8rem;opacity:.7;max-width:480px">Conectando con el servidor</div>
+        </div>
+
+        {# Stage 2: Iframe nativo (PDF/imagen servida con Content-Type correcto) #}
+        <iframe id="contratoFrame" style="display:none;width:100%;height:100%;border:none;background:#fff"
+                title="Visor de contrato" allow="fullscreen"></iframe>
+
+        {# Stage 3: PDF.js canvas (fallback cuando iframe falla) #}
+        <div id="udvPdfjsContainer" style="display:none;width:100%;height:100%;overflow:auto;background:#525659;padding:16px 0">
+          <div id="udvPdfjsToolbar" style="position:sticky;top:0;z-index:10;background:rgba(26,26,46,.95);backdrop-filter:blur(8px);padding:8px 14px;display:flex;align-items:center;gap:10px;color:#fff;font-size:.78rem;border-radius:6px;margin:0 14px 12px">
+            <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsPrev()" id="udvBtnPrev"><i class="bi bi-chevron-left"></i></button>
+            <span id="udvPdfjsPageInfo" style="min-width:80px;text-align:center">— / —</span>
+            <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsNext()" id="udvBtnNext"><i class="bi bi-chevron-right"></i></button>
+            <div class="ms-auto d-flex align-items-center gap-2">
+              <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsZoomOut()"><i class="bi bi-zoom-out"></i></button>
+              <span id="udvPdfjsZoom" style="min-width:48px;text-align:center">100%</span>
+              <button class="btn btn-sm btn-outline-light" onclick="udvPdfjsZoomIn()"><i class="bi bi-zoom-in"></i></button>
+              <span class="badge ms-2" style="background:#16a34a;font-size:.65rem">PDF.js</span>
+            </div>
+          </div>
+          <canvas id="udvPdfjsCanvas" style="display:block;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,.5);background:#fff"></canvas>
+        </div>
+
+        {# Stage 4: Imagen renderer dedicado #}
+        <div id="udvImageContainer" style="display:none;width:100%;height:100%;overflow:auto;background:#000;display:flex;align-items:center;justify-content:center">
+          <img id="udvImage" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain"/>
+        </div>
+
+        {# Stage 5: Fallback elegante con metadata + descarga (estilo Notion/Dropbox) #}
         <div id="contratoNoViewer" style="display:none" class="d-flex flex-column align-items-center justify-content-center h-100 text-light gap-3 p-4 text-center">
-          <i id="contratoNoViewerIcon" class="bi bi-file-earmark-word" style="font-size:3rem;color:#3b82f6"></i>
-          <div class="fw-semibold" id="contratoNoViewerTitulo">Archivo no previsualizable</div>
-          <div style="font-size:.85rem;max-width:480px;opacity:.85" id="contratoNoViewerMsg">—</div>
-          <a id="btnDescWord" href="#" class="btn btn-light fw-bold" download style="display:none">
-            <i class="bi bi-download me-1"></i>Descargar contrato
-          </a>
-          <a id="btnAbrirNuevaFallback" href="#" target="_blank" rel="noopener" class="btn btn-outline-light">
-            <i class="bi bi-box-arrow-up-right me-1"></i>Abrir en pestaña nueva
-          </a>
+          <div style="background:rgba(255,255,255,.05);border-radius:14px;padding:32px;max-width:520px;border:1px solid rgba(255,255,255,.1)">
+            <i id="contratoNoViewerIcon" class="bi bi-file-earmark-word" style="font-size:3.5rem;color:#3b82f6"></i>
+            <div class="fw-bold mt-3" style="font-size:1.05rem" id="contratoNoViewerTitulo">Archivo no previsualizable</div>
+            <div style="font-size:.85rem;max-width:440px;opacity:.85;margin:10px auto 0" id="contratoNoViewerMsg">—</div>
+            <div id="udvMetadata" style="display:none;margin-top:16px;padding:12px;background:rgba(0,0,0,.25);border-radius:8px;font-size:.78rem;text-align:left;font-family:'SF Mono',Consolas,monospace;opacity:.8">
+              <div id="udvMetaContent"></div>
+            </div>
+            <div class="d-flex gap-2 justify-content-center mt-3 flex-wrap">
+              {% if permissions.superadmin %}
+              <button id="btnUDVResubir" class="btn btn-warning fw-bold" onclick="udvResubirActual()" style="display:none">
+                <i class="bi bi-cloud-upload me-1"></i>Re-subir este contrato
+              </button>
+              {% endif %}
+              <a id="btnDescWord" href="#" class="btn btn-light fw-bold" download style="display:none">
+                <i class="bi bi-download me-1"></i>Descargar
+              </a>
+              <a id="btnAbrirNuevaFallback" href="#" target="_blank" rel="noopener" class="btn btn-outline-light">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Abrir en pestaña nueva
+              </a>
+              <button id="btnReintentarUDV" class="btn btn-outline-warning" onclick="udvReintentar()" style="display:none">
+                <i class="bi bi-arrow-clockwise me-1"></i>Reintentar
+              </button>
+            </div>
+            <div id="udvErrorTech" style="display:none;margin-top:14px;padding:8px 12px;background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.3);border-radius:6px;font-size:.7rem;color:#fca5a5;font-family:monospace;text-align:left;max-height:120px;overflow:auto"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -6850,7 +7119,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6">
             <label class="form-label fw-semibold">RUT</label>
-            <input type="text" id="ec_rut" class="form-control font-monospace" value="{{ cliente.rut or '' }}">
+            <input type="text" id="ec_rut" class="form-control font-monospace"
+                   value="{{ (cliente.rut | rut_fmt) if cliente.rut else '' }}"
+                   placeholder="77.753.941-8" maxlength="12" autocomplete="off">
           </div>
           <div class="col-6 col-sm-3">
             <label class="form-label fw-semibold">Estado</label>
@@ -6889,7 +7160,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6 col-sm-3">
             <label class="form-label fw-semibold">Tel. empresa</label>
-            <input type="text" id="ec_tel_empresa" class="form-control" value="{{ cliente.tel_empresa or '' }}" placeholder="+56 2 ...">
+            <input type="text" id="ec_tel_empresa" class="form-control ec-tel"
+                   value="{{ (cliente.tel_empresa | tel_chile_fmt) if cliente.tel_empresa else '' }}"
+                   placeholder="+56 2 2345 6789" inputmode="tel" autocomplete="off">
           </div>
 
           {# ── Ubicación ── #}
@@ -6898,7 +7171,19 @@ async function vhGuardar(){
           </div></div>
           <div class="col-12">
             <label class="form-label fw-semibold">Dirección</label>
-            <input type="text" id="ec_direccion" class="form-control" value="{{ cliente.direccion or '' }}">
+            <input type="text" id="ec_direccion" class="form-control"
+                   value="{{ cliente.direccion or '' }}"
+                   placeholder="Empieza a escribir y elige una sugerencia…" autocomplete="off">
+            <input type="hidden" id="ec_direccion_lat"      value="{{ cliente.get('direccion_lat') or '' }}">
+            <input type="hidden" id="ec_direccion_lng"      value="{{ cliente.get('direccion_lng') or '' }}">
+            <input type="hidden" id="ec_direccion_place_id" value="{{ cliente.get('direccion_place_id') or '' }}">
+            <small id="ec_direccion_hint" class="d-block mt-1" style="font-size:.74rem; color:#6b7280">
+              {% if cliente.get('direccion_place_id') %}
+              <i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada — comuna, ciudad y región se completan al elegir otra del menú.
+              {% else %}
+              <i class="bi bi-geo-alt me-1"></i>Escribe la dirección y selecciona del menú: comuna, ciudad y región se completan solas.
+              {% endif %}
+            </small>
           </div>
           <div class="col-4">
             <label class="form-label fw-semibold">Región</label>
@@ -6927,7 +7212,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6 col-sm-2">
             <label class="form-label fw-semibold">Teléfono</label>
-            <input type="text" id="ec_contacto_tel" class="form-control" value="{{ cliente.contacto_tel or '' }}">
+            <input type="text" id="ec_contacto_tel" class="form-control ec-tel"
+                   value="{{ (cliente.contacto_tel | tel_chile_fmt) if cliente.contacto_tel else '' }}"
+                   placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
           </div>
           <div class="col-12 col-sm-2">
             <label class="form-label fw-semibold">Email</label>
@@ -6949,7 +7236,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6 col-sm-2">
             <label class="form-label fw-semibold">Teléfono</label>
-            <input type="text" id="ec_contacto2_tel" class="form-control" value="{{ cliente.contacto2_tel or '' }}">
+            <input type="text" id="ec_contacto2_tel" class="form-control ec-tel"
+                   value="{{ (cliente.contacto2_tel | tel_chile_fmt) if cliente.contacto2_tel else '' }}"
+                   placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
           </div>
           <div class="col-12 col-sm-2">
             <label class="form-label fw-semibold">Email</label>
@@ -7260,28 +7549,231 @@ async function vhGuardar(){
           <span class="spinner-border spinner-border-sm me-2"></span>Cargando ficha…
         </div>
         <div id="ft_content" style="display:none">
-          {# Header con foto + datos clave #}
-          <div class="ft-header" style="padding:18px 22px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
-            <div id="ft_foto_principal" style="width:120px;height:120px;border-radius:12px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;border:2px solid #e5e7eb">
-              <i class="bi bi-image" style="font-size:2rem;color:#9ca3af"></i>
+          {# ═══ HEADER PRO (Daniel 2026-05-27 mockup) ═══
+             Foto grande izq + datos en grid 2x3 derecha + botones acción
+             arriba a la derecha. Diseño limpio tipo SaaS. #}
+          <style>
+            .ft-hero-pro {
+              padding:22px 26px;background:#fff;border-bottom:1px solid #e5e7eb;
+              display:grid;grid-template-columns:auto 1fr auto;gap:24px;
+              align-items:start;
+            }
+            .ft-photo-big {
+              width:280px;height:240px;border-radius:14px;background:#f1f5f9;
+              display:flex;align-items:center;justify-content:center;
+              overflow:hidden;border:2px solid #e5e7eb;position:relative;
+            }
+            .ft-photo-big.has-foto { cursor:zoom-in;border-color:#dc2626; }
+            .ft-photo-big img { width:100%;height:100%;object-fit:cover; }
+            .ft-photo-placeholder-inner {
+              text-align:center;padding:18px;
+            }
+            .ft-eq-title {
+              font-size:1.4rem;font-weight:700;color:#0f172a;line-height:1.2;
+              margin-bottom:2px;
+            }
+            .ft-eq-sku { font-size:.86rem;color:#64748b;font-weight:500;margin-bottom:14px; }
+            .ft-data-grid {
+              display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+              gap:14px 18px;
+            }
+            .ft-data-block { display:flex;flex-direction:column;gap:4px; }
+            .ft-data-label {
+              font-size:.66rem;color:#94a3b8;font-weight:700;text-transform:uppercase;
+              letter-spacing:.4px;display:flex;align-items:center;gap:5px;
+            }
+            .ft-data-value {
+              font-size:.92rem;color:#0f172a;font-weight:600;
+              display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+            }
+            .ft-data-value .estado-pill {
+              background:#dcfce7;color:#166534;font-size:.75rem;padding:3px 10px;
+              border-radius:20px;font-weight:700;display:inline-flex;align-items:center;gap:4px;
+            }
+            .ft-data-value .estado-pill::before {
+              content:'';width:7px;height:7px;background:#16a34a;border-radius:50%;display:inline-block;
+            }
+            .ft-data-value .estado-pill.baja { background:#fee2e2;color:#991b1b; }
+            .ft-data-value .estado-pill.baja::before { background:#dc2626; }
+            .ft-actions-pro { display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end; }
+            .ft-chips-row {
+              padding:14px 26px 0;display:flex;gap:8px;flex-wrap:wrap;
+            }
+            .ft-chip-pro {
+              font-size:.74rem;font-weight:600;padding:6px 12px;border-radius:20px;
+              display:inline-flex;align-items:center;gap:5px;
+              border:1px solid transparent;
+            }
+            .ft-chip-pro.green { background:#f0fdf4;color:#15803d;border-color:#bbf7d0; }
+            .ft-chip-pro.blue  { background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe; }
+            .ft-chip-pro.amber { background:#fffbeb;color:#92400e;border-color:#fde68a; }
+            .ft-chip-pro.red   { background:#fef2f2;color:#991b1b;border-color:#fecaca; }
+            @media (max-width: 900px) {
+              .ft-hero-pro { grid-template-columns: 1fr; }
+              .ft-photo-big { width:100%;height:220px; }
+              .ft-actions-pro { justify-content:flex-start; }
+            }
+          </style>
+
+          <div class="ft-hero-pro">
+            {# Foto grande izq #}
+            <div id="ft_foto_principal" class="ft-photo-big"
+                 onclick="if(this.dataset.fullUrl)window.open(this.dataset.fullUrl,'_blank')">
+              <div class="ft-photo-placeholder-inner">
+                <i class="bi bi-camera" style="font-size:3rem;color:#cbd5e1"></i>
+                <div style="font-size:.76rem;color:#94a3b8;margin-top:10px;font-weight:700">SIN FOTO PRINCIPAL</div>
+                <div style="font-size:.66rem;color:#cbd5e1;margin-top:3px">La foto se genera del último levantamiento</div>
+              </div>
             </div>
-            <div style="flex:1;min-width:240px">
-              <div style="font-size:1.1rem;font-weight:700;color:#0f172a" id="ft_eq_titulo">—</div>
-              <div class="text-muted small mb-2" id="ft_eq_subtitulo">—</div>
-              <div class="d-flex gap-2 flex-wrap" id="ft_eq_chips"></div>
+
+            {# Datos derecha en grid #}
+            <div>
+              <div class="ft-eq-title" id="ft_eq_titulo">—</div>
+              <div class="ft-eq-sku" id="ft_eq_subtitulo">—</div>
+              <div class="ft-data-grid" id="ft_data_grid">
+                {# Llenado por JS — bloques: Serie, Estado, Cliente/Contrato,
+                   Inicio contrato, Ubicación, Categoría, Marca/Modelo, Última visita #}
+              </div>
             </div>
-            <div style="display:flex;gap:6px;flex-shrink:0">
-              <button class="btn btn-sm btn-outline-secondary" id="ft_btn_editar" onclick="ftAbrirEditar()" title="Editar campos del equipo">
+
+            {# Botones acción arriba derecha #}
+            <div class="ft-actions-pro">
+              <button class="btn btn-sm btn-outline-secondary" id="ft_btn_editar" onclick="ftAbrirEditar()" title="Editar datos administrativos">
                 <i class="bi bi-pencil-square me-1"></i>Editar
               </button>
-              <a class="btn btn-sm btn-ilus" id="ft_btn_ficha_full" href="#" target="_blank" title="Abrir ficha completa">
-                <i class="bi bi-box-arrow-up-right"></i>
+              <a class="btn btn-sm btn-outline-secondary" id="ft_btn_ficha_full" href="#" target="_blank" title="Abrir ficha completa en nueva pestaña">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Abrir ficha completa
               </a>
+              <button class="btn btn-sm" id="ft_btn_pdf" onclick="ftDescargarPDF()" title="Descargar ficha técnica en PDF"
+                      style="background:#dc2626;color:#fff;font-weight:600;border:0">
+                <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
+              </button>
             </div>
           </div>
 
+          {# Chips bajo el header #}
+          <div class="ft-chips-row" id="ft_eq_chips"></div>
+
           {# Alertas dinámicas #}
           <div id="ft_alertas" style="padding:0 22px;margin-top:14px"></div>
+
+          {# ── CALIDAD DE FICHA (Daniel 2026-05-26 — CMMS pro) ──
+             Score 0-100 calculado en backend con 12 criterios objetivos.
+             Muestra barra visual con color + estado + criterios pendientes. #}
+          <div id="ft_calidad_card" style="display:none;padding:8px 22px 0">
+            <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+                        padding:14px 16px;display:flex;gap:16px;align-items:center;
+                        flex-wrap:wrap">
+              <div style="flex:1;min-width:240px">
+                <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                  <span style="font-size:.7rem;font-weight:700;color:#475569;
+                               text-transform:uppercase;letter-spacing:.5px">
+                    <i class="bi bi-clipboard-check me-1"></i>Calidad de la ficha
+                  </span>
+                  <span id="ft_cal_estado_badge"></span>
+                </div>
+                {# Barra de progreso con color dinámico #}
+                <div style="background:#f1f5f9;height:10px;border-radius:6px;overflow:hidden;margin-top:6px">
+                  <div id="ft_cal_bar" style="height:100%;width:0%;transition:width .4s;background:#16a34a"></div>
+                </div>
+                <div style="font-size:.7rem;color:#64748b;margin-top:4px"
+                     id="ft_cal_pendientes">—</div>
+              </div>
+              <div style="text-align:center;min-width:88px">
+                <div id="ft_cal_score" style="font-size:2rem;font-weight:800;line-height:1;color:#16a34a">—</div>
+                <div style="font-size:.62rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.4px">/100</div>
+              </div>
+            </div>
+          </div>
+
+          {# ── CARD LEVANTAMIENTO (DEPRECADA 2026-05-27: ahora va integrado
+             en el header de arriba con ft_lev_info_inline. Se mantiene
+             oculta para no romper referencias JS, pero NUNCA se muestra). #}
+          <div id="ft_levantamiento_card" style="display:none !important;padding:8px 22px 0">
+            <style>
+              .ft-lev-hero {
+                background:linear-gradient(135deg,#ffffff 0%,#fafbff 100%);
+                border:1px solid #e5e7eb;border-left:5px solid #dc2626;
+                border-radius:14px;padding:18px;display:flex;gap:20px;
+                align-items:stretch;flex-wrap:wrap;
+                box-shadow:0 2px 8px rgba(0,0,0,.04);
+              }
+              .ft-lev-foto-wrap {
+                width:220px;min-height:220px;border-radius:12px;background:#f8fafc;
+                display:flex;align-items:center;justify-content:center;
+                overflow:hidden;flex-shrink:0;border:2px solid #e5e7eb;
+                position:relative;
+              }
+              .ft-lev-foto-wrap.has-foto { cursor:zoom-in; border-color:#16a34a; }
+              .ft-lev-foto-wrap img { width:100%;height:100%;object-fit:cover; }
+              .ft-lev-foto-placeholder {
+                display:flex;flex-direction:column;align-items:center;
+                justify-content:center;text-align:center;padding:14px;
+              }
+              .ft-lev-body { flex:1;min-width:260px;display:flex;flex-direction:column;gap:10px; }
+              .ft-lev-badge-tipo {
+                background:#dc2626;color:#fff;font-size:.7rem;padding:4px 10px;
+                font-weight:700;letter-spacing:.3px;
+              }
+              .ft-lev-danos {
+                background:#fef2f2;border:1px solid #fecaca;border-radius:8px;
+                padding:8px 12px;font-size:.82rem;color:#991b1b;
+                display:flex;align-items:center;gap:8px;
+              }
+              .ft-lev-danos i { color:#dc2626;font-size:1rem; }
+              .ft-lev-section {
+                background:#f8fafc;border-radius:8px;padding:10px 12px;
+                border-left:3px solid #e5e7eb;
+              }
+              .ft-lev-section-label {
+                font-size:.65rem;color:#94a3b8;font-weight:700;text-transform:uppercase;
+                letter-spacing:.6px;margin-bottom:4px;
+              }
+              .ft-lev-section-text {
+                font-size:.85rem;color:#1f2937;line-height:1.55;
+                white-space:pre-wrap;word-break:break-word;
+              }
+              .ft-lev-meta {
+                display:flex;gap:14px;flex-wrap:wrap;font-size:.72rem;
+                color:#64748b;margin-top:auto;padding-top:6px;border-top:1px dashed #e5e7eb;
+              }
+              .ft-lev-meta span { font-weight:500; }
+              @media (max-width:640px) {
+                .ft-lev-foto-wrap { width:100%; min-height:180px; }
+              }
+            </style>
+            <div class="ft-lev-hero">
+              <div id="ft_lev_foto" class="ft-lev-foto-wrap"
+                   onclick="if(this.dataset.fullUrl)window.open(this.dataset.fullUrl,'_blank')">
+                <div class="ft-lev-foto-placeholder">
+                  <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
+                  <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
+                  <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en la próxima visita</div>
+                </div>
+              </div>
+              <div class="ft-lev-body">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <span class="badge ft-lev-badge-tipo">
+                    <i class="bi bi-camera-fill me-1"></i>ÚLTIMO LEVANTAMIENTO
+                  </span>
+                  <span id="ft_lev_fecha" style="font-size:.84rem;color:#374151;font-weight:600"></span>
+                  <span id="ft_lev_estado_badge"></span>
+                </div>
+                <div id="ft_lev_danos" class="ft-lev-danos" style="display:none">
+                  <i class="bi bi-exclamation-triangle-fill"></i>
+                  <span><strong>Daños detectados</strong> — revisar observaciones del técnico</span>
+                </div>
+                <div class="ft-lev-section">
+                  <div class="ft-lev-section-label">Observaciones del técnico</div>
+                  <div id="ft_lev_observaciones" class="ft-lev-section-text">—</div>
+                </div>
+                <div class="ft-lev-meta">
+                  <span id="ft_lev_tecnico"></span>
+                  <span id="ft_lev_n_revisiones"></span>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {# Stats cards #}
           <div class="ft-stats" style="padding:14px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">
@@ -7293,11 +7785,18 @@ async function vhGuardar(){
             <div class="ft-stat" data-key="garantia"></div>
           </div>
 
-          {# Tabs internos #}
+          {# Tabs internos — 2026-05-26 (Daniel) — Agregada tab "Resumen" como default
+             con vista consolidada estilo dashboard: datos del equipo + historial OTs
+             + contrato + galería de fotos, todo en una sola vista. #}
           <ul class="nav nav-pills mb-0 px-3 pt-2 ft-tabs" id="ftTabs" role="tablist" style="background:#fff;border-bottom:1px solid #e5e7eb;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap">
             <li class="nav-item" role="presentation">
-              <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#ftTabVisitas" type="button">
-                <i class="bi bi-list-check me-1"></i>Visitas <span class="badge bg-secondary ms-1" id="ft_bdg_visitas">0</span>
+              <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#ftTabResumen" type="button">
+                <i class="bi bi-grid-1x2 me-1"></i>Resumen
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabVisitas" type="button">
+                <i class="bi bi-list-check me-1"></i>Historial OT <span class="badge bg-secondary ms-1" id="ft_bdg_visitas">0</span>
               </button>
             </li>
             {# 2026-05-21 (Daniel) — Tab "Revisiones": timeline cronológico
@@ -7310,7 +7809,7 @@ async function vhGuardar(){
             </li>
             <li class="nav-item" role="presentation">
               <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabFotos" type="button">
-                <i class="bi bi-images me-1"></i>Fotos <span class="badge bg-secondary ms-1" id="ft_bdg_fotos">0</span>
+                <i class="bi bi-images me-1"></i>Fotografías <span class="badge bg-secondary ms-1" id="ft_bdg_fotos">0</span>
               </button>
             </li>
             <li class="nav-item" role="presentation">
@@ -7328,15 +7827,22 @@ async function vhGuardar(){
                 <i class="bi bi-file-earmark-text me-1"></i>Contratos <span class="badge bg-secondary ms-1" id="ft_bdg_contratos">0</span>
               </button>
             </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ftTabAuditoria" type="button">
+                <i class="bi bi-clock-history me-1"></i>Auditoría
+              </button>
+            </li>
           </ul>
 
           <div class="tab-content" style="padding:16px 22px;background:#fff;min-height:280px">
-            <div class="tab-pane fade show active" id="ftTabVisitas" role="tabpanel"></div>
+            <div class="tab-pane fade show active" id="ftTabResumen" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabVisitas" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabRevisiones" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabFotos" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabSeriales" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabEstado" role="tabpanel"></div>
             <div class="tab-pane fade" id="ftTabContratos" role="tabpanel"></div>
+            <div class="tab-pane fade" id="ftTabAuditoria" role="tabpanel"></div>
           </div>
 
           {# Sub-modal: Edición del equipo (inline dentro del modal padre) #}
@@ -7406,6 +7912,23 @@ async function vhGuardar(){
       </div>
     </div>
   </div>
+</div>
+
+{# ── LIGHTBOX para fotos del equipo (Daniel 2026-05-27 — galería pro) ── #}
+<div id="ftLightbox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:99999;cursor:zoom-out" onclick="ftLightboxCerrar()">
+  <button onclick="event.stopPropagation();ftLightboxPrev()" style="position:absolute;left:18px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:50%;width:48px;height:48px;font-size:1.4rem;cursor:pointer;z-index:2">
+    <i class="bi bi-chevron-left"></i>
+  </button>
+  <button onclick="event.stopPropagation();ftLightboxNext()" style="position:absolute;right:18px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:50%;width:48px;height:48px;font-size:1.4rem;cursor:pointer;z-index:2">
+    <i class="bi bi-chevron-right"></i>
+  </button>
+  <button onclick="event.stopPropagation();ftLightboxCerrar()" style="position:absolute;right:18px;top:18px;background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:50%;width:42px;height:42px;font-size:1.1rem;cursor:pointer;z-index:2">
+    <i class="bi bi-x-lg"></i>
+  </button>
+  <div style="height:100%;display:flex;align-items:center;justify-content:center;padding:60px 80px">
+    <img id="ftLightboxImg" src="" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.4)" onclick="event.stopPropagation()">
+  </div>
+  <div id="ftLightboxInfo" style="position:absolute;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:#fff;padding:10px 18px;border-radius:24px;font-size:.84rem;backdrop-filter:blur(8px);text-align:center;max-width:600px"></div>
 </div>
 
 {# CSS específico del modal de ficha técnica #}
@@ -7924,27 +8447,60 @@ async function vhGuardar(){
         <div class="row g-3">
           <div class="col-12">
             <label class="form-label fw-semibold">Nombre del equipo <span class="text-danger">*</span></label>
-            <input type="text" id="mm_nombre" class="form-control" placeholder="Ej: Trotadora Life Fitness T3">
+            <input type="text" id="mm_nombre" class="form-control" placeholder="Ej: Trotadora ILUS Kairos">
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">SKU del modelo</label>
-            <input type="text" id="mm_sku" class="form-control font-monospace">
+            <label class="form-label fw-semibold">SKU del modelo <span class="text-muted small">(auto)</span></label>
+            <input type="text" id="mm_sku" class="form-control font-monospace" placeholder="Se genera al guardar">
+            <div class="form-text small">Si lo dejas vacío, se genera uno automático. Puedes editarlo.</div>
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">N° Serie</label>
-            <input type="text" id="mm_serie" class="form-control">
+            <label class="form-label fw-semibold">N° Serie <span class="text-muted small">(auto)</span></label>
+            <input type="text" id="mm_serie" class="form-control" placeholder="Se genera al guardar">
+            <div class="form-text small">Si lo dejas vacío, se asigna uno automático. El levantamiento lo sobrescribe.</div>
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">Cantidad</label>
+            <label class="form-label fw-semibold">Categoría / Familia</label>
+            <select id="mm_familia" class="form-select">
+              <option value="">— Sin especificar —</option>
+              <option value="cardio">Cardio (trotadora / elíptica / bici)</option>
+              <option value="selectorizado">Selectorizado</option>
+              <option value="carga_libre">Carga libre (mancuernas / discos)</option>
+              <option value="racks_estructuras">Racks / estructuras</option>
+              <option value="bancos">Bancos</option>
+              <option value="accesorios">Accesorios</option>
+              <option value="bicicletas">Bicicletas</option>
+              <option value="trotadoras">Trotadoras</option>
+              <option value="otros">Otros</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Marca <span class="text-muted small">(opc.)</span></label>
+            <input type="text" id="mm_marca" class="form-control" placeholder="Ej: ILUS">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Modelo <span class="text-muted small">(opc.)</span></label>
+            <input type="text" id="mm_modelo" class="form-control" placeholder="Ej: Kairos Row Machine">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Año fabricación <span class="text-muted small">(opc.)</span></label>
+            <input type="number" id="mm_anio" class="form-control" min="2000" max="2100" placeholder="Ej: 2024">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Ubicación <span class="text-muted small">(opc.)</span></label>
+            <input type="text" id="mm_ubicacion" class="form-control" placeholder="Ej: Sala cardio 2do piso">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Cantidad <span class="text-muted small">(opc.)</span></label>
             <input type="number" id="mm_cantidad" class="form-control" value="1" min="1">
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">Doc. origen</label>
+            <label class="form-label fw-semibold">Doc. origen <span class="text-muted small">(opc.)</span></label>
             <input type="text" id="mm_doc" class="form-control" placeholder="FCV-1234">
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold">Notas</label>
-            <textarea id="mm_notas" class="form-control" rows="2"></textarea>
+            <label class="form-label fw-semibold">Notas / observaciones <span class="text-muted small">(opc.)</span></label>
+            <textarea id="mm_notas" class="form-control" rows="2" placeholder="Color, voltaje, dimensiones, peso o cualquier observación inicial"></textarea>
           </div>
         </div>
       </div>
@@ -8145,7 +8701,21 @@ window.__FICHA_DATA = {
   can_create_tecnicos: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }}
 };
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260521"></script>
+<!-- PDF.js (Mozilla) — fallback canvas renderer para PDFs que el browser no
+     renderiza en iframe (caso: Cloudinary raw con Content-Disposition forzado,
+     PDFs escaneados con CSP estricto, etc.). Solo se inicializa si el visor
+     universal lo necesita; no impacta performance del resto de la página. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<script>
+  // Configurar worker de PDF.js apenas cargue
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  });
+</script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530b"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

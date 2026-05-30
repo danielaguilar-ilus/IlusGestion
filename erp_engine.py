@@ -404,6 +404,16 @@ def rut_variants(rut: str) -> list[str]:
     _add(raw)
     _add(clean)
 
+    # Detectar "RUT(8 dígitos) + DV(1 dígito) pegados sin separador"
+    # Ej: "139372220" = "13937222" + DV "0". El ERP guarda RTEN sin DV ni puntos;
+    # si detectamos esta concatenación añadimos el número sin DV como variante
+    # prioritaria (lo que realmente está en RTEN dentro de MAEEN).
+    if not has_dv and clean.isdigit() and len(clean) == 9:
+        c_num, c_dv = clean[:8], clean[8]
+        if _compute_dv(c_num) == c_dv:
+            _add(c_num)               # sin DV → coincide con RTEN del ERP
+            _add(f"{c_num}-{c_dv}")   # con guión (variante adicional)
+
     if has_dv and len(clean) >= 2:
         num = clean[:-1]
         dv = clean[-1]
@@ -633,12 +643,43 @@ class ERPClient:
         "DESLI", "DESCLI", "OBSLI", "REFLI",
     )
     LINE_ZONA_KEYS = ("NOKOZO", "ZONA", "NOKOZONA")
+    LINE_RUT_KEYS = (
+        "RTEN", "RUTEN", "RUTENDO", "RUTCLI",
+        "RTENDESP", "ENDOCLIESP", "RUTENDESP",
+    )
+
+    # RUTs/nombres de placeholder "consumidor final" en Random ERP
+    _CF_RUTS = frozenset({
+        "66666666", "666666666", "666666666 6",   # 66.666.666-6 y variantes
+        "55555555", "555555555",                   # variantes menos comunes
+        "77777777", "777777777",
+    })
+    _CF_NOMBRES = frozenset({
+        "CONSUMIDOR FINAL", "CONSUMIDORFINAL", "CONS FINAL", "C FINAL",
+        "C.FINAL", "CONSUMIDOR", "SIN NOMBRE", "CLIENTE FINAL", "CLIENTE",
+    })
 
     # ZZ — códigos de SKU que son servicio/flete (no productos físicos)
     ZZ_CODES = frozenset({
         "ZZENVIO", "ZZINGREPUESTO", "ZZSERVTEC",
         "ZZRETIRO", "ZZINSTALACION", "ZZINGARREQUIP",
     })
+
+    @classmethod
+    def _is_consumidor_final(cls, rut: str, nombre: str = "") -> bool:
+        """Detecta si el RUT/nombre corresponde al placeholder 'consumidor final'.
+
+        En Random ERP los documentos B2C usan ENDO = '66666666' y los datos
+        reales del cliente están en las líneas (maeddo) o en campos *DESP.
+        """
+        clean = str(rut).replace(".", "").replace("-", "").replace(" ", "").upper()
+        candidates = {clean}
+        if len(clean) > 1:
+            candidates.add(clean[:-1])   # sin DV
+        if candidates & cls._CF_RUTS:
+            return True
+        clean_nombre = str(nombre).upper().strip()
+        return any(cf in clean_nombre for cf in cls._CF_NOMBRES)
 
     def __init__(
         self,
@@ -802,6 +843,21 @@ class ERPClient:
             except Exception as e:
                 self.log.warning("ERP entity timeout: %s", e)
 
+        # Fallback KOEN: si ninguna variante de RUT encontró la entidad, intentar
+        # búsqueda por código de entidad (koen). Resuelve el caso donde ENDO en el
+        # documento contiene un código interno de Random (KOEN) que difiere del RUT
+        # (RTEN) — ej: ENDO="10543" pero RTEN="13937222". Sin este fallback la
+        # búsqueda falla silenciosamente y se pierde teléfono/email del cliente.
+        if not winner:
+            try:
+                body = self._get("/entidades", {"koen": str(rut).strip()}, timeout=3)
+                data = body.get("data") or []
+                if data:
+                    winner = data[0]
+                    self.log.info("ERP entity HIT koen=%s", str(rut)[:20])
+            except Exception as e:
+                self.log.debug("ERP entity miss koen=%s: %s", str(rut)[:20], e)
+
         with self._lock:
             self._ent_cache[cache_key] = (time.time(), winner)
             if len(self._ent_cache) > 500:
@@ -814,17 +870,47 @@ class ERPClient:
     def fetch_entity_by_name(self, name: str) -> Optional[dict]:
         """Búsqueda secundaria por NRAZON cuando el RUT no resuelve.
         Útil para ventas web donde el ENDO es B2C placeholder.
+
+        Prueba múltiples variantes del nombre para cubrir diferencias de
+        capitalización y truncamiento:
+          1. Nombre tal cual (ej: "Elizabeth Montenegro Echeverría")
+          2. UPPERCASE (el ERP guarda NOKOEN en mayúsculas en muchos casos)
+          3. Truncado a 50 chars (límite de NOKOEN en Random) — original y UPPER
+          4. Solo primeras 2 palabras (apellidos o razones sociales largas)
         """
         if not name or len(name.strip()) < 4:
             return None
-        try:
-            body = self._get("/entidades", {"nrazon": name.strip()}, timeout=4)
-            data = body.get("data") or []
-            if data:
-                self.log.info("ERP entity HIT nrazon=%s", name[:40])
-                return data[0]
-        except Exception as e:
-            self.log.debug("ERP entity miss nrazon=%s: %s", name[:40], e)
+
+        name_clean = name.strip()
+        upper = name_clean.upper()
+
+        # Construir variantes sin repetir
+        variants: list[str] = []
+        def _nadd(v: str) -> None:
+            v = v.strip()
+            if v and len(v) >= 4 and v not in variants:
+                variants.append(v)
+
+        _nadd(name_clean)           # original (puede ser title-case)
+        _nadd(upper)                # UPPERCASE — formato habitual en Random
+        if len(name_clean) > 50:    # NOKOEN tiene máx 50 chars
+            _nadd(name_clean[:50])
+            _nadd(upper[:50])
+        # Primeras 2 palabras — útil si el ERP tiene nombre truncado por espacio
+        words = name_clean.split()
+        if len(words) > 2:
+            _nadd(" ".join(words[:2]))
+            _nadd(" ".join(words[:2]).upper())
+
+        for nv in variants:
+            try:
+                body = self._get("/entidades", {"nrazon": nv}, timeout=4)
+                data = body.get("data") or []
+                if data:
+                    self.log.info("ERP entity HIT nrazon=%s", nv[:40])
+                    return data[0]
+            except Exception as e:
+                self.log.debug("ERP entity miss nrazon=%s: %s", nv[:40], e)
         return None
 
     # ── Búsqueda de documento ───────────────────────────────────────
@@ -833,19 +919,86 @@ class ERPClient:
     def _pick(d: dict, keys: Iterable[str]) -> str:
         """Devuelve el primer valor no-vacío entre las keys dadas.
 
-        Búsqueda 100% case-insensitive: construye un índice de las keys del
-        dict en lowercase y compara cada key buscada contra ese índice.
-        Esto evita fallar si el ERP devuelve "obdo", "Obdo" u "OBDO".
+        Búsqueda case-insensitive Y con strip automático de prefijos de tabla.
+        Random ERP devuelve campos con prefijo según la tabla de origen:
+          E_CAMPO  → MAEEDO (header/encabezado)
+          OB_CAMPO → MAEEDOOB (observaciones del documento)
+          D_CAMPO  → MAEDDO (detalle/líneas)
+          L_/LI_   → variantes de líneas en algunas versiones del ERP
+          H_/C_/M_ → variantes de header según versión
+
+        Esto permite encontrar "ENDO" aunque la API devuelva "E_ENDO",
+        y "OBDO" aunque devuelva "OB_OBDO". Transparente para el caller.
         """
         if not d:
             return ""
-        # Construir índice {lowercase: valor_real} para acceso CI
-        lower_index = {str(k).lower(): v for k, v in d.items()}
+        # Índice primario: lowercase exacto
+        lower_index: dict[str, Any] = {str(k).lower(): v for k, v in d.items()}
+        # Índice secundario: keys sin prefijo de tabla (para APIs que los agregan)
+        _PREFIXES = ("e_", "ob_", "d_", "l_", "li_", "h_", "c_", "m_")
+        stripped_index: dict[str, Any] = {}
+        for lk, v in lower_index.items():
+            for pfx in _PREFIXES:
+                if lk.startswith(pfx):
+                    bare = lk[len(pfx):]
+                    if bare and bare not in stripped_index:
+                        stripped_index[bare] = v
+                    break
         for k in keys:
-            v = lower_index.get(str(k).lower())
+            lk = str(k).lower()
+            v = lower_index.get(lk)
+            if v is None:
+                v = stripped_index.get(lk)
             if v is not None and str(v).strip():
                 return str(v).strip()
         return ""
+
+    @staticmethod
+    def _parse_obdo_contact(obdo: str) -> dict:
+        """Extrae teléfono, email y dirección de un texto OBDO libre.
+
+        Random ERP para boletas (BLV) y docs B2C guarda los datos del cliente
+        como texto concatenado en el campo OBDO, ej:
+          "Teniente Montt 1980 Ñuñoa - 976787263 - Elitamonec@gmail.com"
+
+        Devuelve dict {"telefono": str, "email": str, "direccion": str}.
+        Valores vacíos si no se puede extraer.
+        """
+        result: dict = {"telefono": "", "email": "", "direccion": ""}
+        if not obdo or len(str(obdo).strip()) < 4:
+            return result
+
+        text = str(obdo).strip()
+
+        # Email: patrón estándar
+        email_m = re.search(r'[\w.+%-]+@[\w.-]+\.[a-zA-Z]{2,}', text)
+        if email_m:
+            result["email"] = email_m.group(0).lower()
+
+        # Teléfono chileno: +569XXXXXXXX, 9XXXXXXXX, 56XXXXXXXXX
+        phone_m = re.search(
+            r'(?:\+?56\s?)?[92]\d{7,8}',
+            re.sub(r'[\s\-\.\(\)]', '', text)
+        )
+        if phone_m:
+            result["telefono"] = normalize_phone_cl(phone_m.group(0))
+
+        # Dirección: partes del texto que no son email ni teléfono
+        parts = [p.strip() for p in re.split(r'\s*[-–|]\s*', text) if p.strip()]
+        dir_parts = []
+        for part in parts:
+            if email_m and email_m.group(0).lower() in part.lower():
+                continue
+            digits_only = re.sub(r'[\s\+]', '', part)
+            if digits_only.isdigit() and len(digits_only) >= 7:
+                continue
+            if re.match(r'^[\+\d\s\(\)-]{7,16}$', part):
+                continue
+            dir_parts.append(part)
+        if dir_parts:
+            result["direccion"] = ", ".join(dir_parts)
+
+        return result
 
     @classmethod
     def _scan_lines(cls, lines: list[dict]) -> dict:
@@ -867,7 +1020,7 @@ class ERPClient:
         """
         out = {
             "nombre": "", "direccion": "", "comuna": "", "obs": "", "zona": "",
-            "tipo_operacion": "", "tipo_codigo": "",
+            "rut": "", "tipo_operacion": "", "tipo_codigo": "",
         }
         if not lines:
             return out
@@ -888,6 +1041,8 @@ class ERPClient:
                 out["comuna"] = raw_c
             if not out["zona"]:
                 out["zona"] = cls._pick(ln, cls.LINE_ZONA_KEYS)
+            if not out["rut"]:
+                out["rut"] = cls._pick(ln, cls.LINE_RUT_KEYS)
             # OBSERVACIONES: recolectar TODAS las únicas
             obs_line = fix_yen_to_n(cls._pick(ln, cls.LINE_OBS_KEYS))
             if obs_line and obs_line not in obs_seen:
@@ -1119,6 +1274,72 @@ class ERPClient:
             cliente_obs = fix_yen_to_n(self._pick(ent, ("OBEN", "OBSERVACIONES")))
             cliente_comuna_nombre = cmen_to_comuna(cliente_cien, cliente_cmen)
 
+        # ── Detectar "consumidor final" y buscar entidad real ────────
+        # Cuando ENDO es el placeholder 66.666.666-6, los datos del cliente
+        # real están en las líneas (maeddo) o en campos *DESP del header.
+        if self._is_consumidor_final(cliente_rut or endo, cliente_nombre):
+            diag["fallback_chain"].append(
+                f"consumidor final detectado (rut={cliente_rut or endo}) — buscando entidad real"
+            )
+            # Resetear datos de la entidad genérica
+            cliente_nombre = ""
+            cliente_rut    = ""
+            cliente_email  = ""
+            cliente_telefono  = ""
+            cliente_dir_base  = ""
+            cliente_obs       = ""
+            cliente_cien      = ""
+            cliente_cmen      = ""
+            cliente_comuna_nombre = ""
+
+            # Buscar entidad real: primero por RUT desde las líneas
+            rut_linea = line_data.get("rut", "")
+            ent_real = None
+            if rut_linea and not self._is_consumidor_final(rut_linea):
+                ent_real = self.fetch_entity(rut_linea)
+                if ent_real:
+                    diag["fallback_chain"].append(
+                        f"entidad real por RUT de línea: {rut_linea[:20]}"
+                    )
+
+            # Si no, buscar por nombre del destinatario (campos *DESP del header)
+            nombre_dest = (
+                fix_yen_to_n(
+                    self._pick(raw_header, ("NOKOENDESP", "NOMENDESP", "NOMENDE",
+                                            "NRAZONFINAL", "NRAZON"))
+                ).title()
+                or line_data.get("nombre", "")
+            )
+            if not ent_real and nombre_dest and not self._is_consumidor_final("", nombre_dest):
+                ent_real = self.fetch_entity_by_name(nombre_dest)
+                if ent_real:
+                    diag["fallback_chain"].append(
+                        f"entidad real por nombre destinatario: {nombre_dest[:30]}"
+                    )
+
+            if ent_real:
+                cliente_nombre   = fix_yen_to_n(
+                    self._pick(ent_real, ("NOKOEN", "NRAZON", "NOMBRE"))
+                ).title()
+                cliente_rut      = self._pick(ent_real, ("RTEN", "ENDO")) or rut_linea
+                cliente_email    = self._pick(ent_real, ("EMAIL", "EMAILCOMER", "MAIL"))
+                cliente_telefono = normalize_phone_cl(
+                    self._pick(ent_real, ("FOEN", "FAEN", "FONO", "CELULAR"))
+                )
+                cliente_dir_base = fix_yen_to_n(
+                    self._pick(ent_real, ("DIEN", "DIRECCION", "DIRECEN"))
+                ).title()
+                cliente_cien     = self._pick(ent_real, ("CIEN", "REGION"))
+                cliente_cmen     = self._pick(ent_real, ("CMEN", "COMUNA"))
+                cliente_obs      = fix_yen_to_n(
+                    self._pick(ent_real, ("OBEN", "OBSERVACIONES"))
+                )
+                cliente_comuna_nombre = cmen_to_comuna(cliente_cien, cliente_cmen)
+            elif nombre_dest and not self._is_consumidor_final("", nombre_dest):
+                # Al menos usar el nombre del destinatario aunque no encontremos entidad
+                cliente_nombre = nombre_dest
+                cliente_rut    = rut_linea or endo
+
         # ── Consolidar — la prioridad depende del campo ────────────────
         #
         # Para datos IDENTITARIOS del cliente (nombre, email, teléfono):
@@ -1266,6 +1487,30 @@ class ERPClient:
             "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
             "diagnostics":      diag,
         }
+
+        # ── Fallback OBDO: extraer teléfono/email/dirección del texto libre ──
+        # Para BLV y docs B2C, Random guarda el contacto en el campo OBDO como
+        # texto libre: "Calle 123 Ñuñoa - 976787263 - correo@gmail.com".
+        # Actualizamos el doc ya armado si faltan datos de contacto.
+        if cliente_obs and (not doc["telefono"] or not doc["email"] or not doc["direccion"]):
+            _obdo = ERPClient._parse_obdo_contact(cliente_obs)
+            changed = False
+            if not doc["telefono"] and _obdo["telefono"]:
+                doc["telefono"] = _obdo["telefono"]
+                changed = True
+                diag["fallback_chain"].append("tel extraído del OBDO")
+            if not doc["email"] and _obdo["email"]:
+                doc["email"] = _obdo["email"]
+                changed = True
+                diag["fallback_chain"].append("email extraído del OBDO")
+            if not doc["direccion"] and _obdo["direccion"]:
+                doc["direccion"] = _obdo["direccion"]
+                changed = True
+                diag["fallback_chain"].append("dir extraída del OBDO")
+            if changed:
+                doc["datos_completos"] = bool(
+                    doc["cliente_nombre"] and (doc["email"] or doc["telefono"])
+                )
 
         self._doc_store(cache_key, doc)
         self.log.info(

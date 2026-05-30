@@ -74,12 +74,29 @@ function _aiRenderError(err){
     const cfg = map[m] || map.fecha_indeterminada;
     sub.innerHTML = `<i class="bi ${cfg.icon} me-1" style="color:${cfg.color}"></i><span style="color:${cfg.color}">${cfg.text}</span>`;
   }
-  // Cargar una sola vez al boot
+  // 2026-05-28 (Daniel — FASE 3.4) Lazy load del hint IA al boot.
+  // ANTES: este fetch corría EAGER al cargar la ficha del cliente. El
+  //        endpoint /ia/elegibilidad toma ~4.5s en cache miss y los
+  //        ~6 queries SQL bloqueaban el first paint percibido del usuario.
+  // AHORA: usamos requestIdleCallback para diferir el call hasta que el
+  //        navegador esté idle (después del paint). Fallback setTimeout
+  //        para Safari < 17 que aún no implementa la API.
+  //        El hint aparece "auto" 1-3s después de cargar la ficha, sin
+  //        bloquear el render inicial. El cache 10min del backend sigue
+  //        intacto, así que en MISS solo paga la primera vista.
   if (window.__FICHA_DATA && window.__FICHA_DATA.cid) {
-    fetch(`/mantenciones/api/clientes/${window.__FICHA_DATA.cid}/ia/elegibilidad`)
-      .then(r => r.json())
-      .then(d => { if (d && d.ok) paintHint(d); })
-      .catch(()=>{});
+    const _loadEligibilidad = () => {
+      fetch(`/mantenciones/api/clientes/${window.__FICHA_DATA.cid}/ia/elegibilidad`)
+        .then(r => r.json())
+        .then(d => { if (d && d.ok) paintHint(d); })
+        .catch(()=>{});
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(_loadEligibilidad, { timeout: 3000 });
+    } else {
+      // Safari < 17 y navegadores viejos: fallback 800ms post-paint
+      setTimeout(_loadEligibilidad, 800);
+    }
   }
 })();
 
@@ -355,8 +372,147 @@ function filtrarEquipos(q) {
 }
 
 // ─── Modales ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  MODAL EDITAR CLIENTE — formato chileno en vivo + dirección Places
+//  Daniel 30/05/2026: "el RUT no tiene formato de RUT… la dirección
+//  que arregle automáticamente la comuna, la ciudad, la región, todo,
+//  pero tiene que validar la dirección… algo bien inteligente."
+//
+//  - RUT  → 77.753.941-8  (idempotente con _formato_rut_chile backend)
+//  - Tel  → +56 9 1234 5678 (móvil) / +56 2 2345 6789 (fijo)
+//  - Dir  → Google Places: al elegir sugerencia valida y auto-rellena
+//           comuna / ciudad / región + persiste lat/lng/place_id.
+// ═══════════════════════════════════════════════════════════════
+
+// RUT chileno legible. Extrae dígitos+K primero → idempotente.
+function _ilusFmtRut(raw) {
+  const clean = String(raw || '').replace(/[^0-9kK]/g, '').toUpperCase();
+  if (!clean) return '';
+  if (clean.length < 2) return clean;
+  const cuerpo = clean.slice(0, -1);
+  const dv     = clean.slice(-1);
+  let out = '';
+  for (let i = 0; i < cuerpo.length; i++) {
+    if (i > 0 && (cuerpo.length - i) % 3 === 0) out += '.';
+    out += cuerpo[i];
+  }
+  return out + '-' + dv;
+}
+
+// Teléfono chileno legible. Extrae dígitos primero → idempotente.
+function _ilusFmtTel(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (!d) return String(raw || '').trim();
+  if (d.startsWith('56')) d = d.slice(2);          // quitar país
+  if (d.length === 9 && d[0] === '9') {            // móvil
+    return '+56 9 ' + d.slice(1, 5) + ' ' + d.slice(5);
+  }
+  if (d.length === 9) {                            // fijo c/código área (1 díg)
+    return '+56 ' + d[0] + ' ' + d.slice(1, 5) + ' ' + d.slice(5);
+  }
+  if (d.length === 8) {                            // fijo s/código → Santiago (2)
+    return '+56 2 ' + d.slice(0, 4) + ' ' + d.slice(4);
+  }
+  return String(raw || '').trim();                 // no reconocible: dejar como está
+}
+
+// Aplica máscara a un input (on blur siempre; on input opcional para RUT).
+function _ilusBindFmt(el, fmtFn, liveInput) {
+  if (!el || el.dataset.ilusFmt === '1') return;
+  el.dataset.ilusFmt = '1';
+  el.addEventListener('blur', function () {
+    const v = fmtFn(el.value);
+    if (v !== el.value) el.value = v;
+  });
+  if (liveInput) {
+    el.addEventListener('input', function () {
+      const v = fmtFn(el.value);
+      if (v !== el.value) { el.value = v; }       // RUT secuencial: cursor al final OK
+    });
+  }
+}
+
+// "Región Metropolitana de Santiago" → "Metropolitana" (más legible).
+function _ilusLimpiaRegion(r) {
+  if (!r) return r;
+  let s = String(r).replace(/^Regi[oó]n\s+(de\s+|del\s+|de\s+la\s+)?/i, '').trim();
+  s = s.replace(/\s+de\s+Santiago$/i, '');
+  return s || String(r);
+}
+
+// Inicializa Google Places en el campo dirección del modal (idempotente).
+function _ilusInitDireccionCliente() {
+  const input = document.getElementById('ec_direccion');
+  if (!input || input.dataset.placesBound === '1') return;
+  if (typeof ilusPlacesAutocomplete !== 'function') {
+    // SDK aún no cargó: encolar y reintentar cuando __ilusGmapsReady dispare.
+    if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_ilusInitDireccionCliente);
+    return;
+  }
+  input.dataset.placesBound = '1';
+  ilusPlacesAutocomplete('ec_direccion', {
+    country: 'cl',
+    types: ['address'],
+    onPlaceSelected: function (place) {
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+      set('ec_direccion_lat',      place.lat || '');
+      set('ec_direccion_lng',      place.lng || '');
+      set('ec_direccion_place_id', place.place_id || '');
+      // Parsear address_components de Google → campos chilenos.
+      const comps = place.componentes || [];
+      const pick = function () {
+        for (let i = 0; i < arguments.length; i++) {
+          const t = arguments[i];
+          const c = comps.find(x => (x.types || []).indexOf(t) >= 0);
+          if (c) return c.long_name;
+        }
+        return '';
+      };
+      // CL: level_1=Región · level_3/locality=Comuna · locality/level_2=Ciudad
+      const region = pick('administrative_area_level_1');
+      const comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+      const ciudad = pick('locality', 'administrative_area_level_2') || comuna;
+      const setIf  = (id, v) => { const e = document.getElementById(id); if (e && v) e.value = v; };
+      setIf('ec_region', _ilusLimpiaRegion(region));
+      setIf('ec_comuna', comuna);
+      setIf('ec_ciudad', ciudad);
+      const hint = document.getElementById('ec_direccion_hint');
+      if (hint) {
+        const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
+        const ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
+        hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>' +
+          'Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      }
+    },
+    onNoSelection: function () {
+      const hint = document.getElementById('ec_direccion_hint');
+      if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>' +
+        'Selecciona una opción del menú para validar la dirección.';
+    }
+  });
+}
+
+// Configura formato + autocomplete cada vez que se abre el modal (idempotente).
+function _ilusSetupEditarCliente(modalEl) {
+  try { _ilusBindFmt(document.getElementById('ec_rut'), _ilusFmtRut, true); } catch (e) {}
+  try {
+    (modalEl || document).querySelectorAll('.ec-tel').forEach(function (el) {
+      _ilusBindFmt(el, _ilusFmtTel, false);
+    });
+  } catch (e) {}
+  try { _ilusInitDireccionCliente(); } catch (e) {}
+}
+
 function abrirEditarCliente() {
-  new bootstrap.Modal(document.getElementById('modalEditarCliente')).show();
+  const modalEl = document.getElementById('modalEditarCliente');
+  if (!modalEl) return;
+  new bootstrap.Modal(modalEl).show();
+  // Configurar tras shown.bs.modal: Google Autocomplete necesita el input
+  // ya visible para medir bien la posición del dropdown.
+  modalEl.addEventListener('shown.bs.modal', function onShown() {
+    modalEl.removeEventListener('shown.bs.modal', onShown);
+    _ilusSetupEditarCliente(modalEl);
+  }, { once: true });
 }
 
 // Atajo directo desde la KPI "Tipo cliente" del tab Resumen (Daniel 22/05/2026).
@@ -372,6 +528,7 @@ function abrirEditarTipoCliente() {
   // antes de hacer scroll + focus, sino el select aún no está renderizado.
   modalEl.addEventListener('shown.bs.modal', function onShown() {
     modalEl.removeEventListener('shown.bs.modal', onShown);
+    try { _ilusSetupEditarCliente(modalEl); } catch(_e) {}  // formato RUT/tel + dirección Places
     const sel = document.getElementById('ec_tipo_cliente');
     if (!sel) return;
     try { sel.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_e) {}
@@ -1927,12 +2084,14 @@ async function verFichaTecnicaEquipo(mid, nombre) {
   document.getElementById('ft_loading').style.display = 'block';
   document.getElementById('ft_content').style.display = 'none';
   document.getElementById('ft_edit_panel').style.display = 'none';
-  // Resetear tab activo a Visitas
+  // Resetear tab activo a Resumen (default, 2026-05-26)
   try {
     document.querySelectorAll('#ftTabs .nav-link').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('#modalFichaTecnica .tab-pane').forEach(p => p.classList.remove('show','active'));
-    document.querySelector('#ftTabs .nav-link[data-bs-target="#ftTabVisitas"]').classList.add('active');
-    document.getElementById('ftTabVisitas').classList.add('show','active');
+    const _btnRes = document.querySelector('#ftTabs .nav-link[data-bs-target="#ftTabResumen"]');
+    if (_btnRes) _btnRes.classList.add('active');
+    const _paneRes = document.getElementById('ftTabResumen');
+    if (_paneRes) _paneRes.classList.add('show','active');
   } catch(_){}
   _modalFichaTec.show();
 
@@ -1959,30 +2118,100 @@ function _ftRender(d) {
   const stats = d.stats || {};
   const alertas = d.alertas || [];
 
-  // ── Header con foto + datos clave ──
+  // ── Header con foto GRANDE del último levantamiento (Daniel 2026-05-27)
+  // Prioridad: foto más reciente de galería > foto principal del equipo
+  // > placeholder. La galería viene ordenada DESC (más reciente primero).
   const fotoEl = document.getElementById('ft_foto_principal');
-  if (eq.foto_principal_url || eq.foto_url) {
-    fotoEl.innerHTML = `<img src="${escAttr(eq.foto_principal_url || eq.foto_url)}" style="width:100%;height:100%;object-fit:cover" alt="">`;
+  const fotosGal = d.fotos_galeria || [];
+  const fotoUrl = (fotosGal.length && fotosGal[0].url)
+                  || eq.foto_principal_url
+                  || eq.foto_url
+                  || '';
+  if (fotoUrl) {
+    fotoEl.innerHTML = `<img src="${escAttr(fotoUrl)}" loading="lazy" decoding="async"
+                            style="width:100%;height:100%;object-fit:cover;cursor:zoom-in"
+                            alt="Foto del equipo">`;
+    fotoEl.dataset.fullUrl = fotoUrl;
+    fotoEl.style.cursor = 'zoom-in';
   } else {
-    fotoEl.innerHTML = `<i class="bi bi-image" style="font-size:2rem;color:#9ca3af"></i>`;
+    fotoEl.innerHTML = `<div class="ft-foto-placeholder" style="text-align:center;padding:14px">
+        <i class="bi bi-camera" style="font-size:2.6rem;color:#cbd5e1"></i>
+        <div style="font-size:.72rem;color:#94a3b8;margin-top:8px;font-weight:700">SIN FOTO</div>
+        <div style="font-size:.66rem;color:#cbd5e1;margin-top:2px">Captura una en próxima visita</div>
+      </div>`;
+    delete fotoEl.dataset.fullUrl;
+    fotoEl.style.cursor = 'default';
   }
-  document.getElementById('ft_eq_titulo').textContent = eq.nombre || '—';
-  const subParts = [];
-  if (eq.marca) subParts.push(eq.marca);
-  if (eq.modelo) subParts.push(eq.modelo);
-  if (eq.sku) subParts.push(`SKU ${eq.sku}`);
-  document.getElementById('ft_eq_subtitulo').textContent = subParts.join(' · ') || 'Sin datos';
+  // ── HEADER PRO (Daniel 2026-05-27 mockup) ──
+  // Título grande + SKU debajo + grid de datos clave + chips de estado
+  document.getElementById('ft_eq_titulo').textContent = eq.nombre || 'Equipo sin nombre';
+  document.getElementById('ft_eq_subtitulo').textContent = eq.sku ? `SKU ${eq.sku}` : 'SKU no asignado';
 
-  // Chips: serie, estado, ubicación
-  const chipsHtml = [];
-  if (eq.serie_actual || eq.serie) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:6px 10px;font-size:.74rem"><i class="bi bi-upc me-1"></i>Serie: <span style="font-family:monospace;font-weight:700">${escHtml(eq.serie_actual || eq.serie)}</span></span>`);
-  const estadoColor = {activo:'#16a34a', inactivo:'#6b7280', baja:'#dc2626'}[(eq.estado||'').toLowerCase()] || '#6b7280';
-  chipsHtml.push(`<span class="badge" style="background:${estadoColor}15;color:${estadoColor};border:1px solid ${estadoColor}50;padding:6px 10px;font-size:.74rem"><i class="bi bi-circle-fill me-1" style="font-size:.5rem"></i>${escHtml((eq.estado||'activo').toUpperCase())}</span>`);
-  if (eq.ubicacion_sala) chipsHtml.push(`<span class="badge" style="background:#dbeafe;color:#1e40af;padding:6px 10px;font-size:.74rem"><i class="bi bi-geo-alt me-1"></i>${escHtml(eq.ubicacion_sala)}</span>`);
-  if (eq.anio_fabricacion) chipsHtml.push(`<span class="badge" style="background:#f3f4f6;color:#374151;padding:6px 10px;font-size:.74rem"><i class="bi bi-calendar3 me-1"></i>${eq.anio_fabricacion}</span>`);
-  document.getElementById('ft_eq_chips').innerHTML = chipsHtml.join('');
+  // Grid de datos (estilo "label / value" del mockup)
+  const dataGridEl = document.getElementById('ft_data_grid');
+  if (dataGridEl) {
+    const fechaInicio = (d.contratos_relacionados || d.contratos || []).find(c => c.fecha_inicio)?.fecha_inicio || '';
+    const estadoLower = (eq.estado || 'activo').toLowerCase();
+    const estadoClass = estadoLower === 'baja' ? 'baja' : '';
+    const estadoLabel = estadoLower === 'baja' ? 'BAJA' : (estadoLower === 'garantia' ? 'GARANTÍA' : 'ACTIVO');
+    const contratos = d.contratos_relacionados || d.contratos || [];
+    const ctActivo = contratos.find(c => c.estado === 'vigente' || c.estado === 'indefinido') || contratos[0];
+    const cliente = eq.razon_social || '—';
+    const marcaModelo = [eq.marca, eq.modelo].filter(Boolean).join(' / ') || '—';
+    const ultimaVisita = stats.ultima_visita_fecha || '';
+    const diasUlt = stats.dias_desde_ultima_visita;
 
-  document.getElementById('ft_btn_ficha_full').href = d.ficha_url || '#';
+    const blocks = [
+      {label:'<i class="bi bi-upc"></i> Serie / Nº de serie',
+       value: `<span style="font-family:monospace;font-size:.85rem">${escHtml(eq.serie_actual || eq.serie || '—')}</span>${(eq.serie_actual||eq.serie)?'<button class="btn btn-link p-0 ms-1" onclick="navigator.clipboard.writeText(\''+escAttr(eq.serie_actual||eq.serie)+'\');ilusToast(\'Copiado\',{type:\'success\'})" title="Copiar"><i class="bi bi-clipboard" style="font-size:.78rem;color:#94a3b8"></i></button>':''}`},
+      {label:'<i class="bi bi-circle-fill" style="font-size:.45rem"></i> Estado',
+       value: `<span class="estado-pill ${estadoClass}">${estadoLabel}</span>`},
+      {label:'<i class="bi bi-building"></i> Cliente / Contrato',
+       value: `<span>${escHtml(cliente)}${ctActivo?` <a href="/mantenciones/clientes/${eq.cliente_id}" class="text-decoration-none ms-1" target="_blank"><i class="bi bi-box-arrow-up-right" style="font-size:.78rem;color:#94a3b8"></i></a>`:''}</span>`},
+    ];
+    if (fechaInicio) blocks.push({label:'<i class="bi bi-calendar3"></i> Inicio contrato', value: escHtml(fechaInicio)});
+    if (eq.ubicacion_sala || eq.ubicacion_cliente) blocks.push({label:'<i class="bi bi-geo-alt"></i> Ubicación', value: escHtml(eq.ubicacion_sala || eq.ubicacion_cliente)});
+    if (eq.familia_equipo && eq.familia_equipo !== 'otros') blocks.push({label:'<i class="bi bi-grid-3x3"></i> Categoría', value: escHtml(eq.familia_equipo.charAt(0).toUpperCase()+eq.familia_equipo.slice(1))});
+    if (marcaModelo !== '—') blocks.push({label:'<i class="bi bi-tag"></i> Marca / Modelo', value: escHtml(marcaModelo)});
+
+    dataGridEl.innerHTML = blocks.map(b => `
+      <div class="ft-data-block">
+        <div class="ft-data-label">${b.label}</div>
+        <div class="ft-data-value">${b.value}</div>
+      </div>
+    `).join('');
+  }
+
+  // Chips de estado bajo el header (pills coloridas)
+  const chips = [];
+  const estLow = (eq.estado || 'activo').toLowerCase();
+  if (estLow === 'activo') chips.push('<span class="ft-chip-pro green"><i class="bi bi-check-circle"></i> Activo</span>');
+  else if (estLow === 'baja') chips.push('<span class="ft-chip-pro red"><i class="bi bi-x-circle"></i> Baja</span>');
+  else chips.push(`<span class="ft-chip-pro amber"><i class="bi bi-exclamation-circle"></i> ${escHtml(estLow)}</span>`);
+  if ((d.contratos_relacionados||d.contratos||[]).length) chips.push('<span class="ft-chip-pro blue"><i class="bi bi-file-text"></i> Con contrato</span>');
+  if ((d.fotos_galeria||[]).length) chips.push('<span class="ft-chip-pro blue"><i class="bi bi-images"></i> Con fotos</span>');
+  if (stats.ultima_visita_fecha) {
+    const dias = stats.dias_desde_ultima_visita;
+    const diasTxt = dias != null ? ` (${dias} día${dias===1?'':'s'})` : '';
+    chips.push(`<span class="ft-chip-pro blue"><i class="bi bi-calendar-check"></i> Última visita: ${escHtml(stats.ultima_visita_fecha)}${diasTxt}</span>`);
+  }
+  const chipsEl = document.getElementById('ft_eq_chips');
+  if (chipsEl) chipsEl.innerHTML = chips.join('');
+
+  // FIX 2026-05-27 (Daniel): los botones 'Abrir ficha completa', 'PDF',
+  // 'Sync fotos' fueron eliminados del HTML. Hacemos getElementById defensivo
+  // para que setear href NO explote con "Cannot set properties of null".
+  const _btnFichaFull = document.getElementById('ft_btn_ficha_full');
+  if (_btnFichaFull) _btnFichaFull.href = d.ficha_url || '#';
+
+  // ── CALIDAD DE FICHA (Daniel 2026-05-26 — score 0-100 con criterios)
+  _ftRenderCalidad(d);
+
+  // ── LEVANTAMIENTO INICIAL (Daniel 2026-05-26) ──
+  // El levantamiento es la PRIMERA revisión cronológica del equipo.
+  // Datos disponibles: revisiones_timeline (DESC) + fotos_galeria (DESC).
+  // La PRIMERA cronológicamente es la ÚLTIMA del array.
+  _ftRenderLevantamiento(d);
 
   // ── Alertas ──
   const alertasEl = document.getElementById('ft_alertas');
@@ -2034,12 +2263,356 @@ function _ftRender(d) {
   if (_bdgRev) _bdgRev.textContent = (d.revisiones_timeline || []).length;
 
   // ── Contenido de tabs ──
+  _ftRenderResumen(d);
   _ftRenderVisitas(d.historial_visitas || []);
   _ftRenderFotos(d.fotos_galeria || []);
   _ftRenderSeriales(d.historial_seriales || []);
   _ftRenderEstado(d.historial_estado || []);
   _ftRenderContratos(d.contratos_relacionados || []);
   _ftRenderRevisiones(d.revisiones_timeline || [], d.revisiones_counters || {});
+  _ftRenderAuditoria(d);  // 2026-05-27 — timeline unificado de cambios
+
+  // Mostrar botón "Sincronizar fotos" solo si el equipo tiene OTs con fotos
+  // pero la galería tiene menos fotos (huérfanas en mant_levantamiento_fotos).
+  // 2026-05-26 (Daniel) — backfill de fotos del levantamiento.
+  try {
+    const visitas = d.historial_visitas || [];
+    const fotosEnVisitas = visitas.reduce((acc, v) => acc + (v.fotos_count || 0), 0);
+    const fotosEnGaleria = (d.fotos_galeria || []).length;
+    const btnSync = document.getElementById('ft_btn_sync_fotos');
+    if (btnSync) {
+      if (fotosEnVisitas > fotosEnGaleria) {
+        btnSync.style.display = '';
+        btnSync.dataset.huerfanas = fotosEnVisitas - fotosEnGaleria;
+        btnSync.title = `Hay ${fotosEnVisitas - fotosEnGaleria} foto(s) de OT que no aparecen en la galería. Click para sincronizar.`;
+      } else {
+        btnSync.style.display = 'none';
+      }
+    }
+  } catch(_) {}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 2026-05-26 (Daniel) — Tab "Resumen" — vista consolidada estilo dashboard
+// con: datos del equipo (izq) | historial OT corto (centro) | contrato (der)
+// + galería de fotografías abajo. Es el tab DEFAULT al abrir la ficha.
+// ════════════════════════════════════════════════════════════════════
+function _ftRenderResumen(d) {
+  const el = document.getElementById('ftTabResumen');
+  if (!el) return;
+  const eq = d.equipo || {};
+  const stats = d.stats || {};
+  const visitas = (d.historial_visitas || []).slice(0, 5);
+  const fotos = (d.fotos_galeria || []).slice(0, 10);
+  const contratos = d.contratos_relacionados || [];
+
+  // ── Helper para filas de datos
+  const _row = (label, val, mono) => {
+    const v = (val !== null && val !== undefined && val !== '') ? val : '—';
+    return `
+      <div class="ft-res-row">
+        <div class="ft-res-lbl">${escHtml(label)}</div>
+        <div class="ft-res-val${mono ? ' ft-res-mono' : ''}">${escHtml(String(v))}</div>
+      </div>`;
+  };
+
+  // ── Tipo familia legible
+  const familiaLabel = {
+    cardio: 'Cardio',
+    selectorizado: 'Selectorizado',
+    peso_libre: 'Peso libre',
+    funcional: 'Funcional',
+    fuerza: 'Fuerza',
+    accesorios: 'Accesorios',
+    cross: 'Cross training',
+    musculacion: 'Musculación',
+    otros: 'Otros',
+  }[(eq.familia_equipo || '').toLowerCase()] || (eq.familia_equipo || '—');
+
+  // ── Datos del equipo (columna izq)
+  const datosHtml = `
+    <div class="ft-res-card">
+      <div class="ft-res-card-hdr">
+        <i class="bi bi-clipboard-data me-1"></i>Datos del equipo
+      </div>
+      <div class="ft-res-card-body">
+        ${_row('SKU', eq.sku, true)}
+        ${_row('N° de serie', eq.serie_actual || eq.serie, true)}
+        ${_row('Marca / Modelo', [eq.marca, eq.modelo].filter(Boolean).join(' / '))}
+        ${_row('Categoría', familiaLabel)}
+        ${_row('Peso', eq.peso_kg ? `${eq.peso_kg} kg` : null)}
+        ${_row('Dimensiones', eq.dimensiones)}
+        ${_row('Año fabricación', eq.anio_fabricacion)}
+        ${_row('Color', eq.color)}
+        ${_row('Ubicación', eq.ubicacion_sala)}
+        ${_row('Voltaje', eq.voltaje)}
+        ${_row('Notas', eq.observaciones)}
+      </div>
+    </div>
+  `;
+
+  // ── Historial OT (columna centro)
+  let historialHtml;
+  if (!visitas.length) {
+    historialHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-list-check me-1"></i>Historial de OTs
+        </div>
+        <div class="ft-res-card-body text-center text-muted py-4">
+          <i class="bi bi-calendar-x" style="font-size:1.6rem;opacity:.3"></i>
+          <div class="small mt-1">Sin OTs aún</div>
+        </div>
+      </div>`;
+  } else {
+    const items = visitas.map(v => {
+      const tipoBadgeColor = {
+        levantamiento: '#dbeafe',
+        preventiva:    '#dcfce7',
+        correctiva:    '#fef3c7',
+      }[(v.tipo||'').toLowerCase()] || '#f3f4f6';
+      const tipoBadgeText = {
+        levantamiento: '#1e40af',
+        preventiva:    '#166534',
+        correctiva:    '#92400e',
+      }[(v.tipo||'').toLowerCase()] || '#374151';
+      const estadoChip = {
+        cerrada:    'Cerrada',
+        completada: 'Cerrada',
+        en_curso:   'En curso',
+        programada: 'Pendiente',
+      }[(v.estado||'').toLowerCase()] || (v.estado || '');
+      return `
+        <div class="ft-res-ot-item">
+          <div class="ft-res-ot-num">
+            <a href="${escAttr(v.url||'#')}" target="_blank" rel="noopener" class="text-decoration-none">
+              ${escHtml(v.numero_ot || '—')}
+            </a>
+          </div>
+          <div class="ft-res-ot-body">
+            <div class="ft-res-ot-title">
+              <span class="ft-res-ot-tipo" style="background:${tipoBadgeColor};color:${tipoBadgeText}">${escHtml(v.tipo || '—')}</span>
+              ${v.titulo ? escHtml(v.titulo) : 'Sin título'}
+              ${estadoChip ? `<span class="ft-res-ot-estado">${escHtml(estadoChip)}</span>` : ''}
+            </div>
+            <div class="ft-res-ot-meta">
+              <i class="bi bi-calendar3"></i> ${escHtml(v.fecha || '—')}
+              · <i class="bi bi-person"></i> ${escHtml(v.tecnico || '—')}
+              ${v.fotos_count ? ` · <span style="color:#dc2626;font-weight:600"><i class="bi bi-camera"></i> ${v.fotos_count} foto(s)</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    const totalOts = (d.historial_visitas || []).length;
+    historialHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-list-check me-1"></i>Historial de OTs</span>
+          ${totalOts > 5 ? `<span class="ft-res-card-link" onclick="document.querySelector('#ftTabs .nav-link[data-bs-target=&quot;#ftTabVisitas&quot;]').click()">Ver las ${totalOts} OTs <i class="bi bi-arrow-right"></i></span>` : ''}
+        </div>
+        <div class="ft-res-card-body" style="padding:6px 4px">
+          ${items}
+        </div>
+      </div>`;
+  }
+
+  // ── Contrato (columna derecha)
+  let contratoHtml;
+  if (!contratos.length) {
+    contratoHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-file-earmark-text me-1"></i>Contrato / Arriendo / Mantención
+        </div>
+        <div class="ft-res-card-body text-center text-muted py-4">
+          <i class="bi bi-file-earmark" style="font-size:1.6rem;opacity:.3"></i>
+          <div class="small mt-1">Sin contratos vigentes</div>
+        </div>
+      </div>`;
+  } else {
+    const c = contratos[0];
+    const dr = c.dias_restantes;
+    let estadoBadge = { color:'#6b7280', text: c.es_indefinido ? 'Indefinido' : 'Vigente' };
+    if (!c.es_indefinido && dr !== null && dr !== undefined) {
+      if (dr < 0) estadoBadge = { color:'#dc2626', text:'Vencido' };
+      else if (dr <= 30) estadoBadge = { color:'#f59e0b', text:`Vence en ${dr}d` };
+      else estadoBadge = { color:'#16a34a', text:'Vigente' };
+    }
+    contratoHtml = `
+      <div class="ft-res-card">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-file-earmark-text me-1"></i>Contrato / Arriendo / Mantención
+        </div>
+        <div class="ft-res-card-body">
+          ${_row('Tipo', c.tipo || 'Mantención')}
+          ${_row('N° de contrato', c.numero || c.nombre || `#${c.id}`, true)}
+          ${_row('Inicio', c.fecha_inicio)}
+          ${_row('Término', c.fecha_vencimiento || (c.es_indefinido ? 'Indefinido' : '—'))}
+          <div class="ft-res-row">
+            <div class="ft-res-lbl">Estado</div>
+            <div class="ft-res-val">
+              <span class="badge" style="background:${estadoBadge.color}15;color:${estadoBadge.color};border:1px solid ${estadoBadge.color}50;padding:4px 9px">
+                ${escHtml(estadoBadge.text)}
+              </span>
+            </div>
+          </div>
+          ${contratos.length > 1 ? `
+            <div class="ft-res-row" style="border-top:1px dashed #e5e7eb;margin-top:8px;padding-top:8px">
+              <div class="ft-res-lbl">Otros contratos</div>
+              <div class="ft-res-val">
+                <span class="ft-res-card-link" onclick="document.querySelector('#ftTabs .nav-link[data-bs-target=&quot;#ftTabContratos&quot;]').click()">
+                  ${contratos.length - 1} más <i class="bi bi-arrow-right"></i>
+                </span>
+              </div>
+            </div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // ── Galería de fotos (fila inferior)
+  let galeriaHtml;
+  if (!fotos.length) {
+    galeriaHtml = `
+      <div class="ft-res-card ft-res-card-wide">
+        <div class="ft-res-card-hdr">
+          <i class="bi bi-images me-1"></i>Fotografías del equipo
+        </div>
+        <div class="ft-res-card-body text-center text-muted py-4">
+          <i class="bi bi-image" style="font-size:1.6rem;opacity:.3"></i>
+          <div class="small mt-1">Sin fotografías cargadas todavía</div>
+          <div class="small mt-1" style="font-size:.7rem;opacity:.7">Las fotos del levantamiento y de visitas aparecerán acá.</div>
+        </div>
+      </div>`;
+  } else {
+    const totalFotos = (d.fotos_galeria || []).length;
+    galeriaHtml = `
+      <div class="ft-res-card ft-res-card-wide">
+        <div class="ft-res-card-hdr d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-images me-1"></i>Fotografías del equipo <span class="badge bg-light text-dark ms-1">${totalFotos}</span></span>
+          ${totalFotos > 10 ? `<span class="ft-res-card-link" onclick="document.querySelector('#ftTabs .nav-link[data-bs-target=&quot;#ftTabFotos&quot;]').click()">Ver todas <i class="bi bi-arrow-right"></i></span>` : ''}
+        </div>
+        <div class="ft-res-card-body">
+          <div class="ft-res-fotos">
+            ${fotos.map(f => `
+              <div class="ft-res-foto" onclick="window.open('${escAttr(f.url)}','_blank')" title="${escAttr(f.descripcion || f.tomada_por || 'Foto')}">
+                <img src="${escAttr(f.url)}" alt="" loading="lazy">
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ── Estilos del tab Resumen (inyectados una sola vez)
+  const styleId = 'ft-resumen-style';
+  if (!document.getElementById(styleId)) {
+    const st = document.createElement('style');
+    st.id = styleId;
+    st.textContent = `
+      .ft-res-grid{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:14px;align-items:start;margin-bottom:14px}
+      @media (max-width: 992px){.ft-res-grid{grid-template-columns:1fr}}
+      .ft-res-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+      .ft-res-card-wide{grid-column:1/-1}
+      .ft-res-card-hdr{padding:10px 14px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:700;font-size:.84rem;color:#0f172a}
+      .ft-res-card-body{padding:10px 14px}
+      .ft-res-row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed #f3f4f6;font-size:.82rem}
+      .ft-res-row:last-child{border-bottom:0}
+      .ft-res-lbl{color:#6b7280;font-weight:500;min-width:90px}
+      .ft-res-val{color:#0f172a;font-weight:600;text-align:right;flex:1;word-break:break-word}
+      .ft-res-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+      .ft-res-card-link{font-size:.74rem;color:#dc2626;font-weight:700;cursor:pointer}
+      .ft-res-card-link:hover{text-decoration:underline}
+      .ft-res-ot-item{display:flex;gap:10px;padding:9px 8px;border-bottom:1px solid #f3f4f6}
+      .ft-res-ot-item:last-child{border-bottom:0}
+      .ft-res-ot-num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.74rem;font-weight:700;background:#f3f4f6;padding:4px 6px;border-radius:6px;height:fit-content;white-space:nowrap;color:#0f172a}
+      .ft-res-ot-num a{color:#0f172a}
+      .ft-res-ot-body{flex:1;min-width:0}
+      .ft-res-ot-title{font-weight:600;font-size:.82rem;color:#0f172a;line-height:1.25;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+      .ft-res-ot-tipo{font-size:.66rem;font-weight:700;padding:2px 7px;border-radius:10px;text-transform:uppercase;letter-spacing:.02em}
+      .ft-res-ot-estado{font-size:.66rem;color:#6b7280;background:#f3f4f6;padding:2px 7px;border-radius:10px;font-weight:600}
+      .ft-res-ot-meta{font-size:.72rem;color:#6b7280;margin-top:3px}
+      .ft-res-fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:7px}
+      .ft-res-foto{aspect-ratio:1;border-radius:8px;overflow:hidden;cursor:pointer;background:#f3f4f6;border:1px solid #e5e7eb;transition:transform .15s ease, box-shadow .15s ease}
+      .ft-res-foto:hover{transform:scale(1.03);box-shadow:0 4px 14px rgba(0,0,0,.12)}
+      .ft-res-foto img{width:100%;height:100%;object-fit:cover}
+    `;
+    document.head.appendChild(st);
+  }
+
+  el.innerHTML = `
+    <div class="ft-res-grid">
+      ${datosHtml}
+      ${historialHtml}
+      ${contratoHtml}
+    </div>
+    ${galeriaHtml}
+  `;
+}
+
+// ── Descargar PDF de la ficha técnica (2026-05-26 Daniel) ────────────
+function ftDescargarPDF() {
+  if (!_ftCurrentMid) return;
+  // Endpoint genérico de PDF de ficha de equipo. Si no existe en backend,
+  // se cae al print() nativo del navegador con la URL de ficha completa.
+  const url = `/mantenciones/maquinas/${_ftCurrentMid}/ficha-tecnica.pdf`;
+  // Probamos primero el PDF directo; si 404, abrimos ficha completa para imprimir.
+  fetch(url, { method:'HEAD' }).then(r => {
+    if (r.ok) {
+      window.open(url, '_blank');
+    } else {
+      // Fallback: abre ficha completa en pestaña nueva y dispara print al cargar
+      const w = window.open(`/mantenciones/maquinas/${_ftCurrentMid}?print=1`, '_blank');
+      if (w) w.focus();
+    }
+  }).catch(() => {
+    const w = window.open(`/mantenciones/maquinas/${_ftCurrentMid}?print=1`, '_blank');
+    if (w) w.focus();
+  });
+}
+
+// ── Sincronizar fotos huérfanas del levantamiento → galería del equipo
+// 2026-05-26 (Daniel) — Si en alguna sesión vieja el INSERT a
+// mant_maquina_fotos falló silenciosamente, las fotos quedaron solo en
+// mant_levantamiento_fotos. Este botón llama al backfill para copiarlas.
+async function ftSincronizarFotos() {
+  if (!_ftCurrentMid) return;
+  const btn = document.getElementById('ft_btn_sync_fotos');
+  const ok = await ilusConfirm({
+    title: 'Sincronizar fotos del equipo',
+    message: 'Vamos a buscar fotos de las OT (levantamientos) de este equipo que no aparezcan todavía en la galería y copiarlas. ¿Continúo?',
+    sub: 'Es seguro — usa anti-duplicado por URL.',
+    okLabel: 'Sí, sincronizar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando…';
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${_ftCurrentMid}/sync-fotos-lev`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      await ilusAlert({ title:'Error', message: d.error || 'No se pudo sincronizar', type:'error' });
+    } else {
+      ilusToast(`✓ ${d.copiadas || 0} foto(s) copiada(s) a la galería`, { type:'success' });
+      // Refrescar ficha
+      if (_ftCurrentMid) {
+        const eq = _ftCurrentData ? _ftCurrentData.equipo : null;
+        await verFichaTecnicaEquipo(_ftCurrentMid, eq ? eq.nombre : '');
+      }
+    }
+  } catch(e) {
+    await ilusAlert({ title:'Error de red', message: e.message || 'No se pudo conectar', type:'error' });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sincronizar fotos';
+    }
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2162,6 +2735,142 @@ function _ftRenderRevisiones(revisiones, counters) {
   el.innerHTML = headerHtml + items;
 }
 
+// Renderiza la card "Calidad de la ficha" — score visual + criterios pendientes.
+function _ftRenderCalidad(d) {
+  const card = document.getElementById('ft_calidad_card');
+  if (!card) return;
+  const cal = d.calidad_ficha;
+  if (!cal) { card.style.display = 'none'; return; }
+
+  const score = Math.max(0, Math.min(100, cal.score || 0));
+  const estado = cal.estado || 'incompleta';
+  const pendientes = cal.pendientes || [];
+
+  // Color según estado
+  const cfg = {
+    'completa':       { bg: '#16a34a', label: '✓ FICHA COMPLETA',  textCol: '#15803d' },
+    'buena':          { bg: '#3b82f6', label: 'BUENA',              textCol: '#1d4ed8' },
+    'revisar_datos':  { bg: '#f59e0b', label: '⚠ REVISAR DATOS',    textCol: '#b45309' },
+    'incompleta':     { bg: '#dc2626', label: '✕ INCOMPLETA',       textCol: '#991b1b' },
+  }[estado] || { bg: '#94a3b8', label: '—', textCol: '#64748b' };
+
+  // Barra + score grande
+  const bar = document.getElementById('ft_cal_bar');
+  if (bar) {
+    bar.style.width = score + '%';
+    bar.style.background = cfg.bg;
+  }
+  const scoreEl = document.getElementById('ft_cal_score');
+  if (scoreEl) {
+    scoreEl.textContent = score;
+    scoreEl.style.color = cfg.bg;
+  }
+  // Badge de estado
+  const badgeEl = document.getElementById('ft_cal_estado_badge');
+  if (badgeEl) {
+    badgeEl.innerHTML = `<span class="badge" style="background:${cfg.bg};color:#fff;font-size:.65rem;padding:3px 9px;font-weight:600">${cfg.label}</span>`;
+  }
+  // Pendientes (máx 4 visibles)
+  const pendEl = document.getElementById('ft_cal_pendientes');
+  if (pendEl) {
+    if (pendientes.length === 0) {
+      pendEl.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Todos los criterios cumplidos.';
+    } else {
+      const muestra = pendientes.slice(0, 4).map(p => `<span class="badge" style="background:#fef2f2;color:#991b1b;font-size:.62rem;padding:2px 7px;margin-right:4px;margin-top:3px">✕ ${p}</span>`).join('');
+      const extra = pendientes.length > 4 ? ` <span style="color:#94a3b8;font-size:.7rem">+${pendientes.length - 4} más</span>` : '';
+      pendEl.innerHTML = `<div style="margin-top:2px"><strong style="color:${cfg.textCol}">Pendientes:</strong> ${muestra}${extra}</div>`;
+    }
+  }
+  card.style.display = 'block';
+}
+
+// Renderiza la card "Levantamiento inicial" — fotó + fecha + estado +
+// daños + observaciones (extraído de la PRIMERA revisión cronológica).
+function _ftRenderLevantamiento(d) {
+  // CAMBIO 2026-05-27 (Daniel): info levantamiento ahora va INTEGRADA en
+  // el header del modal (ft_lev_info_inline), no como card separada.
+  // La foto va ARRIBA con ft_foto_principal (manejado en _ftRender).
+  // Aquí solo poblamos los datos textuales del levantamiento.
+  const inline = document.getElementById('ft_lev_info_inline');
+  if (!inline) return;
+  const revisiones = d.revisiones_timeline || [];
+  const fotos      = d.fotos_galeria || [];
+  const eq         = d.equipo || {};
+
+  // Última revisión cronológica = index 0 (orden DESC)
+  const ultRev  = revisiones.length ? revisiones[0] : null;
+  const ultFoto = fotos.length ? fotos[0] : null;
+
+  // Mostrar solo si hay info de levantamiento real (revisión o foto)
+  if (!ultRev && !ultFoto) {
+    inline.style.display = 'none';
+    return;
+  }
+  inline.style.display = 'block';
+
+  // ── Fecha del último levantamiento ──
+  let fecha = '';
+  if (ultRev && ultRev.revisado_at)      fecha = ultRev.revisado_at;
+  else if (ultRev && ultRev.fecha)       fecha = ultRev.fecha;
+  else if (ultFoto && ultFoto.fecha)     fecha = ultFoto.fecha;
+  document.getElementById('ft_lev_fecha').textContent = fecha ? ('📅 ' + fecha) : '— sin levantamientos registrados';
+
+  // ── Estado capturado en la última revisión ──
+  const estado = ultRev ? (ultRev.estado_revision || '').toLowerCase() : '';
+  const estadoBadgeEl = document.getElementById('ft_lev_estado_badge');
+  const estadosCfg = {
+    'operativo':         { bg: '#16a34a', label: '✓ OPERATIVO' },
+    'verificado':        { bg: '#16a34a', label: '✓ VERIFICADO' },
+    'con_cambios':       { bg: '#3b82f6', label: '↻ CON CAMBIOS' },
+    'con_falla':         { bg: '#dc2626', label: '⚠ CON FALLA' },
+    'con_observaciones': { bg: '#f59e0b', label: '⚠ CON OBSERVACIONES' },
+    'falla_detectada':   { bg: '#dc2626', label: '⚠ FALLA DETECTADA' },
+    'fuera_servicio':    { bg: '#7c2d12', label: '✕ FUERA DE SERVICIO' },
+    'saltado':           { bg: '#94a3b8', label: '— NO REVISADO' },
+  };
+  const cfg = estadosCfg[estado];
+  estadoBadgeEl.innerHTML = cfg
+    ? `<span class="badge" style="background:${cfg.bg};color:#fff;font-size:.68rem;padding:4px 9px;font-weight:700">${cfg.label}</span>`
+    : (ultRev ? `<span class="badge" style="background:#94a3b8;color:#fff;font-size:.68rem;padding:4px 9px">${escHtml(estado.toUpperCase()||'—')}</span>` : '');
+
+  // ── Daños: warning visible si estado indica problema ──
+  const danosEl = document.getElementById('ft_lev_danos');
+  const conDanos = ['con_falla', 'fuera_servicio', 'con_observaciones', 'falla_detectada'].includes(estado);
+  danosEl.style.display = conDanos ? 'flex' : 'none';
+
+  // ── Observaciones del técnico (de la última revisión) ──
+  const obsEl = document.getElementById('ft_lev_observaciones');
+  let obs = '';
+  if (ultRev) {
+    obs = (ultRev.observacion || ultRev.razon_saltado || '').trim();
+  }
+  if (!obs && ultFoto && ultFoto.descripcion) {
+    obs = (ultFoto.descripcion || '').trim();
+  }
+  if (!obs && eq.observaciones) {
+    obs = (eq.observaciones || '').trim();
+  }
+  if (obs) {
+    obsEl.textContent = obs;
+    obsEl.style.color = '#1f2937';
+    obsEl.style.fontStyle = 'normal';
+  } else {
+    obsEl.textContent = 'Sin observaciones registradas. Captura observaciones en la próxima visita técnica.';
+    obsEl.style.color = '#9ca3af';
+    obsEl.style.fontStyle = 'italic';
+  }
+
+  // ── Técnico responsable + contador en una línea ──
+  const tecEl = document.getElementById('ft_lev_tecnico');
+  let tec = '';
+  if (ultRev && ultRev.revisado_por) tec = ultRev.revisado_por;
+  else if (ultFoto && ultFoto.tomada_por) tec = ultFoto.tomada_por;
+  const partes = [];
+  if (tec) partes.push(`<i class="bi bi-person-circle me-1"></i>Técnico: <strong>${escHtml(tec)}</strong>`);
+  if (revisiones.length > 1) partes.push(`<i class="bi bi-clock-history ms-2 me-1"></i><strong>${revisiones.length}</strong> revisiones totales`);
+  tecEl.innerHTML = partes.join('');
+}
+
 function _ftRenderStat(key, val, label, cls) {
   const el = document.querySelector(`.ft-stat[data-key="${key}"]`);
   if (!el) return;
@@ -2217,26 +2926,123 @@ function _ftRenderVisitas(visitas) {
   }).join('');
 }
 
+// ── Galería tipo Facebook con lightbox (Daniel 2026-05-27) ──
+// Foto principal grande + grid de miniaturas + lightbox al hacer click.
+window._ftFotos = [];   // array de fotos para el lightbox
+window._ftFotoIdx = 0;  // index actual en el lightbox
+
 function _ftRenderFotos(fotos) {
   const el = document.getElementById('ftTabFotos');
   if (!fotos.length) {
-    el.innerHTML = `<div class="text-center text-muted py-4">
-      <i class="bi bi-image" style="font-size:2rem;opacity:.3"></i>
-      <div class="fw-semibold mt-2">Sin fotos</div>
-      <div class="small mt-1">Las fotos del levantamiento y de visitas posteriores aparecerán aquí.</div>
+    el.innerHTML = `<div class="text-center text-muted py-5">
+      <i class="bi bi-images" style="font-size:3rem;opacity:.25"></i>
+      <div class="fw-semibold mt-3" style="font-size:1rem">Aún no existen fotografías asociadas a este equipo</div>
+      <div class="small mt-2" style="max-width:420px;margin:0 auto;color:#94a3b8">Cuando un técnico capture fotos del equipo en una OT (levantamiento, antes/después, evidencia de daño, etc.), aparecerán aquí ordenadas por fecha.</div>
     </div>`;
     return;
   }
+  // Guardamos las fotos para el lightbox
+  window._ftFotos = fotos;
+  // Foto principal (la más reciente) + miniaturas
+  const principal = fotos[0];
+  const otras = fotos.slice(1);
   el.innerHTML = `
-    <div class="d-grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr))">
-      ${fotos.map(f => `
-        <div class="ft-photo-card" onclick="window.open('${escAttr(f.url)}','_blank')" title="${escAttr(f.descripcion || f.tomada_por || 'Foto')}">
-          <img src="${escAttr(f.url)}" alt="" loading="lazy">
+    <style>
+      .ft-gal-main {
+        width:100%;max-height:480px;border-radius:14px;background:#0f172a;
+        display:flex;align-items:center;justify-content:center;overflow:hidden;
+        cursor:zoom-in;position:relative;
+      }
+      .ft-gal-main img { max-width:100%;max-height:480px;object-fit:contain;display:block; }
+      .ft-gal-main-info {
+        position:absolute;left:0;right:0;bottom:0;
+        background:linear-gradient(to top, rgba(0,0,0,.85), transparent);
+        color:#fff;padding:18px 20px 14px;font-size:.84rem;
+      }
+      .ft-gal-grid {
+        display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));
+        gap:8px;margin-top:14px;
+      }
+      .ft-gal-thumb {
+        position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;
+        cursor:zoom-in;background:#f1f5f9;border:2px solid transparent;
+        transition:border-color .12s,transform .12s;
+      }
+      .ft-gal-thumb:hover { border-color:#dc2626;transform:scale(1.03); }
+      .ft-gal-thumb img { width:100%;height:100%;object-fit:cover; }
+      .ft-gal-thumb-label {
+        position:absolute;top:6px;left:6px;background:rgba(0,0,0,.7);color:#fff;
+        font-size:.62rem;padding:2px 7px;border-radius:10px;font-weight:600;
+        text-transform:uppercase;letter-spacing:.3px;
+      }
+    </style>
+    <div class="ft-gal-main" onclick="ftLightboxAbrir(0)">
+      <img src="${escAttr(principal.url)}" alt="${escAttr(principal.descripcion||'Foto principal')}" loading="lazy">
+      <div class="ft-gal-main-info">
+        <div style="font-weight:600">${escHtml(principal.descripcion || 'Foto del equipo')}</div>
+        <div style="opacity:.85;font-size:.74rem;margin-top:2px">
+          <i class="bi bi-camera-fill me-1"></i>${escHtml(principal.tipo_foto || 'principal')}
+          ${principal.fecha ? ' · <i class="bi bi-calendar3 me-1"></i>' + escHtml(principal.fecha) : ''}
+          ${principal.tomada_por ? ' · <i class="bi bi-person-circle me-1"></i>' + escHtml(principal.tomada_por) : ''}
         </div>
-      `).join('')}
+      </div>
     </div>
-    <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>Click en una foto para abrir en pantalla completa.</div>
+    ${otras.length ? `
+      <div class="ft-gal-grid">
+        ${otras.map((f, i) => `
+          <div class="ft-gal-thumb" onclick="ftLightboxAbrir(${i + 1})" title="${escAttr(f.descripcion || f.tipo_foto || 'Foto')}">
+            <img src="${escAttr(f.url)}" alt="" loading="lazy">
+            ${f.tipo_foto && f.tipo_foto !== 'principal' ? `<div class="ft-gal-thumb-label">${escHtml(f.tipo_foto)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+    <div class="small text-muted mt-3"><i class="bi bi-info-circle me-1"></i>${fotos.length} foto${fotos.length===1?'':'s'} · click para ampliar y navegar con flechas.</div>
   `;
+}
+
+// ── Lightbox: abrir, navegar, cerrar ──
+function ftLightboxAbrir(idx) {
+  const fotos = window._ftFotos || [];
+  if (!fotos.length) return;
+  window._ftFotoIdx = Math.max(0, Math.min(idx, fotos.length - 1));
+  ftLightboxRender();
+  document.getElementById('ftLightbox').style.display = 'block';
+  // Permitir cerrar con ESC + navegar con flechas
+  document.addEventListener('keydown', _ftLightboxKey);
+}
+function ftLightboxCerrar() {
+  document.getElementById('ftLightbox').style.display = 'none';
+  document.removeEventListener('keydown', _ftLightboxKey);
+}
+function ftLightboxPrev() {
+  const fotos = window._ftFotos || [];
+  if (!fotos.length) return;
+  window._ftFotoIdx = (window._ftFotoIdx - 1 + fotos.length) % fotos.length;
+  ftLightboxRender();
+}
+function ftLightboxNext() {
+  const fotos = window._ftFotos || [];
+  if (!fotos.length) return;
+  window._ftFotoIdx = (window._ftFotoIdx + 1) % fotos.length;
+  ftLightboxRender();
+}
+function ftLightboxRender() {
+  const fotos = window._ftFotos || [];
+  const f = fotos[window._ftFotoIdx];
+  if (!f) return;
+  document.getElementById('ftLightboxImg').src = f.url;
+  const partes = [`<strong>${escHtml(f.descripcion || 'Foto del equipo')}</strong>`];
+  if (f.tipo_foto)   partes.push(escHtml(f.tipo_foto));
+  if (f.fecha)       partes.push(escHtml(f.fecha));
+  if (f.tomada_por)  partes.push(escHtml(f.tomada_por));
+  partes.push(`${window._ftFotoIdx + 1} / ${fotos.length}`);
+  document.getElementById('ftLightboxInfo').innerHTML = partes.join(' · ');
+}
+function _ftLightboxKey(e) {
+  if (e.key === 'Escape') ftLightboxCerrar();
+  else if (e.key === 'ArrowLeft') ftLightboxPrev();
+  else if (e.key === 'ArrowRight') ftLightboxNext();
 }
 
 function _ftRenderSeriales(seriales) {
@@ -2300,6 +3106,125 @@ function _ftRenderEstado(estados) {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+// ── Auditoría / Movimientos: timeline unificado (Daniel 2026-05-27) ──
+// Combina revisiones + cambios de serial + cambios de estado + fotos
+// agregadas, todo en un solo timeline cronológico DESC.
+function _ftRenderAuditoria(d) {
+  const el = document.getElementById('ftTabAuditoria');
+  if (!el) return;
+  const eventos = [];
+
+  // Revisiones del técnico
+  (d.revisiones_timeline || []).forEach(r => {
+    eventos.push({
+      ts: r.revisado_at || r.fecha || '',
+      icono: 'bi-clipboard-pulse', color: '#3b82f6',
+      usuario: r.revisado_por || 'Sistema',
+      accion: `Revisó equipo en ${r.numero_ot || 'OT'}`,
+      detalle: r.observacion || r.razon_saltado || `Estado: ${r.estado_revision || '—'}`,
+      ot: r.numero_ot || '',
+    });
+  });
+  // Cambios de serial
+  (d.historial_seriales || []).forEach(s => {
+    eventos.push({
+      ts: s.fecha || '',
+      icono: 'bi-upc', color: '#dc2626',
+      usuario: s.usuario || 'Sistema',
+      accion: 'Cambió N° de serie',
+      detalle: `${escHtml(s.valor_anterior || '(vacío)')} → <strong style="color:#16a34a">${escHtml(s.valor_nuevo || '—')}</strong>${s.razon ? '<br><span style="opacity:.75">Motivo: ' + escHtml(s.razon) + '</span>' : ''}`,
+    });
+  });
+  // Cambios de estado
+  (d.historial_estado || []).forEach(s => {
+    eventos.push({
+      ts: s.fecha || '',
+      icono: 'bi-clipboard-check', color: '#f59e0b',
+      usuario: s.usuario || 'Sistema',
+      accion: 'Cambió estado del equipo',
+      detalle: `<span class="badge bg-secondary">${escHtml(s.estado_anterior || '—')}</span> → <span class="badge" style="background:#dc2626;color:#fff">${escHtml(s.estado_nuevo || '—')}</span>${s.razon ? '<br><span style="opacity:.75">' + escHtml(s.razon) + '</span>' : ''}`,
+    });
+  });
+  // Fotos agregadas (agrupadas por fecha+usuario para no inundar)
+  const fotosGrupos = {};
+  (d.fotos_galeria || []).forEach(f => {
+    const key = `${(f.fecha || '').slice(0,10)}__${f.tomada_por || ''}`;
+    if (!fotosGrupos[key]) {
+      fotosGrupos[key] = { ts: f.fecha || '', usuario: f.tomada_por || 'Técnico', count: 0 };
+    }
+    fotosGrupos[key].count++;
+  });
+  Object.values(fotosGrupos).forEach(g => {
+    eventos.push({
+      ts: g.ts,
+      icono: 'bi-camera-fill', color: '#16a34a',
+      usuario: g.usuario,
+      accion: `Adjuntó ${g.count} fotografía${g.count === 1 ? '' : 's'}`,
+      detalle: '',
+    });
+  });
+
+  // Ordenar DESC por timestamp
+  eventos.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+  if (!eventos.length) {
+    el.innerHTML = `<div class="text-center text-muted py-5">
+      <i class="bi bi-clock-history" style="font-size:3rem;opacity:.25"></i>
+      <div class="fw-semibold mt-3">Sin movimientos registrados</div>
+      <div class="small mt-2" style="max-width:420px;margin:0 auto;color:#94a3b8">
+        Cuando un técnico revise el equipo, cambie el serial, modifique el estado o adjunte fotos, todo quedará registrado acá con fecha, usuario y motivo.
+      </div>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <style>
+      .ft-audit-tl { position:relative;padding-left:30px; }
+      .ft-audit-tl::before {
+        content:'';position:absolute;left:14px;top:6px;bottom:6px;
+        width:2px;background:#e5e7eb;
+      }
+      .ft-audit-item {
+        position:relative;padding:10px 14px;margin-bottom:10px;
+        background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+      }
+      .ft-audit-item::before {
+        content:'';position:absolute;left:-23px;top:14px;
+        width:14px;height:14px;border-radius:50%;background:#fff;
+        border:3px solid currentColor;z-index:2;
+      }
+      .ft-audit-head {
+        display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+        font-size:.85rem;margin-bottom:3px;
+      }
+      .ft-audit-user { font-weight:700;color:#0f172a; }
+      .ft-audit-accion { color:#374151; }
+      .ft-audit-fecha {
+        font-size:.7rem;color:#94a3b8;margin-left:auto;white-space:nowrap;
+      }
+      .ft-audit-detalle {
+        font-size:.78rem;color:#475569;line-height:1.5;
+      }
+    </style>
+    <div class="ft-audit-tl">
+      ${eventos.slice(0, 40).map(ev => `
+        <div class="ft-audit-item" style="color:${ev.color}">
+          <div class="ft-audit-head">
+            <i class="bi ${ev.icono}" style="color:${ev.color};font-size:1rem"></i>
+            <span class="ft-audit-user">${escHtml(ev.usuario)}</span>
+            <span class="ft-audit-accion">${escHtml(ev.accion)}</span>
+            ${ev.ot ? `<span class="badge" style="background:#f1f5f9;color:#475569;font-size:.62rem">${escHtml(ev.ot)}</span>` : ''}
+            <span class="ft-audit-fecha">${escHtml(ev.ts || 'sin fecha')}</span>
+          </div>
+          ${ev.detalle ? `<div class="ft-audit-detalle">${ev.detalle}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>
+    ${eventos.length > 40 ? `<div class="text-center text-muted small mt-3">Mostrando los 40 movimientos más recientes de ${eventos.length} totales.</div>` : ''}
   `;
 }
 
@@ -2512,10 +3437,13 @@ async function guardarCliente() {
     email_empresa:     $v('ec_email_empresa'),
     tel_empresa:       $v('ec_tel_empresa'),
     // Ubicación
-    direccion:         $v('ec_direccion'),
-    region:            $v('ec_region'),
-    comuna:            $v('ec_comuna'),
-    ciudad:            $v('ec_ciudad'),
+    direccion:          $v('ec_direccion'),
+    direccion_lat:      $v('ec_direccion_lat'),
+    direccion_lng:      $v('ec_direccion_lng'),
+    direccion_place_id: $v('ec_direccion_place_id'),
+    region:             $v('ec_region'),
+    comuna:             $v('ec_comuna'),
+    ciudad:             $v('ec_ciudad'),
     // Contacto principal
     contacto_nombre:   $v('ec_contacto_nombre'),
     contacto_cargo:    $v('ec_contacto_cargo'),
@@ -3091,23 +4019,45 @@ async function importarDesdeErp() {
 // ─── Agregar máquina manual ───────────────────────────────
 async function guardarMaquinaManual() {
   const nombre = document.getElementById('mm_nombre').value.trim();
-  if (!nombre) { alert('Nombre requerido'); return; }
+  if (!nombre) {
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({title:'Nombre requerido', message:'El nombre del equipo es obligatorio.', type:'warning'});
+    } else { alert('Nombre requerido'); }
+    return;
+  }
+  // 2026-05-27 (Daniel): SKU y N° Serie auto si vienen vacíos. Backend genera.
+  // Categoría/familia, marca, modelo, año, ubicación → todos opcionales.
+  const payload = {
+    nombre,
+    sku:      document.getElementById('mm_sku').value.trim(),
+    serie:    document.getElementById('mm_serie').value.trim(),
+    cantidad: parseInt(document.getElementById('mm_cantidad').value) || 1,
+    doc_origen: document.getElementById('mm_doc').value.trim(),
+    notas:    document.getElementById('mm_notas').value.trim(),
+    // Campos nuevos opcionales
+    familia_equipo: (document.getElementById('mm_familia')||{}).value || '',
+    marca:    (document.getElementById('mm_marca')||{}).value || '',
+    modelo:   (document.getElementById('mm_modelo')||{}).value || '',
+    anio_fabricacion: parseInt((document.getElementById('mm_anio')||{}).value) || null,
+    ubicacion_sala: (document.getElementById('mm_ubicacion')||{}).value || '',
+    auto_sku: true,    // pedirle al backend que rellene SKU si viene vacío
+    auto_serie: true,  // pedirle al backend que rellene serie si viene vacío
+  };
   const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      nombre,
-      sku:      document.getElementById('mm_sku').value.trim(),
-      serie:    document.getElementById('mm_serie').value.trim(),
-      cantidad: parseInt(document.getElementById('mm_cantidad').value) || 1,
-      doc_origen: document.getElementById('mm_doc').value.trim(),
-      notas:    document.getElementById('mm_notas').value.trim(),
-    })
+    body: JSON.stringify(payload)
   });
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('modalMaqManual')).hide();
     location.reload();
-  } else { alert('Error al guardar'); }
+  } else {
+    let err = 'Error al guardar';
+    try { const d = await r.json(); err = d.error || err; } catch(_){}
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({title:'No se pudo agregar', message:err, type:'error'});
+    } else { alert(err); }
+  }
 }
 
 // 2026-05-22 (Daniel): "Eliminar equipo" pasa a ser flujo confidencial.
@@ -3321,10 +4271,31 @@ async function subirContrato() {
 
     if (r.ok && data && data.ok) {
       bootstrap.Modal.getInstance(document.getElementById('modalContrato')).hide();
-      if (typeof ilusToast === 'function') {
+      if (data.reparado) {
+        // El PDF estaba dañado y el sistema lo reparó — avisar explícito
+        await ilusAlert({
+          title: 'Contrato subido y reparado',
+          message: 'El PDF estaba dañado y el sistema lo reparó automáticamente antes de guardarlo. Ya está disponible para visualizar.',
+          type: 'success',
+        });
+      } else if (typeof ilusToast === 'function') {
         ilusToast('✓ Contrato subido correctamente (persistente)', { type: 'success' });
       }
       setTimeout(() => location.reload(), 900);
+      return;
+    }
+
+    // PDF inválido — el sistema validó server-side y rechazó. Mantener
+    // el modal abierto para que el usuario suba otro archivo de inmediato.
+    if (data && data.error_codigo === 'PDF_INVALIDO') {
+      await ilusAlert({
+        title: 'El archivo no se puede usar',
+        message: data.error,
+        type: 'warning',
+      });
+      // Limpiar el input file para que el usuario elija otro
+      const fInput = document.getElementById('ct_archivo');
+      if (fInput) fInput.value = '';
       return;
     }
 
@@ -3540,43 +4511,109 @@ async function vhGuardar() {
 }
 
 // ─── Re-subir archivo de contrato (cuando se perdió por deploy de Railway) ──
-function reSubirContrato(ctid, nombre) {
-  // Crear input file invisible y disparar el dialog del browser
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = '.pdf,.doc,.docx';
-  inp.style.display = 'none';
-  inp.onchange = async () => {
-    const f = inp.files[0];
-    if (!f) return;
-    const ok = await ilusConfirm({
-      title: 'Re-subir archivo del contrato',
-      message: `«${nombre}»`,
-      sub: `Archivo nuevo: ${f.name}\nEsto reemplaza el archivo anterior. Conserva los datos del contrato y el análisis IA actual.`,
-      okLabel: 'Sí, reemplazar',
-    });
-    if (!ok) return;
+// Bucle persistente de re-subida: si el archivo está mal (PDF dañado, no es
+// PDF real, etc.), el sistema muestra el problema y abre otra vez el picker
+// hasta que el usuario suba uno válido o cancele explícitamente.
+async function reSubirContrato(ctid, nombre) {
+  // Confirmación inicial — solo se pide una vez
+  const okStart = await ilusConfirm({
+    title: 'Re-subir archivo del contrato',
+    message: `«${nombre}»`,
+    sub: 'Esto reemplaza el archivo anterior. Conserva los datos del contrato y el análisis IA actual.',
+    okLabel: 'Elegir archivo',
+  });
+  if (!okStart) return;
 
+  let intento = 0;
+  let mensajeProblema = null;  // pasa de iteración a iteración
+
+  while (true) {
+    intento++;
+    // Mostrar el problema de la iteración anterior (si lo hubo)
+    if (mensajeProblema) {
+      await ilusAlert({
+        title: 'El archivo anterior no se pudo usar',
+        message: mensajeProblema,
+        type: 'warning',
+      });
+    }
+
+    // Abrir file picker (envuelto en Promise para esperar a la elección)
+    const f = await new Promise((resolve) => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = '.pdf';   // solo PDF — más estricto que antes
+      inp.style.display = 'none';
+      // Trick: si el usuario cancela el dialog, focus vuelve al body sin
+      // disparar onchange. Detectamos con un listener temporal.
+      const onCancel = () => {
+        // Pequeño delay para no ganarle a onchange
+        setTimeout(() => {
+          if (!inp.files || inp.files.length === 0) resolve(null);
+        }, 300);
+        window.removeEventListener('focus', onCancel);
+      };
+      window.addEventListener('focus', onCancel, { once: true });
+      inp.onchange = () => {
+        window.removeEventListener('focus', onCancel);
+        resolve(inp.files && inp.files[0] ? inp.files[0] : null);
+        setTimeout(() => inp.remove(), 100);
+      };
+      document.body.appendChild(inp);
+      inp.click();
+    });
+
+    if (!f) {
+      // Usuario canceló — preguntamos si quiere salir del proceso
+      const continuar = await ilusConfirm({
+        title: '¿Salir sin re-subir?',
+        message: 'El contrato sigue sin archivo válido. ¿Deseas cancelar el proceso?',
+        okLabel: 'Sí, cancelar',
+        cancelLabel: 'Volver a elegir',
+        danger: true,
+      });
+      if (continuar) return;   // usuario abortó del todo
+      mensajeProblema = null;   // no había problema, solo cerró el dialog
+      continue;
+    }
+
+    // Subir el archivo seleccionado
+    ilusToast(`Validando archivo (intento ${intento})…`, { type: 'info' });
     const fd = new FormData();
     fd.append('archivo', f);
+    let d;
     try {
       const r = await fetch(`/mantenciones/api/contratos/${ctid}/re-subir`, {
         method: 'POST', body: fd
       });
-      const d = await r.json();
-      if (d.ok) {
-        ilusToast(`Archivo re-subido: ${d.archivo_nombre}`, { type:'success' });
-        setTimeout(() => location.reload(), 1200);
-      } else {
-        ilusToast(d.error || 'Error al re-subir', { type:'error' });
-      }
-    } catch(e) {
-      ilusToast(`Error de red: ${e.message}`, { type:'error' });
+      d = await r.json();
+    } catch (e) {
+      mensajeProblema = `Error de red: ${e.message}. Verifica tu conexión e intenta de nuevo.`;
+      continue;   // vuelve a abrir el picker
     }
-  };
-  document.body.appendChild(inp);
-  inp.click();
-  setTimeout(() => inp.remove(), 1000);
+
+    if (d && d.ok) {
+      // ÉXITO — mostrar mensaje y recargar
+      const tituloOk = d.reparado
+        ? 'Archivo re-subido y reparado'
+        : 'Archivo re-subido correctamente';
+      const msgOk = d.reparado
+        ? `El PDF estaba dañado y el sistema lo reparó automáticamente antes de guardarlo. Ya está disponible (${d.n_pages || '—'} páginas).`
+        : `Archivo válido (${d.n_pages || '—'} páginas). La página se recargará para mostrar el contrato.`;
+      await ilusAlert({
+        title: tituloOk,
+        message: msgOk,
+        type: 'success',
+      });
+      location.reload();
+      return;   // salir del bucle
+    }
+
+    // FALLO — preparar mensaje para la siguiente iteración
+    mensajeProblema = (d && d.error) ||
+      'No se pudo procesar el archivo. Intenta con otro archivo PDF.';
+    // El bucle continúa y vuelve a abrir el picker
+  }
 }
 
 // Modal de eliminar contrato — Bootstrap custom, no confirm/prompt nativos
@@ -3640,29 +4677,44 @@ async function analizarContrato(ctid, btn) {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}/analizar`, { method:'POST' });
     const data = await r.json();
     if (data.ok) {
-      // Si la IA detectó que NO es un contrato, mostramos el aviso del tipo detectado
-      if (data.tipo_doc_detectado && data.tipo_doc_detectado !== 'contrato_servicio') {
-        alert(
-          `⚠️ Atención: la IA detectó que este documento NO es un contrato de servicio.\n\n` +
-          `Tipo detectado: ${data.tipo_doc_detectado}\n` +
-          `Razón: ${data.razon_deteccion || 'sin detalle'}\n\n` +
-          `El análisis se completó igual (con confianza baja). ` +
-          `Considera reemplazar el archivo por el contrato real.`
-        );
-      }
       _planTabActualizarStatus(true);
-      location.reload();
+      // Si la IA detectó que NO es un contrato, avisamos (modal ILUS, no alert nativo).
+      if (data.tipo_doc_detectado && data.tipo_doc_detectado !== 'contrato_servicio') {
+        await ilusAlert({
+          title: 'Este documento no parece un contrato',
+          message: 'La IA detectó que el archivo subido no es un contrato de servicio. '
+                 + 'El análisis se completó igual (con confianza baja). '
+                 + 'Considera reemplazar el archivo por el contrato real.',
+          sub: '<strong>Tipo detectado:</strong> ' + escHtml(data.tipo_doc_detectado)
+             + '<br><strong>Razón:</strong> ' + escHtml(data.razon_deteccion || 'sin detalle'),
+          subHtml: true,
+          type: 'warning',
+        });
+      }
+      // Mostramos el análisis 360° EN VIVO desde data.resultado.
+      // Al cerrar el modal recargamos para refrescar el dashboard persistido del servidor.
+      _mostrarAnalisisContrato360(data.resultado || {});
+      // El botón se restituye visualmente (igual va a recargar al cerrar el modal).
+      btn.disabled = false;
+      btn.innerHTML = orig;
     } else {
       // Si el documento fue RECHAZADO por la IA validadora
       if (data.error_codigo === 'NO_ES_CONTRATO') {
-        alert(
-          `❌ El archivo subido NO es un contrato de servicio.\n\n` +
-          `La IA detectó: ${data.tipo_doc_detectado || 'documento desconocido'}\n` +
-          `Razón: ${data.razon_deteccion || ''}\n\n` +
-          `Sube el contrato correcto y vuelve a intentar.`
-        );
+        await ilusAlert({
+          title: 'El archivo no es un contrato',
+          message: 'El documento subido no es un contrato de servicio. '
+                 + 'Sube el contrato correcto y vuelve a intentar.',
+          sub: '<strong>La IA detectó:</strong> ' + escHtml(data.tipo_doc_detectado || 'documento desconocido')
+             + (data.razon_deteccion ? '<br><strong>Razón:</strong> ' + escHtml(data.razon_deteccion) : ''),
+          subHtml: true,
+          type: 'error',
+        });
       } else {
-        alert('Error en análisis IA:\n' + (data.error || 'Error desconocido'));
+        await ilusAlert({
+          title: 'No se pudo analizar el contrato',
+          message: data.error || 'Error desconocido',
+          type: 'error',
+        });
       }
       btn.disabled = false;
       btn.innerHTML = orig;
@@ -3670,7 +4722,345 @@ async function analizarContrato(ctid, btn) {
   } catch(e) {
     btn.disabled = false;
     btn.innerHTML = orig;
-    alert('Error de conexión: ' + e.message);
+    await ilusAlert({
+      title: 'Error de conexión',
+      message: e.message || String(e),
+      type: 'error',
+    });
+  }
+}
+
+// ─── Análisis 360° del contrato (Comité de expertos IA) ──────────────────
+// Renderiza el JSON enriquecido (exposición, garantía, cláusulas sugeridas,
+// propuestas comerciales y rentabilidad) en el modal reusable #modalAIResult.
+// Todo el texto que viene del JSON se escapa con escHtml() antes de inyectarse.
+function _mostrarAnalisisContrato360(res) {
+  res = res || {};
+  const titleEl = document.getElementById('aiResultTitle');
+  const bodyEl  = document.getElementById('aiResultBody');
+  if (!bodyEl) { location.reload(); return; }   // sin modal → fallback al flujo viejo
+  if (titleEl) titleEl.textContent = 'Análisis 360° del contrato';
+  bodyEl.innerHTML = _ctaRenderHTML(res);
+
+  const modalEl = document.getElementById('modalAIResult');
+  const modal = new bootstrap.Modal(modalEl);
+  // Al cerrar, recargamos la ficha para que el dashboard persistido (Jinja) se actualice.
+  modalEl.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+  modal.show();
+}
+
+// Paleta semáforo reusable para niveles alto/medio/bajo.
+function _ctaSemaforo(nivel) {
+  const n = String(nivel || 'medio').toLowerCase();
+  if (n === 'alto')  return { color:'#dc2626', bg:'#fef2f2', border:'#fecaca', label:'ALTO',  icon:'bi-exclamation-octagon-fill' };
+  if (n === 'bajo')  return { color:'#16a34a', bg:'#f0fdf4', border:'#bbf7d0', label:'BAJO',  icon:'bi-shield-check' };
+  return                    { color:'#f59e0b', bg:'#fffbeb', border:'#fde68a', label:'MEDIO', icon:'bi-exclamation-triangle-fill' };
+}
+
+// Paleta para prioridad/probabilidad alta/media/baja.
+function _ctaPrioColor(p) {
+  const n = String(p || '').toLowerCase();
+  if (n === 'alta') return { color:'#dc2626', bg:'#fee2e2' };
+  if (n === 'baja') return { color:'#16a34a', bg:'#dcfce7' };
+  return                   { color:'#b45309', bg:'#fef3c7' };
+}
+
+// Formatea un número CLP con separador de miles (es-CL). Null/0 → null.
+function _ctaCLP(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!isFinite(n) || n === 0) return null;
+  return '$' + n.toLocaleString('es-CL');
+}
+
+// Encabezado de sección reusable.
+function _ctaHead(emoji, titulo, color) {
+  return `<div style="display:flex;align-items:center;gap:8px;margin:22px 0 12px">
+    <span style="font-size:1.15rem;line-height:1">${emoji}</span>
+    <h6 style="margin:0;font-size:.95rem;font-weight:800;color:${color || '#0f172a'}">${escHtml(titulo)}</h6>
+  </div>`;
+}
+
+// Construye TODO el HTML del análisis 360°.
+function _ctaRenderHTML(res) {
+  const score = Number(res.score) || 0;
+  const sc = score >= 70 ? '#16a34a' : score >= 40 ? '#f59e0b' : '#dc2626';
+  const scText = score >= 80 ? 'Excelente' : score >= 60 ? 'Bueno' : score >= 40 ? 'Regular' : 'Crítico';
+  const riesgo = _ctaSemaforo(res.nivel_riesgo);
+
+  let h = '';
+
+  // ── HERO: score + nivel de riesgo + resumen ──
+  h += `<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+        background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;
+        border-radius:14px;padding:20px 22px;margin-bottom:6px">
+    <div style="position:relative;flex-shrink:0">
+      <svg viewBox="0 0 100 100" style="width:104px;height:104px">
+        <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="8"></circle>
+        <circle cx="50" cy="50" r="44" fill="none" stroke="${sc}" stroke-width="8"
+                stroke-dasharray="${(score*2.764).toFixed(1)} ${(276.4-score*2.764).toFixed(1)}"
+                transform="rotate(-90 50 50)" stroke-linecap="round"
+                style="transition:stroke-dasharray .8s cubic-bezier(.34,1.56,.64,1)"></circle>
+        <text x="50" y="48" text-anchor="middle" style="font-size:26px;font-weight:900;fill:#fff">${score}</text>
+        <text x="50" y="63" text-anchor="middle" style="font-size:9px;font-weight:600;fill:rgba(255,255,255,.6)">de 100</text>
+      </svg>
+    </div>
+    <div style="flex:1;min-width:230px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <span style="background:${sc}22;color:${sc};border:1px solid ${sc}55;
+              padding:3px 12px;border-radius:50px;font-size:.72rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.4px">${scText}</span>
+        <span style="background:${riesgo.color}22;color:${riesgo.color};border:1px solid ${riesgo.color}55;
+              padding:3px 12px;border-radius:50px;font-size:.72rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.4px">
+          <i class="bi ${riesgo.icon} me-1"></i>Riesgo ${riesgo.label}</span>
+        ${res.tipo_contrato ? `<span style="background:rgba(124,58,237,.25);color:#c4b5fd;
+              padding:3px 12px;border-radius:50px;font-size:.72rem;font-weight:700">
+              ${escHtml(res.tipo_contrato)}</span>` : ''}
+      </div>
+      ${res.resumen ? `<p style="margin:0;font-size:.88rem;line-height:1.55;color:#e2e8f0">${escHtml(res.resumen)}</p>` : ''}
+    </div>
+  </div>`;
+
+  // ── KPIs económicos rápidos ──
+  const kpis = [];
+  const mm = _ctaCLP(res.costo_mensual);
+  const ct = _ctaCLP(res.costo_total);
+  const cpm = _ctaCLP(res.costo_por_mant);
+  if (mm)  kpis.push(['bi-cash-stack', '#16a34a', '#dcfce7', mm,  'Monto mensual']);
+  if (ct)  kpis.push(['bi-wallet2',    '#1e40af', '#dbeafe', ct,  'Costo total']);
+  if (cpm) kpis.push(['bi-tools',      '#92400e', '#fef3c7', cpm, 'Por mantención']);
+  if (res.sla_horas) kpis.push(['bi-stopwatch', '#6d28d9', '#ede9fe', res.sla_horas + 'h', 'SLA respuesta']);
+  if (res.frecuencia_sugerida_meses) kpis.push(['bi-arrow-repeat', '#0e7490', '#cffafe', 'c/' + res.frecuencia_sugerida_meses + 'm', 'Frecuencia']);
+  if (kpis.length) {
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px">`;
+    kpis.forEach(([ic, fg, bg, val, lbl]) => {
+      h += `<div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #eef0f3;
+            border-radius:10px;padding:11px 13px;box-shadow:0 1px 2px rgba(0,0,0,.04)">
+        <div style="width:36px;height:36px;border-radius:9px;background:${bg};color:${fg};
+              display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.05rem">
+          <i class="bi ${ic}"></i></div>
+        <div style="min-width:0">
+          <div style="font-size:1rem;font-weight:800;color:#0f172a;line-height:1.1">${escHtml(val)}</div>
+          <div style="font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.3px">${escHtml(lbl)}</div>
+        </div></div>`;
+    });
+    h += `</div>`;
+  }
+
+  // ── ⚠️ EXPOSICIÓN (lo que más le importa a gerencia) ──
+  const exp = res.exposicion;
+  if (exp && (exp.nivel || exp.resumen || (exp.escenarios||[]).length)) {
+    const s = _ctaSemaforo(exp.nivel);
+    h += _ctaHead('⚠️', 'Exposición', '#0f172a');
+    h += `<div style="background:${s.bg};border:1px solid ${s.border};border-left:5px solid ${s.color};
+          border-radius:12px;padding:14px 16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:${exp.resumen ? '8px' : '0'}">
+        <span style="display:inline-flex;align-items:center;gap:6px;background:${s.color};color:#fff;
+              padding:4px 12px;border-radius:50px;font-size:.72rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.5px;flex-shrink:0">
+          <i class="bi ${s.icon}"></i>Nivel ${s.label}</span>
+        ${exp.resumen ? '' : `<span style="font-size:.8rem;color:#64748b">Sin resumen disponible</span>`}
+      </div>
+      ${exp.resumen ? `<p style="margin:0;font-size:.86rem;line-height:1.55;color:#334155">${escHtml(exp.resumen)}</p>` : ''}
+    </div>`;
+
+    const escenarios = exp.escenarios || [];
+    if (escenarios.length) {
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:12px">`;
+      escenarios.forEach(e => {
+        const pp = _ctaPrioColor(e.probabilidad);
+        h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 15px;
+              box-shadow:0 2px 8px rgba(0,0,0,.05);display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+            <div style="font-size:.86rem;font-weight:800;color:#0f172a;line-height:1.35">${escHtml(e.riesgo || 'Escenario de riesgo')}</div>
+            ${e.probabilidad ? `<span style="background:${pp.bg};color:${pp.color};padding:2px 9px;
+                  border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;
+                  letter-spacing:.3px;flex-shrink:0;white-space:nowrap">Prob. ${escHtml(e.probabilidad)}</span>` : ''}
+          </div>
+          ${e.impacto ? `<div style="font-size:.78rem;color:#475569;line-height:1.5">
+            <i class="bi bi-lightning-charge-fill me-1" style="color:#f59e0b"></i>
+            <strong>Impacto:</strong> ${escHtml(e.impacto)}</div>` : ''}
+          ${e.mitigacion ? `<div style="font-size:.78rem;color:#166534;background:#f0fdf4;border-radius:8px;
+                padding:8px 10px;line-height:1.5">
+            <i class="bi bi-shield-check me-1"></i>
+            <strong>Mitigación:</strong> ${escHtml(e.mitigacion)}</div>` : ''}
+        </div>`;
+      });
+      h += `</div>`;
+    }
+  }
+
+  // ── 🛡️ GARANTÍA ──
+  const gar = res.analisis_garantia;
+  if (gar && (gar.cubre_garantia !== undefined || gar.riesgo_terceros || gar.recomendacion)) {
+    h += _ctaHead('🛡️', 'Garantía', '#0f172a');
+    const cubre = !!gar.cubre_garantia;
+    const cond  = !!gar.condicionada_a_mantencion_ilus;
+    h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 16px;
+          box-shadow:0 2px 8px rgba(0,0,0,.05)">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:${(gar.riesgo_terceros||gar.recomendacion)?'12px':'0'}">
+        <span style="display:inline-flex;align-items:center;gap:6px;
+              background:${cubre?'#dcfce7':'#fee2e2'};color:${cubre?'#166534':'#991b1b'};
+              padding:4px 12px;border-radius:50px;font-size:.74rem;font-weight:800">
+          <i class="bi ${cubre?'bi-check-circle-fill':'bi-x-circle-fill'}"></i>
+          ${cubre?'Cubre garantía':'No cubre garantía'}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;
+              background:${cond?'#dcfce7':'#fee2e2'};color:${cond?'#166534':'#991b1b'};
+              padding:4px 12px;border-radius:50px;font-size:.74rem;font-weight:800">
+          <i class="bi ${cond?'bi-link-45deg':'bi-unlock'}"></i>
+          ${cond?'Condicionada a mantención ILUS':'No condicionada a ILUS'}</span>
+      </div>
+      ${gar.riesgo_terceros ? `<div style="font-size:.82rem;color:#475569;line-height:1.55;margin-bottom:${gar.recomendacion?'10px':'0'}">
+        <i class="bi bi-people-fill me-1" style="color:#dc2626"></i>
+        <strong>Riesgo de terceros:</strong> ${escHtml(gar.riesgo_terceros)}</div>` : ''}
+      ${gar.recomendacion ? `<div style="font-size:.82rem;color:#1e3a8a;background:#eff6ff;border-radius:8px;
+            padding:9px 11px;line-height:1.55">
+        <i class="bi bi-lightbulb-fill me-1" style="color:#3b82f6"></i>
+        <strong>Recomendación:</strong> ${escHtml(gar.recomendacion)}</div>` : ''}
+    </div>`;
+  }
+
+  // ── ⚖️ CLÁUSULAS SUGERIDAS (con botón copiar) ──
+  const cls = res.clausulas_sugeridas || [];
+  if (cls.length) {
+    h += _ctaHead('⚖️', 'Cláusulas sugeridas', '#0f172a');
+    cls.forEach((c, i) => {
+      const texto = c.texto || '';
+      h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 16px;
+            margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px">
+          <div style="font-size:.88rem;font-weight:800;color:#0f172a;line-height:1.35">
+            <i class="bi bi-bookmark-star-fill me-1" style="color:#dc2626"></i>${escHtml(c.titulo || ('Cláusula ' + (i+1)))}</div>
+          <button type="button" class="btn btn-sm btn-outline-secondary" style="flex-shrink:0;white-space:nowrap"
+                  onclick="_ctaCopiarClausula(this)" data-clausula="${escAttr(texto)}">
+            <i class="bi bi-clipboard me-1"></i>Copiar</button>
+        </div>
+        ${texto ? `<div style="font-size:.82rem;color:#334155;line-height:1.6;background:#f8fafc;
+              border-left:3px solid #dc2626;border-radius:6px;padding:11px 13px;
+              white-space:pre-wrap;font-family:Georgia,'Times New Roman',serif">${escHtml(texto)}</div>` : ''}
+        ${c.justificacion ? `<div style="font-size:.74rem;color:#6b7280;margin-top:8px;line-height:1.5">
+          <i class="bi bi-info-circle me-1"></i><strong>Por qué:</strong> ${escHtml(c.justificacion)}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  // ── 💼 PROPUESTAS COMERCIALES ──
+  const props = res.propuestas_comerciales || [];
+  if (props.length) {
+    h += _ctaHead('💼', 'Propuestas comerciales', '#0f172a');
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px">`;
+    props.forEach(p => {
+      const pp = _ctaPrioColor(p.prioridad);
+      h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:14px 15px;
+            box-shadow:0 2px 8px rgba(0,0,0,.05);display:flex;flex-direction:column;gap:8px;
+            border-top:3px solid ${pp.color}">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+          <div style="font-size:.86rem;font-weight:800;color:#0f172a;line-height:1.35">${escHtml(p.titulo || 'Propuesta comercial')}</div>
+          ${p.prioridad ? `<span style="background:${pp.bg};color:${pp.color};padding:2px 9px;
+                border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;
+                letter-spacing:.3px;flex-shrink:0;white-space:nowrap">${escHtml(p.prioridad)}</span>` : ''}
+        </div>
+        ${p.descripcion ? `<div style="font-size:.79rem;color:#475569;line-height:1.5">${escHtml(p.descripcion)}</div>` : ''}
+        ${p.impacto_ingreso ? `<div style="font-size:.76rem;color:#166534;font-weight:700;margin-top:auto">
+          <i class="bi bi-graph-up-arrow me-1"></i>${escHtml(p.impacto_ingreso)}</div>` : ''}
+      </div>`;
+    });
+    h += `</div>`;
+  }
+
+  // ── 📊 RENTABILIDAD ──
+  const rent = res.rentabilidad;
+  if (rent && (rent.mrr_estimado_clp || rent.margen_estimado || rent.oportunidad_ingreso_clp)) {
+    h += _ctaHead('📊', 'Rentabilidad', '#0f172a');
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">`;
+    const mrr = _ctaCLP(rent.mrr_estimado_clp);
+    const opp = _ctaCLP(rent.oportunidad_ingreso_clp);
+    if (mrr) {
+      h += `<div style="background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;border-radius:12px;padding:15px 16px">
+        <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin-bottom:4px">
+          <i class="bi bi-cash-coin me-1"></i>MRR estimado</div>
+        <div style="font-size:1.5rem;font-weight:900;line-height:1">${escHtml(mrr)}</div>
+        <div style="font-size:.66rem;color:#64748b;margin-top:3px">ingreso mensual recurrente</div>
+      </div>`;
+    }
+    if (opp) {
+      h += `<div style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:12px;padding:15px 16px">
+        <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#bbf7d0;margin-bottom:4px">
+          <i class="bi bi-graph-up-arrow me-1"></i>Oportunidad de ingreso</div>
+        <div style="font-size:1.5rem;font-weight:900;line-height:1">${escHtml(opp)}</div>
+        <div style="font-size:.66rem;color:#dcfce7;margin-top:3px">potencial adicional detectado</div>
+      </div>`;
+    }
+    if (rent.margen_estimado) {
+      h += `<div style="background:#fff;border:1px solid #eef0f3;border-radius:12px;padding:15px 16px;
+            box-shadow:0 2px 8px rgba(0,0,0,.05)">
+        <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;margin-bottom:4px">
+          <i class="bi bi-pie-chart-fill me-1"></i>Margen estimado</div>
+        <div style="font-size:1.15rem;font-weight:800;color:#0f172a;line-height:1.25">${escHtml(rent.margen_estimado)}</div>
+      </div>`;
+    }
+    h += `</div>`;
+  }
+
+  // ── Listas clásicas (cláusulas críticas / puntos críticos / alertas / mejoras) ──
+  const _ctaLista = (emoji, titulo, items, color, bg, icon) => {
+    const arr = (items || []).filter(Boolean);
+    if (!arr.length) return '';
+    let out = _ctaHead(emoji, titulo, '#0f172a');
+    out += `<div style="display:flex;flex-direction:column;gap:7px">`;
+    arr.forEach(it => {
+      const txt = typeof it === 'string' ? it : (it.texto || it.titulo || it.descripcion || JSON.stringify(it));
+      out += `<div style="display:flex;align-items:flex-start;gap:9px;background:${bg};
+            border-radius:9px;padding:10px 12px;font-size:.82rem;color:#334155;line-height:1.5">
+        <i class="bi ${icon}" style="color:${color};flex-shrink:0;margin-top:2px"></i>
+        <span>${escHtml(txt)}</span></div>`;
+    });
+    out += `</div>`;
+    return out;
+  };
+  h += _ctaLista('📌', 'Cláusulas críticas', res.clausulas_criticas, '#dc2626', '#fef2f2', 'bi-exclamation-diamond-fill');
+  h += _ctaLista('🔎', 'Puntos críticos',    res.puntos_criticos,    '#b45309', '#fffbeb', 'bi-search');
+  h += _ctaLista('🔔', 'Alertas',            res.alertas,            '#dc2626', '#fef2f2', 'bi-bell-fill');
+  h += _ctaLista('🚀', 'Mejoras prioritarias', res.mejoras_prioritarias, '#16a34a', '#f0fdf4', 'bi-arrow-up-circle-fill');
+
+  // ── Cobertura (texto largo) ──
+  if (res.cobertura_descripcion) {
+    h += _ctaHead('📋', 'Cobertura', '#0f172a');
+    h += `<div style="font-size:.84rem;color:#334155;line-height:1.6;background:#f8fafc;
+          border:1px solid #eef0f3;border-radius:10px;padding:13px 15px;white-space:pre-wrap">${escHtml(res.cobertura_descripcion)}</div>`;
+  }
+
+  // ── Pie: aviso de que al cerrar se refresca ──
+  h += `<div style="margin-top:20px;padding-top:14px;border-top:1px dashed #e5e7eb;
+        font-size:.74rem;color:#9ca3af;text-align:center">
+    <i class="bi bi-stars me-1" style="color:#7c3aed"></i>
+    Análisis generado por el comité de expertos IA. Al cerrar, la ficha se actualizará con el resumen guardado.
+  </div>`;
+
+  return h;
+}
+
+// Copia la redacción jurídica de una cláusula al portapapeles (toast ILUS).
+async function _ctaCopiarClausula(btn) {
+  const texto = btn.getAttribute('data-clausula') || '';
+  try {
+    await navigator.clipboard.writeText(texto);
+    ilusToast('Copiado', { type:'success' });
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copiado';
+    setTimeout(() => { btn.innerHTML = orig; }, 1600);
+  } catch(e) {
+    // Fallback para navegadores sin clipboard API (o contexto no seguro)
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = texto; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      ilusToast('Copiado', { type:'success' });
+    } catch(_) {
+      ilusToast('No se pudo copiar', { type:'error' });
+    }
   }
 }
 
@@ -4502,81 +5892,561 @@ function renderPlan(p, clienteNombre, envelope) {
   document.getElementById('planResultado').innerHTML = html;
 }
 
-// ─── Ver contrato (visor robusto multi-formato) ──────────────────────────
-// Estrategia:
-//   PDF                → iframe nativo del navegador
-//   Imagen (jpg/png)   → iframe (browser muestra imagen)
-//   DOC/DOCX/XLS/PPT   → Office Online Viewer (requiere Cloudinary HTTPS)
-//                        si no hay Cloudinary, fallback con mensaje + botón
-// Descarga: SOLO superadmin (validación server-side adicional en /archivo?download=1)
-function verContrato(ctid, nombre, tipo, hasCloud) {
-  const baseUrl = `/mantenciones/api/contratos/${ctid}/archivo`;
-  const titulo  = document.getElementById('modalVerContratoTitulo');
-  const frame   = document.getElementById('contratoFrame');
-  const noView  = document.getElementById('contratoNoViewer');
+// ════════════════════════════════════════════════════════════════════════
+// UNIVERSAL DOCUMENT VIEWER — Visor universal de contratos (Google Drive-like)
+// ════════════════════════════════════════════════════════════════════════
+// REESCRITO 2026-05-26 (Daniel — iframe en blanco):
+//   Antes: iframe simple → falla cuando Cloudinary devuelve attachment header.
+//   Ahora: cadena de fallback resiliente:
+//     1. HEAD al endpoint → obtener Content-Type real + size
+//     2. Iframe nativo con detección de "iframe en blanco" a los 6 segundos
+//     3. <object> tag como segundo intento (algunos browsers prefieren object)
+//     4. PDF.js canvas — renderiza PDF página por página (NO depende de headers)
+//     5. Image renderer dedicado para JPG/PNG/WEBP
+//     6. Office Online Viewer para DOCX/XLSX/PPTX si hay Cloudinary HTTPS
+//     7. Metadata-only con descarga (último recurso, estilo Notion)
+//
+// Estado global del visor (singleton). Se resetea cada vez que se abre.
+const UDV = {
+  ctid:      null,
+  baseUrl:   '',
+  nombre:    '',
+  tipo:      '',
+  hasCloud:  false,
+  esSuperadmin: false,
+  // Detector de iframe en blanco
+  iframeLoadTimer: null,
+  iframeBlankTimer: null,
+  iframeFinishedLoading: false,
+  // PDF.js state
+  pdfDoc:       null,
+  pdfPageNum:   1,
+  pdfPagesTotal: 0,
+  pdfZoom:      1.0,
+  pdfRendering: false,
+  pdfPendingPage: null,
+  // Logs
+  logs: [],
+};
+
+function _udvLog(level, ...args) {
+  const ts = new Date().toISOString().slice(11, 23);
+  const msg = `[UDV ${ts}] [${level}] ` + args.map(a =>
+    typeof a === 'object' ? JSON.stringify(a) : String(a)
+  ).join(' ');
+  UDV.logs.push(msg);
+  if (level === 'ERROR') console.error(msg);
+  else if (level === 'WARN') console.warn(msg);
+  else console.log(msg);
+}
+
+function _udvSetStep(text) {
+  const el = document.getElementById('udvLoadingStep');
+  if (el) el.textContent = text;
+  _udvLog('INFO', 'Step:', text);
+}
+
+function _udvShowStage(stage) {
+  // stages: loading | iframe | pdfjs | image | error
+  // FIX CRITICO 2026-05-26: Bootstrap d-flex/d-block aplican !important,
+  // por lo que el.style.display='none' NO oculta el loader. Usamos
+  // setProperty con 'important' explicito para ganar la batalla CSS.
+  const stages = {
+    loading:  'udvLoading',
+    iframe:   'contratoFrame',
+    pdfjs:    'udvPdfjsContainer',
+    image:    'udvImageContainer',
+    error:    'contratoNoViewer',
+  };
+  const displayWhenActive = {
+    loading:  'flex',   // ya viene como d-flex
+    iframe:   'block',
+    pdfjs:    'block',
+    image:    'flex',
+    error:    'flex',
+  };
+  Object.entries(stages).forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (k === stage) {
+      el.style.setProperty('display', displayWhenActive[k], 'important');
+    } else {
+      el.style.setProperty('display', 'none', 'important');
+    }
+  });
+}
+
+function _udvSetBadge(text, color) {
+  const b = document.getElementById('udvStatusBadge');
+  if (!b) return;
+  if (!text) { b.style.display = 'none'; return; }
+  b.textContent = text;
+  b.style.background = color || '#16a34a';
+  b.style.display = '';
+}
+
+function _udvShowError(opts) {
+  const { titulo, mensaje, icono, iconColor, mostrarReintentar, mostrarResubir, metadata, errorTech } = opts || {};
+  document.getElementById('contratoNoViewerIcon').className = icono || 'bi bi-file-earmark-x';
+  document.getElementById('contratoNoViewerIcon').style.color = iconColor || '#dc2626';
+  document.getElementById('contratoNoViewerTitulo').textContent = titulo || 'Este contrato debe re-subirse';
+  document.getElementById('contratoNoViewerMsg').innerHTML = mensaje ||
+    'No se pudo mostrar el archivo. Re-súbelo para que vuelva a quedar disponible para todos.';
+  const meta = document.getElementById('udvMetadata');
+  const metaContent = document.getElementById('udvMetaContent');
+  if (metadata) {
+    metaContent.innerHTML = Object.entries(metadata).map(([k,v]) =>
+      `<div><span style="opacity:.6">${k}:</span> <span>${v}</span></div>`
+    ).join('');
+    meta.style.display = '';
+  } else {
+    meta.style.display = 'none';
+  }
+  // Botón Reintentar (solo si se pidió explícito)
+  const btnRet = document.getElementById('btnReintentarUDV');
+  if (btnRet) btnRet.style.display = mostrarReintentar ? '' : 'none';
+  // Botón Re-subir: solo si superadmin Y el archivo es re-subible (contrato),
+  // NO para adjuntos genéricos (esos se re-suben desde el tab Documentos).
+  const btnRes = document.getElementById('btnUDVResubir');
+  if (btnRes) btnRes.style.display =
+    (mostrarResubir && UDV.esSuperadmin && UDV.allowResubir) ? '' : 'none';
+  const errTech = document.getElementById('udvErrorTech');
+  if (errorTech) {
+    errTech.textContent = errorTech + '\n\n' + UDV.logs.slice(-20).join('\n');
+    errTech.style.display = '';
+  } else {
+    errTech.style.display = 'none';
+  }
+  _udvShowStage('error');
+  _udvSetBadge('', '');
+}
+
+function udvReintentar() {
+  // Re-ejecuta con el mismo estado actual del visor
+  if (UDV.baseUrl) {
+    verArchivoUDV({
+      baseUrl:  UDV.baseUrl,
+      ctid:     UDV.ctid,
+      nombre:   UDV.nombre,
+      tipo:     UDV.tipo,
+      hasCloud: UDV.hasCloud,
+      allowDownload: UDV.allowDownload,
+      allowResubir:  UDV.allowResubir,
+    });
+  }
+}
+
+// Re-sube el contrato actualmente abierto en el visor. Cierra el modal
+// y dispara el file picker — reSubirContrato() ya hace el resto.
+function udvResubirActual() {
+  if (!UDV.ctid) return;
+  const m = bootstrap.Modal.getInstance(document.getElementById('modalVerContrato'));
+  if (m) m.hide();
+  reSubirContrato(UDV.ctid, UDV.nombre || `Contrato #${UDV.ctid}`);
+}
+
+// ─── HEAD probe: detecta el Content-Type real del archivo ─────────────
+async function _udvHead(url) {
+  try {
+    const r = await fetch(url, { method: 'HEAD', credentials: 'same-origin' });
+    if (!r.ok) {
+      _udvLog('WARN', 'HEAD status', r.status);
+      return null;
+    }
+    const info = {
+      status:      r.status,
+      contentType: r.headers.get('Content-Type') || '',
+      length:      r.headers.get('Content-Length') || '',
+      disposition: r.headers.get('Content-Disposition') || '',
+    };
+    _udvLog('INFO', 'HEAD result:', info);
+    return info;
+  } catch (e) {
+    _udvLog('WARN', 'HEAD failed:', e.message);
+    return null;
+  }
+}
+
+// ─── Iframe loader con detección de "iframe en blanco" ─────────────────
+function _udvLoadIframe(url, opts) {
+  const { onLoaded, onBlank, onError, blankTimeoutMs = 6000 } = opts || {};
+  const frame = document.getElementById('contratoFrame');
+
+  // Limpiar timers anteriores
+  if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+  UDV.iframeFinishedLoading = false;
+
+  // Reset iframe
+  frame.src = 'about:blank';
+  _udvShowStage('iframe');
+
+  // Pequeño delay para asegurar reset
+  setTimeout(() => {
+    // Detector de iframe en blanco: si después de blankTimeoutMs no
+    // recibimos onload, asumimos que el browser descargó el archivo
+    // en lugar de renderizarlo (síntoma clásico de Content-Disposition
+    // attachment forzado por el CDN).
+    UDV.iframeBlankTimer = setTimeout(() => {
+      if (!UDV.iframeFinishedLoading) {
+        _udvLog('WARN', `Iframe blank after ${blankTimeoutMs}ms — switching to fallback`);
+        if (onBlank) onBlank();
+      }
+    }, blankTimeoutMs);
+
+    frame.onload = () => {
+      UDV.iframeFinishedLoading = true;
+      if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+      _udvLog('INFO', 'Iframe loaded:', url);
+      // Verificar si el iframe realmente cargó contenido (no about:blank ni error)
+      try {
+        // Acceso al contentDocument puede tirar SecurityError si es cross-origin
+        // (que con nuestro proxy NO es). Si es same-origin y document está vacío,
+        // entonces el browser descargó el archivo.
+        const doc = frame.contentDocument;
+        if (doc) {
+          const docUrl = doc.URL || '';
+          if (docUrl === 'about:blank' || docUrl === '') {
+            _udvLog('WARN', 'Iframe document is about:blank — likely downloaded');
+            if (onBlank) onBlank();
+            return;
+          }
+        }
+      } catch (e) {
+        // Cross-origin: no podemos inspeccionar, asumimos OK (Cloudinary, etc.)
+        _udvLog('INFO', 'Iframe is cross-origin (OK):', e.message);
+      }
+      if (onLoaded) onLoaded();
+    };
+
+    frame.onerror = (e) => {
+      UDV.iframeFinishedLoading = true;
+      if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+      _udvLog('ERROR', 'Iframe error:', e);
+      if (onError) onError(e);
+    };
+
+    frame.src = url;
+  }, 30);
+}
+
+// ─── PDF.js: render PDF en canvas (sin depender de headers) ───────────
+async function _udvLoadPdfJs(url) {
+  if (!window.pdfjsLib) {
+    _udvLog('ERROR', 'pdfjsLib no está cargado');
+    throw new Error('PDF.js no disponible — recarga la página');
+  }
+  _udvSetStep('Renderizando PDF con PDF.js (Mozilla)…');
+  _udvShowStage('loading');
+  try {
+    const loadingTask = window.pdfjsLib.getDocument({ url, withCredentials: true });
+    UDV.pdfDoc = await loadingTask.promise;
+    UDV.pdfPagesTotal = UDV.pdfDoc.numPages;
+    UDV.pdfPageNum = 1;
+    UDV.pdfZoom = 1.0;
+    _udvLog('INFO', 'PDF.js loaded', { pages: UDV.pdfPagesTotal });
+    _udvShowStage('pdfjs');
+    _udvSetBadge(`PDF.js · ${UDV.pdfPagesTotal} pág.`, '#16a34a');
+    await _udvRenderPdfPage();
+  } catch (e) {
+    _udvLog('ERROR', 'PDF.js failed:', e.message);
+    throw e;
+  }
+}
+
+async function _udvRenderPdfPage() {
+  if (!UDV.pdfDoc || UDV.pdfRendering) {
+    UDV.pdfPendingPage = UDV.pdfPageNum;
+    return;
+  }
+  UDV.pdfRendering = true;
+  try {
+    const page = await UDV.pdfDoc.getPage(UDV.pdfPageNum);
+    const canvas = document.getElementById('udvPdfjsCanvas');
+    const ctx = canvas.getContext('2d');
+    const viewport = page.getViewport({ scale: UDV.pdfZoom * 1.5 });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.width  = (viewport.width / 1.5) + 'px';
+    canvas.style.height = (viewport.height / 1.5) + 'px';
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    document.getElementById('udvPdfjsPageInfo').textContent =
+      `${UDV.pdfPageNum} / ${UDV.pdfPagesTotal}`;
+    document.getElementById('udvPdfjsZoom').textContent =
+      Math.round(UDV.pdfZoom * 100) + '%';
+    document.getElementById('udvBtnPrev').disabled = (UDV.pdfPageNum <= 1);
+    document.getElementById('udvBtnNext').disabled = (UDV.pdfPageNum >= UDV.pdfPagesTotal);
+  } finally {
+    UDV.pdfRendering = false;
+    if (UDV.pdfPendingPage !== null) {
+      const p = UDV.pdfPendingPage;
+      UDV.pdfPendingPage = null;
+      UDV.pdfPageNum = p;
+      _udvRenderPdfPage();
+    }
+  }
+}
+
+function udvPdfjsPrev() {
+  if (UDV.pdfPageNum > 1) { UDV.pdfPageNum--; _udvRenderPdfPage(); }
+}
+function udvPdfjsNext() {
+  if (UDV.pdfPageNum < UDV.pdfPagesTotal) { UDV.pdfPageNum++; _udvRenderPdfPage(); }
+}
+function udvPdfjsZoomIn() {
+  UDV.pdfZoom = Math.min(3.0, UDV.pdfZoom + 0.25); _udvRenderPdfPage();
+}
+function udvPdfjsZoomOut() {
+  UDV.pdfZoom = Math.max(0.5, UDV.pdfZoom - 0.25); _udvRenderPdfPage();
+}
+
+// ─── Image renderer dedicado ──────────────────────────────────────────
+function _udvLoadImage(url) {
+  _udvSetStep('Cargando imagen…');
+  const img = document.getElementById('udvImage');
+  img.src = '';
+  img.onload = () => {
+    _udvLog('INFO', 'Image loaded:', url);
+    _udvShowStage('image');
+    _udvSetBadge('Imagen', '#3b82f6');
+  };
+  img.onerror = () => {
+    _udvLog('ERROR', 'Image failed to load');
+    _udvShowError({
+      titulo: 'Este contrato debe re-subirse',
+      mensaje: UDV.esSuperadmin
+        ? 'La imagen no se pudo cargar. Súbela de nuevo y quedará disponible.'
+        : 'No se pudo cargar la imagen. Avisa al administrador para que la vuelva a subir.',
+      icono: 'bi bi-cloud-arrow-up',
+      iconColor: '#f59e0b',
+      mostrarResubir: true,
+    });
+  };
+  img.src = url;
+}
+
+// ─── ENTRY POINT GENERICO: visualizar cualquier archivo en el UDV ─────
+// opts: { baseUrl, nombre, tipo, hasCloud, ctid (opcional), kind (opcional),
+//         allowDownload (bool), allowResubir (bool) }
+async function verArchivoUDV(opts) {
+  const o = opts || {};
+  UDV.ctid     = o.ctid || null;
+  UDV.baseUrl  = o.baseUrl;
+  UDV.nombre   = o.nombre || 'Documento';
+  UDV.tipo     = o.tipo || '';
+  UDV.hasCloud = !!o.hasCloud;
+  UDV.esSuperadmin = !!DATA.is_superadmin;
+  // allowDownload: si el documento permite descarga server-side
+  UDV.allowDownload = (o.allowDownload === undefined) ? UDV.esSuperadmin : !!o.allowDownload;
+  // allowResubir: si tiene sentido ofrecer el botón "Re-subir" (solo contratos)
+  UDV.allowResubir  = (o.allowResubir === undefined) ? !!o.ctid : !!o.allowResubir;
+  UDV.logs = [];
+  return _verArchivoInterno();
+}
+
+// Wrapper retro-compatible para contratos (mantiene la firma vieja)
+async function verContrato(ctid, nombre, tipo, hasCloud) {
+  return verArchivoUDV({
+    baseUrl:  `/mantenciones/api/contratos/${ctid}/archivo`,
+    ctid:     ctid,
+    nombre:   nombre || `Contrato #${ctid}`,
+    tipo:     tipo,
+    hasCloud: hasCloud,
+    allowDownload: !!DATA.is_superadmin,
+    allowResubir:  true,
+  });
+}
+
+async function _verArchivoInterno() {
+  const ctid   = UDV.ctid;
+  const nombre = UDV.nombre;
+  const tipo   = UDV.tipo;
+  const hasCloud = UDV.hasCloud;
+  if (UDV.iframeBlankTimer) clearTimeout(UDV.iframeBlankTimer);
+  if (UDV.pdfDoc) { try { UDV.pdfDoc.destroy(); } catch(e){} UDV.pdfDoc = null; }
+
+  _udvLog('INFO', 'verArchivoUDV start', { ctid, nombre, tipo, hasCloud,
+          allowDownload: UDV.allowDownload, allowResubir: UDV.allowResubir });
+
+  // Header del modal
+  document.getElementById('modalVerContratoTitulo').innerHTML =
+    `<i class="bi bi-file-earmark-text me-2"></i>${UDV.nombre}`;
+  document.getElementById('btnAbrirContratoNueva').href = UDV.baseUrl;
+  document.getElementById('btnAbrirNuevaFallback').href = UDV.baseUrl;
   const btnDl   = document.getElementById('btnDescargarContrato');
   const btnWord = document.getElementById('btnDescWord');
-  const btnOpen = document.getElementById('btnAbrirContratoNueva');
-  const btnFallbackOpen = document.getElementById('btnAbrirNuevaFallback');
-  const nvIcon  = document.getElementById('contratoNoViewerIcon');
-  const nvTit   = document.getElementById('contratoNoViewerTitulo');
-  const nvMsg   = document.getElementById('contratoNoViewerMsg');
-
-  const esSuperadmin = DATA.is_superadmin;
-  const t = (tipo || '').toLowerCase();
-  const isPdf   = (t === 'pdf');
-  const isImg   = ['imagen','jpg','jpeg','png','gif','webp'].includes(t);
-  const isOffice= ['word','doc','docx','xls','xlsx','ppt','pptx'].includes(t);
-
-  titulo.innerHTML = `<i class="bi bi-file-earmark-text me-2"></i>${nombre || 'Contrato'}`;
-
-  // Botones de header
-  btnOpen.href = baseUrl;
-  btnFallbackOpen.href = baseUrl;
-  if (esSuperadmin) {
+  // SEGURIDAD: Botones de descarga solo si esSuperadmin Y allowDownload.
+  // Otros roles ni siquiera ven el botón "Abrir en pestaña nueva" para
+  // archivos donde no tienen autorización de descarga (cumple regla:
+  // solo superadmin puede bajar archivos del módulo mantenciones).
+  const puedeDescargar = !!UDV.allowDownload && !!UDV.esSuperadmin;
+  if (puedeDescargar) {
     btnDl.style.display = '';
-    btnDl.href = baseUrl + '?download=1';
-    btnDl.title = 'Descargar (solo superadmin)';
+    btnDl.href = UDV.baseUrl + '?download=1';
     btnWord.style.display = '';
-    btnWord.href = baseUrl + '?download=1';
+    btnWord.href = UDV.baseUrl + '?download=1';
   } else {
     btnDl.style.display = 'none';
     btnWord.style.display = 'none';
   }
+  // El botón "Abrir en pestaña nueva" también descarga, así que lo
+  // ocultamos si no es superadmin.
+  const btnOpen = document.getElementById('btnAbrirContratoNueva');
+  const btnOpenF = document.getElementById('btnAbrirNuevaFallback');
+  if (btnOpen)  btnOpen.style.display  = puedeDescargar ? '' : 'none';
+  if (btnOpenF) btnOpenF.style.display = puedeDescargar ? '' : 'none';
 
-  // Reset frame
-  frame.src = 'about:blank';
-
-  if (isPdf || isImg) {
-    // PDF e imágenes: el browser las renderiza nativamente vía iframe
-    frame.style.display = '';
-    noView.style.display = 'none';
-    setTimeout(() => { frame.src = baseUrl; }, 50);
-  } else if (isOffice && hasCloud) {
-    // Office Online Viewer — endpoint hace 302 al viewer.officeapps.live.com
-    frame.style.display = '';
-    noView.style.display = 'none';
-    setTimeout(() => { frame.src = baseUrl + '?viewer=office'; }, 50);
-  } else if (isOffice && !hasCloud) {
-    // Word/Excel/PPT pero NO está en Cloudinary — no podemos usar Office Viewer
-    frame.style.display = 'none';
-    noView.style.display = '';
-    nvIcon.className = 'bi bi-file-earmark-word';
-    nvIcon.style.color = '#3b82f6';
-    nvTit.textContent = 'Documento Office no previsualizable';
-    nvMsg.innerHTML = esSuperadmin
-      ? '<strong>Solución:</strong> re-súbelo. El sistema lo guardará en Cloudinary y entonces podrás previsualizarlo con Microsoft Office Online Viewer.'
-      : '<strong>Pide al superadministrador</strong> que re-suba este contrato. Cuando se guarde en Cloudinary, podrás verlo en línea sin descargarlo.';
-  } else {
-    // Tipo desconocido — ofrecer apertura externa
-    frame.style.display = 'none';
-    noView.style.display = '';
-    nvIcon.className = 'bi bi-file-earmark';
-    nvIcon.style.color = '#94a3b8';
-    nvTit.textContent = `Formato no previsualizable (${t || 'desconocido'})`;
-    nvMsg.textContent = 'Intenta abrir el archivo en una pestaña nueva — el navegador puede manejarlo según el tipo.';
-  }
+  // Abrir modal y mostrar loading
+  _udvShowStage('loading');
+  _udvSetBadge('', '');
+  _udvSetStep('Conectando con el servidor…');
   new bootstrap.Modal(document.getElementById('modalVerContrato')).show();
+
+  // ── Normalizar tipo (Python None → string vacío) ─────────────────────
+  const t = (tipo === 'None' ? '' : (tipo || '')).toLowerCase();
+  const isPdfHint   = (t === 'pdf');
+  const isImgHint   = ['imagen','jpg','jpeg','png','gif','webp'].includes(t);
+  const isOfficeHint= ['word','doc','docx','xls','xlsx','ppt','pptx'].includes(t);
+
+  // ── OPTIMIZACION VELOCIDAD 2026-05-26 ────────────────────────────────
+  // Si el hint del template ya nos da el tipo (caso normal: archivo_tipo
+  // está en BD), saltamos el HEAD probe completamente y cargamos directo.
+  // El HEAD agregaba ~200-500ms innecesarios en cada apertura.
+  //
+  // Solo hacemos HEAD probe si el tipo es desconocido (caso edge: contratos
+  // legacy sin archivo_tipo). En ese caso, el HEAD nos dice qué es.
+  let headInfo = null;
+  let realMime = '';
+  const tipoEsConocido = isPdfHint || isImgHint || isOfficeHint;
+
+  if (!tipoEsConocido) {
+    _udvSetStep('Detectando tipo de archivo…');
+    headInfo = await _udvHead(UDV.baseUrl);
+    if (headInfo && headInfo.status >= 400) {
+      _udvShowError({
+        titulo: 'Este contrato debe re-subirse',
+        mensaje: UDV.esSuperadmin
+          ? 'El archivo ya no está disponible en el servidor. Súbelo de nuevo con el botón de abajo y quedará operando al instante.'
+          : 'El archivo ya no está disponible. Avisa al administrador para que lo vuelva a subir.',
+        icono: 'bi bi-cloud-arrow-up',
+        iconColor: '#f59e0b',
+        mostrarResubir: true,
+      });
+      return;
+    }
+    realMime = (headInfo && headInfo.contentType || '').toLowerCase();
+  } else {
+    _udvLog('INFO', 'Skip HEAD probe — tipo conocido:', t);
+  }
+
+  const isPdf    = realMime.includes('pdf')        || isPdfHint;
+  const isImg    = realMime.startsWith('image/')   || isImgHint;
+  const isOffice = realMime.includes('msword') ||
+                   realMime.includes('officedocument') ||
+                   realMime.includes('ms-excel') ||
+                   realMime.includes('ms-powerpoint') ||
+                   isOfficeHint;
+
+  _udvLog('INFO', 'Tipo decidido', { realMime, isPdf, isImg, isOffice, hint: t });
+
+  // ── RUTA 1: Office docs con Cloudinary → Office Online Viewer ────────
+  if (isOffice && UDV.hasCloud) {
+    _udvSetStep('Cargando documento Word/Excel…');
+    _udvLoadIframe(UDV.baseUrl + '?viewer=office', {
+      onLoaded: () => {
+        _udvLog('INFO', 'Office Viewer cargado');
+        _udvSetBadge('Office Online', '#3b82f6');
+      },
+      onBlank: () => {
+        _udvShowError({
+          titulo: 'Este contrato debe re-subirse',
+          mensaje: UDV.esSuperadmin
+            ? 'El visor de Word/Excel no pudo cargar el archivo. Súbelo de nuevo y volverá a quedar disponible.'
+            : 'No se pudo mostrar el archivo. Avisa al administrador para que lo vuelva a subir.',
+          icono: 'bi bi-cloud-arrow-up',
+          iconColor: '#f59e0b',
+          mostrarResubir: true,
+        });
+      },
+      blankTimeoutMs: 10000,  // Office viewer es más lento
+    });
+    return;
+  }
+
+  // ── RUTA 2: Office docs SIN Cloudinary → no se puede previsualizar ──
+  if (isOffice && !UDV.hasCloud) {
+    _udvShowError({
+      titulo: 'Este contrato debe re-subirse',
+      mensaje: UDV.esSuperadmin
+        ? 'Este documento Word/Excel todavía no está en la nube. Vuelve a subirlo y quedará disponible para todos al instante.'
+        : 'Este documento todavía no está disponible para preview. Avisa al administrador para que lo vuelva a subir.',
+      icono: 'bi bi-cloud-arrow-up',
+      iconColor: '#f59e0b',
+      mostrarResubir: true,
+    });
+    return;
+  }
+
+  // ── RUTA 3: Imagen → image renderer dedicado ────────────────────────
+  if (isImg) {
+    _udvLoadImage(UDV.baseUrl);
+    return;
+  }
+
+  // ── RUTA 4: PDF (o desconocido que probablemente sea PDF) ────────────
+  // Estrategia: intentar iframe primero (más rápido si funciona).
+  // Si el iframe queda en blanco a los 6s, switch a PDF.js canvas.
+  _udvSetStep('Cargando documento…');
+  _udvLoadIframe(UDV.baseUrl, {
+    onLoaded: () => {
+      _udvLog('INFO', 'Iframe OK');
+      _udvSetBadge('Visor nativo', '#16a34a');
+    },
+    onBlank: async () => {
+      _udvLog('WARN', 'Iframe blank → fallback a PDF.js');
+      // El iframe quedó en blanco. Si es un PDF (real o probable),
+      // intentamos PDF.js canvas. Para otros tipos, mostramos error.
+      const probablyPdf = isPdf || realMime.includes('pdf') ||
+                           (UDV.nombre || '').toLowerCase().endsWith('.pdf');
+      if (probablyPdf && window.pdfjsLib) {
+        try {
+          await _udvLoadPdfJs(UDV.baseUrl);
+        } catch (e) {
+          _udvShowError({
+            titulo: 'Este contrato debe re-subirse',
+            mensaje: UDV.esSuperadmin
+              ? 'El archivo está dañado o en un formato que no se puede mostrar. Súbelo de nuevo y quedará operando al instante.'
+              : 'No se pudo mostrar el archivo. Avisa al administrador para que lo vuelva a subir.',
+            icono: 'bi bi-cloud-arrow-up',
+            iconColor: '#f59e0b',
+            mostrarResubir: true,
+            errorTech: 'PDF.js: ' + (e.message || e),
+          });
+        }
+      } else {
+        _udvShowError({
+          titulo: 'Este contrato debe re-subirse',
+          mensaje: UDV.esSuperadmin
+            ? 'El archivo está en un formato que no se puede mostrar. Súbelo de nuevo (PDF o Word) y quedará disponible.'
+            : 'Este archivo no se puede mostrar. Avisa al administrador para que lo vuelva a subir.',
+          icono: 'bi bi-cloud-arrow-up',
+          iconColor: '#f59e0b',
+          mostrarResubir: true,
+        });
+      }
+    },
+    onError: (e) => {
+      _udvShowError({
+        titulo: 'Este contrato debe re-subirse',
+        mensaje: UDV.esSuperadmin
+          ? 'Hubo un problema con el archivo. Súbelo de nuevo y quedará operando.'
+          : 'No se pudo cargar el archivo. Avisa al administrador para que lo vuelva a subir.',
+        icono: 'bi bi-cloud-arrow-up',
+        iconColor: '#f59e0b',
+        mostrarResubir: true,
+        errorTech: 'Iframe error: ' + (e.message || e),
+      });
+    },
+  });
 }
 
 // ─── ERP por RUT — sección Equipos ──────────────────────────
@@ -5354,17 +7224,22 @@ function _repToggleExportBtns(enabled) {
   document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('repId');
     if (el) obs.observe(el, {attributes:true, attributeFilter:['value']});
-    // Polling de respaldo cada 800ms cuando el modal está abierto
+    // 2026-05-28 (Daniel — FASE 3) Polling de respaldo: subido de 800ms
+    // a 5000ms. El MutationObserver de arriba ya detecta cambios en repId
+    // en tiempo real; este interval es solo paracaídas para edge cases
+    // raros donde se setea repId.value sin disparar el observer (assignar
+    // .value directo en algunos browsers). 800ms cada modal abierto era
+    // un waste innecesario de CPU; 5s es suficiente para el caso degradado.
     setInterval(() => {
       const modal = document.getElementById('modalReporte');
       if (modal && modal.classList.contains('show')) {
         _repToggleExportBtns(!!document.getElementById('repId')?.value);
       }
-    }, 800);
+    }, 5000);
   });
 })();
 
-// ─── Adjuntos del contrato ─────────────────────────────────────
+// ─── Adjuntos del contrato (lista compacta dentro del tab Contratos) ───
 async function cargarAdjuntos(ctid) {
   const cont = document.getElementById('adjuntosLista');
   if (!cont) return;
@@ -5376,16 +7251,41 @@ async function cargarAdjuntos(ctid) {
     return;
   }
   const iconos = {contrato:'file-earmark-pdf',imagen:'image',solicitud:'file-earmark-spreadsheet',otro:'paperclip'};
-  cont.innerHTML = data.map(a => `
-    <div class="adj-row">
-      <i class="bi bi-${iconos[a.tipo]||'paperclip'}" style="font-size:1.3rem;color:#6b7280;flex-shrink:0"></i>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.nombre}</div>
-        <div style="font-size:.68rem;color:#9ca3af">${a.tipo} · ${a.created_at} · ${a.created_by||''}</div>
-      </div>
-      <a href="${a.url}" target="_blank" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i></a>
-      <button class="btn btn-xs btn-outline-danger" onclick="eliminarAdjunto(${a.id},this)"><i class="bi bi-trash"></i></button>
-    </div>`).join('');
+  const esSuper = !!DATA.is_superadmin;
+  cont.innerHTML = data.map(a => {
+    // URL del proxy (fuerza inline + valida permisos server-side)
+    const urlProxy = `/mantenciones/api/adjuntos/${a.id}/archivo`;
+    // Botón eliminar SOLO si superadmin
+    const btnEliminar = esSuper
+      ? `<button class="btn btn-xs btn-outline-danger" onclick="eliminarAdjunto(${a.id},this)" title="Eliminar (solo superadmin)"><i class="bi bi-trash"></i></button>`
+      : '';
+    // Botón descargar SOLO si superadmin
+    const btnDescargar = esSuper
+      ? `<a href="${urlProxy}?download=1" download class="btn btn-xs btn-outline-secondary" title="Descargar (solo superadmin)"><i class="bi bi-download"></i></a>`
+      : '';
+    // Mime hint para el visor (extensión desde archivo_nombre)
+    const ext = (a.archivo_nombre||'').toLowerCase().split('.').pop();
+    const tipoVisor = ['pdf'].includes(ext) ? 'pdf'
+                     : ['jpg','jpeg','png','gif','webp'].includes(ext) ? 'imagen'
+                     : ['docx','doc'].includes(ext) ? 'docx'
+                     : ['xlsx','xls'].includes(ext) ? 'xlsx' : '';
+    const nombreEsc = (a.nombre||'').replace(/'/g,"\\'");
+    return `
+      <div class="adj-row">
+        <i class="bi bi-${iconos[a.tipo]||'paperclip'}" style="font-size:1.3rem;color:#6b7280;flex-shrink:0"></i>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.nombre}</div>
+          <div style="font-size:.68rem;color:#9ca3af">${a.tipo} · ${a.created_at} · ${a.created_by||''}</div>
+        </div>
+        <button class="btn btn-xs btn-outline-primary"
+                onclick="verArchivoUDV({baseUrl:'${urlProxy}',nombre:'${nombreEsc}',tipo:'${tipoVisor}',hasCloud:${!!a.persistente},allowDownload:${esSuper},allowResubir:false})"
+                title="Ver dentro del sistema">
+          <i class="bi bi-eye"></i>
+        </button>
+        ${btnDescargar}
+        ${btnEliminar}
+      </div>`;
+  }).join('');
 }
 
 function mostrarSubirAdjunto() {
@@ -5426,3 +7326,49 @@ function _planTabActualizarStatus(ctAnalizado) {
     el.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Contrato analizado — plan completo disponible</span>';
   }
 }
+
+// ─── Dar de baja masiva todos los equipos de un cliente (solo superadmin) ──
+async function bajaMasivaEquipos(cid) {
+  const confirmText = await ilusPrompt({
+    title: 'Dar de baja TODOS los equipos',
+    message: 'Esta acción marcará como <strong style="color:#dc2626">BAJA</strong> todos los equipos activos de este cliente.',
+    sub: 'Para confirmar, escribe <strong>BAJA TOTAL</strong> en el campo de abajo.',
+    subHtml: true,
+    placeholder: 'BAJA TOTAL',
+    okLabel: 'Dar de baja',
+    cancelLabel: 'Cancelar',
+  });
+  if (!confirmText) return;
+  if (confirmText.trim().toUpperCase() !== 'BAJA TOTAL') {
+    await ilusAlert({
+      title: 'Confirmación incorrecta',
+      message: 'Debes escribir exactamente <strong>BAJA TOTAL</strong> para confirmar.',
+      subHtml: true,
+      type: 'warning',
+    });
+    return;
+  }
+  ilusToast('Procesando baja masiva…', { type: 'info' });
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${cid}/equipos/baja-masiva`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm_text: confirmText.trim() }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await ilusAlert({
+        title: 'Baja masiva completada',
+        message: `Se dieron de baja <strong>${d.n}</strong> equipo${d.n !== 1 ? 's' : ''}. La página se recargará.`,
+        subHtml: true,
+        type: 'success',
+      });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'Error', message: d.error || 'No se pudo completar la baja masiva.', type: 'error' });
+    }
+  } catch (e) {
+    await ilusAlert({ title: 'Error de red', message: 'No se pudo conectar con el servidor.', type: 'error' });
+  }
+}
+

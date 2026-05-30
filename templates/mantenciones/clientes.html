@@ -869,134 +869,130 @@ async function limpiarHuerfanos(){
 
 <script>
 function aplicarKpiFiltro(tipo) {
-  const url = new URL(window.location.href);
-  // Limpiar filtros relacionados
-  url.searchParams.delete('estado');
-  url.searchParams.delete('contrato');
-  url.searchParams.delete('equipos');
+  // Los KPIs ahora alimentan el motor de filtros EN VIVO (sin recargar).
+  // ILUSFilter.set hace toggle, así que volver a clic en el mismo KPI lo quita.
+  if (typeof ILUSFilter === 'undefined') return;
   switch(tipo) {
-    case 'all':           break;  // sin filtros
-    case 'activo':        url.searchParams.set('estado', 'activo'); break;
-    case 'contrato_con':  url.searchParams.set('contrato', 'con'); break;
-    case 'contrato_sin':  url.searchParams.set('contrato', 'sin'); break;
-    case 'equipos_con':   url.searchParams.set('equipos', 'con'); break;
-    case 'equipos_sin':   url.searchParams.set('equipos', 'sin'); break;
+    case 'all':           ILUSFilter.clear();                     break;
+    case 'activo':        ILUSFilter.set('estado',  'activo');    break;
+    case 'contrato_con':  ILUSFilter.set('contrato','vigente');   break;
+    case 'contrato_sin':  ILUSFilter.set('contrato','sin_vigente'); break;
+    case 'equipos_con':   ILUSFilter.set('equipos', 'con');       break;
+    case 'equipos_sin':   ILUSFilter.set('equipos', 'sin');       break;
   }
-  window.location.href = url.toString();
+  // Llevar la vista a la zona de resultados para feedback inmediato.
+  try { document.getElementById('clientGrid')?.scrollIntoView({behavior:'smooth', block:'start'}); } catch(e){}
 }
 </script>
 
-{# ── PILLS DE TIPO DE CLIENTE — contrato comercial (mantención/arriendo/leasing)
-   Recarga la página con ?tipo=X que el backend filtra. Sin tipo → todos.
-   Estilo: pill grande clickeable con el color asociado al tipo.
-   #}
-{%- set tipo_actual = (filtros.tipo if filtros and filtros.tipo else '') -%}
-<div class="tipo-cliente-pills mb-3" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-  <span class="small fw-semibold text-muted me-1" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.5px">
-    <i class="bi bi-funnel-fill me-1"></i>Tipo de contrato:
-  </span>
-  <a href="?{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}{{ k }}={{ v }}&{% endif %}{% endfor %}"
-     class="tc-pill {% if not tipo_actual %}tc-pill-active{% endif %}"
-     style="background:{% if not tipo_actual %}#0a0a0a{% else %}#f3f4f6{% endif %};
-            color:{% if not tipo_actual %}#fff{% else %}#374151{% endif %}">
-    <i class="bi bi-grid-3x3-gap me-1"></i>Todos
-  </a>
-  <a href="?tipo=mantencion{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}&{{ k }}={{ v }}{% endif %}{% endfor %}"
-     class="tc-pill {% if tipo_actual == 'mantencion' %}tc-pill-active{% endif %}"
-     style="background:{% if tipo_actual == 'mantencion' %}#dc2626{% else %}#fef2f2{% endif %};
-            color:{% if tipo_actual == 'mantencion' %}#fff{% else %}#dc2626{% endif %}">
-    <i class="bi bi-wrench-adjustable me-1"></i>Mantención
-  </a>
-  <a href="?tipo=arriendo{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}&{{ k }}={{ v }}{% endif %}{% endfor %}"
-     class="tc-pill {% if tipo_actual == 'arriendo' %}tc-pill-active{% endif %}"
-     style="background:{% if tipo_actual == 'arriendo' %}#0891b2{% else %}#ecfeff{% endif %};
-            color:{% if tipo_actual == 'arriendo' %}#fff{% else %}#0891b2{% endif %}">
-    <i class="bi bi-calendar-range me-1"></i>Arriendo
-  </a>
-  <a href="?tipo=leasing{% for k,v in (filtros.items() if filtros else []) %}{% if k != 'tipo' and v %}&{{ k }}={{ v }}{% endif %}{% endfor %}"
-     class="tc-pill {% if tipo_actual == 'leasing' %}tc-pill-active{% endif %}"
-     style="background:{% if tipo_actual == 'leasing' %}#f59e0b{% else %}#fffbeb{% endif %};
-            color:{% if tipo_actual == 'leasing' %}#fff{% else %}#f59e0b{% endif %}">
-    <i class="bi bi-cash-coin me-1"></i>Leasing
-  </a>
-</div>
-<style>
-  .tc-pill{
-    display:inline-flex;align-items:center;gap:4px;
-    padding:7px 16px;border-radius:50px;
-    font-size:.82rem;font-weight:700;letter-spacing:.02em;
-    text-decoration:none;border:1.5px solid transparent;
-    transition:all .18s cubic-bezier(.2,.8,.2,1);
-    box-shadow:0 1px 2px rgba(0,0,0,.04);
-  }
-  .tc-pill:hover{
-    transform:translateY(-1px);
-    box-shadow:0 4px 10px rgba(0,0,0,.08);
-    text-decoration:none;
-  }
-  .tc-pill-active{
-    box-shadow:0 3px 8px rgba(0,0,0,.18);
-    transform:translateY(-1px);
-  }
-  @media (max-width: 575px){
-    .tipo-cliente-pills{padding:0 2px}
-    .tc-pill{padding:6px 12px;font-size:.76rem}
-  }
-</style>
+{# ══ MOTOR DE FILTROS INTELIGENTE (multifiltro client-side) ══════════════
+   Daniel 30/05/2026: filtros combinables EN VIVO, con contador por opción,
+   chips de filtros activos, contador de resultados y deep-linking por URL.
+   Todo lo orquesta window.ILUSFilter (en el <script> de más abajo).
+   Los data-* de cada card son la fuente de verdad del filtrado. #}
+{% set FILTER_GROUPS = [
+     {'key':'tipo',     'label':'Tipo',     'icon':'tag-fill',
+      'opts':[('mantencion','Mantención'),('arriendo','Arriendo'),('leasing','Leasing')]},
+     {'key':'estado',   'label':'Estado',   'icon':'circle-fill',
+      'opts':[('activo','Activo'),('inactivo','Inactivo'),('prospecto','Prospecto'),('suspendido','Suspendido')]},
+     {'key':'contrato', 'label':'Contrato', 'icon':'file-earmark-text-fill',
+      'opts':[('vigente','Vigente'),('por_vencer','Por vencer'),('vencido','Vencido'),('sin_vigente','Sin contrato')]},
+     {'key':'equipos',  'label':'Equipos',  'icon':'tools',
+      'opts':[('con','Con equipos'),('sin','Sin equipos')]}
+   ] %}
 
-{# ── FILTER BAR ──────────────────────────────────────────────────── #}
-<div class="filter-bar mb-3">
-  <div class="row g-2 align-items-center">
-    <div class="col-12 col-sm-5 col-md-4">
-      <div class="input-group input-group-sm">
-        <span class="input-group-text bg-white border-end-0 pe-1">
-          <i class="bi bi-search text-muted"></i>
-        </span>
-        <input type="text" id="searchInput" class="form-control border-start-0 ps-1"
-               placeholder="Buscar por nombre, RUT, email, comuna…"
-               value="{{ filtros.q }}" oninput="filterAndPage(1)">
-      </div>
+<div class="flt-shell mb-3">
+  {# Fila superior: búsqueda + vista #}
+  <div class="flt-top">
+    <div class="flt-search">
+      <i class="bi bi-search"></i>
+      <input type="text" id="searchInput" autocomplete="off"
+             placeholder="Buscar por nombre, RUT, email, comuna…"
+             value="{{ filtros.q or '' }}"
+             oninput="ILUSFilter.setSearch(this.value)">
+      <button type="button" class="flt-search-clear" id="fltSearchClear"
+              onclick="ILUSFilter.setSearch('')" title="Limpiar búsqueda" hidden>
+        <i class="bi bi-x-lg"></i>
+      </button>
     </div>
-    <div class="col-auto">
-      <select id="filterEstado" class="form-select form-select-sm" onchange="filterAndPage(1)">
-        <option value="">Estado: Todos</option>
-        <option value="activo"     {% if filtros.estado=='activo'     %}selected{% endif %}>Activos</option>
-        <option value="inactivo"   {% if filtros.estado=='inactivo'   %}selected{% endif %}>Inactivos</option>
-        <option value="prospecto"  {% if filtros.estado=='prospecto'  %}selected{% endif %}>Prospectos</option>
-        <option value="suspendido" {% if filtros.estado=='suspendido' %}selected{% endif %}>Suspendidos</option>
-      </select>
+    <div class="btn-group btn-group-sm flt-view" role="group">
+      <button type="button" class="btn btn-outline-secondary active" id="btnGrid"
+              onclick="setView('grid')" title="Cuadrícula"><i class="bi bi-grid-3x3-gap"></i></button>
+      <button type="button" class="btn btn-outline-secondary" id="btnList"
+              onclick="setView('list')" title="Lista"><i class="bi bi-list-ul"></i></button>
     </div>
-    <div class="col-auto">
-      <select id="filterContrato" class="form-select form-select-sm" onchange="filterAndPage(1)">
-        <option value="">Contrato: Todos</option>
-        <option value="vigente">Vigente</option>
-        <option value="por_vencer">Por vencer</option>
-        <option value="vencido">Vencido</option>
-        <option value="indefinido">Indefinido</option>
-        <option value="sin_contrato">Sin contrato</option>
-      </select>
+  </div>
+
+  {# Una fila por grupo: pills con contador por opción #}
+  {% for g in FILTER_GROUPS %}
+  <div class="flt-row">
+    <span class="flt-row-lbl"><i class="bi bi-{{ g.icon }}"></i>{{ g.label }}</span>
+    <div class="flt-pills" data-group="{{ g.key }}">
+      <button type="button" class="flt-pill is-active" data-val=""
+              onclick="ILUSFilter.set('{{ g.key }}','')">Todos</button>
+      {% for val,lbl in g.opts %}
+      <button type="button" class="flt-pill" data-val="{{ val }}"
+              onclick="ILUSFilter.set('{{ g.key }}','{{ val }}')">
+        {{ lbl }}<span class="flt-count" data-cg="{{ g.key }}" data-cv="{{ val }}">0</span>
+      </button>
+      {% endfor %}
     </div>
-    <div class="col-auto">
-      <select id="filterEquipos" class="form-select form-select-sm" onchange="filterAndPage(1)">
-        <option value="">Equipos: Todos</option>
-        <option value="con">Con equipos</option>
-        <option value="sin">Sin equipos</option>
-      </select>
-    </div>
-    <div class="col-auto ms-auto d-flex gap-2">
-      <div class="btn-group btn-group-sm" role="group">
-        <button type="button" class="btn btn-outline-secondary active" id="btnGrid"
-                onclick="setView('grid')" title="Cuadrícula">
-          <i class="bi bi-grid-3x3-gap"></i>
-        </button>
-        <button type="button" class="btn btn-outline-secondary" id="btnList"
-                onclick="setView('list')" title="Lista">
-          <i class="bi bi-list-ul"></i>
-        </button>
-      </div>
+  </div>
+  {% endfor %}
+
+  {# Barra inferior: chips activos + contador en vivo + limpiar todo #}
+  <div class="flt-foot">
+    <div class="flt-chips" id="fltChips"></div>
+    <div class="flt-foot-right">
+      <span class="flt-result" id="fltResult"></span>
+      <button type="button" class="flt-clear" id="fltClear" onclick="ILUSFilter.clear()" hidden>
+        <i class="bi bi-x-circle me-1"></i>Limpiar todo
+      </button>
     </div>
   </div>
 </div>
+
+<style>
+/* ══ Motor de filtros ILUS ══ */
+.flt-shell{background:#fff;border:1px solid #eef0f2;border-radius:14px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.flt-top{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+.flt-search{position:relative;flex:1;display:flex;align-items:center}
+.flt-search > .bi-search{position:absolute;left:12px;color:#9ca3af;font-size:.9rem;pointer-events:none}
+.flt-search input{width:100%;height:42px;border:1.5px solid #e5e7eb;border-radius:10px;padding:0 38px 0 36px;font-size:16px;transition:border-color .15s,box-shadow .15s;outline:none}
+.flt-search input:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.flt-search-clear{position:absolute;right:8px;border:0;background:#f3f4f6;color:#6b7280;width:24px;height:24px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.7rem}
+.flt-search-clear:hover{background:#e5e7eb;color:#111}
+.flt-view{flex-shrink:0}
+.flt-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px dashed #f0f1f3}
+.flt-row:first-of-type{border-top:0}
+.flt-row-lbl{flex-shrink:0;width:92px;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;display:flex;align-items:center;gap:5px}
+.flt-row-lbl .bi{font-size:.7rem;opacity:.7}
+.flt-pills{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.flt-pill{display:inline-flex;align-items:center;gap:6px;border:1.5px solid #e5e7eb;background:#fff;color:#374151;padding:5px 12px;border-radius:50px;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s cubic-bezier(.2,.8,.2,1);white-space:nowrap}
+.flt-pill:hover{border-color:#d1d5db;transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+.flt-pill.is-active{background:#0a0a0a;border-color:#0a0a0a;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.flt-count{font-size:.68rem;font-weight:800;background:rgba(0,0,0,.06);color:inherit;padding:1px 7px;border-radius:50px;min-width:20px;text-align:center}
+.flt-pill.is-active .flt-count{background:rgba(255,255,255,.22)}
+.flt-pill[data-count="0"]{opacity:.4}
+.flt-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid #f0f1f3}
+.flt-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-height:24px;align-items:center}
+.flt-chip{display:inline-flex;align-items:center;gap:6px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;padding:3px 6px 3px 11px;border-radius:50px;font-size:.74rem;font-weight:700}
+.flt-chip button{border:0;background:rgba(220,38,38,.12);color:#dc2626;width:18px;height:18px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.6rem}
+.flt-chip button:hover{background:#dc2626;color:#fff}
+.flt-foot-right{display:flex;align-items:center;gap:12px}
+.flt-result{font-size:.8rem;color:#6b7280;font-weight:600;white-space:nowrap}
+.flt-result b{color:#0a0a0a}
+.flt-clear{border:1px solid #e5e7eb;background:#fff;color:#6b7280;padding:5px 12px;border-radius:8px;font-size:.76rem;font-weight:700;cursor:pointer;white-space:nowrap}
+.flt-clear:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2}
+@media (max-width:640px){
+  .flt-shell{padding:12px;border-radius:12px}
+  .flt-row{flex-direction:column;align-items:flex-start;gap:5px}
+  .flt-row-lbl{width:auto}
+  .flt-pills{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px;-webkit-overflow-scrolling:touch}
+  .flt-foot{flex-direction:column;align-items:stretch}
+  .flt-foot-right{justify-content:space-between}
+}
+</style>
 
 
 {# ── CARDS GRID ──────────────────────────────────────────────────── #}
@@ -1211,6 +1207,23 @@ function aplicarKpiFiltro(tipo) {
   {% endfor %}
 </div><!-- /clientGrid -->
 
+{# Estado vacío cuando el multifiltro no devuelve resultados (hay clientes
+   en el universo pero ninguno coincide). Lo muestra/oculta ILUSFilter. #}
+<div id="fltEmpty" class="flt-empty" hidden>
+  <div class="flt-empty-icon">🔍</div>
+  <p class="flt-empty-title">Ningún cliente coincide con estos filtros</p>
+  <p class="flt-empty-sub">Prueba quitar algún filtro o cambiar la búsqueda.</p>
+  <button type="button" class="btn btn-ilus" onclick="ILUSFilter.clear()">
+    <i class="bi bi-arrow-counterclockwise me-1"></i>Limpiar filtros
+  </button>
+</div>
+<style>
+.flt-empty{text-align:center;padding:48px 20px;background:#fff;border:1px dashed #e5e7eb;border-radius:14px}
+.flt-empty-icon{font-size:2.4rem;margin-bottom:6px;opacity:.7}
+.flt-empty-title{font-weight:800;color:#374151;margin:0 0 2px}
+.flt-empty-sub{color:#9ca3af;font-size:.85rem;margin:0 0 16px}
+</style>
+
 {# ── FOOTER PAGINACIÓN (estilo Foodat: contador izq · pager der · perPage) ─ #}
 <div class="cli-footer">
   <div class="cli-footer-info" id="pageInfo">Mostrando 0 de 0</div>
@@ -1242,92 +1255,193 @@ function aplicarKpiFiltro(tipo) {
 
 <script>
 (function () {
+  // ══════════════════════════════════════════════════════════════════
+  //  MOTOR DE FILTROS ILUS — multifiltro 100% client-side
+  //  Combina tipo + estado + contrato + equipos + búsqueda en vivo, con
+  //  contador por opción, chips de filtros activos, contador de resultados,
+  //  paginación y deep-linking por URL. Fuente de verdad: los data-* de
+  //  cada .card-wrapper. (Daniel 30/05/2026)
+  // ══════════════════════════════════════════════════════════════════
+  const GROUPS = ['tipo', 'estado', 'contrato', 'equipos'];
+  const F = { q: '', tipo: '', estado: '', contrato: '', equipos: '' };
   let curPage = 1;
 
-  function wrappers() {
-    return Array.from(document.querySelectorAll('.card-wrapper'));
+  const $  = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const cards = () => $$('.card-wrapper');
+
+  const GLBL = { tipo: 'Tipo', estado: 'Estado', contrato: 'Contrato', equipos: 'Equipos' };
+  const LBL = {
+    tipo:     { mantencion: 'Mantención', arriendo: 'Arriendo', leasing: 'Leasing' },
+    estado:   { activo: 'Activo', inactivo: 'Inactivo', prospecto: 'Prospecto', suspendido: 'Suspendido' },
+    contrato: { vigente: 'Vigente', por_vencer: 'Por vencer', vencido: 'Vencido', sin_vigente: 'Sin contrato' },
+    equipos:  { con: 'Con equipos', sin: 'Sin equipos' },
+  };
+
+  // ¿una card pasa el filtro de un grupo? (contrato tiene caso especial)
+  function matchGroup(card, g, val) {
+    if (!val) return true;
+    if (g === 'contrato') {
+      const cv = card.dataset.contrato || '';
+      return val === 'sin_vigente' ? (cv !== 'vigente') : (cv === val);
+    }
+    return (card.dataset[g] || '') === val;
+  }
+  function matchAll(card) {
+    if (F.q && !(card.dataset.search || '').includes(F.q)) return false;
+    return GROUPS.every(g => matchGroup(card, g, F[g]));
   }
 
-  function visible() {
-    const q  = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
-    const es = document.getElementById('filterEstado')?.value   || '';
-    const co = document.getElementById('filterContrato')?.value || '';
-    const eq = document.getElementById('filterEquipos')?.value  || '';
-    // Tipo viene del querystring (pill selection), no de un <select> — el backend ya filtró.
-    return wrappers().filter(el => {
-      if (es && el.dataset.estado   !== es) return false;
-      if (co && el.dataset.contrato !== co) return false;
-      if (eq && el.dataset.equipos  !== eq) return false;
-      if (q  && !el.dataset.search.includes(q)) return false;
-      return true;
+  // Contador por opción (absoluto sobre el universo cargado)
+  function renderCounts() {
+    const all = cards();
+    $$('.flt-count').forEach(span => {
+      const n = all.filter(c => matchGroup(c, span.dataset.cg, span.dataset.cv)).length;
+      span.textContent = n;
+      const pill = span.closest('.flt-pill');
+      if (pill) pill.dataset.count = n;
     });
   }
 
-  window.filterAndPage = function (page) {
-    if (page) curPage = page;
-    const vis = visible();
-    const pp  = parseInt(document.getElementById('perPage')?.value || 6);
+  function renderActivePills() {
+    $$('.flt-pills').forEach(box => {
+      const g = box.dataset.group;
+      $$('.flt-pill', box).forEach(p =>
+        p.classList.toggle('is-active', (p.dataset.val || '') === (F[g] || '')));
+    });
+  }
+
+  function renderChips() {
+    const wrap = $('#fltChips');
+    if (wrap) {
+      const chips = [];
+      if (F.q) chips.push({ g: 'q', label: 'Búsqueda: “' + F.q + '”' });
+      GROUPS.forEach(g => { if (F[g]) chips.push({ g, label: GLBL[g] + ': ' + (LBL[g][F[g]] || F[g]) }); });
+      wrap.innerHTML = chips.map(c =>
+        '<span class="flt-chip">' + c.label +
+        '<button type="button" onclick="ILUSFilter.remove(\'' + c.g + '\')" title="Quitar filtro">' +
+        '<i class="bi bi-x-lg"></i></button></span>').join('');
+    }
+    const anyFilter = !!(F.q || GROUPS.some(g => F[g]));
+    const clr = $('#fltClear'); if (clr) clr.hidden = !anyFilter;
+    const sc = $('#fltSearchClear'); if (sc) sc.hidden = !F.q;
+  }
+
+  function syncURL() {
+    const p = new URLSearchParams();
+    if (F.q) p.set('q', F.q);
+    GROUPS.forEach(g => { if (F[g]) p.set(g, F[g]); });
+    const qs = p.toString();
+    try { history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '')); } catch (e) {}
+  }
+
+  function paginate(vis) {
+    const pp  = parseInt($('#perPage') ? $('#perPage').value : 6) || 6;
     const tot = vis.length;
-    const pgs = pp >= 999 ? 1 : Math.ceil(tot / pp);
+    const universo = cards().length;
+    const pgs = pp >= 999 ? 1 : Math.max(1, Math.ceil(tot / pp));
     if (curPage > pgs) curPage = 1;
     const s = (curPage - 1) * pp;
     const e = pp >= 999 ? tot : s + pp;
 
-    wrappers().forEach(el => el.style.display = 'none');
+    cards().forEach(el => el.style.display = 'none');
     vis.forEach((el, i) => { el.style.display = (i >= s && i < e) ? '' : 'none'; });
 
-    const pi = document.getElementById('pageInfo');
-    if (pi) {
-      if (!tot) {
-        pi.textContent = 'Sin resultados';
-      } else if (pp >= 999) {
-        pi.textContent = 'Mostrando ' + tot + ' de ' + tot;
-      } else {
-        // Estilo Foodat: "Mostrando 1 de 4" donde 4 es el total de páginas
-        pi.textContent = 'Mostrando ' + curPage + ' de ' + pgs;
-      }
-    }
+    // Estado vacío + grid
+    const empty = $('#fltEmpty'), grid = $('#clientGrid');
+    if (empty) empty.hidden = (tot !== 0);
+    if (grid)  grid.style.display = (tot === 0) ? 'none' : '';
 
-    const ul = document.getElementById('pagCtrl');
+    // Contador de resultados (barra de filtros)
+    const res = $('#fltResult');
+    if (res) {
+      res.innerHTML = (tot === universo)
+        ? '<b>' + tot + '</b> cliente' + (tot === 1 ? '' : 's')
+        : '<b>' + tot + '</b> de ' + universo;
+    }
+    // pageInfo (footer)
+    const pi = $('#pageInfo');
+    if (pi) pi.textContent = !tot ? 'Sin resultados'
+      : (pp >= 999 ? ('Mostrando ' + tot + ' de ' + tot)
+                   : ('Página ' + curPage + ' de ' + pgs + ' · ' + tot + ' cliente' + (tot === 1 ? '' : 's')));
+
+    // Pager numérico
+    const ul = $('#pagCtrl');
     if (!ul) return;
     ul.innerHTML = '';
     if (pgs <= 1) return;
-
-    function li(label, pg, disabled, active) {
+    const li = (label, pg, dis, act) => {
       const l = document.createElement('li');
-      l.className = 'page-item' + (disabled ? ' disabled' : '') + (active ? ' active' : '');
+      l.className = 'page-item' + (dis ? ' disabled' : '') + (act ? ' active' : '');
       const a = document.createElement('a');
       a.className = 'page-link'; a.href = '#'; a.innerHTML = label;
-      if (!disabled) a.onclick = ev => { ev.preventDefault(); filterAndPage(pg); };
+      if (!dis) a.onclick = ev => { ev.preventDefault(); curPage = pg; refresh(false); };
       l.appendChild(a); ul.appendChild(l);
-    }
-
+    };
     li('&laquo;', curPage - 1, curPage === 1);
     for (let p = 1; p <= pgs; p++) {
-      if (p === 1 || p === pgs || (p >= curPage - 1 && p <= curPage + 1)) {
-        li(p, p, false, p === curPage);
-      } else if (p === curPage - 2 || p === curPage + 2) {
-        li('…', p, true);
-      }
+      if (p === 1 || p === pgs || (p >= curPage - 1 && p <= curPage + 1)) li(p, p, false, p === curPage);
+      else if (p === curPage - 2 || p === curPage + 2) li('…', p, true);
     }
     li('&raquo;', curPage + 1, curPage === pgs);
+  }
+
+  function refresh(resetPage) {
+    if (resetPage) curPage = 1;
+    paginate(cards().filter(matchAll));
+  }
+
+  const ILUSFilter = {
+    set(g, val) {
+      F[g] = (F[g] === val) ? '' : val;   // toggle (clic en activo = quitar)
+      renderActivePills(); renderChips(); syncURL(); refresh(true);
+    },
+    remove(g) {
+      if (g === 'q') { F.q = ''; const i = $('#searchInput'); if (i) i.value = ''; }
+      else F[g] = '';
+      renderActivePills(); renderChips(); syncURL(); refresh(true);
+    },
+    setSearch(val) {
+      F.q = (val || '').toLowerCase().trim();
+      renderChips(); syncURL(); refresh(true);
+    },
+    clear() {
+      F.q = ''; GROUPS.forEach(g => F[g] = '');
+      const i = $('#searchInput'); if (i) i.value = '';
+      renderActivePills(); renderChips(); syncURL(); refresh(true);
+    },
   };
+  window.ILUSFilter = ILUSFilter;
+  window.filterAndPage = () => refresh(true);   // compat: perPage onchange
 
   window.setView = function (view) {
-    const grid = document.getElementById('clientGrid');
-    if (!grid) return;
-    if (view === 'list') {
-      grid.classList.add('list-view');
-      document.getElementById('btnGrid')?.classList.remove('active');
-      document.getElementById('btnList')?.classList.add('active');
-    } else {
-      grid.classList.remove('list-view');
-      document.getElementById('btnGrid')?.classList.add('active');
-      document.getElementById('btnList')?.classList.remove('active');
-    }
+    const grid = $('#clientGrid'); if (!grid) return;
+    const list = (view === 'list');
+    grid.classList.toggle('list-view', list);
+    $('#btnGrid') && $('#btnGrid').classList.toggle('active', !list);
+    $('#btnList') && $('#btnList').classList.toggle('active', list);
+    try { localStorage.setItem('ilus_cli_view', view); } catch (e) {}
   };
 
-  filterAndPage(1);
+  // ── Init: deep-link desde URL + restaurar vista + primer render ──
+  (function init() {
+    const p = new URLSearchParams(location.search);
+    F.q = (p.get('q') || '').toLowerCase().trim();
+    GROUPS.forEach(g => { F[g] = (p.get(g) || '').toLowerCase().trim(); });
+    // Compatibilidad con URLs viejas (KPIs server-side)
+    if (F.contrato === 'con') F.contrato = 'vigente';
+    if (F.contrato === 'sin') F.contrato = 'sin_vigente';
+    if (F.estado === 'all') F.estado = '';
+    // Default: si la URL no trae NINGÚN filtro, arrancar mostrando Activos
+    // (experiencia familiar). El chip "Estado: Activo" lo hace explícito y
+    // se quita con un clic para ver todos los clientes.
+    const hadParam = ['q', 'tipo', 'estado', 'contrato', 'equipos'].some(k => p.get(k));
+    if (!hadParam) F.estado = 'activo';
+    const i = $('#searchInput'); if (i && F.q) i.value = F.q;
+    renderCounts(); renderActivePills(); renderChips();
+    try { const v = localStorage.getItem('ilus_cli_view'); if (v) setView(v); } catch (e) {}
+    refresh(true);
+  })();
 })();
 </script>
 

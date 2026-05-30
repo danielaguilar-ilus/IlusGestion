@@ -47,7 +47,8 @@
         <div id="fotoWrap">
           {% if colab and colab.foto_filename %}
           <img src="{{ photo_src(colab.foto_filename, 'uploads/colaboradores') }}"
-               class="foto-preview" id="fotoPreview">
+               class="foto-preview" id="fotoPreview"
+               loading="lazy" decoding="async">
           {% else %}
           <div class="foto-placeholder" id="fotoPlaceholder">
             {{ (fd.get('nombre_completo') or (colab.nombre_completo if colab else 'C'))[0].upper() }}

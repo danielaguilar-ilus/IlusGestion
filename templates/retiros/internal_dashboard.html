@@ -305,29 +305,46 @@ async function abrirDescargaInformeDash(){
     <div class="col-md-3 d-flex gap-2"><button class="btn btn-sm btn-ilus">Filtrar</button><a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a></div>
   </div>
   <div class="btn-group btn-group-sm mt-3">
-    {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Pipeline','kanban'),('agenda','Agenda diaria','calendar-day'),('lista','Lista','list-ul')] %}
+    {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Kanban','kanban'),('agenda','Agenda diaria','calendar-day'),('lista','Lista','list-ul')] %}
     <a class="btn {% if filtros.view==view %}btn-dark{% else %}btn-outline-dark{% endif %}" href="{{ url_for('pickup_dashboard', view=view, q=filtros.q, status=filtros.status, date=filtros.date) }}"><i class="bi bi-{{ icon }} me-1"></i>{{ label }}</a>
     {% endfor %}
   </div>
 </form>
 
 {% if filtros.view == 'kanban' %}
-<div class="d-flex gap-3 overflow-auto pb-3">
-  {% for key,label in statuses.items() %}
-  <div style="min-width:280px">
-    <div class="fw-bold small text-uppercase text-muted mb-2">{{ label }} <span class="badge bg-secondary">{{ stats.get(key,0) }}</span></div>
-    {% for r in rows if r.status == key %}
-    {% set b = status_badge(r.status) %}
-    <a href="{{ url_for('pickup_detail', rid=r.id) }}" class="text-decoration-none text-dark">
-      <div class="ilus-card p-3 mb-2" style="border-left:4px solid var(--ilus-red)">
-        <div class="fw-bold">{{ r.code }}</div>
-        <div class="small">{{ r.customer_name }}</div>
-        <div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
-        <span class="badge bg-{{ b.color }} mt-2">{{ b.label }}</span>
+{# 2026-05-26 (Daniel) — Pipeline consolidada: 12 estados → 6 columnas visuales.
+   Cada columna agrupa varios estados pero las cards conservan su badge real
+   (status_badge) para mantener la granularidad operacional. Banda superior
+   con color por grupo + ícono. La última columna es "Retirada" (terminal). #}
+<div class="d-flex gap-3 overflow-auto pb-3 ilus-pipeline">
+  {% for group in pipeline_groups %}
+    {% set total = namespace(n=0) %}
+    {% for s in group.statuses %}{% set total.n = total.n + stats.get(s, 0) %}{% endfor %}
+    <div class="ilus-pipeline-col" style="min-width:280px;flex:1 0 280px;background:#f9fafb;border-radius:10px;border:1px solid #e5e7eb;border-top:4px solid {{ group.accent }};overflow:hidden">
+      <div class="ilus-pipeline-hdr d-flex justify-content-between align-items-center" style="padding:10px 12px;background:#fff;border-bottom:1px solid #e5e7eb">
+        <div class="fw-bold small text-uppercase" style="color:{{ group.accent }};letter-spacing:.04em">
+          <i class="bi {{ group.icon }} me-1"></i>{{ group.label }}
+        </div>
+        <span class="badge" style="background:{{ group.accent }};color:#fff;padding:4px 9px;font-size:.74rem">{{ total.n }}</span>
       </div>
-    </a>
-    {% endfor %}
-  </div>
+      <div class="ilus-pipeline-body" style="padding:10px;min-height:120px">
+        {% for r in rows if r.status in group.statuses %}
+          {% set b = status_badge(r.status) %}
+          <a href="{{ url_for('pickup_detail', rid=r.id) }}" class="text-decoration-none text-dark">
+            <div class="ilus-card p-3 mb-2" style="border-left:4px solid {{ group.accent }}">
+              <div class="fw-bold">{{ r.code }}</div>
+              <div class="small">{{ r.customer_name }}</div>
+              <div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
+              <span class="badge bg-{{ b.color }} mt-2">{{ b.label }}</span>
+            </div>
+          </a>
+        {% else %}
+          <div class="text-muted small text-center py-3" style="opacity:.55">
+            <i class="bi bi-dash-circle"></i> Sin retiros
+          </div>
+        {% endfor %}
+      </div>
+    </div>
   {% endfor %}
 </div>
 {% elif filtros.view == 'agenda' %}

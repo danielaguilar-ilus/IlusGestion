@@ -39,6 +39,61 @@ PICKUP_STATUS_COLORS = {
     "cerrada": "secondary",
 }
 
+# ── PIPELINE_GROUPS (2026-05-26 Daniel) ──────────────────────────────
+# Agrupación VISUAL del kanban del monitor de retiros: los 12 estados
+# de PICKUP_STATUS se consolidan en 6 columnas para reducir saturación.
+# Las cards mantienen su badge real (status_badge) dentro de cada columna
+# para no perder granularidad operacional.
+# La última columna SIEMPRE es "Retirada" (terminal exitosa) como acordó
+# Daniel — refuerza el foco del operador en el outcome positivo.
+#
+# IMPORTANTE: NO cambia los estados de BD ni los endpoints de transición.
+# Solo cambia cómo el template agrupa visualmente las columnas.
+PIPELINE_GROUPS = [
+    {
+        "key": "por_revisar",
+        "label": "Por revisar",
+        "statuses": ["solicitud_recibida", "en_revision", "informacion_incompleta"],
+        "accent": "#6b7280",   # gris neutro
+        "icon": "bi-inbox",
+    },
+    {
+        "key": "propuesta",
+        "label": "Propuesta",
+        "statuses": ["propuesta_enviada", "esperando_cliente"],
+        "accent": "#3b82f6",   # azul info
+        "icon": "bi-envelope-paper",
+    },
+    {
+        "key": "agendada",
+        "label": "Agendada",
+        "statuses": ["agenda_confirmada", "reagendada"],
+        "accent": "#8b5cf6",   # violeta
+        "icon": "bi-calendar-check",
+    },
+    {
+        "key": "preparacion",
+        "label": "En preparacion",
+        "statuses": ["en_preparacion"],
+        "accent": "#f59e0b",   # ambar
+        "icon": "bi-box-seam",
+    },
+    {
+        "key": "canceladas",
+        "label": "Canceladas",
+        "statuses": ["rechazada", "fallida", "cerrada"],
+        "accent": "#9ca3af",   # gris frio
+        "icon": "bi-x-octagon",
+    },
+    {
+        "key": "retirada",
+        "label": "Retirada",
+        "statuses": ["retirada"],
+        "accent": "#16a34a",   # verde exito (terminal final)
+        "icon": "bi-check2-circle",
+    },
+]
+
 PICKUP_RELATIONS = [
     ("dueno", "Dueno / titular"),
     ("comprador", "Comprador"),
@@ -467,6 +522,8 @@ def register_pickup_routes(app, ctx):
             "slot_minutes": 30,
             "buffer_cierre_min": 0,
             "parallel_capacity": 2,
+            "min_notice_hours": 24,
+            "proposal_expiry_hours": 48,
             "work_days": "1,2,3,4,5",
             "holidays": "",
             "alert_enabled": 0,
@@ -484,6 +541,18 @@ def register_pickup_routes(app, ctx):
         """Llamar tras cualquier UPDATE de pickup_settings (admin guarda config)."""
         _SETTINGS_CACHE["row"] = None
         _SETTINGS_CACHE["fetched_at"] = 0.0
+
+    def _td_to_hhmm(val):
+        """Convierte TIME de MySQL (timedelta de PyMySQL) o string a 'HH:MM' cero-relleno.
+        PyMySQL retorna timedelta para columnas TIME; comparar timedelta con str lanza TypeError."""
+        try:
+            if hasattr(val, "total_seconds"):  # timedelta
+                total = int(val.total_seconds())
+                h, m = divmod(total // 60, 60)
+                return f"{h:02d}:{m:02d}"
+            return str(val)[:5]
+        except Exception:
+            return str(val)[:5] if val else "00:00"
 
     def date_allowed(date_str, cfg=None):
         cfg = cfg or settings()
@@ -544,6 +613,117 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
         return True, ""
+
+    # ══════════════════════════════════════════════════════════════════
+    #  VALIDACIÓN TEMPORAL CENTRAL (Daniel 2026-05-29 — FASE 2)
+    #  Fuente ÚNICA de verdad para fecha/hora de un retiro. Reemplaza el
+    #  uso suelto de date_allowed() que NO validaba fecha pasada, min_notice
+    #  ni timezone. Todas las rutas (solicitud pública, propuesta interna,
+    #  confirmación, contrapropuesta, API disponibilidad, API calendario)
+    #  deben pasar por acá.
+    # ══════════════════════════════════════════════════════════════════
+    def _now_chile():
+        """Datetime AHORA en hora Chile, como naive (sin tzinfo).
+        Railway corre en UTC; usar datetime.now() server rompe 'hoy'/'ahora'
+        cerca de medianoche. Comparamos todo en naive-Chile para evitar
+        además TypeError aware-vs-naive con los DATETIME de MySQL."""
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo("America/Santiago")).replace(tzinfo=None)
+        except Exception:
+            return datetime.now()
+
+    def validate_pickup_datetime(date_str, time_from, time_to, cfg=None,
+                                 mode="public", now_chile=None):
+        """Valida un slot fecha+hora de retiro. Devuelve (ok: bool, error: str).
+
+        mode:
+          - 'public'   : cliente crea/confirma/contrapropone. Colación
+                         bloqueada, exige min_notice_hours, prohíbe pasado.
+          - 'internal' : operador propone. Permite cruzar colación
+                         (bypass_lunch) y NO exige min_notice, PERO sigue
+                         prohibiendo fecha/hora pasada.
+          - 'calendar' : para pintar disponibilidad (igual que public).
+
+        El VENCIMIENTO de una propuesta concreta se chequea aparte con
+        proposal_is_vigente() porque depende de expires_at en la fila.
+        """
+        cfg = cfg or settings()
+        now = now_chile or _now_chile()
+
+        # 1) Formato fecha
+        try:
+            d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            return False, "Fecha no válida."
+        # 2) Formato hora
+        tf = str(time_from or "")[:5]
+        tt = str(time_to or "")[:5]
+        try:
+            h_from = datetime.strptime(tf, "%H:%M").time()
+            h_to   = datetime.strptime(tt, "%H:%M").time()
+        except Exception:
+            return False, "Horario no válido."
+
+        start_dt = datetime.combine(d, h_from)   # naive-Chile
+        today = now.date()
+
+        # 3) Fecha/hora pasada (TODOS los modos)
+        if d < today or (d == today and start_dt <= now):
+            return False, ("Esta propuesta venció o la fecha ya pasó. "
+                           "Propón una nueva fecha.")
+
+        # 4) Anticipación mínima (solo cliente: public/calendar)
+        if mode in ("public", "calendar"):
+            try:
+                min_notice = int(cfg.get("min_notice_hours") or 24)
+            except (TypeError, ValueError):
+                min_notice = 24
+            if (start_dt - now).total_seconds() < min_notice * 3600:
+                return False, (f"Se requieren al menos {min_notice} horas de "
+                               f"anticipación. Elige una fecha más adelante.")
+
+        # 5) Día hábil + feriados (reusa date_allowed)
+        ok_day, msg_day = date_allowed(date_str, cfg)
+        if not ok_day:
+            return False, msg_day
+
+        # 6) Horario de bodega + colación (operador puede cruzar colación)
+        ok_time, msg_time = time_allowed(tf, tt, cfg, bypass_lunch=(mode == "internal"))
+        if not ok_time:
+            return False, msg_time
+
+        # 7) Duración múltiplo de slot_minutes (default 30)
+        try:
+            slot = int(cfg.get("slot_minutes") or 30)
+        except (TypeError, ValueError):
+            slot = 30
+        dur_min = (datetime.combine(d, h_to) - datetime.combine(d, h_from)).total_seconds() / 60
+        if dur_min <= 0:
+            return False, "El horario de término debe ser posterior al de inicio."
+        if slot > 0 and int(round(dur_min)) % slot != 0:
+            return False, f"La duración debe ser múltiplo de {slot} minutos."
+
+        return True, ""
+
+    def proposal_is_vigente(proposal, now_chile=None):
+        """True si la propuesta sigue 'pending' y NO venció (expires_at).
+        Filas viejas sin expires_at se consideran vigentes (compat)."""
+        if not proposal:
+            return False
+        if (proposal.get("status") or "") != "pending":
+            return False
+        exp = proposal.get("expires_at")
+        if not exp:
+            return True
+        now = now_chile or _now_chile()
+        # exp viene como datetime naive de MySQL (hora Chile por convención).
+        if hasattr(exp, "year"):
+            try:
+                return now < exp
+            except TypeError:
+                return True
+        return True
 
     def calc_package(length_cm, width_cm, height_cm, weight_kg):
         l, w, h = [max(float(x or 0), 0) for x in (length_cm, width_cm, height_cm)]
@@ -689,6 +869,10 @@ def register_pickup_routes(app, ctx):
             date_str = date.isoformat() if hasattr(date, "isoformat") else str(date)
         except Exception:
             return False, "Fecha inválida."
+        # Normalizar: PyMySQL devuelve timedelta para columnas TIME. Comparar
+        # timedelta con str (open_t="09:00") lanzaría TypeError en time_allowed.
+        time_from = _td_to_hhmm(time_from)
+        time_to   = _td_to_hhmm(time_to)
 
         # 1) Día permitido (work_days + holidays) y rango horario válido
         ok_d, msg_d = date_allowed(date_str, cfg)
@@ -1549,24 +1733,26 @@ def register_pickup_routes(app, ctx):
                 # No bloqueamos por error de logueo de declaración; pero lo registramos
                 print(f"[pickup_public_request] declaración tercero error: {_decl_exc}", flush=True)
 
-            # Validación fecha mínima +24 horas
+            # FASE 2 (2026-05-29): validador temporal CENTRAL, modo 'public'.
+            # Reemplaza el chequeo +24h manual (que usaba datetime.now() del
+            # server = UTC, no Chile → fallaba cerca de medianoche), más
+            # date_allowed y time_allowed sueltos. Valida TZ Chile, fecha no
+            # pasada, min_notice_hours, día hábil, feriado, horario, colación
+            # y duración múltiplo de slot — fuente única de verdad.
+            ok_date = ok_time = True
             if data["requested_date"]:
-                try:
-                    fecha_solicitada = datetime.strptime(data["requested_date"], "%Y-%m-%d").date()
-                    fecha_minima = (datetime.now() + timedelta(hours=24)).date()
-                    if fecha_solicitada < fecha_minima:
-                        errors.append("La fecha de retiro debe ser al menos 24 horas después de hoy.")
-                except ValueError:
-                    errors.append("Fecha inválida.")
-            ok_date = True
-            msg_date = ""
-            if data["requested_date"]:
-                ok_date, msg_date = date_allowed(data["requested_date"], cfg)
-            ok_time, msg_time = time_allowed(data["requested_time_from"], data["requested_time_to"], cfg)
-            if not ok_date:
-                errors.append(msg_date)
-            if not ok_time:
-                errors.append(msg_time)
+                ok_dt, msg_dt = validate_pickup_datetime(
+                    data["requested_date"], data["requested_time_from"],
+                    data["requested_time_to"], cfg=cfg, mode="public")
+                if not ok_dt:
+                    errors.append(msg_dt)
+                    ok_date = ok_time = False
+            else:
+                # Sin fecha elegida (raro: 1611 ya setea next_allowed_date):
+                # validar al menos el rango horario base.
+                ok_time, msg_time = time_allowed(data["requested_time_from"], data["requested_time_to"], cfg)
+                if not ok_time:
+                    errors.append(msg_time)
 
             # Validación dura del slot: colación, bloqueos manuales, capacidad
             # paralela. Evita que un usuario bypaseando JS mande un horario
@@ -1925,11 +2111,12 @@ def register_pickup_routes(app, ctx):
                 if payload: p.update(payload)
                 return jsonify(p), code
             # wrapper defensivo: cualquier excepción NO capturada por handlers
-            # internos devuelve flash legible al cliente en vez de 500. El
-            # tracking público NO debe mostrar stacktraces ni errores
-            # técnicos al cliente.
-            _post_failed = False
-            if action == "confirm":
+            # internos devuelve JSON legible (no HTML 500) al cliente.
+            # Root cause histórico: timedelta vs str en time_allowed → TypeError.
+            # Aunque ya fue corregido en _validar_disponibilidad_slot, este try
+            # atrapa cualquier excepción futura antes de que Flask la convierta en HTML.
+            try:
+              if action == "confirm":
                 proposal = mysql_fetchone(f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' ORDER BY id DESC LIMIT 1", (req["id"],))
                 if not proposal:
                     # No hay propuesta pendiente — el cliente vio el botón
@@ -1950,6 +2137,26 @@ def register_pickup_routes(app, ctx):
                     )
                     try: _POLL_CACHE.pop(token, None)
                     except Exception: pass
+                    return redirect(url_for("pickup_public_tracking", token=token))
+                # FASE 3 (2026-05-29): la propuesta existe pero pudo VENCER
+                # (expires_at < ahora Chile). NO se puede confirmar una propuesta
+                # vencida — se marca 'expired' y se pide al cliente nueva fecha.
+                if proposal and not proposal_is_vigente(proposal):
+                    try:
+                        mysql_execute(
+                            f"UPDATE `{PROP}` SET status='expired', answered_at=NOW() WHERE id=%s",
+                            (proposal["id"],),
+                        )
+                    except Exception: pass
+                    log_event(req["id"], "propuesta_vencida", old, old,
+                              "Cliente intentó confirmar una propuesta vencida", "sistema", "Expiry")
+                    _msg_exp = ("Esta propuesta venció o la fecha ya pasó. Propón una "
+                                "nueva fecha y el equipo ILUS te responderá.")
+                    try: _POLL_CACHE.pop(token, None)
+                    except Exception: pass
+                    if _is_ajax:
+                        return _ajax_err(_msg_exp, code=410, payload={"reason": "proposal_expired"})
+                    flash(_msg_exp, "warning")
                     return redirect(url_for("pickup_public_tracking", token=token))
                 if proposal:
                     # ═══════════════════════════════════════════════════════════
@@ -2020,7 +2227,7 @@ def register_pickup_routes(app, ctx):
                             extra_kg = float(req.get("total_weight_kg") or 0)
                             extra_m3 = float(req.get("total_volume_m3") or 0)
                             date_str = str(proposal["date"])[:10]
-                            tf_str   = str(proposal["time_from"])[:5]
+                            tf_str   = _td_to_hhmm(proposal["time_from"])
 
                             cur_tx.execute(
                                 f"""SELECT COUNT(*) AS n,
@@ -2044,7 +2251,16 @@ def register_pickup_routes(app, ctx):
                             m3_now    = float(slot_row.get("m3") or 0)
 
                             cfg_lock = settings()
-                            max_picks_slot = int(cfg_lock.get("max_picks_per_slot") or 5)
+                            # FASE 4 (2026-05-29): capacidad ÚNICA = parallel_capacity,
+                            # la MISMA fuente que ve el calendario público y
+                            # _validar_disponibilidad_slot. Antes acá se usaba
+                            # max_picks_per_slot (default 5) → permitía confirmar 5
+                            # retiros cuando el calendario mostraba cupo 2 = SOBREVENTA.
+                            _pc_lock = cfg_lock.get("parallel_capacity")
+                            if _pc_lock is not None and str(_pc_lock).strip():
+                                max_picks_slot = int(_pc_lock)
+                            else:
+                                max_picks_slot = int(cfg_lock.get("max_picks_per_slot") or 2)
                             max_kg_slot    = float(cfg_lock.get("max_kg_per_slot") or 500)
                             max_m3_slot    = float(cfg_lock.get("max_m3_per_slot") or 5)
 
@@ -2141,7 +2357,7 @@ def register_pickup_routes(app, ctx):
                         "Te enviamos un correo con todos los detalles.",
                         "success",
                     )
-            elif action == "reject":
+              elif action == "reject":
                 # Si la solicitud ya está cerrada/rechazada, no hacer nada
                 # (defensa contra doble-submit / refresh con resend POST).
                 if old in ("rechazada", "cerrada"):
@@ -2177,24 +2393,16 @@ def register_pickup_routes(app, ctx):
                     "Tu solicitud fue cancelada. Te enviamos un correo de confirmación y avisamos al equipo ILUS.",
                     "info",
                 )
-            elif action == "counter":
+              elif action == "counter":
                 date, tf, tt = request.form.get("counter_date"), request.form.get("counter_time_from"), request.form.get("counter_time_to")
-                # Validaciones backend (defense in depth — el frontend ya valida pero
-                # nunca confiamos en el cliente). El nuevo modal con calendario
-                # inteligente envía slot ya validado, pero alguien podría hacer
-                # POST manual con fecha en pasado o slot ocupado.
-                okd, md = date_allowed(date, cfg); okt, mt = time_allowed(tf, tt, cfg)
-                # Anti-pasado adicional: nunca aceptar fecha < hoy
-                try:
-                    from datetime import date as _d
-                    _hoy = _d.today()
-                    _propuesta_d = _d.fromisoformat(str(date)[:10])
-                    if _propuesta_d <= _hoy:
-                        okd, md = False, "No puedes proponer una fecha del pasado o de hoy. Mínimo: mañana."
-                except Exception:
-                    okd, md = False, "Fecha inválida. Usa el formato YYYY-MM-DD."
-                # Anti-slot-ocupado: validar capacidad del slot propuesto
-                if okd and okt:
+                # FASE 2 (2026-05-29): validador temporal CENTRAL, modo 'public'.
+                # El cliente contrapropone → exige anticipación mínima (min_notice),
+                # prohíbe fecha/hora pasada, valida día hábil/feriado/horario/colación
+                # y duración múltiplo de slot. Reemplaza las 3 validaciones sueltas
+                # anteriores (date_allowed + time_allowed + anti-pasado manual).
+                ok_dt, msg_dt = validate_pickup_datetime(date, tf, tt, cfg=cfg, mode="public")
+                ok_slot, motivo_slot = True, ""
+                if ok_dt:
                     try:
                         ok_slot, motivo_slot = _validar_disponibilidad_slot(
                             date, tf, tt,
@@ -2202,16 +2410,27 @@ def register_pickup_routes(app, ctx):
                             extra_kg=float(req.get("total_weight_kg") or 0),
                             extra_m3=float(req.get("total_volume_m3") or 0),
                         )
-                        if not ok_slot:
-                            okt = False
-                            mt = f"Ese horario ya no está disponible: {motivo_slot}"
                     except Exception as _e:
                         print(f"[pickup_tracking] counter validar slot err: {_e}", flush=True)
-                if okd and okt:
+                if ok_dt and ok_slot:
+                    # FASE 3: marcar propuestas pending anteriores como 'superseded'
+                    # (solo una vigente a la vez) y setear expires_at en la
+                    # contrapropuesta del cliente. Queda 'en_revision' → ILUS debe
+                    # aceptar o enviar nueva propuesta (lado ILUS del ping-pong).
+                    try:
+                        _expiry_h = int(cfg.get("proposal_expiry_hours") or 48)
+                    except (TypeError, ValueError):
+                        _expiry_h = 48
+                    _expires_at = (_now_chile() + timedelta(hours=_expiry_h)).strftime("%Y-%m-%d %H:%M:%S")
                     mysql_execute(
-                        f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token)
-                            VALUES (%s,'cliente',%s,%s,%s,%s,'Contrapropuesta cliente','pending',%s)""",
-                        (req["id"], date, tf, tt, (request.form.get("counter_message", "") or "")[:1000], secrets.token_urlsafe(24)),
+                        f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() "
+                        f"WHERE request_id=%s AND status='pending'", (req["id"],)
+                    )
+                    mysql_execute(
+                        f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token,expires_at)
+                            VALUES (%s,'cliente',%s,%s,%s,%s,'Contrapropuesta cliente','pending',%s,%s)""",
+                        (req["id"], date, tf, tt, (request.form.get("counter_message", "") or "")[:1000],
+                         secrets.token_urlsafe(24), _expires_at),
                     )
                     mysql_execute(f"UPDATE `{REQ}` SET status='en_revision' WHERE id=%s", (req["id"],))
                     log_event(req["id"], "cliente_contrapropuso", old, "en_revision", f"{date} {tf}-{tt}", "cliente", req["contact_name"])
@@ -2224,10 +2443,22 @@ def register_pickup_routes(app, ctx):
                         "success",
                     )
                 else:
+                    _err = msg_dt if not ok_dt else f"Ese horario ya no está disponible: {motivo_slot}"
                     try:
-                        print(f"[pickup_tracking] COUNTER rechazada req_id={req['id']} okd={okd} okt={okt} motivo={md or mt}", flush=True)
+                        print(f"[pickup_tracking] COUNTER rechazada req_id={req['id']} ok_dt={ok_dt} ok_slot={ok_slot} motivo={_err}", flush=True)
                     except Exception: pass
-                    flash(md or mt or "No se pudo registrar la propuesta. Intenta con otro horario.", "warning")
+                    if _is_ajax:
+                        return _ajax_err(_err, code=409, payload={"reason": "counter_invalid"})
+                    flash(_err or "No se pudo registrar la propuesta. Intenta con otro horario.", "warning")
+            except Exception as _outer_err:
+                try:
+                    print(f"[pickup_tracking] CRASH req={req.get('id')} action={action}: {_outer_err}", flush=True)
+                    import traceback; traceback.print_exc()
+                except Exception:
+                    pass
+                if _is_ajax:
+                    return jsonify({"ok": False, "error": "Error interno del servidor. Intenta nuevamente."}), 500
+                flash("Error interno al procesar la acción. Intenta nuevamente.", "danger")
             # Invalidar cache de polling — el cliente verá su nuevo estado al instante
             try: _POLL_CACHE.pop(token, None)
             except Exception: pass
@@ -2586,7 +2817,15 @@ def register_pickup_routes(app, ctx):
             (today, today),
         ) or {}
         templates = mysql_fetchall(f"SELECT id, code, title, body, channel, active FROM `{TPL}` WHERE active=1 ORDER BY title")
-        return render_template("retiros/internal_dashboard.html", rows=rows, filtros=filtros, statuses=PICKUP_STATUS, stats=stats, day=day, settings=settings(), templates=templates, status_badge=status_badge)
+        return render_template(
+            "retiros/internal_dashboard.html",
+            rows=rows, filtros=filtros, statuses=PICKUP_STATUS, stats=stats,
+            day=day, settings=settings(), templates=templates,
+            status_badge=status_badge,
+            # 2026-05-26 (Daniel) — Pipeline consolidada: 12 estados → 6 columnas
+            # visuales. El template usa pipeline_groups en el kanban del monitor.
+            pipeline_groups=PIPELINE_GROUPS,
+        )
 
     # ══════════════════════════════════════════════════════════════════
     #  BANDEJA "HACER HOY" — tareas prioritarias del equipo
@@ -5921,14 +6160,15 @@ def register_pickup_routes(app, ctx):
             pass
 
         date, tf, tt = request.form.get("date"), request.form.get("time_from"), request.form.get("time_to")
-        # Daniel 2026-05-24: el OPERADOR (este endpoint está bajo
-        # @require_permission("edit") — sólo lo alcanza staff interno con
-        # permiso retiros/admin/superadmin) puede CRUZAR la colación si
-        # la factura es grande y necesita más tiempo. El cliente público
-        # NUNCA pasa por acá — el wizard interno es exclusivo del operador.
-        okd, md = date_allowed(date); okt, mt = time_allowed(tf, tt, bypass_lunch=True)
-        if not okd or not okt:
-            return _resp_err(md or mt)
+        cfg = settings()
+        # FASE 2 (2026-05-29): validador temporal central, modo 'internal'.
+        # El OPERADOR (endpoint bajo @require_permission("edit")) puede CRUZAR
+        # la colación si la factura es grande, PERO ya NO puede proponer
+        # fecha/hora PASADA (antes date_allowed lo permitía — bug). El cliente
+        # público nunca pasa por acá.
+        ok_dt, msg_dt = validate_pickup_datetime(date, tf, tt, cfg=cfg, mode="internal")
+        if not ok_dt:
+            return _resp_err(msg_dt)
 
         # Validar capacidad real del slot (cupos, kg, m³, bloqueos).
         # bypass_lunch=True → el operador manda por encima del cliente.
@@ -5944,11 +6184,25 @@ def register_pickup_routes(app, ctx):
                       f"Intento de proponer {date} {tf}-{tt}: {motivo}", "interno")
             return _resp_err(f"Slot no disponible: {motivo}", status=409)
 
+        # ── FASE 3 (2026-05-29): ping-pong. Antes de crear la propuesta nueva,
+        #    marcar las propuestas pending anteriores como 'superseded' (solo
+        #    puede haber UNA propuesta vigente a la vez). expires_at = ahora
+        #    (Chile) + proposal_expiry_hours.
+        try:
+            _expiry_h = int(cfg.get("proposal_expiry_hours") or 48)
+        except (TypeError, ValueError):
+            _expiry_h = 48
+        _expires_at = (_now_chile() + timedelta(hours=_expiry_h)).strftime("%Y-%m-%d %H:%M:%S")
+        mysql_execute(
+            f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() "
+            f"WHERE request_id=%s AND status='pending'", (rid,)
+        )
         # ── INSERT propuesta y UPDATE estado (lo crítico, debe completarse) ──
         mysql_execute(
-            f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token)
-                VALUES (%s,'internal',%s,%s,%s,%s,%s,'pending',%s)""",
-            (rid, date, tf, tt, request.form.get("message", ""), request.form.get("reason", ""), secrets.token_urlsafe(24)),
+            f"""INSERT INTO `{PROP}` (request_id,proposed_by,date,time_from,time_to,message,reason,status,token,expires_at)
+                VALUES (%s,'internal',%s,%s,%s,%s,%s,'pending',%s,%s)""",
+            (rid, date, tf, tt, request.form.get("message", ""), request.form.get("reason", ""),
+             secrets.token_urlsafe(24), _expires_at),
         )
         mysql_execute(
             f"UPDATE `{REQ}` SET status='propuesta_enviada', proposed_date=%s, "
@@ -6754,6 +7008,17 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
 
+        # FASE 2 (2026-05-29): horizonte temporal. No ofrecer slots pasados
+        # (criterio para TODOS) ni que violen min_notice (solo cliente público;
+        # el operador interno puede agendar más cerca vía pickup_create_proposal).
+        # Calculado en hora Chile para coincidir con el validador central.
+        _now_cl = _now_chile()
+        try:
+            _min_notice_h = int(cfg.get("min_notice_hours") or 24)
+        except (TypeError, ValueError):
+            _min_notice_h = 24
+        _min_dt = _now_cl + _td(hours=_min_notice_h)
+
         # Generar disponibilidad por día.
         # Si pidieron un día específico (?date=) iteramos solo ese; si no,
         # generamos los 31 días desde d_from hasta d_to inclusive.
@@ -6810,6 +7075,10 @@ def register_pickup_routes(app, ctx):
                 kg_actual = float(ocup["kg"])
                 m3_actual = float(ocup["m3"])
 
+                # FASE 2 (2026-05-29): inicio del slot en hora Chile, para
+                # filtrar pasado / min_notice (coincide con el validador central).
+                slot_dt = datetime.combine(d, datetime.min.time()) + _td(minutes=slot_start_min)
+
                 # Determinar estado
                 if is_lunch:
                     estado = "colacion"
@@ -6817,6 +7086,12 @@ def register_pickup_routes(app, ctx):
                 elif manual_block:
                     estado = "bloqueado"
                     razon  = manual_block
+                elif slot_dt <= _now_cl:
+                    estado = "no_disponible"
+                    razon  = "El horario ya pasó"
+                elif (not include_owners) and slot_dt < _min_dt:
+                    estado = "no_disponible"
+                    razon  = f"Requiere {_min_notice_h}h de anticipación"
                 elif ocupacion_actual >= parallel_capacity or kg_actual >= max_kg_slot or m3_actual >= max_m3_slot:
                     estado = "completo"
                     razon  = f"Cupo lleno ({ocupacion_actual}/{parallel_capacity})"

@@ -75,9 +75,11 @@
         <span class="text-muted small">Puedes ajustar los campos a continuación antes de guardar.</span>
       </div>
 
-      <div class="form-text mt-1">
-        <i class="bi bi-info-circle me-1 text-muted"></i>
-        La búsqueda cubre la base de datos ERP. También puedes escribir SKU y nombre manualmente.
+      <div class="form-text mt-1" style="background:#fef9c3;border-left:3px solid #f59e0b;padding:7px 10px;border-radius:6px">
+        <i class="bi bi-shield-lock me-1" style="color:#b45309"></i>
+        <strong style="color:#92400e">Solo productos del ERP:</strong>
+        por seguridad, los SKUs se completan únicamente seleccionando un
+        resultado del buscador. No se aceptan productos inventados.
       </div>
     </div>
   </div>
@@ -91,7 +93,8 @@
     <div class="card-body p-3">
       <div class="row g-3">
 
-        {# SKU #}
+        {# SKU — siempre readonly: solo se llena vía typeahead del ERP
+           (seguridad: nadie puede inventar productos manualmente) #}
         <div class="col-md-3">
           <label class="form-label fw-semibold small">
             SKU <span style="color:var(--ilus-red)">*</span>
@@ -100,15 +103,18 @@
                  name="sku"
                  id="skuInput"
                  required
+                 readonly
                  class="form-control font-monospace text-uppercase"
                  value="{{ (fd.sku or product.sku) if product else fd.get('sku','') }}"
-                 placeholder="Ej: 1121100987"
-                 {% if product %}readonly style="background:#f8f8f8"{% endif %}>
+                 placeholder="Selecciona desde el buscador ERP"
+                 style="background:#f8f8f8;cursor:not-allowed"
+                 title="El SKU se completa automáticamente al seleccionar un producto del ERP">
           <div class="form-text">
+            <i class="bi bi-lock-fill me-1 text-muted"></i>
             {% if product %}
-              <i class="bi bi-lock-fill me-1 text-muted"></i>El SKU no puede cambiarse
+              El SKU no puede cambiarse
             {% else %}
-              Identificador único del producto
+              Solo se acepta SKU del ERP
             {% endif %}
           </div>
         </div>

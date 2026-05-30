@@ -902,21 +902,40 @@ document.getElementById('cubicadorForm').addEventListener('submit', function() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Cubicando…';
 
-  // Inyectar barra de progreso flotante
+  // Inyectar barra de progreso flotante — FULLSCREEN en mobile (Daniel
+  // 2026-05-27: en celular el overlay top-0 no se veía bien). Ahora es un
+  // overlay centrado que cubre toda la pantalla y NO se puede perder de vista.
+  var esMobile = window.innerWidth < 768;
   var overlay = document.createElement('div');
   overlay.id = 'cubicadorProgress';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;padding:14px 22px;z-index:10000;box-shadow:0 6px 20px rgba(0,0,0,.25);border-bottom:3px solid #dc2626';
-  overlay.innerHTML =
-    '<div style="max-width:900px;margin:auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap">'+
-      '<span style="font-size:1.5rem">📦</span>'+
-      '<div style="flex:1;min-width:200px">'+
-        '<div id="cubProgressMsg" style="font-size:.86rem;font-weight:700">Cubicando documentos...</div>'+
-        '<div style="background:rgba(255,255,255,.1);border-radius:50px;overflow:hidden;height:6px;margin-top:6px">'+
-          '<div id="cubProgressFill" style="height:100%;background:linear-gradient(90deg,#dc2626,#fb923c);width:8%;transition:width .5s ease-out;border-radius:50px;box-shadow:0 0 8px rgba(220,38,38,.5)"></div>'+
+  if (esMobile) {
+    // Mobile: overlay fullscreen centrado, imposible de no ver
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(10,10,10,.96);color:#fff;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px';
+    overlay.innerHTML =
+      '<div style="text-align:center;max-width:340px;width:100%">'+
+        '<div style="font-size:3rem;margin-bottom:14px">📦</div>'+
+        '<div id="cubProgressMsg" style="font-size:1rem;font-weight:700;margin-bottom:16px">Cubicando documentos...</div>'+
+        '<div style="background:rgba(255,255,255,.12);border-radius:50px;overflow:hidden;height:10px">'+
+          '<div id="cubProgressFill" style="height:100%;background:linear-gradient(90deg,#dc2626,#fb923c);width:8%;transition:width .5s ease-out;border-radius:50px;box-shadow:0 0 12px rgba(220,38,38,.6)"></div>'+
         '</div>'+
-      '</div>'+
-      '<span id="cubProgressTime" style="font-size:.7rem;color:#9ca3af;font-family:monospace">0.0s</span>'+
-    '</div>';
+        '<div id="cubProgressTime" style="font-size:.8rem;color:#9ca3af;font-family:monospace;margin-top:12px">0.0s</div>'+
+        '<div style="font-size:.72rem;color:#64748b;margin-top:8px">Consultando ERP Random — un momento…</div>'+
+      '</div>';
+  } else {
+    // Desktop: barra superior delgada (comportamiento original)
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;padding:14px 22px;z-index:99999;box-shadow:0 6px 20px rgba(0,0,0,.25);border-bottom:3px solid #dc2626';
+    overlay.innerHTML =
+      '<div style="max-width:900px;margin:auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap">'+
+        '<span style="font-size:1.5rem">📦</span>'+
+        '<div style="flex:1;min-width:200px">'+
+          '<div id="cubProgressMsg" style="font-size:.86rem;font-weight:700">Cubicando documentos...</div>'+
+          '<div style="background:rgba(255,255,255,.1);border-radius:50px;overflow:hidden;height:6px;margin-top:6px">'+
+            '<div id="cubProgressFill" style="height:100%;background:linear-gradient(90deg,#dc2626,#fb923c);width:8%;transition:width .5s ease-out;border-radius:50px;box-shadow:0 0 8px rgba(220,38,38,.5)"></div>'+
+          '</div>'+
+        '</div>'+
+        '<span id="cubProgressTime" style="font-size:.7rem;color:#9ca3af;font-family:monospace">0.0s</span>'+
+      '</div>';
+  }
   document.body.appendChild(overlay);
 
   // Animar progreso
