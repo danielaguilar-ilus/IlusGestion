@@ -28230,6 +28230,12 @@ def mant_clientes():
     contrato_fil = request.args.get("contrato", "")
     equipos_fil  = request.args.get("equipos", "")  # FASE 2026-05-16: con|sin
     vista        = request.args.get("vista", "grid")
+    # Filtro tipo de contrato comercial: mantencion | arriendo | leasing.
+    # Cualquier valor fuera de esos 3 = sin filtro ("Todos"). El front
+    # (pills tipo-cliente) recarga con ?tipo=X esperando este filtro.
+    tipo_fil     = request.args.get("tipo", "").strip().lower()
+    if tipo_fil not in ("mantencion", "arriendo", "leasing"):
+        tipo_fil = ""
 
     where, params = ["1=1"], []
     # 'all' = NO filtrar por estado (incluye inactivos/suspendidos/prospectos).
@@ -28244,14 +28250,17 @@ def mant_clientes():
             " OR c.email_empresa LIKE %s OR c.giro LIKE %s OR c.comuna LIKE %s)"
         )
         qp = f"%{q}%"; params += [qp, qp, qp, qp, qp, qp]
-    # Filtro contrato: con (al menos 1 contrato) / sin (ninguno)
+    # Filtro contrato: con / sin contrato VIGENTE. Se alinea con el KPI
+    # "Con contrato" (global_stats.con_contrato cuenta solo vigentes), para
+    # que el número del KPI y lo que muestra el filtro al hacer clic coincidan
+    # exactamente. Daniel 30/05/2026.
     if contrato_fil == "con":
         where.append(
-            "EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id)"
+            "EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id AND ct.estado='vigente')"
         )
     elif contrato_fil == "sin":
         where.append(
-            "NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id)"
+            "NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id AND ct.estado='vigente')"
         )
     # Filtro equipos: con (al menos 1 equipo activo) / sin (ninguno)
     if equipos_fil == "con":
@@ -28264,6 +28273,13 @@ def mant_clientes():
             "NOT EXISTS (SELECT 1 FROM mant_maquinas m "
             "WHERE m.cliente_id=c.id AND COALESCE(m.estado,'activo')<>'baja')"
         )
+    # Filtro tipo de contrato comercial (mantencion/arriendo/leasing).
+    # NULL/'' se tratan como 'mantencion' (default histórico) para que el
+    # filtro Mantención incluya clientes antiguos sin tipo asignado.
+    if tipo_fil == "mantencion":
+        where.append("(c.tipo_cliente='mantencion' OR c.tipo_cliente IS NULL OR c.tipo_cliente='')")
+    elif tipo_fil in ("arriendo", "leasing"):
+        where.append("c.tipo_cliente=%s"); params.append(tipo_fil)
     wstr = " AND ".join(where)
 
     # Reescritura: 5 subqueries correlacionadas (N×5 ejecuciones) → 4 derived tables agregadas (1 ejecución cada una).
@@ -28314,13 +28330,13 @@ def mant_clientes():
     """, tuple(params))
     clientes = [dict(r) for r in rows]
 
-    # Post-filtro contrato
+    # Post-filtro contrato — solo para los valores del select avanzado
+    # (vigente / vencido). 'con' y 'sin' YA se resolvieron en el WHERE por
+    # contrato vigente; re-filtrarlos aquí rompería la coherencia con el KPI.
     if contrato_fil == 'vigente':
         clientes = [c for c in clientes if c.get('contrato_estado') == 'vigente']
     elif contrato_fil == 'vencido':
         clientes = [c for c in clientes if c.get('contrato_estado') in ('vencido','por_vencer')]
-    elif contrato_fil == 'sin':
-        clientes = [c for c in clientes if not c.get('contratos_count')]
 
     # Enriquecer cada cliente: completaje, badge, días a próx visita
     today_d = datetime.today().date()
@@ -28413,7 +28429,7 @@ def mant_clientes():
     return render_template("mantenciones/clientes.html",
         clientes         = clientes,
         filtros          = {"q": q, "estado": estado, "contrato": contrato_fil,
-                            "equipos": equipos_fil, "vista": vista},
+                            "equipos": equipos_fil, "vista": vista, "tipo": tipo_fil},
         global_stats     = global_stats,
         orphans_detected = orphans_detected,
     )
@@ -29698,6 +29714,7 @@ def mant_cliente_update(cid):
               "contacto_nombre","contacto_cargo","contacto_tel","contacto_email",
               "contacto2_nombre","contacto2_cargo","contacto2_tel","contacto2_email",
               "direccion","comuna","ciudad","region",
+              "direccion_lat","direccion_lng","direccion_place_id",
               "notas","notas_confidenciales","estado","tipo_cliente"]
     # Validación dura del ENUM tipo_cliente — si llega valor distinto, lo descartamos
     # silenciosamente para no romper el UPDATE.
@@ -29707,6 +29724,16 @@ def mant_cliente_update(cid):
             d.pop("tipo_cliente", None)
         else:
             d["tipo_cliente"] = _tc
+    # Geo (Google Places): sanitizar lat/lng a float|None y place_id a str|None.
+    # Las columnas son DECIMAL(10,7)/VARCHAR — un '' string rompería el UPDATE.
+    if "direccion_lat" in d:
+        try: d["direccion_lat"] = float(d["direccion_lat"]) if str(d.get("direccion_lat") or "").strip() else None
+        except (TypeError, ValueError): d["direccion_lat"] = None
+    if "direccion_lng" in d:
+        try: d["direccion_lng"] = float(d["direccion_lng"]) if str(d.get("direccion_lng") or "").strip() else None
+        except (TypeError, ValueError): d["direccion_lng"] = None
+    if "direccion_place_id" in d:
+        d["direccion_place_id"] = (str(d.get("direccion_place_id") or "").strip()[:200]) or None
     sets   = [f"{f}=%s" for f in fields if f in d]
     vals   = [d[f] for f in fields if f in d]
     if not sets:

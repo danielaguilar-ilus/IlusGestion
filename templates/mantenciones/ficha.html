@@ -7119,7 +7119,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6">
             <label class="form-label fw-semibold">RUT</label>
-            <input type="text" id="ec_rut" class="form-control font-monospace" value="{{ cliente.rut or '' }}">
+            <input type="text" id="ec_rut" class="form-control font-monospace"
+                   value="{{ (cliente.rut | rut_fmt) if cliente.rut else '' }}"
+                   placeholder="77.753.941-8" maxlength="12" autocomplete="off">
           </div>
           <div class="col-6 col-sm-3">
             <label class="form-label fw-semibold">Estado</label>
@@ -7158,7 +7160,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6 col-sm-3">
             <label class="form-label fw-semibold">Tel. empresa</label>
-            <input type="text" id="ec_tel_empresa" class="form-control" value="{{ cliente.tel_empresa or '' }}" placeholder="+56 2 ...">
+            <input type="text" id="ec_tel_empresa" class="form-control ec-tel"
+                   value="{{ (cliente.tel_empresa | tel_chile_fmt) if cliente.tel_empresa else '' }}"
+                   placeholder="+56 2 2345 6789" inputmode="tel" autocomplete="off">
           </div>
 
           {# ── Ubicación ── #}
@@ -7167,7 +7171,19 @@ async function vhGuardar(){
           </div></div>
           <div class="col-12">
             <label class="form-label fw-semibold">Dirección</label>
-            <input type="text" id="ec_direccion" class="form-control" value="{{ cliente.direccion or '' }}">
+            <input type="text" id="ec_direccion" class="form-control"
+                   value="{{ cliente.direccion or '' }}"
+                   placeholder="Empieza a escribir y elige una sugerencia…" autocomplete="off">
+            <input type="hidden" id="ec_direccion_lat"      value="{{ cliente.get('direccion_lat') or '' }}">
+            <input type="hidden" id="ec_direccion_lng"      value="{{ cliente.get('direccion_lng') or '' }}">
+            <input type="hidden" id="ec_direccion_place_id" value="{{ cliente.get('direccion_place_id') or '' }}">
+            <small id="ec_direccion_hint" class="d-block mt-1" style="font-size:.74rem; color:#6b7280">
+              {% if cliente.get('direccion_place_id') %}
+              <i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada — comuna, ciudad y región se completan al elegir otra del menú.
+              {% else %}
+              <i class="bi bi-geo-alt me-1"></i>Escribe la dirección y selecciona del menú: comuna, ciudad y región se completan solas.
+              {% endif %}
+            </small>
           </div>
           <div class="col-4">
             <label class="form-label fw-semibold">Región</label>
@@ -7196,7 +7212,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6 col-sm-2">
             <label class="form-label fw-semibold">Teléfono</label>
-            <input type="text" id="ec_contacto_tel" class="form-control" value="{{ cliente.contacto_tel or '' }}">
+            <input type="text" id="ec_contacto_tel" class="form-control ec-tel"
+                   value="{{ (cliente.contacto_tel | tel_chile_fmt) if cliente.contacto_tel else '' }}"
+                   placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
           </div>
           <div class="col-12 col-sm-2">
             <label class="form-label fw-semibold">Email</label>
@@ -7218,7 +7236,9 @@ async function vhGuardar(){
           </div>
           <div class="col-6 col-sm-2">
             <label class="form-label fw-semibold">Teléfono</label>
-            <input type="text" id="ec_contacto2_tel" class="form-control" value="{{ cliente.contacto2_tel or '' }}">
+            <input type="text" id="ec_contacto2_tel" class="form-control ec-tel"
+                   value="{{ (cliente.contacto2_tel | tel_chile_fmt) if cliente.contacto2_tel else '' }}"
+                   placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
           </div>
           <div class="col-12 col-sm-2">
             <label class="form-label fw-semibold">Email</label>
@@ -8695,7 +8715,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260527d"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530a"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

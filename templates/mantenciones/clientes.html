@@ -877,10 +877,13 @@ function aplicarKpiFiltro(tipo) {
   switch(tipo) {
     case 'all':           break;  // sin filtros
     case 'activo':        url.searchParams.set('estado', 'activo'); break;
-    case 'contrato_con':  url.searchParams.set('contrato', 'con'); break;
-    case 'contrato_sin':  url.searchParams.set('contrato', 'sin'); break;
-    case 'equipos_con':   url.searchParams.set('equipos', 'con'); break;
-    case 'equipos_sin':   url.searchParams.set('equipos', 'sin'); break;
+    // Los KPIs de contrato/equipos cuentan TODOS los estados (son globales),
+    // así que al hacer clic mostramos estado=all para que el número del KPI
+    // y la cantidad de resultados coincidan exactamente.
+    case 'contrato_con':  url.searchParams.set('contrato', 'con'); url.searchParams.set('estado', 'all'); break;
+    case 'contrato_sin':  url.searchParams.set('contrato', 'sin'); url.searchParams.set('estado', 'all'); break;
+    case 'equipos_con':   url.searchParams.set('equipos', 'con'); url.searchParams.set('estado', 'all'); break;
+    case 'equipos_sin':   url.searchParams.set('equipos', 'sin'); url.searchParams.set('estado', 'all'); break;
   }
   window.location.href = url.toString();
 }

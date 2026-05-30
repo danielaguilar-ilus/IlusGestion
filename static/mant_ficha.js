@@ -372,8 +372,147 @@ function filtrarEquipos(q) {
 }
 
 // ─── Modales ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  MODAL EDITAR CLIENTE — formato chileno en vivo + dirección Places
+//  Daniel 30/05/2026: "el RUT no tiene formato de RUT… la dirección
+//  que arregle automáticamente la comuna, la ciudad, la región, todo,
+//  pero tiene que validar la dirección… algo bien inteligente."
+//
+//  - RUT  → 77.753.941-8  (idempotente con _formato_rut_chile backend)
+//  - Tel  → +56 9 1234 5678 (móvil) / +56 2 2345 6789 (fijo)
+//  - Dir  → Google Places: al elegir sugerencia valida y auto-rellena
+//           comuna / ciudad / región + persiste lat/lng/place_id.
+// ═══════════════════════════════════════════════════════════════
+
+// RUT chileno legible. Extrae dígitos+K primero → idempotente.
+function _ilusFmtRut(raw) {
+  const clean = String(raw || '').replace(/[^0-9kK]/g, '').toUpperCase();
+  if (!clean) return '';
+  if (clean.length < 2) return clean;
+  const cuerpo = clean.slice(0, -1);
+  const dv     = clean.slice(-1);
+  let out = '';
+  for (let i = 0; i < cuerpo.length; i++) {
+    if (i > 0 && (cuerpo.length - i) % 3 === 0) out += '.';
+    out += cuerpo[i];
+  }
+  return out + '-' + dv;
+}
+
+// Teléfono chileno legible. Extrae dígitos primero → idempotente.
+function _ilusFmtTel(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (!d) return String(raw || '').trim();
+  if (d.startsWith('56')) d = d.slice(2);          // quitar país
+  if (d.length === 9 && d[0] === '9') {            // móvil
+    return '+56 9 ' + d.slice(1, 5) + ' ' + d.slice(5);
+  }
+  if (d.length === 9) {                            // fijo c/código área (1 díg)
+    return '+56 ' + d[0] + ' ' + d.slice(1, 5) + ' ' + d.slice(5);
+  }
+  if (d.length === 8) {                            // fijo s/código → Santiago (2)
+    return '+56 2 ' + d.slice(0, 4) + ' ' + d.slice(4);
+  }
+  return String(raw || '').trim();                 // no reconocible: dejar como está
+}
+
+// Aplica máscara a un input (on blur siempre; on input opcional para RUT).
+function _ilusBindFmt(el, fmtFn, liveInput) {
+  if (!el || el.dataset.ilusFmt === '1') return;
+  el.dataset.ilusFmt = '1';
+  el.addEventListener('blur', function () {
+    const v = fmtFn(el.value);
+    if (v !== el.value) el.value = v;
+  });
+  if (liveInput) {
+    el.addEventListener('input', function () {
+      const v = fmtFn(el.value);
+      if (v !== el.value) { el.value = v; }       // RUT secuencial: cursor al final OK
+    });
+  }
+}
+
+// "Región Metropolitana de Santiago" → "Metropolitana" (más legible).
+function _ilusLimpiaRegion(r) {
+  if (!r) return r;
+  let s = String(r).replace(/^Regi[oó]n\s+(de\s+|del\s+|de\s+la\s+)?/i, '').trim();
+  s = s.replace(/\s+de\s+Santiago$/i, '');
+  return s || String(r);
+}
+
+// Inicializa Google Places en el campo dirección del modal (idempotente).
+function _ilusInitDireccionCliente() {
+  const input = document.getElementById('ec_direccion');
+  if (!input || input.dataset.placesBound === '1') return;
+  if (typeof ilusPlacesAutocomplete !== 'function') {
+    // SDK aún no cargó: encolar y reintentar cuando __ilusGmapsReady dispare.
+    if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_ilusInitDireccionCliente);
+    return;
+  }
+  input.dataset.placesBound = '1';
+  ilusPlacesAutocomplete('ec_direccion', {
+    country: 'cl',
+    types: ['address'],
+    onPlaceSelected: function (place) {
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+      set('ec_direccion_lat',      place.lat || '');
+      set('ec_direccion_lng',      place.lng || '');
+      set('ec_direccion_place_id', place.place_id || '');
+      // Parsear address_components de Google → campos chilenos.
+      const comps = place.componentes || [];
+      const pick = function () {
+        for (let i = 0; i < arguments.length; i++) {
+          const t = arguments[i];
+          const c = comps.find(x => (x.types || []).indexOf(t) >= 0);
+          if (c) return c.long_name;
+        }
+        return '';
+      };
+      // CL: level_1=Región · level_3/locality=Comuna · locality/level_2=Ciudad
+      const region = pick('administrative_area_level_1');
+      const comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+      const ciudad = pick('locality', 'administrative_area_level_2') || comuna;
+      const setIf  = (id, v) => { const e = document.getElementById(id); if (e && v) e.value = v; };
+      setIf('ec_region', _ilusLimpiaRegion(region));
+      setIf('ec_comuna', comuna);
+      setIf('ec_ciudad', ciudad);
+      const hint = document.getElementById('ec_direccion_hint');
+      if (hint) {
+        const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
+        const ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
+        hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>' +
+          'Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      }
+    },
+    onNoSelection: function () {
+      const hint = document.getElementById('ec_direccion_hint');
+      if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>' +
+        'Selecciona una opción del menú para validar la dirección.';
+    }
+  });
+}
+
+// Configura formato + autocomplete cada vez que se abre el modal (idempotente).
+function _ilusSetupEditarCliente(modalEl) {
+  try { _ilusBindFmt(document.getElementById('ec_rut'), _ilusFmtRut, true); } catch (e) {}
+  try {
+    (modalEl || document).querySelectorAll('.ec-tel').forEach(function (el) {
+      _ilusBindFmt(el, _ilusFmtTel, false);
+    });
+  } catch (e) {}
+  try { _ilusInitDireccionCliente(); } catch (e) {}
+}
+
 function abrirEditarCliente() {
-  new bootstrap.Modal(document.getElementById('modalEditarCliente')).show();
+  const modalEl = document.getElementById('modalEditarCliente');
+  if (!modalEl) return;
+  new bootstrap.Modal(modalEl).show();
+  // Configurar tras shown.bs.modal: Google Autocomplete necesita el input
+  // ya visible para medir bien la posición del dropdown.
+  modalEl.addEventListener('shown.bs.modal', function onShown() {
+    modalEl.removeEventListener('shown.bs.modal', onShown);
+    _ilusSetupEditarCliente(modalEl);
+  }, { once: true });
 }
 
 // Atajo directo desde la KPI "Tipo cliente" del tab Resumen (Daniel 22/05/2026).
@@ -389,6 +528,7 @@ function abrirEditarTipoCliente() {
   // antes de hacer scroll + focus, sino el select aún no está renderizado.
   modalEl.addEventListener('shown.bs.modal', function onShown() {
     modalEl.removeEventListener('shown.bs.modal', onShown);
+    try { _ilusSetupEditarCliente(modalEl); } catch(_e) {}  // formato RUT/tel + dirección Places
     const sel = document.getElementById('ec_tipo_cliente');
     if (!sel) return;
     try { sel.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_e) {}
@@ -3297,10 +3437,13 @@ async function guardarCliente() {
     email_empresa:     $v('ec_email_empresa'),
     tel_empresa:       $v('ec_tel_empresa'),
     // Ubicación
-    direccion:         $v('ec_direccion'),
-    region:            $v('ec_region'),
-    comuna:            $v('ec_comuna'),
-    ciudad:            $v('ec_ciudad'),
+    direccion:          $v('ec_direccion'),
+    direccion_lat:      $v('ec_direccion_lat'),
+    direccion_lng:      $v('ec_direccion_lng'),
+    direccion_place_id: $v('ec_direccion_place_id'),
+    region:             $v('ec_region'),
+    comuna:             $v('ec_comuna'),
+    ciudad:             $v('ec_ciudad'),
     // Contacto principal
     contacto_nombre:   $v('ec_contacto_nombre'),
     contacto_cargo:    $v('ec_contacto_cargo'),
