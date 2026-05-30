@@ -182,6 +182,32 @@ def _formato_rut_chile_impl(rut_str):
     return f"{cuerpo_fmt}-{dv}" if dv else cuerpo_fmt
 
 
+def _rut_cuerpo(raw):
+    """Devuelve SOLO el cuerpo del RUT (sin puntos, guion ni digito verificador).
+
+    El ERP Random guarda el RUT base en MAEEN.RTEN SIN digito verificador, asi que
+    TODA busqueda por RUT debe usar el cuerpo. Daniel 30/05/2026: buscar
+    '77.017.350-K' debe encontrar lo mismo que '77017350'.
+
+    Ejemplos:
+        '77.017.350-K' -> '77017350'   ;  '77017350-9' -> '77017350'
+        '77017350K'    -> '77017350'   ;  '770173509'  -> '77017350'
+        '77017350'     -> '77017350'   ;  '8827'       -> '8827'  (numero de doc)
+        '12.345.678-9' -> '12345678'
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip().upper()
+    if "-" in s:                              # con guion: cuerpo = antes del guion
+        return re.sub(r"[^0-9K]", "", s.split("-", 1)[0])
+    s = re.sub(r"[^0-9K]", "", s)             # limpiar separadores
+    if s.endswith("K"):                       # DV K pegado
+        return s[:-1]
+    if len(s) >= 9:                           # 9 digitos -> ultimo es DV
+        return s[:-1]
+    return s                                  # 8 o menos digitos -> ya es cuerpo
+
+
 # NOTA: el filtro Jinja "rut_fmt" se registra más abajo, después de que
 # `app = Flask(__name__)` esté definido (alrededor de la línea 171).
 # Buscar: @app.template_filter('rut_fmt')
@@ -28418,6 +28444,10 @@ def _erp_buscar_clientes(q, limit=20):
     q_like       = f"%{q_upper}%"
     q_sin_puntos = q.replace(".", "").replace(" ", "").replace("-", "")
     q_sin_like   = f"%{q_sin_puntos}%"
+    # RTEN del ERP = RUT base SIN dígito verificador. Si el usuario escribe el
+    # RUT con DV ('77.017.350-K'), buscamos también por el cuerpo ('77017350').
+    q_cuerpo      = _rut_cuerpo(q)
+    q_cuerpo_like = f"%{q_cuerpo}%" if (q_cuerpo and len(q_cuerpo) >= 6) else q_sin_like
     try:
         top_n = max(1, min(int(limit or 20), 200))
     except (TypeError, ValueError):
@@ -28438,7 +28468,7 @@ def _erp_buscar_clientes(q, limit=20):
                AND LTRIM(RTRIM(COALESCE(en.TIEN, ''))) IN ('C','A')
              ORDER BY razon_social
             """,
-            (q_like, q_like, q_like, q_sin_like),
+            (q_like, q_like, q_like, q_cuerpo_like),
             max_rows=top_n,
         )
         if not rows:
@@ -45188,18 +45218,24 @@ def mant_buscar_erp_sql():
             "documentos": [], "sin_conexion": True
         }), 200
 
-    # Normalizar query
+    # Normalizar query. El ERP guarda el RUT base (MAEEN.RTEN / ENDO) SIN dígito
+    # verificador, así que para RUT buscamos por el CUERPO. Aceptamos RUT con DV
+    # numérico o K. Daniel 30/05/2026: '77.017.350-K' debe encontrar lo mismo
+    # que '77017350' (antes la K rompía la detección y caía a búsqueda por nombre).
     q_clean   = q.replace(".", "").replace(" ", "").replace("-", "").upper()
     is_digits = q_clean.isdigit()
+    rut_base  = _rut_cuerpo(q)            # cuerpo sin DV, ej '77017350'
+    # Parece RUT si el cuerpo es numérico y: tiene >=7 dígitos, o trae DV (guión/K).
+    parece_rut = rut_base.isdigit() and (
+        len(rut_base) >= 7 or (len(rut_base) >= 6 and ("-" in q or q_clean.endswith("K"))))
     tidos_in  = "','".join(_RANDOM_TIDOS_VENTA)
 
     docs = []
     modo = ""
     try:
-        # ── Modo 1: RUT (7-9 dígitos) ───────────────────────────
-        if is_digits and 7 <= len(q_clean) <= 9:
+        # ── Modo 1: RUT (busca todos los docs del cliente por su CUERPO) ──
+        if parece_rut:
             modo = "rut"
-            rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
             docs = _random_sql_query(f"""
                 SELECT TOP 100
                     e.IDMAEEDO, e.TIDO, e.NUDO, e.ENDO,
@@ -45214,7 +45250,7 @@ def mant_buscar_erp_sql():
                 WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
                   AND e.TIDO IN ('{tidos_in}')
                 ORDER BY e.FEEMDO DESC
-            """, (f"{rut_base}%", f"%{q_clean}%")) or []
+            """, (f"{rut_base}%", f"{rut_base}-%")) or []
 
         # ── Modo 2: Número de documento (1-6 dígitos) ──────────
         if not docs and is_digits and 1 <= len(q_clean) <= 7:
