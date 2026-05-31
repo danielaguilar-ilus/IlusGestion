@@ -40820,11 +40820,22 @@ def mant_ot_ejecutar(vid):
     _lev_id = visita.get("levantamiento_id")
     if _lev_id:
         try:
-            _lev_items = mysql_fetchall(
+            # PERF 2026-05-31 (ot_performance): este sync reconstruye la
+            # asociación equipo↔OT y solo hace falta UNA vez (cuando la OT aún
+            # no tiene equipos). Antes corría un INSERT IGNORE + commit en CADA
+            # apertura de la OT — una escritura inútil en el hot path del
+            # técnico. Ahora se evita con un COUNT barato: si ya hay equipos
+            # sincronizados, NO se vuelve a escribir (la apertura queda de solo
+            # lectura). Caso orphan (count=0) sigue reconstruyéndose igual.
+            _ya_sync = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_visita_equipos WHERE visita_id=%s",
+                (vid,)
+            ) or {}
+            _lev_items = [] if int(_ya_sync.get("n") or 0) > 0 else (mysql_fetchall(
                 "SELECT maquina_id FROM mant_levantamiento_items "
                 " WHERE levantamiento_id=%s AND maquina_id IS NOT NULL",
                 (_lev_id,)
-            ) or []
+            ) or [])
             if _lev_items:
                 # INSERT IGNORE por UNIQUE KEY uq_visita_maquina (visita_id, maquina_id)
                 _rows = [(vid, int(it["maquina_id"]),
