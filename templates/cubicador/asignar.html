@@ -247,6 +247,20 @@
 .tot-lbl{ font-size:.6rem; text-transform:uppercase; letter-spacing:.6px; color:#9ca3af; font-weight:700; margin-bottom:4px; }
 .tot-val{ font-size:1.1rem; font-weight:900; color:#fff; line-height:1.1; }
 .tot-val.red{ color:#fee2e2; font-size:1.25rem; }
+/* Móvil: las 6 celdas de totales no caben en una fila (se recortan) →
+   envolver a 3 por fila (≤640px) y 2 por fila (≤380px). Mantiene los
+   totales destacados y legibles sin scroll horizontal. */
+@media (max-width:640px){
+  .totals-bar{ flex-wrap:wrap; }
+  .tot-cell{ flex:1 1 33.333%; min-width:33.333%;
+             border-bottom:1px solid rgba(255,255,255,.08); }
+  .tot-cell:nth-child(3n){ border-right:none; }
+}
+@media (max-width:380px){
+  .tot-cell{ flex-basis:50%; min-width:50%; }
+  .tot-cell:nth-child(3n){ border-right:1px solid rgba(255,255,255,.08); }
+  .tot-cell:nth-child(2n){ border-right:none; }
+}
 
 /* ══ AVISO CALCULAR ══════════════════════════════════════════ */
 .aviso-calcular{
