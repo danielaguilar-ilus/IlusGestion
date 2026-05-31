@@ -469,3 +469,49 @@ body {
   }
   body { background: #fff !important; color: #000 !important; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE BASE v2 — refuerzo de gaps de auditoría (Daniel 30/05/2026)
+   Rama claude/responsive-mobile · Fase: responsive_base
+   Ataca patrones TRANSVERSALES detectados en la auditoría móvil:
+   modales con height inline fijo, grids de KPI con columnas fijas,
+   kanbans/pipelines que no colapsan, overflow horizontal.
+   Solo CSS (sin frameworks). Paleta ILUS intacta. No toca etiquetas/PDF.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Modales: anular height/max-height INLINE fijos (ej. height:90vh) que
+     rompen el scroll y ocultan el footer. El .modal-footer sticky ya está
+     definido arriba; aquí solo garantizamos el alto correcto. */
+  .modal-content { height: auto !important; max-height: 100dvh !important; }
+
+  /* Grids de KPIs / cards con columnas fijas → 2 columnas legibles en móvil.
+     (.kpi-grid/.kpi-card ya pasan a 1fr arriba; aquí sumamos los que faltaban.) */
+  .cc2-kpi-row, .ots-kpi-row, .kpi-row, .kpi-strip, .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Kanban / pipelines con columnas fijas → apilados (sin scroll horizontal). */
+  .kanban, .kanban-board, .pipeline, .pipeline-board,
+  [class*="kanban"], [class*="pipeline"] {
+    display: flex !important; flex-direction: column !important;
+    overflow-x: visible !important;
+  }
+  .kanban-col, .kanban-column, .pipeline-col, .pipeline-column,
+  [class*="kanban-col"], [class*="pipeline-col"] {
+    flex: 1 1 auto !important; width: 100% !important;
+    min-width: 0 !important; max-width: 100% !important;
+  }
+
+  /* Anti-overflow horizontal: contenido común no excede el ancho de pantalla. */
+  .container, .container-fluid, .ilus-card, .card, .f-card { max-width: 100%; }
+  img, video, canvas, svg { max-width: 100%; height: auto; }
+}
+
+@media (max-width: 430px) {
+  /* Pantallas muy chicas: KPIs a 1 columna (evita apretar el texto). */
+  .cc2-kpi-row, .ots-kpi-row, .kpi-row, .kpi-strip, .stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+  /* Touch targets en tabs y pills de filtros (Apple HIG). */
+  .ftab-btn, .tc-pill, .flt-pill { min-height: 40px; }
+}
