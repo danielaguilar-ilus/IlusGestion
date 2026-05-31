@@ -372,6 +372,7 @@ body {
     border: none;
     padding: 5px 0;
     font-size: .85rem;
+    width: auto;   /* anula anchos de columna (ej. .status-cell width:60px) que encajonarían la fila en card */
   }
   .table-mobile-cards tbody td[data-label]::before {
     content: attr(data-label);
@@ -392,6 +393,14 @@ body {
     gap: 6px;
   }
   .table-mobile-cards tbody td:last-child::before { content: none; }
+  /* Fila de estado vacío (`<td colspan>`): es :last-child pero NO es footer
+     de acciones → centrar y quitar el borde/margen de footer. */
+  .table-mobile-cards tbody td[colspan] {
+    justify-content: center;
+    border-top: none;
+    margin-top: 0;
+    padding-top: 5px;
+  }
 
   /* ── Scroll-hint: gradiente fade en bordes de tablas con overflow ── */
   /* Wrapper opcional `.scroll-hint` indica visualmente que hay más
@@ -550,6 +559,12 @@ body {
   .form-actions-sticky > a.btn { flex: 0 0 auto; }
   .form-actions-sticky > button.btn,
   .form-actions-sticky > .btn[type="submit"] { flex: 1 1 auto; }
+  /* position:sticky muere si un ancestro tiene overflow != visible.
+     `.ilus-card` usa overflow:hidden (style.css) → lo liberamos SOLO en las
+     cards que envuelven la barra sticky (ej. cliente_form, cuyo <form> vive
+     dentro de .ilus-card). :has() es progressive enhancement: donde no hay
+     soporte, la barra degrada a no-sticky (sigue siendo una barra prolija). */
+  .ilus-card:has(.form-actions-sticky) { overflow: visible; }
 
   /* ── Modales: header y footer sticky dentro del modal fullscreen ──
      `.modal-content` ya es flex-column (Bootstrap) y v2 le fijó

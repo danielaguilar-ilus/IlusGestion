@@ -157,7 +157,7 @@
      pre-cargado arriba, así que es esencialmente instantáneo. #}
   <link href="{{ url_for('static', filename='style.css') }}?v=20260526h" rel="stylesheet">
   {# Mobile-first responsive overrides — debe cargarse DESPUÉS de style.css #}
-  <link href="{{ url_for('static', filename='mobile.css') }}?v=20260531d" rel="stylesheet">
+  <link href="{{ url_for('static', filename='mobile.css') }}?v=20260531e" rel="stylesheet">
   {# PWA Manifest — permite "agregar a pantalla de inicio" en iOS/Android #}
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 
@@ -248,7 +248,7 @@
      else 'Comunicaciones' if _ep.startswith('comm_')
      else 'Administración' if (_ep.startswith('users') or _ep.startswith('admin') or _ep in ['new_user', 'edit_user'])
      else 'Mi cuenta' if _ep == 'mi_cuenta'
-     else 'Etiquetas' if _ep in ['new_product', 'etiquetas_masivo_index', 'labels', 'print_labels']
+     else 'Etiquetas' if _ep in ['new_product', 'etiquetas_masivo_index', 'print_labels']
      else '' %}
 <div class="mobile-topbar no-print">
   <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menu">
