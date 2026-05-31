@@ -3515,10 +3515,19 @@ async function confirmarVisitaMulti() {
           <hr class="my-2">
 
           {# ── EQUIPOS INTERVENIDOS ── #}
-          <div class="small fw-bold text-muted mb-2">MÁQUINAS / EQUIPOS INTERVENIDOS</div>
-          <div id="repMaquinasList"></div>
-          <button class="btn btn-sm btn-outline-secondary mb-3" onclick="repAddMaquina()">
-            <i class="bi bi-plus me-1"></i>Agregar equipo
+          <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+            <div class="small fw-bold text-muted">MÁQUINAS / EQUIPOS INTERVENIDOS</div>
+            <button type="button" class="btn btn-sm btn-ilus fw-semibold" onclick="repTraerEquipos()">
+              <i class="bi bi-box-seam me-1"></i>Traer equipos de la ficha
+            </button>
+          </div>
+          {# Tabla contenida con scroll para que el modal no crezca demasiado #}
+          <div id="repMaquinasScroll"
+               style="max-height:240px;overflow-y:auto;padding:2px 4px 2px 0;border:1px solid #f1f5f9;border-radius:10px;background:#fcfcfd">
+            <div id="repMaquinasList"></div>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary mt-2 mb-3" onclick="repAddMaquina()">
+            <i class="bi bi-plus me-1"></i>Agregar equipo manual
           </button>
           <hr class="my-2">
 
@@ -3534,7 +3543,7 @@ async function confirmarVisitaMulti() {
             <textarea id="repIANotas" class="form-control form-control-sm mb-2" rows="2"
                       placeholder="Notas rápidas para la IA: qué pidió el cliente, qué se hizo, hallazgos, repuestos usados… La IA redacta los objetivos, trabajos, observaciones y recomendaciones por máquina."></textarea>
             <button type="button" class="btn btn-sm fw-bold" style="background:#7c3aed;color:#fff"
-                    onclick="repRedactarIA(this)">
+                    id="btnRepRedactarIA" onclick="repRedactarIA(this)">
               <i class="bi bi-magic me-1"></i>Redactar con IA
             </button>
             <span class="text-muted ms-2" style="font-size:.74rem">
@@ -8845,7 +8854,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530g"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530h"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

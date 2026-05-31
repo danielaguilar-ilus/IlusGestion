@@ -7115,9 +7115,9 @@ function repRenderMaquinas() {
       <div style="flex:1">
         <div class="row g-2 mb-1">
           <div class="col-3"><input type="text" class="form-control form-control-sm" placeholder="SKU"
-            value="${m.sku||''}" onchange="_repMaquinas[${i}].sku=this.value"></div>
+            value="${m.sku||''}" onchange="_repMaquinas[${i}].sku=this.value;repGateIA()"></div>
           <div class="col-5"><input type="text" class="form-control form-control-sm" placeholder="Descripción equipo"
-            value="${m.descripcion||''}" onchange="_repMaquinas[${i}].descripcion=this.value"></div>
+            value="${m.descripcion||''}" onchange="_repMaquinas[${i}].descripcion=this.value;repGateIA()"></div>
           <div class="col-2"><input type="number" class="form-control form-control-sm" placeholder="Cant" min="1"
             value="${m.cantidad||1}" onchange="_repMaquinas[${i}].cantidad=parseInt(this.value)||1"></div>
           <div class="col-2"><input type="text" class="form-control form-control-sm" placeholder="Modelo"
@@ -7138,11 +7138,126 @@ function repRenderMaquinas() {
         <i class="bi bi-dash"></i>
       </button>
     </div>`).join('');
+  repGateIA();
 }
 
 function repAddMaquina() {
   _repMaquinas.push({sku:'',descripcion:'',cantidad:1,modelo:'',serie:'',repuesto:'',garantia:'',observacion:''});
   repRenderMaquinas();
+}
+
+// ─── Gate del botón "Redactar con IA": exige al menos un equipo cargado ──────
+// (Daniel: la IA depende del análisis de productos → no dejar redactar sin equipos.)
+function repGateIA() {
+  const btn = document.getElementById('btnRepRedactarIA');
+  if (!btn) return;
+  const hay = (_repMaquinas || []).some(m => (m.sku || '').trim() || (m.descripcion || '').trim());
+  btn.disabled = !hay;
+  btn.style.opacity = hay ? '' : '.5';
+  btn.style.cursor = hay ? '' : 'not-allowed';
+  btn.title = hay
+    ? 'Redacta el informe con IA a partir de tus notas y los equipos'
+    : 'Primero trae o agrega al menos un equipo de la ficha';
+}
+
+// ─── Traer equipos de la ficha del cliente al informe ───────────────────────
+// Tabla scrollable con checkboxes (todos pre-seleccionados), seleccionar/
+// deseleccionar todos y elegir cuáles incluir. Usa /clientes/<cid>/maquinas-list.
+function _repEquiposInject() {
+  if (document.getElementById('modalRepEquipos')) return;
+  const html =
+    '<div class="modal fade" id="modalRepEquipos" tabindex="-1">' +
+    '<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">' +
+    '<div class="modal-content">' +
+    '<div class="modal-header" style="background:#0a0a0a;color:#fff">' +
+    '<h5 class="modal-title"><i class="bi bi-box-seam me-2"></i>Equipos de la ficha del cliente</h5>' +
+    '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>' +
+    '<div class="modal-body" id="repEqBody"></div>' +
+    '<div class="modal-footer">' +
+    '<span class="me-auto small text-muted">Marca los equipos a incluir en el informe.</span>' +
+    '<button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>' +
+    '<button class="btn btn-ilus fw-bold" id="repEqAgregar" onclick="repEquiposAgregar()">' +
+    '<i class="bi bi-plus-lg me-1"></i>Agregar (<span id="repEqCount">0</span>)</button>' +
+    '</div></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function repTraerEquipos() {
+  _repEquiposInject();
+  const body = document.getElementById('repEqBody');
+  body.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Cargando equipos de la ficha…</div>';
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRepEquipos'));
+  modal.show();
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas-list`);
+    const eq = await r.json();
+    if (!Array.isArray(eq) || !eq.length) {
+      body.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-inbox" style="font-size:2rem;opacity:.3"></i><div class="mt-2">Este cliente no tiene equipos registrados en la ficha.</div></div>';
+      document.getElementById('repEqAgregar').disabled = true;
+      document.getElementById('repEqCount').textContent = '0';
+      return;
+    }
+    window._repEquiposCache = eq;
+    body.innerHTML =
+      '<div style="max-height:50vh;overflow:auto;border:1px solid #e5e7eb;border-radius:10px">' +
+      '<table class="table table-sm table-hover align-middle mb-0" style="font-size:.85rem">' +
+      '<thead style="position:sticky;top:0;z-index:1;background:#f8fafc">' +
+      '<tr><th style="width:44px" class="text-center"><input type="checkbox" id="repEqAll" class="form-check-input" checked onchange="repEquiposToggleAll(this.checked)"></th>' +
+      '<th>Equipo</th><th style="width:130px">SKU</th><th style="width:120px">N° Serie</th><th style="width:90px" class="text-center">Estado</th></tr></thead><tbody>' +
+      eq.map((e, i) => {
+        const baja = (e.estado_op || '').toLowerCase() === 'baja';
+        return '<tr>' +
+          `<td class="text-center"><input type="checkbox" class="rep-eq-chk form-check-input" data-i="${i}" checked onchange="repEquiposContar()"></td>` +
+          `<td>${escHtml(e.nombre || '—')}</td>` +
+          `<td class="font-monospace small">${escHtml(e.sku || '—')}</td>` +
+          `<td class="small">${escHtml(e.serie || '—')}</td>` +
+          `<td class="text-center"><span class="badge ${baja ? 'bg-secondary' : 'bg-success'}">${escHtml(e.estado_op || 'operativo')}</span></td>` +
+          '</tr>';
+      }).join('') +
+      '</tbody></table></div>';
+    document.getElementById('repEqAgregar').disabled = false;
+    repEquiposContar();
+  } catch (e) {
+    body.innerHTML = `<div class="alert alert-danger m-2 small">No se pudieron cargar los equipos: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function repEquiposToggleAll(checked) {
+  document.querySelectorAll('#modalRepEquipos .rep-eq-chk').forEach(c => { c.checked = checked; });
+  repEquiposContar();
+}
+
+function repEquiposContar() {
+  const n = document.querySelectorAll('#modalRepEquipos .rep-eq-chk:checked').length;
+  const c = document.getElementById('repEqCount'); if (c) c.textContent = n;
+  const all = document.getElementById('repEqAll');
+  const total = document.querySelectorAll('#modalRepEquipos .rep-eq-chk').length;
+  if (all) all.checked = (n === total && total > 0);
+  const btn = document.getElementById('repEqAgregar'); if (btn) btn.disabled = (n === 0);
+}
+
+function repEquiposAgregar() {
+  const chks = document.querySelectorAll('#modalRepEquipos .rep-eq-chk:checked');
+  if (!chks.length) { ilusToast('No marcaste ningún equipo.', { type: 'warning' }); return; }
+  const key = m => `${(m.sku || '').trim()}|${(m.serie || '').trim()}|${(m.descripcion || '').trim()}`.toLowerCase();
+  // Conservar solo filas con datos (descartar las vacías iniciales).
+  let base = (_repMaquinas || []).filter(m => (m.sku || '').trim() || (m.descripcion || '').trim() || (m.serie || '').trim());
+  const existentes = new Set(base.map(key));
+  let added = 0;
+  chks.forEach(c => {
+    const e = (window._repEquiposCache || [])[parseInt(c.dataset.i)];
+    if (!e) return;
+    const row = { sku: e.sku || '', descripcion: e.nombre || '', cantidad: 1, modelo: '',
+                  serie: e.serie || '', repuesto: '', garantia: '', observacion: '' };
+    if (existentes.has(key(row))) return;
+    base.push(row); existentes.add(key(row)); added++;
+  });
+  _repMaquinas = base.length ? base
+    : [{ sku: '', descripcion: '', cantidad: 1, modelo: '', serie: '', repuesto: '', garantia: '', observacion: '' }];
+  repRenderMaquinas();
+  bootstrap.Modal.getInstance(document.getElementById('modalRepEquipos'))?.hide();
+  ilusToast(added ? `✓ ${added} equipo(s) agregado(s) al informe.` : 'Esos equipos ya estaban en el informe.',
+            { type: added ? 'success' : 'info' });
 }
 
 function repRenderLista(tipo) {
