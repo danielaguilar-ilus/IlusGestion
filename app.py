@@ -45834,12 +45834,13 @@ def _load_reporte_full(rid):
             except Exception: rep[k] = []
     try:
         fotos = mysql_fetchall(
-            "SELECT id,nombre,archivo_path FROM mant_contrato_adjuntos "
+            "SELECT id,nombre,archivo_path,cloudinary_url FROM mant_contrato_adjuntos "
             "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
         ) or []
         rep["fotos"] = [
             {"nombre": f.get("nombre"),
-             "url": f"/static/uploads/mantenciones/reportes/{f['archivo_path']}"}
+             "url": (f.get("cloudinary_url")
+                     or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")}
             for f in fotos
         ]
     except Exception:
@@ -46132,11 +46133,12 @@ def mant_reporte_get(rid):
     d["garantia_aplica"] = bool(d.get("garantia_aplica"))
     # Adjuntos
     fotos = mysql_fetchall(
-        "SELECT id,nombre,archivo_path,tipo,created_at FROM mant_contrato_adjuntos "
+        "SELECT id,nombre,archivo_path,cloudinary_url,tipo,created_at FROM mant_contrato_adjuntos "
         "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
     )
     d["fotos"] = [{"id":f["id"],"nombre":f["nombre"],
-                   "url":f"/static/uploads/mantenciones/reportes/{f['archivo_path']}"} for f in fotos]
+                   "url": (f.get("cloudinary_url")
+                           or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")} for f in fotos]
     return jsonify(d)
 
 
@@ -46219,7 +46221,11 @@ def mant_reporte_del(rid):
 @app.route("/mantenciones/api/reportes/<int:rid>/fotos", methods=["POST"])
 @_mant_required
 def mant_reporte_foto_subir(rid):
-    """Sube foto al registro fotográfico del reporte."""
+    """Sube foto al registro fotográfico del reporte.
+
+    Persiste en Cloudinary (almacenamiento permanente). El filesystem de Railway
+    es EFÍMERO: lo guardado solo en local se pierde en cada deploy. Por eso la
+    foto va primero a Cloudinary y el archivo local queda solo como respaldo."""
     f = request.files.get("foto")
     if not f or not f.filename:
         return jsonify({"error":"Sin archivo"}), 400
@@ -46227,19 +46233,47 @@ def mant_reporte_foto_subir(rid):
     if ext not in ALLOWED_REPORT_IMG:
         return jsonify({"error":"Tipo no permitido"}), 400
     fname  = secure_filename(f"rep{rid}_{int(time.time())}_{f.filename}")
-    fpath  = os.path.join(MANT_REPORTES_UPLOADS, fname)
-    f.save(fpath)
-    size   = os.path.getsize(fpath)
+
+    # 1) Cloudinary (persistente). Si no está configurado, caemos a local.
+    cloud_url = None
+    cloud_pid = None
+    size = 0
+    try:
+        f.stream.seek(0)
+        _res = _cloud_upload_image_full(
+            f.stream, public_id=f"rep{rid}_{int(time.time())}", folder="ilus/reportes"
+        )
+        cloud_url = _res.get("url")
+        cloud_pid = _res.get("public_id")
+        size = _res.get("size", 0)
+    except Exception as e_cld:
+        print(f"[reporte_foto] Cloudinary no disponible, uso backup local: {e_cld}", flush=True)
+
+    # 2) Respaldo local (no bloqueante; fallback si Cloudinary no estaba).
+    try:
+        f.stream.seek(0)
+        fpath = os.path.join(MANT_REPORTES_UPLOADS, fname)
+        f.save(fpath)
+        if not size:
+            try: size = os.path.getsize(fpath)
+            except Exception: size = 0
+    except Exception as e_loc:
+        print(f"[reporte_foto] backup local falló: {e_loc}", flush=True)
+        if not cloud_url:
+            return jsonify({"error": "No se pudo guardar la foto. Reintenta."}), 502
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_contrato_adjuntos
                    (contrato_id,cliente_id,tipo,nombre,archivo_nombre,archivo_path,
+                    cloudinary_url,cloudinary_public_id,
                     mime_type,tamaño_bytes,created_by)
-                   SELECT %s,cliente_id,'imagen',%s,%s,%s,%s,%s,%s
+                   SELECT %s,cliente_id,'imagen',%s,%s,%s,%s,%s,%s,%s,%s
                    FROM mant_reportes WHERE id=%s""",
                 (rid, f.filename, f.filename, fname,
+                 cloud_url, cloud_pid,
                  f"image/{ext}", size, current_username(), rid)
             )
             aid = cur.lastrowid
@@ -46250,9 +46284,8 @@ def mant_reporte_foto_subir(rid):
         if rep_info:
             _mant_log("cliente", rep_info["cliente_id"], "reporte_foto_subida",
                       f"reporte #{rid} — {f.filename}")
-        return jsonify({"ok":True,"id":aid,
-                        "url":f"/static/uploads/mantenciones/reportes/{fname}",
-                        "nombre":f.filename})
+        url = cloud_url or f"/static/uploads/mantenciones/reportes/{fname}"
+        return jsonify({"ok":True, "id":aid, "url":url, "nombre":f.filename})
     finally:
         conn.close()
 
@@ -47392,12 +47425,13 @@ def mant_reporte_pdf(rid):
     # Fotos del registro fotográfico
     try:
         fotos = mysql_fetchall(
-            "SELECT id,nombre,archivo_path FROM mant_contrato_adjuntos "
+            "SELECT id,nombre,archivo_path,cloudinary_url FROM mant_contrato_adjuntos "
             "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
         ) or []
         rep["fotos"] = [
             {"nombre": f.get("nombre"),
-             "url": f"/static/uploads/mantenciones/reportes/{f['archivo_path']}"}
+             "url": (f.get("cloudinary_url")
+                     or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")}
             for f in fotos
         ]
     except Exception:

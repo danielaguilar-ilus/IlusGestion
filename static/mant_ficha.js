@@ -3920,6 +3920,140 @@ async function epConfirmarMismatch() {
   } catch(e) { alert('Error de red'); }
 }
 
+// ─── Modal de progreso dinámico (operaciones lentas: import ERP, etc.) ───────
+// Reutilizable: ilusProgreso.open({titulo,subtitulo,paso}) → avanzar(hechos,total,
+// etiqueta) → exito(msg) / error(msg) → cerrar(). Mucho movimiento visual para
+// que la espera se sienta corta: barra animada, % que sube, frases rotativas,
+// engranaje girando y chispas. NO usa innerHTML con datos del usuario (textContent).
+const ilusProgreso = (function () {
+  let modal = null, raf = null, frasesTimer = null, fraseI = 0, pctActual = 0, pctObjetivo = 0;
+  const FRASES = [
+    '🔌 Sincronizando con el ERP…',
+    '🧬 Generando series únicas por equipo…',
+    '🗂️ Creando fichas técnicas…',
+    '📊 Cuadrando saldos del documento…',
+    '🏷️ Aplicando catálogo ILUS Fitness…',
+    '🔗 Enlazando equipos a la ficha…',
+    '✨ Puliendo los últimos detalles…',
+  ];
+  function inject() {
+    if (document.getElementById('ilusProgModal')) return;
+    if (!document.getElementById('ilusProgCss')) {
+      const st = document.createElement('style'); st.id = 'ilusProgCss';
+      st.textContent =
+        '@keyframes ipgStripes{from{background-position:0 0}to{background-position:44px 0}}' +
+        '@keyframes ipgSpin{to{transform:rotate(360deg)}}' +
+        '@keyframes ipgPop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.15)}100%{transform:scale(1);opacity:1}}' +
+        '@keyframes ipgShim{0%{transform:translateX(-120%)}100%{transform:translateX(240%)}}' +
+        '@keyframes ipgFloat{0%{transform:translateY(0);opacity:0}25%{opacity:.95}100%{transform:translateY(-52px);opacity:0}}' +
+        '#ilusProgModal .ipg-spark{position:absolute;bottom:6px;width:6px;height:6px;border-radius:50%;animation:ipgFloat 2.3s linear infinite}';
+      document.head.appendChild(st);
+    }
+    const html =
+      '<div class="modal fade" id="ilusProgModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true">' +
+      '<div class="modal-dialog modal-dialog-centered" style="max-width:430px">' +
+      '<div class="modal-content" style="border:none;border-radius:20px;overflow:hidden;background:linear-gradient(160deg,#15151f,#0a0a0f);color:#fff;box-shadow:0 24px 70px rgba(0,0,0,.55)">' +
+      '<div style="position:relative;padding:26px 26px 6px;text-align:center;overflow:hidden">' +
+      '<div id="ipgSparks" style="position:absolute;inset:0;pointer-events:none"></div>' +
+      '<div id="ipgIcon" style="width:74px;height:74px;margin:0 auto 14px;border-radius:18px;background:linear-gradient(135deg,#dc2626,#7f1d1d);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 26px rgba(220,38,38,.5)">' +
+      '<i class="bi bi-gear-wide-connected" style="font-size:2.1rem;animation:ipgSpin 2.4s linear infinite"></i></div>' +
+      '<div id="ipgTitulo" style="font-size:1.12rem;font-weight:800;letter-spacing:.3px">Procesando…</div>' +
+      '<div id="ipgSub" style="font-size:.82rem;color:#9ca3af;margin-top:3px"></div></div>' +
+      '<div style="padding:6px 26px 24px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:7px">' +
+      '<span id="ipgFrase" style="font-size:.8rem;color:#e5e7eb;font-weight:600;transition:opacity .2s">Iniciando…</span>' +
+      '<span id="ipgPct" style="font-size:1.5rem;font-weight:900;color:#f87171;line-height:1">0%</span></div>' +
+      '<div style="height:13px;border-radius:50px;background:#26262f;overflow:hidden;position:relative">' +
+      '<div id="ipgBar" style="height:100%;width:0%;border-radius:50px;background:#dc2626;background-image:linear-gradient(45deg,rgba(255,255,255,.18) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.18) 50%,rgba(255,255,255,.18) 75%,transparent 75%),linear-gradient(90deg,#dc2626,#f87171);background-size:44px 44px,100% 100%;transition:width .5s cubic-bezier(.22,1,.36,1);position:relative;animation:ipgStripes .9s linear infinite">' +
+      '<div style="position:absolute;top:0;left:0;height:100%;width:70px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);animation:ipgShim 1.4s ease-in-out infinite"></div></div></div>' +
+      '<div id="ipgPaso" style="margin-top:14px;font-size:.84rem;color:#cbd5e1;min-height:20px;display:flex;align-items:center;gap:8px">' +
+      '<span class="spinner-border spinner-border-sm" style="color:#f87171"></span><span id="ipgPasoTxt">Preparando…</span></div>' +
+      '<div id="ipgContador" style="margin-top:6px;font-size:.74rem;color:#6b7280"></div>' +
+      '</div></div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+    const sp = document.getElementById('ipgSparks');
+    for (let i = 0; i < 9; i++) {
+      const s = document.createElement('span');
+      s.className = 'ipg-spark';
+      s.style.left = (8 + i * 11) + '%';
+      s.style.animationDelay = (i * 0.25) + 's';
+      s.style.background = (i % 2) ? '#f87171' : '#fca5a5';
+      sp.appendChild(s);
+    }
+  }
+  function animarPct() {
+    cancelAnimationFrame(raf);
+    const paso = () => {
+      if (Math.abs(pctActual - pctObjetivo) < 0.5) pctActual = pctObjetivo;
+      else pctActual += (pctObjetivo - pctActual) * 0.18;
+      const v = Math.round(pctActual);
+      const e = document.getElementById('ipgPct'); if (e) e.textContent = v + '%';
+      const b = document.getElementById('ipgBar'); if (b) b.style.width = v + '%';
+      if (pctActual !== pctObjetivo) raf = requestAnimationFrame(paso);
+    };
+    raf = requestAnimationFrame(paso);
+  }
+  return {
+    open(opts) {
+      opts = opts || {};
+      inject();
+      document.getElementById('ipgTitulo').textContent = opts.titulo || 'Procesando…';
+      document.getElementById('ipgSub').textContent = opts.subtitulo || '';
+      document.getElementById('ipgPaso').innerHTML =
+        '<span class="spinner-border spinner-border-sm" style="color:#f87171"></span><span id="ipgPasoTxt"></span>';
+      document.getElementById('ipgPasoTxt').textContent = opts.paso || 'Preparando…';
+      document.getElementById('ipgContador').textContent = '';
+      document.getElementById('ipgFrase').textContent = FRASES[0];
+      const ic = document.getElementById('ipgIcon');
+      ic.style.background = 'linear-gradient(135deg,#dc2626,#7f1d1d)';
+      ic.innerHTML = '<i class="bi bi-gear-wide-connected" style="font-size:2.1rem;animation:ipgSpin 2.4s linear infinite"></i>';
+      pctActual = 0; pctObjetivo = 0;
+      document.getElementById('ipgBar').style.width = '0%';
+      document.getElementById('ipgPct').textContent = '0%';
+      if (!modal) modal = new bootstrap.Modal(document.getElementById('ilusProgModal'));
+      modal.show();
+      clearInterval(frasesTimer); fraseI = 0;
+      frasesTimer = setInterval(() => {
+        fraseI = (fraseI + 1) % FRASES.length;
+        const f = document.getElementById('ipgFrase');
+        if (f) { f.style.opacity = '0'; setTimeout(() => { f.textContent = FRASES[fraseI]; f.style.opacity = '1'; }, 190); }
+      }, 1700);
+    },
+    avanzar(hechos, total, etiqueta) {
+      pctObjetivo = total > 0 ? Math.min(100, Math.round(hechos / total * 100)) : 0;
+      animarPct();
+      if (etiqueta) document.getElementById('ipgPasoTxt').textContent = etiqueta;
+      const c = document.getElementById('ipgContador');
+      if (c) c.textContent = total ? (hechos + ' de ' + total + ' completados') : '';
+    },
+    exito(mensaje) {
+      clearInterval(frasesTimer);
+      pctObjetivo = 100; animarPct();
+      const ic = document.getElementById('ipgIcon');
+      ic.style.background = 'linear-gradient(135deg,#16a34a,#15803d)';
+      ic.innerHTML = '<i class="bi bi-check-lg" style="font-size:2.5rem;animation:ipgPop .5s ease both"></i>';
+      document.getElementById('ipgFrase').textContent = '¡Completado!';
+      document.getElementById('ipgPaso').innerHTML =
+        '<i class="bi bi-check-circle-fill" style="color:#22c55e"></i><span id="ipgPasoTxt"></span>';
+      document.getElementById('ipgPasoTxt').textContent = mensaje || 'Listo';
+    },
+    error(mensaje) {
+      clearInterval(frasesTimer); cancelAnimationFrame(raf);
+      const ic = document.getElementById('ipgIcon');
+      ic.style.background = 'linear-gradient(135deg,#dc2626,#7f1d1d)';
+      ic.innerHTML = '<i class="bi bi-exclamation-triangle-fill" style="font-size:2.1rem"></i>';
+      document.getElementById('ipgFrase').textContent = 'Con problemas';
+      document.getElementById('ipgPaso').innerHTML =
+        '<i class="bi bi-x-circle-fill" style="color:#f87171"></i><span id="ipgPasoTxt"></span>';
+      document.getElementById('ipgPasoTxt').textContent = mensaje || 'Ocurrió un error';
+    },
+    cerrar() {
+      clearInterval(frasesTimer); cancelAnimationFrame(raf);
+      if (modal) modal.hide();
+    },
+  };
+})();
+
 async function epImportarSeleccionados() {
   if (_epSeleccion.size === 0) return;
   // Bloqueo si mismatch sin confirmar
@@ -3933,58 +4067,78 @@ async function epImportarSeleccionados() {
         okLabel: 'Entendido',
       });
     } else {
-      alert('Confirma primero el motivo del RUT distinto.');
+      ilusToast('Confirma primero el motivo del RUT distinto.', { type: 'warning' });
     }
     return;
   }
-  const btn = document.getElementById('ep_btnImportar');
-  const original = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando…';
 
   const fecha_doc = _epDocActual.fecha_iso || '';
   const doc_origen = `${_epDocActual.tido_display} ${_epDocActual.nudo_display}`;
   const justifMismatch = window._erpMismatch?.motivo || '';
-  let creados = 0, fallidos = 0, bloqueados = 0;
 
+  // 1) Armar el PLAN de fichas a crear (leyendo los selects ANTES de procesar),
+  //    así conocemos el total exacto y el progreso es REAL (no inventado).
+  const plan = [];
+  let bloqueados = 0;
   for (const idx of _epSeleccion) {
     const p = _epProductos[idx];
     if (p._completo) { bloqueados++; continue; }   // saldo 0 → no agrega
-
     const saldo = (p._saldo !== undefined) ? p._saldo : (parseInt(p.cantidad) || 1);
     const nombre = p.nombre || p.sku || '';
-
-    // Leer la elección del usuario (1 ficha vs N fichas) del select inline
     const sel = document.querySelector(`select[data-ep-fichas-idx="${idx}"]`);
     const fichasElegidas = sel ? parseInt(sel.value) : 1;
     const filas = (fichasElegidas > 1) ? Math.min(fichasElegidas, saldo) : 1;
     const cantidadCadaUna = (fichasElegidas > 1) ? 1 : saldo;
-
-    for (let n = 1; n <= filas; n++) {
-      try {
-        const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            sku: p.sku || '',
-            nombre,
-            serie: '',                       // backend genera ILUS-{rut}-{sku}-{n}
-            cantidad: cantidadCadaUna,
-            doc_origen,
-            doc_fecha: fecha_doc,
-            fecha_instalacion: fecha_doc,
-            justif_doc_mismatch: justifMismatch,
-          })
-        });
-        if (r.ok) creados++; else fallidos++;
-      } catch(e) { fallidos++; }
+    for (let n = 0; n < filas; n++) {
+      plan.push({ sku: p.sku || '', nombre, cantidad: cantidadCadaUna });
     }
   }
+  if (!plan.length) {
+    ilusToast(bloqueados ? 'Esos equipos ya están completos en la ficha.' : 'No hay nada que importar.',
+              { type: 'info' });
+    return;
+  }
 
-  btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>${creados} creado(s)`;
-  setTimeout(() => {
-    _epModal.hide();
-    location.reload();
-  }, 1200);
+  // 2) Abrir el modal de progreso (sobre el de selección; al final recargamos).
+  document.getElementById('ep_btnImportar').disabled = true;
+  ilusProgreso.open({
+    titulo: 'Importando equipos desde el ERP',
+    subtitulo: `${doc_origen} · ${plan.length} ficha(s) a crear`,
+    paso: 'Conectando con el ERP…',
+  });
+
+  // 3) Crear las fichas una por una, actualizando el progreso REAL.
+  let creados = 0, fallidos = 0;
+  for (let i = 0; i < plan.length; i++) {
+    const f = plan[i];
+    ilusProgreso.avanzar(i, plan.length, `Creando ficha ${i + 1} de ${plan.length}: ${f.nombre}`);
+    try {
+      const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sku: f.sku,
+          nombre: f.nombre,
+          serie: '',                       // backend genera ILUS-{rut}-{sku}-{n}
+          cantidad: f.cantidad,
+          doc_origen,
+          doc_fecha: fecha_doc,
+          fecha_instalacion: fecha_doc,
+          justif_doc_mismatch: justifMismatch,
+        })
+      });
+      if (r.ok) creados++; else fallidos++;
+    } catch (e) { fallidos++; }
+  }
+
+  ilusProgreso.avanzar(plan.length, plan.length, 'Finalizando…');
+  if (creados === 0) {
+    ilusProgreso.error(`No se pudieron crear las fichas (${fallidos} con error). Reintenta.`);
+    document.getElementById('ep_btnImportar').disabled = false;
+    setTimeout(() => ilusProgreso.cerrar(), 2800);
+    return;
+  }
+  ilusProgreso.exito(`${creados} ficha(s) creada(s)${fallidos ? ' · ' + fallidos + ' con error' : ''}.`);
+  setTimeout(() => { ilusProgreso.cerrar(); location.reload(); }, 1600);
 }
 
 function erpToggle(key, linea, checked) {
