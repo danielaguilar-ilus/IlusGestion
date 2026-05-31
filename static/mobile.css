@@ -571,3 +571,46 @@ body {
     padding-bottom: calc(.6rem + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE SIDEBAR & HEADER v2 — Fase: responsive_sidebar_header
+   Rama claude/responsive-mobile-v2 (Daniel 31/05/2026)
+   Topbar móvil compacto (90→60px → libera ~30px verticales por pantalla),
+   logo más chico, botón menú con touch ≥44px, y título de módulo para
+   saber "dónde estoy" mientras se hace scroll. El sidebar ya es drawer
+   (responsive_base). Solo CSS, paleta ILUS intacta. No toca etiquetas/PDF.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  /* Topbar más bajo. La var --topbar-h también la usa el dropdown de
+     notificaciones para posicionarse → se ajusta solo. */
+  :root { --topbar-h: 60px; }
+  .mobile-topbar { height: 60px; padding: 0 10px; gap: 10px; }
+
+  /* Logo proporcional al topbar compacto (antes 80px). */
+  .mobile-logo { height: 38px; }
+  .mobile-brand-name { font-size: 1.4rem; }
+
+  /* Botón menú (hamburguesa): touch target Apple HIG 44px. */
+  .sidebar-toggle {
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 1.7rem;
+  }
+
+  /* Título de módulo: ocupa el espacio central, una línea con elipsis. */
+  .mobile-module-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #fff;
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: .2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

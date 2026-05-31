@@ -157,7 +157,7 @@
      pre-cargado arriba, así que es esencialmente instantáneo. #}
   <link href="{{ url_for('static', filename='style.css') }}?v=20260526h" rel="stylesheet">
   {# Mobile-first responsive overrides — debe cargarse DESPUÉS de style.css #}
-  <link href="{{ url_for('static', filename='mobile.css') }}?v=20260531b" rel="stylesheet">
+  <link href="{{ url_for('static', filename='mobile.css') }}?v=20260531c" rel="stylesheet">
   {# PWA Manifest — permite "agregar a pantalla de inicio" en iOS/Android #}
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 
@@ -232,8 +232,24 @@
 
 {# ══════════════════════════════════════════════
    MOBILE TOP BAR  (oculto en desktop)
+   El título de módulo da contexto de "dónde estoy" mientras se hace
+   scroll (el item activo del sidebar queda oculto en el drawer). Se deriva
+   del endpoint en Jinja — sin lógica en app.py. Reusa los mismos grupos
+   que los active-states del sidebar.
 ══════════════════════════════════════════════ #}
 {% if current_user and not embed_mode %}
+{% set _ep = request.endpoint or '' %}
+{% set mobile_module =
+     'Inicio' if _ep == 'index'
+     else 'Retiros' if _ep.startswith('pickup')
+     else 'Cubicador' if _ep in ['cubicador', 'asignar_cotizar']
+     else 'Transporte' if (_ep.startswith('transporte') or _ep.startswith('tr_'))
+     else 'Mantenciones' if _ep.startswith('mant_')
+     else 'Comunicaciones' if _ep.startswith('comm_')
+     else 'Administración' if (_ep.startswith('users') or _ep.startswith('admin') or _ep in ['new_user', 'edit_user'])
+     else 'Mi cuenta' if _ep == 'mi_cuenta'
+     else 'Etiquetas' if _ep in ['new_product', 'etiquetas_masivo_index', 'labels', 'print_labels']
+     else '' %}
 <div class="mobile-topbar no-print">
   <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menu">
     <i class="bi bi-list"></i>
@@ -246,6 +262,11 @@
     </picture>
   {% else %}
     <span class="mobile-brand-name">ILUS<span style="color:var(--ilus-red)">.</span></span>
+  {% endif %}
+
+  {# Título de módulo: contexto persistente de "dónde estoy" en móvil. #}
+  {% if mobile_module %}
+  <span class="mobile-module-title">{{ mobile_module }}</span>
   {% endif %}
 
   {# ─── CAMPANA DE NOTIFICACIONES — sección mobile-topbar ───────────
@@ -265,8 +286,6 @@
                    line-height:1">0</span>
     </button>
   </div>
-
-  <span class="mobile-user-label">{{ current_user.nombre }}</span>
 </div>
 {% endif %}
 
