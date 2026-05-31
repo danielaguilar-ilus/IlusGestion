@@ -17389,11 +17389,17 @@ def _tr_manifiesto_export_impl(mid):
         flash("Este manifiesto no tiene items para exportar.", "warning")
         return redirect(url_for("tr_manifiesto_detalle", mid=mid))
 
-    fmt_row = mysql_fetchone(
-        "SELECT formato_export FROM transport_couriers WHERE LOWER(nombre)=LOWER(%s) LIMIT 1",
-        (man.get("courier") or "",)
-    )
-    formato = ((fmt_row or {}).get("formato_export") or "").strip().lower()
+    # Defensivo: si la columna formato_export aún no existe (ensure no corrió
+    # o falló), no rompemos el export — caemos a la auto-detección por nombre.
+    try:
+        fmt_row = mysql_fetchone(
+            "SELECT formato_export FROM transport_couriers WHERE LOWER(nombre)=LOWER(%s) LIMIT 1",
+            (man.get("courier") or "",)
+        )
+        formato = ((fmt_row or {}).get("formato_export") or "").strip().lower()
+    except Exception as _e_fmt:
+        print(f"[manif_export] formato_export SELECT falló: {_e_fmt}", flush=True)
+        formato = ""
 
     # Auto-detección por nombre del courier (robusto: no depende del seed
     # de init_transporte_tables, que en prod está skipeado). Daniel pidió que
@@ -51494,6 +51500,57 @@ def _ensure_transporte_columns():
     return faltantes
 
 
+def _ensure_transport_couriers_formato_export():
+    """Garantiza la columna transport_couriers.formato_export AUNQUE
+    ILUS_SKIP_MIGRATIONS esté activo. Sin esta columna, el export del
+    manifiesto cae con OperationalError (1054) 'Unknown column'.
+
+    Es idempotente: SELECT a information_schema + ALTER solo si falta.
+    También repuebla valores conocidos (FedEx, Clickex, Felca/Milling)
+    para que la auto-detección del export agarre el formato correcto."""
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_couriers'"
+            ) or [])
+        }
+    except Exception as _eci:
+        print(f"[ensure_couriers_fmt] no se pudo leer schema: {_eci}", flush=True)
+        return False
+    if "formato_export" not in existing:
+        try:
+            mysql_execute(
+                "ALTER TABLE transport_couriers ADD COLUMN formato_export "
+                "VARCHAR(20) DEFAULT 'generic' "
+                "COMMENT 'Plantilla de carga masiva: fedex|simplyroute|clickex|generic'"
+            )
+            print("[ensure_couriers_fmt] columna formato_export agregada", flush=True)
+        except Exception as _ec:
+            print(f"[ensure_couriers_fmt] no se pudo agregar columna: {_ec}", flush=True)
+            return False
+    # Repoblar valores conocidos (no pisa si ya están seteados a algo distinto de 'generic'/NULL)
+    seeds = [
+        ("fedex",       "fedex"),
+        ("clickex",     "clickex"),
+        ("felca",       "simplyroute"),
+        ("milling",     "simplyroute"),
+        ("melling",     "simplyroute"),
+    ]
+    for kw, fmt in seeds:
+        try:
+            mysql_execute(
+                "UPDATE transport_couriers SET formato_export=%s "
+                "WHERE LOWER(nombre) LIKE %s "
+                "AND (formato_export IS NULL OR formato_export='' OR formato_export='generic')",
+                (fmt, f"%{kw}%")
+            )
+        except Exception:
+            pass
+    return True
+
+
 def _ensure_transporte_labels_table():
     """Garantiza la tabla transport_labels AUNQUE ILUS_SKIP_MIGRATIONS esté activo.
 
@@ -51620,6 +51677,15 @@ try:
         _ensure_transporte_labels_table()
 except Exception as _lbl_err:
     print(f"[ILUS][WARN] _ensure_transporte_labels_table: {_lbl_err}", flush=True)
+
+# CRÍTICO: garantizar transport_couriers.formato_export SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1. Sin esta columna, /transporte/manifiestos/<id>/export
+# revienta con OperationalError 1054 (visto en prod 2026-05-31).
+try:
+    with app.app_context():
+        _ensure_transport_couriers_formato_export()
+except Exception as _fmt_err:
+    print(f"[ILUS][WARN] _ensure_transport_couriers_formato_export: {_fmt_err}", flush=True)
 
 # CRÍTICO: garantizar mant_reportes.garantia_aplica SIEMPRE, incluso con
 # ILUS_SKIP_MIGRATIONS=1 (si no, crear/editar informes con el flag de garantía
