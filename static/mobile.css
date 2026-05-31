@@ -515,3 +515,59 @@ body {
   /* Touch targets en tabs y pills de filtros (Apple HIG). */
   .ftab-btn, .tc-pill, .flt-pill { min-height: 40px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE FORMS & MODALS v2 — Fase: responsive_forms_modals
+   Rama claude/responsive-mobile-v2 (Daniel 31/05/2026)
+   Objetivo: en móvil los formularios largos tienen su barra de acciones
+   (Cancelar/Guardar) SIEMPRE visible y por encima del teclado, y los
+   modales fullscreen mantienen header y footer pegados (sticky) sin tapar
+   el botón de guardar. Solo CSS, paleta ILUS intacta. No toca etiquetas/PDF.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* ── Barra de acciones de formularios de PÁGINA (no modales) ──
+     Añadir la clase `.form-actions-sticky` al <div> que contiene los
+     botones Cancelar/Guardar al final del <form>. Queda pegada al fondo
+     del viewport mientras se hace scroll; sticky (no fixed) para que el
+     teclado iOS no la tape — se desplaza por encima del teclado. */
+  .form-actions-sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
+    background: #fff;
+    border-top: 1px solid #e5e7eb;
+    box-shadow: 0 -3px 12px rgba(0, 0, 0, .06);
+    padding-top: 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    margin-top: 12px;
+  }
+  /* Botón secundario (Cancelar, normalmente un <a>) compacto;
+     primario (Guardar / submit, un <button>) ocupa el resto. */
+  .form-actions-sticky > .btn { min-height: 46px; margin: 0; }
+  .form-actions-sticky > a.btn { flex: 0 0 auto; }
+  .form-actions-sticky > button.btn,
+  .form-actions-sticky > .btn[type="submit"] { flex: 1 1 auto; }
+
+  /* ── Modales: header y footer sticky dentro del modal fullscreen ──
+     `.modal-content` ya es flex-column (Bootstrap) y v2 le fijó
+     max-height:100dvh. El scroll lo maneja `.modal`; aquí pegamos
+     header arriba y footer abajo para que el botón guardar nunca quede
+     fuera de pantalla. Scope a `.modal.show` → no afecta modales cerrados
+     ni los helpers ilus* (que no son `.modal` de Bootstrap). */
+  .modal.show .modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #fff;   /* opaco; los modales con header oscuro usan style inline → gana */
+  }
+  .modal.show .modal-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    background: #fff;   /* evita que el contenido se vea por detrás al hacer scroll */
+    padding-bottom: calc(.6rem + env(safe-area-inset-bottom, 0px));
+  }
+}
