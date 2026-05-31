@@ -2619,53 +2619,59 @@ async function abrirEnvioManifiesto(){
   _mfToggleModo();
   document.getElementById('modalManifiesto').style.display = 'flex';
 
-  // Cargar manifiestos abiertos del mismo courier (ordenados primero)
+  // Cargar manifiestos abiertos DEL MISMO COURIER (strict por default).
+  // Decisión Daniel (2026-05-31): un manifiesto = un courier. No mezclar.
   const sel = document.getElementById('mfSelectExistente');
   sel.innerHTML = '<option value="">— Cargando… —</option>';
   try {
-    const r = await fetch(`/transporte/api/manifiestos/abiertos?courier=${encodeURIComponent(courierNom)}`);
+    const r = await fetch(`/transporte/api/manifiestos/abiertos?courier=${encodeURIComponent(courierNom)}&strict=1`);
     const d = await r.json();
     if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
-    const items = d.manifiestos || [];
+    const items        = d.manifiestos || [];
+    const otrosCount   = d.otros_courier_count || 0;
     const radioExistente = document.querySelector('input[name=mfModo][value=existente]');
     const labelExistente = document.getElementById('mfRadioExistenteLabel');
     const subExistente   = document.getElementById('mfRadioExistenteSub');
     const radioNuevo     = document.querySelector('input[name=mfModo][value=nuevo]');
     if (!items.length) {
-      // Sin manifiestos abiertos → bloquear visualmente "existente" y forzar "nuevo"
-      sel.innerHTML = '<option value="">— No hay manifiestos abiertos —</option>';
+      // Sin manifiestos abiertos DEL COURIER → bloquear "existente" y forzar "nuevo"
+      sel.innerHTML = `<option value="">— No hay manifiestos abiertos de ${courierNom} —</option>`;
       sel.disabled = true;
       if (radioExistente) radioExistente.disabled = true;
       if (labelExistente) {
         labelExistente.style.opacity = '0.45';
         labelExistente.style.cursor  = 'not-allowed';
       }
-      if (subExistente)   subExistente.textContent = 'Ninguno en preparación para este courier';
+      if (subExistente) subExistente.textContent = `Ninguno en preparación para ${courierNom}`;
+      const otrosTxt = otrosCount > 0
+        ? ` <span style="color:#9ca3af;font-size:.78rem">(hay ${otrosCount} de otros courier, no aplica)</span>`
+        : '';
       document.getElementById('mfHintExistente').innerHTML =
-        '<i class="bi bi-info-circle"></i> No hay manifiestos en preparación — se creará uno nuevo.';
+        `<i class="bi bi-info-circle"></i> No hay manifiestos abiertos de <b>${courierNom}</b> — se creará uno nuevo.${otrosTxt}`;
       if (radioNuevo) { radioNuevo.checked = true; _mfToggleModo(); }
     } else {
-      // Hay manifiestos → habilitar "existente" y mostrarlos formateados
+      // Hay manifiestos del courier → habilitar "existente" con la lista filtrada
       sel.disabled = false;
       if (radioExistente) radioExistente.disabled = false;
       if (labelExistente) { labelExistente.style.opacity = ''; labelExistente.style.cursor = ''; }
-      if (subExistente)   subExistente.textContent = 'Selecciona uno en preparación';
-      // Padding fijo para alinear (es-CL date a 10 chars; correlativo MAN-AAAA-NNNN = 13)
+      if (subExistente) subExistente.textContent = `Selecciona uno de ${courierNom}`;
+      // Como ya están filtrados por courier, el option no necesita repetir el courier.
+      // Columnas: correlativo · fecha · ítems · estado
       sel.innerHTML = items.map(m => {
         const corr   = (m.correlativo || '').padEnd(14, ' ');
-        const courier = (m.courier || '—').padEnd(20, ' ').slice(0,20);
         const fecha  = (m.fecha || '').padEnd(10, ' ');
         const items_ = String(m.total_items || 0).padStart(3, ' ');
         const estado = m.estado || '';
         return `<option value="${m.id}" data-courier="${m.courier || ''}" data-estado="${estado}">`
-             + `${corr} · ${courier} · ${fecha} · ${items_} ítems · ${estado}</option>`;
+             + `${corr} · ${fecha} · ${items_} ítems · ${estado}</option>`;
       }).join('');
-      // Tipo monoespaciado para que las columnas se alineen
       sel.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
       sel.style.fontSize = '.82rem';
+      const otrosTxt = otrosCount > 0
+        ? ` <span style="color:#9ca3af;font-size:.78rem">· ${otrosCount} de otros courier ocultos</span>`
+        : '';
       document.getElementById('mfHintExistente').innerHTML =
-        `<i class="bi bi-list-check"></i> <b>${items.length}</b> manifiesto(s) abierto(s). `
-        + `Los de <b>${courierNom}</b> aparecen primero.`;
+        `<i class="bi bi-list-check"></i> <b>${items.length}</b> manifiesto(s) abierto(s) de <b>${courierNom}</b>.${otrosTxt}`;
     }
   } catch(e) {
     sel.innerHTML = '<option value="">(error cargando)</option>';

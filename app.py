@@ -11467,6 +11467,34 @@ def erp_documento_unificado():
 # Reusa _normalize_phone_cl / _cmen_to_comuna ya definidos en app.py.
 # ════════════════════════════════════════════════════════════════════════
 
+# Cache del doc raw del ERP (output de _cubicador_fetch_doc_via_sql).
+# Distinto al _CUB_DOC_CACHE (que cachea el output del cubicador para el frontend).
+# Este sirve a flujos internos: _tr_fetch_from_erp y otras rutas que necesitan
+# el doc crudo del ERP. Combinado, hace que "enviar al manifiesto" sea casi
+# instantáneo si el operador ya buscó el doc en el cubicador hace <5 min.
+_TR_DOC_RAW_CACHE = {}     # key=f"{tido}|{nudo}" → (epoch_expires, doc)
+_TR_DOC_RAW_CACHE_TTL = 300
+_TR_DOC_RAW_CACHE_MAX = 200
+
+def _cubicador_fetch_doc_via_sql_cached(tido, nudo):
+    """Wrapper de _cubicador_fetch_doc_via_sql con cache TTL 5 min."""
+    import time as _t
+    key = f"{(tido or '').upper()}|{nudo}"
+    row = _TR_DOC_RAW_CACHE.get(key)
+    if row and row[0] > _t.time():
+        return row[1]
+    doc = _cubicador_fetch_doc_via_sql(tido, nudo)
+    if doc:
+        if len(_TR_DOC_RAW_CACHE) >= _TR_DOC_RAW_CACHE_MAX:
+            try:
+                oldest = min(_TR_DOC_RAW_CACHE.items(), key=lambda kv: kv[1][0])[0]
+                _TR_DOC_RAW_CACHE.pop(oldest, None)
+            except Exception:
+                _TR_DOC_RAW_CACHE.clear()
+        _TR_DOC_RAW_CACHE[key] = (_t.time() + _TR_DOC_RAW_CACHE_TTL, doc)
+    return doc
+
+
 def _cubicador_fetch_doc_via_sql(tido, nudo):
     """Fallback SQL al ERP (SQL Server Random) cuando la REST API está caída.
 
@@ -11975,7 +12003,7 @@ def _cubicador_fetch(tido, nudo):
                   f"intentando fallback SQL para {tido}/{nudo} por si la REST falla "
                   f"intermitente", flush=True)
         try:
-            doc = _cubicador_fetch_doc_via_sql(tido, nudo)
+            doc = _cubicador_fetch_doc_via_sql_cached(tido, nudo)
             if doc:
                 print(f"[cub-fetch] Fallback SQL recuperó el documento {tido}/{nudo} "
                       f"cuando REST no lo encontró", flush=True)
@@ -14112,7 +14140,8 @@ def _tr_fetch_from_erp(tido, nudo):
     #    502 Bad Gateway y reventaba este flujo. Fallback a REST solo si SQL falla.
     doc = None
     try:
-        doc = _cubicador_fetch_doc_via_sql(tido, nudo)
+        # Cached: si el cubicador buscó este doc hace <5 min, no toca el ERP.
+        doc = _cubicador_fetch_doc_via_sql_cached(tido, nudo)
     except Exception as e_sql:
         print(f"[tr_fetch] SQL falló para {tido}/{nudo}: {e_sql}", flush=True)
         doc = None
@@ -17748,20 +17777,46 @@ def tr_manifiestos_abiertos():
     """Devuelve manifiestos abiertos para el selector del cubicador.
 
     Estados considerados "abiertos": 'En preparación', 'En curso'.
-    Si se pasa ?courier=Nombre, ordena los del mismo courier primero
-    (mejor UX: el courier elegido en la cotización aparece arriba).
+
+    Query params:
+      ?courier=Nombre  → filtra ESTRICTAMENTE los del mismo courier.
+                         Decisión Daniel (2026-05-31): Clickex no puede mezclar
+                         con Milling/Felca. Cada manifiesto = un solo courier.
+      ?strict=0        → modo legacy: solo ORDENA por courier preferido pero
+                         devuelve todos (para vistas administrativas).
     """
     courier_pref = (request.args.get("courier") or "").strip()
+    strict = request.args.get("strict", "1") != "0"  # default estricto
     try:
-        rows = mysql_fetchall("""
-            SELECT id, correlativo, fecha, courier, estado,
-                   COALESCE(total_items, 0) AS total_items,
-                   COALESCE(costo_total, 0) AS costo_total
-              FROM transport_manifests
-             WHERE estado IN ('En preparación','En curso')
-             ORDER BY (courier=%s) DESC, fecha DESC, id DESC
-             LIMIT 50
-        """, (courier_pref,)) or []
+        if strict and courier_pref:
+            rows = mysql_fetchall("""
+                SELECT id, correlativo, fecha, courier, estado,
+                       COALESCE(total_items, 0) AS total_items,
+                       COALESCE(costo_total, 0) AS costo_total
+                  FROM transport_manifests
+                 WHERE estado IN ('En preparación','En curso')
+                   AND LOWER(TRIM(courier)) = LOWER(TRIM(%s))
+                 ORDER BY fecha DESC, id DESC
+                 LIMIT 50
+            """, (courier_pref,)) or []
+            # Conteo de "otros couriers" para mostrar info al operador
+            other_row = mysql_fetchone("""
+                SELECT COUNT(*) AS n FROM transport_manifests
+                 WHERE estado IN ('En preparación','En curso')
+                   AND LOWER(TRIM(courier)) <> LOWER(TRIM(%s))
+            """, (courier_pref,)) or {}
+            other_count = int(other_row.get("n") or 0)
+        else:
+            rows = mysql_fetchall("""
+                SELECT id, correlativo, fecha, courier, estado,
+                       COALESCE(total_items, 0) AS total_items,
+                       COALESCE(costo_total, 0) AS costo_total
+                  FROM transport_manifests
+                 WHERE estado IN ('En preparación','En curso')
+                 ORDER BY (courier=%s) DESC, fecha DESC, id DESC
+                 LIMIT 50
+            """, (courier_pref,)) or []
+            other_count = 0
     except Exception as e:
         return jsonify({"error": f"Error consultando manifiestos: {e}"}), 500
 
@@ -17769,7 +17824,13 @@ def tr_manifiestos_abiertos():
         # Normalizar fecha a YYYY-MM-DD para el frontend
         if r.get("fecha"):
             r["fecha"] = r["fecha"].isoformat() if hasattr(r["fecha"], "isoformat") else str(r["fecha"])
-    return jsonify({"ok": True, "manifiestos": rows})
+    return jsonify({
+        "ok": True,
+        "manifiestos": rows,
+        "courier_filtro": courier_pref if strict else "",
+        "strict": strict,
+        "otros_courier_count": other_count,
+    })
 
 
 @app.route("/transporte/api/cubicador/enviar-manifiesto", methods=["POST"])
@@ -17797,6 +17858,40 @@ def tr_cubicador_enviar_manifiesto():
         return jsonify({"error": "tido y nudo son obligatorios"}), 400
     if not courier:
         return jsonify({"error": "Selecciona un courier antes de enviar"}), 400
+
+    # 0) Validar coherencia courier ↔ manifiesto destino.
+    #    Decisión Daniel (2026-05-31): un manifiesto = un solo courier. Si el
+    #    operador elige FedEx pero apunta a un manifiesto de Clickex, rechazar
+    #    explícito (no autocorregir silencioso).
+    if mid_in:
+        try:
+            _man_row = mysql_fetchone(
+                "SELECT courier, estado FROM transport_manifests WHERE id=%s",
+                (int(mid_in),)
+            )
+            if not _man_row:
+                return jsonify({"error": f"Manifiesto #{mid_in} no existe."}), 404
+            _man_courier = (_man_row.get("courier") or "").strip()
+            if _man_courier and _man_courier.lower() != courier.lower():
+                return jsonify({
+                    "error": (
+                        f"El manifiesto seleccionado es de courier "
+                        f"\"{_man_courier}\" y estás cotizando con \"{courier}\". "
+                        f"Crea un manifiesto nuevo o elige uno de {courier}."
+                    ),
+                    "courier_manifiesto": _man_courier,
+                    "courier_cotizado": courier,
+                }), 409
+            if (_man_row.get("estado") or "").strip() not in ("En preparación", "En curso"):
+                return jsonify({
+                    "error": f"Manifiesto #{mid_in} está en estado "
+                             f"\"{_man_row.get('estado')}\" — no se pueden agregar items."
+                }), 409
+        except ValueError:
+            return jsonify({"error": "manifest_id inválido"}), 400
+        except Exception as e_check:
+            print(f"[cub_enviar_manif] check coherencia courier falló: {e_check}", flush=True)
+            # No bloqueamos por errores transitorios de check — el flujo sigue.
 
     # 1) Upsert commitment desde ERP (helper existente, ya probado)
     try:
