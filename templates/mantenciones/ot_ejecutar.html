@@ -3713,7 +3713,37 @@ async function _capSubirFoto(mid, fileInput){
   if (uploader){ uploader.classList.add('uploading'); uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Comprimiendo…</span>'; }
   // PERF 2026-05-22: comprimir en cliente antes de subir (iPhone 4-8MB → ~400KB).
   const file = await _compressImageBeforeUpload(rawFile);
-  if (uploader){ uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Subiendo…</span>'; }
+  fileInput.value = '';
+
+  // ── UI OPTIMISTA (perf 2026-05-31): mostramos la foto AL INSTANTE con un
+  // objectURL local y dejamos al técnico seguir trabajando. La subida a
+  // Cloudinary va en SEGUNDO PLANO; al terminar reemplazamos por la URL real.
+  // Si falla, revertimos y avisamos. (Antes el técnico esperaba el round-trip.)
+  const previewUrl = URL.createObjectURL(file);
+  const eqYaTieneFoto = !!(EQUIPOS_IDX[String(mid)] && EQUIPOS_IDX[String(mid)].foto_url);
+  const cardImg = document.querySelector(`#tx-eq-card-${mid} .eq-foto-img`);
+  const prevCardSrc = cardImg ? cardImg.getAttribute('src') : null;
+  // Si el equipo no tenía foto, ésta será la principal → mostrarla ya en la card.
+  if (cardImg && !eqYaTieneFoto){ cardImg.src = previewUrl; }
+  // Tile "cargando" al inicio de la galería del modal (si está abierta).
+  const grid = document.getElementById('cap-fotos-grid');
+  let optTile = null;
+  if (grid){
+    optTile = document.createElement('div');
+    optTile.style.cssText = 'position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;opacity:.75';
+    optTile.innerHTML =
+      `<img src="${previewUrl}" style="width:100%;height:100%;object-fit:cover">` +
+      `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.3)">` +
+      `<i class="bi bi-arrow-clockwise spin" style="color:#fff;font-size:1.3rem"></i></span>`;
+    grid.prepend(optTile);
+  }
+  // Liberar el uploader de inmediato: el técnico puede seguir.
+  if (uploader){
+    uploader.classList.remove('uploading');
+    uploader.innerHTML = '<i class="bi bi-camera-fill"></i><span>Subir foto</span>';
+  }
+  ilusToast('Subiendo foto en segundo plano…', { type: 'info' });
+
   const fd = new FormData();
   fd.append('foto', file, file.name || rawFile.name || 'foto.jpg');
   // Si el equipo NO tiene foto principal, esta primera es la principal.
@@ -3729,24 +3759,24 @@ async function _capSubirFoto(mid, fileInput){
     ilusToast(d.degradado
       ? '✓ Foto agregada a la galería del equipo'
       : '✓ Foto principal guardada', { type: 'success' });
-    // Refrescar galería
-    await _capRefreshFotos(mid);
-    // Si fue principal, actualizar hero y card del equipo
+    // Si fue principal, fijar la URL REAL en hero/card/índice.
     if (d.es_principal){
       if (EQUIPOS_IDX[String(mid)]) EQUIPOS_IDX[String(mid)].foto_url = d.url;
-      // refrescar lista de equipos
-      const cardImg = document.querySelector(`#tx-eq-card-${mid} .eq-foto-img`);
       if (cardImg){ cardImg.src = d.url; }
+    } else if (cardImg && !eqYaTieneFoto && prevCardSrc !== null){
+      // Optimista asumió principal pero el backend la degradó → revertir card.
+      cardImg.src = prevCardSrc;
     }
+    // Refrescar galería (reemplaza el tile optimista por los reales).
+    await _capRefreshFotos(mid);
   } catch(e){
     console.error('[_capSubirFoto]', e);
+    // Revertir UI optimista.
+    if (optTile){ optTile.remove(); }
+    if (cardImg && !eqYaTieneFoto && prevCardSrc !== null){ cardImg.src = prevCardSrc; }
     ilusToast(e.message || 'No se pudo subir la foto', { type: 'error' });
   } finally {
-    if (uploader){
-      uploader.classList.remove('uploading');
-      uploader.innerHTML = '<i class="bi bi-camera-fill"></i><span>Subir foto</span>';
-    }
-    fileInput.value = '';
+    try { URL.revokeObjectURL(previewUrl); } catch(_){}
   }
 }
 
