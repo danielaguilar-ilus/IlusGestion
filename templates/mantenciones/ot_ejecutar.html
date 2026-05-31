@@ -2296,8 +2296,19 @@
             <i class="bi bi-person-badge me-1 text-primary"></i>Firma del cliente (quien recibe)
           </label>
           <input type="text" id="firmaCliNombre" class="form-control mb-2"
-                 placeholder="Nombre del cliente que recibe"
+                 placeholder="Nombre de quien recibe y firma"
+                 data-sugerido="{{ visita.contacto_nombre or '' }}"
                  value="{{ visita.contacto_nombre or '' }}">
+          <input type="text" id="firmaCliRut" class="form-control mb-2"
+                 placeholder="RUT de quien firma (ej: 12.345.678-9)">
+          <div class="row g-2 mb-1">
+            <div class="col-12 col-sm-6"><input type="text" id="firmaCliCargo" class="form-control form-control-sm" placeholder="Cargo / relación (opcional)" maxlength="120"></div>
+            <div class="col-6 col-sm-3"><input type="text" id="firmaCliTel" class="form-control form-control-sm" placeholder="Teléfono (opc.)" maxlength="40"></div>
+            <div class="col-6 col-sm-3"><input type="email" id="firmaCliEmail" class="form-control form-control-sm" placeholder="Email (opc.)" maxlength="190"></div>
+          </div>
+          <small class="d-block text-muted mb-2" style="font-size:.7rem">
+            <i class="bi bi-info-circle me-1"></i>Si el cliente firma, <b>nombre y RUT del firmante son obligatorios</b>. Sugerimos el contacto, pero cámbialo por quien realmente recibe (encargado, recepción, etc.).
+          </small>
           <div class="firma-canvas-wrap" id="wrap-canvasCli">
             <canvas id="canvasCli" width="800" height="240"></canvas>
             <div class="firma-placeholder">✍️ El cliente firma aquí con el dedo</div>
@@ -6988,6 +6999,14 @@ async function enviarFirma(){
   }
   const firmaTec = cvTec.toDataURL('image/png');
   const firmaCli = (_sig.canvasCli && _sig.canvasCli.has) ? document.getElementById('canvasCli').toDataURL('image/png') : '';
+  const cliNombreEl = document.getElementById('firmaCliNombre');
+  const cliNombre = (cliNombreEl && cliNombreEl.value || '').trim();
+  const cliRut = ((document.getElementById('firmaCliRut') || {}).value || '').trim();
+  // Si el cliente firmó, exigir identidad del firmante real (nombre + RUT).
+  if (firmaCli){
+    if (!cliNombre){ ilusToast('Falta el nombre de quien firma por el cliente', { type:'warning' }); return; }
+    if (cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('Falta el RUT de quien firma (RUT chileno válido)', { type:'warning' }); return; }
+  }
   const btn = document.getElementById('btnFirmarConfirm');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
   try {
@@ -6997,7 +7016,12 @@ async function enviarFirma(){
         firma_tecnico: firmaTec,
         firma_tecnico_nombre: document.getElementById('firmaTecNombre').value.trim(),
         firma_cliente: firmaCli,
-        firma_cliente_nombre: document.getElementById('firmaCliNombre').value.trim(),
+        firma_cliente_nombre: cliNombre,
+        firma_cliente_rut: cliRut,
+        firma_cliente_cargo: ((document.getElementById('firmaCliCargo') || {}).value || '').trim(),
+        firma_cliente_tel: ((document.getElementById('firmaCliTel') || {}).value || '').trim(),
+        firma_cliente_email: ((document.getElementById('firmaCliEmail') || {}).value || '').trim(),
+        firma_cliente_sugerido_nombre: (cliNombreEl && cliNombreEl.dataset ? (cliNombreEl.dataset.sugerido || '') : ''),
       })
     });
     const d = await r.json();

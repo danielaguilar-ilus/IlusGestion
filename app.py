@@ -25383,6 +25383,36 @@ def init_mantenciones_tables():
             """)
 
             # ════════════════════════════════════════════════════════════
+            # 2026-05-31 (Daniel — Fase 2 OT) — IDENTIDAD DEL FIRMANTE
+            # Quién firma la recepción de la OT: nombre + RUT REAL del que
+            # firma (no se asume el contacto principal). Guarda el contacto
+            # SUGERIDO y el valor FINAL si fueron distintos, + trazabilidad
+            # (técnico, ip, user_agent). Fuente de verdad de la firma cliente.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_ot_signatures (
+                    id                      INT AUTO_INCREMENT PRIMARY KEY,
+                    ot_id                   INT NOT NULL,
+                    suggested_contact_name  VARCHAR(200) NULL,
+                    suggested_contact_rut   VARCHAR(20)  NULL,
+                    signer_name             VARCHAR(200) NOT NULL,
+                    signer_rut              VARCHAR(20)  NOT NULL,
+                    signer_role             VARCHAR(120) NULL,
+                    signer_phone            VARCHAR(40)  NULL,
+                    signer_email            VARCHAR(190) NULL,
+                    signature_url           TEXT NULL,
+                    signed_at               DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    signed_by_technician_id INT NULL,
+                    ip                      VARCHAR(64)  NULL,
+                    user_agent              VARCHAR(400) NULL,
+                    created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ot_id) REFERENCES mant_visitas(id) ON DELETE CASCADE,
+                    INDEX idx_ot  (ot_id),
+                    INDEX idx_rut (signer_rut)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ════════════════════════════════════════════════════════════
             # 2026-05-17 — PROMOCIÓN LEVANTAMIENTO → FICHA DE EQUIPO
             # Daniel pidió que las OTs tipo 'levantamiento' al cerrarse
             # promuevan sus datos capturados (fotos, observaciones, tareas)
@@ -41922,9 +41952,32 @@ def mant_ot_firmar_revision(vid):
     nombre_tec = (d.get("firma_tecnico_nombre") or "").strip()[:200] or None
     firma_cli = (d.get("firma_cliente") or "").strip()
     nombre_cli = (d.get("firma_cliente_nombre") or "").strip()[:200] or None
+    # ── Identidad del firmante cliente (Fase 2 — Daniel 2026-05-31) ──
+    rut_cli    = (d.get("firma_cliente_rut") or "").strip()
+    cargo_cli  = (d.get("firma_cliente_cargo") or "").strip()[:120] or None
+    tel_cli    = (d.get("firma_cliente_tel") or "").strip()[:40] or None
+    email_cli  = (d.get("firma_cliente_email") or "").strip()[:190] or None
+    sug_nombre = (d.get("firma_cliente_sugerido_nombre") or "").strip()[:200] or None
+    sug_rut    = (d.get("firma_cliente_sugerido_rut") or "").strip()[:20] or None
 
     if not firma_tec:
         return jsonify({"ok": False, "error": "Falta la firma del técnico"}), 400
+
+    # Si el cliente firma, exigimos la identidad del firmante REAL: nombre +
+    # RUT chileno válido. NO se asume el contacto principal (puede recibir otra
+    # persona: encargado, conserjería, administración, etc.).
+    rut_cli_norm = None
+    if firma_cli:
+        if not nombre_cli:
+            return jsonify({"ok": False,
+                            "error": "Falta el NOMBRE de quien firma por el cliente.",
+                            "error_codigo": "FIRMANTE_SIN_NOMBRE"}), 400
+        _ok_rut, _rut_res = validar_rut(rut_cli)
+        if not _ok_rut:
+            return jsonify({"ok": False,
+                            "error": f"RUT del firmante inválido: {_rut_res}",
+                            "error_codigo": "FIRMANTE_RUT_INVALIDO"}), 400
+        rut_cli_norm = _formato_rut_chile(_rut_res) or _rut_res
 
     try:
         # Verificar que todas las tareas obligatorias estén completas
@@ -41966,6 +42019,25 @@ def mant_ot_firmar_revision(vid):
             " WHERE id=%s",
             (firma_tec_url, uid, nombre_tec, firma_cli_url, nombre_cli, vid)
         )
+        # ── Registro de identidad del firmante cliente (Fase 2) ──────────
+        # Persistimos quién firmó realmente (nombre + RUT validado) + el
+        # contacto sugerido (para auditar si cambió) + trazabilidad.
+        if firma_cli:
+            try:
+                _ua = (request.headers.get("User-Agent") or "")[:400]
+                _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+                       or request.remote_addr or "")[:64]
+                mysql_execute(
+                    "INSERT INTO mant_ot_signatures "
+                    "(ot_id, suggested_contact_name, suggested_contact_rut, "
+                    " signer_name, signer_rut, signer_role, signer_phone, signer_email, "
+                    " signature_url, signed_by_technician_id, ip, user_agent) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (vid, sug_nombre, sug_rut, nombre_cli, rut_cli_norm, cargo_cli,
+                     tel_cli, email_cli, firma_cli_url, uid, _ip, _ua)
+                )
+            except Exception as _e_sig:
+                print(f"[firma-signer] no se guardó identidad firmante vid={vid}: {_e_sig}", flush=True)
         # Marcar levantamiento como cerrado si la OT tenía uno
         v_info = mysql_fetchone(
             "SELECT levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
