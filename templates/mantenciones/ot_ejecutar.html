@@ -7083,7 +7083,19 @@ async function enviarFirma(){
       });
       setTimeout(() => location.reload(), 600);
     } else {
-      ilusToast(d.error || 'Error', { type:'error' });
+      // Gate de cierre (Fase 10): si faltan tareas por cubrir, mostramos el
+      // panel con el detalle exacto de qué falta (por equipo).
+      if (Array.isArray(d.faltantes) && d.faltantes.length){
+        await ilusAlert({
+          title: '🚧 No puedes cerrar esta OT todavía',
+          message: d.error || 'Quedan tareas obligatorias sin completar ni justificar.',
+          sub: d.faltantes.join(' · '),
+          type: 'warning',
+          okLabel: 'Entendido',
+        });
+      } else {
+        ilusToast(d.error || 'Error', { type:'error' });
+      }
       btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
     }
   } catch(e){

@@ -41998,17 +41998,35 @@ def mant_ot_firmar_revision(vid):
         rut_cli_norm = _formato_rut_chile(_rut_res) or _rut_res
 
     try:
-        # Verificar que todas las tareas obligatorias estén completas
-        pendientes = mysql_fetchone(
-            "SELECT COUNT(*) AS n FROM mant_visita_tareas "
-            " WHERE visita_id=%s AND obligatoria=1 AND COALESCE(completada,0)=0",
+        # ── Gate de cierre (Fase 10) ──────────────────────────────────────
+        # Una tarea obligatoria está CUBIERTA si se completó O si su equipo fue
+        # omitido con causal (estado_revision='saltado'). Así el técnico que SÍ
+        # justificó no queda bloqueado. Devolvemos QUÉ FALTA por equipo para que
+        # el frontend muestre el panel "No puedes cerrar todavía".
+        faltan_rows = mysql_fetchall(
+            "SELECT t.maquina_id, "
+            "       COALESCE(m.nombre, CONCAT('Equipo #', t.maquina_id)) AS nombre, "
+            "       COUNT(*) AS n "
+            "  FROM mant_visita_tareas t "
+            "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
+            " WHERE t.visita_id=%s AND t.obligatoria=1 AND COALESCE(t.completada,0)=0 "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_visita_equipos e "
+            "                    WHERE e.visita_id=t.visita_id AND e.maquina_id=t.maquina_id "
+            "                      AND e.estado_revision='saltado') "
+            " GROUP BY t.maquina_id, m.nombre "
+            " ORDER BY nombre",
             (vid,)
-        )
-        if pendientes and (pendientes.get("n") or 0) > 0:
+        ) or []
+        if faltan_rows:
+            faltantes = [f"{r['nombre']}: {int(r['n'])} tarea(s) obligatoria(s) sin cubrir"
+                         for r in faltan_rows]
+            total_pend = sum(int(r["n"]) for r in faltan_rows)
             return jsonify({
                 "ok": False,
-                "error": f"Quedan {pendientes['n']} tarea(s) obligatoria(s) sin completar.",
+                "error": (f"No puedes cerrar esta OT todavía: quedan {total_pend} "
+                          "tarea(s) obligatoria(s) sin completar ni justificar."),
                 "error_codigo": "TAREAS_PENDIENTES",
+                "faltantes": faltantes,
             }), 400
 
         u = getattr(g, "user", None) or {}
