@@ -13334,13 +13334,58 @@ def asignar_cotizar():
     return resp
 
 
+# ── Cache server-side del cubicador ERP ──────────────────────────────────────
+# Memoria por worker (gunicorn). TTL corto (5 min) — los documentos del ERP
+# no cambian con frecuencia y el operador típicamente busca el mismo doc
+# varias veces seguidas (cubicar, ajustar, agregar al manifiesto).
+# Reduce búsqueda repetida de ~3-4s a <50ms.
+_CUB_DOC_CACHE = {}       # key=f"{tido}|{nudo}" → (epoch_expires, hdr, lineas)
+_CUB_DOC_CACHE_TTL = 300  # 5 min
+_CUB_DOC_CACHE_MAX = 200  # evicción FIFO simple si crece de más
+
+def _cub_doc_cache_get(key):
+    import time as _t
+    row = _CUB_DOC_CACHE.get(key)
+    if not row:
+        return None
+    exp, hdr, lineas = row
+    if exp < _t.time():
+        _CUB_DOC_CACHE.pop(key, None)
+        return None
+    return hdr, lineas
+
+def _cub_doc_cache_put(key, hdr, lineas):
+    import time as _t
+    if len(_CUB_DOC_CACHE) >= _CUB_DOC_CACHE_MAX:
+        # Eviccionar el más viejo
+        try:
+            oldest = min(_CUB_DOC_CACHE.items(), key=lambda kv: kv[1][0])[0]
+            _CUB_DOC_CACHE.pop(oldest, None)
+        except Exception:
+            _CUB_DOC_CACHE.clear()
+    _CUB_DOC_CACHE[key] = (_t.time() + _CUB_DOC_CACHE_TTL, hdr, lineas)
+
+def _cub_doc_cache_invalidate(tido, nudo):
+    """Llamado cuando el documento se persiste (ediciones aguas abajo del cubicador).
+    Mantiene el cache fresco aunque sea un sistema READ-ONLY."""
+    try:
+        key = f"{(tido or '').upper()}|{nudo}"
+        _CUB_DOC_CACHE.pop(key, None)
+    except Exception:
+        pass
+
+
 @app.route("/api/asignar/documento", methods=["POST"])
 @login_required
 def api_asignar_documento():
     """
     Busca un documento en el ERP y devuelve header + líneas con datos de cubicaje.
-    POST JSON: { tido, nudo }
+    POST JSON: { tido, nudo, prefetch?, no_cache? }
     Campos de respuesta alineados con lo que usa asignar.html.
+
+    Cache: respuesta server-side cacheada 5 min. ?prefetch=1 marca que el
+    cliente está prefetcheando — el cache sigue grabándose, pero no contamos
+    estadística de uso.
     """
     if not g.permissions.get("cubicador"):
         return jsonify({"error": "Sin permiso"}), 403
@@ -13348,16 +13393,27 @@ def api_asignar_documento():
     data = request.get_json(silent=True) or {}
     tido = (data.get("tido") or "FCV").strip().upper()
     nudo = str(data.get("nudo") or "").strip()
+    no_cache = bool(data.get("no_cache"))
 
     if not nudo:
         return jsonify({"error": "Número de documento requerido"}), 400
 
-    try:
-        hdr, lineas = _cubicador_fetch(tido, nudo)
-    except ConnectionError as ce:
-        return jsonify({"error": str(ce)}), 503
-    except Exception as ex:
-        return jsonify({"error": f"Error al consultar ERP: {ex}"}), 500
+    cache_key = f"{tido}|{nudo}"
+    hdr_l = None if no_cache else _cub_doc_cache_get(cache_key)
+    if hdr_l:
+        hdr, lineas = hdr_l
+        # Marca para diagnóstico — el frontend puede mostrar "⚡ desde cache"
+        _from_cache = True
+    else:
+        try:
+            hdr, lineas = _cubicador_fetch(tido, nudo)
+        except ConnectionError as ce:
+            return jsonify({"error": str(ce)}), 503
+        except Exception as ex:
+            return jsonify({"error": f"Error al consultar ERP: {ex}"}), 500
+        if hdr is not None:
+            _cub_doc_cache_put(cache_key, hdr, lineas)
+        _from_cache = False
 
     if hdr is None:
         # Devolvemos diagnóstico del motor para que el frontend pueda mostrar
@@ -13493,6 +13549,7 @@ def api_asignar_documento():
         },
         "tipos_doc":     TIPOS_DOC_CUBICADOR,
         "zzenvio_valor": round(zzenvio_valor, 0),
+        "from_cache":    _from_cache,
     })
 
 
@@ -16866,18 +16923,46 @@ def tr_commitment_logs(cid):
 @app.route("/transporte/manifiestos")
 @_tr_required
 def tr_manifiestos():
+    # Filtros + búsqueda libre + paginación.
+    # Búsqueda (q) matchea contra correlativo, courier y notas (LIKE %q%).
+    # page=1 default. Page size = 50 (balance entre fluidez y scroll mobile).
+    PAGE_SIZE = 50
     filtros = {
-        "courier": request.args.get("courier", ""),
-        "estado":  request.args.get("estado", ""),
+        "courier": request.args.get("courier", "").strip(),
+        "estado":  request.args.get("estado", "").strip(),
+        "q":       request.args.get("q", "").strip(),
     }
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except Exception:
+        page = 1
+
     where, params = ["1=1"], []
     if filtros["courier"]:
         where.append("courier=%s"); params.append(filtros["courier"])
     if filtros["estado"]:
         where.append("estado=%s"); params.append(filtros["estado"])
+    if filtros["q"]:
+        q_like = f"%{filtros['q']}%"
+        where.append("(correlativo LIKE %s OR courier LIKE %s OR notas LIKE %s)")
+        params.extend([q_like, q_like, q_like])
+
+    where_sql = " AND ".join(where)
+    # Total para paginación (count separado, barato con WHERE indexado)
+    total_row = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM transport_manifests WHERE " + where_sql,
+        tuple(params)
+    ) or {}
+    total = int(total_row.get("n") or 0)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    if page > total_pages:
+        page = total_pages
+
+    offset = (page - 1) * PAGE_SIZE
     manifiestos = mysql_fetchall(
-        "SELECT * FROM transport_manifests WHERE " + " AND ".join(where) +
-        " ORDER BY fecha DESC, id DESC", tuple(params)
+        "SELECT * FROM transport_manifests WHERE " + where_sql +
+        " ORDER BY fecha DESC, id DESC LIMIT %s OFFSET %s",
+        tuple(params) + (PAGE_SIZE, offset)
     )
     return render_template(
         "transporte/manifiestos.html",
@@ -16885,6 +16970,14 @@ def tr_manifiestos():
         filtros=filtros,
         couriers=COURIERS,
         estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
+        paginacion={
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "page_size": PAGE_SIZE,
+            "has_prev": page > 1,
+            "has_next": page < total_pages,
+        },
     )
 
 

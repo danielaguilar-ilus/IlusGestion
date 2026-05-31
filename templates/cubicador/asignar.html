@@ -458,7 +458,9 @@
             <option value="COV">Cotización (COV)</option>
           </select>
           <input type="text" id="docNudo" placeholder="N° de documento (ej: 10599)"
-                 onkeydown="if(event.key==='Enter') buscarDoc()">
+                 autocomplete="off"
+                 onkeydown="if(event.key==='Enter') buscarDoc()"
+                 oninput="_schedulePrefetch()">
           <button class="btn-buscar" onclick="buscarDoc()" id="btnBuscar">
             <span class="spin-ico" id="spinBuscar" style="display:none"></span>
             <i class="bi bi-search" id="icoBuscar"></i>
@@ -1286,6 +1288,49 @@ table td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
 </body></html>`;
   win.document.write(html);
   win.document.close();
+}
+
+// ── PREFETCH: cuando el operador tipea un nudo, dispara la búsqueda en
+//    background (debounce 700ms) si tiene >=4 dígitos. El backend cachea 5 min,
+//    así que al apretar Enter la respuesta es instantánea (cache HIT local).
+let _prefetchTimer = null;
+let _prefetchInFlight = null;   // AbortController del último prefetch
+async function _schedulePrefetch(){
+  if (_prefetchTimer) { clearTimeout(_prefetchTimer); _prefetchTimer = null; }
+  const nudo = (document.getElementById('docNudo').value || '').trim();
+  const tido = document.getElementById('docTipo').value;
+  if (nudo.length < 4) return;
+  // Si ya está en cache local, no hace falta prefetch
+  const key = `${tido}|${nudo}`;
+  const cached = _docCache.get(key);
+  if (cached && (Date.now() - cached.ts) < _docCacheTTL) return;
+  _prefetchTimer = setTimeout(async () => {
+    // Cancelar prefetch anterior en vuelo (el operador siguió tipeando)
+    if (_prefetchInFlight){ try { _prefetchInFlight.abort(); } catch(e){} }
+    _prefetchInFlight = new AbortController();
+    try {
+      const r = await fetch('/api/asignar/documento', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ tido, nudo, prefetch: true }),
+        signal: _prefetchInFlight.signal,
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.ok){
+        _docCache.set(key, { data: d, ts: Date.now() });
+        if (_docCache.size > 30){
+          _docCache.delete(_docCache.keys().next().value);
+        }
+        console.log('[asignar] prefetch OK ' + key + (d.from_cache ? ' (server cache)' : ''));
+      }
+    } catch(e){
+      // Silencioso: prefetch no debe molestar al usuario
+      if (e.name !== 'AbortError') console.warn('[asignar] prefetch fail', e);
+    } finally {
+      _prefetchInFlight = null;
+    }
+  }, 700);
 }
 
 async function buscarDoc(){

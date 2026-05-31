@@ -17,19 +17,33 @@
   </div>
 </div>
 
-{# ── Filtros ── #}
-<form method="get" class="ilus-card mb-3 p-3">
+{# ── Filtros + búsqueda ── #}
+<form method="get" class="ilus-card mb-3 p-3" id="filtrosForm">
   <div class="row g-2 align-items-end">
-    <div class="col-6 col-sm-4">
-      <select name="courier" class="form-select form-select-sm">
+    <div class="col-12 col-sm-5">
+      <label class="form-label small fw-semibold mb-1 d-block d-sm-none">Buscar</label>
+      <div class="input-group input-group-sm">
+        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+        <input type="text" name="q" value="{{ filtros.q }}"
+               class="form-control form-control-sm"
+               placeholder="Buscar por correlativo, courier o notas…"
+               autocomplete="off">
+        {% if filtros.q %}
+        <a href="{{ url_for('tr_manifiestos', courier=filtros.courier, estado=filtros.estado) }}"
+           class="btn btn-outline-secondary" title="Limpiar búsqueda">✕</a>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-6 col-sm-3">
+      <select name="courier" class="form-select form-select-sm" onchange="document.getElementById('filtrosForm').submit()">
         <option value="">Todos los courier</option>
         {% for c in couriers %}
         <option value="{{ c }}" {% if filtros.courier==c %}selected{% endif %}>{{ c }}</option>
         {% endfor %}
       </select>
     </div>
-    <div class="col-6 col-sm-4">
-      <select name="estado" class="form-select form-select-sm">
+    <div class="col-6 col-sm-3">
+      <select name="estado" class="form-select form-select-sm" onchange="document.getElementById('filtrosForm').submit()">
         <option value="">Todos los estados</option>
         {% for e in estados_manifest %}
         <option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>
@@ -38,15 +52,29 @@
     </div>
     <div class="col-auto">
       <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
-      <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-outline-secondary ms-1">✕</a>
+      {% if filtros.courier or filtros.estado or filtros.q %}
+      <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-outline-secondary ms-1" title="Limpiar todo">✕</a>
+      {% endif %}
     </div>
   </div>
 </form>
 
 {# ── Tabla desktop ── #}
 <div class="ilus-card d-none d-md-block mb-3">
-  <div class="ilus-card-header">
-    <span>Manifiestos <span class="badge bg-secondary ms-1">{{ manifiestos|length }}</span></span>
+  <div class="ilus-card-header d-flex justify-content-between align-items-center">
+    <span>Manifiestos
+      <span class="badge bg-secondary ms-1">{{ paginacion.total }}</span>
+      {% if paginacion.total_pages > 1 %}
+      <span class="text-muted small ms-2">
+        Página {{ paginacion.page }} de {{ paginacion.total_pages }}
+      </span>
+      {% endif %}
+    </span>
+    {% if filtros.q or filtros.courier or filtros.estado %}
+    <span class="badge bg-warning text-dark">
+      <i class="bi bi-funnel-fill me-1"></i>Filtros activos
+    </span>
+    {% endif %}
   </div>
   <div class="table-responsive">
     <table class="table ilus-table mb-0" style="font-size:.82rem">
@@ -140,6 +168,63 @@
   <div class="text-center py-4 text-muted">Sin manifiestos</div>
   {% endfor %}
 </div>
+
+{# ── Paginación ── #}
+{% if paginacion.total_pages > 1 %}
+<nav class="mt-3" aria-label="Paginación manifiestos">
+  <ul class="pagination pagination-sm justify-content-center mb-0">
+    {% set base_qs = (
+      ('courier=' + filtros.courier) if filtros.courier else '',
+      ('estado=' + filtros.estado) if filtros.estado else '',
+      ('q=' + filtros.q) if filtros.q else '',
+    )|select|join('&') %}
+    {% set sep = '&' if base_qs else '' %}
+
+    <li class="page-item {% if not paginacion.has_prev %}disabled{% endif %}">
+      <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ paginacion.page - 1 }}">
+        <i class="bi bi-chevron-left"></i>
+      </a>
+    </li>
+
+    {% set window_start = [1, paginacion.page - 2]|max %}
+    {% set window_end = [paginacion.total_pages, paginacion.page + 2]|min %}
+
+    {% if window_start > 1 %}
+      <li class="page-item">
+        <a class="page-link" href="?{{ base_qs }}{{ sep }}page=1">1</a>
+      </li>
+      {% if window_start > 2 %}
+        <li class="page-item disabled"><span class="page-link">…</span></li>
+      {% endif %}
+    {% endif %}
+
+    {% for p in range(window_start, window_end + 1) %}
+    <li class="page-item {% if p == paginacion.page %}active{% endif %}">
+      <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ p }}">{{ p }}</a>
+    </li>
+    {% endfor %}
+
+    {% if window_end < paginacion.total_pages %}
+      {% if window_end < paginacion.total_pages - 1 %}
+        <li class="page-item disabled"><span class="page-link">…</span></li>
+      {% endif %}
+      <li class="page-item">
+        <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ paginacion.total_pages }}">{{ paginacion.total_pages }}</a>
+      </li>
+    {% endif %}
+
+    <li class="page-item {% if not paginacion.has_next %}disabled{% endif %}">
+      <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ paginacion.page + 1 }}">
+        <i class="bi bi-chevron-right"></i>
+      </a>
+    </li>
+  </ul>
+  <div class="text-center text-muted small mt-2">
+    Mostrando {{ ((paginacion.page - 1) * paginacion.page_size) + 1 }}–{{ [paginacion.page * paginacion.page_size, paginacion.total]|min }}
+    de <strong>{{ paginacion.total }}</strong> manifiesto(s)
+  </div>
+</nav>
+{% endif %}
 
 {# ── Modal nuevo manifiesto ── #}
 <div class="modal fade" id="newManModal" tabindex="-1">
