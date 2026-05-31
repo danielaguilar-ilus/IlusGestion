@@ -41934,6 +41934,19 @@ def mant_ot_exec_gps(vid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _ot_firmante_cliente(vid):
+    """Última identidad del firmante cliente (mant_ot_signatures) para mostrar
+    su RUT/cargo en el PDF y el detalle de la OT. Devuelve {} si no hay firma."""
+    try:
+        r = mysql_fetchone(
+            "SELECT signer_rut, signer_role FROM mant_ot_signatures "
+            "WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,)
+        )
+        return dict(r) if r else {}
+    except Exception:
+        return {}
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
@@ -43209,6 +43222,7 @@ def mant_visita_pdf(vid):
     html = render_template(
         "mantenciones/ot_pdf.html",
         visita=visita,
+        firmante_cliente=_ot_firmante_cliente(vid),
         equipos=equipos,
         eq_idx=eq_idx,
         grupos=grupos,
@@ -43499,6 +43513,7 @@ def mant_ot_pdf_render(vid):
     return render_template(
         "mantenciones/ot_pdf.html",
         visita=visita,
+        firmante_cliente=_ot_firmante_cliente(vid),
         equipos=equipos,
         tecnicos_extra=tecnicos_extra,
         tareas=tareas,
