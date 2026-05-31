@@ -1143,6 +1143,116 @@
 #modalFichaTecnica .cap-readonly-banner i{
   color:#3b82f6;font-size:1rem;flex-shrink:0;margin-top:1px;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE TÉCNICO v3 (Daniel 31/05/2026) — Fase responsive_mantenciones_ot
+   Rama claude/responsive-mobile.
+   Objetivo: que el TÉCNICO ejecute la OT cómodo DESDE EL CELULAR.
+   Foco auditoría 360/390/430px:
+     · Modal de FIRMA usable (canvas full, toolbar/colores táctiles ≥44px,
+       footer siempre visible con scroll interno).
+     · Checklist: pills Sí/No/N-A táctiles sin renglones rotos.
+     · Fotos del checklist: thumbnails táctiles.
+   SOLO layout/CSS/touch — no toca lógica de firma/guardado ni datos.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Toolbar de firma: botones y colores TÁCTILES (Apple HIG ≥44px) ──
+   Antes: firma-tool 40px, firma-color 32px → muy chicos para el dedo. */
+.firma-toolbar{gap:8px}
+.firma-toolbar .firma-tool{min-height:44px;padding:9px 16px;font-size:.82rem}
+.firma-toolbar .firma-color{width:38px;height:38px}
+
+/* ── Tarjeta de captura del modal de ficha técnica: estado-chips y skip
+   con touch target pleno (estaban a 36px). ── */
+#modalFichaTecnica .cap-estado-chip{min-height:44px}
+
+/* ════════════════════════════════════════════════════════════════════
+   MÓVIL (≤576px) — el modal de firma/aprobación ya es fullscreen por
+   `modal-fullscreen-sm-down`. Aquí lo hacemos cómodo para firmar:
+   body con scroll propio + FOOTER STICKY (botón "Firmar" siempre a la vista).
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 576px){
+  /* Patrón flex robusto: modal-content a 100dvh en columna; el BODY toma el
+     espacio y scrollea solo; header (banner) y footer NO encogen → quedan
+     siempre a la vista sin depender de position:sticky. */
+  .firma-modal .modal-content{
+    /* !important para ganar a la regla base .modal-content{height:auto!important}
+       de mobile.css — el modal de firma SÍ debe ser fullscreen con footer fijo. */
+    height:100dvh !important; max-height:100dvh !important;
+    display:flex; flex-direction:column;
+  }
+  .firma-modal .firma-banner,
+  .firma-modal .modal-header{ flex:0 0 auto; }
+  .firma-modal .modal-body{
+    flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:14px;
+  }
+  /* El modal de ficha técnica trae max-height:80vh INLINE en su body, que
+     en el flex column de 100dvh dejaría un hueco bajo el contenido. Lo
+     anulamos solo en móvil (único caso que justifica !important: inline). */
+  #modalFichaTecnica .modal-body{ max-height:none !important; }
+  /* Footer SIEMPRE visible al fondo: el técnico firma y confirma sin
+     perseguir el botón al final del scroll. Sombra para despegarlo. */
+  .firma-modal .modal-footer{
+    flex:0 0 auto;
+    background:#fafafa;
+    box-shadow:0 -4px 14px rgba(0,0,0,.10);
+    padding:12px 14px;
+    padding-bottom:calc(12px + env(safe-area-inset-bottom));
+    /* mobile.css ya apila los .btn full-width (column-reverse); reforzamos
+       el touch target del CTA principal. */
+  }
+  .firma-modal .modal-footer .btn{ min-height:48px; font-size:.95rem; }
+  /* El modal de aprobación tiene un spacer flexible (.flex-grow-1) que en
+     el footer apilado (column-reverse) deja un hueco vacío. Lo colapsamos. */
+  #modalAprobacion .modal-footer > .flex-grow-1{ display:none; }
+
+  /* Canvas de firma: el ancho manda; alto algo menor en pantallas
+     pequeñas para que quepan ambas firmas (técnico + cliente) + footer
+     sin saltos. Sigue siendo amplio para firmar con el dedo. */
+  .firma-canvas-wrap canvas{ height:200px; }
+
+  /* Header del banner del modal de firma: que el botón cerrar no se
+     pegue al borde y sea fácil de tocar. */
+  .firma-modal .firma-banner .btn-close{ padding:.7rem; }
+
+  /* Compromisos de la firma: ya van en 1 columna (<680px). Compactamos
+     el padding para no robar tanto scroll antes de la firma. */
+  .resp-firma-card{ padding:12px 14px; margin-bottom:14px; }
+}
+
+/* ── iPhone SE / pantallas muy angostas (≤360px) ── */
+@media (max-width: 360px){
+  .firma-modal .modal-body{ padding:12px; }
+  .firma-canvas-wrap canvas{ height:180px; }
+  /* Toolbar de firma: que los colores no empujen el "Deshacer" fuera —
+     dejamos que el grupo de colores baje a su propia línea si hace falta. */
+  .firma-toolbar .firma-color-pick{ margin-left:0; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CHECKLIST — controles táctiles en anchos angostos (≤480px)
+   Los pills Sí/No/N-A y aprobado/alerta/falla con flex-wrap podían
+   quebrarse en renglones desparejos. Los pasamos a una grilla de 3
+   columnas iguales para que queden alineados y bien tocables.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 480px){
+  .tx-tarea .ctrl.tx-btn-group{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:8px;
+  }
+  .tx-tarea .ctrl.tx-btn-group .tx-btn-pill{
+    width:100%; padding-left:6px; padding-right:6px;
+    justify-content:center; display:inline-flex; align-items:center;
+    font-size:.84rem;
+  }
+  /* Botón "Agregar foto" desktop-zone oculto en móvil; el botón móvil
+     ya es full-width 56px. Las miniaturas resultantes, táctiles. */
+  .tx-tarea .foto-result img{ width:72px; height:72px; }
+  /* Inputs/selects/textarea de la tarea a 16px (anti-zoom iOS) en móvil. */
+  .tx-tarea input[type="text"], .tx-tarea input[type="number"],
+  .tx-tarea input[type="datetime-local"], .tx-tarea select,
+  .tx-tarea textarea{ font-size:16px; }
+}
 </style>
 
 <div class="tx-wrap">
