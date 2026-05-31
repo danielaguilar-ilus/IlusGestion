@@ -2960,6 +2960,12 @@ async function confirmarVisitaMulti() {
             <button class="btn btn-sm btn-outline-secondary" onclick="analizarContrato({{ ct.id }}, this)" title="Re-analizar con IA">
               <i class="bi bi-arrow-clockwise"></i>
             </button>
+            {% if ct.ai_analizado %}
+            <a class="btn btn-sm btn-outline-dark" href="/mantenciones/api/contratos/{{ ct.id }}/analisis/pdf"
+               target="_blank" rel="noopener" title="Descargar análisis en PDF">
+              <i class="bi bi-file-earmark-pdf"></i>
+            </a>
+            {% endif %}
             {% if permissions.superadmin %}
             <button class="btn btn-sm btn-outline-warning" onclick="reSubirContrato({{ ct.id }}, '{{ (ct.nombre or 'contrato')|e }}')"
                     title="Re-subir contrato (si se perdió por deploy)">
@@ -3515,6 +3521,26 @@ async function confirmarVisitaMulti() {
             <i class="bi bi-plus me-1"></i>Agregar equipo
           </button>
           <hr class="my-2">
+
+          {# ── REDACTAR CON IA (Daniel 2026-05-30): la IA escribe objetivos /
+             trabajos / observaciones / recomendaciones por máquina a partir de
+             notas rápidas del técnico. No guarda: rellena el formulario. ── #}
+          <div class="rep-ia-redactar mb-3"
+               style="background:linear-gradient(135deg,#faf5ff,#eef2ff);border:1px solid #ddd6fe;border-radius:12px;padding:12px 14px">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <i class="bi bi-stars" style="color:#7c3aed;font-size:1.1rem"></i>
+              <span class="fw-bold" style="font-size:.9rem;color:#5b21b6">Redactar informe con IA</span>
+            </div>
+            <textarea id="repIANotas" class="form-control form-control-sm mb-2" rows="2"
+                      placeholder="Notas rápidas para la IA: qué pidió el cliente, qué se hizo, hallazgos, repuestos usados… La IA redacta los objetivos, trabajos, observaciones y recomendaciones por máquina."></textarea>
+            <button type="button" class="btn btn-sm fw-bold" style="background:#7c3aed;color:#fff"
+                    onclick="repRedactarIA(this)">
+              <i class="bi bi-magic me-1"></i>Redactar con IA
+            </button>
+            <span class="text-muted ms-2" style="font-size:.74rem">
+              Rellena Objetivos · Trabajos · Observaciones · Recomendaciones por máquina
+            </span>
+          </div>
 
           {# ── SECCIONES NARRATIVAS ── #}
           <div class="row g-3">
@@ -8819,7 +8845,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530d"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260530f"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

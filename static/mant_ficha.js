@@ -4711,7 +4711,7 @@ async function analizarContrato(ctid, btn) {
       }
       // Mostramos el análisis 360° EN VIVO desde data.resultado.
       // Al cerrar el modal recargamos para refrescar el dashboard persistido del servidor.
-      _mostrarAnalisisContrato360(data.resultado || {});
+      _mostrarAnalisisContrato360(data.resultado || {}, ctid);
       // El botón se restituye visualmente (igual va a recargar al cerrar el modal).
       btn.disabled = false;
       btn.innerHTML = orig;
@@ -4752,13 +4752,13 @@ async function analizarContrato(ctid, btn) {
 // Renderiza el JSON enriquecido (exposición, garantía, cláusulas sugeridas,
 // propuestas comerciales y rentabilidad) en el modal reusable #modalAIResult.
 // Todo el texto que viene del JSON se escapa con escHtml() antes de inyectarse.
-function _mostrarAnalisisContrato360(res) {
+function _mostrarAnalisisContrato360(res, ctid) {
   res = res || {};
   const titleEl = document.getElementById('aiResultTitle');
   const bodyEl  = document.getElementById('aiResultBody');
   if (!bodyEl) { location.reload(); return; }   // sin modal → fallback al flujo viejo
   if (titleEl) titleEl.textContent = 'Análisis 360° del contrato';
-  bodyEl.innerHTML = _ctaRenderHTML(res);
+  bodyEl.innerHTML = _ctaRenderHTML(res, ctid);
 
   const modalEl = document.getElementById('modalAIResult');
   const modal = new bootstrap.Modal(modalEl);
@@ -4800,13 +4800,23 @@ function _ctaHead(emoji, titulo, color) {
 }
 
 // Construye TODO el HTML del análisis 360°.
-function _ctaRenderHTML(res) {
+function _ctaRenderHTML(res, ctid) {
   const score = Number(res.score) || 0;
   const sc = score >= 70 ? '#16a34a' : score >= 40 ? '#f59e0b' : '#dc2626';
   const scText = score >= 80 ? 'Excelente' : score >= 60 ? 'Bueno' : score >= 40 ? 'Regular' : 'Crítico';
   const riesgo = _ctaSemaforo(res.nivel_riesgo);
 
   let h = '';
+
+  // Barra de acciones: exportar el análisis como documento PDF corporativo ILUS.
+  if (ctid) {
+    h += `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+      <button class="btn btn-sm btn-outline-dark fw-semibold"
+              onclick="window.open('/mantenciones/api/contratos/${ctid}/analisis/pdf','_blank','noopener')">
+        <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
+      </button>
+    </div>`;
+  }
 
   // ── HERO: score + nivel de riesgo + resumen ──
   h += `<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;
@@ -7093,6 +7103,78 @@ async function eliminarReporte(rid) {
   if (!ok) return;
   const r = await fetch(`/mantenciones/api/reportes/${rid}`,{method:'DELETE'});
   if (r.ok) cargarReportes();
+}
+
+// ─── Reporte: la IA REDACTA el contenido (objetivos/trabajos/observaciones) ──
+// A diferencia de repAnalizarIA (diagnóstico de salud), esto genera el TEXTO del
+// informe a partir de notas rápidas del técnico. No guarda: rellena el formulario.
+async function repRedactarIA(btn) {
+  const notas        = (document.getElementById('repIANotas')?.value || '').trim();
+  const antecedentes = (document.getElementById('repAntecedentes')?.value || '').trim();
+  const asunto       = (document.getElementById('repAsunto')?.value || '').trim();
+  const hayMaquinas  = (_repMaquinas || []).some(m => (m.sku || '').trim() || (m.descripcion || '').trim());
+  if (!notas && !antecedentes && !asunto && !hayMaquinas) {
+    ilusToast('Escribe primero el asunto, la solicitud del cliente o unas notas para la IA.', { type:'warning' });
+    return;
+  }
+  // Si ya hay contenido redactado, confirmar antes de reemplazar.
+  const hayContenido = (_repObjetivos||[]).some(v=>v&&v.trim())
+                    || (_repTrabajos||[]).some(v=>v&&v.trim())
+                    || (_repObservaciones||[]).some(v=>v&&v.trim());
+  if (hayContenido) {
+    const ok = await ilusConfirm({
+      title: 'Redactar con IA',
+      message: 'Esto reemplazará Objetivos, Trabajos y Observaciones con la redacción de la IA.',
+      sub: 'Podrás revisar y editar todo antes de guardar.',
+      okLabel: 'Redactar', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+  }
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Redactando…';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/reportes/redactar-ia`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        tipo:           document.getElementById('repTipo')?.value || 'mantencion',
+        garantia_aplica: document.getElementById('rep_gar_si')?.checked || false,
+        asunto, antecedentes, notas,
+        maquinas:       _repMaquinas,
+      })
+    });
+    const data = await r.json();
+    if (!data.ok) {
+      await ilusAlert({ title:'No se pudo redactar', message: data.error || 'Error desconocido', type:'error' });
+      return;
+    }
+    const res = data.resultado || {};
+    if (res.asunto_sugerido && !asunto) {
+      document.getElementById('repAsunto').value = res.asunto_sugerido;
+    }
+    if (res.antecedentes && !antecedentes) {
+      document.getElementById('repAntecedentes').value = res.antecedentes;
+    }
+    if (res.objetivos     && res.objetivos.length)     _repObjetivos     = res.objetivos;
+    if (res.trabajos      && res.trabajos.length)      _repTrabajos      = res.trabajos;
+    if (res.observaciones && res.observaciones.length) _repObservaciones = res.observaciones;
+    // Observación/recomendación por máquina: mapear por SKU.
+    (res.maquinas || []).forEach(rm => {
+      if (!rm.observacion) return;
+      const m = (_repMaquinas || []).find(x => (x.sku || '') && x.sku === rm.sku);
+      if (m) m.observacion = rm.observacion;
+    });
+    repRenderLista('Objetivos');
+    repRenderLista('Trabajos');
+    repRenderLista('Observaciones');
+    repRenderMaquinas();
+    ilusToast('✓ Borrador redactado por la IA. Revísalo y guarda.', { type:'success' });
+  } catch (e) {
+    await ilusAlert({ title:'Error de conexión', message: e.message || String(e), type:'error' });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
 }
 
 async function repAnalizarIA() {
