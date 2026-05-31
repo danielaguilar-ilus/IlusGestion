@@ -257,7 +257,11 @@
     }
 
     @media(max-width:600px){
-      .stepper{grid-template-columns:1fr;gap:14px}
+      /* Daniel 30/05/2026 (responsive_retiros): el stepper de 4 nodos NO debe
+         quedar en fila en celular (se superponía el texto). Incluimos
+         `.stepper.stepper-4` para igualar la especificidad de la regla
+         desktop `.stepper.stepper-4{...}` y forzar el apilado vertical. */
+      .stepper,.stepper.stepper-4{grid-template-columns:1fr;gap:14px}
       .stepper::before,.stepper-fill{display:none}
       .step{display:grid;grid-template-columns:auto 1fr;gap:16px;text-align:left;align-items:center}
       .step .circle{width:54px;height:54px;font-size:1.3rem;margin:0}
@@ -404,9 +408,13 @@
       /* Botones full width en mobile */
       .btns .btn-act{width:100%}
 
-      /* Pub-top reorganizado */
-      .pub-top{padding:12px 14px}
+      /* Pub-top reorganizado — header fijo compacto (no comerse pantalla).
+         Daniel 30/05/2026 (responsive_retiros): logo + paddings reducidos
+         y respeto de safe-area superior del iPhone. */
+      .pub-top{padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top,0px))}
       .pub-top-inner{gap:8px}
+      .pub-top-inner .logo-wrap{width:172px;height:46px}
+      .pub-top-inner .logo-wrap img{transform:scale(1.55)}
 
       /* Historial colapsable: padding más ajustado */
       details summary{padding:6px 0}

@@ -831,8 +831,30 @@
       input[type="tel"],input[type="date"],input[type="time"],input[type="number"],
       textarea,select{font-size:16px !important}
 
+      /* ── Más ancho útil: reducir padding lateral del shell ── */
+      .shell{padding:24px 12px}
+
       /* ── Botones full-width en mobile ── */
-      .submit-btn,.btn-ilus,button[type="submit"]{width:100%;min-height:48px}
+      .btn-ilus,button[type="submit"]{width:100%;min-height:48px}
+
+      /* ── CTA principal SIEMPRE VISIBLE en mobile (barra inferior fija) ──
+         El formulario es largo; el cliente debe poder enviar sin tener que
+         scrollear hasta el final. Hacemos el MISMO botón (sigue siendo el
+         <button type=submit> del form, no duplicamos nada) fijo al fondo del
+         viewport. Respeta la safe-area del iPhone y se eleva con sombra.
+         `body.sending` lo oculta para no taparse con el overlay de envío. */
+      .submit-btn{
+        min-height:52px;margin-top:20px;
+        position:fixed;
+        left:12px;right:12px;width:auto;
+        bottom:calc(10px + env(safe-area-inset-bottom,0px));
+        z-index:40;
+        box-shadow:0 12px 30px rgba(230,0,0,.40), 0 -1px 0 rgba(255,255,255,.65) inset, 0 0 0 6px rgba(250,250,250,.75);
+      }
+      body.sending .submit-btn{display:none}
+      /* Espacio al fondo del form para que el contenido final (nota de
+         privacidad) no quede tapado por el botón fijo. */
+      #form-solicitud .form-body{padding-bottom:108px}
 
       /* ── Touch targets >= 44x44 ── */
       .slot-item{min-height:48px}
@@ -2386,6 +2408,7 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
     void overlay.offsetWidth;
     requestAnimationFrame(() => overlay.classList.add('active'));
     document.body.style.overflow = 'hidden';
+    document.body.classList.add('sending'); // oculta el CTA fijo mobile bajo el overlay
 
     // Animaciones RÁPIDAS (~600 ms total) — solo para que el ojo perciba
     // los 3 pasos. El cliente ya tiene su código en <1 s.
@@ -2401,6 +2424,7 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
       setTimeout(() => { overlay.hidden = true; }, 280);
       document.body.style.overflow = '';
     }
+    document.body.classList.remove('sending'); // re-muestra el CTA fijo mobile
     if (btn){
       btn.classList.remove('is-loading');
       btn.disabled = false;
