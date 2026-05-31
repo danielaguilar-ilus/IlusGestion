@@ -561,14 +561,21 @@ body {
     position: sticky;
     top: 0;
     z-index: 3;
-    background: #fff;   /* opaco; los modales con header oscuro usan style inline → gana */
   }
   .modal.show .modal-footer {
     position: sticky;
     bottom: 0;
     z-index: 3;
-    background: #fff;   /* evita que el contenido se vea por detrás al hacer scroll */
     padding-bottom: calc(.6rem + env(safe-area-inset-bottom, 0px));
+  }
+  /* Fondo opaco para que el contenido no se transparente por detrás al
+     hacer scroll. Va en :where() (especificidad 0) a propósito: así NO pisa
+     el fondo propio de los modales con header `bg-dark text-white` (clase),
+     `text-bg-*` o style inline — esos ganan y conservan su color. Sin esto,
+     `.modal.show .modal-header` (0,3,0) vencía a `.modal-header.bg-dark`
+     (0,2,0) y dejaba texto blanco sobre blanco = header ilegible. */
+  :where(.modal.show .modal-header, .modal.show .modal-footer) {
+    background: #fff;
   }
 }
 
