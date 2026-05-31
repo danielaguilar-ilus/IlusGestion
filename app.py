@@ -36341,7 +36341,12 @@ def mant_visita_cerrar(vid):
 # Razones válidas para saltar un equipo. Cualquier otra cae como 'otro'.
 _RAZONES_SALTADO_VALIDAS = (
     "no_encontrado", "dado_de_baja", "danado_inaccesible",
-    "cliente_lo_quito", "otro"
+    "cliente_lo_quito", "otro",
+    # 2026-05-31 (Fase 3 — cobertura de tareas): causales ampliadas. Una tarea/
+    # equipo no ejecutado debe quedar con una causal clara + observación
+    # obligatoria (ya exigida, mín. 5 chars). No se borran las antiguas (compat).
+    "sin_acceso", "cliente_no_permite", "equipo_en_uso", "sin_energia",
+    "requiere_repuesto", "reagendar", "no_aplica",
 )
 
 # Estados válidos para el campo estado_revision.
