@@ -2704,6 +2704,13 @@ async function enviarAManifiesto(){
 
   btn.disabled = true;
   btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Enviando…';
+  // Barra de progreso dentro del modal
+  _mfShowProgress([
+    { ms: 100,  pct: 20, txt: '📤 Enviando datos…' },
+    { ms: 500,  pct: 45, txt: '📦 Registrando en manifiesto…' },
+    { ms: 1200, pct: 70, txt: '🔗 Vinculando productos…' },
+    { ms: 2200, pct: 90, txt: '⏳ Casi listo…' },
+  ]);
   try {
     const r = await fetch('/transporte/api/cubicador/enviar-manifiesto', {
       method: 'POST',
@@ -2711,19 +2718,25 @@ async function enviarAManifiesto(){
       body: JSON.stringify(payload),
     });
     const d = await r.json();
+    _mfFinishProgress();
     if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
     cerrarModalManifiesto();
     if (window.ilusToast) {
       ilusToast(
         d.duplicate
           ? `Ya estaba en el manifiesto ${d.correlativo || ('#'+d.manifest_id)}`
-          : `Enviado al manifiesto ${d.correlativo || ('#'+d.manifest_id)}`,
+          : `✓ Enviado al manifiesto ${d.correlativo || ('#'+d.manifest_id)}`,
         { type: d.duplicate ? 'warning' : 'success' }
       );
     }
-    // Redirigir al detalle del manifiesto
-    setTimeout(() => { window.location.href = `/transporte/manifiestos/${d.manifest_id}`; }, 1100);
+    // Limpiar el cubicador para ingresar la siguiente factura SIN recargar
+    _resetCubicadorParaSiguiente({
+      manifest_id:   d.manifest_id,
+      correlativo:   d.correlativo,
+      duplicate:     d.duplicate,
+    });
   } catch(e) {
+    _mfFinishProgress();
     alertBox.textContent = 'Error: ' + e.message;
     alertBox.style.display = '';
     if (window.ilusToast) ilusToast('Error al enviar: ' + e.message, { type:'error' });
@@ -2731,6 +2744,76 @@ async function enviarAManifiesto(){
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar al manifiesto';
   }
+}
+
+// ── Barra de progreso del modal "Enviar a manifiesto" ──
+let _mfProgressTimers = [];
+function _mfShowProgress(steps){
+  const bar = document.getElementById('mfProgressBar');
+  if (!bar) return;
+  const fill = document.getElementById('mfProgressFill');
+  const msg  = document.getElementById('mfProgressMsg');
+  bar.style.display = 'block';
+  if (fill) fill.style.width = '8%';
+  if (msg)  msg.textContent  = 'Iniciando…';
+  _mfProgressTimers.forEach(t => clearTimeout(t));
+  _mfProgressTimers = [];
+  steps.forEach(s => {
+    _mfProgressTimers.push(setTimeout(() => {
+      if (fill) fill.style.width = s.pct + '%';
+      if (msg)  msg.textContent  = s.txt;
+    }, s.ms));
+  });
+}
+function _mfFinishProgress(){
+  _mfProgressTimers.forEach(t => clearTimeout(t));
+  _mfProgressTimers = [];
+  const bar  = document.getElementById('mfProgressBar');
+  const fill = document.getElementById('mfProgressFill');
+  if (fill) fill.style.width = '100%';
+  setTimeout(() => { if (bar) bar.style.display = 'none'; }, 350);
+}
+
+// ── Reset del cubicador para ingresar siguiente factura SIN recargar ──
+function _resetCubicadorParaSiguiente(info){
+  info = info || {};
+  // 1) Limpiar estado
+  _docData = null;
+  _courierSel = null;
+  // 2) Ocultar todas las cards de resultado
+  ['cardDatos','cardCubaje','cardNotas','cardCouriers','cardAcciones','cardFlujo']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  // 3) Limpiar banner de documento
+  const banner = document.getElementById('docBanner');
+  if (banner) banner.innerHTML = '';
+  // 4) Mostrar mini-banner verde de "última factura enviada" con link al manifiesto
+  const tip = document.getElementById('docBanner');
+  if (tip && info.manifest_id){
+    const corr = info.correlativo || ('#' + info.manifest_id);
+    const verbo = info.duplicate ? 'Ya estaba en' : 'Enviada a';
+    tip.innerHTML = `
+      <div style="background:#dcfce7;border:1px solid #16a34a;border-left:4px solid #16a34a;
+                  border-radius:10px;padding:12px 16px;margin-bottom:14px;
+                  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="color:#166534;font-weight:600;font-size:.92rem">
+          <i class="bi bi-check-circle-fill me-1"></i>
+          ${verbo} manifiesto <strong>${corr}</strong> · Ingresa la siguiente factura ↓
+        </div>
+        <a href="/transporte/manifiestos/${info.manifest_id}" target="_blank"
+           style="background:#16a34a;color:#fff;padding:6px 14px;border-radius:50px;
+                  font-size:.78rem;font-weight:700;text-decoration:none;white-space:nowrap">
+          <i class="bi bi-box-arrow-up-right"></i> Ver manifiesto
+        </a>
+      </div>`;
+  }
+  // 5) Limpiar el número de documento y enfocar para tipear el siguiente
+  const nudoInput = document.getElementById('docNudo');
+  if (nudoInput){ nudoInput.value = ''; setTimeout(() => nudoInput.focus(), 200); }
+  // 6) Limpiar inputs del cliente que el operador pudo haber tocado
+  ['cli-tel','cli-email','cli-dir','cli-comuna','cli-bultos','cli-notas']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  // 7) Scroll suave al input para que se vea bien en mobile
+  if (nudoInput) nudoInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 function imprimir()      { window.print(); }
 function exportarExcel() { if(!_docData) return; alert('Generando Excel…'); }
@@ -2804,6 +2887,17 @@ function setBuscarLoading(on){
       </div>
 
       <div id="mfAlert" class="mf-alert" style="display:none"></div>
+
+      <div id="mfProgressBar" style="display:none;margin-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span id="mfProgressMsg" style="font-size:.78rem;color:#374151;font-weight:600">Iniciando…</span>
+        </div>
+        <div style="background:#f3f4f6;border-radius:50px;overflow:hidden;height:7px;border:1px solid #e5e7eb">
+          <div id="mfProgressFill" style="height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);
+                                          width:0%;transition:width .4s ease-out;border-radius:50px;
+                                          box-shadow:0 0 6px rgba(22,163,74,.4)"></div>
+        </div>
+      </div>
     </div>
 
     <div class="modal-mf-foot">

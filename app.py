@@ -17344,6 +17344,33 @@ def tr_manifiesto_export(mid):
     NO bloquean el export — solo se resaltan en rojo (solo alertar).
     """
     try:
+        return _tr_manifiesto_export_impl(mid)
+    except Exception as e:
+        import traceback, html as _htmlmod
+        tb = traceback.format_exc()
+        print(f"[manifiesto_export {mid}] ERROR:\n{tb}", flush=True)
+        msg = _htmlmod.escape(f"{type(e).__name__}: {e}")
+        # Página de error amigable (no extiende base.html para evitar cascada)
+        return (f"""<!doctype html><html><head><meta charset="utf-8">
+<title>Error exportando manifiesto</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:760px;margin:60px auto;padding:0 24px;color:#0a0a0a}}
+.box{{background:#fff;border:1px solid #fee2e2;border-left:5px solid #dc2626;border-radius:12px;
+padding:24px;box-shadow:0 6px 22px -10px rgba(220,38,38,.18)}}
+h1{{color:#dc2626;font-size:1.25rem;margin:0 0 12px}}
+pre{{background:#fee2e2;color:#7f1d1d;padding:10px 14px;border-radius:8px;font-size:.85rem;
+overflow-x:auto;margin:14px 0 0}}
+a{{color:#dc2626;font-weight:700;text-decoration:none}}
+a:hover{{text-decoration:underline}}</style></head><body>
+<div class="box">
+<h1>⚠ No se pudo generar el export del manifiesto #{mid}</h1>
+<p>El manifiesto está guardado, pero hubo un error al armar el Excel. Manda esta captura a soporte:</p>
+<pre>{msg}</pre>
+<p style="margin-top:18px"><a href="/transporte/manifiestos/{mid}">← Volver al manifiesto</a></p>
+</div></body></html>""", 500)
+
+
+def _tr_manifiesto_export_impl(mid):
+    try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment
     except Exception:
@@ -17358,6 +17385,9 @@ def tr_manifiesto_export(mid):
         return redirect(url_for("tr_manifiestos"))
 
     items = _tr_manifiesto_items_export(mid)
+    if not items:
+        flash("Este manifiesto no tiene items para exportar.", "warning")
+        return redirect(url_for("tr_manifiesto_detalle", mid=mid))
 
     fmt_row = mysql_fetchone(
         "SELECT formato_export FROM transport_couriers WHERE LOWER(nombre)=LOWER(%s) LIMIT 1",
@@ -17527,7 +17557,8 @@ def tr_manifiesto_export(mid):
         _fname = f"DocumentosFedEx_{_stamp}.xlsx"
     elif formato in ("simplyroute", "clickex"):
         # Para SimplyRoute usamos el nombre del courier (Felca/Milling); Clickex su propio.
-        _courier = (man.get("courier") or "").strip().split()[-1] or "Manifiesto"
+        _parts = (man.get("courier") or "").strip().split()
+        _courier = (_parts[-1] if _parts else "") or ("Clickex" if formato == "clickex" else "Manifiesto")
         _courier_clean = _courier.replace("/", "-").replace(" ", "_")
         _fname = f"{_courier_clean}_{_stamp}.xlsx"
     else:
