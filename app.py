@@ -17426,6 +17426,14 @@ def _tr_manifiesto_export_impl(mid):
     def _falta(v):
         return not str(v or "").strip()
 
+    # Sanitiza strings para Excel: openpyxl lanza IllegalCharacterError si un
+    # texto trae caracteres de control (llegan desde el ERP en notas/dirección/
+    # observaciones). Los quitamos antes de escribir la celda. (Daniel 30/05/2026)
+    import re as _re_xc
+    _ILLEGAL_XLSX = _re_xc.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+    def _xc(v):
+        return _ILLEGAL_XLSX.sub("", v) if isinstance(v, str) else v
+
     if formato == "fedex":
         ws.title = "FedEx"
         s = _tr_sender_cfg()
@@ -17458,7 +17466,7 @@ def _tr_manifiesto_export_impl(mid):
                 "FEDEX_PRIORITY", "CLP", "Y", "Y", "Y", "ES", "Y",
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 15).fill = MISS_FILL
 
@@ -17488,7 +17496,7 @@ def _tr_manifiesto_export_impl(mid):
                 "", "", "", "", "",
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 21).fill = MISS_FILL
 
@@ -17520,7 +17528,7 @@ def _tr_manifiesto_export_impl(mid):
                 nbult,
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 6).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 7).fill = MISS_FILL
 
@@ -17537,7 +17545,7 @@ def _tr_manifiesto_export_impl(mid):
                 max(1, int(it.get("n_bultos") or 1)),
             ]
             for ci, v in enumerate(row, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
             if _falta(it.get("telefono")): ws.cell(ri, 5).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 6).fill = MISS_FILL
 
@@ -18792,7 +18800,7 @@ def transporte_couriers_export():
             ] + [precios.get(k,'') for k in all_keys]
 
             for ci, v in enumerate(row_vals, 1):
-                ws.cell(ri, ci, v)
+                ws.cell(ri, ci, _xc(v))
 
     if not wb.sheetnames:
         ws = wb.create_sheet("Sin datos")
@@ -25402,6 +25410,36 @@ def init_mantenciones_tables():
                     FOREIGN KEY (visita_origen) REFERENCES mant_visitas(id)  ON DELETE SET NULL,
                     INDEX idx_maquina  (maquina_id),
                     INDEX idx_principal(es_principal)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # ════════════════════════════════════════════════════════════
+            # 2026-05-31 (Daniel — Fase 2 OT) — IDENTIDAD DEL FIRMANTE
+            # Quién firma la recepción de la OT: nombre + RUT REAL del que
+            # firma (no se asume el contacto principal). Guarda el contacto
+            # SUGERIDO y el valor FINAL si fueron distintos, + trazabilidad
+            # (técnico, ip, user_agent). Fuente de verdad de la firma cliente.
+            # ════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_ot_signatures (
+                    id                      INT AUTO_INCREMENT PRIMARY KEY,
+                    ot_id                   INT NOT NULL,
+                    suggested_contact_name  VARCHAR(200) NULL,
+                    suggested_contact_rut   VARCHAR(20)  NULL,
+                    signer_name             VARCHAR(200) NOT NULL,
+                    signer_rut              VARCHAR(20)  NOT NULL,
+                    signer_role             VARCHAR(120) NULL,
+                    signer_phone            VARCHAR(40)  NULL,
+                    signer_email            VARCHAR(190) NULL,
+                    signature_url           TEXT NULL,
+                    signed_at               DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    signed_by_technician_id INT NULL,
+                    ip                      VARCHAR(64)  NULL,
+                    user_agent              VARCHAR(400) NULL,
+                    created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ot_id) REFERENCES mant_visitas(id) ON DELETE CASCADE,
+                    INDEX idx_ot  (ot_id),
+                    INDEX idx_rut (signer_rut)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
@@ -33998,6 +34036,44 @@ def _ia_job_lanzar(endpoint: str, fn, *, entidad_tipo=None, entidad_id=None,
     return job_id
 
 
+def _coerce_json_from_llm(raw):
+    """Extrae un objeto/array JSON de una respuesta de LLM de forma tolerante.
+
+    Los modelos suelen "ensuciar" el JSON de formas predecibles; este helper
+    las absorbe todas:
+      - lo envuelven en un fence markdown  ```json ... ```
+      - agregan prosa antes o después del bloque
+      - dejan comas colgantes  (",}"  o  ",]")  que rompen json.loads
+
+    Devuelve el objeto Python ya parseado, o lanza ValueError si NO hay JSON
+    recuperable (respuesta vacía o truncada a la mitad por max_tokens).
+    """
+    if not raw or not str(raw).strip():
+        raise ValueError("respuesta vacía")
+    s = str(raw).strip()
+    # 1) Si viene dentro de un bloque ```...``` nos quedamos con su contenido.
+    _fence = re.search(r"```(?:json)?\s*(.+?)\s*```", s, re.DOTALL | re.IGNORECASE)
+    if _fence:
+        s = _fence.group(1).strip()
+    # 2) Intento directo.
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    # 3) Recortar al primer {…última } (o [ … ]) y reintentar, quitando además
+    #    comas colgantes (",}" / ",]") que invalidan el JSON.
+    for _op, _cl in (("{", "}"), ("[", "]")):
+        _i, _j = s.find(_op), s.rfind(_cl)
+        if 0 <= _i < _j:
+            _frag = s[_i:_j + 1]
+            for _cand in (_frag, re.sub(r",\s*([}\]])", r"\1", _frag)):
+                try:
+                    return json.loads(_cand)
+                except Exception:
+                    continue
+    raise ValueError("no parseable")
+
+
 def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                  expect_json=True, model=None, temperature=0.2,
                  attachments=None, tier=None,
@@ -34085,34 +34161,29 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                         tokens_in=_tok_in, tokens_out=_tok_out,
                         elapsed_ms=_elapsed, ok=True)
                 return raw, None
-            # Limpiar bloque ```json ... ```
-            if raw.startswith("```"):
-                raw = raw.split("```")[1] if "```" in raw[3:] else raw
-                if raw.lower().startswith("json"):
-                    raw = raw[4:].lstrip()
-                raw = raw.split("```")[0].strip()
+            # Parseo tolerante: absorbe fences ```json, prosa alrededor y comas
+            # colgantes (ver _coerce_json_from_llm).
             try:
-                _parsed = json.loads(raw)
+                _parsed = _coerce_json_from_llm(raw)
                 _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
                         entidad_id=log_entidad_id, modelo=m, tier=tier,
                         tokens_in=_tok_in, tokens_out=_tok_out,
                         elapsed_ms=_elapsed, ok=True)
                 return _parsed, None
-            except json.JSONDecodeError:
-                # Intentar extraer JSON aunque haya texto adicional
-                idx_start = raw.find("{")
-                idx_end   = raw.rfind("}")
-                if idx_start >= 0 and idx_end > idx_start:
-                    try:
-                        _parsed = json.loads(raw[idx_start:idx_end+1])
-                        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
-                                entidad_id=log_entidad_id, modelo=m, tier=tier,
-                                tokens_in=_tok_in, tokens_out=_tok_out,
-                                elapsed_ms=_elapsed, ok=True)
-                        return _parsed, None
-                    except Exception:
-                        pass
-                last_err = f"Respuesta no parseable como JSON: {raw[:200]}"
+            except Exception:
+                # Distinguir el truncamiento (respuesta cortada por max_tokens)
+                # de un JSON realmente malformado o vacío: el mensaje cambia para
+                # que el usuario sepa qué hacer.
+                _stop = getattr(msg, "stop_reason", None)
+                if _stop == "max_tokens":
+                    last_err = ("La IA generó una respuesta más larga que el límite "
+                                "y se cortó a la mitad. Reintenta; si el documento es "
+                                "muy extenso, divídelo o súbelo más corto.")
+                elif not (raw or "").strip():
+                    last_err = ("La IA devolvió una respuesta vacía. "
+                                "Reintenta en unos segundos.")
+                else:
+                    last_err = f"Respuesta no parseable como JSON: {raw[:200]}"
         except Exception as e:
             err_str = str(e)
             last_err = err_str
@@ -35129,9 +35200,12 @@ Devuelve SOLO el JSON, sin texto adicional."""
 
     # Llamada unificada con fallback de modelos. Si el PDF es escaneado,
     # mandamos el PDF como attachment para que Claude lo procese visualmente.
+    # max_tokens alto (8000): el esquema pedido es grande (cláusulas jurídicas
+    # completas + propuestas + escenarios de exposición). Con 4000 la respuesta
+    # se truncaba a la mitad → "Respuesta no parseable como JSON". (Daniel 30/05/2026)
     resultado, err = _claude_call(
         prompt_usuario, prompt_sistema,
-        max_tokens=4000, expect_json=True,
+        max_tokens=8000, expect_json=True,
         attachments=pdf_b64_paginas if es_escaneado else None
     )
     if err:
@@ -36298,7 +36372,12 @@ def mant_visita_cerrar(vid):
 # Razones válidas para saltar un equipo. Cualquier otra cae como 'otro'.
 _RAZONES_SALTADO_VALIDAS = (
     "no_encontrado", "dado_de_baja", "danado_inaccesible",
-    "cliente_lo_quito", "otro"
+    "cliente_lo_quito", "otro",
+    # 2026-05-31 (Fase 3 — cobertura de tareas): causales ampliadas. Una tarea/
+    # equipo no ejecutado debe quedar con una causal clara + observación
+    # obligatoria (ya exigida, mín. 5 chars). No se borran las antiguas (compat).
+    "sin_acceso", "cliente_no_permite", "equipo_en_uso", "sin_energia",
+    "requiere_repuesto", "reagendar", "no_aplica",
 )
 
 # Estados válidos para el campo estado_revision.
@@ -40807,11 +40886,22 @@ def mant_ot_ejecutar(vid):
     _lev_id = visita.get("levantamiento_id")
     if _lev_id:
         try:
-            _lev_items = mysql_fetchall(
+            # PERF 2026-05-31 (ot_performance): este sync reconstruye la
+            # asociación equipo↔OT y solo hace falta UNA vez (cuando la OT aún
+            # no tiene equipos). Antes corría un INSERT IGNORE + commit en CADA
+            # apertura de la OT — una escritura inútil en el hot path del
+            # técnico. Ahora se evita con un COUNT barato: si ya hay equipos
+            # sincronizados, NO se vuelve a escribir (la apertura queda de solo
+            # lectura). Caso orphan (count=0) sigue reconstruyéndose igual.
+            _ya_sync = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_visita_equipos WHERE visita_id=%s",
+                (vid,)
+            ) or {}
+            _lev_items = [] if int(_ya_sync.get("n") or 0) > 0 else (mysql_fetchall(
                 "SELECT maquina_id FROM mant_levantamiento_items "
                 " WHERE levantamiento_id=%s AND maquina_id IS NOT NULL",
                 (_lev_id,)
-            ) or []
+            ) or [])
             if _lev_items:
                 # INSERT IGNORE por UNIQUE KEY uq_visita_maquina (visita_id, maquina_id)
                 _rows = [(vid, int(it["maquina_id"]),
@@ -41880,6 +41970,19 @@ def mant_ot_exec_gps(vid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _ot_firmante_cliente(vid):
+    """Última identidad del firmante cliente (mant_ot_signatures) para mostrar
+    su RUT/cargo en el PDF y el detalle de la OT. Devuelve {} si no hay firma."""
+    try:
+        r = mysql_fetchone(
+            "SELECT signer_rut, signer_role FROM mant_ot_signatures "
+            "WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,)
+        )
+        return dict(r) if r else {}
+    except Exception:
+        return {}
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
@@ -41898,22 +42001,63 @@ def mant_ot_firmar_revision(vid):
     nombre_tec = (d.get("firma_tecnico_nombre") or "").strip()[:200] or None
     firma_cli = (d.get("firma_cliente") or "").strip()
     nombre_cli = (d.get("firma_cliente_nombre") or "").strip()[:200] or None
+    # ── Identidad del firmante cliente (Fase 2 — Daniel 2026-05-31) ──
+    rut_cli    = (d.get("firma_cliente_rut") or "").strip()
+    cargo_cli  = (d.get("firma_cliente_cargo") or "").strip()[:120] or None
+    tel_cli    = (d.get("firma_cliente_tel") or "").strip()[:40] or None
+    email_cli  = (d.get("firma_cliente_email") or "").strip()[:190] or None
+    sug_nombre = (d.get("firma_cliente_sugerido_nombre") or "").strip()[:200] or None
+    sug_rut    = (d.get("firma_cliente_sugerido_rut") or "").strip()[:20] or None
 
     if not firma_tec:
         return jsonify({"ok": False, "error": "Falta la firma del técnico"}), 400
 
+    # Si el cliente firma, exigimos la identidad del firmante REAL: nombre +
+    # RUT chileno válido. NO se asume el contacto principal (puede recibir otra
+    # persona: encargado, conserjería, administración, etc.).
+    rut_cli_norm = None
+    if firma_cli:
+        if not nombre_cli:
+            return jsonify({"ok": False,
+                            "error": "Falta el NOMBRE de quien firma por el cliente.",
+                            "error_codigo": "FIRMANTE_SIN_NOMBRE"}), 400
+        _ok_rut, _rut_res = validar_rut(rut_cli)
+        if not _ok_rut:
+            return jsonify({"ok": False,
+                            "error": f"RUT del firmante inválido: {_rut_res}",
+                            "error_codigo": "FIRMANTE_RUT_INVALIDO"}), 400
+        rut_cli_norm = _formato_rut_chile(_rut_res) or _rut_res
+
     try:
-        # Verificar que todas las tareas obligatorias estén completas
-        pendientes = mysql_fetchone(
-            "SELECT COUNT(*) AS n FROM mant_visita_tareas "
-            " WHERE visita_id=%s AND obligatoria=1 AND COALESCE(completada,0)=0",
+        # ── Gate de cierre (Fase 10) ──────────────────────────────────────
+        # Una tarea obligatoria está CUBIERTA si se completó O si su equipo fue
+        # omitido con causal (estado_revision='saltado'). Así el técnico que SÍ
+        # justificó no queda bloqueado. Devolvemos QUÉ FALTA por equipo para que
+        # el frontend muestre el panel "No puedes cerrar todavía".
+        faltan_rows = mysql_fetchall(
+            "SELECT t.maquina_id, "
+            "       COALESCE(m.nombre, CONCAT('Equipo #', t.maquina_id)) AS nombre, "
+            "       COUNT(*) AS n "
+            "  FROM mant_visita_tareas t "
+            "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
+            " WHERE t.visita_id=%s AND t.obligatoria=1 AND COALESCE(t.completada,0)=0 "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_visita_equipos e "
+            "                    WHERE e.visita_id=t.visita_id AND e.maquina_id=t.maquina_id "
+            "                      AND e.estado_revision='saltado') "
+            " GROUP BY t.maquina_id, m.nombre "
+            " ORDER BY nombre",
             (vid,)
-        )
-        if pendientes and (pendientes.get("n") or 0) > 0:
+        ) or []
+        if faltan_rows:
+            faltantes = [f"{r['nombre']}: {int(r['n'])} tarea(s) obligatoria(s) sin cubrir"
+                         for r in faltan_rows]
+            total_pend = sum(int(r["n"]) for r in faltan_rows)
             return jsonify({
                 "ok": False,
-                "error": f"Quedan {pendientes['n']} tarea(s) obligatoria(s) sin completar.",
+                "error": (f"No puedes cerrar esta OT todavía: quedan {total_pend} "
+                          "tarea(s) obligatoria(s) sin completar ni justificar."),
                 "error_codigo": "TAREAS_PENDIENTES",
+                "faltantes": faltantes,
             }), 400
 
         u = getattr(g, "user", None) or {}
@@ -41942,6 +42086,25 @@ def mant_ot_firmar_revision(vid):
             " WHERE id=%s",
             (firma_tec_url, uid, nombre_tec, firma_cli_url, nombre_cli, vid)
         )
+        # ── Registro de identidad del firmante cliente (Fase 2) ──────────
+        # Persistimos quién firmó realmente (nombre + RUT validado) + el
+        # contacto sugerido (para auditar si cambió) + trazabilidad.
+        if firma_cli:
+            try:
+                _ua = (request.headers.get("User-Agent") or "")[:400]
+                _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+                       or request.remote_addr or "")[:64]
+                mysql_execute(
+                    "INSERT INTO mant_ot_signatures "
+                    "(ot_id, suggested_contact_name, suggested_contact_rut, "
+                    " signer_name, signer_rut, signer_role, signer_phone, signer_email, "
+                    " signature_url, signed_by_technician_id, ip, user_agent) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (vid, sug_nombre, sug_rut, nombre_cli, rut_cli_norm, cargo_cli,
+                     tel_cli, email_cli, firma_cli_url, uid, _ip, _ua)
+                )
+            except Exception as _e_sig:
+                print(f"[firma-signer] no se guardó identidad firmante vid={vid}: {_e_sig}", flush=True)
         # Marcar levantamiento como cerrado si la OT tenía uno
         v_info = mysql_fetchone(
             "SELECT levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
@@ -43113,6 +43276,7 @@ def mant_visita_pdf(vid):
     html = render_template(
         "mantenciones/ot_pdf.html",
         visita=visita,
+        firmante_cliente=_ot_firmante_cliente(vid),
         equipos=equipos,
         eq_idx=eq_idx,
         grupos=grupos,
@@ -43403,6 +43567,7 @@ def mant_ot_pdf_render(vid):
     return render_template(
         "mantenciones/ot_pdf.html",
         visita=visita,
+        firmante_cliente=_ot_firmante_cliente(vid),
         equipos=equipos,
         tecnicos_extra=tecnicos_extra,
         tareas=tareas,
@@ -45792,21 +45957,56 @@ ALLOWED_REPORT_IMG = {"jpg","jpeg","png","gif","webp"}
 ALLOWED_ADJUNTO    = {"pdf","doc","docx","jpg","jpeg","png","gif","webp","xlsx","xls"}
 
 
+def _load_reporte_full(rid):
+    """Carga reporte + datos de cliente + fotos, con los campos JSON ya
+    decodificados, listo para _reporte_to_pdf_html / _build_reporte_docx.
+    Devuelve (rep, cliente) o (None, None) si no existe."""
+    r = mysql_fetchone(
+        "SELECT r.*, c.razon_social, c.rut, c.contacto_nombre, c.contacto_tel, "
+        "c.contacto_email, c.direccion, c.comuna, c.ciudad "
+        "FROM mant_reportes r JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s",
+        (rid,)
+    )
+    if not r:
+        return None, None
+    rep = dict(r)
+    cliente = {
+        "razon_social":    rep.pop("razon_social", ""),
+        "rut":             rep.pop("rut", ""),
+        "contacto_nombre": rep.pop("contacto_nombre", ""),
+        "contacto_tel":    rep.pop("contacto_tel", ""),
+        "contacto_email":  rep.pop("contacto_email", ""),
+        "direccion":       rep.pop("direccion", ""),
+        "comuna":          rep.pop("comuna", ""),
+        "ciudad":          rep.pop("ciudad", ""),
+    }
+    for k in ("objetivos", "trabajos", "observaciones", "maquinas_json", "ai_acciones"):
+        if rep.get(k):
+            try: rep[k] = json.loads(rep[k])
+            except Exception: rep[k] = []
+    try:
+        fotos = mysql_fetchall(
+            "SELECT id,nombre,archivo_path,cloudinary_url FROM mant_contrato_adjuntos "
+            "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
+        ) or []
+        rep["fotos"] = [
+            {"nombre": f.get("nombre"),
+             "url": (f.get("cloudinary_url")
+                     or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")}
+            for f in fotos
+        ]
+    except Exception:
+        rep["fotos"] = []
+    return rep, cliente
+
+
 def _save_reporte_html_snapshot(rid):
     """Genera y persiste HTML del reporte en disco. Devuelve ruta relativa o None."""
     try:
-        r = mysql_fetchone(
-            "SELECT r.*, c.razon_social, c.rut FROM mant_reportes r "
-            "JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s", (rid,)
-        )
-        if not r: return None
-        rep = dict(r)
-        cliente = {"razon_social": rep.pop("razon_social",""), "rut": rep.pop("rut","")}
-        for k in ("objetivos","trabajos","observaciones","maquinas_json","ai_acciones"):
-            if rep.get(k):
-                try: rep[k] = json.loads(rep[k])
-                except: rep[k] = []
-        html = _reporte_to_html(rep, cliente)
+        rep, cliente = _load_reporte_full(rid)
+        if not rep: return None
+        # Snapshot = mismo documento corporativo que el PDF, pero sin auto-print.
+        html = _reporte_to_pdf_html(rep, cliente, auto_print=False)
         fname = f"informe_{rid}_{int(time.time())}.html"
         fpath = os.path.join(MANT_REPORTES_HTML, fname)
         with open(fpath, "w", encoding="utf-8") as fh:
@@ -45901,6 +46101,175 @@ def mant_reporte_crear(cid):
         conn.close()
 
 
+@app.route("/mantenciones/api/clientes/<int:cid>/reportes/redactar-ia", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_reporte_redactar_ia(cid):
+    """IA redacta el contenido narrativo del Informe Post Servicio.
+
+    A partir de los datos crudos del borrador (asunto, antecedentes/solicitud,
+    notas rápidas del técnico y máquinas intervenidas) genera objetivos,
+    trabajos realizados, observaciones generales y una observación/recomendación
+    por máquina, en tono profesional chileno. NO guarda nada: devuelve el JSON
+    para que el usuario lo revise en el formulario y luego guarde."""
+    cli = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"error": "Cliente no encontrado"}), 404
+    d = request.get_json(silent=True) or {}
+    tipo     = (d.get("tipo") or "mantencion").strip()
+    asunto   = (d.get("asunto") or "").strip()
+    ante     = (d.get("antecedentes") or "").strip()
+    notas    = (d.get("notas") or "").strip()
+    garantia = _parse_garantia_aplica(d.get("garantia_aplica"))
+    maquinas = d.get("maquinas") or []
+    if isinstance(maquinas, str):
+        try: maquinas = json.loads(maquinas)
+        except Exception: maquinas = []
+    if not (asunto or ante or notas or maquinas):
+        return jsonify({"error": "Faltan datos. Escribe al menos el asunto, la solicitud "
+                                 "del cliente o unas notas para que la IA redacte."}), 400
+
+    tipo_lbl = {"mantencion": "Mantención preventiva", "instalacion": "Instalación",
+                "inspeccion": "Inspección técnica",
+                "visita_tecnica": "Visita técnica / reparación",
+                "otro": "Servicio técnico"}.get(tipo, "Servicio técnico")
+    cobertura = ("Garantía (sin costo para el cliente)" if garantia
+                 else "Servicio pagado (puede recomendarse cotización si corresponde)")
+
+    # Resumen compacto y legible de las máquinas para el prompt.
+    maq_txt = ""
+    for i, m in enumerate(maquinas, 1):
+        if not isinstance(m, dict):
+            continue
+        det = []
+        if m.get("modelo"):   det.append(f"modelo {m['modelo']}")
+        if m.get("serie"):    det.append(f"serie {m['serie']}")
+        if m.get("repuesto"): det.append(f"repuesto declarado: {m['repuesto']}")
+        if str(m.get("garantia") or "").strip():
+            det.append(f"garantía: {m['garantia']}")
+        linea = f"SKU {m.get('sku') or '—'} · {m.get('descripcion') or 'equipo sin descripción'}"
+        if det:
+            linea += " (" + "; ".join(det) + ")"
+        maq_txt += f"  {i}. {linea}\n"
+    maq_txt = maq_txt or "  (el técnico no declaró equipos específicos)\n"
+
+    # ── PROMPT (sistema): rol experto + estilo + reglas anti-invención + few-shot.
+    prompt_sistema = """Eres REDACTOR TÉCNICO SENIOR de ILUS Fitness (marca de Sport and Health \
+Solutions SPA, Chile), experto en servicio técnico de equipamiento de gimnasio: trotadoras/cintas \
+de correr, elípticas, bicicletas (spinning, vertical, recumbent) y máquinas de fuerza \
+(selectorizadas, poleas, prensas).
+
+MISIÓN: convertir las notas rápidas y desordenadas de un técnico en terreno —más los datos de los \
+equipos— en un INFORME POST SERVICIO profesional, ordenado y listo para enviar al cliente. El \
+técnico ahorra tiempo: tú redactas en limpio y con criterio técnico.
+
+REGLAS DE ESTILO (obligatorias):
+1. Español de Chile, formal y neutro. Tercera persona impersonal: "Se realiza", "Se verifica", \
+"Se reemplaza", "Se recomienda". Nunca en primera persona.
+2. Una idea por ítem; frases concretas y técnicas. Cero relleno, cero marketing, cero superlativos.
+3. Terminología correcta del rubro: banda de trote, motor (AC/DC), placa controladora, \
+consola/tarjeta, sensor de velocidad, rodamientos, piola o cable de acero, polea, sistema \
+selectorizado, etc.
+4. NUNCA inventes datos. No inventes seriales, SKUs, modelos, mediciones, valores ni repuestos que \
+no aparezcan en la información entregada. Si un dato falta, no lo menciones. Mejor breve y veraz que \
+largo e inventado.
+5. Coherencia: los "trabajos" deben responder a los "objetivos"; las "observaciones" cierran con el \
+estado final del equipo y recomendaciones accionables (próxima mantención, repuestos a cotizar, \
+condiciones del lugar de instalación).
+6. Cobertura: si el servicio es en GARANTÍA, no sugieras cobros al cliente; si es PAGADO, puedes \
+recomendar cotizaciones cuando corresponda.
+
+CRITERIO PROFESIONAL (sé inteligente, no un loro):
+- Ordena y completa la REDACCIÓN y la ESTRUCTURA con criterio de un técnico competente: si las notas \
+dicen "cambié el controlador y quedó andando", infiere y describe los pasos lógicos del procedimiento \
+(desmontaje, reemplazo, prueba de funcionamiento) expresados con propiedad. PERO sigue PROHIBIDO \
+inventar DATOS DUROS: seriales, SKUs, modelos, marcas, mediciones o valores en pesos solo si vienen.
+- Agrega recomendaciones técnicas PERTINENTES al equipo cuando aporten valor real:
+  · Trotadoras/cintas: lubricación y centrado de banda, limpieza interna, circuito eléctrico estable.
+  · Máquinas de fuerza: inspección y tensado de piolas y poleas, lubricación de guías, ajuste de pernos.
+  · Bicicletas/elípticas: consola, sistema de resistencia, rodamientos y pedales.
+- Cierra con la próxima acción cuando aplique (p. ej. mantención preventiva sugerida cada 3 meses).
+
+GUÍA SEGÚN EL TIPO DE SERVICIO:
+- Mantención preventiva → revisión, limpieza, lubricación y ajustes; cierra con estado general y próxima mantención.
+- Instalación → armado, nivelación, puesta en marcha, pruebas y entrega/capacitación al cliente.
+- Reparación / visita técnica → estructura: diagnóstico → causa raíz → solución aplicada → resultado.
+- Inspección → estado de cada componente y recomendaciones priorizadas.
+
+SI HAY POCA INFORMACIÓN: redacta SOLO lo que las notas respaldan, de forma profesional y breve. No \
+rellenes con relleno vacío; un informe corto es válido si la visita fue simple.
+
+CONTENIDO A GENERAR:
+- asunto_sugerido: título corto y profesional del informe (ej.: "Reemplazo de placa controladora — Trotadora X3-S").
+- antecedentes: 1 a 3 frases que formalizan la solicitud o falla reportada por el cliente.
+- objetivos: 2 a 5 ítems con lo que se buscaba lograr en la visita.
+- trabajos: 3 a 8 ítems con las intervenciones efectivamente realizadas, en orden lógico.
+- observaciones: 2 a 5 ítems con hallazgos, estado final y recomendaciones.
+- maquinas: UNA entrada por cada equipo recibido, con su SKU intacto y una observación/recomendación \
+técnica específica de ESE equipo.
+
+EJEMPLO DE TONO (referencia de estilo, NO lo copies literal):
+  antecedentes: "El cliente reporta que la trotadora no enciende al accionar el interruptor principal."
+  trabajos: ["Se mide el voltaje en la toma de alimentación, verificando 220 V estables.",
+             "Se reemplaza la placa controladora por una unidad nueva.",
+             "Se ejecuta prueba de funcionamiento en velocidad baja, media y alta sin observaciones."]
+  observaciones: ["Se recomienda conectar el equipo a un circuito eléctrico exclusivo para evitar caídas de tensión."]
+
+SALIDA: responde SOLO con un JSON válido con EXACTAMENTE estas claves: asunto_sugerido, \
+antecedentes, objetivos, trabajos, observaciones, maquinas. Sin ningún texto fuera del JSON."""
+
+    # ── PROMPT (usuario): el contexto real del informe.
+    prompt_usuario = f"""EMPRESA QUE EJECUTA EL SERVICIO: ILUS Fitness.
+CLIENTE: {cli['razon_social']}
+TIPO DE SERVICIO: {tipo_lbl}
+COBERTURA: {cobertura}
+ASUNTO ACTUAL: {asunto or '(vacío — propón uno en asunto_sugerido)'}
+SOLICITUD / ANTECEDENTES DEL CLIENTE: {ante or '(no especificado)'}
+
+NOTAS RÁPIDAS DEL TÉCNICO (materia prima; pueden venir incompletas o desordenadas):
+-----
+{notas or '(sin notas)'}
+-----
+
+EQUIPOS INTERVENIDOS:
+{maq_txt}
+Redacta el Informe Post Servicio en el JSON pedido, fiel a estas notas y datos."""
+
+    resultado, err = _claude_call(
+        prompt_usuario, prompt_sistema,
+        max_tokens=3000, expect_json=True, tier="sonnet", temperature=0.35,
+        log_endpoint="reporte_redactar_ia", log_entidad_tipo="cliente", log_entidad_id=cid,
+    )
+    if err:
+        return jsonify({"error": f"Error IA: {err}"}), 503
+    if not resultado or not isinstance(resultado, dict):
+        return jsonify({"error": "La IA no devolvió un borrador válido. Reintenta."}), 503
+
+    # Normalizar: listas de strings limpias.
+    def _clean_list(v):
+        if isinstance(v, str):
+            v = [v]
+        return [str(x).strip() for x in (v or []) if str(x).strip()]
+    salida = {
+        "asunto_sugerido": (resultado.get("asunto_sugerido") or "").strip(),
+        "antecedentes": (resultado.get("antecedentes") or "").strip(),
+        "objetivos":    _clean_list(resultado.get("objetivos")),
+        "trabajos":     _clean_list(resultado.get("trabajos")),
+        "observaciones": _clean_list(resultado.get("observaciones")),
+        "maquinas": [
+            {"sku": str(m.get("sku") or "").strip(),
+             "observacion": str(m.get("observacion") or "").strip()}
+            for m in (resultado.get("maquinas") or []) if isinstance(m, dict)
+        ],
+    }
+    try:
+        _mant_log("cliente", cid, "reporte_redactado_ia",
+                  f"obj={len(salida['objetivos'])} trab={len(salida['trabajos'])}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "resultado": salida})
+
+
 @app.route("/mantenciones/api/reportes/<int:rid>", methods=["GET"])
 @_mant_required
 def mant_reporte_get(rid):
@@ -45916,11 +46285,12 @@ def mant_reporte_get(rid):
     d["garantia_aplica"] = bool(d.get("garantia_aplica"))
     # Adjuntos
     fotos = mysql_fetchall(
-        "SELECT id,nombre,archivo_path,tipo,created_at FROM mant_contrato_adjuntos "
+        "SELECT id,nombre,archivo_path,cloudinary_url,tipo,created_at FROM mant_contrato_adjuntos "
         "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
     )
     d["fotos"] = [{"id":f["id"],"nombre":f["nombre"],
-                   "url":f"/static/uploads/mantenciones/reportes/{f['archivo_path']}"} for f in fotos]
+                   "url": (f.get("cloudinary_url")
+                           or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")} for f in fotos]
     return jsonify(d)
 
 
@@ -46003,7 +46373,11 @@ def mant_reporte_del(rid):
 @app.route("/mantenciones/api/reportes/<int:rid>/fotos", methods=["POST"])
 @_mant_required
 def mant_reporte_foto_subir(rid):
-    """Sube foto al registro fotográfico del reporte."""
+    """Sube foto al registro fotográfico del reporte.
+
+    Persiste en Cloudinary (almacenamiento permanente). El filesystem de Railway
+    es EFÍMERO: lo guardado solo en local se pierde en cada deploy. Por eso la
+    foto va primero a Cloudinary y el archivo local queda solo como respaldo."""
     f = request.files.get("foto")
     if not f or not f.filename:
         return jsonify({"error":"Sin archivo"}), 400
@@ -46011,19 +46385,47 @@ def mant_reporte_foto_subir(rid):
     if ext not in ALLOWED_REPORT_IMG:
         return jsonify({"error":"Tipo no permitido"}), 400
     fname  = secure_filename(f"rep{rid}_{int(time.time())}_{f.filename}")
-    fpath  = os.path.join(MANT_REPORTES_UPLOADS, fname)
-    f.save(fpath)
-    size   = os.path.getsize(fpath)
+
+    # 1) Cloudinary (persistente). Si no está configurado, caemos a local.
+    cloud_url = None
+    cloud_pid = None
+    size = 0
+    try:
+        f.stream.seek(0)
+        _res = _cloud_upload_image_full(
+            f.stream, public_id=f"rep{rid}_{int(time.time())}", folder="ilus/reportes"
+        )
+        cloud_url = _res.get("url")
+        cloud_pid = _res.get("public_id")
+        size = _res.get("size", 0)
+    except Exception as e_cld:
+        print(f"[reporte_foto] Cloudinary no disponible, uso backup local: {e_cld}", flush=True)
+
+    # 2) Respaldo local (no bloqueante; fallback si Cloudinary no estaba).
+    try:
+        f.stream.seek(0)
+        fpath = os.path.join(MANT_REPORTES_UPLOADS, fname)
+        f.save(fpath)
+        if not size:
+            try: size = os.path.getsize(fpath)
+            except Exception: size = 0
+    except Exception as e_loc:
+        print(f"[reporte_foto] backup local falló: {e_loc}", flush=True)
+        if not cloud_url:
+            return jsonify({"error": "No se pudo guardar la foto. Reintenta."}), 502
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_contrato_adjuntos
                    (contrato_id,cliente_id,tipo,nombre,archivo_nombre,archivo_path,
+                    cloudinary_url,cloudinary_public_id,
                     mime_type,tamaño_bytes,created_by)
-                   SELECT %s,cliente_id,'imagen',%s,%s,%s,%s,%s,%s
+                   SELECT %s,cliente_id,'imagen',%s,%s,%s,%s,%s,%s,%s,%s
                    FROM mant_reportes WHERE id=%s""",
                 (rid, f.filename, f.filename, fname,
+                 cloud_url, cloud_pid,
                  f"image/{ext}", size, current_username(), rid)
             )
             aid = cur.lastrowid
@@ -46034,9 +46436,8 @@ def mant_reporte_foto_subir(rid):
         if rep_info:
             _mant_log("cliente", rep_info["cliente_id"], "reporte_foto_subida",
                       f"reporte #{rid} — {f.filename}")
-        return jsonify({"ok":True,"id":aid,
-                        "url":f"/static/uploads/mantenciones/reportes/{fname}",
-                        "nombre":f.filename})
+        url = cloud_url or f"/static/uploads/mantenciones/reportes/{fname}"
+        return jsonify({"ok":True, "id":aid, "url":url, "nombre":f.filename})
     finally:
         conn.close()
 
@@ -46056,7 +46457,7 @@ def mant_reporte_analizar(rid):
     if not ai_key:
         return jsonify({"error":"API IA no configurada"}), 503
 
-    prompt = f"""Eres el sistema de análisis técnico de ILUS Sport & Health Solution SPA.
+    prompt = f"""Eres el sistema de análisis técnico de ILUS Fitness (marca de Sport and Health Solutions SPA).
 Analiza este Informe Post Servicio y genera un diagnóstico inteligente.
 
 CLIENTE: {r['razon_social']}
@@ -46182,7 +46583,7 @@ def _build_reporte_docx(rep, cliente):
     run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    sr = sub.add_run("ILUS Sport & Health Solution SPA  |  RUT 76.996.964-0")
+    sr = sub.add_run(f"{ILUS_BRAND} — {ILUS_LEGAL}  |  RUT {ILUS_RUT}")
     sr.font.size = Pt(9)
     sr.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
 
@@ -46283,7 +46684,7 @@ def _build_reporte_docx(rep, cliente):
     doc.add_paragraph()
     foot = doc.add_paragraph()
     foot.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    fr = foot.add_run(f"Generado el {_now_chile_str('%d/%m/%Y %H:%M')} — ILUS Sport & Health")
+    fr = foot.add_run(f"Generado el {_now_chile_str('%d/%m/%Y %H:%M')} — {ILUS_BRAND} · {ILUS_LEGAL}")
     fr.font.size = Pt(8)
     fr.font.color.rgb = RGBColor(0x9C, 0xA3, 0xAF)
 
@@ -46294,60 +46695,314 @@ def _build_reporte_docx(rep, cliente):
 
 
 def _reporte_to_html(rep, cliente):
-    """Genera HTML del reporte para preview o email."""
+    """Genera HTML del reporte con estilos INLINE (email-safe; los clientes de
+    correo descartan <style>). Para preview/snapshot en pantalla se usa el
+    documento corporativo completo (_reporte_to_pdf_html)."""
+    from markupsafe import escape as _esc
+    def e(v):
+        s = "" if v is None else str(v).strip()
+        return str(_esc(s)) if s else "—"
+    def e_raw(v):
+        return str(_esc("" if v is None else str(v)))
+
     def _ls(items):
         if isinstance(items, str):
             try: items = json.loads(items)
-            except: items = []
-        if not items: return '<em style="color:#9ca3af">—</em>'
-        return '<ul style="margin:6px 0 12px 20px">' + ''.join(f'<li>{i}</li>' for i in items) + '</ul>'
+            except Exception: items = []
+        items = [i for i in (items or []) if str(i).strip()]
+        if not items:
+            return '<p style="margin:4px 0;color:#9ca3af;font-style:italic">Sin información registrada.</p>'
+        lis = ''.join(
+            f'<li style="margin-bottom:5px;color:#374151">{e_raw(i)}</li>' for i in items
+        )
+        return f'<ul style="margin:6px 0 4px 22px;padding:0">{lis}</ul>'
+
+    def _sec(titulo):
+        return (f'<div style="background:#0a0a0a;color:#fff;font-size:12px;font-weight:700;'
+                f'letter-spacing:.6px;text-transform:uppercase;padding:6px 12px;'
+                f'border-left:5px solid #dc2626;border-radius:6px;margin:18px 0 8px">{e_raw(titulo)}</div>')
 
     maq = rep.get('maquinas_json') or []
     if isinstance(maq, str):
         try: maq = json.loads(maq)
-        except: maq = []
+        except Exception: maq = []
     maq_html = ''
     if maq:
-        maq_html = '<table style="width:100%;border-collapse:collapse;margin:8px 0 16px"><thead><tr style="background:#fafbfc"><th style="text-align:left;padding:8px;border-bottom:2px solid #eaecf0;font-size:.75rem">Equipo</th><th style="text-align:left;padding:8px;border-bottom:2px solid #eaecf0;font-size:.75rem">SKU/Serie</th><th style="text-align:left;padding:8px;border-bottom:2px solid #eaecf0;font-size:.75rem">Estado</th></tr></thead><tbody>'
+        filas = ''
         for m in maq:
-            maq_html += f'<tr><td style="padding:8px;border-bottom:1px solid #f3f4f6;font-size:.82rem">{m.get("nombre","")}</td><td style="padding:8px;border-bottom:1px solid #f3f4f6;font-size:.78rem;color:#6b7280">{m.get("sku") or m.get("serie","")}</td><td style="padding:8px;border-bottom:1px solid #f3f4f6;font-size:.78rem">{m.get("estado","OK")}</td></tr>'
-        maq_html += '</tbody></table>'
+            filas += (
+                '<tr>'
+                f'<td style="padding:7px 9px;border:1px solid #e5e7eb;font-size:12px">{e(m.get("sku"))}</td>'
+                f'<td style="padding:7px 9px;border:1px solid #e5e7eb;font-size:12px">{e(m.get("descripcion"))}</td>'
+                f'<td style="padding:7px 9px;border:1px solid #e5e7eb;font-size:12px;text-align:center">{e(m.get("cantidad") or 1)}</td>'
+                f'<td style="padding:7px 9px;border:1px solid #e5e7eb;font-size:12px;text-align:center">{e(m.get("garantia"))}</td>'
+                f'<td style="padding:7px 9px;border:1px solid #e5e7eb;font-size:12px;color:#374151">{e(m.get("observacion"))}</td>'
+                '</tr>'
+            )
+        maq_html = (
+            _sec("Máquinas / equipos intervenidos")
+            + '<table style="width:100%;border-collapse:collapse;margin:6px 0 4px">'
+            '<thead><tr style="background:#0a0a0a;color:#fff">'
+            '<th style="text-align:left;padding:7px 9px;font-size:11px">SKU</th>'
+            '<th style="text-align:left;padding:7px 9px;font-size:11px">Descripción</th>'
+            '<th style="padding:7px 9px;font-size:11px">Cant.</th>'
+            '<th style="padding:7px 9px;font-size:11px">Garantía</th>'
+            '<th style="text-align:left;padding:7px 9px;font-size:11px">Observación</th>'
+            f'</tr></thead><tbody>{filas}</tbody></table>'
+        )
 
     ai_block = ''
     if rep.get('ai_diagnostico'):
-        ai_block = f'<div style="background:linear-gradient(135deg,#faf5ff,#eff6ff);border:1px solid #ddd6fe;border-radius:10px;padding:14px 18px;margin:16px 0"><div style="font-size:.7rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🤖 Diagnóstico IA</div><div style="font-size:.86rem;line-height:1.55;color:#374151">{rep["ai_diagnostico"]}</div></div>'
+        ai_block = (
+            '<div style="background:#faf5ff;border:1px solid #ddd6fe;border-radius:10px;'
+            'padding:14px 18px;margin:18px 0">'
+            '<div style="font-size:11px;font-weight:800;color:#7c3aed;text-transform:uppercase;'
+            'letter-spacing:.5px;margin-bottom:6px">Diagnóstico técnico (IA)</div>'
+            f'<div style="font-size:13px;line-height:1.55;color:#374151">{e_raw(rep["ai_diagnostico"]).strip()}</div></div>'
+        )
+
+    tipo_lbl = {"mantencion": "Mantención", "instalacion": "Instalación",
+                "inspeccion": "Inspección", "garantia": "Garantía",
+                "otro": "Servicio Técnico"}.get((rep.get("tipo") or "").lower(), "Servicio Técnico")
+    tecnicos = e(rep.get('tecnico_senior'))
+    if rep.get('tecnico_junior'):
+        tecnicos += f' · {e_raw(rep.get("tecnico_junior"))}'
+    ante = (f'{_sec("Antecedentes")}<p style="font-size:13px;line-height:1.55;color:#374151;margin:4px 0">'
+            f'{e_raw(rep["antecedentes"]).strip()}</p>') if rep.get('antecedentes') else ''
+
+    def _kv(k, v):
+        return (f'<tr><td style="padding:7px 10px;border:1px solid #e5e7eb;background:#f8fafc;'
+                f'font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.3px;'
+                f'color:#374151;width:130px">{e_raw(k)}</td>'
+                f'<td style="padding:7px 10px;border:1px solid #e5e7eb;font-size:12.5px">{v}</td></tr>')
 
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Informe — {cliente.get('razon_social','')}</title></head>
-<body style="font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#0f172a;max-width:780px;margin:0 auto;padding:24px;background:#fff">
-  <div style="text-align:center;border-bottom:3px solid #cc0000;padding-bottom:16px;margin-bottom:24px">
-    <div style="font-size:1.6rem;font-weight:900;color:#cc0000;letter-spacing:1px">INFORME POST-SERVICIO</div>
-    <div style="font-size:.78rem;color:#6b7280;margin-top:4px">ILUS Sport &amp; Health Solution SPA · RUT 76.996.964-0</div>
+<html><head><meta charset="utf-8"><title>Informe — {e(cliente.get('razon_social'))}</title></head>
+<body style="font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#111827;max-width:740px;margin:0 auto;padding:0;background:#fff">
+  <div style="background:#0a0a0a;border-radius:12px;padding:18px 22px;margin-bottom:16px;border-bottom:4px solid #dc2626">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:#f87171">{ILUS_BRAND} · {ILUS_TAGLINE}</div>
+    <div style="font-size:20px;font-weight:900;color:#fff;letter-spacing:.4px">INFORME POST-SERVICIO</div>
+    <div style="font-size:10px;color:#9ca3af;margin-top:4px">{ILUS_LEGAL} · RUT {ILUS_RUT}</div>
   </div>
-  <table style="width:100%;border-collapse:collapse;margin-bottom:18px;font-size:.82rem">
-    <tr><td style="padding:6px;border:1px solid #eaecf0;background:#fafbfc;width:140px"><strong>Cliente</strong></td><td style="padding:6px;border:1px solid #eaecf0">{cliente.get('razon_social','—')}</td></tr>
-    <tr><td style="padding:6px;border:1px solid #eaecf0;background:#fafbfc"><strong>RUT</strong></td><td style="padding:6px;border:1px solid #eaecf0">{cliente.get('rut','—')}</td></tr>
-    <tr><td style="padding:6px;border:1px solid #eaecf0;background:#fafbfc"><strong>Ticket</strong></td><td style="padding:6px;border:1px solid #eaecf0">{rep.get('ticket_num','—')}</td></tr>
-    <tr><td style="padding:6px;border:1px solid #eaecf0;background:#fafbfc"><strong>Asunto</strong></td><td style="padding:6px;border:1px solid #eaecf0">{rep.get('asunto','—')}</td></tr>
-    <tr><td style="padding:6px;border:1px solid #eaecf0;background:#fafbfc"><strong>Tipo</strong></td><td style="padding:6px;border:1px solid #eaecf0">{rep.get('tipo','—')} <span style="color:#9ca3af">·</span> Estado: {rep.get('estado','—')}</td></tr>
-    <tr><td style="padding:6px;border:1px solid #eaecf0;background:#fafbfc"><strong>Técnicos</strong></td><td style="padding:6px;border:1px solid #eaecf0">{rep.get('tecnico_senior','—')} {('· ' + rep.get('tecnico_junior')) if rep.get('tecnico_junior') else ''}</td></tr>
+  <table style="width:100%;border-collapse:collapse;margin-bottom:6px">
+    {_kv('Cliente', e(cliente.get('razon_social')))}
+    {_kv('RUT', e(cliente.get('rut')))}
+    {_kv('N° Ticket', e(rep.get('ticket_num')))}
+    {_kv('Tipo · Estado', f"{e_raw(tipo_lbl)} · {e((rep.get('estado') or '').title())}")}
+    {_kv('Técnicos', tecnicos)}
   </table>
-  {f'<h3 style="font-size:.95rem;color:#cc0000;margin-top:20px">Antecedentes</h3><p style="font-size:.86rem;line-height:1.55;color:#374151">{rep["antecedentes"]}</p>' if rep.get('antecedentes') else ''}
-  <h3 style="font-size:.95rem;color:#cc0000;margin-top:20px">Objetivos</h3>{_ls(rep.get('objetivos'))}
-  <h3 style="font-size:.95rem;color:#cc0000;margin-top:20px">Trabajos realizados</h3>{_ls(rep.get('trabajos'))}
-  <h3 style="font-size:.95rem;color:#cc0000;margin-top:20px">Observaciones</h3>{_ls(rep.get('observaciones'))}
-  {f'<h3 style="font-size:.95rem;color:#cc0000;margin-top:20px">Equipos atendidos</h3>{maq_html}' if maq else ''}
+  <div style="font-size:13px;font-weight:700;color:#0a0a0a;margin:12px 0;padding:9px 14px;background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #dc2626;border-radius:0 8px 8px 0">
+    <span style="font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#dc2626;margin-right:8px">Asunto</span>{e(rep.get('asunto'))}
+  </div>
+  {ante}
+  {_sec("Objetivos de la visita")}{_ls(rep.get('objetivos'))}
+  {_sec("Trabajos realizados e intervenciones")}{_ls(rep.get('trabajos'))}
+  {_sec("Observaciones generales post-visita")}{_ls(rep.get('observaciones'))}
+  {maq_html}
   {ai_block}
-  <div style="text-align:center;color:#9ca3af;font-size:.7rem;margin-top:32px;padding-top:16px;border-top:1px solid #eaecf0">
-    Generado el {_now_chile_str('%d/%m/%Y %H:%M')} · ILUS Sport &amp; Health
+  <div style="text-align:center;color:#9ca3af;font-size:11px;margin-top:28px;padding-top:14px;border-top:2px solid #dc2626">
+    Documento generado el {_now_chile_str('%d/%m/%Y %H:%M')} · © {_now_chile_str('%Y')} {ILUS_BRAND} · {ILUS_LEGAL}
   </div>
 </body></html>"""
 
 
-def _reporte_to_pdf_html(rep, cliente):
+# CSS del informe corporativo ILUS. String plano (NO f-string) → sin doblar
+# llaves. Diseño 2026-05-30 (Daniel): paginado REAL en hojas carta con paged.js
+# (cabecera + pie repetidos en cada hoja + numeración), logo grande, tarjetas y
+# tablas. print-color-adjust fuerza que los fondos negros/rojos salgan al PDF.
+_REPORTE_PDF_CSS = """
+  :root{ --ilus-red:#dc2626; --ilus-red-d:#b91c1c; --ilus-black:#0a0a0a; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{ font-family:'Segoe UI',-apple-system,Roboto,Helvetica,Arial,sans-serif; color:var(--ink);
+        font-size:11.5px; line-height:1.5; background:#eceff3;
+        -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+  /* ── Hoja carta + cabecera/pie corrientes en CADA página (paged.js) ── */
+  @page{
+    size: Letter;
+    margin: 3.15cm 1.9cm 2.15cm;
+    @top-center{ content: element(rhead); }
+    @bottom-left{ content: element(rfoot); }
+    @bottom-right{ content: "Página " counter(page) " de " counter(pages);
+                   font-size:8.5px; color:#9ca3af; font-family:'Segoe UI',Arial,sans-serif; }
+  }
+  .rh{ position: running(rhead); }
+  .rf{ position: running(rfoot); }
+  .rh-inner{ display:flex; align-items:center; justify-content:space-between; gap:16px; width:100%;
+             background:linear-gradient(135deg,#0a0a0a 0%,#1c1c22 100%); border-radius:11px;
+             padding:13px 20px; border-bottom:4px solid var(--ilus-red);
+             box-shadow:0 4px 12px rgba(10,10,10,.22);
+             -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .rh-brand{ display:flex; align-items:center; gap:16px; }
+  .rep-logo{ height:70px; width:auto; max-width:250px; display:block; }
+  .rep-logo-fallback{ height:70px; display:flex; align-items:center; color:#fff; padding-left:14px;
+             border-left:4px solid var(--ilus-red); font-weight:900; letter-spacing:1px; font-size:32px; }
+  .rh-eyebrow{ font-size:9px; font-weight:800; letter-spacing:1.4px; text-transform:uppercase; color:#f87171; margin-bottom:2px; }
+  .rh-title{ font-size:18px; font-weight:900; color:#fff; letter-spacing:.4px; line-height:1.1; }
+  .rh-sub{ font-size:9px; color:#9ca3af; margin-top:3px; }
+  .rh-meta{ text-align:right; flex-shrink:0; }
+  .rep-ticket{ font-size:10px; font-weight:800; color:#fff; background:var(--ilus-red); border-radius:6px;
+             padding:4px 12px; display:inline-block; letter-spacing:.5px; box-shadow:0 2px 8px rgba(220,38,38,.4); }
+  .rep-gar{ font-size:8.5px; font-weight:800; border-radius:6px; padding:3px 10px; display:inline-block;
+             letter-spacing:.5px; margin-top:7px; border:1px solid transparent; }
+  .rep-gar-si{ background:#dcfce7; color:#166534; border-color:#86efac; }
+  .rep-gar-no{ background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+  .rf-inner{ width:100%; font-size:8.5px; color:var(--muted); border-top:2px solid var(--ilus-red); padding-top:5px; }
+  .rf-inner b{ color:var(--ilus-black); }
+
+  /* ── Asunto ── */
+  .rep-asunto{ font-size:12.5px; font-weight:700; color:var(--ilus-black);
+             margin:0 0 12px; padding:9px 14px; background:#f8fafc;
+             border:1px solid var(--line); border-left:4px solid var(--ilus-red);
+             border-radius:0 8px 8px 0; }
+  .rep-asunto-k{ display:inline-block; font-size:8.5px; font-weight:800; letter-spacing:.6px;
+             text-transform:uppercase; color:var(--ilus-red); margin-right:10px; vertical-align:1px; }
+  /* ── Chips de resumen ── */
+  .rep-chips{ display:flex; flex-wrap:wrap; gap:7px; margin:0 0 16px; }
+  .rep-chip{ display:inline-flex; align-items:center; gap:6px; background:#fff;
+             border:1px solid var(--line); border-radius:50px; padding:3px 11px 3px 5px;
+             font-size:9.5px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .rep-chip-k{ background:var(--ilus-black); color:#fff; border-radius:50px; padding:2px 8px;
+             font-size:8px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; }
+  .rep-chip-v{ font-weight:700; color:var(--ink); }
+  .rep-chip-ok .rep-chip-k{ background:#166534; }
+  .rep-chip-info .rep-chip-k{ background:#1d4ed8; }
+  .rep-chip-warn .rep-chip-k{ background:#b45309; }
+  /* ── Secciones ── */
+  .rep-section{ margin-bottom:18px; break-inside:avoid; }
+  .rep-section-bar{ background:var(--ilus-black); color:#fff; font-size:10px; font-weight:800;
+             letter-spacing:.7px; text-transform:uppercase; padding:6px 12px 6px 16px;
+             border-radius:7px 7px 0 0; position:relative; }
+  .rep-section-bar::before{ content:''; position:absolute; left:0; top:0; bottom:0; width:5px;
+             background:var(--ilus-red); border-radius:7px 0 0 0; }
+  .rep-section-bar-soft{ background:#374151; }
+  .rep-section > .rep-section-bar + *{ border:1px solid var(--line); border-top:none;
+             border-radius:0 0 8px 8px; padding:13px 16px; margin-top:0; background:#fff; }
+  /* ── Tablas ── */
+  table{ border-collapse:collapse; width:100%; }
+  .rep-kv{ margin:0; }
+  .rep-kv th{ background:#f8fafc; color:#374151; text-align:left; font-size:9px;
+             text-transform:uppercase; letter-spacing:.3px; font-weight:800;
+             padding:6px 9px; border:1px solid var(--line); width:16%; vertical-align:top; }
+  .rep-kv td{ padding:6px 9px; border:1px solid var(--line); width:34%; vertical-align:top; }
+  .rep-table{ margin:0; }
+  .rep-table thead th{ background:var(--ilus-black); color:#fff; font-size:9px;
+             text-transform:uppercase; letter-spacing:.3px; padding:7px 9px; text-align:left;
+             border:1px solid var(--ilus-black); }
+  .rep-table tbody td{ padding:6px 9px; border:1px solid var(--line); vertical-align:top; }
+  .rep-table tbody tr:nth-child(even) td{ background:#f9fafb; }
+  .rep-center{ text-align:center; }
+  .rep-badge{ display:inline-block; font-size:9px; font-weight:800; padding:2px 9px;
+             border-radius:50px; letter-spacing:.3px; }
+  .rep-badge-si{ background:#dcfce7; color:#166534; }
+  .rep-badge-no{ background:#fee2e2; color:#991b1b; }
+  .rep-badge-na{ background:#f3f4f6; color:#6b7280; }
+  /* ── Listas y texto ── */
+  .rep-list{ margin:2px 0; padding-left:20px; }
+  .rep-list li{ margin-bottom:5px; }
+  .rep-list li::marker{ color:var(--ilus-red); }
+  .rep-text{ margin:2px 0; text-align:justify; }
+  .rep-empty{ color:#9ca3af; font-style:italic; margin:2px 0; }
+  /* ── Fotos ── */
+  .rep-foto-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:11px; }
+  .rep-foto{ margin:0; border:1px solid var(--line); border-radius:10px; overflow:hidden;
+             background:#fff; box-shadow:0 2px 8px rgba(0,0,0,.06); break-inside:avoid; }
+  .rep-foto img{ width:100%; height:148px; object-fit:cover; display:block; }
+  .rep-foto figcaption{ font-size:8.5px; color:var(--muted); padding:5px 7px; text-align:center;
+             border-top:1px solid #f3f4f6; }
+  /* ── Barra imprimir (solo pantalla) ── */
+  .rep-print-bar{ position:fixed; top:16px; right:16px; z-index:9999; }
+  .rep-print-bar button{ background:var(--ilus-red); color:#fff; border:none; border-radius:10px;
+             padding:11px 19px; font-weight:800; font-size:13px; cursor:pointer;
+             box-shadow:0 6px 18px rgba(220,38,38,.45); }
+  .rep-print-bar button:hover{ background:var(--ilus-red-d); }
+
+  /* ── Pantalla: cada hoja carta que genera paged.js ── */
+  .pagedjs_page{ background:#fff; box-shadow:0 8px 30px rgba(0,0,0,.18); margin:16px auto; }
+
+  /* ── Fallback si paged.js NO carga (sin CDN): una hoja continua decente ── */
+  body.no-paged{ padding:24px 12px; }
+  body.no-paged .rep-doc{ max-width:21.6cm; margin:0 auto; background:#fff; padding:2.2cm 2.3cm;
+             box-shadow:0 10px 40px rgba(0,0,0,.2); border-radius:10px; }
+  body.no-paged .rh{ position:static; display:block; margin-bottom:16px; }
+  body.no-paged .rf{ position:static; display:block; margin-top:20px; }
+
+  @media print{
+    body{ background:#fff; }
+    .rep-print-bar{ display:none !important; }
+    .pagedjs_page{ box-shadow:none; margin:0; }
+    body.no-paged{ padding:0; }
+    body.no-paged .rep-doc{ box-shadow:none; border-radius:0; padding:0; max-width:none; }
+    .rep-section, .rep-foto{ break-inside:avoid; }
+    thead{ display:table-header-group; }
+  }
+"""
+
+
+# ── Identidad ILUS (Daniel 2026-05-30) ───────────────────────────────────
+#   Razón social (entidad legal):  Sport and Health Solutions SPA
+#   Marca comercial:               ILUS Fitness
+#   Significado de ILUS:           I Like You Strong  (tagline)
+ILUS_BRAND    = "ILUS Fitness"
+ILUS_TAGLINE  = "I Like You Strong"
+ILUS_LEGAL    = "Sport and Health Solutions SPA"
+ILUS_RUT      = "76.996.964-0"
+ILUS_CONTACTO = "contacto@sphs.cl"
+
+
+def _ilus_logo_datauri():
+    """Logo ILUS (transparente, 'ILUS.' blanco) embebido como data URI para que
+    SIEMPRE renderice en PDF / preview / snapshot sin depender de que cargue un
+    archivo estático (en file:// o tras un deploy). Prioriza la versión
+    transparente (se funde con el hero oscuro); cae a la versión con fondo negro
+    y, en último caso, a la ruta /static/Logo.png."""
+    for _name in ("logo_dark_b64.txt", "logo_pdf.txt"):
+        try:
+            with open(os.path.join(BASE_DIR, "static", _name), "r", encoding="utf-8") as _f:
+                _b64 = _f.read().strip()
+            if _b64:
+                return "data:image/png;base64," + _b64
+        except Exception:
+            continue
+    return "/static/Logo.png"
+
+
+def _paged_doc_scripts(auto_print=False):
+    """Scripts para paginar el documento en hojas carta con paged.js (cabecera y
+    pie repetidos + numeración). Degrada con elegancia: si el CDN no carga en 4s,
+    marca <body class='no-paged'> (una hoja continua) y, si corresponde, imprime."""
+    ap = "1" if auto_print else "0"
+    # Botón flotante de imprimir: se inyecta por JS DESPUÉS de paginar para que
+    # paged.js no lo meta dentro de una hoja.
+    js_btn = (
+        "function _ilusPB(){if(document.getElementById('ilusPB'))return;"
+        "var b=document.createElement('button');b.textContent='\\u2b07 Descargar / Imprimir PDF';"
+        "b.onclick=function(){window.print();};"
+        "var d=document.createElement('div');d.id='ilusPB';d.className='rep-print-bar';"
+        "d.appendChild(b);document.body.appendChild(d);}"
+    )
+    return (
+        "<script>" + js_btn +
+        "window.PagedConfig={auto:true,after:function(){_ilusPB();"
+        "if(" + ap + "){setTimeout(function(){try{window.print();}catch(e){}},350);}"
+        "}};</script>"
+        '<script src="https://unpkg.com/pagedjs/dist/paged.polyfill.js"></script>'
+        "<script>setTimeout(function(){"
+        "if(!document.querySelector('.pagedjs_page')){"
+        "document.body.classList.add('no-paged');_ilusPB();"
+        + ("setTimeout(function(){try{window.print();}catch(e){}},300);" if auto_print else "")
+        + "}},4000);</script>"
+    )
+
+
+def _reporte_to_pdf_html(rep, cliente, auto_print=True):
     """Genera HTML corporativo ILUS (formato informe técnico ISO) listo para
     imprimir a PDF desde el navegador (window.print()). NO requiere libs de
     sistema (weasyprint/wkhtmltopdf): el propio navegador genera el PDF.
+
+    auto_print=True  → dispara window.print() al cargar (endpoint /pdf).
+    auto_print=False → solo se ve el documento (preview / snapshot 'Ver HTML').
 
     Replica las secciones de los informes oficiales ILUS:
       - INFORME TÉCNICO POST-SERVICIO (mantención/instalación/inspección/otro)
@@ -46581,144 +47236,310 @@ def _reporte_to_pdf_html(rep, cliente):
 
     asunto    = e(rep.get("asunto"))
     ticket    = e(rep.get("ticket_num"))
-    logo_url  = "/static/Logo.png"
+    logo_url  = _ilus_logo_datauri()
     gen_fecha = _now_chile_str("%d/%m/%Y %H:%M")
     año       = _now_chile_str("%Y")
+
+    # ── Chips de resumen (glance rápido bajo el asunto) ───────────────────
+    def _chip(label, value, cls=""):
+        v = "" if value is None else str(value).strip()
+        if not v or v == "—":
+            return ""
+        return (f'<span class="rep-chip {cls}">'
+                f'<span class="rep-chip-k">{e_raw(label)}</span>'
+                f'<span class="rep-chip-v">{e_raw(v)}</span></span>')
+    _estado_cls = {"borrador": "rep-chip-warn", "emitido": "rep-chip-info",
+                   "entregado": "rep-chip-ok"}.get((rep.get("estado") or "").lower(), "")
+    chips_html = (
+        '<div class="rep-chips">'
+        + _chip("Tipo", tipo_lbl)
+        + _chip("Estado", (rep.get("estado") or "").title(), _estado_cls)
+        + _chip("Solicitado", _fecha_str(rep.get("fecha_solicitado")))
+        + _chip("Inicio", _fecha_str(rep.get("fecha_inicio")))
+        + _chip("Cierre", _fecha_str(rep.get("fecha_cierre")) or "Abierto")
+        + _chip("Téc. Senior", rep.get("tecnico_senior"))
+        + _chip("Téc. Junior", rep.get("tecnico_junior"))
+        + "</div>"
+    )
+
+    _css = _REPORTE_PDF_CSS
+    _scripts = _paged_doc_scripts(auto_print)
 
     return f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{titulo} · {e(cliente.get('razon_social'))}</title>
-<style>
-  :root{{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; }}
-  *{{ box-sizing:border-box; }}
-  html,body{{ margin:0; padding:0; }}
-  body{{ font-family:Arial,Helvetica,'Segoe UI',sans-serif; color:#0a0a0a;
-         font-size:11px; line-height:1.45; background:#525659; }}
-  .rep-page{{ background:#fff; width:21.6cm; min-height:27.9cm; margin:18px auto;
-              padding:2cm; box-shadow:0 4px 24px rgba(0,0,0,.35); }}
-  /* Encabezado */
-  .rep-head{{ display:flex; align-items:center; gap:16px;
-              border-bottom:3px solid var(--ilus-red); padding-bottom:14px; margin-bottom:6px; }}
-  .rep-head .rep-logo{{ width:120px; height:auto; flex-shrink:0; }}
-  .rep-head .rep-logo-fallback{{ width:120px; height:46px; flex-shrink:0;
-              background:var(--ilus-black); color:#fff; border-radius:6px;
-              display:flex; align-items:center; justify-content:center;
-              font-weight:900; letter-spacing:1px; font-size:18px; }}
-  .rep-head-txt{{ flex:1; }}
-  .rep-head-txt .rep-title{{ font-size:18px; font-weight:900; color:var(--ilus-black);
-              letter-spacing:.5px; line-height:1.1; }}
-  .rep-head-txt .rep-sub{{ font-size:10px; color:#6b7280; margin-top:3px; }}
-  .rep-head-meta{{ text-align:right; flex-shrink:0; }}
-  .rep-head-meta .rep-ticket{{ font-size:9px; font-weight:700; color:#fff;
-              background:var(--ilus-red); border-radius:4px; padding:3px 10px;
-              display:inline-block; letter-spacing:.5px; }}
-  .rep-gar{{ font-size:8.5px; font-weight:800; border-radius:4px; padding:3px 10px;
-              display:inline-block; letter-spacing:.5px; margin-top:6px;
-              border:1px solid transparent; }}
-  .rep-gar-si{{ background:#dcfce7; color:#166534; border-color:#86efac; }}
-  .rep-gar-no{{ background:#fee2e2; color:#991b1b; border-color:#fca5a5; }}
-  .rep-asunto{{ font-size:12px; font-weight:700; color:var(--ilus-black);
-              margin:10px 0 14px; padding:7px 12px; background:#f3f4f6;
-              border-left:4px solid var(--ilus-red); border-radius:0 4px 4px 0; }}
-  /* Secciones */
-  .rep-section{{ margin-bottom:14px; }}
-  .rep-section-bar{{ background:var(--ilus-black); color:#fff; font-size:10px;
-              font-weight:800; letter-spacing:.7px; text-transform:uppercase;
-              padding:5px 10px; border-radius:3px; position:relative; padding-left:14px; }}
-  .rep-section-bar::before{{ content:''; position:absolute; left:0; top:0; bottom:0;
-              width:5px; background:var(--ilus-red); border-radius:3px 0 0 3px; }}
-  .rep-section-bar-soft{{ background:#374151; }}
-  /* Tablas clave-valor */
-  table{{ border-collapse:collapse; width:100%; }}
-  .rep-kv{{ margin-top:6px; }}
-  .rep-kv th{{ background:#f8fafc; color:#374151; text-align:left; font-size:9.5px;
-              text-transform:uppercase; letter-spacing:.3px; font-weight:700;
-              padding:5px 8px; border:1px solid #e5e7eb; width:16%; vertical-align:top; }}
-  .rep-kv td{{ padding:5px 8px; border:1px solid #e5e7eb; width:34%; vertical-align:top; }}
-  /* Tablas de datos */
-  .rep-table{{ margin-top:6px; }}
-  .rep-table thead th{{ background:var(--ilus-black); color:#fff; font-size:9.5px;
-              text-transform:uppercase; letter-spacing:.3px; padding:6px 8px;
-              text-align:left; border:1px solid var(--ilus-black); }}
-  .rep-table tbody td{{ padding:5px 8px; border:1px solid #e5e7eb; vertical-align:top; }}
-  .rep-table tbody tr:nth-child(even) td{{ background:#fafbfc; }}
-  .rep-center{{ text-align:center; }}
-  .rep-badge{{ display:inline-block; font-size:9px; font-weight:800; padding:1px 8px;
-              border-radius:50px; letter-spacing:.3px; }}
-  .rep-badge-si{{ background:#dcfce7; color:#166534; }}
-  .rep-badge-no{{ background:#fee2e2; color:#991b1b; }}
-  .rep-badge-na{{ background:#f3f4f6; color:#6b7280; }}
-  /* Listas y texto */
-  .rep-list{{ margin:8px 0 4px; padding-left:20px; }}
-  .rep-list li{{ margin-bottom:4px; }}
-  .rep-text{{ margin:8px 0 4px; text-align:justify; }}
-  .rep-empty{{ color:#9ca3af; font-style:italic; margin:8px 0 4px; }}
-  /* Fotos */
-  .rep-foto-grid{{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:8px; }}
-  .rep-foto{{ margin:0; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;
-              background:#fff; }}
-  .rep-foto img{{ width:100%; height:150px; object-fit:cover; display:block; }}
-  .rep-foto figcaption{{ font-size:8.5px; color:#6b7280; padding:4px 6px;
-              text-align:center; border-top:1px solid #f3f4f6; }}
-  /* Pie */
-  .rep-foot{{ margin-top:22px; padding-top:12px; border-top:2px solid var(--ilus-red);
-              display:flex; justify-content:space-between; align-items:flex-end;
-              font-size:8.5px; color:#6b7280; }}
-  .rep-foot b{{ color:var(--ilus-black); }}
-  /* Botón imprimir (no se imprime) */
-  .rep-print-bar{{ position:fixed; top:14px; right:14px; z-index:50; }}
-  .rep-print-bar button{{ background:var(--ilus-red); color:#fff; border:none;
-              border-radius:8px; padding:10px 18px; font-weight:700; font-size:13px;
-              cursor:pointer; box-shadow:0 4px 14px rgba(220,38,38,.4); }}
-  @media print {{
-    body{{ background:#fff; }}
-    .rep-page{{ width:auto; min-height:auto; margin:0; padding:0; box-shadow:none; }}
-    .rep-print-bar{{ display:none !important; }}
-    .rep-section{{ page-break-inside:avoid; }}
-    .rep-foto{{ page-break-inside:avoid; }}
-    thead{{ display:table-header-group; }}
-  }}
-  @page {{ size:Letter; margin:2cm; }}
-</style></head>
+<style>{_css}</style></head>
 <body>
-  <div class="rep-print-bar"><button onclick="window.print()">Descargar / Imprimir PDF</button></div>
-  <div class="rep-page">
-    <div class="rep-head">
-      <img class="rep-logo" src="{logo_url}" alt="ILUS"
-           onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
-      <div class="rep-head-txt">
-        <div class="rep-title">{titulo}</div>
-        <div class="rep-sub">ILUS Sport &amp; Health Solution SPA · RUT 76.996.964-0</div>
+  <div class="rep-doc">
+    <div class="rh"><div class="rh-inner">
+      <div class="rh-brand">
+        <img class="rep-logo" src="{logo_url}" alt="ILUS"
+             onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
+        <div class="rh-txt">
+          <div class="rh-eyebrow">{ILUS_BRAND} · {ILUS_TAGLINE}</div>
+          <div class="rh-title">{titulo}</div>
+          <div class="rh-sub">{ILUS_LEGAL} · RUT {ILUS_RUT}</div>
+        </div>
       </div>
-      <div class="rep-head-meta">
+      <div class="rh-meta">
         <span class="rep-ticket">N° {ticket}</span>
         <div>{gar_badge_html}</div>
       </div>
-    </div>
-    <div class="rep-asunto">Asunto: {asunto}</div>
-    {bloque_datos}
-    {bloque_narrativo}
-    {ai_html}
-    {fotos_html}
-    <div class="rep-foot">
-      <div>
-        <b>ILUS Sport &amp; Health Solution SPA</b><br>
-        Servicio Técnico · contacto@sphs.cl
-      </div>
-      <div style="text-align:right">
-        Documento generado el {gen_fecha}<br>
-        © {año} ILUS Sport &amp; Health
-      </div>
+    </div></div>
+    <div class="rf"><div class="rf-inner">
+      <b>{ILUS_BRAND}</b> · {ILUS_LEGAL} · {ILUS_CONTACTO} · Generado el {gen_fecha}
+    </div></div>
+    <div class="rep-content">
+      <div class="rep-asunto"><span class="rep-asunto-k">Asunto</span>{asunto}</div>
+      {chips_html}
+      {bloque_datos}
+      {bloque_narrativo}
+      {ai_html}
+      {fotos_html}
     </div>
   </div>
-  <script>
-    // Dispara el diálogo de impresión del navegador apenas cargan imágenes.
-    window.addEventListener('load', function(){{
-      setTimeout(function(){{ try{{ window.print(); }}catch(e){{}} }}, 350);
-    }});
-  </script>
+  {_scripts}
 </body></html>"""
+
+
+def _contrato_analisis_to_pdf_html(ct, cliente, auto_print=True):
+    """Documento corporativo ILUS del Análisis 360° del contrato (Comité IA).
+    Renderiza el JSON persistido en ai_analisis_json reusando el sistema de
+    diseño del informe (_REPORTE_PDF_CSS). El navegador genera el PDF."""
+    from markupsafe import escape as _esc
+
+    def e(v):
+        s = "" if v is None else str(v).strip()
+        return str(_esc(s)) if s else "—"
+
+    def e_raw(v):
+        return str(_esc("" if v is None else str(v)))
+
+    def _clp(v):
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return None
+        if not n:
+            return None
+        return "$" + format(int(round(n)), ",d").replace(",", ".")
+
+    def _ul(items):
+        items = [i for i in (items or []) if str(i).strip()]
+        if not items:
+            return '<p class="rep-empty">Sin elementos.</p>'
+        return '<ul class="rep-list">' + "".join(f"<li>{e_raw(i)}</li>" for i in items) + "</ul>"
+
+    try:
+        data = json.loads(ct.get("ai_analisis_json") or "{}")
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    # Fallback a columnas sueltas si no hay JSON 360 completo.
+    resumen   = data.get("resumen") or ct.get("ai_resumen") or ""
+    tipo_c    = data.get("tipo_contrato") or ct.get("ai_tipo_contrato") or ""
+    try:    score = int(float(data.get("score") if data.get("score") is not None else (ct.get("ai_score") or 0)))
+    except Exception: score = 0
+    score = max(0, min(100, score))
+    riesgo    = (data.get("nivel_riesgo") or ct.get("nivel_riesgo") or "medio").lower()
+    sc_color  = "#16a34a" if score >= 70 else "#f59e0b" if score >= 40 else "#dc2626"
+    sc_text   = "Excelente" if score >= 80 else "Bueno" if score >= 60 else "Regular" if score >= 40 else "Crítico"
+    rg_map    = {"alto": ("#dc2626", "ALTO"), "bajo": ("#16a34a", "BAJO")}
+    rg_color, rg_label = rg_map.get(riesgo, ("#f59e0b", "MEDIO"))
+    _dash     = round(score * 2.764, 1)
+
+    # ── Chips económicos ──
+    def _chip(label, value):
+        if not value:
+            return ""
+        return (f'<span class="rep-chip"><span class="rep-chip-k">{e_raw(label)}</span>'
+                f'<span class="rep-chip-v">{e_raw(value)}</span></span>')
+    chips = (
+        '<div class="rep-chips">'
+        + _chip("Monto mensual", _clp(data.get("costo_mensual")))
+        + _chip("Costo total", _clp(data.get("costo_total")))
+        + _chip("Por mantención", _clp(data.get("costo_por_mant")))
+        + _chip("SLA", (str(data.get("sla_horas")) + " h") if data.get("sla_horas") else "")
+        + _chip("Frecuencia", ("c/" + str(data.get("frecuencia_sugerida_meses")) + " meses") if data.get("frecuencia_sugerida_meses") else "")
+        + _chip("Vigencia", ("Indefinido" if data.get("es_indefinido") else
+                             (str(data.get("vigencia_inicio") or "") + " → " + str(data.get("vigencia_fin") or "")).strip(" →")))
+        + "</div>"
+    )
+
+    secciones = ""
+
+    # Resumen gerencial
+    if resumen:
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Resumen gerencial</div>'
+                      f'<p class="rep-text">{e_raw(resumen)}</p></div>')
+
+    # Cobertura
+    if data.get("cobertura_descripcion"):
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Cobertura</div>'
+                      f'<p class="rep-text">{e_raw(data["cobertura_descripcion"])}</p></div>')
+
+    # Exposición + escenarios
+    exp = data.get("exposicion") or {}
+    if exp.get("resumen") or exp.get("escenarios"):
+        scn = ""
+        for s in (exp.get("escenarios") or []):
+            if not isinstance(s, dict):
+                continue
+            scn += ("<tr>"
+                    f"<td>{e(s.get('riesgo'))}</td>"
+                    f"<td>{e(s.get('impacto'))}</td>"
+                    f"<td class='rep-center'>{e(s.get('probabilidad'))}</td>"
+                    f"<td>{e(s.get('mitigacion'))}</td></tr>")
+        tabla = ("<table class='rep-table' style='margin-top:8px'><thead><tr>"
+                 "<th>Riesgo</th><th>Impacto</th><th>Prob.</th><th>Mitigación</th></tr></thead>"
+                 f"<tbody>{scn}</tbody></table>") if scn else ""
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Exposición para ILUS</div>'
+                      + (f'<p class="rep-text">{e_raw(exp.get("resumen"))}</p>' if exp.get("resumen") else "")
+                      + tabla + "</div>")
+
+    # Análisis de garantía
+    gar = data.get("analisis_garantia") or {}
+    if gar:
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Análisis de garantía</div>'
+                      '<table class="rep-kv">'
+                      f'<tr><th>¿Cubre garantía?</th><td>{"Sí" if gar.get("cubre_garantia") else "No"}</td>'
+                      f'<th>¿Condicionada a mantención ILUS?</th><td>{"Sí" if gar.get("condicionada_a_mantencion_ilus") else "No"}</td></tr>'
+                      + (f'<tr><th>Riesgo terceros</th><td colspan="3">{e(gar.get("riesgo_terceros"))}</td></tr>' if gar.get("riesgo_terceros") else "")
+                      + (f'<tr><th>Recomendación</th><td colspan="3">{e(gar.get("recomendacion"))}</td></tr>' if gar.get("recomendacion") else "")
+                      + '</table></div>')
+
+    # Listas de hallazgos
+    for titulo, key in (("Puntos críticos", "puntos_criticos"),
+                        ("Cláusulas críticas / ausentes", "clausulas_criticas"),
+                        ("Alertas accionables", "alertas"),
+                        ("Mejoras prioritarias", "mejoras_prioritarias")):
+        if data.get(key):
+            secciones += (f'<div class="rep-section"><div class="rep-section-bar">{titulo}</div>'
+                          f'{_ul(data.get(key))}</div>')
+
+    # Cláusulas sugeridas (tarjetas)
+    cls = data.get("clausulas_sugeridas") or []
+    if cls:
+        cards = ""
+        for c in cls:
+            if not isinstance(c, dict):
+                continue
+            cards += ('<div style="border:1px solid #e5e7eb;border-left:4px solid #dc2626;'
+                      'border-radius:0 8px 8px 0;padding:10px 13px;margin-bottom:8px;background:#fff">'
+                      f'<div style="font-weight:800;color:#0a0a0a;font-size:11.5px;margin-bottom:3px">{e(c.get("titulo"))}</div>'
+                      f'<div style="color:#374151;white-space:pre-wrap">{e_raw(c.get("texto"))}</div>'
+                      + (f'<div style="color:#6b7280;font-size:10px;margin-top:5px"><b>Por qué:</b> {e_raw(c.get("justificacion"))}</div>' if c.get("justificacion") else "")
+                      + "</div>")
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Cláusulas sugeridas (listas para usar)</div>'
+                      f'<div style="margin-top:8px">{cards}</div></div>')
+
+    # Propuestas comerciales
+    props = data.get("propuestas_comerciales") or []
+    if props:
+        cards = ""
+        for p in props:
+            if not isinstance(p, dict):
+                continue
+            prio = (p.get("prioridad") or "").lower()
+            pc = "#dc2626" if prio == "alta" else "#16a34a" if prio == "baja" else "#b45309"
+            cards += ('<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 13px;margin-bottom:8px;background:#fff">'
+                      f'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:3px">'
+                      f'<span style="font-weight:800;color:#0a0a0a;font-size:11.5px">{e(p.get("titulo"))}</span>'
+                      + (f'<span style="font-size:9px;font-weight:800;text-transform:uppercase;color:#fff;background:{pc};padding:2px 9px;border-radius:50px">{e_raw(prio)}</span>' if prio else "")
+                      + "</div>"
+                      f'<div style="color:#374151">{e_raw(p.get("descripcion"))}</div>'
+                      + (f'<div style="color:#166534;font-size:10px;margin-top:5px"><b>Impacto ingreso:</b> {e_raw(p.get("impacto_ingreso"))}</div>' if p.get("impacto_ingreso") else "")
+                      + "</div>")
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Propuestas comerciales</div>'
+                      f'<div style="margin-top:8px">{cards}</div></div>')
+
+    # Rentabilidad
+    rent = data.get("rentabilidad") or {}
+    if rent and (rent.get("mrr_estimado_clp") or rent.get("margen_estimado") or rent.get("oportunidad_ingreso_clp")):
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Rentabilidad</div>'
+                      '<table class="rep-kv">'
+                      f'<tr><th>MRR estimado</th><td>{e(_clp(rent.get("mrr_estimado_clp")) or "—")}</td>'
+                      f'<th>Margen</th><td>{e(rent.get("margen_estimado"))}</td></tr>'
+                      f'<tr><th>Oportunidad ingreso</th><td colspan="3">{e(_clp(rent.get("oportunidad_ingreso_clp")) or "—")}</td></tr>'
+                      '</table></div>')
+
+    logo_url  = _ilus_logo_datauri()
+    gen_fecha = _now_chile_str("%d/%m/%Y %H:%M")
+    rut_fmt   = _formato_rut_chile(cliente.get("rut", "")) or "—"
+    _scripts  = _paged_doc_scripts(auto_print)
+
+    return f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Análisis de contrato · {e(cliente.get('razon_social'))}</title>
+<style>{_REPORTE_PDF_CSS}</style></head>
+<body>
+  <div class="rep-doc">
+    <div class="rh"><div class="rh-inner">
+      <div class="rh-brand">
+        <img class="rep-logo" src="{logo_url}" alt="ILUS"
+             onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
+        <div class="rh-txt">
+          <div class="rh-eyebrow">{ILUS_BRAND} · {ILUS_TAGLINE}</div>
+          <div class="rh-title">ANÁLISIS DE CONTRATO</div>
+          <div class="rh-sub">{ILUS_LEGAL} · RUT {ILUS_RUT} · Comité de Expertos IA</div>
+        </div>
+      </div>
+      <div class="rh-meta" style="display:flex;align-items:center;gap:12px">
+        <svg viewBox="0 0 100 100" style="width:66px;height:66px">
+          <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="9"></circle>
+          <circle cx="50" cy="50" r="44" fill="none" stroke="{sc_color}" stroke-width="9"
+                  stroke-dasharray="{_dash} {round(276.4 - _dash, 1)}"
+                  transform="rotate(-90 50 50)" stroke-linecap="round"></circle>
+          <text x="50" y="49" text-anchor="middle" style="font-size:27px;font-weight:900;fill:#fff">{score}</text>
+          <text x="50" y="64" text-anchor="middle" style="font-size:9px;fill:rgba(255,255,255,.65)">de 100</text>
+        </svg>
+        <div style="text-align:left">
+          <span style="display:inline-block;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#fff;background:{sc_color};padding:3px 10px;border-radius:50px">{sc_text}</span><br>
+          <span style="display:inline-block;margin-top:6px;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#fff;background:{rg_color};padding:3px 10px;border-radius:50px">Riesgo {rg_label}</span>
+        </div>
+      </div>
+    </div></div>
+    <div class="rf"><div class="rf-inner">
+      <b>{ILUS_BRAND}</b> · {ILUS_LEGAL} · Análisis asistido por IA · {ILUS_CONTACTO} · Generado el {gen_fecha}
+    </div></div>
+    <div class="rep-content">
+      <div class="rep-asunto"><span class="rep-asunto-k">Contrato</span>{e(ct.get('nombre') or tipo_c or 'Contrato de servicio')}</div>
+      <div class="rep-section">
+        <div class="rep-section-bar">Datos del cliente y contrato</div>
+        <table class="rep-kv">
+          <tr><th>Razón Social</th><td>{e(cliente.get('razon_social'))}</td><th>RUT</th><td>{e_raw(rut_fmt)}</td></tr>
+          <tr><th>Tipo de contrato</th><td>{e(tipo_c)}</td><th>Frecuencia ERP</th><td>{e((str(ct.get('frecuencia_meses')) + ' meses') if ct.get('frecuencia_meses') else None)}</td></tr>
+        </table>
+      </div>
+      {chips}
+      {secciones}
+    </div>
+  </div>
+  {_scripts}
+</body></html>"""
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/analisis/pdf", methods=["GET"])
+@_mant_required
+def mant_contrato_analisis_pdf(ctid):
+    """Vista imprimible del Análisis 360° del contrato (el navegador genera el PDF)."""
+    ct = mysql_fetchone(
+        "SELECT ct.*, cl.razon_social, cl.rut FROM mant_contratos ct "
+        "JOIN mant_clientes cl ON cl.id=ct.cliente_id WHERE ct.id=%s", (ctid,)
+    )
+    if not ct:
+        return "Contrato no encontrado", 404
+    if not ct.get("ai_analizado"):
+        return ("Este contrato aún no tiene análisis IA. Analízalo primero "
+                "desde la ficha del cliente.", 404)
+    cliente = {"razon_social": ct.get("razon_social", ""), "rut": ct.get("rut", "")}
+    try: _mant_log("contrato", ctid, "exportar_analisis_pdf")
+    except Exception: pass
+    return _contrato_analisis_to_pdf_html(dict(ct), cliente)
 
 
 @app.route("/mantenciones/api/reportes/<int:rid>/pdf", methods=["GET"])
@@ -46756,12 +47577,13 @@ def mant_reporte_pdf(rid):
     # Fotos del registro fotográfico
     try:
         fotos = mysql_fetchall(
-            "SELECT id,nombre,archivo_path FROM mant_contrato_adjuntos "
+            "SELECT id,nombre,archivo_path,cloudinary_url FROM mant_contrato_adjuntos "
             "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
         ) or []
         rep["fotos"] = [
             {"nombre": f.get("nombre"),
-             "url": f"/static/uploads/mantenciones/reportes/{f['archivo_path']}"}
+             "url": (f.get("cloudinary_url")
+                     or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")}
             for f in fotos
         ]
     except Exception:
@@ -46803,15 +47625,10 @@ def mant_reporte_word(rid):
 @app.route("/mantenciones/api/reportes/<int:rid>/html", methods=["GET"])
 @_mant_required
 def mant_reporte_html(rid):
-    """Devuelve preview HTML del reporte."""
-    r = mysql_fetchone(
-        "SELECT r.*, c.razon_social, c.rut FROM mant_reportes r "
-        "JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s", (rid,)
-    )
-    if not r: return "Reporte no encontrado", 404
-    rep = dict(r)
-    cliente = {"razon_social": rep.pop("razon_social",""), "rut": rep.pop("rut","")}
-    return _reporte_to_html(rep, cliente)
+    """Devuelve preview HTML del reporte (mismo formato corporativo que el PDF)."""
+    rep, cliente = _load_reporte_full(rid)
+    if not rep: return "Reporte no encontrado", 404
+    return _reporte_to_pdf_html(rep, cliente, auto_print=False)
 
 
 @app.route("/mantenciones/api/reportes/<int:rid>/enviar", methods=["POST"])
@@ -46849,7 +47666,7 @@ def mant_reporte_enviar(rid):
     body_email = (
         f"<p>Estimado/a {cliente['contacto_nombre'] or cliente['razon_social']},</p>"
         f"<p>Adjunto encontrarás el informe de servicio realizado. {mensaje_extra}</p>"
-        f"<p>Saludos,<br><strong>Equipo ILUS Sport &amp; Health</strong></p>"
+        f"<p>Saludos,<br><strong>Equipo {ILUS_BRAND}</strong></p>"
         f"<hr style='border:none;border-top:1px solid #eaecf0;margin:18px 0'>"
         f"{html_reporte}"
     )

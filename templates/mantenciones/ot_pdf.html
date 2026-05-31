@@ -1116,6 +1116,7 @@
         {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="">{% else %}—{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
+      {% if firmante_cliente and firmante_cliente.signer_rut %}<div class="fir-meta">RUT {{ firmante_cliente.signer_rut }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %}</div>{% endif %}
       <div class="fir-lbl">Aceptado Por</div>
       {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at | chile_fmt }}</div>{% endif %}
     </div>
@@ -1259,6 +1260,7 @@
         {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="">{% else %}—{% endif %}
       </div>
       <div class="fir-nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
+      {% if firmante_cliente and firmante_cliente.signer_rut %}<div class="fir-meta">RUT {{ firmante_cliente.signer_rut }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %}</div>{% endif %}
       <div class="fir-lbl">Aceptado Por</div>
       {% if visita.firma_cliente_at %}<div class="fir-meta">{{ visita.firma_cliente_at | chile_fmt }}</div>{% endif %}
     </div>

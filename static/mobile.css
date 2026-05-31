@@ -372,6 +372,7 @@ body {
     border: none;
     padding: 5px 0;
     font-size: .85rem;
+    width: auto;   /* anula anchos de columna (ej. .status-cell width:60px) que encajonarían la fila en card */
   }
   .table-mobile-cards tbody td[data-label]::before {
     content: attr(data-label);
@@ -392,6 +393,14 @@ body {
     gap: 6px;
   }
   .table-mobile-cards tbody td:last-child::before { content: none; }
+  /* Fila de estado vacío (`<td colspan>`): es :last-child pero NO es footer
+     de acciones → centrar y quitar el borde/margen de footer. */
+  .table-mobile-cards tbody td[colspan] {
+    justify-content: center;
+    border-top: none;
+    margin-top: 0;
+    padding-top: 5px;
+  }
 
   /* ── Scroll-hint: gradiente fade en bordes de tablas con overflow ── */
   /* Wrapper opcional `.scroll-hint` indica visualmente que hay más
@@ -468,4 +477,162 @@ body {
     display: none !important;
   }
   body { background: #fff !important; color: #000 !important; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE BASE v2 — refuerzo de gaps de auditoría (Daniel 30/05/2026)
+   Rama claude/responsive-mobile · Fase: responsive_base
+   Ataca patrones TRANSVERSALES detectados en la auditoría móvil:
+   modales con height inline fijo, grids de KPI con columnas fijas,
+   kanbans/pipelines que no colapsan, overflow horizontal.
+   Solo CSS (sin frameworks). Paleta ILUS intacta. No toca etiquetas/PDF.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Modales: anular height/max-height INLINE fijos (ej. height:90vh) que
+     rompen el scroll y ocultan el footer. El .modal-footer sticky ya está
+     definido arriba; aquí solo garantizamos el alto correcto. */
+  .modal-content { height: auto !important; max-height: 100dvh !important; }
+
+  /* Grids de KPIs / cards con columnas fijas → 2 columnas legibles en móvil.
+     (.kpi-grid/.kpi-card ya pasan a 1fr arriba; aquí sumamos los que faltaban.) */
+  .cc2-kpi-row, .ots-kpi-row, .kpi-row, .kpi-strip, .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Kanban / pipelines con columnas fijas → apilados (sin scroll horizontal). */
+  .kanban, .kanban-board, .pipeline, .pipeline-board,
+  [class*="kanban"], [class*="pipeline"] {
+    display: flex !important; flex-direction: column !important;
+    overflow-x: visible !important;
+  }
+  .kanban-col, .kanban-column, .pipeline-col, .pipeline-column,
+  [class*="kanban-col"], [class*="pipeline-col"] {
+    flex: 1 1 auto !important; width: 100% !important;
+    min-width: 0 !important; max-width: 100% !important;
+  }
+
+  /* Anti-overflow horizontal: contenido común no excede el ancho de pantalla. */
+  .container, .container-fluid, .ilus-card, .card, .f-card { max-width: 100%; }
+  img, video, canvas, svg { max-width: 100%; height: auto; }
+}
+
+@media (max-width: 430px) {
+  /* Pantallas muy chicas: KPIs a 1 columna (evita apretar el texto). */
+  .cc2-kpi-row, .ots-kpi-row, .kpi-row, .kpi-strip, .stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+  /* Touch targets en tabs y pills de filtros (Apple HIG). */
+  .ftab-btn, .tc-pill, .flt-pill { min-height: 40px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE FORMS & MODALS v2 — Fase: responsive_forms_modals
+   Rama claude/responsive-mobile-v2 (Daniel 31/05/2026)
+   Objetivo: en móvil los formularios largos tienen su barra de acciones
+   (Cancelar/Guardar) SIEMPRE visible y por encima del teclado, y los
+   modales fullscreen mantienen header y footer pegados (sticky) sin tapar
+   el botón de guardar. Solo CSS, paleta ILUS intacta. No toca etiquetas/PDF.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* ── Barra de acciones de formularios de PÁGINA (no modales) ──
+     Añadir la clase `.form-actions-sticky` al <div> que contiene los
+     botones Cancelar/Guardar al final del <form>. Queda pegada al fondo
+     del viewport mientras se hace scroll; sticky (no fixed) para que el
+     teclado iOS no la tape — se desplaza por encima del teclado. */
+  .form-actions-sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
+    background: #fff;
+    border-top: 1px solid #e5e7eb;
+    box-shadow: 0 -3px 12px rgba(0, 0, 0, .06);
+    padding-top: 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    margin-top: 12px;
+  }
+  /* Botón secundario (Cancelar, normalmente un <a>) compacto;
+     primario (Guardar / submit, un <button>) ocupa el resto. */
+  .form-actions-sticky > .btn { min-height: 46px; margin: 0; }
+  .form-actions-sticky > a.btn { flex: 0 0 auto; }
+  .form-actions-sticky > button.btn,
+  .form-actions-sticky > .btn[type="submit"] { flex: 1 1 auto; }
+  /* position:sticky muere si un ancestro tiene overflow != visible.
+     `.ilus-card` usa overflow:hidden (style.css) → lo liberamos SOLO en las
+     cards que envuelven la barra sticky (ej. cliente_form, cuyo <form> vive
+     dentro de .ilus-card). :has() es progressive enhancement: donde no hay
+     soporte, la barra degrada a no-sticky (sigue siendo una barra prolija). */
+  .ilus-card:has(.form-actions-sticky) { overflow: visible; }
+
+  /* ── Modales: header y footer sticky dentro del modal fullscreen ──
+     `.modal-content` ya es flex-column (Bootstrap) y v2 le fijó
+     max-height:100dvh. El scroll lo maneja `.modal`; aquí pegamos
+     header arriba y footer abajo para que el botón guardar nunca quede
+     fuera de pantalla. Scope a `.modal.show` → no afecta modales cerrados
+     ni los helpers ilus* (que no son `.modal` de Bootstrap). */
+  .modal.show .modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+  .modal.show .modal-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    padding-bottom: calc(.6rem + env(safe-area-inset-bottom, 0px));
+  }
+  /* Fondo opaco para que el contenido no se transparente por detrás al
+     hacer scroll. Va en :where() (especificidad 0) a propósito: así NO pisa
+     el fondo propio de los modales con header `bg-dark text-white` (clase),
+     `text-bg-*` o style inline — esos ganan y conservan su color. Sin esto,
+     `.modal.show .modal-header` (0,3,0) vencía a `.modal-header.bg-dark`
+     (0,2,0) y dejaba texto blanco sobre blanco = header ilegible. */
+  :where(.modal.show .modal-header, .modal.show .modal-footer) {
+    background: #fff;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE SIDEBAR & HEADER v2 — Fase: responsive_sidebar_header
+   Rama claude/responsive-mobile-v2 (Daniel 31/05/2026)
+   Topbar móvil compacto (90→60px → libera ~30px verticales por pantalla),
+   logo más chico, botón menú con touch ≥44px, y título de módulo para
+   saber "dónde estoy" mientras se hace scroll. El sidebar ya es drawer
+   (responsive_base). Solo CSS, paleta ILUS intacta. No toca etiquetas/PDF.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  /* Topbar más bajo. La var --topbar-h también la usa el dropdown de
+     notificaciones para posicionarse → se ajusta solo. */
+  :root { --topbar-h: 60px; }
+  .mobile-topbar { height: 60px; padding: 0 10px; gap: 10px; }
+
+  /* Logo proporcional al topbar compacto (antes 80px). */
+  .mobile-logo { height: 38px; }
+  .mobile-brand-name { font-size: 1.4rem; }
+
+  /* Botón menú (hamburguesa): touch target Apple HIG 44px. */
+  .sidebar-toggle {
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 1.7rem;
+  }
+
+  /* Título de módulo: ocupa el espacio central, una línea con elipsis. */
+  .mobile-module-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #fff;
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: .2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }

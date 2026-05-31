@@ -152,7 +152,7 @@
       <span class="text-muted small fw-normal">{{ users|length }} usuario(s) listado(s)</span>
     </div>
     <div class="table-responsive">
-      <table class="table ilus-table mb-0">
+      <table class="table ilus-table mb-0 table-mobile-cards">
         <thead>
           <tr>
             <th class="status-cell" title="En línea ahora (verde) o desconectado (gris). Se refresca cada 30 segundos.">En línea</th>
@@ -169,17 +169,17 @@
         <tbody>
           {% for user in users %}
           <tr data-user-id="{{ user.id }}" {% if not user.active %}style="opacity:.55"{% endif %}>
-            <td class="status-cell">
+            <td class="status-cell" data-label="En línea">
               {% if user.online %}
                 <span class="user-status online" title="En línea ahora (actividad en los últimos 5 minutos)"></span>
               {% else %}
                 <span class="user-status offline" title="Desconectado"></span>
               {% endif %}
             </td>
-            <td class="font-monospace">{{ user.username }}</td>
-            <td>{{ user.nombre }}</td>
-            <td class="small text-muted">{{ user.phone or '-' }}</td>
-            <td>
+            <td class="font-monospace" data-label="Usuario">{{ user.username }}</td>
+            <td data-label="Nombre">{{ user.nombre }}</td>
+            <td class="small text-muted" data-label="WhatsApp">{{ user.phone or '-' }}</td>
+            <td data-label="Rol">
               {% if user.role == 'superadmin' %}
                 <span class="ilus-badge" style="background:var(--ilus-black);color:#fff;border:1.5px solid var(--ilus-red);font-size:.68rem;padding:2px 9px;border-radius:50px">
                   <i class="bi bi-shield-lock-fill me-1"></i>Super Admin
@@ -202,14 +202,14 @@
                 <span class="ilus-badge" style="background:#aaa;color:#fff;font-size:.7rem;padding:2px 8px;border-radius:50px">{{ user.role }}</span>
               {% endif %}
             </td>
-            <td>
+            <td data-label="Estado">
               {% if user.active %}
                 <span class="badge-active"><i class="bi bi-check-circle me-1"></i>Activo</span>
               {% else %}
                 <span class="badge-inactive"><i class="bi bi-x-circle me-1"></i>Inactivo</span>
               {% endif %}
             </td>
-            <td class="conx-cell">
+            <td class="conx-cell" data-label="Última conexión">
               {% if user.last_login_at %}
                 <div class="conx-warm">
                   <i class="bi bi-broadcast me-1"></i>
@@ -226,7 +226,7 @@
                 </span>
               {% endif %}
             </td>
-            <td class="text-center">
+            <td class="text-center" data-label="Logins">
               {% if user.login_count and user.login_count > 0 %}
                 <span class="badge bg-light text-dark" style="font-size:.7rem">{{ user.login_count }}</span>
               {% else %}

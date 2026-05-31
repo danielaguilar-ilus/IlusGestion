@@ -3920,6 +3920,140 @@ async function epConfirmarMismatch() {
   } catch(e) { alert('Error de red'); }
 }
 
+// ─── Modal de progreso dinámico (operaciones lentas: import ERP, etc.) ───────
+// Reutilizable: ilusProgreso.open({titulo,subtitulo,paso}) → avanzar(hechos,total,
+// etiqueta) → exito(msg) / error(msg) → cerrar(). Mucho movimiento visual para
+// que la espera se sienta corta: barra animada, % que sube, frases rotativas,
+// engranaje girando y chispas. NO usa innerHTML con datos del usuario (textContent).
+const ilusProgreso = (function () {
+  let modal = null, raf = null, frasesTimer = null, fraseI = 0, pctActual = 0, pctObjetivo = 0;
+  const FRASES = [
+    '🔌 Sincronizando con el ERP…',
+    '🧬 Generando series únicas por equipo…',
+    '🗂️ Creando fichas técnicas…',
+    '📊 Cuadrando saldos del documento…',
+    '🏷️ Aplicando catálogo ILUS Fitness…',
+    '🔗 Enlazando equipos a la ficha…',
+    '✨ Puliendo los últimos detalles…',
+  ];
+  function inject() {
+    if (document.getElementById('ilusProgModal')) return;
+    if (!document.getElementById('ilusProgCss')) {
+      const st = document.createElement('style'); st.id = 'ilusProgCss';
+      st.textContent =
+        '@keyframes ipgStripes{from{background-position:0 0}to{background-position:44px 0}}' +
+        '@keyframes ipgSpin{to{transform:rotate(360deg)}}' +
+        '@keyframes ipgPop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.15)}100%{transform:scale(1);opacity:1}}' +
+        '@keyframes ipgShim{0%{transform:translateX(-120%)}100%{transform:translateX(240%)}}' +
+        '@keyframes ipgFloat{0%{transform:translateY(0);opacity:0}25%{opacity:.95}100%{transform:translateY(-52px);opacity:0}}' +
+        '#ilusProgModal .ipg-spark{position:absolute;bottom:6px;width:6px;height:6px;border-radius:50%;animation:ipgFloat 2.3s linear infinite}';
+      document.head.appendChild(st);
+    }
+    const html =
+      '<div class="modal fade" id="ilusProgModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-hidden="true">' +
+      '<div class="modal-dialog modal-dialog-centered" style="max-width:430px">' +
+      '<div class="modal-content" style="border:none;border-radius:20px;overflow:hidden;background:linear-gradient(160deg,#15151f,#0a0a0f);color:#fff;box-shadow:0 24px 70px rgba(0,0,0,.55)">' +
+      '<div style="position:relative;padding:26px 26px 6px;text-align:center;overflow:hidden">' +
+      '<div id="ipgSparks" style="position:absolute;inset:0;pointer-events:none"></div>' +
+      '<div id="ipgIcon" style="width:74px;height:74px;margin:0 auto 14px;border-radius:18px;background:linear-gradient(135deg,#dc2626,#7f1d1d);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 26px rgba(220,38,38,.5)">' +
+      '<i class="bi bi-gear-wide-connected" style="font-size:2.1rem;animation:ipgSpin 2.4s linear infinite"></i></div>' +
+      '<div id="ipgTitulo" style="font-size:1.12rem;font-weight:800;letter-spacing:.3px">Procesando…</div>' +
+      '<div id="ipgSub" style="font-size:.82rem;color:#9ca3af;margin-top:3px"></div></div>' +
+      '<div style="padding:6px 26px 24px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:7px">' +
+      '<span id="ipgFrase" style="font-size:.8rem;color:#e5e7eb;font-weight:600;transition:opacity .2s">Iniciando…</span>' +
+      '<span id="ipgPct" style="font-size:1.5rem;font-weight:900;color:#f87171;line-height:1">0%</span></div>' +
+      '<div style="height:13px;border-radius:50px;background:#26262f;overflow:hidden;position:relative">' +
+      '<div id="ipgBar" style="height:100%;width:0%;border-radius:50px;background:#dc2626;background-image:linear-gradient(45deg,rgba(255,255,255,.18) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.18) 50%,rgba(255,255,255,.18) 75%,transparent 75%),linear-gradient(90deg,#dc2626,#f87171);background-size:44px 44px,100% 100%;transition:width .5s cubic-bezier(.22,1,.36,1);position:relative;animation:ipgStripes .9s linear infinite">' +
+      '<div style="position:absolute;top:0;left:0;height:100%;width:70px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);animation:ipgShim 1.4s ease-in-out infinite"></div></div></div>' +
+      '<div id="ipgPaso" style="margin-top:14px;font-size:.84rem;color:#cbd5e1;min-height:20px;display:flex;align-items:center;gap:8px">' +
+      '<span class="spinner-border spinner-border-sm" style="color:#f87171"></span><span id="ipgPasoTxt">Preparando…</span></div>' +
+      '<div id="ipgContador" style="margin-top:6px;font-size:.74rem;color:#6b7280"></div>' +
+      '</div></div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+    const sp = document.getElementById('ipgSparks');
+    for (let i = 0; i < 9; i++) {
+      const s = document.createElement('span');
+      s.className = 'ipg-spark';
+      s.style.left = (8 + i * 11) + '%';
+      s.style.animationDelay = (i * 0.25) + 's';
+      s.style.background = (i % 2) ? '#f87171' : '#fca5a5';
+      sp.appendChild(s);
+    }
+  }
+  function animarPct() {
+    cancelAnimationFrame(raf);
+    const paso = () => {
+      if (Math.abs(pctActual - pctObjetivo) < 0.5) pctActual = pctObjetivo;
+      else pctActual += (pctObjetivo - pctActual) * 0.18;
+      const v = Math.round(pctActual);
+      const e = document.getElementById('ipgPct'); if (e) e.textContent = v + '%';
+      const b = document.getElementById('ipgBar'); if (b) b.style.width = v + '%';
+      if (pctActual !== pctObjetivo) raf = requestAnimationFrame(paso);
+    };
+    raf = requestAnimationFrame(paso);
+  }
+  return {
+    open(opts) {
+      opts = opts || {};
+      inject();
+      document.getElementById('ipgTitulo').textContent = opts.titulo || 'Procesando…';
+      document.getElementById('ipgSub').textContent = opts.subtitulo || '';
+      document.getElementById('ipgPaso').innerHTML =
+        '<span class="spinner-border spinner-border-sm" style="color:#f87171"></span><span id="ipgPasoTxt"></span>';
+      document.getElementById('ipgPasoTxt').textContent = opts.paso || 'Preparando…';
+      document.getElementById('ipgContador').textContent = '';
+      document.getElementById('ipgFrase').textContent = FRASES[0];
+      const ic = document.getElementById('ipgIcon');
+      ic.style.background = 'linear-gradient(135deg,#dc2626,#7f1d1d)';
+      ic.innerHTML = '<i class="bi bi-gear-wide-connected" style="font-size:2.1rem;animation:ipgSpin 2.4s linear infinite"></i>';
+      pctActual = 0; pctObjetivo = 0;
+      document.getElementById('ipgBar').style.width = '0%';
+      document.getElementById('ipgPct').textContent = '0%';
+      if (!modal) modal = new bootstrap.Modal(document.getElementById('ilusProgModal'));
+      modal.show();
+      clearInterval(frasesTimer); fraseI = 0;
+      frasesTimer = setInterval(() => {
+        fraseI = (fraseI + 1) % FRASES.length;
+        const f = document.getElementById('ipgFrase');
+        if (f) { f.style.opacity = '0'; setTimeout(() => { f.textContent = FRASES[fraseI]; f.style.opacity = '1'; }, 190); }
+      }, 1700);
+    },
+    avanzar(hechos, total, etiqueta) {
+      pctObjetivo = total > 0 ? Math.min(100, Math.round(hechos / total * 100)) : 0;
+      animarPct();
+      if (etiqueta) document.getElementById('ipgPasoTxt').textContent = etiqueta;
+      const c = document.getElementById('ipgContador');
+      if (c) c.textContent = total ? (hechos + ' de ' + total + ' completados') : '';
+    },
+    exito(mensaje) {
+      clearInterval(frasesTimer);
+      pctObjetivo = 100; animarPct();
+      const ic = document.getElementById('ipgIcon');
+      ic.style.background = 'linear-gradient(135deg,#16a34a,#15803d)';
+      ic.innerHTML = '<i class="bi bi-check-lg" style="font-size:2.5rem;animation:ipgPop .5s ease both"></i>';
+      document.getElementById('ipgFrase').textContent = '¡Completado!';
+      document.getElementById('ipgPaso').innerHTML =
+        '<i class="bi bi-check-circle-fill" style="color:#22c55e"></i><span id="ipgPasoTxt"></span>';
+      document.getElementById('ipgPasoTxt').textContent = mensaje || 'Listo';
+    },
+    error(mensaje) {
+      clearInterval(frasesTimer); cancelAnimationFrame(raf);
+      const ic = document.getElementById('ipgIcon');
+      ic.style.background = 'linear-gradient(135deg,#dc2626,#7f1d1d)';
+      ic.innerHTML = '<i class="bi bi-exclamation-triangle-fill" style="font-size:2.1rem"></i>';
+      document.getElementById('ipgFrase').textContent = 'Con problemas';
+      document.getElementById('ipgPaso').innerHTML =
+        '<i class="bi bi-x-circle-fill" style="color:#f87171"></i><span id="ipgPasoTxt"></span>';
+      document.getElementById('ipgPasoTxt').textContent = mensaje || 'Ocurrió un error';
+    },
+    cerrar() {
+      clearInterval(frasesTimer); cancelAnimationFrame(raf);
+      if (modal) modal.hide();
+    },
+  };
+})();
+
 async function epImportarSeleccionados() {
   if (_epSeleccion.size === 0) return;
   // Bloqueo si mismatch sin confirmar
@@ -3933,58 +4067,78 @@ async function epImportarSeleccionados() {
         okLabel: 'Entendido',
       });
     } else {
-      alert('Confirma primero el motivo del RUT distinto.');
+      ilusToast('Confirma primero el motivo del RUT distinto.', { type: 'warning' });
     }
     return;
   }
-  const btn = document.getElementById('ep_btnImportar');
-  const original = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando…';
 
   const fecha_doc = _epDocActual.fecha_iso || '';
   const doc_origen = `${_epDocActual.tido_display} ${_epDocActual.nudo_display}`;
   const justifMismatch = window._erpMismatch?.motivo || '';
-  let creados = 0, fallidos = 0, bloqueados = 0;
 
+  // 1) Armar el PLAN de fichas a crear (leyendo los selects ANTES de procesar),
+  //    así conocemos el total exacto y el progreso es REAL (no inventado).
+  const plan = [];
+  let bloqueados = 0;
   for (const idx of _epSeleccion) {
     const p = _epProductos[idx];
     if (p._completo) { bloqueados++; continue; }   // saldo 0 → no agrega
-
     const saldo = (p._saldo !== undefined) ? p._saldo : (parseInt(p.cantidad) || 1);
     const nombre = p.nombre || p.sku || '';
-
-    // Leer la elección del usuario (1 ficha vs N fichas) del select inline
     const sel = document.querySelector(`select[data-ep-fichas-idx="${idx}"]`);
     const fichasElegidas = sel ? parseInt(sel.value) : 1;
     const filas = (fichasElegidas > 1) ? Math.min(fichasElegidas, saldo) : 1;
     const cantidadCadaUna = (fichasElegidas > 1) ? 1 : saldo;
-
-    for (let n = 1; n <= filas; n++) {
-      try {
-        const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            sku: p.sku || '',
-            nombre,
-            serie: '',                       // backend genera ILUS-{rut}-{sku}-{n}
-            cantidad: cantidadCadaUna,
-            doc_origen,
-            doc_fecha: fecha_doc,
-            fecha_instalacion: fecha_doc,
-            justif_doc_mismatch: justifMismatch,
-          })
-        });
-        if (r.ok) creados++; else fallidos++;
-      } catch(e) { fallidos++; }
+    for (let n = 0; n < filas; n++) {
+      plan.push({ sku: p.sku || '', nombre, cantidad: cantidadCadaUna });
     }
   }
+  if (!plan.length) {
+    ilusToast(bloqueados ? 'Esos equipos ya están completos en la ficha.' : 'No hay nada que importar.',
+              { type: 'info' });
+    return;
+  }
 
-  btn.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>${creados} creado(s)`;
-  setTimeout(() => {
-    _epModal.hide();
-    location.reload();
-  }, 1200);
+  // 2) Abrir el modal de progreso (sobre el de selección; al final recargamos).
+  document.getElementById('ep_btnImportar').disabled = true;
+  ilusProgreso.open({
+    titulo: 'Importando equipos desde el ERP',
+    subtitulo: `${doc_origen} · ${plan.length} ficha(s) a crear`,
+    paso: 'Conectando con el ERP…',
+  });
+
+  // 3) Crear las fichas una por una, actualizando el progreso REAL.
+  let creados = 0, fallidos = 0;
+  for (let i = 0; i < plan.length; i++) {
+    const f = plan[i];
+    ilusProgreso.avanzar(i, plan.length, `Creando ficha ${i + 1} de ${plan.length}: ${f.nombre}`);
+    try {
+      const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sku: f.sku,
+          nombre: f.nombre,
+          serie: '',                       // backend genera ILUS-{rut}-{sku}-{n}
+          cantidad: f.cantidad,
+          doc_origen,
+          doc_fecha: fecha_doc,
+          fecha_instalacion: fecha_doc,
+          justif_doc_mismatch: justifMismatch,
+        })
+      });
+      if (r.ok) creados++; else fallidos++;
+    } catch (e) { fallidos++; }
+  }
+
+  ilusProgreso.avanzar(plan.length, plan.length, 'Finalizando…');
+  if (creados === 0) {
+    ilusProgreso.error(`No se pudieron crear las fichas (${fallidos} con error). Reintenta.`);
+    document.getElementById('ep_btnImportar').disabled = false;
+    setTimeout(() => ilusProgreso.cerrar(), 2800);
+    return;
+  }
+  ilusProgreso.exito(`${creados} ficha(s) creada(s)${fallidos ? ' · ' + fallidos + ' con error' : ''}.`);
+  setTimeout(() => { ilusProgreso.cerrar(); location.reload(); }, 1600);
 }
 
 function erpToggle(key, linea, checked) {
@@ -4711,7 +4865,7 @@ async function analizarContrato(ctid, btn) {
       }
       // Mostramos el análisis 360° EN VIVO desde data.resultado.
       // Al cerrar el modal recargamos para refrescar el dashboard persistido del servidor.
-      _mostrarAnalisisContrato360(data.resultado || {});
+      _mostrarAnalisisContrato360(data.resultado || {}, ctid);
       // El botón se restituye visualmente (igual va a recargar al cerrar el modal).
       btn.disabled = false;
       btn.innerHTML = orig;
@@ -4752,13 +4906,13 @@ async function analizarContrato(ctid, btn) {
 // Renderiza el JSON enriquecido (exposición, garantía, cláusulas sugeridas,
 // propuestas comerciales y rentabilidad) en el modal reusable #modalAIResult.
 // Todo el texto que viene del JSON se escapa con escHtml() antes de inyectarse.
-function _mostrarAnalisisContrato360(res) {
+function _mostrarAnalisisContrato360(res, ctid) {
   res = res || {};
   const titleEl = document.getElementById('aiResultTitle');
   const bodyEl  = document.getElementById('aiResultBody');
   if (!bodyEl) { location.reload(); return; }   // sin modal → fallback al flujo viejo
   if (titleEl) titleEl.textContent = 'Análisis 360° del contrato';
-  bodyEl.innerHTML = _ctaRenderHTML(res);
+  bodyEl.innerHTML = _ctaRenderHTML(res, ctid);
 
   const modalEl = document.getElementById('modalAIResult');
   const modal = new bootstrap.Modal(modalEl);
@@ -4800,13 +4954,23 @@ function _ctaHead(emoji, titulo, color) {
 }
 
 // Construye TODO el HTML del análisis 360°.
-function _ctaRenderHTML(res) {
+function _ctaRenderHTML(res, ctid) {
   const score = Number(res.score) || 0;
   const sc = score >= 70 ? '#16a34a' : score >= 40 ? '#f59e0b' : '#dc2626';
   const scText = score >= 80 ? 'Excelente' : score >= 60 ? 'Bueno' : score >= 40 ? 'Regular' : 'Crítico';
   const riesgo = _ctaSemaforo(res.nivel_riesgo);
 
   let h = '';
+
+  // Barra de acciones: exportar el análisis como documento PDF corporativo ILUS.
+  if (ctid) {
+    h += `<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+      <button class="btn btn-sm btn-outline-dark fw-semibold"
+              onclick="window.open('/mantenciones/api/contratos/${ctid}/analisis/pdf','_blank','noopener')">
+        <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF
+      </button>
+    </div>`;
+  }
 
   // ── HERO: score + nivel de riesgo + resumen ──
   h += `<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;
@@ -6951,9 +7115,9 @@ function repRenderMaquinas() {
       <div style="flex:1">
         <div class="row g-2 mb-1">
           <div class="col-3"><input type="text" class="form-control form-control-sm" placeholder="SKU"
-            value="${m.sku||''}" onchange="_repMaquinas[${i}].sku=this.value"></div>
+            value="${m.sku||''}" onchange="_repMaquinas[${i}].sku=this.value;repGateIA()"></div>
           <div class="col-5"><input type="text" class="form-control form-control-sm" placeholder="Descripción equipo"
-            value="${m.descripcion||''}" onchange="_repMaquinas[${i}].descripcion=this.value"></div>
+            value="${m.descripcion||''}" onchange="_repMaquinas[${i}].descripcion=this.value;repGateIA()"></div>
           <div class="col-2"><input type="number" class="form-control form-control-sm" placeholder="Cant" min="1"
             value="${m.cantidad||1}" onchange="_repMaquinas[${i}].cantidad=parseInt(this.value)||1"></div>
           <div class="col-2"><input type="text" class="form-control form-control-sm" placeholder="Modelo"
@@ -6974,11 +7138,126 @@ function repRenderMaquinas() {
         <i class="bi bi-dash"></i>
       </button>
     </div>`).join('');
+  repGateIA();
 }
 
 function repAddMaquina() {
   _repMaquinas.push({sku:'',descripcion:'',cantidad:1,modelo:'',serie:'',repuesto:'',garantia:'',observacion:''});
   repRenderMaquinas();
+}
+
+// ─── Gate del botón "Redactar con IA": exige al menos un equipo cargado ──────
+// (Daniel: la IA depende del análisis de productos → no dejar redactar sin equipos.)
+function repGateIA() {
+  const btn = document.getElementById('btnRepRedactarIA');
+  if (!btn) return;
+  const hay = (_repMaquinas || []).some(m => (m.sku || '').trim() || (m.descripcion || '').trim());
+  btn.disabled = !hay;
+  btn.style.opacity = hay ? '' : '.5';
+  btn.style.cursor = hay ? '' : 'not-allowed';
+  btn.title = hay
+    ? 'Redacta el informe con IA a partir de tus notas y los equipos'
+    : 'Primero trae o agrega al menos un equipo de la ficha';
+}
+
+// ─── Traer equipos de la ficha del cliente al informe ───────────────────────
+// Tabla scrollable con checkboxes (todos pre-seleccionados), seleccionar/
+// deseleccionar todos y elegir cuáles incluir. Usa /clientes/<cid>/maquinas-list.
+function _repEquiposInject() {
+  if (document.getElementById('modalRepEquipos')) return;
+  const html =
+    '<div class="modal fade" id="modalRepEquipos" tabindex="-1">' +
+    '<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">' +
+    '<div class="modal-content">' +
+    '<div class="modal-header" style="background:#0a0a0a;color:#fff">' +
+    '<h5 class="modal-title"><i class="bi bi-box-seam me-2"></i>Equipos de la ficha del cliente</h5>' +
+    '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>' +
+    '<div class="modal-body" id="repEqBody"></div>' +
+    '<div class="modal-footer">' +
+    '<span class="me-auto small text-muted">Marca los equipos a incluir en el informe.</span>' +
+    '<button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>' +
+    '<button class="btn btn-ilus fw-bold" id="repEqAgregar" onclick="repEquiposAgregar()">' +
+    '<i class="bi bi-plus-lg me-1"></i>Agregar (<span id="repEqCount">0</span>)</button>' +
+    '</div></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function repTraerEquipos() {
+  _repEquiposInject();
+  const body = document.getElementById('repEqBody');
+  body.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Cargando equipos de la ficha…</div>';
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRepEquipos'));
+  modal.show();
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/maquinas-list`);
+    const eq = await r.json();
+    if (!Array.isArray(eq) || !eq.length) {
+      body.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-inbox" style="font-size:2rem;opacity:.3"></i><div class="mt-2">Este cliente no tiene equipos registrados en la ficha.</div></div>';
+      document.getElementById('repEqAgregar').disabled = true;
+      document.getElementById('repEqCount').textContent = '0';
+      return;
+    }
+    window._repEquiposCache = eq;
+    body.innerHTML =
+      '<div style="max-height:50vh;overflow:auto;border:1px solid #e5e7eb;border-radius:10px">' +
+      '<table class="table table-sm table-hover align-middle mb-0" style="font-size:.85rem">' +
+      '<thead style="position:sticky;top:0;z-index:1;background:#f8fafc">' +
+      '<tr><th style="width:44px" class="text-center"><input type="checkbox" id="repEqAll" class="form-check-input" checked onchange="repEquiposToggleAll(this.checked)"></th>' +
+      '<th>Equipo</th><th style="width:130px">SKU</th><th style="width:120px">N° Serie</th><th style="width:90px" class="text-center">Estado</th></tr></thead><tbody>' +
+      eq.map((e, i) => {
+        const baja = (e.estado_op || '').toLowerCase() === 'baja';
+        return '<tr>' +
+          `<td class="text-center"><input type="checkbox" class="rep-eq-chk form-check-input" data-i="${i}" checked onchange="repEquiposContar()"></td>` +
+          `<td>${escHtml(e.nombre || '—')}</td>` +
+          `<td class="font-monospace small">${escHtml(e.sku || '—')}</td>` +
+          `<td class="small">${escHtml(e.serie || '—')}</td>` +
+          `<td class="text-center"><span class="badge ${baja ? 'bg-secondary' : 'bg-success'}">${escHtml(e.estado_op || 'operativo')}</span></td>` +
+          '</tr>';
+      }).join('') +
+      '</tbody></table></div>';
+    document.getElementById('repEqAgregar').disabled = false;
+    repEquiposContar();
+  } catch (e) {
+    body.innerHTML = `<div class="alert alert-danger m-2 small">No se pudieron cargar los equipos: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function repEquiposToggleAll(checked) {
+  document.querySelectorAll('#modalRepEquipos .rep-eq-chk').forEach(c => { c.checked = checked; });
+  repEquiposContar();
+}
+
+function repEquiposContar() {
+  const n = document.querySelectorAll('#modalRepEquipos .rep-eq-chk:checked').length;
+  const c = document.getElementById('repEqCount'); if (c) c.textContent = n;
+  const all = document.getElementById('repEqAll');
+  const total = document.querySelectorAll('#modalRepEquipos .rep-eq-chk').length;
+  if (all) all.checked = (n === total && total > 0);
+  const btn = document.getElementById('repEqAgregar'); if (btn) btn.disabled = (n === 0);
+}
+
+function repEquiposAgregar() {
+  const chks = document.querySelectorAll('#modalRepEquipos .rep-eq-chk:checked');
+  if (!chks.length) { ilusToast('No marcaste ningún equipo.', { type: 'warning' }); return; }
+  const key = m => `${(m.sku || '').trim()}|${(m.serie || '').trim()}|${(m.descripcion || '').trim()}`.toLowerCase();
+  // Conservar solo filas con datos (descartar las vacías iniciales).
+  let base = (_repMaquinas || []).filter(m => (m.sku || '').trim() || (m.descripcion || '').trim() || (m.serie || '').trim());
+  const existentes = new Set(base.map(key));
+  let added = 0;
+  chks.forEach(c => {
+    const e = (window._repEquiposCache || [])[parseInt(c.dataset.i)];
+    if (!e) return;
+    const row = { sku: e.sku || '', descripcion: e.nombre || '', cantidad: 1, modelo: '',
+                  serie: e.serie || '', repuesto: '', garantia: '', observacion: '' };
+    if (existentes.has(key(row))) return;
+    base.push(row); existentes.add(key(row)); added++;
+  });
+  _repMaquinas = base.length ? base
+    : [{ sku: '', descripcion: '', cantidad: 1, modelo: '', serie: '', repuesto: '', garantia: '', observacion: '' }];
+  repRenderMaquinas();
+  bootstrap.Modal.getInstance(document.getElementById('modalRepEquipos'))?.hide();
+  ilusToast(added ? `✓ ${added} equipo(s) agregado(s) al informe.` : 'Esos equipos ya estaban en el informe.',
+            { type: added ? 'success' : 'info' });
 }
 
 function repRenderLista(tipo) {
@@ -7093,6 +7372,78 @@ async function eliminarReporte(rid) {
   if (!ok) return;
   const r = await fetch(`/mantenciones/api/reportes/${rid}`,{method:'DELETE'});
   if (r.ok) cargarReportes();
+}
+
+// ─── Reporte: la IA REDACTA el contenido (objetivos/trabajos/observaciones) ──
+// A diferencia de repAnalizarIA (diagnóstico de salud), esto genera el TEXTO del
+// informe a partir de notas rápidas del técnico. No guarda: rellena el formulario.
+async function repRedactarIA(btn) {
+  const notas        = (document.getElementById('repIANotas')?.value || '').trim();
+  const antecedentes = (document.getElementById('repAntecedentes')?.value || '').trim();
+  const asunto       = (document.getElementById('repAsunto')?.value || '').trim();
+  const hayMaquinas  = (_repMaquinas || []).some(m => (m.sku || '').trim() || (m.descripcion || '').trim());
+  if (!notas && !antecedentes && !asunto && !hayMaquinas) {
+    ilusToast('Escribe primero el asunto, la solicitud del cliente o unas notas para la IA.', { type:'warning' });
+    return;
+  }
+  // Si ya hay contenido redactado, confirmar antes de reemplazar.
+  const hayContenido = (_repObjetivos||[]).some(v=>v&&v.trim())
+                    || (_repTrabajos||[]).some(v=>v&&v.trim())
+                    || (_repObservaciones||[]).some(v=>v&&v.trim());
+  if (hayContenido) {
+    const ok = await ilusConfirm({
+      title: 'Redactar con IA',
+      message: 'Esto reemplazará Objetivos, Trabajos y Observaciones con la redacción de la IA.',
+      sub: 'Podrás revisar y editar todo antes de guardar.',
+      okLabel: 'Redactar', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+  }
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Redactando…';
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/reportes/redactar-ia`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        tipo:           document.getElementById('repTipo')?.value || 'mantencion',
+        garantia_aplica: document.getElementById('rep_gar_si')?.checked || false,
+        asunto, antecedentes, notas,
+        maquinas:       _repMaquinas,
+      })
+    });
+    const data = await r.json();
+    if (!data.ok) {
+      await ilusAlert({ title:'No se pudo redactar', message: data.error || 'Error desconocido', type:'error' });
+      return;
+    }
+    const res = data.resultado || {};
+    if (res.asunto_sugerido && !asunto) {
+      document.getElementById('repAsunto').value = res.asunto_sugerido;
+    }
+    if (res.antecedentes && !antecedentes) {
+      document.getElementById('repAntecedentes').value = res.antecedentes;
+    }
+    if (res.objetivos     && res.objetivos.length)     _repObjetivos     = res.objetivos;
+    if (res.trabajos      && res.trabajos.length)      _repTrabajos      = res.trabajos;
+    if (res.observaciones && res.observaciones.length) _repObservaciones = res.observaciones;
+    // Observación/recomendación por máquina: mapear por SKU.
+    (res.maquinas || []).forEach(rm => {
+      if (!rm.observacion) return;
+      const m = (_repMaquinas || []).find(x => (x.sku || '') && x.sku === rm.sku);
+      if (m) m.observacion = rm.observacion;
+    });
+    repRenderLista('Objetivos');
+    repRenderLista('Trabajos');
+    repRenderLista('Observaciones');
+    repRenderMaquinas();
+    ilusToast('✓ Borrador redactado por la IA. Revísalo y guarda.', { type:'success' });
+  } catch (e) {
+    await ilusAlert({ title:'Error de conexión', message: e.message || String(e), type:'error' });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
 }
 
 async function repAnalizarIA() {

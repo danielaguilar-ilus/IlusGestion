@@ -1143,6 +1143,116 @@
 #modalFichaTecnica .cap-readonly-banner i{
   color:#3b82f6;font-size:1rem;flex-shrink:0;margin-top:1px;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   RESPONSIVE TÉCNICO v3 (Daniel 31/05/2026) — Fase responsive_mantenciones_ot
+   Rama claude/responsive-mobile.
+   Objetivo: que el TÉCNICO ejecute la OT cómodo DESDE EL CELULAR.
+   Foco auditoría 360/390/430px:
+     · Modal de FIRMA usable (canvas full, toolbar/colores táctiles ≥44px,
+       footer siempre visible con scroll interno).
+     · Checklist: pills Sí/No/N-A táctiles sin renglones rotos.
+     · Fotos del checklist: thumbnails táctiles.
+   SOLO layout/CSS/touch — no toca lógica de firma/guardado ni datos.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Toolbar de firma: botones y colores TÁCTILES (Apple HIG ≥44px) ──
+   Antes: firma-tool 40px, firma-color 32px → muy chicos para el dedo. */
+.firma-toolbar{gap:8px}
+.firma-toolbar .firma-tool{min-height:44px;padding:9px 16px;font-size:.82rem}
+.firma-toolbar .firma-color{width:38px;height:38px}
+
+/* ── Tarjeta de captura del modal de ficha técnica: estado-chips y skip
+   con touch target pleno (estaban a 36px). ── */
+#modalFichaTecnica .cap-estado-chip{min-height:44px}
+
+/* ════════════════════════════════════════════════════════════════════
+   MÓVIL (≤576px) — el modal de firma/aprobación ya es fullscreen por
+   `modal-fullscreen-sm-down`. Aquí lo hacemos cómodo para firmar:
+   body con scroll propio + FOOTER STICKY (botón "Firmar" siempre a la vista).
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 576px){
+  /* Patrón flex robusto: modal-content a 100dvh en columna; el BODY toma el
+     espacio y scrollea solo; header (banner) y footer NO encogen → quedan
+     siempre a la vista sin depender de position:sticky. */
+  .firma-modal .modal-content{
+    /* !important para ganar a la regla base .modal-content{height:auto!important}
+       de mobile.css — el modal de firma SÍ debe ser fullscreen con footer fijo. */
+    height:100dvh !important; max-height:100dvh !important;
+    display:flex; flex-direction:column;
+  }
+  .firma-modal .firma-banner,
+  .firma-modal .modal-header{ flex:0 0 auto; }
+  .firma-modal .modal-body{
+    flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:14px;
+  }
+  /* El modal de ficha técnica trae max-height:80vh INLINE en su body, que
+     en el flex column de 100dvh dejaría un hueco bajo el contenido. Lo
+     anulamos solo en móvil (único caso que justifica !important: inline). */
+  #modalFichaTecnica .modal-body{ max-height:none !important; }
+  /* Footer SIEMPRE visible al fondo: el técnico firma y confirma sin
+     perseguir el botón al final del scroll. Sombra para despegarlo. */
+  .firma-modal .modal-footer{
+    flex:0 0 auto;
+    background:#fafafa;
+    box-shadow:0 -4px 14px rgba(0,0,0,.10);
+    padding:12px 14px;
+    padding-bottom:calc(12px + env(safe-area-inset-bottom));
+    /* mobile.css ya apila los .btn full-width (column-reverse); reforzamos
+       el touch target del CTA principal. */
+  }
+  .firma-modal .modal-footer .btn{ min-height:48px; font-size:.95rem; }
+  /* El modal de aprobación tiene un spacer flexible (.flex-grow-1) que en
+     el footer apilado (column-reverse) deja un hueco vacío. Lo colapsamos. */
+  #modalAprobacion .modal-footer > .flex-grow-1{ display:none; }
+
+  /* Canvas de firma: el ancho manda; alto algo menor en pantallas
+     pequeñas para que quepan ambas firmas (técnico + cliente) + footer
+     sin saltos. Sigue siendo amplio para firmar con el dedo. */
+  .firma-canvas-wrap canvas{ height:200px; }
+
+  /* Header del banner del modal de firma: que el botón cerrar no se
+     pegue al borde y sea fácil de tocar. */
+  .firma-modal .firma-banner .btn-close{ padding:.7rem; }
+
+  /* Compromisos de la firma: ya van en 1 columna (<680px). Compactamos
+     el padding para no robar tanto scroll antes de la firma. */
+  .resp-firma-card{ padding:12px 14px; margin-bottom:14px; }
+}
+
+/* ── iPhone SE / pantallas muy angostas (≤360px) ── */
+@media (max-width: 360px){
+  .firma-modal .modal-body{ padding:12px; }
+  .firma-canvas-wrap canvas{ height:180px; }
+  /* Toolbar de firma: que los colores no empujen el "Deshacer" fuera —
+     dejamos que el grupo de colores baje a su propia línea si hace falta. */
+  .firma-toolbar .firma-color-pick{ margin-left:0; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CHECKLIST — controles táctiles en anchos angostos (≤480px)
+   Los pills Sí/No/N-A y aprobado/alerta/falla con flex-wrap podían
+   quebrarse en renglones desparejos. Los pasamos a una grilla de 3
+   columnas iguales para que queden alineados y bien tocables.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 480px){
+  .tx-tarea .ctrl.tx-btn-group{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:8px;
+  }
+  .tx-tarea .ctrl.tx-btn-group .tx-btn-pill{
+    width:100%; padding-left:6px; padding-right:6px;
+    justify-content:center; display:inline-flex; align-items:center;
+    font-size:.84rem;
+  }
+  /* Botón "Agregar foto" desktop-zone oculto en móvil; el botón móvil
+     ya es full-width 56px. Las miniaturas resultantes, táctiles. */
+  .tx-tarea .foto-result img{ width:72px; height:72px; }
+  /* Inputs/selects/textarea de la tarea a 16px (anti-zoom iOS) en móvil. */
+  .tx-tarea input[type="text"], .tx-tarea input[type="number"],
+  .tx-tarea input[type="datetime-local"], .tx-tarea select,
+  .tx-tarea textarea{ font-size:16px; }
+}
 </style>
 
 <div class="tx-wrap">
@@ -2155,6 +2265,55 @@
               </div>
             </label>
             <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="sin_acceso">
+              <div class="skip-radio-content">
+                <strong>Sin acceso</strong>
+                <span>Sala cerrada, sin llave o sin permiso para entrar.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="cliente_no_permite">
+              <div class="skip-radio-content">
+                <strong>El cliente no permite intervenir</strong>
+                <span>El cliente pidió no tocar el equipo en esta visita.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="equipo_en_uso">
+              <div class="skip-radio-content">
+                <strong>Equipo en uso</strong>
+                <span>Estaba siendo usado y no se pudo intervenir.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="sin_energia">
+              <div class="skip-radio-content">
+                <strong>Sin energía</strong>
+                <span>No había alimentación eléctrica para probarlo.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="requiere_repuesto">
+              <div class="skip-radio-content">
+                <strong>Requiere repuesto</strong>
+                <span>Falta un repuesto para ejecutar la tarea (indícalo abajo).</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="reagendar">
+              <div class="skip-radio-content">
+                <strong>Reagendar</strong>
+                <span>Debe reprogramarse otra visita para este equipo.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
+              <input type="radio" name="skipRazon" value="no_aplica">
+              <div class="skip-radio-content">
+                <strong>No aplica</strong>
+                <span>La tarea no corresponde a este equipo.</span>
+              </div>
+            </label>
+            <label class="skip-radio">
               <input type="radio" name="skipRazon" value="otro">
               <div class="skip-radio-content">
                 <strong>Otro motivo</strong>
@@ -2296,8 +2455,19 @@
             <i class="bi bi-person-badge me-1 text-primary"></i>Firma del cliente (quien recibe)
           </label>
           <input type="text" id="firmaCliNombre" class="form-control mb-2"
-                 placeholder="Nombre del cliente que recibe"
+                 placeholder="Nombre de quien recibe y firma"
+                 data-sugerido="{{ visita.contacto_nombre or '' }}"
                  value="{{ visita.contacto_nombre or '' }}">
+          <input type="text" id="firmaCliRut" class="form-control mb-2"
+                 placeholder="RUT de quien firma (ej: 12.345.678-9)">
+          <div class="row g-2 mb-1">
+            <div class="col-12 col-sm-6"><input type="text" id="firmaCliCargo" class="form-control form-control-sm" placeholder="Cargo / relación (opcional)" maxlength="120"></div>
+            <div class="col-6 col-sm-3"><input type="text" id="firmaCliTel" class="form-control form-control-sm" placeholder="Teléfono (opc.)" maxlength="40"></div>
+            <div class="col-6 col-sm-3"><input type="email" id="firmaCliEmail" class="form-control form-control-sm" placeholder="Email (opc.)" maxlength="190"></div>
+          </div>
+          <small class="d-block text-muted mb-2" style="font-size:.7rem">
+            <i class="bi bi-info-circle me-1"></i>Si el cliente firma, <b>nombre y RUT del firmante son obligatorios</b>. Sugerimos el contacto, pero cámbialo por quien realmente recibe (encargado, recepción, etc.).
+          </small>
           <div class="firma-canvas-wrap" id="wrap-canvasCli">
             <canvas id="canvasCli" width="800" height="240"></canvas>
             <div class="firma-placeholder">✍️ El cliente firma aquí con el dedo</div>
@@ -3713,7 +3883,37 @@ async function _capSubirFoto(mid, fileInput){
   if (uploader){ uploader.classList.add('uploading'); uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Comprimiendo…</span>'; }
   // PERF 2026-05-22: comprimir en cliente antes de subir (iPhone 4-8MB → ~400KB).
   const file = await _compressImageBeforeUpload(rawFile);
-  if (uploader){ uploader.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i><span>Subiendo…</span>'; }
+  fileInput.value = '';
+
+  // ── UI OPTIMISTA (perf 2026-05-31): mostramos la foto AL INSTANTE con un
+  // objectURL local y dejamos al técnico seguir trabajando. La subida a
+  // Cloudinary va en SEGUNDO PLANO; al terminar reemplazamos por la URL real.
+  // Si falla, revertimos y avisamos. (Antes el técnico esperaba el round-trip.)
+  const previewUrl = URL.createObjectURL(file);
+  const eqYaTieneFoto = !!(EQUIPOS_IDX[String(mid)] && EQUIPOS_IDX[String(mid)].foto_url);
+  const cardImg = document.querySelector(`#tx-eq-card-${mid} .eq-foto-img`);
+  const prevCardSrc = cardImg ? cardImg.getAttribute('src') : null;
+  // Si el equipo no tenía foto, ésta será la principal → mostrarla ya en la card.
+  if (cardImg && !eqYaTieneFoto){ cardImg.src = previewUrl; }
+  // Tile "cargando" al inicio de la galería del modal (si está abierta).
+  const grid = document.getElementById('cap-fotos-grid');
+  let optTile = null;
+  if (grid){
+    optTile = document.createElement('div');
+    optTile.style.cssText = 'position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;opacity:.75';
+    optTile.innerHTML =
+      `<img src="${previewUrl}" style="width:100%;height:100%;object-fit:cover">` +
+      `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.3)">` +
+      `<i class="bi bi-arrow-clockwise spin" style="color:#fff;font-size:1.3rem"></i></span>`;
+    grid.prepend(optTile);
+  }
+  // Liberar el uploader de inmediato: el técnico puede seguir.
+  if (uploader){
+    uploader.classList.remove('uploading');
+    uploader.innerHTML = '<i class="bi bi-camera-fill"></i><span>Subir foto</span>';
+  }
+  ilusToast('Subiendo foto en segundo plano…', { type: 'info' });
+
   const fd = new FormData();
   fd.append('foto', file, file.name || rawFile.name || 'foto.jpg');
   // Si el equipo NO tiene foto principal, esta primera es la principal.
@@ -3729,24 +3929,24 @@ async function _capSubirFoto(mid, fileInput){
     ilusToast(d.degradado
       ? '✓ Foto agregada a la galería del equipo'
       : '✓ Foto principal guardada', { type: 'success' });
-    // Refrescar galería
-    await _capRefreshFotos(mid);
-    // Si fue principal, actualizar hero y card del equipo
+    // Si fue principal, fijar la URL REAL en hero/card/índice.
     if (d.es_principal){
       if (EQUIPOS_IDX[String(mid)]) EQUIPOS_IDX[String(mid)].foto_url = d.url;
-      // refrescar lista de equipos
-      const cardImg = document.querySelector(`#tx-eq-card-${mid} .eq-foto-img`);
       if (cardImg){ cardImg.src = d.url; }
+    } else if (cardImg && !eqYaTieneFoto && prevCardSrc !== null){
+      // Optimista asumió principal pero el backend la degradó → revertir card.
+      cardImg.src = prevCardSrc;
     }
+    // Refrescar galería (reemplaza el tile optimista por los reales).
+    await _capRefreshFotos(mid);
   } catch(e){
     console.error('[_capSubirFoto]', e);
+    // Revertir UI optimista.
+    if (optTile){ optTile.remove(); }
+    if (cardImg && !eqYaTieneFoto && prevCardSrc !== null){ cardImg.src = prevCardSrc; }
     ilusToast(e.message || 'No se pudo subir la foto', { type: 'error' });
   } finally {
-    if (uploader){
-      uploader.classList.remove('uploading');
-      uploader.innerHTML = '<i class="bi bi-camera-fill"></i><span>Subir foto</span>';
-    }
-    fileInput.value = '';
+    try { URL.revokeObjectURL(previewUrl); } catch(_){}
   }
 }
 
@@ -6958,6 +7158,14 @@ async function enviarFirma(){
   }
   const firmaTec = cvTec.toDataURL('image/png');
   const firmaCli = (_sig.canvasCli && _sig.canvasCli.has) ? document.getElementById('canvasCli').toDataURL('image/png') : '';
+  const cliNombreEl = document.getElementById('firmaCliNombre');
+  const cliNombre = (cliNombreEl && cliNombreEl.value || '').trim();
+  const cliRut = ((document.getElementById('firmaCliRut') || {}).value || '').trim();
+  // Si el cliente firmó, exigir identidad del firmante real (nombre + RUT).
+  if (firmaCli){
+    if (!cliNombre){ ilusToast('Falta el nombre de quien firma por el cliente', { type:'warning' }); return; }
+    if (cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('Falta el RUT de quien firma (RUT chileno válido)', { type:'warning' }); return; }
+  }
   const btn = document.getElementById('btnFirmarConfirm');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
   try {
@@ -6967,7 +7175,12 @@ async function enviarFirma(){
         firma_tecnico: firmaTec,
         firma_tecnico_nombre: document.getElementById('firmaTecNombre').value.trim(),
         firma_cliente: firmaCli,
-        firma_cliente_nombre: document.getElementById('firmaCliNombre').value.trim(),
+        firma_cliente_nombre: cliNombre,
+        firma_cliente_rut: cliRut,
+        firma_cliente_cargo: ((document.getElementById('firmaCliCargo') || {}).value || '').trim(),
+        firma_cliente_tel: ((document.getElementById('firmaCliTel') || {}).value || '').trim(),
+        firma_cliente_email: ((document.getElementById('firmaCliEmail') || {}).value || '').trim(),
+        firma_cliente_sugerido_nombre: (cliNombreEl && cliNombreEl.dataset ? (cliNombreEl.dataset.sugerido || '') : ''),
       })
     });
     const d = await r.json();
@@ -6980,7 +7193,19 @@ async function enviarFirma(){
       });
       setTimeout(() => location.reload(), 600);
     } else {
-      ilusToast(d.error || 'Error', { type:'error' });
+      // Gate de cierre (Fase 10): si faltan tareas por cubrir, mostramos el
+      // panel con el detalle exacto de qué falta (por equipo).
+      if (Array.isArray(d.faltantes) && d.faltantes.length){
+        await ilusAlert({
+          title: '🚧 No puedes cerrar esta OT todavía',
+          message: d.error || 'Quedan tareas obligatorias sin completar ni justificar.',
+          sub: d.faltantes.join(' · '),
+          type: 'warning',
+          okLabel: 'Entendido',
+        });
+      } else {
+        ilusToast(d.error || 'Error', { type:'error' });
+      }
       btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
     }
   } catch(e){

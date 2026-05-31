@@ -316,6 +316,29 @@ async function abrirDescargaInformeDash(){
    Cada columna agrupa varios estados pero las cards conservan su badge real
    (status_badge) para mantener la granularidad operacional. Banda superior
    con color por grupo + ícono. La última columna es "Retirada" (terminal). #}
+<style>
+  /* ── Responsive pipeline (Daniel 30/05/2026 · responsive_retiros) ──
+     `static/mobile.css` (responsive_base v2) ya apila los [class*="pipeline"]
+     en celular. Reforzamos LOCALMENTE para blindar el caso: el contenedor
+     trae `.overflow-auto` de Bootstrap (overflow:auto!important) y las
+     columnas tienen min-width/flex INLINE. Aquí garantizamos columna única
+     sin scroll horizontal y con buen espaciado en ≤768px. */
+  @media (max-width:768px){
+    .ilus-pipeline{
+      flex-direction:column !important;
+      overflow-x:visible !important;
+      gap:14px !important;
+    }
+    .ilus-pipeline-col{
+      min-width:0 !important;
+      width:100% !important;
+      max-width:100% !important;
+      flex:1 1 auto !important;
+    }
+    /* El cuerpo de cada columna ya no necesita alto mínimo grande en mobile */
+    .ilus-pipeline-body{min-height:0 !important}
+  }
+</style>
 <div class="d-flex gap-3 overflow-auto pb-3 ilus-pipeline">
   {% for group in pipeline_groups %}
     {% set total = namespace(n=0) %}
