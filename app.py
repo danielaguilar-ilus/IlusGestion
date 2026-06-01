@@ -11607,59 +11607,67 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
           AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
     """
 
-    for nv in nudo_candidatos:
-        diag["nudo_tried"].append(nv)
-        try:
-            rows = _random_sql_query(
-                _HEADER_JOIN_SQL,
-                ('01', erp_tido, nv),
-                max_rows=1,
-            )
-            if rows:
-                header_row = rows[0]
-                matched_nudo = nv
-                empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
-                diag["match_nudo"] = nv
-                diag["fallback_chain"].append(f"MAEEDO+OB+EN JOIN OK con nudo={nv}")
-                print(f"[cub-sql-mssql] JOIN match: tido={erp_tido} nudo={nv} "
-                      f"endo={(header_row.get('E_ENDO') or '')[:20]} "
-                      f"cliente={(header_row.get('EN_NOKOEN') or '')[:30]}",
-                      flush=True)
-                break
-        except Exception as e:
-            print(f"[cub-sql-mssql] JOIN query falló para nudo={nv}: "
-                  f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+    # ⚡ OPTIMIZACIÓN 2026-05-31: en lugar de probar variantes de NUDO una a una
+    # (1 round-trip por variante = hasta 5s en peor caso), pasamos TODAS las
+    # variantes en UN solo IN(...) → 1 round-trip único.
+    _ph_nudos = ",".join(["%s"] * len(nudo_candidatos))
+    _HEADER_JOIN_SQL_IN = _HEADER_JOIN_SQL.replace(
+        "AND LTRIM(RTRIM(e.NUDO))    = %s",
+        f"AND LTRIM(RTRIM(e.NUDO)) IN ({_ph_nudos})"
+    )
+
+    t_hdr = time.time()
+    try:
+        rows = _random_sql_query(
+            _HEADER_JOIN_SQL_IN,
+            ('01', erp_tido, *nudo_candidatos),
+            max_rows=1,
+        )
+        if rows:
+            header_row = rows[0]
+            matched_nudo = (header_row.get("E_NUDO") or "").strip()
+            empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
+            diag["nudo_tried"] = nudo_candidatos[:]
+            diag["match_nudo"] = matched_nudo
+            diag["fallback_chain"].append(f"JOIN OK con IN({len(nudo_candidatos)}) → nudo={matched_nudo}")
+            print(f"[cub-sql-mssql] JOIN match: tido={erp_tido} nudo={matched_nudo} "
+                  f"endo={(header_row.get('E_ENDO') or '')[:20]} "
+                  f"cliente={(header_row.get('EN_NOKOEN') or '')[:30]} "
+                  f"({int((time.time()-t_hdr)*1000)}ms)",
+                  flush=True)
+    except Exception as e:
+        diag["nudo_tried"] = nudo_candidatos[:]
+        print(f"[cub-sql-mssql] JOIN IN query falló: "
+              f"{type(e).__name__}: {str(e)[:200]}", flush=True)
 
     if not header_row:
         # ── Fallback: sin filtro EMPRESA (por si está en otra empresa) ──
         # Misma query JOIN pero sin el AND EMPRESA = '01'
         print(f"[cub-sql-mssql] no match con EMPRESA='01', reintentando sin filtro",
               flush=True)
-        _HEADER_JOIN_SQL_NO_EMP = _HEADER_JOIN_SQL.replace(
+        _HEADER_JOIN_SQL_IN_NO_EMP = _HEADER_JOIN_SQL_IN.replace(
             "WHERE LTRIM(RTRIM(e.EMPRESA)) = %s\n          AND LTRIM(RTRIM(e.TIDO))    = %s",
             "WHERE LTRIM(RTRIM(e.TIDO))    = %s"
         )
-        for nv in nudo_candidatos:
-            try:
-                rows = _random_sql_query(
-                    _HEADER_JOIN_SQL_NO_EMP,
-                    (erp_tido, nv),
-                    max_rows=1,
+        try:
+            rows = _random_sql_query(
+                _HEADER_JOIN_SQL_IN_NO_EMP,
+                (erp_tido, *nudo_candidatos),
+                max_rows=1,
+            )
+            if rows:
+                header_row = rows[0]
+                matched_nudo = (header_row.get("E_NUDO") or "").strip()
+                empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
+                diag["match_nudo"] = matched_nudo
+                diag["fallback_chain"].append(
+                    f"JOIN OK con IN+sin EMPRESA → nudo={matched_nudo} (EMPRESA={empresa_real})"
                 )
-                if rows:
-                    header_row = rows[0]
-                    matched_nudo = nv
-                    empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
-                    diag["match_nudo"] = nv
-                    diag["fallback_chain"].append(
-                        f"JOIN OK con nudo={nv} (EMPRESA={empresa_real}, sin filtro)"
-                    )
-                    print(f"[cub-sql-mssql] JOIN match SIN filtro EMPRESA: "
-                          f"nudo={nv} EMPRESA real={empresa_real}", flush=True)
-                    break
-            except Exception as e:
-                print(f"[cub-sql-mssql] JOIN fallback falló nudo={nv}: "
-                      f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+                print(f"[cub-sql-mssql] JOIN match SIN filtro EMPRESA: "
+                      f"nudo={matched_nudo} EMPRESA real={empresa_real}", flush=True)
+        except Exception as e:
+            print(f"[cub-sql-mssql] JOIN IN fallback falló: "
+                  f"{type(e).__name__}: {str(e)[:200]}", flush=True)
 
     diag["latency_ms"] = int((time.time() - t0) * 1000)
 
@@ -11673,52 +11681,113 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     id_maeedo = header_row.get("IDMAEEDO")
     endo_full = (header_row.get("E_ENDO") or "").strip()
 
-    # ── 2. MAEDDO (líneas) ──────────────────────────────────────────────
-    # OPTIMIZACIÓN: corre en paralelo con… nada en este punto, porque el JOIN
-    # ya nos dio header+obs+entidad. Pero igual lo hacemos en un thread por
-    # si en el futuro queremos paralelizarlo con más cosas. Por ahora simple.
-    lineas_raw = []
-    try:
-        # Daniel 2026-05-24: FÓRMULA COMPLETA DEL SALDO según diccionario
-        # oficial Random (TABLAS BD Random — tabla MAEDDO).
-        #
-        # Saldo línea = CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1
-        #   · CAPRCO1: cantidad primaria contable (la original del docto)
-        #   · CAPRAD1: cantidad primaria autodocumentada (despachada via GUÍA)
-        #   · CAPREX1: cantidad primaria externa (despachada externamente)
-        #   · CAPRNC1: cantidad primaria por NOTAS DE CRÉDITO (devolución)
-        # También leemos ESLIDO (estado de despacho de la línea) por si
-        # Random lo marca explícito como totalmente despachado.
-        #
-        # Ej: BLV 20828
-        #   · Kettlebell 16kg → CAPRCO1=1, CAPRAD1=1 → saldo=0 (despachada via GDV 30570)
-        #   · Kettlebell 12kg → CAPRCO1=1, CAPRAD1=1 → saldo=0 (despachada)
-        #   · Kettlebell  8kg → CAPRCO1=1, CAPRAD1=0 → saldo=1 (PENDIENTE de retiro)
-        lineas_rows = _random_sql_query(
-            "SELECT NULIDO, "
-            "       LTRIM(RTRIM(COALESCE(KOPRCT, ''))) AS KOPRCT, "
-            "       LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR, "
-            "       COALESCE(CAPRCO1, 0) AS CAPRCO1, "
-            "       COALESCE(CAPRAD1, 0) AS CAPRAD1, "
-            "       COALESCE(CAPREX1, 0) AS CAPREX1, "
-            "       COALESCE(CAPRNC1, 0) AS CAPRNC1, "
-            "       LTRIM(RTRIM(COALESCE(ESLIDO, ''))) AS ESLIDO, "
-            "       COALESCE(PPPRNE,  0) AS PPPRNE, "
-            "       COALESCE(VANELI,  0) AS VANELI, "
-            "       COALESCE(VABRLI,  0) AS VABRLI "
-            "  FROM MAEDDO "
-            " WHERE LTRIM(RTRIM(EMPRESA)) = %s "
-            "   AND LTRIM(RTRIM(TIDO))    = %s "
-            "   AND LTRIM(RTRIM(NUDO))    = %s "
-            " ORDER BY NULIDO",
-            (empresa_real, erp_tido, matched_nudo),
-            max_rows=500,
-        ) or []
-        lineas_raw = [dict(r) for r in lineas_rows]
-        print(f"[cub-sql-mssql] MAEDDO: {len(lineas_raw)} líneas", flush=True)
-    except Exception as e:
-        print(f"[cub-sql-mssql] MAEDDO query falló: "
-              f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+    # ⚡ OPTIMIZACIÓN 2026-05-31: paralelizar las queries restantes para bajar
+    # de ~2s secuencial a ~700ms (latency_cloud_random ≈ 500ms por roundtrip).
+    #   - QUERY A: MAEDDO (líneas del documento) — siempre se hace.
+    #   - QUERY B: MAEEN por RUT REAL del cliente — solo si parseamos un RUT
+    #     chileno del OBDO/TEXTO (caso boleta a consumidor final: el ENDO es
+    #     "BOLETA" genérico, el RUT real va embebido en observaciones).
+    # Ambas usan _random_sql_query (thread-safe gracias al pool PooledDB).
+    import threading as _th_run
+    import re as _re_rut
+
+    # Parsear RUT chileno (XX.XXX.XXX-X o XXXXXXXX-X) del OBDO/extras antes
+    # del JOIN. Si encontramos uno y NO es el genérico "1-9"/"BOLETA", lo
+    # usamos para la búsqueda paralela de la entidad real.
+    _obdo_full = (header_row.get("OB_OBDO") or "") + " " + \
+                 (header_row.get("OB_TEXTO1") or "") + " " + \
+                 (header_row.get("OB_TEXTO2") or "") + " " + \
+                 (header_row.get("OB_TEXTO3") or "")
+    _rut_match = _re_rut.search(
+        r'(\d{1,2}[.\s]?\d{3}[.\s]?\d{3}[-\s]?[\dkK])', _obdo_full
+    )
+    rut_obdo = None
+    if _rut_match:
+        rut_raw = _re_rut.sub(r'[^\dkK]', '', _rut_match.group(1)).upper()
+        # Filtro genéricos: BOLETA (00.000.001-9), demos, dummies y RUTs cortos
+        if rut_raw and len(rut_raw) >= 8:
+            cuerpo = rut_raw[:-1].lstrip("0") or "0"
+            dv = rut_raw[-1]
+            # Cuerpo válido: ≥4 dígitos significativos y no genérico
+            if len(cuerpo) >= 4 and cuerpo not in ("1", "11", "99", "999", "1000", "9999"):
+                rut_obdo = cuerpo + "-" + dv
+
+    _results = {"lineas": [], "rut_entity": None}
+
+    def _job_lineas():
+        try:
+            # Daniel 2026-05-24: FÓRMULA COMPLETA DEL SALDO (CAPRCO1 - CAPRAD1
+            # - CAPREX1 - CAPRNC1). Ver comentario histórico abajo.
+            lineas_rows = _random_sql_query(
+                "SELECT NULIDO, "
+                "       LTRIM(RTRIM(COALESCE(KOPRCT, ''))) AS KOPRCT, "
+                "       LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR, "
+                "       COALESCE(CAPRCO1, 0) AS CAPRCO1, "
+                "       COALESCE(CAPRAD1, 0) AS CAPRAD1, "
+                "       COALESCE(CAPREX1, 0) AS CAPREX1, "
+                "       COALESCE(CAPRNC1, 0) AS CAPRNC1, "
+                "       LTRIM(RTRIM(COALESCE(ESLIDO, ''))) AS ESLIDO, "
+                "       COALESCE(PPPRNE,  0) AS PPPRNE, "
+                "       COALESCE(VANELI,  0) AS VANELI, "
+                "       COALESCE(VABRLI,  0) AS VABRLI "
+                "  FROM MAEDDO "
+                " WHERE LTRIM(RTRIM(EMPRESA)) = %s "
+                "   AND LTRIM(RTRIM(TIDO))    = %s "
+                "   AND LTRIM(RTRIM(NUDO))    = %s "
+                " ORDER BY NULIDO",
+                (empresa_real, erp_tido, matched_nudo),
+                max_rows=500,
+            ) or []
+            _results["lineas"] = [dict(r) for r in lineas_rows]
+        except Exception as e:
+            print(f"[cub-sql-mssql] MAEDDO query falló: "
+                  f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+
+    def _job_rut_entity():
+        if not rut_obdo:
+            return
+        try:
+            # Buscar la entidad por RUT base (cuerpo sin DV) — más robusto
+            rut_body = rut_obdo.split("-")[0]
+            row = _random_sql_one(
+                "SELECT TOP 1 "
+                "  LTRIM(RTRIM(COALESCE(NOKOEN,    ''))) AS NOKOEN, "
+                "  LTRIM(RTRIM(COALESCE(NOKOENAMP, ''))) AS NOKOENAMP, "
+                "  LTRIM(RTRIM(COALESCE(EMAIL,     ''))) AS EMAIL, "
+                "  LTRIM(RTRIM(COALESCE(FOEN,      ''))) AS FOEN, "
+                "  LTRIM(RTRIM(COALESCE(DIEN,      ''))) AS DIEN, "
+                "  LTRIM(RTRIM(COALESCE(CMEN,      ''))) AS CMEN, "
+                "  LTRIM(RTRIM(COALESCE(CIEN,      ''))) AS CIEN, "
+                "  LTRIM(RTRIM(COALESCE(RTEN,      ''))) AS RTEN "
+                "FROM MAEEN "
+                "WHERE LTRIM(RTRIM(RTEN)) = %s "
+                "   OR LTRIM(RTRIM(RTEN)) LIKE %s",
+                (rut_obdo, f"{rut_body}%"),
+            )
+            if row:
+                _results["rut_entity"] = row
+                print(f"[cub-sql-mssql] entity-by-RUT {rut_obdo} → "
+                      f"{(row.get('NOKOEN') or '')[:30]}", flush=True)
+        except Exception as e:
+            print(f"[cub-sql-mssql] entity-by-RUT falló: "
+                  f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+
+    t_para = time.time()
+    _th_lineas = _th_run.Thread(target=_job_lineas, name="erp-lineas", daemon=True)
+    _th_rut    = _th_run.Thread(target=_job_rut_entity, name="erp-rut", daemon=True)
+    _th_lineas.start()
+    if rut_obdo:
+        _th_rut.start()
+    _th_lineas.join(timeout=15)
+    if rut_obdo:
+        _th_rut.join(timeout=15)
+    print(f"[cub-sql-mssql] paralelo lineas+rut: "
+          f"{int((time.time()-t_para)*1000)}ms "
+          f"(rut_obdo={rut_obdo or '—'}, lineas={len(_results['lineas'])})",
+          flush=True)
+
+    lineas_raw = _results["lineas"]
+    rut_entity = _results["rut_entity"]
 
     # ── 3 + 4. Observaciones + Cliente ya VIENEN del JOIN inicial ──────
     # OPTIMIZACIÓN 2026-05-19: estos datos antes requerían 2 queries
@@ -11770,6 +11839,33 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         cliente_obs_en   = _erpe.fix_yen_to_n(header_row.get("EN_OBEN") or "")
         diag["match_rut"] = cliente_rut
         diag["fallback_chain"].append(f"entidad MAEEN OK (JOIN, RUT={en_rten})")
+
+    # 🔍 ENRIQUECIMIENTO POR RUT REAL (caso boleta a consumidor final):
+    # Si parseamos un RUT real del OBDO y el JOIN no encontró un cliente
+    # significativo (o trajo el genérico BOLETA), reemplazamos con los datos
+    # del cliente REAL. Esto resuelve casos como BLV 10680 → "renato vargas"
+    # cuando el ERP devuelve cliente="BOLETA".
+    if rut_entity and (
+        not cliente_nombre
+        or cliente_nombre.lower() in {"boleta", "consumidor final", "particular",
+                                      "cliente final", "varios", "publico general"}
+    ):
+        nombre_largo = (rut_entity.get("NOKOENAMP") or "").strip()
+        nombre_corto = (rut_entity.get("NOKOEN")    or "").strip()
+        if nombre_largo or nombre_corto:
+            cliente_nombre   = _erpe.fix_yen_to_n(nombre_largo or nombre_corto).title()
+            cliente_rut      = (rut_entity.get("RTEN") or rut_obdo or cliente_rut).strip()
+            cliente_email    = cliente_email or (rut_entity.get("EMAIL") or "").strip()
+            cliente_telefono = cliente_telefono or _erpe.normalize_phone_cl(
+                rut_entity.get("FOEN") or ""
+            )
+            cliente_dir_base = cliente_dir_base or _erpe.fix_yen_to_n(
+                rut_entity.get("DIEN") or ""
+            ).title()
+            cliente_cien     = cliente_cien or (rut_entity.get("CIEN") or "").strip()
+            cliente_cmen     = cliente_cmen or (rut_entity.get("CMEN") or "").strip()
+            diag["match_rut"] = cliente_rut
+            diag["fallback_chain"].append(f"entidad real por RUT-OBDO {rut_obdo} → {cliente_nombre[:30]}")
 
     # ── Tipo de operación + scan completo de líneas ─────────────────────
     # Reusar la misma lógica de _scan_lines del motor (clase ERPClient).
