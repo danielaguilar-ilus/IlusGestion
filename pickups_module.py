@@ -2829,6 +2829,139 @@ def register_pickup_routes(app, ctx):
         )
 
     # ══════════════════════════════════════════════════════════════════
+    #  NUEVO RETIRO INTERNO / BACKOFFICE (Daniel 2026-05-29)
+    #  Botón [+ Nuevo retiro interno] en el monitor → modal → POST aquí.
+    #  Es el MISMO flujo que el público pero request_source='backoffice'.
+    #  Modo CONFIRMACIÓN DIRECTA: el operador marca que el cliente ya
+    #  aceptó por un canal (tel/correo/WhatsApp/presencial) → queda
+    #  agenda_confirmada al instante. Reusa validate_pickup_datetime +
+    #  _validar_disponibilidad_slot (no duplica lógica fecha/capacidad).
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/nuevo", methods=["POST"])
+    @require_permission("edit")
+    def pickup_create_internal():
+        f = request.form
+        def _err(msg, code=400):
+            return jsonify({"ok": False, "error": msg}), code
+
+        customer_name      = (f.get("customer_name") or "").strip()[:200]
+        document_type      = (f.get("document_type") or "").strip()[:40]
+        document_number    = (f.get("document_number") or "").strip()[:60]
+        pickup_person_name = (f.get("pickup_person_name") or "").strip()[:200]
+        date = (f.get("date") or "").strip()
+        tf   = (f.get("time_from") or "").strip()
+        tt   = (f.get("time_to") or "").strip()
+        canal = (f.get("canal") or "").strip().lower()[:30]
+
+        # ── FASE 8: validaciones obligatorias para confirmación directa ──
+        if len(customer_name) < 2:
+            return _err("Falta el nombre del cliente.")
+        if not document_type or not document_number:
+            return _err("Falta el documento (tipo y número).")
+        if len(pickup_person_name) < 2:
+            return _err("Falta la persona que retira.")
+        if not (date and tf and tt):
+            return _err("Falta la fecha y hora del retiro.")
+        if canal not in ("telefono", "correo", "whatsapp", "presencial"):
+            return _err("Para confirmar directo, marca el canal por el que el cliente aceptó.")
+
+        cfg = settings()
+        # Validación temporal central (modo interno: NO exige min_notice y
+        # permite cruzar colación, pero NUNCA fecha/hora pasada).
+        ok_dt, msg_dt = validate_pickup_datetime(date, tf, tt, cfg=cfg, mode="internal")
+        if not ok_dt:
+            return _err(msg_dt)
+
+        try:    wkg = float(f.get("total_weight_kg") or 0)
+        except (TypeError, ValueError): wkg = 0.0
+        try:    m3 = float(f.get("total_volume_m3") or 0)
+        except (TypeError, ValueError): m3 = 0.0
+        try:    pv = float(f.get("total_volumetric_weight") or 0)
+        except (TypeError, ValueError): pv = 0.0
+        try:    bultos = int(f.get("total_packages") or 1)
+        except (TypeError, ValueError): bultos = 1
+
+        # Capacidad real del slot (misma fuente que el calendario)
+        ok_slot, motivo = _validar_disponibilidad_slot(
+            date, tf, tt, extra_kg=wkg, extra_m3=m3, bypass_lunch=True
+        )
+        if not ok_slot:
+            return _err(f"Ese horario no está disponible: {motivo}", code=409)
+
+        u = getattr(g, "user", None) or {}
+        uid   = u.get("id")
+        uname = u.get("nombre") or u.get("username") or "interno"
+        now_cl = _now_chile().strftime("%Y-%m-%d %H:%M:%S")
+        token  = secrets.token_urlsafe(42)
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                code = _generate_pickup_code(cur)
+                cur.execute(
+                    f"""INSERT INTO `{REQ}`
+                        (code, request_source, created_by_user_id, created_by_user_name,
+                         internal_created_at, customer_confirm_required, customer_already_agreed,
+                         document_type, document_number, customer_name, customer_rut,
+                         contact_name, contact_email, contact_phone,
+                         pickup_person_name, pickup_person_rut, pickup_person_phone, pickup_person_relation,
+                         requested_date, requested_time_from, requested_time_to,
+                         proposed_date, proposed_time_from, proposed_time_to,
+                         confirmed_date, confirmed_time_from, confirmed_time_to,
+                         status, total_packages, total_weight_kg, total_volumetric_weight, total_volume_m3,
+                         observations, public_token, signature_status, created_ip, created_user_agent)
+                        VALUES (%s,'backoffice',%s,%s,%s,0,1,
+                                %s,%s,%s,%s,
+                                %s,%s,%s,
+                                %s,%s,%s,%s,
+                                %s,%s,%s,
+                                %s,%s,%s,
+                                %s,%s,%s,
+                                'agenda_confirmada',%s,%s,%s,%s,
+                                %s,%s,'pendiente',%s,%s)""",
+                    (code, uid, uname, now_cl,
+                     document_type, document_number, customer_name, (f.get("customer_rut") or "").strip()[:20],
+                     (f.get("contact_name") or pickup_person_name)[:180],
+                     (f.get("contact_email") or "").strip()[:190], (f.get("contact_phone") or "").strip()[:40],
+                     pickup_person_name, (f.get("pickup_person_rut") or "").strip()[:20],
+                     (f.get("pickup_person_phone") or "").strip()[:40], (f.get("pickup_person_relation") or "otro")[:30],
+                     date, tf, tt,  date, tf, tt,  date, tf, tt,
+                     bultos, wkg, pv, m3,
+                     (f.get("observations") or "").strip()[:2000], token,
+                     request.remote_addr, (request.user_agent.string or "")[:300]),
+                )
+                rid = cur.lastrowid
+            conn.commit()
+        except Exception as e:
+            try: conn.rollback()
+            except Exception: pass
+            return _err(f"No se pudo crear el retiro: {str(e)[:200]}", code=500)
+        finally:
+            try: conn.close()
+            except Exception: pass
+
+        # FASE 9: trazabilidad — log de creación interna + confirmación directa
+        log_event(rid, "retiro_interno_creado", None, "agenda_confirmada",
+                  f"Retiro backoffice creado por {uname} — confirmación directa (canal: {canal})",
+                  "interno", uname)
+        # Notificar al cliente si dejó email (no bloqueante)
+        try:
+            if (f.get("contact_email") or "").strip():
+                _fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+                if _fresh:
+                    notify_async(_fresh, "confirmed")
+        except Exception as _e:
+            print(f"[pickup_create_internal notify] {_e}", flush=True)
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
+
+        return jsonify({
+            "ok": True, "id": rid, "code": code,
+            "message": f"Retiro {code} creado y confirmado para {date} {tf}-{tt}.",
+            "redirect_url": url_for("pickup_detail", rid=rid),
+        })
+
+    # ══════════════════════════════════════════════════════════════════
     #  BANDEJA "HACER HOY" — tareas prioritarias del equipo
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/bandeja-hoy")

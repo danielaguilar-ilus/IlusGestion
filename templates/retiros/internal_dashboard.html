@@ -7,6 +7,9 @@
     <div class="sub">Solicitudes de retiro en bodega, agenda y negociacion controlada</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
+    <button type="button" class="btn btn-sm btn-ilus fw-bold" data-bs-toggle="modal" data-bs-target="#modalNuevoRetiroInterno" title="Crear un retiro internamente (backoffice)">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo retiro interno
+    </button>
     <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-box-arrow-up-right me-1"></i>Vista publica</a>
     <button type="button" class="btn btn-sm btn-outline-light" onclick="abrirDescargaInformeDash()" title="Excel con todos los retiros del mes">
       <i class="bi bi-file-earmark-excel me-1"></i>Informe mes
@@ -19,6 +22,185 @@
     {% endif %}
   </div>
 </div>
+
+{# ════════════════════════════════════════════════════════════════════
+   MODAL: NUEVO RETIRO INTERNO / BACKOFFICE (Daniel 2026-05-29)
+   Botón en el header → este modal → POST /retiros/nuevo (AJAX).
+   Confirmación directa: el cliente ya aceptó por un canal → agenda_confirmada.
+   Bootstrap modal (>5 campos, según CLAUDE.md regla #8).
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalNuevoRetiroInterno" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--ilus-black) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red)">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-plus-circle me-2" style="color:var(--ilus-red)"></i>Nuevo retiro interno
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert d-flex align-items-center gap-2 mb-3" style="background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #d97706;font-size:.82rem">
+          <i class="bi bi-info-circle-fill" style="color:#d97706"></i>
+          <div>Retiro creado <strong>internamente</strong>. Como el cliente ya aceptó por otro canal,
+          queda <strong>confirmado al instante</strong> (respetando capacidad y sin fechas pasadas).</div>
+        </div>
+        <form id="formNuevoRetiroInterno">
+          <div class="row g-2">
+            {# Documento #}
+            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-1"><i class="bi bi-file-earmark-text me-1"></i>Documento</div></div>
+            <div class="col-6 col-md-4">
+              <label class="form-label small fw-semibold">Tipo *</label>
+              <select name="document_type" class="form-select form-select-sm" required>
+                <option value="factura">Factura</option>
+                <option value="boleta">Boleta</option>
+                <option value="nota_venta">Nota de venta</option>
+                <option value="pedido">Pedido</option>
+                <option value="guia">Guía de despacho</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label small fw-semibold">N° documento *</label>
+              <input name="document_number" class="form-control form-control-sm" maxlength="60" required>
+            </div>
+
+            {# Cliente #}
+            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-building me-1"></i>Cliente</div></div>
+            <div class="col-12 col-md-6">
+              <label class="form-label small fw-semibold">Nombre / Razón social *</label>
+              <input name="customer_name" class="form-control form-control-sm" maxlength="200" required>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">RUT</label>
+              <input name="customer_rut" class="form-control form-control-sm" maxlength="20" placeholder="12.345.678-9">
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Teléfono</label>
+              <input name="contact_phone" class="form-control form-control-sm" maxlength="40" placeholder="+56 9 ...">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label small fw-semibold">Email (opcional — para avisarle)</label>
+              <input name="contact_email" type="email" class="form-control form-control-sm" maxlength="190" placeholder="cliente@correo.cl">
+            </div>
+
+            {# Persona que retira #}
+            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-person-badge me-1"></i>Persona que retira</div></div>
+            <div class="col-12 col-md-5">
+              <label class="form-label small fw-semibold">Nombre *</label>
+              <input name="pickup_person_name" class="form-control form-control-sm" maxlength="200" required>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">RUT</label>
+              <input name="pickup_person_rut" class="form-control form-control-sm" maxlength="20">
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label small fw-semibold">Relación</label>
+              <select name="pickup_person_relation" class="form-select form-select-sm">
+                <option value="dueno">Dueño / titular</option>
+                <option value="comprador">Comprador</option>
+                <option value="chofer">Chofer</option>
+                <option value="transporte">Transporte</option>
+                <option value="autorizado">Autorizado</option>
+                <option value="otro" selected>Otro</option>
+              </select>
+            </div>
+
+            {# Carga #}
+            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-box-seam me-1"></i>Carga</div></div>
+            <div class="col-4 col-md-3">
+              <label class="form-label small fw-semibold">Bultos</label>
+              <input name="total_packages" type="number" min="1" value="1" class="form-control form-control-sm">
+            </div>
+            <div class="col-4 col-md-3">
+              <label class="form-label small fw-semibold">Peso real (kg)</label>
+              <input name="total_weight_kg" type="number" min="0" step="0.01" value="0" class="form-control form-control-sm">
+            </div>
+            <div class="col-4 col-md-3">
+              <label class="form-label small fw-semibold">Volumen (m³)</label>
+              <input name="total_volume_m3" type="number" min="0" step="0.001" value="0" class="form-control form-control-sm">
+            </div>
+
+            {# Agenda #}
+            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-calendar-check me-1"></i>Agenda (entrega)</div></div>
+            <div class="col-12 col-md-4">
+              <label class="form-label small fw-semibold">Fecha *</label>
+              <input name="date" id="nri_date" type="date" class="form-control form-control-sm" required>
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label small fw-semibold">Desde *</label>
+              <input name="time_from" type="time" step="1800" class="form-control form-control-sm" value="09:00" required>
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label small fw-semibold">Hasta *</label>
+              <input name="time_to" type="time" step="1800" class="form-control form-control-sm" value="09:30" required>
+            </div>
+
+            {# Canal de aceptación (obligatorio para confirmar directo) #}
+            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-check2-circle me-1"></i>El cliente ya aceptó por</div></div>
+            <div class="col-12 col-md-6">
+              <select name="canal" class="form-select form-select-sm" required>
+                <option value="" selected disabled>Elige el canal…</option>
+                <option value="telefono">Teléfono</option>
+                <option value="correo">Correo</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="presencial">Presencial</option>
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold mt-1">Observación interna</label>
+              <textarea name="observations" class="form-control form-control-sm" rows="2" maxlength="2000" placeholder="Notas para el equipo de bodega…"></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer" style="background:#fafafa">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="btnGuardarRetiroInterno">
+          <i class="bi bi-check2 me-1"></i>Crear y confirmar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Nuevo retiro interno / backoffice (Daniel 2026-05-29) ──
+(function(){
+  const modalEl = document.getElementById('modalNuevoRetiroInterno');
+  if (!modalEl) return;
+  // Al abrir: fecha mínima = mañana (no permitir pasado en el picker; el
+  // backend revalida igual con validate_pickup_datetime en hora Chile).
+  modalEl.addEventListener('show.bs.modal', function(){
+    try {
+      const d = new Date(); d.setDate(d.getDate() + 1);
+      const min = d.toISOString().slice(0,10);
+      const inp = document.getElementById('nri_date');
+      if (inp){ inp.min = min; if (!inp.value) inp.value = min; }
+    } catch(_){}
+  });
+  const btn = document.getElementById('btnGuardarRetiroInterno');
+  btn?.addEventListener('click', async function(){
+    const form = document.getElementById('formNuevoRetiroInterno');
+    if (!form.reportValidity()) return;   // valida required nativos
+    btn.disabled = true;
+    const _orig = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+    try {
+      const r = await fetch('/retiros/nuevo', { method:'POST', body: new FormData(form) });
+      const d = await r.json().catch(()=>({ok:false,error:'Respuesta inválida del servidor.'}));
+      if (!r.ok || !d.ok) {
+        await ilusAlert({ title:'No se pudo crear', message: d.error || 'Error desconocido.', type:'error' });
+        return;
+      }
+      ilusToast('✓ ' + (d.message || 'Retiro creado y confirmado'), { type:'success' });
+      setTimeout(()=>{ window.location.href = d.redirect_url || '/retiros'; }, 700);
+    } catch(e) {
+      await ilusAlert({ title:'Error de red', message: e.message || 'No se pudo contactar al servidor.', type:'error' });
+    } finally {
+      btn.disabled = false; btn.innerHTML = _orig;
+    }
+  });
+})();
+</script>
 
 <script>
 async function abrirDescargaInformeDash(){
