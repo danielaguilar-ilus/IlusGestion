@@ -17717,7 +17717,7 @@ def _tr_sender_cfg():
     return {
         "name":     g("ILUS_SHIP_SENDER_NAME",     "Alison Mellado"),
         "company":  g("ILUS_SHIP_SENDER_COMPANY",  "Sport and Healt Solutions"),
-        "phone":    g("ILUS_SHIP_SENDER_PHONE",    "+56 9 7640 8650"),
+        "phone":    g("ILUS_SHIP_SENDER_PHONE",    "934975608"),
         "email":    g("ILUS_SHIP_SENDER_EMAIL",    "alison.mellado@sphs.cl"),
         "line1":    g("ILUS_SHIP_SENDER_LINE1",    "Av. Pdte. Eduardo Frei Montalva"),
         "line2":    g("ILUS_SHIP_SENDER_LINE2",    "9770, Bod 30, Quilicura"),
@@ -17726,6 +17726,58 @@ def _tr_sender_cfg():
         "city":     g("ILUS_SHIP_SENDER_CITY",     "Quilicura"),
         "country":  g("ILUS_SHIP_SENDER_COUNTRY",  "CL"),
     }
+
+
+# ── Búsqueda de código postal por comuna (replica BuscarCodigoPostal VBA) ──
+# Tabla oficial FedEx 2025 (481 comunas) cargada lazy una sola vez.
+_CL_POSTAL_CACHE = None
+
+def _cl_norm_comuna(s):
+    """Normaliza comuna: lowercase, sin tildes, sin puntuación."""
+    import unicodedata as _u, re as _re
+    if not s:
+        return ""
+    s = str(s).strip().lower()
+    s = _u.normalize("NFD", s)
+    s = "".join(c for c in s if _u.category(c) != "Mn")
+    s = _re.sub(r"[^a-z0-9 ]+", " ", s)
+    s = _re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _codigo_postal_chile(comuna):
+    """Devuelve el código postal de una comuna chilena para la carga masiva
+    de FedEx. Réplica de BuscarCodigoPostal de la macro de Daniel pero contra
+    la tabla oficial FedEx (cl_codigos_postales.CODIGOS_POSTALES_CL).
+
+    Returns: string de 7 dígitos o '' si la comuna no se encuentra (FedEx
+    rechazaría el envío sin código postal, así que el export marca esa celda
+    en rojo para que el operador corrija).
+    """
+    global _CL_POSTAL_CACHE
+    if _CL_POSTAL_CACHE is None:
+        try:
+            from cl_codigos_postales import CODIGOS_POSTALES_CL
+            _CL_POSTAL_CACHE = CODIGOS_POSTALES_CL
+        except Exception as e:
+            print(f"[postal-cl] no se pudo cargar tabla: {e}", flush=True)
+            _CL_POSTAL_CACHE = {}
+    if not _CL_POSTAL_CACHE:
+        return ""
+    k = _cl_norm_comuna(comuna)
+    if not k:
+        return ""
+    # Match exacto primero
+    if k in _CL_POSTAL_CACHE:
+        return _CL_POSTAL_CACHE[k]
+    # Fuzzy: empieza con (Las Condes vs "Las Condes Centro")
+    for key, val in _CL_POSTAL_CACHE.items():
+        if k.startswith(key) or key.startswith(k):
+            return val
+    # Match por palabras (ej "santiago centro" → "santiago")
+    primera = k.split(" ")[0]
+    if len(primera) >= 4 and primera in _CL_POSTAL_CACHE:
+        return _CL_POSTAL_CACHE[primera]
+    return ""
 
 
 def _tr_manifiesto_items_export(mid):
@@ -17903,38 +17955,74 @@ def _tr_manifiesto_export_impl(mid):
             "recipientShipAlertNotification", "recipientNotificationLanguageCode",
             "senderExceptionNotification",
         ])
-        # Sender pre-truncado una vez (es FIJO por instancia)
+
+        # DividirTextoInteligente — réplica exacta del helper VBA de Daniel.
+        # Divide un texto en 2 partes respetando palabras y un límite máx por
+        # parte. Si cabe entero, parte2='' (igual que la macro).
+        def _dividir_texto_inteligente(txt, maxlen=FEDEX_MAX):
+            s = (txt or "").strip()
+            if len(s) <= maxlen:
+                return s, ""
+            cut = -1
+            for sep in (" ", ", ", " - "):
+                c = s.rfind(sep, 0, maxlen + 1)
+                if c > maxlen // 2:
+                    cut = c
+                    break
+            if cut <= maxlen // 2:
+                cut = maxlen
+            p1 = s[:cut].rstrip(" ,-")
+            p2 = s[cut:].lstrip(" ,-")[:maxlen]
+            return p1, p2
+
+        # Sender FIJO — exactamente como columnas 2..11 de la macro VBA.
         sender_name  = _trunc(s["name"])
-        sender_l1, sender_l2_split = _split_address(s["line1"])
-        # Si el sender ya tiene line2 propio (config) y line1 cabía, respetar.
-        if not sender_l2_split:
-            sender_l2 = _trunc(s.get("line2", ""))
-        else:
-            sender_l2 = sender_l2_split
+        sender_l1    = _trunc(s["line1"])
+        sender_l2    = _trunc(s.get("line2", ""))
 
         for ri, it in enumerate(items, 2):
             nbult = max(1, int(it.get("n_bultos") or 1))
-            peso  = float(it.get("peso_kg") or 0)
-            ppp   = round(peso / nbult, 3) if nbult else peso
-            # Recipient: nombre + address con split inteligente
-            rcp_name = _trunc(it.get("cliente_nombre") or "")
-            rcp_l1, rcp_l2 = _split_address(it.get("direccion") or "")
+            peso_tot  = float(it.get("peso_kg") or 0)
+            # PackageWeight (col 25) = peso TOTAL / nbultos = peso por bulto.
+            # Mismo cálculo que la macro VBA línea: peso / bultos.
+            ppp   = round(peso_tot / nbult, 3) if nbult else peso_tot
+            # Recipient: nombre va a col 12 + col 13 (recipientCompany) si excede.
+            rcp_l12, rcp_l13 = _dividir_texto_inteligente(it.get("cliente_nombre") or "")
+            # Dirección: cols 16, 17, 18 — la macro VBA solo divide en 2, no
+            # llena la 18. Mantenemos compatibilidad.
+            rcp_l16, rcp_l17 = _dividir_texto_inteligente(it.get("direccion") or "")
+            # Código postal del destinatario: tabla oficial FedEx por comuna
+            # (réplica de BuscarCodigoPostal de la macro). Si falla, intenta
+            # con cod_postal del item (lo que el ERP haya guardado) como
+            # último recurso. Si tampoco, queda vacío y se marca en rojo.
+            comuna_dest = (it.get("comuna") or "").strip()
+            cp_dest = _codigo_postal_chile(comuna_dest) or (it.get("cod_postal") or "").strip()
+            # ServiceType — réplica condición VBA: bultos < 68 → PRIORITY,
+            # sino FREIGHT. (En la macro Daniel usa nbultos como umbral; lo
+            # respetamos textualmente).
+            service_type = "FEDEX_PRIORITY" if nbult < 68 else "FEDEX_PRIORITY_FREIGHT"
             row = [
-                it.get("nudo") or "",
-                sender_name, s["company"], s["phone"], s["email"], sender_l1, sender_l2,
-                s["postcode"], s["state"], s["city"], s["country"],
-                rcp_name, "",
-                it.get("telefono") or "", it.get("email") or "",
-                rcp_l1, rcp_l2, "",
-                it.get("cod_postal") or "", "CL",
-                _trunc(it.get("region") or it.get("comuna") or "", 35), "CL",
-                "YOUR_PACKAGING", nbult, ppp, "KGS", 1, 1, 1,
-                "FEDEX_PRIORITY", "CLP", "Y", "Y", "Y", "ES", "Y",
+                it.get("nudo") or "",                                 # 1  reference
+                sender_name, s["company"], s["phone"], s["email"],    # 2-5 sender contact
+                sender_l1, sender_l2,                                 # 6-7 sender lines
+                s["postcode"], s["state"], s["city"], s["country"],   # 8-11 sender geo
+                rcp_l12, rcp_l13,                                     # 12-13 recipient name (split)
+                it.get("telefono") or "", it.get("email") or "",      # 14-15 recipient contact
+                rcp_l16, rcp_l17, "",                                 # 16-18 recipient lines
+                cp_dest, "CL",                                        # 19-20 recipient postcode/state
+                _trunc(comuna_dest, 35), "CL",                        # 21-22 recipient city/country
+                "YOUR_PACKAGING", nbult, ppp, "KGS",                  # 23-26 package
+                1, 1, 1,                                              # 27-29 dimensions (cm)
+                service_type, "CLP",                                  # 30-31 service + currency
+                "Y", "Y", "Y", "ES", "Y",                             # 32-36 notifications
             ]
             for ci, v in enumerate(row, 1):
                 ws.cell(ri, ci, _xc(v))
+            # Resaltar campos críticos faltantes para que Daniel corrija antes de subir.
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
             if _falta(it.get("email")):    ws.cell(ri, 15).fill = MISS_FILL
+            if not cp_dest:                ws.cell(ri, 19).fill = MISS_FILL  # FedEx rechaza sin CP
+            if _falta(comuna_dest):        ws.cell(ri, 21).fill = MISS_FILL
 
     elif formato == "simplyroute":
         ws.title = "Felca y Milling"
