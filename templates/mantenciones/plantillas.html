@@ -38,7 +38,7 @@
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-list-check me-2" style="color:var(--ilus-red)"></i>Plantillas de Checklist</h4>
-    <div class="sub">Define un conjunto reusable de tareas con 9 tipos de respuesta. Aplícalo a OTs con 1 click.</div>
+    <div class="sub">Define un conjunto reusable de tareas con 9 tipos de respuesta. En levantamiento, cada tarea puede alimentar un campo de la ficha del equipo. Aplícalo a OTs con 1 click.</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary">
@@ -190,6 +190,20 @@ const TIPOS_RESPUESTA = [
   {v:'fecha_hora',   l:'📅 Fecha y hora',                 hint:'Selector datetime'},
   {v:'foto',         l:'📸 Foto obligatoria',             hint:'Tarea requiere subir al menos una foto'},
 ];
+// Campos de la ficha del equipo (mant_maquinas) que una tarea de LEVANTAMIENTO
+// puede alimentar. Al responder la tarea, su valor se vuelca a la ficha cuando
+// el supervisor aprueba la OT. NULL = la tarea no alimenta la ficha.
+const TARGET_FIELDS = [
+  {v:'',                 l:'— No alimenta la ficha —'},
+  {v:'serie',            l:'🔖 N° de serie'},
+  {v:'marca',            l:'🏷️ Marca'},
+  {v:'modelo',           l:'🔧 Modelo'},
+  {v:'anio_fabricacion', l:'📅 Año de fabricación'},
+  {v:'voltaje',          l:'⚡ Voltaje'},
+  {v:'ubicacion_sala',   l:'📍 Ubicación en sala'},
+  {v:'estado_capturado', l:'🟢 Estado del equipo'},
+  {v:'observaciones',    l:'🗒️ Observaciones'},
+];
 const TIPOS_VISITA_LABEL = {
   preventiva:'Preventiva', correctiva:'Correctiva', garantia:'Garantía',
   levantamiento:'Levantamiento', inspeccion:'Inspección',
@@ -294,7 +308,7 @@ function agregarItem(){
   _items.push({
     titulo:'', descripcion:'', tipo_respuesta:'check',
     obligatoria:false, requiere_foto:false, unidad:'',
-    rango_min:null, rango_max:null, opciones_lista:[]
+    rango_min:null, rango_max:null, opciones_lista:[], target_field:''
   });
   renderItems();
   // Scroll al nuevo y enfocar
@@ -354,6 +368,9 @@ function renderItems(){
     const showUnidadRango = (it.tipo_respuesta === 'numero');
     const showLista = (it.tipo_respuesta === 'lista');
     const tipoHint = (TIPOS_RESPUESTA.find(t => t.v===it.tipo_respuesta) || {}).hint || '';
+    const targetOpciones = TARGET_FIELDS.map(t =>
+      `<option value="${t.v}" ${(it.target_field||'')===t.v?'selected':''}>${t.l}</option>`
+    ).join('');
     return `
       <div class="it-card" id="item-${idx}">
         <div class="it-head">
@@ -383,6 +400,15 @@ function renderItems(){
         <textarea class="form-control form-control-sm mb-1" rows="1"
                   placeholder="Descripción / ayuda al técnico (opcional)"
                   oninput="actualizarItem(${idx}, 'descripcion', this.value)">${escHtml(it.descripcion||'')}</textarea>
+        <div style="background:#eff6ff;border:1px dashed #bfdbfe;border-radius:6px;padding:6px 8px;margin-bottom:6px">
+          <label style="font-size:.66rem;color:#1e40af;font-weight:700;text-transform:uppercase;letter-spacing:.3px">
+            <i class="bi bi-database-fill-up me-1"></i>Alimenta campo de la ficha (solo levantamiento)
+          </label>
+          <select class="form-select form-select-sm mt-1" data-field="target_field"
+                  onchange="actualizarItem(${idx}, 'target_field', this.value)">
+            ${targetOpciones}
+          </select>
+        </div>
         ${showUnidadRango ? `
           <div class="row g-1 mb-1">
             <div class="col-4"><input type="text" class="form-control form-control-sm" placeholder="Unidad (V, bar…)"
@@ -462,6 +488,7 @@ async function guardarPlantilla(){
       rango_min: it.rango_min,
       rango_max: it.rango_max,
       opciones_lista: it.opciones_lista || [],
+      target_field: it.target_field || null,
     }))
   };
   const url = _editId ? `/mantenciones/api/plantillas/${_editId}` : '/mantenciones/api/plantillas';
