@@ -4789,6 +4789,9 @@ def inject_globals():
         # Flag global para todos los templates: True si el usuario es 'tecnico' (solo lectura).
         # Permite ocultar botones de edición/creación/borrado sin tocar cada template.
         "is_tecnico":   (_role == "tecnico"),
+        # is_superadmin global: permite mostrar bloques de diagnóstico (campos
+        # crudos del ERP, etc.) SOLO al superadmin, no a operación normal.
+        "is_superadmin": (_role == "superadmin"),
         "photo_src":    _photo_src,
         # Modo embebido (iframe): default False; los endpoints que aceptan
         # ?embed=1 pueden sobreescribir pasando embed_mode=True en su render.
@@ -11970,6 +11973,23 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         "source":          "sql_fallback_mssql",
     }
 
+    # ═══ NORMALIZACIÓN FINAL — placeholders del ERP fuera ═══════════════
+    # Decisión Daniel 2026-05-31: BOLETA / ERP_ENVIO / CONSUMIDOR FINAL
+    # nunca deben salir del fetch. Si el ERP no entrega un cliente real,
+    # devolvemos vacío y la UI mostrará "Cliente no informado por ERP"
+    # con campos editables.
+    cliente_nombre_clean   = _erp_clean(cliente_nombre)
+    cliente_rut_clean      = "" if _erp_is_placeholder_rut(cliente_rut) else cliente_rut
+    cliente_email_clean    = _erp_clean(cliente_email)
+    cliente_telefono_clean = _erp_clean(cliente_telefono)
+    direccion_final_clean  = _erp_clean(direccion_final)
+    comuna_final_clean     = _erp_clean(comuna_final)
+    obs_final_clean        = _erp_clean(obs_final)
+
+    # Si el nombre quedó vacío pero hay productos / fecha → "Cliente no informado por ERP"
+    if not cliente_nombre_clean and (lineas_raw or fecha_str):
+        cliente_nombre_clean = "Cliente no informado por ERP"
+
     doc = {
         "tido":             display_tido,
         "nudo":             str(nudo),
@@ -11977,13 +11997,13 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         "erp_tido":         erp_tido,
         "erp_nudo":         matched_nudo or erp_nudo,
         "fecha":            fecha_str,
-        "cliente_nombre":   cliente_nombre,
-        "cliente_rut":      cliente_rut,
-        "email":            cliente_email,
-        "telefono":         cliente_telefono,
-        "direccion":        direccion_final,
-        "comuna":           comuna_final,
-        "observaciones":    obs_final,
+        "cliente_nombre":   cliente_nombre_clean,
+        "cliente_rut":      cliente_rut_clean,
+        "email":            cliente_email_clean,
+        "telefono":         cliente_telefono_clean,
+        "direccion":        direccion_final_clean,
+        "comuna":           comuna_final_clean,
+        "observaciones":    obs_final_clean,
         "tipo_operacion":   line_data.get("tipo_operacion", ""),
         "tipo_codigo":      line_data.get("tipo_codigo", ""),
         "valor_neto":       float(header_row.get("E_VANEDO") or 0),
@@ -14254,6 +14274,71 @@ def _parse_obdo(obdo: str) -> dict:
     return result
 
 
+# ════════════════════════════════════════════════════════════════════════
+# NORMALIZADOR ERP RANDOM — UNA SOLA FUENTE DE VERDAD
+# ════════════════════════════════════════════════════════════════════════
+# Decisión arquitectónica Daniel 2026-05-31:
+# - Cubicador, Asignar/Cotizar, Transporte y Manifiestos deben leer DATOS
+#   LIMPIOS del ERP. Nunca propagar placeholders como "BOLETA" (RUT),
+#   "ERP_ENVIO" (dirección), "CONSUMIDOR FINAL" (nombre), etc.
+# - Esta lista es la blacklist canónica. Cualquier valor que comparado en
+#   uppercase + trim entra acá → se trata como vacío.
+# ════════════════════════════════════════════════════════════════════════
+
+ERP_PLACEHOLDERS = {
+    # Nombres genéricos
+    "BOLETA", "BOLETA DE VENTA", "CONSUMIDOR FINAL", "CONSUMIDORFINAL",
+    "CLIENTE FINAL", "CLIENTE GENERICO", "CLIENTE GENÉRICO", "GENERICO",
+    "GENÉRICO", "PARTICULAR", "VARIOS", "PUBLICO GENERAL", "PÚBLICO GENERAL",
+    # Direcciones placeholder
+    "ERP_ENVIO", "ERP ENVIO", "ENVIO", "ENVÍO", "DESPACHO", "RETIRO",
+    "RETIRO EN TIENDA", "RETIRO EN BODEGA", "SIN DIRECCION", "SIN DIRECCIÓN",
+    # Comunas vacías
+    "SIN COMUNA", "S/I", "N/A", "NA", "NULL", "NONE",
+    # RUTs falsos
+    "11111111-1", "111111111", "1-9", "00000001-9", "0-0",
+    "00.000.001-9", "99.999.999-9",
+    # Email/teléfono dummy
+    "EMAIL@EJEMPLO.CL", "EMAIL@EJEMPLO.COM", "0", "00000000",
+}
+
+# RUTs base genéricos del ERP Random (cuerpo sin DV)
+ERP_PLACEHOLDER_RUT_BASES = {"1", "11", "99", "999", "9999", "0", "00000001"}
+
+
+def _erp_is_placeholder(value) -> bool:
+    """True si el valor es un placeholder del ERP (debería tratarse como vacío)."""
+    if value is None:
+        return True
+    s = str(value).strip()
+    if not s:
+        return True
+    return s.upper() in ERP_PLACEHOLDERS
+
+
+def _erp_clean(value, fallback=""):
+    """Devuelve el valor o fallback si es placeholder/vacío."""
+    if _erp_is_placeholder(value):
+        return fallback
+    return str(value).strip()
+
+
+def _erp_is_placeholder_rut(rut: str) -> bool:
+    """True si el RUT es un placeholder del ERP."""
+    if not rut:
+        return True
+    s = str(rut).strip().upper()
+    if s in ERP_PLACEHOLDERS:
+        return True
+    # Limpiar puntos/guiones y verificar cuerpo
+    import re as _re
+    clean = _re.sub(r'[^\dkK]', '', s)
+    if not clean or len(clean) < 8:
+        return True
+    cuerpo = clean[:-1].lstrip("0") or "0"
+    return cuerpo in ERP_PLACEHOLDER_RUT_BASES
+
+
 def _clasif_from_skus(skus):
     """Determina la clasificación de un compromiso según sus SKUs ZZ."""
     skus = [s.strip().upper() for s in skus if s]
@@ -14309,12 +14394,16 @@ def _tr_fetch_from_erp(tido, nudo):
                 if data:
                     rh = data[0].get("maeedo") or {}
                     obdo = _parse_obdo((rh.get("OBDO") or rh.get("TEXTO1") or "").strip())
+                    # Normalizar placeholders en la rama REST también.
+                    _nombre_rest = _erp_clean(rh.get("NOKOEN")) or obdo.get("nombre") or ""
+                    _rut_rest    = "" if _erp_is_placeholder_rut(rh.get("ENDO")) else (rh.get("ENDO") or "").strip()
+                    _comuna_rest = _erp_clean(rh.get("CMEN") or rh.get("NOKOZO") or rh.get("NOKOCOMU"))
+                    _dir_rest    = obdo.get("direccion") or _erp_clean(rh.get("DIENDESP"))
                     doc = {
-                        "cliente_nombre": (rh.get("NOKOEN") or "").strip(),
-                        "cliente_rut":    (rh.get("ENDO") or "").strip(),
-                        "comuna":         (rh.get("CMEN") or rh.get("NOKOZO") or
-                                           rh.get("NOKOCOMU") or "").strip(),
-                        "direccion":      obdo.get("direccion") or (rh.get("DIENDESP") or "").strip(),
+                        "cliente_nombre": _nombre_rest,
+                        "cliente_rut":    _rut_rest,
+                        "comuna":         _comuna_rest,
+                        "direccion":      _dir_rest,
                         "telefono":       obdo.get("telefono") or "",
                         "email":          obdo.get("email") or "",
                         "valor_neto":     float(rh.get("VANEDO") or 0),
@@ -14360,8 +14449,11 @@ def _tr_fetch_from_erp(tido, nudo):
         if not telefono and _p["telefono"]:   telefono  = _p["telefono"]
         if not email and _p["email"]:         email     = _p["email"]
         if not comuna:                         comuna    = _p["comuna"] or _detect_comuna(direccion)
-    if not cliente_nombre:
-        cliente_nombre = "Consumidor final"
+    # Si el ERP no entregó cliente real, marcamos explícito en lugar del
+    # placeholder histórico "Consumidor final" (que se trataba como genérico
+    # en el normalizador y volvía a aparecer).
+    if not cliente_nombre or _erp_is_placeholder(cliente_nombre):
+        cliente_nombre = "Cliente no informado por ERP"
     valor_neto     = float(doc.get("valor_neto") or 0)
     valor_bruto    = float(doc.get("valor_bruto") or 0)
     fecha_em       = _parse_date(doc.get("fecha"))

@@ -491,12 +491,14 @@
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">2</span>Datos del Documento</div>
         <div class="d-flex align-items-center gap-2">
+          {% if is_superadmin %}
           <button type="button" id="btnDiag" onclick="toggleDiagPanel()"
                   style="background:transparent;border:1px solid #475569;color:#cbd5e1;
                          padding:3px 10px;border-radius:6px;font-size:.7rem;cursor:pointer"
-                  title="Ver campos crudos del ERP — útil para diagnóstico">
+                  title="Ver campos crudos del ERP — solo superadmin">
             <i class="bi bi-bug me-1"></i>Diagnosticar ERP
           </button>
+          {% endif %}
           <button type="button" onclick="exportarDocumento()"
                   style="background:#dc2626;border:none;color:#fff;
                          padding:3px 10px;border-radius:6px;font-size:.7rem;cursor:pointer;font-weight:700"
@@ -509,8 +511,9 @@
         </div>
       </div>
       <div class="ac-card-body">
-        {# Panel de diagnóstico ERP — siempre disponible vía botón #}
+        {# Panel de diagnóstico ERP — solo visible para superadmin (vía JS) #}
         <div id="panelDiagnostico"></div>
+        <script>window.IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};</script>
         <div class="client-grid" id="clientGrid">
 
           {# Row 1: Cliente, RUT, Fecha #}
@@ -1460,7 +1463,7 @@ function renderDoc(d, elapsedMs){
       : '<span class="db-pill" style="background:rgba(156,163,175,.15);color:#9ca3af"><i class="bi bi-truck me-1"></i>Sin ZZ Envío</span>';
 
     // Observación: SIEMPRE visible (con o sin valor), con fuente si vacía
-    const obsSource = (h.diagnostics && h.diagnostics.obs_source) || 'desconocido';
+    // Observaciones: si hay → mostrar bonito; si no → discreto y sin jerga técnica.
     const obsTxt = h.observaciones
       ? `<div class="db-row" style="background:rgba(251,146,60,.15);border-left:3px solid #fb923c">
            <strong style="color:#fed7aa">📝 Observaciones del documento</strong>
@@ -1468,7 +1471,7 @@ function renderDoc(d, elapsedMs){
          </div>`
       : `<div class="db-row" style="background:rgba(107,114,128,.18);border:1px dashed rgba(156,163,175,.40)">
            <strong style="color:#9ca3af">📝 Observaciones</strong>
-           <span style="color:#9ca3af;font-style:italic">Sin observaciones <span style="font-size:.66rem;opacity:.7">(fuente intentada: ${escHtml(obsSource)})</span></span>
+           <span style="color:#9ca3af;font-style:italic">Sin observaciones</span>
          </div>`;
 
     banner.innerHTML = `
@@ -1500,19 +1503,25 @@ function renderDoc(d, elapsedMs){
   }
 
   // ── Datos del documento (campos de solo lectura)
-  setText('cli-nombre', h.cliente_nombre || '⚠ Sin nombre en ERP');
+  // Nombre del cliente — backend ya normaliza ("Cliente no informado por ERP"
+  // cuando no hay dato real). Si llega vacío, mostramos guion neutro.
+  setText('cli-nombre', h.cliente_nombre || 'Cliente no informado por ERP');
   setText('cli-rut',    h.cliente_rut    || '—');
   setText('cli-fecha',  h.fecha          || '—');
   setText('cli-neto',   fClp(h.valor_neto));
   setText('cli-skus',   d.zzenvio_valor > 0 ? fClp(d.zzenvio_valor) : '—');
   setText('cli-seguro', fClp(h.valor_neto * 0.012));
 
-  // ── DIAGNÓSTICO: si los datos clave están vacíos, mostrar campos
-  //    crudos del ERP para que el operador pueda copiarlos manualmente
-  //    o avisarle al admin qué nombres usa este tipo de documento.
+  // ── DIAGNÓSTICO: bloque amarillo + campos crudos SOLO visible a superadmin.
+  //    Decisión Daniel 2026-05-31: la vista operativa nunca muestra ruido
+  //    técnico. Si faltan datos del cliente, mostramos el campo editable
+  //    vacío y el operador completa — sin alerta, sin texto "Datos crudos".
   const datosCompletos = h.datos_completos === true;
   const diagPanel = document.getElementById('panelDiagnostico');
   if (diagPanel){
+    diagPanel.innerHTML = '';  // limpiar siempre, reglas abajo deciden si rellena
+  }
+  if (diagPanel && window.IS_SUPERADMIN === true){
     if (!datosCompletos && h.raw_sample && Object.keys(h.raw_sample).length){
       const items = Object.entries(h.raw_sample)
         .filter(([k,v]) => v && String(v).trim())
