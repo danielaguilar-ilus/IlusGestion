@@ -10367,6 +10367,7 @@ def erp_engine_peek():
 _CF_PLACEHOLDERS = (
     "consumidor final", "cons final", "sin nombre", "sin razon social",
     "cliente generico", "cliente generico mostrador", "mostrador",
+    "cliente no informado", "no informado por erp",
 )
 
 
@@ -10531,10 +10532,10 @@ def resolve_erp_customer(doc, *, tido=None, nudo=None):
             out["dispatch_address"] = parsed["direccion"]
             out["fallback_chain"].append("obdo.direccion")
 
-    # CASO 5: Si después de TODO sigue siendo CF, dejar texto limpio.
+    # CASO 5: Si después de TODO sigue siendo CF, dejar texto canónico limpio.
     if name_is_cf:
         if out["customer_name"] in ("", None) or _is_cf_name(out["customer_name"]):
-            out["customer_name"] = "Consumidor Final"  # legítimamente CF
+            out["customer_name"] = "Cliente no informado por ERP"
         out["source"] = "fallback"
         out["confidence"] = "low"
         out["fallback_chain"].append("agotado")
@@ -11978,7 +11979,7 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     # nunca deben salir del fetch. Si el ERP no entrega un cliente real,
     # devolvemos vacío y la UI mostrará "Cliente no informado por ERP"
     # con campos editables.
-    cliente_nombre_clean   = _erp_clean(cliente_nombre)
+    cliente_nombre_clean   = "" if _erp_is_placeholder_name(cliente_nombre) else str(cliente_nombre).strip()
     cliente_rut_clean      = "" if _erp_is_placeholder_rut(cliente_rut) else cliente_rut
     cliente_email_clean    = _erp_clean(cliente_email)
     cliente_telefono_clean = _erp_clean(cliente_telefono)
@@ -11986,9 +11987,9 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     comuna_final_clean     = _erp_clean(comuna_final)
     obs_final_clean        = _erp_clean(obs_final)
 
-    # Si el nombre quedó vacío pero hay productos / fecha → "Cliente no informado por ERP"
+    # Si el nombre quedó vacío pero hay productos / fecha → texto canónico
     if not cliente_nombre_clean and (lineas_raw or fecha_str):
-        cliente_nombre_clean = "Cliente no informado por ERP"
+        cliente_nombre_clean = ERP_NO_CLIENT
 
     doc = {
         "tido":             display_tido,
@@ -12015,10 +12016,17 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         "raw_linea_sample": raw_line_sample,
         "raw_obs_sample":   {},
         "n_lineas":         len(lineas_raw),
-        "datos_completos":  bool(cliente_nombre and (cliente_email or cliente_telefono)),
+        # datos_completos refleja el estado REAL (limpio): hay nombre de cliente
+        # verdadero (no el placeholder "Cliente no informado por ERP") + contacto.
+        "datos_completos":  bool(
+            cliente_nombre_clean
+            and cliente_nombre_clean != "Cliente no informado por ERP"
+            and (cliente_email_clean or cliente_telefono_clean)
+        ),
         "diagnostics":      diag,
     }
-    print(f"[cub-sql-mssql] OK {erp_tido}/{matched_nudo}: cliente={(cliente_nombre or '?')[:30]} "
+    print(f"[cub-sql-mssql] OK {erp_tido}/{matched_nudo}: "
+          f"cliente={(cliente_nombre_clean or '?')[:30]} "
           f"lineas={len(lineas_raw)} latency={diag['latency_ms']}ms", flush=True)
     return doc
 
@@ -13695,13 +13703,26 @@ def api_asignar_documento():
             "confidence": _res.get("confidence") if _res else "low",
             "chain": _res.get("fallback_chain") if _res else [],
         }
-        # Solo ahora, si SIGUE vacío, ponemos placeholder limpio
+        # Solo ahora, si SIGUE vacío, ponemos texto canónico limpio
         if not (hdr.get("cliente_nombre") or "").strip():
-            hdr["cliente_nombre"] = "Consumidor Final"
+            hdr["cliente_nombre"] = "Cliente no informado por ERP"
     except Exception as _e_res2:
         print(f"[asignar_documento] resolver falló: {_e_res2}", flush=True)
         if not (hdr.get("cliente_nombre") or "").strip():
-            hdr["cliente_nombre"] = "Consumidor Final"
+            hdr["cliente_nombre"] = "Cliente no informado por ERP"
+
+    # ═══ NORMALIZACIÓN FINAL del header en /asignar ═════════════════════
+    # Última barrera: cualquier placeholder que se haya colado (BOLETA,
+    # ERP_ENVIO, CONSUMIDOR FINAL, SIN COMUNA) se limpia antes de devolver.
+    _nom = _erp_clean(hdr.get("cliente_nombre"))
+    hdr["cliente_nombre"] = _nom or "Cliente no informado por ERP"
+    if _erp_is_placeholder_rut(hdr.get("cliente_rut")):
+        hdr["cliente_rut"] = ""
+    hdr["direccion"]     = _erp_clean(hdr.get("direccion"))
+    hdr["comuna"]        = _erp_clean(hdr.get("comuna"))
+    hdr["telefono"]      = _erp_clean(hdr.get("telefono"))
+    hdr["email"]         = _erp_clean(hdr.get("email"))
+    hdr["observaciones"] = _erp_clean(hdr.get("observaciones"))
 
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
 
@@ -14339,6 +14360,29 @@ def _erp_is_placeholder_rut(rut: str) -> bool:
     return cuerpo in ERP_PLACEHOLDER_RUT_BASES
 
 
+# Texto canónico cuando el ERP no entrega cliente real. UNA sola constante
+# para que todos los caminos usen exactamente el mismo string.
+ERP_NO_CLIENT = "Cliente no informado por ERP"
+
+
+def _erp_is_placeholder_name(name) -> bool:
+    """True si NO es un nombre de cliente real: placeholder del ERP, el texto
+    canónico ERP_NO_CLIENT (en cualquier capitalización), o un código numérico
+    puro (ej. SUENDO '000411', que el ERP usa como subcliente, NO como nombre)."""
+    if _erp_is_placeholder(name):
+        return True
+    s = str(name).strip()
+    if not s:
+        return True
+    if s.lower() == ERP_NO_CLIENT.lower():
+        return True
+    import re as _re
+    # Código numérico puro (dígitos, puntos, guiones, espacios) → no es nombre
+    if _re.fullmatch(r'[\d.\-\s]+', s):
+        return True
+    return False
+
+
 def _clasif_from_skus(skus):
     """Determina la clasificación de un compromiso según sus SKUs ZZ."""
     skus = [s.strip().upper() for s in skus if s]
@@ -14434,17 +14478,22 @@ def _tr_fetch_from_erp(tido, nudo):
     tiene_saldo = 1 if saldo_total > 0 else 0
 
     # ── Datos del header (campos friendly, ya enriquecidos por el motor/SQL) ──
-    cliente_nombre = (doc.get("cliente_nombre") or "").strip().title()
-    endo           = (doc.get("cliente_rut") or doc.get("endo") or "").strip()
-    comuna         = (doc.get("comuna") or "").strip()
-    direccion      = (doc.get("direccion") or "").strip()
-    telefono       = (doc.get("telefono") or "").strip()
-    email          = (doc.get("email") or "").strip()
+    # NORMALIZACIÓN: pasar TODO por _erp_clean para no persistir placeholders
+    # (ERP_ENVIO, BOLETA, SIN COMUNA, etc.) en transport_commitments (MySQL).
+    _nom_raw       = _erp_clean(doc.get("cliente_nombre"))
+    cliente_nombre = "" if _erp_is_placeholder_name(_nom_raw) else _nom_raw.title()
+    _endo_raw      = doc.get("cliente_rut") or doc.get("endo") or ""
+    endo           = "" if _erp_is_placeholder_rut(_endo_raw) else str(_endo_raw).strip()
+    comuna         = _erp_clean(doc.get("comuna"))
+    direccion      = _erp_clean(doc.get("direccion"))
+    telefono       = _erp_clean(doc.get("telefono"))
+    email          = _erp_clean(doc.get("email"))
     # Enriquecer desde OBDO si el ERP dejó vacíos (boletas a consumidor final:
     # el contacto va en observaciones). Igual criterio que el cubicador.
-    _obs = (doc.get("observaciones") or "").strip()
+    _obs = _erp_clean(doc.get("observaciones"))
     if _obs:
         _p = _parse_obdo(_obs)
+        if not cliente_nombre and _p.get("nombre"): cliente_nombre = _p["nombre"].title()
         if not direccion and _p["direccion"]: direccion = _p["direccion"]
         if not telefono and _p["telefono"]:   telefono  = _p["telefono"]
         if not email and _p["email"]:         email     = _p["email"]
@@ -14452,8 +14501,8 @@ def _tr_fetch_from_erp(tido, nudo):
     # Si el ERP no entregó cliente real, marcamos explícito en lugar del
     # placeholder histórico "Consumidor final" (que se trataba como genérico
     # en el normalizador y volvía a aparecer).
-    if not cliente_nombre or _erp_is_placeholder(cliente_nombre):
-        cliente_nombre = "Cliente no informado por ERP"
+    if _erp_is_placeholder_name(cliente_nombre):
+        cliente_nombre = ERP_NO_CLIENT
     valor_neto     = float(doc.get("valor_neto") or 0)
     valor_bruto    = float(doc.get("valor_bruto") or 0)
     fecha_em       = _parse_date(doc.get("fecha"))
@@ -14593,12 +14642,13 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             --  2. MAEEN.NOKOEN (nombre corto)
             --  3. MAEEDO.SUENDO (subcliente del documento — clave para BLV
             --     a consumidor final donde no hay ENDO en MAEEN)
-            --  4. literal 'Consumidor final' si nada de lo anterior existe
+            --  4. string vacío si nada existe — Python pone el texto canónico
+            --     "Cliente no informado por ERP" (NO persistir "Consumidor final").
             LTRIM(RTRIM(COALESCE(
                 NULLIF(LTRIM(RTRIM(en.NOKOENAMP)), ''),
                 NULLIF(LTRIM(RTRIM(en.NOKOEN)),    ''),
                 NULLIF(LTRIM(RTRIM(h.SUENDO)),     ''),
-                'Consumidor final'
+                ''
             ))) AS NOKOEN,
             LTRIM(RTRIM(COALESCE(o.OBDO, o.TEXTO1, ''))) AS OBDO,
             LTRIM(RTRIM(COALESCE(o.DIENDESP, ''))) AS DIENDESP,
@@ -14717,14 +14767,23 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
         try:
             tido  = (row.get("TIDO") or "").strip()
             nudo  = (row.get("NUDO") or "").strip()
-            endo  = (row.get("ENDO") or "").strip()
-            nombre = (row.get("NOKOEN") or "").strip().title()
-            obdo  = (row.get("OBDO") or "").strip()
-            parsed = _parse_obdo(obdo)
-            dir_  = parsed["direccion"] or (row.get("DIENDESP") or "").strip()
+            # NORMALIZACIÓN: no persistir placeholders del ERP en MySQL.
+            endo  = "" if _erp_is_placeholder_rut(row.get("ENDO")) else (row.get("ENDO") or "").strip()
+            # _erp_is_placeholder_name descarta placeholders, el canónico Y
+            # códigos numéricos (SUENDO '000411' NO es un nombre de cliente).
+            _nom_raw = _erp_clean(row.get("NOKOEN"))
+            nombre = "" if _erp_is_placeholder_name(_nom_raw) else _nom_raw.title()
+            obdo  = _erp_clean(row.get("OBDO"))
+            parsed = _parse_obdo(obdo) if obdo else {"direccion":"","telefono":"","email":"","comuna":"","nombre":""}
+            # Nombre desde OBDO si quedó vacío (boletas a consumidor final)
+            if not nombre and parsed.get("nombre"):
+                nombre = parsed["nombre"].title()
+            if not nombre:
+                nombre = ERP_NO_CLIENT
+            dir_  = parsed["direccion"] or _erp_clean(row.get("DIENDESP"))
             tel   = parsed["telefono"]
             mail  = parsed["email"]
-            comuna = (row.get("COMUNA") or "").strip()
+            comuna = _erp_clean(row.get("COMUNA"))
             vneto  = float(row.get("VANEDO") or 0)
             vbruto = float(row.get("VABRDO") or 0)
             costo_zz = float(row.get("costo_zz_sum") or 0)

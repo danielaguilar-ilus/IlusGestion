@@ -1158,9 +1158,11 @@ function copiarDiagnostico(){
   });
 }
 
-// Toggle del panel de diagnóstico (siempre disponible vía botón)
+// Toggle del panel de diagnóstico — SOLO superadmin (defensa en profundidad:
+// el botón ya está gateado en Jinja, pero esto evita invocación por consola).
 function toggleDiagPanel(){
-  if (!_docData){ alert('Primero busca un documento'); return; }
+  if (window.IS_SUPERADMIN !== true) return;
+  if (!_docData){ if(window.ilusToast) ilusToast('Primero busca un documento', {type:'info'}); return; }
   const h = _docData.header || {};
   const panel = document.getElementById('panelDiagnostico');
   if (panel.dataset.shown === '1'){
