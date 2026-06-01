@@ -25259,6 +25259,8 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visita_tareas ADD COLUMN plantilla_id INT NULL COMMENT 'FK a mant_tarea_plantillas: plantilla origen (NULL si tarea manual)'",
                 "ALTER TABLE mant_visita_tareas ADD INDEX idx_plantilla (plantilla_id)",
                 "ALTER TABLE mant_visita_tareas ADD INDEX idx_maquina_plantilla (maquina_id, plantilla_id)",
+                # 2026-06-01 — OT Levantamiento → Ficha: campo de ficha que alimenta la tarea
+                "ALTER TABLE mant_visita_tareas ADD COLUMN target_field VARCHAR(40) NULL COMMENT 'Campo de mant_maquinas que alimenta esta tarea al aprobar (solo levantamiento)'",
                 # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — BUG CRÍTICO FIX: cloudinary_url en fotos
                 # Existía código que INSERT/SELECT esta columna pero CREATE
@@ -25628,6 +25630,15 @@ def init_mantenciones_tables():
                     INDEX idx_orden (plantilla_id, orden)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+
+            # 2026-06-01 — OT Levantamiento → Ficha: campo de ficha que alimenta cada tarea
+            try:
+                cur.execute(
+                    "ALTER TABLE mant_tarea_plantilla_items ADD COLUMN target_field VARCHAR(40) NULL "
+                    "COMMENT 'Campo de mant_maquinas que alimenta esta tarea (plantillas levantamiento)'"
+                )
+            except Exception:
+                pass
 
             # ── SEEDS: plantillas predefinidas útiles (solo si DB está vacía)
             try:
@@ -40714,6 +40725,15 @@ _PLANT_TIPO_VISITA = (
     "preventiva", "correctiva", "garantia", "levantamiento",
     "inspeccion", "instalacion", "otro",
 )
+# Campos de la ficha del equipo (mant_maquinas) que una tarea de plantilla
+# de LEVANTAMIENTO puede alimentar. Al responder la tarea, su valor se replica
+# a mant_levantamiento_items y la proyección existente lo aplica a la ficha al
+# aprobar la OT. NULL/"" = la tarea no alimenta la ficha.
+# Subconjunto soportado por _mirror_ot_equipo_a_levantamiento (serie incluida).
+_TAREA_TARGET_FIELDS = (
+    "serie", "marca", "modelo", "voltaje", "anio_fabricacion",
+    "ubicacion_sala", "estado_capturado", "observaciones",
+)
 
 
 def _validar_item_plantilla(d):
@@ -40743,6 +40763,10 @@ def _validar_item_plantilla(d):
     except Exception: rmin = None
     try: rmax = float(rmax) if rmax not in (None, "") else None
     except Exception: rmax = None
+    # target_field: campo de la ficha que alimenta esta tarea (opcional, levantamiento).
+    tgt = (d.get("target_field") or "").strip()
+    if tgt and tgt not in _TAREA_TARGET_FIELDS:
+        return None, f"target_field inválido: {tgt}"
     return {
         "orden":        int(d.get("orden") or 0),
         "titulo":       titulo,
@@ -40754,6 +40778,7 @@ def _validar_item_plantilla(d):
         "rango_min":    rmin,
         "rango_max":    rmax,
         "opciones_lista_json": opciones,
+        "target_field": tgt or None,
     }, None
 
 
@@ -40849,6 +40874,7 @@ def mant_plantilla_detalle(pid):
             "rango_min": float(it["rango_min"]) if it.get("rango_min") is not None else None,
             "rango_max": float(it["rango_max"]) if it.get("rango_max") is not None else None,
             "opciones_lista": opciones,
+            "target_field": it.get("target_field") or "",
         })
     return jsonify({
         "ok": True,
@@ -40908,11 +40934,11 @@ def mant_plantilla_crear():
                 cur.execute(
                     "INSERT INTO mant_tarea_plantilla_items "
                     "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
-                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json, target_field) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (pid, it["orden"], it["titulo"], it["descripcion"], it["tipo_respuesta"],
                      it["obligatoria"], it["requiere_foto"], it["unidad"],
-                     it["rango_min"], it["rango_max"], it["opciones_lista_json"])
+                     it["rango_min"], it["rango_max"], it["opciones_lista_json"], it.get("target_field"))
                 )
         conn.commit()
         try:
@@ -40970,11 +40996,11 @@ def mant_plantilla_actualizar(pid):
                 cur.execute(
                     "INSERT INTO mant_tarea_plantilla_items "
                     "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
-                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json, target_field) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (pid, it["orden"], it["titulo"], it["descripcion"], it["tipo_respuesta"],
                      it["obligatoria"], it["requiere_foto"], it["unidad"],
-                     it["rango_min"], it["rango_max"], it["opciones_lista_json"])
+                     it["rango_min"], it["rango_max"], it["opciones_lista_json"], it.get("target_field"))
                 )
         conn.commit()
         try:
@@ -41155,12 +41181,12 @@ def mant_visita_aplicar_plantilla(vid):
                     cur.execute(
                         "INSERT INTO mant_visita_tareas "
                         "(visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
-                        " maquina_id, tipo_respuesta, obligatoria, requiere_foto, "
+                        " maquina_id, tipo_respuesta, target_field, obligatoria, requiere_foto, "
                         " unidad, rango_min, rango_max, opciones_lista_json, "
                         " estado_trabajo, created_by) "
-                        "VALUES (%s,%s,%s,%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s)",
+                        "VALUES (%s,%s,%s,%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s)",
                         (vid, pid, next_orden, titulo[:300], it.get("descripcion"),
-                         mid, tr,
+                         mid, tr, it.get("target_field"),
                          it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
                          it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
                          it.get("opciones_lista_json"), current_username())
@@ -42091,6 +42117,9 @@ def _mirror_ot_equipo_a_levantamiento(vid, mid, payload):
     if "ubicacion_sala" in payload:
         # En mant_levantamiento_items la columna se llama `ubicacion`
         set_map["ubicacion"] = (str(payload["ubicacion_sala"] or "").strip())[:200] or None
+    if "serie" in payload:
+        # En mant_levantamiento_items el snapshot de serie es `serie_snap`.
+        set_map["serie_snap"] = (str(payload["serie"] or "").strip())[:120] or None
     if "ultima_intervencion" in payload:
         v = payload["ultima_intervencion"]
         set_map["ultima_intervencion"] = v if v else None
@@ -43218,7 +43247,7 @@ def mant_visita_tarea_respuesta(vid, tid):
     # Leer la tarea para conocer su tipo + version + lock-holder
     tar = mysql_fetchone(
         "SELECT id, tipo_respuesta, obligatoria, rango_min, rango_max, valor_json, "
-        "       version, locked_by_user_id, locked_at "
+        "       version, locked_by_user_id, locked_at, maquina_id, target_field "
         "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
         (tid, vid)
     )
@@ -43440,6 +43469,25 @@ def mant_visita_tarea_respuesta(vid, tid):
             f" WHERE id=%s AND visita_id=%s",
             tuple(vals)
         )
+        # ── BRIDGE target_field → ficha (OT levantamiento) ──
+        # Si la tarea declara un campo de ficha, replicamos el valor capturado a
+        # mant_levantamiento_items; la proyección EXISTENTE lo aplica a la ficha
+        # del equipo al APROBAR la OT (decisión: volcado al aprobar el supervisor).
+        # Defensivo: un fallo aquí nunca rompe el guardado de la respuesta.
+        try:
+            _tgt = (tar.get("target_field") or "").strip()
+            _mid_t = tar.get("maquina_id")
+            if completar and _tgt and _mid_t and _tgt in _TAREA_TARGET_FIELDS:
+                _raw = None
+                if tipo == "texto":          _raw = valor_norm.get("texto")
+                elif tipo == "numero":       _raw = valor_norm.get("numero")
+                elif tipo == "lista":        _raw = valor_norm.get("opcion")
+                elif tipo == "sino":         _raw = valor_norm.get("valor")
+                elif tipo == "verificacion": _raw = {"aprobado": "operativo", "alerta": "advertencia", "falla": "fuera_servicio"}.get(valor_norm.get("valor"))
+                if _raw not in (None, ""):
+                    _mirror_ot_equipo_a_levantamiento(vid, _mid_t, {_tgt: _raw})
+        except Exception as _e_bridge:
+            print(f"[tarea_respuesta bridge target_field] vid={vid} tid={tid}: {_e_bridge}", flush=True)
         # Releer version actualizada para devolver al frontend
         v_new = mysql_fetchone(
             "SELECT version FROM mant_visita_tareas WHERE id=%s", (tid,)
@@ -52238,6 +52286,79 @@ def _ensure_mant_reportes_columns():
     return faltantes
 
 
+def _ensure_levantamiento_target_field():
+    """Garantiza la columna `target_field` en mant_tarea_plantilla_items y
+    mant_visita_tareas AUNQUE ILUS_SKIP_MIGRATIONS=1. Sin ella, el editor de
+    plantillas, aplicar-plantilla y el guardado de respuestas con mapeo darían
+    'Unknown column'. La 1ª vez que se crea la columna en los items, hace un
+    mapeo best-effort por título en plantillas de levantamiento existentes
+    (solo donde target_field IS NULL). El mapeo NO se repite en arranques
+    posteriores, así que respeta los NULL intencionales del usuario.
+    (OT Levantamiento → Ficha, 2026-06-01)"""
+    faltaron = []
+    items_recien_creada = False
+    for tabla in ("mant_tarea_plantilla_items", "mant_visita_tareas"):
+        try:
+            existing = {
+                (r.get("COLUMN_NAME") or "").lower()
+                for r in (mysql_fetchall(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s", (tabla,)
+                ) or [])
+            }
+            if "target_field" not in existing:
+                mysql_execute(
+                    f"ALTER TABLE {tabla} ADD COLUMN target_field VARCHAR(40) NULL "
+                    "COMMENT 'Campo de mant_maquinas que alimenta la tarea (levantamiento)'"
+                )
+                faltaron.append(tabla)
+                if tabla == "mant_tarea_plantilla_items":
+                    items_recien_creada = True
+                print(f"[ensure_target_field] columna agregada en {tabla}", flush=True)
+        except Exception as e_tf:
+            print(f"[ensure_target_field] no se pudo agregar en {tabla}: {e_tf}", flush=True)
+
+    # Mapeo best-effort SOLO la 1ª vez (cuando la columna recién se crea).
+    if items_recien_creada:
+        try:
+            _lev = mysql_fetchall(
+                "SELECT i.id, i.titulo, i.tipo_respuesta "
+                "  FROM mant_tarea_plantilla_items i "
+                "  JOIN mant_tarea_plantillas p ON p.id=i.plantilla_id "
+                " WHERE p.tipo_visita='levantamiento' AND i.target_field IS NULL"
+            ) or []
+            _kw = [
+                ("serial", "serie"), ("serie", "serie"), ("marca", "marca"),
+                ("modelo", "modelo"), ("ubicaci", "ubicacion_sala"),
+                ("observa", "observaciones"), ("año", "anio_fabricacion"),
+                ("anio", "anio_fabricacion"), ("fabricaci", "anio_fabricacion"),
+                ("voltaje", "voltaje"), ("estado", "estado_capturado"),
+            ]
+            n_map = 0
+            for it in _lev:
+                if (it.get("tipo_respuesta") or "").lower() == "foto":
+                    continue
+                tit = (it.get("titulo") or "").lower()
+                tgt = None
+                for k, f in _kw:
+                    if k in tit:
+                        tgt = f
+                        break
+                if tgt:
+                    try:
+                        mysql_execute(
+                            "UPDATE mant_tarea_plantilla_items SET target_field=%s "
+                            " WHERE id=%s AND target_field IS NULL", (tgt, it["id"]))
+                        n_map += 1
+                    except Exception:
+                        pass
+            if n_map:
+                print(f"[ensure_target_field] mapeo best-effort: {n_map} tarea(s)", flush=True)
+        except Exception as e_map:
+            print(f"[ensure_target_field] mapeo no aplicado: {e_map}", flush=True)
+    return faltaron
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -52312,6 +52433,17 @@ try:
               f"{_faltaron_rep}", flush=True)
 except Exception as _ensure_rep_err:
     print(f"[ILUS][WARN] _ensure_mant_reportes_columns: {_ensure_rep_err}", flush=True)
+
+# CRÍTICO: garantizar `target_field` SIEMPRE (OT Levantamiento → Ficha),
+# incluso con ILUS_SKIP_MIGRATIONS=1. Sin esta columna, el editor de plantillas,
+# aplicar-plantilla y el guardado de respuestas con mapeo darían 'Unknown column'.
+try:
+    with app.app_context():
+        _faltaron_tf = _ensure_levantamiento_target_field()
+    if _faltaron_tf:
+        print(f"[ILUS] target_field agregado (skip-migrations): {_faltaron_tf}", flush=True)
+except Exception as _ensure_tf_err:
+    print(f"[ILUS][WARN] _ensure_levantamiento_target_field: {_ensure_tf_err}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #
