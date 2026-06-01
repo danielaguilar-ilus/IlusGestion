@@ -2800,6 +2800,7 @@ def register_pickup_routes(app, ctx):
                        total_volume_m3, peso_real_kg, peso_vol_kg,
                        tiempo_estimado_min, doc_validation_status,
                        information_quality_score, risk_score,
+                       request_source, created_by_user_name,
                        created_at, updated_at
                 FROM `{REQ}`
                 WHERE {' AND '.join(where)}

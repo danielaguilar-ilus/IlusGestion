@@ -2715,6 +2715,24 @@ def init_pickup_tables():
                 f"COMMENT 'Peso volumétrico total calculado desde catálogo'",
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN tiempo_estimado_min INT DEFAULT NULL "
                 f"COMMENT 'Tiempo estimado de retiro en minutos (basado en bultos)'",
+                # ── MODELO DE ORIGEN (Daniel 2026-05-29 — retiro interno/backoffice) ──
+                # request_source distingue retiros creados por el cliente (web) de
+                # los creados internamente por un operador ILUS (backoffice/phone/import).
+                # Default 'web' → todos los retiros existentes quedan correctamente
+                # marcados como web sin tocar datos. Idempotente.
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN request_source VARCHAR(20) NOT NULL DEFAULT 'web' "
+                f"COMMENT 'Origen: web|backoffice|phone|import'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN created_by_user_id INT NULL "
+                f"COMMENT 'app_users.id del operador que creó el retiro interno (NULL si web)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN created_by_user_name VARCHAR(190) NULL "
+                f"COMMENT 'Nombre del operador creador (snapshot para mostrar sin JOIN)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN internal_created_at DATETIME NULL "
+                f"COMMENT 'Fecha de creación interna (hora Chile)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN customer_confirm_required TINYINT(1) DEFAULT 1 "
+                f"COMMENT '1=requiere que el cliente confirme la propuesta; 0=ya aceptó por otro canal'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN customer_already_agreed TINYINT(1) DEFAULT 0 "
+                f"COMMENT '1=cliente ya aceptó por teléfono/correo (confirmación directa interna)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_source (request_source)",
                 # Daniel 2026-05-23: emails adicionales para envío (cliente declarado + email del doc ERP + manualmente agregados)
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN extra_emails VARCHAR(800) NULL "
                 f"COMMENT 'Emails adicionales separados por coma para enviar notificaciones (además del contact_email)'",
