@@ -2538,16 +2538,63 @@ function exportarAuditDoc(){
 
 // ════════════════════════════════════════════════════════════
 //  VALIDACIÓN MANIFIESTO
+//  Decisión Daniel 2026-05-31: tel/email NO bloquean (boletas a consumidor
+//  final pueden no traer datos del ERP). Solo bloquean dirección/comuna/
+//  bultos (necesarios para el courier). Si hay tel/email pero está mal
+//  formateado, advertimos pero permitimos avanzar.
 // ════════════════════════════════════════════════════════════
+
+// Validadores chilenos reusables
+function _esTelChileno(tel){
+  // Acepta: +56 9 XXXX XXXX (móvil) o +56 X XXXX XXXX (fijo).
+  // Normalizado: 9 dígitos después del +56 (o sin +56, partiendo con 9 o 2).
+  const t = (tel || '').replace(/[\s\-()]/g, '');
+  if (!t) return null; // vacío = sin opinión
+  return /^(\+?56)?[29]\d{8}$/.test(t);
+}
+function _esEmailValido(email){
+  const e = (email || '').trim();
+  if (!e) return null; // vacío = sin opinión
+  return /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/.test(e);
+}
+
+// Aplica clase visual is-valid / is-invalid (Bootstrap) según validador
+function _aplicarValidacion(el, fnValidar){
+  if (!el) return;
+  const v = fnValidar(el.value);
+  el.classList.remove('is-valid','is-invalid');
+  if (v === true)  el.classList.add('is-valid');
+  if (v === false) el.classList.add('is-invalid');
+}
+
+// Wire-up de validación en vivo (idempotente, llamar al cargar la página
+// y también después de renderDoc para inputs nuevos).
+function _wireValidacionVivo(){
+  const tel = document.getElementById('cli-tel');
+  if (tel && !tel.dataset.valWired){
+    tel.dataset.valWired = '1';
+    tel.addEventListener('input', () => _aplicarValidacion(tel, _esTelChileno));
+    tel.addEventListener('blur',  () => _aplicarValidacion(tel, _esTelChileno));
+  }
+  const mail = document.getElementById('cli-email');
+  if (mail && !mail.dataset.valWired){
+    mail.dataset.valWired = '1';
+    mail.addEventListener('input', () => _aplicarValidacion(mail, _esEmailValido));
+    mail.addEventListener('blur',  () => _aplicarValidacion(mail, _esEmailValido));
+  }
+}
+document.addEventListener('DOMContentLoaded', _wireValidacionVivo);
+
 async function validarParaManifiesto(){
   if(!_docData){
     await ilusAlert({title:'Documento requerido', message:'Carga un documento primero.', type:'warning'});
     return false;
   }
 
+  // Solo dirección/comuna/bultos son obligatorios (los necesita el courier).
+  // Tel/email pueden venir vacíos en boletas a consumidor final — el courier
+  // los pide nice-to-have pero el sistema acepta el envío igual.
   const campos = [
-    { id:'cli-email',  nombre:'Email' },
-    { id:'cli-tel',    nombre:'Teléfono' },
     { id:'cli-dir',    nombre:'Dirección' },
     { id:'cli-bultos', nombre:'Total Bultos' },
     { id:'cli-comuna', nombre:'Comuna' },
@@ -2555,7 +2602,7 @@ async function validarParaManifiesto(){
   const vacios = campos.filter(c => !(document.getElementById(c.id)?.value||'').trim());
   if(vacios.length){
     await ilusAlert({
-      title:'Faltan datos',
+      title:'Faltan datos para el courier',
       message:'Completa los siguientes campos antes de asignar al manifiesto:',
       sub: vacios.map(c=>'• '+c.nombre).join('<br>'),
       subHtml:true,
@@ -2564,17 +2611,31 @@ async function validarParaManifiesto(){
     document.getElementById(vacios[0].id)?.focus();
     return false;
   }
-  // Validar teléfono
-  const tel = document.getElementById('cli-tel').value.replace(/\s/g,'');
-  if(!/^\+56\d{9}$/.test(tel)){
-    await ilusAlert({
-      title:'Teléfono inválido',
-      message:'El teléfono debe estar en formato +56 9 XXXX XXXX (9 dígitos después del +56).',
-      type:'warning',
-    });
-    document.getElementById('cli-tel').focus();
-    return false;
+
+  // Validación SUAVE de formato: si hay valor pero formato malo, pedir confirmación
+  // (no bloquear). Si no hay valor, OK.
+  const tel  = document.getElementById('cli-tel').value.trim();
+  const mail = document.getElementById('cli-email').value.trim();
+  const avisos = [];
+  if (tel && _esTelChileno(tel) === false){
+    avisos.push('• El teléfono <strong>' + tel + '</strong> no parece chileno (formato esperado +56 9 XXXX XXXX)');
   }
+  if (mail && _esEmailValido(mail) === false){
+    avisos.push('• El email <strong>' + mail + '</strong> no tiene formato válido');
+  }
+  if (avisos.length){
+    const ok = await ilusConfirm({
+      title: 'Datos del cliente con formato sospechoso',
+      message: 'Detectamos los siguientes problemas:',
+      sub: avisos.join('<br>') + '<br><br>¿Avanzar igual? El courier puede rechazar el envío si los datos son incorrectos.',
+      subHtml: true,
+      type: 'warning',
+      okLabel: 'Sí, enviar igual',
+      cancelLabel: 'Volver a corregir',
+    });
+    if (!ok) return false;
+  }
+
   if(!_courierSel || !_courierSel.id){
     await ilusAlert({
       title:'Selecciona un courier',
@@ -2769,13 +2830,13 @@ async function enviarAManifiesto(){
 
   btn.disabled = true;
   btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Enviando…';
-  // Barra de progreso dentro del modal
+  // Loader ILUS con pasos ajustados a la velocidad real del backend (<500ms con cache)
   _mfShowProgress([
-    { ms: 100,  pct: 20, txt: '📤 Enviando datos…' },
-    { ms: 500,  pct: 45, txt: '📦 Registrando en manifiesto…' },
-    { ms: 1200, pct: 70, txt: '🔗 Vinculando productos…' },
-    { ms: 2200, pct: 90, txt: '⏳ Casi listo…' },
-  ]);
+    { ms: 60,   pct: 25, txt: '📤 Enviando datos del documento…' },
+    { ms: 200,  pct: 55, txt: '📦 Registrando en manifiesto…' },
+    { ms: 450,  pct: 80, txt: '🔗 Vinculando productos…' },
+    { ms: 900,  pct: 92, txt: '⏳ Confirmando con el servidor…' },
+  ], { title: 'Enviando al manifiesto' });
   try {
     const r = await fetch('/transporte/api/cubicador/enviar-manifiesto', {
       method: 'POST',
@@ -2811,32 +2872,45 @@ async function enviarAManifiesto(){
   }
 }
 
-// ── Barra de progreso del modal "Enviar a manifiesto" ──
+// ── Loader ILUS del modal "Enviar a manifiesto" (estilo Claude Design) ──
 let _mfProgressTimers = [];
-function _mfShowProgress(steps){
-  const bar = document.getElementById('mfProgressBar');
-  if (!bar) return;
-  const fill = document.getElementById('mfProgressFill');
-  const msg  = document.getElementById('mfProgressMsg');
-  bar.style.display = 'block';
-  if (fill) fill.style.width = '8%';
-  if (msg)  msg.textContent  = 'Iniciando…';
+function _mfShowProgress(steps, opts){
+  opts = opts || {};
+  const overlay = document.getElementById('mfLoaderOverlay');
+  if (!overlay) return;
+  const title = document.getElementById('mfLoaderTitle');
+  const fill  = document.getElementById('mfLoaderFill');
+  const msg   = document.getElementById('mfLoaderMsg');
+  if (title) title.textContent = opts.title || 'Enviando al manifiesto';
+  if (fill)  fill.style.width  = '6%';
+  if (msg)   msg.textContent   = 'Iniciando…';
+  overlay.style.display = 'flex';
   _mfProgressTimers.forEach(t => clearTimeout(t));
   _mfProgressTimers = [];
   steps.forEach(s => {
     _mfProgressTimers.push(setTimeout(() => {
       if (fill) fill.style.width = s.pct + '%';
-      if (msg)  msg.textContent  = s.txt;
+      if (msg)  { msg.style.opacity = '0'; setTimeout(() => { msg.textContent = s.txt; msg.style.opacity = '1'; }, 120); }
     }, s.ms));
   });
 }
 function _mfFinishProgress(){
   _mfProgressTimers.forEach(t => clearTimeout(t));
   _mfProgressTimers = [];
-  const bar  = document.getElementById('mfProgressBar');
-  const fill = document.getElementById('mfProgressFill');
+  const overlay = document.getElementById('mfLoaderOverlay');
+  const fill    = document.getElementById('mfLoaderFill');
+  const msg     = document.getElementById('mfLoaderMsg');
   if (fill) fill.style.width = '100%';
-  setTimeout(() => { if (bar) bar.style.display = 'none'; }, 350);
+  if (msg)  msg.textContent  = '✓ Listo';
+  setTimeout(() => {
+    if (overlay) {
+      overlay.style.opacity = '0';
+      setTimeout(() => {
+        overlay.style.display = 'none';
+        overlay.style.opacity = '';  // reset para próxima vez
+      }, 220);
+    }
+  }, 400);
 }
 
 // ── Reset del cubicador para ingresar siguiente factura SIN recargar ──
@@ -2952,16 +3026,22 @@ function setBuscarLoading(on){
       </div>
 
       <div id="mfAlert" class="mf-alert" style="display:none"></div>
+    </div>
 
-      <div id="mfProgressBar" style="display:none;margin-top:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span id="mfProgressMsg" style="font-size:.78rem;color:#374151;font-weight:600">Iniciando…</span>
+    {# ── Overlay loader ILUS (estilo Claude Design) ── #}
+    <div id="mfLoaderOverlay" class="mf-loader-overlay" style="display:none">
+      <div class="mf-loader-card">
+        <div class="mf-loader-logo-wrap">
+          <div class="mf-loader-pulse"></div>
+          <img src="{{ url_for('static', filename='Logo_small.webp') }}"
+               alt="ILUS" class="mf-loader-logo">
         </div>
-        <div style="background:#f3f4f6;border-radius:50px;overflow:hidden;height:7px;border:1px solid #e5e7eb">
-          <div id="mfProgressFill" style="height:100%;background:linear-gradient(90deg,#16a34a,#22c55e);
-                                          width:0%;transition:width .4s ease-out;border-radius:50px;
-                                          box-shadow:0 0 6px rgba(22,163,74,.4)"></div>
+        <div class="mf-loader-title" id="mfLoaderTitle">Enviando al manifiesto</div>
+        <div class="mf-loader-msg" id="mfLoaderMsg">Iniciando…</div>
+        <div class="mf-loader-bar">
+          <div class="mf-loader-fill" id="mfLoaderFill"></div>
         </div>
+        <div class="mf-loader-foot">ILUS Sport &amp; Health</div>
       </div>
     </div>
 
@@ -3009,6 +3089,75 @@ function setBuscarLoading(on){
 .modal-mf-box{position:relative;background:#fff;border-radius:12px;width:min(540px,94vw);
               max-height:92vh;display:flex;flex-direction:column;
               box-shadow:0 24px 60px rgba(0,0,0,.4);overflow:hidden}
+
+/* ── Loader ILUS estilo Claude Design ── */
+.mf-loader-overlay{
+  position:absolute;inset:0;z-index:10;
+  background:rgba(255,255,255,.97);
+  display:flex;align-items:center;justify-content:center;
+  animation:mfLoaderFadeIn .25s ease-out;
+}
+@keyframes mfLoaderFadeIn{
+  from{opacity:0;backdrop-filter:blur(0)}
+  to  {opacity:1;backdrop-filter:blur(4px)}
+}
+.mf-loader-card{
+  display:flex;flex-direction:column;align-items:center;gap:14px;
+  padding:28px 36px;text-align:center;
+  max-width:340px;
+}
+.mf-loader-logo-wrap{
+  position:relative;width:84px;height:84px;
+  display:flex;align-items:center;justify-content:center;
+}
+.mf-loader-pulse{
+  position:absolute;inset:0;border-radius:50%;
+  background:radial-gradient(circle, rgba(220,38,38,.25), rgba(220,38,38,0) 70%);
+  animation:mfLoaderPulse 1.6s ease-in-out infinite;
+}
+@keyframes mfLoaderPulse{
+  0%, 100%{transform:scale(.85);opacity:.55}
+  50%     {transform:scale(1.15);opacity:.95}
+}
+.mf-loader-logo{
+  width:64px;height:64px;object-fit:contain;
+  filter:drop-shadow(0 4px 10px rgba(220,38,38,.35));
+  animation:mfLoaderFloat 2.6s ease-in-out infinite;
+  position:relative;z-index:1;
+}
+@keyframes mfLoaderFloat{
+  0%, 100%{transform:translateY(0) rotate(-2deg)}
+  50%     {transform:translateY(-6px) rotate(2deg)}
+}
+.mf-loader-title{
+  font-size:1.05rem;font-weight:700;color:#0a0a0a;
+  letter-spacing:.01em;
+}
+.mf-loader-msg{
+  font-size:.85rem;color:#6b7280;min-height:1.2em;
+  transition:opacity .2s ease;
+}
+.mf-loader-bar{
+  width:240px;height:6px;background:#f3f4f6;
+  border-radius:50px;overflow:hidden;border:1px solid #e5e7eb;
+  position:relative;
+}
+.mf-loader-fill{
+  height:100%;width:0%;border-radius:50px;
+  background:linear-gradient(90deg,#dc2626,#f59e0b,#16a34a);
+  background-size:200% 100%;
+  transition:width .45s cubic-bezier(.4,0,.2,1);
+  box-shadow:0 0 8px rgba(220,38,38,.4);
+  animation:mfLoaderShine 1.8s ease-in-out infinite;
+}
+@keyframes mfLoaderShine{
+  0%  {background-position:0% 0%}
+  100%{background-position:200% 0%}
+}
+.mf-loader-foot{
+  font-size:.7rem;color:#9ca3af;letter-spacing:.06em;
+  text-transform:uppercase;font-weight:600;margin-top:4px;
+}
 .modal-mf-hdr{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #eee;
               background:#0f172a;color:#fff}
 .modal-mf-hdr h3{margin:0;flex:1;font-size:1.0rem;font-weight:700;color:#fff}

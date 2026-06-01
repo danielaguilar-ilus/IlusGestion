@@ -11777,16 +11777,42 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     # del MAEDDO (Random a veces los duplica ahí).
     line_data = _ERP._scan_lines(lineas_raw)
 
-    # ── Consolidar: entidad (MAEEN) > líneas scan > otros fallbacks ─────
-    # Nombre: MAEEN.NOKOEN > NOKOEN embebido en líneas
-    cliente_nombre = cliente_nombre or line_data.get("nombre", "")
+    # ── Parsear OBDO de antemano: en boletas a consumidor final, el cliente
+    #    REAL (nombre, dirección, teléfono, email) suele venir embebido en
+    #    OBDO/TEXTO1, no en MAEEN. Lo extraemos antes de decidir el nombre.
+    _obdo_raw = obs_table_main or cliente_obs_en or line_data.get("obs", "")
+    _obdo_parsed = _parse_obdo(_obdo_raw) if _obdo_raw else {
+        "nombre": "", "direccion": "", "telefono": "", "email": "", "comuna": ""
+    }
 
-    # Dirección: MAEEDOOB.DIENDESP > MAEEN.DIEN > línea scan
+    # ── Consolidar: entidad (MAEEN) > líneas scan > OBDO > fallbacks ─────
+    # Si el ERP devuelve cliente genérico (BOLETA/CONSUMIDOR FINAL/PARTICULAR),
+    # preferir el nombre del OBDO/líneas (es el cliente real).
+    _GENERIC_NAMES = {"", "boleta", "consumidor final", "particular",
+                      "cliente final", "varios", "publico general"}
+    _is_generic = (cliente_nombre or "").strip().lower() in _GENERIC_NAMES
+    if _is_generic:
+        cliente_nombre = (
+            line_data.get("nombre", "")
+            or _obdo_parsed.get("nombre", "")
+            or cliente_nombre  # si todo falla, dejamos el genérico
+        )
+    else:
+        cliente_nombre = cliente_nombre or line_data.get("nombre", "") or _obdo_parsed.get("nombre", "")
+
+    # Dirección: MAEEDOOB.DIENDESP > MAEEN.DIEN > línea scan > OBDO
     direccion_final = (
         dir_despacho_obs
         or cliente_dir_base
         or line_data.get("direccion", "")
+        or _obdo_parsed.get("direccion", "")
     )
+
+    # Teléfono / email: si MAEEN no tenía, usar OBDO (caso boleta consumidor final)
+    if not cliente_telefono and _obdo_parsed.get("telefono"):
+        cliente_telefono = _erpe.normalize_phone_cl(_obdo_parsed["telefono"]) or _obdo_parsed["telefono"]
+    if not cliente_email and _obdo_parsed.get("email"):
+        cliente_email = _obdo_parsed["email"]
 
     # Observaciones: MAEEDOOB > MAEEN.OBEN > obs embebidas en líneas
     obs_final = obs_table_main or cliente_obs_en or line_data.get("obs", "")
@@ -14090,9 +14116,13 @@ def _detect_comuna(text: str) -> str:
 
 
 def _parse_obdo(obdo: str) -> dict:
-    """Parsea texto libre OBDO: 'Dirección [comuna] - teléfono - email'."""
+    """Parsea texto libre OBDO: 'Nombre - dirección [comuna] - teléfono - email'.
+
+    Extrae nombre cuando el ERP devuelve cliente genérico (BOLETA/CONSUMIDOR
+    FINAL/PARTICULAR) en boletas — el dato real va en OBDO/TEXTO1.
+    """
     import re as _re
-    result = {"direccion": "", "telefono": "", "email": "", "comuna": ""}
+    result = {"direccion": "", "telefono": "", "email": "", "comuna": "", "nombre": ""}
     if not obdo:
         return result
     original = obdo
@@ -14104,7 +14134,26 @@ def _parse_obdo(obdo: str) -> dict:
     if phone_m:
         result["telefono"] = phone_m.group(0).strip()
         obdo = obdo.replace(phone_m.group(0), "")
-    result["direccion"] = _re.sub(r'[-–]+\s*$', '', obdo).strip(' -–')
+    # Intentar separar nombre + dirección. Heurística: si arranca con
+    # palabras alfabéticas (no dígitos), el primer trozo antes de un
+    # separador típico (/, -, –, ,) o salto de línea ES el nombre.
+    rest = _re.sub(r'[-–]+\s*$', '', obdo).strip(' -–\n')
+    name_dir_m = _re.match(
+        r'^\s*([A-Za-zÁÉÍÓÚÑáéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ\.\' ]{1,60})\s*[/\-–,\n]\s*(.+)$',
+        rest
+    )
+    if name_dir_m:
+        candidato = name_dir_m.group(1).strip()
+        resto     = name_dir_m.group(2).strip()
+        # Si el candidato tiene pinta de calle (Av., Calle, Pasaje, etc.) NO es nombre
+        if not _re.match(r'^(av\.?|avenida|calle|psje\.?|pasaje|camino|ruta|carretera|los|las|el|la)\b',
+                         candidato, _re.IGNORECASE):
+            result["nombre"]    = candidato
+            result["direccion"] = resto
+        else:
+            result["direccion"] = rest
+    else:
+        result["direccion"] = rest
     result["comuna"] = _detect_comuna(original)
     return result
 
@@ -17562,6 +17611,36 @@ def _tr_manifiesto_export_impl(mid):
     def _xc(v):
         return _ILLEGAL_XLSX.sub("", v) if isinstance(v, str) else v
 
+    # Helpers FedEx: la plantilla oficial limita ciertos campos a 35 chars
+    # (senderContactName, senderLine1, senderLine2, recipientContactName,
+    # recipientLine1, recipientLine2). Hay que truncar/dividir inteligente
+    # para que FedEx no rechace la carga masiva.
+    FEDEX_MAX = 35
+
+    def _trunc(v, n=FEDEX_MAX):
+        s = (v or "").strip()
+        return s[:n]
+
+    def _split_address(addr, n=FEDEX_MAX):
+        """Divide una dirección larga en (line1, line2) sin cortar palabras.
+        Si cabe en n chars → (addr, ''). Si no, busca el último espacio/coma
+        antes del límite y rompe ahí; el resto va a line2 (también truncado a n).
+        """
+        s = (addr or "").strip()
+        if len(s) <= n:
+            return s, ""
+        # Buscar último separador natural antes del límite
+        cut = -1
+        for sep in (", ", " - ", " "):
+            cut = s.rfind(sep, 0, n)
+            if cut > n // 2:  # evita cortes demasiado tempranos
+                break
+        if cut <= n // 2:
+            cut = n  # fallback: corte duro
+        line1 = s[:cut].rstrip(" ,-")
+        line2 = s[cut:].lstrip(" ,-")[:n]
+        return line1, line2
+
     if formato == "fedex":
         ws.title = "FedEx"
         s = _tr_sender_cfg()
@@ -17577,19 +17656,31 @@ def _tr_manifiesto_export_impl(mid):
             "recipientShipAlertNotification", "recipientNotificationLanguageCode",
             "senderExceptionNotification",
         ])
+        # Sender pre-truncado una vez (es FIJO por instancia)
+        sender_name  = _trunc(s["name"])
+        sender_l1, sender_l2_split = _split_address(s["line1"])
+        # Si el sender ya tiene line2 propio (config) y line1 cabía, respetar.
+        if not sender_l2_split:
+            sender_l2 = _trunc(s.get("line2", ""))
+        else:
+            sender_l2 = sender_l2_split
+
         for ri, it in enumerate(items, 2):
             nbult = max(1, int(it.get("n_bultos") or 1))
             peso  = float(it.get("peso_kg") or 0)
             ppp   = round(peso / nbult, 3) if nbult else peso
+            # Recipient: nombre + address con split inteligente
+            rcp_name = _trunc(it.get("cliente_nombre") or "")
+            rcp_l1, rcp_l2 = _split_address(it.get("direccion") or "")
             row = [
                 it.get("nudo") or "",
-                s["name"], s["company"], s["phone"], s["email"], s["line1"], s["line2"],
+                sender_name, s["company"], s["phone"], s["email"], sender_l1, sender_l2,
                 s["postcode"], s["state"], s["city"], s["country"],
-                it.get("cliente_nombre") or "", "",
+                rcp_name, "",
                 it.get("telefono") or "", it.get("email") or "",
-                it.get("direccion") or "", "", "",
+                rcp_l1, rcp_l2, "",
                 it.get("cod_postal") or "", "CL",
-                it.get("region") or it.get("comuna") or "", "CL",
+                _trunc(it.get("region") or it.get("comuna") or "", 35), "CL",
                 "YOUR_PACKAGING", nbult, ppp, "KGS", 1, 1, 1,
                 "FEDEX_PRIORITY", "CLP", "Y", "Y", "Y", "ES", "Y",
             ]
