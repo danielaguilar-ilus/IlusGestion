@@ -46707,6 +46707,94 @@ def _reporte_informe_pdf_bytes(rep, cliente):
                    wait_fn=wait_imgs, wait_timeout=6000)
 
 
+def _reporte_faltantes(rep):
+    """Requisitos OBLIGATORIOS para que un informe avance (regla Daniel):
+    N° ticket, N° OT y el PDF de la OT adjunto; además al menos un equipo y el
+    asunto. Devuelve lista de faltantes (vacía = completo). SIN tokens."""
+    falt = []
+    if not str(rep.get("ticket_num") or "").strip():
+        falt.append("N° de ticket")
+    if not str(rep.get("ot_num") or "").strip():
+        falt.append("N° de OT")
+    if not str(rep.get("ot_doc_url") or "").strip():
+        falt.append("Documento de la OT (PDF adjunto)")
+    maqs = rep.get("maquinas_json")
+    if not (isinstance(maqs, list) and maqs):
+        falt.append("Al menos un equipo intervenido")
+    if not str(rep.get("asunto") or "").strip():
+        falt.append("Asunto del informe")
+    return falt
+
+
+def _reporte_analisis_reglas(rep, cliente=None):
+    """Agente interno DETERMINISTA (sin IA / sin tokens): valida completitud y
+    genera diagnóstico + recomendaciones por reglas a partir de los datos del
+    informe (equipos, repuestos, garantía, observaciones, fotos)."""
+    cliente = cliente or {}
+    _norm = lambda x: (str(x or "")).strip().lower()
+    faltantes = _reporte_faltantes(rep)
+    maqs = rep.get("maquinas_json") if isinstance(rep.get("maquinas_json"), list) else []
+    trabajos = rep.get("trabajos") if isinstance(rep.get("trabajos"), list) else []
+    observaciones = rep.get("observaciones") if isinstance(rep.get("observaciones"), list) else []
+    fotos = rep.get("fotos") if isinstance(rep.get("fotos"), list) else []
+    garantia = bool(rep.get("garantia_aplica"))
+
+    acciones, cotizaciones = [], []
+    equipos_con_repuesto = 0
+    for m in maqs:
+        nombre = m.get("descripcion") or m.get("nombre") or m.get("maquina") or "Equipo"
+        rep_nombre = (m.get("repuesto") or "").strip()
+        gar_m = _norm(m.get("garantia")) in ("si", "sí", "true", "1", "yes")
+        if rep_nombre and _norm(rep_nombre) not in ("no", "ninguno", "-"):
+            equipos_con_repuesto += 1
+            if gar_m or garantia:
+                acciones.append({"urgencia": "media", "tipo": "garantia",
+                                 "titulo": f"Repuesto «{rep_nombre}» de {nombre}: cubierto por garantía (sin costo)."})
+            else:
+                acciones.append({"urgencia": "alta", "tipo": "cotizacion",
+                                 "titulo": f"Cotizar repuesto «{rep_nombre}» para {nombre}."})
+                cotizaciones.append(rep_nombre)
+        obs_m = _norm(m.get("observacion"))
+        if any(k in obs_m for k in ("pendiente", "cotiz", "reagend", "stock", "proveedor", "solicit")):
+            acciones.append({"urgencia": "media", "tipo": "seguimiento",
+                             "titulo": f"Seguimiento en {nombre}: {(m.get('observacion') or '')[:120]}"})
+
+    if not fotos:
+        acciones.append({"urgencia": "baja", "tipo": "evidencia",
+                         "titulo": "Adjuntar registro fotográfico (respaldo recomendado)."})
+    texto_obs = " ".join(observaciones).lower()
+    if any(k in texto_obs for k in ("pendiente", "cotiz", "reagend", "próxima", "proxima")):
+        acciones.append({"urgencia": "media", "tipo": "seguimiento",
+                         "titulo": "Observaciones con temas pendientes — programar seguimiento."})
+
+    tipo_lbl = {"mantencion": "mantención preventiva", "instalacion": "instalación",
+                "inspeccion": "inspección técnica", "visita_tecnica": "visita técnica / reparación",
+                "garantia": "atención en garantía", "otro": "servicio técnico"}.get(rep.get("tipo"), "servicio técnico")
+    cli_nombre = cliente.get("razon_social") or "el cliente"
+    partes = [f"Informe de {tipo_lbl} para {cli_nombre} (Ticket {rep.get('ticket_num') or '—'} / OT {rep.get('ot_num') or '—'}).",
+              f"Se intervinieron {len(maqs)} equipo(s) y se registraron {len(trabajos)} trabajo(s)."]
+    if equipos_con_repuesto:
+        partes.append(f"{equipos_con_repuesto} equipo(s) requirieron repuesto.")
+    partes.append("Servicio cubierto por garantía (sin costo para el cliente)." if garantia
+                  else ("Servicio facturable" + (f"; se sugiere cotizar: {', '.join(cotizaciones)}." if cotizaciones else ".")))
+    diagnostico = " ".join(partes)
+
+    checks = [bool(str(rep.get("ticket_num") or "").strip()),
+              bool(str(rep.get("ot_num") or "").strip()),
+              bool(str(rep.get("ot_doc_url") or "").strip()),
+              bool(maqs), bool(trabajos), bool(observaciones), bool(fotos)]
+    indice = round(100 * sum(1 for c in checks if c) / len(checks))
+
+    return {
+        "motor": "reglas-internas-v1", "completo": (len(faltantes) == 0),
+        "faltantes": faltantes, "diagnostico": diagnostico, "acciones": acciones,
+        "indice_completitud": indice,
+        "resumen": {"equipos": len(maqs), "trabajos": len(trabajos),
+                    "observaciones": len(observaciones), "fotos": len(fotos),
+                    "equipos_con_repuesto": equipos_con_repuesto, "garantia": garantia},
+    }
+
+
 def _save_reporte_html_snapshot(rid):
     """Genera y persiste HTML del reporte en disco. Devuelve ruta relativa o None."""
     try:
@@ -48386,6 +48474,88 @@ def mant_contrato_analisis_pdf(ctid):
     return _contrato_analisis_to_pdf_html(dict(ct), cliente)
 
 
+@app.route("/mantenciones/api/reportes/<int:rid>/analizar", methods=["POST"])
+@_mant_required
+def mant_reporte_analizar_reglas(rid):
+    """Agente interno (REGLAS, sin IA / sin tokens): valida que el informe esté
+    completo (ticket + OT + documento obligatorios) y genera diagnóstico +
+    recomendaciones por reglas. Guarda y devuelve {ok, completo, faltantes, analisis}."""
+    rep, cliente = _load_reporte_full(rid)
+    if not rep:
+        return jsonify({"error": "Informe no encontrado"}), 404
+    analisis = _reporte_analisis_reglas(rep, cliente)
+    try:
+        mysql_execute(
+            "UPDATE mant_reportes SET analisis_reglas_json=%s, analisis_reglas_at=NOW() WHERE id=%s",
+            (json.dumps(analisis, ensure_ascii=False), rid)
+        )
+    except Exception as e:
+        print(f"[reporte_analizar_reglas] {e}", flush=True)
+    try:
+        _mant_log("reporte", rid, "analizado_interno",
+                  f"completo={analisis['completo']} idx={analisis['indice_completitud']}%")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "completo": analisis["completo"],
+                    "faltantes": analisis["faltantes"], "analisis": analisis})
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>/ot-doc", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_reporte_ot_doc(rid):
+    """Adjunta el PDF de la OT al informe (obligatorio para avanzar)."""
+    if not mysql_fetchone("SELECT id FROM mant_reportes WHERE id=%s", (rid,)):
+        return jsonify({"error": "Informe no encontrado"}), 404
+    f = (request.files.get("doc") or request.files.get("file")
+         or request.files.get("archivo"))
+    if not f or not f.filename:
+        return jsonify({"error": "No se recibió ningún archivo"}), 400
+    ext = (f.filename.rsplit(".", 1)[-1] if "." in f.filename else "").lower()
+    if ext != "pdf":
+        return jsonify({"error": "El documento de la OT debe ser un archivo PDF"}), 400
+    url = None
+    try:
+        if _CLD_READY:
+            res = _cloud_upload_raw(f.stream, public_id=f"otdoc_rep{rid}", folder="ilus/informes_ot")
+            url = res.get("url")
+        else:
+            from werkzeug.utils import secure_filename as _sf
+            sub = os.path.join(UPLOAD_FOLDER, "mantenciones", "reportes")
+            os.makedirs(sub, exist_ok=True)
+            fname = f"otdoc_{rid}_{_sf(f.filename)}"
+            f.save(os.path.join(sub, fname))
+            url = f"/static/uploads/mantenciones/reportes/{fname}"
+    except Exception as e:
+        print(f"[reporte_ot_doc] {e}", flush=True)
+        return jsonify({"error": "No se pudo subir el documento"}), 500
+    mysql_execute("UPDATE mant_reportes SET ot_doc_url=%s, ot_doc_nombre=%s WHERE id=%s",
+                  (url, f.filename[:300], rid))
+    try: _mant_log("reporte", rid, "ot_doc_adjuntado", f.filename[:120])
+    except Exception: pass
+    return jsonify({"ok": True, "url": url, "nombre": f.filename})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/visita-id", methods=["GET"])
+@_mant_required
+def mant_cliente_visita_id(cid):
+    """Resuelve el id de una OT (visita) del cliente a partir de su N° de OT
+    (numero_ot, id o coincidencia parcial). Para 'Generar informe desde OT'."""
+    ot = (request.args.get("ot") or "").strip()
+    if not ot:
+        return jsonify({"error": "Falta el N° de OT"}), 400
+    cond_id = int(ot) if ot.isdigit() else -1
+    v = mysql_fetchone(
+        "SELECT id, numero_ot FROM mant_visitas "
+        " WHERE cliente_id=%s AND (id=%s OR numero_ot=%s OR numero_ot LIKE %s) "
+        " ORDER BY id DESC LIMIT 1",
+        (cid, cond_id, ot, f"%{ot}")
+    )
+    if not v:
+        return jsonify({"ok": False, "error": f"No se encontró una OT '{ot}' para este cliente."}), 404
+    return jsonify({"ok": True, "vid": v["id"], "numero_ot": v.get("numero_ot")})
+
+
 @app.route("/mantenciones/api/reportes/<int:rid>/pdf", methods=["GET"])
 @_mant_required
 def mant_reporte_pdf(rid):
@@ -48400,6 +48570,18 @@ def mant_reporte_pdf(rid):
     rep, cliente = _load_reporte_full(rid)
     if not rep:
         return "Reporte no encontrado", 404
+    # Gate (regla Daniel): N° ticket + N° OT + PDF de la OT obligatorios para avanzar.
+    faltan = _reporte_faltantes(rep)
+    if faltan and request.args.get("force") != "1":
+        _items = "".join(f"<li>{x}</li>" for x in faltan)
+        return ("<!doctype html><meta charset='utf-8'>"
+                "<div style='font-family:Segoe UI,Arial;max-width:560px;margin:60px auto;"
+                "padding:24px;border:1px solid #fecaca;border-radius:12px;background:#fef2f2'>"
+                "<h2 style='color:#dc2626;margin:0 0 8px'>Informe incompleto</h2>"
+                "<p style='color:#374151'>Para generar el informe (y poder avanzar) faltan "
+                "estos datos obligatorios:</p><ul style='color:#111827'>" + _items + "</ul>"
+                "<p style='color:#6b7280;font-size:.85rem'>Complétalos en la pestaña "
+                "<b>Reportes</b> de la ficha del cliente y vuelve a generar el PDF.</p></div>"), 200
     try:
         _mant_log("reporte", rid, "exportar_pdf")
     except Exception:
@@ -52411,8 +52593,14 @@ def _ensure_mant_reportes_columns():
         "garantia_aplica": "TINYINT(1) NOT NULL DEFAULT 0 "
                            "COMMENT 'Garantía: 1=aplica (cubierto), 0=no aplica (pago)'",
         # Trazabilidad OT (Informe post-venta, 2026-06-01): vincula el informe a la OT.
-        "ot_num":    "VARCHAR(30) NULL COMMENT 'Nº de OT/visita asociada (trazabilidad informe)'",
-        "visita_id": "INT NULL COMMENT 'FK lógica a mant_visitas: OT origen del informe'",
+        "ot_num":        "VARCHAR(30) NULL COMMENT 'Nº de OT/visita asociada (trazabilidad informe)'",
+        "visita_id":     "INT NULL COMMENT 'FK lógica a mant_visitas: OT origen del informe'",
+        # Documento de la OT (obligatorio para avanzar): PDF de la OT adjunto.
+        "ot_doc_url":    "VARCHAR(600) NULL COMMENT 'URL del PDF de la OT adjunto (Cloudinary/local)'",
+        "ot_doc_nombre": "VARCHAR(300) NULL COMMENT 'Nombre del archivo PDF de la OT'",
+        # Análisis del agente interno (reglas, SIN IA/tokens).
+        "analisis_reglas_json": "TEXT NULL COMMENT 'JSON del análisis determinista (diagnóstico+acciones+faltantes)'",
+        "analisis_reglas_at":   "DATETIME NULL COMMENT 'Cuándo corrió el análisis interno'",
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()
