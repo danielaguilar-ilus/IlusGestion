@@ -1,0 +1,219 @@
+{# ════════════════════════════════════════════════════════════════════
+   INFORME POST SERVICIO ILUS — formato carta para PDF (Playwright).
+   Replica el documento Word "INFORME TICKET X / OT Y".
+   Contexto: rep (mant_reportes + JSON decodificado + fotos), cliente,
+   logo_uri, fmt_date (callable), brand, hoy.
+   ════════════════════════════════════════════════════════════════════ #}
+{% macro val(x) %}{{ x if (x is not none and x|string|trim) else '—' }}{% endmacro %}
+{% set maquinas = rep.maquinas_json if rep.maquinas_json is iterable and rep.maquinas_json is not string else [] %}
+{% set objetivos = rep.objetivos if rep.objetivos is iterable and rep.objetivos is not string else [] %}
+{% set trabajos = rep.trabajos if rep.trabajos is iterable and rep.trabajos is not string else [] %}
+{% set observaciones = rep.observaciones if rep.observaciones is iterable and rep.observaciones is not string else [] %}
+{% set fotos = rep.fotos if rep.fotos else [] %}
+{% set tipo_lbl = {'mantencion':'Mantención preventiva','instalacion':'Instalación','inspeccion':'Inspección técnica','visita_tecnica':'Visita técnica / Reparación','garantia':'Garantía','otro':'Servicio técnico'}.get(rep.tipo, 'Servicio técnico') %}
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    color: #111827; font-size: 10pt; line-height: 1.38;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .doc { width: 100%; }
+  table { border-collapse: collapse; width: 100%; }
+  /* ── Cabecera principal ── */
+  .hdr { border: 1.5px solid #0a0a0a; }
+  .hdr td { border: 1px solid #b9b9b9; padding: 5px 8px; vertical-align: middle; font-size: 9.5pt; }
+  .hdr .brandcell {
+    background: #0a0a0a; color: #fff; width: 38%; vertical-align: top; padding: 10px;
+    border: 1px solid #0a0a0a;
+  }
+  .hdr .brandcell img { height: 30px; display:block; margin-bottom: 8px; }
+  .hdr .toptitle { font-size: 15pt; font-weight: 800; color: #fff; letter-spacing: .3px; }
+  .hdr .toprole { font-size: 8pt; color: #f3b6b6; margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
+  .hdr .asunto { background:#dc2626; color:#fff; font-weight:700; font-size:10pt; vertical-align: top; padding:10px; border:1px solid #dc2626; }
+  .hdr .lbl { background: #f3f4f6; font-weight: 700; color:#374151; white-space: nowrap; width: 14%; }
+  .hdr .sec {
+    background: #dc2626; color: #fff; font-weight: 800; text-align: center;
+    text-transform: uppercase; letter-spacing: .6px; font-size: 9.5pt; padding: 5px;
+  }
+  .hdr .colh { background:#0a0a0a; color:#fff; font-weight:700; text-align:center; font-size:8.5pt; text-transform:uppercase; }
+  .hdr .desc { font-style: italic; color:#4b5563; font-size: 9pt; }
+  /* ── Secciones de texto ── */
+  .block { margin-top: 12px; border: 1px solid #d1d5db; }
+  .block > .block-h {
+    background: #dc2626; color:#fff; font-weight:800; text-transform:uppercase;
+    letter-spacing:.6px; font-size: 9.5pt; padding: 6px 10px;
+  }
+  .block > .block-b { padding: 8px 12px; }
+  .block ul { margin: 0; padding-left: 18px; }
+  .block li { margin-bottom: 3px; }
+  .block p { margin: 0 0 6px; }
+  /* ── Tabla por máquina ── */
+  .maq { margin-top: 10px; border: 1px solid #d1d5db; }
+  .maq .maq-h { background:#0a0a0a; color:#fff; font-weight:800; text-transform:uppercase; font-size:9pt; padding:5px 10px; letter-spacing:.5px; }
+  .maq table td, .maq table th { border: 1px solid #cbd5e1; padding: 4px 7px; font-size: 9pt; }
+  .maq table th { background:#f3f4f6; color:#374151; text-transform:uppercase; font-size:8pt; }
+  .maq .obs td { background:#fafafa; }
+  .gar-si { color:#16a34a; font-weight:700; }
+  .gar-no { color:#dc2626; font-weight:700; }
+  /* ── Registro fotográfico ── */
+  .fotos-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .fotos-grid .fcell { border:1px solid #e5e7eb; border-radius:4px; overflow:hidden; height: 150px; background:#f8fafc; display:flex; align-items:center; justify-content:center; }
+  .fotos-grid img { width:100%; height:100%; object-fit: cover; }
+  /* ── Firmas ── */
+  .firmas { margin-top: 18px; display:grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+  .firma { text-align:center; }
+  .firma .ln { border-top: 1px solid #374151; margin-top: 40px; padding-top: 4px; font-weight:700; font-size:9pt; }
+  .firma .ro { font-size: 8pt; color:#6b7280; }
+  /* ── Footer ── */
+  .foot { margin-top: 16px; border-top: 2px solid #dc2626; padding-top: 6px; font-size: 7.5pt; color:#6b7280; display:flex; justify-content:space-between; }
+  .pill { display:inline-block; background:#16a34a; color:#fff; border-radius:9999px; padding:1px 8px; font-size:7.5pt; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  {# ─── CABECERA ─── #}
+  <table class="hdr">
+    <tr>
+      <td class="brandcell" rowspan="2">
+        {% if logo_uri %}<img src="{{ logo_uri }}" alt="ILUS">{% endif %}
+        <div class="toptitle">TICKET {{ val(rep.ticket_num) }} / OT {{ val(rep.ot_num) }}</div>
+        <div class="toprole">{{ tipo_lbl }}</div>
+      </td>
+      <td class="asunto" colspan="4">Asunto: {{ val(rep.asunto) }}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Técnico</td>
+      <td>{{ val(rep.tecnico_senior or rep.tecnico_junior) }}</td>
+      <td class="lbl">Fecha solicitado</td>
+      <td>{{ fmt_date(rep.fecha_solicitado) }}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Fecha inicio</td><td>{{ fmt_date(rep.fecha_inicio) }}</td>
+      <td class="lbl">Fecha cierre</td><td>{{ fmt_date(rep.fecha_cierre) or 'Abierto' }}</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="lbl">Razón Social</td><td colspan="2">{{ val(cliente.razon_social) }}</td>
+      <td class="lbl">Contacto</td><td>{{ val(cliente.contacto_nombre) }}</td>
+    </tr>
+    <tr>
+      <td class="lbl">RUT</td><td colspan="2">{{ cliente.rut | rut_fmt if cliente.rut else '—' }}</td>
+      <td class="lbl">Teléfono</td><td>{{ val(cliente.contacto_tel) }}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Dirección</td>
+      <td colspan="2">{{ val(cliente.direccion) }}{% if cliente.comuna %}, {{ cliente.comuna }}{% endif %}</td>
+      <td class="lbl">Correo</td><td>{{ val(cliente.contacto_email) }}</td>
+    </tr>
+    <tr><td class="sec" colspan="5">Máquinas a intervenir – Solicitadas</td></tr>
+    <tr>
+      <td class="colh" style="width:18%">SKU</td>
+      <td class="colh" colspan="3">Descripción</td>
+      <td class="colh" style="width:12%">Cantidad</td>
+    </tr>
+    {% if maquinas %}
+      {% for m in maquinas %}
+      <tr>
+        <td>{{ val(m.sku) }}</td>
+        <td colspan="3">{{ val(m.descripcion or m.nombre or m.maquina) }}</td>
+        <td style="text-align:center">{{ m.cantidad or 1 }}</td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="5" style="text-align:center;color:#9ca3af">Sin equipos registrados</td></tr>
+    {% endif %}
+    {% if rep.antecedentes and rep.antecedentes|trim %}
+    <tr><td class="desc" colspan="5">{{ rep.antecedentes }}</td></tr>
+    {% endif %}
+    <tr><td class="sec" colspan="5">Objetivos de la visita técnica</td></tr>
+    <tr><td colspan="5">
+      {% if objetivos %}<ul style="margin:0;padding-left:18px">{% for o in objetivos %}<li>{{ o }}</li>{% endfor %}</ul>
+      {% else %}—{% endif %}
+    </td></tr>
+  </table>
+
+  {# ─── TRABAJOS REALIZADOS ─── #}
+  <div class="block">
+    <div class="block-h">Trabajos realizados e intervenciones</div>
+    <div class="block-b">
+      {% if trabajos %}<ul>{% for t in trabajos %}<li>{{ t }}</li>{% endfor %}</ul>
+      {% else %}<p style="color:#9ca3af">Sin trabajos registrados.</p>{% endif %}
+    </div>
+  </div>
+
+  {# ─── OBSERVACIONES GENERALES ─── #}
+  <div class="block">
+    <div class="block-h">Observaciones generales — Post visita técnica</div>
+    <div class="block-b">
+      {% if observaciones %}<ul>{% for o in observaciones %}<li>{{ o }}</li>{% endfor %}</ul>
+      {% else %}<p style="color:#9ca3af">Sin observaciones generales.</p>{% endif %}
+    </div>
+  </div>
+
+  {# ─── OBSERVACIONES Y RECOMENDACIONES POR MÁQUINA ─── #}
+  {% for m in maquinas %}
+  <div class="maq">
+    <div class="maq-h">Observaciones y recomendaciones por máquina ({{ '%02d'|format(loop.index) }})</div>
+    <table>
+      <tr>
+        <th>Máquina</th><th>Modelo</th><th>Serial</th><th>Repuesto</th><th>Nombre repuesto</th><th>Garantía</th>
+      </tr>
+      <tr>
+        <td>{{ val(m.descripcion or m.nombre or m.maquina) }}</td>
+        <td>{{ val(m.modelo or m.sku) }}</td>
+        <td>{{ val(m.serie or m.serial) }}</td>
+        {% set tiene_rep = (m.repuesto and (m.repuesto|string|lower) not in ('no','none','-','')) %}
+        <td>{{ 'Sí' if tiene_rep else 'No' }}</td>
+        <td>{{ val(m.repuesto if tiene_rep else (m.nombre_repuesto or '')) }}</td>
+        {% set gar = (m.garantia|string|lower) in ('si','sí','true','1','yes') %}
+        <td class="{{ 'gar-si' if gar else 'gar-no' }}">{{ 'SÍ' if gar else 'NO' }}</td>
+      </tr>
+      {% if m.observacion and m.observacion|trim %}
+      <tr class="obs"><td style="font-weight:700">Observación</td><td colspan="5">{{ m.observacion }}</td></tr>
+      {% endif %}
+    </table>
+  </div>
+  {% endfor %}
+
+  {# ─── REGISTRO FOTOGRÁFICO ─── #}
+  {% if fotos %}
+  <div class="block" style="page-break-inside: avoid;">
+    <div class="block-h">Registro fotográfico</div>
+    <div class="block-b">
+      <div class="fotos-grid">
+        {% for f in fotos %}
+        <div class="fcell"><img src="{{ f.url }}" alt=""></div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ─── FIRMAS ─── #}
+  <div class="firmas">
+    <div class="firma"><div class="ln">{{ val(rep.tecnico_senior or rep.tecnico_junior) }}</div><div class="ro">Realizado por — Técnico ILUS</div></div>
+    <div class="firma"><div class="ln">&nbsp;</div><div class="ro">Recibido conforme — Cliente</div></div>
+  </div>
+
+  {# ─── FOOTER ─── #}
+  <div class="foot">
+    <div>
+      <strong>{{ brand.name }}</strong> · {{ brand.legal }} · RUT {{ brand.rut }}<br>
+      {{ brand.web }} · {{ brand.email }}
+    </div>
+    <div style="text-align:right">
+      Informe #{{ rep.id }} · {{ hoy }}<br>
+      {% if rep.garantia_aplica %}<span class="pill">GARANTÍA — SIN COSTO</span>{% else %}<span class="pill" style="background:#6b7280">SERVICIO</span>{% endif %}
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

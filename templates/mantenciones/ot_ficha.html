@@ -385,7 +385,49 @@
       <i class="bi bi-filetype-pdf"></i>Descargar PDF
     </a>
     {% endif %}
+    {# ─── Generar Informe Post Servicio (formato ILUS, trazabilidad Ticket/OT) ─── #}
+    <button type="button" class="ot-estado-badge" id="btnGenInforme"
+       style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;cursor:pointer;font-weight:800;display:inline-flex;align-items:center;gap:6px"
+       onclick="generarInformeServicio({{ visita.id }})"
+       title="Crear el Informe Post Servicio (PDF formato ILUS) con trazabilidad Ticket / OT">
+      <i class="bi bi-file-earmark-medical"></i>Generar informe de servicio
+    </button>
   </div>
+  <script>
+  async function generarInformeServicio(vid){
+    const ok = await ilusConfirm({
+      title: 'Generar informe de servicio',
+      message: 'Se creará el Informe Post Servicio de esta OT, con la trazabilidad Ticket / OT y los datos del cliente, equipos y trabajos.',
+      sub: 'Podrás revisarlo, pulirlo con IA y descargarlo en PDF (formato ILUS).',
+      okLabel: 'Generar informe',
+    });
+    if (!ok) return;
+    const btn = document.getElementById('btnGenInforme');
+    if (btn) btn.style.pointerEvents = 'none';
+    ilusToast('Generando informe…', { type:'info', duration:1500 });
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${vid}/generar-informe`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+      });
+      const d = await r.json();
+      if (d.ok){
+        await ilusAlert({
+          title: '✅ Informe creado',
+          message: `Trazabilidad: Ticket ${d.ticket_num || '—'} / OT ${d.ot_num || '—'}.`,
+          sub: 'Se abrirá el PDF en una pestaña nueva. También puedes editarlo/pulirlo con IA desde la ficha del cliente, pestaña Informes.',
+          type: 'success',
+        });
+        window.open(`/mantenciones/api/reportes/${d.id}/pdf`, '_blank');
+      } else {
+        ilusToast(d.error || 'No se pudo generar el informe', { type:'error' });
+      }
+    } catch(e){
+      ilusToast('Error de red al generar el informe', { type:'error' });
+    } finally {
+      if (btn) btn.style.pointerEvents = '';
+    }
+  }
+  </script>
 
   {% if visita.levantamiento_id and visita.estado != 'completada' %}
   {# ═══════════════════════════════════════════════════════════════

@@ -46668,6 +46668,45 @@ def _load_reporte_full(rid):
     return rep, cliente
 
 
+def _reporte_informe_pdf_bytes(rep, cliente):
+    """Renderiza el informe en formato Word (templates/mantenciones/reporte_informe_pdf.html)
+    y lo convierte a PDF carta REAL con Playwright. Devuelve bytes; lanza
+    PDFEngineUnavailable si Chromium no está disponible (el caller hace fallback)."""
+    def _fmt_date(v):
+        if not v:
+            return ""
+        try:
+            if hasattr(v, "strftime"):
+                return v.strftime("%d/%m/%Y")
+            s = str(v)[:10]
+            if len(s) == 10 and s[4:5] == "-":
+                y, m, d = s.split("-")
+                return f"{d}/{m}/{y}"
+            return s
+        except Exception:
+            return str(v)
+    brand = {
+        "name":  "ILUS Sport & Health",
+        "legal": "Sport and Health Solutions SPA",
+        "rut":   ILUS_RUT,
+        "web":   "www.ilusfitness.com",
+        "email": "servicio.tecnico@ilusfitness.com",
+    }
+    try:
+        hoy = _now_chile_str("%d/%m/%Y %H:%M")
+    except Exception:
+        hoy = datetime.now().strftime("%d/%m/%Y")
+    html = render_template(
+        "mantenciones/reporte_informe_pdf.html",
+        rep=rep, cliente=cliente, logo_uri=_ilus_logo_datauri(),
+        fmt_date=_fmt_date, brand=brand, hoy=hoy,
+    )
+    wait_imgs = "document.images.length===0||[...document.images].every(i=>i.complete)"
+    return _pw_pdf(html, page_format="Letter",
+                   margin={"top": "14mm", "right": "12mm", "bottom": "12mm", "left": "12mm"},
+                   wait_fn=wait_imgs, wait_timeout=6000)
+
+
 def _save_reporte_html_snapshot(rid):
     """Genera y persiste HTML del reporte en disco. Devuelve ruta relativa o None."""
     try:
@@ -46701,7 +46740,7 @@ def _save_reporte_html_snapshot(rid):
 @_mant_required
 def mant_reportes_list(cid):
     rows = mysql_fetchall(
-        "SELECT id,tipo,estado,ticket_num,asunto,tecnico_junior,tecnico_senior,"
+        "SELECT id,tipo,estado,ticket_num,ot_num,asunto,tecnico_junior,tecnico_senior,"
         "fecha_inicio,fecha_cierre,ai_diagnostico,ai_fecha,html_path,html_generated_at,"
         "created_by,created_at "
         "FROM mant_reportes WHERE cliente_id=%s ORDER BY created_at DESC", (cid,)
@@ -46739,14 +46778,15 @@ def mant_reporte_crear(cid):
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_reportes
-                   (cliente_id,tipo,estado,ticket_num,asunto,
+                   (cliente_id,tipo,estado,ticket_num,ot_num,visita_id,asunto,
                     tecnico_junior,tecnico_senior,
                     fecha_solicitado,fecha_inicio,fecha_cierre,
                     antecedentes,objetivos,trabajos,observaciones,
                     maquinas_json,garantia_aplica,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, d.get("tipo","mantencion"), d.get("estado","borrador"),
-                 d.get("ticket_num",""), d.get("asunto",""),
+                 d.get("ticket_num",""), d.get("ot_num") or None, d.get("visita_id") or None,
+                 d.get("asunto",""),
                  d.get("tecnico_junior",""), d.get("tecnico_senior",""),
                  d.get("fecha_solicitado") or None,
                  d.get("fecha_inicio") or None, d.get("fecha_cierre") or None,
@@ -46765,6 +46805,141 @@ def mant_reporte_crear(cid):
         try: _save_reporte_html_snapshot(rid)
         except Exception: pass
         return jsonify({"ok": True, "id": rid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/generar-informe", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_visita_generar_informe(vid):
+    """Crea un Informe Post Servicio PREFILLADO desde una OT (visita).
+    "Subir la OT": toma ticket, Nº OT, cliente, equipos, checklist y
+    observaciones de la OT y arma el borrador del informe — con trazabilidad
+    TICKET / OT garantizada. Devuelve {ok, id, cliente_id} para abrir el editor.
+    Todo es editable luego; la IA puede pulir la redacción."""
+    v = mysql_fetchone(
+        "SELECT v.*, COALESCE(u.nombre, u.username) AS tecnico_principal "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+        " WHERE v.id=%s", (vid,)
+    )
+    if not v:
+        return jsonify({"error": "OT no encontrada"}), 404
+    v = dict(v)
+    cid = v.get("cliente_id")
+
+    # Ticket asociado (trazabilidad)
+    tk = mysql_fetchone(
+        "SELECT numero_ticket, id, created_at FROM mant_tickets "
+        " WHERE visita_id=%s ORDER BY id DESC LIMIT 1", (vid,)
+    ) or {}
+    ticket_num = str(tk.get("numero_ticket") or tk.get("id") or "").strip()
+    ot_num = str(v.get("numero_ot") or v.get("id") or "").strip()
+
+    # Tipo de OT → tipo de informe
+    _tipo_map = {"preventiva": "mantencion", "correctiva": "visita_tecnica",
+                 "garantia": "garantia", "inspeccion": "inspeccion",
+                 "instalacion": "instalacion", "levantamiento": "inspeccion"}
+    tipo_rep = _tipo_map.get((v.get("tipo") or "").lower(), "visita_tecnica")
+
+    # Equipos de la OT (defensivo con columnas que podrían no existir)
+    mids = [r["maquina_id"] for r in (mysql_fetchall(
+        "SELECT DISTINCT maquina_id FROM mant_visita_tareas "
+        " WHERE visita_id=%s AND maquina_id IS NOT NULL", (vid,)
+    ) or []) if r.get("maquina_id")]
+    # Observación por equipo (de la revisión en terreno)
+    obs_eq = {}
+    for r in (mysql_fetchall(
+        "SELECT maquina_id, observacion_tecnico FROM mant_visita_equipos WHERE visita_id=%s", (vid,)
+    ) or []):
+        if r.get("observacion_tecnico"):
+            obs_eq[r["maquina_id"]] = r["observacion_tecnico"]
+    # Repuestos por equipo (nombre + si es garantía)
+    rep_eq = {}
+    try:
+        for r in (mysql_fetchall(
+            "SELECT maquina_id, nombre, tipo FROM mant_repuestos "
+            " WHERE visita_id=%s", (vid,)
+        ) or []):
+            mid = r.get("maquina_id")
+            rep_eq.setdefault(mid, {"nombre": r.get("nombre"), "garantia": (r.get("tipo") == "garantia")})
+    except Exception:
+        pass
+
+    maquinas = []
+    for mid in mids:
+        m = mysql_fetchone("SELECT * FROM mant_maquinas WHERE id=%s", (mid,)) or {}
+        rinfo = rep_eq.get(mid, {})
+        maquinas.append({
+            "sku": m.get("sku") or "",
+            "descripcion": m.get("nombre") or "",
+            "cantidad": m.get("cantidad") or 1,
+            "modelo": m.get("modelo") or "",
+            "serie": m.get("serie") or "",
+            "repuesto": rinfo.get("nombre") or "",
+            "garantia": "si" if rinfo.get("garantia") else "no",
+            "observacion": obs_eq.get(mid) or "",
+        })
+
+    # Trabajos realizados = checklist completado
+    trabajos = [r["titulo"] for r in (mysql_fetchall(
+        "SELECT titulo FROM mant_visita_tareas "
+        " WHERE visita_id=%s AND COALESCE(completada,0)=1 AND titulo IS NOT NULL "
+        " ORDER BY orden, id", (vid,)
+    ) or []) if (r.get("titulo") or "").strip()]
+
+    # Observaciones generales = diagnóstico / observaciones de cierre
+    observaciones = []
+    for campo in ("diagnostico", "observaciones"):
+        val = (v.get(campo) or "").strip()
+        if val:
+            observaciones.append(val)
+
+    def _to_date(x):
+        if not x:
+            return None
+        try:
+            return x.date().isoformat() if hasattr(x, "date") else str(x)[:10]
+        except Exception:
+            return str(x)[:10]
+
+    asunto = (v.get("titulo") or "").strip() or f"Visita técnica — OT {ot_num}"
+    antecedentes = (v.get("descripcion") or "").strip()
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_reportes
+                   (cliente_id,tipo,estado,ticket_num,ot_num,visita_id,asunto,
+                    tecnico_junior,tecnico_senior,fecha_solicitado,fecha_inicio,fecha_cierre,
+                    antecedentes,objetivos,trabajos,observaciones,maquinas_json,
+                    garantia_aplica,created_by)
+                   VALUES (%s,%s,'borrador',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, tipo_rep, ticket_num, ot_num, vid, asunto,
+                 "", v.get("tecnico_principal") or v.get("tecnico") or "",
+                 _to_date(tk.get("created_at")) or _to_date(v.get("created_at")),
+                 _to_date(v.get("fecha_programada")) or _to_date(v.get("hora_real_inicio")),
+                 _to_date(v.get("cerrada_at")),
+                 antecedentes,
+                 json.dumps([], ensure_ascii=False),
+                 json.dumps(trabajos, ensure_ascii=False),
+                 json.dumps(observaciones, ensure_ascii=False),
+                 json.dumps(maquinas, ensure_ascii=False),
+                 1 if (v.get("tipo") == "garantia") else 0,
+                 current_username())
+            )
+            rid = cur.lastrowid
+        conn.commit()
+        try:
+            _mant_log("reporte", rid, "creado_desde_ot",
+                      f"OT {ot_num} / Ticket {ticket_num} → {len(maquinas)} equipo(s)")
+        except Exception: pass
+        try: _save_reporte_html_snapshot(rid)
+        except Exception: pass
+        return jsonify({"ok": True, "id": rid, "cliente_id": cid,
+                        "ticket_num": ticket_num, "ot_num": ot_num})
     finally:
         conn.close()
 
@@ -46979,7 +47154,8 @@ def mant_reporte_update(rid):
     if not (_es_super or _es_creador_borrador):
         return jsonify({"error": "Solo el superadministrador puede editar reportes ya emitidos o de otros usuarios."}), 403
     d = request.get_json(silent=True) or {}
-    allowed = ["tipo","estado","ticket_num","asunto","tecnico_junior","tecnico_senior",
+    allowed = ["tipo","estado","ticket_num","ot_num","visita_id","asunto",
+               "tecnico_junior","tecnico_senior",
                "fecha_solicitado","fecha_inicio","fecha_cierre",
                "antecedentes","objetivos","trabajos","observaciones","maquinas_json",
                # Garantía transversal (separada del tipo de servicio)
@@ -48213,53 +48389,37 @@ def mant_contrato_analisis_pdf(ctid):
 @app.route("/mantenciones/api/reportes/<int:rid>/pdf", methods=["GET"])
 @_mant_required
 def mant_reporte_pdf(rid):
-    """Vista imprimible del reporte (formato ILUS) — el navegador genera el PDF.
+    """PDF del Informe Post Servicio en formato ILUS (estilo Word).
 
-    Accesible para todos los roles con permiso de mantenciones (incluido el
-    ejecutivo SSTT). No requiere libs de sistema: usa window.print().
+    Genera un PDF REAL (Playwright, hoja carta) con el template
+    reporte_informe_pdf.html. Si Chromium no está disponible en el server,
+    cae con elegancia a la vista imprimible HTML (window.print()).
+    Forzar la vista imprimible: ?print=1.
+    Accesible para todos los roles con permiso de mantenciones.
     """
-    r = mysql_fetchone(
-        "SELECT r.*, c.razon_social, c.rut, c.contacto_nombre, c.contacto_tel, "
-        "c.contacto_email, c.direccion, c.comuna, c.ciudad "
-        "FROM mant_reportes r JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s",
-        (rid,)
-    )
-    if not r:
+    rep, cliente = _load_reporte_full(rid)
+    if not rep:
         return "Reporte no encontrado", 404
-    rep = dict(r)
-    cliente = {
-        "razon_social":    rep.pop("razon_social", ""),
-        "rut":             rep.pop("rut", ""),
-        "contacto_nombre": rep.pop("contacto_nombre", ""),
-        "contacto_tel":    rep.pop("contacto_tel", ""),
-        "contacto_email":  rep.pop("contacto_email", ""),
-        "direccion":       rep.pop("direccion", ""),
-        "comuna":          rep.pop("comuna", ""),
-        "ciudad":          rep.pop("ciudad", ""),
-    }
-    # Decodificar campos JSON
-    for k in ("objetivos", "trabajos", "observaciones", "maquinas_json", "ai_acciones"):
-        if rep.get(k):
-            try: rep[k] = json.loads(rep[k])
-            except Exception: rep[k] = []
-    # Fotos del registro fotográfico
-    try:
-        fotos = mysql_fetchall(
-            "SELECT id,nombre,archivo_path,cloudinary_url FROM mant_contrato_adjuntos "
-            "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
-        ) or []
-        rep["fotos"] = [
-            {"nombre": f.get("nombre"),
-             "url": (f.get("cloudinary_url")
-                     or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")}
-            for f in fotos
-        ]
-    except Exception:
-        rep["fotos"] = []
     try:
         _mant_log("reporte", rid, "exportar_pdf")
     except Exception:
         pass
+    if request.args.get("print") != "1":
+        try:
+            pdf_bytes = _reporte_informe_pdf_bytes(rep, cliente)
+            _ot = (rep.get("ot_num") or "").strip()
+            _tk = (rep.get("ticket_num") or "").strip()
+            fname = ("Informe" + (f"_OT{_ot}" if _ot else "")
+                     + (f"_T{_tk}" if _tk else f"_{rid}") + ".pdf").replace(" ", "")
+            resp = make_response(pdf_bytes)
+            resp.headers["Content-Type"] = "application/pdf"
+            resp.headers["Content-Disposition"] = f'inline; filename="{fname}"'
+            return resp
+        except PDFEngineUnavailable as e:
+            print(f"[reporte_pdf] Playwright no disponible, fallback HTML: {e}", flush=True)
+        except Exception as e:
+            print(f"[reporte_pdf] error generando PDF, fallback HTML: {e}", flush=True)
+    # Fallback: vista imprimible del navegador (no requiere Chromium server-side)
     return _reporte_to_pdf_html(rep, cliente)
 
 
@@ -52250,6 +52410,9 @@ def _ensure_mant_reportes_columns():
         # Garantía transversal a nivel de reporte (separada del tipo).
         "garantia_aplica": "TINYINT(1) NOT NULL DEFAULT 0 "
                            "COMMENT 'Garantía: 1=aplica (cubierto), 0=no aplica (pago)'",
+        # Trazabilidad OT (Informe post-venta, 2026-06-01): vincula el informe a la OT.
+        "ot_num":    "VARCHAR(30) NULL COMMENT 'Nº de OT/visita asociada (trazabilidad informe)'",
+        "visita_id": "INT NULL COMMENT 'FK lógica a mant_visitas: OT origen del informe'",
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()

@@ -6981,7 +6981,7 @@ async function cargarReportes() {
           <div style="flex:1;min-width:0">
             <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
               <span class="fw-bold" style="font-size:.95rem">
-                ${rep.ticket_num ? `TICKET ${rep.ticket_num} — ` : ''}${rep.asunto || 'Informe de servicio'}
+                ${(rep.ticket_num || rep.ot_num) ? `TICKET ${rep.ticket_num || '—'} / OT ${rep.ot_num || '—'} — ` : ''}${rep.asunto || 'Informe de servicio'}
               </span>
               <span class="rep-tipo-badge rep-tipo-${rep.tipo}">${tipoLbl[rep.tipo]||rep.tipo}</span>
               <span class="rep-tipo-badge rep-estado-${rep.estado}">${rep.estado.charAt(0).toUpperCase()+rep.estado.slice(1)}</span>
@@ -7045,6 +7045,7 @@ function abrirNuevoReporte() {
   document.getElementById('repTipo').value = 'mantencion';
   document.getElementById('repEstado').value = 'borrador';
   document.getElementById('repTicket').value = '';
+  { const _o = document.getElementById('repOt'); if (_o) _o.value = ''; }
   document.getElementById('repAsunto').value = '';
   document.getElementById('repTecJunior').value = '';
   document.getElementById('repTecSenior').value = '';
@@ -7084,6 +7085,7 @@ async function editarReporte(rid) {
   _repSetGarantia(data.garantia_aplica === true || _repGarLegacy);
   document.getElementById('repEstado').value = data.estado || 'borrador';
   document.getElementById('repTicket').value = data.ticket_num || '';
+  { const _o = document.getElementById('repOt'); if (_o) _o.value = data.ot_num || ''; }
   document.getElementById('repAsunto').value = data.asunto || '';
   document.getElementById('repTecJunior').value = data.tecnico_junior || '';
   document.getElementById('repTecSenior').value = data.tecnico_senior || '';
@@ -7329,6 +7331,7 @@ async function repGuardar(silencioso=false) {
     tipo:            document.getElementById('repTipo').value,
     estado:          document.getElementById('repEstado').value,
     ticket_num:      document.getElementById('repTicket').value.trim(),
+    ot_num:          (document.getElementById('repOt')?.value || '').trim(),
     asunto:          document.getElementById('repAsunto').value.trim(),
     tecnico_junior:  document.getElementById('repTecJunior').value.trim(),
     tecnico_senior:  document.getElementById('repTecSenior').value.trim(),
