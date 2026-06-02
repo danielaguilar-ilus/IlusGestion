@@ -43986,13 +43986,14 @@ def mant_visita_pdf(vid):
             wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
         )
     except PDFEngineUnavailable:
-        return jsonify({
-            "ok": False,
-            "error": "Generador PDF no disponible. Avisá al admin.",
-        }), 503
+        # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
+        # documento; el usuario hace "Guardar como PDF" desde el navegador). Antes
+        # devolvía 503 y la OT "no se visualizaba". Ahora SIEMPRE se puede ver.
+        print("[ot_pdf] Playwright no disponible → fallback a HTML imprimible", flush=True)
+        return html
     except Exception as e:
-        print(f"[ot_pdf] err: {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo generar el PDF"}), 500
+        print(f"[ot_pdf] err: {e} → fallback a HTML imprimible", flush=True)
+        return html
 
     fname = f"OT_{visita.get('numero_ot') or vid}.pdf"
     return send_file(
@@ -48593,18 +48594,11 @@ def mant_reporte_pdf(rid):
     rep, cliente = _load_reporte_full(rid)
     if not rep:
         return "Reporte no encontrado", 404
-    # Gate (regla Daniel): N° ticket + N° OT + PDF de la OT obligatorios para avanzar.
-    faltan = _reporte_faltantes(rep)
-    if faltan and request.args.get("force") != "1":
-        _items = "".join(f"<li>{x}</li>" for x in faltan)
-        return ("<!doctype html><meta charset='utf-8'>"
-                "<div style='font-family:Segoe UI,Arial;max-width:560px;margin:60px auto;"
-                "padding:24px;border:1px solid #fecaca;border-radius:12px;background:#fef2f2'>"
-                "<h2 style='color:#dc2626;margin:0 0 8px'>Informe incompleto</h2>"
-                "<p style='color:#374151'>Para generar el informe (y poder avanzar) faltan "
-                "estos datos obligatorios:</p><ul style='color:#111827'>" + _items + "</ul>"
-                "<p style='color:#6b7280;font-size:.85rem'>Complétalos en la pestaña "
-                "<b>Reportes</b> de la ficha del cliente y vuelve a generar el PDF.</p></div>"), 200
+    # FIX 2026-06-02 (Daniel — "visualizar documentos no funciona"): el PDF/vista
+    # del informe SIEMPRE se genera. La obligatoriedad de N° ticket + N° OT +
+    # documento de la OT se valida en el "agente interno" (POST /analizar) y al
+    # emitir — NO se bloquea la VISUALIZACIÓN (antes esto rompía la vista de
+    # informes existentes que aún no tenían esos datos).
     try:
         _mant_log("reporte", rid, "exportar_pdf")
     except Exception:
