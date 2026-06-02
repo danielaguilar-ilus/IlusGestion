@@ -3064,17 +3064,27 @@ def validar_rut(rut, auto_completar_dv=True):
     if len(rut_norm) > 12:
         return False, "RUT muy largo"
 
-    # CASO ESPECIAL: cuerpo de RUT SIN DV (solo dígitos, 6-9 chars).
-    # Empresas chilenas tienen 7-8 dígitos (ej: 76123456). Si auto_completar
-    # está activo, calculamos el DV y devolvemos el RUT completo.
-    if auto_completar_dv and rut_norm.isdigit() and 6 <= len(rut_norm) <= 9:
-        dv_calculado = _calcular_dv_rut(rut_norm)
-        if dv_calculado is not None:
-            return True, f"{rut_norm}{dv_calculado}"
+    # CASO ESPECIAL: completar DV solo cuando el input es SOLO el cuerpo.
+    # El cuerpo de un RUT chileno tiene como máximo 8 dígitos (RUTs van hasta
+    # ~99.999.999), por eso el autocompletado aplica a 6-8 dígitos.
+    # FIX 2026-06-02 (Daniel): antes el rango llegaba a 9 y NO chequeaba si el
+    # RUT ya venía completo, así que a un RUT con DV se le pegaba OTRO DV
+    # (ej '255470655' → '2554706552', el "2" inventado al editar el cliente).
+    # Ahora: si ya es un RUT completo y válido se devuelve tal cual; solo si es
+    # cuerpo puro (6-8 dígitos) se agrega el DV; cuerpo > 8 dígitos = inválido.
+    if auto_completar_dv and rut_norm.isdigit() and 6 <= len(rut_norm) <= 8:
+        _b, _d = rut_norm[:-1], rut_norm[-1]
+        ya_completo = (len(_b) >= 6 and _calcular_dv_rut(_b) == _d)
+        if not ya_completo:
+            dv_calculado = _calcular_dv_rut(rut_norm)
+            if dv_calculado is not None:
+                return True, f"{rut_norm}{dv_calculado}"
 
     num, dv = rut_norm[:-1], rut_norm[-1]
     if not num.isdigit():
         return False, "RUT contiene caracteres no numéricos"
+    if len(num) > 8:
+        return False, "RUT inválido: el cuerpo supera los 8 dígitos (posible DV duplicado)"
     if dv not in "0123456789K":
         return False, "Dígito verificador inválido"
 
@@ -3082,6 +3092,19 @@ def validar_rut(rut, auto_completar_dv=True):
     if dv != dv_esperado:
         return False, f"Dígito verificador inválido (esperado: {dv_esperado})"
     return True, rut_norm
+
+
+def _rut_recuperar(raw):
+    """Recupera el RUT válido (cuerpo ≤8 + DV correcto) desde un valor que pudo
+    quedar corrupto con DV duplicado (ej '2554706552' → '255470655'). Prueba
+    cuerpos de 8, 7 y 6 dígitos. Devuelve RUT normalizado válido o None."""
+    s = re.sub(r"[^0-9K]", "", str(raw or "").upper())
+    for body_len in (8, 7, 6):
+        if len(s) >= body_len + 1:
+            body, dv = s[:body_len], s[body_len]
+            if body.isdigit() and _calcular_dv_rut(body) == dv:
+                return body + dv
+    return None
 
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -52795,6 +52818,44 @@ try:
         print(f"[ILUS] target_field agregado (skip-migrations): {_faltaron_tf}", flush=True)
 except Exception as _ensure_tf_err:
     print(f"[ILUS][WARN] _ensure_levantamiento_target_field: {_ensure_tf_err}", flush=True)
+
+
+def _reparar_ruts_clientes_corruptos():
+    """Repara RUTs de mant_clientes con DV DUPLICADO (cuerpo normalizado > 9
+    chars, ej '2554706552' → '255470655'). Idempotente y barato: un COUNT
+    primero; solo corrige los corruptos. (Bug 2026-06-02 — Daniel: el sistema
+    'inventaba' un dígito al editar el cliente y la búsqueda al ERP fallaba.)"""
+    try:
+        _expr = ("CHAR_LENGTH(REPLACE(REPLACE(REPLACE("
+                 "UPPER(COALESCE(rut,'')),'.',''),'-',''),' ',''))")
+        n = mysql_fetchone(f"SELECT COUNT(*) AS n FROM mant_clientes WHERE {_expr} > 9")
+        if not n or (n.get("n") or 0) == 0:
+            return 0
+        rows = mysql_fetchall(f"SELECT id, rut FROM mant_clientes WHERE {_expr} > 9") or []
+        fixed = 0
+        for r in rows:
+            rec = _rut_recuperar(r.get("rut"))
+            if rec and rec != normalizar_rut(r.get("rut")):
+                try:
+                    mysql_execute("UPDATE mant_clientes SET rut=%s WHERE id=%s", (rec, r["id"]))
+                    fixed += 1
+                except Exception:
+                    pass
+        if fixed:
+            print(f"[reparar-ruts] {fixed} RUT(s) de clientes corregidos (DV duplicado)", flush=True)
+        return fixed
+    except Exception as e:
+        print(f"[reparar-ruts] no se aplicó: {e}", flush=True)
+        return 0
+
+
+# CRÍTICO: reparar RUTs de clientes con DV duplicado al arrancar (bug 2026-06-02).
+# Corre SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1); es barato por el COUNT guard.
+try:
+    with app.app_context():
+        _reparar_ruts_clientes_corruptos()
+except Exception as _e_rut_rep:
+    print(f"[ILUS][WARN] _reparar_ruts_clientes_corruptos: {_e_rut_rep}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #
