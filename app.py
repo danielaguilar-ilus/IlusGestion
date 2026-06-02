@@ -43820,216 +43820,21 @@ def mant_seguimiento_vista():
 # PDF — Reporte completo de OT con firmas y fotos
 # ═════════════════════════════════════════════════════════════════════
 
-@app.route("/mantenciones/api/visitas/<int:vid>/pdf")
-@_mant_required
-@_ot_can_view
-def mant_visita_pdf(vid):
-    """Genera un PDF completo de la OT con:
-    - Header ILUS + número OT + estado
-    - Datos cliente + dirección visita
-    - Datos programación (fecha, hora, GPS)
-    - Lista equipos con foto + datos técnicos + estado + observaciones
-    - Tareas agrupadas por (equipo × plantilla) con respuestas
-    - Fotos del levantamiento embebidas
-    - Firmas técnico + cliente + supervisor
+def _ot_pdf_context(vid):
+    """Construye el contexto COMPLETO para renderizar `mantenciones/ot_pdf.html`.
 
-    Usa Playwright (_pw_pdf). Si no está disponible, devuelve 503.
-    """
-    visita = mysql_fetchone(
-        "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
-        "       c.direccion AS cli_direccion, c.comuna AS cli_comuna, "
-        "       c.contacto_nombre AS cli_contacto, c.contacto_tel AS cli_contacto_tel, "
-        "       COALESCE(u.nombre, u.username) AS tecnico_principal, "
-        "       u.username AS tecnico_email "
-        "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id = v.cliente_id "
-        "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
-        " WHERE v.id=%s",
-        (vid,)
-    )
-    if not visita:
-        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
-    visita = dict(visita)
+    Fuente ÚNICA de verdad de las variables del PDF/HTML de la OT — la usan
+    tanto `mant_visita_pdf` (Playwright → PDF real) como `mant_ot_pdf_render`
+    (HTML imprimible). Antes cada función computaba lo suyo y DIVERGIERON: el
+    template se rediseñó esperando `paginas_equipos` / `tareas_chk` /
+    `eq_fotos_idx` / `eq_check_resumen`, pero `mant_visita_pdf` no los pasaba,
+    así que `paginas_equipos|length` reventaba con un Undefined → HTTP 500 al
+    intentar ver la OT. Centralizar evita que se vuelvan a desincronizar.
 
-    # ── Validación 2026-05-18 (Daniel): el PDF requiere las 3 firmas ──
-    # Solo permitimos generar el PDF cuando la OT está cerrada con las
-    # 3 firmas presentes (cliente + técnico + supervisor/aprobador).
-    # Si falta alguna, devolvemos 409 con el detalle de qué falta.
-    estado = (visita.get("estado") or "").lower()
-    razones_pdf = []
-    if estado != "cerrada":
-        razones_pdf.append(
-            f"La OT debe estar cerrada para descargar el PDF (estado actual: {estado or '—'})."
-        )
-    if not visita.get("firma_cliente_url"):
-        razones_pdf.append("Falta firma del cliente.")
-    if not visita.get("firma_tecnico_url"):
-        razones_pdf.append("Falta firma del técnico.")
-    if not visita.get("firma_supervisor_url"):
-        razones_pdf.append("Falta firma del aprobador.")
-    if razones_pdf:
-        # Si es petición browser (no AJAX), redirigir con flash a la OT
-        is_ajax = (
-            request.headers.get("X-Requested-With") == "XMLHttpRequest"
-            or (request.headers.get("Accept") or "").startswith("application/json")
-        )
-        if not is_ajax:
-            flash(
-                "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
-                + " ".join(razones_pdf),
-                "warning",
-            )
-            return redirect(url_for("mant_ot_ejecutar", vid=vid))
-        return jsonify({
-            "ok": False,
-            "error": "Faltan requisitos para generar el PDF",
-            "razones": razones_pdf,
-        }), 409
-
-    # Equipos
-    equipos = mysql_fetchall(
-        "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
-        "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
-        "       m.ubicacion_sala, m.estado_capturado, m.tiene_dano, "
-        "       m.observaciones "
-        "  FROM mant_visita_tareas vt "
-        "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
-        " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
-        " ORDER BY m.nombre",
-        (vid,)
-    ) or []
-    equipos = [dict(e) for e in equipos]
-
-    # Tareas + plantilla
-    tareas = mysql_fetchall(
-        "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, "
-        "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
-        "       t.unidad, t.completada, t.completada_at, t.observaciones, "
-        "       t.valor_json, "
-        "       COALESCE(p.nombre, 'Gestión de tareas') AS plantilla_nombre "
-        "  FROM mant_visita_tareas t "
-        "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
-        " WHERE t.visita_id=%s "
-        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
-        (vid,)
-    ) or []
-    tareas = [dict(t) for t in tareas]
-    for t in tareas:
-        if t.get("valor_json"):
-            try: t["valor"] = json.loads(t["valor_json"])
-            except Exception: t["valor"] = None
-
-    # Agrupar por (mid, pid)
-    grupos = []
-    grupo_idx = {}
-    for t in tareas:
-        mid = t.get("maquina_id") or 0
-        pid = t.get("plantilla_id") or 0
-        key = (mid, pid)
-        if key not in grupo_idx:
-            grupo_idx[key] = len(grupos)
-            grupos.append({
-                "maquina_id": mid, "plantilla_id": pid,
-                "plantilla_nombre": t.get("plantilla_nombre") or "Tareas manuales",
-                "tareas": [],
-            })
-        grupos[grupo_idx[key]]["tareas"].append(t)
-    eq_idx = {e["id"]: e for e in equipos}
-
-    # Fotos (PDF) — usar columna real `tomada_at`
-    fotos = mysql_fetchall(
-        "SELECT id, tarea_id, archivo_path, cloudinary_url, tipo_foto, tomada_at "
-        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
-        (vid,)
-    ) or []
-    fotos_dict = []
-    for f in fotos:
-        d = dict(f)
-        url = d.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{d['archivo_path']}"
-            if d.get("archivo_path") else ""
-        )
-        if not url:
-            continue
-        d["url"] = url
-        fotos_dict.append(d)
-
-    # Logo ILUS — usa el base64 pre-encodeado si existe
-    logo_b64 = ""
-    try:
-        logo_path = os.path.join(app.static_folder, "logo_pdf.txt")
-        if os.path.exists(logo_path):
-            with open(logo_path, "r", encoding="utf-8") as f:
-                logo_b64 = f.read().strip()
-    except Exception: pass
-
-    # Render HTML
-    html = render_template(
-        "mantenciones/ot_pdf.html",
-        visita=visita,
-        firmante_cliente=_ot_firmante_cliente(vid),
-        equipos=equipos,
-        eq_idx=eq_idx,
-        grupos=grupos,
-        fotos=fotos_dict,
-        logo_b64=logo_b64,
-        generated_at=_now_chile_str('%d/%m/%Y %H:%M'),
-    )
-
-    # PDF
-    try:
-        pdf_bytes = _pw_pdf(
-            html, page_format="A4", margin={
-                "top": "15mm", "bottom": "15mm",
-                "left": "12mm", "right": "12mm",
-            },
-            wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
-        )
-    except PDFEngineUnavailable:
-        # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
-        # documento; el usuario hace "Guardar como PDF" desde el navegador). Antes
-        # devolvía 503 y la OT "no se visualizaba". Ahora SIEMPRE se puede ver.
-        print("[ot_pdf] Playwright no disponible → fallback a HTML imprimible", flush=True)
-        return html
-    except Exception as e:
-        print(f"[ot_pdf] err: {e} → fallback a HTML imprimible", flush=True)
-        return html
-
-    fname = f"OT_{visita.get('numero_ot') or vid}.pdf"
-    return send_file(
-        io.BytesIO(pdf_bytes), mimetype="application/pdf",
-        as_attachment=False, download_name=fname,
-    )
-
-
-# ═════════════════════════════════════════════════════════════════════
-# PDF DINÁMICO — Reporte HTML imprimible de OT cerrada
-# ─────────────────────────────────────────────────────────────────────
-# Endpoint dependency-free: renderiza un HTML+CSS @media print que el
-# usuario imprime con "Guardar como PDF" desde el navegador. No requiere
-# Playwright / wkhtmltopdf / WeasyPrint — cero dependencias nativas.
-#
-# REGLAS de negocio (pedido Daniel 2026-05-17):
-#   - Solo se genera si la OT está estado='cerrada'.
-#   - Las 3 firmas deben existir:
-#       * firma_cliente_url       (cliente que recibe la conformidad)
-#       * firma_tecnico_url       (técnico ejecutor)
-#       * firma_supervisor_url    (responsable/supervisor que aprobó)
-#   - El "Validado Por" (firma supervisor) es DINÁMICO: se busca por
-#     firma_supervisor_user_id en app_users y se muestra el nombre real
-#     de quien aprobó la OT (no hardcodeado a Aarón ni nadie).
-#   - Si alguna firma falta → redirige a la OT con flash error y mensaje
-#     claro de qué le falta.
-# ═════════════════════════════════════════════════════════════════════
-
-@app.route("/mantenciones/ot/<int:vid>/pdf")
-@_mant_required
-@_ot_can_view
-def mant_ot_pdf_render(vid):
-    """Renderiza el HTML imprimible de la OT cerrada (Guardar como PDF).
-
-    Query params:
-      - ?print=1 → dispara window.print() automáticamente al cargar.
+    Devuelve (ctx, status, razones):
+      - status == "ok"         → ctx = dict de variables de template
+      - status == "not_found"  → ctx None
+      - status == "incompleto" → ctx None, razones = lista (no cerrada / faltan firmas)
     """
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
@@ -44049,8 +43854,7 @@ def mant_ot_pdf_render(vid):
         (vid,)
     )
     if not visita:
-        flash("OT no encontrada.", "danger")
-        return redirect(url_for("mant_index"))
+        return None, "not_found", []
     visita = dict(visita)
 
     # ── Validación: OT cerrada con las 3 firmas ──────────────────────
@@ -44064,14 +43868,8 @@ def mant_ot_pdf_render(vid):
         razones.append("Falta firma del técnico.")
     if not visita.get("firma_supervisor_url"):
         razones.append("Falta firma del responsable/supervisor.")
-
     if razones:
-        flash(
-            "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
-            + " ".join(razones),
-            "warning"
-        )
-        return redirect(url_for("mant_ot_ejecutar", vid=vid))
+        return None, "incompleto", razones
 
     # ── Equipos (distinct via tareas) ────────────────────────────────
     equipos = mysql_fetchall(
@@ -44231,8 +44029,7 @@ def mant_ot_pdf_render(vid):
             "maquina_nombre":   t.get("maquina_nombre") or "",
         })
 
-    # ── Paginar equipos: 2 por página (cards grandes) ────────────────
-    # Página 1: 2 equipos (los primeros). Páginas siguientes: 3 c/u.
+    # ── Paginar equipos: 2 en pág 1, 3 por página siguientes ─────────
     paginas_equipos = []
     if equipos:
         if len(equipos) <= 2:
@@ -44256,22 +44053,134 @@ def mant_ot_pdf_render(vid):
     except Exception:
         pass
 
-    return render_template(
-        "mantenciones/ot_pdf.html",
-        visita=visita,
-        firmante_cliente=_ot_firmante_cliente(vid),
-        equipos=equipos,
-        tecnicos_extra=tecnicos_extra,
-        tareas=tareas,
-        tareas_chk=tareas_chk,
-        fotos=fotos,
-        fotos_generales=fotos_generales,
-        eq_fotos_idx=eq_fotos_idx,
-        eq_check_resumen=eq_check_resumen,
-        paginas_equipos=paginas_equipos,
-        logo_b64=logo_b64,
-        generated_at=_now_chile_str('%d/%m/%Y %H:%M'),
+    ctx = {
+        "visita": visita,
+        "firmante_cliente": _ot_firmante_cliente(vid),
+        "equipos": equipos,
+        "tecnicos_extra": tecnicos_extra,
+        "tareas": tareas,
+        "tareas_chk": tareas_chk,
+        "fotos": fotos,
+        "fotos_generales": fotos_generales,
+        "eq_fotos_idx": eq_fotos_idx,
+        "eq_check_resumen": eq_check_resumen,
+        "paginas_equipos": paginas_equipos,
+        "logo_b64": logo_b64,
+        "generated_at": _now_chile_str('%d/%m/%Y %H:%M'),
+    }
+    return ctx, "ok", []
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/pdf")
+@_mant_required
+@_ot_can_view
+def mant_visita_pdf(vid):
+    """Genera un PDF completo de la OT con:
+    - Header ILUS + número OT + estado
+    - Datos cliente + dirección visita
+    - Datos programación (fecha, hora, GPS)
+    - Lista equipos con foto + datos técnicos + estado + observaciones
+    - Tareas agrupadas por (equipo × plantilla) con respuestas
+    - Fotos del levantamiento embebidas
+    - Firmas técnico + cliente + supervisor
+
+    Usa Playwright (_pw_pdf). Si Chromium no está disponible, cae al HTML
+    imprimible (mismo documento) para que la OT SIEMPRE se pueda visualizar.
+    Contexto vía `_ot_pdf_context` (compartido con `mant_ot_pdf_render`).
+    """
+    ctx, status, razones = _ot_pdf_context(vid)
+    if status == "not_found":
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if status == "incompleto":
+        # Si es petición browser (no AJAX), redirigir con flash a la OT
+        is_ajax = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or (request.headers.get("Accept") or "").startswith("application/json")
+        )
+        if not is_ajax:
+            flash(
+                "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
+                + " ".join(razones),
+                "warning",
+            )
+            return redirect(url_for("mant_ot_ejecutar", vid=vid))
+        return jsonify({
+            "ok": False,
+            "error": "Faltan requisitos para generar el PDF",
+            "razones": razones,
+        }), 409
+
+    # Render HTML (contexto compartido con mant_ot_pdf_render → no divergen)
+    html = render_template("mantenciones/ot_pdf.html", **ctx)
+
+    # PDF
+    try:
+        pdf_bytes = _pw_pdf(
+            html, page_format="A4", margin={
+                "top": "15mm", "bottom": "15mm",
+                "left": "12mm", "right": "12mm",
+            },
+            wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
+        )
+    except PDFEngineUnavailable:
+        # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
+        # documento; el usuario hace "Guardar como PDF" desde el navegador). Antes
+        # devolvía 503 y la OT "no se visualizaba". Ahora SIEMPRE se puede ver.
+        print("[ot_pdf] Playwright no disponible → fallback a HTML imprimible", flush=True)
+        return html
+    except Exception as e:
+        print(f"[ot_pdf] err: {e} → fallback a HTML imprimible", flush=True)
+        return html
+
+    fname = f"OT_{ctx['visita'].get('numero_ot') or vid}.pdf"
+    return send_file(
+        io.BytesIO(pdf_bytes), mimetype="application/pdf",
+        as_attachment=False, download_name=fname,
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PDF DINÁMICO — Reporte HTML imprimible de OT cerrada
+# ─────────────────────────────────────────────────────────────────────
+# Endpoint dependency-free: renderiza un HTML+CSS @media print que el
+# usuario imprime con "Guardar como PDF" desde el navegador. No requiere
+# Playwright / wkhtmltopdf / WeasyPrint — cero dependencias nativas.
+#
+# REGLAS de negocio (pedido Daniel 2026-05-17):
+#   - Solo se genera si la OT está estado='cerrada'.
+#   - Las 3 firmas deben existir:
+#       * firma_cliente_url       (cliente que recibe la conformidad)
+#       * firma_tecnico_url       (técnico ejecutor)
+#       * firma_supervisor_url    (responsable/supervisor que aprobó)
+#   - El "Validado Por" (firma supervisor) es DINÁMICO: se busca por
+#     firma_supervisor_user_id en app_users y se muestra el nombre real
+#     de quien aprobó la OT (no hardcodeado a Aarón ni nadie).
+#   - Si alguna firma falta → redirige a la OT con flash error y mensaje
+#     claro de qué le falta.
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/ot/<int:vid>/pdf")
+@_mant_required
+@_ot_can_view
+def mant_ot_pdf_render(vid):
+    """Renderiza el HTML imprimible de la OT cerrada (Guardar como PDF).
+
+    Query params:
+      - ?print=1 → dispara window.print() automáticamente al cargar.
+    """
+    ctx, status, razones = _ot_pdf_context(vid)
+    if status == "not_found":
+        flash("OT no encontrada.", "danger")
+        return redirect(url_for("mant_index"))
+    if status == "incompleto":
+        flash(
+            "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
+            + " ".join(razones),
+            "warning"
+        )
+        return redirect(url_for("mant_ot_ejecutar", vid=vid))
+    # Contexto compartido con mant_visita_pdf (fuente única → no divergen)
+    return render_template("mantenciones/ot_pdf.html", **ctx)
 
 
 # ═════════════════════════════════════════════════════════════════════
