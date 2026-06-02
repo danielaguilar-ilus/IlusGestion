@@ -6957,9 +6957,15 @@ async function cargarReportes() {
   const lista = document.getElementById('reportesLista');
   if (!lista) return;
   lista.innerHTML = '<div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  // Timeout duro: el spinner NUNCA queda infinito. Si el servidor se satura o
+  // cuelga, a los 25s abortamos y mostramos error + botón "Reintentar".
+  const _ac = new AbortController();
+  const _to = setTimeout(() => _ac.abort(), 25000);
   try {
-    const r = await fetch(`/mantenciones/api/clientes/${CID}/reportes`);
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/reportes`, { signal: _ac.signal });
+    if (!r.ok) throw new Error('El servidor respondió ' + r.status);
     const data = await r.json();
+    if (!Array.isArray(data)) throw new Error((data && data.error) ? data.error : 'Respuesta inesperada del servidor');
     if (!data.length) {
       lista.innerHTML = `<div class="text-center py-5 text-muted">
         <i class="bi bi-file-earmark-x" style="font-size:3rem;opacity:.25"></i>
@@ -6984,7 +6990,7 @@ async function cargarReportes() {
                 ${(rep.ticket_num || rep.ot_num) ? `TICKET ${rep.ticket_num || '—'} / OT ${rep.ot_num || '—'} — ` : ''}${rep.asunto || 'Informe de servicio'}
               </span>
               <span class="rep-tipo-badge rep-tipo-${rep.tipo}">${tipoLbl[rep.tipo]||rep.tipo}</span>
-              <span class="rep-tipo-badge rep-estado-${rep.estado}">${rep.estado.charAt(0).toUpperCase()+rep.estado.slice(1)}</span>
+              <span class="rep-tipo-badge rep-estado-${rep.estado||'borrador'}">${((rep.estado||'borrador').charAt(0).toUpperCase()+(rep.estado||'borrador').slice(1))}</span>
             </div>
             <div style="font-size:.75rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:0 16px">
               ${rep.tecnico_junior ? `<span><i class="bi bi-person me-1"></i>${rep.tecnico_junior}</span>` : ''}
@@ -7022,7 +7028,15 @@ async function cargarReportes() {
         ${rep.html_generated_at ? `<div class="mt-2" style="font-size:.66rem;color:#9ca3af;text-align:right"><i class="bi bi-clock me-1"></i>HTML generado ${rep.html_generated_at}</div>` : ''}
       </div>`).join('');
   } catch(e) {
-    lista.innerHTML = `<div class="alert alert-danger">Error cargando reportes: ${e.message}</div>`;
+    const msg = (e && e.name === 'AbortError')
+      ? 'La carga tardó demasiado (servidor lento). Intenta de nuevo.'
+      : ((e && e.message) ? e.message : 'Error desconocido');
+    lista.innerHTML = `<div class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2 mb-0">
+      <span><i class="bi bi-exclamation-triangle me-1"></i>No se pudieron cargar los informes: ${msg}</span>
+      <button class="btn btn-sm btn-outline-dark fw-bold" onclick="cargarReportes()"><i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button>
+    </div>`;
+  } finally {
+    clearTimeout(_to);
   }
 }
 

@@ -44613,6 +44613,22 @@ def mant_visita_fotos_subir(vid):
     except (TypeError, ValueError):
         maquina_id = None
 
+    # FIX 2026-06-02 (Daniel — "ver la foto del levantamiento en la ficha del equipo"):
+    # si la foto va asociada a una tarea pero el frontend NO envió maquina_id, lo
+    # DERIVAMOS de la tarea. Sin maquina_id la foto queda huérfana: la proyección a la
+    # ficha y la sección "último levantamiento" filtran por (visita_id, maquina_id),
+    # así que sin él la foto NUNCA aparece en el equipo.
+    if maquina_id is None and tarea_id:
+        try:
+            _tr = mysql_fetchone(
+                "SELECT maquina_id FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
+                (tarea_id, vid)
+            )
+            if _tr and _tr.get("maquina_id"):
+                maquina_id = _tr["maquina_id"]
+        except Exception:
+            pass
+
     # Log entrada — útil en Railway logs
     print(f"[fotos_subir vid={vid}] iniciando: {len(files)} archivo(s), "
           f"tarea_id={tarea_id} maquina_id={maquina_id} tipo={tipo_foto} "
@@ -46760,12 +46776,26 @@ def _save_reporte_html_snapshot(rid):
 @app.route("/mantenciones/api/clientes/<int:cid>/reportes", methods=["GET"])
 @_mant_required
 def mant_reportes_list(cid):
-    rows = mysql_fetchall(
+    _SEL = (
         "SELECT id,tipo,estado,ticket_num,ot_num,asunto,tecnico_junior,tecnico_senior,"
         "fecha_inicio,fecha_cierre,ai_diagnostico,ai_fecha,html_path,html_generated_at,"
         "created_by,created_at "
-        "FROM mant_reportes WHERE cliente_id=%s ORDER BY created_at DESC", (cid,)
+        "FROM mant_reportes WHERE cliente_id=%s ORDER BY created_at DESC"
     )
+    try:
+        rows = mysql_fetchall(_SEL, (cid,))
+    except Exception as _e1:
+        # Posible columna nueva ausente (ot_num, etc.) si la migración no corrió.
+        # Aseguramos las columnas y reintentamos UNA vez. Si aún falla, devolvemos
+        # JSON de error (no HTML 500) para que el frontend muestre mensaje +
+        # "Reintentar" en vez de quedar cargando eternamente.
+        try:
+            _ensure_mant_reportes_columns()
+            rows = mysql_fetchall(_SEL, (cid,))
+        except Exception as _e2:
+            print(f"[mant_reportes_list] error cid={cid}: {_e2}", flush=True)
+            return jsonify({"error": "No se pudieron cargar los informes (revisa logs)."}), 500
+    rows = rows or []
     def _fmt(r):
         d = dict(r)
         for k in ("fecha_inicio","fecha_cierre","ai_fecha","created_at","html_generated_at"):
@@ -51213,21 +51243,30 @@ def mant_maquina_ficha(mid):
             # Adjuntar fotos de la OT vinculadas a este equipo
             try:
                 fr = mysql_fetchall(
-                    "SELECT id, archivo_path, descripcion, tomada_por, tomada_at "
+                    "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, tomada_at "
                     "  FROM mant_visita_fotos "
                     " WHERE visita_id=%s AND maquina_id=%s "
                     " ORDER BY tomada_at ASC LIMIT 12",
                     (d["visita_id"], mid)
                 ) or []
-                d["fotos"] = [
-                    {
-                        "url": f.get("archivo_path"),
+                # FIX 2026-06-02 (Daniel): priorizar cloudinary_url. En Railway el
+                # filesystem es efímero → las fotos viven en Cloudinary y archivo_path
+                # queda vacío. Antes se filtraba por archivo_path y se descartaban TODAS
+                # las fotos de Cloudinary → la ficha no mostraba ninguna foto del levant.
+                _lev_fotos = []
+                for f in fr:
+                    _u = f.get("cloudinary_url") or (
+                        f"/static/{f['archivo_path']}" if f.get("archivo_path") else ""
+                    )
+                    if not _u:
+                        continue
+                    _lev_fotos.append({
+                        "url": _u,
                         "descripcion": f.get("descripcion") or "",
                         "tomada_por": f.get("tomada_por") or "",
                         "tomada_at": str(f["tomada_at"])[:16] if f.get("tomada_at") else "",
-                    }
-                    for f in fr if f.get("archivo_path")
-                ]
+                    })
+                d["fotos"] = _lev_fotos
             except Exception:
                 d["fotos"] = []
             d["numero_ot"] = d.get("numero_ot") or f"VS-{d['visita_id']:05d}"
@@ -52759,6 +52798,43 @@ try:
         _reparar_ruts_clientes_corruptos()
 except Exception as _e_rut_rep:
     print(f"[ILUS][WARN] _reparar_ruts_clientes_corruptos: {_e_rut_rep}", flush=True)
+
+
+def _reparar_visita_fotos_maquina_id():
+    """Backfill: fotos de OT asociadas a una tarea pero SIN maquina_id heredan el
+    maquina_id de su tarea. Sin esto, las fotos del levantamiento NO aparecen en la
+    ficha del equipo (la proyección a la ficha y la sección 'último levantamiento'
+    filtran por (visita_id, maquina_id)). Idempotente y barato (COUNT guard).
+    Bug 2026-06-02 — Daniel: 'quiero ver la foto del levantamiento en la ficha'."""
+    try:
+        n = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_fotos f "
+            "JOIN mant_visita_tareas t ON t.id = f.tarea_id "
+            "WHERE f.maquina_id IS NULL AND t.maquina_id IS NOT NULL"
+        )
+        if not n or (n.get("n") or 0) == 0:
+            return 0
+        mysql_execute(
+            "UPDATE mant_visita_fotos f "
+            "JOIN mant_visita_tareas t ON t.id = f.tarea_id "
+            "SET f.maquina_id = t.maquina_id "
+            "WHERE f.maquina_id IS NULL AND t.maquina_id IS NOT NULL"
+        )
+        print(f"[reparar-fotos] {n.get('n')} foto(s) de OT heredaron maquina_id de su tarea", flush=True)
+        return n.get("n") or 0
+    except Exception as e:
+        print(f"[reparar-fotos] no se aplicó: {e}", flush=True)
+        return 0
+
+
+# CRÍTICO: backfill de maquina_id en fotos de OT para que las fotos del levantamiento
+# YA capturadas aparezcan en la ficha del equipo. Corre SIEMPRE (incluso con
+# ILUS_SKIP_MIGRATIONS=1); barato por el COUNT guard.
+try:
+    with app.app_context():
+        _reparar_visita_fotos_maquina_id()
+except Exception as _e_foto_rep:
+    print(f"[ILUS][WARN] _reparar_visita_fotos_maquina_id: {_e_foto_rep}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #
