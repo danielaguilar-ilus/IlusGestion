@@ -3276,7 +3276,15 @@ def load_current_user():
         cached_ts = cached.get("ts", 0)
         # TTL diferenciado: admin/superadmin 10s, resto 60s
         _ttl = 10 if cached.get("role") in ("superadmin", "admin") else 60
-        if (time.time() - cached_ts) < _ttl:
+        # Época de auth (2026-06-01): si un admin cambió roles desde que se
+        # cacheó esta sesión, forzamos re-lectura de BD para traer rol/permisos
+        # frescos. Ante CUALQUIER error, _epoch_ok=True → usa el caché normal
+        # (degradación segura: nunca deja a un usuario sin sesión).
+        try:
+            _epoch_ok = (cached.get("ae", "") == _current_auth_epoch())
+        except Exception:
+            _epoch_ok = True
+        if _epoch_ok and (time.time() - cached_ts) < _ttl:
             g.user = cached
             g.permissions = permission_set(cached["role"])
             # Heartbeat last_seen_at (throttle 60s en memoria del proceso)
@@ -3309,6 +3317,7 @@ def load_current_user():
         "role":     user["role"],
         "active":   user["active"],
         "ts":       time.time(),
+        "ae":       _current_auth_epoch(),   # época de auth al momento de cachear
     }
 
     # Heartbeat last_seen_at (throttle 60s en memoria del proceso) —
@@ -3410,6 +3419,36 @@ def _cache_signal_changed(scope: str) -> bool:
         prev_ts, _ = _cache_signal_local.get(scope, (None, 0.0))
         _cache_signal_local[scope] = (new_ts, now)
         return (new_ts is not None) and (prev_ts is None or new_ts != prev_ts)
+
+
+# ── ÉPOCA DE AUTH (Daniel 2026-06-01) ─────────────────────────────────
+# Cuando un admin cambia el rol de un usuario (o lo elimina) se hace
+# _cache_signal_bump("auth"). La sesión del usuario afectado tiene cacheado
+# su rol/permisos (cookie _uc, TTL 60s); sin esto seguiría con permisos
+# VIEJOS hasta 60s o hasta re-login. Con la "época", el cargador de sesión
+# detecta el cambio y re-lee el rol fresco de la BD en la próxima navegación
+# del usuario — sin que tenga que cerrar sesión a mano.
+#
+# Lectura NO consumidora (a diferencia de _cache_signal_changed), cacheada
+# por worker ≤15s. Devuelve str del timestamp de la señal, o "" si no hay.
+_AUTH_EPOCH_CACHE = {"val": "", "checked": 0.0}
+_AUTH_EPOCH_POLL_S = 15
+
+
+def _current_auth_epoch():
+    now = time.monotonic()
+    c = _AUTH_EPOCH_CACHE
+    if (now - c["checked"]) < _AUTH_EPOCH_POLL_S:
+        return c["val"]
+    try:
+        row = mysql_fetchone(
+            "SELECT updated_at FROM app_cache_signals WHERE scope='auth'"
+        )
+        c["val"] = str((row or {}).get("updated_at") or "")
+    except Exception:
+        pass  # ante error conservamos el último valor (nunca rompe el login)
+    c["checked"] = now
+    return c["val"]
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -8981,6 +9020,14 @@ def admin_roles_update(uid):
         with conn.cursor() as cur:
             cur.execute(f"UPDATE `{AUTH_TABLE}` SET role=%s WHERE id=%s", (role, uid))
         conn.commit()
+        # Refresco de sesión (2026-06-01): el usuario afectado tiene su rol
+        # cacheado en la cookie de sesión. Bumpeamos la época de auth para que
+        # en su próxima navegación re-lea el rol/permisos frescos de la BD,
+        # sin tener que cerrar sesión a mano.
+        try: _cache_signal_bump("auth")
+        except Exception: pass
+        _audit("user_role_change", target_type="user", target_id=uid,
+               details={"nuevo_rol": role})
         return jsonify({"ok":True})
     finally:
         conn.close()
@@ -9101,6 +9148,11 @@ def admin_rol_eliminar(slug):
     mysql_execute(f"UPDATE `{AUTH_TABLE}` SET role='lector' WHERE role=%s", (slug,))
     mysql_execute("DELETE FROM rol_permisos WHERE rol_slug=%s", (slug,))
     mysql_execute("DELETE FROM roles_dinamicos WHERE slug=%s", (slug,))
+    # Refrescar sesión de los usuarios reasignados + invalidar caché de rol.
+    try: _cache_signal_bump("auth")
+    except Exception: pass
+    try: invalidate_role_cache(slug)
+    except Exception: pass
     flash(f"Rol {slug} eliminado.", "success")
     return redirect(url_for("admin_roles_matrix"))
 
