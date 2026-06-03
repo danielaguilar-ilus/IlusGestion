@@ -309,6 +309,9 @@ _pw_lock     = threading.Lock()
 _pw_ctx      = None   # sync_playwright() context manager
 _pw_browser  = None   # Browser instance reutilizado
 _pw_install_attempted = False  # Solo intentamos auto-install una vez por proceso
+_pw_unavailable = False  # FAST-FAIL: si Chromium falla una vez, no reintentar en este proceso
+                         # (evita colgar requests hasta 240s + serializar todos los PDF
+                         #  detrás del lock global cuando Chromium está caído en prod).
 
 
 def _pw_install_chromium_runtime():
@@ -346,7 +349,7 @@ def _pw_install_chromium_runtime():
         env = {**_os.environ, "PLAYWRIGHT_BROWSERS_PATH": pw_path}
         result = _sp.run(
             [_sys.executable, "-m", "playwright", "install", "chromium"],
-            env=env, capture_output=True, text=True, timeout=240
+            env=env, capture_output=True, text=True, timeout=60
         )
         if result.returncode == 0:
             print(f"[playwright] ✓ Chromium instalado en {pw_path}", flush=True)
@@ -377,7 +380,13 @@ def _pw_browser_get():
     Si Chromium no está instalado (build de Railway falló), intenta
     auto-instalarlo en runtime UNA SOLA VEZ por proceso.
     """
-    global _pw_ctx, _pw_browser
+    global _pw_ctx, _pw_browser, _pw_unavailable
+    # FAST-FAIL: si en este proceso ya confirmamos que Chromium no está disponible,
+    # fallar al instante — NO esperar el lock global ni el subprocess de install.
+    # (Antes, el primer PDF tras cada deploy colgaba hasta 60s y serializaba TODOS los
+    #  demás PDF detrás del lock. Esto era el "procesando indefinidamente" de Aarón.)
+    if _pw_unavailable:
+        raise PDFEngineUnavailable("Chromium no disponible en este proceso (fast-fail).")
     with _pw_lock:
         # Verificar si el browser sigue vivo
         if _pw_browser is not None:
@@ -424,9 +433,11 @@ def _pw_browser_get():
                         return _try_launch()
                     except Exception as e_retry:
                         print(f"[playwright] Launch falló tras install: {e_retry}", flush=True)
+                        _pw_unavailable = True   # fast-fail para próximos PDF de este proceso
                         raise
                 else:
-                    # Auto-install falló — propagar el error original
+                    # Auto-install falló — marcar no disponible y propagar el error
+                    _pw_unavailable = True       # fast-fail para próximos PDF de este proceso
                     raise
             else:
                 raise
@@ -2715,6 +2726,24 @@ def init_pickup_tables():
                 f"COMMENT 'Peso volumétrico total calculado desde catálogo'",
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN tiempo_estimado_min INT DEFAULT NULL "
                 f"COMMENT 'Tiempo estimado de retiro en minutos (basado en bultos)'",
+                # ── MODELO DE ORIGEN (Daniel 2026-05-29 — retiro interno/backoffice) ──
+                # request_source distingue retiros creados por el cliente (web) de
+                # los creados internamente por un operador ILUS (backoffice/phone/import).
+                # Default 'web' → todos los retiros existentes quedan correctamente
+                # marcados como web sin tocar datos. Idempotente.
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN request_source VARCHAR(20) NOT NULL DEFAULT 'web' "
+                f"COMMENT 'Origen: web|backoffice|phone|import'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN created_by_user_id INT NULL "
+                f"COMMENT 'app_users.id del operador que creó el retiro interno (NULL si web)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN created_by_user_name VARCHAR(190) NULL "
+                f"COMMENT 'Nombre del operador creador (snapshot para mostrar sin JOIN)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN internal_created_at DATETIME NULL "
+                f"COMMENT 'Fecha de creación interna (hora Chile)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN customer_confirm_required TINYINT(1) DEFAULT 1 "
+                f"COMMENT '1=requiere que el cliente confirme la propuesta; 0=ya aceptó por otro canal'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN customer_already_agreed TINYINT(1) DEFAULT 0 "
+                f"COMMENT '1=cliente ya aceptó por teléfono/correo (confirmación directa interna)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_source (request_source)",
                 # Daniel 2026-05-23: emails adicionales para envío (cliente declarado + email del doc ERP + manualmente agregados)
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN extra_emails VARCHAR(800) NULL "
                 f"COMMENT 'Emails adicionales separados por coma para enviar notificaciones (además del contact_email)'",
@@ -3081,17 +3110,27 @@ def validar_rut(rut, auto_completar_dv=True):
     if len(rut_norm) > 12:
         return False, "RUT muy largo"
 
-    # CASO ESPECIAL: cuerpo de RUT SIN DV (solo dígitos, 6-9 chars).
-    # Empresas chilenas tienen 7-8 dígitos (ej: 76123456). Si auto_completar
-    # está activo, calculamos el DV y devolvemos el RUT completo.
-    if auto_completar_dv and rut_norm.isdigit() and 6 <= len(rut_norm) <= 9:
-        dv_calculado = _calcular_dv_rut(rut_norm)
-        if dv_calculado is not None:
-            return True, f"{rut_norm}{dv_calculado}"
+    # CASO ESPECIAL: completar DV solo cuando el input es SOLO el cuerpo.
+    # El cuerpo de un RUT chileno tiene como máximo 8 dígitos (RUTs van hasta
+    # ~99.999.999), por eso el autocompletado aplica a 6-8 dígitos.
+    # FIX 2026-06-02 (Daniel): antes el rango llegaba a 9 y NO chequeaba si el
+    # RUT ya venía completo, así que a un RUT con DV se le pegaba OTRO DV
+    # (ej '255470655' → '2554706552', el "2" inventado al editar el cliente).
+    # Ahora: si ya es un RUT completo y válido se devuelve tal cual; solo si es
+    # cuerpo puro (6-8 dígitos) se agrega el DV; cuerpo > 8 dígitos = inválido.
+    if auto_completar_dv and rut_norm.isdigit() and 6 <= len(rut_norm) <= 8:
+        _b, _d = rut_norm[:-1], rut_norm[-1]
+        ya_completo = (len(_b) >= 6 and _calcular_dv_rut(_b) == _d)
+        if not ya_completo:
+            dv_calculado = _calcular_dv_rut(rut_norm)
+            if dv_calculado is not None:
+                return True, f"{rut_norm}{dv_calculado}"
 
     num, dv = rut_norm[:-1], rut_norm[-1]
     if not num.isdigit():
         return False, "RUT contiene caracteres no numéricos"
+    if len(num) > 8:
+        return False, "RUT inválido: el cuerpo supera los 8 dígitos (posible DV duplicado)"
     if dv not in "0123456789K":
         return False, "Dígito verificador inválido"
 
@@ -3099,6 +3138,19 @@ def validar_rut(rut, auto_completar_dv=True):
     if dv != dv_esperado:
         return False, f"Dígito verificador inválido (esperado: {dv_esperado})"
     return True, rut_norm
+
+
+def _rut_recuperar(raw):
+    """Recupera el RUT válido (cuerpo ≤8 + DV correcto) desde un valor que pudo
+    quedar corrupto con DV duplicado (ej '2554706552' → '255470655'). Prueba
+    cuerpos de 8, 7 y 6 dígitos. Devuelve RUT normalizado válido o None."""
+    s = re.sub(r"[^0-9K]", "", str(raw or "").upper())
+    for body_len in (8, 7, 6):
+        if len(s) >= body_len + 1:
+            body, dv = s[:body_len], s[body_len]
+            if body.isdigit() and _calcular_dv_rut(body) == dv:
+                return body + dv
+    return None
 
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -3270,7 +3322,15 @@ def load_current_user():
         cached_ts = cached.get("ts", 0)
         # TTL diferenciado: admin/superadmin 10s, resto 60s
         _ttl = 10 if cached.get("role") in ("superadmin", "admin") else 60
-        if (time.time() - cached_ts) < _ttl:
+        # Época de auth (2026-06-01): si un admin cambió roles desde que se
+        # cacheó esta sesión, forzamos re-lectura de BD para traer rol/permisos
+        # frescos. Ante CUALQUIER error, _epoch_ok=True → usa el caché normal
+        # (degradación segura: nunca deja a un usuario sin sesión).
+        try:
+            _epoch_ok = (cached.get("ae", "") == _current_auth_epoch())
+        except Exception:
+            _epoch_ok = True
+        if _epoch_ok and (time.time() - cached_ts) < _ttl:
             g.user = cached
             g.permissions = permission_set(cached["role"])
             # Heartbeat last_seen_at (throttle 60s en memoria del proceso)
@@ -3303,6 +3363,7 @@ def load_current_user():
         "role":     user["role"],
         "active":   user["active"],
         "ts":       time.time(),
+        "ae":       _current_auth_epoch(),   # época de auth al momento de cachear
     }
 
     # Heartbeat last_seen_at (throttle 60s en memoria del proceso) —
@@ -3404,6 +3465,36 @@ def _cache_signal_changed(scope: str) -> bool:
         prev_ts, _ = _cache_signal_local.get(scope, (None, 0.0))
         _cache_signal_local[scope] = (new_ts, now)
         return (new_ts is not None) and (prev_ts is None or new_ts != prev_ts)
+
+
+# ── ÉPOCA DE AUTH (Daniel 2026-06-01) ─────────────────────────────────
+# Cuando un admin cambia el rol de un usuario (o lo elimina) se hace
+# _cache_signal_bump("auth"). La sesión del usuario afectado tiene cacheado
+# su rol/permisos (cookie _uc, TTL 60s); sin esto seguiría con permisos
+# VIEJOS hasta 60s o hasta re-login. Con la "época", el cargador de sesión
+# detecta el cambio y re-lee el rol fresco de la BD en la próxima navegación
+# del usuario — sin que tenga que cerrar sesión a mano.
+#
+# Lectura NO consumidora (a diferencia de _cache_signal_changed), cacheada
+# por worker ≤15s. Devuelve str del timestamp de la señal, o "" si no hay.
+_AUTH_EPOCH_CACHE = {"val": "", "checked": 0.0}
+_AUTH_EPOCH_POLL_S = 15
+
+
+def _current_auth_epoch():
+    now = time.monotonic()
+    c = _AUTH_EPOCH_CACHE
+    if (now - c["checked"]) < _AUTH_EPOCH_POLL_S:
+        return c["val"]
+    try:
+        row = mysql_fetchone(
+            "SELECT updated_at FROM app_cache_signals WHERE scope='auth'"
+        )
+        c["val"] = str((row or {}).get("updated_at") or "")
+    except Exception:
+        pass  # ante error conservamos el último valor (nunca rompe el login)
+    c["checked"] = now
+    return c["val"]
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -7156,11 +7247,13 @@ def index():
 
     # ── 1. Mapeo explícito por rol (más predecible que por permisos) ──
     ROLE_HOME = {
-        "tecnico":     ("mant_ots_list",   {"solo_mias": "1"}),
-        "mantenciones":("mant_index",      {}),
-        "ejecutivo":   ("mant_index",      {}),
-        "transporte":  ("transporte_index",{}),
-        "distribucion":("transporte_index",{}),
+        "tecnico":      ("mant_ots_list",   {"solo_mias": "1"}),
+        "mantenciones": ("mant_index",      {}),
+        "ejecutivo":    ("mant_index",      {}),
+        "transporte":   ("transporte_index",{}),
+        "distribucion": ("transporte_index",{}),
+        # Agente de retiros (2026-06-01): aterriza directo en el monitor de retiros.
+        "agente_retiros": ("pickup_dashboard", {}),
     }
     if role in ROLE_HOME:
         endpoint, args = ROLE_HOME[role]
@@ -8975,6 +9068,14 @@ def admin_roles_update(uid):
         with conn.cursor() as cur:
             cur.execute(f"UPDATE `{AUTH_TABLE}` SET role=%s WHERE id=%s", (role, uid))
         conn.commit()
+        # Refresco de sesión (2026-06-01): el usuario afectado tiene su rol
+        # cacheado en la cookie de sesión. Bumpeamos la época de auth para que
+        # en su próxima navegación re-lea el rol/permisos frescos de la BD,
+        # sin tener que cerrar sesión a mano.
+        try: _cache_signal_bump("auth")
+        except Exception: pass
+        _audit("user_role_change", target_type="user", target_id=uid,
+               details={"nuevo_rol": role})
         return jsonify({"ok":True})
     finally:
         conn.close()
@@ -9095,8 +9196,62 @@ def admin_rol_eliminar(slug):
     mysql_execute(f"UPDATE `{AUTH_TABLE}` SET role='lector' WHERE role=%s", (slug,))
     mysql_execute("DELETE FROM rol_permisos WHERE rol_slug=%s", (slug,))
     mysql_execute("DELETE FROM roles_dinamicos WHERE slug=%s", (slug,))
+    # Refrescar sesión de los usuarios reasignados + invalidar caché de rol.
+    try: _cache_signal_bump("auth")
+    except Exception: pass
+    try: invalidate_role_cache(slug)
+    except Exception: pass
     flash(f"Rol {slug} eliminado.", "success")
     return redirect(url_for("admin_roles_matrix"))
+
+
+@app.route("/admin/roles/diagnostico")
+@require_permission("admin")
+def admin_roles_diagnostico():
+    """Diagnóstico SEGURO (read-only) de roles — Daniel 2026-06-01.
+    Muestra las filas REALES de roles_dinamicos + cuántos usuarios tiene cada
+    rol + duplicados por nombre. Para depurar el 'doble Super Administrador'
+    sin tocar datos. Solo superadmin."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"error": "Solo superadmin"}), 403
+    roles = mysql_fetchall(
+        "SELECT id, slug, nombre, color, is_system, activo, created_at "
+        "FROM roles_dinamicos ORDER BY nombre, id"
+    ) or []
+    ucounts = mysql_fetchall(
+        f"SELECT role AS slug, COUNT(*) AS n FROM `{AUTH_TABLE}` GROUP BY role"
+    ) or []
+    cnt = {r["slug"]: int(r["n"]) for r in ucounts}
+    # Duplicados por nombre (case-insensitive)
+    by_name = {}
+    for r in roles:
+        by_name.setdefault((r["nombre"] or "").strip().lower(), []).append(r["slug"])
+    dups = {k: v for k, v in by_name.items() if len(v) > 1}
+    out = []
+    for r in roles:
+        out.append({
+            "id":        r["id"],
+            "slug":      r["slug"],
+            "nombre":    r["nombre"],
+            "is_system": bool(r["is_system"]),
+            "activo":    bool(r["activo"]),
+            "usuarios":  cnt.get(r["slug"], 0),
+            "eliminable": (not r["is_system"]),
+        })
+    # Usuarios cuyo rol NO existe en roles_dinamicos (huérfanos) — útil saberlo
+    slugs_existentes = {r["slug"] for r in roles}
+    huerfanos = {s: n for s, n in cnt.items() if s not in slugs_existentes and s != "superadmin"}
+    return jsonify({
+        "ok": True,
+        "total_roles": len(roles),
+        "roles": out,
+        "duplicados_por_nombre": dups,
+        "usuarios_por_rol": cnt,
+        "roles_huerfanos_con_usuarios": huerfanos,
+        "nota": "is_system=true → NO eliminable. 'usuarios' = cuántas cuentas "
+                "tienen ese rol (revisar antes de borrar/mergear). Si hay "
+                "'duplicados_por_nombre', son varias filas con el mismo nombre.",
+    })
 
 
 # ══════════════════════════════════════════════════════════════
@@ -26611,6 +26766,28 @@ def init_mantenciones_tables():
                 except Exception:
                     pass
 
+            # ── Rol de negocio: Agente de retiros (Daniel 2026-06-01) ──────────
+            # is_system=0 → totalmente gestionable por el admin (editar/eliminar).
+            # Se siembra UNA sola vez con acceso SOLO al módulo Retiros. A partir
+            # de ahí, el admin agrega/quita módulos a este (o cualquier) rol desde
+            # /admin/roles (matriz dinámica). El cur.rowcount==1 garantiza que solo
+            # sembramos los permisos en la primera creación — nunca pisamos los
+            # cambios que el admin haga después en la matriz.
+            try:
+                cur.execute(
+                    "INSERT IGNORE INTO roles_dinamicos (slug,nombre,descripcion,color,is_system) "
+                    "VALUES ('agente_retiros','Agente de retiros',"
+                    "'Acceso solo al modulo de Retiros','#0ea5e9',0)"
+                )
+                if cur.rowcount == 1:
+                    for _acc in ("ver", "gestionar", "monitor"):
+                        cur.execute(
+                            "INSERT IGNORE INTO rol_permisos (rol_slug,modulo,accion,permitido) "
+                            "VALUES ('agente_retiros','retiros',%s,1)", (_acc,)
+                        )
+            except Exception:
+                pass
+
             # Regla: no se pueden repetir nombres de rol (ya hay UNIQUE en slug)
             try:
                 cur.execute("ALTER TABLE roles_dinamicos ADD UNIQUE KEY uq_rol_nombre (nombre)")
@@ -29519,7 +29696,7 @@ Incluye: datos del cliente, condiciones contractuales, costos, equipos mencionad
 
     try:
         import anthropic as _anthropic
-        cliente_ia = _anthropic.Anthropic(api_key=ai_key)
+        cliente_ia = _anthropic.Anthropic(api_key=ai_key, timeout=60)
 
         if is_image:
             # Análisis por visión (foto del contrato desde celular)
@@ -34780,7 +34957,7 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
     else:
         models_to_try = _CLAUDE_MODELS_FALLBACK
     last_err = None
-    client = _anthropic.Anthropic(api_key=ai_key)
+    client = _anthropic.Anthropic(api_key=ai_key, timeout=60)
 
     # Si hay attachments, construir content como lista (texto + adjuntos)
     if attachments:
@@ -43814,215 +43991,21 @@ def mant_seguimiento_vista():
 # PDF — Reporte completo de OT con firmas y fotos
 # ═════════════════════════════════════════════════════════════════════
 
-@app.route("/mantenciones/api/visitas/<int:vid>/pdf")
-@_mant_required
-@_ot_can_view
-def mant_visita_pdf(vid):
-    """Genera un PDF completo de la OT con:
-    - Header ILUS + número OT + estado
-    - Datos cliente + dirección visita
-    - Datos programación (fecha, hora, GPS)
-    - Lista equipos con foto + datos técnicos + estado + observaciones
-    - Tareas agrupadas por (equipo × plantilla) con respuestas
-    - Fotos del levantamiento embebidas
-    - Firmas técnico + cliente + supervisor
+def _ot_pdf_context(vid):
+    """Construye el contexto COMPLETO para renderizar `mantenciones/ot_pdf.html`.
 
-    Usa Playwright (_pw_pdf). Si no está disponible, devuelve 503.
-    """
-    visita = mysql_fetchone(
-        "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
-        "       c.direccion AS cli_direccion, c.comuna AS cli_comuna, "
-        "       c.contacto_nombre AS cli_contacto, c.contacto_tel AS cli_contacto_tel, "
-        "       COALESCE(u.nombre, u.username) AS tecnico_principal, "
-        "       u.username AS tecnico_email "
-        "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id = v.cliente_id "
-        "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
-        " WHERE v.id=%s",
-        (vid,)
-    )
-    if not visita:
-        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
-    visita = dict(visita)
+    Fuente ÚNICA de verdad de las variables del PDF/HTML de la OT — la usan
+    tanto `mant_visita_pdf` (Playwright → PDF real) como `mant_ot_pdf_render`
+    (HTML imprimible). Antes cada función computaba lo suyo y DIVERGIERON: el
+    template se rediseñó esperando `paginas_equipos` / `tareas_chk` /
+    `eq_fotos_idx` / `eq_check_resumen`, pero `mant_visita_pdf` no los pasaba,
+    así que `paginas_equipos|length` reventaba con un Undefined → HTTP 500 al
+    intentar ver la OT. Centralizar evita que se vuelvan a desincronizar.
 
-    # ── Validación 2026-05-18 (Daniel): el PDF requiere las 3 firmas ──
-    # Solo permitimos generar el PDF cuando la OT está cerrada con las
-    # 3 firmas presentes (cliente + técnico + supervisor/aprobador).
-    # Si falta alguna, devolvemos 409 con el detalle de qué falta.
-    estado = (visita.get("estado") or "").lower()
-    razones_pdf = []
-    if estado != "cerrada":
-        razones_pdf.append(
-            f"La OT debe estar cerrada para descargar el PDF (estado actual: {estado or '—'})."
-        )
-    if not visita.get("firma_cliente_url"):
-        razones_pdf.append("Falta firma del cliente.")
-    if not visita.get("firma_tecnico_url"):
-        razones_pdf.append("Falta firma del técnico.")
-    if not visita.get("firma_supervisor_url"):
-        razones_pdf.append("Falta firma del aprobador.")
-    if razones_pdf:
-        # Si es petición browser (no AJAX), redirigir con flash a la OT
-        is_ajax = (
-            request.headers.get("X-Requested-With") == "XMLHttpRequest"
-            or (request.headers.get("Accept") or "").startswith("application/json")
-        )
-        if not is_ajax:
-            flash(
-                "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
-                + " ".join(razones_pdf),
-                "warning",
-            )
-            return redirect(url_for("mant_ot_ejecutar", vid=vid))
-        return jsonify({
-            "ok": False,
-            "error": "Faltan requisitos para generar el PDF",
-            "razones": razones_pdf,
-        }), 409
-
-    # Equipos
-    equipos = mysql_fetchall(
-        "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
-        "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
-        "       m.ubicacion_sala, m.estado_capturado, m.tiene_dano, "
-        "       m.observaciones "
-        "  FROM mant_visita_tareas vt "
-        "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
-        " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
-        " ORDER BY m.nombre",
-        (vid,)
-    ) or []
-    equipos = [dict(e) for e in equipos]
-
-    # Tareas + plantilla
-    tareas = mysql_fetchall(
-        "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, "
-        "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
-        "       t.unidad, t.completada, t.completada_at, t.observaciones, "
-        "       t.valor_json, "
-        "       COALESCE(p.nombre, 'Gestión de tareas') AS plantilla_nombre "
-        "  FROM mant_visita_tareas t "
-        "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
-        " WHERE t.visita_id=%s "
-        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
-        (vid,)
-    ) or []
-    tareas = [dict(t) for t in tareas]
-    for t in tareas:
-        if t.get("valor_json"):
-            try: t["valor"] = json.loads(t["valor_json"])
-            except Exception: t["valor"] = None
-
-    # Agrupar por (mid, pid)
-    grupos = []
-    grupo_idx = {}
-    for t in tareas:
-        mid = t.get("maquina_id") or 0
-        pid = t.get("plantilla_id") or 0
-        key = (mid, pid)
-        if key not in grupo_idx:
-            grupo_idx[key] = len(grupos)
-            grupos.append({
-                "maquina_id": mid, "plantilla_id": pid,
-                "plantilla_nombre": t.get("plantilla_nombre") or "Tareas manuales",
-                "tareas": [],
-            })
-        grupos[grupo_idx[key]]["tareas"].append(t)
-    eq_idx = {e["id"]: e for e in equipos}
-
-    # Fotos (PDF) — usar columna real `tomada_at`
-    fotos = mysql_fetchall(
-        "SELECT id, tarea_id, archivo_path, cloudinary_url, tipo_foto, tomada_at "
-        "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
-        (vid,)
-    ) or []
-    fotos_dict = []
-    for f in fotos:
-        d = dict(f)
-        url = d.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{d['archivo_path']}"
-            if d.get("archivo_path") else ""
-        )
-        if not url:
-            continue
-        d["url"] = url
-        fotos_dict.append(d)
-
-    # Logo ILUS — usa el base64 pre-encodeado si existe
-    logo_b64 = ""
-    try:
-        logo_path = os.path.join(app.static_folder, "logo_pdf.txt")
-        if os.path.exists(logo_path):
-            with open(logo_path, "r", encoding="utf-8") as f:
-                logo_b64 = f.read().strip()
-    except Exception: pass
-
-    # Render HTML
-    html = render_template(
-        "mantenciones/ot_pdf.html",
-        visita=visita,
-        firmante_cliente=_ot_firmante_cliente(vid),
-        equipos=equipos,
-        eq_idx=eq_idx,
-        grupos=grupos,
-        fotos=fotos_dict,
-        logo_b64=logo_b64,
-        generated_at=_now_chile_str('%d/%m/%Y %H:%M'),
-    )
-
-    # PDF
-    try:
-        pdf_bytes = _pw_pdf(
-            html, page_format="A4", margin={
-                "top": "15mm", "bottom": "15mm",
-                "left": "12mm", "right": "12mm",
-            },
-            wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
-        )
-    except PDFEngineUnavailable:
-        return jsonify({
-            "ok": False,
-            "error": "Generador PDF no disponible. Avisá al admin.",
-        }), 503
-    except Exception as e:
-        print(f"[ot_pdf] err: {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo generar el PDF"}), 500
-
-    fname = f"OT_{visita.get('numero_ot') or vid}.pdf"
-    return send_file(
-        io.BytesIO(pdf_bytes), mimetype="application/pdf",
-        as_attachment=False, download_name=fname,
-    )
-
-
-# ═════════════════════════════════════════════════════════════════════
-# PDF DINÁMICO — Reporte HTML imprimible de OT cerrada
-# ─────────────────────────────────────────────────────────────────────
-# Endpoint dependency-free: renderiza un HTML+CSS @media print que el
-# usuario imprime con "Guardar como PDF" desde el navegador. No requiere
-# Playwright / wkhtmltopdf / WeasyPrint — cero dependencias nativas.
-#
-# REGLAS de negocio (pedido Daniel 2026-05-17):
-#   - Solo se genera si la OT está estado='cerrada'.
-#   - Las 3 firmas deben existir:
-#       * firma_cliente_url       (cliente que recibe la conformidad)
-#       * firma_tecnico_url       (técnico ejecutor)
-#       * firma_supervisor_url    (responsable/supervisor que aprobó)
-#   - El "Validado Por" (firma supervisor) es DINÁMICO: se busca por
-#     firma_supervisor_user_id en app_users y se muestra el nombre real
-#     de quien aprobó la OT (no hardcodeado a Aarón ni nadie).
-#   - Si alguna firma falta → redirige a la OT con flash error y mensaje
-#     claro de qué le falta.
-# ═════════════════════════════════════════════════════════════════════
-
-@app.route("/mantenciones/ot/<int:vid>/pdf")
-@_mant_required
-@_ot_can_view
-def mant_ot_pdf_render(vid):
-    """Renderiza el HTML imprimible de la OT cerrada (Guardar como PDF).
-
-    Query params:
-      - ?print=1 → dispara window.print() automáticamente al cargar.
+    Devuelve (ctx, status, razones):
+      - status == "ok"         → ctx = dict de variables de template
+      - status == "not_found"  → ctx None
+      - status == "incompleto" → ctx None, razones = lista (no cerrada / faltan firmas)
     """
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
@@ -44042,8 +44025,7 @@ def mant_ot_pdf_render(vid):
         (vid,)
     )
     if not visita:
-        flash("OT no encontrada.", "danger")
-        return redirect(url_for("mant_index"))
+        return None, "not_found", []
     visita = dict(visita)
 
     # ── Validación: OT cerrada con las 3 firmas ──────────────────────
@@ -44057,14 +44039,8 @@ def mant_ot_pdf_render(vid):
         razones.append("Falta firma del técnico.")
     if not visita.get("firma_supervisor_url"):
         razones.append("Falta firma del responsable/supervisor.")
-
     if razones:
-        flash(
-            "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
-            + " ".join(razones),
-            "warning"
-        )
-        return redirect(url_for("mant_ot_ejecutar", vid=vid))
+        return None, "incompleto", razones
 
     # ── Equipos (distinct via tareas) ────────────────────────────────
     equipos = mysql_fetchall(
@@ -44224,8 +44200,7 @@ def mant_ot_pdf_render(vid):
             "maquina_nombre":   t.get("maquina_nombre") or "",
         })
 
-    # ── Paginar equipos: 2 por página (cards grandes) ────────────────
-    # Página 1: 2 equipos (los primeros). Páginas siguientes: 3 c/u.
+    # ── Paginar equipos: 2 en pág 1, 3 por página siguientes ─────────
     paginas_equipos = []
     if equipos:
         if len(equipos) <= 2:
@@ -44249,22 +44224,134 @@ def mant_ot_pdf_render(vid):
     except Exception:
         pass
 
-    return render_template(
-        "mantenciones/ot_pdf.html",
-        visita=visita,
-        firmante_cliente=_ot_firmante_cliente(vid),
-        equipos=equipos,
-        tecnicos_extra=tecnicos_extra,
-        tareas=tareas,
-        tareas_chk=tareas_chk,
-        fotos=fotos,
-        fotos_generales=fotos_generales,
-        eq_fotos_idx=eq_fotos_idx,
-        eq_check_resumen=eq_check_resumen,
-        paginas_equipos=paginas_equipos,
-        logo_b64=logo_b64,
-        generated_at=_now_chile_str('%d/%m/%Y %H:%M'),
+    ctx = {
+        "visita": visita,
+        "firmante_cliente": _ot_firmante_cliente(vid),
+        "equipos": equipos,
+        "tecnicos_extra": tecnicos_extra,
+        "tareas": tareas,
+        "tareas_chk": tareas_chk,
+        "fotos": fotos,
+        "fotos_generales": fotos_generales,
+        "eq_fotos_idx": eq_fotos_idx,
+        "eq_check_resumen": eq_check_resumen,
+        "paginas_equipos": paginas_equipos,
+        "logo_b64": logo_b64,
+        "generated_at": _now_chile_str('%d/%m/%Y %H:%M'),
+    }
+    return ctx, "ok", []
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/pdf")
+@_mant_required
+@_ot_can_view
+def mant_visita_pdf(vid):
+    """Genera un PDF completo de la OT con:
+    - Header ILUS + número OT + estado
+    - Datos cliente + dirección visita
+    - Datos programación (fecha, hora, GPS)
+    - Lista equipos con foto + datos técnicos + estado + observaciones
+    - Tareas agrupadas por (equipo × plantilla) con respuestas
+    - Fotos del levantamiento embebidas
+    - Firmas técnico + cliente + supervisor
+
+    Usa Playwright (_pw_pdf). Si Chromium no está disponible, cae al HTML
+    imprimible (mismo documento) para que la OT SIEMPRE se pueda visualizar.
+    Contexto vía `_ot_pdf_context` (compartido con `mant_ot_pdf_render`).
+    """
+    ctx, status, razones = _ot_pdf_context(vid)
+    if status == "not_found":
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if status == "incompleto":
+        # Si es petición browser (no AJAX), redirigir con flash a la OT
+        is_ajax = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or (request.headers.get("Accept") or "").startswith("application/json")
+        )
+        if not is_ajax:
+            flash(
+                "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
+                + " ".join(razones),
+                "warning",
+            )
+            return redirect(url_for("mant_ot_ejecutar", vid=vid))
+        return jsonify({
+            "ok": False,
+            "error": "Faltan requisitos para generar el PDF",
+            "razones": razones,
+        }), 409
+
+    # Render HTML (contexto compartido con mant_ot_pdf_render → no divergen)
+    html = render_template("mantenciones/ot_pdf.html", **ctx)
+
+    # PDF
+    try:
+        pdf_bytes = _pw_pdf(
+            html, page_format="A4", margin={
+                "top": "15mm", "bottom": "15mm",
+                "left": "12mm", "right": "12mm",
+            },
+            wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
+        )
+    except PDFEngineUnavailable:
+        # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
+        # documento; el usuario hace "Guardar como PDF" desde el navegador). Antes
+        # devolvía 503 y la OT "no se visualizaba". Ahora SIEMPRE se puede ver.
+        print("[ot_pdf] Playwright no disponible → fallback a HTML imprimible", flush=True)
+        return html
+    except Exception as e:
+        print(f"[ot_pdf] err: {e} → fallback a HTML imprimible", flush=True)
+        return html
+
+    fname = f"OT_{ctx['visita'].get('numero_ot') or vid}.pdf"
+    return send_file(
+        io.BytesIO(pdf_bytes), mimetype="application/pdf",
+        as_attachment=False, download_name=fname,
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PDF DINÁMICO — Reporte HTML imprimible de OT cerrada
+# ─────────────────────────────────────────────────────────────────────
+# Endpoint dependency-free: renderiza un HTML+CSS @media print que el
+# usuario imprime con "Guardar como PDF" desde el navegador. No requiere
+# Playwright / wkhtmltopdf / WeasyPrint — cero dependencias nativas.
+#
+# REGLAS de negocio (pedido Daniel 2026-05-17):
+#   - Solo se genera si la OT está estado='cerrada'.
+#   - Las 3 firmas deben existir:
+#       * firma_cliente_url       (cliente que recibe la conformidad)
+#       * firma_tecnico_url       (técnico ejecutor)
+#       * firma_supervisor_url    (responsable/supervisor que aprobó)
+#   - El "Validado Por" (firma supervisor) es DINÁMICO: se busca por
+#     firma_supervisor_user_id en app_users y se muestra el nombre real
+#     de quien aprobó la OT (no hardcodeado a Aarón ni nadie).
+#   - Si alguna firma falta → redirige a la OT con flash error y mensaje
+#     claro de qué le falta.
+# ═════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/ot/<int:vid>/pdf")
+@_mant_required
+@_ot_can_view
+def mant_ot_pdf_render(vid):
+    """Renderiza el HTML imprimible de la OT cerrada (Guardar como PDF).
+
+    Query params:
+      - ?print=1 → dispara window.print() automáticamente al cargar.
+    """
+    ctx, status, razones = _ot_pdf_context(vid)
+    if status == "not_found":
+        flash("OT no encontrada.", "danger")
+        return redirect(url_for("mant_index"))
+    if status == "incompleto":
+        flash(
+            "PDF disponible solo cuando la OT está cerrada con las 3 firmas. "
+            + " ".join(razones),
+            "warning"
+        )
+        return redirect(url_for("mant_ot_ejecutar", vid=vid))
+    # Contexto compartido con mant_visita_pdf (fuente única → no divergen)
+    return render_template("mantenciones/ot_pdf.html", **ctx)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -44696,6 +44783,22 @@ def mant_visita_fotos_subir(vid):
         maquina_id = int(maquina_id) if maquina_id else None
     except (TypeError, ValueError):
         maquina_id = None
+
+    # FIX 2026-06-02 (Daniel — "ver la foto del levantamiento en la ficha del equipo"):
+    # si la foto va asociada a una tarea pero el frontend NO envió maquina_id, lo
+    # DERIVAMOS de la tarea. Sin maquina_id la foto queda huérfana: la proyección a la
+    # ficha y la sección "último levantamiento" filtran por (visita_id, maquina_id),
+    # así que sin él la foto NUNCA aparece en el equipo.
+    if maquina_id is None and tarea_id:
+        try:
+            _tr = mysql_fetchone(
+                "SELECT maquina_id FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
+                (tarea_id, vid)
+            )
+            if _tr and _tr.get("maquina_id"):
+                maquina_id = _tr["maquina_id"]
+        except Exception:
+            pass
 
     # Log entrada — útil en Railway logs
     print(f"[fotos_subir vid={vid}] iniciando: {len(files)} archivo(s), "
@@ -46685,6 +46788,133 @@ def _load_reporte_full(rid):
     return rep, cliente
 
 
+def _reporte_informe_pdf_bytes(rep, cliente):
+    """Renderiza el informe en formato Word (templates/mantenciones/reporte_informe_pdf.html)
+    y lo convierte a PDF carta REAL con Playwright. Devuelve bytes; lanza
+    PDFEngineUnavailable si Chromium no está disponible (el caller hace fallback)."""
+    def _fmt_date(v):
+        if not v:
+            return ""
+        try:
+            if hasattr(v, "strftime"):
+                return v.strftime("%d/%m/%Y")
+            s = str(v)[:10]
+            if len(s) == 10 and s[4:5] == "-":
+                y, m, d = s.split("-")
+                return f"{d}/{m}/{y}"
+            return s
+        except Exception:
+            return str(v)
+    brand = {
+        "name":  "ILUS Sport & Health",
+        "legal": "Sport and Health Solutions SPA",
+        "rut":   ILUS_RUT,
+        "web":   "www.ilusfitness.com",
+        "email": "servicio.tecnico@ilusfitness.com",
+    }
+    try:
+        hoy = _now_chile_str("%d/%m/%Y %H:%M")
+    except Exception:
+        hoy = datetime.now().strftime("%d/%m/%Y")
+    html = render_template(
+        "mantenciones/reporte_informe_pdf.html",
+        rep=rep, cliente=cliente, logo_uri=_ilus_logo_datauri(),
+        fmt_date=_fmt_date, brand=brand, hoy=hoy,
+    )
+    wait_imgs = "document.images.length===0||[...document.images].every(i=>i.complete)"
+    return _pw_pdf(html, page_format="Letter",
+                   margin={"top": "14mm", "right": "12mm", "bottom": "12mm", "left": "12mm"},
+                   wait_fn=wait_imgs, wait_timeout=6000)
+
+
+def _reporte_faltantes(rep):
+    """Requisitos OBLIGATORIOS para que un informe avance (regla Daniel):
+    N° ticket, N° OT y el PDF de la OT adjunto; además al menos un equipo y el
+    asunto. Devuelve lista de faltantes (vacía = completo). SIN tokens."""
+    falt = []
+    if not str(rep.get("ticket_num") or "").strip():
+        falt.append("N° de ticket")
+    if not str(rep.get("ot_num") or "").strip():
+        falt.append("N° de OT")
+    if not str(rep.get("ot_doc_url") or "").strip():
+        falt.append("Documento de la OT (PDF adjunto)")
+    maqs = rep.get("maquinas_json")
+    if not (isinstance(maqs, list) and maqs):
+        falt.append("Al menos un equipo intervenido")
+    if not str(rep.get("asunto") or "").strip():
+        falt.append("Asunto del informe")
+    return falt
+
+
+def _reporte_analisis_reglas(rep, cliente=None):
+    """Agente interno DETERMINISTA (sin IA / sin tokens): valida completitud y
+    genera diagnóstico + recomendaciones por reglas a partir de los datos del
+    informe (equipos, repuestos, garantía, observaciones, fotos)."""
+    cliente = cliente or {}
+    _norm = lambda x: (str(x or "")).strip().lower()
+    faltantes = _reporte_faltantes(rep)
+    maqs = rep.get("maquinas_json") if isinstance(rep.get("maquinas_json"), list) else []
+    trabajos = rep.get("trabajos") if isinstance(rep.get("trabajos"), list) else []
+    observaciones = rep.get("observaciones") if isinstance(rep.get("observaciones"), list) else []
+    fotos = rep.get("fotos") if isinstance(rep.get("fotos"), list) else []
+    garantia = bool(rep.get("garantia_aplica"))
+
+    acciones, cotizaciones = [], []
+    equipos_con_repuesto = 0
+    for m in maqs:
+        nombre = m.get("descripcion") or m.get("nombre") or m.get("maquina") or "Equipo"
+        rep_nombre = (m.get("repuesto") or "").strip()
+        gar_m = _norm(m.get("garantia")) in ("si", "sí", "true", "1", "yes")
+        if rep_nombre and _norm(rep_nombre) not in ("no", "ninguno", "-"):
+            equipos_con_repuesto += 1
+            if gar_m or garantia:
+                acciones.append({"urgencia": "media", "tipo": "garantia",
+                                 "titulo": f"Repuesto «{rep_nombre}» de {nombre}: cubierto por garantía (sin costo)."})
+            else:
+                acciones.append({"urgencia": "alta", "tipo": "cotizacion",
+                                 "titulo": f"Cotizar repuesto «{rep_nombre}» para {nombre}."})
+                cotizaciones.append(rep_nombre)
+        obs_m = _norm(m.get("observacion"))
+        if any(k in obs_m for k in ("pendiente", "cotiz", "reagend", "stock", "proveedor", "solicit")):
+            acciones.append({"urgencia": "media", "tipo": "seguimiento",
+                             "titulo": f"Seguimiento en {nombre}: {(m.get('observacion') or '')[:120]}"})
+
+    if not fotos:
+        acciones.append({"urgencia": "baja", "tipo": "evidencia",
+                         "titulo": "Adjuntar registro fotográfico (respaldo recomendado)."})
+    texto_obs = " ".join(observaciones).lower()
+    if any(k in texto_obs for k in ("pendiente", "cotiz", "reagend", "próxima", "proxima")):
+        acciones.append({"urgencia": "media", "tipo": "seguimiento",
+                         "titulo": "Observaciones con temas pendientes — programar seguimiento."})
+
+    tipo_lbl = {"mantencion": "mantención preventiva", "instalacion": "instalación",
+                "inspeccion": "inspección técnica", "visita_tecnica": "visita técnica / reparación",
+                "garantia": "atención en garantía", "otro": "servicio técnico"}.get(rep.get("tipo"), "servicio técnico")
+    cli_nombre = cliente.get("razon_social") or "el cliente"
+    partes = [f"Informe de {tipo_lbl} para {cli_nombre} (Ticket {rep.get('ticket_num') or '—'} / OT {rep.get('ot_num') or '—'}).",
+              f"Se intervinieron {len(maqs)} equipo(s) y se registraron {len(trabajos)} trabajo(s)."]
+    if equipos_con_repuesto:
+        partes.append(f"{equipos_con_repuesto} equipo(s) requirieron repuesto.")
+    partes.append("Servicio cubierto por garantía (sin costo para el cliente)." if garantia
+                  else ("Servicio facturable" + (f"; se sugiere cotizar: {', '.join(cotizaciones)}." if cotizaciones else ".")))
+    diagnostico = " ".join(partes)
+
+    checks = [bool(str(rep.get("ticket_num") or "").strip()),
+              bool(str(rep.get("ot_num") or "").strip()),
+              bool(str(rep.get("ot_doc_url") or "").strip()),
+              bool(maqs), bool(trabajos), bool(observaciones), bool(fotos)]
+    indice = round(100 * sum(1 for c in checks if c) / len(checks))
+
+    return {
+        "motor": "reglas-internas-v1", "completo": (len(faltantes) == 0),
+        "faltantes": faltantes, "diagnostico": diagnostico, "acciones": acciones,
+        "indice_completitud": indice,
+        "resumen": {"equipos": len(maqs), "trabajos": len(trabajos),
+                    "observaciones": len(observaciones), "fotos": len(fotos),
+                    "equipos_con_repuesto": equipos_con_repuesto, "garantia": garantia},
+    }
+
+
 def _save_reporte_html_snapshot(rid):
     """Genera y persiste HTML del reporte en disco. Devuelve ruta relativa o None."""
     try:
@@ -46717,12 +46947,30 @@ def _save_reporte_html_snapshot(rid):
 @app.route("/mantenciones/api/clientes/<int:cid>/reportes", methods=["GET"])
 @_mant_required
 def mant_reportes_list(cid):
-    rows = mysql_fetchall(
-        "SELECT id,tipo,estado,ticket_num,asunto,tecnico_junior,tecnico_senior,"
-        "fecha_inicio,fecha_cierre,ai_diagnostico,ai_fecha,html_path,html_generated_at,"
+    # PERF 2026-06-03: el listado solo muestra un preview de ai_diagnostico
+    # (mant_ficha.js usa .slice(0,220)). Traer LEFT(...,240) en vez del TEXT
+    # completo evita transferir párrafos enteros por fila (Railway↔Clever Cloud).
+    _SEL = (
+        "SELECT id,tipo,estado,ticket_num,ot_num,asunto,tecnico_junior,tecnico_senior,"
+        "fecha_inicio,fecha_cierre,LEFT(ai_diagnostico,240) AS ai_diagnostico,"
+        "ai_fecha,html_path,html_generated_at,"
         "created_by,created_at "
-        "FROM mant_reportes WHERE cliente_id=%s ORDER BY created_at DESC", (cid,)
+        "FROM mant_reportes WHERE cliente_id=%s ORDER BY created_at DESC"
     )
+    try:
+        rows = mysql_fetchall(_SEL, (cid,))
+    except Exception as _e1:
+        # Posible columna nueva ausente (ot_num, etc.) si la migración no corrió.
+        # Aseguramos las columnas y reintentamos UNA vez. Si aún falla, devolvemos
+        # JSON de error (no HTML 500) para que el frontend muestre mensaje +
+        # "Reintentar" en vez de quedar cargando eternamente.
+        try:
+            _ensure_mant_reportes_columns()
+            rows = mysql_fetchall(_SEL, (cid,))
+        except Exception as _e2:
+            print(f"[mant_reportes_list] error cid={cid}: {_e2}", flush=True)
+            return jsonify({"error": "No se pudieron cargar los informes (revisa logs)."}), 500
+    rows = rows or []
     def _fmt(r):
         d = dict(r)
         for k in ("fecha_inicio","fecha_cierre","ai_fecha","created_at","html_generated_at"):
@@ -46756,14 +47004,15 @@ def mant_reporte_crear(cid):
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO mant_reportes
-                   (cliente_id,tipo,estado,ticket_num,asunto,
+                   (cliente_id,tipo,estado,ticket_num,ot_num,visita_id,asunto,
                     tecnico_junior,tecnico_senior,
                     fecha_solicitado,fecha_inicio,fecha_cierre,
                     antecedentes,objetivos,trabajos,observaciones,
                     maquinas_json,garantia_aplica,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, d.get("tipo","mantencion"), d.get("estado","borrador"),
-                 d.get("ticket_num",""), d.get("asunto",""),
+                 d.get("ticket_num",""), d.get("ot_num") or None, d.get("visita_id") or None,
+                 d.get("asunto",""),
                  d.get("tecnico_junior",""), d.get("tecnico_senior",""),
                  d.get("fecha_solicitado") or None,
                  d.get("fecha_inicio") or None, d.get("fecha_cierre") or None,
@@ -46782,6 +47031,141 @@ def mant_reporte_crear(cid):
         try: _save_reporte_html_snapshot(rid)
         except Exception: pass
         return jsonify({"ok": True, "id": rid})
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/generar-informe", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_visita_generar_informe(vid):
+    """Crea un Informe Post Servicio PREFILLADO desde una OT (visita).
+    "Subir la OT": toma ticket, Nº OT, cliente, equipos, checklist y
+    observaciones de la OT y arma el borrador del informe — con trazabilidad
+    TICKET / OT garantizada. Devuelve {ok, id, cliente_id} para abrir el editor.
+    Todo es editable luego; la IA puede pulir la redacción."""
+    v = mysql_fetchone(
+        "SELECT v.*, COALESCE(u.nombre, u.username) AS tecnico_principal "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+        " WHERE v.id=%s", (vid,)
+    )
+    if not v:
+        return jsonify({"error": "OT no encontrada"}), 404
+    v = dict(v)
+    cid = v.get("cliente_id")
+
+    # Ticket asociado (trazabilidad)
+    tk = mysql_fetchone(
+        "SELECT numero_ticket, id, created_at FROM mant_tickets "
+        " WHERE visita_id=%s ORDER BY id DESC LIMIT 1", (vid,)
+    ) or {}
+    ticket_num = str(tk.get("numero_ticket") or tk.get("id") or "").strip()
+    ot_num = str(v.get("numero_ot") or v.get("id") or "").strip()
+
+    # Tipo de OT → tipo de informe
+    _tipo_map = {"preventiva": "mantencion", "correctiva": "visita_tecnica",
+                 "garantia": "garantia", "inspeccion": "inspeccion",
+                 "instalacion": "instalacion", "levantamiento": "inspeccion"}
+    tipo_rep = _tipo_map.get((v.get("tipo") or "").lower(), "visita_tecnica")
+
+    # Equipos de la OT (defensivo con columnas que podrían no existir)
+    mids = [r["maquina_id"] for r in (mysql_fetchall(
+        "SELECT DISTINCT maquina_id FROM mant_visita_tareas "
+        " WHERE visita_id=%s AND maquina_id IS NOT NULL", (vid,)
+    ) or []) if r.get("maquina_id")]
+    # Observación por equipo (de la revisión en terreno)
+    obs_eq = {}
+    for r in (mysql_fetchall(
+        "SELECT maquina_id, observacion_tecnico FROM mant_visita_equipos WHERE visita_id=%s", (vid,)
+    ) or []):
+        if r.get("observacion_tecnico"):
+            obs_eq[r["maquina_id"]] = r["observacion_tecnico"]
+    # Repuestos por equipo (nombre + si es garantía)
+    rep_eq = {}
+    try:
+        for r in (mysql_fetchall(
+            "SELECT maquina_id, nombre, tipo FROM mant_repuestos "
+            " WHERE visita_id=%s", (vid,)
+        ) or []):
+            mid = r.get("maquina_id")
+            rep_eq.setdefault(mid, {"nombre": r.get("nombre"), "garantia": (r.get("tipo") == "garantia")})
+    except Exception:
+        pass
+
+    maquinas = []
+    for mid in mids:
+        m = mysql_fetchone("SELECT * FROM mant_maquinas WHERE id=%s", (mid,)) or {}
+        rinfo = rep_eq.get(mid, {})
+        maquinas.append({
+            "sku": m.get("sku") or "",
+            "descripcion": m.get("nombre") or "",
+            "cantidad": m.get("cantidad") or 1,
+            "modelo": m.get("modelo") or "",
+            "serie": m.get("serie") or "",
+            "repuesto": rinfo.get("nombre") or "",
+            "garantia": "si" if rinfo.get("garantia") else "no",
+            "observacion": obs_eq.get(mid) or "",
+        })
+
+    # Trabajos realizados = checklist completado
+    trabajos = [r["titulo"] for r in (mysql_fetchall(
+        "SELECT titulo FROM mant_visita_tareas "
+        " WHERE visita_id=%s AND COALESCE(completada,0)=1 AND titulo IS NOT NULL "
+        " ORDER BY orden, id", (vid,)
+    ) or []) if (r.get("titulo") or "").strip()]
+
+    # Observaciones generales = diagnóstico / observaciones de cierre
+    observaciones = []
+    for campo in ("diagnostico", "observaciones"):
+        val = (v.get(campo) or "").strip()
+        if val:
+            observaciones.append(val)
+
+    def _to_date(x):
+        if not x:
+            return None
+        try:
+            return x.date().isoformat() if hasattr(x, "date") else str(x)[:10]
+        except Exception:
+            return str(x)[:10]
+
+    asunto = (v.get("titulo") or "").strip() or f"Visita técnica — OT {ot_num}"
+    antecedentes = (v.get("descripcion") or "").strip()
+
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mant_reportes
+                   (cliente_id,tipo,estado,ticket_num,ot_num,visita_id,asunto,
+                    tecnico_junior,tecnico_senior,fecha_solicitado,fecha_inicio,fecha_cierre,
+                    antecedentes,objetivos,trabajos,observaciones,maquinas_json,
+                    garantia_aplica,created_by)
+                   VALUES (%s,%s,'borrador',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cid, tipo_rep, ticket_num, ot_num, vid, asunto,
+                 "", v.get("tecnico_principal") or v.get("tecnico") or "",
+                 _to_date(tk.get("created_at")) or _to_date(v.get("created_at")),
+                 _to_date(v.get("fecha_programada")) or _to_date(v.get("hora_real_inicio")),
+                 _to_date(v.get("cerrada_at")),
+                 antecedentes,
+                 json.dumps([], ensure_ascii=False),
+                 json.dumps(trabajos, ensure_ascii=False),
+                 json.dumps(observaciones, ensure_ascii=False),
+                 json.dumps(maquinas, ensure_ascii=False),
+                 1 if (v.get("tipo") == "garantia") else 0,
+                 current_username())
+            )
+            rid = cur.lastrowid
+        conn.commit()
+        try:
+            _mant_log("reporte", rid, "creado_desde_ot",
+                      f"OT {ot_num} / Ticket {ticket_num} → {len(maquinas)} equipo(s)")
+        except Exception: pass
+        try: _save_reporte_html_snapshot(rid)
+        except Exception: pass
+        return jsonify({"ok": True, "id": rid, "cliente_id": cid,
+                        "ticket_num": ticket_num, "ot_num": ot_num})
     finally:
         conn.close()
 
@@ -46996,7 +47380,8 @@ def mant_reporte_update(rid):
     if not (_es_super or _es_creador_borrador):
         return jsonify({"error": "Solo el superadministrador puede editar reportes ya emitidos o de otros usuarios."}), 403
     d = request.get_json(silent=True) or {}
-    allowed = ["tipo","estado","ticket_num","asunto","tecnico_junior","tecnico_senior",
+    allowed = ["tipo","estado","ticket_num","ot_num","visita_id","asunto",
+               "tecnico_junior","tecnico_senior",
                "fecha_solicitado","fecha_inicio","fecha_cierre",
                "antecedentes","objetivos","trabajos","observaciones","maquinas_json",
                # Garantía transversal (separada del tipo de servicio)
@@ -47182,7 +47567,7 @@ Responde SOLO en JSON con esta estructura:
 
     try:
         import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=ai_key)
+        client = _anthropic.Anthropic(api_key=ai_key, timeout=60)
         msg = client.messages.create(
             model="claude-opus-4-5", max_tokens=2000,
             messages=[{"role":"user","content":prompt}]
@@ -48227,56 +48612,127 @@ def mant_contrato_analisis_pdf(ctid):
     return _contrato_analisis_to_pdf_html(dict(ct), cliente)
 
 
+@app.route("/mantenciones/api/reportes/<int:rid>/analizar", methods=["POST"])
+@_mant_required
+def mant_reporte_analizar_reglas(rid):
+    """Agente interno (REGLAS, sin IA / sin tokens): valida que el informe esté
+    completo (ticket + OT + documento obligatorios) y genera diagnóstico +
+    recomendaciones por reglas. Guarda y devuelve {ok, completo, faltantes, analisis}."""
+    rep, cliente = _load_reporte_full(rid)
+    if not rep:
+        return jsonify({"error": "Informe no encontrado"}), 404
+    analisis = _reporte_analisis_reglas(rep, cliente)
+    try:
+        mysql_execute(
+            "UPDATE mant_reportes SET analisis_reglas_json=%s, analisis_reglas_at=NOW() WHERE id=%s",
+            (json.dumps(analisis, ensure_ascii=False), rid)
+        )
+    except Exception as e:
+        print(f"[reporte_analizar_reglas] {e}", flush=True)
+    try:
+        _mant_log("reporte", rid, "analizado_interno",
+                  f"completo={analisis['completo']} idx={analisis['indice_completitud']}%")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "completo": analisis["completo"],
+                    "faltantes": analisis["faltantes"], "analisis": analisis})
+
+
+@app.route("/mantenciones/api/reportes/<int:rid>/ot-doc", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_reporte_ot_doc(rid):
+    """Adjunta el PDF de la OT al informe (obligatorio para avanzar)."""
+    if not mysql_fetchone("SELECT id FROM mant_reportes WHERE id=%s", (rid,)):
+        return jsonify({"error": "Informe no encontrado"}), 404
+    f = (request.files.get("doc") or request.files.get("file")
+         or request.files.get("archivo"))
+    if not f or not f.filename:
+        return jsonify({"error": "No se recibió ningún archivo"}), 400
+    ext = (f.filename.rsplit(".", 1)[-1] if "." in f.filename else "").lower()
+    if ext != "pdf":
+        return jsonify({"error": "El documento de la OT debe ser un archivo PDF"}), 400
+    url = None
+    try:
+        if _CLD_READY:
+            res = _cloud_upload_raw(f.stream, public_id=f"otdoc_rep{rid}", folder="ilus/informes_ot")
+            url = res.get("url")
+        else:
+            from werkzeug.utils import secure_filename as _sf
+            sub = os.path.join(UPLOAD_FOLDER, "mantenciones", "reportes")
+            os.makedirs(sub, exist_ok=True)
+            fname = f"otdoc_{rid}_{_sf(f.filename)}"
+            f.save(os.path.join(sub, fname))
+            url = f"/static/uploads/mantenciones/reportes/{fname}"
+    except Exception as e:
+        print(f"[reporte_ot_doc] {e}", flush=True)
+        return jsonify({"error": "No se pudo subir el documento"}), 500
+    mysql_execute("UPDATE mant_reportes SET ot_doc_url=%s, ot_doc_nombre=%s WHERE id=%s",
+                  (url, f.filename[:300], rid))
+    try: _mant_log("reporte", rid, "ot_doc_adjuntado", f.filename[:120])
+    except Exception: pass
+    return jsonify({"ok": True, "url": url, "nombre": f.filename})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/visita-id", methods=["GET"])
+@_mant_required
+def mant_cliente_visita_id(cid):
+    """Resuelve el id de una OT (visita) del cliente a partir de su N° de OT
+    (numero_ot, id o coincidencia parcial). Para 'Generar informe desde OT'."""
+    ot = (request.args.get("ot") or "").strip()
+    if not ot:
+        return jsonify({"error": "Falta el N° de OT"}), 400
+    cond_id = int(ot) if ot.isdigit() else -1
+    v = mysql_fetchone(
+        "SELECT id, numero_ot FROM mant_visitas "
+        " WHERE cliente_id=%s AND (id=%s OR numero_ot=%s OR numero_ot LIKE %s) "
+        " ORDER BY id DESC LIMIT 1",
+        (cid, cond_id, ot, f"%{ot}")
+    )
+    if not v:
+        return jsonify({"ok": False, "error": f"No se encontró una OT '{ot}' para este cliente."}), 404
+    return jsonify({"ok": True, "vid": v["id"], "numero_ot": v.get("numero_ot")})
+
+
 @app.route("/mantenciones/api/reportes/<int:rid>/pdf", methods=["GET"])
 @_mant_required
 def mant_reporte_pdf(rid):
-    """Vista imprimible del reporte (formato ILUS) — el navegador genera el PDF.
+    """PDF del Informe Post Servicio en formato ILUS (estilo Word).
 
-    Accesible para todos los roles con permiso de mantenciones (incluido el
-    ejecutivo SSTT). No requiere libs de sistema: usa window.print().
+    Genera un PDF REAL (Playwright, hoja carta) con el template
+    reporte_informe_pdf.html. Si Chromium no está disponible en el server,
+    cae con elegancia a la vista imprimible HTML (window.print()).
+    Forzar la vista imprimible: ?print=1.
+    Accesible para todos los roles con permiso de mantenciones.
     """
-    r = mysql_fetchone(
-        "SELECT r.*, c.razon_social, c.rut, c.contacto_nombre, c.contacto_tel, "
-        "c.contacto_email, c.direccion, c.comuna, c.ciudad "
-        "FROM mant_reportes r JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s",
-        (rid,)
-    )
-    if not r:
+    rep, cliente = _load_reporte_full(rid)
+    if not rep:
         return "Reporte no encontrado", 404
-    rep = dict(r)
-    cliente = {
-        "razon_social":    rep.pop("razon_social", ""),
-        "rut":             rep.pop("rut", ""),
-        "contacto_nombre": rep.pop("contacto_nombre", ""),
-        "contacto_tel":    rep.pop("contacto_tel", ""),
-        "contacto_email":  rep.pop("contacto_email", ""),
-        "direccion":       rep.pop("direccion", ""),
-        "comuna":          rep.pop("comuna", ""),
-        "ciudad":          rep.pop("ciudad", ""),
-    }
-    # Decodificar campos JSON
-    for k in ("objetivos", "trabajos", "observaciones", "maquinas_json", "ai_acciones"):
-        if rep.get(k):
-            try: rep[k] = json.loads(rep[k])
-            except Exception: rep[k] = []
-    # Fotos del registro fotográfico
-    try:
-        fotos = mysql_fetchall(
-            "SELECT id,nombre,archivo_path,cloudinary_url FROM mant_contrato_adjuntos "
-            "WHERE contrato_id=%s AND tipo='imagen' ORDER BY created_at", (rid,)
-        ) or []
-        rep["fotos"] = [
-            {"nombre": f.get("nombre"),
-             "url": (f.get("cloudinary_url")
-                     or f"/static/uploads/mantenciones/reportes/{f['archivo_path']}")}
-            for f in fotos
-        ]
-    except Exception:
-        rep["fotos"] = []
+    # FIX 2026-06-02 (Daniel — "visualizar documentos no funciona"): el PDF/vista
+    # del informe SIEMPRE se genera. La obligatoriedad de N° ticket + N° OT +
+    # documento de la OT se valida en el "agente interno" (POST /analizar) y al
+    # emitir — NO se bloquea la VISUALIZACIÓN (antes esto rompía la vista de
+    # informes existentes que aún no tenían esos datos).
     try:
         _mant_log("reporte", rid, "exportar_pdf")
     except Exception:
         pass
+    if request.args.get("print") != "1":
+        try:
+            pdf_bytes = _reporte_informe_pdf_bytes(rep, cliente)
+            _ot = (rep.get("ot_num") or "").strip()
+            _tk = (rep.get("ticket_num") or "").strip()
+            fname = ("Informe" + (f"_OT{_ot}" if _ot else "")
+                     + (f"_T{_tk}" if _tk else f"_{rid}") + ".pdf").replace(" ", "")
+            resp = make_response(pdf_bytes)
+            resp.headers["Content-Type"] = "application/pdf"
+            resp.headers["Content-Disposition"] = f'inline; filename="{fname}"'
+            return resp
+        except PDFEngineUnavailable as e:
+            print(f"[reporte_pdf] Playwright no disponible, fallback HTML: {e}", flush=True)
+        except Exception as e:
+            print(f"[reporte_pdf] error generando PDF, fallback HTML: {e}", flush=True)
+    # Fallback: vista imprimible del navegador (no requiere Chromium server-side)
     return _reporte_to_pdf_html(rep, cliente)
 
 
@@ -50962,21 +51418,30 @@ def mant_maquina_ficha(mid):
             # Adjuntar fotos de la OT vinculadas a este equipo
             try:
                 fr = mysql_fetchall(
-                    "SELECT id, archivo_path, descripcion, tomada_por, tomada_at "
+                    "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, tomada_at "
                     "  FROM mant_visita_fotos "
                     " WHERE visita_id=%s AND maquina_id=%s "
                     " ORDER BY tomada_at ASC LIMIT 12",
                     (d["visita_id"], mid)
                 ) or []
-                d["fotos"] = [
-                    {
-                        "url": f.get("archivo_path"),
+                # FIX 2026-06-02 (Daniel): priorizar cloudinary_url. En Railway el
+                # filesystem es efímero → las fotos viven en Cloudinary y archivo_path
+                # queda vacío. Antes se filtraba por archivo_path y se descartaban TODAS
+                # las fotos de Cloudinary → la ficha no mostraba ninguna foto del levant.
+                _lev_fotos = []
+                for f in fr:
+                    _u = f.get("cloudinary_url") or (
+                        f"/static/{f['archivo_path']}" if f.get("archivo_path") else ""
+                    )
+                    if not _u:
+                        continue
+                    _lev_fotos.append({
+                        "url": _u,
                         "descripcion": f.get("descripcion") or "",
                         "tomada_por": f.get("tomada_por") or "",
                         "tomada_at": str(f["tomada_at"])[:16] if f.get("tomada_at") else "",
-                    }
-                    for f in fr if f.get("archivo_path")
-                ]
+                    })
+                d["fotos"] = _lev_fotos
             except Exception:
                 d["fotos"] = []
             d["numero_ot"] = d.get("numero_ot") or f"VS-{d['visita_id']:05d}"
@@ -52267,6 +52732,15 @@ def _ensure_mant_reportes_columns():
         # Garantía transversal a nivel de reporte (separada del tipo).
         "garantia_aplica": "TINYINT(1) NOT NULL DEFAULT 0 "
                            "COMMENT 'Garantía: 1=aplica (cubierto), 0=no aplica (pago)'",
+        # Trazabilidad OT (Informe post-venta, 2026-06-01): vincula el informe a la OT.
+        "ot_num":        "VARCHAR(30) NULL COMMENT 'Nº de OT/visita asociada (trazabilidad informe)'",
+        "visita_id":     "INT NULL COMMENT 'FK lógica a mant_visitas: OT origen del informe'",
+        # Documento de la OT (obligatorio para avanzar): PDF de la OT adjunto.
+        "ot_doc_url":    "VARCHAR(600) NULL COMMENT 'URL del PDF de la OT adjunto (Cloudinary/local)'",
+        "ot_doc_nombre": "VARCHAR(300) NULL COMMENT 'Nombre del archivo PDF de la OT'",
+        # Análisis del agente interno (reglas, SIN IA/tokens).
+        "analisis_reglas_json": "TEXT NULL COMMENT 'JSON del análisis determinista (diagnóstico+acciones+faltantes)'",
+        "analisis_reglas_at":   "DATETIME NULL COMMENT 'Cuándo corrió el análisis interno'",
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()
@@ -52300,6 +52774,21 @@ def _ensure_mant_reportes_columns():
             print("[ensure_rep_cols] ENUM tipo ampliado con 'visita_tecnica'", flush=True)
     except Exception as e_enum:
         print(f"[ensure_rep_cols] no se pudo ampliar ENUM tipo: {e_enum}", flush=True)
+
+    # PERF 2026-06-03: índice compuesto (cliente_id, created_at) para servir
+    # "WHERE cliente_id=%s ORDER BY created_at DESC" (listado de informes de la
+    # ficha) directo del índice, sin filesort. Idempotente: solo si no existe.
+    try:
+        _idx = mysql_fetchone(
+            "SELECT 1 AS x FROM information_schema.STATISTICS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_reportes' "
+            "  AND INDEX_NAME='idx_rep_cli_creado' LIMIT 1")
+        if not _idx:
+            mysql_execute(
+                "ALTER TABLE mant_reportes ADD INDEX idx_rep_cli_creado (cliente_id, created_at)")
+            print("[ensure_rep_cols] índice idx_rep_cli_creado creado", flush=True)
+    except Exception as e_idx:
+        print(f"[ensure_rep_cols] no se pudo crear índice idx_rep_cli_creado: {e_idx}", flush=True)
     return faltantes
 
 
@@ -52461,6 +52950,81 @@ try:
         print(f"[ILUS] target_field agregado (skip-migrations): {_faltaron_tf}", flush=True)
 except Exception as _ensure_tf_err:
     print(f"[ILUS][WARN] _ensure_levantamiento_target_field: {_ensure_tf_err}", flush=True)
+
+
+def _reparar_ruts_clientes_corruptos():
+    """Repara RUTs de mant_clientes con DV DUPLICADO (cuerpo normalizado > 9
+    chars, ej '2554706552' → '255470655'). Idempotente y barato: un COUNT
+    primero; solo corrige los corruptos. (Bug 2026-06-02 — Daniel: el sistema
+    'inventaba' un dígito al editar el cliente y la búsqueda al ERP fallaba.)"""
+    try:
+        _expr = ("CHAR_LENGTH(REPLACE(REPLACE(REPLACE("
+                 "UPPER(COALESCE(rut,'')),'.',''),'-',''),' ',''))")
+        n = mysql_fetchone(f"SELECT COUNT(*) AS n FROM mant_clientes WHERE {_expr} > 9")
+        if not n or (n.get("n") or 0) == 0:
+            return 0
+        rows = mysql_fetchall(f"SELECT id, rut FROM mant_clientes WHERE {_expr} > 9") or []
+        fixed = 0
+        for r in rows:
+            rec = _rut_recuperar(r.get("rut"))
+            if rec and rec != normalizar_rut(r.get("rut")):
+                try:
+                    mysql_execute("UPDATE mant_clientes SET rut=%s WHERE id=%s", (rec, r["id"]))
+                    fixed += 1
+                except Exception:
+                    pass
+        if fixed:
+            print(f"[reparar-ruts] {fixed} RUT(s) de clientes corregidos (DV duplicado)", flush=True)
+        return fixed
+    except Exception as e:
+        print(f"[reparar-ruts] no se aplicó: {e}", flush=True)
+        return 0
+
+
+# CRÍTICO: reparar RUTs de clientes con DV duplicado al arrancar (bug 2026-06-02).
+# Corre SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1); es barato por el COUNT guard.
+try:
+    with app.app_context():
+        _reparar_ruts_clientes_corruptos()
+except Exception as _e_rut_rep:
+    print(f"[ILUS][WARN] _reparar_ruts_clientes_corruptos: {_e_rut_rep}", flush=True)
+
+
+def _reparar_visita_fotos_maquina_id():
+    """Backfill: fotos de OT asociadas a una tarea pero SIN maquina_id heredan el
+    maquina_id de su tarea. Sin esto, las fotos del levantamiento NO aparecen en la
+    ficha del equipo (la proyección a la ficha y la sección 'último levantamiento'
+    filtran por (visita_id, maquina_id)). Idempotente y barato (COUNT guard).
+    Bug 2026-06-02 — Daniel: 'quiero ver la foto del levantamiento en la ficha'."""
+    try:
+        n = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_fotos f "
+            "JOIN mant_visita_tareas t ON t.id = f.tarea_id "
+            "WHERE f.maquina_id IS NULL AND t.maquina_id IS NOT NULL"
+        )
+        if not n or (n.get("n") or 0) == 0:
+            return 0
+        mysql_execute(
+            "UPDATE mant_visita_fotos f "
+            "JOIN mant_visita_tareas t ON t.id = f.tarea_id "
+            "SET f.maquina_id = t.maquina_id "
+            "WHERE f.maquina_id IS NULL AND t.maquina_id IS NOT NULL"
+        )
+        print(f"[reparar-fotos] {n.get('n')} foto(s) de OT heredaron maquina_id de su tarea", flush=True)
+        return n.get("n") or 0
+    except Exception as e:
+        print(f"[reparar-fotos] no se aplicó: {e}", flush=True)
+        return 0
+
+
+# CRÍTICO: backfill de maquina_id en fotos de OT para que las fotos del levantamiento
+# YA capturadas aparezcan en la ficha del equipo. Corre SIEMPRE (incluso con
+# ILUS_SKIP_MIGRATIONS=1); barato por el COUNT guard.
+try:
+    with app.app_context():
+        _reparar_visita_fotos_maquina_id()
+except Exception as _e_foto_rep:
+    print(f"[ILUS][WARN] _reparar_visita_fotos_maquina_id: {_e_foto_rep}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #
@@ -53615,7 +54179,7 @@ EVIDENCIA VISUAL — fotos por tipo (últimos 90 días):
     try:
         import anthropic as _anthropic
         t0 = _time.time()
-        ai  = _anthropic.Anthropic(api_key=ai_key)
+        ai  = _anthropic.Anthropic(api_key=ai_key, timeout=60)
         # Modelo actualizado: claude-opus-4-7 (era 4-5 hasta 2026-05-21)
         msg = ai.messages.create(
             model="claude-opus-4-7",

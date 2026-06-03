@@ -6957,9 +6957,15 @@ async function cargarReportes() {
   const lista = document.getElementById('reportesLista');
   if (!lista) return;
   lista.innerHTML = '<div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  // Timeout duro: el spinner NUNCA queda infinito. Si el servidor se satura o
+  // cuelga, a los 25s abortamos y mostramos error + botón "Reintentar".
+  const _ac = new AbortController();
+  const _to = setTimeout(() => _ac.abort(), 25000);
   try {
-    const r = await fetch(`/mantenciones/api/clientes/${CID}/reportes`);
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/reportes`, { signal: _ac.signal });
+    if (!r.ok) throw new Error('El servidor respondió ' + r.status);
     const data = await r.json();
+    if (!Array.isArray(data)) throw new Error((data && data.error) ? data.error : 'Respuesta inesperada del servidor');
     if (!data.length) {
       lista.innerHTML = `<div class="text-center py-5 text-muted">
         <i class="bi bi-file-earmark-x" style="font-size:3rem;opacity:.25"></i>
@@ -6981,10 +6987,10 @@ async function cargarReportes() {
           <div style="flex:1;min-width:0">
             <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
               <span class="fw-bold" style="font-size:.95rem">
-                ${rep.ticket_num ? `TICKET ${rep.ticket_num} — ` : ''}${rep.asunto || 'Informe de servicio'}
+                ${(rep.ticket_num || rep.ot_num) ? `TICKET ${rep.ticket_num || '—'} / OT ${rep.ot_num || '—'} — ` : ''}${rep.asunto || 'Informe de servicio'}
               </span>
               <span class="rep-tipo-badge rep-tipo-${rep.tipo}">${tipoLbl[rep.tipo]||rep.tipo}</span>
-              <span class="rep-tipo-badge rep-estado-${rep.estado}">${rep.estado.charAt(0).toUpperCase()+rep.estado.slice(1)}</span>
+              <span class="rep-tipo-badge rep-estado-${rep.estado||'borrador'}">${((rep.estado||'borrador').charAt(0).toUpperCase()+(rep.estado||'borrador').slice(1))}</span>
             </div>
             <div style="font-size:.75rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:0 16px">
               ${rep.tecnico_junior ? `<span><i class="bi bi-person me-1"></i>${rep.tecnico_junior}</span>` : ''}
@@ -6997,14 +7003,10 @@ async function cargarReportes() {
             </div>` : ''}
           </div>
           <div class="d-flex gap-1 flex-shrink-0 flex-wrap">
-            ${rep.html_url ? `
-              <a href="${rep.html_url}" target="_blank" class="btn btn-xs btn-outline-success" title="Ver HTML guardado">
-                <i class="bi bi-eye"></i>
-              </a>
-              <a href="${rep.html_url}" download="informe_${rep.id}.html" class="btn btn-xs btn-outline-secondary" title="Descargar HTML">
-                <i class="bi bi-download"></i>
-              </a>` : ''}
-            <a href="/mantenciones/api/reportes/${rep.id}/pdf" target="_blank" class="btn btn-xs btn-outline-danger" title="Descargar PDF">
+            <a href="/mantenciones/api/reportes/${rep.id}/html" target="_blank" class="btn btn-xs btn-outline-success fw-bold" title="Ver informe (rápido, sin esperar el motor PDF)">
+              <i class="bi bi-eye me-1"></i>Ver
+            </a>
+            <a href="/mantenciones/api/reportes/${rep.id}/pdf" target="_blank" class="btn btn-xs btn-outline-danger" title="Descargar PDF (puede tardar si el motor PDF del servidor no está disponible)">
               <i class="bi bi-file-earmark-pdf"></i>
             </a>
             <a href="/mantenciones/api/reportes/${rep.id}/word" class="btn btn-xs btn-outline-dark" title="Descargar Word">
@@ -7022,7 +7024,15 @@ async function cargarReportes() {
         ${rep.html_generated_at ? `<div class="mt-2" style="font-size:.66rem;color:#9ca3af;text-align:right"><i class="bi bi-clock me-1"></i>HTML generado ${rep.html_generated_at}</div>` : ''}
       </div>`).join('');
   } catch(e) {
-    lista.innerHTML = `<div class="alert alert-danger">Error cargando reportes: ${e.message}</div>`;
+    const msg = (e && e.name === 'AbortError')
+      ? 'La carga tardó demasiado (servidor lento). Intenta de nuevo.'
+      : ((e && e.message) ? e.message : 'Error desconocido');
+    lista.innerHTML = `<div class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2 mb-0">
+      <span><i class="bi bi-exclamation-triangle me-1"></i>No se pudieron cargar los informes: ${msg}</span>
+      <button class="btn btn-sm btn-outline-dark fw-bold" onclick="cargarReportes()"><i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button>
+    </div>`;
+  } finally {
+    clearTimeout(_to);
   }
 }
 
@@ -7045,6 +7055,10 @@ function abrirNuevoReporte() {
   document.getElementById('repTipo').value = 'mantencion';
   document.getElementById('repEstado').value = 'borrador';
   document.getElementById('repTicket').value = '';
+  { const _o = document.getElementById('repOt'); if (_o) _o.value = ''; }
+  { const _e=document.getElementById('repOtDocEstado'); if(_e) _e.innerHTML='';
+    const _i=document.getElementById('repOtDocInput'); if(_i) _i.value='';
+    const _b=document.getElementById('repAnalisisBox'); if(_b){_b.style.display='none';_b.innerHTML='';} }
   document.getElementById('repAsunto').value = '';
   document.getElementById('repTecJunior').value = '';
   document.getElementById('repTecSenior').value = '';
@@ -7084,6 +7098,11 @@ async function editarReporte(rid) {
   _repSetGarantia(data.garantia_aplica === true || _repGarLegacy);
   document.getElementById('repEstado').value = data.estado || 'borrador';
   document.getElementById('repTicket').value = data.ticket_num || '';
+  { const _o = document.getElementById('repOt'); if (_o) _o.value = data.ot_num || ''; }
+  { const _e=document.getElementById('repOtDocEstado'); if(_e) _e.innerHTML = data.ot_doc_url
+      ? `<i class="bi bi-check-circle-fill text-success"></i> ${data.ot_doc_nombre||'PDF adjunto'}`
+      : '<span class="text-danger">Falta adjuntar el PDF de la OT</span>';
+    const _b=document.getElementById('repAnalisisBox'); if(_b){_b.style.display='none';_b.innerHTML='';} }
   document.getElementById('repAsunto').value = data.asunto || '';
   document.getElementById('repTecJunior').value = data.tecnico_junior || '';
   document.getElementById('repTecSenior').value = data.tecnico_senior || '';
@@ -7329,6 +7348,7 @@ async function repGuardar(silencioso=false) {
     tipo:            document.getElementById('repTipo').value,
     estado:          document.getElementById('repEstado').value,
     ticket_num:      document.getElementById('repTicket').value.trim(),
+    ot_num:          (document.getElementById('repOt')?.value || '').trim(),
     asunto:          document.getElementById('repAsunto').value.trim(),
     tecnico_junior:  document.getElementById('repTecJunior').value.trim(),
     tecnico_senior:  document.getElementById('repTecSenior').value.trim(),
@@ -7362,6 +7382,86 @@ async function repGuardar(silencioso=false) {
     ilusToast('Error guardando: ' + (resp.error||'desconocido'), { type:'error' });
   }
   return resp;
+}
+
+/* ── Generar informe DESDE una OT: autollena ticket+OT+cliente+equipos+trabajos ── */
+async function generarDesdeOT(){
+  const ot = await ilusPrompt({
+    title: 'Generar informe desde OT',
+    message: 'Ingresa el N° de OT del cliente. Traeré ticket, equipos y trabajos automáticamente; tú solo pules el detalle.',
+    placeholder: 'Ej: 269', required: true,
+  });
+  if (!ot) return;
+  ilusToast('Buscando la OT…', { type:'info', duration:1500 });
+  try {
+    const rv = await fetch(`/mantenciones/api/clientes/${CID}/visita-id?ot=${encodeURIComponent(ot)}`);
+    const dv = await rv.json();
+    if (!dv.ok){ ilusToast(dv.error || 'OT no encontrada', { type:'error' }); return; }
+    const rg = await fetch(`/mantenciones/api/visitas/${dv.vid}/generar-informe`,
+                           { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const dg = await rg.json();
+    if (dg.ok){
+      ilusToast(`✓ Informe creado (Ticket ${dg.ticket_num||'—'} / OT ${dg.ot_num||'—'}). Falta adjuntar el PDF de la OT.`, { type:'success' });
+      await cargarReportes();
+      editarReporte(dg.id);
+    } else { ilusToast(dg.error || 'No se pudo generar el informe', { type:'error' }); }
+  } catch(e){ ilusToast('Error de red al generar desde la OT', { type:'error' }); }
+}
+
+/* ── Adjuntar PDF de la OT (obligatorio para avanzar) ── */
+async function subirOtDoc(){
+  const rid = document.getElementById('repId').value;
+  if (!rid){ ilusToast('Primero guarda el informe (para obtener su ID).', { type:'warning' }); return; }
+  const inp = document.getElementById('repOtDocInput');
+  if (!inp || !inp.files || !inp.files[0]){ ilusToast('Elige el archivo PDF de la OT', { type:'warning' }); return; }
+  const fd = new FormData(); fd.append('doc', inp.files[0]);
+  ilusToast('Subiendo documento de la OT…', { type:'info', duration:1500 });
+  try {
+    const r = await fetch(`/mantenciones/api/reportes/${rid}/ot-doc`, { method:'POST', body: fd });
+    const d = await r.json();
+    if (d.ok){
+      const e = document.getElementById('repOtDocEstado');
+      if (e) e.innerHTML = `<i class="bi bi-check-circle-fill text-success"></i> ${d.nombre}`;
+      ilusToast('✓ Documento de la OT adjunto', { type:'success' });
+    } else ilusToast(d.error || 'No se pudo subir el documento', { type:'error' });
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+/* ── Agente interno (REGLAS, sin IA/tokens): valida obligatorios + diagnostica ── */
+async function analizarInterno(){
+  const rid = document.getElementById('repId').value;
+  if (!rid){ ilusToast('Primero guarda el informe.', { type:'warning' }); return; }
+  const btn = document.getElementById('btnRepInterno');
+  const box = document.getElementById('repAnalisisBox');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/mantenciones/api/reportes/${rid}/analizar`,
+                          { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'Error', { type:'error' }); return; }
+    const a = d.analisis || {};
+    const esc = (s)=>String(s||'').replace(/</g,'&lt;');
+    let html = '';
+    if (!d.completo){
+      html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px 12px;margin-bottom:8px">
+        <div class="fw-bold" style="color:#dc2626"><i class="bi bi-exclamation-triangle-fill me-1"></i>No se puede avanzar — faltan datos obligatorios</div>
+        <ul style="margin:6px 0 0">${(d.faltantes||[]).map(f=>`<li>${esc(f)}</li>`).join('')}</ul></div>`;
+    } else {
+      html += `<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:8px 12px;margin-bottom:8px;color:#15803d;font-weight:700"><i class="bi bi-check-circle-fill me-1"></i>Informe completo — listo para generar el PDF</div>`;
+    }
+    html += `<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px">
+      <div class="fw-bold mb-1"><i class="bi bi-cpu me-1" style="color:#dc2626"></i>Agente interno · ${a.indice_completitud||0}% completo</div>
+      <div class="small mb-2" style="color:#374151">${esc(a.diagnostico)}</div>`;
+    if ((a.acciones||[]).length){
+      html += `<div class="small fw-bold mb-1">Recomendaciones:</div><ul class="small" style="margin:0">`;
+      a.acciones.forEach(ac => { const col = ac.urgencia==='alta'?'#dc2626':(ac.urgencia==='media'?'#b45309':'#6b7280'); html += `<li style="color:${col}">${esc(ac.titulo)}</li>`; });
+      html += `</ul>`;
+    }
+    html += `</div>`;
+    if (box){ box.style.display='block'; box.innerHTML = html; }
+    ilusToast(d.completo ? '✓ Informe completo' : 'Faltan datos obligatorios', { type: d.completo ? 'success':'warning' });
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+  finally { if (btn) btn.disabled = false; }
 }
 
 async function eliminarReporte(rid) {

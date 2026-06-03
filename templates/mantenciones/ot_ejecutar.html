@@ -2168,12 +2168,20 @@
 
 <div class="tx-bottom">
   {% if visita.estado == 'cerrada' %}
-    {# OT cerrada — botón descargar PDF #}
+    {% if _es_superadmin %}
+    {# OT cerrada — botón descargar PDF · 🔒 SOLO superadmin (brecha Aaron 2026-06-02):
+       los roles no-superadmin (ejecutivo/supervisor/técnico) NO deben ver la descarga. #}
     <a href="/mantenciones/api/visitas/{{ visita.id }}/pdf"
        class="tx-btn-firmar" target="_blank" rel="noopener"
        style="background:linear-gradient(135deg,#16a34a,#15803d);text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px">
       <i class="bi bi-file-earmark-pdf-fill"></i> Descargar PDF de la OT
     </a>
+    {% else %}
+    {# Roles no-superadmin: estado de solo lectura, sin botón de descarga. #}
+    <div class="tx-btn-firmar" style="background:#e5e7eb;color:#374151;cursor:default;display:flex;align-items:center;justify-content:center;gap:8px">
+      <i class="bi bi-check-circle-fill" style="color:#16a34a"></i> OT cerrada
+    </div>
+    {% endif %}
   {% elif visita.estado == 'pendiente_aprobacion' %}
     {% if _puede_aprobar %}
       {# CTA verde para el creador/admin/supervisor — firmar y cerrar #}
