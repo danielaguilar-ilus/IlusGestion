@@ -2955,7 +2955,16 @@ def _build_perms_from_matrix(role):
     base["etiquetas"]      = bool(eti.get("ver"))
     base["retiros"]        = bool(ret.get("ver"))
     base["mantenciones"]   = bool(man.get("ver"))
-    base["transporte"]     = bool(tra.get("ver"))
+    # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
+    # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
+    # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
+    # Antes solo miraba "ver" → si la operadora marcaba cubicador/asignar/
+    # manifiestos/couriers pero al guardar "ver" quedó desmarcado, todo el
+    # módulo rebotaba. Simétrico al fix de "cubicador" abajo.
+    base["transporte"]     = bool(
+        tra.get("ver") or tra.get("cubicador") or tra.get("asignar")
+        or tra.get("manifiestos") or tra.get("couriers")
+    )
     # /cubicador y /asignar comparten el gate g.permissions["cubicador"].
     # La matriz tiene acciones separadas "cubicador" y "asignar" — ambas
     # abren pantallas que el backend protege con el flag "cubicador".
@@ -3858,23 +3867,71 @@ def _is_ajax_request():
 def api_whoami():
     """Diagnóstico: qué permisos efectivos tiene el usuario actual.
     Útil cuando el usuario reporta 'no puedo crear cliente' o 'no veo X módulo'.
+
+    Incluye el slug exacto del rol asignado, la matriz cruda de rol_permisos
+    para ese slug, y si ese slug existe en roles_dinamicos. Esto permite
+    diagnosticar mismatches del tipo "el rol asignado es 'Transporte' pero
+    la matriz se guardó como 'transporte_ilus'".
     """
     if not g.user:
         return jsonify({"ok": False, "error": "Sin sesión"}), 401
     perms_dict = dict(g.permissions or {})
+    role_slug = g.user.get("role")
+
+    # Matriz cruda guardada en BD para ese slug
+    matriz_raw = {}
+    try:
+        rows = mysql_fetchall(
+            "SELECT modulo, accion, permitido FROM rol_permisos WHERE rol_slug=%s "
+            "ORDER BY modulo, accion",
+            (role_slug,)
+        ) or []
+        for r in rows:
+            matriz_raw.setdefault(r["modulo"], {})[r["accion"]] = bool(r["permitido"])
+    except Exception as e:
+        matriz_raw = {"_error": str(e)}
+
+    # ¿Existe ese slug en roles_dinamicos?
+    role_in_db = None
+    try:
+        rd = mysql_fetchone(
+            "SELECT id, slug, nombre, activo, is_system FROM roles_dinamicos WHERE slug=%s",
+            (role_slug,)
+        )
+        if rd:
+            role_in_db = dict(rd)
+    except Exception:
+        pass
+
+    # Lista de TODOS los slugs disponibles en roles_dinamicos (para detectar typos)
+    todos_slugs = []
+    try:
+        todos = mysql_fetchall("SELECT slug, nombre FROM roles_dinamicos ORDER BY slug") or []
+        todos_slugs = [{"slug": r["slug"], "nombre": r["nombre"]} for r in todos]
+    except Exception:
+        pass
+
     return jsonify({
         "ok": True,
         "usuario": {
             "id":       g.user.get("id"),
             "username": g.user.get("username"),
             "nombre":   g.user.get("nombre"),
-            "role":     g.user.get("role"),
+            "role":     role_slug,
         },
         "permissions": perms_dict,
         "modulos_visibles": [k for k in
             ("etiquetas","retiros","mantenciones","transporte","cubicador",
              "comunicaciones","admin","superadmin","ajustes")
             if perms_dict.get(k)],
+        "diagnostico_rol": {
+            "slug_asignado":    role_slug,
+            "rol_existe_en_db": role_in_db is not None,
+            "rol_en_db":        role_in_db,
+            "matriz_guardada":  matriz_raw,
+            "filas_matriz":     sum(len(v) for v in matriz_raw.values() if isinstance(v, dict)),
+            "todos_los_slugs":  todos_slugs,
+        },
     })
 
 
