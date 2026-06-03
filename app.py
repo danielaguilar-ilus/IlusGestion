@@ -7157,11 +7157,13 @@ def index():
 
     # ── 1. Mapeo explícito por rol (más predecible que por permisos) ──
     ROLE_HOME = {
-        "tecnico":     ("mant_ots_list",   {"solo_mias": "1"}),
-        "mantenciones":("mant_index",      {}),
-        "ejecutivo":   ("mant_index",      {}),
-        "transporte":  ("transporte_index",{}),
-        "distribucion":("transporte_index",{}),
+        "tecnico":      ("mant_ots_list",   {"solo_mias": "1"}),
+        "mantenciones": ("mant_index",      {}),
+        "ejecutivo":    ("mant_index",      {}),
+        "transporte":   ("transporte_index",{}),
+        "distribucion": ("transporte_index",{}),
+        # Agente de retiros (2026-06-01): aterriza directo en el monitor de retiros.
+        "agente_retiros": ("pickup_dashboard", {}),
     }
     if role in ROLE_HOME:
         endpoint, args = ROLE_HOME[role]
@@ -26512,6 +26514,28 @@ def init_mantenciones_tables():
                     )
                 except Exception:
                     pass
+
+            # ── Rol de negocio: Agente de retiros (Daniel 2026-06-01) ──────────
+            # is_system=0 → totalmente gestionable por el admin (editar/eliminar).
+            # Se siembra UNA sola vez con acceso SOLO al módulo Retiros. A partir
+            # de ahí, el admin agrega/quita módulos a este (o cualquier) rol desde
+            # /admin/roles (matriz dinámica). El cur.rowcount==1 garantiza que solo
+            # sembramos los permisos en la primera creación — nunca pisamos los
+            # cambios que el admin haga después en la matriz.
+            try:
+                cur.execute(
+                    "INSERT IGNORE INTO roles_dinamicos (slug,nombre,descripcion,color,is_system) "
+                    "VALUES ('agente_retiros','Agente de retiros',"
+                    "'Acceso solo al modulo de Retiros','#0ea5e9',0)"
+                )
+                if cur.rowcount == 1:
+                    for _acc in ("ver", "gestionar", "monitor"):
+                        cur.execute(
+                            "INSERT IGNORE INTO rol_permisos (rol_slug,modulo,accion,permitido) "
+                            "VALUES ('agente_retiros','retiros',%s,1)", (_acc,)
+                        )
+            except Exception:
+                pass
 
             # Regla: no se pueden repetir nombres de rol (ya hay UNIQUE en slug)
             try:

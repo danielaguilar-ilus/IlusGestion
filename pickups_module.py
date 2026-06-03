@@ -2838,7 +2838,7 @@ def register_pickup_routes(app, ctx):
     #  _validar_disponibilidad_slot (no duplica lógica fecha/capacidad).
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/nuevo", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_create_internal():
         f = request.form
         def _err(msg, code=400):
@@ -3137,7 +3137,7 @@ def register_pickup_routes(app, ctx):
             return redirect(url_for("pickup_dashboard"))
 
     @app.route("/retiros/<int:rid>/status", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_update_status(rid):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
@@ -3195,7 +3195,7 @@ def register_pickup_routes(app, ctx):
         return redirect(url_for("pickup_detail", rid=rid))
 
     @app.route("/retiros/<int:rid>/validar-doc", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_validar_doc(rid):
         """Paso 1 del proceso interno: validar documentación del cliente.
         Marca el estado de validación, calcula peso/vol/tiempo estimado y
@@ -3751,7 +3751,7 @@ def register_pickup_routes(app, ctx):
         return jsonify({"ok": True, "resultados": resultados})
 
     @app.route("/retiros/<int:rid>/docs/agregar", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_doc_agregar(rid):
         """Agrega un documento del ERP al retiro. Valida que exista, calcula
         peso/vol/m³ desde las líneas, guarda snapshot y recalcula totales.
@@ -4405,7 +4405,7 @@ def register_pickup_routes(app, ctx):
         return jsonify(resp)
 
     @app.route("/retiros/<int:rid>/docs/<int:doc_id>", methods=["DELETE", "POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_doc_quitar(rid, doc_id):
         """Quita un documento del retiro y recalcula totales.
         Acepta DELETE o POST (POST con _method=DELETE para clientes que no soporten DELETE).
@@ -4722,7 +4722,7 @@ def register_pickup_routes(app, ctx):
         })
 
     @app.route("/retiros/<int:rid>/docs/<int:doc_id>/lineas", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_doc_lineas_guardar(rid, doc_id):
         """Guarda selección granular de líneas. UPSERT en pickup_doc_lineas.
 
@@ -5566,7 +5566,7 @@ def register_pickup_routes(app, ctx):
     #  oficial el dueño del documento"
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/<int:rid>/customer", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_actualizar_cliente(rid):
         """Actualiza nombre/RUT del cliente y, opcionalmente, copia los
         datos actuales del cliente como persona-que-retira (oficial = dueño
@@ -5810,7 +5810,7 @@ def register_pickup_routes(app, ctx):
         return {"sent": sent, "failed": failed, "total": len(emails)}
 
     @app.route("/retiros/<int:rid>/field", methods=["PATCH", "POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_inline_field(rid):
         """Auto-save inline de un campo de la ficha.
 
@@ -6102,7 +6102,7 @@ def register_pickup_routes(app, ctx):
 
 
     @app.route("/retiros/<int:rid>/proposal", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_create_proposal(rid):
         """Crea/envía propuesta al cliente. Soporta dos modos:
           - HTML form (legacy): redirect a pickup_detail
@@ -6178,7 +6178,7 @@ def register_pickup_routes(app, ctx):
         date, tf, tt = request.form.get("date"), request.form.get("time_from"), request.form.get("time_to")
         cfg = settings()
         # FASE 2 (2026-05-29): validador temporal central, modo 'internal'.
-        # El OPERADOR (endpoint bajo @require_permission("edit")) puede CRUZAR
+        # El OPERADOR (endpoint bajo @require_permission("retiros")) puede CRUZAR
         # la colación si la factura es grande, PERO ya NO puede proponer
         # fecha/hora PASADA (antes date_allowed lo permitía — bug). El cliente
         # público nunca pasa por acá.
@@ -6270,7 +6270,7 @@ def register_pickup_routes(app, ctx):
         return redirect(url_for("pickup_detail", rid=rid))
 
     @app.route("/retiros/<int:rid>/message", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_send_message(rid):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
