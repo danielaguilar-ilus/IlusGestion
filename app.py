@@ -2926,11 +2926,16 @@ def _legacy_permission_set(role):
     if role == "vendedor":
         return {**base, "view": True, "cubicador": True, "etiquetas": True}
     if role == "transporte":
-        # Rol de Transporte: monitor + cubicador + asignar + manifiestos +
-        # couriers. Defensivo: si por algún motivo el rol no tiene filas en
-        # rol_permisos, igual queda operativo (antes devolvía todo False → la
-        # usuaria veía el menú pero cada submódulo la rebotaba a /transporte).
-        return {**base, "view": True, "transporte": True, "cubicador": True,
+        # Rol de Transporte (según matriz configurada por Daniel):
+        #   - Etiquetas: ver, crear, editar, imprimir
+        #   - Transporte: monitor + cubicador + asignar + manifiestos + couriers
+        # Defensivo: si el rol no tiene filas en rol_permisos, igual queda
+        # operativo (antes devolvía todo False → veía el menú pero cada
+        # submódulo la rebotaba; y faltaba etiquetas → no veía ese módulo).
+        return {**base,
+                "view": True, "create": True, "edit": True, "print": True,
+                "etiquetas": True,
+                "transporte": True, "cubicador": True,
                 "tr_cubicador": True, "tr_asignar": True,
                 "tr_manifiestos": True, "tr_couriers": True}
     return base
@@ -3007,23 +3012,33 @@ def _role_has_matrix_rows(role):
         return False
 
 
+# TTL del caché de permisos (segundos). Auto-sana aunque la señal cross-worker
+# falle: cualquier cambio de matriz se refleja en ≤ este tiempo SIN reiniciar.
+# Antes el caché no expiraba → si app_cache_signals fallaba, un worker quedaba
+# con permisos viejos PARA SIEMPRE (caso Alison: re-login no ayudaba porque el
+# caché es por-ROL compartido, no por-sesión).
+_ROLE_PERMS_TTL_S = 45
+_ROLE_PERMS_CACHE_TS = {}   # role → epoch en que se cacheó
+
 def permission_set(role):
-    """Devuelve dict de permisos para un rol. Con caché en proceso.
-    Si otro worker invalidó el caché vía `app_cache_signals`, este worker
-    se entera a lo sumo cada _CACHE_SIGNAL_POLL_S segundos."""
+    """Devuelve dict de permisos para un rol. Caché en proceso con TTL +
+    invalidación cross-worker (señal app_cache_signals)."""
     if role is None:
         return _empty_perms()
     if role == "superadmin":
         return {k: True for k in PERMS_KEYS}
+    import time as _t
     # Detecta invalidación cross-worker (poleo BD ≤ cada 30s)
     try:
         if _cache_signal_changed("role_perms"):
             _ROLE_PERMS_CACHE.clear()
+            _ROLE_PERMS_CACHE_TS.clear()
     except Exception:
         pass
-    # Cache check
+    # Cache check con TTL — si expiró, recomputa (auto-sana sin reinicio)
     cached = _ROLE_PERMS_CACHE.get(role)
-    if cached is not None:
+    ts = _ROLE_PERMS_CACHE_TS.get(role, 0)
+    if cached is not None and (_t.time() - ts) < _ROLE_PERMS_TTL_S:
         return cached
     # Si la matriz tiene filas para este rol → usar matriz dinámica
     # Si no → fallback legacy hardcoded
@@ -3032,6 +3047,7 @@ def permission_set(role):
     else:
         perms = _legacy_permission_set(role)
     _ROLE_PERMS_CACHE[role] = perms
+    _ROLE_PERMS_CACHE_TS[role] = _t.time()
     return perms
 
 
@@ -3041,8 +3057,10 @@ def invalidate_role_cache(role=None):
     Notifica a los demás workers vía `app_cache_signals`."""
     if role:
         _ROLE_PERMS_CACHE.pop(role, None)
+        _ROLE_PERMS_CACHE_TS.pop(role, None)
     else:
         _ROLE_PERMS_CACHE.clear()
+        _ROLE_PERMS_CACHE_TS.clear()
     try:
         _cache_signal_bump("role_perms")
     except Exception:

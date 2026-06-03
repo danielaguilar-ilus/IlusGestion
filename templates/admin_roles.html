@@ -346,7 +346,25 @@ async function confirmarEliminarRol(slug, nombre) {
     danger: true,
   });
   if (!ok) return;
-  location.href = '/admin/roles/' + encodeURIComponent(slug) + '/eliminar';
+  // BUG FIX 2026-06-03: el endpoint /admin/roles/<slug>/eliminar solo acepta
+  // POST. Antes se usaba location.href (GET) → 405 Method Not Allowed → el rol
+  // nunca se borraba. Ahora se hace POST vía fetch.
+  try {
+    const r = await fetch('/admin/roles/' + encodeURIComponent(slug) + '/eliminar', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (r.ok || r.redirected) {
+      if (window.ilusToast) ilusToast(`Rol "${nombre}" eliminado`, { type: 'success' });
+      setTimeout(() => location.reload(), 700);
+    } else {
+      const txt = await r.text().catch(() => '');
+      if (window.ilusToast) ilusToast('No se pudo eliminar el rol (HTTP ' + r.status + ')', { type: 'error' });
+      console.warn('[eliminar rol] fallo', r.status, txt.slice(0, 200));
+    }
+  } catch (e) {
+    if (window.ilusToast) ilusToast('Error de conexión al eliminar el rol', { type: 'error' });
+  }
 }
 
 function rmSelectRol(slug, btn) {
