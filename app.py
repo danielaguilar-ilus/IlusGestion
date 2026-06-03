@@ -8479,7 +8479,7 @@ def etiquetas_masivo_zip(batch_id):
 # ─────────────────────────────────────────────
 
 @app.route("/products/export/excel")
-@login_required
+@require_permission("print")
 def export_excel():
     try:
         import openpyxl
@@ -9050,6 +9050,65 @@ PERMISSIONS_MATRIX = {
                        "acciones":["ajustes","usuarios","roles","marketing","login_imagenes"]},
 }
 
+# Metadata UI de cada acción — Daniel 2026-06-03: la matriz se reorganiza en
+# dos grupos visuales: SUBMÓDULOS (acceso a una pantalla) y BLOQUEOS (acciones
+# sensibles que se desactivan a propósito: imprimir/descargar, eliminar,
+# kill switch). Mismo dato persistido (rol_permisos), distinta presentación.
+PERMISSIONS_META = {
+    "etiquetas": {
+        "ver":      {"label": "Catálogo",                 "tipo": "submodulo", "icon": "bi-boxes"},
+        "crear":    {"label": "Nuevo producto",           "tipo": "submodulo", "icon": "bi-plus-circle"},
+        "editar":   {"label": "Editar producto",          "tipo": "submodulo", "icon": "bi-pencil"},
+        "masivo":   {"label": "Carga masiva",             "tipo": "submodulo", "icon": "bi-collection"},
+        "imprimir": {"label": "Imprimir / Descargar PDF", "tipo": "bloqueo",   "icon": "bi-printer"},
+        "eliminar": {"label": "Eliminar producto",        "tipo": "bloqueo",   "icon": "bi-trash"},
+    },
+    "mantenciones": {
+        "ver":          {"label": "Acceso al módulo",     "tipo": "submodulo", "icon": "bi-wrench"},
+        "crear":        {"label": "Crear OT / cliente",   "tipo": "submodulo", "icon": "bi-plus-circle"},
+        "editar":       {"label": "Editar OT / cliente",  "tipo": "submodulo", "icon": "bi-pencil"},
+        "calendario":   {"label": "Calendario de visitas","tipo": "submodulo", "icon": "bi-calendar"},
+        "ots":          {"label": "Órdenes de Trabajo",   "tipo": "submodulo", "icon": "bi-card-checklist"},
+        "cotizaciones": {"label": "Cotizaciones",         "tipo": "submodulo", "icon": "bi-currency-dollar"},
+        "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
+    },
+    "retiros": {
+        "ver":       {"label": "Monitor de retiros",  "tipo": "submodulo", "icon": "bi-eye"},
+        "gestionar": {"label": "Gestionar retiros",   "tipo": "submodulo", "icon": "bi-tools"},
+        "monitor":   {"label": "Dashboard avanzado",  "tipo": "submodulo", "icon": "bi-speedometer"},
+        "marketing": {"label": "Marketing de retiros","tipo": "submodulo", "icon": "bi-megaphone"},
+    },
+    "transporte": {
+        "ver":         {"label": "Monitor transporte","tipo": "submodulo", "icon": "bi-truck"},
+        "cubicador":   {"label": "Cubicador",         "tipo": "submodulo", "icon": "bi-box"},
+        "asignar":     {"label": "Asignar y Cotizar", "tipo": "submodulo", "icon": "bi-clipboard-check"},
+        "manifiestos": {"label": "Manifiestos",       "tipo": "submodulo", "icon": "bi-file-earmark-text"},
+        "couriers":    {"label": "Couriers / tarifas","tipo": "submodulo", "icon": "bi-cash-coin"},
+    },
+    "comunicaciones": {
+        "ver":         {"label": "Ver historial",         "tipo": "submodulo", "icon": "bi-chat-dots"},
+        "configurar":  {"label": "Configurar canales",    "tipo": "submodulo", "icon": "bi-gear"},
+        "enviar":      {"label": "Enviar mensajes",       "tipo": "submodulo", "icon": "bi-send"},
+        "plantillas":  {"label": "Plantillas",            "tipo": "submodulo", "icon": "bi-card-text"},
+        "kill_switch": {"label": "Kill switch (cortar canal)","tipo": "bloqueo", "icon": "bi-power"},
+    },
+    "admin": {
+        "ajustes":        {"label": "Ajustes generales", "tipo": "submodulo", "icon": "bi-gear-wide-connected"},
+        "usuarios":       {"label": "Usuarios",          "tipo": "submodulo", "icon": "bi-people"},
+        "roles":          {"label": "Roles y permisos",  "tipo": "submodulo", "icon": "bi-shield-lock"},
+        "marketing":      {"label": "Marketing",         "tipo": "submodulo", "icon": "bi-megaphone"},
+        "login_imagenes": {"label": "Imágenes de login", "tipo": "submodulo", "icon": "bi-image"},
+    },
+}
+
+def _accion_meta(modulo, accion):
+    """Devuelve dict {label, tipo, icon} para una acción. Default si no existe."""
+    return (PERMISSIONS_META.get(modulo, {}) or {}).get(accion) or {
+        "label": accion.replace("_", " ").title(),
+        "tipo": "submodulo",
+        "icon": "bi-check2",
+    }
+
 
 def _get_roles_disponibles():
     """
@@ -9126,10 +9185,25 @@ def admin_roles():
     perms_by_role = {}
     for r in roles:
         perms_by_role[r["slug"]] = get_role_permissions(r["slug"])
+    # Pre-clasifico cada acción por tipo (submodulo / bloqueo) para que el
+    # template renderice 2 grupos visuales sin tener que llamar a Python.
+    matrix_grouped = {}
+    for mod_key, mod_cfg in PERMISSIONS_MATRIX.items():
+        subs, blocks = [], []
+        for accion in mod_cfg["acciones"]:
+            meta = _accion_meta(mod_key, accion)
+            entry = {"key": accion, **meta}
+            (subs if meta["tipo"] == "submodulo" else blocks).append(entry)
+        matrix_grouped[mod_key] = {
+            **mod_cfg,
+            "submodulos": subs,
+            "bloqueos":   blocks,
+        }
     return render_template("admin_roles.html",
         users=[dict(u) for u in users],
         roles=[dict(r) for r in roles],
         matrix=PERMISSIONS_MATRIX,
+        matrix_grouped=matrix_grouped,
         perms=perms_by_role,
     )
 

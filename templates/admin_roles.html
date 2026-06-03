@@ -67,6 +67,31 @@
 .rm-action-chip input{display:none;}
 .rm-action-chip.checked{background:#dcfce7;border-color:#86efac;color:#166534;}
 .rm-action-chip.checked::before{content:'✓ ';font-weight:800;}
+.rm-action-chip i{font-size:.85rem;}
+
+/* Agrupación por TIPO (Submódulos vs Bloqueos) — Daniel 2026-06-03 */
+.rm-action-groups{display:flex;flex-direction:column;gap:10px;}
+.rm-action-group{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.rm-group-label{font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;
+                color:#92400e;font-weight:800;display:inline-flex;align-items:center;
+                gap:6px;background:#fef3c7;padding:3px 10px;border-radius:50px;
+                border:1px solid #fde68a;}
+.rm-group-label i{color:#d97706;}
+/* Submódulos: verde cuando activos = acceso permitido */
+.rm-chip-sub.checked{background:#dcfce7;border-color:#16a34a;color:#166534;}
+.rm-chip-sub.checked i{color:#16a34a;}
+/* Bloqueos: ámbar cuando activos = acción sensible PERMITIDA (atención del admin) */
+.rm-chip-bloq{border-style:dashed;}
+.rm-chip-bloq.checked{background:#fff7ed;border-color:#f59e0b;border-style:solid;
+                       color:#92400e;}
+.rm-chip-bloq.checked::before{content:'⚠ ';font-weight:800;}
+.rm-chip-bloq.checked i{color:#d97706;}
+.rm-chip-bloq:not(.checked){opacity:.7;}
+.rm-chip-bloq:not(.checked)::before{content:'🚫 ';font-weight:800;}
+
+.rm-col-title{display:flex;gap:14px;align-items:center;}
+.rm-col-sub, .rm-col-bloq{display:inline-flex;flex-direction:column;line-height:1.2;}
+.rm-col-sub small, .rm-col-bloq small{font-size:.62rem;}
 
 .rm-actions-bar{padding:14px 18px;border-top:1px solid var(--border);
                 background:#fafbfc;display:flex;justify-content:space-between;
@@ -225,26 +250,57 @@
       <thead>
         <tr>
           <th style="width:200px">Módulo</th>
-          <th>Acciones</th>
+          <th>
+            <span class="rm-col-title">
+              <span class="rm-col-sub">Submódulos
+                <small class="text-muted" style="font-weight:400">(acceso a pantallas)</small>
+              </span>
+              <span class="rm-col-bloq">Bloqueos
+                <small class="text-muted" style="font-weight:400">(acciones sensibles)</small>
+              </span>
+            </span>
+          </th>
         </tr>
       </thead>
       <tbody>
-        {% for mod_key, mod_cfg in matrix.items() %}
+        {% for mod_key, mod_cfg in matrix_grouped.items() %}
         <tr>
           <td>
             <div class="rm-modulo"><i class="bi {{ mod_cfg.icon }}"></i>{{ mod_cfg.label }}</div>
           </td>
           <td>
-            <div class="rm-action-list">
-              {% for accion in mod_cfg.acciones %}
-              {% set checked = perms.get(r.slug,{}).get(mod_key,{}).get(accion, False) %}
-              <label class="rm-action-chip{% if checked %} checked{% endif %}">
-                <input type="checkbox" name="p_.{{ mod_key }}.{{ accion }}"
-                       {% if checked %}checked{% endif %}
-                       onchange="this.parentElement.classList.toggle('checked', this.checked)">
-                {{ accion.replace('_',' ').title() }}
-              </label>
-              {% endfor %}
+            <div class="rm-action-groups">
+              {# ── SUBMÓDULOS — acceso a pantallas (verde) ── #}
+              <div class="rm-action-group rm-group-sub">
+                {% for ac in mod_cfg.submodulos %}
+                {% set checked = perms.get(r.slug,{}).get(mod_key,{}).get(ac.key, False) %}
+                <label class="rm-action-chip rm-chip-sub{% if checked %} checked{% endif %}"
+                       title="Acceso al submódulo {{ ac.label }}">
+                  <input type="checkbox" name="p_.{{ mod_key }}.{{ ac.key }}"
+                         {% if checked %}checked{% endif %}
+                         onchange="this.parentElement.classList.toggle('checked', this.checked)">
+                  <i class="bi {{ ac.icon }}"></i>{{ ac.label }}
+                </label>
+                {% endfor %}
+              </div>
+              {# ── BLOQUEOS — acciones sensibles (rojo cuando ACTIVAS = permitidas) ── #}
+              {% if mod_cfg.bloqueos %}
+              <div class="rm-action-group rm-group-bloq">
+                <div class="rm-group-label">
+                  <i class="bi bi-shield-exclamation"></i> Permite también:
+                </div>
+                {% for ac in mod_cfg.bloqueos %}
+                {% set checked = perms.get(r.slug,{}).get(mod_key,{}).get(ac.key, False) %}
+                <label class="rm-action-chip rm-chip-bloq{% if checked %} checked{% endif %}"
+                       title="{{ ac.label }} — desmarcalo para BLOQUEAR esta acción">
+                  <input type="checkbox" name="p_.{{ mod_key }}.{{ ac.key }}"
+                         {% if checked %}checked{% endif %}
+                         onchange="this.parentElement.classList.toggle('checked', this.checked)">
+                  <i class="bi {{ ac.icon }}"></i>{{ ac.label }}
+                </label>
+                {% endfor %}
+              </div>
+              {% endif %}
             </div>
           </td>
         </tr>
