@@ -3294,7 +3294,15 @@ def load_current_user():
         cached_ts = cached.get("ts", 0)
         # TTL diferenciado: admin/superadmin 10s, resto 60s
         _ttl = 10 if cached.get("role") in ("superadmin", "admin") else 60
-        if (time.time() - cached_ts) < _ttl:
+        # Época de auth (2026-06-01): si un admin cambió roles desde que se
+        # cacheó esta sesión, forzamos re-lectura de BD para traer rol/permisos
+        # frescos. Ante CUALQUIER error, _epoch_ok=True → usa el caché normal
+        # (degradación segura: nunca deja a un usuario sin sesión).
+        try:
+            _epoch_ok = (cached.get("ae", "") == _current_auth_epoch())
+        except Exception:
+            _epoch_ok = True
+        if _epoch_ok and (time.time() - cached_ts) < _ttl:
             g.user = cached
             g.permissions = permission_set(cached["role"])
             # Heartbeat last_seen_at (throttle 60s en memoria del proceso)
@@ -3327,6 +3335,7 @@ def load_current_user():
         "role":     user["role"],
         "active":   user["active"],
         "ts":       time.time(),
+        "ae":       _current_auth_epoch(),   # época de auth al momento de cachear
     }
 
     # Heartbeat last_seen_at (throttle 60s en memoria del proceso) —
@@ -3428,6 +3437,36 @@ def _cache_signal_changed(scope: str) -> bool:
         prev_ts, _ = _cache_signal_local.get(scope, (None, 0.0))
         _cache_signal_local[scope] = (new_ts, now)
         return (new_ts is not None) and (prev_ts is None or new_ts != prev_ts)
+
+
+# ── ÉPOCA DE AUTH (Daniel 2026-06-01) ─────────────────────────────────
+# Cuando un admin cambia el rol de un usuario (o lo elimina) se hace
+# _cache_signal_bump("auth"). La sesión del usuario afectado tiene cacheado
+# su rol/permisos (cookie _uc, TTL 60s); sin esto seguiría con permisos
+# VIEJOS hasta 60s o hasta re-login. Con la "época", el cargador de sesión
+# detecta el cambio y re-lee el rol fresco de la BD en la próxima navegación
+# del usuario — sin que tenga que cerrar sesión a mano.
+#
+# Lectura NO consumidora (a diferencia de _cache_signal_changed), cacheada
+# por worker ≤15s. Devuelve str del timestamp de la señal, o "" si no hay.
+_AUTH_EPOCH_CACHE = {"val": "", "checked": 0.0}
+_AUTH_EPOCH_POLL_S = 15
+
+
+def _current_auth_epoch():
+    now = time.monotonic()
+    c = _AUTH_EPOCH_CACHE
+    if (now - c["checked"]) < _AUTH_EPOCH_POLL_S:
+        return c["val"]
+    try:
+        row = mysql_fetchone(
+            "SELECT updated_at FROM app_cache_signals WHERE scope='auth'"
+        )
+        c["val"] = str((row or {}).get("updated_at") or "")
+    except Exception:
+        pass  # ante error conservamos el último valor (nunca rompe el login)
+    c["checked"] = now
+    return c["val"]
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -9001,6 +9040,14 @@ def admin_roles_update(uid):
         with conn.cursor() as cur:
             cur.execute(f"UPDATE `{AUTH_TABLE}` SET role=%s WHERE id=%s", (role, uid))
         conn.commit()
+        # Refresco de sesión (2026-06-01): el usuario afectado tiene su rol
+        # cacheado en la cookie de sesión. Bumpeamos la época de auth para que
+        # en su próxima navegación re-lea el rol/permisos frescos de la BD,
+        # sin tener que cerrar sesión a mano.
+        try: _cache_signal_bump("auth")
+        except Exception: pass
+        _audit("user_role_change", target_type="user", target_id=uid,
+               details={"nuevo_rol": role})
         return jsonify({"ok":True})
     finally:
         conn.close()
@@ -9121,8 +9168,62 @@ def admin_rol_eliminar(slug):
     mysql_execute(f"UPDATE `{AUTH_TABLE}` SET role='lector' WHERE role=%s", (slug,))
     mysql_execute("DELETE FROM rol_permisos WHERE rol_slug=%s", (slug,))
     mysql_execute("DELETE FROM roles_dinamicos WHERE slug=%s", (slug,))
+    # Refrescar sesión de los usuarios reasignados + invalidar caché de rol.
+    try: _cache_signal_bump("auth")
+    except Exception: pass
+    try: invalidate_role_cache(slug)
+    except Exception: pass
     flash(f"Rol {slug} eliminado.", "success")
     return redirect(url_for("admin_roles_matrix"))
+
+
+@app.route("/admin/roles/diagnostico")
+@require_permission("admin")
+def admin_roles_diagnostico():
+    """Diagnóstico SEGURO (read-only) de roles — Daniel 2026-06-01.
+    Muestra las filas REALES de roles_dinamicos + cuántos usuarios tiene cada
+    rol + duplicados por nombre. Para depurar el 'doble Super Administrador'
+    sin tocar datos. Solo superadmin."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"error": "Solo superadmin"}), 403
+    roles = mysql_fetchall(
+        "SELECT id, slug, nombre, color, is_system, activo, created_at "
+        "FROM roles_dinamicos ORDER BY nombre, id"
+    ) or []
+    ucounts = mysql_fetchall(
+        f"SELECT role AS slug, COUNT(*) AS n FROM `{AUTH_TABLE}` GROUP BY role"
+    ) or []
+    cnt = {r["slug"]: int(r["n"]) for r in ucounts}
+    # Duplicados por nombre (case-insensitive)
+    by_name = {}
+    for r in roles:
+        by_name.setdefault((r["nombre"] or "").strip().lower(), []).append(r["slug"])
+    dups = {k: v for k, v in by_name.items() if len(v) > 1}
+    out = []
+    for r in roles:
+        out.append({
+            "id":        r["id"],
+            "slug":      r["slug"],
+            "nombre":    r["nombre"],
+            "is_system": bool(r["is_system"]),
+            "activo":    bool(r["activo"]),
+            "usuarios":  cnt.get(r["slug"], 0),
+            "eliminable": (not r["is_system"]),
+        })
+    # Usuarios cuyo rol NO existe en roles_dinamicos (huérfanos) — útil saberlo
+    slugs_existentes = {r["slug"] for r in roles}
+    huerfanos = {s: n for s, n in cnt.items() if s not in slugs_existentes and s != "superadmin"}
+    return jsonify({
+        "ok": True,
+        "total_roles": len(roles),
+        "roles": out,
+        "duplicados_por_nombre": dups,
+        "usuarios_por_rol": cnt,
+        "roles_huerfanos_con_usuarios": huerfanos,
+        "nota": "is_system=true → NO eliminable. 'usuarios' = cuántas cuentas "
+                "tienen ese rol (revisar antes de borrar/mergear). Si hay "
+                "'duplicados_por_nombre', son varias filas con el mismo nombre.",
+    })
 
 
 # ══════════════════════════════════════════════════════════════
