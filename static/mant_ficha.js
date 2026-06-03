@@ -7003,14 +7003,10 @@ async function cargarReportes() {
             </div>` : ''}
           </div>
           <div class="d-flex gap-1 flex-shrink-0 flex-wrap">
-            ${rep.html_url ? `
-              <a href="${rep.html_url}" target="_blank" class="btn btn-xs btn-outline-success" title="Ver HTML guardado">
-                <i class="bi bi-eye"></i>
-              </a>
-              <a href="${rep.html_url}" download="informe_${rep.id}.html" class="btn btn-xs btn-outline-secondary" title="Descargar HTML">
-                <i class="bi bi-download"></i>
-              </a>` : ''}
-            <a href="/mantenciones/api/reportes/${rep.id}/pdf" target="_blank" class="btn btn-xs btn-outline-danger" title="Descargar PDF">
+            <a href="/mantenciones/api/reportes/${rep.id}/html" target="_blank" class="btn btn-xs btn-outline-success fw-bold" title="Ver informe (rápido, sin esperar el motor PDF)">
+              <i class="bi bi-eye me-1"></i>Ver
+            </a>
+            <a href="/mantenciones/api/reportes/${rep.id}/pdf" target="_blank" class="btn btn-xs btn-outline-danger" title="Descargar PDF (puede tardar si el motor PDF del servidor no está disponible)">
               <i class="bi bi-file-earmark-pdf"></i>
             </a>
             <a href="/mantenciones/api/reportes/${rep.id}/word" class="btn btn-xs btn-outline-dark" title="Descargar Word">

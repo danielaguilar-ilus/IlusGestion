@@ -309,6 +309,9 @@ _pw_lock     = threading.Lock()
 _pw_ctx      = None   # sync_playwright() context manager
 _pw_browser  = None   # Browser instance reutilizado
 _pw_install_attempted = False  # Solo intentamos auto-install una vez por proceso
+_pw_unavailable = False  # FAST-FAIL: si Chromium falla una vez, no reintentar en este proceso
+                         # (evita colgar requests hasta 240s + serializar todos los PDF
+                         #  detrás del lock global cuando Chromium está caído en prod).
 
 
 def _pw_install_chromium_runtime():
@@ -346,7 +349,7 @@ def _pw_install_chromium_runtime():
         env = {**_os.environ, "PLAYWRIGHT_BROWSERS_PATH": pw_path}
         result = _sp.run(
             [_sys.executable, "-m", "playwright", "install", "chromium"],
-            env=env, capture_output=True, text=True, timeout=240
+            env=env, capture_output=True, text=True, timeout=60
         )
         if result.returncode == 0:
             print(f"[playwright] ✓ Chromium instalado en {pw_path}", flush=True)
@@ -377,7 +380,13 @@ def _pw_browser_get():
     Si Chromium no está instalado (build de Railway falló), intenta
     auto-instalarlo en runtime UNA SOLA VEZ por proceso.
     """
-    global _pw_ctx, _pw_browser
+    global _pw_ctx, _pw_browser, _pw_unavailable
+    # FAST-FAIL: si en este proceso ya confirmamos que Chromium no está disponible,
+    # fallar al instante — NO esperar el lock global ni el subprocess de install.
+    # (Antes, el primer PDF tras cada deploy colgaba hasta 60s y serializaba TODOS los
+    #  demás PDF detrás del lock. Esto era el "procesando indefinidamente" de Aarón.)
+    if _pw_unavailable:
+        raise PDFEngineUnavailable("Chromium no disponible en este proceso (fast-fail).")
     with _pw_lock:
         # Verificar si el browser sigue vivo
         if _pw_browser is not None:
@@ -424,9 +433,11 @@ def _pw_browser_get():
                         return _try_launch()
                     except Exception as e_retry:
                         print(f"[playwright] Launch falló tras install: {e_retry}", flush=True)
+                        _pw_unavailable = True   # fast-fail para próximos PDF de este proceso
                         raise
                 else:
-                    # Auto-install falló — propagar el error original
+                    # Auto-install falló — marcar no disponible y propagar el error
+                    _pw_unavailable = True       # fast-fail para próximos PDF de este proceso
                     raise
             else:
                 raise
@@ -29668,7 +29679,7 @@ Incluye: datos del cliente, condiciones contractuales, costos, equipos mencionad
 
     try:
         import anthropic as _anthropic
-        cliente_ia = _anthropic.Anthropic(api_key=ai_key)
+        cliente_ia = _anthropic.Anthropic(api_key=ai_key, timeout=60)
 
         if is_image:
             # Análisis por visión (foto del contrato desde celular)
@@ -34929,7 +34940,7 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
     else:
         models_to_try = _CLAUDE_MODELS_FALLBACK
     last_err = None
-    client = _anthropic.Anthropic(api_key=ai_key)
+    client = _anthropic.Anthropic(api_key=ai_key, timeout=60)
 
     # Si hay attachments, construir content como lista (texto + adjuntos)
     if attachments:
@@ -46919,9 +46930,13 @@ def _save_reporte_html_snapshot(rid):
 @app.route("/mantenciones/api/clientes/<int:cid>/reportes", methods=["GET"])
 @_mant_required
 def mant_reportes_list(cid):
+    # PERF 2026-06-03: el listado solo muestra un preview de ai_diagnostico
+    # (mant_ficha.js usa .slice(0,220)). Traer LEFT(...,240) en vez del TEXT
+    # completo evita transferir párrafos enteros por fila (Railway↔Clever Cloud).
     _SEL = (
         "SELECT id,tipo,estado,ticket_num,ot_num,asunto,tecnico_junior,tecnico_senior,"
-        "fecha_inicio,fecha_cierre,ai_diagnostico,ai_fecha,html_path,html_generated_at,"
+        "fecha_inicio,fecha_cierre,LEFT(ai_diagnostico,240) AS ai_diagnostico,"
+        "ai_fecha,html_path,html_generated_at,"
         "created_by,created_at "
         "FROM mant_reportes WHERE cliente_id=%s ORDER BY created_at DESC"
     )
@@ -47535,7 +47550,7 @@ Responde SOLO en JSON con esta estructura:
 
     try:
         import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=ai_key)
+        client = _anthropic.Anthropic(api_key=ai_key, timeout=60)
         msg = client.messages.create(
             model="claude-opus-4-5", max_tokens=2000,
             messages=[{"role":"user","content":prompt}]
@@ -52742,6 +52757,21 @@ def _ensure_mant_reportes_columns():
             print("[ensure_rep_cols] ENUM tipo ampliado con 'visita_tecnica'", flush=True)
     except Exception as e_enum:
         print(f"[ensure_rep_cols] no se pudo ampliar ENUM tipo: {e_enum}", flush=True)
+
+    # PERF 2026-06-03: índice compuesto (cliente_id, created_at) para servir
+    # "WHERE cliente_id=%s ORDER BY created_at DESC" (listado de informes de la
+    # ficha) directo del índice, sin filesort. Idempotente: solo si no existe.
+    try:
+        _idx = mysql_fetchone(
+            "SELECT 1 AS x FROM information_schema.STATISTICS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_reportes' "
+            "  AND INDEX_NAME='idx_rep_cli_creado' LIMIT 1")
+        if not _idx:
+            mysql_execute(
+                "ALTER TABLE mant_reportes ADD INDEX idx_rep_cli_creado (cliente_id, created_at)")
+            print("[ensure_rep_cols] índice idx_rep_cli_creado creado", flush=True)
+    except Exception as e_idx:
+        print(f"[ensure_rep_cols] no se pudo crear índice idx_rep_cli_creado: {e_idx}", flush=True)
     return faltantes
 
 
@@ -54132,7 +54162,7 @@ EVIDENCIA VISUAL — fotos por tipo (últimos 90 días):
     try:
         import anthropic as _anthropic
         t0 = _time.time()
-        ai  = _anthropic.Anthropic(api_key=ai_key)
+        ai  = _anthropic.Anthropic(api_key=ai_key, timeout=60)
         # Modelo actualizado: claude-opus-4-7 (era 4-5 hasta 2026-05-21)
         msg = ai.messages.create(
             model="claude-opus-4-7",
