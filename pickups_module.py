@@ -2800,6 +2800,7 @@ def register_pickup_routes(app, ctx):
                        total_volume_m3, peso_real_kg, peso_vol_kg,
                        tiempo_estimado_min, doc_validation_status,
                        information_quality_score, risk_score,
+                       request_source, created_by_user_name,
                        created_at, updated_at
                 FROM `{REQ}`
                 WHERE {' AND '.join(where)}
@@ -2828,121 +2829,136 @@ def register_pickup_routes(app, ctx):
         )
 
     # ══════════════════════════════════════════════════════════════════
-    #  BANDEJA "HACER HOY" — tareas prioritarias del equipo
+    #  NUEVO RETIRO INTERNO / BACKOFFICE (Daniel 2026-05-29)
+    #  Botón [+ Nuevo retiro interno] en el monitor → modal → POST aquí.
+    #  Es el MISMO flujo que el público pero request_source='backoffice'.
+    #  Modo CONFIRMACIÓN DIRECTA: el operador marca que el cliente ya
+    #  aceptó por un canal (tel/correo/WhatsApp/presencial) → queda
+    #  agenda_confirmada al instante. Reusa validate_pickup_datetime +
+    #  _validar_disponibilidad_slot (no duplica lógica fecha/capacidad).
     # ══════════════════════════════════════════════════════════════════
-    @app.route("/retiros/api/bandeja-hoy")
+    @app.route("/retiros/nuevo", methods=["POST"])
     @require_permission("retiros")
-    def pickup_bandeja_hoy():
-        """Devuelve las 4 listas de tareas prioritarias del día.
+    def pickup_create_internal():
+        f = request.form
+        def _err(msg, code=400):
+            return jsonify({"ok": False, "error": msg}), code
 
-        Grupos:
-          - urgentes:         sin validar + fecha solicitada <= hoy+2 días
-          - sin_respuesta:    propuestas internas con > 24h sin respuesta
-          - confirmados_hoy:  agenda_confirmada con fecha hoy (a preparar)
-          - sin_firma:        retirados hoy sin firma/foto registrada
-        """
-        def _norm(rows):
-            out = []
-            for r in rows or []:
-                d = dict(r)
-                # Serializar fechas/horas a strings
-                for k in ("requested_date", "proposed_date", "confirmed_date"):
-                    if d.get(k):
-                        d[k] = d[k].isoformat() if hasattr(d[k], "isoformat") else str(d[k])
-                for k in ("requested_time_from", "requested_time_to",
-                          "proposed_time_from", "proposed_time_to",
-                          "confirmed_time_from", "confirmed_time_to"):
-                    if d.get(k):
-                        d[k] = str(d[k])[:5]
-                for k in ("created_at", "closed_at", "proposal_created_at"):
-                    if d.get(k):
-                        d[k] = str(d[k])[:19]
-                # URLs útiles para acciones
-                if d.get("id"):
-                    d["detail_url"] = url_for("pickup_detail", rid=d["id"])
-                if d.get("public_token"):
-                    d["tracking_url"] = url_for(
-                        "pickup_public_tracking",
-                        token=d["public_token"],
-                        _external=False,
-                    )
-                out.append(d)
-            return out
+        customer_name      = (f.get("customer_name") or "").strip()[:200]
+        document_type      = (f.get("document_type") or "").strip()[:40]
+        document_number    = (f.get("document_number") or "").strip()[:60]
+        pickup_person_name = (f.get("pickup_person_name") or "").strip()[:200]
+        date = (f.get("date") or "").strip()
+        tf   = (f.get("time_from") or "").strip()
+        tt   = (f.get("time_to") or "").strip()
+        canal = (f.get("canal") or "").strip().lower()[:30]
 
-        # 1) Urgentes: sin validar + fecha solicitada en los próximos 2 días
-        urgentes = mysql_fetchall(
-            f"""SELECT id, code, customer_name, contact_name, contact_phone,
-                       contact_email, document_type, document_number,
-                       requested_date, requested_time_from, requested_time_to,
-                       status, doc_validation_status, public_token, created_at
-                FROM `{REQ}`
-                WHERE status IN ('solicitud_recibida','en_revision')
-                  AND (doc_validation_status IS NULL
-                       OR doc_validation_status IN ('pendiente','en_revision'))
-                  AND requested_date IS NOT NULL
-                  AND requested_date <= DATE_ADD(CURDATE(), INTERVAL 2 DAY)
-                ORDER BY requested_date ASC, created_at ASC
-                LIMIT 50"""
-        ) or []
+        # ── FASE 8: validaciones obligatorias para confirmación directa ──
+        if len(customer_name) < 2:
+            return _err("Falta el nombre del cliente.")
+        if not document_type or not document_number:
+            return _err("Falta el documento (tipo y número).")
+        if len(pickup_person_name) < 2:
+            return _err("Falta la persona que retira.")
+        if not (date and tf and tt):
+            return _err("Falta la fecha y hora del retiro.")
+        if canal not in ("telefono", "correo", "whatsapp", "presencial"):
+            return _err("Para confirmar directo, marca el canal por el que el cliente aceptó.")
 
-        # 2) Propuestas enviadas hace > 24h sin respuesta del cliente
-        sin_respuesta = mysql_fetchall(
-            f"""SELECT pr.id, pr.code, pr.customer_name, pr.contact_name,
-                       pr.contact_phone, pr.contact_email,
-                       pr.document_type, pr.document_number,
-                       pr.status, pr.public_token,
-                       pp.date AS proposed_date,
-                       pp.time_from AS proposed_time_from,
-                       pp.time_to AS proposed_time_to,
-                       pp.created_at AS proposal_created_at
-                FROM `{REQ}` pr
-                JOIN `{PROP}` pp ON pp.request_id = pr.id
-                WHERE pp.proposed_by = 'internal'
-                  AND pp.status = 'pending'
-                  AND pp.created_at < NOW() - INTERVAL 24 HOUR
-                  AND pr.status NOT IN ('rechazada','cerrada','fallida','retirada')
-                ORDER BY pp.created_at ASC
-                LIMIT 50"""
-        ) or []
+        cfg = settings()
+        # Validación temporal central (modo interno: NO exige min_notice y
+        # permite cruzar colación, pero NUNCA fecha/hora pasada).
+        ok_dt, msg_dt = validate_pickup_datetime(date, tf, tt, cfg=cfg, mode="internal")
+        if not ok_dt:
+            return _err(msg_dt)
 
-        # 3) Confirmados para hoy (a preparar)
-        confirmados_hoy = mysql_fetchall(
-            f"""SELECT id, code, customer_name, contact_name, contact_phone,
-                       contact_email, document_type, document_number,
-                       confirmed_date, confirmed_time_from, confirmed_time_to,
-                       total_packages, total_weight_kg, total_volume_m3,
-                       pickup_person_name, status, public_token
-                FROM `{REQ}`
-                WHERE status = 'agenda_confirmada'
-                  AND DATE(confirmed_date) = CURDATE()
-                ORDER BY confirmed_time_from ASC
-                LIMIT 50"""
-        ) or []
+        try:    wkg = float(f.get("total_weight_kg") or 0)
+        except (TypeError, ValueError): wkg = 0.0
+        try:    m3 = float(f.get("total_volume_m3") or 0)
+        except (TypeError, ValueError): m3 = 0.0
+        try:    pv = float(f.get("total_volumetric_weight") or 0)
+        except (TypeError, ValueError): pv = 0.0
+        try:    bultos = int(f.get("total_packages") or 1)
+        except (TypeError, ValueError): bultos = 1
 
-        # 4) Retiradas hoy sin firma/foto registrada
-        sin_firma = mysql_fetchall(
-            f"""SELECT pr.id, pr.code, pr.customer_name, pr.contact_name,
-                       pr.contact_phone, pr.contact_email,
-                       pr.document_type, pr.document_number,
-                       pr.confirmed_date, pr.closed_at,
-                       pr.pickup_person_name, pr.status, pr.public_token
-                FROM `{REQ}` pr
-                WHERE pr.status = 'retirada'
-                  AND DATE(pr.closed_at) = CURDATE()
-                  AND pr.id NOT IN (
-                       SELECT request_id FROM `{SIG}` WHERE request_id IS NOT NULL
-                  )
-                ORDER BY pr.closed_at DESC
-                LIMIT 50"""
-        ) or []
+        # Capacidad real del slot (misma fuente que el calendario)
+        ok_slot, motivo = _validar_disponibilidad_slot(
+            date, tf, tt, extra_kg=wkg, extra_m3=m3, bypass_lunch=True
+        )
+        if not ok_slot:
+            return _err(f"Ese horario no está disponible: {motivo}", code=409)
+
+        u = getattr(g, "user", None) or {}
+        uid   = u.get("id")
+        uname = u.get("nombre") or u.get("username") or "interno"
+        now_cl = _now_chile().strftime("%Y-%m-%d %H:%M:%S")
+        token  = secrets.token_urlsafe(42)
+
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                code = _generate_pickup_code(cur)
+                cur.execute(
+                    f"""INSERT INTO `{REQ}`
+                        (code, request_source, created_by_user_id, created_by_user_name,
+                         internal_created_at, customer_confirm_required, customer_already_agreed,
+                         document_type, document_number, customer_name, customer_rut,
+                         contact_name, contact_email, contact_phone,
+                         pickup_person_name, pickup_person_rut, pickup_person_phone, pickup_person_relation,
+                         requested_date, requested_time_from, requested_time_to,
+                         proposed_date, proposed_time_from, proposed_time_to,
+                         confirmed_date, confirmed_time_from, confirmed_time_to,
+                         status, total_packages, total_weight_kg, total_volumetric_weight, total_volume_m3,
+                         observations, public_token, signature_status, created_ip, created_user_agent)
+                        VALUES (%s,'backoffice',%s,%s,%s,0,1,
+                                %s,%s,%s,%s,
+                                %s,%s,%s,
+                                %s,%s,%s,%s,
+                                %s,%s,%s,
+                                %s,%s,%s,
+                                %s,%s,%s,
+                                'agenda_confirmada',%s,%s,%s,%s,
+                                %s,%s,'pendiente',%s,%s)""",
+                    (code, uid, uname, now_cl,
+                     document_type, document_number, customer_name, (f.get("customer_rut") or "").strip()[:20],
+                     (f.get("contact_name") or pickup_person_name)[:180],
+                     (f.get("contact_email") or "").strip()[:190], (f.get("contact_phone") or "").strip()[:40],
+                     pickup_person_name, (f.get("pickup_person_rut") or "").strip()[:20],
+                     (f.get("pickup_person_phone") or "").strip()[:40], (f.get("pickup_person_relation") or "otro")[:30],
+                     date, tf, tt,  date, tf, tt,  date, tf, tt,
+                     bultos, wkg, pv, m3,
+                     (f.get("observations") or "").strip()[:2000], token,
+                     request.remote_addr, (request.user_agent.string or "")[:300]),
+                )
+                rid = cur.lastrowid
+            conn.commit()
+        except Exception as e:
+            try: conn.rollback()
+            except Exception: pass
+            return _err(f"No se pudo crear el retiro: {str(e)[:200]}", code=500)
+        finally:
+            try: conn.close()
+            except Exception: pass
+
+        # FASE 9: trazabilidad — log de creación interna + confirmación directa
+        log_event(rid, "retiro_interno_creado", None, "agenda_confirmada",
+                  f"Retiro backoffice creado por {uname} — confirmación directa (canal: {canal})",
+                  "interno", uname)
+        # Notificar al cliente si dejó email (no bloqueante)
+        try:
+            if (f.get("contact_email") or "").strip():
+                _fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+                if _fresh:
+                    notify_async(_fresh, "confirmed")
+        except Exception as _e:
+            print(f"[pickup_create_internal notify] {_e}", flush=True)
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
 
         return jsonify({
-            "ok": True,
-            "today": datetime.now().date().isoformat(),
-            "urgentes":        _norm(urgentes),
-            "sin_respuesta":   _norm(sin_respuesta),
-            "confirmados_hoy": _norm(confirmados_hoy),
-            "sin_firma":       _norm(sin_firma),
+            "ok": True, "id": rid, "code": code,
+            "message": f"Retiro {code} creado y confirmado para {date} {tf}-{tt}.",
+            "redirect_url": url_for("pickup_detail", rid=rid),
         })
 
     # ══════════════════════════════════════════════════════════════════
@@ -3121,7 +3137,7 @@ def register_pickup_routes(app, ctx):
             return redirect(url_for("pickup_dashboard"))
 
     @app.route("/retiros/<int:rid>/status", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_update_status(rid):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
@@ -3179,7 +3195,7 @@ def register_pickup_routes(app, ctx):
         return redirect(url_for("pickup_detail", rid=rid))
 
     @app.route("/retiros/<int:rid>/validar-doc", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_validar_doc(rid):
         """Paso 1 del proceso interno: validar documentación del cliente.
         Marca el estado de validación, calcula peso/vol/tiempo estimado y
@@ -3735,7 +3751,7 @@ def register_pickup_routes(app, ctx):
         return jsonify({"ok": True, "resultados": resultados})
 
     @app.route("/retiros/<int:rid>/docs/agregar", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_doc_agregar(rid):
         """Agrega un documento del ERP al retiro. Valida que exista, calcula
         peso/vol/m³ desde las líneas, guarda snapshot y recalcula totales.
@@ -4389,7 +4405,7 @@ def register_pickup_routes(app, ctx):
         return jsonify(resp)
 
     @app.route("/retiros/<int:rid>/docs/<int:doc_id>", methods=["DELETE", "POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_doc_quitar(rid, doc_id):
         """Quita un documento del retiro y recalcula totales.
         Acepta DELETE o POST (POST con _method=DELETE para clientes que no soporten DELETE).
@@ -4706,7 +4722,7 @@ def register_pickup_routes(app, ctx):
         })
 
     @app.route("/retiros/<int:rid>/docs/<int:doc_id>/lineas", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_doc_lineas_guardar(rid, doc_id):
         """Guarda selección granular de líneas. UPSERT en pickup_doc_lineas.
 
@@ -5550,7 +5566,7 @@ def register_pickup_routes(app, ctx):
     #  oficial el dueño del documento"
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/<int:rid>/customer", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_actualizar_cliente(rid):
         """Actualiza nombre/RUT del cliente y, opcionalmente, copia los
         datos actuales del cliente como persona-que-retira (oficial = dueño
@@ -5794,7 +5810,7 @@ def register_pickup_routes(app, ctx):
         return {"sent": sent, "failed": failed, "total": len(emails)}
 
     @app.route("/retiros/<int:rid>/field", methods=["PATCH", "POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_inline_field(rid):
         """Auto-save inline de un campo de la ficha.
 
@@ -6086,7 +6102,7 @@ def register_pickup_routes(app, ctx):
 
 
     @app.route("/retiros/<int:rid>/proposal", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_create_proposal(rid):
         """Crea/envía propuesta al cliente. Soporta dos modos:
           - HTML form (legacy): redirect a pickup_detail
@@ -6162,7 +6178,7 @@ def register_pickup_routes(app, ctx):
         date, tf, tt = request.form.get("date"), request.form.get("time_from"), request.form.get("time_to")
         cfg = settings()
         # FASE 2 (2026-05-29): validador temporal central, modo 'internal'.
-        # El OPERADOR (endpoint bajo @require_permission("edit")) puede CRUZAR
+        # El OPERADOR (endpoint bajo @require_permission("retiros")) puede CRUZAR
         # la colación si la factura es grande, PERO ya NO puede proponer
         # fecha/hora PASADA (antes date_allowed lo permitía — bug). El cliente
         # público nunca pasa por acá.
@@ -6254,7 +6270,7 @@ def register_pickup_routes(app, ctx):
         return redirect(url_for("pickup_detail", rid=rid))
 
     @app.route("/retiros/<int:rid>/message", methods=["POST"])
-    @require_permission("edit")
+    @require_permission("retiros")
     def pickup_send_message(rid):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:

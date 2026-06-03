@@ -2715,6 +2715,24 @@ def init_pickup_tables():
                 f"COMMENT 'Peso volumétrico total calculado desde catálogo'",
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN tiempo_estimado_min INT DEFAULT NULL "
                 f"COMMENT 'Tiempo estimado de retiro en minutos (basado en bultos)'",
+                # ── MODELO DE ORIGEN (Daniel 2026-05-29 — retiro interno/backoffice) ──
+                # request_source distingue retiros creados por el cliente (web) de
+                # los creados internamente por un operador ILUS (backoffice/phone/import).
+                # Default 'web' → todos los retiros existentes quedan correctamente
+                # marcados como web sin tocar datos. Idempotente.
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN request_source VARCHAR(20) NOT NULL DEFAULT 'web' "
+                f"COMMENT 'Origen: web|backoffice|phone|import'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN created_by_user_id INT NULL "
+                f"COMMENT 'app_users.id del operador que creó el retiro interno (NULL si web)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN created_by_user_name VARCHAR(190) NULL "
+                f"COMMENT 'Nombre del operador creador (snapshot para mostrar sin JOIN)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN internal_created_at DATETIME NULL "
+                f"COMMENT 'Fecha de creación interna (hora Chile)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN customer_confirm_required TINYINT(1) DEFAULT 1 "
+                f"COMMENT '1=requiere que el cliente confirme la propuesta; 0=ya aceptó por otro canal'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN customer_already_agreed TINYINT(1) DEFAULT 0 "
+                f"COMMENT '1=cliente ya aceptó por teléfono/correo (confirmación directa interna)'",
+                f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD INDEX idx_pickup_source (request_source)",
                 # Daniel 2026-05-23: emails adicionales para envío (cliente declarado + email del doc ERP + manualmente agregados)
                 f"ALTER TABLE `{PICKUP_REQUESTS_TABLE}` ADD COLUMN extra_emails VARCHAR(800) NULL "
                 f"COMMENT 'Emails adicionales separados por coma para enviar notificaciones (además del contact_email)'",
@@ -7162,11 +7180,13 @@ def index():
 
     # ── 1. Mapeo explícito por rol (más predecible que por permisos) ──
     ROLE_HOME = {
-        "tecnico":     ("mant_ots_list",   {"solo_mias": "1"}),
-        "mantenciones":("mant_index",      {}),
-        "ejecutivo":   ("mant_index",      {}),
-        "transporte":  ("transporte_index",{}),
-        "distribucion":("transporte_index",{}),
+        "tecnico":      ("mant_ots_list",   {"solo_mias": "1"}),
+        "mantenciones": ("mant_index",      {}),
+        "ejecutivo":    ("mant_index",      {}),
+        "transporte":   ("transporte_index",{}),
+        "distribucion": ("transporte_index",{}),
+        # Agente de retiros (2026-06-01): aterriza directo en el monitor de retiros.
+        "agente_retiros": ("pickup_dashboard", {}),
     }
     if role in ROLE_HOME:
         endpoint, args = ROLE_HOME[role]
@@ -26616,6 +26636,28 @@ def init_mantenciones_tables():
                     )
                 except Exception:
                     pass
+
+            # ── Rol de negocio: Agente de retiros (Daniel 2026-06-01) ──────────
+            # is_system=0 → totalmente gestionable por el admin (editar/eliminar).
+            # Se siembra UNA sola vez con acceso SOLO al módulo Retiros. A partir
+            # de ahí, el admin agrega/quita módulos a este (o cualquier) rol desde
+            # /admin/roles (matriz dinámica). El cur.rowcount==1 garantiza que solo
+            # sembramos los permisos en la primera creación — nunca pisamos los
+            # cambios que el admin haga después en la matriz.
+            try:
+                cur.execute(
+                    "INSERT IGNORE INTO roles_dinamicos (slug,nombre,descripcion,color,is_system) "
+                    "VALUES ('agente_retiros','Agente de retiros',"
+                    "'Acceso solo al modulo de Retiros','#0ea5e9',0)"
+                )
+                if cur.rowcount == 1:
+                    for _acc in ("ver", "gestionar", "monitor"):
+                        cur.execute(
+                            "INSERT IGNORE INTO rol_permisos (rol_slug,modulo,accion,permitido) "
+                            "VALUES ('agente_retiros','retiros',%s,1)", (_acc,)
+                        )
+            except Exception:
+                pass
 
             # Regla: no se pueden repetir nombres de rol (ya hay UNIQUE en slug)
             try:
