@@ -2896,6 +2896,14 @@ def _legacy_permission_set(role):
         return {**base, "view": True, "etiquetas": True, "retiros": True}
     if role == "vendedor":
         return {**base, "view": True, "cubicador": True, "etiquetas": True}
+    if role == "transporte":
+        # Rol de Transporte: monitor + cubicador + asignar + manifiestos +
+        # couriers. Defensivo: si por algún motivo el rol no tiene filas en
+        # rol_permisos, igual queda operativo (antes devolvía todo False → la
+        # usuaria veía el menú pero cada submódulo la rebotaba a /transporte).
+        return {**base, "view": True, "transporte": True, "cubicador": True,
+                "tr_cubicador": True, "tr_asignar": True,
+                "tr_manifiestos": True, "tr_couriers": True}
     return base
 
 
@@ -2919,7 +2927,16 @@ def _build_perms_from_matrix(role):
     base["retiros"]        = bool(ret.get("ver"))
     base["mantenciones"]   = bool(man.get("ver"))
     base["transporte"]     = bool(tra.get("ver"))
-    base["cubicador"]      = bool(tra.get("cubicador"))
+    # /cubicador y /asignar comparten el gate g.permissions["cubicador"].
+    # La matriz tiene acciones separadas "cubicador" y "asignar" — ambas
+    # abren pantallas que el backend protege con el flag "cubicador".
+    # Mapeo: cualquiera de las dos (o tener "ver" del módulo) habilita el gate.
+    base["cubicador"]      = bool(tra.get("cubicador") or tra.get("asignar"))
+    # Flags granulares de transporte (para futuros gates finos en sidebar/rutas).
+    base["tr_cubicador"]   = bool(tra.get("cubicador"))
+    base["tr_asignar"]     = bool(tra.get("asignar"))
+    base["tr_manifiestos"] = bool(tra.get("manifiestos"))
+    base["tr_couriers"]    = bool(tra.get("couriers"))
     base["comunicaciones"] = bool(com.get("ver"))
 
     # Acciones legacy — mapeadas desde Etiquetas (campo "view" controla el primer producto)
