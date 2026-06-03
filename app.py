@@ -9157,6 +9157,55 @@ def admin_rol_eliminar(slug):
     return redirect(url_for("admin_roles_matrix"))
 
 
+@app.route("/admin/roles/diagnostico")
+@require_permission("admin")
+def admin_roles_diagnostico():
+    """Diagnóstico SEGURO (read-only) de roles — Daniel 2026-06-01.
+    Muestra las filas REALES de roles_dinamicos + cuántos usuarios tiene cada
+    rol + duplicados por nombre. Para depurar el 'doble Super Administrador'
+    sin tocar datos. Solo superadmin."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"error": "Solo superadmin"}), 403
+    roles = mysql_fetchall(
+        "SELECT id, slug, nombre, color, is_system, activo, created_at "
+        "FROM roles_dinamicos ORDER BY nombre, id"
+    ) or []
+    ucounts = mysql_fetchall(
+        f"SELECT role AS slug, COUNT(*) AS n FROM `{AUTH_TABLE}` GROUP BY role"
+    ) or []
+    cnt = {r["slug"]: int(r["n"]) for r in ucounts}
+    # Duplicados por nombre (case-insensitive)
+    by_name = {}
+    for r in roles:
+        by_name.setdefault((r["nombre"] or "").strip().lower(), []).append(r["slug"])
+    dups = {k: v for k, v in by_name.items() if len(v) > 1}
+    out = []
+    for r in roles:
+        out.append({
+            "id":        r["id"],
+            "slug":      r["slug"],
+            "nombre":    r["nombre"],
+            "is_system": bool(r["is_system"]),
+            "activo":    bool(r["activo"]),
+            "usuarios":  cnt.get(r["slug"], 0),
+            "eliminable": (not r["is_system"]),
+        })
+    # Usuarios cuyo rol NO existe en roles_dinamicos (huérfanos) — útil saberlo
+    slugs_existentes = {r["slug"] for r in roles}
+    huerfanos = {s: n for s, n in cnt.items() if s not in slugs_existentes and s != "superadmin"}
+    return jsonify({
+        "ok": True,
+        "total_roles": len(roles),
+        "roles": out,
+        "duplicados_por_nombre": dups,
+        "usuarios_por_rol": cnt,
+        "roles_huerfanos_con_usuarios": huerfanos,
+        "nota": "is_system=true → NO eliminable. 'usuarios' = cuántas cuentas "
+                "tienen ese rol (revisar antes de borrar/mergear). Si hay "
+                "'duplicados_por_nombre', son varias filas con el mismo nombre.",
+    })
+
+
 # ══════════════════════════════════════════════════════════════
 #  MÓDULO: HRM — COLABORADORES
 # ══════════════════════════════════════════════════════════════
