@@ -7338,7 +7338,15 @@ def index():
             "mant_index":       perms.get("mantenciones"),
             "transporte_index": perms.get("transporte"),
         }.get(endpoint, True)
-        if perm_match:
+        # Opt-out explícito: si el usuario hizo clic en "Productos" del sidebar
+        # con ?ver=etiquetas, NO rebotamos a su home — queremos que entre al
+        # catálogo. Útil para roles como "transporte" que tienen permiso
+        # etiquetas pero el home natural es /transporte/ (Daniel 2026-06-03).
+        forzar_etiquetas = (
+            request.args.get("ver") == "etiquetas"
+            and (perms.get("etiquetas") or perms.get("print") or perms.get("superadmin"))
+        )
+        if perm_match and not forzar_etiquetas:
             return redirect(url_for(endpoint, **args))
 
     # ── 2. Roles "etiquetas-first": ven el catálogo de productos ──
