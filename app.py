@@ -1129,7 +1129,14 @@ def _get_pool():
                 maxconnections = 30,
                 maxusage       = 200,
                 blocking       = False,
-                ping           = 7,
+                # PERF 2026-06-03 (Daniel — SaaS premium <2s): ping=7 revalidaba la
+                # conexión en checkout+cursor+execute → CADA query pagaba 2 COM_PING
+                # extra (round-trips a Clever Cloud). Con ~8-9 queries por render de
+                # ficha eran ~16-18 round-trips de puro ping. ping=1 revalida SOLO al
+                # sacar la conexión del pool (1 vez por request). Seguro: mincached=2 +
+                # keepalive 60s + wait_timeout=600 + read_timeout=5 ya cubren conexiones
+                # zombi. (El pool del ERP Random ya usa ping=1 — coherente.)
+                ping           = 1,
                 host           = MYSQL_CONFIG["host"],
                 port           = MYSQL_CONFIG["port"],
                 user           = MYSQL_CONFIG["user"],
@@ -53182,6 +53189,101 @@ try:
         _reparar_visita_fotos_maquina_id()
 except Exception as _e_foto_rep:
     print(f"[ILUS][WARN] _reparar_visita_fotos_maquina_id: {_e_foto_rep}", flush=True)
+
+
+def _reparar_fotos_levantamiento_a_galeria():
+    """Backfill: que la OT de LEVANTAMIENTO 'mueva' la ficha del equipo también para los
+    levantamientos YA aprobados (la proyección original corrió antes del fix de maquina_id,
+    así que su galería/foto principal quedaron vacías). Copia las fotos de OT de
+    levantamiento (mant_visita_fotos con maquina_id) a la galería permanente
+    (mant_maquina_fotos) y, si el equipo no tiene foto principal, le pone la primera.
+    Idempotente: COUNT guard + anti-dup por (maquina_id, visita_origen, url). La
+    concurrencia entre los 2 workers de gunicorn (sin --preload) se evita con un
+    GET_LOCK en el caller (solo UNO corre el backfill). Bug 2026-06-03 — Daniel:
+    'necesito que la ficha la mueva la OT'."""
+    try:
+        # COUNT guard: ¿hay fotos de levantamiento (con maquina_id) que NO estén ya en la galería?
+        n = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_fotos f "
+            "  JOIN mant_visitas v ON v.id=f.visita_id "
+            " WHERE f.maquina_id IS NOT NULL "
+            "   AND (v.tipo='levantamiento' OR v.levantamiento_id IS NOT NULL) "
+            "   AND (f.cloudinary_url IS NOT NULL OR (f.archivo_path IS NOT NULL AND f.archivo_path<>'')) "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_maquina_fotos mf "
+            "        WHERE mf.maquina_id=f.maquina_id AND mf.visita_origen=f.visita_id "
+            "          AND ((f.cloudinary_url IS NOT NULL AND mf.cloudinary_url=f.cloudinary_url) "
+            "            OR (f.archivo_path<>'' AND mf.archivo_path=f.archivo_path)))")
+        if not n or (n.get("n") or 0) == 0:
+            return 0
+        cand = mysql_fetchall(
+            "SELECT f.id, f.maquina_id, f.visita_id, f.archivo_path, f.cloudinary_url, "
+            "       f.archivo_nombre, f.descripcion, f.tomada_por "
+            "  FROM mant_visita_fotos f "
+            "  JOIN mant_visitas v ON v.id=f.visita_id "
+            " WHERE f.maquina_id IS NOT NULL "
+            "   AND (v.tipo='levantamiento' OR v.levantamiento_id IS NOT NULL) "
+            "   AND (f.cloudinary_url IS NOT NULL OR (f.archivo_path IS NOT NULL AND f.archivo_path<>'')) "
+            " ORDER BY f.maquina_id, f.tomada_at, f.id") or []
+        insertadas = 0; heroes = 0; vistas = set()
+        for f in cand:
+            mid = f["maquina_id"]; vid = f["visita_id"]
+            _ap = f.get("archivo_path") or ""; _cu = f.get("cloudinary_url") or None
+            # Anti-dup por foto (idempotente; la exclusión entre workers la da el GET_LOCK)
+            try:
+                dup = mysql_fetchone(
+                    "SELECT id FROM mant_maquina_fotos "
+                    " WHERE maquina_id=%s AND visita_origen=%s "
+                    "   AND ((%s IS NOT NULL AND cloudinary_url=%s) OR (%s<>'' AND archivo_path=%s)) LIMIT 1",
+                    (mid, vid, _cu, _cu, _ap, _ap))
+            except Exception:
+                dup = None
+            if not dup:
+                try:
+                    mysql_execute(
+                        "INSERT INTO mant_maquina_fotos "
+                        "(maquina_id, archivo_path, cloudinary_url, archivo_nombre, tipo_foto, "
+                        " descripcion, visita_origen, tomada_por) "
+                        "VALUES (%s,%s,%s,%s,'detalle',%s,%s,%s)",
+                        (mid, _ap, _cu, (f.get("archivo_nombre") or None),
+                         (f.get("descripcion") or None), vid, (f.get("tomada_por") or None)))
+                    insertadas += 1
+                except Exception:
+                    continue
+            # Foto principal (hero): primera foto de cada máquina, solo si no tiene una.
+            if mid not in vistas:
+                vistas.add(mid)
+                url = _cu or (f"/static/{_ap}" if _ap else "")
+                if url:
+                    try:
+                        mysql_execute(
+                            "UPDATE mant_maquinas SET foto_url=%s "
+                            " WHERE id=%s AND (foto_url IS NULL OR foto_url='')", (url, mid))
+                        heroes += 1
+                    except Exception:
+                        pass
+        if insertadas or heroes:
+            print(f"[reparar-fotos-galeria] {insertadas} foto(s) de levantamiento → galería, "
+                  f"{heroes} foto(s) principal(es) seteadas", flush=True)
+        return insertadas
+    except Exception as e:
+        print(f"[reparar-fotos-galeria] no se aplicó: {e}", flush=True)
+        return 0
+
+
+# CRÍTICO: que la OT de levantamiento 'mueva' la ficha (galería + foto principal) también
+# para los levantamientos ya aprobados. Corre DESPUÉS del backfill de maquina_id. COUNT guard.
+# GET_LOCK(0): con gunicorn 2 workers (sin --preload) solo UNO corre el backfill → no duplica.
+try:
+    with app.app_context():
+        _gal_lk = mysql_fetchone("SELECT GET_LOCK('ilus_backfill_fotos_galeria', 0) AS l")
+        if _gal_lk and _gal_lk.get("l") == 1:
+            try:
+                _reparar_fotos_levantamiento_a_galeria()
+            finally:
+                try: mysql_fetchone("SELECT RELEASE_LOCK('ilus_backfill_fotos_galeria') AS r")
+                except Exception: pass
+except Exception as _e_gal_rep:
+    print(f"[ILUS][WARN] _reparar_fotos_levantamiento_a_galeria: {_e_gal_rep}", flush=True)
 
 # ── PLAN DE MEJORA IA ─────────────────────────────────────────────────────────
 #

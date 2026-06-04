@@ -3399,7 +3399,7 @@ async function confirmarVisitaMulti() {
       <p class="text-muted mb-0" style="font-size:.78rem">Registro de mantenciones, instalaciones e inspecciones realizadas</p>
     </div>
     <div class="d-flex gap-2">
-      <button class="btn btn-sm btn-outline-secondary" onclick="cargarReportes()">
+      <button class="btn btn-sm btn-outline-secondary" onclick="cargarReportes(true)">
         <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
       </button>
       {% if not is_tecnico %}
@@ -8882,7 +8882,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260603b"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260603c"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

@@ -6952,10 +6952,15 @@ async function gcGuardar() {
 // ─── REPORTES ─────────────────────────────────────────────────
 let _repMaquinas  = [], _repObjetivos = [], _repTrabajos = [], _repObservaciones = [];
 let _repCurrentId = null, _repFotosTemp = [];
+let _reportesCache = null;   // PERF: HTML del listado ya renderizado → re-navegación instantánea
+function _invalidarReportes(){ _reportesCache = null; }
 
-async function cargarReportes() {
+async function cargarReportes(force = false) {
   const lista = document.getElementById('reportesLista');
   if (!lista) return;
+  // PERF 2026-06-03: cache hit → render instantáneo sin round-trip. Se invalida en
+  // cada mutación (crear/editar/eliminar/generar/analizar) para no mostrar datos viejos.
+  if (!force && _reportesCache !== null) { lista.innerHTML = _reportesCache; return; }
   lista.innerHTML = '<div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
   // Timeout duro: el spinner NUNCA queda infinito. Si el servidor se satura o
   // cuelga, a los 25s abortamos y mostramos error + botón "Reintentar".
@@ -6974,6 +6979,7 @@ async function cargarReportes() {
         <button class="btn btn-sm btn-ilus mt-3 fw-bold" onclick="abrirNuevoReporte()">
           <i class="bi bi-plus-circle me-1"></i>Nuevo informe</button>
       </div>`;
+      _reportesCache = lista.innerHTML;
       return;
     }
     const tipoIcon = {mantencion:'wrench',instalacion:'box-seam',inspeccion:'search',garantia:'shield-check',otro:'file'};
@@ -7023,6 +7029,7 @@ async function cargarReportes() {
         </div>
         ${rep.html_generated_at ? `<div class="mt-2" style="font-size:.66rem;color:#9ca3af;text-align:right"><i class="bi bi-clock me-1"></i>HTML generado ${rep.html_generated_at}</div>` : ''}
       </div>`).join('');
+    _reportesCache = lista.innerHTML;   // PERF: cachear para re-navegación instantánea
   } catch(e) {
     const msg = (e && e.name === 'AbortError')
       ? 'La carga tardó demasiado (servidor lento). Intenta de nuevo.'
@@ -7375,7 +7382,7 @@ async function repGuardar(silencioso=false) {
       document.getElementById('btnRepIA').style.display = '';
     }
     if (!silencioso) {
-      cargarReportes();
+      _invalidarReportes(); cargarReportes(true);
       bootstrap.Modal.getInstance(document.getElementById('modalReporte'))?.hide();
     }
   } else {
@@ -7402,7 +7409,7 @@ async function generarDesdeOT(){
     const dg = await rg.json();
     if (dg.ok){
       ilusToast(`✓ Informe creado (Ticket ${dg.ticket_num||'—'} / OT ${dg.ot_num||'—'}). Falta adjuntar el PDF de la OT.`, { type:'success' });
-      await cargarReportes();
+      _invalidarReportes(); await cargarReportes(true);
       editarReporte(dg.id);
     } else { ilusToast(dg.error || 'No se pudo generar el informe', { type:'error' }); }
   } catch(e){ ilusToast('Error de red al generar desde la OT', { type:'error' }); }
@@ -7471,7 +7478,7 @@ async function eliminarReporte(rid) {
   });
   if (!ok) return;
   const r = await fetch(`/mantenciones/api/reportes/${rid}`,{method:'DELETE'});
-  if (r.ok) cargarReportes();
+  if (r.ok) { _invalidarReportes(); cargarReportes(true); }
 }
 
 // ─── Reporte: la IA REDACTA el contenido (objetivos/trabajos/observaciones) ──
@@ -7615,7 +7622,7 @@ async function repAnalizarIA() {
     }
 
     document.getElementById('modalRepIABody').innerHTML = html;
-    cargarReportes();
+    _invalidarReportes(); cargarReportes(true);
   } catch(e) {
     document.getElementById('modalRepIABody').innerHTML = `<div class="alert alert-danger">Error: ${e.message}</div>`;
   }
@@ -7723,6 +7730,14 @@ function _repToggleExportBtns(enabled) {
   document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('repId');
     if (el) obs.observe(el, {attributes:true, attributeFilter:['value']});
+    // PERF 2026-06-03: prefetch del listado de Reportes en idle → al abrir la
+    // pestaña los datos ya están cacheados (primera apertura instantánea, sin
+    // competir con el render inicial de la ficha).
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(() => { try { cargarReportes(); } catch(e){} }, { timeout: 4000 });
+    } else {
+      setTimeout(() => { try { cargarReportes(); } catch(e){} }, 2000);
+    }
     // 2026-05-28 (Daniel — FASE 3) Polling de respaldo: subido de 800ms
     // a 5000ms. El MutationObserver de arriba ya detecta cambios en repId
     // en tiempo real; este interval es solo paracaídas para edge cases
