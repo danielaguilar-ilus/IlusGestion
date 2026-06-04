@@ -4005,6 +4005,106 @@ def before_request():
 
 
 # ════════════════════════════════════════════════════════════════════
+# MANEJO DE ERRORES — página amigable + traceback en logs
+# ════════════════════════════════════════════════════════════════════
+# 2026-06-04 (Daniel — caso José Miguel): al tocar el logo, un usuario de
+# rol "solo retiros" recibió el "Internal Server Error" CRUDO de Werkzeug
+# (página blanca, asusta y no da pistas). Causa: NO había errorhandler →
+# cualquier excepción no atrapada mostraba la página fea por default y el
+# traceback se perdía.
+#
+# Este handler:
+#   1. Registra el traceback COMPLETO + contexto (path, endpoint, usuario,
+#      rol) en los logs del worker → diagnóstico inmediato en Railway.
+#   2. Devuelve una página ILUS amigable (inline, SIN extends ni template
+#      externo) → no puede volver a fallar aunque el error esté en base.html
+#      o en un context_processor. Cero recursión.
+# ════════════════════════════════════════════════════════════════════
+def _friendly_error_page(titulo, mensaje, code):
+    """HTML branded ILUS, 100% inline (no depende de base.html ni de la BD)."""
+    import html as _h_esc
+    safe_titulo = _h_esc.escape(str(titulo))
+    safe_msg = _h_esc.escape(str(mensaje))
+    return (
+        "<!doctype html><html lang='es'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>{safe_titulo} · ILUS</title>"
+        "<style>"
+        "*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"
+        "'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#0a0a0a;color:#fff;"
+        "min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}"
+        ".card{max-width:460px;width:100%;text-align:center;background:#141414;border:1px solid #262626;"
+        "border-radius:18px;padding:40px 28px;box-shadow:0 20px 60px rgba(0,0,0,.5)}"
+        ".brand{font-size:1.6rem;font-weight:800;letter-spacing:-.5px;margin-bottom:18px}"
+        ".brand span{color:#dc2626}"
+        ".ico{font-size:2.6rem;margin-bottom:10px}"
+        "h1{font-size:1.15rem;margin:0 0 8px}p{color:#a3a3a3;font-size:.92rem;line-height:1.5;margin:0 0 22px}"
+        ".btn{display:inline-block;background:#dc2626;color:#fff;text-decoration:none;font-weight:600;"
+        "padding:12px 22px;border-radius:10px;min-height:44px;line-height:20px}"
+        ".btn:hover{background:#b91c1c}.sub{margin-top:16px;font-size:.78rem;color:#737373}"
+        "</style></head><body><div class='card'>"
+        "<div class='brand'>ILUS<span>.</span></div>"
+        f"<div class='ico'>⚠️</div><h1>{safe_titulo}</h1><p>{safe_msg}</p>"
+        "<a class='btn' href='/'>Volver al inicio</a>"
+        "<div class='sub'>Si el problema continúa, avisa al administrador.</div>"
+        "</div></body></html>",
+        code,
+    )
+
+
+def _is_ajax_safe():
+    """True si la request parece AJAX/fetch — sin lanzar nunca."""
+    try:
+        return _is_ajax_request()
+    except Exception:
+        return False
+
+
+@app.errorhandler(500)
+def _handle_500(e):
+    try:
+        import traceback as _tb
+        _u = getattr(g, "user", None) or {}
+        print(
+            f"[ERROR 500] path={request.path} endpoint={request.endpoint} "
+            f"method={request.method} user={_u.get('username','-')} "
+            f"role={_u.get('role','-')}\n{_tb.format_exc()}",
+            flush=True,
+        )
+    except Exception:
+        pass
+    if _is_ajax_safe():
+        return jsonify({"ok": False,
+                        "error": "Error interno del servidor. Intenta de nuevo en un momento.",
+                        "error_codigo": "ERROR_500"}), 500
+    try:
+        return _friendly_error_page(
+            "Algo salió mal",
+            "Tuvimos un problema al cargar esta página. El equipo técnico ya "
+            "quedó notificado en los registros. Intenta de nuevo en un momento.",
+            500,
+        )
+    except Exception:
+        return ("Error interno. Intenta de nuevo en un momento.", 500)
+
+
+@app.errorhandler(404)
+def _handle_404(e):
+    if _is_ajax_safe():
+        return jsonify({"ok": False, "error": "Recurso no encontrado.",
+                        "error_codigo": "ERROR_404"}), 404
+    try:
+        return _friendly_error_page(
+            "Página no encontrada",
+            "La dirección que buscas no existe o cambió de lugar. "
+            "Vuelve al inicio para continuar.",
+            404,
+        )
+    except Exception:
+        return ("No encontrado.", 404)
+
+
+# ════════════════════════════════════════════════════════════════════
 # PERFORMANCE — after_request: compresión gzip + cache headers static
 # ════════════════════════════════════════════════════════════════════
 # 2026-05-17: Antes los assets `/static/*` se servían sin Cache-Control
@@ -7344,6 +7444,12 @@ def index():
             "mant_ots_list":    perms.get("mantenciones"),
             "mant_index":       perms.get("mantenciones"),
             "transporte_index": perms.get("transporte"),
+            # 2026-06-04 (Daniel — caso José Miguel): el agente_retiros solo
+            # rebota a /retiros si REALMENTE tiene el permiso. Si su caché de
+            # rol viene viejo (sin retiros), NO lo mandamos a una ruta que
+            # require_permission rechazaría → caería abajo a
+            # _redirect_to_first_accessible, evitando un loop de redirección.
+            "pickup_dashboard": perms.get("retiros"),
         }.get(endpoint, True)
         # Opt-out explícito: si el usuario hizo clic en "Productos" del sidebar
         # con ?ver=etiquetas, NO rebotamos a su home — queremos que entre al
@@ -9179,6 +9285,16 @@ def has_role_permission(slug, modulo, accion):
     return bool(row and row.get("permitido"))
 
 
+# Roles nativos del sistema — protegidos por SLUG (no por is_system). NUNCA
+# se eliminan. Cualquier slug fuera de este set es gestionable/eliminable por
+# el admin, incluido un duplicado legacy con is_system=1 mal puesto.
+# (Daniel 2026-06-04 — 'no puedo eliminar un rol' / 'doble Super Administrador'.)
+_PROTECTED_ROLE_SLUGS = frozenset({
+    "superadmin", "admin", "editor", "mantenciones",
+    "transporte", "vendedor", "lector",
+})
+
+
 @app.route("/admin/roles")
 @require_permission("admin")
 def admin_roles():
@@ -9206,9 +9322,16 @@ def admin_roles():
             "submodulos": subs,
             "bloqueos":   blocks,
         }
+    roles_ctx = []
+    for _r in roles:
+        _rd = dict(_r)
+        # is_protected → el template oculta "Eliminar rol" para los 7 nativos.
+        # Los demás (custom/legacy/duplicado) SÍ muestran el botón.
+        _rd["is_protected"] = _rd.get("slug") in _PROTECTED_ROLE_SLUGS
+        roles_ctx.append(_rd)
     return render_template("admin_roles.html",
         users=[dict(u) for u in users],
-        roles=[dict(r) for r in roles],
+        roles=roles_ctx,
         matrix=PERMISSIONS_MATRIX,
         matrix_grouped=matrix_grouped,
         perms=perms_by_role,
@@ -9348,16 +9471,44 @@ def admin_rol_crear():
 @app.route("/admin/roles/<slug>/eliminar", methods=["POST"])
 @require_permission("admin")
 def admin_rol_eliminar(slug):
-    """Elimina un rol dinámico (solo no-sistema)."""
-    row = mysql_fetchone("SELECT is_system FROM roles_dinamicos WHERE slug=%s", (slug,))
+    """Elimina un rol dinámico.
+
+    2026-06-04 (Daniel — 'no puedo eliminar un rol' + 'doble Super
+    Administrador'): la protección pasó de la bandera `is_system` al SLUG
+    canónico. Antes, un 'Super Administrador' DUPLICADO quedaba marcado
+    is_system=1 y por eso NO se podía borrar. Ahora protegemos solo los 7
+    slugs nativos ({_PROTECTED_ROLE_SLUGS}); cualquier otro rol (custom,
+    legacy o duplicado) SÍ se elimina, aunque tenga is_system mal seteado.
+    """
+    slug = (slug or "").strip()
+    if slug in _PROTECTED_ROLE_SLUGS:
+        flash("Ese es un rol nativo del sistema y no se puede eliminar.", "danger")
+        return redirect(url_for("admin_roles_matrix"))
+    row = mysql_fetchone("SELECT nombre FROM roles_dinamicos WHERE slug=%s", (slug,))
     if not row:
         flash("Rol no encontrado.", "danger")
         return redirect(url_for("admin_roles_matrix"))
-    if row.get("is_system"):
-        flash("No se pueden eliminar roles del sistema.", "danger")
-        return redirect(url_for("admin_roles_matrix"))
-    # Reasignar usuarios a 'lector'
-    mysql_execute(f"UPDATE `{AUTH_TABLE}` SET role='lector' WHERE role=%s", (slug,))
+    # Destino de reasignación de usuarios. A prueba de LOCKOUT: si este rol es
+    # un DUPLICADO por nombre de un rol canónico que sí existe (p.ej. el
+    # 'Super Administrador' duplicado), mandamos sus usuarios a ese rol
+    # canónico — NO a 'lector' — para no degradar admins reales por error.
+    # Si no hay match canónico, caen a 'lector' (comportamiento histórico).
+    destino = "lector"
+    try:
+        dup = mysql_fetchone(
+            "SELECT slug FROM roles_dinamicos "
+            " WHERE LOWER(TRIM(nombre)) = (SELECT LOWER(TRIM(nombre)) "
+            "                                FROM roles_dinamicos WHERE slug=%s) "
+            "   AND slug <> %s AND slug IN "
+            "       ('superadmin','admin','editor','mantenciones','transporte','vendedor','lector') "
+            " ORDER BY is_system DESC LIMIT 1",
+            (slug, slug),
+        )
+        if dup and dup.get("slug"):
+            destino = dup["slug"]
+    except Exception:
+        destino = "lector"
+    mysql_execute(f"UPDATE `{AUTH_TABLE}` SET role=%s WHERE role=%s", (destino, slug))
     mysql_execute("DELETE FROM rol_permisos WHERE rol_slug=%s", (slug,))
     mysql_execute("DELETE FROM roles_dinamicos WHERE slug=%s", (slug,))
     # Refrescar sesión de los usuarios reasignados + invalidar caché de rol.
@@ -9365,7 +9516,9 @@ def admin_rol_eliminar(slug):
     except Exception: pass
     try: invalidate_role_cache(slug)
     except Exception: pass
-    flash(f"Rol {slug} eliminado.", "success")
+    try: invalidate_role_cache(destino)
+    except Exception: pass
+    flash(f"Rol \"{slug}\" eliminado. Los usuarios que lo tenían pasaron a \"{destino}\".", "success")
     return redirect(url_for("admin_roles_matrix"))
 
 

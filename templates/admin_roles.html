@@ -229,7 +229,7 @@
             data-rol="{{ r.slug }}" onclick="rmSelectRol('{{ r.slug }}', this)">
       <span class="dot" style="background:{{ r.color }}"></span>
       {{ r.nombre }}
-      {% if r.is_system %}<span class="badge-sys">SISTEMA</span>{% endif %}
+      {% if r.is_protected %}<span class="badge-sys">SISTEMA</span>{% endif %}
     </button>
     {% endfor %}
     <button class="rm-rol-btn" type="button"
@@ -313,7 +313,7 @@
         Cambios afectan a todos los usuarios con rol <strong>{{ r.nombre }}</strong>.
       </div>
       <div class="d-flex gap-2">
-        {% if not r.is_system %}
+        {% if not r.is_protected %}
         <button type="button" class="btn btn-sm btn-outline-danger"
                 onclick="confirmarEliminarRol('{{ r.slug }}', {{ r.nombre|tojson }})">
           <i class="bi bi-trash me-1"></i>Eliminar rol
