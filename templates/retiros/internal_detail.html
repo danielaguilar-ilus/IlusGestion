@@ -2947,7 +2947,7 @@ if ('IntersectionObserver' in window){
 }
 </script>
 
-<script src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
+<script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
 
 <script>
 // ════════════════════════════════════════════════════════════════════
@@ -4476,10 +4476,12 @@ function _iwRefreshPreview(){
 // Inicial: mount si el form está visible y aún no se propuso.
 // Daniel 2026-05-24: ahora basta con tener al menos UN doc asociado
 // (no requiere con_saldo verificado por ERP, que a veces falla).
-{% if not _step4_done and _n_docs_inicial > 0 %}
-_mountProposeCalendar();
-window._calMounted = true;
-{% endif %}
+// ⚡ PERF (Juan Daniel 2026-06-03): retiros_calendar.js ahora carga con
+// `defer` para no bloquear el parseo de la ficha (34.6KB). En este punto
+// del parseo la librería todavía NO cargó, así que NO montamos aquí —
+// solo fijamos la intención (booleano evaluado por Jinja). El montaje
+// real ocurre en DOMContentLoaded, cuando el script diferido ya existe.
+window._shouldMountProposeCal = {{ 'true' if (not _step4_done and _n_docs_inicial > 0) else 'false' }};
 
 // Re-proponer
 const _reproBtn = document.getElementById('iwShowReproposeBtn');
@@ -5747,17 +5749,44 @@ async function agregarEmailSugerencia(email){
 //  INIT
 // ════════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', function(){
-  cargarSaldoCliente(_RID);
-  cargarSugerenciasEmail();
-  // Daniel 2026-05-24: cargar tabla de productos al inicio (Paso 1)
-  refrescarTablaProductos();
-  // Si la carga inicial > 100kg, mostrar hint
+  // ⚡ PERF (Juan Daniel 2026-06-03): abrir una solicitud en <2s.
+  // La ficha PINTA primero (los datos del retiro y los documentos ya
+  // asociados —con su saldo guardado— vienen en el HTML, se ven al
+  // instante). Las 3 cargas pesadas se DIFIEREN a después del primer
+  // paint con requestIdleCallback, ordenadas de la más rápida a la más
+  // lenta. La consulta al ERP Random (la más lenta) va de última y nunca
+  // bloquea lo que el operador ve.
+  const _deferLoad = (fn, timeout) => {
+    const run = () => { try { fn(); } catch(_e){} };
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: timeout });
+    } else {
+      setTimeout(run, 60);   // fallback Safari < 17
+    }
+  };
+  // 1) Tabla de productos del retiro (consulta local, rápida).
+  _deferLoad(() => refrescarTablaProductos(), 800);
+  // 2) Sugerencias de email (ligera).
+  _deferLoad(() => cargarSugerenciasEmail(), 1200);
+  // 3) Documentos con saldo en el ERP (lo más lento) — al final, en
+  //    segundo plano. El operador ya tiene la ficha completa a la vista.
+  _deferLoad(() => cargarSaldoCliente(_RID), 2000);
+
+  // 4) Calendario de propuesta, solo si la solicitud está en ese paso.
+  //    retiros_calendar.js carga con `defer`, por lo que para este punto
+  //    (DOMContentLoaded) ya está disponible. Antes esto se montaba en
+  //    pleno parseo y bloqueaba; ahora va después del primer paint.
+  if (window._shouldMountProposeCal && !window._calMounted){
+    try { _mountProposeCalendar(); window._calMounted = true; } catch(_e){}
+  }
+
+  // Hint de peso (instantáneo, sin red).
   const pesoInicial = {{ (req.peso_real_kg or 0)|float }};
   if (pesoInicial > 100){
     const hp = document.getElementById('hintPeso');
     if (hp) hp.style.display = 'flex';
   }
-  // Activar edición inline en todos los elementos marcados
+  // Activar edición inline en todos los elementos marcados.
   setupInlineEdit();
 });
 </script>
