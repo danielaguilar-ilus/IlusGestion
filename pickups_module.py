@@ -5007,9 +5007,11 @@ def register_pickup_routes(app, ctx):
         from datetime import datetime as _dt, timedelta as _td
         fecha_desde = (_dt.now().date() - _td(days=dias)).isoformat()
 
-        # TIDOs relevantes para "saldo pendiente de retiro":
-        # FCV, BLV, NVI, NVV, GDV, GDP — todos los que pueden generar retiros
-        tidos_in = "','".join(("FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "VD", "WEB"))
+        # TIDOs relevantes para "saldo pendiente de retiro".
+        # Daniel 2026-06-03: EXCLUIR guías de despacho (GDV/GDP) de la búsqueda
+        # por RUT — "estas figuran siempre con saldo" y ensucian el resultado.
+        # El operador retira contra factura/boleta/nota de venta, no contra guía.
+        tidos_in = "','".join(("FCV", "BLV", "NVI", "NVV", "VD", "WEB"))
 
         # ZZ SKUs típicos de despacho/retiro (ver erp_engine / transporte)
         # Para no duplicar lógica, usamos el patrón LIKE 'ZZ%' que cubre todos.

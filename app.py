@@ -26943,12 +26943,17 @@ def init_mantenciones_tables():
                     "VALUES ('agente_retiros','Agente de retiros',"
                     "'Acceso solo al modulo de Retiros','#0ea5e9',0)"
                 )
-                if cur.rowcount == 1:
-                    for _acc in ("ver", "gestionar", "monitor"):
-                        cur.execute(
-                            "INSERT IGNORE INTO rol_permisos (rol_slug,modulo,accion,permitido) "
-                            "VALUES ('agente_retiros','retiros',%s,1)", (_acc,)
-                        )
+                # Sembrar permisos de retiros de forma idempotente. INSERT IGNORE
+                # NO pisa filas existentes → si el admin editó la matriz, sus
+                # valores mandan. Pero si el rol existía SIN permisos (creado en
+                # un deploy anterior antes del seed), ahora queda funcional →
+                # el Agente de retiros puede VER y OPERAR el módulo (asignar
+                # factura, proponer, confirmar) sin el error de permisos.
+                for _acc in ("ver", "gestionar", "monitor"):
+                    cur.execute(
+                        "INSERT IGNORE INTO rol_permisos (rol_slug,modulo,accion,permitido) "
+                        "VALUES ('agente_retiros','retiros',%s,1)", (_acc,)
+                    )
             except Exception:
                 pass
 
