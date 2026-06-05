@@ -7225,7 +7225,7 @@ async function vhGuardar(){
 
 {# ── Modal: Editar cliente ── #}
 <div class="modal fade" id="modalEditarCliente" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Editar cliente</h5>
@@ -7305,15 +7305,15 @@ async function vhGuardar(){
               {% endif %}
             </small>
           </div>
-          <div class="col-4">
+          <div class="col-12 col-sm-4">
             <label class="form-label fw-semibold">Región</label>
             <input type="text" id="ec_region" class="form-control" value="{{ cliente.get('region') or '' }}" placeholder="Ej: Metropolitana">
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <label class="form-label fw-semibold">Comuna</label>
             <input type="text" id="ec_comuna" class="form-control" value="{{ cliente.comuna or '' }}">
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <label class="form-label fw-semibold">Ciudad</label>
             <input type="text" id="ec_ciudad" class="form-control" value="{{ cliente.ciudad or '' }}">
           </div>
@@ -7322,21 +7322,21 @@ async function vhGuardar(){
           <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
             <i class="bi bi-person-vcard me-1"></i>Contacto principal
           </div></div>
-          <div class="col-12 col-sm-5">
+          <div class="col-12 col-md-4">
             <label class="form-label fw-semibold">Nombre completo</label>
             <input type="text" id="ec_contacto_nombre" class="form-control" value="{{ cliente.contacto_nombre or '' }}">
           </div>
-          <div class="col-6 col-sm-3">
+          <div class="col-6 col-md-2">
             <label class="form-label fw-semibold">Cargo / Rol</label>
             <input type="text" id="ec_contacto_cargo" class="form-control" value="{{ cliente.contacto_cargo or '' }}" placeholder="Administrador…">
           </div>
-          <div class="col-6 col-sm-2">
+          <div class="col-6 col-md-2">
             <label class="form-label fw-semibold">Teléfono</label>
             <input type="text" id="ec_contacto_tel" class="form-control ec-tel"
                    value="{{ (cliente.contacto_tel | tel_chile_fmt) if cliente.contacto_tel else '' }}"
                    placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
           </div>
-          <div class="col-12 col-sm-2">
+          <div class="col-12 col-md-4">
             <label class="form-label fw-semibold">Email</label>
             <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}">
           </div>
@@ -7346,21 +7346,21 @@ async function vhGuardar(){
             <i class="bi bi-people me-1"></i>Contacto secundario
             <span class="text-muted fw-normal" style="font-size:.72rem">— opcional</span>
           </div></div>
-          <div class="col-12 col-sm-5">
+          <div class="col-12 col-md-4">
             <label class="form-label fw-semibold">Nombre completo</label>
             <input type="text" id="ec_contacto2_nombre" class="form-control" value="{{ cliente.contacto2_nombre or '' }}" placeholder="Ej: María González">
           </div>
-          <div class="col-6 col-sm-3">
+          <div class="col-6 col-md-2">
             <label class="form-label fw-semibold">Cargo / Rol</label>
             <input type="text" id="ec_contacto2_cargo" class="form-control" value="{{ cliente.contacto2_cargo or '' }}" placeholder="Gerente, mantenedor…">
           </div>
-          <div class="col-6 col-sm-2">
+          <div class="col-6 col-md-2">
             <label class="form-label fw-semibold">Teléfono</label>
             <input type="text" id="ec_contacto2_tel" class="form-control ec-tel"
                    value="{{ (cliente.contacto2_tel | tel_chile_fmt) if cliente.contacto2_tel else '' }}"
                    placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
           </div>
-          <div class="col-12 col-sm-2">
+          <div class="col-12 col-md-4">
             <label class="form-label fw-semibold">Email</label>
             <input type="email" id="ec_contacto2_email" class="form-control" value="{{ cliente.contacto2_email or '' }}">
           </div>

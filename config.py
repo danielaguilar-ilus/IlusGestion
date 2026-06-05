@@ -79,6 +79,10 @@ MYSQL_CONFIG = {
     'user':     _env('MYSQL_USER'),
     'password': _env('MYSQL_PASSWORD'),
     'database': _env('MYSQL_DATABASE'),
+    # Cloud Run + Cloud SQL (2026-06-05): si MYSQL_UNIX_SOCKET está seteado,
+    # la conexión va por socket unix /cloudsql/<connection_name> en vez de
+    # host:port. En Railway/local queda vacío → se sigue usando host:port.
+    'unix_socket': _env('MYSQL_UNIX_SOCKET'),
     'table':    'etiquetas',
     'users_table':    'app_users',
     'products_table': 'app_products',

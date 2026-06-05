@@ -1,0 +1,14 @@
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.md
+.claude/
+.venv/
+venv/
+env/
+node_modules/
+archived/
+tools/
+flask_local.log

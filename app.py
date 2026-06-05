@@ -1067,6 +1067,7 @@ def get_mysql():
     return pymysql.connect(
         host=MYSQL_CONFIG["host"],
         port=MYSQL_CONFIG["port"],
+        unix_socket=MYSQL_CONFIG.get("unix_socket") or None,
         user=MYSQL_CONFIG["user"],
         password=MYSQL_CONFIG["password"],
         database=MYSQL_CONFIG["database"],
@@ -1139,6 +1140,7 @@ def _get_pool():
                 ping           = 1,
                 host           = MYSQL_CONFIG["host"],
                 port           = MYSQL_CONFIG["port"],
+                unix_socket    = MYSQL_CONFIG.get("unix_socket") or None,
                 user           = MYSQL_CONFIG["user"],
                 password       = MYSQL_CONFIG["password"],
                 database       = MYSQL_CONFIG["database"],
@@ -5257,9 +5259,17 @@ def product_search():
     except Exception:
         pass
 
-    # ── 3. REST API ERP /productos — fuente en tiempo real ───────────
+    # ⚡ PERF (Juan Daniel 2026-06-05): el SQL directo a Random es ~70x más
+    # rápido que el REST API (MEDIDO: ~14ms vs ~0.8-1.2s). Respetamos el flag
+    # global ILUS_ERP_PREFER_SQL (default "1"), igual que ya hacen cubicador y
+    # retiros, para que la búsqueda de productos use SQL primero (baja de ~1s+
+    # a ~15ms). El REST queda solo como respaldo si se desactiva el flag.
+    _PREFER_SQL = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                   in ("1", "true", "yes", "on"))
+
+    # ── 3. REST API ERP /productos — SOLO si NO preferimos SQL ───────
     erp_api_tried = False
-    if len(q) >= 2:
+    if not _PREFER_SQL and len(q) >= 2:
         try:
             TOKEN = ERP_CONFIG.get("api_token", "")
             body  = _erp_get(
@@ -5271,7 +5281,7 @@ def product_search():
                     "visible": "true",
                     "venta":   "true",       # solo productos de venta (excluye servicios)
                 },
-                TOKEN, timeout=6,
+                TOKEN, timeout=3,
             )
             erp_api_tried = True
             existing_skus = {r["sku"] for r in results}
@@ -5301,11 +5311,13 @@ def product_search():
             except Exception:
                 erp_api_error = type(e).__name__
 
-    # ── 4. FALLBACK SQL directo a MAEPR (cuando REST API cae) ────────
+    # ── 4. SQL directo a MAEPR — PRINCIPAL si preferimos SQL, o respaldo si REST cae ──
     # 2026-05-19: si la REST API del ERP no responde, vamos directo al
     # SQL Server de Random (mismo que usa Transporte/Mantenciones). Esto
     # restaura el comportamiento de búsqueda CATÁLOGO completo del ERP.
-    if not erp_api_ok and len(q) >= 2:
+    # 2026-06-05 (perf): con ILUS_ERP_PREFER_SQL=1 este es el camino PRINCIPAL
+    # (~14ms vs ~1s del REST). Por eso la condición incluye _PREFER_SQL.
+    if (_PREFER_SQL or not erp_api_ok) and len(q) >= 2:
         try:
             like_sql = f"%{q.upper()}%"
             erp_rows = _random_sql_query(
@@ -21226,7 +21238,11 @@ def init_comunicaciones_tables():
                 )
 
             def _ret_stepper(active_idx):
-                """Mini-stepper visual de 5 nodos (email-safe, tabla)."""
+                """Stepper de 5 nodos CON LÍNEA CONECTORA (email-safe, tabla).
+                (Juan Daniel 2026-06-05: 'que tenga la conexión, como en retiros'.)
+                Nodo: verde=completado (i<active), rojo=actual (i==active), gris=pendiente.
+                Leg (línea): verde la ya pasada, roja la que sale del actual, gris las pendientes.
+                Fila 1 = 5 nodos + 4 legs (9 celdas). Fila 2 = 5 labels al 20% (centradas)."""
                 pasos = [
                     ("📩", "Solicitada"),
                     ("🔎", "Revisada"),
@@ -21234,31 +21250,48 @@ def init_comunicaciones_tables():
                     ("📦", "Preparando"),
                     ("✓", "Retirada"),
                 ]
-                tds = []
+                celdas = []      # nodos + legs (fila superior)
+                labels_tds = []  # labels (fila inferior)
+                n = len(pasos)
                 for i, (icon, label) in enumerate(pasos):
                     if i < active_idx:
-                        bg, fg, ring = "#16a34a", "#ffffff", "#16a34a"
+                        bg, fg, extra = "#16a34a", "#ffffff", ""
                     elif i == active_idx:
-                        bg, fg, ring = "#dc2626", "#ffffff", "#dc2626"
+                        bg, fg, extra = "#dc2626", "#ffffff", "box-shadow:0 0 0 4px rgba(220,38,38,.15);"
                     else:
-                        bg, fg, ring = "#f3f4f6", "#9ca3af", "#e5e7eb"
-                    color_lbl = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
-                    weight_lbl = "800" if i == active_idx else "600"
-                    tds.append(
-                        f'<td align="center" valign="top" style="width:20%;padding:0 4px">'
-                        f'<div style="display:inline-block;width:36px;height:36px;line-height:36px;'
-                        f'border-radius:18px;background:{bg};color:{fg};font-size:15px;font-weight:900;'
-                        f'border:2px solid {ring}">{icon}</div>'
-                        f'<div style="font-size:10px;color:{color_lbl};text-transform:uppercase;'
-                        f'font-weight:{weight_lbl};letter-spacing:.05em;margin-top:6px">{label}</div>'
+                        bg, fg, extra = "#f3f4f6", "#9ca3af", "border:1px solid #e5e7eb;"
+                    celdas.append(
+                        f'<td align="center" valign="middle" width="11%" style="padding:0">'
+                        f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
+                        f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;'
+                        f'font-size:15px;font-weight:900;text-align:center;margin:0 auto;{extra}">{icon}</div>'
                         f'</td>'
+                    )
+                    if i < n - 1:
+                        leg = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#e5e7eb")
+                        celdas.append(
+                            f'<td valign="middle" width="11.5%" style="padding:0 2px">'
+                            f'<div style="height:4px;background:{leg};border-radius:2px;'
+                            f'font-size:0;line-height:0">&nbsp;</div></td>'
+                        )
+                    lbl_color = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
+                    lbl_weight = "800" if i == active_idx else "600"
+                    labels_tds.append(
+                        f'<td align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
+                        f'font-size:10px;color:{lbl_color};text-transform:uppercase;font-weight:{lbl_weight};'
+                        f'letter-spacing:.04em">{label}</td>'
                     )
                 return (
                     '<table cellpadding="0" cellspacing="0" width="100%" '
-                    'style="background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;'
-                    'padding:14px 8px;margin:0 0 18px"><tr>'
-                    f'{"".join(tds)}'
+                    'style="background:#ffffff;border:1px solid #ececef;border-radius:12px;margin:0 0 18px">'
+                    '<tr><td style="padding:20px 14px 16px 14px">'
+                    '<table cellpadding="0" cellspacing="0" width="100%"><tr>'
+                    f'{"".join(celdas)}'
                     '</tr></table>'
+                    '<table cellpadding="0" cellspacing="0" width="100%" style="margin-top:9px"><tr>'
+                    f'{"".join(labels_tds)}'
+                    '</tr></table>'
+                    '</td></tr></table>'
                 )
 
             # Datos clave reutilizables (siempre presentes en el email)
