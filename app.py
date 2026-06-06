@@ -18114,6 +18114,24 @@ def tr_manifiesto_detalle(mid):
                 except Exception:
                     _prods = []
             it["productos"] = _prods if _prods else prod_por_comm.get(it["commitment_id"], [])
+            # OT FedEx: marca si esta factura aún no tiene tracking number asignado.
+            it["tiene_ot"] = bool((it.get("tracking_number") or "").strip())
+
+        # ── ALERTA "Facturas sin OT FedEx" (visión Daniel 2026-06-06) ──
+        # FedEx se gestiona por API: una vez asignada la OT (tracking number),
+        # el estado se actualiza solo. Alison solo necesita saber qué facturas
+        # del manifiesto AÚN no tienen OT (si no, el cliente queda sin tracking).
+        courier_l = (manifiesto.get("courier") or "").strip().lower()
+        es_fedex = ("fedex" in courier_l)
+        sin_ot = []
+        if es_fedex:
+            for it in items:
+                if not it.get("tiene_ot"):
+                    sin_ot.append({
+                        "item_id": it["id"],
+                        "doc": f"{it.get('tido') or ''} {it.get('nudo') or ''}".strip(),
+                        "cliente": it.get("cliente_nombre") or "",
+                    })
 
         logs = mysql_fetchall(
             "SELECT * FROM transport_logs WHERE entity_type='manifest' AND entity_id=%s "
@@ -18127,6 +18145,8 @@ def tr_manifiesto_detalle(mid):
             estados_entrega=ESTADOS_ENTREGA,
             estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
             couriers=COURIERS,
+            es_fedex=es_fedex,
+            sin_ot=sin_ot,
         )
     except Exception as e:
         import traceback, html as _htmlmod

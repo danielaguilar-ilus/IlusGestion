@@ -131,6 +131,41 @@
 </div>
 {% endif %}
 
+{# ── ALERTA: Facturas FedEx sin OT asignada (visión Daniel) ── #}
+{% if es_fedex %}
+  {% if sin_ot %}
+  <div class="alert d-flex align-items-start gap-2 no-print py-2 mb-3" role="alert"
+       style="background:#fff8e1;border:1px solid #fcd34d;color:#92400e;border-radius:11px">
+    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+    <div class="flex-grow-1">
+      <strong>{{ sin_ot|length }} factura{{ 's' if sin_ot|length != 1 }} sin OT FedEx asignada.</strong>
+      <div class="small mt-1" style="color:#a16207">
+        FedEx se gestiona por API: hasta que no asignes la OT (N° de seguimiento) a estas facturas,
+        el cliente <strong>no tendrá seguimiento</strong>. Asígnala con el botón
+        <i class="bi bi-truck"></i> de cada factura.
+      </div>
+      <div class="mt-2 d-flex flex-wrap gap-1">
+        {% for s in sin_ot %}
+        <button class="btn btn-sm py-0 px-2" style="background:#fef3c7;border:1px solid #fcd34d;color:#92400e;font-size:.76rem"
+                onclick="abrirTrackingFedex({{ s.item_id }})" title="Asignar OT a {{ s.cliente|e }}">
+          <i class="bi bi-truck me-1"></i>{{ s.doc }}
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert d-flex align-items-center gap-2 no-print py-2 mb-3" role="alert"
+       style="background:#dcfce7;border:1px solid #86efac;color:#15803d;border-radius:11px">
+    <i class="bi bi-check-circle-fill fs-5"></i>
+    <div>
+      <strong>Todas las facturas tienen OT FedEx asignada.</strong>
+      <span class="small">El seguimiento se actualiza automáticamente por API.</span>
+    </div>
+  </div>
+  {% endif %}
+{% endif %}
+
 {# ── Resumen de estados de entrega ── #}
 {% set total_entregados = items|selectattr('estado_entrega','eq','Entregado')|list|length %}
 {% set total_fallidos   = items|selectattr('estado_entrega','eq','Entrega fallida')|list|length %}
