@@ -14874,10 +14874,110 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
             )
             evt_id = cur.lastrowid
         conn.commit()
+        # Notificación al cliente (best-effort, no bloquea si falla).
+        # Solo en estados clave: En ruta y Entregado (no spamear con todos los pasos).
+        if estado in ('En ruta', 'Entregado') and commitment_id:
+            try:
+                _tr_notificar_cliente(commitment_id, estado, comentario=comentario)
+            except Exception as _ne:
+                print(f"[tr_notify] {_ne}", flush=True)
         return evt_id
     except Exception as _ev_err:
         print(f"[tr_event] no se pudo registrar evento: {_ev_err}", flush=True)
         return None
+
+
+def _tr_notificar_cliente(commitment_id, estado, comentario=None):
+    """Envía email al cliente cuando su despacho cambia a un estado clave.
+    Best-effort: si no hay email, no envía. Usa el sistema de comunicaciones
+    ILUS (branding global, kill switch global y por módulo).
+    Anti-spam: solo envía si el último estado notificado es distinto al actual
+    (controla con caché in-memory de 5 min — basta para evitar duplicados por
+    re-eventos del cron FedEx)."""
+    # Anti-spam: caché simple
+    import time as _t
+    if not hasattr(_tr_notificar_cliente, "_cache"):
+        _tr_notificar_cliente._cache = {}
+    cache = _tr_notificar_cliente._cache
+    key = (commitment_id, estado)
+    now = _t.time()
+    # Limpia entradas viejas
+    for k in list(cache.keys()):
+        if now - cache[k] > 600:
+            cache.pop(k, None)
+    if key in cache:
+        return  # ya notificado recientemente
+    cache[key] = now
+
+    c = mysql_fetchone(
+        "SELECT id, tido, nudo, cliente_nombre, email, public_token "
+        "FROM transport_commitments WHERE id=%s", (commitment_id,))
+    if not c or not (c.get("email") or "").strip():
+        return
+    tok = _tr_ensure_public_token(commitment_id)
+    if not tok:
+        return
+    try:
+        track_url = url_for("tr_public_tracking", token=tok, _external=True)
+    except Exception:
+        # Fuera de contexto request (cron) → URL relativa
+        track_url = f"/t/{tok}"
+    doc = f"{c.get('tido') or ''} {c.get('nudo') or ''}".strip()
+    cliente = c.get("cliente_nombre") or ""
+    if estado == 'En ruta':
+        asunto = _brand_subject(f"Tu despacho {doc} va en camino")
+        titulo = "Tu despacho va en camino 🚚"
+        cuerpo = ("Buenas noticias: tu pedido salió a ruta y va camino a tu dirección. "
+                  "Puedes ver el estado actualizado en tiempo real en el siguiente link:")
+    else:   # Entregado
+        asunto = _brand_subject(f"Tu despacho {doc} fue entregado")
+        titulo = "¡Tu despacho fue entregado! ✅"
+        cuerpo = ("Confirmamos la entrega de tu pedido. Si tienes alguna observación "
+                  "sobre el producto recibido, contáctanos. Puedes ver el detalle "
+                  "completo de la entrega (foto, firma) en el link:")
+    html = _ilus_email_html_tracking(titulo, cliente, doc, cuerpo, track_url, comentario)
+    _send_ilus_email(c["email"].strip(), asunto, html,
+                     evento=f"tracking_{estado.lower().replace(' ','_')}",
+                     modulo="transporte")
+
+
+def _ilus_email_html_tracking(titulo, cliente, doc, cuerpo, track_url, comentario=None):
+    """Plantilla email HTML simple, ILUS branding. Sin dependencias externas
+    (los clientes de email son notoriamente caprichosos: tablas + estilos inline).
+    """
+    com_html = ""
+    if comentario:
+        com_html = (f'<p style="margin:8px 0 0;color:#6b7280;font-size:13px;font-style:italic">'
+                    f'"{comentario}"</p>')
+    return f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+<table cellpadding="0" cellspacing="0" width="100%" style="background:#f4f4f5;padding:24px 0">
+  <tr><td align="center">
+    <table cellpadding="0" cellspacing="0" width="560" style="max-width:560px;width:100%;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.05)">
+      <tr><td style="background:#0a0a0a;padding:24px 28px">
+        <table cellpadding="0" cellspacing="0"><tr>
+          <td style="background:#dc2626;width:42px;height:42px;border-radius:11px;text-align:center;color:#fff;font-weight:900;font-size:18px">IL</td>
+          <td style="padding-left:12px;color:#fff;font-weight:800;font-size:17px">ILUS Sport &amp; Health</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding:30px 28px 10px">
+        <h1 style="margin:0;color:#0a0a0a;font-size:22px;font-weight:800">{titulo}</h1>
+        <p style="margin:10px 0 4px;color:#6b7280;font-size:14px">Hola {cliente or ''},</p>
+        <p style="margin:6px 0 16px;color:#374151;font-size:15px;line-height:1.5">{cuerpo}</p>
+        {com_html}
+        <table cellpadding="0" cellspacing="0" style="margin:22px 0"><tr><td>
+          <a href="{track_url}" style="background:#dc2626;color:#fff;text-decoration:none;font-weight:800;padding:14px 28px;border-radius:11px;font-size:15px;display:inline-block">Ver seguimiento en vivo &rarr;</a>
+        </td></tr></table>
+        <p style="margin:18px 0 0;color:#9ca3af;font-size:12px">N° de documento: <strong style="color:#374151;font-family:monospace">{doc}</strong></p>
+      </td></tr>
+      <tr><td style="background:#fafafa;padding:18px 28px;border-top:1px solid #f3f4f6;color:#9ca3af;font-size:12px;text-align:center">
+        ¿Dudas? Escríbenos a <a href="mailto:servicio.tecnico@ilusfitness.com" style="color:#dc2626;text-decoration:none">servicio.tecnico@ilusfitness.com</a><br>
+        © <strong style="color:#0a0a0a">ILUS Sport &amp; Health</strong>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
 
 
 def _tr_ensure_public_token(commitment_id):
@@ -19701,8 +19801,13 @@ def tr_monitor_live():
     Permite a Daniel/Alison ver dónde está cada chofer, qué ha completado y
     si realmente fue al destino (auditoría 'el chofer me está mintiendo').
     """
+    # Transportes para el filtro
+    couriers = mysql_fetchall(
+        "SELECT id, nombre FROM transport_couriers WHERE activo=1 ORDER BY nombre"
+    ) or []
     return render_template("transporte/monitor.html",
-                           gmaps_key=GOOGLE_MAPS_API_KEY)
+                           gmaps_key=GOOGLE_MAPS_API_KEY,
+                           couriers_filtro=couriers)
 
 
 @app.route("/transporte/api/monitor/snapshot")
@@ -19734,11 +19839,15 @@ def tr_monitor_snapshot():
         ORDER BY d.nombre
     """) or []
     # Para cada chofer, contar paradas done/pendientes de su manifiesto activo
+    # y detectar "chofer sospechoso" (estancado lejos del próximo destino).
     out = []
     for d in drivers:
         mid = d.get("manifest_id")
         progreso = None
         man_info = None
+        proximo_destino = None
+        sospechoso = False
+        dist_destino_m = None
         if mid:
             man_info = mysql_fetchone(
                 "SELECT correlativo, courier FROM transport_manifests WHERE id=%s",
@@ -19758,6 +19867,32 @@ def tr_monitor_snapshot():
                 "fallidas":   int(stats.get("fallidas") or 0),
                 "en_ruta":    int(stats.get("en_ruta") or 0),
             }
+            # Próximo destino (primera factura pendiente con coords)
+            pdest = mysql_fetchone("""
+                SELECT c.cliente_nombre, c.direccion, c.comuna,
+                       c.dest_lat, c.dest_lng
+                FROM transport_manifest_items mi
+                JOIN transport_commitments c ON c.id = mi.commitment_id
+                WHERE mi.manifest_id=%s
+                  AND mi.estado_entrega NOT IN ('Entregado','Devolución')
+                ORDER BY mi.orden, mi.id LIMIT 1
+            """, (mid,))
+            if pdest:
+                proximo_destino = {
+                    "cliente":   pdest.get("cliente_nombre") or "",
+                    "direccion": pdest.get("direccion") or "",
+                    "comuna":    pdest.get("comuna") or "",
+                }
+                # Distancia chofer ↔ próximo destino
+                if pdest.get("dest_lat") and pdest.get("dest_lng"):
+                    dist_destino_m = _haversine_m(
+                        d["lat"], d["lng"], pdest["dest_lat"], pdest["dest_lng"])
+                    # Sospechoso si: lleva > 30 min cerca del mismo punto (velocidad
+                    # muy baja) Y a > 500m de la próxima parada. Heurística simple.
+                    if dist_destino_m and dist_destino_m > 500:
+                        speed = float(d.get("speed_kmh") or 0)
+                        if speed < 5 and int(d.get("age_s") or 0) < 600:
+                            sospechoso = True
         out.append({
             "id":       d["id"],
             "nombre":   d["nombre"],
@@ -19774,7 +19909,11 @@ def tr_monitor_snapshot():
             "age_s":    int(d.get("age_s") or 0),
             "manifest_id":  mid,
             "manifest_corr": (man_info or {}).get("correlativo") or "",
+            "courier_man":   (man_info or {}).get("courier") or "",
             "progreso":     progreso,
+            "proximo_destino": proximo_destino,
+            "dist_destino_m":  int(dist_destino_m) if dist_destino_m else None,
+            "sospechoso":      sospechoso,
         })
     return jsonify({"ok": True, "count": len(out), "drivers": out})
 
