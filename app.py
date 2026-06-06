@@ -3990,6 +3990,31 @@ def require_permission(permission):
 
 
 @app.before_request
+def _legacy_host_redirect():
+    """Cutover Railway → Google (Juan Daniel 2026-06-06): "el link viejo debe llevar
+    al nuevo". Si la env var ILUS_REDIRECT_TO está seteada (SOLO en el host viejo /
+    Railway), reenvía TODO el tráfico al host nuevo (Google Cloud Run) preservando
+    ruta + query (ej: links de seguimiento de retiro siguen funcionando).
+
+    En Google la variable NO está → return None → la app funciona normal. Es 100%
+    INERTE sin la variable, por eso es seguro tenerlo siempre en el código.
+    302 (temporal) para que el cambio sea REVERSIBLE (sin cache duro del navegador)."""
+    _target = (os.environ.get("ILUS_REDIRECT_TO") or "").strip()
+    if not _target:
+        return None
+    try:
+        from urllib.parse import urlsplit
+        if request.host == urlsplit(_target).netloc:
+            return None  # ya estamos en el destino → evita bucle de redirección
+        _dest = _target.rstrip("/") + request.full_path
+        if _dest.endswith("?"):
+            _dest = _dest[:-1]
+        return redirect(_dest, code=302)
+    except Exception:
+        return redirect(_target, code=302)
+
+
+@app.before_request
 def before_request():
     """Pipeline global pre-request:
        1. Carga el usuario actual desde sesión → g.user / g.permissions.
