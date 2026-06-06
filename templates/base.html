@@ -465,6 +465,10 @@
       </a>
       {% endif %}
       {% if permissions.transporte %}
+      <a href="{{ url_for('tr_dashboard_hoy') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_dashboard_hoy'] %} active{% endif %}">
+        <i class="bi bi-speedometer2"></i><span>Dashboard</span>
+      </a>
       <a href="{{ url_for('transporte_index') }}"
          class="sidebar-link{% if request.endpoint in ['transporte_index'] %} active{% endif %}">
         <i class="bi bi-display"></i><span>Monitor</span>
@@ -488,6 +492,10 @@
       <a href="{{ url_for('tr_buscar_interno') }}"
          class="sidebar-link{% if request.endpoint in ['tr_buscar_interno'] %} active{% endif %}">
         <i class="bi bi-search"></i><span>Buscar despacho</span>
+      </a>
+      <a href="/transporte/ot-masivo"
+         class="sidebar-link{% if request.endpoint in ['tr_ot_masivo_ui'] %} active{% endif %}">
+        <i class="bi bi-file-earmark-arrow-up"></i><span>OT Masivo FedEx</span>
       </a>
       {% endif %}
     </div>

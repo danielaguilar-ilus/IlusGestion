@@ -19826,6 +19826,71 @@ def chofer_ping():
     return jsonify({"ok": True})
 
 
+@app.route("/transporte/dashboard")
+@_tr_required
+def tr_dashboard_hoy():
+    """Dashboard del día — pantalla command center con stats agregadas:
+    entregas hoy, choferes activos, alertas, últimas entregas con foto.
+    Para que Daniel/Alison entren al sistema y vean TODO de un vistazo."""
+    # Stats de HOY (zona horaria Santiago)
+    stats = mysql_fetchone("""
+        SELECT
+          (SELECT COUNT(*) FROM transport_manifests
+             WHERE DATE(fecha) = CURDATE()) AS manifiestos_hoy,
+          (SELECT COUNT(*) FROM transport_tracking_events
+             WHERE estado='Entregado'
+               AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS entregados_hoy,
+          (SELECT COUNT(*) FROM transport_tracking_events
+             WHERE estado='Entrega fallida'
+               AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS fallidos_hoy,
+          (SELECT COUNT(*) FROM transport_tracking_events
+             WHERE estado='En ruta'
+               AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS en_ruta_hoy,
+          (SELECT COUNT(DISTINCT driver_id) FROM transport_driver_pings
+             WHERE ts > DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AS choferes_activos,
+          (SELECT COUNT(*) FROM transport_manifest_items mi
+             JOIN transport_manifests m ON m.id = mi.manifest_id
+             WHERE LOWER(m.courier) LIKE '%%fedex%%'
+               AND (mi.tracking_number IS NULL OR mi.tracking_number='')
+               AND mi.estado_entrega NOT IN ('Entregado','Devolución')
+          ) AS sin_ot_fedex
+    """) or {}
+    # Últimas 8 entregas con prueba
+    ultimas = mysql_fetchall("""
+        SELECT p.entregado_at, p.receptor_nombre, p.fotos_json, p.firma_url,
+               c.tido, c.nudo, c.cliente_nombre, c.comuna,
+               co.nombre AS courier
+        FROM transport_delivery_proof p
+        JOIN transport_commitments c ON c.id = p.commitment_id
+        LEFT JOIN transport_manifest_items mi ON mi.id = p.manifest_item_id
+        LEFT JOIN transport_manifests m ON m.id = mi.manifest_id
+        LEFT JOIN transport_couriers co ON LOWER(co.nombre) LIKE CONCAT('%%', LOWER(m.courier), '%%')
+        ORDER BY p.entregado_at DESC LIMIT 8
+    """) or []
+    # Procesar fotos para preview
+    for u in ultimas:
+        try:
+            fotos = json.loads(u.get("fotos_json") or "[]")
+            u["foto_thumb"] = fotos[0] if fotos else ""
+        except Exception:
+            u["foto_thumb"] = ""
+    # Top transportes hoy (por entregas)
+    top_couriers = mysql_fetchall("""
+        SELECT m.courier, COUNT(*) AS entregas
+        FROM transport_tracking_events e
+        JOIN transport_manifest_items mi ON mi.id = e.manifest_item_id
+        JOIN transport_manifests m ON m.id = mi.manifest_id
+        WHERE e.estado='Entregado'
+          AND DATE(CONVERT_TZ(e.ts_utc,'+00:00','-04:00')) = CURDATE()
+          AND m.courier IS NOT NULL AND m.courier != ''
+        GROUP BY m.courier ORDER BY entregas DESC LIMIT 5
+    """) or []
+    return render_template("transporte/dashboard.html",
+                           stats=stats, ultimas=ultimas,
+                           top_couriers=top_couriers,
+                           gmaps_key=GOOGLE_MAPS_API_KEY)
+
+
 @app.route("/transporte/monitor")
 @_tr_required
 def tr_monitor_live():
@@ -54957,6 +55022,13 @@ try:
     print("[ILUS] Modulo POD por courier registrado.")
 except Exception as _pod_reg_err:
     print(f"[ILUS][WARN] register_pod_routes: {_pod_reg_err}")
+
+try:
+    from transporte_ot_masivo import register_ot_routes
+    register_ot_routes(app, globals())
+    print("[ILUS] Modulo OT Masivo registrado.")
+except Exception as _ot_reg_err:
+    print(f"[ILUS][WARN] register_ot_routes: {_ot_reg_err}")
 
 # ════════════════════════════════════════════════════════════════════════
 #  COLD-START PERFORMANCE — saltar migraciones idempotentes en cada worker
