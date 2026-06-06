@@ -251,6 +251,27 @@
       </div>
     </div>
 
+    {# ── LIVE: ubicación del chofer (estilo Uber Eats) ───────────── #}
+    {% if data.driver_live %}
+    <div class="tk-card" style="padding:0;overflow:hidden;border:1px solid #fecaca">
+      <div style="padding:.85rem 1rem;display:flex;align-items:center;gap:.5rem;background:linear-gradient(135deg,#fff,#fef2f2);border-bottom:1px solid #fee2e2">
+        <span style="width:9px;height:9px;background:#16a34a;border-radius:50%;animation:tkLive 1.6s infinite"></span>
+        <strong style="font-size:.92rem">Tu pedido va en camino</strong>
+        <span style="margin-left:auto;font-size:.78rem;color:var(--gray)">
+          {% if data.driver_live.eta_min %}llega en ~{{ data.driver_live.eta_min }} min{% else %}en ruta{% endif %}
+        </span>
+      </div>
+      <style>@keyframes tkLive{ 0%,100%{opacity:1} 50%{opacity:.3} }</style>
+      {% if gmaps_key %}
+      <div id="liveMap" style="width:100%;height:220px;background:#f3f4f6"></div>
+      {% else %}
+      <div style="padding:1rem;text-align:center;color:var(--gray);font-size:.85rem">
+        Tu chofer va en camino · {{ (data.driver_live.dist_m / 1000)|round(1) if data.driver_live.dist_m else '—' }} km del destino
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {# ── Resumen del envío ──────────────────────────────────────── #}
     <div class="tk-card">
       <div class="tk-card-h"><i class="bi bi-geo-alt-fill"></i>Resumen</div>
@@ -442,5 +463,41 @@
     }
     scheduleNext();
   </script>
+
+  {% if data.driver_live and gmaps_key %}
+  <script>
+    function initLiveMap(){
+      const dl = {{ data.driver_live|tojson }};
+      const map = new google.maps.Map(document.getElementById('liveMap'), {
+        zoom: 13, center: { lat: dl.lat, lng: dl.lng },
+        mapTypeControl:false, streetViewControl:false, fullscreenControl:false,
+        zoomControl:false, gestureHandling:'cooperative',
+        styles: [{ featureType:'poi', stylers:[{ visibility:'off' }] }]
+      });
+      // Marker del chofer (rojo ILUS)
+      new google.maps.Marker({
+        position:{ lat: dl.lat, lng: dl.lng }, map: map,
+        icon:{ path: google.maps.SymbolPath.CIRCLE, scale:11,
+               fillColor:'#dc2626', fillOpacity:1, strokeColor:'#fff', strokeWeight:3 },
+        title:'Tu chofer'
+      });
+      // Marker del destino (negro)
+      if (dl.dest_lat && dl.dest_lng){
+        new google.maps.Marker({
+          position:{ lat: dl.dest_lat, lng: dl.dest_lng }, map: map,
+          icon:{ path:'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z',
+                 fillColor:'#0a0a0a', fillOpacity:1, strokeColor:'#fff', strokeWeight:1.5, scale:1.4, anchor:new google.maps.Point(12,22) },
+          title:'Destino'
+        });
+        const b = new google.maps.LatLngBounds();
+        b.extend({ lat: dl.lat, lng: dl.lng });
+        b.extend({ lat: dl.dest_lat, lng: dl.dest_lng });
+        map.fitBounds(b, 40);
+      }
+    }
+    window.initLiveMap = initLiveMap;
+  </script>
+  <script async src="https://maps.googleapis.com/maps/api/js?key={{ gmaps_key }}&callback=initLiveMap"></script>
+  {% endif %}
 </body>
 </html>

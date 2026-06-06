@@ -18897,6 +18897,58 @@ def _tracking_payload(token):
         "eventos":       eventos,
         "proof":         proof,
         "entregado_at":  str(c.get("delivered_at") or "")[:19],
+        # Live driver location (Uber-style): solo si está "En ruta" y hay
+        # chofer asignado con ping reciente. Privacidad: solo lat/lng + ETA
+        # estimada, nunca nombre/RUT/patente del chofer.
+        "driver_live":   _tracking_driver_live(c["id"], estado_actual),
+    }
+
+
+def _tracking_driver_live(commitment_id, estado_actual):
+    """Devuelve la posición en vivo del chofer si está en ruta hacia esta factura.
+    Solo cuando estado='En ruta' (privacidad: no se expone GPS si ya entregó
+    o si aún está en preparación). Devuelve None si no aplica.
+    """
+    if estado_actual != 'En ruta':
+        return None
+    # Manifest activo de este commitment
+    mi = mysql_fetchone("""
+        SELECT mi.manifest_id, c.dest_lat, c.dest_lng
+        FROM transport_manifest_items mi
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.commitment_id=%s ORDER BY mi.id DESC LIMIT 1
+    """, (commitment_id,))
+    if not mi or not mi.get("manifest_id"):
+        return None
+    # Chofer asignado al manifest
+    drv = mysql_fetchone(
+        "SELECT driver_id FROM transport_manifest_drivers WHERE manifest_id=%s",
+        (mi["manifest_id"],))
+    if not drv:
+        return None
+    # Último ping reciente (<5 min)
+    ping = mysql_fetchone("""
+        SELECT lat, lng, ts, TIMESTAMPDIFF(SECOND, ts, NOW()) AS age_s
+        FROM transport_driver_pings
+        WHERE driver_id=%s AND ts > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+        ORDER BY id DESC LIMIT 1
+    """, (drv["driver_id"],))
+    if not ping:
+        return None
+    # Distancia estimada (haversine, si hay coords de destino)
+    dist_m = None
+    if mi.get("dest_lat") and mi.get("dest_lng"):
+        dist_m = _haversine_m(ping["lat"], ping["lng"],
+                              mi["dest_lat"], mi["dest_lng"])
+    return {
+        "lat": float(ping["lat"]),
+        "lng": float(ping["lng"]),
+        "dest_lat": float(mi["dest_lat"]) if mi.get("dest_lat") else None,
+        "dest_lng": float(mi["dest_lng"]) if mi.get("dest_lng") else None,
+        "age_s": int(ping["age_s"] or 0),
+        "dist_m": int(dist_m) if dist_m else None,
+        # ETA grosera asumiendo 25 km/h promedio (urbano)
+        "eta_min": (int(dist_m / 1000.0 / 25.0 * 60) if dist_m else None),
     }
 
 
@@ -18915,6 +18967,7 @@ def tr_public_tracking(token):
     return render_template(
         "transporte/public_tracking.html",
         token=token, data=payload,
+        gmaps_key=GOOGLE_MAPS_API_KEY,
     )
 
 
