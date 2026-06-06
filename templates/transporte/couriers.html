@@ -2,6 +2,48 @@
 {% block title %}Couriers — ILUS Transporte{% endblock %}
 
 {% block content %}
+<style>
+/* ── Tarjetas de courier — diseño sobrio coherente con la app ── */
+.cr-card{
+  background:#fff; border:1px solid #e8e8e8; border-radius:12px;
+  cursor:pointer; transition:border-color .15s, box-shadow .15s, transform .12s;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+}
+.cr-card:hover{ border-color:#CC0000; box-shadow:0 6px 20px -10px rgba(204,0,0,.25); transform:translateY(-2px); }
+.cr-card.cr-inactive{ opacity:.6; }
+.cr-inactive-badge{
+  position:absolute; top:10px; right:12px; font-size:.62rem; font-weight:700;
+  background:#6b7280; color:#fff; padding:.15rem .5rem; border-radius:20px;
+}
+.cr-logo{ width:48px; height:48px; object-fit:contain; border-radius:9px; background:#f8f9fa; padding:5px; flex-shrink:0; border:1px solid #f0f0f0; }
+.cr-logo-ph{
+  width:48px; height:48px; flex-shrink:0; border-radius:9px;
+  background:#0a0a0a; color:#CC0000; font-weight:800; font-size:1rem;
+  display:flex; align-items:center; justify-content:center;
+}
+/* Tags sobrios — gris suave, no colores chillones */
+.cr-tag{
+  font-size:.66rem; font-weight:600; color:#4b5563; background:#f3f4f6;
+  padding:.16rem .5rem; border-radius:6px; text-transform:capitalize;
+}
+.cr-tag-muted{ color:#9ca3af; background:#f9fafb; border:1px solid #f0f0f0; }
+/* Stats sin colorines */
+.cr-stats{ display:flex; align-items:center; gap:.5rem; background:#fafafa; border-radius:9px; padding:.6rem .4rem; }
+.cr-stat{ flex:1; text-align:center; }
+.cr-stat-num{ font-size:1.25rem; font-weight:800; line-height:1.1; color:#0a0a0a; }
+.cr-stat-num.cr-num-ok{ color:#16a34a; }
+.cr-stat-lbl{ font-size:.64rem; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; margin-top:.1rem; }
+.cr-stat-sep{ width:1px; align-self:stretch; background:#e8e8e8; }
+/* Acciones rápidas */
+.cr-act{
+  display:inline-flex; align-items:center; font-size:.76rem; font-weight:600;
+  color:#374151; text-decoration:none; padding:.35rem .65rem; border-radius:7px;
+  background:#f8f9fa; border:1px solid #f0f0f0; transition:all .12s;
+}
+.cr-act:hover{ background:#fef2f2; border-color:#fee2e2; color:#CC0000; }
+.cr-act-danger{ color:#9ca3af; background:transparent; border-color:transparent; }
+.cr-act-danger:hover{ background:#fee2e2; color:#dc2626; border-color:#fecaca; }
+</style>
 <div class="container-fluid py-3 px-3 px-md-4">
 
   {# ── HEADER NEGRO ESTANDARIZADO ── #}
@@ -34,6 +76,12 @@
               <i class="bi bi-download me-2"></i>Exportar tarifas
             </a>
           </li>
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <button class="dropdown-item" type="button" onclick="cargarLogos()">
+              <i class="bi bi-image me-2 text-primary"></i>Cargar logos oficiales
+            </button>
+          </li>
         </ul>
       </div>
       {# Form invisible para upload de tarifas multi-hoja #}
@@ -61,106 +109,77 @@
   <div class="row g-3" id="couriersGrid">
     {% for c in couriers %}
     <div class="col-12 col-md-6 col-xl-4" id="cardWrap{{ c.id }}">
-      <div class="card border-0 shadow-sm h-100 position-relative"
-           style="border-top: 3px solid {% if c.activo %}#CC0000{% else %}#555{% endif %} !important; border-radius: 10px; overflow: hidden;">
+      <div class="cr-card h-100 position-relative {% if not c.activo %}cr-inactive{% endif %}"
+           onclick="window.location.href='/transporte/couriers/{{ c.id }}'"
+           title="Abrir ficha de {{ c.nombre }}">
 
-        {# inactive overlay badge #}
         {% if not c.activo %}
-        <div class="position-absolute top-0 end-0 mt-2 me-2">
-          <span class="badge bg-secondary" style="font-size:.65rem;">Inactivo</span>
-        </div>
+        <span class="cr-inactive-badge">Inactivo</span>
         {% endif %}
 
-        <div class="card-body p-3" style="{% if not c.activo %}opacity:0.65{% endif %}">
+        <div class="p-3">
 
-          {# top: logo + name + badges #}
-          <div class="d-flex align-items-start gap-3 mb-3">
+          {# top: logo + name + tipo #}
+          <div class="d-flex align-items-center gap-3 mb-3">
             {% if c.logo_url %}
-            <img src="{{ c.logo_url }}" alt="{{ c.nombre }}"
-                 style="width:52px;height:52px;object-fit:contain;border-radius:8px;background:#f8f9fa;padding:4px;flex-shrink:0;">
+            <img src="{{ c.logo_url }}" alt="{{ c.nombre }}" class="cr-logo"
+                 onerror="this.outerHTML='<div class=&quot;cr-logo-ph&quot;>{{ c.nombre[:2]|upper }}</div>'">
             {% else %}
-            <div class="d-flex align-items-center justify-content-center rounded-3 flex-shrink-0"
-                 style="width:52px;height:52px;background:#111;font-size:1.1rem;font-weight:700;color:#CC0000;">
-              {{ c.nombre[:2]|upper }}
-            </div>
+            <div class="cr-logo-ph">{{ c.nombre[:2]|upper }}</div>
             {% endif %}
 
             <div class="flex-grow-1 min-w-0">
               <div class="fw-bold fs-6 text-truncate" title="{{ c.nombre }}">{{ c.nombre }}</div>
-              <div class="d-flex gap-1 flex-wrap mt-1">
-                <span class="badge small
-                  {% if c.tipo=='nacional' %}bg-primary
-                  {% elif c.tipo=='regional' %}bg-info text-dark
-                  {% elif c.tipo=='local' %}bg-success
-                  {% elif c.tipo=='internacional' %}bg-purple
-                  {% else %}bg-secondary{% endif %}">
-                  {{ c.tipo|capitalize }}
-                </span>
-                {% if c.activo %}
-                <span class="badge bg-success small">Activo</span>
-                {% endif %}
+              <div class="d-flex gap-1 flex-wrap mt-1 align-items-center">
+                <span class="cr-tag">{{ c.tipo|capitalize }}</span>
+                {% if not c.total_contratos %}<span class="cr-tag cr-tag-muted">Sin contrato</span>{% endif %}
               </div>
             </div>
-          </div>
 
-          {# status chips #}
-          <div class="d-flex gap-2 flex-wrap mb-3">
-            <span class="badge rounded-pill small {% if c.total_contratos %}bg-success{% else %}bg-warning text-dark{% endif %}">
-              <i class="bi bi-file-earmark-text me-1"></i>
-              {% if c.total_contratos %}Contrato vigente{% else %}Sin contrato{% endif %}
-            </span>
-            <span class="badge rounded-pill small {% if c.website %}bg-success{% else %}bg-secondary{% endif %}">
-              <i class="bi bi-globe me-1"></i>
-              {% if c.website %}Web{% else %}Sin web{% endif %}
-            </span>
+            <i class="bi bi-chevron-right text-muted" style="font-size:1.1rem;flex-shrink:0;"></i>
           </div>
 
           {# stats row #}
-          <div class="d-flex gap-3 mb-3 py-2 px-3 rounded-2" style="background:#f8f9fa;">
-            <div class="text-center flex-fill">
-              <div class="fw-bold text-danger" style="font-size:1.2rem;line-height:1.2;">{{ c.total_comunas or 0 }}</div>
-              <div class="text-muted" style="font-size:0.68rem;">Comunas</div>
+          <div class="cr-stats">
+            <div class="cr-stat">
+              <div class="cr-stat-num">{{ c.total_comunas or 0 }}</div>
+              <div class="cr-stat-lbl">Comunas</div>
             </div>
-            <div class="vr opacity-25"></div>
-            <div class="text-center flex-fill">
-              <div class="fw-bold" style="font-size:1.2rem;line-height:1.2;">{{ c.total_tarifas or 0 }}</div>
-              <div class="text-muted" style="font-size:0.68rem;">Tarifas</div>
+            <div class="cr-stat-sep"></div>
+            <div class="cr-stat">
+              <div class="cr-stat-num {% if c.comunas_con_precio %}cr-num-ok{% endif %}">{{ c.comunas_con_precio or 0 }}</div>
+              <div class="cr-stat-lbl">Con tarifa</div>
             </div>
             {% if c.peso_max_bulto %}
-            <div class="vr opacity-25"></div>
-            <div class="text-center flex-fill">
-              <div class="fw-bold" style="font-size:1.2rem;line-height:1.2;">{{ c.peso_max_bulto|int }}</div>
-              <div class="text-muted" style="font-size:0.68rem;">kg/bulto</div>
+            <div class="cr-stat-sep"></div>
+            <div class="cr-stat">
+              <div class="cr-stat-num">{{ c.peso_max_bulto|int }}</div>
+              <div class="cr-stat-lbl">kg/bulto</div>
             </div>
             {% endif %}
           </div>
 
           {# contact snippet #}
-          <div class="text-muted small mb-3" style="font-size:.78rem;">
+          {% if c.rut or c.telefono or c.email %}
+          <div class="text-muted small mt-3" style="font-size:.76rem;">
             {% if c.rut %}<div class="text-truncate"><i class="bi bi-card-text me-1 text-secondary"></i>{{ c.rut }}</div>{% endif %}
-            {% if c.contacto %}<div class="text-truncate"><i class="bi bi-person me-1 text-secondary"></i>{{ c.contacto }}</div>{% endif %}
             {% if c.telefono %}<div class="text-truncate"><i class="bi bi-telephone me-1 text-secondary"></i>{{ c.telefono }}</div>{% endif %}
             {% if c.email %}<div class="text-truncate"><i class="bi bi-envelope me-1 text-secondary"></i>{{ c.email }}</div>{% endif %}
           </div>
+          {% endif %}
 
-          {# action buttons #}
-          <div class="d-flex gap-2 flex-wrap">
-            <a href="/transporte/couriers/{{ c.id }}" class="btn btn-sm btn-danger" title="Ficha completa">
-              <i class="bi bi-file-person me-1"></i>Ficha
-            </a>
-            <a href="/transporte/couriers/{{ c.id }}#tab-tarifas" class="btn btn-sm btn-outline-primary" title="Ver tarifas">
+          {# quick actions (no navegan a ficha — stopPropagation) #}
+          <div class="d-flex gap-2 flex-wrap mt-3 pt-3" style="border-top:1px solid #f0f0f0;">
+            <a href="/transporte/couriers/{{ c.id }}#tab-tarifas" class="cr-act" onclick="event.stopPropagation()">
               <i class="bi bi-map me-1"></i>Tarifas
             </a>
-            <a href="/transporte/couriers/{{ c.id }}/pod" class="btn btn-sm btn-outline-success" title="Configurar Prueba de Entrega">
+            <a href="/transporte/couriers/{{ c.id }}/pod" class="cr-act" onclick="event.stopPropagation()">
               <i class="bi bi-shield-check me-1"></i>POD
             </a>
-            <button class="btn btn-sm btn-outline-secondary" onclick="editarCourier({{ c.id }})" title="Editar rápido">
-              <i class="bi bi-pencil"></i>
-            </button>
-            <button class="btn btn-sm {% if c.activo %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
-                    onclick="toggleActivo({{ c.id }}, {{ 0 if c.activo else 1 }})"
-                    title="{% if c.activo %}Desactivar{% else %}Activar{% endif %}">
-              <i class="bi bi-{% if c.activo %}eye-slash{% else %}eye{% endif %}"></i>
+            <button class="cr-act cr-act-danger ms-auto"
+                    onclick="event.stopPropagation(); eliminarCourier({{ c.id }}, '{{ c.nombre|e }}')"
+                    title="Eliminar courier">
+              <i class="bi bi-trash3"></i>
             </button>
           </div>
 
@@ -560,6 +579,43 @@ async function toggleActivo(id, nuevoValor) {
     body: JSON.stringify({...c, activo: nuevoValor})
   });
   location.reload();
+}
+
+async function cargarLogos() {
+  ilusToast('Cargando logos oficiales…', { type: 'info' });
+  try {
+    const r = await fetch('/transporte/couriers/seed-logos', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      ilusToast(`✓ ${d.actualizados.length} logos asociados`, { type: 'success' });
+      setTimeout(() => location.reload(), 800);
+    } else {
+      ilusToast('No se pudieron cargar', { type: 'error' });
+    }
+  } catch (e) { ilusToast('Error de conexión', { type: 'error' }); }
+}
+
+async function eliminarCourier(id, nombre) {
+  const ok = await ilusConfirm({
+    title: 'Eliminar courier',
+    message: `¿Eliminar definitivamente «${nombre}»?`,
+    sub: 'Se borran sus comunas y tarifas asociadas. Los manifiestos históricos NO se afectan (referencian por nombre). Esta acción no se puede deshacer.',
+    okLabel: 'Sí, eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/transporte/couriers/${id}?hard=1`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) {
+      ilusToast(`✓ «${d.nombre || nombre}» eliminado`, { type: 'success' });
+      const card = document.getElementById('cardWrap' + id);
+      if (card) card.remove();
+    } else {
+      ilusToast(d.error || 'No se pudo eliminar', { type: 'error' });
+    }
+  } catch (e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
 }
 
 /* ── helpers ── */

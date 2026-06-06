@@ -21823,7 +21823,11 @@ def tr_couriers():
     couriers = mysql_fetchall(
         """SELECT c.*,
            COUNT(DISTINCT t.id) AS total_tarifas,
-           COUNT(DISTINCT cc.id) AS total_comunas
+           COUNT(DISTINCT cc.id) AS total_comunas,
+           COUNT(DISTINCT CASE
+             WHEN cc.precios_json IS NOT NULL AND cc.precios_json <> ''
+              AND cc.precios_json <> '{}' AND cc.precios_json <> '[]'
+             THEN cc.id END) AS comunas_con_precio
            FROM transport_couriers c
            LEFT JOIN transport_courier_tarifas t ON t.courier_id=c.id AND t.activo=1
            LEFT JOIN transport_courier_comunas cc ON cc.courier_id=c.id
@@ -22016,13 +22020,83 @@ def tr_courier_editar(cid):
 @app.route("/transporte/couriers/<int:cid>", methods=["DELETE"])
 @_tr_required
 def tr_courier_eliminar(cid):
+    """Eliminar courier.
+
+    ?hard=1 → borra de verdad (con sus comunas/tarifas/contratos por
+              ON DELETE CASCADE). Para depurar duplicados como
+              'Transportes Mellín' (legacy de Milling).
+    Sin hard → soft-delete (activo=0, preserva historial).
+
+    Los manifiestos referencian al courier por NOMBRE (string), no por FK,
+    así que el hard-delete no rompe manifiestos históricos.
+    """
+    hard = request.args.get("hard") in ("1", "true", "yes")
+    row = mysql_fetchone("SELECT nombre FROM transport_couriers WHERE id=%s", (cid,))
+    if not row:
+        return jsonify({"error": "no_encontrado"}), 404
     conn = get_db()
     with conn.cursor() as cur:
-        # desactivar en lugar de borrar (preserva historial)
-        cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (cid,))
+        if hard:
+            cur.execute("DELETE FROM transport_couriers WHERE id=%s", (cid,))
+            accion = "courier eliminado (hard)"
+        else:
+            cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (cid,))
+            accion = "courier desactivado"
     conn.commit()
     _invalidate_couriers_cache()
-    return jsonify({"ok": True})
+    try:
+        _tr_log("commitment", cid, accion, row.get("nombre") or "")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "hard": hard, "nombre": row.get("nombre")})
+
+
+@app.route("/transporte/couriers/seed-logos", methods=["POST"])
+@_tr_required
+def tr_couriers_seed_logos():
+    """Asocia logos oficiales + websites a los couriers conocidos por nombre.
+    Solo setea si el campo está vacío (no pisa cambios manuales). Idempotente.
+    Logos descargados localmente a static/img/couriers/ para no depender de CDN.
+    """
+    # URLs directas de CDN estables (Wikimedia para FedEx; Brandfetch para los
+    # couriers chilenos — fondo transparente, 512px). El navegador del cliente
+    # las carga; si una falla, el front cae al placeholder con iniciales.
+    _BF = "https://cdn.brandfetch.io"
+    seeds = {
+        "fedex":       {"logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/FedEx_Express.svg/320px-FedEx_Express.svg.png", "web": "https://www.fedex.com/es-cl/"},
+        "starken":     {"logo": f"{_BF}/starken.cl/w/400/h/400",      "web": "https://www.starken.cl/"},
+        "chilexpress": {"logo": f"{_BF}/chilexpress.cl/w/400/h/400",  "web": "https://www.chilexpress.cl/"},
+        "blue":        {"logo": f"{_BF}/blue.cl/w/400/h/400",         "web": "https://www.blue.cl/"},
+        "clickex":     {"logo": f"{_BF}/clickex.cl/w/400/h/400",      "web": "https://clickex.cl/"},
+        "enviame":     {"logo": f"{_BF}/enviame.io/w/400/h/400",      "web": "https://enviame.io/"},
+        "envíame":     {"logo": f"{_BF}/enviame.io/w/400/h/400",      "web": "https://enviame.io/"},
+    }
+    actualizados = []
+    rows = mysql_fetchall("SELECT id, nombre, logo_url, website FROM transport_couriers") or []
+    for r in rows:
+        nom = (r.get("nombre") or "").strip().lower()
+        match = None
+        for kw, data in seeds.items():
+            if kw in nom:
+                match = data
+                break
+        if not match:
+            continue
+        sets, params = [], []
+        if not (r.get("logo_url") or "").strip():
+            sets.append("logo_url=%s"); params.append(match["logo"])
+        if not (r.get("website") or "").strip():
+            sets.append("website=%s"); params.append(match["web"])
+        if sets:
+            params.append(r["id"])
+            try:
+                mysql_execute(f"UPDATE transport_couriers SET {', '.join(sets)} WHERE id=%s",
+                              tuple(params))
+                actualizados.append(r["nombre"])
+            except Exception as e:
+                print(f"[seed-logos] {r['nombre']}: {e}", flush=True)
+    _invalidate_couriers_cache()
+    return jsonify({"ok": True, "actualizados": actualizados})
 
 
 @app.route("/transporte/couriers/<int:cid>/api", methods=["GET"])
