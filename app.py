@@ -19569,6 +19569,38 @@ def chofer_ruta(mid):
                            pod=pod, gmaps_key=GOOGLE_MAPS_API_KEY)
 
 
+@app.route("/chofer/manifiesto/<int:mid>/parada/<int:commitment_id>/iniciar",
+           methods=["POST"])
+@_chofer_required
+def chofer_parada_iniciar(mid, commitment_id):
+    """El chofer toca "Navegar" → marca la factura como 'En ruta' si no lo está.
+    Dispara el email "tu despacho va en camino" al cliente (vía _tr_event).
+    Idempotente: si ya está 'En ruta' o 'Entregado', no hace nada."""
+    drv = g.chofer
+    asign = mysql_fetchone(
+        "SELECT id FROM transport_manifest_drivers "
+        "WHERE manifest_id=%s AND driver_id=%s", (mid, drv["id"]))
+    if not asign:
+        return jsonify({"error": "no_asignado"}), 403
+    item = mysql_fetchone(
+        "SELECT id, estado_entrega FROM transport_manifest_items "
+        "WHERE manifest_id=%s AND commitment_id=%s", (mid, commitment_id))
+    if not item:
+        return jsonify({"error": "no_encontrado"}), 404
+    estado_actual = item.get("estado_entrega") or ""
+    if estado_actual in ('En ruta', 'Entregado', 'Devolución'):
+        return jsonify({"ok": True, "ya_estaba": True, "estado": estado_actual})
+    mysql_execute(
+        "UPDATE transport_manifest_items SET estado_entrega='En ruta' WHERE id=%s",
+        (item["id"],))
+    _tr_log("manifest_item", item["id"], "en ruta (chofer navegó)",
+            drv["nombre"])
+    _tr_event(item["id"], 'En ruta', fuente='chofer',
+              comentario=f"{drv['nombre']} salió hacia esta parada",
+              commitment_id=commitment_id)
+    return jsonify({"ok": True, "ya_estaba": False, "estado": "En ruta"})
+
+
 @app.route("/chofer/manifiesto/<int:mid>/entrega/<int:commitment_id>")
 @_chofer_required
 def chofer_entrega(mid, commitment_id):
