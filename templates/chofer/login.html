@@ -1,0 +1,100 @@
+{# App del chofer — Login con RUT + PIN. Standalone, mobile-first, ILUS. #}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>Chofer · ILUS</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='ilus-icon.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; --gray:#6b7280; }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; height:100%; }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:linear-gradient(160deg,#0a0a0a 0%, #1a1a1a 55%, #2a0a0a 100%);
+      color:#fff; min-height:100vh;
+      display:flex; align-items:center; justify-content:center;
+      padding:max(1rem,env(safe-area-inset-top)) 1rem max(1rem,env(safe-area-inset-bottom));
+      -webkit-font-smoothing:antialiased;
+    }
+    .ch-login{ width:100%; max-width:380px; }
+    .ch-brand{ text-align:center; margin-bottom:2rem; }
+    .ch-brand-dot{
+      width:64px; height:64px; border-radius:18px; background:var(--ilus-red);
+      display:inline-flex; align-items:center; justify-content:center;
+      color:#fff; font-weight:900; font-size:1.6rem; letter-spacing:1px;
+      box-shadow:0 16px 40px -12px rgba(220,38,38,.7);
+    }
+    .ch-brand h1{ font-size:1.3rem; margin:1rem 0 .15rem; font-weight:800; }
+    .ch-brand p{ font-size:.8rem; color:#9ca3af; margin:0; letter-spacing:1.5px; text-transform:uppercase; }
+    .ch-card{
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.1);
+      border-radius:20px;
+      padding:1.6rem 1.4rem;
+      backdrop-filter:blur(10px);
+    }
+    .ch-row{ margin-bottom:1.1rem; }
+    .ch-lbl{ font-size:.78rem; font-weight:700; color:#d1d5db; margin-bottom:.4rem; display:block;
+             text-transform:uppercase; letter-spacing:.5px; }
+    .ch-input{
+      width:100%; padding:.9rem 1rem; font-size:16px;
+      background:rgba(255,255,255,.07); border:1.5px solid rgba(255,255,255,.15);
+      border-radius:13px; color:#fff; min-height:52px;
+      transition:border-color .15s, box-shadow .15s;
+    }
+    .ch-input::placeholder{ color:#6b7280; }
+    .ch-input:focus{ outline:none; border-color:var(--ilus-red);
+      box-shadow:0 0 0 3px rgba(220,38,38,.25); background:rgba(255,255,255,.1); }
+    .ch-input.pin{ letter-spacing:.5rem; text-align:center; font-size:1.5rem; font-weight:700; }
+    .ch-btn{
+      width:100%; padding:1rem; border:none; border-radius:13px;
+      background:var(--ilus-red); color:#fff; font-weight:800; font-size:1.05rem;
+      cursor:pointer; min-height:54px; letter-spacing:.3px;
+      box-shadow:0 10px 30px -10px rgba(220,38,38,.7);
+      transition:transform .12s, background .15s;
+      display:flex; align-items:center; justify-content:center; gap:.5rem;
+    }
+    .ch-btn:active{ transform:scale(.98); }
+    .ch-err{
+      background:rgba(220,38,38,.15); border:1px solid rgba(220,38,38,.4);
+      color:#fca5a5; border-radius:12px; padding:.7rem .9rem; font-size:.86rem;
+      margin-bottom:1.1rem; display:flex; align-items:flex-start; gap:.5rem;
+    }
+    .ch-foot{ text-align:center; font-size:.72rem; color:#6b7280; margin-top:1.5rem; }
+  </style>
+</head>
+<body>
+  <div class="ch-login">
+    <div class="ch-brand">
+      <div class="ch-brand-dot">IL</div>
+      <h1>App del Chofer</h1>
+      <p>ILUS Sport &amp; Health</p>
+    </div>
+
+    <div class="ch-card">
+      {% if error %}
+      <div class="ch-err"><i class="bi bi-exclamation-triangle-fill"></i><div>{{ error }}</div></div>
+      {% endif %}
+      <form method="POST" action="{{ url_for('chofer_login') }}" autocomplete="off">
+        <div class="ch-row">
+          <label class="ch-lbl" for="rut">Tu RUT</label>
+          <input class="ch-input" id="rut" name="rut" type="text" inputmode="text"
+                 placeholder="12.345.678-9" autocomplete="username" required autofocus>
+        </div>
+        <div class="ch-row">
+          <label class="ch-lbl" for="pin">PIN</label>
+          <input class="ch-input pin" id="pin" name="pin" type="password" inputmode="numeric"
+                 placeholder="••••" maxlength="8" autocomplete="current-password" required>
+        </div>
+        <button class="ch-btn" type="submit"><i class="bi bi-box-arrow-in-right"></i>Entrar</button>
+      </form>
+    </div>
+
+    <div class="ch-foot">¿Problemas para entrar? Contacta a tu coordinador.</div>
+  </div>
+</body>
+</html>

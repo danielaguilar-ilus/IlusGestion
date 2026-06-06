@@ -320,6 +320,26 @@ html, body {
   line-height: .9;
   color: var(--ilus-black);
 }
+/* QR único por bulto — el chofer lo escanea para capturar el bulto */
+.bultos-box .qr-box {
+  width: 18mm;
+  height: 18mm;
+  margin-top: 1.5mm;
+}
+.bultos-box .qr-box img,
+.bultos-box .qr-box canvas {
+  width: 18mm !important;
+  height: 18mm !important;
+  display: block;
+}
+.bultos-box .qr-code-txt {
+  font-family: monospace;
+  font-size: 2.4mm;
+  font-weight: 700;
+  letter-spacing: .3mm;
+  color: var(--ilus-black);
+  margin-top: .5mm;
+}
 
 /* STATUS DE SALIDA (vacío para sello/firma) */
 .lbl-status {
@@ -436,6 +456,10 @@ html, body {
             <span class="b-de">de</span>
             <span class="b-n">{{ b.total }}</span>
           </div>
+          {% if b.qr %}
+          <div class="qr-box" data-qr="{{ b.qr }}" title="Escanea para registrar este bulto"></div>
+          <div class="qr-code-txt">{{ b.qr }}</div>
+          {% endif %}
         </div>
       </div>
 
@@ -466,7 +490,24 @@ html, body {
 {% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
+// Render de los QR únicos por bulto (chofer escanea para capturar)
+document.addEventListener("DOMContentLoaded", function () {
+  if (typeof QRCode === "undefined") return;
+  document.querySelectorAll(".qr-box").forEach(function (box) {
+    var code = (box.dataset.qr || "").trim();
+    if (!code) return;
+    try {
+      new QRCode(box, {
+        text: code,
+        width: 80, height: 80,
+        colorDark: "#000000", colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.M,
+      });
+    } catch (e) {}
+  });
+});
 document.addEventListener("DOMContentLoaded", function () {
   function renderBarcode(barcode) {
     const code = (barcode.dataset.code || "").trim();

@@ -3792,6 +3792,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/t/",                      # tracking público de transporte (token URL)
     "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
     "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
+    "/chofer",                  # app del chofer (sesión driver_id propia)
 )
 
 
@@ -18208,12 +18209,49 @@ def _tr_etiqueta_facturas(commitment_ids):
     return facturas
 
 
+def _tr_label_qr_code():
+    """Genera un código QR único y corto para una etiqueta (8 chars hex).
+    Lo prefijamos con 'L' para identificarlo a simple vista. Ej: 'L3f9a2c71'.
+    Corto a propósito: cabe holgado en un QR pequeño y escanea rápido."""
+    return "L" + secrets.token_hex(4)
+
+
+def _tr_attach_qr_codes(facturas, manifest_id=None):
+    """Adjunta el qr_code de cada bulto a la estructura `facturas` (in-place).
+
+    Lee transport_labels y mapea (commitment_id, bulto_num) → qr_code, para que
+    la plantilla de etiquetas pueda imprimir el QR único de cada bulto.
+    """
+    if not facturas:
+        return facturas
+    cids = [f["commitment_id"] for f in facturas]
+    if not cids:
+        return facturas
+    _ph = ",".join(["%s"] * len(cids))
+    try:
+        rows = mysql_fetchall(
+            f"SELECT commitment_id, bulto_num, qr_code FROM transport_labels "
+            f"WHERE manifest_id=%s AND commitment_id IN ({_ph})",
+            tuple([manifest_id or 0] + cids)
+        ) or []
+    except Exception:
+        rows = []
+    qmap = {(r["commitment_id"], r["bulto_num"]): (r.get("qr_code") or "") for r in rows}
+    for f in facturas:
+        for b in f["bultos"]:
+            b["qr"] = qmap.get((f["commitment_id"], b["num"]), "")
+    return facturas
+
+
 def _tr_upsert_labels(facturas, manifest_id=None, courier=""):
     """UPSERT de filas en transport_labels (una por bulto) con estado 'generada'.
 
     Alimenta el tracking aguas abajo. Idempotente por (commitment_id, manifest_id,
     bulto_num) gracias a la UNIQUE KEY de la tabla. Si la tabla no existe todavía
     (cold-start raro), no rompe la generación de etiquetas — solo loguea.
+
+    Genera un qr_code ÚNICO por etiqueta (para que el chofer escanee). Solo se
+    asigna si la etiqueta aún no tiene uno (no se regenera al re-imprimir).
     """
     if not facturas:
         return
@@ -18233,6 +18271,26 @@ def _tr_upsert_labels(facturas, manifest_id=None, courier=""):
                         (f["commitment_id"], manifest_id or 0, b["num"], b["total"], courier or ""),
                     )
         conn.commit()
+        # Asignar qr_code a las etiquetas que aún no lo tienen (reintenta ante
+        # colisión del UNIQUE — probabilidad ínfima con 8 hex pero por las dudas).
+        try:
+            faltan = mysql_fetchall(
+                "SELECT id FROM transport_labels "
+                "WHERE (qr_code IS NULL OR qr_code='') AND manifest_id=%s",
+                (manifest_id or 0,)
+            ) or []
+            for row in faltan:
+                for _ in range(4):
+                    try:
+                        mysql_execute(
+                            "UPDATE transport_labels SET qr_code=%s WHERE id=%s",
+                            (_tr_label_qr_code(), row["id"])
+                        )
+                        break
+                    except Exception:
+                        continue
+        except Exception as e_qr:
+            print(f"[tr_labels] qr asignación falló (no bloquea): {e_qr}", flush=True)
     except Exception as e_lbl:
         print(f"[tr_labels] upsert falló (no bloquea impresión): {e_lbl}", flush=True)
 
@@ -18257,6 +18315,7 @@ def tr_manifiesto_etiquetas(mid):
 
     courier = manifiesto.get("courier") or ""
     _tr_upsert_labels(facturas, manifest_id=mid, courier=courier)
+    _tr_attach_qr_codes(facturas, manifest_id=mid)
 
     total_etiquetas = sum(f["total_bultos"] for f in facturas)
     _tr_log("manifest", mid, "etiquetas generadas",
@@ -18289,6 +18348,7 @@ def tr_factura_etiquetas(commitment_id):
     )
     manifest_id = mrow["manifest_id"] if mrow else None
     _tr_upsert_labels(facturas, manifest_id=manifest_id, courier="")
+    _tr_attach_qr_codes(facturas, manifest_id=manifest_id)
 
     total_etiquetas = sum(f["total_bultos"] for f in facturas)
     _tr_log("commitment", commitment_id, "etiquetas generadas",
@@ -19064,6 +19124,338 @@ def tr_cron_fedex_poll():
         "changed": changed_count,
         "items":   items_log,
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  APP DEL CHOFER (FASE 2) — login RUT+PIN, captura por escaneo QR, ruta
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _chofer_actual():
+    """Devuelve el dict del chofer logueado, o None. Lee de sesión."""
+    did = session.get("driver_id")
+    if not did:
+        return None
+    return mysql_fetchone(
+        "SELECT id, nombre, rut, telefono, patente, activo "
+        "FROM transport_drivers WHERE id=%s AND activo=1",
+        (did,)
+    )
+
+
+def _chofer_required(view):
+    """Decorador: exige sesión de chofer. Redirige a /chofer/login si no hay."""
+    @wraps(view)
+    def wrapped(*a, **kw):
+        if not session.get("driver_id"):
+            if "/api/" in request.path or request.is_json:
+                return jsonify({"error": "no_auth", "login": url_for("chofer_login")}), 401
+            return redirect(url_for("chofer_login"))
+        drv = _chofer_actual()
+        if not drv:
+            session.pop("driver_id", None)
+            return redirect(url_for("chofer_login"))
+        g.chofer = drv
+        return view(*a, **kw)
+    return wrapped
+
+
+@app.route("/chofer/login", methods=["GET", "POST"])
+@rate_limited("chofer_login", max_attempts=12, window_seconds=600)
+def chofer_login():
+    """Login del chofer con RUT + PIN. Sesión propia (driver_id)."""
+    if request.method == "GET":
+        if session.get("driver_id"):
+            return redirect(url_for("chofer_home"))
+        return render_template("chofer/login.html", error=None)
+    rut_raw = (request.form.get("rut") or "").strip()
+    pin     = (request.form.get("pin") or "").strip()
+    rut_norm = normalizar_rut(rut_raw)
+    if not rut_norm or not pin:
+        return render_template("chofer/login.html",
+                               error="Ingresa tu RUT y tu PIN."), 400
+    drv = mysql_fetchone(
+        "SELECT id, nombre, pin_hash, activo FROM transport_drivers WHERE rut=%s",
+        (rut_norm,)
+    )
+    if not drv or not drv.get("activo"):
+        return render_template("chofer/login.html",
+                               error="RUT no registrado o inactivo. "
+                                     "Contacta a tu coordinador."), 401
+    if not check_password_hash(drv.get("pin_hash") or "", pin):
+        return render_template("chofer/login.html",
+                               error="PIN incorrecto. Intenta de nuevo."), 401
+    session["driver_id"] = drv["id"]
+    session.permanent = True
+    try:
+        mysql_execute("UPDATE transport_drivers SET last_login_at=NOW() WHERE id=%s",
+                      (drv["id"],))
+    except Exception:
+        pass
+    return redirect(url_for("chofer_home"))
+
+
+@app.route("/chofer/logout")
+def chofer_logout():
+    session.pop("driver_id", None)
+    return redirect(url_for("chofer_login"))
+
+
+@app.route("/chofer")
+@app.route("/chofer/")
+@_chofer_required
+def chofer_home():
+    """Home del chofer: lista de manifiestos asignados con su fase."""
+    drv = g.chofer
+    manifiestos = mysql_fetchall("""
+        SELECT m.id, m.correlativo, m.fecha, m.courier, m.estado,
+               md.fase, md.assigned_at, md.captura_done_at,
+               (SELECT COUNT(*) FROM transport_manifest_items WHERE manifest_id=m.id) AS n_items,
+               (SELECT COUNT(*) FROM transport_labels
+                  WHERE manifest_id=m.id) AS n_bultos,
+               (SELECT COUNT(*) FROM transport_labels
+                  WHERE manifest_id=m.id AND captured_at IS NOT NULL) AS n_capturados
+        FROM transport_manifest_drivers md
+        JOIN transport_manifests m ON m.id = md.manifest_id
+        WHERE md.driver_id=%s
+        ORDER BY md.assigned_at DESC
+        LIMIT 50
+    """, (drv["id"],)) or []
+    return render_template("chofer/home.html",
+                           chofer=drv, manifiestos=manifiestos)
+
+
+@app.route("/chofer/manifiesto/<int:mid>/captura")
+@_chofer_required
+def chofer_captura(mid):
+    """Pantalla de CAPTURA: el chofer escanea cada etiqueta (QR) para retirar
+    los bultos del manifiesto. Cuando todos los bultos de una factura están
+    capturados, esa factura pasa a 'Entregado a transporte'."""
+    drv = g.chofer
+    # Verificar que el manifiesto está asignado a este chofer
+    asign = mysql_fetchone(
+        "SELECT id, fase FROM transport_manifest_drivers "
+        "WHERE manifest_id=%s AND driver_id=%s",
+        (mid, drv["id"])
+    )
+    if not asign:
+        flash("Ese manifiesto no está asignado a ti.", "danger")
+        return redirect(url_for("chofer_home"))
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, fecha, courier FROM transport_manifests WHERE id=%s",
+        (mid,)
+    )
+    # Resumen de bultos por factura
+    facturas = mysql_fetchall("""
+        SELECT c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre, c.comuna,
+               COUNT(l.id) AS total_bultos,
+               SUM(CASE WHEN l.captured_at IS NOT NULL THEN 1 ELSE 0 END) AS capturados
+        FROM transport_manifest_items mi
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        LEFT JOIN transport_labels l
+               ON l.commitment_id = c.id AND l.manifest_id = %s
+        WHERE mi.manifest_id = %s
+        GROUP BY c.id, c.tido, c.nudo, c.cliente_nombre, c.comuna
+        ORDER BY c.cliente_nombre
+    """, (mid, mid)) or []
+    total_bultos     = sum(int(f["total_bultos"] or 0) for f in facturas)
+    total_capturados = sum(int(f["capturados"] or 0) for f in facturas)
+    return render_template("chofer/captura.html",
+                           chofer=drv, manifiesto=manifiesto,
+                           facturas=facturas,
+                           total_bultos=total_bultos,
+                           total_capturados=total_capturados)
+
+
+@app.route("/chofer/manifiesto/<int:mid>/captura/scan", methods=["POST"])
+@_chofer_required
+def chofer_captura_scan(mid):
+    """Procesa un escaneo de QR. Resuelve el bulto, lo marca capturado, y si la
+    factura quedó completa, cambia su estado a 'Entregado a transporte'.
+
+    Body JSON: { code: "L3f9a2c71" }
+    Returns: {ok, bulto, factura_completa, factura_doc, progreso{...}}
+    """
+    drv = g.chofer
+    asign = mysql_fetchone(
+        "SELECT id FROM transport_manifest_drivers "
+        "WHERE manifest_id=%s AND driver_id=%s", (mid, drv["id"])
+    )
+    if not asign:
+        return jsonify({"error": "manifiesto no asignado"}), 403
+    code = ((request.get_json(silent=True, force=True) or {}).get("code") or "").strip()
+    if not code:
+        return jsonify({"error": "código vacío"}), 400
+    # Buscar la etiqueta por qr_code DENTRO de este manifiesto
+    label = mysql_fetchone(
+        "SELECT id, commitment_id, bulto_num, bulto_total, captured_at "
+        "FROM transport_labels WHERE qr_code=%s AND manifest_id=%s",
+        (code, mid)
+    )
+    if not label:
+        # ¿Existe el QR pero en otro manifiesto? Mensaje claro.
+        otro = mysql_fetchone(
+            "SELECT manifest_id FROM transport_labels WHERE qr_code=%s", (code,)
+        )
+        if otro:
+            return jsonify({"ok": False, "error": "otro_manifiesto",
+                            "msg": "Esa etiqueta pertenece a otro manifiesto."}), 404
+        return jsonify({"ok": False, "error": "no_encontrado",
+                        "msg": "Código no reconocido. ¿Es una etiqueta ILUS?"}), 404
+    ya = bool(label.get("captured_at"))
+    if not ya:
+        mysql_execute(
+            "UPDATE transport_labels SET captured_at=NOW(), captured_by=%s, "
+            "estado='capturada' WHERE id=%s",
+            (drv["id"], label["id"])
+        )
+    # Recalcular progreso de ESTA factura
+    cid = label["commitment_id"]
+    prog = mysql_fetchone("""
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN captured_at IS NOT NULL THEN 1 ELSE 0 END) AS cap
+        FROM transport_labels WHERE manifest_id=%s AND commitment_id=%s
+    """, (mid, cid)) or {}
+    total_f = int(prog.get("total") or 0)
+    cap_f   = int(prog.get("cap") or 0)
+    factura_completa = (total_f > 0 and cap_f >= total_f)
+    # Si la factura quedó completa → estado 'Entregado a transporte'
+    doc = ""
+    if factura_completa:
+        item = mysql_fetchone(
+            "SELECT id, estado_entrega FROM transport_manifest_items "
+            "WHERE manifest_id=%s AND commitment_id=%s", (mid, cid)
+        )
+        cinfo = mysql_fetchone(
+            "SELECT tido, nudo FROM transport_commitments WHERE id=%s", (cid,)
+        ) or {}
+        doc = f"{cinfo.get('tido') or ''} {cinfo.get('nudo') or ''}".strip()
+        if item and item.get("estado_entrega") != 'Entregado a transporte' \
+                and item.get("estado_entrega") not in ('En ruta', 'Entregado'):
+            mysql_execute(
+                "UPDATE transport_manifest_items SET estado_entrega='Entregado a transporte' "
+                "WHERE id=%s", (item["id"],)
+            )
+            _tr_event(item["id"], 'Entregado a transporte', fuente='chofer',
+                      comentario=f"Bultos capturados por {drv['nombre']}",
+                      commitment_id=cid)
+    # Progreso global del manifiesto
+    gprog = mysql_fetchone("""
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN captured_at IS NOT NULL THEN 1 ELSE 0 END) AS cap
+        FROM transport_labels WHERE manifest_id=%s
+    """, (mid,)) or {}
+    return jsonify({
+        "ok": True,
+        "ya_capturado":    ya,
+        "commitment_id":   cid,
+        "bulto":           f"{label['bulto_num']}/{label['bulto_total']}",
+        "factura_completa": factura_completa,
+        "factura_doc":     doc,
+        "factura_prog":    {"cap": cap_f, "total": total_f},
+        "global_prog":     {"cap": int(gprog.get("cap") or 0),
+                            "total": int(gprog.get("total") or 0)},
+    })
+
+
+@app.route("/chofer/manifiesto/<int:mid>/captura/finalizar", methods=["POST"])
+@_chofer_required
+def chofer_captura_finalizar(mid):
+    """Cierra la fase de captura y avanza el manifiesto a fase 'ruta'."""
+    drv = g.chofer
+    asign = mysql_fetchone(
+        "SELECT id FROM transport_manifest_drivers "
+        "WHERE manifest_id=%s AND driver_id=%s", (mid, drv["id"])
+    )
+    if not asign:
+        return jsonify({"error": "manifiesto no asignado"}), 403
+    mysql_execute(
+        "UPDATE transport_manifest_drivers "
+        "SET fase='ruta', captura_done_at=NOW() WHERE id=%s",
+        (asign["id"],)
+    )
+    _tr_log("manifest", mid, "captura finalizada por chofer", drv["nombre"])
+    return jsonify({"ok": True, "next": url_for("chofer_home")})
+
+
+# ── Admin: gestión de choferes + asignación a manifiestos ────────────────
+
+@app.route("/transporte/choferes")
+@_tr_required
+def tr_choferes():
+    """Listado/gestión de choferes (admin transporte)."""
+    drivers = mysql_fetchall(
+        "SELECT id, nombre, rut, telefono, patente, activo, last_login_at, created_at "
+        "FROM transport_drivers ORDER BY activo DESC, nombre"
+    ) or []
+    return render_template("transporte/choferes.html", drivers=drivers)
+
+
+@app.route("/transporte/choferes/crear", methods=["POST"])
+@_tr_required
+def tr_choferes_crear():
+    """Crea un chofer con RUT + PIN (hasheado)."""
+    f = request.form if request.form else (request.get_json(silent=True) or {})
+    nombre = (f.get("nombre") or "").strip()
+    rut    = normalizar_rut((f.get("rut") or "").strip())
+    pin    = (f.get("pin") or "").strip()
+    tel    = (f.get("telefono") or "").strip() or None
+    patente = (f.get("patente") or "").strip() or None
+    if not nombre or not rut or not pin:
+        return jsonify({"error": "nombre, RUT y PIN son obligatorios"}), 400
+    if len(pin) < 4 or len(pin) > 8 or not pin.isdigit():
+        return jsonify({"error": "El PIN debe ser de 4 a 8 dígitos"}), 400
+    try:
+        mysql_execute(
+            "INSERT INTO transport_drivers (nombre, rut, pin_hash, telefono, patente, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (nombre, rut, generate_password_hash(pin), tel, patente, current_username())
+        )
+    except Exception as e:
+        if "Duplicate" in str(e):
+            return jsonify({"error": "Ya existe un chofer con ese RUT"}), 409
+        return jsonify({"error": f"No se pudo crear: {str(e)[:120]}"}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/choferes/<int:did>/pin", methods=["POST"])
+@_tr_required
+def tr_choferes_reset_pin(did):
+    """Resetea el PIN de un chofer."""
+    pin = ((request.get_json(silent=True) or request.form) or {}).get("pin", "").strip()
+    if len(pin) < 4 or len(pin) > 8 or not pin.isdigit():
+        return jsonify({"error": "El PIN debe ser de 4 a 8 dígitos"}), 400
+    mysql_execute("UPDATE transport_drivers SET pin_hash=%s WHERE id=%s",
+                  (generate_password_hash(pin), did))
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/choferes/<int:did>/toggle", methods=["POST"])
+@_tr_required
+def tr_choferes_toggle(did):
+    """Activa/desactiva un chofer."""
+    mysql_execute("UPDATE transport_drivers SET activo = 1 - activo WHERE id=%s", (did,))
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/manifiestos/<int:mid>/asignar-chofer", methods=["POST"])
+@_tr_required
+def tr_asignar_chofer(mid):
+    """Asigna un manifiesto a un chofer (1 chofer por manifiesto)."""
+    did = ((request.get_json(silent=True) or request.form) or {}).get("driver_id")
+    if not did:
+        return jsonify({"error": "driver_id requerido"}), 400
+    drv = mysql_fetchone("SELECT id, nombre FROM transport_drivers WHERE id=%s AND activo=1",
+                         (did,))
+    if not drv:
+        return jsonify({"error": "chofer no encontrado o inactivo"}), 404
+    mysql_execute("""
+        INSERT INTO transport_manifest_drivers (manifest_id, driver_id, fase, assigned_by)
+        VALUES (%s,%s,'asignado',%s)
+        ON DUPLICATE KEY UPDATE driver_id=VALUES(driver_id), fase='asignado',
+                                assigned_at=NOW(), assigned_by=VALUES(assigned_by)
+    """, (mid, did, current_username()))
+    _tr_log("manifest", mid, "chofer asignado", drv["nombre"])
+    return jsonify({"ok": True, "chofer": drv["nombre"]})
 
 
 # ── MANIFIESTOS: export a Excel de carga masiva (FedEx / SimplyRoute) ─────────
@@ -54057,6 +54449,76 @@ def _ensure_transporte_labels_table():
             INDEX idx_lbl_manifest   (manifest_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
+    # Columnas de CAPTURA por el chofer (escaneo QR en bodega).
+    # captured_at/by → trazabilidad de quién y cuándo escaneó cada bulto.
+    cap_cols = {
+        "captured_at":   "DATETIME NULL COMMENT 'Cuándo el chofer escaneó este bulto'",
+        "captured_by":   "INT NULL COMMENT 'transport_drivers.id que escaneó'",
+        "qr_code":       "VARCHAR(40) NULL COMMENT 'Código único del QR de esta etiqueta'",
+    }
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_labels'"
+            ) or [])
+        }
+    except Exception:
+        existing = set()
+    for col, ddl in cap_cols.items():
+        if col.lower() not in existing:
+            try:
+                mysql_execute(f"ALTER TABLE transport_labels ADD COLUMN {col} {ddl}")
+            except Exception:
+                pass
+    # Índice UNIQUE en qr_code (el chofer escanea esto → debe ser único global)
+    try:
+        mysql_execute("ALTER TABLE transport_labels ADD UNIQUE INDEX uq_lbl_qr (qr_code)")
+    except Exception:
+        pass
+
+
+def _ensure_transport_drivers_table():
+    """Garantiza la tabla transport_drivers (choferes con login RUT+PIN).
+
+    El chofer tiene un login propio (separado de los usuarios admin) para la
+    app móvil de captura/ruta/entrega. PIN hasheado (nunca plano). Idempotente.
+    """
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_drivers (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            nombre        VARCHAR(160) NOT NULL,
+            rut           VARCHAR(20)  NOT NULL,
+            pin_hash      VARCHAR(255) NOT NULL,
+            telefono      VARCHAR(40)  NULL,
+            patente       VARCHAR(20)  NULL COMMENT 'Patente del vehículo (opcional)',
+            activo        TINYINT(1)   DEFAULT 1,
+            created_by    VARCHAR(190) NULL,
+            created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+            last_login_at DATETIME     NULL,
+            UNIQUE KEY uq_driver_rut (rut),
+            INDEX idx_driver_activo (activo)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+    # Asignación chofer ↔ manifiesto (un manifiesto puede asignarse a un chofer).
+    # Vive aparte para no tocar el ENUM de estados del manifiesto.
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_manifest_drivers (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            manifest_id   INT NOT NULL,
+            driver_id     INT NOT NULL,
+            fase          VARCHAR(20) DEFAULT 'asignado'
+                          COMMENT 'asignado|captura|ruta|entrega|cerrado',
+            assigned_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            assigned_by   VARCHAR(190) NULL,
+            captura_done_at DATETIME NULL,
+            ruta_started_at DATETIME NULL,
+            UNIQUE KEY uq_md (manifest_id),
+            INDEX idx_md_driver (driver_id, fase),
+            FOREIGN KEY (manifest_id) REFERENCES transport_manifests(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
 
 
 def _ensure_mant_reportes_columns():
@@ -54274,6 +54736,15 @@ try:
         _ensure_transport_tracking_tables()
 except Exception as _trk_err:
     print(f"[ILUS][WARN] _ensure_transport_tracking_tables: {_trk_err}", flush=True)
+
+# FASE 2 CHOFER: tabla de choferes (login RUT+PIN) + asignación manifiesto↔chofer
+# + columnas de captura (qr_code, captured_*) en transport_labels.
+try:
+    with app.app_context():
+        _ensure_transporte_labels_table()      # ahora también agrega qr_code/captured_*
+        _ensure_transport_drivers_table()
+except Exception as _drv_err:
+    print(f"[ILUS][WARN] _ensure_transport_drivers_table: {_drv_err}", flush=True)
 
 # CRÍTICO: garantizar mant_reportes.garantia_aplica SIEMPRE, incluso con
 # ILUS_SKIP_MIGRATIONS=1 (si no, crear/editar informes con el flag de garantía
