@@ -21720,11 +21720,24 @@ def tr_couriers_import_tariffs():
 @app.route("/transporte/couriers/<int:cid>", methods=["GET"])
 @_tr_required
 def tr_courier_ficha(cid):
-    courier = mysql_fetchone("""
+    # El SELECT histórico usaba MAX(cc.updated_at). En entornos donde la
+    # columna nunca se agregó (ILUS_SKIP_MIGRATIONS=1 + ALTER que se perdió)
+    # eso revienta con 'Unknown column'. Lo hacemos defensivo: detectamos si
+    # la columna existe y armamos el SELECT con esa info.
+    try:
+        _has_upd = mysql_fetchone(
+            "SELECT 1 AS y FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_courier_comunas' "
+            "AND COLUMN_NAME='updated_at' LIMIT 1"
+        )
+    except Exception:
+        _has_upd = None
+    _max_upd = "MAX(cc.updated_at)" if _has_upd else "NULL"
+    courier = mysql_fetchone(f"""
         SELECT c.*,
                COUNT(DISTINCT cc.id) AS total_comunas,
                COUNT(DISTINCT ct.id) AS total_contratos,
-               MAX(cc.updated_at)    AS ultima_importacion
+               {_max_upd}            AS ultima_importacion
         FROM transport_couriers c
         LEFT JOIN transport_courier_comunas cc ON cc.courier_id=c.id
         LEFT JOIN transport_courier_contratos ct ON ct.courier_id=c.id AND ct.vigente=1
@@ -55253,6 +55266,33 @@ def _ensure_transporte_columns():
     return faltantes
 
 
+def _ensure_courier_comunas_updated_at():
+    """Garantiza transport_courier_comunas.updated_at AUNQUE ILUS_SKIP_MIGRATIONS=1.
+
+    Esta columna se usaba en /transporte/couriers/<id> con MAX(cc.updated_at)
+    pero el CREATE TABLE original NO la define. En envs donde el ALTER
+    histórico se perdió (Cloud Run con skip_migrations), la ficha del courier
+    revienta con 'Unknown column'. 1 SELECT barato + ALTER solo si falta.
+    """
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_courier_comunas'"
+            ) or [])
+        }
+        if "updated_at" not in existing:
+            mysql_execute(
+                "ALTER TABLE transport_courier_comunas "
+                "ADD COLUMN updated_at DATETIME NULL "
+                "  COMMENT 'Última actualización de comunas (importación tarifas)'"
+            )
+            print("[ensure_comunas] columna updated_at agregada", flush=True)
+    except Exception as _e:
+        print(f"[ensure_comunas] no se pudo asegurar updated_at: {_e}", flush=True)
+
+
 def _ensure_transport_couriers_formato_export():
     """Garantiza la columna transport_couriers.formato_export AUNQUE
     ILUS_SKIP_MIGRATIONS esté activo. Sin esta columna, el export del
@@ -55838,6 +55878,14 @@ try:
         _ensure_transport_couriers_formato_export()
 except Exception as _fmt_err:
     print(f"[ILUS][WARN] _ensure_transport_couriers_formato_export: {_fmt_err}", flush=True)
+
+# FIX 2026-06-06: ficha del courier (/transporte/couriers/<id>) reventaba con
+# 'Unknown column cc.updated_at' en producción. Garantizamos la columna en boot.
+try:
+    with app.app_context():
+        _ensure_courier_comunas_updated_at()
+except Exception as _ccu_err:
+    print(f"[ILUS][WARN] _ensure_courier_comunas_updated_at: {_ccu_err}", flush=True)
 
 # FASE 1 TRACKING: garantizar tablas/columnas de tracking + prueba de entrega
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. CREATE TABLE IF NOT EXISTS es
