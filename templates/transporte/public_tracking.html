@@ -1,0 +1,446 @@
+{# Tracking público de despacho — sin login, identificado por token.
+   FASE 1 del roadmap de tracking ILUS.
+   Mobile-first (regla #3). Branding ILUS (regla #2). No expone datos sensibles.
+#}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Seguimiento de despacho · {{ data.doc }} · ILUS</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='ilus-icon.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root{
+      --ilus-red:#dc2626;
+      --ilus-red-50:#fef2f2;
+      --ilus-red-100:#fee2e2;
+      --ilus-black:#0a0a0a;
+      --ok:#16a34a;
+      --ok-bg:#dcfce7;
+      --warn:#f59e0b;
+      --warn-bg:#fff8e1;
+      --info:#3b82f6;
+      --info-bg:#dbeafe;
+      --danger:#dc2626;
+      --danger-bg:#fee2e2;
+      --gray:#6b7280;
+      --gray-bg:#f3f4f6;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; padding:0; }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+      background:#fafafa; color:#0a0a0a;
+      padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      -webkit-font-smoothing:antialiased;
+    }
+    .tk-shell{ max-width:680px; margin:0 auto; padding:1rem .9rem 4rem; }
+    /* Header con logo ILUS */
+    .tk-brand{
+      display:flex; align-items:center; gap:.55rem; justify-content:center;
+      padding:1rem 0 .35rem; text-decoration:none;
+    }
+    .tk-brand-dot{
+      width:34px; height:34px; border-radius:9px; background:var(--ilus-red);
+      display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800;
+      font-size:1rem; letter-spacing:.5px;
+      box-shadow:0 6px 16px -8px rgba(220,38,38,.55);
+    }
+    .tk-brand-name{ font-weight:800; color:var(--ilus-black); font-size:1rem; letter-spacing:.3px; }
+    .tk-brand-sub{ font-size:.7rem; color:var(--gray); letter-spacing:1px; text-transform:uppercase; margin-top:.05rem; display:block; }
+
+    /* Hero: estado actual grande */
+    .tk-hero{
+      margin:1.25rem 0;
+      padding:1.5rem 1.25rem 1.6rem;
+      border-radius:18px;
+      background:linear-gradient(135deg, #ffffff 0%, var(--ilus-red-50) 100%);
+      border:1px solid var(--ilus-red-100);
+      box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px -16px rgba(0,0,0,.16);
+      text-align:center;
+    }
+    .tk-hero-doc{ font-size:.78rem; color:var(--gray); font-weight:600; letter-spacing:.5px; }
+    .tk-hero-cli{ font-size:1.05rem; color:var(--ilus-black); font-weight:700; margin-top:.1rem; }
+    .tk-hero-state{
+      margin-top:1rem; display:inline-flex; align-items:center; gap:.5rem;
+      padding:.55rem 1.05rem; border-radius:999px;
+      font-weight:700; font-size:.95rem;
+    }
+    .tk-hero-state.s-success{ background:var(--ok-bg); color:var(--ok); border:1px solid #bbf7d0; }
+    .tk-hero-state.s-primary{ background:var(--info-bg); color:var(--info); border:1px solid #bfdbfe; }
+    .tk-hero-state.s-info{    background:var(--info-bg); color:var(--info); border:1px solid #bfdbfe; }
+    .tk-hero-state.s-warning{ background:var(--warn-bg); color:#b45309; border:1px solid #fcd34d; }
+    .tk-hero-state.s-danger{  background:var(--danger-bg); color:var(--danger); border:1px solid #fecaca; }
+    .tk-hero-state.s-secondary{ background:var(--gray-bg); color:var(--gray); border:1px solid #e5e7eb; }
+    .tk-hero-state i{ font-size:1.1rem; }
+    .tk-hero-sub{ font-size:.82rem; color:var(--gray); margin-top:.7rem; }
+
+    /* Stepper visual de 4 pasos */
+    .tk-steps{ display:flex; align-items:center; gap:.5rem; margin:1.4rem auto 0; max-width:560px; }
+    .tk-step{ flex:1; display:flex; flex-direction:column; align-items:center; gap:.3rem; }
+    .tk-step-dot{
+      width:32px; height:32px; border-radius:50%;
+      background:#fff; border:2px solid #e5e7eb; color:#9ca3af;
+      display:flex; align-items:center; justify-content:center; font-size:.95rem;
+      transition:all .2s;
+    }
+    .tk-step.active .tk-step-dot{
+      background:var(--ilus-red); border-color:var(--ilus-red); color:#fff;
+      box-shadow:0 4px 10px -4px rgba(220,38,38,.5);
+    }
+    .tk-step.done .tk-step-dot{
+      background:var(--ok); border-color:var(--ok); color:#fff;
+    }
+    .tk-step-label{ font-size:.66rem; color:var(--gray); text-align:center; font-weight:600; line-height:1.2; }
+    .tk-step.active .tk-step-label{ color:var(--ilus-black); font-weight:700; }
+    .tk-step.done .tk-step-label{ color:var(--ok); font-weight:700; }
+    .tk-step-bar{ flex:0 0 18px; height:2px; background:#e5e7eb; margin-top:-14px; }
+    .tk-step-bar.done{ background:var(--ok); }
+
+    /* Cards */
+    .tk-card{
+      background:#fff; border:1px solid #eef0f2; border-radius:14px;
+      box-shadow:0 1px 2px rgba(0,0,0,.04);
+      padding:1rem 1.05rem;
+      margin-bottom:.9rem;
+    }
+    .tk-card-h{
+      display:flex; align-items:center; gap:.45rem;
+      font-size:.78rem; font-weight:700; color:var(--ilus-black);
+      text-transform:uppercase; letter-spacing:.4px;
+      margin-bottom:.65rem;
+    }
+    .tk-card-h i{ color:var(--ilus-red); }
+    .tk-kv{ display:flex; justify-content:space-between; align-items:center; padding:.35rem 0; font-size:.88rem; }
+    .tk-kv + .tk-kv{ border-top:1px solid #f3f4f6; }
+    .tk-kv-k{ color:var(--gray); font-size:.78rem; font-weight:600; }
+    .tk-kv-v{ color:var(--ilus-black); font-weight:600; text-align:right; }
+
+    /* Timeline */
+    .tk-tl{ position:relative; padding-left:1.3rem; }
+    .tk-tl::before{
+      content:""; position:absolute; left:.45rem; top:.4rem; bottom:.4rem;
+      width:2px; background:#e5e7eb;
+    }
+    .tk-tl-row{ position:relative; padding:.35rem 0 .65rem .3rem; }
+    .tk-tl-row::before{
+      content:""; position:absolute; left:-1.07rem; top:.55rem;
+      width:12px; height:12px; border-radius:50%; background:#fff;
+      border:2px solid #cbd5e1;
+    }
+    .tk-tl-row.c-success::before{ border-color:var(--ok);     box-shadow:0 0 0 3px var(--ok-bg); }
+    .tk-tl-row.c-primary::before{ border-color:var(--info);   box-shadow:0 0 0 3px var(--info-bg); }
+    .tk-tl-row.c-info::before{    border-color:var(--info);   box-shadow:0 0 0 3px var(--info-bg); }
+    .tk-tl-row.c-warning::before{ border-color:var(--warn);   box-shadow:0 0 0 3px var(--warn-bg); }
+    .tk-tl-row.c-danger::before{  border-color:var(--danger); box-shadow:0 0 0 3px var(--danger-bg); }
+    .tk-tl-row.c-secondary::before{ border-color:#9ca3af; }
+    .tk-tl-row:last-child::before{ background:var(--ilus-red); border-color:var(--ilus-red); }
+    .tk-tl-est{ font-weight:700; font-size:.92rem; color:var(--ilus-black); }
+    .tk-tl-ts{ font-size:.72rem; color:var(--gray); margin-top:.1rem; }
+    .tk-tl-com{ font-size:.82rem; color:#374151; margin-top:.15rem; }
+
+    /* Prueba de entrega */
+    .tk-proof{ background:linear-gradient(135deg,#fff 0%, var(--ok-bg) 100%); border-color:#bbf7d0; }
+    .tk-proof .tk-card-h i{ color:var(--ok); }
+    .tk-fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(86px,1fr)); gap:.4rem; margin-top:.45rem; }
+    .tk-fotos img{
+      width:100%; aspect-ratio:1; object-fit:cover; border-radius:10px;
+      border:1px solid #d1fae5; cursor:zoom-in;
+    }
+    .tk-firma{
+      margin-top:.5rem; padding:.4rem; background:#fff; border:1px solid #d1fae5; border-radius:10px;
+      text-align:center;
+    }
+    .tk-firma img{ max-width:240px; max-height:80px; }
+
+    /* Footer */
+    .tk-footer{ text-align:center; font-size:.72rem; color:var(--gray); margin-top:2rem; padding:1rem 0; }
+    .tk-footer a{ color:var(--ilus-red); text-decoration:none; font-weight:600; }
+    .tk-footer-help{ display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; margin-top:.5rem; }
+    .tk-footer-btn{
+      display:inline-flex; align-items:center; gap:.3rem;
+      padding:.45rem .8rem; border-radius:8px; background:#fff; border:1px solid #e5e7eb;
+      color:var(--ilus-black); text-decoration:none; font-size:.78rem; font-weight:600;
+      min-height:38px;
+    }
+    .tk-footer-btn:hover{ background:var(--ilus-red-50); border-color:var(--ilus-red-100); color:var(--ilus-red); }
+
+    /* Polling indicator (sutil) */
+    .tk-live{
+      display:inline-flex; align-items:center; gap:.35rem;
+      font-size:.7rem; color:var(--gray); margin-top:.5rem;
+    }
+    .tk-live-dot{
+      width:7px; height:7px; border-radius:50%; background:var(--ok);
+      animation:pulseDot 2s infinite;
+    }
+    @keyframes pulseDot{ 0%,100%{ opacity:1 } 50%{ opacity:.35 } }
+
+    /* Mobile tweaks */
+    @media (max-width:520px){
+      .tk-shell{ padding:.5rem .7rem 4rem; }
+      .tk-hero{ padding:1.15rem 1rem 1.25rem; }
+      .tk-hero-state{ font-size:.85rem; padding:.45rem .85rem; }
+      .tk-step-dot{ width:28px; height:28px; font-size:.85rem; }
+      .tk-step-label{ font-size:.6rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="tk-shell">
+
+    {# ── Branding ────────────────────────────────────────────────── #}
+    <div class="tk-brand">
+      <div class="tk-brand-dot">IL</div>
+      <div>
+        <div class="tk-brand-name">ILUS Sport &amp; Health</div>
+        <span class="tk-brand-sub">Seguimiento de despacho</span>
+      </div>
+    </div>
+
+    {# ── Hero ────────────────────────────────────────────────────── #}
+    <div class="tk-hero">
+      <div class="tk-hero-doc">{{ data.doc }}</div>
+      <div class="tk-hero-cli">{{ data.cliente }}</div>
+      <div id="tkState" class="tk-hero-state s-{{ data.estado_color }}">
+        <i class="bi {{ data.estado_icon }}"></i>
+        <span id="tkStateLabel">{{ data.estado }}</span>
+      </div>
+      <div id="tkStateSub" class="tk-hero-sub">
+        {% if data.estado == 'Entregado' %}
+          Tu despacho fue entregado.
+        {% elif data.estado == 'En ruta' %}
+          Tu despacho va en camino al destino.
+        {% elif data.estado == 'Entregado a transporte' %}
+          Tu despacho fue entregado al transporte.
+        {% elif data.estado == 'En preparación' %}
+          Estamos preparando tu despacho.
+        {% elif data.estado == 'Entrega fallida' %}
+          La entrega no pudo concretarse. Nos pondremos en contacto contigo.
+        {% elif data.estado == 'Devolución' %}
+          Tu despacho está en proceso de devolución.
+        {% endif %}
+      </div>
+
+      {# Stepper de 4 pasos #}
+      {% set cur = data.estado_step or 1 %}
+      {% set terminal_danger = data.estado in ['Entrega fallida','Devolución'] %}
+      <div class="tk-steps" id="tkSteps" aria-hidden="true">
+        {% set steps = [
+          ('En preparación','bi-clipboard-check'),
+          ('Entregado a transporte','bi-truck-flatbed'),
+          ('En ruta','bi-truck'),
+          ('Entregado','bi-check-circle-fill'),
+        ] %}
+        {% for label, ic in steps %}
+          {% set n = loop.index %}
+          <div class="tk-step {% if n < cur %}done{% elif n == cur and not terminal_danger %}active{% elif n == cur and terminal_danger %}active{% endif %}">
+            <div class="tk-step-dot"><i class="bi {{ ic }}"></i></div>
+            <div class="tk-step-label">{{ label }}</div>
+          </div>
+          {% if not loop.last %}
+          <div class="tk-step-bar {% if n < cur %}done{% endif %}"></div>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      <div class="tk-live">
+        <span class="tk-live-dot"></span>
+        <span>Actualizando automáticamente</span>
+      </div>
+    </div>
+
+    {# ── Resumen del envío ──────────────────────────────────────── #}
+    <div class="tk-card">
+      <div class="tk-card-h"><i class="bi bi-geo-alt-fill"></i>Resumen</div>
+      <div class="tk-kv">
+        <span class="tk-kv-k">Destino</span>
+        <span class="tk-kv-v">{{ data.destino or '—' }}</span>
+      </div>
+      {% if data.region %}
+      <div class="tk-kv">
+        <span class="tk-kv-k">Región</span>
+        <span class="tk-kv-v">{{ data.region }}</span>
+      </div>
+      {% endif %}
+      {% if data.courier %}
+      <div class="tk-kv">
+        <span class="tk-kv-k">Transportista</span>
+        <span class="tk-kv-v">{{ data.courier }}</span>
+      </div>
+      {% endif %}
+      {% if data.manifiesto %}
+      <div class="tk-kv">
+        <span class="tk-kv-k">Manifiesto</span>
+        <span class="tk-kv-v" style="font-family:ui-monospace,Consolas,monospace">{{ data.manifiesto }}</span>
+      </div>
+      {% endif %}
+      {% if data.entregado_at %}
+      <div class="tk-kv">
+        <span class="tk-kv-k">Entregado</span>
+        <span class="tk-kv-v">{{ data.entregado_at | chile_fmt }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Prueba de entrega (solo si está entregado) ─────────────── #}
+    {% if data.proof %}
+    <div class="tk-card tk-proof">
+      <div class="tk-card-h"><i class="bi bi-shield-check"></i>Prueba de entrega</div>
+      <div class="tk-kv">
+        <span class="tk-kv-k">Recibido por</span>
+        <span class="tk-kv-v">{{ data.proof.receptor }}{% if data.proof.relacion %} · {{ data.proof.relacion }}{% endif %}</span>
+      </div>
+      {% if data.proof.entregado_at %}
+      <div class="tk-kv">
+        <span class="tk-kv-k">Hora entrega</span>
+        <span class="tk-kv-v">{{ data.proof.entregado_at | chile_fmt }}</span>
+      </div>
+      {% endif %}
+      {% if data.proof.firma_url %}
+      <div class="tk-firma">
+        <img src="{{ data.proof.firma_url }}" alt="Firma del receptor">
+      </div>
+      {% endif %}
+      {% if data.proof.fotos %}
+      <div class="tk-fotos">
+        {% for f in data.proof.fotos %}
+        <img src="{{ f }}" alt="Foto de entrega" onclick="window.open(this.src,'_blank')">
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# ── Timeline ──────────────────────────────────────────────── #}
+    <div class="tk-card">
+      <div class="tk-card-h"><i class="bi bi-clock-history"></i>Historial</div>
+      <div class="tk-tl" id="tkTimeline">
+        {% if data.eventos %}
+          {% for e in data.eventos %}
+          <div class="tk-tl-row c-{{ e.color }}">
+            <div class="tk-tl-est"><i class="bi {{ e.icon }} me-1" aria-hidden="true"></i>{{ e.estado }}</div>
+            <div class="tk-tl-ts">{{ e.ts | chile_fmt }}</div>
+            {% if e.comentario %}<div class="tk-tl-com">{{ e.comentario }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="tk-tl-row c-secondary">
+            <div class="tk-tl-est">Despacho registrado</div>
+            <div class="tk-tl-ts">Sin eventos aún · te actualizaremos en cuanto haya movimientos</div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── Footer ────────────────────────────────────────────────── #}
+    <div class="tk-footer">
+      <div>
+        ¿Necesitas ayuda con tu despacho?
+      </div>
+      <div class="tk-footer-help">
+        <a class="tk-footer-btn" href="mailto:servicio.tecnico@ilusfitness.com">
+          <i class="bi bi-envelope"></i> Escríbenos
+        </a>
+        <a class="tk-footer-btn" href="https://ilusfitness.com/soporte" target="_blank" rel="noopener">
+          <i class="bi bi-life-preserver"></i> Soporte
+        </a>
+      </div>
+      <div style="margin-top:1rem">
+        © {{ data.doc and '' }}<strong style="color:var(--ilus-black)">ILUS Sport &amp; Health</strong>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Polling cada 30s — sin librerías, sin dependencias.
+    const STATUS_URL = "{{ url_for('tr_public_tracking_status', token=token) }}";
+    const STATE_LABELS_SUB = {
+      'En preparación':         'Estamos preparando tu despacho.',
+      'Entregado a transporte': 'Tu despacho fue entregado al transporte.',
+      'En ruta':                'Tu despacho va en camino al destino.',
+      'Entregado':              'Tu despacho fue entregado.',
+      'Entrega fallida':        'La entrega no pudo concretarse. Nos pondremos en contacto contigo.',
+      'Devolución':             'Tu despacho está en proceso de devolución.',
+    };
+    let lastEstado = "{{ data.estado }}";
+
+    function fmtTs(ts){
+      if (!ts) return '';
+      try {
+        const d = new Date(ts.replace(' ', 'T') + 'Z');
+        return d.toLocaleString('es-CL', {
+          day:'2-digit', month:'2-digit', year:'numeric',
+          hour:'2-digit', minute:'2-digit', timeZone:'America/Santiago',
+        });
+      } catch(e) { return ts; }
+    }
+
+    function actualizarUI(data){
+      if (!data || !data.ok) return;
+      // Hero
+      const stEl = document.getElementById('tkState');
+      const stLb = document.getElementById('tkStateLabel');
+      const stSb = document.getElementById('tkStateSub');
+      if (stEl && data.estado_color) {
+        stEl.className = 'tk-hero-state s-' + data.estado_color;
+        const ic = stEl.querySelector('i');
+        if (ic && data.estado_icon) ic.className = 'bi ' + data.estado_icon;
+      }
+      if (stLb) stLb.textContent = data.estado || '';
+      if (stSb) stSb.textContent = STATE_LABELS_SUB[data.estado] || '';
+
+      // Stepper
+      const stepsRoot = document.getElementById('tkSteps');
+      if (stepsRoot) {
+        const stepDivs = stepsRoot.querySelectorAll('.tk-step');
+        const bars     = stepsRoot.querySelectorAll('.tk-step-bar');
+        const cur = data.estado_step || 1;
+        stepDivs.forEach(function(div, idx){
+          const n = idx + 1;
+          div.classList.remove('done','active');
+          if (n < cur) div.classList.add('done');
+          else if (n === cur) div.classList.add('active');
+        });
+        bars.forEach(function(b, idx){
+          b.classList.toggle('done', (idx + 1) < cur);
+        });
+      }
+
+      // Si el estado cambió, recargar para que se vea el timeline completo
+      // y la prueba de entrega si aplica. Es lo más simple y robusto.
+      if (data.estado && data.estado !== lastEstado) {
+        lastEstado = data.estado;
+        setTimeout(function(){ location.reload(); }, 800);
+      }
+    }
+
+    let _consec_err = 0;
+    async function poll(){
+      try {
+        const r = await fetch(STATUS_URL, { cache: 'no-store' });
+        if (r.status === 429) { _consec_err++; return; }   // rate limited: backoff
+        if (!r.ok) { _consec_err++; return; }
+        _consec_err = 0;
+        const data = await r.json();
+        actualizarUI(data);
+      } catch(e) {
+        _consec_err++;
+      }
+    }
+
+    // Polling adaptativo: 30s normal, 60s si hubo errores, 120s en errores seguidos.
+    function scheduleNext(){
+      let delay = 30000;
+      if (_consec_err >= 3) delay = 120000;
+      else if (_consec_err >= 1) delay = 60000;
+      setTimeout(async function(){
+        if (!document.hidden) await poll();
+        scheduleNext();
+      }, delay);
+    }
+    scheduleNext();
+  </script>
+</body>
+</html>

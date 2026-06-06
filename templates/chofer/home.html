@@ -1,0 +1,156 @@
+{# App del chofer — Home: lista de manifiestos asignados. Mobile-first. #}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>Mis manifiestos · ILUS</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='ilus-icon.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; --gray:#6b7280; --ok:#16a34a; }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:#f4f4f5; color:var(--ilus-black); min-height:100vh;
+      padding-bottom:max(1.5rem,env(safe-area-inset-bottom));
+      -webkit-font-smoothing:antialiased;
+    }
+    .ch-top{
+      background:var(--ilus-black); color:#fff;
+      padding:max(1rem,env(safe-area-inset-top)) 1.1rem 1rem;
+      display:flex; align-items:center; justify-content:space-between;
+      position:sticky; top:0; z-index:10;
+    }
+    .ch-top-l{ display:flex; align-items:center; gap:.7rem; }
+    .ch-top-dot{
+      width:40px; height:40px; border-radius:11px; background:var(--ilus-red);
+      display:flex; align-items:center; justify-content:center; font-weight:900; letter-spacing:.5px;
+    }
+    .ch-top-name{ font-weight:800; font-size:1rem; line-height:1.1; }
+    .ch-top-sub{ font-size:.72rem; color:#9ca3af; }
+    .ch-logout{ color:#9ca3af; font-size:1.4rem; text-decoration:none; }
+    .ch-wrap{ max-width:640px; margin:0 auto; padding:1.1rem; }
+    .ch-h2{ font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.6px;
+            color:var(--gray); margin:.5rem 0 1rem; }
+    .ch-card{
+      background:#fff; border:1px solid #e5e7eb; border-radius:16px;
+      padding:1.1rem 1.15rem; margin-bottom:1rem;
+      box-shadow:0 1px 3px rgba(0,0,0,.05);
+      text-decoration:none; color:inherit; display:block;
+      transition:transform .12s, box-shadow .15s;
+    }
+    .ch-card:active{ transform:scale(.99); }
+    .ch-card-top{ display:flex; align-items:center; justify-content:space-between; margin-bottom:.7rem; }
+    .ch-corr{ font-family:monospace; font-weight:800; font-size:1.05rem; color:var(--ilus-black); }
+    .ch-courier{ font-size:.78rem; color:var(--gray); }
+    .ch-fase{
+      display:inline-flex; align-items:center; gap:.3rem;
+      font-size:.7rem; font-weight:800; padding:.3rem .65rem; border-radius:20px;
+      text-transform:uppercase; letter-spacing:.4px;
+    }
+    .ch-fase.asignado{ background:#dbeafe; color:#1e40af; }
+    .ch-fase.captura{  background:#fef3c7; color:#b45309; }
+    .ch-fase.ruta{     background:#e0e7ff; color:#4338ca; }
+    .ch-fase.entrega{  background:#dcfce7; color:#15803d; }
+    .ch-fase.cerrado{  background:#f3f4f6; color:#6b7280; }
+    .ch-meta{ display:flex; gap:1.2rem; font-size:.82rem; color:#374151; margin-bottom:.8rem; }
+    .ch-meta b{ color:var(--ilus-black); }
+    .ch-prog{ height:8px; background:#f3f4f6; border-radius:50px; overflow:hidden; margin-bottom:.5rem; }
+    .ch-prog-fill{ height:100%; background:linear-gradient(90deg,var(--ilus-red),#fb923c); border-radius:50px; transition:width .4s; }
+    .ch-prog-txt{ font-size:.74rem; color:var(--gray); }
+    .ch-cta{
+      margin-top:.9rem; display:flex; align-items:center; justify-content:center; gap:.5rem;
+      background:var(--ilus-red); color:#fff; padding:.75rem; border-radius:12px;
+      font-weight:800; font-size:.92rem; min-height:46px;
+    }
+    .ch-cta.done{ background:var(--ok); }
+    .ch-empty{ text-align:center; padding:3rem 1rem; color:var(--gray); }
+    .ch-empty i{ font-size:3rem; opacity:.4; display:block; margin-bottom:1rem; }
+  </style>
+</head>
+<body>
+  <div class="ch-top">
+    <div class="ch-top-l">
+      <div class="ch-top-dot">IL</div>
+      <div>
+        <div class="ch-top-name">{{ chofer.nombre }}</div>
+        <div class="ch-top-sub">{{ chofer.patente or 'Chofer ILUS' }}</div>
+      </div>
+    </div>
+    <a class="ch-logout" href="{{ url_for('chofer_logout') }}" title="Salir"><i class="bi bi-box-arrow-right"></i></a>
+  </div>
+
+  <div class="ch-wrap">
+    <div class="ch-h2"><i class="bi bi-list-check me-1"></i>Mis manifiestos</div>
+
+    {% if manifiestos %}
+      {% for m in manifiestos %}
+      {% set cap = m.n_capturados or 0 %}
+      {% set tot = m.n_bultos or 0 %}
+      {% set pct = ((cap / tot) * 100) if tot else 0 %}
+      {% set fase = m.fase or 'asignado' %}
+      {% set _dest = url_for('chofer_ruta', mid=m.id) if fase in ['ruta','entrega'] else url_for('chofer_captura', mid=m.id) %}
+      <a class="ch-card" href="{{ _dest }}">
+        <div class="ch-card-top">
+          <span class="ch-corr">{{ m.correlativo or ('M-' ~ m.id) }}</span>
+          <span class="ch-fase {{ fase }}">{{ fase }}</span>
+        </div>
+        <div class="ch-meta">
+          <span><b>{{ m.courier or '—' }}</b></span>
+          <span>{{ m.n_items or 0 }} factura{{ 's' if (m.n_items or 0) != 1 }}</span>
+          <span>{{ tot }} bulto{{ 's' if tot != 1 }}</span>
+        </div>
+        {% if tot %}
+        <div class="ch-prog"><div class="ch-prog-fill" style="width:{{ pct }}%"></div></div>
+        <div class="ch-prog-txt">{{ cap }}/{{ tot }} bultos capturados</div>
+        {% endif %}
+        {% if fase == 'asignado' or fase == 'captura' %}
+        <div class="ch-cta"><i class="bi bi-upc-scan"></i>Capturar bultos</div>
+        {% elif fase == 'ruta' or fase == 'entrega' %}
+        <div class="ch-cta done" style="background:#4338ca"><i class="bi bi-geo-alt"></i>Ver ruta de entrega</div>
+        {% else %}
+        <div class="ch-cta done"><i class="bi bi-check2-circle"></i>Manifiesto cerrado</div>
+        {% endif %}
+      </a>
+      {% endfor %}
+    {% else %}
+      <div class="ch-empty">
+        <i class="bi bi-inbox"></i>
+        <div><strong>No tienes manifiestos asignados</strong></div>
+        <div style="font-size:.85rem;margin-top:.4rem">Cuando tu coordinador te asigne un manifiesto, aparecerá aquí.</div>
+      </div>
+    {% endif %}
+  </div>
+
+  {# ── PING GPS silencioso (cada 30s mientras la app esté abierta) ── #}
+  <script>
+    (function(){
+      if (!navigator.geolocation) return;
+      let _battery_pct = null;
+      if (navigator.getBattery) navigator.getBattery().then(function(b){
+        _battery_pct = Math.round(b.level * 100);
+        b.addEventListener && b.addEventListener('levelchange', function(){ _battery_pct = Math.round(b.level * 100); });
+      }).catch(function(){});
+      function _ping(){
+        navigator.geolocation.getCurrentPosition(function(pos){
+          fetch('/chofer/ping', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              lat: pos.coords.latitude, lng: pos.coords.longitude,
+              accuracy_m: pos.coords.accuracy,
+              speed_kmh: pos.coords.speed ? Math.round(pos.coords.speed * 3.6 * 10)/10 : null,
+              heading_deg: pos.coords.heading,
+              battery_pct: _battery_pct,
+              manifest_id: null
+            }), keepalive: true
+          }).catch(function(){});
+        }, function(){}, { enableHighAccuracy:true, timeout:8000, maximumAge:5000 });
+      }
+      _ping();
+      setInterval(function(){ if (!document.hidden) _ping(); }, 30000);
+    })();
+  </script>
+</body>
+</html>

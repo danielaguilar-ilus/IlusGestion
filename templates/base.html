@@ -477,6 +477,18 @@
          class="sidebar-link{% if request.endpoint in ['tr_couriers'] %} active{% endif %}">
         <i class="bi bi-building"></i><span>Couriers</span>
       </a>
+      <a href="{{ url_for('tr_choferes') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_choferes'] %} active{% endif %}">
+        <i class="bi bi-person-badge"></i><span>Choferes</span>
+      </a>
+      <a href="{{ url_for('tr_monitor_live') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_monitor_live'] %} active{% endif %}">
+        <i class="bi bi-broadcast"></i><span>Monitor en vivo</span>
+      </a>
+      <a href="{{ url_for('tr_buscar_interno') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_buscar_interno'] %} active{% endif %}">
+        <i class="bi bi-search"></i><span>Buscar despacho</span>
+      </a>
       {% endif %}
     </div>
     {% endif %}

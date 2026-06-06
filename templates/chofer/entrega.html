@@ -1,0 +1,325 @@
+{# App del chofer — ENTREGA: GPS + foto(s) + RUT validado + firma del cliente.
+   Estilo DispatchTrack/Bringg: prueba de entrega configurable por transporte. #}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>Entrega · {{ parada.cliente_nombre }} · ILUS</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='ilus-icon.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; --gray:#6b7280; --ok:#16a34a; }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; }
+    body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:#f4f4f5; color:var(--ilus-black); min-height:100vh;
+      padding-bottom:max(7rem,calc(env(safe-area-inset-bottom) + 6rem)); -webkit-font-smoothing:antialiased; }
+    .en-top{ background:var(--ilus-black); color:#fff; padding:max(.8rem,env(safe-area-inset-top)) 1rem .8rem;
+      display:flex; align-items:center; gap:.8rem; position:sticky; top:0; z-index:20; }
+    .en-back{ color:#fff; font-size:1.5rem; text-decoration:none; }
+    .en-top-t{ font-weight:800; font-size:1rem; }
+    .en-top-s{ font-size:.72rem; color:#9ca3af; }
+    .en-wrap{ max-width:560px; margin:0 auto; padding:1rem; }
+
+    .en-dest{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:1rem; margin-bottom:1rem; }
+    .en-dest-cli{ font-weight:800; font-size:1.05rem; }
+    .en-dest-addr{ font-size:.85rem; color:#374151; margin-top:.2rem; }
+    .en-gps{ display:inline-flex; align-items:center; gap:.4rem; margin-top:.6rem; font-size:.78rem;
+      padding:.35rem .7rem; border-radius:20px; font-weight:700; }
+    .en-gps.ok{ background:#dcfce7; color:#15803d; } .en-gps.wait{ background:#fef3c7; color:#b45309; }
+    .en-gps.err{ background:#fee2e2; color:#dc2626; }
+
+    .en-card{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:1.1rem; margin-bottom:1rem; }
+    .en-lbl{ font-size:.8rem; font-weight:800; color:var(--ilus-black); margin-bottom:.45rem; display:flex; align-items:center; gap:.35rem; }
+    .en-lbl .req{ color:var(--ilus-red); }
+    .en-lbl .opt{ color:var(--gray); font-weight:600; font-size:.72rem; }
+    .en-input{ width:100%; padding:.8rem .9rem; font-size:16px; border:1.5px solid #d1d5db; border-radius:11px;
+      min-height:50px; transition:border-color .15s, box-shadow .15s; }
+    .en-input:focus{ outline:none; border-color:var(--ilus-red); box-shadow:0 0 0 3px rgba(220,38,38,.15); }
+    .en-input.ok{ border-color:var(--ok); box-shadow:0 0 0 3px #dcfce7; }
+    .en-input.err{ border-color:var(--ilus-red); box-shadow:0 0 0 3px #fee2e2; }
+    .en-hint{ font-size:.74rem; margin-top:.3rem; }
+    .en-hint.err{ color:var(--ilus-red); } .en-hint.ok{ color:var(--ok); }
+
+    /* Fotos */
+    .en-fotos{ display:grid; grid-template-columns:repeat(3,1fr); gap:.5rem; margin-top:.3rem; }
+    .en-foto-add{ aspect-ratio:1; border:2px dashed #d1d5db; border-radius:12px; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:.3rem; color:var(--gray); cursor:pointer; background:#fafafa; }
+    .en-foto-add i{ font-size:1.5rem; }
+    .en-foto-add span{ font-size:.66rem; font-weight:700; }
+    .en-foto-thumb{ aspect-ratio:1; border-radius:12px; overflow:hidden; position:relative; }
+    .en-foto-thumb img{ width:100%; height:100%; object-fit:cover; }
+    .en-foto-x{ position:absolute; top:3px; right:3px; width:24px; height:24px; border-radius:50%;
+      background:rgba(0,0,0,.6); color:#fff; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+
+    /* Firma */
+    .en-firma-wrap{ position:relative; }
+    .en-firma{ width:100%; height:180px; border:2px solid #d1d5db; border-radius:12px; background:#fff; touch-action:none; display:block; }
+    .en-firma-clear{ position:absolute; top:8px; right:8px; background:#fff; border:1px solid #d1d5db; border-radius:8px;
+      padding:.3rem .6rem; font-size:.72rem; font-weight:700; cursor:pointer; color:var(--gray); }
+    .en-firma-ph{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#cbd5e1;
+      font-size:.9rem; pointer-events:none; }
+
+    .en-foot{ position:fixed; bottom:0; left:0; right:0; z-index:25; background:rgba(255,255,255,.96);
+      backdrop-filter:blur(8px); border-top:1px solid #e5e7eb; padding:.9rem 1rem max(.9rem,env(safe-area-inset-bottom)); }
+    .en-foot-inner{ max-width:560px; margin:0 auto; }
+    .en-submit{ width:100%; background:var(--ok); color:#fff; border:none; padding:1rem; border-radius:14px;
+      font-weight:800; font-size:1.05rem; cursor:pointer; min-height:54px; display:flex; align-items:center; justify-content:center; gap:.5rem;
+      box-shadow:0 10px 30px -10px rgba(22,163,74,.6); }
+    .en-submit:disabled{ background:#d1d5db; color:#9ca3af; box-shadow:none; }
+
+    .en-toast{ position:fixed; top:max(4.5rem,calc(env(safe-area-inset-top) + 3.8rem)); left:50%;
+      transform:translateX(-50%) translateY(-20px); background:var(--ilus-black); color:#fff; padding:.8rem 1.3rem;
+      border-radius:14px; font-weight:700; font-size:.92rem; z-index:50; opacity:0; pointer-events:none;
+      transition:opacity .25s, transform .25s; box-shadow:0 12px 30px -10px rgba(0,0,0,.5); max-width:90vw; text-align:center; }
+    .en-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+    .en-toast.err{ background:var(--ilus-red); } .en-toast.ok{ background:var(--ok); }
+  </style>
+</head>
+<body>
+  <div class="en-top">
+    <a class="en-back" href="{{ url_for('chofer_ruta', mid=manifiesto.id) }}"><i class="bi bi-chevron-left"></i></a>
+    <div>
+      <div class="en-top-t">Registrar entrega</div>
+      <div class="en-top-s">{{ parada.tido }} {{ parada.nudo }}</div>
+    </div>
+  </div>
+
+  <div class="en-wrap">
+    {# Destino + GPS #}
+    <div class="en-dest">
+      <div class="en-dest-cli">{{ parada.cliente_nombre or '—' }}</div>
+      <div class="en-dest-addr"><i class="bi bi-geo-alt me-1"></i>{{ parada.direccion or '—' }}{% if parada.comuna %}, {{ parada.comuna }}{% endif %}</div>
+      <div class="en-gps wait" id="gpsBadge"><i class="bi bi-crosshair"></i><span id="gpsTxt">Obteniendo ubicación…</span></div>
+    </div>
+
+    {# Receptor #}
+    <div class="en-card">
+      <div class="en-lbl"><i class="bi bi-person"></i>Nombre de quien recibe <span class="req">*</span></div>
+      <input class="en-input" id="recNombre" type="text" placeholder="Ej: Juan Pérez" autocomplete="off">
+
+      {% if pod.rut_req %}
+      <div class="en-lbl mt-3"><i class="bi bi-person-vcard"></i>RUT del receptor <span class="req">*</span></div>
+      {% else %}
+      <div class="en-lbl mt-3"><i class="bi bi-person-vcard"></i>RUT del receptor <span class="opt">(opcional)</span></div>
+      {% endif %}
+      <input class="en-input" id="recRut" type="text" inputmode="text" placeholder="12.345.678-9" autocomplete="off">
+      <div class="en-hint" id="rutHint"></div>
+
+      <div class="en-lbl mt-3"><i class="bi bi-tag"></i>Relación <span class="opt">(opcional)</span></div>
+      <input class="en-input" id="recRelacion" type="text" placeholder="Ej: Titular, conserje, familiar…" autocomplete="off">
+    </div>
+
+    {# Fotos #}
+    <div class="en-card">
+      <div class="en-lbl">
+        <i class="bi bi-camera"></i>Fotos de la entrega
+        {% if pod.fotos_min %}<span class="req">* mín. {{ pod.fotos_min }}</span>{% else %}<span class="opt">(opcional)</span>{% endif %}
+      </div>
+      <div class="en-fotos" id="fotosGrid">
+        <label class="en-foto-add" id="fotoAdd">
+          <i class="bi bi-camera-fill"></i><span>Agregar</span>
+          <input type="file" accept="image/*" capture="environment" hidden id="fotoInput" multiple>
+        </label>
+      </div>
+    </div>
+
+    {# Firma #}
+    <div class="en-card">
+      <div class="en-lbl">
+        <i class="bi bi-pen"></i>Firma del cliente
+        {% if pod.firma_req %}<span class="req">*</span>{% else %}<span class="opt">(opcional)</span>{% endif %}
+      </div>
+      <div class="en-firma-wrap">
+        <canvas class="en-firma" id="firmaCanvas"></canvas>
+        <button class="en-firma-clear" type="button" onclick="limpiarFirma()"><i class="bi bi-eraser"></i> Borrar</button>
+        <div class="en-firma-ph" id="firmaPh">Firma aquí con el dedo</div>
+      </div>
+
+      <div class="en-lbl mt-3"><i class="bi bi-chat-left-text"></i>Notas <span class="opt">(opcional)</span></div>
+      <input class="en-input" id="notas" type="text" placeholder="Observaciones de la entrega…" autocomplete="off">
+    </div>
+  </div>
+
+  <div class="en-foot">
+    <div class="en-foot-inner">
+      <button class="en-submit" id="btnSubmit" onclick="enviarEntrega()">
+        <i class="bi bi-check2-circle"></i>Confirmar entrega
+      </button>
+    </div>
+  </div>
+
+  <div class="en-toast" id="enToast"></div>
+
+  <script>
+    const SUBMIT_URL = "{{ url_for('chofer_entrega_submit', mid=manifiesto.id, commitment_id=parada.commitment_id) }}";
+    const POD = { fotos_min: {{ pod.fotos_min }}, firma_req: {{ 'true' if pod.firma_req else 'false' }},
+                  rut_req: {{ 'true' if pod.rut_req else 'false' }}, geocerca_m: {{ pod.geocerca_m }} };
+    let _gps = { lat:null, lng:null, acc:null };
+    let _fotos = [];
+    let _forzarGeo = false;
+
+    function toast(msg, type){
+      const t = document.getElementById('enToast');
+      t.className = 'en-toast show ' + (type||'');
+      t.textContent = msg;
+      clearTimeout(window._tt); window._tt = setTimeout(()=>t.classList.remove('show'), 2600);
+    }
+
+    // ── GPS ──
+    function initGps(){
+      const badge = document.getElementById('gpsBadge'), txt = document.getElementById('gpsTxt');
+      if (!navigator.geolocation){ badge.className='en-gps err'; txt.textContent='GPS no disponible'; return; }
+      navigator.geolocation.getCurrentPosition(function(pos){
+        _gps.lat = pos.coords.latitude; _gps.lng = pos.coords.longitude; _gps.acc = pos.coords.accuracy;
+        badge.className = 'en-gps ok';
+        txt.textContent = 'Ubicación capturada (±' + Math.round(pos.coords.accuracy) + ' m)';
+      }, function(){
+        badge.className='en-gps err'; txt.textContent='No se pudo obtener la ubicación';
+      }, { enableHighAccuracy:true, timeout:10000, maximumAge:0 });
+    }
+
+    // ── RUT validación chilena (módulo 11) ──
+    function limpiarRut(v){ return (v||'').replace(/[^0-9kK]/g,'').toUpperCase(); }
+    function dvRut(cuerpo){
+      let s=1, m=0;
+      for(let i=cuerpo.length-1;i>=0;i--){ s=(s+parseInt(cuerpo[i])*(9-m%6))%11; m++; }
+      return s ? String(s-1) : 'K';
+    }
+    function rutValido(v){
+      const c = limpiarRut(v);
+      if (c.length < 7) return false;
+      const cuerpo = c.slice(0,-1), dv = c.slice(-1);
+      if (!/^\d+$/.test(cuerpo)) return false;
+      return dvRut(cuerpo) === dv;
+    }
+    function fmtRut(v){
+      const c = limpiarRut(v); if (c.length<2) return c;
+      let cuerpo=c.slice(0,-1), dv=c.slice(-1), out='';
+      while(cuerpo.length>3){ out='.'+cuerpo.slice(-3)+out; cuerpo=cuerpo.slice(0,-3); }
+      return cuerpo+out+'-'+dv;
+    }
+    const rutEl = document.getElementById('recRut'), rutHint = document.getElementById('rutHint');
+    rutEl.addEventListener('blur', function(){
+      const v=this.value.trim(); if(!v){ this.className='en-input'; rutHint.textContent=''; return; }
+      this.value = fmtRut(v);
+      if (rutValido(v)){ this.className='en-input ok'; rutHint.className='en-hint ok'; rutHint.textContent='✓ RUT válido'; }
+      else { this.className='en-input err'; rutHint.className='en-hint err'; rutHint.textContent='RUT inválido — revisa el dígito verificador'; }
+    });
+
+    // ── Fotos ──
+    document.getElementById('fotoInput').addEventListener('change', function(ev){
+      const files = Array.from(ev.target.files||[]);
+      files.forEach(function(file){
+        if (_fotos.length >= 5){ toast('Máximo 5 fotos','err'); return; }
+        const reader = new FileReader();
+        reader.onload = function(e){ _comprimir(e.target.result, function(dataUrl){ _fotos.push(dataUrl); _renderFotos(); }); };
+        reader.readAsDataURL(file);
+      });
+      ev.target.value='';
+    });
+    function _comprimir(dataUrl, cb){
+      const img = new Image();
+      img.onload = function(){
+        const max=1280; let w=img.width, h=img.height;
+        if (w>h && w>max){ h=h*max/w; w=max; } else if (h>max){ w=w*max/h; h=max; }
+        const c=document.createElement('canvas'); c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        cb(c.toDataURL('image/jpeg',0.78));
+      };
+      img.src = dataUrl;
+    }
+    function _renderFotos(){
+      const grid=document.getElementById('fotosGrid');
+      grid.querySelectorAll('.en-foto-thumb').forEach(e=>e.remove());
+      _fotos.forEach(function(src,i){
+        const d=document.createElement('div'); d.className='en-foto-thumb';
+        d.innerHTML='<img src="'+src+'"><button class="en-foto-x" onclick="_delFoto('+i+')"><i class="bi bi-x"></i></button>';
+        grid.insertBefore(d, document.getElementById('fotoAdd'));
+      });
+    }
+    window._delFoto = function(i){ _fotos.splice(i,1); _renderFotos(); };
+
+    // ── Firma canvas ──
+    const canvas = document.getElementById('firmaCanvas'), ctx = canvas.getContext('2d');
+    let drawing=false, hasSign=false;
+    function resizeCanvas(){
+      const r=canvas.getBoundingClientRect(); const dpr=window.devicePixelRatio||1;
+      canvas.width=r.width*dpr; canvas.height=r.height*dpr; ctx.scale(dpr,dpr);
+      ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.strokeStyle='#0a0a0a';
+    }
+    function pos(e){ const r=canvas.getBoundingClientRect(); const t=e.touches?e.touches[0]:e; return {x:t.clientX-r.left,y:t.clientY-r.top}; }
+    function start(e){ drawing=true; const p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); e.preventDefault(); }
+    function move(e){ if(!drawing)return; const p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke();
+      if(!hasSign){ hasSign=true; document.getElementById('firmaPh').style.display='none'; } e.preventDefault(); }
+    function end(){ drawing=false; }
+    canvas.addEventListener('mousedown',start); canvas.addEventListener('mousemove',move); canvas.addEventListener('mouseup',end);
+    canvas.addEventListener('touchstart',start,{passive:false}); canvas.addEventListener('touchmove',move,{passive:false}); canvas.addEventListener('touchend',end);
+    window.limpiarFirma = function(){ ctx.clearRect(0,0,canvas.width,canvas.height); hasSign=false; document.getElementById('firmaPh').style.display='block'; };
+
+    // ── Enviar ──
+    async function enviarEntrega(){
+      const nombre = document.getElementById('recNombre').value.trim();
+      const rut = document.getElementById('recRut').value.trim();
+      const relacion = document.getElementById('recRelacion').value.trim();
+      const notas = document.getElementById('notas').value.trim();
+
+      if (!nombre){ toast('Falta el nombre de quien recibe','err'); return; }
+      if (POD.rut_req && !rutValido(rut)){ toast('Ingresa un RUT válido','err'); return; }
+      if (POD.fotos_min && _fotos.length < POD.fotos_min){ toast('Faltan fotos (mín. '+POD.fotos_min+')','err'); return; }
+      if (POD.firma_req && !hasSign){ toast('Falta la firma del cliente','err'); return; }
+
+      const firma = hasSign ? canvas.toDataURL('image/png') : null;
+      const btn = document.getElementById('btnSubmit'); btn.disabled=true;
+      btn.innerHTML='<i class="bi bi-hourglass-split"></i>Enviando…';
+      try {
+        const r = await fetch(SUBMIT_URL, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            receptor_nombre:nombre, receptor_rut:rut, receptor_relacion:relacion,
+            firma_data_url:firma, fotos:_fotos, lat:_gps.lat, lng:_gps.lng, accuracy_m:_gps.acc,
+            notas:notas, forzar_geocerca:_forzarGeo
+          })
+        });
+        const d = await r.json();
+        if (r.status === 409 && d.error === 'geocerca'){
+          btn.disabled=false; btn.innerHTML='<i class="bi bi-check2-circle"></i>Confirmar entrega';
+          if (confirm(d.msg)){ _forzarGeo=true; enviarEntrega(); }
+          return;
+        }
+        if (!d.ok){ btn.disabled=false; btn.innerHTML='<i class="bi bi-check2-circle"></i>Confirmar entrega'; toast(d.error||'No se pudo registrar','err'); return; }
+        toast('✓ Entrega registrada','ok');
+        setTimeout(function(){ window.location.href = d.next; }, 1000);
+      } catch(e){
+        btn.disabled=false; btn.innerHTML='<i class="bi bi-check2-circle"></i>Confirmar entrega';
+        toast('Error de conexión','err');
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', function(){ resizeCanvas(); initGps(); });
+    window.addEventListener('resize', resizeCanvas);
+
+    // ── PING GPS silencioso cada 30s ──
+    (function(){
+      if (!navigator.geolocation) return;
+      const MID = {{ manifiesto.id }};
+      let _bat = null;
+      if (navigator.getBattery) navigator.getBattery().then(b => { _bat = Math.round(b.level * 100); }).catch(()=>{});
+      function _ping(){
+        navigator.geolocation.getCurrentPosition(function(pos){
+          fetch('/chofer/ping', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ lat:pos.coords.latitude, lng:pos.coords.longitude,
+              accuracy_m:pos.coords.accuracy,
+              speed_kmh: pos.coords.speed ? Math.round(pos.coords.speed*3.6*10)/10 : null,
+              heading_deg: pos.coords.heading, battery_pct: _bat, manifest_id: MID }),
+            keepalive:true }).catch(()=>{});
+        }, function(){}, { enableHighAccuracy:true, timeout:8000, maximumAge:5000 });
+      }
+      _ping();
+      setInterval(function(){ if (!document.hidden) _ping(); }, 30000);
+    })();
+  </script>
+</body>
+</html>

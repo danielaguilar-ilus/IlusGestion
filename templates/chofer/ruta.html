@@ -1,0 +1,180 @@
+{# App del chofer — Modo RUTA: paradas en mapa Google + lista para entregar. #}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>Ruta · {{ manifiesto.correlativo }} · ILUS</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='ilus-icon.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; --gray:#6b7280; --ok:#16a34a; }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; }
+    body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:#f4f4f5; color:var(--ilus-black); min-height:100vh;
+      padding-bottom:max(1.5rem,env(safe-area-inset-bottom)); -webkit-font-smoothing:antialiased; }
+    .rt-top{ background:var(--ilus-black); color:#fff; padding:max(.8rem,env(safe-area-inset-top)) 1rem .8rem;
+      display:flex; align-items:center; gap:.8rem; position:sticky; top:0; z-index:20; }
+    .rt-back{ color:#fff; font-size:1.5rem; text-decoration:none; }
+    .rt-top-t{ font-family:monospace; font-weight:800; font-size:1rem; }
+    .rt-top-s{ font-size:.72rem; color:#9ca3af; }
+    #map{ width:100%; height:38vh; min-height:240px; background:#e5e7eb; }
+    .rt-map-off{ display:flex; align-items:center; justify-content:center; height:38vh; min-height:240px;
+      background:#e5e7eb; color:var(--gray); flex-direction:column; gap:.6rem; text-align:center; padding:1.5rem; }
+    .rt-wrap{ max-width:640px; margin:0 auto; padding:1rem; }
+    .rt-h3{ font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:var(--gray);
+      margin:.5rem 0 .9rem; display:flex; align-items:center; justify-content:space-between; }
+    .rt-opt-btn{ background:#fff; border:1px solid #d1d5db; border-radius:8px; padding:.35rem .7rem;
+      font-size:.74rem; font-weight:700; color:var(--ilus-black); cursor:pointer; }
+    .rt-stop{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:.9rem 1rem; margin-bottom:.8rem;
+      display:flex; gap:.85rem; align-items:flex-start; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+    .rt-stop.done{ border-color:#bbf7d0; background:#f0fdf4; opacity:.85; }
+    .rt-stop-n{ width:30px; height:30px; flex-shrink:0; border-radius:50%; background:var(--ilus-red); color:#fff;
+      display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.9rem; }
+    .rt-stop.done .rt-stop-n{ background:var(--ok); }
+    .rt-stop-body{ flex:1; min-width:0; }
+    .rt-stop-cli{ font-weight:800; font-size:.96rem; }
+    .rt-stop-addr{ font-size:.82rem; color:#374151; margin-top:.15rem; }
+    .rt-stop-meta{ font-size:.74rem; color:var(--gray); margin-top:.25rem; font-family:monospace; }
+    .rt-stop-acts{ display:flex; gap:.5rem; margin-top:.7rem; flex-wrap:wrap; }
+    .rt-btn{ flex:1; min-width:120px; display:inline-flex; align-items:center; justify-content:center; gap:.4rem;
+      padding:.6rem .8rem; border-radius:10px; font-weight:800; font-size:.84rem; text-decoration:none; border:none; cursor:pointer; min-height:44px; }
+    .rt-btn-nav{ background:#fff; border:1.5px solid #d1d5db; color:var(--ilus-black); }
+    .rt-btn-deliver{ background:var(--ilus-red); color:#fff; }
+    .rt-btn-done{ background:#dcfce7; color:#15803d; border:1px solid #86efac; }
+    .rt-estado-badge{ font-size:.68rem; font-weight:800; padding:.2rem .5rem; border-radius:20px; text-transform:uppercase; }
+    .e-prep{ background:#f3f4f6; color:#6b7280; }
+    .e-trans{ background:#dbeafe; color:#1e40af; }
+    .e-ruta{ background:#e0e7ff; color:#4338ca; }
+    .e-entreg{ background:#dcfce7; color:#15803d; }
+    .e-fallida{ background:#fee2e2; color:#dc2626; }
+  </style>
+</head>
+<body>
+  <div class="rt-top">
+    <a class="rt-back" href="{{ url_for('chofer_home') }}"><i class="bi bi-chevron-left"></i></a>
+    <div>
+      <div class="rt-top-t">{{ manifiesto.correlativo or ('M-' ~ manifiesto.id) }}</div>
+      <div class="rt-top-s">Ruta de entrega · {{ paradas|length }} parada{{ 's' if paradas|length != 1 }}</div>
+    </div>
+  </div>
+
+  {% if gmaps_key %}
+  <div id="map"></div>
+  {% else %}
+  <div class="rt-map-off">
+    <i class="bi bi-map" style="font-size:2.5rem"></i>
+    <div>Mapa no disponible (falta configurar Google Maps).<br>Usa los botones "Navegar" de cada parada.</div>
+  </div>
+  {% endif %}
+
+  <div class="rt-wrap">
+    <div class="rt-h3">
+      <span><i class="bi bi-geo-alt me-1"></i>Paradas</span>
+    </div>
+
+    {% for p in paradas %}
+    {% set done = p.estado_entrega in ['Entregado','Devolución'] %}
+    {% set est = p.estado_entrega or 'En preparación' %}
+    <div class="rt-stop {{ 'done' if done }}">
+      <div class="rt-stop-n">{{ loop.index }}</div>
+      <div class="rt-stop-body">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div class="rt-stop-cli">{{ p.cliente_nombre or '—' }}</div>
+          <span class="rt-estado-badge {{ {'En preparación':'e-prep','Entregado a transporte':'e-trans','En ruta':'e-ruta','Entregado':'e-entreg','Entrega fallida':'e-fallida','Devolución':'e-fallida'}[est] or 'e-prep' }}">{{ est }}</span>
+        </div>
+        <div class="rt-stop-addr">{{ p.direccion or '—' }}{% if p.comuna %}, {{ p.comuna }}{% endif %}</div>
+        <div class="rt-stop-meta">{{ p.tido }} {{ p.nudo }} · {{ p.bultos or 0 }} bulto{{ 's' if (p.bultos or 0) != 1 }}{% if p.telefono %} · {{ p.telefono }}{% endif %}</div>
+        <div class="rt-stop-acts">
+          <a class="rt-btn rt-btn-nav" target="_blank"
+             href="https://www.google.com/maps/dir/?api=1&destination={{ (p.direccion ~ ', ' ~ (p.comuna or '') ~ ', Chile')|urlencode }}">
+            <i class="bi bi-sign-turn-right"></i>Navegar
+          </a>
+          {% if done %}
+          <a class="rt-btn rt-btn-done" href="{{ url_for('chofer_entrega', mid=manifiesto.id, commitment_id=p.commitment_id) }}">
+            <i class="bi bi-check2-circle"></i>Ver entrega
+          </a>
+          {% else %}
+          <a class="rt-btn rt-btn-deliver" href="{{ url_for('chofer_entrega', mid=manifiesto.id, commitment_id=p.commitment_id) }}">
+            <i class="bi bi-box-seam"></i>Entregar
+          </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if gmaps_key %}
+  <script>
+    const PARADAS = [
+      {% for p in paradas %}
+      { n: {{ loop.index }},
+        cliente: {{ (p.cliente_nombre or '')|tojson }},
+        dir: {{ ((p.direccion or '') ~ ', ' ~ (p.comuna or '') ~ ', Chile')|tojson }},
+        lat: {{ p.dest_lat if p.dest_lat else 'null' }},
+        lng: {{ p.dest_lng if p.dest_lng else 'null' }},
+        done: {{ 'true' if p.estado_entrega in ['Entregado','Devolución'] else 'false' }} },
+      {% endfor %}
+    ];
+    let map, geocoder;
+    function initMap(){
+      map = new google.maps.Map(document.getElementById('map'), {
+        zoom: 11, center: { lat: -33.45, lng: -70.66 },  // Santiago default
+        mapTypeControl:false, streetViewControl:false, fullscreenControl:false,
+      });
+      geocoder = new google.maps.Geocoder();
+      const bounds = new google.maps.LatLngBounds();
+      let pending = 0;
+      PARADAS.forEach(function(p){
+        function place(pos){
+          const marker = new google.maps.Marker({
+            position: pos, map: map, label: { text: String(p.n), color:'#fff', fontWeight:'800' },
+            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 14,
+                    fillColor: p.done ? '#16a34a' : '#dc2626', fillOpacity:1,
+                    strokeColor:'#fff', strokeWeight:2 },
+          });
+          const info = new google.maps.InfoWindow({ content: '<strong>'+p.n+'. '+p.cliente+'</strong><br>'+p.dir });
+          marker.addListener('click', function(){ info.open(map, marker); });
+          bounds.extend(pos); map.fitBounds(bounds);
+        }
+        if (p.lat && p.lng) { place({ lat: parseFloat(p.lat), lng: parseFloat(p.lng) }); }
+        else if (p.dir) {
+          pending++;
+          geocoder.geocode({ address: p.dir }, function(res, status){
+            if (status === 'OK' && res[0]) place(res[0].geometry.location);
+            pending--;
+          });
+        }
+      });
+    }
+    window.initMap = initMap;
+  </script>
+  <script async src="https://maps.googleapis.com/maps/api/js?key={{ gmaps_key }}&callback=initMap"></script>
+  {% endif %}
+
+  <script>
+    // ── PING GPS silencioso cada 30s ──
+    (function(){
+      if (!navigator.geolocation) return;
+      const MID = {{ manifiesto.id }};
+      let _bat = null;
+      if (navigator.getBattery) navigator.getBattery().then(b => { _bat = Math.round(b.level * 100); }).catch(()=>{});
+      function _ping(){
+        navigator.geolocation.getCurrentPosition(function(pos){
+          fetch('/chofer/ping', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ lat:pos.coords.latitude, lng:pos.coords.longitude,
+              accuracy_m:pos.coords.accuracy,
+              speed_kmh: pos.coords.speed ? Math.round(pos.coords.speed*3.6*10)/10 : null,
+              heading_deg: pos.coords.heading, battery_pct: _bat, manifest_id: MID }),
+            keepalive:true }).catch(()=>{});
+        }, function(){}, { enableHighAccuracy:true, timeout:8000, maximumAge:5000 });
+      }
+      _ping();
+      setInterval(function(){ if (!document.hidden) _ping(); }, 30000);
+    })();
+  </script>
+</body>
+</html>
