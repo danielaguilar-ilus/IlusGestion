@@ -20,9 +20,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import wraps
 
-from flask import (Flask, Response, flash, g, jsonify, make_response, redirect,
-                   render_template, render_template_string, request, send_file,
-                   session, url_for)
+from flask import (Flask, Response, abort, flash, g, jsonify, make_response,
+                   redirect, render_template, render_template_string, request,
+                   send_file, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -14528,6 +14528,18 @@ ESTADOS_ENTREGA = [
     'En ruta', 'Entregado', 'Entrega fallida', 'Devolución',
 ]
 
+# Stepper visual del tracking público (cliente).
+# El orden define la barra de progreso; los terminales (Entregado/fallida/Devolución)
+# pintan el último paso en su color.
+ESTADOS_ENTREGA_META = {
+    'En preparación':         {'color': 'secondary', 'icon': 'bi-clipboard-check',     'step': 1},
+    'Entregado a transporte': {'color': 'info',      'icon': 'bi-truck-flatbed',       'step': 2},
+    'En ruta':                {'color': 'primary',   'icon': 'bi-truck',               'step': 3},
+    'Entregado':              {'color': 'success',   'icon': 'bi-check-circle-fill',   'step': 4},
+    'Entrega fallida':        {'color': 'danger',    'icon': 'bi-x-octagon-fill',      'step': 4},
+    'Devolución':             {'color': 'warning',   'icon': 'bi-arrow-return-left',   'step': 4},
+}
+
 ESTADO_COLORS = {
     'Pendiente':              'warning',
     'En proceso':             'primary',
@@ -14559,6 +14571,93 @@ def _tr_log(entity_type, entity_id, accion, detalle=""):
         conn.commit()
     except Exception:
         pass
+
+
+def _tr_event(manifest_item_id, estado, fuente='manual',
+              comentario=None, lat=None, lng=None, payload_json=None,
+              commitment_id=None):
+    """Registra UN evento de tracking en transport_tracking_events (append-only).
+
+    Esta tabla es la línea de tiempo visible en el tracking público del cliente
+    final y la base para auditoría/OTIF futura. Es complementaria a
+    `transport_logs` (auditoría interna): `transport_logs` es opaco al cliente;
+    `transport_tracking_events` es lo que se publica.
+
+    Args:
+        manifest_item_id: id en transport_manifest_items.
+        estado: uno de ESTADOS_ENTREGA (no se valida acá; el caller decide).
+        fuente: 'manual' | 'chofer' | 'fedex' | 'aftership' | 'sistema'.
+        comentario: texto libre (visible al cliente — no incluyas datos internos).
+        lat, lng: coordenadas opcionales (chofer marca entrega in-situ).
+        payload_json: raw del courier o info adicional (NO visible al cliente).
+        commitment_id: para denormalizar y acelerar el query público; si no se
+            pasa, se intenta resolver con un SELECT.
+
+    Returns:
+        id del evento creado, o None si falló.
+    """
+    try:
+        if commitment_id is None and manifest_item_id:
+            r = mysql_fetchone(
+                "SELECT commitment_id FROM transport_manifest_items WHERE id=%s",
+                (manifest_item_id,)
+            )
+            commitment_id = (r or {}).get("commitment_id")
+        usuario = current_username() if fuente in ('manual', 'chofer') else None
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO transport_tracking_events "
+                "(manifest_item_id, commitment_id, estado, fuente, "
+                " lat, lng, usuario, comentario, payload_json) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (manifest_item_id, commitment_id, estado, fuente,
+                 lat, lng, usuario, comentario,
+                 (json.dumps(payload_json, ensure_ascii=False)
+                  if isinstance(payload_json, (dict, list)) else payload_json))
+            )
+            evt_id = cur.lastrowid
+        conn.commit()
+        return evt_id
+    except Exception as _ev_err:
+        print(f"[tr_event] no se pudo registrar evento: {_ev_err}", flush=True)
+        return None
+
+
+def _tr_ensure_public_token(commitment_id):
+    """Garantiza que el commitment tenga su token público (lo crea lazy si falta).
+
+    El token vive en transport_commitments.public_token (URL-safe, 40 chars).
+    Lo atamos al commitment, NO al manifest_item, para que el link sobreviva si
+    la factura se mueve de un manifiesto a otro. Devuelve el token (o None si
+    falló crearlo).
+    """
+    try:
+        r = mysql_fetchone(
+            "SELECT public_token FROM transport_commitments WHERE id=%s",
+            (commitment_id,)
+        )
+        if not r:
+            return None
+        tok = (r.get("public_token") or "").strip()
+        if tok:
+            return tok
+        # Generar y persistir. UNIQUE KEY garantiza unicidad; si llegásemos a
+        # colisionar (probabilidad ~0 con 40 chars URL-safe), reintenta.
+        for _ in range(3):
+            new_tok = secrets.token_urlsafe(30)[:40]
+            try:
+                mysql_execute(
+                    "UPDATE transport_commitments SET public_token=%s WHERE id=%s",
+                    (new_tok, commitment_id)
+                )
+                return new_tok
+            except Exception:
+                continue
+        return None
+    except Exception as _tok_err:
+        print(f"[tr_token] no se pudo generar token: {_tok_err}", flush=True)
+        return None
 
 
 def _norm_comuna_key(s: str) -> str:
@@ -18003,17 +18102,30 @@ def tr_quitar_item(mid, item_id):
 @app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>/estado", methods=["PUT"])
 @_tr_required
 def tr_estado_entrega(mid, item_id):
-    estado = (request.get_json(silent=True) or {}).get("estado_entrega", "")
+    body = request.get_json(silent=True) or {}
+    estado = body.get("estado_entrega", "")
     if estado not in ESTADOS_ENTREGA:
         return jsonify({"error": "estado inválido"}), 400
+    comentario = (body.get("comentario") or "").strip() or None
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE transport_manifest_items SET estado_entrega=%s WHERE id=%s AND manifest_id=%s",
             (estado, item_id, mid)
         )
+        # Cuando se marca Entregado, cacheamos delivered_at en el commitment para
+        # queries rápidas (KPIs / OTIF / tracking público sin recorrer eventos).
+        if estado == 'Entregado':
+            cur.execute(
+                "UPDATE transport_commitments tc "
+                "JOIN transport_manifest_items tmi ON tmi.commitment_id = tc.id "
+                "SET tc.delivered_at = COALESCE(tc.delivered_at, NOW()) "
+                "WHERE tmi.id=%s",
+                (item_id,)
+            )
     conn.commit()
     _tr_log("manifest_item", item_id, "estado_entrega", estado)
+    _tr_event(item_id, estado, fuente='manual', comentario=comentario)
     return jsonify({"ok": True})
 
 
@@ -18030,6 +18142,371 @@ def tr_estado_manifiesto(mid):
     conn.commit()
     _tr_log("manifest", mid, "estado cambiado", estado)
     return jsonify({"ok": True})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  TRACKING FASE 1 — núcleo + tracking público + prueba de entrega
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>/entrega",
+           methods=["POST"])
+@_tr_required
+def tr_registrar_entrega(mid, item_id):
+    """Registra la prueba de entrega completa: receptor + firma + foto + GPS.
+
+    Marca el estado como 'Entregado', cachea delivered_at en el commitment y
+    publica el evento al tracking del cliente. Es idempotente: si ya existe
+    una prueba para este item, se reemplaza (no se duplica).
+
+    Body JSON:
+      receptor_nombre (required), receptor_rut, receptor_relacion,
+      firma_data_url (canvas base64), fotos[] (data URLs),
+      lat, lng, accuracy_m, notas.
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    receptor = (body.get("receptor_nombre") or "").strip()
+    if not receptor:
+        return jsonify({"error": "receptor requerido"}), 400
+    receptor_rut = (body.get("receptor_rut") or "").strip() or None
+    relacion = (body.get("receptor_relacion") or "").strip() or None
+    firma_data = (body.get("firma_data_url") or "").strip() or None
+    fotos_in = body.get("fotos") or []
+    if not isinstance(fotos_in, list):
+        fotos_in = [fotos_in]
+    lat = body.get("lat"); lng = body.get("lng")
+    accuracy = body.get("accuracy_m")
+    notas = (body.get("notas") or "").strip() or None
+
+    # Verificar que el item exista y traer commitment_id
+    item = mysql_fetchone(
+        "SELECT id, commitment_id FROM transport_manifest_items "
+        "WHERE id=%s AND manifest_id=%s",
+        (item_id, mid)
+    )
+    if not item:
+        return jsonify({"error": "item no encontrado"}), 404
+    commitment_id = item["commitment_id"]
+
+    # Subir firma a Cloudinary (fallback al data URL si no hay credenciales).
+    firma_url = ""
+    if firma_data:
+        firma_url = _subir_firma_cloudinary(
+            firma_data, item_id, f"transp_receptor_{item_id}"
+        ) or firma_data
+
+    # Subir fotos (hasta 5). data URL → Cloudinary. Si Cloudinary no está
+    # disponible, guardamos el data URL crudo (LONGTEXT lo soporta).
+    fotos_urls = []
+    for idx, raw in enumerate(fotos_in[:5]):
+        if not raw or not isinstance(raw, str):
+            continue
+        if not raw.startswith("data:") and raw.startswith("http"):
+            fotos_urls.append(raw)
+            continue
+        try:
+            if _CLD_READY and _cloudinary_uploader:
+                pid = f"transp_entrega_{item_id}_{idx}_{int(time.time())}"
+                res = _cloudinary_uploader.upload(
+                    raw, public_id=pid, folder="ilus/transporte/entregas",
+                    overwrite=True, resource_type="image",
+                )
+                fotos_urls.append(res.get("secure_url") or raw)
+            else:
+                fotos_urls.append(raw)
+        except Exception as _up_err:
+            print(f"[tr_entrega] foto {idx} no se pudo subir: {_up_err}",
+                  flush=True)
+            fotos_urls.append(raw)
+
+    conn = get_db()
+    with conn.cursor() as cur:
+        # Upsert prueba de entrega (UNIQUE KEY uq_item garantiza 1:1).
+        cur.execute("""
+            INSERT INTO transport_delivery_proof
+              (manifest_item_id, commitment_id, receptor_nombre, receptor_rut,
+               receptor_relacion, firma_url, fotos_json,
+               lat, lng, accuracy_m, usuario, notas)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE
+              receptor_nombre = VALUES(receptor_nombre),
+              receptor_rut    = VALUES(receptor_rut),
+              receptor_relacion = VALUES(receptor_relacion),
+              firma_url       = VALUES(firma_url),
+              fotos_json      = VALUES(fotos_json),
+              lat             = VALUES(lat),
+              lng             = VALUES(lng),
+              accuracy_m      = VALUES(accuracy_m),
+              usuario         = VALUES(usuario),
+              notas           = VALUES(notas),
+              entregado_at    = NOW()
+        """, (
+            item_id, commitment_id, receptor, receptor_rut, relacion,
+            firma_url, json.dumps(fotos_urls, ensure_ascii=False),
+            lat, lng, accuracy, current_username(), notas
+        ))
+        # Cambiar estado a Entregado
+        cur.execute(
+            "UPDATE transport_manifest_items SET estado_entrega='Entregado' "
+            "WHERE id=%s AND manifest_id=%s",
+            (item_id, mid)
+        )
+        # Cachear delivered_at en el commitment
+        cur.execute(
+            "UPDATE transport_commitments SET delivered_at = COALESCE(delivered_at, NOW()) "
+            "WHERE id=%s",
+            (commitment_id,)
+        )
+    conn.commit()
+
+    _tr_log("manifest_item", item_id, "entrega registrada",
+            f"receptor={receptor} fotos={len(fotos_urls)}")
+    _tr_event(item_id, 'Entregado', fuente='manual',
+              comentario=f"Recibido por: {receptor}",
+              lat=lat, lng=lng, commitment_id=commitment_id)
+    return jsonify({"ok": True, "fotos": len(fotos_urls),
+                    "firma": bool(firma_url)})
+
+
+@app.route("/transporte/api/items/<int:item_id>/link-cliente", methods=["GET"])
+@_tr_required
+def tr_get_link_cliente(item_id):
+    """Devuelve el link público de tracking del cliente para este item.
+
+    Genera el token lazy si aún no existe. Retorna también el commitment_id
+    y el doc, para que el modal del operador muestre contexto al copiar el link.
+    """
+    item = mysql_fetchone(
+        "SELECT tmi.id, tmi.commitment_id, tc.tido, tc.nudo, tc.cliente_nombre "
+        "FROM transport_manifest_items tmi "
+        "JOIN transport_commitments tc ON tc.id = tmi.commitment_id "
+        "WHERE tmi.id=%s LIMIT 1",
+        (item_id,)
+    )
+    if not item:
+        return jsonify({"error": "item no encontrado"}), 404
+    tok = _tr_ensure_public_token(item["commitment_id"])
+    if not tok:
+        return jsonify({"error": "no se pudo generar token"}), 500
+    url = url_for("tr_public_tracking", token=tok, _external=True)
+    return jsonify({
+        "ok": True,
+        "url": url,
+        "token": tok,
+        "doc": f"{item.get('tido') or ''} {item.get('nudo') or ''}".strip(),
+        "cliente": item.get("cliente_nombre") or "",
+    })
+
+
+@app.route("/transporte/api/items/<int:item_id>/link-cliente/regenerar",
+           methods=["POST"])
+@_tr_required
+def tr_regenerar_link_cliente(item_id):
+    """Regenera el token público (caso fuga del link). Solo superadmin.
+
+    El link viejo deja de funcionar inmediatamente. El nuevo se devuelve
+    en la respuesta.
+    """
+    if not bool((getattr(g, "permissions", None) or {}).get("superadmin")):
+        return jsonify({"error": "permiso denegado"}), 403
+    item = mysql_fetchone(
+        "SELECT commitment_id FROM transport_manifest_items WHERE id=%s",
+        (item_id,)
+    )
+    if not item:
+        return jsonify({"error": "item no encontrado"}), 404
+    new_tok = secrets.token_urlsafe(30)[:40]
+    try:
+        mysql_execute(
+            "UPDATE transport_commitments SET public_token=%s WHERE id=%s",
+            (new_tok, item["commitment_id"])
+        )
+    except Exception as _e:
+        return jsonify({"error": f"no se pudo regenerar: {_e}"}), 500
+    _tr_log("commitment", item["commitment_id"], "token regenerado", "")
+    url = url_for("tr_public_tracking", token=new_tok, _external=True)
+    return jsonify({"ok": True, "url": url, "token": new_tok})
+
+
+# ── Tracking público (sin login) ─────────────────────────────────────────
+# Rate limit por token + cache de polling (mismo patrón que retiros)
+_TRACK_RL: dict = {}        # token → [timestamps]
+_TRACK_RL_MAX = 60
+_TRACK_RL_WINDOW = 60.0
+
+def _track_rate_ok(token):
+    """Rate-limit por token: 60 req/min. Igual que retiros."""
+    import time as _time
+    now = _time.time()
+    cutoff = now - _TRACK_RL_WINDOW
+    bucket = [t for t in (_TRACK_RL.get(token) or []) if t >= cutoff]
+    if len(bucket) >= _TRACK_RL_MAX:
+        _TRACK_RL[token] = bucket
+        return False
+    bucket.append(now)
+    _TRACK_RL[token] = bucket
+    return True
+
+_TRACK_POLL_CACHE: dict = {}    # token → {payload, ts}
+_TRACK_POLL_TTL = 10.0          # segundos
+
+
+def _mask_address(direccion, comuna):
+    """Enmascara la dirección para tracking público: muestra el nombre de la
+    calle pero oculta el número exacto + dpto. Evita filtrar la dirección
+    completa a cualquiera con el link.
+
+    Estrategia: solo enmascara el ÚLTIMO número de cada segmento separado por
+    coma (street nº, depto nº). Conserva nombres tipo "Av. 11 de Septiembre"
+    intactos, porque ahí el número es parte del nombre, no del número de calle.
+    """
+    if not direccion:
+        return (comuna or "").strip()
+    import re as _re
+    partes = []
+    for seg in str(direccion).split(","):
+        seg = seg.strip()
+        if not seg:
+            continue
+        # Reemplaza solo el ÚLTIMO grupo de dígitos del segmento (probable nº)
+        m = list(_re.finditer(r"\d{1,6}", seg))
+        if m:
+            last = m[-1]
+            seg = seg[:last.start()] + "···" + seg[last.end():]
+        partes.append(seg.strip())
+    base = ", ".join(partes)
+    base = _re.sub(r"\s{2,}", " ", base).strip(" ,")
+    comuna = (comuna or "").strip()
+    return f"{base}, {comuna}".strip(", ").strip()
+
+
+def _tracking_payload(token):
+    """Construye el payload completo del tracking público.
+    Devuelve dict o None si el token no existe."""
+    c = mysql_fetchone("""
+        SELECT id, tido, nudo, cliente_nombre, comuna, direccion, region,
+               estado, delivered_at, fecha_emision, fecha_entrega
+        FROM transport_commitments WHERE public_token=%s LIMIT 1
+    """, (token,))
+    if not c:
+        return None
+    cid = c["id"]
+    # Manifest item más reciente para este commitment
+    mi = mysql_fetchone("""
+        SELECT tmi.id AS item_id, tmi.estado_entrega, tmi.manifest_id,
+               tm.courier, tm.correlativo
+        FROM transport_manifest_items tmi
+        LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
+        WHERE tmi.commitment_id=%s
+        ORDER BY tmi.id DESC LIMIT 1
+    """, (cid,))
+    # Timeline (toda la historia, ordenada por fecha)
+    eventos_raw = mysql_fetchall("""
+        SELECT estado, fuente, ts_utc, comentario, lat, lng
+        FROM transport_tracking_events
+        WHERE commitment_id=%s
+        ORDER BY ts_utc ASC, id ASC
+    """, (cid,)) or []
+    eventos = []
+    for e in eventos_raw:
+        est = e.get("estado") or ""
+        meta = ESTADOS_ENTREGA_META.get(est, {})
+        eventos.append({
+            "estado":     est,
+            "color":      meta.get("color", "secondary"),
+            "icon":       meta.get("icon", "bi-circle"),
+            "fuente":     e.get("fuente") or "manual",
+            "ts":         str(e.get("ts_utc") or "")[:19],
+            "comentario": e.get("comentario") or "",
+        })
+    # Prueba de entrega (si existe)
+    proof = None
+    if mi:
+        p = mysql_fetchone("""
+            SELECT receptor_nombre, receptor_relacion, firma_url,
+                   fotos_json, entregado_at
+            FROM transport_delivery_proof WHERE manifest_item_id=%s LIMIT 1
+        """, (mi["item_id"],))
+        if p:
+            try:
+                fotos = json.loads(p.get("fotos_json") or "[]")
+            except Exception:
+                fotos = []
+            # Enmascarar nombre del receptor: "Juan P." (primer nombre + inicial)
+            rname = (p.get("receptor_nombre") or "").strip()
+            partes = rname.split()
+            if len(partes) >= 2:
+                rname_short = f"{partes[0]} {partes[-1][0]}."
+            else:
+                rname_short = rname
+            proof = {
+                "receptor":      rname_short,
+                "relacion":      p.get("receptor_relacion") or "",
+                "firma_url":     p.get("firma_url") or "",
+                "fotos":         fotos,
+                "entregado_at":  str(p.get("entregado_at") or "")[:19],
+            }
+    estado_actual = (mi or {}).get("estado_entrega") or "En preparación"
+    meta_actual = ESTADOS_ENTREGA_META.get(estado_actual, {})
+    return {
+        "ok": True,
+        "doc":           f"{c.get('tido') or ''} {c.get('nudo') or ''}".strip(),
+        "cliente":       c.get("cliente_nombre") or "",
+        "destino":       _mask_address(c.get("direccion"), c.get("comuna")),
+        "region":        c.get("region") or "",
+        "courier":       (mi or {}).get("courier") or "",
+        "manifiesto":    (mi or {}).get("correlativo") or "",
+        "estado":        estado_actual,
+        "estado_color":  meta_actual.get("color", "secondary"),
+        "estado_icon":   meta_actual.get("icon", "bi-circle"),
+        "estado_step":   meta_actual.get("step", 1),
+        "eventos":       eventos,
+        "proof":         proof,
+        "entregado_at":  str(c.get("delivered_at") or "")[:19],
+    }
+
+
+@app.route("/t/<token>")
+def tr_public_tracking(token):
+    """Vista pública de tracking del cliente (sin login).
+    El token vive en transport_commitments.public_token.
+    """
+    # Validación cheap del formato del token (evita queries con basura)
+    if not token or len(token) < 16 or len(token) > 80 \
+            or not re.match(r"^[A-Za-z0-9_\-]+$", token):
+        abort(404)
+    payload = _tracking_payload(token)
+    if not payload:
+        abort(404)
+    return render_template(
+        "transporte/public_tracking.html",
+        token=token, data=payload,
+    )
+
+
+@app.route("/t/<token>/status")
+def tr_public_tracking_status(token):
+    """JSON ligero para el polling del tracking público (cada 30s)."""
+    if not token or len(token) < 16 or len(token) > 80 \
+            or not re.match(r"^[A-Za-z0-9_\-]+$", token):
+        return jsonify({"ok": False, "error": "invalid_token"}), 400
+    if not _track_rate_ok(token):
+        return jsonify({"ok": False, "error": "rate_limited",
+                        "retry_after": int(_TRACK_RL_WINDOW)}), 429
+    import time as _time
+    ent = _TRACK_POLL_CACHE.get(token)
+    if ent and (_time.time() - ent["ts"]) < _TRACK_POLL_TTL:
+        return jsonify(ent["payload"])
+    payload = _tracking_payload(token)
+    if not payload:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    _TRACK_POLL_CACHE[token] = {"payload": payload, "ts": _time.time()}
+    # Limpieza barata si crece mucho
+    if len(_TRACK_POLL_CACHE) > 500:
+        cutoff = _time.time() - _TRACK_POLL_TTL * 3
+        for k in list(_TRACK_POLL_CACHE.keys()):
+            if _TRACK_POLL_CACHE[k]["ts"] < cutoff:
+                _TRACK_POLL_CACHE.pop(k, None)
+    return jsonify(payload)
 
 
 # ── MANIFIESTOS: export a Excel de carga masiva (FedEx / SimplyRoute) ─────────
@@ -52852,6 +53329,109 @@ def _ensure_transport_couriers_formato_export():
     return True
 
 
+def _ensure_transport_tracking_tables():
+    """Garantiza las tablas y columnas del tracking público + prueba de entrega
+    (FASE 1 del roadmap) AUNQUE ILUS_SKIP_MIGRATIONS esté activo.
+
+    Tablas:
+      - transport_tracking_events: timeline append-only (1 fila por evento).
+      - transport_delivery_proof:  prueba de entrega (1 fila por item entregado).
+
+    Columnas nuevas en transport_commitments:
+      - public_token VARCHAR(60) UNIQUE: token URL-safe que identifica al
+        cliente final. Vive a nivel de factura (no de manifest_item) para
+        sobrevivir re-asignaciones.
+      - delivered_at DATETIME NULL: caché del primer evento Entregado,
+        para queries rápidas (KPIs/OTIF, vista pública).
+
+    Es idempotente: CREATE TABLE IF NOT EXISTS + ALTER si la columna falta.
+    """
+    # 1) Tabla de eventos (timeline)
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_tracking_events (
+            id               INT AUTO_INCREMENT PRIMARY KEY,
+            manifest_item_id INT NOT NULL,
+            commitment_id    INT NULL,
+            estado           VARCHAR(60) NOT NULL,
+            fuente           VARCHAR(20) NOT NULL DEFAULT 'manual'
+                              COMMENT 'manual|chofer|fedex|aftership|sistema',
+            ts_utc           DATETIME DEFAULT CURRENT_TIMESTAMP,
+            lat              DECIMAL(10,7) NULL,
+            lng              DECIMAL(10,7) NULL,
+            usuario          VARCHAR(190) NULL,
+            comentario       TEXT NULL,
+            payload_json     LONGTEXT NULL,
+            INDEX idx_te_item   (manifest_item_id, ts_utc),
+            INDEX idx_te_comm   (commitment_id, ts_utc),
+            INDEX idx_te_estado (estado),
+            FOREIGN KEY (manifest_item_id)
+                REFERENCES transport_manifest_items(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # 2) Tabla de prueba de entrega (1 fila por item)
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_delivery_proof (
+            id                 INT AUTO_INCREMENT PRIMARY KEY,
+            manifest_item_id   INT NOT NULL,
+            commitment_id      INT NULL,
+            receptor_nombre    VARCHAR(180) NOT NULL,
+            receptor_rut       VARCHAR(30) NULL,
+            receptor_relacion  VARCHAR(60) NULL,
+            firma_url          LONGTEXT NULL,
+            fotos_json         LONGTEXT NULL,
+            lat                DECIMAL(10,7) NULL,
+            lng                DECIMAL(10,7) NULL,
+            accuracy_m         DECIMAL(7,1) NULL,
+            entregado_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+            usuario            VARCHAR(190) NULL,
+            notas              TEXT NULL,
+            UNIQUE KEY uq_dp_item (manifest_item_id),
+            INDEX idx_dp_comm     (commitment_id),
+            FOREIGN KEY (manifest_item_id)
+                REFERENCES transport_manifest_items(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # 3) Columnas nuevas en transport_commitments (idempotente)
+    needed = {
+        "public_token": "VARCHAR(60) NULL COMMENT 'Token URL-safe para tracking público del cliente'",
+        "delivered_at": "DATETIME NULL COMMENT 'Caché del primer evento Entregado'",
+    }
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_commitments'"
+            ) or [])
+        }
+    except Exception as _e_sc:
+        print(f"[tr_tracking] schema lookup falló: {_e_sc}", flush=True)
+        return
+    for col, ddl in needed.items():
+        if col.lower() not in existing:
+            try:
+                mysql_execute(f"ALTER TABLE transport_commitments ADD COLUMN {col} {ddl}")
+                print(f"[tr_tracking] columna agregada: {col}", flush=True)
+            except Exception as _e_add:
+                print(f"[tr_tracking] no se pudo agregar {col}: {_e_add}", flush=True)
+    # 4) Índice UNIQUE en public_token (idempotente con try/except)
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_commitments "
+            "ADD UNIQUE INDEX uq_tcomm_token (public_token)"
+        )
+    except Exception:
+        pass  # ya existe
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_commitments ADD INDEX idx_tcomm_delivered (delivered_at)"
+        )
+    except Exception:
+        pass
+
+
 def _ensure_transporte_labels_table():
     """Garantiza la tabla transport_labels AUNQUE ILUS_SKIP_MIGRATIONS esté activo.
 
@@ -53084,6 +53664,15 @@ try:
         _ensure_transport_couriers_formato_export()
 except Exception as _fmt_err:
     print(f"[ILUS][WARN] _ensure_transport_couriers_formato_export: {_fmt_err}", flush=True)
+
+# FASE 1 TRACKING: garantizar tablas/columnas de tracking + prueba de entrega
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. CREATE TABLE IF NOT EXISTS es
+# idempotente. Sin esto, /t/<token> y el botón "Link cliente" fallan.
+try:
+    with app.app_context():
+        _ensure_transport_tracking_tables()
+except Exception as _trk_err:
+    print(f"[ILUS][WARN] _ensure_transport_tracking_tables: {_trk_err}", flush=True)
 
 # CRÍTICO: garantizar mant_reportes.garantia_aplica SIEMPRE, incluso con
 # ILUS_SKIP_MIGRATIONS=1 (si no, crear/editar informes con el flag de garantía

@@ -292,6 +292,10 @@
                     onclick='abrirEditar({{ item_json }})'>
               <i class="bi bi-pencil-square"></i>
             </button>
+            <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Copiar link de seguimiento del cliente"
+                    onclick="mostrarLinkCliente({{ item.id }})">
+              <i class="bi bi-link-45deg"></i>
+            </button>
             <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Quitar del manifiesto"
                     onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
               <i class="bi bi-trash3"></i>
@@ -417,6 +421,10 @@
           </button>
           <button class="btn btn-sm btn-outline-secondary mfd-act-btn" onclick='abrirEditar({{ item_json }})'>
             <i class="bi bi-pencil-square"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Link de seguimiento del cliente"
+                  onclick="mostrarLinkCliente({{ item.id }})">
+            <i class="bi bi-link-45deg"></i>
           </button>
           <button class="btn btn-sm btn-outline-danger mfd-act-btn" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
             <i class="bi bi-trash3"></i>
@@ -885,6 +893,51 @@ function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
     if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
     else alert('Error de conexión');
   });
+}
+
+async function mostrarLinkCliente(itemId) {
+  // Pide el link público al backend (lazy-genera el token si aún no existe)
+  // y lo muestra en un ilusAlert con botón "Copiar". El link sobrevive si
+  // la factura se mueve a otro manifiesto (vive a nivel de commitment).
+  let data;
+  try {
+    const resp = await fetch('/transporte/api/items/' + itemId + '/link-cliente');
+    data = await resp.json();
+  } catch (e) {
+    if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
+    return;
+  }
+  if (!data || !data.ok) {
+    if (window.ilusToast) ilusToast(data && data.error || 'No se pudo obtener el link', { type: 'error' });
+    return;
+  }
+  const url = data.url || '';
+  const safe = String(url).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+  // Modal con el link + botón copiar + nota de "compártelo con el cliente"
+  await ilusAlert({
+    title: 'Link de seguimiento del cliente',
+    message: 'Comparte este link con el cliente para que siga su despacho en tiempo real:',
+    sub: '<div style="margin:.5rem 0;padding:.6rem .7rem;background:#f3f4f6;border-radius:8px;'
+       + 'font-family:ui-monospace,Consolas,monospace;font-size:.78rem;word-break:break-all;border:1px solid #e5e7eb">'
+       + safe + '</div>'
+       + '<div style="font-size:.78rem;color:#6b7280;margin-top:.4rem">'
+       + '<i class="bi bi-shield-check"></i> El link es privado: solo quien lo tenga puede ver el estado de '
+       + '<strong>' + (data.doc || 'esta factura') + '</strong>. No expone datos sensibles del cliente.'
+       + '</div>',
+    subHtml: true,
+    type: 'info',
+    okLabel: 'Copiar link',
+  });
+  // Tras cerrar el modal, copiar al portapapeles
+  try {
+    await navigator.clipboard.writeText(url);
+    if (window.ilusToast) ilusToast('✓ Link copiado al portapapeles', { type: 'success' });
+  } catch (e) {
+    // Fallback: si el navegador bloquea clipboard, abrir prompt para copia manual
+    window.prompt('Copia el link manualmente (Ctrl+C):', url);
+  }
 }
 
 async function quitarItem(mid, itemId) {
