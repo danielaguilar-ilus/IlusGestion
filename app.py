@@ -3789,6 +3789,9 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/retiros/seguimiento/",    # /retiros/seguimiento/<token>
     "/webhook/",                # webhooks externos (Twilio, etc.)
     "/webhooks/",               # alias plural
+    "/t/",                      # tracking público de transporte (token URL)
+    "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
+    "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
 )
 
 
@@ -13787,6 +13790,258 @@ def _fedex_calc_rate(peso_pred_kg: float, postal_destino: str,
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  FEDEX TRACK API — credenciales y polling (independiente del Rate API)
+# ═══════════════════════════════════════════════════════════════════════════
+# FedEx genera credenciales SEPARADAS para Rate y Track. Mismo OAuth flow
+# (client_credentials), distinto client_id/secret. Por eso usamos otro cache.
+# Setear en Cloud Run → Variables:
+#   FEDEX_TRACK_CLIENT_ID, FEDEX_TRACK_CLIENT_SECRET
+# (FEDEX_ACCOUNT es el mismo de Rate; ya está definido más arriba).
+FEDEX_TRACK_CLIENT_ID     = os.environ.get("FEDEX_TRACK_CLIENT_ID", "").strip()
+FEDEX_TRACK_CLIENT_SECRET = os.environ.get("FEDEX_TRACK_CLIENT_SECRET", "").strip()
+FEDEX_TRACK_URL           = "https://apis.fedex.com/track/v1/trackingnumbers"
+
+if not (FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET):
+    print("[ILUS][FEDEX] Credenciales FedEx Track API NO configuradas — "
+          "polling de estados FedEx deshabilitado. Setear FEDEX_TRACK_CLIENT_ID, "
+          "FEDEX_TRACK_CLIENT_SECRET en Cloud Run → Variables.", flush=True)
+
+_fedex_track_token_cache = {"token": None, "expires_at": 0}
+_fedex_track_token_lock  = threading.Lock()
+
+
+def _fedex_track_get_token() -> str:
+    """OAuth client_credentials para el Track API. Cache 60min."""
+    import requests as _req
+    if not (FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET):
+        raise RuntimeError("FedEx Track API no configurada "
+                           "(faltan FEDEX_TRACK_CLIENT_ID/SECRET)")
+    with _fedex_track_token_lock:
+        now = time.time()
+        if (_fedex_track_token_cache["token"]
+                and now < _fedex_track_token_cache["expires_at"] - 30):
+            return _fedex_track_token_cache["token"]
+        resp = _req.post(
+            FEDEX_OAUTH_URL,
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     FEDEX_TRACK_CLIENT_ID,
+                "client_secret": FEDEX_TRACK_CLIENT_SECRET,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        j = resp.json()
+        _fedex_track_token_cache["token"]      = j["access_token"]
+        _fedex_track_token_cache["expires_at"] = now + int(j.get("expires_in", 3600))
+        return _fedex_track_token_cache["token"]
+
+
+# Mapping códigos de estado FedEx → ESTADOS_ENTREGA de ILUS.
+# Fuente: docs FedEx Track API REST v1 (statusCode).
+_FEDEX_STATUS_MAP = {
+    # Pre-shipment
+    "OC": 'En preparación',        # Order Created (label generated, not yet picked up)
+    "PU": 'Entregado a transporte',# Picked Up
+    "AR": 'Entregado a transporte',# Arrived at FedEx location
+    "AF": 'Entregado a transporte',# At FedEx facility
+    "DP": 'En ruta',               # Departed FedEx location
+    # In transit
+    "IT": 'En ruta',               # In Transit
+    "IX": 'En ruta',               # In transit (intl)
+    "OD": 'En ruta',               # Out for Delivery
+    "OF": 'En ruta',               # At FedEx Origin Facility
+    "OF_DT": 'En ruta',
+    # Delivered
+    "DL": 'Entregado',
+    "POD": 'Entregado',
+    # Exceptions / failures
+    "DE": 'Entrega fallida',       # Delivery Exception
+    "CA": 'Devolución',            # Shipment Canceled
+    "RS": 'Devolución',            # Returned to Shipper
+    "DY": 'En ruta',               # Delay
+    "SE": 'Entrega fallida',       # Shipment Exception
+    "HL": 'En ruta',               # Hold at Location
+    "CC": 'En ruta',               # Customs / Clearance Delay
+}
+
+
+def _fedex_estado_a_ilus(status_code: str, description: str = "") -> str:
+    """Traduce un statusCode de FedEx a uno de ESTADOS_ENTREGA de ILUS.
+
+    Si el código no está mapeado, intenta inferir por la descripción
+    (caso fallback). Default: 'En ruta' (más informativo que 'En preparación'
+    cuando el envío ya fue tomado por FedEx).
+    """
+    sc = (status_code or "").strip().upper()
+    if sc in _FEDEX_STATUS_MAP:
+        return _FEDEX_STATUS_MAP[sc]
+    desc = (description or "").lower()
+    if "delivered" in desc:
+        return 'Entregado'
+    if "out for delivery" in desc or "on fedex vehicle" in desc:
+        return 'En ruta'
+    if "in transit" in desc or "departed" in desc or "arrived" in desc:
+        return 'En ruta'
+    if "picked up" in desc or "in fedex possession" in desc:
+        return 'Entregado a transporte'
+    if "exception" in desc or "delivery refused" in desc:
+        return 'Entrega fallida'
+    if "label created" in desc or "shipment information" in desc:
+        return 'En preparación'
+    return 'En ruta'   # default seguro: si FedEx tiene algo, está moviéndose
+
+
+def _fedex_track_lookup(tracking_numbers):
+    """Consulta el Track API para 1 a N tracking numbers.
+
+    Args:
+        tracking_numbers: str (uno) o list[str] (hasta 30 según docs FedEx).
+
+    Returns:
+        list[dict]: cada uno {tracking_number, status_code, status_label,
+            estado_ilus, eta, last_event, raw}.
+        Si falla el HTTP, levanta excepción (caller maneja).
+    """
+    import requests as _req
+    if isinstance(tracking_numbers, str):
+        tracking_numbers = [tracking_numbers]
+    tracking_numbers = [str(t).strip() for t in (tracking_numbers or []) if str(t).strip()]
+    if not tracking_numbers:
+        return []
+    token = _fedex_track_get_token()
+    body = {
+        "trackingInfo": [
+            {"trackingNumberInfo": {"trackingNumber": t}}
+            for t in tracking_numbers[:30]
+        ],
+        "includeDetailedScans": True,
+    }
+    resp = _req.post(
+        FEDEX_TRACK_URL,
+        json=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+            "X-locale":      "es_CL",
+        },
+        timeout=25,
+    )
+    resp.raise_for_status()
+    data = resp.json() or {}
+    out = []
+    for entry in (data.get("output", {}).get("completeTrackResults") or []):
+        tn = (entry.get("trackingNumber") or "").strip()
+        results = entry.get("trackResults") or []
+        if not results:
+            continue
+        # Tomamos el primer trackResult (es el último estado conocido)
+        r0 = results[0]
+        st = r0.get("latestStatusDetail") or {}
+        code = st.get("code") or ""
+        label = (st.get("statusByLocale") or st.get("description")
+                 or st.get("derivedCode") or "")
+        # ETA: estimatedDeliveryTimeWindow o dateAndTimes
+        eta = ""
+        dt_window = r0.get("estimatedDeliveryTimeWindow") or {}
+        if dt_window.get("window"):
+            eta = dt_window["window"].get("ends") or dt_window["window"].get("begins") or ""
+        if not eta:
+            for dat in (r0.get("dateAndTimes") or []):
+                if dat.get("type") in ("ESTIMATED_DELIVERY", "ACTUAL_DELIVERY"):
+                    eta = dat.get("dateTime") or ""
+                    break
+        # Último scan event (para mostrar al cliente)
+        last_event = ""
+        scans = r0.get("scanEvents") or []
+        if scans:
+            ev = scans[0]
+            last_event = (ev.get("eventDescription")
+                          or ev.get("derivedStatus")
+                          or "")
+        out.append({
+            "tracking_number": tn,
+            "status_code":     code,
+            "status_label":    label,
+            "estado_ilus":     _fedex_estado_a_ilus(code, label),
+            "eta":             eta,
+            "last_event":      last_event,
+            "scans":           scans,    # raw para guardar en payload_json
+        })
+    return out
+
+
+def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
+                             tracking_number=None, payload=None,
+                             comentario=None):
+    """Aplica el estado venido del courier al item.
+
+    Si el estado cambió respecto al actual del item:
+      - UPDATE estado_entrega del item
+      - INSERT evento en transport_tracking_events (fuente=fuente)
+      - Cachea delivered_at si pasó a 'Entregado'
+    Siempre actualiza last_carrier_* (incluso si el estado no cambió, para
+    saber que sí pollers se conectó).
+
+    Returns: dict {changed: bool, estado_actual: str, comentario: str}
+    """
+    if estado_ilus not in ESTADOS_ENTREGA:
+        return {"changed": False, "error": "estado inválido"}
+    cur_item = mysql_fetchone(
+        "SELECT id, estado_entrega, commitment_id, manifest_id "
+        "FROM transport_manifest_items WHERE id=%s",
+        (item_id,)
+    )
+    if not cur_item:
+        return {"changed": False, "error": "item no encontrado"}
+    actual = cur_item.get("estado_entrega") or ""
+    changed = (estado_ilus != actual)
+    conn = get_db()
+    with conn.cursor() as cur:
+        # Siempre refresca metadatos del courier (no es destructivo)
+        if tracking_number is not None:
+            cur.execute(
+                "UPDATE transport_manifest_items "
+                "SET tracking_number=%s, last_carrier_poll_at=NOW(), "
+                "    last_carrier_status=%s, last_carrier_source=%s "
+                "WHERE id=%s",
+                (tracking_number, (estado_ilus or '')[:120], fuente, item_id)
+            )
+        else:
+            cur.execute(
+                "UPDATE transport_manifest_items "
+                "SET last_carrier_poll_at=NOW(), last_carrier_status=%s, "
+                "    last_carrier_source=%s "
+                "WHERE id=%s",
+                ((estado_ilus or '')[:120], fuente, item_id)
+            )
+        if changed:
+            cur.execute(
+                "UPDATE transport_manifest_items SET estado_entrega=%s WHERE id=%s",
+                (estado_ilus, item_id)
+            )
+            if estado_ilus == 'Entregado':
+                cur.execute(
+                    "UPDATE transport_commitments SET delivered_at = COALESCE(delivered_at, NOW()) "
+                    "WHERE id=%s",
+                    (cur_item["commitment_id"],)
+                )
+    conn.commit()
+    if changed:
+        _tr_log("manifest_item", item_id, f"estado por {fuente}", estado_ilus)
+        _tr_event(item_id, estado_ilus, fuente=fuente,
+                  comentario=comentario,
+                  payload_json=payload,
+                  commitment_id=cur_item["commitment_id"])
+    return {
+        "changed":   changed,
+        "anterior":  actual,
+        "nuevo":     estado_ilus,
+        "comentario": comentario or "",
+    }
+
+
 # Mapa comunas CL → código postal (expandible)
 _COMUNA_POSTAL = {
     "SANTIAGO": "8320000", "PROVIDENCIA": "7500000", "LAS CONDES": "7550000",
@@ -18507,6 +18762,308 @@ def tr_public_tracking_status(token):
             if _TRACK_POLL_CACHE[k]["ts"] < cutoff:
                 _TRACK_POLL_CACHE.pop(k, None)
     return jsonify(payload)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  SEGUIMIENTO público — el cliente busca por factura/boleta + RUT
+# ═══════════════════════════════════════════════════════════════════════════
+# A diferencia de /t/<token> (link directo), aquí el cliente NO necesita link:
+# escribe su nº de documento + RUT, lo encontramos, y le mostramos su estado.
+# La validación cruzada (doc + RUT) evita que cualquiera escriba un nº y vea
+# datos de otro. Rate-limited 10 intentos/hora por IP para frenar enumeración.
+
+@app.route("/seguimiento")
+def seguimiento_lookup_page():
+    """Página pública del módulo Seguimiento. Form simple: doc + RUT."""
+    return render_template("transporte/seguimiento_lookup.html",
+                           error=None, prefill=None)
+
+
+@app.route("/seguimiento/buscar", methods=["POST"])
+@rate_limited("seguimiento_lookup", max_attempts=10, window_seconds=3600)
+def seguimiento_buscar():
+    """Busca el commitment por (tido?, nudo, rut) y redirige a /t/<token>.
+
+    Acepta también búsqueda flexible (sin tido — el sistema barre BLV/FEV/GDV)
+    para que el cliente no tenga que conocer la jerga interna del documento.
+    """
+    form = request.form
+    doc_type   = (form.get("doc_type") or "").strip().upper()
+    doc_number = (form.get("doc_number") or "").strip()
+    raw_rut    = (form.get("customer_rut") or "").strip()
+    # Limpieza tolerante: quita "N°", "Nº", puntos, espacios extra
+    doc_number = re.sub(r"[Nn][°ºo]\s*", "", doc_number).strip()
+    doc_number = re.sub(r"[^A-Za-z0-9]", "", doc_number)
+
+    if not doc_number or not raw_rut:
+        return render_template("transporte/seguimiento_lookup.html",
+                               error="Ingresa el número de documento y tu RUT.",
+                               prefill={"doc_type": doc_type,
+                                        "doc_number": doc_number,
+                                        "customer_rut": raw_rut}), 400
+
+    rut_norm = normalizar_rut(raw_rut)
+    if not rut_norm or len(rut_norm) < 8:
+        return render_template("transporte/seguimiento_lookup.html",
+                               error="El RUT no tiene un formato válido.",
+                               prefill={"doc_type": doc_type,
+                                        "doc_number": doc_number,
+                                        "customer_rut": raw_rut}), 400
+
+    # Buscar el commitment con tolerancia: por nudo + matcheo de RUT.
+    where = ["nudo = %s"]
+    params = [doc_number]
+    if doc_type:
+        where.append("tido = %s")
+        params.append(doc_type)
+    # Match RUT: el cliente puede escribirlo con o sin puntos/DV. Normalizamos.
+    # Comparamos los últimos N dígitos del cuerpo del RUT (sin DV) para robustez
+    # frente a variantes de formato guardadas históricamente.
+    where.append(
+        "REPLACE(REPLACE(REPLACE(UPPER(IFNULL(cliente_rut,'')),'.',''),'-',''),' ','') "
+        " LIKE %s"
+    )
+    rut_clean = re.sub(r"[^0-9Kk]", "", rut_norm).upper()
+    params.append(f"%{rut_clean}%")
+
+    sql = ("SELECT id, public_token, tido, nudo "
+           "FROM transport_commitments WHERE " + " AND ".join(where) +
+           " ORDER BY id DESC LIMIT 1")
+    row = mysql_fetchone(sql, tuple(params))
+    if not row:
+        return render_template("transporte/seguimiento_lookup.html",
+                               error=("No encontramos ese documento con ese RUT. "
+                                      "Verifica los datos o contacta a soporte."),
+                               prefill={"doc_type": doc_type,
+                                        "doc_number": doc_number,
+                                        "customer_rut": raw_rut}), 404
+
+    # Lazy-generar token y redirigir a la página de tracking del cliente
+    tok = _tr_ensure_public_token(row["id"])
+    if not tok:
+        return render_template("transporte/seguimiento_lookup.html",
+                               error=("Tuvimos un problema técnico generando "
+                                      "tu link. Intenta de nuevo en unos minutos."),
+                               prefill=None), 500
+    return redirect(url_for("tr_public_tracking", token=tok))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FEDEX TRACK API — endpoints (asignar tracking + poll on-demand + cron)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/transporte/api/items/<int:item_id>/tracking-fedex", methods=["POST"])
+@_tr_required
+def tr_set_tracking_fedex(item_id):
+    """Asocia un nº de tracking FedEx a este item y consulta el estado en vivo.
+
+    Body JSON: { tracking_number: "780123456789" }
+
+    Flow:
+      1) Guarda tracking_number en el item.
+      2) Llama a FedEx Track API.
+      3) Aplica el estado venido al item (cambia estado_entrega si difiere) +
+         INSERT evento con fuente='fedex'.
+      4) Devuelve {ok, estado, estado_anterior, eta, last_event}.
+
+    Si la API de FedEx falla, el tracking_number igual queda guardado para que
+    el cron lo procese después.
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    tn = (body.get("tracking_number") or "").strip()
+    if not tn or len(tn) < 10 or len(tn) > 30:
+        return jsonify({"error": "tracking_number inválido"}), 400
+    item = mysql_fetchone(
+        "SELECT id, commitment_id FROM transport_manifest_items WHERE id=%s",
+        (item_id,)
+    )
+    if not item:
+        return jsonify({"error": "item no encontrado"}), 404
+
+    # Persistir tracking_number primero (aunque FedEx falle, queda guardado)
+    try:
+        mysql_execute(
+            "UPDATE transport_manifest_items SET tracking_number=%s WHERE id=%s",
+            (tn, item_id)
+        )
+    except Exception as _e_save:
+        return jsonify({"error": f"no se pudo guardar: {_e_save}"}), 500
+
+    # Consultar FedEx en vivo (best-effort)
+    try:
+        results = _fedex_track_lookup([tn])
+    except Exception as _e_fx:
+        msg = str(_e_fx)
+        # No revelar internal stuff al cliente
+        if "FedEx Track API no configurada" in msg:
+            return jsonify({
+                "ok": True, "saved": True,
+                "warning": "Tracking guardado. FedEx Track API no está "
+                           "configurada en el servidor — el cron no podrá "
+                           "actualizar estados automáticamente.",
+            })
+        return jsonify({
+            "ok": True, "saved": True,
+            "warning": f"Tracking guardado, pero FedEx no respondió: {msg[:140]}",
+        })
+
+    if not results:
+        return jsonify({"ok": True, "saved": True,
+                        "warning": "Tracking guardado. FedEx aún no tiene "
+                                   "información de este envío."})
+
+    r = results[0]
+    comentario = r.get("last_event") or r.get("status_label") or ""
+    apply_res = _tr_apply_carrier_status(
+        item_id, r["estado_ilus"], fuente='fedex',
+        tracking_number=tn,
+        payload={"fedex": {
+            "status_code":  r.get("status_code"),
+            "status_label": r.get("status_label"),
+            "eta":          r.get("eta"),
+            "scans":        (r.get("scans") or [])[:10],
+        }},
+        comentario=comentario or None,
+    )
+    return jsonify({
+        "ok":          True,
+        "saved":       True,
+        "changed":     apply_res.get("changed", False),
+        "estado":      apply_res.get("nuevo", r["estado_ilus"]),
+        "anterior":    apply_res.get("anterior", ""),
+        "fedex_code":  r.get("status_code"),
+        "fedex_label": r.get("status_label"),
+        "eta":         r.get("eta"),
+        "last_event":  comentario,
+    })
+
+
+@app.route("/transporte/api/items/<int:item_id>/tracking-fedex", methods=["GET"])
+@_tr_required
+def tr_get_tracking_fedex(item_id):
+    """Devuelve el último tracking conocido para este item (sin pollear FedEx).
+    El front lo usa para pintar el modal de tracking si ya hay datos guardados.
+    """
+    r = mysql_fetchone(
+        "SELECT id, tracking_number, last_carrier_poll_at, last_carrier_status, "
+        "       last_carrier_source, estado_entrega "
+        "FROM transport_manifest_items WHERE id=%s",
+        (item_id,)
+    )
+    if not r:
+        return jsonify({"error": "no encontrado"}), 404
+    return jsonify({
+        "ok":                True,
+        "tracking_number":   r.get("tracking_number") or "",
+        "last_poll":         str(r.get("last_carrier_poll_at") or "")[:19],
+        "last_status":       r.get("last_carrier_status") or "",
+        "source":            r.get("last_carrier_source") or "",
+        "estado_entrega":    r.get("estado_entrega") or "",
+        "fedex_configurado": bool(FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET),
+    })
+
+
+def _fedex_cron_token_required(token_received):
+    """Permite proteger el cron con FEDEX_CRON_TOKEN. Si no se setea, solo
+    permite localhost (más estricto)."""
+    expected = (os.environ.get("FEDEX_CRON_TOKEN") or "").strip()
+    if expected:
+        return token_received and token_received == expected
+    # Sin token configurado: solo aceptar desde 127.0.0.1
+    return request.remote_addr in ("127.0.0.1", "::1", "localhost")
+
+
+@app.route("/transporte/cron/fedex-track-poll", methods=["GET", "POST"])
+def tr_cron_fedex_poll():
+    """Polling masivo de los items con tracking FedEx que aún no están en
+    estado terminal. Pensado para Cloud Scheduler (cada 15-30 min).
+
+    Seguridad: protegido con FEDEX_CRON_TOKEN (header X-Cron-Token o query ?token=).
+    Si no se configura el token, solo acepta requests desde 127.0.0.1.
+
+    Query params:
+      - limit (default 25, max 30 por límite FedEx por request)
+      - dry  (1 = solo lista, no actualiza)
+
+    Returns: { ok, polled, changed, errors, ratelimit_hit }
+    """
+    tok = (request.headers.get("X-Cron-Token")
+           or request.args.get("token") or "").strip()
+    if not _fedex_cron_token_required(tok):
+        return jsonify({"error": "forbidden"}), 403
+
+    if not (FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET):
+        return jsonify({"ok": False,
+                        "error": "FedEx Track API no configurada"}), 503
+
+    limit = min(int(request.args.get("limit") or 25), 30)
+    dry   = request.args.get("dry") in ("1", "true", "yes")
+
+    # Items elegibles: tienen tracking_number, NO están en estado terminal,
+    # y o nunca se han polleado, o se polearon hace > 15 min.
+    rows = mysql_fetchall("""
+        SELECT id, tracking_number
+        FROM transport_manifest_items
+        WHERE tracking_number IS NOT NULL AND tracking_number <> ''
+          AND estado_entrega NOT IN ('Entregado', 'Devolución')
+          AND (last_carrier_poll_at IS NULL
+               OR last_carrier_poll_at < DATE_SUB(NOW(), INTERVAL 15 MINUTE))
+        ORDER BY last_carrier_poll_at IS NULL DESC, last_carrier_poll_at ASC
+        LIMIT %s
+    """, (limit,)) or []
+    if not rows:
+        return jsonify({"ok": True, "polled": 0, "changed": 0,
+                        "items": [], "msg": "nada que pollear"})
+
+    if dry:
+        return jsonify({
+            "ok": True, "polled": 0, "changed": 0,
+            "items": [{"id": r["id"], "tn": r["tracking_number"]} for r in rows],
+            "msg": "dry-run",
+        })
+
+    by_tn = {r["tracking_number"]: r["id"] for r in rows}
+    tns = list(by_tn.keys())
+    try:
+        results = _fedex_track_lookup(tns)
+    except Exception as _e_fx:
+        return jsonify({"ok": False,
+                        "error": f"FedEx Track API falló: {str(_e_fx)[:200]}"}), 502
+
+    changed_count = 0
+    items_log = []
+    for r in results:
+        tn = r.get("tracking_number")
+        item_id = by_tn.get(tn)
+        if not item_id:
+            continue
+        comentario = r.get("last_event") or r.get("status_label") or ""
+        apply_res = _tr_apply_carrier_status(
+            item_id, r["estado_ilus"], fuente='fedex',
+            payload={"fedex": {
+                "status_code":  r.get("status_code"),
+                "status_label": r.get("status_label"),
+                "eta":          r.get("eta"),
+                "scans":        (r.get("scans") or [])[:5],
+            }},
+            comentario=comentario or None,
+        )
+        if apply_res.get("changed"):
+            changed_count += 1
+        items_log.append({
+            "id":       item_id,
+            "tn":       tn,
+            "changed":  apply_res.get("changed", False),
+            "estado":   apply_res.get("nuevo"),
+            "anterior": apply_res.get("anterior"),
+            "fedex":    r.get("status_label"),
+        })
+    return jsonify({
+        "ok": True,
+        "polled":  len(results),
+        "changed": changed_count,
+        "items":   items_log,
+    })
 
 
 # ── MANIFIESTOS: export a Excel de carga masiva (FedEx / SimplyRoute) ─────────
@@ -53427,6 +53984,50 @@ def _ensure_transport_tracking_tables():
     try:
         mysql_execute(
             "ALTER TABLE transport_commitments ADD INDEX idx_tcomm_delivered (delivered_at)"
+        )
+    except Exception:
+        pass
+
+    # 5) Columnas nuevas en transport_manifest_items (tracking courier — FedEx/etc.)
+    #    Atadas al ITEM (no al commitment) porque el tracking-number depende de
+    #    en qué manifiesto/courier se despachó (re-envíos cambian de número).
+    item_cols = {
+        "tracking_number":      "VARCHAR(60) NULL COMMENT 'Nº seguimiento del courier (FedEx Track API, etc.)'",
+        "last_carrier_poll_at": "DATETIME NULL COMMENT 'Última consulta exitosa al courier API'",
+        "last_carrier_status":  "VARCHAR(120) NULL COMMENT 'Último estado RAW del courier (debug)'",
+        "last_carrier_source":  "VARCHAR(20) NULL COMMENT 'fedex|aftership|chofer|sistema'",
+    }
+    try:
+        existing_it = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_manifest_items'"
+            ) or [])
+        }
+    except Exception as _e_sit:
+        print(f"[tr_tracking] schema items lookup falló: {_e_sit}", flush=True)
+        return
+    for col, ddl in item_cols.items():
+        if col.lower() not in existing_it:
+            try:
+                mysql_execute(
+                    f"ALTER TABLE transport_manifest_items ADD COLUMN {col} {ddl}"
+                )
+                print(f"[tr_tracking] columna agregada item: {col}", flush=True)
+            except Exception as _e_add_it:
+                print(f"[tr_tracking] no se pudo agregar item.{col}: {_e_add_it}",
+                      flush=True)
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_manifest_items ADD INDEX idx_tmi_track (tracking_number)"
+        )
+    except Exception:
+        pass
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_manifest_items "
+            "ADD INDEX idx_tmi_poll (last_carrier_poll_at, last_carrier_source)"
         )
     except Exception:
         pass

@@ -296,6 +296,10 @@
                     onclick="mostrarLinkCliente({{ item.id }})">
               <i class="bi bi-link-45deg"></i>
             </button>
+            <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="Asociar Nº de tracking FedEx (auto-actualiza estado)"
+                    onclick="abrirTrackingFedex({{ item.id }})">
+              <i class="bi bi-truck"></i>
+            </button>
             <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Quitar del manifiesto"
                     onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
               <i class="bi bi-trash3"></i>
@@ -425,6 +429,10 @@
           <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Link de seguimiento del cliente"
                   onclick="mostrarLinkCliente({{ item.id }})">
             <i class="bi bi-link-45deg"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="FedEx tracking"
+                  onclick="abrirTrackingFedex({{ item.id }})">
+            <i class="bi bi-truck"></i>
           </button>
           <button class="btn btn-sm btn-outline-danger mfd-act-btn" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
             <i class="bi bi-trash3"></i>
@@ -893,6 +901,70 @@ function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
     if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
     else alert('Error de conexión');
   });
+}
+
+async function abrirTrackingFedex(itemId) {
+  // Trae el tracking actual (si existe) y abre prompt para asociar / actualizar.
+  let cur = {};
+  try {
+    const r = await fetch('/transporte/api/items/' + itemId + '/tracking-fedex');
+    cur = await r.json();
+  } catch(e) {}
+  const wasSet = !!(cur && cur.tracking_number);
+  const placeholder = wasSet ? cur.tracking_number : 'Ej: 780123456789';
+  // Sub con contexto (último poll si existe)
+  let sub = '';
+  if (!cur.fedex_configurado) {
+    sub = '<div style="color:#b45309;background:#fff8e1;padding:.5rem .7rem;border-radius:8px;'
+        + 'font-size:.78rem;border:1px solid #fcd34d">'
+        + '<i class="bi bi-exclamation-triangle-fill"></i> FedEx Track API aún no está configurada '
+        + 'en el servidor. El nº se guarda pero el estado no se actualizará solo.</div>';
+  } else if (wasSet) {
+    sub = '<div style="font-size:.78rem;color:#6b7280">Último poll: '
+        + (cur.last_poll || '—') + ' · Estado FedEx: <strong>'
+        + (cur.last_status || '—') + '</strong></div>';
+  }
+  const tn = await ilusPrompt({
+    title: wasSet ? 'Actualizar tracking FedEx' : 'Asociar tracking FedEx',
+    message: 'Pega el número de seguimiento (Tracking Number) que te dio FedEx. '
+           + 'Lo consultamos en vivo y actualizamos el estado de la entrega solo.',
+    sub: sub,
+    subHtml: !!sub,
+    placeholder: placeholder,
+    okLabel: wasSet ? 'Actualizar' : 'Asociar y consultar',
+    inputValue: wasSet ? cur.tracking_number : '',
+  });
+  if (tn === null || tn === undefined) return;   // canceló
+  const value = String(tn || '').replace(/[^A-Za-z0-9]/g, '');
+  if (value.length < 10) {
+    if (window.ilusToast) ilusToast('El tracking debe tener al menos 10 caracteres', { type: 'warning' });
+    return;
+  }
+  let res;
+  try {
+    const resp = await fetch('/transporte/api/items/' + itemId + '/tracking-fedex', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tracking_number: value })
+    });
+    res = await resp.json();
+  } catch(e) {
+    if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
+    return;
+  }
+  if (!res || !res.ok) {
+    if (window.ilusToast) ilusToast((res && res.error) || 'No se pudo guardar', { type: 'error' });
+    return;
+  }
+  if (res.warning) {
+    if (window.ilusToast) ilusToast(res.warning, { type: 'warning' });
+    return;
+  }
+  let msg = '✓ Tracking guardado';
+  if (res.changed) msg += ' · Estado actualizado a "' + (res.estado || '?') + '"';
+  if (window.ilusToast) ilusToast(msg, { type: 'success' });
+  // Si el estado cambió, recargar para que se vea el nuevo
+  if (res.changed) setTimeout(function(){ location.reload(); }, 1000);
 }
 
 async function mostrarLinkCliente(itemId) {
