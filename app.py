@@ -19918,6 +19918,60 @@ def tr_monitor_snapshot():
     return jsonify({"ok": True, "count": len(out), "drivers": out})
 
 
+@app.route("/transporte/api/commitment/<int:cid>/geocode", methods=["POST"])
+def tr_geocode_commitment(cid):
+    """Geocoding lazy: si una parada no tiene dest_lat/dest_lng, geocodifica
+    con Google y persiste. Llamado desde la app del chofer (autenticado por
+    sesión driver_id) o desde admin (sesión normal). Idempotente: si ya tiene
+    coords, devuelve las existentes sin llamar a Google.
+    """
+    # Autorización: chofer o admin transporte
+    if not (session.get("driver_id") or (getattr(g, "permissions", None) or {}).get("transporte")):
+        return jsonify({"error": "no_auth"}), 401
+    c = mysql_fetchone(
+        "SELECT id, direccion, comuna, region, dest_lat, dest_lng "
+        "FROM transport_commitments WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"error": "no_encontrado"}), 404
+    if c.get("dest_lat") and c.get("dest_lng"):
+        return jsonify({"ok": True, "lat": float(c["dest_lat"]),
+                        "lng": float(c["dest_lng"]), "cached": True})
+    if not GOOGLE_MAPS_API_KEY:
+        return jsonify({"ok": False, "error": "geocoding_no_config"}), 503
+    address = ", ".join([x for x in [
+        (c.get("direccion") or "").strip(),
+        (c.get("comuna") or "").strip(),
+        (c.get("region") or "").strip(),
+        "Chile",
+    ] if x])
+    if not address.strip():
+        return jsonify({"error": "sin_direccion"}), 400
+    try:
+        import requests as _req
+        resp = _req.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"address": address, "key": GOOGLE_MAPS_API_KEY,
+                    "components": "country:CL", "language": "es"},
+            timeout=8,
+        )
+        data = resp.json() or {}
+        results = data.get("results") or []
+        if not results:
+            return jsonify({"ok": False, "error": "no_match",
+                            "status": data.get("status")}), 404
+        loc = results[0]["geometry"]["location"]
+        lat, lng = float(loc["lat"]), float(loc["lng"])
+        try:
+            mysql_execute(
+                "UPDATE transport_commitments SET dest_lat=%s, dest_lng=%s WHERE id=%s",
+                (lat, lng, cid))
+        except Exception as _e:
+            print(f"[geocode] no se pudo persistir: {_e}", flush=True)
+        return jsonify({"ok": True, "lat": lat, "lng": lng, "cached": False})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:140]}), 502
+
+
 @app.route("/transporte/api/chofer/<int:did>/ruta-hecha")
 @_tr_required
 def tr_chofer_ruta_hecha(did):
@@ -54864,6 +54918,13 @@ try:
     print("[ILUS] Modulo de retiros registrado.")
 except Exception as _pickup_reg_err:
     print(f"[ILUS][WARN] register_pickup_routes: {_pickup_reg_err}")
+
+try:
+    from transporte_pod import register_pod_routes
+    register_pod_routes(app, globals())
+    print("[ILUS] Modulo POD por courier registrado.")
+except Exception as _pod_reg_err:
+    print(f"[ILUS][WARN] register_pod_routes: {_pod_reg_err}")
 
 # ════════════════════════════════════════════════════════════════════════
 #  COLD-START PERFORMANCE — saltar migraciones idempotentes en cada worker

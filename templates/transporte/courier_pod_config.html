@@ -1,0 +1,710 @@
+{% extends "base.html" %}
+{% block title %}POD · {{ courier.nombre }} — ILUS Transporte{% endblock %}
+
+{% block content %}
+<style>
+  :root {
+    --ilus-red:   #dc2626;
+    --ilus-black: #0a0a0a;
+    --ilus-white: #ffffff;
+    --ilus-gray:  #6b7280;
+    --ilus-bg:    #f7f7f8;
+    --ilus-card:  #ffffff;
+    --ilus-line:  #e5e7eb;
+  }
+
+  .pod-wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem 1rem 4rem;
+  }
+  .pod-head {
+    background: var(--ilus-black);
+    color: var(--ilus-white);
+    border-radius: 14px;
+    padding: 1.25rem 1.25rem;
+    margin-bottom: 1.25rem;
+    display: flex; align-items: center; gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .pod-head .pod-badge {
+    background: var(--ilus-red);
+    color: #fff;
+    font-weight: 700;
+    border-radius: 8px;
+    padding: .3rem .65rem;
+    letter-spacing: .04em;
+    font-size: .72rem;
+    text-transform: uppercase;
+  }
+  .pod-head h1 { font-size: 1.3rem; margin: 0; font-weight: 700; }
+  .pod-head .pod-sub { color: #c7c7c7; font-size: .85rem; margin-top: .1rem; }
+
+  .pod-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+  @media (min-width: 992px) {
+    .pod-grid { grid-template-columns: 1.05fr .95fr; }
+  }
+
+  .pod-card {
+    background: var(--ilus-card);
+    border: 1px solid var(--ilus-line);
+    border-radius: 14px;
+    padding: 1.25rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  }
+  .pod-card h2 {
+    font-size: 1rem;
+    font-weight: 700;
+    margin: 0 0 .25rem;
+    color: var(--ilus-black);
+    display: flex; align-items: center; gap: .55rem;
+  }
+  .pod-card h2 .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ilus-red);
+  }
+  .pod-card .pod-card-hint {
+    font-size: .82rem; color: var(--ilus-gray);
+    margin-bottom: 1rem;
+  }
+
+  /* Quick presets */
+  .preset-row {
+    display: flex; flex-wrap: wrap; gap: .5rem;
+    margin-bottom: 1rem;
+  }
+  .preset-btn {
+    background: #fff;
+    border: 1.5px solid var(--ilus-line);
+    border-radius: 10px;
+    padding: .55rem .85rem;
+    font-size: .82rem;
+    font-weight: 600;
+    color: var(--ilus-black);
+    cursor: pointer;
+    transition: border-color .15s, background .15s, transform .05s;
+    display: inline-flex; align-items: center; gap: .4rem;
+    /* Touch target (regla #3) */
+    min-height: 44px;
+  }
+  .preset-btn:hover { border-color: var(--ilus-red); background: #fff5f5; }
+  .preset-btn:active { transform: scale(.97); }
+  .preset-btn .preset-emoji { font-size: 1rem; }
+
+  /* Form blocks */
+  .field-block {
+    border: 1px solid var(--ilus-line);
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: .85rem;
+    background: #fafafa;
+  }
+  .field-block .field-title {
+    font-weight: 600;
+    font-size: .92rem;
+    color: var(--ilus-black);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .5rem;
+    margin-bottom: .15rem;
+  }
+  .field-block .field-help {
+    color: var(--ilus-gray);
+    font-size: .78rem;
+    margin-bottom: .65rem;
+  }
+
+  /* Number + slider duo */
+  .num-row { display: flex; align-items: center; gap: .75rem; }
+  .num-row input[type=range] { flex: 1; accent-color: var(--ilus-red); }
+  .num-row input[type=number] {
+    width: 84px;
+    padding: .55rem .65rem;
+    border: 1.5px solid var(--ilus-line);
+    border-radius: 8px;
+    /* Anti zoom iOS (regla #3): 16px en mobile */
+    font-size: 16px;
+    font-weight: 600;
+    text-align: center;
+    min-height: 44px;
+  }
+  .num-row input[type=number]:focus {
+    outline: none;
+    border-color: var(--ilus-red);
+    box-shadow: 0 0 0 3px rgba(220,38,38,.15);
+  }
+  .num-row .unit {
+    font-size: .82rem; color: var(--ilus-gray);
+    font-weight: 500;
+  }
+
+  /* iOS-style switches */
+  .switch-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .75rem;
+  }
+  .switch {
+    position: relative;
+    width: 52px; height: 30px;
+    flex-shrink: 0;
+    display: inline-block;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0;
+    background: #cbd5e1;
+    border-radius: 999px;
+    transition: background .2s;
+    cursor: pointer;
+  }
+  .switch .slider::before {
+    content: "";
+    position: absolute;
+    left: 3px; top: 3px;
+    width: 24px; height: 24px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform .2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  }
+  .switch input:checked + .slider { background: var(--ilus-red); }
+  .switch input:checked + .slider::before { transform: translateX(22px); }
+  .switch input:focus + .slider {
+    box-shadow: 0 0 0 3px rgba(220,38,38,.2);
+  }
+
+  /* Geocerca chip when disabled */
+  .geo-chip {
+    display: inline-block;
+    background: #f3f4f6;
+    color: var(--ilus-gray);
+    font-size: .72rem;
+    padding: .2rem .5rem;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  .geo-chip.on { background: #dcfce7; color: #15803d; }
+
+  /* Save button */
+  .pod-actions {
+    display: flex; align-items: center; gap: .75rem;
+    margin-top: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .btn-save {
+    background: var(--ilus-red);
+    color: #fff;
+    border: 0;
+    border-radius: 10px;
+    padding: .75rem 1.4rem;
+    font-weight: 700;
+    font-size: .95rem;
+    cursor: pointer;
+    min-height: 44px;
+    transition: filter .15s, transform .05s;
+  }
+  .btn-save:hover  { filter: brightness(1.08); }
+  .btn-save:active { transform: scale(.98); }
+  .btn-save:disabled { opacity: .55; cursor: not-allowed; }
+
+  .btn-back {
+    background: #fff;
+    color: var(--ilus-black);
+    border: 1.5px solid var(--ilus-line);
+    border-radius: 10px;
+    padding: .7rem 1.1rem;
+    font-weight: 600;
+    text-decoration: none;
+    min-height: 44px;
+    display: inline-flex; align-items: center;
+  }
+  .btn-back:hover { border-color: var(--ilus-black); color: var(--ilus-black); }
+
+  /* ── PREVIEW (mockup pantalla chofer) ────────────────── */
+  .preview-stage {
+    background: #18181b;
+    border-radius: 18px;
+    padding: 1.1rem;
+    display: flex; justify-content: center;
+  }
+  .phone {
+    width: 100%; max-width: 320px;
+    background: #fff;
+    border-radius: 22px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    border: 2px solid #27272a;
+  }
+  .phone-bar {
+    background: var(--ilus-black);
+    color: #fff;
+    padding: .7rem .9rem;
+    font-size: .82rem;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .phone-bar .ot-tag {
+    background: var(--ilus-red);
+    padding: .15rem .5rem;
+    border-radius: 6px;
+    font-weight: 700; font-size: .68rem;
+  }
+  .phone-body { padding: 0; }
+  .phone-section {
+    padding: .8rem .9rem;
+    border-bottom: 1px solid #eef0f3;
+  }
+  .phone-section:last-child { border-bottom: 0; }
+  .phone-section .ps-label {
+    font-size: .68rem; color: #6b7280;
+    text-transform: uppercase; font-weight: 700;
+    letter-spacing: .04em;
+    margin-bottom: .35rem;
+  }
+  .phone-section .ps-val {
+    font-size: .9rem; color: var(--ilus-black); font-weight: 600;
+  }
+  .photo-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: .35rem;
+    margin-top: .4rem;
+  }
+  .photo-slot {
+    aspect-ratio: 1/1;
+    background: #f3f4f6;
+    border: 2px dashed #d1d5db;
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    color: #9ca3af;
+    font-size: 1rem;
+  }
+  .photo-slot.req {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: var(--ilus-red);
+    font-weight: 700;
+  }
+  .signature-box {
+    height: 70px;
+    background: #f8fafc;
+    border: 1.5px dashed #cbd5e1;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: #94a3b8;
+    font-size: .8rem;
+    font-style: italic;
+    margin-top: .25rem;
+  }
+  .rut-box {
+    background: #fff;
+    border: 1.5px solid #cbd5e1;
+    border-radius: 8px;
+    padding: .5rem .65rem;
+    color: #94a3b8;
+    font-size: .85rem;
+    margin-top: .25rem;
+  }
+  .geo-box {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    padding: .5rem .65rem;
+    font-size: .78rem;
+    color: #1e40af;
+    display: flex; align-items: center; gap: .4rem;
+    margin-top: .25rem;
+  }
+  .geo-box.off {
+    background: #f3f4f6;
+    border-color: var(--ilus-line);
+    color: var(--ilus-gray);
+  }
+  .phone-cta {
+    background: var(--ilus-red);
+    color: #fff;
+    text-align: center;
+    padding: .75rem;
+    font-weight: 700;
+    font-size: .9rem;
+  }
+  .phone-cta.disabled { background: #cbd5e1; color: #fff; }
+
+  .req-counter {
+    font-size: .72rem;
+    color: var(--ilus-gray);
+    background: #f3f4f6;
+    padding: .15rem .5rem;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  .req-counter.warn { background: #fff8e1; color: #b45309; }
+
+  .pod-card.preview-card { background: #fafafa; }
+</style>
+
+<div class="pod-wrap">
+
+  {# ── Breadcrumb ── #}
+  <nav aria-label="breadcrumb" class="mb-2">
+    <ol class="breadcrumb small">
+      <li class="breadcrumb-item"><a href="/transporte" class="text-muted text-decoration-none">Transporte</a></li>
+      <li class="breadcrumb-item"><a href="/transporte/couriers" class="text-muted text-decoration-none">Couriers</a></li>
+      <li class="breadcrumb-item"><a href="/transporte/couriers/{{ courier.id }}" class="text-muted text-decoration-none">{{ courier.nombre }}</a></li>
+      <li class="breadcrumb-item active fw-semibold">POD</li>
+    </ol>
+  </nav>
+
+  {# ── Header ── #}
+  <div class="pod-head">
+    <div>
+      <span class="pod-badge">POD · Prueba de Entrega</span>
+      <h1 class="mt-2">{{ courier.nombre }}</h1>
+      <div class="pod-sub">Configura qué evidencia exige el chofer al cerrar cada entrega.</div>
+    </div>
+  </div>
+
+  <div class="pod-grid">
+
+    {# ════════ COLUMNA IZQUIERDA: CONFIGURACIÓN ════════ #}
+    <div class="pod-card">
+      <h2><span class="dot"></span> Configuración</h2>
+      <div class="pod-card-hint">Estas reglas se aplican a TODAS las entregas hechas con este courier.</div>
+
+      {# Presets rápidos #}
+      <div class="preset-row" id="presets">
+        <button type="button" class="preset-btn" data-preset="fedex">
+          <span class="preset-emoji">📦</span> FedEx (sin firma)
+        </button>
+        <button type="button" class="preset-btn" data-preset="milling">
+          <span class="preset-emoji">🛡️</span> Milling estricto
+        </button>
+        <button type="button" class="preset-btn" data-preset="minimo">
+          <span class="preset-emoji">⚡</span> Mínimo (solo nombre)
+        </button>
+      </div>
+
+      {# Fotos mínimas #}
+      <div class="field-block">
+        <div class="field-title">
+          <span>📸 Fotos mínimas en la entrega</span>
+          <span id="fotosCounter" class="req-counter">1 foto</span>
+        </div>
+        <div class="field-help">
+          Cantidad de fotos que el chofer DEBE tomar para cerrar la entrega
+          (caja, ubicación, persona que recibe…). Máximo 10.
+        </div>
+        <div class="num-row">
+          <input type="range" id="fotosRange" min="0" max="10" step="1" value="{{ courier.pod_fotos_min }}">
+          <input type="number" id="fotosNum" min="0" max="10" step="1" value="{{ courier.pod_fotos_min }}">
+          <span class="unit">/ 10</span>
+        </div>
+      </div>
+
+      {# Firma #}
+      <div class="field-block">
+        <div class="switch-row">
+          <div>
+            <div class="field-title" style="margin-bottom:0;">
+              ✍️ Firma del receptor obligatoria
+            </div>
+            <div class="field-help" style="margin-top:.15rem;margin-bottom:0;">
+              El chofer captura una firma en pantalla antes de cerrar.
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="firmaReq" {% if courier.pod_firma_req %}checked{% endif %}>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      {# RUT #}
+      <div class="field-block">
+        <div class="switch-row">
+          <div>
+            <div class="field-title" style="margin-bottom:0;">
+              🆔 RUT del receptor obligatorio
+            </div>
+            <div class="field-help" style="margin-top:.15rem;margin-bottom:0;">
+              Se valida el formato chileno (XX.XXX.XXX-X).
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="rutReq" {% if courier.pod_rut_req %}checked{% endif %}>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      {# Geocerca #}
+      <div class="field-block">
+        <div class="field-title">
+          <span>📍 Geocerca de entrega</span>
+          <span id="geoChip" class="geo-chip">Desactivada</span>
+        </div>
+        <div class="field-help">
+          Radio máximo (m) entre la ubicación del chofer y la dirección destino.
+          <strong>0</strong> = desactivada · máx <strong>5.000 m</strong>.
+        </div>
+        <div class="num-row">
+          <input type="range" id="geoRange" min="0" max="5000" step="50" value="{{ courier.pod_geocerca_m }}">
+          <input type="number" id="geoNum" min="0" max="5000" step="50" value="{{ courier.pod_geocerca_m }}">
+          <span class="unit">metros</span>
+        </div>
+      </div>
+
+      <div class="pod-actions">
+        <button type="button" id="btnSave" class="btn-save">Guardar configuración</button>
+        <a href="/transporte/couriers/{{ courier.id }}" class="btn-back">Volver a la ficha</a>
+      </div>
+    </div>
+
+    {# ════════ COLUMNA DERECHA: PREVIEW ════════ #}
+    <div class="pod-card preview-card">
+      <h2><span class="dot"></span> Vista previa — pantalla del chofer</h2>
+      <div class="pod-card-hint">Esto es lo que verá el chofer al cerrar una entrega con este courier.</div>
+
+      <div class="preview-stage">
+        <div class="phone">
+          <div class="phone-bar">
+            <span>Cerrar entrega</span>
+            <span class="ot-tag">OT 1234</span>
+          </div>
+          <div class="phone-body">
+
+            <div class="phone-section">
+              <div class="ps-label">Cliente / dirección</div>
+              <div class="ps-val">Soc. SPHS · Av. Apoquindo 4501</div>
+            </div>
+
+            <div class="phone-section">
+              <div class="ps-label">
+                Fotos mínimas
+                <span id="prevFotosCount" class="req-counter">1 requerida(s)</span>
+              </div>
+              <div class="photo-grid" id="prevPhotos"></div>
+            </div>
+
+            <div class="phone-section" id="prevFirmaSection">
+              <div class="ps-label">Firma del receptor <span class="req-counter">obligatoria</span></div>
+              <div class="signature-box">— firma aquí —</div>
+            </div>
+
+            <div class="phone-section" id="prevRutSection">
+              <div class="ps-label">RUT del receptor <span class="req-counter">obligatorio</span></div>
+              <div class="rut-box">Ej: 12.345.678-9</div>
+            </div>
+
+            <div class="phone-section">
+              <div class="ps-label">Geocerca</div>
+              <div id="prevGeo" class="geo-box off">⚪ Sin restricción de ubicación</div>
+            </div>
+
+            <div class="phone-cta" id="prevCta">Cerrar entrega</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const COURIER_ID = {{ courier.id }};
+
+  // ── State ──────────────────────────────────────────────────────────
+  const els = {
+    fotosRange: document.getElementById('fotosRange'),
+    fotosNum:   document.getElementById('fotosNum'),
+    fotosCounter: document.getElementById('fotosCounter'),
+
+    firmaReq:   document.getElementById('firmaReq'),
+    rutReq:     document.getElementById('rutReq'),
+
+    geoRange:   document.getElementById('geoRange'),
+    geoNum:     document.getElementById('geoNum'),
+    geoChip:    document.getElementById('geoChip'),
+
+    // preview
+    prevPhotos:      document.getElementById('prevPhotos'),
+    prevFotosCount:  document.getElementById('prevFotosCount'),
+    prevFirmaSection:document.getElementById('prevFirmaSection'),
+    prevRutSection:  document.getElementById('prevRutSection'),
+    prevGeo:         document.getElementById('prevGeo'),
+    prevCta:         document.getElementById('prevCta'),
+
+    btnSave:    document.getElementById('btnSave'),
+  };
+
+  function clamp(v, lo, hi) {
+    v = parseInt(v, 10);
+    if (isNaN(v)) v = lo;
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  // ── Sync number↔range pairs ───────────────────────────────────────
+  function bindPair(rangeEl, numEl, lo, hi, onChange) {
+    function setVal(v) {
+      v = clamp(v, lo, hi);
+      rangeEl.value = v;
+      numEl.value   = v;
+      onChange(v);
+    }
+    rangeEl.addEventListener('input', () => setVal(rangeEl.value));
+    numEl.addEventListener('input',   () => setVal(numEl.value));
+    numEl.addEventListener('blur',    () => setVal(numEl.value));
+    return setVal;
+  }
+
+  // ── Re-render preview ─────────────────────────────────────────────
+  function readState() {
+    return {
+      fotos_min:  clamp(els.fotosNum.value, 0, 10),
+      firma_req:  els.firmaReq.checked ? 1 : 0,
+      rut_req:    els.rutReq.checked   ? 1 : 0,
+      geocerca_m: clamp(els.geoNum.value, 0, 5000),
+    };
+  }
+
+  function renderPreview() {
+    const s = readState();
+
+    // Photos grid
+    els.prevPhotos.innerHTML = '';
+    const total = Math.max(s.fotos_min, 3);  // mostrar mínimo 3 slots vacíos
+    for (let i = 0; i < total; i++) {
+      const slot = document.createElement('div');
+      slot.className = 'photo-slot' + (i < s.fotos_min ? ' req' : '');
+      slot.textContent = i < s.fotos_min ? '★' : '+';
+      els.prevPhotos.appendChild(slot);
+    }
+    els.prevFotosCount.textContent =
+      s.fotos_min === 0 ? 'opcional'
+      : (s.fotos_min === 1 ? '1 requerida' : (s.fotos_min + ' requeridas'));
+    els.prevFotosCount.classList.toggle('warn', s.fotos_min >= 3);
+
+    els.fotosCounter.textContent =
+      s.fotos_min === 0 ? 'opcional'
+      : (s.fotos_min === 1 ? '1 foto' : s.fotos_min + ' fotos');
+    els.fotosCounter.classList.toggle('warn', s.fotos_min >= 3);
+
+    // Firma / RUT
+    els.prevFirmaSection.style.display = s.firma_req ? '' : 'none';
+    els.prevRutSection.style.display   = s.rut_req   ? '' : 'none';
+
+    // Geocerca
+    if (s.geocerca_m > 0) {
+      els.prevGeo.classList.remove('off');
+      els.prevGeo.innerHTML = '🎯 Radio máximo: <strong>' + s.geocerca_m + ' m</strong>';
+      els.geoChip.textContent = 'Activa · ' + s.geocerca_m + ' m';
+      els.geoChip.classList.add('on');
+    } else {
+      els.prevGeo.classList.add('off');
+      els.prevGeo.innerHTML = '⚪ Sin restricción de ubicación';
+      els.geoChip.textContent = 'Desactivada';
+      els.geoChip.classList.remove('on');
+    }
+
+    // CTA — si no se exige NADA, sigue habilitado igual.
+    const algunReq = s.fotos_min > 0 || s.firma_req || s.rut_req || s.geocerca_m > 0;
+    els.prevCta.classList.toggle('disabled', !algunReq);
+    els.prevCta.textContent = algunReq
+      ? 'Completar evidencia y cerrar'
+      : 'Cerrar entrega';
+  }
+
+  const setFotos = bindPair(els.fotosRange, els.fotosNum, 0, 10, renderPreview);
+  const setGeo   = bindPair(els.geoRange,   els.geoNum,   0, 5000, renderPreview);
+  els.firmaReq.addEventListener('change', renderPreview);
+  els.rutReq.addEventListener('change',   renderPreview);
+
+  // ── Presets ───────────────────────────────────────────────────────
+  const PRESETS = {
+    // FedEx: deja foto + RUT pero NO exige firma (entregas en oficinas/recepción)
+    fedex:   { fotos: 2, firma: false, rut: true,  geo: 0    },
+    // Milling: máquinas grandes, evidencia robusta + geocerca
+    milling: { fotos: 3, firma: true,  rut: true,  geo: 100  },
+    // Mínimo: solo registra que se entregó
+    minimo:  { fotos: 0, firma: false, rut: false, geo: 0    },
+  };
+
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = PRESETS[btn.dataset.preset];
+      if (!p) return;
+      setFotos(p.fotos);
+      setGeo(p.geo);
+      els.firmaReq.checked = !!p.firma;
+      els.rutReq.checked   = !!p.rut;
+      renderPreview();
+      if (typeof ilusToast === 'function') {
+        ilusToast('✓ Preset aplicado — recuerda guardar', { type: 'info' });
+      }
+    });
+  });
+
+  // ── Save (fetch POST + ilusToast) ─────────────────────────────────
+  async function save() {
+    const s = readState();
+    els.btnSave.disabled = true;
+    const original = els.btnSave.textContent;
+    els.btnSave.textContent = 'Guardando…';
+
+    try {
+      const resp = await fetch('/transporte/couriers/' + COURIER_ID + '/pod', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(s),
+      });
+      let data = {};
+      try { data = await resp.json(); } catch (_) { /* respuesta no-JSON */ }
+
+      if (resp.ok && data && data.ok) {
+        if (typeof ilusToast === 'function') {
+          ilusToast('✓ Configuración POD guardada', { type: 'success' });
+        }
+      } else {
+        const msg = (data && data.error) || ('Error ' + resp.status);
+        if (typeof ilusAlert === 'function') {
+          await ilusAlert({
+            title:   'No se pudo guardar',
+            message: msg,
+            type:    'error',
+          });
+        } else if (typeof ilusToast === 'function') {
+          ilusToast('Error al guardar: ' + msg, { type: 'error' });
+        }
+      }
+    } catch (e) {
+      const msg = (e && e.message) ? e.message : String(e);
+      if (typeof ilusAlert === 'function') {
+        await ilusAlert({
+          title:   'Error de red',
+          message: 'No se pudo conectar con el servidor.',
+          sub:     msg,
+          type:    'error',
+        });
+      } else if (typeof ilusToast === 'function') {
+        ilusToast('Error de red: ' + msg, { type: 'error' });
+      }
+    } finally {
+      els.btnSave.disabled = false;
+      els.btnSave.textContent = original;
+    }
+  }
+
+  els.btnSave.addEventListener('click', save);
+
+  // Primera render
+  renderPreview();
+})();
+</script>
+{% endblock %}
