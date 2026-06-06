@@ -124,5 +124,33 @@
       </div>
     {% endif %}
   </div>
+
+  {# ── PING GPS silencioso (cada 30s mientras la app esté abierta) ── #}
+  <script>
+    (function(){
+      if (!navigator.geolocation) return;
+      let _battery_pct = null;
+      if (navigator.getBattery) navigator.getBattery().then(function(b){
+        _battery_pct = Math.round(b.level * 100);
+        b.addEventListener && b.addEventListener('levelchange', function(){ _battery_pct = Math.round(b.level * 100); });
+      }).catch(function(){});
+      function _ping(){
+        navigator.geolocation.getCurrentPosition(function(pos){
+          fetch('/chofer/ping', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              lat: pos.coords.latitude, lng: pos.coords.longitude,
+              accuracy_m: pos.coords.accuracy,
+              speed_kmh: pos.coords.speed ? Math.round(pos.coords.speed * 3.6 * 10)/10 : null,
+              heading_deg: pos.coords.heading,
+              battery_pct: _battery_pct,
+              manifest_id: null
+            }), keepalive: true
+          }).catch(function(){});
+        }, function(){}, { enableHighAccuracy:true, timeout:8000, maximumAge:5000 });
+      }
+      _ping();
+      setInterval(function(){ if (!document.hidden) _ping(); }, 30000);
+    })();
+  </script>
 </body>
 </html>

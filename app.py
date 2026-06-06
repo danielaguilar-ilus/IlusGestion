@@ -19647,6 +19647,286 @@ def chofer_entrega_submit(mid, commitment_id):
                     "next": url_for("chofer_ruta", mid=mid)})
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  PINGS GPS — el chofer envía coords periódicas (silencioso).
+#  Admin las consume en /transporte/monitor (mapa en vivo estilo Uber).
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/chofer/ping", methods=["POST"])
+@_chofer_required
+def chofer_ping():
+    """Recibe un ping GPS silencioso del chofer (sin notificación visual).
+
+    Body JSON: { lat, lng, accuracy_m, speed_kmh, heading_deg, battery_pct,
+                 manifest_id (opcional, en qué ruta está) }
+    Frecuencia recomendada en el front: cada 30s mientras la app esté abierta
+    en home/captura/ruta/entrega. Cuando el chofer cierra la app o pierde GPS,
+    simplemente deja de mandar (el monitor muestra "última posición: hace X").
+    """
+    drv = g.chofer
+    body = request.get_json(silent=True, force=True) or {}
+    lat = body.get("lat"); lng = body.get("lng")
+    if lat is None or lng is None:
+        return jsonify({"ok": False, "error": "lat/lng requeridos"}), 400
+    try:
+        lat = float(lat); lng = float(lng)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "coords inválidas"}), 400
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return jsonify({"ok": False, "error": "coords fuera de rango"}), 400
+    mid = body.get("manifest_id")
+    try:
+        mid = int(mid) if mid else None
+    except (TypeError, ValueError):
+        mid = None
+    try:
+        mysql_execute(
+            "INSERT INTO transport_driver_pings "
+            "(driver_id, manifest_id, lat, lng, accuracy_m, speed_kmh, heading_deg, battery_pct) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (drv["id"], mid, lat, lng,
+             body.get("accuracy_m"), body.get("speed_kmh"),
+             body.get("heading_deg"), body.get("battery_pct"))
+        )
+    except Exception as e:
+        print(f"[chofer_ping] {e}", flush=True)
+        return jsonify({"ok": False}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/monitor")
+@_tr_required
+def tr_monitor_live():
+    """Monitor en vivo: mapa con todos los choferes activos + sus rutas.
+    Permite a Daniel/Alison ver dónde está cada chofer, qué ha completado y
+    si realmente fue al destino (auditoría 'el chofer me está mintiendo').
+    """
+    return render_template("transporte/monitor.html",
+                           gmaps_key=GOOGLE_MAPS_API_KEY)
+
+
+@app.route("/transporte/api/monitor/snapshot")
+@_tr_required
+def tr_monitor_snapshot():
+    """Snapshot JSON para el monitor en vivo. Devuelve choferes activos
+    (último ping < 30 min), sus posiciones y sus manifiestos en curso.
+    Polleado cada 10s por la UI.
+    """
+    # Choferes con ping reciente
+    drivers = mysql_fetchall("""
+        SELECT d.id, d.nombre, d.rut, d.patente, d.telefono,
+               co.nombre AS courier,
+               p.lat, p.lng, p.accuracy_m, p.speed_kmh, p.battery_pct, p.ts,
+               p.manifest_id,
+               TIMESTAMPDIFF(SECOND, p.ts, NOW()) AS age_s
+        FROM transport_drivers d
+        LEFT JOIN transport_couriers co ON co.id = d.courier_id
+        JOIN (
+          SELECT t1.* FROM transport_driver_pings t1
+          INNER JOIN (
+            SELECT driver_id, MAX(id) AS max_id
+            FROM transport_driver_pings
+            WHERE ts > DATE_SUB(NOW(), INTERVAL 30 MINUTE)
+            GROUP BY driver_id
+          ) t2 ON t1.id = t2.max_id
+        ) p ON p.driver_id = d.id
+        WHERE d.activo=1
+        ORDER BY d.nombre
+    """) or []
+    # Para cada chofer, contar paradas done/pendientes de su manifiesto activo
+    out = []
+    for d in drivers:
+        mid = d.get("manifest_id")
+        progreso = None
+        man_info = None
+        if mid:
+            man_info = mysql_fetchone(
+                "SELECT correlativo, courier FROM transport_manifests WHERE id=%s",
+                (mid,)
+            )
+            stats = mysql_fetchone("""
+                SELECT
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN estado_entrega='Entregado' THEN 1 ELSE 0 END) AS entregadas,
+                  SUM(CASE WHEN estado_entrega='Entrega fallida' THEN 1 ELSE 0 END) AS fallidas,
+                  SUM(CASE WHEN estado_entrega='En ruta' THEN 1 ELSE 0 END) AS en_ruta
+                FROM transport_manifest_items WHERE manifest_id=%s
+            """, (mid,)) or {}
+            progreso = {
+                "total":      int(stats.get("total") or 0),
+                "entregadas": int(stats.get("entregadas") or 0),
+                "fallidas":   int(stats.get("fallidas") or 0),
+                "en_ruta":    int(stats.get("en_ruta") or 0),
+            }
+        out.append({
+            "id":       d["id"],
+            "nombre":   d["nombre"],
+            "rut":      d.get("rut") or "",
+            "courier":  d.get("courier") or "",
+            "patente":  d.get("patente") or "",
+            "telefono": d.get("telefono") or "",
+            "lat":      float(d["lat"]),
+            "lng":      float(d["lng"]),
+            "accuracy_m": float(d["accuracy_m"]) if d.get("accuracy_m") else None,
+            "speed_kmh":  float(d["speed_kmh"])  if d.get("speed_kmh")  else None,
+            "battery_pct": int(d["battery_pct"]) if d.get("battery_pct") is not None else None,
+            "ts":       str(d["ts"])[:19],
+            "age_s":    int(d.get("age_s") or 0),
+            "manifest_id":  mid,
+            "manifest_corr": (man_info or {}).get("correlativo") or "",
+            "progreso":     progreso,
+        })
+    return jsonify({"ok": True, "count": len(out), "drivers": out})
+
+
+@app.route("/transporte/api/chofer/<int:did>/ruta-hecha")
+@_tr_required
+def tr_chofer_ruta_hecha(did):
+    """Devuelve los últimos N pings del chofer (su recorrido del día).
+    Permite auditar si REALMENTE fue al destino donde dice que entregó.
+    Default: últimas 6 horas.
+    """
+    horas = int(request.args.get("horas") or 6)
+    horas = max(1, min(horas, 24))
+    limit = int(request.args.get("limit") or 500)
+    rows = mysql_fetchall("""
+        SELECT lat, lng, accuracy_m, speed_kmh, ts, manifest_id
+        FROM transport_driver_pings
+        WHERE driver_id=%s AND ts > DATE_SUB(NOW(), INTERVAL %s HOUR)
+        ORDER BY id ASC LIMIT %s
+    """, (did, horas, limit)) or []
+    return jsonify({
+        "ok": True,
+        "count": len(rows),
+        "pings": [{
+            "lat": float(r["lat"]), "lng": float(r["lng"]),
+            "ts": str(r["ts"])[:19], "manifest_id": r.get("manifest_id"),
+            "accuracy_m": float(r["accuracy_m"]) if r.get("accuracy_m") else None,
+            "speed_kmh":  float(r["speed_kmh"])  if r.get("speed_kmh")  else None,
+        } for r in rows],
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  TRACKING INTERNO — el vendedor llama, Alison consulta cualquier factura
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/transporte/buscar")
+@_tr_required
+def tr_buscar_interno():
+    """Búsqueda interna: cualquier usuario de transporte busca un despacho
+    por factura/RUT/cliente y ve TODO (estado, chofer, GPS último, foto,
+    firma, eventos, FedEx). Mucho más completo que el tracking del cliente.
+    """
+    q = (request.args.get("q") or "").strip()
+    resultados = []
+    detalle = None
+    if q:
+        q_clean = re.sub(r"[^A-Za-z0-9]", "", q)
+        rut_clean = re.sub(r"[^0-9Kk]", "", q).upper()
+        # Búsqueda flexible: por nudo (nº doc), por RUT, o por nombre LIKE.
+        rows = mysql_fetchall("""
+            SELECT id, tido, nudo, cliente_nombre, cliente_rut, comuna,
+                   delivered_at, public_token
+            FROM transport_commitments
+            WHERE nudo = %s
+               OR REPLACE(REPLACE(REPLACE(UPPER(IFNULL(cliente_rut,'')),'.',''),'-',''),' ','') LIKE %s
+               OR UPPER(IFNULL(cliente_nombre,'')) LIKE %s
+            ORDER BY id DESC LIMIT 30
+        """, (q_clean or q, f"%{rut_clean}%" if rut_clean else "%__NUNCA__%",
+              f"%{q.upper()}%")) or []
+        resultados = rows
+        # Si solo hay un resultado, cargamos su detalle automáticamente
+        if len(rows) == 1:
+            detalle = _tr_buscar_detalle(rows[0]["id"])
+    return render_template("transporte/buscar_interno.html",
+                           q=q, resultados=resultados, detalle=detalle)
+
+
+@app.route("/transporte/api/buscar/<int:commitment_id>")
+@_tr_required
+def tr_buscar_interno_api(commitment_id):
+    """JSON con el detalle completo de un commitment para el panel."""
+    d = _tr_buscar_detalle(commitment_id)
+    if not d:
+        return jsonify({"error": "no encontrado"}), 404
+    return jsonify({"ok": True, "detalle": d})
+
+
+def _tr_buscar_detalle(commitment_id):
+    """Construye el dict de detalle completo (estado, chofer, GPS, eventos,
+    prueba de entrega, FedEx) para el tracking interno."""
+    c = mysql_fetchone("""
+        SELECT id, tido, nudo, cliente_nombre, cliente_rut, comuna, direccion,
+               telefono, email, region, delivered_at, public_token, estado
+        FROM transport_commitments WHERE id=%s
+    """, (commitment_id,))
+    if not c:
+        return None
+    # Último manifest_item (el envío actual)
+    mi = mysql_fetchone("""
+        SELECT mi.id AS item_id, mi.manifest_id, mi.estado_entrega,
+               mi.tracking_number, mi.last_carrier_poll_at, mi.last_carrier_status,
+               mi.last_carrier_source,
+               tm.correlativo, tm.courier
+        FROM transport_manifest_items mi
+        LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
+        WHERE mi.commitment_id=%s ORDER BY mi.id DESC LIMIT 1
+    """, (commitment_id,))
+    chofer = None
+    last_ping = None
+    if mi and mi.get("manifest_id"):
+        chofer = mysql_fetchone("""
+            SELECT d.id, d.nombre, d.rut, d.telefono, d.patente, co.nombre AS courier
+            FROM transport_manifest_drivers md
+            JOIN transport_drivers d ON d.id = md.driver_id
+            LEFT JOIN transport_couriers co ON co.id = d.courier_id
+            WHERE md.manifest_id=%s
+        """, (mi["manifest_id"],))
+        if chofer:
+            last_ping = mysql_fetchone("""
+                SELECT lat, lng, ts, accuracy_m, speed_kmh,
+                       TIMESTAMPDIFF(SECOND, ts, NOW()) AS age_s
+                FROM transport_driver_pings
+                WHERE driver_id=%s
+                ORDER BY id DESC LIMIT 1
+            """, (chofer["id"],))
+    # Eventos (timeline completo, sin filtrar)
+    eventos = mysql_fetchall("""
+        SELECT estado, fuente, ts_utc, comentario, lat, lng, usuario
+        FROM transport_tracking_events
+        WHERE commitment_id=%s ORDER BY ts_utc ASC, id ASC
+    """, (commitment_id,)) or []
+    # Prueba de entrega
+    proof = None
+    if mi:
+        p = mysql_fetchone("""
+            SELECT receptor_nombre, receptor_rut, receptor_relacion, firma_url,
+                   fotos_json, lat, lng, accuracy_m, entregado_at, usuario, notas
+            FROM transport_delivery_proof WHERE manifest_item_id=%s
+        """, (mi["item_id"],))
+        if p:
+            try: fotos = json.loads(p.get("fotos_json") or "[]")
+            except Exception: fotos = []
+            proof = {**dict(p), "fotos": fotos, "fotos_json": None}
+    return {
+        "commitment": dict(c),
+        "manifest_item": dict(mi) if mi else None,
+        "chofer": dict(chofer) if chofer else None,
+        "last_ping": dict(last_ping) if last_ping else None,
+        "eventos": [{
+            "estado":     e.get("estado") or "",
+            "fuente":     e.get("fuente") or "",
+            "ts":         str(e.get("ts_utc") or "")[:19],
+            "comentario": e.get("comentario") or "",
+            "usuario":    e.get("usuario") or "",
+            "lat":        float(e["lat"]) if e.get("lat") else None,
+            "lng":        float(e["lng"]) if e.get("lng") else None,
+        } for e in eventos],
+        "proof": proof,
+    }
+
+
 # ── Admin: gestión de choferes + asignación a manifiestos ────────────────
 
 @app.route("/transporte/choferes")
@@ -19730,6 +20010,41 @@ def tr_choferes_toggle(did):
     """Activa/desactiva un chofer."""
     mysql_execute("UPDATE transport_drivers SET activo = 1 - activo WHERE id=%s", (did,))
     return jsonify({"ok": True})
+
+
+@app.route("/transporte/api/manifiestos/<int:mid>/choferes-disponibles")
+@_tr_required
+def tr_choferes_disponibles(mid):
+    """Devuelve los choferes activos compatibles con este manifiesto.
+    Match por nombre del courier (LIKE bidireccional para tolerar variantes).
+    """
+    man = mysql_fetchone("SELECT courier FROM transport_manifests WHERE id=%s", (mid,))
+    courier_name = (man.get("courier") or "").strip().lower() if man else ""
+    rows = mysql_fetchall("""
+        SELECT d.id, d.nombre, d.rut, d.patente, d.telefono,
+               co.id AS courier_id, co.nombre AS courier_nombre,
+               (SELECT COUNT(*) FROM transport_manifest_drivers WHERE driver_id=d.id) AS asignados
+        FROM transport_drivers d
+        LEFT JOIN transport_couriers co ON co.id = d.courier_id
+        WHERE d.activo = 1
+        ORDER BY d.nombre
+    """) or []
+    # Marcar compatibles
+    out = []
+    for r in rows:
+        cn = (r.get("courier_nombre") or "").strip().lower()
+        compatible = (not cn or not courier_name
+                      or cn in courier_name or courier_name in cn)
+        out.append({**dict(r), "compatible": compatible})
+    # Asignado actual
+    current = mysql_fetchone(
+        "SELECT driver_id FROM transport_manifest_drivers WHERE manifest_id=%s", (mid,))
+    return jsonify({
+        "ok": True,
+        "courier_manifiesto": man.get("courier") if man else "",
+        "current_driver_id":  current.get("driver_id") if current else None,
+        "choferes": out,
+    })
 
 
 @app.route("/transporte/manifiestos/<int:mid>/asignar-chofer", methods=["POST"])
@@ -54891,6 +55206,26 @@ def _ensure_transport_drivers_table():
             UNIQUE KEY uq_md (manifest_id),
             INDEX idx_md_driver (driver_id, fase),
             FOREIGN KEY (manifest_id) REFERENCES transport_manifests(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+    # PINGS GPS del chofer — historial completo (ruta hecha + posición actual).
+    # El chofer envía coords cada ~30s en background mientras está en ruta;
+    # admin las consume en el monitor en vivo (estilo Uber). El chofer NO tiene
+    # UI que indique que están viéndolo: el ping es silencioso (visión Daniel).
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_driver_pings (
+            id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+            driver_id   INT NOT NULL,
+            manifest_id INT NULL,
+            lat         DECIMAL(10,7) NOT NULL,
+            lng         DECIMAL(10,7) NOT NULL,
+            accuracy_m  DECIMAL(7,1)  NULL,
+            speed_kmh   DECIMAL(6,1)  NULL,
+            heading_deg DECIMAL(5,1)  NULL,
+            battery_pct INT NULL,
+            ts          DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_dp_driver_ts (driver_id, ts),
+            INDEX idx_dp_manifest  (manifest_id, ts)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 

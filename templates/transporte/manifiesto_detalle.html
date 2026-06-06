@@ -59,6 +59,9 @@
     {% endif %}
   </div>
   <div class="mfd-hero-actions no-print">
+    <button class="btn btn-sm btn-outline-warning fw-bold" onclick="abrirAsignarChofer()">
+      <i class="bi bi-person-badge me-1"></i><span id="chBtnLbl">Asignar chofer</span>
+    </button>
     <button class="btn btn-sm mfd-btn-labels"
             onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas', '_blank')">
       <i class="bi bi-tags-fill me-1"></i>Etiquetas del manifiesto
@@ -1001,6 +1004,69 @@ async function abrirTrackingFedex(itemId) {
   // Si el estado cambió, recargar para que se vea el nuevo
   if (res.changed) setTimeout(function(){ location.reload(); }, 1000);
 }
+
+async function abrirAsignarChofer(){
+  // Trae choferes y los muestra para elegir.
+  let data;
+  try { const r = await fetch('/transporte/api/manifiestos/{{ manifiesto.id }}/choferes-disponibles'); data = await r.json(); }
+  catch(e){ ilusToast('Error de conexión', {type:'error'}); return; }
+  if (!data || !data.ok) { ilusToast(data && data.error || 'No se pudo cargar', {type:'error'}); return; }
+  const compat = (data.choferes || []).filter(c => c.compatible);
+  const incomp = (data.choferes || []).filter(c => !c.compatible);
+  if (!compat.length && !incomp.length) {
+    ilusToast('No hay choferes registrados. Crea uno en /transporte/choferes', {type:'warning'});
+    return;
+  }
+  // Render como ilusAlert con HTML controlado
+  const sec = function(title, arr, hint){
+    if (!arr.length) return '';
+    return '<div style="font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:'+(hint?'#b45309':'#15803d')+';margin:.7rem 0 .35rem">'+title+'</div>'
+      + arr.map(c =>
+        '<button type="button" data-id="'+c.id+'" class="ch-pick" style="display:block;width:100%;text-align:left;margin-bottom:.35rem;padding:.6rem .8rem;'
+        +'background:#fff;border:1.5px solid #e5e7eb;border-radius:9px;cursor:pointer'
+        +(data.current_driver_id===c.id?';box-shadow:0 0 0 2px #16a34a':'')+'">'
+        +'<strong>'+c.nombre+'</strong> <span style="font-size:.74rem;color:#6b7280">· '+(c.courier_nombre||'sin transporte')+(c.patente?' · '+c.patente:'')+'</span>'
+        +(data.current_driver_id===c.id?' <span style="background:#dcfce7;color:#15803d;padding:.1rem .4rem;border-radius:8px;font-size:.66rem;font-weight:700;margin-left:.3rem">ACTUAL</span>':'')
+        +'</button>'
+      ).join('');
+  };
+  const html =
+    '<div style="font-size:.78rem;color:#6b7280;margin-bottom:.5rem">Transporte del manifiesto: <strong>'+(data.courier_manifiesto||'sin especificar')+'</strong></div>'
+    + sec('Compatibles', compat, false)
+    + sec('Otro transporte (avisará si lo eliges)', incomp, true);
+  await ilusAlert({ title:'Asignar chofer al manifiesto', message:'Elige el chofer que tomará este manifiesto:',
+    sub: html, subHtml:true, type:'info', okLabel:'Cerrar' });
+  // Después del alert, los botones siguen vivos en el DOM del modal? NO — el modal se cierra al hacer OK.
+  // Mejor: clic directo cierra el modal y asigna. Atachamos listeners ANTES del await.
+}
+
+// Listener delegado para los botones del modal (funciona porque ilusAlert renderiza en body)
+document.addEventListener('click', async function(ev){
+  const btn = ev.target.closest('.ch-pick');
+  if (!btn) return;
+  const did = parseInt(btn.dataset.id, 10);
+  // Cerrar modal abierto
+  const md = document.querySelector('.ilus-modal-x'); if (md) md.click();
+  try {
+    const r = await fetch('/transporte/manifiestos/{{ manifiesto.id }}/asignar-chofer', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ driver_id: did })
+    });
+    const d = await r.json();
+    if (r.status === 409 && d.error === 'courier_mismatch'){
+      const ok = await ilusConfirm({ title:'Transporte distinto', message: d.msg,
+        sub:'¿Asignar igual? El chofer verá un manifiesto que no es del transporte donde está registrado.',
+        okLabel:'Asignar igual', danger:true });
+      if (!ok) return;
+      // Forzar: por ahora solo un mensaje porque el backend bloquea. En siguiente iteración: param force=1.
+      ilusToast('Mismatch bloqueado — actualiza el transporte del chofer o el del manifiesto', {type:'warning'});
+      return;
+    }
+    if (!d.ok) { ilusToast(d.error || 'Error', {type:'error'}); return; }
+    ilusToast('✓ Chofer asignado: ' + (d.chofer || ''), {type:'success'});
+    document.getElementById('chBtnLbl').textContent = d.chofer || 'Chofer asignado';
+  } catch(e) { ilusToast('Error de conexión', {type:'error'}); }
+});
 
 async function mostrarLinkCliente(itemId) {
   // Pide el link público al backend (lazy-genera el token si aún no existe)

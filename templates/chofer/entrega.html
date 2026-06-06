@@ -300,6 +300,26 @@
 
     document.addEventListener('DOMContentLoaded', function(){ resizeCanvas(); initGps(); });
     window.addEventListener('resize', resizeCanvas);
+
+    // ── PING GPS silencioso cada 30s ──
+    (function(){
+      if (!navigator.geolocation) return;
+      const MID = {{ manifiesto.id }};
+      let _bat = null;
+      if (navigator.getBattery) navigator.getBattery().then(b => { _bat = Math.round(b.level * 100); }).catch(()=>{});
+      function _ping(){
+        navigator.geolocation.getCurrentPosition(function(pos){
+          fetch('/chofer/ping', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ lat:pos.coords.latitude, lng:pos.coords.longitude,
+              accuracy_m:pos.coords.accuracy,
+              speed_kmh: pos.coords.speed ? Math.round(pos.coords.speed*3.6*10)/10 : null,
+              heading_deg: pos.coords.heading, battery_pct: _bat, manifest_id: MID }),
+            keepalive:true }).catch(()=>{});
+        }, function(){}, { enableHighAccuracy:true, timeout:8000, maximumAge:5000 });
+      }
+      _ping();
+      setInterval(function(){ if (!document.hidden) _ping(); }, 30000);
+    })();
   </script>
 </body>
 </html>

@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}Buscar despacho — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-search me-2"></i>Buscar despacho</h4>
+      <div class="sub">Estado, chofer, GPS y prueba de entrega de cualquier factura. Para responder a vendedores y clientes.</div>
+    </div>
+    <a href="{{ url_for('tr_monitor_live') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-broadcast me-1"></i>Monitor en vivo
+    </a>
+  </div>
+</div>
+
+<style>
+.bi-wrap{ display:grid; grid-template-columns:1fr 1.4fr; gap:16px; }
+@media(max-width:1100px){ .bi-wrap{ grid-template-columns:1fr; } }
+.bi-search-card{ background:#fff; border:1px solid #e5e7eb; border-radius:13px; padding:1.2rem 1.3rem; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+.bi-search-row{ display:flex; gap:.5rem; }
+.bi-input{ flex:1; padding:.85rem 1rem; font-size:1rem; border:1.5px solid #d1d5db; border-radius:11px; min-height:50px; }
+.bi-input:focus{ outline:none; border-color:#dc2626; box-shadow:0 0 0 3px rgba(220,38,38,.12); }
+.bi-btn{ background:#dc2626; color:#fff; border:none; padding:0 1.4rem; border-radius:11px; font-weight:700; min-height:50px; cursor:pointer; }
+.bi-hint{ margin-top:.5rem; font-size:.78rem; color:#6b7280; }
+.bi-results{ margin-top:1rem; max-height:60vh; overflow-y:auto; }
+.bi-result{ padding:.75rem .9rem; border:1px solid #e5e7eb; border-radius:10px; margin-bottom:.5rem; cursor:pointer; transition:background .12s, border-color .15s; }
+.bi-result:hover{ background:#fef2f2; border-color:#fecaca; }
+.bi-result-doc{ font-family:monospace; font-weight:800; font-size:.95rem; color:#0f172a; }
+.bi-result-cli{ font-size:.86rem; color:#374151; margin-top:.15rem; }
+.bi-result-meta{ font-size:.74rem; color:#6b7280; margin-top:.15rem; }
+
+.bi-detail{ background:#fff; border:1px solid #e5e7eb; border-radius:13px; padding:0; box-shadow:0 1px 3px rgba(0,0,0,.04); overflow:hidden; }
+.bi-det-hdr{ background:#0f172a; color:#fff; padding:1rem 1.2rem; }
+.bi-det-doc{ font-family:monospace; font-weight:800; font-size:1.1rem; }
+.bi-det-cli{ font-size:.92rem; color:#cbd5e1; margin-top:.15rem; }
+.bi-det-body{ padding:1.1rem 1.2rem; }
+.bi-det-section{ margin-bottom:1.3rem; }
+.bi-det-h{ font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; margin-bottom:.5rem; display:flex; align-items:center; gap:.4rem; }
+.bi-det-h i{ color:#dc2626; }
+.bi-kv{ display:flex; justify-content:space-between; padding:.3rem 0; font-size:.88rem; border-bottom:1px solid #f3f4f6; }
+.bi-kv:last-child{ border-bottom:none; }
+.bi-kv-k{ color:#6b7280; font-weight:600; font-size:.78rem; }
+.bi-kv-v{ color:#0f172a; font-weight:600; text-align:right; }
+.bi-estado-badge{ font-weight:700; padding:.3rem .65rem; border-radius:20px; font-size:.78rem; }
+.b-prep{ background:#f3f4f6; color:#6b7280; } .b-trans{ background:#dbeafe; color:#1e40af; }
+.b-ruta{ background:#e0e7ff; color:#4338ca; } .b-entreg{ background:#dcfce7; color:#15803d; }
+.b-fallida{ background:#fee2e2; color:#dc2626; }
+.bi-tl{ position:relative; padding-left:1.3rem; }
+.bi-tl::before{ content:""; position:absolute; left:.45rem; top:.4rem; bottom:.4rem; width:2px; background:#e5e7eb; }
+.bi-tl-row{ position:relative; padding:.35rem 0 .65rem .3rem; }
+.bi-tl-row::before{ content:""; position:absolute; left:-1.07rem; top:.55rem; width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid #cbd5e1; }
+.bi-tl-est{ font-weight:700; font-size:.88rem; }
+.bi-tl-ts{ font-size:.72rem; color:#6b7280; margin-top:.1rem; }
+.bi-tl-com{ font-size:.8rem; color:#374151; margin-top:.15rem; }
+.bi-tl-fnt{ display:inline-block; font-size:.66rem; font-weight:700; text-transform:uppercase; padding:.1rem .45rem; border-radius:10px; margin-left:.4rem; }
+.bi-fnt-chofer{ background:#e0e7ff; color:#4338ca; } .bi-fnt-fedex{ background:#fff3e0; color:#b45309; }
+.bi-fnt-manual{ background:#f3f4f6; color:#6b7280; } .bi-fnt-sistema{ background:#dcfce7; color:#15803d; }
+.bi-fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); gap:.4rem; }
+.bi-fotos img{ width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; cursor:zoom-in; border:1px solid #e5e7eb; }
+.bi-firma{ padding:.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:10px; text-align:center; margin-top:.4rem; }
+.bi-firma img{ max-width:220px; max-height:70px; }
+.bi-driver-card{ background:linear-gradient(135deg,#fff,#fef2f2); border:1px solid #fecaca; border-radius:10px; padding:.8rem; }
+.bi-no-detail{ padding:3rem 1rem; text-align:center; color:#6b7280; }
+.bi-no-detail i{ font-size:3rem; opacity:.4; display:block; margin-bottom:.8rem; }
+.bi-gps-link{ font-size:.74rem; color:#dc2626; text-decoration:none; font-weight:700; }
+</style>
+
+<div class="bi-wrap">
+  <div>
+    <div class="bi-search-card">
+      <form method="GET" action="">
+        <div class="bi-search-row">
+          <input class="bi-input" type="text" name="q" value="{{ q or '' }}"
+                 placeholder="N° factura, RUT o nombre del cliente" autofocus autocomplete="off">
+          <button class="bi-btn" type="submit"><i class="bi bi-search"></i></button>
+        </div>
+        <div class="bi-hint">Ejemplos: <code>10680</code>, <code>12345678-9</code>, <code>Pedro</code></div>
+      </form>
+      {% if resultados %}
+      <div class="bi-results">
+        <div class="bi-hint mb-2">{{ resultados|length }} resultado{{ 's' if resultados|length != 1 }}{% if resultados|length > 1 %} — haz clic para ver detalle{% endif %}:</div>
+        {% for r in resultados %}
+        <div class="bi-result" onclick="cargarDetalle({{ r.id }})">
+          <div class="bi-result-doc">{{ r.tido }} {{ r.nudo }}</div>
+          <div class="bi-result-cli">{{ r.cliente_nombre or '—' }}</div>
+          <div class="bi-result-meta">{{ r.cliente_rut | rut_fmt }}{% if r.comuna %} · {{ r.comuna }}{% endif %}{% if r.delivered_at %} · ✓ Entregado {{ r.delivered_at | chile_fmt }}{% endif %}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% elif q %}
+      <div class="bi-no-detail mt-3">
+        <i class="bi bi-search"></i>
+        <div><strong>Sin resultados para «{{ q }}»</strong></div>
+        <div class="small mt-1">Verifica el número o intenta con el RUT o nombre.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div id="detailPanel">
+    <div class="bi-detail">
+      <div class="bi-no-detail">
+        <i class="bi bi-binoculars"></i>
+        <div><strong>Selecciona un despacho</strong></div>
+        <div class="small mt-1">Busca por factura, RUT o nombre y haz clic para ver el seguimiento completo.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+{% if resultados and resultados|length == 1 %}
+document.addEventListener('DOMContentLoaded', function(){ cargarDetalle({{ resultados[0].id }}); });
+{% endif %}
+
+async function cargarDetalle(cid){
+  const panel = document.getElementById('detailPanel');
+  panel.innerHTML = '<div class="bi-detail"><div class="bi-no-detail"><i class="bi bi-hourglass-split"></i><div>Cargando…</div></div></div>';
+  try {
+    const r = await fetch('/transporte/api/buscar/' + cid);
+    const d = await r.json();
+    if (!d.ok || !d.detalle) { panel.innerHTML = '<div class="bi-detail"><div class="bi-no-detail"><i class="bi bi-x-circle"></i><div>No se pudo cargar</div></div></div>'; return; }
+    panel.innerHTML = _renderDetalle(d.detalle);
+  } catch(e) {
+    panel.innerHTML = '<div class="bi-detail"><div class="bi-no-detail"><i class="bi bi-wifi-off"></i><div>Error de conexión</div></div></div>';
+  }
+}
+
+function _fmtTs(t){ if(!t) return '—'; try{ return new Date(t.replace(' ','T')+'-04:00').toLocaleString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'America/Santiago'}); }catch(e){ return t; } }
+function _ageTxt(s){ if(s<60) return 'ahora'; if(s<3600) return 'hace '+Math.round(s/60)+' min'; return 'hace '+Math.round(s/3600)+'h'; }
+function _badgeClass(e){ return ({'En preparación':'b-prep','Entregado a transporte':'b-trans','En ruta':'b-ruta','Entregado':'b-entreg','Entrega fallida':'b-fallida','Devolución':'b-fallida'}[e] || 'b-prep'); }
+
+function _renderDetalle(d){
+  const c = d.commitment, mi = d.manifest_item, ch = d.chofer, lp = d.last_ping, p = d.proof;
+  const est = mi ? mi.estado_entrega : (c.estado || 'En preparación');
+  let html = '<div class="bi-detail">';
+  html += '<div class="bi-det-hdr"><div class="d-flex justify-content-between align-items-start gap-2">';
+  html += '<div><div class="bi-det-doc">'+(c.tido||'')+' '+(c.nudo||'')+'</div>';
+  html += '<div class="bi-det-cli">'+(c.cliente_nombre||'—')+'</div></div>';
+  html += '<span class="bi-estado-badge '+_badgeClass(est)+'">'+est+'</span></div></div>';
+  html += '<div class="bi-det-body">';
+
+  // Cliente
+  html += '<div class="bi-det-section"><div class="bi-det-h"><i class="bi bi-person"></i>Cliente / Destino</div>';
+  html += '<div class="bi-kv"><span class="bi-kv-k">RUT</span><span class="bi-kv-v" style="font-family:monospace">'+(c.cliente_rut||'—')+'</span></div>';
+  html += '<div class="bi-kv"><span class="bi-kv-k">Dirección</span><span class="bi-kv-v">'+(c.direccion||'—')+'</span></div>';
+  html += '<div class="bi-kv"><span class="bi-kv-k">Comuna</span><span class="bi-kv-v">'+(c.comuna||'—')+'</span></div>';
+  if (c.telefono) html += '<div class="bi-kv"><span class="bi-kv-k">Teléfono</span><span class="bi-kv-v">'+c.telefono+'</span></div>';
+  if (c.email) html += '<div class="bi-kv"><span class="bi-kv-k">Email</span><span class="bi-kv-v">'+c.email+'</span></div>';
+  html += '</div>';
+
+  // Manifiesto + courier
+  if (mi){
+    html += '<div class="bi-det-section"><div class="bi-det-h"><i class="bi bi-truck"></i>Despacho</div>';
+    if (mi.correlativo) html += '<div class="bi-kv"><span class="bi-kv-k">Manifiesto</span><span class="bi-kv-v" style="font-family:monospace"><a href="/transporte/manifiestos/'+mi.manifest_id+'">'+mi.correlativo+'</a></span></div>';
+    if (mi.courier) html += '<div class="bi-kv"><span class="bi-kv-k">Transporte</span><span class="bi-kv-v">'+mi.courier+'</span></div>';
+    if (mi.tracking_number) html += '<div class="bi-kv"><span class="bi-kv-k">N° tracking</span><span class="bi-kv-v" style="font-family:monospace">'+mi.tracking_number+'</span></div>';
+    if (mi.last_carrier_poll_at) html += '<div class="bi-kv"><span class="bi-kv-k">Último poll courier</span><span class="bi-kv-v">'+_fmtTs(mi.last_carrier_poll_at)+'</span></div>';
+    html += '</div>';
+  }
+
+  // Chofer + GPS
+  if (ch){
+    html += '<div class="bi-det-section"><div class="bi-det-h"><i class="bi bi-person-badge"></i>Chofer asignado</div>';
+    html += '<div class="bi-driver-card">';
+    html += '<div style="font-weight:800">'+ch.nombre+'</div>';
+    html += '<div style="font-size:.78rem;color:#6b7280">'+(ch.courier||'')+(ch.patente?' · '+ch.patente:'')+(ch.telefono?' · '+ch.telefono:'')+'</div>';
+    if (lp){
+      html += '<div style="margin-top:.5rem;font-size:.8rem">'
+            + '<i class="bi bi-geo-alt-fill" style="color:#dc2626"></i> '
+            + '<a class="bi-gps-link" href="https://www.google.com/maps?q='+lp.lat+','+lp.lng+'" target="_blank">'
+            + 'Ver en mapa</a> · '+_ageTxt(lp.age_s)
+            + (lp.speed_kmh!=null ? ' · '+Math.round(lp.speed_kmh)+' km/h' : '')
+            + '</div>';
+    } else {
+      html += '<div style="margin-top:.5rem;font-size:.78rem;color:#9ca3af">Sin pings recientes</div>';
+    }
+    html += '</div></div>';
+  }
+
+  // Prueba de entrega
+  if (p){
+    html += '<div class="bi-det-section"><div class="bi-det-h"><i class="bi bi-shield-check"></i>Prueba de entrega</div>';
+    html += '<div class="bi-kv"><span class="bi-kv-k">Receptor</span><span class="bi-kv-v">'+(p.receptor_nombre||'—')+(p.receptor_relacion?' · '+p.receptor_relacion:'')+'</span></div>';
+    if (p.receptor_rut) html += '<div class="bi-kv"><span class="bi-kv-k">RUT receptor</span><span class="bi-kv-v" style="font-family:monospace">'+p.receptor_rut+'</span></div>';
+    if (p.entregado_at) html += '<div class="bi-kv"><span class="bi-kv-k">Hora entrega</span><span class="bi-kv-v">'+_fmtTs(p.entregado_at)+'</span></div>';
+    if (p.lat && p.lng) html += '<div class="bi-kv"><span class="bi-kv-k">GPS entrega</span><span class="bi-kv-v"><a class="bi-gps-link" target="_blank" href="https://www.google.com/maps?q='+p.lat+','+p.lng+'">Ver punto</a></span></div>';
+    if (p.firma_url) html += '<div class="bi-firma"><img src="'+p.firma_url+'" alt="Firma"></div>';
+    if (p.fotos && p.fotos.length){
+      html += '<div class="bi-fotos mt-2">';
+      p.fotos.forEach(f => html += '<img src="'+f+'" onclick="window.open(this.src,\'_blank\')">');
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  // Timeline
+  html += '<div class="bi-det-section"><div class="bi-det-h"><i class="bi bi-clock-history"></i>Historial completo</div>';
+  if (d.eventos.length){
+    html += '<div class="bi-tl">';
+    d.eventos.forEach(function(e){
+      const fc = ({chofer:'bi-fnt-chofer',fedex:'bi-fnt-fedex',aftership:'bi-fnt-fedex',manual:'bi-fnt-manual',sistema:'bi-fnt-sistema'}[e.fuente] || 'bi-fnt-manual');
+      html += '<div class="bi-tl-row"><div class="bi-tl-est">'+e.estado+'<span class="bi-tl-fnt '+fc+'">'+e.fuente+'</span></div>';
+      html += '<div class="bi-tl-ts">'+_fmtTs(e.ts)+(e.usuario?' · '+e.usuario:'')+'</div>';
+      if (e.comentario) html += '<div class="bi-tl-com">'+e.comentario+'</div>';
+      if (e.lat && e.lng) html += '<div class="bi-tl-com" style="font-size:.74rem"><a class="bi-gps-link" target="_blank" href="https://www.google.com/maps?q='+e.lat+','+e.lng+'">📍 Ver lugar del evento</a></div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="color:#9ca3af;font-size:.85rem">Sin eventos registrados aún.</div>';
+  }
+  html += '</div>';
+
+  html += '</div></div>';
+  return html;
+}
+</script>
+{% endblock %}
