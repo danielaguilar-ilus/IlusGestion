@@ -19775,8 +19775,53 @@ def chofer_entrega_submit(mid, commitment_id):
         mysql_execute(
             "UPDATE transport_manifest_drivers SET fase='cerrado' WHERE manifest_id=%s",
             (mid,))
-    return jsonify({"ok": True, "quedan": quedan,
-                    "next": url_for("chofer_ruta", mid=mid)})
+        next_url = url_for("chofer_cierre", mid=mid)
+    else:
+        next_url = url_for("chofer_ruta", mid=mid)
+    return jsonify({"ok": True, "quedan": quedan, "next": next_url})
+
+
+@app.route("/chofer/manifiesto/<int:mid>/cierre")
+@_chofer_required
+def chofer_cierre(mid):
+    """Pantalla de cierre del día — gamification estilo Uber Driver.
+    Muestra resumen del manifiesto completado: entregas, tiempo, km
+    recorridos, foto del mapa. Para que el chofer se sienta valorado.
+    """
+    drv = g.chofer
+    asign = mysql_fetchone(
+        "SELECT * FROM transport_manifest_drivers WHERE manifest_id=%s AND driver_id=%s",
+        (mid, drv["id"]))
+    if not asign:
+        return redirect(url_for("chofer_home"))
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, courier FROM transport_manifests WHERE id=%s", (mid,))
+    stats = mysql_fetchone("""
+        SELECT
+          SUM(CASE WHEN estado_entrega='Entregado' THEN 1 ELSE 0 END) AS entregadas,
+          SUM(CASE WHEN estado_entrega='Entrega fallida' THEN 1 ELSE 0 END) AS fallidas,
+          COUNT(*) AS total,
+          MIN(added_at) AS inicio,
+          MAX(added_at) AS fin
+        FROM transport_manifest_items WHERE manifest_id=%s
+    """, (mid,)) or {}
+    # Km recorridos: suma haversine entre pings consecutivos del día del chofer
+    pings = mysql_fetchall("""
+        SELECT lat, lng FROM transport_driver_pings
+        WHERE driver_id=%s AND ts > DATE_SUB(NOW(), INTERVAL 18 HOUR)
+        ORDER BY id ASC
+    """, (drv["id"],)) or []
+    km = 0.0
+    prev = None
+    for p in pings:
+        if prev:
+            d = _haversine_m(prev["lat"], prev["lng"], p["lat"], p["lng"])
+            if d and d < 5000:  # ignora outliers > 5km entre pings consecutivos
+                km += d / 1000.0
+        prev = p
+    return render_template("chofer/cierre.html",
+                           chofer=drv, manifiesto=manifiesto, stats=stats,
+                           km=round(km, 1))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
