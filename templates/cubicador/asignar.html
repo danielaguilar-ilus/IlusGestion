@@ -1411,6 +1411,21 @@ async function buscarDoc(){
 // ── Barra de progreso con mensajes secuenciales ─────────────
 let _progressTimers = [];
 function showProgress(steps){
+  _progressTimers.forEach(t => clearTimeout(t));
+  _progressTimers = [];
+  // ── PREMIUM: casco ILUS girando (overlay full-screen) ──
+  // Misma secuencia de mensajes del ERP, ahora con el loader de marca.
+  // Fallback a la barra DOM clásica si ilusLoader no estuviera disponible.
+  if (window.ilusLoader){
+    ilusLoader.show({ text:'Iniciando búsqueda…', sub:'ERP Random · cloud.random.cl', progress:8 });
+    steps.forEach(s => {
+      _progressTimers.push(setTimeout(() => {
+        ilusLoader.text(s.txt);
+        ilusLoader.progress(s.pct);
+      }, s.ms));
+    });
+    return;
+  }
   const bar = document.getElementById('progressBar');
   const msg = document.getElementById('progressMsg');
   const fill = document.getElementById('progressFill');
@@ -1418,8 +1433,6 @@ function showProgress(steps){
   bar.style.display = 'block';
   fill.style.width = '8%';
   msg.textContent = 'Iniciando búsqueda...';
-  _progressTimers.forEach(t => clearTimeout(t));
-  _progressTimers = [];
   steps.forEach(s => {
     _progressTimers.push(setTimeout(() => {
       fill.style.width = s.pct + '%';
@@ -1430,6 +1443,14 @@ function showProgress(steps){
 function finishProgress(){
   _progressTimers.forEach(t => clearTimeout(t));
   _progressTimers = [];
+  if (window.ilusLoader){
+    ilusLoader.progress(100);
+    ilusLoader.text('¡Listo!');
+    setTimeout(() => ilusLoader.hide(), 350);
+    const _b = document.getElementById('progressBar'); // por si quedó visible la barra clásica
+    if (_b) _b.style.display = 'none';
+    return;
+  }
   const bar = document.getElementById('progressBar');
   const fill = document.getElementById('progressFill');
   if (!bar) return;

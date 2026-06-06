@@ -21186,20 +21186,27 @@ def init_comunicaciones_tables():
             # ══════════════════════════════════════════════════════════════
 
             def _ret_hero_block(badge_txt, badge_color, badge_bg, titulo, subt):
-                """Hero visual del email retiros: banda colorada con icono + título."""
+                """Hero del email retiros: TARJETA CLARA (ya NO negra) con riel rojo
+                izquierdo + 'Orden de retiro' + código rojo grande.
+                (Juan Daniel 2026-06-05: 'la solicitud recibida ahora ya no es en
+                negro, está perfecto'.) badge_color/badge_bg = chip de estado (varía)."""
                 return (
                     f'<table cellpadding="0" cellspacing="0" width="100%" '
-                    f'style="background:#0a0a0a;border-radius:10px;overflow:hidden;margin:0 0 20px">'
+                    f'style="background:#ffffff;border:1px solid #ececef;border-left:5px solid #dc2626;'
+                    f'border-radius:12px;margin:0 0 20px;box-shadow:0 2px 8px rgba(10,10,10,.05)">'
                     f'<tr><td style="padding:24px 26px;text-align:center">'
-                    f'<div style="display:inline-block;background:{badge_bg};color:{badge_color};'
+                    # Chip SUAVE (pill): fondo claro + texto oscuro, como el preview
+                    # aprobado. Los call-sites pasan (txt, color_claro, color_oscuro),
+                    # así que aquí background=color_claro y color=texto_oscuro.
+                    f'<div style="display:inline-block;background:{badge_color};color:{badge_bg};'
                     f'font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;'
-                    f'padding:6px 14px;border-radius:50px;margin-bottom:14px">{badge_txt}</div>'
-                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#fff;font-size:13px;'
-                    f'letter-spacing:.06em;text-transform:uppercase;font-weight:700;opacity:.6;margin-bottom:4px">Orden de retiro</div>'
-                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#fff;font-size:32px;'
-                    f'font-weight:900;letter-spacing:.02em;margin-bottom:6px">{{{{code}}}}</div>'
-                    f'<div style="color:#cbd5e1;font-size:14px;font-weight:600;line-height:1.45">{titulo}</div>'
-                    f'<div style="color:#9ca3af;font-size:12px;margin-top:6px">{subt}</div>'
+                    f'padding:6px 14px;border-radius:50px;margin-bottom:16px">{badge_txt}</div>'
+                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#9ca3af;font-size:12px;'
+                    f'letter-spacing:.14em;text-transform:uppercase;font-weight:700;margin-bottom:2px">Orden de retiro</div>'
+                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#dc2626;font-size:34px;line-height:1.1;'
+                    f'font-weight:900;letter-spacing:.03em;margin-bottom:8px">{{{{code}}}}</div>'
+                    f'<div style="color:#1f2937;font-size:14px;font-weight:600;line-height:1.45">{titulo}</div>'
+                    f'<div style="color:#6b7280;font-size:12px;margin-top:6px">{subt}</div>'
                     f'</td></tr></table>'
                 )
 
@@ -22501,7 +22508,7 @@ def _comm_render_email_document(title, body_html, subtitle=""):
 
     cc = _get_client_cfg()
     color = cc.get("corp_color") or "#CC0000"
-    company = cc.get("company_name") or "ILUS Sport & Health"
+    company = cc.get("company_name") or "ILUS Fitness · Sport & Health Solutions"
     logo = cc.get("logo_url") or ""
     header = _email_header_ilus(title, subtitle, color, logo, company)
     body = _email_body_section(body_html)
@@ -22674,22 +22681,36 @@ def _email_card(header_html, body_html, footer_html="", width=580):
 </table>"""
 
 
-def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, company="ILUS"):
-    logo_url = logo_url or "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
+def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, company="ILUS", eyebrow=""):
+    """Header de marca ILUS: UN solo bloque negro (ya no doble) con acento rojo
+    superior + logo blanco transparente GRANDE (~82px) + título/subtítulo opcionales.
+    (Juan Daniel 2026-06-05: 'un solo header, el logo ~200% más grande, sin tanto
+    negro, déjalo así en toda la aplicación'.) `eyebrow` = etiqueta roja opcional."""
+    logo_url = logo_url or "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png?height=240"
+    eyebrow_html = (
+        f'<div style="color:#dc2626;font-size:11px;font-weight:800;letter-spacing:.22em;'
+        f'text-transform:uppercase;margin-bottom:12px">{eyebrow}</div>'
+    ) if eyebrow else ""
+    title_html = (
+        f'<div style="color:#ffffff;font-size:23px;line-height:1.25;font-weight:800;letter-spacing:.01em">{title}</div>'
+    ) if title else ""
+    subtitle_html = (
+        f'<div style="color:#b5b5b8;font-size:13px;line-height:1.5;margin-top:9px">{subtitle}</div>'
+    ) if subtitle else ""
+    bottom_row = (
+        f'<tr><td align="center" style="padding:8px 32px 32px 32px;text-align:center">'
+        f'{eyebrow_html}{title_html}{subtitle_html}</td></tr>'
+    ) if (eyebrow or title or subtitle) else ""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;background-image:linear-gradient(180deg,#161616 0%,#0a0a0a 60%,#000 100%)">
+  <tr><td style="height:4px;background:#dc2626;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td style="background:#000;padding:24px 28px;text-align:center">
-      <img src="{logo_url}" alt="{company}"
-           style="height:48px;max-width:230px;width:auto;display:block;margin:0 auto;object-fit:contain">
+    <td align="center" style="padding:30px 28px 8px 28px;text-align:center">
+      <img src="{logo_url}" alt="{company}" height="82"
+           style="height:82px;width:auto;max-width:320px;display:block;margin:0 auto;border:0;object-fit:contain">
     </td>
   </tr>
-  <tr>
-    <td style="background:#111;padding:28px 32px;text-align:center;border-top:1px solid #202020">
-      <div style="color:#ffffff;font-size:22px;line-height:1.25;font-weight:800">{title}</div>
-      {"<div style='color:#f3f4f6;font-size:13px;line-height:1.45;margin-top:8px'>" + subtitle + "</div>" if subtitle else ""}
-    </td>
-  </tr>
+  {bottom_row}
 </table>"""
 
 
@@ -22697,16 +22718,22 @@ def _email_body_section(content):
     return f'<div style="padding:32px 30px;font-size:14px;line-height:1.6;color:#111827">{content}</div>'
 
 
-def _email_footer_ilus(company="ILUS Sport & Health"):
+def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
+    """Footer de marca ILUS con el ESLOGAN 'I LIKE U STRONG' en MAYÚSCULAS
+    (las letras I·L·U·S en rojo = el significado del acrónimo) + nombre legal.
+    (Juan Daniel 2026-06-05: 'el eslogan de ILUS es I LIKE U STRONG, todo en
+    mayúscula; es ILUS Fitness Sport & Health Solutions'.)"""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#000">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a">
+  <tr><td style="height:3px;background:#dc2626;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td style="padding:24px 32px;text-align:center;color:#6b7280;font-size:11px;line-height:1.6">
-      <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">{company}</div>
-      <div style="color:#9ca3af;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
-      <div style="color:#6b7280;margin-top:14px">
-        Este correo fue generado automaticamente. Para soporte, utiliza nuestros canales oficiales.
+    <td style="padding:30px 32px 28px 32px;text-align:center">
+      <div style="font-size:18px;font-weight:900;letter-spacing:.20em;line-height:1.2"><span style="color:#dc2626">I</span><span style="color:#ffffff"> LIKE </span><span style="color:#dc2626">U</span><span style="color:#ffffff"> </span><span style="color:#dc2626">S</span><span style="color:#ffffff">TRONG</span></div>
+      <div style="width:46px;height:2px;background:#dc2626;margin:14px auto 16px auto;font-size:0;line-height:0">&nbsp;</div>
+      <div style="color:#DC143C;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">{company}</div>
+      <div style="color:#9ca3af;font-size:12px;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
+      <div style="color:#6b7280;font-size:11px;line-height:1.6;margin-top:16px">
+        Este correo fue generado automáticamente. Para soporte, utiliza nuestros canales oficiales.
       </div>
     </td>
   </tr>

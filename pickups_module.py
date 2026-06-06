@@ -1116,20 +1116,27 @@ def register_pickup_routes(app, ctx):
                 asunto = _apply_template(tpl_email.get("asunto") or "", variables)
                 cuerpo = _apply_template(tpl_email.get("cuerpo") or "", variables)
                 # Envolver en el wrapper HTML oficial ILUS
-                html = _ilus_email_html(
-                    titulo=asunto or f"Actualización retiro {req['code']}",
-                    subtitulo=f"{req['code']} - {variables['documento']}",
-                    saludo=variables["persona_retira"],
-                    parrafos=[cuerpo],   # cuerpo ya viene como HTML
-                    btn_primario_txt="Ver solicitud",
-                    btn_primario_url=follow_url,
-                    btn_secundario_txt="Cómo llegar",
-                    btn_secundario_url=cfg.get("maps_url"),
-                    info_lineas=[
-                        ("", "Bodega", variables["warehouse_name"]),
-                        ("", "Dirección", variables["warehouse_addr"]),
-                    ],
-                )
+                # El `cuerpo` de la plantilla de retiros YA es un email completo y
+                # autosuficiente (hero + stepper + datos + CTA — diseño 2026-06).
+                # Por eso NO lo envolvemos con _ilus_email_html, que agregaría OTRO
+                # header negro + botones + Bodega/Dirección DUPLICADOS (el "doble
+                # header negro" y la repetición que reportó Daniel). Usamos el
+                # wrapper de marca limpio: solo el logo ILUS grande arriba y el
+                # eslogan "I LIKE U STRONG" abajo. (Juan Daniel 2026-06-05.)
+                try:
+                    from app import _comm_render_email_document
+                    html = _comm_render_email_document(asunto, cuerpo)
+                except Exception:
+                    # Fallback defensivo: si el wrapper limpio no estuviera
+                    # disponible, no perdemos el envío (diseño anterior).
+                    html = _ilus_email_html(
+                        titulo=asunto or f"Actualización retiro {req['code']}",
+                        subtitulo=f"{req['code']} - {variables['documento']}",
+                        saludo=variables["persona_retira"],
+                        parrafos=[cuerpo],   # cuerpo ya viene como HTML
+                        btn_primario_txt="Ver mi retiro en vivo",
+                        btn_primario_url=follow_url,
+                    )
                 # Multi-email: envía al cliente declarado + extra_emails + emails del ERP
                 _multi = _send_pickup_email_multi(req, f"ILUS — {asunto}", html)
                 sent_mail = len(_multi["sent"]) > 0
