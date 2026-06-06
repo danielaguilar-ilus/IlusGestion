@@ -92,7 +92,8 @@
       {% set tot = m.n_bultos or 0 %}
       {% set pct = ((cap / tot) * 100) if tot else 0 %}
       {% set fase = m.fase or 'asignado' %}
-      <a class="ch-card" href="{{ url_for('chofer_captura', mid=m.id) }}">
+      {% set _dest = url_for('chofer_ruta', mid=m.id) if fase in ['ruta','entrega'] else url_for('chofer_captura', mid=m.id) %}
+      <a class="ch-card" href="{{ _dest }}">
         <div class="ch-card-top">
           <span class="ch-corr">{{ m.correlativo or ('M-' ~ m.id) }}</span>
           <span class="ch-fase {{ fase }}">{{ fase }}</span>
@@ -108,8 +109,8 @@
         {% endif %}
         {% if fase == 'asignado' or fase == 'captura' %}
         <div class="ch-cta"><i class="bi bi-upc-scan"></i>Capturar bultos</div>
-        {% elif fase == 'ruta' %}
-        <div class="ch-cta done"><i class="bi bi-geo-alt"></i>Ver ruta de entrega</div>
+        {% elif fase == 'ruta' or fase == 'entrega' %}
+        <div class="ch-cta done" style="background:#4338ca"><i class="bi bi-geo-alt"></i>Ver ruta de entrega</div>
         {% else %}
         <div class="ch-cta done"><i class="bi bi-check2-circle"></i>Manifiesto cerrado</div>
         {% endif %}

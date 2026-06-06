@@ -22,6 +22,7 @@
           <tr>
             <th>Nombre</th>
             <th>RUT</th>
+            <th>Transporte</th>
             <th>Teléfono</th>
             <th>Patente</th>
             <th>Últi­mo acceso</th>
@@ -34,6 +35,15 @@
           <tr>
             <td class="fw-semibold">{{ d.nombre }}</td>
             <td class="font-monospace">{{ d.rut | rut_fmt }}</td>
+            <td>
+              <select class="form-select form-select-sm" style="min-width:130px"
+                      onchange="setCourier({{ d.id }}, this.value)">
+                <option value="">— Sin transporte —</option>
+                {% for c in couriers %}
+                <option value="{{ c.id }}" {% if c.id == d.courier_id %}selected{% endif %}>{{ c.nombre }}</option>
+                {% endfor %}
+              </select>
+            </td>
             <td>{{ d.telefono or '—' }}</td>
             <td>{{ d.patente or '—' }}</td>
             <td class="small text-muted">{{ d.last_login_at | chile_fmt if d.last_login_at else 'Nunca' }}</td>
@@ -57,7 +67,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="7" class="text-center text-muted py-4">
+          <tr><td colspan="8" class="text-center text-muted py-4">
             <i class="bi bi-person-x fs-3 d-block mb-2 opacity-50"></i>
             Aún no hay choferes. Crea el primero para empezar.
           </td></tr>
@@ -69,6 +79,7 @@
 </div>
 
 <script>
+const COURIERS = [{% for c in couriers %}{id:{{ c.id }}, nombre:{{ c.nombre|tojson }}},{% endfor %}];
 async function abrirCrearChofer(){
   const nombre = await ilusPrompt({ title:'Nuevo chofer', message:'Nombre completo del chofer', placeholder:'Ej: Pedro Soto', required:true });
   if (!nombre) return;
@@ -76,15 +87,32 @@ async function abrirCrearChofer(){
   if (!rut) return;
   const pin = await ilusPrompt({ title:'PIN de acceso', message:'PIN numérico de 4 a 8 dígitos (el chofer lo usará para entrar)', placeholder:'1234', required:true });
   if (!pin) return;
+  // Elegir transporte
+  let courier_id = '';
+  if (COURIERS.length){
+    const lista = COURIERS.map((c,i)=>(i+1)+'. '+c.nombre).join('\n');
+    const sel = await ilusPrompt({ title:'Transporte del chofer',
+      message:'¿A qué transporte pertenece? Escribe el número:\n\n'+lista,
+      placeholder:'Ej: 1', required:false });
+    if (sel){ const idx=parseInt(sel)-1; if (COURIERS[idx]) courier_id = COURIERS[idx].id; }
+  }
   const tel = await ilusPrompt({ title:'Teléfono (opcional)', message:'Teléfono de contacto', placeholder:'+56 9 ...' });
   const patente = await ilusPrompt({ title:'Patente (opcional)', message:'Patente del vehículo', placeholder:'ABCD-12' });
   const r = await fetch('{{ url_for("tr_choferes_crear") }}', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ nombre, rut, pin, telefono: tel||'', patente: patente||'' })
+    body: JSON.stringify({ nombre, rut, pin, courier_id, telefono: tel||'', patente: patente||'' })
   });
   const d = await r.json();
   if (d.ok) { ilusToast('✓ Chofer creado', {type:'success'}); setTimeout(()=>location.reload(), 700); }
   else ilusToast(d.error || 'No se pudo crear', {type:'error'});
+}
+async function setCourier(id, courierId){
+  const r = await fetch('/transporte/choferes/' + id + '/courier', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ courier_id: courierId })
+  });
+  const d = await r.json();
+  if (d.ok) ilusToast('✓ Transporte actualizado', {type:'success'});
+  else ilusToast(d.error || 'Error', {type:'error'});
 }
 async function resetPin(id, nombre){
   const pin = await ilusPrompt({ title:'Resetear PIN', message:'Nuevo PIN para ' + nombre + ' (4 a 8 dígitos)', placeholder:'1234', required:true });

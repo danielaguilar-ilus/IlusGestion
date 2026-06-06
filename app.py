@@ -19394,7 +19394,257 @@ def chofer_captura_finalizar(mid):
         (asign["id"],)
     )
     _tr_log("manifest", mid, "captura finalizada por chofer", drv["nombre"])
-    return jsonify({"ok": True, "next": url_for("chofer_home")})
+    return jsonify({"ok": True, "next": url_for("chofer_ruta", mid=mid)})
+
+
+def _tr_pod_config(courier_nombre):
+    """Devuelve la config de prueba de entrega (POD) del transporte.
+    Estilo DispatchTrack: cada courier define fotos mínimas, firma, RUT y
+    geocerca. Defaults sensatos si el courier no tiene config."""
+    default = {"fotos_min": 1, "firma_req": True, "rut_req": True, "geocerca_m": 0}
+    if not courier_nombre:
+        return default
+    row = mysql_fetchone(
+        "SELECT COALESCE(pod_fotos_min,1) AS f, COALESCE(pod_firma_req,1) AS s, "
+        "       COALESCE(pod_rut_req,1) AS r, COALESCE(pod_geocerca_m,0) AS g "
+        "FROM transport_couriers WHERE LOWER(nombre) LIKE %s LIMIT 1",
+        (f"%{courier_nombre.strip().lower()}%",)
+    )
+    if not row:
+        return default
+    return {
+        "fotos_min":  int(row.get("f") or 0),
+        "firma_req":  bool(row.get("s")),
+        "rut_req":    bool(row.get("r")),
+        "geocerca_m": int(row.get("g") or 0),
+    }
+
+
+def _haversine_m(lat1, lng1, lat2, lng2):
+    """Distancia en metros entre dos coords (geocerca)."""
+    import math
+    try:
+        lat1, lng1, lat2, lng2 = map(float, (lat1, lng1, lat2, lng2))
+    except (TypeError, ValueError):
+        return None
+    R = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lng2 - lng1)
+    a = (math.sin(dphi/2)**2
+         + math.cos(p1)*math.cos(p2)*math.sin(dlmb/2)**2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+
+@app.route("/chofer/manifiesto/<int:mid>/ruta")
+@_chofer_required
+def chofer_ruta(mid):
+    """Modo RUTA: paradas del manifiesto en un mapa Google + lista para entregar."""
+    drv = g.chofer
+    asign = mysql_fetchone(
+        "SELECT id, fase FROM transport_manifest_drivers "
+        "WHERE manifest_id=%s AND driver_id=%s", (mid, drv["id"])
+    )
+    if not asign:
+        flash("Ese manifiesto no está asignado a ti.", "danger")
+        return redirect(url_for("chofer_home"))
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, courier FROM transport_manifests WHERE id=%s", (mid,)
+    )
+    paradas = mysql_fetchall("""
+        SELECT mi.id AS item_id, mi.estado_entrega,
+               c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
+               c.direccion, c.comuna, c.telefono, c.region,
+               c.dest_lat, c.dest_lng,
+               (SELECT COUNT(*) FROM transport_labels
+                  WHERE manifest_id=%s AND commitment_id=c.id) AS bultos
+        FROM transport_manifest_items mi
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.manifest_id=%s
+        ORDER BY mi.orden, mi.id
+    """, (mid, mid)) or []
+    pod = _tr_pod_config(manifiesto.get("courier") if manifiesto else "")
+    return render_template("chofer/ruta.html",
+                           chofer=drv, manifiesto=manifiesto, paradas=paradas,
+                           pod=pod, gmaps_key=GOOGLE_MAPS_API_KEY)
+
+
+@app.route("/chofer/manifiesto/<int:mid>/entrega/<int:commitment_id>")
+@_chofer_required
+def chofer_entrega(mid, commitment_id):
+    """Pantalla de ENTREGA: GPS + foto(s) + guía + RUT + firma del cliente."""
+    drv = g.chofer
+    asign = mysql_fetchone(
+        "SELECT id FROM transport_manifest_drivers "
+        "WHERE manifest_id=%s AND driver_id=%s", (mid, drv["id"])
+    )
+    if not asign:
+        flash("Ese manifiesto no está asignado a ti.", "danger")
+        return redirect(url_for("chofer_home"))
+    parada = mysql_fetchone("""
+        SELECT mi.id AS item_id, mi.estado_entrega,
+               c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
+               c.direccion, c.comuna, c.telefono, c.dest_lat, c.dest_lng
+        FROM transport_manifest_items mi
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.manifest_id=%s AND mi.commitment_id=%s
+    """, (mid, commitment_id))
+    if not parada:
+        flash("Factura no encontrada en este manifiesto.", "danger")
+        return redirect(url_for("chofer_ruta", mid=mid))
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, courier FROM transport_manifests WHERE id=%s", (mid,)
+    )
+    pod = _tr_pod_config(manifiesto.get("courier") if manifiesto else "")
+    return render_template("chofer/entrega.html",
+                           chofer=drv, manifiesto=manifiesto, parada=parada,
+                           pod=pod, gmaps_key=GOOGLE_MAPS_API_KEY)
+
+
+@app.route("/chofer/manifiesto/<int:mid>/entrega/<int:commitment_id>/submit",
+           methods=["POST"])
+@_chofer_required
+def chofer_entrega_submit(mid, commitment_id):
+    """Registra la entrega del chofer: receptor + RUT + firma + foto(s) + GPS.
+
+    Valida según la config POD del transporte (fotos mínimas, firma, RUT,
+    geocerca). Reusa transport_delivery_proof. Marca 'Entregado' + evento
+    fuente='chofer' (el cliente lo ve en su tracking).
+    """
+    drv = g.chofer
+    asign = mysql_fetchone(
+        "SELECT id FROM transport_manifest_drivers "
+        "WHERE manifest_id=%s AND driver_id=%s", (mid, drv["id"])
+    )
+    if not asign:
+        return jsonify({"error": "manifiesto no asignado"}), 403
+    item = mysql_fetchone(
+        "SELECT mi.id, c.dest_lat, c.dest_lng "
+        "FROM transport_manifest_items mi "
+        "JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "WHERE mi.manifest_id=%s AND mi.commitment_id=%s",
+        (mid, commitment_id)
+    )
+    if not item:
+        return jsonify({"error": "factura no encontrada"}), 404
+    item_id = item["id"]
+
+    man = mysql_fetchone("SELECT courier FROM transport_manifests WHERE id=%s", (mid,))
+    pod = _tr_pod_config(man.get("courier") if man else "")
+
+    body = request.get_json(silent=True, force=True) or {}
+    receptor = (body.get("receptor_nombre") or "").strip()
+    receptor_rut = (body.get("receptor_rut") or "").strip()
+    relacion = (body.get("receptor_relacion") or "").strip() or None
+    firma_data = (body.get("firma_data_url") or "").strip() or None
+    fotos_in = body.get("fotos") or []
+    if not isinstance(fotos_in, list):
+        fotos_in = [fotos_in]
+    lat = body.get("lat"); lng = body.get("lng")
+    accuracy = body.get("accuracy_m")
+    notas = (body.get("notas") or "").strip() or None
+
+    # ── Validaciones según POD del transporte ──
+    if not receptor:
+        return jsonify({"error": "Falta el nombre de quien recibe."}), 400
+    if pod["rut_req"]:
+        ok_rut, rut_res = validar_rut(receptor_rut)
+        if not ok_rut:
+            return jsonify({"error": f"RUT del receptor inválido: {rut_res}"}), 400
+        receptor_rut = rut_res
+    else:
+        if receptor_rut:
+            ok_rut, rut_res = validar_rut(receptor_rut)
+            receptor_rut = rut_res if ok_rut else normalizar_rut(receptor_rut)
+        else:
+            receptor_rut = None
+    fotos_validas = [x for x in fotos_in if x and isinstance(x, str)]
+    if pod["fotos_min"] and len(fotos_validas) < pod["fotos_min"]:
+        return jsonify({"error": f"Se requieren al menos {pod['fotos_min']} foto(s)."}), 400
+    if pod["firma_req"] and not firma_data:
+        return jsonify({"error": "Falta la firma del receptor."}), 400
+    # Geocerca (si está activa y hay coords de destino)
+    geocerca_ok = True
+    dist_m = None
+    if pod["geocerca_m"] and item.get("dest_lat") and item.get("dest_lng") and lat and lng:
+        dist_m = _haversine_m(item["dest_lat"], item["dest_lng"], lat, lng)
+        if dist_m is not None and dist_m > pod["geocerca_m"]:
+            geocerca_ok = False
+            if not body.get("forzar_geocerca"):
+                return jsonify({
+                    "error": "geocerca",
+                    "msg": f"Estás a {int(dist_m)} m del destino (máx {pod['geocerca_m']} m). "
+                           f"¿Confirmas que estás en el lugar de entrega?",
+                    "dist_m": int(dist_m),
+                }), 409
+
+    # ── Subir firma + fotos a Cloudinary (fallback data URL) ──
+    firma_url = ""
+    if firma_data:
+        firma_url = _subir_firma_cloudinary(firma_data, item_id,
+                                            f"chofer_receptor_{item_id}") or firma_data
+    fotos_urls = []
+    for idx, raw in enumerate(fotos_validas[:5]):
+        if not raw.startswith("data:") and raw.startswith("http"):
+            fotos_urls.append(raw); continue
+        try:
+            if _CLD_READY and _cloudinary_uploader:
+                pid = f"chofer_entrega_{item_id}_{idx}_{int(time.time())}"
+                res = _cloudinary_uploader.upload(
+                    raw, public_id=pid, folder="ilus/transporte/entregas",
+                    overwrite=True, resource_type="image")
+                fotos_urls.append(res.get("secure_url") or raw)
+            else:
+                fotos_urls.append(raw)
+        except Exception as _eu:
+            print(f"[chofer_entrega] foto {idx}: {_eu}", flush=True)
+            fotos_urls.append(raw)
+
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO transport_delivery_proof
+              (manifest_item_id, commitment_id, receptor_nombre, receptor_rut,
+               receptor_relacion, firma_url, fotos_json, lat, lng, accuracy_m,
+               usuario, notas)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE
+              receptor_nombre=VALUES(receptor_nombre), receptor_rut=VALUES(receptor_rut),
+              receptor_relacion=VALUES(receptor_relacion), firma_url=VALUES(firma_url),
+              fotos_json=VALUES(fotos_json), lat=VALUES(lat), lng=VALUES(lng),
+              accuracy_m=VALUES(accuracy_m), usuario=VALUES(usuario), notas=VALUES(notas),
+              entregado_at=NOW()
+        """, (item_id, commitment_id, receptor, receptor_rut, relacion,
+              firma_url, json.dumps(fotos_urls, ensure_ascii=False),
+              lat, lng, accuracy, f"chofer:{drv['nombre']}", notas))
+        cur.execute(
+            "UPDATE transport_manifest_items SET estado_entrega='Entregado' WHERE id=%s",
+            (item_id,))
+        cur.execute(
+            "UPDATE transport_commitments SET delivered_at=COALESCE(delivered_at,NOW()) WHERE id=%s",
+            (commitment_id,))
+    conn.commit()
+
+    coment = f"Recibido por: {receptor}"
+    if not geocerca_ok and dist_m is not None:
+        coment += f" (a {int(dist_m)} m del destino)"
+    _tr_log("manifest_item", item_id, "entrega por chofer",
+            f"{drv['nombre']} · receptor={receptor} fotos={len(fotos_urls)}")
+    _tr_event(item_id, 'Entregado', fuente='chofer', comentario=coment,
+              lat=lat, lng=lng, commitment_id=commitment_id)
+
+    # ¿Quedan paradas pendientes? Si no, el manifiesto se puede cerrar.
+    pend = mysql_fetchone("""
+        SELECT COUNT(*) AS n FROM transport_manifest_items
+        WHERE manifest_id=%s AND estado_entrega NOT IN ('Entregado','Devolución')
+    """, (mid,)) or {}
+    quedan = int(pend.get("n") or 0)
+    if quedan == 0:
+        mysql_execute(
+            "UPDATE transport_manifest_drivers SET fase='cerrado' WHERE manifest_id=%s",
+            (mid,))
+    return jsonify({"ok": True, "quedan": quedan,
+                    "next": url_for("chofer_ruta", mid=mid)})
 
 
 # ── Admin: gestión de choferes + asignación a manifiestos ────────────────
@@ -19404,36 +19654,61 @@ def chofer_captura_finalizar(mid):
 def tr_choferes():
     """Listado/gestión de choferes (admin transporte)."""
     drivers = mysql_fetchall(
-        "SELECT id, nombre, rut, telefono, patente, activo, last_login_at, created_at "
-        "FROM transport_drivers ORDER BY activo DESC, nombre"
+        "SELECT d.id, d.nombre, d.rut, d.telefono, d.patente, d.activo, "
+        "       d.last_login_at, d.created_at, d.courier_id, "
+        "       co.nombre AS courier_nombre "
+        "FROM transport_drivers d "
+        "LEFT JOIN transport_couriers co ON co.id = d.courier_id "
+        "ORDER BY d.activo DESC, d.nombre"
     ) or []
-    return render_template("transporte/choferes.html", drivers=drivers)
+    couriers = mysql_fetchall(
+        "SELECT id, nombre FROM transport_couriers WHERE activo=1 ORDER BY nombre"
+    ) or []
+    return render_template("transporte/choferes.html", drivers=drivers, couriers=couriers)
 
 
 @app.route("/transporte/choferes/crear", methods=["POST"])
 @_tr_required
 def tr_choferes_crear():
-    """Crea un chofer con RUT + PIN (hasheado)."""
+    """Crea un chofer con RUT + PIN (hasheado) y su transporte (courier)."""
     f = request.form if request.form else (request.get_json(silent=True) or {})
     nombre = (f.get("nombre") or "").strip()
     rut    = normalizar_rut((f.get("rut") or "").strip())
     pin    = (f.get("pin") or "").strip()
     tel    = (f.get("telefono") or "").strip() or None
     patente = (f.get("patente") or "").strip() or None
+    courier_id = f.get("courier_id") or None
+    try:
+        courier_id = int(courier_id) if courier_id else None
+    except (ValueError, TypeError):
+        courier_id = None
     if not nombre or not rut or not pin:
         return jsonify({"error": "nombre, RUT y PIN son obligatorios"}), 400
     if len(pin) < 4 or len(pin) > 8 or not pin.isdigit():
         return jsonify({"error": "El PIN debe ser de 4 a 8 dígitos"}), 400
     try:
         mysql_execute(
-            "INSERT INTO transport_drivers (nombre, rut, pin_hash, telefono, patente, created_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s)",
-            (nombre, rut, generate_password_hash(pin), tel, patente, current_username())
+            "INSERT INTO transport_drivers (nombre, rut, pin_hash, courier_id, telefono, patente, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (nombre, rut, generate_password_hash(pin), courier_id, tel, patente, current_username())
         )
     except Exception as e:
         if "Duplicate" in str(e):
             return jsonify({"error": "Ya existe un chofer con ese RUT"}), 409
         return jsonify({"error": f"No se pudo crear: {str(e)[:120]}"}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/transporte/choferes/<int:did>/courier", methods=["POST"])
+@_tr_required
+def tr_choferes_set_courier(did):
+    """Cambia el transporte (courier) al que pertenece un chofer."""
+    cid = ((request.get_json(silent=True) or request.form) or {}).get("courier_id")
+    try:
+        cid = int(cid) if cid else None
+    except (ValueError, TypeError):
+        cid = None
+    mysql_execute("UPDATE transport_drivers SET courier_id=%s WHERE id=%s", (cid, did))
     return jsonify({"ok": True})
 
 
@@ -19464,10 +19739,24 @@ def tr_asignar_chofer(mid):
     did = ((request.get_json(silent=True) or request.form) or {}).get("driver_id")
     if not did:
         return jsonify({"error": "driver_id requerido"}), 400
-    drv = mysql_fetchone("SELECT id, nombre FROM transport_drivers WHERE id=%s AND activo=1",
-                         (did,))
+    drv = mysql_fetchone(
+        "SELECT d.id, d.nombre, d.courier_id, co.nombre AS courier_nombre "
+        "FROM transport_drivers d LEFT JOIN transport_couriers co ON co.id=d.courier_id "
+        "WHERE d.id=%s AND d.activo=1", (did,))
     if not drv:
         return jsonify({"error": "chofer no encontrado o inactivo"}), 404
+    # Validar que el transporte del chofer coincida con el del manifiesto.
+    man = mysql_fetchone("SELECT courier FROM transport_manifests WHERE id=%s", (mid,))
+    man_courier = (man.get("courier") or "").strip().lower() if man else ""
+    drv_courier = (drv.get("courier_nombre") or "").strip().lower()
+    if drv_courier and man_courier and drv_courier not in man_courier \
+            and man_courier not in drv_courier:
+        return jsonify({
+            "error": "courier_mismatch",
+            "msg": f"{drv['nombre']} pertenece a «{drv['courier_nombre']}», pero este "
+                   f"manifiesto es de «{man.get('courier')}». Asigna un chofer del "
+                   f"transporte correcto."
+        }), 409
     mysql_execute("""
         INSERT INTO transport_manifest_drivers (manifest_id, driver_id, fase, assigned_by)
         VALUES (%s,%s,'asignado',%s)
@@ -54504,6 +54793,10 @@ def _ensure_transport_drivers_table():
 
     El chofer tiene un login propio (separado de los usuarios admin) para la
     app móvil de captura/ruta/entrega. PIN hasheado (nunca plano). Idempotente.
+
+    courier_id (multi-tenant): el chofer pertenece a UN transporte. Solo ve
+    manifiestos de su transporte (un chofer de Milling NO ve manifiestos de
+    Felca o FedEx). Visión Daniel 2026-06-06.
     """
     mysql_execute("""
         CREATE TABLE IF NOT EXISTS transport_drivers (
@@ -54511,6 +54804,7 @@ def _ensure_transport_drivers_table():
             nombre        VARCHAR(160) NOT NULL,
             rut           VARCHAR(20)  NOT NULL,
             pin_hash      VARCHAR(255) NOT NULL,
+            courier_id    INT NULL COMMENT 'Transporte al que pertenece (multi-tenant)',
             telefono      VARCHAR(40)  NULL,
             patente       VARCHAR(20)  NULL COMMENT 'Patente del vehículo (opcional)',
             activo        TINYINT(1)   DEFAULT 1,
@@ -54518,9 +54812,69 @@ def _ensure_transport_drivers_table():
             created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
             last_login_at DATETIME     NULL,
             UNIQUE KEY uq_driver_rut (rut),
-            INDEX idx_driver_activo (activo)
+            INDEX idx_driver_activo (activo),
+            INDEX idx_driver_courier (courier_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
+    # Migración idempotente: courier_id si la tabla ya existía sin la columna.
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_drivers'"
+            ) or [])
+        }
+        if "courier_id" not in existing:
+            mysql_execute("ALTER TABLE transport_drivers ADD COLUMN courier_id INT NULL "
+                          "COMMENT 'Transporte al que pertenece (multi-tenant)'")
+            mysql_execute("ALTER TABLE transport_drivers ADD INDEX idx_driver_courier (courier_id)")
+    except Exception:
+        pass
+    # Config de PRUEBA DE ENTREGA por transporte (estilo DispatchTrack):
+    # cada courier define cuántas fotos exige, si pide firma, RUT y geocerca.
+    pod_cols = {
+        "pod_fotos_min":  "INT DEFAULT 1 COMMENT 'Fotos mínimas en la entrega (0=ninguna)'",
+        "pod_firma_req":  "TINYINT(1) DEFAULT 1 COMMENT 'Exigir firma del receptor'",
+        "pod_rut_req":    "TINYINT(1) DEFAULT 1 COMMENT 'Exigir RUT del receptor'",
+        "pod_geocerca_m": "INT DEFAULT 0 COMMENT 'Radio (m) de geocerca; 0=desactivada'",
+    }
+    try:
+        ec = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_couriers'"
+            ) or [])
+        }
+        for col, ddl in pod_cols.items():
+            if col.lower() not in ec:
+                try:
+                    mysql_execute(f"ALTER TABLE transport_couriers ADD COLUMN {col} {ddl}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # Geocoords destino en commitments (para geocerca + mapa de ruta).
+    try:
+        ecc = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_commitments'"
+            ) or [])
+        }
+        for col, ddl in {
+            "dest_lat": "DECIMAL(10,7) NULL COMMENT 'Lat destino (geocoded)'",
+            "dest_lng": "DECIMAL(10,7) NULL COMMENT 'Lng destino (geocoded)'",
+        }.items():
+            if col.lower() not in ecc:
+                try:
+                    mysql_execute(f"ALTER TABLE transport_commitments ADD COLUMN {col} {ddl}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
     # Asignación chofer ↔ manifiesto (un manifiesto puede asignarse a un chofer).
     # Vive aparte para no tocar el ENUM de estados del manifiesto.
     mysql_execute("""
