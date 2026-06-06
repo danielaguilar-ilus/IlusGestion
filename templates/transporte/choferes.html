@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Choferes — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-person-badge me-2"></i>Choferes</h4>
+      <div class="sub">Gestiona los choferes que usan la app móvil de captura y ruta.</div>
+    </div>
+    <button class="btn btn-sm btn-light" onclick="abrirCrearChofer()">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo chofer
+    </button>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Nombre</th>
+            <th>RUT</th>
+            <th>Transporte</th>
+            <th>Teléfono</th>
+            <th>Patente</th>
+            <th>Últi­mo acceso</th>
+            <th class="text-center">Estado</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in drivers %}
+          <tr>
+            <td class="fw-semibold">{{ d.nombre }}</td>
+            <td class="font-monospace">{{ d.rut | rut_fmt }}</td>
+            <td>
+              <select class="form-select form-select-sm" style="min-width:130px"
+                      onchange="setCourier({{ d.id }}, this.value)">
+                <option value="">— Sin transporte —</option>
+                {% for c in couriers %}
+                <option value="{{ c.id }}" {% if c.id == d.courier_id %}selected{% endif %}>{{ c.nombre }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>{{ d.telefono or '—' }}</td>
+            <td>{{ d.patente or '—' }}</td>
+            <td class="small text-muted">{{ d.last_login_at | chile_fmt if d.last_login_at else 'Nunca' }}</td>
+            <td class="text-center">
+              {% if d.activo %}
+              <span class="badge bg-success-subtle text-success-emphasis">Activo</span>
+              {% else %}
+              <span class="badge bg-secondary-subtle text-secondary-emphasis">Inactivo</span>
+              {% endif %}
+            </td>
+            <td class="text-end text-nowrap">
+              <button class="btn btn-sm btn-outline-secondary" title="Resetear PIN"
+                      onclick="resetPin({{ d.id }}, '{{ d.nombre|e }}')">
+                <i class="bi bi-key"></i>
+              </button>
+              <button class="btn btn-sm {{ 'btn-outline-danger' if d.activo else 'btn-outline-success' }}"
+                      title="{{ 'Desactivar' if d.activo else 'Activar' }}"
+                      onclick="toggleChofer({{ d.id }})">
+                <i class="bi {{ 'bi-pause-circle' if d.activo else 'bi-play-circle' }}"></i>
+              </button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">
+            <i class="bi bi-person-x fs-3 d-block mb-2 opacity-50"></i>
+            Aún no hay choferes. Crea el primero para empezar.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const COURIERS = [{% for c in couriers %}{id:{{ c.id }}, nombre:{{ c.nombre|tojson }}},{% endfor %}];
+async function abrirCrearChofer(){
+  const nombre = await ilusPrompt({ title:'Nuevo chofer', message:'Nombre completo del chofer', placeholder:'Ej: Pedro Soto', required:true });
+  if (!nombre) return;
+  const rut = await ilusPrompt({ title:'RUT del chofer', message:'RUT (con o sin puntos)', placeholder:'12.345.678-9', required:true });
+  if (!rut) return;
+  const pin = await ilusPrompt({ title:'PIN de acceso', message:'PIN numérico de 4 a 8 dígitos (el chofer lo usará para entrar)', placeholder:'1234', required:true });
+  if (!pin) return;
+  // Elegir transporte
+  let courier_id = '';
+  if (COURIERS.length){
+    const lista = COURIERS.map((c,i)=>(i+1)+'. '+c.nombre).join('\n');
+    const sel = await ilusPrompt({ title:'Transporte del chofer',
+      message:'¿A qué transporte pertenece? Escribe el número:\n\n'+lista,
+      placeholder:'Ej: 1', required:false });
+    if (sel){ const idx=parseInt(sel)-1; if (COURIERS[idx]) courier_id = COURIERS[idx].id; }
+  }
+  const tel = await ilusPrompt({ title:'Teléfono (opcional)', message:'Teléfono de contacto', placeholder:'+56 9 ...' });
+  const patente = await ilusPrompt({ title:'Patente (opcional)', message:'Patente del vehículo', placeholder:'ABCD-12' });
+  const r = await fetch('{{ url_for("tr_choferes_crear") }}', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ nombre, rut, pin, courier_id, telefono: tel||'', patente: patente||'' })
+  });
+  const d = await r.json();
+  if (d.ok) { ilusToast('✓ Chofer creado', {type:'success'}); setTimeout(()=>location.reload(), 700); }
+  else ilusToast(d.error || 'No se pudo crear', {type:'error'});
+}
+async function setCourier(id, courierId){
+  const r = await fetch('/transporte/choferes/' + id + '/courier', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ courier_id: courierId })
+  });
+  const d = await r.json();
+  if (d.ok) ilusToast('✓ Transporte actualizado', {type:'success'});
+  else ilusToast(d.error || 'Error', {type:'error'});
+}
+async function resetPin(id, nombre){
+  const pin = await ilusPrompt({ title:'Resetear PIN', message:'Nuevo PIN para ' + nombre + ' (4 a 8 dígitos)', placeholder:'1234', required:true });
+  if (!pin) return;
+  const r = await fetch('/transporte/choferes/' + id + '/pin', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin })
+  });
+  const d = await r.json();
+  if (d.ok) ilusToast('✓ PIN actualizado', {type:'success'});
+  else ilusToast(d.error || 'Error', {type:'error'});
+}
+async function toggleChofer(id){
+  const r = await fetch('/transporte/choferes/' + id + '/toggle', { method:'POST' });
+  const d = await r.json();
+  if (d.ok) location.reload();
+  else ilusToast(d.error || 'Error', {type:'error'});
+}
+</script>
+{% endblock %}

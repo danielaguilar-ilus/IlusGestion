@@ -1,0 +1,375 @@
+{# App del chofer — CAPTURA por escaneo QR. Cámara en vivo + html5-qrcode.
+   El chofer escanea cada etiqueta; cuando completa una factura, se marca
+   "Entregado a transporte" automáticamente. #}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>Capturar · {{ manifiesto.correlativo }} · ILUS</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='ilus-icon.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; --gray:#6b7280; --ok:#16a34a; }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:#f4f4f5; color:var(--ilus-black); min-height:100vh;
+      padding-bottom:max(7rem,calc(env(safe-area-inset-bottom) + 6rem));
+      -webkit-font-smoothing:antialiased;
+    }
+    .cap-top{
+      background:var(--ilus-black); color:#fff;
+      padding:max(.8rem,env(safe-area-inset-top)) 1rem .8rem;
+      display:flex; align-items:center; gap:.8rem;
+      position:sticky; top:0; z-index:20;
+    }
+    .cap-back{ color:#fff; font-size:1.5rem; text-decoration:none; }
+    .cap-top-t{ font-family:monospace; font-weight:800; font-size:1rem; }
+    .cap-top-s{ font-size:.72rem; color:#9ca3af; }
+    .cap-wrap{ max-width:640px; margin:0 auto; padding:1rem; }
+
+    /* Progreso global sticky */
+    .cap-prog-card{
+      background:#fff; border:1px solid #e5e7eb; border-radius:16px;
+      padding:1rem 1.15rem; margin-bottom:1rem; box-shadow:0 1px 3px rgba(0,0,0,.05);
+    }
+    .cap-prog-top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:.6rem; }
+    .cap-prog-big{ font-size:1.8rem; font-weight:900; color:var(--ilus-black); line-height:1; }
+    .cap-prog-big small{ font-size:1rem; color:var(--gray); font-weight:600; }
+    .cap-prog-lbl{ font-size:.74rem; color:var(--gray); text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
+    .cap-prog-bar{ height:12px; background:#f3f4f6; border-radius:50px; overflow:hidden; }
+    .cap-prog-fill{ height:100%; background:linear-gradient(90deg,var(--ilus-red),#fb923c); border-radius:50px; transition:width .4s cubic-bezier(.34,1.56,.64,1); }
+
+    /* Scanner */
+    .cap-scan{
+      background:#000; border-radius:18px; overflow:hidden;
+      position:relative; margin-bottom:1rem;
+      aspect-ratio:1/1; max-height:340px;
+    }
+    #reader{ width:100%; height:100%; }
+    #reader video{ object-fit:cover !important; }
+    .cap-scan-hint{
+      position:absolute; bottom:0; left:0; right:0;
+      background:linear-gradient(transparent, rgba(0,0,0,.8));
+      color:#fff; padding:1.5rem 1rem .9rem; text-align:center;
+      font-size:.85rem; pointer-events:none;
+    }
+    .cap-scan-off{
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      height:100%; color:#9ca3af; gap:1rem; text-align:center; padding:1.5rem;
+    }
+    .cap-scan-off i{ font-size:3rem; }
+    .cap-start-btn{
+      background:var(--ilus-red); color:#fff; border:none; padding:.85rem 1.6rem;
+      border-radius:12px; font-weight:800; font-size:1rem; cursor:pointer; min-height:50px;
+      display:inline-flex; align-items:center; gap:.5rem;
+    }
+
+    /* Manual input fallback */
+    .cap-manual{ display:flex; gap:.5rem; margin-bottom:1rem; }
+    .cap-manual input{
+      flex:1; padding:.8rem 1rem; font-size:16px; border:1.5px solid #d1d5db;
+      border-radius:12px; min-height:50px; text-transform:uppercase;
+    }
+    .cap-manual input:focus{ outline:none; border-color:var(--ilus-red); box-shadow:0 0 0 3px rgba(220,38,38,.15); }
+    .cap-manual button{
+      background:var(--ilus-black); color:#fff; border:none; padding:0 1.2rem; border-radius:12px;
+      font-weight:700; cursor:pointer; min-height:50px;
+    }
+
+    /* Lista de facturas */
+    .cap-h3{ font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.6px;
+             color:var(--gray); margin:1.2rem 0 .8rem; }
+    .cap-fac{
+      background:#fff; border:1px solid #e5e7eb; border-radius:13px;
+      padding:.85rem 1rem; margin-bottom:.7rem;
+      display:flex; align-items:center; gap:.8rem;
+      transition:border-color .2s, background .2s;
+    }
+    .cap-fac.done{ border-color:#bbf7d0; background:#f0fdf4; }
+    .cap-fac-ico{
+      width:38px; height:38px; border-radius:10px; flex-shrink:0;
+      display:flex; align-items:center; justify-content:center; font-size:1.1rem;
+      background:#f3f4f6; color:var(--gray);
+    }
+    .cap-fac.done .cap-fac-ico{ background:var(--ok); color:#fff; }
+    .cap-fac-body{ flex:1; min-width:0; }
+    .cap-fac-cli{ font-weight:700; font-size:.92rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .cap-fac-doc{ font-size:.75rem; color:var(--gray); font-family:monospace; }
+    .cap-fac-cnt{ font-weight:800; font-size:.95rem; white-space:nowrap; }
+    .cap-fac-cnt small{ color:var(--gray); font-weight:600; }
+
+    /* Footer fijo: finalizar */
+    .cap-foot{
+      position:fixed; bottom:0; left:0; right:0; z-index:25;
+      background:rgba(255,255,255,.96); backdrop-filter:blur(8px);
+      border-top:1px solid #e5e7eb;
+      padding:.9rem 1rem max(.9rem,env(safe-area-inset-bottom));
+    }
+    .cap-foot-inner{ max-width:640px; margin:0 auto; }
+    .cap-finalizar{
+      width:100%; background:var(--ok); color:#fff; border:none; padding:1rem;
+      border-radius:14px; font-weight:800; font-size:1.05rem; cursor:pointer; min-height:54px;
+      display:flex; align-items:center; justify-content:center; gap:.5rem;
+      box-shadow:0 10px 30px -10px rgba(22,163,74,.6);
+    }
+    .cap-finalizar:disabled{ background:#d1d5db; color:#9ca3af; box-shadow:none; cursor:not-allowed; }
+
+    /* Toast de scan */
+    .cap-toast{
+      position:fixed; top:max(4.5rem,calc(env(safe-area-inset-top) + 3.8rem)); left:50%;
+      transform:translateX(-50%) translateY(-20px);
+      background:var(--ilus-black); color:#fff; padding:.8rem 1.3rem; border-radius:14px;
+      font-weight:700; font-size:.95rem; z-index:50; opacity:0; pointer-events:none;
+      transition:opacity .25s, transform .25s; box-shadow:0 12px 30px -10px rgba(0,0,0,.5);
+      display:flex; align-items:center; gap:.6rem; max-width:90vw;
+    }
+    .cap-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+    .cap-toast.ok{ background:var(--ok); }
+    .cap-toast.warn{ background:#f59e0b; }
+    .cap-toast.err{ background:var(--ilus-red); }
+    .cap-toast i{ font-size:1.3rem; }
+  </style>
+</head>
+<body>
+  <div class="cap-top">
+    <a class="cap-back" href="{{ url_for('chofer_home') }}"><i class="bi bi-chevron-left"></i></a>
+    <div>
+      <div class="cap-top-t">{{ manifiesto.correlativo or ('M-' ~ manifiesto.id) }}</div>
+      <div class="cap-top-s">{{ manifiesto.courier or 'Captura de bultos' }}</div>
+    </div>
+  </div>
+
+  <div class="cap-wrap">
+
+    {# Progreso global #}
+    <div class="cap-prog-card">
+      <div class="cap-prog-top">
+        <div>
+          <div class="cap-prog-lbl">Bultos capturados</div>
+          <div class="cap-prog-big"><span id="capN">{{ total_capturados }}</span><small>/{{ total_bultos }}</small></div>
+        </div>
+        {% set fac_done = facturas|selectattr('capturados','equalto',0)|list %}
+        {% set total_completas = namespace(n=0) %}
+        {% for f in facturas %}{% if f.total_bultos|int > 0 and f.capturados|int >= f.total_bultos|int %}{% set total_completas.n = total_completas.n + 1 %}{% endif %}{% endfor %}
+        <div style="text-align:right">
+          <div class="cap-prog-lbl">Facturas</div>
+          <div class="cap-prog-big" style="font-size:1.3rem"><span id="facDone">{{ total_completas.n }}</span><small>/{{ facturas|length }}</small></div>
+        </div>
+      </div>
+      <div class="cap-prog-bar">
+        <div class="cap-prog-fill" id="progFill"
+             style="width:{{ ((total_capturados / total_bultos) * 100) if total_bultos else 0 }}%"></div>
+      </div>
+    </div>
+
+    {# Scanner de cámara #}
+    <div class="cap-scan" id="scanBox">
+      <div class="cap-scan-off" id="scanOff">
+        <i class="bi bi-upc-scan"></i>
+        <div>Toca para activar la cámara y escanear los códigos QR de las etiquetas</div>
+        <button class="cap-start-btn" onclick="startScanner()"><i class="bi bi-camera-fill"></i>Activar cámara</button>
+      </div>
+      <div id="reader" style="display:none"></div>
+      <div class="cap-scan-hint" id="scanHint" style="display:none">Apunta al código QR de la etiqueta</div>
+    </div>
+
+    {# Entrada manual (fallback si la cámara falla) #}
+    <div class="cap-manual">
+      <input id="manualCode" type="text" placeholder="Código manual (ej: L3f9a2c71)"
+             autocomplete="off" onkeydown="if(event.key==='Enter') enviarManual()">
+      <button onclick="enviarManual()"><i class="bi bi-check-lg"></i></button>
+    </div>
+
+    {# Lista de facturas con progreso #}
+    <div class="cap-h3"><i class="bi bi-receipt me-1"></i>Facturas del manifiesto</div>
+    <div id="facList">
+      {% for f in facturas %}
+      {% set done = (f.capturados|int >= f.total_bultos|int and f.total_bultos|int > 0) %}
+      <div class="cap-fac {{ 'done' if done }}" id="fac-{{ f.commitment_id }}"
+           data-total="{{ f.total_bultos }}">
+        <div class="cap-fac-ico"><i class="bi {{ 'bi-check-lg' if done else 'bi-box' }}"></i></div>
+        <div class="cap-fac-body">
+          <div class="cap-fac-cli">{{ f.cliente_nombre or '—' }}</div>
+          <div class="cap-fac-doc">{{ f.tido }} {{ f.nudo }}{% if f.comuna %} · {{ f.comuna }}{% endif %}</div>
+        </div>
+        <div class="cap-fac-cnt"><span id="faccnt-{{ f.commitment_id }}">{{ f.capturados or 0 }}</span><small>/{{ f.total_bultos }}</small></div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Footer fijo: finalizar captura #}
+  <div class="cap-foot">
+    <div class="cap-foot-inner">
+      <button class="cap-finalizar" id="btnFinalizar" onclick="finalizarCaptura()">
+        <i class="bi bi-flag-fill"></i>
+        Finalizar captura y pasar a ruta
+      </button>
+    </div>
+  </div>
+
+  {# Toast #}
+  <div class="cap-toast" id="capToast"><i class="bi bi-check-circle-fill"></i><span id="capToastTxt"></span></div>
+
+  <audio id="beepOk" preload="auto" src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="></audio>
+
+  <script>
+    const MID = {{ manifiesto.id }};
+    const SCAN_URL = "{{ url_for('chofer_captura_scan', mid=manifiesto.id) }}";
+    const FINAL_URL = "{{ url_for('chofer_captura_finalizar', mid=manifiesto.id) }}";
+    const TOTAL_BULTOS = {{ total_bultos }};
+    let html5Qr = null;
+    let _busy = false;
+    let _lastScan = { code:'', ts:0 };
+
+    function toast(msg, type){
+      const t = document.getElementById('capToast');
+      const ic = t.querySelector('i');
+      t.className = 'cap-toast show ' + (type||'ok');
+      const icons = { ok:'bi-check-circle-fill', warn:'bi-exclamation-triangle-fill', err:'bi-x-circle-fill' };
+      ic.className = 'bi ' + (icons[type||'ok']);
+      document.getElementById('capToastTxt').textContent = msg;
+      clearTimeout(window._toastTm);
+      window._toastTm = setTimeout(function(){ t.classList.remove('show'); }, 2200);
+    }
+
+    function vibrate(ms){ if (navigator.vibrate) try{ navigator.vibrate(ms); }catch(e){} }
+    function beep(){ try{ document.getElementById('beepOk').play(); }catch(e){} }
+
+    async function procesarCodigo(code){
+      code = (code||'').trim().toUpperCase();
+      if (!code) return;
+      // Anti-doble-scan: ignora el mismo código en menos de 2.5s
+      const now = Date.now();
+      if (code === _lastScan.code && (now - _lastScan.ts) < 2500) return;
+      _lastScan = { code:code, ts:now };
+      if (_busy) return;
+      _busy = true;
+      try {
+        const r = await fetch(SCAN_URL, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ code: code })
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          vibrate([60,40,60]);
+          toast(d.msg || 'Código no válido', 'err');
+          _busy = false; return;
+        }
+        if (d.ya_capturado) {
+          toast('Bulto ' + d.bulto + ' ya estaba capturado', 'warn');
+          vibrate(40);
+        } else {
+          beep(); vibrate(60);
+          toast('✓ Bulto ' + d.bulto + ' capturado', 'ok');
+        }
+        // Actualizar progreso global
+        if (d.global_prog) {
+          document.getElementById('capN').textContent = d.global_prog.cap;
+          const pct = d.global_prog.total ? (d.global_prog.cap / d.global_prog.total * 100) : 0;
+          document.getElementById('progFill').style.width = pct + '%';
+        }
+        // Actualizar el contador exacto de la factura escaneada (sin recargar)
+        if (d.commitment_id && d.factura_prog) {
+          const cntEl = document.getElementById('faccnt-' + d.commitment_id);
+          if (cntEl) cntEl.textContent = d.factura_prog.cap;
+          const facEl = document.getElementById('fac-' + d.commitment_id);
+          if (facEl && d.factura_completa) {
+            facEl.classList.add('done');
+            const ico = facEl.querySelector('.cap-fac-ico i');
+            if (ico) ico.className = 'bi bi-check-lg';
+            _recalcFacDone();
+          }
+        }
+        if (d.factura_completa && d.factura_doc) {
+          toast('✓ Factura ' + d.factura_doc + ' completa → en transporte', 'ok');
+          vibrate([80,40,80]);
+        }
+      } catch(e) {
+        toast('Error de conexión', 'err');
+      }
+      _busy = false;
+    }
+
+    // Recuenta facturas completas (las que tienen clase .done) y actualiza el header
+    function _recalcFacDone(){
+      const done = document.querySelectorAll('.cap-fac.done').length;
+      const el = document.getElementById('facDone');
+      if (el) el.textContent = done;
+    }
+
+    function enviarManual(){
+      const inp = document.getElementById('manualCode');
+      const v = inp.value.trim();
+      if (v) { procesarCodigo(v); inp.value=''; inp.focus(); }
+    }
+
+    function startScanner(){
+      const off = document.getElementById('scanOff');
+      const reader = document.getElementById('reader');
+      const hint = document.getElementById('scanHint');
+      off.style.display = 'none';
+      reader.style.display = 'block';
+      hint.style.display = 'block';
+      html5Qr = new Html5Qrcode('reader', { verbose:false });
+      html5Qr.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        function(decodedText){ procesarCodigo(decodedText); },
+        function(err){ /* ignore per-frame errors */ }
+      ).catch(function(e){
+        off.style.display = 'flex';
+        reader.style.display = 'none';
+        hint.style.display = 'none';
+        toast('No se pudo abrir la cámara. Usa el código manual.', 'warn');
+      });
+    }
+
+    async function finalizarCaptura(){
+      const btn = document.getElementById('btnFinalizar');
+      btn.disabled = true;
+      try {
+        const r = await fetch(FINAL_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+        const d = await r.json();
+        if (d.ok) {
+          if (html5Qr) try{ html5Qr.stop(); }catch(e){}
+          toast('✓ Captura finalizada', 'ok');
+          setTimeout(function(){ window.location.href = d.next || "{{ url_for('chofer_home') }}"; }, 900);
+        } else {
+          btn.disabled = false;
+          toast(d.error || 'No se pudo finalizar', 'err');
+        }
+      } catch(e) { btn.disabled = false; toast('Error de conexión', 'err'); }
+    }
+
+    // Auto-activar cámara si hay permiso previo
+    document.addEventListener('DOMContentLoaded', function(){
+      // No auto-start para no pedir permiso sin gesto del usuario en algunos browsers.
+    });
+
+    // ── PING GPS silencioso cada 30s ──
+    (function(){
+      if (!navigator.geolocation) return;
+      let _bat = null;
+      if (navigator.getBattery) navigator.getBattery().then(b => { _bat = Math.round(b.level * 100); }).catch(()=>{});
+      function _ping(){
+        navigator.geolocation.getCurrentPosition(function(pos){
+          fetch('/chofer/ping', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ lat:pos.coords.latitude, lng:pos.coords.longitude,
+              accuracy_m:pos.coords.accuracy,
+              speed_kmh: pos.coords.speed ? Math.round(pos.coords.speed*3.6*10)/10 : null,
+              heading_deg: pos.coords.heading, battery_pct: _bat, manifest_id: MID }),
+            keepalive:true }).catch(()=>{});
+        }, function(){}, { enableHighAccuracy:true, timeout:8000, maximumAge:5000 });
+      }
+      _ping();
+      setInterval(function(){ if (!document.hidden) _ping(); }, 30000);
+    })();
+  </script>
+</body>
+</html>

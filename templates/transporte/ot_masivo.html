@@ -1,0 +1,643 @@
+{% extends "base.html" %}
+{% block title %}Carga masiva de OT FedEx — Transporte ILUS{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* ── Paleta ILUS ───────────────────────────────────────────────── */
+  :root{
+    --otm-red:    #dc2626;
+    --otm-black:  #0a0a0a;
+    --otm-bg:     #f8f9fa;
+    --otm-gray:   #6b7280;
+  }
+  .otm-wrap{max-width:1180px;margin:0 auto}
+  .otm-card{
+    background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+    padding:1.25rem;box-shadow:0 1px 3px rgba(10,10,10,.04);
+  }
+  .otm-card + .otm-card{margin-top:1rem}
+  .otm-card h5{margin:0 0 .25rem 0;font-weight:700;color:var(--otm-black)}
+  .otm-card .otm-sub{color:var(--otm-gray);font-size:.85rem;margin-bottom:1rem}
+
+  /* ── Botones ILUS ─────────────────────────────────────────────── */
+  .otm-btn-primary{
+    background:var(--otm-red);color:#fff;border:none;
+    padding:.6rem 1.1rem;border-radius:10px;font-weight:600;
+    min-height:44px;display:inline-flex;align-items:center;gap:.5rem;
+    transition:transform .08s, box-shadow .15s;
+  }
+  .otm-btn-primary:hover{
+    background:#b91c1c;color:#fff;
+    box-shadow:0 4px 12px rgba(220,38,38,.25);
+  }
+  .otm-btn-primary:disabled{
+    background:#fca5a5;cursor:not-allowed;box-shadow:none;
+  }
+  .otm-btn-secondary{
+    background:#fff;color:var(--otm-black);
+    border:1px solid #d1d5db;
+    padding:.6rem 1.1rem;border-radius:10px;font-weight:600;
+    min-height:44px;display:inline-flex;align-items:center;gap:.5rem;
+  }
+  .otm-btn-secondary:hover{background:#f3f4f6}
+  .otm-btn-dark{
+    background:var(--otm-black);color:#fff;border:none;
+    padding:.6rem 1.1rem;border-radius:10px;font-weight:600;
+    min-height:44px;display:inline-flex;align-items:center;gap:.5rem;
+  }
+  .otm-btn-dark:hover{background:#222;color:#fff}
+
+  /* ── Drag & drop ──────────────────────────────────────────────── */
+  .otm-drop{
+    border:2px dashed #d1d5db;border-radius:14px;padding:2rem 1rem;
+    text-align:center;background:#fff;cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  .otm-drop:hover{border-color:var(--otm-red);background:#fff5f5}
+  .otm-drop.dragover{
+    border-color:var(--otm-red);background:#fee2e2;
+  }
+  .otm-drop-icon{font-size:2.5rem;color:var(--otm-red);display:block}
+  .otm-drop-text{font-weight:600;color:var(--otm-black);margin-top:.5rem}
+  .otm-drop-sub{color:var(--otm-gray);font-size:.85rem;margin-top:.25rem}
+
+  /* ── Resumen de chips ─────────────────────────────────────────── */
+  .otm-chips{display:flex;flex-wrap:wrap;gap:.5rem;margin:.75rem 0}
+  .otm-chip{
+    display:inline-flex;align-items:center;gap:.4rem;
+    padding:.35rem .75rem;border-radius:999px;font-size:.85rem;
+    font-weight:600;border:1px solid transparent;
+  }
+  .otm-chip-count{
+    background:rgba(255,255,255,.5);padding:.05rem .45rem;
+    border-radius:999px;font-size:.8rem;
+  }
+  .otm-chip.c-ok_nuevo     {background:#dcfce7;color:#15803d;border-color:#bbf7d0}
+  .otm-chip.c-ok_re_envio  {background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+  .otm-chip.c-ya_existe    {background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+  .otm-chip.c-no_encontrada{background:#fef3c7;color:#92400e;border-color:#fde68a}
+  .otm-chip.c-ot_duplicada {background:#fee2e2;color:#991b1b;border-color:#fecaca}
+  .otm-chip.c-invalido     {background:#fee2e2;color:#991b1b;border-color:#fecaca}
+  .otm-chip.c-total        {background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+
+  /* ── Tabla de filas ───────────────────────────────────────────── */
+  .otm-table-wrap{overflow-x:auto;margin-top:.5rem;border-radius:10px}
+  .otm-table{width:100%;border-collapse:collapse;font-size:.85rem;background:#fff}
+  .otm-table th{
+    background:var(--otm-black);color:#fff;text-align:left;
+    padding:.55rem .65rem;font-size:.78rem;font-weight:600;
+    text-transform:uppercase;letter-spacing:.02em;position:sticky;top:0;
+  }
+  .otm-table td{padding:.55rem .65rem;border-bottom:1px solid #f3f4f6;vertical-align:top}
+  .otm-table tr.r-ok_nuevo     {background:#f0fdf4}
+  .otm-table tr.r-ok_re_envio  {background:#eff6ff}
+  .otm-table tr.r-ya_existe    {background:#f9fafb;color:#6b7280}
+  .otm-table tr.r-no_encontrada{background:#fffbeb}
+  .otm-table tr.r-ot_duplicada {background:#fef2f2}
+  .otm-table tr.r-invalido     {background:#fef2f2}
+
+  .otm-badge{
+    display:inline-block;padding:.18rem .55rem;border-radius:999px;
+    font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.02em;
+  }
+  .otm-badge.b-ok_nuevo     {background:#16a34a;color:#fff}
+  .otm-badge.b-ok_re_envio  {background:#3b82f6;color:#fff}
+  .otm-badge.b-ya_existe    {background:#6b7280;color:#fff}
+  .otm-badge.b-no_encontrada{background:#f59e0b;color:#000}
+  .otm-badge.b-ot_duplicada {background:#dc2626;color:#fff}
+  .otm-badge.b-invalido     {background:#dc2626;color:#fff}
+
+  .otm-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem}
+  .otm-msg-cell{font-size:.78rem;color:var(--otm-gray);max-width:340px}
+  .otm-ot-anterior{color:#991b1b;font-size:.7rem;display:block;margin-top:.2rem}
+
+  .otm-actions{
+    display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;
+    margin-top:1rem;padding-top:1rem;border-top:1px solid #e5e7eb;
+  }
+  .otm-reenvio-box{
+    background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;
+    padding:.75rem 1rem;font-size:.85rem;display:flex;align-items:center;
+    gap:.6rem;flex:1 1 auto;min-width:240px;
+  }
+  .otm-reenvio-box input[type=checkbox]{
+    width:1.15rem;height:1.15rem;accent-color:var(--otm-red);flex-shrink:0;
+  }
+  .otm-reenvio-box label{cursor:pointer;line-height:1.3}
+
+  /* ── Spinner inline ───────────────────────────────────────────── */
+  .otm-spin{
+    display:inline-block;width:1rem;height:1rem;border:2px solid #fff;
+    border-top-color:transparent;border-radius:50%;
+    animation:otmspin .6s linear infinite;
+  }
+  @keyframes otmspin{to{transform:rotate(360deg)}}
+
+  /* ── Mobile-first responsivo ──────────────────────────────────── */
+  @media (max-width:640px){
+    .otm-card{padding:1rem;border-radius:10px}
+    .otm-drop{padding:1.5rem 1rem}
+    .otm-drop-icon{font-size:2rem}
+    .otm-chip{font-size:.78rem;padding:.3rem .6rem}
+    .otm-table{font-size:.78rem}
+    .otm-table th,.otm-table td{padding:.45rem .5rem}
+    .otm-msg-cell{max-width:200px}
+    .otm-actions{flex-direction:column;align-items:stretch}
+    .otm-btn-primary,.otm-btn-secondary,.otm-btn-dark{
+      width:100%;justify-content:center;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="otm-wrap">
+
+  {# ── Cabecera ────────────────────────────────────────────────── #}
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h4 class="mb-0" style="font-weight:700;color:#0a0a0a">
+        <i class="bi bi-upload me-2" style="color:#dc2626"></i>Carga masiva de OT FedEx
+      </h4>
+      <div class="text-muted small">
+        Vincula múltiples nº de tracking a sus facturas correspondientes.
+      </div>
+    </div>
+    <a href="{{ url_for('transporte_index') }}" class="otm-btn-secondary">
+      <i class="bi bi-arrow-left"></i>Monitor
+    </a>
+  </div>
+
+  {# ── PASO 1 — Descargar plantilla + subir archivo ─────────────── #}
+  <div class="otm-card">
+    <h5><i class="bi bi-1-circle me-1" style="color:#dc2626"></i>Empieza con la plantilla</h5>
+    <div class="otm-sub">
+      Descarga el Excel modelo, copia tus datos y súbelo. Columnas esperadas:
+      <strong>N° Factura</strong>, <strong>Tipo</strong> (opcional),
+      <strong>N° Tracking FedEx</strong> y <strong>Observación</strong> (opcional).
+    </div>
+
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <a href="{{ url_for('tr_ot_masivo_plantilla') }}" class="otm-btn-dark">
+        <i class="bi bi-file-earmark-excel"></i>Descargar plantilla Excel
+      </a>
+    </div>
+
+    <div id="dropZone" class="otm-drop" tabindex="0" role="button"
+         aria-label="Arrastra el archivo aquí o haz click para seleccionar">
+      <i class="bi bi-cloud-upload otm-drop-icon"></i>
+      <div class="otm-drop-text">Arrastra tu Excel aquí o haz click para seleccionar</div>
+      <div class="otm-drop-sub">Formatos: .xlsx · Tamaño máximo recomendado: 5 MB</div>
+      <input type="file" id="fileInput" accept=".xlsx"
+             style="display:none" aria-hidden="true">
+    </div>
+
+    <div id="fileStatus" class="mt-2" style="display:none">
+      <div class="d-flex align-items-center gap-2 small">
+        <i class="bi bi-file-earmark-spreadsheet" style="color:#16a34a"></i>
+        <strong id="fileName">—</strong>
+        <button type="button" id="btnClearFile"
+                class="btn btn-sm btn-link p-0 text-muted" title="Quitar archivo">
+          <i class="bi bi-x-circle"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ── PASO 2 — Resultado del preview (se rellena via JS) ────────── #}
+  <div id="previewCard" class="otm-card" style="display:none">
+    <h5><i class="bi bi-2-circle me-1" style="color:#dc2626"></i>Vista previa del análisis</h5>
+    <div class="otm-sub">
+      Revisa cada fila antes de aplicar. Las filas en rojo o ámbar requieren
+      atención. Sólo las verdes (y azules confirmadas) se aplicarán.
+    </div>
+
+    <div id="resumenChips" class="otm-chips"></div>
+
+    <div class="otm-table-wrap">
+      <table class="otm-table" id="filasTable">
+        <thead>
+          <tr>
+            <th style="width:48px">Fila</th>
+            <th>Factura</th>
+            <th>Tipo</th>
+            <th>Tracking FedEx</th>
+            <th>Cliente</th>
+            <th>Estado</th>
+            <th>Observación / Aviso</th>
+          </tr>
+        </thead>
+        <tbody id="filasBody"></tbody>
+      </table>
+    </div>
+
+    <div class="otm-actions">
+      <div id="reenvioBox" class="otm-reenvio-box" style="display:none">
+        <input type="checkbox" id="confirmReEnvio">
+        <label for="confirmReEnvio">
+          <strong>Sí, son re-envíos legítimos.</strong>
+          Sobrescribir las OT anteriores en las facturas marcadas en azul.
+        </label>
+      </div>
+      <div class="d-flex gap-2 ms-auto">
+        <button type="button" class="otm-btn-secondary" id="btnCancelarPreview">
+          <i class="bi bi-arrow-counterclockwise"></i>Empezar de nuevo
+        </button>
+        <button type="button" class="otm-btn-primary" id="btnAplicar" disabled>
+          <i class="bi bi-check2-circle"></i>
+          <span id="btnAplicarTxt">Aplicar</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ── PASO 3 — Resultado final ─────────────────────────────────── #}
+  <div id="resultCard" class="otm-card" style="display:none">
+    <h5><i class="bi bi-3-circle me-1" style="color:#dc2626"></i>Resultado</h5>
+    <div id="resultBody" class="small"></div>
+    <div class="otm-actions">
+      <button type="button" class="otm-btn-primary" id="btnNuevaCarga">
+        <i class="bi bi-arrow-clockwise"></i>Cargar otro archivo
+      </button>
+      <a href="{{ url_for('transporte_index') }}" class="otm-btn-secondary">
+        <i class="bi bi-list-task"></i>Volver al monitor
+      </a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  'use strict';
+
+  // ── Estado global del wizard ─────────────────────────────────────
+  let filasPreview = [];   // array que vino del /preview
+  let resumenPreview = {}; // resumen del /preview
+
+  // ── Util: leer cookie CSRF si existe (Flask-WTF no la usa acá, pero
+  // por consistencia con otros endpoints) ──
+  function _csrf() {
+    const m = document.cookie.match(/(?:^|; )csrf_token=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  // ── Estado labels (para la UI). NO se ven los códigos crudos. ─────
+  const STATUS_INFO = {
+    'ok_nuevo':      { label:'Listo',         color:'success', icon:'bi-check-circle-fill' },
+    'ok_re_envio':   { label:'Re-envío',      color:'primary', icon:'bi-arrow-repeat' },
+    'ya_existe':     { label:'Idéntica',      color:'secondary', icon:'bi-dash-circle' },
+    'no_encontrada': { label:'No encontrada', color:'warning', icon:'bi-question-circle-fill' },
+    'ot_duplicada':  { label:'OT duplicada',  color:'danger', icon:'bi-exclamation-triangle-fill' },
+    'invalido':      { label:'Inválido',      color:'danger', icon:'bi-exclamation-octagon-fill' },
+  };
+  const CHIP_ORDER = [
+    ['ok_nuevo','Listas para asignar'],
+    ['ok_re_envio','Re-envíos detectados'],
+    ['ya_existe','Idénticas (se omiten)'],
+    ['no_encontrada','Facturas no encontradas'],
+    ['ot_duplicada','OT duplicadas'],
+    ['invalido','Inválidas'],
+  ];
+
+  // ── DOM refs ─────────────────────────────────────────────────────
+  const dropZone   = document.getElementById('dropZone');
+  const fileInput  = document.getElementById('fileInput');
+  const fileStatus = document.getElementById('fileStatus');
+  const fileName   = document.getElementById('fileName');
+  const btnClearFile = document.getElementById('btnClearFile');
+
+  const previewCard  = document.getElementById('previewCard');
+  const resumenChips = document.getElementById('resumenChips');
+  const filasBody    = document.getElementById('filasBody');
+  const reenvioBox   = document.getElementById('reenvioBox');
+  const confirmReEnvio = document.getElementById('confirmReEnvio');
+  const btnAplicar   = document.getElementById('btnAplicar');
+  const btnAplicarTxt= document.getElementById('btnAplicarTxt');
+  const btnCancelar  = document.getElementById('btnCancelarPreview');
+
+  const resultCard   = document.getElementById('resultCard');
+  const resultBody   = document.getElementById('resultBody');
+  const btnNuevaCarga = document.getElementById('btnNuevaCarga');
+
+  // ── Util: helper para escapar HTML al insertar valores del backend ─
+  function esc(s) {
+    if (s === undefined || s === null) return '';
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // Subida del archivo: drag-drop + click
+  // ──────────────────────────────────────────────────────────────────
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+  ['dragenter','dragover'].forEach(ev => {
+    dropZone.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      dropZone.classList.add('dragover');
+    });
+  });
+  ['dragleave','drop'].forEach(ev => {
+    dropZone.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      dropZone.classList.remove('dragover');
+    });
+  });
+  dropZone.addEventListener('drop', (e) => {
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) handleFile(files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files && fileInput.files.length) handleFile(fileInput.files[0]);
+  });
+  btnClearFile.addEventListener('click', resetAll);
+
+  async function handleFile(file) {
+    if (!file) return;
+    const name = (file.name || '').toLowerCase();
+    if (!name.endsWith('.xlsx')) {
+      await ilusAlert({
+        title:'Formato no soportado',
+        message:'Por ahora sólo aceptamos archivos .xlsx (Excel moderno).',
+        sub:'Convertí el archivo desde Google Sheets o Excel y volvé a subirlo.',
+        type:'warning',
+      });
+      return;
+    }
+    fileName.textContent = file.name + ' · ' + Math.round((file.size||0)/1024) + ' KB';
+    fileStatus.style.display = '';
+    await doPreview(file);
+  }
+
+  async function doPreview(file) {
+    // mensajes durante el upload
+    ilusToast('Analizando archivo…', { type:'info' });
+    const fd = new FormData();
+    fd.append('archivo', file);
+    let resp, data;
+    try {
+      resp = await fetch('{{ url_for("tr_ot_masivo_preview") }}', {
+        method:'POST', body:fd, credentials:'same-origin',
+        headers: { 'X-CSRF-Token': _csrf() },
+      });
+      data = await resp.json();
+    } catch (e) {
+      await ilusAlert({
+        title:'No se pudo procesar',
+        message:'El servidor no respondió correctamente.',
+        sub: esc(String(e).slice(0,180)),
+        type:'error',
+      });
+      return;
+    }
+    if (!resp.ok || !data.ok) {
+      await ilusAlert({
+        title:'Error analizando el archivo',
+        message: esc(data.error || ('HTTP '+resp.status)),
+        type:'error',
+      });
+      return;
+    }
+    filasPreview = data.filas || [];
+    resumenPreview = data.resumen || {};
+    renderPreview();
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // Render del preview
+  // ──────────────────────────────────────────────────────────────────
+  function renderPreview() {
+    // Chips de resumen
+    const r = resumenPreview || {};
+    const chips = [];
+    chips.push(`<span class="otm-chip c-total">
+        <i class="bi bi-list-ul"></i>Total
+        <span class="otm-chip-count">${r.total || 0}</span></span>`);
+    CHIP_ORDER.forEach(([key, label]) => {
+      const n = r[key] || 0;
+      if (n > 0) {
+        chips.push(`<span class="otm-chip c-${key}">
+            ${label}<span class="otm-chip-count">${n}</span></span>`);
+      }
+    });
+    resumenChips.innerHTML = chips.join('');
+
+    // Filas
+    const rows = (filasPreview || []).map(f => {
+      const info = STATUS_INFO[f.status] || { label:f.status, icon:'bi-circle' };
+      let msg = esc(f.msg || '');
+      if (f.status === 'ok_re_envio' && f.ot_anterior) {
+        msg += `<span class="otm-ot-anterior">OT anterior: <code>${esc(f.ot_anterior)}</code></span>`;
+      }
+      return `<tr class="r-${f.status}" data-row="${esc(f.row)}">
+        <td class="otm-mono">${esc(f.row)}</td>
+        <td class="otm-mono"><strong>${esc(f.factura||'—')}</strong></td>
+        <td class="otm-mono">${esc(f.tido||'')}</td>
+        <td class="otm-mono">${esc(f.ot||'—')}</td>
+        <td>${esc(f.cliente||'—')}</td>
+        <td><span class="otm-badge b-${f.status}">
+            <i class="bi ${info.icon}"></i> ${esc(info.label)}</span></td>
+        <td class="otm-msg-cell">${msg}</td>
+      </tr>`;
+    }).join('');
+    filasBody.innerHTML = rows || `<tr><td colspan="7" class="text-center text-muted p-4">
+      No se detectaron filas con datos en el archivo.</td></tr>`;
+
+    // Caja de re-envíos: sólo aparece si hay re-envíos detectados.
+    if ((r.ok_re_envio||0) > 0) {
+      reenvioBox.style.display = '';
+      confirmReEnvio.checked = false;
+    } else {
+      reenvioBox.style.display = 'none';
+      confirmReEnvio.checked = false;
+    }
+    refreshAplicarBtn();
+    previewCard.style.display = '';
+    resultCard.style.display = 'none';
+    // scroll al preview para mobile
+    previewCard.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+
+  confirmReEnvio.addEventListener('change', refreshAplicarBtn);
+
+  function refreshAplicarBtn() {
+    const r = resumenPreview || {};
+    const directas = r.ok_nuevo || 0;
+    const reenvios = r.ok_re_envio || 0;
+    const aplicarReenvios = confirmReEnvio.checked && reenvios > 0;
+    const total = directas + (aplicarReenvios ? reenvios : 0);
+    if (total <= 0) {
+      btnAplicar.disabled = true;
+      btnAplicarTxt.textContent = reenvios > 0
+        ? 'Marca el check para aplicar re-envíos'
+        : 'No hay filas para aplicar';
+    } else {
+      btnAplicar.disabled = false;
+      btnAplicarTxt.textContent = `Aplicar a ${total} factura${total===1?'':'s'}`;
+    }
+  }
+
+  btnCancelar.addEventListener('click', async () => {
+    const ok = await ilusConfirm({
+      title:'Descartar análisis',
+      message:'¿Querés descartar el análisis actual y empezar de nuevo?',
+      sub:'No se aplicará ninguna OT.',
+      okLabel:'Sí, descartar', cancelLabel:'Seguir',
+    });
+    if (!ok) return;
+    resetAll();
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // Aplicar
+  // ──────────────────────────────────────────────────────────────────
+  btnAplicar.addEventListener('click', async () => {
+    const r = resumenPreview || {};
+    const directas = r.ok_nuevo || 0;
+    const reenvios = r.ok_re_envio || 0;
+    const aplicarReenvios = confirmReEnvio.checked && reenvios > 0;
+    const total = directas + (aplicarReenvios ? reenvios : 0);
+    if (total <= 0) return;
+
+    // Confirmación final ilus
+    const partes = [];
+    if (directas > 0) partes.push(`<strong style="color:#16a34a">${directas}</strong> nueva(s)`);
+    if (aplicarReenvios) partes.push(`<strong style="color:#1e40af">${reenvios}</strong> re-envío(s) (sobrescribirá OT anteriores)`);
+    const sub = partes.join(' · ');
+
+    const ok = await ilusConfirm({
+      title:'Confirmar aplicación',
+      message:`Vamos a asignar ${total} OT FedEx a sus facturas.`,
+      sub: sub,
+      subHtml: true,
+      okLabel:'Sí, aplicar', cancelLabel:'Cancelar',
+      type:'question',
+    });
+    if (!ok) return;
+
+    // Lock UI durante el request
+    btnAplicar.disabled = true;
+    const oldHtml = btnAplicar.innerHTML;
+    btnAplicar.innerHTML = '<span class="otm-spin"></span> Aplicando…';
+
+    let resp, data;
+    try {
+      resp = await fetch('{{ url_for("tr_ot_masivo_aplicar") }}', {
+        method:'POST', credentials:'same-origin',
+        headers:{
+          'Content-Type':'application/json',
+          'X-CSRF-Token': _csrf(),
+        },
+        body: JSON.stringify({
+          filas: filasPreview,
+          confirm_re_envio: aplicarReenvios,
+        }),
+      });
+      data = await resp.json();
+    } catch (e) {
+      btnAplicar.innerHTML = oldHtml;
+      btnAplicar.disabled = false;
+      await ilusAlert({
+        title:'Error de red',
+        message:'No se pudo conectar con el servidor.',
+        sub: esc(String(e).slice(0,180)),
+        type:'error',
+      });
+      return;
+    }
+
+    btnAplicar.innerHTML = oldHtml;
+    btnAplicar.disabled = false;
+
+    if (!resp.ok || !data.ok) {
+      await ilusAlert({
+        title:'No se pudo aplicar',
+        message: esc(data.error || ('HTTP '+resp.status)),
+        type:'error',
+      });
+      return;
+    }
+
+    renderResult(data);
+    if ((data.aplicadas || 0) > 0) {
+      ilusToast('✓ ' + (data.mensaje || 'Aplicado'), { type:'success' });
+    } else {
+      ilusToast('No se aplicó ninguna fila', { type:'warning' });
+    }
+  });
+
+  function renderResult(d) {
+    const errs = d.errores || [];
+    const warning = d.fedex_warning || '';
+    const parts = [];
+
+    parts.push(`<div class="d-flex flex-wrap gap-2 mb-2">
+      <span class="otm-chip c-ok_nuevo">
+        <i class="bi bi-check-circle"></i>Aplicadas
+        <span class="otm-chip-count">${d.aplicadas || 0}</span></span>
+      <span class="otm-chip c-ya_existe">
+        <i class="bi bi-dash-circle"></i>Omitidas
+        <span class="otm-chip-count">${d.omitidas || 0}</span></span>
+      <span class="otm-chip c-ok_re_envio">
+        <i class="bi bi-truck"></i>Consultadas en FedEx
+        <span class="otm-chip-count">${d.fedex_consultado || 0}</span></span>
+      ${errs.length ? `<span class="otm-chip c-invalido">
+        <i class="bi bi-exclamation-triangle"></i>Errores
+        <span class="otm-chip-count">${errs.length}</span></span>` : ''}
+    </div>`);
+
+    if (warning) {
+      parts.push(`<div class="alert alert-warning small">
+        <i class="bi bi-info-circle me-1"></i>${esc(warning)}</div>`);
+    }
+    if (errs.length) {
+      const errRows = errs.slice(0, 50).map(e => `<tr>
+          <td class="otm-mono">${esc(e.factura||'—')}</td>
+          <td class="otm-mono">${esc(e.ot||'—')}</td>
+          <td>${esc(e.error||'')}</td>
+        </tr>`).join('');
+      parts.push(`<details open class="mt-2">
+        <summary class="fw-semibold text-danger">Errores (${errs.length})</summary>
+        <div class="otm-table-wrap mt-2">
+          <table class="otm-table">
+            <thead><tr><th>Factura</th><th>OT</th><th>Detalle</th></tr></thead>
+            <tbody>${errRows}</tbody>
+          </table>
+        </div>
+      </details>`);
+    }
+
+    resultBody.innerHTML = parts.join('');
+    previewCard.style.display = 'none';
+    resultCard.style.display = '';
+    resultCard.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+
+  btnNuevaCarga.addEventListener('click', resetAll);
+
+  function resetAll() {
+    fileInput.value = '';
+    fileStatus.style.display = 'none';
+    fileName.textContent = '—';
+    filasPreview = [];
+    resumenPreview = {};
+    filasBody.innerHTML = '';
+    resumenChips.innerHTML = '';
+    previewCard.style.display = 'none';
+    resultCard.style.display = 'none';
+    resultBody.innerHTML = '';
+    confirmReEnvio.checked = false;
+    dropZone.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+})();
+</script>
+{% endblock %}

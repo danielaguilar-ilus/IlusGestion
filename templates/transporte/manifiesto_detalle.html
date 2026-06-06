@@ -59,6 +59,9 @@
     {% endif %}
   </div>
   <div class="mfd-hero-actions no-print">
+    <button class="btn btn-sm btn-outline-warning fw-bold" onclick="abrirAsignarChofer()">
+      <i class="bi bi-person-badge me-1"></i><span id="chBtnLbl">Asignar chofer</span>
+    </button>
     <button class="btn btn-sm mfd-btn-labels"
             onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas', '_blank')">
       <i class="bi bi-tags-fill me-1"></i>Etiquetas del manifiesto
@@ -129,6 +132,41 @@
     <div class="text-muted">Sin estos datos el cliente no recibe información de seguimiento. Edita cada factura para completarlos. El export igual se genera (resaltados en rojo).</div>
   </div>
 </div>
+{% endif %}
+
+{# ── ALERTA: Facturas FedEx sin OT asignada (visión Daniel) ── #}
+{% if es_fedex %}
+  {% if sin_ot %}
+  <div class="alert d-flex align-items-start gap-2 no-print py-2 mb-3" role="alert"
+       style="background:#fff8e1;border:1px solid #fcd34d;color:#92400e;border-radius:11px">
+    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+    <div class="flex-grow-1">
+      <strong>{{ sin_ot|length }} factura{{ 's' if sin_ot|length != 1 }} sin OT FedEx asignada.</strong>
+      <div class="small mt-1" style="color:#a16207">
+        FedEx se gestiona por API: hasta que no asignes la OT (N° de seguimiento) a estas facturas,
+        el cliente <strong>no tendrá seguimiento</strong>. Asígnala con el botón
+        <i class="bi bi-truck"></i> de cada factura.
+      </div>
+      <div class="mt-2 d-flex flex-wrap gap-1">
+        {% for s in sin_ot %}
+        <button class="btn btn-sm py-0 px-2" style="background:#fef3c7;border:1px solid #fcd34d;color:#92400e;font-size:.76rem"
+                onclick="abrirTrackingFedex({{ s.item_id }})" title="Asignar OT a {{ s.cliente|e }}">
+          <i class="bi bi-truck me-1"></i>{{ s.doc }}
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert d-flex align-items-center gap-2 no-print py-2 mb-3" role="alert"
+       style="background:#dcfce7;border:1px solid #86efac;color:#15803d;border-radius:11px">
+    <i class="bi bi-check-circle-fill fs-5"></i>
+    <div>
+      <strong>Todas las facturas tienen OT FedEx asignada.</strong>
+      <span class="small">El seguimiento se actualiza automáticamente por API.</span>
+    </div>
+  </div>
+  {% endif %}
 {% endif %}
 
 {# ── Resumen de estados de entrega ── #}
@@ -284,6 +322,12 @@
             </select>
           </td>
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
+            {% if item.estado_entrega == 'Entregado' %}
+            <a class="btn btn-sm btn-outline-success mfd-act-btn" title="Ver prueba de entrega (foto, firma, GPS)"
+               href="/transporte/buscar?q={{ item.nudo }}" target="_blank">
+              <i class="bi bi-shield-check"></i>
+            </a>
+            {% endif %}
             <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas de esta factura"
                     onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
               <i class="bi bi-tags"></i>
@@ -291,6 +335,14 @@
             <button class="btn btn-sm btn-outline-secondary mfd-act-btn" title="Editar contacto, bultos y medidas"
                     onclick='abrirEditar({{ item_json }})'>
               <i class="bi bi-pencil-square"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Copiar link de seguimiento del cliente"
+                    onclick="mostrarLinkCliente({{ item.id }})">
+              <i class="bi bi-link-45deg"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="Asociar Nº de tracking FedEx (auto-actualiza estado)"
+                    onclick="abrirTrackingFedex({{ item.id }})">
+              <i class="bi bi-truck"></i>
             </button>
             <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Quitar del manifiesto"
                     onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
@@ -417,6 +469,14 @@
           </button>
           <button class="btn btn-sm btn-outline-secondary mfd-act-btn" onclick='abrirEditar({{ item_json }})'>
             <i class="bi bi-pencil-square"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Link de seguimiento del cliente"
+                  onclick="mostrarLinkCliente({{ item.id }})">
+            <i class="bi bi-link-45deg"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="FedEx tracking"
+                  onclick="abrirTrackingFedex({{ item.id }})">
+            <i class="bi bi-truck"></i>
           </button>
           <button class="btn btn-sm btn-outline-danger mfd-act-btn" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
             <i class="bi bi-trash3"></i>
@@ -885,6 +945,178 @@ function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
     if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
     else alert('Error de conexión');
   });
+}
+
+async function abrirTrackingFedex(itemId) {
+  // Trae el tracking actual (si existe) y abre prompt para asociar / actualizar.
+  let cur = {};
+  try {
+    const r = await fetch('/transporte/api/items/' + itemId + '/tracking-fedex');
+    cur = await r.json();
+  } catch(e) {}
+  const wasSet = !!(cur && cur.tracking_number);
+  const placeholder = wasSet ? cur.tracking_number : 'Ej: 780123456789';
+  // Sub con contexto (último poll si existe)
+  let sub = '';
+  if (!cur.fedex_configurado) {
+    sub = '<div style="color:#b45309;background:#fff8e1;padding:.5rem .7rem;border-radius:8px;'
+        + 'font-size:.78rem;border:1px solid #fcd34d">'
+        + '<i class="bi bi-exclamation-triangle-fill"></i> FedEx Track API aún no está configurada '
+        + 'en el servidor. El nº se guarda pero el estado no se actualizará solo.</div>';
+  } else if (wasSet) {
+    sub = '<div style="font-size:.78rem;color:#6b7280">Último poll: '
+        + (cur.last_poll || '—') + ' · Estado FedEx: <strong>'
+        + (cur.last_status || '—') + '</strong></div>';
+  }
+  const tn = await ilusPrompt({
+    title: wasSet ? 'Actualizar tracking FedEx' : 'Asociar tracking FedEx',
+    message: 'Pega el número de seguimiento (Tracking Number) que te dio FedEx. '
+           + 'Lo consultamos en vivo y actualizamos el estado de la entrega solo.',
+    sub: sub,
+    subHtml: !!sub,
+    placeholder: placeholder,
+    okLabel: wasSet ? 'Actualizar' : 'Asociar y consultar',
+    inputValue: wasSet ? cur.tracking_number : '',
+  });
+  if (tn === null || tn === undefined) return;   // canceló
+  const value = String(tn || '').replace(/[^A-Za-z0-9]/g, '');
+  if (value.length < 10) {
+    if (window.ilusToast) ilusToast('El tracking debe tener al menos 10 caracteres', { type: 'warning' });
+    return;
+  }
+  let res;
+  try {
+    const resp = await fetch('/transporte/api/items/' + itemId + '/tracking-fedex', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tracking_number: value })
+    });
+    res = await resp.json();
+  } catch(e) {
+    if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
+    return;
+  }
+  if (!res || !res.ok) {
+    if (window.ilusToast) ilusToast((res && res.error) || 'No se pudo guardar', { type: 'error' });
+    return;
+  }
+  if (res.warning) {
+    if (window.ilusToast) ilusToast(res.warning, { type: 'warning' });
+    return;
+  }
+  let msg = '✓ Tracking guardado';
+  if (res.changed) msg += ' · Estado actualizado a "' + (res.estado || '?') + '"';
+  if (window.ilusToast) ilusToast(msg, { type: 'success' });
+  // Si el estado cambió, recargar para que se vea el nuevo
+  if (res.changed) setTimeout(function(){ location.reload(); }, 1000);
+}
+
+async function abrirAsignarChofer(){
+  // Trae choferes y los muestra para elegir.
+  let data;
+  try { const r = await fetch('/transporte/api/manifiestos/{{ manifiesto.id }}/choferes-disponibles'); data = await r.json(); }
+  catch(e){ ilusToast('Error de conexión', {type:'error'}); return; }
+  if (!data || !data.ok) { ilusToast(data && data.error || 'No se pudo cargar', {type:'error'}); return; }
+  const compat = (data.choferes || []).filter(c => c.compatible);
+  const incomp = (data.choferes || []).filter(c => !c.compatible);
+  if (!compat.length && !incomp.length) {
+    ilusToast('No hay choferes registrados. Crea uno en /transporte/choferes', {type:'warning'});
+    return;
+  }
+  // Render como ilusAlert con HTML controlado
+  const sec = function(title, arr, hint){
+    if (!arr.length) return '';
+    return '<div style="font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:'+(hint?'#b45309':'#15803d')+';margin:.7rem 0 .35rem">'+title+'</div>'
+      + arr.map(c =>
+        '<button type="button" data-id="'+c.id+'" class="ch-pick" style="display:block;width:100%;text-align:left;margin-bottom:.35rem;padding:.6rem .8rem;'
+        +'background:#fff;border:1.5px solid #e5e7eb;border-radius:9px;cursor:pointer'
+        +(data.current_driver_id===c.id?';box-shadow:0 0 0 2px #16a34a':'')+'">'
+        +'<strong>'+c.nombre+'</strong> <span style="font-size:.74rem;color:#6b7280">· '+(c.courier_nombre||'sin transporte')+(c.patente?' · '+c.patente:'')+'</span>'
+        +(data.current_driver_id===c.id?' <span style="background:#dcfce7;color:#15803d;padding:.1rem .4rem;border-radius:8px;font-size:.66rem;font-weight:700;margin-left:.3rem">ACTUAL</span>':'')
+        +'</button>'
+      ).join('');
+  };
+  const html =
+    '<div style="font-size:.78rem;color:#6b7280;margin-bottom:.5rem">Transporte del manifiesto: <strong>'+(data.courier_manifiesto||'sin especificar')+'</strong></div>'
+    + sec('Compatibles', compat, false)
+    + sec('Otro transporte (avisará si lo eliges)', incomp, true);
+  await ilusAlert({ title:'Asignar chofer al manifiesto', message:'Elige el chofer que tomará este manifiesto:',
+    sub: html, subHtml:true, type:'info', okLabel:'Cerrar' });
+  // Después del alert, los botones siguen vivos en el DOM del modal? NO — el modal se cierra al hacer OK.
+  // Mejor: clic directo cierra el modal y asigna. Atachamos listeners ANTES del await.
+}
+
+// Listener delegado para los botones del modal (funciona porque ilusAlert renderiza en body)
+document.addEventListener('click', async function(ev){
+  const btn = ev.target.closest('.ch-pick');
+  if (!btn) return;
+  const did = parseInt(btn.dataset.id, 10);
+  // Cerrar modal abierto
+  const md = document.querySelector('.ilus-modal-x'); if (md) md.click();
+  try {
+    const r = await fetch('/transporte/manifiestos/{{ manifiesto.id }}/asignar-chofer', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ driver_id: did })
+    });
+    const d = await r.json();
+    if (r.status === 409 && d.error === 'courier_mismatch'){
+      const ok = await ilusConfirm({ title:'Transporte distinto', message: d.msg,
+        sub:'¿Asignar igual? El chofer verá un manifiesto que no es del transporte donde está registrado.',
+        okLabel:'Asignar igual', danger:true });
+      if (!ok) return;
+      // Forzar: por ahora solo un mensaje porque el backend bloquea. En siguiente iteración: param force=1.
+      ilusToast('Mismatch bloqueado — actualiza el transporte del chofer o el del manifiesto', {type:'warning'});
+      return;
+    }
+    if (!d.ok) { ilusToast(d.error || 'Error', {type:'error'}); return; }
+    ilusToast('✓ Chofer asignado: ' + (d.chofer || ''), {type:'success'});
+    document.getElementById('chBtnLbl').textContent = d.chofer || 'Chofer asignado';
+  } catch(e) { ilusToast('Error de conexión', {type:'error'}); }
+});
+
+async function mostrarLinkCliente(itemId) {
+  // Pide el link público al backend (lazy-genera el token si aún no existe)
+  // y lo muestra en un ilusAlert con botón "Copiar". El link sobrevive si
+  // la factura se mueve a otro manifiesto (vive a nivel de commitment).
+  let data;
+  try {
+    const resp = await fetch('/transporte/api/items/' + itemId + '/link-cliente');
+    data = await resp.json();
+  } catch (e) {
+    if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
+    return;
+  }
+  if (!data || !data.ok) {
+    if (window.ilusToast) ilusToast(data && data.error || 'No se pudo obtener el link', { type: 'error' });
+    return;
+  }
+  const url = data.url || '';
+  const safe = String(url).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+  // Modal con el link + botón copiar + nota de "compártelo con el cliente"
+  await ilusAlert({
+    title: 'Link de seguimiento del cliente',
+    message: 'Comparte este link con el cliente para que siga su despacho en tiempo real:',
+    sub: '<div style="margin:.5rem 0;padding:.6rem .7rem;background:#f3f4f6;border-radius:8px;'
+       + 'font-family:ui-monospace,Consolas,monospace;font-size:.78rem;word-break:break-all;border:1px solid #e5e7eb">'
+       + safe + '</div>'
+       + '<div style="font-size:.78rem;color:#6b7280;margin-top:.4rem">'
+       + '<i class="bi bi-shield-check"></i> El link es privado: solo quien lo tenga puede ver el estado de '
+       + '<strong>' + (data.doc || 'esta factura') + '</strong>. No expone datos sensibles del cliente.'
+       + '</div>',
+    subHtml: true,
+    type: 'info',
+    okLabel: 'Copiar link',
+  });
+  // Tras cerrar el modal, copiar al portapapeles
+  try {
+    await navigator.clipboard.writeText(url);
+    if (window.ilusToast) ilusToast('✓ Link copiado al portapapeles', { type: 'success' });
+  } catch (e) {
+    // Fallback: si el navegador bloquea clipboard, abrir prompt para copia manual
+    window.prompt('Copia el link manualmente (Ctrl+C):', url);
+  }
 }
 
 async function quitarItem(mid, itemId) {

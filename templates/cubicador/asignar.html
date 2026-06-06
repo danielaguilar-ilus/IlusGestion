@@ -8,7 +8,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4><i class="bi bi-truck me-2"></i>Asignar y Cotizar</h4>
-      <div class="sub">Busca el documento ERP, cubica los productos y selecciona el courier al mejor precio.</div>
+      <div class="sub">Busca el documento ERP, valida el contacto y selecciona el courier al mejor precio.</div>
     </div>
     <div class="d-flex gap-2">
       <a href="{{ url_for('tr_couriers') }}" class="btn btn-sm btn-outline-light">
@@ -16,6 +16,55 @@
       </a>
     </div>
   </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   STEPPER guía — 3 pasos: Buscar · Validar · Cotizar
+   Pegado arriba (sticky), refleja el progreso en vivo.
+   Clic en cada paso → scroll suave a esa sección.
+   ════════════════════════════════════════════════════════════════════ #}
+<div id="acStepper" class="ac-stepper" aria-label="Pasos del flujo">
+  <button type="button" class="ac-step active" data-step="1" data-target="acSec1"
+          onclick="acStepGoTo(1)" aria-label="Paso 1: Buscar">
+    <span class="ac-step-dot"><i class="bi bi-search"></i></span>
+    <div class="ac-step-body">
+      <span class="ac-step-num">Paso 1</span>
+      <span class="ac-step-lbl">Buscar factura</span>
+    </div>
+  </button>
+  <div class="ac-step-bar" id="acBar1"></div>
+  <button type="button" class="ac-step" data-step="2" data-target="acSec2"
+          onclick="acStepGoTo(2)" aria-label="Paso 2: Validar contacto">
+    <span class="ac-step-dot"><i class="bi bi-shield-check"></i></span>
+    <div class="ac-step-body">
+      <span class="ac-step-num">Paso 2</span>
+      <span class="ac-step-lbl">Validar contacto</span>
+    </div>
+  </button>
+  <div class="ac-step-bar" id="acBar2"></div>
+  <button type="button" class="ac-step" data-step="3" data-target="acSec3"
+          onclick="acStepGoTo(3)" aria-label="Paso 3: Escoger courier">
+    <span class="ac-step-dot"><i class="bi bi-truck"></i></span>
+    <div class="ac-step-body">
+      <span class="ac-step-num">Paso 3</span>
+      <span class="ac-step-lbl">Escoger courier</span>
+    </div>
+  </button>
+</div>
+
+{# Hint inicial educativo (se oculta tras la primera búsqueda exitosa) #}
+<div id="acHintWelcome" class="ac-hint">
+  <i class="bi bi-stars"></i>
+  <div>
+    <strong>¿Cómo funciona?</strong>
+    Sigue los 3 pasos del menú de arriba. Mientras buscas la factura, te traemos los datos del ERP;
+    luego validas dirección, teléfono y correo; y al final eliges el courier al mejor precio.
+    <span class="ac-kbd-hint">Tip: presiona <kbd>Enter</kbd> para avanzar más rápido.</span>
+  </div>
+  <button type="button" class="ac-hint-x" onclick="document.getElementById('acHintWelcome').remove()"
+          aria-label="Cerrar tip">
+    <i class="bi bi-x"></i>
+  </button>
 </div>
 
 <style>
@@ -31,6 +80,178 @@
   --c-red:    #CC0000;
   --c-green:  #16a34a;
   --radius:   10px;
+}
+
+/* ══ STEPPER SUPERIOR — el "norte" visual del módulo ════════════ */
+.ac-stepper{
+  position:sticky; top:0; z-index:30;
+  display:flex; align-items:center; gap:0;
+  padding:14px 18px;
+  background:linear-gradient(180deg,#ffffff 0%, #fafafa 100%);
+  border:1px solid var(--c-border);
+  border-radius:14px;
+  margin:0 0 14px;
+  box-shadow:0 4px 14px -8px rgba(15,23,42,.10);
+}
+.ac-step{
+  flex:1; min-width:0;
+  display:flex; align-items:center; gap:12px;
+  background:transparent; border:none; cursor:pointer; padding:6px 10px;
+  border-radius:10px;
+  transition:background .15s;
+  text-align:left;
+}
+.ac-step:hover{ background:#f3f4f6; }
+.ac-step:focus-visible{ outline:2px solid var(--c-red); outline-offset:2px; }
+.ac-step-dot{
+  width:38px; height:38px; flex-shrink:0;
+  border-radius:50%; background:#fff;
+  border:2px solid var(--c-border);
+  display:flex; align-items:center; justify-content:center;
+  color:#9ca3af; font-size:1rem;
+  transition:all .25s cubic-bezier(.34,1.56,.64,1);
+}
+.ac-step.active .ac-step-dot{
+  background:var(--c-red); border-color:var(--c-red); color:#fff;
+  box-shadow:0 6px 16px -6px rgba(204,0,0,.55);
+  transform:scale(1.08);
+}
+.ac-step.done .ac-step-dot{
+  background:var(--c-green); border-color:var(--c-green); color:#fff;
+}
+.ac-step.done .ac-step-dot::before{
+  content:"\F26B";   /* bi-check-lg */
+  font-family:"bootstrap-icons"; font-size:1.1rem;
+  position:absolute;
+}
+.ac-step.done .ac-step-dot i{ display:none; }
+.ac-step-body{ display:flex; flex-direction:column; min-width:0; line-height:1.15; }
+.ac-step-num{
+  font-size:.66rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px;
+  color:#9ca3af;
+}
+.ac-step.active .ac-step-num{ color:var(--c-red); }
+.ac-step.done   .ac-step-num{ color:var(--c-green); }
+.ac-step-lbl{
+  font-size:.92rem; font-weight:800; color:var(--c-text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.ac-step-bar{
+  flex:0 0 32px; height:2px; background:var(--c-border);
+  margin:0 4px; border-radius:2px;
+  transition:background .25s;
+}
+.ac-step-bar.done{ background:var(--c-green); }
+
+@media(max-width:720px){
+  .ac-stepper{ padding:10px 8px; gap:0; }
+  .ac-step{ flex-direction:column; align-items:center; gap:4px; padding:6px 2px; text-align:center; }
+  .ac-step-dot{ width:30px; height:30px; font-size:.85rem; }
+  .ac-step-num{ display:none; }
+  .ac-step-lbl{ font-size:.7rem; white-space:normal; line-height:1.1; }
+  .ac-step-bar{ flex:0 0 14px; }
+}
+
+/* ══ HINT WELCOME — explica el flujo a usuarios nuevos ═══════════ */
+.ac-hint{
+  display:flex; align-items:flex-start; gap:.7rem;
+  margin:0 0 14px;
+  padding:12px 14px;
+  background:linear-gradient(135deg,#fff 0%, var(--c-card2) 100%);
+  border:1px solid var(--c-border); border-left:4px solid var(--c-red);
+  border-radius:11px;
+  box-shadow:0 1px 2px rgba(15,23,42,.03);
+  font-size:.86rem; color:#374151; line-height:1.45;
+  position:relative;
+  animation:acHintSlideIn .4s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes acHintSlideIn{
+  from{ opacity:0; transform:translateY(-6px); }
+  to  { opacity:1; transform:translateY(0); }
+}
+.ac-hint i.bi-stars{ color:var(--c-red); font-size:1.2rem; margin-top:1px; flex-shrink:0; }
+.ac-hint strong{ color:var(--c-text); display:block; margin-bottom:2px; }
+.ac-kbd-hint{ display:block; margin-top:.4rem; color:#6b7280; font-size:.78rem; }
+.ac-kbd-hint kbd{
+  background:#f3f4f6; border:1px solid var(--c-border); border-radius:5px;
+  padding:1px 6px; font-size:.74rem; color:#374151;
+  box-shadow:0 1px 0 #e5e7eb;
+}
+.ac-hint-x{
+  background:transparent; border:none; color:#9ca3af; cursor:pointer;
+  padding:0; font-size:1.15rem; line-height:1; flex-shrink:0;
+  width:26px; height:26px; border-radius:6px;
+  display:flex; align-items:center; justify-content:center;
+  transition:background .15s, color .15s;
+}
+.ac-hint-x:hover{ background:#f3f4f6; color:var(--c-text); }
+
+/* ══ "SIGUIENTE PASO" — botón inline al cerrar cada sección ══════ */
+.ac-next-step{
+  display:inline-flex; align-items:center; gap:.5rem;
+  background:linear-gradient(135deg, var(--c-red) 0%, #aa0000 100%);
+  color:#fff; border:none;
+  padding:.7rem 1.3rem; border-radius:10px;
+  font-weight:700; font-size:.9rem; cursor:pointer;
+  box-shadow:0 6px 16px -6px rgba(204,0,0,.5);
+  transition:transform .15s, box-shadow .15s;
+}
+.ac-next-step:hover{ transform:translateY(-1px); box-shadow:0 10px 22px -8px rgba(204,0,0,.6); }
+.ac-next-step:active{ transform:translateY(0); }
+.ac-next-step i{ font-size:1rem; }
+
+/* ══ VALIDACIÓN VISUAL — estados ok/warn/err sobre inputs ═══════ */
+.client-input.is-ok    { border-color:var(--c-green)!important; box-shadow:0 0 0 3px #dcfce7!important; }
+.client-input.is-warn  { border-color:#f59e0b!important;        box-shadow:0 0 0 3px #fef3c7!important; }
+.client-input.is-err   { border-color:#dc2626!important;        box-shadow:0 0 0 3px #fee2e2!important; }
+.field-status{
+  display:inline-flex; align-items:center; gap:.3rem;
+  font-size:.72rem; font-weight:600; margin-top:.25rem;
+}
+.field-status.ok   { color:var(--c-green); }
+.field-status.warn { color:#b45309; }
+.field-status.err  { color:#dc2626; }
+
+/* ══ FAB flotante "Continuar" ═════════════════════════════════ */
+.ac-fab{
+  position:fixed; right:20px; bottom:24px; z-index:50;
+  display:inline-flex; align-items:center; gap:.55rem;
+  background:linear-gradient(135deg, var(--c-red) 0%, #aa0000 100%);
+  color:#fff; border:none;
+  padding:.85rem 1.3rem; border-radius:999px;
+  font-weight:700; font-size:.9rem; cursor:pointer;
+  box-shadow:0 12px 32px -10px rgba(204,0,0,.65), 0 4px 12px -6px rgba(0,0,0,.2);
+  opacity:0; transform:translateY(20px) scale(.85);
+  pointer-events:none;
+  transition:opacity .3s cubic-bezier(.34,1.56,.64,1),
+             transform .3s cubic-bezier(.34,1.56,.64,1),
+             background .15s;
+}
+.ac-fab.show{
+  opacity:1; transform:translateY(0) scale(1); pointer-events:auto;
+}
+.ac-fab:hover{ background:#aa0000; }
+.ac-fab i{ font-size:1.2rem; }
+.ac-fab-lbl{ white-space:nowrap; }
+@supports(padding:max(0px)){
+  .ac-fab{ right:max(20px, env(safe-area-inset-right));
+           bottom:max(24px, env(safe-area-inset-bottom)); }
+}
+@media(max-width:520px){
+  .ac-fab{ padding:.7rem 1rem; font-size:.82rem; }
+  .ac-fab i{ font-size:1.05rem; }
+}
+
+/* ══ SKELETON loaders — placeholder mientras ERP carga ═════════ */
+.ac-skel{
+  background:linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%);
+  background-size:200% 100%;
+  animation:acSkelShine 1.4s ease-in-out infinite;
+  border-radius:6px;
+}
+@keyframes acSkelShine{
+  0%{ background-position:200% 0; }
+  100%{ background-position:-200% 0; }
 }
 
 /* ══ LAYOUT ══════════════════════════════════════════════════ */
@@ -439,7 +660,7 @@
   <div class="left-panel">
 
     {# ── 1. Buscar ── #}
-    <div class="ac-card">
+    <div class="ac-card" id="acSec1">
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">1</span>Buscar Documento ERP</div>
       </div>
@@ -487,7 +708,8 @@
     <div id="docBanner"></div>
 
     {# ── 2. Datos del Documento ── #}
-    <div class="ac-card" id="cardDatos" style="display:none">
+    <div class="ac-card" id="cardDatos" style="display:none" data-acsec="2">
+      <span id="acSec2" style="position:absolute;margin-top:-90px"></span>
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">2</span>Datos del Documento</div>
         <div class="d-flex align-items-center gap-2">
@@ -716,7 +938,8 @@
     </div>
 
     {# 4. Cotización de Couriers #}
-    <div class="ac-card" id="cardCouriers" style="display:none">
+    <div class="ac-card" id="cardCouriers" style="display:none" data-acsec="3">
+      <span id="acSec3" style="position:absolute;margin-top:-90px"></span>
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">4</span>Cotización de Couriers</div>
         <div style="display:flex;gap:6px;align-items:center">
@@ -3216,4 +3439,239 @@ function setBuscarLoading(on){
 .mf-alert{background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:9px 12px;
           border-radius:6px;font-size:.82rem;margin-top:12px}
 </style>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   STEPPER GUÍA + UX espectacular del módulo Asignar y Cotizar
+   Auto-detecta el estado del flujo y actualiza el stepper superior
+   sin tocar la lógica del módulo (es 100% adicional).
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  const STEPS_EL = {
+    1: document.querySelector('.ac-step[data-step="1"]'),
+    2: document.querySelector('.ac-step[data-step="2"]'),
+    3: document.querySelector('.ac-step[data-step="3"]'),
+  };
+  const BARS_EL = {
+    1: document.getElementById('acBar1'),
+    2: document.getElementById('acBar2'),
+  };
+  let _currentStep = 1;
+  let _completed = { 1:false, 2:false, 3:false };
+
+  function _setStepperState(){
+    [1,2,3].forEach(function(n){
+      const el = STEPS_EL[n];
+      if (!el) return;
+      el.classList.remove('active','done');
+      if (_completed[n]) el.classList.add('done');
+      else if (n === _currentStep) el.classList.add('active');
+    });
+    if (BARS_EL[1]) BARS_EL[1].classList.toggle('done', _completed[1]);
+    if (BARS_EL[2]) BARS_EL[2].classList.toggle('done', _completed[2]);
+  }
+
+  // Scroll suave al paso elegido (deja el stepper sticky visible)
+  window.acStepGoTo = function(n){
+    _currentStep = n;
+    _setStepperState();
+    const targetId = 'acSec' + n;
+    const t = document.getElementById(targetId);
+    if (!t) return;
+    const rect = t.getBoundingClientRect();
+    const y = window.scrollY + rect.top - 88;   // 88 = altura stepper sticky
+    window.scrollTo({ top: y, behavior: 'smooth' });
+  };
+
+  // Detección reactiva: usa MutationObserver sobre los cards clave para
+  // saber cuándo el flujo avanzó. No requiere modificar el JS existente.
+  // Flags para mostrar toast solo cuando un paso pasa de false→true
+  let _notified = { 1:false, 2:false, 3:false };
+
+  function _refreshFlowState(){
+    const cardDatos    = document.getElementById('cardDatos');
+    const cardCouriers = document.getElementById('cardCouriers');
+    const datosVisible = cardDatos    && cardDatos.style.display !== 'none';
+    const courVisible  = cardCouriers && cardCouriers.style.display !== 'none';
+
+    const wasCompleted = { ..._completed };
+
+    // Paso 1 completo cuando cardDatos se muestra (doc encontrado)
+    if (datosVisible !== _completed[1]) _completed[1] = datosVisible;
+
+    // Paso 2 completo cuando hay teléfono + email + dirección no-placeholder.
+    if (datosVisible){
+      const tel   = (document.getElementById('cli-tel')   || {}).value || '';
+      const email = (document.getElementById('cli-email') || {}).value || '';
+      const dir   = (document.getElementById('cli-dir')   || {}).value || '';
+      const validTel   = /^\+?56\s*9?\s*[0-9]{4}\s*[0-9]{4}$/.test(tel.replace(/\s+/g,'')) ||
+                         /^\+?569\d{8}$/.test(tel.replace(/\s+/g,''));
+      const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      const validDir   = (dir.trim().length >= 6);
+      _completed[2] = (validTel && validEmail && validDir);
+    } else {
+      _completed[2] = false;
+    }
+    _completed[3] = courVisible;
+
+    // Toast cuando un paso se completó por primera vez
+    [1,2,3].forEach(function(n){
+      if (_completed[n] && !wasCompleted[n] && !_notified[n]) {
+        _notified[n] = true;
+        const labels = {
+          1: '✓ Documento ERP encontrado',
+          2: '✓ Contacto y dirección validados',
+          3: '✓ Couriers cotizados',
+        };
+        if (window.ilusToast) ilusToast(labels[n], { type:'success', duration: 2400 });
+      }
+      if (!_completed[n] && wasCompleted[n]) _notified[n] = false;
+    });
+
+    if      (!_completed[1]) _currentStep = 1;
+    else if (!_completed[2]) _currentStep = 2;
+    else                     _currentStep = 3;
+    _setStepperState();
+    _updateFab();
+  }
+
+  // ── Botón flotante "Continuar al paso N" (FAB contextual) ─────
+  function _ensureFab(){
+    let fab = document.getElementById('acFab');
+    if (fab) return fab;
+    fab = document.createElement('button');
+    fab.id = 'acFab';
+    fab.type = 'button';
+    fab.className = 'ac-fab';
+    fab.innerHTML = '<span class="ac-fab-lbl">Continuar</span> <i class="bi bi-arrow-right-circle-fill"></i>';
+    fab.addEventListener('click', function(){
+      const n = parseInt(fab.dataset.target || '1', 10);
+      acStepGoTo(n);
+    });
+    document.body.appendChild(fab);
+    return fab;
+  }
+  function _updateFab(){
+    // Mostrar el FAB solo si hay un próximo paso disponible y no estoy ahí
+    let next = 0;
+    if (_completed[1] && !_completed[2]) next = 2;
+    else if (_completed[2] && !_completed[3]) next = 3;
+    const fab = _ensureFab();
+    if (!next) { fab.classList.remove('show'); return; }
+    // No mostrarlo si la sección destino ya está visible en viewport
+    const t = document.getElementById('acSec' + next);
+    if (t) {
+      const rect = t.getBoundingClientRect();
+      const inView = rect.top < window.innerHeight * 0.65 && rect.bottom > 60;
+      if (inView) { fab.classList.remove('show'); return; }
+    }
+    const labels = { 2: 'Validar contacto', 3: 'Cotizar couriers' };
+    fab.dataset.target = String(next);
+    fab.querySelector('.ac-fab-lbl').textContent = labels[next] || 'Continuar';
+    fab.classList.add('show');
+  }
+  // Recalcular FAB on scroll (oculta cuando llegas)
+  window.addEventListener('scroll', function(){
+    if (window.__acFabScrollTm) cancelAnimationFrame(window.__acFabScrollTm);
+    window.__acFabScrollTm = requestAnimationFrame(_updateFab);
+  }, { passive: true });
+
+  // Observa cambios de visibilidad/style en los cards clave
+  const _obs = new MutationObserver(_refreshFlowState);
+  ['cardDatos','cardCubaje','cardCouriers'].forEach(function(id){
+    const el = document.getElementById(id);
+    if (el) _obs.observe(el, { attributes:true, attributeFilter:['style'] });
+  });
+
+  // También recalcula al editar tel/email/dir (validación en vivo de paso 2)
+  ['cli-tel','cli-email','cli-dir'].forEach(function(id){
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', _onFieldInput);
+      el.addEventListener('blur',  _onFieldInput);
+    }
+  });
+
+  function _onFieldInput(ev){
+    const id = ev.target.id;
+    const v  = (ev.target.value || '').trim();
+    ev.target.classList.remove('is-ok','is-warn','is-err');
+    let ok = false;
+    if (id === 'cli-tel') {
+      const clean = v.replace(/\s+/g,'');
+      ok = /^\+?56\s*9?\s*[0-9]{4}\s*[0-9]{4}$/.test(clean) || /^\+?569\d{8}$/.test(clean);
+      if (v && !ok) ev.target.classList.add('is-warn');
+      else if (ok)  ev.target.classList.add('is-ok');
+    } else if (id === 'cli-email') {
+      ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      if (v && !ok) ev.target.classList.add('is-warn');
+      else if (ok)  ev.target.classList.add('is-ok');
+    } else if (id === 'cli-dir') {
+      ok = (v.length >= 6);
+      if (v && !ok) ev.target.classList.add('is-warn');
+      else if (ok)  ev.target.classList.add('is-ok');
+    }
+    _refreshFlowState();
+  }
+
+  // ── Atajos de teclado para velocidad ──────────────────────────
+  // Enter en docNudo ya está manejado por el código existente (buscarDoc).
+  // Agregamos: 1/2/3 con Alt para saltar entre pasos, Esc para limpiar.
+  document.addEventListener('keydown', function(ev){
+    // Solo si no estamos escribiendo en un input/textarea
+    const tag = (ev.target.tagName || '').toLowerCase();
+    const inField = (tag === 'input' || tag === 'textarea' || tag === 'select');
+    if (ev.altKey && !inField) {
+      if (ev.key === '1') { ev.preventDefault(); acStepGoTo(1); }
+      if (ev.key === '2') { ev.preventDefault(); acStepGoTo(2); }
+      if (ev.key === '3') { ev.preventDefault(); acStepGoTo(3); }
+    }
+    // Atajo "/" para enfocar la búsqueda (estilo Slack/GitHub)
+    if (ev.key === '/' && !inField) {
+      ev.preventDefault();
+      const inp = document.getElementById('docNudo');
+      if (inp) { inp.focus(); inp.select && inp.select(); }
+    }
+  });
+
+  // ── Inicializa al cargar la página ────────────────────────────
+  document.addEventListener('DOMContentLoaded', function(){
+    _refreshFlowState();
+    // Si ya hay un doc cargado (recarga con datos), avanza al stepper
+    setTimeout(_refreshFlowState, 300);
+  });
+
+  // Exponemos un helper público para que el código existente pueda
+  // forzar el refresh tras búsqueda/cotización si quiere (opcional).
+  window.acRefreshStepper = _refreshFlowState;
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   PREFETCH inteligente de couriers — al cargar la página, traemos la
+   lista de couriers activos en background. Cuando llega paso 3, el
+   usuario ya tiene la data en memoria (cero espera).
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if (window.__acCouriersPrefetched) return;
+  window.__acCouriersPrefetched = true;
+  // Solo si la API existe y estamos en idle
+  if (typeof window.requestIdleCallback !== 'function') return;
+  window.requestIdleCallback(function(){
+    try {
+      fetch('/transporte/api/couriers/lista', {
+        method: 'GET',
+        headers: {'Accept': 'application/json'},
+        cache: 'force-cache',
+      }).then(function(r){
+        if (!r.ok) return null;
+        return r.json();
+      }).then(function(data){
+        if (data) window.__acCouriersCache = data;
+      }).catch(function(){ /* silencio */ });
+    } catch(e){}
+  }, { timeout: 2500 });
+})();
+</script>
 {% endblock %}

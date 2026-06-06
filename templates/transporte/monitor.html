@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}Monitor en vivo — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-broadcast me-2"></i>Monitor en vivo
+        <span class="badge bg-danger ms-2" id="liveDot" style="animation:pulse 2s infinite">EN VIVO</span>
+      </h4>
+      <div class="sub">Posición en tiempo real de cada chofer. Actualiza cada 10s.</div>
+    </div>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <select id="filtroCourier" class="form-select form-select-sm" style="max-width:200px"
+              onchange="_refresh()">
+        <option value="">Todos los transportes</option>
+        {% for c in couriers_filtro %}
+        <option value="{{ c.nombre|e }}">{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <span class="badge bg-secondary-subtle text-secondary-emphasis" id="lastUpdate">—</span>
+      <a href="{{ url_for('tr_buscar_interno') }}" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-search me-1"></i>Buscar despacho
+      </a>
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.5 } }
+.mn-wrap{ display:grid; grid-template-columns:1fr 380px; gap:16px; }
+@media(max-width:1100px){ .mn-wrap{ grid-template-columns:1fr; } }
+.mn-map-card{ background:#fff; border:1px solid #e5e7eb; border-radius:13px; overflow:hidden; height:75vh; min-height:480px; position:relative; }
+#monMap{ width:100%; height:100%; }
+.mn-side{ display:flex; flex-direction:column; gap:.6rem; max-height:75vh; overflow-y:auto; padding-right:.3rem; }
+.mn-driver{ background:#fff; border:1px solid #e5e7eb; border-left:4px solid #16a34a; border-radius:11px; padding:.85rem 1rem; cursor:pointer;
+  transition:transform .12s, box-shadow .15s, border-left-color .2s; position:relative; }
+.mn-driver:hover{ transform:translateY(-1px); box-shadow:0 6px 16px -8px rgba(0,0,0,.1); }
+.mn-driver.stale{ border-left-color:#f59e0b; opacity:.85; }
+.mn-driver.very-stale{ border-left-color:#dc2626; opacity:.7; }
+.mn-driver.selected{ box-shadow:0 0 0 3px #dc2626; }
+.mn-driver.sospechoso{ border-left-color:#dc2626; background:linear-gradient(135deg,#fff 0%, #fef2f2 100%); }
+.mn-sosp-flag{ display:inline-flex; align-items:center; gap:.25rem; background:#fee2e2; color:#dc2626;
+  font-size:.66rem; font-weight:800; padding:.18rem .5rem; border-radius:20px; text-transform:uppercase; letter-spacing:.4px;
+  animation:sospPulse 1.8s infinite; margin-top:.3rem; }
+@keyframes sospPulse{ 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+.mn-prox{ font-size:.74rem; color:#6b7280; margin-top:.35rem; padding:.35rem .55rem; background:#f9fafb; border-radius:8px;
+  display:flex; align-items:center; gap:.35rem; }
+.mn-prox i{ color:#dc2626; flex-shrink:0; }
+.mn-prox b{ color:#0f172a; }
+.mn-prox-dist{ background:#0f172a; color:#fff; font-size:.66rem; font-weight:700; padding:.1rem .4rem; border-radius:8px; margin-left:auto; flex-shrink:0; }
+.mn-d-top{ display:flex; justify-content:space-between; align-items:center; margin-bottom:.3rem; }
+.mn-d-name{ font-weight:800; font-size:.95rem; }
+.mn-d-courier{ font-size:.72rem; color:#6b7280; }
+.mn-d-meta{ font-size:.78rem; color:#374151; margin-top:.3rem; display:flex; gap:.8rem; flex-wrap:wrap; }
+.mn-d-meta b{ color:#0f172a; }
+.mn-d-age{ font-size:.7rem; font-weight:700; padding:.15rem .5rem; border-radius:20px; }
+.mn-d-age.fresh{ background:#dcfce7; color:#15803d; }
+.mn-d-age.stale{ background:#fef3c7; color:#b45309; }
+.mn-d-age.very-stale{ background:#fee2e2; color:#dc2626; }
+.mn-d-prog{ margin-top:.5rem; }
+.mn-d-prog-bar{ height:6px; background:#f3f4f6; border-radius:50px; overflow:hidden; }
+.mn-d-prog-fill{ height:100%; background:linear-gradient(90deg,#16a34a,#84cc16); border-radius:50px; transition:width .4s; }
+.mn-d-prog-txt{ font-size:.7rem; color:#6b7280; margin-top:.2rem; }
+.mn-empty{ text-align:center; padding:3rem 1rem; color:#6b7280; }
+.mn-empty i{ font-size:3rem; opacity:.4; display:block; margin-bottom:.8rem; }
+.mn-bat{ display:inline-flex; align-items:center; gap:.2rem; }
+.mn-bat.low{ color:#dc2626; }
+</style>
+
+<div class="mn-wrap">
+  <div class="mn-map-card">
+    <div id="monMap"></div>
+  </div>
+  <div class="mn-side" id="driverList">
+    <div class="mn-empty" id="emptyState">
+      <i class="bi bi-broadcast"></i>
+      <div><strong>Esperando choferes…</strong></div>
+      <div class="small mt-1">Cuando un chofer abra la app, aparecerá acá con su ubicación.</div>
+    </div>
+  </div>
+</div>
+
+{% if gmaps_key %}
+<script async src="https://maps.googleapis.com/maps/api/js?key={{ gmaps_key }}&callback=initMonMap"></script>
+{% endif %}
+<script>
+let _map, _markers = {}, _routePolyline = null, _selectedId = null;
+const FETCH_URL = "{{ url_for('tr_monitor_snapshot') }}";
+
+function initMonMap(){
+  _map = new google.maps.Map(document.getElementById('monMap'), {
+    zoom: 11, center:{ lat:-33.45, lng:-70.66 },
+    mapTypeControl:false, streetViewControl:false, fullscreenControl:false,
+  });
+  _refresh();
+  setInterval(_refresh, 10000);
+}
+{% if not gmaps_key %}
+document.getElementById('monMap').innerHTML =
+  '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:#6b7280;flex-direction:column;gap:.5rem">'
+  + '<i class="bi bi-map" style="font-size:3rem"></i><div>Google Maps no configurado — solo lista lateral disponible</div></div>';
+_refresh(); setInterval(_refresh, 10000);
+{% endif %}
+
+async function _refresh(){
+  try {
+    const r = await fetch(FETCH_URL);
+    const d = await r.json();
+    if (!d.ok) return;
+    let drivers = d.drivers || [];
+    // Filtro por transporte (matchea contra courier o courier_man)
+    const filtro = (document.getElementById('filtroCourier').value || '').trim().toLowerCase();
+    if (filtro){
+      drivers = drivers.filter(dr =>
+        (dr.courier||'').toLowerCase().includes(filtro)
+        || (dr.courier_man||'').toLowerCase().includes(filtro)
+      );
+    }
+    _render(drivers);
+    document.getElementById('lastUpdate').textContent = 'Actualizado: ' + new Date().toLocaleTimeString('es-CL', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  } catch(e) {}
+}
+
+function _ageClass(s){ if (s<90) return 'fresh'; if (s<300) return 'stale'; return 'very-stale'; }
+function _ageTxt(s){ if (s<60) return 'ahora'; if (s<3600) return 'hace ' + Math.round(s/60) + ' min'; return 'hace ' + Math.round(s/3600) + 'h'; }
+
+function _render(drivers){
+  const list = document.getElementById('driverList');
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.remove();
+  // Limpiar cards previos
+  list.querySelectorAll('.mn-driver').forEach(n => n.remove());
+  // Cards
+  if (!drivers.length){
+    list.innerHTML = '<div class="mn-empty"><i class="bi bi-broadcast"></i><div><strong>Esperando choferes…</strong></div></div>';
+  } else {
+    // Orden: sospechosos primero
+    drivers.sort((a,b) => (b.sospechoso?1:0) - (a.sospechoso?1:0));
+    drivers.forEach(function(dr){
+      const ageK = _ageClass(dr.age_s);
+      const prog = dr.progreso || { total:0, entregadas:0, fallidas:0, en_ruta:0 };
+      const pct = prog.total ? Math.round(prog.entregadas / prog.total * 100) : 0;
+      const card = document.createElement('div');
+      card.className = 'mn-driver ' + (ageK === 'fresh' ? '' : ageK) + (dr.sospechoso ? ' sospechoso' : '');
+      card.dataset.id = dr.id;
+      // Próximo destino con distancia
+      let proxHtml = '';
+      if (dr.proximo_destino && dr.proximo_destino.cliente){
+        const distTxt = (dr.dist_destino_m!=null)
+          ? (dr.dist_destino_m > 1000 ? (dr.dist_destino_m/1000).toFixed(1)+' km' : dr.dist_destino_m+' m')
+          : '';
+        proxHtml = '<div class="mn-prox"><i class="bi bi-geo-alt-fill"></i>'+
+          '<span>Próx: <b>'+dr.proximo_destino.cliente+'</b>'+(dr.proximo_destino.comuna?' · '+dr.proximo_destino.comuna:'')+'</span>'+
+          (distTxt ? '<span class="mn-prox-dist">'+distTxt+'</span>' : '')+
+        '</div>';
+      }
+      card.innerHTML =
+        '<div class="mn-d-top">'+
+          '<div><div class="mn-d-name">'+dr.nombre+'</div>'+
+            '<div class="mn-d-courier">'+(dr.courier || 'Sin transporte')+(dr.patente ? ' · ' + dr.patente : '')+'</div></div>'+
+          '<span class="mn-d-age '+ageK+'">'+_ageTxt(dr.age_s)+'</span>'+
+        '</div>'+
+        (dr.manifest_corr ? '<div class="mn-d-meta"><span><b>'+dr.manifest_corr+'</b></span>'+
+          (dr.speed_kmh!=null ? '<span>'+Math.round(dr.speed_kmh)+' km/h</span>' : '')+
+          (dr.battery_pct!=null ? '<span class="mn-bat '+(dr.battery_pct<20?'low':'')+'"><i class="bi bi-battery'+(dr.battery_pct<20?'':'-half')+'"></i>'+dr.battery_pct+'%</span>' : '')+
+        '</div>' : '')+
+        proxHtml+
+        (dr.sospechoso ? '<div class="mn-sosp-flag"><i class="bi bi-exclamation-triangle-fill"></i>Estancado lejos del destino</div>' : '')+
+        (prog.total ? '<div class="mn-d-prog"><div class="mn-d-prog-bar"><div class="mn-d-prog-fill" style="width:'+pct+'%"></div></div>'+
+          '<div class="mn-d-prog-txt">'+prog.entregadas+'/'+prog.total+' entregados'+(prog.fallidas?' · '+prog.fallidas+' fallida(s)':'')+'</div></div>' : '');
+      card.addEventListener('click', function(){ _selectDriver(dr); });
+      list.appendChild(card);
+    });
+  }
+  // Markers en mapa
+  if (typeof google === 'undefined' || !_map) return;
+  // Quitar markers de choferes que ya no están
+  const ids = new Set(drivers.map(d => d.id));
+  Object.keys(_markers).forEach(function(k){
+    if (!ids.has(parseInt(k))) { _markers[k].setMap(null); delete _markers[k]; }
+  });
+  drivers.forEach(function(dr){
+    const pos = { lat: dr.lat, lng: dr.lng };
+    const ageK = _ageClass(dr.age_s);
+    let color = ageK === 'fresh' ? '#16a34a' : (ageK === 'stale' ? '#f59e0b' : '#dc2626');
+    if (dr.sospechoso) color = '#dc2626';
+    const scale = dr.sospechoso ? 13 : 11;
+    const stroke = dr.sospechoso ? '#fee2e2' : '#fff';
+    const sw = dr.sospechoso ? 5 : 3;
+    if (_markers[dr.id]) {
+      _markers[dr.id].setPosition(pos);
+      _markers[dr.id].setIcon({ path: google.maps.SymbolPath.CIRCLE, scale: scale,
+        fillColor: color, fillOpacity:1, strokeColor: stroke, strokeWeight: sw });
+    } else {
+      const m = new google.maps.Marker({ position: pos, map: _map, title: dr.nombre,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: scale,
+                fillColor: color, fillOpacity:1, strokeColor: stroke, strokeWeight: sw } });
+      const iw = new google.maps.InfoWindow();
+      m.addListener('click', function(){
+        iw.setContent('<strong>'+dr.nombre+'</strong><br>'+(dr.courier||'')+'<br>'+_ageTxt(dr.age_s));
+        iw.open(_map, m);
+        _selectDriver(dr);
+      });
+      _markers[dr.id] = m;
+    }
+  });
+  // Centrar si es la 1ª vez
+  if (drivers.length && !window._centered){
+    const b = new google.maps.LatLngBounds();
+    drivers.forEach(d => b.extend({ lat:d.lat, lng:d.lng }));
+    _map.fitBounds(b);
+    if (drivers.length === 1) _map.setZoom(14);
+    window._centered = true;
+  }
+}
+
+async function _selectDriver(dr){
+  _selectedId = dr.id;
+  document.querySelectorAll('.mn-driver').forEach(c => c.classList.toggle('selected', parseInt(c.dataset.id) === dr.id));
+  if (typeof google === 'undefined' || !_map) return;
+  // Dibujar la ruta REAL que ha hecho (sus últimos pings)
+  if (_routePolyline) { _routePolyline.setMap(null); _routePolyline = null; }
+  try {
+    const r = await fetch('/transporte/api/chofer/' + dr.id + '/ruta-hecha?horas=6');
+    const d = await r.json();
+    if (d.ok && d.pings && d.pings.length > 1){
+      _routePolyline = new google.maps.Polyline({
+        path: d.pings.map(p => ({ lat:p.lat, lng:p.lng })),
+        strokeColor:'#dc2626', strokeOpacity:.7, strokeWeight:3, map:_map
+      });
+    }
+  } catch(e) {}
+  if (_markers[dr.id]) _map.panTo(_markers[dr.id].getPosition());
+}
+</script>
+{% endblock %}

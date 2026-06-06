@@ -1,0 +1,139 @@
+{# App del chofer — Pantalla de CIERRE del manifiesto. Gamification. #}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>¡Gran trabajo! · ILUS</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='ilus-icon.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root{ --ilus-red:#dc2626; --ilus-black:#0a0a0a; --ok:#16a34a; --warn:#f59e0b; }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; min-height:100%; }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:linear-gradient(160deg,#0a0a0a 0%, #1a1a1a 50%, #2a0a0a 100%);
+      color:#fff; min-height:100vh;
+      padding:max(1rem,env(safe-area-inset-top)) 1rem max(2rem,env(safe-area-inset-bottom));
+      -webkit-font-smoothing:antialiased;
+      display:flex; flex-direction:column;
+    }
+    .cl-shell{ max-width:440px; margin:0 auto; width:100%; flex:1; display:flex; flex-direction:column; }
+
+    /* Animación celebratoria */
+    .cl-celebrate{
+      text-align:center; padding:1.5rem 0 1rem;
+      animation:clFadeIn .6s cubic-bezier(.34,1.56,.64,1);
+    }
+    @keyframes clFadeIn{ from{ opacity:0; transform:translateY(20px); } to{ opacity:1; transform:translateY(0); } }
+    .cl-emoji{ font-size:4rem; animation:clBounce 2s infinite; display:inline-block; }
+    @keyframes clBounce{ 0%,100%{ transform:translateY(0) rotate(0); } 25%{ transform:translateY(-12px) rotate(-5deg); } 75%{ transform:translateY(-12px) rotate(5deg); } }
+    .cl-celebrate h1{ font-size:1.7rem; margin:.8rem 0 .3rem; font-weight:900; }
+    .cl-celebrate p{ color:#9ca3af; font-size:1rem; margin:0; }
+
+    /* Tarjeta de stats */
+    .cl-card{
+      background:rgba(255,255,255,.05);
+      border:1px solid rgba(255,255,255,.1);
+      border-radius:20px;
+      padding:1.6rem 1.4rem;
+      margin:1.5rem 0 1rem;
+      backdrop-filter:blur(10px);
+      animation:clFadeIn .6s .15s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    .cl-corr{ font-family:monospace; font-weight:800; font-size:1.05rem; color:#fff; }
+    .cl-corr-sub{ font-size:.74rem; color:#9ca3af; margin-top:.1rem; letter-spacing:.5px; text-transform:uppercase; }
+
+    .cl-stats{ display:grid; grid-template-columns:1fr 1fr; gap:.8rem; margin-top:1.2rem; }
+    .cl-stat{ background:rgba(255,255,255,.04); border-radius:13px; padding:1rem .9rem; text-align:center; border:1px solid rgba(255,255,255,.06); }
+    .cl-stat-num{ font-size:2rem; font-weight:900; line-height:1; }
+    .cl-stat-num.ok{ color:#86efac; } .cl-stat-num.warn{ color:#fbbf24; }
+    .cl-stat-lbl{ font-size:.7rem; color:#9ca3af; margin-top:.4rem; text-transform:uppercase; font-weight:700; letter-spacing:.5px; }
+
+    .cl-extra{ display:flex; justify-content:space-between; margin-top:1rem; padding-top:1rem; border-top:1px solid rgba(255,255,255,.08); font-size:.86rem; color:#cbd5e1; }
+    .cl-extra b{ color:#fff; }
+
+    /* CTA */
+    .cl-actions{ margin-top:auto; }
+    .cl-btn-primary{
+      display:flex; align-items:center; justify-content:center; gap:.5rem;
+      width:100%; background:var(--ilus-red); color:#fff; border:none;
+      padding:1rem; border-radius:14px; font-weight:800; font-size:1.05rem;
+      cursor:pointer; min-height:54px; text-decoration:none;
+      box-shadow:0 10px 30px -10px rgba(220,38,38,.7);
+    }
+    .cl-btn-primary:active{ transform:scale(.98); }
+    .cl-btn-secondary{
+      display:block; text-align:center; margin-top:.7rem; color:#9ca3af;
+      text-decoration:none; font-size:.86rem; padding:.6rem;
+    }
+
+    /* Confetti minimal */
+    .confetti{ position:fixed; top:-10px; pointer-events:none; z-index:1; opacity:.9; }
+  </style>
+</head>
+<body>
+  <div class="cl-shell">
+
+    <div class="cl-celebrate">
+      <div class="cl-emoji">🎉</div>
+      <h1>¡Gran trabajo, {{ chofer.nombre.split()[0] }}!</h1>
+      <p>Terminaste tu manifiesto</p>
+    </div>
+
+    <div class="cl-card">
+      <div class="cl-corr">{{ manifiesto.correlativo or ('M-' ~ manifiesto.id) }}</div>
+      <div class="cl-corr-sub">{{ manifiesto.courier or 'Transporte' }}</div>
+
+      <div class="cl-stats">
+        <div class="cl-stat">
+          <div class="cl-stat-num ok">{{ stats.entregadas or 0 }}</div>
+          <div class="cl-stat-lbl">Entregadas</div>
+        </div>
+        <div class="cl-stat">
+          <div class="cl-stat-num warn">{{ stats.fallidas or 0 }}</div>
+          <div class="cl-stat-lbl">Fallidas</div>
+        </div>
+      </div>
+
+      <div class="cl-extra">
+        <span>📦 <b>{{ stats.total or 0 }}</b> total</span>
+        <span>🛣️ <b>{{ km }}</b> km recorridos</span>
+      </div>
+    </div>
+
+    <div class="cl-actions">
+      <a href="{{ url_for('chofer_home') }}" class="cl-btn-primary">
+        <i class="bi bi-house-fill"></i>Volver a mis manifiestos
+      </a>
+      <a href="{{ url_for('chofer_logout') }}" class="cl-btn-secondary">
+        <i class="bi bi-box-arrow-right me-1"></i>Cerrar sesión
+      </a>
+    </div>
+  </div>
+
+  <script>
+    // Mini-confetti rojo/blanco (sin libs)
+    (function(){
+      const colors = ['#dc2626', '#fbbf24', '#16a34a', '#3b82f6', '#ffffff'];
+      for (let i = 0; i < 40; i++){
+        const c = document.createElement('div');
+        c.className = 'confetti';
+        c.style.left = (Math.random() * 100) + 'vw';
+        c.style.width = (4 + Math.random() * 6) + 'px';
+        c.style.height = c.style.width;
+        c.style.background = colors[Math.floor(Math.random() * colors.length)];
+        c.style.borderRadius = Math.random() > .5 ? '50%' : '2px';
+        c.style.animation = 'confettiFall ' + (2 + Math.random() * 2.5) + 's ' + (Math.random() * 0.5) + 's linear forwards';
+        document.body.appendChild(c);
+      }
+      const style = document.createElement('style');
+      style.textContent = '@keyframes confettiFall { to { transform: translateY(105vh) rotate(720deg); opacity:0; } }';
+      document.head.appendChild(style);
+      setTimeout(() => { document.querySelectorAll('.confetti').forEach(c => c.remove()); }, 6000);
+    })();
+  </script>
+</body>
+</html>
