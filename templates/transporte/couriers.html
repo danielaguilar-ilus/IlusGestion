@@ -3,46 +3,131 @@
 
 {% block content %}
 <style>
-/* ── Tarjetas de courier — diseño sobrio coherente con la app ── */
+/* ═══ TARJETA COURIER — diseño premium estilo Linear/Stripe ═══════════ */
 .cr-card{
-  background:#fff; border:1px solid #e8e8e8; border-radius:12px;
-  cursor:pointer; transition:border-color .15s, box-shadow .15s, transform .12s;
+  background:#fff;
+  border:1px solid #e8e8e8; border-radius:14px;
+  overflow:hidden;
+  transition:border-color .15s, box-shadow .2s, transform .12s;
   box-shadow:0 1px 2px rgba(0,0,0,.03);
+  position:relative;
 }
-.cr-card:hover{ border-color:#CC0000; box-shadow:0 6px 20px -10px rgba(204,0,0,.25); transform:translateY(-2px); }
+.cr-card:hover{
+  border-color:#CC0000;
+  box-shadow:0 12px 30px -14px rgba(204,0,0,.30), 0 4px 10px -4px rgba(0,0,0,.08);
+  transform:translateY(-3px);
+}
 .cr-card.cr-inactive{ opacity:.6; }
+.cr-card-link{
+  display:block; padding:0; cursor:pointer;
+  text-decoration:none; color:inherit;
+}
 .cr-inactive-badge{
-  position:absolute; top:10px; right:12px; font-size:.62rem; font-weight:700;
-  background:#6b7280; color:#fff; padding:.15rem .5rem; border-radius:20px;
+  position:absolute; top:12px; right:12px;
+  font-size:.62rem; font-weight:700; background:#6b7280; color:#fff;
+  padding:.18rem .55rem; border-radius:20px; z-index:2;
 }
-.cr-logo{ width:48px; height:48px; object-fit:contain; border-radius:9px; background:#f8f9fa; padding:5px; flex-shrink:0; border:1px solid #f0f0f0; }
-.cr-logo-ph{
-  width:48px; height:48px; flex-shrink:0; border-radius:9px;
-  background:#0a0a0a; color:#CC0000; font-weight:800; font-size:1rem;
+
+/* HERO: banda superior con logo grande centrado, fondo gris muy suave */
+.cr-hero{
+  padding:1.6rem 1.2rem 1.2rem;
+  background:linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
+  border-bottom:1px solid #f3f4f6;
+  text-align:center;
+  position:relative;
+}
+.cr-logo-wrap{
+  width:72px; height:72px; margin:0 auto .75rem;
+  border-radius:14px; background:#fff;
+  border:1px solid #f0f0f0;
   display:flex; align-items:center; justify-content:center;
+  box-shadow:0 2px 8px rgba(0,0,0,.04);
+  padding:8px;
 }
-/* Tags sobrios — gris suave, no colores chillones */
+.cr-logo-wrap img{
+  max-width:100%; max-height:100%; object-fit:contain;
+}
+.cr-logo-ph{
+  width:72px; height:72px; margin:0 auto .75rem;
+  border-radius:14px;
+  background:linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+  color:#CC0000; font-weight:900; font-size:1.5rem;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 4px 12px rgba(0,0,0,.15);
+  letter-spacing:.5px;
+}
+.cr-name{ font-size:1.05rem; font-weight:800; color:#0a0a0a; line-height:1.2; margin-bottom:.35rem; }
+.cr-tags{ display:flex; justify-content:center; gap:.35rem; flex-wrap:wrap; }
 .cr-tag{
-  font-size:.66rem; font-weight:600; color:#4b5563; background:#f3f4f6;
-  padding:.16rem .5rem; border-radius:6px; text-transform:capitalize;
+  font-size:.66rem; font-weight:600; color:#4b5563;
+  background:#f3f4f6;
+  padding:.2rem .55rem; border-radius:20px;
+  text-transform:capitalize; letter-spacing:.2px;
+  display:inline-flex; align-items:center; gap:.25rem;
 }
 .cr-tag-muted{ color:#9ca3af; background:#f9fafb; border:1px solid #f0f0f0; }
-/* Stats sin colorines */
-.cr-stats{ display:flex; align-items:center; gap:.5rem; background:#fafafa; border-radius:9px; padding:.6rem .4rem; }
-.cr-stat{ flex:1; text-align:center; }
-.cr-stat-num{ font-size:1.25rem; font-weight:800; line-height:1.1; color:#0a0a0a; }
-.cr-stat-num.cr-num-ok{ color:#16a34a; }
-.cr-stat-lbl{ font-size:.64rem; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; margin-top:.1rem; }
-.cr-stat-sep{ width:1px; align-self:stretch; background:#e8e8e8; }
-/* Acciones rápidas */
-.cr-act{
-  display:inline-flex; align-items:center; font-size:.76rem; font-weight:600;
-  color:#374151; text-decoration:none; padding:.35rem .65rem; border-radius:7px;
-  background:#f8f9fa; border:1px solid #f0f0f0; transition:all .12s;
+.cr-tag i{ font-size:.7rem; opacity:.7; }
+
+/* STATS: 2-3 columnas con números grandes */
+.cr-stats{
+  display:grid;
+  grid-template-columns:repeat(var(--cols, 2), 1fr);
+  padding:1rem 1.2rem;
+  background:#fff;
 }
-.cr-act:hover{ background:#fef2f2; border-color:#fee2e2; color:#CC0000; }
-.cr-act-danger{ color:#9ca3af; background:transparent; border-color:transparent; }
-.cr-act-danger:hover{ background:#fee2e2; color:#dc2626; border-color:#fecaca; }
+.cr-stat{ text-align:center; padding:0 .5rem; }
+.cr-stat + .cr-stat{ border-left:1px solid #f0f0f0; }
+.cr-stat-num{
+  font-size:1.6rem; font-weight:800; line-height:1; color:#0a0a0a;
+  font-variant-numeric:tabular-nums;
+}
+.cr-stat-num.cr-num-ok{ color:#16a34a; }
+.cr-stat-num.cr-num-muted{ color:#d1d5db; }
+.cr-stat-lbl{
+  font-size:.65rem; color:#9ca3af; font-weight:700;
+  text-transform:uppercase; letter-spacing:.5px; margin-top:.3rem;
+}
+
+/* CONTACTO: chips suaves */
+.cr-contact{
+  padding:0 1.2rem .75rem; display:flex; flex-wrap:wrap; gap:.4rem;
+}
+.cr-contact-chip{
+  font-size:.72rem; color:#6b7280; background:#f8f9fa;
+  padding:.25rem .6rem; border-radius:20px;
+  display:inline-flex; align-items:center; gap:.25rem;
+  border:1px solid #f0f0f0;
+}
+
+/* ACCIONES: barra inferior con botones grandes con icons */
+.cr-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr auto;
+  border-top:1px solid #f0f0f0;
+  background:#fafafa;
+}
+.cr-btn{
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:.25rem; padding:.7rem .4rem;
+  background:transparent; border:none; border-right:1px solid #f0f0f0;
+  color:#374151; font-size:.7rem; font-weight:700;
+  text-decoration:none; cursor:pointer; min-height:54px;
+  transition:background .12s, color .12s;
+  text-transform:uppercase; letter-spacing:.3px;
+}
+.cr-btn:last-child{ border-right:none; }
+.cr-btn i{ font-size:1.1rem; color:#9ca3af; transition:color .12s; }
+.cr-btn:hover{ background:#fff; color:#0a0a0a; }
+.cr-btn:hover i{ color:#CC0000; }
+.cr-btn.cr-btn-primary{ background:#0a0a0a; color:#fff; }
+.cr-btn.cr-btn-primary i{ color:#CC0000; }
+.cr-btn.cr-btn-primary:hover{ background:#CC0000; color:#fff; }
+.cr-btn.cr-btn-primary:hover i{ color:#fff; }
+.cr-btn.cr-btn-danger{
+  border-right:none; flex:0 0 54px; padding:.7rem .8rem;
+}
+.cr-btn.cr-btn-danger:hover{ background:#fee2e2; color:#dc2626; }
+.cr-btn.cr-btn-danger:hover i{ color:#dc2626; }
 </style>
 <div class="container-fluid py-3 px-3 px-md-4">
 
@@ -108,50 +193,54 @@
   {# ── COURIER CARDS ── #}
   <div class="row g-3" id="couriersGrid">
     {% for c in couriers %}
+    {% set _cols = 3 if c.peso_max_bulto else 2 %}
     <div class="col-12 col-md-6 col-xl-4" id="cardWrap{{ c.id }}">
-      <div class="cr-card h-100 position-relative {% if not c.activo %}cr-inactive{% endif %}"
-           onclick="window.location.href='/transporte/couriers/{{ c.id }}'"
-           title="Abrir ficha de {{ c.nombre }}">
-
+      <div class="cr-card h-100 {% if not c.activo %}cr-inactive{% endif %}">
         {% if not c.activo %}
         <span class="cr-inactive-badge">Inactivo</span>
         {% endif %}
 
-        <div class="p-3">
+        {# Toda la zona HERO+STATS+CONTACT abre la ficha al hacer click #}
+        <a class="cr-card-link" href="/transporte/couriers/{{ c.id }}">
 
-          {# top: logo + name + tipo #}
-          <div class="d-flex align-items-center gap-3 mb-3">
+          {# HERO: logo grande + nombre + tags #}
+          <div class="cr-hero">
             {% if c.logo_url %}
-            <img src="{{ c.logo_url }}" alt="{{ c.nombre }}" class="cr-logo"
-                 onerror="this.outerHTML='<div class=&quot;cr-logo-ph&quot;>{{ c.nombre[:2]|upper }}</div>'">
+            <div class="cr-logo-wrap">
+              <img src="{{ c.logo_url }}" alt="{{ c.nombre }}"
+                   onerror="this.parentNode.outerHTML='<div class=&quot;cr-logo-ph&quot;>{{ c.nombre[:2]|upper }}</div>'">
+            </div>
             {% else %}
             <div class="cr-logo-ph">{{ c.nombre[:2]|upper }}</div>
             {% endif %}
-
-            <div class="flex-grow-1 min-w-0">
-              <div class="fw-bold fs-6 text-truncate" title="{{ c.nombre }}">{{ c.nombre }}</div>
-              <div class="d-flex gap-1 flex-wrap mt-1 align-items-center">
-                <span class="cr-tag">{{ c.tipo|capitalize }}</span>
-                {% if not c.total_contratos %}<span class="cr-tag cr-tag-muted">Sin contrato</span>{% endif %}
-              </div>
+            <div class="cr-name">{{ c.nombre }}</div>
+            <div class="cr-tags">
+              <span class="cr-tag">
+                {% if c.tipo == 'internacional' %}<i class="bi bi-globe-americas"></i>
+                {% elif c.tipo == 'nacional' %}<i class="bi bi-map"></i>
+                {% elif c.tipo == 'regional' %}<i class="bi bi-geo-alt"></i>
+                {% else %}<i class="bi bi-truck"></i>{% endif %}
+                {{ c.tipo|capitalize }}
+              </span>
+              {% if c.total_contratos %}
+              <span class="cr-tag"><i class="bi bi-file-earmark-check"></i>Con contrato</span>
+              {% else %}
+              <span class="cr-tag cr-tag-muted"><i class="bi bi-file-earmark"></i>Sin contrato</span>
+              {% endif %}
             </div>
-
-            <i class="bi bi-chevron-right text-muted" style="font-size:1.1rem;flex-shrink:0;"></i>
           </div>
 
-          {# stats row #}
-          <div class="cr-stats">
+          {# STATS #}
+          <div class="cr-stats" style="--cols: {{ _cols }}">
             <div class="cr-stat">
-              <div class="cr-stat-num">{{ c.total_comunas or 0 }}</div>
+              <div class="cr-stat-num {% if not c.total_comunas %}cr-num-muted{% endif %}">{{ c.total_comunas or 0 }}</div>
               <div class="cr-stat-lbl">Comunas</div>
             </div>
-            <div class="cr-stat-sep"></div>
             <div class="cr-stat">
-              <div class="cr-stat-num {% if c.comunas_con_precio %}cr-num-ok{% endif %}">{{ c.comunas_con_precio or 0 }}</div>
+              <div class="cr-stat-num {% if c.comunas_con_precio %}cr-num-ok{% elif not c.comunas_con_precio %}cr-num-muted{% endif %}">{{ c.comunas_con_precio or 0 }}</div>
               <div class="cr-stat-lbl">Con tarifa</div>
             </div>
             {% if c.peso_max_bulto %}
-            <div class="cr-stat-sep"></div>
             <div class="cr-stat">
               <div class="cr-stat-num">{{ c.peso_max_bulto|int }}</div>
               <div class="cr-stat-lbl">kg/bulto</div>
@@ -159,30 +248,32 @@
             {% endif %}
           </div>
 
-          {# contact snippet #}
+          {# CONTACTO (chips suaves) #}
           {% if c.rut or c.telefono or c.email %}
-          <div class="text-muted small mt-3" style="font-size:.76rem;">
-            {% if c.rut %}<div class="text-truncate"><i class="bi bi-card-text me-1 text-secondary"></i>{{ c.rut }}</div>{% endif %}
-            {% if c.telefono %}<div class="text-truncate"><i class="bi bi-telephone me-1 text-secondary"></i>{{ c.telefono }}</div>{% endif %}
-            {% if c.email %}<div class="text-truncate"><i class="bi bi-envelope me-1 text-secondary"></i>{{ c.email }}</div>{% endif %}
+          <div class="cr-contact">
+            {% if c.telefono %}<span class="cr-contact-chip"><i class="bi bi-telephone"></i>{{ c.telefono }}</span>{% endif %}
+            {% if c.email %}<span class="cr-contact-chip"><i class="bi bi-envelope"></i>{{ c.email[:24] }}{% if c.email|length > 24 %}…{% endif %}</span>{% endif %}
+            {% if c.rut and not c.telefono and not c.email %}<span class="cr-contact-chip"><i class="bi bi-card-text"></i>{{ c.rut }}</span>{% endif %}
           </div>
           {% endif %}
+        </a>
 
-          {# quick actions (no navegan a ficha — stopPropagation) #}
-          <div class="d-flex gap-2 flex-wrap mt-3 pt-3" style="border-top:1px solid #f0f0f0;">
-            <a href="/transporte/couriers/{{ c.id }}#tab-tarifas" class="cr-act" onclick="event.stopPropagation()">
-              <i class="bi bi-map me-1"></i>Tarifas
-            </a>
-            <a href="/transporte/couriers/{{ c.id }}/pod" class="cr-act" onclick="event.stopPropagation()">
-              <i class="bi bi-shield-check me-1"></i>POD
-            </a>
-            <button class="cr-act cr-act-danger ms-auto"
-                    onclick="event.stopPropagation(); eliminarCourier({{ c.id }}, '{{ c.nombre|e }}')"
-                    title="Eliminar courier">
-              <i class="bi bi-trash3"></i>
-            </button>
-          </div>
-
+        {# ACCIONES: barra inferior con icons grandes — fuera del link #}
+        <div class="cr-actions">
+          <a class="cr-btn cr-btn-primary" href="/transporte/couriers/{{ c.id }}" title="Abrir ficha completa">
+            <i class="bi bi-file-person-fill"></i>Ficha
+          </a>
+          <a class="cr-btn" href="/transporte/couriers/{{ c.id }}#tab-tarifas" title="Ver tarifas por comuna">
+            <i class="bi bi-cash-coin"></i>Tarifas
+          </a>
+          <a class="cr-btn" href="/transporte/couriers/{{ c.id }}/pod" title="Config. Prueba de Entrega">
+            <i class="bi bi-shield-check"></i>POD
+          </a>
+          <button class="cr-btn cr-btn-danger" type="button"
+                  onclick="eliminarCourier({{ c.id }}, '{{ c.nombre|e }}')"
+                  title="Eliminar courier">
+            <i class="bi bi-trash3"></i>
+          </button>
         </div>
       </div>
     </div>
