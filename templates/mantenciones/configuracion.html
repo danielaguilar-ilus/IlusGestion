@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block title %}Configuración del Agente — ILUS{% endblock %}
+
+{% block content %}
+<style>
+  .ag-banner{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);
+    color:#fff;border-radius:12px;padding:14px 18px;margin-bottom:16px;
+    display:flex;align-items:center;gap:12px;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+  .ag-banner i.ag-bicon{font-size:1.6rem;color:var(--ilus-red);flex-shrink:0}
+  .ag-banner .t{font-weight:800;letter-spacing:-.01em;font-size:.98rem}
+  .ag-banner .s{font-size:.8rem;color:#cfd3da;margin-top:1px}
+
+  .ag-cat{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+    padding:16px 18px;margin-bottom:14px}
+  .ag-cat-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;
+    padding-bottom:9px;border-bottom:1px solid #f1f3f5}
+  .ag-cat-head .chip{width:30px;height:30px;border-radius:8px;display:flex;
+    align-items:center;justify-content:center;font-size:.95rem;flex-shrink:0}
+  .ag-cat-head h6{margin:0;font-weight:800;color:#0f172a;font-size:.95rem;text-transform:capitalize}
+  .ag-cat-head .cnt{margin-left:auto;font-size:.68rem;color:#9ca3af;font-weight:700;
+    text-transform:uppercase;letter-spacing:.4px}
+
+  .cat-frecuencia .chip{background:#dbeafe;color:#1e40af}
+  .cat-precio    .chip{background:#dcfce7;color:#166534}
+  .cat-descuento .chip{background:#fef3c7;color:#92400e}
+  .cat-alerta    .chip{background:#fee2e2;color:#991b1b}
+  .cat-politica  .chip{background:#ede9fe;color:#5b21b6}
+  .cat-texto     .chip{background:#f3f4f6;color:#374151}
+  .cat-otros     .chip{background:#f3f4f6;color:#374151}
+
+  .ag-rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+  .ag-rule{display:flex;flex-direction:column;gap:5px}
+  .ag-rule label.rl{font-weight:700;font-size:.85rem;color:#0f172a}
+  .ag-rule .desc{font-size:.73rem;color:#6b7280;line-height:1.35}
+  .ag-rule .ctrl{display:flex;align-items:center;gap:8px}
+  .ag-rule .ctrl .unidad{font-size:.78rem;color:#6b7280;font-weight:600;white-space:nowrap}
+  .ag-rule.bool{flex-direction:row;align-items:flex-start;gap:10px;
+    background:#fafafa;border:1px solid #eef0f2;border-radius:9px;padding:10px 12px}
+  .ag-rule.bool .form-check-input{margin-top:.15rem;flex-shrink:0}
+  .ag-rule.dirty label.rl::after{content:'•';color:var(--ilus-red);margin-left:5px;font-weight:900}
+  .ag-rule .rango{font-size:.68rem;color:#9ca3af}
+
+  .ag-savebar{position:sticky;bottom:0;z-index:5;background:#fff;border:1px solid #eaecf0;
+    border-radius:12px;padding:11px 16px;margin-top:16px;display:flex;
+    align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    box-shadow:0 -4px 16px rgba(0,0,0,.05)}
+  .ag-savebar .info{font-size:.8rem;color:#6b7280}
+  .ag-savebar .info b{color:var(--ilus-red)}
+
+  .empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;
+    padding:50px 30px;text-align:center}
+  .empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-sliders me-2"></i>Configuración del Agente</h4>
+    <div class="sub">Reglas del negocio que rigen el cálculo de salud, riesgo y exposición de cada cliente.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('mant_radar_page') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-radar me-1"></i>Ir al Radar
+    </a>
+    <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Dashboard
+    </a>
+  </div>
+</div>
+
+<div class="ag-banner">
+  <i class="bi bi-cpu ag-bicon"></i>
+  <div>
+    <div class="t">Estas reglas alimentan al Agente de Inteligencia</div>
+    <div class="s">100% por reglas, sin IA. Ajusta un valor y guarda — el próximo recálculo del Radar las usa.</div>
+  </div>
+</div>
+
+<div id="ag_root">
+  <div class="text-center py-5 text-muted">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando reglas…
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// Orden y metadatos visuales de cada categoría
+const CAT_META = {
+  frecuencia: {icon:'⏱', label:'Frecuencia'},
+  precio:     {icon:'💲', label:'Precio'},
+  descuento:  {icon:'🏷️', label:'Descuento'},
+  alerta:     {icon:'🚨', label:'Alerta'},
+  politica:   {icon:'📜', label:'Política'},
+  texto:      {icon:'📝', label:'Texto'},
+};
+const CAT_ORDER = ['frecuencia','precio','descuento','alerta','politica','texto'];
+
+let _reglas = [];                 // [{clave,valor,tipo_dato,...}]
+const _original = {};             // clave -> valor original (string)
+const _actual   = {};             // clave -> valor actual (string)
+
+function _isBool(td){ return td === 'bool'; }
+function _isNum(td){ return td === 'int' || td === 'float'; }
+
+async function cargar(){
+  const root = document.getElementById('ag_root');
+  root.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando reglas…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/reglas-negocio');
+    if (r.status === 403){
+      root.innerHTML = `<div class="empty-state"><i class="bi bi-shield-lock"></i>
+        <div class="fw-bold">Acceso restringido</div>
+        <div class="text-muted small">Solo administradores pueden configurar el Agente de Inteligencia.</div></div>`;
+      return;
+    }
+    const d = await r.json();
+    if (!Array.isArray(d)){
+      root.innerHTML = `<div class="alert alert-danger">Error: ${esc(d && d.error || 'respuesta inesperada')}</div>`;
+      return;
+    }
+    _reglas = d;
+    for (const reg of _reglas){
+      const v = reg.valor == null ? '' : String(reg.valor);
+      _original[reg.clave] = v;
+      _actual[reg.clave]   = v;
+    }
+    render();
+  } catch(e){
+    root.innerHTML = `<div class="alert alert-danger">Error de red: ${esc(e.message)}</div>`;
+  }
+}
+
+function render(){
+  const root = document.getElementById('ag_root');
+  if (!_reglas.length){
+    root.innerHTML = `<div class="empty-state"><i class="bi bi-sliders"></i>
+      <div class="fw-bold">No hay reglas configuradas</div>
+      <div class="text-muted small">Aún no se definieron reglas del negocio para el Agente.</div></div>`;
+    return;
+  }
+
+  // Agrupar por categoría
+  const grupos = {};
+  for (const reg of _reglas){
+    const cat = (reg.categoria || 'otros').toLowerCase();
+    (grupos[cat] = grupos[cat] || []).push(reg);
+  }
+  // Orden: categorías conocidas primero, luego el resto alfabético
+  const cats = Object.keys(grupos).sort((a,b) => {
+    const ia = CAT_ORDER.indexOf(a), ib = CAT_ORDER.indexOf(b);
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.localeCompare(b);
+  });
+
+  let html = '';
+  for (const cat of cats){
+    const meta = CAT_META[cat] || {icon:'⚙️', label:cat};
+    const items = grupos[cat].slice().sort((a,b) => (a.orden||0) - (b.orden||0));
+    const catCls = CAT_META[cat] ? ('cat-' + cat) : 'cat-otros';
+    html += `<div class="ag-cat ${catCls}">
+      <div class="ag-cat-head">
+        <span class="chip">${meta.icon}</span>
+        <h6>${esc(meta.label)}</h6>
+        <span class="cnt">${items.length} regla${items.length!==1?'s':''}</span>
+      </div>
+      <div class="ag-rules">
+        ${items.map(renderRule).join('')}
+      </div>
+    </div>`;
+  }
+  root.innerHTML = html;
+}
+
+function renderRule(reg){
+  const id = 'rg_' + reg.clave.replace(/[^a-zA-Z0-9_]/g, '_');
+  const label = esc(reg.label || reg.clave);
+  const desc  = reg.descripcion ? `<div class="desc">${esc(reg.descripcion)}</div>` : '';
+  const val   = _actual[reg.clave] != null ? _actual[reg.clave] : '';
+  const td    = reg.tipo_dato;
+
+  // BOOL → checkbox
+  if (_isBool(td)){
+    const on = (val === '1' || val === 'true' || val === 'True');
+    return `<div class="ag-rule bool" id="wrap_${id}">
+      <input class="form-check-input" type="checkbox" id="${id}" ${on?'checked':''}
+             onchange="onChange('${esc(reg.clave)}', this.checked ? '1' : '0')">
+      <div><label class="rl" for="${id}">${label}</label>${desc}</div>
+    </div>`;
+  }
+
+  // INT / FLOAT → number
+  if (_isNum(td)){
+    const step  = (td === 'float') ? 'any' : '1';
+    const minA  = (reg.min_val != null) ? `min="${esc(reg.min_val)}"` : '';
+    const maxA  = (reg.max_val != null) ? `max="${esc(reg.max_val)}"` : '';
+    const unid  = reg.unidad ? `<span class="unidad">${esc(reg.unidad)}</span>` : '';
+    let rango = '';
+    if (reg.min_val != null || reg.max_val != null){
+      const mn = reg.min_val != null ? esc(reg.min_val) : '−∞';
+      const mx = reg.max_val != null ? esc(reg.max_val) : '∞';
+      rango = `<div class="rango">Rango permitido: ${mn} a ${mx}</div>`;
+    }
+    return `<div class="ag-rule" id="wrap_${id}">
+      <label class="rl" for="${id}">${label}</label>${desc}
+      <div class="ctrl">
+        <input type="number" class="form-control form-control-sm" id="${id}"
+               value="${esc(val)}" step="${step}" ${minA} ${maxA}
+               oninput="onChange('${esc(reg.clave)}', this.value)">
+        ${unid}
+      </div>
+      ${rango}
+    </div>`;
+  }
+
+  // STRING / JSON → textarea si es largo o json, si no input text
+  const isLong = (td === 'json') || (String(val).length > 60) || String(val).includes('\n');
+  if (isLong){
+    return `<div class="ag-rule" id="wrap_${id}" style="grid-column:1/-1">
+      <label class="rl" for="${id}">${label}</label>${desc}
+      <textarea class="form-control form-control-sm" id="${id}" rows="3"
+                oninput="onChange('${esc(reg.clave)}', this.value)">${esc(val)}</textarea>
+    </div>`;
+  }
+  return `<div class="ag-rule" id="wrap_${id}">
+    <label class="rl" for="${id}">${label}</label>${desc}
+    <input type="text" class="form-control form-control-sm" id="${id}"
+           value="${esc(val)}" oninput="onChange('${esc(reg.clave)}', this.value)">
+  </div>`;
+}
+
+function onChange(clave, valor){
+  _actual[clave] = String(valor);
+  // marcar/desmarcar dirty visual
+  const id = 'rg_' + clave.replace(/[^a-zA-Z0-9_]/g, '_');
+  const wrap = document.getElementById('wrap_' + id);
+  if (wrap){
+    if (_actual[clave] !== _original[clave]) wrap.classList.add('dirty');
+    else wrap.classList.remove('dirty');
+  }
+  actualizarSaveBar();
+}
+
+function _diffCount(){
+  let n = 0;
+  for (const k in _actual){ if (_actual[k] !== _original[k]) n++; }
+  return n;
+}
+
+function actualizarSaveBar(){
+  const n = _diffCount();
+  const info = document.getElementById('ag_saveinfo');
+  const btn  = document.getElementById('ag_savebtn');
+  if (!info || !btn) return;
+  if (n === 0){
+    info.innerHTML = 'Sin cambios pendientes.';
+    btn.disabled = true;
+  } else {
+    info.innerHTML = `<b>${n}</b> cambio${n!==1?'s':''} sin guardar.`;
+    btn.disabled = false;
+  }
+}
+
+async function guardar(){
+  const cambios = {};
+  for (const k in _actual){ if (_actual[k] !== _original[k]) cambios[k] = _actual[k]; }
+  if (!Object.keys(cambios).length){
+    ilusToast('No hay cambios para guardar', {type:'info'});
+    return;
+  }
+  const btn = document.getElementById('ag_savebtn');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/reglas-negocio', {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cambios}),
+    });
+    if (r.status === 403){
+      ilusToast('No tienes permisos para guardar (solo admin).', {type:'error'});
+      if (btn) btn.disabled = false;
+      return;
+    }
+    const d = await r.json();
+    if (!r.ok || !d.ok){
+      ilusToast('Error: ' + esc(d && d.error || 'no se pudo guardar'), {type:'error'});
+      if (btn) btn.disabled = false;
+      return;
+    }
+    // Confirmar: lo actual pasa a ser lo original
+    for (const k in cambios){ _original[k] = _actual[k]; }
+    document.querySelectorAll('.ag-rule.dirty').forEach(el => el.classList.remove('dirty'));
+    actualizarSaveBar();
+    ilusToast(`✓ ${d.actualizadas != null ? d.actualizadas : Object.keys(cambios).length} regla(s) guardada(s)`, {type:'success'});
+  } catch(e){
+    ilusToast('Error de red: ' + esc(e.message), {type:'error'});
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Barra de guardado fija al pie (se inyecta una vez)
+(function mountSaveBar(){
+  const bar = document.createElement('div');
+  bar.className = 'ag-savebar';
+  bar.innerHTML = `
+    <div class="info" id="ag_saveinfo">Sin cambios pendientes.</div>
+    <button class="btn btn-ilus fw-bold" id="ag_savebtn" disabled onclick="guardar()">
+      <i class="bi bi-check-circle-fill me-1"></i>Guardar cambios
+    </button>`;
+  const content = document.querySelector('.main-content') || document.body;
+  // se inserta tras el root para quedar al final del flujo de la página
+  const root = document.getElementById('ag_root');
+  if (root && root.parentNode) root.parentNode.insertBefore(bar, root.nextSibling);
+  else content.appendChild(bar);
+})();
+
+document.addEventListener('DOMContentLoaded', cargar);
+</script>
+{% endblock %}

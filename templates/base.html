@@ -538,6 +538,17 @@
         <i class="bi bi-list-check"></i><span>Plantillas</span>
       </a>
       {% endif %}
+      {# Agente de Inteligencia — solo admin/superadmin #}
+      {% if permissions.admin or permissions.superadmin %}
+      <a href="{{ url_for('mant_radar_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_radar_page' %} active{% endif %}">
+        <i class="bi bi-radar"></i><span>Radar</span>
+      </a>
+      <a href="{{ url_for('mant_configuracion') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_configuracion' %} active{% endif %}">
+        <i class="bi bi-sliders"></i><span>Agente · Reglas</span>
+      </a>
+      {% endif %}
       {# <a href="{{ url_for('mant_analisis') }}"
          class="sidebar-link{% if request.endpoint == 'mant_analisis' %} active{% endif %}">
         <i class="bi bi-graph-up-arrow"></i><span>Análisis</span>

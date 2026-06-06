@@ -133,7 +133,7 @@
 .score-fill{height:100%;border-radius:4px;transition:width .6s ease;}
 .empty-state{text-align:center;padding:28px 16px;color:#9ca3af;}
 .empty-state i{font-size:2rem;opacity:.3;display:block;margin-bottom:8px;}
-/* ── IA & Plan ───────────────────────────────────── */
+/* ── Plan (legacy, sin uso) ──────────────────────── */
 .plan-hero{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);
            border-radius:var(--rad);padding:28px 24px;color:#fff;position:relative;overflow:hidden;}
 .plan-hero::before{content:'';position:absolute;top:-40px;right:-40px;width:200px;height:200px;
@@ -356,7 +356,7 @@
   box-shadow:0 6px 20px rgba(124,58,237,.3);
 }
 
-/* Análisis IA — contenedor */
+/* Análisis del contrato — contenedor */
 .ct-pro-ai{padding:20px 22px;}
 
 /* Banner del score con dial */
@@ -627,31 +627,6 @@
          La gestión va por Visita / OT directamente. #}
       {% endif %}
 
-      {# ── Dropdown de acciones IA ─────────────────────────────────── #}
-      <div class="dropdown">
-        <button class="btn btn-sm fw-bold dropdown-toggle"
-                style="background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border:0"
-                data-bs-toggle="dropdown" title="Acciones con Inteligencia Artificial">
-          <i class="bi bi-stars me-1"></i>IA
-        </button>
-        <ul class="dropdown-menu dropdown-menu-end">
-          <li><h6 class="dropdown-header"><i class="bi bi-stars me-1"></i>Asistente Claude</h6></li>
-          <li><a class="dropdown-item" href="#" onclick="aiAnalisisCliente();return false">
-            <i class="bi bi-graph-up me-2 text-primary"></i>Análisis económico y operativo
-            <div class="small text-muted">Score, MRR, riesgos, oportunidades</div>
-          </a></li>
-          <li><a class="dropdown-item" href="#" onclick="aiCompletarFichaCliente();return false">
-            <i class="bi bi-magic me-2 text-purple"></i>Completar ficha del cliente
-            <div class="small text-muted">Sugerir giro, comuna, región</div>
-          </a></li>
-          <li><hr class="dropdown-divider"></li>
-          <li><a class="dropdown-item" href="#" onclick="aiHealth();return false">
-            <i class="bi bi-heart-pulse me-2 text-success"></i>Diagnóstico de la IA
-            <div class="small text-muted">Verificar si Claude API responde</div>
-          </a></li>
-        </ul>
-      </div>
-
       {% if permissions.superadmin %}
       <div class="dropdown">
         <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
@@ -840,6 +815,9 @@
     <button class="ftab-btn" data-tab="reportes" onclick="switchTab('reportes');cargarReportes()">
       <i class="bi bi-file-earmark-medical"></i>Reportes
     </button>
+    <button class="ftab-btn" data-tab="intel" onclick="switchTab('intel');cargarInteligencia()">
+      <i class="bi bi-robot"></i>Agente
+    </button>
     <button class="ftab-btn" data-tab="repuestos" onclick="switchTab('repuestos');cargarRepuestos()">
       <i class="bi bi-gear-wide-connected"></i>Repuestos
       <span id="repCountBadge" class="badge ms-1" style="font-size:.6rem;background:#fef3c7;color:#92400e;display:none">0</span>
@@ -855,9 +833,6 @@
     </button>
     <button class="ftab-btn" data-tab="comunicaciones" onclick="switchTab('comunicaciones');cargarComunicaciones()">
       <i class="bi bi-chat-dots"></i>Comunicaciones
-    </button>
-    <button class="ftab-btn" data-tab="ia" onclick="switchTab('ia')">
-      <i class="bi bi-stars"></i>IA &amp; Plan
     </button>
     <button class="ftab-btn" data-tab="historial" onclick="switchTab('historial')">
       <i class="bi bi-clock-history"></i>Historial
@@ -1546,9 +1521,6 @@
       <button class="ar-btn" onclick="switchTab('contrato'); setTimeout(()=>abrirContratoModal(), 200)">
         <i class="bi bi-file-earmark-arrow-up"></i> Subir documento
       </button>
-      <button class="ar-btn" onclick="switchTab('ia')">
-        <i class="bi bi-stars"></i> Generar plan IA
-      </button>
       {# Botón "Imprimir ficha" eliminado 2026-05-21 (Daniel) — no es necesario. #}
     </div>
   </div>
@@ -2089,14 +2061,6 @@
           </div>
           <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
         </div>
-        <div class="eq-accion-item" onclick="switchTab('ia')">
-          <div class="eq-accion-icon" style="background:#faf5ff;color:#7c3aed"><i class="bi bi-stars"></i></div>
-          <div>
-            <div class="eq-accion-title">Ver plan IA</div>
-            <div class="eq-accion-sub">Recomendaciones por equipo</div>
-          </div>
-          <i class="bi bi-arrow-right ms-auto" style="color:#cbd5e1;font-size:.8rem"></i>
-        </div>
         {% if permissions.superadmin %}
         <div class="eq-accion-item" onclick="bajaMasivaEquipos({{ cliente.id }})"
              style="border-top:1px solid #fee2e2;margin-top:4px;padding-top:10px">
@@ -2112,8 +2076,8 @@
     </div>
     {% endif %}
 
-    {# ── Resumen IA del contrato vigente ── (2026-05-26: aprovecha datos
-       ya analizados, cero costo IA, visible en 2 segundos para el operador) #}
+    {# ── Resumen del contrato vigente ── (2026-05-26: aprovecha datos
+       ya analizados, visible en 2 segundos para el operador) #}
     {% set _ct_ia = (contratos|selectattr('estado','equalto','vigente')|list|first
                      if contratos else none) %}
     {% if not _ct_ia and contratos %}
@@ -2130,7 +2094,7 @@
     <div class="f-card" style="border-left:3px solid {{ _ia_color }}">
       <div class="f-card-header" style="background:{{ _ia_bg }};border-bottom-color:{{ _ia_border }}">
         <span class="f-card-title" style="color:{{ _ia_color }}">
-          <i class="bi bi-stars me-1"></i>Resumen IA del contrato
+          <i class="bi bi-stars me-1"></i>Resumen del contrato
         </span>
         {% if _ia_score %}
         <span class="badge ms-auto" style="background:{{ _ia_color }};color:#fff;font-size:.65rem">
@@ -2165,29 +2129,6 @@
             Ver contrato completo <i class="bi bi-arrow-right ms-1"></i>
           </button>
         </div>
-      </div>
-    </div>
-    {% elif _ct_ia and not _ct_ia.ai_resumen %}
-    {# Contrato existe pero NO analizado por IA — CTA para analizar #}
-    <div class="f-card" style="border-left:3px solid #94a3b8">
-      <div class="f-card-header" style="background:#f8fafc;border-bottom-color:#e2e8f0">
-        <span class="f-card-title" style="color:#475569">
-          <i class="bi bi-stars me-1"></i>Resumen IA del contrato
-        </span>
-        <span class="badge ms-auto" style="background:#cbd5e1;color:#475569;font-size:.65rem">
-          Pendiente
-        </span>
-      </div>
-      <div class="f-card-body" style="padding:12px 16px;text-align:center">
-        <p style="font-size:.78rem;color:#64748b;margin:0 0 8px">
-          El contrato aún no fue analizado. La IA puede extraer cláusulas, alertas y score de calidad.
-        </p>
-        {% if not is_tecnico %}
-        <button class="btn btn-sm btn-outline-secondary" style="font-size:.75rem"
-                onclick="analizarContrato({{ _ct_ia.id }}, this)">
-          <i class="bi bi-stars me-1"></i>Analizar con IA
-        </button>
-        {% endif %}
       </div>
     </div>
     {% endif %}
@@ -2856,7 +2797,7 @@ async function confirmarVisitaMulti() {
       </h5>
       <p class="text-muted mb-0" style="font-size:.78rem">
         Sube hasta {{ _max_ct }} contratos independientes (mantención + anexos + adendas).
-        La IA analiza cada uno por separado. Si necesitas más, usa la pestaña <em>Documentos</em> como anexos.
+        Si necesitas más, usa la pestaña <em>Documentos</em> como anexos.
       </p>
     </div>
     {% if not is_tecnico %}
@@ -2957,9 +2898,6 @@ async function confirmarVisitaMulti() {
               <i class="bi bi-cloud-slash me-1"></i>Sin Cloudinary
             </span>
             {% endif %}
-            <button class="btn btn-sm btn-outline-secondary" onclick="analizarContrato({{ ct.id }}, this)" title="Re-analizar con IA">
-              <i class="bi bi-arrow-clockwise"></i>
-            </button>
             {% if ct.ai_analizado %}
             <a class="btn btn-sm btn-outline-dark" href="/mantenciones/api/contratos/{{ ct.id }}/analisis/pdf"
                target="_blank" rel="noopener" title="Descargar análisis en PDF">
@@ -2980,42 +2918,13 @@ async function confirmarVisitaMulti() {
         </div>
       </div>
 
-      {# Si NO está analizado: CTA grande para analizar #}
-      {% if not ct.ai_analizado %}
-      <div class="ct-pro-noai">
-        <div class="ct-pro-noai-icon">
-          <i class="bi bi-stars"></i>
-        </div>
-        <h5 style="font-size:1rem;font-weight:800;margin-bottom:6px">Analiza este contrato con IA</h5>
-        <p style="color:#6b7280;font-size:.84rem;margin-bottom:14px">
-          Claude leerá el PDF completo y extraerá automáticamente: cláusulas críticas, riesgos,
-          cobertura, frecuencia recomendada, costos, alertas y propuestas de mejora.
-        </p>
-        <button class="btn fw-bold px-4" style="background:#7c3aed;color:#fff;border:none"
-                onclick="analizarContrato({{ ct.id }}, this)">
-          <i class="bi bi-stars me-2"></i>Analizar contrato
-        </button>
-      </div>
-      {% else %}
+      {# Análisis de contrato almacenado: solo se muestra si ya existe. #}
+      {% if ct.ai_analizado %}
 
       {# ═════════════════════════════════════════════════════
-         ANÁLISIS IA — DASHBOARD COMPLETO
+         DASHBOARD DE ANÁLISIS DEL CONTRATO
          ═════════════════════════════════════════════════════ #}
       <div class="ct-pro-ai">
-
-        {# ── Alerta si el análisis está desactualizado (> 90 días) ── #}
-        {% if ct.ai_fecha and (hoy - ct.ai_fecha).days > 90 %}
-        <div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-3" style="font-size:.8rem;border-radius:8px">
-          <i class="bi bi-arrow-clockwise" style="font-size:1rem"></i>
-          <div style="flex:1">
-            <strong>Análisis de hace {{ (hoy - ct.ai_fecha).days }} días.</strong>
-            Si el contrato fue renovado o modificado, re-analiza para actualizar.
-          </div>
-          <button class="btn btn-sm btn-warning fw-semibold" onclick="analizarContrato({{ ct.id }}, this)">
-            Re-analizar
-          </button>
-        </div>
-        {% endif %}
 
         {# ── Banner de score con dial circular grande ── #}
         <div class="ct-score-banner">
@@ -3034,7 +2943,7 @@ async function confirmarVisitaMulti() {
           </div>
           <div class="ct-score-info">
             <div class="ct-score-tag">
-              <i class="bi bi-stars me-1"></i>Análisis IA · {{ ct.ai_tipo_contrato or 'Contrato Mant.' }}
+              <i class="bi bi-stars me-1"></i>Análisis del contrato · {{ ct.ai_tipo_contrato or 'Contrato Mant.' }}
             </div>
             {% if ct.ai_resumen %}
             <p class="ct-score-resumen">{{ ct.ai_resumen }}</p>
@@ -3350,7 +3259,7 @@ async function confirmarVisitaMulti() {
     <div class="ilus-empty">
       <div class="e-icon"><i class="bi bi-file-earmark-text"></i></div>
       <div class="e-title">Sin contratos subidos</div>
-      <div class="e-sub">Sube el PDF del contrato y la IA extraerá automáticamente cláusulas, riesgos, costos y proyecciones.</div>
+      <div class="e-sub">Sube el PDF del contrato para registrar sus cláusulas, costos y vigencia.</div>
       <div class="e-actions">
         <button class="btn btn-ilus fw-bold" onclick="abrirContratoModal()">
           <i class="bi bi-upload me-1"></i>Subir primer contrato
@@ -3539,26 +3448,6 @@ async function confirmarVisitaMulti() {
           </button>
           <hr class="my-2">
 
-          {# ── REDACTAR CON IA (Daniel 2026-05-30): la IA escribe objetivos /
-             trabajos / observaciones / recomendaciones por máquina a partir de
-             notas rápidas del técnico. No guarda: rellena el formulario. ── #}
-          <div class="rep-ia-redactar mb-3"
-               style="background:linear-gradient(135deg,#faf5ff,#eef2ff);border:1px solid #ddd6fe;border-radius:12px;padding:12px 14px">
-            <div class="d-flex align-items-center gap-2 mb-2">
-              <i class="bi bi-stars" style="color:#7c3aed;font-size:1.1rem"></i>
-              <span class="fw-bold" style="font-size:.9rem;color:#5b21b6">Redactar informe con IA</span>
-            </div>
-            <textarea id="repIANotas" class="form-control form-control-sm mb-2" rows="2"
-                      placeholder="Notas rápidas para la IA: qué pidió el cliente, qué se hizo, hallazgos, repuestos usados… La IA redacta los objetivos, trabajos, observaciones y recomendaciones por máquina."></textarea>
-            <button type="button" class="btn btn-sm fw-bold" style="background:#7c3aed;color:#fff"
-                    id="btnRepRedactarIA" onclick="repRedactarIA(this)">
-              <i class="bi bi-magic me-1"></i>Redactar con IA
-            </button>
-            <span class="text-muted ms-2" style="font-size:.74rem">
-              Rellena Objetivos · Trabajos · Observaciones · Recomendaciones por máquina
-            </span>
-          </div>
-
           {# ── SECCIONES NARRATIVAS ── #}
           <div class="row g-3">
             <div class="col-12">
@@ -3622,9 +3511,6 @@ async function confirmarVisitaMulti() {
                   title="Agente interno (reglas, sin IA): valida obligatorios y diagnostica">
             <i class="bi bi-cpu me-1"></i>Analizar (agente interno)
           </button>
-          <button class="btn btn-outline-info" onclick="repAnalizarIA()" id="btnRepIA">
-            <i class="bi bi-stars me-1"></i>Analizar con IA
-          </button>
           <button class="btn btn-outline-dark" onclick="repDescargarWord()" id="btnRepWord" disabled>
             <i class="bi bi-file-earmark-word me-1"></i>Word
           </button>
@@ -3639,26 +3525,245 @@ async function confirmarVisitaMulti() {
     </div>
   </div>
 
-  {# Modal: análisis IA del reporte #}
-  <div class="modal fade" id="modalRepIA" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header" style="background:#7c3aed">
-          <h5 class="modal-title text-white fw-bold"><i class="bi bi-stars me-2"></i>Diagnóstico IA del informe</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body" id="modalRepIABody">
-          <div class="text-center py-5">
-            <div class="spinner-border text-danger mb-3"></div>
-            <div class="fw-semibold text-muted">Analizando con Claude AI…</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
 
 </div>
 {# /tab-reportes #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: INTELIGENCIA — Agente de Inteligencia de Ficha (determinista)
+   Diagnóstico calculado en backend (sin IA): score de salud, calidad
+   de información, contrato, brecha de mantenciones gratis, proyección
+   de fechas, propuesta comercial y acciones recomendadas.
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-intel">
+<style>
+/* ════════════════════════════════════════════════════════════════
+   PANEL INTELIGENCIA — diseño premium SaaS (paleta ILUS)
+   rojo #dc2626 · negro #0a0a0a · blanco. Tarjetas suaves, gradientes
+   sutiles, micro-animaciones, grid responsive. Las clases legacy se
+   conservan; las nuevas (intel-hero2 / intel-agent-* / intel-grid /
+   intel-meter / intel-eqchip…) son la base del rediseño.
+   ════════════════════════════════════════════════════════════════ */
+:root{--intel-red:#dc2626;--intel-red-dk:#991b1b;--intel-ink:#0a0a0a;}
+
+/* Aparición suave al pintar el panel */
+@keyframes intelFadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+#intelPanel > *{animation:intelFadeUp .45s cubic-bezier(.22,.61,.36,1) both;}
+#intelPanel > *:nth-child(2){animation-delay:.05s}
+#intelPanel > *:nth-child(3){animation-delay:.1s}
+#intelPanel > *:nth-child(4){animation-delay:.14s}
+#intelPanel > *:nth-child(n+5){animation-delay:.18s}
+@media (prefers-reduced-motion:reduce){ #intelPanel > *{animation:none}}
+
+/* ───────── HERO del agente: avatar + burbuja + gauge ───────── */
+.intel-hero2{position:relative;overflow:hidden;border-radius:20px;
+  background:radial-gradient(120% 140% at 0% 0%,#1f1f1f 0%,#0a0a0a 55%);
+  color:#fff;padding:24px 26px;margin-bottom:18px;
+  box-shadow:0 18px 40px -22px rgba(0,0,0,.85),inset 0 1px 0 rgba(255,255,255,.05);
+  display:flex;gap:24px;align-items:stretch;flex-wrap:wrap;}
+.intel-hero2::before{content:'';position:absolute;top:-40%;right:-12%;width:340px;height:340px;
+  background:radial-gradient(circle,rgba(220,38,38,.30),transparent 68%);pointer-events:none;}
+.intel-hero2::after{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,var(--intel-red),transparent);}
+.intel-hero2-main{flex:1 1 340px;min-width:280px;display:flex;gap:16px;position:relative;z-index:1;}
+.intel-avatar{width:54px;height:54px;flex-shrink:0;border-radius:16px;
+  background:linear-gradient(145deg,var(--intel-red),#0a0a0a);
+  display:flex;align-items:center;justify-content:center;font-size:1.55rem;color:#fff;
+  box-shadow:0 8px 20px -6px rgba(220,38,38,.6),inset 0 1px 0 rgba(255,255,255,.25);position:relative;}
+.intel-avatar .intel-pulse{position:absolute;right:-2px;bottom:-2px;width:14px;height:14px;border-radius:50%;
+  background:#22c55e;border:2.5px solid #0a0a0a;}
+.intel-avatar .intel-pulse::after{content:'';position:absolute;inset:0;border-radius:50%;
+  background:#22c55e;animation:intelPing 2s ease-out infinite;}
+@keyframes intelPing{0%{transform:scale(1);opacity:.7}80%,100%{transform:scale(2.6);opacity:0}}
+.intel-agent-name{font-size:.66rem;font-weight:800;letter-spacing:.7px;text-transform:uppercase;
+  color:#fca5a5;display:flex;align-items:center;gap:6px;margin-bottom:7px;}
+.intel-bubble{position:relative;background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.10);border-radius:6px 16px 16px 16px;
+  padding:13px 16px;font-size:.9rem;line-height:1.6;color:#f3f4f6;
+  backdrop-filter:blur(4px);}
+.intel-bubble::before{content:'';position:absolute;left:-7px;top:13px;width:14px;height:14px;
+  background:rgba(255,255,255,.055);border-left:1px solid rgba(255,255,255,.10);
+  border-bottom:1px solid rgba(255,255,255,.10);transform:rotate(45deg);}
+.intel-bubble b,.intel-bubble strong{color:#fff;}
+
+/* Gauge a la derecha del hero */
+.intel-hero2-side{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:11px;position:relative;z-index:1;min-width:148px;}
+.intel-gauge{position:relative;width:138px;height:138px;flex-shrink:0;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  filter:drop-shadow(0 6px 16px rgba(0,0,0,.5));transition:transform .3s ease;}
+.intel-gauge:hover{transform:scale(1.04);}
+.intel-gauge-inner{position:absolute;inset:11px;border-radius:50%;
+  background:radial-gradient(circle at 50% 35%,#161616,#000);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.7);}
+.intel-gauge-num{font-size:2.5rem;font-weight:900;line-height:1;color:#fff;letter-spacing:-1px;}
+.intel-gauge-lbl{font-size:.55rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:1.2px;color:#9ca3af;margin-top:4px;}
+.intel-risk{font-size:.68rem;padding:5px 15px;border-radius:50px;font-weight:800;
+  text-transform:uppercase;letter-spacing:.5px;display:inline-flex;align-items:center;gap:6px;
+  box-shadow:0 2px 8px rgba(0,0,0,.15);}
+.intel-risk-bajo{background:#dcfce7;color:#166534;}
+.intel-risk-medio{background:#fff8e1;color:#92400e;}
+.intel-risk-alto{background:#fee2e2;color:#991b1b;}
+
+/* Legacy hero (por si algún render viejo lo usa) */
+.intel-hero{display:flex;align-items:center;gap:22px;flex-wrap:wrap;
+  background:linear-gradient(135deg,#0a0a0a,#1a1a1a);color:#fff;
+  border-radius:16px;padding:22px 26px;margin-bottom:18px;}
+
+/* ───────── KPIs ───────── */
+.intel-kpi{position:relative;overflow:hidden;background:#fff;border:1px solid #eef0f3;
+  border-radius:14px;padding:14px 16px;height:100%;border-left:3px solid #94a3b8;
+  box-shadow:0 1px 2px rgba(16,24,40,.04);transition:transform .18s ease,box-shadow .18s ease;}
+.intel-kpi:hover{transform:translateY(-2px);box-shadow:0 10px 24px -14px rgba(16,24,40,.30);}
+.intel-kpi-lbl{font-size:.6rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.6px;color:#9ca3af;margin-bottom:6px;line-height:1.15;}
+.intel-kpi-val{font-size:1.6rem;font-weight:900;color:#0f172a;line-height:1;letter-spacing:-.5px;}
+.intel-kpi-ok{border-left-color:#16a34a;}
+.intel-kpi-warn{border-left-color:#f59e0b;}
+.intel-kpi-danger{border-left-color:#dc2626;}
+
+/* ───────── Tarjetas genéricas ───────── */
+.intel-card{position:relative;background:#fff;border:1px solid #eef0f3;border-radius:16px;
+  padding:18px 20px;margin-bottom:14px;height:100%;
+  box-shadow:0 1px 2px rgba(16,24,40,.04);transition:transform .18s ease,box-shadow .18s ease;}
+.intel-card:hover{transform:translateY(-2px);box-shadow:0 14px 32px -20px rgba(16,24,40,.30);}
+.intel-card-title{font-size:.74rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.5px;color:#374151;margin-bottom:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.intel-card-title i{font-size:1rem;}
+.intel-card-danger{border:1px solid #fecaca;background:linear-gradient(180deg,#fff,#fff6f6);}
+
+/* Grid responsive (colapsa a 1 columna en móvil) */
+.intel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px;}
+@media (max-width:768px){.intel-grid{grid-template-columns:1fr;}}
+
+/* Número grande "hero metric" dentro de tarjetas */
+.intel-bignum{font-size:2.3rem;font-weight:900;color:#0f172a;line-height:1;letter-spacing:-1px;}
+
+/* Barra de progreso / completitud */
+.intel-bar{height:11px;border-radius:50px;background:#f1f5f9;overflow:hidden;
+  box-shadow:inset 0 1px 2px rgba(16,24,40,.06);}
+.intel-bar-fill{height:100%;border-radius:50px;transition:width .7s cubic-bezier(.22,.61,.36,1);}
+.intel-meter-lbl{font-size:.7rem;font-weight:700;color:#6b7280;}
+
+/* Definition list (etiqueta arriba / valor abajo) */
+.intel-dl{display:flex;flex-wrap:wrap;gap:12px 0;}
+.intel-dl-item{flex:1 1 50%;min-width:140px;}
+.intel-dl-lbl{font-size:.64rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.4px;color:#9ca3af;margin-bottom:2px;}
+.intel-dl-val{font-size:.92rem;font-weight:700;color:#0f172a;}
+
+/* Chips & pills */
+.intel-chip{font-size:.6rem;padding:3px 10px;border-radius:50px;font-weight:800;
+  display:inline-flex;align-items:center;gap:4px;letter-spacing:.2px;}
+.intel-pill{font-size:.72rem;padding:4px 12px;border-radius:50px;font-weight:700;
+  background:#f3f4f6;color:#374151;display:inline-flex;align-items:center;gap:5px;margin:0 6px 6px 0;
+  transition:transform .15s ease;}
+.intel-pill:hover{transform:translateY(-1px);}
+.intel-eqchip{font-size:.72rem;padding:6px 13px;border-radius:11px;font-weight:800;
+  display:inline-flex;align-items:center;gap:6px;margin:0 7px 7px 0;
+  background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;}
+.intel-eqchip.bad{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
+
+/* Timeline de proyección */
+.intel-tl{position:relative;padding-left:20px;}
+.intel-tl::before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;
+  background:linear-gradient(180deg,#e5e7eb,#f1f5f9);}
+.intel-tl-row{position:relative;padding:6px 0 6px 4px;font-size:.83rem;}
+.intel-tl-row::before{content:'';position:absolute;left:-19px;top:10px;width:11px;height:11px;
+  border-radius:50%;background:#cbd5e1;border:2px solid #fff;box-shadow:0 0 0 1px #cbd5e1;}
+.intel-tl-vencida::before{background:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.25);}
+.intel-tl-prox::before{background:#16a34a;box-shadow:0 0 0 2px rgba(22,163,74,.25);}
+.intel-tl-proy::before{background:#cbd5e1;}
+
+/* Propuesta comercial */
+.intel-prop-row{display:flex;justify-content:space-between;align-items:center;
+  padding:7px 0;font-size:.86rem;border-bottom:1px dashed #f1f5f9;}
+.intel-prop-total{font-size:1.15rem;font-weight:900;color:#dc2626;letter-spacing:-.5px;}
+
+/* Acciones recomendadas */
+.intel-accion{display:flex;align-items:flex-start;gap:11px;padding:12px 14px;
+  background:#fff;border:1px solid #eef0f3;border-radius:11px;margin-bottom:8px;
+  transition:transform .15s ease,box-shadow .15s ease;}
+.intel-accion:hover{transform:translateX(2px);box-shadow:0 8px 20px -16px rgba(16,24,40,.4);}
+.intel-accion-alta{border-left:3px solid #dc2626;}
+.intel-accion-media{border-left:3px solid #f59e0b;}
+.intel-accion-baja{border-left:3px solid #16a34a;}
+
+/* ───────── Agente Proactivo: consultas accionables ───────── */
+.intel-agente-box{position:relative;overflow:hidden;background:linear-gradient(180deg,#fff,#fff8f8);
+  border:1px solid #fecaca;border-radius:18px;padding:16px 18px;margin-bottom:18px;
+  box-shadow:0 10px 30px -18px rgba(220,38,38,.35);}
+.intel-agente-box::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,#dc2626,#f59e0b);}
+.intel-agente-head{font-size:.82rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.5px;color:#0a0a0a;margin-bottom:13px;display:flex;align-items:center;gap:8px;}
+.intel-agente-head .bi-bell-fill{animation:intelRing 2.6s ease-in-out infinite;transform-origin:50% 0;}
+@keyframes intelRing{0%,72%,100%{transform:rotate(0)}76%{transform:rotate(13deg)}80%{transform:rotate(-11deg)}84%{transform:rotate(8deg)}88%{transform:rotate(-5deg)}92%{transform:rotate(0)}}
+.intel-agente-ok{display:flex;align-items:center;gap:13px;
+  background:linear-gradient(180deg,#f0fdf4,#ecfdf5);
+  border:1px solid #bbf7d0;border-radius:16px;padding:15px 17px;margin-bottom:18px;
+  box-shadow:0 8px 24px -18px rgba(22,163,74,.4);}
+.intel-consulta{position:relative;display:flex;align-items:flex-start;gap:13px;padding:13px 15px;
+  border:1px solid #eef0f3;border-radius:13px;margin-bottom:10px;background:#fff;
+  transition:transform .15s ease,box-shadow .15s ease;}
+.intel-consulta:hover{transform:translateY(-1px);box-shadow:0 10px 26px -18px rgba(16,24,40,.4);}
+.intel-consulta:last-child{margin-bottom:0;}
+.intel-consulta input.form-control{border-radius:9px;border-color:#e5e7eb;}
+.intel-consulta input.form-control:focus{border-color:#dc2626;box-shadow:0 0 0 .18rem rgba(220,38,38,.14);}
+
+/* Desglose del score (dentro del hero oscuro) */
+.intel-score-detalle{width:100%;}
+.intel-score-detalle summary::-webkit-details-marker{display:none;}
+.intel-score-detalle summary{transition:opacity .15s ease;}
+.intel-score-detalle summary:hover{opacity:.85;}
+.intel-score-detalle[open] summary .bi-question-circle{transform:rotate(0);}
+
+/* Botones pequeños del panel (refuerzo visual sobre .btn-xs global) */
+#intelPanel .btn-xs{border-radius:8px;font-weight:700;transition:transform .12s ease,filter .12s ease;}
+#intelPanel .btn-xs:hover{transform:translateY(-1px);filter:brightness(1.03);}
+
+/* Botón PROMINENTE "Generar OT" (acción programar_ot del tracking de fechas) */
+#intelPanel .intel-btn-ot{
+  background:#dc2626;border-color:#dc2626;color:#fff;
+  border-radius:9px;font-weight:800;letter-spacing:.2px;
+  padding:7px 16px;box-shadow:0 3px 10px rgba(220,38,38,.32);
+  transition:transform .12s ease,box-shadow .12s ease,filter .12s ease;
+}
+#intelPanel .intel-btn-ot:hover{
+  background:#b91c1c;border-color:#b91c1c;color:#fff;
+  transform:translateY(-1px);box-shadow:0 5px 16px rgba(220,38,38,.42);
+}
+
+@media (max-width:576px){
+  .intel-hero2{padding:18px 16px;gap:16px;}
+  .intel-hero2-side{width:100%;}
+  .intel-gauge{width:120px;height:120px;}
+  .intel-card{padding:15px 16px;}
+}
+</style>
+
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+      <h5 class="mb-1 fw-bold" style="font-size:1rem"><i class="bi bi-robot me-1" style="color:#dc2626"></i>Agente de gestión</h5>
+      <p class="text-muted mb-0" style="font-size:.78rem">Diagnóstico automático del cliente — salud, brechas y oportunidad comercial</p>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="cargarInteligencia(true)" title="Recalcular el diagnóstico desde cero">
+        <i class="bi bi-arrow-clockwise me-1"></i>Recalcular
+      </button>
+    </div>
+  </div>
+
+  <div id="intelPanel">
+    <div class="text-center py-5 text-muted">
+      <div class="spinner-border spinner-border-sm me-2"></div>Calculando inteligencia…
+    </div>
+  </div>
+</div>
+{# /tab-intel #}
 
 
 {# ══════════════════════════════════════════════════════════════════
@@ -5420,128 +5525,6 @@ function abrirEmailManual() {
 {# /tab-comunicaciones #}
 
 
-{# ══════════════════════════════════════════════════════
-   TAB: IA & PLAN
-══════════════════════════════════════════════════════ #}
-<div class="ftab-pane" id="tab-ia">
-
-  {# Hero card ─────────────────────────────────────────── #}
-  <div class="plan-hero mb-4">
-    <span class="plan-hero-icon">🤖</span>
-    <div class="plan-hero-title">Plan de Mejora con IA</div>
-    <div class="plan-hero-sub">
-      Un solo análisis combina diagnóstico, proyección 12 meses, recomendaciones
-      por equipo y objetivos comerciales. Se genera <strong>una vez cada 6 meses</strong>
-      (o antes si aparece información nueva relevante) y debe verificarse el cumplimiento
-      del plan anterior antes de regenerar — para no desperdiciar tokens ni perder trazabilidad.
-    </div>
-
-    {# Botón único — su estado lo gobierna planActualizarBotonIA() en JS #}
-    <div class="mt-3 d-flex gap-2 flex-wrap align-items-center">
-      <button class="btn btn-ilus fw-bold px-4" id="btnGenerarPlan"
-              data-cid="{{ cliente.id }}" onclick="planAccionIA()">
-        <i class="bi bi-stars me-2"></i>Analizar con IA
-      </button>
-      <span id="planCtStatus" style="font-size:.78rem;align-self:center">
-        <span class="text-muted"><i class="bi bi-hourglass-split me-1"></i>Cargando estado del análisis…</span>
-      </span>
-      <a href="#" onclick="switchTab('contrato');return false" class="btn btn-sm btn-outline-secondary">
-        <i class="bi bi-arrow-right me-1"></i>Ir a contratos
-      </a>
-    </div>
-
-    {# Chip de plan vigente (lo rellena planRenderEstadoIA en JS) #}
-    <div id="planEstadoChips" class="mt-3 d-flex gap-2 flex-wrap" style="display:none"></div>
-  </div>
-
-  {# Resumen IA de contratos existentes ──────────────── #}
-  {% set ct_analizados = contratos|selectattr('ai_analizado')|list %}
-  {% if ct_analizados %}
-  <div class="f-card mb-4">
-    <div class="f-card-header">
-      <span class="f-card-title"><i class="bi bi-stars me-1"></i>Análisis IA de contratos</span>
-    </div>
-    <div class="f-card-body">
-      {% for ct in ct_analizados %}
-      <div class="d-flex align-items-center gap-3 mb-3 {% if not loop.last %}pb-3{% endif %}" {% if not loop.last %}style="border-bottom:1px solid var(--border)"{% endif %}>
-        <div class="ai-score-ring" style="background:{{ '#16a34a' if (ct.ai_score or 0)>=70 else '#ea580c' if (ct.ai_score or 0)>=40 else '#dc2626' }};width:44px;height:44px;font-size:.9rem">
-          {{ ct.ai_score or '?' }}
-        </div>
-        <div style="flex:1;min-width:0">
-          <div class="fw-bold" style="font-size:.85rem">{{ ct.nombre or 'Contrato' }}</div>
-          <div style="font-size:.76rem;color:#6b7280">{{ ct.ai_tipo_contrato or '' }} · Score {{ ct.ai_score or '—' }}/100</div>
-          {% if ct.ai_resumen %}
-          <p style="font-size:.77rem;color:#374151;margin:4px 0 0;line-height:1.45">{{ ct.ai_resumen[:160] }}{% if ct.ai_resumen|length > 160 %}…{% endif %}</p>
-          {% endif %}
-        </div>
-        <span class="badge-{{ ct.estado }}">{{ ct.estado.replace('_',' ').title() }}</span>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
-  {# Área de resultado del plan ────────────────────────── #}
-  <div id="planSpinner" style="display:none" class="text-center py-5">
-    <div class="spinner-border text-danger mb-3" style="width:3rem;height:3rem"></div>
-    <div class="fw-semibold text-muted">Generando plan de mejora con Claude AI…</div>
-    <div class="text-muted mt-2" style="font-size:.82rem">Esto puede tomar hasta 30 segundos</div>
-  </div>
-
-  <div id="planResultado" style="display:none">
-    <!-- Renderizado dinámicamente por JS -->
-  </div>
-
-</div>
-{# /ftab-pane ia #}
-
-
-{# ── Modal: Verificar cumplimiento del plan IA anterior ─────────────────
-   Se muestra cuando el plan no está verificado. Lista los objetivos
-   (propuestas_mejora + proxima_visita) extraídos del plan_json anterior y
-   pide check + evidencia/razón por cada uno antes de permitir un análisis
-   nuevo. La lista la rellena planAbrirModalVerificar() en mant_ficha.js. #}
-<div class="modal fade" id="modalVerificarPlan" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header" style="background:#fef3c7;border-bottom:1px solid #fcd34d">
-        <h5 class="modal-title fw-bold" style="color:#92400e">
-          <i class="bi bi-clipboard-check me-2"></i>Verificar cumplimiento del plan anterior
-        </h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted" style="font-size:.85rem">
-          Antes de generar un nuevo análisis IA, marca qué objetivos del plan anterior
-          se cumplieron. Esto previene gasto innecesario de tokens y mantiene la trazabilidad
-          del seguimiento al cliente.
-        </p>
-        <div id="vpInfoPlan" class="mb-3 p-2 rounded"
-             style="background:#f9fafb;border:1px solid #e5e7eb;font-size:.8rem;color:#374151">
-          <!-- Datos del plan a verificar -->
-        </div>
-        <div id="vpObjetivos">
-          <!-- Lista de objetivos generada dinámicamente -->
-        </div>
-        <div class="mt-3">
-          <label class="form-label fw-semibold" style="font-size:.82rem">
-            Notas generales sobre el cumplimiento (opcional)
-          </label>
-          <textarea class="form-control" id="vpNotas" rows="3"
-                    placeholder="Ej: El plan se cumplió parcialmente. Faltó renegociar contrato por agenda del cliente."></textarea>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-success fw-bold" id="vpBtnConfirmar" onclick="planConfirmarVerificacion()">
-          <i class="bi bi-check2-circle me-1"></i>Confirmar cumplimiento
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-
 {# ══════════════════════════════════════════════════════════════════
    TAB: MANTENCIONES / VISITAS
 ══════════════════════════════════════════════════════════════════ #}
@@ -6681,7 +6664,7 @@ function abrirEmailManual() {
 
         {# ── Tab: Variables ── #}
         <div id="gcTabVars">
-          <p class="text-muted small">Edita los valores clave del contrato. Esta información complementa el análisis IA y queda registrada.</p>
+          <p class="text-muted small">Edita los valores clave del contrato. Esta información queda registrada junto al contrato.</p>
           <div class="row g-3">
             <div class="col-6 col-md-4">
               <label class="form-label fw-semibold small">SLA de respuesta (horas)</label>
@@ -6724,7 +6707,7 @@ function abrirEmailManual() {
 
         {# ── Tab: Cláusulas ── #}
         <div id="gcTabClausulas" style="display:none">
-          <p class="text-muted small">Registra cláusulas propias o edita las detectadas por IA. Quedan guardadas junto al contrato.</p>
+          <p class="text-muted small">Registra o edita las cláusulas del contrato. Quedan guardadas junto al contrato.</p>
           <div id="gcClausulasLista"></div>
           <button class="btn btn-sm btn-outline-primary mt-2" onclick="gcAddClausula()">
             <i class="bi bi-plus-circle me-1"></i>Agregar cláusula
@@ -6765,7 +6748,7 @@ function abrirEmailManual() {
           <ul class="mt-1 mb-1" style="font-size:.82rem;padding-left:1.2rem">
             <li><strong id="elimCtrNombre"></strong></li>
             <li>El archivo PDF/Word físico</li>
-            <li>El análisis IA del contrato</li>
+            <li>El análisis del contrato</li>
             <li>Los adjuntos asociados</li>
           </ul>
         </div>
@@ -8817,31 +8800,6 @@ async function vhGuardar(){
   </div>
 </div>
 
-{# ════════════════════════════════════════════════════════════════════
-   MODAL: Resultado de Análisis IA del cliente
-════════════════════════════════════════════════════════════════════ #}
-<div class="modal fade" id="modalAIResult" tabindex="-1">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#4c1d95,#7c3aed);color:#fff">
-        <h5 class="modal-title fw-bold">
-          <i class="bi bi-stars me-2"></i><span id="aiResultTitle">Resultado del análisis</span>
-        </h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body" id="aiResultBody">
-        <div class="text-center py-5">
-          <div class="spinner-border text-primary"></div>
-          <div class="small text-muted mt-3">Consultando a Claude...</div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
@@ -8865,6 +8823,7 @@ window.__FICHA_DATA = {
   cliente_razon_social: {{ (cliente.razon_social or '') | tojson }},
   contrato_vigente_id: {{ _ct_active.id if _ct_active else 'null' }},
   is_superadmin: {{ 'true' if permissions and permissions.superadmin else 'false' }},
+  is_admin: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }},
   can_create_tecnicos: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }}
 };
 </script>
@@ -8882,7 +8841,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260603c"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260606g"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico
