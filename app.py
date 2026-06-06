@@ -253,6 +253,56 @@ def _now_chile_str(fmt="%d-%m-%Y %H:%M"):
 
 app = Flask(__name__)
 
+
+# ── /version: diagnóstico simple — qué commit está corriendo el servidor ──
+# Lee el hash del último commit del filesystem (puesto por el deploy).
+# Útil para diferenciar "no se aplicó el deploy" vs "cache del navegador".
+_VERSION_CACHE = {"hash": None, "msg": None}
+def _get_version_info():
+    if _VERSION_CACHE["hash"] is not None:
+        return _VERSION_CACHE
+    try:
+        import subprocess as _sp
+        # En Cloud Build se commitea desde git, así que .git puede no estar.
+        # Probamos varias fuentes en orden.
+        h = (os.environ.get("GIT_COMMIT") or os.environ.get("COMMIT_SHA")
+             or os.environ.get("K_REVISION") or "").strip()
+        if not h:
+            try:
+                h = _sp.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                     stderr=_sp.DEVNULL, timeout=2).decode().strip()
+            except Exception:
+                pass
+        msg = (os.environ.get("GIT_COMMIT_MSG") or "").strip()
+        if not msg:
+            try:
+                msg = _sp.check_output(["git", "log", "-1", "--format=%s"],
+                                       stderr=_sp.DEVNULL, timeout=2).decode().strip()
+            except Exception:
+                pass
+        _VERSION_CACHE["hash"] = h or "unknown"
+        _VERSION_CACHE["msg"]  = msg or ""
+    except Exception:
+        _VERSION_CACHE["hash"] = "unknown"
+        _VERSION_CACHE["msg"]  = ""
+    return _VERSION_CACHE
+
+@app.route("/version")
+def app_version():
+    """Endpoint público para diagnóstico — devuelve commit + revisión Cloud Run."""
+    from flask import jsonify as _jf
+    v = _get_version_info()
+    return _jf({
+        "ok": True,
+        "commit":     v["hash"],
+        "msg":        v["msg"],
+        "revision":   os.environ.get("K_REVISION", ""),     # Cloud Run la setea sola
+        "service":    os.environ.get("K_SERVICE", ""),
+        "expected_commit_with_redesign": "222d716",
+        "expected_features": ["cr-hero", "cr-actions", "cr-btn-primary",
+                              "_ensure_courier_comunas_updated_at"],
+    })
+
 # ── SECRET_KEY ────────────────────────────────────────────────────────
 # Prioridad:
 #   1. Variable de entorno FLASK_SECRET_KEY (Railway/prod)
@@ -4189,6 +4239,21 @@ def _perf_static_cache_and_gzip(resp):
             resp.headers["Permissions-Policy"] = (
                 "geolocation=(self), camera=(self), microphone=()"
             )
+
+        # ── 0.05) Anti-cache para HTML — NUEVO 2026-06-06 ─────────────────
+        # Síntoma: tras pushear cambios a producción, Daniel veía la UI
+        # vieja durante horas porque Chrome cacheaba el HTML agresivamente
+        # cuando no había Cache-Control explícito. Solución: en respuestas
+        # HTML/JSON (no en assets estáticos), forzamos no-store. Los assets
+        # con hash en la URL (/static/...) siguen con cache largo más abajo.
+        try:
+            _ct = (resp.headers.get("Content-Type") or "").lower()
+            _is_static = (request.path.startswith("/static/") if request else False)
+            if (not _is_static) and ("text/html" in _ct or "application/json" in _ct):
+                resp.headers["Cache-Control"] = "no-store, must-revalidate"
+                resp.headers["Pragma"] = "no-cache"
+        except Exception:
+            pass
 
         # ── 0.1) Headers de seguridad globales ───────────────────────────
         # Code review senior 2026-05-17: el sitio no tenía las cabeceras
