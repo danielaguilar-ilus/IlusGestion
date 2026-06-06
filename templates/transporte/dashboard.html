@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-speedometer2 me-2"></i>Dashboard — Hoy
+        <span class="badge bg-danger ms-2" style="animation:pulse 2s infinite">EN VIVO</span>
+      </h4>
+      <div class="sub">Resumen del día. Auto-refresca cada 30s.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('tr_monitor_live') }}" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-broadcast me-1"></i>Monitor en vivo
+      </a>
+      <a href="{{ url_for('tr_buscar_interno') }}" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-search me-1"></i>Buscar despacho
+      </a>
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.5 } }
+.dh-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:18px; }
+@media(max-width:900px){ .dh-grid{ grid-template-columns:repeat(2,1fr); } }
+@media(max-width:520px){ .dh-grid{ grid-template-columns:1fr; } }
+.dh-stat{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:1.2rem 1.3rem; position:relative; overflow:hidden;
+  box-shadow:0 1px 3px rgba(0,0,0,.04); transition:transform .15s; }
+.dh-stat:hover{ transform:translateY(-2px); }
+.dh-stat::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; }
+.dh-stat.ok::before{ background:#16a34a; } .dh-stat.warn::before{ background:#f59e0b; }
+.dh-stat.err::before{ background:#dc2626; } .dh-stat.live::before{ background:#dc2626; }
+.dh-stat.info::before{ background:#3b82f6; }
+.dh-lbl{ font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; display:flex; align-items:center; gap:.3rem; }
+.dh-num{ font-size:2.4rem; font-weight:900; line-height:1; margin-top:.4rem; color:#0a0a0a; }
+.dh-hint{ font-size:.74rem; color:#9ca3af; margin-top:.3rem; }
+.dh-stat.ok .dh-num{ color:#16a34a; } .dh-stat.warn .dh-num{ color:#f59e0b; }
+.dh-stat.err .dh-num{ color:#dc2626; } .dh-stat.live .dh-num{ color:#dc2626; }
+.dh-cta{ display:inline-block; margin-top:.6rem; font-size:.74rem; font-weight:700; color:#dc2626; text-decoration:none; }
+
+.dh-row{ display:grid; grid-template-columns:1.4fr 1fr; gap:14px; }
+@media(max-width:1024px){ .dh-row{ grid-template-columns:1fr; } }
+.dh-card{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:1.1rem 1.2rem; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+.dh-card-h{ font-size:.8rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#0f172a; margin-bottom:.85rem; display:flex; align-items:center; gap:.4rem; }
+.dh-card-h i{ color:#dc2626; }
+
+.dh-entrega{ display:flex; gap:.7rem; padding:.7rem .15rem; border-bottom:1px solid #f3f4f6; align-items:center; }
+.dh-entrega:last-child{ border-bottom:none; }
+.dh-entrega-foto{ width:48px; height:48px; border-radius:10px; object-fit:cover; flex-shrink:0; background:#f3f4f6; }
+.dh-entrega-empty{ width:48px; height:48px; border-radius:10px; background:#f3f4f6; display:flex; align-items:center; justify-content:center; color:#9ca3af; flex-shrink:0; }
+.dh-entrega-body{ flex:1; min-width:0; }
+.dh-entrega-cli{ font-weight:700; font-size:.88rem; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dh-entrega-meta{ font-size:.74rem; color:#6b7280; }
+.dh-entrega-time{ font-size:.7rem; font-weight:700; color:#16a34a; }
+
+.dh-topcourier{ display:flex; justify-content:space-between; align-items:center; padding:.55rem 0; border-bottom:1px solid #f3f4f6; font-size:.88rem; }
+.dh-topcourier:last-child{ border-bottom:none; }
+.dh-topcourier-n{ font-weight:800; color:#0a0a0a; }
+.dh-topcourier-c{ flex:1; padding:0 .8rem; }
+.dh-topcourier-cnt{ background:#dcfce7; color:#15803d; padding:.2rem .6rem; border-radius:20px; font-size:.78rem; font-weight:700; }
+
+.dh-empty{ text-align:center; padding:1.8rem 1rem; color:#9ca3af; }
+.dh-empty i{ font-size:2rem; opacity:.5; display:block; margin-bottom:.4rem; }
+</style>
+
+{# ── Stats principales ── #}
+<div class="dh-grid">
+  <div class="dh-stat ok">
+    <div class="dh-lbl"><i class="bi bi-check-circle-fill"></i>Entregados hoy</div>
+    <div class="dh-num">{{ stats.entregados_hoy or 0 }}</div>
+    <div class="dh-hint">Despachos completados</div>
+  </div>
+  <div class="dh-stat info">
+    <div class="dh-lbl"><i class="bi bi-truck"></i>En ruta ahora</div>
+    <div class="dh-num">{{ stats.en_ruta_hoy or 0 }}</div>
+    <div class="dh-hint">Despachos en camino</div>
+  </div>
+  <div class="dh-stat live">
+    <div class="dh-lbl"><i class="bi bi-broadcast"></i>Choferes activos</div>
+    <div class="dh-num">{{ stats.choferes_activos or 0 }}</div>
+    <a href="{{ url_for('tr_monitor_live') }}" class="dh-cta">Ver monitor en vivo &rarr;</a>
+  </div>
+  <div class="dh-stat {{ 'warn' if (stats.sin_ot_fedex or 0) > 0 else 'ok' }}">
+    <div class="dh-lbl"><i class="bi bi-exclamation-triangle"></i>Sin OT FedEx</div>
+    <div class="dh-num">{{ stats.sin_ot_fedex or 0 }}</div>
+    <div class="dh-hint">{% if (stats.sin_ot_fedex or 0) > 0 %}Facturas FedEx sin tracking{% else %}Todo en orden{% endif %}</div>
+  </div>
+</div>
+
+<div class="dh-grid" style="grid-template-columns:repeat(3,1fr)">
+  <div class="dh-stat">
+    <div class="dh-lbl"><i class="bi bi-clipboard-check"></i>Manifiestos hoy</div>
+    <div class="dh-num" style="font-size:1.6rem">{{ stats.manifiestos_hoy or 0 }}</div>
+  </div>
+  <div class="dh-stat err">
+    <div class="dh-lbl"><i class="bi bi-x-octagon"></i>Fallidos hoy</div>
+    <div class="dh-num" style="font-size:1.6rem">{{ stats.fallidos_hoy or 0 }}</div>
+  </div>
+  <div class="dh-stat info">
+    <div class="dh-lbl"><i class="bi bi-graph-up"></i>Tasa éxito</div>
+    {% set total_int = (stats.entregados_hoy or 0) + (stats.fallidos_hoy or 0) %}
+    {% set tasa = ((stats.entregados_hoy or 0) / total_int * 100) if total_int > 0 else 0 %}
+    <div class="dh-num" style="font-size:1.6rem">{{ "%.0f"|format(tasa) }}%</div>
+  </div>
+</div>
+
+{# ── Últimas entregas + top couriers ── #}
+<div class="dh-row">
+  <div class="dh-card">
+    <div class="dh-card-h"><i class="bi bi-shield-check"></i>Últimas entregas</div>
+    {% if ultimas %}
+      {% for u in ultimas %}
+      <a class="dh-entrega" href="{{ url_for('tr_buscar_interno') }}?q={{ u.nudo }}" style="text-decoration:none;color:inherit">
+        {% if u.foto_thumb %}
+        <img class="dh-entrega-foto" src="{{ u.foto_thumb }}" alt="Entrega">
+        {% else %}
+        <div class="dh-entrega-empty"><i class="bi bi-box"></i></div>
+        {% endif %}
+        <div class="dh-entrega-body">
+          <div class="dh-entrega-cli">{{ u.cliente_nombre or '—' }}</div>
+          <div class="dh-entrega-meta">{{ u.tido }} {{ u.nudo }}{% if u.comuna %} · {{ u.comuna }}{% endif %}{% if u.receptor_nombre %} · recibió {{ u.receptor_nombre.split()[0] }}{% endif %}</div>
+        </div>
+        <div class="dh-entrega-time">{{ u.entregado_at | chile_fmt('%H:%M') }}</div>
+      </a>
+      {% endfor %}
+    {% else %}
+      <div class="dh-empty"><i class="bi bi-inbox"></i>Aún sin entregas registradas hoy.</div>
+    {% endif %}
+  </div>
+
+  <div class="dh-card">
+    <div class="dh-card-h"><i class="bi bi-trophy"></i>Top transportes hoy</div>
+    {% if top_couriers %}
+      {% for tc in top_couriers %}
+      <div class="dh-topcourier">
+        <span class="dh-topcourier-n">{{ loop.index }}.</span>
+        <span class="dh-topcourier-c">{{ tc.courier }}</span>
+        <span class="dh-topcourier-cnt">{{ tc.entregas }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="dh-empty"><i class="bi bi-graph-up"></i>Sin datos del día.</div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+// Auto-refresh cada 30s
+setTimeout(() => location.reload(), 30000);
+</script>
+{% endblock %}

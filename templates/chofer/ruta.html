@@ -89,6 +89,7 @@
         <div class="rt-stop-meta">{{ p.tido }} {{ p.nudo }} · {{ p.bultos or 0 }} bulto{{ 's' if (p.bultos or 0) != 1 }}{% if p.telefono %} · {{ p.telefono }}{% endif %}</div>
         <div class="rt-stop-acts">
           <a class="rt-btn rt-btn-nav" target="_blank"
+             onclick="_iniciarParada({{ p.commitment_id }})"
              href="https://www.google.com/maps/dir/?api=1&destination={{ (p.direccion ~ ', ' ~ (p.comuna or '') ~ ', Chile')|urlencode }}">
             <i class="bi bi-sign-turn-right"></i>Navegar
           </a>
@@ -112,6 +113,7 @@
     const PARADAS = [
       {% for p in paradas %}
       { n: {{ loop.index }},
+        commitment_id: {{ p.commitment_id }},
         cliente: {{ (p.cliente_nombre or '')|tojson }},
         dir: {{ ((p.direccion or '') ~ ', ' ~ (p.comuna or '') ~ ', Chile')|tojson }},
         lat: {{ p.dest_lat if p.dest_lat else 'null' }},
@@ -141,12 +143,12 @@
           bounds.extend(pos); map.fitBounds(bounds);
         }
         if (p.lat && p.lng) { place({ lat: parseFloat(p.lat), lng: parseFloat(p.lng) }); }
-        else if (p.dir) {
-          pending++;
-          geocoder.geocode({ address: p.dir }, function(res, status){
-            if (status === 'OK' && res[0]) place(res[0].geometry.location);
-            pending--;
-          });
+        else if (p.commitment_id) {
+          // Geocoding lazy server-side (persiste en BD para próximas veces)
+          fetch('/transporte/api/commitment/' + p.commitment_id + '/geocode', { method:'POST' })
+            .then(r => r.json())
+            .then(d => { if (d.ok) place({ lat: d.lat, lng: d.lng }); })
+            .catch(()=>{});
         }
       });
     }
@@ -156,6 +158,12 @@
   {% endif %}
 
   <script>
+    // Auto-marca "En ruta" al tocar "Navegar" (dispara email al cliente)
+    window._iniciarParada = function(cid){
+      fetch('/chofer/manifiesto/{{ manifiesto.id }}/parada/' + cid + '/iniciar',
+            { method:'POST', keepalive:true }).catch(()=>{});
+    };
+
     // ── PING GPS silencioso cada 30s ──
     (function(){
       if (!navigator.geolocation) return;
