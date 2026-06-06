@@ -3991,17 +3991,31 @@ def require_permission(permission):
 
 @app.before_request
 def _legacy_host_redirect():
-    """Cutover Railway → Google (Juan Daniel 2026-06-06): "el link viejo debe llevar
-    al nuevo". Si la env var ILUS_REDIRECT_TO está seteada (SOLO en el host viejo /
-    Railway), reenvía TODO el tráfico al host nuevo (Google Cloud Run) preservando
-    ruta + query (ej: links de seguimiento de retiro siguen funcionando).
+    """Cutover Railway → Google (Juan Daniel 2026-06-06): "ya no quiero usar Railway,
+    que todos vayan a Google y esa página redirija todo".
 
-    En Google la variable NO está → return None → la app funciona normal. Es 100%
-    INERTE sin la variable, por eso es seguro tenerlo siempre en el código.
-    302 (temporal) para que el cambio sea REVERSIBLE (sin cache duro del navegador)."""
-    _target = (os.environ.get("ILUS_REDIRECT_TO") or "").strip()
-    if not _target:
+    A PRUEBA DE BALAS: si corremos en RAILWAY (detectado por las vars RAILWAY_* que
+    Railway inyecta SOLO en sus contenedores), reenvía TODO el tráfico a Google Cloud
+    Run (302, preservando ruta + query — los links de seguimiento viejos siguen
+    funcionando). NO depende de NINGUNA variable manual, por eso no puede fallar por
+    un typo u olvido. En Google Cloud Run esas vars RAILWAY_* NO existen → return None
+    → la app funciona normal.
+
+    Escape hatch: ILUS_REDIRECT_OFF=1 desactiva el reenvío. ILUS_REDIRECT_TO sobrescribe
+    el host destino (ej. si algún día se usa un dominio propio)."""
+    if (os.environ.get("ILUS_REDIRECT_OFF") or "").strip().lower() in ("1", "true", "yes", "on"):
         return None
+    _on_railway = bool(
+        os.environ.get("RAILWAY_PROJECT_ID")
+        or os.environ.get("RAILWAY_ENVIRONMENT")
+        or os.environ.get("RAILWAY_SERVICE_ID")
+        or os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    )
+    _target = (os.environ.get("ILUS_REDIRECT_TO") or "").strip()
+    if not _target and _on_railway:
+        _target = "https://ilus-app-469212710544.southamerica-west1.run.app"
+    if not _target:
+        return None  # ni Railway ni override → app normal (Google Cloud Run)
     try:
         from urllib.parse import urlsplit
         if request.host == urlsplit(_target).netloc:
