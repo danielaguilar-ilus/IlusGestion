@@ -322,6 +322,12 @@
             </select>
           </td>
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
+            {% if item.estado_entrega == 'Entregado' %}
+            <a class="btn btn-sm btn-outline-success mfd-act-btn" title="Ver prueba de entrega (foto, firma, GPS)"
+               href="/transporte/buscar?q={{ item.nudo }}" target="_blank">
+              <i class="bi bi-shield-check"></i>
+            </a>
+            {% endif %}
             <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas de esta factura"
                     onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
               <i class="bi bi-tags"></i>
