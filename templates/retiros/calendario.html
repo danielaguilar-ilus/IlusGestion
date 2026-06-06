@@ -147,6 +147,7 @@
 }
 .agi-slot.full{background:linear-gradient(180deg,#fee2e2 0%,#fef2f2 100%);}
 .agi-slot.high{background:linear-gradient(180deg,#fef9c3 0%,#fff 100%);}
+.agi-slot.half{background:linear-gradient(180deg,#ffedd5 0%,#fff 100%);}  /* medio cupo (1/2) — Juan Daniel 2026-06-05 */
 .agi-slot.drag-over{
   background:linear-gradient(135deg,#dcfce7,#bbf7d0);
   box-shadow:inset 0 0 0 2px var(--kd-conf);
@@ -799,10 +800,14 @@ function agiRenderWeek(){
       let capInfo = '';
       let picksHtml = '';
       if (slotData){
-        const pct = slotData.pct;
-        if (pct >= 100) cellClass += ' full';
-        else if (pct >= 70) cellClass += ' high';
-        capInfo = `<div class="agi-slot-cap" title="Ocupación ${pct}%">${slotData.ocupados}/${slotData.max_picks}</div>`;
+        // Juan Daniel 2026-06-05: ver el DOBLE cupo en el calendario.
+        // lleno (2/2) = rojo, medio cupo (1/2) = ámbar, libre = normal.
+        const _ocup = slotData.ocupados || 0;
+        const _mx   = slotData.max_picks || 2;
+        if (_ocup >= _mx) cellClass += ' full';
+        else if (_ocup >= 1) cellClass += ' half';
+        const _lbl = (_ocup >= _mx) ? 'Lleno' : (_ocup >= 1 ? 'Medio cupo' : 'Libre');
+        capInfo = `<div class="agi-slot-cap" title="${_lbl} (${_ocup}/${_mx})">${_ocup}/${_mx}</div>`;
         picksHtml = slotData.picks.map(p => agiPickCardHtml(p)).join('');
       }
       html += `<div class="${cellClass}" data-fecha="${fecha}" data-slot="${slot}"
