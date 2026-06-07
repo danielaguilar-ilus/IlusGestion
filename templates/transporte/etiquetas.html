@@ -124,7 +124,7 @@ html, body {
 /* En impresión: una etiqueta por página, sin sombras de pantalla */
 @media print {
   html, body { background: #fff; }
-  .toolbar { display: none !important; }
+  .toolbar, .selector-panel, .et-overlay { display: none !important; }
   .sheet { padding: 0; gap: 0; }
   .etiqueta {
     box-shadow: none;
@@ -136,7 +136,25 @@ html, body {
     page-break-after: auto;
     break-after: auto;
   }
+  /* Excluir de la impresión las etiquetas que el usuario desmarcó */
+  .et-wrap.is-off {
+    display: none !important;
+  }
 }
+
+/* ── PDF mode (Playwright headless): forzar layout impreso desde el inicio ── */
+{% if pdf_mode %}
+html, body { background: #fff; }
+.toolbar, .selector-panel, .et-overlay { display: none !important; }
+.sheet { padding: 0; gap: 0; }
+.etiqueta {
+  box-shadow: none;
+  border-radius: 4mm;
+  page-break-after: always;
+  break-after: page;
+}
+.etiqueta:last-child { page-break-after: auto; break-after: auto; }
+{% endif %}
 
 /* HEADER de marca */
 .lbl-head {
@@ -386,6 +404,178 @@ html, body {
   letter-spacing: .2mm;
   line-height: 1.05;
 }
+
+/* ═══ SELECTOR ULTRAPOTENTE (solo pantalla) ═══ */
+.selector-panel {
+  max-width: 900px;
+  margin: 14px auto 4px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  font-family: Arial, Helvetica, sans-serif;
+  box-shadow: 0 2px 10px rgba(0,0,0,.04);
+}
+.sp-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.sp-title {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 900; font-size: 14px; color: #0a0a0a;
+}
+.sp-title i { color: #dc2626; }
+.sp-counter {
+  font-size: 12px; color: #6b7280; font-weight: 700;
+}
+.sp-counter strong { color: #dc2626; font-size: 13px; }
+
+.sp-quick {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.sp-chip {
+  border: 1.5px solid #e5e7eb;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.sp-chip:hover { background: #f3f4f6; border-color: #9ca3af; }
+.sp-chip.is-active { background: #0a0a0a; color: #fff; border-color: #0a0a0a; }
+.sp-chip.red { color: #dc2626; border-color: #fca5a5; }
+.sp-chip.red:hover { background: #fee2e2; }
+
+.sp-rango {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-rango label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: .25px;
+}
+.sp-rango .hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.sp-rango input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  color: #0a0a0a;
+}
+.sp-rango input:focus {
+  outline: 0;
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.12);
+}
+.sp-rango button {
+  height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #0a0a0a;
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sp-rango button:hover { background: #dc2626; }
+
+.sp-downloads {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-dl {
+  flex: 1;
+  min-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.sp-dl.primary { background: #dc2626; color: #fff; }
+.sp-dl.primary:hover { background: #b91c1c; }
+.sp-dl.secondary { background: #0a0a0a; color: #fff; }
+.sp-dl.secondary:hover { background: #374151; }
+.sp-dl.outline { background: #fff; color: #0a0a0a; border: 1.5px solid #0a0a0a; }
+.sp-dl.outline:hover { background: #f3f4f6; }
+.sp-dl i { font-size: 16px; }
+.sp-dl.is-busy {
+  opacity: .6; pointer-events: none;
+}
+
+/* Wrap de etiqueta + checkbox flotante (solo pantalla) */
+.et-wrap {
+  position: relative;
+}
+.et-overlay {
+  position: absolute;
+  top: 10px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(10,10,10,.92);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 10;
+  box-shadow: 0 4px 14px rgba(0,0,0,.3);
+}
+.et-overlay input[type=checkbox] {
+  width: 18px; height: 18px;
+  accent-color: #dc2626;
+  cursor: pointer;
+}
+.et-overlay label {
+  cursor: pointer;
+  user-select: none;
+}
+.et-wrap.is-off .etiqueta {
+  opacity: .25;
+  filter: grayscale(1);
+}
+.et-wrap.is-off .et-overlay {
+  background: rgba(107,114,128,.92);
+}
+
+/* Mobile: stack downloads */
+@media (max-width: 720px) {
+  .sp-rango { grid-template-columns: 1fr; }
+  .sp-rango button { width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -398,9 +588,64 @@ html, body {
   </div>
   <div class="tb-actions">
     <a class="btn btn-back" href="{{ url_for('transporte_index') }}"><i class="bi bi-arrow-left"></i> Volver</a>
-    <button type="button" class="btn btn-print" onclick="window.print()"><i class="bi bi-printer-fill"></i> Imprimir</button>
+    <button type="button" class="btn btn-print" onclick="ilusImprimirSel()"><i class="bi bi-printer-fill"></i> Imprimir (navegador)</button>
   </div>
 </div>
+
+{% if facturas %}
+<div class="selector-panel" id="sp">
+  <div class="sp-head">
+    <div class="sp-title">
+      <i class="bi bi-sliders"></i>
+      <span>Qu&eacute; imprimir</span>
+    </div>
+    <div class="sp-counter">
+      Seleccionadas: <strong id="sp-cnt">{{ total_etiquetas }}</strong>
+      <span style="color:#9ca3af"> / {{ total_etiquetas }}</span>
+    </div>
+  </div>
+
+  <div class="sp-quick">
+    <button type="button" class="sp-chip is-active" data-quick="all">
+      <i class="bi bi-check-all"></i> Todas ({{ total_etiquetas }})
+    </button>
+    <button type="button" class="sp-chip" data-quick="none">
+      <i class="bi bi-x-circle"></i> Ninguna
+    </button>
+    <button type="button" class="sp-chip" data-quick="invert">
+      <i class="bi bi-arrow-left-right"></i> Invertir
+    </button>
+    {% for f in facturas %}
+    <button type="button" class="sp-chip" data-quick="factura" data-cid="{{ f.commitment_id }}"
+            title="Imprimir solo los {{ f.total_bultos }} bultos de {{ f.doc_full or f.doc_numero }}">
+      <i class="bi bi-file-earmark-text"></i> {{ f.doc_numero or '—' }} ({{ f.total_bultos }})
+    </button>
+    {% endfor %}
+  </div>
+
+  <div class="sp-rango">
+    <label>
+      Rango por factura
+      <div class="hint">ej: <code>{{ facturas[0].doc_numero }}:1,3,5-8</code></div>
+    </label>
+    <input id="sp-rango" type="text"
+           placeholder="{{ facturas[0].doc_numero }}:1-3,5,8  |  separa varias con coma">
+    <button type="button" id="sp-aplicar"><i class="bi bi-funnel-fill"></i> Aplicar</button>
+  </div>
+
+  <div class="sp-downloads">
+    <button type="button" class="sp-dl primary" id="sp-pdf" title="Descarga UN PDF con todas las etiquetas seleccionadas">
+      <i class="bi bi-file-earmark-pdf-fill"></i> PDF (1 archivo)
+    </button>
+    <button type="button" class="sp-dl secondary" id="sp-zip" title="Descarga un ZIP con un PDF por cada etiqueta — ideal para reimprimir bultos sueltos">
+      <i class="bi bi-file-earmark-zip-fill"></i> ZIP (individuales)
+    </button>
+    <button type="button" class="sp-dl outline" onclick="ilusImprimirSel()" title="Diálogo del navegador (más rápido si tienes la impresora local)">
+      <i class="bi bi-printer"></i> Imprimir directo
+    </button>
+  </div>
+</div>
+{% endif %}
 
 {% if not facturas %}
   <div class="empty">
@@ -409,9 +654,18 @@ html, body {
     <p>No se encontraron facturas con bultos para imprimir.</p>
   </div>
 {% else %}
-<div class="sheet">
+<div class="sheet" id="sheet">
   {% for f in facturas %}
     {% for b in f.bultos %}
+    <div class="et-wrap" data-cid="{{ f.commitment_id }}" data-num="{{ b.num }}" data-doc="{{ f.doc_numero }}">
+      {% if not pdf_mode %}
+      <div class="et-overlay">
+        <input type="checkbox" id="ck-{{ f.commitment_id }}-{{ b.num }}" checked>
+        <label for="ck-{{ f.commitment_id }}-{{ b.num }}">
+          {{ f.doc_numero }} · Bulto {{ b.num }}/{{ b.total }}
+        </label>
+      </div>
+      {% endif %}
     <article class="etiqueta">
 
       <header class="lbl-head">
@@ -484,6 +738,7 @@ html, body {
       </footer>
 
     </article>
+    </div>
     {% endfor %}
   {% endfor %}
 </div>
@@ -511,7 +766,7 @@ document.addEventListener("DOMContentLoaded", function () {
 document.addEventListener("DOMContentLoaded", function () {
   function renderBarcode(barcode) {
     const code = (barcode.dataset.code || "").trim();
-    if (!code) { return; }
+    if (!code) { barcode.dataset.rendered = "1"; return; }
     const wrap = barcode.closest(".barcode-wrap");
     const wrapWidth = wrap ? wrap.clientWidth : 280;
     // Densidad similar a la del módulo de productos (CODE128, sin texto).
@@ -535,6 +790,207 @@ document.addEventListener("DOMContentLoaded", function () {
   }
   document.querySelectorAll(".barcode").forEach(renderBarcode);
 });
+
+/* ══════════════════════════════════════════════════════════════════════
+   SELECTOR ULTRAPOTENTE — filtrado, rangos, descarga PDF/ZIP
+   ══════════════════════════════════════════════════════════════════════ */
+(function() {
+  const PDF_MODE = {{ 'true' if pdf_mode else 'false' }};
+  if (PDF_MODE) return;   // En modo Playwright no inicializa nada interactivo.
+
+  const TIPO    = {{ ('"manifiesto"' if manifiesto_id is defined and manifiesto_id else '"factura"') | safe }};
+  const BASE_PDF = "{{ pdf_url|default('', true) }}";
+  const BASE_ZIP = "{{ pdf_url|default('', true) }}";
+
+  const wraps   = Array.from(document.querySelectorAll(".et-wrap"));
+  const cntEl   = document.getElementById("sp-cnt");
+  const total   = wraps.length;
+
+  function refresh() {
+    let on = 0;
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck && ck.checked) {
+        w.classList.remove("is-off");
+        on++;
+      } else {
+        w.classList.add("is-off");
+      }
+    });
+    if (cntEl) cntEl.textContent = on;
+    // Activar chip "Todas" si están todas marcadas
+    document.querySelectorAll(".sp-chip[data-quick]").forEach(c => c.classList.remove("is-active"));
+    if (on === total) {
+      const allChip = document.querySelector('.sp-chip[data-quick="all"]');
+      if (allChip) allChip.classList.add("is-active");
+    } else if (on === 0) {
+      const noneChip = document.querySelector('.sp-chip[data-quick="none"]');
+      if (noneChip) noneChip.classList.add("is-active");
+    }
+  }
+
+  function setAll(state) {
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck) ck.checked = state;
+    });
+    refresh();
+  }
+
+  function setFactura(cid) {
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck) ck.checked = (String(w.dataset.cid) === String(cid));
+    });
+    refresh();
+  }
+
+  function invert() {
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck) ck.checked = !ck.checked;
+    });
+    refresh();
+  }
+
+  /**
+   * Parser de rangos: "10589:1,3,5-8 ; 10590:2-4"
+   * Devuelve {doc: [num,num,...], doc2: [num,...]}
+   * Si una entrada no tiene ':doc', se aplica a TODAS las facturas que matchean ese rango.
+   */
+  function parseRango(spec) {
+    if (!spec) return null;
+    const out = {};
+    spec.split(/[,;]/).forEach(part => {
+      part = part.trim();
+      if (!part) return;
+      let doc = null, nums = part;
+      if (part.includes(":")) {
+        const ix = part.indexOf(":");
+        doc = part.substring(0, ix).trim();
+        nums = part.substring(ix + 1).trim();
+      }
+      // ahora nums puede ser "1" o "1-3" o "5-8"
+      let lo, hi;
+      if (nums.includes("-")) {
+        const ab = nums.split("-");
+        lo = parseInt(ab[0], 10); hi = parseInt(ab[1], 10);
+      } else {
+        lo = hi = parseInt(nums, 10);
+      }
+      if (isNaN(lo) || isNaN(hi)) return;
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      const key = doc || "*";
+      if (!out[key]) out[key] = new Set();
+      for (let n = lo; n <= hi; n++) out[key].add(n);
+    });
+    return out;
+  }
+
+  function aplicarRango() {
+    const inp = document.getElementById("sp-rango");
+    const spec = inp.value.trim();
+    if (!spec) {
+      if (typeof ilusToast !== "undefined") ilusToast("Ingresa un rango (ej: 10589:1,3,5-8)", { type: "warning" });
+      return;
+    }
+    const parsed = parseRango(spec);
+    if (!parsed || Object.keys(parsed).length === 0) {
+      if (typeof ilusToast !== "undefined") ilusToast("Rango no válido. Formato: DOC:1,3,5-8", { type: "error" });
+      return;
+    }
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (!ck) return;
+      const doc = w.dataset.doc;
+      const num = parseInt(w.dataset.num, 10);
+      let on = false;
+      if (parsed[doc] && parsed[doc].has(num)) on = true;
+      else if (parsed["*"] && parsed["*"].has(num)) on = true;
+      ck.checked = on;
+    });
+    refresh();
+    if (typeof ilusToast !== "undefined") {
+      const sel = wraps.filter(w => w.querySelector('input[type=checkbox]').checked).length;
+      ilusToast("✓ " + sel + " etiqueta" + (sel === 1 ? "" : "s") + " coinciden", { type: "success" });
+    }
+  }
+
+  /** Devuelve string 'cid:num,cid:num,...' de las etiquetas seleccionadas. */
+  function getSeleccionParam() {
+    const partes = [];
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck && ck.checked) partes.push(w.dataset.cid + ":" + w.dataset.num);
+    });
+    return partes.join(",");
+  }
+
+  function descargar(individual) {
+    const sel = getSeleccionParam();
+    if (!sel) {
+      if (typeof ilusAlert !== "undefined") {
+        ilusAlert({ title: "Sin selección", message: "Marca al menos una etiqueta antes de descargar.", type: "warning" });
+      } else {
+        alert("Marca al menos una etiqueta antes de descargar.");
+      }
+      return;
+    }
+    if (!BASE_PDF) {
+      alert("URL PDF no configurada en el template.");
+      return;
+    }
+    const btn = document.getElementById(individual ? "sp-zip" : "sp-pdf");
+    if (btn) btn.classList.add("is-busy");
+    const u = new URL(BASE_PDF, location.origin);
+    u.searchParams.set("b", sel);
+    if (individual) u.searchParams.set("individual", "1");
+    // Forzar descarga (no inline) en modo individual; para PDF mostramos en tab
+    if (individual) {
+      const a = document.createElement("a");
+      a.href = u.toString();
+      a.download = "";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } else {
+      window.open(u.toString(), "_blank", "noopener");
+    }
+    setTimeout(() => { if (btn) btn.classList.remove("is-busy"); }, 1500);
+  }
+
+  // Wire-up
+  document.querySelectorAll(".sp-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const q = chip.dataset.quick;
+      if (q === "all")        setAll(true);
+      else if (q === "none")  setAll(false);
+      else if (q === "invert") invert();
+      else if (q === "factura") setFactura(chip.dataset.cid);
+    });
+  });
+
+  document.getElementById("sp-aplicar").addEventListener("click", aplicarRango);
+  document.getElementById("sp-rango").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); aplicarRango(); }
+  });
+  document.getElementById("sp-pdf").addEventListener("click", () => descargar(false));
+  document.getElementById("sp-zip").addEventListener("click", () => descargar(true));
+
+  wraps.forEach(w => {
+    const ck = w.querySelector('input[type=checkbox]');
+    if (ck) ck.addEventListener("change", refresh);
+  });
+
+  refresh();
+
+  // Atajo global para el botón "Imprimir (navegador)" del toolbar
+  window.ilusImprimirSel = function() {
+    // Las desmarcadas ya tienen .is-off (oculto en print). Solo lanza print.
+    window.print();
+  };
+})();
 </script>
 </body>
 </html>

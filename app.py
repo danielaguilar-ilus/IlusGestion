@@ -18550,6 +18550,66 @@ ILUS_REMITENTE = {
 }
 
 
+def _tr_parse_seleccion(spec):
+    """Parsea string 'cid:num,cid:num,cid:a-b,...' a set de (cid, num).
+
+    Devuelve None si spec vacío o 'all' → significa 'sin filtro' (todo).
+    Tolera rangos (cid:1-3 → 3 entradas), espacios y entradas inválidas.
+    """
+    if not spec:
+        return None
+    spec = str(spec).strip()
+    if not spec or spec.lower() == "all":
+        return None
+    sel = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        cid_str, num_part = part.split(":", 1)
+        try:
+            cid = int(cid_str)
+        except Exception:
+            continue
+        num_part = num_part.strip()
+        if "-" in num_part:
+            try:
+                a, b = num_part.split("-", 1)
+                lo, hi = int(a), int(b)
+                if lo > hi:
+                    lo, hi = hi, lo
+                for n in range(lo, hi + 1):
+                    sel.add((cid, n))
+            except Exception:
+                continue
+        else:
+            try:
+                sel.add((cid, int(num_part)))
+            except Exception:
+                continue
+    return sel
+
+
+def _tr_filtrar_bultos(facturas, seleccion):
+    """Aplica el filtro de selección a la estructura de facturas.
+
+    seleccion=None → devuelve facturas intactas (sin filtro).
+    seleccion=set de (cid, num) → conserva solo los bultos cuya tupla
+    está incluida. Omite facturas que se quedaron sin bultos.
+    """
+    if seleccion is None:
+        return facturas
+    out = []
+    for f in facturas:
+        cid = f["commitment_id"]
+        keep = [b for b in f["bultos"] if (cid, b["num"]) in seleccion]
+        if keep:
+            ff = dict(f)
+            ff["bultos"] = keep
+            out.append(ff)
+    return out
+
+
 def _tr_etiqueta_facturas(commitment_ids):
     """Construye la estructura de etiquetas para una lista de commitment_ids.
 
@@ -18713,6 +18773,7 @@ def tr_manifiesto_etiquetas(mid):
         titulo      = f"Etiquetas · Manifiesto {manifiesto.get('correlativo') or mid}",
         courier     = courier,
         total_etiquetas = total_etiquetas,
+        pdf_url     = url_for('tr_manifiesto_etiquetas_pdf', mid=mid),
     )
 
 
@@ -18746,7 +18807,150 @@ def tr_factura_etiquetas(commitment_id):
         titulo      = f"Etiquetas · {facturas[0]['doc_full'] or commitment_id}",
         courier     = "",
         total_etiquetas = total_etiquetas,
+        pdf_url     = url_for('tr_factura_etiquetas_pdf', commitment_id=commitment_id),
     )
+
+
+def _tr_render_etiquetas_pdf(facturas, *, fecha, titulo, courier, individual=False):
+    """Render común para descarga PDF/ZIP. Reusa _pw_pdf (Playwright headless).
+
+    facturas: ya filtrada (con bultos a imprimir).
+    individual=True → devuelve ZIP con un PDF por bulto. False → 1 PDF con todos.
+    Devuelve (bytes, mimetype, filename_sugerido) o lanza PDFEngineUnavailable.
+    """
+    wait_fn = (
+        "() => { "
+        "const bcs = Array.from(document.querySelectorAll('.barcode')); "
+        "const qrs = Array.from(document.querySelectorAll('.qr-box')); "
+        "const bcsOk = bcs.every(b => b.dataset.rendered === '1'); "
+        "const qrsOk = qrs.every(q => q.querySelector('img,canvas')); "
+        "return bcsOk && qrsOk; "
+        "}"
+    )
+
+    def render_one(fac_subset):
+        total = sum(len(f["bultos"]) for f in fac_subset)
+        html = render_template(
+            "transporte/etiquetas.html",
+            facturas        = fac_subset,
+            remitente       = ILUS_REMITENTE,
+            fecha           = fecha,
+            titulo          = titulo,
+            courier         = courier,
+            total_etiquetas = total,
+            pdf_mode        = True,
+        )
+        return _pw_pdf(html, width="100mm", height="150mm", wait_fn=wait_fn, wait_timeout=8000)
+
+    stamp = fecha.replace(" ", "_").replace(":", "").replace("-", "")
+
+    if not individual:
+        return render_one(facturas), "application/pdf", f"etiquetas_{stamp}.pdf"
+
+    import zipfile  # local: módulo solo usado en modo individual (ZIP)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in facturas:
+            for b in f["bultos"]:
+                ff = dict(f); ff["bultos"] = [b]
+                pdf_bytes = render_one([ff])
+                doc = (f.get("doc_numero") or f.get("commitment_id") or "doc")
+                nombre = f"{doc}_bulto_{b['num']:02d}_de_{b['total']:02d}.pdf"
+                zf.writestr(nombre, pdf_bytes)
+    buf.seek(0)
+    return buf.getvalue(), "application/zip", f"etiquetas_individuales_{stamp}.zip"
+
+
+@app.route("/transporte/manifiestos/<int:mid>/etiquetas/pdf")
+@_tr_required
+def tr_manifiesto_etiquetas_pdf(mid):
+    """Descarga PDF (o ZIP individual) de etiquetas de un manifiesto.
+
+    Query:
+      ?b=cid:num,cid:1-3,...   → filtro de bultos (cualquier rango). Sin filtro = todos.
+      ?individual=1            → devuelve ZIP con 1 PDF por bulto (para reimpresión puntual).
+    """
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        return "Manifiesto no encontrado", 404
+
+    items = mysql_fetchall(
+        "SELECT commitment_id FROM transport_manifest_items "
+        "WHERE manifest_id=%s ORDER BY orden, id", (mid,)
+    ) or []
+    facturas = _tr_etiqueta_facturas([it["commitment_id"] for it in items])
+    courier  = manifiesto.get("courier") or ""
+    _tr_upsert_labels(facturas, manifest_id=mid, courier=courier)
+    _tr_attach_qr_codes(facturas, manifest_id=mid)
+
+    seleccion = _tr_parse_seleccion(request.args.get("b", "all"))
+    facturas  = _tr_filtrar_bultos(facturas, seleccion)
+    if not facturas:
+        return "No hay bultos que coincidan con la selección", 400
+
+    individual = (request.args.get("individual") or "").strip() == "1"
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    titulo = f"Etiquetas · Manifiesto {manifiesto.get('correlativo') or mid}"
+
+    try:
+        data, mime, fname = _tr_render_etiquetas_pdf(
+            facturas, fecha=fecha, titulo=titulo, courier=courier, individual=individual
+        )
+    except PDFEngineUnavailable as e:
+        return (f"Motor PDF no disponible: {e}. Usa el botón 'Imprimir (navegador)' como alternativa.", 503)
+    except Exception as e:
+        print(f"[tr_etiquetas_pdf] error: {type(e).__name__}: {e}", flush=True)
+        return f"Error generando PDF: {type(e).__name__}", 500
+
+    n = sum(len(f["bultos"]) for f in facturas)
+    _tr_log("manifest", mid, "etiquetas pdf", f"{n} bultos · {'zip' if individual else 'pdf'}")
+
+    return Response(data, mimetype=mime, headers={
+        "Content-Disposition": f'{"attachment" if individual else "inline"}; filename="{fname}"'
+    })
+
+
+@app.route("/transporte/factura/<int:commitment_id>/etiquetas/pdf")
+@_tr_required
+def tr_factura_etiquetas_pdf(commitment_id):
+    """Descarga PDF (o ZIP individual) de etiquetas de UNA factura."""
+    facturas = _tr_etiqueta_facturas([commitment_id])
+    if not facturas:
+        return "Factura no encontrada", 404
+
+    mrow = mysql_fetchone(
+        "SELECT manifest_id FROM transport_manifest_items "
+        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1", (commitment_id,)
+    )
+    manifest_id = mrow["manifest_id"] if mrow else None
+    _tr_upsert_labels(facturas, manifest_id=manifest_id, courier="")
+    _tr_attach_qr_codes(facturas, manifest_id=manifest_id)
+
+    seleccion = _tr_parse_seleccion(request.args.get("b", "all"))
+    facturas  = _tr_filtrar_bultos(facturas, seleccion)
+    if not facturas:
+        return "No hay bultos que coincidan con la selección", 400
+
+    individual = (request.args.get("individual") or "").strip() == "1"
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    titulo = f"Etiquetas · {facturas[0]['doc_full'] or commitment_id}"
+
+    try:
+        data, mime, fname = _tr_render_etiquetas_pdf(
+            facturas, fecha=fecha, titulo=titulo, courier="", individual=individual
+        )
+    except PDFEngineUnavailable as e:
+        return (f"Motor PDF no disponible: {e}. Usa el botón 'Imprimir (navegador)' como alternativa.", 503)
+    except Exception as e:
+        print(f"[tr_etiquetas_pdf] error: {type(e).__name__}: {e}", flush=True)
+        return f"Error generando PDF: {type(e).__name__}", 500
+
+    n = sum(len(f["bultos"]) for f in facturas)
+    _tr_log("commitment", commitment_id, "etiquetas pdf", f"{n} bultos · {'zip' if individual else 'pdf'}")
+
+    return Response(data, mimetype=mime, headers={
+        "Content-Disposition": f'{"attachment" if individual else "inline"}; filename="{fname}"'
+    })
 
 
 @app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
