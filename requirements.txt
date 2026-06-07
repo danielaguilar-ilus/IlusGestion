@@ -2,6 +2,11 @@ flask>=3.0.0
 pymysql>=1.1.0
 DBUtils>=3.0.0
 playwright==1.49.1
+# greenlet pineado >= 3.1.2 porque 3.1.1 (dep transitiva de playwright)
+# NO compila en Python 3.13 (CPython renombró c_recursion_remaining a
+# py_recursion_remaining en TPythonState.cpp). Sin este pin el build de
+# Cloud Build buildpacks falla en clean install.
+greenlet>=3.1.2
 cloudinary>=1.36.0
 openpyxl>=3.1.0
 gunicorn>=21.2.0
