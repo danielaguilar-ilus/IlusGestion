@@ -7115,6 +7115,14 @@ function _intelRender(d){
   // Reportes. Si el dict no trae `informe_trimestral`, no mostramos la tarjeta.
   html += _intelInformeTrimestral(d.informe_trimestral);
 
+  // ── Botón: Informe de gestión COMPLETO del cliente (HTML imprimible → PDF) ──
+  html += '<div class="intel-card" style="border-left:4px solid #dc2626">'
+        + '<div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">'
+        + '<div><div class="fw-bold"><i class="bi bi-file-earmark-text me-1 text-danger"></i>Informe de gestión del cliente</div>'
+        + '<div class="text-muted small">Contrato, cláusulas, frecuencia, pagos, productos, historial y tus dolores — listo para imprimir/enviar.</div></div>'
+        + '<button class="btn btn-ilus fw-bold" onclick="intelInformeFicha()"><i class="bi bi-download me-1"></i>Generar informe (PDF)</button>'
+        + '</div></div>';
+
   // ── Historia (pasado) vs Agenda (futuro): dos tarjetas diferenciadas ──
   // Verde/gris "hecho" a la izquierda · azul "programado" a la derecha.
   html += _intelHistoriaAgenda(d);
@@ -7351,6 +7359,12 @@ function _intelRender(d){
 // Usa d.informe_trimestral = {periodo, ya_generado, reporte_id, reporte_url}.
 // 1 informe por trimestre (lo genera el backend de forma determinista y lo
 // deja en la pestaña Reportes). Si no viene el dict, retorna '' (no se pinta).
+function intelInformeFicha(){
+  // Abre el Informe de Gestión del cliente (HTML imprimible → PDF en el navegador).
+  if (typeof CID === 'undefined' || !CID) { ilusToast('Cliente no identificado', {type:'error'}); return; }
+  window.open('/mantenciones/api/clientes/' + CID + '/informe-ficha', '_blank');
+}
+
 function _intelInformeTrimestral(it){
   if (!it || typeof it !== 'object') return '';
   const periodo = _intelEsc(it.periodo || '');

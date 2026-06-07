@@ -52514,6 +52514,233 @@ def _reporte_to_pdf_html(rep, cliente, auto_print=True):
 </body></html>"""
 
 
+def _informe_ficha_html(d, ct, cliente, auto_print=True):
+    """Informe de GESTIÓN del cliente (Agente ILUS, determinista, SIN IA).
+    Compila el diagnóstico 360 (contrato, cláusulas, frecuencia, pagos, productos,
+    historial) y DESTACA los dolores: garantías/gratuitas que debemos cubrir,
+    fugas a terceros y servicios sin facturar. Vista imprimible → PDF en el navegador."""
+    from markupsafe import escape as _esc
+
+    def e(v):
+        s = "" if v is None else str(v).strip()
+        return str(_esc(s)) if s else "—"
+
+    def e_raw(v):
+        return str(_esc("" if v is None else str(v)))
+
+    def _clp(v):
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return None
+        if not n:
+            return None
+        return "$" + format(int(round(n)), ",d").replace(",", ".")
+
+    def _ul(items):
+        items = [i for i in (items or []) if str(i).strip()]
+        if not items:
+            return '<p class="rep-empty">Sin elementos.</p>'
+        return '<ul class="rep-list">' + "".join(f"<li>{e_raw(i)}</li>" for i in items) + "</ul>"
+
+    dc = d.get("diagnostico_contrato") or {}
+    br = d.get("brecha_gratis") or {}
+    fac = d.get("facturacion") or {}
+    hist = d.get("historia") or {}
+    mant = d.get("mantenciones") or {}
+    eq = d.get("equipos") or {}
+    val = d.get("valorizacion") or {}
+    uni = d.get("universo") or {}
+    dcli = d.get("datos_cliente") or {}
+
+    try:
+        score = int(float(d.get("score_salud") or 0))
+    except Exception:
+        score = 0
+    score = max(0, min(100, score))
+    riesgo = (d.get("nivel_riesgo") or "medio").lower()
+    sc_color = "#16a34a" if score >= 70 else "#f59e0b" if score >= 40 else "#dc2626"
+    sc_text = "Excelente" if score >= 80 else "Bueno" if score >= 60 else "Regular" if score >= 40 else "Crítico"
+    rg_color, rg_label = {"alto": ("#dc2626", "ALTO"), "bajo": ("#16a34a", "BAJO")}.get(riesgo, ("#f59e0b", "MEDIO"))
+    _dash = round(score * 2.764, 1)
+
+    secciones = ""
+    if d.get("resumen_ejecutivo"):
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Resumen ejecutivo del Agente</div>'
+                      f'<p class="rep-text">{e_raw(d["resumen_ejecutivo"])}</p></div>')
+
+    # DOLORES (lo más importante para ILUS) — destacado rojo
+    dolores = []
+    if (br.get("pendientes") or 0):
+        _exp = _clp(br.get("exposicion_clp"))
+        dolores.append(f"<b>Garantías/mantenciones gratuitas que debemos cubrir:</b> {br.get('pendientes')}"
+                       + (f" — exposición {_exp}" if _exp else "") + ". " + e_raw(br.get("mensaje") or ""))
+    _porcob = hist.get("por_cobertura") or {}
+    _fuga = _porcob.get("Tercero (fuga)") or _porcob.get("Tercero") or 0
+    if _fuga:
+        dolores.append(f"<b>Fuga a terceros:</b> {_fuga} mantención(es) las hizo un técnico EXTERNO — "
+                       "riesgo de cubrir garantía sin recibir el ingreso del servicio.")
+    elif br.get("riesgo_fuga_tercero"):
+        dolores.append("<b>Riesgo de fuga a terceros:</b> el patrón sugiere mantenciones con externos; conviene blindar la garantía.")
+    if fac.get("pendientes"):
+        _ant = fac.get("mas_antigua_dias")
+        dolores.append(f"<b>Servicios sin facturar:</b> {fac['pendientes']} servicio(s) realizados sin cerrar la factura"
+                       + (f" (el más antiguo lleva {_ant} días)" if _ant is not None else "") + ".")
+    if dolores:
+        secciones += ('<div class="rep-section"><div class="rep-section-bar" style="background:#dc2626">'
+                      '⚠ Dolores / Exposición de ILUS</div><ul class="rep-list" style="margin-top:8px">'
+                      + "".join(f"<li>{x}</li>" for x in dolores) + "</ul></div>")
+    else:
+        secciones += ('<div class="rep-section"><div class="rep-section-bar" style="background:#16a34a">'
+                      '✓ Sin dolores detectados</div><p class="rep-text">No hay brechas de garantía, '
+                      'fugas a terceros ni servicios sin facturar pendientes.</p></div>')
+
+    # Contrato + cláusulas
+    chips = ('<div class="rep-chips">'
+             f'<span class="rep-chip"><span class="rep-chip-k">Estado</span><span class="rep-chip-v">{e_raw(dc.get("estado") or "—")}</span></span>'
+             + (f'<span class="rep-chip"><span class="rep-chip-k">Frecuencia</span><span class="rep-chip-v">c/{dc.get("frecuencia_meses")} meses</span></span>' if dc.get("frecuencia_meses") else "")
+             + (f'<span class="rep-chip"><span class="rep-chip-k">Valor anual</span><span class="rep-chip-v">{_clp(dc.get("valor_anual"))}</span></span>' if dc.get("valor_anual") else "")
+             + f'<span class="rep-chip"><span class="rep-chip-k">Vigencia</span><span class="rep-chip-v">{e_raw(dc.get("vigencia_inicio") or "—")} → {e_raw(dc.get("vigencia_fin") or ("indefinido" if dc.get("es_indefinido") else "—"))}</span></span>'
+             + "</div>")
+    sec_ct = chips
+    try:
+        _clauses = json.loads(ct.get("ai_clausulas") or "[]")
+    except Exception:
+        _clauses = []
+    try:
+        _alertas = json.loads(ct.get("ai_alertas") or "[]")
+    except Exception:
+        _alertas = []
+    if _alertas:
+        sec_ct += '<div style="margin-top:10px;font-weight:800;color:#dc2626;font-size:11px">Alertas del contrato</div>' + _ul(_alertas)
+    if _clauses:
+        sec_ct += '<div style="margin-top:8px;font-weight:800;color:#0a0a0a;font-size:11px">Cláusulas relevantes</div>' + _ul(_clauses)
+    if not d.get("tiene_contrato"):
+        sec_ct += '<p class="rep-text" style="color:#dc2626">⚠ Este cliente NO tiene contrato registrado.</p>'
+    secciones += '<div class="rep-section"><div class="rep-section-bar">Contrato</div>' + sec_ct + '</div>'
+
+    # Facturación pendiente
+    if fac.get("items"):
+        rows = "".join(f"<tr><td>{e(it.get('fecha'))}</td><td>{e(it.get('tipo_label'))}</td>"
+                       f"<td>{e(it.get('ef_label'))}</td><td>{e(it.get('cobertura_label'))}</td></tr>"
+                       for it in fac["items"][:15])
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Facturación pendiente</div>'
+                      '<table class="rep-kv"><tr><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Cobertura</th></tr>'
+                      + rows + "</table></div>")
+
+    # Productos / equipos
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Productos / equipos asociados</div>'
+                  '<table class="rep-kv">'
+                  f'<tr><th>Total equipos</th><td>{eq.get("total", 0)}</td><th>Críticos</th><td>{eq.get("criticos", 0)}</td></tr>'
+                  f'<tr><th>Sin N° de serie</th><td>{eq.get("sin_serie", 0)}</td><th>Sin foto</th><td>{eq.get("sin_foto", 0)}</td></tr>'
+                  "</table></div>")
+
+    # Historial
+    cob_rows = "".join(f"<tr><th>{e(k)}</th><td>{v}</td><th></th><td></td></tr>" for k, v in (_porcob.items() if _porcob else []))
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Historial de gestiones</div>'
+                  '<table class="rep-kv">'
+                  f'<tr><th>Total gestiones</th><td>{uni.get("total_gestiones", 0)}</td><th>Realizadas</th><td>{uni.get("realizadas", 0)}</td></tr>'
+                  f'<tr><th>Última gestión</th><td colspan="3">{e(uni.get("ultima_fecha"))}</td></tr>'
+                  + cob_rows + "</table></div>")
+
+    # Agenda / proyección
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Agenda y proyección</div>'
+                  '<table class="rep-kv">'
+                  f'<tr><th>Próxima mantención</th><td>{e(mant.get("proxima_fecha"))}</td><th>Vencidas</th><td>{len(mant.get("vencidas") or [])}</td></tr>'
+                  f'<tr><th>Realizadas</th><td>{mant.get("realizadas", 0)}</td><th>Esperadas a hoy</th><td>{mant.get("esperadas_a_hoy", 0)}</td></tr>'
+                  "</table></div>")
+
+    if val.get("pitch"):
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Propuesta comercial</div>'
+                      f'<p class="rep-text">{e_raw(val["pitch"])}</p></div>')
+    _acc = [a.get("titulo") for a in (d.get("acciones") or []) if a.get("titulo")]
+    if _acc:
+        secciones += '<div class="rep-section"><div class="rep-section-bar">Acciones recomendadas</div>' + _ul(_acc) + "</div>"
+    if dcli.get("faltantes"):
+        secciones += '<div class="rep-section"><div class="rep-section-bar">Datos de ficha por completar</div>' + _ul(dcli["faltantes"]) + "</div>"
+
+    logo_url = _ilus_logo_datauri()
+    gen_fecha = _now_chile_str("%d/%m/%Y %H:%M")
+    rut_fmt = _formato_rut_chile(cliente.get("rut", "")) or "—"
+    _scripts = _paged_doc_scripts(auto_print)
+    razon = cliente.get("razon_social") or (d.get("cliente") or {}).get("razon_social") or "Cliente"
+
+    return f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Informe de gestión · {e(razon)}</title>
+<style>{_REPORTE_PDF_CSS}</style></head>
+<body>
+  <div class="rep-doc">
+    <div class="rh"><div class="rh-inner">
+      <div class="rh-brand">
+        <img class="rep-logo" src="{logo_url}" alt="ILUS"
+             onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
+        <div class="rh-txt">
+          <div class="rh-eyebrow">{ILUS_BRAND} · {ILUS_TAGLINE}</div>
+          <div class="rh-title">INFORME DE GESTIÓN DEL CLIENTE</div>
+          <div class="rh-sub">{ILUS_LEGAL} · RUT {ILUS_RUT} · Agente ILUS (determinista, sin IA)</div>
+        </div>
+      </div>
+      <div class="rh-meta" style="display:flex;align-items:center;gap:12px">
+        <svg viewBox="0 0 100 100" style="width:66px;height:66px">
+          <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="9"></circle>
+          <circle cx="50" cy="50" r="44" fill="none" stroke="{sc_color}" stroke-width="9"
+                  stroke-dasharray="{_dash} {round(276.4 - _dash, 1)}"
+                  transform="rotate(-90 50 50)" stroke-linecap="round"></circle>
+          <text x="50" y="49" text-anchor="middle" style="font-size:27px;font-weight:900;fill:#fff">{score}</text>
+          <text x="50" y="64" text-anchor="middle" style="font-size:9px;fill:rgba(255,255,255,.65)">de 100</text>
+        </svg>
+        <div style="text-align:left">
+          <span style="display:inline-block;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#fff;background:{sc_color};padding:3px 10px;border-radius:50px">{sc_text}</span><br>
+          <span style="display:inline-block;margin-top:6px;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#fff;background:{rg_color};padding:3px 10px;border-radius:50px">Riesgo {rg_label}</span>
+        </div>
+      </div>
+    </div></div>
+    <div class="rf"><div class="rf-inner">
+      <b>{ILUS_BRAND}</b> · {ILUS_LEGAL} · Informe del Agente (determinista, sin IA) · {ILUS_CONTACTO} · Generado el {gen_fecha}
+    </div></div>
+    <div class="rep-content">
+      <div class="rep-asunto"><span class="rep-asunto-k">Cliente</span>{e(razon)}</div>
+      <div class="rep-section">
+        <div class="rep-section-bar">Datos del cliente</div>
+        <table class="rep-kv">
+          <tr><th>Razón Social</th><td>{e(razon)}</td><th>RUT</th><td>{e_raw(rut_fmt)}</td></tr>
+          <tr><th>Dirección</th><td>{e(cliente.get('direccion'))}</td><th>Comuna</th><td>{e(cliente.get('comuna'))}</td></tr>
+          <tr><th>Contacto</th><td>{e(cliente.get('contacto_nombre'))}</td><th>Calidad ficha</th><td>{d.get('calidad_informacion','—')}%</td></tr>
+        </table>
+      </div>
+      {secciones}
+    </div>
+  </div>
+  {_scripts}
+</body></html>"""
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/informe-ficha", methods=["GET"])
+@_mant_required
+def mant_informe_ficha(cid):
+    """Informe de gestión del cliente (Agente ILUS determinista). Vista imprimible → PDF."""
+    cli = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return "Cliente no encontrado", 404
+    try:
+        d = _cliente_inteligencia(cid, _reglas_cargar())
+    except Exception as e:
+        print(f"[informe_ficha] cid={cid}: {e}", flush=True)
+        d = None
+    if not d:
+        return "No se pudo generar el informe de ficha.", 500
+    ct = mysql_fetchone(
+        "SELECT * FROM mant_contratos WHERE cliente_id=%s "
+        "ORDER BY (estado='vigente') DESC, ai_analizado DESC, id DESC LIMIT 1", (cid,)) or {}
+    try:
+        _mant_log("cliente", cid, "informe_ficha")
+    except Exception:
+        pass
+    return _informe_ficha_html(d, ct, cli)
+
+
 def _contrato_analisis_to_pdf_html(ct, cliente, auto_print=True):
     """Documento corporativo ILUS del Análisis 360° del contrato (Comité IA).
     Renderiza el JSON persistido en ai_analisis_json reusando el sistema de
