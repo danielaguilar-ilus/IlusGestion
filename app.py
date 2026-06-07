@@ -38927,6 +38927,54 @@ Devuelve SOLO el JSON."""
 
 # ── ANÁLISIS IA DE CONTRATO ───────────────────────────────────────────
 
+def _descargar_contrato_bytes(cu, public_id=None):
+    """Descarga los bytes del archivo del contrato desde Cloudinary. Maneja el
+    401 ANÓNIMO de PDFs (política Cloudinary): si la URL directa falla, FIRMA la
+    URL con el SDK (sign_url) usando el public_id. Devuelve bytes o None."""
+    import requests as _rq
+    if cu:
+        try:
+            r = _rq.get(cu, timeout=30, allow_redirects=True)
+            if r.status_code == 200 and r.content:
+                return r.content
+            print(f"[contrato dl directo] HTTP {r.status_code}", flush=True)
+        except Exception as e:
+            print(f"[contrato dl directo] {e}", flush=True)
+    if public_id:
+        try:
+            import cloudinary.utils
+            for rtype in ("raw", "image"):
+                signed, _opts = cloudinary.utils.cloudinary_url(
+                    public_id, resource_type=rtype, type="upload", sign_url=True, secure=True)
+                r = _rq.get(signed, timeout=30, allow_redirects=True)
+                if r.status_code == 200 and r.content:
+                    return r.content
+        except Exception as e:
+            print(f"[contrato dl signed] {e}", flush=True)
+    return None
+
+
+def _ocr_contrato(fpath, max_pages=12):
+    """OCR DETERMINISTA (Tesseract, open-source, SIN IA ni tokens) de un contrato
+    escaneado (PDF imagen o imagen). Devuelve texto reconocido en español, o ''.
+    Requiere tesseract-ocr + tesseract-ocr-spa + poppler (instalados vía Dockerfile)."""
+    if not fpath or not os.path.exists(fpath):
+        return ""
+    ext = fpath.rsplit(".", 1)[-1].lower() if "." in fpath else ""
+    try:
+        import pytesseract
+        if ext == "pdf":
+            from pdf2image import convert_from_path
+            paginas = convert_from_path(fpath, dpi=200, first_page=1, last_page=max_pages)
+            return "\n".join(pytesseract.image_to_string(img, lang="spa") for img in paginas)
+        if ext in ("jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp"):
+            from PIL import Image
+            return pytesseract.image_to_string(Image.open(fpath), lang="spa")
+    except Exception as e:
+        print(f"[ocr_contrato] {e}", flush=True)
+    return ""
+
+
 @app.route("/mantenciones/api/contratos/<int:ctid>/analizar", methods=["POST"])
 @_mant_required
 def mant_contrato_analizar(ctid):
@@ -38945,8 +38993,34 @@ def mant_contrato_analizar(ctid):
     pdf_b64_paginas = []   # base64 de las primeras N páginas (fallback visión)
     es_escaneado = False
     fpath = os.path.join(MANT_UPLOADS, ct["archivo_path"] or "")
-    if os.path.exists(fpath):
-        ext = ct["archivo_path"].rsplit(".", 1)[-1].lower()
+    # Cloud Run tiene disco EFÍMERO: los contratos viven en Cloudinary. Si el
+    # archivo no está en el disco local, lo descargamos de Cloudinary (o de su
+    # adjunto) a un temporal para poder extraer texto y/o hacer OCR.
+    if (not ct.get("archivo_path")) or (not os.path.exists(fpath)) or os.path.isdir(fpath):
+        _cu = ct.get("cloudinary_url")
+        if not _cu:
+            _adj = mysql_fetchone(
+                "SELECT cloudinary_url FROM mant_contrato_adjuntos "
+                "WHERE contrato_id=%s AND cloudinary_url IS NOT NULL AND cloudinary_url<>'' "
+                "ORDER BY id ASC LIMIT 1", (ctid,))
+            _cu = (_adj or {}).get("cloudinary_url")
+        _bytes = _descargar_contrato_bytes(_cu, ct.get("cloudinary_public_id"))
+        if _bytes:
+            try:
+                _ext = (ct.get("archivo_tipo") or "pdf").lower().lstrip(".")
+                if _ext not in ("pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"):
+                    _ext = "pdf"
+                os.makedirs(MANT_UPLOADS, exist_ok=True)
+                _tmp = os.path.join(MANT_UPLOADS, f"_ctdl_{ctid}.{_ext}")
+                with open(_tmp, "wb") as _f:
+                    _f.write(_bytes)
+                fpath = _tmp
+            except Exception as _e:
+                print(f"[contrato dl write] ctid={ctid}: {_e}", flush=True)
+        else:
+            print(f"[contrato dl] ctid={ctid}: no se pudo descargar de Cloudinary (directo+firmado)", flush=True)
+    if os.path.exists(fpath) and not os.path.isdir(fpath):
+        ext = fpath.rsplit(".", 1)[-1].lower()
         if ext == "pdf":
             try:
                 import pdfplumber
@@ -38986,37 +39060,11 @@ def mant_contrato_analizar(ctid):
             except Exception:
                 pass
 
-    # ══════════════════════════════════════════════════════════════════
-    # PRE-CHECK IA: ¿es realmente un contrato de servicio?
-    # Validador rápido (Haiku-tier) que evita gastar Sonnet/Opus analizando
-    # listas de productos, facturas u otros documentos que NO son contratos.
-    # ══════════════════════════════════════════════════════════════════
+    # MOTOR DETERMINISTA (CERO IA): se eliminó el pre-check con Claude.
+    # (Las variables datos_extra/prompt_sistema de abajo quedan vestigiales y no
+    #  se usan; el análisis lo hace contrato_reglas.analizar_contrato más abajo.)
     tipo_doc_detectado = None
     razon_deteccion = None
-    if texto_contrato and len(texto_contrato.strip()) > 100:
-        precheck_sistema = (
-            "Eres un clasificador de documentos. Recibes el texto de un archivo "
-            "y debes decidir si es un CONTRATO DE SERVICIO/MANTENCIÓN. "
-            "Responde SIEMPRE en JSON: "
-            '{"tipo":"contrato_servicio|lista_productos|factura|cotizacion|'
-            'guia_despacho|reporte_tecnico|otro","confianza":0-100,"razon":"frase corta"}'
-        )
-        precheck_usuario = (
-            f"Clasifica este documento (extracto):\n\n{texto_contrato[:2500]}\n\n"
-            "¿Es un contrato de servicio/mantención? Responde el JSON."
-        )
-        precheck, precheck_err = _claude_call(
-            precheck_usuario, precheck_sistema,
-            max_tokens=200, expect_json=True, temperature=0.1
-        )
-        if precheck and isinstance(precheck, dict):
-            tipo_doc_detectado = precheck.get("tipo")
-            razon_deteccion = precheck.get("razon")
-            confianza = int(precheck.get("confianza") or 0)
-            # Daniel 30/05/2026: NUNCA rechazar. La IA analiza CUALQUIER documento
-            # contractual (compraventa, leasing, servicio, garantía, comodato…) y
-            # entrega el análisis gerencial igual. El tipo detectado solo se informa
-            # al prompt (para contextualizar) y al usuario; jamás bloquea el análisis.
 
     # Datos del contrato para enriquecer el prompt
     datos_extra = (
@@ -39102,41 +39150,41 @@ jurídico REAL listo para usar, enfocadas en: (1) mantención periódica OBLIGAT
 (2) garantía CONDICIONADA a esa mantención exclusiva, (3) cobro de toda visita/OT fuera de
 cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a ILUS."""
 
-    if es_escaneado and pdf_b64_paginas:
-        prompt_usuario = f"""Analiza este contrato de mantención. El PDF adjunto
-es ESCANEADO (imagen), no texto extraíble. Léelo visualmente.
-
-METADATOS:
-{datos_extra}
-
-(El texto del contrato está en el PDF adjunto — léelo visualmente)
-
-Devuelve SOLO el JSON, sin texto adicional."""
-    else:
-        prompt_usuario = f"""Analiza este contrato de mantención:
-
-METADATOS:
-{datos_extra}
-
-TEXTO DEL CONTRATO:
-{texto_contrato[:6000]}
-
-Devuelve SOLO el JSON, sin texto adicional."""
-
-    # Llamada unificada con fallback de modelos. Si el PDF es escaneado,
-    # mandamos el PDF como attachment para que Claude lo procese visualmente.
-    # max_tokens alto (8000): el esquema pedido es grande (cláusulas jurídicas
-    # completas + propuestas + escenarios de exposición). Con 4000 la respuesta
-    # se truncaba a la mitad → "Respuesta no parseable como JSON". (Daniel 30/05/2026)
-    resultado, err = _claude_call(
-        prompt_usuario, prompt_sistema,
-        max_tokens=8000, expect_json=True,
-        attachments=pdf_b64_paginas if es_escaneado else None
-    )
-    if err:
-        return jsonify({"error": f"Error IA: {err}"}), 503
-    if not resultado:
-        return jsonify({"error": "Sin respuesta de IA"}), 503
+    # ── ANÁLISIS 100% DETERMINISTA POR REGLAS (CERO IA) ──
+    # Si el texto extraído es poco (PDF escaneado), intentamos OCR (Tesseract,
+    # determinista, open-source, SIN IA). Si aun con OCR no hay texto suficiente,
+    # pedimos una versión con texto.
+    if es_escaneado or len((texto_contrato or "").strip()) < 300:
+        _ocr = _ocr_contrato(fpath)
+        if _ocr and len(_ocr.strip()) > len((texto_contrato or "").strip()):
+            texto_contrato = _ocr
+            es_escaneado = False
+    if len((texto_contrato or "").strip()) < 300:
+        return jsonify({"ok": False, "requiere_texto": True,
+                        "error": "No pude leer texto suficiente del contrato, ni siquiera con OCR "
+                                 "(el escaneo puede estar muy borroso o ser una foto de baja calidad). "
+                                 "Súbelo en PDF con texto seleccionable o en Word."}), 200
+    import contrato_reglas
+    _an = contrato_reglas.analizar_contrato(texto_contrato)
+    _ids_alert = {a.get("id") for a in _an.get("alertas_criticas", [])}
+    _es_arriendo = bool({"tipo_es_arriendo_no_mantencion", "tipo_leasing_opcion_compra",
+                         "tipo_arriendo_disfrazado_costos_a_ilus",
+                         "tipo_compraventa_transferencia_propiedad"} & _ids_alert)
+    _clausulas = ([c["mensaje"] for c in _an.get("clausulas_relevantes", [])]
+                  + ["✓ " + f["mensaje"] for f in _an.get("clausulas_favorables", [])])
+    resultado = {
+        "motor": "contrato-reglas-v1",
+        "tipo_contrato": "Arriendo / Riesgo (revisar)" if _es_arriendo else "Servicio de mantención",
+        "resumen": _an.get("resumen", ""),
+        "score": _an.get("score"),
+        "nivel_riesgo": _an.get("nivel_riesgo", "medio"),
+        "alertas": [a["mensaje"] for a in _an.get("alertas_criticas", [])],
+        "puntos_criticos": [p["mensaje"] for p in _an.get("puntos_revisar", [])],
+        "clausulas_criticas": _clausulas,
+        "mejoras_prioritarias": [p["propuesta"] for p in _an.get("propuestas_mejora", [])],
+        "cobertura_descripcion": "",
+        "detalle": _an,
+    }
 
     # Guardar resultado en DB (estructura expandida + trazabilidad de usuario)
     conn = get_mysql()
@@ -39144,50 +39192,26 @@ Devuelve SOLO el JSON, sin texto adicional."""
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE mant_contratos SET
-                   ai_analizado=1, ai_fecha=%s, ai_usuario=%s,
-                   ai_analisis_json=%s,
-                   ai_resumen=%s,
-                   ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
+                   ai_analizado=1, ai_fecha=%s, ai_usuario=%s, ai_analisis_json=%s,
+                   ai_resumen=%s, ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
                    ai_clausulas=%s, ai_cobertura=%s, ai_tipo_contrato=%s,
-                   ai_frecuencia_sug=%s, ai_score=%s,
-                   ai_vigencia_inicio=%s, ai_vigencia_fin=%s,
-                   nivel_riesgo=%s,
-                   sla_horas=%s,
-                   incluye_mant_gratis=%s, incluye_repuestos=%s,
-                   costo_por_mant=%s, costo_total=%s,
-                   frecuencia_meses=COALESCE(NULLIF(frecuencia_meses,0),%s),
-                   es_indefinido=COALESCE(NULLIF(es_indefinido,0),%s),
-                   monto_mensual=COALESCE(NULLIF(monto_mensual,0),%s)
+                   ai_score=%s, nivel_riesgo=%s
                    WHERE id=%s""",
-                (datetime.now(),
-                 current_username(),
+                (datetime.now(), current_username(),
                  json.dumps(resultado, ensure_ascii=False),
-                 resultado.get("resumen",""),
-                 json.dumps(resultado.get("puntos_criticos",[]),    ensure_ascii=False),
-                 json.dumps(resultado.get("alertas",[]),            ensure_ascii=False),
-                 json.dumps(resultado.get("mejoras_prioritarias",[]),ensure_ascii=False),
-                 json.dumps(resultado.get("clausulas_criticas",[]), ensure_ascii=False),
-                 resultado.get("cobertura_descripcion",""),
-                 resultado.get("tipo_contrato",""),
-                 resultado.get("frecuencia_sugerida_meses"),
-                 resultado.get("score"),
-                 resultado.get("vigencia_inicio") or None,
-                 resultado.get("vigencia_fin") or None,
-                 resultado.get("nivel_riesgo","medio"),
-                 resultado.get("sla_horas") or None,
-                 1 if resultado.get("incluye_mant_gratis") else 0,
-                 1 if resultado.get("incluye_repuestos") else 0,
-                 resultado.get("costo_por_mant") or None,
-                 resultado.get("costo_total") or None,
-                 resultado.get("frecuencia_sugerida_meses"),
-                 1 if resultado.get("es_indefinido") else 0,
-                 resultado.get("costo_mensual") or None,
+                 resultado.get("resumen", ""),
+                 json.dumps(resultado.get("puntos_criticos", []), ensure_ascii=False),
+                 json.dumps(resultado.get("alertas", []), ensure_ascii=False),
+                 json.dumps(resultado.get("mejoras_prioritarias", []), ensure_ascii=False),
+                 json.dumps(resultado.get("clausulas_criticas", []), ensure_ascii=False),
+                 resultado.get("cobertura_descripcion", ""),
+                 resultado.get("tipo_contrato", ""),
+                 resultado.get("score"), resultado.get("nivel_riesgo", "medio"),
                  ctid)
             )
         conn.commit()
-        _mant_log("contrato", ctid, "analizado_ia",
-                  f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')}"
-                  + (f" · tipo_doc={tipo_doc_detectado}" if tipo_doc_detectado else ""))
+        _mant_log("contrato", ctid, "analizado_reglas",
+                  f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')} (motor determinista)")
         return jsonify({
             "ok": True,
             "resultado": resultado,
@@ -50133,7 +50157,7 @@ def _cliente_inteligencia(cid, reglas=None):
 
     visitas = mysql_fetchall(
         "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, costo, costo_real, "
-        "       cubierto_por, es_retroactiva, contrato_id, levantamiento_id "
+        "       cubierto_por, es_retroactiva, estado_facturacion, contrato_id, levantamiento_id "
         "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
     visitas = [dict(v) for v in visitas]
 
@@ -50205,6 +50229,32 @@ def _cliente_inteligencia(cid, reglas=None):
         "proxima": agenda[0]["fecha"] if agenda else None,
         "dias_a_proxima": agenda[0]["dias_faltan"] if agenda else None,
         "vencidas_programadas": sum(1 for a in agenda if a["vencida"]),
+    }
+
+    # ── Cierre de facturación: servicios REALIZADOS con el proceso de factura ABIERTO ──
+    # (estado_facturacion en sin_cotizar/cotizado/con_oc = pendiente; facturado/no_aplica = cerrado)
+    _fact_abierto = ("sin_cotizar", "cotizado", "con_oc")
+    _ef_label = {"sin_cotizar": "Sin cotizar", "cotizado": "Cotizado", "con_oc": "Con OC"}
+    fact_items = []
+    for v in visitas:
+        if (v.get("estado") or "").lower() != "completada":
+            continue
+        ef = (v.get("estado_facturacion") or "sin_cotizar").lower()
+        if ef in _fact_abierto:
+            fr = _intel_as_date(v.get("fecha_realizada")) or _intel_as_date(v.get("fecha_programada"))
+            fact_items.append({
+                "id": v.get("id"), "fecha": str(fr) if fr else None,
+                "dias": ((hoy - fr).days if fr else None),
+                "tipo_label": _tipo_label.get(v.get("tipo") or "otro", (v.get("tipo") or "otro").capitalize()),
+                "estado_facturacion": ef, "ef_label": _ef_label.get(ef, ef),
+                "cobertura_label": _cob_label.get((v.get("cubierto_por") or "contrato"), "Contrato"),
+            })
+    fact_items.sort(key=lambda x: (x["fecha"] or ""))
+    facturacion = {
+        "pendientes": len(fact_items),
+        "items": fact_items[:25],
+        "al_dia": len(fact_items) == 0,
+        "mas_antigua_dias": (fact_items[0]["dias"] if fact_items else None),
     }
 
     # ── Datos del cliente (¿qué le falta a la ficha? — con clave para llenar inline) ──
@@ -50415,6 +50465,8 @@ def _cliente_inteligencia(cid, reglas=None):
         kpis.append({"label": "Próxima", "valor": mant["proxima_fecha"], "tono": "ok"})
     if exposicion > 0:
         kpis.append({"label": "Exposición", "valor": f"${_intel_clp(exposicion)}", "tono": "danger"})
+    if facturacion["pendientes"]:
+        kpis.append({"label": "Sin facturar", "valor": facturacion["pendientes"], "tono": "danger"})
 
     # ── Consultas accionables: el Agente "trabaja para el usuario" (resolver = completar/corregir data) ──
     consultas = []
@@ -50489,6 +50541,16 @@ def _cliente_inteligencia(cid, reglas=None):
             "detalle": "Gestiona la renovación para no perder la cobertura.",
             "acciones": [{"label": "Ver contrato", "accion": "link", "url": f"/mantenciones/clientes/{cid}"}],
         })
+    if facturacion["pendientes"]:
+        _ant = facturacion["mas_antigua_dias"]
+        consultas.append({
+            "id": "facturacion_pendiente", "tipo": "facturacion", "severidad": "alta",
+            "pregunta": f"Hay {facturacion['pendientes']} servicio(s) realizado(s) SIN cerrar la facturación.",
+            "detalle": ("Un servicio no termina hasta facturarlo (o marcarlo 'no aplica'). "
+                        + (f"El más antiguo lleva {_ant} día(s)." if _ant is not None else "")),
+            "acciones": [{"label": "Ver facturación", "accion": "link",
+                          "url": f"/mantenciones/clientes/{cid}"}],
+        })
     consultas.append({
         "id": "proponer_plan", "tipo": "oportunidad", "severidad": "baja",
         "pregunta": "Oportunidad: proponer un plan de mantención.",
@@ -50532,6 +50594,8 @@ def _cliente_inteligencia(cid, reglas=None):
         _re.append(f"Faltan {len(datos_faltantes)} dato(s) de la ficha del cliente.")
     if not equipos:
         _re.append("No hay equipos cargados.")
+    if facturacion["pendientes"]:
+        _re.append(f"⚠️ {facturacion['pendientes']} servicio(s) realizado(s) sin facturar — cierra el proceso.")
     _re.append(f"Oportunidad: plan de mantención desde ${_intel_clp(total)} con IVA.")
     resumen_ejecutivo = " ".join(_re)
 
@@ -50547,6 +50611,14 @@ def _cliente_inteligencia(cid, reglas=None):
         "datos_cliente": datos_cliente, "equipos": equipos_resumen,
         "diagnostico_contrato": diag_contrato, "mantenciones": mant,
         "brecha_gratis": brecha, "valorizacion": valorizacion, "acciones": acciones, "kpis": kpis,
+        "facturacion": facturacion,
+        "principios": [
+            "Me baso solo en tus datos reales: ficha, contrato, equipos, visitas y ERP. No invento resultados.",
+            "Reviso todo: cliente, contrato, equipos, historial, próximas visitas y facturación.",
+            "Protejo a la empresa: aviso de brechas, fugas a terceros y procesos sin cerrar.",
+            "Cierro el ciclo: una mantención no termina hasta facturarla (o marcarla 'no aplica').",
+            "Sugiero acciones (generar OT, agendar, completar datos); los valores van cuando cotizamos.",
+        ],
         "informe_trimestral": _intel_informe_estado(cid),
         "intel_schema": _INTEL_SCHEMA,
     }
@@ -50555,7 +50627,7 @@ def _cliente_inteligencia(cid, reglas=None):
 # Versión del esquema del diagnóstico. Subir este número invalida automáticamente
 # los cachés viejos (mant_cliente_intel) tras un cambio en la forma del dict del motor,
 # para que el panel no muestre un diagnóstico viejo sin las secciones nuevas.
-_INTEL_SCHEMA = 3
+_INTEL_SCHEMA = 4
 
 
 def _intel_cache_fresco(cid, ttl_horas):

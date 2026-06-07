@@ -569,8 +569,8 @@ let _LEV = { id: null, adjuntos_preliminares: [] };
 // correctiva, visita_tecnica, etc. Por compat, "Levantamiento de
 // ficha" === "levantamiento fotográfico" (mismo tipo).
 // ════════════════════════════════════════════════════════════
-async function abrirGenerarOT(){
-  abrirLevantamientoSelector();
+async function abrirGenerarOT(tipoPreset){
+  abrirLevantamientoSelector(tipoPreset);
 }
 // Alias por compat con llamadas viejas
 const abrirLevantamientoFotografico = abrirGenerarOT;
@@ -666,7 +666,7 @@ async function _cargarPlantillas(){
   return _LEV_PLANTILLAS.all;
 }
 
-async function abrirLevantamientoSelector(){
+async function abrirLevantamientoSelector(tipoPreset){
   const tbody = document.getElementById('levSelectTbody');
   if (!tbody) { ilusToast('Modal no inicializado', { type:'error' }); return; }
   // Cargar equipos desde la página actual (los que ya están renderizados en tab Equipos)
@@ -723,9 +723,13 @@ async function abrirLevantamientoSelector(){
       </td>
     </tr>`;
   }).join('');
-  // Reset tipo de OT al default
+  // Tipo de OT: preset si se pidió (Programar mantención = 'preventiva'); si no, 'levantamiento'.
   const tipoSel = document.getElementById('otTipo');
-  if (tipoSel) tipoSel.value = 'levantamiento';
+  if (tipoSel) {
+    const _wanted = tipoPreset || 'levantamiento';
+    const _has = Array.from(tipoSel.options).some(o => o.value === _wanted);
+    tipoSel.value = _has ? _wanted : 'levantamiento';
+  }
   onTipoOtChange(); // actualiza descripción + título sugerido
 
   document.getElementById('levSelectNotas').value = '';
@@ -1421,26 +1425,12 @@ function escAttr(s){
 }
 
 function abrirNuevaVisita(tipoPreset) {
-  // tipoPreset opcional: 'preventiva' | 'correctiva' | 'garantia' | 'inspeccion'
-  document.getElementById('vi_id').value = '';
-  const titulo = tipoPreset === 'preventiva'
-    ? '<i class="bi bi-tools me-2"></i>Programar mantención preventiva'
-    : '<i class="bi bi-calendar-plus me-2"></i>Nueva visita';
-  document.getElementById('modalVisitaTitulo').innerHTML = titulo;
-  ['vi_titulo','vi_tecnico','vi_descripcion'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('vi_tipo').value = tipoPreset || 'preventiva';
-  document.getElementById('vi_estado').value = 'programada';
-  // Fecha por defecto: hoy + 14 días para mantenciones, +3 días para resto
-  const dias = tipoPreset === 'preventiva' ? 14 : 3;
-  const f = new Date(); f.setDate(f.getDate() + dias);
-  document.getElementById('vi_fecha').value = f.toISOString().slice(0,10);
-  document.getElementById('vi_hora_inicio').value = '';
-  document.getElementById('vi_hora_fin').value = '';
-  document.getElementById('vi_costo').value = '';
-  // Garantía: default "No aplica" (servicio pagado) en visita nueva
-  _viSetGarantia(false);
-  document.getElementById('btnEliminarVisita').style.display = 'none';
-  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+  // Daniel 2026-06-06: "Programar mantención" y "Nueva visita" REUSAN el modal
+  // POTENTE de OT (7 pasos: tipo, dirección con Google [trae la del cliente,
+  // editable], contacto, fecha/hora, técnicos, equipos+plantillas, acceso,
+  // archivos). Así se calendariza Y se genera la OT en un mismo flujo.
+  // El modal simple #modalVisita queda solo para EDITAR visitas existentes.
+  abrirGenerarOT(tipoPreset || 'preventiva');
 }
 // Marca el toggle de garantía de la visita y refresca la nota.
 // `aplica` true → "Aplica (cubierto)"; false → "No aplica (pago)".
@@ -4524,9 +4514,13 @@ function toggleAiPanel(ctid) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// MANTENCIÓN HISTÓRICA — registro de visitas pasadas + cálculo de próxima
+// MANTENCIÓN HISTÓRICA (LEGACY) — SUPERADO por la versión inline en
+// ficha.html (abrirVisitaHistorica/vhPreview/vhGuardar). Estas viejas
+// referenciaban #vh_crear_proxima (que ya no existe) → crasheaban con
+// "Cannot set properties of null". Renombradas a _OLD_*_unused para que NO
+// pisen a las inline. No se invocan desde ningún lado.
 // ════════════════════════════════════════════════════════════════════
-function abrirVisitaHistorica() {
+function _OLD_abrirVisitaHistorica_unused() {
   // Reset
   document.getElementById('vh_fecha').value = '';
   document.getElementById('vh_tipo').value = 'preventiva';
@@ -4542,8 +4536,8 @@ function abrirVisitaHistorica() {
   new bootstrap.Modal(document.getElementById('modalVisitaHistorica')).show();
 }
 
-// Preview en vivo: cuando el usuario elige fecha, mostramos la sugerencia
-async function vhPreview() {
+// Preview en vivo (LEGACY, superado por inline en ficha.html)
+async function _OLD_vhPreview_unused() {
   const fecha = document.getElementById('vh_fecha').value;
   const box = document.getElementById('vh_preview');
   const txt = document.getElementById('vh_preview_text');
@@ -4606,7 +4600,7 @@ async function vhPreview() {
   }
 }
 
-async function vhGuardar() {
+async function _OLD_vhGuardar_unused() {
   const btn = document.getElementById('vh_btn');
   const box = document.getElementById('vh_result');
   const fecha = document.getElementById('vh_fecha').value;
@@ -4830,7 +4824,7 @@ async function _ejecutarEliminarContrato() {
 async function analizarContrato(ctid, btn) {
   const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando con IA…';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando contrato…';
   try {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}/analizar`, { method:'POST' });
     const data = await r.json();
@@ -7125,6 +7119,11 @@ function _intelRender(d){
   // Verde/gris "hecho" a la izquierda · azul "programado" a la derecha.
   html += _intelHistoriaAgenda(d);
 
+  // ── Cierre de facturación (prioridad alta del dueño) ──
+  // Junto a Historia/Agenda: un servicio realizado NO está cerrado hasta
+  // facturarlo. Tono alerta si hay pendientes; verde sobrio si está al día.
+  html += _intelFacturacion(d);
+
   // ── Fila de KPIs ──
   const kpis = Array.isArray(d.kpis) ? d.kpis : [];
   if (kpis.length) {
@@ -7342,6 +7341,9 @@ function _intelRender(d){
   // ── Oportunidades (consultas de severidad baja / tipo oportunidad) ──
   html += _intelOportunidades(d.consultas);
 
+  // ── Cómo trabaja tu Agente (ficha de instrucciones, al FINAL) ──
+  html += _intelPrincipios(d);
+
   panel.innerHTML = html;
 }
 
@@ -7548,6 +7550,130 @@ function _intelHistoriaAgenda(d){
 
   // Lado a lado en desktop (intel-grid = 2 col → 1 col en ≤768px).
   return `<div class="intel-grid mt-1">${cardHist}${cardAgenda}</div>`;
+}
+
+// ─── Tarjeta "💰 Cierre de facturación" ────────────────────────────
+// d.facturacion = {pendientes:int, items:[{id,fecha,dias,tipo_label,
+//   estado_facturacion,ef_label,cobertura_label}], al_dia:bool,
+//   mas_antigua_dias:int|null}
+// Un servicio realizado NO está cerrado hasta que se factura (o se marca
+// "no aplica"). Aquí solo mostramos el ESTADO del cierre — CERO montos
+// (por ahora no cotizamos). Determinista: si no viene el dict, no pinta.
+// Reusa intel-card / intel-card-title / intel-tl / intel-chip / intel-bignum.
+function _intelFacturacion(d){
+  const f = (d && typeof d.facturacion === 'object' && d.facturacion) ? d.facturacion : null;
+  if (!f) return '';   // backend no mandó facturación → no pintamos nada
+
+  // Botón "Ver facturación": si existe la pestaña Finanzas, cambiamos a
+  // ella (switchTab revienta si el tab no existe en el DOM, por eso el
+  // guard); si no, navegamos a la ficha del cliente.
+  const verBtn = `<button type="button" class="btn btn-sm btn-outline-dark fw-bold"
+        onclick="if (document.querySelector('.ftab-btn[data-tab=&quot;finanzas&quot;]')) { switchTab('finanzas'); if (typeof cargarFinanzas==='function') cargarFinanzas(); } else { window.location.href='/mantenciones/clientes/'+CID; }">
+        <i class="bi bi-receipt me-1"></i>Ver facturación</button>`;
+
+  const pend = parseInt(f.pendientes, 10) || 0;
+
+  // ── Caso AL DÍA: tarjeta verde sobria ──
+  if (pend <= 0 && f.al_dia === true) {
+    return `
+    <div class="intel-card mt-1" style="border:1px solid #bbf7d0;background:linear-gradient(180deg,#fff,#f0fdf4)">
+      <div class="intel-card-title"><i class="bi bi-cash-coin" style="color:#16a34a"></i>💰 Cierre de facturación
+        <span class="intel-chip" style="background:#dcfce7;color:#166534">al día</span>
+      </div>
+      <div style="font-size:.9rem;color:#166534;font-weight:700;display:flex;align-items:center;gap:8px">
+        <i class="bi bi-check-circle-fill" style="font-size:1.15rem"></i>
+        Facturación al día — no hay servicios pendientes de cerrar.
+      </div>
+    </div>`;
+  }
+
+  // ── Caso PENDIENTES: tarjeta en tono ALERTA (rojo/ámbar) ──
+  if (pend > 0) {
+    const masAnt = (f.mas_antigua_dias == null) ? null : parseInt(f.mas_antigua_dias, 10);
+    const items  = Array.isArray(f.items) ? f.items.slice(0, 8) : [];
+
+    // Color del estado de facturación de cada item (Sin cotizar = rojo,
+    // Cotizado = ámbar, Con OC = azul). Lo decide ef_label, no inventamos.
+    const efStyle = (lbl) => {
+      const s = String(lbl || '').toLowerCase();
+      if (/sin\s*cotiz/.test(s)) return 'background:#fee2e2;color:#991b1b';
+      if (/cotizad/.test(s))     return 'background:#fff8e1;color:#b45309';
+      if (/oc|orden\s*de\s*compra/.test(s)) return 'background:#dbeafe;color:#1e40af';
+      return 'background:#f3f4f6;color:#6b7280';
+    };
+
+    let lista;
+    if (!items.length) {
+      lista = '';
+    } else {
+      lista = `<div class="intel-tl" style="margin-top:10px">${items.map(it => {
+        const da = (it.dias == null) ? null : parseInt(it.dias, 10);
+        const daTxt = (da == null) ? '' : (da <= 0 ? 'hoy' : `hace ${da} día${da===1?'':'s'}`);
+        const tipoLbl = (it.tipo_label && String(it.tipo_label).trim()) ? String(it.tipo_label).trim() : 'Servicio';
+        const efLbl   = (it.ef_label && String(it.ef_label).trim()) ? String(it.ef_label).trim() : '';
+        const cobLbl  = (it.cobertura_label && String(it.cobertura_label).trim()) ? String(it.cobertura_label).trim() : '';
+        return `<div class="intel-tl-row intel-tl-vencida" style="padding-top:7px;padding-bottom:7px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <i class="bi bi-receipt" style="color:#dc2626"></i>
+            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
+            <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
+            ${efLbl ? `<span class="intel-chip" style="${efStyle(efLbl)}">${_intelEsc(efLbl)}</span>` : ''}
+          </div>
+          <div style="font-size:.72rem;color:#6b7280;margin-top:2px;padding-left:22px">
+            ${cobLbl ? `<span style="font-weight:700">${_intelEsc(cobLbl)}</span>` : ''}${(cobLbl && daTxt)?' · ':''}${daTxt ? _intelEsc(daTxt) : ''}
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    const masAntLine = (masAnt != null)
+      ? `<div style="font-size:.78rem;color:#991b1b;font-weight:700;margin-top:6px"><i class="bi bi-hourglass-bottom me-1"></i>El más antiguo lleva ${masAnt} día${masAnt===1?'':'s'}.</div>`
+      : '';
+
+    return `
+    <div class="intel-card intel-card-danger mt-1">
+      <div class="intel-card-title"><i class="bi bi-cash-coin" style="color:#dc2626"></i>💰 Cierre de facturación
+        <span class="intel-chip" style="background:#fee2e2;color:#991b1b">proceso abierto</span>
+      </div>
+      <div class="d-flex align-items-baseline gap-2">
+        <span class="intel-bignum" style="font-size:1.9rem;color:#dc2626">${pend}</span>
+        <span style="font-size:.82rem;color:#991b1b;font-weight:700">servicio${pend===1?'':'s'} realizado${pend===1?'':'s'} SIN facturar</span>
+      </div>
+      ${masAntLine}
+      <div style="font-size:.82rem;color:#374151;margin-top:8px;line-height:1.5">
+        Un servicio no termina hasta facturarlo (o marcarlo <b>"no aplica"</b>).
+      </div>
+      ${lista}
+      <div class="mt-3">${verBtn}</div>
+    </div>`;
+  }
+
+  // Sin pendientes pero al_dia tampoco true → no afirmamos nada.
+  return '';
+}
+
+// ─── Sección "🧭 Cómo trabaja tu Agente" ───────────────────────────
+// d.principios = ["...","..."] → bullets sobrios (gris) que refuerzan que
+// el Agente NO inventa y qué revisa. Es la "ficha de instrucciones" del
+// Agente; va al FINAL del panel. Si no viene la lista, retorna ''.
+function _intelPrincipios(d){
+  const arr = (d && Array.isArray(d.principios)) ? d.principios.filter(x => x != null && String(x).trim()) : [];
+  if (!arr.length) return '';
+
+  const bullets = arr.map(p => `
+    <li style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;font-size:.82rem;color:#4b5563;line-height:1.5">
+      <i class="bi bi-check2" style="color:#6b7280;font-size:.95rem;margin-top:2px;flex-shrink:0"></i>
+      <span>${_intelEsc(String(p).trim())}</span>
+    </li>`).join('');
+
+  return `
+  <div class="intel-card mt-3" style="border:1px solid #e5e7eb;background:#fafafa">
+    <div class="intel-card-title" style="color:#6b7280"><i class="bi bi-shield-check" style="color:#6b7280"></i>🧭 Cómo trabaja tu Agente</div>
+    <div style="font-size:.76rem;color:#9ca3af;margin-bottom:6px;line-height:1.5">
+      Estas son las reglas del Agente: trabaja solo con datos reales de la ficha.
+    </div>
+    <ul style="list-style:none;margin:0;padding:0">${bullets}</ul>
+  </div>`;
 }
 
 // POST /intel/informe-trimestral → genera el informe del trimestre actual y
