@@ -501,6 +501,141 @@ html, body { background: #fff; }
 }
 .sp-rango button:hover { background: #dc2626; }
 
+/* ── Bultos por factura ── */
+.sp-bultos {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-bultos-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #0a0a0a;
+  flex-wrap: wrap;
+}
+.sp-bultos-head i { color: #dc2626; font-size: 16px; }
+.sp-bultos-hint {
+  font-weight: 500;
+  font-size: 11px;
+  color: #6b7280;
+  margin-left: 4px;
+}
+.sp-bultos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.bf-card {
+  background: #f9fafb;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color .15s, background .15s;
+}
+.bf-card.is-dirty {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+.bf-card.is-saving { opacity: .7; pointer-events: none; }
+.bf-doc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #0a0a0a;
+}
+.bf-doc i { color: #dc2626; }
+.bf-tipo {
+  background: #e5e7eb;
+  color: #374151;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.bf-cliente {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bf-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.bf-step {
+  width: 28px;
+  height: 32px;
+  border: 1.5px solid #d1d5db;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 900;
+  color: #0a0a0a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.bf-step:hover { background: #f3f4f6; border-color: #6b7280; }
+.bf-input {
+  width: 64px;
+  height: 32px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 900;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  color: #0a0a0a;
+  font-family: inherit;
+  /* Hide spin buttons */
+  -moz-appearance: textfield;
+}
+.bf-input::-webkit-outer-spin-button,
+.bf-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.bf-input:focus {
+  outline: 0;
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.12);
+}
+.bf-label {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 700;
+}
+.bf-save {
+  background: #dc2626;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+.bf-save:hover { background: #b91c1c; }
+
 .sp-downloads {
   display: flex;
   gap: 8px;
@@ -631,6 +766,36 @@ html, body { background: #fff; }
     <input id="sp-rango" type="text"
            placeholder="{{ facturas[0].doc_numero }}:1-3,5,8  |  separa varias con coma">
     <button type="button" id="sp-aplicar"><i class="bi bi-funnel-fill"></i> Aplicar</button>
+  </div>
+
+  <div class="sp-bultos">
+    <div class="sp-bultos-head">
+      <i class="bi bi-box-seam"></i>
+      <span>Bultos por factura</span>
+      <span class="sp-bultos-hint">Capturá cu&aacute;ntos bultos tiene cada factura. Si es 1 quiere decir que el ERP no trajo el dato.</span>
+    </div>
+    <div class="sp-bultos-grid">
+      {% for f in facturas %}
+      <div class="bf-card" data-cid="{{ f.commitment_id }}" data-doc="{{ f.doc_numero }}">
+        <div class="bf-doc">
+          <i class="bi bi-receipt"></i>
+          <strong>{{ f.doc_numero or '—' }}</strong>
+          {% if f.doc_tipo %}<span class="bf-tipo">{{ f.doc_tipo }}</span>{% endif %}
+        </div>
+        <div class="bf-cliente">{{ f.cliente or '—' }}</div>
+        <div class="bf-input-wrap">
+          <button type="button" class="bf-step" data-step="-1" title="Quitar 1">&minus;</button>
+          <input type="number" class="bf-input" min="1" max="999" value="{{ f.total_bultos }}"
+                 data-original="{{ f.total_bultos }}">
+          <button type="button" class="bf-step" data-step="1" title="Agregar 1">+</button>
+          <span class="bf-label">bulto{{ 's' if f.total_bultos != 1 else '' }}</span>
+        </div>
+        <button type="button" class="bf-save" data-cid="{{ f.commitment_id }}" hidden>
+          <i class="bi bi-check-lg"></i> Guardar y regenerar
+        </button>
+      </div>
+      {% endfor %}
+    </div>
   </div>
 
   <div class="sp-downloads">
@@ -990,6 +1155,99 @@ document.addEventListener("DOMContentLoaded", function () {
     // Las desmarcadas ya tienen .is-off (oculto en print). Solo lanza print.
     window.print();
   };
+
+  /* ─────────────────────────────────────────────────────────────────
+     Editor de bultos por factura
+     - +/- ajusta el número, marca la card como "dirty"
+     - Guardar → POST al endpoint, valida que no haya bultos escaneados,
+       recarga la página para mostrar las nuevas etiquetas.
+     ───────────────────────────────────────────────────────────────── */
+  function markDirty(card) {
+    const input = card.querySelector('.bf-input');
+    const orig  = parseInt(input.dataset.original, 10);
+    const now   = parseInt(input.value, 10);
+    const saveBtn = card.querySelector('.bf-save');
+    if (isNaN(now) || now < 1 || now > 999) {
+      card.classList.remove('is-dirty');
+      saveBtn.hidden = true;
+      return;
+    }
+    if (now !== orig) {
+      card.classList.add('is-dirty');
+      saveBtn.hidden = false;
+    } else {
+      card.classList.remove('is-dirty');
+      saveBtn.hidden = true;
+    }
+  }
+
+  async function guardarBultos(card) {
+    const cid   = card.dataset.cid;
+    const doc   = card.dataset.doc;
+    const input = card.querySelector('.bf-input');
+    const nuevo = parseInt(input.value, 10);
+    if (isNaN(nuevo) || nuevo < 1) {
+      if (typeof ilusToast !== "undefined")
+        ilusToast("Ingresa un número válido (1-999)", { type: "error" });
+      return;
+    }
+    card.classList.add('is-saving');
+    try {
+      const r = await fetch(`/transporte/factura/${cid}/n-bultos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ n_bultos: nuevo })
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        const msg = j.error || "Error guardando";
+        if (typeof ilusAlert !== "undefined") {
+          await ilusAlert({ title: "No se pudo actualizar", message: msg, type: "error" });
+        } else {
+          alert(msg);
+        }
+        return;
+      }
+      if (typeof ilusToast !== "undefined") {
+        ilusToast(`✓ ${doc}: ${j.previo} → ${j.n_bultos} bultos · regenerando etiquetas...`,
+                  { type: "success" });
+      }
+      // Recargar la página para que las nuevas etiquetas se rendericen
+      setTimeout(() => { window.location.reload(); }, 800);
+    } catch (e) {
+      if (typeof ilusAlert !== "undefined") {
+        await ilusAlert({ title: "Error de red", message: String(e), type: "error" });
+      } else {
+        alert("Error de red: " + e);
+      }
+    } finally {
+      card.classList.remove('is-saving');
+    }
+  }
+
+  document.querySelectorAll('.bf-card').forEach(card => {
+    const input = card.querySelector('.bf-input');
+    const minus = card.querySelector('.bf-step[data-step="-1"]');
+    const plus  = card.querySelector('.bf-step[data-step="1"]');
+    const save  = card.querySelector('.bf-save');
+
+    minus.addEventListener('click', () => {
+      const v = parseInt(input.value, 10) || 1;
+      if (v > 1) { input.value = v - 1; markDirty(card); }
+    });
+    plus.addEventListener('click', () => {
+      const v = parseInt(input.value, 10) || 1;
+      if (v < 999) { input.value = v + 1; markDirty(card); }
+    });
+    input.addEventListener('input', () => markDirty(card));
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && card.classList.contains('is-dirty')) {
+        ev.preventDefault();
+        guardarBultos(card);
+      }
+    });
+    save.addEventListener('click', () => guardarBultos(card));
+  });
 })();
 </script>
 </body>

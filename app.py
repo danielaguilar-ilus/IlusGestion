@@ -18953,6 +18953,111 @@ def tr_factura_etiquetas_pdf(commitment_id):
     })
 
 
+@app.route("/transporte/factura/<int:commitment_id>/n-bultos", methods=["POST"])
+@_tr_required
+def tr_factura_set_bultos(commitment_id):
+    """Captura/edita el número de bultos de una factura desde la pantalla de
+    etiquetas. Valida que los bultos eliminados no estén ya escaneados.
+    Regenera las filas en transport_labels (crea las nuevas, borra las
+    excedentes, actualiza bulto_total en las existentes). Idempotente.
+
+    Body JSON: {"n_bultos": 14}
+    Response: {"ok": True, "n_bultos": 14, "previo": 1, "total_etiquetas": N}
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        nuevo = int(body.get("n_bultos", 0))
+    except Exception:
+        return jsonify({"ok": False, "error": "n_bultos inválido"}), 400
+    if nuevo < 1 or nuevo > 999:
+        return jsonify({"ok": False, "error": "Debe estar entre 1 y 999"}), 400
+
+    fac = mysql_fetchone(
+        "SELECT id, COALESCE(n_bultos,1) AS n_bultos, nudo "
+        "FROM transport_commitments WHERE id=%s",
+        (commitment_id,)
+    )
+    if not fac:
+        return jsonify({"ok": False, "error": "Factura no encontrada"}), 404
+
+    actual = int(fac.get("n_bultos") or 1)
+    if nuevo == actual:
+        return jsonify({"ok": True, "n_bultos": nuevo, "previo": actual, "sin_cambio": True})
+
+    # Si bajamos, validar que los bultos a eliminar no estén ya capturados.
+    if nuevo < actual:
+        try:
+            ocupados = mysql_fetchall(
+                "SELECT bulto_num, estado FROM transport_labels "
+                "WHERE commitment_id=%s AND bulto_num > %s "
+                "  AND estado IS NOT NULL AND estado <> 'generada'",
+                (commitment_id, nuevo)
+            ) or []
+        except Exception:
+            ocupados = []
+        if ocupados:
+            nums = ", ".join(str(o["bulto_num"]) for o in ocupados)
+            return jsonify({
+                "ok": False,
+                "error": (f"No se puede bajar a {nuevo}: los bultos {nums} "
+                          "ya fueron procesados (escaneados/en ruta/entregados). "
+                          "Revierte esos estados primero o sube el número.")
+            }), 409
+
+    # Update del n_bultos en la factura
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE transport_commitments SET n_bultos=%s WHERE id=%s",
+                (nuevo, commitment_id)
+            )
+            # Borrar excedentes si bajamos
+            if nuevo < actual:
+                cur.execute(
+                    "DELETE FROM transport_labels "
+                    "WHERE commitment_id=%s AND bulto_num > %s",
+                    (commitment_id, nuevo)
+                )
+            # Actualizar bulto_total en las filas existentes
+            cur.execute(
+                "UPDATE transport_labels SET bulto_total=%s WHERE commitment_id=%s",
+                (nuevo, commitment_id)
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[tr_factura_set_bultos] DB error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error al guardar"}), 500
+
+    # Crear las filas nuevas en transport_labels (si subimos)
+    mrow = mysql_fetchone(
+        "SELECT manifest_id FROM transport_manifest_items "
+        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1",
+        (commitment_id,)
+    )
+    manifest_id = mrow["manifest_id"] if mrow else None
+    courier = ""
+    if manifest_id:
+        mfrow = mysql_fetchone(
+            "SELECT courier FROM transport_manifests WHERE id=%s", (manifest_id,)
+        )
+        courier = (mfrow.get("courier") if mfrow else "") or ""
+
+    fac_struct = _tr_etiqueta_facturas([commitment_id])
+    if fac_struct:
+        _tr_upsert_labels(fac_struct, manifest_id=manifest_id, courier=courier)
+
+    _tr_log("commitment", commitment_id, "n_bultos capturado",
+            f"{actual} → {nuevo}")
+
+    return jsonify({
+        "ok": True,
+        "n_bultos": nuevo,
+        "previo": actual,
+        "doc": (fac.get("nudo") or "").strip(),
+    })
+
+
 @app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
 @_tr_required
 def tr_agregar_item(mid):
