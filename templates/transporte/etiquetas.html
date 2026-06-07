@@ -156,63 +156,109 @@ html, body { background: #fff; }
 .etiqueta:last-child { page-break-after: auto; break-after: auto; }
 {% endif %}
 
-/* HEADER de marca */
+/* HEADER ILUS — logo + datos del remitente (estilo factura formal) */
 .lbl-head {
-  background: var(--ilus-black);
-  color: var(--ilus-white);
-  padding: 2.4mm 3mm;
-  text-align: center;
-}
-.lbl-head .brand {
-  font-size: 3.4mm;
-  font-weight: 950;
-  letter-spacing: .2mm;
-  line-height: 1.15;
-}
-.lbl-head .brand .red { color: var(--ilus-red); }
-.lbl-head .brand .dot { color: var(--ilus-red); padding: 0 .6mm; }
-
-/* Fila remitente + fecha */
-.lbl-from {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 38mm 1fr;
   gap: 2mm;
-  padding: 2mm 3mm;
-  border-bottom: .4mm solid #000;
-  background: #f3f4f6;
+  padding: 2.5mm 3mm;
+  background: var(--ilus-white);
+  border-bottom: .7mm solid var(--ilus-black);
+  align-items: center;
 }
-.lbl-from .from-label {
-  font-size: 2.3mm;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: .25mm;
+.lbl-head .brand-logo {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+.lbl-head .brand-logo img {
+  max-width: 36mm;
+  max-height: 16mm;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+/* Fallback texto si no hay logo */
+.lbl-head .brand-logo .brand-text {
+  font-size: 5mm;
+  font-weight: 950;
+  letter-spacing: .3mm;
+  line-height: 1;
+  color: var(--ilus-black);
+}
+.lbl-head .brand-logo .brand-text .red {
   color: var(--ilus-red);
 }
-.lbl-from .from-name {
-  font-size: 3mm;
+.lbl-head .brand-info {
+  display: flex;
+  flex-direction: column;
+  gap: .25mm;
+  padding-left: 2mm;
+  border-left: .35mm solid var(--ilus-black);
+  font-size: 2.4mm;
+  font-weight: 700;
+  line-height: 1.18;
+  color: var(--ilus-black);
+}
+.lbl-head .brand-info .rut {
+  font-size: 2.7mm;
   font-weight: 900;
-  line-height: 1.1;
 }
-.lbl-from .from-addr {
-  font-size: 2.5mm;
+.lbl-head .brand-info .giro {
+  font-size: 2.3mm;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .15mm;
+}
+.lbl-head .brand-info .addr,
+.lbl-head .brand-info .tel {
+  font-size: 2.3mm;
   font-weight: 600;
-  color: #1f2937;
-  line-height: 1.15;
 }
-.lbl-from .from-date {
-  text-align: right;
-  white-space: nowrap;
+
+/* Banda Courier / N° Courier / Fecha — campos de captura del transportista */
+.lbl-courier {
+  display: grid;
+  grid-template-columns: 1fr 1fr 26mm;
+  gap: 0;
+  border-bottom: .5mm solid var(--ilus-black);
+  background: var(--ilus-white);
 }
-.lbl-from .from-date .dt-label {
-  font-size: 2.1mm;
+.lbl-courier > div {
+  padding: 2mm 3mm 2.5mm;
+}
+.lbl-courier .cr-cell {
+  border-right: .35mm solid var(--ilus-black);
+  min-height: 11mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.lbl-courier .cr-cell:last-child {
+  border-right: 0;
+}
+.lbl-courier .cr-label {
+  font-size: 2.2mm;
   font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: .25mm;
   color: var(--ilus-gray);
+  margin-bottom: 1mm;
 }
-.lbl-from .from-date .dt-val {
-  font-size: 2.7mm;
+.lbl-courier .cr-value {
+  font-size: 3mm;
   font-weight: 800;
+  color: var(--ilus-black);
+  min-height: 4mm;
+  border-bottom: .3mm solid var(--ilus-gray);
+  padding-bottom: .5mm;
+}
+.lbl-courier .cr-value.fecha {
+  font-size: 2.7mm;
+  font-weight: 900;
+  border-bottom: 0;
+  line-height: 1.15;
 }
 
 /* Bloque grande: N° DOCUMENTO + barcode */
@@ -273,11 +319,20 @@ html, body { background: #fff; }
   gap: 1.6mm;
 }
 .dest-info .dest-label {
-  font-size: 2.5mm;
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+  font-size: 3.4mm;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .3mm;
-  color: var(--ilus-red);
+  color: var(--ilus-black);
+  padding-bottom: 1mm;
+  border-bottom: .35mm solid var(--ilus-gray);
+}
+.dest-info .dest-label svg {
+  width: 4.5mm;
+  height: 4.5mm;
 }
 .dest-row .k {
   font-size: 2.2mm;
@@ -297,35 +352,47 @@ html, body { background: #fff; }
   font-weight: 950;
 }
 
-/* Caja BULTOS X de N — grande, rojo */
+/* Caja BULTOS X de N — número grande arriba, QR debajo */
 .bultos-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   text-align: center;
-  padding: 2mm;
+  padding: 2mm 1mm 2mm;
   background: #fff;
+  gap: 1mm;
 }
 .bultos-box .b-title {
-  font-size: 3mm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5mm;
+  font-size: 3.4mm;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .4mm;
   color: var(--ilus-black);
 }
+.bultos-box .b-title svg {
+  width: 4.5mm;
+  height: 4.5mm;
+}
 .bultos-box .b-main {
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 1mm;
+  gap: 1.5mm;
   margin-top: .5mm;
+  padding-bottom: 1mm;
+  border-bottom: .35mm solid var(--ilus-gray);
+  width: 90%;
 }
 .bultos-box .b-x {
-  font-size: 18mm;
+  font-size: 22mm;
   font-weight: 950;
   line-height: .9;
-  color: var(--ilus-red);
+  color: var(--ilus-black);
 }
 .bultos-box .b-de {
   font-size: 4mm;
@@ -333,50 +400,71 @@ html, body { background: #fff; }
   color: var(--ilus-gray);
 }
 .bultos-box .b-n {
-  font-size: 9mm;
+  font-size: 11mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
 }
 /* QR único por bulto — el chofer lo escanea para capturar el bulto */
 .bultos-box .qr-box {
-  width: 18mm;
-  height: 18mm;
-  margin-top: 1.5mm;
+  width: 22mm;
+  height: 22mm;
+  margin-top: .8mm;
 }
 .bultos-box .qr-box img,
 .bultos-box .qr-box canvas {
-  width: 18mm !important;
-  height: 18mm !important;
+  width: 22mm !important;
+  height: 22mm !important;
   display: block;
 }
 .bultos-box .qr-code-txt {
-  font-family: monospace;
+  font-family: 'Courier New', monospace;
   font-size: 2.4mm;
   font-weight: 700;
   letter-spacing: .3mm;
   color: var(--ilus-black);
-  margin-top: .5mm;
+  margin-top: .3mm;
 }
 
-/* STATUS DE SALIDA (vacío para sello/firma) */
+/* STATUS DE SALIDA (caja vacía visible para sello/firma) */
 .lbl-status {
-  border-bottom: .5mm solid #000;
-  padding: 2mm 3mm;
+  display: grid;
+  grid-template-columns: 32mm 1fr;
+  gap: 2mm;
+  border-bottom: .5mm solid var(--ilus-black);
+  padding: 2.2mm 3mm;
   min-height: 16mm;
+  align-items: center;
 }
-.lbl-status .st-title {
-  font-size: 2.4mm;
+.lbl-status .st-info {
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+}
+.lbl-status .st-info svg {
+  width: 5mm;
+  height: 5mm;
+  flex-shrink: 0;
+}
+.lbl-status .st-text .st-title {
+  font-size: 2.8mm;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: .35mm;
-  color: var(--ilus-red);
+  letter-spacing: .3mm;
+  color: var(--ilus-black);
+  line-height: 1.1;
 }
-.lbl-status .st-hint {
-  font-size: 2.1mm;
+.lbl-status .st-text .st-hint {
+  font-size: 2mm;
   font-weight: 600;
   color: var(--ilus-gray);
-  font-style: italic;
+  margin-top: .5mm;
+}
+.lbl-status .st-box {
+  border: .4mm dashed var(--ilus-gray);
+  border-radius: 1.5mm;
+  min-height: 13mm;
+  background: #fafafa;
 }
 
 /* Footer de íconos de cuidado */
@@ -833,24 +921,40 @@ html, body { background: #fff; }
       {% endif %}
     <article class="etiqueta">
 
+      {# ─── HEADER: logo ILUS + datos formales del remitente ─── #}
       <header class="lbl-head">
-        <div class="brand">
-          SPORTS HEALTH SOLUTIONS<span class="dot">·</span>I Like you Strong<span class="dot">·</span>ILUS by <span class="red">MOTION</span>
+        <div class="brand-logo">
+          {% if logo_url %}
+            <img src="{{ logo_url }}" alt="ILUS">
+          {% else %}
+            <div class="brand-text">IL<span class="red">U</span>S</div>
+          {% endif %}
+        </div>
+        <div class="brand-info">
+          <div class="rut">{{ remitente.rut or '76.996.964-0' }}</div>
+          <div class="giro">{{ remitente.giro or 'IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS' }}</div>
+          <div class="addr">{{ remitente.direccion }}</div>
+          <div class="tel">{{ remitente.telefono or '+56229465970' }}</div>
         </div>
       </header>
 
-      <div class="lbl-from">
-        <div>
-          <div class="from-label">Remitente</div>
-          <div class="from-name">{{ remitente.nombre }}</div>
-          <div class="from-addr">{{ remitente.direccion }}</div>
+      {# ─── BANDA: Courier · N° Courier · Fecha ─── #}
+      <div class="lbl-courier">
+        <div class="cr-cell">
+          <div class="cr-label">Courier</div>
+          <div class="cr-value">{{ courier or '&nbsp;' | safe }}</div>
         </div>
-        <div class="from-date">
-          <div class="dt-label">Fecha</div>
-          <div class="dt-val">{{ fecha }}</div>
+        <div class="cr-cell">
+          <div class="cr-label">N&deg; Courier</div>
+          <div class="cr-value">&nbsp;</div>
+        </div>
+        <div class="cr-cell">
+          <div class="cr-label">Fecha</div>
+          <div class="cr-value fecha">{{ fecha }}</div>
         </div>
       </div>
 
+      {# ─── N° DOCUMENTO + BARCODE ─── #}
       <div class="lbl-doc">
         <div class="doc-title">N&deg; Documento / Orden</div>
         <div class="doc-number">{{ f.doc_numero or '—' }}</div>
@@ -860,16 +964,23 @@ html, body { background: #fff; }
         </div>
       </div>
 
+      {# ─── DESTINATARIO + BULTOS (con QR debajo del número) ─── #}
       <div class="lbl-dest">
         <div class="dest-info">
-          <div class="dest-label">Destinatario</div>
+          <div class="dest-label">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            Destinatario
+          </div>
           <div class="dest-row"><span class="k">Cliente</span><span class="v big">{{ f.cliente or '—' }}</span></div>
           <div class="dest-row"><span class="k">Fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
           <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v">{{ f.direccion or '—' }}</span></div>
           <div class="dest-row"><span class="k">Comuna</span><span class="v">{{ f.comuna or '—' }}</span></div>
         </div>
         <div class="bultos-box">
-          <div class="b-title">Bultos</div>
+          <div class="b-title">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16.5c0 .38-.21.71-.53.88l-7.9 4.44c-.16.12-.36.18-.57.18-.21 0-.41-.06-.57-.18l-7.9-4.44A.991.991 0 013 16.5v-9c0-.38.21-.71.53-.88l7.9-4.44c.16-.12.36-.18.57-.18.21 0 .41.06.57.18l7.9 4.44c.32.17.53.5.53.88v9zM12 4.15L6.04 7.5 12 10.85l5.96-3.35L12 4.15zM5 15.91l6 3.38v-6.71L5 9.21v6.7zm14 0v-6.7l-6 3.37v6.71l6-3.38z"/></svg>
+            Bultos
+          </div>
           <div class="b-main">
             <span class="b-x">{{ b.num }}</span>
             <span class="b-de">de</span>
@@ -882,9 +993,16 @@ html, body { background: #fff; }
         </div>
       </div>
 
+      {# ─── STATUS DE SALIDA (caja vacía para sello/firma) ─── #}
       <div class="lbl-status">
-        <div class="st-title">Status de salida</div>
-        <div class="st-hint">Sello / firma del transportista</div>
+        <div class="st-info">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.06 9l.94.94L5.92 19H5v-.92L14.06 9m3.6-6c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83a.996.996 0 000-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29zm-3.6 3.19L3 17.25V21h3.75L17.81 9.94 14.06 6.19z"/></svg>
+          <div class="st-text">
+            <div class="st-title">Status de salida</div>
+            <div class="st-hint">Sello / firma del transportista</div>
+          </div>
+        </div>
+        <div class="st-box"></div>
       </div>
 
       <footer class="lbl-foot">

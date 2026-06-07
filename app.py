@@ -18545,8 +18545,12 @@ a{{color:#dc2626;font-weight:700;text-decoration:none}}</style></head>
 
 # Remitente fijo de todas las etiquetas (origen de los despachos).
 ILUS_REMITENTE = {
-    "nombre":    "SPORT AND HEALTH SOLUTIONS",
-    "direccion": "Eduardo Frei Montalva 9770, Bod 30, Quilicura",
+    "nombre":    "SPORT AND HEALTH SOLUTION SPA",
+    "rut":       "76.996.964-0",
+    "giro":      "IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS",
+    "direccion": "AV. APOQUINDO 4499, LAS CONDES",
+    "telefono":  "+56229465970",
+    "bodega":    "Eduardo Frei Montalva 9770, Bod 30, Quilicura",
 }
 
 
@@ -18774,6 +18778,7 @@ def tr_manifiesto_etiquetas(mid):
         courier     = courier,
         total_etiquetas = total_etiquetas,
         pdf_url     = url_for('tr_manifiesto_etiquetas_pdf', mid=mid),
+        logo_url    = _logo_data_url(),
     )
 
 
@@ -18808,6 +18813,7 @@ def tr_factura_etiquetas(commitment_id):
         courier     = "",
         total_etiquetas = total_etiquetas,
         pdf_url     = url_for('tr_factura_etiquetas_pdf', commitment_id=commitment_id),
+        logo_url    = _logo_data_url(),
     )
 
 
@@ -18828,6 +18834,7 @@ def _tr_render_etiquetas_pdf(facturas, *, fecha, titulo, courier, individual=Fal
         "}"
     )
 
+    logo_url_cached = _logo_data_url()
     def render_one(fac_subset):
         total = sum(len(f["bultos"]) for f in fac_subset)
         html = render_template(
@@ -18839,6 +18846,7 @@ def _tr_render_etiquetas_pdf(facturas, *, fecha, titulo, courier, individual=Fal
             courier         = courier,
             total_etiquetas = total,
             pdf_mode        = True,
+            logo_url        = logo_url_cached,
         )
         return _pw_pdf(html, width="100mm", height="150mm", wait_fn=wait_fn, wait_timeout=8000)
 
