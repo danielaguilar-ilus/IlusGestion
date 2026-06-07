@@ -38927,57 +38927,138 @@ Devuelve SOLO el JSON."""
 
 # ── ANÁLISIS IA DE CONTRATO ───────────────────────────────────────────
 
-def _contrato_reglas_overrides():
-    """Overrides editables desde el front (activa/peso) por regla de contrato. Persistente."""
+def _json_load_list(s):
     try:
-        rows = mysql_fetchall("SELECT rule_id, activa, peso_override FROM mant_contrato_reglas_cfg") or []
+        v = json.loads(s or "[]")
+        return [str(x) for x in v] if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def _parse_patrones(v):
+    """Acepta lista o string (coma/; /salto de línea) → lista de patrones en minúscula."""
+    items = v if isinstance(v, list) else re.split(r"[\n,;]+", str(v or ""))
+    return [p.strip().lower() for p in items if p and str(p).strip()]
+
+
+def _contrato_reglas_db():
+    """Reglas de contrato desde la BD (CRUD = fuente de verdad). Fallback al
+    archivo contrato_reglas.json si la tabla no existe o está vacía."""
+    try:
+        rows = mysql_fetchall("SELECT * FROM mant_contrato_reglas ORDER BY orden, id") or []
     except Exception:
         rows = []
-    return {r["rule_id"]: {"activa": bool(r.get("activa")), "peso": r.get("peso_override")} for r in rows}
+    if not rows:
+        import contrato_reglas as _cr
+        return [{**r, "activa": True} for r in _cr.cargar_reglas()]
+    out = []
+    for r in rows:
+        out.append({
+            "id": r.get("id"), "tipo": r.get("tipo"), "categoria": r.get("categoria"),
+            "dimension": r.get("dimension"), "severidad": r.get("severidad"),
+            "peso_score": int(r.get("peso_score") or 0),
+            "mensaje": r.get("mensaje") or "", "propuesta": r.get("propuesta") or "",
+            "base_legal": r.get("base_legal") or "",
+            "patrones_presencia": _json_load_list(r.get("patrones_presencia")),
+            "patrones_ausencia": _json_load_list(r.get("patrones_ausencia")),
+            "activa": bool(r.get("activa", 1)),
+        })
+    return out
+
+
+def _contrato_reglas_activas():
+    """Solo las reglas ACTIVAS (las que el motor evalúa)."""
+    return [r for r in _contrato_reglas_db() if r.get("activa", True)]
 
 
 @app.route("/mantenciones/api/contrato-reglas", methods=["GET"])
 @_mant_required
 def mant_contrato_reglas_list():
-    """Lista las reglas del agente de contratos + su configuración editable."""
-    import contrato_reglas
-    ov = _contrato_reglas_overrides()
-    out = []
-    for r in contrato_reglas.cargar_reglas():
-        c = ov.get(r.get("id")) or {}
-        out.append({
-            "id": r.get("id"), "tipo": r.get("tipo"), "dimension": r.get("dimension"),
-            "severidad": r.get("severidad"), "mensaje": r.get("mensaje"),
-            "peso_base": r.get("peso_score"),
-            "peso": (c.get("peso") if c.get("peso") is not None else r.get("peso_score")),
-            "activa": (c.get("activa") if "activa" in c else True),
-            "base_legal": r.get("base_legal") or "",
-        })
-    return jsonify({"reglas": out, "total": len(out)})
+    """Lista TODAS las reglas de contrato (CRUD)."""
+    reglas = _contrato_reglas_db()
+    return jsonify({"reglas": reglas, "total": len(reglas),
+                    "activas": sum(1 for r in reglas if r.get("activa"))})
+
+
+@app.route("/mantenciones/api/contrato-reglas", methods=["POST"])
+@_mant_required
+def mant_contrato_reglas_create():
+    """Crea una regla de contrato nueva (CRUD, admin)."""
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin."}), 403
+    d = request.get_json(silent=True) or {}
+    rid = re.sub(r"[^a-z0-9_]+", "_", (d.get("id") or "").strip().lower()).strip("_")[:80]
+    if not rid:
+        base = re.sub(r"[^a-z0-9_]+", "_", (d.get("mensaje") or "regla").lower()).strip("_")[:50]
+        rid = "custom_" + (base or "regla")
+    if mysql_fetchone("SELECT id FROM mant_contrato_reglas WHERE id=%s", (rid,)):
+        rid = (rid[:60] + "_" + str(int(datetime.now().timestamp()))[-5:])
+    tipo = d.get("tipo") if d.get("tipo") in ("alerta_critica", "punto_revisar", "clausula_relevante", "clausula_favorable") else "punto_revisar"
+    try:
+        mysql_execute(
+            "INSERT INTO mant_contrato_reglas (id,tipo,categoria,dimension,severidad,peso_score,"
+            "mensaje,propuesta,base_legal,patrones_presencia,patrones_ausencia,activa,orden,updated_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (rid, tipo, d.get("categoria") or "custom", d.get("dimension") or "personalizadas",
+             d.get("severidad") or "media", int(d.get("peso_score") or -5),
+             (d.get("mensaje") or "")[:2000], (d.get("propuesta") or "")[:3000], (d.get("base_legal") or "")[:600],
+             json.dumps(_parse_patrones(d.get("patrones_presencia")), ensure_ascii=False),
+             json.dumps(_parse_patrones(d.get("patrones_ausencia")), ensure_ascii=False),
+             1 if d.get("activa", True) else 0, 999, current_username()))
+    except Exception as e:
+        print(f"[contrato_reglas_create] {e}", flush=True)
+        return jsonify({"error": "No se pudo crear la regla."}), 500
+    return jsonify({"ok": True, "id": rid})
 
 
 @app.route("/mantenciones/api/contrato-reglas/<rule_id>", methods=["PUT"])
 @_mant_required
 def mant_contrato_reglas_update(rule_id):
-    """Activa/desactiva o ajusta el peso de una regla de contrato (persistente, admin)."""
+    """Edita una regla de contrato (CRUD, admin). Campos parciales permitidos."""
     if not _intel_es_admin():
         return jsonify({"error": "Solo admin/superadmin."}), 403
+    if not mysql_fetchone("SELECT id FROM mant_contrato_reglas WHERE id=%s", (rule_id,)):
+        return jsonify({"error": "Regla no encontrada."}), 404
     d = request.get_json(silent=True) or {}
-    activa = 1 if d.get("activa", True) else 0
-    peso = d.get("peso")
+    sets, vals = [], []
+    if "activa" in d:
+        sets.append("activa=%s"); vals.append(1 if d.get("activa") else 0)
+    if "peso" in d or "peso_score" in d:
+        try:
+            _p = int(d.get("peso", d.get("peso_score")))
+        except (TypeError, ValueError):
+            _p = 0
+        sets.append("peso_score=%s"); vals.append(_p)
+    for campo in ("tipo", "categoria", "dimension", "severidad", "mensaje", "propuesta", "base_legal"):
+        if campo in d:
+            sets.append(f"{campo}=%s"); vals.append(str(d.get(campo) or "")[:3000])
+    if "patrones_presencia" in d:
+        sets.append("patrones_presencia=%s"); vals.append(json.dumps(_parse_patrones(d.get("patrones_presencia")), ensure_ascii=False))
+    if "patrones_ausencia" in d:
+        sets.append("patrones_ausencia=%s"); vals.append(json.dumps(_parse_patrones(d.get("patrones_ausencia")), ensure_ascii=False))
+    if not sets:
+        return jsonify({"ok": True})
+    sets.append("updated_by=%s"); vals.append(current_username())
+    vals.append(rule_id)
     try:
-        peso = int(peso) if (peso is not None and str(peso).strip() != "") else None
-    except (TypeError, ValueError):
-        peso = None
-    try:
-        mysql_execute(
-            "INSERT INTO mant_contrato_reglas_cfg (rule_id, activa, peso_override, updated_by) "
-            "VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE activa=VALUES(activa), "
-            "peso_override=VALUES(peso_override), updated_by=VALUES(updated_by)",
-            (rule_id[:80], activa, peso, current_username()))
+        mysql_execute(f"UPDATE mant_contrato_reglas SET {', '.join(sets)} WHERE id=%s", vals)
     except Exception as e:
         print(f"[contrato_reglas_update] {e}", flush=True)
         return jsonify({"error": "No se pudo guardar la regla."}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/contrato-reglas/<rule_id>", methods=["DELETE"])
+@_mant_required
+def mant_contrato_reglas_delete(rule_id):
+    """Elimina una regla de contrato (CRUD, admin)."""
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin."}), 403
+    try:
+        mysql_execute("DELETE FROM mant_contrato_reglas WHERE id=%s", (rule_id,))
+    except Exception as e:
+        print(f"[contrato_reglas_delete] {e}", flush=True)
+        return jsonify({"error": "No se pudo eliminar la regla."}), 500
     return jsonify({"ok": True})
 
 
@@ -39219,7 +39300,7 @@ cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a
                                  "(el escaneo puede estar muy borroso o ser una foto de baja calidad). "
                                  "Súbelo en PDF con texto seleccionable o en Word."}), 200
     import contrato_reglas
-    _an = contrato_reglas.analizar_contrato(texto_contrato, overrides=_contrato_reglas_overrides())
+    _an = contrato_reglas.analizar_contrato(texto_contrato, reglas=_contrato_reglas_activas())
     _ids_alert = {a.get("id") for a in _an.get("alertas_criticas", [])}
     _es_arriendo = bool({"tipo_es_arriendo_no_mantencion", "tipo_leasing_opcion_compra",
                          "tipo_arriendo_disfrazado_costos_a_ilus",
@@ -50741,9 +50822,11 @@ def _intel_informe_estado(cid, periodo=None):
             "ORDER BY id DESC LIMIT 1", (cid, periodo))
     except Exception:
         r = None
+    # reporte_url = render EN VIVO (no el snapshot estático en disco, que es
+    # efímero en Cloud Run y daba 404 al abrir "Ver informe").
     return {"periodo": periodo, "ya_generado": bool(r),
             "reporte_id": (r["id"] if r else None),
-            "reporte_url": (f"/static/{r['html_path']}" if (r and r.get("html_path")) else None)}
+            "reporte_url": (f"/mantenciones/api/reportes/{r['id']}/html" if r else None)}
 
 
 def _intel_generar_informe_trimestral(cid, usuario=None):
@@ -57584,16 +57667,49 @@ def _ensure_mant_intel_tables():
         print(f"[ensure_intel] reglas: {e}", flush=True)
     try:
         mysql_execute("""
-            CREATE TABLE IF NOT EXISTS mant_contrato_reglas_cfg (
-                rule_id       VARCHAR(80) PRIMARY KEY,
-                activa        TINYINT(1) NOT NULL DEFAULT 1,
-                peso_override INT NULL,
-                updated_by    VARCHAR(190),
-                updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS mant_contrato_reglas (
+                id           VARCHAR(80) PRIMARY KEY,
+                tipo         VARCHAR(40),
+                categoria    VARCHAR(60),
+                dimension    VARCHAR(60),
+                severidad    VARCHAR(20),
+                peso_score   INT DEFAULT 0,
+                mensaje      TEXT,
+                propuesta    TEXT,
+                base_legal   TEXT,
+                patrones_presencia TEXT,
+                patrones_ausencia  TEXT,
+                activa       TINYINT(1) NOT NULL DEFAULT 1,
+                orden        INT DEFAULT 100,
+                updated_by   VARCHAR(190),
+                updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_dim (dimension), INDEX idx_activa (activa)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # Seed inicial desde contrato_reglas.json SOLO si la tabla está vacía
+        # (a partir de ahí, la fuente de verdad es la BD — CRUD desde el front).
+        _cnt = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contrato_reglas")
+        if not _cnt or not (_cnt.get("n") or 0):
+            import contrato_reglas as _cr
+            _o = 0
+            for _r in _cr.cargar_reglas():
+                _o += 10
+                try:
+                    mysql_execute(
+                        "INSERT IGNORE INTO mant_contrato_reglas "
+                        "(id,tipo,categoria,dimension,severidad,peso_score,mensaje,propuesta,"
+                        " base_legal,patrones_presencia,patrones_ausencia,activa,orden) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s)",
+                        (_r.get("id"), _r.get("tipo"), _r.get("categoria"), _r.get("dimension"),
+                         _r.get("severidad"), int(_r.get("peso_score") or 0), _r.get("mensaje", ""),
+                         _r.get("propuesta", ""), _r.get("base_legal", ""),
+                         json.dumps(_r.get("patrones_presencia") or [], ensure_ascii=False),
+                         json.dumps(_r.get("patrones_ausencia") or [], ensure_ascii=False), _o))
+                except Exception as _se:
+                    print(f"[seed contrato_reglas] {_r.get('id')}: {_se}", flush=True)
+            print(f"[ensure_intel] mant_contrato_reglas seed OK ({_o // 10} reglas)", flush=True)
     except Exception as e:
-        print(f"[ensure_intel] contrato_reglas_cfg: {e}", flush=True)
+        print(f"[ensure_intel] contrato_reglas: {e}", flush=True)
     try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_cliente_intel (
