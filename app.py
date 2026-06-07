@@ -37999,6 +37999,17 @@ def _coerce_json_from_llm(raw):
     raise ValueError("no parseable")
 
 
+_IA_OFF_MSG = ("La IA está deshabilitada. El Agente ILUS trabaja con sus herramientas "
+               "deterministas: informe de ficha, informe post-servicio y análisis de "
+               "contrato por reglas.")
+
+
+def _ia_enabled():
+    """Kill-switch global de IA. Por defecto APAGADO (barrido cero-IA: el Agente
+    es 100% determinista). Para reactivar la IA: setear ILUS_IA_ENABLED=1."""
+    return os.environ.get("ILUS_IA_ENABLED", "").strip().lower() in ("1", "true", "on", "yes", "si", "sí")
+
+
 def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                  expect_json=True, model=None, temperature=0.2,
                  attachments=None, tier=None,
@@ -38028,6 +38039,17 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
             _endpoint_inferido = request.endpoint or "ai_unknown"
         except Exception:
             _endpoint_inferido = "ai_background"
+
+    # ── KILL-SWITCH GLOBAL DE IA (barrido cero-IA, Daniel: "es mío, sin tokens") ──
+    # Por defecto la IA está APAGADA: el Agente ILUS trabaja 100% determinista.
+    # Red de seguridad universal: aunque un endpoint olvide el guard temprano,
+    # acá nunca se llama a la API ni se gasta. Reactivar: ILUS_IA_ENABLED=1.
+    if not _ia_enabled():
+        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                entidad_id=log_entidad_id, tier=tier, ok=False,
+                error_msg="IA deshabilitada (ILUS_IA_ENABLED off)",
+                elapsed_ms=int((time.time() - _start_ts) * 1000))
+        return None, _IA_OFF_MSG
 
     ai_key = _get_ai_key()
     if not ai_key:
@@ -38380,6 +38402,8 @@ def mant_ia_alertas_diarias_manual():
 @_mant_required
 def mant_maquina_ai_completar(mid):
     """Usa Claude para completar la ficha técnica de una máquina."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     maq = mysql_fetchone(
         "SELECT m.*, c.razon_social, c.comuna "
         "  FROM mant_maquinas m "
@@ -38487,6 +38511,8 @@ def mant_cliente_ai_analisis(cid):
       - El gating "deberías regenerar?" debe ocurrir en el cliente vía
         GET /api/clientes/<cid>/ia/elegibilidad ANTES de POSTear acá.
     """
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
@@ -38859,6 +38885,8 @@ def mant_cliente_ia_diferir(cid):
 @_mant_required
 def mant_cliente_ai_completar(cid):
     """Sugiere completar campos faltantes de la ficha del cliente."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
@@ -51459,6 +51487,8 @@ def mant_reporte_redactar_ia(cid):
     trabajos realizados, observaciones generales y una observación/recomendación
     por máquina, en tono profesional chileno. NO guarda nada: devuelve el JSON
     para que el usuario lo revise en el formulario y luego guarde."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     cli = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (cid,))
     if not cli:
         return jsonify({"error": "Cliente no encontrado"}), 404
@@ -51794,6 +51824,8 @@ def mant_reporte_foto_subir(rid):
 @_mant_required
 def mant_reporte_analizar(rid):
     """Análisis IA del reporte: diagnóstico, acciones sugeridas, alertas."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     r = mysql_fetchone("SELECT r.*, c.razon_social FROM mant_reportes r "
                        "JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s", (rid,))
     if not r: return jsonify({"error":"No encontrado"}), 404
@@ -58768,6 +58800,8 @@ def mant_plan_mejora(cid):
       - Cache RAM TTL 1h (key=plan_mejora_<cid>). `?force=1` lo invalida.
     """
     import time as _time
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
 
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
