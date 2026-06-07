@@ -106,10 +106,25 @@ def _resumen(score, nivel, alertas, puntos, favorables):
     return " ".join(p)
 
 
-def analizar_contrato(texto, reglas=None):
+def analizar_contrato(texto, reglas=None, overrides=None):
     """Analiza el texto del contrato (determinista). Devuelve un dict estable
-    listo para el panel del front y para el PDF."""
+    listo para el panel del front y para el PDF.
+
+    overrides: dict {rule_id: {"activa": bool, "peso": int|None}} editable desde
+    el front (panel de reglas) y persistido en BD. Desactiva reglas o ajusta su
+    peso sin tocar el archivo base."""
     reglas = reglas if reglas is not None else cargar_reglas()
+    if overrides:
+        _aj = []
+        for r in reglas:
+            ov = overrides.get(r.get("id"))
+            if ov:
+                if ov.get("activa") is False:
+                    continue  # regla desactivada desde el front
+                if ov.get("peso") is not None:
+                    r = {**r, "peso_score": int(ov["peso"])}
+            _aj.append(r)
+        reglas = _aj
     t = _norm(texto or "")
     base = {
         "motor": "contrato-reglas-v1",

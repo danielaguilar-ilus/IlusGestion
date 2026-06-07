@@ -81,6 +81,8 @@
   </div>
 </div>
 
+<div id="ag_contrato_root" style="margin-top:22px"></div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -317,6 +319,68 @@ async function guardar(){
   else content.appendChild(bar);
 })();
 
-document.addEventListener('DOMContentLoaded', cargar);
+// ── Reglas de análisis de CONTRATO (45) — activar/desactivar + peso, persistente ──
+const TIPO_META = {
+  alerta_critica:    {c:'#dc2626', l:'Crítica'},
+  punto_revisar:     {c:'#f59e0b', l:'Revisar'},
+  clausula_relevante:{c:'#3b82f6', l:'Cláusula'},
+  clausula_favorable:{c:'#16a34a', l:'Favorable'},
+};
+async function cargarContrato(){
+  const root = document.getElementById('ag_contrato_root');
+  if (!root) return;
+  root.innerHTML = '<div class="ag-cat"><div class="text-muted small"><span class="spinner-border spinner-border-sm me-2"></span>Cargando reglas de contrato…</div></div>';
+  try {
+    const r = await fetch('/mantenciones/api/contrato-reglas');
+    const d = await r.json();
+    const reglas = (d && d.reglas) || [];
+    if (!reglas.length){ root.innerHTML = ''; return; }
+    const grupos = {};
+    reglas.forEach(rg => { (grupos[rg.dimension || 'otros'] = grupos[rg.dimension || 'otros'] || []).push(rg); });
+    let html = '<div class="ag-banner" style="background:linear-gradient(135deg,#0a0a0a,#2a0d0d)">'
+      + '<i class="bi bi-file-earmark-text ag-bicon"></i><div>'
+      + '<div class="t">Reglas de análisis de CONTRATO (' + reglas.length + ')</div>'
+      + '<div class="s">Activa/desactiva o ajusta el peso de cada regla. Se guarda al instante. 100% sin IA.</div></div></div>';
+    Object.keys(grupos).forEach(dim => {
+      html += '<div class="ag-cat"><div class="ag-cat-head"><span class="chip" style="background:#fee2e2;color:#991b1b">⚖️</span>'
+        + '<h6>' + esc(dim.replace(/_/g, ' ')) + '</h6><span class="cnt">' + grupos[dim].length + ' regla' + (grupos[dim].length !== 1 ? 's' : '') + '</span></div>';
+      grupos[dim].forEach(rg => {
+        const m = TIPO_META[rg.tipo] || {c:'#6b7280', l:rg.tipo};
+        html += '<div class="ag-rule" data-rid="' + esc(rg.id) + '" style="flex-direction:row;align-items:flex-start;gap:10px;border-bottom:1px solid #f1f3f5;padding:9px 0;' + (rg.activa ? '' : 'opacity:.5') + '">'
+          + '<input class="form-check-input cfg-act" type="checkbox" ' + (rg.activa ? 'checked' : '') + ' title="Activa" onchange="cfgRegla(\'' + esc(rg.id) + '\')">'
+          + '<div style="flex:1;min-width:0">'
+          + '<div style="font-size:.8rem;color:#0f172a;line-height:1.35">' + esc(rg.mensaje) + '</div>'
+          + '<span style="display:inline-block;margin-top:3px;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.3px;color:#fff;background:' + m.c + ';padding:1px 8px;border-radius:50px">' + esc(m.l) + '</span>'
+          + (rg.base_legal ? ' <span class="text-muted" style="font-size:.65rem" title="' + esc(rg.base_legal) + '">· base legal ⓘ</span>' : '')
+          + '</div>'
+          + '<div class="ctrl"><span class="unidad">peso</span>'
+          + '<input type="number" class="form-control form-control-sm cfg-peso" style="width:74px" value="' + esc(rg.peso) + '" onchange="cfgRegla(\'' + esc(rg.id) + '\')"></div>'
+          + '</div>';
+      });
+      html += '</div>';
+    });
+    root.innerHTML = html;
+  } catch(e){
+    root.innerHTML = '<div class="alert alert-danger">No se pudieron cargar las reglas de contrato.</div>';
+  }
+}
+async function cfgRegla(id){
+  const row = document.querySelector('[data-rid="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+  if (!row) return;
+  const activa = row.querySelector('.cfg-act').checked;
+  const peso = row.querySelector('.cfg-peso').value;
+  try {
+    const r = await fetch('/mantenciones/api/contrato-reglas/' + encodeURIComponent(id), {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({activa, peso}),
+    });
+    if (r.status === 403){ ilusToast('Solo admin/superadmin puede editar las reglas.', {type:'error'}); return; }
+    const d = await r.json();
+    if (r.ok && d.ok){ ilusToast('✓ Regla actualizada', {type:'success'}); row.style.opacity = activa ? '1' : '.5'; }
+    else ilusToast('No se pudo guardar la regla.', {type:'error'});
+  } catch(e){ ilusToast('Error de red al guardar la regla.', {type:'error'}); }
+}
+
+document.addEventListener('DOMContentLoaded', () => { cargar(); cargarContrato(); });
 </script>
 {% endblock %}

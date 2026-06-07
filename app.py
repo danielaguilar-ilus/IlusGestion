@@ -38927,6 +38927,60 @@ Devuelve SOLO el JSON."""
 
 # ── ANÁLISIS IA DE CONTRATO ───────────────────────────────────────────
 
+def _contrato_reglas_overrides():
+    """Overrides editables desde el front (activa/peso) por regla de contrato. Persistente."""
+    try:
+        rows = mysql_fetchall("SELECT rule_id, activa, peso_override FROM mant_contrato_reglas_cfg") or []
+    except Exception:
+        rows = []
+    return {r["rule_id"]: {"activa": bool(r.get("activa")), "peso": r.get("peso_override")} for r in rows}
+
+
+@app.route("/mantenciones/api/contrato-reglas", methods=["GET"])
+@_mant_required
+def mant_contrato_reglas_list():
+    """Lista las reglas del agente de contratos + su configuración editable."""
+    import contrato_reglas
+    ov = _contrato_reglas_overrides()
+    out = []
+    for r in contrato_reglas.cargar_reglas():
+        c = ov.get(r.get("id")) or {}
+        out.append({
+            "id": r.get("id"), "tipo": r.get("tipo"), "dimension": r.get("dimension"),
+            "severidad": r.get("severidad"), "mensaje": r.get("mensaje"),
+            "peso_base": r.get("peso_score"),
+            "peso": (c.get("peso") if c.get("peso") is not None else r.get("peso_score")),
+            "activa": (c.get("activa") if "activa" in c else True),
+            "base_legal": r.get("base_legal") or "",
+        })
+    return jsonify({"reglas": out, "total": len(out)})
+
+
+@app.route("/mantenciones/api/contrato-reglas/<rule_id>", methods=["PUT"])
+@_mant_required
+def mant_contrato_reglas_update(rule_id):
+    """Activa/desactiva o ajusta el peso de una regla de contrato (persistente, admin)."""
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin."}), 403
+    d = request.get_json(silent=True) or {}
+    activa = 1 if d.get("activa", True) else 0
+    peso = d.get("peso")
+    try:
+        peso = int(peso) if (peso is not None and str(peso).strip() != "") else None
+    except (TypeError, ValueError):
+        peso = None
+    try:
+        mysql_execute(
+            "INSERT INTO mant_contrato_reglas_cfg (rule_id, activa, peso_override, updated_by) "
+            "VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE activa=VALUES(activa), "
+            "peso_override=VALUES(peso_override), updated_by=VALUES(updated_by)",
+            (rule_id[:80], activa, peso, current_username()))
+    except Exception as e:
+        print(f"[contrato_reglas_update] {e}", flush=True)
+        return jsonify({"error": "No se pudo guardar la regla."}), 500
+    return jsonify({"ok": True})
+
+
 def _descargar_contrato_bytes(cu, public_id=None):
     """Descarga los bytes del archivo del contrato desde Cloudinary. Maneja el
     401 ANÓNIMO de PDFs (política Cloudinary): si la URL directa falla, FIRMA la
@@ -39165,7 +39219,7 @@ cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a
                                  "(el escaneo puede estar muy borroso o ser una foto de baja calidad). "
                                  "Súbelo en PDF con texto seleccionable o en Word."}), 200
     import contrato_reglas
-    _an = contrato_reglas.analizar_contrato(texto_contrato)
+    _an = contrato_reglas.analizar_contrato(texto_contrato, overrides=_contrato_reglas_overrides())
     _ids_alert = {a.get("id") for a in _an.get("alertas_criticas", [])}
     _es_arriendo = bool({"tipo_es_arriendo_no_mantencion", "tipo_leasing_opcion_compra",
                          "tipo_arriendo_disfrazado_costos_a_ilus",
@@ -57528,6 +57582,18 @@ def _ensure_mant_intel_tables():
         """)
     except Exception as e:
         print(f"[ensure_intel] reglas: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_contrato_reglas_cfg (
+                rule_id       VARCHAR(80) PRIMARY KEY,
+                activa        TINYINT(1) NOT NULL DEFAULT 1,
+                peso_override INT NULL,
+                updated_by    VARCHAR(190),
+                updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_intel] contrato_reglas_cfg: {e}", flush=True)
     try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_cliente_intel (
