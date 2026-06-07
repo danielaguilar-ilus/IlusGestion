@@ -7365,6 +7365,12 @@ function intelInformeFicha(){
   window.open('/mantenciones/api/clientes/' + CID + '/informe-ficha', '_blank');
 }
 
+function intelInformePostservicio(vid){
+  // Abre el Informe POST-SERVICIO de una visita realizada (imprimible → PDF).
+  if (!vid) { ilusToast('Visita no identificada', {type:'error'}); return; }
+  window.open('/mantenciones/api/visitas/' + vid + '/informe-postservicio', '_blank');
+}
+
 function _intelInformeTrimestral(it){
   if (!it || typeof it !== 'object') return '';
   const periodo = _intelEsc(it.periodo || '');
@@ -7474,6 +7480,7 @@ function _intelHistoriaAgenda(d){
             <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
             <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
             ${it.es_retroactiva ? '<span class="intel-chip" style="background:#f3f4f6;color:#6b7280"><i class="bi bi-arrow-counterclockwise"></i>retroactiva</span>' : ''}
+            ${it.id ? `<button class="btn btn-sm btn-outline-danger py-0 px-2 ms-auto" style="font-size:.68rem;line-height:1.5" onclick="intelInformePostservicio(${it.id})" title="Generar informe post-servicio"><i class="bi bi-file-earmark-text"></i> Informe</button>` : ''}
           </div>
           <div style="font-size:.72rem;color:#6b7280;margin-top:2px;padding-left:22px">
             ${cobLbl ? `<span style="color:${esFugaIt?'#dc2626':'#16a34a'};font-weight:700">${_intelEsc(cobLbl)}</span>` : ''}${(cobLbl && (costo>0||daTxt))?' · ':''}${costo>0 ? `<b style="color:#0f172a">${_intelCLP(costo)}</b>` : ''}${(costo>0&&daTxt)?' · ':''}${daTxt ? _intelEsc(daTxt) : ''}

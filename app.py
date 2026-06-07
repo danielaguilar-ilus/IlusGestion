@@ -52878,6 +52878,281 @@ def mant_informe_ficha(cid):
     return _informe_ficha_html(d, ct, cli)
 
 
+# ── Señales de dolor para el informe POST-SERVICIO (diseñadas por panel de
+#    especialistas: técnico senior + abogado garantías/SERNAC + comercial + redactor).
+#    Determinista, SIN IA: son patrones de texto que se buscan en las observaciones
+#    del técnico. base_legal: Ley 19.496 (SERNAC) art. 12/19/20/21. ──
+_POSTSERV_SENALES = [
+    {"patron": r"tercero|externo|tecnico de afuera|servicio externo|otra empresa|otro tecnico|lo vio otro|ya lo habian (revisado|reparado)|intervencion previa|lo arreglo el cliente|instalado por tercero",
+     "dolor": "FUGA A TERCEROS (dolor #1): el cliente deriva trabajo facturable a externos mientras ILUS cubre garantías/preventivas gratis. Una intervención previa de un tercero pudo dañar el equipo o anular la garantía.",
+     "recomendacion": "Marcar bandera interna 'posible intervención de tercero' (NO mostrar al cliente). Foto del estado. Verificar garantía del equipo; si está vigente dejar por escrito que la intervención no autorizada puede invalidarla. Escalar a comercial: ofrecer contrato integral con tarifa preferente."},
+    {"patron": r"manipulad|destapad|abierto antes|sello roto|sin sello|precinto",
+     "dolor": "Manipulación previa / sello de garantía violado: causal típica de rechazo de garantía e indicio de tercero.",
+     "recomendacion": "Fotografiar el sello, registrar en 'Integridad de garantía', citar art. 21 Ley 19.496 y escalar a garantías ANTES de aprobar cobertura sin costo."},
+    {"patron": r"repuesto generico|repuesto no original|pieza generica|no original",
+     "dolor": "Pieza NO original instalada: degrada idoneidad (art. 12 Ley 19.496), puede anular garantía del fabricante y expone a ILUS a una falla posterior.",
+     "recomendacion": "Registrar marca/origen del repuesto y quién lo suministró. Si fue aporte del cliente, dejar por escrito la advertencia de ILUS y su aceptación expresa."},
+    {"patron": r"lo movieron de lugar|traslad|movido por",
+     "dolor": "Traslado/movimiento del equipo por externos: puede causar daño y anular la garantía por manipulación inadecuada.",
+     "recomendacion": "Registrar que el traslado fue por externos y el estado en que se recibió. Advertir por escrito el efecto sobre la garantía si el daño deriva del traslado."},
+    {"patron": r"mal uso|uso indebido|sobrecarga|mala instalacion|instalado mal|golpe|caida|mojad|falta de mantencion|nunca le hicieron mantencion",
+     "dolor": "Falla NO atribuible a defecto de fábrica (mal uso/mala instalación/mantención deficiente): si se procesa como garantía, ILUS asume un costo que es del cliente (art. 21 Ley 19.496).",
+     "recomendacion": "Clasificar causa raíz como 'mal uso' con evidencia. Excluir de garantía, reclasificar cobertura a 'cliente' (pagable) y activar facturación. Dejar constancia escrita."},
+    {"patron": r"fuera de garantia|sin garantia|garantia vencida|ya no tiene garantia|se vencio",
+     "dolor": "Equipo fuera de garantía atendido por inercia como garantía/cortesía: trabajo gratis indebido (cruce de ambos dolores).",
+     "recomendacion": "Cruzar fecha_fin_garantia antes de cerrar. Si venció: cambiar cobertura a 'cliente', generar cotización/factura, avisar al cliente por escrito y ofrecer contrato."},
+    {"patron": r"sin factur|no factur|sin ot|sin orden|despues facturamos|queda pendiente facturar|de palabra|sin documento|sin respaldo|cobrar aparte",
+     "dolor": "SERVICIOS SIN FACTURAR (dolor #2): servicio ejecutado sin respaldo formal / sin documento tributario. Trabajo facturable que se pierde.",
+     "recomendacion": "No cerrar OT pagada sin OT/ticket. Verificar estado de facturación; gatillar 'regularizar factura' y alerta ALTA a administración: 'OT cerrada pendiente de facturar'."},
+    {"patron": r"sin costo|no cobrar|gratis|cortesia|esta vez sin cargo|sin cargo",
+     "dolor": "Servicio regalado sin trazabilidad: válido solo si es garantía/contrato real; si no, erosiona margen y se vuelve costumbre.",
+     "recomendacion": "Validar que la gratuidad corresponda a contrato/garantía. Si es cortesía, registrar motivo + aprobador y cuantificar horas+repuestos regalados. Si la cobertura es 'cliente' y dice 'sin costo', escalar antes de cerrar."},
+    {"patron": r"fuera de contrato|fuera de alcance|no estaba en contrato",
+     "dolor": "Trabajo fuera del alcance del contrato: servicio extra que suele quedar sin facturar absorbido en la cuota.",
+     "recomendacion": "Identificar el trabajo extra-contrato, valorizarlo y emitir cotización/OC adicional. No absorberlo en la cuota."},
+    {"patron": r"falta repuesto|no habia repuesto|sin stock|pedir repuesto|se requiere repuesto|hay que volver|segunda visita|proxima visita|no se pudo terminar|requiere visita",
+     "dolor": "Trabajo incompleto: equipo inoperativo, requiere segunda visita. Riesgo de no agendar/cobrar o de que el cliente llame a un tercero (fuga).",
+     "recomendacion": "Crear OT de seguimiento (pendiente repuesto) vinculada, con SKU del equipo y fecha tentativa. Agendar de inmediato la visita de cierre y dejar la cotización lista si es facturable."},
+    {"patron": r"recomiendo cambiar|se recomienda cambiar|conviene reemplazar|a punto de fallar|proxima a fallar|desgastad|al limite|vida util",
+     "dolor": "Oportunidad de upsell / mantención predictiva que se pierde si queda solo en el texto libre; ventana para que el repuesto se fugue a un tercero.",
+     "recomendacion": "Extraer la recomendación a 'próxima intervención sugerida' y abrir cotización ILUS del repuesto/equipo. Asignar seguimiento comercial. Toda recomendación de cambio debe generar un lead."},
+    {"patron": r"fuera de servicio|no funciona|inoperativo|no enciende|dado de baja|no se puede reparar|irreparable",
+     "dolor": "Equipo detenido: impacto operativo y riesgo de que el cliente busque reemplazo con la competencia.",
+     "recomendacion": "Indicar de inmediato la vía de solución (repuesto + costo estimado o cotización de reemplazo ILUS) y convertir la urgencia en OT/cotización pagada antes de que la tome un tercero."},
+]
+
+
+def _postserv_norm(s):
+    import unicodedata
+    s = (s or "").lower()
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def _postservicio_analisis(visita, equipos):
+    """Análisis determinista (sin IA) de una visita realizada: dispara las señales
+    de dolor sobre las observaciones del técnico + flags de cobertura/garantía."""
+    partes = [visita.get("observaciones") or "", visita.get("descripcion") or ""]
+    for e in (equipos or []):
+        if e.get("observacion_tecnico"):
+            partes.append(e["observacion_tecnico"])
+    texto = _postserv_norm(" \n ".join(partes))
+    alertas = []
+    if texto.strip():
+        for s in _POSTSERV_SENALES:
+            try:
+                if re.search(s["patron"], texto):
+                    alertas.append({"dolor": s["dolor"], "recomendacion": s["recomendacion"]})
+            except re.error:
+                continue
+    cob = (visita.get("cubierto_por") or "contrato").lower()
+    costo = float(visita.get("costo") or 0)
+    cobertura_nota = ""
+    if cob == "garantia":
+        cobertura_nota = ("ILUS cubrió este servicio SIN COSTO (garantía). Verificar que la garantía esté "
+                          "vigente y que la causa esté cubierta; si no, reclasificar a 'Cliente paga' (facturable).")
+    elif cob in ("cliente", "tercero") and costo > 0:
+        cobertura_nota = ("Servicio FACTURABLE (lo paga el cliente). Asegurar que termine facturado — "
+                          "no dejar la OT cerrada sin documento tributario.")
+    from datetime import date as _d
+    hoy = _d.today()
+    gar_vencidas = []
+    for e in (equipos or []):
+        ffg = e.get("fecha_fin_garantia")
+        if ffg and hasattr(ffg, "year") and ffg < hoy and cob == "garantia":
+            gar_vencidas.append(e.get("nombre") or e.get("sku") or "equipo")
+    estados = [(e.get("estado_revision") or "") for e in (equipos or [])]
+    if any(x == "falla_detectada" for x in estados):
+        veredicto, vcolor = "Falla detectada / requiere atención", "#dc2626"
+    elif any(x in ("con_cambios", "saltado") for x in estados):
+        veredicto, vcolor = "Operativo con observaciones", "#f59e0b"
+    elif estados:
+        veredicto, vcolor = "Equipo(s) operativo(s)", "#16a34a"
+    else:
+        veredicto, vcolor = "Servicio realizado", "#16a34a"
+    return {"alertas": alertas, "cobertura_nota": cobertura_nota,
+            "gar_vencidas": gar_vencidas, "veredicto": veredicto, "vcolor": vcolor}
+
+
+def _informe_postservicio_html(visita, cliente, equipos, analisis, auto_print=True):
+    """Informe POST-SERVICIO de una visita (Agente ILUS, determinista, sin IA).
+    Diseño por panel de especialistas. Vista imprimible → PDF en el navegador."""
+    from markupsafe import escape as _esc
+
+    def e(v):
+        s = "" if v is None else str(v).strip()
+        return str(_esc(s)) if s else "—"
+
+    def e_raw(v):
+        return str(_esc("" if v is None else str(v)))
+
+    def _clp(v):
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return None
+        return ("$" + format(int(round(n)), ",d").replace(",", ".")) if n else None
+
+    _tipo_label = {"preventiva": "Mantención preventiva", "correctiva": "Correctiva",
+                   "garantia": "Garantía", "inspeccion": "Inspección",
+                   "levantamiento": "Levantamiento", "instalacion": "Instalación"}
+    _cob_label = {"contrato": "Contrato", "cliente": "Cliente paga", "garantia": "Garantía (gratis)",
+                  "mixto": "Mixto", "tercero": "Tercero"}
+    _cob_color = {"contrato": "#16a34a", "cliente": "#b45309", "garantia": "#dc2626",
+                  "mixto": "#6b7280", "tercero": "#dc2626"}
+    cob = (visita.get("cubierto_por") or "contrato").lower()
+    tipo = (visita.get("tipo") or "").lower()
+    fecha = visita.get("fecha_realizada") or visita.get("fecha_programada")
+    ver = analisis.get("veredicto") or "Servicio realizado"
+    vcolor = analisis.get("vcolor") or "#16a34a"
+
+    secciones = ""
+
+    # Resumen ejecutivo (determinista)
+    _n_eq = len(equipos or [])
+    resumen = (f"Se realizó una {_tipo_label.get(tipo, 'visita')} el {e(str(fecha)[:10])}"
+               + (f", atendiendo {_n_eq} equipo(s)" if _n_eq else "")
+               + f". Modalidad: {_cob_label.get(cob, cob)}. Estado final: {ver}.")
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Resumen ejecutivo</div>'
+                  f'<p class="rep-text">{e_raw(resumen)}</p></div>')
+
+    # Observaciones del técnico (el corazón) — transcripción fiel
+    obs = (visita.get("observaciones") or "").strip()
+    if obs:
+        cuerpo = f'<div style="white-space:pre-wrap;color:#1f2937;font-size:11.5px;line-height:1.5">{e_raw(obs)}</div>'
+    else:
+        cuerpo = '<p class="rep-empty">El técnico no registró observaciones de texto en esta visita.</p>'
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Observaciones del técnico (en sus palabras)</div>'
+                  '<div style="border-left:3px solid #0a0a0a;background:#f9fafb;border-radius:0 8px 8px 0;padding:11px 14px;margin-top:8px">'
+                  '<div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;margin-bottom:5px">Registro en terreno</div>'
+                  + cuerpo + '</div></div>')
+
+    # Equipos atendidos
+    if equipos:
+        from datetime import date as _d2
+        hoy = _d2.today()
+        _est_lbl = {"verificado": ("Verificado", "#16a34a"), "con_cambios": ("Con cambios", "#b45309"),
+                    "saltado": ("No revisado", "#6b7280"), "falla_detectada": ("Falla detectada", "#dc2626")}
+        rows = ""
+        for eq in equipos:
+            nom = e(eq.get("nombre") or eq.get("sku") or "Equipo")
+            serie = e(eq.get("serie"))
+            ffg = eq.get("fecha_fin_garantia")
+            if ffg and hasattr(ffg, "year"):
+                gar = ('<span style="color:#16a34a;font-weight:800">SÍ</span>' if ffg >= hoy
+                       else '<span style="color:#dc2626;font-weight:800">NO (vencida)</span>')
+            else:
+                gar = '<span style="color:#9ca3af">s/d</span>'
+            est = (eq.get("estado_revision") or "").lower()
+            elbl, ecol = _est_lbl.get(est, (est or "—", "#6b7280"))
+            obs_eq = (eq.get("observacion_tecnico") or "").strip()
+            rows += (f'<tr><td><b>{nom}</b>{(" · " + serie) if serie != "—" else ""}</td>'
+                     f'<td class="rep-center">{gar}</td>'
+                     f'<td><span style="color:{ecol};font-weight:700">{e_raw(elbl)}</span></td></tr>')
+            if obs_eq:
+                rows += (f'<tr><td colspan="3" style="color:#6b7280;font-size:10.5px;padding-top:0">'
+                         f'↳ {e_raw(obs_eq)}</td></tr>')
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Equipos atendidos y estado</div>'
+                      '<table class="rep-kv"><tr><th>Equipo</th><th class="rep-center">Garantía</th><th>Estado</th></tr>'
+                      + rows + '</table></div>')
+
+    # Cobertura y condición comercial
+    if analisis.get("cobertura_nota"):
+        _cn_red = cob in ("cliente", "tercero", "garantia")
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Cobertura y condición comercial</div>'
+                      f'<p class="rep-text" style="color:{"#991b1b" if _cn_red else "#374151"}">{e_raw(analisis["cobertura_nota"])}</p></div>')
+
+    # Alertas de riesgo (USO INTERNO) — las señales disparadas
+    alertas = analisis.get("alertas") or []
+    if alertas:
+        cards = ""
+        for al in alertas:
+            cards += ('<div style="border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:0 8px 8px 0;'
+                      'padding:9px 12px;margin-bottom:7px;background:#fff5f5">'
+                      f'<div style="font-weight:800;color:#991b1b;font-size:11px">{e_raw(al.get("dolor"))}</div>'
+                      f'<div style="color:#374151;font-size:10.5px;margin-top:3px"><b>Acción:</b> {e_raw(al.get("recomendacion"))}</div>'
+                      '</div>')
+        secciones += ('<div class="rep-section"><div class="rep-section-bar" style="background:#dc2626">'
+                      '⚠ Alertas de riesgo — USO INTERNO (no mostrar al cliente)</div>'
+                      f'<div style="margin-top:8px">{cards}</div></div>')
+
+    logo_url = _ilus_logo_datauri()
+    gen_fecha = _now_chile_str("%d/%m/%Y %H:%M")
+    rut_fmt = _formato_rut_chile(cliente.get("rut", "")) or "—"
+    _scripts = _paged_doc_scripts(auto_print)
+    razon = cliente.get("razon_social") or "Cliente"
+
+    return f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Informe post-servicio · {e(razon)}</title>
+<style>{_REPORTE_PDF_CSS}</style></head>
+<body>
+  <div class="rep-doc">
+    <div class="rh"><div class="rh-inner">
+      <div class="rh-brand">
+        <img class="rep-logo" src="{logo_url}" alt="ILUS"
+             onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
+        <div class="rh-txt">
+          <div class="rh-eyebrow">{ILUS_BRAND} · {ILUS_TAGLINE}</div>
+          <div class="rh-title">INFORME POST-SERVICIO</div>
+          <div class="rh-sub">{ILUS_LEGAL} · RUT {ILUS_RUT} · Agente ILUS (sin IA)</div>
+        </div>
+      </div>
+      <div class="rh-meta" style="text-align:right">
+        <div style="font-size:8.5px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.4px">Estado final</div>
+        <span style="display:inline-block;margin-top:5px;font-size:11px;font-weight:800;color:#fff;background:{vcolor};padding:5px 13px;border-radius:50px">{e_raw(ver)}</span>
+      </div>
+    </div></div>
+    <div class="rf"><div class="rf-inner">
+      <b>{ILUS_BRAND}</b> · {ILUS_LEGAL} · Informe del Agente (determinista, sin IA) · {ILUS_CONTACTO} · Generado el {gen_fecha}
+    </div></div>
+    <div class="rep-content">
+      <div class="rep-asunto"><span class="rep-asunto-k">Servicio</span>{e(visita.get('titulo') or _tipo_label.get(tipo, 'Visita de mantención'))}</div>
+      <div class="rep-section">
+        <div class="rep-section-bar">Identificación del servicio</div>
+        <table class="rep-kv">
+          <tr><th>Cliente</th><td>{e(razon)}</td><th>RUT</th><td>{e_raw(rut_fmt)}</td></tr>
+          <tr><th>Dirección</th><td>{e(cliente.get('direccion'))}</td><th>Comuna</th><td>{e(cliente.get('comuna'))}</td></tr>
+          <tr><th>Tipo</th><td>{e(_tipo_label.get(tipo, tipo))}</td><th>Fecha</th><td>{e(str(fecha)[:10] if fecha else None)}</td></tr>
+          <tr><th>Técnico</th><td>{e(visita.get('tecnico'))}</td>
+              <th>Cobertura</th><td><span style="color:{_cob_color.get(cob,'#374151')};font-weight:800">{e(_cob_label.get(cob, cob))}</span></td></tr>
+        </table>
+      </div>
+      {secciones}
+    </div>
+  </div>
+  {_scripts}
+</body></html>"""
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/informe-postservicio", methods=["GET"])
+@_mant_required
+def mant_informe_postservicio(vid):
+    """Informe post-servicio de una visita realizada (Agente determinista). Imprimible → PDF."""
+    v = mysql_fetchone(
+        "SELECT v.*, c.razon_social, c.rut, c.direccion, c.comuna, c.contacto_nombre "
+        "FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+    if not v:
+        return "Visita no encontrada", 404
+    try:
+        equipos = mysql_fetchall(
+            "SELECT ve.estado_revision, ve.razon_saltado, ve.observacion_tecnico, "
+            "m.sku, m.nombre, m.serie, m.fecha_fin_garantia, m.estado AS maquina_estado "
+            "FROM mant_visita_equipos ve LEFT JOIN mant_maquinas m ON m.id=ve.maquina_id "
+            "WHERE ve.visita_id=%s ORDER BY ve.id", (vid,)) or []
+    except Exception:
+        equipos = []
+    analisis = _postservicio_analisis(v, equipos)
+    cli = {"razon_social": v.get("razon_social"), "rut": v.get("rut"),
+           "direccion": v.get("direccion"), "comuna": v.get("comuna"),
+           "contacto_nombre": v.get("contacto_nombre")}
+    try:
+        _mant_log("visita", vid, "informe_postservicio")
+    except Exception:
+        pass
+    return _informe_postservicio_html(v, cli, equipos, analisis)
+
+
 def _contrato_analisis_to_pdf_html(ct, cliente, auto_print=True):
     """Documento corporativo ILUS del Análisis 360° del contrato (Comité IA).
     Renderiza el JSON persistido en ai_analisis_json reusando el sistema de
