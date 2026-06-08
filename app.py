@@ -8385,7 +8385,7 @@ def upload_photo(pid):
 
     ext       = file.filename.rsplit(".", 1)[1].lower()
     ts        = int(datetime.now().timestamp())
-    if _CLD_READY:
+    if _gcs_ready() or _CLD_READY:
         try:
             filename = _cloud_upload(file, public_id=f"p{pid}_{ts}", folder="ilus/products")
             print(f"[ILUS] Foto subida a Cloudinary: {filename}")
@@ -10145,7 +10145,7 @@ def admin_login_imagenes_subir():
         # ── Cloudinary primero (PERSISTENTE — sobrevive deploys Railway) ─
         cloud_url = None
         cloud_pid = None
-        if _CLD_READY:
+        if _gcs_ready() or _CLD_READY:
             try:
                 f.stream.seek(0)
                 public_id = f"login_{int(time.time())}_{i}"
@@ -10227,8 +10227,7 @@ def admin_login_imagen_update(iid):
             # Borrar de Cloudinary si está ahí
             if row.get("cloudinary_public_id"):
                 try:
-                    if _cloudinary_uploader:
-                        _uploader_destroy(row["cloudinary_public_id"], resource_type="image")
+                    _uploader_destroy(row["cloudinary_public_id"], resource_type="image")
                 except Exception as e:
                     print(f"[login_imagen_del] Cloudinary delete fail: {e}", flush=True)
             # Borrar archivo local si existe
@@ -10474,7 +10473,7 @@ def admin_retiros_carousel_subir():
         # ── Cloudinary primero ──────────────────────────────────────────
         cloud_url = None
         cloud_pid = None
-        if _CLD_READY:
+        if _gcs_ready() or _CLD_READY:
             try:
                 f.stream.seek(0)
                 public_id = f"retiros_{int(time.time())}_{saved}"
@@ -10635,8 +10634,7 @@ def admin_retiros_carousel_update(iid):
             # Borrar Cloudinary
             if row.get("cloudinary_public_id"):
                 try:
-                    if _cloudinary_uploader:
-                        _uploader_destroy(row["cloudinary_public_id"], resource_type="image")
+                    _uploader_destroy(row["cloudinary_public_id"], resource_type="image")
                 except Exception as e:
                     print(f"[retiros_carousel_del] Cloudinary delete fail: {e}", flush=True)
             # Borrar archivo local
@@ -36459,7 +36457,7 @@ def mant_tecnico_externo_subir_contrato(eid):
     cloud_url = None
     try:
         import cloudinary, cloudinary.uploader  # noqa
-        if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
+        if _gcs_ready() or (CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key")):
             result = _uploader_upload(
                 f,
                 folder=f"ilus/tecnicos_externos/{eid}/contrato",
@@ -36508,7 +36506,7 @@ def mant_tecnico_externo_subir_foto(eid):
     cloud_url = None
     try:
         import cloudinary, cloudinary.uploader  # noqa
-        if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
+        if _gcs_ready() or (CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key")):
             result = _uploader_upload(
                 f,
                 folder=f"ilus/tecnicos_externos/{eid}/avatar",
@@ -36577,7 +36575,7 @@ def mant_visita_grabacion_video(vid):
     duration_sec = None
     try:
         import cloudinary, cloudinary.uploader  # noqa
-        if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
+        if _gcs_ready() or (CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key")):
             result = _uploader_upload(
                 f,
                 folder=f"ilus/visitas/v{vid}/grabaciones",
@@ -37262,7 +37260,7 @@ def mant_contrato_subir(cid):
         size_bytes = 0  # no crítico, sigue
 
     # Validar Cloudinary disponible (estandarización: sin Cloudinary, no se sube)
-    if not _CLD_READY:
+    if not (_gcs_ready() or _CLD_READY):
         return jsonify({
             "error": (
                 "El almacenamiento de archivos no está disponible en este momento. "
@@ -37637,7 +37635,7 @@ def mant_contrato_re_subir(ctid):
     # Antes guardábamos en filesystem como "fallback" pero ese archivo
     # se pierde en el próximo deploy → re-subir era inútil. Mejor fallar
     # con mensaje claro que el admin pueda accionar.
-    if not _CLD_READY:
+    if not (_gcs_ready() or _CLD_READY):
         return jsonify({
             "ok": False,
             "error": ("El almacenamiento persistente no está disponible. "
@@ -48550,7 +48548,7 @@ def mant_visita_fotos_subir(vid):
     cloud_ok = False
     try:
         import cloudinary, cloudinary.uploader  # noqa
-        cloud_ok = bool(CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"))
+        cloud_ok = bool(_gcs_ready() or (CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key")))
     except ImportError:
         cloud_ok = False
     if not cloud_ok:
@@ -48751,7 +48749,7 @@ def mant_visita_adjuntos_upload(vid):
     # Subir a Cloudinary según tipo
     try:
         import cloudinary, cloudinary.uploader  # noqa
-        cloud_ok = bool(CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"))
+        cloud_ok = bool(_gcs_ready() or (CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key")))
     except ImportError:
         cloud_ok = False
 
@@ -53914,7 +53912,7 @@ def mant_reporte_ot_doc(rid):
         return jsonify({"error": "El documento de la OT debe ser un archivo PDF"}), 400
     url = None
     try:
-        if _CLD_READY:
+        if _gcs_ready() or _CLD_READY:
             res = _cloud_upload_raw(f.stream, public_id=f"otdoc_rep{rid}", folder="ilus/informes_ot")
             url = res.get("url")
         else:
@@ -54195,7 +54193,7 @@ def mant_adjunto_subir(ctid):
     # ── Cloudinary primero (persistente) ─────────────────────────────
     cloud_url = None
     cloud_pid = None
-    if _CLD_READY:
+    if _gcs_ready() or _CLD_READY:
         try:
             f.stream.seek(0)
             folder = f"ilus/contratos/adjuntos/{tipo}"
@@ -54986,7 +54984,7 @@ def mant_cliente_documento_subir(cid):
     # ── Cloudinary primero ───────────────────────────────────────────
     cloud_url = None
     cloud_pid = None
-    if _CLD_READY:
+    if _gcs_ready() or _CLD_READY:
         try:
             f.stream.seek(0)
             folder = f"ilus/contratos/adjuntos/{tipo}"
@@ -56164,7 +56162,7 @@ def mant_lev_item_subir_foto(iid):
     tipo_foto = (request.form.get("tipo_foto") or "general").strip().lower()[:60]
     descripcion = (request.form.get("descripcion") or "").strip()[:300]
 
-    if not _CLD_READY:
+    if not (_gcs_ready() or _CLD_READY):
         return jsonify({"ok": False, "error": "Cloudinary no configurado — contacta al administrador"}), 503
 
     try:
@@ -56273,7 +56271,7 @@ def mant_lev_foto_del(fid):
     if not foto:
         return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
 
-    if foto.get("cloudinary_public_id") and _CLD_READY:
+    if foto.get("cloudinary_public_id"):
         try:
             _uploader_destroy(foto["cloudinary_public_id"], resource_type="image")
         except Exception as e:
