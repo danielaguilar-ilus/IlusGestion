@@ -16,3 +16,5 @@ anthropic>=0.30.0
 twilio>=9.10.0
 # Random ERP — SQL Server read-only via pymssql
 pymssql>=2.3.0
+
+greenlet>=3.1.2

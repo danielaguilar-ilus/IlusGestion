@@ -238,9 +238,10 @@
                 <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary"
                    title="Editar"><i class="bi bi-pencil"></i></a>
                 <button type="button" class="btn btn-sm btn-outline-primary"
-                        title="Solicitar cambio de contrasena por email/WhatsApp"
+                        title="Solicitar cambio de contraseña por email"
+                        aria-label="Solicitar cambio de contraseña por email"
                         onclick="enviarPasswordLink({{ user.id }}, '{{ user.nombre }}', '{{ user.username }}', this)">
-                  <i class="bi bi-envelope-lock"></i>
+                  <i class="bi bi-key"></i>
                 </button>
                 {% if current_user.id != user.id %}
                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal"

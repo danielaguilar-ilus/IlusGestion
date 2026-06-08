@@ -253,6 +253,14 @@ def _now_chile_str(fmt="%d-%m-%Y %H:%M"):
 
 app = Flask(__name__)
 
+# ── Cloud Run / proxy inverso ──────────────────────────────────────────────
+# Cloud Run termina el TLS en su proxy y reenvía al contenedor por HTTP. Sin
+# esto, request.scheme="http" → url_for(_external=True) genera enlaces "http://"
+# (p.ej. el botón del correo de cambio de contraseña). ProxyFix respeta
+# X-Forwarded-Proto (→ https) y X-Forwarded-For (→ IP real del cliente).
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
 
 # ── /version: diagnóstico simple — qué commit está corriendo el servidor ──
 # Lee el hash del último commit del filesystem (puesto por el deploy).
@@ -5562,6 +5570,21 @@ def login():
             _uid = user["id"]
             _uname = user["username"]
             _urole = user["role"]
+            # ── Alerta de inicio de sesión: ¿dispositivo nuevo? (cookie larga) ──
+            _dev_cookie = request.cookies.get("ilus_dev")
+            _is_new_device = not _dev_cookie
+            _dev_token = _dev_cookie or secrets.token_urlsafe(16)
+            _alert_to = (user.get("username") or "")
+            _alert_nombre = user.get("nombre") or ""
+            _alert_ua = (request.headers.get("User-Agent") or "")[:180]
+            try:
+                _alert_cuando = _now_chile().strftime("%d/%m/%Y %H:%M hrs")
+            except Exception:
+                _alert_cuando = ""
+            try:
+                _alert_action = url_for("forgot_password", _external=True)
+            except Exception:
+                _alert_action = ""
             import threading as _th_login
             def _login_track_async():
                 with app.app_context():
@@ -5595,13 +5618,29 @@ def login():
                                user_override={"id": _uid, "username": _uname, "role": _urole})
                     except Exception as _e_au:
                         print(f"[login-track-async] audit falló: {_e_au}", flush=True)
+
+                    # Alerta de login desde dispositivo nuevo (best-effort)
+                    if _is_new_device and "@" in _alert_to:
+                        try:
+                            _send_login_alert_email(
+                                _alert_to, _alert_nombre, ip=ip,
+                                user_agent=_alert_ua, cuando=_alert_cuando,
+                                action_url=_alert_action)
+                        except Exception as _e_la:
+                            print(f"[login-alert] fail: {_e_la}", flush=True)
             _th_login.Thread(target=_login_track_async, daemon=True,
                              name=f"login-track-{_uid}").start()
         except Exception as _e_login_track:
             import traceback as _tb_lt
             print(f"[login-track] FAIL outer uid={user['id']}: {_e_login_track}\n{_tb_lt.format_exc()}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
-        return redirect(next_url)
+        resp = redirect(next_url)
+        try:
+            resp.set_cookie("ilus_dev", _dev_token, max_age=60*60*24*365,
+                            httponly=True, samesite="Lax", secure=True)
+        except Exception:
+            pass
+        return resp
     # FIX 2026-05-18 (perf): cache privado corto (30s) en GET /login.
     # El HTML cambia muy poco entre requests y antes lo forzábamos a
     # `no-store` que invalidaba el cache del navegador en cada toque.
@@ -6635,7 +6674,7 @@ def _send_password_access_email(
     html_body = _ilus_email_html(
         titulo=titulo,
         subtitulo="Acceso seguro con enlace de un solo uso",
-        saludo=f"Hola, {to_name}",
+        saludo=to_name,
         parrafos=[
             intro,
             "Por seguridad, la contraseña no se envía ni se escribe manualmente. "
@@ -6663,6 +6702,42 @@ def _send_password_access_email(
     return sent
 
 
+def _send_login_alert_email(to_addr: str, to_name: str, *, ip: str = "",
+                            user_agent: str = "", cuando: str = "",
+                            action_url: str = "") -> bool:
+    """Alerta de seguridad: nuevo inicio de sesión desde un dispositivo no
+    reconocido. Solo se dispara cuando el navegador NO trae la cookie de
+    dispositivo conocido (no en cada login), para no ser spam."""
+    if not to_addr or "@" not in to_addr:
+        return False
+    try:
+        marca_nombre = _get_marca()["name"]
+    except Exception:
+        marca_nombre = "ILUS Fitness"
+    info = []
+    if cuando:     info.append(("", "Fecha y hora", cuando))
+    if ip:         info.append(("", "Dirección IP", ip))
+    if user_agent: info.append(("", "Dispositivo", user_agent))
+    info.append(("", "Cuenta", to_addr))
+    html_body = _ilus_email_html(
+        titulo="Nuevo inicio de sesión",
+        subtitulo="Detectamos un acceso desde un dispositivo nuevo",
+        saludo=to_name,
+        parrafos=[
+            f"Acabamos de registrar un inicio de sesión en tu cuenta {marca_nombre} "
+            "desde un dispositivo o navegador que no habíamos visto antes.",
+            "Si fuiste tú, no necesitas hacer nada — este aviso es solo por tu seguridad.",
+            "Si <strong>no</strong> reconoces este acceso, cambia tu contraseña de "
+            "inmediato y avísale al administrador.",
+        ],
+        btn_primario_txt=("Cambiar mi contraseña" if action_url else ""),
+        btn_primario_url=action_url,
+        info_lineas=info,
+    )
+    return _send_ilus_email(to_addr, _brand_subject("Nuevo inicio de sesión"), html_body,
+                            evento="login_alert", modulo="comunicacion_interna")
+
+
 def _portal_login_url():
     return url_for("login", _external=True)
 
@@ -6672,7 +6747,7 @@ def _send_access_notification_email(to_addr: str, to_name: str, login_url: str, 
     html_body = _ilus_email_html(
         titulo="Acceso al portal ILUS habilitado",
         subtitulo="Ya puedes ingresar a la aplicacion",
-        saludo=f"Hola, {to_name}",
+        saludo=to_name,
         parrafos=[
             f"<strong>{actor_name}</strong> habilito tus credenciales de acceso al portal ILUS.",
             "Por seguridad, este correo no incluye tu contraseña. Usa la clave entregada por el administrador "
@@ -6853,15 +6928,16 @@ def forgot_password():
                     snap_url   = reset_url
 
                     def _bg_recovery():
-                        try:
-                            _notify_user_access(
-                                snap_user, snap_nom, snap_phone,
-                                mode="token",
-                                action_url=snap_url,
-                                email_purpose="change",
-                            )
-                        except Exception as _exc:
-                            print(f"[ILUS][RESET][bg] fail: {_exc}", flush=True)
+                        with app.app_context():   # ← FIX: el hilo necesita contexto Flask (g/get_db)
+                            try:
+                                _notify_user_access(
+                                    snap_user, snap_nom, snap_phone,
+                                    mode="token",
+                                    action_url=snap_url,
+                                    email_purpose="change",
+                                )
+                            except Exception as _exc:
+                                print(f"[ILUS][RESET][bg] fail: {_exc}", flush=True)
 
                     threading.Thread(target=_bg_recovery, daemon=True).start()
 
@@ -9104,14 +9180,15 @@ def new_user():
                 actor_name_snap = g.user["nombre"] if getattr(g, "user", None) else "ILUS"
                 snap_phone = wa_number or phone or ""
                 def _send_bg(_un=username, _nom=nombre, _ph=snap_phone, _url=welcome_url, _actor=actor_name_snap):
-                    try:
-                        _notify_user_access(
-                            _un, _nom, _ph,
-                            mode="token", action_url=_url,
-                            email_purpose="invite",
-                        )
-                    except Exception as _se:
-                        print(f"[new_user/bg-notify] fail: {_se}", flush=True)
+                    with app.app_context():   # ← FIX: el hilo necesita contexto Flask (g/get_db)
+                        try:
+                            _notify_user_access(
+                                _un, _nom, _ph,
+                                mode="token", action_url=_url,
+                                email_purpose="invite",
+                            )
+                        except Exception as _se:
+                            print(f"[new_user/bg-notify] fail: {_se}", flush=True)
                 threading.Thread(target=_send_bg, daemon=True).start()
                 ch = "email + WhatsApp" if snap_phone else "email"
                 flash(f"✅ Usuario creado. Invitación enviada por {ch} a {username} en segundo plano.", "success")
@@ -9122,10 +9199,11 @@ def new_user():
                 # Notificación de clave manual también en background
                 snap_user = username; snap_nombre = nombre; snap_phone = wa_number or phone
                 def _notify_bg():
-                    try:
-                        _notify_user_access(snap_user, snap_nombre, snap_phone, mode="manual")
-                    except Exception as _ne:
-                        print(f"[new_user/bg-notify] fail: {_ne}", flush=True)
+                    with app.app_context():   # ← FIX: el hilo necesita contexto Flask (g/get_db)
+                        try:
+                            _notify_user_access(snap_user, snap_nombre, snap_phone, mode="manual")
+                        except Exception as _ne:
+                            print(f"[new_user/bg-notify] fail: {_ne}", flush=True)
                 threading.Thread(target=_notify_bg, daemon=True).start()
                 flash("✅ Usuario creado con clave manual. Notificación enviada en segundo plano.", "success")
             else:
