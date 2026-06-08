@@ -899,6 +899,74 @@ _RAW_CT_BY_EXT = {
 }
 
 
+def _gcs_upload_like_cloudinary(src, public_id, folder="ilus", resource_type="image", filename=None):
+    """Sube a GCS y devuelve un dict con la MISMA forma que el result de
+    cloudinary.uploader.upload ({secure_url, public_id, bytes, resource_type, url}).
+    Permite reemplazar llamadas directas a Cloudinary con cambio mínimo en cada
+    módulo (avatares, logo, fotos de equipos/visitas, adjuntos de OT, etc.).
+    Acepta FileStorage, stream, bytes, data-URL base64 o ruta de archivo."""
+    rt = (resource_type or "image").lower()
+    if rt == "image":
+        data, ct = _img_resize_bytes(src)
+        ext = ".png" if ct == "image/png" else ".jpg"
+    else:
+        name = filename or getattr(src, "filename", "") or (src if isinstance(src, str) and not src.startswith("data:") else "")
+        ext = (os.path.splitext(name)[1] or "").lower()
+        if isinstance(src, (bytes, bytearray)):
+            data = bytes(src)
+        elif isinstance(src, str) and src.startswith("data:"):
+            import base64 as _b64
+            data = _b64.b64decode(src.split(",", 1)[1])
+        elif hasattr(src, "read"):
+            try:
+                src.seek(0)
+            except Exception:
+                pass
+            data = src.read()
+        elif isinstance(src, str) and os.path.exists(src):
+            with open(src, "rb") as _fh:
+                data = _fh.read()
+        else:
+            data = b""
+        if not ext:
+            ext = ".mp4" if rt == "video" else ".bin"
+        import mimetypes as _mt
+        ct = _RAW_CT_BY_EXT.get(ext) or _mt.guess_type("x" + ext)[0] or ("video/mp4" if rt == "video" else "application/octet-stream")
+    key = _gcs_key(folder, public_id, ext)
+    url = _storage_upload_bytes(data, key, ct)
+    return {"secure_url": url, "url": url, "public_id": key, "bytes": len(data), "resource_type": rt}
+
+
+def _uploader_upload(src, public_id=None, folder="ilus", resource_type="image", **kwargs):
+    """Reemplazo drop-in de cloudinary.uploader.upload: si GCS está activo sube a
+    GCS (mismo dict de retorno {secure_url, public_id, bytes, ...}); si no, llama
+    a Cloudinary real. Ignora kwargs propios de Cloudinary (transformation, eager,
+    overwrite, format, type) cuando va a GCS."""
+    if _gcs_ready():
+        return _gcs_upload_like_cloudinary(
+            src, public_id or f"f_{int(time.time())}", folder=folder, resource_type=resource_type)
+    import cloudinary.uploader as _cu
+    return _cu.upload(src, public_id=public_id, folder=folder, resource_type=resource_type, **kwargs)
+
+
+def _uploader_destroy(public_id, **kwargs):
+    """Borra un objeto por public_id: de GCS si la key tiene extensión (es de GCS)
+    o de Cloudinary si no. Drop-in para los borrados directos (evita huérfanos)."""
+    if not public_id:
+        return
+    if _gcs_ready() and "/" in str(public_id) and os.path.splitext(str(public_id))[1]:
+        try:
+            _gcs_bucket().blob(public_id).delete()
+        except Exception as exc:
+            print(f"[uploader_destroy gcs] {public_id}: {exc}", flush=True)
+        return
+    try:
+        if _cloudinary_uploader:
+            _cloudinary_uploader.destroy(public_id, **kwargs)
+    except Exception as exc:
+        print(f"[uploader_destroy cld] {public_id}: {exc}", flush=True)
+
+
 @app.route("/f/<path:key>")
 def serve_archivo(key):
     """Sirve un archivo desde Google Cloud Storage (fotos, contratos, firmas).
@@ -7390,7 +7458,7 @@ def mi_cuenta_foto():
     try:
         import cloudinary, cloudinary.uploader
         # Subir a Cloudinary en folder específico de avatares
-        result = cloudinary.uploader.upload(
+        result = _uploader_upload(
             f,
             folder=f"ilus/avatars",
             public_id=f"user_{g.user['id']}",
@@ -10151,7 +10219,7 @@ def admin_login_imagen_update(iid):
             if row.get("cloudinary_public_id"):
                 try:
                     if _cloudinary_uploader:
-                        _cloudinary_uploader.destroy(row["cloudinary_public_id"], resource_type="image")
+                        _uploader_destroy(row["cloudinary_public_id"], resource_type="image")
                 except Exception as e:
                     print(f"[login_imagen_del] Cloudinary delete fail: {e}", flush=True)
             # Borrar archivo local si existe
@@ -10559,7 +10627,7 @@ def admin_retiros_carousel_update(iid):
             if row.get("cloudinary_public_id"):
                 try:
                     if _cloudinary_uploader:
-                        _cloudinary_uploader.destroy(row["cloudinary_public_id"], resource_type="image")
+                        _uploader_destroy(row["cloudinary_public_id"], resource_type="image")
                 except Exception as e:
                     print(f"[retiros_carousel_del] Cloudinary delete fail: {e}", flush=True)
             # Borrar archivo local
@@ -26445,7 +26513,7 @@ def comm_client_save():
                 )
                 header, b64 = logo_input.split(",", 1)
                 img_bytes = _b64.b64decode(b64)
-                resp = cloudinary.uploader.upload(
+                resp = _uploader_upload(
                     img_bytes, folder="ilus/branding",
                     public_id="company_logo", overwrite=True,
                     resource_type="image", format="png",
@@ -36394,7 +36462,7 @@ def mant_tecnico_externo_subir_contrato(eid):
     try:
         import cloudinary, cloudinary.uploader  # noqa
         if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
-            result = cloudinary.uploader.upload(
+            result = _uploader_upload(
                 f,
                 folder=f"ilus/tecnicos_externos/{eid}/contrato",
                 public_id=f"contrato_{eid}_{int(time.time())}",
@@ -36443,7 +36511,7 @@ def mant_tecnico_externo_subir_foto(eid):
     try:
         import cloudinary, cloudinary.uploader  # noqa
         if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
-            result = cloudinary.uploader.upload(
+            result = _uploader_upload(
                 f,
                 folder=f"ilus/tecnicos_externos/{eid}/avatar",
                 public_id=f"avatar_{eid}_{int(time.time())}",
@@ -36512,7 +36580,7 @@ def mant_visita_grabacion_video(vid):
     try:
         import cloudinary, cloudinary.uploader  # noqa
         if CLOUDINARY_CONFIG.get("cloud_name") and CLOUDINARY_CONFIG.get("api_key"):
-            result = cloudinary.uploader.upload(
+            result = _uploader_upload(
                 f,
                 folder=f"ilus/visitas/v{vid}/grabaciones",
                 public_id=f"rec_v{vid}_{int(time.time())}",
@@ -46108,7 +46176,7 @@ def mant_ot_equipo_foto(vid, mid):
             overwrite = False
             folder = f"ilus/visitas/v{vid}"
         f.stream.seek(0)
-        result = cloudinary.uploader.upload(
+        result = _uploader_upload(
             f,
             folder=folder,
             public_id=public_id,
@@ -46347,7 +46415,7 @@ def mant_maquina_foto_admin_upload(mid):
         return jsonify({"ok": False, "error": "Archivo demasiado grande (máx 8MB)"}), 400
     try:
         import cloudinary, cloudinary.uploader
-        result = cloudinary.uploader.upload(
+        result = _uploader_upload(
             f,
             folder="ilus/maquinas",
             public_id=f"maquina_{mid}",
@@ -48491,7 +48559,7 @@ def mant_visita_fotos_subir(vid):
             try:
                 import cloudinary.uploader
                 f.stream.seek(0)
-                result = cloudinary.uploader.upload(
+                result = _uploader_upload(
                     f,
                     folder=f"ilus/visitas/v{vid}",
                     public_id=f"v{vid}_t{tarea_id or 0}_m{maquina_id or 0}_{int(time.time())}_{i}",
@@ -48681,7 +48749,7 @@ def mant_visita_adjuntos_upload(vid):
                 rt = "image"
             else:
                 rt = "raw"  # PDF, docs, etc.
-            result = cloudinary.uploader.upload(
+            result = _uploader_upload(
                 f,
                 folder=f"ilus/visitas/v{vid}/adjuntos",
                 public_id=f"v{vid}_{tipo}_{int(time.time())}",
@@ -48749,8 +48817,7 @@ def mant_visita_adjunto_delete(vid, aid):
     # Borrar de Cloudinary si tiene public_id
     if row.get("cloudinary_public_id"):
         try:
-            import cloudinary, cloudinary.uploader
-            cloudinary.uploader.destroy(row["cloudinary_public_id"], invalidate=True)
+            _uploader_destroy(row["cloudinary_public_id"], invalidate=True)
         except Exception as e:
             print(f"[adjunto_del] cloudinary destroy falló: {e}", flush=True)
     # Borrar filesystem si está
@@ -56174,7 +56241,7 @@ def mant_lev_foto_del(fid):
 
     if foto.get("cloudinary_public_id") and _CLD_READY:
         try:
-            _cloudinary_uploader.destroy(foto["cloudinary_public_id"], resource_type="image")
+            _uploader_destroy(foto["cloudinary_public_id"], resource_type="image")
         except Exception as e:
             print(f"[lev_foto_del] Cloudinary delete fail: {e}", flush=True)
 
