@@ -263,14 +263,14 @@
       <i class="bi bi-pencil me-1"></i>Ingresar manualmente
     </button>
     <button class="entry-tab" id="tab-contrato" onclick="setTab('contrato')">
-      <i class="bi bi-stars me-1"></i>Cargar desde contrato (IA)
+      <i class="bi bi-robot me-1"></i>Cargar desde contrato (Agente ILUS)
     </button>
   </div>
 
-  {# — Panel: carga desde contrato (IA) — #}
+  {# — Panel: carga desde contrato (Agente ILUS) — #}
   <div id="panel-contrato" style="display:none">
-    <div class="sec-title"><i class="bi bi-stars me-1"></i>Agente IA — extrae todo el contrato automáticamente</div>
-    <p class="text-muted small mb-3">Sube el contrato PDF, Word o <strong>toma una foto</strong> con tu celular. La IA leerá el documento completo y extraerá datos del cliente, cláusulas, costos, frecuencias y equipos.</p>
+    <div class="sec-title"><i class="bi bi-robot me-1"></i>AGENTE ILUS — lee el contrato y trae todo del ERP</div>
+    <p class="text-muted small mb-3">Sube el contrato en PDF o Word y lo leo con código (RUT, montos, fechas, frecuencia, contacto). Para fotos te pido el RUT y traigo todo del ERP. Sin IA, sin tokens.</p>
 
     {# Botones de entrada: Archivo vs Cámara (visible en móvil) #}
     <div class="d-flex gap-2 mb-3">
@@ -610,7 +610,7 @@
       </tbody>
     </table>
   </div>
-  <div class="text-muted small"><i class="bi bi-info-circle me-1"></i>Si la IA detectó equipos en el contrato, ya aparecen arriba. Puedes añadir más.</div>
+  <div class="text-muted small"><i class="bi bi-info-circle me-1"></i>Si el Agente ILUS detectó equipos en el contrato, ya aparecen arriba. Puedes añadir más.</div>
   <div class="wz-nav">
     <button class="btn btn-outline-secondary" onclick="irPaso(1)"><i class="bi bi-arrow-left me-1"></i>Anterior</button>
     <button class="btn btn-ilus fw-bold px-5" onclick="irPaso3()">Siguiente <i class="bi bi-arrow-right ms-1"></i></button>
@@ -622,7 +622,7 @@
 <div id="step-3" style="display:none">
 <div class="wz-card">
   <div class="sec-title"><i class="bi bi-file-earmark-text me-1"></i>Contrato de mantención</div>
-  <div class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Si cargaste el contrato en el paso 1 con IA, los datos ya están prellenados. Puedes editarlos o agregar adjuntos adicionales.</div>
+  <div class="text-muted small mb-3"><i class="bi bi-info-circle me-1"></i>Si cargaste el contrato en el paso 1 con el Agente ILUS, los datos ya están prellenados. Puedes editarlos o agregar adjuntos adicionales.</div>
 
   <div class="drop-zone" id="dropZone" onclick="document.getElementById('ct_archivo').click()"
        ondragover="event.preventDefault();this.classList.add('drag-over')"
@@ -676,10 +676,10 @@
       </div>
     </div>
     <div class="mt-3">
-      <button class="btn fw-bold" style="background:#7c3aed;color:#fff;border:none" id="btnAnalizar" onclick="analizarConIA()">
-        <i class="bi bi-stars me-1"></i>Analizar con IA
+      <button class="btn fw-bold" style="background:#dc2626;color:#fff;border:none" id="btnAnalizar" onclick="analizarConIA()">
+        <i class="bi bi-robot me-1"></i>Analizar contrato (Agente ILUS)
       </button>
-      <span class="text-muted small ms-2">Claude extrae cláusulas, costos y riesgos del documento</span>
+      <span class="text-muted small ms-2">El Agente ILUS extrae cláusulas, costos y riesgos del documento (sin IA)</span>
     </div>
   </div>
 
@@ -1713,7 +1713,7 @@ function dirKeydown(e) {
   else if(e.key==='Escape') drop.style.display='none';
 }
 
-// ══ AGENTE IA — cargar desde contrato ════════════════════════
+// ══ AGENTE ILUS — cargar desde contrato (determinista, sin IA) ════
 function onDropIA(e) {
   e.preventDefault();
   document.getElementById('dropZoneIA').classList.remove('drag-over');
@@ -1758,10 +1758,10 @@ async function disparaAgente(archivo) {
   status.style.display='';
   status.innerHTML = `<div class="erp-info">
     <span class="spinner-border spinner-border-sm me-2"></span>
-    <strong>Agente IA trabajando…</strong>
+    <strong>Agente ILUS trabajando…</strong>
     ${esImg
-      ? ' Analizando la foto del contrato con visión IA — extrayendo cliente, cláusulas y equipos.'
-      : ' Leyendo el documento y extrayendo datos del cliente, cláusulas, costos y equipos.'
+      ? ' Es una foto: leeré lo que pueda y te pediré el RUT para traer todo del ERP.'
+      : ' Leyendo el documento con código y extrayendo datos del cliente, cláusulas, costos y equipos.'
     }
   </div>`;
 
@@ -1770,8 +1770,27 @@ async function disparaAgente(archivo) {
   try {
     const r = await fetch('/mantenciones/api/agente-contrato', { method:'POST', body:fd });
     const data = await r.json();
-    if(!data.ok) { status.innerHTML=`<div class="erp-warn"><i class="bi bi-exclamation-triangle me-1"></i>${data.error}</div>`; return; }
-    const res = data.resultado;
+
+    // Error explícito del endpoint (status != 200): modal ILUS, sin alert nativo
+    if(!r.ok || data.error) {
+      status.innerHTML = `<div class="erp-warn"><i class="bi bi-exclamation-triangle me-1"></i>${data.error || 'No se pudo leer el contrato.'}</div>`;
+      await ilusAlert({ title:'No se pudo leer', message: data.error || 'No se pudo leer el contrato.', type:'error' });
+      return;
+    }
+
+    // Foto / PDF escaneado sin texto: el Agente pide el RUT y trae todo del ERP
+    if(data.requiere_rut) {
+      await _agenteContratoPorRut(archivo, data.mensaje, status);
+      return;
+    }
+
+    if(!data.ok) {
+      status.innerHTML = `<div class="erp-warn"><i class="bi bi-exclamation-triangle me-1"></i>${data.error || 'No se pudo leer el contrato.'}</div>`;
+      await ilusAlert({ title:'No se pudo leer', message: data.error || 'No se pudo leer el contrato.', type:'error' });
+      return;
+    }
+
+    const res = data.resultado || {};
     WZ.aiData = res.contrato;
 
     // Llenar datos del cliente
@@ -1780,8 +1799,9 @@ async function disparaAgente(archivo) {
     if(cl.rut)          document.getElementById('s1_rut').value           = cl.rut;
     if(cl.direccion)    document.getElementById('s1_direccion').value     = cl.direccion;
     if(cl.comuna)       document.getElementById('s1_comuna').value        = cl.comuna;
-    if(cl.ciudad)       document.getElementById('s1_ciudad').value        = cl.ciudad;
+    if(cl.ciudad || cl.region) document.getElementById('s1_ciudad').value = cl.ciudad || cl.region;
     if(cl.contacto_nombre) document.getElementById('s1_contacto_nombre').value = cl.contacto_nombre;
+    if(cl.contacto_cargo)  document.getElementById('s1_contacto_cargo').value  = cl.contacto_cargo;
     if(cl.contacto_email)  document.getElementById('s1_contacto_email').value  = cl.contacto_email;
     if(cl.contacto_tel)    document.getElementById('s1_contacto_tel').value    = cl.contacto_tel;
 
@@ -1794,7 +1814,7 @@ async function disparaAgente(archivo) {
     document.getElementById('ct_frecuencia').value    = ct.frecuencia_meses||'';
     document.getElementById('ct_indefinido').checked  = !!ct.es_indefinido;
 
-    // Llenar panel IA
+    // Llenar panel de detalle del contrato
     poblarPanelIA(ct);
 
     // Guardar archivo para paso 3 (WZ.archivoContrato es más fiable que DataTransfer en móvil)
@@ -1812,7 +1832,7 @@ async function disparaAgente(archivo) {
     }
 
     // Match ERP
-    const match = data.resultado._erp_match||{};
+    const match = res._erp_match||{};
     const matchDiv = document.getElementById('ia_match');
     matchDiv.style.display='';
     if(match.id) {
@@ -1830,11 +1850,71 @@ async function disparaAgente(archivo) {
 
     status.innerHTML = `<div class="erp-ok">
       <i class="bi bi-check-circle-fill text-success me-1"></i>
-      <strong>Análisis completado.</strong> Se extrajeron datos del cliente, ${(ct.clausulas_criticas||[]).length} cláusulas críticas y ${(res.equipos||[]).length} equipos. Revisa los datos y continúa.
+      <strong>Contrato leído.</strong> Se extrajeron datos del cliente, ${(ct.clausulas_criticas||[]).length} cláusulas críticas y ${(res.equipos||[]).length} equipos. Revisa los datos y continúa.
     </div>`;
+    if (window.qfActualizar) window.qfActualizar();
+    ilusToast('✓ Contrato leído por el Agente ILUS', { type:'success' });
   } catch(e) {
     status.innerHTML = `<div class="erp-warn"><i class="bi bi-x-circle me-1"></i>Error: ${e.message}</div>`;
+    await ilusAlert({ title:'No se pudo leer', message: e.message, type:'error' });
   }
+}
+
+// Foto / PDF escaneado: pido el RUT y traigo todo del ERP reusando la lógica del autocomplete.
+async function _agenteContratoPorRut(archivo, mensaje, status) {
+  ilusToast(mensaje || 'Necesito el RUT para traer los datos del ERP', { type:'info' });
+
+  const rut = await ilusPrompt({
+    title: 'RUT del cliente',
+    message: 'Escribe el RUT y traigo todo del ERP',
+    placeholder: '76.123.456-7',
+  });
+  if(!rut || !rut.trim()) {
+    status.innerHTML = `<div class="erp-warn"><i class="bi bi-info-circle me-1"></i>Carga cancelada. Puedes ingresar los datos manualmente.</div>`;
+    return;
+  }
+
+  status.innerHTML = `<div class="erp-info">
+    <span class="spinner-border spinner-border-sm me-2"></span>
+    <strong>Agente ILUS</strong> · Buscando <strong>${rut.trim()}</strong> en el ERP…
+  </div>`;
+
+  let resultados = [];
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/autocomplete?q=${encodeURIComponent(rut.trim())}`);
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    resultados = await r.json();
+  } catch(err) {
+    status.innerHTML = `<div class="erp-warn"><i class="bi bi-x-circle me-1"></i>Error consultando el ERP: ${err.message}</div>`;
+    ilusToast('No pude consultar el ERP. Complétalo manualmente.', { type:'warning' });
+    return;
+  }
+
+  if(!resultados.length) {
+    status.innerHTML = `<div class="erp-warn"><i class="bi bi-exclamation-triangle me-1"></i>No encontré ese RUT en el ERP. Completa los datos manualmente.</div>`;
+    ilusToast('No encontré ese RUT en el ERP. Complétalo manualmente.', { type:'warning' });
+    return;
+  }
+
+  // Reusar EXACTAMENTE la lógica del autocomplete (rellena campos + enriquece desde ERP)
+  acResults = resultados;
+  acSeleccionar(0);
+
+  // Conservar el archivo (foto) como adjunto del contrato para el paso 3
+  WZ.archivoContrato = archivo;
+  try {
+    const dt = new DataTransfer();
+    dt.items.add(archivo);
+    document.getElementById('ct_archivo').files = dt.files;
+  } catch(e) { /* Safari/iOS no soporta DataTransfer constructor */ }
+  if(typeof mostrarArchivoCargado === 'function') mostrarArchivoCargado(archivo);
+
+  status.innerHTML = `<div class="erp-ok">
+    <i class="bi bi-check-circle-fill text-success me-1"></i>
+    <strong>Datos traídos del ERP.</strong> Revisa el cliente y completa el contrato manualmente.
+  </div>`;
+  if (window.qfActualizar) window.qfActualizar();
+  ilusToast('✓ Datos traídos del ERP', { type:'success' });
 }
 
 // ══ PASO 2 — EQUIPOS ═════════════════════════════════════════
@@ -2820,18 +2900,31 @@ function renderAdjuntos(){
 }
 
 async function analizarConIA(){
+  const _lbl='<i class="bi bi-robot me-1"></i>Analizar contrato (Agente ILUS)';
   const archivo=document.getElementById('ct_archivo').files[0];
-  if(!archivo){alert('Sube un archivo primero');return;}
+  if(!archivo){ilusToast('Sube el contrato primero', {type:'warning'});return;}
   const btn=document.getElementById('btnAnalizar');
   btn.disabled=true;btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Analizando…';
-  // Crear cliente si no existe
-  if(!WZ.cid){const ok=await crearCliente();if(!ok){btn.disabled=false;btn.innerHTML='<i class="bi bi-stars me-1"></i>Analizar con IA';return;}}
-  if(!WZ.ctid){const ok=await subirContrato();if(!ok){btn.disabled=false;btn.innerHTML='<i class="bi bi-stars me-1"></i>Analizar con IA';return;}}
-  const r=await fetch(`/mantenciones/api/contratos/${WZ.ctid}/analizar`,{method:'POST'});
-  const data=await r.json();
-  if(!data.ok){alert(data.error||'Error IA');btn.disabled=false;btn.innerHTML='<i class="bi bi-stars me-1"></i>Analizar con IA';return;}
-  poblarPanelIA(data.resultado);
-  btn.innerHTML='<i class="bi bi-check-circle me-1"></i>Re-analizar';btn.disabled=false;
+  try{
+    // Agente ILUS determinista (CERO IA): lee el documento y devuelve resultado.contrato.
+    const fd=new FormData(); fd.append('archivo', archivo);
+    const r=await fetch('/mantenciones/api/agente-contrato',{method:'POST',body:fd});
+    const data=await r.json();
+    if(!r.ok || data.error){
+      ilusAlert({title:'No se pudo analizar', message:data.error||'Intenta de nuevo', type:'error'});
+      btn.disabled=false;btn.innerHTML=_lbl;return;
+    }
+    if(data.requiere_rut){
+      ilusToast(data.mensaje||'Para fotos usa el RUT en el Paso 1', {type:'info'});
+      btn.disabled=false;btn.innerHTML=_lbl;return;
+    }
+    poblarPanelIA((data.resultado||{}).contrato || {});
+    btn.innerHTML='<i class="bi bi-check-circle me-1"></i>Re-analizar';btn.disabled=false;
+    ilusToast('✓ Contrato analizado por el Agente ILUS', {type:'success'});
+  }catch(e){
+    ilusAlert({title:'Error', message:'No se pudo analizar el contrato', type:'error'});
+    btn.disabled=false;btn.innerHTML=_lbl;
+  }
 }
 
 function poblarPanelIA(r){

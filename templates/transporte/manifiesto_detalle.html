@@ -1179,25 +1179,38 @@ function guardarEstadoManifiesto() {
 // ── Editar contacto + medidas de un ítem (alimenta el export de carga masiva) ──
 var _edModal = null;
 
-// Parsea address_components de Google Places y rellena comuna/región/CP
-function _edParseComponentes(componentes) {
+// Parsea address_components de Google Places y rellena comuna/región/CP.
+// onlyEmpty=true (auto-verificar): solo escribe en los campos vacíos, respeta
+// lo que el operador ya puso. onlyEmpty falsy (elegir sugerencia): sobrescribe.
+function _edParseComponentes(componentes, onlyEmpty) {
   if (!Array.isArray(componentes)) return;
-  var comuna = '', region = '', cp = '';
+  var loc = '', l3 = '', l2 = '', region = '', cp = '';
   componentes.forEach(function(c){
-    var t = c.types || [];
-    if (t.indexOf('locality') !== -1 || t.indexOf('administrative_area_level_3') !== -1) {
-      if (!comuna) comuna = c.long_name || '';
-    }
-    if (t.indexOf('administrative_area_level_1') !== -1) {
-      region = c.long_name || '';
-    }
-    if (t.indexOf('postal_code') !== -1) {
-      cp = c.long_name || '';
-    }
+    var t = c.types || [], n = c.long_name || '';
+    if (t.indexOf('locality') !== -1 && !loc) loc = n;
+    if (t.indexOf('administrative_area_level_3') !== -1 && !l3) l3 = n;
+    if (t.indexOf('administrative_area_level_2') !== -1 && !l2) l2 = n;
+    if (t.indexOf('administrative_area_level_1') !== -1) region = n;
+    if (t.indexOf('postal_code') !== -1) cp = n;
   });
-  if (comuna) document.getElementById('edComuna').value    = comuna;
-  if (region) document.getElementById('edRegion').value    = region;
-  if (cp)     document.getElementById('edCodPostal').value = cp;
+  // Comuna en Chile: ni 'locality' ni 'level_3' son confiables por sí solos
+  // (Providencia → locality correcto; Viña del Mar → a veces level_3). Heurística:
+  // preferir el que NO sea la provincia (level_2), comparando sin acentos.
+  function _norm(s){ return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim(); }
+  var comuna = '';
+  if (loc && _norm(loc) !== _norm(l2))      comuna = loc;
+  else if (l3 && _norm(l3) !== _norm(l2))   comuna = l3;
+  else                                      comuna = loc || l3 || l2;
+  function _set(id, val){
+    if (!val) return;
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (onlyEmpty && el.value && el.value.trim()) return;  // ya tiene dato: no lo pisamos
+    el.value = val;
+  }
+  _set('edComuna',    comuna);
+  _set('edRegion',    region);
+  _set('edCodPostal', cp);
 }
 
 function _edInitPlaces() {
@@ -1225,6 +1238,46 @@ function _edInitPlaces() {
   input.dataset.placesInit = '1';
 }
 
+// Auto-verifica con Google la dirección YA cargada al abrir el modal de edición.
+// Rellena SOLO los campos vacíos (comuna/región/código postal) — los que alimentan
+// el Excel de carga masiva (FedEx / SimplyRoute). No pisa lo que el operador ya puso.
+function _edAutoVerificar() {
+  var input = document.getElementById('edDireccion');
+  var hint  = document.getElementById('edDirHint');
+  if (!input || !input.value.trim()) return;          // sin dirección: nada que verificar
+  if (input.dataset.autoVerif === '1') return;        // ya verificada en esta apertura
+  var elC = document.getElementById('edComuna');
+  var elR = document.getElementById('edRegion');
+  var elP = document.getElementById('edCodPostal');
+  var faltan = (elC && !elC.value.trim()) || (elR && !elR.value.trim()) || (elP && !elP.value.trim());
+  if (!faltan) return;                                // ya está completo: no gastamos llamada
+  if (!window.google || !window.google.maps || !window.google.maps.Geocoder) {
+    // El SDK de Maps aún no cargó → reintenta cuando esté listo (mismo buffer que el autocomplete)
+    if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_edAutoVerificar);
+    return;
+  }
+  input.dataset.autoVerif = '1';
+  if (hint) hint.innerHTML = '<i class="bi bi-arrow-repeat"></i> '
+                           + '<span style="color:#6b7280">Verificando dirección con Google…</span>';
+  try {
+    new google.maps.Geocoder().geocode(
+      { address: input.value.trim(), componentRestrictions: { country: 'cl' }, language: 'es' },
+      function(results, status){
+        if (status === 'OK' && results && results[0] && results[0].address_components) {
+          _edParseComponentes(results[0].address_components, true);  // solo rellena vacíos
+          if (hint) hint.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> '
+                                   + '<span style="color:#16a34a">Dirección verificada con Google</span>';
+        } else {
+          if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle" style="color:#f59e0b"></i> '
+                                   + '<span style="color:#92400e">No pudimos verificarla — escribe y elige una sugerencia</span>';
+        }
+      }
+    );
+  } catch(e) {
+    if (hint) hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para autocompletar';
+  }
+}
+
 function abrirEditar(data) {
   data = data || {};
   document.getElementById('edCid').value        = data.id || '';
@@ -1239,13 +1292,17 @@ function abrirEditar(data) {
   document.getElementById('edPeso').value       = data.peso || '';
   document.getElementById('edBultos').value     = data.bultos || 1;
   document.getElementById('edMsg').innerHTML    = '';
-  // Reset visual hint
+  // Reset visual hint + estado de auto-verificación para esta apertura
   var hint = document.getElementById('edDirHint');
   if (hint) hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para autocompletar';
+  var _edDir = document.getElementById('edDireccion');
+  if (_edDir) _edDir.dataset.autoVerif = '';
   if (!_edModal) _edModal = new bootstrap.Modal(document.getElementById('editarItemModal'));
   _edModal.show();
   // Inicializa Google Places (lazy — espera a que el modal esté visible)
   setTimeout(_edInitPlaces, 150);
+  // Verifica con Google la dirección pre-cargada y completa comuna/región/CP vacíos
+  setTimeout(_edAutoVerificar, 500);
 }
 
 function guardarEdicion() {

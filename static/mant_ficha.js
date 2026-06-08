@@ -14,6 +14,10 @@ const CID = DATA.cid;
 const ES_SUPERADMIN = DATA.is_superadmin === true;
 window.ES_SUPERADMIN = ES_SUPERADMIN;
 
+// admin o superadmin (regla de permisos). Usado por la pestaña Inteligencia.
+const ES_ADMIN = (DATA.is_admin === true);
+window.ES_ADMIN = ES_ADMIN;
+
 // ════════════════════════════════════════════════════════════════════
 // ACCIONES DE IA (Claude)
 // ════════════════════════════════════════════════════════════════════
@@ -79,30 +83,12 @@ function _aiRenderError(err){
     const cfg = map[m] || map.fecha_indeterminada;
     sub.innerHTML = `<i class="bi ${cfg.icon} me-1" style="color:${cfg.color}"></i><span style="color:${cfg.color}">${cfg.text}</span>`;
   }
-  // 2026-05-28 (Daniel — FASE 3.4) Lazy load del hint IA al boot.
-  // ANTES: este fetch corría EAGER al cargar la ficha del cliente. El
-  //        endpoint /ia/elegibilidad toma ~4.5s en cache miss y los
-  //        ~6 queries SQL bloqueaban el first paint percibido del usuario.
-  // AHORA: usamos requestIdleCallback para diferir el call hasta que el
-  //        navegador esté idle (después del paint). Fallback setTimeout
-  //        para Safari < 17 que aún no implementa la API.
-  //        El hint aparece "auto" 1-3s después de cargar la ficha, sin
-  //        bloquear el render inicial. El cache 10min del backend sigue
-  //        intacto, así que en MISS solo paga la primera vista.
-  if (window.__FICHA_DATA && window.__FICHA_DATA.cid) {
-    const _loadEligibilidad = () => {
-      fetch(`/mantenciones/api/clientes/${window.__FICHA_DATA.cid}/ia/elegibilidad`)
-        .then(r => r.json())
-        .then(d => { if (d && d.ok) paintHint(d); })
-        .catch(()=>{});
-    };
-    if (typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(_loadEligibilidad, { timeout: 3000 });
-    } else {
-      // Safari < 17 y navegadores viejos: fallback 800ms post-paint
-      setTimeout(_loadEligibilidad, 800);
-    }
-  }
+  // 2026-06-06 (Daniel) — IA eliminada de la ficha del cliente.
+  // El auto-fetch a /ia/elegibilidad que pintaba el hint del dropdown IA
+  // quedó NEUTRALIZADO: ya no hay dropdown ni acciones IA, así que no se
+  // dispara ninguna llamada a la IA al cargar la ficha. paintHint() queda
+  // como no-op (no existe el elemento que pintaba).
+  void paintHint;
 })();
 
 // ── Análisis económico y operativo del cliente ─────────────────────
@@ -583,8 +569,8 @@ let _LEV = { id: null, adjuntos_preliminares: [] };
 // correctiva, visita_tecnica, etc. Por compat, "Levantamiento de
 // ficha" === "levantamiento fotográfico" (mismo tipo).
 // ════════════════════════════════════════════════════════════
-async function abrirGenerarOT(){
-  abrirLevantamientoSelector();
+async function abrirGenerarOT(tipoPreset){
+  abrirLevantamientoSelector(tipoPreset);
 }
 // Alias por compat con llamadas viejas
 const abrirLevantamientoFotografico = abrirGenerarOT;
@@ -680,7 +666,7 @@ async function _cargarPlantillas(){
   return _LEV_PLANTILLAS.all;
 }
 
-async function abrirLevantamientoSelector(){
+async function abrirLevantamientoSelector(tipoPreset){
   const tbody = document.getElementById('levSelectTbody');
   if (!tbody) { ilusToast('Modal no inicializado', { type:'error' }); return; }
   // Cargar equipos desde la página actual (los que ya están renderizados en tab Equipos)
@@ -737,9 +723,13 @@ async function abrirLevantamientoSelector(){
       </td>
     </tr>`;
   }).join('');
-  // Reset tipo de OT al default
+  // Tipo de OT: preset si se pidió (Programar mantención = 'preventiva'); si no, 'levantamiento'.
   const tipoSel = document.getElementById('otTipo');
-  if (tipoSel) tipoSel.value = 'levantamiento';
+  if (tipoSel) {
+    const _wanted = tipoPreset || 'levantamiento';
+    const _has = Array.from(tipoSel.options).some(o => o.value === _wanted);
+    tipoSel.value = _has ? _wanted : 'levantamiento';
+  }
   onTipoOtChange(); // actualiza descripción + título sugerido
 
   document.getElementById('levSelectNotas').value = '';
@@ -1435,26 +1425,12 @@ function escAttr(s){
 }
 
 function abrirNuevaVisita(tipoPreset) {
-  // tipoPreset opcional: 'preventiva' | 'correctiva' | 'garantia' | 'inspeccion'
-  document.getElementById('vi_id').value = '';
-  const titulo = tipoPreset === 'preventiva'
-    ? '<i class="bi bi-tools me-2"></i>Programar mantención preventiva'
-    : '<i class="bi bi-calendar-plus me-2"></i>Nueva visita';
-  document.getElementById('modalVisitaTitulo').innerHTML = titulo;
-  ['vi_titulo','vi_tecnico','vi_descripcion'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('vi_tipo').value = tipoPreset || 'preventiva';
-  document.getElementById('vi_estado').value = 'programada';
-  // Fecha por defecto: hoy + 14 días para mantenciones, +3 días para resto
-  const dias = tipoPreset === 'preventiva' ? 14 : 3;
-  const f = new Date(); f.setDate(f.getDate() + dias);
-  document.getElementById('vi_fecha').value = f.toISOString().slice(0,10);
-  document.getElementById('vi_hora_inicio').value = '';
-  document.getElementById('vi_hora_fin').value = '';
-  document.getElementById('vi_costo').value = '';
-  // Garantía: default "No aplica" (servicio pagado) en visita nueva
-  _viSetGarantia(false);
-  document.getElementById('btnEliminarVisita').style.display = 'none';
-  new bootstrap.Modal(document.getElementById('modalVisita')).show();
+  // Daniel 2026-06-06: "Programar mantención" y "Nueva visita" REUSAN el modal
+  // POTENTE de OT (7 pasos: tipo, dirección con Google [trae la del cliente,
+  // editable], contacto, fecha/hora, técnicos, equipos+plantillas, acceso,
+  // archivos). Así se calendariza Y se genera la OT en un mismo flujo.
+  // El modal simple #modalVisita queda solo para EDITAR visitas existentes.
+  abrirGenerarOT(tipoPreset || 'preventiva');
 }
 // Marca el toggle de garantía de la visita y refresca la nota.
 // `aplica` true → "Aplica (cubierto)"; false → "No aplica (pago)".
@@ -4538,9 +4514,13 @@ function toggleAiPanel(ctid) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// MANTENCIÓN HISTÓRICA — registro de visitas pasadas + cálculo de próxima
+// MANTENCIÓN HISTÓRICA (LEGACY) — SUPERADO por la versión inline en
+// ficha.html (abrirVisitaHistorica/vhPreview/vhGuardar). Estas viejas
+// referenciaban #vh_crear_proxima (que ya no existe) → crasheaban con
+// "Cannot set properties of null". Renombradas a _OLD_*_unused para que NO
+// pisen a las inline. No se invocan desde ningún lado.
 // ════════════════════════════════════════════════════════════════════
-function abrirVisitaHistorica() {
+function _OLD_abrirVisitaHistorica_unused() {
   // Reset
   document.getElementById('vh_fecha').value = '';
   document.getElementById('vh_tipo').value = 'preventiva';
@@ -4556,8 +4536,8 @@ function abrirVisitaHistorica() {
   new bootstrap.Modal(document.getElementById('modalVisitaHistorica')).show();
 }
 
-// Preview en vivo: cuando el usuario elige fecha, mostramos la sugerencia
-async function vhPreview() {
+// Preview en vivo (LEGACY, superado por inline en ficha.html)
+async function _OLD_vhPreview_unused() {
   const fecha = document.getElementById('vh_fecha').value;
   const box = document.getElementById('vh_preview');
   const txt = document.getElementById('vh_preview_text');
@@ -4620,7 +4600,7 @@ async function vhPreview() {
   }
 }
 
-async function vhGuardar() {
+async function _OLD_vhGuardar_unused() {
   const btn = document.getElementById('vh_btn');
   const box = document.getElementById('vh_result');
   const fecha = document.getElementById('vh_fecha').value;
@@ -4844,7 +4824,7 @@ async function _ejecutarEliminarContrato() {
 async function analizarContrato(ctid, btn) {
   const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando con IA…';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando contrato…';
   try {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}/analizar`, { method:'POST' });
     const data = await r.json();
@@ -5649,28 +5629,12 @@ async function generarPlanMejora() {
   }
 }
 
-// Al cargar el tab IA por primera vez, cargar el estado.
-// (sin window load — se dispara cuando el usuario abre el tab para no
-//  ralentizar la carga inicial de la ficha).
+// 2026-06-06 (Daniel) — IA eliminada de la ficha del cliente.
+// El hook que auto-cargaba el estado del plan IA (al abrir el tab "IA & Plan"
+// o si quedaba guardado en localStorage) quedó NEUTRALIZADO: ya no existe ese
+// tab, así que no se dispara ninguna llamada a la IA al cargar la ficha.
 (function _planEstadoIniHook() {
-  const btnTab = document.querySelector('.ftab-btn[data-tab="ia"]');
-  if (!btnTab) return;
-  let cargado = false;
-  btnTab.addEventListener('click', () => {
-    if (!cargado) {
-      cargado = true;
-      planActualizarEstadoIA();
-    }
-  });
-  // Si el tab IA es el que quedó guardado en localStorage, cargar al iniciar
-  try {
-    const saved = localStorage.getItem(TAB_KEY);
-    if (saved === 'ia') {
-      cargado = true;
-      // Pequeño defer para que el DOM esté completo
-      setTimeout(() => planActualizarEstadoIA(), 50);
-    }
-  } catch(e) {}
+  return; // no-op: tab IA eliminado
 })();
 
 // SVG gauge sencillo (sin librerías) — círculo con stroke-dasharray.
@@ -7043,6 +7007,1016 @@ async function cargarReportes(force = false) {
   }
 }
 
+// ─── INTELIGENCIA DE FICHA ─────────────────────────────────────
+// Agente determinista (sin IA): el backend devuelve un diagnóstico
+// completo del cliente. Aquí solo renderizamos. Mismo patrón que
+// cargarReportes: cache en memoria + AbortController 25s + Reintentar.
+let _intelCache = null;   // dict del diagnóstico ya renderizado → re-navegación instantánea
+function _invalidarIntel(){ _intelCache = null; }
+
+// Monto CLP con puntos de miles → "$ 1.234.567"
+function _intelCLP(n){
+  const v = Math.round(Number(n) || 0);
+  return '$ ' + v.toLocaleString('es-CL');
+}
+function _intelEsc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+async function cargarInteligencia(force = false) {
+  const panel = document.getElementById('intelPanel');
+  if (!panel) return;
+  // cache hit → render instantáneo (se invalida al recalcular con force).
+  if (!force && _intelCache !== null) { _intelRender(_intelCache); return; }
+  panel.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Calculando inteligencia…</div>';
+  // Timeout duro: el spinner NUNCA queda infinito. A los 25s abortamos.
+  const _ac = new AbortController();
+  const _to = setTimeout(() => _ac.abort(), 25000);
+  // Al recalcular mostramos overlay premium (puede tardar unos segundos).
+  if (force && window.ilusLoader) { try { ilusLoader.show('Recalculando inteligencia…'); } catch(e){} }
+  try {
+    const url = `/mantenciones/api/clientes/${CID}/inteligencia` + (force ? '?force=1' : '');
+    const r = await fetch(url, { signal: _ac.signal });
+    if (!r.ok) throw new Error('El servidor respondió ' + r.status);
+    const data = await r.json();
+    if (!data || typeof data !== 'object' || data.error) {
+      throw new Error((data && data.error) ? data.error : 'Respuesta inesperada del servidor');
+    }
+    _intelCache = data;
+    _intelRender(data);
+    if (force && window.ilusToast) { try { ilusToast('✓ Inteligencia recalculada', { type:'success' }); } catch(e){} }
+  } catch(e) {
+    const msg = (e && e.name === 'AbortError')
+      ? 'El cálculo tardó demasiado (servidor lento). Intenta de nuevo.'
+      : ((e && e.message) ? e.message : 'Error desconocido');
+    panel.innerHTML = `<div class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2 mb-0">
+      <span><i class="bi bi-exclamation-triangle me-1"></i>No se pudo calcular la inteligencia: ${_intelEsc(msg)}</span>
+      <button class="btn btn-sm btn-outline-dark fw-bold" onclick="cargarInteligencia(true)"><i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button>
+    </div>`;
+  } finally {
+    clearTimeout(_to);
+    if (window.ilusLoader) { try { ilusLoader.hide(); } catch(e){} }
+  }
+}
+
+// Construye el HTML completo del diagnóstico y lo pinta en #intelPanel.
+function _intelRender(d){
+  const panel = document.getElementById('intelPanel');
+  if (!panel) return;
+  d = d || {};
+  const score = Math.max(0, Math.min(100, parseInt(d.score_salud, 10) || 0));
+  const cal   = Math.max(0, Math.min(100, parseInt(d.calidad_informacion, 10) || 0));
+  const riesgo = (d.nivel_riesgo || 'bajo').toLowerCase();
+
+  // Color del gauge por score (rojo<40, ámbar<70, verde≥70).
+  const gaugeColor = score >= 70 ? '#16a34a' : (score >= 40 ? '#f59e0b' : '#dc2626');
+  const riskIcon = { alto:'exclamation-octagon-fill', medio:'exclamation-triangle-fill', bajo:'shield-check' }[riesgo] || 'shield-check';
+  const riskLbl  = { alto:'Riesgo alto', medio:'Riesgo medio', bajo:'Riesgo bajo' }[riesgo] || ('Riesgo ' + riesgo);
+
+  // ── Consultas accionables del Agente Proactivo (arriba de todo) ──
+  let html = _intelConsultas(d.consultas);
+
+  // ── HERO del Agente: avatar + burbuja con el resumen + gauge de salud ──
+  // El resumen "te habla" en primera persona (cálido, humano). Si el backend
+  // no lo manda, caemos en un texto sensato para no dejar el hero vacío.
+  const resumen = (d.resumen_ejecutivo && String(d.resumen_ejecutivo).trim())
+    ? String(d.resumen_ejecutivo).trim()
+    : 'Revisé esta ficha y preparé un diagnóstico con la salud del cliente, lo que falta y la mejor oportunidad comercial.';
+  html += `
+  <div class="intel-hero2">
+    <div class="intel-hero2-main">
+      <div class="intel-avatar"><i class="bi bi-robot"></i><span class="intel-pulse"></span></div>
+      <div style="flex:1;min-width:0">
+        <div class="intel-agent-name"><i class="bi bi-stars"></i>Agente de inteligencia ILUS · en línea</div>
+        <div class="intel-bubble">${_intelEsc(resumen)}</div>
+      </div>
+    </div>
+    <div class="intel-hero2-side">
+      <div class="intel-gauge" style="background:conic-gradient(${gaugeColor} ${score*3.6}deg, #2a2a2a 0deg)">
+        <div class="intel-gauge-inner">
+          <div class="intel-gauge-num" style="color:${gaugeColor}">${score}</div>
+          <div class="intel-gauge-lbl">Salud</div>
+        </div>
+      </div>
+      <div class="d-flex align-items-center gap-2 flex-wrap justify-content-center">
+        <span class="intel-risk intel-risk-${riesgo}"><i class="bi bi-${riskIcon}"></i>${_intelEsc(riskLbl)}</span>
+        ${d.tiene_contrato
+          ? '<span class="intel-chip" style="background:#dcfce7;color:#166534"><i class="bi bi-file-earmark-check"></i>Con contrato</span>'
+          : '<span class="intel-chip" style="background:#fee2e2;color:#991b1b"><i class="bi bi-file-earmark-x"></i>Sin contrato</span>'}
+      </div>
+      ${_intelScoreDetalle(d.score_detalle, '#fca5a5')}
+    </div>
+  </div>`;
+
+  // ── Card: Informe de gestión trimestral (cerca del score, prominente) ──
+  // Determinista: el backend genera 1 informe por trimestre y lo deja en
+  // Reportes. Si el dict no trae `informe_trimestral`, no mostramos la tarjeta.
+  html += _intelInformeTrimestral(d.informe_trimestral);
+
+  // ── Botón: Informe de gestión COMPLETO del cliente (HTML imprimible → PDF) ──
+  html += '<div class="intel-card" style="border-left:4px solid #dc2626">'
+        + '<div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">'
+        + '<div><div class="fw-bold"><i class="bi bi-file-earmark-text me-1 text-danger"></i>Informe de gestión del cliente</div>'
+        + '<div class="text-muted small">Contrato, cláusulas, frecuencia, pagos, productos, historial y tus dolores — listo para imprimir/enviar.</div></div>'
+        + '<button class="btn btn-ilus fw-bold" onclick="intelInformeFicha()"><i class="bi bi-download me-1"></i>Generar informe (PDF)</button>'
+        + '</div></div>';
+
+  // ── Historia (pasado) vs Agenda (futuro): dos tarjetas diferenciadas ──
+  // Verde/gris "hecho" a la izquierda · azul "programado" a la derecha.
+  html += _intelHistoriaAgenda(d);
+
+  // ── Cierre de facturación (prioridad alta del dueño) ──
+  // Junto a Historia/Agenda: un servicio realizado NO está cerrado hasta
+  // facturarlo. Tono alerta si hay pendientes; verde sobrio si está al día.
+  html += _intelFacturacion(d);
+
+  // ── Fila de KPIs ──
+  const kpis = Array.isArray(d.kpis) ? d.kpis : [];
+  if (kpis.length) {
+    html += '<div class="row g-2 mb-3">';
+    kpis.forEach(k => {
+      const tono = (k.tono || 'ok').toLowerCase();
+      html += `
+      <div class="col-6 col-md-4 col-xl-3">
+        <div class="intel-kpi intel-kpi-${tono}">
+          <div class="intel-kpi-lbl">${_intelEsc(k.label)}</div>
+          <div class="intel-kpi-val">${_intelEsc(k.valor)}${k.sufijo ? `<span style="font-size:.7rem;font-weight:700;color:#9ca3af"> ${_intelEsc(k.sufijo)}</span>` : ''}</div>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  html += '<div class="intel-grid">';
+
+  // ── Card: Universo del cliente ──
+  const u = d.universo || {};
+  const porTipo = u.por_tipo || {};
+  const tiposEntries = Object.keys(porTipo);
+  const ddu = (u.dias_desde_ultima == null) ? null : parseInt(u.dias_desde_ultima, 10);
+  // "Frescura" de la relación: verde reciente, ámbar tibio, rojo frío.
+  let dduTxt = '', dduColor = '#6b7280', dduIcon = 'clock-history';
+  if (ddu != null) {
+    if (ddu <= 0)       { dduTxt = 'hoy';                  dduColor = '#166534'; dduIcon = 'lightning-charge-fill'; }
+    else if (ddu <= 90) { dduTxt = `hace ${ddu} días`;     dduColor = '#166534'; dduIcon = 'clock-history'; }
+    else if (ddu <= 180){ dduTxt = `hace ${ddu} días`;     dduColor = '#b45309'; dduIcon = 'clock-history'; }
+    else                { dduTxt = `hace ${ddu} días`;     dduColor = '#dc2626'; dduIcon = 'exclamation-circle-fill'; }
+  }
+  html += `
+  <div class="intel-card">
+    <div class="intel-card-title"><i class="bi bi-diagram-3" style="color:#7c3aed"></i>Universo del cliente</div>
+    <div class="d-flex align-items-baseline gap-2 mb-2">
+      <span class="intel-bignum">${parseInt(u.total_gestiones,10)||0}</span>
+      <span style="font-size:.78rem;color:#6b7280;font-weight:600">gestiones totales · ${parseInt(u.realizadas,10)||0} realizadas</span>
+    </div>
+    ${tiposEntries.length ? `<div class="mb-2">${tiposEntries.map(t =>
+      `<span class="intel-pill"><i class="bi bi-tag"></i>${_intelEsc(t)}: <b>${parseInt(porTipo[t],10)||0}</b></span>`).join('')}</div>` : ''}
+    <div class="intel-dl">
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Levantamientos</div><div class="intel-dl-val">${parseInt(u.levantamientos,10)||0}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Última gestión</div><div class="intel-dl-val">${_intelEsc(u.ultima_fecha || '—')}${dduTxt ? ` <span style="color:${dduColor};font-weight:800;font-size:.78rem"><i class="bi bi-${dduIcon}"></i> ${dduTxt}</span>` : ''}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Primera gestión</div><div class="intel-dl-val">${_intelEsc(u.primera_fecha || '—')}</div></div>
+    </div>
+  </div>`;
+
+  // ── Card: Datos del cliente (completitud de la ficha) ──
+  // Preferimos d.datos_cliente (nuevo) y caemos a calidad/faltantes legacy.
+  const dc = d.datos_cliente || {};
+  const camposTot = parseInt(dc.campos_total, 10) || 0;
+  const camposOk  = parseInt(dc.campos_ok, 10);
+  const dcFaltantes = Array.isArray(dc.faltantes) ? dc.faltantes
+                    : (Array.isArray(d.faltantes) ? d.faltantes : []);
+  // Porcentaje: si vienen los campos lo calculamos; si no, usamos `cal` legacy.
+  const pctDatos = (camposTot > 0 && Number.isFinite(camposOk))
+    ? Math.round((camposOk / camposTot) * 100) : cal;
+  const dcColor = pctDatos >= 80 ? '#16a34a' : (pctDatos >= 50 ? '#f59e0b' : '#dc2626');
+  const dcCompleto = (dc.completo === true) || (dcFaltantes.length === 0 && pctDatos >= 100);
+  html += `
+  <div class="intel-card">
+    <div class="intel-card-title"><i class="bi bi-person-vcard" style="color:#3b82f6"></i>Datos del cliente
+      ${dc.tiene_coordenadas ? '<span class="intel-chip" style="background:#dbeafe;color:#1e40af"><i class="bi bi-geo-alt-fill"></i>con coordenadas</span>' : ''}
+    </div>
+    <div class="d-flex align-items-center gap-2 mb-1">
+      <div class="intel-bar" style="flex:1"><div class="intel-bar-fill" style="width:${pctDatos}%;background:${dcColor}"></div></div>
+      <span class="fw-bold" style="font-size:1.05rem;color:${dcColor}">${pctDatos}%</span>
+    </div>
+    ${camposTot > 0 ? `<div class="intel-meter-lbl mb-1"><b style="color:${dcColor}">${Number.isFinite(camposOk)?camposOk:'—'}</b> de ${camposTot} campos completos</div>` : ''}
+    ${(!dcCompleto && dcFaltantes.length) ? `
+      <div style="font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;margin:10px 0 6px">Le falta</div>
+      <div>${dcFaltantes.map(f => `<span class="intel-pill" style="background:#fef2f2;color:#991b1b"><i class="bi bi-exclamation-circle"></i>${_intelEsc(f)}</span>`).join('')}</div>
+      <div class="mt-3"><button type="button" class="btn btn-xs btn-ilus fw-bold" onclick="try{abrirEditarCliente()}catch(e){}"><i class="bi bi-pencil-square me-1"></i>Completar ficha</button></div>
+    ` : '<div class="text-success" style="font-size:.84rem"><i class="bi bi-check-circle-fill me-1"></i>Ficha completa, ¡buen trabajo!</div>'}
+  </div>`;
+
+  // ── Card: Equipos del cliente ──
+  const eq = d.equipos || {};
+  const eqTotal   = parseInt(eq.total, 10) || 0;
+  const eqSinSerie= parseInt(eq.sin_serie, 10) || 0;
+  const eqSinFoto = parseInt(eq.sin_foto, 10) || 0;
+  const eqCrit    = parseInt(eq.criticos, 10) || 0;
+  html += `
+  <div class="intel-card ${eqCrit > 0 ? 'intel-card-danger' : ''}">
+    <div class="intel-card-title"><i class="bi bi-hdd-stack" style="color:${eqCrit>0?'#dc2626':'#0ea5e9'}"></i>Equipos
+      ${eqCrit > 0 ? `<span class="intel-chip" style="background:#fee2e2;color:#991b1b"><i class="bi bi-exclamation-triangle-fill"></i>${eqCrit} crítico${eqCrit>1?'s':''}</span>` : ''}
+    </div>
+    <div class="d-flex align-items-baseline gap-2 mb-3">
+      <span class="intel-bignum">${eqTotal}</span>
+      <span style="font-size:.78rem;color:#6b7280;font-weight:600">equipo${eqTotal===1?'':'s'} en la ficha</span>
+    </div>
+    ${eqTotal > 0 ? `
+      <div>
+        <span class="intel-eqchip ${eqSinSerie>0?'bad':''}"><i class="bi bi-${eqSinSerie>0?'upc-scan':'check2'}"></i>${eqSinSerie>0?`${eqSinSerie} sin serie`:'todos con serie'}</span>
+        <span class="intel-eqchip ${eqSinFoto>0?'bad':''}"><i class="bi bi-${eqSinFoto>0?'camera':'images'}"></i>${eqSinFoto>0?`${eqSinFoto} sin foto`:'todos con foto'}</span>
+        ${eqCrit>0?`<span class="intel-eqchip bad"><i class="bi bi-exclamation-octagon"></i>${eqCrit} en estado crítico</span>`:''}
+      </div>
+      ${(eqSinSerie>0||eqSinFoto>0||eqCrit>0)?`<div class="mt-3"><button type="button" class="btn btn-xs btn-outline-dark fw-bold" onclick="switchTab('equipos')"><i class="bi bi-arrow-right-circle me-1"></i>Revisar equipos</button></div>`:''}
+    ` : `<div style="font-size:.84rem;color:#991b1b"><i class="bi bi-exclamation-circle me-1"></i>No hay equipos cargados.</div>
+        <div class="mt-3"><button type="button" class="btn btn-xs btn-ilus fw-bold" onclick="switchTab('equipos')"><i class="bi bi-plus-circle me-1"></i>Agregar equipos</button></div>`}
+  </div>`;
+
+  // ── Card: Contrato ──
+  const c = d.diagnostico_contrato || {};
+  const dias = (c.dias_para_vencer == null) ? null : parseInt(c.dias_para_vencer, 10);
+  let vigTxt = '—', vigColor = '#0f172a';
+  if (c.es_indefinido) { vigTxt = 'Indefinido'; vigColor = '#166534'; }
+  else if (dias != null) {
+    if (dias < 0)      { vigTxt = `Vencido hace ${Math.abs(dias)} días`; vigColor = '#dc2626'; }
+    else if (dias <= 60){ vigTxt = `Vence en ${dias} días`;             vigColor = '#f59e0b'; }
+    else                { vigTxt = `Vence en ${dias} días`;             vigColor = '#166534'; }
+  }
+  html += `
+  <div class="intel-card">
+    <div class="intel-card-title"><i class="bi bi-file-earmark-text" style="color:#5b21b6"></i>Contrato</div>
+    <div class="intel-dl">
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Estado</div><div class="intel-dl-val">${_intelEsc(c.estado || '—')}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Vigencia</div><div class="intel-dl-val" style="color:${vigColor}">${_intelEsc(vigTxt)}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Frecuencia</div><div class="intel-dl-val">${c.frecuencia_meses ? (parseInt(c.frecuencia_meses,10) + ' meses') : '—'}${c.frecuencia_origen ? ` <span style="font-size:.62rem;color:#9ca3af;font-weight:600">(${_intelEsc(c.frecuencia_origen)})</span>` : ''}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Mant. gratis</div><div class="intel-dl-val">${c.incluye_mant_gratis ? '<span style="color:#166534">Sí incluye</span>' : 'No incluye'}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Gratis al año</div><div class="intel-dl-val">${parseInt(c.gratis_incluidas_anual,10)||0}${c.gratis_origen ? ` <span style="font-size:.62rem;color:#9ca3af;font-weight:600">(${_intelEsc(c.gratis_origen)})</span>` : ''}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Valor anual</div><div class="intel-dl-val">${_intelCLP(c.valor_anual)}</div></div>
+    </div>
+    ${(c.vigencia_inicio || c.vigencia_fin) ? `<div style="font-size:.7rem;color:#9ca3af;margin-top:10px"><i class="bi bi-calendar-range me-1"></i>${_intelEsc(c.vigencia_inicio || '—')} → ${_intelEsc(c.vigencia_fin || (c.es_indefinido ? 'Indefinido' : '—'))}</div>` : ''}
+  </div>`;
+
+  // ── Card: Brecha de mantenciones gratis (ROJA si pendientes>0) ──
+  const b = d.brecha_gratis || {};
+  const pend = parseInt(b.pendientes, 10) || 0;
+  html += `
+  <div class="intel-card ${pend > 0 ? 'intel-card-danger' : ''}">
+    <div class="intel-card-title"><i class="bi bi-clipboard-x" style="color:${pend>0?'#dc2626':'#6b7280'}"></i>Brecha de mantenciones${pend > 0 ? ` <span class="intel-chip" style="background:#fee2e2;color:#991b1b">${pend} pendientes</span>` : ''}</div>
+    ${b.mensaje ? `<div style="font-size:.85rem;color:${pend>0?'#991b1b':'#374151'};margin-bottom:10px;line-height:1.5">${_intelEsc(b.mensaje)}</div>` : ''}
+    <div class="intel-dl">
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Esperadas</div><div class="intel-dl-val">${parseInt(b.esperadas,10)||0}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Cubiertas</div><div class="intel-dl-val">${parseInt(b.cubiertas,10)||0}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Pendientes</div><div class="intel-dl-val" style="color:${pend>0?'#dc2626':'#0f172a'}">${pend}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Exposición</div><div class="intel-dl-val" style="color:${pend>0?'#dc2626':'#0f172a'}">${_intelCLP(b.exposicion_clp)}</div></div>
+    </div>
+    ${b.riesgo_fuga_tercero ? '<div class="mt-2"><span class="intel-chip" style="background:#fee2e2;color:#991b1b"><i class="bi bi-box-arrow-up-right"></i>Riesgo de fuga a tercero</span></div>' : ''}
+  </div>`;
+
+  html += '</div>'; // /intel-grid
+
+  // ── Card: Proyección de fechas (timeline) ──
+  const m = d.mantenciones || {};
+  const vencidas = Array.isArray(m.vencidas) ? m.vencidas : [];
+  const proximas = Array.isArray(m.proximas) ? m.proximas : [];
+  const proyeccion = Array.isArray(m.proyeccion) ? m.proyeccion : [];
+  if (vencidas.length || proximas.length || proyeccion.length) {
+    html += `
+    <div class="intel-card mt-1">
+      <div class="intel-card-title"><i class="bi bi-calendar2-week" style="color:#dc2626"></i>Proyección de fechas</div>
+      <div class="row g-3" style="font-size:.7rem;color:#6b7280;margin-bottom:4px">
+        <div class="col-12 col-md-4"><b>Esperadas a hoy:</b> ${parseInt(m.esperadas_a_hoy,10)||0}</div>
+        <div class="col-12 col-md-4"><b>Última:</b> ${_intelEsc(m.ultima_fecha || '—')}</div>
+        <div class="col-12 col-md-4"><b>Próxima:</b> ${_intelEsc(m.proxima_fecha || '—')}</div>
+      </div>
+      <div class="intel-tl">
+        ${vencidas.map(v => `<div class="intel-tl-row intel-tl-vencida"><span style="color:#dc2626;font-weight:700">${_intelEsc(v.fecha)}</span> <span style="color:#991b1b;font-size:.74rem">— vencida hace ${parseInt(v.dias_atraso,10)||0} días</span></div>`).join('')}
+        ${proximas.map(p => `<div class="intel-tl-row intel-tl-prox"><span style="color:#166534;font-weight:700">${_intelEsc(p.fecha)}</span> <span style="color:#15803d;font-size:.74rem">— en ${parseInt(p.dias_faltan,10)||0} días</span></div>`).join('')}
+        ${proyeccion.map(f => `<div class="intel-tl-row intel-tl-proy"><span style="color:#6b7280">${_intelEsc(f)}</span> <span style="color:#9ca3af;font-size:.74rem">— proyectada</span></div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ── Card: Propuesta comercial ──
+  const val = d.valorizacion || {};
+  const hasVal = (parseFloat(val.total) || 0) > 0 || val.pitch;
+  if (hasVal) {
+    html += `
+    <div class="intel-card mt-1" style="border:1px solid #fecdd3;background:linear-gradient(135deg,#fff,#fff5f5)">
+      <div class="intel-card-title"><i class="bi bi-megaphone" style="color:#dc2626"></i>Propuesta comercial</div>
+      ${val.pitch ? `<div style="font-size:.88rem;color:#374151;margin-bottom:12px;line-height:1.5">${_intelEsc(val.pitch)}</div>` : ''}
+      <div style="max-width:420px">
+        <div class="intel-prop-row"><span>Precio unitario</span><span class="fw-bold">${_intelCLP(val.precio_unitario)}</span></div>
+        ${(parseFloat(val.descuento_pct)||0) > 0 || (parseFloat(val.descuento_monto)||0) > 0 ? `<div class="intel-prop-row"><span>Descuento${val.descuento_pct ? ` (${parseFloat(val.descuento_pct)}%)` : ''}</span><span class="fw-bold" style="color:#16a34a">− ${_intelCLP(val.descuento_monto)}</span></div>` : ''}
+        <div class="intel-prop-row"><span>Neto</span><span class="fw-bold">${_intelCLP(val.neto)}</span></div>
+        <div class="intel-prop-row"><span>IVA${val.iva_pct ? ` (${parseFloat(val.iva_pct)}%)` : ''}</span><span class="fw-bold">${_intelCLP(val.iva_monto)}</span></div>
+        <div class="intel-prop-row" style="border-bottom:none"><span class="fw-bold">Total</span><span class="intel-prop-total">${_intelCLP(val.total)}</span></div>
+      </div>
+      <div class="mt-3">
+        <a href="/mantenciones/cotizaciones/nuevo?cliente_id=${CID}" class="btn btn-sm btn-ilus fw-bold">
+          <i class="bi bi-file-earmark-plus me-1"></i>Crear cotización
+        </a>
+      </div>
+    </div>`;
+  }
+
+  // ── Lista de acciones recomendadas ──
+  const acciones = Array.isArray(d.acciones) ? d.acciones : [];
+  if (acciones.length) {
+    const urgIcon = { alta:'exclamation-octagon-fill', media:'exclamation-triangle-fill', baja:'info-circle-fill' };
+    const urgColor = { alta:'#dc2626', media:'#f59e0b', baja:'#16a34a' };
+    const btnCls  = { alta:'btn-ilus', media:'btn-outline-dark', baja:'btn-outline-secondary' };
+    html += `
+    <div class="intel-card mt-1">
+      <div class="intel-card-title"><i class="bi bi-list-check" style="color:#dc2626"></i>Acciones recomendadas</div>
+      ${acciones.map(a => {
+        const urg = (a.urgencia || 'baja').toLowerCase();
+        return `
+        <div class="intel-accion intel-accion-${urg}">
+          <i class="bi bi-${urgIcon[urg]||'info-circle-fill'}" style="font-size:1.25rem;color:${urgColor[urg]||'#6b7280'};flex-shrink:0"></i>
+          <div style="flex:1;min-width:0">
+            <div class="fw-bold" style="font-size:.9rem;color:#0f172a">${_intelEsc(a.titulo)}</div>
+            ${a.tipo ? `<div style="font-size:.72rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.4px;font-weight:700">${_intelEsc(a.tipo)}</div>` : ''}
+          </div>
+          ${a.url_accion ? `<a href="${_intelEsc(a.url_accion)}" class="btn btn-xs ${btnCls[urg]||'btn-outline-secondary'} fw-bold flex-shrink-0">Ir <i class="bi bi-arrow-right ms-1"></i></a>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  // ── Oportunidades (consultas de severidad baja / tipo oportunidad) ──
+  html += _intelOportunidades(d.consultas);
+
+  // ── Cómo trabaja tu Agente (ficha de instrucciones, al FINAL) ──
+  html += _intelPrincipios(d);
+
+  panel.innerHTML = html;
+}
+
+// ─── Tarjeta "Informe de gestión trimestral" ───────────────────────
+// Usa d.informe_trimestral = {periodo, ya_generado, reporte_id, reporte_url}.
+// 1 informe por trimestre (lo genera el backend de forma determinista y lo
+// deja en la pestaña Reportes). Si no viene el dict, retorna '' (no se pinta).
+function intelInformeFicha(){
+  // Abre el Informe de Gestión del cliente (HTML imprimible → PDF en el navegador).
+  if (typeof CID === 'undefined' || !CID) { ilusToast('Cliente no identificado', {type:'error'}); return; }
+  window.open('/mantenciones/api/clientes/' + CID + '/informe-ficha', '_blank');
+}
+
+function intelInformePostservicio(vid){
+  // Abre el Informe POST-SERVICIO de una visita realizada (imprimible → PDF).
+  if (!vid) { ilusToast('Visita no identificada', {type:'error'}); return; }
+  window.open('/mantenciones/api/visitas/' + vid + '/informe-postservicio', '_blank');
+}
+
+function _intelInformeTrimestral(it){
+  if (!it || typeof it !== 'object') return '';
+  const periodo = _intelEsc(it.periodo || '');
+  if (!periodo) return '';
+  const yaGenerado = it.ya_generado === true;
+  const url = (it.reporte_url && String(it.reporte_url).trim()) ? String(it.reporte_url).trim() : '';
+
+  // Cuerpo según estado (pendiente = CTA roja prominente; listo = estado verde).
+  let cuerpo;
+  if (!yaGenerado) {
+    cuerpo = `
+      <button type="button" class="btn btn-lg btn-ilus fw-bold" style="box-shadow:0 4px 14px rgba(220,38,38,.28)" onclick="intelInforme()">
+        <i class="bi bi-file-earmark-text me-2"></i>Generar informe de ${periodo}
+      </button>
+      <div style="font-size:.74rem;color:#6b7280;margin-top:8px;line-height:1.45">
+        El Agente analiza contrato, cláusulas, brechas y equipos, y lo deja en la pestaña Reportes.
+      </div>`;
+  } else {
+    const verBtn = url
+      ? `<button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="window.open('${_intelEsc(url)}','_blank')"><i class="bi bi-box-arrow-up-right me-1"></i>Ver informe</button>`
+      : `<button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="switchTab('reportes'); if (typeof cargarReportes==='function') cargarReportes()"><i class="bi bi-folder2-open me-1"></i>Ver informe</button>`;
+    cuerpo = `
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="fw-bold" style="color:#166534;font-size:.95rem"><i class="bi bi-check-circle-fill me-1"></i>Informe de ${periodo} generado</span>
+        ${verBtn}
+      </div>
+      <div style="font-size:.74rem;color:#9ca3af;margin-top:8px"><i class="bi bi-info-circle me-1"></i>Podrás generar otro al cambiar de trimestre.</div>`;
+  }
+
+  return `
+  <div class="intel-card mt-1" style="border:1px solid #fecdd3;background:linear-gradient(135deg,#fff,#fff5f5)">
+    <div class="intel-card-title"><i class="bi bi-clipboard-data" style="color:#dc2626"></i>Informe de gestión trimestral</div>
+    <div style="font-size:.86rem;color:#374151;margin-bottom:12px;line-height:1.5">Un informe por trimestre. Trimestre actual: <b>${periodo}</b>.</div>
+    ${cuerpo}
+  </div>`;
+}
+
+// ─── Historia (PASADO) vs Agenda (FUTURO): dos tarjetas diferenciadas ──
+// d.historia = {total, items:[{fecha,dias_atras,tipo_label,cobertura_label,
+//   costo,es_retroactiva,...}], ultima, dias_desde_ultima, gasto_total,
+//   por_cobertura:{...}, retroactivas}
+// d.agenda   = {total, items:[{fecha,dias_faltan,tipo_label,vencida,...}],
+//   proxima, dias_a_proxima, vencidas_programadas}
+// Diferenciación clara: la Historia va en verde/gris ("hecho", ícono
+// calendar-check), la Agenda en azul ("programado", ícono calendar-event).
+// Si una sección no viene en `d`, NO se pinta (cero datos inventados).
+// Reusa las clases existentes (intel-grid/intel-card/intel-chip/intel-tl).
+function _intelHistoriaAgenda(d){
+  const h = (d && typeof d.historia === 'object' && d.historia) ? d.historia : null;
+  const a = (d && typeof d.agenda   === 'object' && d.agenda)   ? d.agenda   : null;
+  if (!h && !a) return '';   // backend no mandó ninguna → no pintamos nada
+
+  // ── Tarjeta PASADO: Historia del cliente (verde/gris "hecho") ──
+  let cardHist = '';
+  if (h) {
+    const total = parseInt(h.total, 10) || 0;
+    const ddu   = (h.dias_desde_ultima == null) ? null : parseInt(h.dias_desde_ultima, 10);
+    const gasto = parseFloat(h.gasto_total) || 0;
+    const items = Array.isArray(h.items) ? h.items.slice(0, 8) : [];
+    const retro = parseInt(h.retroactivas, 10) || 0;
+
+    // Encabezado: total + última (hace N días).
+    let head = `<span class="intel-bignum" style="font-size:1.9rem">${total}</span>
+      <span style="font-size:.78rem;color:#6b7280;font-weight:600">gestión${total===1?'':'es'} realizada${total===1?'':'s'}</span>`;
+    let sub = '';
+    if (h.ultima) {
+      const dduTxt = (ddu == null) ? '' : (ddu <= 0 ? ' · hoy' : ` · hace ${ddu} día${ddu===1?'':'s'}`);
+      sub = `<div style="font-size:.74rem;color:#6b7280;margin-top:4px"><i class="bi bi-clock-history me-1" style="color:#16a34a"></i>Última: <b style="color:#0f172a">${_intelEsc(h.ultima)}</b>${_intelEsc(dduTxt)}</div>`;
+    }
+
+    // Chips de cobertura. "Tercero (fuga)" en ROJO (es fuga, dato sensible).
+    const cob = (h.por_cobertura && typeof h.por_cobertura === 'object') ? h.por_cobertura : {};
+    const cobChips = Object.keys(cob).map(k => {
+      const n = parseInt(cob[k], 10) || 0;
+      if (n <= 0) return '';
+      const esFuga = /fuga|tercero/i.test(k);
+      const style = esFuga
+        ? 'background:#fee2e2;color:#991b1b'
+        : 'background:#dcfce7;color:#166534';
+      const ico = esFuga ? 'box-arrow-up-right' : 'check2-circle';
+      return `<span class="intel-pill" style="${style}"><i class="bi bi-${ico}"></i>${_intelEsc(k)}: <b>${n}</b></span>`;
+    }).join('');
+
+    // Gasto total (solo si > 0).
+    const gastoLine = gasto > 0
+      ? `<div style="font-size:.74rem;color:#374151;margin:8px 0 2px"><i class="bi bi-cash-stack me-1" style="color:#6b7280"></i>Gasto histórico: <b style="color:#0f172a">${_intelCLP(gasto)}</b></div>`
+      : '';
+
+    // Lista de items (orden ya viene desc). Ícono verde bi-calendar-check.
+    let lista;
+    if (total === 0 || !items.length) {
+      lista = `<div style="font-size:.82rem;color:#6b7280;display:flex;align-items:center;gap:8px;padding:6px 0">
+        <i class="bi bi-inbox" style="font-size:1.2rem;color:#9ca3af"></i>
+        Aún no hay visitas registradas para este cliente.
+      </div>`;
+    } else {
+      lista = `<div class="intel-tl" style="margin-top:8px">${items.map(it => {
+        const costo = parseFloat(it.costo) || 0;
+        const da = (it.dias_atras == null) ? null : parseInt(it.dias_atras, 10);
+        const daTxt = (da == null) ? '' : (da <= 0 ? 'hoy' : `hace ${da} día${da===1?'':'s'}`);
+        const cobLbl = (it.cobertura_label && String(it.cobertura_label).trim()) ? String(it.cobertura_label).trim() : '';
+        const esFugaIt = /fuga|tercero/i.test(cobLbl);
+        const tipoLbl = (it.tipo_label && String(it.tipo_label).trim()) ? String(it.tipo_label).trim() : (it.titulo || 'Gestión');
+        return `<div class="intel-tl-row intel-tl-prox" style="padding-top:7px;padding-bottom:7px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <i class="bi bi-calendar-check" style="color:#16a34a"></i>
+            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
+            <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
+            ${it.es_retroactiva ? '<span class="intel-chip" style="background:#f3f4f6;color:#6b7280"><i class="bi bi-arrow-counterclockwise"></i>retroactiva</span>' : ''}
+            ${it.id ? `<button class="btn btn-sm btn-outline-danger py-0 px-2 ms-auto" style="font-size:.68rem;line-height:1.5" onclick="intelInformePostservicio(${it.id})" title="Generar informe post-servicio"><i class="bi bi-file-earmark-text"></i> Informe</button>` : ''}
+          </div>
+          <div style="font-size:.72rem;color:#6b7280;margin-top:2px;padding-left:22px">
+            ${cobLbl ? `<span style="color:${esFugaIt?'#dc2626':'#16a34a'};font-weight:700">${_intelEsc(cobLbl)}</span>` : ''}${(cobLbl && (costo>0||daTxt))?' · ':''}${costo>0 ? `<b style="color:#0f172a">${_intelCLP(costo)}</b>` : ''}${(costo>0&&daTxt)?' · ':''}${daTxt ? _intelEsc(daTxt) : ''}
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    cardHist = `
+    <div class="intel-card" style="border:1px solid #bbf7d0;background:linear-gradient(180deg,#fff,#f0fdf4)">
+      <div class="intel-card-title"><i class="bi bi-clipboard-check" style="color:#16a34a"></i>📋 Historia del cliente
+        <span class="intel-chip" style="background:#dcfce7;color:#166534">pasado</span>
+        ${retro > 0 ? `<span class="intel-chip" style="background:#f3f4f6;color:#6b7280">${retro} retroactiva${retro===1?'':'s'}</span>` : ''}
+      </div>
+      <div class="d-flex align-items-baseline gap-2">${head}</div>
+      ${sub}
+      ${cobChips ? `<div style="margin-top:10px">${cobChips}</div>` : ''}
+      ${gastoLine}
+      ${lista}
+    </div>`;
+  }
+
+  // ── Tarjeta FUTURO: Agenda (próximas) (azul "programado") ──
+  let cardAgenda = '';
+  if (a) {
+    const total = parseInt(a.total, 10) || 0;
+    const dap   = (a.dias_a_proxima == null) ? null : parseInt(a.dias_a_proxima, 10);
+    const venc  = parseInt(a.vencidas_programadas, 10) || 0;
+    const items = Array.isArray(a.items) ? a.items.slice(0, 8) : [];
+
+    let head = `<span class="intel-bignum" style="font-size:1.9rem;color:#1e40af">${total}</span>
+      <span style="font-size:.78rem;color:#6b7280;font-weight:600">programada${total===1?'':'s'}</span>`;
+    let sub = '';
+    if (a.proxima) {
+      const dapTxt = (dap == null) ? '' : (dap <= 0 ? ' · hoy' : ` · en ${dap} día${dap===1?'':'s'}`);
+      sub = `<div style="font-size:.74rem;color:#6b7280;margin-top:4px"><i class="bi bi-calendar-event me-1" style="color:#3b82f6"></i>Próxima: <b style="color:#0f172a">${_intelEsc(a.proxima)}</b>${_intelEsc(dapTxt)}</div>`;
+    }
+
+    // Alerta de programadas ya vencidas (ámbar/roja).
+    const alerta = venc > 0
+      ? `<div style="margin-top:10px;font-size:.78rem;font-weight:700;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:8px 11px">
+           <i class="bi bi-exclamation-triangle-fill me-1" style="color:#dc2626"></i>${venc} programada${venc===1?'':'s'} ya vencida${venc===1?'':'s'}
+         </div>`
+      : '';
+
+    // Lista de items. Ícono azul bi-calendar-event.
+    let lista;
+    if (total === 0 || !items.length) {
+      lista = `<div style="font-size:.82rem;color:#6b7280;display:flex;align-items:flex-start;gap:8px;padding:6px 0">
+        <i class="bi bi-calendar-x" style="font-size:1.2rem;color:#9ca3af;flex-shrink:0"></i>
+        <span>No hay visitas programadas. Genera una OT desde el tracking de fechas.</span>
+      </div>`;
+    } else {
+      lista = `<div class="intel-tl" style="margin-top:8px">${items.map(it => {
+        const df = (it.dias_faltan == null) ? null : parseInt(it.dias_faltan, 10);
+        const esVencida = (it.vencida === true) || (df != null && df < 0);
+        const tipoLbl = (it.tipo_label && String(it.tipo_label).trim()) ? String(it.tipo_label).trim() : (it.titulo || 'Mantención');
+        let badge;
+        if (esVencida) {
+          const atraso = (df != null && df < 0) ? Math.abs(df) : null;
+          badge = `<span class="intel-chip" style="background:#fee2e2;color:#991b1b"><i class="bi bi-exclamation-circle-fill"></i>vencida${atraso!=null?` hace ${atraso} día${atraso===1?'':'s'}`:''}</span>`;
+        } else {
+          const enTxt = (df == null) ? 'programada' : (df <= 0 ? 'hoy' : `en ${df} día${df===1?'':'s'}`);
+          badge = `<span class="intel-chip" style="background:#dbeafe;color:#1e40af"><i class="bi bi-hourglass-split"></i>${_intelEsc(enTxt)}</span>`;
+        }
+        return `<div class="intel-tl-row ${esVencida?'intel-tl-vencida':'intel-tl-proy'}" style="padding-top:7px;padding-bottom:7px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <i class="bi bi-calendar-event" style="color:${esVencida?'#dc2626':'#3b82f6'}"></i>
+            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
+            <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
+            ${badge}
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    cardAgenda = `
+    <div class="intel-card ${venc > 0 ? 'intel-card-danger' : ''}" style="${venc > 0 ? '' : 'border:1px solid #bfdbfe;background:linear-gradient(180deg,#fff,#eff6ff)'}">
+      <div class="intel-card-title"><i class="bi bi-calendar-week" style="color:#3b82f6"></i>🗓️ Agenda (próximas)
+        <span class="intel-chip" style="background:#dbeafe;color:#1e40af">futuro</span>
+      </div>
+      <div class="d-flex align-items-baseline gap-2">${head}</div>
+      ${sub}
+      ${alerta}
+      ${lista}
+    </div>`;
+  }
+
+  // Lado a lado en desktop (intel-grid = 2 col → 1 col en ≤768px).
+  return `<div class="intel-grid mt-1">${cardHist}${cardAgenda}</div>`;
+}
+
+// ─── Tarjeta "💰 Cierre de facturación" ────────────────────────────
+// d.facturacion = {pendientes:int, items:[{id,fecha,dias,tipo_label,
+//   estado_facturacion,ef_label,cobertura_label}], al_dia:bool,
+//   mas_antigua_dias:int|null}
+// Un servicio realizado NO está cerrado hasta que se factura (o se marca
+// "no aplica"). Aquí solo mostramos el ESTADO del cierre — CERO montos
+// (por ahora no cotizamos). Determinista: si no viene el dict, no pinta.
+// Reusa intel-card / intel-card-title / intel-tl / intel-chip / intel-bignum.
+function _intelFacturacion(d){
+  const f = (d && typeof d.facturacion === 'object' && d.facturacion) ? d.facturacion : null;
+  if (!f) return '';   // backend no mandó facturación → no pintamos nada
+
+  // Botón "Ver facturación": si existe la pestaña Finanzas, cambiamos a
+  // ella (switchTab revienta si el tab no existe en el DOM, por eso el
+  // guard); si no, navegamos a la ficha del cliente.
+  const verBtn = `<button type="button" class="btn btn-sm btn-outline-dark fw-bold"
+        onclick="if (document.querySelector('.ftab-btn[data-tab=&quot;finanzas&quot;]')) { switchTab('finanzas'); if (typeof cargarFinanzas==='function') cargarFinanzas(); } else { window.location.href='/mantenciones/clientes/'+CID; }">
+        <i class="bi bi-receipt me-1"></i>Ver facturación</button>`;
+
+  const pend = parseInt(f.pendientes, 10) || 0;
+
+  // ── Caso AL DÍA: tarjeta verde sobria ──
+  if (pend <= 0 && f.al_dia === true) {
+    return `
+    <div class="intel-card mt-1" style="border:1px solid #bbf7d0;background:linear-gradient(180deg,#fff,#f0fdf4)">
+      <div class="intel-card-title"><i class="bi bi-cash-coin" style="color:#16a34a"></i>💰 Cierre de facturación
+        <span class="intel-chip" style="background:#dcfce7;color:#166534">al día</span>
+      </div>
+      <div style="font-size:.9rem;color:#166534;font-weight:700;display:flex;align-items:center;gap:8px">
+        <i class="bi bi-check-circle-fill" style="font-size:1.15rem"></i>
+        Facturación al día — no hay servicios pendientes de cerrar.
+      </div>
+    </div>`;
+  }
+
+  // ── Caso PENDIENTES: tarjeta en tono ALERTA (rojo/ámbar) ──
+  if (pend > 0) {
+    const masAnt = (f.mas_antigua_dias == null) ? null : parseInt(f.mas_antigua_dias, 10);
+    const items  = Array.isArray(f.items) ? f.items.slice(0, 8) : [];
+
+    // Color del estado de facturación de cada item (Sin cotizar = rojo,
+    // Cotizado = ámbar, Con OC = azul). Lo decide ef_label, no inventamos.
+    const efStyle = (lbl) => {
+      const s = String(lbl || '').toLowerCase();
+      if (/sin\s*cotiz/.test(s)) return 'background:#fee2e2;color:#991b1b';
+      if (/cotizad/.test(s))     return 'background:#fff8e1;color:#b45309';
+      if (/oc|orden\s*de\s*compra/.test(s)) return 'background:#dbeafe;color:#1e40af';
+      return 'background:#f3f4f6;color:#6b7280';
+    };
+
+    let lista;
+    if (!items.length) {
+      lista = '';
+    } else {
+      lista = `<div class="intel-tl" style="margin-top:10px">${items.map(it => {
+        const da = (it.dias == null) ? null : parseInt(it.dias, 10);
+        const daTxt = (da == null) ? '' : (da <= 0 ? 'hoy' : `hace ${da} día${da===1?'':'s'}`);
+        const tipoLbl = (it.tipo_label && String(it.tipo_label).trim()) ? String(it.tipo_label).trim() : 'Servicio';
+        const efLbl   = (it.ef_label && String(it.ef_label).trim()) ? String(it.ef_label).trim() : '';
+        const cobLbl  = (it.cobertura_label && String(it.cobertura_label).trim()) ? String(it.cobertura_label).trim() : '';
+        return `<div class="intel-tl-row intel-tl-vencida" style="padding-top:7px;padding-bottom:7px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <i class="bi bi-receipt" style="color:#dc2626"></i>
+            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
+            <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
+            ${efLbl ? `<span class="intel-chip" style="${efStyle(efLbl)}">${_intelEsc(efLbl)}</span>` : ''}
+          </div>
+          <div style="font-size:.72rem;color:#6b7280;margin-top:2px;padding-left:22px">
+            ${cobLbl ? `<span style="font-weight:700">${_intelEsc(cobLbl)}</span>` : ''}${(cobLbl && daTxt)?' · ':''}${daTxt ? _intelEsc(daTxt) : ''}
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    const masAntLine = (masAnt != null)
+      ? `<div style="font-size:.78rem;color:#991b1b;font-weight:700;margin-top:6px"><i class="bi bi-hourglass-bottom me-1"></i>El más antiguo lleva ${masAnt} día${masAnt===1?'':'s'}.</div>`
+      : '';
+
+    return `
+    <div class="intel-card intel-card-danger mt-1">
+      <div class="intel-card-title"><i class="bi bi-cash-coin" style="color:#dc2626"></i>💰 Cierre de facturación
+        <span class="intel-chip" style="background:#fee2e2;color:#991b1b">proceso abierto</span>
+      </div>
+      <div class="d-flex align-items-baseline gap-2">
+        <span class="intel-bignum" style="font-size:1.9rem;color:#dc2626">${pend}</span>
+        <span style="font-size:.82rem;color:#991b1b;font-weight:700">servicio${pend===1?'':'s'} realizado${pend===1?'':'s'} SIN facturar</span>
+      </div>
+      ${masAntLine}
+      <div style="font-size:.82rem;color:#374151;margin-top:8px;line-height:1.5">
+        Un servicio no termina hasta facturarlo (o marcarlo <b>"no aplica"</b>).
+      </div>
+      ${lista}
+      <div class="mt-3">${verBtn}</div>
+    </div>`;
+  }
+
+  // Sin pendientes pero al_dia tampoco true → no afirmamos nada.
+  return '';
+}
+
+// ─── Sección "🧭 Cómo trabaja tu Agente" ───────────────────────────
+// d.principios = ["...","..."] → bullets sobrios (gris) que refuerzan que
+// el Agente NO inventa y qué revisa. Es la "ficha de instrucciones" del
+// Agente; va al FINAL del panel. Si no viene la lista, retorna ''.
+function _intelPrincipios(d){
+  const arr = (d && Array.isArray(d.principios)) ? d.principios.filter(x => x != null && String(x).trim()) : [];
+  if (!arr.length) return '';
+
+  const bullets = arr.map(p => `
+    <li style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;font-size:.82rem;color:#4b5563;line-height:1.5">
+      <i class="bi bi-check2" style="color:#6b7280;font-size:.95rem;margin-top:2px;flex-shrink:0"></i>
+      <span>${_intelEsc(String(p).trim())}</span>
+    </li>`).join('');
+
+  return `
+  <div class="intel-card mt-3" style="border:1px solid #e5e7eb;background:#fafafa">
+    <div class="intel-card-title" style="color:#6b7280"><i class="bi bi-shield-check" style="color:#6b7280"></i>🧭 Cómo trabaja tu Agente</div>
+    <div style="font-size:.76rem;color:#9ca3af;margin-bottom:6px;line-height:1.5">
+      Estas son las reglas del Agente: trabaja solo con datos reales de la ficha.
+    </div>
+    <ul style="list-style:none;margin:0;padding:0">${bullets}</ul>
+  </div>`;
+}
+
+// POST /intel/informe-trimestral → genera el informe del trimestre actual y
+// lo deja en Reportes. Mismo patrón que intelAccion (ilusLoader + ilusToast +
+// re-render con la `intel` devuelta). Determinista en el backend: CERO IA aquí.
+async function intelInforme(){
+  const ok = await ilusConfirm({
+    title: 'Generar informe trimestral',
+    message: '¿Generar el informe de gestión de este trimestre y dejarlo en Reportes?',
+    okLabel: 'Generar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+
+  if (window.ilusLoader) { try { ilusLoader.show('Generando informe…'); } catch(e){} }
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/intel/informe-trimestral`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    let data = {};
+    try { data = await r.json(); } catch(e){ data = {}; }
+    if (window.ilusLoader) { try { ilusLoader.hide(); } catch(e){} }
+
+    // Éxito: re-render del panel con la inteligencia devuelta + avisos.
+    if (r.ok && data && data.ok) {
+      if (data.intel && typeof data.intel === 'object') {
+        _intelCache = data.intel;
+        _intelRender(data.intel);
+      }
+      if (window.ilusToast) {
+        try { ilusToast('✓ Informe ' + (data.periodo || 'trimestral') + ' generado', { type:'success' }); } catch(e){}
+        try { ilusToast('Disponible en la pestaña Reportes', { type:'info' }); } catch(e){}
+      }
+      return;
+    }
+    // Ya existe el informe de este trimestre (HTTP 409 / ya_generado).
+    if (r.status === 409 || (data && data.ya_generado)) {
+      if (window.ilusToast) { try { ilusToast((data && data.error) || 'Ya existe el informe de este trimestre', { type:'warning' }); } catch(e){} }
+      return;
+    }
+    // Otro error: modal con detalle amigable.
+    await ilusAlert({
+      title: 'No se pudo generar',
+      message: (data && data.error) || 'Intenta de nuevo',
+      type: 'error',
+    });
+  } catch(e) {
+    if (window.ilusLoader) { try { ilusLoader.hide(); } catch(e2){} }
+    const msg = (e && e.message) ? e.message : 'Error de conexión';
+    if (window.ilusToast) { try { ilusToast(msg, { type:'error' }); } catch(e2){} }
+  }
+}
+
+// ─── AGENTE PROACTIVO: consultas accionables + desglose de score ───
+// El backend devuelve `consultas` (preguntas que el agente necesita que
+// resuelvas) y `score_detalle` (cómo se compone el número de salud).
+// Aquí solo renderizamos + disparamos POST /intel/accion. Mismo estilo
+// que el resto del panel (paleta #dc2626/#0a0a0a, escape XSS _intelEsc).
+
+// Meta visual por severidad de consulta.
+const _INTEL_SEV = {
+  alta:  { color:'#dc2626', bg:'#fef2f2', icon:'exclamation-octagon-fill', chipBg:'#fee2e2', chipFg:'#991b1b', lbl:'Urgente' },
+  media: { color:'#f59e0b', bg:'#fffbeb', icon:'exclamation-triangle-fill', chipBg:'#fff8e1', chipFg:'#92400e', lbl:'Importante' },
+  baja:  { color:'#3b82f6', bg:'#eff6ff', icon:'info-circle-fill', chipBg:'#dbeafe', chipFg:'#1e40af', lbl:'Oportunidad' },
+};
+function _intelSevMeta(sev){ return _INTEL_SEV[(sev||'baja').toLowerCase()] || _INTEL_SEV.baja; }
+
+// ¿Es una consulta de "atención" (va arriba) o de "oportunidad" (va abajo)?
+function _intelEsAtencion(c){
+  const sev = String((c && c.severidad) || '').toLowerCase();
+  const tipo = String((c && c.tipo) || '').toLowerCase();
+  return (sev === 'alta' || sev === 'media') && tipo !== 'oportunidad';
+}
+
+// Desglose del score → <details> "¿Por qué este número?" (dentro del hero oscuro).
+function _intelScoreDetalle(sd, accentColor){
+  sd = sd || {};
+  const comps = Array.isArray(sd.componentes) ? sd.componentes : [];
+  if (!comps.length && !sd.formula) return '';
+  const rows = comps.map(c => {
+    const ok = String(c.estado || '').toLowerCase() === 'ok';
+    const col = ok ? '#86efac' : '#fca5a5';
+    const ic  = ok ? 'check-circle-fill' : 'dash-circle-fill';
+    const peso = (c.peso == null || c.peso === '') ? '' :
+      `<span style="font-size:.66rem;font-weight:800;color:#9ca3af;flex-shrink:0">${(parseInt(c.peso,10) >= 0 ? '+' : '')}${parseInt(c.peso,10)||0}</span>`;
+    return `
+      <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07)">
+        <i class="bi bi-${ic}" style="color:${col};font-size:.95rem;flex-shrink:0;margin-top:1px"></i>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:.78rem;font-weight:700;color:#f3f4f6">${_intelEsc(c.factor)}</div>
+          ${c.detalle ? `<div style="font-size:.72rem;color:#9ca3af;line-height:1.4">${_intelEsc(c.detalle)}</div>` : ''}
+        </div>
+        ${peso}
+      </div>`;
+  }).join('');
+  return `
+  <details class="intel-score-detalle" style="margin-top:12px">
+    <summary style="cursor:pointer;font-size:.76rem;font-weight:800;color:${accentColor||'#fff'};list-style:none;display:inline-flex;align-items:center;gap:6px">
+      <i class="bi bi-question-circle"></i>¿Por qué este número?
+    </summary>
+    <div style="margin-top:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:10px 13px">
+      ${rows || ''}
+      ${sd.formula ? `<div style="margin-top:9px;font-size:.7rem;color:#9ca3af;line-height:1.45"><i class="bi bi-calculator me-1"></i>${_intelEsc(sd.formula)}</div>` : ''}
+    </div>
+  </details>`;
+}
+
+// Botones / inputs de las acciones de UNA consulta.
+function _intelAccionBtns(c){
+  const acciones = Array.isArray(c.acciones) ? c.acciones : [];
+  if (!acciones.length) return '';
+  const cid = _intelEsc(c.id == null ? '' : c.id);
+  const sev = _intelSevMeta(c.severidad);
+  return `<div class="d-flex flex-wrap align-items-center gap-2 mt-2">` + acciones.map((a, idx) => {
+    const tipo = String(a.accion || a.tipo || 'link').toLowerCase();
+    const label = _intelEsc(a.label || 'Aplicar');
+    // 1) link → simple <a href>, NO llama intelAccion.
+    if (tipo === 'link' && a.url) {
+      return `<a href="${_intelEsc(a.url)}" class="btn btn-xs btn-outline-dark fw-bold"><i class="bi bi-box-arrow-up-right me-1"></i>${label}</a>`;
+    }
+    // 2) inputs numéricos (set_frecuencia / set_gratuitas).
+    if (tipo === 'set_frecuencia' || tipo === 'set_gratuitas') {
+      const inpId = `intelInp_${cid}_${idx}`;
+      const ph = _intelEsc(a.placeholder || (tipo === 'set_frecuencia' ? 'Meses' : 'Cantidad'));
+      return `
+        <span class="d-inline-flex align-items-center gap-1">
+          <input type="number" id="${inpId}" min="1" step="1" placeholder="${ph}" class="form-control form-control-sm"
+                 style="width:96px;height:32px;font-size:.82rem" inputmode="numeric">
+          <button type="button" class="btn btn-xs btn-ilus fw-bold"
+                  onclick="intelAccion('${_intelEsc(tipo)}', {__input:'${inpId}'})">${label}</button>
+        </span>`;
+    }
+    // 3) registrar visita retroactiva (lleva fecha).
+    if (tipo === 'registrar_visita_retro') {
+      return `<button type="button" class="btn btn-xs btn-ilus fw-bold"
+                onclick="intelAccion('registrar_visita_retro', {fecha:'${_intelEsc(a.fecha || '')}'})">
+                <i class="bi bi-check-lg me-1"></i>${label}</button>`;
+    }
+    // 3b) generar OT desde el tracking de fechas (lleva fecha). Botón PROMINENTE.
+    if (tipo === 'programar_ot') {
+      return `<button type="button" class="btn btn-sm btn-ilus fw-bold intel-btn-ot"
+                onclick="intelAccion('programar_ot', {fecha:'${_intelEsc(a.fecha || '')}'})">
+                <i class="bi bi-clipboard-plus me-1"></i>${label || 'Generar OT ahora'}</button>`;
+    }
+    // 4) descartar consulta (sigue pendiente / no aplica).
+    if (tipo === 'descartar_consulta') {
+      return `<button type="button" class="btn btn-xs btn-outline-secondary fw-bold"
+                onclick="intelAccion('descartar_consulta', {ref:'${_intelEsc(a.ref || '')}', __hideCard:'intelCard_${cid}'})">
+                ${label}</button>`;
+    }
+    // Fallback: acción genérica sin input (manda solo la acción).
+    return `<button type="button" class="btn btn-xs ${sev.color === '#dc2626' ? 'btn-ilus' : 'btn-outline-dark'} fw-bold"
+              onclick="intelAccion('${_intelEsc(tipo)}', {})">${label}</button>`;
+  }).join('') + `</div>`;
+}
+
+// Campos a rellenar inline (tipo:"completar_inline"). Cada campo es
+// {campo, label, tipo}. Renderiza label + <input> + botón "Guardar" que
+// dispara intelAccion('set_campo_cliente', {campo, valor}). El dueño lo pidió:
+// "este cliente no tiene contactos, pásamelos por acá".
+function _intelCamposInline(c){
+  const campos = Array.isArray(c.campos) ? c.campos : [];
+  if (!campos.length) return '';
+  const cid = _intelEsc(c.id == null ? '' : c.id);
+  return `<div class="d-flex flex-column gap-2 mt-2">` + campos.map((f, idx) => {
+    const campo = _intelEsc(f.campo == null ? '' : f.campo);
+    if (!campo) return '';
+    const label = _intelEsc(f.label || f.campo || 'Dato');
+    const itype = _intelEsc((f.tipo || 'text')).toLowerCase();
+    const inpId = `intelCampo_${cid}_${idx}`;
+    return `
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <label for="${inpId}" style="font-size:.82rem;font-weight:700;color:#374151;min-width:120px">${label}</label>
+        <input type="${itype}" id="${inpId}" placeholder="${label}" class="form-control form-control-sm"
+               style="flex:1;min-width:160px;max-width:280px;height:32px;font-size:.85rem">
+        <button type="button" class="btn btn-xs btn-ilus fw-bold"
+                onclick="intelAccion('set_campo_cliente', {campo:'${campo}', __input:'${inpId}', __inputAsValor:1})">
+          <i class="bi bi-check-lg me-1"></i>Guardar</button>
+      </div>`;
+  }).join('') + `</div>`;
+}
+
+// Tarjeta de UNA consulta (pregunta + detalle + acciones).
+function _intelConsultaCard(c){
+  const sev = _intelSevMeta(c.severidad);
+  const cid = _intelEsc(c.id == null ? '' : c.id);
+  const esInline = String((c && c.tipo) || '').toLowerCase() === 'completar_inline';
+  return `
+  <div class="intel-consulta" id="intelCard_${cid}" style="border-left:4px solid ${sev.color};background:${sev.bg}">
+    <i class="bi bi-${sev.icon}" style="font-size:1.35rem;color:${sev.color};flex-shrink:0;margin-top:1px"></i>
+    <div style="flex:1;min-width:0">
+      <div class="d-flex align-items-start justify-content-between gap-2 flex-wrap">
+        <div class="fw-bold" style="font-size:.92rem;color:#0f172a;line-height:1.35">${_intelEsc(c.pregunta)}</div>
+        <span class="intel-chip" style="background:${sev.chipBg};color:${sev.chipFg};flex-shrink:0">${_intelEsc(sev.lbl)}</span>
+      </div>
+      ${c.detalle ? `<div style="font-size:.8rem;color:#6b7280;line-height:1.45;margin-top:3px">${_intelEsc(c.detalle)}</div>` : ''}
+      ${esInline ? _intelCamposInline(c) : ''}
+      ${_intelAccionBtns(c)}
+    </div>
+  </div>`;
+}
+
+// Sección superior "El agente necesita tu ayuda" (severidad alta/media).
+// Si no hay consultas accionables → estado positivo.
+function _intelConsultas(consultas){
+  const list = (Array.isArray(consultas) ? consultas : []).filter(_intelEsAtencion);
+  if (!list.length) {
+    return `
+    <div class="intel-agente-ok">
+      <i class="bi bi-robot" style="font-size:1.5rem;color:#16a34a;flex-shrink:0"></i>
+      <div>
+        <div class="fw-bold" style="font-size:.92rem;color:#166534">✓ Sin pendientes del agente</div>
+        <div style="font-size:.8rem;color:#15803d">El Agente Proactivo no necesita tu ayuda con esta ficha por ahora.</div>
+      </div>
+    </div>`;
+  }
+  // Orden: alta primero, luego media.
+  const rank = { alta:0, media:1 };
+  list.sort((a,b) => (rank[(a.severidad||'').toLowerCase()] ?? 9) - (rank[(b.severidad||'').toLowerCase()] ?? 9));
+  return `
+  <div class="intel-agente-box">
+    <div class="intel-agente-head">
+      <i class="bi bi-bell-fill" style="color:#dc2626"></i>
+      <span>El agente necesita tu ayuda</span>
+      <span class="intel-chip" style="background:#fee2e2;color:#991b1b">${list.length}</span>
+    </div>
+    ${list.map(_intelConsultaCard).join('')}
+  </div>`;
+}
+
+// Sección inferior "Oportunidades" (severidad baja / tipo oportunidad).
+function _intelOportunidades(consultas){
+  const list = (Array.isArray(consultas) ? consultas : []).filter(c => !_intelEsAtencion(c));
+  if (!list.length) return '';
+  return `
+  <div class="intel-card mt-1" style="border:1px solid #bfdbfe;background:linear-gradient(135deg,#fff,#eff6ff)">
+    <div class="intel-card-title"><i class="bi bi-lightbulb" style="color:#3b82f6"></i>Oportunidades</div>
+    ${list.map(_intelConsultaCard).join('')}
+  </div>`;
+}
+
+// POST /intel/accion → aplica la respuesta del usuario a una consulta del
+// agente y re-renderiza el panel al instante con la inteligencia devuelta.
+//   accion: string ("set_frecuencia" | "set_gratuitas" | "registrar_visita_retro"
+//           | "programar_ot" | "set_campo_cliente" | "descartar_consulta" | ...).
+//   params: { ...extra }. Soporta meta-claves NO enviadas al backend:
+//     __input        → id de un <input>; su valor se manda como `valor`.
+//     __inputAsValor → si está, el valor del __input se trata como TEXTO
+//                      (no número): se valida no-vacío (para tel/email/text).
+//     __hideCard     → id de la tarjeta a ocultar de inmediato (descartar).
+async function intelAccion(accion, params){
+  params = params || {};
+  const inputId = params.__input;
+  const asTexto = !!params.__inputAsValor;
+  const hideCardId = params.__hideCard;
+  const body = { accion };
+  // Copiamos params reales (saltando las meta-claves internas).
+  Object.keys(params).forEach(k => {
+    if (k !== '__input' && k !== '__inputAsValor' && k !== '__hideCard') body[k] = params[k];
+  });
+
+  // Inputs: leer + validar antes de enviar.
+  if (inputId) {
+    const el = document.getElementById(inputId);
+    if (asTexto) {
+      // Campos de texto (tel/email/contacto): validar NO vacío.
+      const v = el ? String(el.value || '').trim() : '';
+      if (!v) {
+        if (window.ilusToast) { try { ilusToast('Completa el campo antes de guardar', { type:'warning' }); } catch(e){} }
+        if (el) { try { el.focus(); } catch(e){} }
+        return;
+      }
+      body.valor = v;
+    } else {
+      // Inputs numéricos: validar > 0.
+      const n = el ? parseInt(el.value, 10) : NaN;
+      if (!Number.isFinite(n) || n <= 0) {
+        if (window.ilusToast) { try { ilusToast('Ingresa un número mayor que 0', { type:'warning' }); } catch(e){} }
+        if (el) { try { el.focus(); } catch(e){} }
+        return;
+      }
+      body.valor = n;
+    }
+  }
+
+  // Descartar: ocultar la tarjeta de inmediato (feedback óptimo).
+  if (hideCardId) {
+    const card = document.getElementById(hideCardId);
+    if (card) card.style.display = 'none';
+  }
+
+  if (window.ilusLoader) { try { ilusLoader.show('Aplicando…'); } catch(e){} }
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/intel/accion`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify(body),
+    });
+    let data = {};
+    try { data = await r.json(); } catch(e){ data = {}; }
+    if (!r.ok || !data || data.error || data.ok === false) {
+      // Falló: si habíamos ocultado la tarjeta, restaurarla.
+      if (hideCardId) { const card = document.getElementById(hideCardId); if (card) card.style.display = ''; }
+      const msg = (data && data.error) ? data.error : ('El servidor respondió ' + r.status);
+      if (window.ilusToast) { try { ilusToast(msg, { type:'error' }); } catch(e){} }
+      return;
+    }
+    // Éxito: re-render instantáneo con la inteligencia devuelta + refrescar cache.
+    if (data.intel && typeof data.intel === 'object') {
+      _intelCache = data.intel;
+      _intelRender(data.intel);
+    }
+    if (window.ilusToast) { try { ilusToast(data.mensaje || '✓ Listo', { type:'success' }); } catch(e){} }
+  } catch(e) {
+    if (hideCardId) { const card = document.getElementById(hideCardId); if (card) card.style.display = ''; }
+    const msg = (e && e.message) ? e.message : 'Error de conexión';
+    if (window.ilusToast) { try { ilusToast(msg, { type:'error' }); } catch(e2){} }
+  } finally {
+    if (window.ilusLoader) { try { ilusLoader.hide(); } catch(e){} }
+  }
+}
+
 // Marca el toggle de garantía del informe (Aplica/No aplica).
 function _repSetGarantia(aplica) {
   const si = document.getElementById('rep_gar_si');
@@ -7737,6 +8711,14 @@ function _repToggleExportBtns(enabled) {
       window.requestIdleCallback(() => { try { cargarReportes(); } catch(e){} }, { timeout: 4000 });
     } else {
       setTimeout(() => { try { cargarReportes(); } catch(e){} }, 2000);
+    }
+    // FIX 2026-06-06 (Daniel: el Agente quedaba "procesando" hasta Recalcular):
+    // autocargar el panel del Agente en idle, igual que Reportes, para que el
+    // diagnóstico esté listo aunque el tab "intel" sea el activo al cargar la ficha.
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(() => { try { cargarInteligencia(); } catch(e){} }, { timeout: 4500 });
+    } else {
+      setTimeout(() => { try { cargarInteligencia(); } catch(e){} }, 2400);
     }
     // 2026-05-28 (Daniel — FASE 3) Polling de respaldo: subido de 800ms
     // a 5000ms. El MutationObserver de arriba ya detecta cambios en repId

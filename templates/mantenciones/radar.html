@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}Radar de mantenciones — ILUS{% endblock %}
+
+{% block content %}
+<style>
+  .rd-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+    gap:10px;margin-bottom:14px}
+  .rd-kpi{background:#fff;border:1px solid #eaecf0;border-radius:11px;
+    padding:12px 14px;display:flex;flex-direction:column;gap:2px;border-left:4px solid #cbd5e1}
+  .rd-kpi .num{font-size:1.5rem;font-weight:900;line-height:1;font-variant-numeric:tabular-nums}
+  .rd-kpi .lbl{font-size:.66rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+  .rd-kpi.alto{border-left-color:#dc2626}.rd-kpi.alto .num{color:#dc2626}
+  .rd-kpi.medio{border-left-color:#f59e0b}.rd-kpi.medio .num{color:#b45309}
+  .rd-kpi.bajo{border-left-color:#16a34a}.rd-kpi.bajo .num{color:#16a34a}
+  .rd-kpi.exp{border-left-color:#0a0a0a}.rd-kpi.exp .num{color:#0f172a}
+
+  .rd-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;
+    padding:10px 12px;margin-bottom:12px}
+
+  .rd-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow:hidden}
+  table.rd-table{width:100%;border-collapse:collapse;font-size:.86rem}
+  table.rd-table thead th{background:#0a0a0a;color:#fff;font-weight:700;font-size:.7rem;
+    text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;text-align:left;white-space:nowrap}
+  table.rd-table thead th.num,table.rd-table tbody td.num{text-align:right}
+  table.rd-table tbody td{padding:10px 12px;border-top:1px solid #f1f3f5;vertical-align:middle}
+  table.rd-table tbody tr{transition:background .12s}
+  table.rd-table tbody tr:hover{background:#fafafa}
+  .rd-cli{font-weight:800;color:#0f172a}
+  .rd-cli-id{font-size:.68rem;color:#9ca3af;font-weight:600}
+
+  .rd-score{display:inline-flex;align-items:center;justify-content:center;min-width:38px;
+    padding:3px 9px;border-radius:7px;font-weight:900;font-size:.82rem;font-variant-numeric:tabular-nums}
+  .score-good{background:#dcfce7;color:#166534}
+  .score-mid {background:#fef3c7;color:#92400e}
+  .score-bad {background:#fee2e2;color:#991b1b}
+
+  .rd-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:50px;
+    font-size:.66rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+  .chip-alto {background:#fee2e2;color:#991b1b}
+  .chip-medio{background:#fef3c7;color:#92400e}
+  .chip-bajo {background:#dcfce7;color:#166534}
+
+  .rd-brecha{font-weight:800;color:#dc2626;font-variant-numeric:tabular-nums}
+  .rd-brecha.zero{color:#9ca3af;font-weight:600}
+  .rd-exp{font-weight:800;color:#0f172a;font-variant-numeric:tabular-nums}
+  .rd-cal{font-size:.68rem;color:#9ca3af}
+
+  .rd-go{color:var(--ilus-red);font-weight:700;white-space:nowrap;text-decoration:none}
+  .rd-go:hover{text-decoration:underline}
+
+  .rd-calidad{display:inline-block;font-size:.62rem;padding:1px 7px;border-radius:50px;
+    background:#f3f4f6;color:#6b7280;font-weight:700;margin-left:6px}
+
+  .empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;
+    padding:50px 30px;text-align:center}
+  .empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px}
+
+  @media(max-width:680px){
+    table.rd-table thead{display:none}
+    table.rd-table,table.rd-table tbody,table.rd-table tr,table.rd-table td{display:block;width:100%}
+    table.rd-table tr{border-top:3px solid #f1f3f5;padding:6px 0}
+    table.rd-table tbody td{border-top:none;padding:5px 14px;text-align:left !important}
+    table.rd-table tbody td::before{content:attr(data-l);display:block;font-size:.62rem;
+      text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;font-weight:700;margin-bottom:1px}
+  }
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-radar me-2"></i>Radar de mantenciones</h4>
+    <div class="sub">Clientes en riesgo, ordenados por urgencia. Detecta brechas de mantenciones gratuitas y exposición económica.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('mant_configuracion') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-sliders me-1"></i>Reglas del Agente
+    </a>
+    <button class="btn btn-sm btn-ilus fw-bold" onclick="recalcular()">
+      <i class="bi bi-arrow-repeat me-1"></i>Recalcular todo
+    </button>
+  </div>
+</div>
+
+<div class="rd-kpi-row">
+  <div class="rd-kpi alto"><div class="num" id="kpi_alto">—</div><div class="lbl"><i class="bi bi-exclamation-octagon me-1"></i>Riesgo alto</div></div>
+  <div class="rd-kpi medio"><div class="num" id="kpi_medio">—</div><div class="lbl"><i class="bi bi-exclamation-triangle me-1"></i>Riesgo medio</div></div>
+  <div class="rd-kpi bajo"><div class="num" id="kpi_bajo">—</div><div class="lbl"><i class="bi bi-check-circle me-1"></i>Riesgo bajo</div></div>
+  <div class="rd-kpi exp"><div class="num" id="kpi_exp">—</div><div class="lbl"><i class="bi bi-cash-stack me-1"></i>Exposición total</div></div>
+</div>
+
+<div class="rd-filtros">
+  <div class="row g-2 align-items-end">
+    <div class="col-6 col-md-3">
+      <label class="form-label small fw-semibold mb-1">Nivel de riesgo</label>
+      <select id="f_riesgo" class="form-select form-select-sm" onchange="cargar()">
+        <option value="">Todos los niveles</option>
+        <option value="alto">Alto</option>
+        <option value="medio">Medio</option>
+        <option value="bajo">Bajo</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-3 d-flex align-items-end">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="f_brecha" onchange="cargar()">
+        <label class="form-check-label small" for="f_brecha">Solo con brecha de gratuitas</label>
+      </div>
+    </div>
+    <div class="col-12 col-md-3 ms-md-auto text-md-end">
+      <span class="small text-muted" id="rd_count"></span>
+    </div>
+  </div>
+</div>
+
+<div id="rd_root">
+  <div class="text-center py-5 text-muted">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando radar…
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtCLP = (n) => {
+  if (n === null || n === undefined || isNaN(n)) return '$0';
+  return '$' + Math.round(Number(n)).toLocaleString('es-CL');
+};
+const fmtFecha = (d) => {
+  if (!d) return '—';
+  const s = String(d).slice(0,10);
+  const [y,m,dd] = s.split('-');
+  return (y && m && dd) ? `${dd}/${m}/${y}` : esc(d);
+};
+
+function scoreCls(s){
+  const n = Number(s);
+  if (isNaN(n)) return 'score-mid';
+  if (n >= 70) return 'score-good';
+  if (n >= 40) return 'score-mid';
+  return 'score-bad';
+}
+
+async function cargar(){
+  const riesgo = document.getElementById('f_riesgo').value;
+  const brecha = document.getElementById('f_brecha').checked;
+  const params = new URLSearchParams();
+  if (riesgo) params.set('riesgo', riesgo);
+  if (brecha) params.set('solo_brecha', '1');
+
+  const root = document.getElementById('rd_root');
+  root.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando radar…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/radar?' + params.toString());
+    if (r.status === 403){
+      root.innerHTML = `<div class="empty-state"><i class="bi bi-shield-lock"></i>
+        <div class="fw-bold">Acceso restringido</div>
+        <div class="text-muted small">Solo administradores pueden ver el Radar.</div></div>`;
+      return;
+    }
+    const d = await r.json();
+    if (!Array.isArray(d)){
+      root.innerHTML = `<div class="alert alert-danger">Error: ${esc(d && d.error || 'respuesta inesperada')}</div>`;
+      return;
+    }
+    render(d);
+  } catch(e){
+    root.innerHTML = `<div class="alert alert-danger">Error de red: ${esc(e.message)}</div>`;
+  }
+}
+
+function render(rows){
+  // KPIs (sobre el resultado actual del filtro)
+  let nAlto=0, nMedio=0, nBajo=0, exp=0;
+  for (const x of rows){
+    const nv = (x.nivel_riesgo || '').toLowerCase();
+    if (nv === 'alto') nAlto++; else if (nv === 'medio') nMedio++; else if (nv === 'bajo') nBajo++;
+    exp += Number(x.exposicion_clp) || 0;
+  }
+  document.getElementById('kpi_alto').textContent  = nAlto;
+  document.getElementById('kpi_medio').textContent = nMedio;
+  document.getElementById('kpi_bajo').textContent  = nBajo;
+  document.getElementById('kpi_exp').textContent   = fmtCLP(exp);
+  document.getElementById('rd_count').textContent  = rows.length
+    ? `${rows.length} cliente${rows.length!==1?'s':''}` : '';
+
+  const root = document.getElementById('rd_root');
+  if (!rows.length){
+    root.innerHTML = `<div class="empty-state">
+      <i class="bi bi-radar"></i>
+      <div class="fw-bold">El radar está vacío</div>
+      <div class="text-muted small mb-3">Aún no hay inteligencia calculada para los clientes${
+        (document.getElementById('f_riesgo').value || document.getElementById('f_brecha').checked) ? ' con estos filtros' : ''}.</div>
+      <button class="btn btn-sm btn-ilus fw-bold" onclick="recalcular()">
+        <i class="bi bi-arrow-repeat me-1"></i>Recalcular todo
+      </button>
+    </div>`;
+    return;
+  }
+
+  let body = '';
+  for (const x of rows){
+    const nv = (x.nivel_riesgo || 'bajo').toLowerCase();
+    const brecha = Number(x.brecha_gratis) || 0;
+    const calidad = (x.calidad_informacion != null && x.calidad_informacion !== '')
+      ? `<span class="rd-calidad" title="Calidad de la información">info ${esc(x.calidad_informacion)}</span>` : '';
+    const url = `/mantenciones/clientes/${encodeURIComponent(x.cliente_id)}#intel`;
+    body += `<tr>
+      <td data-l="Cliente">
+        <div class="rd-cli">${esc(x.razon_social || '—')}${calidad}</div>
+        <div class="rd-cli-id">#${esc(x.cliente_id)}</div>
+      </td>
+      <td data-l="Score"><span class="rd-score ${scoreCls(x.score_salud)}">${x.score_salud != null ? esc(x.score_salud) : '—'}</span></td>
+      <td data-l="Riesgo"><span class="rd-chip chip-${nv}">${esc(nv)}</span></td>
+      <td class="num" data-l="Brecha gratuitas"><span class="rd-brecha ${brecha>0?'':'zero'}">${brecha}</span></td>
+      <td class="num" data-l="Exposición"><span class="rd-exp">${fmtCLP(x.exposicion_clp)}</span></td>
+      <td data-l="Próxima fecha">${fmtFecha(x.proxima_fecha)}</td>
+      <td class="num" data-l="Gestiones">${x.actividad_total != null ? esc(x.actividad_total) : 0}</td>
+      <td data-l="Acción"><a class="rd-go" href="${url}">Ver ficha <i class="bi bi-chevron-right"></i></a></td>
+    </tr>`;
+  }
+
+  root.innerHTML = `<div class="rd-table-wrap"><table class="rd-table">
+    <thead><tr>
+      <th>Cliente</th><th>Score</th><th>Riesgo</th>
+      <th class="num">Brecha gratuitas</th><th class="num">Exposición $</th>
+      <th>Próxima fecha</th><th class="num">Gestiones</th><th>Acción</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+
+async function recalcular(){
+  if (typeof ilusLoader !== 'undefined') ilusLoader.show({text:'Recalculando…', sub:'Analizando clientes con las reglas del Agente'});
+  try {
+    const r = await fetch('/mantenciones/api/radar/recalcular', {method:'POST'});
+    if (r.status === 403){
+      if (typeof ilusLoader !== 'undefined') ilusLoader.hide();
+      ilusToast('No tienes permisos para recalcular (solo admin).', {type:'error'});
+      return;
+    }
+    const d = await r.json();
+    if (typeof ilusLoader !== 'undefined') ilusLoader.hide();
+    if (!r.ok || !d.ok){
+      ilusToast('Error: ' + esc(d && d.error || 'no se pudo recalcular'), {type:'error'});
+      return;
+    }
+    ilusToast(`✓ Radar recalculado (${d.recalculados != null ? d.recalculados : 0} cliente(s))`, {type:'success'});
+    await cargar();
+  } catch(e){
+    if (typeof ilusLoader !== 'undefined') ilusLoader.hide();
+    ilusToast('Error de red: ' + esc(e.message), {type:'error'});
+  }
+}
+
+document.addEventListener('DOMContentLoaded', cargar);
+</script>
+{% endblock %}

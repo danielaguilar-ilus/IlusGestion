@@ -1,0 +1,913 @@
+{
+ "version": "contrato-reglas-v2",
+ "reglas": [
+  {
+   "id": "tipo_es_arriendo_no_mantencion",
+   "tipo": "alerta_critica",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "alta",
+   "peso_score": -25,
+   "mensaje": "El documento parece ser un contrato de ARRIENDO/LEASING de equipos, no de mantencion. Bajo arriendo ILUS asumiria la propiedad y el riesgo de los equipos, y las reparaciones suelen quedar a cargo del arrendador. Confirmar la naturaleza real del contrato antes de firmar.",
+   "propuesta": "Si la intencion es prestar servicio de mantencion, reescribir titulo y objeto como 'prestacion de servicios de mantencion', eliminar lenguaje de arriendo/entrega de bienes y aclarar que la propiedad de los equipos es del cliente.",
+   "patrones_presencia": [
+    "contrato de arriendo",
+    "contrato de arrendamiento",
+    "arrendamiento de equipos",
+    "arriendo de equipos",
+    "arriendo de maquinas",
+    "arrendar los equipos",
+    "el arrendador",
+    "el arrendatario",
+    "renta mensual",
+    "canon de arriendo",
+    "canon de arrendamiento",
+    "cuota de arriendo"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_leasing_opcion_compra",
+   "tipo": "alerta_critica",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "alta",
+   "peso_score": -22,
+   "mensaje": "El contrato contempla LEASING con opcion de compra. Esto no es un contrato de mantencion: implica financiamiento, valor residual y transferencia de propiedad al final del plazo. Las obligaciones y riesgos de ILUS son completamente distintos a un servicio de mantencion.",
+   "propuesta": "Aclarar si ILUS actua como arrendador financiero (asume el valor de los equipos) o solo como prestador de mantencion. Si es lo segundo, eliminar toda referencia a leasing, opcion de compra y valor residual.",
+   "patrones_presencia": [
+    "leasing",
+    "arrendamiento financiero",
+    "opcion de compra",
+    "valor residual",
+    "valor de rescate",
+    "compra final del equipo",
+    "ejercer la opcion"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_arriendo_disfrazado_costos_a_ilus",
+   "tipo": "alerta_critica",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "alta",
+   "peso_score": -28,
+   "mensaje": "El documento se presenta como mantencion pero traslada el costo de reparaciones/repuestos/reposicion a ILUS (o a ILUS como dueno del equipo). Eso es propio de un arriendo encubierto. En un servicio de mantencion las reparaciones las paga el cliente dueno del equipo, no ILUS.",
+   "propuesta": "Definir expresamente que ILUS solo provee mano de obra de mantencion y que los repuestos, reparaciones mayores y reemplazo de equipos son de cargo del cliente, salvo pacto escrito.",
+   "patrones_presencia": [
+    "reparaciones de cargo del arrendador",
+    "reparaciones a cargo del prestador",
+    "ilus se hace cargo de las reparaciones",
+    "el prestador asume las reparaciones",
+    "reemplazo de equipos por cuenta de ilus",
+    "reposicion de equipos a cargo de ilus",
+    "ilus asume el riesgo del equipo",
+    "equipos de propiedad de ilus"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_compraventa_transferencia_propiedad",
+   "tipo": "alerta_critica",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "alta",
+   "peso_score": -15,
+   "mensaje": "El documento contiene lenguaje de COMPRAVENTA o transferencia de propiedad de equipos. Esto cambia por completo la naturaleza del contrato y las garantias exigibles a ILUS. Confirmar si ILUS vende, mantiene o arrienda.",
+   "propuesta": "Si la intencion es solo mantener, eliminar referencias a venta/transferencia de dominio. Si efectivamente hay venta, tratar el documento como compraventa con sus garantias y limitarlas por escrito.",
+   "patrones_presencia": [
+    "compraventa",
+    "contrato de compra",
+    "venta de equipos",
+    "venta de maquinas",
+    "transferencia de dominio",
+    "transferencia de propiedad",
+    "precio de venta",
+    "factura de venta del equipo"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_sin_mencion_mantencion",
+   "tipo": "alerta_critica",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "alta",
+   "peso_score": -18,
+   "mensaje": "El documento no contiene ninguna mencion a 'mantencion', 'mantenimiento' ni 'servicio tecnico'. Es muy probable que NO sea un contrato de mantencion. Reclasificar el documento antes de continuar el analisis.",
+   "propuesta": "Si se pretende un contrato de mantencion, redactar el objeto y las obligaciones en torno al servicio. Si es arriendo/compraventa, aplicar las reglas propias de ese tipo contractual.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "mantencion",
+    "mantenimiento",
+    "servicio tecnico",
+    "soporte tecnico"
+   ]
+  },
+  {
+   "id": "tipo_contrato_mixto_mantencion_arriendo",
+   "tipo": "punto_revisar",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "media",
+   "peso_score": -10,
+   "mensaje": "El documento mezcla elementos de mantencion y de arriendo/leasing (contrato MIXTO). Esto genera ambiguedad sobre quien es dueno de los equipos y quien paga las reparaciones.",
+   "propuesta": "Separar en dos secciones/anexos: (1) arriendo de equipos con sus condiciones; (2) servicio de mantencion con su alcance y precio. Definir con precision la frontera de responsabilidades.",
+   "patrones_presencia": [
+    "arriendo",
+    "arrendamiento",
+    "canon",
+    "renta mensual"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_canon_mensual_fijo_estructura_arriendo",
+   "tipo": "punto_revisar",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "media",
+   "peso_score": -9,
+   "mensaje": "Se pacta un pago periodico fijo (canon/renta/cuota mensual), estructura tipica de arriendo. Verificar que ese pago corresponda a un servicio de mantencion y no al uso/tenencia de los equipos.",
+   "propuesta": "Etiquetar el pago como 'honorarios por servicio de mantencion' en lugar de canon/renta, y vincularlo a la ejecucion efectiva de visitas o ciclos de mantencion.",
+   "patrones_presencia": [
+    "canon mensual",
+    "renta mensual",
+    "cuota mensual de arriendo",
+    "valor del arriendo",
+    "pago mensual por el uso",
+    "mensualidad por el uso de los equipos"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_ilus_entrega_equipos_comodato",
+   "tipo": "punto_revisar",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "media",
+   "peso_score": -8,
+   "mensaje": "ILUS estaria entregando equipos al cliente (comodato/prestamo de uso/cesion de uso/consignacion). Esto agrega un componente de arriendo o comodato y expone a ILUS al riesgo de perdida o deterioro de esos bienes.",
+   "propuesta": "Si ILUS entrega equipos, agregar clausula de comodato/arriendo con inventario, estado, responsabilidad del cliente por danos y exigencia de seguro a cargo del cliente.",
+   "patrones_presencia": [
+    "comodato",
+    "prestamo de uso",
+    "equipos en consignacion",
+    "ilus entregara los equipos",
+    "ilus proporcionara los equipos",
+    "cesion de uso"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_opcion_compra_favor_cliente",
+   "tipo": "punto_revisar",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "media",
+   "peso_score": -9,
+   "mensaje": "Existe una opcion de compra a favor del cliente sobre los equipos. Confirma un componente de arriendo/leasing y obliga a definir precio de ejercicio, plazo y que pasa con la mantencion una vez transferida la propiedad.",
+   "propuesta": "Definir con precision precio de ejercicio, plazo, condicion de pagos al dia, y aclarar que la mantencion se renegocia o termina al transferirse la propiedad.",
+   "patrones_presencia": [
+    "opcion de compra a favor del",
+    "el cliente podra adquirir",
+    "el cliente tendra derecho a comprar",
+    "podra optar por la compra"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_objeto_contrato_ambiguo",
+   "tipo": "punto_revisar",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "media",
+   "peso_score": -8,
+   "mensaje": "No se identifica con claridad el objeto del contrato como prestacion de servicios de mantencion. Sin una clausula de objeto explicita es dificil clasificar y defender la naturaleza del contrato ante el cliente o tribunales.",
+   "propuesta": "Agregar una clausula 'Objeto' que diga expresamente que ILUS prestara servicios de mantencion (preventiva/correctiva) sobre equipos de propiedad del cliente, sin transferir ni arrendar bienes.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "objeto del contrato",
+    "objeto del presente",
+    "prestacion de servicios",
+    "servicio de mantencion",
+    "servicios de mantencion"
+   ]
+  },
+  {
+   "id": "tipo_mantencion_full_alcance_ilimitado",
+   "tipo": "punto_revisar",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "media",
+   "peso_score": -6,
+   "mensaje": "Se menciona mantencion 'full'/'integral'/'todo incluido'. Este termino es peligroso si no esta acotado: el cliente puede interpretar que incluye repuestos, reparaciones mayores y reemplazos sin costo adicional.",
+   "propuesta": "Reemplazar 'full/todo incluido' por un alcance cerrado con checklist e indicar exclusiones (repuestos, reparaciones por mal uso, partes de desgaste, reemplazo de equipos).",
+   "patrones_presencia": [
+    "mantencion full",
+    "servicio full",
+    "todo incluido",
+    "mantencion integral",
+    "servicio integral",
+    "all inclusive",
+    "all-inclusive"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_equipos_propiedad_cliente_confirmada",
+   "tipo": "clausula_favorable",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "baja",
+   "peso_score": 8,
+   "mensaje": "El contrato establece que los equipos son de propiedad del CLIENTE. Refuerza que se trata de un servicio de mantencion (no arriendo) y protege a ILUS de asumir el riesgo de los bienes. Clausula favorable.",
+   "propuesta": "",
+   "patrones_presencia": [
+    "equipos de propiedad del cliente",
+    "maquinas de propiedad del cliente",
+    "el cliente es dueno de los equipos",
+    "el cliente es propietario de los equipos",
+    "los equipos pertenecen al cliente"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "tipo_clasificacion_explicita_servicio_no_arriendo",
+   "tipo": "clausula_favorable",
+   "categoria": "tipo_contrato",
+   "dimension": "tipo_contrato",
+   "severidad": "baja",
+   "peso_score": 10,
+   "mensaje": "El contrato declara expresamente que es un contrato de prestacion de servicios de mantencion y que no constituye arriendo ni leasing. Clausula favorable que protege a ILUS frente a recalificaciones.",
+   "propuesta": "",
+   "patrones_presencia": [
+    "no constituye arriendo",
+    "no constituye arrendamiento",
+    "no se trata de un arriendo",
+    "no constituye leasing",
+    "naturaleza de prestacion de servicios",
+    "el presente es un contrato de prestacion de servicios"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "cobertura_sin_correctiva",
+   "tipo": "alerta_critica",
+   "categoria": "cobertura",
+   "dimension": "cobertura_exclusiones",
+   "severidad": "alta",
+   "peso_score": -15,
+   "mensaje": "El contrato cubre solo mantencion PREVENTIVA y no incluye cobertura correctiva. ILUS podria quedar obligado a reparar fallas no pagadas dentro del precio base, o el cliente asumir que las reparaciones estan incluidas. (Unifica 'solo_preventivo_sin_correctivo' y 'sin_cobertura_correctiva'.)",
+   "propuesta": "Agregar una clausula que distinga preventiva (incluida) de correctiva (cotizada por separado), o definir el alcance exacto y precio de cada una, evitando que el cliente exija reparaciones bajo el mismo precio.",
+   "patrones_presencia": [
+    "mantencion preventiva",
+    "mantenimiento preventivo",
+    "servicio preventivo",
+    "solo preventiva",
+    "unicamente preventiva",
+    "preventiva"
+   ],
+   "patrones_ausencia": [
+    "mantencion correctiva",
+    "mantenimiento correctivo",
+    "correctiva",
+    "correctivo",
+    "reparacion",
+    "reparaciones",
+    "reparacion de fallas"
+   ]
+  },
+  {
+   "id": "cobertura_alcance_sin_checklist",
+   "tipo": "punto_revisar",
+   "categoria": "cobertura",
+   "dimension": "cobertura_exclusiones",
+   "severidad": "alta",
+   "peso_score": -12,
+   "mensaje": "No se especifica que incluye exactamente la mantencion (no hay checklist, pauta ni detalle de actividades). Sin un alcance escrito, cualquier servicio que el cliente exija puede interpretarse como incluido, exponiendo a ILUS a trabajo no remunerado. (Unifica 'alcance_servicio_sin_checklist' y 'alcance_cobertura_no_definido'.)",
+   "propuesta": "Anexar un checklist/pauta de actividades por tipo de mantencion (limpieza, lubricacion, ajuste, calibracion, revision electrica, etc.) y su periodicidad, dejando todo lo no listado como servicio adicional cotizable.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "checklist",
+    "check list",
+    "lista de actividades",
+    "actividades incluidas",
+    "alcance del servicio",
+    "detalle de actividades",
+    "pauta de mantencion",
+    "rutina de mantencion",
+    "anexo de actividades"
+   ]
+  },
+  {
+   "id": "cobertura_repuestos_incluidos_en_precio",
+   "tipo": "alerta_critica",
+   "categoria": "cobertura",
+   "dimension": "cobertura_exclusiones",
+   "severidad": "alta",
+   "peso_score": -12,
+   "mensaje": "El contrato indica que los repuestos estan INCLUIDOS en el precio de la mantencion. Esto traslada a ILUS un costo variable e ilimitado y es senal de contrato tipo 'full'/arriendo encubierto.",
+   "propuesta": "Excluir expresamente repuestos, insumos y partes de desgaste del precio base y cotizarlos por separado, o fijar un tope/listado cerrado de repuestos cubiertos.",
+   "patrones_presencia": [
+    "repuestos incluidos",
+    "incluye repuestos",
+    "insumos incluidos",
+    "partes y piezas incluidas",
+    "repuestos sin costo adicional",
+    "repuestos a cargo de ilus",
+    "repuestos de cargo del prestador"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "cobertura_riesgo_repuestos_marcas_no_distribuidas",
+   "tipo": "alerta_critica",
+   "categoria": "cobertura",
+   "dimension": "cobertura_exclusiones",
+   "severidad": "alta",
+   "peso_score": -12,
+   "mensaje": "Riesgo de repuestos: el contrato obliga a mantener equipos de marcas que ILUS no distribuye o cuyos repuestos tienen acceso limitado. ILUS podria no conseguir repuestos a tiempo y caer en incumplimiento.",
+   "propuesta": "Excluir o limitar la responsabilidad por repuestos de marcas no distribuidas, condicionar los plazos a la disponibilidad de repuestos del fabricante y permitir el uso de repuestos alternativos equivalentes.",
+   "patrones_presencia": [
+    "marcas no distribuidas",
+    "repuestos de dificil acceso",
+    "repuestos importados",
+    "repuestos exclusivos del fabricante",
+    "repuesto que solo provee el fabricante",
+    "equipos fuera de catalogo"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "cobertura_repuestos_excluidos_precio",
+   "tipo": "clausula_favorable",
+   "categoria": "cobertura",
+   "dimension": "cobertura_exclusiones",
+   "severidad": "baja",
+   "peso_score": 7,
+   "mensaje": "El contrato indica que los repuestos y/o piezas NO estan incluidos en el precio (se cobran aparte). Protege a ILUS. Conviene verificar que este redactado con claridad para evitar disputas sobre que es 'repuesto' vs 'mano de obra'.",
+   "propuesta": "Confirmar que la exclusion de repuestos sea inequivoca, con ejemplos de que se considera repuesto, y que se indique como se cotizan (previa aprobacion del cliente por escrito).",
+   "patrones_presencia": [
+    "repuestos no incluidos",
+    "no incluye repuestos",
+    "repuestos se cobran aparte",
+    "repuestos a cargo del cliente",
+    "repuestos por cuenta del cliente"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "cobertura_exclusiones_no_definidas",
+   "tipo": "punto_revisar",
+   "categoria": "cobertura",
+   "dimension": "cobertura_exclusiones",
+   "severidad": "media",
+   "peso_score": -6,
+   "mensaje": "El contrato no enumera exclusiones (mal uso, fuerza mayor, vandalismo, sobreuso, fallas electricas externas). Sin exclusiones, ILUS puede ser responsabilizado por danos ajenos al servicio.",
+   "propuesta": "Agregar clausula de exclusiones: danos por mal uso, sobreuso, instalacion electrica deficiente, fuerza mayor, intervencion de terceros y partes de desgaste natural.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "exclusiones",
+    "quedan excluidos",
+    "no cubre",
+    "mal uso",
+    "fuerza mayor",
+    "caso fortuito"
+   ]
+  },
+  {
+   "id": "pago_plazo_corto",
+   "tipo": "alerta_critica",
+   "categoria": "pagos",
+   "dimension": "pagos_financiero",
+   "severidad": "alta",
+   "peso_score": -12,
+   "mensaje": "Plazo de pago corto (ej. 10 dias corridos). Un plazo breve presiona el flujo de caja de ILUS y aumenta el riesgo de impago. Revisar y negociar a 30 dias o mas.",
+   "propuesta": "Negociar plazo de pago de al menos 30 dias, contado desde la recepcion conforme de la factura y no desde su emision.",
+   "patrones_presencia": [
+    "10 dias corridos",
+    "diez dias corridos",
+    "pago a 10 dias",
+    "plazo de 10 dias",
+    "5 dias corridos",
+    "cinco dias",
+    "pago contra entrega",
+    "pago anticipado"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "pago_valores_variables_sin_tope",
+   "tipo": "alerta_critica",
+   "categoria": "pagos",
+   "dimension": "pagos_financiero",
+   "severidad": "alta",
+   "peso_score": -12,
+   "mensaje": "El contrato contempla valores variables, reajustes o cobros adicionales SIN TOPE definido. Esto expone a ILUS a costos no acotados o a que el cliente discuta montos abiertos.",
+   "propuesta": "Establecer topes, una formula de reajuste objetiva (UF/IPC) y un listado cerrado de cobros adicionales, todos con aprobacion previa por escrito.",
+   "patrones_presencia": [
+    "valores variables",
+    "montos variables",
+    "precio variable",
+    "sin tope",
+    "cobros adicionales",
+    "segun corresponda",
+    "a definir",
+    "valor a convenir",
+    "reajuste sin limite"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "pago_interes_maximo_convencional",
+   "tipo": "clausula_relevante",
+   "categoria": "pagos",
+   "dimension": "pagos_financiero",
+   "severidad": "media",
+   "peso_score": -5,
+   "mensaje": "El contrato fija el interes maximo convencional por mora. Verificar a favor de quien corre: si lo paga ILUS es malo; si lo cobra ILUS al cliente por impago, es favorable. Revisar la direccion del interes.",
+   "propuesta": "Asegurar que el interes por mora corra a favor de ILUS cuando el cliente no paga, al maximo convencional, y eliminarlo o reducirlo si corre contra ILUS.",
+   "patrones_presencia": [
+    "interes maximo convencional",
+    "maximo convencional",
+    "interes por mora",
+    "interes moratorio"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "pago_moneda_no_definida",
+   "tipo": "punto_revisar",
+   "categoria": "pagos",
+   "dimension": "pagos_financiero",
+   "severidad": "media",
+   "peso_score": -5,
+   "mensaje": "No queda claro en que moneda y con que reajuste se pacta el precio (CLP/UF). Sin definir moneda y reajuste, ILUS puede perder valor real frente a la inflacion en contratos largos.",
+   "propuesta": "Definir explicitamente la moneda (preferentemente UF para contratos largos) y la oportunidad/forma de reajuste del precio.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "pesos",
+    "clp",
+    "uf",
+    "unidad de fomento",
+    "reajuste",
+    "ipc"
+   ]
+  },
+  {
+   "id": "term_sin_penalidad_al_cliente",
+   "tipo": "alerta_critica",
+   "categoria": "terminacion",
+   "dimension": "terminacion_penalidades",
+   "severidad": "alta",
+   "peso_score": -10,
+   "mensaje": "No hay penalidades al cliente por impago o incumplimiento. ILUS queda sin herramientas para exigir cumplimiento o compensar el dano si el cliente no paga o entorpece el servicio.",
+   "propuesta": "Agregar penalidades/multas al cliente por mora en el pago, por impedir el acceso a los equipos y por terminacion anticipada injustificada.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "multa",
+    "penalidad",
+    "clausula penal",
+    "indemnizacion a favor de",
+    "sancion por incumplimiento"
+   ]
+  },
+  {
+   "id": "term_terminacion_inmediata_plazo_breve",
+   "tipo": "clausula_relevante",
+   "categoria": "terminacion",
+   "dimension": "terminacion_penalidades",
+   "severidad": "media",
+   "peso_score": -9,
+   "mensaje": "El contrato permite terminacion inmediata por incumplimiento con un plazo de subsanacion muy breve (ej. 5 dias). Si corre contra ILUS es riesgoso: 5 dias puede ser insuficiente para conseguir repuestos o coordinar la visita.",
+   "propuesta": "Ampliar el plazo de subsanacion a un minimo razonable (15-30 dias) y exigir que la terminacion requiera notificacion previa por escrito y oportunidad de corregir.",
+   "patrones_presencia": [
+    "terminacion inmediata",
+    "5 dias sin subsanar",
+    "cinco dias para subsanar",
+    "poner termino de inmediato",
+    "resolucion inmediata",
+    "termino anticipado sin aviso"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "term_desahucio_sin_indemnizacion",
+   "tipo": "clausula_relevante",
+   "categoria": "terminacion",
+   "dimension": "terminacion_penalidades",
+   "severidad": "media",
+   "peso_score": -9,
+   "mensaje": "El cliente puede poner termino al contrato con desahucio (ej. 60 dias) sin indemnizacion a ILUS. ILUS pierde el contrato sin compensacion pese a haber comprometido recursos.",
+   "propuesta": "Exigir indemnizacion o pago minimo por termino anticipado sin causa, o pactar un periodo de permanencia minima del contrato.",
+   "patrones_presencia": [
+    "desahucio",
+    "60 dias sin indemnizacion",
+    "sesenta dias",
+    "termino sin expresion de causa",
+    "poner termino sin causa",
+    "aviso previo de 30 dias",
+    "aviso previo de 60 dias"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "term_prohibicion_cesion_subarriendo",
+   "tipo": "clausula_relevante",
+   "categoria": "terminacion",
+   "dimension": "terminacion_penalidades",
+   "severidad": "media",
+   "peso_score": -4,
+   "mensaje": "El contrato prohibe a ILUS ceder o subcontratar el servicio. Limita la flexibilidad operativa de ILUS para apoyarse en terceros (ej. tecnicos externos) o ceder el contrato.",
+   "propuesta": "Permitir a ILUS subcontratar parcialmente la ejecucion del servicio manteniendo su responsabilidad, y la cesion previo aviso al cliente.",
+   "patrones_presencia": [
+    "prohibicion de cesion",
+    "no podra ceder",
+    "prohibido subcontratar",
+    "prohibido subarrendar",
+    "no podra subarrendar",
+    "cesion del contrato prohibida"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "sla_no_definido",
+   "tipo": "punto_revisar",
+   "categoria": "sla",
+   "dimension": "sla_respuesta",
+   "severidad": "media",
+   "peso_score": -7,
+   "mensaje": "El contrato no define SLA ni tiempo de respuesta. Sin SLA escrito, el cliente puede exigir tiempos de respuesta irrazonables o reclamar incumplimiento sin una vara objetiva.",
+   "propuesta": "Definir SLA realistas de respuesta y resolucion (ej. respuesta 24-48h, resolucion segun disponibilidad de repuestos) y dejar fuera urgencias no acordadas.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "sla",
+    "tiempo de respuesta",
+    "plazo de respuesta",
+    "nivel de servicio",
+    "tiempo de atencion",
+    "horas habiles para responder"
+   ]
+  },
+  {
+   "id": "sla_tiempos_exigentes_para_ilus",
+   "tipo": "clausula_relevante",
+   "categoria": "sla",
+   "dimension": "sla_respuesta",
+   "severidad": "media",
+   "peso_score": -6,
+   "mensaje": "El contrato impone tiempos de respuesta/resolucion muy exigentes a ILUS (ej. atencion 24/7, respuesta inmediata, resolucion en pocas horas). Riesgo de incumplir el SLA y gatillar multas.",
+   "propuesta": "Negociar SLA alcanzables en horario habil, condicionar la resolucion a la disponibilidad de repuestos y excluir fuerza mayor.",
+   "patrones_presencia": [
+    "respuesta inmediata",
+    "atencion 24/7",
+    "24 horas del dia",
+    "resolucion en 24 horas",
+    "tiempo de respuesta de 2 horas",
+    "disponibilidad permanente",
+    "atencion los 365 dias"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "inv_sin_inventario_estado_inicial",
+   "tipo": "punto_revisar",
+   "categoria": "inventario",
+   "dimension": "inventario_equipos",
+   "severidad": "alta",
+   "peso_score": -10,
+   "mensaje": "No hay inventario de equipos ni registro del estado inicial. Sin inventario, ILUS no puede acotar el alcance, demostrar el estado previo ni defenderse de reclamos por equipos que ya estaban danados.",
+   "propuesta": "Anexar inventario detallado (marca, modelo, serie, ubicacion) con estado inicial documentado y fotos, firmado por ambas partes al inicio.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "inventario",
+    "listado de equipos",
+    "detalle de equipos",
+    "estado inicial",
+    "acta de recepcion",
+    "numero de serie",
+    "marca y modelo"
+   ]
+  },
+  {
+   "id": "resp_responsabilidad_ilimitada_ilus",
+   "tipo": "alerta_critica",
+   "categoria": "responsabilidad",
+   "dimension": "responsabilidad_legal",
+   "severidad": "alta",
+   "peso_score": -12,
+   "mensaje": "El contrato impone a ILUS responsabilidad amplia/ilimitada por danos (directos, indirectos, lucro cesante). Expone a ILUS a indemnizaciones desproporcionadas frente al valor del servicio.",
+   "propuesta": "Limitar la responsabilidad de ILUS al monto del servicio contratado, excluir danos indirectos y lucro cesante, y exigir seguro al cliente sobre sus equipos.",
+   "patrones_presencia": [
+    "responsabilidad ilimitada",
+    "todo dano",
+    "danos directos e indirectos",
+    "lucro cesante",
+    "dano emergente y lucro cesante",
+    "respondera por todo perjuicio",
+    "sin limite de responsabilidad"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "resp_garantia_excesiva",
+   "tipo": "clausula_relevante",
+   "categoria": "responsabilidad",
+   "dimension": "responsabilidad_legal",
+   "severidad": "media",
+   "peso_score": -6,
+   "mensaje": "El contrato exige a ILUS garantias amplias o por plazos largos sobre el funcionamiento de los equipos. ILUS no fabrica los equipos y no deberia garantizar su funcionamiento, solo la calidad de su mano de obra.",
+   "propuesta": "Acotar la garantia a la mano de obra de ILUS (ej. 30-90 dias) y excluir garantia sobre el equipo en si, que corresponde al fabricante.",
+   "patrones_presencia": [
+    "garantia de 1 ano",
+    "garantia de un ano",
+    "garantiza el funcionamiento",
+    "garantia total sobre los equipos",
+    "garantia de buen funcionamiento permanente"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "resp_sin_limitacion_responsabilidad",
+   "tipo": "punto_revisar",
+   "categoria": "responsabilidad",
+   "dimension": "responsabilidad_legal",
+   "severidad": "media",
+   "peso_score": -6,
+   "mensaje": "El contrato no incluye una clausula de limitacion de responsabilidad a favor de ILUS. Sin tope, cualquier reclamo podria perseguir el patrimonio completo de ILUS.",
+   "propuesta": "Incorporar clausula de limitacion de responsabilidad: tope igual al valor del contrato/servicio, exclusion de danos indirectos y de fuerza mayor.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "limitacion de responsabilidad",
+    "limite de responsabilidad",
+    "responsabilidad limitada a",
+    "tope de indemnizacion"
+   ]
+  },
+  {
+   "id": "doc_truncado_incompleto",
+   "tipo": "alerta_critica",
+   "categoria": "documento",
+   "dimension": "integridad_documento",
+   "severidad": "alta",
+   "peso_score": -15,
+   "mensaje": "El documento parece truncado o incompleto (faltan clausulas, paginas, firmas o anexos referidos). No se puede analizar ni firmar un contrato incompleto; podrian faltar clausulas clave.",
+   "propuesta": "Solicitar la version completa y final del contrato, con todos los anexos referidos, antes de analizar o firmar.",
+   "patrones_presencia": [
+    "documento truncado",
+    "pagina en blanco",
+    "continua en anexo",
+    "texto cortado",
+    "falta pagina",
+    "[...]"
+   ],
+   "patrones_ausencia": []
+  },
+  {
+   "id": "doc_sin_firmas_partes",
+   "tipo": "punto_revisar",
+   "categoria": "documento",
+   "dimension": "integridad_documento",
+   "severidad": "media",
+   "peso_score": -5,
+   "mensaje": "No se identifica seccion de firmas, comparecientes o representantes legales de las partes. Sin individualizacion y firma, el contrato no obliga y puede ser inejecutable.",
+   "propuesta": "Verificar la individualizacion completa de las partes (RUT, representante legal, personeria) y el bloque de firmas antes de suscribir.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "firma",
+    "firman",
+    "representante legal",
+    "comparecen",
+    "rut",
+    "cedula de identidad"
+   ]
+  },
+  {
+   "id": "doc_anexos_referidos_faltantes",
+   "tipo": "punto_revisar",
+   "categoria": "documento",
+   "dimension": "integridad_documento",
+   "severidad": "media",
+   "peso_score": -5,
+   "mensaje": "El cuerpo del contrato remite a anexos (inventario, pauta, tarifas) que no estan presentes. Esos anexos suelen contener el alcance real y las exclusiones; sin ellos el contrato queda incompleto.",
+   "propuesta": "Exigir y adjuntar todos los anexos referidos antes de firmar, dado que definen alcance, precios y exclusiones del servicio.",
+   "patrones_presencia": [
+    "segun anexo",
+    "ver anexo",
+    "anexo adjunto",
+    "conforme al anexo",
+    "detallado en el anexo"
+   ],
+   "patrones_ausencia": [
+    "anexo n 1",
+    "anexo 1",
+    "anexo a",
+    "primer anexo"
+   ]
+  },
+  {
+   "id": "gar_sin_exclusividad_mantencion_ilus",
+   "tipo": "alerta_critica",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "alta",
+   "peso_score": -10,
+   "mensaje": "DOLOR #1 DIRECTO: el contrato NO condiciona la vigencia de la garantia convencional a que TODA la mantencion (preventiva y correctiva) sea ejecutada por ILUS. Sin esto, el cliente contrata mantenciones pagas con terceros y aun asi exige a ILUS responder por garantia, trasladandole el costo sin ingreso por servicio. La garantia convencional adicional SI puede condicionarse legalmente al mantenimiento por el prestador.",
+   "propuesta": "Agregar clausula de garantia convencional condicionada: 'La garantia convencional adicional que ILUS otorga, distinta de la garantia legal del articulo 21 de la Ley N 19.496 (la cual se respeta integramente respecto de consumidores), tiene como condicion esencial de vigencia que la totalidad de las mantenciones preventivas y correctivas de los equipos sean ejecutadas exclusivamente por ILUS conforme al plan pactado. Si el Cliente contrata o permite mantenciones o reparaciones con terceros, la garantia convencional quedara suspendida respecto del componente o sistema intervenido.'",
+   "base_legal": "Codigo Civil Arts. 1545 y 1444 (las partes pueden pactar elementos accidentales, como condicionar una garantia voluntaria); Ley 19.496 Art. 21 (la garantia legal subsiste; la convencional adicional admite condiciones razonables y no abusivas); Art. 16 g) (la garantia legal no se renuncia).",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "mantencion exclusiva",
+    "mantenimiento exclusivo",
+    "exclusivamente por ilus",
+    "unicamente por ilus",
+    "unica empresa autorizada",
+    "condicionada a la mantencion",
+    "garantia sujeta a mantencion",
+    "mantenciones realizadas por ilus",
+    "ejecutadas por ilus",
+    "siempre que la mantencion sea efectuada por ilus"
+   ]
+  },
+  {
+   "id": "gar_no_anula_por_intervencion_terceros",
+   "tipo": "alerta_critica",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "alta",
+   "peso_score": -9,
+   "mensaje": "No existe clausula que suspenda o extinga la garantia convencional cuando un TERCERO no autorizado interviene, repara, desarma, ajusta o calibra el equipo. Sin esto, el cliente puede dejar que otro prestador toque el equipo y seguir reclamando garantia a ILUS, que termina cubriendo fallas causadas por manos ajenas sin recibir ingreso.",
+   "propuesta": "Agregar: 'La garantia convencional quedara sin efecto, total o parcialmente respecto del componente afectado, si el equipo es intervenido, reparado, desarmado, ajustado o calibrado por personal ajeno a ILUS o no autorizado por escrito por ILUS. Esta limitacion no afecta la garantia legal aplicable a consumidores conforme a la Ley N 19.496.'",
+   "base_legal": "Codigo Civil Arts. 1545 y 1546 (libertad y buena fe contractual) y Art. 1547 (el deudor no responde del hecho de un tercero); Ley 19.496 Art. 21 inc. 5 (la garantia legal no obliga al proveedor cuando el desperfecto proviene de manipulacion por terceros ajenos al servicio tecnico autorizado).",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "intervencion de terceros",
+    "tercero no autorizado",
+    "personal ajeno a ilus",
+    "tecnico no autorizado",
+    "servicio tecnico autorizado",
+    "manipulacion por terceros",
+    "anula la garantia",
+    "suspende la garantia",
+    "se extingue la garantia",
+    "perdida de la garantia",
+    "caducidad de la garantia",
+    "queda sin efecto la garantia"
+   ]
+  },
+  {
+   "id": "gar_no_anula_por_repuestos_no_originales",
+   "tipo": "alerta_critica",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "alta",
+   "peso_score": -8,
+   "mensaje": "El contrato no establece que el uso de repuestos no originales o no suministrados por ILUS anula la garantia convencional. Un tercero suele instalar repuestos genericos; sin esta clausula ILUS queda obligada a responder por fallas causadas por piezas que no controlo ni vendio.",
+   "propuesta": "Agregar: 'La garantia convencional no cubrira fallas, danos o desgastes derivados de la instalacion o uso de repuestos, partes o piezas que no sean originales o que no hayan sido suministrados o autorizados por escrito por ILUS. La instalacion de tales repuestos, o su instalacion por terceros, dejara sin efecto la garantia convencional respecto del componente afectado y de los danos que de el deriven.'",
+   "base_legal": "Codigo Civil Art. 1547 (ILUS no responde por hechos de terceros que rompen el nexo causal) y Art. 1556; Ley 19.496 Art. 21 inc. final (la garantia legal no cubre dano por uso indebido, marco que respalda excluir repuestos no originales de la garantia convencional).",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "repuestos originales",
+    "repuestos no originales",
+    "piezas originales",
+    "repuesto generico",
+    "componente no aprobado",
+    "repuestos suministrados por ilus",
+    "repuestos no autorizados",
+    "repuesto instalado por ilus",
+    "partes genericas"
+   ]
+  },
+  {
+   "id": "gar_no_anula_por_traslado_movimiento_tercero",
+   "tipo": "alerta_critica",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "alta",
+   "peso_score": -7,
+   "mensaje": "No hay clausula que anule o suspenda la garantia cuando el equipo es trasladado, movido, reinstalado o reubicado por un tercero sin supervision de ILUS. El movimiento descalibra y dana equipos de gimnasio; sin esta proteccion ILUS responde por danos que no provoco.",
+   "propuesta": "Agregar: 'Todo traslado, reubicacion, desmontaje, reinstalacion o manipulacion estructural de los equipos debera ser efectuado o autorizado por escrito por ILUS. El traslado o reinstalacion realizada por el Cliente o por terceros sin la intervencion de ILUS dejara sin efecto la garantia convencional respecto de los danos, descalibraciones o desajustes que de ello deriven, sin perjuicio de la garantia legal aplicable a consumidores.'",
+   "base_legal": "Codigo Civil Art. 1547 inc. 2 (caso fortuito / hecho de tercero exime de responsabilidad) y Art. 1556 (danos imputables a hecho del acreedor o de terceros); condicion objetiva y proporcional conforme a la Ley 19.496 Art. 16 g).",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "traslado del equipo",
+    "reubicacion",
+    "reinstalacion",
+    "movimiento del equipo",
+    "cambio de ubicacion",
+    "desmontaje",
+    "desplazamiento del equipo",
+    "trasladado por un tercero"
+   ]
+  },
+  {
+   "id": "gar_no_condicionada_a_pago_al_dia",
+   "tipo": "alerta_critica",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "alta",
+   "peso_score": -7,
+   "mensaje": "La garantia convencional no esta condicionada a que el Cliente este al dia en el pago de las mantenciones contratadas con ILUS. El cliente podria dejar de pagar el servicio y aun asi exigir cobertura de garantia. Debe vincularse la vigencia de la garantia al cumplimiento de pago.",
+   "propuesta": "Agregar: 'La vigencia de la garantia convencional esta condicionada a que el Cliente se encuentre al dia en el pago de las mantenciones y servicios contratados con ILUS. La mora en el pago suspendera la garantia convencional mientras subsista, reactivandose una vez regularizada la deuda. Esta condicion no afecta la garantia legal que la ley reconoce a los consumidores.'",
+   "base_legal": "Codigo Civil Art. 1552 (excepcion de contrato no cumplido: la mora de una parte exime a la otra) y Art. 1489 (condicion resolutoria tacita); Ley 19.496 Art. 21 (la garantia legal subsiste; solo se condiciona la convencional).",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "al dia en el pago",
+    "pagos al dia",
+    "encontrarse al dia",
+    "sin deudas pendientes",
+    "cumplimiento de pago",
+    "morosidad suspende",
+    "suspension por mora",
+    "condicionada al pago de las mantenciones"
+   ]
+  },
+  {
+   "id": "sernac_sin_distincion_garantia_legal_vs_convencional",
+   "tipo": "punto_revisar",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "media",
+   "peso_score": -5,
+   "mensaje": "El contrato no distingue entre garantia LEGAL (irrenunciable frente a consumidores, Ley 19.496) y garantia CONVENCIONAL (la que ILUS ofrece de mas y SI puede condicionar). Sin esta distincion, las condiciones de exclusividad podrian interpretarse como renuncia a la garantia legal y declararse abusivas/nulas. Hay que separarlas explicitamente para que las condiciones sean validas.",
+   "propuesta": "Agregar clausula declarativa: 'Las partes dejan constancia de que la garantia legal de la Ley N 19.496 se respeta integramente y no resulta afectada por este contrato. Las condiciones de exclusividad, pago al dia y no intervencion por terceros aqui pactadas aplican unicamente a la garantia convencional adicional que ILUS otorga voluntariamente por sobre el minimo legal.'",
+   "base_legal": "Ley 19.496 Art. 21 y Art. 16 letra g) (la renuncia anticipada de derechos del consumidor es nula); distinguir ambas garantias es lo que mantiene valida y no abusiva la condicionalidad.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "garantia legal",
+    "garantia convencional",
+    "ley 19.496",
+    "ley n 19.496",
+    "derechos del consumidor",
+    "garantia adicional a la legal",
+    "sin perjuicio de la garantia legal"
+   ]
+  },
+  {
+   "id": "ter_sin_bitacora_intervenciones_autorizadas",
+   "tipo": "punto_revisar",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "media",
+   "peso_score": -4,
+   "mensaje": "El contrato NO exige llevar registro/bitacora de quien interviene el equipo (autorizacion previa por escrito + acta de cada intervencion). Sin trazabilidad, ILUS no puede PROBAR que un tercero toco el equipo y pierde el argumento para denegar la garantia. La carga de la prueba la tendria ILUS.",
+   "propuesta": "Agregar: 'Toda intervencion sobre el equipo requerira autorizacion previa y por escrito de ILUS y quedara registrada en la bitacora de servicio del equipo. La ausencia de registro de una intervencion hara presumir que esta fue realizada por un tercero no autorizado, facultando a ILUS para denegar la garantia convencional sobre el componente afectado.'",
+   "base_legal": "Codigo Civil Art. 1698 (la prueba de la extincion de la obligacion corresponde a quien la alega); Ley 19.496 Art. 21 (la exencion por intervencion de terceros debe acreditarse). Pactar una bitacora obligatoria es herramienta probatoria legitima y no abusiva.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "bitacora",
+    "registro de intervenciones",
+    "autorizacion previa por escrito",
+    "acta de intervencion",
+    "libro de servicio",
+    "trazabilidad de mantencion"
+   ]
+  },
+  {
+   "id": "ter_sin_sello_garantia_evidencia_apertura",
+   "tipo": "punto_revisar",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "media",
+   "peso_score": -3,
+   "mensaje": "El contrato NO menciona sellos de garantia ni evidencia fisica de apertura/manipulacion que permitan detectar intervencion de terceros. Sin sellos pactados, ILUS no tiene un criterio objetivo y verificable para acreditar que el equipo fue abierto por personal ajeno.",
+   "propuesta": "Agregar: 'Los equipos podran llevar sellos o precintos de garantia instalados por ILUS. La ruptura, alteracion o ausencia de dichos sellos se presumira evidencia de intervencion por un tercero no autorizado y facultara a ILUS para denegar la garantia convencional sobre el componente afectado, sin perjuicio de la garantia legal aplicable a consumidores.'",
+   "base_legal": "Codigo Civil Art. 1698 (medios de prueba); Ley 19.496 Art. 21 inc. 5 (exencion por manipulacion de terceros, que debe poder acreditarse). El uso de sellos es practica estandar de la industria y no constituye clausula abusiva del Art. 16.",
+   "patrones_presencia": [],
+   "patrones_ausencia": [
+    "sello de garantia",
+    "sello de seguridad",
+    "evidencia de apertura",
+    "sticker de garantia",
+    "precinto",
+    "sello violado",
+    "ruptura de sello"
+   ]
+  },
+  {
+   "id": "gar_clausula_exclusividad_presente_favorable",
+   "tipo": "clausula_favorable",
+   "categoria": "garantia_exclusividad",
+   "dimension": "garantia_terceros",
+   "severidad": "baja",
+   "peso_score": 9,
+   "mensaje": "El contrato YA contiene una clausula que condiciona la garantia a la mantencion exclusiva con ILUS o anula la garantia por intervencion de terceros / repuestos no originales / traslado por terceros. Esto protege a ILUS frente al dolor #1 (clientes que cobran garantia pero contratan mantencion con terceros). Verificar que distinga garantia legal de convencional para que sea valida frente a consumidores.",
+   "propuesta": "Mantener la clausula. Recomendacion: reforzarla agregando referencia expresa 'sin perjuicio de la garantia legal de la Ley N 19.496' para blindarla frente a consumidores y evitar que se interprete como abusiva o como renuncia a derechos irrenunciables.",
+   "base_legal": "Ley 19.496 Art. 21 y Codigo Civil Art. 1545; clausula favorable y valida en tanto preserve la garantia legal del consumidor.",
+   "patrones_presencia": [
+    "garantia convencional",
+    "mantencion exclusiva",
+    "exclusivamente por ilus",
+    "anula la garantia",
+    "suspende la garantia",
+    "intervencion de terceros",
+    "tercero no autorizado",
+    "condicionada a la mantencion",
+    "repuestos no originales"
+   ],
+   "patrones_ausencia": []
+  }
+ ]
+}

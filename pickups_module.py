@@ -544,15 +544,58 @@ def register_pickup_routes(app, ctx):
 
     def _td_to_hhmm(val):
         """Convierte TIME de MySQL (timedelta de PyMySQL) o string a 'HH:MM' cero-relleno.
-        PyMySQL retorna timedelta para columnas TIME; comparar timedelta con str lanza TypeError."""
+        PyMySQL retorna timedelta para columnas TIME; comparar timedelta con str lanza TypeError.
+
+        BUG 2026-06-05 (Cloud SQL): str(timedelta(hours=9)) = '9:00:00' → [:5] = '9:00:'
+        (SIN cero inicial). Eso rompía la comparación lexicográfica en time_allowed
+        ('09:00' < '9:00:' == True porque '0' < '9') y RECHAZABA TODOS los horarios.
+        Por eso normalizamos SIEMPRE a 'HH:MM' cero-rellenado, venga timedelta o string
+        ('9:00:00' / '09:00' / '9:0')."""
         try:
-            if hasattr(val, "total_seconds"):  # timedelta
+            if hasattr(val, "total_seconds"):  # timedelta (PyMySQL TIME)
                 total = int(val.total_seconds())
                 h, m = divmod(total // 60, 60)
                 return f"{h:02d}:{m:02d}"
-            return str(val)[:5]
+            parts = str(val).split(":")
+            h = int(parts[0]); m = int(parts[1]) if len(parts) > 1 else 0
+            return f"{h:02d}:{m:02d}"
         except Exception:
             return str(val)[:5] if val else "00:00"
+
+    def _chile_holidays(year):
+        """Set de feriados legales de Chile en 'YYYY-MM-DD' para `year`.
+
+        Hardcode OFICIAL para años conocidos (fuente: feriados.cl). Para años no
+        listados, fallback CALCULADO: feriados de fecha fija + Viernes/Sábado Santo
+        (Computus). Actualizar la lista cada año. (Juan Daniel 2026-06-05: 'identifica
+        los feriados chilenos siempre para que no los pongas como laborables'.)"""
+        OFICIALES = {
+            2026: [
+                "2026-01-01","2026-04-03","2026-04-04","2026-05-01","2026-05-21",
+                "2026-06-21","2026-06-29","2026-07-16","2026-08-15","2026-09-18",
+                "2026-09-19","2026-10-12","2026-10-31","2026-11-01","2026-12-08","2026-12-25",
+            ],
+        }
+        if year in OFICIALES:
+            return set(OFICIALES[year])
+        # Fallback: fijos + Semana Santa (Viernes y Sábado Santo).
+        fijos = [(1,1),(5,1),(5,21),(6,29),(7,16),(8,15),(9,18),(9,19),
+                 (10,12),(10,31),(11,1),(12,8),(12,25)]
+        out = {f"{year:04d}-{m:02d}-{d:02d}" for (m, d) in fijos}
+        try:
+            a = year % 19; b = year // 100; c = year % 100
+            d_ = b // 4; e = b % 4; f = (b + 8) // 25
+            g = (b - f + 1) // 3; h = (19*a + b - d_ - g + 15) % 30
+            i = c // 4; k = c % 4; l = (32 + 2*e + 2*i - h - k) % 7
+            mm = (a + 11*h + 22*l) // 451
+            month = (h + l - 7*mm + 114) // 31
+            day = ((h + l - 7*mm + 114) % 31) + 1
+            pascua = datetime(year, month, day).date()
+            out.add((pascua - timedelta(days=2)).isoformat())  # Viernes Santo
+            out.add((pascua - timedelta(days=1)).isoformat())  # Sábado Santo
+        except Exception:
+            pass
+        return out
 
     def date_allowed(date_str, cfg=None):
         cfg = cfg or settings()
@@ -562,10 +605,11 @@ def register_pickup_routes(app, ctx):
             return False, "Fecha no valida."
         days = {int(x) for x in (cfg.get("work_days") or "1,2,3,4,5").split(",") if x.strip().isdigit()}
         holidays = {d.strip() for d in (cfg.get("holidays") or "").replace(";", ",").split(",") if d.strip()}
+        holidays |= _chile_holidays(dt.year)   # feriados legales de Chile (auto)
         if dt.isoweekday() not in days:
-            return False, "La bodega no recibe retiros ese dia."
+            return False, "La bodega no recibe retiros ese día (solo días hábiles)."
         if date_str in holidays:
-            return False, "La fecha seleccionada esta marcada como feriado o dia bloqueado."
+            return False, "La fecha seleccionada es feriado en Chile o está bloqueada."
         return True, ""
 
     def next_allowed_date(cfg=None):
@@ -592,10 +636,13 @@ def register_pickup_routes(app, ctx):
         público sigue con la restricción intacta (bypass_lunch=False).
         """
         cfg = cfg or settings()
-        open_t  = str(cfg.get("open_time")   or "09:00:00")[:5]
-        close_t = str(cfg.get("close_time")  or "16:30:00")[:5]
-        lunch_s = str(cfg.get("lunch_start") or "12:30:00")[:5]
-        lunch_e = str(cfg.get("lunch_end")   or "14:00:00")[:5]
+        # _td_to_hhmm normaliza timedelta (PyMySQL TIME) o string a 'HH:MM' cero-rellenado.
+        # NO usar str(...)[:5] aquí: con timedelta(hours=9) daría '9:00:' y rompería la
+        # comparación lexicográfica de abajo (rechazaba TODOS los horarios). Ver _td_to_hhmm.
+        open_t  = _td_to_hhmm(cfg.get("open_time")   or "09:00:00")
+        close_t = _td_to_hhmm(cfg.get("close_time")  or "16:30:00")
+        lunch_s = _td_to_hhmm(cfg.get("lunch_start") or "12:30:00")
+        lunch_e = _td_to_hhmm(cfg.get("lunch_end")   or "14:00:00")
         if not time_from or not time_to or time_from >= time_to:
             return False, "Selecciona un rango horario valido."
         if time_from < open_t or time_to > close_t:
@@ -1116,20 +1163,27 @@ def register_pickup_routes(app, ctx):
                 asunto = _apply_template(tpl_email.get("asunto") or "", variables)
                 cuerpo = _apply_template(tpl_email.get("cuerpo") or "", variables)
                 # Envolver en el wrapper HTML oficial ILUS
-                html = _ilus_email_html(
-                    titulo=asunto or f"Actualización retiro {req['code']}",
-                    subtitulo=f"{req['code']} - {variables['documento']}",
-                    saludo=variables["persona_retira"],
-                    parrafos=[cuerpo],   # cuerpo ya viene como HTML
-                    btn_primario_txt="Ver solicitud",
-                    btn_primario_url=follow_url,
-                    btn_secundario_txt="Cómo llegar",
-                    btn_secundario_url=cfg.get("maps_url"),
-                    info_lineas=[
-                        ("", "Bodega", variables["warehouse_name"]),
-                        ("", "Dirección", variables["warehouse_addr"]),
-                    ],
-                )
+                # El `cuerpo` de la plantilla de retiros YA es un email completo y
+                # autosuficiente (hero + stepper + datos + CTA — diseño 2026-06).
+                # Por eso NO lo envolvemos con _ilus_email_html, que agregaría OTRO
+                # header negro + botones + Bodega/Dirección DUPLICADOS (el "doble
+                # header negro" y la repetición que reportó Daniel). Usamos el
+                # wrapper de marca limpio: solo el logo ILUS grande arriba y el
+                # eslogan "I LIKE U STRONG" abajo. (Juan Daniel 2026-06-05.)
+                try:
+                    from app import _comm_render_email_document
+                    html = _comm_render_email_document(asunto, cuerpo)
+                except Exception:
+                    # Fallback defensivo: si el wrapper limpio no estuviera
+                    # disponible, no perdemos el envío (diseño anterior).
+                    html = _ilus_email_html(
+                        titulo=asunto or f"Actualización retiro {req['code']}",
+                        subtitulo=f"{req['code']} - {variables['documento']}",
+                        saludo=variables["persona_retira"],
+                        parrafos=[cuerpo],   # cuerpo ya viene como HTML
+                        btn_primario_txt="Ver mi retiro en vivo",
+                        btn_primario_url=follow_url,
+                    )
                 # Multi-email: envía al cliente declarado + extra_emails + emails del ERP
                 _multi = _send_pickup_email_multi(req, f"ILUS — {asunto}", html)
                 sent_mail = len(_multi["sent"]) > 0
@@ -1333,7 +1387,7 @@ def register_pickup_routes(app, ctx):
                                 ("", "Telefono", phone),
                             ],
                         )
-                        _send_ilus_email(dest, subject, html)
+                        _send_ilus_email(dest, subject, html, evento="pickup_reject_operador", modulo="retiros")
                 except Exception as exc:
                     try:
                         print(f"[ILUS][PICKUP REJECT NOTIFY OPERADOR] {exc}")
@@ -1579,7 +1633,7 @@ def register_pickup_routes(app, ctx):
         return jsonify(payload)
 
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
-    @_rate_limited("pickup_public_request", max_attempts=8, window_seconds=3600)
+    @_rate_limited("pickup_public_request", max_attempts=40, window_seconds=3600)
     def pickup_public_request():
         # Rate limit: 8 envíos / hora por IP. Daniel pidió "sin brechas" —
         # antes era ilimitado, lo que permitía a un atacante crear cientos
@@ -5801,7 +5855,10 @@ def register_pickup_routes(app, ctx):
         sent, failed = [], []
         for e in emails:
             try:
-                ok = _send_ilus_email(e, subject, html)
+                # Juan Daniel 2026-06-05: pasar modulo="retiros" para que el correo
+                # se rija por la LLAVE DE PASO de Retiros (no la de "general", que era
+                # el default y bloqueaba el envío aunque Retiros estuviera abierta).
+                ok = _send_ilus_email(e, subject, html, evento="pickup_created", modulo="retiros")
                 if ok:
                     sent.append(e)
                 else:
@@ -6600,7 +6657,15 @@ def register_pickup_routes(app, ctx):
                 erp_contacts_map = {}
 
         # Capacidades
-        max_picks_slot = int(cfg.get("max_picks_per_slot") or 5)
+        # FASE 4 / Juan Daniel 2026-06-05: capacidad ÚNICA = parallel_capacity
+        # (default 2 = "dos agendas"). El calendario mostraba X/max_picks_per_slot
+        # (legacy 5), inconsistente con el cliente que ya usa 2. Ahora el operador
+        # ve el DOBLE cupo (X/2) igual que el público. Mismo patrón que _validar_disponibilidad_slot.
+        _pc_cal = cfg.get("parallel_capacity")
+        if _pc_cal is not None and str(_pc_cal).strip():
+            max_picks_slot = int(_pc_cal)
+        else:
+            max_picks_slot = int(cfg.get("max_picks_per_slot") or 2)
         max_kg_slot    = float(cfg.get("max_kg_per_slot") or 500)
         max_m3_slot    = float(cfg.get("max_m3_per_slot") or 5)
         max_picks_day  = int(cfg.get("max_picks_per_day") or 30)
@@ -7042,6 +7107,10 @@ def register_pickup_routes(app, ctx):
         # generamos los 31 días desde d_from hasta d_to inclusive.
         dias = {}
         total_dias = (d_to - d_from).days + 1
+        # Feriados legales de Chile (auto) para los años del horizonte, además del
+        # config. (Juan Daniel 2026-06-05: bloquear feriados chilenos en el calendario.)
+        for _yr in {d_from.year, d_to.year}:
+            holidays = holidays | _chile_holidays(_yr)
         for offset in range(total_dias):
             d = d_from + _td(days=offset)
             iso = d.isoformat()
@@ -7060,7 +7129,9 @@ def register_pickup_routes(app, ctx):
                 "disponible": dia_disponible,
                 "razon":      "" if dia_disponible else (
                                 "Día bloqueado: " + full_day_motivo if full_day_block else
-                                "No laborable" if not disp_dia else "Día completo"
+                                "Feriado en Chile" if iso in holidays else
+                                "Fin de semana" if d.isoweekday() not in work_days else
+                                "Día completo"
                               ),
                 "slots":      [],
                 "ocupacion_pct": min(100, round((day_picks * 100) / max(1, max_picks_day))),

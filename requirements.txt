@@ -1,6 +1,8 @@
 flask>=3.0.0
+requests>=2.31.0
 pymysql>=1.1.0
 DBUtils>=3.0.0
+# Playwright: PDFs de etiquetas + módulo Etiquetas (módulo Etiquetas y transporte)
 playwright==1.49.1
 # greenlet pineado >= 3.1.2 porque 3.1.1 (dep transitiva de playwright)
 # NO compila en Python 3.13 (CPython renombró c_recursion_remaining a
@@ -13,6 +15,10 @@ gunicorn>=21.2.0
 python-docx>=1.1.0
 pdfplumber>=0.10.0
 pypdf>=4.0.0
+# OCR determinista (sin IA) para contratos escaneados — necesita tesseract + poppler (Dockerfile)
+pytesseract>=0.3.10
+pdf2image>=1.17.0
+Pillow>=10.0.0
 anthropic>=0.30.0
 twilio>=9.10.0
 # Random ERP — SQL Server read-only via pymssql

@@ -765,4 +765,147 @@
       ilusCleanModalBackdrops();
     }
   }, 5000);
+
+  /* ════════════════════════════════════════════════════════════════
+     ilusLoader — overlay de carga PREMIUM con el casco ILUS girando.
+     (Juan Daniel 2026-06-05: "barra de procesos con el logo de ILUS,
+      bien dinámica, un modal con el ILUS dando vuelta, espectacular.")
+     Uso:
+       ilusLoader.show('Buscando documento en el ERP…');
+       ilusLoader.show({ text:'Cotizando couriers…', sub:'puede tardar unos seg' });
+       ilusLoader.text('Casi listo…');         // cambiar el texto
+       ilusLoader.progress(60);                 // 0-100 = barra determinada
+       ilusLoader.hide();
+     Sin progress → barra indeterminada (shimmer). Reutilizable en TODO ILUS.
+  ════════════════════════════════════════════════════════════════ */
+  const LOADER_STYLE_ID = '__ilus_loader_styles';
+  function ensureLoaderStyles(){
+    if (document.getElementById(LOADER_STYLE_ID)) return;
+    const s = document.createElement('style');
+    s.id = LOADER_STYLE_ID;
+    s.textContent = `
+      .ilus-loader{
+        position:fixed; inset:0; z-index:100001;
+        display:none; align-items:center; justify-content:center; padding:24px;
+        background:radial-gradient(120% 120% at 50% 38%, rgba(22,22,22,.92) 0%, rgba(7,7,7,.97) 72%);
+        backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+        opacity:0; transition:opacity .25s ease;
+      }
+      .ilus-loader.show{ opacity:1; }
+      .ilus-loader-card{
+        display:flex; flex-direction:column; align-items:center; gap:20px; text-align:center;
+        transform:translateY(12px) scale(.95);
+        transition:transform .32s cubic-bezier(.2,.8,.2,1.05);
+      }
+      .ilus-loader.show .ilus-loader-card{ transform:none; }
+      .ilus-loader-ring{ position:relative; width:132px; height:132px; display:flex; align-items:center; justify-content:center; }
+      .ilus-loader-ring::before{
+        content:''; position:absolute; inset:0; border-radius:50%;
+        background:conic-gradient(from 0deg, transparent 0 55%, #dc2626 86%, #ff6b6b 100%);
+        -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+                mask:radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+        animation:ilusRingSpin 1.05s linear infinite;
+        filter:drop-shadow(0 0 11px rgba(220,38,38,.6));
+      }
+      .ilus-loader-ring::after{
+        content:''; position:absolute; inset:7px; border-radius:50%;
+        box-shadow:0 0 0 1px rgba(220,38,38,.18), inset 0 0 26px rgba(220,38,38,.12);
+        animation:ilusPulseGlow 1.8s ease-in-out infinite;
+      }
+      .ilus-loader-coin{
+        width:86px; height:86px; border-radius:50%; background:#0a0a0a;
+        border:1px solid rgba(220,38,38,.4); display:flex; align-items:center; justify-content:center;
+        box-shadow:0 10px 34px rgba(0,0,0,.65); transform-style:preserve-3d;
+        animation:ilusCoinFlip 2.6s cubic-bezier(.55,.05,.3,.95) infinite;
+      }
+      .ilus-loader-coin img{ width:60px; height:60px; object-fit:contain; filter:drop-shadow(0 2px 6px rgba(0,0,0,.5)); }
+      .ilus-loader-word{ font-size:1.55rem; font-weight:800; letter-spacing:.5px; color:#fff; text-shadow:0 2px 14px rgba(220,38,38,.4); }
+      .ilus-loader-word b{ color:#dc2626; }
+      .ilus-loader-text{ color:#e5e7eb; font-size:.96rem; font-weight:600; max-width:380px; min-height:1.3em; line-height:1.4; }
+      .ilus-loader-sub{ color:#9ca3af; font-size:.8rem; margin-top:-12px; max-width:340px; }
+      .ilus-loader-bar{ width:300px; max-width:74vw; height:6px; border-radius:99px; background:rgba(255,255,255,.10); overflow:hidden; position:relative; }
+      .ilus-loader-bar > i{ position:absolute; top:0; bottom:0; left:0; display:block; border-radius:99px;
+        background:linear-gradient(90deg,#dc2626,#ff7a7a,#dc2626); box-shadow:0 0 12px rgba(220,38,38,.65); }
+      .ilus-loader-bar.indet > i{ width:38%; animation:ilusBarSlide 1.15s cubic-bezier(.5,0,.5,1) infinite; }
+      .ilus-loader-bar.det > i{ width:var(--pct,0%); transition:width .35s ease; }
+      .ilus-loader-bar.det > i::after{ content:''; position:absolute; inset:0;
+        background:linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent); animation:ilusShine 1.1s linear infinite; }
+      @keyframes ilusRingSpin{ to{ transform:rotate(360deg); } }
+      @keyframes ilusCoinFlip{ 0%,100%{ transform:rotateY(0deg); } 50%{ transform:rotateY(360deg); } }
+      @keyframes ilusPulseGlow{ 0%,100%{ opacity:.45; } 50%{ opacity:1; } }
+      @keyframes ilusBarSlide{ 0%{ left:-38%; } 100%{ left:100%; } }
+      @keyframes ilusShine{ to{ transform:translateX(100%); } }
+      @media (prefers-reduced-motion: reduce){
+        .ilus-loader-ring::before{ animation-duration:2.6s; }
+        .ilus-loader-coin{ animation:none; }
+        .ilus-loader-bar.indet > i{ animation-duration:2.2s; }
+      }
+    `;
+    document.head.appendChild(s);
+  }
+
+  let _loaderEl = null;
+  function _ensureLoaderEl(){
+    if (_loaderEl) return _loaderEl;
+    ensureLoaderStyles();
+    const el = document.createElement('div');
+    el.className = 'ilus-loader';
+    el.setAttribute('role','status'); el.setAttribute('aria-live','polite');
+    el.innerHTML =
+      '<div class="ilus-loader-card">' +
+        '<div class="ilus-loader-ring"><div class="ilus-loader-coin">' +
+          '<img src="/static/Logo.webp" alt="ILUS" onerror="this.onerror=null;this.src=\'/static/Logo.png\';">' +
+        '</div></div>' +
+        '<div class="ilus-loader-word">ILUS<b>.</b></div>' +
+        '<div class="ilus-loader-text"></div>' +
+        '<div class="ilus-loader-bar indet"><i></i></div>' +
+      '</div>';
+    document.body.appendChild(el);
+    _loaderEl = el;
+    return el;
+  }
+
+  const ilusLoader = {
+    show(opts){
+      const el = _ensureLoaderEl();
+      const o = (typeof opts === 'string') ? { text: opts } : (opts || {});
+      el.querySelector('.ilus-loader-text').textContent = o.text || 'Procesando…';
+      // sub (opcional)
+      const card = el.querySelector('.ilus-loader-card');
+      let subEl = el.querySelector('.ilus-loader-sub');
+      if (o.sub){
+        if (!subEl){ subEl = document.createElement('div'); subEl.className = 'ilus-loader-sub';
+          card.insertBefore(subEl, el.querySelector('.ilus-loader-bar')); }
+        subEl.textContent = o.sub;
+      } else if (subEl){ subEl.remove(); }
+      // progreso
+      if (typeof o.progress === 'number') this.progress(o.progress);
+      else {
+        const bar = el.querySelector('.ilus-loader-bar');
+        bar.classList.add('indet'); bar.classList.remove('det'); bar.style.removeProperty('--pct');
+      }
+      el.style.display = 'flex';
+      void el.offsetWidth;           // reflow → fade-in
+      el.classList.add('show');
+      return this;
+    },
+    text(str){ if (_loaderEl) _loaderEl.querySelector('.ilus-loader-text').textContent = str || ''; return this; },
+    progress(pct){
+      const el = _ensureLoaderEl();
+      pct = Math.max(0, Math.min(100, Number(pct) || 0));
+      const bar = el.querySelector('.ilus-loader-bar');
+      bar.classList.add('det'); bar.classList.remove('indet');
+      bar.style.setProperty('--pct', pct + '%');
+      return this;
+    },
+    hide(){
+      if (!_loaderEl) return this;
+      const el = _loaderEl;
+      el.classList.remove('show');
+      setTimeout(function(){ el.style.display = 'none'; }, 270);
+      return this;
+    },
+  };
+  global.ilusLoader = ilusLoader;
+
 })(window);

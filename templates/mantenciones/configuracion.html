@@ -1,0 +1,658 @@
+{% extends "base.html" %}
+{% block title %}Configuración del Agente — ILUS{% endblock %}
+
+{% block content %}
+<style>
+  .ag-banner{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);
+    color:#fff;border-radius:12px;padding:14px 18px;margin-bottom:16px;
+    display:flex;align-items:center;gap:12px;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+  .ag-banner i.ag-bicon{font-size:1.6rem;color:var(--ilus-red);flex-shrink:0}
+  .ag-banner .t{font-weight:800;letter-spacing:-.01em;font-size:.98rem}
+  .ag-banner .s{font-size:.8rem;color:#cfd3da;margin-top:1px}
+
+  .ag-cat{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+    padding:16px 18px;margin-bottom:14px}
+  .ag-cat-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;
+    padding-bottom:9px;border-bottom:1px solid #f1f3f5}
+  .ag-cat-head .chip{width:30px;height:30px;border-radius:8px;display:flex;
+    align-items:center;justify-content:center;font-size:.95rem;flex-shrink:0}
+  .ag-cat-head h6{margin:0;font-weight:800;color:#0f172a;font-size:.95rem;text-transform:capitalize}
+  .ag-cat-head .cnt{margin-left:auto;font-size:.68rem;color:#9ca3af;font-weight:700;
+    text-transform:uppercase;letter-spacing:.4px}
+
+  .cat-frecuencia .chip{background:#dbeafe;color:#1e40af}
+  .cat-precio    .chip{background:#dcfce7;color:#166534}
+  .cat-descuento .chip{background:#fef3c7;color:#92400e}
+  .cat-alerta    .chip{background:#fee2e2;color:#991b1b}
+  .cat-politica  .chip{background:#ede9fe;color:#5b21b6}
+  .cat-texto     .chip{background:#f3f4f6;color:#374151}
+  .cat-otros     .chip{background:#f3f4f6;color:#374151}
+
+  .ag-rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+  .ag-rule{display:flex;flex-direction:column;gap:5px}
+  .ag-rule label.rl{font-weight:700;font-size:.85rem;color:#0f172a}
+  .ag-rule .desc{font-size:.73rem;color:#6b7280;line-height:1.35}
+  .ag-rule .ctrl{display:flex;align-items:center;gap:8px}
+  .ag-rule .ctrl .unidad{font-size:.78rem;color:#6b7280;font-weight:600;white-space:nowrap}
+  .ag-rule.bool{flex-direction:row;align-items:flex-start;gap:10px;
+    background:#fafafa;border:1px solid #eef0f2;border-radius:9px;padding:10px 12px}
+  .ag-rule.bool .form-check-input{margin-top:.15rem;flex-shrink:0}
+  .ag-rule.dirty label.rl::after{content:'•';color:var(--ilus-red);margin-left:5px;font-weight:900}
+  .ag-rule .rango{font-size:.68rem;color:#9ca3af}
+
+  .ag-savebar{position:sticky;bottom:0;z-index:5;background:#fff;border:1px solid #eaecf0;
+    border-radius:12px;padding:11px 16px;margin-top:16px;display:flex;
+    align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    box-shadow:0 -4px 16px rgba(0,0,0,.05)}
+  .ag-savebar .info{font-size:.8rem;color:#6b7280}
+  .ag-savebar .info b{color:var(--ilus-red)}
+
+  .empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;
+    padding:50px 30px;text-align:center}
+  .empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-sliders me-2"></i>Configuración del Agente</h4>
+    <div class="sub">Reglas del negocio que rigen el cálculo de salud, riesgo y exposición de cada cliente.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('mant_radar_page') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-radar me-1"></i>Ir al Radar
+    </a>
+    <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Dashboard
+    </a>
+  </div>
+</div>
+
+<div class="ag-banner">
+  <i class="bi bi-cpu ag-bicon"></i>
+  <div>
+    <div class="t">Estas reglas alimentan al Agente de Inteligencia</div>
+    <div class="s">100% por reglas, sin IA. Ajusta un valor y guarda — el próximo recálculo del Radar las usa.</div>
+  </div>
+</div>
+
+<div id="ag_root">
+  <div class="text-center py-5 text-muted">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando reglas…
+  </div>
+</div>
+
+<div id="ag_contrato_root" style="margin-top:22px"></div>
+
+<!-- Modal CREAR / EDITAR regla de contrato -->
+<div class="modal fade" id="modalReglaContrato" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-file-earmark-text me-2"></i><span id="rcModalTitulo">Nueva regla de contrato</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="rcId">
+        <div class="row g-3">
+          <div class="col-12 col-md-4">
+            <label class="form-label small fw-semibold">Tipo <span class="text-danger">*</span></label>
+            <select id="rcTipo" class="form-select form-select-sm">
+              <option value="alerta_critica">Crítica</option>
+              <option value="punto_revisar">Revisar</option>
+              <option value="clausula_relevante">Cláusula</option>
+              <option value="clausula_favorable">Favorable</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label small fw-semibold">Dimensión</label>
+            <input type="text" id="rcDimension" class="form-control form-control-sm"
+                   placeholder="Ej: pagos, garantia, sla">
+          </div>
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold">Severidad</label>
+            <select id="rcSeveridad" class="form-select form-select-sm">
+              <option value="alta">Alta</option>
+              <option value="media" selected>Media</option>
+              <option value="baja">Baja</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold">Peso</label>
+            <input type="number" id="rcPeso" class="form-control form-control-sm" value="1" step="any">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Mensaje <span class="text-danger">*</span></label>
+            <textarea id="rcMensaje" class="form-control form-control-sm" rows="2"
+                      placeholder="Texto que verá el analista cuando se dispare la regla"></textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Propuesta</label>
+            <textarea id="rcPropuesta" class="form-control form-control-sm" rows="2"
+                      placeholder="Recomendación o redacción sugerida"></textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Base legal</label>
+            <input type="text" id="rcBaseLegal" class="form-control form-control-sm"
+                   placeholder="Ej: Art. 1545 Código Civil">
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label small fw-semibold">Patrones de presencia</label>
+            <textarea id="rcPatPresencia" class="form-control form-control-sm" rows="4"
+                      placeholder="Una frase por línea&#10;Ej: pago anticipado&#10;multa por mora"></textarea>
+            <div class="form-text" style="font-size:.7rem">Una frase por línea. Si aparecen, la regla se dispara.</div>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label small fw-semibold">Patrones de ausencia</label>
+            <textarea id="rcPatAusencia" class="form-control form-control-sm" rows="4"
+                      placeholder="Una frase por línea&#10;Ej: garantía&#10;plazo de entrega"></textarea>
+            <div class="form-text" style="font-size:.7rem">Una frase por línea. Si NO aparecen, la regla se dispara.</div>
+          </div>
+
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="rcActiva" checked>
+              <label class="form-check-label small fw-semibold" for="rcActiva">Regla activa</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="rcGuardarBtn" onclick="guardarReglaContrato()">
+          <i class="bi bi-check-circle-fill me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// Orden y metadatos visuales de cada categoría
+const CAT_META = {
+  frecuencia: {icon:'⏱', label:'Frecuencia'},
+  precio:     {icon:'💲', label:'Precio'},
+  descuento:  {icon:'🏷️', label:'Descuento'},
+  alerta:     {icon:'🚨', label:'Alerta'},
+  politica:   {icon:'📜', label:'Política'},
+  texto:      {icon:'📝', label:'Texto'},
+};
+const CAT_ORDER = ['frecuencia','precio','descuento','alerta','politica','texto'];
+
+let _reglas = [];                 // [{clave,valor,tipo_dato,...}]
+const _original = {};             // clave -> valor original (string)
+const _actual   = {};             // clave -> valor actual (string)
+
+function _isBool(td){ return td === 'bool'; }
+function _isNum(td){ return td === 'int' || td === 'float'; }
+
+async function cargar(){
+  const root = document.getElementById('ag_root');
+  root.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando reglas…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/reglas-negocio');
+    if (r.status === 403){
+      root.innerHTML = `<div class="empty-state"><i class="bi bi-shield-lock"></i>
+        <div class="fw-bold">Acceso restringido</div>
+        <div class="text-muted small">Solo administradores pueden configurar el Agente de Inteligencia.</div></div>`;
+      return;
+    }
+    const d = await r.json();
+    if (!Array.isArray(d)){
+      root.innerHTML = `<div class="alert alert-danger">Error: ${esc(d && d.error || 'respuesta inesperada')}</div>`;
+      return;
+    }
+    _reglas = d;
+    for (const reg of _reglas){
+      const v = reg.valor == null ? '' : String(reg.valor);
+      _original[reg.clave] = v;
+      _actual[reg.clave]   = v;
+    }
+    render();
+  } catch(e){
+    root.innerHTML = `<div class="alert alert-danger">Error de red: ${esc(e.message)}</div>`;
+  }
+}
+
+function render(){
+  const root = document.getElementById('ag_root');
+  if (!_reglas.length){
+    root.innerHTML = `<div class="empty-state"><i class="bi bi-sliders"></i>
+      <div class="fw-bold">No hay reglas configuradas</div>
+      <div class="text-muted small">Aún no se definieron reglas del negocio para el Agente.</div></div>`;
+    return;
+  }
+
+  // Agrupar por categoría
+  const grupos = {};
+  for (const reg of _reglas){
+    const cat = (reg.categoria || 'otros').toLowerCase();
+    (grupos[cat] = grupos[cat] || []).push(reg);
+  }
+  // Orden: categorías conocidas primero, luego el resto alfabético
+  const cats = Object.keys(grupos).sort((a,b) => {
+    const ia = CAT_ORDER.indexOf(a), ib = CAT_ORDER.indexOf(b);
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.localeCompare(b);
+  });
+
+  let html = '';
+  for (const cat of cats){
+    const meta = CAT_META[cat] || {icon:'⚙️', label:cat};
+    const items = grupos[cat].slice().sort((a,b) => (a.orden||0) - (b.orden||0));
+    const catCls = CAT_META[cat] ? ('cat-' + cat) : 'cat-otros';
+    html += `<div class="ag-cat ${catCls}">
+      <div class="ag-cat-head">
+        <span class="chip">${meta.icon}</span>
+        <h6>${esc(meta.label)}</h6>
+        <span class="cnt">${items.length} regla${items.length!==1?'s':''}</span>
+      </div>
+      <div class="ag-rules">
+        ${items.map(renderRule).join('')}
+      </div>
+    </div>`;
+  }
+  root.innerHTML = html;
+}
+
+function renderRule(reg){
+  const id = 'rg_' + reg.clave.replace(/[^a-zA-Z0-9_]/g, '_');
+  const label = esc(reg.label || reg.clave);
+  const desc  = reg.descripcion ? `<div class="desc">${esc(reg.descripcion)}</div>` : '';
+  const val   = _actual[reg.clave] != null ? _actual[reg.clave] : '';
+  const td    = reg.tipo_dato;
+
+  // BOOL → checkbox
+  if (_isBool(td)){
+    const on = (val === '1' || val === 'true' || val === 'True');
+    return `<div class="ag-rule bool" id="wrap_${id}">
+      <input class="form-check-input" type="checkbox" id="${id}" ${on?'checked':''}
+             onchange="onChange('${esc(reg.clave)}', this.checked ? '1' : '0')">
+      <div><label class="rl" for="${id}">${label}</label>${desc}</div>
+    </div>`;
+  }
+
+  // INT / FLOAT → number
+  if (_isNum(td)){
+    const step  = (td === 'float') ? 'any' : '1';
+    const minA  = (reg.min_val != null) ? `min="${esc(reg.min_val)}"` : '';
+    const maxA  = (reg.max_val != null) ? `max="${esc(reg.max_val)}"` : '';
+    const unid  = reg.unidad ? `<span class="unidad">${esc(reg.unidad)}</span>` : '';
+    let rango = '';
+    if (reg.min_val != null || reg.max_val != null){
+      const mn = reg.min_val != null ? esc(reg.min_val) : '−∞';
+      const mx = reg.max_val != null ? esc(reg.max_val) : '∞';
+      rango = `<div class="rango">Rango permitido: ${mn} a ${mx}</div>`;
+    }
+    return `<div class="ag-rule" id="wrap_${id}">
+      <label class="rl" for="${id}">${label}</label>${desc}
+      <div class="ctrl">
+        <input type="number" class="form-control form-control-sm" id="${id}"
+               value="${esc(val)}" step="${step}" ${minA} ${maxA}
+               oninput="onChange('${esc(reg.clave)}', this.value)">
+        ${unid}
+      </div>
+      ${rango}
+    </div>`;
+  }
+
+  // STRING / JSON → textarea si es largo o json, si no input text
+  const isLong = (td === 'json') || (String(val).length > 60) || String(val).includes('\n');
+  if (isLong){
+    return `<div class="ag-rule" id="wrap_${id}" style="grid-column:1/-1">
+      <label class="rl" for="${id}">${label}</label>${desc}
+      <textarea class="form-control form-control-sm" id="${id}" rows="3"
+                oninput="onChange('${esc(reg.clave)}', this.value)">${esc(val)}</textarea>
+    </div>`;
+  }
+  return `<div class="ag-rule" id="wrap_${id}">
+    <label class="rl" for="${id}">${label}</label>${desc}
+    <input type="text" class="form-control form-control-sm" id="${id}"
+           value="${esc(val)}" oninput="onChange('${esc(reg.clave)}', this.value)">
+  </div>`;
+}
+
+function onChange(clave, valor){
+  _actual[clave] = String(valor);
+  // marcar/desmarcar dirty visual
+  const id = 'rg_' + clave.replace(/[^a-zA-Z0-9_]/g, '_');
+  const wrap = document.getElementById('wrap_' + id);
+  if (wrap){
+    if (_actual[clave] !== _original[clave]) wrap.classList.add('dirty');
+    else wrap.classList.remove('dirty');
+  }
+  actualizarSaveBar();
+}
+
+function _diffCount(){
+  let n = 0;
+  for (const k in _actual){ if (_actual[k] !== _original[k]) n++; }
+  return n;
+}
+
+function actualizarSaveBar(){
+  const n = _diffCount();
+  const info = document.getElementById('ag_saveinfo');
+  const btn  = document.getElementById('ag_savebtn');
+  if (!info || !btn) return;
+  if (n === 0){
+    info.innerHTML = 'Sin cambios pendientes.';
+    btn.disabled = true;
+  } else {
+    info.innerHTML = `<b>${n}</b> cambio${n!==1?'s':''} sin guardar.`;
+    btn.disabled = false;
+  }
+}
+
+async function guardar(){
+  const cambios = {};
+  for (const k in _actual){ if (_actual[k] !== _original[k]) cambios[k] = _actual[k]; }
+  if (!Object.keys(cambios).length){
+    ilusToast('No hay cambios para guardar', {type:'info'});
+    return;
+  }
+  const btn = document.getElementById('ag_savebtn');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/reglas-negocio', {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cambios}),
+    });
+    if (r.status === 403){
+      ilusToast('No tienes permisos para guardar (solo admin).', {type:'error'});
+      if (btn) btn.disabled = false;
+      return;
+    }
+    const d = await r.json();
+    if (!r.ok || !d.ok){
+      ilusToast('Error: ' + esc(d && d.error || 'no se pudo guardar'), {type:'error'});
+      if (btn) btn.disabled = false;
+      return;
+    }
+    // Confirmar: lo actual pasa a ser lo original
+    for (const k in cambios){ _original[k] = _actual[k]; }
+    document.querySelectorAll('.ag-rule.dirty').forEach(el => el.classList.remove('dirty'));
+    actualizarSaveBar();
+    ilusToast(`✓ ${d.actualizadas != null ? d.actualizadas : Object.keys(cambios).length} regla(s) guardada(s)`, {type:'success'});
+  } catch(e){
+    ilusToast('Error de red: ' + esc(e.message), {type:'error'});
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Barra de guardado fija al pie (se inyecta una vez)
+(function mountSaveBar(){
+  const bar = document.createElement('div');
+  bar.className = 'ag-savebar';
+  bar.innerHTML = `
+    <div class="info" id="ag_saveinfo">Sin cambios pendientes.</div>
+    <button class="btn btn-ilus fw-bold" id="ag_savebtn" disabled onclick="guardar()">
+      <i class="bi bi-check-circle-fill me-1"></i>Guardar cambios
+    </button>`;
+  const content = document.querySelector('.main-content') || document.body;
+  // se inserta tras el root para quedar al final del flujo de la página
+  const root = document.getElementById('ag_root');
+  if (root && root.parentNode) root.parentNode.insertBefore(bar, root.nextSibling);
+  else content.appendChild(bar);
+})();
+
+// ── Reglas de análisis de CONTRATO — CRUD COMPLETO (crear/editar/borrar + toggle activa/peso) ──
+const TIPO_META = {
+  alerta_critica:    {c:'#dc2626', l:'Crítica'},
+  punto_revisar:     {c:'#f59e0b', l:'Revisar'},
+  clausula_relevante:{c:'#3b82f6', l:'Cláusula'},
+  clausula_favorable:{c:'#16a34a', l:'Favorable'},
+};
+// Orden de tipos dentro de cada dimensión: crítica → revisar → cláusula → favorable
+const TIPO_ORDER = ['alerta_critica','punto_revisar','clausula_relevante','clausula_favorable'];
+
+let _contratoReglas = [];   // último listado crudo del backend
+
+// Convierte un textarea (una frase por línea) en array de frases limpias
+function _linesToArr(txt){
+  return String(txt || '')
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+// Convierte un array (o string) de patrones a texto para el textarea
+function _arrToLines(v){
+  if (Array.isArray(v)) return v.join('\n');
+  return String(v == null ? '' : v);
+}
+
+async function cargarContrato(){
+  const root = document.getElementById('ag_contrato_root');
+  if (!root) return;
+  root.innerHTML = '<div class="ag-cat"><div class="text-muted small"><span class="spinner-border spinner-border-sm me-2"></span>Cargando reglas de contrato…</div></div>';
+  try {
+    const r = await fetch('/mantenciones/api/contrato-reglas');
+    if (r.status === 403){
+      root.innerHTML = '<div class="empty-state"><i class="bi bi-shield-lock"></i>'
+        + '<div class="fw-bold">Acceso restringido</div>'
+        + '<div class="text-muted small">Solo administradores pueden configurar las reglas de contrato.</div></div>';
+      return;
+    }
+    const d = await r.json();
+    const reglas = (d && d.reglas) || [];
+    _contratoReglas = reglas;
+
+    const total   = (d && d.total   != null) ? d.total   : reglas.length;
+    const activas = (d && d.activas != null) ? d.activas : reglas.filter(x => x.activa).length;
+
+    // Banner + cabecera con botón Agregar y contador (activas/total)
+    let html = '<div class="ag-banner" style="background:linear-gradient(135deg,#0a0a0a,#2a0d0d)">'
+      + '<i class="bi bi-file-earmark-text ag-bicon"></i>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div class="t">Reglas de análisis de CONTRATO <span id="rc_contador">(' + activas + '/' + total + ')</span></div>'
+      + '<div class="s">Activa/desactiva, edita o crea reglas. El toggle y el peso se guardan al instante. 100% sin IA.</div>'
+      + '</div>'
+      + '<button class="btn btn-sm btn-ilus fw-bold" onclick="nuevaReglaContrato()" style="flex-shrink:0">'
+      + '<i class="bi bi-plus-circle me-1"></i>Agregar regla</button>'
+      + '</div>';
+
+    if (!reglas.length){
+      html += '<div class="empty-state"><i class="bi bi-file-earmark-text"></i>'
+        + '<div class="fw-bold">No hay reglas de contrato</div>'
+        + '<div class="text-muted small">Crea la primera con el botón Agregar regla.</div></div>';
+      root.innerHTML = html;
+      return;
+    }
+
+    // Agrupar por dimensión y, dentro, ordenar por tipo (crítica → … → favorable)
+    const grupos = {};
+    reglas.forEach(rg => {
+      const dim = rg.dimension || 'otros';
+      (grupos[dim] = grupos[dim] || []).push(rg);
+    });
+    Object.keys(grupos).sort((a,b) => a.localeCompare(b)).forEach(dim => {
+      const items = grupos[dim].slice().sort((a,b) => {
+        const ia = TIPO_ORDER.indexOf(a.tipo), ib = TIPO_ORDER.indexOf(b.tipo);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+      html += '<div class="ag-cat"><div class="ag-cat-head"><span class="chip" style="background:#fee2e2;color:#991b1b">⚖️</span>'
+        + '<h6>' + esc(dim.replace(/_/g, ' ')) + '</h6><span class="cnt">' + items.length + ' regla' + (items.length !== 1 ? 's' : '') + '</span></div>';
+      items.forEach(rg => { html += renderReglaContrato(rg); });
+      html += '</div>';
+    });
+    root.innerHTML = html;
+  } catch(e){
+    root.innerHTML = '<div class="alert alert-danger">No se pudieron cargar las reglas de contrato.</div>';
+  }
+}
+
+function renderReglaContrato(rg){
+  const m = TIPO_META[rg.tipo] || {c:'#6b7280', l:rg.tipo};
+  const peso = (rg.peso != null) ? rg.peso : (rg.peso_score != null ? rg.peso_score : '');
+  return '<div class="ag-rule" data-rid="' + esc(rg.id) + '" style="flex-direction:row;align-items:flex-start;gap:10px;border-bottom:1px solid #f1f3f5;padding:9px 0;' + (rg.activa ? '' : 'opacity:.5') + '">'
+    + '<input class="form-check-input cfg-act" type="checkbox" ' + (rg.activa ? 'checked' : '') + ' title="Activa" onchange="cfgRegla(\'' + esc(rg.id) + '\')">'
+    + '<div style="flex:1;min-width:0">'
+    + '<div style="font-size:.8rem;color:#0f172a;line-height:1.35">' + esc(rg.mensaje) + '</div>'
+    + '<span style="display:inline-block;margin-top:3px;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.3px;color:#fff;background:' + m.c + ';padding:1px 8px;border-radius:50px">' + esc(m.l) + '</span>'
+    + (rg.base_legal ? ' <span class="text-muted" style="font-size:.65rem" title="' + esc(rg.base_legal) + '">· base legal ⓘ</span>' : '')
+    + '</div>'
+    + '<div class="ctrl" style="align-items:flex-start"><span class="unidad">peso</span>'
+    + '<input type="number" step="any" class="form-control form-control-sm cfg-peso" style="width:74px" value="' + esc(peso) + '" onchange="cfgRegla(\'' + esc(rg.id) + '\')">'
+    + '<button class="btn btn-sm btn-outline-secondary" title="Editar" onclick="editarReglaContrato(\'' + esc(rg.id) + '\')"><i class="bi bi-pencil"></i></button>'
+    + '<button class="btn btn-sm btn-outline-danger" title="Borrar" onclick="borrarReglaContrato(\'' + esc(rg.id) + '\')"><i class="bi bi-trash"></i></button>'
+    + '</div>'
+    + '</div>';
+}
+
+// Toggle activa + peso → PUT parcial al instante (igual que antes)
+async function cfgRegla(id){
+  const row = document.querySelector('[data-rid="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+  if (!row) return;
+  const activa = row.querySelector('.cfg-act').checked;
+  const peso = row.querySelector('.cfg-peso').value;
+  try {
+    const r = await fetch('/mantenciones/api/contrato-reglas/' + encodeURIComponent(id), {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({activa, peso}),
+    });
+    if (r.status === 403){ ilusToast('Solo admin/superadmin puede editar las reglas.', {type:'error'}); return; }
+    const d = await r.json();
+    if (r.ok && d.ok){
+      ilusToast('✓ Regla actualizada', {type:'success'});
+      row.style.opacity = activa ? '1' : '.5';
+      // Mantener el objeto local y el contador en sync
+      const obj = _contratoReglas.find(x => String(x.id) === String(id));
+      if (obj){ obj.activa = activa; obj.peso = peso; }
+      _actualizarContadorContrato();
+    } else {
+      ilusToast('No se pudo guardar la regla.', {type:'error'});
+    }
+  } catch(e){ ilusToast('Error de red al guardar la regla.', {type:'error'}); }
+}
+
+function _actualizarContadorContrato(){
+  const el = document.getElementById('rc_contador');
+  if (!el) return;
+  const total = _contratoReglas.length;
+  const activas = _contratoReglas.filter(x => x.activa).length;
+  el.textContent = '(' + activas + '/' + total + ')';
+}
+
+// ── Modal CREAR / EDITAR ──
+function _rcModal(){
+  const el = document.getElementById('modalReglaContrato');
+  return bootstrap.Modal.getOrCreateInstance(el);
+}
+function _rcSetForm(rg){
+  rg = rg || {};
+  document.getElementById('rcId').value           = rg.id != null ? rg.id : '';
+  document.getElementById('rcTipo').value         = rg.tipo || 'punto_revisar';
+  document.getElementById('rcDimension').value    = rg.dimension || '';
+  document.getElementById('rcSeveridad').value    = rg.severidad || 'media';
+  document.getElementById('rcPeso').value         = (rg.peso != null) ? rg.peso : (rg.peso_score != null ? rg.peso_score : 1);
+  document.getElementById('rcMensaje').value      = rg.mensaje || '';
+  document.getElementById('rcPropuesta').value    = rg.propuesta || '';
+  document.getElementById('rcBaseLegal').value    = rg.base_legal || '';
+  document.getElementById('rcPatPresencia').value = _arrToLines(rg.patrones_presencia);
+  document.getElementById('rcPatAusencia').value  = _arrToLines(rg.patrones_ausencia);
+  document.getElementById('rcActiva').checked     = (rg.activa == null) ? true : !!rg.activa;
+}
+
+function nuevaReglaContrato(){
+  _rcSetForm(null);
+  document.getElementById('rcModalTitulo').textContent = 'Nueva regla de contrato';
+  _rcModal().show();
+}
+
+function editarReglaContrato(id){
+  const rg = _contratoReglas.find(x => String(x.id) === String(id));
+  if (!rg){ ilusToast('No se encontró la regla.', {type:'error'}); return; }
+  _rcSetForm(rg);
+  document.getElementById('rcModalTitulo').textContent = 'Editar regla de contrato';
+  _rcModal().show();
+}
+
+async function guardarReglaContrato(){
+  const id = document.getElementById('rcId').value.trim();
+  const mensaje = document.getElementById('rcMensaje').value.trim();
+  if (!mensaje){ ilusToast('El mensaje es obligatorio.', {type:'warning'}); return; }
+
+  const peso = parseFloat(document.getElementById('rcPeso').value);
+  const dim  = document.getElementById('rcDimension').value.trim();
+  const payload = {
+    tipo:       document.getElementById('rcTipo').value,
+    categoria:  dim,
+    dimension:  dim,
+    severidad:  document.getElementById('rcSeveridad').value,
+    peso_score: isNaN(peso) ? 1 : peso,
+    peso:       isNaN(peso) ? 1 : peso,
+    mensaje:    mensaje,
+    propuesta:  document.getElementById('rcPropuesta').value.trim(),
+    base_legal: document.getElementById('rcBaseLegal').value.trim(),
+    patrones_presencia: _linesToArr(document.getElementById('rcPatPresencia').value),
+    patrones_ausencia:  _linesToArr(document.getElementById('rcPatAusencia').value),
+    activa:     document.getElementById('rcActiva').checked,
+  };
+
+  const btn = document.getElementById('rcGuardarBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const editar = !!id;
+    const url = editar
+      ? '/mantenciones/api/contrato-reglas/' + encodeURIComponent(id)
+      : '/mantenciones/api/contrato-reglas';
+    const r = await fetch(url, {
+      method: editar ? 'PUT' : 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (r.status === 403){ ilusToast('Solo admin/superadmin puede editar las reglas.', {type:'error'}); return; }
+    const d = await r.json();
+    if (r.ok && d.ok){
+      _rcModal().hide();
+      ilusToast(editar ? '✓ Regla actualizada' : '✓ Regla creada', {type:'success'});
+      await cargarContrato();
+    } else {
+      ilusToast('Error: ' + esc(d && d.error || 'no se pudo guardar'), {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de red al guardar la regla.', {type:'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function borrarReglaContrato(id){
+  const rg = _contratoReglas.find(x => String(x.id) === String(id));
+  const ok = await ilusConfirm({
+    title: 'Borrar regla de contrato',
+    message: '¿Eliminar esta regla permanentemente?',
+    sub: rg ? esc(rg.mensaje) : 'Esta acción no se puede deshacer.',
+    subHtml: !!rg,
+    okLabel: 'Borrar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch('/mantenciones/api/contrato-reglas/' + encodeURIComponent(id), { method:'DELETE' });
+    if (r.status === 403){ ilusToast('Solo admin/superadmin puede borrar reglas.', {type:'error'}); return; }
+    const d = await r.json();
+    if (r.ok && d.ok){
+      ilusToast('✓ Regla eliminada', {type:'success'});
+      await cargarContrato();
+    } else {
+      ilusToast('Error: ' + esc(d && d.error || 'no se pudo borrar'), {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de red al borrar la regla.', {type:'error'});
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => { cargar(); cargarContrato(); });
+</script>
+{% endblock %}

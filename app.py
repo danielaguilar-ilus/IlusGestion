@@ -253,6 +253,14 @@ def _now_chile_str(fmt="%d-%m-%Y %H:%M"):
 
 app = Flask(__name__)
 
+# ── Cloud Run / proxy inverso ──────────────────────────────────────────────
+# Cloud Run termina el TLS en su proxy y reenvía al contenedor por HTTP. Sin
+# esto, request.scheme="http" → url_for(_external=True) genera enlaces "http://"
+# (p.ej. el botón del correo de cambio de contraseña). ProxyFix respeta
+# X-Forwarded-Proto (→ https) y X-Forwarded-For (→ IP real del cliente).
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
 
 # ── /version: diagnóstico simple — qué commit está corriendo el servidor ──
 # Lee el hash del último commit del filesystem (puesto por el deploy).
@@ -1117,6 +1125,7 @@ def get_mysql():
     return pymysql.connect(
         host=MYSQL_CONFIG["host"],
         port=MYSQL_CONFIG["port"],
+        unix_socket=MYSQL_CONFIG.get("unix_socket") or None,
         user=MYSQL_CONFIG["user"],
         password=MYSQL_CONFIG["password"],
         database=MYSQL_CONFIG["database"],
@@ -1189,6 +1198,7 @@ def _get_pool():
                 ping           = 1,
                 host           = MYSQL_CONFIG["host"],
                 port           = MYSQL_CONFIG["port"],
+                unix_socket    = MYSQL_CONFIG.get("unix_socket") or None,
                 user           = MYSQL_CONFIG["user"],
                 password       = MYSQL_CONFIG["password"],
                 database       = MYSQL_CONFIG["database"],
@@ -5365,9 +5375,17 @@ def product_search():
     except Exception:
         pass
 
-    # ── 3. REST API ERP /productos — fuente en tiempo real ───────────
+    # ⚡ PERF (Juan Daniel 2026-06-05): el SQL directo a Random es ~70x más
+    # rápido que el REST API (MEDIDO: ~14ms vs ~0.8-1.2s). Respetamos el flag
+    # global ILUS_ERP_PREFER_SQL (default "1"), igual que ya hacen cubicador y
+    # retiros, para que la búsqueda de productos use SQL primero (baja de ~1s+
+    # a ~15ms). El REST queda solo como respaldo si se desactiva el flag.
+    _PREFER_SQL = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                   in ("1", "true", "yes", "on"))
+
+    # ── 3. REST API ERP /productos — SOLO si NO preferimos SQL ───────
     erp_api_tried = False
-    if len(q) >= 2:
+    if not _PREFER_SQL and len(q) >= 2:
         try:
             TOKEN = ERP_CONFIG.get("api_token", "")
             body  = _erp_get(
@@ -5379,7 +5397,7 @@ def product_search():
                     "visible": "true",
                     "venta":   "true",       # solo productos de venta (excluye servicios)
                 },
-                TOKEN, timeout=6,
+                TOKEN, timeout=3,
             )
             erp_api_tried = True
             existing_skus = {r["sku"] for r in results}
@@ -5409,11 +5427,13 @@ def product_search():
             except Exception:
                 erp_api_error = type(e).__name__
 
-    # ── 4. FALLBACK SQL directo a MAEPR (cuando REST API cae) ────────
+    # ── 4. SQL directo a MAEPR — PRINCIPAL si preferimos SQL, o respaldo si REST cae ──
     # 2026-05-19: si la REST API del ERP no responde, vamos directo al
     # SQL Server de Random (mismo que usa Transporte/Mantenciones). Esto
     # restaura el comportamiento de búsqueda CATÁLOGO completo del ERP.
-    if not erp_api_ok and len(q) >= 2:
+    # 2026-06-05 (perf): con ILUS_ERP_PREFER_SQL=1 este es el camino PRINCIPAL
+    # (~14ms vs ~1s del REST). Por eso la condición incluye _PREFER_SQL.
+    if (_PREFER_SQL or not erp_api_ok) and len(q) >= 2:
         try:
             like_sql = f"%{q.upper()}%"
             erp_rows = _random_sql_query(
@@ -5550,6 +5570,21 @@ def login():
             _uid = user["id"]
             _uname = user["username"]
             _urole = user["role"]
+            # ── Alerta de inicio de sesión: ¿dispositivo nuevo? (cookie larga) ──
+            _dev_cookie = request.cookies.get("ilus_dev")
+            _is_new_device = not _dev_cookie
+            _dev_token = _dev_cookie or secrets.token_urlsafe(16)
+            _alert_to = (user.get("username") or "")
+            _alert_nombre = user.get("nombre") or ""
+            _alert_ua = (request.headers.get("User-Agent") or "")[:180]
+            try:
+                _alert_cuando = _now_chile().strftime("%d/%m/%Y %H:%M hrs")
+            except Exception:
+                _alert_cuando = ""
+            try:
+                _alert_action = url_for("forgot_password", _external=True)
+            except Exception:
+                _alert_action = ""
             import threading as _th_login
             def _login_track_async():
                 with app.app_context():
@@ -5583,13 +5618,29 @@ def login():
                                user_override={"id": _uid, "username": _uname, "role": _urole})
                     except Exception as _e_au:
                         print(f"[login-track-async] audit falló: {_e_au}", flush=True)
+
+                    # Alerta de login desde dispositivo nuevo (best-effort)
+                    if _is_new_device and "@" in _alert_to:
+                        try:
+                            _send_login_alert_email(
+                                _alert_to, _alert_nombre, ip=ip,
+                                user_agent=_alert_ua, cuando=_alert_cuando,
+                                action_url=_alert_action)
+                        except Exception as _e_la:
+                            print(f"[login-alert] fail: {_e_la}", flush=True)
             _th_login.Thread(target=_login_track_async, daemon=True,
                              name=f"login-track-{_uid}").start()
         except Exception as _e_login_track:
             import traceback as _tb_lt
             print(f"[login-track] FAIL outer uid={user['id']}: {_e_login_track}\n{_tb_lt.format_exc()}", flush=True)
         flash(f"Bienvenido, {user['nombre']}.", "success")
-        return redirect(next_url)
+        resp = redirect(next_url)
+        try:
+            resp.set_cookie("ilus_dev", _dev_token, max_age=60*60*24*365,
+                            httponly=True, samesite="Lax", secure=True)
+        except Exception:
+            pass
+        return resp
     # FIX 2026-05-18 (perf): cache privado corto (30s) en GET /login.
     # El HTML cambia muy poco entre requests y antes lo forzábamos a
     # `no-store` que invalidaba el cache del navegador en cada toque.
@@ -6623,7 +6674,7 @@ def _send_password_access_email(
     html_body = _ilus_email_html(
         titulo=titulo,
         subtitulo="Acceso seguro con enlace de un solo uso",
-        saludo=f"Hola, {to_name}",
+        saludo=to_name,
         parrafos=[
             intro,
             "Por seguridad, la contraseña no se envía ni se escribe manualmente. "
@@ -6651,6 +6702,42 @@ def _send_password_access_email(
     return sent
 
 
+def _send_login_alert_email(to_addr: str, to_name: str, *, ip: str = "",
+                            user_agent: str = "", cuando: str = "",
+                            action_url: str = "") -> bool:
+    """Alerta de seguridad: nuevo inicio de sesión desde un dispositivo no
+    reconocido. Solo se dispara cuando el navegador NO trae la cookie de
+    dispositivo conocido (no en cada login), para no ser spam."""
+    if not to_addr or "@" not in to_addr:
+        return False
+    try:
+        marca_nombre = _get_marca()["name"]
+    except Exception:
+        marca_nombre = "ILUS Fitness"
+    info = []
+    if cuando:     info.append(("", "Fecha y hora", cuando))
+    if ip:         info.append(("", "Dirección IP", ip))
+    if user_agent: info.append(("", "Dispositivo", user_agent))
+    info.append(("", "Cuenta", to_addr))
+    html_body = _ilus_email_html(
+        titulo="Nuevo inicio de sesión",
+        subtitulo="Detectamos un acceso desde un dispositivo nuevo",
+        saludo=to_name,
+        parrafos=[
+            f"Acabamos de registrar un inicio de sesión en tu cuenta {marca_nombre} "
+            "desde un dispositivo o navegador que no habíamos visto antes.",
+            "Si fuiste tú, no necesitas hacer nada — este aviso es solo por tu seguridad.",
+            "Si <strong>no</strong> reconoces este acceso, cambia tu contraseña de "
+            "inmediato y avísale al administrador.",
+        ],
+        btn_primario_txt=("Cambiar mi contraseña" if action_url else ""),
+        btn_primario_url=action_url,
+        info_lineas=info,
+    )
+    return _send_ilus_email(to_addr, _brand_subject("Nuevo inicio de sesión"), html_body,
+                            evento="login_alert", modulo="comunicacion_interna")
+
+
 def _portal_login_url():
     return url_for("login", _external=True)
 
@@ -6660,7 +6747,7 @@ def _send_access_notification_email(to_addr: str, to_name: str, login_url: str, 
     html_body = _ilus_email_html(
         titulo="Acceso al portal ILUS habilitado",
         subtitulo="Ya puedes ingresar a la aplicacion",
-        saludo=f"Hola, {to_name}",
+        saludo=to_name,
         parrafos=[
             f"<strong>{actor_name}</strong> habilito tus credenciales de acceso al portal ILUS.",
             "Por seguridad, este correo no incluye tu contraseña. Usa la clave entregada por el administrador "
@@ -6841,15 +6928,16 @@ def forgot_password():
                     snap_url   = reset_url
 
                     def _bg_recovery():
-                        try:
-                            _notify_user_access(
-                                snap_user, snap_nom, snap_phone,
-                                mode="token",
-                                action_url=snap_url,
-                                email_purpose="change",
-                            )
-                        except Exception as _exc:
-                            print(f"[ILUS][RESET][bg] fail: {_exc}", flush=True)
+                        with app.app_context():   # ← FIX: el hilo necesita contexto Flask (g/get_db)
+                            try:
+                                _notify_user_access(
+                                    snap_user, snap_nom, snap_phone,
+                                    mode="token",
+                                    action_url=snap_url,
+                                    email_purpose="change",
+                                )
+                            except Exception as _exc:
+                                print(f"[ILUS][RESET][bg] fail: {_exc}", flush=True)
 
                     threading.Thread(target=_bg_recovery, daemon=True).start()
 
@@ -9092,14 +9180,15 @@ def new_user():
                 actor_name_snap = g.user["nombre"] if getattr(g, "user", None) else "ILUS"
                 snap_phone = wa_number or phone or ""
                 def _send_bg(_un=username, _nom=nombre, _ph=snap_phone, _url=welcome_url, _actor=actor_name_snap):
-                    try:
-                        _notify_user_access(
-                            _un, _nom, _ph,
-                            mode="token", action_url=_url,
-                            email_purpose="invite",
-                        )
-                    except Exception as _se:
-                        print(f"[new_user/bg-notify] fail: {_se}", flush=True)
+                    with app.app_context():   # ← FIX: el hilo necesita contexto Flask (g/get_db)
+                        try:
+                            _notify_user_access(
+                                _un, _nom, _ph,
+                                mode="token", action_url=_url,
+                                email_purpose="invite",
+                            )
+                        except Exception as _se:
+                            print(f"[new_user/bg-notify] fail: {_se}", flush=True)
                 threading.Thread(target=_send_bg, daemon=True).start()
                 ch = "email + WhatsApp" if snap_phone else "email"
                 flash(f"✅ Usuario creado. Invitación enviada por {ch} a {username} en segundo plano.", "success")
@@ -9110,10 +9199,11 @@ def new_user():
                 # Notificación de clave manual también en background
                 snap_user = username; snap_nombre = nombre; snap_phone = wa_number or phone
                 def _notify_bg():
-                    try:
-                        _notify_user_access(snap_user, snap_nombre, snap_phone, mode="manual")
-                    except Exception as _ne:
-                        print(f"[new_user/bg-notify] fail: {_ne}", flush=True)
+                    with app.app_context():   # ← FIX: el hilo necesita contexto Flask (g/get_db)
+                        try:
+                            _notify_user_access(snap_user, snap_nombre, snap_phone, mode="manual")
+                        except Exception as _ne:
+                            print(f"[new_user/bg-notify] fail: {_ne}", flush=True)
                 threading.Thread(target=_notify_bg, daemon=True).start()
                 flash("✅ Usuario creado con clave manual. Notificación enviada en segundo plano.", "success")
             else:
@@ -12839,8 +12929,19 @@ def _cubicador_fetch(tido, nudo):
             if sku_u not in sku_data_map or not (sku_data_map[sku_u].get("nombre_app") or "").strip():
                 skus_sin_desc.add(sku_u)
 
+    # ⚡ PERF 2026-06-05 (Daniel): este enriquecimiento REST es COSMÉTICO —
+    # la grilla ya funciona con SKU + nombre_app de la BD local. Cuando la
+    # REST de Random está lenta/caída esperaba hasta 8s. Por eso respetamos
+    # el modo SQL-first (ILUS_ERP_PREFER_SQL, default "1") y el circuit
+    # breaker: si cualquiera está activo, SALTAMOS el REST y dejamos la
+    # descripción como esté. Solo si NO es SQL-first y el breaker está
+    # cerrado intentamos enriquecer vía REST (con timeouts cortos).
+    _enr_prefer_sql = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                       in ("1", "true", "yes", "on"))
+    _enr_skip_rest = _enr_prefer_sql or _erp_breaker_is_open()
+
     desc_erp_map = {}   # {sku: nombre_erp}
-    if skus_sin_desc:
+    if skus_sin_desc and not _enr_skip_rest:
         TOKEN_E = ERP_CONFIG.get("api_token", "")
         # Cache global con TTL 1h (productos ERP cambian poco)
         global _ERP_PROD_CACHE
@@ -12854,10 +12955,12 @@ def _cubicador_fetch(tido, nudo):
             if cached and (time.time() - cached[0]) < 3600:
                 return (sku_q, cached[1])
             try:
+                # timeout=2 (era 6): el enriquecimiento es cosmético; si la
+                # REST tarda más, casi seguro está caída → no quemamos tiempo.
                 body = _erp_get(
                     "/productos",
                     {"search": sku_q, "empresa": "01", "fields": "KOPR,NOKOPR", "visible": "true", "limit": "5"},
-                    TOKEN_E, timeout=6
+                    TOKEN_E, timeout=2
                 )
                 items = body.get("data") or []
                 # Match exacto por KOPR primero, sino primer resultado
@@ -12872,6 +12975,10 @@ def _cubicador_fetch(tido, nudo):
                     _ERP_PROD_CACHE[sku_q] = (time.time(), nombre)
                 return (sku_q, nombre)
             except Exception:
+                # READ-ONLY: solo lectura GET. Marcamos fallo en el breaker
+                # para que las próximas búsquedas salten el REST aún más rápido.
+                try: _erp_breaker_record_failure()
+                except Exception: pass
                 return (sku_q, "")
 
         try:
@@ -12881,10 +12988,10 @@ def _cubicador_fetch(tido, nudo):
             # max_workers=4 (era 8): reducir presión sobre el ERP /productos
             with ThreadPoolExecutor(max_workers=4) as pool:
                 futures = {pool.submit(_erp_lookup_sku, s): s for s in sku_list_lookup}
-                # timeout=8s total (era 15). Si el ERP está lento, no bloquear más tiempo;
-                # los SKUs sin descripción usarán fallback nombre_app o quedarán sin nombre.
+                # timeout=2.5s total (era 8). Si el ERP está lento, no bloquear más
+                # tiempo; los SKUs sin descripción usan fallback nombre_app/SKU.
                 try:
-                    for fut in as_completed(futures, timeout=8):
+                    for fut in as_completed(futures, timeout=2.5):
                         try:
                             sku_r, nombre_r = fut.result(timeout=2)
                             if nombre_r:
@@ -12892,7 +12999,11 @@ def _cubicador_fetch(tido, nudo):
                         except Exception: pass
                 except _FutTimeout:
                     pending = sum(1 for f in futures if not f.done())
-                    print(f"[cubicador] enriquecer descripciones: timeout 8s con {pending} SKUs pendientes (fallback a BD local)")
+                    print(f"[cubicador] enriquecer descripciones: timeout 2.5s con {pending} SKUs pendientes (fallback a BD local)")
+                    # REST lenta → marcar fallo en el breaker para saltar el
+                    # enriquecimiento en las próximas búsquedas del cooldown.
+                    try: _erp_breaker_record_failure()
+                    except Exception: pass
         except Exception as _enr_err:
             print(f"[cubicador] enriquecer descripciones falló: {_enr_err}")
 
@@ -14536,29 +14647,40 @@ def api_asignar_documento():
     # MISMO resolver que usa el cubicador: si el nombre es CF pero hay RUT
     # real, consulta MAEEN.NOKOEN por RTEN. Resuelve 'Cristian Rossi Medina'
     # en BLV 21577 en vez de 'Consumidor final'.
-    try:
-        _hdr_res = dict(hdr)
-        _hdr_res["lineas_raw"] = lineas or []
-        _res = resolve_erp_customer(_hdr_res, tido=tido, nudo=nudo)
-        if _res and not _is_cf_name(_res.get("customer_name")):
-            hdr["cliente_nombre"] = _res["customer_name"]
-            if _res.get("customer_rut"):     hdr["cliente_rut"] = _res["customer_rut"]
-            if _res.get("customer_email"):   hdr["email"] = hdr.get("email") or _res["customer_email"]
-            if _res.get("customer_phone"):   hdr["telefono"] = hdr.get("telefono") or _res["customer_phone"]
-            if _res.get("dispatch_address"): hdr["direccion"] = hdr.get("direccion") or _res["dispatch_address"]
-            if _res.get("dispatch_commune"): hdr["comuna"] = hdr.get("comuna") or _res["dispatch_commune"]
-        hdr["_resolver_diag"] = {
-            "source": _res.get("source") if _res else "none",
-            "confidence": _res.get("confidence") if _res else "low",
-            "chain": _res.get("fallback_chain") if _res else [],
-        }
-        # Solo ahora, si SIGUE vacío, ponemos texto canónico limpio
+    #
+    # ⚡ PERF 2026-06-05 (Daniel): _cubicador_fetch() YA corre este mismo
+    # resolver y deja la marca hdr["_resolver_diag"]. Si está presente (y no
+    # venimos de cache, donde igual ya se resolvió), OMITIMOS la segunda
+    # llamada para no duplicar el trabajo (consulta MAEEN). Solo re-resolvemos
+    # si por algún motivo el header llegó sin esa marca.
+    if hdr.get("_resolver_diag") is not None:
+        # Ya resuelto aguas arriba: solo aplicamos el fallback de nombre vacío.
         if not (hdr.get("cliente_nombre") or "").strip():
             hdr["cliente_nombre"] = "Cliente no informado por ERP"
-    except Exception as _e_res2:
-        print(f"[asignar_documento] resolver falló: {_e_res2}", flush=True)
-        if not (hdr.get("cliente_nombre") or "").strip():
-            hdr["cliente_nombre"] = "Cliente no informado por ERP"
+    else:
+        try:
+            _hdr_res = dict(hdr)
+            _hdr_res["lineas_raw"] = lineas or []
+            _res = resolve_erp_customer(_hdr_res, tido=tido, nudo=nudo)
+            if _res and not _is_cf_name(_res.get("customer_name")):
+                hdr["cliente_nombre"] = _res["customer_name"]
+                if _res.get("customer_rut"):     hdr["cliente_rut"] = _res["customer_rut"]
+                if _res.get("customer_email"):   hdr["email"] = hdr.get("email") or _res["customer_email"]
+                if _res.get("customer_phone"):   hdr["telefono"] = hdr.get("telefono") or _res["customer_phone"]
+                if _res.get("dispatch_address"): hdr["direccion"] = hdr.get("direccion") or _res["dispatch_address"]
+                if _res.get("dispatch_commune"): hdr["comuna"] = hdr.get("comuna") or _res["dispatch_commune"]
+            hdr["_resolver_diag"] = {
+                "source": _res.get("source") if _res else "none",
+                "confidence": _res.get("confidence") if _res else "low",
+                "chain": _res.get("fallback_chain") if _res else [],
+            }
+            # Solo ahora, si SIGUE vacío, ponemos texto canónico limpio
+            if not (hdr.get("cliente_nombre") or "").strip():
+                hdr["cliente_nombre"] = "Cliente no informado por ERP"
+        except Exception as _e_res2:
+            print(f"[asignar_documento] resolver falló: {_e_res2}", flush=True)
+            if not (hdr.get("cliente_nombre") or "").strip():
+                hdr["cliente_nombre"] = "Cliente no informado por ERP"
 
     # ═══ NORMALIZACIÓN FINAL del header en /asignar ═════════════════════
     # Última barrera: cualquier placeholder que se haya colado (BOLETA,
@@ -24120,20 +24242,27 @@ def init_comunicaciones_tables():
             # ══════════════════════════════════════════════════════════════
 
             def _ret_hero_block(badge_txt, badge_color, badge_bg, titulo, subt):
-                """Hero visual del email retiros: banda colorada con icono + título."""
+                """Hero del email retiros: TARJETA CLARA (ya NO negra) con riel rojo
+                izquierdo + 'Orden de retiro' + código rojo grande.
+                (Juan Daniel 2026-06-05: 'la solicitud recibida ahora ya no es en
+                negro, está perfecto'.) badge_color/badge_bg = chip de estado (varía)."""
                 return (
                     f'<table cellpadding="0" cellspacing="0" width="100%" '
-                    f'style="background:#0a0a0a;border-radius:10px;overflow:hidden;margin:0 0 20px">'
+                    f'style="background:#ffffff;border:1px solid #ececef;border-left:5px solid #dc2626;'
+                    f'border-radius:12px;margin:0 0 20px;box-shadow:0 2px 8px rgba(10,10,10,.05)">'
                     f'<tr><td style="padding:24px 26px;text-align:center">'
-                    f'<div style="display:inline-block;background:{badge_bg};color:{badge_color};'
+                    # Chip SUAVE (pill): fondo claro + texto oscuro, como el preview
+                    # aprobado. Los call-sites pasan (txt, color_claro, color_oscuro),
+                    # así que aquí background=color_claro y color=texto_oscuro.
+                    f'<div style="display:inline-block;background:{badge_color};color:{badge_bg};'
                     f'font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;'
-                    f'padding:6px 14px;border-radius:50px;margin-bottom:14px">{badge_txt}</div>'
-                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#fff;font-size:13px;'
-                    f'letter-spacing:.06em;text-transform:uppercase;font-weight:700;opacity:.6;margin-bottom:4px">Orden de retiro</div>'
-                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#fff;font-size:32px;'
-                    f'font-weight:900;letter-spacing:.02em;margin-bottom:6px">{{{{code}}}}</div>'
-                    f'<div style="color:#cbd5e1;font-size:14px;font-weight:600;line-height:1.45">{titulo}</div>'
-                    f'<div style="color:#9ca3af;font-size:12px;margin-top:6px">{subt}</div>'
+                    f'padding:6px 14px;border-radius:50px;margin-bottom:16px">{badge_txt}</div>'
+                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#9ca3af;font-size:12px;'
+                    f'letter-spacing:.14em;text-transform:uppercase;font-weight:700;margin-bottom:2px">Orden de retiro</div>'
+                    f'<div style="font-family:Helvetica,Arial,sans-serif;color:#dc2626;font-size:34px;line-height:1.1;'
+                    f'font-weight:900;letter-spacing:.03em;margin-bottom:8px">{{{{code}}}}</div>'
+                    f'<div style="color:#1f2937;font-size:14px;font-weight:600;line-height:1.45">{titulo}</div>'
+                    f'<div style="color:#6b7280;font-size:12px;margin-top:6px">{subt}</div>'
                     f'</td></tr></table>'
                 )
 
@@ -24172,7 +24301,11 @@ def init_comunicaciones_tables():
                 )
 
             def _ret_stepper(active_idx):
-                """Mini-stepper visual de 5 nodos (email-safe, tabla)."""
+                """Stepper de 5 nodos CON LÍNEA CONECTORA (email-safe, tabla).
+                (Juan Daniel 2026-06-05: 'que tenga la conexión, como en retiros'.)
+                Nodo: verde=completado (i<active), rojo=actual (i==active), gris=pendiente.
+                Leg (línea): verde la ya pasada, roja la que sale del actual, gris las pendientes.
+                Fila 1 = 5 nodos + 4 legs (9 celdas). Fila 2 = 5 labels al 20% (centradas)."""
                 pasos = [
                     ("📩", "Solicitada"),
                     ("🔎", "Revisada"),
@@ -24180,31 +24313,48 @@ def init_comunicaciones_tables():
                     ("📦", "Preparando"),
                     ("✓", "Retirada"),
                 ]
-                tds = []
+                celdas = []      # nodos + legs (fila superior)
+                labels_tds = []  # labels (fila inferior)
+                n = len(pasos)
                 for i, (icon, label) in enumerate(pasos):
                     if i < active_idx:
-                        bg, fg, ring = "#16a34a", "#ffffff", "#16a34a"
+                        bg, fg, extra = "#16a34a", "#ffffff", ""
                     elif i == active_idx:
-                        bg, fg, ring = "#dc2626", "#ffffff", "#dc2626"
+                        bg, fg, extra = "#dc2626", "#ffffff", "box-shadow:0 0 0 4px rgba(220,38,38,.15);"
                     else:
-                        bg, fg, ring = "#f3f4f6", "#9ca3af", "#e5e7eb"
-                    color_lbl = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
-                    weight_lbl = "800" if i == active_idx else "600"
-                    tds.append(
-                        f'<td align="center" valign="top" style="width:20%;padding:0 4px">'
-                        f'<div style="display:inline-block;width:36px;height:36px;line-height:36px;'
-                        f'border-radius:18px;background:{bg};color:{fg};font-size:15px;font-weight:900;'
-                        f'border:2px solid {ring}">{icon}</div>'
-                        f'<div style="font-size:10px;color:{color_lbl};text-transform:uppercase;'
-                        f'font-weight:{weight_lbl};letter-spacing:.05em;margin-top:6px">{label}</div>'
+                        bg, fg, extra = "#f3f4f6", "#9ca3af", "border:1px solid #e5e7eb;"
+                    celdas.append(
+                        f'<td align="center" valign="middle" width="11%" style="padding:0">'
+                        f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
+                        f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;'
+                        f'font-size:15px;font-weight:900;text-align:center;margin:0 auto;{extra}">{icon}</div>'
                         f'</td>'
+                    )
+                    if i < n - 1:
+                        leg = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#e5e7eb")
+                        celdas.append(
+                            f'<td valign="middle" width="11.5%" style="padding:0 2px">'
+                            f'<div style="height:4px;background:{leg};border-radius:2px;'
+                            f'font-size:0;line-height:0">&nbsp;</div></td>'
+                        )
+                    lbl_color = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
+                    lbl_weight = "800" if i == active_idx else "600"
+                    labels_tds.append(
+                        f'<td align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
+                        f'font-size:10px;color:{lbl_color};text-transform:uppercase;font-weight:{lbl_weight};'
+                        f'letter-spacing:.04em">{label}</td>'
                     )
                 return (
                     '<table cellpadding="0" cellspacing="0" width="100%" '
-                    'style="background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;'
-                    'padding:14px 8px;margin:0 0 18px"><tr>'
-                    f'{"".join(tds)}'
+                    'style="background:#ffffff;border:1px solid #ececef;border-radius:12px;margin:0 0 18px">'
+                    '<tr><td style="padding:20px 14px 16px 14px">'
+                    '<table cellpadding="0" cellspacing="0" width="100%"><tr>'
+                    f'{"".join(celdas)}'
                     '</tr></table>'
+                    '<table cellpadding="0" cellspacing="0" width="100%" style="margin-top:9px"><tr>'
+                    f'{"".join(labels_tds)}'
+                    '</tr></table>'
+                    '</td></tr></table>'
                 )
 
             # Datos clave reutilizables (siempre presentes en el email)
@@ -25414,7 +25564,7 @@ def _comm_render_email_document(title, body_html, subtitle=""):
 
     cc = _get_client_cfg()
     color = cc.get("corp_color") or "#CC0000"
-    company = cc.get("company_name") or "ILUS Sport & Health"
+    company = cc.get("company_name") or "ILUS Fitness · Sport & Health Solutions"
     logo = cc.get("logo_url") or ""
     header = _email_header_ilus(title, subtitle, color, logo, company)
     body = _email_body_section(body_html)
@@ -25587,22 +25737,36 @@ def _email_card(header_html, body_html, footer_html="", width=580):
 </table>"""
 
 
-def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, company="ILUS"):
-    logo_url = logo_url or "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
+def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, company="ILUS", eyebrow=""):
+    """Header de marca ILUS: UN solo bloque negro (ya no doble) con acento rojo
+    superior + logo blanco transparente GRANDE (~82px) + título/subtítulo opcionales.
+    (Juan Daniel 2026-06-05: 'un solo header, el logo ~200% más grande, sin tanto
+    negro, déjalo así en toda la aplicación'.) `eyebrow` = etiqueta roja opcional."""
+    logo_url = logo_url or "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png?height=240"
+    eyebrow_html = (
+        f'<div style="color:#dc2626;font-size:11px;font-weight:800;letter-spacing:.22em;'
+        f'text-transform:uppercase;margin-bottom:12px">{eyebrow}</div>'
+    ) if eyebrow else ""
+    title_html = (
+        f'<div style="color:#ffffff;font-size:23px;line-height:1.25;font-weight:800;letter-spacing:.01em">{title}</div>'
+    ) if title else ""
+    subtitle_html = (
+        f'<div style="color:#b5b5b8;font-size:13px;line-height:1.5;margin-top:9px">{subtitle}</div>'
+    ) if subtitle else ""
+    bottom_row = (
+        f'<tr><td align="center" style="padding:8px 32px 32px 32px;text-align:center">'
+        f'{eyebrow_html}{title_html}{subtitle_html}</td></tr>'
+    ) if (eyebrow or title or subtitle) else ""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;background-image:linear-gradient(180deg,#161616 0%,#0a0a0a 60%,#000 100%)">
+  <tr><td style="height:4px;background:#dc2626;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td style="background:#000;padding:24px 28px;text-align:center">
-      <img src="{logo_url}" alt="{company}"
-           style="height:48px;max-width:230px;width:auto;display:block;margin:0 auto;object-fit:contain">
+    <td align="center" style="padding:30px 28px 8px 28px;text-align:center">
+      <img src="{logo_url}" alt="{company}" height="82"
+           style="height:82px;width:auto;max-width:320px;display:block;margin:0 auto;border:0;object-fit:contain">
     </td>
   </tr>
-  <tr>
-    <td style="background:#111;padding:28px 32px;text-align:center;border-top:1px solid #202020">
-      <div style="color:#ffffff;font-size:22px;line-height:1.25;font-weight:800">{title}</div>
-      {"<div style='color:#f3f4f6;font-size:13px;line-height:1.45;margin-top:8px'>" + subtitle + "</div>" if subtitle else ""}
-    </td>
-  </tr>
+  {bottom_row}
 </table>"""
 
 
@@ -25610,16 +25774,22 @@ def _email_body_section(content):
     return f'<div style="padding:32px 30px;font-size:14px;line-height:1.6;color:#111827">{content}</div>'
 
 
-def _email_footer_ilus(company="ILUS Sport & Health"):
+def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
+    """Footer de marca ILUS con el ESLOGAN 'I LIKE U STRONG' en MAYÚSCULAS
+    (las letras I·L·U·S en rojo = el significado del acrónimo) + nombre legal.
+    (Juan Daniel 2026-06-05: 'el eslogan de ILUS es I LIKE U STRONG, todo en
+    mayúscula; es ILUS Fitness Sport & Health Solutions'.)"""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0"
-       style="background:#000">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a">
+  <tr><td style="height:3px;background:#dc2626;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td style="padding:24px 32px;text-align:center;color:#6b7280;font-size:11px;line-height:1.6">
-      <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">{company}</div>
-      <div style="color:#9ca3af;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
-      <div style="color:#6b7280;margin-top:14px">
-        Este correo fue generado automaticamente. Para soporte, utiliza nuestros canales oficiales.
+    <td style="padding:30px 32px 28px 32px;text-align:center">
+      <div style="font-size:18px;font-weight:900;letter-spacing:.20em;line-height:1.2"><span style="color:#dc2626">I</span><span style="color:#ffffff"> LIKE </span><span style="color:#dc2626">U</span><span style="color:#ffffff"> </span><span style="color:#dc2626">S</span><span style="color:#ffffff">TRONG</span></div>
+      <div style="width:46px;height:2px;background:#dc2626;margin:14px auto 16px auto;font-size:0;line-height:0">&nbsp;</div>
+      <div style="color:#DC143C;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">{company}</div>
+      <div style="color:#9ca3af;font-size:12px;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
+      <div style="color:#6b7280;font-size:11px;line-height:1.6;margin-top:16px">
+        Este correo fue generado automáticamente. Para soporte, utiliza nuestros canales oficiales.
       </div>
     </td>
   </tr>
@@ -32816,15 +32986,197 @@ def mant_clientes_autocomplete():
     return jsonify(resultados[:20])
 
 
+_MANT_IMG_EXTS = ("jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp")
+
+
+def _contrato_fechas(t):
+    """Extrae fechas (dd/mm/aaaa, dd-mm-aaaa, 'd de mes de aaaa') → ['YYYY-MM-DD',...] ordenadas."""
+    import re
+    out = []
+    meses = {"enero":1,"febrero":2,"marzo":3,"abril":4,"mayo":5,"junio":6,"julio":7,
+             "agosto":8,"septiembre":9,"setiembre":9,"octubre":10,"noviembre":11,"diciembre":12}
+    for m in re.finditer(r'\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b', t or ""):
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100: y += 2000
+        if 1 <= d <= 31 and 1 <= mo <= 12 and 2000 <= y <= 2100:
+            out.append(f"{y:04d}-{mo:02d}-{d:02d}")
+    for m in re.finditer(r'\b(\d{1,2})\s+de\s+([a-záéíóú]+)\s+de\s+(\d{4})', t or "", re.I):
+        d = int(m.group(1)); mo = meses.get(m.group(2).lower()); y = int(m.group(3))
+        if mo and 1 <= d <= 31 and 2000 <= y <= 2100:
+            out.append(f"{y:04d}-{mo:02d}-{d:02d}")
+    return sorted(set(out))
+
+
+def _contrato_equipos(t):
+    """Detecta equipos fitness mencionados en el texto (heurístico). El ERP es la fuente real."""
+    import re
+    kws = r'(trotadora|caminadora|cinta de correr|el[ií]ptic[ao]|bicicleta|spinning|remo|' \
+          r'multiestaci[oó]n|prensa|press|polea|smith|mancuerna|banco|escaladora|stepper|crossover)'
+    out = []
+    noise = re.compile(r'mantenci[oó]n|gratuit|vigencia|monto|cl[aá]usula|contrato|'
+                       r'\brut\b|comuna|raz[oó]n social|frecuencia', re.I)
+    for ln in (t or "").split("\n"):
+        l = ln.strip()
+        if not l or len(l) > 120 or noise.search(l):
+            continue
+        if re.search(kws, l, re.I):
+            qm = re.search(r'\b(\d{1,3})\b', l)
+            out.append({"nombre": l[:90], "marca": None, "modelo": None, "sku": None,
+                        "cantidad": min(int(qm.group(1)), 99) if qm else 1,
+                        "notas": "Detectado en el contrato"})
+        if len(out) >= 30:
+            break
+    return out
+
+
+def _contrato_extraer_determinista(texto):
+    """Extrae datos de un contrato (texto plano) con reglas/regex. CERO IA, CERO tokens."""
+    import re
+    t = texto or ""
+    low = t.lower()
+    cli = {"razon_social": None, "rut": None, "direccion": None, "comuna": None,
+           "ciudad": None, "region": None, "contacto_nombre": None, "contacto_cargo": None,
+           "contacto_email": None, "contacto_tel": None}
+    ct = {"nombre": None, "numero": None, "tipo_contrato": None,
+          "vigencia_inicio": None, "vigencia_fin": None, "es_indefinido": False,
+          "frecuencia_meses": None, "visitas_anuales": None,
+          "monto_mensual": None, "costo_por_mant": None, "costo_total": None,
+          "moneda": "CLP", "incluye_mant_gratis": False, "incluye_repuestos": False,
+          "resumen": None, "clausulas_criticas": [], "alertas": []}
+
+    # RUTs (todos; el endpoint elige el que el ERP reconozca como cliente)
+    ruts = re.findall(r'\b(\d{1,2}[.\s]?\d{3}[.\s]?\d{3}\s*-\s*[\dkK])\b', t)
+    ruts = [r.replace(" ", "") for r in ruts]
+    if ruts:
+        cli["rut"] = ruts[0]
+
+    em = re.search(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', t)
+    if em: cli["contacto_email"] = em.group(0)
+    tel = re.search(r'(\+?56\s?9\s?\d{4}\s?\d{4}|\b9\d{8}\b)', t)
+    if tel: cli["contacto_tel"] = tel.group(0).strip()
+
+    m = re.search(r'raz[oó]n social[:\s]+([A-ZÁÉÍÓÚÑ0-9][^\n]{3,80})', t, re.I)
+    if m: cli["razon_social"] = m.group(1).strip(' .:-')
+    m = re.search(r'(?:domicili[ao]|direcci[oó]n)[:\s]+([^\n]{5,90})', t, re.I)
+    if m: cli["direccion"] = m.group(1).strip(' .:-')
+    m = re.search(r'comuna[:\s]+([A-Za-zÁÉÍÓÚÑáéíóúñ ]{3,40})', t, re.I)
+    if m: cli["comuna"] = m.group(1).strip(' .:-')
+
+    freq_map = {"mensual": 1, "bimestral": 2, "trimestral": 3, "cuatrimestral": 4,
+                "semestral": 6, "anual": 12}
+    # 1) "frecuencia/servicio/mantención <palabra>" tiene prioridad (evita confundir
+    #    con "monto mensual"); 2) palabra suelta (mensual solo si no es de pago);
+    #    3) "cada N meses" manda explícito.
+    mfreq = re.search(r'(?:frecuencia|servicio|mantenci[oó]n(?:es)?)\s+'
+                      r'(?:ser[aá]n?\s+)?(?:de\s+)?(?:tipo\s+|car[aá]cter\s+)?'
+                      r'(mensual|bimestral|trimestral|cuatrimestral|semestral|anual)', low)
+    if mfreq:
+        ct["frecuencia_meses"] = freq_map[mfreq.group(1)]
+    else:
+        for k in ("trimestral", "cuatrimestral", "semestral", "bimestral", "anual", "mensual"):
+            if k == "mensual" and re.search(r'(monto|pago|valor|cuota|abono|arriendo|renta)\s+mensual', low):
+                continue
+            if k in low:
+                ct["frecuencia_meses"] = freq_map[k]
+                break
+    m = re.search(r'cada\s+(\d{1,2})\s+mes', low)
+    if m: ct["frecuencia_meses"] = int(m.group(1))
+    m = re.search(r'(\d{1,2})\s+visitas?\s+(?:al\s+a[nñ]o|anuales)', low)
+    if m: ct["visitas_anuales"] = int(m.group(1))
+
+    montos = [int(x.replace('.', '')) for x in re.findall(r'\$\s?([\d.]{4,})', t)
+              if x.replace('.', '').isdigit()]
+    if montos:
+        ct["costo_total"] = max(montos)
+        if "mensual" in low:
+            ct["monto_mensual"] = min(montos)
+    if re.search(r'\buf\b', low):
+        ct["moneda"] = "UF"
+
+    fechas = _contrato_fechas(t)
+    if fechas:
+        ct["vigencia_inicio"] = fechas[0]
+        if len(fechas) > 1:
+            ct["vigencia_fin"] = fechas[-1]
+    if "indefinid" in low:
+        ct["es_indefinido"] = True
+
+    if re.search(r'mantenci[oó]n(?:es)?\s+gratuit', low) or "sin costo" in low:
+        ct["incluye_mant_gratis"] = True
+    if "repuesto" in low and ("incluye" in low or "incluid" in low):
+        ct["incluye_repuestos"] = True
+
+    if "preventiv" in low and "correctiv" in low: ct["tipo_contrato"] = "Mixto"
+    elif "preventiv" in low: ct["tipo_contrato"] = "Preventivo"
+    elif "correctiv" in low: ct["tipo_contrato"] = "Correctivo"
+    elif "garant" in low: ct["tipo_contrato"] = "Garantía"
+
+    ct["nombre"] = f"Contrato {ct['tipo_contrato']}" if ct["tipo_contrato"] else "Contrato de mantención"
+    ct["resumen"] = ("Datos leídos del documento por el Agente ILUS (sin IA). "
+                     "Verifica y completa lo que falte; el RUT trae el resto desde el ERP.")
+
+    # Score / riesgo DETERMINISTA (sin IA): por completitud + condiciones comerciales.
+    score = 40
+    alertas, clausulas, mejoras = [], [], []
+    if ct["frecuencia_meses"]: score += 15
+    else: alertas.append("No se detectó la frecuencia de mantención.")
+    if ct["vigencia_inicio"]: score += 10
+    else: alertas.append("No se detectó la vigencia del contrato.")
+    if ct["costo_total"] or ct["monto_mensual"]: score += 15
+    else: alertas.append("No se detectó el valor del contrato.")
+    if ct["incluye_repuestos"]:
+        score += 10; clausulas.append("Incluye repuestos.")
+    if ct["incluye_mant_gratis"]:
+        score -= 10
+        clausulas.append("Incluye mantenciones gratuitas (costo para nosotros).")
+        mejoras.append("Controlar las mantenciones gratuitas para no exceder lo pactado.")
+    if not cli["rut"]:
+        alertas.append("No se detectó el RUT en el documento.")
+    score = max(5, min(100, score))
+    ct["score"] = score
+    ct["nivel_riesgo"] = "alto" if score < 45 else ("medio" if score < 70 else "bajo")
+    ct["clausulas_criticas"] = clausulas
+    ct["alertas"] = alertas
+    ct["mejoras_prioritarias"] = mejoras or ["Completar los datos faltantes del contrato y del cliente."]
+
+    return {"cliente": cli, "contrato": ct, "equipos": _contrato_equipos(t), "_ruts": ruts}
+
+
+def _contrato_match_erp(rut, razon=None):
+    """Cruza un RUT (o razón social) con BD local + ERP (read-only). Devuelve el _erp_match."""
+    if rut:
+        cuerpo = _rut_cuerpo(rut)
+        if cuerpo and len(cuerpo) >= 6:
+            local = mysql_fetchone(
+                "SELECT * FROM mant_clientes "
+                "WHERE REPLACE(REPLACE(REPLACE(rut,'.',''),'-',''),' ','') LIKE %s LIMIT 1",
+                (f"%{cuerpo}%",))
+            if local:
+                return {"origen": "local", "id": local["id"],
+                        "razon_social": local.get("razon_social"),
+                        "rut": local.get("rut"), "estado": local.get("estado")}
+        rows = _erp_buscar_clientes(rut, limit=1)
+        if rows:
+            return {"origen": "erp", "id": None,
+                    "razon_social": rows[0]["razon_social"], "rut": rows[0]["rut"]}
+    if razon and len(razon) >= 4:
+        rows = _erp_buscar_clientes(razon, limit=1)
+        if rows:
+            return {"origen": "erp", "id": None,
+                    "razon_social": rows[0]["razon_social"], "rut": rows[0]["rut"]}
+    return {}
+
+
 @app.route("/mantenciones/api/agente-contrato", methods=["POST"])
 @_mant_required
 def mant_agente_contrato():
     """
-    AGENTE IA DE CONTRATOS — lee PDF, Word o FOTO (cámara móvil) y extrae:
-    - Datos del CLIENTE: RUT, razón social, dirección, contacto
-    - Análisis del CONTRATO: tipo, vigencia, SLA, cláusulas, costos, riesgos
-    - Equipos mencionados en el contrato
-    Soporta: PDF, DOCX, JPG, PNG (foto del contrato desde celular).
+    AGENTE ILUS DE CONTRATOS — DETERMINISTA, CERO IA.
+    - PDF / Word: se leen con código y se extraen RUT, razón social, montos,
+      fechas, frecuencia, contacto, etc. con reglas (regex/heurística).
+    - El RUT detectado se cruza con el ERP (read-only) para datos oficiales.
+    - FOTO / imagen: no se lee con código (eso sería IA); se responde
+      requiere_rut=True para pedir el RUT y traer todo del ERP.
     """
     f = request.files.get("archivo")
     if not f or not f.filename:
@@ -32834,189 +33186,64 @@ def mant_agente_contrato():
     if ext not in ("pdf", "doc", "docx") + _MANT_IMG_EXTS:
         return jsonify({"error": "Formato no válido. Usa PDF, Word o imagen (JPG/PNG)."}), 400
 
-    # Verificar API key antes de procesar el archivo
-    ai_key = _get_ai_key()
-    if not ai_key:
-        return jsonify({"error": (
-            "⚠️ API de IA no configurada. "
-            "Agrega tu ANTHROPIC_API_KEY en Railway → Variables de entorno."
-        )}), 503
+    # FOTO / imagen: sin OCR (sería IA). Pedimos el RUT y traemos todo del ERP.
+    if ext in _MANT_IMG_EXTS:
+        return jsonify({"ok": True, "motor": "agente-ilus", "requiere_rut": True,
+                        "mensaje": "📸 Para leer una foto necesito el RUT. Escríbelo y traigo "
+                                   "los datos del cliente y su universo de productos desde el ERP."})
 
-    # Guardar temporalmente
+    # PDF / WORD → extraer texto con código
     tmp_path = os.path.join(MANT_UPLOADS, f"tmp_{int(time.time())}_{secure_filename(f.filename)}")
     f.save(tmp_path)
-
     texto = ""
-    img_b64 = None
-    img_media_type = None
-    is_image = ext in _MANT_IMG_EXTS
-
     try:
-        if is_image:
-            with open(tmp_path, "rb") as img_f:
-                img_b64 = base64.b64encode(img_f.read()).decode()
-            img_media_type = f"image/{'jpeg' if ext == 'jpg' else ext}"
-        elif ext == "pdf":
+        if ext == "pdf":
             import pdfplumber
             with pdfplumber.open(tmp_path) as pdf:
                 texto = "\n".join(p.extract_text() or "" for p in pdf.pages[:20])
-        elif ext in ("doc", "docx"):
+        else:
             import docx as _docx
             doc = _docx.Document(tmp_path)
             texto = "\n".join(p.text for p in doc.paragraphs)
+            for _tb in doc.tables:
+                for _row in _tb.rows:
+                    texto += "\n" + " | ".join(c.text for c in _row.cells)
     except Exception as e:
-        return jsonify({"error": f"No se pudo leer el archivo: {e}"}), 500
+        print(f"[agente-contrato] lectura: {e}", flush=True)
+        return jsonify({"error": "No se pudo leer el archivo. Prueba con el PDF o escribe el RUT."}), 500
     finally:
         try: os.remove(tmp_path)
-        except: pass
+        except Exception: pass
 
-    if not is_image and not texto.strip():
-        return jsonify({"error": "No se pudo extraer texto del documento. Prueba subir el PDF o una foto del contrato."}), 422
+    if not texto.strip():
+        return jsonify({"ok": True, "motor": "agente-ilus", "requiere_rut": True,
+                        "mensaje": "No pude extraer texto (puede ser un PDF escaneado). "
+                                   "Escribe el RUT y traigo todo del ERP."})
 
-    prompt_agente = """Eres un agente experto en análisis de contratos de mantención de equipos fitness en Chile (ILUS Fitness).
-Tu tarea es extraer TODA la información del contrato y responder ÚNICAMENTE con JSON estructurado, sin texto adicional.
+    resultado = _contrato_extraer_determinista(texto)
 
-Estructura requerida:
-{
-  "cliente": {
-    "razon_social": "nombre legal completo o null",
-    "rut": "RUT con formato XX.XXX.XXX-X o null",
-    "direccion": "dirección completa o null",
-    "comuna": "comuna o null",
-    "ciudad": "ciudad o null",
-    "region": "región o null",
-    "contacto_nombre": "nombre del contacto principal o null",
-    "contacto_cargo": "cargo del contacto o null",
-    "contacto_email": "email o null",
-    "contacto_tel": "teléfono o null"
-  },
-  "prestador": {
-    "razon_social": "empresa prestadora (usualmente ILUS) o null",
-    "rut": "RUT prestador o null",
-    "contacto_nombre": "técnico/representante o null"
-  },
-  "contrato": {
-    "nombre": "nombre o título del contrato",
-    "numero": "número de contrato o null",
-    "tipo_contrato": "Preventivo|Correctivo|Full|Garantía|Mixto|Otro",
-    "vigencia_inicio": "YYYY-MM-DD o null",
-    "vigencia_fin": "YYYY-MM-DD o null",
-    "es_indefinido": true_o_false,
-    "renovacion_automatica": true_o_false,
-    "dias_aviso_termino": número_entero_o_null,
-    "frecuencia_meses": número_entero_o_null,
-    "visitas_anuales": número_entero_o_null,
-    "horario_atencion": "descripción horario o null",
-    "sla_horas": número_o_null,
-    "tiempo_respuesta_urgente_horas": número_o_null,
-    "monto_mensual": número_o_null,
-    "costo_por_mant": número_o_null,
-    "costo_total": número_o_null,
-    "moneda": "CLP|UF|USD",
-    "forma_pago": "descripción o null",
-    "incluye_mant_gratis": true_o_false,
-    "incluye_repuestos": true_o_false,
-    "limite_repuestos": "descripción límite de repuestos o null",
-    "cobertura_descripcion": "qué cubre el contrato exactamente",
-    "exclusiones": ["exclusión1", "exclusión2"],
-    "penalidades": "descripción de penalidades por incumplimiento o null",
-    "nivel_riesgo": "alto|medio|bajo",
-    "score": número_0_a_100,
-    "resumen": "2-3 oraciones resumiendo el contrato para el prestador",
-    "clausulas_criticas": ["clausula crítica 1", "clausula crítica 2"],
-    "alertas": ["alerta operativa 1", "alerta operativa 2"],
-    "mejoras_prioritarias": ["mejora sugerida 1", "mejora sugerida 2"]
-  },
-  "equipos": [
-    {
-      "nombre": "nombre del equipo fitness",
-      "marca": "marca o null",
-      "modelo": "modelo o null",
-      "sku": "código o null",
-      "cantidad": número_entero,
-      "ubicacion": "sala/piso/zona o null",
-      "notas": "observaciones o null"
-    }
-  ],
-  "instalaciones": [
-    {
-      "nombre": "nombre de la instalación/sede o null",
-      "direccion": "dirección o null",
-      "comuna": "comuna o null"
-    }
-  ]
-}
-
-Criterios de evaluación:
-- score 80-100: contrato muy favorable para el prestador (buenas tarifas, SLA razonable, cobertura clara)
-- score 50-79: contrato aceptable con algunas condiciones a revisar
-- score 20-49: contrato desfavorable (tarifas bajas, SLA exigente, sin límite de repuestos)
-- score 0-19: contrato de alto riesgo financiero u operativo
-
-Si el documento es una fotografía del contrato, extrae la información visible con la misma rigurosidad.
-Si un dato no aparece en el documento, usa null. No inventes información."""
-
-    prompt_usuario = f"""Analiza este contrato de mantención de equipos fitness y extrae TODA la información:
-
-{texto[:8000] if not is_image else '[Contrato en imagen adjunta — analiza todo el texto visible]'}
-
-Incluye: datos del cliente, condiciones contractuales, costos, equipos mencionados, cláusulas críticas, riesgos y alertas operativas."""
-
-    try:
-        import anthropic as _anthropic
-        cliente_ia = _anthropic.Anthropic(api_key=ai_key, timeout=60)
-
-        if is_image:
-            # Análisis por visión (foto del contrato desde celular)
-            msg = cliente_ia.messages.create(
-                model="claude-opus-4-5",
-                max_tokens=2500,
-                system=prompt_agente,
-                messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {
-                        "type": "base64",
-                        "media_type": img_media_type,
-                        "data": img_b64
-                    }},
-                    {"type": "text", "text": prompt_usuario}
-                ]}]
-            )
-        else:
-            msg = cliente_ia.messages.create(
-                model="claude-opus-4-5",
-                max_tokens=2500,
-                system=prompt_agente,
-                messages=[{"role": "user", "content": prompt_usuario}]
-            )
-
-        raw = msg.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"): raw = raw[4:]
-        resultado = json.loads(raw)
-    except Exception as e:
-        return jsonify({"error": f"Error en análisis IA: {e}"}), 500
-
-    # Cruzar RUT detectado con ERP/local para enriquecer
-    rut_detectado = (resultado.get("cliente") or {}).get("rut","")
-    erp_data = {}
-    if rut_detectado:
-        local = mysql_fetchone(
-            "SELECT * FROM mant_clientes WHERE rut LIKE %s LIMIT 1",
-            (f"%{rut_detectado.split('-')[0]}%",)
-        )
-        if local:
-            erp_data = {"origen":"local","id":local["id"],
-                        "razon_social":local["razon_social"],
-                        "rut":local["rut"],"estado":local["estado"]}
-        else:
-            rows = _erp_buscar_clientes(rut_detectado.split("-")[0], limit=1)
-            if rows:
-                erp_data = {"origen":"erp","id":None,
-                            "razon_social":rows[0]["razon_social"],
-                            "rut":rows[0]["rut"]}
-
-    resultado["_erp_match"] = erp_data
+    # Elegir el RUT que el ERP reconozca como cliente: un contrato suele traer el
+    # RUT del prestador (ILUS) y el del cliente; nos quedamos con el del cliente.
+    ruts = resultado.pop("_ruts", [])
+    cli = resultado.get("cliente") or {}
+    candidatos = []
+    for r in ([cli.get("rut")] if cli.get("rut") else []) + ruts:
+        if r and r not in candidatos:
+            candidatos.append(r)
+    match = {}
+    for r in candidatos:
+        m = _contrato_match_erp(r, None)
+        if m:
+            match = m
+            cli["rut"] = r
+            break
+    if not match:
+        match = _contrato_match_erp(None, cli.get("razon_social"))
+    if match.get("razon_social") and not cli.get("razon_social"):
+        cli["razon_social"] = match["razon_social"]
+    resultado["cliente"] = cli
+    resultado["_erp_match"] = match
+    resultado["motor"] = "agente-ilus"
     return jsonify({"ok": True, "resultado": resultado})
 
 
@@ -38167,6 +38394,17 @@ def _coerce_json_from_llm(raw):
     raise ValueError("no parseable")
 
 
+_IA_OFF_MSG = ("La IA está deshabilitada. El Agente ILUS trabaja con sus herramientas "
+               "deterministas: informe de ficha, informe post-servicio y análisis de "
+               "contrato por reglas.")
+
+
+def _ia_enabled():
+    """Kill-switch global de IA. Por defecto APAGADO (barrido cero-IA: el Agente
+    es 100% determinista). Para reactivar la IA: setear ILUS_IA_ENABLED=1."""
+    return os.environ.get("ILUS_IA_ENABLED", "").strip().lower() in ("1", "true", "on", "yes", "si", "sí")
+
+
 def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
                  expect_json=True, model=None, temperature=0.2,
                  attachments=None, tier=None,
@@ -38196,6 +38434,17 @@ def _claude_call(prompt_usuario, prompt_sistema, max_tokens=1500,
             _endpoint_inferido = request.endpoint or "ai_unknown"
         except Exception:
             _endpoint_inferido = "ai_background"
+
+    # ── KILL-SWITCH GLOBAL DE IA (barrido cero-IA, Daniel: "es mío, sin tokens") ──
+    # Por defecto la IA está APAGADA: el Agente ILUS trabaja 100% determinista.
+    # Red de seguridad universal: aunque un endpoint olvide el guard temprano,
+    # acá nunca se llama a la API ni se gasta. Reactivar: ILUS_IA_ENABLED=1.
+    if not _ia_enabled():
+        _ia_log(_endpoint_inferido, entidad_tipo=log_entidad_tipo,
+                entidad_id=log_entidad_id, tier=tier, ok=False,
+                error_msg="IA deshabilitada (ILUS_IA_ENABLED off)",
+                elapsed_ms=int((time.time() - _start_ts) * 1000))
+        return None, _IA_OFF_MSG
 
     ai_key = _get_ai_key()
     if not ai_key:
@@ -38548,6 +38797,8 @@ def mant_ia_alertas_diarias_manual():
 @_mant_required
 def mant_maquina_ai_completar(mid):
     """Usa Claude para completar la ficha técnica de una máquina."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     maq = mysql_fetchone(
         "SELECT m.*, c.razon_social, c.comuna "
         "  FROM mant_maquinas m "
@@ -38655,6 +38906,8 @@ def mant_cliente_ai_analisis(cid):
       - El gating "deberías regenerar?" debe ocurrir en el cliente vía
         GET /api/clientes/<cid>/ia/elegibilidad ANTES de POSTear acá.
     """
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
@@ -39027,6 +39280,8 @@ def mant_cliente_ia_diferir(cid):
 @_mant_required
 def mant_cliente_ai_completar(cid):
     """Sugiere completar campos faltantes de la ficha del cliente."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
@@ -39095,6 +39350,189 @@ Devuelve SOLO el JSON."""
 
 # ── ANÁLISIS IA DE CONTRATO ───────────────────────────────────────────
 
+def _json_load_list(s):
+    try:
+        v = json.loads(s or "[]")
+        return [str(x) for x in v] if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def _parse_patrones(v):
+    """Acepta lista o string (coma/; /salto de línea) → lista de patrones en minúscula."""
+    items = v if isinstance(v, list) else re.split(r"[\n,;]+", str(v or ""))
+    return [p.strip().lower() for p in items if p and str(p).strip()]
+
+
+def _contrato_reglas_db():
+    """Reglas de contrato desde la BD (CRUD = fuente de verdad). Fallback al
+    archivo contrato_reglas.json si la tabla no existe o está vacía."""
+    try:
+        rows = mysql_fetchall("SELECT * FROM mant_contrato_reglas ORDER BY orden, id") or []
+    except Exception:
+        rows = []
+    if not rows:
+        import contrato_reglas as _cr
+        return [{**r, "activa": True} for r in _cr.cargar_reglas()]
+    out = []
+    for r in rows:
+        out.append({
+            "id": r.get("id"), "tipo": r.get("tipo"), "categoria": r.get("categoria"),
+            "dimension": r.get("dimension"), "severidad": r.get("severidad"),
+            "peso_score": int(r.get("peso_score") or 0),
+            "mensaje": r.get("mensaje") or "", "propuesta": r.get("propuesta") or "",
+            "base_legal": r.get("base_legal") or "",
+            "patrones_presencia": _json_load_list(r.get("patrones_presencia")),
+            "patrones_ausencia": _json_load_list(r.get("patrones_ausencia")),
+            "activa": bool(r.get("activa", 1)),
+        })
+    return out
+
+
+def _contrato_reglas_activas():
+    """Solo las reglas ACTIVAS (las que el motor evalúa)."""
+    return [r for r in _contrato_reglas_db() if r.get("activa", True)]
+
+
+@app.route("/mantenciones/api/contrato-reglas", methods=["GET"])
+@_mant_required
+def mant_contrato_reglas_list():
+    """Lista TODAS las reglas de contrato (CRUD)."""
+    reglas = _contrato_reglas_db()
+    return jsonify({"reglas": reglas, "total": len(reglas),
+                    "activas": sum(1 for r in reglas if r.get("activa"))})
+
+
+@app.route("/mantenciones/api/contrato-reglas", methods=["POST"])
+@_mant_required
+def mant_contrato_reglas_create():
+    """Crea una regla de contrato nueva (CRUD, admin)."""
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin."}), 403
+    d = request.get_json(silent=True) or {}
+    rid = re.sub(r"[^a-z0-9_]+", "_", (d.get("id") or "").strip().lower()).strip("_")[:80]
+    if not rid:
+        base = re.sub(r"[^a-z0-9_]+", "_", (d.get("mensaje") or "regla").lower()).strip("_")[:50]
+        rid = "custom_" + (base or "regla")
+    if mysql_fetchone("SELECT id FROM mant_contrato_reglas WHERE id=%s", (rid,)):
+        rid = (rid[:60] + "_" + str(int(datetime.now().timestamp()))[-5:])
+    tipo = d.get("tipo") if d.get("tipo") in ("alerta_critica", "punto_revisar", "clausula_relevante", "clausula_favorable") else "punto_revisar"
+    try:
+        mysql_execute(
+            "INSERT INTO mant_contrato_reglas (id,tipo,categoria,dimension,severidad,peso_score,"
+            "mensaje,propuesta,base_legal,patrones_presencia,patrones_ausencia,activa,orden,updated_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (rid, tipo, d.get("categoria") or "custom", d.get("dimension") or "personalizadas",
+             d.get("severidad") or "media", int(d.get("peso_score") or -5),
+             (d.get("mensaje") or "")[:2000], (d.get("propuesta") or "")[:3000], (d.get("base_legal") or "")[:600],
+             json.dumps(_parse_patrones(d.get("patrones_presencia")), ensure_ascii=False),
+             json.dumps(_parse_patrones(d.get("patrones_ausencia")), ensure_ascii=False),
+             1 if d.get("activa", True) else 0, 999, current_username()))
+    except Exception as e:
+        print(f"[contrato_reglas_create] {e}", flush=True)
+        return jsonify({"error": "No se pudo crear la regla."}), 500
+    return jsonify({"ok": True, "id": rid})
+
+
+@app.route("/mantenciones/api/contrato-reglas/<rule_id>", methods=["PUT"])
+@_mant_required
+def mant_contrato_reglas_update(rule_id):
+    """Edita una regla de contrato (CRUD, admin). Campos parciales permitidos."""
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin."}), 403
+    if not mysql_fetchone("SELECT id FROM mant_contrato_reglas WHERE id=%s", (rule_id,)):
+        return jsonify({"error": "Regla no encontrada."}), 404
+    d = request.get_json(silent=True) or {}
+    sets, vals = [], []
+    if "activa" in d:
+        sets.append("activa=%s"); vals.append(1 if d.get("activa") else 0)
+    if "peso" in d or "peso_score" in d:
+        try:
+            _p = int(d.get("peso", d.get("peso_score")))
+        except (TypeError, ValueError):
+            _p = 0
+        sets.append("peso_score=%s"); vals.append(_p)
+    for campo in ("tipo", "categoria", "dimension", "severidad", "mensaje", "propuesta", "base_legal"):
+        if campo in d:
+            sets.append(f"{campo}=%s"); vals.append(str(d.get(campo) or "")[:3000])
+    if "patrones_presencia" in d:
+        sets.append("patrones_presencia=%s"); vals.append(json.dumps(_parse_patrones(d.get("patrones_presencia")), ensure_ascii=False))
+    if "patrones_ausencia" in d:
+        sets.append("patrones_ausencia=%s"); vals.append(json.dumps(_parse_patrones(d.get("patrones_ausencia")), ensure_ascii=False))
+    if not sets:
+        return jsonify({"ok": True})
+    sets.append("updated_by=%s"); vals.append(current_username())
+    vals.append(rule_id)
+    try:
+        mysql_execute(f"UPDATE mant_contrato_reglas SET {', '.join(sets)} WHERE id=%s", vals)
+    except Exception as e:
+        print(f"[contrato_reglas_update] {e}", flush=True)
+        return jsonify({"error": "No se pudo guardar la regla."}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/contrato-reglas/<rule_id>", methods=["DELETE"])
+@_mant_required
+def mant_contrato_reglas_delete(rule_id):
+    """Elimina una regla de contrato (CRUD, admin)."""
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin."}), 403
+    try:
+        mysql_execute("DELETE FROM mant_contrato_reglas WHERE id=%s", (rule_id,))
+    except Exception as e:
+        print(f"[contrato_reglas_delete] {e}", flush=True)
+        return jsonify({"error": "No se pudo eliminar la regla."}), 500
+    return jsonify({"ok": True})
+
+
+def _descargar_contrato_bytes(cu, public_id=None):
+    """Descarga los bytes del archivo del contrato desde Cloudinary. Maneja el
+    401 ANÓNIMO de PDFs (política Cloudinary): si la URL directa falla, FIRMA la
+    URL con el SDK (sign_url) usando el public_id. Devuelve bytes o None."""
+    import requests as _rq
+    if cu:
+        try:
+            r = _rq.get(cu, timeout=30, allow_redirects=True)
+            if r.status_code == 200 and r.content:
+                return r.content
+            print(f"[contrato dl directo] HTTP {r.status_code}", flush=True)
+        except Exception as e:
+            print(f"[contrato dl directo] {e}", flush=True)
+    if public_id:
+        try:
+            import cloudinary.utils
+            for rtype in ("raw", "image"):
+                signed, _opts = cloudinary.utils.cloudinary_url(
+                    public_id, resource_type=rtype, type="upload", sign_url=True, secure=True)
+                r = _rq.get(signed, timeout=30, allow_redirects=True)
+                if r.status_code == 200 and r.content:
+                    return r.content
+        except Exception as e:
+            print(f"[contrato dl signed] {e}", flush=True)
+    return None
+
+
+def _ocr_contrato(fpath, max_pages=12):
+    """OCR DETERMINISTA (Tesseract, open-source, SIN IA ni tokens) de un contrato
+    escaneado (PDF imagen o imagen). Devuelve texto reconocido en español, o ''.
+    Requiere tesseract-ocr + tesseract-ocr-spa + poppler (instalados vía Dockerfile)."""
+    if not fpath or not os.path.exists(fpath):
+        return ""
+    ext = fpath.rsplit(".", 1)[-1].lower() if "." in fpath else ""
+    try:
+        import pytesseract
+        if ext == "pdf":
+            from pdf2image import convert_from_path
+            paginas = convert_from_path(fpath, dpi=200, first_page=1, last_page=max_pages)
+            return "\n".join(pytesseract.image_to_string(img, lang="spa") for img in paginas)
+        if ext in ("jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp"):
+            from PIL import Image
+            return pytesseract.image_to_string(Image.open(fpath), lang="spa")
+    except Exception as e:
+        print(f"[ocr_contrato] {e}", flush=True)
+    return ""
+
+
 @app.route("/mantenciones/api/contratos/<int:ctid>/analizar", methods=["POST"])
 @_mant_required
 def mant_contrato_analizar(ctid):
@@ -39113,8 +39551,34 @@ def mant_contrato_analizar(ctid):
     pdf_b64_paginas = []   # base64 de las primeras N páginas (fallback visión)
     es_escaneado = False
     fpath = os.path.join(MANT_UPLOADS, ct["archivo_path"] or "")
-    if os.path.exists(fpath):
-        ext = ct["archivo_path"].rsplit(".", 1)[-1].lower()
+    # Cloud Run tiene disco EFÍMERO: los contratos viven en Cloudinary. Si el
+    # archivo no está en el disco local, lo descargamos de Cloudinary (o de su
+    # adjunto) a un temporal para poder extraer texto y/o hacer OCR.
+    if (not ct.get("archivo_path")) or (not os.path.exists(fpath)) or os.path.isdir(fpath):
+        _cu = ct.get("cloudinary_url")
+        if not _cu:
+            _adj = mysql_fetchone(
+                "SELECT cloudinary_url FROM mant_contrato_adjuntos "
+                "WHERE contrato_id=%s AND cloudinary_url IS NOT NULL AND cloudinary_url<>'' "
+                "ORDER BY id ASC LIMIT 1", (ctid,))
+            _cu = (_adj or {}).get("cloudinary_url")
+        _bytes = _descargar_contrato_bytes(_cu, ct.get("cloudinary_public_id"))
+        if _bytes:
+            try:
+                _ext = (ct.get("archivo_tipo") or "pdf").lower().lstrip(".")
+                if _ext not in ("pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"):
+                    _ext = "pdf"
+                os.makedirs(MANT_UPLOADS, exist_ok=True)
+                _tmp = os.path.join(MANT_UPLOADS, f"_ctdl_{ctid}.{_ext}")
+                with open(_tmp, "wb") as _f:
+                    _f.write(_bytes)
+                fpath = _tmp
+            except Exception as _e:
+                print(f"[contrato dl write] ctid={ctid}: {_e}", flush=True)
+        else:
+            print(f"[contrato dl] ctid={ctid}: no se pudo descargar de Cloudinary (directo+firmado)", flush=True)
+    if os.path.exists(fpath) and not os.path.isdir(fpath):
+        ext = fpath.rsplit(".", 1)[-1].lower()
         if ext == "pdf":
             try:
                 import pdfplumber
@@ -39154,37 +39618,11 @@ def mant_contrato_analizar(ctid):
             except Exception:
                 pass
 
-    # ══════════════════════════════════════════════════════════════════
-    # PRE-CHECK IA: ¿es realmente un contrato de servicio?
-    # Validador rápido (Haiku-tier) que evita gastar Sonnet/Opus analizando
-    # listas de productos, facturas u otros documentos que NO son contratos.
-    # ══════════════════════════════════════════════════════════════════
+    # MOTOR DETERMINISTA (CERO IA): se eliminó el pre-check con Claude.
+    # (Las variables datos_extra/prompt_sistema de abajo quedan vestigiales y no
+    #  se usan; el análisis lo hace contrato_reglas.analizar_contrato más abajo.)
     tipo_doc_detectado = None
     razon_deteccion = None
-    if texto_contrato and len(texto_contrato.strip()) > 100:
-        precheck_sistema = (
-            "Eres un clasificador de documentos. Recibes el texto de un archivo "
-            "y debes decidir si es un CONTRATO DE SERVICIO/MANTENCIÓN. "
-            "Responde SIEMPRE en JSON: "
-            '{"tipo":"contrato_servicio|lista_productos|factura|cotizacion|'
-            'guia_despacho|reporte_tecnico|otro","confianza":0-100,"razon":"frase corta"}'
-        )
-        precheck_usuario = (
-            f"Clasifica este documento (extracto):\n\n{texto_contrato[:2500]}\n\n"
-            "¿Es un contrato de servicio/mantención? Responde el JSON."
-        )
-        precheck, precheck_err = _claude_call(
-            precheck_usuario, precheck_sistema,
-            max_tokens=200, expect_json=True, temperature=0.1
-        )
-        if precheck and isinstance(precheck, dict):
-            tipo_doc_detectado = precheck.get("tipo")
-            razon_deteccion = precheck.get("razon")
-            confianza = int(precheck.get("confianza") or 0)
-            # Daniel 30/05/2026: NUNCA rechazar. La IA analiza CUALQUIER documento
-            # contractual (compraventa, leasing, servicio, garantía, comodato…) y
-            # entrega el análisis gerencial igual. El tipo detectado solo se informa
-            # al prompt (para contextualizar) y al usuario; jamás bloquea el análisis.
 
     # Datos del contrato para enriquecer el prompt
     datos_extra = (
@@ -39270,41 +39708,41 @@ jurídico REAL listo para usar, enfocadas en: (1) mantención periódica OBLIGAT
 (2) garantía CONDICIONADA a esa mantención exclusiva, (3) cobro de toda visita/OT fuera de
 cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a ILUS."""
 
-    if es_escaneado and pdf_b64_paginas:
-        prompt_usuario = f"""Analiza este contrato de mantención. El PDF adjunto
-es ESCANEADO (imagen), no texto extraíble. Léelo visualmente.
-
-METADATOS:
-{datos_extra}
-
-(El texto del contrato está en el PDF adjunto — léelo visualmente)
-
-Devuelve SOLO el JSON, sin texto adicional."""
-    else:
-        prompt_usuario = f"""Analiza este contrato de mantención:
-
-METADATOS:
-{datos_extra}
-
-TEXTO DEL CONTRATO:
-{texto_contrato[:6000]}
-
-Devuelve SOLO el JSON, sin texto adicional."""
-
-    # Llamada unificada con fallback de modelos. Si el PDF es escaneado,
-    # mandamos el PDF como attachment para que Claude lo procese visualmente.
-    # max_tokens alto (8000): el esquema pedido es grande (cláusulas jurídicas
-    # completas + propuestas + escenarios de exposición). Con 4000 la respuesta
-    # se truncaba a la mitad → "Respuesta no parseable como JSON". (Daniel 30/05/2026)
-    resultado, err = _claude_call(
-        prompt_usuario, prompt_sistema,
-        max_tokens=8000, expect_json=True,
-        attachments=pdf_b64_paginas if es_escaneado else None
-    )
-    if err:
-        return jsonify({"error": f"Error IA: {err}"}), 503
-    if not resultado:
-        return jsonify({"error": "Sin respuesta de IA"}), 503
+    # ── ANÁLISIS 100% DETERMINISTA POR REGLAS (CERO IA) ──
+    # Si el texto extraído es poco (PDF escaneado), intentamos OCR (Tesseract,
+    # determinista, open-source, SIN IA). Si aun con OCR no hay texto suficiente,
+    # pedimos una versión con texto.
+    if es_escaneado or len((texto_contrato or "").strip()) < 300:
+        _ocr = _ocr_contrato(fpath)
+        if _ocr and len(_ocr.strip()) > len((texto_contrato or "").strip()):
+            texto_contrato = _ocr
+            es_escaneado = False
+    if len((texto_contrato or "").strip()) < 300:
+        return jsonify({"ok": False, "requiere_texto": True,
+                        "error": "No pude leer texto suficiente del contrato, ni siquiera con OCR "
+                                 "(el escaneo puede estar muy borroso o ser una foto de baja calidad). "
+                                 "Súbelo en PDF con texto seleccionable o en Word."}), 200
+    import contrato_reglas
+    _an = contrato_reglas.analizar_contrato(texto_contrato, reglas=_contrato_reglas_activas())
+    _ids_alert = {a.get("id") for a in _an.get("alertas_criticas", [])}
+    _es_arriendo = bool({"tipo_es_arriendo_no_mantencion", "tipo_leasing_opcion_compra",
+                         "tipo_arriendo_disfrazado_costos_a_ilus",
+                         "tipo_compraventa_transferencia_propiedad"} & _ids_alert)
+    _clausulas = ([c["mensaje"] for c in _an.get("clausulas_relevantes", [])]
+                  + ["✓ " + f["mensaje"] for f in _an.get("clausulas_favorables", [])])
+    resultado = {
+        "motor": "contrato-reglas-v1",
+        "tipo_contrato": "Arriendo / Riesgo (revisar)" if _es_arriendo else "Servicio de mantención",
+        "resumen": _an.get("resumen", ""),
+        "score": _an.get("score"),
+        "nivel_riesgo": _an.get("nivel_riesgo", "medio"),
+        "alertas": [a["mensaje"] for a in _an.get("alertas_criticas", [])],
+        "puntos_criticos": [p["mensaje"] for p in _an.get("puntos_revisar", [])],
+        "clausulas_criticas": _clausulas,
+        "mejoras_prioritarias": [p["propuesta"] for p in _an.get("propuestas_mejora", [])],
+        "cobertura_descripcion": "",
+        "detalle": _an,
+    }
 
     # Guardar resultado en DB (estructura expandida + trazabilidad de usuario)
     conn = get_mysql()
@@ -39312,50 +39750,26 @@ Devuelve SOLO el JSON, sin texto adicional."""
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE mant_contratos SET
-                   ai_analizado=1, ai_fecha=%s, ai_usuario=%s,
-                   ai_analisis_json=%s,
-                   ai_resumen=%s,
-                   ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
+                   ai_analizado=1, ai_fecha=%s, ai_usuario=%s, ai_analisis_json=%s,
+                   ai_resumen=%s, ai_puntos_criticos=%s, ai_alertas=%s, ai_mejoras=%s,
                    ai_clausulas=%s, ai_cobertura=%s, ai_tipo_contrato=%s,
-                   ai_frecuencia_sug=%s, ai_score=%s,
-                   ai_vigencia_inicio=%s, ai_vigencia_fin=%s,
-                   nivel_riesgo=%s,
-                   sla_horas=%s,
-                   incluye_mant_gratis=%s, incluye_repuestos=%s,
-                   costo_por_mant=%s, costo_total=%s,
-                   frecuencia_meses=COALESCE(NULLIF(frecuencia_meses,0),%s),
-                   es_indefinido=COALESCE(NULLIF(es_indefinido,0),%s),
-                   monto_mensual=COALESCE(NULLIF(monto_mensual,0),%s)
+                   ai_score=%s, nivel_riesgo=%s
                    WHERE id=%s""",
-                (datetime.now(),
-                 current_username(),
+                (datetime.now(), current_username(),
                  json.dumps(resultado, ensure_ascii=False),
-                 resultado.get("resumen",""),
-                 json.dumps(resultado.get("puntos_criticos",[]),    ensure_ascii=False),
-                 json.dumps(resultado.get("alertas",[]),            ensure_ascii=False),
-                 json.dumps(resultado.get("mejoras_prioritarias",[]),ensure_ascii=False),
-                 json.dumps(resultado.get("clausulas_criticas",[]), ensure_ascii=False),
-                 resultado.get("cobertura_descripcion",""),
-                 resultado.get("tipo_contrato",""),
-                 resultado.get("frecuencia_sugerida_meses"),
-                 resultado.get("score"),
-                 resultado.get("vigencia_inicio") or None,
-                 resultado.get("vigencia_fin") or None,
-                 resultado.get("nivel_riesgo","medio"),
-                 resultado.get("sla_horas") or None,
-                 1 if resultado.get("incluye_mant_gratis") else 0,
-                 1 if resultado.get("incluye_repuestos") else 0,
-                 resultado.get("costo_por_mant") or None,
-                 resultado.get("costo_total") or None,
-                 resultado.get("frecuencia_sugerida_meses"),
-                 1 if resultado.get("es_indefinido") else 0,
-                 resultado.get("costo_mensual") or None,
+                 resultado.get("resumen", ""),
+                 json.dumps(resultado.get("puntos_criticos", []), ensure_ascii=False),
+                 json.dumps(resultado.get("alertas", []), ensure_ascii=False),
+                 json.dumps(resultado.get("mejoras_prioritarias", []), ensure_ascii=False),
+                 json.dumps(resultado.get("clausulas_criticas", []), ensure_ascii=False),
+                 resultado.get("cobertura_descripcion", ""),
+                 resultado.get("tipo_contrato", ""),
+                 resultado.get("score"), resultado.get("nivel_riesgo", "medio"),
                  ctid)
             )
         conn.commit()
-        _mant_log("contrato", ctid, "analizado_ia",
-                  f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')}"
-                  + (f" · tipo_doc={tipo_doc_detectado}" if tipo_doc_detectado else ""))
+        _mant_log("contrato", ctid, "analizado_reglas",
+                  f"score={resultado.get('score')} riesgo={resultado.get('nivel_riesgo')} (motor determinista)")
         return jsonify({
             "ok": True,
             "resultado": resultado,
@@ -50183,6 +50597,741 @@ def _reporte_analisis_reglas(rep, cliente=None):
     }
 
 
+# ════════════════════════════════════════════════════════════════════════
+# AGENTE DE INTELIGENCIA DE FICHA — determinista, CERO IA / CERO tokens
+# Diagnostica contrato, frecuencia, universo del cliente, brecha de
+# mantenciones gratuitas, riesgo de fuga a tercero, valorización y propuesta
+# comercial. TODO por reglas configurables (mant_reglas_negocio). 2026-06-06.
+# ════════════════════════════════════════════════════════════════════════
+_REGLAS_DEFAULTS = {
+    # clave: (valor, tipo_dato, categoria, label, unidad)
+    "frecuencia_default_meses":   ("3",     "int",    "frecuencia", "Frecuencia por defecto si el contrato no la trae", "meses"),
+    "precio_base_preventiva":     ("60000", "float",  "precio",     "Precio base mantención preventiva",                "CLP"),
+    "precio_base_correctiva":     ("90000", "float",  "precio",     "Precio base reparación correctiva",                "CLP"),
+    "descuento_sugerido_pct":     ("30",    "float",  "descuento",  "Descuento sugerido en las propuestas",             "%"),
+    "iva_pct":                    ("19",    "float",  "precio",     "IVA",                                              "%"),
+    "umbral_alerta_proxima_dias": ("15",    "int",    "alerta",     "Avisar si la próxima mantención está dentro de X días", "días"),
+    "umbral_vencida_critica_dias":("30",    "int",    "alerta",     "Marcar crítico si una mantención lleva X días vencida", "días"),
+    "intel_cache_ttl_horas":      ("6",     "int",    "politica",   "Horas de validez del diagnóstico en caché",        "horas"),
+    "score_peso_brecha":          ("40",    "int",    "politica",   "Peso de la brecha de gratuitas en el score",       "pts"),
+    "score_peso_vencidas":        ("35",    "int",    "politica",   "Peso de las mantenciones vencidas en el score",    "pts"),
+    "score_peso_contrato":        ("25",    "int",    "politica",   "Peso de la vigencia del contrato en el score",     "pts"),
+    "texto_propuesta":            ("Te proponemos realizar la mantención preventiva de tus equipos para mantenerlos operativos y seguros.",
+                                                "string", "texto",      "Texto base de la propuesta comercial",             ""),
+}
+_REGLAS_CACHE = None
+
+
+def _reglas_cast(val, tipo):
+    try:
+        if tipo == "int":   return int(float(val))
+        if tipo == "float": return float(val)
+        if tipo == "bool":  return str(val).strip().lower() in ("1", "true", "si", "sí", "yes", "on")
+        if tipo == "json":  return json.loads(val) if val else None
+    except Exception:
+        return None
+    return str(val) if val is not None else ""
+
+
+def _reglas_cargar(force=False):
+    """Reglas de negocio (mant_reglas_negocio) → dict {clave: valor_casteado}.
+    Cacheado en proceso. Fallback a _REGLAS_DEFAULTS. CERO IA."""
+    global _REGLAS_CACHE
+    if _REGLAS_CACHE is not None and not force:
+        return _REGLAS_CACHE
+    out = {k: _reglas_cast(spec[0], spec[1]) for k, spec in _REGLAS_DEFAULTS.items()}
+    try:
+        for r in (mysql_fetchall("SELECT clave, valor, tipo_dato FROM mant_reglas_negocio") or []):
+            out[r["clave"]] = _reglas_cast(r.get("valor"), r.get("tipo_dato") or "string")
+    except Exception:
+        pass
+    _REGLAS_CACHE = out
+    return out
+
+
+def _reglas_invalidar():
+    global _REGLAS_CACHE
+    _REGLAS_CACHE = None
+
+
+def _intel_clp(n):
+    try:
+        return f"{int(round(float(n))):,}".replace(",", ".")
+    except Exception:
+        return str(n or 0)
+
+
+def _intel_as_date(v):
+    from datetime import datetime as _dt, date as _date
+    if not v:
+        return None
+    if isinstance(v, _dt):
+        return v.date()
+    if isinstance(v, _date):
+        return v
+    try:
+        return _dt.strptime(str(v)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _intel_add_months(d, n):
+    if not d:
+        return None
+    mes = d.month + int(n); anio = d.year
+    while mes > 12:
+        mes -= 12; anio += 1
+    while mes < 1:
+        mes += 12; anio -= 1
+    try:
+        return d.replace(year=anio, month=mes)
+    except ValueError:
+        return d.replace(year=anio, month=mes, day=28)
+
+
+def _intel_meses_entre(d1, d2):
+    if not d1 or not d2 or d2 < d1:
+        return 0
+    return (d2.year - d1.year) * 12 + (d2.month - d1.month) - (1 if d2.day < d1.day else 0)
+
+
+def _cliente_inteligencia(cid, reglas=None):
+    """AGENTE determinista (CERO IA / CERO tokens): diagnóstico 360 del cliente
+    por REGLAS. Devuelve un dict estable para el panel de la ficha y el radar."""
+    from datetime import datetime as _dt
+    R = reglas or _reglas_cargar()
+    hoy = _dt.now().date()
+    cli = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return None
+    cli = dict(cli)
+
+    ct = mysql_fetchone(
+        "SELECT * FROM mant_contratos WHERE cliente_id=%s AND estado IN ('vigente','indefinido') "
+        "ORDER BY created_at DESC LIMIT 1", (cid,))
+    if not ct:
+        ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC LIMIT 1", (cid,))
+    ct = dict(ct) if ct else None
+
+    visitas = mysql_fetchall(
+        "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, costo, costo_real, "
+        "       cubierto_por, es_retroactiva, estado_facturacion, contrato_id, levantamiento_id "
+        "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
+    visitas = [dict(v) for v in visitas]
+
+    faltantes = []
+
+    # ── Universo: cuántas veces hemos ido (toda gestión) ──
+    realizadas_all = [v for v in visitas if v.get("estado") == "completada"]
+    por_tipo = {}
+    for v in visitas:
+        t = v.get("tipo") or "otro"
+        por_tipo[t] = por_tipo.get(t, 0) + 1
+    fechas_real = sorted(d for d in (_intel_as_date(v.get("fecha_realizada")) for v in realizadas_all) if d)
+    universo = {
+        "total_gestiones": len(visitas),
+        "realizadas": len(realizadas_all),
+        "por_tipo": por_tipo,
+        "levantamientos": sum(1 for v in visitas if v.get("levantamiento_id")),
+        "primera_fecha": str(fechas_real[0]) if fechas_real else None,
+        "ultima_fecha": str(fechas_real[-1]) if fechas_real else None,
+        "dias_desde_ultima": ((hoy - fechas_real[-1]).days if fechas_real else None),
+    }
+
+    # ── Historia (visitas YA hechas) vs Agenda (programadas a futuro) ──
+    # Diferencia explícita pasado/futuro para "levantar la historia" del cliente.
+    _tipo_label = {"preventiva": "Preventiva", "correctiva": "Correctiva", "garantia": "Garantía",
+                   "inspeccion": "Inspección", "levantamiento": "Levantamiento",
+                   "instalacion": "Instalación", "retroactiva": "Retroactiva"}
+    _cob_label = {"contrato": "Contrato", "cliente": "Cliente paga", "garantia": "Garantía",
+                  "mixto": "Mixto", "tercero": "Tercero (fuga)"}
+    historia, agenda = [], []
+    for v in visitas:
+        est = (v.get("estado") or "").lower()
+        fr = _intel_as_date(v.get("fecha_realizada"))
+        fp = _intel_as_date(v.get("fecha_programada"))
+        tipo = v.get("tipo") or "otro"
+        if est == "completada" or (fr and fr <= hoy):
+            f = fr or fp
+            historia.append({
+                "id": v.get("id"), "fecha": str(f) if f else None,
+                "dias_atras": ((hoy - f).days if f else None),
+                "tipo": tipo, "tipo_label": _tipo_label.get(tipo, tipo.capitalize()),
+                "titulo": v.get("titulo") or "",
+                "estado": est, "cubierto_por": (v.get("cubierto_por") or "contrato"),
+                "cobertura_label": _cob_label.get((v.get("cubierto_por") or "contrato"), "Contrato"),
+                "costo": float(v.get("costo_real") or v.get("costo") or 0),
+                "es_retroactiva": bool(v.get("es_retroactiva")),
+            })
+        elif est in ("programada", "reagendada", "en_curso") and fp:
+            agenda.append({
+                "id": v.get("id"), "fecha": str(fp), "dias_faltan": (fp - hoy).days,
+                "tipo": tipo, "tipo_label": _tipo_label.get(tipo, tipo.capitalize()),
+                "titulo": v.get("titulo") or "", "estado": est, "vencida": fp < hoy,
+            })
+    historia.sort(key=lambda x: (x["fecha"] or ""), reverse=True)
+    agenda.sort(key=lambda x: x["fecha"])
+    _por_cob = {}
+    for h in historia:
+        _por_cob[h["cobertura_label"]] = _por_cob.get(h["cobertura_label"], 0) + 1
+    historia_resumen = {
+        "total": len(historia), "items": historia[:25],
+        "ultima": historia[0]["fecha"] if historia else None,
+        "dias_desde_ultima": historia[0]["dias_atras"] if historia else None,
+        "gasto_total": sum(h["costo"] for h in historia),
+        "por_cobertura": _por_cob,
+        "retroactivas": sum(1 for h in historia if h["es_retroactiva"]),
+    }
+    agenda_resumen = {
+        "total": len(agenda), "items": agenda[:25],
+        "proxima": agenda[0]["fecha"] if agenda else None,
+        "dias_a_proxima": agenda[0]["dias_faltan"] if agenda else None,
+        "vencidas_programadas": sum(1 for a in agenda if a["vencida"]),
+    }
+
+    # ── Cierre de facturación: servicios REALIZADOS con el proceso de factura ABIERTO ──
+    # (estado_facturacion en sin_cotizar/cotizado/con_oc = pendiente; facturado/no_aplica = cerrado)
+    _fact_abierto = ("sin_cotizar", "cotizado", "con_oc")
+    _ef_label = {"sin_cotizar": "Sin cotizar", "cotizado": "Cotizado", "con_oc": "Con OC"}
+    fact_items = []
+    for v in visitas:
+        if (v.get("estado") or "").lower() != "completada":
+            continue
+        ef = (v.get("estado_facturacion") or "sin_cotizar").lower()
+        if ef in _fact_abierto:
+            fr = _intel_as_date(v.get("fecha_realizada")) or _intel_as_date(v.get("fecha_programada"))
+            fact_items.append({
+                "id": v.get("id"), "fecha": str(fr) if fr else None,
+                "dias": ((hoy - fr).days if fr else None),
+                "tipo_label": _tipo_label.get(v.get("tipo") or "otro", (v.get("tipo") or "otro").capitalize()),
+                "estado_facturacion": ef, "ef_label": _ef_label.get(ef, ef),
+                "cobertura_label": _cob_label.get((v.get("cubierto_por") or "contrato"), "Contrato"),
+            })
+    fact_items.sort(key=lambda x: (x["fecha"] or ""))
+    facturacion = {
+        "pendientes": len(fact_items),
+        "items": fact_items[:25],
+        "al_dia": len(fact_items) == 0,
+        "mas_antigua_dias": (fact_items[0]["dias"] if fact_items else None),
+    }
+
+    # ── Datos del cliente (¿qué le falta a la ficha? — con clave para llenar inline) ──
+    _cli_campos = [
+        ("rut",             "RUT",                  "text"),
+        ("direccion",       "Dirección",            "text"),
+        ("comuna",          "Comuna",               "text"),
+        ("ciudad",          "Ciudad",               "text"),
+        ("contacto_nombre", "Contacto (nombre)",    "text"),
+        ("contacto_tel",    "Teléfono de contacto", "tel"),
+        ("contacto_email",  "Email de contacto",    "email"),
+    ]
+    campos_faltantes = [{"campo": c, "label": l, "tipo": t}
+                        for c, l, t in _cli_campos if not str(cli.get(c) or "").strip()]
+    datos_faltantes = [d["label"] for d in campos_faltantes]
+    datos_cliente = {
+        "completo": len(campos_faltantes) == 0,
+        "faltantes": datos_faltantes,
+        "campos_faltantes": campos_faltantes,
+        "tiene_coordenadas": bool(cli.get("direccion_lat") and cli.get("direccion_lng")),
+        "campos_ok": len(_cli_campos) - len(campos_faltantes),
+        "campos_total": len(_cli_campos),
+    }
+
+    # ── Equipos del cliente (¿fichas completas?) ──
+    equipos = mysql_fetchall(
+        "SELECT * FROM mant_maquinas WHERE cliente_id=%s AND COALESCE(estado,'activo') != 'baja'", (cid,)) or []
+    equipos = [dict(e) for e in equipos]
+    equipos_resumen = {
+        "total": len(equipos),
+        "sin_serie": sum(1 for e in equipos if not str(e.get("serie") or "").strip()),
+        "sin_foto":  sum(1 for e in equipos if not str(e.get("foto_url") or "").strip()),
+        "criticos":  sum(1 for e in equipos if (e.get("estado_op") or "") == "critico"),
+    }
+
+    # ── Diagnóstico de contrato ──
+    tiene_contrato = bool(ct)
+    if not tiene_contrato:
+        faltantes.append("Contrato registrado")
+    frecuencia = None; freq_origen = "regla_default"
+    if ct and ct.get("frecuencia_meses"):
+        frecuencia = int(ct["frecuencia_meses"]); freq_origen = "contrato"
+    elif ct and ct.get("ai_frecuencia_sug"):
+        frecuencia = int(ct["ai_frecuencia_sug"]); freq_origen = "sugerida"
+    if not frecuencia:
+        frecuencia = int(R.get("frecuencia_default_meses") or 3)
+        if tiene_contrato:
+            faltantes.append("Frecuencia de mantención en el contrato")
+    frecuencia = max(1, frecuencia)
+
+    f_ini = _intel_as_date(ct.get("fecha_inicio")) if ct else None
+    f_fin = _intel_as_date(ct.get("fecha_vencimiento")) if ct else None
+    es_indef = bool(ct.get("es_indefinido")) if ct else False
+    if ct and not f_ini:
+        f_ini = _intel_as_date(ct.get("created_at"))
+        faltantes.append("Fecha de inicio del contrato")
+    dias_para_vencer = (f_fin - hoy).days if f_fin else None
+    estado_contrato = (ct.get("estado") if ct else "sin_contrato") or "sin_contrato"
+    valor_anual = None
+    if ct:
+        valor_anual = float(ct.get("monto_anual") or 0) or (float(ct.get("monto_mensual") or 0) * 12) or None
+
+    incluye_gratis = bool(ct.get("incluye_mant_gratis")) if ct else False
+    gratis_anual = None; gratis_origen = "desconocido"
+    if ct and ct.get("mant_gratis_incluidas_anual"):
+        gratis_anual = int(ct["mant_gratis_incluidas_anual"]); gratis_origen = "contrato"
+    elif incluye_gratis:
+        gratis_anual = max(1, round(12 / frecuencia)); gratis_origen = "estimado"
+        faltantes.append("N° de mantenciones gratuitas/año en el contrato (se está estimando)")
+
+    diag_contrato = {
+        "contrato_id": ct.get("id") if ct else None,
+        "estado": estado_contrato,
+        "vigencia_inicio": str(f_ini) if f_ini else None,
+        "vigencia_fin": str(f_fin) if f_fin else None,
+        "es_indefinido": es_indef,
+        "dias_para_vencer": dias_para_vencer,
+        "frecuencia_meses": frecuencia,
+        "frecuencia_origen": freq_origen,
+        "incluye_mant_gratis": incluye_gratis,
+        "gratis_incluidas_anual": gratis_anual,
+        "gratis_origen": gratis_origen,
+        "valor_anual": valor_anual,
+    }
+
+    # ── Proyección de fechas (mismo avance de meses que mant_generar_calendario) ──
+    ancla = f_ini or (fechas_real[0] if fechas_real else None)
+    meses_transcurridos = _intel_meses_entre(ancla, hoy) if ancla else 0
+    esperadas_a_hoy = (meses_transcurridos // frecuencia) if (ancla and frecuencia) else 0
+    n_realizadas = len(realizadas_all)
+    n_por_contrato = sum(1 for v in realizadas_all if (v.get("cubierto_por") or "contrato") == "contrato")
+    n_por_tercero = sum(1 for v in visitas if (v.get("cubierto_por") or "") == "tercero")
+
+    proyeccion = []; vencidas = []; proximas = []
+    if ancla:
+        meses_hechos = {(d.year, d.month) for d in fechas_real}
+        cursor = _intel_add_months(ancla, frecuencia)
+        tope = f_fin or _intel_add_months(hoy, 24)
+        guard = 0
+        while cursor and cursor <= tope and guard < 120:
+            guard += 1
+            if cursor <= hoy:
+                if (cursor.year, cursor.month) not in meses_hechos:
+                    vencidas.append({"fecha": str(cursor), "dias_atraso": (hoy - cursor).days})
+            else:
+                proximas.append({"fecha": str(cursor), "dias_faltan": (cursor - hoy).days})
+                proyeccion.append(str(cursor))
+            cursor = _intel_add_months(cursor, frecuencia)
+
+    mant = {
+        "esperadas_a_hoy": esperadas_a_hoy,
+        "realizadas": n_realizadas,
+        "realizadas_por_contrato": n_por_contrato,
+        "realizadas_por_tercero": n_por_tercero,
+        "ultima_fecha": str(fechas_real[-1]) if fechas_real else None,
+        "proxima_fecha": proximas[0]["fecha"] if proximas else None,
+        "vencidas": vencidas[:12],
+        "proximas": proximas[:12],
+        "proyeccion": proyeccion[:12],
+    }
+
+    # ── Brecha de mantenciones gratuitas ──
+    costo_mant = (float(ct["costo_por_mant"]) if (ct and ct.get("costo_por_mant"))
+                  else float(R.get("precio_base_preventiva") or 0))
+    anios = max(0.0, meses_transcurridos / 12.0)
+    if incluye_gratis and gratis_anual:
+        esperadas_gratis = int(gratis_anual * anios + 1e-6)
+        if esperadas_a_hoy:
+            esperadas_gratis = min(esperadas_gratis, esperadas_a_hoy)
+        cubiertas_gratis = n_por_contrato
+        pendientes_gratis = max(0, esperadas_gratis - cubiertas_gratis)
+    else:
+        esperadas_gratis = cubiertas_gratis = pendientes_gratis = 0
+    exposicion = round(pendientes_gratis * costo_mant)
+    riesgo_fuga = bool(n_por_tercero > 0 or (incluye_gratis and pendientes_gratis > 0))
+    if incluye_gratis and pendientes_gratis > 0:
+        brecha_msg = (f"Debimos cubrir {esperadas_gratis} mantención(es) gratuita(s) y solo hicimos "
+                      f"{cubiertas_gratis}. Hay {pendientes_gratis} pendiente(s) — reaccionar YA para "
+                      f"evitar que el cliente recurra a un tercero.")
+    elif n_por_tercero > 0:
+        brecha_msg = f"{n_por_tercero} mantención(es) registradas como cubiertas por un TERCERO. Fuga confirmada."
+    else:
+        brecha_msg = "Sin brecha de mantenciones gratuitas detectada."
+    brecha = {"esperadas": esperadas_gratis, "cubiertas": cubiertas_gratis, "pendientes": pendientes_gratis,
+              "exposicion_clp": exposicion, "riesgo_fuga_tercero": riesgo_fuga, "mensaje": brecha_msg}
+
+    # ── Valorización + propuesta comercial (misma fórmula que _cotiz_calcular_totales) ──
+    precio_unitario = costo_mant or float(R.get("precio_base_preventiva") or 0)
+    desc_pct = float(R.get("descuento_sugerido_pct") or 0)
+    iva_pct = float(R.get("iva_pct") or 19)
+    desc_monto = round(precio_unitario * desc_pct / 100.0)
+    neto = round(precio_unitario - desc_monto)
+    iva_monto = round(neto * iva_pct / 100.0)
+    total = round(neto + iva_monto)
+    pitch = (f"{R.get('texto_propuesta') or ''} Valorizada en ${_intel_clp(precio_unitario)}; con "
+             f"{desc_pct:g}% de descuento queda en ${_intel_clp(neto)} + IVA (total ${_intel_clp(total)}).").strip()
+    valorizacion = {"precio_unitario": precio_unitario, "descuento_pct": desc_pct, "descuento_monto": desc_monto,
+                    "neto": neto, "iva_pct": iva_pct, "iva_monto": iva_monto, "total": total, "pitch": pitch}
+
+    # ── Calidad de información (completitud) ──
+    checks = [tiene_contrato,
+              bool(ct and (ct.get("frecuencia_meses") or ct.get("ai_frecuencia_sug"))),
+              bool(f_ini),
+              bool((not incluye_gratis) or gratis_origen == "contrato"),
+              bool(f_fin or es_indef),
+              bool(fechas_real),
+              bool(valor_anual),
+              datos_cliente["completo"],
+              bool(equipos)]
+    calidad = round(100 * sum(1 for c in checks if c) / len(checks))
+
+    # ── Score de salud + nivel de riesgo (pesos configurables) ──
+    pb = int(R.get("score_peso_brecha") or 40); pv = int(R.get("score_peso_vencidas") or 35)
+    pc = int(R.get("score_peso_contrato") or 25); tot_p = max(1, pb + pv + pc)
+    s_brecha = 1.0 if pendientes_gratis <= 0 else max(0.0, 1.0 - pendientes_gratis / 3.0)
+    s_venc = 1.0 if not vencidas else max(0.0, 1.0 - len(vencidas) / 3.0)
+    if not tiene_contrato:                 s_contrato = 0.3
+    elif estado_contrato == "vencido":     s_contrato = 0.2
+    elif estado_contrato == "por_vencer":  s_contrato = 0.6
+    else:                                  s_contrato = 1.0
+    score = round(100 * (pb * s_brecha + pv * s_venc + pc * s_contrato) / tot_p)
+    nivel = "bajo" if (score >= 75 and not riesgo_fuga) else ("medio" if score >= 45 else "alto")
+
+    # ── Acciones sugeridas ──
+    acciones = []
+    if pendientes_gratis > 0:
+        acciones.append({"urgencia": "alta", "tipo": "agendar", "url_accion": f"/mantenciones/clientes/{cid}",
+                         "titulo": f"Agendar {pendientes_gratis} mantención(es) gratuita(s) pendiente(s) — exposición ${_intel_clp(exposicion)}."})
+    if vencidas:
+        acciones.append({"urgencia": "alta", "tipo": "agendar", "url_accion": f"/mantenciones/clientes/{cid}",
+                         "titulo": f"{len(vencidas)} mantención(es) vencida(s) según la frecuencia del contrato."})
+    if proximas and proximas[0]["dias_faltan"] <= int(R.get("umbral_alerta_proxima_dias") or 15):
+        acciones.append({"urgencia": "media", "tipo": "agendar", "url_accion": f"/mantenciones/clientes/{cid}",
+                         "titulo": f"Próxima mantención el {proximas[0]['fecha']} (en {proximas[0]['dias_faltan']} días)."})
+    if dias_para_vencer is not None and dias_para_vencer <= 60:
+        acciones.append({"urgencia": "media", "tipo": "contrato", "url_accion": f"/mantenciones/clientes/{cid}",
+                         "titulo": f"Contrato vence en {dias_para_vencer} días — gestionar renovación."})
+    acciones.append({"urgencia": "baja", "tipo": "cotizar", "url_accion": f"/mantenciones/cotizaciones/nuevo?cliente_id={cid}",
+                     "titulo": f"Proponer mantención con {desc_pct:g}% dcto (${_intel_clp(total)} con IVA)."})
+
+    kpis = [
+        {"label": "Salud", "valor": score, "sufijo": "/100", "tono": ("ok" if score >= 75 else "warn" if score >= 45 else "danger")},
+        {"label": "Calidad info", "valor": calidad, "sufijo": "%", "tono": ("ok" if calidad >= 75 else "warn" if calidad >= 45 else "danger")},
+        {"label": "Brecha gratuitas", "valor": pendientes_gratis, "tono": ("ok" if pendientes_gratis == 0 else "danger")},
+        {"label": "Visitas totales", "valor": len(visitas), "tono": "ok"},
+    ]
+    if mant["proxima_fecha"]:
+        kpis.append({"label": "Próxima", "valor": mant["proxima_fecha"], "tono": "ok"})
+    if exposicion > 0:
+        kpis.append({"label": "Exposición", "valor": f"${_intel_clp(exposicion)}", "tono": "danger"})
+    if facturacion["pendientes"]:
+        kpis.append({"label": "Sin facturar", "valor": facturacion["pendientes"], "tono": "danger"})
+
+    # ── Consultas accionables: el Agente "trabaja para el usuario" (resolver = completar/corregir data) ──
+    consultas = []
+    if campos_faltantes:
+        consultas.append({
+            "id": "datos_cliente", "tipo": "completar_inline", "severidad": "media",
+            "pregunta": "Faltan datos del cliente — pásamelos aquí mismo:",
+            "detalle": "Los guardo al instante y sube la calidad de la ficha.",
+            "campos": campos_faltantes,
+            "acciones": [{"label": "Abrir ficha completa", "accion": "link", "url": f"/mantenciones/clientes/{cid}"}],
+        })
+    if not equipos:
+        consultas.append({
+            "id": "sin_equipos", "tipo": "completar", "severidad": "media",
+            "pregunta": "Este cliente no tiene equipos registrados.",
+            "detalle": "Agrega los equipos para planificar y valorizar las mantenciones.",
+            "acciones": [{"label": "Ver equipos", "accion": "link", "url": f"/mantenciones/clientes/{cid}"}],
+        })
+    elif equipos_resumen["sin_serie"] or equipos_resumen["sin_foto"]:
+        _eqd = []
+        if equipos_resumen["sin_serie"]: _eqd.append(f"{equipos_resumen['sin_serie']} sin N° de serie")
+        if equipos_resumen["sin_foto"]:  _eqd.append(f"{equipos_resumen['sin_foto']} sin foto")
+        consultas.append({
+            "id": "equipos_incompletos", "tipo": "completar", "severidad": "baja",
+            "pregunta": f"Hay equipos con ficha incompleta ({', '.join(_eqd)}).",
+            "detalle": "Completa las fichas de los equipos para una mejor trazabilidad.",
+            "acciones": [{"label": "Ver equipos", "accion": "link", "url": f"/mantenciones/clientes/{cid}"}],
+        })
+    if tiene_contrato and freq_origen == "regla_default":
+        consultas.append({
+            "id": "falta_frecuencia", "tipo": "completar", "severidad": "alta",
+            "pregunta": "¿Cada cuántos meses se hace la mantención de este cliente?",
+            "detalle": "El contrato no tiene la frecuencia registrada; sin ella la proyección es solo estimada.",
+            "acciones": [{"label": "Guardar frecuencia", "accion": "set_frecuencia", "input": "meses",
+                          "placeholder": "Ej: 3"}],
+        })
+    if incluye_gratis and gratis_origen != "contrato":
+        consultas.append({
+            "id": "falta_gratuitas", "tipo": "completar", "severidad": "media",
+            "pregunta": "¿Cuántas mantenciones gratuitas al año incluye el contrato?",
+            "detalle": f"Hoy se está estimando {gratis_anual}/año. Confírmalo para calcular la brecha exacta.",
+            "acciones": [{"label": "Guardar N°", "accion": "set_gratuitas", "input": "cantidad",
+                          "placeholder": str(gratis_anual or 4)}],
+        })
+    for v in vencidas[:6]:
+        consultas.append({
+            "id": f"visita_{v['fecha']}", "tipo": "visita_proyectada", "severidad": "alta",
+            "pregunta": f"El contrato proyectaba una mantención el {v['fecha']} y no está registrada. ¿Qué hacemos?",
+            "detalle": f"Lleva {v['dias_atraso']} día(s) de atraso.",
+            "acciones": [
+                {"label": "Generar OT ahora", "accion": "programar_ot", "fecha": v["fecha"]},
+                {"label": "Ya se hizo (registrar)", "accion": "registrar_visita_retro", "fecha": v["fecha"]},
+                {"label": "No aplica", "accion": "descartar_consulta", "ref": f"visita_{v['fecha']}"},
+            ],
+        })
+    # Si NO hay vencidas pero la próxima está cerca, ofrecer generar la OT por adelantado.
+    if not vencidas and proximas:
+        _p0 = proximas[0]
+        consultas.append({
+            "id": f"prog_{_p0['fecha']}", "tipo": "visita_proyectada", "severidad": "media",
+            "pregunta": f"La próxima mantención toca el {_p0['fecha']} (en {_p0['dias_faltan']} día(s)).",
+            "detalle": "Adelántate: genera la OT para que el equipo la tenga agendada.",
+            "acciones": [
+                {"label": "Generar OT", "accion": "programar_ot", "fecha": _p0["fecha"]},
+                {"label": "Más tarde", "accion": "descartar_consulta", "ref": f"prog_{_p0['fecha']}"},
+            ],
+        })
+    if dias_para_vencer is not None and dias_para_vencer <= 60:
+        consultas.append({
+            "id": "contrato_por_vencer", "tipo": "contrato", "severidad": "media",
+            "pregunta": f"El contrato vence en {dias_para_vencer} día(s).",
+            "detalle": "Gestiona la renovación para no perder la cobertura.",
+            "acciones": [{"label": "Ver contrato", "accion": "link", "url": f"/mantenciones/clientes/{cid}"}],
+        })
+    if facturacion["pendientes"]:
+        _ant = facturacion["mas_antigua_dias"]
+        consultas.append({
+            "id": "facturacion_pendiente", "tipo": "facturacion", "severidad": "alta",
+            "pregunta": f"Hay {facturacion['pendientes']} servicio(s) realizado(s) SIN cerrar la facturación.",
+            "detalle": ("Un servicio no termina hasta facturarlo (o marcarlo 'no aplica'). "
+                        + (f"El más antiguo lleva {_ant} día(s)." if _ant is not None else "")),
+            "acciones": [{"label": "Ver facturación", "accion": "link",
+                          "url": f"/mantenciones/clientes/{cid}"}],
+        })
+    consultas.append({
+        "id": "proponer_plan", "tipo": "oportunidad", "severidad": "baja",
+        "pregunta": "Oportunidad: proponer un plan de mantención.",
+        "detalle": pitch,
+        "acciones": [{"label": "Crear cotización", "accion": "link",
+                      "url": f"/mantenciones/cotizaciones/nuevo?cliente_id={cid}"}],
+    })
+
+    # ── Desglose del score (¿por qué este número?) ──
+    score_detalle = {
+        "formula": "Salud = brecha de gratuitas + mantenciones al día + vigencia del contrato (ponderado).",
+        "componentes": [
+            {"factor": "Brecha de gratuitas", "estado": ("ok" if pendientes_gratis == 0 else "penaliza"),
+             "detalle": (f"{pendientes_gratis} pendiente(s)" if pendientes_gratis else "Sin brecha"), "peso": pb},
+            {"factor": "Mantenciones vencidas", "estado": ("ok" if not vencidas else "penaliza"),
+             "detalle": (f"{len(vencidas)} vencida(s)" if vencidas else "Al día"), "peso": pv},
+            {"factor": "Contrato", "estado": ("ok" if s_contrato >= 0.9 else "penaliza"),
+             "detalle": estado_contrato, "peso": pc},
+        ],
+    }
+
+    # ── Resumen ejecutivo amigable (el agente "te habla", determinista, sin IA) ──
+    _rz = cli.get("razon_social") or "este cliente"
+    _re = [f"Revisé a {_rz}."]
+    if universo["realizadas"]:
+        _re.append(f"Hemos realizado {universo['realizadas']} gestión(es)" +
+                   (f"; la última hace {universo['dias_desde_ultima']} día(s)." if universo.get("dias_desde_ultima") is not None else "."))
+    else:
+        _re.append("Aún no tenemos visitas registradas.")
+    if not tiene_contrato:
+        _re.append("No hay contrato registrado.")
+    elif estado_contrato == "vencido":
+        _re.append("⚠️ El contrato está vencido.")
+    elif dias_para_vencer is not None and dias_para_vencer <= 60:
+        _re.append(f"El contrato vence pronto ({dias_para_vencer} día(s)).")
+    else:
+        _re.append(f"Contrato vigente, mantención cada {frecuencia} mes(es).")
+    if pendientes_gratis > 0:
+        _re.append(f"⚠️ Debemos {pendientes_gratis} mantención(es) gratuita(s) (exposición ${_intel_clp(exposicion)}) — conviene reaccionar.")
+    if datos_faltantes:
+        _re.append(f"Faltan {len(datos_faltantes)} dato(s) de la ficha del cliente.")
+    if not equipos:
+        _re.append("No hay equipos cargados.")
+    if facturacion["pendientes"]:
+        _re.append(f"⚠️ {facturacion['pendientes']} servicio(s) realizado(s) sin facturar — cierra el proceso.")
+    _re.append(f"Oportunidad: plan de mantención desde ${_intel_clp(total)} con IVA.")
+    resumen_ejecutivo = " ".join(_re)
+
+    return {
+        "motor": "intel-reglas-v1",
+        "calculado_at": _dt.now().strftime("%Y-%m-%d %H:%M"),
+        "cliente": {"id": cli["id"], "razon_social": cli.get("razon_social")},
+        "resumen_ejecutivo": resumen_ejecutivo,
+        "score_salud": score, "calidad_informacion": calidad, "nivel_riesgo": nivel,
+        "score_detalle": score_detalle,
+        "tiene_contrato": tiene_contrato, "faltantes": faltantes, "consultas": consultas,
+        "universo": universo, "historia": historia_resumen, "agenda": agenda_resumen,
+        "datos_cliente": datos_cliente, "equipos": equipos_resumen,
+        "diagnostico_contrato": diag_contrato, "mantenciones": mant,
+        "brecha_gratis": brecha, "valorizacion": valorizacion, "acciones": acciones, "kpis": kpis,
+        "facturacion": facturacion,
+        "principios": [
+            "Me baso solo en tus datos reales: ficha, contrato, equipos, visitas y ERP. No invento resultados.",
+            "Reviso todo: cliente, contrato, equipos, historial, próximas visitas y facturación.",
+            "Protejo a la empresa: aviso de brechas, fugas a terceros y procesos sin cerrar.",
+            "Cierro el ciclo: una mantención no termina hasta facturarla (o marcarla 'no aplica').",
+            "Sugiero acciones (generar OT, agendar, completar datos); los valores van cuando cotizamos.",
+        ],
+        "informe_trimestral": _intel_informe_estado(cid),
+        "intel_schema": _INTEL_SCHEMA,
+    }
+
+
+# Versión del esquema del diagnóstico. Subir este número invalida automáticamente
+# los cachés viejos (mant_cliente_intel) tras un cambio en la forma del dict del motor,
+# para que el panel no muestre un diagnóstico viejo sin las secciones nuevas.
+_INTEL_SCHEMA = 4
+
+
+def _intel_cache_fresco(cid, ttl_horas):
+    """Devuelve el payload cacheado si es fresco Y del esquema actual, si no None."""
+    from datetime import datetime as _dt
+    try:
+        r = mysql_fetchone("SELECT payload_json, calculado_at FROM mant_cliente_intel WHERE cliente_id=%s", (cid,))
+        if not r or not r.get("calculado_at") or not r.get("payload_json"):
+            return None
+        ca = r["calculado_at"]
+        if isinstance(ca, str):
+            ca = _dt.strptime(ca[:19], "%Y-%m-%d %H:%M:%S")
+        if (_dt.now() - ca).total_seconds() / 3600.0 <= float(ttl_horas):
+            pl = json.loads(r["payload_json"])
+            if pl.get("intel_schema") == _INTEL_SCHEMA:
+                return pl
+    except Exception:
+        pass
+    return None
+
+
+def _intel_guardar_cache(cid, payload):
+    """Persiste el diagnóstico (denormalizado para el radar + payload completo)."""
+    try:
+        mant = payload.get("mantenciones") or {}
+        br = payload.get("brecha_gratis") or {}
+        mysql_execute(
+            "INSERT INTO mant_cliente_intel "
+            "(cliente_id, score_salud, calidad_informacion, nivel_riesgo, brecha_gratis, "
+            " exposicion_clp, proxima_fecha, actividad_total, payload_json, calculado_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()) "
+            "ON DUPLICATE KEY UPDATE score_salud=VALUES(score_salud), "
+            " calidad_informacion=VALUES(calidad_informacion), nivel_riesgo=VALUES(nivel_riesgo), "
+            " brecha_gratis=VALUES(brecha_gratis), exposicion_clp=VALUES(exposicion_clp), "
+            " proxima_fecha=VALUES(proxima_fecha), actividad_total=VALUES(actividad_total), "
+            " payload_json=VALUES(payload_json), calculado_at=NOW()",
+            (cid, payload.get("score_salud"), payload.get("calidad_informacion"),
+             payload.get("nivel_riesgo"), br.get("pendientes") or 0, br.get("exposicion_clp") or 0,
+             mant.get("proxima_fecha") or None, (payload.get("universo") or {}).get("total_gestiones") or 0,
+             json.dumps(payload, ensure_ascii=False)))
+    except Exception as e:
+        print(f"[intel] no se pudo cachear cid={cid}: {e}", flush=True)
+
+
+def _intel_periodo_actual(d=None):
+    from datetime import datetime as _dt
+    n = d or _dt.now()
+    return f"{n.year}-Q{(n.month - 1)//3 + 1}"
+
+
+def _intel_informe_estado(cid, periodo=None):
+    """Estado del informe trimestral del Agente (si ya existe uno para el trimestre)."""
+    periodo = periodo or _intel_periodo_actual()
+    try:
+        r = mysql_fetchone(
+            "SELECT id, html_path FROM mant_reportes WHERE cliente_id=%s AND agente_periodo=%s "
+            "ORDER BY id DESC LIMIT 1", (cid, periodo))
+    except Exception:
+        r = None
+    # reporte_url = render EN VIVO (no el snapshot estático en disco, que es
+    # efímero en Cloud Run y daba 404 al abrir "Ver informe").
+    return {"periodo": periodo, "ya_generado": bool(r),
+            "reporte_id": (r["id"] if r else None),
+            "reporte_url": (f"/mantenciones/api/reportes/{r['id']}/html" if r else None)}
+
+
+def _intel_generar_informe_trimestral(cid, usuario=None):
+    """Genera (1 vez por trimestre) un Informe de gestión post-venta DETERMINISTA
+    desde el diagnóstico del Agente y lo deja en Reportes. CERO IA."""
+    periodo = _intel_periodo_actual()
+    est = _intel_informe_estado(cid, periodo)
+    if est["ya_generado"]:
+        return {"ok": False, "ya_generado": True, "reporte_id": est["reporte_id"],
+                "error": f"Ya existe el informe de {periodo}. Podrás generar otro al cambiar de trimestre."}
+    d = _cliente_inteligencia(cid, _reglas_cargar())
+    if not d:
+        return {"ok": False, "error": "Cliente no encontrado."}
+    dc = d.get("diagnostico_contrato") or {}; uni = d.get("universo") or {}
+    br = d.get("brecha_gratis") or {}; val = d.get("valorizacion") or {}; mant = d.get("mantenciones") or {}
+    clausulas = []
+    if d.get("tiene_contrato"):
+        clausulas.append(f"Vigencia: {dc.get('vigencia_inicio') or '—'} a "
+                         f"{dc.get('vigencia_fin') or ('indefinido' if dc.get('es_indefinido') else '—')} "
+                         f"(estado: {dc.get('estado')}).")
+        clausulas.append(f"Frecuencia de mantención: cada {dc.get('frecuencia_meses')} mes(es).")
+        clausulas.append(f"Mantenciones gratuitas incluidas: "
+                         f"{dc.get('gratis_incluidas_anual') if dc.get('incluye_mant_gratis') else 'no incluye'}.")
+        if dc.get("valor_anual"):
+            clausulas.append(f"Valor anual del contrato: ${_intel_clp(dc.get('valor_anual'))}.")
+    else:
+        clausulas.append("El cliente no tiene contrato registrado.")
+    objetivos = [
+        "Evaluar el estado de mantención y del contrato del cliente.",
+        "Detectar brechas de cobertura y proyectar las próximas mantenciones.",
+        "Proponer acciones para mantener la continuidad operativa y la relación comercial.",
+    ]
+    trabajos = [
+        f"Se revisaron {uni.get('total_gestiones', 0)} gestión(es) históricas (última: {uni.get('ultima_fecha') or 'sin registro'}).",
+        f"Mantenciones realizadas: {mant.get('realizadas', 0)}; esperadas a la fecha: {mant.get('esperadas_a_hoy', 0)}.",
+        f"Calidad de la información de la ficha: {d.get('calidad_informacion')}%.",
+    ] + [f"Cláusula — {c}" for c in clausulas]
+    observaciones = []
+    if br.get("pendientes"):
+        observaciones.append(f"Brecha: {br.get('mensaje')}")
+    if mant.get("vencidas"):
+        observaciones.append(f"Hay {len(mant.get('vencidas'))} mantención(es) vencida(s) según la frecuencia del contrato.")
+    _df = (d.get("datos_cliente") or {}).get("faltantes") or []
+    if _df:
+        observaciones.append("Datos de ficha por completar: " + ", ".join(_df[:6]) + ".")
+    eqr = d.get("equipos") or {}
+    observaciones.append(f"Equipos: {eqr.get('total',0)} (sin serie: {eqr.get('sin_serie',0)}, "
+                         f"sin foto: {eqr.get('sin_foto',0)}, críticos: {eqr.get('criticos',0)}).")
+    if mant.get("proxima_fecha"):
+        observaciones.append(f"Próxima mantención proyectada: {mant.get('proxima_fecha')}.")
+    observaciones.append(f"Propuesta comercial: {val.get('pitch')}")
+    eqs = mysql_fetchall("SELECT sku, nombre, serie FROM mant_maquinas WHERE cliente_id=%s "
+                         "AND COALESCE(estado,'activo')!='baja' LIMIT 200", (cid,)) or []
+    maquinas = [{"sku": e.get("sku") or "", "descripcion": e.get("nombre") or "",
+                 "serie": e.get("serie") or "", "cantidad": 1} for e in eqs]
+    asunto = (f"Informe de gestión {periodo} — {(d.get('cliente') or {}).get('razon_social') or ''}").strip()[:300]
+    from datetime import datetime as _dt
+    hoy = str(_dt.now().date())
+    try:
+        mysql_execute(
+            "INSERT INTO mant_reportes (cliente_id, tipo, estado, asunto, antecedentes, "
+            " objetivos, trabajos, observaciones, maquinas_json, fecha_inicio, fecha_cierre, "
+            " agente_periodo, created_by) "
+            "VALUES (%s,'inspeccion','emitido',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (cid, asunto, d.get("resumen_ejecutivo") or "",
+             json.dumps(objetivos, ensure_ascii=False), json.dumps(trabajos, ensure_ascii=False),
+             json.dumps(observaciones, ensure_ascii=False), json.dumps(maquinas, ensure_ascii=False),
+             hoy, hoy, periodo, usuario or current_username()))
+        row = mysql_fetchone("SELECT id FROM mant_reportes WHERE cliente_id=%s AND agente_periodo=%s "
+                             "ORDER BY id DESC LIMIT 1", (cid, periodo))
+        rid = row["id"] if row else None
+    except Exception as e:
+        print(f"[intel_informe] cid={cid}: {e}", flush=True)
+        return {"ok": False, "error": "No se pudo generar el informe (revisa logs)."}
+    if rid:
+        try: _save_reporte_html_snapshot(rid)
+        except Exception: pass
+        try: _mant_log("reporte", rid, "agente_trimestral", periodo)
+        except Exception: pass
+    return {"ok": True, "reporte_id": rid, "periodo": periodo}
+
+
 def _save_reporte_html_snapshot(rid):
     """Genera y persiste HTML del reporte en disco. Devuelve ruta relativa o None."""
     try:
@@ -50247,6 +51396,290 @@ def mant_reportes_list(cid):
             d["html_url"] = f"/static/{d['html_path']}"
         return d
     return jsonify([_fmt(r) for r in rows])
+
+
+# ════════════════════════════════════════════════════════════════════════
+# AGENTE DE INTELIGENCIA — endpoints (panel ficha · recálculo · reglas · radar)
+# Todo determinista (sin IA). Reglas/radar/config solo admin/superadmin.
+# ════════════════════════════════════════════════════════════════════════
+def _intel_es_admin():
+    perms = getattr(g, "permissions", {}) or {}
+    return bool(perms.get("superadmin") or perms.get("admin"))
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/inteligencia", methods=["GET"])
+@_mant_required
+def mant_intel_panel(cid):
+    """Diagnóstico del Agente (determinista, sin IA). Caché fresco si existe; ?force=1 recalcula."""
+    try:
+        R = _reglas_cargar()
+        if request.args.get("force") != "1":
+            cached = _intel_cache_fresco(cid, R.get("intel_cache_ttl_horas") or 6)
+            if cached:
+                cached["_cache"] = True
+                return jsonify(cached)
+        data = _cliente_inteligencia(cid, R)
+        if data is None:
+            return jsonify({"error": "Cliente no encontrado"}), 404
+        _intel_guardar_cache(cid, data)
+        return jsonify(data)
+    except Exception as e:
+        print(f"[intel_panel] cid={cid}: {e}", flush=True)
+        return jsonify({"error": "No se pudo calcular el diagnóstico (revisa logs)."}), 500
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/inteligencia/recalcular", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_intel_recalcular(cid):
+    try:
+        data = _cliente_inteligencia(cid, _reglas_cargar())
+        if data is None:
+            return jsonify({"error": "Cliente no encontrado"}), 404
+        _intel_guardar_cache(cid, data)
+        return jsonify(data)
+    except Exception as e:
+        print(f"[intel_recalcular] cid={cid}: {e}", flush=True)
+        return jsonify({"error": "No se pudo recalcular."}), 500
+
+
+def _intel_contrato_id(cid):
+    ct = (mysql_fetchone("SELECT id FROM mant_contratos WHERE cliente_id=%s AND estado IN "
+                         "('vigente','indefinido') ORDER BY created_at DESC LIMIT 1", (cid,))
+          or mysql_fetchone("SELECT id FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC LIMIT 1", (cid,)))
+    return ct["id"] if ct else None
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/intel/accion", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_intel_accion(cid):
+    """Resuelve una consulta del Agente Proactivo: completa/corrige data y recalcula.
+    Acciones: set_frecuencia, set_gratuitas, registrar_visita_retro, descartar_consulta. CERO IA."""
+    d = request.get_json(silent=True) or {}
+    accion = (d.get("accion") or "").strip()
+    try:
+        if accion == "set_frecuencia":
+            meses = int(float(d.get("valor") or 0))
+            if meses < 1 or meses > 36:
+                return jsonify({"error": "Frecuencia inválida (1 a 36 meses)."}), 400
+            ctid = _intel_contrato_id(cid)
+            if not ctid:
+                return jsonify({"error": "El cliente no tiene contrato registrado."}), 400
+            mysql_execute("UPDATE mant_contratos SET frecuencia_meses=%s WHERE id=%s", (meses, ctid))
+        elif accion == "set_gratuitas":
+            cant = int(float(d.get("valor") or 0))
+            if cant < 0 or cant > 60:
+                return jsonify({"error": "Cantidad inválida (0 a 60)."}), 400
+            ctid = _intel_contrato_id(cid)
+            if not ctid:
+                return jsonify({"error": "El cliente no tiene contrato registrado."}), 400
+            mysql_execute("UPDATE mant_contratos SET mant_gratis_incluidas_anual=%s, incluye_mant_gratis=1 WHERE id=%s",
+                          (cant, ctid))
+        elif accion == "registrar_visita_retro":
+            fecha = (d.get("fecha") or "").strip()[:10]
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", fecha or ""):
+                return jsonify({"error": "Fecha inválida."}), 400
+            uid = None
+            try: uid = (g.user or {}).get("id")
+            except Exception: uid = None
+            mysql_execute(
+                "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
+                " fecha_programada, fecha_realizada, es_retroactiva, cubierto_por, created_by, created_by_user_id) "
+                "VALUES (%s,%s,%s,'preventiva','completada',%s,%s,1,'contrato',%s,%s)",
+                (cid, _intel_contrato_id(cid), "Mantención preventiva (registro retroactivo)",
+                 fecha, fecha, current_username(), uid))
+        elif accion == "set_campo_cliente":
+            campo = (d.get("campo") or "").strip()
+            valor = (d.get("valor") or "").strip()
+            _ALLOWED_CLI = {"rut", "direccion", "comuna", "ciudad", "contacto_nombre",
+                            "contacto_cargo", "contacto_tel", "contacto_email",
+                            "email_empresa", "tel_empresa", "giro"}
+            if campo not in _ALLOWED_CLI:
+                return jsonify({"error": "Campo no permitido."}), 400
+            if not valor:
+                return jsonify({"error": "El valor está vacío."}), 400
+            if campo == "rut":
+                try:
+                    _ok, _r = validar_rut(valor)
+                    if _ok:
+                        valor = _r
+                except Exception:
+                    pass
+            # `campo` está en whitelist de columnas literales; el valor va parametrizado.
+            mysql_execute(f"UPDATE mant_clientes SET {campo}=%s WHERE id=%s", (valor[:200], cid))
+        elif accion == "programar_ot":
+            fecha = (d.get("fecha") or "").strip()[:10]
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", fecha or ""):
+                return jsonify({"error": "Fecha inválida."}), 400
+            uid = None
+            try: uid = (g.user or {}).get("id")
+            except Exception: uid = None
+            mysql_execute(
+                "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
+                " fecha_programada, cubierto_por, created_by, created_by_user_id) "
+                "VALUES (%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
+                (cid, _intel_contrato_id(cid), "Mantención preventiva (agendada por el Agente)",
+                 fecha, current_username(), uid))
+        elif accion == "descartar_consulta":
+            pass  # no cambia data; la mantención sigue pendiente (es real)
+        else:
+            return jsonify({"error": "Acción no reconocida."}), 400
+        data = _cliente_inteligencia(cid, _reglas_cargar())
+        if data:
+            _intel_guardar_cache(cid, data)
+        try: _mant_log("intel", cid, accion)
+        except Exception: pass
+        return jsonify({"ok": True, "intel": data})
+    except Exception as e:
+        print(f"[intel_accion] cid={cid} accion={accion}: {e}", flush=True)
+        return jsonify({"error": "No se pudo aplicar la acción."}), 500
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/intel/informe-trimestral", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_intel_informe_trimestral(cid):
+    """El Agente genera el Informe de gestión del trimestre (1 por trimestre) y lo deja en Reportes."""
+    try:
+        res = _intel_generar_informe_trimestral(cid, current_username())
+        if not res.get("ok"):
+            return jsonify(res), (409 if res.get("ya_generado") else 400)
+        data = _cliente_inteligencia(cid, _reglas_cargar())
+        if data:
+            _intel_guardar_cache(cid, data)
+        res["intel"] = data
+        return jsonify(res)
+    except Exception as e:
+        print(f"[intel_informe_ep] cid={cid}: {e}", flush=True)
+        return jsonify({"error": "No se pudo generar el informe."}), 500
+
+
+@app.route("/mantenciones/api/reglas-negocio", methods=["GET"])
+@_mant_required
+def mant_reglas_list():
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+    try:
+        rows = mysql_fetchall(
+            "SELECT clave, valor, tipo_dato, categoria, label, descripcion, unidad, "
+            "       min_val, max_val, orden FROM mant_reglas_negocio ORDER BY categoria, orden, clave") or []
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        print(f"[reglas_list] {e}", flush=True)
+        return jsonify({"error": "No se pudieron cargar las reglas."}), 500
+
+
+@app.route("/mantenciones/api/reglas-negocio", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def mant_reglas_guardar():
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+    d = request.get_json(silent=True) or {}
+    cambios = d.get("cambios") if isinstance(d.get("cambios"), dict) else d
+    if not isinstance(cambios, dict) or not cambios:
+        return jsonify({"error": "Sin cambios"}), 400
+    user = current_username()
+    actualizadas = 0
+    try:
+        for clave, valor in cambios.items():
+            r = mysql_fetchone("SELECT tipo_dato, min_val, max_val FROM mant_reglas_negocio WHERE clave=%s", (clave,))
+            if not r:
+                continue
+            sval = str(valor)
+            if r.get("tipo_dato") in ("int", "float"):
+                try:
+                    num = float(sval)
+                    if r.get("min_val") is not None and num < float(r["min_val"]): num = float(r["min_val"])
+                    if r.get("max_val") is not None and num > float(r["max_val"]): num = float(r["max_val"])
+                    sval = str(int(num)) if r["tipo_dato"] == "int" else str(num)
+                except Exception:
+                    continue
+            mysql_execute("UPDATE mant_reglas_negocio SET valor=%s, updated_by=%s WHERE clave=%s", (sval, user, clave))
+            actualizadas += 1
+        _reglas_invalidar()
+        try: _mant_log("reglas_negocio", 0, "editar", f"{actualizadas} regla(s)")
+        except Exception: pass
+        return jsonify({"ok": True, "actualizadas": actualizadas})
+    except Exception as e:
+        print(f"[reglas_guardar] {e}", flush=True)
+        return jsonify({"error": "No se pudieron guardar las reglas."}), 500
+
+
+@app.route("/mantenciones/api/radar", methods=["GET"])
+@_mant_required
+def mant_radar_data():
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+    riesgo = (request.args.get("riesgo") or "").strip().lower()
+    solo_brecha = request.args.get("solo_brecha") == "1"
+    try:
+        sql = ("SELECT i.cliente_id, c.razon_social, i.score_salud, i.calidad_informacion, "
+               "       i.nivel_riesgo, i.brecha_gratis, i.exposicion_clp, i.proxima_fecha, "
+               "       i.actividad_total, i.calculado_at "
+               "  FROM mant_cliente_intel i JOIN mant_clientes c ON c.id=i.cliente_id WHERE 1=1 ")
+        params = []
+        if riesgo in ("alto", "medio", "bajo"):
+            sql += " AND i.nivel_riesgo=%s "; params.append(riesgo)
+        if solo_brecha:
+            sql += " AND i.brecha_gratis > 0 "
+        sql += (" ORDER BY FIELD(i.nivel_riesgo,'alto','medio','bajo'), i.brecha_gratis DESC, "
+                " i.score_salud ASC LIMIT 500")
+        rows = mysql_fetchall(sql, tuple(params)) or []
+        def _f(r):
+            d = dict(r)
+            for k in ("proxima_fecha", "calculado_at"):
+                if d.get(k): d[k] = str(d[k])[:16]
+            return d
+        return jsonify([_f(r) for r in rows])
+    except Exception as e:
+        print(f"[radar_data] {e}", flush=True)
+        return jsonify({"error": "No se pudo cargar el radar."}), 500
+
+
+@app.route("/mantenciones/api/radar/recalcular", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_radar_recalcular():
+    if not _intel_es_admin():
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+    try:
+        R = _reglas_cargar()
+        ids = mysql_fetchall(
+            "SELECT id FROM mant_clientes WHERE COALESCE(estado,'activo') != 'inactivo' LIMIT 1000") or []
+        n = 0
+        for row in ids:
+            try:
+                data = _cliente_inteligencia(row["id"], R)
+                if data:
+                    _intel_guardar_cache(row["id"], data); n += 1
+            except Exception:
+                continue
+        return jsonify({"ok": True, "recalculados": n})
+    except Exception as e:
+        print(f"[radar_recalcular] {e}", flush=True)
+        return jsonify({"error": "No se pudo recalcular el radar."}), 500
+
+
+@app.route("/mantenciones/configuracion")
+@_mant_required
+@_no_tecnico
+def mant_configuracion():
+    if not _intel_es_admin():
+        flash("Solo admin/superadmin pueden configurar el Agente.", "warning")
+        return redirect(url_for("mant_index"))
+    return render_template("mantenciones/configuracion.html")
+
+
+@app.route("/mantenciones/radar")
+@_mant_required
+@_no_tecnico
+def mant_radar_page():
+    if not _intel_es_admin():
+        flash("Solo admin/superadmin pueden ver el Radar.", "warning")
+        return redirect(url_for("mant_index"))
+    return render_template("mantenciones/radar.html")
 
 
 @app.route("/mantenciones/api/reportes/<int:rid>/regenerar-html", methods=["POST"])
@@ -50449,6 +51882,8 @@ def mant_reporte_redactar_ia(cid):
     trabajos realizados, observaciones generales y una observación/recomendación
     por máquina, en tono profesional chileno. NO guarda nada: devuelve el JSON
     para que el usuario lo revise en el formulario y luego guarde."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     cli = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (cid,))
     if not cli:
         return jsonify({"error": "Cliente no encontrado"}), 404
@@ -50784,6 +52219,8 @@ def mant_reporte_foto_subir(rid):
 @_mant_required
 def mant_reporte_analizar(rid):
     """Análisis IA del reporte: diagnóstico, acciones sugeridas, alertas."""
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
     r = mysql_fetchone("SELECT r.*, c.razon_social FROM mant_reportes r "
                        "JOIN mant_clientes c ON c.id=r.cliente_id WHERE r.id=%s", (rid,))
     if not r: return jsonify({"error":"No encontrado"}), 404
@@ -51639,6 +53076,508 @@ def _reporte_to_pdf_html(rep, cliente, auto_print=True):
   </div>
   {_scripts}
 </body></html>"""
+
+
+def _informe_ficha_html(d, ct, cliente, auto_print=True):
+    """Informe de GESTIÓN del cliente (Agente ILUS, determinista, SIN IA).
+    Compila el diagnóstico 360 (contrato, cláusulas, frecuencia, pagos, productos,
+    historial) y DESTACA los dolores: garantías/gratuitas que debemos cubrir,
+    fugas a terceros y servicios sin facturar. Vista imprimible → PDF en el navegador."""
+    from markupsafe import escape as _esc
+
+    def e(v):
+        s = "" if v is None else str(v).strip()
+        return str(_esc(s)) if s else "—"
+
+    def e_raw(v):
+        return str(_esc("" if v is None else str(v)))
+
+    def _clp(v):
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return None
+        if not n:
+            return None
+        return "$" + format(int(round(n)), ",d").replace(",", ".")
+
+    def _ul(items):
+        items = [i for i in (items or []) if str(i).strip()]
+        if not items:
+            return '<p class="rep-empty">Sin elementos.</p>'
+        return '<ul class="rep-list">' + "".join(f"<li>{e_raw(i)}</li>" for i in items) + "</ul>"
+
+    dc = d.get("diagnostico_contrato") or {}
+    br = d.get("brecha_gratis") or {}
+    fac = d.get("facturacion") or {}
+    hist = d.get("historia") or {}
+    mant = d.get("mantenciones") or {}
+    eq = d.get("equipos") or {}
+    val = d.get("valorizacion") or {}
+    uni = d.get("universo") or {}
+    dcli = d.get("datos_cliente") or {}
+
+    try:
+        score = int(float(d.get("score_salud") or 0))
+    except Exception:
+        score = 0
+    score = max(0, min(100, score))
+    riesgo = (d.get("nivel_riesgo") or "medio").lower()
+    sc_color = "#16a34a" if score >= 70 else "#f59e0b" if score >= 40 else "#dc2626"
+    sc_text = "Excelente" if score >= 80 else "Bueno" if score >= 60 else "Regular" if score >= 40 else "Crítico"
+    rg_color, rg_label = {"alto": ("#dc2626", "ALTO"), "bajo": ("#16a34a", "BAJO")}.get(riesgo, ("#f59e0b", "MEDIO"))
+    _dash = round(score * 2.764, 1)
+
+    secciones = ""
+    if d.get("resumen_ejecutivo"):
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Resumen ejecutivo del Agente</div>'
+                      f'<p class="rep-text">{e_raw(d["resumen_ejecutivo"])}</p></div>')
+
+    # DOLORES (lo más importante para ILUS) — destacado rojo
+    dolores = []
+    if (br.get("pendientes") or 0):
+        _exp = _clp(br.get("exposicion_clp"))
+        dolores.append(f"<b>Garantías/mantenciones gratuitas que debemos cubrir:</b> {br.get('pendientes')}"
+                       + (f" — exposición {_exp}" if _exp else "") + ". " + e_raw(br.get("mensaje") or ""))
+    _porcob = hist.get("por_cobertura") or {}
+    _fuga = _porcob.get("Tercero (fuga)") or _porcob.get("Tercero") or 0
+    if _fuga:
+        dolores.append(f"<b>Fuga a terceros:</b> {_fuga} mantención(es) las hizo un técnico EXTERNO — "
+                       "riesgo de cubrir garantía sin recibir el ingreso del servicio.")
+    elif br.get("riesgo_fuga_tercero"):
+        dolores.append("<b>Riesgo de fuga a terceros:</b> el patrón sugiere mantenciones con externos; conviene blindar la garantía.")
+    if fac.get("pendientes"):
+        _ant = fac.get("mas_antigua_dias")
+        dolores.append(f"<b>Servicios sin facturar:</b> {fac['pendientes']} servicio(s) realizados sin cerrar la factura"
+                       + (f" (el más antiguo lleva {_ant} días)" if _ant is not None else "") + ".")
+    if dolores:
+        secciones += ('<div class="rep-section"><div class="rep-section-bar" style="background:#dc2626">'
+                      '⚠ Dolores / Exposición de ILUS</div><ul class="rep-list" style="margin-top:8px">'
+                      + "".join(f"<li>{x}</li>" for x in dolores) + "</ul></div>")
+    else:
+        secciones += ('<div class="rep-section"><div class="rep-section-bar" style="background:#16a34a">'
+                      '✓ Sin dolores detectados</div><p class="rep-text">No hay brechas de garantía, '
+                      'fugas a terceros ni servicios sin facturar pendientes.</p></div>')
+
+    # Contrato + cláusulas
+    chips = ('<div class="rep-chips">'
+             f'<span class="rep-chip"><span class="rep-chip-k">Estado</span><span class="rep-chip-v">{e_raw(dc.get("estado") or "—")}</span></span>'
+             + (f'<span class="rep-chip"><span class="rep-chip-k">Frecuencia</span><span class="rep-chip-v">c/{dc.get("frecuencia_meses")} meses</span></span>' if dc.get("frecuencia_meses") else "")
+             + (f'<span class="rep-chip"><span class="rep-chip-k">Valor anual</span><span class="rep-chip-v">{_clp(dc.get("valor_anual"))}</span></span>' if dc.get("valor_anual") else "")
+             + f'<span class="rep-chip"><span class="rep-chip-k">Vigencia</span><span class="rep-chip-v">{e_raw(dc.get("vigencia_inicio") or "—")} → {e_raw(dc.get("vigencia_fin") or ("indefinido" if dc.get("es_indefinido") else "—"))}</span></span>'
+             + "</div>")
+    sec_ct = chips
+    try:
+        _clauses = json.loads(ct.get("ai_clausulas") or "[]")
+    except Exception:
+        _clauses = []
+    try:
+        _alertas = json.loads(ct.get("ai_alertas") or "[]")
+    except Exception:
+        _alertas = []
+    if _alertas:
+        sec_ct += '<div style="margin-top:10px;font-weight:800;color:#dc2626;font-size:11px">Alertas del contrato</div>' + _ul(_alertas)
+    if _clauses:
+        sec_ct += '<div style="margin-top:8px;font-weight:800;color:#0a0a0a;font-size:11px">Cláusulas relevantes</div>' + _ul(_clauses)
+    if not d.get("tiene_contrato"):
+        sec_ct += '<p class="rep-text" style="color:#dc2626">⚠ Este cliente NO tiene contrato registrado.</p>'
+    secciones += '<div class="rep-section"><div class="rep-section-bar">Contrato</div>' + sec_ct + '</div>'
+
+    # Facturación pendiente
+    if fac.get("items"):
+        rows = "".join(f"<tr><td>{e(it.get('fecha'))}</td><td>{e(it.get('tipo_label'))}</td>"
+                       f"<td>{e(it.get('ef_label'))}</td><td>{e(it.get('cobertura_label'))}</td></tr>"
+                       for it in fac["items"][:15])
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Facturación pendiente</div>'
+                      '<table class="rep-kv"><tr><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Cobertura</th></tr>'
+                      + rows + "</table></div>")
+
+    # Productos / equipos
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Productos / equipos asociados</div>'
+                  '<table class="rep-kv">'
+                  f'<tr><th>Total equipos</th><td>{eq.get("total", 0)}</td><th>Críticos</th><td>{eq.get("criticos", 0)}</td></tr>'
+                  f'<tr><th>Sin N° de serie</th><td>{eq.get("sin_serie", 0)}</td><th>Sin foto</th><td>{eq.get("sin_foto", 0)}</td></tr>'
+                  "</table></div>")
+
+    # Historial
+    cob_rows = "".join(f"<tr><th>{e(k)}</th><td>{v}</td><th></th><td></td></tr>" for k, v in (_porcob.items() if _porcob else []))
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Historial de gestiones</div>'
+                  '<table class="rep-kv">'
+                  f'<tr><th>Total gestiones</th><td>{uni.get("total_gestiones", 0)}</td><th>Realizadas</th><td>{uni.get("realizadas", 0)}</td></tr>'
+                  f'<tr><th>Última gestión</th><td colspan="3">{e(uni.get("ultima_fecha"))}</td></tr>'
+                  + cob_rows + "</table></div>")
+
+    # Agenda / proyección
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Agenda y proyección</div>'
+                  '<table class="rep-kv">'
+                  f'<tr><th>Próxima mantención</th><td>{e(mant.get("proxima_fecha"))}</td><th>Vencidas</th><td>{len(mant.get("vencidas") or [])}</td></tr>'
+                  f'<tr><th>Realizadas</th><td>{mant.get("realizadas", 0)}</td><th>Esperadas a hoy</th><td>{mant.get("esperadas_a_hoy", 0)}</td></tr>'
+                  "</table></div>")
+
+    if val.get("pitch"):
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Propuesta comercial</div>'
+                      f'<p class="rep-text">{e_raw(val["pitch"])}</p></div>')
+    _acc = [a.get("titulo") for a in (d.get("acciones") or []) if a.get("titulo")]
+    if _acc:
+        secciones += '<div class="rep-section"><div class="rep-section-bar">Acciones recomendadas</div>' + _ul(_acc) + "</div>"
+    if dcli.get("faltantes"):
+        secciones += '<div class="rep-section"><div class="rep-section-bar">Datos de ficha por completar</div>' + _ul(dcli["faltantes"]) + "</div>"
+
+    logo_url = _ilus_logo_datauri()
+    gen_fecha = _now_chile_str("%d/%m/%Y %H:%M")
+    rut_fmt = _formato_rut_chile(cliente.get("rut", "")) or "—"
+    _scripts = _paged_doc_scripts(auto_print)
+    razon = cliente.get("razon_social") or (d.get("cliente") or {}).get("razon_social") or "Cliente"
+
+    return f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Informe de gestión · {e(razon)}</title>
+<style>{_REPORTE_PDF_CSS}</style></head>
+<body>
+  <div class="rep-doc">
+    <div class="rh"><div class="rh-inner">
+      <div class="rh-brand">
+        <img class="rep-logo" src="{logo_url}" alt="ILUS"
+             onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
+        <div class="rh-txt">
+          <div class="rh-eyebrow">{ILUS_BRAND} · {ILUS_TAGLINE}</div>
+          <div class="rh-title">INFORME DE GESTIÓN DEL CLIENTE</div>
+          <div class="rh-sub">{ILUS_LEGAL} · RUT {ILUS_RUT} · Agente ILUS (determinista, sin IA)</div>
+        </div>
+      </div>
+      <div class="rh-meta" style="display:flex;align-items:center;gap:12px">
+        <svg viewBox="0 0 100 100" style="width:66px;height:66px">
+          <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="9"></circle>
+          <circle cx="50" cy="50" r="44" fill="none" stroke="{sc_color}" stroke-width="9"
+                  stroke-dasharray="{_dash} {round(276.4 - _dash, 1)}"
+                  transform="rotate(-90 50 50)" stroke-linecap="round"></circle>
+          <text x="50" y="49" text-anchor="middle" style="font-size:27px;font-weight:900;fill:#fff">{score}</text>
+          <text x="50" y="64" text-anchor="middle" style="font-size:9px;fill:rgba(255,255,255,.65)">de 100</text>
+        </svg>
+        <div style="text-align:left">
+          <span style="display:inline-block;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#fff;background:{sc_color};padding:3px 10px;border-radius:50px">{sc_text}</span><br>
+          <span style="display:inline-block;margin-top:6px;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#fff;background:{rg_color};padding:3px 10px;border-radius:50px">Riesgo {rg_label}</span>
+        </div>
+      </div>
+    </div></div>
+    <div class="rf"><div class="rf-inner">
+      <b>{ILUS_BRAND}</b> · {ILUS_LEGAL} · Informe del Agente (determinista, sin IA) · {ILUS_CONTACTO} · Generado el {gen_fecha}
+    </div></div>
+    <div class="rep-content">
+      <div class="rep-asunto"><span class="rep-asunto-k">Cliente</span>{e(razon)}</div>
+      <div class="rep-section">
+        <div class="rep-section-bar">Datos del cliente</div>
+        <table class="rep-kv">
+          <tr><th>Razón Social</th><td>{e(razon)}</td><th>RUT</th><td>{e_raw(rut_fmt)}</td></tr>
+          <tr><th>Dirección</th><td>{e(cliente.get('direccion'))}</td><th>Comuna</th><td>{e(cliente.get('comuna'))}</td></tr>
+          <tr><th>Contacto</th><td>{e(cliente.get('contacto_nombre'))}</td><th>Calidad ficha</th><td>{d.get('calidad_informacion','—')}%</td></tr>
+        </table>
+      </div>
+      {secciones}
+    </div>
+  </div>
+  {_scripts}
+</body></html>"""
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/informe-ficha", methods=["GET"])
+@_mant_required
+def mant_informe_ficha(cid):
+    """Informe de gestión del cliente (Agente ILUS determinista). Vista imprimible → PDF."""
+    cli = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return "Cliente no encontrado", 404
+    try:
+        d = _cliente_inteligencia(cid, _reglas_cargar())
+    except Exception as e:
+        print(f"[informe_ficha] cid={cid}: {e}", flush=True)
+        d = None
+    if not d:
+        return "No se pudo generar el informe de ficha.", 500
+    ct = mysql_fetchone(
+        "SELECT * FROM mant_contratos WHERE cliente_id=%s "
+        "ORDER BY (estado='vigente') DESC, ai_analizado DESC, id DESC LIMIT 1", (cid,)) or {}
+    try:
+        _mant_log("cliente", cid, "informe_ficha")
+    except Exception:
+        pass
+    return _informe_ficha_html(d, ct, cli)
+
+
+# ── Señales de dolor para el informe POST-SERVICIO (diseñadas por panel de
+#    especialistas: técnico senior + abogado garantías/SERNAC + comercial + redactor).
+#    Determinista, SIN IA: son patrones de texto que se buscan en las observaciones
+#    del técnico. base_legal: Ley 19.496 (SERNAC) art. 12/19/20/21. ──
+_POSTSERV_SENALES = [
+    {"patron": r"tercero|externo|tecnico de afuera|servicio externo|otra empresa|otro tecnico|lo vio otro|ya lo habian (revisado|reparado)|intervencion previa|lo arreglo el cliente|instalado por tercero",
+     "dolor": "FUGA A TERCEROS (dolor #1): el cliente deriva trabajo facturable a externos mientras ILUS cubre garantías/preventivas gratis. Una intervención previa de un tercero pudo dañar el equipo o anular la garantía.",
+     "recomendacion": "Marcar bandera interna 'posible intervención de tercero' (NO mostrar al cliente). Foto del estado. Verificar garantía del equipo; si está vigente dejar por escrito que la intervención no autorizada puede invalidarla. Escalar a comercial: ofrecer contrato integral con tarifa preferente."},
+    {"patron": r"manipulad|destapad|abierto antes|sello roto|sin sello|precinto",
+     "dolor": "Manipulación previa / sello de garantía violado: causal típica de rechazo de garantía e indicio de tercero.",
+     "recomendacion": "Fotografiar el sello, registrar en 'Integridad de garantía', citar art. 21 Ley 19.496 y escalar a garantías ANTES de aprobar cobertura sin costo."},
+    {"patron": r"repuesto generico|repuesto no original|pieza generica|no original",
+     "dolor": "Pieza NO original instalada: degrada idoneidad (art. 12 Ley 19.496), puede anular garantía del fabricante y expone a ILUS a una falla posterior.",
+     "recomendacion": "Registrar marca/origen del repuesto y quién lo suministró. Si fue aporte del cliente, dejar por escrito la advertencia de ILUS y su aceptación expresa."},
+    {"patron": r"lo movieron de lugar|traslad|movido por",
+     "dolor": "Traslado/movimiento del equipo por externos: puede causar daño y anular la garantía por manipulación inadecuada.",
+     "recomendacion": "Registrar que el traslado fue por externos y el estado en que se recibió. Advertir por escrito el efecto sobre la garantía si el daño deriva del traslado."},
+    {"patron": r"mal uso|uso indebido|sobrecarga|mala instalacion|instalado mal|golpe|caida|mojad|falta de mantencion|nunca le hicieron mantencion",
+     "dolor": "Falla NO atribuible a defecto de fábrica (mal uso/mala instalación/mantención deficiente): si se procesa como garantía, ILUS asume un costo que es del cliente (art. 21 Ley 19.496).",
+     "recomendacion": "Clasificar causa raíz como 'mal uso' con evidencia. Excluir de garantía, reclasificar cobertura a 'cliente' (pagable) y activar facturación. Dejar constancia escrita."},
+    {"patron": r"fuera de garantia|sin garantia|garantia vencida|ya no tiene garantia|se vencio",
+     "dolor": "Equipo fuera de garantía atendido por inercia como garantía/cortesía: trabajo gratis indebido (cruce de ambos dolores).",
+     "recomendacion": "Cruzar fecha_fin_garantia antes de cerrar. Si venció: cambiar cobertura a 'cliente', generar cotización/factura, avisar al cliente por escrito y ofrecer contrato."},
+    {"patron": r"sin factur|no factur|sin ot|sin orden|despues facturamos|queda pendiente facturar|de palabra|sin documento|sin respaldo|cobrar aparte",
+     "dolor": "SERVICIOS SIN FACTURAR (dolor #2): servicio ejecutado sin respaldo formal / sin documento tributario. Trabajo facturable que se pierde.",
+     "recomendacion": "No cerrar OT pagada sin OT/ticket. Verificar estado de facturación; gatillar 'regularizar factura' y alerta ALTA a administración: 'OT cerrada pendiente de facturar'."},
+    {"patron": r"sin costo|no cobrar|gratis|cortesia|esta vez sin cargo|sin cargo",
+     "dolor": "Servicio regalado sin trazabilidad: válido solo si es garantía/contrato real; si no, erosiona margen y se vuelve costumbre.",
+     "recomendacion": "Validar que la gratuidad corresponda a contrato/garantía. Si es cortesía, registrar motivo + aprobador y cuantificar horas+repuestos regalados. Si la cobertura es 'cliente' y dice 'sin costo', escalar antes de cerrar."},
+    {"patron": r"fuera de contrato|fuera de alcance|no estaba en contrato",
+     "dolor": "Trabajo fuera del alcance del contrato: servicio extra que suele quedar sin facturar absorbido en la cuota.",
+     "recomendacion": "Identificar el trabajo extra-contrato, valorizarlo y emitir cotización/OC adicional. No absorberlo en la cuota."},
+    {"patron": r"falta repuesto|no habia repuesto|sin stock|pedir repuesto|se requiere repuesto|hay que volver|segunda visita|proxima visita|no se pudo terminar|requiere visita",
+     "dolor": "Trabajo incompleto: equipo inoperativo, requiere segunda visita. Riesgo de no agendar/cobrar o de que el cliente llame a un tercero (fuga).",
+     "recomendacion": "Crear OT de seguimiento (pendiente repuesto) vinculada, con SKU del equipo y fecha tentativa. Agendar de inmediato la visita de cierre y dejar la cotización lista si es facturable."},
+    {"patron": r"recomiendo cambiar|se recomienda cambiar|conviene reemplazar|a punto de fallar|proxima a fallar|desgastad|al limite|vida util",
+     "dolor": "Oportunidad de upsell / mantención predictiva que se pierde si queda solo en el texto libre; ventana para que el repuesto se fugue a un tercero.",
+     "recomendacion": "Extraer la recomendación a 'próxima intervención sugerida' y abrir cotización ILUS del repuesto/equipo. Asignar seguimiento comercial. Toda recomendación de cambio debe generar un lead."},
+    {"patron": r"fuera de servicio|no funciona|inoperativo|no enciende|dado de baja|no se puede reparar|irreparable",
+     "dolor": "Equipo detenido: impacto operativo y riesgo de que el cliente busque reemplazo con la competencia.",
+     "recomendacion": "Indicar de inmediato la vía de solución (repuesto + costo estimado o cotización de reemplazo ILUS) y convertir la urgencia en OT/cotización pagada antes de que la tome un tercero."},
+]
+
+
+def _postserv_norm(s):
+    import unicodedata
+    s = (s or "").lower()
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def _postservicio_analisis(visita, equipos):
+    """Análisis determinista (sin IA) de una visita realizada: dispara las señales
+    de dolor sobre las observaciones del técnico + flags de cobertura/garantía."""
+    partes = [visita.get("observaciones") or "", visita.get("descripcion") or ""]
+    for e in (equipos or []):
+        if e.get("observacion_tecnico"):
+            partes.append(e["observacion_tecnico"])
+    texto = _postserv_norm(" \n ".join(partes))
+    alertas = []
+    if texto.strip():
+        for s in _POSTSERV_SENALES:
+            try:
+                if re.search(s["patron"], texto):
+                    alertas.append({"dolor": s["dolor"], "recomendacion": s["recomendacion"]})
+            except re.error:
+                continue
+    cob = (visita.get("cubierto_por") or "contrato").lower()
+    costo = float(visita.get("costo") or 0)
+    cobertura_nota = ""
+    if cob == "garantia":
+        cobertura_nota = ("ILUS cubrió este servicio SIN COSTO (garantía). Verificar que la garantía esté "
+                          "vigente y que la causa esté cubierta; si no, reclasificar a 'Cliente paga' (facturable).")
+    elif cob in ("cliente", "tercero") and costo > 0:
+        cobertura_nota = ("Servicio FACTURABLE (lo paga el cliente). Asegurar que termine facturado — "
+                          "no dejar la OT cerrada sin documento tributario.")
+    from datetime import date as _d
+    hoy = _d.today()
+    gar_vencidas = []
+    for e in (equipos or []):
+        ffg = e.get("fecha_fin_garantia")
+        if ffg and hasattr(ffg, "year") and ffg < hoy and cob == "garantia":
+            gar_vencidas.append(e.get("nombre") or e.get("sku") or "equipo")
+    estados = [(e.get("estado_revision") or "") for e in (equipos or [])]
+    if any(x == "falla_detectada" for x in estados):
+        veredicto, vcolor = "Falla detectada / requiere atención", "#dc2626"
+    elif any(x in ("con_cambios", "saltado") for x in estados):
+        veredicto, vcolor = "Operativo con observaciones", "#f59e0b"
+    elif estados:
+        veredicto, vcolor = "Equipo(s) operativo(s)", "#16a34a"
+    else:
+        veredicto, vcolor = "Servicio realizado", "#16a34a"
+    return {"alertas": alertas, "cobertura_nota": cobertura_nota,
+            "gar_vencidas": gar_vencidas, "veredicto": veredicto, "vcolor": vcolor}
+
+
+def _informe_postservicio_html(visita, cliente, equipos, analisis, auto_print=True):
+    """Informe POST-SERVICIO de una visita (Agente ILUS, determinista, sin IA).
+    Diseño por panel de especialistas. Vista imprimible → PDF en el navegador."""
+    from markupsafe import escape as _esc
+
+    def e(v):
+        s = "" if v is None else str(v).strip()
+        return str(_esc(s)) if s else "—"
+
+    def e_raw(v):
+        return str(_esc("" if v is None else str(v)))
+
+    def _clp(v):
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return None
+        return ("$" + format(int(round(n)), ",d").replace(",", ".")) if n else None
+
+    _tipo_label = {"preventiva": "Mantención preventiva", "correctiva": "Correctiva",
+                   "garantia": "Garantía", "inspeccion": "Inspección",
+                   "levantamiento": "Levantamiento", "instalacion": "Instalación"}
+    _cob_label = {"contrato": "Contrato", "cliente": "Cliente paga", "garantia": "Garantía (gratis)",
+                  "mixto": "Mixto", "tercero": "Tercero"}
+    _cob_color = {"contrato": "#16a34a", "cliente": "#b45309", "garantia": "#dc2626",
+                  "mixto": "#6b7280", "tercero": "#dc2626"}
+    cob = (visita.get("cubierto_por") or "contrato").lower()
+    tipo = (visita.get("tipo") or "").lower()
+    fecha = visita.get("fecha_realizada") or visita.get("fecha_programada")
+    ver = analisis.get("veredicto") or "Servicio realizado"
+    vcolor = analisis.get("vcolor") or "#16a34a"
+
+    secciones = ""
+
+    # Resumen ejecutivo (determinista)
+    _n_eq = len(equipos or [])
+    resumen = (f"Se realizó una {_tipo_label.get(tipo, 'visita')} el {e(str(fecha)[:10])}"
+               + (f", atendiendo {_n_eq} equipo(s)" if _n_eq else "")
+               + f". Modalidad: {_cob_label.get(cob, cob)}. Estado final: {ver}.")
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Resumen ejecutivo</div>'
+                  f'<p class="rep-text">{e_raw(resumen)}</p></div>')
+
+    # Observaciones del técnico (el corazón) — transcripción fiel
+    obs = (visita.get("observaciones") or "").strip()
+    if obs:
+        cuerpo = f'<div style="white-space:pre-wrap;color:#1f2937;font-size:11.5px;line-height:1.5">{e_raw(obs)}</div>'
+    else:
+        cuerpo = '<p class="rep-empty">El técnico no registró observaciones de texto en esta visita.</p>'
+    secciones += ('<div class="rep-section"><div class="rep-section-bar">Observaciones del técnico (en sus palabras)</div>'
+                  '<div style="border-left:3px solid #0a0a0a;background:#f9fafb;border-radius:0 8px 8px 0;padding:11px 14px;margin-top:8px">'
+                  '<div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;margin-bottom:5px">Registro en terreno</div>'
+                  + cuerpo + '</div></div>')
+
+    # Equipos atendidos
+    if equipos:
+        from datetime import date as _d2
+        hoy = _d2.today()
+        _est_lbl = {"verificado": ("Verificado", "#16a34a"), "con_cambios": ("Con cambios", "#b45309"),
+                    "saltado": ("No revisado", "#6b7280"), "falla_detectada": ("Falla detectada", "#dc2626")}
+        rows = ""
+        for eq in equipos:
+            nom = e(eq.get("nombre") or eq.get("sku") or "Equipo")
+            serie = e(eq.get("serie"))
+            ffg = eq.get("fecha_fin_garantia")
+            if ffg and hasattr(ffg, "year"):
+                gar = ('<span style="color:#16a34a;font-weight:800">SÍ</span>' if ffg >= hoy
+                       else '<span style="color:#dc2626;font-weight:800">NO (vencida)</span>')
+            else:
+                gar = '<span style="color:#9ca3af">s/d</span>'
+            est = (eq.get("estado_revision") or "").lower()
+            elbl, ecol = _est_lbl.get(est, (est or "—", "#6b7280"))
+            obs_eq = (eq.get("observacion_tecnico") or "").strip()
+            rows += (f'<tr><td><b>{nom}</b>{(" · " + serie) if serie != "—" else ""}</td>'
+                     f'<td class="rep-center">{gar}</td>'
+                     f'<td><span style="color:{ecol};font-weight:700">{e_raw(elbl)}</span></td></tr>')
+            if obs_eq:
+                rows += (f'<tr><td colspan="3" style="color:#6b7280;font-size:10.5px;padding-top:0">'
+                         f'↳ {e_raw(obs_eq)}</td></tr>')
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Equipos atendidos y estado</div>'
+                      '<table class="rep-kv"><tr><th>Equipo</th><th class="rep-center">Garantía</th><th>Estado</th></tr>'
+                      + rows + '</table></div>')
+
+    # Cobertura y condición comercial
+    if analisis.get("cobertura_nota"):
+        _cn_red = cob in ("cliente", "tercero", "garantia")
+        secciones += ('<div class="rep-section"><div class="rep-section-bar">Cobertura y condición comercial</div>'
+                      f'<p class="rep-text" style="color:{"#991b1b" if _cn_red else "#374151"}">{e_raw(analisis["cobertura_nota"])}</p></div>')
+
+    # Alertas de riesgo (USO INTERNO) — las señales disparadas
+    alertas = analisis.get("alertas") or []
+    if alertas:
+        cards = ""
+        for al in alertas:
+            cards += ('<div style="border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:0 8px 8px 0;'
+                      'padding:9px 12px;margin-bottom:7px;background:#fff5f5">'
+                      f'<div style="font-weight:800;color:#991b1b;font-size:11px">{e_raw(al.get("dolor"))}</div>'
+                      f'<div style="color:#374151;font-size:10.5px;margin-top:3px"><b>Acción:</b> {e_raw(al.get("recomendacion"))}</div>'
+                      '</div>')
+        secciones += ('<div class="rep-section"><div class="rep-section-bar" style="background:#dc2626">'
+                      '⚠ Alertas de riesgo — USO INTERNO (no mostrar al cliente)</div>'
+                      f'<div style="margin-top:8px">{cards}</div></div>')
+
+    logo_url = _ilus_logo_datauri()
+    gen_fecha = _now_chile_str("%d/%m/%Y %H:%M")
+    rut_fmt = _formato_rut_chile(cliente.get("rut", "")) or "—"
+    _scripts = _paged_doc_scripts(auto_print)
+    razon = cliente.get("razon_social") or "Cliente"
+
+    return f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Informe post-servicio · {e(razon)}</title>
+<style>{_REPORTE_PDF_CSS}</style></head>
+<body>
+  <div class="rep-doc">
+    <div class="rh"><div class="rh-inner">
+      <div class="rh-brand">
+        <img class="rep-logo" src="{logo_url}" alt="ILUS"
+             onerror="this.outerHTML='<div class=&quot;rep-logo-fallback&quot;>ILUS.</div>'">
+        <div class="rh-txt">
+          <div class="rh-eyebrow">{ILUS_BRAND} · {ILUS_TAGLINE}</div>
+          <div class="rh-title">INFORME POST-SERVICIO</div>
+          <div class="rh-sub">{ILUS_LEGAL} · RUT {ILUS_RUT} · Agente ILUS (sin IA)</div>
+        </div>
+      </div>
+      <div class="rh-meta" style="text-align:right">
+        <div style="font-size:8.5px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.4px">Estado final</div>
+        <span style="display:inline-block;margin-top:5px;font-size:11px;font-weight:800;color:#fff;background:{vcolor};padding:5px 13px;border-radius:50px">{e_raw(ver)}</span>
+      </div>
+    </div></div>
+    <div class="rf"><div class="rf-inner">
+      <b>{ILUS_BRAND}</b> · {ILUS_LEGAL} · Informe del Agente (determinista, sin IA) · {ILUS_CONTACTO} · Generado el {gen_fecha}
+    </div></div>
+    <div class="rep-content">
+      <div class="rep-asunto"><span class="rep-asunto-k">Servicio</span>{e(visita.get('titulo') or _tipo_label.get(tipo, 'Visita de mantención'))}</div>
+      <div class="rep-section">
+        <div class="rep-section-bar">Identificación del servicio</div>
+        <table class="rep-kv">
+          <tr><th>Cliente</th><td>{e(razon)}</td><th>RUT</th><td>{e_raw(rut_fmt)}</td></tr>
+          <tr><th>Dirección</th><td>{e(cliente.get('direccion'))}</td><th>Comuna</th><td>{e(cliente.get('comuna'))}</td></tr>
+          <tr><th>Tipo</th><td>{e(_tipo_label.get(tipo, tipo))}</td><th>Fecha</th><td>{e(str(fecha)[:10] if fecha else None)}</td></tr>
+          <tr><th>Técnico</th><td>{e(visita.get('tecnico'))}</td>
+              <th>Cobertura</th><td><span style="color:{_cob_color.get(cob,'#374151')};font-weight:800">{e(_cob_label.get(cob, cob))}</span></td></tr>
+        </table>
+      </div>
+      {secciones}
+    </div>
+  </div>
+  {_scripts}
+</body></html>"""
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/informe-postservicio", methods=["GET"])
+@_mant_required
+def mant_informe_postservicio(vid):
+    """Informe post-servicio de una visita realizada (Agente determinista). Imprimible → PDF."""
+    v = mysql_fetchone(
+        "SELECT v.*, c.razon_social, c.rut, c.direccion, c.comuna, c.contacto_nombre "
+        "FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+    if not v:
+        return "Visita no encontrada", 404
+    try:
+        equipos = mysql_fetchall(
+            "SELECT ve.estado_revision, ve.razon_saltado, ve.observacion_tecnico, "
+            "m.sku, m.nombre, m.serie, m.fecha_fin_garantia, m.estado AS maquina_estado "
+            "FROM mant_visita_equipos ve LEFT JOIN mant_maquinas m ON m.id=ve.maquina_id "
+            "WHERE ve.visita_id=%s ORDER BY ve.id", (vid,)) or []
+    except Exception:
+        equipos = []
+    analisis = _postservicio_analisis(v, equipos)
+    cli = {"razon_social": v.get("razon_social"), "rut": v.get("rut"),
+           "direccion": v.get("direccion"), "comuna": v.get("comuna"),
+           "contacto_nombre": v.get("contacto_nombre")}
+    try:
+        _mant_log("visita", vid, "informe_postservicio")
+    except Exception:
+        pass
+    return _informe_postservicio_html(v, cli, equipos, analisis)
 
 
 def _contrato_analisis_to_pdf_html(ct, cliente, auto_print=True):
@@ -56403,6 +58342,142 @@ def _ensure_mant_reportes_columns():
     return faltantes
 
 
+def _ensure_mant_intel_tables():
+    """Garantiza tablas/columnas del Agente de Inteligencia SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). Idempotente. CERO IA."""
+    faltaron = []
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_reglas_negocio (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                clave       VARCHAR(80) NOT NULL UNIQUE,
+                valor       VARCHAR(500) NOT NULL,
+                tipo_dato   ENUM('int','float','bool','string','json') DEFAULT 'string',
+                categoria   VARCHAR(60) DEFAULT 'general',
+                label       VARCHAR(200),
+                descripcion VARCHAR(400),
+                unidad      VARCHAR(30),
+                min_val     DECIMAL(14,2) NULL,
+                max_val     DECIMAL(14,2) NULL,
+                orden       INT DEFAULT 100,
+                updated_by  VARCHAR(190),
+                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_categoria (categoria)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_intel] reglas: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_contrato_reglas (
+                id           VARCHAR(80) PRIMARY KEY,
+                tipo         VARCHAR(40),
+                categoria    VARCHAR(60),
+                dimension    VARCHAR(60),
+                severidad    VARCHAR(20),
+                peso_score   INT DEFAULT 0,
+                mensaje      TEXT,
+                propuesta    TEXT,
+                base_legal   TEXT,
+                patrones_presencia TEXT,
+                patrones_ausencia  TEXT,
+                activa       TINYINT(1) NOT NULL DEFAULT 1,
+                orden        INT DEFAULT 100,
+                updated_by   VARCHAR(190),
+                updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_dim (dimension), INDEX idx_activa (activa)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        # Seed inicial desde contrato_reglas.json SOLO si la tabla está vacía
+        # (a partir de ahí, la fuente de verdad es la BD — CRUD desde el front).
+        _cnt = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_contrato_reglas")
+        if not _cnt or not (_cnt.get("n") or 0):
+            import contrato_reglas as _cr
+            _o = 0
+            for _r in _cr.cargar_reglas():
+                _o += 10
+                try:
+                    mysql_execute(
+                        "INSERT IGNORE INTO mant_contrato_reglas "
+                        "(id,tipo,categoria,dimension,severidad,peso_score,mensaje,propuesta,"
+                        " base_legal,patrones_presencia,patrones_ausencia,activa,orden) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s)",
+                        (_r.get("id"), _r.get("tipo"), _r.get("categoria"), _r.get("dimension"),
+                         _r.get("severidad"), int(_r.get("peso_score") or 0), _r.get("mensaje", ""),
+                         _r.get("propuesta", ""), _r.get("base_legal", ""),
+                         json.dumps(_r.get("patrones_presencia") or [], ensure_ascii=False),
+                         json.dumps(_r.get("patrones_ausencia") or [], ensure_ascii=False), _o))
+                except Exception as _se:
+                    print(f"[seed contrato_reglas] {_r.get('id')}: {_se}", flush=True)
+            print(f"[ensure_intel] mant_contrato_reglas seed OK ({_o // 10} reglas)", flush=True)
+    except Exception as e:
+        print(f"[ensure_intel] contrato_reglas: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_cliente_intel (
+                cliente_id          INT PRIMARY KEY,
+                score_salud         INT,
+                calidad_informacion INT,
+                nivel_riesgo        ENUM('alto','medio','bajo') DEFAULT 'bajo',
+                brecha_gratis       INT DEFAULT 0,
+                exposicion_clp      DECIMAL(14,2) DEFAULT 0,
+                proxima_fecha       DATE NULL,
+                actividad_total     INT DEFAULT 0,
+                payload_json        MEDIUMTEXT,
+                calculado_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_riesgo (nivel_riesgo),
+                INDEX idx_brecha (brecha_gratis)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_intel] cliente_intel: {e}", flush=True)
+    try:
+        ex = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_contratos'") or [])}
+        if "mant_gratis_incluidas_anual" not in ex:
+            mysql_execute("ALTER TABLE mant_contratos ADD COLUMN mant_gratis_incluidas_anual INT NULL "
+                          "COMMENT 'Nº mantenciones gratuitas/año pactadas. NULL = derivar de frecuencia'")
+            faltaron.append("mant_contratos.mant_gratis_incluidas_anual")
+    except Exception as e:
+        print(f"[ensure_intel] contrato col: {e}", flush=True)
+    try:
+        col = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' AND COLUMN_NAME='cubierto_por'")
+        ctype = ((col or {}).get("COLUMN_TYPE") or "").lower()
+        if ctype and "tercero" not in ctype:
+            mysql_execute("ALTER TABLE mant_visitas MODIFY cubierto_por "
+                          "ENUM('contrato','cliente','garantia','mixto','tercero') NOT NULL DEFAULT 'contrato' "
+                          "COMMENT 'Quién paga este servicio'")
+            faltaron.append("mant_visitas.cubierto_por+tercero")
+    except Exception as e:
+        print(f"[ensure_intel] cubierto_por enum: {e}", flush=True)
+    try:
+        ex = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_reportes'") or [])}
+        if "agente_periodo" not in ex:
+            mysql_execute("ALTER TABLE mant_reportes ADD COLUMN agente_periodo VARCHAR(10) NULL "
+                          "COMMENT 'Trimestre del informe generado por el Agente, ej 2026-Q2'")
+            faltaron.append("mant_reportes.agente_periodo")
+    except Exception as e:
+        print(f"[ensure_intel] agente_periodo: {e}", flush=True)
+    try:
+        orden = 0
+        for clave, spec in _REGLAS_DEFAULTS.items():
+            orden += 10
+            valor, tipo, categoria, label, unidad = spec
+            mysql_execute(
+                "INSERT IGNORE INTO mant_reglas_negocio "
+                "(clave, valor, tipo_dato, categoria, label, unidad, orden) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (clave, valor, tipo, categoria, label, unidad, orden))
+    except Exception as e:
+        print(f"[ensure_intel] seed reglas: {e}", flush=True)
+    return faltaron
+
+
 def _ensure_levantamiento_target_field():
     """Garantiza la columna `target_field` en mant_tarea_plantilla_items y
     mant_visita_tareas AUNQUE ILUS_SKIP_MIGRATIONS=1. Sin ella, el editor de
@@ -56587,6 +58662,15 @@ try:
         print(f"[ILUS] target_field agregado (skip-migrations): {_faltaron_tf}", flush=True)
 except Exception as _ensure_tf_err:
     print(f"[ILUS][WARN] _ensure_levantamiento_target_field: {_ensure_tf_err}", flush=True)
+
+# CRÍTICO: tablas/columnas del Agente de Inteligencia SIEMPRE (incluso skip-migrations).
+try:
+    with app.app_context():
+        _faltaron_intel = _ensure_mant_intel_tables()
+    if _faltaron_intel:
+        print(f"[ILUS] Inteligencia: migraciones aplicadas: {_faltaron_intel}", flush=True)
+except Exception as _ensure_intel_err:
+    print(f"[ILUS][WARN] _ensure_mant_intel_tables: {_ensure_intel_err}", flush=True)
 
 
 def _reparar_ruts_clientes_corruptos():
@@ -57111,6 +59195,8 @@ def mant_plan_mejora(cid):
       - Cache RAM TTL 1h (key=plan_mejora_<cid>). `?force=1` lo invalida.
     """
     import time as _time
+    if not _ia_enabled():
+        return jsonify({"ok": False, "error": _IA_OFF_MSG}), 503
 
     cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cliente:
