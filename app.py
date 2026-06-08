@@ -5867,15 +5867,11 @@ def login():
                     except Exception as _e_au:
                         print(f"[login-track-async] audit falló: {_e_au}", flush=True)
 
-                    # Alerta de login desde dispositivo nuevo (best-effort)
-                    if _is_new_device and "@" in _alert_to:
-                        try:
-                            _send_login_alert_email(
-                                _alert_to, _alert_nombre, ip=ip,
-                                user_agent=_alert_ua, cuando=_alert_cuando,
-                                action_url=_alert_action)
-                        except Exception as _e_la:
-                            print(f"[login-alert] fail: {_e_la}", flush=True)
+                    # Alerta de login por correo: DESHABILITADA (2026-06-08, Daniel:
+                    # "un inicio de sesion no amerita un correo"). NO se le escribe a
+                    # los usuarios por iniciar sesion. El tracking de last_login + audit
+                    # de mas arriba SI sigue (eso no manda correo).
+                    pass  # (para reactivar: restaurar la llamada a _send_login_alert_email)
             _th_login.Thread(target=_login_track_async, daemon=True,
                              name=f"login-track-{_uid}").start()
         except Exception as _e_login_track:
@@ -6971,9 +6967,10 @@ def _send_password_access_email(
 def _send_login_alert_email(to_addr: str, to_name: str, *, ip: str = "",
                             user_agent: str = "", cuando: str = "",
                             action_url: str = "") -> bool:
-    """Alerta de seguridad: nuevo inicio de sesión desde un dispositivo no
-    reconocido. Solo se dispara cuando el navegador NO trae la cookie de
-    dispositivo conocido (no en cada login), para no ser spam."""
+    """Alerta de inicio de sesión por correo. DESHABILITADA 2026-06-08 (Daniel:
+    "un inicio de sesión no amerita un correo"). Se deja la función por si se
+    reactiva en el futuro, pero hoy NO envía nada a nadie."""
+    return False  # ← no enviar correos de inicio de sesion a los usuarios
     if not to_addr or "@" not in to_addr:
         return False
     # ── Plantilla editable desde /comunicaciones (con respaldo hardcodeado) ──
