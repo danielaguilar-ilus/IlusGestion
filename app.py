@@ -6659,6 +6659,24 @@ def _send_password_access_email(
     _ = skip_diagnose  # noqa: F841 (mantener firma para callers existentes)
 
     is_setup     = mode == "setup"
+    # ── Plantilla editable desde /comunicaciones (con respaldo hardcodeado) ──
+    _tpl_estado = "usuario_nuevo" if is_setup else "olvido_contrasena"
+    _db = _render_comm_template(_tpl_estado, "email", {
+        "nombre_usuario": to_name, "email_usuario": to_addr, "rol": "",
+        "link_acceso": action_url, "creado_por": actor_name,
+        "fecha_hora": _now_chile().strftime("%d/%m/%Y %H:%M"),
+    })
+    if _db:
+        _asunto, _cuerpo = _db
+        sent = _send_ilus_email(to_addr, _brand_subject(_asunto),
+                                _comm_render_email_document(_asunto, _cuerpo),
+                                evento="password_access", modulo="comunicacion_interna")
+        if not sent and not getattr(g, "_last_email_error", ""):
+            g._last_email_error = (
+                "No se pudo enviar el correo. Verifica en /comunicaciones "
+                "que Resend o SMTP estén configurados correctamente."
+            )
+        return sent
     marca        = _get_marca()
     marca_nombre = marca["name"]
     titulo  = "Crear contraseña de acceso" if is_setup else "Cambio de contraseña solicitado"
@@ -6710,6 +6728,17 @@ def _send_login_alert_email(to_addr: str, to_name: str, *, ip: str = "",
     dispositivo conocido (no en cada login), para no ser spam."""
     if not to_addr or "@" not in to_addr:
         return False
+    # ── Plantilla editable desde /comunicaciones (con respaldo hardcodeado) ──
+    _db = _render_comm_template("inicio_sesion", "email", {
+        "nombre_usuario": to_name, "email_usuario": to_addr,
+        "ip_acceso": ip or "", "fecha_hora": cuando or "",
+        "link_acceso": action_url or "",
+    })
+    if _db:
+        _asunto, _cuerpo = _db
+        return _send_ilus_email(to_addr, _brand_subject(_asunto),
+                                _comm_render_email_document(_asunto, _cuerpo),
+                                evento="login_alert", modulo="comunicacion_interna")
     try:
         marca_nombre = _get_marca()["name"]
     except Exception:
@@ -25269,6 +25298,47 @@ def _email_html_is_full_document(html: str) -> bool:
         if marker in h:
             return True
     return False
+
+
+def _render_comm_template(estado, canal, variables, *, modulo="comunicacion_interna"):
+    """Carga una plantilla EDITABLE de comm_templates y sustituye {{variables}}.
+
+    Replica el patrón de Retiros (app.py ~17655): SELECT por (modulo,estado,canal),
+    .replace() en cadena de {{var}} y {{ var }} (NO Jinja, NO regex). Respeta la
+    columna 'activo'.
+
+    Devuelve (asunto, cuerpo) listos para envolver con _comm_render_email_document,
+    o None cuando: no hay fila, activo=0 (apagada por el admin), o ambos vacíos.
+    None => el caller DEBE caer al fallback hardcodeado (degradar, nunca omitir:
+    los correos de seguridad siempre deben salir).
+    """
+    try:
+        tpl = mysql_fetchone(
+            "SELECT asunto, cuerpo, COALESCE(activo,1) AS activo "
+            "FROM comm_templates "
+            "WHERE modulo=%s AND estado=%s AND canal=%s LIMIT 1",
+            (modulo, estado, canal),
+        )
+    except Exception as _exc:
+        print(f"[comm-tpl] lookup fail {modulo}/{estado}/{canal}: {_exc}", flush=True)
+        return None
+    if not tpl:
+        return None
+    try:
+        if not int(tpl.get("activo", 1) or 0):
+            return None  # plantilla apagada -> fallback
+    except Exception:
+        pass
+    asunto = tpl.get("asunto") or ""
+    cuerpo = tpl.get("cuerpo") or ""
+    if not asunto and not cuerpo:
+        return None  # vacía -> fallback
+    for k, v in (variables or {}).items():
+        sv = "" if v is None else str(v)
+        tok, tok2 = "{{" + str(k) + "}}", "{{ " + str(k) + " }}"
+        asunto = asunto.replace(tok, sv).replace(tok2, sv)
+        cuerpo = cuerpo.replace(tok, sv).replace(tok2, sv)
+    return (asunto, cuerpo)
 
 
 # ── Placeholders DEMO para envío manual de prueba ────────────────────────
