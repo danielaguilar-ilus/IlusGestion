@@ -858,11 +858,20 @@ def _img_resize_bytes(file_obj, max_dim=1600, quality=82):
     """Redimensiona (lado mayor <= max_dim) y comprime una imagen. Devuelve
     (bytes, content_type). Si no es imagen o Pillow falla, devuelve el original.
     Mantiene la calidad visual pero evita servir fotos de varios MB (velocidad)."""
-    try:
-        file_obj.seek(0)
-        raw = file_obj.read()
-    except Exception:
-        raw = bytes(file_obj) if isinstance(file_obj, (bytes, bytearray)) else b""
+    if isinstance(file_obj, str) and file_obj.startswith("data:"):
+        try:
+            import base64 as _b64
+            raw = _b64.b64decode(file_obj.split(",", 1)[1])
+        except Exception:
+            raw = b""
+    elif isinstance(file_obj, (bytes, bytearray)):
+        raw = bytes(file_obj)
+    else:
+        try:
+            file_obj.seek(0)
+            raw = file_obj.read()
+        except Exception:
+            raw = b""
     try:
         from PIL import Image
         import io as _io
@@ -18371,11 +18380,11 @@ def tr_upload_foto():
 
             ext = secure_filename(file.filename).rsplit(".", 1)[-1].lower()
             ts  = int(datetime.now().timestamp())
-            if _CLD_READY:
+            if _gcs_ready() or _CLD_READY:
                 try:
                     filename = _cloud_upload(file, public_id=f"p{pid}_{ts}", folder="ilus/products")
                 except Exception as exc:
-                    return jsonify({"error": f"Error Cloudinary: {exc}"}), 500
+                    return jsonify({"error": f"Error al subir la foto: {exc}"}), 500
             else:
                 filename = f"p{pid}_{ts}.{ext}"
                 file.save(os.path.join(UPLOAD_FOLDER, filename))
@@ -19293,15 +19302,9 @@ def tr_registrar_entrega(mid, item_id):
             fotos_urls.append(raw)
             continue
         try:
-            if _CLD_READY and _cloudinary_uploader:
-                pid = f"transp_entrega_{item_id}_{idx}_{int(time.time())}"
-                res = _cloudinary_uploader.upload(
-                    raw, public_id=pid, folder="ilus/transporte/entregas",
-                    overwrite=True, resource_type="image",
-                )
-                fotos_urls.append(res.get("secure_url") or raw)
-            else:
-                fotos_urls.append(raw)
+            pid = f"transp_entrega_{item_id}_{idx}_{int(time.time())}"
+            res = _uploader_upload(raw, public_id=pid, folder="ilus/transporte/entregas", resource_type="image")
+            fotos_urls.append(res.get("secure_url") or raw)
         except Exception as _up_err:
             print(f"[tr_entrega] foto {idx} no se pudo subir: {_up_err}",
                   flush=True)
@@ -20427,14 +20430,9 @@ def chofer_entrega_submit(mid, commitment_id):
         if not raw.startswith("data:") and raw.startswith("http"):
             fotos_urls.append(raw); continue
         try:
-            if _CLD_READY and _cloudinary_uploader:
-                pid = f"chofer_entrega_{item_id}_{idx}_{int(time.time())}"
-                res = _cloudinary_uploader.upload(
-                    raw, public_id=pid, folder="ilus/transporte/entregas",
-                    overwrite=True, resource_type="image")
-                fotos_urls.append(res.get("secure_url") or raw)
-            else:
-                fotos_urls.append(raw)
+            pid = f"chofer_entrega_{item_id}_{idx}_{int(time.time())}"
+            res = _uploader_upload(raw, public_id=pid, folder="ilus/transporte/entregas", resource_type="image")
+            fotos_urls.append(res.get("secure_url") or raw)
         except Exception as _eu:
             print(f"[chofer_entrega] foto {idx}: {_eu}", flush=True)
             fotos_urls.append(raw)
@@ -37975,6 +37973,25 @@ def mant_contrato_archivo(ctid):
     #   directo, y como queremos descarga el header attachment es correcto).
     if ct.get("cloudinary_url"):
         cld_url = ct["cloudinary_url"]
+        # GCS: el contrato vive en NUESTRO bucket (url /f/key) → servir directo
+        # con la autenticación del endpoint. Arregla "el contrato no se ve"
+        # (requests.get sobre una URL relativa /f/ lanzaba MissingSchema).
+        if cld_url.startswith("/f/") and _gcs_ready():
+            try:
+                data = _gcs_bucket().blob(cld_url[3:]).download_as_bytes()
+                import mimetypes as _mt
+                ctype = _mt.guess_type(cld_url)[0] or "application/pdf"
+                from flask import Response as _Resp
+                resp = _Resp(data, status=200)
+                resp.headers["Content-Type"] = ctype
+                resp.headers["Content-Disposition"] = (
+                    f'attachment; filename="{nombre}"' if as_dl else f'inline; filename="{nombre}"')
+                resp.headers["Cache-Control"] = "private, max-age=86400"
+                resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+                resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+                return resp
+            except Exception as _ge:
+                print(f"[mant_contrato_archivo] ctid={ctid} GCS error: {_ge}", flush=True)
         sep = "&" if "?" in cld_url else "?"
 
         if as_dl:
@@ -54292,6 +54309,23 @@ def mant_adjunto_archivo(aid):
     # ── PRIORIDAD 1: Cloudinary (proxy con headers correctos) ──────────
     cld_url = (adj.get("cloudinary_url") or "").strip()
     if cld_url:
+        # GCS: el adjunto vive en NUESTRO bucket (/f/key) → servir directo.
+        if cld_url.startswith("/f/") and _gcs_ready():
+            try:
+                data = _gcs_bucket().blob(cld_url[3:]).download_as_bytes()
+                import mimetypes as _mt2
+                ctype = (mime_map.get(ext) or adj.get("mime_type")
+                         or _mt2.guess_type(cld_url)[0] or "application/octet-stream")
+                resp = _Resp(data, status=200)
+                resp.headers["Content-Type"] = ctype
+                resp.headers["Content-Disposition"] = (
+                    f'attachment; filename="{nombre}"' if as_dl else f'inline; filename="{nombre}"')
+                resp.headers["Cache-Control"] = "private, max-age=86400"
+                resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+                resp.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+                return resp
+            except Exception as _ge2:
+                print(f"[mant_adjunto_archivo] aid={aid} GCS error: {_ge2}", flush=True)
         if as_dl:
             sep = "&" if "?" in cld_url else "?"
             return _redir(f"{cld_url}{sep}fl_attachment=true", code=302)

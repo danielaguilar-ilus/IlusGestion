@@ -1278,10 +1278,7 @@ body {
 .login-hero {
   flex: 1 1 58%;
   position: relative;
-  background:
-    url('https://ilusfitness.com/cdn/shop/files/ilus-fitness-banner-home-tdo-maquinas-desktop_1.jpg?v=1772556672&width=1920')
-    center 30% / cover no-repeat,
-    #111;
+  background: #0a0a0a;
   display: flex;
   align-items: flex-end;
   padding: 52px;
