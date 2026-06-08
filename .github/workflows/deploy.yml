@@ -106,7 +106,7 @@ jobs:
             --memory 2Gi \
             --cpu 2 \
             --timeout 300 \
-            --env-vars-file /tmp/env.yaml \          
+            --env-vars-file /tmp/env.yaml \
             --quiet
 
       # --- INFORMACION del deploy ---
