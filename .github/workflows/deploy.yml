@@ -9,7 +9,7 @@
 #      que viene funcionando manual
 #   5. Imprime la URL y revision final
 #
-# REQUISITOS UNICOS (configurar 1 sola vez en GitHub):
+# REQUISITOS UNICOS (configurar 1 sola hvez en GitHub):
 #   Settings -> Secrets and variables -> Actions -> "New repository secret"
 #     GCP_SA_KEY    = contenido del JSON de la SA (ilus-app-498503-9fd9b2388e9d.json)
 #     GCP_ENV_VARS  = contenido completo del env.yaml
@@ -107,11 +107,10 @@ jobs:
             --cpu 2 \
             --timeout 300 \
             --env-vars-file /tmp/env.yaml \
-            --clear-base-image \
             --quiet
 
       # --- INFORMACION del deploy ---
-      - name: Show deployed revision and URL
+      - name: Show deployed revision and U
         run: |
           REV=$(gcloud run services describe "$SERVICE" \
                 --region="$REGION" --project="$PROJECT_ID" \
