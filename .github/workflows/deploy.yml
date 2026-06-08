@@ -1,0 +1,159 @@
+# =====================================================================
+# Auto-deploy a Cloud Run cuando hay push en la rama mia o en main.
+#
+# QUE HACE
+#   1. Checkout del codigo
+#   2. Autentica gcloud usando GCP_SA_KEY (secret encriptado de GitHub)
+#   3. Escribe el env.yaml desde GCP_ENV_VARS (otro secret)
+#   4. Corre `gcloud run deploy ilus-app --source .` con el comando exacto
+#      que viene funcionando manual
+#   5. Imprime la URL y revision final
+#
+# REQUISITOS UNICOS (configurar 1 sola vez en GitHub):
+#   Settings -> Secrets and variables -> Actions -> "New repository secret"
+#     GCP_SA_KEY    = contenido del JSON de la SA (ilus-app-498503-9fd9b2388e9d.json)
+#     GCP_ENV_VARS  = contenido completo del env.yaml
+#
+# CUANDO SE DISPARA
+#   - Cualquier push a `main`
+#   - Cualquier push a la rama de esta sesion
+#   - Manualmente desde GitHub UI (Actions -> Run workflow)
+#
+# CONCURRENCIA
+#   Solo 1 deploy a la vez. Si llega otro mientras esta corriendo,
+#   espera en cola (no cancela el actual).
+# =====================================================================
+
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+      - claude/view-all-sessions-O6JEs
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'deploy_*.ps1'
+      - 'smoke_test_*.ps1'
+  workflow_dispatch:    # Permite disparar manual desde la UI
+
+# Solo 1 deploy a la vez. Evita race conditions entre sesiones.
+concurrency:
+  group: cloud-run-deploy
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID:    ilus-app-498503
+  REGION:        southamerica-west1
+  SERVICE:       ilus-app
+  CLOUDSQL_INST: ilus-app-498503:southamerica-west1:ilus-db
+
+jobs:
+  deploy:
+    name: Build & deploy to Cloud Run
+    runs-on: ubuntu-latest
+
+    # Permisos minimos
+    permissions:
+      contents: read
+      id-token: write    # por si en el futuro pasamos a Workload Identity
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --- AUTENTICAR a Google Cloud usando el secret encriptado ---
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      # --- ESCRIBIR env.yaml desde el secret (sin imprimirlo en logs) ---
+      - name: Write env.yaml from secret
+        run: |
+          # Heredoc: el contenido NO aparece en los logs de Actions
+          cat > /tmp/env.yaml <<'EOF_ENV_YAML'
+          ${{ secrets.GCP_ENV_VARS }}
+          EOF_ENV_YAML
+          # Verificar que se escribio algo razonable (sin mostrar el contenido)
+          BYTES=$(wc -c < /tmp/env.yaml)
+          LINES=$(wc -l < /tmp/env.yaml)
+          echo "env.yaml escrito: $BYTES bytes, $LINES lineas"
+          if [ "$BYTES" -lt 50 ]; then
+            echo "::error::El secret GCP_ENV_VARS parece vacio o invalido"
+            exit 1
+          fi
+
+      # --- DEPLOY a Cloud Run (mismo comando que el manual) ---
+      - name: Deploy to Cloud Run
+        id: deploy
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source . \
+            --region "$REGION" \
+            --project "$PROJECT_ID" \
+            --add-cloudsql-instances "$CLOUDSQL_INST" \
+            --allow-unauthenticated \
+            --min-instances 1 \
+            --max-instances 4 \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 300 \
+            --env-vars-file /tmp/env.yaml \
+            --clear-base-image \
+            --quiet
+
+      # --- INFORMACION del deploy ---
+      - name: Show deployed revision and URL
+        run: |
+          REV=$(gcloud run services describe "$SERVICE" \
+                --region="$REGION" --project="$PROJECT_ID" \
+                --format="value(status.latestReadyRevisionName)")
+          URL=$(gcloud run services describe "$SERVICE" \
+                --region="$REGION" --project="$PROJECT_ID" \
+                --format="value(status.url)")
+          echo ""
+          echo "=================================================="
+          echo "  DEPLOY OK"
+          echo "=================================================="
+          echo "  Revision: $REV"
+          echo "  URL:      $URL"
+          echo "  Commit:   ${{ github.sha }}"
+          echo "  Branch:   ${{ github.ref_name }}"
+          echo "=================================================="
+
+      # --- SMOKE TEST liviano post-deploy ---
+      - name: Smoke test endpoints publicos
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" \
+                --region="$REGION" --project="$PROJECT_ID" \
+                --format="value(status.url)")
+          echo "Esperando 15s para warmup..."
+          sleep 15
+          FAILED=0
+          for PATH_TEST in "/login" "/version"; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -L "$URL$PATH_TEST" --max-time 30 || echo "ERR")
+            if [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; then
+              echo "[OK]   $PATH_TEST -> $CODE"
+            else
+              echo "[FAIL] $PATH_TEST -> $CODE"
+              FAILED=$((FAILED+1))
+            fi
+          done
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::warning::$FAILED smoke test(s) fallaron pero el deploy ya termino"
+          fi
+
+      # --- LIMPIAR el env.yaml por las dudas ---
+      - name: Cleanup env.yaml
+        if: always()
+        run: |
+          rm -f /tmp/env.yaml
+          echo "env.yaml temporal eliminado"
