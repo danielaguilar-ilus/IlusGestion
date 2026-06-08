@@ -25472,9 +25472,10 @@ def _send_whatsapp(account_sid, auth_token, from_num, to_num, body, *, modulo: s
 def _email_wrapper(inner, company="ILUS Sport & Health"):
     return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Comunicacion - {company}</title></head>
-<body style="margin:0;padding:0;background:#f1f2f4;font-family:Arial,Helvetica,sans-serif;color:#111827">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f2f4;padding:28px 12px">
+<title>Comunicacion - {company}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet"></head>
+<body style="margin:0;padding:0;background:#eceef1;font-family:'Inter',Helvetica,Arial,sans-serif;color:#111827">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#eceef1;padding:30px 12px">
 <tr><td align="center">{inner}</td></tr>
 </table></body></html>"""
 
@@ -25495,28 +25496,28 @@ def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, 
     superior + logo blanco transparente GRANDE (~82px) + título/subtítulo opcionales.
     (Juan Daniel 2026-06-05: 'un solo header, el logo ~200% más grande, sin tanto
     negro, déjalo así en toda la aplicación'.) `eyebrow` = etiqueta roja opcional."""
-    logo_url = logo_url or "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png?height=240"
+    logo_url = logo_url or "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png?height=300"
     eyebrow_html = (
-        f'<div style="color:#dc2626;font-size:11px;font-weight:800;letter-spacing:.22em;'
+        f'<div style="color:#E20F2E;font-size:11px;font-weight:800;letter-spacing:.20em;'
         f'text-transform:uppercase;margin-bottom:12px">{eyebrow}</div>'
     ) if eyebrow else ""
     title_html = (
-        f'<div style="color:#ffffff;font-size:23px;line-height:1.25;font-weight:800;letter-spacing:.01em">{title}</div>'
+        f'<div style="color:#ffffff;font-size:25px;line-height:1.18;font-weight:900;letter-spacing:.01em">{title}</div>'
     ) if title else ""
     subtitle_html = (
         f'<div style="color:#b5b5b8;font-size:13px;line-height:1.5;margin-top:9px">{subtitle}</div>'
     ) if subtitle else ""
     bottom_row = (
-        f'<tr><td align="center" style="padding:8px 32px 32px 32px;text-align:center">'
+        f'<tr><td align="center" style="padding:6px 32px 34px 32px;text-align:center">'
         f'{eyebrow_html}{title_html}{subtitle_html}</td></tr>'
     ) if (eyebrow or title or subtitle) else ""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;background-image:linear-gradient(180deg,#161616 0%,#0a0a0a 60%,#000 100%)">
-  <tr><td style="height:4px;background:#dc2626;font-size:0;line-height:0">&nbsp;</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#000000;background-image:linear-gradient(180deg,#141414 0%,#000000 100%)">
+  <tr><td style="height:5px;background:#E20F2E;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td align="center" style="padding:30px 28px 8px 28px;text-align:center">
-      <img src="{logo_url}" alt="{company}" height="82"
-           style="height:82px;width:auto;max-width:320px;display:block;margin:0 auto;border:0;object-fit:contain">
+    <td align="center" style="padding:38px 28px 14px 28px;text-align:center">
+      <img src="{logo_url}" alt="{company}" height="140"
+           style="height:140px;width:auto;max-width:440px;display:block;margin:0 auto;border:0;object-fit:contain">
     </td>
   </tr>
   {bottom_row}
@@ -25533,16 +25534,26 @@ def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
     (Juan Daniel 2026-06-05: 'el eslogan de ILUS es I LIKE U STRONG, todo en
     mayúscula; es ILUS Fitness Sport & Health Solutions'.)"""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a">
-  <tr><td style="height:3px;background:#dc2626;font-size:0;line-height:0">&nbsp;</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#000000">
+  <tr><td style="height:3px;background:#E20F2E;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td style="padding:30px 32px 28px 32px;text-align:center">
-      <div style="font-size:18px;font-weight:900;letter-spacing:.20em;line-height:1.2"><span style="color:#dc2626">I</span><span style="color:#ffffff"> LIKE </span><span style="color:#dc2626">U</span><span style="color:#ffffff"> </span><span style="color:#dc2626">S</span><span style="color:#ffffff">TRONG</span></div>
-      <div style="width:46px;height:2px;background:#dc2626;margin:14px auto 16px auto;font-size:0;line-height:0">&nbsp;</div>
-      <div style="color:#DC143C;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">{company}</div>
-      <div style="color:#9ca3af;font-size:12px;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
-      <div style="color:#6b7280;font-size:11px;line-height:1.6;margin-top:16px">
-        Este correo fue generado automáticamente. Para soporte, utiliza nuestros canales oficiales.
+    <td style="padding:34px 32px 18px 32px;text-align:center">
+      <div style="font-size:21px;font-weight:900;letter-spacing:.22em;line-height:1.2"><span style="color:#E20F2E">I</span><span style="color:#ffffff"> LIKE </span><span style="color:#E20F2E">U</span><span style="color:#ffffff"> </span><span style="color:#E20F2E">S</span><span style="color:#ffffff">TRONG</span></div>
+      <div style="width:52px;height:2px;background:#E20F2E;margin:16px auto 18px auto;font-size:0;line-height:0">&nbsp;</div>
+      <table cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 18px"><tr>
+        <td style="padding:0 7px"><a href="https://instagram.com/ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">INSTAGRAM</a></td>
+        <td style="color:#555">&middot;</td>
+        <td style="padding:0 7px"><a href="https://tiktok.com/@ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">TIKTOK</a></td>
+        <td style="color:#555">&middot;</td>
+        <td style="padding:0 7px"><a href="https://youtube.com/@ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">YOUTUBE</a></td>
+        <td style="color:#555">&middot;</td>
+        <td style="padding:0 7px"><a href="https://www.facebook.com/ilusfitness/" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">FACEBOOK</a></td>
+      </tr></table>
+      <div style="color:#E20F2E;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase">{company}</div>
+      <div style="color:#9a9a9a;font-size:12px;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
+      <div style="color:#6b6b6b;font-size:11px;line-height:1.7;margin-top:16px;border-top:1px solid #1c1c1c;padding-top:16px">
+        Este correo fue generado automaticamente. Para soporte escribenos a <a href="mailto:servicio.tecnico@ilusfitness.com" style="color:#bbb;text-decoration:none">servicio.tecnico@ilusfitness.com</a><br>
+        &copy; 2026 ILUS Fitness &middot; Todos los derechos reservados.
       </div>
     </td>
   </tr>
