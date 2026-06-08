@@ -333,7 +333,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=bool(os.environ.get("RAILWAY_ENVIRONMENT") or
                                os.environ.get("FLASK_ENV") == "production"),
-    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,  # 30 días
+    PERMANENT_SESSION_LIFETIME=60 * 60,  # 1 hora (idle-logout — se renueva en cada request activo)
     # ── PERF 2026-05-18 (audit Daniel) ─────────────────────────────
     # Flask por default setea `Cache-Control: no-cache` en send_static_file
     # vía send_file_max_age=None. Forzamos 30 días → el navegador cachea
@@ -3580,12 +3580,33 @@ _last_seen_lock  = threading.Lock()
 _LAST_SEEN_THROTTLE_SEC = 60
 
 
+_LAST_SEEN_SKIP_PATHS = frozenset({
+    # Rutas de polling/heartbeat: llamadas cada pocos segundos por el frontend.
+    # No deben actualizar last_seen_at — de lo contrario el LED verde nunca
+    # se apagaría aunque el usuario haya cerrado el browser.
+    "/admin/api/users/online",
+    "/api/heartbeat",
+    "/ping",
+    "/_health",
+})
+
+
 def _update_last_seen(uid):
     """Actualiza last_seen_at del usuario (heartbeat). Throttle 60s en
     memoria del proceso. El UPDATE corre en hilo daemon con conexión
-    directa (no toca `g`)."""
+    directa (no toca `g`).
+
+    Rutas en _LAST_SEEN_SKIP_PATHS se excluyen para que el LED
+    no se mantenga verde artificialmente por el polling del frontend.
+    """
     if not uid:
         return
+    # Skip rutas de polling para no mantener last_seen_at vivo artificialmente
+    try:
+        if request.path in _LAST_SEEN_SKIP_PATHS:
+            return
+    except Exception:
+        pass  # fuera de request context (tests, etc.) → continuar normal
     now_ts = time.time()
     with _last_seen_lock:
         last = _last_seen_cache.get(uid, 0)
@@ -3673,6 +3694,21 @@ def load_current_user():
         except Exception:
             _epoch_ok = True
         if _epoch_ok and (time.time() - cached_ts) < _ttl:
+            # ── IDLE-LOGOUT: 60 min sin actividad ──────────────────
+            try:
+                _last_seen_c = cached.get("last_seen_at")
+                if _last_seen_c is not None:
+                    import datetime as _dt
+                    _now_utc = _dt.datetime.utcnow()
+                    if isinstance(_last_seen_c, str):
+                        _last_seen_c = _dt.datetime.fromisoformat(_last_seen_c.replace("Z", ""))
+                    if (_now_utc - _last_seen_c).total_seconds() > 3600:
+                        session.clear()
+                        g._idle_expired = True
+                        return
+            except Exception:
+                pass  # nunca romper login por este check
+            # ────────────────────────────────────────────────────────
             g.user = cached
             g.permissions = permission_set(cached["role"])
             # Heartbeat last_seen_at (throttle 60s en memoria del proceso)
@@ -3694,6 +3730,21 @@ def load_current_user():
         return
 
     user = dict(user)
+    # ── IDLE-LOGOUT: 60 min sin actividad (datos frescos de BD) ──
+    try:
+        _last_seen_b = user.get("last_seen_at")
+        if _last_seen_b is not None:
+            import datetime as _dt2
+            _now_utc2 = _dt2.datetime.utcnow()
+            if isinstance(_last_seen_b, str):
+                _last_seen_b = _dt2.datetime.fromisoformat(_last_seen_b.replace("Z", ""))
+            if (_now_utc2 - _last_seen_b).total_seconds() > 3600:
+                session.clear()
+                g._idle_expired = True
+                return
+    except Exception:
+        pass  # nunca romper login por este check
+    # ────────────────────────────────────────────────────────────
     g.user = user
     g.permissions = permission_set(user["role"])
 
@@ -4344,12 +4395,32 @@ def _legacy_host_redirect():
 def before_request():
     """Pipeline global pre-request:
        1. Carga el usuario actual desde sesión → g.user / g.permissions.
-       2. Valida CSRF en métodos mutadores (POST/PUT/DELETE/PATCH).
+       2. Detecta idle-logout (sesión expirada por inactividad > 60 min).
+       3. Valida CSRF en métodos mutadores (POST/PUT/DELETE/PATCH).
           DEBE correr tras load_current_user para poder redirigir a la
           misma URL si el usuario está autenticado (UX más amable que
           forzar login). Si CSRF falla, devuelve una Response y Flask
           interrumpe el pipeline."""
     load_current_user()
+
+    # ── IDLE-LOGOUT: sesión expirada por inactividad ──────────────────
+    if getattr(g, '_idle_expired', False):
+        _rpath = request.path or ""
+        # Rutas de API / JSON → devolver 401 con JSON (no redirigir)
+        _is_api = (_rpath.startswith("/api/") or _rpath.startswith("/admin/api/")
+                   or _rpath.startswith("/retiros/api/") or _rpath.startswith("/transporte/api/")
+                   or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                   or "application/json" in (request.accept_mimetypes.best or ""))
+        if _is_api:
+            return jsonify({"ok": False, "error": "Sesión expirada por inactividad",
+                            "error_codigo": "SESSION_IDLE_EXPIRED",
+                            "redirect": "/login"}), 401
+        # Rutas HTML normales → flash + redirect a login (excepto /login mismo)
+        if _rpath not in ("/login", "/logout"):
+            flash("Tu sesión se cerró automáticamente por inactividad. Inicia sesión nuevamente.", "warning")
+            return redirect(url_for("login"))
+    # ─────────────────────────────────────────────────────────────────
+
     csrf_resp = _csrf_check_request()
     if csrf_resp is not None:
         return csrf_resp
@@ -5787,6 +5858,7 @@ def login():
             return render_template("login.html", next_url=next_url, username=username, login_images=imgs, marca=_get_marca())
         session.clear()
         session["user_id"] = user["id"]
+        session.permanent = True   # La cookie dura PERMANENT_SESSION_LIFETIME (1h); se renueva en cada request
         # ── FIX 2026-05-18 ──────────────────────────────────────────
         # CAUSA RAÍZ del bug "Nunca se conectó" para usuarios que SÍ se
         # conectaron: la versión anterior corría en un hilo daemon y llamaba
@@ -5910,6 +5982,13 @@ def logout():
     uid = g.user.get("id") if getattr(g, "user", None) else None
     uname = g.user.get("username") if getattr(g, "user", None) else None
     urole = g.user.get("role") if getattr(g, "user", None) else None
+    # Limpiar caché de last_seen para que el LED se apague de inmediato
+    try:
+        if uid is not None:
+            with _last_seen_lock:
+                _last_seen_cache.pop(uid, None)
+    except Exception:
+        pass
     session.clear()
     try:
         _audit("logout", target_type="user", target_id=uid,
@@ -9222,12 +9301,13 @@ def users_index():
     # 2026-05-26 (audit DevTools, body era 95KB): mantenemos SELECT * para
     # NO romper el template, pero agregamos LIMIT 300 (suficiente para
     # empresas hasta 300 usuarios; más allá hay que paginar UI).
-    # `online=1` si last_seen_at está a menos de 5 minutos de NOW().
+    # 2026-06-08: ventana "online" reducida 5 min → 3 min (LED apaga más rápido).
+    # `online=1` si last_seen_at está a menos de 3 minutos de NOW().
     try:
         users = mysql_fetchall(
             f"SELECT *, "
             f"  CASE WHEN last_seen_at IS NOT NULL AND "
-            f"            last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) "
+            f"            last_seen_at >= DATE_SUB(NOW(), INTERVAL 3 MINUTE) "
             f"       THEN 1 ELSE 0 END AS online "
             f"FROM `{AUTH_TABLE}` WHERE {' AND '.join(where)} "
             f"ORDER BY active DESC, online DESC, last_login_at DESC, nombre, username "
@@ -9250,10 +9330,14 @@ def users_index():
             f"SELECT "
             f" SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) AS activos, "
             f" SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS inactivos, "
-            f" SUM(CASE WHEN active=1 AND last_login_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
+            # 2026-06-08: usar GREATEST(last_login_at, last_seen_at) para no perder
+            # usuarios que navegaron sin hacer login explícito en los últimos 7d
+            f" SUM(CASE WHEN active=1 AND "
+            f"          GREATEST(COALESCE(last_login_at,'2000-01-01'),COALESCE(last_seen_at,'2000-01-01')) "
+            f"          >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
             f"          THEN 1 ELSE 0 END) AS conectados_7d, "
-            # 2026-05-18: en línea ahora = last_seen_at en los últimos 5 min
-            f" SUM(CASE WHEN active=1 AND last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) "
+            # 2026-06-08: ventana reducida de 5 min → 3 min (LED apaga más rápido al cerrar browser)
+            f" SUM(CASE WHEN active=1 AND last_seen_at >= DATE_SUB(NOW(), INTERVAL 3 MINUTE) "
             f"          THEN 1 ELSE 0 END) AS online_ahora, "
             f" SUM(CASE WHEN active=1 AND (last_login_at IS NULL OR "
             f"          last_login_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) THEN 1 ELSE 0 END) AS nunca_o_viejos, "
@@ -9267,7 +9351,7 @@ def users_index():
             f" SUM(CASE WHEN active=0 THEN 1 ELSE 0 END) AS inactivos, "
             f" SUM(CASE WHEN active=1 AND last_login_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
             f"          THEN 1 ELSE 0 END) AS conectados_7d, "
-            f" 0 AS online_ahora, "
+            f" 0 AS online_ahora, "  # fallback: last_seen_at no disponible
             f" SUM(CASE WHEN active=1 AND (last_login_at IS NULL OR "
             f"          last_login_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) THEN 1 ELSE 0 END) AS nunca_o_viejos, "
             f" COUNT(*) AS total "
@@ -9287,13 +9371,15 @@ def admin_users_online():
     """JSON compact: lista de {id, online} para refrescar LEDs sin recargar.
     Refresca cada 30s desde el frontend. Admin / superadmin only.
 
-    `online=true` si last_seen_at está a menos de 5 minutos de NOW().
+    `online=true` si last_seen_at está a menos de 3 minutos de NOW().
+    Este endpoint está en la SKIP-LIST de _update_last_seen para no
+    mantener el LED verde de forma artificial mientras el browser pollea.
     """
     try:
         rows = mysql_fetchall(
             f"SELECT id, "
             f"       (last_seen_at IS NOT NULL AND "
-            f"        last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)) AS online "
+            f"        last_seen_at >= DATE_SUB(NOW(), INTERVAL 3 MINUTE)) AS online "
             f"FROM `{AUTH_TABLE}` WHERE active=1"
         ) or []
         users_payload = [{"id": r["id"], "online": bool(r["online"])} for r in rows]

@@ -113,7 +113,7 @@
         <div class="uk-l">Conectados 7d</div>
       </div>
     </div>
-    <div class="uk-card" style="cursor:default" title="Usuarios con actividad en los últimos 5 minutos">
+    <div class="uk-card" style="cursor:default" title="Usuarios con actividad en los últimos 3 minutos">
       <div class="uk-ico" style="background:#dcfce7;color:#166534">
         <span class="user-status online" style="position:static"></span>
       </div>
@@ -161,7 +161,8 @@
             <th>WhatsApp</th>
             <th>Rol</th>
             <th>Estado</th>
-            <th title="Última vez que el usuario inició sesión en la plataforma">Última conexión</th>
+            <th title="Última vez que el usuario inició sesión explícitamente (formulario de login)">Login</th>
+            <th title="Última actividad registrada (cualquier request autenticado). Más preciso que Login para saber si alguien está usando el sistema.">Visto</th>
             <th class="text-center" title="Cantidad total de inicios de sesión">Logins</th>
             <th class="text-center">Acciones</th>
           </tr>
@@ -171,7 +172,7 @@
           <tr data-user-id="{{ user.id }}" {% if not user.active %}style="opacity:.55"{% endif %}>
             <td class="status-cell" data-label="En línea">
               {% if user.online %}
-                <span class="user-status online" title="En línea ahora (actividad en los últimos 5 minutos)"></span>
+                <span class="user-status online" title="En línea ahora (actividad en los últimos 3 minutos)"></span>
               {% else %}
                 <span class="user-status offline" title="Desconectado"></span>
               {% endif %}
@@ -209,10 +210,10 @@
                 <span class="badge-inactive"><i class="bi bi-x-circle me-1"></i>Inactivo</span>
               {% endif %}
             </td>
-            <td class="conx-cell" data-label="Última conexión">
+            <td class="conx-cell" data-label="Login">
               {% if user.last_login_at %}
                 <div class="conx-warm">
-                  <i class="bi bi-broadcast me-1"></i>
+                  <i class="bi bi-box-arrow-in-right me-1"></i>
                   {# Filtro chile_fmt convierte UTC (BD) → America/Santiago con DST automático #}
                   {{ user.last_login_at|chile_fmt }}
                   <span class="text-muted" style="font-size:.62rem">(Chile)</span>
@@ -222,8 +223,27 @@
                 {% endif %}
               {% else %}
                 <span class="conx-never">
-                  <i class="bi bi-dash-circle me-1"></i>Nunca se conectó
+                  <i class="bi bi-dash-circle me-1"></i>Nunca
                 </span>
+              {% endif %}
+            </td>
+            <td class="conx-cell" data-label="Visto">
+              {% if user.last_seen_at %}
+                {% if user.online %}
+                  <div class="conx-warm">
+                    <i class="bi bi-activity me-1"></i>
+                    {{ user.last_seen_at|chile_fmt }}
+                    <span class="text-muted" style="font-size:.62rem">(Chile)</span>
+                  </div>
+                {% else %}
+                  <div class="conx-cool">
+                    <i class="bi bi-clock-history me-1"></i>
+                    {{ user.last_seen_at|chile_fmt }}
+                    <span class="text-muted" style="font-size:.62rem">(Chile)</span>
+                  </div>
+                {% endif %}
+              {% else %}
+                <span class="conx-cold"><i class="bi bi-dash me-1"></i>Sin datos</span>
               {% endif %}
             </td>
             <td class="text-center" data-label="Logins">
@@ -255,7 +275,7 @@
           {% endfor %}
           {% if not users %}
           <tr>
-            <td colspan="9" class="text-center py-4 text-muted">
+            <td colspan="10" class="text-center py-4 text-muted">
               <i class="bi bi-search me-2"></i>Sin usuarios para este filtro
             </td>
           </tr>
@@ -389,7 +409,7 @@ async function enviarPasswordLink(uid, nombre, email, btn) {
         if (u.online) {
           led.classList.remove('offline');
           led.classList.add('online');
-          led.title = 'En línea ahora (actividad en los últimos 5 minutos)';
+          led.title = 'En línea ahora (actividad en los últimos 3 minutos)';
         } else {
           led.classList.remove('online');
           led.classList.add('offline');
