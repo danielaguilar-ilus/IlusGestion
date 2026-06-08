@@ -26,7 +26,7 @@ from flask import (Flask, Response, abort, flash, g, jsonify, make_response,
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
-from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY
+from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY, GCS_BUCKET, GCS_ENABLED
 try:
     from config import BRAND_CONFIG
 except ImportError:
@@ -812,12 +812,125 @@ except Exception as _cld_err:
     print(f"[ILUS] Cloudinary no disponible: {_cld_err} — fotos locales.")
 
 
+# ═════════════════════════════════════════════════════════════════════
+#  GOOGLE CLOUD STORAGE — almacenamiento propio (reemplaza Cloudinary)
+#  En Cloud Run usa la identidad del servicio (ADC) — SIN claves en env.
+#  Los archivos se sirven por la ruta /f/<key> (la app lee de GCS; el
+#  bucket NO es público → más seguro). Kill-switch: ILUS_STORAGE_GCS=0.
+# ═════════════════════════════════════════════════════════════════════
+_GCS_BUCKET_OBJ = None
+_GCS_INIT_DONE = False
+
+
+def _gcs_bucket():
+    """Bucket GCS (lazy). None si está deshabilitado o no disponible → cae a Cloudinary."""
+    global _GCS_BUCKET_OBJ, _GCS_INIT_DONE
+    if _GCS_INIT_DONE:
+        return _GCS_BUCKET_OBJ
+    _GCS_INIT_DONE = True
+    if not GCS_ENABLED:
+        print("[ILUS] GCS deshabilitado (ILUS_STORAGE_GCS=0) — uso Cloudinary.", flush=True)
+        return None
+    try:
+        from google.cloud import storage as _gcs_lib
+        _GCS_BUCKET_OBJ = _gcs_lib.Client().bucket(GCS_BUCKET)
+        print(f"[ILUS] GCS listo — bucket {GCS_BUCKET}", flush=True)
+    except Exception as e:
+        print(f"[ILUS] GCS no disponible: {e} — uso Cloudinary.", flush=True)
+        _GCS_BUCKET_OBJ = None
+    return _GCS_BUCKET_OBJ
+
+
+def _gcs_ready():
+    return _gcs_bucket() is not None
+
+
+def _gcs_key(folder, public_id, ext):
+    """Clave del objeto: folder/public_id.ext (sin dobles barras)."""
+    folder = (folder or "ilus").strip("/")
+    pid = str(public_id).strip("/")
+    if ext and not ext.startswith("."):
+        ext = "." + ext
+    return f"{folder}/{pid}{ext}"
+
+
+def _img_resize_bytes(file_obj, max_dim=1600, quality=82):
+    """Redimensiona (lado mayor <= max_dim) y comprime una imagen. Devuelve
+    (bytes, content_type). Si no es imagen o Pillow falla, devuelve el original.
+    Mantiene la calidad visual pero evita servir fotos de varios MB (velocidad)."""
+    try:
+        file_obj.seek(0)
+        raw = file_obj.read()
+    except Exception:
+        raw = bytes(file_obj) if isinstance(file_obj, (bytes, bytearray)) else b""
+    try:
+        from PIL import Image
+        import io as _io
+        im = Image.open(_io.BytesIO(raw))
+        fmt = (im.format or "JPEG").upper()
+        if fmt == "PNG":
+            im.thumbnail((max_dim, max_dim))
+            out = _io.BytesIO(); im.save(out, format="PNG", optimize=True)
+            return out.getvalue(), "image/png"
+        if im.mode in ("RGBA", "P", "LA"):
+            im = im.convert("RGB")
+        im.thumbnail((max_dim, max_dim))
+        out = _io.BytesIO(); im.save(out, format="JPEG", quality=quality, optimize=True)
+        return out.getvalue(), "image/jpeg"
+    except Exception:
+        return raw, (getattr(file_obj, "content_type", None) or "application/octet-stream")
+
+
+def _storage_upload_bytes(data, key, content_type):
+    """Sube bytes a GCS bajo 'key'. Devuelve la URL app-proxy /f/<key>."""
+    b = _gcs_bucket()
+    blob = b.blob(key)
+    blob.cache_control = "public, max-age=2592000"
+    blob.upload_from_string(data, content_type=content_type)
+    return "/f/" + key
+
+
+_RAW_CT_BY_EXT = {
+    ".pdf": "application/pdf", ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".zip": "application/zip", ".csv": "text/csv", ".txt": "text/plain",
+}
+
+
+@app.route("/f/<path:key>")
+def serve_archivo(key):
+    """Sirve un archivo desde Google Cloud Storage (fotos, contratos, firmas).
+    Reemplaza las URLs públicas de Cloudinary. La app lee de GCS (el bucket NO
+    es público); las keys son no-adivinables → misma seguridad que antes."""
+    import mimetypes
+    b = _gcs_bucket()
+    if not b:
+        return "Almacenamiento no disponible", 503
+    blob = b.blob(key)
+    try:
+        data = blob.download_as_bytes()
+    except Exception:
+        return "Archivo no encontrado", 404
+    ct = mimetypes.guess_type(key)[0] or "application/octet-stream"
+    resp = Response(data, mimetype=ct)
+    resp.headers["Cache-Control"] = "public, max-age=2592000"
+    resp.headers["Content-Disposition"] = "inline"
+    return resp
+
+
 def _cloud_upload(file_obj, public_id: str, folder: str = "ilus") -> str:
     """Sube a Cloudinary y devuelve la URL segura. Lanza excepción si falla.
 
     LEGACY: solo devuelve la URL. Para nuevos códigos que necesiten public_id
     para borrar después, usar _cloud_upload_image_full() que devuelve dict.
+    GCS primero; Cloudinary de respaldo.
     """
+    if _gcs_ready():
+        data, ct = _img_resize_bytes(file_obj)
+        ext = ".png" if ct == "image/png" else ".jpg"
+        return _storage_upload_bytes(data, _gcs_key(folder, public_id, ext), ct)
     result = _cloudinary_uploader.upload(
         file_obj,
         public_id     = public_id,
@@ -835,9 +948,16 @@ def _cloud_upload_image_full(file_obj, public_id: str, folder: str = "ilus") -> 
     versión devuelve el public_id EXACTO que Cloudinary asignó. Esto evita
     parsearlo después con regex frágil (que fallaba con transformaciones
     en la URL tipo /upload/c_fill,w_500/...).
+    GCS primero (con redimensionado); Cloudinary de respaldo.
     """
+    if _gcs_ready():
+        data, ct = _img_resize_bytes(file_obj)
+        ext = ".png" if ct == "image/png" else ".jpg"
+        key = _gcs_key(folder, public_id, ext)
+        url = _storage_upload_bytes(data, key, ct)
+        return {"url": url, "public_id": key, "size": len(data)}
     if not _CLD_READY or not _cloudinary_uploader:
-        raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
+        raise RuntimeError("Almacenamiento no configurado (ni GCS ni Cloudinary).")
     result = _cloudinary_uploader.upload(
         file_obj,
         public_id     = public_id,
@@ -868,9 +988,27 @@ def _cloud_upload_raw(file_obj, public_id: str, folder: str = "ilus/contratos") 
        - El endpoint /api/contratos/<id>/archivo hace PROXY del PDF y
          agrega headers Content-Type: application/pdf + inline para que
          el iframe del navegador lo renderice.
+    GCS primero (en GCS los PDF se sirven inline sin el bloqueo 401 de
+    Cloudinary → arregla "el contrato no se ve"); Cloudinary de respaldo.
     """
+    if _gcs_ready():
+        fname = getattr(file_obj, "filename", "") or (file_obj if isinstance(file_obj, str) else "")
+        ext = (os.path.splitext(fname)[1] or "").lower() or ".pdf"
+        if isinstance(file_obj, (bytes, bytearray)):
+            data = bytes(file_obj)
+        elif hasattr(file_obj, "read"):
+            file_obj.seek(0); data = file_obj.read()
+        elif isinstance(file_obj, str) and os.path.exists(file_obj):
+            with open(file_obj, "rb") as _fh:
+                data = _fh.read()
+        else:
+            data = b""
+        ct = _RAW_CT_BY_EXT.get(ext, "application/octet-stream")
+        key = _gcs_key(folder, public_id, ext)
+        url = _storage_upload_bytes(data, key, ct)
+        return {"url": url, "public_id": key, "size": len(data)}
     if not _CLD_READY or not _cloudinary_uploader:
-        raise RuntimeError("Cloudinary no configurado — credenciales faltan en config.py")
+        raise RuntimeError("Almacenamiento no configurado (ni GCS ni Cloudinary).")
     result = _cloudinary_uploader.upload(
         file_obj,
         public_id     = public_id,
@@ -912,6 +1050,21 @@ def _subir_firma_cloudinary(data_url: str, vid: int, tipo: str) -> str:
     """
     if not data_url or not data_url.startswith("data:"):
         return data_url or ""
+    # GCS primero.
+    if _gcs_ready():
+        try:
+            import base64 as _b64
+            header, b64 = data_url.split(",", 1)
+            ct = "image/png"
+            if ":" in header and ";" in header:
+                ct = header.split(":", 1)[1].split(";", 1)[0] or "image/png"
+            data = _b64.b64decode(b64)
+            ext = ".png" if "png" in ct else ".jpg"
+            key = _gcs_key("ilus/mantenciones/firmas", f"firma_{tipo}_{vid}_{int(time.time())}", ext)
+            return _storage_upload_bytes(data, key, ct)
+        except Exception as e:
+            print(f"[firma_gcs] fallo tipo={tipo} vid={vid}: {e}", flush=True)
+            return data_url
     # Sin Cloudinary configurado → guardar tal cual (LONGTEXT acepta).
     if not _CLD_READY or not _cloudinary_uploader:
         return data_url
@@ -933,7 +1086,15 @@ def _subir_firma_cloudinary(data_url: str, vid: int, tipo: str) -> str:
 
 
 def _cloud_delete(url_or_filename: str) -> None:
-    """Elimina de Cloudinary si es URL; del disco si es nombre local."""
+    """Elimina de GCS (/f/...), de Cloudinary (http) o del disco (nombre local)."""
+    if url_or_filename.startswith("/f/"):
+        try:
+            b = _gcs_bucket()
+            if b:
+                b.blob(url_or_filename[3:]).delete()
+        except Exception as exc:
+            print(f"[ILUS] GCS delete error: {exc}")
+        return
     if url_or_filename.startswith("http"):
         try:
             match = re.search(r"/upload/(?:v\d+/)?(.+)\.[^.]+$", url_or_filename)
@@ -948,8 +1109,18 @@ def _cloud_delete(url_or_filename: str) -> None:
 
 
 def _cloud_delete_raw(public_id: str) -> None:
-    """Elimina recurso raw (PDF/DOCX) de Cloudinary por public_id."""
-    if not _CLD_READY or not _cloudinary_uploader or not public_id:
+    """Elimina recurso raw (PDF/DOCX) de GCS (key con extensión) o Cloudinary."""
+    if not public_id:
+        return
+    # Las keys de GCS llevan extensión (folder/pid.pdf); los public_id de
+    # Cloudinary no. Si hay extensión y GCS está activo → borrar de GCS.
+    if _gcs_ready() and os.path.splitext(public_id)[1]:
+        try:
+            _gcs_bucket().blob(public_id).delete()
+        except Exception as exc:
+            print(f"[ILUS] GCS delete raw error ({public_id}): {exc}")
+        return
+    if not _CLD_READY or not _cloudinary_uploader:
         return
     try:
         _cloudinary_uploader.destroy(public_id, resource_type="raw", type="upload")
@@ -39158,6 +39329,28 @@ def _contrato_reglas_activas():
     return [r for r in _contrato_reglas_db() if r.get("activa", True)]
 
 
+@app.route("/mantenciones/api/storage/health", methods=["GET"])
+@_mant_required
+def mant_storage_health():
+    """Diagnóstico de almacenamiento: prueba escribir/leer/borrar en GCS con la
+    identidad REAL de la app (compute SA). Verifica la migración end-to-end."""
+    out = {"gcs_enabled": GCS_ENABLED, "bucket": GCS_BUCKET, "gcs_ready": False,
+           "write": False, "read": False, "delete": False, "error": None}
+    try:
+        b = _gcs_bucket()
+        out["gcs_ready"] = b is not None
+        if b:
+            key = f"ilus/_diag/health_{int(time.time())}.txt"
+            b.blob(key).upload_from_string(b"ok", content_type="text/plain")
+            out["write"] = True
+            out["read"] = (b.blob(key).download_as_bytes() == b"ok")
+            b.blob(key).delete()
+            out["delete"] = True
+    except Exception as e:
+        out["error"] = str(e)[:300]
+    return jsonify(out)
+
+
 @app.route("/mantenciones/api/contrato-reglas", methods=["GET"])
 @_mant_required
 def mant_contrato_reglas_list():
@@ -39252,9 +39445,21 @@ def mant_contrato_reglas_delete(rule_id):
 def _descargar_contrato_bytes(cu, public_id=None):
     """Descarga los bytes del archivo del contrato desde Cloudinary. Maneja el
     401 ANÓNIMO de PDFs (política Cloudinary): si la URL directa falla, FIRMA la
-    URL con el SDK (sign_url) usando el public_id. Devuelve bytes o None."""
+    URL con el SDK (sign_url) usando el public_id. Devuelve bytes o None.
+    GCS: si el contrato está en Google Cloud Storage (url /f/key o public_id=key
+    con extensión), lo lee directo del bucket (sin el bloqueo 401 de Cloudinary)."""
     import requests as _rq
-    if cu:
+    gcs_key = None
+    if cu and cu.startswith("/f/"):
+        gcs_key = cu[3:]
+    elif public_id and "/" in public_id and os.path.splitext(public_id)[1]:
+        gcs_key = public_id
+    if gcs_key and _gcs_ready():
+        try:
+            return _gcs_bucket().blob(gcs_key).download_as_bytes()
+        except Exception as e:
+            print(f"[contrato dl gcs] {gcs_key}: {e}", flush=True)
+    if cu and cu.startswith("http"):
         try:
             r = _rq.get(cu, timeout=30, allow_redirects=True)
             if r.status_code == 200 and r.content:

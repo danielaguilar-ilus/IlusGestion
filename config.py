@@ -136,6 +136,14 @@ CLOUDINARY_CONFIG = {
 }
 
 # ─────────────────────────────────────────────
+#  Google Cloud Storage (almacenamiento propio — reemplaza Cloudinary)
+#  En Cloud Run usa la identidad del servicio (ADC), sin claves en env.
+#  GCS_BUCKET: nombre del bucket. ILUS_STORAGE_GCS: kill-switch (1=GCS, 0=Cloudinary).
+# ─────────────────────────────────────────────
+GCS_BUCKET  = _env('GCS_BUCKET', 'ilus-app-fotos')
+GCS_ENABLED = _env('ILUS_STORAGE_GCS', '1').strip().lower() in ('1', 'true', 'on', 'yes', 'si', 'sí')
+
+# ─────────────────────────────────────────────
 #  CANALES DE COMUNICACIÓN ACTIVOS
 #
 #  Daniel dio de baja Twilio (WhatsApp + SMS) — todo el flujo automático
