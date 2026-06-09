@@ -3737,11 +3737,51 @@ async function confirmarVisitaMulti() {
   transform:translateY(-1px);box-shadow:0 5px 16px rgba(220,38,38,.42);
 }
 
+/* ───────── Encabezado de sección (jerarquía ejecutiva) ─────────
+   Todas las secciones del panel (Chat, Atención, Diagnóstico, Reportes)
+   abren con este mismo bloque para dar orden y consistencia. */
+.intel-section{display:flex;align-items:flex-start;gap:11px;
+  margin:26px 0 13px;padding-bottom:0;}
+.intel-section:first-child{margin-top:6px;}
+.intel-section-bar{flex:0 0 auto;width:4px;align-self:stretch;min-height:34px;
+  border-radius:50px;background:linear-gradient(180deg,var(--intel-red),#7f1d1d);}
+.intel-section-txt{flex:1;min-width:0;}
+.intel-section-title{font-size:1.02rem;font-weight:900;color:#0a0a0a;
+  letter-spacing:-.2px;display:flex;align-items:center;gap:9px;line-height:1.2;}
+.intel-section-title i{font-size:1.05rem;color:var(--intel-red);}
+.intel-section-sub{font-size:.78rem;color:#6b7280;margin-top:2px;line-height:1.35;}
+
+/* ───────── Tarjeta del CHAT (la estrella → marco rojo) ───────── */
+.intel-card-chat{border:1px solid #fecaca;
+  box-shadow:0 10px 30px -20px rgba(220,38,38,.35),0 1px 2px rgba(16,24,40,.04);}
+#intelPanel .intel-card-chat #intelChatInput{min-height:44px;border-radius:11px;}
+#intelPanel .intel-card-chat #intelChatInput:focus{border-color:#dc2626;
+  box-shadow:0 0 0 .18rem rgba(220,38,38,.14);}
+#intelPanel .intel-card-chat .btn-ilus{min-height:44px;border-radius:11px;}
+
+/* ───────── Zona "Reportes y documentos" (botones consistentes) ───────── */
+.intel-report-card{display:flex;align-items:center;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;}
+.intel-report-info{flex:1 1 260px;min-width:0;}
+.intel-report-title{font-size:.95rem;font-weight:800;color:#0f172a;
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;line-height:1.25;}
+.intel-report-title i{font-size:1.05rem;}
+.intel-report-desc{font-size:.78rem;color:#6b7280;margin-top:4px;line-height:1.45;}
+/* Botón uniforme para TODA la zona de reportes (mismo alto/forma) */
+#intelPanel .intel-report-btn{min-height:44px;border-radius:11px;font-weight:800;
+  white-space:nowrap;flex:0 0 auto;padding:0 18px;}
+.intel-report-soon{background:#fafafa;border:1px dashed #d1d5db;}
+.intel-report-soon .intel-report-title{color:#6b7280;}
+
 @media (max-width:576px){
   .intel-hero2{padding:18px 16px;gap:16px;}
   .intel-hero2-side{width:100%;}
   .intel-gauge{width:120px;height:120px;}
   .intel-card{padding:15px 16px;}
+  .intel-section{margin:22px 0 11px;}
+  .intel-section-title{font-size:.96rem;}
+  .intel-report-card{flex-direction:column;align-items:stretch;}
+  #intelPanel .intel-report-btn{width:100%;}
 }
 </style>
 

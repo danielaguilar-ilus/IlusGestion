@@ -7054,6 +7054,20 @@ function _intelEsc(s){
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// Fecha en formato chileno DD/MM/YYYY para TODO el panel del Agente.
+// El backend envía fechas ISO ("2025-09-30" o "2025-09-30 14:05"). Aquí las
+// mostramos como "30/09/2025". Si el valor no es una fecha ISO reconocible,
+// se devuelve tal cual (no rompemos textos como "—" o "Indefinido").
+function _intelFecha(s){
+  if (s == null) return '';
+  const str = String(s).trim();
+  if (!str) return '';
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);   // YYYY-MM-DD[...]
+  if (!m) return str;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+// Igual que _intelFecha pero ya escapado para inyectar en HTML.
+function _intelFechaEsc(s){ return _intelEsc(_intelFecha(s)); }
 
 async function cargarInteligencia(force = false) {
   const panel = document.getElementById('intelPanel');
@@ -7105,10 +7119,18 @@ function _intelRender(d){
   const riskIcon = { alto:'exclamation-octagon-fill', medio:'exclamation-triangle-fill', bajo:'shield-check' }[riesgo] || 'shield-check';
   const riskLbl  = { alto:'Riesgo alto', medio:'Riesgo medio', bajo:'Riesgo bajo' }[riesgo] || ('Riesgo ' + riesgo);
 
-  // ── Consultas accionables del Agente Proactivo (arriba de todo) ──
-  let html = _intelConsultas(d.consultas);
+  // ════════════════════════════════════════════════════════════════
+  // JERARQUÍA EJECUTIVA DEL PANEL (pensada para gerencia):
+  //   1. HERO          → salud / riesgo / contrato (estado de un vistazo)
+  //   2. CHAT          → la estrella: pregúntale al agente
+  //   3. ATENCIÓN      → consultas que el agente necesita que resuelvas
+  //   4. DIAGNÓSTICO   → KPIs + contrato/historia/agenda/facturación/…
+  //   5. REPORTES      → generar informes y (a futuro) analizar PDFs
+  // Cada bloque abre con un encabezado de sección consistente (.intel-section).
+  // ════════════════════════════════════════════════════════════════
+  let html = '';
 
-  // ── HERO del Agente: avatar + burbuja con el resumen + gauge de salud ──
+  // ── 1) HERO del Agente: avatar + burbuja con el resumen + gauge de salud ──
   // El resumen "te habla" en primera persona (cálido, humano). Si el backend
   // no lo manda, caemos en un texto sensato para no dejar el hero vacío.
   const resumen = (d.resumen_ejecutivo && String(d.resumen_ejecutivo).trim())
@@ -7140,14 +7162,15 @@ function _intelRender(d){
     </div>
   </div>`;
 
-  // ── Chat: Pregúntale al agente (conversacional, determinista, sin IA) ──
+  // ── 2) CHAT: Pregúntale al agente (conversacional, determinista, sin IA) ──
+  // Es la "estrella" del panel → va arriba y con marco rojo destacado.
   const _chipsHtml = INTEL_CHIPS.map(q =>
     `<button class="btn btn-sm btn-outline-secondary" style="font-size:.72rem;border-radius:50px" onclick='intelPreguntar(${JSON.stringify(q)})'>${_intelEsc(q)}</button>`
   ).join('');
+  html += _intelSection('Pregúntale al agente', 'chat-dots-fill', 'La estrella: resuelve dudas de este cliente al instante');
   html += `
-  <div class="intel-card" id="intelChatCard" style="border:1px solid #e5e7eb">
-    <div class="intel-card-title"><i class="bi bi-chat-dots-fill" style="color:#dc2626"></i>Pregúntale al agente sobre este cliente</div>
-    <div id="intelChatLog" style="max-height:320px;overflow-y:auto;margin:6px 0 8px;padding-right:4px">
+  <div class="intel-card intel-card-chat" id="intelChatCard">
+    <div id="intelChatLog" style="max-height:320px;overflow-y:auto;margin:2px 0 10px;padding-right:4px">
       <div style="text-align:left;margin:4px 0"><span style="display:inline-block;background:#f3f4f6;color:#111827;padding:7px 12px;border-radius:14px 14px 14px 2px;font-size:.82rem">Pregúntame lo que necesites de este cliente — frecuencia, garantías, si se cobra o es gratis, cuánto cobrar, atrasos, fuga a terceros… Toca una sugerencia o escribe abajo. 👇</span></div>
     </div>
     <div class="d-flex flex-wrap gap-1 mb-2">${_chipsHtml}</div>
@@ -7157,44 +7180,42 @@ function _intelRender(d){
     </div>
   </div>`;
 
-  // ── Card: Informe de gestión trimestral (cerca del score, prominente) ──
-  // Determinista: el backend genera 1 informe por trimestre y lo deja en
-  // Reportes. Si el dict no trae `informe_trimestral`, no mostramos la tarjeta.
-  html += _intelInformeTrimestral(d.informe_trimestral);
+  // ── 3) ATENCIÓN: consultas accionables que el agente necesita resueltas ──
+  // Siempre se pinta (si no hay nada pendiente, _intelConsultas muestra el
+  // estado positivo verde). Encabezado de sección consistente arriba.
+  html += _intelSection('Acciones que requieren tu atención', 'bell-fill', 'Lo que el agente necesita que resuelvas en esta ficha');
+  html += _intelConsultas(d.consultas);
 
-  // ── Botón: Informe de gestión COMPLETO del cliente (HTML imprimible → PDF) ──
-  html += '<div class="intel-card" style="border-left:4px solid #dc2626">'
-        + '<div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">'
-        + '<div><div class="fw-bold"><i class="bi bi-file-earmark-text me-1 text-danger"></i>Informe de gestión del cliente</div>'
-        + '<div class="text-muted small">Contrato, cláusulas, frecuencia, pagos, productos, historial y tus dolores — listo para imprimir/enviar.</div></div>'
-        + '<button class="btn btn-ilus fw-bold" onclick="intelInformeFicha()"><i class="bi bi-download me-1"></i>Generar informe (PDF)</button>'
-        + '</div></div>';
+  // ════════════════════════════════════════════════════════════════
+  // 4) DIAGNÓSTICO — la "foto completa" del cliente, agrupada y titulada.
+  // ════════════════════════════════════════════════════════════════
+  html += _intelSection('Diagnóstico del cliente', 'clipboard-data', 'Contrato, historia, agenda, facturación y métricas clave');
 
-  // ── Historia (pasado) vs Agenda (futuro): dos tarjetas diferenciadas ──
-  // Verde/gris "hecho" a la izquierda · azul "programado" a la derecha.
-  html += _intelHistoriaAgenda(d);
-
-  // ── Cierre de facturación (prioridad alta del dueño) ──
-  // Junto a Historia/Agenda: un servicio realizado NO está cerrado hasta
-  // facturarlo. Tono alerta si hay pendientes; verde sobrio si está al día.
-  html += _intelFacturacion(d);
-
-  // ── Fila de KPIs ──
+  // ── 4.0) Fila de KPIs (resumen numérico, abre el diagnóstico) ──
   const kpis = Array.isArray(d.kpis) ? d.kpis : [];
   if (kpis.length) {
     html += '<div class="row g-2 mb-3">';
     kpis.forEach(k => {
       const tono = (k.tono || 'ok').toLowerCase();
+      // Los KPIs de fecha (Próxima/Última) deben mostrarse DD/MM/YYYY.
+      // _intelFecha devuelve el texto original si no es una fecha ISO.
+      const valor = _intelFecha(k.valor);
       html += `
       <div class="col-6 col-md-4 col-xl-3">
         <div class="intel-kpi intel-kpi-${tono}">
           <div class="intel-kpi-lbl">${_intelEsc(k.label)}</div>
-          <div class="intel-kpi-val">${_intelEsc(k.valor)}${k.sufijo ? `<span style="font-size:.7rem;font-weight:700;color:#9ca3af"> ${_intelEsc(k.sufijo)}</span>` : ''}</div>
+          <div class="intel-kpi-val">${_intelEsc(valor)}${k.sufijo ? `<span style="font-size:.7rem;font-weight:700;color:#9ca3af"> ${_intelEsc(k.sufijo)}</span>` : ''}</div>
         </div>
       </div>`;
     });
     html += '</div>';
   }
+
+  // ── 4.1) Historia (pasado) vs Agenda (futuro): dos tarjetas diferenciadas ──
+  html += _intelHistoriaAgenda(d);
+
+  // ── 4.2) Cierre de facturación (prioridad alta del dueño) ──
+  html += _intelFacturacion(d);
 
   html += '<div class="intel-grid">';
 
@@ -7222,8 +7243,8 @@ function _intelRender(d){
       `<span class="intel-pill"><i class="bi bi-tag"></i>${_intelEsc(t)}: <b>${parseInt(porTipo[t],10)||0}</b></span>`).join('')}</div>` : ''}
     <div class="intel-dl">
       <div class="intel-dl-item"><div class="intel-dl-lbl">Levantamientos</div><div class="intel-dl-val">${parseInt(u.levantamientos,10)||0}</div></div>
-      <div class="intel-dl-item"><div class="intel-dl-lbl">Última gestión</div><div class="intel-dl-val">${_intelEsc(u.ultima_fecha || '—')}${dduTxt ? ` <span style="color:${dduColor};font-weight:800;font-size:.78rem"><i class="bi bi-${dduIcon}"></i> ${dduTxt}</span>` : ''}</div></div>
-      <div class="intel-dl-item"><div class="intel-dl-lbl">Primera gestión</div><div class="intel-dl-val">${_intelEsc(u.primera_fecha || '—')}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Última gestión</div><div class="intel-dl-val">${u.ultima_fecha ? _intelFechaEsc(u.ultima_fecha) : '—'}${dduTxt ? ` <span style="color:${dduColor};font-weight:800;font-size:.78rem"><i class="bi bi-${dduIcon}"></i> ${dduTxt}</span>` : ''}</div></div>
+      <div class="intel-dl-item"><div class="intel-dl-lbl">Primera gestión</div><div class="intel-dl-val">${u.primera_fecha ? _intelFechaEsc(u.primera_fecha) : '—'}</div></div>
     </div>
   </div>`;
 
@@ -7303,7 +7324,7 @@ function _intelRender(d){
       <div class="intel-dl-item"><div class="intel-dl-lbl">Gratis al año</div><div class="intel-dl-val">${parseInt(c.gratis_incluidas_anual,10)||0}${c.gratis_origen ? ` <span style="font-size:.62rem;color:#9ca3af;font-weight:600">(${_intelEsc(c.gratis_origen)})</span>` : ''}</div></div>
       <div class="intel-dl-item"><div class="intel-dl-lbl">Valor anual</div><div class="intel-dl-val">${_intelCLP(c.valor_anual)}</div></div>
     </div>
-    ${(c.vigencia_inicio || c.vigencia_fin) ? `<div style="font-size:.7rem;color:#9ca3af;margin-top:10px"><i class="bi bi-calendar-range me-1"></i>${_intelEsc(c.vigencia_inicio || '—')} → ${_intelEsc(c.vigencia_fin || (c.es_indefinido ? 'Indefinido' : '—'))}</div>` : ''}
+    ${(c.vigencia_inicio || c.vigencia_fin) ? `<div style="font-size:.7rem;color:#9ca3af;margin-top:10px"><i class="bi bi-calendar-range me-1"></i>${c.vigencia_inicio ? _intelFechaEsc(c.vigencia_inicio) : '—'} → ${c.vigencia_fin ? _intelFechaEsc(c.vigencia_fin) : (c.es_indefinido ? 'Indefinido' : '—')}</div>` : ''}
   </div>`;
 
   // ── Card: Brecha de mantenciones gratis (ROJA si pendientes>0) ──
@@ -7335,13 +7356,13 @@ function _intelRender(d){
       <div class="intel-card-title"><i class="bi bi-calendar2-week" style="color:#dc2626"></i>Proyección de fechas</div>
       <div class="row g-3" style="font-size:.7rem;color:#6b7280;margin-bottom:4px">
         <div class="col-12 col-md-4"><b>Esperadas a hoy:</b> ${parseInt(m.esperadas_a_hoy,10)||0}</div>
-        <div class="col-12 col-md-4"><b>Última:</b> ${_intelEsc(m.ultima_fecha || '—')}</div>
-        <div class="col-12 col-md-4"><b>Próxima:</b> ${_intelEsc(m.proxima_fecha || '—')}</div>
+        <div class="col-12 col-md-4"><b>Última:</b> ${m.ultima_fecha ? _intelFechaEsc(m.ultima_fecha) : '—'}</div>
+        <div class="col-12 col-md-4"><b>Próxima:</b> ${m.proxima_fecha ? _intelFechaEsc(m.proxima_fecha) : '—'}</div>
       </div>
       <div class="intel-tl">
-        ${vencidas.map(v => `<div class="intel-tl-row intel-tl-vencida"><span style="color:#dc2626;font-weight:700">${_intelEsc(v.fecha)}</span> <span style="color:#991b1b;font-size:.74rem">— vencida hace ${parseInt(v.dias_atraso,10)||0} días</span></div>`).join('')}
-        ${proximas.map(p => `<div class="intel-tl-row intel-tl-prox"><span style="color:#166534;font-weight:700">${_intelEsc(p.fecha)}</span> <span style="color:#15803d;font-size:.74rem">— en ${parseInt(p.dias_faltan,10)||0} días</span></div>`).join('')}
-        ${proyeccion.map(f => `<div class="intel-tl-row intel-tl-proy"><span style="color:#6b7280">${_intelEsc(f)}</span> <span style="color:#9ca3af;font-size:.74rem">— proyectada</span></div>`).join('')}
+        ${vencidas.map(v => `<div class="intel-tl-row intel-tl-vencida"><span style="color:#dc2626;font-weight:700">${_intelFechaEsc(v.fecha)}</span> <span style="color:#991b1b;font-size:.74rem">— vencida hace ${parseInt(v.dias_atraso,10)||0} días</span></div>`).join('')}
+        ${proximas.map(p => `<div class="intel-tl-row intel-tl-prox"><span style="color:#166534;font-weight:700">${_intelFechaEsc(p.fecha)}</span> <span style="color:#15803d;font-size:.74rem">— en ${parseInt(p.dias_faltan,10)||0} días</span></div>`).join('')}
+        ${proyeccion.map(f => `<div class="intel-tl-row intel-tl-proy"><span style="color:#6b7280">${_intelFechaEsc(f)}</span> <span style="color:#9ca3af;font-size:.74rem">— proyectada</span></div>`).join('')}
       </div>
     </div>`;
   }
@@ -7396,10 +7417,63 @@ function _intelRender(d){
   // ── Oportunidades (consultas de severidad baja / tipo oportunidad) ──
   html += _intelOportunidades(d.consultas);
 
+  // ════════════════════════════════════════════════════════════════
+  // 5) REPORTES Y DOCUMENTOS — todo lo de generar/analizar informes,
+  // agrupado en UNA zona limpia con botones consistentes. A futuro acá
+  // vivirá la carga de un PDF de OT para analizar (placeholder listo).
+  // ════════════════════════════════════════════════════════════════
+  html += _intelSection('Reportes y documentos', 'folder2-open', 'Genera informes del cliente y analiza documentos');
+  html += _intelReportes(d);
+
   // ── Cómo trabaja tu Agente (ficha de instrucciones, al FINAL) ──
   html += _intelPrincipios(d);
 
   panel.innerHTML = html;
+}
+
+// ─── Encabezado de sección consistente del panel del Agente ─────────
+// Todas las secciones (Chat, Atención, Diagnóstico, Reportes) abren con
+// este mismo encabezado para dar jerarquía visual uniforme.
+function _intelSection(titulo, icono, sub){
+  return `
+  <div class="intel-section">
+    <div class="intel-section-bar"></div>
+    <div class="intel-section-txt">
+      <div class="intel-section-title"><i class="bi bi-${_intelEsc(icono)}"></i>${_intelEsc(titulo)}</div>
+      ${sub ? `<div class="intel-section-sub">${_intelEsc(sub)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+// ─── Zona "Reportes y documentos" (agrupada y consistente) ──────────
+// Reúne: (1) informe de gestión trimestral, (2) informe de gestión del
+// cliente (PDF), (3) placeholder "Analizar OT (PDF)" para el futuro.
+// Botones del mismo tamaño/estilo, alineados; nada desperdigado.
+function _intelReportes(d){
+  // (1) Informe trimestral (si el backend lo trae; si no, no se pinta).
+  const trimestral = _intelInformeTrimestral(d.informe_trimestral);
+
+  // (2) Informe de gestión COMPLETO del cliente (HTML imprimible → PDF).
+  const informeFicha = `
+  <div class="intel-card intel-report-card">
+    <div class="intel-report-info">
+      <div class="intel-report-title"><i class="bi bi-file-earmark-text text-danger"></i>Informe de gestión del cliente</div>
+      <div class="intel-report-desc">Contrato, cláusulas, frecuencia, pagos, productos, historial y tus dolores — listo para imprimir o enviar.</div>
+    </div>
+    <button class="btn btn-ilus fw-bold intel-report-btn" onclick="intelInformeFicha()"><i class="bi bi-download me-1"></i>Generar informe (PDF)</button>
+  </div>`;
+
+  // (3) Placeholder: Analizar OT (PDF). Deshabilitado con tooltip "próximamente".
+  const analizarOT = `
+  <div class="intel-card intel-report-card intel-report-soon">
+    <div class="intel-report-info">
+      <div class="intel-report-title"><i class="bi bi-cloud-arrow-up text-muted"></i>Analizar OT (PDF) <span class="intel-chip" style="background:#f3f4f6;color:#6b7280">Próximamente</span></div>
+      <div class="intel-report-desc">Sube el PDF de una OT y el agente lo analizará automáticamente para extraer trabajos, repuestos y observaciones.</div>
+    </div>
+    <button class="btn btn-outline-secondary fw-bold intel-report-btn" disabled title="Próximamente"><i class="bi bi-upload me-1"></i>Subir PDF</button>
+  </div>`;
+
+  return trimestral + informeFicha + analizarOT;
 }
 
 // ─── Tarjeta "Informe de gestión trimestral" ───────────────────────
@@ -7537,7 +7611,7 @@ function _intelHistoriaAgenda(d){
     let sub = '';
     if (h.ultima) {
       const dduTxt = (ddu == null) ? '' : (ddu <= 0 ? ' · hoy' : ` · hace ${ddu} día${ddu===1?'':'s'}`);
-      sub = `<div style="font-size:.74rem;color:#6b7280;margin-top:4px"><i class="bi bi-clock-history me-1" style="color:#16a34a"></i>Última: <b style="color:#0f172a">${_intelEsc(h.ultima)}</b>${_intelEsc(dduTxt)}</div>`;
+      sub = `<div style="font-size:.74rem;color:#6b7280;margin-top:4px"><i class="bi bi-clock-history me-1" style="color:#16a34a"></i>Última: <b style="color:#0f172a">${_intelFechaEsc(h.ultima)}</b>${_intelEsc(dduTxt)}</div>`;
     }
 
     // Chips de cobertura. "Tercero (fuga)" en ROJO (es fuga, dato sensible).
@@ -7576,7 +7650,7 @@ function _intelHistoriaAgenda(d){
         return `<div class="intel-tl-row intel-tl-prox" style="padding-top:7px;padding-bottom:7px">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <i class="bi bi-calendar-check" style="color:#16a34a"></i>
-            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
+            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${it.fecha ? _intelFechaEsc(it.fecha) : '—'}</span>
             <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
             ${it.es_retroactiva ? '<span class="intel-chip" style="background:#f3f4f6;color:#6b7280"><i class="bi bi-arrow-counterclockwise"></i>retroactiva</span>' : ''}
             ${it.id ? `<button class="btn btn-sm btn-outline-danger py-0 px-2 ms-auto" style="font-size:.68rem;line-height:1.5" onclick="intelInformePostservicio(${it.id})" title="Generar informe post-servicio"><i class="bi bi-file-earmark-text"></i> Informe</button>` : ''}
@@ -7615,7 +7689,7 @@ function _intelHistoriaAgenda(d){
     let sub = '';
     if (a.proxima) {
       const dapTxt = (dap == null) ? '' : (dap <= 0 ? ' · hoy' : ` · en ${dap} día${dap===1?'':'s'}`);
-      sub = `<div style="font-size:.74rem;color:#6b7280;margin-top:4px"><i class="bi bi-calendar-event me-1" style="color:#3b82f6"></i>Próxima: <b style="color:#0f172a">${_intelEsc(a.proxima)}</b>${_intelEsc(dapTxt)}</div>`;
+      sub = `<div style="font-size:.74rem;color:#6b7280;margin-top:4px"><i class="bi bi-calendar-event me-1" style="color:#3b82f6"></i>Próxima: <b style="color:#0f172a">${_intelFechaEsc(a.proxima)}</b>${_intelEsc(dapTxt)}</div>`;
     }
 
     // Alerta de programadas ya vencidas (ámbar/roja).
@@ -7648,7 +7722,7 @@ function _intelHistoriaAgenda(d){
         return `<div class="intel-tl-row ${esVencida?'intel-tl-vencida':'intel-tl-proy'}" style="padding-top:7px;padding-bottom:7px">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <i class="bi bi-calendar-event" style="color:${esVencida?'#dc2626':'#3b82f6'}"></i>
-            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
+            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${it.fecha ? _intelFechaEsc(it.fecha) : '—'}</span>
             <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
             ${badge}
           </div>
@@ -7735,7 +7809,7 @@ function _intelFacturacion(d){
         return `<div class="intel-tl-row intel-tl-vencida" style="padding-top:7px;padding-bottom:7px">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <i class="bi bi-receipt" style="color:#dc2626"></i>
-            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${_intelEsc(it.fecha || '—')}</span>
+            <span style="color:#0f172a;font-weight:700;font-size:.82rem">${it.fecha ? _intelFechaEsc(it.fecha) : '—'}</span>
             <span style="color:#475569;font-size:.78rem">${_intelEsc(tipoLbl)}</span>
             ${efLbl ? `<span class="intel-chip" style="${efStyle(efLbl)}">${_intelEsc(efLbl)}</span>` : ''}
           </div>
@@ -8013,12 +8087,13 @@ function _intelConsultas(consultas){
   // Orden: alta primero, luego media.
   const rank = { alta:0, media:1 };
   list.sort((a,b) => (rank[(a.severidad||'').toLowerCase()] ?? 9) - (rank[(b.severidad||'').toLowerCase()] ?? 9));
+  // El título grande lo aporta el encabezado de sección; aquí solo un
+  // contador compacto para no duplicar el rótulo.
   return `
   <div class="intel-agente-box">
     <div class="intel-agente-head">
       <i class="bi bi-bell-fill" style="color:#dc2626"></i>
-      <span>El agente necesita tu ayuda</span>
-      <span class="intel-chip" style="background:#fee2e2;color:#991b1b">${list.length}</span>
+      <span>${list.length} pendiente${list.length===1?'':'s'} por resolver</span>
     </div>
     ${list.map(_intelConsultaCard).join('')}
   </div>`;

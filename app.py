@@ -44327,10 +44327,29 @@ def mant_ticket_ficha(tid):
 def mant_cliente_maquinas_list(cid):
     """Lista máquinas del cliente — para el selector en ticket nuevo."""
     rows = mysql_fetchall(
-        "SELECT id, nombre, sku, serie, estado_op "
+        "SELECT id, nombre, sku, serie, estado_op, COALESCE(aplica_mantencion,1) AS aplica_mantencion "
         "  FROM mant_maquinas WHERE cliente_id=%s ORDER BY nombre", (cid,)
     ) or []
     return jsonify([dict(r) for r in rows])
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/aplica-mantencion", methods=["PUT"])
+@_mant_required
+def mant_maquina_aplica_mantencion(mid):
+    """Marca si al equipo se le realiza mantención (SÍ/NO). Sirve para segregar
+    accesorios/productos que no requieren seguimiento ni se cotizan como mantención."""
+    d = request.get_json(silent=True) or {}
+    val = 1 if d.get("aplica", True) else 0
+    try:
+        mysql_execute("UPDATE mant_maquinas SET aplica_mantencion=%s WHERE id=%s", (val, mid))
+    except Exception as e:
+        print(f"[aplica_mantencion] mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar."}), 500
+    try:
+        _mant_log("maquina", mid, "aplica_mantencion", "si" if val else "no")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "aplica": bool(val)})
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -58639,6 +58658,18 @@ def _ensure_mant_intel_tables():
             print(f"[ensure_intel] mant_contrato_reglas seed OK ({_o // 10} reglas)", flush=True)
     except Exception as e:
         print(f"[ensure_intel] contrato_reglas: {e}", flush=True)
+    # Campo "¿aplica mantención?" en el equipo (segregar accesorios que NO se mantienen).
+    try:
+        _col = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_maquinas' "
+            "AND COLUMN_NAME='aplica_mantencion'")
+        if not _col or not (_col.get("n") or 0):
+            mysql_execute("ALTER TABLE mant_maquinas ADD COLUMN aplica_mantencion TINYINT(1) NOT NULL DEFAULT 1 "
+                          "COMMENT 'Si al equipo se le realiza mantencion (segregar accesorios)'")
+            print("[ensure_intel] mant_maquinas.aplica_mantencion agregada", flush=True)
+    except Exception as e:
+        print(f"[ensure_intel] aplica_mantencion: {e}", flush=True)
     try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_cliente_intel (
