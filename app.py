@@ -39865,9 +39865,48 @@ cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a
                          "tipo_compraventa_transferencia_propiedad"} & _ids_alert)
     _clausulas = ([c["mensaje"] for c in _an.get("clausulas_relevantes", [])]
                   + ["✓ " + f["mensaje"] for f in _an.get("clausulas_favorables", [])])
+
+    # ── Campos extraídos por el motor determinista (regex, sin IA) con
+    #    FALLBACK a los metadatos ya guardados en mant_contratos ──
+    _campos = _an.get("campos_extraidos") or {}
+    _tipo_doc_motor = _an.get("tipo_documento")
+    _TIPO_LABEL_APP = {
+        "mantencion": "Servicio de mantención", "arriendo": "Arriendo / Leasing (revisar)",
+        "comodato": "Comodato", "compraventa": "Compraventa",
+        "garantia": "Garantía", "otro": "Otro / atípico",
+    }
+    if _es_arriendo:
+        _tipo_contrato = "Arriendo / Riesgo (revisar)"
+    elif _tipo_doc_motor:
+        _tipo_contrato = _TIPO_LABEL_APP.get(_tipo_doc_motor, "Servicio de mantención")
+    else:
+        _tipo_contrato = "Servicio de mantención"
+
+    # Vigencia: texto del contrato, con fallback a las fechas del registro.
+    _vig_ini = _campos.get("vigencia_inicio") or (
+        ct["fecha_inicio"].strftime("%d/%m/%Y") if ct.get("fecha_inicio") else None)
+    _vig_fin = _campos.get("vigencia_fin") or (
+        ct["fecha_vencimiento"].strftime("%d/%m/%Y") if ct.get("fecha_vencimiento") else None)
+    # Monto: el extraído del texto, o el monto_mensual del registro.
+    _costo_mensual = _campos.get("monto_principal")
+    if _costo_mensual is None and ct.get("monto_mensual"):
+        try:
+            _costo_mensual = int(float(ct["monto_mensual"]))
+        except (ValueError, TypeError):
+            _costo_mensual = None
+    # Frecuencia: la del texto, o la declarada en el registro.
+    _frec = _campos.get("frecuencia_meses")
+    if _frec is None and ct.get("frecuencia_meses"):
+        try:
+            _frec = int(ct["frecuencia_meses"])
+        except (ValueError, TypeError):
+            _frec = None
+
     resultado = {
-        "motor": "contrato-reglas-v1",
-        "tipo_contrato": "Arriendo / Riesgo (revisar)" if _es_arriendo else "Servicio de mantención",
+        "motor": _an.get("motor") or "contrato-reglas-v1",
+        "tipo_contrato": _tipo_contrato,
+        "tipo_documento": _tipo_doc_motor,
+        "cobertura_parcial": bool(_an.get("cobertura_parcial")),
         "resumen": _an.get("resumen", ""),
         "score": _an.get("score"),
         "nivel_riesgo": _an.get("nivel_riesgo", "medio"),
@@ -39876,6 +39915,17 @@ cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a
         "clausulas_criticas": _clausulas,
         "mejoras_prioritarias": [p["propuesta"] for p in _an.get("propuestas_mejora", [])],
         "cobertura_descripcion": "",
+        # Campos extraídos del documento (determinista) + fallback a metadatos.
+        "vigencia_inicio": _vig_ini,
+        "vigencia_fin": _vig_fin,
+        "es_indefinido": bool(_campos.get("es_indefinido")),
+        "costo_mensual": _costo_mensual,
+        "montos_uf": _campos.get("montos_uf") or [],
+        "frecuencia_sugerida_meses": _frec,
+        "sla_horas": _campos.get("sla_horas"),
+        "ruts": _campos.get("ruts") or [],
+        "partes": _campos.get("ruts") or [],
+        "campos_extraidos": _campos,
         "detalle": _an,
     }
 

@@ -14,8 +14,23 @@ import unicodedata
 
 
 def _norm(s):
+    """minúsculas + sin tildes (ñ→n) + puntuación a espacios → tokens limpios."""
     s = (s or "").lower().strip()
-    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _similar(a, b):
+    """Tolerancia a typos (difflib, determinista). True si a≈b."""
+    import difflib
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.82
+
+
+def _fmt_fecha(s):
+    """'YYYY-MM-DD[...]' → 'DD/MM/YYYY' (regla del proyecto). Si no matchea, devuelve el original."""
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(s or ""))
+    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else (str(s) if s else "")
 
 
 def _clp(v):
@@ -141,7 +156,7 @@ def _r_mantenciones_vencidas(d):
     out = [f"🔴 Hay {n} mantención(es) VENCIDA(S). Llevas {real} realizadas de {esp} esperadas a hoy (déficit de {max(0,(esp or 0)-(real or 0))})."]
     for v in venc[:6]:
         if isinstance(v, dict):
-            f = v.get("fecha") or v.get("fecha_esperada") or "—"
+            f = _fmt_fecha(v.get("fecha") or v.get("fecha_esperada")) or "—"
             da = v.get("dias_atraso")
             out.append(f"  • {f}" + (f" — {da} día(s) de atraso" if da is not None else ""))
     out.append("📅 Prográmalas para evitar exposición de SLA y que el cliente llame a un tercero.")
@@ -153,10 +168,10 @@ def _r_proxima_mantencion(d):
     prox = _g(d, "mantenciones.proximas", []) or []
     frec = _g(d, "diagnostico_contrato.frecuencia_meses")
     if pf:
-        out = [f"📅 La próxima mantención está agendada para el {str(pf)[:10]}."]
+        out = [f"📅 La próxima mantención está agendada para el {_fmt_fecha(pf)}."]
         for p in prox[:3]:
             if isinstance(p, dict) and p.get("fecha"):
-                out.append(f"  • {str(p.get('fecha'))[:10]}" + (f" — {p.get('titulo') or p.get('tipo') or ''}" if (p.get('titulo') or p.get('tipo')) else ""))
+                out.append(f"  • {_fmt_fecha(p.get('fecha'))}" + (f" — {p.get('titulo') or p.get('tipo') or ''}" if (p.get('titulo') or p.get('tipo')) else ""))
         return "\n".join(out)
     if frec:
         return f"No hay próxima mantención agendada, pero el contrato exige una cada {frec} meses — debes programarla."
@@ -284,7 +299,7 @@ def _r_historial(d):
     ult = _g(d, "historia.ultima") or _g(d, "universo.ultima_fecha")
     gasto = _clp(_g(d, "historia.gasto_total"))
     out = [f"📋 Histórico: {tot} gestiones registradas"
-           + (f", última el {str(ult)[:10]}" if ult else "")
+           + (f", última el {_fmt_fecha(ult)}" if ult else "")
            + (f", gasto total {gasto}" if gasto else "") + "."]
     out.append(f"Contrato: {_cob(d,'Contrato')} | Cliente paga: {_cob(d,'Cliente paga')} | Garantía: {_cob(d,'Garantía')} | Tercero (fuga): {_cob(d,'Tercero (fuga)')}.")
     if _cob(d, "Tercero (fuga)"):
@@ -436,7 +451,7 @@ def _r_contacto(d):
 # ── Tabla de intents (orden = prioridad) ─────────────────────────────
 INTENTS = [
     ("gratis_o_se_cobra", _r_gratis_o_se_cobra, 1, ["gratis", "se cobra", "cobrar", "cobro", "cubierto", "cubrimos", "incluido", "incluye", "gratuita", "cortesia", "facturar o garantia"]),
-    ("cuanto_cobrar", _r_cuanto_cobrar, 1, ["cuanto cobr", "cuanto le cobro", "cuanto cotiz", "precio", "monto", "cotizo", "cotizar", "ofrecer", "cuanto vale", "tarifa", "valorizacion", "propuesta", "descuento", "cuanto queda"]),
+    ("cuanto_cobrar", _r_cuanto_cobrar, 1, ["cuanto cobr", "cuanto le cobro", "cuanto deber", "deberia cobr", "cobrarle", "cuanto cotiz", "precio", "monto", "cotizo", "cotizar", "ofrecer", "cuanto vale", "tarifa", "valorizacion", "propuesta", "descuento", "cuanto queda", "plata", "lucas", "presupuesto"]),
     ("fuga_a_terceros", _r_fuga_a_terceros, 1, ["fuga", "tercero", "competencia", "otra empresa", "otro proveedor", "perdiendo", "externo", "competidor", "se nos va"]),
     ("mantenciones_gratis_pendientes", _r_mantenciones_gratis_pendientes, 1, ["gratis pendientes", "incluidas", "cuantas gratis", "le debemos", "pactadas", "cumplimos", "quedan gratis", "regalando", "regalo", "brecha"]),
     ("servicios_sin_facturar", _r_servicios_sin_facturar, 1, ["sin facturar", "facturacion", "por cobrar", "no facturado", "regularizar", "factura pendiente", "pendiente de cobro"]),
@@ -450,7 +465,7 @@ INTENTS = [
     ("oportunidad", _r_oportunidad, 3, ["oportunidad", "vender", "venta", "upsell", "negocio", "crecer", "que le ofrezco", "que le puedo vender", "potencial"]),
     ("que_hacer", _r_que_hacer, 3, ["que hago", "que hacer", "que falta", "proximos pasos", "que sigue", "recomendacion", "prioridad", "acciones", "plan"]),
     ("equipos", _r_equipos, 3, ["equipos", "maquinas", "inventario", "sin serie", "sin foto", "cuantas maquinas", "parque", "equipo critico"]),
-    ("garantia_mal_asignada", _r_garantia_mal_asignada, 4, ["mal asignada", "mal clasificada", "regalado", "garantia mal", "deberia cobrar", "debi cobrar", "exceso garantia"]),
+    ("garantia_mal_asignada", _r_garantia_mal_asignada, 4, ["mal asignada", "mal clasificada", "regalamos garantia", "garantia mal", "se debio cobrar", "debi cobrar", "exceso garantia", "regalado en garantia"]),
     ("exposicion_total", _r_exposicion_total, 4, ["exposicion", "en riesgo", "perdida", "en juego", "plata en riesgo", "riesgo economico", "cuanto pierdo", "dejamos de facturar"]),
     ("legal", _r_legal, 5, ["legal", "ley", "19496", "consumidor", "demanda", "demandar", "sernac", "reclamo", "responsabilidad"]),
     ("datos_faltantes", _r_datos_faltantes, 4, ["que datos faltan", "incompleta", "completar", "calidad de la ficha", "esta completa", "que le falta a la ficha"]),
@@ -478,25 +493,44 @@ def responder(pregunta, d):
     q = _norm(pregunta)
     if not q or len(q) < 2:
         return {"intent": None,
-                "respuesta": "Hazme una pregunta sobre este cliente. Por ejemplo, toca una de las sugerencias.",
+                "respuesta": "Hazme una pregunta sobre este cliente — frecuencia, garantías, si se cobra o es gratis, atrasos, riesgo… o toca una sugerencia.",
                 "sugerencias": CHIPS}
-    best, best_score, best_pri = None, 0, 99
+    qtoks = set(q.split())
+    best, best_score, best_pri = None, 0.0, 99
     for key, fn, pri, kws in INTENTS:
-        # Pondera por nº de palabras del keyword: una frase específica
-        # ("cuanto le cobro") pesa más que una palabra genérica ("cobro").
-        score = sum(len(k.split()) for k in kws if k in q)
-        if score > best_score or (score == best_score and score > 0 and pri < best_pri):
+        score = 0.0
+        for k in kws:
+            if k in q:
+                score += 2.0 * len(k.split())   # coincidencia EXACTA de frase: peso doble
+                continue
+            ktoks = k.split()
+            hit = 0
+            for kt in ktoks:
+                if kt in qtoks:
+                    hit += 1
+                elif len(kt) >= 4 and any(_similar(kt, qt) for qt in qtoks):
+                    hit += 1                     # tolerancia a typos (garntia≈garantia)
+            if hit:
+                score += hit / len(ktoks)        # solapamiento parcial de tokens
+        if score > best_score or (abs(score - best_score) < 1e-9 and score > 0 and pri < best_pri):
             best, best_score, best_pri = (key, fn), score, pri
-    if not best or best_score == 0:
-        return {"intent": None,
-                "respuesta": ("No estoy seguro de qué necesitas. Puedo responder sobre frecuencia, garantías, "
-                              "si la mantención se cobra o es gratis, cuánto cobrar, atrasos, fuga a terceros, "
-                              "facturación, riesgo y más. Toca una sugerencia 👇"),
+    # Fallback INTELIGENTE: si no hay match razonable, dar el resumen del cliente
+    # (NUNCA un "no entendí" seco — el agente siempre responde algo útil).
+    if not best or best_score < 0.5:
+        try:
+            resumen = _r_resumen_general(d)
+        except Exception:
+            resumen = ""
+        pre = f"No identifiqué la pregunta exacta, pero esto es lo más relevante de {_nombre(d)}:\n\n"
+        return {"intent": "resumen_general_fallback",
+                "respuesta": (pre + resumen) if resumen else
+                             "Pregúntame sobre frecuencia, garantías, cobro, atrasos o riesgo de este cliente.",
                 "sugerencias": CHIPS}
     key, fn = best
     try:
         resp = fn(d)
     except Exception as e:
+        print(f"[agente_chat] intent {key} fallo: {e!r}", flush=True)
         resp = "No pude calcular la respuesta con los datos actuales de la ficha."
         key = key + "_error"
     return {"intent": key, "respuesta": resp, "sugerencias": CHIPS}
