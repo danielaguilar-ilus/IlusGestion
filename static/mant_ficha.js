@@ -3675,12 +3675,37 @@ async function buscarErpSql() {
     return;
   }
 
-  // Render tabla de documentos con click para abrir modal de productos
-  const modoLbl = {rut:'RUT', numero:'Número doc.', nombre:'Nombre'}[data.modo] || '';
-  let html = `<div class="d-flex justify-content-between align-items-center mb-2 small text-muted">
-    <span><strong>${data.documentos.length}</strong> documento(s) encontrado(s) por <strong>${modoLbl}</strong></span>
+  // Guardar documentos y renderizar con filtro por tipo (FCV/GDV/VD/COV…)
+  _erpDocsAll = data.documentos;
+  _erpModoLbl = {rut:'RUT', numero:'Número doc.', nombre:'Nombre'}[data.modo] || '';
+  _erpRenderDocs();
+}
+
+// Documentos ERP encontrados — guardados para filtrar por tipo sin re-buscar.
+let _erpDocsAll = [];
+let _erpModoLbl = '';
+
+function _erpRenderDocs() {
+  const cont = document.getElementById('erpResultado');
+  if (!cont) return;
+  const sel = document.getElementById('erpFiltroTipo');
+  const filtro = sel ? sel.value : '';
+  const docs = filtro ? _erpDocsAll.filter(d => (d.tido_display || '') === filtro) : _erpDocsAll;
+  // Tipos distintos presentes en los resultados (para el dropdown), con conteo.
+  const tipos = [...new Set(_erpDocsAll.map(d => d.tido_display || '').filter(Boolean))].sort();
+  let opts = `<option value="">Todos (${_erpDocsAll.length})</option>`;
+  tipos.forEach(t => {
+    const n = _erpDocsAll.filter(d => (d.tido_display || '') === t).length;
+    opts += `<option value="${escHtml(t)}"${t === filtro ? ' selected' : ''}>${escHtml(t)} (${n})</option>`;
+  });
+  let html = `<div class="d-flex justify-content-between align-items-center mb-2 gap-2 flex-wrap">
+    <span class="small text-muted"><strong>${docs.length}</strong> de ${_erpDocsAll.length} documento(s) por <strong>${escHtml(_erpModoLbl)}</strong></span>
+    <div class="d-flex align-items-center gap-1">
+      <label class="mb-0 text-muted fw-semibold" style="font-size:.75rem"><i class="bi bi-funnel me-1"></i>Tipo:</label>
+      <select id="erpFiltroTipo" class="form-select form-select-sm" style="width:auto;font-size:.78rem" onchange="_erpRenderDocs()">${opts}</select>
+    </div>
   </div>
-  <div class="table-responsive" style="max-height:380px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">
+  <div class="table-responsive" style="max-height:360px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px">
   <table class="table table-sm table-hover mb-0" style="font-size:.82rem">
     <thead class="sticky-top" style="background:#f9fafb;top:0">
       <tr>
@@ -3693,9 +3718,11 @@ async function buscarErpSql() {
       </tr>
     </thead>
     <tbody>`;
-  data.documentos.forEach((d, i) => {
-    // FIX 2026-05-19: tolerar que uno tenga DV y el otro no
-    // (ej: "78.129.118-8" vs "78129118" deben coincidir).
+  if (!docs.length) {
+    html += `<tr><td colspan="6" class="text-center text-muted py-3" style="font-size:.82rem">Sin documentos de tipo "${escHtml(filtro)}"</td></tr>`;
+  }
+  docs.forEach((d) => {
+    // FIX 2026-05-19: tolerar que uno tenga DV y el otro no.
     const rutMatch = ilusRutsMatch(d.rut, RUT_FICHA);
     const tidoBadge = `<span class="badge bg-secondary" style="font-size:.62rem;font-family:monospace">${escHtml(d.tido_display)}</span>`;
     const total = d.valor_total ? '$' + Math.round(d.valor_total).toLocaleString('es-CL') : '—';
@@ -4075,8 +4102,11 @@ async function epImportarSeleccionados() {
     return;
   }
 
-  // 2) Abrir el modal de progreso (sobre el de selección; al final recargamos).
+  // 2) Cerrar los modales ERP (evita el glitch visual de modales encimados que
+  //    reportó el usuario) y abrir SOLO el modal de progreso. Al final se recarga.
   document.getElementById('ep_btnImportar').disabled = true;
+  try { if (_epModal) _epModal.hide(); } catch (e) {}
+  try { bootstrap.Modal.getInstance(document.getElementById('modalErp'))?.hide(); } catch (e) {}
   ilusProgreso.open({
     titulo: 'Importando equipos desde el ERP',
     subtitulo: `${doc_origen} · ${plan.length} ficha(s) a crear`,

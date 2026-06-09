@@ -783,9 +783,13 @@ document.addEventListener('DOMContentLoaded', () => {
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <div class="mb-3">
+        <div class="mb-2">
           <small class="text-muted">Título</small>
           <div class="fw-bold" id="rvOTTit">—</div>
+        </div>
+        <!-- Resumen de lo cargado en la OT (se llena al abrir, sin abrir la OT completa) -->
+        <div id="rvResumen" class="mb-3">
+          <div class="text-center text-muted py-3 small"><span class="spinner-border spinner-border-sm me-2"></span>Cargando resumen…</div>
         </div>
         <div class="alert alert-info py-2 small mb-3">
           <i class="bi bi-info-circle me-1"></i>
@@ -794,8 +798,17 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <div class="mb-2">
           <label class="form-label small fw-semibold">Comentario / motivo (opcional para aprobar, obligatorio para rechazar)</label>
-          <textarea id="rvComentario" class="form-control form-control-sm" rows="3"
+          <textarea id="rvComentario" class="form-control form-control-sm" rows="2"
                     placeholder="Ej: Revisado OK · Falta foto del display · etc."></textarea>
+        </div>
+        <!-- Firma del supervisor — opcional, sin abrir la OT -->
+        <div class="mb-1">
+          <div class="d-flex justify-content-between align-items-center">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-pen me-1"></i>Tu firma (supervisor) <span class="text-muted fw-normal">— opcional</span></label>
+            <button type="button" class="btn btn-sm btn-link text-muted p-0" style="font-size:.75rem" onclick="_rvLimpiarFirma()">Limpiar</button>
+          </div>
+          <canvas id="rvFirmaCanvas" width="520" height="120"
+                  style="width:100%;height:108px;border:1px dashed #cbd5e1;border-radius:8px;background:#fff;touch-action:none;cursor:crosshair"></canvas>
         </div>
         <input type="hidden" id="rvOTId">
       </div>
@@ -812,13 +825,76 @@ document.addEventListener('DOMContentLoaded', () => {
 </div>
 <script>
 let _modalRevisarOT = null;
-function abrirRevisarOT(otId, num, titulo){
+let _rvFirmada = false;
+async function abrirRevisarOT(otId, num, titulo){
   document.getElementById('rvOTId').value = otId;
   document.getElementById('rvOTNum').textContent = num;
   document.getElementById('rvOTTit').textContent = titulo || '—';
   document.getElementById('rvComentario').value = '';
+  document.getElementById('rvResumen').innerHTML =
+    '<div class="text-center text-muted py-3 small"><span class="spinner-border spinner-border-sm me-2"></span>Cargando resumen…</div>';
   if (!_modalRevisarOT) _modalRevisarOT = new bootstrap.Modal(document.getElementById('modalRevisarOT'));
   _modalRevisarOT.show();
+  setTimeout(_rvInitCanvas, 150);   // el canvas ya tiene tamaño tras mostrarse
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${otId}/resumen`);
+    _rvRenderResumen(await r.json());
+  } catch(e) {
+    document.getElementById('rvResumen').innerHTML =
+      '<div class="alert alert-warning py-2 small mb-0">No se pudo cargar el resumen.</div>';
+  }
+}
+
+function _rvRenderResumen(d){
+  const cont = document.getElementById('rvResumen');
+  if (!cont) return;
+  if (!d || !d.ok){ cont.innerHTML = '<div class="alert alert-warning py-2 small mb-0">Resumen no disponible.</div>'; return; }
+  const esc = (s)=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const chip = (ico,txt,col)=>`<span class="badge rounded-pill" style="background:${col};font-weight:600;font-size:.72rem"><i class="bi bi-${ico} me-1"></i>${txt}</span>`;
+  const tareas = `${d.tareas_ok||0}/${d.tareas_total||0}`;
+  const obs = (d.observaciones||'').trim();
+  const obsHtml = obs
+    ? `<div class="mt-2"><div class="small fw-semibold text-muted mb-1"><i class="bi bi-chat-left-text me-1"></i>Observaciones del técnico</div><div class="small" style="white-space:pre-wrap;background:#f9fafb;border-left:3px solid #16a34a;border-radius:0 6px 6px 0;padding:7px 10px;max-height:120px;overflow:auto">${esc(obs)}</div></div>`
+    : '<div class="mt-2 small text-muted fst-italic">El técnico no dejó observaciones de texto.</div>';
+  const firma = d.firma_tecnico
+    ? `<div class="mt-2 small" style="color:#16a34a"><i class="bi bi-patch-check-fill me-1"></i>Firmado por <b>${esc(d.firma_tecnico_nombre||'el técnico')}</b>${d.firma_tecnico_at?(' · '+esc(d.firma_tecnico_at)):''}</div>`
+    : '<div class="mt-2 small text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Sin firma del técnico registrada.</div>';
+  cont.innerHTML = `
+    <div class="border rounded p-2" style="background:#fcfcfd">
+      <div class="d-flex flex-wrap gap-1 mb-1">
+        ${chip('wrench-adjustable', esc(d.tipo||'—'), '#0a0a0a')}
+        ${chip('person', esc(d.tecnico||'—'), '#475569')}
+        ${d.fecha?chip('calendar-check', esc(d.fecha), '#475569'):''}
+      </div>
+      <div class="d-flex flex-wrap gap-1">
+        ${chip('check2-square', 'Tareas '+tareas, (d.tareas_total&&d.tareas_ok>=d.tareas_total)?'#16a34a':'#b45309')}
+        ${chip('camera', (d.fotos||0)+' foto(s)', '#3b82f6')}
+        ${chip('hdd-stack', (d.equipos||0)+' equipo(s)', '#6b7280')}
+      </div>
+      ${obsHtml}
+      ${firma}
+    </div>`;
+}
+
+// ── Canvas de firma del supervisor (opcional, sin abrir la OT) ──
+function _rvInitCanvas(){
+  const c = document.getElementById('rvFirmaCanvas');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0a0a0a';
+  _rvFirmada = false;
+  let drawing = false, last = null;
+  const pos = (e)=>{ const r=c.getBoundingClientRect(); const t=(e.touches&&e.touches[0])?e.touches[0]:e; return {x:(t.clientX-r.left)*(c.width/r.width), y:(t.clientY-r.top)*(c.height/r.height)}; };
+  const start = (e)=>{ drawing=true; last=pos(e); _rvFirmada=true; e.preventDefault(); };
+  const move = (e)=>{ if(!drawing) return; const p=pos(e); ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p; e.preventDefault(); };
+  const end = ()=>{ drawing=false; };
+  c.onmousedown=start; c.onmousemove=move; c.onmouseup=end; c.onmouseleave=end;
+  c.ontouchstart=start; c.ontouchmove=move; c.ontouchend=end;
+}
+function _rvLimpiarFirma(){
+  const c = document.getElementById('rvFirmaCanvas');
+  if (c){ c.getContext('2d').clearRect(0,0,c.width,c.height); _rvFirmada=false; }
 }
 
 async function aprobarOT(){
@@ -833,9 +909,11 @@ async function aprobarOT(){
   });
   if (!ok) return;
   try {
+    const firma = (_rvFirmada && document.getElementById('rvFirmaCanvas'))
+      ? document.getElementById('rvFirmaCanvas').toDataURL('image/png') : '';
     const r = await fetch(`/mantenciones/api/visitas/${id}/aprobar-cierre`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ comentario })
+      body: JSON.stringify({ comentario, firma_supervisor: firma })
     });
     const d = await r.json();
     if (d.ok){

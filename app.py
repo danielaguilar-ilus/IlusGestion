@@ -47088,6 +47088,49 @@ def _is_aprobador(user=None):
     return fam in ("superadmin", "admin", "supervisor", "ejecutivo")
 
 
+@app.route("/mantenciones/api/visitas/<int:vid>/resumen", methods=["GET"])
+@_mant_required
+def mant_visita_resumen(vid):
+    """Resumen liviano de la OT para la revisión rápida del supervisor:
+    qué se hizo (tareas, fotos, equipos), observaciones del técnico y su firma.
+    Permite revisar SIN abrir la OT completa."""
+    v = mysql_fetchone(
+        "SELECT v.id, v.titulo, v.tipo, v.estado, v.tecnico, v.fecha_realizada, "
+        "v.observaciones, v.firma_tecnico_nombre, v.firma_tecnico_at, v.firma_tecnico_url, "
+        "c.razon_social "
+        "FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+
+    def _n(sql):
+        try:
+            r = mysql_fetchone(sql, (vid,))
+            return int((r or {}).get("n", 0) or 0)
+        except Exception:
+            return 0
+
+    _tipo_lbl = {"preventiva": "Preventiva", "correctiva": "Correctiva", "garantia": "Garantía",
+                 "inspeccion": "Inspección", "levantamiento": "Levantamiento", "instalacion": "Instalación"}
+    tipo = (v.get("tipo") or "").lower()
+    return jsonify({
+        "ok": True,
+        "titulo": v.get("titulo") or "",
+        "tipo": _tipo_lbl.get(tipo, tipo or "—"),
+        "estado": v.get("estado"),
+        "tecnico": v.get("tecnico") or "—",
+        "cliente": v.get("razon_social") or "—",
+        "fecha": (str(v.get("fecha_realizada"))[:10] if v.get("fecha_realizada") else None),
+        "observaciones": v.get("observaciones") or "",
+        "tareas_total": _n("SELECT COUNT(*) AS n FROM mant_visita_tareas WHERE visita_id=%s"),
+        "tareas_ok": _n("SELECT COUNT(*) AS n FROM mant_visita_tareas WHERE visita_id=%s AND completada=1"),
+        "fotos": _n("SELECT COUNT(*) AS n FROM mant_visita_fotos WHERE visita_id=%s"),
+        "equipos": _n("SELECT COUNT(*) AS n FROM mant_visita_equipos WHERE visita_id=%s"),
+        "firma_tecnico": bool(v.get("firma_tecnico_url")),
+        "firma_tecnico_nombre": v.get("firma_tecnico_nombre") or "",
+        "firma_tecnico_at": (str(v.get("firma_tecnico_at"))[:16] if v.get("firma_tecnico_at") else None),
+    })
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/aprobar-cierre", methods=["POST"])
 @_mant_required
 def mant_ot_aprobar_cierre(vid):
