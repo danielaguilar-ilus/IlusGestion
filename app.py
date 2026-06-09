@@ -53482,6 +53482,39 @@ def mant_informe_ficha(cid):
     return _informe_ficha_html(d, ct, cli)
 
 
+@app.route("/mantenciones/api/clientes/<int:cid>/preguntar", methods=["POST"])
+@_mant_required
+def mant_cliente_preguntar(cid):
+    """Agente CONVERSACIONAL determinista (sin IA): responde una pregunta puntual
+    sobre el cliente usando el diagnóstico ya calculado (_cliente_inteligencia).
+    Devuelve {ok, intent, respuesta, sugerencias}."""
+    import agente_chat
+    cli = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    body = request.get_json(silent=True) or {}
+    pregunta = (body.get("pregunta") or "").strip()[:300]
+    try:
+        intel = _cliente_inteligencia(cid, _reglas_cargar()) or {}
+    except Exception as e:
+        print(f"[preguntar] cid={cid}: {e}", flush=True)
+        intel = {}
+    # Enriquecer el bloque cliente con datos de identidad (para preguntas de contacto)
+    c = dict(intel.get("cliente") or {})
+    if not c.get("razon_social"):
+        c["razon_social"] = cli.get("razon_social")
+    for k in ("rut", "direccion", "comuna", "contacto_nombre", "contacto"):
+        if cli.get(k) and not c.get(k):
+            c[k] = cli.get(k)
+    intel["cliente"] = c
+    r = agente_chat.responder(pregunta, intel)
+    try:
+        _mant_log("cliente", cid, "agente_pregunta", (pregunta or "")[:120])
+    except Exception:
+        pass
+    return jsonify({"ok": True, **r})
+
+
 # ── Señales de dolor para el informe POST-SERVICIO (diseñadas por panel de
 #    especialistas: técnico senior + abogado garantías/SERNAC + comercial + redactor).
 #    Determinista, SIN IA: son patrones de texto que se buscan en las observaciones

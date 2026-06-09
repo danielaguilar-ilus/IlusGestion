@@ -7140,6 +7140,23 @@ function _intelRender(d){
     </div>
   </div>`;
 
+  // ── Chat: Pregúntale al agente (conversacional, determinista, sin IA) ──
+  const _chipsHtml = INTEL_CHIPS.map(q =>
+    `<button class="btn btn-sm btn-outline-secondary" style="font-size:.72rem;border-radius:50px" onclick='intelPreguntar(${JSON.stringify(q)})'>${_intelEsc(q)}</button>`
+  ).join('');
+  html += `
+  <div class="intel-card" id="intelChatCard" style="border:1px solid #e5e7eb">
+    <div class="intel-card-title"><i class="bi bi-chat-dots-fill" style="color:#dc2626"></i>Pregúntale al agente sobre este cliente</div>
+    <div id="intelChatLog" style="max-height:320px;overflow-y:auto;margin:6px 0 8px;padding-right:4px">
+      <div style="text-align:left;margin:4px 0"><span style="display:inline-block;background:#f3f4f6;color:#111827;padding:7px 12px;border-radius:14px 14px 14px 2px;font-size:.82rem">Pregúntame lo que necesites de este cliente — frecuencia, garantías, si se cobra o es gratis, cuánto cobrar, atrasos, fuga a terceros… Toca una sugerencia o escribe abajo. 👇</span></div>
+    </div>
+    <div class="d-flex flex-wrap gap-1 mb-2">${_chipsHtml}</div>
+    <div class="d-flex gap-2">
+      <input id="intelChatInput" class="form-control form-control-sm" placeholder="Ej: ¿esta mantención es gratis o se cobra?" onkeydown="if(event.key==='Enter')intelPreguntar()">
+      <button class="btn btn-ilus btn-sm px-3" onclick="intelPreguntar()" title="Preguntar"><i class="bi bi-send"></i></button>
+    </div>
+  </div>`;
+
   // ── Card: Informe de gestión trimestral (cerca del score, prominente) ──
   // Determinista: el backend genera 1 informe por trimestre y lo deja en
   // Reportes. Si el dict no trae `informe_trimestral`, no mostramos la tarjeta.
@@ -7393,6 +7410,58 @@ function intelInformeFicha(){
   // Abre el Informe de Gestión del cliente (HTML imprimible → PDF en el navegador).
   if (typeof CID === 'undefined' || !CID) { ilusToast('Cliente no identificado', {type:'error'}); return; }
   window.open('/mantenciones/api/clientes/' + CID + '/informe-ficha', '_blank');
+}
+
+// ── Agente conversacional (chat determinista en el panel del Agente) ──
+const INTEL_CHIPS = [
+  "¿Cada cuánto se le hace mantención?",
+  "¿Esta mantención es gratis o se cobra?",
+  "¿Cómo van las garantías?",
+  "¿Cuánto le cobro?",
+  "¿Hay mantenciones atrasadas?",
+  "¿Se está fugando a terceros?",
+  "¿Qué tengo sin facturar?",
+  "¿Cuándo es la próxima mantención?",
+  "¿Cómo está este cliente?",
+  "¿Qué hago ahora?",
+];
+
+function _intelChatPush(role, text){
+  const log = document.getElementById('intelChatLog');
+  if (!log) return null;
+  const wrap = document.createElement('div');
+  if (role === 'user'){
+    wrap.style.cssText = 'text-align:right;margin:5px 0';
+    wrap.innerHTML = `<span style="display:inline-block;background:#dc2626;color:#fff;padding:6px 11px;border-radius:14px 14px 2px 14px;font-size:.82rem;max-width:85%">${_intelEsc(text)}</span>`;
+  } else {
+    wrap.style.cssText = 'text-align:left;margin:5px 0';
+    wrap.innerHTML = `<span style="display:inline-block;background:#f3f4f6;color:#111827;padding:7px 12px;border-radius:14px 14px 14px 2px;font-size:.82rem;max-width:92%;white-space:pre-wrap;line-height:1.45">${_intelEsc(text)}</span>`;
+  }
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return wrap;
+}
+
+async function intelPreguntar(preset){
+  if (typeof CID === 'undefined' || !CID) return;
+  const input = document.getElementById('intelChatInput');
+  const q = String(preset !== undefined ? preset : (input ? input.value : '')).trim();
+  if (!q) return;
+  if (input) input.value = '';
+  _intelChatPush('user', q);
+  const pending = _intelChatPush('bot', '…');
+  try {
+    const r = await fetch('/mantenciones/api/clientes/' + CID + '/preguntar', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pregunta: q })
+    });
+    const d = await r.json();
+    if (pending) pending.remove();
+    _intelChatPush('bot', (d && d.respuesta) ? d.respuesta : 'No pude responder con los datos actuales.');
+  } catch(e){
+    if (pending) pending.remove();
+    _intelChatPush('bot', 'Error de red. Reintenta en unos segundos.');
+  }
 }
 
 function intelInformePostservicio(vid){
