@@ -12,6 +12,10 @@
 
 {% block content %}
 <style>
+/* El body de esta página SIEMPRE oscuro: evita el destello/fondo blanco
+   mientras cargan las imágenes del carrusel (el global es gris claro). */
+body{background:#0a0a0a;}
+
 /* ── Carrusel login (transición suave entre imágenes) ── */
 .login-carousel{position:absolute;inset:0;z-index:0;overflow:hidden;}
 .login-carousel-slide{
@@ -25,6 +29,34 @@
   position:absolute;inset:0;z-index:1;
   background:linear-gradient(135deg,rgba(10,10,10,.55) 0%,rgba(10,10,10,.85) 70%,rgba(10,10,10,.95) 100%);
 }
+
+/* ── Leyendas del carrusel (titulo/subtitulo por imagen) ──
+   ANTES NO TENÍAN CSS: quedaban como texto suelto arriba-izquierda,
+   todas visibles a la vez ("se descontrolaba" al cambiar de imagen). */
+.login-slide-caption{
+  position:absolute;right:28px;bottom:24px;z-index:2;
+  max-width:300px;text-align:right;pointer-events:none;
+  opacity:0;transition:opacity .9s ease-in-out;
+}
+.login-slide-caption.active{opacity:1;}
+.login-slide-caption .lc-title{
+  font-size:.92rem;font-weight:800;color:#fff;
+  letter-spacing:.02em;text-shadow:0 2px 10px rgba(0,0,0,.75);
+}
+.login-slide-caption .lc-sub{
+  font-size:.74rem;color:#cfd3da;line-height:1.4;
+  text-shadow:0 1px 8px rgba(0,0,0,.7);
+}
+
+/* ── Puntos del carrusel de imágenes (antes sin CSS = invisibles) ── */
+.login-carousel-dots{
+  position:absolute;right:28px;top:24px;z-index:2;display:flex;gap:6px;
+}
+.login-carousel-dot{
+  width:26px;height:4px;border-radius:2px;cursor:pointer;
+  background:rgba(255,255,255,.25);transition:background .25s;
+}
+.login-carousel-dot.active{background:var(--ilus-red);}
 .login-hero-content{position:relative;z-index:2;display:flex;flex-direction:column;height:100%;width:100%;padding:0;}
 
 /* ── Logo arriba (3× más grande que el original de 165px = 495px) ── */
@@ -90,10 +122,29 @@
   width:24px;height:3px;background:rgba(255,255,255,.18);
   border-radius:2px;transition:background .25s;
 }
-.login-tagline-dot.active{background:var(--ilus-red);}
+.login-tagline-dot.active{background:var(--ilus-red);cursor:pointer;}
+.login-tagline-dot{cursor:pointer;}
 
+/* ── Frase estratégica rotativa (fade suave al cambiar) ── */
+.login-phrase-fade{transition:opacity .55s ease;}
+.login-phrase-fade.out{opacity:0;}
+
+/* ── Responsive del hero ──
+   ANTES: bajo 1100px las 3 tarjetas pasaban a 1 columna y el contenido
+   se DESBORDABA (tarjetas cortadas, logo encima de la foto). Ahora el
+   contenido se achica por etapas y nunca se corta. */
+@media (max-width:1280px){
+  .login-brand-top img{width:clamp(200px,24vw,360px);}
+  .login-tagline-hero{font-size:clamp(1.9rem,3.4vw,2.8rem);}
+}
 @media (max-width:1100px){
-  .login-value-grid{grid-template-columns:1fr;}
+  .login-value-grid{gap:10px;max-width:520px;}
+  .login-value-card .lv-sub{display:none;}
+  .login-hero-content{padding:32px !important;}
+}
+@media (max-width:991px), (max-height:760px){
+  /* pantallas angostas o bajas: fuera tarjetas, que respire */
+  .login-value-grid{display:none;}
 }
 </style>
 <div class="login-wrap">
@@ -144,15 +195,17 @@
         {% endif %}
       </div>
 
-      {# Mensaje principal: JUNTOS SOMOS MÁS FUERTES #}
-      <h1 class="login-tagline-hero">
+      {# Mensaje principal ROTATIVO: arranca al azar y va cambiando solo.
+         Como la sesión expira cada 60 min, cada vuelta al login muestra
+         una frase estratégica distinta. #}
+      <h1 class="login-tagline-hero login-phrase-fade" id="loginPhraseTitle">
         JUNTOS<br>
         <span class="ln-red">SOMOS MÁS<br>FUERTES<span class="ln-dot">.</span></span>
       </h1>
 
       <span class="login-tagline-divider"></span>
 
-      <p class="login-tagline-body">
+      <p class="login-tagline-body login-phrase-fade" id="loginPhraseBody">
         Cada entrega, cada ruta y cada esfuerzo suman para llevar lo mejor a más personas.
         <strong>Sigamos construyendo grandes resultados.</strong>
       </p>
@@ -176,12 +229,8 @@
         </div>
       </div>
 
-      {# Dots decorativos abajo #}
-      <div class="login-tagline-dots">
-        <div class="login-tagline-dot active"></div>
-        <div class="login-tagline-dot"></div>
-        <div class="login-tagline-dot"></div>
-      </div>
+      {# Dots de las frases (los genera el JS, uno por frase, clicables) #}
+      <div class="login-tagline-dots" id="loginPhraseDots"></div>
     </div>
   </div>
 
@@ -280,6 +329,54 @@
     var timer;
     function restart(){ clearInterval(timer); timer = setInterval(function(){ show((idx+1)%slides.length); }, 5500); }
     restart();
+  }
+
+  // ── Frases estratégicas rotativas (independientes del carrusel) ──
+  // Arranca en una frase AL AZAR: como la sesión expira cada 60 min,
+  // cada vez que el equipo vuelve al login ve un mensaje distinto.
+  var PHRASES = [
+    { t:'JUNTOS', r:'SOMOS MÁS<br>FUERTES',
+      b:'Cada entrega, cada ruta y cada esfuerzo suman para llevar lo mejor a más personas. <strong>Sigamos construyendo grandes resultados.</strong>' },
+    { t:'ILUS SIGNIFICA', r:'I LIKE U<br>STRONG',
+      b:'Nuestro nombre es una promesa: equipos y servicio que te hacen más fuerte. <strong>Hagámosla cumplir con cada cliente.</strong>' },
+    { t:'CADA DETALLE', r:'CONSTRUYE<br>CONFIANZA',
+      b:'La excelencia se nota en cada mantención, cada retiro y cada despacho a tiempo. <strong>Los detalles son la marca ILUS.</strong>' },
+    { t:'HOY MEJOR', r:'QUE AYER<br>SIEMPRE',
+      b:'Medimos, aprendemos y subimos el estándar todos los días. <strong>El progreso es nuestro deporte.</strong>' }
+  ];
+  var phT = document.getElementById('loginPhraseTitle');
+  var phB = document.getElementById('loginPhraseBody');
+  var phD = document.getElementById('loginPhraseDots');
+  if (phT && phB && phD) {
+    var pIdx = Math.floor(Math.random() * PHRASES.length);
+    var pDots = [];
+    PHRASES.forEach(function(_, i){
+      var d = document.createElement('div');
+      d.className = 'login-tagline-dot';
+      d.addEventListener('click', function(){ setPhrase(i); restartPhrases(); });
+      phD.appendChild(d); pDots.push(d);
+    });
+    function paintPhrase(i){
+      var p = PHRASES[i];
+      phT.innerHTML = p.t + '<br><span class="ln-red">' + p.r + '<span class="ln-dot">.</span></span>';
+      phB.innerHTML = p.b;
+      pDots.forEach(function(d,j){ d.classList.toggle('active', j===i); });
+      pIdx = i;
+    }
+    function setPhrase(i){
+      phT.classList.add('out'); phB.classList.add('out');
+      setTimeout(function(){
+        paintPhrase(i);
+        phT.classList.remove('out'); phB.classList.remove('out');
+      }, 560);
+    }
+    var phTimer;
+    function restartPhrases(){
+      clearInterval(phTimer);
+      phTimer = setInterval(function(){ setPhrase((pIdx+1)%PHRASES.length); }, 7400);
+    }
+    paintPhrase(pIdx);
+    restartPhrases();
   }
 })();
 </script>
