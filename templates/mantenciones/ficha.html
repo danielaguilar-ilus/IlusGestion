@@ -2872,7 +2872,46 @@ async function confirmarVisitaMulti() {
               {% elif dias_v <= 0 and not ct.es_indefinido and ct.fecha_vencimiento %}
               <span class="cli-badge" style="background:#fee2e2;color:#991b1b">⚠ VENCIDO</span>
               {% endif %}
+              {# ── FIRMA (2026-06-10): detector + confirmación humana ── #}
+              {% set _fe = ct.firma_estado or '' %}
+              {% if _fe == 'firmado' %}
+              <span class="cli-badge" style="background:#dcfce7;color:#166534" title="{{ ct.firma_detalle or '' }}{{ ' · Confirmado por ' ~ ct.firma_confirmada_por if ct.firma_confirmada_por else '' }}">
+                <i class="bi bi-vector-pen"></i> Firmado{{ ' ✓' if ct.firma_confirmada_por else '' }}
+              </span>
+              {% elif _fe == 'sin_firma' %}
+              <span class="cli-badge" style="background:#fee2e2;color:#991b1b" title="{{ ct.firma_detalle or '' }}">
+                <i class="bi bi-vector-pen"></i> Sin firma
+              </span>
+              {% elif _fe %}
+              <span class="cli-badge" style="background:#fef3c7;color:#92400e" title="{{ ct.firma_detalle or '' }}">
+                <i class="bi bi-vector-pen"></i> Firma por confirmar
+              </span>
+              {% endif %}
             </div>
+            {# ── ALERTA: el detector dice que esto NO parece un contrato ── #}
+            {% if ct.doc_check == 'no_contrato' and ct.nombre != 'Contenedor de documentos' %}
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:7px 11px;margin:6px 0;font-size:.8rem;color:#991b1b;font-weight:700">
+              <i class="bi bi-exclamation-octagon-fill me-1"></i>
+              {{ ct.doc_check_detalle or 'Este documento no parece un contrato.' }}
+              {% if puede_gestionar_visitas %}
+              <button class="btn btn-xs btn-outline-danger fw-bold ms-2" onclick="ctMoverADocumentos({{ ct.id }}, '{{ (ct.nombre or 'documento')|e }}')">
+                <i class="bi bi-folder-symlink me-1"></i>Mover a Documentos
+              </button>
+              {% endif %}
+            </div>
+            {% endif %}
+            {# ── Confirmación humana de firma (el papel a la vista manda) ── #}
+            {% if puede_gestionar_visitas and not ct.firma_confirmada_por and ct.nombre != 'Contenedor de documentos' %}
+            <div style="font-size:.72rem;color:#6b7280;margin:4px 0 0">
+              ¿Está firmado este contrato?
+              <button class="btn btn-xs btn-outline-success fw-bold ms-1" onclick="ctConfirmarFirma({{ ct.id }}, 'firmado')">
+                <i class="bi bi-check2"></i> Sí, firmado
+              </button>
+              <button class="btn btn-xs btn-outline-secondary fw-bold ms-1" onclick="ctConfirmarFirma({{ ct.id }}, 'sin_firma')">
+                <i class="bi bi-x"></i> Sin firma
+              </button>
+            </div>
+            {% endif %}
             <div style="font-size:.76rem;color:#6b7280;display:flex;flex-wrap:wrap;gap:0 16px">
               {% if ct.fecha_inicio %}
               <span><i class="bi bi-calendar3 me-1"></i>Inicio: <strong>{{ ct.fecha_inicio.strftime('%d/%m/%Y') }}</strong></span>
@@ -8957,7 +8996,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610b"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610c"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

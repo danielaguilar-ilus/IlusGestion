@@ -4556,6 +4556,56 @@ async function subirContrato() {
       setTimeout(() => location.reload(), 900);
       return;
     }
+    // ── GATE "¿es un contrato?" (2026-06-10, caso Clínica Alemana) ──
+    // El detector dice que el archivo NO parece un contrato (ej: factura,
+    // informe). Flujo de decisión: Documentos → forzar → cancelar.
+    if (r.status === 409 && data && data.error_codigo === 'NO_ES_CONTRATO') {
+      const aDocs = await ilusConfirm({
+        title: 'Esto no parece un contrato',
+        message: data.error || 'El documento no parece un contrato.',
+        sub: '¿Quieres guardarlo en la pestaña DOCUMENTOS del cliente? (recomendado)',
+        okLabel: 'Sí, a Documentos', cancelLabel: 'No',
+      });
+      if (aDocs && archivo) {
+        try {
+          const fd2 = new FormData();
+          fd2.append('archivo', archivo);
+          fd2.append('tipo', 'otro');
+          fd2.append('nombre', document.getElementById('ct_nombre')?.value?.trim() || archivo.name);
+          const r2 = await fetch(`/mantenciones/api/clientes/${CID}/documentos`, { method: 'POST', body: fd2 });
+          const d2 = await r2.json().catch(() => ({}));
+          if (r2.ok && d2.ok !== false) {
+            ilusToast('✓ Guardado en Documentos del cliente', { type: 'success' });
+            bootstrap.Modal.getInstance(document.getElementById('modalContrato'))?.hide();
+            setTimeout(() => location.reload(), 800);
+          } else {
+            ilusToast('No se pudo guardar en Documentos: ' + (d2.error || 'error'), { type: 'error' });
+          }
+        } catch (e2) { ilusToast('Error de red: ' + e2.message, { type: 'error' }); }
+        return;
+      }
+      const forzar = await ilusConfirm({
+        title: 'Forzar como contrato',
+        message: '¿Estás SEGURO de que este documento es un contrato?',
+        sub: 'Se guardará en Contratos pese a la alerta del detector, y quedará registrado que fue forzado.',
+        okLabel: 'Sí, es un contrato', cancelLabel: 'Cancelar', danger: true,
+      });
+      if (forzar) {
+        try {
+          fd.append('force_contrato', '1');
+          const r3 = await fetch(`/mantenciones/api/clientes/${CID}/contratos`, { method: 'POST', body: fd });
+          const d3 = await r3.json().catch(() => ({}));
+          if (r3.ok && d3.ok !== false) {
+            ilusToast('Contrato guardado (forzado)', { type: 'success' });
+            bootstrap.Modal.getInstance(document.getElementById('modalContrato'))?.hide();
+            setTimeout(() => location.reload(), 800);
+          } else {
+            ilusToast('Error: ' + (d3.error || 'no se pudo subir'), { type: 'error' });
+          }
+        } catch (e3) { ilusToast('Error de red: ' + e3.message, { type: 'error' }); }
+      }
+      return;
+    }
     if (data && data.error_codigo === 'FORMATO_NO_PERMITIDO') {
       alert(data.error);
       return;
@@ -4597,6 +4647,48 @@ async function subirContrato() {
 function toggleAiPanel(ctid) {
   const el = document.getElementById(`ai-${ctid}`);
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ─── GATE de contratos (2026-06-10, caso Clínica Alemana) ──────────
+// Mueve un documento mal clasificado de Contratos → pestaña Documentos.
+async function ctMoverADocumentos(ctid, nombre) {
+  const ok = await ilusConfirm({
+    title: 'Mover a Documentos',
+    message: `¿Mover "${nombre}" a la pestaña Documentos del cliente?`,
+    sub: 'El archivo se conserva intacto; solo deja de figurar como contrato. Sus fechas/montos de contrato se descartan.',
+    okLabel: 'Sí, mover', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/contratos/${ctid}/mover-a-documentos`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { ilusToast('No se pudo mover: ' + (d.error || 'error'), { type: 'error' }); return; }
+    ilusToast('✓ Movido a Documentos del cliente', { type: 'success' });
+    setTimeout(() => location.reload(), 800);
+  } catch (e) { ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+}
+
+// Confirmación humana del estado de firma del contrato.
+async function ctConfirmarFirma(ctid, estado) {
+  const esF = estado === 'firmado';
+  const ok = await ilusConfirm({
+    title: esF ? 'Confirmar contrato firmado' : 'Marcar sin firma',
+    message: esF ? '¿Confirmas que este contrato ESTÁ firmado por ambas partes?'
+                 : '¿Confirmas que este contrato NO está firmado?',
+    sub: 'Quedará registrado con tu usuario y fecha.',
+    okLabel: 'Confirmar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/contratos/${ctid}/firma`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { ilusToast('No se pudo: ' + (d.error || 'error'), { type: 'error' }); return; }
+    ilusToast(esF ? '✓ Contrato confirmado como firmado' : 'Marcado sin firma', { type: 'success' });
+    setTimeout(() => location.reload(), 800);
+  } catch (e) { ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -5277,6 +5369,26 @@ function _ctaRenderHTML(res, ctid) {
     h += _ctaHead('📋', 'Cobertura', '#0f172a');
     h += `<div style="font-size:.84rem;color:#334155;line-height:1.6;background:#f8fafc;
           border:1px solid #eef0f3;border-radius:10px;padding:13px 15px;white-space:pre-wrap">${escHtml(res.cobertura_descripcion)}</div>`;
+  }
+
+  // ── ✍️ FIRMA + CONTRACTUALIDAD (2026-06-10) ──
+  const _fir = (res.detalle && res.detalle.firma) || null;
+  const _dch = (res.detalle && res.detalle.doc_check) || null;
+  if (_fir || _dch) {
+    const _fmap = { firmado: ['#dcfce7', '#166534', 'Firmado'], sin_firma: ['#fee2e2', '#991b1b', 'Sin firma'],
+                    indeterminado: ['#fef3c7', '#92400e', 'Firma por confirmar'] };
+    let _chips = '';
+    if (_fir && _fmap[_fir.veredicto]) {
+      const [bg, col, lbl] = _fmap[_fir.veredicto];
+      _chips += `<span style="background:${bg};color:${col};border-radius:50px;padding:4px 12px;font-size:.74rem;font-weight:800;margin-right:6px" title="${escHtml(_fir.detalle || '')}"><i class="bi bi-vector-pen me-1"></i>${lbl}</span>`;
+    }
+    if (_dch && _dch.veredicto === 'no_contrato') {
+      _chips += `<span style="background:#fee2e2;color:#991b1b;border-radius:50px;padding:4px 12px;font-size:.74rem;font-weight:800"><i class="bi bi-exclamation-octagon-fill me-1"></i>${escHtml(_dch.detalle || 'No parece un contrato')}</span>`;
+    }
+    if (_chips) {
+      h += `<div style="margin:10px 0 4px">${_chips}</div>`;
+      if (_fir && _fir.detalle) h += `<div style="font-size:.72rem;color:#6b7280;margin-bottom:8px">${escHtml(_fir.detalle)}</div>`;
+    }
   }
 
   // ── 📜 LECTURA CLÁUSULA POR CLÁUSULA (2026-06-10, Daniel) ──

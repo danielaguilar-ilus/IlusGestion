@@ -660,3 +660,172 @@ def leer_clausulas(texto, reglas=None):
         "favorables": sum(1 for c in out if c["semaforo"] == "favorable"),
         "clausulas": out,
     }
+
+
+# ═══════════════ ¿ES UN CONTRATO? (gate de subida, 2026-06-10) ═══════════════
+# Caso Clínica Alemana: se subió un documento NO-contrato a la sección
+# Contratos y el sistema lo aceptó sin chistar. Este detector determinista
+# (CERO IA) puntúa la "contractualidad" del texto y nombra qué parece ser.
+
+# Señales POSITIVAS (substring sobre texto normalizado, peso)
+_CONTRACT_POS = [
+    ("contrato", 25), ("las partes", 15), ("comparecen", 15), ("comparece", 10),
+    ("celebran el presente", 20), ("celebran", 8), ("convienen", 10),
+    ("acuerdan", 8), ("en adelante", 10), ("representante legal", 10),
+    ("representada por", 8), ("representado por", 8), ("domicilio", 5),
+    ("vigencia", 6), ("plazo de", 5), ("clausula", 8), ("anexo", 4),
+    ("rescindir", 6), ("terminacion anticipada", 6), ("renovacion", 5),
+]
+# Señales NEGATIVAS: el doc parece OTRA cosa (etiqueta legible, peso)
+_CONTRACT_NEG = [
+    ("factura electronica", "una FACTURA", 45),
+    ("factura n", "una FACTURA", 35),
+    ("nota de credito", "una NOTA DE CRÉDITO", 45),
+    ("guia de despacho", "una GUÍA DE DESPACHO", 45),
+    ("orden de compra", "una ORDEN DE COMPRA", 35),
+    ("cotizacion n", "una COTIZACIÓN", 30),
+    ("presupuesto n", "un PRESUPUESTO", 25),
+    ("boleta", "una BOLETA", 30),
+    ("informe tecnico", "un INFORME TÉCNICO", 35),
+    ("informe de servicio", "un INFORME DE SERVICIO", 35),
+    ("informe de visita", "un INFORME DE VISITA", 35),
+    ("manual de usuario", "un MANUAL", 45),
+    ("manual de instrucciones", "un MANUAL", 45),
+    ("curriculum", "un CURRÍCULUM", 45),
+    ("acta de entrega", "un ACTA DE ENTREGA", 20),
+    ("certificado de", "un CERTIFICADO", 15),
+    ("listado de precios", "una LISTA DE PRECIOS", 30),
+]
+
+
+def evaluar_contractualidad(texto):
+    """¿El texto corresponde a un CONTRATO? Determinista, explicable.
+
+    Devuelve dict:
+      veredicto: 'contrato' | 'dudoso' | 'no_contrato' | 'indeterminado'
+      score: 0-100 (None si indeterminado)
+      parece: etiqueta legible si NO parece contrato (ej. "una FACTURA")
+      senales_pos / senales_neg: listas de señales encontradas (explicación)
+      tipo_documento: clasificación fina (mantencion/arriendo/…)
+
+    'indeterminado' = texto vacío o muy corto (PDF escaneado sin OCR) → el
+    caller decide (no bloquear a ciegas; avisar y permitir confirmación humana).
+    """
+    t = _norm(texto or "")
+    if len(t.strip()) < 200:
+        return {"veredicto": "indeterminado", "score": None, "parece": None,
+                "senales_pos": [], "senales_neg": [],
+                "tipo_documento": None,
+                "detalle": "No se pudo leer texto suficiente (¿PDF escaneado?)."}
+    pos, neg = [], []
+    score = 0
+    # Positivas: "contrato" pesa doble si aparece al INICIO (título).
+    for kw, w in _CONTRACT_POS:
+        if kw in t:
+            if kw == "contrato" and kw in t[:600]:
+                w += 15
+            score += w
+            pos.append(kw)
+    # Cláusulas reales (PRIMERO:/CLÁUSULA X/…) son señal fuerte de contrato.
+    try:
+        n_cl = len([p for p in segmentar_clausulas(texto) if p.get("encabezado")])
+        if n_cl >= 3:
+            score += 20; pos.append(f"{n_cl} clausulas numeradas")
+        elif n_cl == 2:
+            score += 10; pos.append("2 clausulas numeradas")
+    except Exception:
+        pass
+    # 2+ RUTs (las dos partes) — señal fuerte.
+    try:
+        ruts = set(_RE_RUT.findall(texto or ""))
+        if len(ruts) >= 2:
+            score += 15; pos.append(f"{len(ruts)} RUTs (partes)")
+    except Exception:
+        pass
+    # Negativas: lo que el doc PARECE ser. La más pesada define la etiqueta.
+    parece, peor = None, 0
+    for kw, etiqueta, w in _CONTRACT_NEG:
+        if kw in t:
+            score -= w
+            neg.append(kw)
+            if w > peor:
+                parece, peor = etiqueta, w
+    score = max(0, min(100, score))
+    if score >= 55:
+        veredicto = "contrato"
+    elif score >= 35:
+        veredicto = "dudoso"
+    else:
+        veredicto = "no_contrato"
+    tipo_doc, _sc = _detectar_tipo_documento(t)
+    return {"veredicto": veredicto, "score": score,
+            "parece": (parece if veredicto != "contrato" else None),
+            "senales_pos": pos[:8], "senales_neg": neg[:8],
+            "tipo_documento": tipo_doc,
+            "detalle": (f"Parece {parece}, no un contrato." if (parece and veredicto == "no_contrato")
+                        else None)}
+
+
+# ═══════════════ ¿ESTÁ FIRMADO? (detección honesta, 2026-06-10) ═══════════════
+# Determinista sobre el TEXTO (en un PDF escaneado el OCR no "ve" la tinta de
+# una firma manuscrita — por eso el default honesto es 'indeterminado' y el
+# humano confirma con un click). Analiza con foco en el ÚLTIMO 30% del doc.
+
+_FIRMA_FUERTE = [
+    "firmado electronicamente", "firma electronica avanzada", "firma electronica simple",
+    "docusign", "firmado digitalmente", "e-sign", "firma digital",
+]
+_FIRMA_CIERRE = [
+    "en senal de conformidad", "en senal de aceptacion", "firman el presente",
+    "firman en", "previa lectura", "ratifican y firman", "para constancia firman",
+    "ante mi", "notario",
+]
+_FIRMA_BORRADOR = ["borrador", "draft", "version para revision", "documento de trabajo",
+                   "no valido como contrato"]
+
+
+def detectar_firmas(texto):
+    """Veredicto de firma: 'firmado' | 'sin_firma' | 'indeterminado'.
+
+    Honesto por diseño: solo afirma 'firmado' con señales textuales fuertes
+    (firma electrónica). Una firma manuscrita escaneada NO es detectable por
+    texto → 'indeterminado' con explicación, y la confirmación final es
+    humana (botón en la ficha).
+    """
+    raw = texto or ""
+    t = _norm(raw)
+    if len(t.strip()) < 200:
+        return {"veredicto": "indeterminado", "senales": [],
+                "detalle": "Sin texto legible (¿escaneado?). Confírmalo visualmente."}
+    cola_raw = raw[int(len(raw) * 0.70):]
+    cola = _norm(cola_raw)
+    senales = []
+    # Borrador explícito → sin firma.
+    for kw in _FIRMA_BORRADOR:
+        if kw in t:
+            return {"veredicto": "sin_firma", "senales": [kw],
+                    "detalle": "El documento se declara borrador / versión de trabajo."}
+    # Firma electrónica → firmado (señal más fuerte que existe en texto).
+    for kw in _FIRMA_FUERTE:
+        if kw in t:
+            senales.append(kw)
+    if senales:
+        return {"veredicto": "firmado", "senales": senales,
+                "detalle": "Tiene constancia de firma electrónica en el texto."}
+    # Cierre de firmas + partes identificadas al final.
+    cierre = [kw for kw in _FIRMA_CIERRE if kw in cola]
+    ruts_cola = set(_RE_RUT.findall(cola_raw))
+    if cierre and len(ruts_cola) >= 2:
+        return {"veredicto": "indeterminado",
+                "senales": cierre + [f"{len(ruts_cola)} RUTs al cierre"],
+                "detalle": ("Tiene el bloque de firmas con las partes identificadas, pero el texto "
+                            "no permite saber si la firma manuscrita está estampada. Confírmalo visualmente.")}
+    if cierre:
+        return {"veredicto": "indeterminado", "senales": cierre,
+                "detalle": "Tiene lenguaje de cierre de firmas. Confirma visualmente si está estampada."}
+    # Líneas de firma vacías al final sin nada más → probablemente sin firmar.
+    if ("____" in cola_raw) and len(ruts_cola) == 0:
+        return {"veredicto": "sin_firma", "senales": ["lineas de firma vacias"],
+                "detalle": "Hay líneas de firma sin nombres ni RUT al cierre — parece sin firmar."}
+    return {"veredicto": "indeterminado", "senales": [],
+            "detalle": "El texto no permite determinarlo. Confírmalo visualmente."}

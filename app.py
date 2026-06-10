@@ -37566,6 +37566,58 @@ def mant_contrato_subir(cid):
     except Exception as e_cnt:
         print(f"[mant_contrato_subir] no se pudo verificar tope ({e_cnt})", flush=True)
 
+    # ═══ GATE "¿ES UN CONTRATO?" (2026-06-10, caso Clínica Alemana) ═══
+    # En la sección Contratos SOLO van contratos. Extraemos el texto nativo
+    # del PDF (pdfplumber, rápido) y lo evaluamos con el detector determinista.
+    #   no_contrato → 409 requiere_decision (el front ofrece: guardarlo en
+    #                 Documentos / forzar como contrato / cancelar).
+    #   dudoso      → se acepta con warning visible.
+    #   indeterminado (escaneado sin texto) → se acepta marcado "por verificar";
+    #                 el botón Analizar (con OCR) lo re-evalúa después.
+    # `force_contrato=1` (decisión humana explícita) salta el bloqueo y queda
+    # registrado en el log.
+    _doc_check = None; _doc_check_det = None
+    _firma_estado = None; _firma_det = None
+    _force_ct = str(d.get("force_contrato") or "").strip() in ("1", "true", "si", "sí")
+    try:
+        import contrato_reglas as _cr_gate
+        _upload_stream.seek(0)
+        _texto_gate = ""
+        try:
+            import pdfplumber as _pp
+            with _pp.open(_upload_stream) as _pdf_g:
+                for _pg in _pdf_g.pages[:8]:
+                    _texto_gate += (_pg.extract_text() or "") + "\n"
+        except Exception as _e_txt:
+            print(f"[contrato gate] extract texto: {_e_txt}", flush=True)
+        _ev = _cr_gate.evaluar_contractualidad(_texto_gate)
+        _doc_check = _ev.get("veredicto")
+        _doc_check_det = (_ev.get("detalle") or
+                          (f"Score contractualidad {_ev.get('score')}/100" if _ev.get("score") is not None else None))
+        if _doc_check == "no_contrato" and not _force_ct:
+            print(f"[contrato gate] RECHAZADO cid={cid} archivo={f.filename} "
+                  f"parece={_ev.get('parece')} senales={_ev.get('senales_neg')}", flush=True)
+            return jsonify({
+                "error": (f"Este documento parece {_ev.get('parece') or 'otro tipo de documento'}, "
+                          "no un contrato. En la sección Contratos solo van contratos."),
+                "error_codigo": "NO_ES_CONTRATO",
+                "requiere_decision": True,
+                "parece": _ev.get("parece"),
+                "senales": _ev.get("senales_neg") or [],
+            }), 409
+        if _force_ct and _doc_check == "no_contrato":
+            _doc_check_det = ((_doc_check_det or "") + " · Forzado como contrato por " +
+                              (current_username() or "usuario"))[:300]
+        # Firma (gratis con el mismo texto)
+        _fr = _cr_gate.detectar_firmas(_texto_gate)
+        _firma_estado = _fr.get("veredicto")
+        _firma_det = (_fr.get("detalle") or "")[:400] or None
+        _upload_stream.seek(0)
+    except Exception as _e_gate:
+        print(f"[contrato gate] error no bloqueante: {_e_gate}", flush=True)
+        try: _upload_stream.seek(0)
+        except Exception: pass
+
     fname = secure_filename(f"{cid}_{int(time.time())}_{f.filename}")
 
     # ── Subir a Cloudinary como 'raw' (PDFs/ZIPs/DOCs) ─────────────────
@@ -37657,9 +37709,21 @@ def mant_contrato_subir(cid):
                 )
             ctid = cur.lastrowid
         conn.commit()
+        # GATE 2026-06-10: persistir veredicto de contractualidad + firma
+        # (UPDATE separado y tolerante — la columna puede no existir pre-migración).
+        try:
+            if _doc_check or _firma_estado:
+                mysql_execute(
+                    "UPDATE mant_contratos SET doc_check=%s, doc_check_detalle=%s, "
+                    " firma_estado=%s, firma_detalle=%s WHERE id=%s",
+                    (_doc_check, _doc_check_det, _firma_estado, _firma_det, ctid))
+        except Exception as _e_dc:
+            print(f"[contrato gate] persistencia veredicto: {_e_dc}", flush=True)
         _detalle_log = f"{f.filename} (Cloudinary raw · {size_bytes/1024:.0f}KB"
         if _fue_reparado:
             _detalle_log += " · PDF reparado automáticamente"
+        if _force_ct:
+            _detalle_log += " · FORZADO como contrato pese al detector"
         _detalle_log += ")"
         _mant_log("contrato", ctid, "subido", _detalle_log)
         return jsonify({
@@ -37755,6 +37819,107 @@ def mant_contrato_check_archivo(ctid):
         "archivo_nombre":   ct.get("archivo_nombre") or "",
         "razon":            razon_legacy,
     })
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/firma", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_contrato_firma_confirmar(ctid):
+    """Confirmación HUMANA del estado de firma (2026-06-10). El detector
+    determinista sugiere; la persona que tiene el papel a la vista manda.
+    Body: {"estado": "firmado"|"sin_firma"}  (o {"estado":"limpiar"} para
+    volver al veredicto automático)."""
+    u = getattr(g, "user", None) or {}
+    if _rol_familia(u.get("role")) not in ("admin", "superadmin", "supervisor", "ejecutivo"):
+        return jsonify({"error": "Tu rol no puede confirmar firmas."}), 403
+    d = request.get_json(silent=True) or {}
+    estado = (d.get("estado") or "").strip().lower()
+    if estado not in ("firmado", "sin_firma", "limpiar"):
+        return jsonify({"error": "Estado inválido (firmado | sin_firma)."}), 400
+    ct = mysql_fetchone("SELECT id, cliente_id FROM mant_contratos WHERE id=%s", (ctid,))
+    if not ct:
+        return jsonify({"error": "Contrato no encontrado."}), 404
+    try:
+        if estado == "limpiar":
+            mysql_execute(
+                "UPDATE mant_contratos SET firma_confirmada_por=NULL, firma_confirmada_at=NULL "
+                " WHERE id=%s", (ctid,))
+        else:
+            mysql_execute(
+                "UPDATE mant_contratos SET firma_estado=%s, "
+                " firma_detalle=%s, firma_confirmada_por=%s, firma_confirmada_at=NOW() "
+                " WHERE id=%s",
+                (estado, "Confirmado visualmente por el equipo.",
+                 (current_username() or "")[:190], ctid))
+        _mant_log("contrato", ctid, "firma_confirmada", f"{estado} por {current_username()}")
+        return jsonify({"ok": True, "estado": estado})
+    except Exception as e:
+        print(f"[contrato firma] ctid={ctid}: {e}", flush=True)
+        return jsonify({"error": "No se pudo guardar la confirmación."}), 500
+
+
+@app.route("/mantenciones/api/contratos/<int:ctid>/mover-a-documentos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_contrato_mover_a_documentos(ctid):
+    """Caso Clínica Alemana (2026-06-10): un documento que NO es contrato
+    quedó en la sección Contratos. Lo MUEVE a la pestaña Documentos del
+    cliente (mant_contrato_adjuntos) conservando el archivo en el storage,
+    y elimina el registro de mant_contratos. Roles de gestión."""
+    u = getattr(g, "user", None) or {}
+    if _rol_familia(u.get("role")) not in ("admin", "superadmin", "supervisor", "ejecutivo"):
+        return jsonify({"error": "Tu rol no puede mover documentos."}), 403
+    ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE id=%s", (ctid,))
+    if not ct:
+        return jsonify({"error": "Contrato no encontrado."}), 404
+    ct = dict(ct)
+    cid = ct["cliente_id"]
+    try:
+        # El adjunto necesita colgar de un contrato (FK NOT NULL). Usamos otro
+        # contrato del cliente; si no hay, el "Contenedor de documentos"
+        # (mismo patrón que mant_cliente_documento_subir).
+        host = mysql_fetchone(
+            "SELECT id FROM mant_contratos WHERE cliente_id=%s AND id != %s "
+            "ORDER BY (nombre='Contenedor de documentos') DESC, created_at DESC LIMIT 1",
+            (cid, ctid))
+        if host:
+            host_id = host["id"]
+        else:
+            mysql_execute(
+                "INSERT INTO mant_contratos (cliente_id, nombre, estado, created_by) "
+                "VALUES (%s, 'Contenedor de documentos', 'indefinido', %s)",
+                (cid, current_username()))
+            host = mysql_fetchone(
+                "SELECT id FROM mant_contratos WHERE cliente_id=%s AND nombre='Contenedor de documentos' "
+                "ORDER BY id DESC LIMIT 1", (cid,))
+            host_id = (host or {}).get("id")
+        if not host_id:
+            return jsonify({"error": "No se pudo preparar el destino en Documentos."}), 500
+        # Crear el adjunto con el MISMO archivo (sin tocar el storage).
+        mysql_execute(
+            "INSERT INTO mant_contrato_adjuntos "
+            " (contrato_id, cliente_id, tipo, subtipo_externo, nombre, archivo_nombre, "
+            "  archivo_path, cloudinary_url, cloudinary_public_id, mime_type, descripcion, created_by) "
+            "VALUES (%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (host_id, cid, "otro",
+             (ct.get("nombre") or ct.get("archivo_nombre") or "Documento")[:300],
+             ct.get("archivo_nombre"), ct.get("archivo_path"),
+             ct.get("cloudinary_url"), ct.get("cloudinary_public_id"),
+             "application/pdf",
+             ("Movido desde Contratos (no era un contrato). " + (ct.get("doc_check_detalle") or ""))[:500],
+             (current_username() or "")[:190]))
+        # Re-colgar adjuntos hijos del contrato movido y eliminar el registro.
+        mysql_execute("UPDATE mant_contrato_adjuntos SET contrato_id=%s "
+                      " WHERE contrato_id=%s", (host_id, ctid))
+        _mant_log("contrato", ctid, "movido_a_documentos",
+                  f"{ct.get('archivo_nombre') or ct.get('nombre')} por {current_username()}")
+        _mant_log("cliente", cid, "documento_reclasificado",
+                  f"contrato #{ctid} → Documentos")
+        mysql_execute("DELETE FROM mant_contratos WHERE id=%s", (ctid,))
+        return jsonify({"ok": True, "mensaje": "Documento movido a la pestaña Documentos."})
+    except Exception as e:
+        print(f"[contrato mover] ctid={ctid}: {e}", flush=True)
+        return jsonify({"error": "No se pudo mover el documento."}), 500
 
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/re-subir", methods=["POST"])
@@ -39980,6 +40145,29 @@ cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a
                                  "Súbelo en PDF con texto seleccionable o en Word."}), 200
     import contrato_reglas
     _an = contrato_reglas.analizar_contrato(texto_contrato, reglas=_contrato_reglas_activas())
+    # GATE 2026-06-10: con el texto COMPLETO (incluye OCR de escaneados)
+    # re-evaluamos contractualidad + firma y persistimos. La confirmación
+    # HUMANA de firma manda: si existe, no se pisa el estado.
+    try:
+        _ev2 = contrato_reglas.evaluar_contractualidad(texto_contrato)
+        _fr2 = contrato_reglas.detectar_firmas(texto_contrato)
+        _an["doc_check"] = _ev2
+        _an["firma"] = _fr2
+        _row_fc = mysql_fetchone(
+            "SELECT firma_confirmada_por FROM mant_contratos WHERE id=%s", (ctid,))
+        _hay_confirm = bool((_row_fc or {}).get("firma_confirmada_por"))
+        if _hay_confirm:
+            mysql_execute(
+                "UPDATE mant_contratos SET doc_check=%s, doc_check_detalle=%s WHERE id=%s",
+                (_ev2.get("veredicto"), (_ev2.get("detalle") or None), ctid))
+        else:
+            mysql_execute(
+                "UPDATE mant_contratos SET doc_check=%s, doc_check_detalle=%s, "
+                " firma_estado=%s, firma_detalle=%s WHERE id=%s",
+                (_ev2.get("veredicto"), (_ev2.get("detalle") or None),
+                 _fr2.get("veredicto"), (_fr2.get("detalle") or "")[:400] or None, ctid))
+    except Exception as _e_gate2:
+        print(f"[analizar gate] {_e_gate2}", flush=True)
     _ids_alert = {a.get("id") for a in _an.get("alertas_criticas", [])}
     _es_arriendo = bool({"tipo_es_arriendo_no_mantencion", "tipo_leasing_opcion_compra",
                          "tipo_arriendo_disfrazado_costos_a_ilus",
@@ -59549,6 +59737,19 @@ def _ensure_mant_intel_tables():
             mysql_execute("ALTER TABLE mant_contratos ADD COLUMN mant_gratis_incluidas_anual INT NULL "
                           "COMMENT 'Nº mantenciones gratuitas/año pactadas. NULL = derivar de frecuencia'")
             faltaron.append("mant_contratos.mant_gratis_incluidas_anual")
+        # GATE CONTRATOS 2026-06-10 (caso Clínica Alemana): veredicto de
+        # contractualidad + estado de firma (detección determinista + humano).
+        for _col, _ddl in (
+            ("doc_check", "doc_check VARCHAR(16) NULL COMMENT 'contrato|dudoso|no_contrato|indeterminado'"),
+            ("doc_check_detalle", "doc_check_detalle VARCHAR(300) NULL"),
+            ("firma_estado", "firma_estado VARCHAR(16) NULL COMMENT 'firmado|sin_firma|indeterminado'"),
+            ("firma_detalle", "firma_detalle VARCHAR(400) NULL"),
+            ("firma_confirmada_por", "firma_confirmada_por VARCHAR(190) NULL COMMENT 'humano que confirmo la firma'"),
+            ("firma_confirmada_at", "firma_confirmada_at DATETIME NULL"),
+        ):
+            if _col not in ex:
+                mysql_execute(f"ALTER TABLE mant_contratos ADD COLUMN {_ddl}")
+                faltaron.append(f"mant_contratos.{_col}")
     except Exception as e:
         print(f"[ensure_intel] contrato col: {e}", flush=True)
     try:
