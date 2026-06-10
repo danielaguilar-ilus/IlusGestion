@@ -428,7 +428,7 @@
   .agi-list{display:block;}
   .agi-drawer{
     top:auto;bottom:-100%;right:0;width:100%;
-    height:90vh;max-height:90vh;border-left:none;border-top:1px solid var(--ilus-line);
+    height:90dvh;max-height:90dvh;border-left:none;border-top:1px solid var(--ilus-line);
     border-radius:18px 18px 0 0;
     transition:bottom .35s cubic-bezier(.34,1.56,.64,1);
   }
@@ -450,6 +450,77 @@
   .agi-week{grid-template-columns:64px repeat(7,minmax(0,1fr));}
   .agi-time-col{font-size:.62rem;padding:6px 3px;}
 }
+
+/* ── Días NO HÁBILES (fin de semana / feriado) ──────────────────────── */
+.agi-week-head.nohabil{background:#f3f4f6;color:var(--ilus-muted-soft);}
+.agi-week-head.nohabil .agi-day{color:var(--ilus-muted-soft);}
+.agi-nohabil-tag{
+  display:inline-block;margin-top:4px;font-size:.56rem;font-weight:900;
+  text-transform:uppercase;letter-spacing:.4px;color:#6b7280;
+  background:#e5e7eb;padding:1px 7px;border-radius:50px;
+}
+.agi-slot.nohabil{
+  background:repeating-linear-gradient(135deg,#f3f4f6 0 8px,#ebedf0 8px 16px);
+  cursor:not-allowed;
+}
+.agi-slot.nohabil:hover{box-shadow:none;}
+
+/* ── Slot vacío clicable → crear retiro ─────────────────────────────── */
+.agi-slot.creatable{cursor:pointer;}
+.agi-slot.creatable:hover{box-shadow:inset 0 0 0 2px #cbd5e1;}
+.agi-slot.creatable:hover::after{
+  content:'+';position:absolute;bottom:2px;right:6px;
+  font-size:.95rem;font-weight:900;color:var(--ilus-muted-soft);line-height:1;
+  pointer-events:none;
+}
+
+/* ── FILTROS (búsqueda + chips de estado) ───────────────────────────── */
+.agi-filters{
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  background:#fff;border:1px solid var(--ilus-line);border-radius:12px;
+  padding:9px 14px;margin-bottom:12px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);
+}
+.agi-filter-search{
+  position:relative;flex:1;min-width:200px;max-width:340px;
+}
+.agi-filter-search i{
+  position:absolute;left:10px;top:50%;transform:translateY(-50%);
+  color:var(--ilus-muted-soft);font-size:.85rem;pointer-events:none;
+}
+.agi-filter-search input{
+  width:100%;border:1px solid #e5e7eb;border-radius:9px;
+  padding:7px 10px 7px 30px;font-size:16px;min-height:38px;
+  color:var(--ilus-ink);background:#fafbfc;outline:none;
+  transition:border-color .15s,box-shadow .15s;
+}
+.agi-filter-search input:focus{
+  border-color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.08);background:#fff;
+}
+.agi-filter-chips{display:flex;gap:6px;flex-wrap:wrap;}
+.agi-filter-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  border:1px solid #e5e7eb;background:#fff;color:#374151;
+  padding:5px 12px;border-radius:50px;font-size:.74rem;font-weight:800;
+  cursor:pointer;transition:all .15s;min-height:34px;
+}
+.agi-filter-chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+.agi-filter-chip:hover{border-color:#cbd5e1;background:#fafbfc;}
+.agi-filter-chip.active{background:var(--ilus-ink);color:#fff;border-color:var(--ilus-ink);}
+.agi-filtered-out{display:none !important;}
+@media (max-width: 767.98px){
+  .agi-filter-chip{min-height:44px;padding:8px 14px;}
+  .agi-filter-search{max-width:100%;}
+  .agi-filter-search input{min-height:44px;}
+}
+
+/* ── Botones extra del drawer (acciones rápidas) ────────────────────── */
+.agi-act-accept{background:#16a34a;color:#fff;grid-column:span 2;}
+.agi-act-accept:hover{background:#15803d;color:#fff;}
+.agi-act-prep{background:#f59e0b;color:#fff;}
+.agi-act-prep:hover{background:#d97706;color:#fff;}
+.agi-act-done{background:#0f172a;color:#fff;}
+.agi-act-done:hover{background:#1e293b;color:#fff;}
 
 /* iOS safe-area */
 @supports(padding:max(0px)){
@@ -545,6 +616,26 @@
   </span>
 </div>
 
+{# ── FILTROS: búsqueda + chips de estado (client-side, sin recargar) ── #}
+<div class="agi-filters">
+  <div class="agi-filter-search">
+    <i class="bi bi-search"></i>
+    <input type="search" id="agiFilterText" placeholder="Buscar código o cliente…"
+           autocomplete="off" oninput="agiSetFilterText(this.value)" aria-label="Buscar retiros">
+  </div>
+  <div class="agi-filter-chips" id="agiFilterChips">
+    <button type="button" class="agi-filter-chip active" data-kd="all" onclick="agiSetFilterKd('all', this)">Todos</button>
+    <button type="button" class="agi-filter-chip" data-kd="requested" onclick="agiSetFilterKd('requested', this)">
+      <span class="dot" style="background:var(--kd-req)"></span>Solicitado</button>
+    <button type="button" class="agi-filter-chip" data-kd="proposed" onclick="agiSetFilterKd('proposed', this)">
+      <span class="dot" style="background:var(--kd-prop)"></span>Propuesto</button>
+    <button type="button" class="agi-filter-chip" data-kd="confirmed" onclick="agiSetFilterKd('confirmed', this)">
+      <span class="dot" style="background:var(--kd-conf)"></span>Confirmado</button>
+    <button type="button" class="agi-filter-chip" data-kd="disputed" onclick="agiSetFilterKd('disputed', this)">
+      <span class="dot" style="background:var(--kd-disp)"></span>En disputa</button>
+  </div>
+</div>
+
 {# ── Loader (skeleton) ── #}
 <div id="agiLoader" style="display:none">
   <div class="agi-skel-row">
@@ -593,6 +684,7 @@
         <input type="hidden" id="agi-mover-tf">
         <input type="hidden" id="agi-mover-tt">
         <div class="agi-mover-msg" id="agi-mover-resumen"></div>
+        <div id="agi-mover-capwarn" style="display:none;background:#fff8e1;border:1px solid #fde68a;border-left:3px solid #f59e0b;border-radius:8px;padding:9px 12px;font-size:.8rem;color:#92400e;margin-bottom:12px"></div>
         <label class="form-label small fw-bold mb-1">Mensaje al cliente (opcional)</label>
         <textarea id="agi-mover-msg" class="form-control" rows="3"
           placeholder="Hola, te proponemos esta nueva fecha porque…"
@@ -669,7 +761,49 @@ const AGI_POLL_MS = 30000;
 const _AGI_IS_MOBILE = () => window.matchMedia('(max-width: 767.98px)').matches;
 
 // ── Helpers ───────────────────────────────────────────────────────────
-function agiFmt(d){ return d.toISOString().slice(0,10); }
+// FIX timezone: toISOString() es UTC — en Chile (UTC-3/-4) después de las
+// 20-21h devolvía el día SIGUIENTE. Formateamos con la fecha LOCAL.
+function agiFmt(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// ¿Es día hábil? Usa settings.work_days (ISO: 1=Lun … 7=Dom) + holidays (csv)
+// que la API ya entrega. Nota: los feriados legales de Chile se validan en
+// backend pero NO vienen en settings.holidays — aquí solo pintamos los
+// configurados manualmente + fines de semana.
+function agiWorkInfo(d, fecha){
+  const cfg = (_agiData && _agiData.settings) || {};
+  const wd = String(cfg.work_days || '1,2,3,4,5').split(',')
+    .map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+  const hol = String(cfg.holidays || '').replace(/;/g, ',').split(',')
+    .map(s => s.trim()).filter(Boolean);
+  if (hol.includes(fecha)) return { habil:false, label:'Feriado' };
+  const iso = ((d.getDay() + 6) % 7) + 1;   // 1=lunes … 7=domingo
+  if (!wd.includes(iso)) return { habil:false, label:'No hábil' };
+  return { habil:true, label:'' };
+}
+
+// ── FILTROS client-side (texto + estado) ─────────────────────────────
+let _agiFilterText = '';
+let _agiFilterKd = 'all';
+function agiSetFilterText(v){
+  _agiFilterText = (v || '').trim().toLowerCase();
+  agiApplyFilters();
+}
+function agiSetFilterKd(kd, btn){
+  _agiFilterKd = kd;
+  document.querySelectorAll('.agi-filter-chip').forEach(b =>
+    b.classList.toggle('active', b === btn));
+  agiApplyFilters();
+}
+function agiApplyFilters(){
+  const txt = _agiFilterText, kd = _agiFilterKd;
+  document.querySelectorAll('.agi-pick, .agi-list-pick').forEach(el => {
+    const matchKd = kd === 'all' || el.classList.contains('kd-' + kd);
+    const hay = ((el.dataset.code || '') + ' ' + (el.dataset.cliente || '')).toLowerCase();
+    const matchTxt = !txt || hay.includes(txt);
+    el.classList.toggle('agi-filtered-out', !(matchKd && matchTxt));
+  });
+}
 function agiSOW(d){
   // Start of week (lunes)
   const x = new Date(d);
@@ -760,21 +894,28 @@ function agiRenderWeek(){
   document.getElementById('agiRangeLabel').textContent =
     `${fmt(_agiRangeFrom)} → ${fmt(_agiRangeTo)} ${_agiRangeFrom.getFullYear()}`;
 
-  // Headers
+  // Headers (precomputamos info de día hábil/feriado para reusar en los slots)
   const today = agiFmt(new Date());
   const dayNames = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
-  let html = '<div class="agi-week-head" style="grid-column:1"><div style="font-size:.66rem;color:var(--ilus-muted-soft)">HORA</div></div>';
+  const daysMeta = [];
   for (let i = 0; i < 7; i++){
     const d = new Date(_agiRangeFrom); d.setDate(d.getDate() + i);
     const fecha = agiFmt(d);
+    daysMeta.push({ d, fecha, w: agiWorkInfo(d, fecha) });
+  }
+  let html = '<div class="agi-week-head" style="grid-column:1"><div style="font-size:.66rem;color:var(--ilus-muted-soft)">HORA</div></div>';
+  for (let i = 0; i < 7; i++){
+    const { d, fecha, w } = daysMeta[i];
     const dia = _agiData.dias[fecha] || { total_picks:0, ocupacion_pct:0 };
     const isToday = fecha === today;
     const barColor = dia.ocupacion_pct >= 80 ? '#dc2626' : dia.ocupacion_pct >= 50 ? '#f59e0b' : '#16a34a';
-    html += `<div class="agi-week-head${isToday?' today':''}" data-fecha="${fecha}">
+    html += `<div class="agi-week-head${isToday?' today':''}${!w.habil?' nohabil':''}" data-fecha="${fecha}">
       <div style="font-size:.65rem">${dayNames[i]}</div>
       <div class="agi-day">${d.getDate()}</div>
-      <div style="font-size:.62rem;color:var(--ilus-muted-soft);font-weight:700">${dia.total_picks} retiros</div>
-      <div class="agi-bar"><div class="agi-bar-fill" style="width:${dia.ocupacion_pct}%;background:${barColor}"></div></div>
+      ${!w.habil
+        ? `<div class="agi-nohabil-tag">${w.label}</div>`
+        : `<div style="font-size:.62rem;color:var(--ilus-muted-soft);font-weight:700">${dia.total_picks} retiros</div>
+      <div class="agi-bar"><div class="agi-bar-fill" style="width:${dia.ocupacion_pct}%;background:${barColor}"></div></div>`}
     </div>`;
   }
 
@@ -792,25 +933,39 @@ function agiRenderWeek(){
   for (const slot of slots){
     html += `<div class="agi-time-col">${slot}</div>`;
     for (let i = 0; i < 7; i++){
-      const d = new Date(_agiRangeFrom); d.setDate(d.getDate() + i);
-      const fecha = agiFmt(d);
+      const { fecha, w } = daysMeta[i];
       const dia = _agiData.dias[fecha];
       const slotData = dia && dia.slots[slot];
       let cellClass = 'agi-slot';
       let capInfo = '';
       let picksHtml = '';
+      let ocup = 0;
+      let mx = cfg.max_picks_slot || 2;
       if (slotData){
         // Juan Daniel 2026-06-05: ver el DOBLE cupo en el calendario.
         // lleno (2/2) = rojo, medio cupo (1/2) = ámbar, libre = normal.
-        const _ocup = slotData.ocupados || 0;
-        const _mx   = slotData.max_picks || 2;
-        if (_ocup >= _mx) cellClass += ' full';
-        else if (_ocup >= 1) cellClass += ' half';
-        const _lbl = (_ocup >= _mx) ? 'Lleno' : (_ocup >= 1 ? 'Medio cupo' : 'Libre');
-        capInfo = `<div class="agi-slot-cap" title="${_lbl} (${_ocup}/${_mx})">${_ocup}/${_mx}</div>`;
+        ocup = slotData.ocupados || 0;
+        mx   = slotData.max_picks || 2;
+        if (ocup >= mx) cellClass += ' full';
+        else if (ocup >= 1) cellClass += ' half';
+        const _lbl = (ocup >= mx) ? 'Lleno' : (ocup >= 1 ? 'Medio cupo' : 'Libre');
+        capInfo = `<div class="agi-slot-cap" title="${_lbl} (${ocup}/${mx})">${ocup}/${mx}</div>`;
         picksHtml = slotData.picks.map(p => agiPickCardHtml(p)).join('');
       }
-      html += `<div class="${cellClass}" data-fecha="${fecha}" data-slot="${slot}"
+      // Día NO hábil: gris rayado, sin DnD ni click-crear.
+      if (!w.habil){
+        cellClass += ' nohabil';
+        html += `<div class="${cellClass}" data-fecha="${fecha}" data-slot="${slot}"
+                  title="${w.label} — no se agendan retiros">${capInfo}${picksHtml}</div>`;
+        continue;
+      }
+      // Día hábil con cupo: click en zona vacía → crear retiro prellenado.
+      let extraAttrs = '';
+      if (ocup < mx){
+        cellClass += ' creatable';
+        extraAttrs = ` onclick="agiSlotCrear(event, '${fecha}', '${slot}')" title="Crear retiro aquí"`;
+      }
+      html += `<div class="${cellClass}" data-fecha="${fecha}" data-slot="${slot}"${extraAttrs}
                 ondragover="agiDragOver(event)" ondragleave="agiDragLeave(event)"
                 ondrop="agiDrop(event)">${capInfo}${picksHtml}</div>`;
     }
@@ -825,6 +980,22 @@ function agiRenderWeek(){
     el.addEventListener('dragend', agiDragEnd);
     el.addEventListener('click', () => agiAbrirDrawer(parseInt(el.dataset.pickId, 10)));
   });
+
+  // Mantener filtros activos tras cada refresh (polling incluido)
+  agiApplyFilters();
+}
+
+// ── Crear retiro desde un slot vacío (día hábil con cupo) ────────────
+function agiSlotCrear(ev, fecha, slot){
+  // Si el click fue sobre una tarjeta, eso abre el drawer — no crear.
+  if (ev.target.closest('.agi-pick')) return;
+  const cfg = (_agiData && _agiData.settings) || {};
+  const slotMin = cfg.slot_minutes || 30;
+  const [h, m] = slot.split(':').map(Number);
+  const endMin = h*60 + m + slotMin;
+  const endStr = `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}`;
+  // El dashboard abre el modal "nuevo retiro" prellenado con estos params.
+  window.location.href = `/retiros?new=1&date=${encodeURIComponent(fecha)}&from=${encodeURIComponent(slot)}&to=${encodeURIComponent(endStr)}`;
 }
 
 // ── HTML de una tarjeta de retiro ────────────────────────────────────
@@ -877,11 +1048,15 @@ function agiRenderList(){
     const isToday = fecha === today;
     const dayIdx = d.getDay();
     const total = dia ? dia.total_picks : 0;
+    const w = agiWorkInfo(d, fecha);
+    const nohabilTag = !w.habil
+      ? ` <span style="font-size:.58rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;background:rgba(255,255,255,.18);padding:1px 8px;border-radius:50px">${w.label}</span>`
+      : '';
 
     html += `<div class="agi-list-day">
       <div class="agi-list-day-head${isToday?' today':''}">
         <div>
-          <div class="agi-list-day-name">${dayNames[dayIdx]}${isToday?' · HOY':''}</div>
+          <div class="agi-list-day-name">${dayNames[dayIdx]}${isToday?' · HOY':''}${nohabilTag}</div>
           <div class="agi-list-day-num">${d.getDate()} ${d.toLocaleDateString('es-CL',{month:'short'})}</div>
         </div>
         <div class="agi-list-day-stats">
@@ -907,7 +1082,8 @@ function agiRenderList(){
         }[kd];
         const warnIcon = p.has_data_mismatch
           ? `<i class="bi bi-exclamation-triangle-fill" style="color:#f59e0b" title="Datos de ERP diferentes"></i>` : '';
-        html += `<div class="agi-list-pick kd-${kd}" onclick="agiAbrirDrawer(${p.id})">
+        html += `<div class="agi-list-pick kd-${kd}" onclick="agiAbrirDrawer(${p.id})"
+          data-code="${agiEsc(p.code||'')}" data-cliente="${agiEsc(p.customer_name||'')}">
           <div class="agi-list-pick-top">
             <span class="agi-list-pick-time">${agiEsc(p.time_from||'')}</span>
             <span class="agi-pick-kd kd-${kd}">${kdLbl}</span>
@@ -925,6 +1101,8 @@ function agiRenderList(){
     html += `</div></div>`;
   }
   cont.innerHTML = html;
+  // Mantener filtros activos tras cada refresh (polling incluido)
+  agiApplyFilters();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -986,6 +1164,28 @@ function agiDrop(ev){
   const [h, m] = slotDest.split(':').map(Number);
   const endMin = h*60 + m + 30;
   const endStr = `${String(Math.floor(endMin/60)).padStart(2,'0')}:${String(endMin%60).padStart(2,'0')}`;
+  // ¿El slot destino excedería kg/m³ con esta carga? Advertencia ámbar
+  // (NO bloquea — el backend valida de verdad al confirmar).
+  let capWarn = '';
+  try {
+    const cfg = (_agiData && _agiData.settings) || {};
+    const diaDest = _agiData.dias[fechaDest];
+    const slotInfo = diaDest && diaDest.slots ? diaDest.slots[slotDest] : null;
+    const moving = agiFindPickInCalendar(_agiDragData.rid) || {};
+    const curKg = slotInfo ? (slotInfo.total_kg || 0) : 0;
+    const curM3 = slotInfo ? (slotInfo.total_m3 || 0) : 0;
+    const newKg = curKg + (moving.total_weight_kg || 0);
+    const newM3 = curM3 + (moving.total_volume_m3 || 0);
+    const maxKg = (slotInfo && slotInfo.max_kg) || cfg.max_kg_slot || 0;
+    const maxM3 = (slotInfo && slotInfo.max_m3) || cfg.max_m3_slot || 0;
+    const partes = [];
+    if (maxKg && newKg > maxKg) partes.push(`peso ${Math.round(newKg)} kg (máx ${Math.round(maxKg)} kg)`);
+    if (maxM3 && newM3 > maxM3) partes.push(`volumen ${Math.round(newM3*100)/100} m³ (máx ${maxM3} m³)`);
+    if (partes.length){
+      capWarn = `Ojo: el bloque destino quedaría con ${partes.join(' y ')}. ` +
+        `Puedes enviar la propuesta igual — el sistema validará la capacidad al confirmar.`;
+    }
+  } catch(_){ /* advertencia opcional: nunca bloquear el flujo */ }
   // Lanzar modal de confirmación
   agiAbrirMover({
     rid: _agiDragData.rid,
@@ -997,6 +1197,7 @@ function agiDrop(ev){
     fechaDest: fechaDest,
     tfDest: slotDest,
     ttDest: endStr,
+    capWarn: capWarn,
   });
 }
 
@@ -1015,6 +1216,15 @@ function agiAbrirMover(payload){
        De <b>${agiEsc(payload.fechaOrig)} ${agiEsc(payload.tfOrig)}–${agiEsc(payload.ttOrig)}</b>
        a <b style="color:#16a34a">${agiEsc(payload.fechaDest)} ${agiEsc(payload.tfDest)}–${agiEsc(payload.ttDest)}</b>
      </div>`;
+  // Advertencia ámbar de capacidad (solo viene desde drag&drop)
+  const capWarnEl = document.getElementById('agi-mover-capwarn');
+  if (payload.capWarn){
+    capWarnEl.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-1"></i>${agiEsc(payload.capWarn)}`;
+    capWarnEl.style.display = '';
+  } else {
+    capWarnEl.style.display = 'none';
+    capWarnEl.innerHTML = '';
+  }
   new bootstrap.Modal(document.getElementById('agiModalMover')).show();
 }
 
@@ -1342,8 +1552,39 @@ function agiRenderDrawer(d){
       <i class="bi bi-envelope-x"></i>Sin email
     </button>`;
   }
+  const isClosed = (d.status === 'cerrada' || d.status === 'retirada' || d.status === 'rechazada');
+
+  // ── Acción rápida: ACEPTAR CONTRAPROPUESTA pendiente del cliente ──
+  // proposed_by='cliente' + status='pending' = el cliente contrapropuso
+  // otra fecha y está esperando respuesta de ILUS.
+  const pendCounter = (d.proposals || []).find(p =>
+    String(p.status || '').toLowerCase() === 'pending' &&
+    !['internal', 'operacion'].includes(String(p.proposed_by || '').toLowerCase()));
+  if (pendCounter && !isClosed){
+    actHtml += `<button class="agi-act-btn agi-act-accept"
+        title="Aceptar ${agiEsc(pendCounter.date||'')} ${agiEsc(pendCounter.time_from||'')}–${agiEsc(pendCounter.time_to||'')}"
+        onclick="agiAceptarContrapropuesta(${d.id}, this)">
+      <i class="bi bi-check2-circle"></i>Aceptar contrapropuesta
+    </button>`;
+  }
+
+  // ── Acciones rápidas de estado (con ilusConfirm previo) ──────────
+  if (!isClosed){
+    if (d.status !== 'en_preparacion'){
+      actHtml += `<button class="agi-act-btn agi-act-prep"
+          onclick="agiCambiarEstado(${d.id}, 'en_preparacion', 'En preparación')">
+        <i class="bi bi-box-seam"></i>En preparación
+      </button>`;
+    }
+    actHtml += `<button class="agi-act-btn agi-act-done"
+        ${d.status === 'en_preparacion' ? 'style="grid-column:span 2"' : ''}
+        onclick="agiCambiarEstado(${d.id}, 'retirada', 'Retirada')">
+      <i class="bi bi-check2-all"></i>Retirada
+    </button>`;
+  }
+
   // Botón mover/reagendar — solo si no está cerrada/retirada
-  if (d.status !== 'cerrada' && d.status !== 'retirada' && d.status !== 'rechazada'){
+  if (!isClosed){
     actHtml += `<button class="agi-act-btn agi-act-move" onclick="${moverFn}">
       <i class="bi bi-calendar-plus"></i>Reagendar / Proponer otra fecha
     </button>`;
@@ -1408,6 +1649,69 @@ function agiAbrirMoverDesdeDrawer(rid){
         ed.addEventListener('change', () => { hidden.value = ed.value; });
       }
     });
+  }
+}
+
+// ── Aceptar la contrapropuesta pendiente del cliente ─────────────────
+// POST /retiros/<rid>/aceptar-contrapropuesta (AJAX) → {ok, message, confirmed}
+async function agiAceptarContrapropuesta(rid, btnEl){
+  if (btnEl){ btnEl.disabled = true; btnEl.style.opacity = '.6'; }
+  try {
+    const r = await fetch(`/retiros/${rid}/aceptar-contrapropuesta`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
+    });
+    let d = {};
+    try { d = await r.json(); } catch(_){}
+    if (r.ok && d.ok){
+      ilusToast(d.message || '✓ Contrapropuesta aceptada — retiro confirmado', { type:'success' });
+      agiCerrarDrawer();
+      agiCargar(true);
+    } else {
+      ilusToast(d.error || d.message || 'No se pudo aceptar la contrapropuesta', { type:'error' });
+      if (btnEl){ btnEl.disabled = false; btnEl.style.opacity = ''; }
+    }
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type:'error' });
+    if (btnEl){ btnEl.disabled = false; btnEl.style.opacity = ''; }
+  }
+}
+
+// ── Cambio rápido de estado desde el drawer ──────────────────────────
+// POST clásico a /retiros/<rid>/status (responde redirect → lo manejamos
+// con redirect:'manual' y refrescamos el calendario nosotros).
+async function agiCambiarEstado(rid, status, label){
+  const ok = await ilusConfirm({
+    title: 'Cambiar estado',
+    message: `¿Marcar este retiro como "${label}"?`,
+    sub: 'El cliente recibirá la notificación del avance.',
+    okLabel: label, cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  try {
+    const nota = encodeURIComponent('desde calendario');
+    const r = await fetch(`/retiros/${rid}/status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      credentials: 'same-origin',
+      redirect: 'manual',
+      // el endpoint lee request.form['notes']; mandamos 'nota' también por compat
+      body: `status=${encodeURIComponent(status)}&notes=${nota}&nota=${nota}`,
+    });
+    // redirect:'manual' → respuesta 'opaqueredirect' (status 0) = el POST llegó
+    if (r.type === 'opaqueredirect' || r.ok){
+      ilusToast(`✓ Retiro marcado como ${label}`, { type:'success' });
+      agiCerrarDrawer();
+      agiCargar(true);
+    } else {
+      ilusToast('No se pudo cambiar el estado', { type:'error' });
+    }
+  } catch(e){
+    ilusToast('Error de red: ' + e.message, { type:'error' });
   }
 }
 

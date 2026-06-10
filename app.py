@@ -354,8 +354,21 @@ app.jinja_env.auto_reload = False
 
 @app.template_filter("hm")
 def _jinja_hm(value):
+    """'HH:MM' cero-rellenado para inputs type=time.
+    PyMySQL entrega TIME como timedelta y str(timedelta(hours=9)) = '9:00:00'
+    → [:5] daba '9:00:' (inválido para <input type=time> → se veía vacío)."""
     if value is None:
         return ""
+    try:
+        if hasattr(value, "total_seconds"):
+            total = int(value.total_seconds())
+            h, m = divmod(total // 60, 60)
+            return f"{h:02d}:{m:02d}"
+        parts = str(value).strip().split(":")
+        if len(parts) >= 2:
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    except Exception:
+        pass
     return str(value)[:5]
 
 # ══════════════════════════════════════════════════════════════
@@ -3176,6 +3189,28 @@ def current_username():
         return None
 
 
+def _public_base_url():
+    """Base URL pública absoluta, SEGURA para usar en threads/crons.
+
+    url_for(..., _external=True) necesita un request activo (o SERVER_NAME);
+    fuera de request lanza "Unable to build URLs outside an active request
+    without SERVER_NAME" (visto en logs de Cloud Run 2026-06 — emails salían
+    sin link). Con request usamos request.url_root (respeta dominio/proxy);
+    sin request caemos a la env ILUS_PUBLIC_BASE_URL con default a la URL
+    pública de Cloud Run. Mismo patrón que pickups_module._public_base_url.
+    """
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            return (request.url_root or "").rstrip("/")
+    except Exception:
+        pass
+    return os.environ.get(
+        "ILUS_PUBLIC_BASE_URL",
+        "https://ilus-app-469212710544.southamerica-west1.run.app",
+    ).rstrip("/")
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  PERMISOS — sistema unificado
 #
@@ -5488,6 +5523,17 @@ def _build_label_pdf_legacy(product, bulto, total_bultos):
 @app.context_processor
 def inject_globals():
     _role = (g.user["role"] if g.user else "") or ""
+    # 2026-06-09 (Daniel) — flag único reusable en TODOS los templates:
+    # ¿el usuario es un rol de GESTIÓN que puede editar/reagendar visitas?
+    # Calculado con el MISMO `_rol_familia()` que usa el backend
+    # (`_puede_ot_accion('metadata')`) para que el frontend NUNCA se
+    # desincronice de la matriz de permisos real. Familias de gestión:
+    # superadmin, admin, supervisor, ejecutivo (ej. Aaron 'ejecutivo_sstt').
+    try:
+        _puede_gestionar_visitas = _rol_familia(_role) in (
+            "superadmin", "admin", "supervisor", "ejecutivo")
+    except Exception:
+        _puede_gestionar_visitas = (_role in ("superadmin", "admin"))
     # Marca dinámica disponible en TODOS los templates como {{ marca.name }},
     # {{ marca.logo_url }}, etc. Daniel edita comm_client_config en
     # /comunicaciones y cambia inmediatamente en el front (login, footer,
@@ -5516,6 +5562,11 @@ def inject_globals():
         # Flag global para todos los templates: True si el usuario es 'tecnico' (solo lectura).
         # Permite ocultar botones de edición/creación/borrado sin tocar cada template.
         "is_tecnico":   (_role == "tecnico"),
+        # 2026-06-09 (Daniel): roles de gestión (admin/supervisor/ejecutivo/
+        # superadmin) pueden editar y REAGENDAR visitas. Usado por el modal
+        # del calendario para habilitar campos + botón Guardar. Espejo exacto
+        # del gate backend `_puede_ot_accion('metadata')`.
+        "puede_gestionar_visitas": _puede_gestionar_visitas,
         # is_superadmin global: permite mostrar bloques de diagnóstico (campos
         # crudos del ERP, etc.) SOLO al superadmin, no a operación normal.
         "is_superadmin": (_role == "superadmin"),
@@ -18019,10 +18070,16 @@ def _mantenciones_cron_run_once(slot_str=""):
                     metricas["pickup_reminders_omitted"] += 1
                     continue
                 # Construir variables locales (mismo set que _render_pickup_vars)
+                # Link literal (NO url_for): el cron corre FUERA de request
+                # context → url_for(_external=True) lanza "Unable to build
+                # URLs outside an active request" y el recordatorio salía
+                # sin link de seguimiento (fix 2026-06-09).
                 follow_url = ""
                 try:
-                    follow_url = url_for("pickup_public_tracking",
-                                         token=rd["public_token"], _external=True)
+                    if rd.get("public_token"):
+                        follow_url = (_public_base_url()
+                                      + "/retiros/seguimiento/"
+                                      + str(rd["public_token"]))
                 except Exception: pass
                 tf = str(rd.get("confirmed_time_from") or "")[:5]
                 tt = str(rd.get("confirmed_time_to") or "")[:5]
@@ -27234,8 +27291,8 @@ def _puede_ot_accion(vid, accion, user=None):
     crear OT     │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗
     configurar   │   ✓      │   ✓    │   ✓     │ ✓(cre)  │ ✓(asign)  │  ✗
     ejecutar     │   ✓      │   ✗    │   ✗     │   ✗     │ ✓(asign)  │  ✗
-    metadata     │   ✓      │   ✓    │   ✗     │   ✗     │   ✗       │  ✗
-    editar       │   ✓      │   ✓    │   ✗     │   ✗     │   ✗       │  ✗
+    metadata     │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← gestión edita/reagenda (06-09)
+    editar       │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← (Daniel 2026-06-09)
     eliminar     │   ✓      │   ✗    │   ✗     │   ✗     │   ✗       │  ✗
     aprobar      │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← ejecutivo firma
     firmar_creador│  ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← como supervisor
@@ -27428,8 +27485,12 @@ def _puede_ot_accion(vid, accion, user=None):
     #    Si necesita corregir algo lo pide al admin."
     # 'editar' es alias semántico de 'metadata' (mismo permiso).
     if accion in ("metadata", "editar"):
-        if role == "admin":
-            print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} -> ALLOWED (admin)", flush=True)
+        # 2026-06-09 (Daniel) — REVISIÓN: los roles de GESTIÓN editan/reagendan
+        # visitas (antes SOLO admin). El ejecutivo SSTT (Aaron) crea y gestiona
+        # las OT, así que debe poder corregir la fecha/datos. Consistente con
+        # 'crear' y 'aprobar'. (Eliminar definitivamente sigue siendo solo superadmin.)
+        if role in ("admin", "supervisor", "ejecutivo"):
+            print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} -> ALLOWED (gestión)", flush=True)
             return True
         print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} "
               f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
@@ -30445,6 +30506,9 @@ def init_mantenciones_tables():
                 # ot_rechazada) para que la campana del header los liste con
                 # icono propio. Es idempotente: si el enum ya existe con esos
                 # valores, MySQL acepta el MODIFY sin error.
+                # 2026-06-09 (retiros): + retiro_nuevo / retiro_respuesta /
+                # retiro_sin_saldo para las alertas internas del módulo de
+                # retiros (alta pública, respuesta del cliente, saldo ERP=0).
                 "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
                 "  ENUM('vencimiento','sla','visita_proxima','visita_atrasada',"
                 "       'factura_pendiente','garantia','garantia_por_vencer',"
@@ -30453,6 +30517,7 @@ def init_mantenciones_tables():
                 "       'ot_asignada','ot_pendiente_aprobacion',"
                 "       'ot_aprobada','ot_rechazada',"
                 "       'sugerencia','ot_sugerida_cron',"
+                "       'retiro_nuevo','retiro_respuesta','retiro_sin_saldo',"
                 "       'otro') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
@@ -30790,6 +30855,22 @@ def _mant_notificar(destino_user_id, tipo, titulo, cuerpo='', url_accion='',
         else:
             sql_match += " AND destino_user_id=%s "
             params.append(destino_user_id)
+        # 2026-06-09 (retiros): cuando NO hay cliente_id NI visita_id (caso
+        # notificaciones de retiros), el match anterior colapsaba retiros
+        # DISTINTOS en una sola notif (todos matcheaban tipo+NULL+NULL).
+        # Si hay url_accion ('/retiros/123'), la incluimos en la idempotencia
+        # para deduplicar por entidad real. Retrocompatible: con cliente_id o
+        # visita_id presentes el comportamiento es idéntico al anterior.
+        if cliente_id is None and visita_id is None and (url_accion or "").strip():
+            sql_match += " AND url_accion=%s "
+            params.append((url_accion or "")[:500])
+            # Review M3 2026-06-09: dentro del MISMO retiro, eventos distintos
+            # (contrapropuso → confirmó → rechazó) comparten tipo+url_accion;
+            # sin esto, el 2° evento se suprimía mientras el 1° estuviera sin
+            # leer y la campana mostraba información VIEJA. El título distingue
+            # el evento real.
+            sql_match += " AND titulo=%s "
+            params.append((titulo or "")[:255])
         sql_match += " LIMIT 1"
         try:
             existing = mysql_fetchone(sql_match, tuple(params))
@@ -40115,21 +40196,27 @@ def mant_calendario_dia_drill(fecha):
         else:
             _extra_where = " AND 1=0 "
 
-        # Visitas del día con sus técnicos
+        # Visitas del día con sus técnicos.
+        # 2026-06-09 (Daniel — tablero interactivo): el técnico mostrado debe
+        # reflejar la asignación REAL (`v.tecnico_user_id` → app_users, fuente
+        # de verdad nueva), con fallback a la tabla legacy `mant_tecnicos`. Así,
+        # al reasignar desde el tablero, el nuevo técnico aparece de inmediato.
         visitas = mysql_fetchall(
             "SELECT v.id, v.numero_ot, v.cliente_id, v.titulo, v.tipo, v.estado, "
             "       v.fecha_programada, v.hora_inicio, v.hora_fin, "
             "       v.hora_real_inicio, v.hora_real_fin, "
             "       v.duracion_planificada_min, v.duracion_real_min, "
             "       v.pausada_total_min, v.costo, v.costo_real, "
-            "       v.satisfaccion_estrellas, "
+            "       v.satisfaccion_estrellas, v.tecnico_user_id, "
             "       c.razon_social AS cliente_nombre, c.comuna, "
-            "       t.id AS tecnico_id, t.nombre AS tecnico_nombre, "
+            "       COALESCE(t.id, v.tecnico_user_id) AS tecnico_id, "
+            "       COALESCE(au.nombre, au.username, t.nombre) AS tecnico_nombre, "
             "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id) AS n_tareas, "
             "       (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id AND completada=1) AS n_completas "
             "  FROM mant_visitas v "
             "  JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+            "  LEFT JOIN app_users au ON au.id=v.tecnico_user_id "
             f" WHERE v.fecha_programada=%s {_extra_where} "
             " ORDER BY v.hora_inicio, v.id",
             (fecha, *_extra_params)
@@ -40157,6 +40244,25 @@ def mant_calendario_dia_drill(fecha):
             else:
                 v["delta_min"] = None
                 v["overrun_pct"] = None
+
+        # 🔧 FIX 2026-06-09 (Daniel — bug "Object of type timedelta is not JSON
+        # serializable" al abrir un día con 2+ visitas): las columnas TIME de
+        # MySQL (hora_inicio/hora_fin) llegan como `timedelta` de PyMySQL y
+        # `jsonify` NO las sabe serializar → el endpoint reventaba con 500 y el
+        # modal mostraba "No se pudo cargar". Convertimos a 'HH:MM' string AQUÍ
+        # (después del cálculo de plan, que sí necesita el timedelta crudo).
+        # hora_real_inicio/fin son DATETIME → Flask las serializa solo.
+        for v in visitas:
+            for _campo in ("hora_inicio", "hora_fin"):
+                _val = v.get(_campo)
+                if _val is None:
+                    continue
+                if hasattr(_val, "total_seconds"):   # timedelta (TIME de PyMySQL)
+                    _tot = int(_val.total_seconds())
+                    _h, _m = divmod(_tot // 60, 60)
+                    v[_campo] = f"{int(_h):02d}:{int(_m):02d}"
+                elif not isinstance(_val, str):
+                    v[_campo] = str(_val)[:5]
 
         # KPIs del día
         n_total = len(visitas)
@@ -43824,6 +43930,22 @@ def mant_visita_update(vid):
         if warn_mod_upd:
             resp["warning"] = warn_mod_upd
         return jsonify(resp)
+    except Exception as _e_upd:
+        # REGLA #4: nunca propagar un 500 crudo al cliente. Logueamos el
+        # detalle (SOLO nombres de campos, NUNCA los valores — pueden traer
+        # datos personales) y devolvemos un mensaje amigable. Antes este
+        # try tenía solo finally → cualquier fallo SQL caía al errorhandler
+        # global como 500 y el front mostraba "Error al guardar la visita"
+        # sin pista de la causa.
+        try: conn.rollback()
+        except Exception: pass
+        print(f"[upd-ot ERROR] vid={vid} campos={list(sets)} -> {type(_e_upd).__name__}: {_e_upd}",
+              flush=True)
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo guardar la visita. Revisa los datos e "
+                     "inténtalo de nuevo; si persiste, avisa al administrador.",
+        }), 400
     finally:
         conn.close()
 

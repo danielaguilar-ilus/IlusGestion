@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Solicita tu retiro — ILUS</title>
   <meta name="description" content="Solicita tu retiro en bodega ILUS. Agenda online en 1 minuto.">
   <meta name="theme-color" content="#0a0a0a">
@@ -46,6 +46,11 @@
         radial-gradient(900px 480px at 6% 2%, rgba(10,10,10,.035) 0%, transparent 55%),
         linear-gradient(180deg, #f7f7f8 0%, #f3f4f6 100%);
       background-attachment:fixed;
+    }
+    /* iOS Safari: background-attachment:fixed fuerza repaints en cada scroll
+       (jank). -webkit-touch-callout solo existe en iOS → lo desactivamos ahí. */
+    @supports (-webkit-touch-callout: none){
+      body{background-attachment:scroll}
     }
     ::selection{background:rgba(220,38,38,.18);color:#0a0a0a}
     /* Scrollbar sutil acorde a la marca (WebKit) */
@@ -234,9 +239,15 @@
     .hero-slide-tag .stag-label{display:inline-block;background:var(--ilus-red);font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;padding:4px 10px;border-radius:4px;margin-bottom:8px}
     .hero-slide-tag h4{font-family:'Bebas Neue';font-size:1.85rem;line-height:1;margin:0;letter-spacing:.01em}
     .hero-slide-tag p{font-size:.86rem;color:#e5e7eb;margin:6px 0 0}
-    .hero-slide-dots{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:3}
-    .hero-slide-dot{width:30px;height:4px;background:rgba(255,255,255,.3);border-radius:2px;cursor:pointer;transition:background .25s}
-    .hero-slide-dot.active{background:var(--ilus-red)}
+    .hero-slide-dots{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:3}
+    /* Target táctil >=24px de alto: el padding agranda el área clickeable y
+       background-clip:content-box mantiene la barrita visual de 4px. */
+    .hero-slide-dot{
+      width:30px;height:24px;padding:10px 0;
+      background-color:rgba(255,255,255,.3);background-clip:content-box;
+      border-radius:2px;cursor:pointer;transition:background-color .25s;
+    }
+    .hero-slide-dot.active{background-color:var(--ilus-red)}
 
     /* Stats strip — beneficios destacados del servicio */
     .stats-strip{
@@ -636,26 +647,9 @@
     @keyframes slotPop{0%{transform:translateY(0) scale(.9)}60%{transform:translateY(-3px) scale(1.07)}100%{transform:translateY(-2px) scale(1.03)}}
     @keyframes slotRing{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.16)}50%{box-shadow:0 0 0 6px rgba(220,38,38,0)}}
 
-    /* Slots intermedios del rango (entre INICIO y FIN) */
-    .slot-item.is-in-range{
-      background:linear-gradient(180deg,rgba(220,38,38,.18) 0%,rgba(220,38,38,.06) 100%);
-      color:var(--ilus-red);border-color:#fecaca;font-weight:800;
-    }
-    .slot-item.is-in-range:hover{background:rgba(220,38,38,.22);border-color:#fca5a5}
-
-    /* Badges INICIO / FIN encima del bloque */
-    .slot-item.is-start::before{
-      content:'INICIO';position:absolute;top:-10px;left:50%;transform:translateX(-50%);z-index:4;
-      background:#0a0a0a;color:#fff;font-size:.55rem;padding:3px 9px;border-radius:50px;
-      letter-spacing:.07em;font-weight:900;box-shadow:0 3px 8px rgba(0,0,0,.28);white-space:nowrap;
-    }
-    .slot-item.is-end:not(.is-start)::before{
-      content:'FIN';position:absolute;bottom:-10px;top:auto;left:50%;transform:translateX(-50%);z-index:4;
-      background:#0a0a0a;color:#fff;font-size:.55rem;padding:3px 9px;border-radius:50px;
-      letter-spacing:.07em;font-weight:900;box-shadow:0 3px 8px rgba(0,0,0,.28);white-space:nowrap;
-    }
-    /* Si INICIO == FIN (1 solo bloque), texto compacto */
-    .slot-item.is-start.is-end::before{content:'INICIO · FIN';font-size:.5rem;padding:2px 6px}
+    /* 2026-06-09: removidos estilos muertos de rangos (is-in-range / badges
+       INICIO-FIN). Desde la política 2026-06-05 el cliente elige UN solo
+       bloque de 30 min — nunca un rango. */
 
     /* Resumen inferior (barra negra con rango + duración) */
     .slot-summary{
@@ -683,14 +677,8 @@
     }
 
     .slot-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px;align-items:center}
-    .slot-quick{
-      padding:7px 15px;background:#fff;border:1.5px solid #e5e7eb;border-radius:50px;
-      font-size:.76rem;font-weight:800;cursor:pointer;color:#374151;
-      transition:all .16s var(--ease-out);
-    }
-    .slot-quick:hover{background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);transform:translateY(-1px);box-shadow:0 6px 14px -4px rgba(220,38,38,.4)}
-    .slot-quick.slot-clear{background:transparent;border-color:#d1d5db;color:#6b7280}
-    .slot-quick.slot-clear:hover{background:#0a0a0a;border-color:#0a0a0a;color:#fff;box-shadow:0 6px 14px -4px rgba(0,0,0,.3)}
+    /* 2026-06-09: removido CSS .slot-quick — los botones rápidos 1h/2h/3h y el
+       "Limpiar" duplicado ya no existen (queda solo el Limpiar del resumen). */
 
     /* Submit — premium con pulso al click */
     .submit-btn{
@@ -1038,7 +1026,7 @@
     #tracking-search:hover{transform:translateY(-2px)}
     #tracking-search h5{letter-spacing:-.015em;font-weight:900}
     #tracking-search .btn-dark{
-      background:#0a0a0a;border:none;border-radius:var(--r-sm);min-width:50px;
+      background:#0a0a0a;border:none;border-radius:var(--r-sm);min-width:50px;min-height:44px;
       box-shadow:0 8px 18px -6px rgba(0,0,0,.4);
       transition:transform .18s var(--ease-out),box-shadow .2s,background .2s;
     }
@@ -1061,6 +1049,111 @@
     .form-body .alert-danger{border:1px solid #fecaca;border-radius:var(--r-sm);background:#fef2f2;color:#991b1b}
 
     /* ════════════════════════════════════════════════════════════
+       ROTADOR DE FRASES DEL H1 (2026-06-09)
+       La línea roja del hero rota entre 4 frases con fade suave.
+       ════════════════════════════════════════════════════════════ */
+    .hero-title .word-red{transition:opacity .35s ease, transform .35s ease}
+    .hero-title .word-red.rot-out{opacity:0;transform:translateY(8px)}
+    @media (prefers-reduced-motion: reduce){
+      .hero-title .word-red{transition:none}
+      .hero-title .word-red.rot-out{opacity:1;transform:none}
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       MARQUEE ROJO (2026-06-09) — franja de beneficios entre hero
+       y stats-strip. CSS puro: contenido duplicado + translateX(-50%)
+       para loop perfecto. Pausa on-hover; estático con reduced-motion.
+       ════════════════════════════════════════════════════════════ */
+    .ilus-marquee{
+      background:linear-gradient(180deg,#e02b2b 0%,var(--red-500) 60%,#b91c1c 100%);
+      color:#fff;overflow:hidden;padding:10px 0;position:relative;
+      border-top:1px solid rgba(0,0,0,.18);border-bottom:1px solid rgba(0,0,0,.18);
+    }
+    .ilus-marquee-track{
+      display:flex;width:max-content;
+      animation:ilusMarquee 30s linear infinite;
+      will-change:transform;
+    }
+    .ilus-marquee:hover .ilus-marquee-track{animation-play-state:paused}
+    .ilus-marquee-content{
+      flex-shrink:0;white-space:nowrap;
+      font-weight:800;font-size:.76rem;letter-spacing:.16em;text-transform:uppercase;
+    }
+    @keyframes ilusMarquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+    @media (prefers-reduced-motion: reduce){
+      .ilus-marquee-track{animation:none;width:auto;justify-content:center}
+      .ilus-marquee-content{white-space:normal;text-align:center;padding:0 16px}
+      .ilus-marquee-content + .ilus-marquee-content{display:none}
+    }
+
+    /* Slide fallback del hero (sin imágenes BD): gradiente oscuro + logo 20% */
+    .hero-slide-fallback{
+      background:linear-gradient(135deg,#1d1d1d 0%,#0a0a0a 55%,#171717 100%);
+      display:flex;align-items:center;justify-content:center;
+    }
+    .hero-slide-fallback img{
+      width:58%;max-width:340px;opacity:.2;display:block;
+      filter:drop-shadow(0 8px 30px rgba(0,0,0,.6));
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       CALENDARIO CUSTOM ILUS (2026-06-09)
+       Mini-calendario mensual pintado desde el API de disponibilidad.
+       Celdas táctiles >=44px, día seleccionado rojo ILUS, días no
+       disponibles en gris con candado y motivo al tocar.
+       ════════════════════════════════════════════════════════════ */
+    .ilus-cal{
+      background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+      border:1.5px solid var(--gray-2);border-radius:var(--r-md);padding:14px;
+      box-shadow:inset 0 1px 2px rgba(15,23,42,.03);
+    }
+    .ilus-cal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+    .ilus-cal-month{font-weight:900;font-size:.92rem;color:#0a0a0a;letter-spacing:-.01em;text-transform:capitalize}
+    .ilus-cal-nav{
+      width:44px;height:44px;min-height:44px;border-radius:10px;border:1.5px solid #e5e7eb;
+      background:#fff;color:#374151;display:flex;align-items:center;justify-content:center;
+      cursor:pointer;transition:border-color .16s var(--ease-out), color .16s, background .16s;font-size:1rem;flex-shrink:0;
+    }
+    .ilus-cal-nav:hover:not(:disabled){border-color:var(--ilus-red);color:var(--ilus-red);background:#fff5f5}
+    .ilus-cal-nav:disabled{opacity:.35;cursor:not-allowed}
+    .ilus-cal-week{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+    .ilus-cal-week span{text-align:center;font-size:.64rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;padding:4px 0}
+    .ilus-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+    .ilus-cal-day{
+      position:relative;min-height:44px;border-radius:10px;
+      background:#fff;border:1.5px solid #eef0f2;color:#1f2937;font-weight:800;font-size:.86rem;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+      cursor:pointer;padding:4px 2px;font-variant-numeric:tabular-nums;
+      transition:transform .16s var(--ease-spring), border-color .15s, background .15s, box-shadow .15s;
+    }
+    .ilus-cal-day:hover:not(.is-off):not(.is-out):not(:disabled){
+      border-color:var(--ilus-red);background:#fff5f5;transform:translateY(-1px);
+      box-shadow:0 6px 12px -4px rgba(220,38,38,.2);
+    }
+    .ilus-cal-day.is-empty{visibility:hidden;pointer-events:none}
+    .ilus-cal-day.is-out{background:transparent;border-color:transparent;color:#d1d5db;cursor:default;font-weight:600}
+    .ilus-cal-day.is-off{
+      background:#f3f4f6;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed;font-weight:600;
+    }
+    .ilus-cal-day.is-off .cal-lock{font-size:.58rem;line-height:1;color:#9ca3af}
+    .ilus-cal-day.is-today:not(.is-selected){box-shadow:inset 0 0 0 1.5px rgba(220,38,38,.45)}
+    .ilus-cal-day.is-selected{
+      background:linear-gradient(160deg,#ff2d2d 0%,var(--ilus-red) 55%,#b30000 100%);
+      border-color:var(--ilus-red);color:#fff;
+      box-shadow:0 8px 18px -6px rgba(220,38,38,.55), 0 1px 0 rgba(255,255,255,.3) inset;
+      transform:translateY(-1px);
+    }
+    .ilus-cal-day .cal-dot{width:6px;height:6px;border-radius:50%;display:block;flex-shrink:0}
+    .ilus-cal-day.is-selected .cal-dot{background:#fff !important}
+    .ilus-cal-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:.66rem;color:#6b7280;font-weight:600}
+    .ilus-cal-legend>span{display:inline-flex;align-items:center;gap:5px}
+    .ilus-cal-legend .cal-dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+    @media (prefers-reduced-motion: reduce){
+      .ilus-cal-day{transition:none}
+      .ilus-cal-day:hover:not(.is-off):not(.is-out):not(:disabled){transform:none}
+    }
+
+    /* ════════════════════════════════════════════════════════════
        RESPONSIVE
        ════════════════════════════════════════════════════════════ */
     @media(max-width:991px){
@@ -1069,8 +1162,17 @@
       .steps-grid{grid-template-columns:1fr 1fr}
       .stats-inner{grid-template-columns:1fr 1fr}
     }
+    /* ── Franja 601-768px (tablets chicas / landscape): anti-zoom iOS.
+       Antes estas reglas solo vivían en <=600px y la franja quedaba huérfana. ── */
+    @media(max-width:768px){
+      .form-control,.form-select,input[type="text"],input[type="email"],
+      input[type="tel"],input[type="date"],input[type="time"],input[type="number"],
+      textarea,select{font-size:16px !important}
+    }
     @media(max-width:600px){
       .hero-bullets{grid-template-columns:1fr}
+      /* stats a 1 columna en móvil (en 991px quedan 2x2) */
+      .stats-inner{grid-template-columns:1fr}
       .steps-grid{grid-template-columns:1fr}
       .form-body{padding:18px 14px}
       .form-head{padding:22px 18px 20px}
@@ -1111,10 +1213,13 @@
       /* Espacio al fondo del form para que el contenido final (nota de
          privacidad) no quede tapado por el botón fijo. */
       #form-solicitud .form-body{padding-bottom:108px}
+      /* El botón submit fijo también tapaba el footer — darle aire. */
+      .footer{padding-bottom:96px}
 
       /* ── Touch targets >= 44x44 ── */
       .slot-item{min-height:48px}
       .auth-toggle{min-height:56px;padding:14px}
+      #slotSummary .btn{min-height:44px}
 
       /* ── Cards sin overflow lateral ── */
       .form-wrapper{padding-left:12px;padding-right:12px}
@@ -1208,16 +1313,17 @@
         <div class="hero-pill-row">
           <span class="hero-pill red"><i class="bi bi-lightning-charge-fill me-1"></i>Servicio premium</span>
           <span class="hero-pill"><i class="bi bi-shield-check me-1"></i>Bodega Quilicura</span>
-          <span class="hero-pill"><i class="bi bi-clock-history me-1"></i>Atención en menos de 2 hrs</span>
+          <span class="hero-pill"><i class="bi bi-clock-history me-1"></i>Respuesta en menos de 24 hrs</span>
         </div>
 
         <h1 class="hero-title">
           Tu equipo de fitness,<br>
-          <span class="word-red">listo para retirar</span>
+          {# 2026-06-09: la línea roja ROTA entre 4 frases (ver JS heroRotator) #}
+          <span class="word-red" id="heroRotator">listo para retirar</span>
         </h1>
 
         <p class="hero-copy">
-          Agenda el retiro de tu factura, boleta o nota de venta en <strong>3 minutos</strong>.
+          Agenda el retiro de tu factura, boleta o nota de venta en <strong>2 minutos</strong>.
           Te enviamos un enlace privado de seguimiento y confirmamos por correo. Sin filas,
           sin papeleo, sin malos ratos. <strong>Así trabaja ILUS.</strong>
         </p>
@@ -1290,36 +1396,55 @@
             {% endfor %}
           {% endif %}
           {% if not _slides %}
-            {% set _slides = [
-              (url_for('static', filename='uploads/p2530_1777290755.jpg'), 'Equipo profesional', 'Trotadoras, bicicletas, fuerza y más', False),
-              (url_for('static', filename='uploads/p1257_1777170890.jpeg'), 'Calidad ILUS', 'Productos que duran toda la vida', False),
-              (url_for('static', filename='uploads/p1271_1777153752.jpeg'), 'Bodega central', 'Despacho organizado y profesional', False),
-            ] %}
-          {% endif %}
-          {% for img_url, title, sub, _is_cloud in _slides %}
-          <div class="hero-slide {% if loop.first %}active{% endif %}"
-               style="background-image:url('{{ img_url }}')">
-            <div class="hero-slide-tag">
-              <span class="stag-label">{{ sub }}</span>
-              <h4>{{ title }}</h4>
+            {# FIX 2026-06-09: las 3 imágenes default históricas ya NO existen
+               en el servidor (404 silencioso → slideshow en blanco). Fallback:
+               UNA sola slide con gradiente oscuro + logo al 20% de opacidad. #}
+            <div class="hero-slide hero-slide-fallback active">
+              <img src="{{ url_for('static', filename='Logo.webp') }}" alt="" loading="lazy" decoding="async">
+              <div class="hero-slide-tag">
+                <span class="stag-label">Calidad que se siente</span>
+                <h4>ILUS Sport &amp; Health</h4>
+              </div>
             </div>
-          </div>
-          {% endfor %}
+          {% else %}
+            {% for img_url, title, sub, _is_cloud in _slides %}
+            <div class="hero-slide {% if loop.first %}active{% endif %}"
+                 style="background-image:url('{{ img_url }}')">
+              <div class="hero-slide-tag">
+                <span class="stag-label">{{ sub }}</span>
+                <h4>{{ title }}</h4>
+              </div>
+            </div>
+            {% endfor %}
+          {% endif %}
+          {% if _slides and _slides|length > 1 %}
           <div class="hero-slide-dots" id="heroDots">
             {% for _ in _slides %}
-            <span class="hero-slide-dot {% if loop.first %}active{% endif %}" data-idx="{{ loop.index0 }}"></span>
+            <span class="hero-slide-dot {% if loop.first %}active{% endif %}" data-idx="{{ loop.index0 }}" role="button" aria-label="Ir a imagen {{ loop.index }}"></span>
             {% endfor %}
           </div>
+          {% endif %}
         </div>
       </div>
     </div>
   </header>
 
+  {# ── MARQUEE ROJO (2026-06-09): franja de beneficios en loop infinito.
+        Contenido duplicado a propósito (la 2ª copia es aria-hidden) para
+        que translateX(-50%) cierre el loop sin saltos. ── #}
+  {% set _marquee_txt = 'RETIRO EN BODEGA SIN COSTO · MÁS DE 13 AÑOS IMPULSANDO EL FITNESS EN CHILE · GARANTÍA LEGAL MÍNIMA DE 6 MESES · SEGUIMIENTO ONLINE DE TU SOLICITUD · BODEGA QUILICURA 1.850 M² · ' %}
+  <div class="ilus-marquee">
+    <div class="ilus-marquee-track">
+      <span class="ilus-marquee-content">{{ _marquee_txt }}</span>
+      <span class="ilus-marquee-content" aria-hidden="true">{{ _marquee_txt }}</span>
+    </div>
+  </div>
+
   {# Stats strip — beneficios reales del servicio de retiro #}
   <div class="stats-strip">
     <div class="stats-inner">
       <div class="stat-cell">
-        <div class="stat-num"><i class="bi bi-clock-history"></i> 24h</div>
+        <div class="stat-num"><i class="bi bi-clock-history"></i> <span data-countup="24" data-suffix="h">24h</span></div>
         <div class="stat-lbl">Respuesta rápida</div>
       </div>
       <div class="stat-cell">
@@ -1599,15 +1724,52 @@
             </div>
             <div class="step-titles">
               <h5>¿Cuándo quieres venir?</h5>
-              <p class="step-sub">Elige el día y <strong>tu hora de llegada</strong>. Cada bloque dura 30 minutos. Atendemos <strong>09:00 a 12:30</strong> en la mañana y <strong>14:00 a 16:30</strong> en la tarde, solo días hábiles.</p>
+              {# El horario se actualiza desde payload.operacion (fallback: texto actual) #}
+              <p class="step-sub">Elige el día y <strong>tu hora de llegada</strong>. Cada bloque dura 30 minutos. <span id="horarioAtencion">Atendemos <strong>09:00 a 12:30</strong> en la mañana y <strong>14:00 a 16:30</strong> en la tarde, solo días hábiles.</span></p>
             </div>
           </div>
           <div class="row g-3">
             <div class="col-md-5">
               <label class="form-label small fw-bold">Fecha del retiro <span class="req">*</span></label>
-              <input type="date" id="cal_fecha" class="form-control" required>
-              <div class="input-help with-example">Necesitamos mínimo 24 horas de anticipación para preparar tu pedido.</div>
-              <small id="cal_fecha_msg" class="input-help"></small>
+
+              {# ── CALENDARIO CUSTOM ILUS (2026-06-09) ───────────────────
+                 Se pinta desde /retiros/api/disponibilidad-publica con el
+                 horizonte [from, to] del payload (hora Chile del servidor —
+                 NUNCA el reloj del navegador). El input date nativo de abajo
+                 queda como RESPALDO visible solo si el API falla, junto al
+                 botón Reintentar. Contrato intacto: el calendario setea
+                 #cal_fecha y dispara 'change' → onFechaChange() →
+                 hidden requested_date + render de slots. #}
+              <div id="ilusCalWrap" class="ilus-cal" style="display:none" role="group" aria-label="Calendario de fechas disponibles">
+                <div class="ilus-cal-head">
+                  <button type="button" class="ilus-cal-nav" id="calPrev" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
+                  <div class="ilus-cal-month" id="calMonthLabel" aria-live="polite"></div>
+                  <button type="button" class="ilus-cal-nav" id="calNext" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
+                </div>
+                <div class="ilus-cal-week" aria-hidden="true">
+                  <span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span>
+                </div>
+                <div class="ilus-cal-grid" id="calGrid"></div>
+                <div class="ilus-cal-legend">
+                  <span><span class="cal-dot" style="background:#16a34a"></span>Libre</span>
+                  <span><span class="cal-dot" style="background:#f59e0b"></span>Medio</span>
+                  <span><span class="cal-dot" style="background:#dc2626"></span>Lleno</span>
+                  <span><i class="bi bi-lock-fill" style="font-size:.7rem;color:#9ca3af"></i>&nbsp;No disponible</span>
+                </div>
+              </div>
+
+              {# Respaldo: input nativo + Reintentar (visible solo si falla el API) #}
+              <div id="calFallback">
+                <input type="date" id="cal_fecha" class="form-control" required>
+                <button type="button" class="btn btn-sm btn-outline-danger mt-2 fw-bold" id="calRetryBtn"
+                        onclick="reintentarDisponibilidad()" style="display:none;min-height:44px">
+                  <i class="bi bi-arrow-clockwise me-1"></i>Reintentar disponibilidad
+                </button>
+              </div>
+
+              {# El texto de anticipación se actualiza desde payload.operacion #}
+              <div class="input-help with-example" id="noticeHelp">Necesitamos mínimo 24 horas de anticipación para preparar tu pedido.</div>
+              <small id="cal_fecha_msg" class="input-help" aria-live="polite"></small>
             </div>
             <div class="col-md-7">
               <label class="form-label small fw-bold">Bloque horario <span class="req">*</span></label>
@@ -1626,11 +1788,11 @@
                     <i class="bi bi-calendar3 me-1"></i>Selecciona una fecha primero
                   </div>
                 </div>
+                {# 2026-06-09: removido el "Limpiar" duplicado — queda solo el del resumen #}
                 <div class="slot-actions" id="slotQuickWrap" style="display:none">
                   <span class="text-muted small me-2"><i class="bi bi-info-circle me-1"></i>Elige <strong>una sola hora</strong> de llegada</span>
-                  <span class="slot-quick slot-clear" onclick="clearSlots()">Limpiar</span>
                 </div>
-                <div class="slot-summary" id="slotSummary">
+                <div class="slot-summary" id="slotSummary" aria-live="polite">
                   <div id="slotSummaryText" class="sum-empty">No has seleccionado bloque aún</div>
                   <button type="button" class="btn btn-sm btn-outline-light" id="clearSlotBtn" onclick="clearSlots()" style="display:none">
                     <i class="bi bi-x-lg me-1"></i>Limpiar
@@ -1773,13 +1935,92 @@
 let _heroIdx = 0;
 const _heroSlides = document.querySelectorAll('.hero-slide');
 const _heroDots = document.querySelectorAll('.hero-slide-dot');
+const _motionReduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 function setHero(i){
+  if (!_heroSlides.length) return;
   _heroIdx = (i + _heroSlides.length) % _heroSlides.length;
   _heroSlides.forEach((s,k) => s.classList.toggle('active', k === _heroIdx));
   _heroDots.forEach((d,k) => d.classList.toggle('active', k === _heroIdx));
 }
 _heroDots.forEach((d,i) => d.addEventListener('click', () => setHero(i)));
-setInterval(() => setHero(_heroIdx + 1), 4500);
+// 2026-06-09: autoplay solo si hay >1 slide y el usuario no pidió reduced-motion.
+// Pausa al hover (antes era un setInterval incondicional).
+let _heroTimer = null;
+function _heroPlay(){
+  if (_heroTimer || _motionReduced || _heroSlides.length < 2) return;
+  _heroTimer = setInterval(() => setHero(_heroIdx + 1), 4500);
+}
+function _heroPause(){
+  if (_heroTimer){ clearInterval(_heroTimer); _heroTimer = null; }
+}
+const _heroBox = document.getElementById('heroSlides');
+if (_heroBox){
+  _heroBox.addEventListener('mouseenter', _heroPause);
+  _heroBox.addEventListener('mouseleave', _heroPlay);
+}
+_heroPlay();
+
+// ════════════════════════════════════════════════════════
+//  ROTADOR DE FRASES DEL H1 (2026-06-09)
+//  La línea roja rota entre 4 frases con fade. Estático si el
+//  usuario prefiere reduced-motion.
+// ════════════════════════════════════════════════════════
+(function(){
+  const el = document.getElementById('heroRotator');
+  if (!el || _motionReduced) return;
+  const frases = ['LISTO PARA RETIRAR', 'SIN FILAS NI PAPELEO', 'CON SEGUIMIENTO ONLINE', 'EN 3 PASOS SIMPLES'];
+  let idx = 0;
+  setInterval(() => {
+    el.classList.add('rot-out');
+    setTimeout(() => {
+      idx = (idx + 1) % frases.length;
+      el.textContent = frases[idx];
+      el.classList.remove('rot-out');
+    }, 360);
+  }, 3600);
+})();
+
+// ════════════════════════════════════════════════════════
+//  COUNT-UP DE STATS (2026-06-09)
+//  Anima los números del stats-strip al entrar al viewport.
+//  IntersectionObserver + requestAnimationFrame; con
+//  reduced-motion (o sin IO) pinta el valor final directo.
+// ════════════════════════════════════════════════════════
+(function(){
+  const els = document.querySelectorAll('[data-countup]');
+  if (!els.length) return;
+  function setFinal(el){
+    el.textContent = (el.dataset.countup || '') + (el.dataset.suffix || '');
+  }
+  function animate(el){
+    const target = parseFloat(el.dataset.countup) || 0;
+    const suffix = el.dataset.suffix || '';
+    if (_motionReduced){ setFinal(el); return; }
+    const dur = 1100;
+    let start = null;
+    function frame(ts){
+      if (start === null) start = ts;
+      const p = Math.min(1, (ts - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);   // ease-out cúbico
+      el.textContent = Math.round(target * eased) + suffix;
+      if (p < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  if (!('IntersectionObserver' in window) || _motionReduced){
+    els.forEach(setFinal);
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(en => {
+      if (en.isIntersecting){
+        animate(en.target);
+        io.unobserve(en.target);
+      }
+    });
+  }, { threshold: 0.4 });
+  els.forEach(el => io.observe(el));
+})();
 
 // ════════════════════════════════════════════════════════
 //  IR A SEGUIMIENTO (banner mini)
@@ -1797,8 +2038,14 @@ function irASeguimiento(){
   // Si es URL completa, redirige tal cual; si es código, redirige a búsqueda
   if (v.startsWith('http') || v.includes('/retiros/seguimiento/')){
     location.href = v;
-  } else if (v.match(/^RET-\d+$/i)){
-    location.href = '/retiros/buscar?code=' + encodeURIComponent(v);
+    return;
+  }
+  // FIX 2026-06-09: los códigos nuevos son ALFANUMÉRICOS (ej: RET-CCE24P).
+  // El regex anterior (/^RET-\d+$/) solo aceptaba dígitos y mandaba los
+  // códigos nuevos a la ruta de token (404). Trim + uppercase antes de evaluar.
+  const code = v.toUpperCase().trim();
+  if (/^RET-[A-Z0-9]{4,}$/.test(code)){
+    location.href = '/retiros/buscar?code=' + encodeURIComponent(code);
   } else {
     // asumimos token
     location.href = '/retiros/seguimiento/' + encodeURIComponent(v);
@@ -2031,18 +2278,213 @@ function _minToHM(min){
 }
 
 async function cargarDisponibilidad() {
+  const msg   = document.getElementById('cal_fecha_msg');
+  const retry = document.getElementById('calRetryBtn');
   try {
     const r = await fetch('/retiros/api/disponibilidad-publica');
-    _disponibilidad = await r.json();
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const payload = await r.json();
+    if (!payload || !payload.from || !payload.to || !payload.dias) throw new Error('payload incompleto');
+    _disponibilidad = payload;
+    // Límites min/max SIEMPRE del payload (hora Chile del servidor) —
+    // NUNCA del reloj del navegador (bug timezone conocido).
     const fechaInput = document.getElementById('cal_fecha');
-    const tomorrow = new Date(Date.now() + 24*3600*1000);
-    const tomorrowStr = tomorrow.toISOString().slice(0,10);
-    fechaInput.min = (_disponibilidad.from < tomorrowStr) ? tomorrowStr : _disponibilidad.from;
+    fechaInput.min = _disponibilidad.from;
     fechaInput.max = _disponibilidad.to;
-    fechaInput.addEventListener('change', onFechaChange);
+    _applyOperacionTexts();
+    _initIlusCalendar();
+    if (retry) retry.style.display = 'none';
+    if (fechaInput.value){
+      // Había una fecha elegida (ej: reintento o re-render con fd) → refrescar slots
+      onFechaChange();
+    } else if (msg){
+      msg.textContent = '';
+      msg.style.color = '';
+    }
   } catch (e) {
-    document.getElementById('cal_fecha_msg').textContent = 'No se pudo cargar disponibilidad';
+    // FALLBACK (2026-06-09): si el API falla, el form ya NO queda muerto.
+    // Mostramos el input date nativo como respaldo + botón Reintentar.
+    _disponibilidad = null;
+    const wrap = document.getElementById('ilusCalWrap');
+    const fb   = document.getElementById('calFallback');
+    if (wrap) wrap.style.display = 'none';
+    if (fb) fb.style.display = '';
+    if (retry) retry.style.display = 'inline-flex';
+    if (msg){
+      msg.textContent = 'No se pudo cargar la disponibilidad. Reintenta en unos segundos.';
+      msg.style.color = '#dc2626';
+    }
   }
+}
+
+// Reintento manual del fallback (botón "Reintentar disponibilidad")
+async function reintentarDisponibilidad(){
+  const btn = document.getElementById('calRetryBtn');
+  if (btn){
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Cargando…';
+  }
+  await cargarDisponibilidad();
+  if (btn){
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Reintentar disponibilidad';
+  }
+}
+
+// Textos de horario y anticipación alimentados del payload.operacion.
+// NOTA: el backend HOY no expone min_notice_hours en el payload — se lee
+// defensivamente con fallback 24 (el texto actual). Si algún día se agrega
+// al payload, esto lo toma solo.
+function _applyOperacionTexts(){
+  const op = (_disponibilidad && _disponibilidad.operacion) || {};
+  const mn = parseInt(op.min_notice_hours, 10) || 24;
+  const noticeEl = document.getElementById('noticeHelp');
+  if (noticeEl) noticeEl.textContent = 'Necesitamos mínimo ' + mn + ' horas de anticipación para preparar tu pedido.';
+  const horEl = document.getElementById('horarioAtencion');
+  if (horEl && op.open_time && op.lunch_start && op.lunch_end && op.close_time){
+    // Strings HH:MM controlados por el servidor — seguros para innerHTML
+    horEl.innerHTML = 'Atendemos <strong>' + op.open_time + ' a ' + op.lunch_start +
+                      '</strong> en la mañana y <strong>' + op.lunch_end + ' a ' + op.close_time +
+                      '</strong> en la tarde, solo días hábiles.';
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  CALENDARIO CUSTOM ILUS (2026-06-09)
+//  Grid mensual Lun-Dom pintado desde _disponibilidad.dias dentro
+//  del horizonte [from, to] del API. Días no disponibles en gris
+//  con candado y motivo al tocar; disponibles con punto de ocupación
+//  (verde / ámbar / rojo según ocupacion_pct); selección en rojo ILUS.
+//  El input #cal_fecha sigue siendo la fuente del valor (contrato
+//  intacto con requested_date y el render de slots).
+// ════════════════════════════════════════════════════════
+const _CAL_MESES = ['enero','febrero','marzo','abril','mayo','junio',
+                    'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+let _calCursor = null;   // { y, m } — mes visible (m: 0-11)
+
+function _isoAddDays(iso, delta){
+  const p = String(iso || '').split('-').map(Number);
+  const dt = new Date(Date.UTC(p[0] || 1970, (p[1] || 1) - 1, (p[2] || 1) + delta));
+  return dt.toISOString().slice(0, 10);
+}
+function _calMonthKey(y, m){ return y * 12 + m; }
+function _calKeyOfIso(iso){
+  return _calMonthKey(parseInt(iso.slice(0, 4), 10), parseInt(iso.slice(5, 7), 10) - 1);
+}
+
+function _initIlusCalendar(){
+  if (!_disponibilidad || !_disponibilidad.from) return;
+  const wrap = document.getElementById('ilusCalWrap');
+  const fb   = document.getElementById('calFallback');
+  if (!wrap) return;
+  wrap.style.display = '';
+  if (fb) fb.style.display = 'none';
+  const sel = document.getElementById('cal_fecha').value;
+  const base = (sel && sel >= _disponibilidad.from && sel <= _disponibilidad.to) ? sel : _disponibilidad.from;
+  _calCursor = { y: parseInt(base.slice(0, 4), 10), m: parseInt(base.slice(5, 7), 10) - 1 };
+  const prev = document.getElementById('calPrev');
+  const next = document.getElementById('calNext');
+  if (prev) prev.onclick = () => _calNav(-1);
+  if (next) next.onclick = () => _calNav(1);
+  _renderIlusCal();
+}
+
+function _calNav(dir){
+  if (!_calCursor || !_disponibilidad) return;
+  let m = _calCursor.m + dir, y = _calCursor.y;
+  if (m < 0){ m = 11; y--; }
+  if (m > 11){ m = 0; y++; }
+  const k = _calMonthKey(y, m);
+  if (k < _calKeyOfIso(_disponibilidad.from) || k > _calKeyOfIso(_disponibilidad.to)) return;
+  _calCursor = { y: y, m: m };
+  _renderIlusCal();
+}
+
+function _renderIlusCal(){
+  if (!_calCursor || !_disponibilidad) return;
+  const grid  = document.getElementById('calGrid');
+  const label = document.getElementById('calMonthLabel');
+  if (!grid) return;
+  const y = _calCursor.y, m = _calCursor.m;
+  if (label) label.textContent = _CAL_MESES[m] + ' ' + y;
+
+  const fromIso = _disponibilidad.from, toIso = _disponibilidad.to;
+  const curKey  = _calMonthKey(y, m);
+  const prev = document.getElementById('calPrev');
+  const next = document.getElementById('calNext');
+  if (prev) prev.disabled = (curKey <= _calKeyOfIso(fromIso));
+  if (next) next.disabled = (curKey >= _calKeyOfIso(toIso));
+
+  // "Hoy" derivado del payload: from = mañana en hora Chile → hoy = from - 1.
+  // (Marcador cosmético; nunca usamos el reloj del navegador para límites.)
+  const todayIso = _isoAddDays(fromIso, -1);
+  const selected = document.getElementById('cal_fecha').value;
+
+  const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const firstWd = (new Date(Date.UTC(y, m, 1)).getUTCDay() + 6) % 7;  // 0 = lunes
+
+  grid.innerHTML = '';
+  for (let b = 0; b < firstWd; b++){
+    const ph = document.createElement('span');
+    ph.className = 'ilus-cal-day is-empty';
+    grid.appendChild(ph);
+  }
+  for (let d = 1; d <= daysInMonth; d++){
+    const iso = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ilus-cal-day';
+    btn.appendChild(document.createTextNode(String(d)));
+    const inRange = (iso >= fromIso && iso <= toIso);
+    const dia = inRange ? (_disponibilidad.dias || {})[iso] : null;
+    let aria = d + ' de ' + _CAL_MESES[m] + ' de ' + y;
+
+    if (!inRange){
+      btn.classList.add('is-out');
+      btn.disabled = true;
+      aria += ' — fuera del rango agendable';
+    } else if (!dia || !dia.disponible){
+      // No disponible: gris + candado + motivo visible al tocar
+      btn.classList.add('is-off');
+      const lock = document.createElement('span');
+      lock.className = 'cal-lock';
+      lock.innerHTML = '<i class="bi bi-lock-fill"></i>';
+      btn.appendChild(lock);
+      const razon = (dia && dia.razon) || 'Día no disponible';
+      aria += ' — ' + razon;
+      btn.setAttribute('aria-disabled', 'true');
+      btn.addEventListener('click', () => {
+        const msg = document.getElementById('cal_fecha_msg');
+        if (msg){ msg.textContent = razon; msg.style.color = '#dc2626'; }
+        _showToast(razon, 'info');
+      });
+    } else {
+      const pct = Math.max(0, Math.min(100, parseInt(dia.ocupacion_pct, 10) || 0));
+      const dot = document.createElement('span');
+      dot.className = 'cal-dot';
+      let nivel;
+      if (pct >= 80){ dot.style.background = '#dc2626'; nivel = 'casi lleno'; }
+      else if (pct >= 40){ dot.style.background = '#f59e0b'; nivel = 'ocupación media'; }
+      else { dot.style.background = '#16a34a'; nivel = 'con cupos libres'; }
+      btn.appendChild(dot);
+      aria += ' — disponible, ' + nivel + ' (' + pct + '% ocupado)';
+      btn.addEventListener('click', () => _calPickDay(iso));
+    }
+    if (iso === todayIso) btn.classList.add('is-today');
+    if (selected && iso === selected) btn.classList.add('is-selected');
+    btn.setAttribute('aria-label', aria);
+    grid.appendChild(btn);
+  }
+}
+
+function _calPickDay(iso){
+  const inp = document.getElementById('cal_fecha');
+  if (!inp) return;
+  inp.value = iso;
+  // Dispara el listener 'change' → onFechaChange() (requested_date + slots)
+  // y los watchers de estado de los steps. Un solo camino para ambos modos.
+  inp.dispatchEvent(new Event('change', { bubbles: true }));
+  _renderIlusCal();
 }
 
 function onFechaChange() {
@@ -2060,11 +2502,15 @@ function onFechaChange() {
     return;
   }
 
-  const minDate = new Date(Date.now() + 24*3600*1000); minDate.setHours(0,0,0,0);
-  if (new Date(fecha + 'T00:00:00') < minDate){
-    msg.textContent = 'Necesitamos minimo 24 horas de anticipacion';
+  // Horizonte mínimo desde el PAYLOAD (hora Chile del servidor) — antes se
+  // usaba el reloj del navegador (bug timezone conocido). Comparación de
+  // strings ISO YYYY-MM-DD: orden lexicográfico == orden cronológico.
+  if (fecha < _disponibilidad.from){
+    const mnH = parseInt(((_disponibilidad.operacion || {}).min_notice_hours), 10) || 24;
+    msg.textContent = 'Necesitamos mínimo ' + mnH + ' horas de anticipación';
     msg.style.color = '#dc2626';
-    grid.innerHTML = '<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde manana</div>';
+    const desde = _disponibilidad.from.split('-').reverse().join('/');
+    grid.innerHTML = '<div class="text-center w-100 py-3" style="grid-column:1/-1;color:#dc2626"><i class="bi bi-exclamation-triangle me-1"></i>Elige una fecha desde el ' + desde + '</div>';
     quick.style.display = 'none';
     return;
   }
@@ -2132,24 +2578,26 @@ function renderSlotGrid(){
     } else if (estado === 'bloqueado'){
       cls.push('is-blocked', 'is-disabled');
       title = 'Hora no disponible';
+    } else if (estado === 'no_disponible'){
+      // FIX 2026-06-09: 'no_disponible' (hora pasada / min_notice) caía al
+      // else y quedaba CLICKEABLE. Ahora va gris con candado, sin onclick.
+      cls.push('is-blocked', 'is-disabled');
+      title = 'Hora no disponible';
     } else {
       title = 'Disponible';
     }
 
-    if (_slotStartIdx !== null && _slotEndIdx !== null){
-      if (i === _slotStartIdx && i === _slotEndIdx){
-        cls.push('is-selected', 'is-start', 'is-end');
-      } else if (i === _slotStartIdx){
-        cls.push('is-selected', 'is-start');
-      } else if (i === _slotEndIdx){
-        cls.push('is-selected', 'is-end');
-      } else if (i > _slotStartIdx && i < _slotEndIdx){
-        cls.push('is-in-range');
-      }
+    // Política 2026-06-05: selección de UN solo bloque (no rangos) —
+    // se removieron las clases muertas is-start / is-end / is-in-range.
+    if (_slotStartIdx !== null && i === _slotStartIdx){
+      cls.push('is-selected');
     }
 
     const hora = s.time_from || s.hora || '';
-    return `<div class="${cls.join(' ')}" data-idx="${i}" onclick="onSlotClick(${i})" title="${title}">${badge}${hora}</div>`;
+    // Los deshabilitados NO llevan onclick (antes solo se filtraba en el handler)
+    const disabled = cls.indexOf('is-disabled') !== -1;
+    const action = disabled ? 'aria-disabled="true"' : `onclick="onSlotClick(${i})"`;
+    return `<div class="${cls.join(' ')}" data-idx="${i}" ${action} title="${title}">${badge}${hora}</div>`;
   };
 
   // Buscar el índice del primer slot post-colación
@@ -2191,8 +2639,8 @@ function onSlotClick(i){
 
   // Juan Daniel 2026-06-05: 'ocupado' (1/2 = MEDIO CUPO) SÍ es agendable —
   // atendemos hasta 2 clientes por bloque (dos agendas). Solo 'completo' (2/2),
-  // colación y bloqueado quedan fuera.
-  if (estado === 'colacion' || estado === 'completo' || estado === 'bloqueado'){
+  // colación, bloqueado y no_disponible (pasado / min_notice) quedan fuera.
+  if (estado === 'colacion' || estado === 'completo' || estado === 'bloqueado' || estado === 'no_disponible'){
     _showToast('Esa hora ya no tiene cupos. Elige otro bloque.', 'warning');
     return;
   }
@@ -2212,53 +2660,8 @@ function onSlotClick(i){
   renderSlotGrid();
 }
 
-function setQuickRange(hours){
-  if (!hours || hours <= 0){ clearSlots(); return; }
-  const slotMin = (_disponibilidad && _disponibilidad.slot_minutes) ? _disponibilidad.slot_minutes : 30;
-  const slotsNeeded = Math.max(1, Math.round(hours * 60 / slotMin));
-
-  // Buscar primer slot que pueda iniciar y permita N bloques contiguos
-  // sin cruzar colación / completo / ocupado / bloqueado.
-  // Daniel 2026-05-24: para el cliente público, 'ocupado' (1/2) también es
-  // no agendable — solo slots PLENAMENTE LIBRES son clickeables.
-  let foundStart = -1;
-  let foundEnd   = -1;
-  for (let i = 0; i < _slotsDelDia.length; i++){
-    const s0 = _slotsDelDia[i];
-    // Slot plenamente libre = disponible y sin ocupación.
-    const ocup0 = (s0.ocupados || 0);
-    const puedeIni = s0.disponible && !s0.lunch && ocup0 === 0;
-    if (!puedeIni) continue;
-    const endIdx = i + slotsNeeded - 1;
-    if (endIdx >= _slotsDelDia.length) continue;
-    let ok = true;
-    for (let k = i; k <= endIdx; k++){
-      const sk = _slotsDelDia[k];
-      let ek = sk.estado;
-      if (!ek){
-        if (sk.lunch) ek = 'colacion';
-        else if (sk.razon && !sk.disponible) ek = 'bloqueado';
-        else if (!sk.disponible) ek = 'completo';
-        else if ((sk.ocupados || 0) > 0 && (sk.ocupados || 0) < (sk.max || 2)) ek = 'ocupado';
-        else ek = 'disponible';
-      }
-      if (ek === 'colacion' || ek === 'completo' ||
-          ek === 'ocupado' || ek === 'bloqueado'){
-        ok = false; break;
-      }
-    }
-    if (ok){ foundStart = i; foundEnd = endIdx; break; }
-  }
-
-  if (foundStart < 0){
-    _showToast(`No hay ${hours} hora${hours===1?'':'s'} contiguas libres este dia. Prueba otra fecha o menos tiempo.`, 'warning');
-    return;
-  }
-  _slotStartIdx = foundStart;
-  _slotEndIdx   = foundEnd;
-  updateSlotSummary();
-  renderSlotGrid();
-}
+// 2026-06-09: removida setQuickRange() (rangos 1h/2h/3h) — código muerto desde
+// la política 2026-06-05 de "un solo bloque de 30 min". Ningún botón la llamaba.
 
 function clearSlots(){
   _slotStartIdx = _slotEndIdx = null;
@@ -2656,8 +3059,8 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
     setTimeout(() => spartanShowStep(3, 'Generando código…'), 400);
   }
 
-  // Helper para mostrar error + cerrar overlay + reactivar botón
-  function _onError(msg){
+  // Helper compartido: cerrar overlay + reactivar botón (sin mensaje)
+  function _resetSubmitUI(){
     if (overlay){
       overlay.classList.remove('active');
       setTimeout(() => { overlay.hidden = true; }, 280);
@@ -2670,6 +3073,11 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
       const txt = btn.querySelector('.submit-btn-text');
       if (txt) txt.textContent = 'Enviar solicitud';
     }
+  }
+
+  // Helper para mostrar error + cerrar overlay + reactivar botón
+  function _onError(msg){
+    _resetSubmitUI();
     if (typeof ilusAlert === 'function'){
       ilusAlert({
         title: 'No pudimos enviar tu solicitud',
@@ -2679,27 +3087,62 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
     } else if (typeof ilusToast === 'function'){
       ilusToast(msg || 'Error al enviar', { type: 'error', duration: 5000 });
     } else {
-      alert(msg || 'Error al enviar');
+      console.error('[ILUS submit]', msg || 'Error al enviar');
     }
   }
 
+  // 2026-06-09: el slot se ocupó entre que el cliente lo eligió y envió.
+  // Recargamos disponibilidad fresca, repintamos calendario + slots del día
+  // y avisamos con toast — antes solo salía un alert genérico y el cliente
+  // reintentaba contra el mismo bloque lleno.
+  async function _onSlotTaken(){
+    _resetSubmitUI();
+    clearSlots();
+    try {
+      const r = await fetch('/retiros/api/disponibilidad-publica');
+      if (r.ok){
+        const fresh = await r.json();
+        if (fresh && fresh.from && fresh.dias) _disponibilidad = fresh;
+      }
+    } catch (_e){ /* sin red: conservamos los datos previos */ }
+    if (_disponibilidad){
+      const wrap = document.getElementById('ilusCalWrap');
+      if (wrap && wrap.style.display !== 'none' && typeof _renderIlusCal === 'function'){
+        _renderIlusCal();
+      }
+      onFechaChange();  // repinta los slots del día seleccionado con datos frescos
+    }
+    _showToast('Ese cupo se acaba de ocupar. Actualizamos la disponibilidad — elige otro bloque.', 'warning');
+    const sp = document.getElementById('slotPicker');
+    if (sp) sp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   // Helper: pintar el código RET-XXX GRANDE como protagonista
+  // 2026-06-09: + botón "Copiar código" (clipboard con fallback), botón
+  // "Ir al seguimiento ahora" y redirect a 6 s (antes 1.5 s — ilegible).
   function _showSuccess(code, trackingUrl){
     spartanShowStep(3, '¡Solicitud enviada!');
+    const safeCode = String(code || '').replace(/[^A-Za-z0-9\-]/g, '') || 'RET-XXXXXX';
+    window._ilusRetCode = safeCode;
+    window._ilusTrackingUrl = trackingUrl || '/retiros';
     if (overlay){
       overlay.classList.add('done');
       const fill = document.getElementById('spFill');
       if (fill) fill.style.width = '100%';
 
-      // Reemplazar el sub por el código GRANDE + CTA
+      // Reemplazar el sub por el código GRANDE + acciones
       const sub = document.getElementById('spartanSub');
       if (sub){
         sub.innerHTML =
           '<div style="text-align:center;width:100%">' +
-          '  <div style="font-size:.78rem;color:#6b7280;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Tu código de retiro</div>' +
-          '  <div style="font-family:\'Bebas Neue\',\'Inter\',sans-serif;font-size:2.4rem;font-weight:900;color:#0a0a0a;letter-spacing:.04em;line-height:1">' + (code || 'RET-XXXXXX') + '</div>' +
-          '  <div style="font-size:.82rem;color:#374151;margin-top:10px;line-height:1.45">Recibirás un email de confirmación en los próximos minutos.</div>' +
-          '  <div style="font-size:.74rem;color:#9ca3af;margin-top:8px">Redirigiendo al seguimiento…</div>' +
+          '  <div style="font-size:.78rem;color:rgba(255,255,255,.65);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Tu código de retiro</div>' +
+          '  <div style="font-family:\'Bebas Neue\',\'Inter\',sans-serif;font-size:2.6rem;font-weight:900;color:#fff;letter-spacing:.05em;line-height:1;text-shadow:0 2px 14px rgba(0,0,0,.5)">' + safeCode + '</div>' +
+          '  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px">' +
+          '    <button type="button" onclick="copiarCodigoRet(this)" style="min-height:44px;padding:10px 18px;border-radius:10px;border:1.5px solid rgba(255,255,255,.4);background:rgba(255,255,255,.08);color:#fff;font-weight:800;font-size:.86rem;cursor:pointer"><i class="bi bi-clipboard me-1"></i>Copiar código</button>' +
+          '    <button type="button" onclick="irAlSeguimientoAhora()" style="min-height:44px;padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(180deg,#dc2626 0%,#b91c1c 100%);color:#fff;font-weight:800;font-size:.86rem;cursor:pointer;box-shadow:0 8px 18px -6px rgba(220,38,38,.55)"><i class="bi bi-arrow-right-circle me-1"></i>Ir al seguimiento ahora</button>' +
+          '  </div>' +
+          '  <div style="font-size:.82rem;color:rgba(255,255,255,.75);margin-top:14px;line-height:1.45">Recibirás un email de confirmación en los próximos minutos.</div>' +
+          '  <div style="font-size:.74rem;color:rgba(255,255,255,.5);margin-top:6px">Te llevamos al seguimiento en unos segundos…</div>' +
           '</div>';
       }
       // Reemplazar el texto principal por un check
@@ -2707,10 +3150,10 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
       if (t) t.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a;margin-right:6px"></i>Recibido';
     }
 
-    // Redirigir al tracking después de mostrar el código (~1.5 s para que se lea)
+    // 6 s: tiempo real para leer y copiar el código antes del redirect
     setTimeout(() => {
-      window.location.href = trackingUrl || '/retiros';
-    }, 1500);
+      window.location.href = window._ilusTrackingUrl;
+    }, 6000);
   }
 
   // Enviar por fetch — el backend detecta X-Requested-With y responde JSON
@@ -2742,7 +3185,13 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
       const errs = (data && Array.isArray(data.errors)) ? data.errors.join(' · ')
                  : (data && data.error) ? data.error
                  : 'No pudimos procesar tu solicitud.';
-      _onError(errs);
+      // 2026-06-09: si el error es de cupo (slot tomado entre la elección y
+      // el envío), recargamos disponibilidad y guiamos a elegir otro bloque.
+      if (/slot|cupo|lleno/i.test(errs)){
+        _onSlotTaken();
+      } else {
+        _onError(errs);
+      }
       return;
     }
 
@@ -2754,7 +3203,48 @@ document.getElementById('form-solicitud').addEventListener('submit', async funct
   }
 });
 
+// ════════════════════════════════════════════════════════
+//  COPIAR CÓDIGO RET (2026-06-09) — clipboard API + fallback
+//  execCommand para navegadores viejos / contextos sin HTTPS.
+// ════════════════════════════════════════════════════════
+function copiarCodigoRet(btnEl){
+  const code = window._ilusRetCode || '';
+  if (!code) return;
+  const done = () => {
+    if (btnEl) btnEl.innerHTML = '<i class="bi bi-check-lg me-1"></i>Copiado';
+    _showToast('Código ' + code + ' copiado al portapapeles', 'success');
+  };
+  const fallback = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      done();
+    } catch (_e){
+      _showToast('No se pudo copiar automáticamente. Tu código: ' + code, 'info');
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).then(done).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+function irAlSeguimientoAhora(){
+  window.location.href = window._ilusTrackingUrl || '/retiros';
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  // Listener de fecha UNA sola vez aquí (antes se agregaba dentro de
+  // cargarDisponibilidad — cada reintento apilaba un listener más).
+  const _fi = document.getElementById('cal_fecha');
+  if (_fi) _fi.addEventListener('change', onFechaChange);
   cargarDisponibilidad();
   // Si el formulario se re-renderizó con datos previos (fd), validar los campos
   // ya cargados para que el usuario vea el estado verde/rojo de inmediato.

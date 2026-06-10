@@ -11,13 +11,7 @@
       <i class="bi bi-plus-lg me-1"></i>Nuevo retiro interno
     </button>
     <a href="{{ url_for('pickup_public_request') }}" target="_blank" class="btn btn-sm btn-outline-light"><i class="bi bi-box-arrow-up-right me-1"></i>Vista publica</a>
-    <button type="button" class="btn btn-sm btn-outline-light" onclick="abrirDescargaInformeDash()" title="Excel con todos los retiros del mes">
-      <i class="bi bi-file-earmark-excel me-1"></i>Informe mes
-    </button>
     {% if permissions.admin %}
-    <button id="btn-recordatorios-24h" type="button" class="btn btn-sm btn-outline-warning" title="Avisar por email/WA a clientes con retiro mañana">
-      <i class="bi bi-bell me-1"></i>Enviar recordatorios 24h
-    </button>
     <button class="btn btn-sm btn-ilus" data-bs-toggle="modal" data-bs-target="#settingsModal"><i class="bi bi-gear me-1"></i>Horarios y alertas</button>
     {% endif %}
   </div>
@@ -124,6 +118,8 @@
             <div class="col-12 col-md-4">
               <label class="form-label small fw-semibold">Fecha *</label>
               <input name="date" id="nri_date" type="date" class="form-control form-control-sm" required>
+              {# Hint informativo de cupos del día (se llena por JS vía /retiros/api/disponibilidad-publica) #}
+              <div id="nriDispoHint" class="small mt-1" style="display:none"></div>
             </div>
             <div class="col-6 col-md-4">
               <label class="form-label small fw-semibold">Desde *</label>
@@ -167,16 +163,84 @@
 (function(){
   const modalEl = document.getElementById('modalNuevoRetiroInterno');
   if (!modalEl) return;
-  // Al abrir: fecha mínima = mañana (no permitir pasado en el picker; el
-  // backend revalida igual con validate_pickup_datetime en hora Chile).
+
+  // ── Hint de cupos del día (responsive_retiros 2026-06-09) ──
+  // Solo informativo: muestra bloques libres vs llenos del día elegido.
+  // No bloquea nada — el backend valida capacidad real al crear.
+  async function nriCargarDisponibilidad(fecha){
+    const hint = document.getElementById('nriDispoHint');
+    if (!hint) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha || '')){ hint.style.display = 'none'; return; }
+    hint.style.display = '';
+    hint.style.color = '#6b7280';
+    hint.innerHTML = '<span class="spinner-border spinner-border-sm me-1" style="width:.78rem;height:.78rem"></span>Consultando cupos del día…';
+    try {
+      const r = await fetch('/retiros/api/disponibilidad-publica?date=' + encodeURIComponent(fecha), { credentials:'same-origin' });
+      const d = await r.json();
+      const dia = (d && d.dias) ? d.dias[fecha] : null;
+      if (!dia){
+        hint.innerHTML = '<i class="bi bi-info-circle me-1"></i>Sin información de cupos para ese día.';
+        return;
+      }
+      if (!dia.disponible){
+        hint.style.color = '#b45309';
+        hint.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>' + (dia.razon || 'Día no disponible para retiros') + ' <span style="color:#6b7280">(informativo)</span>';
+        return;
+      }
+      const slots  = dia.slots || [];
+      const libres = slots.filter(s => s.estado === 'disponible' || s.estado === 'ocupado').length;
+      const llenos = slots.filter(s => s.estado === 'completo').length;
+      if (libres === 0){
+        hint.style.color = '#b45309';
+        hint.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Día sin bloques libres (' + llenos + ' llenos) — revisa capacidad antes de confirmar.';
+      } else {
+        hint.style.color = '#16a34a';
+        hint.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>' + libres + ' bloque' + (libres === 1 ? '' : 's') + ' con cupo' + (llenos ? ' · ' + llenos + ' lleno' + (llenos === 1 ? '' : 's') : '') + ' ese día.';
+      }
+    } catch(_){
+      hint.style.color = '#6b7280';
+      hint.innerHTML = '<i class="bi bi-info-circle me-1"></i>No se pudo consultar los cupos (solo informativo).';
+    }
+  }
+  const nriDateInp = document.getElementById('nri_date');
+  nriDateInp?.addEventListener('change', function(){ nriCargarDisponibilidad(this.value); });
+
+  // Al abrir: fecha mínima = HOY. Los retiros internos (backoffice) SÍ
+  // pueden agendarse para hoy mismo — el backend (validate_pickup_datetime
+  // en modo "internal", hora Chile) revalida igual.
   modalEl.addEventListener('show.bs.modal', function(){
     try {
-      const d = new Date(); d.setDate(d.getDate() + 1);
-      const min = d.toISOString().slice(0,10);
+      const d = new Date();
+      const min = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       const inp = document.getElementById('nri_date');
-      if (inp){ inp.min = min; if (!inp.value) inp.value = min; }
+      if (inp){
+        inp.min = min;
+        if (!inp.value) inp.value = min;
+        nriCargarDisponibilidad(inp.value);
+      }
     } catch(_){}
   });
+
+  // ── Auto-apertura por query params (responsive_retiros 2026-06-09) ──
+  // ?new=1 abre el modal al cargar; date/from/to (YYYY-MM-DD / HH:MM)
+  // prellenan fecha y horario. Bootstrap carga con defer → esperar DOM ready.
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get('new') === '1'){
+      const form = document.getElementById('formNuevoRetiroInterno');
+      const qd = qs.get('date') || '', qf = qs.get('from') || '', qt = qs.get('to') || '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(qd) && nriDateInp) nriDateInp.value = qd;
+      if (form){
+        if (/^\d{2}:\d{2}$/.test(qf)){ const i = form.querySelector('input[name="time_from"]'); if (i) i.value = qf; }
+        if (/^\d{2}:\d{2}$/.test(qt)){ const i = form.querySelector('input[name="time_to"]');   if (i) i.value = qt; }
+      }
+      const abrir = function(){
+        try { window.bootstrap && bootstrap.Modal.getOrCreateInstance(modalEl).show(); } catch(_){}
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', abrir);
+      else abrir();
+    }
+  } catch(_){}
   const btn = document.getElementById('btnGuardarRetiroInterno');
   btn?.addEventListener('click', async function(){
     const form = document.getElementById('formNuevoRetiroInterno');
@@ -202,79 +266,9 @@
 })();
 </script>
 
-<script>
-async function abrirDescargaInformeDash(){
-  const mesDefault = new Date().toISOString().slice(0,7);
-  const mes = await ilusPrompt({
-    title: 'Informe mensual de retiros',
-    message: 'Selecciona el mes a exportar (formato YYYY-MM):',
-    sub: 'Excel con todos los retiros — solicitados, confirmados y completados — del mes.',
-    placeholder: mesDefault,
-    defaultValue: mesDefault,
-    required: true,
-  });
-  if (!mes) return;
-  if (!/^\d{4}-\d{2}$/.test(mes)){
-    ilusToast('Formato inválido. Usa YYYY-MM.', { type:'warning' });
-    return;
-  }
-  const soloPend = await ilusConfirm({
-    title: '¿Filtrar?',
-    message: '¿Solo retiros aún pendientes (sin completar)?',
-    sub: 'Cancela para incluir TODOS los retiros del mes.',
-    okLabel: 'Solo pendientes', cancelLabel: 'Todos',
-  });
-  let url = `/retiros/api/informe-mes.xlsx?mes=${encodeURIComponent(mes)}`;
-  if (soloPend) url += `&solo_pendientes=1`;
-  window.location.href = url;
-}
-</script>
-
-<script>
-// Botón "Enviar recordatorios 24h" (solo admins) — header del monitor.
-document.addEventListener('DOMContentLoaded', function(){
-  var btnRem = document.getElementById('btn-recordatorios-24h');
-  if (!btnRem) return;
-  btnRem.addEventListener('click', async function(){
-    var ok = await ilusConfirm({
-      title: 'Enviar recordatorios 24h',
-      message: '¿Enviar recordatorios a todos los clientes con retiro confirmado para MAÑANA?',
-      sub: 'Se envía un email a cada cliente recordándole el horario y bodega.',
-      okLabel: 'Sí, enviar a todos',
-    });
-    if (!ok) return;
-    btnRem.disabled = true;
-    var orig = btnRem.innerHTML;
-    btnRem.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Enviando...';
-    try {
-      var r = await fetch('{{ url_for("pickup_enviar_recordatorios_24h") }}', {
-        method:'POST', credentials:'same-origin',
-        headers:{'X-Requested-With':'fetch','Content-Type':'application/x-www-form-urlencoded'}
-      });
-      var data = await r.json();
-      var errsTxt = '';
-      if (data.errores && data.errores.length){
-        errsTxt = '\nErrores: ' + data.errores.slice(0,5).map(function(e){
-          return (e.code || '?') + ': ' + (e.error || '');
-        }).join('; ');
-      }
-      await ilusAlert({
-        title: 'Recordatorios 24h',
-        message: 'Enviados: ' + (data.enviados || 0) +
-                 ' · Omitidos: ' + (data.omitidos || 0) +
-                 ' · Candidatos: ' + (data.total_candidatos || 0),
-        sub: errsTxt || undefined,
-        type: (data.errores && data.errores.length) ? 'warning' : 'success',
-      });
-    } catch(err) {
-      ilusToast('Error al enviar recordatorios. Revisa la consola.', { type:'error' });
-      console.error('[recordatorios-24h]', err);
-    } finally {
-      btnRem.disabled = false; btnRem.innerHTML = orig;
-    }
-  });
-});
-</script>
+{# 2026-06-10 (pedido de Daniel): se quitaron del header "Informe mes" y
+   "Enviar recordatorios 24h" junto con su JS. Los endpoints del backend
+   (informe-mes.xlsx y pickup_enviar_recordatorios_24h) siguen vivos. #}
 
 <div class="row g-3 mb-3">
   <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Retiros hoy</div><div class="fs-3 fw-black">{{ day.total or 0 }}</div></div></div>
@@ -290,7 +284,8 @@ document.addEventListener('DOMContentLoaded', function(){
     <div class="col-md-2"><input type="date" name="date" value="{{ filtros.date }}" class="form-control form-control-sm"></div>
     <div class="col-md-3 d-flex gap-2"><button class="btn btn-sm btn-ilus">Filtrar</button><a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a></div>
   </div>
-  <div class="btn-group btn-group-sm mt-3">
+  {# responsive_retiros (2026-06-09): flex-wrap evita que el selector de vistas se clipee en móvil #}
+  <div class="btn-group btn-group-sm mt-3 flex-wrap">
     {% for view,label,icon in [('monitor','Monitor','display'),('kanban','Kanban','kanban'),('agenda','Agenda diaria','calendar-day'),('lista','Lista','list-ul')] %}
     <a class="btn {% if filtros.view==view %}btn-dark{% else %}btn-outline-dark{% endif %}" href="{{ url_for('pickup_dashboard', view=view, q=filtros.q, status=filtros.status, date=filtros.date) }}"><i class="bi bi-{{ icon }} me-1"></i>{{ label }}</a>
     {% endfor %}
@@ -301,7 +296,13 @@ document.addEventListener('DOMContentLoaded', function(){
 {# 2026-05-26 (Daniel) — Pipeline consolidada: 12 estados → 6 columnas visuales.
    Cada columna agrupa varios estados pero las cards conservan su badge real
    (status_badge) para mantener la granularidad operacional. Banda superior
-   con color por grupo + ícono. La última columna es "Retirada" (terminal). #}
+   con color por grupo + ícono. La última columna es "Retirada" (terminal).
+   2026-06-10 — Kanban ARRASTRABLE (HTML5 drag & drop, vanilla):
+   · Destinos válidos: Por revisar→en_revision · En preparacion→en_preparacion
+     · Retirada→retirada · Canceladas→rechazada (con ilusConfirm danger).
+   · "Propuesta" y "Agendada" NO son destinos: esos estados los maneja la
+     negociación de fechas desde la ficha (Proponer fecha).
+   · Móvil/touch: botón ⋮ "Mover a..." por card → ilusActionSheet. #}
 <style>
   /* ── Responsive pipeline (Daniel 30/05/2026 · responsive_retiros) ──
      `static/mobile.css` (responsive_base v2) ya apila los [class*="pipeline"]
@@ -324,38 +325,295 @@ document.addEventListener('DOMContentLoaded', function(){
     /* El cuerpo de cada columna ya no necesita alto mínimo grande en mobile */
     .ilus-pipeline-body{min-height:0 !important}
   }
+
+  /* ── Kanban drag & drop (2026-06-10) ── */
+  .kanban-card{
+    cursor:grab;
+    transition:transform .16s ease, box-shadow .16s ease, opacity .16s ease;
+  }
+  .kanban-card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(10,10,10,.10)}
+  .kanban-card:active{cursor:grabbing}
+  .kanban-card.is-dragging{opacity:.45;transform:scale(.97)}
+  .ilus-pipeline-col{transition:outline-color .12s ease, background-color .12s ease}
+  /* Columna destino VÁLIDA bajo el drag: highlight verde suave (outline no
+     pelea con el border-top de acento inline) */
+  .ilus-pipeline-col.drop-ok{
+    outline:2px solid #16a34a;outline-offset:-2px;
+    background:#f0fdf4 !important;
+  }
+  .ilus-pipeline-col.drop-ok .ilus-pipeline-hdr{background:#dcfce7 !important}
+  /* Columna NO válida (Propuesta/Agendada): borde rojo punteado + not-allowed */
+  .ilus-pipeline-col.drop-no{
+    outline:2px dashed #dc2626;outline-offset:-2px;
+    cursor:not-allowed;
+  }
+  .kanban-empty{opacity:.55}
+  /* Botón ⋮ "Mover a..." — visible solo en móvil / pantallas touch */
+  .kanban-move-btn{display:none}
+  @media (max-width:768px), (pointer:coarse){
+    .kanban-move-btn{
+      display:inline-flex;align-items:center;justify-content:center;
+      min-width:44px;min-height:44px;          /* touch ≥44px (Apple HIG) */
+      margin:-8px -10px 0 0;
+      border:none;background:transparent;color:#6b7280;
+      border-radius:10px;font-size:1.05rem;
+    }
+    .kanban-move-btn:active{background:#f3f4f6;color:#0a0a0a}
+  }
 </style>
-<div class="d-flex gap-3 overflow-auto pb-3 ilus-pipeline">
+<div class="d-flex gap-3 overflow-auto pb-3 ilus-pipeline" id="kanbanBoard">
   {% for group in pipeline_groups %}
     {% set total = namespace(n=0) %}
     {% for s in group.statuses %}{% set total.n = total.n + stats.get(s, 0) %}{% endfor %}
-    <div class="ilus-pipeline-col" style="min-width:280px;flex:1 0 280px;background:#f9fafb;border-radius:10px;border:1px solid #e5e7eb;border-top:4px solid {{ group.accent }};overflow:hidden">
+    {% set droppable = group.key in ['por_revisar', 'preparacion', 'retirada', 'canceladas'] %}
+    <div class="ilus-pipeline-col" data-group="{{ group.key }}" data-accent="{{ group.accent }}" data-icon="{{ group.icon }}"
+         {% if not droppable %}title="Usa Proponer fecha en la ficha"{% endif %}
+         style="min-width:280px;flex:1 0 280px;background:#f9fafb;border-radius:10px;border:1px solid #e5e7eb;border-top:4px solid {{ group.accent }};overflow:hidden">
       <div class="ilus-pipeline-hdr d-flex justify-content-between align-items-center" style="padding:10px 12px;background:#fff;border-bottom:1px solid #e5e7eb">
-        <div class="fw-bold small text-uppercase" style="color:{{ group.accent }};letter-spacing:.04em">
+        <div class="fw-bold small text-uppercase js-col-label" style="color:{{ group.accent }};letter-spacing:.04em">
           <i class="bi {{ group.icon }} me-1"></i>{{ group.label }}
         </div>
-        <span class="badge" style="background:{{ group.accent }};color:#fff;padding:4px 9px;font-size:.74rem">{{ total.n }}</span>
+        <span class="badge js-col-count" style="background:{{ group.accent }};color:#fff;padding:4px 9px;font-size:.74rem">{{ total.n }}</span>
       </div>
       <div class="ilus-pipeline-body" style="padding:10px;min-height:120px">
+        {% set colcards = namespace(n=0) %}
         {% for r in rows if r.status in group.statuses %}
+          {% set colcards.n = colcards.n + 1 %}
           {% set b = status_badge(r.status) %}
-          <a href="{{ url_for('pickup_detail', rid=r.id) }}" class="text-decoration-none text-dark">
-            <div class="ilus-card p-3 mb-2" style="border-left:4px solid {{ group.accent }}">
+          <div class="ilus-card p-3 mb-2 kanban-card" draggable="true" tabindex="0" role="link"
+               data-rid="{{ r.id }}" data-code="{{ r.code }}" data-status="{{ r.status }}"
+               data-href="{{ url_for('pickup_detail', rid=r.id) }}"
+               style="border-left:4px solid {{ group.accent }}">
+            <div class="d-flex justify-content-between align-items-start">
               <div class="fw-bold">{{ r.code }}</div>
-              <div class="small">{{ r.customer_name }}</div>
-              <div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
-              <span class="badge bg-{{ b.color }} mt-2">{{ b.label }}</span>
+              <button type="button" class="kanban-move-btn" title="Mover a..." aria-label="Mover {{ r.code }} a otra columna">
+                <i class="bi bi-three-dots-vertical"></i>
+              </button>
             </div>
-          </a>
-        {% else %}
-          <div class="text-muted small text-center py-3" style="opacity:.55">
-            <i class="bi bi-dash-circle"></i> Sin retiros
+            <div class="small">{{ r.customer_name }}</div>
+            <div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
+            <span class="badge bg-{{ b.color }} mt-2 js-card-badge">{{ b.label }}</span>
           </div>
         {% endfor %}
+        {# Placeholder SIEMPRE en el DOM: el JS lo muestra/oculta al mover cards #}
+        <div class="kanban-empty text-muted small text-center py-3"{% if colcards.n %} style="display:none"{% endif %}>
+          <i class="bi bi-dash-circle"></i> Sin retiros
+        </div>
       </div>
     </div>
   {% endfor %}
 </div>
+
+<script>
+// ── Kanban arrastrable (2026-06-10) ──────────────────────────────────
+// HTML5 drag & drop vanilla, sin librerías. El endpoint POST
+// /retiros/<rid>/status es un form-POST clásico que REDIRIGE, por eso
+// el fetch va con redirect:'manual' (éxito = opaqueredirect). El CSRF
+// lo inyecta el wrapper global de fetch de base.html (X-CSRF-Token);
+// igual mandamos csrf_token en el FormData por robustez.
+(function(){
+  'use strict';
+  const board = document.getElementById('kanbanBoard');
+  if (!board) return;
+
+  // Política de drops: columna (group.key) → estado destino.
+  // "propuesta" y "agendada" NO están: sus estados los maneja la
+  // negociación de fechas desde la ficha.
+  const DROP_TARGETS = {
+    por_revisar: 'en_revision',
+    preparacion: 'en_preparacion',
+    retirada:    'retirada',
+    canceladas:  'rechazada',
+  };
+
+  // Badges reales (status_badge del backend) para pintar el optimista.
+  const STATUS_BADGE = {
+    {% for s in ['en_revision', 'en_preparacion', 'retirada', 'rechazada'] %}
+    {% set sb = status_badge(s) %}
+    '{{ s }}': { label: '{{ sb.label }}', color: '{{ sb.color }}' },
+    {% endfor %}
+  };
+
+  let dragging = false;   // distingue drag real de click simple
+  let dragCard = null;
+
+  // ── Helpers DOM ──
+  function colBody(col){ return col.querySelector('.ilus-pipeline-body'); }
+
+  function ajustarColumna(col, delta){
+    const badge = col.querySelector('.js-col-count');
+    if (badge) badge.textContent = Math.max(0, (parseInt(badge.textContent, 10) || 0) + delta);
+    const body = colBody(col);
+    const ph = body.querySelector('.kanban-empty');
+    if (ph) ph.style.display = body.querySelector('.kanban-card') ? 'none' : '';
+  }
+
+  function moverDom(card, colDestino, antesDe){
+    const colOrigen = card.closest('.ilus-pipeline-col');
+    const body = colBody(colDestino);
+    const ref = (antesDe && antesDe.parentNode === body) ? antesDe : body.querySelector('.kanban-empty');
+    body.insertBefore(card, ref);
+    if (colOrigen !== colDestino){
+      ajustarColumna(colOrigen, -1);
+      ajustarColumna(colDestino, +1);
+    }
+  }
+
+  // ── Movimiento: optimista + POST + revert si falla ──
+  async function moverCard(card, colDestino, nuevoEstado){
+    const estadoActual = card.dataset.status;
+    if (!nuevoEstado || nuevoEstado === estadoActual) return;
+    const code = card.dataset.code;
+
+    if (nuevoEstado === 'rechazada'){
+      const ok = await ilusConfirm({
+        title: 'Cancelar retiro',
+        message: '¿Marcar ' + code + ' como rechazada? El cliente recibirá un correo.',
+        okLabel: 'Sí, rechazar', cancelLabel: 'Cancelar',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+
+    // Snapshot para revertir si el POST falla
+    const badge = card.querySelector('.js-card-badge');
+    const snap = {
+      col: card.closest('.ilus-pipeline-col'),
+      next: card.nextElementSibling,
+      accent: card.style.borderLeftColor,
+      badgeClass: badge ? badge.className : '',
+      badgeText: badge ? badge.textContent : '',
+    };
+
+    // Optimista: mover card + contadores + badge + acento
+    moverDom(card, colDestino);
+    card.dataset.status = nuevoEstado;
+    card.style.borderLeftColor = colDestino.dataset.accent || '';
+    const sb = STATUS_BADGE[nuevoEstado];
+    if (badge && sb){
+      badge.className = 'badge bg-' + sb.color + ' mt-2 js-card-badge';
+      badge.textContent = sb.label;
+    }
+
+    try {
+      const fd = new FormData();
+      fd.append('status', nuevoEstado);
+      fd.append('nota', 'kanban drag');
+      fd.append('csrf_token', window.__CSRF_TOKEN || '');
+      const r = await fetch('/retiros/' + card.dataset.rid + '/status', {
+        method: 'POST', body: fd,
+        credentials: 'same-origin',
+        redirect: 'manual',          // el endpoint redirige al éxito
+      });
+      // 'opaqueredirect' = el backend redirigió (flujo normal del form-POST)
+      if (!(r.type === 'opaqueredirect' || r.ok)) throw new Error('HTTP ' + r.status);
+      ilusToast('✓ ' + code + ' → ' + (sb ? sb.label : nuevoEstado), { type: 'success' });
+    } catch (err){
+      // Revertir el movimiento optimista
+      moverDom(card, snap.col, snap.next);
+      card.dataset.status = estadoActual;
+      card.style.borderLeftColor = snap.accent;
+      if (badge){ badge.className = snap.badgeClass; badge.textContent = snap.badgeText; }
+      ilusToast('No se pudo mover ' + code + ' — cambio revertido', { type: 'error' });
+      console.error('[kanban]', err);
+    }
+  }
+
+  // ── Drag & drop (delegación en el board) ──
+  board.addEventListener('dragstart', function(e){
+    const card = e.target.closest('.kanban-card');
+    if (!card) return;
+    dragCard = card; dragging = true;
+    card.classList.add('is-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', card.dataset.rid); } catch(_){}
+  });
+
+  board.addEventListener('dragend', function(){
+    if (dragCard) dragCard.classList.remove('is-dragging');
+    dragCard = null;
+    board.querySelectorAll('.drop-ok, .drop-no').forEach(c => c.classList.remove('drop-ok', 'drop-no'));
+    setTimeout(function(){ dragging = false; }, 60);   // bloquea el click fantasma post-drop
+  });
+
+  board.addEventListener('dragover', function(e){
+    if (!dragCard) return;
+    const col = e.target.closest('.ilus-pipeline-col');
+    board.querySelectorAll('.drop-ok, .drop-no').forEach(c => { if (c !== col) c.classList.remove('drop-ok', 'drop-no'); });
+    if (!col) return;
+    if (DROP_TARGETS[col.dataset.group]){
+      e.preventDefault();                  // habilita el drop en toda la columna
+      e.dataTransfer.dropEffect = 'move';
+      col.classList.add('drop-ok');
+    } else {
+      e.dataTransfer.dropEffect = 'none';  // cursor not-allowed
+      col.classList.add('drop-no');
+    }
+  });
+
+  board.addEventListener('dragleave', function(e){
+    const col = e.target.closest('.ilus-pipeline-col');
+    if (col && !col.contains(e.relatedTarget)) col.classList.remove('drop-ok', 'drop-no');
+  });
+
+  board.addEventListener('drop', function(e){
+    const col = e.target.closest('.ilus-pipeline-col');
+    if (!col || !dragCard) return;
+    e.preventDefault();
+    col.classList.remove('drop-ok', 'drop-no');
+    const card = dragCard;               // dragend anula dragCard después
+    const target = DROP_TARGETS[col.dataset.group];
+    if (target) moverCard(card, col, target);
+  });
+
+  // ── Click: ⋮ abre "Mover a...", click simple abre la ficha ──
+  board.addEventListener('click', function(e){
+    const btn = e.target.closest('.kanban-move-btn');
+    if (btn){
+      e.preventDefault(); e.stopPropagation();
+      abrirMenuMover(btn.closest('.kanban-card'));
+      return;
+    }
+    const card = e.target.closest('.kanban-card');
+    if (!card || dragging) return;       // si hubo drag, no navegar
+    if (card.dataset.href) window.location.href = card.dataset.href;
+  });
+
+  // Accesibilidad teclado: Enter sobre la card abre la ficha
+  board.addEventListener('keydown', function(e){
+    if (e.key !== 'Enter') return;
+    const card = e.target.closest('.kanban-card');
+    if (card && card === e.target && card.dataset.href) window.location.href = card.dataset.href;
+  });
+
+  // ── Móvil / touch: action-sheet "Mover a..." (mismo POST) ──
+  async function abrirMenuMover(card){
+    if (!card) return;
+    const opciones = [];
+    board.querySelectorAll('.ilus-pipeline-col').forEach(function(col){
+      const target = DROP_TARGETS[col.dataset.group];
+      if (!target || target === card.dataset.status) return;
+      const lbl = col.querySelector('.js-col-label');
+      opciones.push({
+        label: lbl ? lbl.textContent.trim() : col.dataset.group,
+        icon: col.dataset.icon || 'bi-arrow-right',
+        value: col.dataset.group,
+        style: col.dataset.group === 'canceladas' ? 'danger' : (col.dataset.group === 'retirada' ? 'dark' : 'secondary'),
+      });
+    });
+    if (!opciones.length) return;
+    const grupo = await ilusActionSheet({
+      title: 'Mover ' + card.dataset.code,
+      message: 'Elige la columna destino',
+      sub: 'Para Propuesta/Agendada usa "Proponer fecha" en la ficha.',
+      options: opciones,
+    });
+    if (!grupo) return;
+    const colDestino = board.querySelector('.ilus-pipeline-col[data-group="' + grupo + '"]');
+    if (colDestino) moverCard(card, colDestino, DROP_TARGETS[grupo]);
+  }
+})();
+</script>
 {% elif filtros.view == 'agenda' %}
 <div class="row g-3">
   <div class="col-xl-8">
@@ -393,26 +651,28 @@ document.addEventListener('DOMContentLoaded', function(){
 {% else %}
 <div class="ilus-card">
   <div class="table-responsive">
-    <table class="table ilus-table mb-0 align-middle">
+    {# responsive_retiros: .table-mobile-cards (patrón mobile.css) → en móvil cada fila se ve como card con data-label #}
+    <table class="table ilus-table table-mobile-cards mb-0 align-middle">
       <thead><tr><th>Solicitud</th><th>Cliente</th><th>Documento</th><th>Fecha solicitada</th><th>Estado</th><th>Calidad</th><th class="text-end">Carga</th><th class="text-end" style="width:60px">Acción</th></tr></thead>
       <tbody>
         {% for r in rows %}
         {% set b = status_badge(r.status) %}
         <tr data-href="{{ url_for('pickup_detail', rid=r.id) }}" class="row-clickable" style="cursor:pointer">
-          <td class="fw-bold font-monospace">{{ r.code }}</td>
-          <td>{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></td>
-          <td>{{ r.document_type|upper }} {{ r.document_number }}</td>
-          <td>{{ r.requested_date }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
-          <td><span class="badge bg-{{ b.color }}">{{ b.label }}</span></td>
-          <td>
+          <td class="fw-bold font-monospace" data-label="Solicitud">{{ r.code }}</td>
+          <td data-label="Cliente">{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></td>
+          <td data-label="Documento">{{ r.document_type|upper }} {{ r.document_number }}</td>
+          <td data-label="Fecha solicitada">{{ r.requested_date }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
+          <td data-label="Estado"><span class="badge bg-{{ b.color }}">{{ b.label }}</span></td>
+          <td data-label="Calidad">
             <div class="progress" style="height:7px"><div class="progress-bar bg-{{ 'success' if r.information_quality_score>=80 else ('warning' if r.information_quality_score>=60 else 'danger') }}" style="width:{{ r.information_quality_score }}%"></div></div>
             <small>{{ r.information_quality_score }}%</small>
           </td>
-          <td class="text-end">{{ r.total_packages }} bultos<br><small class="text-muted">{{ r.total_weight_kg }} kg · PV {{ r.total_volumetric_weight }}</small></td>
+          <td class="text-end" data-label="Carga">{{ r.total_packages }} bultos<br><small class="text-muted">{{ r.total_weight_kg }} kg · PV {{ r.total_volumetric_weight }}</small></td>
           {# Daniel 2026-05-23: columna acción flotante con dropdown #}
           <td class="text-end" onclick="event.stopPropagation()">
             <div class="dropdown">
-              <button class="btn btn-sm btn-outline-dark" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Acciones">
+              {# responsive_retiros: strategy fixed → el menú no se recorta por el overflow del card #}
+              <button class="btn btn-sm btn-outline-dark" type="button" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Acciones">
                 <i class="bi bi-three-dots-vertical"></i>
               </button>
               <ul class="dropdown-menu dropdown-menu-end shadow-sm">
@@ -501,28 +761,101 @@ async function eliminarSolicitudDesdeMonitor(rid, code, cliente){
 {% endif %}
 
 {% if permissions.admin %}
+{# 2026-06-10 — Modal reorganizado en secciones tituladas (Bodega /
+   Horario y dias / Feriados y cierres / Equipo y alertas). TODOS los
+   names se mantienen intactos: warehouse_name, warehouse_addr, maps_url,
+   open_time, close_time, work_days, holidays, notify_emails,
+   alert_enabled, alert_title, alert_message.
+   modal-dialog-scrollable → header/footer fijos (sticky) y cuerpo con scroll. #}
+<style>
+  #settingsModal .settings-section-title{
+    font-weight:700;font-size:.78rem;text-transform:uppercase;
+    letter-spacing:.05em;color:var(--ilus-red);
+    border-bottom:2px solid #f3f4f6;padding-bottom:6px;margin-bottom:4px;
+  }
+  /* Días como pills clicables (checkbox btn-check oculto + label pill) */
+  #settingsModal .day-pill{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:54px;min-height:40px;padding:6px 14px;margin:0;
+    border:1.5px solid #d1d5db;border-radius:999px;background:#fff;
+    font-weight:600;font-size:.86rem;color:#374151;
+    cursor:pointer;user-select:none;transition:all .12s ease;
+  }
+  #settingsModal .day-pill:hover{border-color:#9ca3af;background:#f9fafb}
+  #settingsModal .btn-check:checked + .day-pill{
+    background:var(--ilus-red);border-color:var(--ilus-red);color:#fff;
+  }
+  #settingsModal .btn-check:focus-visible + .day-pill{outline:2px solid var(--ilus-black);outline-offset:2px}
+  @media (max-width:768px){
+    #settingsModal .day-pill{min-height:44px;min-width:48px}  /* touch ≥44px */
+  }
+</style>
 <div class="modal fade" id="settingsModal" tabindex="-1">
-  <div class="modal-dialog modal-lg"><form method="post" action="{{ url_for('pickup_settings_save') }}" class="modal-content">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable"><form method="post" action="{{ url_for('pickup_settings_save') }}" class="modal-content">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="modal-header bg-dark text-white"><h5 class="modal-title">Horarios, feriados y alerta publica</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body row g-3">
-      <div class="col-md-6"><label class="form-label">Nombre bodega</label><input name="warehouse_name" class="form-control" value="{{ settings.warehouse_name }}"></div>
-      <div class="col-md-6"><label class="form-label">Direccion</label><input name="warehouse_addr" class="form-control" value="{{ settings.warehouse_addr }}"></div>
-      <div class="col-12"><label class="form-label">Link mapa</label><input name="maps_url" class="form-control" value="{{ settings.maps_url }}"></div>
-      <div class="col-md-3"><label class="form-label">Abre</label><input name="open_time" type="time" class="form-control" value="{{ settings.open_time|hm }}"></div>
-      <div class="col-md-3"><label class="form-label">Cierra</label><input name="close_time" type="time" class="form-control" value="{{ settings.close_time|hm }}"></div>
-      <div class="col-md-6"><label class="form-label">Feriados/bloqueos (YYYY-MM-DD separados por coma)</label><input name="holidays" class="form-control" value="{{ settings.holidays or '' }}"></div>
-      <div class="col-12">
-        <label class="form-label">Dias habilitados</label><br>
-        {% for n,d in [(1,'Lun'),(2,'Mar'),(3,'Mie'),(4,'Jue'),(5,'Vie'),(6,'Sab'),(7,'Dom')] %}
-        <label class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="work_days" value="{{ n }}" {% if n|string in (settings.work_days or '') %}checked{% endif %}>{{ d }}</label>
-        {% endfor %}
-      </div>
-      <div class="col-md-4"><label class="form-check"><input class="form-check-input" type="checkbox" name="alert_enabled" {% if settings.alert_enabled %}checked{% endif %}>Mostrar alerta publica</label></div>
-      <div class="col-md-8"><input name="alert_title" class="form-control" value="{{ settings.alert_title }}"></div>
-      <div class="col-12"><textarea name="alert_message" class="form-control" rows="3">{{ settings.alert_message or '' }}</textarea></div>
+    <div class="modal-header bg-dark text-white">
+      <h5 class="modal-title"><i class="bi bi-gear me-2" style="color:var(--ilus-red)"></i>Horarios, feriados y alerta publica</h5>
+      <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
     </div>
-    <div class="modal-footer"><button class="btn btn-ilus">Guardar configuracion</button></div>
+    <div class="modal-body">
+
+      {# ── Sección 1: Bodega ── #}
+      <div class="settings-section-title"><i class="bi bi-buildings me-1"></i>Bodega</div>
+      <div class="row g-3 mb-4">
+        <div class="col-md-6"><label class="form-label">Nombre bodega</label><input name="warehouse_name" class="form-control" value="{{ settings.warehouse_name }}"></div>
+        <div class="col-md-6"><label class="form-label">Direccion</label><input name="warehouse_addr" class="form-control" value="{{ settings.warehouse_addr }}"></div>
+        <div class="col-12"><label class="form-label">Link mapa</label><input name="maps_url" class="form-control" value="{{ settings.maps_url }}" placeholder="https://maps.google.com/..."></div>
+      </div>
+
+      {# ── Sección 2: Horario y días ── #}
+      <div class="settings-section-title"><i class="bi bi-clock me-1"></i>Horario y dias</div>
+      <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3"><label class="form-label">Abre</label><input name="open_time" type="time" class="form-control" value="{{ settings.open_time|hm }}"></div>
+        <div class="col-6 col-md-3"><label class="form-label">Cierra</label><input name="close_time" type="time" class="form-control" value="{{ settings.close_time|hm }}"></div>
+        <div class="col-12">
+          <label class="form-label d-block">Dias habilitados</label>
+          <div class="d-flex flex-wrap gap-2">
+            {% for n,d in [(1,'Lun'),(2,'Mar'),(3,'Mie'),(4,'Jue'),(5,'Vie'),(6,'Sab'),(7,'Dom')] %}
+            <input class="btn-check" type="checkbox" id="wd_pill_{{ n }}" name="work_days" value="{{ n }}" {% if n|string in (settings.work_days or '') %}checked{% endif %} autocomplete="off">
+            <label class="day-pill" for="wd_pill_{{ n }}">{{ d }}</label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 3: Feriados y cierres ── #}
+      <div class="settings-section-title"><i class="bi bi-calendar-x me-1"></i>Feriados y cierres</div>
+      <div class="row g-3 mb-4">
+        <div class="col-12">
+          <label class="form-label">Cierres extra de bodega</label>
+          <input name="holidays" class="form-control" value="{{ settings.holidays or '' }}" placeholder="2026-09-18, 2026-12-24">
+          <div class="form-text">Los feriados nacionales de Chile se bloquean solos. Agrega aqui SOLO cierres extra de bodega (YYYY-MM-DD, separados por coma).</div>
+        </div>
+      </div>
+
+      {# ── Sección 4: Equipo y alertas ── #}
+      <div class="settings-section-title"><i class="bi bi-people me-1"></i>Equipo y alertas</div>
+      <div class="row g-3">
+        <div class="col-12">
+          <label class="form-label">Correos del equipo para alertas de retiros (separados por coma)</label>
+          <textarea name="notify_emails" class="form-control" rows="2" placeholder="bodega@ilusfitness.com, ventas@ilusfitness.com">{{ settings.notify_emails or '' }}</textarea>
+          <div class="form-text">Reciben aviso de nuevas solicitudes y respuestas de clientes.</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-check form-switch mt-md-4 pt-md-2">
+            <input class="form-check-input" type="checkbox" name="alert_enabled" {% if settings.alert_enabled %}checked{% endif %}>
+            <span class="form-check-label">Mostrar alerta publica</span>
+          </label>
+        </div>
+        <div class="col-md-8"><label class="form-label">Titulo de la alerta</label><input name="alert_title" class="form-control" value="{{ settings.alert_title }}"></div>
+        <div class="col-12"><label class="form-label">Mensaje de la alerta</label><textarea name="alert_message" class="form-control" rows="3">{{ settings.alert_message or '' }}</textarea></div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+      <button class="btn btn-ilus">Guardar configuracion</button>
+    </div>
   </form></div>
 </div>
 {% endif %}

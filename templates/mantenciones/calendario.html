@@ -295,6 +295,74 @@
 .dia-visit-delta.over{color:#991b1b;}
 .dia-visit-delta.warn{color:#92400e;}
 .dia-visit-delta.muted{color:#9ca3af;}
+
+/* ── Tablero del día interactivo (2026-06-09, Daniel) ── */
+.dia-cards{display:flex;flex-direction:column;gap:12px;margin-top:4px;}
+.dia-card{
+  background:#fff;border:1px solid #e5e7eb;border-left:5px solid #94a3b8;
+  border-radius:12px;padding:12px 14px;transition:box-shadow .15s;
+}
+.dia-card:hover{box-shadow:0 5px 16px rgba(15,23,42,.09);}
+.dia-card.st-programada{border-left-color:#3b82f6;}
+.dia-card.st-reagendada{border-left-color:#8b5cf6;}
+.dia-card.st-en_curso{border-left-color:#f59e0b;}
+.dia-card.st-completada{border-left-color:#16a34a;}
+.dia-card.st-cancelada{border-left-color:#9ca3af;opacity:.66;}
+.dia-card-top{display:flex;align-items:flex-start;gap:12px;}
+.dia-card-hora{
+  font-family:monospace;font-weight:800;color:#0f172a;font-size:.86rem;
+  background:#f1f5f9;border-radius:8px;padding:7px 9px;white-space:nowrap;
+  text-align:center;min-width:62px;line-height:1.15;
+}
+.dia-card-body{flex:1;min-width:0;}
+.dia-card-cli{font-weight:800;color:#0f172a;font-size:.98rem;line-height:1.2;}
+.dia-card-meta{font-size:.78rem;color:#6b7280;margin-top:3px;}
+.dia-card-meta .sep{margin:0 6px;color:#cbd5e1;}
+.dia-card-ot{font-family:monospace;font-weight:700;color:#dc2626;font-size:.7rem;margin-top:3px;}
+.dia-badge{
+  font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+  padding:4px 10px;border-radius:50px;white-space:nowrap;flex-shrink:0;
+}
+.dia-badge.programada{background:#dbeafe;color:#1e40af;}
+.dia-badge.reagendada{background:#ede9fe;color:#5b21b6;}
+.dia-badge.en_curso{background:#fef3c7;color:#92400e;}
+.dia-badge.completada{background:#dcfce7;color:#166534;}
+.dia-badge.cancelada{background:#f3f4f6;color:#4b5563;}
+.dia-card-prog{font-size:.72rem;color:#6b7280;margin-top:5px;}
+.dia-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px;}
+.dia-act{
+  border:1px solid #e5e7eb;background:#fff;border-radius:8px;
+  padding:6px 11px;font-size:.78rem;font-weight:700;cursor:pointer;
+  display:inline-flex;align-items:center;gap:5px;transition:all .12s;
+  color:#374151;text-decoration:none;
+}
+.dia-act:hover{background:#f9fafb;border-color:#cbd5e1;}
+.dia-act i{font-size:.85rem;}
+.dia-act.ok{color:#166534;border-color:#bbf7d0;}
+.dia-act.ok:hover{background:#dcfce7;}
+.dia-act.move{color:#1e40af;border-color:#bfdbfe;}
+.dia-act.move:hover{background:#dbeafe;}
+.dia-act.assign{color:#5b21b6;border-color:#ddd6fe;}
+.dia-act.assign:hover{background:#ede9fe;}
+.dia-act.danger{color:#991b1b;border-color:#fecaca;}
+.dia-act.danger:hover{background:#fee2e2;}
+.dia-act.open{color:#0a0a0a;border-color:#d1d5db;}
+.dia-act.open:hover{background:#0a0a0a;color:#fff;}
+.dia-extra{
+  margin-top:11px;padding:11px 12px;background:#f8fafc;
+  border:1px dashed #cbd5e1;border-radius:10px;
+}
+.dia-extra > label{
+  font-size:.68rem;font-weight:800;text-transform:uppercase;color:#475569;
+  letter-spacing:.04em;display:block;margin-bottom:7px;
+}
+.dia-extra .row-inline{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;}
+.dia-extra .row-inline > div > label{font-size:.6rem;color:#94a3b8;display:block;font-weight:700;}
+.dia-extra input,.dia-extra select{
+  border:1px solid #d1d5db;border-radius:8px;padding:7px 9px;font-size:.85rem;background:#fff;
+}
+.dia-extra input[type=date],.dia-extra input[type=time]{min-width:128px;}
+.dia-empty{text-align:center;padding:28px 10px;color:#9ca3af;}
 </style>
 
 {# ─────────── HEADER NEGRO ─────────── #}
@@ -602,10 +670,12 @@
       <div class="modal-footer d-flex justify-content-between">
         {# 🔒 2026-05-22 (Daniel — brecha Aaron):
            · Eliminar visita → solo superadmin (DELETE definitivo).
-           · Guardar (editar/crear) → admin/superadmin (PUT general).
-           Ejecutivo solo puede VER la visita en el calendario y abrir
-           la OT — NO editarla ni eliminarla. La creación va por el
-           wizard de levantamiento, no por este modal del calendario. #}
+           · Guardar (EDITAR/reagendar) → roles de gestión: admin, supervisor,
+             ejecutivo, superadmin (2026-06-09, Daniel). Reagendar una visita
+             ya programada es gestión, no ejecución.
+           · Crear visita NUEVA desde el calendario → sigue siendo admin/
+             superadmin; el ejecutivo crea OTs por el wizard de levantamiento
+             (trazabilidad completa), ver abrirNuevaVisita(). #}
         {% if permissions.superadmin %}
         <button type="button" class="btn btn-outline-danger" id="btnEliminarVisita" onclick="eliminarVisita()" style="display:none">
           <i class="bi bi-trash me-1"></i>Eliminar
@@ -618,9 +688,9 @@
             <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
           </a>
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-            {% if permissions.admin or permissions.superadmin %}Cancelar{% else %}Cerrar{% endif %}
+            {% if puede_gestionar_visitas %}Cancelar{% else %}Cerrar{% endif %}
           </button>
-          {% if permissions.admin or permissions.superadmin %}
+          {% if puede_gestionar_visitas %}
           <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarVisita()">
             <i class="bi bi-check-circle me-1"></i>Guardar
           </button>
@@ -1122,12 +1192,12 @@ function abrirVisitaModal(vid){
   document.getElementById('vi_costo').value = ev.costo || '';
   document.getElementById('vi_tecnico').value = ev.tecnicos.map(t => t.nombre).join(', ');
   document.getElementById('vi_descripcion').value = ev.descripcion || '';
-  // 🔒 2026-05-22 (Daniel — brecha Aaron): Si NO puede editar (ej. ejecutivo),
-  // hacemos los inputs read-only y el modal pasa a modo "vista de detalle".
-  // El botón Guardar ya no se renderiza (Jinja), pero por accesibilidad
-  // visual los campos quedan disabled para que el usuario entienda que es
-  // solo lectura. Igualmente el backend bloquea el PUT con 403.
-  const _puedeEditar = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }};
+  // 2026-06-09 (Daniel — REVISIÓN): los roles de GESTIÓN (admin, supervisor,
+  // ejecutivo, superadmin) SÍ pueden editar/reagendar una visita existente.
+  // Solo roles sin gestión (ej. técnico de campo) quedan en modo "vista de
+  // detalle" (inputs disabled + sin botón Guardar). Espejo exacto del gate
+  // backend `_puede_ot_accion('metadata')` vía `puede_gestionar_visitas`.
+  const _puedeEditar = {{ 'true' if puede_gestionar_visitas else 'false' }};
   const _camposVisita = ['vi_cliente','vi_tipo','vi_titulo','vi_fecha',
                          'vi_hora_inicio','vi_hora_fin','vi_estado','vi_costo',
                          'vi_tecnico','vi_descripcion'];
@@ -1310,8 +1380,13 @@ function deltaClass(deltaMin){
   return 'ok';
 }
 
+// ── Tablero del día (interactivo) ───────────────────────────────────
+let _DIA_FECHA    = null;   // YYYY-MM-DD del día abierto
+let _DIA_VISITAS  = {};     // id -> visita (las acciones leen datos frescos de aquí)
+let _DIA_TECNICOS = null;   // cache de técnicos (lazy, para Reasignar)
+
 async function abrirDetalleDia(fecha){
-  // fecha en YYYY-MM-DD
+  _DIA_FECHA = fecha;
   const fObj = new Date(fecha + 'T00:00:00');
   const nombreDia = ['DOM','LUN','MAR','MIÉ','JUE','VIE','SÁB'][fObj.getDay()];
   const fLabel = `${nombreDia} ${fObj.getDate()} ${fmtMesEs(fObj.getMonth())} ${fObj.getFullYear()}`;
@@ -1325,10 +1400,13 @@ async function abrirDetalleDia(fecha){
     bootstrap.Modal.getInstance(document.getElementById('modalDiaDetalle')).hide();
     nuevaVisitaEnSlot(fecha, '09:00');
   };
-  // Mostrar modal
-  const modal = new bootstrap.Modal(document.getElementById('modalDiaDetalle'));
-  modal.show();
+  // Mostrar modal (getOrCreate evita instancias duplicadas al refrescar)
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalDiaDetalle')).show();
+  await cargarDetalleDia(fecha);
+}
 
+// Re-fetch + re-render del día SIN re-crear el modal (lo usan las acciones).
+async function cargarDetalleDia(fecha){
   try {
     const r = await fetch(`/mantenciones/api/calendario/dia/${fecha}`);
     const d = await r.json();
@@ -1344,124 +1422,200 @@ async function abrirDetalleDia(fecha){
   }
 }
 
+const _DIA_EST = {
+  programada: {label:'Programada', badge:'programada'},
+  reagendada: {label:'Reagendada', badge:'reagendada'},
+  en_curso:   {label:'En curso',   badge:'en_curso'},
+  completada: {label:'Realizada',  badge:'completada'},
+  cancelada:  {label:'Cancelada',  badge:'cancelada'},
+};
+const _DIA_TIPO = {
+  preventiva:'Preventiva', correctiva:'Correctiva', instalacion:'Instalación',
+  garantia:'Garantía', inspeccion:'Inspección', levantamiento:'Levantamiento',
+};
+
 function renderDetalleDia(data){
   const k = data.kpis || {};
   const visitas = data.visitas || [];
-  const tecs    = data.tecnicos || [];
+  _DIA_VISITAS = {};
+  visitas.forEach(v => { _DIA_VISITAS[v.id] = v; });
 
-  // ── KPIs
+  // ── Tira de KPIs (resumen compacto del día)
   let html = `<div class="dia-kpis">
-    <div class="dia-kpi"><div class="num">${k.total || 0}</div><div class="lbl">Total OTs</div></div>
-    <div class="dia-kpi ok"><div class="num">${k.completadas || 0}</div><div class="lbl">Completadas</div></div>
+    <div class="dia-kpi"><div class="num">${k.total || 0}</div><div class="lbl">Total</div></div>
+    <div class="dia-kpi ok"><div class="num">${k.completadas || 0}</div><div class="lbl">Realizadas</div></div>
     <div class="dia-kpi warn"><div class="num">${k.en_curso || 0}</div><div class="lbl">En curso</div></div>
     <div class="dia-kpi muted"><div class="num">${k.pendientes || 0}</div><div class="lbl">Pendientes</div></div>
     <div class="dia-kpi danger"><div class="num">${k.canceladas || 0}</div><div class="lbl">Canceladas</div></div>
   </div>`;
 
-  // ── Plan vs Real
-  if ((k.dur_plan_min_total || 0) > 0 || (k.dur_real_min_total || 0) > 0){
-    let overText = '';
-    if (k.overrun_pct_global != null){
-      const cls = k.overrun_pct_global > 15 ? 'over' : (k.overrun_pct_global > 0 ? 'warn' : 'ok');
-      const sign = k.overrun_pct_global >= 0 ? '+' : '';
-      overText = `<span class="dia-tec-delta ${cls}">${sign}${k.overrun_pct_global}% overrun</span>`;
-    }
-    html += `<div class="alert alert-light border d-flex justify-content-between align-items-center py-2 mb-3">
-      <div>
-        <strong>⏱ Plan:</strong> ${fmtMin(k.dur_plan_min_total)}
-        &nbsp;·&nbsp;
-        <strong>Real:</strong> ${fmtMin(k.dur_real_min_total)}
-      </div>
-      <div>${overText}</div>
+  if (!visitas.length){
+    html += `<div class="dia-empty">
+      <i class="bi bi-calendar-x" style="font-size:2rem;display:block;margin-bottom:8px"></i>
+      <div class="fw-bold">Sin visitas ese día</div>
+      <div class="small">Crea una nueva con el botón de abajo.</div>
     </div>`;
+    document.getElementById('modalDiaBody').innerHTML = html;
+    return;
   }
 
-  // ── Heatmap por técnico
-  if (tecs.length){
-    html += `<h6 class="text-muted mt-4 mb-2"><i class="bi bi-person-badge me-1"></i>Carga por técnico</h6>`;
-    html += `<div class="list-view mb-3">`;
-    // Header
-    html += `<div class="dia-tec-row head" style="background:#fafafa;font-size:.65rem;font-weight:800;text-transform:uppercase;color:#6b7280;letter-spacing:.05em">
-      <div>Técnico</div>
-      <div class="text-end">OTs</div>
-      <div class="text-end">Plan</div>
-      <div class="text-end">Real</div>
-      <div class="text-end">Delta</div>
-    </div>`;
-    // Filas
-    const maxReal = Math.max(...tecs.map(t => t.dur_real_min || 0), 1);
-    for (const t of tecs){
-      const delta = (t.dur_real_min || 0) - (t.dur_plan_min || 0);
-      const dcls = deltaClass(delta);
-      const pct  = Math.min(100, Math.round((t.dur_real_min || 0) * 100 / maxReal));
-      const barCls = dcls === 'over' ? 'over' : (dcls === 'warn' ? 'warn' : '');
-      html += `<div class="dia-tec-row">
-        <div>
-          <div class="dia-tec-nombre">${escHtml(t.nombre || 'Sin asignar')}</div>
-          <div class="dia-tec-vbar" style="margin-top:6px">
-            <div class="dia-tec-vbar-fill ${barCls}" style="width:${pct}%"></div>
-          </div>
-        </div>
-        <div class="text-end dia-tec-stat">${t.n_visitas}</div>
-        <div class="text-end dia-tec-stat">${fmtMin(t.dur_plan_min)}</div>
-        <div class="text-end dia-tec-stat">${fmtMin(t.dur_real_min)}</div>
-        <div class="text-end">
-          <span class="dia-tec-delta ${dcls}">${delta >= 0 ? '+' : ''}${delta} min</span>
-        </div>
-      </div>`;
-    }
-    html += `</div>`;
-  }
-
-  // ── Tabla de visitas
-  if (visitas.length){
-    html += `<h6 class="text-muted mt-4 mb-2"><i class="bi bi-list-check me-1"></i>Visitas del día</h6>`;
-    html += `<div class="list-view">`;
-    html += `<div class="dia-visit-row head">
-      <div>OT N°</div>
-      <div>Cliente</div>
-      <div class="text-end">Plan</div>
-      <div class="text-end">Real</div>
-      <div class="text-end">Δ min</div>
-      <div class="text-end">%</div>
-      <div></div>
-    </div>`;
-    for (const v of visitas){
-      const numero = v.numero_ot || ('VS-' + String(v.id).padStart(5, '0'));
-      const horaP = (v.hora_inicio ? String(v.hora_inicio).slice(0,5) : '—') +
-                    (v.hora_fin ? '–' + String(v.hora_fin).slice(0,5) : '');
-      const horaR = (v.hora_real_inicio ? String(v.hora_real_inicio).slice(11,16) : '—') +
-                    (v.hora_real_fin ? '–' + String(v.hora_real_fin).slice(11,16) : '');
-      const planMin = v.duracion_planificada_min;
-      const realMin = v.duracion_real_min;
-      const dcls = v.delta_min != null ? deltaClass(v.delta_min) : 'muted';
-      const deltaTxt = v.delta_min != null ? `${v.delta_min >= 0 ? '+' : ''}${v.delta_min}m` : '—';
-      const pctTxt   = v.overrun_pct != null ? `${v.overrun_pct >= 0 ? '+' : ''}${v.overrun_pct}%` : '—';
-      html += `<div class="dia-visit-row" onclick="window.location='/mantenciones/ot/${v.id}'">
-        <div class="dia-visit-ot">${escHtml(numero)}</div>
-        <div class="dia-visit-cli" title="${escHtml(v.cliente_nombre || '')}">
-          ${escHtml(v.cliente_nombre || '—')}
-          <div class="small text-muted">${horaP} → ${horaR}</div>
-        </div>
-        <div class="text-end dia-tec-stat">${fmtMin(planMin)}</div>
-        <div class="text-end dia-tec-stat">${fmtMin(realMin)}</div>
-        <div class="text-end dia-visit-delta ${dcls}">${deltaTxt}</div>
-        <div class="text-end dia-visit-delta ${dcls}">${pctTxt}</div>
-        <div class="text-end">
-          <i class="bi bi-arrow-right-circle"></i>
-        </div>
-      </div>`;
-    }
-    html += `</div>`;
-  } else {
-    html += `<div class="alert alert-light text-center py-4 mt-3">
-      <i class="bi bi-calendar-x" style="font-size:1.8rem;color:#9ca3af;display:block;margin-bottom:6px"></i>
-      <div class="fw-bold text-muted">Sin visitas registradas ese día</div>
-      <div class="small text-muted">Crea una nueva con el botón inferior.</div>
-    </div>`;
-  }
-
+  // ── Tarjetas interactivas (una por visita) — decidir/cambiar sin salir
+  html += `<div class="dia-cards">`;
+  for (const v of visitas) html += _diaCardHtml(v);
+  html += `</div>`;
   document.getElementById('modalDiaBody').innerHTML = html;
+}
+
+function _diaCardHtml(v){
+  const est = _DIA_EST[v.estado] || {label:(v.estado || '—'), badge:'programada'};
+  const numero = v.numero_ot || ('VS-' + String(v.id).padStart(5, '0'));
+  const horaP = (v.hora_inicio ? String(v.hora_inicio).slice(0,5) : '—') +
+                (v.hora_fin ? '–' + String(v.hora_fin).slice(0,5) : '');
+  const tipoLabel = _DIA_TIPO[v.tipo] || (v.tipo || 'Visita');
+  const tecnico = v.tecnico_nombre || 'Sin asignar';
+  const metaParts = [escHtml(tipoLabel)];
+  if (v.comuna) metaParts.push(escHtml(v.comuna));
+  metaParts.push('<i class="bi bi-person me-1"></i>' + escHtml(tecnico));
+  const meta = metaParts.join('<span class="sep">·</span>');
+  const prog = v.n_tareas
+    ? `<div class="dia-card-prog"><i class="bi bi-list-check me-1"></i>${v.n_completas||0}/${v.n_tareas} tareas</div>` : '';
+
+  let acts = '';
+  if (v.estado !== 'completada')
+    acts += `<button class="dia-act ok" onclick="diaMarcarRealizada(${v.id})"><i class="bi bi-check2-circle"></i>Realizada</button>`;
+  acts += `<button class="dia-act move" onclick="diaReagendar(${v.id})"><i class="bi bi-calendar-event"></i>Reagendar</button>`;
+  acts += `<button class="dia-act assign" onclick="diaReasignar(${v.id})"><i class="bi bi-person-gear"></i>Reasignar</button>`;
+  if (v.estado !== 'cancelada')
+    acts += `<button class="dia-act danger" onclick="diaCancelarVisita(${v.id})"><i class="bi bi-x-circle"></i>Cancelar</button>`;
+  acts += `<a class="dia-act open" href="/mantenciones/ot/${v.id}"><i class="bi bi-box-arrow-up-right"></i>Abrir OT</a>`;
+
+  return `<div class="dia-card st-${v.estado || 'programada'}" id="diaCard-${v.id}">
+    <div class="dia-card-top">
+      <div class="dia-card-hora">${horaP}</div>
+      <div class="dia-card-body">
+        <div class="dia-card-cli">${escHtml(v.cliente_nombre || '—')}</div>
+        <div class="dia-card-meta">${meta}</div>
+        <div class="dia-card-ot">${escHtml(numero)}</div>
+        ${prog}
+      </div>
+      <span class="dia-badge ${est.badge}">${escHtml(est.label)}</span>
+    </div>
+    <div class="dia-acts">${acts}</div>
+    <div class="dia-extra" id="diaExtra-${v.id}" style="display:none"></div>
+  </div>`;
+}
+
+// ── Acciones del tablero ─────────────────────────────────────────────
+// Helper: PUT a la visita + refresca el día y el calendario de fondo.
+async function _diaPut(vid, payload, okMsg){
+  try{
+    const r = await fetch(`/mantenciones/api/visitas/${vid}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      ilusToast('No se pudo: ' + (d.error || 'error'), {type:'error'});
+      return false;
+    }
+    ilusToast(okMsg || 'Listo', {type:'success'});
+    await cargarDetalleDia(_DIA_FECHA);                       // refresca el modal
+    if (typeof cargarEventos === 'function') cargarEventos();  // refresca el calendario detrás
+    return true;
+  }catch(e){
+    ilusToast('Error de red: ' + e.message, {type:'error'});
+    return false;
+  }
+}
+
+async function diaMarcarRealizada(vid){
+  const v = _DIA_VISITAS[vid] || {};
+  const ok = await ilusConfirm({
+    title:'Marcar como realizada',
+    message:`¿Confirmas que la visita de ${v.cliente_nombre || 'este cliente'} ya se realizó?`,
+    okLabel:'Sí, realizada',
+  });
+  if (!ok) return;
+  _diaPut(vid, {estado:'completada'}, '✓ Marcada como realizada');
+}
+
+async function diaCancelarVisita(vid){
+  const v = _DIA_VISITAS[vid] || {};
+  const ok = await ilusConfirm({
+    title:'Cancelar visita',
+    message:`¿Cancelar la visita de ${v.cliente_nombre || 'este cliente'}?`,
+    sub:'No se borra — queda registrada como cancelada.',
+    okLabel:'Sí, cancelar', danger:true,
+  });
+  if (!ok) return;
+  _diaPut(vid, {estado:'cancelada'}, 'Visita cancelada');
+}
+
+function diaCerrarExtra(vid){
+  const ex = document.getElementById('diaExtra-'+vid);
+  if (ex){ ex.style.display='none'; ex.innerHTML=''; }
+}
+
+function diaReagendar(vid){
+  const v = _DIA_VISITAS[vid] || {};
+  const ex = document.getElementById('diaExtra-'+vid);
+  if (!ex) return;
+  const horaVal = v.hora_inicio ? String(v.hora_inicio).slice(0,5) : '09:00';
+  ex.style.display='block';
+  ex.innerHTML = `
+    <label><i class="bi bi-calendar-event me-1"></i>Mover esta visita a…</label>
+    <div class="row-inline">
+      <div><label>Fecha</label><input type="date" id="diaReFecha-${vid}" value="${_DIA_FECHA || ''}"></div>
+      <div><label>Hora</label><input type="time" id="diaReHora-${vid}" value="${horaVal}"></div>
+      <button class="dia-act move" onclick="diaReagendarConfirmar(${vid})"><i class="bi bi-check2"></i>Confirmar</button>
+      <button class="dia-act" onclick="diaCerrarExtra(${vid})">Cancelar</button>
+    </div>`;
+}
+
+async function diaReagendarConfirmar(vid){
+  const fEl = document.getElementById('diaReFecha-'+vid);
+  const hEl = document.getElementById('diaReHora-'+vid);
+  const fecha = fEl ? fEl.value : '';
+  const hora  = hEl ? hEl.value : '';
+  if (!fecha){ ilusToast('Elige una fecha', {type:'warning'}); return; }
+  const payload = {fecha_programada: fecha};
+  if (hora) payload.hora_inicio = hora;
+  // Si cambia de día y estaba 'programada', la marcamos 'reagendada' (deja rastro).
+  const v = _DIA_VISITAS[vid] || {};
+  if (fecha !== _DIA_FECHA && v.estado === 'programada') payload.estado = 'reagendada';
+  _diaPut(vid, payload, '🗓️ Visita reagendada');
+}
+
+async function diaReasignar(vid){
+  const ex = document.getElementById('diaExtra-'+vid);
+  if (!ex) return;
+  ex.style.display='block';
+  ex.innerHTML = `<div class="text-muted small py-1"><span class="spinner-border spinner-border-sm me-1"></span>Cargando técnicos…</div>`;
+  if (!_DIA_TECNICOS){
+    try{ const r = await fetch('/mantenciones/api/tecnicos'); _DIA_TECNICOS = await r.json(); }
+    catch(e){ _DIA_TECNICOS = []; }
+  }
+  const v = _DIA_VISITAS[vid] || {};
+  const curUid = v.tecnico_user_id;
+  const opts = ['<option value="">— Sin asignar —</option>'].concat(
+    (_DIA_TECNICOS || []).map(t =>
+      `<option value="${t.id}" ${String(t.id)===String(curUid)?'selected':''}>${escHtml(t.nombre || ('Téc '+t.id))}</option>`)
+  ).join('');
+  ex.innerHTML = `
+    <label><i class="bi bi-person-gear me-1"></i>Reasignar técnico</label>
+    <div class="row-inline">
+      <select id="diaReTec-${vid}" style="min-width:210px">${opts}</select>
+      <button class="dia-act assign" onclick="diaReasignarConfirmar(${vid})"><i class="bi bi-check2"></i>Confirmar</button>
+      <button class="dia-act" onclick="diaCerrarExtra(${vid})">Cancelar</button>
+    </div>`;
+}
+
+async function diaReasignarConfirmar(vid){
+  const sel = document.getElementById('diaReTec-'+vid);
+  if (!sel) return;
+  const payload = {tecnico_user_id: sel.value ? parseInt(sel.value,10) : null};
+  payload.tecnico = sel.value ? (sel.options[sel.selectedIndex].text || '') : '';
+  _diaPut(vid, payload, '👤 Técnico reasignado');
 }
 
 // ── Init ────────────────────────────────────────────────────────────

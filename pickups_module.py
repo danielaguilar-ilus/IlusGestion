@@ -5,8 +5,30 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from flask import flash, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import flash, has_request_context, jsonify, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.utils import secure_filename
+
+
+def _public_base_url():
+    """Base URL pública absoluta, SEGURA para usar dentro de threads.
+
+    `url_for(..., _external=True)` necesita un request activo (o SERVER_NAME
+    configurado); en threads daemon lanza "Unable to build URLs outside an
+    active request without SERVER_NAME" y el email sale sin link (verificado
+    en logs de Cloud Run 2026-06). Patrón:
+      - Con request activo → usamos request.url_root (respeta dominio/proxy).
+      - Sin request (thread/cron) → env ILUS_PUBLIC_BASE_URL con default a la
+        URL pública de Cloud Run.
+    """
+    try:
+        if has_request_context():
+            return (request.url_root or "").rstrip("/")
+    except Exception:
+        pass
+    return os.environ.get(
+        "ILUS_PUBLIC_BASE_URL",
+        "https://ilus-app-469212710544.southamerica-west1.run.app",
+    ).rstrip("/")
 
 
 PICKUP_STATUS = {
@@ -232,6 +254,16 @@ def register_pickup_routes(app, ctx):
                 mysql_execute(f"ALTER TABLE `{SET}` ADD COLUMN `{col}` VARCHAR(260) NULL")
             except Exception:
                 pass
+        # 2026-06-09: emails internos (CSV) que reciben alertas del equipo
+        # de retiros (alta pública, respuesta del cliente, sin saldo).
+        # Idempotente: si la columna ya existe, el ALTER falla y seguimos.
+        try:
+            mysql_execute(
+                f"ALTER TABLE `{SET}` ADD COLUMN notify_emails TEXT NULL "
+                f"COMMENT 'Emails internos (CSV) para alertas del equipo de retiros'"
+            )
+        except Exception:
+            pass
 
     ensure_marketing_columns()
 
@@ -532,6 +564,7 @@ def register_pickup_routes(app, ctx):
             "hero_image_1": "",
             "hero_image_2": "",
             "hero_image_3": "",
+            "notify_emails": "",
         }
         _SETTINGS_CACHE["row"] = result
         _SETTINGS_CACHE["fetched_at"] = now
@@ -863,6 +896,18 @@ def register_pickup_routes(app, ctx):
 
     def log_event(request_id, action, old_status=None, new_status=None, notes="", actor_type="sistema", actor_name=None):
         try:
+            # ip/ua solo si hay request activo: log_event también se llama desde
+            # threads daemon (_bg_post_insert) donde request.* lanza RuntimeError
+            # y antes hacía perder el INSERT completo (fix 2026-06-09).
+            _ip = _ua = None
+            _actor_fallback = "Cliente"
+            try:
+                if has_request_context():
+                    _ip = request.remote_addr
+                    _ua = (request.user_agent.string or "")[:300]
+                    _actor_fallback = g.user["nombre"] if getattr(g, "user", None) else "Cliente"
+            except Exception:
+                pass
             mysql_execute(
                 f"""INSERT INTO `{LOG}`
                     (request_id,actor_type,actor_name,action,old_status,new_status,notes,ip,user_agent)
@@ -870,13 +915,13 @@ def register_pickup_routes(app, ctx):
                 (
                     request_id,
                     actor_type,
-                    actor_name or (g.user["nombre"] if getattr(g, "user", None) else "Cliente"),
+                    actor_name or _actor_fallback,
                     action,
                     old_status,
                     new_status,
                     notes,
-                    request.remote_addr,
-                    (request.user_agent.string or "")[:300],
+                    _ip,
+                    _ua,
                 ),
             )
         except Exception as exc:
@@ -1097,7 +1142,10 @@ def register_pickup_routes(app, ctx):
             "m3":                str(req.get("total_volume_m3") or 0),
             "warehouse_name":    cfg.get("warehouse_name") or "Bodega ILUS Quilicura",
             "warehouse_addr":    cfg.get("warehouse_addr") or "",
-            "link_seguimiento":  url_for("pickup_public_tracking", token=req["public_token"], _external=True),
+            # Link literal (NO url_for): esta función corre también en threads
+            # daemon (notify_async / _bg_post_insert) donde url_for(_external=True)
+            # lanza "Unable to build URLs outside an active request".
+            "link_seguimiento":  _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or ""),
         }
 
 
@@ -1150,7 +1198,9 @@ def register_pickup_routes(app, ctx):
         Si la plantilla no existe en BD, cae al template hardcoded original.
         """
         cfg = settings()
-        follow_url = url_for("pickup_public_tracking", token=req["public_token"], _external=True)
+        # Link literal (NO url_for): notify() corre en threads daemon donde
+        # url_for(_external=True) falla sin SERVER_NAME (fix 2026-06-09).
+        follow_url = _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or "")
         variables = _render_pickup_vars(req, proposal)
         estado = _KIND_TO_ESTADO.get(kind)
 
@@ -1304,7 +1354,9 @@ def register_pickup_routes(app, ctx):
 
         IMPORTANTE: pasamos un snapshot dict (no la fila viva) por seguridad
         — la conexión MySQL del request termina cuando vuelve la response.
-        Dentro del thread abrimos app_context() para que url_for() funcione.
+        Dentro del thread abrimos app_context() para que get_db()/g y los
+        helpers de email funcionen. Los links se construyen con
+        _public_base_url() (NO url_for — falla en threads sin SERVER_NAME).
         """
         try:
             import threading
@@ -1359,16 +1411,16 @@ def register_pickup_routes(app, ctx):
                         cont = _req.get("contact_name") or "?"
                         mail = _req.get("contact_email") or "—"
                         phone= _req.get("contact_phone") or "—"
-                        # `pickup_detail` es el nombre real de la vista interna
-                        # (no `pickup_internal_detail`). Si por algún motivo no
-                        # existe el endpoint, fallback al tracking público.
-                        try:
-                            link = url_for("pickup_detail", rid=_req["id"], _external=True)
-                        except Exception:
-                            try:
-                                link = url_for("pickup_public_tracking", token=_req.get("public_token"), _external=True)
-                            except Exception:
-                                link = "—"
+                        # Link literal (NO url_for): este runner corre en thread
+                        # daemon donde url_for(_external=True) lanza "Unable to
+                        # build URLs outside an active request" (fix 2026-06-09).
+                        # Ficha interna /retiros/<rid>; fallback al tracking público.
+                        if _req.get("id"):
+                            link = _public_base_url() + "/retiros/" + str(_req["id"])
+                        elif _req.get("public_token"):
+                            link = _public_base_url() + "/retiros/seguimiento/" + str(_req["public_token"])
+                        else:
+                            link = _public_base_url()
                         subject = f"ILUS - Cliente rechazo retiro {code}"
                         html = _ilus_email_html(
                             titulo="Cliente rechazo la propuesta de retiro",
@@ -1402,6 +1454,174 @@ def register_pickup_routes(app, ctx):
             t.start()
         except Exception as exc:
             print(f"[ILUS][PICKUP REJECT NOTIFY SPAWN] {exc}")
+
+    # ══════════════════════════════════════════════════════════════════
+    #  NOTIFICACIÓN AL EQUIPO — in-app (campana) + email interno (SLA)
+    # ══════════════════════════════════════════════════════════════════
+    # 2026-06-09: el equipo necesita enterarse AL INSTANTE de los eventos
+    # del flujo de retiros (alta pública, respuesta del cliente, retiro
+    # agendado sin saldo ERP) sin mirar el dashboard.
+    #  (a) In-app: mant_notificaciones para usuarios activos con rol
+    #      superadmin/admin/supervisor (vía ctx['_mant_notificar']).
+    #  (b) Email: pickup_settings.notify_emails (CSV) + support_email del
+    #      brand. modulo='comunicacion_interna' A PROPÓSITO: las alertas
+    #      internas deben fluir aunque la llave 'retiros' (cliente) esté
+    #      bloqueada en el kill switch de comunicaciones.
+    # Best-effort total: corre en thread con app_context y NUNCA rompe el
+    # flujo principal (todo va en try/except).
+    def _notificar_equipo_retiros(evento_titulo, cuerpo, rid, code,
+                                  prioridad="alta", tipo="retiro_nuevo",
+                                  send_email=True):
+        try:
+            titulo_snap = str(evento_titulo or "")[:200]
+            cuerpo_snap = str(cuerpo or "")[:2000]
+            rid_snap = int(rid)
+            code_snap = str(code or "?")
+            prio_snap = prioridad or "alta"
+            tipo_snap = tipo or "retiro_nuevo"
+            send_email_snap = bool(send_email)
+
+            def _runner():
+                try:
+                    with app.app_context():
+                        url_accion = f"/retiros/{rid_snap}"
+                        # ── (a) In-app: campana del header ────────────────
+                        try:
+                            _mant_notificar = ctx.get("_mant_notificar")
+                            _auth_table = ctx.get("AUTH_TABLE") or "app_users"
+                            if _mant_notificar:
+                                # Review M4 2026-06-09: los roles usan slugs
+                                # compuestos (supervisor_sstt, admin_general...)
+                                # que _rol_familia matchea por prefijo — un IN
+                                # exacto los dejaba sin campana. LIKE prefijo.
+                                rows = mysql_fetchall(
+                                    f"SELECT id FROM `{_auth_table}` "
+                                    f" WHERE active=1 AND (role LIKE 'superadmin%%' "
+                                    f"   OR role LIKE 'admin%%' OR role LIKE 'supervisor%%')"
+                                ) or []
+                                creadas = 0
+                                for r in rows:
+                                    uid = r.get("id")
+                                    if not uid:
+                                        continue
+                                    try:
+                                        _mant_notificar(
+                                            destino_user_id=int(uid),
+                                            tipo=tipo_snap,
+                                            titulo=titulo_snap,
+                                            cuerpo=cuerpo_snap,
+                                            url_accion=url_accion,
+                                            prioridad=prio_snap,
+                                            cliente_id=None,
+                                            visita_id=None,
+                                        )
+                                        creadas += 1
+                                    except Exception as _e_n:
+                                        print(f"[ILUS][PICKUP TEAM NOTIF] in-app uid={uid}: {_e_n}", flush=True)
+                                if creadas:
+                                    _inval = ctx.get("_mant_notif_cache_invalidar")
+                                    if _inval:
+                                        try: _inval(None)
+                                        except Exception: pass
+                        except Exception as _e_inapp:
+                            print(f"[ILUS][PICKUP TEAM NOTIF] in-app: {_e_inapp}", flush=True)
+
+                        # ── (b) Email interno ─────────────────────────────
+                        if send_email_snap:
+                            try:
+                                dests = []
+                                try:
+                                    cfg_n = settings() or {}
+                                    for em in str(cfg_n.get("notify_emails") or "").replace(";", ",").split(","):
+                                        em = em.strip().lower()
+                                        if em and is_valid_email(em) and em not in dests:
+                                            dests.append(em)
+                                except Exception:
+                                    pass
+                                try:
+                                    brand_cfg = _get_brand_cfg() or {}
+                                    _sup = (brand_cfg.get("support_email") or "").strip().lower()
+                                    if _sup and _sup not in dests:
+                                        dests.append(_sup)
+                                except Exception:
+                                    pass
+                                if dests:
+                                    import html as _html_esc
+                                    link = _public_base_url() + f"/retiros/{rid_snap}"
+                                    subject = f"ILUS - {titulo_snap}"
+                                    html = _ilus_email_html(
+                                        titulo=titulo_snap,
+                                        subtitulo=f"Retiro {code_snap}",
+                                        saludo="Equipo ILUS",
+                                        parrafos=[
+                                            _html_esc.escape(cuerpo_snap).replace("\n", "<br>"),
+                                            "Revisa la solicitud en el panel interno de retiros.",
+                                        ],
+                                        btn_primario_txt="Abrir retiro",
+                                        btn_primario_url=link,
+                                    )
+                                    for dest in dests:
+                                        try:
+                                            _send_ilus_email(
+                                                dest, subject, html,
+                                                evento="retiros_equipo",
+                                                modulo="comunicacion_interna",
+                                            )
+                                        except Exception as _e_m:
+                                            print(f"[ILUS][PICKUP TEAM NOTIF] email {_mask_email(dest)}: {_e_m}", flush=True)
+                            except Exception as _e_mail:
+                                print(f"[ILUS][PICKUP TEAM NOTIF] email: {_e_mail}", flush=True)
+                except Exception as exc:
+                    print(f"[ILUS][PICKUP TEAM NOTIF RUNNER] {exc}", flush=True)
+
+            threading.Thread(
+                target=_runner, daemon=True,
+                name=f"pickup-team-notify-{code_snap}",
+            ).start()
+        except Exception as exc:
+            print(f"[ILUS][PICKUP TEAM NOTIF SPAWN] {exc}")
+
+    # ── D2 (2026-06-09): alerta "agendado SIN SALDO" tras confirmar ──
+    # El ERP puede indicar que TODOS los docs del retiro están sin saldo
+    # (todo despachado — posible guía ya emitida). NO bloqueamos la
+    # confirmación (decisión Daniel 2026-05-24: indicador, no bloqueante),
+    # pero el equipo debe revisarlo ANTES de preparar los bultos.
+    def _alertar_si_sin_saldo(rid, code):
+        try:
+            rid_snap = int(rid)
+            code_snap = str(code or "?")
+
+            def _runner():
+                try:
+                    with app.app_context():
+                        row = mysql_fetchone(
+                            """SELECT COUNT(*) AS total,
+                                      SUM(CASE WHEN con_saldo=0 THEN 1 ELSE 0 END) AS sin_saldo
+                                 FROM pickup_request_docs
+                                WHERE request_id=%s""",
+                            (rid_snap,)
+                        ) or {}
+                        total = int(row.get("total") or 0)
+                        sin_saldo = int(row.get("sin_saldo") or 0)
+                        if total >= 1 and sin_saldo == total:
+                            _notificar_equipo_retiros(
+                                f"Retiro {code_snap} agendado SIN SALDO — revisar antes de preparar",
+                                ("El ERP indica que todos los documentos asociados a este retiro "
+                                 "están sin saldo (todo despachado — posible guía ya emitida). "
+                                 "El retiro quedó agendado igualmente, pero requiere confirmación "
+                                 "interna antes de preparar los bultos."),
+                                rid_snap, code_snap,
+                                prioridad="urgente", tipo="retiro_sin_saldo",
+                            )
+                except Exception as exc:
+                    print(f"[ILUS][PICKUP SALDO ALERT] {exc}", flush=True)
+
+            threading.Thread(
+                target=_runner, daemon=True,
+                name=f"pickup-saldo-alert-{code_snap}",
+            ).start()
+        except Exception as exc:
+            print(f"[ILUS][PICKUP SALDO ALERT SPAWN] {exc}")
 
     # ══════════════════════════════════════════════════════════════════
     #  SANITIZACIÓN — elimina campos internos antes de enviar al cliente
@@ -1635,10 +1855,10 @@ def register_pickup_routes(app, ctx):
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
     @_rate_limited("pickup_public_request", max_attempts=40, window_seconds=3600)
     def pickup_public_request():
-        # Rate limit: 8 envíos / hora por IP. Daniel pidió "sin brechas" —
-        # antes era ilimitado, lo que permitía a un atacante crear cientos
-        # de retiros basura para llenar BD/disk. 8 es generoso para un
-        # cliente legítimo que se equivoca y reintenta varias veces.
+        # Rate limit: 40 envíos / hora por IP (ver decorador max_attempts=40).
+        # Daniel pidió "sin brechas" — antes era ilimitado, lo que permitía a
+        # un atacante crear cientos de retiros basura para llenar BD/disk.
+        # 40 cubre clientes legítimos detrás de un NAT corporativo compartido.
         cfg = settings()
         if request.method == "POST":
             form = request.form
@@ -1846,7 +2066,21 @@ def register_pickup_routes(app, ctx):
                     _car_imgs = [dict(r) for r in (_car_rows or [])]
                 except Exception:
                     _car_imgs = []
-                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs)
+                # D3 (2026-06-09): el re-render por error de validación NO
+                # pasaba announcements → los avisos vigentes desaparecían de
+                # la página tras un error. Misma query que el GET.
+                try:
+                    _anun_rows = mysql_fetchall(
+                        "SELECT id, titulo, mensaje, tipo, icon FROM retiros_announcements "
+                        "WHERE activa=1 "
+                        "  AND (fecha_desde IS NULL OR fecha_desde <= NOW()) "
+                        "  AND (fecha_hasta IS NULL OR fecha_hasta >= NOW()) "
+                        "ORDER BY orden ASC, id DESC"
+                    )
+                    _anuncios_err = [dict(r) for r in (_anun_rows or [])]
+                except Exception:
+                    _anuncios_err = []
+                return render_template("retiros/public_request.html", settings=cfg, relations=PICKUP_RELATIONS, errors=errors, fd=form, carousel_images=_car_imgs, announcements=_anuncios_err)
 
             files = [f for f in request.files.getlist("attachments") if f and f.filename]
             quality, risk = quality_score(data, packages, signed=True, attachments=len(files))
@@ -1951,7 +2185,12 @@ def register_pickup_routes(app, ctx):
             _auth_snap = bool(auth_active)
 
             def _bg_post_insert(rid_bg, req_bg, data_bg, auth_bg):
+                # FIX 2026-06-09 (verificado en logs de prod): este thread
+                # crasheaba con "Working outside of application context" —
+                # notify()/settings()/log_event usan get_db() → g, que solo
+                # existe dentro de un app_context. Lo abrimos explícitamente.
                 try:
+                  with app.app_context():
                     # 1. Log de declaración de tercero (auditoría legal)
                     try:
                         _cli_rut_c = _clean_rut(data_bg.get("customer_rut") or "")
@@ -1983,6 +2222,26 @@ def register_pickup_routes(app, ctx):
                     if sent_wa:
                         log_event(rid_bg, "whatsapp_enviado", "solicitud_recibida", "solicitud_recibida",
                                   "WhatsApp de solicitud enviado.", "sistema", "Comunicaciones")
+
+                    # 3. Notificación al EQUIPO interno (in-app + email) — SLA
+                    try:
+                        _code_bg = req_bg.get("code") or "?"
+                        _doc_bg = f"{(req_bg.get('document_type') or '').upper()} {req_bg.get('document_number') or ''}".strip()
+                        # _td_to_hhmm: los TIME de MySQL llegan como timedelta
+                        # ('9:00:00' → str()[:5] daría '9:00:' sin cero inicial)
+                        _tf_bg = _td_to_hhmm(req_bg.get("requested_time_from")) if req_bg.get("requested_time_from") else ""
+                        _tt_bg = _td_to_hhmm(req_bg.get("requested_time_to")) if req_bg.get("requested_time_to") else ""
+                        _notificar_equipo_retiros(
+                            f"Nueva solicitud de retiro {_code_bg}",
+                            (f"Cliente: {req_bg.get('customer_name') or '?'}. "
+                             f"Documento: {_doc_bg or '—'}. "
+                             f"Fecha pedida: {str(req_bg.get('requested_date') or '—')} "
+                             f"{_tf_bg}-{_tt_bg}."),
+                            rid_bg, _code_bg,
+                            prioridad="alta", tipo="retiro_nuevo",
+                        )
+                    except Exception as _e_team:
+                        print(f"[pickup_public_request][BG] team-notify error: {_e_team}", flush=True)
                 except Exception as _bg_exc:
                     print(f"[pickup_public_request][BG] crash rid={rid_bg}: {_bg_exc}", flush=True)
 
@@ -2212,6 +2471,19 @@ def register_pickup_routes(app, ctx):
                         return _ajax_err(_msg_exp, code=410, payload={"reason": "proposal_expired"})
                     flash(_msg_exp, "warning")
                     return redirect(url_for("pickup_public_tracking", token=token))
+                # ── GATE DE SEGURIDAD (C2, 2026-06-09) ──────────────────────
+                # Solo se puede confirmar una propuesta hecha por ILUS
+                # (proposed_by='internal'). Si la pending es la CONTRAPROPUESTA
+                # del propio cliente, NO puede auto-confirmarla — la acepta el
+                # equipo desde /retiros/<rid>/aceptar-contrapropuesta.
+                if proposal and str(proposal.get("proposed_by") or "").lower() != "internal":
+                    _msg_rev = ("Tu propuesta está en revisión por nuestro equipo. "
+                                "Te confirmaremos por correo en breve.")
+                    if _is_ajax:
+                        return _ajax_err(_msg_rev, code=409,
+                                         payload={"reason": "client_proposal_in_review"})
+                    flash(_msg_rev, "info")
+                    return redirect(url_for("pickup_public_tracking", token=token))
                 if proposal:
                     # ═══════════════════════════════════════════════════════════
                     # FIX RACE CONDITION (2026-05-12):
@@ -2398,6 +2670,22 @@ def register_pickup_routes(app, ctx):
                         req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
                         notify_async(req_after, "confirmed")
                     except Exception as _e: print(f"[pickups][notify confirm] {_e}")
+                    # Notificación al EQUIPO (in-app + email) — el cliente confirmó
+                    try:
+                        _notificar_equipo_retiros(
+                            f"El cliente CONFIRMÓ el retiro {req.get('code') or '?'}",
+                            (f"Cliente: {req.get('customer_name') or '?'}. "
+                             f"Fecha confirmada: {str(proposal['date'])[:10]} "
+                             f"{_td_to_hhmm(proposal['time_from'])}-{_td_to_hhmm(proposal['time_to'])}."),
+                            req["id"], req.get("code") or "?",
+                            prioridad="alta", tipo="retiro_respuesta",
+                        )
+                    except Exception as _e: print(f"[pickups][team notify confirm] {_e}")
+                    # D2: si TODOS los docs ERP están sin saldo → alerta urgente
+                    # al equipo (NO bloquea la confirmación).
+                    try:
+                        _alertar_si_sin_saldo(req["id"], req.get("code"))
+                    except Exception as _e: print(f"[pickups][saldo alert confirm] {_e}")
                     if _is_ajax:
                         return _ajax_ok({
                             "message": "Retiro confirmado",
@@ -2418,7 +2706,9 @@ def register_pickup_routes(app, ctx):
                     flash("Esta solicitud ya fue cancelada anteriormente.", "info")
                     return redirect(url_for("pickup_public_tracking", token=token))
                 reason = (request.form.get("reason") or "").strip()[:500]
-                mysql_execute(f"UPDATE `{REQ}` SET status='rechazada' WHERE id=%s", (req["id"],))
+                # C3 (2026-06-09): cerrar también closed_at — gap conocido, el
+                # rechazo del cliente dejaba la solicitud sin fecha de cierre.
+                mysql_execute(f"UPDATE `{REQ}` SET status='rechazada', closed_at=NOW() WHERE id=%s", (req["id"],))
                 # También marcar la propuesta pendiente (si hay) como declined
                 try:
                     mysql_execute(
@@ -2443,6 +2733,18 @@ def register_pickup_routes(app, ctx):
                 try:
                     _notificar_operador_rechazo(req, reason)
                 except Exception as _e: print(f"[pickups][notify reject operador] {_e}")
+                # In-app al equipo (campana). El email interno YA sale arriba
+                # vía _notificar_operador_rechazo → send_email=False evita duplicar.
+                try:
+                    _notificar_equipo_retiros(
+                        f"El cliente RECHAZÓ el retiro {req.get('code') or '?'}",
+                        (f"Cliente: {req.get('customer_name') or '?'}. "
+                         f"Motivo declarado: {reason or 'No indicó motivo'}."),
+                        req["id"], req.get("code") or "?",
+                        prioridad="urgente", tipo="retiro_respuesta",
+                        send_email=False,
+                    )
+                except Exception as _e: print(f"[pickups][team notify reject] {_e}")
                 flash(
                     "Tu solicitud fue cancelada. Te enviamos un correo de confirmación y avisamos al equipo ILUS.",
                     "info",
@@ -2491,6 +2793,27 @@ def register_pickup_routes(app, ctx):
                     try:
                         print(f"[pickup_tracking] COUNTER OK req_id={req['id']} fecha={date} {tf}-{tt}", flush=True)
                     except Exception: pass
+                    # Notificación al EQUIPO (in-app + email): hay contrapropuesta
+                    # esperando respuesta de ILUS (aceptar o proponer otra fecha).
+                    try:
+                        _notificar_equipo_retiros(
+                            f"El cliente contrapropuso fecha en el retiro {req.get('code') or '?'}",
+                            (f"Cliente: {req.get('customer_name') or '?'}. "
+                             f"El cliente contrapropuso {date} {tf}-{tt}. "
+                             f"Acepta la contrapropuesta o envía una nueva fecha."),
+                            req["id"], req.get("code") or "?",
+                            prioridad="alta", tipo="retiro_respuesta",
+                        )
+                    except Exception as _e: print(f"[pickups][team notify counter] {_e}")
+                    # Email AL CLIENTE confirmando recepción de su contrapropuesta
+                    # (antes el cliente quedaba sin acuse por correo).
+                    try:
+                        req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (req["id"],)) or req
+                        notify_async(req_after, "message", custom_message=(
+                            f"Recibimos tu propuesta de fecha {date} {tf}-{tt}. "
+                            "Nuestro equipo la revisará y te confirmaremos por correo."
+                        ))
+                    except Exception as _e: print(f"[pickups][notify counter cliente] {_e}")
                     flash(
                         f"¡Listo! Registramos tu contrapropuesta para {date} a las {tf}. "
                         "Te confirmaremos en breve por correo.",
@@ -6173,9 +6496,11 @@ def register_pickup_routes(app, ctx):
         reload). El frontend nuevo del wizard usa fetch + JSON para feedback
         instantáneo (<500ms).
 
-        Bloqueo de seguridad wizard: si ningún doc asociado tiene saldo (todos
-        son con_saldo=0), rechazamos con mensaje claro. Esto evita el caso
-        "ya entregamos vía guía → no se puede volver a entregar".
+        Saldo ERP (Daniel 2026-05-24): ya NO bloqueamos por saldo. Si ningún
+        doc asociado tiene saldo (todos con_saldo=0) solo se loguea una
+        advertencia para métricas y el flujo continúa — el operador asume la
+        responsabilidad (puede que el cliente esté abonando o que la guía ya
+        se haya emitido). Ver bloque SIN-SALDO-WARN más abajo.
         """
         # Detectar si es AJAX (sin acoplar a un único framework)
         is_ajax = (
@@ -6328,6 +6653,198 @@ def register_pickup_routes(app, ctx):
         flash("Propuesta enviada al cliente.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
 
+    @app.route("/retiros/<int:rid>/aceptar-contrapropuesta", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_aceptar_contrapropuesta(rid):
+        """ILUS acepta la CONTRAPROPUESTA de fecha enviada por el cliente
+        (doble confirmación, C1 2026-06-09). AJAX JSON.
+
+        Flujo: el cliente contrapropuso (proposal pending, proposed_by='cliente',
+        retiro en 'en_revision') → el operador la acepta acá:
+          PROP → accepted + answered_at, REQ → agenda_confirmada con
+          confirmed_date/time copiados de la propuesta (en transacción).
+        Luego: log_event + notify async 'confirmed' al cliente + alerta
+        sin-saldo al equipo (D2). Errores siempre con mensaje amigable.
+        """
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+
+        # Guard de estado (review M2 2026-06-09): una contrapropuesta pendiente
+        # puede sobrevivir a un cierre manual vía /status (ese endpoint no las
+        # marca). Aceptarla aquí "resucitaría" un retiro cerrado/rechazado.
+        if str(req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
+            return jsonify({
+                "ok": False,
+                "error": "Este retiro ya está cerrado o finalizado. Si corresponde reagendar, crea una solicitud nueva o reabre desde Cambiar estado.",
+            }), 409
+
+        proposal = mysql_fetchone(
+            f"SELECT * FROM `{PROP}` WHERE request_id=%s AND status='pending' "
+            f"ORDER BY id DESC LIMIT 1",
+            (rid,)
+        )
+        if not proposal or str(proposal.get("proposed_by") or "").lower() != "cliente":
+            return jsonify({
+                "ok": False,
+                "error": "No hay una contrapropuesta del cliente pendiente para este retiro.",
+            }), 409
+
+        # Vigencia (expires_at): una contrapropuesta vencida no se puede aceptar.
+        if not proposal_is_vigente(proposal):
+            try:
+                mysql_execute(
+                    f"UPDATE `{PROP}` SET status='expired', answered_at=NOW() WHERE id=%s",
+                    (proposal["id"],),
+                )
+            except Exception:
+                pass
+            return jsonify({
+                "ok": False,
+                "error": "La contrapropuesta del cliente venció. Envíale una nueva propuesta de fecha.",
+            }), 410
+
+        # Disponibilidad real del slot (cupos, kg, m³, bloqueos, colación).
+        ok_slot, motivo = _validar_disponibilidad_slot(
+            proposal["date"], proposal["time_from"], proposal["time_to"],
+            exclude_request_id=rid,
+            extra_kg=float(req.get("total_weight_kg") or 0),
+            extra_m3=float(req.get("total_volume_m3") or 0),
+        )
+        if not ok_slot:
+            return jsonify({
+                "ok": False,
+                "error": f"Ese horario ya no está disponible: {motivo} Propón otra fecha al cliente.",
+            }), 409
+
+        # Transacción: PROP→accepted + REQ→agenda_confirmada (atómico).
+        # Review M1 2026-06-09: re-validar capacidad BAJO LOCK (SELECT FOR
+        # UPDATE + reconteo), mismo patrón FASE 2 del confirm público —
+        # entre la validación de arriba y este commit otro cliente puede
+        # confirmar el mismo slot (sobreventa real vivida el 2026-05-12).
+        accept_ok = False
+        accept_motivo = ""
+        conn_tx = None
+        try:
+            conn_tx = get_mysql()
+            with conn_tx.cursor() as cur_tx:
+                extra_kg = float(req.get("total_weight_kg") or 0)
+                extra_m3 = float(req.get("total_volume_m3") or 0)
+                date_str = str(proposal["date"])[:10]
+                tf_str   = _td_to_hhmm(proposal["time_from"])
+                cur_tx.execute(
+                    f"""SELECT COUNT(*) AS n,
+                                COALESCE(SUM(total_weight_kg),0) AS kg,
+                                COALESCE(SUM(total_volume_m3),0) AS m3
+                         FROM `{REQ}`
+                         WHERE status NOT IN ('rechazada','cerrada','fallida')
+                           AND id <> %s
+                           AND (
+                             (confirmed_date=%s AND TIME_FORMAT(confirmed_time_from,'%%H:%%i')=%s)
+                             OR
+                             (confirmed_date IS NULL AND proposed_date=%s
+                              AND TIME_FORMAT(proposed_time_from,'%%H:%%i')=%s)
+                           )
+                         FOR UPDATE""",
+                    (rid, date_str, tf_str, date_str, tf_str),
+                )
+                slot_row  = cur_tx.fetchone() or {}
+                picks_now = int(slot_row.get("n") or 0)
+                kg_now    = float(slot_row.get("kg") or 0)
+                m3_now    = float(slot_row.get("m3") or 0)
+                cfg_lock  = settings()
+                _pc_lock  = cfg_lock.get("parallel_capacity")
+                if _pc_lock is not None and str(_pc_lock).strip():
+                    max_picks_slot = int(_pc_lock)
+                else:
+                    max_picks_slot = int(cfg_lock.get("max_picks_per_slot") or 2)
+                max_kg_slot = float(cfg_lock.get("max_kg_per_slot") or 500)
+                max_m3_slot = float(cfg_lock.get("max_m3_per_slot") or 5)
+
+                if picks_now + 1 > max_picks_slot:
+                    accept_motivo = f"el slot se llenó ({picks_now} de {max_picks_slot})."
+                elif kg_now + extra_kg > max_kg_slot:
+                    accept_motivo = "se excedería la capacidad de peso del bloque."
+                elif m3_now + extra_m3 > max_m3_slot:
+                    accept_motivo = "se excedería la capacidad de volumen del bloque."
+                else:
+                    cur_tx.execute(
+                        f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() "
+                        f"WHERE id=%s AND status='pending'",
+                        (proposal["id"],),
+                    )
+                    if cur_tx.rowcount:
+                        cur_tx.execute(
+                            f"""UPDATE `{REQ}`
+                                  SET status='agenda_confirmada',
+                                      confirmed_date=%s,
+                                      confirmed_time_from=%s,
+                                      confirmed_time_to=%s
+                                WHERE id=%s""",
+                            (proposal["date"], proposal["time_from"],
+                             proposal["time_to"], rid),
+                        )
+                        accept_ok = True
+                    else:
+                        accept_motivo = "otro operador ya respondió esta contrapropuesta."
+            if accept_ok:
+                conn_tx.commit()
+            else:
+                conn_tx.rollback()
+        except Exception as _tx_err:
+            if conn_tx is not None:
+                try: conn_tx.rollback()
+                except Exception: pass
+            accept_ok = False
+            print(f"[pickup_aceptar_contrapropuesta] tx error rid={rid}: {_tx_err}", flush=True)
+        finally:
+            if conn_tx is not None:
+                try: conn_tx.close()
+                except Exception: pass
+
+        if not accept_ok:
+            _det = accept_motivo or "puede que otro operador ya la haya respondido."
+            return jsonify({
+                "ok": False,
+                "error": f"No se pudo aceptar la contrapropuesta: {_det} Recarga la ficha e intenta de nuevo.",
+            }), 409
+
+        log_event(
+            rid, "ilus_acepto_contrapropuesta", req["status"], "agenda_confirmada",
+            f"{str(proposal['date'])[:10]} {_td_to_hhmm(proposal['time_from'])}-{_td_to_hhmm(proposal['time_to'])}",
+            "interno",
+        )
+
+        # Invalidar caches: el cliente debe ver 'agenda_confirmada' al instante.
+        try: _POLL_CACHE.pop(req.get("public_token"), None)
+        except Exception: pass
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
+
+        # Email "agenda confirmada" al cliente (async, con datos finales).
+        try:
+            req_after = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+            notify_async(req_after, "confirmed")
+        except Exception as _e:
+            print(f"[pickup_aceptar_contrapropuesta][notify] {_e}", flush=True)
+
+        # D2: si TODOS los docs ERP están sin saldo → alerta urgente al equipo.
+        try:
+            _alertar_si_sin_saldo(rid, req.get("code"))
+        except Exception as _e:
+            print(f"[pickup_aceptar_contrapropuesta][saldo] {_e}", flush=True)
+
+        return jsonify({
+            "ok": True,
+            "message": "Contrapropuesta aceptada. El retiro quedó agendado y avisamos al cliente por correo.",
+            "confirmed": {
+                "date":      str(proposal["date"])[:10],
+                "time_from": _td_to_hhmm(proposal["time_from"]),
+                "time_to":   _td_to_hhmm(proposal["time_to"]),
+            },
+            "redirect_url": url_for("pickup_detail", rid=rid),
+        })
+
     @app.route("/retiros/<int:rid>/message", methods=["POST"])
     @require_permission("retiros")
     def pickup_send_message(rid):
@@ -6352,13 +6869,15 @@ def register_pickup_routes(app, ctx):
         mysql_execute(
             f"""UPDATE `{SET}`
                 SET warehouse_name=%s, warehouse_addr=%s, maps_url=%s, open_time=%s, close_time=%s,
-                    work_days=%s, holidays=%s, alert_enabled=%s, alert_title=%s, alert_message=%s
+                    work_days=%s, holidays=%s, alert_enabled=%s, alert_title=%s, alert_message=%s,
+                    notify_emails=%s
                 WHERE id=1""",
             (
                 data.get("warehouse_name", ""), data.get("warehouse_addr", ""), data.get("maps_url", ""),
                 data.get("open_time", "09:00"), data.get("close_time", "16:30"),
                 ",".join(data.getlist("work_days")) or "1,2,3,4,5", data.get("holidays", ""),
                 1 if data.get("alert_enabled") else 0, data.get("alert_title", "Aviso importante"), data.get("alert_message", ""),
+                (data.get("notify_emails") or "").strip()[:2000],
             ),
         )
         # Invalidar cache de settings (Daniel mayo 2026) — el TTL es 30s pero

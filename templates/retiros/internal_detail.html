@@ -1142,7 +1142,12 @@
       0 -32px 80px -16px rgba(15,23,42,.40);
     transform:translateY(100%);opacity:0;
     transition:transform .5s var(--ease-spring), opacity .35s var(--ease-out), visibility 0s linear .5s;
-    max-height:92vh;overflow:hidden;
+    /* responsive_retiros 2026-06-09: dvh respeta la barra dinámica del browser
+       móvil (92vh quedaba detrás de la UI de Safari/Chrome). El 92vh previo
+       queda como fallback para browsers sin soporte dvh. */
+    max-height:92vh;
+    max-height:92dvh;
+    overflow:hidden;
     display:flex;flex-direction:column;
     /* 🔧 BUG FIX Daniel 2026-05-24: modal cerrado debe ser INVISIBLE y NO clickeable.
        Antes solo tenía opacity:0 + transform off-screen → el <select> nativo del browser
@@ -1450,6 +1455,8 @@
   /* Sticky footer con contador */
   .rba-foot{
     flex-shrink:0;padding:14px 24px;
+    /* responsive_retiros 2026-06-09: safe-area para iPhones con notch/home bar */
+    padding-bottom:calc(14px + env(safe-area-inset-bottom, 0px));
     background:rgba(255,255,255,.96);
     backdrop-filter:blur(12px);
     -webkit-backdrop-filter:blur(12px);
@@ -1872,6 +1879,11 @@
 {% set _n_docs_con_saldo_inicial = (docs_asociados | selectattr('con_saldo', 'equalto', 1) | list | length) if docs_asociados else 0 %}
 {% set _step4_done = (req.proposed_date|string|trim) not in ('', 'None') %}
 {% set _step5_done = (req.confirmed_date|string|trim) not in ('', 'None') %}
+{# Contrapropuesta vigente del CLIENTE (ping-pong): pending + proposed_by='cliente'.
+   Si existe, el operador puede aceptarla con 1 click (POST aceptar-contrapropuesta)
+   o re-proponer otra fecha con el flujo existente. (responsive_retiros 2026-06-09) #}
+{% set _props_cc = proposals | selectattr('status', 'equalto', 'pending') | selectattr('proposed_by', 'equalto', 'cliente') | list %}
+{% set _contraprop_cliente = _props_cc[0] if _props_cc else none %}
 
 <div class="pipe-wrap">
   <div class="pipe-wrap-title"><i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>Estado del retiro · click en un paso para ir a esa sección</div>
@@ -2378,6 +2390,33 @@
         </div>
         {% endif %}
 
+        {# ── CONTRAPROPUESTA DEL CLIENTE (responsive_retiros 2026-06-09) ──
+           Visible solo si hay propuesta pending con proposed_by='cliente'.
+           Botón verde = aceptar con 1 click (POST aceptar-contrapropuesta →
+           retiro confirmado). El flujo de re-proponer sigue disponible. #}
+        {% if _contraprop_cliente %}
+        <div class="smart-hint" id="iwCounterCard"
+             style="background:#dcfce7;border:1px solid #86efac;border-left:4px solid #16a34a">
+          <i class="bi bi-person-raised-hand" style="color:#16a34a"></i>
+          <div style="flex:1">
+            <strong>El cliente contrapropuso:</strong>
+            <strong>{{ _contraprop_cliente.date }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}</strong>
+            {% if _contraprop_cliente.message %}
+            <div class="small mt-1" style="opacity:.85">“{{ _contraprop_cliente.message }}”</div>
+            {% endif %}
+            <div class="small mt-1" style="opacity:.85">
+              Acepta con 1 click para confirmar el retiro, o usa <strong>Re-proponer</strong> para enviar otra fecha.
+            </div>
+            <div class="d-flex gap-2 flex-wrap mt-2">
+              <button type="button" class="btn btn-success fw-bold" id="btnAceptarContrapropuesta"
+                      onclick="aceptarContrapropuesta(this)">
+                <i class="bi bi-check-circle-fill me-1"></i>Aceptar contrapropuesta
+              </button>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
         <div id="iwProposeForm" {% if _step4_done or _n_docs_inicial == 0 %}style="display:none"{% endif %}>
           <form id="iwProposeFormEl" novalidate>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -2853,6 +2892,12 @@
       <strong>{{ p.date }} {{ p.time_from|hm }}-{{ p.time_to|hm }}</strong>
       <div class="text-muted small">{{ p.proposed_by }} · {{ p.status }}</div>
       {% if p.message %}<div class="small mt-1">{{ p.message }}</div>{% endif %}
+      {# Contrapropuesta vigente del cliente → aceptar con 1 click (responsive_retiros 2026-06-09) #}
+      {% if p.status == 'pending' and p.proposed_by == 'cliente' %}
+      <button type="button" class="btn btn-sm btn-success fw-bold mt-2" onclick="aceptarContrapropuesta(this)">
+        <i class="bi bi-check-circle-fill me-1"></i>Aceptar contrapropuesta
+      </button>
+      {% endif %}
     </div>
     {% else %}<div class="text-muted small">Sin propuestas todavía.</div>{% endfor %}
   </div>
@@ -4501,6 +4546,51 @@ if (_reproBtn){
     _mountProposeCalendar();
     if (form && form.scrollIntoView){ form.scrollIntoView({behavior:'smooth', block:'center'}); }
   });
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  ACEPTAR CONTRAPROPUESTA DEL CLIENTE (responsive_retiros 2026-06-09)
+//  Visible solo cuando hay propuesta pending con proposed_by='cliente'.
+//  POST /retiros/<rid>/aceptar-contrapropuesta → {ok,message,confirmed,redirect_url}
+// ════════════════════════════════════════════════════════════════════
+async function aceptarContrapropuesta(btn){
+  const ok = await ilusConfirm({
+    title: 'Aceptar contrapropuesta',
+    message: '¿Aceptar la fecha y hora que propuso el cliente?',
+    sub: 'El retiro quedará confirmado y el cliente recibirá aviso por email.',
+    okLabel: 'Sí, aceptar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const _orig = btn ? btn.innerHTML : '';
+  if (btn){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Aceptando…';
+  }
+  try {
+    const fd = new FormData();
+    const tok = document.querySelector('#iwProposeFormEl input[name=csrf_token]') ||
+                document.querySelector('input[name=csrf_token]');
+    if (tok) fd.append('csrf_token', tok.value);
+    const r = await fetch(`/retiros/${_RID}/aceptar-contrapropuesta`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+      body: fd, credentials: 'same-origin',
+    });
+    const d = await r.json().catch(() => ({ ok:false, error:'Respuesta inválida del servidor.' }));
+    if (!r.ok || !d.ok){
+      await ilusAlert({ title:'No se pudo aceptar', message: (d && d.error) || ('Error HTTP ' + r.status), type:'error' });
+      return;
+    }
+    ilusToast('✓ ' + (d.message || 'Contrapropuesta aceptada — retiro confirmado'), { type:'success' });
+    setTimeout(() => {
+      if (d.redirect_url) window.location.href = d.redirect_url;
+      else window.location.reload();
+    }, 900);
+  } catch(err){
+    await ilusAlert({ title:'Error de red', message: err.message || 'No se pudo contactar al servidor.', type:'error' });
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = _orig; }
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════

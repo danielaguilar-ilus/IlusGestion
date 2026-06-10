@@ -419,6 +419,34 @@ body {
     background-size: 18px 100%, 18px 100%, 8px 100%, 8px 100%;
     background-attachment: local, local, scroll, scroll;
   }
+
+  /* ── FIX #16: Campos editables inline (contenteditable / data-inline-edit)
+     también disparan el auto-zoom de iOS si su fuente es < 16px.
+     El FIX #1 solo cubre inputs/selects/textareas nativos. */
+  [contenteditable="true"],
+  [data-inline-edit] {
+    font-size: 16px !important;
+  }
+
+  /* ── FIX #17: .btn-group se clipea en pantallas angostas (≤390px) —
+     ej. el selector de vistas del monitor. Permitir wrap. */
+  .btn-group {
+    flex-wrap: wrap;
+  }
+
+  /* ── FIX #18: Agenda inteligente — touch targets Apple HIG. */
+  .agi-nav-btn,
+  .agi-vista-btn {
+    min-height: 44px;
+  }
+  .agi-warn-add-btn {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+  .agi-drawer-close {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════
