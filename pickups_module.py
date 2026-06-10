@@ -265,7 +265,13 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
 
-    ensure_marketing_columns()
+    # 2026-06-10 — FIX RAÍZ: estas migraciones de boot corren en IMPORT,
+    # donde NO hay contexto Flask. get_db() usa `g` → RuntimeError que el
+    # try/except se tragaba EN SILENCIO desde siempre en Cloud Run (la
+    # columna notify_emails nunca se creó → 500 en guardar settings).
+    # app.app_context() habilita `g` fuera de un request.
+    with app.app_context():
+        ensure_marketing_columns()
 
     def ensure_reminder_columns():
         """Migración: timestamp del envío del recordatorio 24h."""
@@ -277,7 +283,8 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
 
-    ensure_reminder_columns()
+    with app.app_context():
+        ensure_reminder_columns()
 
     # ════════════════════════════════════════════════════════════════════
     #  MIGRACIÓN CRÍTICA — pickup_request_docs + pickup_doc_lineas
@@ -457,8 +464,11 @@ def register_pickup_routes(app, ctx):
         _MULTIDOC_TABLES_READY["v"] = True
         print("[ensure_multidoc_tables] OK (cached, los endpoints saltan en el hot path)", flush=True)
 
-    # Ejecutar al boot del módulo (force=True → siempre corre al boot)
-    ensure_multidoc_tables_runtime(force=True)
+    # Ejecutar al boot del módulo (force=True → siempre corre al boot).
+    # Con app_context: en import no hay `g` y sin esto el boot-run moría
+    # en silencio (los endpoints lo auto-curaban después, por eso "andaba").
+    with app.app_context():
+        ensure_multidoc_tables_runtime(force=True)
 
     # ── Migración horarios v3 (Daniel 2026-05-23, reforzado 2026-05-24) ─
     # Daniel reiteró: el horario es ÚNICO Y SIN EXCEPCIÓN para todas las
