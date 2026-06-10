@@ -608,10 +608,19 @@ def register_pickup_routes(app, ctx):
     def _chile_holidays(year):
         """Set de feriados legales de Chile en 'YYYY-MM-DD' para `year`.
 
+        2026-06-10: la FUENTE DE VERDAD ahora es cl_feriados.py (compartida con
+        mantenciones/planificador — un solo lugar para actualizar 2027+). El
+        cuerpo de abajo queda como FALLBACK por si el import fallara.
+
         Hardcode OFICIAL para años conocidos (fuente: feriados.cl). Para años no
         listados, fallback CALCULADO: feriados de fecha fija + Viernes/Sábado Santo
         (Computus). Actualizar la lista cada año. (Juan Daniel 2026-06-05: 'identifica
         los feriados chilenos siempre para que no los pongas como laborables'.)"""
+        try:
+            from cl_feriados import feriados_set
+            return set(feriados_set(year))
+        except Exception:
+            pass
         OFICIALES = {
             2026: [
                 "2026-01-01","2026-04-03","2026-04-04","2026-05-01","2026-05-21",

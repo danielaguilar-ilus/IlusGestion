@@ -205,6 +205,18 @@ function render(rows){
     const calidad = (x.calidad_informacion != null && x.calidad_informacion !== '')
       ? `<span class="rd-calidad" title="Calidad de la información">info ${esc(x.calidad_informacion)}</span>` : '';
     const url = `/mantenciones/clientes/${encodeURIComponent(x.cliente_id)}#intel`;
+    // RADAR DEL JEFE (2026-06-10): frecuencia + monto + margen por cliente.
+    const frec = x.frecuencia_meses ? `cada ${esc(x.frecuencia_meses)}m` : '—';
+    const origLbl = {definido:'definido', contrato:'contrato', tarifa_base:'tarifa'}[x.monto_origen] || '';
+    const monto = (x.monto_neto != null && x.monto_neto !== '')
+      ? `${fmtCLP(x.monto_neto)}${origLbl ? ` <span style="font-size:.58rem;color:#9ca3af;font-weight:700">(${origLbl})</span>` : ''}`
+      : '—';
+    let margen = '—';
+    if (x.margen_pct != null && x.margen_pct !== ''){
+      const mp = Number(x.margen_pct);
+      const mc = mp >= 30 ? '#166534' : (mp >= 10 ? '#b45309' : '#dc2626');
+      margen = `<span style="font-weight:800;color:${mc}">${esc(mp)}%</span>`;
+    }
     body += `<tr>
       <td data-l="Cliente">
         <div class="rd-cli">${esc(x.razon_social || '—')}${calidad}</div>
@@ -212,10 +224,12 @@ function render(rows){
       </td>
       <td data-l="Score"><span class="rd-score ${scoreCls(x.score_salud)}">${x.score_salud != null ? esc(x.score_salud) : '—'}</span></td>
       <td data-l="Riesgo"><span class="rd-chip chip-${nv}">${esc(nv)}</span></td>
+      <td data-l="Frecuencia">${frec}</td>
+      <td class="num" data-l="Monto neto">${monto}</td>
+      <td class="num" data-l="Margen %">${margen}</td>
       <td class="num" data-l="Brecha gratuitas"><span class="rd-brecha ${brecha>0?'':'zero'}">${brecha}</span></td>
       <td class="num" data-l="Exposición"><span class="rd-exp">${fmtCLP(x.exposicion_clp)}</span></td>
       <td data-l="Próxima fecha">${fmtFecha(x.proxima_fecha)}</td>
-      <td class="num" data-l="Gestiones">${x.actividad_total != null ? esc(x.actividad_total) : 0}</td>
       <td data-l="Acción"><a class="rd-go" href="${url}">Ver ficha <i class="bi bi-chevron-right"></i></a></td>
     </tr>`;
   }
@@ -223,8 +237,9 @@ function render(rows){
   root.innerHTML = `<div class="rd-table-wrap"><table class="rd-table">
     <thead><tr>
       <th>Cliente</th><th>Score</th><th>Riesgo</th>
+      <th>Frec.</th><th class="num">Monto neto</th><th class="num">Margen %</th>
       <th class="num">Brecha gratuitas</th><th class="num">Exposición $</th>
-      <th>Próxima fecha</th><th class="num">Gestiones</th><th>Acción</th>
+      <th>Próxima fecha</th><th>Acción</th>
     </tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;

@@ -7338,6 +7338,13 @@ async function vhGuardar(){
             <label class="form-label fw-semibold">Giro / actividad</label>
             <input type="text" id="ec_giro" class="form-control" value="{{ cliente.giro or '' }}" placeholder="Servicios deportivos, hotelería…">
           </div>
+          {# PLANIFICADOR 2026-06-10: día del mes preferido (caso U.Católica = 12) #}
+          <div class="col-6 col-sm-3">
+            <label class="form-label fw-semibold">Día mantención <small class="text-muted">(1-28)</small></label>
+            <input type="number" id="ec_dia_pref" class="form-control" min="1" max="28"
+                   value="{{ cliente.dia_mantencion_pref or '' }}" placeholder="Ej: 12">
+            <div class="form-text" style="font-size:.7rem">Día del mes preferido. Si cae feriado/finde se mueve al hábil siguiente.</div>
+          </div>
           <div class="col-6 col-sm-3">
             <label class="form-label fw-semibold">Email empresa</label>
             <input type="email" id="ec_email_empresa" class="form-control" value="{{ cliente.email_empresa or '' }}" placeholder="contacto@empresa.cl">
@@ -8710,6 +8717,16 @@ async function vhGuardar(){
             <label class="form-label fw-semibold">Notas / observaciones <span class="text-muted small">(opc.)</span></label>
             <textarea id="mm_notas" class="form-control" rows="2" placeholder="Color, voltaje, dimensiones, peso o cualquier observación inicial"></textarea>
           </div>
+          {# PLANIFICADOR 2026-06-10: segregar accesorios desde el nacimiento #}
+          <div class="col-12">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="mm_aplica" checked>
+              <label class="form-check-label fw-semibold" for="mm_aplica">
+                Aplica mantención
+                <span class="text-muted small d-block" style="font-weight:400">Desmarca para accesorios (collarines, mancuernas sueltas…) que no se levantan ni mantienen.</span>
+              </label>
+            </div>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -8940,7 +8957,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610a"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610b"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

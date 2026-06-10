@@ -3481,6 +3481,9 @@ async function guardarCliente() {
     giro:              $v('ec_giro'),
     email_empresa:     $v('ec_email_empresa'),
     tel_empresa:       $v('ec_tel_empresa'),
+    // Planificador (2026-06-10): día del mes preferido para mantención (1-28).
+    // Vacío → null (el backend lo limpia y vuelve al día del ancla).
+    dia_mantencion_pref: $v('ec_dia_pref') || null,
     // Ubicación
     direccion:          $v('ec_direccion'),
     direccion_lat:      $v('ec_direccion_lat'),
@@ -4269,6 +4272,8 @@ async function guardarMaquinaManual() {
     modelo:   (document.getElementById('mm_modelo')||{}).value || '',
     anio_fabricacion: parseInt((document.getElementById('mm_anio')||{}).value) || null,
     ubicacion_sala: (document.getElementById('mm_ubicacion')||{}).value || '',
+    // Planificador (2026-06-10): accesorios nacen excluidos de mantención.
+    aplica_mantencion: (document.getElementById('mm_aplica') ? (document.getElementById('mm_aplica').checked ? 1 : 0) : 1),
     auto_sku: true,    // pedirle al backend que rellene SKU si viene vacío
     auto_serie: true,  // pedirle al backend que rellene serie si viene vacío
   };

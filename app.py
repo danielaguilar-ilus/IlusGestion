@@ -33508,18 +33508,26 @@ def mant_generar_calendario(cid):
            ORDER BY created_at DESC LIMIT 1""",
         (cid,)
     )
-    cliente = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (cid,))
+    cliente = mysql_fetchone(
+        "SELECT razon_social, dia_mantencion_pref FROM mant_clientes WHERE id=%s", (cid,))
     if not ct:
         return jsonify({"error": "Sin contrato activo para este cliente"}), 404
 
     frecuencia = ct.get("ai_frecuencia_sug") or ct.get("frecuencia_meses") or 3
     desde = datetime.strptime(desde_str, "%Y-%m-%d").date() if desde_str else datetime.now().date()
 
+    # PLANIFICADOR 2026-06-10: la fecha EMITIDA respeta el día preferido del
+    # cliente (U.Católica = día 12) + regla 'mover a día hábil'. El cursor
+    # `fecha_actual` avanza CRUDO (misma regla de oro que el motor del agente).
+    _dia_pref = (cliente or {}).get("dia_mantencion_pref")
+    _R_cal = _reglas_cargar()
+
     visitas_preview = []
     fecha_actual = desde
     while fecha_actual <= desde + timedelta(days=meses * 30):
+        _fa = _mant_fecha_ajustada(fecha_actual, _dia_pref, _R_cal) or fecha_actual
         visitas_preview.append({
-            "fecha":    str(fecha_actual),
+            "fecha":    str(_fa),
             "titulo":   f"Mantención {tipo.capitalize()} — {cliente['razon_social'] if cliente else ''}",
             "tipo":     tipo,
             "tecnico":  tecnico,
@@ -34399,7 +34407,16 @@ def mant_cliente_update(cid):
               "contacto2_nombre","contacto2_cargo","contacto2_tel","contacto2_email",
               "direccion","comuna","ciudad","region",
               "direccion_lat","direccion_lng","direccion_place_id",
-              "notas","notas_confidenciales","estado","tipo_cliente"]
+              "notas","notas_confidenciales","estado","tipo_cliente",
+              # PLANIFICADOR 2026-06-10: día del mes preferido para mantención (1-28)
+              "dia_mantencion_pref"]
+    # Día preferido: int 1-28 o None (28 máx → jamás falla en febrero).
+    if "dia_mantencion_pref" in d:
+        try:
+            _dp = int(d.get("dia_mantencion_pref"))
+            d["dia_mantencion_pref"] = _dp if 1 <= _dp <= 28 else None
+        except (TypeError, ValueError):
+            d["dia_mantencion_pref"] = None
     # Validación dura del ENUM tipo_cliente — si llega valor distinto, lo descartamos
     # silenciosamente para no romper el UPDATE.
     if "tipo_cliente" in d:
@@ -35045,8 +35062,9 @@ def mant_maquina_add(cid):
                        (cliente_id,sku,nombre,serie,doc_origen,doc_fecha,cantidad,notas,
                         ubicacion_cliente,estado_op,fecha_instalacion,
                         tag_1,tag_2,
-                        justif_fecha_inst,justif_doc_mismatch,created_by)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        justif_fecha_inst,justif_doc_mismatch,created_by,
+                        aplica_mantencion)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     base_params(serie)
                 )
                 return cur.lastrowid, serie
@@ -35059,6 +35077,11 @@ def mant_maquina_add(cid):
                 raise
         # Si pasamos los 5 intentos sin éxito, devolver error claro
         raise Exception(f"No se pudo generar serie única tras {max_intentos} intentos para cliente {cid}, SKU {sku}")
+
+    # PLANIFICADOR 2026-06-10: accesorios (collarines, etc.) nacen excluidos de
+    # mantención si el front lo pide. Va en el INSERT principal — NO en
+    # _campos_extra (su filtro descarta el 0, que es justo el valor relevante).
+    _aplica_mant = 1 if d.get("aplica_mantencion", 1) in (1, True, "1", "true") else 0
 
     conn = get_mysql()
     creadas = []
@@ -35079,7 +35102,8 @@ def mant_maquina_add(cid):
                                 (_r.get("tag_2") or "").strip()[:120] or None,
                                 _r.get("justif_fecha_inst") or None,
                                 _r.get("justif_doc_mismatch") or None,
-                                current_username())
+                                current_username(),
+                                _aplica_mant)
                     mid_new, serie_efectiva = _insert_con_retry(cur, build, serie_nueva)
                     creadas.append({"id": mid_new, "serie": serie_efectiva})
             else:
@@ -35098,7 +35122,8 @@ def mant_maquina_add(cid):
                             (_r.get("tag_2") or "").strip()[:120] or None,
                             _r.get("justif_fecha_inst") or None,
                             _r.get("justif_doc_mismatch") or None,
-                            current_username())
+                            current_username(),
+                            _aplica_mant)
                 mid_new, serie_efectiva = _insert_con_retry(cur, build, serie)
                 creadas.append({"id": mid_new, "serie": serie_efectiva})
         conn.commit()
@@ -40315,9 +40340,17 @@ def mant_calendario_dia_drill(fecha):
             tecnicos_dia[tid]["dur_plan_min"] += v.get("duracion_planificada_min") or 0
             tecnicos_dia[tid]["dur_real_min"] += v.get("duracion_real_min") or 0
 
+        # PLANIFICADOR 2026-06-10: avisar si el día es feriado (banner tablero).
+        _feriado_nombre = None
+        try:
+            from cl_feriados import feriados_chile
+            _feriado_nombre = feriados_chile(int(fecha[:4])).get(fecha)
+        except Exception:
+            pass
         return jsonify({
             "ok": True,
             "fecha": fecha,
+            "feriado": _feriado_nombre,
             "visitas": visitas,
             "kpis": {
                 "total": n_total,
@@ -46151,12 +46184,31 @@ def mant_ot_equipo_datos(vid, mid):
     except Exception:
         valores_antes = {}
 
+    # F-LEV 2026-06-10: regla opcional 'levantamiento_foto_obligatoria' (default
+    # OFF) — si está ON, no se puede marcar el equipo COMPLETADO sin ≥1 foto.
+    if d.get("completado"):
+        try:
+            if bool(_reglas_cargar().get("levantamiento_foto_obligatoria")):
+                _nf = mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM mant_visita_fotos "
+                    " WHERE visita_id=%s AND maquina_id=%s", (vid, mid))
+                if not _nf or not (_nf.get("n") or 0):
+                    return jsonify({"ok": False,
+                                    "error": "Falta la foto del equipo. Sube al menos 1 foto "
+                                             "antes de marcarlo como completado."}), 400
+        except Exception as _e_fg:
+            print(f"[mant_ot_equipo_datos] gate foto: {_e_fg}", flush=True)
+
     sets, vals = [], []
+    warning = None
     for k, maxlen in permitidos_str.items():
         if k in d:
             v = (str(d.get(k) or "").strip())[:maxlen] or None
-            # estado_capturado se valida contra ENUM (ignoramos valores inválidos)
+            # estado_capturado se valida contra ENUM. F-LEV 2026-06-10: ya NO
+            # se ignora en silencio — avisamos al técnico que ese valor no se
+            # guardó (errores honestos, el modal lo muestra).
             if k == "estado_capturado" and v and v not in estados_validos:
+                warning = f"El estado '{v}' no es válido y no se guardó."
                 continue
             sets.append(f"{k}=%s"); vals.append(v)
     # Numéricos / booleanos
@@ -46171,7 +46223,12 @@ def mant_ot_equipo_datos(vid, mid):
         sets.append("ultima_intervencion=%s"); vals.append(v if v else None)
     # 2026-05-22 — campo que también vive en mant_levantamiento_items.
     # En mant_maquinas no existe `fecha_documento` — solo espejamos al item.
-    if not sets:
+    # 🔧 FIX F-LEV 2026-06-10 (Daniel — "la ficha del levantamiento tiene
+    # problemas"): el botón "Marcar equipo como completado" manda SOLO
+    # {completado:true} → sets quedaba vacío → este return devolvía
+    # "Sin campos" 400 y el botón FALLABA siempre. Ahora un payload con
+    # 'completado' (o 'tiene_dano' solo) es válido.
+    if not sets and "completado" not in d:
         return jsonify({"ok": False, "error": "Sin campos"}), 400
     # Siempre actualizamos last_visita_id para trazabilidad
     sets.append("last_visita_id=%s"); vals.append(vid)
@@ -46250,9 +46307,17 @@ def mant_ot_equipo_datos(vid, mid):
                           flush=True)
         except Exception:
             pass
-        return jsonify({"ok": True})
+        resp = {"ok": True}
+        if warning:
+            resp["warning"] = warning
+        return jsonify(resp)
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        # REGLA #4: log con detalle (solo nombres de campos), mensaje amigable
+        # al técnico — nunca un error interno crudo.
+        print(f"[mant_ot_equipo_datos ERROR] vid={vid} mid={mid} "
+              f"campos={[s.split('=')[0] for s in sets]} -> {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo guardar. Revisa el dato (¿serie repetida?) y reintenta."}), 400
 
 
 def _ensure_levantamiento_para_visita(vid):
@@ -49503,10 +49568,16 @@ def mant_calendario():
     # ?embed=1 → modo embebido (iframe en /mantenciones/ots): oculta sidebar
     # vía variable `embed_mode` que base.html debe respetar.
     embed = request.args.get("embed") == "1"
+    # PLANIFICADOR 2026-06-10: capacidad de visitas/día (semáforo de carga).
+    try:
+        capacidad_dia = int(_reglas_cargar().get("capacidad_visitas_dia") or 4)
+    except Exception:
+        capacidad_dia = 4
     return render_template("mantenciones/calendario.html",
         clientes = [dict(r) for r in clientes],
         tecnicos = [dict(r) for r in tecnicos],
         embed_mode = embed,
+        capacidad_dia = capacidad_dia,
     )
 
 
@@ -51024,6 +51095,12 @@ _REGLAS_DEFAULTS = {
     "iva_pct":                    ("19",    "float",  "precio",     "IVA",                                              "%"),
     "umbral_alerta_proxima_dias": ("15",    "int",    "alerta",     "Avisar si la próxima mantención está dentro de X días", "días"),
     "umbral_vencida_critica_dias":("30",    "int",    "alerta",     "Marcar crítico si una mantención lleva X días vencida", "días"),
+    # PLANIFICADOR 2026-06-10 (Daniel): fechas proyectadas NUNCA en feriado/finde
+    # ("hay días que pueden ser fin de semana o no laborables") + semáforo de
+    # carga del calendario.
+    "mover_a_dia_habil":          ("1",     "bool",   "frecuencia", "Mover mantención proyectada a día hábil si cae feriado/fin de semana", ""),
+    "capacidad_visitas_dia":      ("4",     "int",    "capacidad",  "Capacidad de visitas por día (semáforo del calendario)", "visitas"),
+    "levantamiento_foto_obligatoria": ("0", "bool",   "politica",   "Exigir al menos 1 foto para completar un equipo en el levantamiento", ""),
     "intel_cache_ttl_horas":      ("6",     "int",    "politica",   "Horas de validez del diagnóstico en caché",        "horas"),
     "score_peso_brecha":          ("40",    "int",    "politica",   "Peso de la brecha de gratuitas en el score",       "pts"),
     "score_peso_vencidas":        ("35",    "int",    "politica",   "Peso de las mantenciones vencidas en el score",    "pts"),
@@ -51108,6 +51185,26 @@ def _intel_meses_entre(d1, d2):
     if not d1 or not d2 or d2 < d1:
         return 0
     return (d2.year - d1.year) * 12 + (d2.month - d1.month) - (1 if d2.day < d1.day else 0)
+
+
+def _mant_fecha_ajustada(fecha, dia_pref, R=None):
+    """ÚNICO punto de ajuste de fechas proyectadas de mantención (2026-06-10).
+
+    Aplica (1) día del mes preferido del cliente (mant_clientes.
+    dia_mantencion_pref, caso U.Católica "siempre el día 12") y (2) la regla
+    'mover_a_dia_habil' (feriados de cl_feriados.py + fines de semana).
+
+    LO USAN: el motor _cliente_inteligencia, mant_generar_calendario y el
+    planificador anual. REGLA DE ORO: el cursor de la serie avanza SIN
+    ajustar; esto se aplica solo a la fecha EMITIDA (cero deriva). El "mes"
+    de una mantención = mes de la fecha AJUSTADA (mismo criterio en dedup).
+    """
+    try:
+        from cl_feriados import ajustar_fecha_mantencion
+        R = R or _reglas_cargar()
+        return ajustar_fecha_mantencion(fecha, dia_pref, bool(R.get("mover_a_dia_habil")))
+    except Exception:
+        return fecha   # fail-open: jamás romper una proyección por el ajuste
 
 
 def _cliente_inteligencia(cid, reglas=None):
@@ -51340,17 +51437,21 @@ def _cliente_inteligencia(cid, reglas=None):
     proyeccion = []; vencidas = []; proximas = []
     if ancla:
         meses_hechos = {(d.year, d.month) for d in fechas_real}
+        # PLANIFICADOR 2026-06-10: la fecha EMITIDA se ajusta (día preferido del
+        # cliente + mover a día hábil); el cursor avanza CRUDO (cero deriva).
+        dia_pref = cli.get("dia_mantencion_pref")
         cursor = _intel_add_months(ancla, frecuencia)
         tope = f_fin or _intel_add_months(hoy, 24)
         guard = 0
         while cursor and cursor <= tope and guard < 120:
             guard += 1
-            if cursor <= hoy:
-                if (cursor.year, cursor.month) not in meses_hechos:
-                    vencidas.append({"fecha": str(cursor), "dias_atraso": (hoy - cursor).days})
+            fa = _mant_fecha_ajustada(cursor, dia_pref, R) or cursor
+            if fa <= hoy:
+                if (fa.year, fa.month) not in meses_hechos:
+                    vencidas.append({"fecha": str(fa), "dias_atraso": (hoy - fa).days})
             else:
-                proximas.append({"fecha": str(cursor), "dias_faltan": (cursor - hoy).days})
-                proyeccion.append(str(cursor))
+                proximas.append({"fecha": str(fa), "dias_faltan": (fa - hoy).days})
+                proyeccion.append(str(fa))
             cursor = _intel_add_months(cursor, frecuencia)
 
     mant = {
@@ -51561,6 +51662,15 @@ def _cliente_inteligencia(cid, reglas=None):
             "acciones": [{"label": "Guardar N°", "accion": "set_gratuitas", "input": "cantidad",
                           "placeholder": str(gratis_anual or 4)}],
         })
+    # PLANIFICADOR 2026-06-10 (caso U.Católica): día preferido del mes.
+    if tiene_contrato and not cli.get("dia_mantencion_pref"):
+        consultas.append({
+            "id": "falta_dia_pref", "tipo": "completar_inline", "severidad": "baja",
+            "pregunta": "¿Qué día del mes prefiere este cliente para su mantención?",
+            "detalle": "Ej: 12 = siempre cerca del día 12. La proyección lo respeta y, si cae en feriado o fin de semana, la muevo al día hábil siguiente.",
+            "campos": [{"campo": "dia_mantencion_pref", "label": "Día del mes (1-28)", "tipo": "number"}],
+            "acciones": [],
+        })
     for v in vencidas[:6]:
         consultas.append({
             "id": f"visita_{v['fecha']}", "tipo": "visita_proyectada", "severidad": "alta",
@@ -51705,7 +51815,7 @@ def _cliente_inteligencia(cid, reglas=None):
 # Versión del esquema del diagnóstico. Subir este número invalida automáticamente
 # los cachés viejos (mant_cliente_intel) tras un cambio en la forma del dict del motor,
 # para que el panel no muestre un diagnóstico viejo sin las secciones nuevas.
-_INTEL_SCHEMA = 5   # v5 (2026-06-10): +finanzas/márgenes, +equipos mantenibles/excluidos, +modulos
+_INTEL_SCHEMA = 6   # v6 (2026-06-10): proyección con día preferido + ajuste a día hábil (planificador)
 
 
 def _intel_cache_fresco(cid, ttl_horas):
@@ -52017,7 +52127,9 @@ def mant_intel_accion(cid):
                             "email_empresa", "tel_empresa", "giro",
                             # FINANZAS 2026-06-10: monto final NETO por mantención
                             # definido por gerencia (la "valoración" de Daniel).
-                            "valor_mantencion_clp"}
+                            "valor_mantencion_clp",
+                            # PLANIFICADOR 2026-06-10: día preferido (1-28)
+                            "dia_mantencion_pref"}
             if campo not in _ALLOWED_CLI:
                 return jsonify({"error": "Campo no permitido."}), 400
             if not valor:
@@ -52034,6 +52146,11 @@ def mant_intel_accion(cid):
                 _num = re.sub(r"[^\d]", "", str(valor))
                 if not _num or int(_num) <= 0:
                     return jsonify({"error": "Monto inválido. Escribe solo el número, ej: 150000."}), 400
+                valor = _num
+            if campo == "dia_mantencion_pref":
+                _num = re.sub(r"[^\d]", "", str(valor))
+                if not _num or not (1 <= int(_num) <= 28):
+                    return jsonify({"error": "Día inválido. Escribe un número entre 1 y 28."}), 400
                 valor = _num
             # `campo` está en whitelist de columnas literales; el valor va parametrizado.
             mysql_execute(f"UPDATE mant_clientes SET {campo}=%s WHERE id=%s", (valor[:200], cid))
@@ -52146,7 +52263,7 @@ def mant_radar_data():
     try:
         sql = ("SELECT i.cliente_id, c.razon_social, i.score_salud, i.calidad_informacion, "
                "       i.nivel_riesgo, i.brecha_gratis, i.exposicion_clp, i.proxima_fecha, "
-               "       i.actividad_total, i.calculado_at "
+               "       i.actividad_total, i.calculado_at, i.payload_json "
                "  FROM mant_cliente_intel i JOIN mant_clientes c ON c.id=i.cliente_id WHERE 1=1 ")
         params = []
         if riesgo in ("alto", "medio", "bajo"):
@@ -52160,6 +52277,22 @@ def mant_radar_data():
             d = dict(r)
             for k in ("proxima_fecha", "calculado_at"):
                 if d.get(k): d[k] = str(d[k])[:16]
+            # RADAR DEL JEFE 2026-06-10 (Daniel): frecuencia + monto + margen por
+            # cliente, leídos del payload del motor en Python (tolerante a
+            # payloads de esquemas viejos sin 'finanzas'). Nunca exponer el JSON.
+            d["frecuencia_meses"] = None
+            d["monto_neto"] = None; d["monto_origen"] = None
+            d["margen_pct"] = None
+            try:
+                _p = json.loads(d.get("payload_json") or "{}")
+                d["frecuencia_meses"] = (_p.get("diagnostico_contrato") or {}).get("frecuencia_meses")
+                _val = _p.get("valorizacion") or {}
+                d["monto_neto"] = _val.get("neto")
+                d["monto_origen"] = _val.get("origen_precio")
+                d["margen_pct"] = (_p.get("finanzas") or {}).get("margen_pct")
+            except Exception:
+                pass
+            d.pop("payload_json", None)
             return d
         return jsonify([_f(r) for r in rows])
     except Exception as e:
@@ -52189,6 +52322,345 @@ def mant_radar_recalcular():
     except Exception as e:
         print(f"[radar_recalcular] {e}", flush=True)
         return jsonify({"error": "No se pudo recalcular el radar."}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PLANIFICADOR ANUAL DE MANTENCIONES (2026-06-10, Daniel)
+# "La foto que pide el jefe": grilla clientes × 12 meses con el estado de
+# cada mantención (proyectada / agendada / realizada / vencida) + generación
+# masiva de OTs con preview. CERO IA — reusa la MISMA proyección del motor
+# (_intel_add_months + _mant_fecha_ajustada → día preferido + día hábil).
+# ══════════════════════════════════════════════════════════════════════
+
+def _planificador_compute(anio, R=None):
+    """Proyección anual de TODOS los clientes activos. 2 queries + cómputo
+    Python (sin llamar _cliente_inteligencia por cliente — performance).
+
+    Devuelve {"kpis": {...}, "clientes": [{id, razon_social, frecuencia,
+    dia_pref, riesgo, tiene_contrato, proxima, meses: {1..12: {estado, fecha,
+    visita_id, numero_ot} | None}}]}.
+
+    Estados de celda (precedencia): realizada → agendada → vencida →
+    proyectada → None. El "mes" de una proyección = mes de la fecha AJUSTADA
+    (misma regla de oro del motor — ver _mant_fecha_ajustada).
+    """
+    from datetime import datetime as _dt
+    R = R or _reglas_cargar()
+    hoy = _dt.now().date()
+    anio = int(anio)
+
+    # Query 1: clientes activos + su contrato más reciente vigente/indefinido
+    # (mismo criterio que el motor: ORDER BY created_at DESC) + riesgo del intel.
+    clientes = mysql_fetchall(
+        "SELECT c.id, c.razon_social, c.dia_mantencion_pref, i.nivel_riesgo, "
+        "       ct.id AS ctid, ct.fecha_inicio, ct.fecha_vencimiento, ct.es_indefinido, "
+        "       ct.frecuencia_meses, ct.ai_frecuencia_sug, ct.created_at AS ct_created "
+        "  FROM mant_clientes c "
+        "  LEFT JOIN mant_contratos ct ON ct.id = ( "
+        "        SELECT ct2.id FROM mant_contratos ct2 "
+        "         WHERE ct2.cliente_id=c.id AND ct2.estado IN ('vigente','indefinido') "
+        "         ORDER BY ct2.created_at DESC LIMIT 1) "
+        "  LEFT JOIN mant_cliente_intel i ON i.cliente_id=c.id "
+        " WHERE COALESCE(c.estado,'activo') = 'activo' "
+        " ORDER BY c.razon_social LIMIT 500", ()) or []
+
+    # Query 2: visitas del año (sargable) indexadas por cliente y mes.
+    ini = f"{anio}-01-01"; fin = f"{anio + 1}-01-01"
+    visitas = mysql_fetchall(
+        "SELECT cliente_id, id, fecha_programada, fecha_realizada, estado, numero_ot "
+        "  FROM mant_visitas "
+        " WHERE (fecha_programada >= %s AND fecha_programada < %s) "
+        "    OR (fecha_realizada  >= %s AND fecha_realizada  < %s)",
+        (ini, fin, ini, fin)) or []
+    vis_por_cli = {}
+    for v in visitas:
+        f = _intel_as_date(v.get("fecha_realizada")) or _intel_as_date(v.get("fecha_programada"))
+        if not f or f.year != anio:
+            continue
+        est = (v.get("estado") or "").lower()
+        if est == "cancelada":
+            continue
+        vis_por_cli.setdefault(int(v["cliente_id"]), {}).setdefault(f.month, []).append({
+            "id": v.get("id"), "estado": est, "numero_ot": v.get("numero_ot"),
+            "fecha": str(f),
+        })
+
+    frec_default = int(R.get("frecuencia_default_meses") or 3)
+    out_clientes = []
+    k_real = k_agen = k_venc = k_proy = 0; k_toca = k_cubiertas = 0
+    for c in clientes:
+        cid = int(c["id"])
+        tiene_ct = bool(c.get("ctid"))
+        frecuencia = int(c.get("frecuencia_meses") or c.get("ai_frecuencia_sug") or frec_default)
+        frecuencia = max(1, frecuencia)
+        dia_pref = c.get("dia_mantencion_pref")
+        ancla = _intel_as_date(c.get("fecha_inicio")) or _intel_as_date(c.get("ct_created"))
+        f_fin_ct = _intel_as_date(c.get("fecha_vencimiento"))
+
+        meses = {}
+        # Visitas reales del año pintan su mes (precedencia realizada > agendada).
+        for mes_n, lst in (vis_por_cli.get(cid) or {}).items():
+            done = next((x for x in lst if x["estado"] == "completada"), None)
+            prog = next((x for x in lst if x["estado"] in ("programada", "reagendada", "en_curso")), None)
+            pick = done or prog
+            if pick:
+                meses[mes_n] = {"estado": ("realizada" if done else "agendada"),
+                                "fecha": pick["fecha"], "visita_id": pick["id"],
+                                "numero_ot": pick.get("numero_ot")}
+        # Proyección teórica del contrato sobre los meses sin visita.
+        if tiene_ct and ancla:
+            cursor = ancla; guard = 0
+            while cursor and guard < 120:
+                guard += 1
+                fa = _mant_fecha_ajustada(cursor, dia_pref, R) or cursor
+                if fa.year > anio or (f_fin_ct and cursor > f_fin_ct):
+                    break
+                if fa.year == anio and fa.month not in meses:
+                    meses[fa.month] = {
+                        "estado": ("vencida" if fa < hoy else "proyectada"),
+                        "fecha": str(fa), "visita_id": None, "numero_ot": None,
+                    }
+                cursor = _intel_add_months(cursor, frecuencia)
+        # KPIs + próxima
+        proxima = None
+        for m in range(1, 13):
+            cel = meses.get(m)
+            if not cel:
+                continue
+            est = cel["estado"]
+            if est == "realizada": k_real += 1; k_toca += 1; k_cubiertas += 1
+            elif est == "agendada": k_agen += 1; k_toca += 1; k_cubiertas += 1
+            elif est == "vencida": k_venc += 1; k_toca += 1
+            elif est == "proyectada": k_proy += 1; k_toca += 1
+            if not proxima and est in ("proyectada", "agendada") and cel["fecha"] >= str(hoy):
+                proxima = cel["fecha"]
+        out_clientes.append({
+            "id": cid, "razon_social": c.get("razon_social"),
+            "frecuencia": frecuencia if tiene_ct else None,
+            "dia_pref": dia_pref, "riesgo": (c.get("nivel_riesgo") or None),
+            "tiene_contrato": tiene_ct, "proxima": proxima,
+            "meses": {str(m): meses.get(m) for m in range(1, 13)},
+        })
+    cobertura = round(100.0 * k_cubiertas / k_toca) if k_toca else 100
+    return {
+        "anio": anio,
+        "kpis": {"cobertura_pct": cobertura, "ots_agendadas": k_agen,
+                 "realizadas": k_real, "vencidas": k_venc, "proyectadas": k_proy},
+        "clientes": out_clientes,
+    }
+
+
+@app.route("/mantenciones/api/planificador", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_planificador_data():
+    try:
+        anio = int(request.args.get("anio") or datetime.now().year)
+        anio = max(2020, min(2040, anio))
+    except (TypeError, ValueError):
+        anio = datetime.now().year
+    riesgo = (request.args.get("riesgo") or "").strip().lower()
+    solo_ct = request.args.get("solo_contrato") == "1"
+    try:
+        data = _planificador_compute(anio)
+        cls = data["clientes"]
+        if riesgo in ("alto", "medio", "bajo"):
+            cls = [c for c in cls if (c.get("riesgo") or "") == riesgo]
+        if solo_ct:
+            cls = [c for c in cls if c.get("tiene_contrato")]
+        data["clientes"] = cls
+        return jsonify({"ok": True, **data})
+    except Exception as e:
+        print(f"[planificador] anio={anio}: {e}", flush=True)
+        return jsonify({"error": "No se pudo calcular el plan anual."}), 500
+
+
+@app.route("/mantenciones/api/planificador/generar-ots", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_planificador_generar_ots():
+    """Genera OTs programadas desde la proyección (mes/trimestre o celda).
+    Patrón anti-click-accidental de mant_generar_calendario: la única forma
+    de CREAR es {dry_run:false, confirm:true}. Dedup garantizado: la
+    recomputación server-side solo emite celdas proyectada/vencida (los meses
+    con visita viva ya no son candidatos) + EXISTS por fila en la transacción."""
+    u = getattr(g, "user", None) or {}
+    if _rol_familia(u.get("role")) not in ("admin", "superadmin", "supervisor", "ejecutivo"):
+        return jsonify({"error": "Tu rol no puede generar OTs masivas."}), 403
+    d = request.get_json(silent=True) or {}
+    dry_run = d.get("dry_run", True)
+    confirm = bool(d.get("confirm", False))
+    if not dry_run and not confirm:
+        dry_run = True
+    try:
+        anio = int(d.get("anio") or datetime.now().year)
+        meses_sel = sorted({int(m) for m in (d.get("meses") or []) if 1 <= int(m) <= 12})
+    except (TypeError, ValueError):
+        return jsonify({"error": "Año o meses inválidos."}), 400
+    if not meses_sel:
+        return jsonify({"error": "Indica al menos un mes."}), 400
+    cliente_ids = None
+    if d.get("cliente_ids"):
+        try:
+            cliente_ids = {int(x) for x in d["cliente_ids"]}
+        except (TypeError, ValueError):
+            return jsonify({"error": "cliente_ids inválidos."}), 400
+    try:
+        data = _planificador_compute(anio)
+        candidatas = []
+        for c in data["clientes"]:
+            if cliente_ids is not None and c["id"] not in cliente_ids:
+                continue
+            for m in meses_sel:
+                cel = (c.get("meses") or {}).get(str(m))
+                if cel and cel["estado"] in ("proyectada", "vencida"):
+                    candidatas.append({"cliente_id": c["id"], "razon_social": c["razon_social"],
+                                       "fecha": cel["fecha"], "mes": m})
+        if dry_run:
+            return jsonify({"ok": True, "dry_run": True, "preview": candidatas,
+                            "preview_count": len(candidatas), "requires_confirm": True})
+        # CREAR (confirm=true): shape idéntico a programar_ot del Agente.
+        uid = u.get("id")
+        try:
+            uid = int(uid) if uid else None
+        except (TypeError, ValueError):
+            uid = None
+        creadas = 0; omitidas = []
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                for cand in candidatas:
+                    cid = cand["cliente_id"]; mes = cand["mes"]
+                    # Defensa contra carreras: ¿apareció una visita viva ese mes?
+                    cur.execute(
+                        "SELECT 1 FROM mant_visitas "
+                        " WHERE cliente_id=%s AND estado IN ('programada','reagendada','en_curso','completada') "
+                        "   AND ((fecha_realizada IS NOT NULL AND YEAR(fecha_realizada)=%s AND MONTH(fecha_realizada)=%s) "
+                        "     OR (fecha_realizada IS NULL AND YEAR(fecha_programada)=%s AND MONTH(fecha_programada)=%s)) "
+                        " LIMIT 1", (cid, anio, mes, anio, mes))
+                    if cur.fetchone():
+                        omitidas.append({"cliente_id": cid, "razon_social": cand["razon_social"],
+                                         "motivo": "ya tiene visita ese mes"})
+                        continue
+                    cur.execute(
+                        "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
+                        " fecha_programada, cubierto_por, created_by, created_by_user_id) "
+                        "VALUES (%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
+                        (cid, _intel_contrato_id(cid), "Mantención preventiva (Plan anual)",
+                         cand["fecha"], current_username(), uid))
+                    creadas += 1
+            conn.commit()
+        finally:
+            conn.close()
+        try:
+            _mant_log("cliente", 0, "plan_anual_generado",
+                      f"{creadas} OT(s) año {anio} meses {meses_sel} por {current_username()}")
+        except Exception:
+            pass
+        return jsonify({"ok": True, "creadas": creadas, "omitidas": omitidas})
+    except Exception as e:
+        print(f"[planificador generar] {e}", flush=True)
+        return jsonify({"error": "No se pudieron generar las OTs."}), 500
+
+
+@app.route("/mantenciones/planificador")
+@_mant_required
+@_no_tecnico
+def mant_planificador_page():
+    return render_template("mantenciones/planificador.html",
+                           anio_actual=datetime.now().year)
+
+
+# ── Catálogo de MARCAS (F-LEV 2026-06-10, Daniel) ─────────────────────
+# "Marca como catálogo (ILUS, Gymleco, Drax, Freemotion, Prime…) dándole una
+# vuelta al ERP que tiene las familias/marcas". Merge de 3 fuentes:
+#   1. Seed conocido (marcas fitness que ILUS maneja).
+#   2. DISTINCT de mant_maquinas.marca (lo ya escrito en la casa).
+#   3. ERP Random READ-ONLY: familias/marcas de productos (best-effort, con
+#      fallback silencioso si el ERP no responde o la columna no existe).
+# El front lo usa como <datalist> → sugerencias SIN bloquear texto libre.
+_MARCAS_SEED = [
+    "ILUS", "Gymleco", "Draxfit", "Drax", "Freemotion", "Keiser",
+    "Booty Builder", "Prime", "Life Fitness", "Technogym", "Matrix",
+    "Precor", "Hammer Strength", "Cybex", "Octane", "Concept2",
+    "Assault Fitness", "Spirit", "BH Fitness", "Movement", "Star Trac",
+]
+_MARCAS_CACHE = {"data": None, "ts": 0.0}
+
+
+def _marcas_catalogo():
+    """Lista canónica de marcas (cache en proceso 1h)."""
+    import time as _t
+    if _MARCAS_CACHE["data"] is not None and (_t.time() - _MARCAS_CACHE["ts"]) < 3600:
+        return _MARCAS_CACHE["data"]
+    canon = {}   # lower → forma canónica (la primera vista gana; seed primero)
+    for m in _MARCAS_SEED:
+        canon.setdefault(m.lower(), m)
+    # 2) Lo ya usado en mant_maquinas
+    try:
+        for r in (mysql_fetchall(
+                "SELECT DISTINCT TRIM(marca) AS m FROM mant_maquinas "
+                "WHERE marca IS NOT NULL AND TRIM(marca) != '' LIMIT 200") or []):
+            m = (r.get("m") or "").strip()
+            if 2 <= len(m) <= 60:
+                canon.setdefault(m.lower(), m)
+    except Exception:
+        pass
+    # 3) ERP Random (read-only, best-effort): familias de productos. Probamos
+    #    candidatos de columna/tabla conocidos del esquema Random; el primero
+    #    que responda con texto legible se usa. Si el ERP está caído o el
+    #    campo no existe → seguimos solo con seed+local.
+    for _sql in (
+        "SELECT DISTINCT TOP 100 RTRIM(NOKOFM) AS m FROM TABFM WHERE NOKOFM IS NOT NULL",
+        "SELECT DISTINCT TOP 100 RTRIM(MRPR) AS m FROM MAEPR WHERE MRPR IS NOT NULL",
+    ):
+        try:
+            rows = _random_sql_query(_sql, None, max_rows=100)
+            if not rows:
+                continue
+            for r in rows:
+                m = str(r.get("m") or "").strip()
+                # Filtrar códigos crudos (puro número / 1 char / basura larga)
+                if 2 <= len(m) <= 60 and not m.isdigit():
+                    canon.setdefault(m.lower(), m.title() if m.isupper() else m)
+            break   # una fuente ERP exitosa basta
+        except Exception:
+            continue
+    data = sorted(canon.values(), key=lambda s: s.lower())
+    _MARCAS_CACHE["data"] = data
+    _MARCAS_CACHE["ts"] = _t.time()
+    return data
+
+
+@app.route("/mantenciones/api/marcas", methods=["GET"])
+@_mant_required
+def mant_marcas_api():
+    try:
+        return jsonify({"ok": True, "marcas": _marcas_catalogo()})
+    except Exception as e:
+        print(f"[marcas] {e}", flush=True)
+        return jsonify({"ok": True, "marcas": _MARCAS_SEED})
+
+
+@app.route("/mantenciones/api/feriados", methods=["GET"])
+@_mant_required
+def mant_feriados_api():
+    """Feriados de Chile {fecha: nombre} para los años pedidos (máx 3).
+    Fuente única: cl_feriados.py (compartida con retiros)."""
+    try:
+        from cl_feriados import feriados_chile
+        anios = []
+        for a in (request.args.get("anios") or str(datetime.now().year)).split(","):
+            a = a.strip()
+            if a.isdigit() and 2020 <= int(a) <= 2040:
+                anios.append(int(a))
+        out = {}
+        for a in anios[:3]:
+            out.update(feriados_chile(a))
+        return jsonify(out)
+    except Exception as e:
+        print(f"[feriados] {e}", flush=True)
+        return jsonify({}), 200   # fail-open: el calendario sigue sin feriados
 
 
 @app.route("/mantenciones/configuracion")
@@ -57542,6 +58014,15 @@ def mant_maquina_ficha_tecnica_json(mid):
     hoy = datetime.now().date()
     cliente_id = eq.get("cliente_id")
 
+    # F-LEV 2026-06-10 (Daniel): si el equipo NO tiene N° de serie, SUGERIR la
+    # serie ILUS que se generaría (la "que ya viene de cuando se crea el
+    # producto"). El técnico la acepta con un click en el modal de captura.
+    if not (eq.get("serie") or "").strip():
+        try:
+            eq["serie_sugerida"] = _generar_serie_ilus(cliente_id, eq.get("sku") or "")
+        except Exception:
+            eq["serie_sugerida"] = None
+
     # ── 1. Fotos galería (mant_maquina_fotos) ──────────────────────
     # ORDER BY tomada_at (existe desde la migración inicial). NO usamos
     # created_at porque puede no estar poblado en filas viejas.
@@ -59032,6 +59513,13 @@ def _ensure_mant_intel_tables():
             mysql_execute("ALTER TABLE mant_clientes ADD COLUMN valor_mantencion_clp DECIMAL(12,2) NULL "
                           "COMMENT 'Monto final NETO por mantencion definido por gerencia (valoracion)'")
             faltaron.append("mant_clientes.valor_mantencion_clp")
+        # PLANIFICADOR 2026-06-10 (Daniel — caso U.Católica "siempre el día 12"):
+        # día del mes preferido para la mantención. 1-28 (28 máx → nunca falla
+        # en febrero). NULL = usar el día del ancla del contrato.
+        if "dia_mantencion_pref" not in ex_c:
+            mysql_execute("ALTER TABLE mant_clientes ADD COLUMN dia_mantencion_pref TINYINT NULL "
+                          "COMMENT 'Dia del mes preferido para mantencion (1-28). NULL = dia del ancla'")
+            faltaron.append("mant_clientes.dia_mantencion_pref")
     except Exception as e:
         print(f"[ensure_intel] valor_mantencion: {e}", flush=True)
     try:

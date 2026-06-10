@@ -563,6 +563,13 @@
         <i class="bi bi-list-check"></i><span>Plantillas</span>
       </a>
       {% endif %}
+      {# Plan Anual de mantenciones (2026-06-10): gestión, no técnicos #}
+      {% if current_user and current_user.role != 'tecnico' %}
+      <a href="{{ url_for('mant_planificador_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_planificador_page' %} active{% endif %}">
+        <i class="bi bi-grid-3x3-gap"></i><span>Plan Anual</span>
+      </a>
+      {% endif %}
       {# Agente de Inteligencia — solo admin/superadmin #}
       {% if permissions.admin or permissions.superadmin %}
       <a href="{{ url_for('mant_radar_page') }}"

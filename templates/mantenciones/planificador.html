@@ -1,0 +1,670 @@
+{% extends "base.html" %}
+{% block title %}Plan Anual de Mantenciones — ILUS{% endblock %}
+
+{% block content %}
+<style>
+  /* ══ Plan Anual de Mantenciones (.pa-*) — solo selectores por clase ══ */
+
+  /* Hero negro ejecutivo */
+  .pa-hero{background:linear-gradient(135deg,#0a0a0a,#2a0d0d);border-bottom:3px solid #dc2626;
+    border-radius:14px;padding:22px 26px;margin-bottom:14px;color:#fff;
+    display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+  .pa-hero-t{margin:0;font-size:1.35rem;font-weight:900;letter-spacing:-.02em;color:#fff;
+    display:flex;align-items:center;gap:10px}
+  .pa-hero-ic{color:#dc2626;font-size:1.2rem}
+  .pa-hero-sub{font-size:.8rem;color:rgba(255,255,255,.65);margin-top:3px}
+  .pa-year{display:flex;align-items:center;gap:10px}
+  .pa-year-btn{width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.4);
+    background:transparent;color:#fff;font-size:1.05rem;display:flex;align-items:center;
+    justify-content:center;cursor:pointer;transition:background .15s,border-color .15s}
+  .pa-year-btn:hover{background:rgba(255,255,255,.14);border-color:#fff}
+  .pa-year-num{font-size:2rem;font-weight:900;color:#fff;min-width:104px;text-align:center;
+    font-variant-numeric:tabular-nums;line-height:1}
+
+  /* KPI cards */
+  .pa-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px}
+  .pa-kpi{background:#fff;border:1px solid #eef0f3;border-radius:14px;
+    box-shadow:0 1px 8px rgba(10,10,10,.05);padding:14px 16px}
+  .pa-kpi-num{font-size:1.8rem;font-weight:900;line-height:1.1;color:#0f172a;font-variant-numeric:tabular-nums}
+  .pa-kpi-lbl{font-size:.66rem;font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+  .pa-kpi-sub{font-size:.66rem;color:#9ca3af;margin-top:5px;min-height:1em}
+  .pa-kpi-az .pa-kpi-num{color:#2563eb}
+  .pa-kpi-vd .pa-kpi-num{color:#16a34a}
+  .pa-kpi-rj .pa-kpi-num{color:#dc2626}
+  .pa-bar{height:7px;border-radius:50px;background:#f3f4f6;overflow:hidden;margin-top:8px}
+  .pa-bar-fill{height:100%;width:0;border-radius:50px;background:linear-gradient(90deg,#dc2626,#ef4444);
+    transition:width .9s cubic-bezier(.2,.8,.2,1)}
+  .pa-kpi-pulse .pa-kpi-num{animation:pa-pulse 1.8s ease-in-out infinite}
+  @keyframes pa-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+  /* Toolbar sticky */
+  .pa-toolbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    background:rgba(255,255,255,.93);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border-bottom:1px solid #eaecf0;border-radius:0 0 10px 10px;padding:10px 8px;margin-bottom:12px}
+  .pa-fchips{display:flex;gap:6px;flex-wrap:wrap}
+  .pa-fchip{border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:50px;
+    padding:6px 14px;font-size:.74rem;font-weight:800;cursor:pointer;min-height:34px;
+    transition:background .12s,color .12s,border-color .12s}
+  .pa-fchip:hover{border-color:#9ca3af}
+  .pa-fchip-on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+  .pa-switch{font-size:.78rem;font-weight:700;color:#374151;margin:0;white-space:nowrap}
+  .pa-sep{flex:1 1 auto}
+  .pa-genbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .pa-gen-group{display:flex;align-items:stretch}
+  .pa-gen-sel{width:auto;min-width:104px;border-radius:8px 0 0 8px;font-weight:700;font-size:.74rem}
+  .pa-gen-group .pa-btn-red{border-radius:0 8px 8px 0;white-space:nowrap}
+  .pa-btn-red{background:#dc2626;border:1px solid #dc2626;color:#fff}
+  .pa-btn-red:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}
+  .pa-btn-red:focus{box-shadow:0 0 0 .2rem rgba(220,38,38,.25);color:#fff}
+  .pa-btn-red:disabled{background:#dc2626;border-color:#dc2626;color:#fff;opacity:.6}
+  .pa-leg{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:.68rem;font-weight:700;color:#6b7280}
+  .pa-leg-it{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+  .pa-leg-dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .pa-ld-re{background:#dcfce7;border:1px solid #86efac}
+  .pa-ld-ag{background:#dbeafe;border:1px solid #93c5fd}
+  .pa-ld-pr{background:transparent;border:2px dashed #cbd5e1}
+  .pa-ld-ve{background:#fee2e2;border:1px solid #fca5a5}
+
+  /* Estados de página */
+  .pa-load{padding:70px 20px;text-align:center;color:#6b7280;font-size:.9rem}
+  .pa-err{background:#fff;border:1px solid #fecaca;border-radius:14px;padding:44px 24px;text-align:center}
+  .pa-err-ic{font-size:2.4rem;color:#dc2626;opacity:.6;display:block;margin-bottom:8px}
+  .pa-empty{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 24px;
+    text-align:center;color:#6b7280}
+  .pa-empty-ic{font-size:2.6rem;opacity:.3;display:block;margin-bottom:8px}
+
+  /* La grilla anual */
+  .pa-grid-wrap{background:#fff;border:1px solid #eaecf0;border-radius:14px;
+    overflow:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch;
+    max-height:calc(100vh - 170px);max-height:calc(100dvh - 170px)}
+  .pa-grid{border-collapse:separate;border-spacing:0;width:100%;min-width:1010px}
+  .pa-th{position:sticky;top:0;z-index:3;background:#fff;border-bottom:2px solid #eef0f3;
+    font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;
+    padding:10px 4px;text-align:center;min-width:64px}
+  .pa-th-cli{left:0;z-index:5;text-align:left;min-width:230px;padding-left:14px;
+    box-shadow:4px 0 8px -4px rgba(10,10,10,.07)}
+  .pa-mes-now{background:#fef2f2;color:#dc2626}
+  .pa-cli-col{position:sticky;left:0;z-index:2;background:#fff;min-width:230px;max-width:270px;
+    padding:7px 12px 7px 14px;border-bottom:1px solid #f3f4f6;
+    box-shadow:4px 0 8px -4px rgba(10,10,10,.07)}
+  .pa-cli-name{font-weight:800;font-size:.9rem;color:#0f172a;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .pa-cli-sub{font-size:.68rem;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pa-rdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .pa-r-alto{background:#dc2626}
+  .pa-r-medio{background:#f59e0b}
+  .pa-r-bajo{background:#16a34a}
+  .pa-r-na{background:#d1d5db}
+  .pa-cell{height:54px;min-width:64px;text-align:center;vertical-align:middle;
+    border-bottom:1px solid #f3f4f6;border-left:1px solid #f8f9fa;padding:2px}
+  .pa-row:hover .pa-cell{background:#fafafa}
+  .pa-row:hover .pa-cli-col{background:#fafafa}
+  .pa-row-nc .pa-cli-in{opacity:.55}
+  .pa-row-nc .pa-chip{opacity:.55}
+  .pa-row-nc .pa-dot{opacity:.55}
+  .pa-dot{color:#e5e7eb;font-weight:900;font-size:1rem;user-select:none}
+  .pa-chip{width:46px;height:38px;margin:0 auto;border-radius:10px;display:flex;align-items:center;
+    justify-content:center;cursor:pointer;font-size:.68rem;font-weight:800;line-height:1;
+    border:1px solid transparent;transition:transform .12s,box-shadow .12s}
+  .pa-chip:hover{transform:scale(1.1);box-shadow:0 3px 10px rgba(10,10,10,.12)}
+  .pa-chip-realizada{background:#dcfce7;border-color:#86efac;color:#166534;font-size:.85rem}
+  .pa-chip-agendada{background:#dbeafe;border-color:#93c5fd;color:#1e40af}
+  .pa-chip-proyectada{background:transparent;border:2px dashed #cbd5e1;color:#6b7280}
+  .pa-chip-vencida{background:#fee2e2;border-color:#fca5a5;color:#991b1b;font-size:.85rem;
+    animation:pa-pulse 1.6s ease-in-out infinite}
+
+  /* Popover de celda (un solo div reutilizable) */
+  .pa-pop{position:absolute;z-index:99990;width:248px;background:#fff;border:1px solid #e5e7eb;
+    border-radius:12px;box-shadow:0 14px 38px rgba(10,10,10,.22);padding:12px;display:none}
+  .pa-pop-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+  .pa-pop-badge{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+    padding:3px 10px;border-radius:50px}
+  .pa-pb-realizada{background:#dcfce7;color:#166534}
+  .pa-pb-agendada{background:#dbeafe;color:#1e40af}
+  .pa-pb-proyectada{background:#f3f4f6;color:#6b7280}
+  .pa-pb-vencida{background:#fee2e2;color:#991b1b}
+  .pa-pop-x{border:0;background:transparent;color:#9ca3af;font-size:1.25rem;line-height:1;
+    cursor:pointer;padding:0 2px}
+  .pa-pop-x:hover{color:#0a0a0a}
+  .pa-pop-fecha{font-size:.92rem;font-weight:800;color:#0f172a}
+  .pa-pop-ot{font-size:.7rem;font-weight:700;color:#1e40af;margin-top:1px}
+  .pa-pop-cli{font-size:.76rem;color:#6b7280;margin:2px 0 10px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .pa-pop-acts{display:flex;flex-direction:column;gap:6px}
+  .pa-pop-ficha{font-size:.74rem;font-weight:700;color:#dc2626;text-decoration:none;
+    text-align:center;padding:4px 0}
+  .pa-pop-ficha:hover{text-decoration:underline}
+
+  /* Modal vista previa */
+  .pa-prev-hint{font-size:.74rem;color:#6b7280;margin-bottom:8px}
+  .pa-prev-list{border:1px solid #eef0f3;border-radius:10px;overflow:hidden}
+  .pa-prev-it{display:flex;justify-content:space-between;gap:10px;padding:8px 12px;
+    font-size:.8rem;border-bottom:1px solid #f3f4f6;background:#fff}
+  .pa-prev-it:last-child{border-bottom:0}
+  .pa-prev-cli{font-weight:700;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pa-prev-f{font-weight:800;color:#dc2626;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* Mobile-first: scroll horizontal con primera columna sticky */
+  @media(max-width:680px){
+    .pa-hero{padding:16px 14px}
+    .pa-hero-t{font-size:1.05rem}
+    .pa-year-num{font-size:1.5rem;min-width:78px}
+    .pa-toolbar{gap:8px;padding:8px 6px}
+    .pa-fchip{min-height:44px;padding:8px 14px}
+    .pa-gen-sel{min-height:44px}
+    .pa-genbar .pa-btn-red{min-height:44px}
+    .pa-leg{width:100%}
+    .pa-th-cli{min-width:180px}
+    .pa-cli-col{min-width:180px;max-width:200px}
+    .pa-cli-name{font-size:.82rem}
+    .pa-grid{min-width:950px}
+    .pa-grid-wrap{max-height:calc(100dvh - 150px)}
+  }
+</style>
+
+<!-- Hero -->
+<div class="pa-hero">
+  <div class="pa-hero-tx">
+    <h4 class="pa-hero-t"><i class="bi bi-grid-3x3-gap-fill pa-hero-ic"></i>Plan Anual de Mantenciones</h4>
+    <div class="pa-hero-sub">Cobertura de cartera mes a mes — quién está cubierto y quién no</div>
+  </div>
+  <div class="pa-year">
+    <button type="button" class="pa-year-btn" id="paPrev" aria-label="Año anterior"><i class="bi bi-chevron-left"></i></button>
+    <div class="pa-year-num" id="paYearNum">{{ anio_actual }}</div>
+    <button type="button" class="pa-year-btn" id="paNext" aria-label="Año siguiente"><i class="bi bi-chevron-right"></i></button>
+  </div>
+</div>
+
+<!-- KPIs -->
+<div class="pa-kpis">
+  <div class="pa-kpi">
+    <div class="pa-kpi-num" id="paKCob">—</div>
+    <div class="pa-kpi-lbl"><i class="bi bi-bullseye me-1"></i>Cobertura del año</div>
+    <div class="pa-bar"><div class="pa-bar-fill" id="paKBar"></div></div>
+    <div class="pa-kpi-sub" id="paKProy"></div>
+  </div>
+  <div class="pa-kpi pa-kpi-az">
+    <div class="pa-kpi-num" id="paKAg">—</div>
+    <div class="pa-kpi-lbl"><i class="bi bi-calendar-check me-1"></i>OTs agendadas</div>
+  </div>
+  <div class="pa-kpi pa-kpi-vd">
+    <div class="pa-kpi-num" id="paKRe">—</div>
+    <div class="pa-kpi-lbl"><i class="bi bi-check2-circle me-1"></i>Realizadas</div>
+  </div>
+  <div class="pa-kpi pa-kpi-rj" id="paKVeCard">
+    <div class="pa-kpi-num" id="paKVe">—</div>
+    <div class="pa-kpi-lbl"><i class="bi bi-exclamation-octagon me-1"></i>Vencidas</div>
+  </div>
+</div>
+
+<!-- Toolbar sticky: filtros + acciones + leyenda -->
+<div class="pa-toolbar">
+  <div class="pa-fchips" id="paChips">
+    <button type="button" class="pa-fchip pa-fchip-on" data-r="">Todos</button>
+    <button type="button" class="pa-fchip" data-r="alto">Alto</button>
+    <button type="button" class="pa-fchip" data-r="medio">Medio</button>
+    <button type="button" class="pa-fchip" data-r="bajo">Bajo</button>
+  </div>
+  <div class="form-check form-switch pa-switch">
+    <input class="form-check-input" type="checkbox" role="switch" id="paSoloContrato">
+    <label class="form-check-label" for="paSoloContrato">Solo con contrato</label>
+  </div>
+  <div class="pa-sep"></div>
+  {% if puede_gestionar_visitas %}
+  <div class="pa-genbar">
+    <div class="pa-gen-group">
+      <select class="form-select form-select-sm pa-gen-sel" id="paSelMes" aria-label="Mes a generar"></select>
+      <button type="button" class="btn btn-sm pa-btn-red fw-bold" id="paBtnMes">
+        <i class="bi bi-lightning-charge-fill me-1"></i>Generar OTs del mes
+      </button>
+    </div>
+    <div class="pa-gen-group">
+      <select class="form-select form-select-sm pa-gen-sel" id="paSelQ" aria-label="Trimestre a generar"></select>
+      <button type="button" class="btn btn-sm pa-btn-red fw-bold" id="paBtnQ">
+        <i class="bi bi-lightning-charge me-1"></i>Generar trimestre
+      </button>
+    </div>
+  </div>
+  {% endif %}
+  <div class="pa-leg">
+    <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-re"></span>✓ Realizada</span>
+    <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-ag"></span>Agendada</span>
+    <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-pr"></span>Proyectada</span>
+    <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-ve"></span>Vencida</span>
+  </div>
+</div>
+
+<!-- Estado (spinner / error / vacío) -->
+<div id="paEstado"></div>
+
+<!-- Grilla -->
+<div class="pa-grid-wrap" id="paGridWrap" hidden>
+  <table class="pa-grid">
+    <thead><tr id="paHead"></tr></thead>
+    <tbody id="paBody"></tbody>
+  </table>
+</div>
+
+<!-- Popover reutilizable de celda -->
+<div class="pa-pop" id="paPop" role="dialog" aria-label="Detalle de mantención"></div>
+
+{% if puede_gestionar_visitas %}
+<!-- Modal de vista previa para generación masiva -->
+<div class="modal fade" id="mPreviewOTs" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="paPrevTitle">Vista previa</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="pa-prev-hint">Estas OTs se crearán como visitas agendadas. Revisa la lista antes de confirmar.</div>
+        <div class="pa-prev-list" id="paPrevBody"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm pa-btn-red fw-bold" id="paPrevGo">Generar OTs</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Plan Anual de Mantenciones ─────────────────────────── */
+const ANIO_INI = {{ anio_actual }};
+const PUEDE_GESTIONAR = {{ 'true' if puede_gestionar_visitas else 'false' }};
+const API_PLAN = '/mantenciones/api/planificador';
+const API_GEN  = '/mantenciones/api/planificador/generar-ots';
+const MES_ABR  = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const MES_FULL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto',
+                  'Septiembre','Octubre','Noviembre','Diciembre'];
+const EST_TXT  = {realizada:'Realizada', agendada:'Agendada', proyectada:'Proyectada', vencida:'Vencida'};
+
+let ANIO = ANIO_INI;     // año visible
+let DATA = null;         // última respuesta del API
+let PEND = null;         // generación masiva pendiente de confirmar
+const F  = {riesgo:'', soloContrato:false};
+
+const elEstado = document.getElementById('paEstado');
+const elWrap   = document.getElementById('paGridWrap');
+const elHead   = document.getElementById('paHead');
+const elBody   = document.getElementById('paBody');
+const elPop    = document.getElementById('paPop');
+
+/* ── Helpers ────────────────────────────────────────────── */
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ISO → DD/MM/YYYY
+function fmtF(iso){
+  if (!iso) return '—';
+  const p = String(iso).slice(0, 10).split('-');
+  return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : esc(String(iso));
+}
+// ISO → DD/MM
+function fmtDM(iso){
+  if (!iso) return '—';
+  const p = String(iso).slice(0, 10).split('-');
+  return p.length === 3 ? p[2] + '/' + p[1] : '—';
+}
+
+/* ── Estados de página ──────────────────────────────────── */
+function uiSpinner(){
+  elWrap.hidden = true;
+  elEstado.innerHTML = '<div class="pa-load"><div class="spinner-border spinner-border-sm me-2"></div>' +
+    'Calculando plan anual…</div>';
+}
+function uiError(msg){
+  elWrap.hidden = true;
+  elEstado.innerHTML = '<div class="pa-err"><i class="bi bi-exclamation-octagon pa-err-ic"></i>' +
+    '<div class="fw-bold mb-1">No se pudo cargar el plan</div>' +
+    '<div class="text-muted small mb-3">' + esc(msg) + '</div>' +
+    '<button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="cargar()">' +
+    '<i class="bi bi-arrow-repeat me-1"></i>Reintentar</button></div>';
+}
+function uiVacio(){
+  elWrap.hidden = true;
+  const conFiltros = !!(F.riesgo || F.soloContrato);
+  elEstado.innerHTML = '<div class="pa-empty"><i class="bi bi-calendar2-x pa-empty-ic"></i>' +
+    '<div class="fw-bold">Sin clientes activos</div>' +
+    '<div class="small">' + (conFiltros
+      ? 'Ningún cliente coincide con los filtros aplicados.'
+      : 'Aún no hay clientes con plan de mantención.') + '</div></div>';
+}
+
+/* ── Render KPIs ────────────────────────────────────────── */
+function renderKpis(k){
+  k = k || {};
+  const pct = Math.max(0, Math.min(100, Math.round(Number(k.cobertura_pct) || 0)));
+  document.getElementById('paKCob').textContent = pct + '%';
+  document.getElementById('paKAg').textContent  = (k.ots_agendadas != null) ? k.ots_agendadas : '—';
+  document.getElementById('paKRe').textContent  = (k.realizadas != null) ? k.realizadas : '—';
+  document.getElementById('paKVe').textContent  = (k.vencidas != null) ? k.vencidas : '—';
+  const proy = Number(k.proyectadas) || 0;
+  document.getElementById('paKProy').textContent = proy > 0 ? (proy + ' mantenciones proyectadas pendientes') : '';
+  const bar = document.getElementById('paKBar');
+  bar.style.width = '0%';
+  requestAnimationFrame(() => { requestAnimationFrame(() => { bar.style.width = pct + '%'; }); });
+  document.getElementById('paKVeCard').classList.toggle('pa-kpi-pulse', (Number(k.vencidas) || 0) > 0);
+}
+
+/* ── Render grilla ──────────────────────────────────────── */
+function buildHead(){
+  const hoy = new Date();
+  const mesNow = (ANIO === hoy.getFullYear()) ? (hoy.getMonth() + 1) : 0;
+  let h = '<th class="pa-th pa-th-cli">Cliente</th>';
+  for (let m = 1; m <= 12; m++){
+    h += '<th class="pa-th pa-th-mes' + (m === mesNow ? ' pa-mes-now' : '') + '">' + MES_ABR[m - 1] + '</th>';
+  }
+  elHead.innerHTML = h;
+}
+
+function chipHtml(c, mes, cel){
+  if (!cel) return '<span class="pa-dot">·</span>';
+  const dd  = cel.fecha ? String(cel.fecha).slice(8, 10) : '·';
+  const dat = ' data-cli="' + esc(c.id) + '" data-mes="' + mes + '"';
+  if (cel.estado === 'realizada'){
+    return '<div class="pa-chip pa-chip-realizada"' + dat + ' title="Realizada · ' + fmtF(cel.fecha) + '">' +
+      '<i class="bi bi-check-lg"></i></div>';
+  }
+  if (cel.estado === 'agendada'){
+    return '<div class="pa-chip pa-chip-agendada"' + dat + ' title="' +
+      esc(cel.numero_ot || 'OT agendada') + ' · ' + fmtF(cel.fecha) + '">' + dd + '</div>';
+  }
+  if (cel.estado === 'vencida'){
+    return '<div class="pa-chip pa-chip-vencida"' + dat + ' title="Vencida · ' + fmtF(cel.fecha) + '">!</div>';
+  }
+  return '<div class="pa-chip pa-chip-proyectada"' + dat + ' title="Proyectada · ' + fmtF(cel.fecha) + '">' + dd + '</div>';
+}
+
+function renderGrid(clientes){
+  let html = '';
+  for (const c of clientes){
+    const r   = String(c.riesgo || '').toLowerCase();
+    const dot = (r === 'alto') ? 'pa-r-alto' : (r === 'medio') ? 'pa-r-medio' : (r === 'bajo') ? 'pa-r-bajo' : 'pa-r-na';
+    const tit = r ? ('Riesgo ' + r) : 'Sin riesgo calculado';
+    const sub = c.tiene_contrato
+      ? ('cada ' + esc(c.frecuencia != null ? c.frecuencia : '—') + ' meses · día ' +
+         esc(c.dia_pref != null ? c.dia_pref : '—') + ' · próx ' + fmtDM(c.proxima))
+      : 'sin contrato';
+    html += '<tr class="pa-row' + (c.tiene_contrato ? '' : ' pa-row-nc') + '">';
+    html += '<td class="pa-cli-col"><div class="pa-cli-in">' +
+      '<div class="pa-cli-name" title="' + esc(c.razon_social) + '">' +
+      '<span class="pa-rdot ' + dot + '" title="' + tit + '"></span>' + esc(c.razon_social) + '</div>' +
+      '<div class="pa-cli-sub">' + sub + '</div></div></td>';
+    for (let m = 1; m <= 12; m++){
+      html += '<td class="pa-cell">' + chipHtml(c, m, (c.meses || {})[m]) + '</td>';
+    }
+    html += '</tr>';
+  }
+  elBody.innerHTML = html;
+}
+
+/* ── Carga de datos ─────────────────────────────────────── */
+async function cargar(){
+  cerrarPop();
+  document.getElementById('paYearNum').textContent = ANIO;
+  uiSpinner();
+  const q = new URLSearchParams();
+  q.set('anio', String(ANIO));
+  if (F.riesgo) q.set('riesgo', F.riesgo);
+  if (F.soloContrato) q.set('solo_contrato', '1');
+  try {
+    const r = await fetch(API_PLAN + '?' + q.toString());
+    let d = null;
+    try { d = await r.json(); } catch (e2) { d = null; }
+    if (r.status === 403){ uiError('Tu rol no tiene acceso al planificador.'); return; }
+    if (!r.ok || !d || d.ok !== true) throw new Error((d && d.error) || ('Error HTTP ' + r.status));
+    DATA = d;
+    renderKpis(d.kpis);
+    if (!d.clientes || !d.clientes.length){ uiVacio(); return; }
+    buildHead();
+    renderGrid(d.clientes);
+    elEstado.innerHTML = '';
+    elWrap.hidden = false;
+  } catch (e) {
+    uiError(e.message || 'Error de red');
+    if (typeof ilusToast === 'function') ilusToast('No se pudo cargar el plan anual.', {type: 'error'});
+  }
+}
+
+function cambiarAnio(delta){
+  const n = ANIO + delta;
+  if (n < 2020 || n > 2099) return;
+  ANIO = n;
+  cargar();
+}
+
+/* ── Popover de celda ───────────────────────────────────── */
+function cerrarPop(){ elPop.style.display = 'none'; }
+
+function abrirPop(chip, c, mes, cel){
+  const est = String((cel && cel.estado) || 'proyectada');
+  let acc = '';
+  if (PUEDE_GESTIONAR && (est === 'proyectada' || est === 'vencida')){
+    acc += '<button type="button" class="btn btn-sm pa-btn-red fw-bold w-100 pa-pop-gen">' +
+      '<i class="bi bi-lightning-charge-fill me-1"></i>Generar OT</button>';
+  }
+  if ((est === 'agendada' || est === 'realizada') && cel.visita_id){
+    acc += '<a class="btn btn-sm btn-outline-dark fw-bold w-100" href="/mantenciones/ot/' +
+      encodeURIComponent(cel.visita_id) + '"><i class="bi bi-file-earmark-text me-1"></i>Abrir OT</a>';
+  }
+  acc += '<a class="pa-pop-ficha" href="/mantenciones/clientes/' + encodeURIComponent(c.id) + '">' +
+    'Ver ficha del cliente <i class="bi bi-chevron-right"></i></a>';
+
+  elPop.innerHTML =
+    '<div class="pa-pop-head"><span class="pa-pop-badge pa-pb-' + esc(est) + '">' +
+    (EST_TXT[est] || esc(est)) + '</span>' +
+    '<button type="button" class="pa-pop-x" aria-label="Cerrar">&times;</button></div>' +
+    '<div class="pa-pop-fecha"><i class="bi bi-calendar3 me-1"></i>' + fmtF(cel.fecha) + '</div>' +
+    (cel.numero_ot ? ('<div class="pa-pop-ot">' + esc(cel.numero_ot) + '</div>') : '') +
+    '<div class="pa-pop-cli" title="' + esc(c.razon_social) + '">' + esc(c.razon_social) + '</div>' +
+    '<div class="pa-pop-acts">' + acc + '</div>';
+
+  elPop.querySelector('.pa-pop-x').addEventListener('click', cerrarPop);
+  const bGen = elPop.querySelector('.pa-pop-gen');
+  if (bGen) bGen.addEventListener('click', () => generarUno(c, mes, cel));
+
+  // Posicionar cerca del chip cuidando los bordes del viewport
+  elPop.style.display = 'block';
+  const rc = chip.getBoundingClientRect();
+  const pw = elPop.offsetWidth, ph = elPop.offsetHeight;
+  let x = window.scrollX + rc.left + (rc.width / 2) - (pw / 2);
+  x = Math.max(window.scrollX + 8, Math.min(x, window.scrollX + window.innerWidth - pw - 8));
+  let y = window.scrollY + rc.bottom + 8;
+  if (rc.bottom + ph + 16 > window.innerHeight) y = window.scrollY + rc.top - ph - 8;
+  elPop.style.left = Math.round(x) + 'px';
+  elPop.style.top  = Math.round(y) + 'px';
+}
+
+/* ── POST compartido al generador ───────────────────────── */
+async function postGen(body){
+  const r = await fetch(API_GEN, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (r.status === 403) throw new Error('Tu rol no tiene permisos para generar OTs.');
+  let d = null;
+  try { d = await r.json(); } catch (e2) { d = null; }
+  if (!r.ok || !d || d.ok !== true) throw new Error((d && d.error) || ('Error HTTP ' + r.status));
+  return d;
+}
+
+/* ── Generar UNA OT desde el popover ────────────────────── */
+async function generarUno(c, mes, cel){
+  const ok = await ilusConfirm({
+    title: 'Generar OT',
+    message: '¿Crear la OT de ' + c.razon_social + ' para el ' + fmtF(cel.fecha) + '?',
+    sub: 'La visita quedará agendada en el calendario de mantenciones.',
+    okLabel: 'Generar OT', cancelLabel: 'Cancelar'
+  });
+  if (!ok) return;
+  cerrarPop();
+  try {
+    const d = await postGen({anio: ANIO, meses: [mes], cliente_ids: [c.id], dry_run: false, confirm: true});
+    if ((d.creadas || 0) > 0){
+      ilusToast('✓ OT creada para ' + c.razon_social, {type: 'success'});
+    } else if (d.omitidas && d.omitidas.length){
+      ilusToast('No se creó: ' + (d.omitidas[0].motivo || 'el mes ya estaba cubierto'), {type: 'warning'});
+    } else {
+      ilusToast('No había nada que generar.', {type: 'info'});
+    }
+    cargar();
+  } catch (e) {
+    ilusToast(e.message || 'Error de red al generar la OT.', {type: 'error'});
+  }
+}
+
+/* ── Generación masiva: dry-run → preview → confirm ─────── */
+async function genMasivo(meses, btn){
+  cerrarPop();
+  if (!DATA || !DATA.clientes || !DATA.clientes.length){
+    ilusToast('No hay clientes visibles con los filtros actuales.', {type: 'info'});
+    return;
+  }
+  // Filtros riesgo/contrato ya aplicados por el server: los visibles son DATA.clientes
+  const ids = DATA.clientes.map((c) => c.id);
+  if (btn) btn.disabled = true;
+  try {
+    const d = await postGen({anio: ANIO, meses: meses, cliente_ids: ids, dry_run: true});
+    const prev = d.preview || [];
+    if (!d.preview_count || !prev.length){
+      ilusToast('Nada que generar: esos meses ya están cubiertos.', {type: 'info'});
+      return;
+    }
+    PEND = {meses: meses, cliente_ids: ids, n: d.preview_count};
+    document.getElementById('paPrevTitle').textContent = 'Vista previa · ' + d.preview_count + ' OTs por generar';
+    let lis = '';
+    for (const p of prev){
+      lis += '<div class="pa-prev-it"><span class="pa-prev-cli">' + esc(p.razon_social) + '</span>' +
+        '<span class="pa-prev-f">' + fmtF(p.fecha) + '</span></div>';
+    }
+    document.getElementById('paPrevBody').innerHTML = lis;
+    document.getElementById('paPrevGo').textContent = 'Generar ' + d.preview_count + ' OTs';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('mPreviewOTs')).show();
+  } catch (e) {
+    ilusToast(e.message || 'Error de red al calcular la vista previa.', {type: 'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function confirmarMasivo(){
+  if (!PEND) return;
+  const ok = await ilusConfirm({
+    title: 'Generar OTs',
+    message: '¿Crear ' + PEND.n + ' órdenes de trabajo del plan ' + ANIO + '?',
+    sub: 'Quedarán agendadas según el día preferido de cada cliente.',
+    okLabel: 'Generar ' + PEND.n + ' OTs', cancelLabel: 'Cancelar'
+  });
+  if (!ok) return;
+  const btn = document.getElementById('paPrevGo');
+  btn.disabled = true;
+  try {
+    const d = await postGen({anio: ANIO, meses: PEND.meses, cliente_ids: PEND.cliente_ids,
+      dry_run: false, confirm: true});
+    ilusToast('✓ ' + (d.creadas || 0) + ' OTs creadas', {type: 'success'});
+    if (d.omitidas && d.omitidas.length){
+      ilusToast(d.omitidas.length + ' cliente(s) omitido(s): ya tenían OT o sin fecha válida.', {type: 'warning'});
+    }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('mPreviewOTs')).hide();
+    PEND = null;
+    cargar();
+  } catch (e) {
+    ilusToast(e.message || 'Error de red al generar las OTs.', {type: 'error'});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Selects de mes y trimestre (solo si puede gestionar) ── */
+function llenarSelects(){
+  const sm = document.getElementById('paSelMes');
+  const sq = document.getElementById('paSelQ');
+  if (!sm || !sq) return;
+  const hoy = new Date();
+  let om = '';
+  for (let m = 1; m <= 12; m++) om += '<option value="' + m + '">' + MES_FULL[m - 1] + '</option>';
+  sm.innerHTML = om;
+  sm.value = String((ANIO === hoy.getFullYear()) ? (hoy.getMonth() + 1) : 1);
+  const QTXT = ['Q1 (Ene–Mar)', 'Q2 (Abr–Jun)', 'Q3 (Jul–Sep)', 'Q4 (Oct–Dic)'];
+  let oq = '';
+  for (let qn = 1; qn <= 4; qn++) oq += '<option value="' + qn + '">' + QTXT[qn - 1] + '</option>';
+  sq.innerHTML = oq;
+  sq.value = String((ANIO === hoy.getFullYear()) ? (Math.floor(hoy.getMonth() / 3) + 1) : 1);
+}
+
+/* ── Init ───────────────────────────────────────────────── */
+function init(){
+  // Popover al body: coordenadas absolutas respecto al documento
+  document.body.appendChild(elPop);
+  elPop.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', (e) => {
+    if (elPop.style.display === 'block' && !e.target.closest('.pa-pop')) cerrarPop();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarPop(); });
+  window.addEventListener('scroll', cerrarPop, {passive: true});
+  elWrap.addEventListener('scroll', cerrarPop, {passive: true});
+
+  // Click en chips de la grilla (delegación)
+  elBody.addEventListener('click', (e) => {
+    const chip = e.target.closest('.pa-chip');
+    if (!chip) return;
+    e.stopPropagation();
+    const cid = Number(chip.dataset.cli);
+    const mes = Number(chip.dataset.mes);
+    const c = ((DATA && DATA.clientes) || []).find((x) => Number(x.id) === cid);
+    if (!c) return;
+    const cel = (c.meses || {})[mes];
+    if (!cel) return;
+    abrirPop(chip, c, mes, cel);
+  });
+
+  // Filtro de riesgo (chips)
+  document.getElementById('paChips').addEventListener('click', (e) => {
+    const b = e.target.closest('.pa-fchip');
+    if (!b) return;
+    F.riesgo = b.dataset.r || '';
+    document.querySelectorAll('.pa-fchip').forEach((x) => x.classList.toggle('pa-fchip-on', x === b));
+    cargar();
+  });
+
+  // Toggle solo con contrato
+  document.getElementById('paSoloContrato').addEventListener('change', (e) => {
+    F.soloContrato = !!e.target.checked;
+    cargar();
+  });
+
+  // Selector de año
+  document.getElementById('paPrev').addEventListener('click', () => cambiarAnio(-1));
+  document.getElementById('paNext').addEventListener('click', () => cambiarAnio(1));
+
+  // Generación masiva (botones existen solo si puede gestionar)
+  const bm = document.getElementById('paBtnMes');
+  if (bm) bm.addEventListener('click', () => {
+    const m = Number(document.getElementById('paSelMes').value) || 1;
+    genMasivo([m], bm);
+  });
+  const bq = document.getElementById('paBtnQ');
+  if (bq) bq.addEventListener('click', () => {
+    const qn = Number(document.getElementById('paSelQ').value) || 1;
+    genMasivo([qn * 3 - 2, qn * 3 - 1, qn * 3], bq);
+  });
+  const go = document.getElementById('paPrevGo');
+  if (go) go.addEventListener('click', confirmarMasivo);
+
+  llenarSelects();
+  cargar();
+}
+
+if (document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+{% endblock %}
