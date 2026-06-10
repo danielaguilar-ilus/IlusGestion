@@ -688,8 +688,28 @@ def register_pickup_routes(app, ctx):
         lunch_e = _td_to_hhmm(cfg.get("lunch_end")   or "14:00:00")
         if not time_from or not time_to or time_from >= time_to:
             return False, "Selecciona un rango horario valido."
-        if time_from < open_t or time_to > close_t:
-            return False, f"El horario debe estar entre {open_t} y {close_t}."
+        # Daniel 2026-06-10: el CIERRE es la última hora de LLEGADA admitida.
+        # La grilla pública (v3, 2026-05-24) ofrece el bloque 16:30→17:00 a
+        # propósito; este validador exigía que el bloque TERMINARA antes del
+        # cierre (16:30) y rechazaba justo ese bloque ("El horario debe estar
+        # entre 09:00 y 16:30" al elegir 16:30). Regla nueva: la LLEGADA
+        # (time_from) debe caer entre apertura y cierre; el término puede
+        # extenderse hasta cierre + 1 bloque (la atención del último cliente).
+        try:
+            _slot_min = int(cfg.get("slot_minutes") or 30)
+        except (TypeError, ValueError):
+            _slot_min = 30
+        try:
+            _cH, _cM = [int(x) for x in close_t.split(":")[:2]]
+            _fin_tot = _cH * 60 + _cM + _slot_min
+            _fin_max = f"{_fin_tot // 60:02d}:{_fin_tot % 60:02d}"
+        except Exception:
+            _fin_max = close_t
+        if time_from < open_t or time_from > close_t or time_to > _fin_max:
+            return False, (
+                f"La hora de llegada debe estar entre {open_t} y {close_t} "
+                f"(la atención del último bloque termina a las {_fin_max})."
+            )
         # Cruce de colación: el rango (time_from, time_to) se solapa con
         # (lunch_s, lunch_e) cuando NO se cumple: time_to <= lunch_s OR time_from >= lunch_e
         if bypass_lunch:
