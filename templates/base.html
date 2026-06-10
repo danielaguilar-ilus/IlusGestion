@@ -549,10 +549,15 @@
       </a> #}
       {# Cotizaciones y Plantillas: ocultas para rol 'tecnico'. #}
       {% if current_user and current_user.role != 'tecnico' %}
+      {# 2026-06-10 (Daniel): Cotizaciones FUERA del menú hasta habilitar el
+         módulo. Se reactiva desde Configuración → regla
+         'Módulo Cotizaciones visible' (sin tocar código). #}
+      {% if mant_cotizaciones_on %}
       <a href="{{ url_for('mant_cotizaciones_list') }}"
          class="sidebar-link{% if request.endpoint in ['mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
         <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
       </a>
+      {% endif %}
       <a href="{{ url_for('mant_plantillas_page') }}"
          class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
         <i class="bi bi-list-check"></i><span>Plantillas</span>

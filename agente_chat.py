@@ -100,24 +100,58 @@ def _r_cuanto_cobrar(d):
     total = _g(d, "valorizacion.total")
     nom = _nombre(d)
     if not total:
-        return ("Aún no hay una valorización calculada para este cliente. Genera la cotización/levantamiento "
-                "desde la ficha para obtener el monto sugerido.")
+        return ("Aún no hay una valorización calculada para este cliente. Define el monto final en el panel "
+                "del Agente (sección Finanzas) o registra la tarifa en el contrato.")
     out = []
-    pitch = _g(d, "valorizacion.pitch")
-    if pitch:
-        out.append(pitch)
-    out.append(f"Para {nom} la valorización sugerida es {_clp(total)} bruto.")
-    dpct = _g(d, "valorizacion.descuento_pct")
-    if dpct:
+    # 2026-06-10: si gerencia DEFINIÓ el monto final en la ficha, eso manda.
+    if _g(d, "valorizacion.origen_precio") == "definido":
         neto = _clp(_g(d, "valorizacion.neto"))
-        iva = _clp(_g(d, "valorizacion.iva"))
-        out.append(f"Con {dpct}% de descuento queda en {neto} neto + {iva} IVA.")
+        out.append(f"Para {nom} el monto definido por gerencia es {neto} neto + IVA = {_clp(total)} total por mantención.")
+    else:
+        pitch = _g(d, "valorizacion.pitch")
+        if pitch:
+            out.append(pitch)
+        out.append(f"Para {nom} la valorización sugerida es {_clp(total)} bruto.")
+        dpct = _g(d, "valorizacion.descuento_pct")
+        if dpct:
+            neto = _clp(_g(d, "valorizacion.neto"))
+            iva = _clp(_g(d, "valorizacion.iva_monto"))
+            out.append(f"Con {dpct}% de descuento queda en {neto} neto + {iva} IVA.")
     if _g(d, "tiene_contrato"):
         mm = _clp(_g(d, "diagnostico_contrato.monto_mensual"))
         va = _clp(_g(d, "diagnostico_contrato.valor_anual"))
         if mm or va:
             out.append(f"Hoy paga {mm or '—'}/mes ({va or '—'}/año); úsalo como piso de negociación.")
-    out.append("💰 Es plata sobre la mesa → arma la cotización y ciérrala antes de que el cliente busque un tercero.")
+    mpct = _g(d, "finanzas.margen_pct")
+    if mpct is not None:
+        out.append(f"Tu margen histórico con este cliente es {mpct}% — cuida que el nuevo precio no lo baje.")
+    out.append("💰 Es plata sobre la mesa → cierra el monto antes de que el cliente busque un tercero.")
+    return "\n".join(out)
+
+
+def _r_finanzas_margen(d):
+    """Margen real: lo cobrado vs lo que me cobra el proveedor (interno/externo)."""
+    nom = _nombre(d)
+    fz = _g(d, "finanzas") or {}
+    n = fz.get("n_servicios") or 0
+    if not n:
+        return (f"Aún no tengo servicios con montos registrados para {nom}. Cuando completes las visitas "
+                "con su valor cobrado y el costo del proveedor (al editar la visita), te calculo la "
+                "diferencia y el % de margen al instante.")
+    out = [f"📊 Finanzas de {nom} ({n} servicio(s) con montos):"]
+    out.append(f"• Cobrado: {_clp(fz.get('total_cobrado'))}")
+    out.append(f"• Costo proveedor/técnico: {_clp(fz.get('total_costo_proveedor'))}")
+    mg = fz.get("margen_clp"); mpct = fz.get("margen_pct")
+    out.append(f"• Margen (diferencia): {_clp(mg)}" + (f" = {mpct}%" if mpct is not None else ""))
+    sin = fz.get("sin_costo_proveedor") or 0
+    if sin:
+        out.append(f"⚠️ {sin} servicio(s) no tienen costo de proveedor registrado — el margen real puede ser menor. "
+                   "Complétalo editando cada visita (campo 'Costo proveedor').")
+    vd = fz.get("valor_definido")
+    if vd:
+        out.append(f"Monto definido por gerencia: {_clp(vd)} neto por mantención.")
+    else:
+        out.append("Tip: define el monto final por mantención en la sección Finanzas del panel y lo uso en todas las respuestas.")
     return "\n".join(out)
 
 
@@ -452,6 +486,7 @@ def _r_contacto(d):
 INTENTS = [
     ("gratis_o_se_cobra", _r_gratis_o_se_cobra, 1, ["gratis", "se cobra", "cobrar", "cobro", "cubierto", "cubrimos", "incluido", "incluye", "gratuita", "cortesia", "facturar o garantia"]),
     ("cuanto_cobrar", _r_cuanto_cobrar, 1, ["cuanto cobr", "cuanto le cobro", "cuanto deber", "deberia cobr", "cobrarle", "cuanto cotiz", "precio", "monto", "cotizo", "cotizar", "ofrecer", "cuanto vale", "tarifa", "valorizacion", "propuesta", "descuento", "cuanto queda", "plata", "lucas", "presupuesto"]),
+    ("finanzas_margen", _r_finanzas_margen, 1, ["margen", "margenes", "rentabilidad", "utilidad", "ganancia", "cuanto gano", "cuanto ganamos", "me deja", "diferencia de precio", "costo proveedor", "cuesta el proveedor", "le pago al proveedor", "me cuesta", "cuanto me cobra", "finanzas", "numeros del cliente"]),
     ("fuga_a_terceros", _r_fuga_a_terceros, 1, ["fuga", "tercero", "competencia", "otra empresa", "otro proveedor", "perdiendo", "externo", "competidor", "se nos va"]),
     ("mantenciones_gratis_pendientes", _r_mantenciones_gratis_pendientes, 1, ["gratis pendientes", "incluidas", "cuantas gratis", "le debemos", "pactadas", "cumplimos", "quedan gratis", "regalando", "regalo", "brecha"]),
     ("servicios_sin_facturar", _r_servicios_sin_facturar, 1, ["sin facturar", "facturacion", "por cobrar", "no facturado", "regularizar", "factura pendiente", "pendiente de cobro"]),
@@ -479,6 +514,7 @@ CHIPS = [
     "¿Esta mantención es gratis o se cobra?",
     "¿Cómo van las garantías?",
     "¿Cuánto le cobro?",
+    "¿Cuál es mi margen con este cliente?",
     "¿Hay mantenciones atrasadas?",
     "¿Se está fugando a terceros?",
     "¿Qué tengo sin facturar?",

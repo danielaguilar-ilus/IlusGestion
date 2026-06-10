@@ -507,4 +507,156 @@ def analizar_contrato(texto, reglas=None, overrides=None):
                             tipo=tipo_doc, campos=campos,
                             cobertura_parcial=cobertura_parcial),
     })
+    # 2026-06-10 (Daniel): "las cláusulas delicadas, leerlas una por una".
+    # Lectura cláusula-por-cláusula con las MISMAS reglas (ya filtradas por
+    # overrides). Determinista, CERO IA.
+    try:
+        base["lectura_clausulas"] = leer_clausulas(texto, reglas_eval)
+    except Exception:
+        base["lectura_clausulas"] = None
     return base
+
+
+# ───────────────────── LECTURA CLÁUSULA POR CLÁUSULA ─────────────────────
+# Segmenta el contrato en cláusulas reales (PRIMERO:, CLÁUSULA X, Artículo N,
+# numeración 1.- etc.) y evalúa cada una con las reglas de PRESENCIA. Las
+# reglas de AUSENCIA son del documento completo (que falte un SLA no es culpa
+# de una cláusula puntual), así que aquí no se aplican. CERO IA.
+
+_CLAUSULA_HDR_RE = re.compile(
+    r"(?m)^[ \t]*("
+    r"(?:PRIMER[OA]|SEGUND[OA]|TERCER[OA]|CUART[OA]|QUINT[OA]|SEXT[OA]|"
+    r"S[EÉ]PTIM[OA]|OCTAV[OA]|NOVEN[OA]|D[EÉ]CIM[OA](?:\s*\w+)?|"
+    r"UND[EÉ]CIM[OA]|DUOD[EÉ]CIM[OA]|VIG[EÉ]SIM[OA](?:\s*\w+)?)\s*[:.\-–—]"
+    r"|CL[AÁ]USULA\s+[\w°ºª]+\s*[:.\-–—]?"
+    r"|ART[IÍ]CULO\s+[\w°ºª]+\s*[:.\-–—]?"
+    r"|ANEXO\s+[\w°ºª]+\s*[:.\-–—]?"
+    r"|\d{1,2}\s*[.\-)°º]+(?=\s*[A-ZÁÉÍÓÚÑ])"
+    r")"
+)
+
+
+def segmentar_clausulas(texto):
+    """Divide el texto original en cláusulas [{n, encabezado, texto}].
+    Si no detecta encabezados formales (≥2), cae a párrafos dobles."""
+    texto = (texto or "").strip()
+    if not texto:
+        return []
+    matches = list(_CLAUSULA_HDR_RE.finditer(texto))
+    partes = []
+    if len(matches) >= 2:
+        for i, m in enumerate(matches):
+            ini = m.start()
+            fin = matches[i + 1].start() if i + 1 < len(matches) else len(texto)
+            cuerpo = texto[ini:fin].strip()
+            if len(cuerpo) < 25:      # encabezado huérfano (índice, firma…)
+                continue
+            partes.append({
+                "n": len(partes) + 1,
+                "encabezado": re.sub(r"\s+", " ", m.group(1)).strip(" :.-–—")[:60],
+                "texto": cuerpo,
+            })
+    else:
+        # Fallback: párrafos dobles; los muy cortos se pegan al anterior.
+        bloques = [b.strip() for b in re.split(r"\n\s*\n+", texto) if b.strip()]
+        for b in bloques:
+            if partes and len(b) < 180:
+                partes[-1]["texto"] += "\n" + b
+            else:
+                partes.append({"n": len(partes) + 1, "encabezado": "", "texto": b})
+    return partes[:60]   # tope de sanidad
+
+
+# Términos DELICADOS que el lector marca aunque ninguna regla de la BD dispare
+# en esa cláusula. ILUS es el PRESTADOR: exclusividad/anulación por terceros lo
+# protegen (las reglas BD las marcan favorables); aquí solo señalamos DÓNDE
+# leer con lupa. (tema, [variantes normalizadas])
+_TERMINOS_SENSIBLES = [
+    ("Garantía condicionada / se anula",
+     ["anula la garantia", "anulara la garantia", "sin efecto la garantia",
+      "quedara sin efecto", "queda sin efecto", "se extingue la garantia",
+      "perdida de la garantia", "caducidad de la garantia", "suspende la garantia",
+      "garantia sujeta a", "condicionada a la mantencion"]),
+    ("Terceros / exclusividad",
+     ["terceros ajenos", "tercero no autorizado", "personal ajeno",
+      "mantencion exclusiva", "exclusivamente por", "unica empresa autorizada",
+      "repuestos no originales", "repuestos genericos", "intervencion de terceros"]),
+    ("Multas / intereses / mora",
+     ["multa", "interes diario", "intereses por mora", "mora superior",
+      "uf por dia", "uf diaria", "recargo"]),
+    ("Renovación / término del contrato",
+     ["renovacion automatica", "se renovara automaticamente", "termino anticipado",
+      "terminacion anticipada", "desahucio", "aviso previo de"]),
+    ("Responsabilidad / indemnización",
+     ["indemnizacion", "indemnizar", "responsabilidad civil", "dano emergente",
+      "lucro cesante", "exime de responsabilidad", "libera de responsabilidad"]),
+    ("Suspensión del servicio",
+     ["suspension del servicio", "suspender el servicio", "faculta la suspension",
+      "interrumpir el servicio"]),
+    ("Mantenciones gratuitas / incluidas",
+     ["mantenciones gratuitas", "mantencion gratuita", "sin costo para el cliente",
+      "incluye mantencion", "mantenciones incluidas"]),
+]
+
+
+def leer_clausulas(texto, reglas=None):
+    """Evalúa cada cláusula → semáforo + hallazgos + términos sensibles.
+    - Reglas de PRESENCIA pura: se evalúan sobre la cláusula.
+    - Reglas MIXTAS (presencia+ausencia): presencia en la cláusula y ausencia
+      sobre el DOCUMENTO COMPLETO (que falte la contraparte es global, no
+      culpa de la cláusula → evita falsos positivos).
+    - Reglas de AUSENCIA pura: no aplican por cláusula (son del documento).
+    Devuelve {total, criticas, a_revisar, favorables, clausulas:[...]}"""
+    if reglas is None:
+        reglas = cargar_reglas()
+    partes = segmentar_clausulas(texto)
+    if not partes:
+        return {"total": 0, "criticas": 0, "a_revisar": 0, "favorables": 0, "clausulas": []}
+    t_doc = _norm(texto or "")
+    reglas_pres = [r for r in reglas if (r.get("patrones_presencia") or [])]
+    out = []
+    for p in partes:
+        tn = _norm(p["texto"])
+        hallazgos = []
+        for r in reglas_pres:
+            if not any(_ocurre_no_negado(tn, _norm(pa)) for pa in (r.get("patrones_presencia") or [])):
+                continue
+            aus = r.get("patrones_ausencia") or []
+            if aus and not all(_ocurre_o_negado(t_doc, _norm(pa)) for pa in aus):
+                continue   # la contraparte SÍ está en el documento → regla no aplica
+            hallazgos.append({
+                "id": r.get("id"), "tipo": r.get("tipo"),
+                "mensaje": (r.get("mensaje") or "").strip(),
+                "base_legal": (r.get("base_legal") or "").strip(),
+                "propuesta": (r.get("propuesta") or "").strip(),
+            })
+        # Términos sensibles: substring directo (sin filtro de negación — el
+        # punto es marcar dónde LEER con atención, no juzgar).
+        sensibles = []
+        for tema, variantes in _TERMINOS_SENSIBLES:
+            if any(v in tn for v in variantes):
+                sensibles.append(tema)
+        tipos = {h["tipo"] for h in hallazgos}
+        if "alerta_critica" in tipos:
+            semaforo = "critica"
+        elif "punto_revisar" in tipos or "clausula_relevante" in tipos or sensibles:
+            semaforo = "revisar"
+        elif "clausula_favorable" in tipos:
+            semaforo = "favorable"
+        else:
+            semaforo = "neutra"
+        extracto = re.sub(r"\s+", " ", p["texto"]).strip()
+        out.append({
+            "n": p["n"], "encabezado": p["encabezado"],
+            "extracto": (extracto[:300] + ("…" if len(extracto) > 300 else "")),
+            "semaforo": semaforo,
+            "sensibles": sensibles[:5],
+            "hallazgos": hallazgos[:6],
+        })
+    return {
+        "total": len(out),
+        "criticas": sum(1 for c in out if c["semaforo"] == "critica"),
+        "a_revisar": sum(1 for c in out if c["semaforo"] == "revisar"),
+        "favorables": sum(1 for c in out if c["semaforo"] == "favorable"),
+        "clausulas": out,
+    }

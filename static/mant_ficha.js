@@ -1456,10 +1456,61 @@ function editarVisita(v) {
   document.getElementById('vi_tecnico').value = v.tecnico || '';
   document.getElementById('vi_costo').value = v.costo || '';
   document.getElementById('vi_descripcion').value = v.descripcion || '';
+  // FINANZAS (2026-06-10): costo del proveedor + quién ejecutó → margen.
+  const _cp = document.getElementById('vi_costo_prov');
+  if (_cp) _cp.value = (v.costo_proveedor != null ? v.costo_proveedor : '');
+  const _pt = document.getElementById('vi_prov_tipo');
+  if (_pt) _pt.value = v.proveedor_tipo || '';
+  const _pn = document.getElementById('vi_prov_nombre');
+  if (_pn) _pn.value = v.proveedor_nombre || '';
+  viProvToggleNombre();
   // Garantía: "Aplica" si la visita está cubierta por garantía.
   _viSetGarantia(v.cubierto_por === 'garantia' || v.modalidad_cobro === 'garantia');
   document.getElementById('btnEliminarVisita').style.display = '';
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+// Muestra el campo "Nombre del proveedor" solo si ejecutó un externo.
+function viProvToggleNombre() {
+  const t = document.getElementById('vi_prov_tipo');
+  const w = document.getElementById('vi_prov_nombre_wrap');
+  if (w) w.style.display = (t && t.value === 'externo') ? '' : 'none';
+}
+
+// ── ¿Aplica mantención? (2026-06-10, Daniel) ─────────────────────────
+// Chip por equipo en la pestaña Equipos: separa collarines/accesorios que NO
+// se mantienen. Reversible con un click; el Agente recalcula al refrescar.
+async function eqToggleMantencion(mid) {
+  const chip = document.getElementById('eqMant-' + mid);
+  if (!chip) return;
+  const ahora = chip.dataset.aplica === '1';
+  const nuevo = !ahora;
+  if (!nuevo) {
+    const ok = await ilusConfirm({
+      title: 'Excluir de mantención',
+      message: '¿Marcar este equipo como "Sin mantención"?',
+      sub: 'No se contará en el plan, la valorización ni los levantamientos. Puedes revertirlo con un click.',
+      okLabel: 'Excluir', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/aplica-mantencion`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aplica: nuevo }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { ilusToast('No se pudo: ' + (d.error || 'error'), { type: 'error' }); return; }
+    chip.dataset.aplica = nuevo ? '1' : '0';
+    chip.className = 'eq-mant-chip ' + (nuevo ? 'eq-mant-si' : 'eq-mant-no');
+    chip.innerHTML = nuevo
+      ? '<i class="bi bi-wrench-adjustable"></i> En plan'
+      : '<i class="bi bi-dash-circle"></i> Sin mantención';
+    chip.title = nuevo ? 'En plan de mantención — click para excluirlo'
+                       : 'Excluido de mantención — click para incluirlo';
+    ilusToast(nuevo ? '✓ Equipo incluido en el plan de mantención'
+                    : 'Equipo excluido de mantención', { type: nuevo ? 'success' : 'info' });
+  } catch (e) { ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
 
 async function eliminarVisitaFromTabla(vid, titulo) {
@@ -5223,6 +5274,47 @@ function _ctaRenderHTML(res, ctid) {
           border:1px solid #eef0f3;border-radius:10px;padding:13px 15px;white-space:pre-wrap">${escHtml(res.cobertura_descripcion)}</div>`;
   }
 
+  // ── 📜 LECTURA CLÁUSULA POR CLÁUSULA (2026-06-10, Daniel) ──
+  // "las cláusulas delicadas, leerlas una por una" — semáforo por cláusula
+  // con extracto, hallazgos de las reglas (con base legal) y términos
+  // sensibles. Viene de resultado.detalle.lectura_clausulas (determinista).
+  const _lc = (res.detalle && res.detalle.lectura_clausulas) || res.lectura_clausulas || null;
+  if (_lc && Array.isArray(_lc.clausulas) && _lc.clausulas.length) {
+    const _sem = {
+      critica:   { c: '#dc2626', bg: '#fef2f2', bd: '#fecaca', icon: 'exclamation-octagon-fill', lbl: 'Crítica' },
+      revisar:   { c: '#b45309', bg: '#fffbeb', bd: '#fde68a', icon: 'eye-fill',                 lbl: 'Leer con atención' },
+      favorable: { c: '#166534', bg: '#f0fdf4', bd: '#bbf7d0', icon: 'shield-check',             lbl: 'Favorable a ILUS' },
+      neutra:    { c: '#6b7280', bg: '#f9fafb', bd: '#e5e7eb', icon: 'dash-circle',              lbl: 'Neutra' },
+    };
+    h += _ctaHead('📜', `Lectura cláusula por cláusula (${_lc.total})`, '#0f172a');
+    h += `<div style="font-size:.74rem;color:#6b7280;margin:-4px 0 10px">
+      ${_lc.criticas || 0} crítica(s) · ${_lc.a_revisar || 0} para leer con atención · ${_lc.favorables || 0} favorable(s)
+    </div>`;
+    _lc.clausulas.forEach(c => {
+      const s = _sem[c.semaforo] || _sem.neutra;
+      const abierta = c.semaforo === 'critica' || c.semaforo === 'revisar';
+      h += `
+      <details style="background:${s.bg};border:1px solid ${s.bd};border-radius:10px;margin-bottom:7px;overflow:hidden" ${abierta ? 'open' : ''}>
+        <summary style="padding:9px 13px;cursor:pointer;display:flex;align-items:center;gap:8px;list-style:none">
+          <i class="bi bi-${s.icon}" style="color:${s.c};font-size:.95rem"></i>
+          <span style="font-weight:800;font-size:.8rem;color:#0f172a">${escHtml(c.encabezado || ('Cláusula ' + c.n))}</span>
+          <span style="margin-left:auto;font-size:.62rem;font-weight:800;text-transform:uppercase;color:${s.c};letter-spacing:.04em">${s.lbl}</span>
+        </summary>
+        <div style="padding:0 13px 11px">
+          <div style="font-size:.8rem;color:#374151;line-height:1.55;background:rgba(255,255,255,.7);border-radius:8px;padding:9px 11px;font-style:italic">"${escHtml(c.extracto || '')}"</div>
+          ${(c.sensibles || []).length ? `<div style="margin-top:7px">${c.sensibles.map(t =>
+            `<span style="display:inline-block;background:#fff;border:1px solid ${s.bd};color:${s.c};border-radius:50px;padding:2px 9px;font-size:.66rem;font-weight:800;margin:2px 3px 0 0"><i class="bi bi-flag-fill me-1"></i>${escHtml(t)}</span>`).join('')}</div>` : ''}
+          ${(c.hallazgos || []).map(hg => `
+            <div style="margin-top:7px;font-size:.76rem;color:#374151;background:#fff;border-left:3px solid ${s.c};border-radius:6px;padding:7px 10px">
+              <b>${escHtml(hg.mensaje || hg.id || '')}</b>
+              ${hg.base_legal ? `<div style="color:#6b7280;font-size:.7rem;margin-top:2px"><i class="bi bi-bank me-1"></i>${escHtml(hg.base_legal)}</div>` : ''}
+              ${hg.propuesta ? `<div style="color:#166534;font-size:.7rem;margin-top:2px"><i class="bi bi-lightbulb me-1"></i>${escHtml(hg.propuesta)}</div>` : ''}
+            </div>`).join('')}
+        </div>
+      </details>`;
+    });
+  }
+
   // ── Pie: aviso de que al cerrar se refresca ──
   h += `<div style="margin-top:20px;padding-top:14px;border-top:1px dashed #e5e7eb;
         font-size:.74rem;color:#9ca3af;text-align:center">
@@ -5274,6 +5366,10 @@ async function guardarVisita() {
     descripcion:     document.getElementById('vi_descripcion').value.trim(),
     // Garantía transversal (Aplica/No aplica) — independiente del tipo.
     garantia_aplica: document.getElementById('vi_gar_si')?.checked || false,
+    // FINANZAS (2026-06-10): margen = cobrado - costo proveedor.
+    costo_proveedor: parseFloat(document.getElementById('vi_costo_prov')?.value) || null,
+    proveedor_tipo:  document.getElementById('vi_prov_tipo')?.value || null,
+    proveedor_nombre: (document.getElementById('vi_prov_nombre')?.value || '').trim() || null,
   };
   let url = '/mantenciones/api/visitas', method = 'POST';
   if (vid) { url = `/mantenciones/api/visitas/${vid}`; method = 'PUT'; }
@@ -7162,6 +7258,19 @@ function _intelRender(d){
     </div>
   </div>`;
 
+  // ── SUB-NAV sticky (2026-06-10, rediseño ejecutivo): el panel es largo;
+  // esta barra ordena la lectura y deja saltar a cada zona en un click.
+  const _fzNav = d.finanzas || {};
+  const _nPend = (Array.isArray(d.consultas) ? d.consultas.filter(c => (c.severidad||'') !== 'baja').length : 0);
+  html += `
+  <div class="intel-subnav" id="intelSubnav">
+    <button onclick="_intelGoto('intelChatCard')"><i class="bi bi-chat-dots-fill"></i> Preguntar</button>
+    <button onclick="_intelGoto('intelSecAtencion')"><i class="bi bi-bell-fill"></i> Pendientes${_nPend ? ` <span class="intel-subnav-badge">${_nPend}</span>` : ''}</button>
+    <button onclick="_intelGoto('intelSecDiag')"><i class="bi bi-clipboard-data"></i> Diagnóstico</button>
+    <button onclick="_intelGoto('intelSecFin')"><i class="bi bi-cash-stack"></i> Finanzas${(_fzNav.margen_pct != null) ? ` <span class="intel-subnav-badge ok">${_fzNav.margen_pct}%</span>` : ''}</button>
+    <button onclick="_intelGoto('intelSecRep')"><i class="bi bi-folder2-open"></i> Reportes</button>
+  </div>`;
+
   // ── 2) CHAT: Pregúntale al agente (conversacional, determinista, sin IA) ──
   // Es la "estrella" del panel → va arriba y con marco rojo destacado.
   const _chipsHtml = INTEL_CHIPS.map(q =>
@@ -7183,12 +7292,14 @@ function _intelRender(d){
   // ── 3) ATENCIÓN: consultas accionables que el agente necesita resueltas ──
   // Siempre se pinta (si no hay nada pendiente, _intelConsultas muestra el
   // estado positivo verde). Encabezado de sección consistente arriba.
+  html += '<div id="intelSecAtencion"></div>';
   html += _intelSection('Acciones que requieren tu atención', 'bell-fill', 'Lo que el agente necesita que resuelvas en esta ficha');
   html += _intelConsultas(d.consultas);
 
   // ════════════════════════════════════════════════════════════════
   // 4) DIAGNÓSTICO — la "foto completa" del cliente, agrupada y titulada.
   // ════════════════════════════════════════════════════════════════
+  html += '<div id="intelSecDiag"></div>';
   html += _intelSection('Diagnóstico del cliente', 'clipboard-data', 'Contrato, historia, agenda, facturación y métricas clave');
 
   // ── 4.0) Fila de KPIs (resumen numérico, abre el diagnóstico) ──
@@ -7277,9 +7388,12 @@ function _intelRender(d){
     ` : '<div class="text-success" style="font-size:.84rem"><i class="bi bi-check-circle-fill me-1"></i>Ficha completa, ¡buen trabajo!</div>'}
   </div>`;
 
-  // ── Card: Equipos del cliente ──
+  // ── Card: Equipos del cliente (mantenibles vs excluidos, 2026-06-10) ──
   const eq = d.equipos || {};
   const eqTotal   = parseInt(eq.total, 10) || 0;
+  const eqMant    = (eq.mantenibles != null) ? (parseInt(eq.mantenibles, 10) || 0) : eqTotal;
+  const eqExcl    = parseInt(eq.excluidos, 10) || 0;
+  const eqExclNom = Array.isArray(eq.excluidos_nombres) ? eq.excluidos_nombres : [];
   const eqSinSerie= parseInt(eq.sin_serie, 10) || 0;
   const eqSinFoto = parseInt(eq.sin_foto, 10) || 0;
   const eqCrit    = parseInt(eq.criticos, 10) || 0;
@@ -7288,17 +7402,18 @@ function _intelRender(d){
     <div class="intel-card-title"><i class="bi bi-hdd-stack" style="color:${eqCrit>0?'#dc2626':'#0ea5e9'}"></i>Equipos
       ${eqCrit > 0 ? `<span class="intel-chip" style="background:#fee2e2;color:#991b1b"><i class="bi bi-exclamation-triangle-fill"></i>${eqCrit} crítico${eqCrit>1?'s':''}</span>` : ''}
     </div>
-    <div class="d-flex align-items-baseline gap-2 mb-3">
-      <span class="intel-bignum">${eqTotal}</span>
-      <span style="font-size:.78rem;color:#6b7280;font-weight:600">equipo${eqTotal===1?'':'s'} en la ficha</span>
+    <div class="d-flex align-items-baseline gap-2 mb-2">
+      <span class="intel-bignum">${eqMant}</span>
+      <span style="font-size:.78rem;color:#6b7280;font-weight:600">en plan de mantención${eqExcl ? ` · ${eqTotal} en la ficha` : ''}</span>
     </div>
+    ${eqExcl ? `<div class="mb-2"><span class="intel-pill" style="background:#f3f4f6;color:#4b5563" title="${_intelEsc(eqExclNom.join(', '))}"><i class="bi bi-dash-circle"></i>${eqExcl} sin mantención (accesorios)</span></div>` : ''}
     ${eqTotal > 0 ? `
       <div>
         <span class="intel-eqchip ${eqSinSerie>0?'bad':''}"><i class="bi bi-${eqSinSerie>0?'upc-scan':'check2'}"></i>${eqSinSerie>0?`${eqSinSerie} sin serie`:'todos con serie'}</span>
         <span class="intel-eqchip ${eqSinFoto>0?'bad':''}"><i class="bi bi-${eqSinFoto>0?'camera':'images'}"></i>${eqSinFoto>0?`${eqSinFoto} sin foto`:'todos con foto'}</span>
         ${eqCrit>0?`<span class="intel-eqchip bad"><i class="bi bi-exclamation-octagon"></i>${eqCrit} en estado crítico</span>`:''}
       </div>
-      ${(eqSinSerie>0||eqSinFoto>0||eqCrit>0)?`<div class="mt-3"><button type="button" class="btn btn-xs btn-outline-dark fw-bold" onclick="switchTab('equipos')"><i class="bi bi-arrow-right-circle me-1"></i>Revisar equipos</button></div>`:''}
+      <div class="mt-3"><button type="button" class="btn btn-xs btn-outline-dark fw-bold" onclick="switchTab('equipos')"><i class="bi bi-arrow-right-circle me-1"></i>Gestionar equipos</button></div>
     ` : `<div style="font-size:.84rem;color:#991b1b"><i class="bi bi-exclamation-circle me-1"></i>No hay equipos cargados.</div>
         <div class="mt-3"><button type="button" class="btn btn-xs btn-ilus fw-bold" onclick="switchTab('equipos')"><i class="bi bi-plus-circle me-1"></i>Agregar equipos</button></div>`}
   </div>`;
@@ -7382,10 +7497,11 @@ function _intelRender(d){
         <div class="intel-prop-row"><span>IVA${val.iva_pct ? ` (${parseFloat(val.iva_pct)}%)` : ''}</span><span class="fw-bold">${_intelCLP(val.iva_monto)}</span></div>
         <div class="intel-prop-row" style="border-bottom:none"><span class="fw-bold">Total</span><span class="intel-prop-total">${_intelCLP(val.total)}</span></div>
       </div>
+      ${val.origen_precio === 'definido' ? `<div style="font-size:.72rem;color:#166534;margin-top:8px"><i class="bi bi-patch-check-fill me-1"></i>Monto definido por gerencia (editable en Finanzas).</div>` : ''}
       <div class="mt-3">
-        <a href="/mantenciones/cotizaciones/nuevo?cliente_id=${CID}" class="btn btn-sm btn-ilus fw-bold">
-          <i class="bi bi-file-earmark-plus me-1"></i>Crear cotización
-        </a>
+        ${(d.modulos && d.modulos.cotizaciones)
+          ? `<a href="/mantenciones/cotizaciones/nuevo?cliente_id=${CID}" class="btn btn-sm btn-ilus fw-bold"><i class="bi bi-file-earmark-plus me-1"></i>Crear cotización</a>`
+          : `<button type="button" class="btn btn-sm btn-ilus fw-bold" onclick="_intelGoto('intelSecFin')"><i class="bi bi-cash-coin me-1"></i>Definir monto final</button>`}
       </div>
     </div>`;
   }
@@ -7418,10 +7534,20 @@ function _intelRender(d){
   html += _intelOportunidades(d.consultas);
 
   // ════════════════════════════════════════════════════════════════
+  // 4.9) FINANZAS Y MÁRGENES (2026-06-10, Daniel): lo cobrado vs lo que
+  // cobra el proveedor → diferencia y % de margen, servicio a servicio.
+  // + campo para que gerencia DEFINA el monto final por mantención.
+  // ════════════════════════════════════════════════════════════════
+  html += '<div id="intelSecFin"></div>';
+  html += _intelSection('Finanzas y márgenes', 'cash-stack', 'Costo del proveedor vs valor cobrado — tu diferencia y % real');
+  html += _intelFinanzas(d);
+
+  // ════════════════════════════════════════════════════════════════
   // 5) REPORTES Y DOCUMENTOS — todo lo de generar/analizar informes,
   // agrupado en UNA zona limpia con botones consistentes. A futuro acá
   // vivirá la carga de un PDF de OT para analizar (placeholder listo).
   // ════════════════════════════════════════════════════════════════
+  html += '<div id="intelSecRep"></div>';
   html += _intelSection('Reportes y documentos', 'folder2-open', 'Genera informes del cliente y analiza documentos');
   html += _intelReportes(d);
 
@@ -7429,6 +7555,95 @@ function _intelRender(d){
   html += _intelPrincipios(d);
 
   panel.innerHTML = html;
+}
+
+// Scroll suave a una zona del panel (sub-nav ejecutiva).
+function _intelGoto(id){
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ─── FINANZAS Y MÁRGENES (2026-06-10, Daniel) ────────────────────────
+// "cuánto está cobrándome el proveedor... para llevar las diferencias y
+// los porcentajes de márgenes" + campo vacío para el monto final.
+function _intelFinanzas(d){
+  const fz = (d && d.finanzas) || {};
+  const n = parseInt(fz.n_servicios, 10) || 0;
+  const mPct = (fz.margen_pct == null) ? null : parseFloat(fz.margen_pct);
+  const mColor = mPct == null ? '#6b7280' : (mPct >= 30 ? '#16a34a' : (mPct >= 10 ? '#f59e0b' : '#dc2626'));
+  const vDef = fz.valor_definido;
+  let h = '<div class="intel-card">';
+
+  // KPIs financieros (4-up)
+  h += `
+  <div class="intel-fin-kpis">
+    <div class="intel-fin-kpi"><div class="lbl">Cobrado</div><div class="val">${_intelCLP(fz.total_cobrado)}</div></div>
+    <div class="intel-fin-kpi"><div class="lbl">Costo proveedor</div><div class="val">${_intelCLP(fz.total_costo_proveedor)}</div></div>
+    <div class="intel-fin-kpi"><div class="lbl">Diferencia</div><div class="val" style="color:${mColor}">${_intelCLP(fz.margen_clp)}</div></div>
+    <div class="intel-fin-kpi"><div class="lbl">% Margen</div><div class="val" style="color:${mColor}">${mPct == null ? '—' : mPct + '%'}</div></div>
+  </div>`;
+
+  // Monto final definido por gerencia (el "deja lo vacío para colocar el monto")
+  h += `
+  <div class="intel-fin-def">
+    <div style="flex:1;min-width:220px">
+      <div style="font-size:.8rem;font-weight:800;color:#0f172a"><i class="bi bi-cash-coin me-1" style="color:#dc2626"></i>Monto final por mantención (neto)</div>
+      <div style="font-size:.72rem;color:#6b7280">Lo defines tú. El agente calcula IVA y total, y lo usa al responder "¿cuánto cobrar?".</div>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+      <input type="number" id="intelValorMant" class="form-control form-control-sm" style="width:150px"
+             placeholder="Ej: 150000" min="0" step="1000" value="${vDef != null ? parseInt(vDef, 10) : ''}">
+      <button class="btn btn-sm btn-ilus fw-bold" onclick="intelGuardarValorMant()"><i class="bi bi-check2 me-1"></i>Guardar</button>
+    </div>
+  </div>`;
+
+  // Detalle por servicio
+  const items = Array.isArray(fz.items) ? fz.items : [];
+  if (items.length) {
+    h += `
+    <div style="overflow-x:auto;margin-top:12px">
+      <table class="table table-sm align-middle mb-1" style="font-size:.8rem">
+        <thead><tr style="font-size:.64rem;text-transform:uppercase;color:#6b7280">
+          <th>Fecha</th><th>Tipo</th><th>Ejecutó</th>
+          <th class="text-end">Cobrado</th><th class="text-end">Costo prov.</th>
+          <th class="text-end">Margen</th><th class="text-end">%</th>
+        </tr></thead><tbody>
+        ${items.map(i => {
+          const ip = (i.margen_pct == null) ? null : parseFloat(i.margen_pct);
+          const ic = ip == null ? '#6b7280' : (ip >= 30 ? '#16a34a' : (ip >= 10 ? '#b45309' : '#dc2626'));
+          const prov = i.proveedor_tipo === 'externo'
+            ? `<span class="intel-pill" style="background:#fef3c7;color:#92400e"><i class="bi bi-truck"></i>${_intelEsc(i.proveedor_nombre || 'Externo')}</span>`
+            : (i.proveedor_tipo === 'interno' ? '<span class="intel-pill" style="background:#dcfce7;color:#166534"><i class="bi bi-person-badge"></i>Interno</span>'
+                                              : '<span style="color:#9ca3af">—</span>');
+          return `<tr>
+            <td>${_intelFechaEsc(i.fecha)}</td>
+            <td>${_intelEsc(i.tipo_label || '')}</td>
+            <td>${prov}</td>
+            <td class="text-end fw-bold">${_intelCLP(i.cobrado)}</td>
+            <td class="text-end">${i.sin_costo_prov ? '<span style="color:#dc2626;font-size:.7rem">falta</span>' : _intelCLP(i.costo_proveedor)}</td>
+            <td class="text-end fw-bold" style="color:${ic}">${i.sin_costo_prov ? '—' : _intelCLP(i.margen)}</td>
+            <td class="text-end fw-bold" style="color:${ic}">${(ip == null || i.sin_costo_prov) ? '—' : ip + '%'}</td>
+          </tr>`;
+        }).join('')}
+        </tbody></table>
+    </div>`;
+    const sin = parseInt(fz.sin_costo_proveedor, 10) || 0;
+    if (sin) {
+      h += `<div style="font-size:.74rem;color:#92400e;background:#fff8e1;border-radius:8px;padding:8px 10px"><i class="bi bi-exclamation-triangle-fill me-1"></i>${sin} servicio(s) sin costo de proveedor — edita la visita (campo "Costo proveedor") para tener tu margen real.</div>`;
+    }
+  } else if (!n) {
+    h += `<div style="font-size:.82rem;color:#6b7280;margin-top:10px"><i class="bi bi-info-circle me-1"></i>Aún no hay servicios con montos. Al completar una visita registra el <b>valor cobrado</b> y el <b>costo del proveedor</b> (botón Editar de la visita) y aquí verás la diferencia y el % al instante.</div>`;
+  }
+  h += '</div>';
+  return h;
+}
+
+// Guarda el monto final por mantención (gerencia) → acción set_campo_cliente.
+async function intelGuardarValorMant(){
+  const inp = document.getElementById('intelValorMant');
+  const v = (inp && inp.value || '').trim();
+  if (!v || parseInt(v, 10) <= 0) { ilusToast('Escribe el monto neto, ej: 150000', { type: 'warning' }); return; }
+  await intelAccion('set_campo_cliente', { campo: 'valor_mantencion_clp', valor: v });
 }
 
 // ─── Encabezado de sección consistente del panel del Agente ─────────

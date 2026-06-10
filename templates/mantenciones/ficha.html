@@ -1582,6 +1582,14 @@
 .gar-chip-warn{background:#fef9c3;color:#854d0e;}
 .gar-chip-vencida{background:#f3f4f6;color:#6b7280;}
 
+/* ¿Aplica mantención? (2026-06-10) — chip toggle por equipo */
+.eq-mant-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:50px;
+  font-size:.63rem;font-weight:800;cursor:pointer;user-select:none;transition:all .12s;border:1px solid transparent;}
+.eq-mant-chip.eq-mant-si{background:#dcfce7;color:#166534;border-color:#bbf7d0;}
+.eq-mant-chip.eq-mant-si:hover{background:#bbf7d0;}
+.eq-mant-chip.eq-mant-no{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;}
+.eq-mant-chip.eq-mant-no:hover{background:#e5e7eb;}
+
 /* Estado equipo */
 .eq-estado-activo{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
 .eq-estado-baja{background:#f3f4f6;color:#6b7280;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
@@ -1883,6 +1891,17 @@
               <span class="eq-estado-{{ m.estado or 'activo' }}">
                 {{ (m.estado or 'activo').replace('_',' ').title() }}
               </span>
+              {# 2026-06-10 (Daniel): separar equipos SIN mantención (collarines,
+                 accesorios). Chip clickeable → PUT aplica-mantencion. #}
+              {% set _apl = (m.aplica_mantencion if m.aplica_mantencion is not none else 1) %}
+              <div style="margin-top:4px">
+                <span class="eq-mant-chip {{ 'eq-mant-si' if _apl else 'eq-mant-no' }}"
+                      id="eqMant-{{ m.id }}" data-aplica="{{ 1 if _apl else 0 }}"
+                      {% if not is_tecnico %}onclick="eqToggleMantencion({{ m.id }})" role="button"{% endif %}
+                      title="{{ 'En plan de mantención — click para excluirlo' if _apl else 'Excluido de mantención — click para incluirlo' }}">
+                  {% if _apl %}<i class="bi bi-wrench-adjustable"></i> En plan{% else %}<i class="bi bi-dash-circle"></i> Sin mantención{% endif %}
+                </span>
+              </div>
             </td>
             {# 2026-05-21 (Daniel) — Última revisión por equipo (badge + meta) #}
             <td>
@@ -3624,6 +3643,28 @@ async function confirmarVisitaMulti() {
 .intel-kpi-ok{border-left-color:#16a34a;}
 .intel-kpi-warn{border-left-color:#f59e0b;}
 .intel-kpi-danger{border-left-color:#dc2626;}
+
+/* ───── Sub-nav sticky del panel (2026-06-10, rediseño ejecutivo) ───── */
+.intel-subnav{position:sticky;top:0;z-index:5;display:flex;gap:6px;flex-wrap:wrap;
+  background:rgba(255,255,255,.96);backdrop-filter:blur(6px);padding:8px 4px;
+  border-bottom:2px solid #f3f4f6;margin:2px 0 10px;}
+.intel-subnav button{border:1px solid #e5e7eb;background:#fff;border-radius:50px;
+  padding:5px 13px;font-size:.74rem;font-weight:800;color:#374151;cursor:pointer;
+  display:inline-flex;align-items:center;gap:5px;transition:all .12s;}
+.intel-subnav button:hover{background:#0a0a0a;color:#fff;border-color:#0a0a0a;}
+.intel-subnav button i{color:#dc2626;}
+.intel-subnav button:hover i{color:#fff;}
+.intel-subnav-badge{background:#dc2626;color:#fff;border-radius:50px;font-size:.62rem;
+  padding:1px 7px;font-weight:900;}
+.intel-subnav-badge.ok{background:#16a34a;}
+
+/* ───── Finanzas y márgenes (2026-06-10) ───── */
+.intel-fin-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px;}
+.intel-fin-kpi{background:#0a0a0a;border-radius:12px;padding:12px 14px;border-left:4px solid #dc2626;}
+.intel-fin-kpi .lbl{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;}
+.intel-fin-kpi .val{font-size:1.12rem;font-weight:900;color:#fff;letter-spacing:-.5px;margin-top:2px;}
+.intel-fin-def{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:#fff5f5;
+  border:1px dashed #fecaca;border-radius:12px;padding:12px 14px;}
 
 /* ───────── Tarjetas genéricas ───────── */
 .intel-card{position:relative;background:#fff;border:1px solid #eef0f3;border-radius:16px;
@@ -8794,8 +8835,26 @@ async function vhGuardar(){
             <input type="text" id="vi_tecnico" class="form-control" placeholder="Nombre del técnico">
           </div>
           <div class="col-6">
-            <label class="form-label fw-semibold">Costo visita ($)</label>
+            <label class="form-label fw-semibold">Valor cobrado al cliente ($)</label>
             <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
+          </div>
+          {# ── FINANZAS (2026-06-10, Daniel): costo del proveedor → margen ── #}
+          <div class="col-6">
+            <label class="form-label fw-semibold">Costo proveedor/técnico ($)</label>
+            <input type="number" id="vi_costo_prov" class="form-control" placeholder="0" min="0" step="1000">
+            <div class="form-text" style="font-size:.72rem">Lo que te cobra quien ejecuta (para calcular tu margen).</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold">Ejecutado por</label>
+            <select id="vi_prov_tipo" class="form-select" onchange="viProvToggleNombre()">
+              <option value="">— No definido —</option>
+              <option value="interno">Técnico interno ILUS</option>
+              <option value="externo">Proveedor externo</option>
+            </select>
+          </div>
+          <div class="col-6" id="vi_prov_nombre_wrap" style="display:none">
+            <label class="form-label fw-semibold">Nombre del proveedor</label>
+            <input type="text" id="vi_prov_nombre" class="form-control" placeholder="Ej: Servitec SpA" maxlength="200">
           </div>
           {# ── GARANTÍA (interruptor transversal, separado del tipo) ── #}
           <div class="col-12">
@@ -8881,7 +8940,7 @@ window.__FICHA_DATA = {
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260608b"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610a"></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

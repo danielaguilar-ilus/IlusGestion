@@ -2099,6 +2099,18 @@
                 onclick="event.stopPropagation(); abrirModalSaltarEquipo({{ eq.id }})">
           <i class="bi bi-skip-forward-fill"></i>
         </button>
+        {# 2026-06-10 (Daniel): excluir collarines/accesorios de mantención
+           DESDE el levantamiento — "no vale la pena levantar un par de
+           collarines". Toggle directo a mant_maquinas.aplica_mantencion. #}
+        {% set _apl_ot = (eq.aplica_mantencion if eq.aplica_mantencion is not none else 1) %}
+        <button type="button" class="eq-action-btn" id="eqAplBtn-{{ eq.id }}"
+                data-aplica="{{ 1 if _apl_ot else 0 }}"
+                title="{{ 'En plan de mantención — tocar para excluir (accesorio)' if _apl_ot else 'SIN mantención — tocar para volver a incluir' }}"
+                aria-label="Aplica mantención sí/no"
+                style="{{ 'background:#f0fdf4;border-color:#bbf7d0;color:#166534' if _apl_ot else 'background:#f3f4f6;border-color:#d1d5db;color:#6b7280' }}"
+                onclick="event.stopPropagation(); otToggleMantencion({{ eq.id }})">
+          <i class="bi {{ 'bi-wrench-adjustable' if _apl_ot else 'bi-dash-circle' }}"></i>
+        </button>
         {% endif %}
       </div>
       <i class="bi bi-chevron-right eq-arrow"></i>
@@ -6143,6 +6155,42 @@ function _escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function _escapeAttr(s){ return String(s||'').replace(/"/g, '&quot;'); }
+
+// ── ¿Aplica mantención? (2026-06-10, Daniel) ─────────────────────────
+// El técnico excluye collarines/accesorios DESDE el levantamiento sin
+// salir de la OT. Reversible con un toque. PUT al endpoint existente.
+async function otToggleMantencion(mid){
+  const btn = document.getElementById('eqAplBtn-' + mid);
+  if (!btn) return;
+  const ahora = btn.dataset.aplica === '1';
+  const nuevo = !ahora;
+  if (!nuevo) {
+    const ok = await ilusConfirm({
+      title: 'Excluir de mantención',
+      message: '¿Marcar este equipo como "Sin mantención"?',
+      sub: 'Para accesorios (collarines, mancuernas sueltas, etc.) que no se levantan ni se mantienen. Reversible.',
+      okLabel: 'Excluir', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/aplica-mantencion`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aplica: nuevo }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { ilusToast('No se pudo: ' + (d.error || 'error'), { type: 'error' }); return; }
+    btn.dataset.aplica = nuevo ? '1' : '0';
+    btn.style.background  = nuevo ? '#f0fdf4' : '#f3f4f6';
+    btn.style.borderColor = nuevo ? '#bbf7d0' : '#d1d5db';
+    btn.style.color       = nuevo ? '#166534' : '#6b7280';
+    btn.title = nuevo ? 'En plan de mantención — tocar para excluir (accesorio)'
+                      : 'SIN mantención — tocar para volver a incluir';
+    btn.innerHTML = nuevo ? '<i class="bi bi-wrench-adjustable"></i>' : '<i class="bi bi-dash-circle"></i>';
+    ilusToast(nuevo ? '✓ Incluido en el plan de mantención' : 'Excluido de mantención (accesorio)',
+              { type: nuevo ? 'success' : 'info' });
+  } catch(e){ ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+}
 
 async function _comprimirImagen(file, maxDim = 1600, quality = 0.82){
   if (file.size < 600 * 1024) return file;

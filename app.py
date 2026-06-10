@@ -5520,6 +5520,17 @@ def _build_label_pdf_legacy(product, bulto, total_bultos):
 #  Context processor
 # ─────────────────────────────────────────────
 
+def _mant_cotizaciones_on():
+    """¿El módulo Cotizaciones está visible? Regla 'modulo_cotizaciones_activo'
+    (mant_reglas_negocio, editable desde /mantenciones/configuracion). Default
+    False (Daniel 2026-06-10: fuera del menú hasta habilitar el módulo).
+    Fail-safe: cualquier error → oculto."""
+    try:
+        return bool(_reglas_cargar().get("modulo_cotizaciones_activo"))
+    except Exception:
+        return False
+
+
 @app.context_processor
 def inject_globals():
     _role = (g.user["role"] if g.user else "") or ""
@@ -5567,6 +5578,10 @@ def inject_globals():
         # del calendario para habilitar campos + botón Guardar. Espejo exacto
         # del gate backend `_puede_ot_accion('metadata')`.
         "puede_gestionar_visitas": _puede_gestionar_visitas,
+        # 2026-06-10 (Daniel): Cotizaciones FUERA del menú hasta habilitar el
+        # módulo. Regla 'modulo_cotizaciones_activo' editable en Configuración
+        # (sin deploy). _reglas_cargar() cachea en proceso → costo ~0.
+        "mant_cotizaciones_on": _mant_cotizaciones_on(),
         # is_superadmin global: permite mostrar bloques de diagnóstico (campos
         # crudos del ERP, etc.) SOLO al superadmin, no a operación normal.
         "is_superadmin": (_role == "superadmin"),
@@ -43672,14 +43687,24 @@ def mant_visita_crear():
         with conn.cursor() as cur:
             # INSERT con created_by_user_id. Si la migración aún no corrió en
             # esta instancia, hacemos fallback al INSERT legacy sin la columna.
+            # FINANZAS 2026-06-10: costo del proveedor + tipo/nombre (margen).
+            _cprov_ins = None
+            try:
+                _cprov_ins = max(0.0, float(d.get("costo_proveedor") or 0)) or None
+            except (TypeError, ValueError):
+                _cprov_ins = None
+            _ptipo_ins = (d.get("proveedor_tipo") or "").strip().lower()
+            _ptipo_ins = _ptipo_ins if _ptipo_ins in ("interno", "externo") else None
+            _pnom_ins = (str(d.get("proveedor_nombre") or "").strip()[:200]) or None
             try:
                 cur.execute(
                     """INSERT INTO mant_visitas
                        (cliente_id,contrato_id,titulo,fecha_programada,hora_inicio,hora_fin,
                         tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
                         modalidad_cobro,cubierto_por,estado_facturacion,
-                        prioridad,created_by,created_by_user_id)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        prioridad,created_by,created_by_user_id,
+                        costo_proveedor,proveedor_tipo,proveedor_nombre)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (d["cliente_id"], d.get("contrato_id") or None,
                      d.get("titulo","Mantención"), d["fecha_programada"],
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
@@ -43688,7 +43713,8 @@ def mant_visita_crear():
                      d.get("estado","programada"), d.get("descripcion",""),
                      float(d.get("costo",0) or 0),
                      modalidad, cubierto_por_ins, estado_factur_ins,
-                     prioridad, current_username(), creador_user_id)
+                     prioridad, current_username(), creador_user_id,
+                     _cprov_ins, _ptipo_ins, _pnom_ins)
                 )
             except Exception as _e_ins_full:
                 # Fallback (DB sin la migración nueva todavía). Este path solo se
@@ -43871,13 +43897,27 @@ def mant_visita_update(vid):
         p = (d.get("prioridad") or "").lower()
         d["prioridad"] = p if p in _OT_PRIORIDADES else "media"
 
+    # FINANZAS 2026-06-10 (Daniel): costo_proveedor (lo que me cobra el técnico/
+    # proveedor) + tipo/nombre, para márgenes. Normalizamos antes del UPDATE.
+    if "proveedor_tipo" in d:
+        _pt = (d.get("proveedor_tipo") or "").strip().lower()
+        d["proveedor_tipo"] = _pt if _pt in ("interno", "externo") else None
+    if "costo_proveedor" in d:
+        try:
+            d["costo_proveedor"] = max(0.0, float(d.get("costo_proveedor") or 0)) or None
+        except (TypeError, ValueError):
+            d["costo_proveedor"] = None
+    if "proveedor_nombre" in d:
+        d["proveedor_nombre"] = (str(d.get("proveedor_nombre") or "").strip()[:200]) or None
     allowed = ["titulo","fecha_programada","fecha_realizada","hora_inicio","hora_fin",
                "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
                "costo","contrato_id",
                # FASE 1 — modelo Fracttal
                "modalidad_cobro","prioridad","diagnostico",
                # Garantía transversal (mapeada desde garantia_aplica)
-               "cubierto_por","estado_facturacion"]
+               "cubierto_por","estado_facturacion",
+               # Finanzas (margen por servicio)
+               "costo_proveedor","proveedor_tipo","proveedor_nombre"]
     # tecnico_user_id: si llega, validar que sea un app_users con role='tecnico'
     if "tecnico_user_id" in d and d["tecnico_user_id"]:
         try:
@@ -45842,11 +45882,14 @@ def mant_ot_ejecutar(vid):
     # la OT con equipos pero el técnico aún no tiene tareas), agregamos también
     # los equipos listados en mant_visita_equipos (audit trail). Esto evita que
     # Lenin vea pantalla en blanco cuando la OT está armada pero sin checklist.
+    # 2026-06-10 (Daniel): + aplica_mantencion para el toggle "Sin mantención"
+    # en el levantamiento (segregar collarines/accesorios al levantar).
     equipos = mysql_fetchall(
         "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
         "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
         "       m.ubicacion_sala, m.estado_capturado, m.tiene_dano, "
-        "       m.observaciones, m.ultima_intervencion, m.visitas_count "
+        "       m.observaciones, m.ultima_intervencion, m.visitas_count, "
+        "       COALESCE(m.aplica_mantencion,1) AS aplica_mantencion "
         "  FROM mant_visita_tareas vt "
         "  JOIN mant_maquinas m ON m.id=vt.maquina_id "
         " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
@@ -45855,7 +45898,8 @@ def mant_ot_ejecutar(vid):
         "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
         "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
         "       m.ubicacion_sala, m.estado_capturado, m.tiene_dano, "
-        "       m.observaciones, m.ultima_intervencion, m.visitas_count "
+        "       m.observaciones, m.ultima_intervencion, m.visitas_count, "
+        "       COALESCE(m.aplica_mantencion,1) AS aplica_mantencion "
         "  FROM mant_visita_equipos ve "
         "  JOIN mant_maquinas m ON m.id=ve.maquina_id "
         " WHERE ve.visita_id=%s AND ve.maquina_id IS NOT NULL "
@@ -50986,6 +51030,9 @@ _REGLAS_DEFAULTS = {
     "score_peso_contrato":        ("25",    "int",    "politica",   "Peso de la vigencia del contrato en el score",     "pts"),
     "texto_propuesta":            ("Te proponemos realizar la mantención preventiva de tus equipos para mantenerlos operativos y seguros.",
                                                 "string", "texto",      "Texto base de la propuesta comercial",             ""),
+    # 2026-06-10 (Daniel): el módulo Cotizaciones sale del menú HASTA que esté
+    # habilitado. Esta regla lo enciende/apaga desde Configuración sin deploy.
+    "modulo_cotizaciones_activo": ("0",     "bool",   "politica",   "Módulo Cotizaciones visible (menú y botones)",     ""),
 }
 _REGLAS_CACHE = None
 
@@ -51081,10 +51128,18 @@ def _cliente_inteligencia(cid, reglas=None):
         ct = mysql_fetchone("SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY created_at DESC LIMIT 1", (cid,))
     ct = dict(ct) if ct else None
 
-    visitas = mysql_fetchall(
-        "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, costo, costo_real, "
-        "       cubierto_por, es_retroactiva, estado_facturacion, contrato_id, levantamiento_id "
-        "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
+    try:
+        visitas = mysql_fetchall(
+            "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, costo, costo_real, "
+            "       cubierto_por, es_retroactiva, estado_facturacion, contrato_id, levantamiento_id, "
+            "       costo_proveedor, proveedor_tipo, proveedor_nombre "
+            "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
+    except Exception:
+        # Fallback pre-migración (columnas de finanzas aún no creadas)
+        visitas = mysql_fetchall(
+            "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, costo, costo_real, "
+            "       cubierto_por, es_retroactiva, estado_facturacion, contrato_id, levantamiento_id "
+            "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
     visitas = [dict(v) for v in visitas]
 
     faltantes = []
@@ -51206,14 +51261,22 @@ def _cliente_inteligencia(cid, reglas=None):
     }
 
     # ── Equipos del cliente (¿fichas completas?) ──
+    # 2026-06-10 (Daniel): separar los equipos que NO aplican a mantención
+    # (collarines, accesorios) — no se levantan, no se valorizan, no penalizan
+    # la calidad de la ficha. El universo mantenible es lo que importa.
     equipos = mysql_fetchall(
         "SELECT * FROM mant_maquinas WHERE cliente_id=%s AND COALESCE(estado,'activo') != 'baja'", (cid,)) or []
     equipos = [dict(e) for e in equipos]
+    _eq_mant = [e for e in equipos if bool(e.get("aplica_mantencion", 1) if e.get("aplica_mantencion") is not None else 1)]
+    _eq_excl = [e for e in equipos if e not in _eq_mant]
     equipos_resumen = {
         "total": len(equipos),
-        "sin_serie": sum(1 for e in equipos if not str(e.get("serie") or "").strip()),
-        "sin_foto":  sum(1 for e in equipos if not str(e.get("foto_url") or "").strip()),
-        "criticos":  sum(1 for e in equipos if (e.get("estado_op") or "") == "critico"),
+        "mantenibles": len(_eq_mant),
+        "excluidos": len(_eq_excl),
+        "excluidos_nombres": [str(e.get("nombre") or e.get("sku") or f"#{e.get('id')}")[:60] for e in _eq_excl][:12],
+        "sin_serie": sum(1 for e in _eq_mant if not str(e.get("serie") or "").strip()),
+        "sin_foto":  sum(1 for e in _eq_mant if not str(e.get("foto_url") or "").strip()),
+        "criticos":  sum(1 for e in _eq_mant if (e.get("estado_op") or "") == "critico"),
     }
 
     # ── Diagnóstico de contrato ──
@@ -51328,17 +51391,69 @@ def _cliente_inteligencia(cid, reglas=None):
               "exposicion_clp": exposicion, "riesgo_fuga_tercero": riesgo_fuga, "mensaje": brecha_msg}
 
     # ── Valorización + propuesta comercial (misma fórmula que _cotiz_calcular_totales) ──
-    precio_unitario = costo_mant or float(R.get("precio_base_preventiva") or 0)
-    desc_pct = float(R.get("descuento_sugerido_pct") or 0)
+    # 2026-06-10 (Daniel): si gerencia DEFINIÓ el monto final (valor_mantencion_clp
+    # en la ficha del cliente), ese monto MANDA — es NETO final, sin descuento
+    # encima. Si no, cae a costo_por_mant del contrato o a la tarifa base.
+    valor_definido = float(cli.get("valor_mantencion_clp") or 0)
     iva_pct = float(R.get("iva_pct") or 19)
-    desc_monto = round(precio_unitario * desc_pct / 100.0)
-    neto = round(precio_unitario - desc_monto)
-    iva_monto = round(neto * iva_pct / 100.0)
-    total = round(neto + iva_monto)
-    pitch = (f"{R.get('texto_propuesta') or ''} Valorizada en ${_intel_clp(precio_unitario)}; con "
-             f"{desc_pct:g}% de descuento queda en ${_intel_clp(neto)} + IVA (total ${_intel_clp(total)}).").strip()
+    if valor_definido > 0:
+        origen_precio = "definido"
+        precio_unitario = valor_definido
+        desc_pct = 0.0; desc_monto = 0
+        neto = round(valor_definido)
+        iva_monto = round(neto * iva_pct / 100.0)
+        total = round(neto + iva_monto)
+        pitch = (f"Monto definido por gerencia: ${_intel_clp(neto)} neto + IVA "
+                 f"(total ${_intel_clp(total)}) por mantención.")
+    else:
+        origen_precio = "contrato" if (ct and ct.get("costo_por_mant")) else "tarifa_base"
+        precio_unitario = costo_mant or float(R.get("precio_base_preventiva") or 0)
+        desc_pct = float(R.get("descuento_sugerido_pct") or 0)
+        desc_monto = round(precio_unitario * desc_pct / 100.0)
+        neto = round(precio_unitario - desc_monto)
+        iva_monto = round(neto * iva_pct / 100.0)
+        total = round(neto + iva_monto)
+        pitch = (f"{R.get('texto_propuesta') or ''} Valorizada en ${_intel_clp(precio_unitario)}; con "
+                 f"{desc_pct:g}% de descuento queda en ${_intel_clp(neto)} + IVA (total ${_intel_clp(total)}).").strip()
     valorizacion = {"precio_unitario": precio_unitario, "descuento_pct": desc_pct, "descuento_monto": desc_monto,
-                    "neto": neto, "iva_pct": iva_pct, "iva_monto": iva_monto, "total": total, "pitch": pitch}
+                    "neto": neto, "iva_pct": iva_pct, "iva_monto": iva_monto, "total": total, "pitch": pitch,
+                    "origen_precio": origen_precio, "valor_definido": (valor_definido if valor_definido > 0 else None)}
+
+    # ── FINANZAS (Daniel 2026-06-10): margen = lo que cobro - lo que me cobra el
+    # proveedor (interno/externo), visita por visita. "Algo bien profesional". ──
+    fin_items = []
+    for v in visitas:
+        if (v.get("estado") or "").lower() != "completada":
+            continue
+        _cobr = float(v.get("costo_real") or v.get("costo") or 0)
+        _cprov = float(v.get("costo_proveedor") or 0)
+        if _cobr <= 0 and _cprov <= 0:
+            continue
+        _fv = _intel_as_date(v.get("fecha_realizada")) or _intel_as_date(v.get("fecha_programada"))
+        _mg = _cobr - _cprov
+        fin_items.append({
+            "id": v.get("id"), "fecha": str(_fv) if _fv else None,
+            "tipo_label": _tipo_label.get(v.get("tipo") or "otro", (v.get("tipo") or "otro").capitalize()),
+            "cobrado": _cobr, "costo_proveedor": _cprov,
+            "proveedor_tipo": (v.get("proveedor_tipo") or None),
+            "proveedor_nombre": (v.get("proveedor_nombre") or None),
+            "margen": _mg,
+            "margen_pct": (round(_mg * 100.0 / _cobr, 1) if _cobr > 0 else None),
+            "sin_costo_prov": _cprov <= 0,
+        })
+    fin_items.sort(key=lambda x: (x["fecha"] or ""), reverse=True)
+    _f_cobr = sum(i["cobrado"] for i in fin_items)
+    _f_prov = sum(i["costo_proveedor"] for i in fin_items)
+    finanzas = {
+        "items": fin_items[:25],
+        "n_servicios": len(fin_items),
+        "total_cobrado": _f_cobr,
+        "total_costo_proveedor": _f_prov,
+        "margen_clp": _f_cobr - _f_prov,
+        "margen_pct": (round((_f_cobr - _f_prov) * 100.0 / _f_cobr, 1) if _f_cobr > 0 else None),
+        "sin_costo_proveedor": sum(1 for i in fin_items if i["sin_costo_prov"]),
+        "valor_definido": (valor_definido if valor_definido > 0 else None),
+    }
 
     # ── Calidad de información (completitud) ──
     checks = [tiene_contrato,
@@ -51378,8 +51493,12 @@ def _cliente_inteligencia(cid, reglas=None):
     if dias_para_vencer is not None and dias_para_vencer <= 60:
         acciones.append({"urgencia": "media", "tipo": "contrato", "url_accion": f"/mantenciones/clientes/{cid}",
                          "titulo": f"Contrato vence en {dias_para_vencer} días — gestionar renovación."})
-    acciones.append({"urgencia": "baja", "tipo": "cotizar", "url_accion": f"/mantenciones/cotizaciones/nuevo?cliente_id={cid}",
-                     "titulo": f"Proponer mantención con {desc_pct:g}% dcto (${_intel_clp(total)} con IVA)."})
+    # Cotizaciones puede estar APAGADO (regla modulo_cotizaciones_activo): la
+    # propuesta apunta a definir el monto en el propio panel, no al módulo.
+    _cotiz_on = _mant_cotizaciones_on()
+    if _cotiz_on:
+        acciones.append({"urgencia": "baja", "tipo": "cotizar", "url_accion": f"/mantenciones/cotizaciones/nuevo?cliente_id={cid}",
+                         "titulo": f"Proponer mantención con {desc_pct:g}% dcto (${_intel_clp(total)} con IVA)."})
 
     kpis = [
         {"label": "Salud", "valor": score, "sufijo": "/100", "tono": ("ok" if score >= 75 else "warn" if score >= 45 else "danger")},
@@ -51393,6 +51512,11 @@ def _cliente_inteligencia(cid, reglas=None):
         kpis.append({"label": "Exposición", "valor": f"${_intel_clp(exposicion)}", "tono": "danger"})
     if facturacion["pendientes"]:
         kpis.append({"label": "Sin facturar", "valor": facturacion["pendientes"], "tono": "danger"})
+    if finanzas["margen_pct"] is not None:
+        kpis.append({"label": "Margen", "valor": f"{finanzas['margen_pct']:g}", "sufijo": "%",
+                     "tono": ("ok" if finanzas["margen_pct"] >= 30 else "warn" if finanzas["margen_pct"] >= 10 else "danger")})
+    if equipos_resumen["excluidos"]:
+        kpis.append({"label": "Equipos mantenibles", "valor": f"{equipos_resumen['mantenibles']}/{equipos_resumen['total']}", "tono": "ok"})
 
     # ── Consultas accionables: el Agente "trabaja para el usuario" (resolver = completar/corregir data) ──
     consultas = []
@@ -51477,12 +51601,29 @@ def _cliente_inteligencia(cid, reglas=None):
             "acciones": [{"label": "Ver facturación", "accion": "link",
                           "url": f"/mantenciones/clientes/{cid}"}],
         })
+    # FINANZAS (Daniel 2026-06-10): el agente pide los datos que le faltan para
+    # llevar márgenes — monto final a cobrar + costo del proveedor por servicio.
+    if valor_definido <= 0:
+        consultas.append({
+            "id": "definir_monto", "tipo": "completar_inline", "severidad": "media",
+            "pregunta": "¿Cuál es el monto final (neto) a cobrar por mantención a este cliente?",
+            "detalle": "Lo dejas tú (gerencia). Con él calculo IVA, total y margen — y se lo respondo a quien pregunte.",
+            "campos": [{"campo": "valor_mantencion_clp", "label": "Monto neto por mantención (CLP)", "tipo": "number"}],
+            "acciones": [],
+        })
+    if finanzas["sin_costo_proveedor"] > 0:
+        consultas.append({
+            "id": "costos_proveedor", "tipo": "finanzas", "severidad": "media",
+            "pregunta": f"{finanzas['sin_costo_proveedor']} servicio(s) realizados no tienen costo de proveedor registrado.",
+            "detalle": "Sin ese dato no puedo calcular tu margen real (diferencia y %). Complétalo editando cada visita (campo 'Costo proveedor').",
+            "acciones": [{"label": "Ver historial", "accion": "link", "url": f"/mantenciones/clientes/{cid}"}],
+        })
     consultas.append({
         "id": "proponer_plan", "tipo": "oportunidad", "severidad": "baja",
         "pregunta": "Oportunidad: proponer un plan de mantención.",
         "detalle": pitch,
-        "acciones": [{"label": "Crear cotización", "accion": "link",
-                      "url": f"/mantenciones/cotizaciones/nuevo?cliente_id={cid}"}],
+        "acciones": ([{"label": "Crear cotización", "accion": "link",
+                       "url": f"/mantenciones/cotizaciones/nuevo?cliente_id={cid}"}] if _cotiz_on else []),
     })
 
     # ── Desglose del score (¿por qué este número?) ──
@@ -51522,7 +51663,16 @@ def _cliente_inteligencia(cid, reglas=None):
         _re.append("No hay equipos cargados.")
     if facturacion["pendientes"]:
         _re.append(f"⚠️ {facturacion['pendientes']} servicio(s) realizado(s) sin facturar — cierra el proceso.")
-    _re.append(f"Oportunidad: plan de mantención desde ${_intel_clp(total)} con IVA.")
+    if equipos_resumen["excluidos"]:
+        _re.append(f"{equipos_resumen['mantenibles']} equipo(s) en plan de mantención "
+                   f"({equipos_resumen['excluidos']} excluido(s): accesorios/sin mantención).")
+    if finanzas["margen_pct"] is not None:
+        _re.append(f"Margen acumulado: ${_intel_clp(finanzas['margen_clp'])} "
+                   f"({finanzas['margen_pct']:g}% sobre ${_intel_clp(finanzas['total_cobrado'])} cobrados).")
+    if valor_definido > 0:
+        _re.append(f"Monto definido por gerencia: ${_intel_clp(valor_definido)} neto por mantención.")
+    else:
+        _re.append(f"Oportunidad: plan de mantención desde ${_intel_clp(total)} con IVA.")
     resumen_ejecutivo = " ".join(_re)
 
     return {
@@ -51538,6 +51688,8 @@ def _cliente_inteligencia(cid, reglas=None):
         "diagnostico_contrato": diag_contrato, "mantenciones": mant,
         "brecha_gratis": brecha, "valorizacion": valorizacion, "acciones": acciones, "kpis": kpis,
         "facturacion": facturacion,
+        "finanzas": finanzas,
+        "modulos": {"cotizaciones": _cotiz_on},
         "principios": [
             "Me baso solo en tus datos reales: ficha, contrato, equipos, visitas y ERP. No invento resultados.",
             "Reviso todo: cliente, contrato, equipos, historial, próximas visitas y facturación.",
@@ -51553,7 +51705,7 @@ def _cliente_inteligencia(cid, reglas=None):
 # Versión del esquema del diagnóstico. Subir este número invalida automáticamente
 # los cachés viejos (mant_cliente_intel) tras un cambio en la forma del dict del motor,
 # para que el panel no muestre un diagnóstico viejo sin las secciones nuevas.
-_INTEL_SCHEMA = 4
+_INTEL_SCHEMA = 5   # v5 (2026-06-10): +finanzas/márgenes, +equipos mantenibles/excluidos, +modulos
 
 
 def _intel_cache_fresco(cid, ttl_horas):
@@ -51862,7 +52014,10 @@ def mant_intel_accion(cid):
             valor = (d.get("valor") or "").strip()
             _ALLOWED_CLI = {"rut", "direccion", "comuna", "ciudad", "contacto_nombre",
                             "contacto_cargo", "contacto_tel", "contacto_email",
-                            "email_empresa", "tel_empresa", "giro"}
+                            "email_empresa", "tel_empresa", "giro",
+                            # FINANZAS 2026-06-10: monto final NETO por mantención
+                            # definido por gerencia (la "valoración" de Daniel).
+                            "valor_mantencion_clp"}
             if campo not in _ALLOWED_CLI:
                 return jsonify({"error": "Campo no permitido."}), 400
             if not valor:
@@ -51874,6 +52029,12 @@ def mant_intel_accion(cid):
                         valor = _r
                 except Exception:
                     pass
+            if campo == "valor_mantencion_clp":
+                # Acepta "1.500.000", "1500000", "$1.500.000" → 1500000
+                _num = re.sub(r"[^\d]", "", str(valor))
+                if not _num or int(_num) <= 0:
+                    return jsonify({"error": "Monto inválido. Escribe solo el número, ej: 150000."}), 400
+                valor = _num
             # `campo` está en whitelist de columnas literales; el valor va parametrizado.
             mysql_execute(f"UPDATE mant_clientes SET {campo}=%s WHERE id=%s", (valor[:200], cid))
         elif accion == "programar_ot":
@@ -58842,6 +59003,37 @@ def _ensure_mant_intel_tables():
             print("[ensure_intel] mant_maquinas.aplica_mantencion agregada", flush=True)
     except Exception as e:
         print(f"[ensure_intel] aplica_mantencion: {e}", flush=True)
+    # FINANZAS 2026-06-10 (Daniel): costo del proveedor por visita (interno/externo)
+    # para calcular margen = valor cobrado - costo proveedor. + monto final por
+    # mantención definido por Daniel en mant_clientes (la "valoración").
+    try:
+        ex_v = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas'") or [])}
+        if "costo_proveedor" not in ex_v:
+            mysql_execute("ALTER TABLE mant_visitas ADD COLUMN costo_proveedor DECIMAL(12,2) NULL "
+                          "COMMENT 'Lo que cobra el proveedor/tecnico por esta visita (costo nuestro)'")
+            faltaron.append("mant_visitas.costo_proveedor")
+        if "proveedor_tipo" not in ex_v:
+            mysql_execute("ALTER TABLE mant_visitas ADD COLUMN proveedor_tipo ENUM('interno','externo') NULL "
+                          "COMMENT 'Quien ejecuto: tecnico interno o proveedor externo'")
+            faltaron.append("mant_visitas.proveedor_tipo")
+        if "proveedor_nombre" not in ex_v:
+            mysql_execute("ALTER TABLE mant_visitas ADD COLUMN proveedor_nombre VARCHAR(200) NULL "
+                          "COMMENT 'Nombre del proveedor externo (si aplica)'")
+            faltaron.append("mant_visitas.proveedor_nombre")
+    except Exception as e:
+        print(f"[ensure_intel] finanzas visitas: {e}", flush=True)
+    try:
+        ex_c = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_clientes'") or [])}
+        if "valor_mantencion_clp" not in ex_c:
+            mysql_execute("ALTER TABLE mant_clientes ADD COLUMN valor_mantencion_clp DECIMAL(12,2) NULL "
+                          "COMMENT 'Monto final NETO por mantencion definido por gerencia (valoracion)'")
+            faltaron.append("mant_clientes.valor_mantencion_clp")
+    except Exception as e:
+        print(f"[ensure_intel] valor_mantencion: {e}", flush=True)
     try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_cliente_intel (
@@ -60726,7 +60918,12 @@ def _cotiz_calcular_totales(cid):
 @app.route("/mantenciones/cotizaciones")
 @_mant_required
 def mant_cotizaciones_list():
-    """Listado HTML de cotizaciones."""
+    """Listado HTML de cotizaciones.
+    2026-06-10 (Daniel): módulo OCULTO hasta habilitarlo (regla
+    'modulo_cotizaciones_activo' en Configuración). Gate suave: redirige
+    al módulo de mantenciones sin romper data ni APIs."""
+    if not _mant_cotizaciones_on():
+        return redirect("/mantenciones/clientes")
     return render_template("mantenciones/cotizaciones_list.html")
 
 
@@ -60734,6 +60931,8 @@ def mant_cotizaciones_list():
 @_mant_required
 def mant_cotizacion_nueva():
     """Form para crear cotización nueva."""
+    if not _mant_cotizaciones_on():
+        return redirect("/mantenciones/clientes")
     cid_default = request.args.get("cliente_id") or ""
     clientes = mysql_fetchall(
         "SELECT id, razon_social, rut FROM mant_clientes "
