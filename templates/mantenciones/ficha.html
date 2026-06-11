@@ -9948,14 +9948,19 @@ window.__FICHA_DATA = {
             </div>
           </div>
           <div class="lev-step-body" style="padding:0">
-            <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;gap:8px">
+            <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;gap:8px;flex-wrap:wrap">
               <small class="text-muted" style="font-size:.74rem">
                 <i class="bi bi-info-circle me-1"></i>
                 Cada equipo puede tener varias plantillas (ej: ficha + instalación + capacitación).
               </small>
-              <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="btnLevToggleTodos" onclick="levToggleTodos()">
-                <i class="bi bi-check2-square me-1"></i>Marcar todos
-              </button>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <button class="btn btn-sm btn-outline-success" id="btnLevMarcarPlan" onclick="levMarcarPlan()" title="Selecciona solo los equipos incluidos en el plan de mantención">
+                  <i class="bi bi-shield-check me-1"></i><span id="levPlanLabel">Solo plan</span>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="btnLevToggleTodos" onclick="levToggleTodos()">
+                  <i class="bi bi-check2-square me-1"></i>Marcar todos
+                </button>
+              </div>
             </div>
             <div class="table-responsive" style="max-height:38vh">
               <table class="table table-sm mb-0 lev-table-eq">

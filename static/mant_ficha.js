@@ -701,15 +701,20 @@ async function abrirLevantamientoSelector(tipoPreset){
   // Equipos DESELECCIONADOS por defecto — el usuario decide qué levantar.
   // Botón de plantillas extra solo HABILITADO si el equipo está marcado
   // (evita confusión: agregar plantillas a equipos no seleccionados).
+  let _planN = 0;
   tbody.innerHTML = filas.map(tr => {
-    const mid = tr.dataset.maquinaId;
+    const mid    = tr.dataset.maquinaId;
     const nombre = (tr.querySelector('.eq-name-main')?.textContent || '').trim() || `Equipo #${mid}`;
     const sku    = tr.dataset.sku || '';
     const serie  = tr.dataset.serie || '';
-    return `<tr style="cursor:pointer" onclick="const c=this.querySelector('.lev-eq-chk');c.checked=!c.checked;levRecalcEqCount();event.stopPropagation();">
-      <td><input type="checkbox" class="lev-eq-chk" data-id="${mid}" onchange="levRecalcEqCount()" onclick="event.stopPropagation()"></td>
+    const aplica = tr.dataset.aplica !== '0';
+    if (aplica) _planN++;
+    const rowStyle   = aplica ? 'cursor:pointer' : 'cursor:pointer;opacity:.5';
+    const sinMantBdg = aplica ? '' : '<span style="font-size:.63rem;color:#9ca3af;margin-left:5px;font-weight:400">(sin mantención)</span>';
+    return `<tr style="${rowStyle}" onclick="const c=this.querySelector('.lev-eq-chk');c.checked=!c.checked;levRecalcEqCount();event.stopPropagation();">
+      <td><input type="checkbox" class="lev-eq-chk" data-id="${mid}" data-aplica="${aplica?'1':'0'}" onchange="levRecalcEqCount()" onclick="event.stopPropagation()"></td>
       <td>
-        <strong>${escHtml(nombre)}</strong>
+        <strong>${escHtml(nombre)}</strong>${sinMantBdg}
         ${sku?`<div class="small text-muted">${escHtml(sku)}</div>`:''}
         ${serie?`<div class="small text-muted">S/N: ${escHtml(serie)}</div>`:''}
       </td>
@@ -723,6 +728,9 @@ async function abrirLevantamientoSelector(tipoPreset){
       </td>
     </tr>`;
   }).join('');
+  // Actualizar label del botón Plan con el conteo real
+  const _planLbl = document.getElementById('levPlanLabel');
+  if (_planLbl) _planLbl.textContent = `Plan (${_planN})`;
   // Tipo de OT: preset si se pidió (Programar mantención = 'preventiva'); si no, 'levantamiento'.
   const tipoSel = document.getElementById('otTipo');
   if (tipoSel) {
@@ -908,8 +916,15 @@ function levRecalcEqCount(){
 function levToggleTodos(){
   const checks = document.querySelectorAll('.lev-eq-chk');
   const marcados = document.querySelectorAll('.lev-eq-chk:checked').length;
-  const newState = marcados < checks.length; // si NO están todos marcados, marca todos; si lo están, desmarca
+  const newState = marcados < checks.length;
   checks.forEach(c => c.checked = newState);
+  levRecalcEqCount();
+}
+
+// Seleccionar únicamente los equipos que están en el plan de mantención (aplica_mantencion=1).
+// Los equipos sin mantención (accesorios, mobiliario, etc.) quedan desmarcados.
+function levMarcarPlan(){
+  document.querySelectorAll('.lev-eq-chk').forEach(c => { c.checked = c.dataset.aplica !== '0'; });
   levRecalcEqCount();
 }
 
