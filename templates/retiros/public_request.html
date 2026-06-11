@@ -1613,9 +1613,9 @@
               <label class="form-label small fw-bold">Teléfono de contacto <span class="req">*</span></label>
               <input name="contact_phone" id="contact_phone" type="tel" class="form-control"
                      value="{{ fd.get('contact_phone','') }}"
-                     placeholder="Ej: +56 9 1234 5678" required autocomplete="tel"
-                     oninput="formatPhone(this)" onblur="validatePhone(this)">
-              <div class="input-help with-example">Por si necesitamos llamarte el día del retiro. Móvil chileno.</div>
+                     placeholder="9 1234 5678" required autocomplete="tel"
+                     oninput="formatPhone(this)" onfocus="phoneOnFocus(this)" onblur="phoneOnBlur(this)">
+              <div class="input-help with-example">Solo los dígitos: <strong>9 XXXX XXXX</strong> — el +56 se agrega solo.</div>
               <div class="input-error" id="contact_phone_err">Teléfono inválido (debe empezar con +56 9)</div>
               <div class="input-ok" id="contact_phone_ok">Teléfono válido</div>
             </div>
@@ -1668,8 +1668,8 @@
                 <label class="form-label small fw-bold">Teléfono del autorizado</label>
                 <input name="pickup_person_phone" id="auth_phone" type="tel" class="form-control"
                        value="{{ fd.get('pickup_person_phone','') }}"
-                       placeholder="Ej: +56 9 8765 4321" autocomplete="tel"
-                       oninput="formatPhone(this)" onblur="validatePhone(this)">
+                       placeholder="9 8765 4321" autocomplete="tel"
+                       oninput="formatPhone(this)" onfocus="phoneOnFocus(this)" onblur="phoneOnBlur(this)">
                 <div class="input-help with-example">Por si necesitamos llamarlo el día del retiro.</div>
                 <div class="input-error" id="auth_phone_err">Teléfono inválido</div>
                 <div class="input-ok" id="auth_phone_ok">Teléfono válido</div>
@@ -2169,21 +2169,40 @@ function isValidCLPhone(p){
   return /^(56)?9\d{8}$/.test(c);
 }
 function formatPhone(input){
-  let c = cleanPhone(input.value).replace(/^\+/,'');
-  if (c.startsWith('56') && c.length > 2) c = c.slice(2);
-  if (c.length > 9) c = c.slice(0, 9);
-  if (c.length === 0){ input.value = ''; return; }
-  let out = '+56 ';
-  if (c.length >= 1) out += c[0];
-  if (c.length >= 2) out += ' ' + c.slice(1, 5);
-  if (c.length >= 6) out += ' ' + c.slice(5, 9);
-  input.value = out;
-  // Limpiar estados visuales mientras tipea
+  // Solo limpia estados visuales mientras el usuario tipea.
+  // NO reescribimos input.value aquí — hacerlo en oninput destruye
+  // la posición del cursor y hace imposible editar en medio del número.
   const errEl = document.getElementById(input.id + '_err');
   const okEl  = document.getElementById(input.id + '_ok');
   input.classList.remove('field-valid', 'field-invalid');
   if (errEl) errEl.style.display = 'none';
   if (okEl) okEl.style.display = 'none';
+}
+function phoneOnFocus(input){
+  // Al enfocar: mostrar solo dígitos para que el usuario pueda editar libremente.
+  // Si el campo tiene "+56 9 1234 5678", lo convierte en "912345678" para edición.
+  let c = cleanPhone(input.value).replace(/^\+/,'');
+  if (c.startsWith('56') && c.length > 2) c = c.slice(2);
+  if (c.length > 0){
+    input.value = c;
+    setTimeout(() => input.select(), 0); // seleccionar todo para fácil reemplazo
+  }
+}
+function phoneOnBlur(input){
+  // Al salir del campo: normaliza a "+56 9 XXXX XXXX" y luego valida.
+  let c = cleanPhone(input.value).replace(/^\+/,'');
+  if (c.startsWith('56') && c.length > 2) c = c.slice(2);
+  if (c.length > 9) c = c.slice(0, 9);
+  if (c.length > 0){
+    let out = '+56 ';
+    if (c.length >= 1) out += c[0];
+    if (c.length >= 2) out += ' ' + c.slice(1, 5);
+    if (c.length >= 6) out += ' ' + c.slice(5, 9);
+    input.value = out;
+  } else {
+    input.value = '';
+  }
+  validatePhone(input);
 }
 function validatePhone(input){
   const has = input.value.length > 0;
@@ -2786,8 +2805,9 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
     elEmail.classList.remove('field-valid');
   }
 
-  // Teléfono del contacto
+  // Teléfono del contacto (normalizar antes de validar, por si no hubo blur)
   const elPhone = document.getElementById('contact_phone');
+  phoneOnBlur(elPhone);
   if (!isValidCLPhone(elPhone.value)){
     errores.push('Teléfono inválido — debe ser móvil chileno (+56 9 XXXX XXXX)');
     invalidIds.push('contact_phone');
@@ -2810,6 +2830,7 @@ document.getElementById('form-solicitud').addEventListener('submit', function(e)
       elAuthRut.classList.remove('field-valid');
     }
     const elAuthPhone = document.getElementById('auth_phone');
+    if (elAuthPhone.value) phoneOnBlur(elAuthPhone);
     if (elAuthPhone.value && !isValidCLPhone(elAuthPhone.value)){
       errores.push('Teléfono del autorizado inválido');
       invalidIds.push('auth_phone');
