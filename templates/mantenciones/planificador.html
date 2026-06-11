@@ -37,6 +37,12 @@
   .pa-kpi-pulse .pa-kpi-num{animation:pa-pulse 1.8s ease-in-out infinite}
   @keyframes pa-pulse{0%,100%{opacity:1}50%{opacity:.5}}
 
+  /* Línea resumen ejecutiva bajo los KPIs */
+  .pa-resumen{font-size:.78rem;color:#475569;margin:-4px 2px 12px;font-weight:600}
+  .pa-res-vd{color:#16a34a;font-weight:800}
+  .pa-res-rj{color:#dc2626;font-weight:800}
+  .pa-res-gr{color:#6b7280;font-weight:700}
+
   /* Toolbar sticky */
   .pa-toolbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
     background:rgba(255,255,255,.93);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
@@ -47,6 +53,12 @@
     transition:background .12s,color .12s,border-color .12s}
   .pa-fchip:hover{border-color:#9ca3af}
   .pa-fchip-on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+  .pa-search{position:relative;display:flex;align-items:center}
+  .pa-search .bi-search{position:absolute;left:11px;font-size:.8rem;color:#9ca3af;pointer-events:none}
+  .pa-search input{border:1px solid #e5e7eb;border-radius:50px;background:#fff;min-height:38px;
+    padding:6px 12px 6px 31px;font-size:.8rem;font-weight:600;color:#0f172a;width:190px;outline:none;
+    transition:border-color .12s,box-shadow .12s}
+  .pa-search input:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
   .pa-switch{font-size:.78rem;font-weight:700;color:#374151;margin:0;white-space:nowrap}
   .pa-sep{flex:1 1 auto}
   .pa-genbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -64,6 +76,8 @@
   .pa-ld-ag{background:#dbeafe;border:1px solid #93c5fd}
   .pa-ld-pr{background:transparent;border:2px dashed #cbd5e1}
   .pa-ld-ve{background:#fee2e2;border:1px solid #fca5a5}
+  .pa-ld-at{background:#fef2f2;border:1px solid #fca5a5}
+  .pa-ld-hi{background:#f9fafb;border:1px solid #d1d5db}
 
   /* Estados de página */
   .pa-load{padding:70px 20px;text-align:center;color:#6b7280;font-size:.9rem}
@@ -88,9 +102,16 @@
     padding:7px 12px 7px 14px;border-bottom:1px solid #f3f4f6;
     box-shadow:4px 0 8px -4px rgba(10,10,10,.07)}
   .pa-cli-name{font-weight:800;font-size:.9rem;color:#0f172a;white-space:nowrap;
-    overflow:hidden;text-overflow:ellipsis}
+    overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center}
+  .pa-cli-nm{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pa-cli-sub{font-size:.68rem;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .pa-rdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .pa-cum{flex:0 0 auto;margin-left:6px;font-size:.62rem;font-weight:800;padding:2px 7px;
+    border-radius:50px;font-variant-numeric:tabular-nums;line-height:1.2;cursor:default}
+  .pa-cum-vd{background:#dcfce7;color:#166534}
+  .pa-cum-am{background:#fff8e1;color:#92400e}
+  .pa-cum-rj{background:#fee2e2;color:#991b1b}
+  .pa-cum-na{background:#f3f4f6;color:#6b7280}
+  .pa-rdot{display:inline-block;flex:0 0 auto;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
   .pa-r-alto{background:#dc2626}
   .pa-r-medio{background:#f59e0b}
   .pa-r-bajo{background:#16a34a}
@@ -112,6 +133,9 @@
   .pa-chip-proyectada{background:transparent;border:2px dashed #cbd5e1;color:#6b7280}
   .pa-chip-vencida{background:#fee2e2;border-color:#fca5a5;color:#991b1b;font-size:.85rem;
     animation:pa-pulse 1.6s ease-in-out infinite}
+  .pa-chip-atrasada{background:#fef2f2;border-color:#fca5a5;color:#b91c1c;gap:3px}
+  .pa-chip-atrasada .pa-chip-dd{font-size:.62rem;font-weight:800}
+  .pa-chip-historica{background:#f9fafb;border:1px solid #d1d5db;color:#9ca3af;font-size:.85rem}
 
   /* Popover de celda (un solo div reutilizable) */
   .pa-pop{position:absolute;z-index:99990;width:248px;background:#fff;border:1px solid #e5e7eb;
@@ -128,6 +152,8 @@
   .pa-pop-x:hover{color:#0a0a0a}
   .pa-pop-fecha{font-size:.92rem;font-weight:800;color:#0f172a}
   .pa-pop-ot{font-size:.7rem;font-weight:700;color:#1e40af;margin-top:1px}
+  .pa-pop-late{font-size:.7rem;font-weight:700;color:#b91c1c;margin-top:2px}
+  .pa-pop-hist{font-size:.7rem;font-weight:700;color:#6b7280;margin-top:2px}
   .pa-pop-cli{font-size:.76rem;color:#6b7280;margin:2px 0 10px;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis}
   .pa-pop-acts{display:flex;flex-direction:column;gap:6px}
@@ -151,6 +177,8 @@
     .pa-year-num{font-size:1.5rem;min-width:78px}
     .pa-toolbar{gap:8px;padding:8px 6px}
     .pa-fchip{min-height:44px;padding:8px 14px}
+    .pa-search{width:100%}
+    .pa-search input{width:100%;min-height:44px;font-size:16px}
     .pa-gen-sel{min-height:44px}
     .pa-genbar .pa-btn-red{min-height:44px}
     .pa-leg{width:100%}
@@ -191,11 +219,22 @@
     <div class="pa-kpi-num" id="paKRe">—</div>
     <div class="pa-kpi-lbl"><i class="bi bi-check2-circle me-1"></i>Realizadas</div>
   </div>
-  <div class="pa-kpi pa-kpi-rj" id="paKVeCard">
+  <div class="pa-kpi pa-kpi-rj" id="paKAtCard"
+       title="Atrasada = OT real ya creada cuya fecha pasó y sigue sin completarse. Distinta de Vencida (proyección teórica sin OT).">
+    <div class="pa-kpi-num" id="paKAt">—</div>
+    <div class="pa-kpi-lbl"><i class="bi bi-clock-history me-1"></i>Atrasadas</div>
+    <div class="pa-kpi-sub">OT real con fecha pasada</div>
+  </div>
+  <div class="pa-kpi pa-kpi-rj" id="paKVeCard"
+       title="Vencida = mantención proyectada por el plan cuya fecha pasó y nunca se generó la OT. Distinta de Atrasada (OT real sin completar).">
     <div class="pa-kpi-num" id="paKVe">—</div>
     <div class="pa-kpi-lbl"><i class="bi bi-exclamation-octagon me-1"></i>Vencidas</div>
+    <div class="pa-kpi-sub">Proyección sin OT generada</div>
   </div>
 </div>
+
+<!-- Resumen ejecutivo (client-side) -->
+<div class="pa-resumen" id="paResumen" hidden></div>
 
 <!-- Toolbar sticky: filtros + acciones + leyenda -->
 <div class="pa-toolbar">
@@ -204,6 +243,10 @@
     <button type="button" class="pa-fchip" data-r="alto">Alto</button>
     <button type="button" class="pa-fchip" data-r="medio">Medio</button>
     <button type="button" class="pa-fchip" data-r="bajo">Bajo</button>
+  </div>
+  <div class="pa-search">
+    <i class="bi bi-search"></i>
+    <input type="search" id="paBuscar" placeholder="Buscar cliente…" autocomplete="off" aria-label="Buscar cliente por nombre">
   </div>
   <div class="form-check form-switch pa-switch">
     <input class="form-check-input" type="checkbox" role="switch" id="paSoloContrato">
@@ -228,9 +271,11 @@
   {% endif %}
   <div class="pa-leg">
     <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-re"></span>✓ Realizada</span>
+    <span class="pa-leg-it" title="Histórica (pre-sistema)"><span class="pa-leg-dot pa-ld-hi"></span>✓ Histórica</span>
     <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-ag"></span>Agendada</span>
+    <span class="pa-leg-it" title="OT real con fecha pasada sin completar"><span class="pa-leg-dot pa-ld-at"></span><i class="bi bi-clock-history"></i> Atrasada</span>
     <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-pr"></span>Proyectada</span>
-    <span class="pa-leg-it"><span class="pa-leg-dot pa-ld-ve"></span>Vencida</span>
+    <span class="pa-leg-it" title="Proyección teórica sin OT generada"><span class="pa-leg-dot pa-ld-ve"></span>! Vencida</span>
   </div>
 </div>
 

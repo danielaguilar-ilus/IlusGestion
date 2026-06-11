@@ -123,6 +123,18 @@
 .badge-completada{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
 .badge-cancelada{background:#f3f4f6;color:#6b7280;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
 .badge-reagendada{background:#fef9c3;color:#854d0e;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+/* 2026-06-10 — badges para los 13 estados del ENUM de mant_visitas.
+   Antes solo existían 4 (programada/completada/cancelada/reagendada) y
+   los otros 9 estados se veían como texto plano. */
+.badge-creada{background:#f3f4f6;color:#374151;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-asignada{background:#dbeafe;color:#1d4ed8;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-en_curso{background:#dbeafe;color:#1e40af;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-en_ejecucion{background:#dbeafe;color:#1e40af;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-pendiente_info{background:#fff8e1;color:#92400e;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-pendiente_repuesto{background:#fff8e1;color:#92400e;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-pendiente_aprobacion{background:#fef3c7;color:#b45309;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-cerrada{background:#bbf7d0;color:#14532d;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
+.badge-anulada{background:#f3f4f6;color:#9ca3af;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;text-decoration:line-through;}
 .badge-vigente{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
 .badge-por_vencer{background:#fef9c3;color:#854d0e;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
 .badge-vencido{background:#fee2e2;color:#991b1b;padding:2px 9px;border-radius:50px;font-size:.64rem;font-weight:700;}
@@ -912,16 +924,28 @@
         </div>
 
         {# 2. Contrato #}
+        {# 2026-06-10 — FIX: el estado 'indefinido' ES contrato activo de
+           primera clase (así lo tratan todos los motores: auto-calendar,
+           __FICHA_DATA, intel). Antes solo se reconocía 'vigente' y los
+           contratos indefinidos caían al branch ámbar como si fueran un
+           problema. Ahora: indefinido → "Vigente · Indefinido" en verde. #}
         {% set ct_activo = contratos|selectattr('estado','equalto','vigente')|list|first if contratos else none %}
-        {% set ct_color = '#2563eb' if ct_activo else '#9ca3af' %}
-        {% set ct_bg = '#eff6ff' if ct_activo else '#f9fafb' %}
+        {% if not ct_activo and contratos %}
+          {% set ct_activo = contratos|selectattr('estado','equalto','indefinido')|list|first %}
+        {% endif %}
+        {% set ct_es_indef = ct_activo and ct_activo.estado == 'indefinido' %}
+        {% set ct_color = '#16a34a' if ct_es_indef else ('#2563eb' if ct_activo else '#9ca3af') %}
+        {% set ct_bg = '#f0fdf4' if ct_es_indef else ('#eff6ff' if ct_activo else '#f9fafb') %}
         <div class="col-6 col-md-4">
           <div class="kpi-cell" style="background:{{ ct_bg }};border-left:3px solid {{ ct_color }}">
             <div class="d-flex align-items-center gap-2 mb-1">
               <i class="bi bi-file-earmark-check-fill" style="color:{{ ct_color }};font-size:1rem"></i>
               <div class="kpi-cell-label" style="margin:0">Contrato</div>
             </div>
-            {% if ct_activo %}
+            {% if ct_activo and ct_es_indef %}
+              <div class="kpi-cell-val" style="color:#16a34a;font-size:.95rem">Vigente · Indefinido</div>
+              <div class="kpi-cell-sub">Sin fecha de término</div>
+            {% elif ct_activo %}
               <div class="kpi-cell-val" style="color:#2563eb;font-size:.95rem">Vigente</div>
               {% if ct_activo.fecha_vencimiento %}
               <div class="kpi-cell-sub">Vence {{ ct_activo.fecha_vencimiento.strftime('%d/%m/%Y') }}</div>
@@ -5953,6 +5977,46 @@ function abrirEmailManual() {
     .vis-ritmo-dot{max-width:18px;height:10px;}
     .vis-ritmo-lbl{font-size:.55rem;}
   }
+  /* ── 2026-06-10 — Lista de OTs por secciones + mini-KPIs ───────── */
+  .vis-kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+    gap:8px;margin-bottom:14px;}
+  .vis-kpi-box{background:#fff;border:1px solid var(--border);border-radius:10px;
+    padding:8px 12px;box-shadow:0 1px 2px rgba(0,0,0,.03);}
+  .vis-kpi-box .vk-num{font-size:1.15rem;font-weight:900;line-height:1.1;}
+  .vis-kpi-box .vk-lbl{font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;
+    font-weight:800;color:#6b7280;}
+  .vis-kpi-box .vk-sub{font-size:.64rem;color:#9ca3af;font-weight:600;}
+  .vis-sec-header{display:flex;align-items:center;gap:8px;font-size:.7rem;
+    text-transform:uppercase;letter-spacing:.6px;font-weight:800;color:#6b7280;
+    margin:16px 2px 6px;flex-wrap:wrap;}
+  .vis-sec-header i{color:#dc2626;font-size:.85rem;}
+  .vis-sec-header .vis-sec-count{background:#f3f4f6;color:#374151;border-radius:50px;
+    padding:1px 8px;font-size:.64rem;font-weight:800;}
+  .vis-chip-atrasada{background:#dc2626;color:#fff;font-size:.6rem;font-weight:800;
+    padding:1px 7px;border-radius:50px;text-transform:uppercase;letter-spacing:.3px;
+    white-space:nowrap;display:inline-block;}
+  .badge-historica{background:#f3f4f6;color:#6b7280;border:1px dashed #d1d5db;
+    font-size:.6rem;font-weight:700;padding:1px 7px;border-radius:50px;
+    white-space:nowrap;display:inline-block;cursor:help;}
+  tr.vis-row-atrasada{background:#fef2f2;}
+  tr.vis-row-hist{opacity:.72;}
+  tr.vis-row-canc{opacity:.6;}
+  /* ── 2026-06-10 — Ritmo v2: recomendado (anillo) vs realizado ──── */
+  .vis-ritmo-cumpl{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+    margin:0 0 12px;}
+  .vis-ritmo-cumpl .vrc-pct{font-size:1.4rem;font-weight:900;line-height:1;color:#0f172a;}
+  .vis-ritmo-cumpl .vrc-pct.good{color:#16a34a;}
+  .vis-ritmo-cumpl .vrc-pct.mid{color:#f59e0b;}
+  .vis-ritmo-cumpl .vrc-pct.bad{color:#dc2626;}
+  .vis-ritmo-cumpl .vrc-txt{font-size:.74rem;color:#6b7280;font-weight:600;}
+  .vis-ritmo-dot.vr2-rec{outline:2px dashed #cbd5e1;outline-offset:2px;}
+  .vis-ritmo-dot.vr2-ok{background:#16a34a;}
+  .vis-ritmo-dot.vr2-hist{background:#86b89a;display:flex;align-items:center;
+    justify-content:center;color:#fff;font-size:.55rem;line-height:1;}
+  .vis-ritmo-dot.vr2-miss{background:#fca5a5;}
+  .vis-ritmo-dot.vr2-agendada{background:#60a5fa;}
+  .vis-ritmo-dot.vr2-atrasada{background:#f59e0b;}
+  .vis-ritmo-dot.vr2-empty{background:#e5e7eb;}
   </style>
 
   {# ══════════════════════════════════════════════════════════════════
@@ -5984,8 +6048,11 @@ function abrirEmailManual() {
       <div><i class="bi bi-activity"></i>Ritmo de mantención · últimos 12 meses</div>
       <div id="visRitmoCount" class="text-muted" style="font-weight:600;text-transform:none;letter-spacing:0;font-size:.7rem"></div>
     </div>
+    {# 2026-06-10 — banner CUMPLIMIENTO (lo llena _renderRitmoPro con el
+       endpoint ritmo-mantencion; queda oculto si cae al fallback simple) #}
+    <div class="vis-ritmo-cumpl" id="visRitmoCumpl" style="display:none"></div>
     <div class="vis-ritmo-track" id="visRitmoTrack"></div>
-    <div class="vis-ritmo-leg">
+    <div class="vis-ritmo-leg" id="visRitmoLeg">
       <span><span class="vis-ritmo-leg-dot" style="background:#16a34a"></span>Preventiva</span>
       <span><span class="vis-ritmo-leg-dot" style="background:#f59e0b"></span>Correctiva</span>
       <span><span class="vis-ritmo-leg-dot" style="background:linear-gradient(90deg,#16a34a 50%,#f59e0b 50%)"></span>Mixto</span>
@@ -6005,9 +6072,21 @@ function abrirEmailManual() {
   </div>
 
   <div id="visVistaLista">
-  <div class="f-card">
-    <div class="f-card-body p-0">
-      <table class="table table-sm mb-0" style="font-size:.82rem">
+
+  {# ════════════════════════════════════════════════════════════════
+     2026-06-10 — Lista de OTs reorganizada en SECCIONES (antes: una
+     sola tabla mezclando todo, ordenada por fecha DESC):
+       1) Mini-KPIs: gestionadas / realizadas / pendientes / atrasadas
+       2) PENDIENTES DE REALIZAR — estados vivos, fecha ASC, atrasadas
+          (fecha < hoy) con resalte rojo suave + chip "Atrasada Nd"
+       3) REALIZADAS — completada+cerrada, fecha DESC, históricas
+          (es_retroactiva=1) atenuadas con badge gris
+       4) Canceladas/anuladas colapsadas al final
+     Todo computado server-side con `visitas` (top 50) y `hoy` (date)
+     que ya pasa la ruta mant_cliente_ficha.
+     ════════════════════════════════════════════════════════════════ #}
+
+  {% macro _vis_thead() %}
         <thead style="background:#fafbfc;border-bottom:2px solid var(--border)">
           <tr>
             <th class="ps-3 py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">N° OT</th>
@@ -6020,9 +6099,16 @@ function abrirEmailManual() {
             <th class="py-2"></th>
           </tr>
         </thead>
-        <tbody>
-        {% for v in visitas|sort(attribute='fecha_programada',reverse=True) %}
-        <tr style="border-bottom:1px solid #f3f4f6;transition:background .1s" onmouseover="this.style.background='#fafbfc'" onmouseout="this.style.background=''">
+  {% endmacro %}
+
+  {# Fila de OT. seccion ∈ pend|done|canc — calcula atraso (solo pendientes)
+     y marca históricas (solo realizadas con es_retroactiva=1). #}
+  {% macro _vis_row(v, seccion='pend') %}
+        {% set _atraso = ((hoy - v.fecha_programada).days if (seccion == 'pend' and hoy and v.fecha_programada and v.fecha_programada < hoy) else 0) %}
+        {% set _hist = (seccion == 'done' and v.es_retroactiva) %}
+        <tr class="{% if _atraso > 0 %}vis-row-atrasada{% elif _hist %}vis-row-hist{% elif seccion == 'canc' %}vis-row-canc{% endif %}"
+            style="border-bottom:1px solid #f3f4f6;transition:background .1s"
+            onmouseover="this.style.background='{{ '#fee2e2' if _atraso > 0 else '#fafbfc' }}'" onmouseout="this.style.background=''">
           <td class="ps-3 py-2 font-monospace" style="white-space:nowrap;font-size:.72rem">
             {% if v.numero_ot %}
               <span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:5px;font-weight:700">{{ v.numero_ot }}</span>
@@ -6032,6 +6118,9 @@ function abrirEmailManual() {
           </td>
           <td class="py-2 font-monospace" style="white-space:nowrap;color:#374151">
             {{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
+            {% if _atraso > 0 %}
+            <span class="vis-chip-atrasada ms-1">Atrasada {{ _atraso }}d</span>
+            {% endif %}
             {% if v.hora_inicio or v.hora_fin %}
             <div style="font-size:.7rem;color:#9ca3af;font-weight:600">
               {# hora_inicio/hora_fin ya vienen normalizadas como string "HH:MM" desde _norm_visita en app.py #}
@@ -6042,6 +6131,10 @@ function abrirEmailManual() {
           </td>
           <td class="py-2 fw-semibold" style="color:#0f172a">
             {{ v.titulo or (v.tipo.capitalize() + ' programada') }}
+            {% if _hist %}
+            <span class="badge-historica ms-1"
+                  title="Registrada retroactivamente; realizada antes de que existiera el sistema">Histórica · pre-sistema</span>
+            {% endif %}
             {% if v.descripcion %}
             <div style="font-size:.7rem;color:#9ca3af;font-weight:400">{{ v.descripcion[:60] }}{% if v.descripcion|length>60 %}…{% endif %}</div>
             {% endif %}
@@ -6099,11 +6192,121 @@ function abrirEmailManual() {
             {% endif %}
           </td>
         </tr>
-        {% endfor %}
+  {% endmacro %}
+
+  {# ── Particionar visitas por sección (server-side, sin JS) ── #}
+  {% set _est_vivos = ['creada','programada','asignada','reagendada','en_curso','en_ejecucion','pendiente_info','pendiente_repuesto','pendiente_aprobacion'] %}
+  {% set _conocidos = _est_vivos + ['completada','cerrada','cancelada','anulada'] %}
+  {% set _vp_conf  = visitas|selectattr('estado','in',_est_vivos)|selectattr('fecha_programada')|sort(attribute='fecha_programada')|list %}
+  {% set _vp_sinf  = visitas|selectattr('estado','in',_est_vivos)|rejectattr('fecha_programada')|list %}
+  {# estados fuera del ENUM (o vacíos) se tratan como pendientes para NO perder filas #}
+  {% set _vp_otras = visitas|rejectattr('estado','in',_conocidos)|list %}
+  {% set vis_pend  = _vp_conf + _vp_sinf + _vp_otras %}
+  {% set _vd_conf  = visitas|selectattr('estado','in',['completada','cerrada'])|selectattr('fecha_programada')|sort(attribute='fecha_programada',reverse=True)|list %}
+  {% set _vd_sinf  = visitas|selectattr('estado','in',['completada','cerrada'])|rejectattr('fecha_programada')|list %}
+  {% set vis_done  = _vd_conf + _vd_sinf %}
+  {% set vis_canc  = visitas|selectattr('estado','in',['cancelada','anulada'])|list %}
+  {% set vis_hist_n = vis_done|selectattr('es_retroactiva')|list|length %}
+  {% set _atr = namespace(n=0) %}
+  {% for v in vis_pend %}{% if hoy and v.fecha_programada and v.fecha_programada < hoy %}{% set _atr.n = _atr.n + 1 %}{% endif %}{% endfor %}
+
+  {# ── Franja de mini-KPIs ── #}
+  <div class="vis-kpi-strip">
+    <div class="vis-kpi-box" style="border-left:3px solid #6b7280">
+      <div class="vk-num" style="color:#0f172a">{{ visitas|length }}</div>
+      <div class="vk-lbl">Total gestionadas</div>
+    </div>
+    <div class="vis-kpi-box" style="border-left:3px solid #16a34a">
+      <div class="vk-num" style="color:#16a34a">{{ vis_done|length }}</div>
+      <div class="vk-lbl">Realizadas</div>
+      {% if vis_hist_n %}<div class="vk-sub">{{ vis_hist_n }} histórica{{ 's' if vis_hist_n != 1 else '' }} pre-sistema</div>{% endif %}
+    </div>
+    <div class="vis-kpi-box" style="border-left:3px solid #3b82f6">
+      <div class="vk-num" style="color:#1d4ed8">{{ vis_pend|length }}</div>
+      <div class="vk-lbl">Pendientes</div>
+    </div>
+    <div class="vis-kpi-box" style="border-left:3px solid {{ '#dc2626' if _atr.n else '#e5e7eb' }}">
+      <div class="vk-num" style="color:{{ '#dc2626' if _atr.n else '#9ca3af' }}">{{ _atr.n }}</div>
+      <div class="vk-lbl">Atrasadas</div>
+    </div>
+  </div>
+
+  {# ── Sección 1: PENDIENTES DE REALIZAR (fecha ASC) ── #}
+  <div class="vis-sec-header">
+    <i class="bi bi-hourglass-split"></i>Pendientes de realizar
+    <span class="vis-sec-count">{{ vis_pend|length }}</span>
+    {% if _atr.n %}<span class="vis-chip-atrasada">{{ _atr.n }} atrasada{{ 's' if _atr.n != 1 else '' }}</span>{% endif %}
+  </div>
+  {% if vis_pend %}
+  <div class="f-card">
+    <div class="f-card-body p-0">
+      <table class="table table-sm mb-0" style="font-size:.82rem">
+        {{ _vis_thead() }}
+        <tbody>
+        {% for v in vis_pend %}{{ _vis_row(v, 'pend') }}{% endfor %}
         </tbody>
       </table>
     </div>
   </div>
+  {% else %}
+  <div class="text-muted small px-3 py-2" style="background:#fafbfc;border:1px dashed var(--border);border-radius:10px">
+    <i class="bi bi-check2-circle me-1" style="color:#16a34a"></i>Nada pendiente — no hay OTs vivas en cola.
+  </div>
+  {% endif %}
+
+  {# ── Sección 2: REALIZADAS (completada + cerrada, fecha DESC) ── #}
+  <div class="vis-sec-header">
+    <i class="bi bi-check2-all"></i>Realizadas
+    <span class="vis-sec-count">{{ vis_done|length }}</span>
+    {% if vis_hist_n %}
+    <span class="badge-historica"
+          title="Registradas retroactivamente; realizadas antes de que existiera el sistema">{{ vis_hist_n }} histórica{{ 's' if vis_hist_n != 1 else '' }} · pre-sistema</span>
+    {% endif %}
+  </div>
+  {% if vis_done %}
+  <div class="f-card">
+    <div class="f-card-body p-0">
+      <table class="table table-sm mb-0" style="font-size:.82rem">
+        {{ _vis_thead() }}
+        <tbody>
+        {% for v in vis_done %}{{ _vis_row(v, 'done') }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="text-muted small px-3 py-2" style="background:#fafbfc;border:1px dashed var(--border);border-radius:10px">
+    <i class="bi bi-clock-history me-1"></i>Aún no hay mantenciones realizadas.
+  </div>
+  {% endif %}
+
+  {# ── Sección 3: canceladas/anuladas colapsadas ── #}
+  {% if vis_canc %}
+  <div class="text-center my-3">
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="visCancToggleBtn"
+            style="font-size:.72rem" onclick="visToggleCanceladas()"
+            data-lbl-ver="Ver {{ vis_canc|length }} cancelada{{ 's' if vis_canc|length != 1 else '' }}/anulada{{ 's' if vis_canc|length != 1 else '' }}">
+      <i class="bi bi-eye me-1"></i>Ver {{ vis_canc|length }} cancelada{{ 's' if vis_canc|length != 1 else '' }}/anulada{{ 's' if vis_canc|length != 1 else '' }}
+    </button>
+  </div>
+  <div id="visCancWrap" style="display:none">
+    <div class="vis-sec-header">
+      <i class="bi bi-x-circle"></i>Canceladas / anuladas
+      <span class="vis-sec-count">{{ vis_canc|length }}</span>
+    </div>
+    <div class="f-card">
+      <div class="f-card-body p-0">
+        <table class="table table-sm mb-0" style="font-size:.82rem">
+          {{ _vis_thead() }}
+          <tbody>
+          {% for v in vis_canc %}{{ _vis_row(v, 'canc') }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   </div>{# /visVistaLista #}
 
   {# ── Vista Timeline (oculta por default) ── #}
@@ -6184,7 +6387,31 @@ function abrirEmailManual() {
      así si el usuario ya abrió Timeline antes, no se pide de nuevo.
      ══════════════════════════════════════════════════════════════════ */
   const CT_VIGENTE_ID = (window.__FICHA_DATA || {}).contrato_vigente_id || null;
+  // 2026-06-10 — flag para acciones comerciales (proponer plan): solo no-técnicos
+  const VIS_NO_TECNICO = {{ 'true' if not is_tecnico else 'false' }};
   window._visResumenLoaded = false;
+
+  // Botón "Proponer plan al cliente" — la función la implementa
+  // mant_ficha.js (mantProponerPlanEmail). Si no existe (JS viejo en
+  // cache) o el usuario es técnico, NO se muestra el botón.
+  function _visBtnProponerPlan(){
+    if (!VIS_NO_TECNICO || typeof window.mantProponerPlanEmail !== 'function') return '';
+    return `<button class="btn btn-sm btn-outline-dark" style="font-size:.72rem" onclick="window.mantProponerPlanEmail()">
+              <i class="bi bi-envelope-paper me-1"></i>Proponer plan al cliente
+            </button>`;
+  }
+
+  // Toggle de la sección colapsada de canceladas/anuladas (lista de OTs)
+  function visToggleCanceladas(){
+    const w = document.getElementById('visCancWrap');
+    const b = document.getElementById('visCancToggleBtn');
+    if (!w || !b) return;
+    const show = w.style.display === 'none';
+    w.style.display = show ? '' : 'none';
+    b.innerHTML = show
+      ? '<i class="bi bi-eye-slash me-1"></i>Ocultar canceladas'
+      : '<i class="bi bi-eye me-1"></i>' + (b.dataset.lblVer || 'Ver canceladas');
+  }
 
   async function _visEnsureVisitasLoaded(){
     if (window._visResumenLoaded || window._visTlLoaded) return;
@@ -6255,9 +6482,11 @@ function abrirEmailManual() {
           <i class="bi bi-calendar-x" style="font-size:1.6rem;opacity:.5;display:block;margin-bottom:8px"></i>
           <div class="mb-2">No hay mantenciones programadas</div>
           ${CT_VIGENTE_ID ? `
-            <button class="btn btn-sm btn-ilus" onclick="visCalendarizarProximas()">
-              <i class="bi bi-calendar-plus me-1"></i>Calendarizar próximas
-            </button>` : `
+            <div class="d-flex gap-2 justify-content-center flex-wrap">
+              <button class="btn btn-sm btn-ilus" onclick="visCalendarizarProximas()">
+                <i class="bi bi-calendar-plus me-1"></i>Calendarizar próximas
+              </button>${_visBtnProponerPlan()}
+            </div>` : `
             <div style="font-size:.7rem;color:#9ca3af">Sin contrato vigente con frecuencia definida</div>
           `}
         </div>`;
@@ -6325,10 +6554,10 @@ function abrirEmailManual() {
       html += `</div>`;
     } else if (CT_VIGENTE_ID){
       html += `
-        <div style="font-size:.7rem;color:#9ca3af;text-align:center;padding:8px 4px">
+        <div style="font-size:.7rem;color:#9ca3af;text-align:center;padding:8px 4px" class="d-flex gap-2 justify-content-center flex-wrap">
           <button class="btn btn-xs btn-outline-secondary" onclick="visCalendarizarProximas()" style="font-size:.7rem">
             <i class="bi bi-calendar-plus me-1"></i>Calendarizar más visitas
-          </button>
+          </button>${_visBtnProponerPlan()}
         </div>`;
     }
     cont.innerHTML = html;
@@ -6337,37 +6566,46 @@ function abrirEmailManual() {
   function _renderUltimas(){
     const cont = document.getElementById('visUltimasBody');
     if (!cont) return;
-    const hoy = new Date(); hoy.setHours(23,59,59,999);
     const visitas = window._visTlVisitas || [];
-    const completadas = visitas
-      .filter(v => (v.estado || '').toLowerCase() === 'completada')
+    // FIX 2026-06-10: 'cerrada' también es realizada (antes solo 'completada'
+    // y las OTs cerradas desaparecían de "Últimas realizadas").
+    const realizadas = visitas
+      .filter(v => ['completada','cerrada'].includes((v.estado || '').toLowerCase()))
       .sort((a,b) => (_visGetDate(b)?.getTime()||0) - (_visGetDate(a)?.getTime()||0))
       .slice(0, 5);
 
-    if (!completadas.length){
+    if (!realizadas.length){
       cont.innerHTML = `
         <div class="vis-prox-empty">
           <i class="bi bi-calendar-check" style="font-size:1.6rem;opacity:.5;display:block;margin-bottom:8px"></i>
-          <div>Aún no hay mantenciones completadas</div>
+          <div>Aún no hay mantenciones realizadas</div>
         </div>`;
       return;
     }
 
     let html = '';
-    completadas.forEach(v => {
+    realizadas.forEach(v => {
       const d = _visGetDate(v);
       const rel = d ? _visFechaRel(d) : '';
       const dStr = d ? d.toLocaleDateString('es-CL', {day:'2-digit', month:'short', year:'2-digit'}) : '—';
       const col = _VIS_TIPO_COLOR[v.tipo] || '#475569';
       const tipo = (v.tipo || '').replace(/_/g, ' ');
-      const fact = (v.estado_facturacion || 'sin_cotizar').toLowerCase();
-      const cub  = (v.cubierto_por || 'contrato').toLowerCase();
+      const fact = (v.estado_facturacion || '').toLowerCase();
+      // FIX 2026-06-10: cubierto_por REAL del API. Antes había un fallback
+      // ||'contrato' que pintaba el badge "Contrato" aunque el dato no
+      // existiera. Si viene null → sin badge de cobertura.
+      const cub = (v.cubierto_por || '').toLowerCase();
       let factBadge = '';
       if (cub === 'garantia') factBadge = `<span class="vis-ult-fact gar">Garantía</span>`;
       else if (fact === 'facturado') factBadge = `<span class="vis-ult-fact fact">Facturado</span>`;
       else if (cub === 'contrato') factBadge = `<span class="vis-ult-fact gar" style="background:#e0e7ff;color:#3730a3">Contrato</span>`;
-      else factBadge = `<span class="vis-ult-fact no">Sin factura</span>`;
-      html += `<div class="vis-ult-item" onclick="window.location.href='/mantenciones/ot/${v.id}'">
+      else if (cub === 'cliente') factBadge = `<span class="vis-ult-fact no">Facturable</span>`;
+      // Históricas (es_retroactiva=1): atenuadas + badge gris
+      const esHist = !!v.es_retroactiva;
+      const histBadge = esHist
+        ? `<span class="badge-historica" title="Registrada retroactivamente; realizada antes de que existiera el sistema">Histórica</span>`
+        : '';
+      html += `<div class="vis-ult-item" ${esHist ? 'style="opacity:.72"' : ''} onclick="window.location.href='/mantenciones/ot/${v.id}'">
         <span class="vis-ult-dot" style="background:${col}"></span>
         <div class="vis-ult-body">
           <div class="vis-ult-titulo">${_visEscHtml(v.title || v.titulo || tipo)}</div>
@@ -6377,16 +6615,132 @@ function abrirEmailManual() {
             ${v.tecnico ? ` · <i class="bi bi-person-badge"></i> ${_visEscHtml(v.tecnico)}` : ''}
           </div>
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${factBadge}</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${factBadge}${histBadge}</div>
       </div>`;
     });
     cont.innerHTML = html;
   }
 
-  function _renderRitmo(){
+  /* ══════════════════════════════════════════════════════════════
+     RITMO v2 (2026-06-10) — RECOMENDADO vs REALIZADO.
+     Consume GET /mantenciones/api/clientes/<cid>/ritmo-mantencion:
+       meses[12] = {ym,label,recomendadas,realizadas,historicas,
+                    agendadas,atrasadas}  (orden ASC, mes actual último)
+       cumplimiento = {esperadas,realizadas,pct,estimado,
+                       frecuencia_meses,frecuencia_origen}
+     Si el endpoint falla, cae al render simple client-side de antes
+     (_renderRitmoFallback) para no romper la pestaña.
+     ══════════════════════════════════════════════════════════════ */
+  async function _renderRitmo(){
+    const cont = document.getElementById('visRitmoTrack');
+    if (!cont) return;
+    try {
+      const r = await fetch(`/mantenciones/api/clientes/${CID}/ritmo-mantencion`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (!d || !d.ok || !Array.isArray(d.meses) || !d.meses.length){
+        throw new Error((d && d.error) || 'sin datos');
+      }
+      _renderRitmoPro(d);
+    } catch(e){
+      _renderRitmoFallback();
+    }
+  }
+
+  function _renderRitmoPro(d){
+    const cont = document.getElementById('visRitmoTrack');
+    const lbl  = document.getElementById('visRitmoCount');
+    const cump = document.getElementById('visRitmoCumpl');
+    const leg  = document.getElementById('visRitmoLeg');
+    if (!cont) return;
+    const now = new Date();
+    const ymNow = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+    // ── Banner CUMPLIMIENTO ──
+    const c = d.cumplimiento || {};
+    if (cump){
+      const pct = Math.max(0, Math.min(100, Math.round(c.pct || 0)));
+      const realiz = c.realizadas || 0;
+      if (!c.esperadas || c.frecuencia_origen === 'sin_datos'){
+        cump.innerHTML = `<span class="vrc-txt">${realiz} realizada${realiz !== 1 ? 's' : ''} en 12 meses · sin frecuencia conocida para proyectar el plan</span>`;
+      } else {
+        const cls = pct >= 80 ? 'good' : (pct >= 50 ? 'mid' : 'bad');
+        const est = c.estimado ? ' <span style="font-size:.72rem;font-weight:700;color:#9ca3af">(estimado)</span>' : '';
+        const origen = ({
+          contrato:      'según contrato',
+          sugerida:      'según frecuencia sugerida',
+          regla_default: 'según regla general',
+        })[c.frecuencia_origen] || 'según contrato';
+        const cada = c.frecuencia_meses ? ` (cada ${c.frecuencia_meses} ${c.frecuencia_meses === 1 ? 'mes' : 'meses'})` : '';
+        cump.innerHTML = `<span class="vrc-pct ${cls}">CUMPLIMIENTO: ${pct}%${est}</span>` +
+          `<span class="vrc-txt">${realiz} realizada${realiz !== 1 ? 's' : ''} de ${c.esperadas} esperada${c.esperadas !== 1 ? 's' : ''} ${origen}${cada}</span>`;
+      }
+      cump.style.display = '';
+    }
+    if (lbl){
+      const totR = d.meses.reduce((a,m) => a + (m.realizadas || 0), 0);
+      lbl.textContent = `${totR} realizada${totR !== 1 ? 's' : ''} en 12 meses`;
+    }
+
+    // ── Track mensual: anillo punteado = recomendado · relleno = real ──
+    let html = '';
+    d.meses.forEach(m => {
+      const esActual = (m.ym === ymNow);
+      const futuro   = (m.ym > ymNow);
+      const rec = m.recomendadas || 0, rea = m.realizadas || 0,
+            his = m.historicas  || 0, age = m.agendadas  || 0,
+            atr = m.atrasadas   || 0;
+      let cls = 'vr2-empty', inner = '';
+      if (rea > 0){
+        if (his >= rea){ cls = 'vr2-hist'; inner = '<i class="bi bi-clock-history"></i>'; }
+        else { cls = 'vr2-ok'; }
+      } else if (age > 0){
+        cls = (atr > 0) ? 'vr2-atrasada' : 'vr2-agendada';
+      } else if (rec > 0 && !futuro && !esActual){
+        cls = 'vr2-miss';   // recomendada, mes pasado, nadie fue
+      }
+      const recCls = rec > 0 ? ' vr2-rec' : '';
+      const curCls = esActual ? ' current-month' : '';
+      const parts = [];
+      if (rec || rea || age){
+        parts.push(`Recomendadas: ${rec}`);
+        parts.push(`Realizadas: ${rea}${his ? ` (${his} histórica${his > 1 ? 's' : ''})` : ''}`);
+        if (age) parts.push(`Agendadas: ${age}${atr ? ` (${atr} atrasada${atr > 1 ? 's' : ''})` : ''}`);
+      } else {
+        parts.push('Sin actividad');
+      }
+      const tip = `${m.label || m.ym} — ${parts.join(' · ')}`;
+      const lblTxt = String(m.label || m.ym).split(' ')[0];
+      html += `<div class="vis-ritmo-month">
+        <div class="vis-ritmo-dot ${cls}${recCls}${curCls}">${inner}</div>
+        <div class="vis-ritmo-lbl ${esActual ? 'current' : ''}">${_visEscHtml(lblTxt)}</div>
+        <div class="vis-ritmo-tooltip">${_visEscHtml(tip)}</div>
+      </div>`;
+    });
+    cont.innerHTML = html;
+
+    // ── Leyenda actualizada ──
+    if (leg){
+      leg.innerHTML = `
+        <span><span class="vis-ritmo-leg-dot" style="background:#fff;outline:2px dashed #cbd5e1;outline-offset:1px"></span>Recomendada (plan)</span>
+        <span><span class="vis-ritmo-leg-dot" style="background:#16a34a"></span>Realizada</span>
+        <span><span class="vis-ritmo-leg-dot" style="background:#86b89a"></span>Histórica (pre-sistema)</span>
+        <span><span class="vis-ritmo-leg-dot" style="background:#fca5a5"></span>Recomendada no realizada</span>
+        <span><span class="vis-ritmo-leg-dot" style="background:#60a5fa"></span>Agendada</span>
+        <span><span class="vis-ritmo-leg-dot" style="background:#f59e0b"></span>Agendada atrasada</span>
+        <span><span class="vis-ritmo-leg-dot" style="background:#e5e7eb"></span>Sin actividad</span>
+        <span style="margin-left:6px"><span class="vis-ritmo-leg-dot" style="background:#fff;box-shadow:0 0 0 2px #dc2626"></span>Mes actual</span>`;
+    }
+  }
+
+  /* Fallback (código original pre-2026-06-10): círculos por mes con las
+     completadas del cache client-side. Solo se usa si el endpoint falla. */
+  function _renderRitmoFallback(){
     const cont = document.getElementById('visRitmoTrack');
     const lbl  = document.getElementById('visRitmoCount');
     if (!cont) return;
+    const cump = document.getElementById('visRitmoCumpl');
+    if (cump) cump.style.display = 'none';
     const visitas = window._visTlVisitas || [];
     const hoy = new Date(); hoy.setDate(1); hoy.setHours(0,0,0,0);
 
@@ -6405,11 +6759,11 @@ function abrirEmailManual() {
     const idx = {};
     meses.forEach((m,i) => idx[m.key] = i);
 
-    // Solo visitas completadas
+    // Solo visitas realizadas (completada + cerrada)
     let totalCompletadas = 0;
     visitas.forEach(v => {
       const est = (v.estado || '').toLowerCase();
-      if (est !== 'completada') return;
+      if (est !== 'completada' && est !== 'cerrada') return;
       const d = _visGetDate(v);
       if (!d) return;
       const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -6447,40 +6801,71 @@ function abrirEmailManual() {
     cont.innerHTML = html;
   }
 
+  /* FIX 2026-06-10 — flujo en 2 pasos (dry_run → confirm).
+     BUG anterior: el POST iba con body {} SIN confirm:true; el backend
+     (por diseño anti-creación-masiva del 2026-05-22) respondía dry_run
+     y NO creaba nada, pero el front mostraba "✓ 0 visita(s) generada(s)"
+     y el usuario creía que calendarizó. Ahora:
+       PASO 1: POST {} → el server devuelve las fechas que crearía.
+       PASO 2: ilusConfirm con esas fechas → POST {confirm:true} real. */
   async function visCalendarizarProximas(){
     if (!CT_VIGENTE_ID){
-      if (window.ilusAlert) {
-        await ilusAlert({title:'Sin contrato', message:'No hay contrato vigente con frecuencia definida.', type:'warning'});
-      } else {
-        alert('Sin contrato vigente');
-      }
+      await ilusAlert({title:'Sin contrato', message:'No hay contrato vigente con frecuencia definida.', type:'warning'});
       return;
     }
-    if (window.ilusConfirm){
-      const ok = await ilusConfirm({
-        title:'Calendarizar próximas mantenciones',
-        message:'Se generarán visitas preventivas automáticas según la frecuencia del contrato vigente.',
-        sub:'Idempotente — no se duplican visitas en meses ya programados.',
-        okLabel:'Calendarizar', cancelLabel:'Cancelar',
-      });
-      if (!ok) return;
-    }
     try {
-      const r = await fetch(`/mantenciones/api/contratos/${CT_VIGENTE_ID}/auto-calendar`, {
+      // PASO 1 — dry-run: obtener las fechas propuestas (no inserta nada)
+      const r1 = await fetch(`/mantenciones/api/contratos/${CT_VIGENTE_ID}/auto-calendar`, {
         method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
       });
-      const d = await r.json();
-      if (d.ok){
-        if (window.ilusToast) ilusToast(`✓ ${d.creadas || 0} visita(s) generada(s)`, {type:'success'});
+      const d1 = await r1.json();
+      if (!d1.ok){
+        await ilusAlert({title:'Error', message:d1.error || 'No se pudo calendarizar', type:'error'});
+        return;
+      }
+      if (!d1.dry_run){
+        // ok sin dry_run = no había nada que crear ("sin huecos")
+        ilusToast(d1.mensaje || 'Sin huecos — ya estaba calendarizado', {type:'info'});
+        return;
+      }
+      const fechas = Array.isArray(d1.fechas) ? d1.fechas : [];
+      const n = d1.preview_count || fechas.length || 0;
+      if (!n){
+        ilusToast('Sin huecos — ya estaba calendarizado', {type:'info'});
+        return;
+      }
+      const fechasFmt = fechas.slice(0, 8).map(f => {
+        try { return new Date(f + 'T00:00:00').toLocaleDateString('es-CL'); } catch(e){ return f; }
+      });
+      const lista = fechasFmt.join(' · ') + (n > 8 ? ` · y ${n - 8} más` : '');
+
+      // PASO 2 — confirmación con las fechas reales que se crearán
+      const ok = await ilusConfirm({
+        title: 'Calendarizar próximas mantenciones',
+        message: `Se crearán ${n} visita${n !== 1 ? 's' : ''} preventiva${n !== 1 ? 's' : ''} según la frecuencia del contrato vigente:`,
+        sub: lista,
+        okLabel: `Calendarizar ${n} visita${n !== 1 ? 's' : ''}`,
+        cancelLabel: 'Cancelar',
+        type: 'question',
+      });
+      if (!ok) return;
+
+      const r2 = await fetch(`/mantenciones/api/contratos/${CT_VIGENTE_ID}/auto-calendar`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({confirm: true})
+      });
+      const d2 = await r2.json();
+      if (d2.ok){
+        ilusToast(`✓ ${d2.creadas || 0} visita(s) calendarizada(s)`, {type:'success'});
         // Invalidar cache y recargar
         window._visResumenLoaded = false;
         window._visTlLoaded = false;
         await renderVisResumen();
       } else {
-        if (window.ilusAlert) await ilusAlert({title:'Error', message:d.error || 'No se pudo calendarizar', type:'error'});
+        await ilusAlert({title:'Error', message:d2.error || 'No se pudo calendarizar', type:'error'});
       }
     } catch(e){
-      if (window.ilusAlert) await ilusAlert({title:'Error', message:e.message, type:'error'});
+      await ilusAlert({title:'Error', message:e.message, type:'error'});
     }
   }
 
@@ -7341,40 +7726,60 @@ async function vhGuardar(){
 
     ilusToast('✓ Visita histórica registrada', {type:'success'});
 
-    // ¿Sugerencia de próxima visita?
+    // ¿Sugerencia de próxima visita? Flujo dry_run → confirm.
+    // FIX 2026-06-10 (mismo bug que visCalendarizarProximas): el POST iba
+    // SIN confirm:true, el backend respondía dry_run y NO creaba nada
+    // aunque el usuario aceptara. Ahora: 1er POST dry-run para obtener
+    // las fechas reales, ilusConfirm con esas fechas, 2do POST confirm:true.
     const sug = d.proxima_sugerida;
     if (sug && sug.fecha){
-      const fStr = new Date(sug.fecha + 'T00:00:00').toLocaleDateString('es-CL');
-      const ok = await ilusConfirm({
-        title: 'Calendarizar próxima visita',
-        message: sug.mensaje || `Sugerimos crear la próxima visita preventiva para el ${fStr}.`,
-        sub: `Frecuencia del contrato: ${sug.frecuencia_meses || '—'} meses`,
-        okLabel: 'Calendarizar',
-        cancelLabel: 'Después',
-        type: 'question',
-      });
-      if (ok){
-        // Usar contrato vigente del template (inyectado en __FICHA_DATA)
-        const ctId = (window.__FICHA_DATA || {}).contrato_vigente_id || null;
-        if (!ctId){
-          ilusToast('No se pudo identificar contrato vigente — agéndala manualmente', {type:'warning'});
-        } else {
-          try {
-            const acR = await fetch(`/mantenciones/api/contratos/${ctId}/auto-calendar`, {
-              method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({desde_fecha: sug.fecha}),
+      const ctId = (window.__FICHA_DATA || {}).contrato_vigente_id || null;
+      if (!ctId){
+        ilusToast('No se pudo identificar contrato vigente — agéndala manualmente', {type:'warning'});
+      } else {
+        try {
+          // PASO 1 — dry-run: el server devuelve las fechas que crearía
+          const preR = await fetch(`/mantenciones/api/contratos/${ctId}/auto-calendar`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({desde_fecha: sug.fecha}),
+          });
+          const preD = await preR.json();
+          if (!preD.ok) throw new Error(preD.error || 'Error');
+          if (preD.dry_run && (preD.preview_count || 0) > 0){
+            const fechasArr = Array.isArray(preD.fechas) ? preD.fechas : [];
+            const nCal = preD.preview_count || fechasArr.length;
+            const fechasFmt = fechasArr.slice(0, 8).map(f => {
+              try { return new Date(f + 'T00:00:00').toLocaleDateString('es-CL'); } catch(e){ return f; }
             });
-            const acD = await acR.json();
-            if (acD.ok && acD.creadas > 0){
-              ilusToast(`✓ ${acD.creadas} visita(s) calendarizadas`, {type:'success'});
-            } else if (acD.ok){
-              ilusToast('Sin huecos — ya estaba calendarizada', {type:'info'});
-            } else {
-              throw new Error(acD.error || 'Error');
+            const ok = await ilusConfirm({
+              title: 'Calendarizar próximas visitas',
+              message: sug.mensaje || 'Sugerimos calendarizar las próximas visitas preventivas.',
+              sub: `Frecuencia: ${sug.frecuencia_meses || '—'} meses · Se crearán ${nCal} visita(s): ` +
+                   fechasFmt.join(' · ') + (nCal > 8 ? ` · y ${nCal - 8} más` : ''),
+              okLabel: `Calendarizar ${nCal} visita(s)`,
+              cancelLabel: 'Después',
+              type: 'question',
+            });
+            if (ok){
+              // PASO 2 — confirmación real: ahora SÍ se insertan las OTs
+              const acR = await fetch(`/mantenciones/api/contratos/${ctId}/auto-calendar`, {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({desde_fecha: sug.fecha, confirm: true}),
+              });
+              const acD = await acR.json();
+              if (acD.ok && acD.creadas > 0){
+                ilusToast(`✓ ${acD.creadas} visita(s) calendarizadas`, {type:'success'});
+              } else if (acD.ok){
+                ilusToast('Sin huecos — ya estaba calendarizada', {type:'info'});
+              } else {
+                throw new Error(acD.error || 'Error');
+              }
             }
-          } catch(e){
-            ilusToast('No se pudo calendarizar: ' + e.message, {type:'error'});
+          } else {
+            ilusToast('Sin huecos — ya estaba calendarizada', {type:'info'});
           }
+        } catch(e){
+          ilusToast('No se pudo calendarizar: ' + e.message, {type:'error'});
         }
       }
     }

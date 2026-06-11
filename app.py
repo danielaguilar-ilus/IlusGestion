@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/app/.pw-browsers")
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 from functools import wraps
 
 from flask import (Flask, Response, abort, flash, g, jsonify, make_response,
@@ -6280,8 +6281,42 @@ def _get_resend_cfg() -> dict:
     return {"api_key": "", "from_addr": "", "_source": ""}
 
 
+def _email_normalize_attachments(attachments):
+    """Normaliza adjuntos de email a lista de tuplas (filename, bytes, mimetype).
+
+    Acepta dos formatos de entrada (FIX 2026-06-11 — informe post-servicio):
+      - tupla/lista: (filename, contenido_bytes, mimetype)
+      - dict:        {"filename":..., "content": bytes, "content_type":...}
+        (formato que ya arma mant_reporte_enviar)
+
+    Entradas inválidas se descartan en silencio (best-effort: el email
+    sale igual, sin el adjunto roto). Devuelve [] si no hay nada usable.
+    """
+    out = []
+    for a in (attachments or []):
+        try:
+            if isinstance(a, dict):
+                fname = a.get("filename") or a.get("nombre") or "adjunto.bin"
+                content = a.get("content") or a.get("bytes")
+                mime = a.get("content_type") or a.get("mimetype") or "application/octet-stream"
+            elif isinstance(a, (tuple, list)) and len(a) >= 2:
+                fname = a[0] or "adjunto.bin"
+                content = a[1]
+                mime = (a[2] if len(a) >= 3 else None) or "application/octet-stream"
+            else:
+                continue
+            if content is None:
+                continue
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            out.append((str(fname)[:200], bytes(content), str(mime)[:150]))
+        except Exception:
+            continue
+    return out
+
+
 def _send_via_resend(to, subject: str, html: str, from_addr: str = None,
-                     reply_to: str = None) -> bool:
+                     reply_to: str = None, attachments=None) -> bool:
     """
     Envía email vía API HTTPS de Resend (no usa puertos SMTP).
     Funciona desde cualquier IP, incluyendo cloud hosting (Railway, Heroku, AWS).
@@ -6292,6 +6327,9 @@ def _send_via_resend(to, subject: str, html: str, from_addr: str = None,
       html: cuerpo HTML
       from_addr: opcional "Nombre <email@dominio>"; default Resend config
       reply_to: opcional buzón de respuesta (header Reply-To)
+      attachments: opcional, lista de (filename, bytes, mimetype) o dicts
+                   {"filename","content","content_type"} (ver
+                   _email_normalize_attachments). Resend los recibe en base64.
 
     En caso de fallo, deja info en `g._last_resend_error` (dict con message/http_code/raw_body).
     """
@@ -6318,6 +6356,14 @@ def _send_via_resend(to, subject: str, html: str, from_addr: str = None,
     if reply_to:
         # Resend acepta string o lista
         payload_dict["reply_to"] = reply_to
+    # Adjuntos (FIX 2026-06-11): Resend acepta [{"filename","content"(base64)}]
+    att_norm = _email_normalize_attachments(attachments)
+    if att_norm:
+        import base64 as _b64
+        payload_dict["attachments"] = [
+            {"filename": fn, "content": _b64.b64encode(fb).decode("ascii")}
+            for fn, fb, _mt in att_norm
+        ]
     payload = json.dumps(payload_dict).encode("utf-8")
 
     req = _ur.Request(
@@ -6679,6 +6725,10 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
     LLAVE DE PASO POR MÓDULO: si el módulo identificado tiene el canal email
     bloqueado en comm_killswitch, NO envía y deja log con estado='bloqueado'.
     Si no se pasa 'modulo', se infiere del 'evento'. Default: 'general'.
+
+    attachments= (kwarg opcional, 2026-06-11): lista de adjuntos que se pasa
+    tal cual a _send_ilus_email_real (tuplas (filename, bytes, mimetype) o
+    dicts {"filename","content","content_type"}).
     """
     # 1) KILL SWITCH GLOBAL (todo email)
     if not comm_is_enabled("email"):
@@ -6840,9 +6890,17 @@ def _brand_wa_prefix(asunto: str) -> str:
     return f"🔧 {prefijo}\n\n"
 
 
-def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
+def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
+                          attachments=None) -> bool:
     """
     Implementación real con fallback configurable por env var.
+
+    attachments (FIX 2026-06-11 — informe post-servicio): lista opcional de
+    tuplas (filename, bytes, mimetype) — también acepta dicts
+    {"filename","content","content_type"} (ver _email_normalize_attachments).
+    Se adjuntan con MIMEApplication en SMTP y en base64 vía Resend. Antes
+    este kwarg no existía y mant_reporte_enviar caía en TypeError → el
+    informe JAMÁS llegaba con su adjunto Word.
 
     PROVIDER (env var ILUS_EMAIL_PROVIDER):
       - "smtp"   (default): Gmail SMTP primero (sale firmado como
@@ -6863,6 +6921,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     from_email). El Reply-To apunta al buzón de soporte.
     """
     marca = _get_marca()
+    att_norm = _email_normalize_attachments(attachments)
     provider = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
     if provider not in ("smtp", "resend", "auto"):
         provider = "smtp"
@@ -6893,7 +6952,8 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
 
         if _send_via_resend(to_addr, subject, html_body,
                             from_addr=from_for_resend,
-                            reply_to=marca["reply_to"]):
+                            reply_to=marca["reply_to"],
+                            attachments=att_norm):
             return True
         # Resend falló — guardar error legible y caer a SMTP
         err = getattr(g, "_last_resend_error", None) or {}
@@ -6915,13 +6975,31 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
     reply_to      = marca["reply_to"]   or cfg.get("reply_to") or ""
 
     # ── Envío vía SMTP (único método; configurable desde el front) ──────
-    msg = MIMEMultipart("alternative")
+    # Con adjuntos el contenedor debe ser multipart/mixed (el HTML va en un
+    # sub-multipart alternative). Sin adjuntos, igual que siempre.
+    if att_norm:
+        msg = MIMEMultipart("mixed")
+        _alt = MIMEMultipart("alternative")
+        _alt.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(_alt)
+        for _fn, _fb, _fm in att_norm:
+            try:
+                _sub = "octet-stream"
+                if _fm and "/" in _fm:
+                    _sub = _fm.split("/", 1)[1] or "octet-stream"
+                _part = MIMEApplication(_fb, _subtype=_sub)
+                _part.add_header("Content-Disposition", "attachment", filename=_fn)
+                msg.attach(_part)
+            except Exception as _e_att:
+                print(f"[ILUS][EMAIL] adjunto '{_fn}' descartado: {_e_att}")
+    else:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
     msg["Subject"] = subject
     msg["From"]    = f"{from_name} <{from_addr_cfg}>"
     msg["To"]      = to_addr
     if reply_to:
         msg["Reply-To"] = reply_to
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     host      = cfg["smtp_host"]
     port      = int(cfg.get("smtp_port", 587))
@@ -6980,7 +7058,8 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str) -> bool:
             pass
         if _send_via_resend(to_addr, subject, html_body,
                             from_addr=from_for_resend,
-                            reply_to=marca["reply_to"]):
+                            reply_to=marca["reply_to"],
+                            attachments=att_norm):
             print(f"[ILUS][EMAIL] Enviado a {to_addr} via Resend (fallback de SMTP)")
             return True
 
@@ -25059,6 +25138,15 @@ def init_comunicaciones_tables():
                  '🔧 *Servicio:* {{tipo_mantencion}}\n⚙️ *Equipo:* {{maquina}}\n'
                  '👷 *Técnico:* {{tecnico}}\n\n¡Gracias por confiar en ILUS! 💪'),
             ]
+            # 5ª plantilla (2026-06-11): propuesta de plan anual de mantención.
+            # El HTML vive en _mant_plan_propuesto_seed() (módulo-level, único
+            # source of truth — lo usa también _ensure_comm_template_plan_propuesto
+            # que corre SIEMPRE en boot, incluso con ILUS_SKIP_MIGRATIONS=1).
+            try:
+                _pp_asu, _pp_cue = _mant_plan_propuesto_seed()
+                _MANT_TPL.append(('plan_propuesto', 'email', _pp_asu, _pp_cue))
+            except Exception as _e_pp:
+                print(f"[init_comm][plan_propuesto] seed builder falló: {_e_pp}", flush=True)
             for _est, _can, _asu, _cue in _MANT_TPL:
                 try:
                     cur.execute(
@@ -30244,7 +30332,10 @@ def init_mantenciones_tables():
                     asunto       VARCHAR(500),
                     evento       VARCHAR(100) COMMENT 'crear_usuario, cambio_clave, retiro, reporte, manual, test, etc',
                     canal        VARCHAR(50) DEFAULT 'email',
-                    estado       ENUM('enviado','fallido') DEFAULT 'enviado',
+                    -- 'bloqueado' (2026-06-11): _send_ilus_email escribe ese
+                    -- estado cuando la llave de paso/kill switch frena el envío.
+                    -- Sin el valor en el ENUM, el INSERT del log fallaba mudo.
+                    estado       ENUM('enviado','fallido','bloqueado') DEFAULT 'enviado',
                     error_msg    TEXT,
                     actor        VARCHAR(190),
                     metadata     TEXT COMMENT 'JSON con info adicional',
@@ -31260,6 +31351,111 @@ def _mant_notificar_batch(rows):
         except Exception:
             pass
         return 0
+
+
+# ═════════════════════════════════════════════════════════════════════
+# FIX 2026-06-11 — NOTIFICACIÓN AL TÉCNICO CUANDO SE LE ASIGNA UNA OT
+#
+# mant_visita_crear (~44450) y mant_visita_actualizar (~44660) llamaban a
+# _notificar_ot_asignada_interna() y _notificar_ot_asignada() dentro de
+# try/except… pero las funciones NUNCA EXISTIERON → NameError tragado en
+# silencio: el técnico jamás se enteraba de que le asignaron una OT.
+#
+# Solo CAMPANITA interna (_mant_notificar). SIN email/WhatsApp a propósito:
+# no abrimos un canal nuevo sin que Daniel lo pruebe primero (decisión
+# 2026-06-11). tipo='ot_asignada' existe en el ENUM de mant_notificaciones
+# (migración 2026-05-22, ver MODIFY COLUMN tipo más arriba).
+# ═════════════════════════════════════════════════════════════════════
+
+def _notificar_ot_asignada_interna(vid, tecnico_user_id=None, motivo="asignada"):
+    """Campanita interna al técnico cuando se le asigna/reasigna una OT.
+
+    Args:
+        vid: id de mant_visitas.
+        tecnico_user_id: app_users.id del técnico destino. Si None, se lee
+            de la visita (v.tecnico_user_id).
+        motivo: 'asignada' | 'reasignada' (cambia el título).
+
+    Devuelve el id de la notificación o None (best-effort, jamás levanta).
+    """
+    try:
+        v = mysql_fetchone(
+            """SELECT v.id, v.numero_ot, v.titulo, v.fecha_programada,
+                      v.hora_inicio, v.tipo, v.cliente_id, v.tecnico_user_id,
+                      c.razon_social
+                 FROM mant_visitas v
+                 LEFT JOIN mant_clientes c ON c.id = v.cliente_id
+                WHERE v.id=%s""",
+            (vid,)
+        )
+        if not v:
+            return None
+        destino = tecnico_user_id or v.get("tecnico_user_id")
+        if not destino:
+            return None  # OT sin técnico → no hay a quién notificar
+        try:
+            destino = int(destino)
+        except Exception:
+            return None
+
+        numero = v.get("numero_ot") or f"V-{int(vid):05d}"
+        if (motivo or "").strip().lower() == "reasignada":
+            titulo = f"OT reasignada a ti: {numero}"
+        else:
+            titulo = f"Nueva OT asignada: {numero}"
+
+        fecha_txt = ""
+        if v.get("fecha_programada"):
+            try:
+                fecha_txt = v["fecha_programada"].strftime("%d/%m/%Y")
+            except Exception:
+                fecha_txt = str(v["fecha_programada"])[:10]
+        hora_txt = str(v["hora_inicio"])[:5] if v.get("hora_inicio") else ""
+        partes = []
+        if v.get("razon_social"):
+            partes.append(f"Cliente: {v['razon_social']}")
+        if fecha_txt:
+            partes.append(f"Fecha: {fecha_txt}" + (f" {hora_txt}" if hora_txt else ""))
+        if v.get("titulo"):
+            partes.append(str(v["titulo"]))
+        cuerpo = " · ".join(partes)
+
+        return _mant_notificar(
+            destino_user_id=destino,
+            tipo="ot_asignada",
+            titulo=titulo,
+            cuerpo=cuerpo,
+            url_accion=f"/mantenciones/ot/{int(vid)}",
+            prioridad="media",
+            cliente_id=v.get("cliente_id"),
+            visita_id=int(vid),
+        )
+    except Exception as e:
+        try:
+            print(f"[ot-asignada] notif interna vid={vid}: {e}", flush=True)
+        except Exception:
+            pass
+        return None
+
+
+def _notificar_ot_asignada(vid):
+    """Notifica la asignación de una OT al técnico (canal: solo campanita).
+
+    Históricamente este nombre estaba reservado para el aviso WhatsApp/SMS
+    al técnico (ver call-sites 'el helper WA/SMS legacy'), pero ese canal
+    está dado de baja (Twilio off, decisión Daniel). Implementación actual:
+    delega en _notificar_ot_asignada_interna — la idempotencia de
+    _mant_notificar evita duplicar la campanita cuando ambos helpers se
+    llaman seguidos. Si algún día se reactiva WhatsApp, este es el lugar.
+    """
+    try:
+        return _notificar_ot_asignada_interna(vid, None, motivo="asignada")
+    except Exception as e:
+        try:
+            print(f"[ot-asignada] vid={vid}: {e}", flush=True)
+        except Exception:
+            pass
+        return None
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -42296,12 +42492,175 @@ def mant_visitas_api():
             "prioridad":       r.get("prioridad") or "media",
             "numero_ot":       r.get("numero_ot") or "",
             "levantamiento_id":r.get("levantamiento_id"),
+            # RITMO 2026-06-11: el front necesita distinguir históricas y la
+            # cobertura REAL (antes mostraba badge "Contrato" para todo porque
+            # estos campos no viajaban). SIN defaults: null se respeta.
+            "es_retroactiva":     bool(r.get("es_retroactiva")),
+            "cubierto_por":       r.get("cubierto_por"),
+            "estado_facturacion": r.get("estado_facturacion"),
+            "fecha_realizada":    (str(r["fecha_realizada"])[:10]
+                                   if r.get("fecha_realizada") else ""),
             "color_tipo":      TIPO_COLOR.get(r.get("tipo"), "#6b7280"),
             "color_borde":     EST_BORDER.get(r.get("estado"), "#0f172a"),
             "color_modalidad": MODALIDAD_COLOR.get(r.get("modalidad_cobro") or "pagado", "#9ca3af"),
             "color_prioridad": PRIORIDAD_COLOR.get(r.get("prioridad") or "media", "#3b82f6"),
         })
     return jsonify(events)
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/ritmo-mantencion", methods=["GET"])
+@_mant_required
+def mant_cliente_ritmo_mantencion(cid):
+    """RITMO DE MANTENCIÓN (2026-06-11): ventana de 12 meses (mes actual
+    incluido, orden cronológico ASC) con recomendadas vs realizadas vs
+    agendadas por mes, para el gráfico de ritmo de la ficha del cliente.
+
+    Reusa la MISMA cadena del Agente intel (_cliente_inteligencia):
+      frecuencia: contrato.frecuencia_meses → ai_frecuencia_sug → regla
+                  'frecuencia_default_meses' (3).
+      ancla:      contrato.fecha_inicio → contrato.created_at → primera
+                  visita realizada. Robusto SIN contrato (estimado:true).
+    El mes de cada proyección = mes de la fecha AJUSTADA (día preferido +
+    día hábil — regla de oro de _mant_fecha_ajustada).
+
+    SIEMPRE responde 200: errores como {ok:false, error:'mensaje amigable'}
+    (nunca 500 con detalles internos)."""
+    from datetime import datetime as _dt
+    # Mismos universos de estados que el planificador anual:
+    _REALIZADA = ("completada", "cerrada")
+    _AGENDADA = ("programada", "reagendada", "asignada", "en_curso",
+                 "en_ejecucion", "pendiente_info", "pendiente_repuesto",
+                 "pendiente_aprobacion")
+    _MES_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
+                 "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+    try:
+        try:
+            cli = mysql_fetchone(
+                "SELECT id, dia_mantencion_pref FROM mant_clientes WHERE id=%s", (cid,))
+        except Exception:
+            # Pre-migración: dia_mantencion_pref aún no existe
+            cli = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,))
+        if not cli:
+            return jsonify({"ok": False, "error": "Cliente no encontrado."})
+        cli = dict(cli)
+        R = _reglas_cargar()
+        hoy = _dt.now().date()
+
+        # Ventana: 12 meses terminando en el mes actual (ASC).
+        primero_mes_actual = hoy.replace(day=1)
+        ventana = [_intel_add_months(primero_mes_actual, -(11 - i)) for i in range(12)]
+        idx = {(d.year, d.month): i for i, d in enumerate(ventana)}
+        meses = [{
+            "ym": f"{d.year:04d}-{d.month:02d}",
+            "label": f"{_MES_ABBR[d.month - 1]} {d.year % 100:02d}",
+            "recomendadas": 0, "realizadas": 0, "historicas": 0,
+            "agendadas": 0, "atrasadas": 0,
+        } for d in ventana]
+
+        # Visitas del cliente (fallback si es_retroactiva aún no migró).
+        try:
+            vis = mysql_fetchall(
+                "SELECT estado, fecha_programada, fecha_realizada, es_retroactiva "
+                "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
+        except Exception:
+            vis = mysql_fetchall(
+                "SELECT estado, fecha_programada, fecha_realizada "
+                "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
+        vis = [dict(v) for v in vis]
+
+        fechas_realizadas = []
+        for v in vis:
+            est = (v.get("estado") or "").lower()
+            f = (_intel_as_date(v.get("fecha_realizada"))
+                 or _intel_as_date(v.get("fecha_programada")))
+            if not f:
+                continue
+            i = idx.get((f.year, f.month))
+            if est in _REALIZADA:
+                fechas_realizadas.append(f)
+                if i is not None:
+                    meses[i]["realizadas"] += 1
+                    if v.get("es_retroactiva"):
+                        meses[i]["historicas"] += 1
+            elif est in _AGENDADA and i is not None:
+                meses[i]["agendadas"] += 1
+                if f < hoy:
+                    meses[i]["atrasadas"] += 1
+        fechas_realizadas.sort()
+
+        # Cadena frecuencia/ancla — criterio EXACTO de _cliente_inteligencia.
+        ct = mysql_fetchone(
+            "SELECT * FROM mant_contratos WHERE cliente_id=%s "
+            "  AND estado IN ('vigente','indefinido') "
+            "ORDER BY created_at DESC LIMIT 1", (cid,))
+        if not ct:
+            ct = mysql_fetchone(
+                "SELECT * FROM mant_contratos WHERE cliente_id=%s "
+                "ORDER BY created_at DESC LIMIT 1", (cid,))
+        ct = dict(ct) if ct else None
+
+        frecuencia = None; freq_origen = "regla_default"
+        if ct and ct.get("frecuencia_meses"):
+            frecuencia = int(ct["frecuencia_meses"]); freq_origen = "contrato"
+        elif ct and ct.get("ai_frecuencia_sug"):
+            frecuencia = int(ct["ai_frecuencia_sug"]); freq_origen = "sugerida"
+        if not frecuencia:
+            frecuencia = int(R.get("frecuencia_default_meses") or 3)
+        frecuencia = max(1, frecuencia)
+
+        f_ini = _intel_as_date(ct.get("fecha_inicio")) if ct else None
+        if ct and not f_ini:
+            f_ini = _intel_as_date(ct.get("created_at"))
+        f_fin = _intel_as_date(ct.get("fecha_vencimiento")) if ct else None
+        ancla = f_ini or (fechas_realizadas[0] if fechas_realizadas else None)
+
+        # recomendadas: cursor desde el ancla con _intel_add_months (avanza
+        # CRUDO, cero deriva); cada proyección se cuenta en el mes de su
+        # fecha AJUSTADA. esperadas = proyecciones con fecha <= hoy.
+        esperadas = 0
+        if ancla:
+            dia_pref = cli.get("dia_mantencion_pref")
+            fin_ventana = _intel_add_months(primero_mes_actual, 1)
+            cursor = _intel_add_months(ancla, frecuencia)
+            # Fast-forward para anclas muy viejas (saltos de `frecuencia`)
+            if cursor and cursor < ventana[0]:
+                saltos = _intel_meses_entre(cursor, ventana[0]) // frecuencia
+                if saltos > 1:
+                    cursor = _intel_add_months(cursor, (saltos - 1) * frecuencia)
+            guard = 0
+            while cursor and cursor < fin_ventana and guard < 60:
+                guard += 1
+                if f_fin and cursor > f_fin:
+                    break
+                fa = _mant_fecha_ajustada(cursor, dia_pref, R) or cursor
+                i = idx.get((fa.year, fa.month))
+                if i is not None:
+                    meses[i]["recomendadas"] = min(2, meses[i]["recomendadas"] + 1)
+                    if fa <= hoy:
+                        esperadas += 1
+                cursor = _intel_add_months(cursor, frecuencia)
+        else:
+            freq_origen = "sin_datos"
+
+        realizadas_ventana = sum(m["realizadas"] for m in meses)
+        pct = (min(100, int(round(100.0 * realizadas_ventana / esperadas)))
+               if esperadas else 100)
+        return jsonify({
+            "ok": True,
+            "meses": meses,
+            "cumplimiento": {
+                "esperadas": esperadas,
+                "realizadas": realizadas_ventana,
+                "pct": pct,
+                "estimado": freq_origen != "contrato",
+                "frecuencia_meses": (frecuencia if ancla else None),
+                "frecuencia_origen": freq_origen,
+            },
+        })
+    except Exception as e:
+        print(f"[ritmo_mantencion] cid={cid}: {e}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo calcular el ritmo de mantención."})
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -49952,6 +50311,325 @@ def mant_productos_search():
     return jsonify([dict(r) for r in rows])
 
 
+# ══════════════════════════════════════════════════════════════════════
+# CORREOS DE MANTENCIONES (2026-06-11)
+#
+# 1) _mant_get_cliente_emails / _mant_send_email_multi — multi-destinatario
+#    real (contacto_email + contacto2_email + email_empresa), enviando UNO
+#    POR UNO con modulo='mantenciones' para que la llave de paso y el
+#    email_log apliquen por destinatario. Patrón clonado de
+#    _get_pickup_all_emails / _send_pickup_email_multi (pickups_module.py).
+#
+# 2) _mant_email_hero / _mant_email_stepper / _mant_email_field /
+#    _mant_email_cta — clones email-safe (tablas + estilos inline, paleta
+#    ILUS) de los helpers premium de Retiros. Aquellos son CLOSURES dentro
+#    de init_comunicaciones_tables (no importables); estos son de módulo,
+#    reusables por cualquier correo de mantenciones.
+#
+# 3) _mant_plan_* — HTML de la propuesta de plan anual de mantención
+#    (plantilla 'plan_propuesto' + fallback inline del endpoint
+#    /mantenciones/api/clientes/<cid>/proponer-plan-email).
+#
+# NADA de esto dispara envíos automáticos: todo es de disparo manual.
+# ══════════════════════════════════════════════════════════════════════
+
+_MANT_DIAS_ES = ("lunes", "martes", "miércoles", "jueves",
+                 "viernes", "sábado", "domingo")
+
+
+def _mant_fecha_es(dt):
+    """'Lunes 09/03/2026' — día de la semana en español + dd/mm/yyyy.
+
+    No usa locale del sistema (en Railway/Cloud Run es C/POSIX): el día
+    sale de la tupla _MANT_DIAS_ES indexada por weekday().
+    """
+    try:
+        dia = _MANT_DIAS_ES[dt.weekday()].capitalize()
+        return f"{dia} {dt.strftime('%d/%m/%Y')}"
+    except Exception:
+        return str(dt)
+
+
+def _mant_get_cliente_emails(cid):
+    """Emails de un cliente de mantenciones, deduplicados y en minúsculas.
+
+    Junta (en este orden) contacto_email, contacto2_email y email_empresa
+    de mant_clientes — históricamente todos los flujos usaban SOLO
+    contacto_email y los otros dos quedaban muertos.
+
+    Returns: [str] lista única en minúsculas (orden estable). [] si nada.
+    """
+    try:
+        row = mysql_fetchone(
+            "SELECT contacto_email, contacto2_email, email_empresa "
+            "  FROM mant_clientes WHERE id=%s",
+            (int(cid),)
+        ) or {}
+    except Exception:
+        # BD sin las columnas nuevas (skip-migrations) → degradar al principal
+        try:
+            row = mysql_fetchone(
+                "SELECT contacto_email FROM mant_clientes WHERE id=%s",
+                (int(cid),)
+            ) or {}
+        except Exception:
+            row = {}
+    out, vistos = [], set()
+    for campo in ("contacto_email", "contacto2_email", "email_empresa"):
+        e = (row.get(campo) or "").strip().lower()
+        if e and "@" in e and 6 <= len(e) <= 180 and e not in vistos:
+            vistos.add(e)
+            out.append(e)
+    return out
+
+
+def _mant_send_email_multi(cid, asunto, html, evento="", emails=None,
+                           attachments=None):
+    """Envía un email de mantenciones a TODOS los destinatarios, UNO POR UNO.
+
+    Cada envío pasa por _send_ilus_email con modulo='mantenciones', por lo
+    que respeta el kill switch global + la llave de paso del módulo y deja
+    una fila por destinatario en email_log.
+
+    Args:
+        cid: id de mant_clientes (para resolver destinatarios por defecto).
+        asunto / html: contenido ya armado (html idealmente ya envuelto con
+            _comm_render_email_document).
+        evento: etiqueta para email_log (default 'mantenciones').
+        emails: lista opcional que REEMPLAZA a los emails del cliente
+            (se normaliza lower + dedupe, conserva el orden).
+        attachments: pass-through a _send_ilus_email (tuplas o dicts, ver
+            _email_normalize_attachments).
+
+    Returns:
+        {"enviados": [emails], "bloqueados": N, "fallidos": N,
+         "destinatarios": [todos los intentados]}
+    """
+    if emails is not None:
+        destinos, vistos = [], set()
+        for e in (emails or []):
+            e = str(e or "").strip().lower()
+            if e and "@" in e and e not in vistos:
+                vistos.add(e)
+                destinos.append(e)
+    else:
+        destinos = _mant_get_cliente_emails(cid)
+
+    # Pre-chequeo de la llave para DISTINGUIR 'bloqueado' de 'fallido'
+    # (_send_ilus_email devuelve False en ambos casos). El envío igual se
+    # intenta uno a uno: si está bloqueado, _send_ilus_email corta solo y
+    # deja el log estado='bloqueado' por destinatario.
+    try:
+        llave_cerrada = (not comm_is_enabled("email")) or \
+                        _modulo_canal_bloqueado("mantenciones", "email")
+    except Exception:
+        llave_cerrada = False
+
+    enviados, bloqueados, fallidos = [], 0, 0
+    for e in destinos:
+        try:
+            ok = _send_ilus_email(e, asunto, html,
+                                  evento=evento or "mantenciones",
+                                  modulo="mantenciones",
+                                  attachments=attachments)
+        except Exception as exc:
+            print(f"[mant-multi-email] fallo {e}: {exc}", flush=True)
+            ok = False
+        if ok:
+            enviados.append(e)
+        elif llave_cerrada:
+            bloqueados += 1
+        else:
+            fallidos += 1
+    return {"enviados": enviados, "bloqueados": bloqueados,
+            "fallidos": fallidos, "destinatarios": destinos}
+
+
+# ── Bloques premium email-safe (paleta ILUS #dc2626 / #0a0a0a) ──────────
+
+def _mant_email_hero(titulo_chip, titulo, subtitulo):
+    """Hero del email: tarjeta CLARA con riel rojo izquierdo + chip pill +
+    título grande + subtítulo. Clon email-safe del hero de Retiros
+    (tablas + estilos inline; sin CSS externo)."""
+    return (
+        '<table cellpadding="0" cellspacing="0" width="100%" '
+        'style="background:#ffffff;border:1px solid #ececef;border-left:5px solid #dc2626;'
+        'border-radius:12px;margin:0 0 20px;box-shadow:0 2px 8px rgba(10,10,10,.05)">'
+        '<tr><td style="padding:24px 26px;text-align:center">'
+        f'<div style="display:inline-block;background:#fee2e2;color:#991b1b;'
+        f'font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;'
+        f'padding:6px 14px;border-radius:50px;margin-bottom:14px">{titulo_chip}</div>'
+        f'<div style="font-family:Helvetica,Arial,sans-serif;color:#0a0a0a;font-size:24px;'
+        f'line-height:1.2;font-weight:900;letter-spacing:.01em;margin-bottom:8px">{titulo}</div>'
+        f'<div style="color:#6b7280;font-size:13px;line-height:1.45">{subtitulo}</div>'
+        '</td></tr></table>'
+    )
+
+
+def _mant_email_stepper(pasos):
+    """Stepper email-safe con línea conectora (clon del de Retiros).
+
+    Args:
+        pasos: lista de tuplas (label, done, current).
+               done=True   → nodo verde con ✓
+               current=True → nodo rojo con glow (paso actual)
+               ambos False → nodo gris pendiente
+    """
+    pasos = list(pasos or [])
+    n = len(pasos)
+    if not n:
+        return ""
+    node_w = f"{100.0 / (2 * n - 1):.2f}%" if n > 1 else "100%"
+    lbl_w = f"{100.0 / n:.2f}%"
+    celdas, labels_tds = [], []
+    for i, paso in enumerate(pasos):
+        try:
+            label, done, current = paso[0], bool(paso[1]), bool(paso[2])
+        except Exception:
+            label, done, current = str(paso), False, False
+        if done:
+            bg, fg, extra, icon = "#16a34a", "#ffffff", "", "✓"
+        elif current:
+            bg, fg, extra, icon = ("#dc2626", "#ffffff",
+                                   "box-shadow:0 0 0 4px rgba(220,38,38,.15);",
+                                   str(i + 1))
+        else:
+            bg, fg, extra, icon = ("#f3f4f6", "#9ca3af",
+                                   "border:1px solid #e5e7eb;", str(i + 1))
+        celdas.append(
+            f'<td align="center" valign="middle" width="{node_w}" style="padding:0">'
+            f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
+            f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;'
+            f'font-size:15px;font-weight:900;text-align:center;margin:0 auto;{extra}">{icon}</div>'
+            f'</td>'
+        )
+        if i < n - 1:
+            leg = "#16a34a" if done else ("#dc2626" if current else "#e5e7eb")
+            celdas.append(
+                f'<td valign="middle" width="{node_w}" style="padding:0 2px">'
+                f'<div style="height:4px;background:{leg};border-radius:2px;'
+                f'font-size:0;line-height:0">&nbsp;</div></td>'
+            )
+        lbl_color = "#16a34a" if done else ("#dc2626" if current else "#9ca3af")
+        lbl_weight = "800" if current else "600"
+        labels_tds.append(
+            f'<td align="center" width="{lbl_w}" style="font-family:Helvetica,Arial,sans-serif;'
+            f'font-size:10px;color:{lbl_color};text-transform:uppercase;font-weight:{lbl_weight};'
+            f'letter-spacing:.04em">{label}</td>'
+        )
+    return (
+        '<table cellpadding="0" cellspacing="0" width="100%" '
+        'style="background:#ffffff;border:1px solid #ececef;border-radius:12px;margin:0 0 18px">'
+        '<tr><td style="padding:20px 14px 16px 14px">'
+        '<table cellpadding="0" cellspacing="0" width="100%"><tr>'
+        f'{"".join(celdas)}'
+        '</tr></table>'
+        '<table cellpadding="0" cellspacing="0" width="100%" style="margin-top:9px"><tr>'
+        f'{"".join(labels_tds)}'
+        '</tr></table>'
+        '</td></tr></table>'
+    )
+
+
+def _mant_email_field(label, valor, accent=False):
+    """Fila label + valor (clon de _ret_field, email-safe)."""
+    val_style = ("color:#dc2626;font-weight:900" if accent
+                 else "color:#0a0a0a;font-weight:700")
+    return (
+        '<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:10px">'
+        '<tr>'
+        f'<td style="font-size:11px;color:#6b7280;text-transform:uppercase;'
+        f'letter-spacing:.07em;font-weight:700;width:40%;padding:4px 0">{label}</td>'
+        f'<td style="font-size:14px;{val_style};padding:4px 0">{valor}</td>'
+        '</tr></table>'
+    )
+
+
+def _mant_email_cta(texto, url):
+    """Botón rojo CTA email-safe (clon de _ret_cta, con URL literal)."""
+    return (
+        '<table cellpadding="0" cellspacing="0" width="100%" style="margin:24px 0 8px">'
+        '<tr><td align="center">'
+        f'<a href="{url}" '
+        'style="display:inline-block;background:#dc2626;color:#ffffff;'
+        'padding:14px 32px;text-decoration:none;font-size:14px;font-weight:800;'
+        'letter-spacing:.04em;border-radius:8px;box-shadow:0 4px 14px rgba(220,38,38,.30)">'
+        f'{texto} →</a>'
+        '</td></tr></table>'
+    )
+
+
+# ── Propuesta de plan de mantención (HTML compartido seed + fallback) ───
+
+def _mant_plan_fechas_html(fechas):
+    """Card blanca con la lista de fechas propuestas (1 fila por fecha,
+    bullet numerado rojo + 'Lunes 09/03/2026')."""
+    filas = []
+    for i, f in enumerate(fechas or []):
+        filas.append(
+            '<tr>'
+            f'<td width="34" valign="middle" style="padding:7px 0">'
+            f'<div style="width:24px;height:24px;line-height:24px;border-radius:12px;'
+            f'background:#fee2e2;color:#dc2626;font-size:12px;font-weight:900;'
+            f'text-align:center">{i + 1}</div></td>'
+            f'<td valign="middle" style="padding:7px 0;font-size:14px;color:#0a0a0a;'
+            f'font-weight:700">{_mant_fecha_es(f)}</td>'
+            '</tr>'
+        )
+    return (
+        '<table cellpadding="0" cellspacing="0" width="100%" '
+        'style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;margin:0 0 18px">'
+        '<tr><td style="padding:12px 22px">'
+        '<table cellpadding="0" cellspacing="0" width="100%">'
+        f'{"".join(filas)}'
+        '</table></td></tr></table>'
+    )
+
+
+def _mant_plan_email_cuerpo(cliente_tok, fechas_tok, mensaje_tok, anio_tok):
+    """Cuerpo (fragmento) del correo de propuesta de plan de mantención.
+
+    Los *_tok pueden ser valores reales (fallback inline del endpoint) o
+    placeholders literales '{{cliente}}', '{{fechas_html}}',
+    '{{mensaje_extra}}', '{{anio}}' (siembra de la plantilla editable).
+    El branding/header/footer lo agrega _comm_render_email_document — acá
+    NO se duplica footer.
+    """
+    return (
+        _mant_email_hero("Plan de mantención preventiva",
+                         cliente_tok,
+                         f"Propuesta de fechas · {anio_tok}") +
+        _mant_email_stepper([
+            ("Propuesto", False, True),
+            ("Confirmado", False, False),
+            ("Programado", False, False),
+            ("Realizado", False, False),
+        ]) +
+        '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+        'Le proponemos las siguientes fechas para las próximas mantenciones '
+        'preventivas de sus equipos:</p>' +
+        str(fechas_tok) +
+        str(mensaje_tok) +
+        '<p style="font-size:13px;color:#6b7280;line-height:1.6;margin:18px 0 0">'
+        'Para confirmar o ajustar fechas, responda este correo y coordinamos '
+        'la agenda con su ejecutivo.</p>'
+    )
+
+
+def _mant_plan_propuesto_seed():
+    """(asunto, cuerpo) de la plantilla editable 'plan_propuesto' de
+    comm_templates (modulo='mantenciones', canal='email').
+
+    Placeholders: {{cliente}}, {{fechas_html}}, {{anio}}, {{mensaje_extra}}.
+    ÚNICO source of truth del HTML — lo consumen la siembra de
+    init_comunicaciones_tables y _ensure_comm_template_plan_propuesto.
+    """
+    asunto = "Propuesta de plan de mantención {{anio}}"
+    cuerpo = _mant_plan_email_cuerpo("{{cliente}}", "{{fechas_html}}",
+                                     "{{mensaje_extra}}", "{{anio}}")
+    return asunto, cuerpo
+
+
 # ── ENVÍO DE EMAIL: visita agendada (con OT) ─────────────────────────
 
 @app.route("/mantenciones/api/visitas/<int:vid>/enviar-email", methods=["POST"])
@@ -49976,8 +50654,18 @@ def mant_visita_enviar_email(vid):
     if not v:
         return jsonify({"error": "Visita no encontrada"}), 404
 
-    destinatario = (d.get("destinatario") or v.get("contacto_email") or "").strip()
-    if not destinatario:
+    # MULTI-DESTINATARIO 2026-06-11: si el body trae 'destinatario' se respeta
+    # ese único email (override manual). Si no, se envía a TODOS los emails
+    # del cliente (contacto_email + contacto2_email + email_empresa) — antes
+    # solo salía al contacto principal y los otros dos campos eran letra muerta.
+    destino_override = (d.get("destinatario") or "").strip()
+    if destino_override:
+        destinos = [destino_override]
+    else:
+        destinos = _mant_get_cliente_emails(v["cliente_id"])
+        if not destinos and (v.get("contacto_email") or "").strip():
+            destinos = [(v.get("contacto_email") or "").strip()]
+    if not destinos:
         return jsonify({"error": "El cliente no tiene email registrado. Indica un destinatario."}), 400
 
     # Cargar técnicos asignados
@@ -50018,39 +50706,245 @@ def mant_visita_enviar_email(vid):
     if v.get("costo"):
         costo_html = f"<p style='font-size:14px'><strong>Costo estimado:</strong> ${int(v['costo']):,} CLP</p>".replace(",", ".")
 
-    saludo = f"Estimado/a {v.get('contacto_nombre') or v['razon_social']}"
-    body = f"""
-    <p style="font-size:14px;color:#374151">{saludo},</p>
-    <p style="font-size:14px;color:#374151">
-      Le informamos que se ha programado una visita técnica en sus dependencias:
-    </p>
-    <table style="width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px">
-      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">N° de Orden</td>
-          <td style="padding:7px 10px;font-family:monospace;color:#dc2626;font-weight:700">{ot}</td></tr>
-      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Tipo</td>
-          <td style="padding:7px 10px">{tipo_label}</td></tr>
-      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Fecha</td>
-          <td style="padding:7px 10px"><strong>{fecha_str}</strong>{(' · ' + horario) if horario else ''}</td></tr>
-      <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Técnico(s)</td>
-          <td style="padding:7px 10px">{tecs_html}</td></tr>
-      {('<tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Dirección</td><td style="padding:7px 10px">' + (v.get('direccion') or '') + ', ' + (v.get('comuna') or '') + '</td></tr>') if v.get('direccion') else ''}
-    </table>
-    {costo_html}
-    {reps_html}
-    <p style="font-size:13px;color:#6b7280;margin-top:18px">
-      Si necesita reagendar o cancelar la visita, por favor responda este correo
-      o comuníquese con su ejecutivo asignado.
-    </p>
-    """
-    asunto = f"Visita técnica programada — {ot} ({fecha_str})"
-    html = _comm_render_email_document(asunto, body, subtitle=f"OT {ot}")
-    ok = _send_ilus_email(destinatario, asunto, html,
-                          evento="visita_agendada", modulo="mantenciones")
+    # ── PLANTILLA EDITABLE PRIMERO (2026-06-11) ──────────────────────
+    # La plantilla 'visita_agendada' de comm_templates (sembrada hace meses)
+    # estaba HUÉRFANA: ningún flujo la leía. Ahora se intenta primero
+    # _render_comm_template; si devuelve None (no existe / activo=0 / vacía)
+    # caemos al HTML inline histórico. Variables documentadas en la siembra:
+    # {{ot}} {{cliente}} {{tecnico}} {{fecha}} {{horario}} {{direccion}}
+    # {{tipo_mantencion}} {{maquina}} {{link_ot}}
+    dir_full = ", ".join(p for p in [(v.get("direccion") or "").strip(),
+                                     (v.get("comuna") or "").strip()] if p) or "—"
+    try:
+        _eq_rows = mysql_fetchall(
+            "SELECT m.nombre FROM mant_visita_equipos ve "
+            "  JOIN mant_maquinas m ON m.id = ve.maquina_id "
+            " WHERE ve.visita_id=%s LIMIT 5",
+            (vid,)
+        ) or []
+        maquina_str = ", ".join(
+            (r.get("nombre") or "").strip()
+            for r in _eq_rows if (r.get("nombre") or "").strip()
+        ) or "—"
+    except Exception:
+        maquina_str = "—"
+    variables = {
+        "ot": ot,
+        "cliente": v.get("razon_social") or "",
+        "tecnico": tecs_html,
+        "fecha": fecha_str,
+        "horario": horario or "por confirmar",
+        "direccion": dir_full,
+        "tipo_mantencion": tipo_label,
+        "maquina": maquina_str,
+        "link_ot": f"{request.host_url.rstrip('/')}/mantenciones/ot/{vid}",
+    }
+    tpl = None
+    try:
+        tpl = _render_comm_template("visita_agendada", "email", variables,
+                                    modulo="mantenciones")
+    except Exception as _e_tpl:
+        print(f"[visita-email] plantilla no disponible, uso HTML inline: {_e_tpl}", flush=True)
 
-    if ok:
-        _mant_log("visita", vid, "email_enviado", f"a {destinatario} — OT {ot}")
-        return jsonify({"ok": True, "destinatario": destinatario})
-    return jsonify({"error": "No se pudo enviar el email. Revisa la configuración SMTP."}), 500
+    if tpl:
+        asunto, body = tpl
+        asunto = (asunto or "").strip() or f"Visita técnica programada — {ot} ({fecha_str})"
+    else:
+        saludo = f"Estimado/a {v.get('contacto_nombre') or v['razon_social']}"
+        body = f"""
+        <p style="font-size:14px;color:#374151">{saludo},</p>
+        <p style="font-size:14px;color:#374151">
+          Le informamos que se ha programado una visita técnica en sus dependencias:
+        </p>
+        <table style="width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px">
+          <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">N° de Orden</td>
+              <td style="padding:7px 10px;font-family:monospace;color:#dc2626;font-weight:700">{ot}</td></tr>
+          <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Tipo</td>
+              <td style="padding:7px 10px">{tipo_label}</td></tr>
+          <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Fecha</td>
+              <td style="padding:7px 10px"><strong>{fecha_str}</strong>{(' · ' + horario) if horario else ''}</td></tr>
+          <tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Técnico(s)</td>
+              <td style="padding:7px 10px">{tecs_html}</td></tr>
+          {('<tr><td style="padding:7px 10px;background:#f9fafb;font-weight:600">Dirección</td><td style="padding:7px 10px">' + (v.get('direccion') or '') + ', ' + (v.get('comuna') or '') + '</td></tr>') if v.get('direccion') else ''}
+        </table>
+        {costo_html}
+        {reps_html}
+        <p style="font-size:13px;color:#6b7280;margin-top:18px">
+          Si necesita reagendar o cancelar la visita, por favor responda este correo
+          o comuníquese con su ejecutivo asignado.
+        </p>
+        """
+        asunto = f"Visita técnica programada — {ot} ({fecha_str})"
+
+    html = _comm_render_email_document(asunto, body, subtitle=f"OT {ot}")
+    # Envío UNO POR UNO a cada destinatario (multi-email real, llave de paso
+    # y email_log por destinatario).
+    res = _mant_send_email_multi(v["cliente_id"], asunto, html,
+                                 evento="visita_agendada", emails=destinos)
+
+    if res["enviados"]:
+        _mant_log("visita", vid, "email_enviado",
+                  f"a {', '.join(res['enviados'])} — OT {ot}")
+        # 'destinatario' se mantiene por compatibilidad con el front actual.
+        return jsonify({"ok": True,
+                        "destinatario": res["enviados"][0],
+                        "enviados": res["enviados"],
+                        "bloqueados": res["bloqueados"],
+                        "fallidos": res["fallidos"]})
+    if res["bloqueados"]:
+        return jsonify({"error": "Envío bloqueado: la llave de paso de emails "
+                                 "de Mantenciones está cerrada.",
+                        "enviados": [], "bloqueados": res["bloqueados"],
+                        "fallidos": res["fallidos"]}), 503
+    return jsonify({"error": "No se pudo enviar el email. Revisa la configuración SMTP.",
+                    "enviados": [], "bloqueados": 0,
+                    "fallidos": res["fallidos"]}), 500
+
+
+# ── PROPUESTA DE PLAN DE MANTENCIÓN POR EMAIL (2026-06-11) ────────────
+
+@app.route("/mantenciones/api/clientes/<int:cid>/proponer-plan-email", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_cliente_proponer_plan_email(cid):
+    """Propone por email un plan anual de mantención preventiva (fechas).
+
+    DISPARO 100% MANUAL (nada automático). Body JSON:
+      fechas:        ['YYYY-MM-DD', ...]  (requerido, 1..12, sin repetidas)
+      emails:        [..] opcional — default: TODOS los emails del cliente
+                     (contacto_email + contacto2_email + email_empresa)
+      mensaje_extra: str opcional (texto libre, se escapa)
+      dry_run:       bool, default TRUE (preview sin enviar)
+
+    Respuestas:
+      dry_run → {ok:true, dry_run:true, destinatarios:[...], asunto:'...',
+                 preview_html:'...'}
+      real    → {ok:true, dry_run:false, enviados:[emails], bloqueados:N,
+                 fallidos:N, destinatarios:[...]}
+                (envía 1 a 1 con modulo='mantenciones' → respeta la llave
+                de paso y deja email_log por destinatario)
+
+    Plantilla editable: comm_templates ('mantenciones','plan_propuesto',
+    'email') con {{cliente}}, {{fechas_html}}, {{anio}}, {{mensaje_extra}}.
+    Si no está disponible, cae al HTML inline (_mant_plan_email_cuerpo).
+    """
+    import html as _h
+
+    d = request.get_json(silent=True) or {}
+    cli = mysql_fetchone(
+        "SELECT id, razon_social, contacto_nombre FROM mant_clientes WHERE id=%s",
+        (cid,)
+    )
+    if not cli:
+        return jsonify({"error": "Cliente no encontrado"}), 404
+
+    # ── 1) Validar fechas: lista de 1..12, formato YYYY-MM-DD, sin repetidas
+    fechas_raw = d.get("fechas")
+    if not isinstance(fechas_raw, list) or not fechas_raw:
+        return jsonify({"error": "Debes indicar al menos una fecha en 'fechas' (lista YYYY-MM-DD)."}), 400
+    if len(fechas_raw) > 12:
+        return jsonify({"error": "Máximo 12 fechas por propuesta de plan."}), 400
+    fechas = []
+    for f in fechas_raw:
+        s = str(f or "").strip()
+        try:
+            fechas.append(datetime.strptime(s, "%Y-%m-%d").date())
+        except Exception:
+            return jsonify({"error": f"Fecha inválida: '{s}'. Usa formato YYYY-MM-DD."}), 400
+    if len(set(fechas)) != len(fechas):
+        return jsonify({"error": "Hay fechas repetidas en la propuesta."}), 400
+    fechas.sort()
+    anio = fechas[0].year
+
+    # ── 2) Destinatarios: body.emails (validados) o todos los del cliente
+    _RE_EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+    emails_in = d.get("emails")
+    if emails_in:
+        if not isinstance(emails_in, list):
+            return jsonify({"error": "'emails' debe ser una lista."}), 400
+        destinos, vistos = [], set()
+        for e in emails_in:
+            e = str(e or "").strip().lower()
+            if not e:
+                continue
+            if not _RE_EMAIL.match(e):
+                return jsonify({"error": f"Email inválido: {e}"}), 400
+            if e not in vistos:
+                vistos.add(e)
+                destinos.append(e)
+    else:
+        destinos = _mant_get_cliente_emails(cid)
+    if not destinos:
+        return jsonify({"error": "El cliente no tiene emails registrados. "
+                                 "Completa la ficha o pasa 'emails' en el body."}), 400
+
+    # ── 3) Armar HTML (plantilla editable primero, fallback inline)
+    cliente_nombre = (cli.get("razon_social") or "").strip() or f"Cliente #{cid}"
+    fechas_html = _mant_plan_fechas_html(fechas)
+    mensaje_extra = (d.get("mensaje_extra") or "").strip()
+    mensaje_html = ""
+    if mensaje_extra:
+        # Input del usuario → SIEMPRE escapado antes de inyectar al HTML.
+        mensaje_html = (
+            '<table cellpadding="0" cellspacing="0" width="100%" '
+            'style="background:#f9fafb;border-left:4px solid #6b7280;'
+            'border-radius:6px;margin:0 0 16px"><tr>'
+            '<td style="padding:12px 16px;font-size:13px;color:#374151;line-height:1.6">'
+            + _h.escape(mensaje_extra).replace("\n", "<br>") +
+            '</td></tr></table>'
+        )
+
+    variables = {
+        "cliente": _h.escape(cliente_nombre),
+        "fechas_html": fechas_html,
+        "anio": str(anio),
+        "mensaje_extra": mensaje_html,
+    }
+    tpl = None
+    try:
+        tpl = _render_comm_template("plan_propuesto", "email", variables,
+                                    modulo="mantenciones")
+    except Exception as _e_tpl:
+        print(f"[plan-propuesto] plantilla no disponible, uso HTML inline: {_e_tpl}", flush=True)
+    if tpl:
+        asunto_base, cuerpo = tpl
+        asunto_base = (asunto_base or "").strip() or f"Propuesta de plan de mantención {anio}"
+    else:
+        asunto_base = f"Propuesta de plan de mantención {anio}"
+        cuerpo = _mant_plan_email_cuerpo(_h.escape(cliente_nombre), fechas_html,
+                                         mensaje_html, str(anio))
+
+    asunto = _brand_subject(asunto_base)
+    # _comm_render_email_document agrega header + footer de marca (anti
+    # double-wrap incluido) — el cuerpo NO trae footer propio.
+    preview_html = _comm_render_email_document(asunto_base, cuerpo,
+                                               subtitle=cliente_nombre)
+
+    # ── 4) dry_run (default TRUE — nunca enviar por accidente)
+    dry_raw = d.get("dry_run", True)
+    dry_run = not (dry_raw is False or str(dry_raw).strip().lower() in ("0", "false", "no"))
+    if dry_run:
+        return jsonify({"ok": True, "dry_run": True,
+                        "destinatarios": destinos,
+                        "asunto": asunto,
+                        "preview_html": preview_html})
+
+    # ── 5) Envío real: 1 a 1, modulo='mantenciones' (respeta llave de paso)
+    res = _mant_send_email_multi(cid, asunto, preview_html,
+                                 evento="plan_propuesto", emails=destinos)
+    try:
+        _mant_log("cliente", cid, "plan_propuesto_email",
+                  f"plan {anio}: {', '.join(f.strftime('%d/%m/%Y') for f in fechas)}"
+                  f" → {', '.join(destinos)}"
+                  f" | enviados={len(res['enviados'])}"
+                  f" bloqueados={res['bloqueados']} fallidos={res['fallidos']}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "dry_run": False,
+                    "enviados": res["enviados"],
+                    "bloqueados": res["bloqueados"],
+                    "fallidos": res["fallidos"],
+                    "destinatarios": destinos})
 
 
 # ── CALENDARIO ────────────────────────────────────────────────────────
@@ -52834,13 +53728,54 @@ def mant_radar_recalcular():
 # (_intel_add_months + _mant_fecha_ajustada → día preferido + día hábil).
 # ══════════════════════════════════════════════════════════════════════
 
+# FIX 2026-06-11: universos de estado canónicos del planificador. Antes solo
+# se reconocía 'completada' como realizada y 'programada/reagendada/en_curso'
+# como agendada → OTs cerradas/asignadas/en_ejecucion/pendiente_* quedaban
+# INVISIBLES (celdas falsamente vencidas) y el dedup de generar-ots podía
+# DUPLICAR OTs sobre meses ya cubiertos.
+_PLAN_ESTADOS_REALIZADA = ("completada", "cerrada")
+_PLAN_ESTADOS_AGENDADA = ("programada", "reagendada", "asignada", "en_curso",
+                          "en_ejecucion", "pendiente_info", "pendiente_repuesto",
+                          "pendiente_aprobacion")
+_PLAN_ESTADOS_VIVOS = _PLAN_ESTADOS_AGENDADA + _PLAN_ESTADOS_REALIZADA
+
+
+def _planificador_kpis(clientes):
+    """KPIs del planificador calculados sobre una lista de clientes (sirve
+    para recalcular DESPUÉS de aplicar filtros — KPIs coherentes con la
+    grilla visible). 'atrasadas' = OTs REALES agendadas con fecha pasada;
+    'vencidas' = proyecciones teóricas sin OT (conceptos separados)."""
+    k_real = k_agen = k_venc = k_proy = k_atra = 0
+    k_toca = k_cubiertas = 0
+    for c in clientes or []:
+        for cel in (c.get("meses") or {}).values():
+            if not cel:
+                continue
+            est = cel.get("estado")
+            if est == "realizada":
+                k_real += 1; k_toca += 1; k_cubiertas += 1
+            elif est == "agendada":
+                k_agen += 1; k_toca += 1; k_cubiertas += 1
+                if cel.get("atrasada"):
+                    k_atra += 1
+            elif est == "vencida":
+                k_venc += 1; k_toca += 1
+            elif est == "proyectada":
+                k_proy += 1; k_toca += 1
+    cobertura = round(100.0 * k_cubiertas / k_toca) if k_toca else 100
+    return {"cobertura_pct": cobertura, "ots_agendadas": k_agen,
+            "realizadas": k_real, "vencidas": k_venc, "proyectadas": k_proy,
+            "atrasadas": k_atra}
+
+
 def _planificador_compute(anio, R=None):
     """Proyección anual de TODOS los clientes activos. 2 queries + cómputo
     Python (sin llamar _cliente_inteligencia por cliente — performance).
 
-    Devuelve {"kpis": {...}, "clientes": [{id, razon_social, frecuencia,
-    dia_pref, riesgo, tiene_contrato, proxima, meses: {1..12: {estado, fecha,
-    visita_id, numero_ot} | None}}]}.
+    Devuelve {"kpis": {...con 'atrasadas'}, "clientes": [{id, razon_social,
+    frecuencia, dia_pref, riesgo, tiene_contrato, proxima,
+    cumplimiento: {realizadas, esperadas}, meses: {1..12: {estado, fecha,
+    visita_id, numero_ot, historica?, atrasada?} | None}}]}.
 
     Estados de celda (precedencia): realizada → agendada → vencida →
     proyectada → None. El "mes" de una proyección = mes de la fecha AJUSTADA
@@ -52868,12 +53803,22 @@ def _planificador_compute(anio, R=None):
 
     # Query 2: visitas del año (sargable) indexadas por cliente y mes.
     ini = f"{anio}-01-01"; fin = f"{anio + 1}-01-01"
-    visitas = mysql_fetchall(
-        "SELECT cliente_id, id, fecha_programada, fecha_realizada, estado, numero_ot "
-        "  FROM mant_visitas "
-        " WHERE (fecha_programada >= %s AND fecha_programada < %s) "
-        "    OR (fecha_realizada  >= %s AND fecha_realizada  < %s)",
-        (ini, fin, ini, fin)) or []
+    try:
+        visitas = mysql_fetchall(
+            "SELECT cliente_id, id, fecha_programada, fecha_realizada, estado, "
+            "       numero_ot, es_retroactiva "
+            "  FROM mant_visitas "
+            " WHERE (fecha_programada >= %s AND fecha_programada < %s) "
+            "    OR (fecha_realizada  >= %s AND fecha_realizada  < %s)",
+            (ini, fin, ini, fin)) or []
+    except Exception:
+        # Fallback pre-migración (es_retroactiva aún no existe)
+        visitas = mysql_fetchall(
+            "SELECT cliente_id, id, fecha_programada, fecha_realizada, estado, numero_ot "
+            "  FROM mant_visitas "
+            " WHERE (fecha_programada >= %s AND fecha_programada < %s) "
+            "    OR (fecha_realizada  >= %s AND fecha_realizada  < %s)",
+            (ini, fin, ini, fin)) or []
     vis_por_cli = {}
     for v in visitas:
         f = _intel_as_date(v.get("fecha_realizada")) or _intel_as_date(v.get("fecha_programada"))
@@ -52884,12 +53829,11 @@ def _planificador_compute(anio, R=None):
             continue
         vis_por_cli.setdefault(int(v["cliente_id"]), {}).setdefault(f.month, []).append({
             "id": v.get("id"), "estado": est, "numero_ot": v.get("numero_ot"),
-            "fecha": str(f),
+            "fecha": str(f), "es_retroactiva": bool(v.get("es_retroactiva")),
         })
 
     frec_default = int(R.get("frecuencia_default_meses") or 3)
     out_clientes = []
-    k_real = k_agen = k_venc = k_proy = 0; k_toca = k_cubiertas = 0
     for c in clientes:
         cid = int(c["id"])
         tiene_ct = bool(c.get("ctid"))
@@ -52901,14 +53845,23 @@ def _planificador_compute(anio, R=None):
 
         meses = {}
         # Visitas reales del año pintan su mes (precedencia realizada > agendada).
+        # FIX 2026-06-11: realizada = completada O cerrada; agendada = TODOS los
+        # estados vivos (antes cerrada/asignada/en_ejecucion/pendiente_* eran
+        # invisibles → celdas falsamente vencidas). Flags extra para el front:
+        # historica (realizada retroactiva) y atrasada (agendada con fecha pasada).
         for mes_n, lst in (vis_por_cli.get(cid) or {}).items():
-            done = next((x for x in lst if x["estado"] == "completada"), None)
-            prog = next((x for x in lst if x["estado"] in ("programada", "reagendada", "en_curso")), None)
+            done = next((x for x in lst if x["estado"] in _PLAN_ESTADOS_REALIZADA), None)
+            prog = next((x for x in lst if x["estado"] in _PLAN_ESTADOS_AGENDADA), None)
             pick = done or prog
             if pick:
-                meses[mes_n] = {"estado": ("realizada" if done else "agendada"),
-                                "fecha": pick["fecha"], "visita_id": pick["id"],
-                                "numero_ot": pick.get("numero_ot")}
+                cel = {"estado": ("realizada" if done else "agendada"),
+                       "fecha": pick["fecha"], "visita_id": pick["id"],
+                       "numero_ot": pick.get("numero_ot")}
+                if done:
+                    cel["historica"] = bool(pick.get("es_retroactiva"))
+                else:
+                    cel["atrasada"] = bool(pick["fecha"] < str(hoy))
+                meses[mes_n] = cel
         # Proyección teórica del contrato sobre los meses sin visita.
         if tiene_ct and ancla:
             cursor = ancla; guard = 0
@@ -52923,17 +53876,19 @@ def _planificador_compute(anio, R=None):
                         "fecha": str(fa), "visita_id": None, "numero_ot": None,
                     }
                 cursor = _intel_add_months(cursor, frecuencia)
-        # KPIs + próxima
-        proxima = None
+        # Próxima + cumplimiento del cliente (año visible): esperadas =
+        # celdas realizada + vencida hasta hoy (lo agendado futuro aún no se
+        # "debe"; lo proyectado futuro tampoco).
+        proxima = None; cum_real = 0; cum_venc = 0
         for m in range(1, 13):
             cel = meses.get(m)
             if not cel:
                 continue
             est = cel["estado"]
-            if est == "realizada": k_real += 1; k_toca += 1; k_cubiertas += 1
-            elif est == "agendada": k_agen += 1; k_toca += 1; k_cubiertas += 1
-            elif est == "vencida": k_venc += 1; k_toca += 1
-            elif est == "proyectada": k_proy += 1; k_toca += 1
+            if est == "realizada":
+                cum_real += 1
+            elif est == "vencida":
+                cum_venc += 1
             if not proxima and est in ("proyectada", "agendada") and cel["fecha"] >= str(hoy):
                 proxima = cel["fecha"]
         out_clientes.append({
@@ -52941,13 +53896,13 @@ def _planificador_compute(anio, R=None):
             "frecuencia": frecuencia if tiene_ct else None,
             "dia_pref": dia_pref, "riesgo": (c.get("nivel_riesgo") or None),
             "tiene_contrato": tiene_ct, "proxima": proxima,
+            "cumplimiento": {"realizadas": cum_real,
+                             "esperadas": cum_real + cum_venc},
             "meses": {str(m): meses.get(m) for m in range(1, 13)},
         })
-    cobertura = round(100.0 * k_cubiertas / k_toca) if k_toca else 100
     return {
         "anio": anio,
-        "kpis": {"cobertura_pct": cobertura, "ots_agendadas": k_agen,
-                 "realizadas": k_real, "vencidas": k_venc, "proyectadas": k_proy},
+        "kpis": _planificador_kpis(out_clientes),
         "clientes": out_clientes,
     }
 
@@ -52971,6 +53926,9 @@ def mant_planificador_data():
         if solo_ct:
             cls = [c for c in cls if c.get("tiene_contrato")]
         data["clientes"] = cls
+        # FIX 2026-06-11: KPIs coherentes con lo VISIBLE — recalculados sobre
+        # la lista filtrada (antes se calculaban sobre todos los clientes).
+        data["kpis"] = _planificador_kpis(cls)
         return jsonify({"ok": True, **data})
     except Exception as e:
         print(f"[planificador] anio={anio}: {e}", flush=True)
@@ -53028,6 +53986,17 @@ def mant_planificador_generar_ots():
         except (TypeError, ValueError):
             uid = None
         creadas = 0; omitidas = []
+        # numero_ot correlativo (FIX 2026-06-11): base UNA vez vía
+        # _next_ot_number() — igual que mant_visita_crear — y se incrementa
+        # localmente por cada OT del lote (los INSERT de esta transacción aún
+        # no son visibles para _next_ot_number, que lee por otra conexión;
+        # llamarlo por fila repetiría el mismo número).
+        _ot_base = _next_ot_number()                    # ej: OT-2026-00042
+        _ot_prefix, _ot_seq = _ot_base.rsplit("-", 1)
+        _ot_seq = int(_ot_seq)
+        # FIX 2026-06-11 dedup: TODOS los estados vivos (antes faltaban
+        # cerrada/asignada/en_ejecucion/pendiente_* → riesgo de OT duplicada).
+        _vivos_ph = ",".join(["%s"] * len(_PLAN_ESTADOS_VIVOS))
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
@@ -53036,19 +54005,21 @@ def mant_planificador_generar_ots():
                     # Defensa contra carreras: ¿apareció una visita viva ese mes?
                     cur.execute(
                         "SELECT 1 FROM mant_visitas "
-                        " WHERE cliente_id=%s AND estado IN ('programada','reagendada','en_curso','completada') "
+                        f" WHERE cliente_id=%s AND estado IN ({_vivos_ph}) "
                         "   AND ((fecha_realizada IS NOT NULL AND YEAR(fecha_realizada)=%s AND MONTH(fecha_realizada)=%s) "
                         "     OR (fecha_realizada IS NULL AND YEAR(fecha_programada)=%s AND MONTH(fecha_programada)=%s)) "
-                        " LIMIT 1", (cid, anio, mes, anio, mes))
+                        " LIMIT 1", (cid, *_PLAN_ESTADOS_VIVOS, anio, mes, anio, mes))
                     if cur.fetchone():
                         omitidas.append({"cliente_id": cid, "razon_social": cand["razon_social"],
                                          "motivo": "ya tiene visita ese mes"})
                         continue
+                    numero_ot = f"{_ot_prefix}-{_ot_seq:05d}"
+                    _ot_seq += 1
                     cur.execute(
-                        "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
+                        "INSERT INTO mant_visitas (numero_ot, cliente_id, contrato_id, titulo, tipo, estado, "
                         " fecha_programada, cubierto_por, created_by, created_by_user_id) "
-                        "VALUES (%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
-                        (cid, _intel_contrato_id(cid), "Mantención preventiva (Plan anual)",
+                        "VALUES (%s,%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
+                        (numero_ot, cid, _intel_contrato_id(cid), "Mantención preventiva (Plan anual)",
                          cand["fecha"], current_username(), uid))
                     creadas += 1
             conn.commit()
@@ -55537,8 +56508,13 @@ def mant_reporte_enviar(rid):
             try: rep[k] = json.loads(rep[k])
             except: rep[k] = []
 
-    destinatarios = d.get("destinatarios") or [cliente["contacto_email"]] if cliente["contacto_email"] else []
-    destinatarios = [e.strip() for e in destinatarios if e and "@" in e]
+    # FIX 2026-06-11: (a) el ternario anterior tenía mal la precedencia —
+    # si el cliente no tenía contacto_email, descartaba TAMBIÉN los
+    # 'destinatarios' explícitos del body; (b) el default ahora son TODOS
+    # los emails del cliente (contacto + contacto2 + empresa), no solo uno.
+    destinatarios = d.get("destinatarios") or _mant_get_cliente_emails(r["cliente_id"]) \
+        or ([cliente["contacto_email"]] if cliente["contacto_email"] else [])
+    destinatarios = [str(e).strip() for e in destinatarios if e and "@" in str(e)]
     if not destinatarios:
         return jsonify({"error":"Sin destinatarios válidos. Configura email del cliente o pasa 'destinatarios'."}), 400
 
@@ -55569,24 +56545,28 @@ def mant_reporte_enviar(rid):
     except Exception as exc:
         print(f"[REPORTE WORD] {exc}")
 
-    # Enviar (usa el helper existente _send_ilus_email si está disponible)
-    sent = False
-    err  = None
-    try:
-        sent = _send_ilus_email(", ".join(destinatarios), asunto, html_email,
-                                evento="reporte_servicio", modulo="mantenciones",
-                                attachments=attachments)
-    except TypeError:
-        # Si el helper no acepta attachments, mandar sin adjunto
-        try: sent = _send_ilus_email(", ".join(destinatarios), asunto, html_email,
-                                     evento="reporte_servicio", modulo="mantenciones")
-        except Exception as exc: err = str(exc)
-    except Exception as exc:
-        err = str(exc)
+    # Enviar UNO POR UNO por destinatario (FIX 2026-06-11):
+    # antes se mandaba un solo email con to_addr=", ".join(destinatarios)
+    # — SMTP/Resend tratan eso como UNA casilla inválida con comas y el
+    # informe no llegaba a nadie cuando había 2+ destinatarios. Además,
+    # _send_ilus_email_real ahora SÍ acepta attachments (el adjunto Word
+    # nunca llegaba: TypeError tragado).
+    res = _mant_send_email_multi(r["cliente_id"], asunto, html_email,
+                                 evento="reporte_servicio",
+                                 emails=destinatarios,
+                                 attachments=attachments)
+    sent = bool(res["enviados"])
+    err = None
+    if not sent:
+        err = ("Llave de paso de Mantenciones cerrada — envío bloqueado"
+               if res["bloqueados"] else
+               "No se pudo enviar a ningún destinatario (revisa configuración SMTP/Resend)")
 
     # Log
     _mant_log("reporte", rid, "enviar_email",
-              f"to={','.join(destinatarios)} ok={sent} err={err or '-'}")
+              f"to={','.join(destinatarios)} enviados={len(res['enviados'])} "
+              f"bloqueados={res['bloqueados']} fallidos={res['fallidos']} "
+              f"adjuntos={len(attachments)} err={err or '-'}")
 
     if sent:
         # Crear notificación de envío
@@ -55595,12 +56575,14 @@ def mant_reporte_enviar(rid):
                 "INSERT INTO mant_notificaciones (cliente_id,entidad,entidad_id,tipo,titulo,mensaje,canal,estado,destinatario,fecha_envio,created_by) "
                 "VALUES (%s,'reporte',%s,'sla',%s,%s,'email','enviada',%s,NOW(),%s)",
                 (r["cliente_id"], rid, f"Informe enviado al cliente",
-                 f"Informe {rep.get('ticket_num') or rid} enviado a {', '.join(destinatarios)}",
-                 ", ".join(destinatarios), current_username())
+                 f"Informe {rep.get('ticket_num') or rid} enviado a {', '.join(res['enviados'])}",
+                 ", ".join(res["enviados"]), current_username())
             )
         except Exception: pass
 
-    return jsonify({"ok": bool(sent), "destinatarios": destinatarios, "error": err})
+    return jsonify({"ok": sent, "destinatarios": destinatarios,
+                    "enviados": res["enviados"], "bloqueados": res["bloqueados"],
+                    "fallidos": res["fallidos"], "error": err})
 
 
 # ── ADJUNTOS DE CONTRATOS (multi-archivo) ─────────────────────────────
@@ -60200,6 +61182,68 @@ def _ensure_levantamiento_target_field():
     return faltaron
 
 
+def _ensure_email_log_estado_bloqueado():
+    """Garantiza que email_log.estado acepte 'bloqueado' AUNQUE
+    ILUS_SKIP_MIGRATIONS=1.
+
+    _send_ilus_email escribe estado='bloqueado' cuando el kill switch global
+    o la llave de paso por módulo frenan un envío, pero el ENUM original era
+    solo ('enviado','fallido') → en modo SQL estricto ese INSERT del log
+    fallaba SILENCIOSO y los bloqueos no quedaban trazados. 1 SELECT barato
+    a information_schema en cold-start; ALTER solo si falta el valor."""
+    try:
+        col = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='email_log' "
+            "  AND COLUMN_NAME='estado' LIMIT 1"
+        )
+        if not col:
+            return False  # tabla aún no existe — el CREATE actual ya trae 'bloqueado'
+        tipo = col.get("COLUMN_TYPE") or ""
+        if isinstance(tipo, (bytes, bytearray)):
+            tipo = tipo.decode("utf-8", "replace")
+        if "bloqueado" in str(tipo).lower():
+            return False  # ya está ampliado
+        mysql_execute(
+            "ALTER TABLE email_log MODIFY COLUMN estado "
+            "ENUM('enviado','fallido','bloqueado') DEFAULT 'enviado'"
+        )
+        print("[ensure_email_log] estado ENUM ampliado con 'bloqueado'", flush=True)
+        return True
+    except Exception as e:
+        print(f"[ensure_email_log] no se pudo ampliar ENUM estado: {e}", flush=True)
+        return False
+
+
+def _ensure_comm_template_plan_propuesto():
+    """Siembra idempotente de la plantilla 'plan_propuesto' (propuesta de plan
+    anual de mantención por email) AUNQUE ILUS_SKIP_MIGRATIONS=1.
+
+    comm_templates tiene UNIQUE KEY uq_mod_estado_canal (modulo, estado,
+    canal) → INSERT IGNORE no pisa ediciones de Daniel desde /comunicaciones.
+    El HTML sale de _mant_plan_propuesto_seed() (mismo source of truth que la
+    siembra de init_comunicaciones_tables). Placeholders: {{cliente}},
+    {{fechas_html}}, {{anio}}, {{mensaje_extra}}."""
+    try:
+        existe = mysql_fetchone(
+            "SELECT id FROM comm_templates WHERE modulo='mantenciones' "
+            "  AND estado='plan_propuesto' AND canal='email' LIMIT 1"
+        )
+        if existe:
+            return False
+        asunto, cuerpo = _mant_plan_propuesto_seed()
+        mysql_execute(
+            "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+            "VALUES ('mantenciones','plan_propuesto','email',%s,%s)",
+            (asunto, cuerpo)
+        )
+        print("[ensure_comm_tpl] plantilla 'plan_propuesto' sembrada", flush=True)
+        return True
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar plan_propuesto: {e}", flush=True)
+        return False
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -60321,6 +61365,22 @@ try:
 except Exception as _ensure_intel_err:
     print(f"[ILUS][WARN] _ensure_mant_intel_tables: {_ensure_intel_err}", flush=True)
 
+# email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
+# sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.
+try:
+    with app.app_context():
+        _ensure_email_log_estado_bloqueado()
+except Exception as _ensure_elog_err:
+    print(f"[ILUS][WARN] _ensure_email_log_estado_bloqueado: {_ensure_elog_err}", flush=True)
+
+# Plantilla editable 'plan_propuesto' (mantenciones/email) SIEMPRE sembrada
+# (incluso skip-migrations) — la usa /mantenciones/api/clientes/<cid>/proponer-plan-email.
+try:
+    with app.app_context():
+        _ensure_comm_template_plan_propuesto()
+except Exception as _ensure_pp_err:
+    print(f"[ILUS][WARN] _ensure_comm_template_plan_propuesto: {_ensure_pp_err}", flush=True)
+
 
 def _reparar_ruts_clientes_corruptos():
     """Repara RUTs de mant_clientes con DV DUPLICADO (cuerpo normalizado > 9
@@ -60395,6 +61455,45 @@ try:
         _reparar_visita_fotos_maquina_id()
 except Exception as _e_foto_rep:
     print(f"[ILUS][WARN] _reparar_visita_fotos_maquina_id: {_e_foto_rep}", flush=True)
+
+
+def _backfill_es_retroactiva_historicas():
+    """Backfill RITMO 2026-06-11: el endpoint viejo /visita-historica creaba
+    visitas históricas SIN marcar es_retroactiva=1 (solo el título
+    '…histórica' las delataba) — por eso la UI no las distinguía. Marca esas
+    visitas completadas por su título. Idempotente (es_retroactiva=0 en el
+    WHERE) y barato (COUNT guard primero)."""
+    _like = ("%historica%", "%histórica%", "%retroactivo%")
+    try:
+        n = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visitas "
+            " WHERE es_retroactiva=0 AND estado='completada' "
+            "   AND (titulo LIKE %s OR titulo LIKE %s OR titulo LIKE %s)",
+            _like)
+        afectadas = (n or {}).get("n") or 0
+        if not afectadas:
+            return 0
+        mysql_execute(
+            "UPDATE mant_visitas SET es_retroactiva=1 "
+            " WHERE es_retroactiva=0 AND estado='completada' "
+            "   AND (titulo LIKE %s OR titulo LIKE %s OR titulo LIKE %s)",
+            _like)
+        print(f"[backfill-retroactivas] {afectadas} visita(s) histórica(s) "
+              "marcadas con es_retroactiva=1 (por título)", flush=True)
+        return afectadas
+    except Exception as e:
+        print(f"[backfill-retroactivas] no se aplicó: {e}", flush=True)
+        return 0
+
+
+# CRÍTICO: backfill de es_retroactiva en visitas históricas viejas para que el
+# ritmo de mantención y el planificador las distingan. Corre SIEMPRE (incluso
+# con ILUS_SKIP_MIGRATIONS=1); barato por el COUNT guard.
+try:
+    with app.app_context():
+        _backfill_es_retroactiva_historicas()
+except Exception as _e_retro_bf:
+    print(f"[ILUS][WARN] _backfill_es_retroactiva_historicas: {_e_retro_bf}", flush=True)
 
 
 def _reparar_fotos_levantamiento_a_galeria():

@@ -5548,7 +5548,28 @@ async function guardarVisita() {
     method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
   });
   if (r.ok) {
+    const d = await r.json().catch(() => ({}));
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
+
+    // ── OPT-IN de aviso por correo (2026-06-11) ──────────────────────
+    // Solo al CREAR (no al editar) y solo si el backend devolvió el id
+    // de la visita nueva. NUNCA se envía sin preguntar al usuario.
+    const nuevaId = (!vid && d) ? (d.id || d.visita_id || null) : null;
+    if (nuevaId) {
+      const enviar = await ilusConfirm({
+        title: 'OT creada',
+        message: '¿Avisar al cliente por correo con la fecha agendada?',
+        sub: 'Se enviará un correo con el día y bloque horario.',
+        okLabel: 'Enviar correo',
+        cancelLabel: 'Ahora no',
+        type: 'question',
+      });
+      if (enviar) {
+        await window.mantEnviarEmailVisita(nuevaId);
+        // Pausa breve para que el toast alcance a leerse antes del reload.
+        await new Promise(res => setTimeout(res, 900));
+      }
+    }
     location.reload();
   } else { ilusToast('Error al guardar la visita', { type:'error' }); }
 }
@@ -5571,6 +5592,151 @@ async function eliminarVisita() {
     ilusToast('Error al eliminar la visita', { type:'error' });
   }
 }
+
+// ─── Correos al cliente (visitas + plan de mantención) ───────────────
+// 2026-06-11 — Wrapper reutilizable del POST enviar-email de una visita.
+// Devuelve true si el correo salió, false en cualquier otro caso.
+// Toasts con mensajes claros: éxito / bloqueado por llave / error.
+window.mantEnviarEmailVisita = async function(vid) {
+  if (!vid) return false;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${vid}/enviar-email`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      ilusToast(`✓ Correo enviado a ${d.destinatario || 'cliente'}`, { type:'success' });
+      return true;
+    }
+    const errTxt = String(d.error || d.detalle || '');
+    if (d.bloqueado || /bloquead|llave|kill.?switch/i.test(errTxt)) {
+      ilusToast('El correo quedó bloqueado por la llave de comunicaciones', { type:'warning', duration: 6000 });
+    } else {
+      ilusToast('No se pudo enviar el correo: ' + (errTxt || 'error desconocido'), { type:'error', duration: 6000 });
+    }
+    return false;
+  } catch(e) {
+    ilusToast('Error de red al enviar el correo: ' + e.message, { type:'error' });
+    return false;
+  }
+};
+
+// 2026-06-11 — Propone por correo el plan anual de mantención del contrato
+// vigente: calcula fechas con el auto-calendar (dry_run, NO crea OTs),
+// pide preview al endpoint proponer-plan-email (dry_run:true) y solo si
+// el usuario confirma envía de verdad (dry_run:false). Nunca auto-envía.
+window.mantProponerPlanEmail = async function() {
+  const ctid = DATA.contrato_vigente_id;
+  if (!ctid) {
+    await ilusAlert({
+      title: 'Sin contrato vigente',
+      message: 'Para proponer un plan de mantención el cliente necesita un contrato vigente con frecuencia definida.',
+      sub: 'Crea o activa un contrato con frecuencia de mantenciones y vuelve a intentarlo.',
+      type: 'info',
+    });
+    return;
+  }
+  try {
+    // (a) Fechas sugeridas — auto-calendar SIN confirm devuelve dry_run
+    //     con el preview de fechas (no inserta nada en mant_visitas).
+    const rF = await fetch(`/mantenciones/api/contratos/${ctid}/auto-calendar`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({}),
+    });
+    const dF = await rF.json().catch(() => ({}));
+    if (!rF.ok || dF.ok === false) {
+      ilusToast('No se pudieron calcular las fechas: ' + (dF.error || 'error desconocido'), { type:'error', duration: 6000 });
+      return;
+    }
+    // Shape defensivo: el backend puede exponer fechas / propuestas / preview.
+    let fechas = dF.fechas || dF.propuestas || dF.preview || [];
+    if (!Array.isArray(fechas)) fechas = [];
+    fechas = fechas.map(f => String(f).slice(0, 10))
+                   .filter(f => /^\d{4}-\d{2}-\d{2}$/.test(f))
+                   .slice(0, 12);   // el endpoint de email acepta 1..12 fechas
+    if (!fechas.length) {
+      await ilusAlert({
+        title: 'Sin fechas para proponer',
+        message: dF.mensaje || 'El contrato no tiene fechas pendientes de calendarizar.',
+        sub: 'Puede que todas las mantenciones del período ya estén programadas.',
+        type: 'info',
+      });
+      return;
+    }
+
+    // (b) Preview del correo (dry_run:true) — destinatarios + asunto.
+    const rP = await fetch(`/mantenciones/api/clientes/${CID}/proponer-plan-email`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ fechas: fechas, dry_run: true }),
+    });
+    const dP = await rP.json().catch(() => ({}));
+    if (!rP.ok || !dP.ok) {
+      ilusToast('No se pudo preparar la propuesta: ' + (dP.error || 'error desconocido'), { type:'error', duration: 6000 });
+      return;
+    }
+    const destinatarios = Array.isArray(dP.destinatarios) ? dP.destinatarios : [];
+    if (!destinatarios.length) {
+      await ilusAlert({
+        title: 'Cliente sin correos',
+        message: 'El cliente no tiene direcciones de correo registradas.',
+        sub: 'Agrega un email de contacto en la ficha y vuelve a intentarlo.',
+        type: 'warning',
+      });
+      return;
+    }
+
+    // (c) Confirmación con preview. HTML controlado: las fechas ya pasaron
+    //     el filtro regex y emails/asunto van escapados con escHtml.
+    const fmtFecha = (iso) => { const p = iso.split('-'); return `${p[2]}/${p[1]}/${p[0]}`; };
+    const chip = (txt, color) =>
+      `<span style="display:inline-block;background:#f3f4f6;border:1px solid #e5e7eb;` +
+      `border-radius:50px;padding:2px 10px;font-size:.78rem;font-weight:700;` +
+      `color:${color};margin:2px 3px 0 0">${txt}</span>`;
+    const subHtml =
+      `<div style="text-align:left">` +
+        `<div style="font-weight:700;margin-bottom:4px">Fechas propuestas (${fechas.length}):</div>` +
+        `<div style="margin-bottom:8px">${fechas.map(f => chip(fmtFecha(f), '#0a0a0a')).join('')}</div>` +
+        `<div style="font-weight:700;margin-bottom:4px">Destinatarios (${destinatarios.length}):</div>` +
+        `<div>${destinatarios.map(e => chip(escHtml(String(e)), '#dc2626')).join('')}</div>` +
+        (dP.asunto ? `<div style="margin-top:8px;color:#6b7280;font-size:.78rem">Asunto: <b>${escHtml(String(dP.asunto))}</b></div>` : '') +
+      `</div>`;
+    const ok = await ilusConfirm({
+      title: 'Proponer plan de mantención',
+      message: 'Se enviará la propuesta de fechas al cliente por correo.',
+      sub: subHtml,
+      subHtml: true,
+      okLabel: 'Enviar propuesta',
+      cancelLabel: 'Cancelar',
+      type: 'question',
+    });
+    if (!ok) return;
+
+    // (d) Envío real (dry_run:false) con las mismas fechas confirmadas.
+    const rS = await fetch(`/mantenciones/api/clientes/${CID}/proponer-plan-email`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ fechas: fechas, dry_run: false }),
+    });
+    const dS = await rS.json().catch(() => ({}));
+    if (rS.ok && dS.ok) {
+      const enviados   = Array.isArray(dS.enviados) ? dS.enviados.length : 0;
+      const bloqueados = Number(dS.bloqueados || 0);
+      if (enviados && !bloqueados) {
+        ilusToast(`✓ Propuesta enviada a ${enviados} destinatario(s)`, { type:'success', duration: 5000 });
+      } else if (enviados && bloqueados) {
+        ilusToast(`Propuesta enviada a ${enviados}; ${bloqueados} bloqueado(s) por la llave de comunicaciones`, { type:'warning', duration: 6500 });
+      } else if (bloqueados) {
+        ilusToast('El correo quedó bloqueado por la llave de comunicaciones', { type:'warning', duration: 6000 });
+      } else {
+        ilusToast('La propuesta no llegó a ningún destinatario', { type:'warning', duration: 6000 });
+      }
+    } else {
+      ilusToast('No se pudo enviar la propuesta: ' + (dS.error || 'error desconocido'), { type:'error', duration: 6000 });
+    }
+  } catch(e) {
+    ilusToast('Error de red: ' + e.message, { type:'error' });
+  }
+};
 
 // ─── Plan de Mejora IA ────────────────────────────────────
 // Estado del análisis (cacheado en memoria de la página) — se rellena
