@@ -263,6 +263,15 @@
                         onclick="enviarPasswordLink({{ user.id }}, '{{ user.nombre }}', '{{ user.username }}', this)">
                   <i class="bi bi-key"></i>
                 </button>
+                {% if current_user and current_user.role == 'superadmin' %}
+                {# Definir clave manual — SOLO superadmin (recuperación BUG1) #}
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        title="Definir clave manual (solo superadmin)"
+                        aria-label="Definir clave manual"
+                        onclick="definirClaveManual({{ user.id }}, '{{ user.nombre|e }}', this)">
+                  <i class="bi bi-shield-lock"></i>
+                </button>
+                {% endif %}
                 {% if current_user.id != user.id %}
                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal"
                         data-bs-target="#deleteUserModal{{ user.id }}" title="Eliminar">
@@ -324,6 +333,54 @@ async function enviarPasswordLink(uid, nombre, email, btn) {
       message: 'No se pudo contactar al servidor. Reintenta en unos segundos.',
       type: 'error',
     });
+    btn.innerHTML = orig; btn.disabled = false;
+  }
+}
+
+// ── BUG1: Definir clave manual (solo superadmin) ───────────────────
+// Pide la nueva contraseña con ilusPrompt (input enmascarado) y la
+// envía al backend, que setea password_hash con el hasher del proyecto
+// e invalida tokens de reset pendientes. El header X-CSRF-Token lo
+// inyecta automáticamente el wrapper global de fetch (base.html).
+async function definirClaveManual(uid, nombre, btn) {
+  // REGLA #1 CLAUDE.md — ilusPrompt (no prompt nativo). inputType:'password'
+  // enmascara la clave mientras se escribe.
+  const clave = await ilusPrompt({
+    title: 'Definir clave manual',
+    message: `Nueva contraseña para ${nombre}`,
+    placeholder: 'mín. 8 caracteres',
+    inputType: 'password',
+    okLabel: 'Definir clave',
+    cancelLabel: 'Cancelar',
+    type: 'danger',
+    required: true,
+  });
+  if (clave === null) return;               // canceló
+  if (!clave || clave.trim().length < 8) {  // validación cliente
+    ilusToast('La contraseña debe tener al menos 8 caracteres', { type: 'warning' });
+    return;
+  }
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+  try {
+    const r = await fetch(`/admin/users/${uid}/set-password`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: clave }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      btn.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+      ilusToast(`Clave actualizada para ${nombre}`, { type: 'success' });
+      setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+    } else {
+      ilusToast(d.error || 'No se pudo actualizar la clave', { type: 'error' });
+      btn.innerHTML = orig; btn.disabled = false;
+    }
+  } catch(e) {
+    ilusToast('No se pudo contactar al servidor. Reintenta en unos segundos.', { type: 'error' });
     btn.innerHTML = orig; btn.disabled = false;
   }
 }

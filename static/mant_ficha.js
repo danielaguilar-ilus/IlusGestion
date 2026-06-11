@@ -779,13 +779,23 @@ async function abrirLevantamientoSelector(tipoPreset, fechaPreset){
   const yyyy = hoy.getFullYear();
   const mm = String(hoy.getMonth()+1).padStart(2,'0');
   const dd = String(hoy.getDate()).padStart(2,'0');
-  const _fechaDef = (fechaPreset && /^\d{4}-\d{2}-\d{2}$/.test(fechaPreset)) ? fechaPreset : `${yyyy}-${mm}-${dd}`;
+  // ¿El llamador (Agente) impuso una fecha concreta? Entonces NO la pisamos
+  // con la sugerencia del día preferido más abajo.
+  const _fechaPresetExplicita = !!(fechaPreset && /^\d{4}-\d{2}-\d{2}$/.test(fechaPreset));
+  const _fechaDef = _fechaPresetExplicita ? fechaPreset : `${yyyy}-${mm}-${dd}`;
   document.getElementById('levFechaProg').value = _fechaDef;
   document.getElementById('levFechaFin').value = '';
   document.getElementById('levRangoDias').checked = false;
   document.getElementById('levFechaFinWrap').style.display = 'none';
   document.getElementById('levHoraIni').value = '09:00';
   document.getElementById('levHoraFin').value = '13:00';
+
+  // BUG2 — Día preferido del cliente: sugerir la fecha en el día habitual de
+  // mantención (este flujo SIEMPRE es "Nueva visita"; #modalLevSelector no se
+  // usa para editar). Si el cliente tiene día preferido, prellena la fecha
+  // (salvo que el Agente ya haya impuesto una) y muestra un hint sutil.
+  // Falla en silencio: jamás rompe la apertura del modal.
+  _levSugerirDiaPreferido(_fechaPresetExplicita);
 
   // Reset técnicos seleccionados
   _LEV_MODAL.tecnicos_seleccionados.clear();
@@ -813,6 +823,66 @@ async function abrirLevantamientoSelector(tipoPreset, fechaPreset){
   } catch(e){
     document.getElementById('levTecnicosBox').innerHTML =
       '<span class="text-danger small">⚠ No se pudieron cargar los técnicos</span>';
+  }
+}
+
+// ── BUG2: sugerir fecha según el "día preferido" de mantención del cliente ──
+// Consulta el backend (read-only) por el día habitual del cliente. Si existe:
+//  (a) prellena #levFechaProg con la fecha sugerida — SOLO si el modal abrió con
+//      la fecha por defecto (hoy) y el Agente no impuso una fecha concreta;
+//  (b) muestra un hint sutil (ámbar) junto al campo de fecha.
+// Si el cliente no tiene día preferido, o el fetch falla, no muestra nada y deja
+// la fecha tal cual (comportamiento actual). Nunca lanza: protege la apertura.
+function _levFechaProgHintEl(){
+  // Crea (una vez) el contenedor del hint justo bajo el input de fecha.
+  let el = document.getElementById('levFechaProgHint');
+  if (el) return el;
+  const input = document.getElementById('levFechaProg');
+  if (!input) return null;
+  el = document.createElement('div');
+  el.id = 'levFechaProgHint';
+  el.className = 'small mt-1';
+  el.style.cssText = 'display:none;font-size:.72rem;line-height:1.25;color:#b45309';
+  (input.parentNode || input).appendChild(el);
+  return el;
+}
+
+async function _levSugerirDiaPreferido(fechaPresetExplicita){
+  const hintEl = _levFechaProgHintEl();
+  // Oculta cualquier hint previo de una apertura anterior del modal.
+  if (hintEl){ hintEl.style.display = 'none'; hintEl.innerHTML = ''; }
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/dia-preferido`);
+    if (!r.ok) return;
+    const d = await r.json().catch(() => null);
+    if (!d || !d.ok) return;
+    const diaPref  = d.dia_mantencion_pref;
+    const sugerida = d.sugerida;
+    // Sin día preferido → no mostramos nada (comportamiento actual).
+    if (diaPref == null || !sugerida || !/^\d{4}-\d{2}-\d{2}$/.test(sugerida)) return;
+
+    // (a) Prellenar solo si el usuario/Agente no fijó una fecha concreta.
+    //     Al abrir, #levFechaProg trae la fecha de hoy por defecto; en ese caso
+    //     la sustituimos por la sugerida. Si el Agente impuso fecha, se respeta.
+    const input = document.getElementById('levFechaProg');
+    if (input && !fechaPresetExplicita){
+      input.value = sugerida;
+    }
+
+    // (b) Hint visible y sutil: "Día preferido … el N de cada mes — sugerimos DD/MM".
+    const p = sugerida.split('-');               // YYYY-MM-DD → DD/MM (sin TZ).
+    const ddmm = `${p[2]}/${p[1]}`;
+    if (hintEl){
+      hintEl.innerHTML =
+        '<i class="bi bi-calendar-heart me-1"></i>' +
+        `Día preferido de este cliente: el <strong>${escHtml(String(diaPref))}</strong> de cada mes` +
+        ` — sugerimos el <strong>${escHtml(ddmm)}</strong>.`;
+      hintEl.style.display = '';
+    }
+  } catch(e){
+    // Silencio: no rompemos el modal si el endpoint no responde.
+    console.warn('día-preferido:', e);
+    if (hintEl){ hintEl.style.display = 'none'; hintEl.innerHTML = ''; }
   }
 }
 

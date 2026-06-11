@@ -1004,7 +1004,17 @@ def serve_archivo(key):
         data = blob.download_as_bytes()
     except Exception:
         return "Archivo no encontrado", 404
-    ct = mimetypes.guess_type(key)[0] or "application/octet-stream"
+    # Content-Type derivado del sufijo del key. Mapa explícito primero (algunos
+    # contenedores Linux minimal no traen 'webp' en /etc/mime.types y caerían a
+    # octet-stream → la imagen no se renderiza inline); luego mimetypes; luego
+    # fallback genérico. Solo afecta el Content-Type, nada más del response.
+    _ext = ("." + key.rsplit(".", 1)[1].lower()) if "." in key else ""
+    _CT_BY_EXT = {
+        ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".gif": "image/gif", ".svg": "image/svg+xml",
+        ".pdf": "application/pdf", ".mp4": "video/mp4", ".webm": "video/webm",
+    }
+    ct = _CT_BY_EXT.get(_ext) or mimetypes.guess_type(key)[0] or "application/octet-stream"
     resp = Response(data, mimetype=ct)
     resp.headers["Cache-Control"] = "public, max-age=2592000"
     resp.headers["Content-Disposition"] = "inline"
@@ -10307,6 +10317,82 @@ def user_password_link(user_id):
         return jsonify({"error": f"No se pudo enviar el enlace seguro. {detalle}"}), 500
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/admin/users/<int:user_id>/set-password", methods=["POST"])
+@login_required
+def user_set_password(user_id):
+    """Fija manualmente la contraseña de un usuario (recuperación BUG1).
+
+    SOLO superadmin. El front pide la clave con `ilusPrompt` y la envía aquí.
+    Reusa el MISMO hasher que `reset_password` (werkzeug `generate_password_hash`),
+    invalida cualquier enlace de reset pendiente del usuario y audita la acción.
+
+    Es un endpoint JSON (fetch) → la verificación de superadmin se hace inline
+    devolviendo 403 JSON, no con `_require_superadmin` (que redirige a HTML).
+    NUNCA se loguea ni se audita el valor de la contraseña.
+    """
+    # ── Gate superadmin (JSON, no redirect) ──
+    if not (g.get("permissions") or {}).get("superadmin"):
+        return jsonify({
+            "ok": False,
+            "error": "Esta acción requiere permisos de Super Administrador.",
+        }), 403
+
+    # ── Usuario destino existe ──
+    user = get_auth_user_by_id(user_id)
+    if not user:
+        return jsonify({"ok": False, "error": "Usuario no encontrado."}), 404
+
+    # ── Validar clave (contrato: mínimo 8 caracteres) ──
+    data = request.get_json(silent=True) or {}
+    password = (data.get("password") or "").strip()
+    if len(password) < 8:
+        return jsonify({
+            "ok": False,
+            "error": "La contraseña debe tener al menos 8 caracteres.",
+        }), 400
+
+    try:
+        new_hash = generate_password_hash(password)
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE `{AUTH_TABLE}` SET password_hash=%s WHERE id=%s",
+                (new_hash, user_id),
+            )
+            # Invalidar enlaces de reset pendientes de este usuario (si los hay).
+            try:
+                cur.execute(
+                    f"UPDATE `{RESETS_TABLE}` SET used=1 WHERE user_id=%s AND used=0",
+                    (user_id,),
+                )
+            except Exception:
+                pass
+            # Limpiar el flag requires_password_change si la columna existe.
+            try:
+                cur.execute(
+                    f"UPDATE `{AUTH_TABLE}` SET requires_password_change=0 WHERE id=%s",
+                    (user_id,),
+                )
+            except Exception:
+                pass
+        conn.commit()
+    except Exception as exc:
+        # Log detallado atrás (SIN la contraseña), mensaje amigable al cliente.
+        print(f"[ILUS][set-password] error uid={user_id}: {exc}", flush=True)
+        _audit("user_set_password", target_type="user", target_id=user_id,
+               status="error",
+               details={"username": user.get("username"), "reason": "exception"})
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo actualizar la contraseña. Inténtalo nuevamente.",
+        }), 500
+
+    # Auditoría — sin el valor de la clave, solo el hecho.
+    _audit("user_set_password", target_type="user", target_id=user_id,
+           details={"username": user.get("username")})
+    return jsonify({"ok": True})
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -42805,6 +42891,68 @@ def mant_sugerir_proxima(cid):
         return jsonify({"ok": False, "error": "No se pudo calcular"}), 500
     sug["ok"] = True
     return jsonify(sug)
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/dia-preferido", methods=["GET"])
+@_mant_required
+def mant_cliente_dia_preferido(cid):
+    """Día del mes preferido del cliente + fecha sugerida para el modal
+    'Nueva visita' (BUG2).
+
+    Devuelve `dia_mantencion_pref` (1-28 o null) y `sugerida` = próxima fecha
+    en ese día del mes: ESTE mes si el día aún no pasó (dia_pref >= hoy.day),
+    si no el mes siguiente. La fecha se ajusta a día hábil con la MISMA lógica
+    del motor (`_mant_fecha_ajustada` → cl_feriados + fines de semana).
+
+    Si el cliente no tiene día preferido → {ok:true, dia_mantencion_pref:null,
+    sugerida:null}. Cualquier error se reporta como 200 {ok:false, error}.
+    """
+    try:
+        cli = mysql_fetchone(
+            "SELECT id, dia_mantencion_pref FROM mant_clientes WHERE id=%s",
+            (cid,),
+        )
+        if not cli:
+            return jsonify({"ok": False, "error": "Cliente no encontrado."}), 200
+
+        dia_pref = cli.get("dia_mantencion_pref")
+        try:
+            dia_pref = int(dia_pref) if dia_pref is not None else None
+        except (TypeError, ValueError):
+            dia_pref = None
+        if not dia_pref or not (1 <= dia_pref <= 28):
+            return jsonify({
+                "ok": True,
+                "dia_mantencion_pref": None,
+                "sugerida": None,
+            })
+
+        # ── Próxima fecha en el día preferido (este mes o el siguiente) ──
+        hoy = _now_chile().date()
+        if dia_pref >= hoy.day:
+            objetivo = hoy.replace(day=dia_pref)
+        else:
+            # Mes siguiente (con rollover de año). dia_pref<=28 → día válido.
+            if hoy.month == 12:
+                objetivo = hoy.replace(year=hoy.year + 1, month=1, day=dia_pref)
+            else:
+                objetivo = hoy.replace(month=hoy.month + 1, day=dia_pref)
+
+        # Ajuste a día hábil con la lógica existente del motor.
+        R = _reglas_cargar()
+        ajustada = _mant_fecha_ajustada(objetivo, dia_pref, R) or objetivo
+
+        return jsonify({
+            "ok": True,
+            "dia_mantencion_pref": dia_pref,
+            "sugerida": ajustada.isoformat(),
+        })
+    except Exception as exc:
+        print(f"[ILUS][dia-preferido] cid={cid}: {exc}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo calcular el día preferido.",
+        }), 200
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/visita-historica", methods=["POST"])
