@@ -1566,11 +1566,10 @@ function viProvToggleNombre() {
 // ── ¿Aplica mantención? (2026-06-10, Daniel) ─────────────────────────
 // Chip por equipo en la pestaña Equipos: separa collarines/accesorios que NO
 // se mantienen. Reversible con un click; el Agente recalcula al refrescar.
-async function eqToggleMantencion(mid) {
-  const chip = document.getElementById('eqMant-' + mid);
-  if (!chip) return;
-  const ahora = chip.dataset.aplica === '1';
-  const nuevo = !ahora;
+async function eqToggleMantencion(mid, swEl) {
+  const sw = swEl || document.getElementById('swPlan-' + mid);
+  const ahora = sw ? sw.checked : false;
+  const nuevo = swEl ? ahora : !ahora;
   if (!nuevo) {
     const ok = await ilusConfirm({
       title: 'Excluir de mantención',
@@ -1578,7 +1577,10 @@ async function eqToggleMantencion(mid) {
       sub: 'No se contará en el plan, la valorización ni los levantamientos. Puedes revertirlo con un click.',
       okLabel: 'Excluir', cancelLabel: 'Cancelar',
     });
-    if (!ok) return;
+    if (!ok) {
+      if (sw) sw.checked = true;
+      return;
+    }
   }
   try {
     const r = await fetch(`/mantenciones/api/maquinas/${mid}/aplica-mantencion`, {
@@ -1586,21 +1588,24 @@ async function eqToggleMantencion(mid) {
       body: JSON.stringify({ aplica: nuevo }),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) { ilusToast('No se pudo: ' + (d.error || 'error'), { type: 'error' }); return; }
-    chip.dataset.aplica = nuevo ? '1' : '0';
-    chip.className = 'eq-mant-chip ' + (nuevo ? 'eq-mant-si' : 'eq-mant-no');
-    chip.innerHTML = nuevo
-      ? '<i class="bi bi-wrench-adjustable"></i> En plan'
-      : '<i class="bi bi-dash-circle"></i> Sin mantención';
-    chip.title = nuevo ? 'En plan de mantención — click para excluirlo'
-                       : 'Excluido de mantención — click para incluirlo';
-    // Mantener el data-aplica de la fila en sync (lo usa el filtro "plan").
+    if (!r.ok || !d.ok) {
+      if (sw) sw.checked = !nuevo;
+      ilusToast('No se pudo: ' + (d.error || 'error'), { type: 'error' });
+      return;
+    }
+    if (sw) {
+      sw.checked = nuevo;
+      sw.title = nuevo ? 'En plan — click para excluir' : 'Sin mantención — click para incluir';
+    }
     const tr = document.getElementById('maq-' + mid);
     if (tr) tr.dataset.aplica = nuevo ? '1' : '0';
     if (typeof _eqAplicarFiltros === 'function') _eqAplicarFiltros();
     ilusToast(nuevo ? '✓ Equipo incluido en el plan de mantención'
                     : 'Equipo excluido de mantención', { type: nuevo ? 'success' : 'info' });
-  } catch (e) { ilusToast('Error de red: ' + e.message, { type: 'error' }); }
+  } catch (e) {
+    if (sw) sw.checked = !nuevo;
+    ilusToast('Error de red: ' + e.message, { type: 'error' });
+  }
 }
 
 async function eliminarVisitaFromTabla(vid, titulo) {

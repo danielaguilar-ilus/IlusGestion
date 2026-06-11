@@ -1634,13 +1634,11 @@
 .gar-chip-warn{background:#fef9c3;color:#854d0e;}
 .gar-chip-vencida{background:#f3f4f6;color:#6b7280;}
 
-/* ¿Aplica mantención? (2026-06-10) — chip toggle por equipo */
-.eq-mant-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:50px;
-  font-size:.63rem;font-weight:800;cursor:pointer;user-select:none;transition:all .12s;border:1px solid transparent;}
-.eq-mant-chip.eq-mant-si{background:#dcfce7;color:#166534;border-color:#bbf7d0;}
-.eq-mant-chip.eq-mant-si:hover{background:#bbf7d0;}
-.eq-mant-chip.eq-mant-no{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb;}
-.eq-mant-chip.eq-mant-no:hover{background:#e5e7eb;}
+/* ¿Aplica mantención? — switch inline por fila de equipo */
+.eq-plan-sw{ width:2.3em;height:1.25em;cursor:pointer; }
+.eq-plan-sw:checked{ background-color:#dc2626;border-color:#dc2626; }
+.eq-plan-sw:checked:focus{ box-shadow:0 0 0 .25rem rgba(220,38,38,.25); }
+.eq-plan-sw:disabled{ cursor:default;opacity:.5; }
 
 /* Estado equipo */
 .eq-estado-activo{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;font-size:.65rem;font-weight:700;}
@@ -1811,6 +1809,7 @@
               <th>Fecha emisión</th>
               <th>Garantía</th>
               <th>Estado</th>
+              <th style="width:70px;text-align:center" title="¿Este equipo está en el plan de mantención?">Plan</th>
               {# 2026-05-21 (Daniel) — Última revisión por equipo #}
               <th title="Estado en la última visita técnica">Última revisión</th>
               <th style="width:60px"></th>
@@ -1961,16 +1960,14 @@
               <span class="eq-estado-{{ m.estado or 'activo' }}">
                 {{ (m.estado or 'activo').replace('_',' ').title() }}
               </span>
-              {# 2026-06-10 (Daniel): separar equipos SIN mantención (collarines,
-                 accesorios). Chip clickeable → PUT aplica-mantencion. #}
-              {% set _apl = _apl_row %}
-              <div style="margin-top:4px">
-                <span class="eq-mant-chip {{ 'eq-mant-si' if _apl else 'eq-mant-no' }}"
-                      id="eqMant-{{ m.id }}" data-aplica="{{ 1 if _apl else 0 }}"
-                      {% if not is_tecnico %}onclick="eqToggleMantencion({{ m.id }})" role="button"{% endif %}
-                      title="{{ 'En plan de mantención — click para excluirlo' if _apl else 'Excluido de mantención — click para incluirlo' }}">
-                  {% if _apl %}<i class="bi bi-wrench-adjustable"></i> En plan{% else %}<i class="bi bi-dash-circle"></i> Sin mantención{% endif %}
-                </span>
+            </td>
+            <td style="text-align:center;vertical-align:middle">
+              <div class="form-check form-switch d-flex justify-content-center mb-0 p-0">
+                <input class="form-check-input eq-plan-sw" type="checkbox" role="switch"
+                       id="swPlan-{{ m.id }}"
+                       {% if _apl_row %}checked{% endif %}
+                       {% if not is_tecnico %}onchange="eqToggleMantencion({{ m.id }}, this)"{% else %}disabled{% endif %}
+                       title="{{ 'En plan — click para excluir' if _apl_row else 'Sin mantención — click para incluir' }}">
               </div>
             </td>
             {# 2026-05-21 (Daniel) — Última revisión por equipo (badge + meta) #}
@@ -2354,17 +2351,11 @@ function eqUpdateBarra() {
 // Sincroniza el chip "En plan" / "Sin mantención" de una fila tras un cambio.
 function _eqRefrescarChipPlan(mid, aplica) {
   const apl = aplica ? 1 : 0;
-  const chip = document.getElementById('eqMant-' + mid);
-  if (chip) {
-    chip.dataset.aplica = String(apl);
-    chip.className = 'eq-mant-chip ' + (apl ? 'eq-mant-si' : 'eq-mant-no');
-    chip.innerHTML = apl
-      ? '<i class="bi bi-wrench-adjustable"></i> En plan'
-      : '<i class="bi bi-dash-circle"></i> Sin mantención';
-    chip.title = apl ? 'En plan de mantención — click para excluirlo'
-                     : 'Excluido de mantención — click para incluirlo';
+  const sw = document.getElementById('swPlan-' + mid);
+  if (sw) {
+    sw.checked = Boolean(apl);
+    sw.title = apl ? 'En plan — click para excluir' : 'Sin mantención — click para incluir';
   }
-  // Mantener el data-aplica de la fila en sync (el filtro lo usa)
   const tr = document.getElementById('maq-' + mid);
   if (tr) tr.dataset.aplica = String(apl);
 }
