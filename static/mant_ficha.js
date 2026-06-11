@@ -666,7 +666,7 @@ async function _cargarPlantillas(){
   return _LEV_PLANTILLAS.all;
 }
 
-async function abrirLevantamientoSelector(tipoPreset){
+async function abrirLevantamientoSelector(tipoPreset, fechaPreset){
   const tbody = document.getElementById('levSelectTbody');
   if (!tbody) { ilusToast('Modal no inicializado', { type:'error' }); return; }
   // Cargar equipos desde la página actual (los que ya están renderizados en tab Equipos)
@@ -774,12 +774,13 @@ async function abrirLevantamientoSelector(tipoPreset){
     }
   }
 
-  // Default: fecha hoy
+  // Default: fecha hoy (o la sugerida por el Agente si viene pre-cargada)
   const hoy = new Date();
   const yyyy = hoy.getFullYear();
   const mm = String(hoy.getMonth()+1).padStart(2,'0');
   const dd = String(hoy.getDate()).padStart(2,'0');
-  document.getElementById('levFechaProg').value = `${yyyy}-${mm}-${dd}`;
+  const _fechaDef = (fechaPreset && /^\d{4}-\d{2}-\d{2}$/.test(fechaPreset)) ? fechaPreset : `${yyyy}-${mm}-${dd}`;
+  document.getElementById('levFechaProg').value = _fechaDef;
   document.getElementById('levFechaFin').value = '';
   document.getElementById('levRangoDias').checked = false;
   document.getElementById('levFechaFinWrap').style.display = 'none';
@@ -8573,10 +8574,11 @@ function _intelAccionBtns(c){
                 onclick="intelAccion('registrar_visita_retro', {fecha:'${_intelEsc(a.fecha || '')}'})">
                 <i class="bi bi-check-lg me-1"></i>${label}</button>`;
     }
-    // 3b) generar OT desde el tracking de fechas (lleva fecha). Botón PROMINENTE.
+    // 3b) generar OT desde el tracking de fechas — abre el wizard completo.
     if (tipo === 'programar_ot') {
+      const fechaParam = _intelEsc(a.fecha || '');
       return `<button type="button" class="btn btn-sm btn-ilus fw-bold intel-btn-ot"
-                onclick="intelAccion('programar_ot', {fecha:'${_intelEsc(a.fecha || '')}'})">
+                onclick="abrirLevantamientoSelector('preventiva','${fechaParam}')">
                 <i class="bi bi-clipboard-plus me-1"></i>${label || 'Generar OT ahora'}</button>`;
     }
     // 4) descartar consulta (sigue pendiente / no aplica).

@@ -53083,7 +53083,7 @@ def _cliente_inteligencia(cid, reglas=None):
         _p0 = proximas[0]
         consultas.append({
             "id": f"prog_{_p0['fecha']}", "tipo": "visita_proyectada", "severidad": "media",
-            "pregunta": f"La próxima mantención toca el {_p0['fecha']} (en {_p0['dias_faltan']} día(s)).",
+            "pregunta": f"La próxima mantención toca el {str(_p0['fecha'])[8:10]}/{str(_p0['fecha'])[5:7]}/{str(_p0['fecha'])[:4]} (en {_p0['dias_faltan']} día(s)).",
             "detalle": "Adelántate: genera la OT para que el equipo la tenga agendada.",
             "acciones": [
                 {"label": "Generar OT", "accion": "programar_ot", "fecha": _p0["fecha"]},
@@ -53564,7 +53564,11 @@ def mant_intel_accion(cid):
                 (cid, _intel_contrato_id(cid), "Mantención preventiva (agendada por el Agente)",
                  fecha, current_username(), uid))
         elif accion == "descartar_consulta":
-            pass  # no cambia data; la mantención sigue pendiente (es real)
+            # No persiste nada — solo señal al frontend de que la tarjeta se ocultó.
+            # Devolver sin intel evita que el re-render la reactive en esta sesión.
+            try: _mant_log("intel", cid, accion)
+            except Exception: pass
+            return jsonify({"ok": True, "mensaje": "Recordatorio pospuesto."})
         else:
             return jsonify({"error": "Acción no reconocida."}), 400
         data = _cliente_inteligencia(cid, _reglas_cargar())
