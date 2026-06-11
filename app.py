@@ -2941,6 +2941,11 @@ PERMS_KEYS = (
     "admin", "superadmin", "ajustes", "hrm",
     "cubicador", "transporte", "mantenciones",
     "etiquetas", "retiros", "comunicaciones",
+    # "masivo" — gate de Carga masiva de etiquetas. Antes las rutas
+    # /etiquetas/masivo* exigían "print" y el checkbox "Carga masiva" de la
+    # matriz no mapeaba a NADA (chip muerto). Caso usuaria transporte
+    # 2026-06-11: tenía Carga masiva ✓ pero rebotaba por no tener Imprimir.
+    "masivo",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -2957,7 +2962,7 @@ def _legacy_permission_set(role):
         return {k: True for k in PERMS_KEYS}
     if role == "admin":
         return {**base,
-                "view": True, "edit": True, "print": True,
+                "view": True, "edit": True, "print": True, "masivo": True,
                 "create": True, "delete": True, "admin": True, "hrm": True,
                 "cubicador": True, "transporte": True, "mantenciones": True,
                 "ajustes": True,
@@ -2975,7 +2980,7 @@ def _legacy_permission_set(role):
         # se aplican server-side filtrando por tecnico_id == user.tecnico.
         return {**base, "mantenciones": True}
     if role == "editor":
-        return {**base, "view": True, "edit": True, "print": True,
+        return {**base, "view": True, "edit": True, "print": True, "masivo": True,
                 "create": True, "hrm": True, "cubicador": True, "transporte": True,
                 "etiquetas": True, "retiros": True}
     if role == "lector":
@@ -2991,7 +2996,7 @@ def _legacy_permission_set(role):
         # submódulo la rebotaba; y faltaba etiquetas → no veía ese módulo).
         return {**base,
                 "view": True, "create": True, "edit": True, "print": True,
-                "etiquetas": True,
+                "masivo": True, "etiquetas": True,
                 "transporte": True, "cubicador": True,
                 "tr_cubicador": True, "tr_asignar": True,
                 "tr_manifiestos": True, "tr_couriers": True}
@@ -3014,7 +3019,15 @@ def _build_perms_from_matrix(role):
     adm = matrix.get("admin", {})
 
     # Flags de módulo (gates de sidebar)
-    base["etiquetas"]      = bool(eti.get("ver"))
+    # Flag coarse "etiquetas" — simétrico al fix de transporte (caso usuaria
+    # transporte 2026-06-11): si el rol tiene CUALQUIER acción de etiquetas
+    # marcada, el módulo se enciende. Antes solo miraba "ver" → un rol con
+    # crear/editar/masivo marcados pero "ver" desmarcado rebotaba del módulo
+    # completo aunque la matriz mostrara chips verdes.
+    base["etiquetas"]      = bool(
+        eti.get("ver") or eti.get("crear") or eti.get("editar")
+        or eti.get("eliminar") or eti.get("imprimir") or eti.get("masivo")
+    )
     base["retiros"]        = bool(ret.get("ver"))
     base["mantenciones"]   = bool(man.get("ver"))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
@@ -3046,6 +3059,9 @@ def _build_perms_from_matrix(role):
     base["edit"]    = bool(eti.get("editar")   or man.get("editar"))
     base["delete"]  = bool(eti.get("eliminar") or man.get("eliminar"))
     base["print"]   = bool(eti.get("imprimir"))
+    # Carga masiva: su propio gate. "imprimir" también lo habilita porque la
+    # carga masiva termina generando PDFs (quien puede imprimir, puede cargar).
+    base["masivo"]  = bool(eti.get("masivo") or eti.get("imprimir"))
 
     # Admin / ajustes
     base["admin"]   = bool(adm.get("usuarios") or adm.get("roles"))
@@ -8269,7 +8285,7 @@ def _etq_batch_cleanup():
 
 
 @app.route("/etiquetas/masivo")
-@require_permission("print")
+@require_permission("masivo")
 def etiquetas_masivo_index():
     """Página principal del módulo de carga masiva.
 
@@ -8296,7 +8312,7 @@ def etiquetas_masivo_index():
 
 
 @app.route("/etiquetas/masivo/plantilla.xlsx")
-@require_permission("print")
+@require_permission("masivo")
 def etiquetas_masivo_plantilla():
     """Descarga la plantilla Excel de ejemplo para carga masiva."""
     try:
@@ -8374,7 +8390,7 @@ def etiquetas_masivo_plantilla():
 
 
 @app.route("/etiquetas/masivo/preview", methods=["POST"])
-@require_permission("print")
+@require_permission("masivo")
 def etiquetas_masivo_preview():
     """Analiza un Excel SIN generar PDFs y clasifica los SKUs en 3 grupos:
 
@@ -8505,7 +8521,7 @@ def etiquetas_masivo_preview():
 
 
 @app.route("/etiquetas/masivo/procesar", methods=["POST"])
-@require_permission("print")
+@require_permission("masivo")
 def etiquetas_masivo_procesar():
     """Procesa el Excel subido y devuelve informe + batch_id para descargar ZIP.
 
@@ -8659,7 +8675,7 @@ def _etiquetas_masivo_procesar_impl():
 
 
 @app.route("/etiquetas/masivo/<batch_id>/zip")
-@require_permission("print")
+@require_permission("masivo")
 def etiquetas_masivo_zip(batch_id):
     """Descarga un ZIP con todos los PDFs generados en el batch."""
     batch = _ETQ_BATCHES.get(batch_id)
