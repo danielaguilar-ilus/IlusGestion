@@ -416,7 +416,7 @@
         <i class="bi bi-plus-circle"></i><span>Nuevo producto</span>
       </a>
       {% endif %}
-      {% if permissions.print or permissions.superadmin %}
+      {% if permissions.masivo or permissions.print or permissions.superadmin %}
       <a href="{{ url_for('etiquetas_masivo_index') }}"
          class="sidebar-link{% if request.endpoint == 'etiquetas_masivo_index' %} active{% endif %}">
         <i class="bi bi-collection"></i><span>Carga masiva</span>
