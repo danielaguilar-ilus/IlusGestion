@@ -10837,6 +10837,217 @@ def _require_superadmin(view):
     return wrapped
 
 
+# ── MIGRACION IMAGENES Cloudinary -> GCS (2026-06-10, Daniel) ──
+# La capa de subida YA migro a GCS (_uploader_upload / _storage_upload_bytes,
+# se sirven por /f/<key>). Estos dos endpoints solo-superadmin sirven para los
+# DATOS historicos: URLs viejas https://res.cloudinary.com/... que siguen en
+# la BD + sus blobs en Cloudinary. Diagnostico (read-only) + migracion por
+# oleadas (descarga el blob publico, lo re-sube a GCS, reescribe la URL en BD).
+#
+# Seguridad: nombres de tabla/columna NUNCA vienen del body crudo -> se validan
+# contra _STORAGE_MIG_ALLOWLIST. URLs/ids siempre parametrizados con %s.
+# Idempotente: si la URL ya empieza con '/f/' se salta; reprocesar el lote es
+# seguro. Cada (tabla, columna) lleva su propia carpeta GCS estable.
+
+# clave 'tabla.columna' -> (tabla, columna, folder_gcs). Solo columnas que
+# existen de verdad en los CREATE TABLE / ALTER de este app.py.
+_STORAGE_MIG_ALLOWLIST = {
+    "mant_maquinas.foto_url":            ("mant_maquinas",            "foto_url",       "ilus/maquinas"),
+    "mant_maquina_fotos.cloudinary_url": ("mant_maquina_fotos",       "cloudinary_url", "ilus/maquina_fotos"),
+    "mant_visita_fotos.cloudinary_url":  ("mant_visita_fotos",        "cloudinary_url", "ilus/visita_fotos"),
+    "mant_levantamiento_fotos.cloudinary_url": ("mant_levantamiento_fotos", "cloudinary_url", "ilus/levantamiento_fotos"),
+    "mant_visita_adjuntos.cloudinary_url": ("mant_visita_adjuntos",   "cloudinary_url", "ilus/visita_adjuntos"),
+    "login_images.cloudinary_url":       ("login_images",             "cloudinary_url", "ilus/login"),
+    "retiros_carousel.cloudinary_url":   ("retiros_carousel",         "cloudinary_url", "ilus/retiros"),
+}
+
+_STORAGE_CLD_LIKE = "%res.cloudinary.com%"
+_STORAGE_GCS_LIKE = "/f/%"
+
+
+def _storage_mig_ext_from_url(url):
+    """Extension (.jpg/.png/...) derivada de la URL Cloudinary; .jpg por defecto."""
+    try:
+        import urllib.parse as _urlparse
+        path = _urlparse.urlparse(url).path
+        ext = (os.path.splitext(path)[1] or "").lower()
+        # Cloudinary a veces no trae extension en la URL canonica.
+        if ext and len(ext) <= 5 and ext[1:].isalnum():
+            return ext
+    except Exception:
+        pass
+    return ".jpg"
+
+
+# Tope de descarga por archivo (Cloud Run tiene RAM acotada; mant_visita_adjuntos
+# puede traer videos). Si el blob supera esto, se salta y se reporta como fallido
+# (mejor migrarlo aparte/manual que tumbar el contenedor por OOM).
+_STORAGE_MIG_MAX_BYTES = 80 * 1024 * 1024  # 80 MB
+
+
+def _storage_mig_download(url, timeout=30):
+    """Descarga (GET) los bytes de una URL publica de Cloudinary, con tope de
+    tamaño para no agotar memoria. Devuelve (data, content_type).
+    Lanza excepcion si falla, si excede el tope, o si el host no es Cloudinary."""
+    import urllib.request as _urlreq
+    import urllib.parse as _urlparse
+    # Endurecimiento: el host debe ser EXACTAMENTE res.cloudinary.com (evita que
+    # un 'res.cloudinary.com.attacker.tld' pase por el substring del LIKE).
+    host = (_urlparse.urlparse(url).hostname or "").lower()
+    if host != "res.cloudinary.com":
+        raise ValueError(f"host no permitido: {host[:60]}")
+    req = _urlreq.Request(url, headers={"User-Agent": "ILUS-storage-migrator/1.0"})
+    with _urlreq.urlopen(req, timeout=timeout) as resp:
+        # Lee 1 byte de mas que el tope: si lo alcanza, el archivo es demasiado grande.
+        data = resp.read(_STORAGE_MIG_MAX_BYTES + 1)
+        ct = resp.headers.get("Content-Type") or "application/octet-stream"
+    if not data:
+        raise ValueError("descarga vacia")
+    if len(data) > _STORAGE_MIG_MAX_BYTES:
+        raise ValueError(f"archivo supera el tope de {_STORAGE_MIG_MAX_BYTES // (1024*1024)}MB")
+    return data, ct
+
+
+@app.route("/admin/storage/diagnostico-imagenes")
+@_require_superadmin
+def admin_storage_diag_imagenes():
+    """READ-ONLY. Cuenta, por cada (tabla, columna) de la allowlist, cuantas
+    URLs apuntan a Cloudinary, cuantas ya estan en GCS (/f/...) y cuantas otras.
+    No descarga nada. Rapido (una query agregada por tabla)."""
+    tablas = []
+    tot = {"cloudinary": 0, "gcs": 0, "otros": 0, "total": 0}
+    for clave, (tabla, col, _folder) in _STORAGE_MIG_ALLOWLIST.items():
+        # Nombres de tabla/columna vienen de la allowlist interna (no del usuario),
+        # por eso es seguro interpolarlos. Los LIKE van parametrizados con %s.
+        sql = (
+            "SELECT "
+            "  SUM(CASE WHEN `{c}` IS NOT NULL AND `{c}`<>'' THEN 1 ELSE 0 END) AS total, "
+            "  SUM(CASE WHEN `{c}` LIKE %s THEN 1 ELSE 0 END) AS cloudinary, "
+            "  SUM(CASE WHEN `{c}` LIKE %s THEN 1 ELSE 0 END) AS gcs "
+            "FROM `{t}`"
+        ).format(c=col, t=tabla)
+        try:
+            row = mysql_fetchone(sql, (_STORAGE_CLD_LIKE, _STORAGE_GCS_LIKE)) or {}
+            total = int(row.get("total") or 0)
+            cld = int(row.get("cloudinary") or 0)
+            gcs = int(row.get("gcs") or 0)
+            otros = max(total - cld - gcs, 0)
+            err = None
+        except Exception as exc:
+            total = cld = gcs = otros = 0
+            err = str(exc)[:200]
+        entry = {"tabla": tabla, "columna": col, "total": total,
+                 "cloudinary": cld, "gcs": gcs, "otros": otros}
+        if err:
+            entry["error"] = err
+        tablas.append(entry)
+        tot["cloudinary"] += cld
+        tot["gcs"] += gcs
+        tot["otros"] += otros
+        tot["total"] += total
+    return jsonify({"ok": True, "tablas": tablas, "totales": tot,
+                    "gcs_activo": bool(_gcs_ready())})
+
+
+@app.route("/admin/storage/migrar-cloudinary-gcs", methods=["POST"])
+@_require_superadmin
+def admin_storage_migrar_cloudinary_gcs():
+    """Migra por OLEADAS las URLs Cloudinary -> GCS.
+    Body JSON: {dry_run: bool=true, limit: int=25 (max 200), tabla: 'tabla.columna' opcional}.
+    Real: descarga el blob publico, lo re-sube a GCS (io.BytesIO via
+    _storage_upload_bytes), reescribe la columna y deja la URL /f/<key>.
+    Idempotente (saltea las que ya son /f/...) y tolerante a fallos por fila."""
+    body = request.get_json(silent=True) or {}
+    dry_run = bool(body.get("dry_run", True))
+    try:
+        limit = int(body.get("limit", 25))
+    except (TypeError, ValueError):
+        limit = 25
+    limit = max(1, min(limit, 200))
+
+    tabla_sel = (body.get("tabla") or "").strip()
+    if tabla_sel:
+        if tabla_sel not in _STORAGE_MIG_ALLOWLIST:
+            return jsonify({"ok": False, "error": "tabla no permitida"}), 400
+        items = [(tabla_sel, _STORAGE_MIG_ALLOWLIST[tabla_sel])]
+    else:
+        items = list(_STORAGE_MIG_ALLOWLIST.items())
+
+    if not dry_run and not _gcs_ready():
+        return jsonify({"ok": False, "error": "GCS no esta activo; no se puede migrar"}), 400
+
+    procesados = migrados = saltados = fallidos = 0
+    detalle = []
+    restante = limit
+
+    for clave, (tabla, col, folder) in items:
+        if restante <= 0:
+            break
+        # tabla/col provienen de la allowlist (no del body) -> interpolacion segura.
+        sql_sel = (
+            "SELECT id, `{c}` AS url FROM `{t}` "
+            "WHERE `{c}` LIKE %s ORDER BY id ASC LIMIT %s"
+        ).format(c=col, t=tabla)
+        try:
+            rows = mysql_fetchall(sql_sel, (_STORAGE_CLD_LIKE, restante)) or []
+        except Exception as exc:
+            if len(detalle) < 50:
+                detalle.append({"tabla": tabla, "id": None, "error": f"select: {str(exc)[:160]}"})
+            continue
+
+        for r in rows:
+            if restante <= 0:
+                break
+            rid = r.get("id")
+            url = (r.get("url") or "").strip()
+            procesados += 1
+            restante -= 1
+
+            # Idempotencia: si ya migro, saltar.
+            if url.startswith("/f/"):
+                saltados += 1
+                continue
+            if "res.cloudinary.com" not in url:
+                saltados += 1
+                continue
+
+            if dry_run:
+                # Solo mostrar ejemplos, sin descargar ni escribir.
+                if len(detalle) < 50:
+                    detalle.append({"tabla": tabla, "id": rid, "antes": url, "despues": "(dry_run)"})
+                continue
+
+            try:
+                data, ct = _storage_mig_download(url)
+                ext = _storage_mig_ext_from_url(url)
+                if ct == "image/png":
+                    ext = ".png"
+                elif ct in ("image/jpeg", "image/jpg"):
+                    ext = ".jpg"
+                # Key estable por (tabla, id) -> reprocesar no colisiona ni duplica.
+                public_id = "{t}_{i}".format(t=tabla, i=rid)
+                key = _gcs_key(folder, public_id, ext)
+                new_url = _storage_upload_bytes(data, key, ct)
+                sql_upd = "UPDATE `{t}` SET `{c}`=%s WHERE id=%s".format(t=tabla, c=col)
+                mysql_execute(sql_upd, (new_url, rid))
+                migrados += 1
+                if len(detalle) < 50:
+                    detalle.append({"tabla": tabla, "id": rid, "antes": url, "despues": new_url})
+            except Exception as exc:
+                fallidos += 1
+                # No logueamos la URL/params completos (pueden traer datos); solo el id.
+                print(f"[storage-mig] fallo {tabla}#{rid}: {str(exc)[:160]}", flush=True)
+                if len(detalle) < 50:
+                    detalle.append({"tabla": tabla, "id": rid, "error": str(exc)[:160]})
+
+    return jsonify({
+        "ok": True, "dry_run": dry_run, "tabla": tabla_sel or None,
+        "procesados": procesados, "migrados": migrados,
+        "saltados": saltados, "fallidos": fallidos,
+        "detalle": detalle,
+    })
+
+
 # ═══════════════════════════════════════════════════════════════
 #  MÓDULO CUBICADOR
 #  Busca documentos de venta en el ERP Random y cruza con
@@ -35469,6 +35680,102 @@ def mant_equipos_baja_seleccion(cid):
         }), 500
 
 
+@app.route("/mantenciones/api/clientes/<int:cid>/equipos/aplica-mantencion-seleccion",
+           methods=["POST"])
+@_mant_required
+def mant_equipos_aplica_mantencion_seleccion(cid):
+    """Aplica/quita el flag `aplica_mantencion` a una lista SELECTIVA de
+    equipos del cliente (acción masiva por checkbox en la UI).
+
+    Body JSON: { "ids": [12, 34, 56], "aplica": 0|1 }
+      aplica=1 → 'En plan' (se le hace mantención)
+      aplica=0 → 'Sin mantención' (accesorio/producto sin seguimiento)
+
+    Calca el patrón de /equipos/baja-seleccion: validación de cliente,
+    WHERE cliente_id (garantía de aislamiento entre clientes), límite de
+    500 ids, placeholders dinámicos (NUNCA concatenando ids), una sola
+    query UPDATE atómica y audit en mant_logs. Mismos permisos que
+    baja-seleccion: superadmin.
+
+    Responde {ok:true, afectados:N}. Idempotente: lo que ya tenga el valor
+    deseado simplemente no se cuenta en rowcount.
+    """
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Acción reservada para superadmin"}), 403
+
+    # Validar que el cliente existe (coherente con baja-masiva)
+    cli = mysql_fetchone("SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    body = request.get_json(silent=True) or {}
+    try:
+        # Valor a aplicar (castea a 0/1 estricto)
+        aplica = 1 if body.get("aplica", 1) in (1, True, "1", "true", "True") else 0
+
+        ids = body.get("ids") or []
+        # Validar y sanitizar IDs (solo enteros positivos)
+        try:
+            ids = [int(x) for x in ids if x and int(x) > 0]
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Lista de IDs inválida"}), 400
+        if not ids:
+            return jsonify({"ok": False, "error": "No se seleccionaron equipos"}), 400
+        if len(ids) > 500:
+            return jsonify({"ok": False, "error": "Máximo 500 equipos por operación"}), 400
+
+        # UPDATE parametrizado: cliente_id + id IN (...) + solo filas que
+        # cambian de valor (así el rowcount = equipos realmente afectados y
+        # la operación es idempotente). El cliente_id en el WHERE impide
+        # tocar equipos de otro cliente.
+        placeholders = ",".join(["%s"] * len(ids))
+        # params: (aplica, cid, *ids, aplica)  → SET aplica, WHERE cid, IN ids,
+        #          COALESCE(...) <> aplica
+        params = tuple([aplica, cid] + ids + [aplica])
+
+        conn = get_mysql()
+        afectados = 0
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE mant_maquinas SET aplica_mantencion=%s "
+                    f" WHERE cliente_id=%s AND id IN ({placeholders}) "
+                    f"   AND COALESCE(aplica_mantencion,1) <> %s",
+                    params
+                )
+                afectados = int(cur.rowcount or 0)
+            conn.commit()
+        finally:
+            try: conn.close()
+            except Exception: pass
+
+        # Audit en bloque (un registro con la lista y el valor aplicado).
+        # Sincrono: _mant_log es UN insert con pool (barato) y ademas usa
+        # current_username() internamente, que necesita contexto de request
+        # (en un hilo de fondo la auditoria se perderia — el mismo patron que
+        # rompio los correos de retiros).
+        try:
+            _mant_log(
+                "cliente", cid,
+                "aplica_mantencion_masivo",
+                f"{'En plan' if aplica else 'Sin mantención'}: "
+                f"{afectados} de {len(ids)} equipo(s) seleccionados "
+                f"(ids={ids})"
+            )
+        except Exception:
+            pass
+
+        return jsonify({"ok": True, "afectados": afectados})
+
+    except Exception as e:
+        print(f"[aplica_mantencion_masivo] EXCEPCION cid={cid} "
+              f"ids_count={len(body.get('ids', []))} err={e}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": f"Error al procesar la operación: {str(e)[:150]}",
+        }), 500
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/destruir", methods=["DELETE"])
 @_mant_required
 def mant_maquina_destruir(mid):
@@ -58515,6 +58822,9 @@ def mant_maquina_ficha_tecnica_json(mid):
         "fecha_fin_garantia": str(eq["fecha_fin_garantia"])[:10] if eq.get("fecha_fin_garantia") else "",
         "estado": eq.get("estado") or "activo",
         "estado_op": eq.get("estado_op") or "operativo",
+        # 2026-06-10 (Daniel): el front precarga el toggle "En plan" del
+        # formulario de edicion desde este campo (default 1 si viene null).
+        "aplica_mantencion": 1 if (eq.get("aplica_mantencion") if eq.get("aplica_mantencion") is not None else 1) else 0,
         "estado_capturado": eq.get("estado_capturado") or "",
         "tiene_dano": bool(eq.get("tiene_dano")),
         "observaciones": eq.get("observaciones") or "",
@@ -58798,7 +59108,7 @@ def mant_maquina_patch(mid):
         "SELECT id, cliente_id, serie, marca, modelo, voltaje, "
         "       anio_fabricacion, ubicacion_sala, observaciones, "
         "       estado, estado_op, fecha_instalacion, fecha_fin_garantia, "
-        "       tag_1, tag_2 "
+        "       tag_1, tag_2, COALESCE(aplica_mantencion,1) AS aplica_mantencion "
         "  FROM mant_maquinas WHERE id=%s",
         (mid,)
     )
@@ -58891,6 +59201,18 @@ def mant_maquina_patch(mid):
                     return jsonify({"ok": False, "error": f"Formato inválido en {f} (usa YYYY-MM-DD)"}), 400
             sets.append(f"{f}=%s"); vals.append(raw)
 
+    # aplica_mantencion (0/1): "En plan" vs "Sin mantención". El front lo
+    # manda junto al resto de la edición. NO requiere motivo (no es crítico),
+    # pero sí dejamos rastro en mant_logs si cambia (igual que el toggle
+    # individual PUT .../aplica-mantencion → accion 'aplica_mantencion' si/no).
+    cambio_aplica = None
+    if "aplica_mantencion" in d:
+        v_nuevo = 1 if d.get("aplica_mantencion") in (1, True, "1", "true", "True") else 0
+        v_antes = 1 if int(eq.get("aplica_mantencion") or 1) else 0
+        sets.append("aplica_mantencion=%s"); vals.append(v_nuevo)
+        if v_antes != v_nuevo:
+            cambio_aplica = (v_antes, v_nuevo)
+
     if not sets:
         return jsonify({"ok": False, "error": "Sin campos para actualizar"}), 400
 
@@ -58927,6 +59249,15 @@ def mant_maquina_patch(mid):
         _mant_log("maquina", mid, "ficha_editada", cambios_resumen[:500])
     except Exception:
         pass
+
+    # Audit del cambio de aplica_mantencion (mismo formato que el toggle
+    # individual: accion 'aplica_mantencion', detalle 'si'/'no').
+    if cambio_aplica is not None:
+        try:
+            _mant_log("maquina", mid, "aplica_mantencion",
+                      "si" if cambio_aplica[1] else "no")
+        except Exception:
+            pass
 
     return jsonify({
         "ok": True,

@@ -1556,6 +1556,34 @@
 .eq-search-wrap{position:relative;}
 .eq-search-wrap i{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#9ca3af;font-size:.85rem;}
 
+/* Filtro plan de mantención (2026-06-10) */
+.eq-plan-group{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.eq-plan-btn{padding:5px 12px;border:none;background:#fff;font-size:.74rem;font-weight:700;
+  color:#6b7280;cursor:pointer;transition:background .1s,color .1s;display:inline-flex;
+  align-items:center;gap:4px;white-space:nowrap;}
+.eq-plan-btn + .eq-plan-btn{border-left:1px solid var(--border);}
+.eq-plan-btn:hover{background:#f3f4f6;}
+.eq-plan-btn.active{background:#16a34a;color:#fff;}
+.eq-plan-btn.active[data-plan="no"]{background:#6b7280;}
+.eq-plan-btn.active[data-plan="todos"]{background:#0f172a;}
+@media (max-width:768px){
+  .eq-plan-btn{min-height:44px;font-size:.8rem;}
+  .eq-tab-btn{min-height:44px;}
+}
+
+/* Toggle "En plan" en el formulario de edición de ficha (2026-06-10) */
+.ft-plan-switch{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #fed7aa;
+  border-radius:10px;padding:10px 14px;cursor:pointer;user-select:none;min-height:44px;}
+.ft-plan-switch input{width:0;height:0;opacity:0;position:absolute;}
+.ft-plan-switch .ft-plan-track{position:relative;flex-shrink:0;width:46px;height:26px;border-radius:50px;
+  background:#d1d5db;transition:background .15s;}
+.ft-plan-switch .ft-plan-track::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;
+  border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .15s;}
+.ft-plan-switch input:checked + .ft-plan-track{background:#16a34a;}
+.ft-plan-switch input:checked + .ft-plan-track::after{left:23px;}
+.ft-plan-switch .ft-plan-txt{font-weight:700;font-size:.82rem;color:#374151;line-height:1.2;}
+.ft-plan-switch .ft-plan-sub{font-size:.7rem;font-weight:500;color:#9ca3af;}
+
 /* Tabla equipos */
 .eq-table{width:100%;border-collapse:collapse;font-size:.81rem;}
 .eq-table thead th{
@@ -1698,6 +1726,22 @@
         <input type="text" class="eq-search" id="eqBuscar" placeholder="Buscar equipo, código, serie…"
                oninput="eqBuscar(this.value)">
       </div>
+      {# 2026-06-10 (Daniel) — Filtro por plan de mantención (client-side) #}
+      <div class="eq-plan-group" role="group" aria-label="Filtrar por plan de mantención"
+           title="Mostrar equipos según su plan de mantención">
+        <button type="button" class="eq-plan-btn active" data-plan="todos"
+                onclick="eqFiltrarPlan('todos',this)">Todos</button>
+        <button type="button" class="eq-plan-btn" data-plan="si"
+                onclick="eqFiltrarPlan('si',this)"
+                title="Solo equipos incluidos en el plan de mantención">
+          <i class="bi bi-wrench-adjustable"></i>Solo en plan
+        </button>
+        <button type="button" class="eq-plan-btn" data-plan="no"
+                onclick="eqFiltrarPlan('no',this)"
+                title="Solo equipos excluidos del plan (accesorios, collarines)">
+          <i class="bi bi-dash-circle"></i>Sin mantención
+        </button>
+      </div>
       <div class="ms-auto d-flex gap-2 flex-wrap align-items-center">
         {# Toggle "Mostrar dados de baja" — por default ocultos, click para ver papelera #}
         <label class="d-flex align-items-center gap-1" style="font-size:.78rem;color:#475569;cursor:pointer;user-select:none"
@@ -1782,9 +1826,11 @@
           {% for m in maquinas %}
           {% set dias_doc = (hoy - m.doc_fecha).days if m.doc_fecha else 9999 %}
           {% set _es_baja = ((m.estado or 'activo') == 'baja') %}
+          {% set _apl_row = (m.aplica_mantencion if m.aplica_mantencion is not none else 1) %}
           <tr id="maq-{{ m.id }}"
               data-maquina-id="{{ m.id }}"
               data-estado="{{ m.estado or 'activo' }}"
+              data-aplica="{{ 1 if _apl_row else 0 }}"
               data-doc-origen="{{ m.doc_origen or '' }}"
               data-sku="{{ m.sku or '' }}"
               data-serie="{{ m.serie or '' }}"
@@ -1893,7 +1939,7 @@
               </span>
               {# 2026-06-10 (Daniel): separar equipos SIN mantención (collarines,
                  accesorios). Chip clickeable → PUT aplica-mantencion. #}
-              {% set _apl = (m.aplica_mantencion if m.aplica_mantencion is not none else 1) %}
+              {% set _apl = _apl_row %}
               <div style="margin-top:4px">
                 <span class="eq-mant-chip {{ 'eq-mant-si' if _apl else 'eq-mant-no' }}"
                       id="eqMant-{{ m.id }}" data-aplica="{{ 1 if _apl else 0 }}"
@@ -2194,15 +2240,31 @@
 </div>{# /flex layout #}
 
 <script>
-// ── Filtro tab (Todos/Activos/Baja) ─────────────────────────
-function eqFiltrar(estado, btn) {
-  document.querySelectorAll('.eq-tab-btn').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+// ════════════════════════════════════════════════════════════════════
+// FILTROS DE LA TABLA DE EQUIPOS (combinables) — 2026-06-10 (Daniel)
+// Estado (tab) + búsqueda + plan de mantención + mostrar bajas se
+// evalúan juntos en _eqAplicarFiltros(), no se pisan entre sí.
+// ════════════════════════════════════════════════════════════════════
+const _eqFiltros = { estado: 'todos', buscar: '', plan: 'todos', mostrarBajas: false };
+
+function _eqAplicarFiltros() {
   const rows = document.querySelectorAll('#maqListado tr');
   let visible = 0;
   rows.forEach(tr => {
     const est = tr.dataset.estado || 'activo';
-    const show = estado === 'todos' || est === estado;
+    const apl = tr.dataset.aplica === '1';
+    const name = tr.dataset.name || '';
+    const esBaja = (est === 'baja');
+    let show = true;
+    // 1) Tab de estado
+    if (_eqFiltros.estado !== 'todos' && est !== _eqFiltros.estado) show = false;
+    // 2) Plan de mantención
+    if (_eqFiltros.plan === 'si' && !apl) show = false;
+    if (_eqFiltros.plan === 'no' && apl) show = false;
+    // 3) Búsqueda por texto
+    if (_eqFiltros.buscar && !name.includes(_eqFiltros.buscar)) show = false;
+    // 4) Bajas ocultas por default (salvo que el tab pida explícitamente "baja")
+    if (esBaja && !_eqFiltros.mostrarBajas && _eqFiltros.estado !== 'baja') show = false;
     tr.style.display = show ? '' : 'none';
     if (show) visible++;
   });
@@ -2210,23 +2272,29 @@ function eqFiltrar(estado, btn) {
   if (countEl) countEl.textContent = `Mostrando ${visible} equipo${visible!==1?'s':''}`;
 }
 
+// ── Filtro tab (Todos/Activos/Baja) ─────────────────────────
+function eqFiltrar(estado, btn) {
+  document.querySelectorAll('.eq-tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  _eqFiltros.estado = estado;
+  _eqAplicarFiltros();
+}
+
 // ── Filtro búsqueda ────────────────────────────────────────
 function eqBuscar(q) {
-  const norm = q.toLowerCase().trim();
-  const rows = document.querySelectorAll('#maqListado tr');
-  let visible = 0;
-  rows.forEach(tr => {
-    if (tr.style.display === 'none' && !norm) return;
-    const name = tr.dataset.name || '';
-    const show = !norm || name.includes(norm);
-    tr.style.display = show ? '' : 'none';
-    if (show) visible++;
-  });
-  const countEl = document.getElementById('eqCount');
-  if (countEl) countEl.textContent = `Mostrando ${visible} equipo${visible!==1?'s':''}`;
+  _eqFiltros.buscar = (q || '').toLowerCase().trim();
+  _eqAplicarFiltros();
 }
 // Alias para el oninput viejo
 function filtrarEquipos(q) { eqBuscar(q); }
+
+// ── Filtro plan de mantención (chips Todos / Solo en plan / Sin mantención) ──
+function eqFiltrarPlan(plan, btn) {
+  document.querySelectorAll('.eq-plan-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  _eqFiltros.plan = plan;
+  _eqAplicarFiltros();
+}
 
 // ════════════════════════════════════════════════════════════════════
 // SELECCIÓN MÚLTIPLE DE EQUIPOS + barra flotante + visita multi
@@ -2258,13 +2326,92 @@ function eqUpdateBarra() {
   }
 }
 
+// ── Plan de mantención: refresco optimista del chip + atajos/masivo (2026-06-10) ──
+// Sincroniza el chip "En plan" / "Sin mantención" de una fila tras un cambio.
+function _eqRefrescarChipPlan(mid, aplica) {
+  const apl = aplica ? 1 : 0;
+  const chip = document.getElementById('eqMant-' + mid);
+  if (chip) {
+    chip.dataset.aplica = String(apl);
+    chip.className = 'eq-mant-chip ' + (apl ? 'eq-mant-si' : 'eq-mant-no');
+    chip.innerHTML = apl
+      ? '<i class="bi bi-wrench-adjustable"></i> En plan'
+      : '<i class="bi bi-dash-circle"></i> Sin mantención';
+    chip.title = apl ? 'En plan de mantención — click para excluirlo'
+                     : 'Excluido de mantención — click para incluirlo';
+  }
+  // Mantener el data-aplica de la fila en sync (el filtro lo usa)
+  const tr = document.getElementById('maq-' + mid);
+  if (tr) tr.dataset.aplica = String(apl);
+}
+
+// Atajo: marca solo las filas VISIBLES que están en plan de mantención.
+function eqSeleccionarEnPlan() {
+  let marcados = 0;
+  document.querySelectorAll('#maqListado tr').forEach(tr => {
+    const chk = tr.querySelector('.eq-row-chk');
+    if (!chk || chk.disabled) return;
+    const visible = tr.style.display !== 'none';
+    const enPlan = tr.dataset.aplica === '1';
+    chk.checked = (visible && enPlan);
+    if (chk.checked) marcados++;
+  });
+  eqUpdateBarra();
+  if (marcados === 0) {
+    ilusToast('No hay equipos en plan visibles para seleccionar', { type: 'warning' });
+  } else {
+    ilusToast(`✓ ${marcados} equipo(s) en plan seleccionado(s)`, { type: 'success' });
+  }
+}
+
+// Acción masiva: pone (aplica=1) o quita (aplica=0) del plan los seleccionados.
+async function eqPlanMasivo(aplica) {
+  const seleccionados = Array.from(document.querySelectorAll('.eq-row-chk:checked'));
+  const ids = seleccionados.map(c => parseInt(c.dataset.id)).filter(Boolean);
+  if (!ids.length) { ilusToast('Selecciona al menos un equipo', { type: 'warning' }); return; }
+  if (ids.length > 500) { ilusToast('Máximo 500 equipos por acción', { type: 'warning' }); return; }
+
+  // "Quitar del plan" pide confirmación (reversible → no danger fuerte).
+  if (!aplica) {
+    const ok = await ilusConfirm({
+      title: 'Quitar del plan de mantención',
+      message: `¿Excluir ${ids.length} equipo(s) del plan de mantención?`,
+      sub: 'No se contarán en el plan, la valorización ni los levantamientos. Puedes revertirlo en cualquier momento.',
+      okLabel: 'Quitar del plan', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+  }
+
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/equipos/aplica-mantencion-seleccion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, aplica: aplica ? 1 : 0 }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) {
+      ilusToast('No se pudo: ' + (d.error || 'error'), { type: 'error' });
+      return;
+    }
+    // Optimista: actualizar los chips de las filas afectadas.
+    ids.forEach(id => _eqRefrescarChipPlan(id, aplica));
+    const n = (typeof d.afectados === 'number') ? d.afectados : ids.length;
+    ilusToast(aplica ? `✓ ${n} equipo(s) puesto(s) en plan`
+                     : `${n} equipo(s) quitado(s) del plan`,
+              { type: aplica ? 'success' : 'info' });
+    // Reaplicar filtros por si el filtro "plan" está activo (la fila puede ocultarse).
+    _eqAplicarFiltros();
+  } catch (e) {
+    ilusToast('Error de red: ' + (e.message || ''), { type: 'error' });
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════
 // FILTRO "MOSTRAR BAJAS" + BAJA MASIVA SELECTIVA (Daniel 2026-05-26)
 // ════════════════════════════════════════════════════════════════════
 function eqAplicarFiltroBajas(mostrar) {
-  document.querySelectorAll('tr.eq-row-baja').forEach(tr => {
-    tr.style.display = mostrar ? '' : 'none';
-  });
+  _eqFiltros.mostrarBajas = !!mostrar;
+  _eqAplicarFiltros();
 }
 
 // Cuenta automática de bajas al cargar (para badge)
@@ -2338,7 +2485,7 @@ function abrirVisitaMulti() {
       serie: c.dataset.serie || '',
       cantidad: c.dataset.cantidad || 1,
     }));
-  if (!seleccionados.length) { alert('Selecciona al menos un equipo'); return; }
+  if (!seleccionados.length) { ilusToast('Selecciona al menos un equipo', { type: 'warning' }); return; }
 
   // Llenar el modal con los equipos seleccionados
   const ul = document.getElementById('vm_lista');
@@ -2781,16 +2928,34 @@ async function confirmarVisitaMulti() {
                             flex-wrap:wrap;max-width:95vw">
   <i class="bi bi-check2-square" style="color:var(--ilus-red);font-size:1.3rem"></i>
   <span><strong id="eqBarraCount">0</strong> equipo(s) seleccionado(s)</span>
-  <button class="btn btn-ilus fw-bold px-4" onclick="abrirVisitaMulti()" style="border-radius:50px">
-    <i class="bi bi-calendar-plus me-1"></i>Agendar visita
+  {# Acción principal: crea UNA OT con todos los equipos marcados (POST visita-multi) #}
+  <button class="btn btn-ilus fw-bold px-4" onclick="abrirVisitaMulti()" style="border-radius:50px;min-height:44px"
+          title="Generar una Orden de Trabajo con los equipos seleccionados">
+    <i class="bi bi-clipboard2-plus me-1"></i>Generar OT con los seleccionados
   </button>
+  {% if not is_tecnico %}
+  {# Atajo: marca solo las filas visibles que están en plan de mantención #}
+  <button class="btn btn-sm fw-bold" onclick="eqSeleccionarEnPlan()" style="border-radius:50px;min-height:44px;background:#14532d;color:#fff;border:0"
+          title="Marcar solo los equipos visibles que están en plan de mantención">
+    <i class="bi bi-wrench-adjustable me-1"></i>Seleccionar en plan
+  </button>
+  {# Acciones masivas de plan de mantención (POST aplica-mantencion-seleccion) #}
+  <button class="btn btn-sm fw-bold" onclick="eqPlanMasivo(1)" style="border-radius:50px;min-height:44px;background:#16a34a;color:#fff;border:0"
+          title="Incluir los equipos seleccionados en el plan de mantención">
+    <i class="bi bi-plus-circle me-1"></i>Poner en plan
+  </button>
+  <button class="btn btn-sm fw-bold" onclick="eqPlanMasivo(0)" style="border-radius:50px;min-height:44px;background:#475569;color:#fff;border:0"
+          title="Excluir los equipos seleccionados del plan de mantención (reversible)">
+    <i class="bi bi-dash-circle me-1"></i>Quitar del plan
+  </button>
+  {% endif %}
   {% if permissions and permissions.superadmin %}
   <button class="btn btn-warning fw-bold px-4" onclick="bajaMasivaSeleccionados()"
-          style="border-radius:50px" title="Dar de baja los equipos seleccionados (solo superadmin)">
+          style="border-radius:50px;min-height:44px" title="Dar de baja los equipos seleccionados (solo superadmin)">
     <i class="bi bi-archive me-1"></i>Dar de baja
   </button>
   {% endif %}
-  <button class="btn btn-sm btn-link text-white-50" onclick="eqToggleAll(false)" title="Limpiar selección">
+  <button class="btn btn-sm btn-link text-white-50" onclick="eqToggleAll(false)" title="Limpiar selección" style="min-height:44px">
     <i class="bi bi-x-lg"></i>
   </button>
 </div>
@@ -8110,11 +8275,29 @@ async function vhGuardar(){
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Marca</label>
-                <input type="text" class="form-control form-control-sm" id="ft_edit_marca" maxlength="120">
+                {# Catálogo de marcas (seed + casa + ERP). Texto libre permitido. #}
+                <input type="text" class="form-control form-control-sm" id="ft_edit_marca"
+                       list="ftMarcasDL" autocomplete="off" maxlength="120"
+                       placeholder="Ej: Life Fitness" onfocus="_ftCargarMarcas()">
+                <datalist id="ftMarcasDL"></datalist>
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Modelo</label>
-                <input type="text" class="form-control form-control-sm" id="ft_edit_modelo" maxlength="120">
+                {# Texto libre por ahora — no hay catálogo de modelos. #}
+                <input type="text" class="form-control form-control-sm" id="ft_edit_modelo"
+                       list="ftModelosDL" autocomplete="off" maxlength="120">
+                <datalist id="ftModelosDL"></datalist>
+              </div>
+              {# Toggle "En plan de mantención" — viaja en el PATCH como aplica_mantencion (2026-06-10) #}
+              <div class="col-12">
+                <label class="ft-plan-switch" for="ft_edit_aplica" title="Define si el equipo entra en el plan de mantención">
+                  <input type="checkbox" id="ft_edit_aplica">
+                  <span class="ft-plan-track"></span>
+                  <span>
+                    <span class="ft-plan-txt">Se le realiza mantención (En plan)</span><br>
+                    <span class="ft-plan-sub">Si está apagado, el equipo se excluye del plan, la valorización y los levantamientos.</span>
+                  </span>
+                </label>
               </div>
               <div class="col-12">
                 <label class="form-label small fw-semibold">Observaciones (opcional)</label>

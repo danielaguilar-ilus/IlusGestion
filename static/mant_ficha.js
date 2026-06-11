@@ -1508,6 +1508,10 @@ async function eqToggleMantencion(mid) {
       : '<i class="bi bi-dash-circle"></i> Sin mantención';
     chip.title = nuevo ? 'En plan de mantención — click para excluirlo'
                        : 'Excluido de mantención — click para incluirlo';
+    // Mantener el data-aplica de la fila en sync (lo usa el filtro "plan").
+    const tr = document.getElementById('maq-' + mid);
+    if (tr) tr.dataset.aplica = nuevo ? '1' : '0';
+    if (typeof _eqAplicarFiltros === 'function') _eqAplicarFiltros();
     ilusToast(nuevo ? '✓ Equipo incluido en el plan de mantención'
                     : 'Equipo excluido de mantención', { type: nuevo ? 'success' : 'info' });
   } catch (e) { ilusToast('Error de red: ' + e.message, { type: 'error' }); }
@@ -3305,6 +3309,39 @@ function _ftRenderContratos(contratos) {
   }).join('');
 }
 
+// ── Catálogo de marcas para la edición (datalist, lazy al primer focus) ──────
+// Mismo patrón que ot_ejecutar.html: GET /api/marcas una vez, se cachea y se
+// normaliza al guardar. Sigue permitiendo texto libre (datalist = sugerencias).
+let _ftMarcas = null;
+async function _ftCargarMarcas() {
+  if (_ftMarcas) return;
+  try {
+    const r = await fetch('/mantenciones/api/marcas');
+    const d = await r.json();
+    _ftMarcas = (d && d.marcas) || [];
+  } catch (e) {
+    _ftMarcas = [];
+  }
+  const dl = document.getElementById('ftMarcasDL');
+  if (dl) {
+    dl.innerHTML = _ftMarcas.map(m => {
+      const esc = String(m).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+      return `<option value="${esc}">`;
+    }).join('');
+  }
+}
+
+// Normaliza la marca al guardar: si coincide (case-insensitive) con una del
+// catálogo, usa la forma canónica → BD consistente ("life fitness" → "Life Fitness").
+function _ftNormalizarMarca(valor) {
+  const v = (valor || '').trim();
+  if (v && _ftMarcas && _ftMarcas.length) {
+    const hit = _ftMarcas.find(m => String(m).toLowerCase() === v.toLowerCase());
+    if (hit) return hit;
+  }
+  return v;
+}
+
 // ── Edición inline ────────────────────────────────────────────────────
 function ftAbrirEditar() {
   const eq = _ftCurrentData ? _ftCurrentData.equipo : null;
@@ -3315,8 +3352,14 @@ function ftAbrirEditar() {
   document.getElementById('ft_edit_ubicacion').value = eq.ubicacion_sala || '';
   document.getElementById('ft_edit_marca').value = eq.marca || '';
   document.getElementById('ft_edit_modelo').value = eq.modelo || '';
+  // Toggle "En plan": default 1 (incluido) si el dato no viene del backend.
+  const apl = (eq.aplica_mantencion === undefined || eq.aplica_mantencion === null)
+    ? 1 : (eq.aplica_mantencion ? 1 : 0);
+  const chkAplica = document.getElementById('ft_edit_aplica');
+  if (chkAplica) chkAplica.checked = (apl === 1);
   document.getElementById('ft_edit_obs').value = eq.observaciones || '';
   document.getElementById('ft_edit_motivo').value = '';
+  _ftCargarMarcas();  // precargar el datalist al abrir
   document.getElementById('ft_edit_panel').style.display = 'block';
   // Scroll al panel
   setTimeout(() => {
@@ -3331,15 +3374,22 @@ function ftCancelarEditar() {
 async function ftGuardarEditar() {
   if (!_ftCurrentMid) return;
   const eq = _ftCurrentData ? _ftCurrentData.equipo : {};
+  // Normaliza la marca a su forma canónica si está en el catálogo.
+  const marcaInp = document.getElementById('ft_edit_marca');
+  const marcaNorm = _ftNormalizarMarca(marcaInp.value);
+  if (marcaInp) marcaInp.value = marcaNorm;
+  const aplicaChk = document.getElementById('ft_edit_aplica');
   const payload = {
     serie: document.getElementById('ft_edit_serie').value.trim(),
     estado: document.getElementById('ft_edit_estado').value,
     estado_op: document.getElementById('ft_edit_estado_op').value,
     ubicacion_sala: document.getElementById('ft_edit_ubicacion').value.trim(),
-    marca: document.getElementById('ft_edit_marca').value.trim(),
+    marca: marcaNorm,
     modelo: document.getElementById('ft_edit_modelo').value.trim(),
     observaciones: document.getElementById('ft_edit_obs').value.trim(),
     motivo: document.getElementById('ft_edit_motivo').value.trim(),
+    // Plan de mantención (backend acepta aplica_mantencion en la whitelist del PATCH).
+    aplica_mantencion: (aplicaChk && aplicaChk.checked) ? 1 : 0,
   };
   // Validación local: si cambia serial o estado, exigir motivo
   const cambia_serial = (payload.serie || '') !== (eq.serie_actual || eq.serie || '');
@@ -3369,6 +3419,10 @@ async function ftGuardarEditar() {
       return;
     }
     ilusToast('Equipo actualizado correctamente', { type: 'success' });
+    // Refrescar el chip "En plan" de la fila (helper global de ficha.html).
+    if (typeof _eqRefrescarChipPlan === 'function') {
+      _eqRefrescarChipPlan(_ftCurrentMid, payload.aplica_mantencion);
+    }
     // Refrescar el modal con los datos nuevos
     document.getElementById('ft_edit_panel').style.display = 'none';
     if (_ftCurrentMid) await verFichaTecnicaEquipo(_ftCurrentMid, eq.nombre);
