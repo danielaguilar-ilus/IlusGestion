@@ -3966,6 +3966,39 @@ async function _capToggleDano(mid){
   }
 }
 
+// Toggle plan de mantención — llama PUT /api/maquinas/<mid>/aplica-mantencion
+async function _capToggleAplica(mid, toggleEl){
+  if (!toggleEl) return;
+  const prev = toggleEl.dataset.active === '1';
+  const nuevo = !prev;
+  toggleEl.dataset.active = nuevo ? '1' : '0';
+  const lbl = toggleEl.querySelector('.lbl');
+  if (lbl) lbl.innerHTML = (nuevo
+    ? 'Sí — incluido en el plan de mantención'
+    : 'No — accesorio o no aplica mantención') + '<small>Tocá para cambiar</small>';
+  _setCapStatus('aplica_mantencion', 'saving', 'Guardando…');
+  try {
+    const r = await fetch(`/mantenciones/api/maquinas/${mid}/aplica-mantencion`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({aplica: nuevo}),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      _setCapStatus('aplica_mantencion', 'saved', nuevo ? '✓ En el plan' : '✓ Excluido del plan');
+      ilusToast(nuevo ? '✓ Incluido en el plan de mantención' : 'Excluido del plan de mantención',
+                {type: nuevo ? 'success' : 'info'});
+    } else { throw new Error(d.error || 'Error'); }
+  } catch(e) {
+    toggleEl.dataset.active = prev ? '1' : '0';
+    if (lbl) lbl.innerHTML = (prev
+      ? 'Sí — incluido en el plan de mantención'
+      : 'No — accesorio o no aplica mantención') + '<small>Tocá para cambiar</small>';
+    _setCapStatus('aplica_mantencion', 'error', '⚠ No se guardó');
+    ilusToast('No se pudo actualizar el plan', {type: 'error'});
+  }
+}
+
 // Marcar equipo como completado (toggle)
 async function _capMarcarCompletado(mid){
   const btn = document.getElementById('cap-completado-btn');
@@ -4345,6 +4378,27 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
       <div class="save-status" id="cap-st-tiene_dano"></div>
     </div>`;
 
+  // ── SECCIÓN 3b: Plan de mantención ────────────────────────
+  const _aplMant = (e.aplica_mantencion !== 0 && e.aplica_mantencion !== false && e.aplica_mantencion != null);
+  const seccionAplicaMantHtml = `
+    <div class="captura-section">
+      <h6 class="ttl"><i class="bi bi-tools"></i>¿Aplica mantención?</h6>
+      <div class="cap-toggle"
+           id="cap-aplica-toggle"
+           data-active="${_aplMant ? '1' : '0'}"
+           data-mid="${mid}"
+           ${readonly ? '' : `onclick="_capToggleAplica(${mid}, this)"`}
+           role="button" tabindex="${readonly ? '-1' : '0'}">
+        <span class="sw"></span>
+        <span class="lbl">${_aplMant
+          ? 'Sí — incluido en el plan de mantención'
+          : 'No — accesorio o no aplica mantención'}
+          <small>${readonly ? '' : 'Tocá para cambiar'}</small>
+        </span>
+      </div>
+      <div class="save-status" id="cap-st-aplica_mantencion"></div>
+    </div>`;
+
   // ── SECCIÓN 4: Observaciones del técnico ───────────────────
   const seccionObsHtml = `
     <div class="captura-section">
@@ -4407,7 +4461,7 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
 
   return clienteHtml + bannerHtml + headerEquipoHtml +
          seccionEstadoHtml + seccionDatosHtml + seccionDanoHtml +
-         seccionObsHtml + seccionFotosHtml +
+         seccionAplicaMantHtml + seccionObsHtml + seccionFotosHtml +
          contratosHtml + otsHtml +
          seccionCompletadoHtml;
 }
@@ -7337,7 +7391,22 @@ function setFirmaColor(id, color, el){
   }
   if (el) el.classList.add('active');
 }
-function abrirModalFirma(){
+async function abrirModalFirma(){
+  // Si hay tareas opcionales sin completar, pedir confirmación explícita.
+  const ctx = _calcCtxGlobal();
+  const pendTotal = ctx.total - ctx.completas;
+  const pendObl   = Math.max(0, ctx.oblTot - ctx.oblComp);
+  const pendOpc   = pendTotal - pendObl;
+  if (pendOpc > 0){
+    const ok = await ilusConfirm({
+      title: 'Tareas sin completar',
+      message: `Quedan ${pendOpc} tarea${pendOpc === 1 ? '' : 's'} opcional${pendOpc === 1 ? '' : 'es'} sin registrar.`,
+      sub: 'Podés firmar igual, pero los checklist quedarán incompletos en el informe.',
+      okLabel: 'Firmar de todas formas',
+      cancelLabel: 'Volver al checklist',
+    });
+    if (!ok) return;
+  }
   new bootstrap.Modal(document.getElementById('modalFirma')).show();
   setTimeout(() => { initCanvas('canvasTec'); initCanvas('canvasCli'); }, 250);
 }
