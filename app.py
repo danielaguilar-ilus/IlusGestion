@@ -7158,7 +7158,14 @@ def _send_login_alert_email(to_addr: str, to_name: str, *, ip: str = "",
 
 
 def _portal_login_url():
-    return url_for("login", _external=True)
+    try:
+        return url_for("login", _external=True)
+    except RuntimeError:
+        # Sin request context (background thread) — url_for necesita request o SERVER_NAME.
+        # login_url solo se usa en cuerpos informativos (WhatsApp/manual), no en tokens;
+        # retornar "" es seguro y no interrumpe el envío de email.
+        sn = app.config.get("SERVER_NAME") or os.environ.get("FLASK_SERVER_NAME", "")
+        return f"https://{sn}/login" if sn else ""
 
 
 def _send_access_notification_email(to_addr: str, to_name: str, login_url: str, *, actor_name: str = "ILUS") -> bool:
@@ -7406,12 +7413,12 @@ def reset_password(token):
         pw2 = request.form.get("password2", "")
         if pw1 != pw2:
             flash("Las contraseñas no coinciden.", "danger")
-            return render_template("reset_password.html", token=token, nombre=row["nombre"], marca=marca)
+            return render_template("reset_password.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
 
         strength_errors = _password_strength_errors(pw1)
         if strength_errors:
             flash(" ".join(strength_errors), "danger")
-            return render_template("reset_password.html", token=token, nombre=row["nombre"], marca=marca)
+            return render_template("reset_password.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
 
         new_hash = generate_password_hash(pw1)
         with conn.cursor() as cur:
@@ -7440,7 +7447,7 @@ def reset_password(token):
         flash("Contraseña actualizada. Ahora puedes iniciar sesión.", "success")
         return redirect(url_for("login"))
 
-    return render_template("reset_password.html", token=token, nombre=row["nombre"], marca=marca)
+    return render_template("reset_password.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
 
 
 @app.route("/welcome/<token>", methods=["GET", "POST"])
@@ -7481,12 +7488,12 @@ def welcome_activate(token):
         pw2 = request.form.get("password2", "")
         if pw1 != pw2:
             flash("Las contraseñas no coinciden.", "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], marca=marca)
+            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
 
         strength_errors = _password_strength_errors(pw1)
         if strength_errors:
             flash(" ".join(strength_errors), "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], marca=marca)
+            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
 
         new_hash = generate_password_hash(pw1)
         with conn.cursor() as cur:
@@ -7515,7 +7522,7 @@ def welcome_activate(token):
         flash(f"¡Cuenta activada! Bienvenido, {row['nombre']}. Ya puedes iniciar sesión.", "success")
         return redirect(url_for("login"))
 
-    return render_template("welcome.html", token=token, nombre=row["nombre"], marca=marca)
+    return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
 
 
 # ── PERFIL DE USUARIO (autogestión) ─────────────────────────────────────
