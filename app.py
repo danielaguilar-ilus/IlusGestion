@@ -34704,10 +34704,12 @@ def _mant_ficha_impl(cid):
                   FROM mant_visita_equipos ve
                   JOIN mant_visitas v ON v.id = ve.visita_id
                   JOIN (
-                       SELECT maquina_id, MAX(id) AS max_id
-                         FROM mant_visita_equipos
-                        WHERE maquina_id IN ({_ph})
-                        GROUP BY maquina_id
+                       SELECT ve2.maquina_id, MAX(ve2.id) AS max_id
+                         FROM mant_visita_equipos ve2
+                         JOIN mant_visitas v2 ON v2.id = ve2.visita_id
+                        WHERE ve2.maquina_id IN ({_ph})
+                          AND v2.estado NOT IN ('programada','reagendada','pendiente','cancelada')
+                        GROUP BY ve2.maquina_id
                   ) lastrev ON lastrev.maquina_id = ve.maquina_id
                            AND lastrev.max_id = ve.id
                 """,
@@ -42212,19 +42214,27 @@ def mant_visita_equipo_observacion(vid, mid):
     obs = (d.get("observacion") or "").strip()[:2000]
     user = current_username()
     try:
-        # Si ya existe, solo actualiza observacion (preserva estado_revision).
-        # Si no, inserta como 'verificado' con la observación.
-        mysql_execute(
-            "INSERT INTO mant_visita_equipos "
-            "  (visita_id, maquina_id, estado_revision, "
-            "   observacion_tecnico, revisado_at, revisado_por) "
-            "VALUES (%s, %s, 'verificado', %s, NOW(), %s) "
-            "ON DUPLICATE KEY UPDATE "
-            "  observacion_tecnico=VALUES(observacion_tecnico), "
-            "  revisado_at=NOW(), "
-            "  revisado_por=VALUES(revisado_por)",
-            (vid, mid, (obs or None), user)
-        )
+        if obs:
+            # Hay observación: INSERT si no existe (sin tocar estado si ya existe).
+            mysql_execute(
+                "INSERT INTO mant_visita_equipos "
+                "  (visita_id, maquina_id, estado_revision, "
+                "   observacion_tecnico, revisado_at, revisado_por) "
+                "VALUES (%s, %s, 'verificado', %s, NOW(), %s) "
+                "ON DUPLICATE KEY UPDATE "
+                "  observacion_tecnico=VALUES(observacion_tecnico), "
+                "  revisado_at=NOW(), "
+                "  revisado_por=VALUES(revisado_por)",
+                (vid, mid, obs, user)
+            )
+        else:
+            # Obs vacía: solo borra la obs en fila existente, no crea fila nueva.
+            mysql_execute(
+                "UPDATE mant_visita_equipos "
+                "SET observacion_tecnico=NULL, revisado_at=NOW(), revisado_por=%s "
+                "WHERE visita_id=%s AND maquina_id=%s",
+                (user, vid, mid)
+            )
     except Exception as e:
         print(f"[visita_equipo_observacion] error vid={vid} mid={mid}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo guardar la observación"}), 500
