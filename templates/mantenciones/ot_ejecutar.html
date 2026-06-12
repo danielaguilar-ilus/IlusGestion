@@ -3682,8 +3682,9 @@ function refreshPills(btn, group){
 // Cubre las variantes castellano + inglés que usa Daniel en las plantillas.
 function _esCampoSerial(titulo){
   if (!titulo) return false;
-  const t = String(titulo).toLowerCase();
-  return /(\bserie\b|\bserial\b|n[°º]?\s*serie|sn\b|\bs\/n\b|numero\s+de\s+serie|n[uú]mero\s+de\s+serie)/i.test(t);
+  // Solo evaluar el título base (antes del " — Nombre Equipo (S/N: ...)" que agrega el backend)
+  const base = String(titulo).split(' — ')[0];
+  return /(\bserie\b|\bserial\b|n[°º]?\s*serie|sn\b|\bs\/n\b|numero\s+de\s+serie|n[uú]mero\s+de\s+serie)/i.test(base);
 }
 
 // Sugiere el serial actualmente registrado en mant_maquinas (que vino en
