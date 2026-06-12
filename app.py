@@ -16246,7 +16246,14 @@ def _tr_fetch_from_erp(tido, nudo):
         float(l.get("CAPRCO1") or 0) - float(l.get("CAPRAD1") or 0)
         for l in zz_lines
     )
-    tiene_saldo = 1 if saldo_total > 0 else 0
+    # Daniel 12/06/2026: las líneas ZZ son SERVICIOS (envío, instalación,
+    # mantención…) y no productos físicos — NUNCA tienen saldo de inventario.
+    # Cuando se "cierra" la línea en el ERP, CAPRAD1 == CAPRCO1 y saldo=0,
+    # pero eso NO significa que el documento esté agotado: el servicio se
+    # consumió contablemente, no hay despacho físico que rebajar.
+    # Por eso forzamos tiene_saldo=1: ILUS siempre puede usar el doc para
+    # despacho físico mientras el ERP no lo cancele.
+    tiene_saldo = 1
 
     # ── Datos del header (campos friendly, ya enriquecidos por el motor/SQL) ──
     # NORMALIZACIÓN: pasar TODO por _erp_clean para no persistir placeholders
@@ -16269,13 +16276,23 @@ def _tr_fetch_from_erp(tido, nudo):
         if not telefono and _p["telefono"]:   telefono  = _p["telefono"]
         if not email and _p["email"]:         email     = _p["email"]
         if not comuna:                         comuna    = _p["comuna"] or _detect_comuna(direccion)
-    # Fallback final: si la comuna sigue siendo un código corto (ej. "TAL", "VI¥"),
-    # resolverla contra el catálogo TABCM del ERP. Esto cubre el caso de que el
-    # cubicador no la haya resuelto antes (re-importaciones, syncs directos).
-    if comuna and 2 <= len(comuna.strip()) <= 4:
-        _resolved = _resolve_comuna_erp(comuna.strip())
-        if _resolved and len(_resolved) > len(comuna.strip()):
-            comuna = _resolved
+    # Fallback final: resolver contra TABCM si la comuna sospecha de ser
+    # un código del ERP. Cubre:
+    #   - Código puro corto: "TAL", "VI¥", "MAI" (2-4 chars)
+    #   - Mixed-case raro: "TALca", "VICmu" (3+ chars MAYÚSCULAS al inicio,
+    #     resto minúsculas, len <= 7) — sucede cuando algún punto del ETL
+    #     hizo .title() sobre un código.
+    if comuna:
+        _c = comuna.strip()
+        _looks_code = (2 <= len(_c) <= 4) or (
+            3 <= len(_c) <= 7 and _c[:3].isupper() and _c[3:].islower()
+        )
+        if _looks_code:
+            # Para mixed-case ("TALca"), usar solo los primeros 3 chars en mayúsculas
+            code = _c[:3].upper() if (3 <= len(_c) <= 7 and _c[:3].isupper() and _c[3:].islower()) else _c.upper()
+            _resolved = _resolve_comuna_erp(code)
+            if _resolved and _resolved.upper() != code:
+                comuna = _resolved
     # Si el ERP no entregó cliente real, marcamos explícito en lugar del
     # placeholder histórico "Consumidor final" (que se trataba como genérico
     # en el normalizador y volvía a aparecer).
@@ -16872,18 +16889,25 @@ def tr_fix_comunas_codigo():
     body = request.get_json(silent=True, force=True) or {}
     if body.get("force_reload_cache"):
         _random_load_tabcm_cache(force=True)
-    # Buscar candidatos: comuna entre 2 y 4 chars (probablemente código)
+    # Buscar candidatos: comuna 2-7 chars (códigos puros + mixed-case "TALca")
     rows = mysql_fetchall(
         "SELECT id, comuna FROM transport_commitments "
-        "WHERE comuna IS NOT NULL AND CHAR_LENGTH(comuna) BETWEEN 2 AND 4"
+        "WHERE comuna IS NOT NULL AND CHAR_LENGTH(comuna) BETWEEN 2 AND 7"
     ) or []
     cambiados, sin_cambio = [], 0
     for r in rows:
         c0 = (r.get("comuna") or "").strip()
         if not c0:
             continue
-        nuevo = _resolve_comuna_erp(c0)
-        if nuevo and nuevo != c0 and len(nuevo) > len(c0):
+        # Detección: código puro corto o mixed-case "TALca"
+        is_short_code  = 2 <= len(c0) <= 4
+        is_mixed_case  = (3 <= len(c0) <= 7 and c0[:3].isupper() and c0[3:].islower())
+        if not (is_short_code or is_mixed_case):
+            sin_cambio += 1
+            continue
+        code  = c0[:3].upper() if is_mixed_case else c0.upper()
+        nuevo = _resolve_comuna_erp(code)
+        if nuevo and nuevo.upper() != code and len(nuevo) > len(c0):
             try:
                 mysql_execute(
                     "UPDATE transport_commitments SET comuna=%s WHERE id=%s",
@@ -59434,6 +59458,18 @@ def _ensure_transport_tracking_tables():
         print("[tr_tracking] tabla transp_fedex_pickups OK", flush=True)
     except Exception as _e_pk:
         print(f"[tr_tracking] no se pudo crear transp_fedex_pickups: {_e_pk}", flush=True)
+
+    # 7) Backfill tiene_saldo=1 (Daniel 12/06/2026 — las líneas ZZ son
+    # servicios contables sin inventario; "sin saldo" no debe disparar
+    # alerta para casos antiguos). Una sola vez.
+    try:
+        mysql_execute(
+            "UPDATE transport_commitments SET tiene_saldo=1 "
+            "WHERE tiene_saldo=0"
+        )
+        print("[tr_tracking] backfill tiene_saldo=1 aplicado", flush=True)
+    except Exception as _e_bs:
+        print(f"[tr_tracking] backfill tiene_saldo: {_e_bs}", flush=True)
 
 
 def _ensure_transporte_labels_table():

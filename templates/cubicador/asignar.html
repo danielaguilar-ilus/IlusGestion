@@ -314,7 +314,9 @@
   gap:0;
   border:1px solid var(--c-border);
   border-radius:9px;
-  overflow:hidden;
+  /* overflow:visible para que el dropdown de comuna no quede recortado
+     (Daniel 12/06/2026 — el dropdown estaba tapado al abrirse). */
+  overflow:visible;
 }
 .client-cell{
   padding:12px 16px;
@@ -378,7 +380,7 @@
 /* Autocomplete container */
 .autocomplete-wrap{ position:relative; }
 .autocomplete-wrap .ac-dropdown{
-  position:absolute; top:100%; left:0; right:0; z-index:999;
+  position:absolute; top:100%; left:0; right:0; z-index:1080;
   background:#fff; border:1px solid var(--c-border);
   border-top:none; border-radius:0 0 8px 8px;
   max-height:220px; overflow-y:auto;
