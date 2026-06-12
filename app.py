@@ -41828,10 +41828,7 @@ def _ot_validar_cierre(vid):
         ) or {}
     total = int(chk_row.get("total") or 0)
     done = int(chk_row.get("done") or 0)
-    # FIX 2026-05-21: si es un levantamiento, NO exigimos tareas explícitas.
-    # El audit trail por equipo lo lleva mant_visita_equipos
-    # (verificado/saltado/con_cambios/falla). Para preventivas/correctivas
-    # sí se sigue exigiendo checklist para no perder control de calidad.
+    # R1a — Tareas de checklist (preventivas/correctivas)
     if total == 0 and not excluir_maquinas and not es_levantamiento:
         razones.append("La OT no tiene tareas asignadas — agrega un checklist antes de cerrar.")
     elif done < total:
@@ -41839,6 +41836,33 @@ def _ot_validar_cierre(vid):
             f"Checklist incompleto: {done}/{total} tareas completadas. "
             f"Faltan {total - done} por marcar."
         )
+
+    # R1b — Revisión de equipos para levantamientos (2026-06-12 Daniel)
+    # Para OT tipo levantamiento, cada equipo en plan (aplica_mantencion=1)
+    # debe tener una entrada en mant_visita_equipos (verificado / con_cambios /
+    # saltado / falla_detectada). Equipos fuera del plan quedan exentos.
+    if es_levantamiento:
+        try:
+            _pend = mysql_fetchone(
+                "SELECT COUNT(*) AS cnt "
+                "  FROM mant_maquinas m "
+                " WHERE m.cliente_id = (SELECT v.cliente_id FROM mant_visitas v WHERE v.id=%s) "
+                "   AND m.aplica_mantencion = 1 "
+                "   AND m.estado != 'baja' "
+                "   AND NOT EXISTS ( "
+                "       SELECT 1 FROM mant_visita_equipos ve "
+                "        WHERE ve.visita_id = %s AND ve.maquina_id = m.id "
+                "   )",
+                (vid, vid)
+            )
+            _pend_cnt = int((_pend or {}).get("cnt") or 0)
+            if _pend_cnt > 0:
+                razones.append(
+                    f"Levantamiento incompleto: {_pend_cnt} equipo(s) en plan sin revisar. "
+                    "Documenta cada uno o márcalos como 'saltado' antes de cerrar."
+                )
+        except Exception as _lev_e:
+            print(f"[_ot_validar_cierre][lev_equip_check] {_lev_e}", flush=True)
 
     # R2 — Diagnóstico obligatorio (excepto levantamiento)
     if not es_levantamiento:

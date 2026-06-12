@@ -7537,6 +7537,21 @@ async function confirmarAprobacion(){
 }
 
 async function rechazarAprobacion(){
+  // Bootstrap mantiene un focus-trap dentro del modal abierto: el input
+  // del ilusPrompt recibe foco visual pero el teclado no llega.
+  // Solución: cerrar el modal primero, esperar que el backdrop se elimine
+  // completamente (hidden.bs.modal), luego abrir el prompt.
+  const _modalEl = document.getElementById('modalAprobacion');
+  const _bsModal = bootstrap.Modal.getInstance(_modalEl);
+  await new Promise(resolve => {
+    if (_bsModal && (_modalEl || {}).classList && _modalEl.classList.contains('show')) {
+      _modalEl.addEventListener('hidden.bs.modal', resolve, { once: true });
+      _bsModal.hide();
+    } else {
+      resolve();
+    }
+  });
+
   const motivo = await ilusPrompt({
     title: 'Rechazar y devolver al técnico',
     message: 'Indica el motivo del rechazo:',
@@ -7546,7 +7561,10 @@ async function rechazarAprobacion(){
     okLabel: 'Rechazar OT',
     cancelLabel: 'Cancelar',
   });
-  if (!motivo) return;
+  if (!motivo) {
+    if (_bsModal) _bsModal.show();
+    return;
+  }
   const btn = document.getElementById('btnRechazarAprob');
   if (btn){
     btn.disabled = true;
