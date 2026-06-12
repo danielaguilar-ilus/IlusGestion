@@ -3841,6 +3841,7 @@ let _epModal = null;
 let _epDocActual = null;   // {tido, nudo, fecha, cliente, rut}
 let _epProductos = [];     // productos del documento abierto
 let _epSeleccion = new Set(); // índices seleccionados
+let _epResumenCarga = null;  // {total_productos, cargados, parciales, pendientes} del backend
 
 async function buscarErpSql() {
   const q = document.getElementById('erpQ').value.trim();
@@ -4007,9 +4008,10 @@ async function abrirModalProductos(doc) {
     '<div class="text-center text-muted py-5"><span class="spinner-border spinner-border-sm me-2"></span>Cargando productos del ERP…</div>';
   _epModal.show();
 
-  // Fetch productos del documento (vía REST API que ya existe)
+  // Fetch productos del documento. Pasamos cid para que el backend cruce
+  // contra mant_maquinas y nos diga qué ya está cargado (confiable, no DOM).
   try {
-    const r = await fetch(`/mantenciones/api/documento?tido=${encodeURIComponent(doc.tido)}&nudo=${encodeURIComponent(doc.nudo)}`);
+    const r = await fetch(`/mantenciones/api/documento?tido=${encodeURIComponent(doc.tido)}&nudo=${encodeURIComponent(doc.nudo)}&cid=${encodeURIComponent(CID || '')}`);
     const data = await r.json();
     if (!data.ok || !data.items?.length) {
       document.getElementById('ep_tabla').innerHTML =
@@ -4017,6 +4019,7 @@ async function abrirModalProductos(doc) {
       return;
     }
     _epProductos = data.items;
+    _epResumenCarga = data.resumen_carga || null;
     document.getElementById('ep_total_items').textContent = _epProductos.length;
     epRenderTabla();
   } catch(e) {
@@ -4026,52 +4029,71 @@ async function abrirModalProductos(doc) {
 }
 
 function epRenderTabla() {
-  // Calcular saldo: cuántas unidades de cada SKU YA están en mant_maquinas con
-  // doc_origen del documento actual. Lo leemos del DOM (lista actual de equipos).
-  const docOrigKey = `${_epDocActual.tido_display} ${_epDocActual.nudo_display}`;
-  const saldoPorSku = {};
-  // Las máquinas existentes están en la tabla de equipos del cliente (#maqListado).
-  const filas = document.querySelectorAll('#maqListado tr[data-doc-origen]');
-  filas.forEach(tr => {
-    if (tr.dataset.docOrigen === docOrigKey) {
-      const sku = tr.dataset.sku || '';
-      const qty = parseInt(tr.dataset.cantidad || '1') || 1;
-      saldoPorSku[sku] = (saldoPorSku[sku] || 0) + qty;
-    }
-  });
+  // El backend ya cruzó contra mant_maquinas (confiable, cuenta TODA la BD,
+  // no el DOM filtrado). Cada producto trae: ya_cargado, saldo, estado_carga.
 
-  let html = `<table class="table table-hover mb-0" style="font-size:.85rem">
+  // Banner de resumen: cuántos productos del documento ya están en la ficha.
+  let banner = '';
+  const rc = _epResumenCarga;
+  if (rc && rc.total_productos) {
+    const todos = rc.cargados === rc.total_productos;
+    if (todos) {
+      banner = `<div class="alert alert-success d-flex align-items-center gap-2 mb-3 py-2 small" style="border-left:4px solid #16a34a">
+        <i class="bi bi-check-circle-fill fs-5"></i>
+        <div><strong>Todo este documento ya está en la ficha.</strong>
+        Los ${rc.total_productos} productos ya tienen su equipo cargado — no hay nada pendiente por importar.</div>
+      </div>`;
+    } else {
+      const pend = rc.pendientes + rc.parciales;
+      banner = `<div class="alert d-flex align-items-center gap-2 mb-3 py-2 small"
+                     style="background:#fff8e1;border-left:4px solid #f59e0b;color:#92400e">
+        <i class="bi bi-clipboard-check fs-5"></i>
+        <div><strong>${pend} producto(s) por cargar.</strong>
+        Ya en la ficha: <strong>${rc.cargados}</strong> ·
+        Parciales: <strong>${rc.parciales}</strong> ·
+        Sin cargar: <strong>${rc.pendientes}</strong>
+        <span class="text-muted">(de ${rc.total_productos} totales)</span></div>
+      </div>`;
+    }
+  }
+
+  let html = banner + `<table class="table table-hover mb-0" style="font-size:.85rem">
     <thead style="background:#f9fafb">
       <tr>
         <th style="width:50px"></th>
         <th>Producto</th>
         <th style="width:140px">SKU del modelo</th>
-        <th style="width:130px" class="text-center">Saldo</th>
+        <th style="width:150px" class="text-center" title="¿Este producto ya tiene su equipo cargado en la ficha del cliente?">¿En la ficha?</th>
         <th style="width:170px" class="text-center" title="Si tiene cantidad &gt; 1, ¿crear N fichas individuales con N° serie único?">Crear fichas</th>
       </tr>
     </thead><tbody>`;
   _epProductos.forEach((p, i) => {
-    const qty = parseInt(p.cantidad) || 1;
-    const yaImp = saldoPorSku[p.sku || ''] || 0;
-    const saldo = Math.max(0, qty - yaImp);
-    const completo = saldo === 0 && yaImp > 0;
+    const qty   = parseInt(p.cantidad) || 1;
+    const yaImp = parseInt(p.ya_cargado) || 0;
+    const saldo = (p.saldo != null) ? parseInt(p.saldo) : Math.max(0, qty - yaImp);
+    const completo = (p.estado_carga === 'cargado') || (saldo === 0 && yaImp > 0);
     p._saldo    = saldo;
     p._completo = completo;
     p._cantTotal = qty;
 
     const checked = _epSeleccion.has(i) ? 'checked' : '';
     const chkAttrs = completo ? 'disabled' : checked;
-    const trStyle = completo ? 'opacity:.55;background:#f8f9fa' : '';
+    const trStyle = completo ? 'opacity:.6;background:#f0fdf4' : '';
 
-    const saldoCell = (yaImp > 0)
-      ? (completo
-          ? `<span class="badge bg-success" title="Las ${qty} unidades ya están en la ficha">
-               <i class="bi bi-check-circle-fill me-1"></i>Completo
-             </span>`
-          : `<span class="badge bg-warning text-dark" title="${yaImp} ya en la ficha de ${qty} totales">
-               ${yaImp}/${qty} · saldo ${saldo}
-             </span>`)
-      : `<span class="text-muted small">${qty}</span>`;
+    let estadoCell;
+    if (completo) {
+      estadoCell = `<span class="badge bg-success" title="Las ${qty} unidad(es) ya están como equipo en la ficha">
+          <i class="bi bi-check-circle-fill me-1"></i>Ya cargado${qty > 1 ? ' ('+qty+')' : ''}
+        </span>`;
+    } else if (yaImp > 0) {
+      estadoCell = `<span class="badge bg-warning text-dark" title="${yaImp} ya en la ficha de ${qty} totales — faltan ${saldo}">
+          <i class="bi bi-clock-history me-1"></i>Parcial ${yaImp}/${qty}
+        </span>`;
+    } else {
+      estadoCell = `<span class="badge" style="background:#f3f4f6;color:#6b7280" title="Aún no está como equipo en la ficha">
+          <i class="bi bi-plus-circle me-1"></i>Falta cargar${qty > 1 ? ' ('+qty+')' : ''}
+        </span>`;
+    }
 
     const opciones = (saldo > 1)
       ? `<select class="form-select form-select-sm" data-ep-fichas-idx="${i}" style="font-size:.72rem">
@@ -4085,7 +4107,7 @@ function epRenderTabla() {
                  onchange="epToggleItem(${i}, this.checked)"></td>
       <td>${escHtml(p.nombre)}</td>
       <td class="font-monospace small">${escHtml(p.sku||'—')}</td>
-      <td class="text-center">${saldoCell}</td>
+      <td class="text-center">${estadoCell}</td>
       <td class="text-center">${opciones}</td>
     </tr>`;
   });

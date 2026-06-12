@@ -51806,6 +51806,12 @@ def mant_documento_erp():
     """
     tido = request.args.get("tido", "").strip().upper()
     nudo = request.args.get("nudo", "").strip()
+    # cid (opcional): cliente cuya ficha estamos viendo. Permite el cruce
+    # confiable "¿ya está cargado?" en backend (no dependiente del DOM).
+    try:
+        cid = int(request.args.get("cid") or 0) or None
+    except (TypeError, ValueError):
+        cid = None
     if not tido or not nudo:
         return jsonify({"error": "Ingresa tipo y número de documento"}), 400
 
@@ -51816,12 +51822,25 @@ def mant_documento_erp():
     if tido not in TIDOS_VALIDOS:
         return jsonify({"error": f"Tipo '{tido}' no válido. Usa: {', '.join(sorted(TIDOS_VALIDOS))}"}), 400
 
-    try:
-        header, lineas = _cubicador_fetch(tido, nudo)
-    except ConnectionError as ce:
-        return jsonify({"error": str(ce)}), 503
-    except Exception as e:
-        return jsonify({"error": f"Error al consultar ERP: {e}"}), 500
+    # ⚡ Cache del fetch ERP (lento: 0.8-2s). El cruce con mant_maquinas se
+    # hace SIEMPRE fresco más abajo (query local ~10ms), así nunca se ve
+    # un saldo desactualizado tras importar fichas.
+    _cache_key = f"{tido}|{nudo}"
+    _cached = _cub_doc_cache_get(_cache_key)
+    if _cached:
+        header, lineas = _cached
+    else:
+        try:
+            header, lineas = _cubicador_fetch(tido, nudo)
+        except ConnectionError as ce:
+            return jsonify({"error": str(ce)}), 503
+        except Exception as e:
+            return jsonify({"error": f"Error al consultar ERP: {e}"}), 500
+        if header:
+            try:
+                _cub_doc_cache_put(_cache_key, header, lineas)
+            except Exception:
+                pass
 
     if not header:
         return jsonify({"error": f"Documento {tido} {nudo} no encontrado en el ERP"}), 404
@@ -51829,9 +51848,20 @@ def mant_documento_erp():
     # Formatear líneas para el wizard
     # NOTA: _cubicador_fetch devuelve el campo "descripcion_erp" (no "descripcion")
     _ZZ_SKUS = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
+
+    # Cruce CONFIABLE contra la BD: cuántas fichas de cada SKU ya existen para
+    # este documento (cuenta TODA la tabla, no el DOM filtrado del front).
+    # Query local rápida (~10ms), siempre fresca.
+    try:
+        _ya_por_sku = _asignados_por_sku(tido, nudo)
+    except Exception as _e_asig:
+        print(f"[mant_documento] cruce saldo error: {_e_asig}", flush=True)
+        _ya_por_sku = {}
+
     items = []
     filtradas = 0
     total_lineas = len(lineas)
+    n_cargados = n_parciales = n_pendientes = 0
     for l in lineas:
         sku  = (l.get("sku") or l.get("KOPRCT") or "").strip().upper()
         nom  = (l.get("descripcion_erp") or l.get("descripcion") or l.get("nombre") or l.get("NOKOPR") or "").strip()
@@ -51843,7 +51873,20 @@ def mant_documento_erp():
         if l.get("es_zz") or sku.upper() in _ZZ_SKUS:
             filtradas += 1
             continue
-        items.append({"sku": sku, "nombre": nom or sku, "cantidad": max(qty, 1)})
+        cant = max(qty, 1)
+        ya = int(_ya_por_sku.get(sku, 0)) if sku else 0
+        saldo = max(0, cant - ya)
+        # Estado de carga: cargado (todo en ficha) / parcial / pendiente
+        if ya <= 0:
+            estado_carga = "pendiente"; n_pendientes += 1
+        elif saldo <= 0:
+            estado_carga = "cargado"; n_cargados += 1
+        else:
+            estado_carga = "parcial"; n_parciales += 1
+        items.append({
+            "sku": sku, "nombre": nom or sku, "cantidad": cant,
+            "ya_cargado": ya, "saldo": saldo, "estado_carga": estado_carga,
+        })
 
     debug = request.args.get("debug") == "1"
     resp = {
@@ -51858,6 +51901,12 @@ def mant_documento_erp():
         "items":        items,
         "total_lineas": total_lineas,
         "filtradas":    filtradas,
+        "resumen_carga": {
+            "total_productos": len(items),
+            "cargados":        n_cargados,
+            "parciales":       n_parciales,
+            "pendientes":      n_pendientes,
+        },
     }
     if debug:
         resp["raw_lineas"] = [{
