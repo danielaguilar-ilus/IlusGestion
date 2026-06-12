@@ -14473,8 +14473,11 @@ def _fedex_create_shipment(
         }
     """
     import requests as _req
-    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
-        return {"ok": False, "error": "FedEx Ship API no configurada (faltan credenciales)"}
+    _missing = [v for v, k in [("FEDEX_RATE_CLIENT_ID", FEDEX_RATE_CLIENT_ID),
+                                ("FEDEX_RATE_CLIENT_SECRET", FEDEX_RATE_CLIENT_SECRET),
+                                ("FEDEX_ACCOUNT", FEDEX_ACCOUNT)] if not k]
+    if _missing:
+        return {"ok": False, "error": f"FedEx Ship API no configurada — faltan variables de entorno: {', '.join(_missing)}"}
     if not recipient or not isinstance(recipient, dict):
         return {"ok": False, "error": "recipient es obligatorio"}
     if not packages or not isinstance(packages, list):
