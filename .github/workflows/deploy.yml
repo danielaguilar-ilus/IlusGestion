@@ -29,8 +29,11 @@ name: Deploy to Cloud Run
 on:
   push:
     branches:
+      # SOLO main despliega (2026-06-12, Daniel). Antes también desplegaba la
+      # rama de la sesión de transporte → cada sesión pisaba el deploy de la
+      # otra (desapareció el Plan Anual 2 veces). Ahora TODA sesión debe
+      # mergear a main para llegar a producción: main = fuente única de verdad.
       - main
-      - claude/view-all-sessions-O6JEs
     paths-ignore:
       - '**.md'
       - 'docs/**'
