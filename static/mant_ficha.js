@@ -7190,19 +7190,19 @@ const CID_CLIENTE = DATA.cid;
 async function cargarDocumentosErpRut() {
   if (erpRutLoaded) return;
   erpRutLoaded = true;
-  const cont = document.getElementById('erpRutContent');
-  if (!cont) return;
+  const lista = document.getElementById('erpDocLista');
+  if (!lista) return;
   try {
     const r = await fetch(`/mantenciones/api/clientes/${CID_CLIENTE}/documentos-erp`);
     const data = await r.json();
     const badge = document.getElementById('erpRutBadge');
 
     if (data.sin_rut) {
-      cont.innerHTML = '<div class="text-muted small py-2 px-1">Este cliente no tiene RUT registrado.</div>';
+      lista.innerHTML = '<div class="text-muted small py-2 px-1">Este cliente no tiene RUT registrado.</div>';
       return;
     }
     if (data.sin_conexion || !data.ok) {
-      cont.innerHTML = `<div class="alert alert-warning py-2 mb-0" style="font-size:.8rem">
+      lista.innerHTML = `<div class="alert alert-warning py-2 mb-0" style="font-size:.8rem">
         <i class="bi bi-exclamation-triangle me-1"></i>${data.msg || 'No hay conexión al ERP.'}
         <br><small>Puedes buscar por número de documento usando el botón "Importar ERP".</small>
       </div>`;
@@ -7213,20 +7213,13 @@ async function cargarDocumentosErpRut() {
 
     const docs = data.documentos || [];
     if (!docs.length) {
-      cont.innerHTML = `<div class="text-center text-muted py-3 small">Sin documentos encontrados para RUT ${data.rut}</div>`;
+      lista.innerHTML = `<div class="text-center text-muted py-3 small">Sin documentos encontrados para RUT ${data.rut}</div>`;
       badge.textContent = '0';
       return;
     }
 
     badge.textContent = `${docs.length} doc.`;
     badge.className = 'badge bg-success';
-
-    // Agrupar por tipo de documento
-    const porTipo = {};
-    docs.forEach(d => {
-      if (!porTipo[d.tipo_doc]) porTipo[d.tipo_doc] = [];
-      porTipo[d.tipo_doc].push(d);
-    });
 
     const tipoIconos = { FCV:'bi-receipt', BLV:'bi-receipt-cutoff', GDV:'bi-box-seam', VD:'bi-shop', NVI:'bi-file-earmark', NVV:'bi-file-earmark-text' };
 
@@ -7236,26 +7229,133 @@ async function cargarDocumentosErpRut() {
       </tr></thead><tbody>`;
     docs.forEach(d => {
       const nLineas = d.lineas?.length || 0;
-      const icono = tipoIconos[d.tipo_doc] || 'bi-file-earmark';
       html += `<tr>
-        <td><span class="badge bg-primary" style="font-size:.65rem">${d.tipo_doc}</span></td>
-        <td class="font-monospace fw-bold">${d.num_doc}</td>
-        <td class="text-muted">${d.fecha || '—'}</td>
+        <td><span class="badge bg-primary" style="font-size:.65rem">${escHtml(d.tipo_doc)}</span></td>
+        <td class="font-monospace fw-bold">${escHtml(d.num_doc)}</td>
+        <td class="text-muted">${escHtml(d.fecha || '—')}</td>
         <td>${nLineas} línea${nLineas!==1?'s':''}</td>
         <td>
-          <button class="btn btn-xs btn-ilus" onclick="importarDocErpRut('${d.tipo_doc}','${d.num_doc_raw}')">
+          <button class="btn btn-xs btn-ilus" onclick="importarDocErpRut('${escHtml(d.tipo_doc)}','${escHtml(d.num_doc_raw)}')">
             <i class="bi bi-download me-1"></i>Importar
           </button>
         </td>
       </tr>`;
     });
     html += '</tbody></table></div>';
-    cont.innerHTML = html;
+    lista.innerHTML = html;
 
   } catch(e) {
-    const cont2 = document.getElementById('erpRutContent');
-    if(cont2) cont2.innerHTML = `<div class="text-danger small py-2">Error al consultar ERP: ${e.message}</div>`;
+    const lista2 = document.getElementById('erpDocLista');
+    if(lista2) lista2.innerHTML = `<div class="text-danger small py-2">Error al consultar ERP: ${e.message}</div>`;
   }
+}
+
+// ─── Búsqueda de producto en documentos ERP ──────────────────
+let _erpBusqTimer  = null;
+let _erpBusqActive = false;
+
+function erpBuscarProducto(q) {
+  clearTimeout(_erpBusqTimer);
+  const q2 = (q || '').trim();
+  const clearBtn = document.getElementById('erpBusqClearBtn');
+  if (clearBtn) clearBtn.classList.toggle('d-none', q2.length === 0);
+  if (q2.length < 3) {
+    if (_erpBusqActive) {
+      _erpBusqActive = false;
+      document.getElementById('erpBusqResultados').style.display = 'none';
+      document.getElementById('erpBusqResultados').innerHTML = '';
+      document.getElementById('erpDocLista').style.display = '';
+    }
+    return;
+  }
+  const res = document.getElementById('erpBusqResultados');
+  res.innerHTML = '<div class="text-center text-muted py-2 small"><span class="spinner-border spinner-border-sm me-1"></span>Buscando…</div>';
+  res.style.display = '';
+  document.getElementById('erpDocLista').style.display = 'none';
+  _erpBusqActive = true;
+
+  _erpBusqTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`/api/mant/cliente/${CID_CLIENTE}/erp-buscar-producto?q=${encodeURIComponent(q2)}`);
+      const data = await r.json();
+      if (!data.ok) {
+        res.innerHTML = `<div class="alert alert-warning py-2 mb-0 small"><i class="bi bi-exclamation-triangle me-1"></i>${escHtml(data.msg || data.error || 'Sin conexión al ERP.')}</div>`;
+        return;
+      }
+      if (!data.documentos.length) {
+        res.innerHTML = `<div class="text-center text-muted py-3 small">Sin resultados para "<strong>${escHtml(q2)}</strong>"</div>`;
+        return;
+      }
+      let html = `<div class="text-muted mb-2" style="font-size:.75rem">
+        ${data.total_docs} documento${data.total_docs!==1?'s':''} con "<strong>${escHtml(q2)}</strong>"
+      </div>`;
+      data.documentos.forEach(doc => {
+        const allOk  = doc.todo_cargado;
+        const hdrBg  = allOk ? '#dcfce7' : '#f8f9fa';
+        const hdrClr = allOk ? '#166534' : '#374151';
+        html += `<div class="border rounded mb-2 overflow-hidden" style="font-size:.77rem">
+          <div class="d-flex align-items-center justify-content-between px-2 py-1"
+               style="background:${hdrBg};color:${hdrClr}">
+            <div>
+              <span class="badge bg-secondary me-1" style="font-size:.6rem;font-family:monospace">${escHtml(doc.tido)}</span>
+              <strong class="font-monospace">${escHtml(doc.nudo)}</strong>
+              <span class="ms-2 opacity-75" style="font-size:.72rem">${escHtml(doc.fecha)}</span>
+            </div>
+            <button class="btn btn-xs ${allOk ? 'btn-outline-success' : 'btn-ilus'}"
+                    onclick="erpAbrirDoc('${escHtml(doc.tido)}','${escHtml(doc.nudo)}')">
+              <i class="bi bi-eye me-1"></i>Ver
+            </button>
+          </div>`;
+        doc.items.forEach(item => {
+          const st = item.estado;
+          const stClr  = st==='cargado' ? '#16a34a' : st==='parcial' ? '#b45309' : '#9ca3af';
+          const stIcon = st==='cargado' ? 'bi-check-circle-fill' : st==='parcial' ? 'bi-circle-half' : 'bi-circle';
+          const stLbl  = st==='cargado' ? 'Ya cargado'
+                       : st==='parcial' ? `Parcial ${item.ya_cargado}/${item.cantidad}`
+                       : `Faltan ${item.saldo}`;
+          html += `<div class="d-flex justify-content-between align-items-center px-2 py-1 border-top">
+            <div class="text-truncate me-2" style="max-width:200px" title="${escHtml(item.nombre)}">
+              <span class="text-muted font-monospace me-1" style="font-size:.7rem">${escHtml(item.sku)}</span>
+              ${escHtml(item.nombre)}
+            </div>
+            <div class="d-flex align-items-center gap-1 flex-shrink-0">
+              <span class="text-muted font-monospace">×${item.cantidad}</span>
+              <span style="color:${stClr}"><i class="bi ${stIcon} me-1"></i>${stLbl}</span>
+            </div>
+          </div>`;
+        });
+        html += '</div>';
+      });
+      res.innerHTML = html;
+    } catch(err) {
+      res.innerHTML = `<div class="text-danger small py-2">Error: ${escHtml(err.message)}</div>`;
+    }
+  }, 400);
+}
+
+function erpLimpiarBusqueda() {
+  clearTimeout(_erpBusqTimer);
+  _erpBusqActive = false;
+  const inp = document.getElementById('erpProductoBusq');
+  if (inp) inp.value = '';
+  const clearBtn = document.getElementById('erpBusqClearBtn');
+  if (clearBtn) clearBtn.classList.add('d-none');
+  document.getElementById('erpBusqResultados').style.display = 'none';
+  document.getElementById('erpBusqResultados').innerHTML = '';
+  document.getElementById('erpDocLista').style.display = '';
+}
+
+function erpAbrirDoc(tido, nudo) {
+  // Construye un objeto doc mínimo para abrirModalProductos (igual al wizard de carga)
+  const docObj = {
+    tido_display: tido,
+    nudo_display: nudo,
+    razon_social: '',
+    rut:    '',
+    fecha:  '',
+    valor_total: 0,
+  };
+  abrirModalProductos(docObj);
 }
 
 function toggleErpRutPanel() {

@@ -2247,10 +2247,31 @@
         </div>
       </div>
       <div id="erpRutPanel" style="display:none">
-        <div class="f-card-body" id="erpRutContent" style="padding:12px 14px">
-          <div class="text-center text-muted py-3" style="font-size:.82rem">
-            <span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP…
+        <div class="f-card-body" id="erpRutContent" style="padding:10px 14px">
+          {# Buscador de producto en documentos ERP #}
+          <div class="mb-2" id="erpBusqBox">
+            <div class="input-group input-group-sm">
+              <span class="input-group-text bg-transparent border-end-0" style="font-size:.78rem">
+                <i class="bi bi-search text-muted"></i>
+              </span>
+              <input type="text" id="erpProductoBusq" class="form-control border-start-0"
+                     placeholder="Buscar producto en documentos ERP…"
+                     style="font-size:.78rem" oninput="erpBuscarProducto(this.value)"
+                     autocomplete="off">
+              <button class="btn btn-outline-secondary btn-sm d-none" id="erpBusqClearBtn"
+                      type="button" onclick="erpLimpiarBusqueda()" title="Limpiar búsqueda">
+                <i class="bi bi-x"></i>
+              </button>
+            </div>
           </div>
+          {# Lista de documentos (vista por defecto) #}
+          <div id="erpDocLista">
+            <div class="text-center text-muted py-3" style="font-size:.82rem">
+              <span class="spinner-border spinner-border-sm me-2"></span>Consultando ERP…
+            </div>
+          </div>
+          {# Resultados de búsqueda por producto #}
+          <div id="erpBusqResultados" style="display:none"></div>
         </div>
       </div>
     </div>

@@ -52364,6 +52364,110 @@ def mant_buscar_erp_sql():
     })
 
 
+@app.route("/api/mant/cliente/<int:cid>/erp-buscar-producto")
+@_mant_required
+def mant_erp_buscar_producto(cid):
+    """Busca en qué documentos ERP del cliente aparece un producto por nombre.
+    GET ?q=trotadora  → [{tido, nudo, fecha, items:[{sku,nombre,cantidad,ya_cargado,saldo,estado}]}]
+    """
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 3:
+        return jsonify({"error": "Mínimo 3 caracteres"}), 400
+    q_safe = q[:60]
+
+    cliente = mysql_fetchone(
+        "SELECT id, rut FROM mant_clientes WHERE id=%s AND deleted_at IS NULL",
+        (cid,)
+    )
+    if not cliente:
+        return jsonify({"error": "Cliente no encontrado"}), 404
+    if not cliente.get("rut"):
+        return jsonify({"ok": False, "sin_rut": True, "documentos": []}), 200
+
+    rut_base = _rut_cuerpo(cliente["rut"])
+    if not rut_base:
+        return jsonify({"ok": False, "sin_rut": True, "documentos": []}), 200
+
+    pool = _random_sql_pool()
+    if pool is None:
+        return jsonify({"ok": False, "sin_conexion": True, "documentos": []}), 200
+
+    tidos_in = "','".join(_RANDOM_TIDOS_VENTA)
+    q_like   = f"%{q_safe.upper()}%"
+
+    try:
+        rows = _random_sql_query(f"""
+            SELECT TOP 200
+                LTRIM(RTRIM(d.TIDO))   AS TIDO,
+                LTRIM(RTRIM(d.NUDO))   AS NUDO,
+                e.FEEMDO               AS FECHA,
+                LTRIM(RTRIM(d.NOKOPR)) AS NOKOPR,
+                LTRIM(RTRIM(d.KOPRCT)) AS SKU,
+                SUM(d.CAPRCO1)         AS CANTIDAD
+            FROM MAEDDO d
+            JOIN MAEEDO e
+                ON LTRIM(RTRIM(e.TIDO)) = LTRIM(RTRIM(d.TIDO))
+               AND LTRIM(RTRIM(e.NUDO)) = LTRIM(RTRIM(d.NUDO))
+            WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
+              AND UPPER(d.NOKOPR) LIKE %s
+              AND d.PRCT = '.f.'
+              AND LTRIM(RTRIM(d.TIDO)) IN ('{tidos_in}')
+              AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+            GROUP BY d.TIDO, d.NUDO, e.FEEMDO, d.NOKOPR, d.KOPRCT
+            ORDER BY e.FEEMDO DESC
+        """, (f"{rut_base}%", f"{rut_base}-%", q_like)) or []
+    except Exception as e:
+        print(f"[erp_buscar_producto] SQL error cid={cid} q={q_safe!r}: {e}", flush=True)
+        return jsonify({"ok": False, "sin_conexion": True, "documentos": [],
+                        "msg": "Error al consultar ERP"}), 200
+
+    # Agrupar por documento (TIDO+NUDO)
+    docs_map = {}
+    docs_order = []
+    for r in rows:
+        key = (r["TIDO"], r["NUDO"])
+        if key not in docs_map:
+            fecha_raw = r.get("FECHA")
+            try:
+                fecha_str = fecha_raw.strftime("%d/%m/%Y") if hasattr(fecha_raw, "strftime") else str(fecha_raw)[:10]
+            except Exception:
+                fecha_str = "—"
+            docs_map[key] = {"tido": r["TIDO"], "nudo": r["NUDO"],
+                             "fecha": fecha_str, "items": []}
+            docs_order.append(key)
+        docs_map[key]["items"].append({
+            "sku":      r["SKU"] or "",
+            "nombre":   r["NOKOPR"] or "",
+            "cantidad": int(r["CANTIDAD"] or 0),
+        })
+
+    # Enriquecer con "ya en la ficha" (query MySQL ~10ms por doc)
+    documentos = []
+    for key in docs_order:
+        doc  = docs_map[key]
+        tido = doc["tido"]
+        nudo = doc["nudo"]
+        try:
+            ya = _asignados_por_sku(tido, nudo)
+        except Exception:
+            ya = {}
+        items_out  = []
+        todo_ok    = True
+        for item in doc["items"]:
+            sku_u      = (item["sku"] or "").upper()
+            ya_cargado = ya.get(sku_u, 0)
+            saldo      = max(0, item["cantidad"] - ya_cargado)
+            if saldo > 0:
+                todo_ok = False
+            estado = "cargado" if saldo == 0 else ("parcial" if ya_cargado > 0 else "pendiente")
+            items_out.append({**item, "ya_cargado": ya_cargado,
+                              "saldo": saldo, "estado": estado})
+        documentos.append({**doc, "items": items_out, "todo_cargado": todo_ok})
+
+    return jsonify({"ok": True, "q": q_safe,
+                    "total_docs": len(documentos), "documentos": documentos})
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos-erp")
 @_mant_required
 def mant_documentos_por_rut(cid):
