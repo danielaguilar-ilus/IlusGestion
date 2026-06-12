@@ -197,6 +197,41 @@ haciendo MAL. Revertí y usá los helpers.
 
 ---
 
+## 🛑 REGLA #4.2 — PROHIBIDO eliminar features sin permiso explícito (no negociable)
+
+**NUNCA borres, ocultes, comentes ni "simplifiques quitando" código,
+botones, links de menú, columnas, toggles, módulos o cualquier
+funcionalidad que YA EXISTE y funciona — a menos que Daniel lo pida
+explícitamente en ese mensaje.**
+
+Esto incluye:
+- Quitar un link del sidebar, una columna de una tabla, un toggle, un botón.
+- "Limpiar" o refactorizar eliminando algo que parecía no usarse.
+- Reemplazar una sección por otra "mejor" descartando la anterior.
+
+### Por qué
+
+Daniel construyó cada feature por una razón operativa. Borrar algo que
+"parece de más" rompe flujos reales (ej: el Radar lo usa otra persona, el
+Plan Anual le avisa qué agendar). Lo que para el agente es ruido, para el
+negocio es una herramienta en uso.
+
+### Qué hacer en su lugar
+
+1. Si crees que algo sobra o estorba para tu tarea → **pregunta antes**.
+2. Si una tarea EXIGE remover algo → confírmalo en el mismo mensaje:
+   "para hacer X tengo que quitar Y, ¿lo confirmas?".
+3. Si vas a mover/renombrar algo → avísalo, no lo hagas silenciosamente.
+4. Si encuentras código muerto real → propónlo, no lo borres de una.
+
+### Regla de oro
+
+**Agregar y mejorar: sí, siempre. Quitar: solo con "sí" explícito de Daniel.**
+Ante la duda, se conserva. Es más barato dejar algo de más que perder
+una herramienta en uso y la confianza.
+
+---
+
 ## 🗄 REGLA #5 — Base de datos
 
 - **Antes de SELECT de columnas nuevas, verificar el `CREATE TABLE`**
