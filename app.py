@@ -19874,6 +19874,121 @@ def tr_set_tracking_fedex(item_id):
     })
 
 
+@app.route("/transporte/api/manifiestos/<int:mid>/trackings-masivo", methods=["POST"])
+@_tr_required
+def tr_trackings_masivo(mid):
+    """Asigna tracking numbers FedEx a múltiples items del manifiesto en una llamada.
+
+    Body JSON: { items: [{ item_id: 123, tracking_number: "..." }, ...] }
+    Guarda los TNs, hace batch-query a FedEx Track API, aplica estados.
+    Devuelve { ok, resultados: [{ item_id, tracking_number, estado, changed, error }] }
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    raw_items = body.get("items", [])
+
+    if not raw_items or not isinstance(raw_items, list):
+        return jsonify({"error": "Se requiere items[]"}), 400
+    if len(raw_items) > 50:
+        return jsonify({"error": "Máximo 50 items por llamada"}), 400
+
+    validated = []
+    for entry in (raw_items or []):
+        try:
+            iid = int(entry.get("item_id") or 0)
+        except (TypeError, ValueError):
+            iid = 0
+        tn = "".join(c for c in str(entry.get("tracking_number") or "").strip() if c.isalnum())
+        if iid > 0 and 10 <= len(tn) <= 30:
+            validated.append({"item_id": iid, "tracking_number": tn})
+
+    if not validated:
+        return jsonify({"error": "No hay tracking numbers válidos (mín. 10 chars)"}), 400
+
+    # Verify all items belong to this manifest
+    item_ids = [v["item_id"] for v in validated]
+    _ph = ",".join(["%s"] * len(item_ids))
+    db_items = mysql_fetchall(
+        f"SELECT id FROM transport_manifest_items WHERE id IN ({_ph}) AND manifest_id=%s",
+        tuple(item_ids) + (mid,)
+    )
+    valid_ids = {r["id"] for r in (db_items or [])}
+
+    resultados = []
+    tn_to_iid = {}   # tracking_number → item_id (para correlacionar respuesta FedEx)
+
+    for entry in validated:
+        iid = entry["item_id"]
+        tn  = entry["tracking_number"]
+        if iid not in valid_ids:
+            resultados.append({"item_id": iid, "tracking_number": tn,
+                                "error": "item no pertenece a este manifiesto"})
+            continue
+        try:
+            mysql_execute(
+                "UPDATE transport_manifest_items SET tracking_number=%s WHERE id=%s",
+                (tn, iid)
+            )
+            resultados.append({"item_id": iid, "tracking_number": tn, "_saved": True})
+            tn_to_iid[tn] = iid
+        except Exception as e_save:
+            resultados.append({"item_id": iid, "tracking_number": tn,
+                                "error": str(e_save)[:120]})
+
+    # Batch FedEx Track API query for all saved TNs
+    if tn_to_iid:
+        try:
+            track_results = _fedex_track_lookup(list(tn_to_iid.keys()))
+        except Exception as e_fx:
+            # Not fatal — TNs are saved; cron will poll later
+            warn_msg = ("FedEx Track API no configurada — el estado se actualizará al siguiente cron."
+                        if "FedEx Track API no configurada" in str(e_fx)
+                        else f"FedEx no respondió ({str(e_fx)[:80]})")
+            for r in resultados:
+                if r.get("_saved"):
+                    r.pop("_saved", None)
+                    r["ok"] = True
+                    r["changed"] = False
+                    r["warning"] = warn_msg
+            return jsonify({"ok": True, "resultados": resultados})
+
+        # Apply states from FedEx response
+        fedex_by_tn = {t["tracking_number"]: t for t in (track_results or [])}
+        for r in resultados:
+            if not r.get("_saved"):
+                continue
+            r.pop("_saved", None)
+            t = fedex_by_tn.get(r["tracking_number"])
+            if not t:
+                r["ok"] = True
+                r["changed"] = False
+                r["estado"] = None
+                r["warning"] = "FedEx aún no tiene info de este envío."
+                continue
+            apply_res = _tr_apply_carrier_status(
+                r["item_id"], t["estado_ilus"], fuente="fedex",
+                tracking_number=t["tracking_number"],
+                payload={"fedex": {
+                    "status_code":  t.get("status_code"),
+                    "status_label": t.get("status_label"),
+                    "eta":          t.get("eta"),
+                }},
+                comentario=t.get("last_event") or t.get("status_label") or None,
+            )
+            r["ok"]      = True
+            r["estado"]  = apply_res.get("nuevo", t["estado_ilus"])
+            r["changed"] = apply_res.get("changed", False)
+
+    # Any entry still marked _saved didn't get a FedEx response
+    for r in resultados:
+        if r.get("_saved"):
+            r.pop("_saved", None)
+            r["ok"] = True
+            r["changed"] = False
+            r["estado"] = None
+
+    return jsonify({"ok": True, "resultados": resultados})
+
+
 @app.route("/transporte/api/items/<int:item_id>/tracking-fedex", methods=["GET"])
 @_tr_required
 def tr_get_tracking_fedex(item_id):

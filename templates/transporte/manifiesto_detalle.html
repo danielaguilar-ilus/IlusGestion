@@ -69,6 +69,12 @@
     <a href="{{ url_for('tr_manifiesto_export', mid=manifiesto.id) }}" class="btn btn-sm btn-success fw-bold">
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
     </a>
+    {% if es_fedex %}
+    <button class="btn btn-sm btn-ilus-fedex fw-bold" onclick="abrirAsignarOtsMasivo()">
+      <i class="bi bi-truck-front me-1"></i>OTs FedEx
+      {% if sin_ot %}<span class="badge bg-danger ms-1">{{ sin_ot|length }}</span>{% endif %}
+    </button>
+    {% endif %}
   </div>
 </div>
 
@@ -717,6 +723,54 @@
 </div>
 
 {# ════════════════════════════════════════════════════════════════════
+   Modal: asignación masiva de OTs FedEx
+   ════════════════════════════════════════════════════════════════════ #}
+{% if es_fedex %}
+<div class="modal fade" id="otsMasivoModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-truck-front me-2"></i>Asignar tracking numbers FedEx en masa</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold mb-1">
+            1. Pega los tracking numbers desde Excel (uno por línea)
+          </label>
+          <textarea id="otsPasteArea" class="form-control font-monospace" rows="5"
+                    placeholder="780123456789&#10;780987654321&#10;780555444333…"></textarea>
+          <div class="form-text">
+            Copia la columna de OTs del Excel de FedEx y pégala aquí. Después haz clic en "Distribuir".
+          </div>
+        </div>
+
+        <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="distribuirOTs()">
+          <i class="bi bi-arrow-down-circle me-1"></i>Distribuir en tabla
+        </button>
+
+        <div class="mb-2 small fw-semibold">2. Revisa y corrige — luego guarda</div>
+
+        <div id="otsMasivoTable">
+          <div class="text-muted small text-center py-3">
+            <i class="bi bi-inbox me-1"></i>Cargando facturas sin OT…
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span id="otsMasivoStatus" class="me-auto small text-muted"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="otsMasivoGuardarBtn" onclick="guardarOTsMasivo()">
+          <i class="bi bi-check-lg me-1"></i>Guardar OTs
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ════════════════════════════════════════════════════════════════════
    Estilos
    ════════════════════════════════════════════════════════════════════ #}
 <style>
@@ -755,6 +809,21 @@
 }
 .mfd-btn-labels:hover{ background:#000; color:#fff; transform:translateY(-1px); }
 .mfd-btn-labels:active{ transform:scale(.97); }
+/* Botón OTs FedEx */
+.btn-ilus-fedex{
+  background:#4d148c; color:#fff; border:none; border-radius:6px;
+  transition:background .15s, transform .12s;
+}
+.btn-ilus-fedex:hover{ background:#3a0f6e; color:#fff; transform:translateY(-1px); }
+.btn-ilus-fedex:active{ transform:scale(.97); }
+/* Tabla masiva OTs */
+.ots-table{ width:100%; font-size:.82rem; border-collapse:collapse; }
+.ots-table thead th{ font-size:.7rem; text-transform:uppercase; letter-spacing:.3px;
+  color:#6b7280; border-bottom:1px solid #e5e7eb; padding:.35rem .5rem; }
+.ots-table tbody td{ padding:.4rem .5rem; border-bottom:1px solid #f3f4f6; vertical-align:middle; }
+.ots-table tbody tr:last-child td{ border-bottom:none; }
+.ots-row-ok td{ background:#f0fdf4; }
+.ots-row-warn td{ background:#fff8e1; }
 
 /* ── Resumen financiero ── */
 .mfd-fin-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:.75rem; }
@@ -891,7 +960,8 @@
 
 {% block scripts %}
 <script>
-var MID = {{ manifiesto.id }};
+var MID    = {{ manifiesto.id }};
+var SIN_OT = {{ sin_ot | tojson | safe }};
 
 /* ── Expandir / colapsar productos de una factura (desktop + mobile) ── */
 function toggleProductos(itemId) {
@@ -1341,6 +1411,145 @@ function guardarEdicion() {
     btn.disabled = false;
     msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  ASIGNACIÓN MASIVA OTs FedEx
+// ══════════════════════════════════════════════════════════════════════
+
+var _otsMasivoModal = null;
+
+function _esc(s) {
+  return String(s || '').replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function _renderOTsTable() {
+  var tbody = document.getElementById('otsMasivoTbody');
+  if (!tbody) return;
+  // Update only the input values that the user hasn't touched yet
+  // (don't reset inputs already filled by distribuirOTs or manual entry)
+}
+
+function abrirAsignarOtsMasivo() {
+  if (!document.getElementById('otsMasivoModal')) return;
+  if (!_otsMasivoModal) _otsMasivoModal = new bootstrap.Modal(document.getElementById('otsMasivoModal'));
+
+  // Render table of items without OT (SIN_OT from Jinja)
+  var rows = '';
+  if (!SIN_OT || !SIN_OT.length) {
+    rows = '<tr><td colspan="3" class="text-center text-success py-3">'
+         + '<i class="bi bi-check-circle-fill me-1"></i>Todas las facturas tienen OT asignada.</td></tr>';
+  } else {
+    SIN_OT.forEach(function(item, idx) {
+      rows += '<tr id="ots-row-' + item.item_id + '">'
+        + '<td class="font-monospace fw-semibold">' + _esc(item.doc) + '</td>'
+        + '<td>' + _esc(item.cliente) + '</td>'
+        + '<td style="min-width:200px">'
+        + '<input type="text" class="form-control form-control-sm font-monospace ot-input"'
+        + ' id="ot-inp-' + idx + '"'
+        + ' data-item="' + item.item_id + '"'
+        + ' placeholder="780…" maxlength="30" autocomplete="off" spellcheck="false">'
+        + '</td></tr>';
+    });
+  }
+
+  document.getElementById('otsMasivoTable').innerHTML =
+    '<table class="ots-table"><thead><tr>'
+    + '<th>Documento</th><th>Cliente / destino</th><th>Tracking number FedEx</th>'
+    + '</tr></thead><tbody id="otsMasivoTbody">' + rows + '</tbody></table>';
+
+  document.getElementById('otsPasteArea').value = '';
+  document.getElementById('otsMasivoStatus').textContent =
+    (SIN_OT && SIN_OT.length) ? SIN_OT.length + ' factura(s) sin OT' : 'Sin pendientes';
+  var btn = document.getElementById('otsMasivoGuardarBtn');
+  if (btn) btn.disabled = false;
+  _otsMasivoModal.show();
+}
+
+function distribuirOTs() {
+  var raw = document.getElementById('otsPasteArea').value || '';
+  var lines = raw.split(/\r?\n/)
+    .map(function(l){ return l.trim().replace(/[^A-Za-z0-9]/g, ''); })
+    .filter(Boolean);
+  var inputs = document.querySelectorAll('.ot-input');
+  var filled = 0;
+  for (var i = 0; i < inputs.length; i++) {
+    if (i < lines.length) {
+      inputs[i].value = lines[i];
+      filled++;
+    }
+  }
+  var status = document.getElementById('otsMasivoStatus');
+  if (status) status.textContent = filled + ' tracking(s) distribuido(s)';
+}
+
+async function guardarOTsMasivo() {
+  var items = [];
+  document.querySelectorAll('.ot-input').forEach(function(inp) {
+    var tn = (inp.value || '').trim().replace(/[^A-Za-z0-9]/g, '');
+    if (tn && tn.length >= 10) {
+      items.push({ item_id: parseInt(inp.dataset.item, 10), tracking_number: tn });
+    }
+  });
+  if (!items.length) {
+    if (window.ilusToast) ilusToast('Ingresa al menos un tracking number (mín. 10 caracteres)', { type: 'warning' });
+    return;
+  }
+  var btn    = document.getElementById('otsMasivoGuardarBtn');
+  var status = document.getElementById('otsMasivoStatus');
+  if (btn)    btn.disabled = true;
+  if (status) status.textContent = 'Guardando y consultando FedEx…';
+
+  var res;
+  try {
+    var r = await fetch('/transporte/api/manifiestos/' + MID + '/trackings-masivo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: items })
+    });
+    res = await r.json();
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    if (status) status.textContent = '';
+    if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
+    return;
+  }
+
+  if (btn) btn.disabled = false;
+  if (!res || !res.ok) {
+    if (status) status.textContent = '';
+    if (window.ilusToast) ilusToast((res && res.error) || 'Error al guardar', { type: 'error' });
+    return;
+  }
+
+  // Tally results
+  var resultados  = res.resultados || [];
+  var ok_count    = resultados.filter(function(r){ return r.ok && !r.error; }).length;
+  var changed_cnt = resultados.filter(function(r){ return r.changed; }).length;
+  var warn_cnt    = resultados.filter(function(r){ return r.warning; }).length;
+
+  // Visual feedback per row
+  resultados.forEach(function(r) {
+    var row = document.getElementById('ots-row-' + r.item_id);
+    if (!row) return;
+    if (r.error)   { row.classList.add('ots-row-warn'); return; }
+    if (r.ok)       { row.classList.add('ots-row-ok');  }
+    var td = row.querySelector('td:last-child');
+    if (td && r.estado) {
+      td.innerHTML += ' <span style="font-size:.7rem;color:#15803d;font-weight:700">'
+                    + _esc(r.estado) + '</span>';
+    }
+  });
+
+  var msg = ok_count + ' OT(s) guardada(s)';
+  if (changed_cnt) msg += ' · ' + changed_cnt + ' estado(s) actualizado(s)';
+  if (warn_cnt)    msg += ' · ' + warn_cnt + ' con advertencia';
+  if (status) status.textContent = msg;
+  if (window.ilusToast) ilusToast('✓ ' + msg, { type: 'success' });
+
+  setTimeout(function(){ location.reload(); }, 1400);
 }
 </script>
 {% endblock %}
