@@ -27780,14 +27780,16 @@ def _puede_ot_accion(vid, accion, user=None):
             try:
                 v = mysql_fetchone(
                     "SELECT tecnico_user_id, created_by, created_by_user_id, "
-                    "       firma_supervisor_user_id, estado, tipo "
+                    "       firma_supervisor_user_id, firma_tecnico_url, "
+                    "       firma_cliente_url, estado, tipo "
                     "  FROM mant_visitas WHERE id=%s",
                     (vid,)
                 )
             except Exception:
                 v = mysql_fetchone(
                     "SELECT tecnico_user_id, created_by, "
-                    "       firma_supervisor_user_id, estado, tipo "
+                    "       firma_supervisor_user_id, firma_tecnico_url, "
+                    "       firma_cliente_url, estado, tipo "
                     "  FROM mant_visitas WHERE id=%s",
                     (vid,)
                 )
@@ -27852,18 +27854,42 @@ def _puede_ot_accion(vid, accion, user=None):
                 print(f"[SECURITY] error consultando colaboradores vid={vid}: {e}",
                       flush=True)
 
+    # ── Estado de firmas (2026-06-12, Daniel) — ventana de corrección ──
+    # El permiso para EDITAR el contenido de la OT depende del avance de las
+    # firmas. superadmin ya retornó True arriba (candado maestro).
+    estado_ot = (v.get("estado") or "").lower()
+    firma_tec = bool(v.get("firma_tecnico_url"))
+    firma_cli = bool(v.get("firma_cliente_url"))
+    ot_sellada     = firma_cli or estado_ot in ("pendiente_aprobacion", "completada", "cerrada")
+    ot_en_ventana  = (not ot_sellada) and (firma_tec or estado_ot == "firmada_tecnico")
+
     # ── EJECUTAR ─────────────────────────────────────────────────
-    # responder tareas, subir fotos, firmar técnico, iniciar/cerrar OT.
-    # SOLO técnico asignado/colaborador + superadmin (ya retornado arriba).
-    # 🔒 FIX 2026-05-22 (Daniel — brecha Aaron): aunque por error administrativo
-    # el ejecutivo quede asignado como técnico (caso edge: alguien lo selecciona
-    # en el dropdown sin filtrar), NO le permitimos ejecutar. El rol manda.
-    # Solo familia 'tecnico' (tecnico, tecnico_externo, etc.) + superadmin
-    # pueden ejecutar OTs físicamente. Defense in depth.
+    # responder tareas, subir fotos, firmar técnico, iniciar/cerrar OT,
+    # corregir datos de equipo.
     if accion == "ejecutar":
+        # (1) Cliente ya firmó conforme (o la OT está en cierre): documento
+        #     sellado para todos salvo superadmin (candado maestro, ya pasó).
+        if ot_sellada:
+            print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+                  f"-> DENIED (cliente firmó / OT en cierre — solo superadmin edita)", flush=True)
+            return False
+        # (2) Ventana de corrección: el técnico firmó pero el cliente NO.
+        #     El técnico queda bloqueado (no edita lo que ya firmó); corrigen
+        #     ejecutivo SSTT / supervisor / admin (+ superadmin ya pasó arriba).
+        if ot_en_ventana:
+            if role in ("admin", "supervisor", "ejecutivo"):
+                print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+                      f"-> ALLOWED (ventana de corrección post-firma técnico)", flush=True)
+                return True
+            print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+                  f"-> DENIED (técnico ya firmó; corrige ejecutivo SSTT/superadmin)", flush=True)
+            return False
+        # (3) Estado de trabajo normal (sin firma del técnico): SOLO técnico
+        #     asignado/colaborador. El rol manda (defense in depth: aunque un
+        #     ejecutivo quede asignado por error, NO ejecuta físicamente).
         if role != "tecnico":
             print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
-                  f"-> DENIED (solo familia 'tecnico' puede ejecutar; este rol levanta/supervisa)", flush=True)
+                  f"-> DENIED (solo familia 'tecnico' ejecuta; este rol levanta/supervisa)", flush=True)
             return False
         result = es_tecnico_asignado
         print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
@@ -27885,6 +27911,19 @@ def _puede_ot_accion(vid, accion, user=None):
     #   - ejecutivo creador de la OT
     #   - técnico asignado (compat: técnico siempre podía hacerlo)
     if accion == "configurar":
+        # 2026-06-12 (Daniel) — una vez que el cliente firmó / la OT está en
+        # cierre, NO se re-arma (salvo superadmin, ya pasó arriba).
+        if ot_sellada:
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (OT sellada por firma del cliente/cierre)", flush=True)
+            return False
+        # Ventana de corrección (técnico ya firmó): el técnico ya no configura;
+        # sí lo hacen ejecutivo SSTT / supervisor / admin.
+        if ot_en_ventana:
+            if role in ("admin", "supervisor", "ejecutivo"):
+                print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (ventana de corrección)", flush=True)
+                return True
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (técnico ya firmó)", flush=True)
+            return False
         if role in ("admin", "supervisor"):
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
             return True
@@ -27979,18 +28018,27 @@ def _puede_ot_accion(vid, accion, user=None):
               f"created_by={creador_username} es_creador={es_creador} -> DENIED", flush=True)
         return False
 
-    # ── VER ────────────────────────────────────────────────────
-    # Lectura: admin/supervisor (siempre), ejecutivo (SUS OTs: creó +
-    # asignado), creador, técnico asignado/colaborador.
-    # 🔒 FIX 2026-05-22 (Daniel): el ejecutivo NO ve TODAS las OTs (antes
-    # sí podía). Ahora solo ve las que él creó o tiene asignadas, igual
-    # que el filtro del listado.
-    if accion == "ver":
-        if role in ("admin", "supervisor"):
+    # ── FIRMAR_CLIENTE (2026-06-12, Daniel) ─────────────────────
+    # Capturar la firma del CLIENTE (segunda firma, tras la del técnico).
+    # La puede capturar el técnico asignado (en sitio, en su dispositivo)
+    # O el ejecutivo SSTT / supervisor / admin (si el cliente firma luego
+    # de la ventana de corrección). superadmin ya pasó arriba.
+    if accion == "firmar_cliente":
+        if es_tecnico_asignado:
             return True
-        if role == "ejecutivo":
-            # Solo SUS OTs (creó + asignado)
-            return es_creador or es_tecnico_asignado
+        if role in ("admin", "supervisor", "ejecutivo"):
+            return True
+        return False
+
+    # ── VER ────────────────────────────────────────────────────
+    # Lectura: admin/supervisor/ejecutivo (TODAS), creador, técnico
+    # asignado/colaborador.
+    # 2026-06-12 (Daniel): el ejecutivo SSTT vuelve a ver TODAS las OTs
+    # (no solo las suyas) para poder revisarlas y corregirlas en la
+    # ventana post-firma del técnico. Consistente con el listado.
+    if accion == "ver":
+        if role in ("admin", "supervisor", "ejecutivo"):
+            return True
         if es_creador:
             return True
         if es_tecnico_asignado:
@@ -29246,6 +29294,19 @@ def init_mantenciones_tables():
                 "  'creada','programada','asignada','en_curso','en_ejecucion',"
                 "  'pendiente_info','pendiente_repuesto','pendiente_aprobacion',"
                 "  'completada','cerrada','cancelada','anulada','reagendada'"
+                ") DEFAULT 'programada'",
+                # 2026-06-12 (Daniel) — FLUJO DE FIRMAS SEPARADAS + VENTANA DE
+                # CORRECCIÓN. Nuevo estado `firmada_tecnico`: el técnico ya firmó
+                # (y queda bloqueado) pero el cliente aún NO. En esa ventana el
+                # ejecutivo SSTT + superadmin pueden corregir errores (ej: equipo
+                # cruzado) antes de que el cliente firme conforme. Secuencia:
+                #   ... → en_ejecucion → firmada_tecnico → pendiente_aprobacion
+                #       → cerrada (ejecutivo certifica; superadmin = candado maestro)
+                "ALTER TABLE mant_visitas MODIFY estado ENUM("
+                "  'creada','programada','asignada','en_curso','en_ejecucion',"
+                "  'firmada_tecnico','pendiente_info','pendiente_repuesto',"
+                "  'pendiente_aprobacion','completada','cerrada','cancelada',"
+                "  'anulada','reagendada'"
                 ") DEFAULT 'programada'",
                 # Tipos de OT — modelo Fracttal 11 valores.
                 # Mantiene los previos (preventiva, correctiva, garantia, inspeccion,
@@ -45738,7 +45799,10 @@ def mant_ots_list():
     # Solución defensiva: comparamos contra TODAS las identidades posibles
     # (username, nombre legible) Y además contra el nuevo `created_by_user_id`
     # (FK estable). Si la columna nueva existe → match exacto por id.
-    if es_ejecutivo and not ver_todas and not solo_mias:
+    # 2026-06-12 (Daniel) — el ejecutivo SSTT ahora ve TODAS las OTs por
+    # defecto (para revisar/corregir en la ventana post-firma del técnico).
+    # El filtro "solo mis creadas/asignadas" queda OPT-IN vía ?mias=1.
+    if es_ejecutivo and request.args.get("mias") == "1" and not solo_mias:
         username_actual = (user.get("username") or "").strip()
         nombre_actual = (user.get("nombre") or "").strip()
         user_id_actual = user.get("id")
@@ -46845,6 +46909,10 @@ def mant_ot_ejecutar(vid):
     # creador / admin arreglar OTs huérfanas (sin equipos/plantilla)
     # sin tener que ir a la vista legacy a mano.
     puede_configurar_flag = _puede_ot_accion(vid, "configurar", u)
+    # 2026-06-12 (Daniel) — flag para capturar la firma del CLIENTE (segunda
+    # firma). La puede capturar el técnico asignado (en sitio, aunque ya no
+    # pueda EDITAR el contenido tras su propia firma) o el ejecutivo SSTT.
+    puede_firmar_cliente_flag = _puede_ot_accion(vid, "firmar_cliente", u)
     # Comparar created_by (varchar username) con el username del user actual,
     # case insensitive y trim, igual que en `_puede_ot_accion`.
     _creator_username = (visita.get("created_by") or "").strip().lower()
@@ -47182,6 +47250,8 @@ def mant_ot_ejecutar(vid):
         # aprobar usando `_puede_ot_accion`, que normaliza ejecutivo_sstt
         # / supervisor_sstt / etc. El template usa este flag directo.
         puede_aprobar=puede_aprobar_flag,
+        # 2026-06-12 (Daniel) — capturar firma del cliente (segunda firma).
+        puede_firmar_cliente=puede_firmar_cliente_flag,
         es_creador=es_creador_flag,
         es_superadmin=es_superadmin_flag,
         # 2026-05-22 (OT 2026-00004 Vitacura) — flags para el panel
@@ -48006,46 +48076,26 @@ def _ot_firmante_cliente(vid):
 @_mant_required
 @_tecnico_owns_visita
 def mant_ot_firmar_revision(vid):
-    """El técnico firma la OT y la pasa a estado 'pendiente_revision'.
-    El supervisor luego deberá aprobarla y cerrarla.
+    """El TÉCNICO firma la OT (primera firma). La OT pasa a 'firmada_tecnico'.
+
+    2026-06-12 (Daniel) — FIRMAS SEPARADAS + VENTANA DE CORRECCIÓN:
+    Antes este endpoint capturaba la firma del técnico Y del cliente juntas y
+    pasaba directo a 'pendiente_aprobacion'. Ahora SOLO firma el técnico y la
+    OT queda en 'firmada_tecnico'. En esa ventana el ejecutivo SSTT / superadmin
+    pueden corregir errores (ej: equipo cruzado) ANTES de que el cliente firme
+    conforme. La firma del cliente se captura aparte (POST /firmar-cliente) y
+    recién ahí pasa a 'pendiente_aprobacion'.
 
     Acepta:
       - firma_tecnico (data URL base64 o URL Cloudinary)
       - firma_tecnico_nombre (string)
-      - firma_cliente (data URL)
-      - firma_cliente_nombre
     """
     d = request.get_json(silent=True) or {}
     firma_tec = (d.get("firma_tecnico") or "").strip()
     nombre_tec = (d.get("firma_tecnico_nombre") or "").strip()[:200] or None
-    firma_cli = (d.get("firma_cliente") or "").strip()
-    nombre_cli = (d.get("firma_cliente_nombre") or "").strip()[:200] or None
-    # ── Identidad del firmante cliente (Fase 2 — Daniel 2026-05-31) ──
-    rut_cli    = (d.get("firma_cliente_rut") or "").strip()
-    cargo_cli  = (d.get("firma_cliente_cargo") or "").strip()[:120] or None
-    tel_cli    = (d.get("firma_cliente_tel") or "").strip()[:40] or None
-    email_cli  = (d.get("firma_cliente_email") or "").strip()[:190] or None
-    sug_nombre = (d.get("firma_cliente_sugerido_nombre") or "").strip()[:200] or None
-    sug_rut    = (d.get("firma_cliente_sugerido_rut") or "").strip()[:20] or None
 
     if not firma_tec:
         return jsonify({"ok": False, "error": "Falta la firma del técnico"}), 400
-
-    # Si el cliente firma, exigimos la identidad del firmante REAL: nombre +
-    # RUT chileno válido. NO se asume el contacto principal (puede recibir otra
-    # persona: encargado, conserjería, administración, etc.).
-    rut_cli_norm = None
-    if firma_cli:
-        if not nombre_cli:
-            return jsonify({"ok": False,
-                            "error": "Falta el NOMBRE de quien firma por el cliente.",
-                            "error_codigo": "FIRMANTE_SIN_NOMBRE"}), 400
-        _ok_rut, _rut_res = validar_rut(rut_cli)
-        if not _ok_rut:
-            return jsonify({"ok": False,
-                            "error": f"RUT del firmante inválido: {_rut_res}",
-                            "error_codigo": "FIRMANTE_RUT_INVALIDO"}), 400
-        rut_cli_norm = _formato_rut_chile(_rut_res) or _rut_res
 
     try:
         # ── Gate de cierre (Fase 10) ──────────────────────────────────────
@@ -48073,7 +48123,7 @@ def mant_ot_firmar_revision(vid):
             total_pend = sum(int(r["n"]) for r in faltan_rows)
             return jsonify({
                 "ok": False,
-                "error": (f"No puedes cerrar esta OT todavía: quedan {total_pend} "
+                "error": (f"No puedes firmar esta OT todavía: quedan {total_pend} "
                           "tarea(s) obligatoria(s) sin completar ni justificar."),
                 "error_codigo": "TAREAS_PENDIENTES",
                 "faltantes": faltantes,
@@ -48082,14 +48132,8 @@ def mant_ot_firmar_revision(vid):
         u = getattr(g, "user", None) or {}
         uid = u.get("id")
 
-        # ── BUG FIX 2026-05-17 — Subir firmas a Cloudinary ──
-        # Las firmas son data URLs base64 de ~100-500KB. La columna TEXT
-        # legacy las truncaba (error 1406). Ahora subimos a Cloudinary
-        # y guardamos solo la URL pública (corta). Si Cloudinary falla,
-        # _subir_firma_cloudinary devuelve el data URL original como
-        # fallback — la columna ahora es LONGTEXT y lo soporta.
+        # ── Subir firma del técnico a Cloudinary (data URL → URL corta) ──
         firma_tec_url = _subir_firma_cloudinary(firma_tec, vid, "tecnico")
-        firma_cli_url = _subir_firma_cloudinary(firma_cli, vid, "cliente") if firma_cli else None
 
         # 2026-05-18 — Estampar el nombre del técnico al firmar. Si el form
         # no lo manda, default al display name del user (nombre o username).
@@ -48100,31 +48144,13 @@ def mant_ot_firmar_revision(vid):
             "UPDATE mant_visitas SET "
             "  firma_tecnico_url=%s, firma_tecnico_user_id=%s, "
             "  firma_tecnico_nombre=%s, firma_tecnico_at=NOW(), "
-            "  firma_cliente_url=%s, firma_cliente_nombre=%s, firma_cliente_at=NOW(), "
-            "  estado='pendiente_aprobacion' "
+            "  estado='firmada_tecnico' "
             " WHERE id=%s",
-            (firma_tec_url, uid, nombre_tec, firma_cli_url, nombre_cli, vid)
+            (firma_tec_url, uid, nombre_tec, vid)
         )
-        # ── Registro de identidad del firmante cliente (Fase 2) ──────────
-        # Persistimos quién firmó realmente (nombre + RUT validado) + el
-        # contacto sugerido (para auditar si cambió) + trazabilidad.
-        if firma_cli:
-            try:
-                _ua = (request.headers.get("User-Agent") or "")[:400]
-                _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-                       or request.remote_addr or "")[:64]
-                mysql_execute(
-                    "INSERT INTO mant_ot_signatures "
-                    "(ot_id, suggested_contact_name, suggested_contact_rut, "
-                    " signer_name, signer_rut, signer_role, signer_phone, signer_email, "
-                    " signature_url, signed_by_technician_id, ip, user_agent) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (vid, sug_nombre, sug_rut, nombre_cli, rut_cli_norm, cargo_cli,
-                     tel_cli, email_cli, firma_cli_url, uid, _ip, _ua)
-                )
-            except Exception as _e_sig:
-                print(f"[firma-signer] no se guardó identidad firmante vid={vid}: {_e_sig}", flush=True)
-        # Marcar levantamiento como cerrado si la OT tenía uno
+        # Marcar levantamiento como cerrado si la OT tenía uno (la captura de
+        # datos del equipo ya terminó; las correcciones de la ventana editan
+        # mant_visita_equipos/mant_maquinas directamente, no dependen de esto).
         v_info = mysql_fetchone(
             "SELECT levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
         )
@@ -48135,11 +48161,119 @@ def mant_ot_firmar_revision(vid):
                 (v_info["levantamiento_id"],)
             )
         _mant_log("visita", vid, "firmada_tecnico",
-                  f"{nombre_tec or ''} → pendiente_aprobacion")
-        # ── Notificación al creador + supervisores ──────────────────
-        # Best-effort, dispara en hilo. Si email/WA están deshabilitados
-        # por kill-switch global, los helpers lo manejan internamente
-        # (no rompe el flujo del técnico).
+                  f"{nombre_tec or ''} → firmada_tecnico (ventana de corrección)")
+        # ── Notificar al ejecutivo SSTT / creador + supervisores ─────
+        # Para que entren a REVISAR y corregir antes de la firma del cliente.
+        # Best-effort en hilo; respeta kill-switches.
+        try:
+            _notificar_ot_pendiente_aprobacion_async(vid, request.host_url)
+        except Exception as e_n:
+            print(f"[notif-firmada-tecnico] fail vid={vid}: {e_n}", flush=True)
+        return jsonify({"ok": True, "estado": "firmada_tecnico"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/firmar-cliente", methods=["POST"])
+@_mant_required
+def mant_ot_firmar_cliente(vid):
+    """El CLIENTE firma conforme (segunda firma). La OT pasa de
+    'firmada_tecnico' → 'pendiente_aprobacion'. Tras esta firma el contenido
+    queda SELLADO (solo superadmin puede editar — candado maestro).
+
+    La puede capturar el técnico asignado (en sitio, en su dispositivo) o el
+    ejecutivo SSTT / supervisor / admin (si el cliente firma tras la ventana de
+    corrección). 2026-06-12 (Daniel).
+
+    Acepta: firma_cliente, firma_cliente_nombre, firma_cliente_rut,
+            firma_cliente_cargo/tel/email (opcionales), sugeridos (auditoría).
+    """
+    if not _puede_ot_accion(vid, "firmar_cliente"):
+        _u = getattr(g, "user", None) or {}
+        print(f"[SECURITY] {_u.get('id')} ({_u.get('username')}) intento firmar-cliente "
+              f"vid={vid} sin permiso", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": "No tienes permiso para capturar la firma del cliente en esta OT.",
+            "error_codigo": "OT_SIN_PERMISO",
+        }), 403
+
+    d = request.get_json(silent=True) or {}
+    firma_cli  = (d.get("firma_cliente") or "").strip()
+    nombre_cli = (d.get("firma_cliente_nombre") or "").strip()[:200] or None
+    rut_cli    = (d.get("firma_cliente_rut") or "").strip()
+    cargo_cli  = (d.get("firma_cliente_cargo") or "").strip()[:120] or None
+    tel_cli    = (d.get("firma_cliente_tel") or "").strip()[:40] or None
+    email_cli  = (d.get("firma_cliente_email") or "").strip()[:190] or None
+    sug_nombre = (d.get("firma_cliente_sugerido_nombre") or "").strip()[:200] or None
+    sug_rut    = (d.get("firma_cliente_sugerido_rut") or "").strip()[:20] or None
+
+    if not firma_cli:
+        return jsonify({"ok": False, "error": "Falta la firma del cliente"}), 400
+    # Identidad del firmante REAL: nombre + RUT chileno válido (puede recibir
+    # otra persona: encargado, conserjería, administración, etc.).
+    if not nombre_cli:
+        return jsonify({"ok": False,
+                        "error": "Falta el NOMBRE de quien firma por el cliente.",
+                        "error_codigo": "FIRMANTE_SIN_NOMBRE"}), 400
+    _ok_rut, _rut_res = validar_rut(rut_cli)
+    if not _ok_rut:
+        return jsonify({"ok": False,
+                        "error": f"RUT del firmante inválido: {_rut_res}",
+                        "error_codigo": "FIRMANTE_RUT_INVALIDO"}), 400
+    rut_cli_norm = _formato_rut_chile(_rut_res) or _rut_res
+
+    # El técnico debe haber firmado primero (orden: técnico → cliente).
+    v = mysql_fetchone(
+        "SELECT estado, firma_tecnico_url, firma_cliente_url "
+        "  FROM mant_visitas WHERE id=%s", (vid,)
+    )
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if not v.get("firma_tecnico_url"):
+        return jsonify({"ok": False,
+                        "error": "El técnico debe firmar antes que el cliente.",
+                        "error_codigo": "FALTA_FIRMA_TECNICO"}), 400
+    if v.get("firma_cliente_url"):
+        return jsonify({"ok": False,
+                        "error": "El cliente ya firmó esta OT.",
+                        "error_codigo": "YA_FIRMADA_CLIENTE"}), 400
+    if (v.get("estado") or "").lower() not in ("firmada_tecnico",):
+        return jsonify({"ok": False,
+                        "error": f"La OT no está lista para la firma del cliente "
+                                 f"(estado actual: {v.get('estado')}).",
+                        "error_codigo": "ESTADO_INVALIDO"}), 400
+
+    try:
+        u = getattr(g, "user", None) or {}
+        uid = u.get("id")
+        firma_cli_url = _subir_firma_cloudinary(firma_cli, vid, "cliente")
+        mysql_execute(
+            "UPDATE mant_visitas SET "
+            "  firma_cliente_url=%s, firma_cliente_nombre=%s, firma_cliente_at=NOW(), "
+            "  estado='pendiente_aprobacion' "
+            " WHERE id=%s",
+            (firma_cli_url, nombre_cli, vid)
+        )
+        # ── Registro de identidad del firmante cliente (Fase 2 + trazabilidad) ──
+        try:
+            _ua = (request.headers.get("User-Agent") or "")[:400]
+            _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+                   or request.remote_addr or "")[:64]
+            mysql_execute(
+                "INSERT INTO mant_ot_signatures "
+                "(ot_id, suggested_contact_name, suggested_contact_rut, "
+                " signer_name, signer_rut, signer_role, signer_phone, signer_email, "
+                " signature_url, signed_by_technician_id, ip, user_agent) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, sug_nombre, sug_rut, nombre_cli, rut_cli_norm, cargo_cli,
+                 tel_cli, email_cli, firma_cli_url, uid, _ip, _ua)
+            )
+        except Exception as _e_sig:
+            print(f"[firma-cliente] no se guardó identidad firmante vid={vid}: {_e_sig}", flush=True)
+        _mant_log("visita", vid, "firmada_cliente",
+                  f"{nombre_cli or ''} → pendiente_aprobacion")
+        # Notificar al ejecutivo SSTT / creador para que firme la aprobación final.
         try:
             _notificar_ot_pendiente_aprobacion_async(vid, request.host_url)
         except Exception as e_n:
@@ -48604,16 +48738,22 @@ def mant_ot_rechazar_cierre(vid):
     v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
-    if v.get("estado") != "pendiente_aprobacion":
+    # 2026-06-12 (Daniel) — se puede devolver al técnico tanto desde
+    # 'pendiente_aprobacion' (cliente ya firmó) como desde 'firmada_tecnico'
+    # (ventana de corrección — el ejecutivo prefiere que el técnico rehaga).
+    if v.get("estado") not in ("pendiente_aprobacion", "firmada_tecnico"):
         return jsonify({
             "ok": False,
-            "error": f"Solo se pueden rechazar OTs pendientes (actual: {v.get('estado')})",
+            "error": f"Solo se pueden rechazar OTs firmadas pendientes de cierre (actual: {v.get('estado')})",
         }), 400
     try:
+        # Volver a 'programada' y LIMPIAR ambas firmas (técnico y cliente):
+        # el técnico rehace y se vuelve a firmar todo el flujo desde cero.
         mysql_execute(
             "UPDATE mant_visitas SET "
             "  estado='programada', "
-            "  firma_tecnico_url=NULL, firma_tecnico_user_id=NULL, firma_tecnico_at=NULL "
+            "  firma_tecnico_url=NULL, firma_tecnico_user_id=NULL, firma_tecnico_at=NULL, "
+            "  firma_cliente_url=NULL, firma_cliente_nombre=NULL, firma_cliente_at=NULL "
             " WHERE id=%s",
             (vid,)
         )

@@ -1350,7 +1350,7 @@
       {% endif %}
     </div>
     {% endif %}
-    {% if visita.estado not in ['cerrada','cancelada','anulada','pendiente_aprobacion'] %}
+    {% if visita.estado not in ['cerrada','cancelada','anulada','firmada_tecnico','pendiente_aprobacion'] %}
     <button class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}" id="btnRuta" onclick="abrirModalRuta()">
       {% if visita.ruta_iniciada_at %}
       <i class="bi bi-check-circle-fill"></i> Ruta · {{ (visita.ruta_app or '')|upper }}
@@ -1825,9 +1825,9 @@
     {% set ts_cerrada  = visita.get('firma_supervisor_at') or visita.get('cerrada_at') or visita.get('hora_real_fin') %}
     {# Booleans completados (un paso está hecho si tiene timestamp REAL o si el estado avanzó pasado él) #}
     {% set done_asignada = true %}  {# siempre done — la OT existe #}
-    {% set done_ruta     = (ts_ruta) or (_est in ['en_ejecucion','pendiente_aprobacion','cerrada']) %}
-    {% set done_sitio    = (ts_sitio) or (ts_ejec) or (_est in ['en_ejecucion','pendiente_aprobacion','cerrada']) %}
-    {% set done_ejec     = (ts_ejec) or (_est in ['pendiente_aprobacion','cerrada']) %}
+    {% set done_ruta     = (ts_ruta) or (_est in ['en_ejecucion','firmada_tecnico','pendiente_aprobacion','cerrada']) %}
+    {% set done_sitio    = (ts_sitio) or (ts_ejec) or (_est in ['en_ejecucion','firmada_tecnico','pendiente_aprobacion','cerrada']) %}
+    {% set done_ejec     = (ts_ejec) or (_est in ['firmada_tecnico','pendiente_aprobacion','cerrada']) %}
     {% set done_firma    = (ts_firma) or (visita.get('firma_tecnico_url')) or (_est == 'cerrada') %}
     {% set done_cerrada  = (ts_cerrada) or (_est == 'cerrada') %}
 
@@ -2224,6 +2224,31 @@
         {% if visita.created_by %}de {{ visita.created_by }}{% endif %}
       </button>
     {% endif %}
+  {% elif visita.estado == 'firmada_tecnico' %}
+    {# 2026-06-12 (Daniel) — El técnico firmó. VENTANA DE CORRECCIÓN antes de
+       la firma del cliente: el ejecutivo SSTT / superadmin pueden corregir
+       (ej: equipo cruzado). El técnico asignado / ejecutivo capturan la firma
+       del cliente cuando esté conforme. #}
+    {% if puede_ejecutar %}
+      <div class="alert alert-warning py-2 small mb-2" style="border-radius:10px">
+        <i class="bi bi-pencil-square me-1"></i>
+        <b>Ventana de corrección:</b> el técnico ya firmó. Revisa y corrige lo que sea
+        necesario <b>antes</b> de capturar la firma del cliente.
+      </div>
+    {% endif %}
+    {% if puede_firmar_cliente %}
+      <button class="tx-btn-firmar" id="btnFirmarCliente" onclick="abrirModalFirmaCliente()"
+              style="background:linear-gradient(135deg,#2563eb,#1d4ed8)">
+        <i class="bi bi-person-badge"></i> Capturar firma del cliente
+      </button>
+      <small class="d-block text-center mt-1" style="color:#2563eb;font-size:.72rem;font-weight:600">
+        Cuando el cliente esté conforme, captura su firma para enviar a aprobación.
+      </small>
+    {% else %}
+      <button class="tx-btn-firmar" disabled>
+        <i class="bi bi-clock-history"></i> Técnico firmó — esperando revisión y firma del cliente
+      </button>
+    {% endif %}
   {% elif visita.estado == 'completada' %}
     <button class="tx-btn-firmar" disabled>
       <i class="bi bi-check-circle-fill"></i> OT completada
@@ -2420,15 +2445,15 @@
       <div class="firma-banner">
         <div class="fb-logo" style="background-image:image-set(url('{{ url_for('static', filename='Logo.webp') }}') type('image/webp'), url('{{ url_for('static', filename='Logo_optimized.png') }}') type('image/png'));background-image:-webkit-image-set(url('{{ url_for('static', filename='Logo.webp') }}') type('image/webp'), url('{{ url_for('static', filename='Logo_optimized.png') }}') type('image/png'))"></div>
         <div class="flex-grow-1">
-          <h5><i class="bi bi-pen-fill me-2"></i>Cerrar Orden de Trabajo</h5>
+          <h5 id="firmaModalTitulo"><i class="bi bi-pen-fill me-2"></i>Firma del técnico</h5>
           <div class="fb-sub">{{ visita.numero_ot }} · {{ visita.razon_social }}</div>
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <div class="alert alert-info py-2 small mb-3">
+        <div class="alert alert-info py-2 small mb-3" id="firmaModalInfo">
           <i class="bi bi-info-circle me-1"></i>
-          Al firmar, la OT pasa a <strong>"Pendiente de aprobación"</strong>. El supervisor revisará y cerrará.
+          Al firmar como técnico, la OT pasa a <strong>"Firmada por técnico"</strong>. El ejecutivo SSTT podrá revisar/corregir antes de la firma del cliente.
         </div>
 
         {# ─── RESPONSABILIDADES DE LA FIRMA (Daniel 22/05/2026)
@@ -2457,7 +2482,7 @@
         </div>
 
         {# ─── FIRMA DEL TÉCNICO ─── #}
-        <div class="mb-4">
+        <div class="mb-4" id="firmaSecTec">
           <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
             <i class="bi bi-person-check me-1 text-success"></i>Tu firma (técnico)
           </label>
@@ -2483,7 +2508,7 @@
         </div>
 
         {# ─── FIRMA DEL CLIENTE ─── #}
-        <div class="mb-2">
+        <div class="mb-2" id="firmaSecCli">
           <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
             <i class="bi bi-person-badge me-1 text-primary"></i>Firma del cliente (quien recibe)
           </label>
@@ -2525,7 +2550,7 @@
         </button>
         <button type="button" class="btn btn-success fw-bold" id="btnFirmarConfirm"
                 onclick="enviarFirma()" style="padding:.6rem 1.4rem;font-size:.95rem">
-          <i class="bi bi-check-lg me-1"></i>Firmar y enviar a revisión
+          <i class="bi bi-check-lg me-1"></i><span id="btnFirmarConfirmLabel">Firmar como técnico</span>
         </button>
       </div>
     </div>
@@ -3340,7 +3365,7 @@ function renderTareas(mid, pid){
     <div class="prog-wrap"><div class="prog-bar" id="tProgBar" style="width:${grupo.progreso}%"></div></div>`;
 
   const cont = document.getElementById('tareasList');
-  const bloqueada = (grupo.bloqueado || VISITA_ESTADO === 'pendiente_aprobacion' || VISITA_ESTADO === 'cerrada');
+  const bloqueada = (grupo.bloqueado || VISITA_ESTADO === 'pendiente_aprobacion' || VISITA_ESTADO === 'cerrada' || !PUEDE_EJECUTAR_FLAG);
   cont.innerHTML = grupo.tareas.map(t => renderTareaHtml(t, bloqueada, mid, pid)).join('');
 }
 
@@ -5864,7 +5889,7 @@ function subirAdjuntoDesdeInput(input, tipoHint){
 
 async function subirAdjuntoFile(file, tipoHint){
   if (!file) return;
-  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion'){
+  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion' || !PUEDE_EJECUTAR_FLAG){
     ilusToast('OT bloqueada · no se pueden subir más adjuntos', { type:'warning' });
     return;
   }
@@ -5995,7 +6020,7 @@ function _grabCalidadConstraints(quality){
 }
 
 async function abrirGrabador(){
-  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion'){
+  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion' || !PUEDE_EJECUTAR_FLAG){
     ilusToast('OT bloqueada · no se pueden subir más adjuntos', { type:'warning' });
     return;
   }
@@ -7186,7 +7211,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!RUTA_YA_INICIADA && DESTINO_DIR && window.innerWidth < 992){
     setTimeout(() => abrirModalRuta(), 1200);
   }
-  if (RUTA_YA_INICIADA && VISITA_ESTADO !== 'cerrada' && VISITA_ESTADO !== 'pendiente_aprobacion'){
+  if (RUTA_YA_INICIADA && VISITA_ESTADO !== 'cerrada' && VISITA_ESTADO !== 'firmada_tecnico' && VISITA_ESTADO !== 'pendiente_aprobacion'){
     iniciarPingPeriodico();
   }
 });
@@ -7283,6 +7308,7 @@ document.addEventListener('visibilitychange', () => {
     _stopPing();
   } else if (RUTA_YA_INICIADA &&
              VISITA_ESTADO !== 'cerrada' &&
+             VISITA_ESTADO !== 'firmada_tecnico' &&
              VISITA_ESTADO !== 'pendiente_aprobacion'){
     iniciarPingPeriodico();
   }
@@ -7392,6 +7418,34 @@ function setFirmaColor(id, color, el){
   }
   if (el) el.classList.add('active');
 }
+// 2026-06-12 (Daniel) — FIRMAS SEPARADAS. El mismo modal #modalFirma sirve en
+// dos etapas: 'tecnico' (firma el técnico → firmada_tecnico) y 'cliente'
+// (firma el cliente → pendiente_aprobacion). _firmaStage controla qué sección
+// se muestra y a qué endpoint se postea.
+let _firmaStage = 'tecnico';
+
+function _firmaSetStage(stage){
+  _firmaStage = stage;
+  const secTec = document.getElementById('firmaSecTec');
+  const secCli = document.getElementById('firmaSecCli');
+  const titulo = document.getElementById('firmaModalTitulo');
+  const info   = document.getElementById('firmaModalInfo');
+  const lbl    = document.getElementById('btnFirmarConfirmLabel');
+  if (stage === 'cliente'){
+    if (secTec) secTec.style.display = 'none';
+    if (secCli) secCli.style.display = '';
+    if (titulo) titulo.innerHTML = '<i class="bi bi-person-badge me-2"></i>Firma del cliente';
+    if (info)   info.innerHTML = '<i class="bi bi-info-circle me-1"></i>Al firmar el cliente, la OT pasa a <strong>"Pendiente de aprobación"</strong> y el contenido queda sellado.';
+    if (lbl)    lbl.textContent = 'Registrar firma del cliente';
+  } else {
+    if (secTec) secTec.style.display = '';
+    if (secCli) secCli.style.display = 'none';
+    if (titulo) titulo.innerHTML = '<i class="bi bi-pen-fill me-2"></i>Firma del técnico';
+    if (info)   info.innerHTML = '<i class="bi bi-info-circle me-1"></i>Al firmar como técnico, la OT pasa a <strong>"Firmada por técnico"</strong>. El ejecutivo SSTT podrá revisar/corregir antes de la firma del cliente.';
+    if (lbl)    lbl.textContent = 'Firmar como técnico';
+  }
+}
+
 async function abrirModalFirma(){
   // Si hay tareas opcionales sin completar, pedir confirmación explícita.
   const ctx = _calcCtxGlobal();
@@ -7408,25 +7462,29 @@ async function abrirModalFirma(){
     });
     if (!ok) return;
   }
+  _firmaSetStage('tecnico');
   new bootstrap.Modal(document.getElementById('modalFirma')).show();
-  setTimeout(() => { initCanvas('canvasTec'); initCanvas('canvasCli'); }, 250);
+  setTimeout(() => { initCanvas('canvasTec'); }, 250);
 }
+
+// Etapa CLIENTE — se abre desde el botón "Capturar firma del cliente" cuando
+// la OT está en 'firmada_tecnico' (tras la revisión/corrección).
+function abrirModalFirmaCliente(){
+  _firmaSetStage('cliente');
+  new bootstrap.Modal(document.getElementById('modalFirma')).show();
+  setTimeout(() => { initCanvas('canvasCli'); }, 250);
+}
+
 async function enviarFirma(){
+  const btn = document.getElementById('btnFirmarConfirm');
+  if (_firmaStage === 'cliente'){ return _enviarFirmaCliente(btn); }
+
+  // ── Etapa TÉCNICO ──
   const cvTec = document.getElementById('canvasTec');
   if (!_sig.canvasTec || !_sig.canvasTec.has){
     ilusToast('Falta tu firma', { type:'warning' }); return;
   }
   const firmaTec = cvTec.toDataURL('image/png');
-  const firmaCli = (_sig.canvasCli && _sig.canvasCli.has) ? document.getElementById('canvasCli').toDataURL('image/png') : '';
-  const cliNombreEl = document.getElementById('firmaCliNombre');
-  const cliNombre = (cliNombreEl && cliNombreEl.value || '').trim();
-  const cliRut = ((document.getElementById('firmaCliRut') || {}).value || '').trim();
-  // Si el cliente firmó, exigir identidad del firmante real (nombre + RUT).
-  if (firmaCli){
-    if (!cliNombre){ ilusToast('Falta el nombre de quien firma por el cliente', { type:'warning' }); return; }
-    if (cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('Falta el RUT de quien firma (RUT chileno válido)', { type:'warning' }); return; }
-  }
-  const btn = document.getElementById('btnFirmarConfirm');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-revision`, {
@@ -7434,6 +7492,54 @@ async function enviarFirma(){
       body: JSON.stringify({
         firma_tecnico: firmaTec,
         firma_tecnico_nombre: document.getElementById('firmaTecNombre').value.trim(),
+      })
+    });
+    const d = await r.json();
+    if (d.ok){
+      bootstrap.Modal.getInstance(document.getElementById('modalFirma'))?.hide();
+      await ilusAlert({
+        title: '✅ Técnico firmó',
+        message: 'La OT quedó en revisión. El ejecutivo SSTT puede corregir antes de la firma del cliente.',
+        type: 'success',
+      });
+      setTimeout(() => location.reload(), 600);
+    } else {
+      // Gate de cierre (Fase 10): si faltan tareas por cubrir, detalle por equipo.
+      if (Array.isArray(d.faltantes) && d.faltantes.length){
+        await ilusAlert({
+          title: '🚧 No puedes firmar esta OT todavía',
+          message: d.error || 'Quedan tareas obligatorias sin completar ni justificar.',
+          sub: d.faltantes.join(' · '),
+          type: 'warning',
+          okLabel: 'Entendido',
+        });
+      } else {
+        ilusToast(d.error || 'Error', { type:'error' });
+      }
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="btnFirmarConfirmLabel">Firmar como técnico</span>';
+    }
+  } catch(e){
+    ilusToast('Error de red', { type:'error' });
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="btnFirmarConfirmLabel">Firmar como técnico</span>';
+  }
+}
+
+async function _enviarFirmaCliente(btn){
+  const cvCli = document.getElementById('canvasCli');
+  if (!_sig.canvasCli || !_sig.canvasCli.has){
+    ilusToast('Falta la firma del cliente', { type:'warning' }); return;
+  }
+  const cliNombreEl = document.getElementById('firmaCliNombre');
+  const cliNombre = (cliNombreEl && cliNombreEl.value || '').trim();
+  const cliRut = ((document.getElementById('firmaCliRut') || {}).value || '').trim();
+  if (!cliNombre){ ilusToast('Falta el nombre de quien firma por el cliente', { type:'warning' }); return; }
+  if (cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('Falta el RUT de quien firma (RUT chileno válido)', { type:'warning' }); return; }
+  const firmaCli = cvCli.toDataURL('image/png');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-cliente`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
         firma_cliente: firmaCli,
         firma_cliente_nombre: cliNombre,
         firma_cliente_rut: cliRut,
@@ -7447,30 +7553,18 @@ async function enviarFirma(){
     if (d.ok){
       bootstrap.Modal.getInstance(document.getElementById('modalFirma'))?.hide();
       await ilusAlert({
-        title: '✅ OT firmada',
-        message: 'Enviado a revisión del supervisor.',
+        title: '✅ Cliente firmó',
+        message: 'La OT pasó a aprobación final. El ejecutivo SSTT la cerrará.',
         type: 'success',
       });
       setTimeout(() => location.reload(), 600);
     } else {
-      // Gate de cierre (Fase 10): si faltan tareas por cubrir, mostramos el
-      // panel con el detalle exacto de qué falta (por equipo).
-      if (Array.isArray(d.faltantes) && d.faltantes.length){
-        await ilusAlert({
-          title: '🚧 No puedes cerrar esta OT todavía',
-          message: d.error || 'Quedan tareas obligatorias sin completar ni justificar.',
-          sub: d.faltantes.join(' · '),
-          type: 'warning',
-          okLabel: 'Entendido',
-        });
-      } else {
-        ilusToast(d.error || 'Error', { type:'error' });
-      }
-      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
+      ilusToast(d.error || 'Error', { type:'error' });
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="btnFirmarConfirmLabel">Registrar firma del cliente</span>';
     }
   } catch(e){
     ilusToast('Error de red', { type:'error' });
-    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y enviar';
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="btnFirmarConfirmLabel">Registrar firma del cliente</span>';
   }
 }
 
