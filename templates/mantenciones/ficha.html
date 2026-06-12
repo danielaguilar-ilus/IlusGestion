@@ -8684,6 +8684,41 @@ async function vhGuardar(){
                        list="ftModelosDL" autocomplete="off" maxlength="120">
                 <datalist id="ftModelosDL"></datalist>
               </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Categoría</label>
+                <select class="form-select form-select-sm" id="ft_edit_familia">
+                  <option value="">— Sin categoría —</option>
+                  <option value="cardio">Cardio</option>
+                  <option value="selectorizado">Selectorizado</option>
+                  <option value="carga_libre">Carga libre</option>
+                  <option value="racks_estructuras">Racks / Estructuras</option>
+                  <option value="bancos">Bancos</option>
+                  <option value="accesorios">Accesorios</option>
+                  <option value="bicicletas">Bicicletas</option>
+                  <option value="trotadoras">Trotadoras</option>
+                  <option value="otros">Otros</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Año fab.</label>
+                <input type="number" class="form-control form-control-sm" id="ft_edit_anio"
+                       min="1980" max="2099" placeholder="Ej: 2022">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Peso (kg)</label>
+                <input type="number" class="form-control form-control-sm" id="ft_edit_peso"
+                       min="0" step="0.1" placeholder="Ej: 85.5">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Color</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_color"
+                       maxlength="60" placeholder="Ej: Negro / Rojo">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Dimensiones</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_dimensiones"
+                       maxlength="120" placeholder="Ej: 150×80×120 cm">
+              </div>
               {# Toggle "En plan de mantención" — viaja en el PATCH como aplica_mantencion (2026-06-10) #}
               <div class="col-12">
                 <label class="ft-plan-switch" for="ft_edit_aplica" title="Define si el equipo entra en el plan de mantención">

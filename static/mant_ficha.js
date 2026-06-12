@@ -3443,6 +3443,11 @@ function ftAbrirEditar() {
   document.getElementById('ft_edit_ubicacion').value = eq.ubicacion_sala || '';
   document.getElementById('ft_edit_marca').value = eq.marca || '';
   document.getElementById('ft_edit_modelo').value = eq.modelo || '';
+  document.getElementById('ft_edit_familia').value = eq.familia_equipo || '';
+  document.getElementById('ft_edit_anio').value = eq.anio_fabricacion || '';
+  document.getElementById('ft_edit_peso').value = eq.peso_kg != null ? eq.peso_kg : '';
+  document.getElementById('ft_edit_color').value = eq.color || '';
+  document.getElementById('ft_edit_dimensiones').value = eq.dimensiones || '';
   // Toggle "En plan": default 1 (incluido) si el dato no viene del backend.
   const apl = (eq.aplica_mantencion === undefined || eq.aplica_mantencion === null)
     ? 1 : (eq.aplica_mantencion ? 1 : 0);
@@ -3477,9 +3482,13 @@ async function ftGuardarEditar() {
     ubicacion_sala: document.getElementById('ft_edit_ubicacion').value.trim(),
     marca: marcaNorm,
     modelo: document.getElementById('ft_edit_modelo').value.trim(),
+    familia_equipo: document.getElementById('ft_edit_familia').value || null,
+    anio_fabricacion: document.getElementById('ft_edit_anio').value || null,
+    peso_kg: document.getElementById('ft_edit_peso').value || null,
+    color: document.getElementById('ft_edit_color').value.trim() || null,
+    dimensiones: document.getElementById('ft_edit_dimensiones').value.trim() || null,
     observaciones: document.getElementById('ft_edit_obs').value.trim(),
     motivo: document.getElementById('ft_edit_motivo').value.trim(),
-    // Plan de mantención (backend acepta aplica_mantencion en la whitelist del PATCH).
     aplica_mantencion: (aplicaChk && aplicaChk.checked) ? 1 : 0,
   };
   // Validación local: si cambia serial o estado, exigir motivo

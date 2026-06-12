@@ -60268,7 +60268,8 @@ def mant_maquina_patch(mid):
         "SELECT id, cliente_id, serie, marca, modelo, voltaje, "
         "       anio_fabricacion, ubicacion_sala, observaciones, "
         "       estado, estado_op, fecha_instalacion, fecha_fin_garantia, "
-        "       tag_1, tag_2, COALESCE(aplica_mantencion,1) AS aplica_mantencion "
+        "       tag_1, tag_2, COALESCE(aplica_mantencion,1) AS aplica_mantencion, "
+        "       familia_equipo, peso_kg, dimensiones, color "
         "  FROM mant_maquinas WHERE id=%s",
         (mid,)
     )
@@ -60296,6 +60297,7 @@ def mant_maquina_patch(mid):
         "serie": 100, "marca": 120, "modelo": 120, "voltaje": 40,
         "ubicacion_sala": 200, "observaciones": 5000,
         "tag_1": 80, "tag_2": 80,
+        "dimensiones": 120, "color": 60,
     }
     estado_values = ("activo", "inactivo", "baja")
     estado_op_values = ("operativo", "advertencia", "critico",
@@ -60349,6 +60351,22 @@ def mant_maquina_patch(mid):
         except (TypeError, ValueError):
             v = None
         sets.append("anio_fabricacion=%s"); vals.append(v)
+
+    if "peso_kg" in d:
+        try:
+            v = round(float(d["peso_kg"]), 2) if d["peso_kg"] not in (None, "") else None
+        except (TypeError, ValueError):
+            v = None
+        sets.append("peso_kg=%s"); vals.append(v)
+
+    # Familia / categoría del equipo
+    _familias_ok = ("cardio","selectorizado","carga_libre","racks_estructuras",
+                    "bancos","accesorios","bicicletas","trotadoras","otros")
+    if "familia_equipo" in d:
+        v = (str(d.get("familia_equipo") or "").strip().lower()) or None
+        if v and v not in _familias_ok:
+            return jsonify({"ok": False, "error": f"Categoría inválida: {v}"}), 400
+        sets.append("familia_equipo=%s"); vals.append(v)
 
     # Fechas (validar formato ISO)
     for f in ("fecha_instalacion", "fecha_fin_garantia"):
