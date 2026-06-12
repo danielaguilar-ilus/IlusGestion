@@ -19098,6 +19098,11 @@ def tr_manifiesto_detalle(mid):
             it["productos"] = _prods if _prods else prod_por_comm.get(it["commitment_id"], [])
             # OT FedEx: marca si esta factura aún no tiene tracking number asignado.
             it["tiene_ot"] = bool((it.get("tracking_number") or "").strip())
+            # No exponer el blob de la etiqueta al template (puede ser MB).
+            # Marcamos solo el flag has_label y limpiamos el campo.
+            it["has_ship_label"] = bool(it.get("ship_label_b64"))
+            if it.get("ship_label_b64"):
+                it["ship_label_b64"] = None
 
         # ── ALERTA "Facturas sin OT FedEx" (visión Daniel 2026-06-06) ──
         # FedEx se gestiona por API: una vez asignada la OT (tracking number),

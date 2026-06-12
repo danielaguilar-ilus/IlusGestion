@@ -70,10 +70,31 @@
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
     </a>
     {% if es_fedex %}
-    <button class="btn btn-sm btn-ilus-fedex fw-bold" onclick="abrirAsignarOtsMasivo()">
-      <i class="bi bi-truck-front me-1"></i>OTs FedEx
-      {% if sin_ot %}<span class="badge bg-danger ms-1">{{ sin_ot|length }}</span>{% endif %}
-    </button>
+    <div class="dropdown">
+      <button class="btn btn-sm btn-ilus-fedex fw-bold dropdown-toggle" data-bs-toggle="dropdown">
+        <i class="bi bi-truck-front me-1"></i>FedEx
+        {% if sin_ot %}<span class="badge bg-danger ms-1">{{ sin_ot|length }}</span>{% endif %}
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><h6 class="dropdown-header"><i class="bi bi-cloud-arrow-up me-1"></i>Generar OTs en FedEx</h6></li>
+        <li><a class="dropdown-item" href="#" onclick="abrirCrearOtsFedex(); return false">
+          <i class="bi bi-magic me-1"></i>Crear OTs automáticamente
+          <div class="small text-muted">FedEx asigna TN + etiqueta · genera todas las pendientes</div>
+        </a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header"><i class="bi bi-pencil-square me-1"></i>OTs ya impresas en FedEx</h6></li>
+        <li><a class="dropdown-item" href="#" onclick="abrirAsignarOtsMasivo(); return false">
+          <i class="bi bi-clipboard-check me-1"></i>Pegar TNs desde Excel
+          <div class="small text-muted">Si ya creaste las OTs en el portal FedEx</div>
+        </a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header"><i class="bi bi-calendar-event me-1"></i>Logística</h6></li>
+        <li><a class="dropdown-item" href="#" onclick="abrirPickupFedex(); return false">
+          <i class="bi bi-truck me-1"></i>Programar retiro FedEx
+          <div class="small text-muted">Agendar pickup en bodega Quilicura</div>
+        </a></li>
+      </ul>
+    </div>
     {% endif %}
   </div>
 </div>
@@ -334,10 +355,17 @@
               <i class="bi bi-shield-check"></i>
             </a>
             {% endif %}
-            <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas de esta factura"
+            <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas ILUS de esta factura"
                     onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
               <i class="bi bi-tags"></i>
             </button>
+            {% if es_fedex and item.get('master_tracking_number') %}
+            <button class="btn btn-sm mfd-act-btn" title="Descargar etiqueta oficial FedEx (PDF/ZPL)"
+                    style="background:#4d148c;color:#fff;border:none"
+                    onclick="window.open('/transporte/api/items/{{ item.id }}/etiqueta-fedex', '_blank')">
+              <i class="bi bi-file-earmark-arrow-down"></i>
+            </button>
+            {% endif %}
             <button class="btn btn-sm btn-outline-secondary mfd-act-btn" title="Editar contacto, bultos y medidas"
                     onclick='abrirEditar({{ item_json }})'>
               <i class="bi bi-pencil-square"></i>
@@ -346,7 +374,21 @@
                     onclick="mostrarLinkCliente({{ item.id }})">
               <i class="bi bi-link-45deg"></i>
             </button>
-            <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="Asociar Nº de tracking FedEx (auto-actualiza estado)"
+            {% if es_fedex %}
+              {% if not item.get('master_tracking_number') %}
+              <button class="btn btn-sm mfd-act-btn" title="Crear OT FedEx automáticamente (Ship API)"
+                      style="background:#4d148c;color:#fff;border:none"
+                      onclick="crearOTFedexItem({{ item.id }})">
+                <i class="bi bi-magic"></i>
+              </button>
+              {% else %}
+              <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Cancelar OT FedEx (mismo día)"
+                      onclick="cancelarOTFedex({{ item.id }})">
+                <i class="bi bi-x-octagon"></i>
+              </button>
+              {% endif %}
+            {% endif %}
+            <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="Asociar Nº de tracking FedEx manualmente"
                     onclick="abrirTrackingFedex({{ item.id }})">
               <i class="bi bi-truck"></i>
             </button>
@@ -763,6 +805,192 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-sm btn-ilus fw-bold" id="otsMasivoGuardarBtn" onclick="guardarOTsMasivo()">
           <i class="bi bi-check-lg me-1"></i>Guardar OTs
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: crear OTs FedEx automáticamente (Ship API)
+   ════════════════════════════════════════════════════════════════════ #}
+{% if es_fedex %}
+<div class="modal fade" id="crearOtsFedexModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#4d148c;color:#fff">
+        <h6 class="modal-title"><i class="bi bi-magic me-2"></i>Crear OTs FedEx automáticamente</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="alert d-flex align-items-start gap-2 py-2 mb-3"
+             style="background:#f3e8ff;border:1px solid #c084fc;color:#581c87;border-radius:9px;font-size:.82rem">
+          <i class="bi bi-info-circle-fill fs-5"></i>
+          <div>
+            ILUS llamará a FedEx por cada factura sin OT, FedEx asignará el tracking number
+            y devolverá la etiqueta. Verás todos los resultados al final.
+            <strong>No tendrás que pegar ningún número manualmente.</strong>
+          </div>
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-semibold mb-1">Tipo de servicio</label>
+            <select id="fxService" class="form-select form-select-sm">
+              <option value="FEDEX_PRIORITY" selected>FedEx Priority (doméstico CL)</option>
+              <option value="FEDEX_INTERNATIONAL_PRIORITY">International Priority</option>
+              <option value="FEDEX_INTERNATIONAL_ECONOMY">International Economy</option>
+            </select>
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-semibold mb-1">Tipo de recogida</label>
+            <select id="fxPickupType" class="form-select form-select-sm">
+              <option value="USE_SCHEDULED_PICKUP" selected>Pickup programado (FedEx va a buscar)</option>
+              <option value="DROPOFF_AT_FEDEX_LOCATION">Llevar a sucursal FedEx</option>
+            </select>
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-semibold mb-1">Formato de etiqueta</label>
+            <select id="fxLabelFormat" class="form-select form-select-sm">
+              <option value="PDF" selected>PDF — para impresora normal (4×6")</option>
+              <option value="ZPLII">ZPL — para impresora térmica Zebra</option>
+              <option value="PNG">PNG — imagen</option>
+            </select>
+          </div>
+          <div class="col-12 col-sm-6 d-flex align-items-end">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="fxNotify">
+              <label class="form-check-label small" for="fxNotify">
+                Notificar por email al destinatario en cada hito (recogida, en ruta, entregado)
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="small fw-semibold mb-2">
+          Facturas pendientes de OT: <span id="fxPendingCount" class="badge bg-secondary">0</span>
+        </div>
+        <div id="fxOtsList" class="border rounded p-2" style="max-height:280px;overflow-y:auto">
+          <div class="text-muted small text-center py-3">Cargando…</div>
+        </div>
+
+        <div id="fxProgress" class="mt-3 d-none">
+          <div class="progress" style="height:18px">
+            <div id="fxProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar" style="width:0%; background:#4d148c">0%</div>
+          </div>
+          <div id="fxProgressMsg" class="small text-muted mt-1 text-center">Conectando con FedEx…</div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm fw-bold" id="fxCrearBtn" onclick="ejecutarCrearOTs()"
+                style="background:#4d148c;color:#fff;border:none">
+          <i class="bi bi-magic me-1"></i>Crear OTs en FedEx
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: programar retiro FedEx en bodega (Pickup API)
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="pickupFedexModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#4d148c;color:#fff">
+        <h6 class="modal-title"><i class="bi bi-truck me-2"></i>Programar retiro FedEx</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="alert d-flex align-items-start gap-2 py-2 mb-3"
+             style="background:#f3e8ff;border:1px solid #c084fc;color:#581c87;border-radius:9px;font-size:.82rem">
+          <i class="bi bi-info-circle-fill fs-5"></i>
+          <div>FedEx pasará a buscar los bultos en la bodega ILUS (Quilicura) en la fecha y hora indicadas.</div>
+        </div>
+
+        <div class="row g-2">
+          <div class="col-12 col-sm-4">
+            <label class="form-label small fw-semibold mb-1">Fecha *</label>
+            <input type="date" id="pkFecha" class="form-control form-control-sm">
+          </div>
+          <div class="col-6 col-sm-4">
+            <label class="form-label small fw-semibold mb-1">Listo desde</label>
+            <input type="time" id="pkReadyTime" class="form-control form-control-sm" value="09:00">
+          </div>
+          <div class="col-6 col-sm-4">
+            <label class="form-label small fw-semibold mb-1">Cierre bodega</label>
+            <input type="time" id="pkCloseTime" class="form-control form-control-sm" value="18:00">
+          </div>
+        </div>
+
+        <div class="row g-2 mt-1">
+          <div class="col-6">
+            <label class="form-label small fw-semibold mb-1">Cantidad de bultos</label>
+            <input type="number" id="pkPackageCount" class="form-control form-control-sm" min="1" value="1">
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold mb-1">Peso total (kg)</label>
+            <input type="number" id="pkTotalWeight" class="form-control form-control-sm" step="0.5" min="0.5" value="1">
+          </div>
+        </div>
+
+        <hr class="my-3">
+
+        <div class="row g-2">
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-semibold mb-1">Contacto (nombre)</label>
+            <input type="text" id="pkContactoNombre" class="form-control form-control-sm" placeholder="Ej: Despacho ILUS" value="Despacho ILUS">
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label small fw-semibold mb-1">Teléfono</label>
+            <input type="text" id="pkContactoTelefono" class="form-control form-control-sm" placeholder="+56229465970" value="+56229465970">
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold mb-1">Email para confirmación (opcional)</label>
+            <input type="email" id="pkNotifyEmail" class="form-control form-control-sm" placeholder="logistica@ilusfitness.com">
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold mb-1">Instrucciones para el chofer (opcional)</label>
+            <input type="text" id="pkInstrucciones" class="form-control form-control-sm" placeholder="Ej: Tocar timbre bodega 30">
+          </div>
+        </div>
+
+        <details class="mt-3">
+          <summary class="small fw-semibold" style="cursor:pointer">Editar dirección de retiro</summary>
+          <div class="row g-2 mt-1">
+            <div class="col-12">
+              <label class="form-label small mb-1">Dirección</label>
+              <input type="text" id="pkDireccion" class="form-control form-control-sm"
+                     value="Eduardo Frei Montalva 9770, Bod 30">
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label small mb-1">Comuna</label>
+              <input type="text" id="pkComuna" class="form-control form-control-sm" value="Quilicura">
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label small mb-1">Código postal</label>
+              <input type="text" id="pkCodPostal" class="form-control form-control-sm" value="8710">
+            </div>
+          </div>
+        </details>
+
+        <div id="pkMsg" class="small mt-2"></div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-info" onclick="consultarDisponibilidadPickup()">
+          <i class="bi bi-calendar-check me-1"></i>Verificar disponibilidad
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm fw-bold" id="pkCrearBtn" onclick="ejecutarCrearPickup()"
+                style="background:#4d148c;color:#fff;border:none">
+          <i class="bi bi-check-lg me-1"></i>Programar retiro
         </button>
       </div>
     </div>
@@ -1550,6 +1778,292 @@ async function guardarOTsMasivo() {
   if (window.ilusToast) ilusToast('✓ ' + msg, { type: 'success' });
 
   setTimeout(function(){ location.reload(); }, 1400);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  CREAR / CANCELAR OT FedEx por item (Ship API individual)
+// ══════════════════════════════════════════════════════════════════════
+
+async function crearOTFedexItem(itemId) {
+  var ok = await ilusConfirm({
+    title: 'Crear OT FedEx',
+    message: '¿Crear OT FedEx para esta factura?',
+    sub: 'FedEx asignará el tracking number y devolverá la etiqueta PDF. '
+       + 'Esto descuenta crédito de la cuenta y se puede cancelar el mismo día.',
+    okLabel: 'Sí, crear OT',
+  });
+  if (!ok) return;
+  ilusToast('Conectando con FedEx…', { type: 'info' });
+  try {
+    var r = await fetch('/transporte/api/items/' + itemId + '/crear-ot-fedex', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        label_format: 'PDF', pickup_type: 'USE_SCHEDULED_PICKUP', notificar: true,
+      })
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      ilusToast(d.error || 'FedEx rechazó la solicitud', { type: 'error' });
+      return;
+    }
+    ilusToast('✓ OT creada: ' + d.master_tracking_number + ' (' + d.n_bultos + ' bulto/s)', { type: 'success' });
+    setTimeout(function(){ location.reload(); }, 1200);
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+async function cancelarOTFedex(itemId) {
+  var ok = await ilusConfirm({
+    title: 'Cancelar OT FedEx',
+    message: '¿Cancelar la OT FedEx de esta factura?',
+    sub: 'Solo se puede cancelar el MISMO día. Después de las 22:00 FedEx la rechazará.',
+    okLabel: 'Sí, cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    var r = await fetch('/transporte/api/items/' + itemId + '/cancelar-ot-fedex', { method: 'POST' });
+    var d = await r.json();
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo cancelar', { type: 'error' });
+      return;
+    }
+    ilusToast('✓ OT FedEx cancelada', { type: 'success' });
+    setTimeout(function(){ location.reload(); }, 800);
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  CREAR OTs FedEx MASIVO (Ship API)
+// ══════════════════════════════════════════════════════════════════════
+
+var _crearOtsFedexModal = null;
+
+function abrirCrearOtsFedex() {
+  if (!document.getElementById('crearOtsFedexModal')) return;
+  if (!_crearOtsFedexModal) _crearOtsFedexModal = new bootstrap.Modal(document.getElementById('crearOtsFedexModal'));
+
+  var lista = document.getElementById('fxOtsList');
+  if (!SIN_OT || !SIN_OT.length) {
+    lista.innerHTML = '<div class="text-center text-success py-3">'
+                    + '<i class="bi bi-check-circle-fill me-1"></i>'
+                    + 'Todas las facturas ya tienen OT asignada.</div>';
+    document.getElementById('fxPendingCount').textContent = '0';
+    document.getElementById('fxCrearBtn').disabled = true;
+  } else {
+    var html = '';
+    SIN_OT.forEach(function(item, idx){
+      html += '<div class="d-flex gap-2 align-items-center py-1 border-bottom" id="fx-row-' + item.item_id + '">'
+            + '<div class="form-check m-0">'
+            + '<input class="form-check-input fx-item-check" type="checkbox" checked '
+            + 'data-item="' + item.item_id + '" id="fxchk-' + idx + '">'
+            + '</div>'
+            + '<div class="flex-grow-1 small">'
+            + '<div class="font-monospace fw-semibold">' + _esc(item.doc) + '</div>'
+            + '<div class="text-muted">' + _esc(item.cliente) + '</div>'
+            + '</div>'
+            + '<div class="small text-muted" id="fx-status-' + item.item_id + '"></div>'
+            + '</div>';
+    });
+    lista.innerHTML = html;
+    document.getElementById('fxPendingCount').textContent = SIN_OT.length;
+    document.getElementById('fxCrearBtn').disabled = false;
+  }
+
+  document.getElementById('fxProgress').classList.add('d-none');
+  document.getElementById('fxProgressBar').style.width = '0%';
+  document.getElementById('fxProgressBar').textContent = '0%';
+
+  _crearOtsFedexModal.show();
+}
+
+async function ejecutarCrearOTs() {
+  var checks = document.querySelectorAll('.fx-item-check:checked');
+  var ids = [];
+  checks.forEach(function(c){ ids.push(parseInt(c.dataset.item, 10)); });
+  if (!ids.length) {
+    ilusToast('Selecciona al menos una factura', { type: 'warning' });
+    return;
+  }
+
+  var ok = await ilusConfirm({
+    title: 'Crear OTs FedEx',
+    message: '¿Crear ' + ids.length + ' OT(s) en FedEx?',
+    sub: 'Esto generará tracking numbers REALES en FedEx y descontará créditos de la cuenta. '
+       + 'No se puede deshacer fácilmente (se puede cancelar el mismo día).',
+    okLabel: 'Sí, crear OTs', danger: false,
+  });
+  if (!ok) return;
+
+  var btn = document.getElementById('fxCrearBtn');
+  btn.disabled = true;
+
+  document.getElementById('fxProgress').classList.remove('d-none');
+  var bar = document.getElementById('fxProgressBar');
+  var msg = document.getElementById('fxProgressMsg');
+  bar.style.width = '15%'; bar.textContent = 'Generando…';
+  msg.textContent = 'Enviando solicitud a FedEx (puede tardar 10-20 seg por OT)…';
+
+  var payload = {
+    item_ids:      ids,
+    service_type:  document.getElementById('fxService').value,
+    label_format:  document.getElementById('fxLabelFormat').value,
+    pickup_type:   document.getElementById('fxPickupType').value,
+    notificar:     document.getElementById('fxNotify').checked,
+  };
+
+  var res;
+  try {
+    var r = await fetch('/transporte/api/manifiestos/' + MID + '/crear-ots-fedex-masivo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    res = await r.json();
+  } catch(e) {
+    btn.disabled = false;
+    bar.style.width = '0%';
+    msg.textContent = '';
+    ilusToast('Error de conexión con FedEx', { type: 'error' });
+    return;
+  }
+
+  if (!res || !res.ok) {
+    btn.disabled = false;
+    bar.style.width = '0%';
+    msg.textContent = '';
+    ilusToast((res && res.error) || 'Error al crear OTs', { type: 'error' });
+    return;
+  }
+
+  bar.style.width = '100%'; bar.textContent = '100%';
+  msg.textContent = 'Listo · ' + res.creadas + ' creada(s) · ' + res.errores + ' error(es)';
+
+  (res.resultados || []).forEach(function(r){
+    var cell = document.getElementById('fx-status-' + r.item_id);
+    if (!cell) return;
+    if (r.ok && r.master_tracking_number) {
+      cell.innerHTML = '<span style="color:#15803d;font-weight:700">'
+                     + '<i class="bi bi-check-circle-fill me-1"></i>'
+                     + _esc(r.master_tracking_number) + '</span>';
+    } else if (r.error) {
+      cell.innerHTML = '<span style="color:#dc2626" title="' + _esc(r.error) + '">'
+                     + '<i class="bi bi-x-circle-fill me-1"></i>error</span>';
+    }
+  });
+
+  ilusToast('✓ ' + res.creadas + ' OT(s) creada(s) en FedEx', { type: 'success' });
+  setTimeout(function(){ location.reload(); }, 2500);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  PROGRAMAR RETIRO FedEx (Pickup API)
+// ══════════════════════════════════════════════════════════════════════
+
+var _pickupFedexModal = null;
+
+function abrirPickupFedex() {
+  if (!document.getElementById('pickupFedexModal')) return;
+  if (!_pickupFedexModal) _pickupFedexModal = new bootstrap.Modal(document.getElementById('pickupFedexModal'));
+
+  // Default: mañana
+  var fecha = document.getElementById('pkFecha');
+  if (fecha && !fecha.value) {
+    var d = new Date(); d.setDate(d.getDate() + 1);
+    fecha.value = d.toISOString().slice(0, 10);
+  }
+  document.getElementById('pkMsg').innerHTML = '';
+  _pickupFedexModal.show();
+}
+
+function _pickupPayload() {
+  return {
+    manifest_id:     MID,
+    fecha:           document.getElementById('pkFecha').value,
+    ready_time:      (document.getElementById('pkReadyTime').value || '09:00') + ':00',
+    close_time:      (document.getElementById('pkCloseTime').value || '18:00') + ':00',
+    package_count:   parseInt(document.getElementById('pkPackageCount').value, 10) || 1,
+    total_weight_kg: parseFloat(document.getElementById('pkTotalWeight').value) || 1,
+    direccion:       document.getElementById('pkDireccion').value.trim(),
+    comuna:          document.getElementById('pkComuna').value.trim(),
+    cod_postal:      document.getElementById('pkCodPostal').value.trim(),
+    instrucciones:   document.getElementById('pkInstrucciones').value.trim(),
+    notify_email:    document.getElementById('pkNotifyEmail').value.trim(),
+    contacto: {
+      nombre:    document.getElementById('pkContactoNombre').value.trim(),
+      telefono:  document.getElementById('pkContactoTelefono').value.trim(),
+    },
+  };
+}
+
+async function consultarDisponibilidadPickup() {
+  var msg = document.getElementById('pkMsg');
+  msg.innerHTML = '<i class="bi bi-arrow-repeat"></i> Consultando disponibilidad…';
+  var p = _pickupPayload();
+  try {
+    var r = await fetch('/transporte/api/pickup/fedex/disponibilidad', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fecha: p.fecha, ready_time: p.ready_time, close_time: p.close_time,
+        peso_kg: p.total_weight_kg,
+        direccion: p.direccion, comuna: p.comuna, cod_postal: p.cod_postal,
+      })
+    });
+    var data = await r.json();
+    if (!data.ok) {
+      msg.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> ' + _esc(data.error || 'No disponible') + '</span>';
+      return;
+    }
+    var opts = data.options || [];
+    if (!opts.length) {
+      msg.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Sin opciones para esa fecha</span>';
+      return;
+    }
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Disponible · ' + opts.length + ' opción(es)</span>';
+  } catch(e) {
+    msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
+  }
+}
+
+async function ejecutarCrearPickup() {
+  var p = _pickupPayload();
+  if (!p.fecha) { ilusToast('Selecciona una fecha', { type: 'warning' }); return; }
+
+  var ok = await ilusConfirm({
+    title: 'Programar retiro FedEx',
+    message: '¿Agendar retiro el ' + p.fecha + ' entre ' + p.ready_time.slice(0,5) + ' y ' + p.close_time.slice(0,5) + '?',
+    sub: p.package_count + ' bulto(s) · ' + p.total_weight_kg + ' kg · ' + p.direccion + ', ' + p.comuna,
+    okLabel: 'Sí, programar',
+  });
+  if (!ok) return;
+
+  var btn = document.getElementById('pkCrearBtn');
+  btn.disabled = true;
+  var msg = document.getElementById('pkMsg');
+  msg.innerHTML = '<i class="bi bi-arrow-repeat"></i> Enviando solicitud a FedEx…';
+
+  try {
+    var r = await fetch('/transporte/api/pickup/fedex/crear', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(p)
+    });
+    var data = await r.json();
+    btn.disabled = false;
+    if (!data.ok) {
+      msg.innerHTML = '<span class="text-danger">' + _esc(data.error || 'Error') + '</span>';
+      return;
+    }
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> '
+                  + 'Retiro programado · Código: <strong>' + _esc(data.pickup_confirmation_code) + '</strong> '
+                  + '· Centro: ' + _esc(data.location) + '</span>';
+    ilusToast('✓ Retiro FedEx programado: ' + data.pickup_confirmation_code, { type: 'success' });
+    setTimeout(function(){ if (_pickupFedexModal) _pickupFedexModal.hide(); }, 2500);
+  } catch(e) {
+    btn.disabled = false;
+    msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
+  }
 }
 </script>
 {% endblock %}
