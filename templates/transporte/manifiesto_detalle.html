@@ -59,6 +59,7 @@
     {% endif %}
   </div>
   <div class="mfd-hero-actions no-print">
+    {% if not es_fedex %}
     <button class="btn btn-sm btn-outline-warning fw-bold" onclick="abrirAsignarChofer()">
       <i class="bi bi-person-badge me-1"></i><span id="chBtnLbl">Asignar chofer</span>
     </button>
@@ -66,6 +67,7 @@
             onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas', '_blank')">
       <i class="bi bi-tags-fill me-1"></i>Etiquetas del manifiesto
     </button>
+    {% endif %}
     <a href="{{ url_for('tr_manifiesto_export', mid=manifiesto.id) }}" class="btn btn-sm btn-success fw-bold">
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
     </a>
@@ -355,10 +357,12 @@
               <i class="bi bi-shield-check"></i>
             </a>
             {% endif %}
+            {% if not es_fedex %}
             <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas ILUS de esta factura"
                     onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
               <i class="bi bi-tags"></i>
             </button>
+            {% endif %}
             {% if es_fedex and item.get('master_tracking_number') %}
             <button class="btn btn-sm mfd-act-btn" title="Descargar etiqueta oficial FedEx (PDF/ZPL)"
                     style="background:#4d148c;color:#fff;border:none"
@@ -370,10 +374,12 @@
                     onclick='abrirEditar({{ item_json }})'>
               <i class="bi bi-pencil-square"></i>
             </button>
+            {% if not es_fedex %}
             <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Copiar link de seguimiento del cliente"
                     onclick="mostrarLinkCliente({{ item.id }})">
               <i class="bi bi-link-45deg"></i>
             </button>
+            {% endif %}
             {% if es_fedex %}
               {% if not item.get('master_tracking_number') %}
               <button class="btn btn-sm mfd-act-btn" title="Crear OT FedEx automáticamente (Ship API)"
@@ -511,17 +517,21 @@
           </div>
         </div>
         <div class="d-flex gap-1 no-print">
+          {% if not es_fedex %}
           <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Etiquetas de esta factura"
                   onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
             <i class="bi bi-tags"></i>
           </button>
+          {% endif %}
           <button class="btn btn-sm btn-outline-secondary mfd-act-btn" onclick='abrirEditar({{ item_json }})'>
             <i class="bi bi-pencil-square"></i>
           </button>
+          {% if not es_fedex %}
           <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Link de seguimiento del cliente"
                   onclick="mostrarLinkCliente({{ item.id }})">
             <i class="bi bi-link-45deg"></i>
           </button>
+          {% endif %}
           <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="FedEx tracking"
                   onclick="abrirTrackingFedex({{ item.id }})">
             <i class="bi bi-truck"></i>
@@ -1949,13 +1959,23 @@ async function ejecutarCrearOTs() {
                      + '<i class="bi bi-check-circle-fill me-1"></i>'
                      + _esc(r.master_tracking_number) + '</span>';
     } else if (r.error) {
-      cell.innerHTML = '<span style="color:#dc2626" title="' + _esc(r.error) + '">'
-                     + '<i class="bi bi-x-circle-fill me-1"></i>error</span>';
+      // Mostrar el texto del error directamente (no solo en tooltip)
+      var errTxt = r.error || 'Error FedEx';
+      // Truncar para que quepa en la celda; el texto completo en title
+      var errShort = errTxt.length > 80 ? errTxt.slice(0, 77) + '…' : errTxt;
+      cell.innerHTML = '<div style="color:#dc2626;font-size:.75rem;max-width:280px">'
+                     + '<div style="font-weight:700"><i class="bi bi-x-circle-fill me-1"></i>Error FedEx</div>'
+                     + '<div title="' + _esc(errTxt) + '" style="line-height:1.3;word-break:break-word">'
+                     + _esc(errShort) + '</div></div>';
     }
   });
 
-  ilusToast('✓ ' + res.creadas + ' OT(s) creada(s) en FedEx', { type: 'success' });
-  setTimeout(function(){ location.reload(); }, 2500);
+  if (res.errores > 0) {
+    ilusToast(res.creadas + ' OT(s) creada(s) · ' + res.errores + ' error(es) — revisa la lista', { type: 'warning' });
+  } else {
+    ilusToast('✓ ' + res.creadas + ' OT(s) creada(s) en FedEx', { type: 'success' });
+  }
+  setTimeout(function(){ location.reload(); }, 3500);
 }
 
 // ══════════════════════════════════════════════════════════════════════

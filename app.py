@@ -14385,10 +14385,12 @@ def _fedex_postal_cl(postal_code) -> str:
     """FedEx Ship/Pickup en Chile usa código postal de 4 dígitos (no 7).
     El Rate API acepta los 7 (ej. 9276181) y los recorta internamente, pero
     Ship requiere los primeros 4 (9276). Tolera None / strings vacíos.
+    Cuando no hay código postal devuelve "" (cadena vacía) — FedEx CL doméstico
+    acepta postalCode vacío; rechaza "0000" como código inválido.
     """
     s = "".join(c for c in str(postal_code or "") if c.isdigit())
-    if not s:
-        return "0000"
+    if not s or s == "0000":
+        return ""
     return s[:4]
 
 
@@ -14409,10 +14411,12 @@ def _fedex_clean_str(s, max_len=None) -> str:
 def _fedex_split_address(direccion: str, max_per_line: int = 35):
     """Divide una dirección larga en hasta 2 líneas para streetLines de FedEx.
     FedEx limita cada línea a 35 chars. Si entra en una sola, devuelve [str].
+    FedEx rechaza streetLines con cadenas vacías — si no hay dirección, devuelve
+    ["Sin dirección"] como placeholder (FedEx CL acepta esto para domestic).
     """
     d = _fedex_clean_str(direccion)
     if not d:
-        return [""]
+        return ["Sin direccion"]
     if len(d) <= max_per_line:
         return [d]
     # Partir por la última coma/espacio antes del límite
@@ -14483,10 +14487,16 @@ def _fedex_create_shipment(
 
     rec_nombre   = _fedex_clean_str(recipient.get("nombre"), 70) or "Cliente"
     rec_empresa  = _fedex_clean_str(recipient.get("empresa"), 70) or rec_nombre
-    rec_tel      = "".join(c for c in str(recipient.get("telefono") or "") if c.isdigit() or c == "+")
-    if rec_tel and not rec_tel.startswith("+"):
-        rec_tel = "+56" + rec_tel.lstrip("0")
-    rec_tel      = rec_tel or "+56000000000"
+    # FedEx CL domestic requiere dígitos solamente (7-15 chars), sin "+" ni espacios.
+    rec_tel      = "".join(c for c in str(recipient.get("telefono") or "") if c.isdigit())
+    if not rec_tel or rec_tel == "0":
+        # Sin teléfono: usar el de bodega ILUS como fallback (FedEx requiere ≥7 dígitos)
+        rec_tel = "".join(c for c in str(ILUS_REMITENTE.get("telefono") or "562294659700") if c.isdigit())
+    elif len(rec_tel) < 7:
+        # Agregar prefijo país sin "+" — ej: 9XXXXXXXX → 569XXXXXXXX
+        rec_tel = "56" + rec_tel.lstrip("0") or "562294659700"
+    # FedEx exige máximo 15 dígitos
+    rec_tel = rec_tel[:15]
     rec_email    = _fedex_clean_str(recipient.get("email"), 80)
     rec_dir      = _fedex_split_address(recipient.get("direccion"))
     rec_comuna_raw = (recipient.get("comuna") or "").strip()
@@ -14497,6 +14507,9 @@ def _fedex_create_shipment(
         except Exception:
             pass
     rec_comuna   = _fedex_clean_str(rec_comuna_raw, 35) or "Santiago"
+    # FedEx CL: usar los primeros 4 dígitos del código postal.
+    # "0000" no es válido — si no hay código postal, enviar cadena vacía
+    # (FedEx acepta postalCode vacío para Chile doméstico).
     rec_postal   = _fedex_postal_cl(recipient.get("cod_postal"))
 
     shipper_dir = _fedex_split_address(ILUS_REMITENTE.get("bodega") or ILUS_REMITENTE["direccion"])
@@ -14530,15 +14543,17 @@ def _fedex_create_shipment(
             "shipper": {
                 "contact": {
                     "personName":  _fedex_clean_str(ILUS_REMITENTE["nombre"], 35),
-                    "phoneNumber": ILUS_REMITENTE["telefono"],
+                    # FedEx CL: dígitos solamente, sin "+" (ej. 56229465970)
+                    "phoneNumber": "".join(c for c in str(ILUS_REMITENTE["telefono"]) if c.isdigit()),
                     "companyName": _fedex_clean_str(ILUS_REMITENTE["nombre"], 35),
                 },
                 "address": {
-                    "streetLines":         shipper_dir,
-                    "city":                "Quilicura",
-                    "stateOrProvinceCode": "CL",
-                    "postalCode":          _fedex_postal_cl(FEDEX_ORIGIN_POSTAL),
-                    "countryCode":         "CL",
+                    "streetLines": shipper_dir,
+                    "city":        "Quilicura",
+                    # Chile doméstico: stateOrProvinceCode debe omitirse o quedar vacío.
+                    # Usar "CL" (código de país) causa rechazo en Ship API.
+                    "postalCode":  _fedex_postal_cl(FEDEX_ORIGIN_POSTAL),
+                    "countryCode": "CL",
                 },
             },
             "recipients": [{
@@ -14549,11 +14564,11 @@ def _fedex_create_shipment(
                     **({"emailAddress": rec_email} if rec_email else {}),
                 },
                 "address": {
-                    "streetLines":         rec_dir,
-                    "city":                rec_comuna,
-                    "stateOrProvinceCode": "CL",
-                    "postalCode":          rec_postal,
-                    "countryCode":         "CL",
+                    "streetLines": rec_dir,
+                    "city":        rec_comuna,
+                    # Chile doméstico: stateOrProvinceCode debe omitirse o quedar vacío.
+                    "countryCode": "CL",
+                    **({"postalCode": rec_postal} if rec_postal else {}),
                 },
             }],
             "shipDatestamp":    ship_date,
@@ -20928,8 +20943,10 @@ def tr_crear_ots_fedex_masivo(mid):
             except Exception:
                 pass
             resultados.append({
-                "item_id": iid, "ok": False,
-                "error":   res.get("error") or "FedEx no respondió",
+                "item_id":    iid,
+                "ok":         False,
+                "error":      res.get("error") or "FedEx no respondió",
+                "error_code": res.get("error_code"),
             })
             continue
         master_tn = res["master_tracking_number"]
