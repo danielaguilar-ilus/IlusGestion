@@ -14269,6 +14269,502 @@ def _fedex_estado_a_ilus(status_code: str, description: str = "") -> str:
     return 'En ruta'   # default seguro: si FedEx tiene algo, está moviéndose
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  FEDEX SHIP API + PICKUP API — crear envíos, etiquetas y retiros
+# ═══════════════════════════════════════════════════════════════════════════
+# Endpoint y servicios FedEx para Chile doméstico (intra-country).
+FEDEX_SHIP_URL          = "https://apis.fedex.com/ship/v1/shipments"
+FEDEX_SHIP_CANCEL_URL   = "https://apis.fedex.com/ship/v1/shipments/cancel"
+FEDEX_PICKUP_AVAIL_URL  = "https://apis.fedex.com/pickup/v1/pickups/availabilities"
+FEDEX_PICKUP_CREATE_URL = "https://apis.fedex.com/pickup/v1/pickups"
+FEDEX_PICKUP_CANCEL_URL = "https://apis.fedex.com/pickup/v1/pickups/cancel"
+
+# Servicio doméstico CL recomendado por FedEx CL para envíos intra-country.
+FEDEX_DEFAULT_SERVICE_CL = "FEDEX_PRIORITY"
+
+
+def _fedex_postal_cl(postal_code) -> str:
+    """FedEx Ship/Pickup en Chile usa código postal de 4 dígitos (no 7).
+    El Rate API acepta los 7 (ej. 9276181) y los recorta internamente, pero
+    Ship requiere los primeros 4 (9276). Tolera None / strings vacíos.
+    """
+    s = "".join(c for c in str(postal_code or "") if c.isdigit())
+    if not s:
+        return "0000"
+    return s[:4]
+
+
+def _fedex_clean_str(s, max_len=None) -> str:
+    """Limpia un string para enviar a FedEx (sin saltos de línea, recorta).
+    FedEx rechaza strings con \\n/\\r y limita la mayoría a 35-60 chars.
+    """
+    if s is None:
+        return ""
+    out = str(s).replace("\n", " ").replace("\r", " ").strip()
+    while "  " in out:
+        out = out.replace("  ", " ")
+    if max_len and len(out) > max_len:
+        out = out[:max_len].rstrip()
+    return out
+
+
+def _fedex_split_address(direccion: str, max_per_line: int = 35):
+    """Divide una dirección larga en hasta 2 líneas para streetLines de FedEx.
+    FedEx limita cada línea a 35 chars. Si entra en una sola, devuelve [str].
+    """
+    d = _fedex_clean_str(direccion)
+    if not d:
+        return [""]
+    if len(d) <= max_per_line:
+        return [d]
+    # Partir por la última coma/espacio antes del límite
+    cut = d[:max_per_line].rfind(",")
+    if cut < 10:
+        cut = d[:max_per_line].rfind(" ")
+    if cut < 10:
+        cut = max_per_line
+    line1 = d[:cut].strip(" ,")
+    line2 = _fedex_clean_str(d[cut:].strip(" ,"), max_per_line)
+    return [line1, line2] if line2 else [line1]
+
+
+def _fedex_create_shipment(
+    *,
+    recipient: dict,
+    packages: list,
+    reference: str = "",
+    ship_date: str = None,
+    service_type: str = None,
+    label_format: str = "PDF",         # PDF | ZPLII | EPL2 | PNG
+    label_stock: str = "PAPER_4X6",    # PAPER_4X6 | STOCK_4X6
+    notify_email: str = "",
+    notify_name: str = "",
+    pickup_type: str = "USE_SCHEDULED_PICKUP",
+) -> dict:
+    """Crea un envío FedEx y devuelve tracking number + etiqueta en base64.
+
+    Args:
+        recipient: dict con keys: nombre, empresa, telefono, email, direccion,
+                   comuna, region, cod_postal.
+        packages:  list[dict] con keys: peso_kg, largo, ancho, alto, valor,
+                   referencia (str opcional).
+        reference: Customer reference (factura ILUS, ej. "FAC 12345").
+        ship_date: 'YYYY-MM-DD' (default: hoy).
+        service_type: FEDEX_PRIORITY | FEDEX_GROUND | FIRST_OVERNIGHT (default CL).
+        label_format: PDF (default), ZPLII para Zebra térmica.
+        notify_email/notify_name: si presentes, FedEx manda notificaciones al
+                                  destinatario en cada hito.
+        pickup_type: USE_SCHEDULED_PICKUP (Alison agenda retiro) |
+                     DROPOFF_AT_FEDEX_LOCATION (se lleva a sucursal).
+
+    Returns:
+        dict {
+            ok: True/False,
+            master_tracking_number: str (TN principal),
+            piece_trackings: [str, ...] (TN por bulto),
+            label_b64: str (etiqueta master en base64),
+            piece_labels: [{tn, label_b64}, ...] (por bulto si multi-bulto),
+            shipment_id: str (transactionId de FedEx),
+            raw: dict (respuesta cruda para debug),
+            error: str (si ok=False),
+            error_code: str (código FedEx si lo hay),
+        }
+    """
+    import requests as _req
+    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
+        return {"ok": False, "error": "FedEx Ship API no configurada (faltan credenciales)"}
+    if not recipient or not isinstance(recipient, dict):
+        return {"ok": False, "error": "recipient es obligatorio"}
+    if not packages or not isinstance(packages, list):
+        return {"ok": False, "error": "packages es obligatorio"}
+
+    import datetime as _dt
+    ship_date = ship_date or _dt.date.today().strftime("%Y-%m-%d")
+    service_type = service_type or FEDEX_DEFAULT_SERVICE_CL
+    token = _fedex_get_token()
+
+    rec_nombre   = _fedex_clean_str(recipient.get("nombre"), 70) or "Cliente"
+    rec_empresa  = _fedex_clean_str(recipient.get("empresa"), 70) or rec_nombre
+    rec_tel      = "".join(c for c in str(recipient.get("telefono") or "") if c.isdigit() or c == "+")
+    if rec_tel and not rec_tel.startswith("+"):
+        rec_tel = "+56" + rec_tel.lstrip("0")
+    rec_tel      = rec_tel or "+56000000000"
+    rec_email    = _fedex_clean_str(recipient.get("email"), 80)
+    rec_dir      = _fedex_split_address(recipient.get("direccion"))
+    rec_comuna   = _fedex_clean_str(recipient.get("comuna"), 35) or "Santiago"
+    rec_postal   = _fedex_postal_cl(recipient.get("cod_postal"))
+
+    shipper_dir = _fedex_split_address(ILUS_REMITENTE.get("bodega") or ILUS_REMITENTE["direccion"])
+
+    # Armar requestedPackageLineItems
+    rpl = []
+    for idx, pkg in enumerate(packages, start=1):
+        peso = max(round(float(pkg.get("peso_kg") or 0), 1), 0.5)
+        largo = max(int(round(float(pkg.get("largo") or 10))), 1)
+        ancho = max(int(round(float(pkg.get("ancho") or 10))), 1)
+        alto  = max(int(round(float(pkg.get("alto")  or 10))), 1)
+        valor = float(pkg.get("valor") or 0)
+        item = {
+            "groupPackageCount": 1,
+            "itemDescriptionForClearance": _fedex_clean_str(pkg.get("descripcion") or reference or "Mercaderia", 50),
+            "declaredValue": {"amount": f"{valor:.2f}", "currency": "CLP"},
+            "weight":     {"units": "KG", "value": peso},
+            "dimensions": {"length": largo, "width": ancho, "height": alto, "units": "CM"},
+        }
+        if reference:
+            item["customerReferences"] = [
+                {"customerReferenceType": "CUSTOMER_REFERENCE", "value": _fedex_clean_str(reference, 30)},
+                {"customerReferenceType": "INVOICE_NUMBER",     "value": _fedex_clean_str(reference, 30)},
+            ]
+        rpl.append(item)
+
+    body = {
+        "labelResponseOptions": "LABEL",
+        "accountNumber": {"value": FEDEX_ACCOUNT},
+        "requestedShipment": {
+            "shipper": {
+                "contact": {
+                    "personName":  _fedex_clean_str(ILUS_REMITENTE["nombre"], 35),
+                    "phoneNumber": ILUS_REMITENTE["telefono"],
+                    "companyName": _fedex_clean_str(ILUS_REMITENTE["nombre"], 35),
+                },
+                "address": {
+                    "streetLines":         shipper_dir,
+                    "city":                "Quilicura",
+                    "stateOrProvinceCode": "CL",
+                    "postalCode":          _fedex_postal_cl(FEDEX_ORIGIN_POSTAL),
+                    "countryCode":         "CL",
+                },
+            },
+            "recipients": [{
+                "contact": {
+                    "personName":   rec_nombre,
+                    "phoneNumber":  rec_tel,
+                    "companyName":  rec_empresa,
+                    **({"emailAddress": rec_email} if rec_email else {}),
+                },
+                "address": {
+                    "streetLines":         rec_dir,
+                    "city":                rec_comuna,
+                    "stateOrProvinceCode": "CL",
+                    "postalCode":          rec_postal,
+                    "countryCode":         "CL",
+                },
+            }],
+            "shipDatestamp":    ship_date,
+            "serviceType":      service_type,
+            "packagingType":    "YOUR_PACKAGING",
+            "pickupType":       pickup_type,
+            "blockInsightVisibility": False,
+            "shippingChargesPayment": {"paymentType": "SENDER"},
+            "labelSpecification": {
+                "imageType":     label_format,
+                "labelStockType": label_stock,
+            },
+            "requestedPackageLineItems": rpl,
+        },
+    }
+
+    # Notificación al destinatario (si dio email)
+    if notify_email:
+        body["requestedShipment"]["emailNotificationDetail"] = {
+            "aggregationType": "PER_PACKAGE",
+            "emailNotificationRecipients": [{
+                "name":                           _fedex_clean_str(notify_name or rec_nombre, 50),
+                "emailNotificationRecipientType": "RECIPIENT",
+                "emailAddress":                   notify_email,
+                "notificationFormatType":         "HTML",
+                "notificationType":               "EMAIL",
+                "locale":                         "es_CL",
+                "notificationEventType": [
+                    "ON_SHIPMENT", "ON_TENDER", "ON_DELIVERY", "ON_EXCEPTION",
+                ],
+            }],
+        }
+
+    try:
+        resp = _req.post(
+            FEDEX_SHIP_URL, json=body,
+            headers={
+                "Authorization":  f"Bearer {token}",
+                "Content-Type":   "application/json",
+                "X-locale":       "es_CL",
+            }, timeout=30,
+        )
+    except Exception as e_net:
+        return {"ok": False, "error": f"Red FedEx: {str(e_net)[:140]}"}
+
+    try:
+        data = resp.json()
+    except Exception:
+        return {"ok": False, "error": f"FedEx no devolvió JSON (HTTP {resp.status_code})"}
+
+    if resp.status_code >= 400:
+        errs = data.get("errors") or []
+        msg = "; ".join(e.get("message", "") for e in errs if e.get("message"))[:280]
+        return {
+            "ok": False,
+            "error": msg or f"FedEx HTTP {resp.status_code}",
+            "error_code": (errs[0].get("code") if errs else None),
+            "raw": data,
+        }
+
+    output = data.get("output", {}) or {}
+    txns = output.get("transactionShipments", []) or []
+    if not txns:
+        return {"ok": False, "error": "FedEx no devolvió transactionShipments", "raw": data}
+
+    txn = txns[0]
+    master_tn = txn.get("masterTrackingNumber") or txn.get("trackingNumber") or ""
+    piece_resp = txn.get("pieceResponses", []) or []
+    piece_trackings = []
+    piece_labels = []
+    master_label_b64 = ""
+    for pr in piece_resp:
+        tn = pr.get("trackingNumber") or ""
+        piece_trackings.append(tn)
+        for doc in (pr.get("packageDocuments") or []):
+            enc = (doc.get("encodedLabel") or doc.get("encoded") or "")
+            if enc:
+                piece_labels.append({"tracking_number": tn, "label_b64": enc})
+                if not master_label_b64:
+                    master_label_b64 = enc
+                break
+
+    # Fallback: a veces la etiqueta master viene a nivel de txn
+    if not master_label_b64:
+        for doc in (txn.get("shipmentDocuments") or []):
+            enc = (doc.get("encodedLabel") or doc.get("encoded") or "")
+            if enc:
+                master_label_b64 = enc
+                break
+
+    return {
+        "ok":                       True,
+        "master_tracking_number":   master_tn,
+        "piece_trackings":          piece_trackings,
+        "label_b64":                master_label_b64,
+        "piece_labels":             piece_labels,
+        "shipment_id":              data.get("transactionId") or "",
+        "service_type":             service_type,
+        "label_format":             label_format,
+    }
+
+
+def _fedex_cancel_shipment(tracking_number: str) -> dict:
+    """Cancela un envío FedEx (mismo día) por tracking number.
+
+    Returns: {ok: bool, cancelled: bool, error?: str}
+    """
+    import requests as _req
+    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
+        return {"ok": False, "error": "FedEx Ship API no configurada"}
+    tn = "".join(c for c in str(tracking_number or "") if c.isalnum())
+    if not tn:
+        return {"ok": False, "error": "tracking_number requerido"}
+    token = _fedex_get_token()
+    try:
+        resp = _req.put(
+            FEDEX_SHIP_CANCEL_URL,
+            json={
+                "accountNumber":     {"value": FEDEX_ACCOUNT},
+                "senderCountryCode": "CL",
+                "deletionControl":   "DELETE_ALL_PACKAGES",
+                "trackingNumber":    tn,
+            },
+            headers={
+                "Authorization":  f"Bearer {token}",
+                "Content-Type":   "application/json",
+                "X-locale":       "es_CL",
+            }, timeout=20,
+        )
+    except Exception as e_net:
+        return {"ok": False, "error": f"Red FedEx: {str(e_net)[:140]}"}
+    try:
+        data = resp.json()
+    except Exception:
+        return {"ok": False, "error": f"FedEx no devolvió JSON (HTTP {resp.status_code})"}
+    if resp.status_code >= 400:
+        errs = data.get("errors") or []
+        msg = "; ".join(e.get("message", "") for e in errs if e.get("message"))[:280]
+        return {"ok": False, "error": msg or f"FedEx HTTP {resp.status_code}", "raw": data}
+    return {
+        "ok":         True,
+        "cancelled":  (data.get("output", {}) or {}).get("cancelledShipment", True),
+        "raw":        data,
+    }
+
+
+def _fedex_pickup_check(
+    *,
+    address: dict,
+    dispatch_date: str,
+    ready_time: str = "09:00:00",
+    close_time: str = "18:00:00",
+    weight_kg: float = 1.0,
+    dims: dict = None,
+) -> dict:
+    """Consulta horarios disponibles para retiro FedEx en Chile.
+
+    Args:
+        address: dict {direccion, comuna, cod_postal}
+        dispatch_date: 'YYYY-MM-DD'
+        ready_time/close_time: 'HH:MM:SS'
+
+    Returns: {ok, options: [{type, cutoff, ready_window}], raw}
+    """
+    import requests as _req
+    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
+        return {"ok": False, "error": "FedEx Pickup API no configurada"}
+    token = _fedex_get_token()
+    dims = dims or {"length": 10, "width": 10, "height": 10, "units": "CM"}
+    body = {
+        "pickupAddress": {
+            "streetLines":         _fedex_split_address(address.get("direccion")),
+            "city":                _fedex_clean_str(address.get("comuna"), 35) or "Quilicura",
+            "stateOrProvinceCode": "CL",
+            "postalCode":          _fedex_postal_cl(address.get("cod_postal")),
+            "countryCode":         "CL",
+        },
+        "dispatchDate":      dispatch_date,
+        "packageReadyTime":  ready_time,
+        "customerCloseTime": close_time,
+        "pickupRequestType": ["SAME_DAY", "FUTURE_DAY"],
+        "shipmentAttributes": {
+            "serviceType":     FEDEX_DEFAULT_SERVICE_CL,
+            "weight":          {"units": "KG", "value": max(float(weight_kg or 1.0), 0.5)},
+            "packagingType":   "YOUR_PACKAGING",
+            "dimensions":      dims,
+        },
+        "numberOfBusinessDays":   1,
+        "packageDetails":         [{"packageSpecialServices": {"specialServiceTypes": ["SIGNATURE_OPTION"]}}],
+        "associatedAccountNumber": FEDEX_ACCOUNT,
+        "carriers":              ["FDXE"],
+        "countryRelationship":    "DOMESTIC",
+    }
+    try:
+        resp = _req.post(FEDEX_PICKUP_AVAIL_URL, json=body,
+                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                         timeout=20)
+        data = resp.json()
+    except Exception as e_net:
+        return {"ok": False, "error": f"FedEx Pickup: {str(e_net)[:140]}"}
+    if resp.status_code >= 400:
+        errs = data.get("errors") or []
+        msg = "; ".join(e.get("message", "") for e in errs if e.get("message"))[:280]
+        return {"ok": False, "error": msg or f"FedEx HTTP {resp.status_code}", "raw": data}
+    out = (data.get("output", {}) or {})
+    opts = out.get("options") or out.get("availableOptions") or []
+    return {"ok": True, "options": opts, "raw": data}
+
+
+def _fedex_pickup_create(
+    *,
+    contact: dict,
+    address: dict,
+    ready_dt: str,           # 'YYYY-MM-DDTHH:MM:SS'
+    close_time: str = "18:00:00",
+    package_count: int = 1,
+    total_weight_kg: float = 1.0,
+    dims: dict = None,
+    notify_email: str = "",
+    delivery_instructions: str = "",
+) -> dict:
+    """Crea una solicitud de retiro FedEx.
+
+    Returns: {ok, pickup_confirmation_code, location, scheduled_date, raw}
+    """
+    import requests as _req
+    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
+        return {"ok": False, "error": "FedEx Pickup API no configurada"}
+    token = _fedex_get_token()
+    dims = dims or {"length": 30, "width": 30, "height": 30, "units": "CM"}
+    body = {
+        "associatedAccountNumber": {"value": FEDEX_ACCOUNT},
+        "originDetail": {
+            "pickupLocation": {
+                "contact": {
+                    "companyName": _fedex_clean_str(contact.get("empresa") or ILUS_REMITENTE["nombre"], 35),
+                    "personName":  _fedex_clean_str(contact.get("nombre")  or "Despacho", 35),
+                    "phoneNumber": _fedex_clean_str(contact.get("telefono") or ILUS_REMITENTE["telefono"], 15),
+                },
+                "address": {
+                    "streetLines":         _fedex_split_address(address.get("direccion") or ILUS_REMITENTE["bodega"]),
+                    "city":                _fedex_clean_str(address.get("comuna") or "Quilicura", 35),
+                    "stateOrProvinceCode": "CL",
+                    "postalCode":          _fedex_postal_cl(address.get("cod_postal") or FEDEX_ORIGIN_POSTAL),
+                    "countryCode":         "CL",
+                },
+                "deliveryInstructions": _fedex_clean_str(delivery_instructions, 80),
+            },
+            "readyDateTimestamp": ready_dt,
+            "customerCloseTime":  close_time,
+        },
+        "totalWeight":  {"units": "KG", "value": max(float(total_weight_kg or 1.0), 0.5)},
+        "dimensions":   dims,
+        "carrierCode":  "FDXE",
+        "packageCount": int(package_count or 1),
+        "accountAddressOfRecord": {
+            "streetLines": _fedex_split_address(ILUS_REMITENTE["bodega"]),
+        },
+    }
+    if notify_email:
+        body["pickupNotificationDetail"] = {
+            "emailDetails": [{"address": notify_email, "locale": "es_CL"}],
+            "format":       "HTML",
+            "userMessage":  "Retiro solicitado desde ILUS Sport & Health",
+        }
+    try:
+        resp = _req.post(FEDEX_PICKUP_CREATE_URL, json=body,
+                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                         timeout=25)
+        data = resp.json()
+    except Exception as e_net:
+        return {"ok": False, "error": f"FedEx Pickup: {str(e_net)[:140]}"}
+    if resp.status_code >= 400:
+        errs = data.get("errors") or []
+        msg = "; ".join(e.get("message", "") for e in errs if e.get("message"))[:280]
+        return {"ok": False, "error": msg or f"FedEx HTTP {resp.status_code}", "raw": data}
+    out = (data.get("output", {}) or {})
+    return {
+        "ok":                       True,
+        "pickup_confirmation_code": out.get("pickupConfirmationCode") or "",
+        "location":                 out.get("location") or "",
+        "scheduled_date":           out.get("scheduledDate") or "",
+        "raw":                      data,
+    }
+
+
+def _fedex_pickup_cancel(*, pickup_confirmation_code: str, scheduled_date: str,
+                        location: str = "") -> dict:
+    """Cancela un retiro FedEx por su confirmation code."""
+    import requests as _req
+    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
+        return {"ok": False, "error": "FedEx Pickup API no configurada"}
+    token = _fedex_get_token()
+    try:
+        resp = _req.put(
+            FEDEX_PICKUP_CANCEL_URL,
+            json={
+                "associatedAccountNumber": {"value": FEDEX_ACCOUNT},
+                "pickupConfirmationCode":  pickup_confirmation_code,
+                "carrierCode":             "FDXE",
+                "scheduledDate":           scheduled_date,
+                "location":                location or "SCLA",
+            },
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            timeout=20,
+        )
+        data = resp.json()
+    except Exception as e_net:
+        return {"ok": False, "error": f"FedEx Pickup cancel: {str(e_net)[:140]}"}
+    if resp.status_code >= 400:
+        errs = data.get("errors") or []
+        msg = "; ".join(e.get("message", "") for e in errs if e.get("message"))[:280]
+        return {"ok": False, "error": msg or f"FedEx HTTP {resp.status_code}", "raw": data}
+    return {"ok": True, "raw": data}
+
+
 def _fedex_track_lookup(tracking_numbers):
     """Consulta el Track API para 1 a N tracking numbers.
 
@@ -20012,6 +20508,533 @@ def tr_get_tracking_fedex(item_id):
         "estado_entrega":    r.get("estado_entrega") or "",
         "fedex_configurado": bool(FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET),
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FEDEX SHIP API — endpoints: crear / cancelar OT, descargar etiqueta
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _tr_item_para_ship(item_id):
+    """Recupera todos los datos necesarios para crear un envío FedEx
+    a partir de un item del manifiesto. Devuelve (item, recipient, packages).
+    """
+    it = mysql_fetchone("""
+        SELECT mi.id, mi.commitment_id, mi.manifest_id, mi.tracking_number,
+               mi.master_tracking_number, mi.ship_created_at,
+               c.tido, c.nudo, c.cliente_nombre, c.cliente_rut,
+               c.direccion, c.comuna, c.region, c.cod_postal,
+               c.telefono, c.email,
+               COALESCE(c.peso_export, 0)     AS peso_total,
+               COALESCE(c.n_bultos, 1)        AS n_bultos,
+               COALESCE(c.valor_bruto, 0)     AS valor_total,
+               COALESCE(c.peso_predominante,0) AS peso_pred,
+               c.productos_json
+        FROM transport_manifest_items mi
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.id=%s
+    """, (item_id,))
+    if not it:
+        return None, None, None
+
+    recipient = {
+        "nombre":     it.get("cliente_nombre") or "Cliente",
+        "empresa":    it.get("cliente_nombre") or "",
+        "telefono":   it.get("telefono") or "",
+        "email":      it.get("email") or "",
+        "direccion":  it.get("direccion") or "",
+        "comuna":     it.get("comuna") or "",
+        "region":     it.get("region") or "",
+        "cod_postal": it.get("cod_postal") or "",
+    }
+
+    n = max(int(it.get("n_bultos") or 1), 1)
+    peso_total = float(it.get("peso_total") or it.get("peso_pred") or 0) or 1.0
+    valor_total = float(it.get("valor_total") or 0)
+    peso_por_bulto  = round(peso_total / n, 2) if n > 0 else peso_total
+    valor_por_bulto = round(valor_total / n, 2) if n > 0 else 0
+    referencia = (f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip()
+
+    # Dimensiones por bulto: si no hay info real, asumimos caja media (40x40x40 cm).
+    # TODO: si tenemos dimensiones reales por bulto en productos_json, usarlas.
+    packages = [{
+        "peso_kg":      peso_por_bulto,
+        "largo":        40,
+        "ancho":        40,
+        "alto":         40,
+        "valor":        valor_por_bulto,
+        "descripcion":  f"Mercaderia {referencia}",
+        "referencia":   referencia,
+    } for _ in range(n)]
+
+    return it, recipient, packages
+
+
+@app.route("/transporte/api/items/<int:item_id>/crear-ot-fedex", methods=["POST"])
+@_tr_required
+def tr_crear_ot_fedex(item_id):
+    """Crea un envío FedEx para este item: pide TN + etiqueta a FedEx, los guarda
+    y deja el TN listo para Track API.
+
+    Body opcional: {
+        service_type:  "FEDEX_PRIORITY" (default),
+        label_format:  "PDF" | "ZPLII" (default PDF),
+        pickup_type:   "USE_SCHEDULED_PICKUP" | "DROPOFF_AT_FEDEX_LOCATION",
+        notificar:     true/false (mandar email al destinatario),
+    }
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    it, recipient, packages = _tr_item_para_ship(item_id)
+    if not it:
+        return jsonify({"error": "item no encontrado"}), 404
+    if it.get("master_tracking_number") and not body.get("forzar"):
+        return jsonify({
+            "error": "Esta factura ya tiene OT FedEx",
+            "master_tracking_number": it["master_tracking_number"],
+        }), 409
+
+    notify_email = recipient["email"] if body.get("notificar") else ""
+
+    res = _fedex_create_shipment(
+        recipient=recipient,
+        packages=packages,
+        reference=(f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip(),
+        service_type=body.get("service_type"),
+        label_format=(body.get("label_format") or "PDF"),
+        label_stock=(body.get("label_stock") or "PAPER_4X6"),
+        pickup_type=(body.get("pickup_type") or "USE_SCHEDULED_PICKUP"),
+        notify_email=notify_email,
+        notify_name=recipient.get("nombre"),
+    )
+
+    if not res.get("ok"):
+        # Guardar el error para debug
+        try:
+            mysql_execute(
+                "UPDATE transport_manifest_items SET ship_error=%s WHERE id=%s",
+                ((res.get("error") or "")[:600], item_id)
+            )
+        except Exception:
+            pass
+        return jsonify({
+            "ok":    False,
+            "error": res.get("error") or "FedEx no respondió",
+            "error_code": res.get("error_code"),
+        }), 502
+
+    import json as _jp
+    master_tn = res["master_tracking_number"]
+    piece_tns = res.get("piece_trackings") or []
+    label_b64 = res.get("label_b64") or ""
+    label_fmt = res.get("label_format") or "PDF"
+
+    try:
+        mysql_execute("""
+            UPDATE transport_manifest_items
+            SET master_tracking_number=%s,
+                tracking_number=%s,
+                piece_trackings_json=%s,
+                ship_label_b64=%s,
+                ship_label_format=%s,
+                ship_created_at=NOW(),
+                ship_cancelled_at=NULL,
+                ship_error=NULL,
+                last_carrier_source='fedex'
+            WHERE id=%s
+        """, (
+            master_tn, master_tn,
+            _jp.dumps(piece_tns) if piece_tns else None,
+            label_b64 or None,
+            label_fmt,
+            item_id,
+        ))
+    except Exception as e_save:
+        return jsonify({
+            "ok":    False,
+            "error": f"Envío creado en FedEx (TN {master_tn}) pero falló al guardar: {str(e_save)[:120]}",
+            "master_tracking_number": master_tn,
+        }), 500
+
+    _tr_log("manifest_item", item_id, "OT FedEx creada",
+            f"TN {master_tn} ({len(piece_tns)} bulto/s)")
+
+    return jsonify({
+        "ok":                      True,
+        "master_tracking_number":  master_tn,
+        "piece_trackings":         piece_tns,
+        "n_bultos":                len(piece_tns),
+        "label_format":            label_fmt,
+        "has_label":               bool(label_b64),
+        "label_url":               url_for("tr_etiqueta_fedex", item_id=item_id),
+    })
+
+
+@app.route("/transporte/api/manifiestos/<int:mid>/crear-ots-fedex-masivo", methods=["POST"])
+@_tr_required
+def tr_crear_ots_fedex_masivo(mid):
+    """Crea OTs FedEx para TODOS los items del manifiesto que aún no la tengan
+    (o para los item_ids específicos del body).
+
+    Body opcional: {
+        item_ids: [1,2,3],   // si vacío, todos los sin OT
+        service_type, label_format, label_stock, pickup_type, notificar
+    }
+
+    Returns: { ok, resultados: [{item_id, ok, master_tracking_number?, error?}] }
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    target_ids = body.get("item_ids") or []
+
+    if target_ids:
+        items = mysql_fetchall(
+            "SELECT id FROM transport_manifest_items "
+            "WHERE manifest_id=%s AND id IN ({})".format(",".join(["%s"] * len(target_ids))),
+            (mid,) + tuple(int(x) for x in target_ids)
+        )
+    else:
+        items = mysql_fetchall(
+            "SELECT id FROM transport_manifest_items "
+            "WHERE manifest_id=%s "
+            "  AND (master_tracking_number IS NULL OR master_tracking_number='')",
+            (mid,)
+        )
+
+    if not items:
+        return jsonify({"error": "No hay items elegibles en este manifiesto"}), 400
+    if len(items) > 30:
+        return jsonify({"error": "Demasiados items (máx. 30 por lote)"}), 400
+
+    resultados = []
+    common_opts = {
+        "service_type":  body.get("service_type"),
+        "label_format":  body.get("label_format") or "PDF",
+        "label_stock":   body.get("label_stock")  or "PAPER_4X6",
+        "pickup_type":   body.get("pickup_type")  or "USE_SCHEDULED_PICKUP",
+        "notificar":     bool(body.get("notificar")),
+    }
+
+    for it_row in items:
+        iid = it_row["id"]
+        it, recipient, packages = _tr_item_para_ship(iid)
+        if not it:
+            resultados.append({"item_id": iid, "ok": False, "error": "item no encontrado"})
+            continue
+        if it.get("master_tracking_number"):
+            resultados.append({"item_id": iid, "ok": True, "skipped": True,
+                               "master_tracking_number": it["master_tracking_number"]})
+            continue
+        notify_email = recipient["email"] if common_opts["notificar"] else ""
+        res = _fedex_create_shipment(
+            recipient=recipient,
+            packages=packages,
+            reference=(f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip(),
+            service_type=common_opts["service_type"],
+            label_format=common_opts["label_format"],
+            label_stock=common_opts["label_stock"],
+            pickup_type=common_opts["pickup_type"],
+            notify_email=notify_email,
+            notify_name=recipient.get("nombre"),
+        )
+        if not res.get("ok"):
+            try:
+                mysql_execute(
+                    "UPDATE transport_manifest_items SET ship_error=%s WHERE id=%s",
+                    ((res.get("error") or "")[:600], iid)
+                )
+            except Exception:
+                pass
+            resultados.append({
+                "item_id": iid, "ok": False,
+                "error":   res.get("error") or "FedEx no respondió",
+            })
+            continue
+        master_tn = res["master_tracking_number"]
+        piece_tns = res.get("piece_trackings") or []
+        import json as _jp
+        try:
+            mysql_execute("""
+                UPDATE transport_manifest_items
+                SET master_tracking_number=%s,
+                    tracking_number=%s,
+                    piece_trackings_json=%s,
+                    ship_label_b64=%s,
+                    ship_label_format=%s,
+                    ship_created_at=NOW(),
+                    ship_cancelled_at=NULL,
+                    ship_error=NULL,
+                    last_carrier_source='fedex'
+                WHERE id=%s
+            """, (
+                master_tn, master_tn,
+                _jp.dumps(piece_tns) if piece_tns else None,
+                res.get("label_b64") or None,
+                res.get("label_format") or "PDF",
+                iid,
+            ))
+        except Exception as e_save:
+            resultados.append({
+                "item_id": iid, "ok": False,
+                "error":   f"FedEx OK ({master_tn}) pero falló guardar: {str(e_save)[:80]}",
+                "master_tracking_number": master_tn,
+            })
+            continue
+        _tr_log("manifest_item", iid, "OT FedEx creada (masivo)",
+                f"TN {master_tn} ({len(piece_tns)} bulto/s)")
+        resultados.append({
+            "item_id":                iid,
+            "ok":                     True,
+            "master_tracking_number": master_tn,
+            "n_bultos":               len(piece_tns),
+        })
+
+    n_ok    = sum(1 for r in resultados if r.get("ok") and not r.get("skipped"))
+    n_skip  = sum(1 for r in resultados if r.get("skipped"))
+    n_err   = sum(1 for r in resultados if not r.get("ok"))
+    return jsonify({
+        "ok": True, "total": len(resultados),
+        "creadas":  n_ok, "ya_tenian": n_skip, "errores": n_err,
+        "resultados": resultados,
+    })
+
+
+@app.route("/transporte/api/items/<int:item_id>/etiqueta-fedex", methods=["GET"])
+@_tr_required
+def tr_etiqueta_fedex(item_id):
+    """Descarga la etiqueta FedEx (PDF / ZPL) generada por Ship API.
+    Si el item tiene piece_trackings (multi-bulto), devuelve un ZIP con
+    todas las etiquetas. Si es 1 bulto, devuelve el archivo directamente.
+    """
+    r = mysql_fetchone(
+        "SELECT ship_label_b64, ship_label_format, master_tracking_number, "
+        "       piece_trackings_json "
+        "FROM transport_manifest_items WHERE id=%s",
+        (item_id,)
+    )
+    if not r:
+        return jsonify({"error": "item no encontrado"}), 404
+    label_b64 = r.get("ship_label_b64") or ""
+    label_fmt = (r.get("ship_label_format") or "PDF").upper()
+    master_tn = r.get("master_tracking_number") or "etiqueta"
+    if not label_b64:
+        return jsonify({"error": "Este item no tiene etiqueta FedEx generada"}), 404
+    import base64 as _b64
+    try:
+        raw = _b64.b64decode(label_b64)
+    except Exception:
+        return jsonify({"error": "Etiqueta corrupta en BD"}), 500
+    mime = {
+        "PDF":   "application/pdf",
+        "PNG":   "image/png",
+        "ZPLII": "application/zpl",
+        "EPL2":  "application/x-epl",
+    }.get(label_fmt, "application/octet-stream")
+    ext = {"PDF": "pdf", "PNG": "png", "ZPLII": "zpl", "EPL2": "epl"}.get(label_fmt, "bin")
+    fname = f"fedex_{master_tn}.{ext}"
+    return Response(
+        raw, mimetype=mime,
+        headers={"Content-Disposition": f'inline; filename="{fname}"'}
+    )
+
+
+@app.route("/transporte/api/items/<int:item_id>/cancelar-ot-fedex", methods=["POST"])
+@_tr_required
+def tr_cancelar_ot_fedex(item_id):
+    """Cancela la OT FedEx del item (mismo día). Marca el item como cancelado
+    y limpia la etiqueta. NO borra el tracking number (queda en histórico)."""
+    r = mysql_fetchone(
+        "SELECT master_tracking_number, ship_created_at, ship_cancelled_at "
+        "FROM transport_manifest_items WHERE id=%s", (item_id,))
+    if not r:
+        return jsonify({"error": "item no encontrado"}), 404
+    tn = r.get("master_tracking_number") or ""
+    if not tn:
+        return jsonify({"error": "Este item no tiene OT FedEx creada"}), 400
+    if r.get("ship_cancelled_at"):
+        return jsonify({"error": "OT ya cancelada"}), 409
+    res = _fedex_cancel_shipment(tn)
+    if not res.get("ok"):
+        return jsonify({"ok": False, "error": res.get("error") or "FedEx no respondió"}), 502
+    try:
+        mysql_execute(
+            "UPDATE transport_manifest_items "
+            "SET ship_cancelled_at=NOW(), ship_label_b64=NULL WHERE id=%s",
+            (item_id,)
+        )
+    except Exception as e_save:
+        return jsonify({"ok": False, "error": f"Cancelada en FedEx pero falló BD: {e_save}"}), 500
+    _tr_log("manifest_item", item_id, "OT FedEx cancelada", f"TN {tn}")
+    return jsonify({"ok": True, "cancelled": True, "tracking_number": tn})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FEDEX PICKUP API — agendar/cancelar retiros desde la bodega
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/transporte/api/pickup/fedex/disponibilidad", methods=["POST"])
+@_tr_required
+def tr_pickup_fedex_disponibilidad():
+    """Consulta horarios disponibles para retiro FedEx en bodega.
+
+    Body: {
+        fecha:        'YYYY-MM-DD',
+        ready_time:   'HH:MM:SS' (default 09:00:00),
+        close_time:   'HH:MM:SS' (default 18:00:00),
+        peso_kg:      float,
+        direccion, comuna, cod_postal  // si vacío, usa bodega ILUS
+    }
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    import datetime as _dt
+    fecha = body.get("fecha") or _dt.date.today().strftime("%Y-%m-%d")
+    res = _fedex_pickup_check(
+        address={
+            "direccion":  body.get("direccion") or ILUS_REMITENTE["bodega"],
+            "comuna":     body.get("comuna")    or "Quilicura",
+            "cod_postal": body.get("cod_postal") or FEDEX_ORIGIN_POSTAL,
+        },
+        dispatch_date=fecha,
+        ready_time=body.get("ready_time") or "09:00:00",
+        close_time=body.get("close_time") or "18:00:00",
+        weight_kg=float(body.get("peso_kg") or 1.0),
+    )
+    if not res.get("ok"):
+        return jsonify({"ok": False, "error": res.get("error") or "FedEx no respondió"}), 502
+    return jsonify(res)
+
+
+@app.route("/transporte/api/pickup/fedex/crear", methods=["POST"])
+@_tr_required
+def tr_pickup_fedex_crear():
+    """Agenda un retiro FedEx en la bodega ILUS.
+
+    Body: {
+        manifest_id?:           int (asocia el pickup al manifiesto),
+        fecha:                  'YYYY-MM-DD',
+        ready_time:             'HH:MM:SS' (default 09:00:00),
+        close_time:             'HH:MM:SS' (default 18:00:00),
+        package_count:          int,
+        total_weight_kg:        float,
+        direccion, comuna, cod_postal, instrucciones,
+        contacto: { nombre, telefono, empresa? },
+        notify_email?:          str,
+    }
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    fecha = body.get("fecha")
+    if not fecha:
+        return jsonify({"error": "fecha es obligatoria"}), 400
+    ready_time = body.get("ready_time") or "09:00:00"
+    close_time = body.get("close_time") or "18:00:00"
+    contacto   = body.get("contacto") or {}
+
+    # FedEx usa 'YYYY-MM-DDTHH:MM:SS' para readyDateTimestamp
+    ready_dt = f"{fecha}T{ready_time}"
+
+    res = _fedex_pickup_create(
+        contact={
+            "nombre":   contacto.get("nombre")   or "Despacho ILUS",
+            "telefono": contacto.get("telefono") or ILUS_REMITENTE["telefono"],
+            "empresa":  contacto.get("empresa")  or ILUS_REMITENTE["nombre"],
+        },
+        address={
+            "direccion":  body.get("direccion") or ILUS_REMITENTE["bodega"],
+            "comuna":     body.get("comuna")    or "Quilicura",
+            "cod_postal": body.get("cod_postal") or FEDEX_ORIGIN_POSTAL,
+        },
+        ready_dt=ready_dt,
+        close_time=close_time,
+        package_count=int(body.get("package_count") or 1),
+        total_weight_kg=float(body.get("total_weight_kg") or 1.0),
+        notify_email=body.get("notify_email") or "",
+        delivery_instructions=body.get("instrucciones") or "",
+    )
+    if not res.get("ok"):
+        return jsonify({"ok": False, "error": res.get("error") or "FedEx no respondió"}), 502
+
+    import json as _jp
+    pcc = res.get("pickup_confirmation_code") or ""
+    loc = res.get("location") or ""
+    sched = res.get("scheduled_date") or fecha
+    mid = body.get("manifest_id")
+    user = (session.get("usuario") or "")[:120] if "session" in globals() else None
+
+    pickup_id = None
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO transp_fedex_pickups
+                    (manifest_id, pickup_confirmation_code, location, scheduled_date,
+                     ready_time, close_time, package_count, total_weight_kg,
+                     contact_name, contact_phone, contact_email,
+                     origin_address, origin_comuna, origin_cod_postal,
+                     delivery_instructions, estado, created_by, raw_response)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, 'Programado', %s, %s)
+            """, (
+                mid, pcc, loc, sched,
+                ready_time, close_time,
+                int(body.get("package_count") or 1),
+                float(body.get("total_weight_kg") or 1.0),
+                (contacto.get("nombre") or "")[:120],
+                (contacto.get("telefono") or "")[:40],
+                (body.get("notify_email") or "")[:120],
+                (body.get("direccion") or ILUS_REMITENTE["bodega"])[:300],
+                (body.get("comuna") or "Quilicura")[:80],
+                (body.get("cod_postal") or FEDEX_ORIGIN_POSTAL)[:10],
+                (body.get("instrucciones") or "")[:120],
+                user,
+                _jp.dumps(res.get("raw") or {})[:65000],
+            ))
+            pickup_id = cur.lastrowid
+        conn.commit()
+        if mid and pickup_id:
+            mysql_execute(
+                "UPDATE transport_manifest_items SET fedex_pickup_id=%s "
+                "WHERE manifest_id=%s AND fedex_pickup_id IS NULL",
+                (pickup_id, mid)
+            )
+    except Exception as e_save:
+        return jsonify({
+            "ok": False,
+            "error": f"Pickup creado en FedEx (PCC {pcc}) pero falló BD: {str(e_save)[:120]}",
+            "pickup_confirmation_code": pcc,
+        }), 500
+
+    return jsonify({
+        "ok":                       True,
+        "pickup_id":                pickup_id,
+        "pickup_confirmation_code": pcc,
+        "location":                 loc,
+        "scheduled_date":           sched,
+    })
+
+
+@app.route("/transporte/api/pickup/fedex/<int:pickup_id>/cancelar", methods=["POST"])
+@_tr_required
+def tr_pickup_fedex_cancelar(pickup_id):
+    """Cancela un retiro FedEx programado."""
+    r = mysql_fetchone(
+        "SELECT id, pickup_confirmation_code, location, scheduled_date, estado "
+        "FROM transp_fedex_pickups WHERE id=%s", (pickup_id,))
+    if not r:
+        return jsonify({"error": "pickup no encontrado"}), 404
+    if r.get("estado") == "Cancelado":
+        return jsonify({"error": "Pickup ya cancelado"}), 409
+    res = _fedex_pickup_cancel(
+        pickup_confirmation_code=r["pickup_confirmation_code"],
+        scheduled_date=str(r["scheduled_date"]),
+        location=r.get("location") or "SCLA",
+    )
+    if not res.get("ok"):
+        return jsonify({"ok": False, "error": res.get("error") or "FedEx no respondió"}), 502
+    try:
+        mysql_execute(
+            "UPDATE transp_fedex_pickups SET estado='Cancelado', cancelled_at=NOW() "
+            "WHERE id=%s", (pickup_id,)
+        )
+    except Exception as e_save:
+        return jsonify({"ok": False, "error": f"Cancelado en FedEx pero falló BD: {e_save}"}), 500
+    return jsonify({"ok": True, "cancelled": True})
 
 
 def _fedex_cron_token_required(token_received):
@@ -58168,6 +59191,16 @@ def _ensure_transport_tracking_tables():
         "last_carrier_poll_at": "DATETIME NULL COMMENT 'Última consulta exitosa al courier API'",
         "last_carrier_status":  "VARCHAR(120) NULL COMMENT 'Último estado RAW del courier (debug)'",
         "last_carrier_source":  "VARCHAR(20) NULL COMMENT 'fedex|aftership|chofer|sistema'",
+        # FedEx Ship API: cuando ILUS crea la OT directamente, guardamos master TN,
+        # piece TNs y la etiqueta PDF en base64 para reimprimirla on-demand.
+        "master_tracking_number": "VARCHAR(60) NULL COMMENT 'Master TN del envío FedEx (multi-bulto)'",
+        "piece_trackings_json":   "TEXT NULL COMMENT 'JSON array de TN por bulto'",
+        "ship_label_b64":         "LONGTEXT NULL COMMENT 'Etiqueta FedEx en base64 (PDF/ZPL)'",
+        "ship_label_format":      "VARCHAR(10) NULL COMMENT 'PDF | ZPLII | PNG | EPL2'",
+        "ship_created_at":        "DATETIME NULL COMMENT 'Cuándo se creó el envío en FedEx'",
+        "ship_cancelled_at":      "DATETIME NULL COMMENT 'Cuándo se canceló el envío en FedEx'",
+        "ship_error":             "TEXT NULL COMMENT 'Último error de Ship API (debug)'",
+        "fedex_pickup_id":        "INT NULL COMMENT 'FK transp_fedex_pickups (retiro asociado)'",
     }
     try:
         existing_it = {
@@ -58203,6 +59236,43 @@ def _ensure_transport_tracking_tables():
         )
     except Exception:
         pass
+
+    # 6) Tabla de retiros FedEx (pickups). Una fila por solicitud de retiro
+    #    en bodega. Un manifiesto puede tener varios pickups (días distintos).
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS transp_fedex_pickups (
+                id                     INT AUTO_INCREMENT PRIMARY KEY,
+                manifest_id            INT NULL COMMENT 'Manifiesto al que pertenece (NULL: bodega masiva)',
+                pickup_confirmation_code VARCHAR(40) NOT NULL,
+                location               VARCHAR(20) NULL  COMMENT 'Centro FedEx que toma el retiro',
+                scheduled_date         DATE NOT NULL,
+                ready_time             TIME NULL,
+                close_time             TIME NULL,
+                package_count          INT DEFAULT 1,
+                total_weight_kg        DECIMAL(8,2) DEFAULT 0,
+                contact_name           VARCHAR(120) NULL,
+                contact_phone          VARCHAR(40)  NULL,
+                contact_email          VARCHAR(120) NULL,
+                origin_address         VARCHAR(300) NULL,
+                origin_comuna          VARCHAR(80)  NULL,
+                origin_cod_postal      VARCHAR(10)  NULL,
+                delivery_instructions  VARCHAR(120) NULL,
+                estado                 ENUM('Programado','Cancelado','Completado','Error')
+                                       DEFAULT 'Programado',
+                created_by             VARCHAR(190) NULL,
+                created_at             DATETIME DEFAULT CURRENT_TIMESTAMP,
+                cancelled_at           DATETIME NULL,
+                raw_response           TEXT NULL COMMENT 'JSON cruda de FedEx (debug)',
+                UNIQUE KEY uq_pcc (pickup_confirmation_code),
+                INDEX idx_man   (manifest_id),
+                INDEX idx_date  (scheduled_date),
+                INDEX idx_estado (estado)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        print("[tr_tracking] tabla transp_fedex_pickups OK", flush=True)
+    except Exception as _e_pk:
+        print(f"[tr_tracking] no se pudo crear transp_fedex_pickups: {_e_pk}", flush=True)
 
 
 def _ensure_transporte_labels_table():
