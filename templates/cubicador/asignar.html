@@ -314,7 +314,9 @@
   gap:0;
   border:1px solid var(--c-border);
   border-radius:9px;
-  overflow:hidden;
+  /* overflow:visible para que el dropdown de comuna no quede recortado
+     (Daniel 12/06/2026 — el dropdown estaba tapado al abrirse). */
+  overflow:visible;
 }
 .client-cell{
   padding:12px 16px;
@@ -378,7 +380,7 @@
 /* Autocomplete container */
 .autocomplete-wrap{ position:relative; }
 .autocomplete-wrap .ac-dropdown{
-  position:absolute; top:100%; left:0; right:0; z-index:999;
+  position:absolute; top:100%; left:0; right:0; z-index:1080;
   background:#fff; border:1px solid var(--c-border);
   border-top:none; border-radius:0 0 8px 8px;
   max-height:220px; overflow-y:auto;
@@ -452,6 +454,52 @@
 @media (max-width:640px){
   /* touch target Apple HIG en mobile */
   .btn-cube-del{ min-width:44px; min-height:44px; font-size:1.05rem; }
+
+  /* ── Tabla cubicaje → TARJETAS apiladas en móvil ──────────────
+     12 columnas no caben en un celular sin scroll horizontal infinito.
+     Convertimos cada fila en una tarjeta y cada celda en una línea
+     "Etiqueta ......... valor", usando el data-label de cada td.
+     Así ves el producto completo sin scrollear de lado. */
+  .cube-wrap{ max-height:none !important; overflow:visible !important; }
+  .cube-table{ font-size:1rem; }
+  .cube-table thead{ display:none; }
+  .cube-table tbody, .cube-table tr, .cube-table td{ display:block; width:100%; }
+  .cube-table tr{
+    border:1.5px solid var(--c-border); border-radius:11px;
+    margin-bottom:11px; padding:4px 12px 8px; background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.04);
+  }
+  .cube-table tr:hover td{ background:transparent; }
+  .cube-table td{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:14px; padding:7px 0; text-align:right;
+    border-bottom:1px solid #f3f4f6;
+  }
+  .cube-table td:last-child{ border-bottom:none; }
+  .cube-table td::before{
+    content:attr(data-label);
+    font-size:.64rem; font-weight:800; text-transform:uppercase;
+    letter-spacing:.4px; color:#6b7280; text-align:left;
+    flex:0 0 auto; white-space:nowrap;
+  }
+  /* SKU como "cabecera" destacada de cada tarjeta */
+  .cube-table td.mono{
+    border-bottom:2px solid var(--c-border);
+    padding-bottom:8px; margin-bottom:2px;
+  }
+  .cube-table td.mono::before{ color:var(--c-red); }
+  .cube-table td.mono{ font-size:.95rem; }
+  /* Descripción: permitir que respire en varias líneas */
+  .cube-table td.cube-desc{ max-width:none !important; }
+  .cube-table td.cube-desc{ align-items:flex-start; text-align:right; }
+  /* Total predominante: el dato clave, más grande */
+  .cube-table td.pred-tot{ font-size:1.05rem; }
+  /* Acción: botón centrado a la derecha sin etiqueta gigante */
+  .cube-table td.cube-act{ justify-content:flex-end; }
+  /* Empty state: vuelve a comportarse como bloque normal centrado */
+  .cube-table tr.cube-empty-row{ border:none; box-shadow:none; padding:0; }
+  .cube-table td.cube-empty-cell{ display:block; text-align:center; }
+  .cube-table td.cube-empty-cell::before{ content:none; }
 }
 
 /* ══ BARRA TOTALES ═══════════════════════════════════════════ */
@@ -542,12 +590,55 @@
   border-color:var(--c-red); background:var(--c-red);
   box-shadow:0 0 0 3px rgba(204,0,0,.2);
 }
-.courier-info{ flex:1; }
+.courier-info{ flex:1; min-width:0; }
+.courier-logo{ min-width:96px; display:flex; align-items:center; justify-content:flex-start; }
+.courier-pricebox{ text-align:right; min-width:96px; }
 .courier-name{ font-size:.82rem; font-weight:700; color:var(--c-text); }
 .courier-svc{ font-size:.68rem; color:var(--c-sub); }
 .courier-price{ font-size:1rem; font-weight:900; color:var(--c-text); text-align:right; white-space:nowrap; }
 .courier-price.loading{ color:#9ca3af; animation:pulse 1s infinite; }
 .courier-etd{ font-size:.64rem; color:var(--c-sub); text-align:right; }
+
+/* ── MÓVIL: reflow del courier a tarjeta de 2 filas ──────────────
+   En desktop el courier es flex horizontal (nombre izq / precio der).
+   En móvil eso obligaba a leer "de punta a punta" con el nombre pegado
+   a la izquierda y la tarifa clavada a la derecha. Acá lo convertimos en
+   una tarjeta donde el precio queda DEBAJO del nombre, grande y a la vista,
+   junto al margen — todo sin scroll horizontal. */
+@media (max-width:600px){
+  .courier-item{
+    display:grid;
+    grid-template-columns:auto auto 1fr;
+    grid-template-areas:
+      "radio logo info"
+      "price price price";
+    align-items:center;
+    column-gap:10px; row-gap:0;
+    padding:12px 13px;
+  }
+  .courier-item > .courier-radio{ grid-area:radio; }
+  .courier-item > .courier-logo{
+    grid-area:logo; min-width:0; max-width:62px;
+  }
+  .courier-item > .courier-logo img{ max-height:30px; width:auto; }
+  .courier-item > .courier-info{ grid-area:info; }
+  .courier-name{ font-size:.92rem; line-height:1.25; }
+  .courier-svc{ font-size:.72rem; }
+  .courier-etd{ font-size:.68rem; text-align:left; margin-top:2px; }
+  /* La caja de precio pasa a ser una franja inferior, alineada a la
+     izquierda, con el precio grande + sublínea + margen en una fila. */
+  .courier-item > .courier-pricebox{
+    grid-area:price;
+    text-align:left; min-width:0; width:100%;
+    display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px;
+    margin-top:10px; padding-top:9px;
+    border-top:1px dashed var(--c-border);
+  }
+  .courier-pricebox .courier-price{
+    text-align:left; font-size:1.3rem; order:1;
+  }
+  .courier-pricebox > div:not(.courier-price){ order:2; align-self:center; }
+}
 .btn-detalle{
   background:#f3f4f6; border:none; color:#6b7280; border-radius:5px;
   padding:3px 9px; font-size:.65rem; cursor:pointer;
@@ -815,7 +906,7 @@
           <i class="bi bi-file-earmark-excel me-1"></i>Exportar
         </button>
       </div>
-      <div style="overflow-x:auto;max-height:320px;overflow-y:auto">
+      <div class="cube-wrap" style="overflow-x:auto;max-height:320px;overflow-y:auto">
         <table class="cube-table">
           <thead>
             <tr>
@@ -1899,18 +1990,18 @@ function renderCubaje(){
     tBult += (parseInt(l.bultos_tot)   || 0);
 
     rows += `<tr>
-      <td class="mono">${l.sku}</td>
-      <td style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
-      <td class="tc">${parseInt(qty)}</td>
-      <td class="tc">${bultosCell}</td>
-      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_kg_u)}</td>
-      <td class="tr">${sf?'<span class="sf">—</span>':fCl(l.peso_vol_u)}</td>
-      <td class="tr" style="font-size:.78rem;color:#555">${sf?'<span class="sf">—</span>':fVol(l.vol_u)}</td>
-      <td class="tr pred-u">${sf?'<span class="sf">—</span>':fCl(l.pred_u)}</td>
-      <td class="tr pred-tot">${sf?'<span class="sf">—</span>':fCl(l.pred_tot)}</td>
-      <td class="tc">${tipo}</td>
-      <td class="tc">${_saldoBadge(l)}</td>
-      <td class="tc">
+      <td class="mono" data-label="SKU">${l.sku}</td>
+      <td class="cube-desc" data-label="Descripción" style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
+      <td class="tc" data-label="Cant.">${parseInt(qty)}</td>
+      <td class="tc" data-label="Bultos/u">${bultosCell}</td>
+      <td class="tr" data-label="KG Real/u">${sf?'<span class="sf">—</span>':fCl(l.peso_kg_u)}</td>
+      <td class="tr" data-label="KG Vol/u">${sf?'<span class="sf">—</span>':fCl(l.peso_vol_u)}</td>
+      <td class="tr" data-label="Vol. m³/u" style="font-size:.78rem;color:#555">${sf?'<span class="sf">—</span>':fVol(l.vol_u)}</td>
+      <td class="tr pred-u" data-label="Predom./u">${sf?'<span class="sf">—</span>':fCl(l.pred_u)}</td>
+      <td class="tr pred-tot" data-label="Total Predom.">${sf?'<span class="sf">—</span>':fCl(l.pred_tot)}</td>
+      <td class="tc" data-label="Tipo">${tipo}</td>
+      <td class="tc" data-label="Saldo">${_saldoBadge(l)}</td>
+      <td class="tc cube-act" data-label="Acción">
         <button type="button" class="btn-cube-del" title="Quitar este producto de la cotización"
                 onclick="eliminarLineaCubaje(${idx})">
           <i class="bi bi-trash"></i>
@@ -1920,7 +2011,7 @@ function renderCubaje(){
   });
 
   if(!rows){
-    rows = `<tr><td colspan="12" style="text-align:center;padding:26px 12px;color:#9ca3af">
+    rows = `<tr class="cube-empty-row"><td colspan="12" class="cube-empty-cell" style="text-align:center;padding:26px 12px;color:#9ca3af">
       <div style="font-size:1.4rem">📦</div>
       <div style="font-weight:700;margin-top:4px">Sin productos en la cotización</div>
       <div style="font-size:.78rem;margin-top:2px">Busca un documento para cargar su detalle.</div>
@@ -2208,13 +2299,13 @@ function renderCouriers(opts){
     html += `
     <div class="courier-item${sel?' selected':''}" onclick='setCourier(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
       <div class="courier-radio"></div>
-      <div style="min-width:96px;display:flex;align-items:center;justify-content:flex-start">${_logoFor(c)}</div>
+      <div class="courier-logo">${_logoFor(c)}</div>
       <div class="courier-info">
         <div class="courier-name">${escHtml(c.courier_nombre)}${recIcon}${profitIcon}${chipValid}${chipWarn}</div>
         <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
         <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(c.tiempo_transito||'—')} ${fuente} ${btnAudit}</div>
       </div>
-      <div style="text-align:right;min-width:96px">
+      <div class="courier-pricebox">
         <div class="courier-price" style="${vistaEsCosto?'color:#475569':''}" title="${c.desglose ? 'Costo $'+Math.round(c.desglose.precio_costo).toLocaleString('es-CL')+' + margen '+(c.desglose.margen_pct||0).toFixed(0)+'% + IVA '+(c.desglose.iva_pct||0).toFixed(0)+'%' : 'Precio cliente'}">${fClp(precioVisible)}</div>
         ${subLineaPrecio}
         ${badgeProfit}

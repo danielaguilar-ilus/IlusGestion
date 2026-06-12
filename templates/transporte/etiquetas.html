@@ -124,7 +124,7 @@ html, body {
 /* En impresión: una etiqueta por página, sin sombras de pantalla */
 @media print {
   html, body { background: #fff; }
-  .toolbar { display: none !important; }
+  .toolbar, .selector-panel, .et-overlay { display: none !important; }
   .sheet { padding: 0; gap: 0; }
   .etiqueta {
     box-shadow: none;
@@ -136,65 +136,129 @@ html, body {
     page-break-after: auto;
     break-after: auto;
   }
+  /* Excluir de la impresión las etiquetas que el usuario desmarcó */
+  .et-wrap.is-off {
+    display: none !important;
+  }
 }
 
-/* HEADER de marca */
+/* ── PDF mode (Playwright headless): forzar layout impreso desde el inicio ── */
+{% if pdf_mode %}
+html, body { background: #fff; }
+.toolbar, .selector-panel, .et-overlay { display: none !important; }
+.sheet { padding: 0; gap: 0; }
+.etiqueta {
+  box-shadow: none;
+  border-radius: 4mm;
+  page-break-after: always;
+  break-after: page;
+}
+.etiqueta:last-child { page-break-after: auto; break-after: auto; }
+{% endif %}
+
+/* HEADER ILUS — logo + datos del remitente (estilo factura formal) */
 .lbl-head {
-  background: var(--ilus-black);
-  color: var(--ilus-white);
-  padding: 2.4mm 3mm;
-  text-align: center;
-}
-.lbl-head .brand {
-  font-size: 3.4mm;
-  font-weight: 950;
-  letter-spacing: .2mm;
-  line-height: 1.15;
-}
-.lbl-head .brand .red { color: var(--ilus-red); }
-.lbl-head .brand .dot { color: var(--ilus-red); padding: 0 .6mm; }
-
-/* Fila remitente + fecha */
-.lbl-from {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 38mm 1fr;
   gap: 2mm;
-  padding: 2mm 3mm;
-  border-bottom: .4mm solid #000;
-  background: #f3f4f6;
+  padding: 2.5mm 3mm;
+  background: var(--ilus-white);
+  border-bottom: .7mm solid var(--ilus-black);
+  align-items: center;
 }
-.lbl-from .from-label {
-  font-size: 2.3mm;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: .25mm;
+.lbl-head .brand-logo {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+.lbl-head .brand-logo img {
+  max-width: 36mm;
+  max-height: 16mm;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+/* Fallback texto si no hay logo */
+.lbl-head .brand-logo .brand-text {
+  font-size: 5mm;
+  font-weight: 950;
+  letter-spacing: .3mm;
+  line-height: 1;
+  color: var(--ilus-black);
+}
+.lbl-head .brand-logo .brand-text .red {
   color: var(--ilus-red);
 }
-.lbl-from .from-name {
-  font-size: 3mm;
+.lbl-head .brand-info {
+  display: flex;
+  flex-direction: column;
+  gap: .25mm;
+  padding-left: 2mm;
+  border-left: .35mm solid var(--ilus-black);
+  font-size: 2.4mm;
+  font-weight: 700;
+  line-height: 1.18;
+  color: var(--ilus-black);
+}
+.lbl-head .brand-info .rut {
+  font-size: 2.7mm;
   font-weight: 900;
-  line-height: 1.1;
 }
-.lbl-from .from-addr {
-  font-size: 2.5mm;
+.lbl-head .brand-info .giro {
+  font-size: 2.3mm;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .15mm;
+}
+.lbl-head .brand-info .addr,
+.lbl-head .brand-info .tel {
+  font-size: 2.3mm;
   font-weight: 600;
-  color: #1f2937;
-  line-height: 1.15;
 }
-.lbl-from .from-date {
-  text-align: right;
-  white-space: nowrap;
+
+/* Banda Courier / N° Courier / Fecha — campos de captura del transportista */
+.lbl-courier {
+  display: grid;
+  grid-template-columns: 1fr 1fr 26mm;
+  gap: 0;
+  border-bottom: .5mm solid var(--ilus-black);
+  background: var(--ilus-white);
 }
-.lbl-from .from-date .dt-label {
-  font-size: 2.1mm;
+.lbl-courier > div {
+  padding: 2mm 3mm 2.5mm;
+}
+.lbl-courier .cr-cell {
+  border-right: .35mm solid var(--ilus-black);
+  min-height: 11mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.lbl-courier .cr-cell:last-child {
+  border-right: 0;
+}
+.lbl-courier .cr-label {
+  font-size: 2.2mm;
   font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: .25mm;
   color: var(--ilus-gray);
+  margin-bottom: 1mm;
 }
-.lbl-from .from-date .dt-val {
-  font-size: 2.7mm;
+.lbl-courier .cr-value {
+  font-size: 3mm;
   font-weight: 800;
+  color: var(--ilus-black);
+  min-height: 4mm;
+  border-bottom: .3mm solid var(--ilus-gray);
+  padding-bottom: .5mm;
+}
+.lbl-courier .cr-value.fecha {
+  font-size: 2.7mm;
+  font-weight: 900;
+  border-bottom: 0;
+  line-height: 1.15;
 }
 
 /* Bloque grande: N° DOCUMENTO + barcode */
@@ -255,11 +319,20 @@ html, body {
   gap: 1.6mm;
 }
 .dest-info .dest-label {
-  font-size: 2.5mm;
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+  font-size: 3.4mm;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .3mm;
-  color: var(--ilus-red);
+  color: var(--ilus-black);
+  padding-bottom: 1mm;
+  border-bottom: .35mm solid var(--ilus-gray);
+}
+.dest-info .dest-label svg {
+  width: 4.5mm;
+  height: 4.5mm;
 }
 .dest-row .k {
   font-size: 2.2mm;
@@ -279,35 +352,47 @@ html, body {
   font-weight: 950;
 }
 
-/* Caja BULTOS X de N — grande, rojo */
+/* Caja BULTOS X de N — número grande arriba, QR debajo */
 .bultos-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   text-align: center;
-  padding: 2mm;
+  padding: 2mm 1mm 2mm;
   background: #fff;
+  gap: 1mm;
 }
 .bultos-box .b-title {
-  font-size: 3mm;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5mm;
+  font-size: 3.4mm;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .4mm;
   color: var(--ilus-black);
 }
+.bultos-box .b-title svg {
+  width: 4.5mm;
+  height: 4.5mm;
+}
 .bultos-box .b-main {
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 1mm;
+  gap: 1.5mm;
   margin-top: .5mm;
+  padding-bottom: 1mm;
+  border-bottom: .35mm solid var(--ilus-gray);
+  width: 90%;
 }
 .bultos-box .b-x {
-  font-size: 18mm;
+  font-size: 22mm;
   font-weight: 950;
   line-height: .9;
-  color: var(--ilus-red);
+  color: var(--ilus-black);
 }
 .bultos-box .b-de {
   font-size: 4mm;
@@ -315,50 +400,71 @@ html, body {
   color: var(--ilus-gray);
 }
 .bultos-box .b-n {
-  font-size: 9mm;
+  font-size: 11mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
 }
 /* QR único por bulto — el chofer lo escanea para capturar el bulto */
 .bultos-box .qr-box {
-  width: 18mm;
-  height: 18mm;
-  margin-top: 1.5mm;
+  width: 22mm;
+  height: 22mm;
+  margin-top: .8mm;
 }
 .bultos-box .qr-box img,
 .bultos-box .qr-box canvas {
-  width: 18mm !important;
-  height: 18mm !important;
+  width: 22mm !important;
+  height: 22mm !important;
   display: block;
 }
 .bultos-box .qr-code-txt {
-  font-family: monospace;
+  font-family: 'Courier New', monospace;
   font-size: 2.4mm;
   font-weight: 700;
   letter-spacing: .3mm;
   color: var(--ilus-black);
-  margin-top: .5mm;
+  margin-top: .3mm;
 }
 
-/* STATUS DE SALIDA (vacío para sello/firma) */
+/* STATUS DE SALIDA (caja vacía visible para sello/firma) */
 .lbl-status {
-  border-bottom: .5mm solid #000;
-  padding: 2mm 3mm;
+  display: grid;
+  grid-template-columns: 32mm 1fr;
+  gap: 2mm;
+  border-bottom: .5mm solid var(--ilus-black);
+  padding: 2.2mm 3mm;
   min-height: 16mm;
+  align-items: center;
 }
-.lbl-status .st-title {
-  font-size: 2.4mm;
+.lbl-status .st-info {
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+}
+.lbl-status .st-info svg {
+  width: 5mm;
+  height: 5mm;
+  flex-shrink: 0;
+}
+.lbl-status .st-text .st-title {
+  font-size: 2.8mm;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: .35mm;
-  color: var(--ilus-red);
+  letter-spacing: .3mm;
+  color: var(--ilus-black);
+  line-height: 1.1;
 }
-.lbl-status .st-hint {
-  font-size: 2.1mm;
+.lbl-status .st-text .st-hint {
+  font-size: 2mm;
   font-weight: 600;
   color: var(--ilus-gray);
-  font-style: italic;
+  margin-top: .5mm;
+}
+.lbl-status .st-box {
+  border: .4mm dashed var(--ilus-gray);
+  border-radius: 1.5mm;
+  min-height: 13mm;
+  background: #fafafa;
 }
 
 /* Footer de íconos de cuidado */
@@ -386,6 +492,313 @@ html, body {
   letter-spacing: .2mm;
   line-height: 1.05;
 }
+
+/* ═══ SELECTOR ULTRAPOTENTE (solo pantalla) ═══ */
+.selector-panel {
+  max-width: 900px;
+  margin: 14px auto 4px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  font-family: Arial, Helvetica, sans-serif;
+  box-shadow: 0 2px 10px rgba(0,0,0,.04);
+}
+.sp-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.sp-title {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 900; font-size: 14px; color: #0a0a0a;
+}
+.sp-title i { color: #dc2626; }
+.sp-counter {
+  font-size: 12px; color: #6b7280; font-weight: 700;
+}
+.sp-counter strong { color: #dc2626; font-size: 13px; }
+
+.sp-quick {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.sp-chip {
+  border: 1.5px solid #e5e7eb;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.sp-chip:hover { background: #f3f4f6; border-color: #9ca3af; }
+.sp-chip.is-active { background: #0a0a0a; color: #fff; border-color: #0a0a0a; }
+.sp-chip.red { color: #dc2626; border-color: #fca5a5; }
+.sp-chip.red:hover { background: #fee2e2; }
+
+.sp-rango {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-rango label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: .25px;
+}
+.sp-rango .hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.sp-rango input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  color: #0a0a0a;
+}
+.sp-rango input:focus {
+  outline: 0;
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.12);
+}
+.sp-rango button {
+  height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #0a0a0a;
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sp-rango button:hover { background: #dc2626; }
+
+/* ── Bultos por factura ── */
+.sp-bultos {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-bultos-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #0a0a0a;
+  flex-wrap: wrap;
+}
+.sp-bultos-head i { color: #dc2626; font-size: 16px; }
+.sp-bultos-hint {
+  font-weight: 500;
+  font-size: 11px;
+  color: #6b7280;
+  margin-left: 4px;
+}
+.sp-bultos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.bf-card {
+  background: #f9fafb;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color .15s, background .15s;
+}
+.bf-card.is-dirty {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+.bf-card.is-saving { opacity: .7; pointer-events: none; }
+.bf-doc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #0a0a0a;
+}
+.bf-doc i { color: #dc2626; }
+.bf-tipo {
+  background: #e5e7eb;
+  color: #374151;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.bf-cliente {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bf-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.bf-step {
+  width: 28px;
+  height: 32px;
+  border: 1.5px solid #d1d5db;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 900;
+  color: #0a0a0a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.bf-step:hover { background: #f3f4f6; border-color: #6b7280; }
+.bf-input {
+  width: 64px;
+  height: 32px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 900;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  color: #0a0a0a;
+  font-family: inherit;
+  /* Hide spin buttons */
+  -moz-appearance: textfield;
+}
+.bf-input::-webkit-outer-spin-button,
+.bf-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.bf-input:focus {
+  outline: 0;
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.12);
+}
+.bf-label {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 700;
+}
+.bf-save {
+  background: #dc2626;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+.bf-save:hover { background: #b91c1c; }
+
+.sp-downloads {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-dl {
+  flex: 1;
+  min-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.sp-dl.primary { background: #dc2626; color: #fff; }
+.sp-dl.primary:hover { background: #b91c1c; }
+.sp-dl.secondary { background: #0a0a0a; color: #fff; }
+.sp-dl.secondary:hover { background: #374151; }
+.sp-dl.outline { background: #fff; color: #0a0a0a; border: 1.5px solid #0a0a0a; }
+.sp-dl.outline:hover { background: #f3f4f6; }
+.sp-dl i { font-size: 16px; }
+.sp-dl.is-busy {
+  opacity: .6; pointer-events: none;
+}
+
+/* Wrap de etiqueta + checkbox flotante (solo pantalla) */
+.et-wrap {
+  position: relative;
+}
+.et-overlay {
+  position: absolute;
+  top: 10px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(10,10,10,.92);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 10;
+  box-shadow: 0 4px 14px rgba(0,0,0,.3);
+}
+.et-overlay input[type=checkbox] {
+  width: 18px; height: 18px;
+  accent-color: #dc2626;
+  cursor: pointer;
+}
+.et-overlay label {
+  cursor: pointer;
+  user-select: none;
+}
+.et-wrap.is-off .etiqueta {
+  opacity: .25;
+  filter: grayscale(1);
+}
+.et-wrap.is-off .et-overlay {
+  background: rgba(107,114,128,.92);
+}
+
+/* Mobile: stack downloads */
+@media (max-width: 720px) {
+  .sp-rango { grid-template-columns: 1fr; }
+  .sp-rango button { width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -398,9 +811,94 @@ html, body {
   </div>
   <div class="tb-actions">
     <a class="btn btn-back" href="{{ url_for('transporte_index') }}"><i class="bi bi-arrow-left"></i> Volver</a>
-    <button type="button" class="btn btn-print" onclick="window.print()"><i class="bi bi-printer-fill"></i> Imprimir</button>
+    <button type="button" class="btn btn-print" onclick="ilusImprimirSel()"><i class="bi bi-printer-fill"></i> Imprimir (navegador)</button>
   </div>
 </div>
+
+{% if facturas %}
+<div class="selector-panel" id="sp">
+  <div class="sp-head">
+    <div class="sp-title">
+      <i class="bi bi-sliders"></i>
+      <span>Qu&eacute; imprimir</span>
+    </div>
+    <div class="sp-counter">
+      Seleccionadas: <strong id="sp-cnt">{{ total_etiquetas }}</strong>
+      <span style="color:#9ca3af"> / {{ total_etiquetas }}</span>
+    </div>
+  </div>
+
+  <div class="sp-quick">
+    <button type="button" class="sp-chip is-active" data-quick="all">
+      <i class="bi bi-check-all"></i> Todas ({{ total_etiquetas }})
+    </button>
+    <button type="button" class="sp-chip" data-quick="none">
+      <i class="bi bi-x-circle"></i> Ninguna
+    </button>
+    <button type="button" class="sp-chip" data-quick="invert">
+      <i class="bi bi-arrow-left-right"></i> Invertir
+    </button>
+    {% for f in facturas %}
+    <button type="button" class="sp-chip" data-quick="factura" data-cid="{{ f.commitment_id }}"
+            title="Imprimir solo los {{ f.total_bultos }} bultos de {{ f.doc_full or f.doc_numero }}">
+      <i class="bi bi-file-earmark-text"></i> {{ f.doc_numero or '—' }} ({{ f.total_bultos }})
+    </button>
+    {% endfor %}
+  </div>
+
+  <div class="sp-rango">
+    <label>
+      Rango por factura
+      <div class="hint">ej: <code>{{ facturas[0].doc_numero }}:1,3,5-8</code></div>
+    </label>
+    <input id="sp-rango" type="text"
+           placeholder="{{ facturas[0].doc_numero }}:1-3,5,8  |  separa varias con coma">
+    <button type="button" id="sp-aplicar"><i class="bi bi-funnel-fill"></i> Aplicar</button>
+  </div>
+
+  <div class="sp-bultos">
+    <div class="sp-bultos-head">
+      <i class="bi bi-box-seam"></i>
+      <span>Bultos por factura</span>
+      <span class="sp-bultos-hint">Capturá cu&aacute;ntos bultos tiene cada factura. Si es 1 quiere decir que el ERP no trajo el dato.</span>
+    </div>
+    <div class="sp-bultos-grid">
+      {% for f in facturas %}
+      <div class="bf-card" data-cid="{{ f.commitment_id }}" data-doc="{{ f.doc_numero }}">
+        <div class="bf-doc">
+          <i class="bi bi-receipt"></i>
+          <strong>{{ f.doc_numero or '—' }}</strong>
+          {% if f.doc_tipo %}<span class="bf-tipo">{{ f.doc_tipo }}</span>{% endif %}
+        </div>
+        <div class="bf-cliente">{{ f.cliente or '—' }}</div>
+        <div class="bf-input-wrap">
+          <button type="button" class="bf-step" data-step="-1" title="Quitar 1">&minus;</button>
+          <input type="number" class="bf-input" min="1" max="999" value="{{ f.total_bultos }}"
+                 data-original="{{ f.total_bultos }}">
+          <button type="button" class="bf-step" data-step="1" title="Agregar 1">+</button>
+          <span class="bf-label">bulto{{ 's' if f.total_bultos != 1 else '' }}</span>
+        </div>
+        <button type="button" class="bf-save" data-cid="{{ f.commitment_id }}" hidden>
+          <i class="bi bi-check-lg"></i> Guardar y regenerar
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="sp-downloads">
+    <button type="button" class="sp-dl primary" id="sp-pdf" title="Descarga UN PDF con todas las etiquetas seleccionadas">
+      <i class="bi bi-file-earmark-pdf-fill"></i> PDF (1 archivo)
+    </button>
+    <button type="button" class="sp-dl secondary" id="sp-zip" title="Descarga un ZIP con un PDF por cada etiqueta — ideal para reimprimir bultos sueltos">
+      <i class="bi bi-file-earmark-zip-fill"></i> ZIP (individuales)
+    </button>
+    <button type="button" class="sp-dl outline" onclick="ilusImprimirSel()" title="Diálogo del navegador (más rápido si tienes la impresora local)">
+      <i class="bi bi-printer"></i> Imprimir directo
+    </button>
+  </div>
+</div>
+{% endif %}
 
 {% if not facturas %}
   <div class="empty">
@@ -409,29 +907,54 @@ html, body {
     <p>No se encontraron facturas con bultos para imprimir.</p>
   </div>
 {% else %}
-<div class="sheet">
+<div class="sheet" id="sheet">
   {% for f in facturas %}
     {% for b in f.bultos %}
+    <div class="et-wrap" data-cid="{{ f.commitment_id }}" data-num="{{ b.num }}" data-doc="{{ f.doc_numero }}">
+      {% if not pdf_mode %}
+      <div class="et-overlay">
+        <input type="checkbox" id="ck-{{ f.commitment_id }}-{{ b.num }}" checked>
+        <label for="ck-{{ f.commitment_id }}-{{ b.num }}">
+          {{ f.doc_numero }} · Bulto {{ b.num }}/{{ b.total }}
+        </label>
+      </div>
+      {% endif %}
     <article class="etiqueta">
 
+      {# ─── HEADER: logo ILUS + datos formales del remitente ─── #}
       <header class="lbl-head">
-        <div class="brand">
-          SPORTS HEALTH SOLUTIONS<span class="dot">·</span>I Like you Strong<span class="dot">·</span>ILUS by <span class="red">MOTION</span>
+        <div class="brand-logo">
+          {% if logo_url %}
+            <img src="{{ logo_url }}" alt="ILUS">
+          {% else %}
+            <div class="brand-text">IL<span class="red">U</span>S</div>
+          {% endif %}
+        </div>
+        <div class="brand-info">
+          <div class="rut">{{ remitente.rut or '76.996.964-0' }}</div>
+          <div class="giro">{{ remitente.giro or 'IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS' }}</div>
+          <div class="addr">{{ remitente.direccion }}</div>
+          <div class="tel">{{ remitente.telefono or '+56229465970' }}</div>
         </div>
       </header>
 
-      <div class="lbl-from">
-        <div>
-          <div class="from-label">Remitente</div>
-          <div class="from-name">{{ remitente.nombre }}</div>
-          <div class="from-addr">{{ remitente.direccion }}</div>
+      {# ─── BANDA: Courier · N° Courier · Fecha ─── #}
+      <div class="lbl-courier">
+        <div class="cr-cell">
+          <div class="cr-label">Courier</div>
+          <div class="cr-value">{{ courier or '&nbsp;' | safe }}</div>
         </div>
-        <div class="from-date">
-          <div class="dt-label">Fecha</div>
-          <div class="dt-val">{{ fecha }}</div>
+        <div class="cr-cell">
+          <div class="cr-label">N&deg; Courier</div>
+          <div class="cr-value">&nbsp;</div>
+        </div>
+        <div class="cr-cell">
+          <div class="cr-label">Fecha</div>
+          <div class="cr-value fecha">{{ fecha }}</div>
         </div>
       </div>
 
+      {# ─── N° DOCUMENTO + BARCODE ─── #}
       <div class="lbl-doc">
         <div class="doc-title">N&deg; Documento / Orden</div>
         <div class="doc-number">{{ f.doc_numero or '—' }}</div>
@@ -441,16 +964,23 @@ html, body {
         </div>
       </div>
 
+      {# ─── DESTINATARIO + BULTOS (con QR debajo del número) ─── #}
       <div class="lbl-dest">
         <div class="dest-info">
-          <div class="dest-label">Destinatario</div>
+          <div class="dest-label">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            Destinatario
+          </div>
           <div class="dest-row"><span class="k">Cliente</span><span class="v big">{{ f.cliente or '—' }}</span></div>
           <div class="dest-row"><span class="k">Fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
           <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v">{{ f.direccion or '—' }}</span></div>
           <div class="dest-row"><span class="k">Comuna</span><span class="v">{{ f.comuna or '—' }}</span></div>
         </div>
         <div class="bultos-box">
-          <div class="b-title">Bultos</div>
+          <div class="b-title">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16.5c0 .38-.21.71-.53.88l-7.9 4.44c-.16.12-.36.18-.57.18-.21 0-.41-.06-.57-.18l-7.9-4.44A.991.991 0 013 16.5v-9c0-.38.21-.71.53-.88l7.9-4.44c.16-.12.36-.18.57-.18.21 0 .41.06.57.18l7.9 4.44c.32.17.53.5.53.88v9zM12 4.15L6.04 7.5 12 10.85l5.96-3.35L12 4.15zM5 15.91l6 3.38v-6.71L5 9.21v6.7zm14 0v-6.7l-6 3.37v6.71l6-3.38z"/></svg>
+            Bultos
+          </div>
           <div class="b-main">
             <span class="b-x">{{ b.num }}</span>
             <span class="b-de">de</span>
@@ -463,9 +993,16 @@ html, body {
         </div>
       </div>
 
+      {# ─── STATUS DE SALIDA (caja vacía para sello/firma) ─── #}
       <div class="lbl-status">
-        <div class="st-title">Status de salida</div>
-        <div class="st-hint">Sello / firma del transportista</div>
+        <div class="st-info">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.06 9l.94.94L5.92 19H5v-.92L14.06 9m3.6-6c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83a.996.996 0 000-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29zm-3.6 3.19L3 17.25V21h3.75L17.81 9.94 14.06 6.19z"/></svg>
+          <div class="st-text">
+            <div class="st-title">Status de salida</div>
+            <div class="st-hint">Sello / firma del transportista</div>
+          </div>
+        </div>
+        <div class="st-box"></div>
       </div>
 
       <footer class="lbl-foot">
@@ -484,6 +1021,7 @@ html, body {
       </footer>
 
     </article>
+    </div>
     {% endfor %}
   {% endfor %}
 </div>
@@ -511,7 +1049,7 @@ document.addEventListener("DOMContentLoaded", function () {
 document.addEventListener("DOMContentLoaded", function () {
   function renderBarcode(barcode) {
     const code = (barcode.dataset.code || "").trim();
-    if (!code) { return; }
+    if (!code) { barcode.dataset.rendered = "1"; return; }
     const wrap = barcode.closest(".barcode-wrap");
     const wrapWidth = wrap ? wrap.clientWidth : 280;
     // Densidad similar a la del módulo de productos (CODE128, sin texto).
@@ -535,6 +1073,300 @@ document.addEventListener("DOMContentLoaded", function () {
   }
   document.querySelectorAll(".barcode").forEach(renderBarcode);
 });
+
+/* ══════════════════════════════════════════════════════════════════════
+   SELECTOR ULTRAPOTENTE — filtrado, rangos, descarga PDF/ZIP
+   ══════════════════════════════════════════════════════════════════════ */
+(function() {
+  const PDF_MODE = {{ 'true' if pdf_mode else 'false' }};
+  if (PDF_MODE) return;   // En modo Playwright no inicializa nada interactivo.
+
+  const TIPO    = {{ ('"manifiesto"' if manifiesto_id is defined and manifiesto_id else '"factura"') | safe }};
+  const BASE_PDF = "{{ pdf_url|default('', true) }}";
+  const BASE_ZIP = "{{ pdf_url|default('', true) }}";
+
+  const wraps   = Array.from(document.querySelectorAll(".et-wrap"));
+  const cntEl   = document.getElementById("sp-cnt");
+  const total   = wraps.length;
+
+  function refresh() {
+    let on = 0;
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck && ck.checked) {
+        w.classList.remove("is-off");
+        on++;
+      } else {
+        w.classList.add("is-off");
+      }
+    });
+    if (cntEl) cntEl.textContent = on;
+    // Activar chip "Todas" si están todas marcadas
+    document.querySelectorAll(".sp-chip[data-quick]").forEach(c => c.classList.remove("is-active"));
+    if (on === total) {
+      const allChip = document.querySelector('.sp-chip[data-quick="all"]');
+      if (allChip) allChip.classList.add("is-active");
+    } else if (on === 0) {
+      const noneChip = document.querySelector('.sp-chip[data-quick="none"]');
+      if (noneChip) noneChip.classList.add("is-active");
+    }
+  }
+
+  function setAll(state) {
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck) ck.checked = state;
+    });
+    refresh();
+  }
+
+  function setFactura(cid) {
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck) ck.checked = (String(w.dataset.cid) === String(cid));
+    });
+    refresh();
+  }
+
+  function invert() {
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck) ck.checked = !ck.checked;
+    });
+    refresh();
+  }
+
+  /**
+   * Parser de rangos: "10589:1,3,5-8 ; 10590:2-4"
+   * Devuelve {doc: [num,num,...], doc2: [num,...]}
+   * Si una entrada no tiene ':doc', se aplica a TODAS las facturas que matchean ese rango.
+   */
+  function parseRango(spec) {
+    if (!spec) return null;
+    const out = {};
+    spec.split(/[,;]/).forEach(part => {
+      part = part.trim();
+      if (!part) return;
+      let doc = null, nums = part;
+      if (part.includes(":")) {
+        const ix = part.indexOf(":");
+        doc = part.substring(0, ix).trim();
+        nums = part.substring(ix + 1).trim();
+      }
+      // ahora nums puede ser "1" o "1-3" o "5-8"
+      let lo, hi;
+      if (nums.includes("-")) {
+        const ab = nums.split("-");
+        lo = parseInt(ab[0], 10); hi = parseInt(ab[1], 10);
+      } else {
+        lo = hi = parseInt(nums, 10);
+      }
+      if (isNaN(lo) || isNaN(hi)) return;
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      const key = doc || "*";
+      if (!out[key]) out[key] = new Set();
+      for (let n = lo; n <= hi; n++) out[key].add(n);
+    });
+    return out;
+  }
+
+  function aplicarRango() {
+    const inp = document.getElementById("sp-rango");
+    const spec = inp.value.trim();
+    if (!spec) {
+      if (typeof ilusToast !== "undefined") ilusToast("Ingresa un rango (ej: 10589:1,3,5-8)", { type: "warning" });
+      return;
+    }
+    const parsed = parseRango(spec);
+    if (!parsed || Object.keys(parsed).length === 0) {
+      if (typeof ilusToast !== "undefined") ilusToast("Rango no válido. Formato: DOC:1,3,5-8", { type: "error" });
+      return;
+    }
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (!ck) return;
+      const doc = w.dataset.doc;
+      const num = parseInt(w.dataset.num, 10);
+      let on = false;
+      if (parsed[doc] && parsed[doc].has(num)) on = true;
+      else if (parsed["*"] && parsed["*"].has(num)) on = true;
+      ck.checked = on;
+    });
+    refresh();
+    if (typeof ilusToast !== "undefined") {
+      const sel = wraps.filter(w => w.querySelector('input[type=checkbox]').checked).length;
+      ilusToast("✓ " + sel + " etiqueta" + (sel === 1 ? "" : "s") + " coinciden", { type: "success" });
+    }
+  }
+
+  /** Devuelve string 'cid:num,cid:num,...' de las etiquetas seleccionadas. */
+  function getSeleccionParam() {
+    const partes = [];
+    wraps.forEach(w => {
+      const ck = w.querySelector('input[type=checkbox]');
+      if (ck && ck.checked) partes.push(w.dataset.cid + ":" + w.dataset.num);
+    });
+    return partes.join(",");
+  }
+
+  function descargar(individual) {
+    const sel = getSeleccionParam();
+    if (!sel) {
+      if (typeof ilusAlert !== "undefined") {
+        ilusAlert({ title: "Sin selección", message: "Marca al menos una etiqueta antes de descargar.", type: "warning" });
+      } else {
+        alert("Marca al menos una etiqueta antes de descargar.");
+      }
+      return;
+    }
+    if (!BASE_PDF) {
+      alert("URL PDF no configurada en el template.");
+      return;
+    }
+    const btn = document.getElementById(individual ? "sp-zip" : "sp-pdf");
+    if (btn) btn.classList.add("is-busy");
+    const u = new URL(BASE_PDF, location.origin);
+    u.searchParams.set("b", sel);
+    if (individual) u.searchParams.set("individual", "1");
+    // Forzar descarga (no inline) en modo individual; para PDF mostramos en tab
+    if (individual) {
+      const a = document.createElement("a");
+      a.href = u.toString();
+      a.download = "";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } else {
+      window.open(u.toString(), "_blank", "noopener");
+    }
+    setTimeout(() => { if (btn) btn.classList.remove("is-busy"); }, 1500);
+  }
+
+  // Wire-up
+  document.querySelectorAll(".sp-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const q = chip.dataset.quick;
+      if (q === "all")        setAll(true);
+      else if (q === "none")  setAll(false);
+      else if (q === "invert") invert();
+      else if (q === "factura") setFactura(chip.dataset.cid);
+    });
+  });
+
+  document.getElementById("sp-aplicar").addEventListener("click", aplicarRango);
+  document.getElementById("sp-rango").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); aplicarRango(); }
+  });
+  document.getElementById("sp-pdf").addEventListener("click", () => descargar(false));
+  document.getElementById("sp-zip").addEventListener("click", () => descargar(true));
+
+  wraps.forEach(w => {
+    const ck = w.querySelector('input[type=checkbox]');
+    if (ck) ck.addEventListener("change", refresh);
+  });
+
+  refresh();
+
+  // Atajo global para el botón "Imprimir (navegador)" del toolbar
+  window.ilusImprimirSel = function() {
+    // Las desmarcadas ya tienen .is-off (oculto en print). Solo lanza print.
+    window.print();
+  };
+
+  /* ─────────────────────────────────────────────────────────────────
+     Editor de bultos por factura
+     - +/- ajusta el número, marca la card como "dirty"
+     - Guardar → POST al endpoint, valida que no haya bultos escaneados,
+       recarga la página para mostrar las nuevas etiquetas.
+     ───────────────────────────────────────────────────────────────── */
+  function markDirty(card) {
+    const input = card.querySelector('.bf-input');
+    const orig  = parseInt(input.dataset.original, 10);
+    const now   = parseInt(input.value, 10);
+    const saveBtn = card.querySelector('.bf-save');
+    if (isNaN(now) || now < 1 || now > 999) {
+      card.classList.remove('is-dirty');
+      saveBtn.hidden = true;
+      return;
+    }
+    if (now !== orig) {
+      card.classList.add('is-dirty');
+      saveBtn.hidden = false;
+    } else {
+      card.classList.remove('is-dirty');
+      saveBtn.hidden = true;
+    }
+  }
+
+  async function guardarBultos(card) {
+    const cid   = card.dataset.cid;
+    const doc   = card.dataset.doc;
+    const input = card.querySelector('.bf-input');
+    const nuevo = parseInt(input.value, 10);
+    if (isNaN(nuevo) || nuevo < 1) {
+      if (typeof ilusToast !== "undefined")
+        ilusToast("Ingresa un número válido (1-999)", { type: "error" });
+      return;
+    }
+    card.classList.add('is-saving');
+    try {
+      const r = await fetch(`/transporte/factura/${cid}/n-bultos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ n_bultos: nuevo })
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        const msg = j.error || "Error guardando";
+        if (typeof ilusAlert !== "undefined") {
+          await ilusAlert({ title: "No se pudo actualizar", message: msg, type: "error" });
+        } else {
+          alert(msg);
+        }
+        return;
+      }
+      if (typeof ilusToast !== "undefined") {
+        ilusToast(`✓ ${doc}: ${j.previo} → ${j.n_bultos} bultos · regenerando etiquetas...`,
+                  { type: "success" });
+      }
+      // Recargar la página para que las nuevas etiquetas se rendericen
+      setTimeout(() => { window.location.reload(); }, 800);
+    } catch (e) {
+      if (typeof ilusAlert !== "undefined") {
+        await ilusAlert({ title: "Error de red", message: String(e), type: "error" });
+      } else {
+        alert("Error de red: " + e);
+      }
+    } finally {
+      card.classList.remove('is-saving');
+    }
+  }
+
+  document.querySelectorAll('.bf-card').forEach(card => {
+    const input = card.querySelector('.bf-input');
+    const minus = card.querySelector('.bf-step[data-step="-1"]');
+    const plus  = card.querySelector('.bf-step[data-step="1"]');
+    const save  = card.querySelector('.bf-save');
+
+    minus.addEventListener('click', () => {
+      const v = parseInt(input.value, 10) || 1;
+      if (v > 1) { input.value = v - 1; markDirty(card); }
+    });
+    plus.addEventListener('click', () => {
+      const v = parseInt(input.value, 10) || 1;
+      if (v < 999) { input.value = v + 1; markDirty(card); }
+    });
+    input.addEventListener('input', () => markDirty(card));
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && card.classList.contains('is-dirty')) {
+        ev.preventDefault();
+        guardarBultos(card);
+      }
+    });
+    save.addEventListener('click', () => guardarBultos(card));
+  });
+})();
 </script>
 </body>
 </html>
