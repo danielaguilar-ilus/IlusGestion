@@ -1404,6 +1404,97 @@ def _random_sql_one(sql: str, params=None):
     return rows[0] if rows else None
 
 
+# ── Resolver de comunas del ERP Random (TABCM) — READ-ONLY ──────────────
+# Daniel reportó que comunas largas como "Talca" salían truncadas como "Tal".
+# Causa: el ERP guarda CMEN (código 3 chars) y NOKOCM (nombre 30 chars) en
+# TABCM. Cuando solo viene el código y no el nombre, el resolver local
+# CMEN_MAP (hardcoded) no cubre todos los casos. Solución: query directa
+# a TABCM con cache en memoria — son ~350 comunas en Chile, cabe en RAM.
+_TABCM_CACHE = {"loaded_at": 0, "by_kopa_koci_kocm": {}, "by_kocm_any": {}}
+_TABCM_TTL_S = 86400  # 24h: las comunas no cambian
+_TABCM_LOCK  = None   # se inicializa lazy
+
+def _random_load_tabcm_cache(force: bool = False) -> bool:
+    """Carga el catálogo de comunas TABCM del ERP a memoria.
+    Devuelve True si la carga tuvo éxito (o el cache aún es válido).
+    READ-ONLY ABSOLUTO: solo hace SELECT.
+    """
+    global _TABCM_LOCK
+    if _TABCM_LOCK is None:
+        import threading as _th
+        _TABCM_LOCK = _th.Lock()
+    with _TABCM_LOCK:
+        now = time.time()
+        if not force and _TABCM_CACHE["by_kopa_koci_kocm"] and \
+           (now - _TABCM_CACHE["loaded_at"]) < _TABCM_TTL_S:
+            return True
+        try:
+            rows = _random_sql_query(
+                "SELECT KOPA, KOCI, KOCM, NOKOCM FROM TABCM",
+                max_rows=2000,
+            ) or []
+        except Exception as e:
+            print(f"[tabcm] no se pudo cargar catalogo TABCM: {e}", flush=True)
+            return False
+        by_full = {}
+        by_kocm = {}
+        for r in rows:
+            kopa = (r.get("KOPA") or "").strip().upper()
+            koci = (r.get("KOCI") or "").strip().upper()
+            kocm = (r.get("KOCM") or "").strip().upper()
+            nombre = (r.get("NOKOCM") or "").strip()
+            if not kocm or not nombre:
+                continue
+            by_full[f"{kopa}|{koci}|{kocm}"] = nombre
+            # Para fallback: si solo viene el KOCM sin contexto.
+            # Si hay colisión, dejamos el primero encontrado pero anotamos colisión.
+            if kocm not in by_kocm:
+                by_kocm[kocm] = [nombre]
+            elif nombre not in by_kocm[kocm]:
+                by_kocm[kocm].append(nombre)
+        _TABCM_CACHE["by_kopa_koci_kocm"] = by_full
+        _TABCM_CACHE["by_kocm_any"]       = by_kocm
+        _TABCM_CACHE["loaded_at"]         = now
+        print(f"[tabcm] catalogo cargado: {len(by_full)} comunas, "
+              f"{len(by_kocm)} codigos unicos", flush=True)
+        return True
+
+
+def _resolve_comuna_erp(cmen_code: str, cien_code: str = "", pais_code: str = "CL") -> str:
+    """Resuelve un código CMEN del ERP a nombre completo de comuna.
+
+    Args:
+        cmen_code: código de comuna (ej. "TAL", "VI¥", "PROV").
+        cien_code: código de ciudad/región para precisar (ej. "TAL" en
+                   Maule → Talca; en RM → Talagante).
+        pais_code: código de país (default "CL").
+
+    Returns: nombre completo de la comuna, o el código mismo si no se
+    pudo resolver. NUNCA modifica el ERP — solo SELECT a TABCM.
+    """
+    if not cmen_code:
+        return ""
+    c_raw = str(cmen_code).strip()
+    if not c_raw:
+        return ""
+    c = c_raw.upper()
+    if not _random_load_tabcm_cache():
+        return c_raw  # Sin cache no podemos resolver — devolver tal cual
+    cien = str(cien_code or "").strip().upper()
+    kopa = str(pais_code or "CL").strip().upper()
+    # 1) Match exacto (país + ciudad + comuna)
+    if cien:
+        nombre = _TABCM_CACHE["by_kopa_koci_kocm"].get(f"{kopa}|{cien}|{c}")
+        if nombre:
+            return nombre
+    # 2) Fallback: solo por código de comuna
+    candidates = _TABCM_CACHE["by_kocm_any"].get(c) or []
+    if candidates:
+        return candidates[0]
+    # 3) No match: si parece nombre (>4 chars), devolver tal cual
+    return c_raw
+
+
 # ── INSTRUMENTACIÓN SQL 2026-05-26 (Daniel — audit runtime) ──────────
 # Wrapper transparente que mide cada query: cuenta queries, suma tiempo,
 # y loguea las que duran > _SQL_SLOW_THRESHOLD_MS. Los stats se agregan
@@ -12605,12 +12696,19 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     obs_final = obs_table_main or cliente_obs_en or line_data.get("obs", "")
 
     # Comuna: resolver código (cien/cmen) de MAEEN si existe,
-    # sino código embebido en líneas (scan)
+    # sino código embebido en líneas (scan).
+    # Prioridad: TABCM del ERP (catálogo real) → CMEN_MAP local (fallback).
     if cliente_cmen:
-        comuna_final = _erpe.cmen_to_comuna(cliente_cien, cliente_cmen) or cliente_cmen
+        comuna_final = (
+            _resolve_comuna_erp(cliente_cmen, cliente_cien)
+            or _erpe.cmen_to_comuna(cliente_cien, cliente_cmen)
+            or cliente_cmen
+        )
     else:
         cmen_line = (line_data.get("comuna") or "").strip()
         comuna_final = (
+            _resolve_comuna_erp(cmen_line) if cmen_line else ""
+        ) or (
             _erpe.cmen_to_comuna("", cmen_line) if cmen_line else ""
         ) or cmen_line
 
@@ -14391,7 +14489,14 @@ def _fedex_create_shipment(
     rec_tel      = rec_tel or "+56000000000"
     rec_email    = _fedex_clean_str(recipient.get("email"), 80)
     rec_dir      = _fedex_split_address(recipient.get("direccion"))
-    rec_comuna   = _fedex_clean_str(recipient.get("comuna"), 35) or "Santiago"
+    rec_comuna_raw = (recipient.get("comuna") or "").strip()
+    # Si llegó un código (2-4 chars), resolver contra TABCM del ERP.
+    if 2 <= len(rec_comuna_raw) <= 4:
+        try:
+            rec_comuna_raw = _resolve_comuna_erp(rec_comuna_raw) or rec_comuna_raw
+        except Exception:
+            pass
+    rec_comuna   = _fedex_clean_str(rec_comuna_raw, 35) or "Santiago"
     rec_postal   = _fedex_postal_cl(recipient.get("cod_postal"))
 
     shipper_dir = _fedex_split_address(ILUS_REMITENTE.get("bodega") or ILUS_REMITENTE["direccion"])
@@ -16164,6 +16269,13 @@ def _tr_fetch_from_erp(tido, nudo):
         if not telefono and _p["telefono"]:   telefono  = _p["telefono"]
         if not email and _p["email"]:         email     = _p["email"]
         if not comuna:                         comuna    = _p["comuna"] or _detect_comuna(direccion)
+    # Fallback final: si la comuna sigue siendo un código corto (ej. "TAL", "VI¥"),
+    # resolverla contra el catálogo TABCM del ERP. Esto cubre el caso de que el
+    # cubicador no la haya resuelto antes (re-importaciones, syncs directos).
+    if comuna and 2 <= len(comuna.strip()) <= 4:
+        _resolved = _resolve_comuna_erp(comuna.strip())
+        if _resolved and len(_resolved) > len(comuna.strip()):
+            comuna = _resolved
     # Si el ERP no entregó cliente real, marcamos explícito en lugar del
     # placeholder histórico "Consumidor final" (que se trataba como genérico
     # en el normalizador y volvía a aparecer).
@@ -16746,6 +16858,50 @@ def _tr_required(fn):
             return redirect(url_for("index"))
         return fn(*a, **kw)
     return wrapper
+
+
+@app.route("/transporte/api/comunas/fix-codigos", methods=["POST"])
+@_tr_required
+def tr_fix_comunas_codigo():
+    """Barrido: corrige comunas que quedaron como CÓDIGOS cortos (ej. "TAL"
+    en vez de "Talca") en transport_commitments. Solo SELECT al ERP y
+    UPDATE al MySQL de ILUS — el ERP NUNCA se toca.
+
+    Body opcional: { force_reload_cache: true }
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    if body.get("force_reload_cache"):
+        _random_load_tabcm_cache(force=True)
+    # Buscar candidatos: comuna entre 2 y 4 chars (probablemente código)
+    rows = mysql_fetchall(
+        "SELECT id, comuna FROM transport_commitments "
+        "WHERE comuna IS NOT NULL AND CHAR_LENGTH(comuna) BETWEEN 2 AND 4"
+    ) or []
+    cambiados, sin_cambio = [], 0
+    for r in rows:
+        c0 = (r.get("comuna") or "").strip()
+        if not c0:
+            continue
+        nuevo = _resolve_comuna_erp(c0)
+        if nuevo and nuevo != c0 and len(nuevo) > len(c0):
+            try:
+                mysql_execute(
+                    "UPDATE transport_commitments SET comuna=%s WHERE id=%s",
+                    (nuevo[:100], r["id"])
+                )
+                cambiados.append({"id": r["id"], "antes": c0, "ahora": nuevo})
+            except Exception:
+                sin_cambio += 1
+        else:
+            sin_cambio += 1
+    return jsonify({
+        "ok":              True,
+        "revisados":       len(rows),
+        "corregidos":      len(cambiados),
+        "sin_cambio":      sin_cambio,
+        "muestra":         cambiados[:20],
+        "tabcm_size":      len(_TABCM_CACHE.get("by_kopa_koci_kocm") or {}),
+    })
 
 
 @app.route("/transporte/api/sync-hoy", methods=["POST"])
