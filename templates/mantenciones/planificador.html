@@ -170,6 +170,38 @@
   .pa-prev-cli{font-weight:700;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pa-prev-f{font-weight:800;color:#dc2626;font-variant-numeric:tabular-nums;white-space:nowrap}
 
+  /* Panel de acciones urgentes ("Por hacer") */
+  .pa-acc{background:#fff;border:1px solid #fecaca;border-radius:14px;margin-bottom:12px;overflow:hidden}
+  .pa-acc-hdr{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;cursor:pointer;
+    background:linear-gradient(90deg,#fef2f2 0%,#fff 60%);user-select:none;gap:10px}
+  .pa-acc-hdr-t{font-size:.82rem;font-weight:800;color:#991b1b;display:flex;align-items:center;gap:8px;
+    flex:1 1 auto}
+  .pa-acc-hdr-t i{color:#dc2626}
+  .pa-acc-chev{color:#9ca3af;font-size:.78rem;transition:transform .2s;flex:0 0 auto}
+  .pa-acc-chev-open{transform:rotate(180deg)}
+  .pa-acc-body{display:flex;gap:12px;padding:12px;flex-wrap:wrap;align-items:flex-start}
+  .pa-acc-grupo{flex:1 1 240px;min-width:200px}
+  .pa-acc-tipo{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;
+    padding:3px 10px;border-radius:50px;margin-bottom:7px;display:inline-flex;align-items:center;gap:4px}
+  .pa-acc-vencida{background:#fee2e2;color:#991b1b}
+  .pa-acc-atrasada{background:#fef3c7;color:#92400e}
+  .pa-acc-proxima{background:#dbeafe;color:#1e40af}
+  .pa-acc-it{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #f8f9fa;min-height:32px}
+  .pa-acc-it:last-child{border-bottom:0}
+  .pa-acc-nom{flex:1 1 auto;font-size:.78rem;font-weight:700;color:#0f172a;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .pa-acc-when{font-size:.68rem;font-weight:700;color:#6b7280;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .pa-acc-when-rj{color:#dc2626}
+  .pa-acc-mas{font-size:.68rem;color:#9ca3af;padding-top:4px;text-align:right}
+  .pa-acc-0{padding:16px;text-align:center;font-size:.8rem;color:#6b7280;width:100%}
+  .pa-acc-0 i{font-size:1.4rem;display:block;margin-bottom:4px;color:#d1d5db}
+  .btn-xs{padding:3px 9px;font-size:.68rem;min-height:26px;line-height:1.4}
+
+  /* Modal agendar fecha individual */
+  .pa-mfecha-sub{font-size:.75rem;color:#6b7280;margin-bottom:12px}
+  .pa-mfecha-badge{font-size:.68rem;font-weight:800;padding:2px 10px;border-radius:50px;
+    background:#fee2e2;color:#991b1b;display:inline-block;margin-bottom:8px}
+
   /* Mobile-first: scroll horizontal con primera columna sticky */
   @media(max-width:680px){
     .pa-hero{padding:16px 14px}
@@ -230,6 +262,17 @@
     <div class="pa-kpi-num" id="paKVe">—</div>
     <div class="pa-kpi-lbl"><i class="bi bi-exclamation-octagon me-1"></i>Vencidas</div>
     <div class="pa-kpi-sub">Proyección sin OT generada</div>
+  </div>
+</div>
+
+<!-- Panel "Por hacer" — acciones urgentes -->
+<div class="pa-acc" id="paAccPanel" hidden>
+  <div class="pa-acc-hdr" id="paAccHdr">
+    <div class="pa-acc-hdr-t"><i class="bi bi-bell-fill"></i><span id="paAccTit">Atención requerida</span></div>
+    <i class="bi bi-chevron-down pa-acc-chev" id="paAccChev"></i>
+  </div>
+  <div id="paAccBody" style="display:none">
+    <div class="pa-acc-body" id="paAccContent"></div>
   </div>
 </div>
 
@@ -294,6 +337,34 @@
 <div class="pa-pop" id="paPop" role="dialog" aria-label="Detalle de mantención"></div>
 
 {% if puede_gestionar_visitas %}
+<!-- Modal: agendar OT individual con date-picker -->
+<div class="modal fade" id="mAgendarOT" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-1">
+        <h5 class="modal-title fw-bold fs-6" id="mAgendarTit">Agendar OT</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pt-1">
+        <div class="pa-mfecha-badge" id="mAgendarBadge"></div>
+        <div class="fw-bold mb-1 small" id="mAgendarCli" style="color:#0f172a"></div>
+        <div class="pa-mfecha-sub" id="mAgendarMes"></div>
+        <label class="form-label fw-bold small mb-1" for="mAgendarFecha">Fecha de visita</label>
+        <input type="date" class="form-control form-control-sm" id="mAgendarFecha">
+        <div class="form-text mt-1">Fecha sugerida por el plan — ajústala si lo necesitas.</div>
+      </div>
+      <div class="modal-footer pt-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm pa-btn-red fw-bold" id="mAgendarGo">
+          <i class="bi bi-lightning-charge-fill me-1"></i>Generar OT
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if puede_gestionar_visitas %}
 <!-- Modal de vista previa para generación masiva -->
 <div class="modal fade" id="mPreviewOTs" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
@@ -328,9 +399,10 @@ const MES_FULL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agos
                   'Septiembre','Octubre','Noviembre','Diciembre'];
 const EST_TXT  = {realizada:'Realizada', agendada:'Agendada', proyectada:'Proyectada', vencida:'Vencida'};
 
-let ANIO = ANIO_INI;     // año visible
-let DATA = null;         // última respuesta del API
+let ANIO = ANIO_INI;
+let DATA = null;
 let PEND = null;         // generación masiva pendiente de confirmar
+let _agendarPend = null; // scheduling individual pendiente
 const F  = {riesgo:'', soloContrato:false};
 
 const elEstado = document.getElementById('paEstado');
@@ -343,17 +415,22 @@ const elPop    = document.getElementById('paPop');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-// ISO → DD/MM/YYYY
 function fmtF(iso){
   if (!iso) return '—';
   const p = String(iso).slice(0, 10).split('-');
   return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : esc(String(iso));
 }
-// ISO → DD/MM
 function fmtDM(iso){
   if (!iso) return '—';
   const p = String(iso).slice(0, 10).split('-');
   return p.length === 3 ? p[2] + '/' + p[1] : '—';
+}
+
+// Fecha ISO de hoy y hoy+30 para el panel de acciones
+function hoyStr(){ return new Date().toISOString().slice(0,10); }
+function d30Str(){
+  const d = new Date(); d.setDate(d.getDate() + 30);
+  return d.toISOString().slice(0,10);
 }
 
 /* ── Estados de página ──────────────────────────────────── */
@@ -385,9 +462,14 @@ function renderKpis(k){
   k = k || {};
   const pct = Math.max(0, Math.min(100, Math.round(Number(k.cobertura_pct) || 0)));
   document.getElementById('paKCob').textContent = pct + '%';
-  document.getElementById('paKAg').textContent  = (k.ots_agendadas != null) ? k.ots_agendadas : '—';
-  document.getElementById('paKRe').textContent  = (k.realizadas != null) ? k.realizadas : '—';
-  document.getElementById('paKVe').textContent  = (k.vencidas != null) ? k.vencidas : '—';
+  document.getElementById('paKAg').textContent  = k.ots_agendadas != null ? k.ots_agendadas : '—';
+  document.getElementById('paKRe').textContent  = k.realizadas != null ? k.realizadas : '—';
+  document.getElementById('paKVe').textContent  = k.vencidas != null ? k.vencidas : '—';
+  // Fix: mostrar atrasadas (antes siempre mostraba "—")
+  const atCard = document.getElementById('paKAtCard');
+  const atNum  = document.getElementById('paKAt');
+  if (atNum) atNum.textContent = k.atrasadas != null ? k.atrasadas : '—';
+  if (atCard) atCard.classList.toggle('pa-kpi-pulse', (Number(k.atrasadas) || 0) > 0);
   const proy = Number(k.proyectadas) || 0;
   document.getElementById('paKProy').textContent = proy > 0 ? (proy + ' mantenciones proyectadas pendientes') : '';
   const bar = document.getElementById('paKBar');
@@ -396,7 +478,170 @@ function renderKpis(k){
   document.getElementById('paKVeCard').classList.toggle('pa-kpi-pulse', (Number(k.vencidas) || 0) > 0);
 }
 
-/* ── Render grilla ──────────────────────────────────────── */
+/* ── Panel "Por hacer" ──────────────────────────────────── */
+function urgScore(c){
+  // Para ordenar grilla: vencidas primero, luego atrasadas, luego próximas 30d
+  const hoy = hoyStr(); const d30 = d30Str();
+  let score = 0;
+  for (const cel of Object.values(c.meses || {})){
+    if (!cel) continue;
+    if (cel.estado === 'vencida') return 1000;
+    if (cel.estado === 'agendada' && cel.atrasada) score = Math.max(score, 100);
+    if (cel.estado === 'proyectada' && cel.fecha && cel.fecha >= hoy && cel.fecha <= d30)
+      score = Math.max(score, 10);
+  }
+  return score;
+}
+
+function renderAcciones(clientes){
+  const panel   = document.getElementById('paAccPanel');
+  const content = document.getElementById('paAccContent');
+  if (!panel || !content || !PUEDE_GESTIONAR) return;
+
+  const hoy = hoyStr(); const d30 = d30Str();
+  const urgentes = [], atrasadas = [], proximos = [];
+
+  for (const c of (clientes || [])){
+    let vFecha = null, aFecha = null, pFecha = null;
+    for (const [, cel] of Object.entries(c.meses || {})){
+      if (!cel) continue;
+      if (cel.estado === 'vencida' && !vFecha) vFecha = cel.fecha;
+      if (cel.estado === 'agendada' && cel.atrasada && !aFecha) aFecha = cel.fecha;
+      if (cel.estado === 'proyectada' && cel.fecha && cel.fecha >= hoy && cel.fecha <= d30 && !pFecha)
+        pFecha = cel.fecha;
+    }
+    if (vFecha) urgentes.push({...c, _xfecha: vFecha});
+    else if (aFecha) atrasadas.push({...c, _xfecha: aFecha});
+    else if (pFecha) proximos.push({...c, _xfecha: pFecha});
+  }
+
+  const total = urgentes.length + atrasadas.length + proximos.length;
+  if (total === 0){ panel.hidden = true; return; }
+
+  // Título del panel
+  const partes = [];
+  if (urgentes.length) partes.push(urgentes.length + ' vencida' + (urgentes.length>1?'s':''));
+  if (atrasadas.length) partes.push(atrasadas.length + ' atrasada' + (atrasadas.length>1?'s':''));
+  if (proximos.length) partes.push(proximos.length + ' próxima' + (proximos.length>1?'s':''));
+  document.getElementById('paAccTit').textContent =
+    'Por hacer — ' + partes.join(' · ');
+  panel.hidden = false;
+
+  // Botón de generar individual para el panel
+  function btnAgendar(c, tipo){
+    // Buscar la celda candidata (vencida > proyectada > agendada-atrasada)
+    let mesSel = null, celSel = null;
+    const prio = tipo === 'urgente'
+      ? ['vencida','proyectada']
+      : tipo === 'atrasada'
+      ? ['agendada','proyectada','vencida']
+      : ['proyectada','vencida'];
+    for (const est of prio){
+      for (const [ms, cel] of Object.entries(c.meses || {})){
+        if (cel && cel.estado === est){
+          mesSel = Number(ms); celSel = cel; break;
+        }
+      }
+      if (mesSel) break;
+    }
+    if (!mesSel) return '<span class="text-muted" style="font-size:.68rem">—</span>';
+    const mc = mesSel, cc = celSel;
+    return '<button class="btn btn-xs pa-btn-red ms-1" ' +
+      'onclick=\'abrirDatePicker(' + JSON.stringify({id:c.id,razon_social:c.razon_social}) + ',' +
+      mc + ',' + JSON.stringify(cc) + ')\'>' +
+      '<i class="bi bi-lightning-charge-fill"></i> Agendar</button>';
+  }
+
+  function grupo(lista, cls, icon, label, tipo){
+    if (!lista.length) return '';
+    const items = lista.slice(0,6).map(c =>
+      '<div class="pa-acc-it">' +
+      '<span class="pa-acc-nom" title="' + esc(c.razon_social) + '">' + esc(c.razon_social) + '</span>' +
+      '<span class="pa-acc-when' + (tipo==='urgente'?' pa-acc-when-rj':'') + '">' + fmtF(c._xfecha) + '</span>' +
+      btnAgendar(c, tipo) +
+      '</div>'
+    ).join('');
+    const mas = lista.length > 6
+      ? '<div class="pa-acc-mas">+ ' + (lista.length-6) + ' más</div>' : '';
+    return '<div class="pa-acc-grupo">' +
+      '<div class="pa-acc-tipo ' + cls + '"><i class="bi ' + icon + '"></i>' + label + ' · ' + lista.length + '</div>' +
+      items + mas + '</div>';
+  }
+
+  content.innerHTML =
+    grupo(urgentes,  'pa-acc-vencida',  'bi-exclamation-octagon-fill', 'Vencidas sin OT', 'urgente') +
+    grupo(atrasadas, 'pa-acc-atrasada', 'bi-clock-history',            'OTs atrasadas',   'atrasada') +
+    grupo(proximos,  'pa-acc-proxima',  'bi-calendar-event',           'Próximos 30 días','proxima');
+
+  // Abrir panel automáticamente si hay urgentes
+  if (urgentes.length > 0) abrirAccPanel();
+}
+
+let _accOpen = false;
+function abrirAccPanel(){
+  const body = document.getElementById('paAccBody');
+  const chev = document.getElementById('paAccChev');
+  if (body) body.style.display = '';
+  if (chev) chev.classList.add('pa-acc-chev-open');
+  _accOpen = true;
+}
+function toggleAccPanel(){
+  const body = document.getElementById('paAccBody');
+  const chev = document.getElementById('paAccChev');
+  _accOpen = !_accOpen;
+  if (body) body.style.display = _accOpen ? '' : 'none';
+  if (chev) chev.classList.toggle('pa-acc-chev-open', _accOpen);
+}
+
+/* ── Date-picker modal (agenda individual) ──────────────── */
+function abrirDatePicker(c, mes, cel){
+  _agendarPend = {c, mes, cel};
+  const est = cel.estado === 'vencida' ? 'Vencida' : 'Proyectada';
+  const badgeEl = document.getElementById('mAgendarBadge');
+  const cliEl   = document.getElementById('mAgendarCli');
+  const mesEl   = document.getElementById('mAgendarMes');
+  const fechaEl = document.getElementById('mAgendarFecha');
+  if (!fechaEl) return;
+  if (badgeEl) badgeEl.textContent = est;
+  if (cliEl)   cliEl.textContent = c.razon_social;
+  if (mesEl)   mesEl.textContent = MES_FULL[mes - 1] + ' ' + ANIO;
+  fechaEl.value = (cel.fecha || '').slice(0, 10);
+  fechaEl.min = ANIO + '-01-01';
+  fechaEl.max = (ANIO + 1) + '-12-31';
+  cerrarPop();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('mAgendarOT')).show();
+}
+
+async function confirmarAgendar(){
+  if (!_agendarPend) return;
+  const {c, mes} = _agendarPend;
+  const fecha = document.getElementById('mAgendarFecha').value;
+  if (!fecha){ ilusToast('Elige una fecha.', {type:'warning'}); return; }
+  const btn = document.getElementById('mAgendarGo');
+  if (btn) btn.disabled = true;
+  try {
+    const d = await postGen({
+      anio: ANIO, meses: [mes], cliente_ids: [c.id],
+      dry_run: false, confirm: true, fecha_override: fecha
+    });
+    if ((d.creadas || 0) > 0){
+      ilusToast('✓ OT creada para ' + c.razon_social, {type: 'success'});
+    } else if (d.omitidas && d.omitidas.length){
+      ilusToast('No se creó: ' + (d.omitidas[0].motivo || 'el mes ya estaba cubierto'), {type: 'warning'});
+    } else {
+      ilusToast('No había nada que generar.', {type: 'info'});
+    }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('mAgendarOT')).hide();
+    _agendarPend = null;
+    cargar();
+  } catch (e) {
+    ilusToast(e.message || 'Error de red al generar la OT.', {type: 'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ── Render grilla (con sort por urgencia) ──────────────── */
 function buildHead(){
   const hoy = new Date();
   const mesNow = (ANIO === hoy.getFullYear()) ? (hoy.getMonth() + 1) : 0;
@@ -411,25 +656,24 @@ function chipHtml(c, mes, cel){
   if (!cel) return '<span class="pa-dot">·</span>';
   const dd  = cel.fecha ? String(cel.fecha).slice(8, 10) : '·';
   const dat = ' data-cli="' + esc(c.id) + '" data-mes="' + mes + '"';
-  if (cel.estado === 'realizada'){
+  if (cel.estado === 'realizada')
     return '<div class="pa-chip pa-chip-realizada"' + dat + ' title="Realizada · ' + fmtF(cel.fecha) + '">' +
       '<i class="bi bi-check-lg"></i></div>';
-  }
-  if (cel.estado === 'agendada'){
+  if (cel.estado === 'agendada')
     return '<div class="pa-chip pa-chip-agendada"' + dat + ' title="' +
       esc(cel.numero_ot || 'OT agendada') + ' · ' + fmtF(cel.fecha) + '">' + dd + '</div>';
-  }
-  if (cel.estado === 'vencida'){
+  if (cel.estado === 'vencida')
     return '<div class="pa-chip pa-chip-vencida"' + dat + ' title="Vencida · ' + fmtF(cel.fecha) + '">!</div>';
-  }
   return '<div class="pa-chip pa-chip-proyectada"' + dat + ' title="Proyectada · ' + fmtF(cel.fecha) + '">' + dd + '</div>';
 }
 
 function renderGrid(clientes){
+  // Ordenar por urgencia: vencidas primero, luego atrasadas, luego próximas 30d, luego resto
+  const sorted = [...clientes].sort((a, b) => urgScore(b) - urgScore(a));
   let html = '';
-  for (const c of clientes){
+  for (const c of sorted){
     const r   = String(c.riesgo || '').toLowerCase();
-    const dot = (r === 'alto') ? 'pa-r-alto' : (r === 'medio') ? 'pa-r-medio' : (r === 'bajo') ? 'pa-r-bajo' : 'pa-r-na';
+    const dot = r === 'alto' ? 'pa-r-alto' : r === 'medio' ? 'pa-r-medio' : r === 'bajo' ? 'pa-r-bajo' : 'pa-r-na';
     const tit = r ? ('Riesgo ' + r) : 'Sin riesgo calculado';
     const sub = c.tiene_contrato
       ? ('cada ' + esc(c.frecuencia != null ? c.frecuencia : '—') + ' meses · día ' +
@@ -441,7 +685,7 @@ function renderGrid(clientes){
       '<span class="pa-rdot ' + dot + '" title="' + tit + '"></span>' + esc(c.razon_social) + '</div>' +
       '<div class="pa-cli-sub">' + sub + '</div></div></td>';
     for (let m = 1; m <= 12; m++){
-      html += '<td class="pa-cell">' + chipHtml(c, m, (c.meses || {})[m]) + '</td>';
+      html += '<td class="pa-cell">' + chipHtml(c, m, (c.meses || {})[String(m)]) + '</td>';
     }
     html += '</tr>';
   }
@@ -465,6 +709,7 @@ async function cargar(){
     if (!r.ok || !d || d.ok !== true) throw new Error((d && d.error) || ('Error HTTP ' + r.status));
     DATA = d;
     renderKpis(d.kpis);
+    renderAcciones(d.clientes);
     if (!d.clientes || !d.clientes.length){ uiVacio(); return; }
     buildHead();
     renderGrid(d.clientes);
@@ -491,7 +736,7 @@ function abrirPop(chip, c, mes, cel){
   let acc = '';
   if (PUEDE_GESTIONAR && (est === 'proyectada' || est === 'vencida')){
     acc += '<button type="button" class="btn btn-sm pa-btn-red fw-bold w-100 pa-pop-gen">' +
-      '<i class="bi bi-lightning-charge-fill me-1"></i>Generar OT</button>';
+      '<i class="bi bi-lightning-charge-fill me-1"></i>Agendar OT</button>';
   }
   if ((est === 'agendada' || est === 'realizada') && cel.visita_id){
     acc += '<a class="btn btn-sm btn-outline-dark fw-bold w-100" href="/mantenciones/ot/' +
@@ -506,14 +751,14 @@ function abrirPop(chip, c, mes, cel){
     '<button type="button" class="pa-pop-x" aria-label="Cerrar">&times;</button></div>' +
     '<div class="pa-pop-fecha"><i class="bi bi-calendar3 me-1"></i>' + fmtF(cel.fecha) + '</div>' +
     (cel.numero_ot ? ('<div class="pa-pop-ot">' + esc(cel.numero_ot) + '</div>') : '') +
+    (cel.atrasada  ? '<div class="pa-pop-late"><i class="bi bi-clock-history me-1"></i>OT con fecha pasada</div>' : '') +
     '<div class="pa-pop-cli" title="' + esc(c.razon_social) + '">' + esc(c.razon_social) + '</div>' +
     '<div class="pa-pop-acts">' + acc + '</div>';
 
   elPop.querySelector('.pa-pop-x').addEventListener('click', cerrarPop);
   const bGen = elPop.querySelector('.pa-pop-gen');
-  if (bGen) bGen.addEventListener('click', () => generarUno(c, mes, cel));
+  if (bGen) bGen.addEventListener('click', () => { abrirDatePicker(c, mes, cel); });
 
-  // Posicionar cerca del chip cuidando los bordes del viewport
   elPop.style.display = 'block';
   const rc = chip.getBoundingClientRect();
   const pw = elPop.offsetWidth, ph = elPop.offsetHeight;
@@ -539,31 +784,6 @@ async function postGen(body){
   return d;
 }
 
-/* ── Generar UNA OT desde el popover ────────────────────── */
-async function generarUno(c, mes, cel){
-  const ok = await ilusConfirm({
-    title: 'Generar OT',
-    message: '¿Crear la OT de ' + c.razon_social + ' para el ' + fmtF(cel.fecha) + '?',
-    sub: 'La visita quedará agendada en el calendario de mantenciones.',
-    okLabel: 'Generar OT', cancelLabel: 'Cancelar'
-  });
-  if (!ok) return;
-  cerrarPop();
-  try {
-    const d = await postGen({anio: ANIO, meses: [mes], cliente_ids: [c.id], dry_run: false, confirm: true});
-    if ((d.creadas || 0) > 0){
-      ilusToast('✓ OT creada para ' + c.razon_social, {type: 'success'});
-    } else if (d.omitidas && d.omitidas.length){
-      ilusToast('No se creó: ' + (d.omitidas[0].motivo || 'el mes ya estaba cubierto'), {type: 'warning'});
-    } else {
-      ilusToast('No había nada que generar.', {type: 'info'});
-    }
-    cargar();
-  } catch (e) {
-    ilusToast(e.message || 'Error de red al generar la OT.', {type: 'error'});
-  }
-}
-
 /* ── Generación masiva: dry-run → preview → confirm ─────── */
 async function genMasivo(meses, btn){
   cerrarPop();
@@ -571,7 +791,6 @@ async function genMasivo(meses, btn){
     ilusToast('No hay clientes visibles con los filtros actuales.', {type: 'info'});
     return;
   }
-  // Filtros riesgo/contrato ya aplicados por el server: los visibles son DATA.clientes
   const ids = DATA.clientes.map((c) => c.id);
   if (btn) btn.disabled = true;
   try {
@@ -626,7 +845,7 @@ async function confirmarMasivo(){
   }
 }
 
-/* ── Selects de mes y trimestre (solo si puede gestionar) ── */
+/* ── Selects de mes y trimestre ─────────────────────────── */
 function llenarSelects(){
   const sm = document.getElementById('paSelMes');
   const sq = document.getElementById('paSelQ');
@@ -645,7 +864,6 @@ function llenarSelects(){
 
 /* ── Init ───────────────────────────────────────────────── */
 function init(){
-  // Popover al body: coordenadas absolutas respecto al documento
   document.body.appendChild(elPop);
   elPop.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', (e) => {
@@ -664,12 +882,16 @@ function init(){
     const mes = Number(chip.dataset.mes);
     const c = ((DATA && DATA.clientes) || []).find((x) => Number(x.id) === cid);
     if (!c) return;
-    const cel = (c.meses || {})[mes];
+    const cel = (c.meses || {})[String(mes)];
     if (!cel) return;
     abrirPop(chip, c, mes, cel);
   });
 
-  // Filtro de riesgo (chips)
+  // Toggle del panel Por hacer
+  const accHdr = document.getElementById('paAccHdr');
+  if (accHdr) accHdr.addEventListener('click', toggleAccPanel);
+
+  // Filtro de riesgo
   document.getElementById('paChips').addEventListener('click', (e) => {
     const b = e.target.closest('.pa-fchip');
     if (!b) return;
@@ -678,17 +900,15 @@ function init(){
     cargar();
   });
 
-  // Toggle solo con contrato
   document.getElementById('paSoloContrato').addEventListener('change', (e) => {
     F.soloContrato = !!e.target.checked;
     cargar();
   });
 
-  // Selector de año
   document.getElementById('paPrev').addEventListener('click', () => cambiarAnio(-1));
   document.getElementById('paNext').addEventListener('click', () => cambiarAnio(1));
 
-  // Generación masiva (botones existen solo si puede gestionar)
+  // Generación masiva
   const bm = document.getElementById('paBtnMes');
   if (bm) bm.addEventListener('click', () => {
     const m = Number(document.getElementById('paSelMes').value) || 1;
@@ -701,6 +921,10 @@ function init(){
   });
   const go = document.getElementById('paPrevGo');
   if (go) go.addEventListener('click', confirmarMasivo);
+
+  // Modal agendar fecha individual
+  const goAg = document.getElementById('mAgendarGo');
+  if (goAg) goAg.addEventListener('click', confirmarAgendar);
 
   llenarSelects();
   cargar();

@@ -54320,6 +54320,14 @@ def mant_planificador_generar_ots():
             cliente_ids = {int(x) for x in d["cliente_ids"]}
         except (TypeError, ValueError):
             return jsonify({"error": "cliente_ids inválidos."}), 400
+    fecha_override = None
+    if d.get("fecha_override"):
+        try:
+            from datetime import datetime as _dt
+            _dt.strptime(str(d["fecha_override"])[:10], "%Y-%m-%d")
+            fecha_override = str(d["fecha_override"])[:10]
+        except ValueError:
+            return jsonify({"error": "fecha_override inválida — usa YYYY-MM-DD."}), 400
     try:
         data = _planificador_compute(anio)
         candidatas = []
@@ -54370,12 +54378,15 @@ def mant_planificador_generar_ots():
                         continue
                     numero_ot = f"{_ot_prefix}-{_ot_seq:05d}"
                     _ot_seq += 1
+                    # fecha_override: solo se aplica cuando es una OT individual
+                    fecha_ot = (fecha_override if fecha_override and len(candidatas) == 1
+                                else cand["fecha"])
                     cur.execute(
                         "INSERT INTO mant_visitas (numero_ot, cliente_id, contrato_id, titulo, tipo, estado, "
                         " fecha_programada, cubierto_por, created_by, created_by_user_id) "
                         "VALUES (%s,%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
                         (numero_ot, cid, _intel_contrato_id(cid), "Mantención preventiva (Plan anual)",
-                         cand["fecha"], current_username(), uid))
+                         fecha_ot, current_username(), uid))
                     creadas += 1
             conn.commit()
         finally:
