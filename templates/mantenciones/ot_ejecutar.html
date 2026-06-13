@@ -2157,6 +2157,11 @@
     <div id="tareasList">
       {# Llenado dinámico #}
     </div>
+    {# 2026-06-12 (Daniel) — datalist ÚNICO para los campos "Marca" de la
+       checklist (combobox de marcas/familias del ERP). Vive FUERA de
+       #tareasList (que se re-renderiza por tarea) para conservar el id
+       único y las opciones cargadas. Lo llena _chkCargarMarcas(). #}
+    <datalist id="chkMarcasDL"></datalist>
   </div>
 
   </div> {# /tabPanel-tareas #}
@@ -2225,15 +2230,22 @@
       </button>
     {% endif %}
   {% elif visita.estado == 'firmada_tecnico' %}
-    {# 2026-06-12 (Daniel) — El técnico firmó. VENTANA DE CORRECCIÓN antes de
-       la firma del cliente: el ejecutivo SSTT / superadmin pueden corregir
-       (ej: equipo cruzado). El técnico asignado / ejecutivo capturan la firma
-       del cliente cuando esté conforme. #}
+    {# 2026-06-12 (Daniel, estilo Fracttal) — El técnico firmó. VENTANA DE
+       CORRECCIÓN antes de la firma del cliente: el TÉCNICO ASIGNADO sigue
+       editando (fotos, tareas, equipo cruzado) y también gestión (ejecutivo
+       SSTT / supervisor / admin). Todo cambio post-firma queda registrado en
+       la bitácora (mant_logs: edicion_post_firma) para amparar al técnico.
+       Al capturar la firma del cliente, la OT se sella. #}
     {% if puede_ejecutar %}
       <div class="alert alert-warning py-2 small mb-2" style="border-radius:10px">
         <i class="bi bi-pencil-square me-1"></i>
-        <b>Ventana de corrección:</b> el técnico ya firmó. Revisa y corrige lo que sea
-        necesario <b>antes</b> de capturar la firma del cliente.
+        <b>Ventana de corrección:</b> el técnico ya firmó pero el cliente aún no.
+        Puedes corregir fotos, tareas y datos de equipos <b>antes</b> de capturar
+        la firma del cliente — al firmar el cliente, la OT se bloquea.
+        <span class="d-block mt-1" style="opacity:.85">
+          <i class="bi bi-shield-check me-1"></i>Todo cambio desde la firma del
+          técnico queda registrado con autor en la bitácora.
+        </span>
       </div>
     {% endif %}
     {% if puede_firmar_cliente %}
@@ -3421,13 +3433,26 @@ function renderTareaHtml(t, bloqueada, mid, pid){
           </button>` : ''}
         </div>`;
       }
+      // ── 2026-06-12 (Daniel) — Campo MARCA: combobox con el catálogo de
+      //    marcas/familias (seed + casa + ERP Random vía /api/marcas).
+      //    Texto libre permitido (el ERP no tiene TODAS las marcas);
+      //    al blur se normaliza a la forma canónica y se guarda normal.
+      const _esMarcaInput = _esCampoMarca(t.titulo || '');
+      if (_esMarcaInput){ _chkCargarMarcas(); } // prefetch (idempotente, cacheado)
+      const _marcaAttrs = _esMarcaInput
+        ? `list="chkMarcasDL" autocomplete="off" onfocus="_chkCargarMarcas()"`
+        : '';
+      const _placeholderTxt = _esMarcaInput
+        ? 'Ej: ILUS, Gymleco, Freemotion…'
+        : 'Escribe tu respuesta…';
       ctrlHtml = `<div class="ctrl">
         ${_serialBannerHtml}
-        <input type="text" id="texto-input-${t.id}" placeholder="Escribe tu respuesta…"
+        <input type="text" id="texto-input-${t.id}" placeholder="${_placeholderTxt}"
           value="${_escapeAttr(_curTxt)}"
+          ${_marcaAttrs}
           ${bloqueada ? 'disabled' : ''}
           oninput="_textoCharFeedback(this, ${t.id}, ${_minChars})"
-          onblur="_textoOnBlur(this, ${t.id}, ${mid}, ${pid}, ${_minChars})">
+          onblur="${_esMarcaInput ? '_chkNormalizarMarca(this); ' : ''}_textoOnBlur(this, ${t.id}, ${mid}, ${pid}, ${_minChars})">
         <div class="tx-texto-feedback" id="texto-fb-${t.id}"
              style="font-size:.72rem;margin-top:4px;font-weight:600;
                     display:flex;align-items:center;gap:6px">
@@ -3708,8 +3733,52 @@ function refreshPills(btn, group){
 function _esCampoSerial(titulo){
   if (!titulo) return false;
   // Solo evaluar el título base (antes del " — Nombre Equipo (S/N: ...)" que agrega el backend)
-  const base = String(titulo).split(' — ')[0];
-  return /(\bserie\b|\bserial\b|n[°º]?\s*serie|sn\b|\bs\/n\b|numero\s+de\s+serie|n[uú]mero\s+de\s+serie)/i.test(base);
+  const base = String(titulo).split(' — ')[0].trim();
+  // 2026-06-12 (Daniel): exclusión DURA — Marca y Observaciones NUNCA son
+  // campos de serial, aunque la plantilla mezcle palabras en el título.
+  // (El serial se sugiere solo en campos que realmente piden serie.)
+  if (/^\s*(marca|observaci)/i.test(base)) return false;
+  // 'sn' anclado por ambos lados (\bsn\b) — antes 'sn\b' matcheaba la
+  // subcadena 'sn' en medio de cualquier palabra.
+  return /(\bserie\b|\bserial\b|n[°º]?\s*serie|\bsn\b|\bs\/n\b|numero\s+de\s+serie|n[uú]mero\s+de\s+serie)/i.test(base);
+}
+
+// 2026-06-12 (Daniel) — Detecta si el título de una tarea pide la MARCA del
+// equipo ("Marca", "Marca del Equipo", "Marca/Fabricante"). En esos campos
+// se ofrece el catálogo de marcas/familias (seed + casa + ERP Random) como
+// combobox (datalist): el técnico elige una familia o escribe libre.
+function _esCampoMarca(titulo){
+  if (!titulo) return false;
+  const base = String(titulo).split(' — ')[0].trim();
+  return /^\s*marca\b/i.test(base);
+}
+
+// Catálogo de marcas para la CHECKLIST (mismo patrón que _capCargarMarcas
+// del modal de captura, con datalist propio para no colisionar IDs).
+let _chkMarcas = null;
+async function _chkCargarMarcas(){
+  if (_chkMarcas === null){
+    try {
+      const r = await fetch('/mantenciones/api/marcas');
+      const d = await r.json();
+      _chkMarcas = (d && d.marcas) || [];
+    } catch(e){ _chkMarcas = []; }
+  }
+  const dl = document.getElementById('chkMarcasDL');
+  if (dl && !dl.children.length && _chkMarcas.length){
+    dl.innerHTML = _chkMarcas.map(m => `<option value="${_escapeAttr(m)}">`).join('');
+  }
+}
+
+// Normaliza la marca al guardar: si coincide (case-insensitive) con una del
+// catálogo, usa la forma canónica → BD consistente ("life fitness" → "Life Fitness").
+function _chkNormalizarMarca(inp){
+  const v = (inp.value || '').trim();
+  if (v && _chkMarcas && _chkMarcas.length){
+    const hit = _chkMarcas.find(m => m.toLowerCase() === v.toLowerCase());
+    if (hit && hit !== v){ inp.value = hit; return hit; }
+  }
+  return v;
 }
 
 // Sugiere el serial actualmente registrado en mant_maquinas (que vino en
@@ -3869,14 +3938,20 @@ async function _capturaSaveReal(mid, payload, intento){
 // ── Catálogo de marcas (datalist, lazy al primer focus) ─────────────
 let _capMarcas = null;
 async function _capCargarMarcas(){
-  if (_capMarcas) return;
-  try {
-    const r = await fetch('/mantenciones/api/marcas');
-    const d = await r.json();
-    _capMarcas = (d && d.marcas) || [];
-    const dl = document.getElementById('capMarcasDL');
-    if (dl) dl.innerHTML = _capMarcas.map(m => `<option value="${_escapeAttr(m)}">`).join('');
-  } catch(e){ _capMarcas = []; }
+  if (_capMarcas === null){
+    try {
+      const r = await fetch('/mantenciones/api/marcas');
+      const d = await r.json();
+      _capMarcas = (d && d.marcas) || [];
+    } catch(e){ _capMarcas = []; }
+  }
+  // FIX 2026-06-12: rellenar SIEMPRE que el datalist esté vacío. El modal
+  // re-crea #capMarcasDL en cada apertura; antes el early-return del cache
+  // dejaba el datalist nuevo sin opciones (sin sugerencias desde la 2ª vez).
+  const dl = document.getElementById('capMarcasDL');
+  if (dl && !dl.children.length && _capMarcas.length){
+    dl.innerHTML = _capMarcas.map(m => `<option value="${_escapeAttr(m)}">`).join('');
+  }
 }
 
 // Normaliza la marca al guardar: si coincide (case-insensitive) con una del
@@ -4133,6 +4208,34 @@ async function _capSubirFoto(mid, fileInput){
   }
 }
 
+// 2026-06-12 (Daniel, estilo Fracttal) — Borrar una foto de ESTA OT.
+// Disponible mientras la OT no esté sellada por la firma del cliente.
+// El backend además limpia la copia del levantamiento y libera la foto
+// principal de la ficha si la puso esta misma OT (para poder re-subir).
+async function _capBorrarFoto(mid, fotoId){
+  const ok = await ilusConfirm({
+    title: 'Eliminar foto',
+    message: '¿Quitar esta foto de la OT?',
+    sub: 'Se elimina de la evidencia de esta OT y no pasará a la ficha del equipo. Podrás subir otra.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos/${fotoId}`, {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || 'No se pudo eliminar la foto');
+    ilusToast('✓ Foto eliminada', { type: 'success' });
+    await _capRefreshFotos(mid);
+  } catch(e){
+    console.error('[_capBorrarFoto]', e);
+    ilusToast(e.message || 'No se pudo eliminar la foto', { type: 'error' });
+  }
+}
+
 // Refresca solo la grilla de fotos del modal (sin recargar todo)
 async function _capRefreshFotos(mid){
   // PERF 2026-05-22 — Skeleton mientras carga (mejora percepción de
@@ -4180,10 +4283,26 @@ function _renderFotosTiles(fotos, mid){
     const lbl = f.fuente === 'ot' ? 'NUEVA' : 'FICHA';
     // PERF 2026-05-22: 'card' (≤400px) para grid; el lightbox usa 'gallery'.
     const thumbUrl = cloudTx(f.url, 'card');
-    html += `<div class="cap-foto-tile ${cls}" title="${_escapeAttr(f.descripcion || f.tipo_foto || '')}">
+    // 2026-06-12 (Daniel, estilo Fracttal): el técnico puede BORRAR las fotos
+    // de ESTA OT (fuente 'ot') mientras la OT no esté sellada por el cliente.
+    // Las fotos históricas de la ficha (fuente 'ficha') no se tocan desde acá.
+    const delBtn = (!readonly && f.fuente === 'ot' && f.id)
+      ? `<button type="button" class="cap-foto-del" title="Eliminar esta foto"
+           onclick="event.stopPropagation();_capBorrarFoto(${mid}, ${f.id})"
+           style="position:absolute;top:4px;right:4px;width:26px;height:26px;
+             border-radius:50%;border:0;background:rgba(220,38,38,.92);color:#fff;
+             font-size:.8rem;line-height:1;display:flex;align-items:center;
+             justify-content:center;cursor:pointer;z-index:2;
+             box-shadow:0 1px 4px rgba(0,0,0,.35)">
+           <i class="bi bi-trash-fill"></i>
+         </button>`
+      : '';
+    html += `<div class="cap-foto-tile ${cls}" style="position:relative"
+        title="${_escapeAttr(f.descripcion || f.tipo_foto || '')}">
       <img src="${_escapeAttr(thumbUrl)}" alt="${_escapeAttr(f.descripcion || '')}"
            loading="lazy" decoding="async">
       <span class="badge-fuente">${lbl}</span>
+      ${delBtn}
     </div>`;
   });
   if (!fotos || !fotos.length){
@@ -5362,7 +5481,9 @@ function _updateProgress(mid, pid){
   const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   grupo.completas = grupo.tareas.filter(t => t.completada).length;
   grupo.progreso = grupo.total ? Math.round((grupo.completas / grupo.total) * 100) : 0;
-  grupo.bloqueado = (grupo.completas === grupo.total && grupo.total > 0);
+  // 2026-06-12 (Daniel, estilo Fracttal): checklist completo NO se auto-bloquea.
+  // El técnico corrige hasta la firma del CLIENTE (sello real = estado + permisos).
+  grupo.bloqueado = false;
 
   // Update vista 3 si está activa
   const tProg = document.getElementById('tProg');

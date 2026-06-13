@@ -90,6 +90,14 @@
           <div class="small text-muted">Si ya creaste las OTs en el portal FedEx</div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header"><i class="bi bi-printer me-1"></i>Impresión</h6></li>
+        <li><a class="dropdown-item"
+               href="/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/pdf"
+               target="_blank">
+          <i class="bi bi-file-earmark-pdf me-1"></i>Imprimir todas las etiquetas FedEx
+          <div class="small text-muted">PDF único 4×6 con todas las etiquetas oficiales</div>
+        </a></li>
+        <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header"><i class="bi bi-calendar-event me-1"></i>Logística</h6></li>
         <li><a class="dropdown-item" href="#" onclick="abrirPickupFedex(); return false">
           <i class="bi bi-truck me-1"></i>Programar retiro FedEx
@@ -388,10 +396,21 @@
                 <i class="bi bi-magic"></i>
               </button>
               {% else %}
-              <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Cancelar OT FedEx (mismo día)"
-                      onclick="cancelarOTFedex({{ item.id }})">
-                <i class="bi bi-x-octagon"></i>
-              </button>
+                {% set cw = item.get('cancel_window') %}
+                {% if cw and cw.expired %}
+                <button class="btn btn-sm btn-outline-secondary mfd-act-btn fx-cancel-btn"
+                        disabled
+                        title="Cancelación solo disponible el mismo día hasta las 16:00 hora Chile">
+                  <i class="bi bi-x-octagon"></i>
+                </button>
+                {% else %}
+                <button class="btn btn-sm btn-outline-danger mfd-act-btn fx-cancel-btn"
+                        {% if cw %}data-cancel-deadline-ms="{{ cw.deadline_ms }}"{% endif %}
+                        title="Cancelar OT FedEx (mismo día hasta 16:00 Chile)"
+                        onclick="cancelarOTFedex({{ item.id }}, this)">
+                  <i class="bi bi-x-octagon"></i>
+                </button>
+                {% endif %}
               {% endif %}
             {% endif %}
             <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="Asociar Nº de tracking FedEx manualmente"
@@ -1823,11 +1842,11 @@ async function crearOTFedexItem(itemId) {
   }
 }
 
-async function cancelarOTFedex(itemId) {
+async function cancelarOTFedex(itemId, btn) {
   var ok = await ilusConfirm({
     title: 'Cancelar OT FedEx',
     message: '¿Cancelar la OT FedEx de esta factura?',
-    sub: 'Solo se puede cancelar el MISMO día. Después de las 22:00 FedEx la rechazará.',
+    sub: 'Solo se puede cancelar el MISMO día hasta las 16:00 hora Chile. Pasada esa hora FedEx ya no acepta la cancelación desde el sistema.',
     okLabel: 'Sí, cancelar', danger: true,
   });
   if (!ok) return;
@@ -1835,6 +1854,13 @@ async function cancelarOTFedex(itemId) {
     var r = await fetch('/transporte/api/items/' + itemId + '/cancelar-ot-fedex', { method: 'POST' });
     var d = await r.json();
     if (!d.ok) {
+      if (d.expired && btn) {
+        btn.disabled = true;
+        btn.classList.remove('btn-outline-danger');
+        btn.classList.add('btn-outline-secondary');
+        btn.removeAttribute('data-cancel-deadline-ms');
+        btn.title = 'Cancelación solo disponible el mismo día hasta las 16:00 hora Chile';
+      }
       ilusToast(d.error || 'No se pudo cancelar', { type: 'error' });
       return;
     }
@@ -1844,6 +1870,37 @@ async function cancelarOTFedex(itemId) {
     ilusToast('Error de conexión', { type: 'error' });
   }
 }
+
+// Cronómetro de cancelación FedEx: actualiza tooltip cada 30s con tiempo
+// restante hasta las 16:00 hora Chile. Cuando expira, deshabilita el botón
+// en vivo sin necesidad de recargar.
+function fedexCancelTickAll() {
+  var btns = document.querySelectorAll('.fx-cancel-btn[data-cancel-deadline-ms]');
+  var now = Date.now();
+  btns.forEach(function(btn){
+    var ddl = parseInt(btn.dataset.cancelDeadlineMs, 10);
+    if (!ddl) return;
+    var ms = ddl - now;
+    if (ms <= 0) {
+      btn.disabled = true;
+      btn.classList.remove('btn-outline-danger');
+      btn.classList.add('btn-outline-secondary');
+      btn.removeAttribute('data-cancel-deadline-ms');
+      btn.removeAttribute('onclick');
+      btn.title = 'Cancelación solo disponible el mismo día hasta las 16:00 hora Chile';
+      return;
+    }
+    var totalMin = Math.floor(ms / 60000);
+    var h = Math.floor(totalMin / 60);
+    var m = totalMin % 60;
+    var rest = h > 0 ? (h + 'h ' + (m<10?'0':'') + m + 'm') : (m + ' min');
+    btn.title = 'Cancelar OT FedEx · ' + rest + ' hasta corte (16:00 Chile)';
+  });
+}
+document.addEventListener('DOMContentLoaded', function(){
+  fedexCancelTickAll();
+  setInterval(fedexCancelTickAll, 30 * 1000);
+});
 
 // ══════════════════════════════════════════════════════════════════════
 //  CREAR OTs FedEx MASIVO (Ship API)

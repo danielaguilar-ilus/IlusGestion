@@ -15541,6 +15541,43 @@ def _fedex_cancel_shipment(tracking_number: str) -> dict:
     }
 
 
+def _fedex_cancel_window(ship_created_at):
+    """Ventana de cancelación de una OT FedEx (Fase 3 cronómetro).
+
+    Regla: FedEx permite cancelar el MISMO día calendario en Chile en que se
+    creó la OT, hasta las 16:00 hora Chile (corte operativo de Quilicura).
+    Después de esa hora el envío entra a la red y debe gestionarse manualmente.
+
+    Args:
+        ship_created_at: datetime de creación (naive UTC desde MySQL NOW()
+        o aware en cualquier zona).
+
+    Returns:
+        dict {deadline_iso, deadline_ms, expired, seconds_left} o None si
+        no hay fecha de creación.
+    """
+    if not ship_created_at:
+        return None
+    try:
+        from datetime import time as _time, timezone as _tz_utc
+        ts = ship_created_at
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_tz_utc.utc)
+        ship_cl = ts.astimezone(_TZ_CL)
+        deadline_cl = datetime.combine(ship_cl.date(), _time(16, 0), tzinfo=_TZ_CL)
+        now_cl = _now_chile()
+        seconds_left = int((deadline_cl - now_cl).total_seconds())
+        return {
+            "deadline_iso": deadline_cl.isoformat(),
+            "deadline_ms":  int(deadline_cl.timestamp() * 1000),
+            "expired":      seconds_left <= 0,
+            "seconds_left": seconds_left,
+        }
+    except Exception as e:
+        print(f"[fedex_cancel_window] error: {e}", flush=True)
+        return None
+
+
 def _fedex_pickup_check(
     *,
     address: dict,
@@ -20130,6 +20167,8 @@ def tr_manifiesto_detalle(mid):
             it["has_ship_label"] = bool(it.get("ship_label_b64"))
             if it.get("ship_label_b64"):
                 it["ship_label_b64"] = None
+            # Ventana de cancelación FedEx (mismo día Chile, corte 16:00).
+            it["cancel_window"] = _fedex_cancel_window(it.get("ship_created_at"))
 
         # ── ALERTA "Facturas sin OT FedEx" (visión Daniel 2026-06-06) ──
         # FedEx se gestiona por API: una vez asignada la OT (tracking number),
@@ -20608,6 +20647,81 @@ def tr_factura_etiquetas_pdf(commitment_id):
 
     return Response(data, mimetype=mime, headers={
         "Content-Disposition": f'{"attachment" if individual else "inline"}; filename="{fname}"'
+    })
+
+
+@app.route("/transporte/manifiestos/<int:mid>/etiquetas-fedex/pdf")
+@_tr_required
+def tr_manifiesto_etiquetas_fedex_pdf(mid):
+    """PDF único concatenando TODAS las etiquetas FedEx (4x6 PDF) del manifiesto.
+
+    Lee `ship_label_b64` de cada item con OT FedEx creada (formato PDF),
+    los une página por página con pypdf y devuelve un solo PDF para imprimir
+    en bloque. Items sin etiqueta o con formato no-PDF (ZPL/PNG/EPL) se
+    omiten silenciosamente — quedan reportados en el log.
+    """
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, courier FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        return "Manifiesto no encontrado", 404
+
+    rows = mysql_fetchall(
+        "SELECT mi.id, mi.tido, mi.nudo, mi.master_tracking_number, "
+        "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at "
+        "FROM transport_manifest_items mi "
+        "WHERE mi.manifest_id=%s "
+        "ORDER BY mi.orden, mi.id", (mid,)) or []
+
+    if not rows:
+        return "Manifiesto sin items", 400
+
+    import base64 as _b64
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    incluidos = 0
+    omitidos = []
+    for r in rows:
+        if r.get("ship_cancelled_at"):
+            omitidos.append(f"{r['tido']}{r['nudo']} (cancelado)")
+            continue
+        b64 = r.get("ship_label_b64") or ""
+        fmt = (r.get("ship_label_format") or "PDF").upper()
+        if not b64:
+            omitidos.append(f"{r['tido']}{r['nudo']} (sin etiqueta)")
+            continue
+        if fmt != "PDF":
+            omitidos.append(f"{r['tido']}{r['nudo']} ({fmt})")
+            continue
+        try:
+            raw = _b64.b64decode(b64)
+            reader = PdfReader(io.BytesIO(raw), strict=False)
+            for page in reader.pages:
+                writer.add_page(page)
+            incluidos += 1
+        except Exception as e:
+            omitidos.append(f"{r['tido']}{r['nudo']} (error: {type(e).__name__})")
+
+    if incluidos == 0:
+        msg = "No hay etiquetas FedEx en formato PDF para imprimir."
+        if omitidos:
+            msg += " Omitidos: " + ", ".join(omitidos[:5])
+            if len(omitidos) > 5:
+                msg += f" (+{len(omitidos)-5} más)"
+        return msg, 400
+
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    data = out.getvalue()
+
+    _tr_log("manifest", mid, "etiquetas fedex pdf",
+            f"{incluidos} incluidos · {len(omitidos)} omitidos")
+
+    corr = manifiesto.get("correlativo") or mid
+    fname = f"etiquetas_fedex_manifiesto_{corr}.pdf"
+    return Response(data, mimetype="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="{fname}"'
     })
 
 
@@ -21878,6 +21992,16 @@ def tr_cancelar_ot_fedex(item_id):
         return jsonify({"error": "Este item no tiene OT FedEx creada"}), 400
     if r.get("ship_cancelled_at"):
         return jsonify({"error": "OT ya cancelada"}), 409
+    # Ventana de cancelación: mismo día Chile hasta 16:00.
+    cw = _fedex_cancel_window(r.get("ship_created_at"))
+    if cw and cw.get("expired"):
+        return jsonify({
+            "ok": False,
+            "expired": True,
+            "error": "La OT FedEx ya no se puede cancelar desde el sistema "
+                     "(corte 16:00 hora Chile del mismo día). Coordina con "
+                     "FedEx directamente si necesitas detener el envío.",
+        }), 409
     res = _fedex_cancel_shipment(tn)
     if not res.get("ok"):
         return jsonify({"ok": False, "error": res.get("error") or "FedEx no respondió"}), 502
@@ -29534,15 +29658,22 @@ def _puede_ot_accion(vid, accion, user=None):
                   f"-> DENIED (cliente firmó / OT en cierre — solo superadmin edita)", flush=True)
             return False
         # (2) Ventana de corrección: el técnico firmó pero el cliente NO.
-        #     El técnico queda bloqueado (no edita lo que ya firmó); corrigen
-        #     ejecutivo SSTT / supervisor / admin (+ superadmin ya pasó arriba).
+        #     2026-06-12 (Daniel, estilo Fracttal): el TÉCNICO ASIGNADO sigue
+        #     editando (corregir fotos, tareas, equipos cruzados) HASTA que
+        #     firme el cliente. También corrigen ejecutivo SSTT / supervisor /
+        #     admin. TODO cambio post-firma deja evidencia en mant_logs
+        #     (ver _ot_evidencia_post_firma) para amparar al técnico.
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
                       f"-> ALLOWED (ventana de corrección post-firma técnico)", flush=True)
                 return True
+            if role == "tecnico" and es_tecnico_asignado:
+                print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+                      f"-> ALLOWED (técnico asignado corrige hasta firma del cliente)", flush=True)
+                return True
             print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
-                  f"-> DENIED (técnico ya firmó; corrige ejecutivo SSTT/superadmin)", flush=True)
+                  f"-> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
             return False
         # (3) Estado de trabajo normal (sin firma del técnico): SOLO técnico
         #     asignado/colaborador. El rol manda (defense in depth: aunque un
@@ -29576,13 +29707,17 @@ def _puede_ot_accion(vid, accion, user=None):
         if ot_sellada:
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (OT sellada por firma del cliente/cierre)", flush=True)
             return False
-        # Ventana de corrección (técnico ya firmó): el técnico ya no configura;
-        # sí lo hacen ejecutivo SSTT / supervisor / admin.
+        # Ventana de corrección (técnico ya firmó, cliente NO): el técnico
+        # asignado SIGUE configurando (2026-06-12, estilo Fracttal) igual que
+        # ejecutivo SSTT / supervisor / admin. Evidencia en mant_logs.
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (ventana de corrección)", flush=True)
                 return True
-            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (técnico ya firmó)", flush=True)
+            if role == "tecnico" and es_tecnico_asignado:
+                print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (técnico asignado, ventana de corrección)", flush=True)
+                return True
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
             return False
         if role in ("admin", "supervisor"):
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
@@ -29750,6 +29885,42 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
     return redirect(url_for("mant_ots_list"))
 
 
+def _ot_evidencia_post_firma(vid, accion):
+    """🛡️ EVIDENCIA POST-FIRMA (2026-06-12, Daniel — estilo Fracttal).
+    Si la OT ya tiene la firma del técnico, CUALQUIER edición posterior
+    (del propio técnico en la ventana de corrección, de gestión, o del
+    superadmin tras la firma del cliente) queda registrada en mant_logs
+    con autor, rol y endpoint. Esto AMPARA al técnico: lo que se mueva
+    después de su firma tiene huella de quién lo movió.
+    Best-effort: jamás bloquea la operación si el log falla."""
+    try:
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return
+        v = mysql_fetchone(
+            "SELECT estado, firma_tecnico_url, tecnico_user_id "
+            "  FROM mant_visitas WHERE id=%s", (vid,))
+        if not v:
+            return
+        if not (v.get("firma_tecnico_url") or (v.get("estado") or "").lower() == "firmada_tecnico"):
+            return  # técnico aún no firma → edición normal, sin evidencia extra
+        u = getattr(g, "user", None) or {}
+        uid = u.get("id")
+        rol = (u.get("role") or "?")
+        es_el_tecnico = False
+        try:
+            es_el_tecnico = bool(v.get("tecnico_user_id") and uid
+                                 and int(v["tecnico_user_id"]) == int(uid))
+        except (TypeError, ValueError):
+            pass
+        quien = "técnico asignado" if es_el_tecnico else f"⚠️ TERCERO ({rol})"
+        _mant_log("visita", vid, "edicion_post_firma",
+                  f"[{quien}] {u.get('nombre') or u.get('username') or '?'} "
+                  f"({rol}) modificó la OT DESPUÉS de la firma del técnico — "
+                  f"{request.method} {request.path} ({accion}, estado={v.get('estado')})")
+    except Exception as e:
+        print(f"[evidencia_post_firma] vid={vid}: {e}", flush=True)
+
+
 def _ot_can_configurar(view_func):
     """Decorador para endpoints que ARMAN la OT antes/durante de la
     ejecución: aplicar plantilla, aplicar protocolo, agregar tareas
@@ -29781,6 +29952,7 @@ def _ot_can_configurar(view_func):
                 u.get("username"),
                 accion="configurar",
             )
+        _ot_evidencia_post_firma(vid, "configurar")
         return view_func(vid, *args, **kwargs)
     return wrapped
 
@@ -29825,6 +29997,7 @@ def _tecnico_owns_visita(view_func):
                 u.get("username"),
                 accion="ejecutar",
             )
+        _ot_evidencia_post_firma(vid, "ejecutar")
         return view_func(vid, *args, **kwargs)
     return wrapped
 
@@ -48798,7 +48971,11 @@ def mant_ot_ejecutar(vid):
         grp["total"] = len(grp["tareas"])
         grp["completas"] = sum(1 for t in grp["tareas"] if t.get("completada"))
         grp["progreso"] = round((grp["completas"] / grp["total"]) * 100) if grp["total"] else 0
-        grp["bloqueado"] = (grp["completas"] == grp["total"] and grp["total"] > 0)
+        # 2026-06-12 (Daniel, estilo Fracttal): un checklist completo YA NO se
+        # auto-bloquea. El técnico corrige libremente hasta la firma del
+        # CLIENTE (el sello real lo ponen estado + _puede_ot_accion; los
+        # cambios post-firma-técnico dejan evidencia en mant_logs).
+        grp["bloqueado"] = False
 
     # Compat: el viejo tareas_por_eq sigue existiendo (legacy templates)
     tareas_por_eq = {}
@@ -52135,12 +52312,32 @@ def mant_visita_adjunto_delete(vid, aid):
 @_mant_required
 @_tecnico_owns_visita
 def mant_visita_foto_delete(vid, fid):
-    """Elimina una foto de la OT (archivo + registro)."""
+    """Elimina una foto de la OT (archivo + registro).
+
+    2026-06-12 (Daniel, estilo Fracttal) — limpieza COMPLETA para que el
+    técnico pueda corregir una foto equivocada antes de la firma del cliente:
+      1. Borra el registro de mant_visita_fotos (evidencia de la OT).
+      2. Borra la copia en mant_levantamiento_fotos (misma URL) para que la
+         foto equivocada NO se promueva a la ficha del equipo al cerrar.
+      3. Si la foto era la PRINCIPAL de la ficha (mant_maquinas.foto_url) y la
+         puso ESTA misma OT (last_visita_id=vid), limpia foto_url → el técnico
+         puede subir la correcta y vuelve a quedar como principal.
+    Audit: mant_logs siempre (antes de borrar, REGLA #5)."""
     row = mysql_fetchone(
-        "SELECT archivo_path FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
+        "SELECT archivo_path, cloudinary_url, maquina_id "
+        "  FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
         (fid, vid)
     )
-    if row and row.get("archivo_path"):
+    if not row:
+        return jsonify({"ok": False, "error": "Foto no encontrada en esta OT"}), 404
+    # Audit ANTES de borrar (REGLA #5)
+    try:
+        _mant_log("visita", vid, "foto_eliminada",
+                  f"foto #{fid} maquina={row.get('maquina_id')} "
+                  f"por {current_username() or '?'}")
+    except Exception:
+        pass
+    if row.get("archivo_path"):
         try:
             fp = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
@@ -52151,6 +52348,28 @@ def mant_visita_foto_delete(vid, fid):
         except Exception:
             pass
     mysql_execute("DELETE FROM mant_visita_fotos WHERE id=%s AND visita_id=%s", (fid, vid))
+    _cld_url = (row.get("cloudinary_url") or "").strip()
+    _mid = row.get("maquina_id")
+    if _cld_url:
+        # 2) Copia en el levantamiento (evita promoción a la ficha al cerrar)
+        try:
+            mysql_execute(
+                "DELETE FROM mant_levantamiento_fotos "
+                " WHERE cloudinary_url=%s AND maquina_id=%s",
+                (_cld_url, _mid)
+            )
+        except Exception as _e_lf:
+            print(f"[foto_delete] levantamiento_fotos vid={vid} fid={fid}: {_e_lf}", flush=True)
+        # 3) Foto principal de la ficha puesta por ESTA OT → liberar
+        try:
+            if _mid:
+                mysql_execute(
+                    "UPDATE mant_maquinas SET foto_url=NULL "
+                    " WHERE id=%s AND foto_url=%s AND last_visita_id=%s",
+                    (_mid, _cld_url, vid)
+                )
+        except Exception as _e_pr:
+            print(f"[foto_delete] foto principal vid={vid} mid={_mid}: {_e_pr}", flush=True)
     return jsonify({"ok": True, "deleted": True})
 
 
