@@ -2839,8 +2839,11 @@ function cargarMonitor() {
               secondary: 'tr-estado-secondary',
             }[ESTADO_COLORS[c.estado]] || 'tr-estado-secondary');
 
-            var costoHtml = c.costo_zz
-              ? '<span class="tr-costo">$' + Math.round(c.costo_zz).toLocaleString('es-CL') + '</span>'
+            // Costo del ENVÍO (VANELI de la línea ZZENVIO). Fallback a costo_zz
+            // para filas viejas aún no re-sincronizadas con el campo nuevo.
+            var _costoVal = c.costo_envio || c.costo_zz;
+            var costoHtml = _costoVal
+              ? '<span class="tr-costo">$' + Math.round(_costoVal).toLocaleString('es-CL') + '</span>'
               : '<span style="color:var(--tr-text-soft)">—</span>';
 
             // Tipo (clasificación) badge
@@ -2998,8 +3001,9 @@ function cargarMonitor() {
               success:'tr-estado-success', danger:'tr-estado-danger',
               info:'tr-estado-info', secondary:'tr-estado-secondary',
             }[ESTADO_COLORS[c.estado]] || 'tr-estado-secondary');
-            var costo = c.costo_zz
-              ? '$' + Math.round(c.costo_zz).toLocaleString('es-CL')
+            var _costoVal = c.costo_envio || c.costo_zz;
+            var costo = _costoVal
+              ? '$' + Math.round(_costoVal).toLocaleString('es-CL')
               : null;
             var rowFlow = '';
             if (c.cobertura_pct >= 100) rowFlow = 'tr-row-entregado';
