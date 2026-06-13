@@ -20372,9 +20372,11 @@ def tr_manifiestos():
 
     where_sql = " AND ".join(where)
     # KPIs globales (respetan los filtros, NO la paginación)
+    # OJO: la key NO puede llamarse "items" — en Jinja {{ kpis.items }} resuelve
+    # al método dict.items() en vez del valor. Por eso usamos "bultos".
     kpi_row = mysql_fetchone(
         "SELECT COUNT(*) AS total, "
-        "       COALESCE(SUM(total_items), 0) AS items, "
+        "       COALESCE(SUM(total_items), 0) AS bultos, "
         "       COALESCE(SUM(costo_total), 0) AS costo, "
         "       SUM(CASE WHEN estado='En preparación' THEN 1 ELSE 0 END) AS en_prep "
         "  FROM transport_manifests WHERE " + where_sql,
@@ -20383,7 +20385,7 @@ def tr_manifiestos():
     total = int(kpi_row.get("total") or 0)
     kpis = {
         "total":    total,
-        "items":    int(kpi_row.get("items") or 0),
+        "bultos":   int(kpi_row.get("bultos") or 0),
         "costo":    float(kpi_row.get("costo") or 0),
         "en_prep":  int(kpi_row.get("en_prep") or 0),
     }
