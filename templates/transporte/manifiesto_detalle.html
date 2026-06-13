@@ -220,8 +220,8 @@
       <strong>{{ sin_ot|length }} factura{{ 's' if sin_ot|length != 1 }} sin OT FedEx asignada.</strong>
       <div class="small mt-1" style="color:#a16207">
         FedEx se gestiona por API: hasta que no asignes la OT (N° de seguimiento) a estas facturas,
-        el cliente <strong>no tendrá seguimiento</strong>. Asígnala con el botón
-        <i class="bi bi-truck"></i> de cada factura.
+        el cliente <strong>no tendrá seguimiento</strong>. Asígnala con el botón Editar
+        <i class="bi bi-pencil-square"></i> de cada factura, o con los accesos rápidos de abajo.
       </div>
       <div class="mt-2 d-flex flex-wrap gap-1">
         {% for s in sin_ot %}
@@ -307,6 +307,7 @@
         {% for item in items %}
         {% set item_json = {
           'id': item.commitment_id,
+          'item_id': item.id,
           'cliente': item.cliente_nombre or '',
           'telefono': item.telefono or '',
           'email': item.email or '',
@@ -316,6 +317,7 @@
           'cod_postal': item.cod_postal or '',
           'peso': (item.peso_export or 0)|float,
           'bultos': (item.n_bultos or 1)|int,
+          'tracking': item.master_tracking_number or '',
           'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
         } | tojson %}
         {% set nprod = item.productos|length %}
@@ -502,10 +504,6 @@
                 {% endif %}
               {% endif %}
             {% endif %}
-            <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="Asociar Nº de tracking FedEx manualmente"
-                    onclick="abrirTrackingFedex({{ item.id }})">
-              <i class="bi bi-truck"></i>
-            </button>
             <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Quitar del manifiesto"
                     onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
               <i class="bi bi-trash3"></i>
@@ -598,6 +596,7 @@
     {% for item in items %}
     {% set item_json = {
       'id': item.commitment_id,
+      'item_id': item.id,
       'cliente': item.cliente_nombre or '',
       'telefono': item.telefono or '',
       'email': item.email or '',
@@ -607,6 +606,7 @@
       'cod_postal': item.cod_postal or '',
       'peso': (item.peso_export or 0)|float,
       'bultos': (item.n_bultos or 1)|int,
+      'tracking': item.master_tracking_number or '',
       'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
     } | tojson %}
     {% set nprod = item.productos|length %}
@@ -640,10 +640,6 @@
             <i class="bi bi-link-45deg"></i>
           </button>
           {% endif %}
-          <button class="btn btn-sm btn-outline-warning mfd-act-btn" title="FedEx tracking"
-                  onclick="abrirTrackingFedex({{ item.id }})">
-            <i class="bi bi-truck"></i>
-          </button>
           <button class="btn btn-sm btn-outline-danger mfd-act-btn" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
             <i class="bi bi-trash3"></i>
           </button>
@@ -828,6 +824,7 @@
       </div>
       <div class="modal-body">
         <input type="hidden" id="edCid">
+        <input type="hidden" id="edItemId">
         <div class="mb-2">
           <label class="form-label small fw-semibold mb-1">Cliente / destinatario</label>
           <input type="text" id="edCliente" class="form-control form-control-sm" readonly>
@@ -877,6 +874,20 @@
           </div>
         </div>
         <div class="form-text">Estos datos alimentan el Excel de carga masiva (FedEx / SimplyRoute).</div>
+        {% if es_fedex %}
+        <hr class="my-3">
+        <div class="mb-1">
+          <label class="form-label small fw-semibold mb-1 d-flex align-items-center gap-2">
+            <span style="background:#4d148c;color:#fff;border-radius:5px;padding:1px 7px;font-weight:900;font-size:.72rem">Fed<span style="color:#ff6600">Ex</span></span>
+            Nº de OT / Tracking
+          </label>
+          <input type="text" id="edTracking" class="form-control form-control-sm font-monospace"
+                 placeholder="Ej: 873034218595" autocomplete="off" inputmode="numeric">
+          <div class="form-text">
+            Pega el Nº de seguimiento FedEx. Al guardar lo consultamos en vivo y actualizamos el estado de la entrega solo.
+          </div>
+        </div>
+        {% endif %}
         <div id="edMsg" class="small mt-2"></div>
       </div>
       <div class="modal-footer">
@@ -1726,6 +1737,8 @@ function _edAutoVerificar() {
 function abrirEditar(data) {
   data = data || {};
   document.getElementById('edCid').value        = data.id || '';
+  var _eItem = document.getElementById('edItemId');
+  if (_eItem) _eItem.value = data.item_id || '';
   document.getElementById('edDoc').textContent  = data.doc || '';
   document.getElementById('edCliente').value    = data.cliente || '';
   document.getElementById('edTelefono').value   = data.telefono || '';
@@ -1736,6 +1749,8 @@ function abrirEditar(data) {
   document.getElementById('edCodPostal').value  = data.cod_postal || '';
   document.getElementById('edPeso').value       = data.peso || '';
   document.getElementById('edBultos').value     = data.bultos || 1;
+  var _eTrack = document.getElementById('edTracking');
+  if (_eTrack) { _eTrack.value = data.tracking || ''; _eTrack.dataset.original = data.tracking || ''; }
   document.getElementById('edMsg').innerHTML    = '';
   // Reset visual hint + estado de auto-verificación para esta apertura
   var hint = document.getElementById('edDirHint');
@@ -1772,15 +1787,45 @@ function guardarEdicion() {
     body: JSON.stringify(payload)
   })
   .then(function(r){ return r.json(); })
-  .then(function(d){
-    btn.disabled = false;
-    if (d.ok) {
-      msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
-      if (window.ilusToast) ilusToast('✓ Datos actualizados', { type: 'success' });
-      setTimeout(function(){ location.reload(); }, 500);
-    } else {
+  .then(async function(d){
+    if (!d.ok) {
+      btn.disabled = false;
       msg.innerHTML = '<span class="text-danger">' + (d.error || 'No se pudo guardar') + '</span>';
+      return;
     }
+    // Si hay campo de OT FedEx y cambió, asociarlo (consulta estado en vivo).
+    var trackMsg = '';
+    var elT = document.getElementById('edTracking');
+    var itemId = (document.getElementById('edItemId') || {}).value;
+    if (elT && itemId) {
+      var tnRaw = (elT.value || '').replace(/[^A-Za-z0-9]/g, '');
+      var orig  = (elT.dataset.original || '').replace(/[^A-Za-z0-9]/g, '');
+      if (tnRaw && tnRaw !== orig) {
+        if (tnRaw.length < 10) {
+          btn.disabled = false;
+          msg.innerHTML = '<span class="text-danger">El Nº de OT FedEx debe tener al menos 10 caracteres.</span>';
+          return;
+        }
+        try {
+          var rt = await fetch('/transporte/api/items/' + itemId + '/tracking-fedex', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ tracking_number: tnRaw })
+          });
+          var dt = await rt.json();
+          if (dt && dt.ok) {
+            trackMsg = dt.changed ? ' · OT asociada, estado: ' + (dt.estado || '?')
+                                  : ' · OT asociada';
+            if (dt.warning) trackMsg = ' · ' + dt.warning;
+          } else {
+            trackMsg = ' · OT no se pudo asociar: ' + ((dt && dt.error) || 'error');
+          }
+        } catch(e) { trackMsg = ' · OT: error de conexión'; }
+      }
+    }
+    btn.disabled = false;
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
+    if (window.ilusToast) ilusToast('✓ Datos actualizados' + trackMsg, { type: 'success' });
+    setTimeout(function(){ location.reload(); }, 700);
   })
   .catch(function(){
     btn.disabled = false;

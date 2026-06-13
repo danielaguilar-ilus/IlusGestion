@@ -20762,9 +20762,10 @@ def tr_manifiesto_etiquetas_fedex_pdf(mid):
         return "Manifiesto no encontrado", 404
 
     rows = mysql_fetchall(
-        "SELECT mi.id, mi.tido, mi.nudo, mi.master_tracking_number, "
+        "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
         "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at "
         "FROM transport_manifest_items mi "
+        "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
         "WHERE mi.manifest_id=%s "
         "ORDER BY mi.orden, mi.id", (mid,)) or []
 
@@ -20854,25 +20855,58 @@ def _fedex_label_to_png_datauri(label_b64, label_fmt="PDF", dpi=203):
     if fmt in ("ZPLII", "EPL2"):
         return None, f"formato {fmt} (térmico, no previsualizable)"
 
-    # PDF → PNG con poppler (pdf2image). Tomamos solo la 1ª página (la etiqueta).
+    # PDF → PNG. Primario: pypdfium2 (autocontenido, no necesita poppler — clave
+    # porque el build de prod por buildpacks NO instala poppler-utils). Fallback:
+    # pdf2image/poppler (solo si está disponible, ej. build con Dockerfile).
+    img, err = _pdf_first_page_to_pil(raw, dpi=dpi)
+    if img is None:
+        return None, err or "no se pudo rasterizar"
     try:
-        from pdf2image import convert_from_bytes
-        paginas = convert_from_bytes(raw, dpi=dpi, fmt="png",
-                                     first_page=1, last_page=1)
-        if not paginas:
-            return None, "PDF sin páginas"
         # Auto-recorte: FedEx a veces entrega la etiqueta 4×6 dentro de una hoja
         # carta (8.5×11) con el resto en blanco. Recortamos al contenido real
         # para que SIEMPRE salga "cortada" al tamaño de la etiqueta, sin importar
         # el labelStockType con que se generó.
-        img = _autocrop_white(paginas[0])
+        img = _autocrop_white(img)
         out = io.BytesIO()
         img.save(out, format="PNG")
         out.seek(0)
         b64png = _b64.b64encode(out.getvalue()).decode("ascii")
         return "data:image/png;base64," + b64png, None
     except Exception as e:
-        return None, f"render falló: {type(e).__name__}"
+        return None, f"PNG falló: {type(e).__name__}"
+
+
+def _pdf_first_page_to_pil(raw_pdf_bytes, dpi=203):
+    """Rasteriza la 1ª página de un PDF a una imagen PIL. Devuelve (img, None) o
+    (None, motivo). Intenta pypdfium2 (sin dependencia de sistema) y, si no está,
+    cae a pdf2image/poppler.
+    """
+    _err1 = "n/a"
+    # 1) pypdfium2 — wheel autocontenido con PDFium embebido.
+    try:
+        import pypdfium2 as _pdfium
+        pdf = _pdfium.PdfDocument(raw_pdf_bytes)
+        try:
+            page = pdf[0]
+            bmp = page.render(scale=dpi / 72.0)
+            return bmp.to_pil(), None
+        finally:
+            try:
+                pdf.close()
+            except Exception:
+                pass
+    except Exception as e_pdfium:
+        _err1 = type(e_pdfium).__name__
+    # 2) Fallback pdf2image/poppler.
+    try:
+        from pdf2image import convert_from_bytes
+        paginas = convert_from_bytes(raw_pdf_bytes, dpi=dpi, fmt="png",
+                                     first_page=1, last_page=1)
+        if paginas:
+            return paginas[0], None
+        return None, "PDF sin páginas"
+    except Exception as e_p2i:
+        return None, f"render falló (pdfium:{_err1} / poppler:{type(e_p2i).__name__})"
 
 
 def _autocrop_white(img, pad_px=10, thresh=24):
@@ -20924,7 +20958,7 @@ def tr_manifiesto_etiquetas_fedex_print(mid):
         return redirect(url_for("transporte_index"))
 
     rows = mysql_fetchall(
-        "SELECT mi.id, mi.tido, mi.nudo, mi.master_tracking_number, "
+        "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
         "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at, "
         "       c.cliente_nombre, c.comuna "
         "FROM transport_manifest_items mi "
@@ -20975,7 +21009,7 @@ def tr_item_etiqueta_fedex_print(item_id):
     """Vista imprimible (100×150 mm) de la etiqueta FedEx de UN item.
     Reusa el mismo template que la versión por manifiesto."""
     r = mysql_fetchone(
-        "SELECT mi.id, mi.tido, mi.nudo, mi.master_tracking_number, "
+        "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
         "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at, "
         "       c.cliente_nombre, c.comuna "
         "FROM transport_manifest_items mi "
