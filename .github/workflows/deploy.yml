@@ -80,11 +80,41 @@ jobs:
 
       # --- ESCRIBIR env.yaml desde el secret (sin imprimirlo en logs) ---
       - name: Write env.yaml from secret
+        env:
+          # Credenciales FedEx en secrets PROPIOS (no dentro de GCP_ENV_VARS).
+          # Asi agregar/rotar una credencial = setear 1 secret simple, sin tener
+          # que re-pegar TODO el env.yaml. GitHub enmascara estos valores en logs.
+          FEDEX_RATE_CLIENT_ID:     ${{ secrets.FEDEX_RATE_CLIENT_ID }}
+          FEDEX_RATE_CLIENT_SECRET: ${{ secrets.FEDEX_RATE_CLIENT_SECRET }}
+          FEDEX_ACCOUNT:            ${{ secrets.FEDEX_ACCOUNT }}
         run: |
           # Heredoc: el contenido NO aparece en los logs de Actions
           cat > /tmp/env.yaml <<'EOF_ENV_YAML'
           ${{ secrets.GCP_ENV_VARS }}
           EOF_ENV_YAML
+
+          # --- Inyectar credenciales FedEx desde secrets separados ---
+          # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
+          # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT):' \
+            /tmp/env.yaml > /tmp/env.clean || true
+          mv /tmp/env.clean /tmp/env.yaml
+          # Garantizar salto de linea final antes de anexar
+          [ -n "$(tail -c1 /tmp/env.yaml 2>/dev/null)" ] && echo "" >> /tmp/env.yaml
+          append_fedex() {
+            key="$1"; val="$2"
+            if [ -n "$val" ]; then
+              printf '%s: "%s"\n' "$key" "$val" >> /tmp/env.yaml
+              echo "  [+] $key inyectada"
+            else
+              echo "  [-] $key vacia (secret no seteado en GitHub) — se omite"
+            fi
+          }
+          echo "Credenciales FedEx:"
+          append_fedex FEDEX_RATE_CLIENT_ID     "$FEDEX_RATE_CLIENT_ID"
+          append_fedex FEDEX_RATE_CLIENT_SECRET "$FEDEX_RATE_CLIENT_SECRET"
+          append_fedex FEDEX_ACCOUNT            "$FEDEX_ACCOUNT"
+
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)
           LINES=$(wc -l < /tmp/env.yaml)
