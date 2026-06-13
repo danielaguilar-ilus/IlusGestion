@@ -18578,14 +18578,14 @@ def tr_sync_status():
 # ═══════════════════════════════════════════════════════════════════════
 def _tr_sync_mes_actual_bg(modo="resync"):
     """
-    Sincronización del mes actual desde el primer día del mes hasta hoy.
+    Sincronización de los últimos 45 días (ventana rodante hasta hoy).
 
     `modo`:
       - "resync"        → solo UPSERT desde ERP (no borra nada).
       - "limpiar_resync"→ borra pendientes del mes SIN manifiesto y luego resync.
 
     Trae todos los documentos BLV/FCV (+ GDV/NVV/NVI/COV) con líneas ZZ
-    emitidos en el mes corriente (1 al hoy). Reutiliza la lógica probada
+    emitidos en los últimos 45 días. Reutiliza la lógica probada
     de `_tr_bulk_sync_erp_mysql` para clasificación + UPSERT.
 
     Retorna dict: {ok, limpiados, sincronizados, errores, ts}.
@@ -18596,7 +18596,12 @@ def _tr_sync_mes_actual_bg(modo="resync"):
 
     now_cl = _dt.datetime.now(ZoneInfo("America/Santiago"))
     hoy_cl = now_cl.date()
-    primer_dia = hoy_cl.replace(day=1)
+    # 2026-06-13: ventana RODANTE de 45 dias (no solo el mes calendario). Antes
+    # usaba hoy.replace(day=1) -> a inicios de mes NO refrescaba los documentos de
+    # fin del mes anterior (ej. boletas del 31-may quedaban con cliente/comuna
+    # viejos en junio). 45 dias cubre el "Ultimo mes" del grid + el borde de
+    # cambio de mes. El scheduler (resync, solo UPSERT) lo tolera (query rapida).
+    primer_dia = hoy_cl - _dt.timedelta(days=45)
 
     limpiados = 0
     if modo == "limpiar_resync":
