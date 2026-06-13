@@ -21834,6 +21834,11 @@ def tr_diag_fedex():
     }
     env_now = {k: _mask(os.environ.get(k, "")) for k in (obligatorias + extras)}
 
+    # Nombres (NUNCA valores) de cualquier variable FEDEX_* presente en el
+    # contenedor. Detecta el caso "Daniel la guardó con otro nombre" (typo de
+    # nombre del secret) que de otro modo quedaría invisible.
+    fedex_keys = sorted([k for k in os.environ if "FEDEX" in k.upper()])
+
     faltan = [k for k in obligatorias if not app_vals[k]["set"]]
     configurado = (len(faltan) == 0)
 
@@ -21849,13 +21854,15 @@ def tr_diag_fedex():
         "faltan": faltan,
         "app_usa": app_vals,
         "os_environ_ahora": env_now,
+        "fedex_keys_en_entorno": fedex_keys,
         "desfase_env_vs_proceso": desfasado,
         "nota": ("Las credenciales se leen UNA sola vez al arrancar el proceso. "
                  "Si cambiaste las env vars hay que generar una nueva revisión "
                  "(redeploy o cambio de variable en Cloud Run) para que tomen "
-                 "efecto. En este proyecto el deploy sobrescribe TODAS las env "
-                 "vars con el secret GCP_ENV_VARS de GitHub: las variables FedEx "
-                 "DEBEN estar en ese secret para sobrevivir un deploy."),
+                 "efecto. En este proyecto el deploy inyecta las credenciales "
+                 "FedEx desde los secrets de GitHub FEDEX_RATE_CLIENT_ID / "
+                 "FEDEX_RATE_CLIENT_SECRET / FEDEX_ACCOUNT: deben existir ahí "
+                 "para sobrevivir un deploy (la consola de Cloud Run se borra)."),
     }
 
     if (request.args.get("token") or "") == "1":
