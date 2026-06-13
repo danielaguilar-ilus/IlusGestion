@@ -22681,9 +22681,145 @@ def tr_reemitir_ot_fedex(item_id):
                     "label_url": url_for("tr_etiqueta_fedex", item_id=item_id)})
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  FEDEX PICKUP API — agendar/cancelar retiros desde la bodega
-# ═══════════════════════════════════════════════════════════════════════════
+@app.route("/transporte/api/manifiestos/<int:mid>/actualizar-etiquetas-fedex", methods=["POST"])
+@_tr_required
+def tr_actualizar_etiquetas_fedex(mid):
+    """Re-emite las OTs FedEx de los items de un manifiesto que les faltan las
+    etiquetas por bulto (creadas antes del fix multi-pieza, solo tienen la master).
+
+    Detecta items con multi-bulto incompleto:
+        ship_bultos > 1 AND ship_labels_json IS NULL AND no cancelados.
+
+    Para cada uno: cancela la OT vieja en FedEx y crea una nueva (mismo recipient,
+    mismos bultos). La nueva guarda TODAS las piezas en ship_labels_json. El TN
+    master cambia — por eso se devuelve la lista de cambios para que el operador
+    descarte cualquier etiqueta vieja impresa.
+
+    Body opcional: { only_item_ids: [123, 456] } para limitar a un subconjunto.
+    """
+    body = request.get_json(silent=True, force=True) or {}
+    only = body.get("only_item_ids")
+    only_clause, only_params = "", ()
+    if isinstance(only, list) and only:
+        placeholders = ",".join(["%s"] * len(only))
+        only_clause = f" AND mi.id IN ({placeholders})"
+        only_params = tuple(only)
+
+    rows = mysql_fetchall(
+        "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, mi.ship_bultos, "
+        "       mi.ship_created_at "
+        "FROM transport_manifest_items mi "
+        "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "WHERE mi.manifest_id=%s "
+        "  AND mi.master_tracking_number IS NOT NULL "
+        "  AND mi.master_tracking_number <> '' "
+        "  AND mi.ship_cancelled_at IS NULL "
+        "  AND COALESCE(mi.ship_bultos, 1) > 1 "
+        "  AND (mi.ship_labels_json IS NULL OR mi.ship_labels_json = '') "
+        + only_clause +
+        " ORDER BY mi.orden, mi.id",
+        (mid,) + only_params) or []
+
+    if not rows:
+        return jsonify({"ok": True, "actualizadas": 0,
+                        "msg": "No hay etiquetas que actualizar — todos los envíos ya tienen sus piezas."})
+
+    actualizadas = []   # [{item_id, doc, old_tn, new_tn, n_bultos}]
+    errores = []        # [{item_id, doc, error, expired?}]
+    for r in rows:
+        iid = r["id"]
+        doc = f"{r.get('tido') or ''}{r.get('nudo') or ''}".strip() or f"#{iid}"
+        old_tn = r["master_tracking_number"]
+        # Ventana de cancelación (mismo día 16:00 Chile).
+        cw = _fedex_cancel_window(r.get("ship_created_at"))
+        if cw and cw.get("expired"):
+            errores.append({"item_id": iid, "doc": doc, "old_tn": old_tn,
+                            "expired": True,
+                            "error": "OT fuera de ventana de cancelación FedEx (16:00 Chile). "
+                                     "Coordina con FedEx para anularla y crea OT nueva manual."})
+            continue
+        # Cancelar vieja.
+        cancel_res = _fedex_cancel_shipment(old_tn)
+        if not cancel_res.get("ok"):
+            errores.append({"item_id": iid, "doc": doc, "old_tn": old_tn,
+                            "error": "No se pudo cancelar TN viejo: "
+                                     + (cancel_res.get("error") or "")[:140]})
+            _tr_log("manifest_item", iid, "Actualizar etiquetas abortado",
+                    f"no canceló {old_tn}: {(cancel_res.get('error') or '')[:140]}")
+            continue
+        _tr_ship_snapshot(iid, "reemision_cancela_vieja",
+                          {"old_tn": old_tn, "via": "actualizar_etiquetas",
+                           "old_bultos": r.get("ship_bultos")})
+        # Crear nueva con los bultos actuales.
+        it, recipient, packages = _tr_item_para_ship(iid)
+        if not it:
+            mysql_execute(
+                "UPDATE transport_manifest_items "
+                "SET ship_cancelled_at=NOW(), ship_label_b64=NULL, ship_labels_json=NULL, "
+                "    ship_label_outdated=0 WHERE id=%s", (iid,))
+            errores.append({"item_id": iid, "doc": doc, "old_tn": old_tn,
+                            "error": "Cancelada la vieja, pero el item ya no está disponible "
+                                     "para recrear."})
+            continue
+        res = _fedex_create_shipment(
+            recipient=recipient, packages=packages,
+            reference=(f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip(),
+            label_stock="STOCK_4X6",
+        )
+        if not res.get("ok"):
+            mysql_execute(
+                "UPDATE transport_manifest_items "
+                "SET ship_cancelled_at=NOW(), ship_label_b64=NULL, ship_labels_json=NULL, "
+                "    ship_label_outdated=0, ship_error=%s WHERE id=%s",
+                ((res.get("error") or "")[:600], iid))
+            errores.append({"item_id": iid, "doc": doc, "old_tn": old_tn,
+                            "error": "Cancelada la vieja pero FedEx rechazó la nueva: "
+                                     + (res.get("error") or "")[:140]})
+            continue
+        import json as _jp
+        new_tn = res["master_tracking_number"]
+        piece_tns = res.get("piece_trackings") or []
+        n_b = len(piece_tns) if piece_tns else int(it.get("n_bultos") or 1)
+        try:
+            mysql_execute("""
+                UPDATE transport_manifest_items
+                SET master_tracking_number=%s, tracking_number=%s, piece_trackings_json=%s,
+                    ship_label_b64=%s, ship_labels_json=%s, ship_label_format=%s,
+                    ship_bultos=%s, ship_created_at=NOW(), ship_cancelled_at=NULL,
+                    ship_label_outdated=0, ship_error=NULL, last_carrier_source='fedex'
+                WHERE id=%s
+            """, (
+                new_tn, new_tn,
+                _jp.dumps(piece_tns) if piece_tns else None,
+                res.get("label_b64") or None,
+                _jp.dumps(res.get("piece_labels") or []) if res.get("piece_labels") else None,
+                res.get("label_format") or "PDF",
+                n_b, iid,
+            ))
+        except Exception as e_save:
+            errores.append({"item_id": iid, "doc": doc, "old_tn": old_tn, "new_tn": new_tn,
+                            "error": f"FedEx OK (TN {new_tn}) pero falló al guardar: {str(e_save)[:100]}"})
+            continue
+        _tr_ship_snapshot(iid, "reemision_crea_nueva",
+                          {"old_tn": old_tn, "new_tn": new_tn, "bultos": n_b,
+                           "via": "actualizar_etiquetas"})
+        _tr_log("manifest_item", iid, "Etiquetas actualizadas",
+                f"TN {old_tn} → {new_tn} ({n_b} bulto/s con todas las piezas)")
+        actualizadas.append({"item_id": iid, "doc": doc, "old_tn": old_tn,
+                             "new_tn": new_tn, "n_bultos": n_b})
+
+    _tr_log("manifest", mid, "actualizar etiquetas fedex",
+            f"{len(actualizadas)} OK · {len(errores)} con error")
+    return jsonify({
+        "ok": True,
+        "actualizadas": len(actualizadas),
+        "errores":      len(errores),
+        "detalle":      actualizadas,
+        "errores_detalle": errores,
+    })
+
+
+
 
 @app.route("/transporte/api/pickup/fedex/disponibilidad", methods=["POST"])
 @_tr_required
