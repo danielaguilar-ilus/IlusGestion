@@ -49,6 +49,7 @@ except ImportError:
 # ── Motor ERP unificado (cubicador, asignar, retiros, mantenciones, etc.) ──
 import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
+import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
     token=ERP_CONFIG.get("api_token", ""),
@@ -15260,6 +15261,18 @@ def _fedex_split_address(direccion: str, max_per_line: int = 35):
     return [line1, line2] if line2 else [line1]
 
 
+# Parser de etiquetas FedEx extraído a módulo aislado y testeable
+# (tests/test_fedex_parse.py). Wrappers delgados para no romper los callers.
+def _fedex_label_from_doc(doc):
+    return _fxlabels.label_from_doc(doc)
+
+
+def _fedex_parse_ship_response(data, label_format="PDF", expected_pieces=0):
+    """Delegado a fedex_labels.parse_ship_response (función pura, ver módulo)."""
+    return _fxlabels.parse_ship_response(
+        data, label_format=label_format, expected_pieces=expected_pieces)
+
+
 def _fedex_create_shipment(
     *,
     recipient: dict,
@@ -15508,112 +15521,16 @@ def _fedex_create_shipment(
             "raw": data,
         }
 
-    output = data.get("output", {}) or {}
-    txns = output.get("transactionShipments", []) or []
-    if not txns:
-        return {"ok": False, "error": "FedEx no devolvió transactionShipments", "raw": data}
-
-    txn = txns[0]
-    master_tn = txn.get("masterTrackingNumber") or txn.get("trackingNumber") or ""
-    piece_resp = txn.get("pieceResponses", []) or []
-
-    def _extract_label(doc):
-        """Saca el base64 de la etiqueta de un packageDocument, sea cual sea la
-        clave que use FedEx (encodedLabel | encoded | docContent | content)."""
-        if not isinstance(doc, dict):
-            return ""
-        return (doc.get("encodedLabel") or doc.get("encoded")
-                or doc.get("docContent") or doc.get("content") or "")
-
-    piece_trackings = []
-    piece_labels = []
-    master_label_b64 = ""
-    for pr in piece_resp:
-        tn = pr.get("trackingNumber") or ""
-        piece_trackings.append(tn)
-        # Una pieza puede traer su etiqueta en packageDocuments. Tomamos la 1ª
-        # con contenido. (Cada pieza de un MPS trae SU propia etiqueta "X of N".)
-        got = ""
-        for doc in (pr.get("packageDocuments") or []):
-            enc = _extract_label(doc)
-            if enc:
-                got = enc
-                break
-        if got:
-            piece_labels.append({"tracking_number": tn, "label_b64": got})
-            if not master_label_b64:
-                master_label_b64 = got
-
-    # Fallback A: etiquetas a nivel de transactionShipment (algunos MPS las
-    # devuelven todas juntas acá, una por pieza).
-    if len(piece_labels) < len(piece_trackings):
-        ship_docs = txn.get("shipmentDocuments") or txn.get("packageDocuments") or []
-        extra = [_extract_label(d) for d in ship_docs]
-        extra = [e for e in extra if e]
-        # Solo usamos este fallback si trae MÁS etiquetas que las que ya tenemos.
-        if len(extra) > len(piece_labels):
-            piece_labels = []
-            for i, enc in enumerate(extra):
-                tn_i = piece_trackings[i] if i < len(piece_trackings) else master_tn
-                piece_labels.append({"tracking_number": tn_i, "label_b64": enc})
-            master_label_b64 = extra[0]
-
-    # Fallback B: nada de lo anterior — al menos la master.
-    if not master_label_b64:
-        for doc in (txn.get("shipmentDocuments") or []):
-            enc = _extract_label(doc)
-            if enc:
-                master_label_b64 = enc
-                piece_labels = [{"tracking_number": master_tn, "label_b64": enc}]
-                break
-
-    # Fallback C (CRÍTICO para FedEx CL doméstico):
-    # Algunas cuentas devuelven N piezas pero EN UN ÚNICO PDF MULTIPÁGINA
-    # (una página = una etiqueta). En ese escenario tenemos N piece_trackings
-    # pero solo 1 piece_label cuyo PDF interno trae todas las páginas.
-    # Sin este fallback, los reportes "etiquetas-fedex/pdf" y "/print" solo
-    # mostraban el bulto 1. Detectamos el caso, partimos el PDF en N páginas
-    # y asignamos una a cada tracking.
-    fmt_lower = (label_format or "PDF").upper()
-    if (fmt_lower == "PDF" and len(piece_labels) == 1
-            and len(piece_trackings) > 1 and master_label_b64):
-        try:
-            import base64 as _b64
-            raw_master = _b64.b64decode(master_label_b64)
-        except Exception:
-            raw_master = b""
-        n_pages = _pdf_count_pages(raw_master) if raw_master else 0
-        if n_pages >= len(piece_trackings):
-            split_b64s = _pdf_split_pages_b64(raw_master)
-            if len(split_b64s) >= len(piece_trackings):
-                piece_labels = []
-                for i, tn in enumerate(piece_trackings):
-                    piece_labels.append({
-                        "tracking_number": tn,
-                        "label_b64":       split_b64s[i],
-                    })
-                try:
-                    print(f"[FEDEX MPS] expanded master PDF {n_pages}p → "
-                          f"{len(piece_labels)} labels (CL multi-piece in single PDF)",
-                          flush=True)
-                except Exception:
-                    pass
-
-    # Diagnóstico (no contiene las etiquetas, solo conteos) para depurar MPS.
-    debug = {
-        "n_piece_responses": len(piece_resp),
-        "n_piece_trackings": len(piece_trackings),
-        "n_piece_labels":    len(piece_labels),
-        "n_shipment_docs":   len(txn.get("shipmentDocuments") or []),
-        "keys_txn":          sorted(list(txn.keys()))[:25],
-        "keys_piece0":       sorted(list(piece_resp[0].keys()))[:25] if piece_resp else [],
-    }
-    try:
-        if len(piece_labels) < len(piece_trackings):
-            print(f"[FEDEX MPS] OJO: {len(piece_trackings)} piezas pero "
-                  f"{len(piece_labels)} etiquetas. debug={debug}", flush=True)
-    except Exception:
-        pass
+    parsed = _fedex_parse_ship_response(data, label_format=label_format,
+                                        expected_pieces=len(packages))
+    if not parsed.get("ok"):
+        return {"ok": False, "error": parsed.get("error") or "FedEx no devolvió etiquetas",
+                "raw": data}
+    master_tn        = parsed["master_tracking_number"]
+    piece_trackings  = parsed["piece_trackings"]
+    piece_labels     = parsed["piece_labels"]
+    master_label_b64 = parsed["master_label_b64"]
+    debug            = parsed["debug"]
 
     # ── Auto-fallback CRÍTICO: MPS sin todas las etiquetas → N OTs individuales
     # Si FedEx CL doméstico devolvió menos etiquetas que bultos (típicamente 1
@@ -21234,48 +21151,14 @@ def _pdf_all_pages_to_pil(raw_pdf_bytes, dpi=203, max_pages=200):
 
 
 def _pdf_count_pages(raw_pdf_bytes):
-    """Cuenta cuántas páginas tiene un PDF. Devuelve int o 0 si falla."""
-    try:
-        import pypdfium2 as _pdfium
-        pdf = _pdfium.PdfDocument(raw_pdf_bytes)
-        try:
-            return len(pdf)
-        finally:
-            try: pdf.close()
-            except Exception: pass
-    except Exception:
-        pass
-    # Fallback pypdf (más liviano que poppler para solo contar).
-    try:
-        from pypdf import PdfReader
-        return len(PdfReader(io.BytesIO(raw_pdf_bytes)).pages)
-    except Exception:
-        return 0
+    """Cuenta páginas de un PDF. Delegado a fedex_labels (única fuente)."""
+    return _fxlabels.pdf_count_pages(raw_pdf_bytes)
 
 
 def _pdf_split_pages_b64(raw_pdf_bytes):
-    """Divide un PDF multipágina en N PDFs de 1 página cada uno (base64).
-    Devuelve list[str_b64] o [] si falla. Usado para expandir el master FedEx
-    multipágina en N etiquetas individuales (una por bulto).
-    """
-    import base64 as _b64
-    try:
-        from pypdf import PdfReader, PdfWriter
-    except Exception:
-        return []
-    try:
-        reader = PdfReader(io.BytesIO(raw_pdf_bytes))
-        out = []
-        for page in reader.pages:
-            w = PdfWriter()
-            w.add_page(page)
-            buf = io.BytesIO()
-            w.write(buf)
-            buf.seek(0)
-            out.append(_b64.b64encode(buf.getvalue()).decode("ascii"))
-        return out
-    except Exception:
-        return []
+    """Parte un PDF multipágina en N PDFs de 1 pág (base64). Delegado a
+    fedex_labels (única fuente, usa pypdfium2 — sin dependencia de cryptography)."""
+    return _fxlabels.pdf_split_pages_b64(raw_pdf_bytes)
 
 
 def _autocrop_white(img, pad_px=10, thresh=24):
