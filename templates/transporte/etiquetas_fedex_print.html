@@ -185,76 +185,123 @@ html, body {
   gap: 18px;
 }
 
-.et-wrap { position: relative; }
+/* ── Tarjeta premium por etiqueta (pantalla) ── */
+.et-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 6px 22px rgba(0,0,0,.10);
+  width: calc(var(--label-w) + 16px);
+  transition: box-shadow .15s, transform .15s, opacity .15s;
+}
+.et-card:hover { box-shadow: 0 10px 30px rgba(0,0,0,.16); transform: translateY(-2px); }
 
-/* Checkbox flotante (solo pantalla) */
-.et-overlay {
-  position: absolute;
-  top: 10px; left: 50%;
-  transform: translateX(-50%);
-  display: flex; align-items: center; gap: 8px;
-  background: rgba(10,10,10,.92);
+/* Cabecera de la tarjeta: selector + datos del bulto */
+.et-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #0a0a0a 0%, #1f2937 100%);
   color: #fff;
-  padding: 6px 12px;
-  border-radius: 999px;
+}
+.et-check { position: relative; cursor: pointer; flex-shrink: 0; }
+.et-check input { position: absolute; opacity: 0; width: 0; height: 0; }
+.et-check-box {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  border: 2px solid rgba(255,255,255,.5);
+  border-radius: 8px;
+  color: transparent;
+  font-size: 18px;
+  transition: all .15s;
+}
+.et-check input:checked + .et-check-box {
+  background: var(--ilus-red);
+  border-color: var(--ilus-red);
+  color: #fff;
+}
+.et-head-info { min-width: 0; flex: 1; }
+.et-head-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.et-doc {
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: .3px;
+}
+.et-bulto {
+  background: var(--fedex-orange);
+  color: #0a0a0a;
+  font-weight: 900;
   font-size: 12px;
-  font-weight: 700;
-  z-index: 10;
-  box-shadow: 0 4px 14px rgba(0,0,0,.3);
-  max-width: 92mm;
+  padding: 2px 9px;
+  border-radius: 999px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.et-overlay input[type=checkbox] {
-  width: 18px; height: 18px;
-  accent-color: #dc2626;
-  cursor: pointer;
-  flex-shrink: 0;
+.et-cliente {
+  font-size: 13px;
+  font-weight: 600;
+  color: #d1d5db;
+  margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.et-overlay label {
-  cursor: pointer;
-  user-select: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.et-track {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 6px;
+}
+.fx-mini {
+  background: var(--fedex-purple); color: #fff; border-radius: 4px;
+  padding: 1px 6px; font-weight: 900; font-size: 11px; flex-shrink: 0;
+}
+.fx-mini span { color: var(--fedex-orange); }
+/* El "código" grande que pidió Daniel: tracking number prominente */
+.et-track-num {
+  font-family: 'Courier New', monospace;
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #fff;
 }
 
 /* La ETIQUETA FedEx — imagen oficial encajada a 100×150 mm exactos */
 .etiqueta-fedex {
   width: var(--label-w);
   height: var(--label-h);
+  margin: 8px auto;
   background: var(--ilus-white);
   overflow: hidden;
   display: block;
   position: relative;
-  box-shadow: 0 4px 18px rgba(0,0,0,.18);
 }
 .etiqueta-fedex img {
   width: 100%;
   height: 100%;
-  object-fit: contain;   /* la etiqueta ya es 4×6, mismo ratio → llena sin deformar */
+  object-fit: contain;   /* mismo ratio 4×6 → llena sin deformar */
   display: block;
 }
 
-.et-wrap.is-off .etiqueta-fedex { opacity: .22; filter: grayscale(1); }
-.et-wrap.is-off .et-overlay { background: rgba(107,114,128,.92); }
+.et-card.is-off { opacity: .35; filter: grayscale(.85); }
 
-/* ── Impresión: una etiqueta por página, exacta, sin adornos de pantalla ── */
+/* ── Impresión: SOLO la etiqueta, una por página, sin adornos ── */
 @media print {
   html, body { background: #fff; }
-  .toolbar, .selector-panel, .et-overlay { display: none !important; }
+  .toolbar, .selector-panel, .et-head { display: none !important; }
   .sheet { padding: 0; gap: 0; }
+  .et-card {
+    border: 0; border-radius: 0; box-shadow: none; width: auto; transform: none;
+  }
   .etiqueta-fedex {
+    margin: 0;
     box-shadow: none;
     page-break-after: always;
     break-after: page;
   }
-  .et-wrap:last-child .etiqueta-fedex {
+  .et-card:last-child .etiqueta-fedex {
     page-break-after: auto;
     break-after: auto;
   }
   /* Etiquetas desmarcadas: fuera de la impresión */
-  .et-wrap.is-off { display: none !important; }
+  .et-card.is-off { display: none !important; }
 }
 </style>
 </head>
@@ -339,15 +386,32 @@ html, body {
 {% else %}
 <div class="sheet" id="sheet">
   {% for e in etiquetas %}
-  <div class="et-wrap" data-item="{{ e.item_id }}">
-    <div class="et-overlay">
-      <input type="checkbox" id="ck-{{ e.item_id }}" checked>
-      <label for="ck-{{ e.item_id }}">
-        {{ e.doc }} · {{ e.cliente }}{% if e.comuna %} · {{ e.comuna }}{% endif %}
+  <div class="et-card" data-item="{{ e.item_id }}">
+    {# Cabecera (solo pantalla): selector + datos del bulto #}
+    <div class="et-head">
+      <label class="et-check">
+        <input type="checkbox" id="ck-{{ loop.index }}" checked>
+        <span class="et-check-box"><i class="bi bi-check-lg"></i></span>
       </label>
+      <div class="et-head-info">
+        <div class="et-head-top">
+          <span class="et-doc">{{ e.doc }}</span>
+          {% if e.bulto_total and e.bulto_total > 1 %}
+          <span class="et-bulto">Bulto {{ e.bulto_num }} / {{ e.bulto_total }}</span>
+          {% endif %}
+        </div>
+        <div class="et-cliente">{{ e.cliente }}{% if e.comuna %} · {{ e.comuna }}{% endif %}</div>
+        {% if e.tracking %}
+        <div class="et-track" title="Nº de seguimiento FedEx">
+          <span class="fx-mini">Fed<span>Ex</span></span>
+          <span class="et-track-num">{{ e.tracking }}</span>
+        </div>
+        {% endif %}
+      </div>
     </div>
+    {# La etiqueta a tamaño real 4×6 #}
     <div class="etiqueta-fedex">
-      <img src="{{ e.img }}" alt="Etiqueta FedEx {{ e.doc }}" loading="lazy">
+      <img src="{{ e.img }}" alt="Etiqueta FedEx {{ e.doc }} bulto {{ e.bulto_num }}" loading="lazy">
     </div>
   </div>
   {% endfor %}
@@ -356,7 +420,7 @@ html, body {
 
 <script>
 (function() {
-  var wraps = Array.from(document.querySelectorAll(".et-wrap"));
+  var wraps = Array.from(document.querySelectorAll(".et-card"));
   var cntEl = document.getElementById("sp-cnt");
   var total = wraps.length;
 
