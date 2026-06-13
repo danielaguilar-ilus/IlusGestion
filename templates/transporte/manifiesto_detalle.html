@@ -303,6 +303,11 @@
                 <i class="bi bi-database-x"></i> sin saldo
               </span>
               {% endif %}
+              {% if item.get('ship_label_outdated') and not item.get('ship_cancelled_at') %}
+              <span class="badge bg-warning text-dark mfd-mini-badge" title="Los bultos cambiaron después de emitir la etiqueta FedEx. La etiqueta vigente está desfasada: re-emítela con el botón naranja de la derecha.">
+                <i class="bi bi-exclamation-triangle me-1"></i>etiqueta FedEx desfasada
+              </span>
+              {% endif %}
             </div>
           </td>
           <td>
@@ -397,6 +402,20 @@
               </button>
               {% else %}
                 {% set cw = item.get('cancel_window') %}
+                {% if item.get('ship_label_outdated') and not item.get('ship_cancelled_at') %}
+                  {% if cw and cw.expired %}
+                  <button class="btn btn-sm btn-outline-secondary mfd-act-btn" disabled
+                          title="La etiqueta FedEx quedó desfasada (cambiaron los bultos) pero ya pasó el corte 16:00 Chile: la OT vieja no es cancelable. Coordina con FedEx para anularla y crea una OT nueva.">
+                    <i class="bi bi-exclamation-triangle"></i>
+                  </button>
+                  {% else %}
+                  <button class="btn btn-sm btn-warning mfd-act-btn fw-bold"
+                          title="Etiqueta FedEx desfasada: los bultos cambiaron. Re-emitir cancela la OT vieja y crea una nueva con los bultos actuales (guarda respaldo del tracking anterior)."
+                          onclick="reemitirOTFedex({{ item.id }}, this)">
+                    <i class="bi bi-arrow-repeat"></i>
+                  </button>
+                  {% endif %}
+                {% endif %}
                 {% if cw and cw.expired %}
                 <button class="btn btn-sm btn-outline-secondary mfd-act-btn fx-cancel-btn"
                         disabled
@@ -1867,6 +1886,37 @@ async function cancelarOTFedex(itemId, btn) {
     ilusToast('✓ OT FedEx cancelada', { type: 'success' });
     setTimeout(function(){ location.reload(); }, 800);
   } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+async function reemitirOTFedex(itemId, btn) {
+  var ok = await ilusConfirm({
+    title: 'Re-emitir etiqueta FedEx',
+    message: '¿Cancelar la OT actual y crear una nueva con los bultos actualizados?',
+    sub: 'Se cancela la etiqueta vieja en FedEx y se emite una nueva con el número de bultos actual. '
+       + 'Solo funciona el mismo día hasta las 16:00 hora Chile. Queda respaldo del tracking anterior.',
+    okLabel: 'Sí, re-emitir',
+  });
+  if (!ok) return;
+  if (btn) btn.disabled = true;
+  ilusToast('Re-emitiendo con FedEx…', { type: 'info' });
+  try {
+    var r = await fetch('/transporte/api/items/' + itemId + '/reemitir-ot-fedex', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label_format: 'PDF', pickup_type: 'USE_SCHEDULED_PICKUP' })
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      if (btn) btn.disabled = false;
+      ilusToast(d.error || 'No se pudo re-emitir', { type: 'error' });
+      return;
+    }
+    ilusToast('✓ Re-emitida: ' + d.master_tracking_number + ' (' + d.n_bultos + ' bulto/s). '
+            + 'TN anterior ' + d.old_tracking_number + ' cancelado.', { type: 'success' });
+    setTimeout(function(){ location.reload(); }, 1500);
+  } catch(e) {
+    if (btn) btn.disabled = false;
     ilusToast('Error de conexión', { type: 'error' });
   }
 }

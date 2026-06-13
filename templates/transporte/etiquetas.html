@@ -1330,6 +1330,17 @@ document.addEventListener("DOMContentLoaded", function () {
         ilusToast(`✓ ${doc}: ${j.previo} → ${j.n_bultos} bultos · regenerando etiquetas...`,
                   { type: "success" });
       }
+      // Si la factura ya tenía OT FedEx, la etiqueta FedEx quedó desfasada: avisar.
+      if (j.fedex_desfasada && typeof ilusAlert !== "undefined") {
+        await ilusAlert({
+          title: "Etiqueta FedEx desfasada",
+          message: "Esta factura ya tenía una OT FedEx creada. Al cambiar los bultos, "
+                 + "la etiqueta FedEx quedó con el número viejo.",
+          sub: "Entra al manifiesto y usa el botón naranja \"Re-emitir\" para cancelar la OT vieja "
+             + "y generar una nueva con los bultos actuales (mismo día hasta las 16:00 Chile).",
+          type: "warning",
+        });
+      }
       // Recargar la página para que las nuevas etiquetas se rendericen
       setTimeout(() => { window.location.reload(); }, 800);
     } catch (e) {
