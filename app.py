@@ -18240,18 +18240,26 @@ def tr_compromisos_json():
     vista  = (request.args.get("vista","") or "").strip().lower()
 
     where, params = [], []
+    # 2026-06-13 (Daniel): "Pendientes" = lo que aún hay que GESTIONAR. Es:
+    #   - tiene SALDO pendiente (falta despachar), O
+    #   - está asignado a un MANIFIESTO (en preparación), aunque su saldo sea 0,
+    # …siempre que NO tenga guía todavía (con guía → ya va en camino).
+    # "Entregados" = sin saldo Y que NO esté en un manifiesto en preparación.
+    # Así, un doc sin saldo y sin manifiesto se va a Entregados (desaparece de
+    # Pendientes), y uno en manifiesto sin guía se reconoce como "en transición".
+    _EN_MANIF = "id IN (SELECT commitment_id FROM transport_manifest_items)"
     # Filtro por vista (categoría del flujo)
     if vista == "pendientes":
-        where.append("tiene_saldo=1 AND (guia_numero IS NULL OR guia_numero='')")
+        where.append(f"(guia_numero IS NULL OR guia_numero='') AND (tiene_saldo=1 OR {_EN_MANIF})")
     elif vista == "parciales":
         where.append("tiene_saldo=1 AND guia_numero IS NOT NULL AND guia_numero<>''")
     elif vista == "entregados":
-        where.append("tiene_saldo=0")
+        where.append(f"tiene_saldo=0 AND NOT ({_EN_MANIF} AND (guia_numero IS NULL OR guia_numero=''))")
     elif vista == "todos":
         pass  # sin filtro adicional
     else:
-        # default histórico: solo con saldo (compat con clientes que no mandan vista)
-        where.append("tiene_saldo=1")
+        # default (compat con clientes que no mandan vista): lo que hay que gestionar
+        where.append(f"(tiene_saldo=1 OR {_EN_MANIF})")
 
     if estado: where.append("estado=%s"); params.append(estado)
     if clasif: where.append("clasificacion=%s"); params.append(clasif)
@@ -18262,7 +18270,8 @@ def tr_compromisos_json():
     if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
 
     rows = mysql_fetchall(
-        "SELECT * FROM transport_commitments WHERE " + " AND ".join(where) +
+        "SELECT *, (" + _EN_MANIF + ") AS en_manifiesto "
+        "FROM transport_commitments WHERE " + " AND ".join(where) +
         " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
     )
 
@@ -18290,6 +18299,7 @@ def tr_compromisos_json():
             "guia_numero":  r.get("guia_numero") or "",
             "cobertura_pct":float(r.get("cobertura_pct") or 0),
             "tiene_saldo":  int(r.get("tiene_saldo") or 0),
+            "en_manifiesto":int(r.get("en_manifiesto") or 0),
         })
 
     # Conteos por categoría — independientes del filtro `vista` aplicado.
@@ -18305,9 +18315,9 @@ def tr_compromisos_json():
 
     conteos_row = mysql_fetchone(
         "SELECT "
-        " SUM(CASE WHEN tiene_saldo=1 AND (guia_numero IS NULL OR guia_numero='') THEN 1 ELSE 0 END) AS pendientes,"
+        " SUM(CASE WHEN (guia_numero IS NULL OR guia_numero='') AND (tiene_saldo=1 OR " + _EN_MANIF + ") THEN 1 ELSE 0 END) AS pendientes,"
         " SUM(CASE WHEN tiene_saldo=1 AND guia_numero IS NOT NULL AND guia_numero<>'' THEN 1 ELSE 0 END) AS parciales,"
-        " SUM(CASE WHEN tiene_saldo=0 THEN 1 ELSE 0 END) AS entregados,"
+        " SUM(CASE WHEN tiene_saldo=0 AND NOT (" + _EN_MANIF + " AND (guia_numero IS NULL OR guia_numero='')) THEN 1 ELSE 0 END) AS entregados,"
         " COUNT(*) AS total"
         " FROM transport_commitments" + base_w,
         tuple(base_params)
