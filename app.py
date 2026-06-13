@@ -15541,6 +15541,43 @@ def _fedex_cancel_shipment(tracking_number: str) -> dict:
     }
 
 
+def _fedex_cancel_window(ship_created_at):
+    """Ventana de cancelación de una OT FedEx (Fase 3 cronómetro).
+
+    Regla: FedEx permite cancelar el MISMO día calendario en Chile en que se
+    creó la OT, hasta las 16:00 hora Chile (corte operativo de Quilicura).
+    Después de esa hora el envío entra a la red y debe gestionarse manualmente.
+
+    Args:
+        ship_created_at: datetime de creación (naive UTC desde MySQL NOW()
+        o aware en cualquier zona).
+
+    Returns:
+        dict {deadline_iso, deadline_ms, expired, seconds_left} o None si
+        no hay fecha de creación.
+    """
+    if not ship_created_at:
+        return None
+    try:
+        from datetime import time as _time, timezone as _tz_utc
+        ts = ship_created_at
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_tz_utc.utc)
+        ship_cl = ts.astimezone(_TZ_CL)
+        deadline_cl = datetime.combine(ship_cl.date(), _time(16, 0), tzinfo=_TZ_CL)
+        now_cl = _now_chile()
+        seconds_left = int((deadline_cl - now_cl).total_seconds())
+        return {
+            "deadline_iso": deadline_cl.isoformat(),
+            "deadline_ms":  int(deadline_cl.timestamp() * 1000),
+            "expired":      seconds_left <= 0,
+            "seconds_left": seconds_left,
+        }
+    except Exception as e:
+        print(f"[fedex_cancel_window] error: {e}", flush=True)
+        return None
+
+
 def _fedex_pickup_check(
     *,
     address: dict,
@@ -20130,6 +20167,8 @@ def tr_manifiesto_detalle(mid):
             it["has_ship_label"] = bool(it.get("ship_label_b64"))
             if it.get("ship_label_b64"):
                 it["ship_label_b64"] = None
+            # Ventana de cancelación FedEx (mismo día Chile, corte 16:00).
+            it["cancel_window"] = _fedex_cancel_window(it.get("ship_created_at"))
 
         # ── ALERTA "Facturas sin OT FedEx" (visión Daniel 2026-06-06) ──
         # FedEx se gestiona por API: una vez asignada la OT (tracking number),
@@ -20608,6 +20647,81 @@ def tr_factura_etiquetas_pdf(commitment_id):
 
     return Response(data, mimetype=mime, headers={
         "Content-Disposition": f'{"attachment" if individual else "inline"}; filename="{fname}"'
+    })
+
+
+@app.route("/transporte/manifiestos/<int:mid>/etiquetas-fedex/pdf")
+@_tr_required
+def tr_manifiesto_etiquetas_fedex_pdf(mid):
+    """PDF único concatenando TODAS las etiquetas FedEx (4x6 PDF) del manifiesto.
+
+    Lee `ship_label_b64` de cada item con OT FedEx creada (formato PDF),
+    los une página por página con pypdf y devuelve un solo PDF para imprimir
+    en bloque. Items sin etiqueta o con formato no-PDF (ZPL/PNG/EPL) se
+    omiten silenciosamente — quedan reportados en el log.
+    """
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, courier FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        return "Manifiesto no encontrado", 404
+
+    rows = mysql_fetchall(
+        "SELECT mi.id, mi.tido, mi.nudo, mi.master_tracking_number, "
+        "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at "
+        "FROM transport_manifest_items mi "
+        "WHERE mi.manifest_id=%s "
+        "ORDER BY mi.orden, mi.id", (mid,)) or []
+
+    if not rows:
+        return "Manifiesto sin items", 400
+
+    import base64 as _b64
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    incluidos = 0
+    omitidos = []
+    for r in rows:
+        if r.get("ship_cancelled_at"):
+            omitidos.append(f"{r['tido']}{r['nudo']} (cancelado)")
+            continue
+        b64 = r.get("ship_label_b64") or ""
+        fmt = (r.get("ship_label_format") or "PDF").upper()
+        if not b64:
+            omitidos.append(f"{r['tido']}{r['nudo']} (sin etiqueta)")
+            continue
+        if fmt != "PDF":
+            omitidos.append(f"{r['tido']}{r['nudo']} ({fmt})")
+            continue
+        try:
+            raw = _b64.b64decode(b64)
+            reader = PdfReader(io.BytesIO(raw), strict=False)
+            for page in reader.pages:
+                writer.add_page(page)
+            incluidos += 1
+        except Exception as e:
+            omitidos.append(f"{r['tido']}{r['nudo']} (error: {type(e).__name__})")
+
+    if incluidos == 0:
+        msg = "No hay etiquetas FedEx en formato PDF para imprimir."
+        if omitidos:
+            msg += " Omitidos: " + ", ".join(omitidos[:5])
+            if len(omitidos) > 5:
+                msg += f" (+{len(omitidos)-5} más)"
+        return msg, 400
+
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    data = out.getvalue()
+
+    _tr_log("manifest", mid, "etiquetas fedex pdf",
+            f"{incluidos} incluidos · {len(omitidos)} omitidos")
+
+    corr = manifiesto.get("correlativo") or mid
+    fname = f"etiquetas_fedex_manifiesto_{corr}.pdf"
+    return Response(data, mimetype="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="{fname}"'
     })
 
 
@@ -21878,6 +21992,16 @@ def tr_cancelar_ot_fedex(item_id):
         return jsonify({"error": "Este item no tiene OT FedEx creada"}), 400
     if r.get("ship_cancelled_at"):
         return jsonify({"error": "OT ya cancelada"}), 409
+    # Ventana de cancelación: mismo día Chile hasta 16:00.
+    cw = _fedex_cancel_window(r.get("ship_created_at"))
+    if cw and cw.get("expired"):
+        return jsonify({
+            "ok": False,
+            "expired": True,
+            "error": "La OT FedEx ya no se puede cancelar desde el sistema "
+                     "(corte 16:00 hora Chile del mismo día). Coordina con "
+                     "FedEx directamente si necesitas detener el envío.",
+        }), 409
     res = _fedex_cancel_shipment(tn)
     if not res.get("ok"):
         return jsonify({"ok": False, "error": res.get("error") or "FedEx no respondió"}), 502
