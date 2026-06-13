@@ -29534,15 +29534,22 @@ def _puede_ot_accion(vid, accion, user=None):
                   f"-> DENIED (cliente firmó / OT en cierre — solo superadmin edita)", flush=True)
             return False
         # (2) Ventana de corrección: el técnico firmó pero el cliente NO.
-        #     El técnico queda bloqueado (no edita lo que ya firmó); corrigen
-        #     ejecutivo SSTT / supervisor / admin (+ superadmin ya pasó arriba).
+        #     2026-06-12 (Daniel, estilo Fracttal): el TÉCNICO ASIGNADO sigue
+        #     editando (corregir fotos, tareas, equipos cruzados) HASTA que
+        #     firme el cliente. También corrigen ejecutivo SSTT / supervisor /
+        #     admin. TODO cambio post-firma deja evidencia en mant_logs
+        #     (ver _ot_evidencia_post_firma) para amparar al técnico.
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
                       f"-> ALLOWED (ventana de corrección post-firma técnico)", flush=True)
                 return True
+            if role == "tecnico" and es_tecnico_asignado:
+                print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+                      f"-> ALLOWED (técnico asignado corrige hasta firma del cliente)", flush=True)
+                return True
             print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
-                  f"-> DENIED (técnico ya firmó; corrige ejecutivo SSTT/superadmin)", flush=True)
+                  f"-> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
             return False
         # (3) Estado de trabajo normal (sin firma del técnico): SOLO técnico
         #     asignado/colaborador. El rol manda (defense in depth: aunque un
@@ -29576,13 +29583,17 @@ def _puede_ot_accion(vid, accion, user=None):
         if ot_sellada:
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (OT sellada por firma del cliente/cierre)", flush=True)
             return False
-        # Ventana de corrección (técnico ya firmó): el técnico ya no configura;
-        # sí lo hacen ejecutivo SSTT / supervisor / admin.
+        # Ventana de corrección (técnico ya firmó, cliente NO): el técnico
+        # asignado SIGUE configurando (2026-06-12, estilo Fracttal) igual que
+        # ejecutivo SSTT / supervisor / admin. Evidencia en mant_logs.
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (ventana de corrección)", flush=True)
                 return True
-            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (técnico ya firmó)", flush=True)
+            if role == "tecnico" and es_tecnico_asignado:
+                print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (técnico asignado, ventana de corrección)", flush=True)
+                return True
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
             return False
         if role in ("admin", "supervisor"):
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
@@ -29750,6 +29761,42 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
     return redirect(url_for("mant_ots_list"))
 
 
+def _ot_evidencia_post_firma(vid, accion):
+    """🛡️ EVIDENCIA POST-FIRMA (2026-06-12, Daniel — estilo Fracttal).
+    Si la OT ya tiene la firma del técnico, CUALQUIER edición posterior
+    (del propio técnico en la ventana de corrección, de gestión, o del
+    superadmin tras la firma del cliente) queda registrada en mant_logs
+    con autor, rol y endpoint. Esto AMPARA al técnico: lo que se mueva
+    después de su firma tiene huella de quién lo movió.
+    Best-effort: jamás bloquea la operación si el log falla."""
+    try:
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return
+        v = mysql_fetchone(
+            "SELECT estado, firma_tecnico_url, tecnico_user_id "
+            "  FROM mant_visitas WHERE id=%s", (vid,))
+        if not v:
+            return
+        if not (v.get("firma_tecnico_url") or (v.get("estado") or "").lower() == "firmada_tecnico"):
+            return  # técnico aún no firma → edición normal, sin evidencia extra
+        u = getattr(g, "user", None) or {}
+        uid = u.get("id")
+        rol = (u.get("role") or "?")
+        es_el_tecnico = False
+        try:
+            es_el_tecnico = bool(v.get("tecnico_user_id") and uid
+                                 and int(v["tecnico_user_id"]) == int(uid))
+        except (TypeError, ValueError):
+            pass
+        quien = "técnico asignado" if es_el_tecnico else f"⚠️ TERCERO ({rol})"
+        _mant_log("visita", vid, "edicion_post_firma",
+                  f"[{quien}] {u.get('nombre') or u.get('username') or '?'} "
+                  f"({rol}) modificó la OT DESPUÉS de la firma del técnico — "
+                  f"{request.method} {request.path} ({accion}, estado={v.get('estado')})")
+    except Exception as e:
+        print(f"[evidencia_post_firma] vid={vid}: {e}", flush=True)
+
+
 def _ot_can_configurar(view_func):
     """Decorador para endpoints que ARMAN la OT antes/durante de la
     ejecución: aplicar plantilla, aplicar protocolo, agregar tareas
@@ -29781,6 +29828,7 @@ def _ot_can_configurar(view_func):
                 u.get("username"),
                 accion="configurar",
             )
+        _ot_evidencia_post_firma(vid, "configurar")
         return view_func(vid, *args, **kwargs)
     return wrapped
 
@@ -29825,6 +29873,7 @@ def _tecnico_owns_visita(view_func):
                 u.get("username"),
                 accion="ejecutar",
             )
+        _ot_evidencia_post_firma(vid, "ejecutar")
         return view_func(vid, *args, **kwargs)
     return wrapped
 
@@ -48798,7 +48847,11 @@ def mant_ot_ejecutar(vid):
         grp["total"] = len(grp["tareas"])
         grp["completas"] = sum(1 for t in grp["tareas"] if t.get("completada"))
         grp["progreso"] = round((grp["completas"] / grp["total"]) * 100) if grp["total"] else 0
-        grp["bloqueado"] = (grp["completas"] == grp["total"] and grp["total"] > 0)
+        # 2026-06-12 (Daniel, estilo Fracttal): un checklist completo YA NO se
+        # auto-bloquea. El técnico corrige libremente hasta la firma del
+        # CLIENTE (el sello real lo ponen estado + _puede_ot_accion; los
+        # cambios post-firma-técnico dejan evidencia en mant_logs).
+        grp["bloqueado"] = False
 
     # Compat: el viejo tareas_por_eq sigue existiendo (legacy templates)
     tareas_por_eq = {}
@@ -52135,12 +52188,32 @@ def mant_visita_adjunto_delete(vid, aid):
 @_mant_required
 @_tecnico_owns_visita
 def mant_visita_foto_delete(vid, fid):
-    """Elimina una foto de la OT (archivo + registro)."""
+    """Elimina una foto de la OT (archivo + registro).
+
+    2026-06-12 (Daniel, estilo Fracttal) — limpieza COMPLETA para que el
+    técnico pueda corregir una foto equivocada antes de la firma del cliente:
+      1. Borra el registro de mant_visita_fotos (evidencia de la OT).
+      2. Borra la copia en mant_levantamiento_fotos (misma URL) para que la
+         foto equivocada NO se promueva a la ficha del equipo al cerrar.
+      3. Si la foto era la PRINCIPAL de la ficha (mant_maquinas.foto_url) y la
+         puso ESTA misma OT (last_visita_id=vid), limpia foto_url → el técnico
+         puede subir la correcta y vuelve a quedar como principal.
+    Audit: mant_logs siempre (antes de borrar, REGLA #5)."""
     row = mysql_fetchone(
-        "SELECT archivo_path FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
+        "SELECT archivo_path, cloudinary_url, maquina_id "
+        "  FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
         (fid, vid)
     )
-    if row and row.get("archivo_path"):
+    if not row:
+        return jsonify({"ok": False, "error": "Foto no encontrada en esta OT"}), 404
+    # Audit ANTES de borrar (REGLA #5)
+    try:
+        _mant_log("visita", vid, "foto_eliminada",
+                  f"foto #{fid} maquina={row.get('maquina_id')} "
+                  f"por {current_username() or '?'}")
+    except Exception:
+        pass
+    if row.get("archivo_path"):
         try:
             fp = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
@@ -52151,6 +52224,28 @@ def mant_visita_foto_delete(vid, fid):
         except Exception:
             pass
     mysql_execute("DELETE FROM mant_visita_fotos WHERE id=%s AND visita_id=%s", (fid, vid))
+    _cld_url = (row.get("cloudinary_url") or "").strip()
+    _mid = row.get("maquina_id")
+    if _cld_url:
+        # 2) Copia en el levantamiento (evita promoción a la ficha al cerrar)
+        try:
+            mysql_execute(
+                "DELETE FROM mant_levantamiento_fotos "
+                " WHERE cloudinary_url=%s AND maquina_id=%s",
+                (_cld_url, _mid)
+            )
+        except Exception as _e_lf:
+            print(f"[foto_delete] levantamiento_fotos vid={vid} fid={fid}: {_e_lf}", flush=True)
+        # 3) Foto principal de la ficha puesta por ESTA OT → liberar
+        try:
+            if _mid:
+                mysql_execute(
+                    "UPDATE mant_maquinas SET foto_url=NULL "
+                    " WHERE id=%s AND foto_url=%s AND last_visita_id=%s",
+                    (_mid, _cld_url, vid)
+                )
+        except Exception as _e_pr:
+            print(f"[foto_delete] foto principal vid={vid} mid={_mid}: {_e_pr}", flush=True)
     return jsonify({"ok": True, "deleted": True})
 
 

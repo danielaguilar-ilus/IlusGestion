@@ -2225,15 +2225,22 @@
       </button>
     {% endif %}
   {% elif visita.estado == 'firmada_tecnico' %}
-    {# 2026-06-12 (Daniel) — El técnico firmó. VENTANA DE CORRECCIÓN antes de
-       la firma del cliente: el ejecutivo SSTT / superadmin pueden corregir
-       (ej: equipo cruzado). El técnico asignado / ejecutivo capturan la firma
-       del cliente cuando esté conforme. #}
+    {# 2026-06-12 (Daniel, estilo Fracttal) — El técnico firmó. VENTANA DE
+       CORRECCIÓN antes de la firma del cliente: el TÉCNICO ASIGNADO sigue
+       editando (fotos, tareas, equipo cruzado) y también gestión (ejecutivo
+       SSTT / supervisor / admin). Todo cambio post-firma queda registrado en
+       la bitácora (mant_logs: edicion_post_firma) para amparar al técnico.
+       Al capturar la firma del cliente, la OT se sella. #}
     {% if puede_ejecutar %}
       <div class="alert alert-warning py-2 small mb-2" style="border-radius:10px">
         <i class="bi bi-pencil-square me-1"></i>
-        <b>Ventana de corrección:</b> el técnico ya firmó. Revisa y corrige lo que sea
-        necesario <b>antes</b> de capturar la firma del cliente.
+        <b>Ventana de corrección:</b> el técnico ya firmó pero el cliente aún no.
+        Puedes corregir fotos, tareas y datos de equipos <b>antes</b> de capturar
+        la firma del cliente — al firmar el cliente, la OT se bloquea.
+        <span class="d-block mt-1" style="opacity:.85">
+          <i class="bi bi-shield-check me-1"></i>Todo cambio desde la firma del
+          técnico queda registrado con autor en la bitácora.
+        </span>
       </div>
     {% endif %}
     {% if puede_firmar_cliente %}
@@ -4133,6 +4140,34 @@ async function _capSubirFoto(mid, fileInput){
   }
 }
 
+// 2026-06-12 (Daniel, estilo Fracttal) — Borrar una foto de ESTA OT.
+// Disponible mientras la OT no esté sellada por la firma del cliente.
+// El backend además limpia la copia del levantamiento y libera la foto
+// principal de la ficha si la puso esta misma OT (para poder re-subir).
+async function _capBorrarFoto(mid, fotoId){
+  const ok = await ilusConfirm({
+    title: 'Eliminar foto',
+    message: '¿Quitar esta foto de la OT?',
+    sub: 'Se elimina de la evidencia de esta OT y no pasará a la ficha del equipo. Podrás subir otra.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos/${fotoId}`, {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || 'No se pudo eliminar la foto');
+    ilusToast('✓ Foto eliminada', { type: 'success' });
+    await _capRefreshFotos(mid);
+  } catch(e){
+    console.error('[_capBorrarFoto]', e);
+    ilusToast(e.message || 'No se pudo eliminar la foto', { type: 'error' });
+  }
+}
+
 // Refresca solo la grilla de fotos del modal (sin recargar todo)
 async function _capRefreshFotos(mid){
   // PERF 2026-05-22 — Skeleton mientras carga (mejora percepción de
@@ -4180,10 +4215,26 @@ function _renderFotosTiles(fotos, mid){
     const lbl = f.fuente === 'ot' ? 'NUEVA' : 'FICHA';
     // PERF 2026-05-22: 'card' (≤400px) para grid; el lightbox usa 'gallery'.
     const thumbUrl = cloudTx(f.url, 'card');
-    html += `<div class="cap-foto-tile ${cls}" title="${_escapeAttr(f.descripcion || f.tipo_foto || '')}">
+    // 2026-06-12 (Daniel, estilo Fracttal): el técnico puede BORRAR las fotos
+    // de ESTA OT (fuente 'ot') mientras la OT no esté sellada por el cliente.
+    // Las fotos históricas de la ficha (fuente 'ficha') no se tocan desde acá.
+    const delBtn = (!readonly && f.fuente === 'ot' && f.id)
+      ? `<button type="button" class="cap-foto-del" title="Eliminar esta foto"
+           onclick="event.stopPropagation();_capBorrarFoto(${mid}, ${f.id})"
+           style="position:absolute;top:4px;right:4px;width:26px;height:26px;
+             border-radius:50%;border:0;background:rgba(220,38,38,.92);color:#fff;
+             font-size:.8rem;line-height:1;display:flex;align-items:center;
+             justify-content:center;cursor:pointer;z-index:2;
+             box-shadow:0 1px 4px rgba(0,0,0,.35)">
+           <i class="bi bi-trash-fill"></i>
+         </button>`
+      : '';
+    html += `<div class="cap-foto-tile ${cls}" style="position:relative"
+        title="${_escapeAttr(f.descripcion || f.tipo_foto || '')}">
       <img src="${_escapeAttr(thumbUrl)}" alt="${_escapeAttr(f.descripcion || '')}"
            loading="lazy" decoding="async">
       <span class="badge-fuente">${lbl}</span>
+      ${delBtn}
     </div>`;
   });
   if (!fotos || !fotos.length){
@@ -5362,7 +5413,9 @@ function _updateProgress(mid, pid){
   const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   grupo.completas = grupo.tareas.filter(t => t.completada).length;
   grupo.progreso = grupo.total ? Math.round((grupo.completas / grupo.total) * 100) : 0;
-  grupo.bloqueado = (grupo.completas === grupo.total && grupo.total > 0);
+  // 2026-06-12 (Daniel, estilo Fracttal): checklist completo NO se auto-bloquea.
+  // El técnico corrige hasta la firma del CLIENTE (sello real = estado + permisos).
+  grupo.bloqueado = false;
 
   // Update vista 3 si está activa
   const tProg = document.getElementById('tProg');
