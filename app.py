@@ -15537,6 +15537,38 @@ def _fedex_create_shipment(
                 piece_labels = [{"tracking_number": master_tn, "label_b64": enc}]
                 break
 
+    # Fallback C (CRÍTICO para FedEx CL doméstico):
+    # Algunas cuentas devuelven N piezas pero EN UN ÚNICO PDF MULTIPÁGINA
+    # (una página = una etiqueta). En ese escenario tenemos N piece_trackings
+    # pero solo 1 piece_label cuyo PDF interno trae todas las páginas.
+    # Sin este fallback, los reportes "etiquetas-fedex/pdf" y "/print" solo
+    # mostraban el bulto 1. Detectamos el caso, partimos el PDF en N páginas
+    # y asignamos una a cada tracking.
+    fmt_lower = (label_format or "PDF").upper()
+    if (fmt_lower == "PDF" and len(piece_labels) == 1
+            and len(piece_trackings) > 1 and master_label_b64):
+        try:
+            import base64 as _b64
+            raw_master = _b64.b64decode(master_label_b64)
+        except Exception:
+            raw_master = b""
+        n_pages = _pdf_count_pages(raw_master) if raw_master else 0
+        if n_pages >= len(piece_trackings):
+            split_b64s = _pdf_split_pages_b64(raw_master)
+            if len(split_b64s) >= len(piece_trackings):
+                piece_labels = []
+                for i, tn in enumerate(piece_trackings):
+                    piece_labels.append({
+                        "tracking_number": tn,
+                        "label_b64":       split_b64s[i],
+                    })
+                try:
+                    print(f"[FEDEX MPS] expanded master PDF {n_pages}p → "
+                          f"{len(piece_labels)} labels (CL multi-piece in single PDF)",
+                          flush=True)
+                except Exception:
+                    pass
+
     # Diagnóstico (no contiene las etiquetas, solo conteos) para depurar MPS.
     debug = {
         "n_piece_responses": len(piece_resp),
@@ -20846,6 +20878,7 @@ def tr_manifiesto_etiquetas_fedex_pdf(mid):
     rows = mysql_fetchall(
         "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
         "       mi.ship_label_b64, mi.ship_labels_json, mi.ship_label_format, "
+        "       mi.piece_trackings_json, mi.ship_bultos, "
         "       mi.ship_cancelled_at "
         "FROM transport_manifest_items mi "
         "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
@@ -20982,6 +21015,90 @@ def _pdf_first_page_to_pil(raw_pdf_bytes, dpi=203):
         return None, f"render falló (pdfium:{_err1} / poppler:{type(e_p2i).__name__})"
 
 
+def _pdf_all_pages_to_pil(raw_pdf_bytes, dpi=203, max_pages=200):
+    """Rasteriza TODAS las páginas de un PDF a imágenes PIL. Devuelve (list[PIL], None)
+    o (None, motivo). Mismo fallback que _pdf_first_page_to_pil (pdfium → poppler).
+
+    Crítico para FedEx CL doméstico: a veces entrega multi-pieza como UN PDF
+    multipágina (en lugar de N PDFs en pieceResponses). Sin esto, solo veíamos
+    el bulto 1. max_pages evita un PDF maligno colgando el server.
+    """
+    _err1 = "n/a"
+    # 1) pypdfium2.
+    try:
+        import pypdfium2 as _pdfium
+        pdf = _pdfium.PdfDocument(raw_pdf_bytes)
+        try:
+            n = min(len(pdf), max_pages)
+            out = []
+            for i in range(n):
+                bmp = pdf[i].render(scale=dpi / 72.0)
+                out.append(bmp.to_pil())
+            return out, None
+        finally:
+            try:
+                pdf.close()
+            except Exception:
+                pass
+    except Exception as e_pdfium:
+        _err1 = type(e_pdfium).__name__
+    # 2) Fallback pdf2image/poppler.
+    try:
+        from pdf2image import convert_from_bytes
+        paginas = convert_from_bytes(raw_pdf_bytes, dpi=dpi, fmt="png",
+                                     first_page=1, last_page=max_pages)
+        if paginas:
+            return list(paginas), None
+        return None, "PDF sin páginas"
+    except Exception as e_p2i:
+        return None, f"render falló (pdfium:{_err1} / poppler:{type(e_p2i).__name__})"
+
+
+def _pdf_count_pages(raw_pdf_bytes):
+    """Cuenta cuántas páginas tiene un PDF. Devuelve int o 0 si falla."""
+    try:
+        import pypdfium2 as _pdfium
+        pdf = _pdfium.PdfDocument(raw_pdf_bytes)
+        try:
+            return len(pdf)
+        finally:
+            try: pdf.close()
+            except Exception: pass
+    except Exception:
+        pass
+    # Fallback pypdf (más liviano que poppler para solo contar).
+    try:
+        from pypdf import PdfReader
+        return len(PdfReader(io.BytesIO(raw_pdf_bytes)).pages)
+    except Exception:
+        return 0
+
+
+def _pdf_split_pages_b64(raw_pdf_bytes):
+    """Divide un PDF multipágina en N PDFs de 1 página cada uno (base64).
+    Devuelve list[str_b64] o [] si falla. Usado para expandir el master FedEx
+    multipágina en N etiquetas individuales (una por bulto).
+    """
+    import base64 as _b64
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except Exception:
+        return []
+    try:
+        reader = PdfReader(io.BytesIO(raw_pdf_bytes))
+        out = []
+        for page in reader.pages:
+            w = PdfWriter()
+            w.add_page(page)
+            buf = io.BytesIO()
+            w.write(buf)
+            buf.seek(0)
+            out.append(_b64.b64encode(buf.getvalue()).decode("ascii"))
+        return out
+    except Exception:
+        return []
+
+
 def _autocrop_white(img, pad_px=10, thresh=24):
     """Recorta los márgenes blancos de una imagen, dejando solo el contenido.
     Usado para que una etiqueta FedEx 4×6 embebida en una hoja carta quede
@@ -21020,14 +21137,20 @@ def _fedex_item_labels(row):
     Lee ship_labels_json [{tracking_number,label_b64}]; si no existe (OTs creadas
     antes de guardar todas las piezas), cae a la única etiqueta master en
     ship_label_b64. Devuelve list[dict] {tracking_number, label_b64, fmt}.
+
+    CRÍTICO: si el master ship_label_b64 es un PDF MULTIPÁGINA (FedEx CL
+    doméstico mete las N etiquetas de un MPS en un solo PDF), lo expandimos
+    en N entries. Esto repara TODAS las OTs históricas en BD sin necesidad
+    de re-emitir; antes solo se veía el bulto 1.
     """
-    import json as _jp
+    import json as _jp, base64 as _b64
     fmt = (row.get("ship_label_format") or "PDF")
+    fmt_u = (fmt or "PDF").upper()
     out = []
-    raw = row.get("ship_labels_json")
-    if raw:
+    raw_json = row.get("ship_labels_json")
+    if raw_json:
         try:
-            for it in (_jp.loads(raw) or []):
+            for it in (_jp.loads(raw_json) or []):
                 b64 = (it.get("label_b64") or "").strip()
                 if b64:
                     out.append({"tracking_number": it.get("tracking_number") or "",
@@ -21039,6 +21162,41 @@ def _fedex_item_labels(row):
         if b64:
             out.append({"tracking_number": row.get("master_tracking_number") or "",
                         "label_b64": b64, "fmt": fmt})
+
+    # ── Expansión multipágina (fix retroactivo) ─────────────────────────────
+    # Si tenemos UNA sola entrada PDF que en realidad es multipágina, partimos.
+    # Cubre OTs viejas guardadas antes del fallback C, sin tocar la BD.
+    if len(out) == 1 and fmt_u == "PDF":
+        b64 = out[0]["label_b64"]
+        try:
+            raw_pdf = _b64.b64decode(b64)
+        except Exception:
+            raw_pdf = b""
+        if raw_pdf:
+            n_pages = _pdf_count_pages(raw_pdf)
+            # Multipágina = el master FedEx trae las N etiquetas dentro.
+            # Si ship_bultos está seteado, validamos coherencia (puede ser =N
+            # o vacío). Si n_pages es > 1 lo expandimos siempre, porque la
+            # única razón realista de un PDF multipágina en este flujo es MPS.
+            if n_pages > 1:
+                splits = _pdf_split_pages_b64(raw_pdf)
+                if len(splits) == n_pages:
+                    # tracking numbers piezas: si el row trae piece_trackings_json
+                    # usamos esos; si no, dejamos el master como hint para todos
+                    # (el cliente verá "X of N" en la etiqueta).
+                    piece_tns = []
+                    try:
+                        pt_raw = row.get("piece_trackings_json")
+                        if pt_raw:
+                            piece_tns = _jp.loads(pt_raw) or []
+                    except Exception:
+                        piece_tns = []
+                    master_tn = out[0]["tracking_number"]
+                    out = []
+                    for i, b in enumerate(splits):
+                        tn_i = piece_tns[i] if i < len(piece_tns) else master_tn
+                        out.append({"tracking_number": tn_i,
+                                    "label_b64": b, "fmt": fmt})
     return out
 
 
@@ -21056,6 +21214,18 @@ def _fedex_labels_to_4x6_pdf(labels, dpi=203):
     from PIL import Image as _PILImage
     W, H = int(4 * dpi), int(6 * dpi)   # 812×1218 @ 203 dpi
     pages, omit = [], []
+
+    def _fit_and_append(pil_img):
+        """Encaja una imagen en lienzo blanco 4×6 manteniendo proporción."""
+        img2 = _autocrop_white(pil_img)
+        canvas = _PILImage.new("RGB", (W, H), (255, 255, 255))
+        src = img2.convert("RGB")
+        scale = min(W / src.width, H / src.height)
+        nw, nh = max(1, int(src.width * scale)), max(1, int(src.height * scale))
+        src = src.resize((nw, nh), _PILImage.LANCZOS)
+        canvas.paste(src, ((W - nw) // 2, (H - nh) // 2))
+        pages.append(canvas)
+
     for i, lab in enumerate(labels, start=1):
         fmt = (lab.get("fmt") or "PDF").upper()
         try:
@@ -21064,26 +21234,22 @@ def _fedex_labels_to_4x6_pdf(labels, dpi=203):
             omit.append(f"bulto {i}: base64 inválido")
             continue
         if fmt == "PDF":
-            img, err = _pdf_first_page_to_pil(raw, dpi=dpi)
+            # CRÍTICO: PDF puede ser multipágina (FedEx CL doméstico mete las N
+            # etiquetas de un MPS en un solo PDF). Rasterizamos TODAS las páginas
+            # para que el output tenga una hoja por bulto.
+            imgs, err = _pdf_all_pages_to_pil(raw, dpi=dpi)
+            if not imgs:
+                omit.append(f"bulto {i}: {err or 'no rasterizable'}")
+                continue
+            for pg in imgs:
+                _fit_and_append(pg)
         elif fmt == "PNG":
             try:
-                img, err = _PILImage.open(io.BytesIO(raw)), None
+                _fit_and_append(_PILImage.open(io.BytesIO(raw)))
             except Exception as e:
-                img, err = None, type(e).__name__
+                omit.append(f"bulto {i}: {type(e).__name__}")
         else:
-            img, err = None, f"formato {fmt}"
-        if img is None:
-            omit.append(f"bulto {i}: {err or 'no rasterizable'}")
-            continue
-        img = _autocrop_white(img)
-        # Encajar en lienzo blanco 4×6 manteniendo proporción (sin deformar).
-        canvas = _PILImage.new("RGB", (W, H), (255, 255, 255))
-        src = img.convert("RGB")
-        scale = min(W / src.width, H / src.height)
-        nw, nh = max(1, int(src.width * scale)), max(1, int(src.height * scale))
-        src = src.resize((nw, nh), _PILImage.LANCZOS)
-        canvas.paste(src, ((W - nw) // 2, (H - nh) // 2))
-        pages.append(canvas)
+            omit.append(f"bulto {i}: formato {fmt}")
     if not pages:
         return None, 0, omit
     buf = io.BytesIO()
@@ -21111,6 +21277,7 @@ def tr_manifiesto_etiquetas_fedex_print(mid):
     rows = mysql_fetchall(
         "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
         "       mi.ship_label_b64, mi.ship_labels_json, mi.ship_label_format, "
+        "       mi.piece_trackings_json, mi.ship_bultos, "
         "       mi.ship_cancelled_at, c.cliente_nombre, c.comuna "
         "FROM transport_manifest_items mi "
         "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
@@ -21167,6 +21334,7 @@ def tr_item_etiqueta_fedex_print(item_id):
     r = mysql_fetchone(
         "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
         "       mi.ship_label_b64, mi.ship_labels_json, mi.ship_label_format, "
+        "       mi.piece_trackings_json, mi.ship_bultos, "
         "       mi.ship_cancelled_at, c.cliente_nombre, c.comuna "
         "FROM transport_manifest_items mi "
         "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
@@ -22649,7 +22817,7 @@ def tr_etiqueta_fedex(item_id):
     """
     r = mysql_fetchone(
         "SELECT ship_label_b64, ship_labels_json, ship_label_format, "
-        "       master_tracking_number, piece_trackings_json "
+        "       master_tracking_number, piece_trackings_json, ship_bultos "
         "FROM transport_manifest_items WHERE id=%s",
         (item_id,)
     )
