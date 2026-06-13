@@ -22515,6 +22515,145 @@ def tr_etiqueta_fedex(item_id):
     )
 
 
+def _fedex_parse_scans(scans):
+    """Normaliza los scanEvents crudos de la Track API a una lista limpia para UI:
+    [{fecha, hora, fecha_txt, descripcion, ubicacion, tipo}], de más reciente a
+    más antiguo (como los muestra FedEx)."""
+    out = []
+    for sc in (scans or []):
+        if not isinstance(sc, dict):
+            continue
+        raw_dt = (sc.get("date") or "")  # ej '2026-06-13T11:31:00-04:00'
+        fecha, hora = "", ""
+        if "T" in raw_dt:
+            fecha, _, resto = raw_dt.partition("T")
+            hora = resto[:5]
+        loc = sc.get("scanLocation") or {}
+        ciudad = (loc.get("city") or "").strip()
+        pais   = (loc.get("countryCode") or "").strip()
+        ubic = ", ".join([p for p in (ciudad.title() if ciudad else "", pais) if p])
+        desc = (sc.get("eventDescription") or sc.get("derivedStatus")
+                or sc.get("exceptionDescription") or "").strip()
+        out.append({
+            "fecha": fecha, "hora": hora,
+            "fecha_txt": (f"{fecha} {hora}").strip(),
+            "descripcion": desc,
+            "ubicacion": ubic,
+            "tipo": sc.get("eventType") or "",
+        })
+    return out
+
+
+@app.route("/transporte/api/items/<int:item_id>/tracking-detalle", methods=["GET"])
+@_tr_required
+def tr_item_tracking_detalle(item_id):
+    """Detalle completo de seguimiento de un item para el modal de tracking:
+    estado actual + stepper, pesos (real/vol/predominante), tarifa, bultos,
+    timeline de eventos ILUS y — best-effort — los scans en vivo de FedEx.
+    """
+    row = mysql_fetchone("""
+        SELECT mi.id, mi.estado_entrega, mi.master_tracking_number, mi.ship_bultos,
+               mi.ship_created_at, mi.last_carrier_status, mi.last_carrier_poll_at,
+               mi.commitment_id, tm.courier, tm.correlativo,
+               c.tido, c.nudo, c.cliente_nombre, c.comuna, c.region,
+               COALESCE(c.peso_real, 0)         AS peso_real,
+               COALESCE(c.peso_vol, 0)          AS peso_vol,
+               COALESCE(c.peso_predominante, 0) AS peso_pred,
+               COALESCE(c.peso_export, 0)       AS peso_export,
+               COALESCE(c.volumen_m3, 0)        AS volumen_m3,
+               COALESCE(c.n_bultos, 1)          AS n_bultos,
+               COALESCE(c.zz_envio, 0)          AS zz_envio,
+               COALESCE(c.costo_courier, 0)     AS costo_courier,
+               COALESCE(c.valor_bruto, 0)       AS valor_bruto
+        FROM transport_manifest_items mi
+        LEFT JOIN transport_manifests tm   ON tm.id = mi.manifest_id
+        LEFT JOIN transport_commitments c  ON c.id = mi.commitment_id
+        WHERE mi.id=%s
+    """, (item_id,))
+    if not row:
+        return jsonify({"ok": False, "error": "item no encontrado"}), 404
+
+    estado = row.get("estado_entrega") or "En preparación"
+    meta = ESTADOS_ENTREGA_META.get(estado, {})
+    doc = f"{row.get('tido') or ''} {row.get('nudo') or ''}".strip()
+
+    # Timeline de eventos ILUS (alto nivel).
+    eventos_raw = mysql_fetchall("""
+        SELECT estado, fuente, ts_utc, comentario
+        FROM transport_tracking_events
+        WHERE manifest_item_id=%s
+        ORDER BY ts_utc DESC, id DESC
+    """, (item_id,)) or []
+    eventos = []
+    for e in eventos_raw:
+        est = e.get("estado") or ""
+        m = ESTADOS_ENTREGA_META.get(est, {})
+        eventos.append({
+            "estado":     est,
+            "color":      m.get("color", "secondary"),
+            "icon":       m.get("icon", "bi-circle"),
+            "fuente":     e.get("fuente") or "manual",
+            "ts":         str(e.get("ts_utc") or "")[:19],
+            "comentario": e.get("comentario") or "",
+        })
+
+    # Scans en vivo de FedEx (best-effort; no rompe si la API falla).
+    fedex_scans, eta, fedex_label = [], "", ""
+    tn = row.get("master_tracking_number") or ""
+    if tn and FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET:
+        try:
+            res = _fedex_track_lookup([tn])
+            if res:
+                r0 = res[0]
+                fedex_scans = _fedex_parse_scans(r0.get("scans"))
+                eta = r0.get("eta") or ""
+                fedex_label = r0.get("status_label") or ""
+        except Exception as _e_fx:
+            print(f"[tracking-detalle] FedEx live falló: {str(_e_fx)[:120]}", flush=True)
+
+    pred = float(row.get("peso_pred") or 0)
+    real = float(row.get("peso_real") or 0)
+    vol  = float(row.get("peso_vol") or 0)
+    if not pred:
+        pred = max(real, vol)
+    cobrado = float(row.get("zz_envio") or 0)
+    costo   = float(row.get("costo_courier") or 0)
+
+    return jsonify({
+        "ok": True,
+        "item_id":   item_id,
+        "doc":       doc or f"#{item_id}",
+        "cliente":   row.get("cliente_nombre") or "—",
+        "comuna":    row.get("comuna") or "",
+        "region":    row.get("region") or "",
+        "courier":   row.get("courier") or "",
+        "manifiesto": row.get("correlativo") or "",
+        "tracking":  tn,
+        "estado":        estado,
+        "estado_color":  meta.get("color", "secondary"),
+        "estado_icon":   meta.get("icon", "bi-circle"),
+        "estado_step":   meta.get("step", 1),
+        "bultos":        int(row.get("ship_bultos") or row.get("n_bultos") or 1),
+        "ship_created_at": str(row.get("ship_created_at") or "")[:19],
+        "ultimo_poll":   str(row.get("last_carrier_poll_at") or "")[:19],
+        "pesos": {
+            "real": round(real, 2), "vol": round(vol, 2),
+            "predominante": round(pred, 2),
+            "mayor_es": "vol" if vol > real else "real",
+            "volumen_m3": round(float(row.get("volumen_m3") or 0), 3),
+        },
+        "tarifa": {
+            "cobrado": cobrado, "costo": costo,
+            "margen": cobrado - costo,
+            "valor_bruto": float(row.get("valor_bruto") or 0),
+        },
+        "eta":           eta,
+        "fedex_label":   fedex_label,
+        "eventos":       eventos,
+        "fedex_scans":   fedex_scans,
+    })
+
+
 @app.route("/transporte/api/items/<int:item_id>/cancelar-ot-fedex", methods=["POST"])
 @_tr_required
 def tr_cancelar_ot_fedex(item_id):

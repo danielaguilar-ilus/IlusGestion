@@ -322,6 +322,14 @@
           'peso': (item.peso_export or 0)|float,
           'bultos': (item.n_bultos or 1)|int,
           'tracking': item.master_tracking_number or '',
+          'peso_real': (item.peso_real or 0)|float,
+          'peso_vol': (item.peso_vol or 0)|float,
+          'peso_pred': (item.peso_predominante or 0)|float,
+          'volumen_m3': (item.volumen_m3 or 0)|float,
+          'cobrado': (item.zz_envio or 0)|float,
+          'costo': (item.costo_courier or 0)|float,
+          'ship_bultos': (item.ship_bultos or item.n_bultos or 1)|int,
+          'estado': item.estado_entrega or '',
           'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
         } | tojson %}
         {% set nprod = item.productos|length %}
@@ -462,6 +470,13 @@
             <button class="btn btn-sm btn-outline-info mfd-act-btn" title="Refrescar estado FedEx (consulta Track API ahora)"
                     onclick="refrescarTrackingItem({{ item.id }}, this)">
               <i class="bi bi-arrow-clockwise"></i>
+            </button>
+            {% endif %}
+            {% if es_fedex and item.get('master_tracking_number') %}
+            <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento detallado (estados, scans FedEx, pesos y tarifa)"
+                    style="background:#0a0a0a;color:#fff;border:none"
+                    onclick="abrirTrackingDetalle({{ item.id }})">
+              <i class="bi bi-geo-alt-fill"></i>
             </button>
             {% endif %}
             <button class="btn btn-sm btn-outline-secondary mfd-act-btn" title="Editar contacto, bultos y medidas"
@@ -616,6 +631,14 @@
       'peso': (item.peso_export or 0)|float,
       'bultos': (item.n_bultos or 1)|int,
       'tracking': item.master_tracking_number or '',
+      'peso_real': (item.peso_real or 0)|float,
+      'peso_vol': (item.peso_vol or 0)|float,
+      'peso_pred': (item.peso_predominante or 0)|float,
+      'volumen_m3': (item.volumen_m3 or 0)|float,
+      'cobrado': (item.zz_envio or 0)|float,
+      'costo': (item.costo_courier or 0)|float,
+      'ship_bultos': (item.ship_bultos or item.n_bultos or 1)|int,
+      'estado': item.estado_entrega or '',
       'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
     } | tojson %}
     {% set nprod = item.productos|length %}
@@ -638,6 +661,13 @@
           <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Etiquetas de esta factura"
                   onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
             <i class="bi bi-tags"></i>
+          </button>
+          {% endif %}
+          {% if es_fedex and item.get('master_tracking_number') %}
+          <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento detallado"
+                  style="background:#0a0a0a;color:#fff;border:none"
+                  onclick="abrirTrackingDetalle({{ item.id }})">
+            <i class="bi bi-geo-alt-fill"></i>
           </button>
           {% endif %}
           <button class="btn btn-sm btn-outline-secondary mfd-act-btn" onclick='abrirEditar({{ item_json }})'>
@@ -897,13 +927,81 @@
           </div>
         </div>
         {% endif %}
+
+        {# Ficha read-only: pesos, tarifa, bultos #}
+        <hr class="my-3">
+        <div class="ed-ficha">
+          <div class="ed-ficha-row">
+            <div class="ed-chip" id="edChipReal"><span class="ed-chip-k">Peso real</span><span class="ed-chip-v">—</span></div>
+            <div class="ed-chip" id="edChipVol"><span class="ed-chip-k">Peso vol.</span><span class="ed-chip-v">—</span></div>
+            <div class="ed-chip ed-chip-pred" id="edChipPred"><span class="ed-chip-k">★ Predominante</span><span class="ed-chip-v">—</span></div>
+          </div>
+          <div class="ed-ficha-row">
+            <div class="ed-chip" id="edChipBultos"><span class="ed-chip-k">Bultos OT</span><span class="ed-chip-v">—</span></div>
+            <div class="ed-chip" id="edChipCobrado"><span class="ed-chip-k">Cobrado (ZZ)</span><span class="ed-chip-v">—</span></div>
+            <div class="ed-chip" id="edChipCosto"><span class="ed-chip-k">Costo courier</span><span class="ed-chip-v">—</span></div>
+            <div class="ed-chip" id="edChipMargen"><span class="ed-chip-k">Margen</span><span class="ed-chip-v">—</span></div>
+          </div>
+        </div>
+
         <div id="edMsg" class="small mt-2"></div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="edGuardarBtn" onclick="guardarEdicion()">
-          <i class="bi bi-check-lg me-1"></i>Guardar
+      <div class="modal-footer justify-content-between">
+        <button type="button" class="btn btn-sm btn-dark fw-bold" id="edVerTracking" style="display:none"
+                onclick="abrirTrackingDetalle(document.getElementById('edItemId').value)">
+          <i class="bi bi-geo-alt-fill me-1"></i>Ver seguimiento
         </button>
+        <div class="d-flex gap-2 ms-auto">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-sm btn-ilus fw-bold" id="edGuardarBtn" onclick="guardarEdicion()">
+            <i class="bi bi-check-lg me-1"></i>Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: SEGUIMIENTO DETALLADO (tracking premium con timeline FedEx)
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="trackingModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+    <div class="modal-content trk-modal">
+      <div class="trk-hero" id="trkHero">
+        <button type="button" class="btn-close btn-close-white trk-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        <div class="trk-hero-top">
+          <span class="trk-fx">Fed<span>Ex</span></span>
+          <span class="trk-doc" id="trkDoc">—</span>
+        </div>
+        <div class="trk-state" id="trkState"><i class="bi bi-hourglass-split"></i> <span id="trkStateLabel">Cargando…</span></div>
+        <div class="trk-sub" id="trkSub">—</div>
+        <div class="trk-tn" id="trkTn"></div>
+        {# Stepper de estados ILUS #}
+        <div class="trk-steps" id="trkSteps"></div>
+      </div>
+      <div class="modal-body trk-body">
+        {# Ficha: pesos + tarifa + bultos #}
+        <div class="trk-ficha" id="trkFicha"></div>
+        {# Tabs: FedEx scans / Historial ILUS #}
+        <div class="trk-tabs">
+          <button class="trk-tab is-active" data-tab="fedex" onclick="trkSwitchTab('fedex')">
+            <i class="bi bi-broadcast me-1"></i>Movimientos FedEx
+          </button>
+          <button class="trk-tab" data-tab="ilus" onclick="trkSwitchTab('ilus')">
+            <i class="bi bi-clock-history me-1"></i>Historial ILUS
+          </button>
+        </div>
+        <div id="trkTabFedex" class="trk-timeline"></div>
+        <div id="trkTabIlus" class="trk-timeline" style="display:none"></div>
+      </div>
+      <div class="modal-footer trk-foot">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="trkRefrescar" onclick="abrirTrackingDetalle(window._trkItemId, true)">
+          <i class="bi bi-arrow-clockwise me-1"></i>Refrescar
+        </button>
+        <a class="btn btn-sm btn-dark" id="trkFedexLink" href="#" target="_blank">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Ver en FedEx.com
+        </a>
       </div>
     </div>
   </div>
@@ -1327,6 +1425,99 @@
   .mfd-prod-row[hidden]{ display:table-row!important; }
   .mfd-prod-row[hidden] .mfd-prod-wrap{ display:block!important; }
 }
+
+/* ═══ Ficha read-only en el modal Editar ═══ */
+.ed-ficha { display:flex; flex-direction:column; gap:7px; }
+.ed-ficha-row { display:flex; flex-wrap:wrap; gap:7px; }
+.ed-chip {
+  flex:1 1 auto; min-width:78px;
+  background:#f8fafc; border:1px solid #e5e7eb; border-radius:9px;
+  padding:6px 10px; display:flex; flex-direction:column; gap:1px;
+}
+.ed-chip-k { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.3px; color:#6b7280; }
+.ed-chip-v { font-size:.92rem; font-weight:900; color:#0a0a0a; }
+.ed-chip-pred { background:#fef2f2; border-color:#fecaca; }
+.ed-chip-pred .ed-chip-k { color:#dc2626; }
+
+/* ═══ Modal de tracking premium ═══ */
+.trk-modal { border:0; border-radius:18px; overflow:hidden; }
+.trk-hero {
+  position:relative;
+  background:linear-gradient(140deg,#4d148c 0%,#2b0a52 55%,#0a0a0a 100%);
+  color:#fff; padding:22px 24px 16px;
+}
+.trk-close { position:absolute; top:14px; right:16px; }
+.trk-hero-top { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.trk-fx { background:#fff; color:#4d148c; font-weight:900; font-size:13px; border-radius:5px; padding:2px 8px; }
+.trk-fx span { color:#ff6600; }
+.trk-doc { font-family:'Courier New',monospace; font-weight:800; font-size:15px; letter-spacing:.5px; opacity:.95; }
+.trk-state {
+  display:inline-flex; align-items:center; gap:8px;
+  font-size:1.45rem; font-weight:900; line-height:1.1; margin-bottom:4px;
+}
+.trk-state i { font-size:1.5rem; }
+.trk-sub { font-size:.82rem; opacity:.82; font-weight:600; }
+.trk-tn {
+  font-family:'Courier New',monospace; font-size:1.05rem; font-weight:900;
+  letter-spacing:1px; margin-top:8px; color:#fff;
+}
+/* Stepper */
+.trk-steps { display:flex; align-items:flex-start; gap:0; margin-top:18px; }
+.trk-step { flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; position:relative; }
+.trk-step-dot {
+  width:34px; height:34px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,.15); border:2px solid rgba(255,255,255,.3);
+  font-size:1rem; color:rgba(255,255,255,.6); z-index:2;
+}
+.trk-step.done .trk-step-dot { background:#16a34a; border-color:#16a34a; color:#fff; }
+.trk-step.active .trk-step-dot { background:#fff; border-color:#fff; color:#4d148c; box-shadow:0 0 0 5px rgba(255,255,255,.22); animation:trkPulse 1.6s infinite; }
+.trk-step.danger .trk-step-dot { background:#dc2626; border-color:#dc2626; color:#fff; }
+@keyframes trkPulse { 0%,100%{box-shadow:0 0 0 5px rgba(255,255,255,.22)} 50%{box-shadow:0 0 0 9px rgba(255,255,255,.08)} }
+.trk-step-label { font-size:.6rem; font-weight:700; text-align:center; opacity:.7; line-height:1.15; max-width:62px; }
+.trk-step.done .trk-step-label, .trk-step.active .trk-step-label { opacity:1; }
+.trk-step-line { position:absolute; top:16px; left:50%; width:100%; height:3px; background:rgba(255,255,255,.2); z-index:1; }
+.trk-step.done .trk-step-line { background:#16a34a; }
+
+.trk-body { padding:18px 20px; }
+.trk-ficha { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+.trk-fchip {
+  flex:1 1 90px; background:#f8fafc; border:1px solid #e5e7eb; border-radius:11px;
+  padding:8px 11px; display:flex; flex-direction:column; gap:2px;
+}
+.trk-fchip-k { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.3px; color:#6b7280; }
+.trk-fchip-v { font-size:1.02rem; font-weight:900; color:#0a0a0a; }
+.trk-fchip.pred { background:#fef2f2; border-color:#fecaca; }
+.trk-fchip.pred .trk-fchip-k { color:#dc2626; }
+.trk-fchip.ok .trk-fchip-v { color:#16a34a; }
+.trk-fchip.bad .trk-fchip-v { color:#dc2626; }
+
+/* Tabs */
+.trk-tabs { display:flex; gap:6px; border-bottom:2px solid #f1f5f9; margin-bottom:14px; }
+.trk-tab {
+  border:0; background:none; padding:8px 12px; font-size:.82rem; font-weight:800;
+  color:#6b7280; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px;
+}
+.trk-tab.is-active { color:#4d148c; border-bottom-color:#4d148c; }
+
+/* Timeline */
+.trk-timeline { position:relative; padding-left:6px; }
+.trk-ev { position:relative; padding:0 0 18px 26px; }
+.trk-ev::before {
+  content:''; position:absolute; left:6px; top:4px; width:11px; height:11px;
+  border-radius:50%; background:#cbd5e1; border:2px solid #fff; box-shadow:0 0 0 2px #cbd5e1; z-index:2;
+}
+.trk-ev:first-child::before { background:#4d148c; box-shadow:0 0 0 2px #4d148c; }
+.trk-ev::after {
+  content:''; position:absolute; left:11px; top:14px; width:2px; height:calc(100% - 10px); background:#e5e7eb;
+}
+.trk-ev:last-child::after { display:none; }
+.trk-ev-desc { font-size:.88rem; font-weight:800; color:#0a0a0a; line-height:1.25; }
+.trk-ev-meta { font-size:.74rem; color:#6b7280; font-weight:600; margin-top:2px; display:flex; flex-wrap:wrap; gap:4px 10px; }
+.trk-ev-meta .loc { color:#4d148c; font-weight:700; }
+.trk-empty { text-align:center; color:#9ca3af; font-size:.85rem; padding:24px 10px; }
+.trk-foot { justify-content:space-between; }
+@media (max-width:576px){ .trk-step-label{ font-size:.52rem; } .trk-state{ font-size:1.2rem; } }
 </style>
 
 {# ════════════════════════════════════════════════════════════════════
@@ -1766,12 +1957,183 @@ function abrirEditar(data) {
   if (hint) hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para autocompletar';
   var _edDir = document.getElementById('edDireccion');
   if (_edDir) _edDir.dataset.autoVerif = '';
+  // Ficha read-only: pesos, tarifa, bultos
+  _edFillFicha(data);
+  // Botón "Ver seguimiento": solo si hay OT FedEx
+  var verBtn = document.getElementById('edVerTracking');
+  if (verBtn) verBtn.style.display = (data.tracking ? 'inline-flex' : 'none');
+
   if (!_edModal) _edModal = new bootstrap.Modal(document.getElementById('editarItemModal'));
   _edModal.show();
   // Inicializa Google Places (lazy — espera a que el modal esté visible)
   setTimeout(_edInitPlaces, 150);
   // Verifica con Google la dirección pre-cargada y completa comuna/región/CP vacíos
   setTimeout(_edAutoVerificar, 500);
+}
+
+function _fmtKg(n) { n = parseFloat(n) || 0; return n ? n.toFixed(1) + ' kg' : '—'; }
+function _fmtMoney(n) { n = parseFloat(n) || 0; return n ? '$' + n.toLocaleString('es-CL') : '$0'; }
+
+function _edFillFicha(data) {
+  data = data || {};
+  var real = parseFloat(data.peso_real) || 0;
+  var vol  = parseFloat(data.peso_vol) || 0;
+  var pred = parseFloat(data.peso_pred) || Math.max(real, vol);
+  var cobrado = parseFloat(data.cobrado) || 0;
+  var costo   = parseFloat(data.costo) || 0;
+  var margen  = cobrado - costo;
+  function setChip(id, val, cls) {
+    var el = document.getElementById(id); if (!el) return;
+    el.querySelector('.ed-chip-v').textContent = val;
+    if (cls) el.querySelector('.ed-chip-v').style.color = cls;
+  }
+  setChip('edChipReal', _fmtKg(real));
+  setChip('edChipVol', _fmtKg(vol));
+  setChip('edChipPred', _fmtKg(pred));
+  setChip('edChipBultos', (data.ship_bultos || data.bultos || 1) + ' bulto(s)');
+  setChip('edChipCobrado', _fmtMoney(cobrado), '#16a34a');
+  setChip('edChipCosto', _fmtMoney(costo));
+  setChip('edChipMargen', _fmtMoney(margen), margen < 0 ? '#dc2626' : '#16a34a');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  TRACKING DETALLADO — modal premium con timeline FedEx
+// ══════════════════════════════════════════════════════════════════════
+var _trkModal = null;
+window._trkItemId = null;
+var _trkData = null;
+
+var TRK_STEPS = [
+  { label: 'En preparación',          icon: 'bi-clipboard-check' },
+  { label: 'Entregado a transporte',  icon: 'bi-truck-flatbed' },
+  { label: 'En ruta',                 icon: 'bi-truck' },
+  { label: 'Entregado',               icon: 'bi-check-circle-fill' },
+];
+
+async function abrirTrackingDetalle(itemId, force) {
+  if (!itemId) return;
+  window._trkItemId = itemId;
+  if (!_trkModal) _trkModal = new bootstrap.Modal(document.getElementById('trackingModal'));
+  // Estado de carga
+  document.getElementById('trkStateLabel').textContent = 'Consultando FedEx…';
+  document.getElementById('trkDoc').textContent = '';
+  document.getElementById('trkSub').textContent = '';
+  document.getElementById('trkTn').textContent = '';
+  document.getElementById('trkSteps').innerHTML = '';
+  document.getElementById('trkFicha').innerHTML = '';
+  document.getElementById('trkTabFedex').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando movimientos…</div>';
+  document.getElementById('trkTabIlus').innerHTML = '';
+  _trkModal.show();
+  try {
+    var r = await fetch('/transporte/api/items/' + itemId + '/tracking-detalle');
+    var d = await r.json();
+    if (!d.ok) {
+      document.getElementById('trkStateLabel').textContent = 'Error';
+      document.getElementById('trkTabFedex').innerHTML = '<div class="trk-empty">' + (d.error || 'No se pudo cargar') + '</div>';
+      return;
+    }
+    _trkData = d;
+    _trkRender(d);
+  } catch(e) {
+    document.getElementById('trkStateLabel').textContent = 'Error de conexión';
+    document.getElementById('trkTabFedex').innerHTML = '<div class="trk-empty">No se pudo conectar.</div>';
+  }
+}
+
+function _trkEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+  });
+}
+
+function _trkRender(d) {
+  document.getElementById('trkDoc').textContent = d.doc || '';
+  document.getElementById('trkStateLabel').textContent = d.estado || '—';
+  var stIcon = document.querySelector('#trkState i');
+  if (stIcon) stIcon.className = 'bi ' + (d.estado_icon || 'bi-circle');
+  var sub = [];
+  if (d.cliente) sub.push(d.cliente);
+  if (d.comuna) sub.push(d.comuna);
+  if (d.region) sub.push(d.region);
+  document.getElementById('trkSub').textContent = sub.join(' · ');
+  document.getElementById('trkTn').textContent = d.tracking ? '#' + d.tracking : '';
+  var fxLink = document.getElementById('trkFedexLink');
+  if (fxLink) fxLink.href = d.tracking ? 'https://www.fedex.com/fedextrack/?trknbr=' + d.tracking : '#';
+
+  // Stepper
+  var cur = d.estado_step || 1;
+  var danger = (d.estado === 'Entrega fallida' || d.estado === 'Devolución');
+  var stepsHtml = '';
+  TRK_STEPS.forEach(function(s, i) {
+    var n = i + 1;
+    var cls = '';
+    if (n < cur) cls = 'done';
+    else if (n === cur) cls = danger ? 'danger' : 'active';
+    stepsHtml += '<div class="trk-step ' + cls + '">'
+      + (i < TRK_STEPS.length - 1 ? '<div class="trk-step-line"></div>' : '')
+      + '<div class="trk-step-dot"><i class="bi ' + s.icon + '"></i></div>'
+      + '<div class="trk-step-label">' + s.label + '</div></div>';
+  });
+  document.getElementById('trkSteps').innerHTML = stepsHtml;
+
+  // Ficha pesos/tarifa/bultos
+  var p = d.pesos || {}, t = d.tarifa || {};
+  var fichaHtml = ''
+    + _trkFchip('Peso real', _fmtKg(p.real))
+    + _trkFchip('Peso vol.', _fmtKg(p.vol))
+    + _trkFchip('★ Predominante', _fmtKg(p.predominante), 'pred')
+    + _trkFchip('Bultos', (d.bultos || 1) + '')
+    + _trkFchip('Cobrado', _fmtMoney(t.cobrado), 'ok')
+    + _trkFchip('Costo', _fmtMoney(t.costo))
+    + _trkFchip('Margen', _fmtMoney(t.margen), (t.margen||0) < 0 ? 'bad' : 'ok');
+  if (d.eta) fichaHtml += _trkFchip('ETA FedEx', d.eta.replace('T',' ').slice(0,16));
+  document.getElementById('trkFicha').innerHTML = fichaHtml;
+
+  // Timeline FedEx scans
+  var fxHtml = '';
+  if (d.fedex_scans && d.fedex_scans.length) {
+    d.fedex_scans.forEach(function(s) {
+      var meta = [];
+      if (s.fecha_txt) meta.push('<span><i class="bi bi-clock me-1"></i>' + _trkEsc(s.fecha_txt) + '</span>');
+      if (s.ubicacion) meta.push('<span class="loc"><i class="bi bi-geo-alt me-1"></i>' + _trkEsc(s.ubicacion) + '</span>');
+      fxHtml += '<div class="trk-ev"><div class="trk-ev-desc">' + _trkEsc(s.descripcion || '—')
+              + '</div><div class="trk-ev-meta">' + meta.join('') + '</div></div>';
+    });
+  } else {
+    fxHtml = '<div class="trk-empty"><i class="bi bi-broadcast"></i><br>FedEx aún no reporta movimientos para este envío.<br>'
+           + '<small>Aparecerán acá apenas el courier escanee el paquete.</small></div>';
+  }
+  document.getElementById('trkTabFedex').innerHTML = fxHtml;
+
+  // Timeline ILUS
+  var ilusHtml = '';
+  if (d.eventos && d.eventos.length) {
+    d.eventos.forEach(function(e) {
+      var meta = [];
+      if (e.ts) meta.push('<span><i class="bi bi-clock me-1"></i>' + _trkEsc(e.ts.replace('T',' ')) + '</span>');
+      meta.push('<span><i class="bi bi-' + (e.fuente === 'fedex' ? 'broadcast' : (e.fuente === 'chofer' ? 'person-badge' : 'gear')) + ' me-1"></i>' + _trkEsc(e.fuente) + '</span>');
+      ilusHtml += '<div class="trk-ev"><div class="trk-ev-desc"><i class="bi ' + (e.icon || 'bi-circle')
+                + ' me-1"></i>' + _trkEsc(e.estado) + '</div>'
+                + (e.comentario ? '<div class="trk-ev-meta"><span>' + _trkEsc(e.comentario) + '</span></div>' : '')
+                + '<div class="trk-ev-meta">' + meta.join('') + '</div></div>';
+    });
+  } else {
+    ilusHtml = '<div class="trk-empty">Sin eventos registrados todavía.</div>';
+  }
+  document.getElementById('trkTabIlus').innerHTML = ilusHtml;
+}
+
+function _trkFchip(k, v, cls) {
+  return '<div class="trk-fchip ' + (cls || '') + '"><span class="trk-fchip-k">'
+       + k + '</span><span class="trk-fchip-v">' + _trkEsc(v) + '</span></div>';
+}
+
+function trkSwitchTab(which) {
+  document.querySelectorAll('.trk-tab').forEach(function(t){
+    t.classList.toggle('is-active', t.dataset.tab === which);
+  });
+  document.getElementById('trkTabFedex').style.display = (which === 'fedex' ? 'block' : 'none');
+  document.getElementById('trkTabIlus').style.display = (which === 'ilus' ? 'block' : 'none');
 }
 
 function guardarEdicion() {
