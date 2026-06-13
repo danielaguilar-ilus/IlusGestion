@@ -98,6 +98,12 @@
           <div class="small text-muted">PDF único 4×6 con todas las etiquetas oficiales</div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header"><i class="bi bi-broadcast me-1"></i>Tracking</h6></li>
+        <li><a class="dropdown-item" href="#" onclick="refrescarTrackingManifiesto(); return false">
+          <i class="bi bi-arrow-clockwise me-1"></i>Refrescar estados FedEx (todos)
+          <div class="small text-muted">Consulta Track API y actualiza estados del manifiesto</div>
+        </a></li>
+        <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header"><i class="bi bi-calendar-event me-1"></i>Logística</h6></li>
         <li><a class="dropdown-item" href="#" onclick="abrirPickupFedex(); return false">
           <i class="bi bi-truck me-1"></i>Programar retiro FedEx
@@ -362,6 +368,23 @@
               <option value="{{ e }}" {% if item.estado_entrega == e %}selected{% endif %}>{{ e }}</option>
               {% endfor %}
             </select>
+            {% if es_fedex and item.get('master_tracking_number') %}
+            <div class="small mt-1" id="fxstat-{{ item.id }}" style="line-height:1.15">
+              {% if item.last_carrier_source == 'fedex' and item.last_carrier_poll_at %}
+              <span class="badge text-bg-info" style="font-weight:600"
+                    title="Estado reportado por FedEx Track API">
+                <i class="bi bi-truck me-1"></i>{{ item.last_carrier_status or 'sin estado' }}
+              </span>
+              <div class="text-muted" style="font-size:.68rem">
+                <i class="bi bi-clock-history me-1"></i>{{ item.last_carrier_poll_at | chile_fmt }}
+              </div>
+              {% else %}
+              <span class="text-muted" style="font-size:.7rem">
+                <i class="bi bi-question-circle me-1"></i>sin estado FedEx aún
+              </span>
+              {% endif %}
+            </div>
+            {% endif %}
           </td>
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
             {% if item.estado_entrega == 'Entregado' %}
@@ -381,6 +404,10 @@
                     style="background:#4d148c;color:#fff;border:none"
                     onclick="window.open('/transporte/api/items/{{ item.id }}/etiqueta-fedex', '_blank')">
               <i class="bi bi-file-earmark-arrow-down"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-info mfd-act-btn" title="Refrescar estado FedEx (consulta Track API ahora)"
+                    onclick="refrescarTrackingItem({{ item.id }}, this)">
+              <i class="bi bi-arrow-clockwise"></i>
             </button>
             {% endif %}
             <button class="btn btn-sm btn-outline-secondary mfd-act-btn" title="Editar contacto, bultos y medidas"
@@ -1846,7 +1873,7 @@ async function crearOTFedexItem(itemId) {
     var r = await fetch('/transporte/api/items/' + itemId + '/crear-ot-fedex', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        label_format: 'PDF', pickup_type: 'USE_SCHEDULED_PICKUP', notificar: true,
+        label_format: 'PDF', pickup_type: 'USE_SCHEDULED_PICKUP', notificar: false,
       })
     });
     var d = await r.json();
@@ -1951,6 +1978,59 @@ document.addEventListener('DOMContentLoaded', function(){
   fedexCancelTickAll();
   setInterval(fedexCancelTickAll, 30 * 1000);
 });
+
+// ══════════════════════════════════════════════════════════════════════
+//  REFRESCAR TRACKING FedEx (Track API — individual y por manifiesto)
+// ══════════════════════════════════════════════════════════════════════
+
+async function refrescarTrackingItem(itemId, btn) {
+  if (btn) { btn.disabled = true; btn.classList.add('disabled'); }
+  ilusToast('Consultando FedEx…', { type: 'info' });
+  try {
+    var r = await fetch('/transporte/api/items/' + itemId + '/refrescar-tracking',
+                        { method: 'POST' });
+    var d = await r.json();
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo consultar FedEx', { type: 'error' });
+      return;
+    }
+    if (d.warning) {
+      ilusToast(d.warning, { type: 'warning' });
+      return;
+    }
+    var msg = 'FedEx: ' + (d.fedex_label || d.estado);
+    if (d.changed) msg = '✓ Estado actualizado: ' + d.anterior + ' → ' + d.estado;
+    ilusToast(msg, { type: d.changed ? 'success' : 'info' });
+    if (d.changed) setTimeout(function(){ location.reload(); }, 1200);
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('disabled'); }
+  }
+}
+
+async function refrescarTrackingManifiesto() {
+  ilusToast('Consultando FedEx para todo el manifiesto…', { type: 'info' });
+  try {
+    var r = await fetch('/transporte/api/manifiestos/{{ manifiesto.id }}/refrescar-tracking',
+                        { method: 'POST' });
+    var d = await r.json();
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo consultar FedEx', { type: 'error' });
+      return;
+    }
+    if (!d.polled) {
+      ilusToast(d.msg || 'No hay envíos activos para refrescar', { type: 'info' });
+      return;
+    }
+    var msg = '✓ ' + d.polled + ' consulta(s) · ' + d.changed + ' cambio(s)';
+    if (d.errores && d.errores.length) msg += ' · ' + d.errores.length + ' error(es)';
+    ilusToast(msg, { type: d.changed ? 'success' : 'info' });
+    if (d.changed) setTimeout(function(){ location.reload(); }, 1500);
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════════
 //  CREAR OTs FedEx MASIVO (Ship API)

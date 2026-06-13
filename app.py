@@ -22621,6 +22621,128 @@ def tr_cron_fedex_poll():
     })
 
 
+@app.route("/transporte/api/items/<int:item_id>/refrescar-tracking", methods=["POST"])
+@_tr_required
+def tr_refrescar_tracking_item(item_id):
+    """Refresca el estado FedEx de UN item desde la UI (admin → "Refrescar").
+
+    Lee master_tracking_number (preferido) o tracking_number, llama a la
+    Track API, aplica el estado venido al item (puede cambiar estado_entrega,
+    genera evento append-only y log de auditoría), y devuelve el resultado para
+    refrescar la fila sin recargar.
+    """
+    r = mysql_fetchone(
+        "SELECT id, master_tracking_number, tracking_number "
+        "FROM transport_manifest_items WHERE id=%s", (item_id,))
+    if not r:
+        return jsonify({"ok": False, "error": "item no encontrado"}), 404
+    tn = (r.get("master_tracking_number") or r.get("tracking_number") or "").strip()
+    if not tn:
+        return jsonify({"ok": False, "error": "Este item no tiene tracking number"}), 400
+    try:
+        results = _fedex_track_lookup([tn])
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"FedEx Track API: {str(e)[:200]}"}), 502
+    if not results:
+        return jsonify({"ok": True, "tn": tn,
+                        "warning": "FedEx aún no tiene información de este envío"})
+    fx = results[0]
+    apply_res = _tr_apply_carrier_status(
+        item_id, fx["estado_ilus"], fuente='fedex',
+        payload={"fedex": {
+            "status_code":  fx.get("status_code"),
+            "status_label": fx.get("status_label"),
+            "eta":          fx.get("eta"),
+            "scans":        (fx.get("scans") or [])[:10],
+        }},
+        comentario=(fx.get("last_event") or fx.get("status_label") or None),
+    )
+    return jsonify({
+        "ok":           True,
+        "tn":           tn,
+        "changed":      apply_res.get("changed", False),
+        "estado":       apply_res.get("nuevo", fx["estado_ilus"]),
+        "anterior":     apply_res.get("anterior", ""),
+        "fedex_code":   fx.get("status_code"),
+        "fedex_label":  fx.get("status_label"),
+        "eta":          fx.get("eta"),
+        "last_event":   fx.get("last_event") or "",
+    })
+
+
+@app.route("/transporte/api/manifiestos/<int:mid>/refrescar-tracking", methods=["POST"])
+@_tr_required
+def tr_refrescar_tracking_manifiesto(mid):
+    """Refresca el tracking FedEx de TODOS los items vivos del manifiesto.
+
+    Solo procesa items con master_tracking_number / tracking_number, no
+    cancelados y no en estado terminal (Entregado/Devolución). Hace batch
+    a la Track API (hasta 30 TN por request) y aplica los estados.
+    """
+    if not (FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET):
+        return jsonify({"ok": False, "error": "FedEx Track API no configurada"}), 503
+    rows = mysql_fetchall(
+        "SELECT id, COALESCE(NULLIF(master_tracking_number,''), tracking_number) AS tn "
+        "FROM transport_manifest_items "
+        "WHERE manifest_id=%s "
+        "  AND COALESCE(NULLIF(master_tracking_number,''), tracking_number) IS NOT NULL "
+        "  AND COALESCE(NULLIF(master_tracking_number,''), tracking_number) <> '' "
+        "  AND ship_cancelled_at IS NULL "
+        "  AND estado_entrega NOT IN ('Entregado', 'Devolución') "
+        "ORDER BY id", (mid,)) or []
+    if not rows:
+        return jsonify({"ok": True, "polled": 0, "changed": 0,
+                        "msg": "No hay envíos activos para refrescar"})
+
+    # Batch en lotes de 30 (límite FedEx).
+    by_tn = {r["tn"]: r["id"] for r in rows}
+    all_tns = list(by_tn.keys())
+    polled = 0
+    changed_count = 0
+    items_log = []
+    errores = []
+    for i in range(0, len(all_tns), 30):
+        lote = all_tns[i:i+30]
+        try:
+            results = _fedex_track_lookup(lote)
+        except Exception as e:
+            errores.append(f"Lote {i//30+1}: {str(e)[:120]}")
+            continue
+        polled += len(results)
+        for fx in results:
+            tn = fx.get("tracking_number")
+            item_id = by_tn.get(tn)
+            if not item_id:
+                continue
+            apply_res = _tr_apply_carrier_status(
+                item_id, fx["estado_ilus"], fuente='fedex',
+                payload={"fedex": {
+                    "status_code":  fx.get("status_code"),
+                    "status_label": fx.get("status_label"),
+                    "eta":          fx.get("eta"),
+                    "scans":        (fx.get("scans") or [])[:5],
+                }},
+                comentario=(fx.get("last_event") or fx.get("status_label") or None),
+            )
+            if apply_res.get("changed"):
+                changed_count += 1
+            items_log.append({
+                "id":      item_id, "tn": tn,
+                "changed": apply_res.get("changed", False),
+                "estado":  apply_res.get("nuevo"),
+                "label":   fx.get("status_label"),
+            })
+    _tr_log("manifest", mid, "refresh tracking masivo",
+            f"polled={polled} changed={changed_count}")
+    return jsonify({
+        "ok":      True,
+        "polled":  polled,
+        "changed": changed_count,
+        "items":   items_log,
+        "errores": errores,
+    })
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  APP DEL CHOFER (FASE 2) — login RUT+PIN, captura por escaneo QR, ruta
 # ═══════════════════════════════════════════════════════════════════════════
