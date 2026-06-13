@@ -132,6 +132,10 @@
           <i class="bi bi-printer-fill me-1"></i>Imprimir etiquetas FedEx (4×6 cortadas)
           <div class="small text-muted">Vista imprimible con selector · sale al tamaño exacto 100×150mm</div>
         </a></li>
+        <li><a class="dropdown-item" href="#" onclick="actualizarEtiquetasFedex(); return false">
+          <i class="bi bi-arrow-repeat me-1" style="color:#dc2626"></i>Actualizar etiquetas multi-bulto
+          <div class="small text-muted">Para OTs viejas con 1 sola etiqueta · re-emite y trae todas las piezas</div>
+        </a></li>
         <li><a class="dropdown-item" href="#" onclick="descargarPdfEtiquetasFedex(); return false">
           <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF original (FedEx)
           <div class="small text-muted">PDF crudo de FedEx con todas las etiquetas del manifiesto</div>
@@ -2543,6 +2547,58 @@ function verImprimirEtiquetasFedex() {
 // PDF crudo de FedEx (respaldo / impresión directa Zebra)
 function descargarPdfEtiquetasFedex() {
   window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/pdf', '_blank');
+}
+
+// Re-emite las OTs que sólo tienen la master guardada (creadas antes del fix
+// multi-pieza). Cancela la vieja en FedEx → crea una nueva → guarda todas las
+// etiquetas por bulto. El TN master cambia.
+async function actualizarEtiquetasFedex() {
+  if (typeof ilusConfirm === 'undefined') { alert('ilusConfirm no cargado'); return; }
+  var ok = await ilusConfirm({
+    title: 'Actualizar etiquetas multi-bulto',
+    message: '¿Re-emitir las OTs que sólo tienen 1 etiqueta para obtener todas las piezas por bulto?',
+    sub: 'Cancela la OT vieja en FedEx y crea una nueva con el mismo destinatario. '
+       + 'El Nº de tracking cambiará — descarta cualquier etiqueta vieja que hayas impreso. '
+       + 'Solo funciona dentro de la ventana de cancelación (16:00 hora Chile del día de creación).',
+    okLabel: 'Actualizar etiquetas',
+    cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  ilusToast('Re-emitiendo OTs en FedEx…', { type: 'info' });
+  try {
+    var r = await fetch('/transporte/api/manifiestos/{{ manifiesto.id }}/actualizar-etiquetas-fedex', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo actualizar', { type: 'error' });
+      return;
+    }
+    if ((d.actualizadas || 0) === 0 && (d.errores || 0) === 0) {
+      ilusToast(d.msg || 'No había etiquetas para actualizar', { type: 'info' });
+      return;
+    }
+    var msg = '✓ ' + d.actualizadas + ' OT(s) actualizada(s) con todas sus etiquetas';
+    if (d.errores) msg += ' · ' + d.errores + ' con error';
+    ilusToast(msg, { type: d.errores ? 'warning' : 'success' });
+    // Si hubo errores, mostrar detalle en modal para que Daniel los vea.
+    if (d.errores && d.errores_detalle && d.errores_detalle.length && typeof ilusAlert !== 'undefined') {
+      var html = '<ul style="margin:0;padding-left:1.1em;font-size:.85rem">';
+      d.errores_detalle.forEach(function(e) {
+        html += '<li><strong>' + (e.doc || '#' + e.item_id) + ':</strong> ' + (e.error || 'error') + '</li>';
+      });
+      html += '</ul>';
+      await ilusAlert({
+        title: 'Algunas OTs no se pudieron actualizar',
+        message: 'Detalles:',
+        sub: html, subHtml: true, type: 'warning',
+      });
+    }
+    setTimeout(function(){ location.reload(); }, 1500);
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
 }
 </script>
 {% endblock %}
