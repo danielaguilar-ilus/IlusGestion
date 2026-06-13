@@ -2,261 +2,572 @@
 {% block title %}Manifiestos — Transporte ILUS{% endblock %}
 
 {% block content %}
-<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-  <div>
-    <h4><i class="bi bi-clipboard-check me-2" style="color:var(--ilus-red)"></i>Manifiestos de Despacho</h4>
-    <div class="sub">Registro de despachos agrupados por courier</div>
-  </div>
-  <div class="d-flex gap-2">
-    <a href="{{ url_for('transporte_index') }}" class="btn btn-sm btn-outline-secondary">
-      <i class="bi bi-arrow-left me-1"></i>Monitor
-    </a>
-    <button class="btn btn-sm btn-ilus fw-bold" data-bs-toggle="modal" data-bs-target="#newManModal">
-      <i class="bi bi-plus-circle me-1"></i>Nuevo manifiesto
-    </button>
-  </div>
-</div>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   Manifiestos · diseño premium ILUS (replica del mockup aprobado)
+   ═══════════════════════════════════════════════════════════════════════ */
+.man-page{ padding:6px 4px 40px; }
 
-{# ── Filtros + búsqueda ── #}
-<form method="get" class="ilus-card mb-3 p-3" id="filtrosForm">
-  <div class="row g-2 align-items-end">
-    <div class="col-12 col-sm-5">
-      <label class="form-label small fw-semibold mb-1 d-block d-sm-none">Buscar</label>
-      <div class="input-group input-group-sm">
-        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-        <input type="text" name="q" value="{{ filtros.q }}"
-               class="form-control form-control-sm"
-               placeholder="Buscar por correlativo, courier o notas…"
-               autocomplete="off">
-        {% if filtros.q %}
-        <a href="{{ url_for('tr_manifiestos', courier=filtros.courier, estado=filtros.estado) }}"
-           class="btn btn-outline-secondary" title="Limpiar búsqueda">✕</a>
-        {% endif %}
+/* ── Header ── */
+.man-header{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:16px; flex-wrap:wrap;
+  margin-bottom:20px;
+}
+.man-header .left{ display:flex; align-items:flex-start; gap:14px; }
+.man-header .icon{
+  width:46px; height:46px; border-radius:12px;
+  background:linear-gradient(135deg,#fee2e2 0%,#fecaca 100%);
+  display:flex; align-items:center; justify-content:center;
+  color:var(--ilus-red); font-size:24px;
+  flex-shrink:0;
+}
+.man-header h1{
+  margin:0; font-size:26px; font-weight:900;
+  color:var(--ilus-black); letter-spacing:-.4px;
+}
+.man-header .sub{ color:#6b7280; font-size:13.5px; font-weight:500; margin-top:2px; }
+.man-header .actions{ display:flex; gap:10px; align-items:center; }
+.btn-monitor{
+  display:inline-flex; align-items:center; gap:7px;
+  background:#fff; border:1.5px solid #e5e7eb;
+  color:var(--ilus-black); font-size:13.5px; font-weight:700;
+  padding:9px 17px; border-radius:11px;
+  text-decoration:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+.btn-monitor:hover{ border-color:var(--ilus-red); color:var(--ilus-red); }
+.btn-nuevo-man{
+  display:inline-flex; align-items:center; gap:7px;
+  background:var(--ilus-red); color:#fff;
+  border:0; font-size:13.5px; font-weight:800;
+  padding:10px 18px; border-radius:11px;
+  cursor:pointer;
+  box-shadow:0 6px 18px -8px rgba(220,38,38,.5);
+  transition:background .15s, transform .08s;
+}
+.btn-nuevo-man:hover{ background:#b91c1c; }
+.btn-nuevo-man:active{ transform:translateY(1px); }
+
+/* ── Filtros ── */
+.man-filtros{
+  background:#fff; border:1px solid #e5e7eb;
+  border-radius:14px; padding:14px;
+  display:grid; grid-template-columns: 1.6fr 1fr 1fr auto; gap:12px;
+  margin-bottom:18px;
+}
+.man-filtros .search{
+  position:relative; display:flex; align-items:center;
+  background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px;
+  transition:border-color .15s, background .15s;
+}
+.man-filtros .search:focus-within{ border-color:var(--ilus-red); background:#fff; }
+.man-filtros .search i{
+  position:absolute; left:14px; color:#9ca3af; font-size:15px;
+}
+.man-filtros .search input{
+  width:100%; border:0; background:transparent;
+  font-size:14px; padding:11px 14px 11px 38px;
+  color:var(--ilus-black); font-weight:500;
+}
+.man-filtros .search input:focus{ outline:none; }
+.man-filtros select{
+  background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px;
+  padding:11px 36px 11px 14px;
+  font-size:14px; font-weight:600; color:var(--ilus-black);
+  appearance:none; cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='%236b7280'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 14px center;
+  transition:border-color .15s, background-color .15s;
+}
+.man-filtros select:focus{ outline:none; border-color:var(--ilus-red); background-color:#fff; }
+.btn-limpiar{
+  display:inline-flex; align-items:center; gap:7px;
+  background:#fff; border:1.5px solid #e5e7eb; color:#374151;
+  font-size:13.5px; font-weight:700;
+  padding:11px 16px; border-radius:10px;
+  text-decoration:none; cursor:pointer; white-space:nowrap;
+  transition:border-color .15s, color .15s;
+}
+.btn-limpiar:hover{ border-color:var(--ilus-red); color:var(--ilus-red); }
+
+/* ── KPIs ── */
+.man-kpis{
+  display:grid; grid-template-columns:repeat(4, 1fr); gap:14px;
+  margin-bottom:22px;
+}
+.kpi{
+  background:#fff; border:1px solid #e5e7eb; border-radius:14px;
+  padding:18px 18px;
+  display:flex; align-items:center; gap:14px;
+  transition:transform .15s, box-shadow .15s;
+}
+.kpi:hover{ transform:translateY(-2px); box-shadow:0 8px 24px -10px rgba(10,10,10,.12); }
+.kpi-info{ flex:1; min-width:0; }
+.kpi-label{
+  font-size:11px; font-weight:800; text-transform:uppercase;
+  letter-spacing:.5px; color:#6b7280; margin-bottom:6px;
+}
+.kpi-value{
+  font-size:28px; font-weight:900; color:var(--ilus-black);
+  line-height:1; letter-spacing:-.5px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.kpi-sub{ font-size:11.5px; color:#9ca3af; margin-top:6px; font-weight:500; }
+.kpi-icon{
+  width:52px; height:52px; border-radius:14px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:24px; flex-shrink:0;
+}
+.kpi-icon.red    { background:#fee2e2; color:#dc2626; }
+.kpi-icon.blue   { background:#dbeafe; color:#2563eb; }
+.kpi-icon.green  { background:#dcfce7; color:#16a34a; }
+.kpi-icon.amber  { background:#fef3c7; color:#d97706; }
+
+/* ── Tabla ── */
+.man-tabla-wrap{
+  background:#fff; border:1px solid #e5e7eb; border-radius:14px;
+  overflow:hidden;
+}
+.man-tabla-head{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 22px;
+  border-bottom:1px solid #f3f4f6;
+}
+.man-tabla-head h2{
+  font-size:16px; font-weight:900; margin:0;
+  display:inline-flex; align-items:center; gap:10px;
+}
+.man-tabla-head .count-pill{
+  background:#f3f4f6; color:#6b7280;
+  font-size:12px; font-weight:800;
+  padding:2px 10px; border-radius:999px;
+}
+.man-tabla{ width:100%; border-collapse:collapse; }
+.man-tabla thead th{
+  background:transparent;
+  font-size:11px; font-weight:800; text-transform:uppercase;
+  letter-spacing:.5px; color:#9ca3af;
+  padding:10px 22px; text-align:left;
+  border-bottom:1px solid #f3f4f6;
+  white-space:nowrap;
+}
+.man-tabla thead th.center{ text-align:center; }
+.man-tabla thead th.right{ text-align:right; }
+.man-tabla tbody td{
+  padding:18px 22px; font-size:14px;
+  border-bottom:1px solid #f3f4f6;
+  vertical-align:middle;
+}
+.man-tabla tbody tr:last-child td{ border-bottom:0; }
+.man-tabla tbody tr{ transition:background .12s; }
+.man-tabla tbody tr:hover{ background:#fafafa; }
+.cell-corr{
+  font-family:'SF Mono', Menlo, Consolas, monospace;
+  font-weight:800; color:var(--ilus-black);
+  letter-spacing:.3px;
+}
+.cell-fecha{ color:#374151; font-weight:600; }
+.cell-courier{ font-weight:600; color:var(--ilus-black); }
+.cell-items-pill{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:32px; height:32px; padding:0 10px;
+  background:var(--ilus-black); color:#fff;
+  border-radius:999px; font-weight:800; font-size:13px;
+}
+.cell-costo{
+  color:var(--ilus-red); font-weight:800;
+  font-family:'SF Mono', Menlo, Consolas, monospace;
+  text-align:right;
+}
+.estado-pill{
+  display:inline-flex; align-items:center; gap:7px;
+  padding:5px 12px; border-radius:999px;
+  font-size:12px; font-weight:800; white-space:nowrap;
+}
+.estado-pill::before{
+  content:""; width:7px; height:7px; border-radius:50%;
+}
+.estado-pill.prep   { background:#fef3c7; color:#92400e; }
+.estado-pill.prep::before  { background:#d97706; }
+.estado-pill.curso  { background:#dbeafe; color:#1e40af; }
+.estado-pill.curso::before { background:#2563eb; }
+.estado-pill.cerr   { background:#e5e7eb; color:#374151; }
+.estado-pill.cerr::before  { background:#6b7280; }
+.estado-pill.ok     { background:#dcfce7; color:#166534; }
+.estado-pill.ok::before    { background:#16a34a; }
+.cell-notas{ color:#9ca3af; font-size:13px; }
+.cell-actions{ display:flex; align-items:center; gap:8px; justify-content:flex-end; }
+.btn-ver{
+  display:inline-flex; align-items:center; gap:6px;
+  background:#fff; border:1.5px solid #e5e7eb; color:var(--ilus-black);
+  font-size:13px; font-weight:700;
+  padding:7px 14px; border-radius:9px;
+  text-decoration:none; cursor:pointer;
+  transition:border-color .15s, color .15s, background .15s;
+}
+.btn-ver:hover{ border-color:var(--ilus-red); color:var(--ilus-red); background:#fef2f2; }
+.btn-menu{
+  width:32px; height:32px; border-radius:9px;
+  background:transparent; border:0; color:#9ca3af;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:18px; cursor:pointer;
+  transition:background .15s, color .15s;
+}
+.btn-menu:hover{ background:#f3f4f6; color:var(--ilus-black); }
+.empty-state{ padding:60px 20px; text-align:center; color:#9ca3af; }
+.empty-state i{ font-size:42px; opacity:.4; display:block; margin-bottom:8px; }
+.empty-state b{ display:block; color:#374151; font-size:15px; font-weight:800; margin-bottom:4px; }
+
+/* ── Footer tabla (paginación) ── */
+.man-tabla-foot{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 22px;
+  background:#fafafa;
+  border-top:1px solid #f3f4f6;
+}
+.man-tabla-foot .left{
+  font-size:13px; color:#6b7280; font-weight:600;
+}
+.man-tabla-foot .right{ display:flex; gap:10px; align-items:center; }
+.page-size-select{
+  background:#fff; border:1.5px solid #e5e7eb; border-radius:9px;
+  padding:7px 30px 7px 12px; font-size:13px; font-weight:700;
+  appearance:none; cursor:pointer; color:var(--ilus-black);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 16 16' fill='%236b7280'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 10px center;
+}
+.pager{ display:inline-flex; gap:4px; align-items:center; }
+.pager a, .pager span.cur, .pager span.disabled{
+  min-width:34px; height:34px; padding:0 9px;
+  display:inline-flex; align-items:center; justify-content:center;
+  border:1.5px solid #e5e7eb; border-radius:9px;
+  background:#fff; color:var(--ilus-black);
+  font-size:13px; font-weight:700; text-decoration:none;
+  transition:border-color .15s, background .15s, color .15s;
+}
+.pager a:hover{ border-color:var(--ilus-red); color:var(--ilus-red); }
+.pager span.cur{ background:var(--ilus-black); color:#fff; border-color:var(--ilus-black); }
+.pager span.disabled{ color:#d1d5db; cursor:default; }
+
+/* ── Menú contextual flotante ── */
+.menu-dropdown{
+  position:absolute; min-width:180px;
+  background:#fff; border:1px solid #e5e7eb; border-radius:11px;
+  box-shadow:0 10px 30px -8px rgba(10,10,10,.18);
+  padding:6px; z-index:1100;
+  display:none;
+}
+.menu-dropdown.open{ display:block; }
+.menu-dropdown a, .menu-dropdown button{
+  display:flex; align-items:center; gap:9px;
+  width:100%; padding:9px 12px; border-radius:8px;
+  background:transparent; border:0; text-align:left;
+  font-size:13.5px; font-weight:600; color:var(--ilus-black);
+  text-decoration:none; cursor:pointer;
+  transition:background .12s;
+}
+.menu-dropdown a:hover, .menu-dropdown button:hover{ background:#f3f4f6; }
+.menu-dropdown a i, .menu-dropdown button i{ color:#6b7280; font-size:15px; }
+.menu-dropdown .danger{ color:#b91c1c; }
+.menu-dropdown .danger i{ color:#dc2626; }
+
+/* ── Mobile ── */
+@media (max-width: 900px){
+  .man-kpis{ grid-template-columns:repeat(2,1fr); }
+  .man-filtros{ grid-template-columns:1fr; }
+  .man-tabla thead{ display:none; }
+  .man-tabla tbody, .man-tabla tbody tr{ display:block; }
+  .man-tabla tbody tr{ padding:14px 16px; border-bottom:1px solid #f3f4f6; }
+  .man-tabla tbody td{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:5px 0; border-bottom:0; gap:10px;
+  }
+  .man-tabla tbody td::before{
+    content:attr(data-label);
+    font-size:11px; font-weight:800; text-transform:uppercase;
+    color:#9ca3af; letter-spacing:.4px;
+  }
+  .cell-actions{ justify-content:flex-end; }
+  .man-tabla-foot{ flex-direction:column; gap:10px; align-items:stretch; }
+  .man-tabla-foot .right{ justify-content:space-between; }
+}
+@media (max-width: 540px){
+  .man-kpis{ grid-template-columns:1fr; }
+  .man-header h1{ font-size:22px; }
+}
+</style>
+
+<div class="man-page">
+
+  {# ── Header ── #}
+  <div class="man-header">
+    <div class="left">
+      <div class="icon"><i class="bi bi-clipboard-check-fill"></i></div>
+      <div>
+        <h1>Manifiestos de Despacho</h1>
+        <div class="sub">Registro de despachos agrupados por courier</div>
       </div>
     </div>
-    <div class="col-6 col-sm-3">
-      <select name="courier" class="form-select form-select-sm" onchange="document.getElementById('filtrosForm').submit()">
-        <option value="">Todos los courier</option>
-        {% for c in couriers %}
-        <option value="{{ c }}" {% if filtros.courier==c %}selected{% endif %}>{{ c }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-6 col-sm-3">
-      <select name="estado" class="form-select form-select-sm" onchange="document.getElementById('filtrosForm').submit()">
-        <option value="">Todos los estados</option>
-        {% for e in estados_manifest %}
-        <option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-auto">
-      <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
-      {% if filtros.courier or filtros.estado or filtros.q %}
-      <a href="{{ url_for('tr_manifiestos') }}" class="btn btn-sm btn-outline-secondary ms-1" title="Limpiar todo">✕</a>
-      {% endif %}
+    <div class="actions">
+      <a href="{{ url_for('transporte_index') }}" class="btn-monitor">
+        <i class="bi bi-graph-up-arrow"></i> Monitor
+      </a>
+      <button class="btn-nuevo-man" data-bs-toggle="modal" data-bs-target="#newManModal">
+        <i class="bi bi-plus-circle-fill"></i> Nuevo manifiesto
+      </button>
     </div>
   </div>
-</form>
 
-{# ── Tabla desktop ── #}
-<div class="ilus-card d-none d-md-block mb-3">
-  <div class="ilus-card-header d-flex justify-content-between align-items-center">
-    <span>Manifiestos
-      <span class="badge bg-secondary ms-1">{{ paginacion.total }}</span>
-      {% if paginacion.total_pages > 1 %}
-      <span class="text-muted small ms-2">
-        Página {{ paginacion.page }} de {{ paginacion.total_pages }}
-      </span>
-      {% endif %}
-    </span>
-    {% if filtros.q or filtros.courier or filtros.estado %}
-    <span class="badge bg-warning text-dark">
-      <i class="bi bi-funnel-fill me-1"></i>Filtros activos
-    </span>
-    {% endif %}
+  {# ── Filtros ── #}
+  <form method="get" class="man-filtros" id="filtrosForm">
+    <input type="hidden" name="page_size" value="{{ paginacion.page_size }}">
+    <div class="search">
+      <i class="bi bi-search"></i>
+      <input type="text" name="q" value="{{ filtros.q }}"
+             placeholder="Buscar por correlativo, courier o notas…"
+             autocomplete="off">
+    </div>
+    <select name="courier" onchange="document.getElementById('filtrosForm').submit()">
+      <option value="">Todos los courier</option>
+      {% for c in couriers %}
+      <option value="{{ c }}" {% if filtros.courier==c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <select name="estado" onchange="document.getElementById('filtrosForm').submit()">
+      <option value="">Todos los estados</option>
+      {% for e in estados_manifest %}
+      <option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>
+      {% endfor %}
+    </select>
+    <a href="{{ url_for('tr_manifiestos') }}" class="btn-limpiar">
+      <i class="bi bi-arrow-counterclockwise"></i> Limpiar filtros
+    </a>
+  </form>
+
+  {# ── KPIs ── #}
+  <div class="man-kpis">
+    <div class="kpi">
+      <div class="kpi-icon red"><i class="bi bi-clipboard-check"></i></div>
+      <div class="kpi-info">
+        <div class="kpi-label">Total manifiestos</div>
+        <div class="kpi-value">{{ kpis.total }}</div>
+        <div class="kpi-sub">En el periodo seleccionado</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon blue"><i class="bi bi-box-seam-fill"></i></div>
+      <div class="kpi-info">
+        <div class="kpi-label">Total items</div>
+        <div class="kpi-value">{{ kpis.items }}</div>
+        <div class="kpi-sub">Items en manifiestos</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon green"><i class="bi bi-currency-dollar"></i></div>
+      <div class="kpi-info">
+        <div class="kpi-label">Costo total</div>
+        <div class="kpi-value">${{ "{:,.0f}".format(kpis.costo).replace(",", ".") }}</div>
+        <div class="kpi-sub">Costo de fletes</div>
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon amber"><i class="bi bi-clock-history"></i></div>
+      <div class="kpi-info">
+        <div class="kpi-label">En preparación</div>
+        <div class="kpi-value">{{ kpis.en_prep }}</div>
+        <div class="kpi-sub">Manifiestos en preparación</div>
+      </div>
+    </div>
   </div>
-  <div class="table-responsive">
-    <table class="table ilus-table mb-0" style="font-size:.82rem">
+
+  {# ── Tabla ── #}
+  <div class="man-tabla-wrap">
+    <div class="man-tabla-head">
+      <h2>Manifiestos <span class="count-pill">{{ paginacion.total }}</span></h2>
+    </div>
+
+    {% if manifiestos %}
+    <table class="man-tabla">
       <thead>
         <tr>
           <th>Correlativo</th>
-          <th>Fecha</th>
+          <th>Fecha <i class="bi bi-arrow-up" style="font-size:10px"></i></th>
           <th>Courier</th>
-          <th class="text-center">Items</th>
-          <th class="text-end">Costo total</th>
+          <th class="center">Items</th>
+          <th class="right">Costo total</th>
           <th>Estado</th>
           <th>Notas</th>
-          <th class="text-center">Acción</th>
+          <th class="right">Acción</th>
         </tr>
       </thead>
       <tbody>
         {% for m in manifiestos %}
-        {% set mcolor = {
-          'En preparación':'warning',
-          'En curso':'primary',
-          'Cerrado':'secondary',
-          'Entregado completo':'success'
-        }.get(m.estado, 'secondary') %}
-        <tr class="tr-hoverable">
-          <td class="fw-bold font-monospace">{{ m.correlativo }}</td>
-          <td>{{ m.fecha.strftime('%d/%m/%Y') if m.fecha else '—' }}</td>
-          <td>{{ m.courier }}</td>
-          <td class="text-center">
-            <span class="badge bg-dark rounded-pill">{{ m.total_items or 0 }}</span>
+        {% set estado_class = {
+          'En preparación':'prep',
+          'En curso':'curso',
+          'Cerrado':'cerr',
+          'Entregado completo':'ok'
+        }.get(m.estado, 'cerr') %}
+        <tr>
+          <td data-label="Correlativo" class="cell-corr">{{ m.correlativo }}</td>
+          <td data-label="Fecha" class="cell-fecha">
+            {{ m.fecha.strftime('%d/%m/%Y') if m.fecha else '—' }}
           </td>
-          <td class="text-end">
+          <td data-label="Courier" class="cell-courier">{{ m.courier }}</td>
+          <td data-label="Items" class="center">
+            <span class="cell-items-pill">{{ m.total_items or 0 }}</span>
+          </td>
+          <td data-label="Costo" class="cell-costo">
             {% if m.costo_total %}
-              <span style="color:var(--ilus-red);font-weight:600">
-                ${{ "{:,.0f}".format(m.costo_total) }}
-              </span>
+              ${{ "{:,.0f}".format(m.costo_total|float).replace(",", ".") }}
             {% else %}
-              <span class="text-muted">—</span>
+              <span style="color:#9ca3af;font-weight:500">—</span>
             {% endif %}
           </td>
-          <td>
-            <span class="badge rounded-pill bg-{{ mcolor }} text-{{ 'dark' if mcolor=='warning' else 'white' }}">
-              {{ m.estado }}
-            </span>
+          <td data-label="Estado">
+            <span class="estado-pill {{ estado_class }}">{{ m.estado }}</span>
           </td>
-          <td class="text-muted small">{{ (m.notas or '')[:40] }}{{ '…' if (m.notas or '')|length > 40 }}</td>
-          <td class="text-center">
-            <a href="{{ url_for('tr_manifiesto_detalle', mid=m.id) }}"
-               class="btn btn-sm btn-outline-secondary">
-              <i class="bi bi-eye me-1"></i>Ver
-            </a>
+          <td data-label="Notas" class="cell-notas">
+            {% if m.notas %}{{ m.notas[:32] }}{{ '…' if m.notas|length > 32 }}{% else %}—{% endif %}
           </td>
-        </tr>
-        {% else %}
-        <tr>
-          <td colspan="8" class="text-center py-4 text-muted">
-            <i class="bi bi-clipboard-x me-2"></i>Sin manifiestos
+          <td data-label="Acción">
+            <div class="cell-actions">
+              <a href="{{ url_for('tr_manifiesto_detalle', mid=m.id) }}" class="btn-ver">
+                <i class="bi bi-eye"></i> Ver
+              </a>
+              <button type="button" class="btn-menu" onclick="toggleMenu(event, 'menu-{{ m.id }}')">
+                <i class="bi bi-three-dots-vertical"></i>
+              </button>
+              <div id="menu-{{ m.id }}" class="menu-dropdown">
+                <a href="{{ url_for('tr_manifiesto_detalle', mid=m.id) }}">
+                  <i class="bi bi-pencil-square"></i> Ver / editar
+                </a>
+                <a href="{{ url_for('tr_manifiesto_etiquetas', mid=m.id) }}">
+                  <i class="bi bi-tags-fill"></i> Etiquetas
+                </a>
+                <a href="{{ url_for('tr_manifiesto_etiquetas_pdf', mid=m.id) }}" target="_blank">
+                  <i class="bi bi-file-earmark-pdf"></i> Etiquetas PDF
+                </a>
+              </div>
+            </div>
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-  </div>
-</div>
+    {% else %}
+    <div class="empty-state">
+      <i class="bi bi-clipboard-x"></i>
+      <b>Sin manifiestos</b>
+      <div>Cuando crees uno aparecerá acá.</div>
+    </div>
+    {% endif %}
 
-{# ── Cards mobile ── #}
-<div class="d-md-none">
-  {% for m in manifiestos %}
-  {% set mcolor = {
-    'En preparación':'warning',
-    'En curso':'primary',
-    'Cerrado':'secondary',
-    'Entregado completo':'success'
-  }.get(m.estado, 'secondary') %}
-  <a href="{{ url_for('tr_manifiesto_detalle', mid=m.id) }}" class="text-decoration-none">
-    <div class="ilus-card mb-2">
-      <div class="p-3">
-        <div class="d-flex justify-content-between align-items-start">
-          <div class="fw-bold font-monospace">{{ m.correlativo }}</div>
-          <span class="badge bg-{{ mcolor }} text-{{ 'dark' if mcolor=='warning' else 'white' }}">{{ m.estado }}</span>
-        </div>
-        <div class="mt-1 fw-semibold">{{ m.courier }}</div>
-        <div class="small text-muted mt-1">
-          {{ m.fecha.strftime('%d/%m/%Y') if m.fecha else '' }} ·
-          {{ m.total_items or 0 }} items
-          {% if m.costo_total %} · ${{ "{:,.0f}".format(m.costo_total) }}{% endif %}
+    {% if paginacion.total > 0 %}
+    <div class="man-tabla-foot">
+      <div class="left">
+        Mostrando {{ ((paginacion.page - 1) * paginacion.page_size) + 1 }} a
+        {{ [paginacion.page * paginacion.page_size, paginacion.total]|min }}
+        de {{ paginacion.total }} resultados
+      </div>
+      <div class="right">
+        <select class="page-size-select"
+                onchange="changePageSize(this.value)">
+          {% for ps in [10,25,50,100] %}
+          <option value="{{ ps }}" {% if paginacion.page_size==ps %}selected{% endif %}>
+            {{ ps }} por página
+          </option>
+          {% endfor %}
+        </select>
+        {% set base_qs = (
+          ('courier=' + filtros.courier) if filtros.courier else '',
+          ('estado=' + filtros.estado) if filtros.estado else '',
+          ('q=' + filtros.q) if filtros.q else '',
+          ('page_size=' + (paginacion.page_size|string)),
+        )|select|join('&') %}
+        {% set sep = '&' if base_qs else '' %}
+        <div class="pager">
+          {% if paginacion.has_prev %}
+          <a href="?{{ base_qs }}{{ sep }}page={{ paginacion.page - 1 }}" aria-label="Anterior">
+            <i class="bi bi-chevron-left"></i>
+          </a>
+          {% else %}
+          <span class="disabled"><i class="bi bi-chevron-left"></i></span>
+          {% endif %}
+
+          {% set window_start = [1, paginacion.page - 2]|max %}
+          {% set window_end = [paginacion.total_pages, paginacion.page + 2]|min %}
+
+          {% if window_start > 1 %}
+          <a href="?{{ base_qs }}{{ sep }}page=1">1</a>
+          {% if window_start > 2 %}<span class="disabled">…</span>{% endif %}
+          {% endif %}
+
+          {% for p in range(window_start, window_end + 1) %}
+            {% if p == paginacion.page %}
+            <span class="cur">{{ p }}</span>
+            {% else %}
+            <a href="?{{ base_qs }}{{ sep }}page={{ p }}">{{ p }}</a>
+            {% endif %}
+          {% endfor %}
+
+          {% if window_end < paginacion.total_pages %}
+          {% if window_end < paginacion.total_pages - 1 %}<span class="disabled">…</span>{% endif %}
+          <a href="?{{ base_qs }}{{ sep }}page={{ paginacion.total_pages }}">{{ paginacion.total_pages }}</a>
+          {% endif %}
+
+          {% if paginacion.has_next %}
+          <a href="?{{ base_qs }}{{ sep }}page={{ paginacion.page + 1 }}" aria-label="Siguiente">
+            <i class="bi bi-chevron-right"></i>
+          </a>
+          {% else %}
+          <span class="disabled"><i class="bi bi-chevron-right"></i></span>
+          {% endif %}
         </div>
       </div>
     </div>
-  </a>
-  {% else %}
-  <div class="text-center py-4 text-muted">Sin manifiestos</div>
-  {% endfor %}
-</div>
-
-{# ── Paginación ── #}
-{% if paginacion.total_pages > 1 %}
-<nav class="mt-3" aria-label="Paginación manifiestos">
-  <ul class="pagination pagination-sm justify-content-center mb-0">
-    {% set base_qs = (
-      ('courier=' + filtros.courier) if filtros.courier else '',
-      ('estado=' + filtros.estado) if filtros.estado else '',
-      ('q=' + filtros.q) if filtros.q else '',
-    )|select|join('&') %}
-    {% set sep = '&' if base_qs else '' %}
-
-    <li class="page-item {% if not paginacion.has_prev %}disabled{% endif %}">
-      <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ paginacion.page - 1 }}">
-        <i class="bi bi-chevron-left"></i>
-      </a>
-    </li>
-
-    {% set window_start = [1, paginacion.page - 2]|max %}
-    {% set window_end = [paginacion.total_pages, paginacion.page + 2]|min %}
-
-    {% if window_start > 1 %}
-      <li class="page-item">
-        <a class="page-link" href="?{{ base_qs }}{{ sep }}page=1">1</a>
-      </li>
-      {% if window_start > 2 %}
-        <li class="page-item disabled"><span class="page-link">…</span></li>
-      {% endif %}
     {% endif %}
-
-    {% for p in range(window_start, window_end + 1) %}
-    <li class="page-item {% if p == paginacion.page %}active{% endif %}">
-      <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ p }}">{{ p }}</a>
-    </li>
-    {% endfor %}
-
-    {% if window_end < paginacion.total_pages %}
-      {% if window_end < paginacion.total_pages - 1 %}
-        <li class="page-item disabled"><span class="page-link">…</span></li>
-      {% endif %}
-      <li class="page-item">
-        <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ paginacion.total_pages }}">{{ paginacion.total_pages }}</a>
-      </li>
-    {% endif %}
-
-    <li class="page-item {% if not paginacion.has_next %}disabled{% endif %}">
-      <a class="page-link" href="?{{ base_qs }}{{ sep }}page={{ paginacion.page + 1 }}">
-        <i class="bi bi-chevron-right"></i>
-      </a>
-    </li>
-  </ul>
-  <div class="text-center text-muted small mt-2">
-    Mostrando {{ ((paginacion.page - 1) * paginacion.page_size) + 1 }}–{{ [paginacion.page * paginacion.page_size, paginacion.total]|min }}
-    de <strong>{{ paginacion.total }}</strong> manifiesto(s)
   </div>
-</nav>
-{% endif %}
+</div>
 
 {# ── Modal nuevo manifiesto ── #}
 <div class="modal fade" id="newManModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered" style="max-width:420px">
-    <div class="modal-content">
-      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
-        <h6 class="modal-title"><i class="bi bi-clipboard-plus me-2"></i>Nuevo Manifiesto</h6>
+  <div class="modal-dialog modal-dialog-centered" style="max-width:440px">
+    <div class="modal-content" style="border:0;border-radius:16px;overflow:hidden">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff;border:0">
+        <h6 class="modal-title fw-bold"><i class="bi bi-clipboard-plus me-2"></i>Nuevo Manifiesto</h6>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body" style="padding:22px 24px">
         <div class="mb-3">
-          <label class="form-label small fw-semibold">Courier <span class="text-danger">*</span></label>
-          <select id="newCourier" class="form-select form-select-sm">
+          <label class="form-label small fw-bold text-uppercase" style="letter-spacing:.4px;color:#374151;font-size:11px">
+            Courier <span class="text-danger">*</span>
+          </label>
+          <select id="newCourier" class="form-select" style="min-height:44px">
             <option value="">— selecciona —</option>
             {% for c in couriers %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label small fw-semibold">Fecha despacho <span class="text-danger">*</span></label>
-          <input type="date" id="newFecha" class="form-control form-control-sm">
+          <label class="form-label small fw-bold text-uppercase" style="letter-spacing:.4px;color:#374151;font-size:11px">
+            Fecha despacho <span class="text-danger">*</span>
+          </label>
+          <input type="date" id="newFecha" class="form-control" style="min-height:44px">
         </div>
         <div class="mb-2">
-          <label class="form-label small fw-semibold">Notas</label>
-          <textarea id="newNotas" class="form-control form-control-sm" rows="2"
+          <label class="form-label small fw-bold text-uppercase" style="letter-spacing:.4px;color:#374151;font-size:11px">
+            Notas
+          </label>
+          <textarea id="newNotas" class="form-control" rows="2"
                     placeholder="Ej: Zona norte, peso máx 200kg…"></textarea>
         </div>
         <div id="newManMsg" class="small mt-2"></div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="newManBtn" onclick="crearManifiesto()">
-          <i class="bi bi-check-circle me-1"></i>Crear manifiesto
+      <div class="modal-footer" style="border:0;padding:14px 24px 20px">
+        <button type="button" class="btn btn-outline-secondary fw-bold" data-bs-dismiss="modal" style="border-radius:10px">Cancelar</button>
+        <button type="button" class="btn-nuevo-man" id="newManBtn" onclick="crearManifiesto()">
+          <i class="bi bi-check-circle-fill"></i> Crear manifiesto
         </button>
       </div>
     </div>
@@ -266,10 +577,34 @@
 
 {% block scripts %}
 <script>
-// Preselect today's date
 document.addEventListener('DOMContentLoaded', function() {
   var today = new Date().toISOString().split('T')[0];
-  document.getElementById('newFecha').value = today;
+  var f = document.getElementById('newFecha');
+  if (f) f.value = today;
+});
+
+function changePageSize(ps){
+  var u = new URL(window.location.href);
+  u.searchParams.set('page_size', ps);
+  u.searchParams.set('page', '1');
+  window.location.href = u.toString();
+}
+
+function toggleMenu(ev, id){
+  ev.stopPropagation();
+  document.querySelectorAll('.menu-dropdown.open').forEach(function(el){
+    if (el.id !== id) el.classList.remove('open');
+  });
+  var m = document.getElementById(id);
+  if (!m) return;
+  var btn = ev.currentTarget;
+  var rect = btn.getBoundingClientRect();
+  m.style.top = (window.scrollY + rect.bottom + 6) + 'px';
+  m.style.left = (window.scrollX + rect.right - 180) + 'px';
+  m.classList.toggle('open');
+}
+document.addEventListener('click', function(){
+  document.querySelectorAll('.menu-dropdown.open').forEach(function(el){ el.classList.remove('open'); });
 });
 
 function crearManifiesto() {
@@ -300,13 +635,13 @@ function crearManifiesto() {
       } else {
         msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Crear manifiesto';
+        btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Crear manifiesto';
       }
     })
     .catch(function() {
       msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Crear manifiesto';
+      btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Crear manifiesto';
     });
 }
 </script>
