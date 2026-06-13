@@ -485,14 +485,9 @@
          class="sidebar-link{% if request.endpoint in ['tr_choferes'] %} active{% endif %}">
         <i class="bi bi-person-badge"></i><span>Choferes</span>
       </a>
-      <a href="{{ url_for('tr_monitor_live') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_monitor_live'] %} active{% endif %}">
-        <i class="bi bi-broadcast"></i><span>Monitor en vivo</span>
-      </a>
-      <a href="{{ url_for('tr_buscar_interno') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_buscar_interno'] %} active{% endif %}">
-        <i class="bi bi-search"></i><span>Buscar despacho</span>
-      </a>
+      {# 'Monitor en vivo' y 'Buscar despacho' temporalmente fuera del sidebar
+         (Daniel 2026-06-13). Las rutas siguen vivas para no romper enlaces;
+         se mantienen accesibles desde la búsqueda global o links directos. #}
       <a href="/transporte/ot-masivo"
          class="sidebar-link{% if request.endpoint in ['tr_ot_masivo_ui'] %} active{% endif %}">
         <i class="bi bi-file-earmark-arrow-up"></i><span>OT Masivo FedEx</span>
