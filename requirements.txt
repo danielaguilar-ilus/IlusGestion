@@ -17,6 +17,11 @@ gunicorn>=21.2.0
 python-docx>=1.1.0
 pdfplumber>=0.10.0
 pypdf>=4.0.0
+# pypdfium2: renderizador PDF→imagen AUTOCONTENIDO (trae el binario PDFium en
+# el wheel, NO necesita poppler de sistema). Lo usa _fedex_label_to_png_datauri
+# para rasterizar etiquetas FedEx a 4×6 en el build de Cloud Run (nixpacks NO
+# instala poppler-utils; el Dockerfile sí, pero prod usa --source=buildpacks).
+pypdfium2>=4.30.0
 # OCR determinista (sin IA) para contratos escaneados — necesita tesseract + poppler (Dockerfile)
 pytesseract>=0.3.10
 pdf2image>=1.17.0
