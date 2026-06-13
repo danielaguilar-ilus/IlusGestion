@@ -15360,6 +15360,10 @@ def _fedex_create_shipment(
         alto  = max(int(round(float(pkg.get("alto")  or 10))), 1)
         valor = float(pkg.get("valor") or 0)
         item = {
+            # MPS: cada bulto es un paquete distinto. sequenceNumber 1-based +
+            # groupPackageCount=1 + totalPackageCount (abajo) son OBLIGATORIOS
+            # para que FedEx devuelva la etiqueta de CADA pieza (no solo la master).
+            "sequenceNumber":    idx,
             "groupPackageCount": 1,
             "itemDescriptionForClearance": _fedex_clean_str(pkg.get("descripcion") or reference or "Mercaderia", 50),
             "weight":     {"units": "KG", "value": peso},
@@ -15419,6 +15423,9 @@ def _fedex_create_shipment(
             "pickupType":       pickup_type,
             "blockInsightVisibility": False,
             "shippingChargesPayment": {"paymentType": "SENDER"},
+            # MPS: total de paquetes del envío. Sin esto FedEx trata el request
+            # como mono-bulto y solo devuelve la etiqueta master ("1 of N").
+            "totalPackageCount": len(rpl),
             "labelSpecification": {
                 "imageType":     label_format,
                 "labelStockType": label_stock,
@@ -15479,27 +15486,72 @@ def _fedex_create_shipment(
     txn = txns[0]
     master_tn = txn.get("masterTrackingNumber") or txn.get("trackingNumber") or ""
     piece_resp = txn.get("pieceResponses", []) or []
+
+    def _extract_label(doc):
+        """Saca el base64 de la etiqueta de un packageDocument, sea cual sea la
+        clave que use FedEx (encodedLabel | encoded | docContent | content)."""
+        if not isinstance(doc, dict):
+            return ""
+        return (doc.get("encodedLabel") or doc.get("encoded")
+                or doc.get("docContent") or doc.get("content") or "")
+
     piece_trackings = []
     piece_labels = []
     master_label_b64 = ""
     for pr in piece_resp:
         tn = pr.get("trackingNumber") or ""
         piece_trackings.append(tn)
+        # Una pieza puede traer su etiqueta en packageDocuments. Tomamos la 1ª
+        # con contenido. (Cada pieza de un MPS trae SU propia etiqueta "X of N".)
+        got = ""
         for doc in (pr.get("packageDocuments") or []):
-            enc = (doc.get("encodedLabel") or doc.get("encoded") or "")
+            enc = _extract_label(doc)
             if enc:
-                piece_labels.append({"tracking_number": tn, "label_b64": enc})
-                if not master_label_b64:
-                    master_label_b64 = enc
+                got = enc
                 break
+        if got:
+            piece_labels.append({"tracking_number": tn, "label_b64": got})
+            if not master_label_b64:
+                master_label_b64 = got
 
-    # Fallback: a veces la etiqueta master viene a nivel de txn
+    # Fallback A: etiquetas a nivel de transactionShipment (algunos MPS las
+    # devuelven todas juntas acá, una por pieza).
+    if len(piece_labels) < len(piece_trackings):
+        ship_docs = txn.get("shipmentDocuments") or txn.get("packageDocuments") or []
+        extra = [_extract_label(d) for d in ship_docs]
+        extra = [e for e in extra if e]
+        # Solo usamos este fallback si trae MÁS etiquetas que las que ya tenemos.
+        if len(extra) > len(piece_labels):
+            piece_labels = []
+            for i, enc in enumerate(extra):
+                tn_i = piece_trackings[i] if i < len(piece_trackings) else master_tn
+                piece_labels.append({"tracking_number": tn_i, "label_b64": enc})
+            master_label_b64 = extra[0]
+
+    # Fallback B: nada de lo anterior — al menos la master.
     if not master_label_b64:
         for doc in (txn.get("shipmentDocuments") or []):
-            enc = (doc.get("encodedLabel") or doc.get("encoded") or "")
+            enc = _extract_label(doc)
             if enc:
                 master_label_b64 = enc
+                piece_labels = [{"tracking_number": master_tn, "label_b64": enc}]
                 break
+
+    # Diagnóstico (no contiene las etiquetas, solo conteos) para depurar MPS.
+    debug = {
+        "n_piece_responses": len(piece_resp),
+        "n_piece_trackings": len(piece_trackings),
+        "n_piece_labels":    len(piece_labels),
+        "n_shipment_docs":   len(txn.get("shipmentDocuments") or []),
+        "keys_txn":          sorted(list(txn.keys()))[:25],
+        "keys_piece0":       sorted(list(piece_resp[0].keys()))[:25] if piece_resp else [],
+    }
+    try:
+        if len(piece_labels) < len(piece_trackings):
+            print(f"[FEDEX MPS] OJO: {len(piece_trackings)} piezas pero "
+                  f"{len(piece_labels)} etiquetas. debug={debug}", flush=True)
+    except Exception:
+        pass
 
     return {
         "ok":                       True,
@@ -15510,6 +15562,7 @@ def _fedex_create_shipment(
         "shipment_id":              data.get("transactionId") or "",
         "service_type":             service_type,
         "label_format":             label_format,
+        "_debug":                   debug,
     }
 
 
@@ -20261,6 +20314,18 @@ def tr_manifiesto_detalle(mid):
             it["has_ship_label"] = bool(it.get("ship_label_b64"))
             if it.get("ship_label_b64"):
                 it["ship_label_b64"] = None
+            # Conteo real de etiquetas por bulto guardadas (multi-pieza) para
+            # mostrar la verdad en la tabla, y NO inflar el payload con el blob.
+            _n_lab = 0
+            if it.get("ship_labels_json"):
+                try:
+                    import json as _jpl
+                    _arr = _jpl.loads(it["ship_labels_json"])
+                    _n_lab = len(_arr) if isinstance(_arr, list) else 0
+                except Exception:
+                    _n_lab = 0
+            it["n_labels"] = _n_lab or (1 if it["has_ship_label"] else 0)
+            it["ship_labels_json"] = None
             # El respaldo histórico no se renderiza; no inflar el payload de la página.
             it["ship_history_json"] = None
             # Ventana de cancelación FedEx (mismo día Chile, corte 16:00).
@@ -22654,6 +22719,54 @@ def tr_item_tracking_detalle(item_id):
     })
 
 
+@app.route("/transporte/api/items/<int:item_id>/labels-debug", methods=["GET"])
+@_tr_required
+def tr_labels_debug(item_id):
+    """Diagnóstico de etiquetas multi-bulto: cuántas piezas tiene la OT vs.
+    cuántas etiquetas guardamos realmente. Para depurar el caso 'trae 1 de N'."""
+    import json as _jp
+    r = mysql_fetchone(
+        "SELECT id, master_tracking_number, ship_bultos, piece_trackings_json, "
+        "       ship_labels_json, ship_label_b64, ship_label_format, ship_created_at "
+        "FROM transport_manifest_items WHERE id=%s", (item_id,))
+    if not r:
+        return jsonify({"ok": False, "error": "item no encontrado"}), 404
+
+    def _count_json(s):
+        if not s:
+            return 0
+        try:
+            v = _jp.loads(s)
+            return len(v) if isinstance(v, list) else 0
+        except Exception:
+            return -1
+
+    labels = _fedex_item_labels(r)
+    piece_tns = []
+    try:
+        piece_tns = _jp.loads(r.get("piece_trackings_json") or "[]")
+    except Exception:
+        pass
+    return jsonify({
+        "ok": True,
+        "item_id":              item_id,
+        "master_tracking":      r.get("master_tracking_number") or "",
+        "ship_bultos":          r.get("ship_bultos"),
+        "ship_created_at":      str(r.get("ship_created_at") or "")[:19],
+        "piece_trackings":      piece_tns,
+        "n_piece_trackings":    len(piece_tns),
+        "n_labels_en_json":     _count_json(r.get("ship_labels_json")),
+        "tiene_master_label":   bool(r.get("ship_label_b64")),
+        "n_labels_efectivas":   len(labels),   # lo que mostraría la vista de impresión
+        "label_format":         r.get("ship_label_format") or "",
+        "diagnostico": (
+            "OK: una etiqueta por bulto" if len(labels) >= int(r.get("ship_bultos") or 1)
+            else f"FALTAN: {int(r.get('ship_bultos') or 1)} bultos pero {len(labels)} etiqueta(s). "
+                 "Re-emite con 'Actualizar etiquetas multi-bulto' (ya con el fix de totalPackageCount)."
+        ),
+    })
+
+
 @app.route("/transporte/api/items/<int:item_id>/cancelar-ot-fedex", methods=["POST"])
 @_tr_required
 def tr_cancelar_ot_fedex(item_id):
@@ -22844,9 +22957,13 @@ def tr_actualizar_etiquetas_fedex(mid):
         only_clause = f" AND mi.id IN ({placeholders})"
         only_params = tuple(only)
 
+    # Items multi-bulto donde NO tenemos una etiqueta por cada pieza:
+    # ship_labels_json nula/vacía, o con menos elementos que ship_bultos.
     rows = mysql_fetchall(
         "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, mi.ship_bultos, "
-        "       mi.ship_created_at "
+        "       mi.ship_created_at, "
+        "       CASE WHEN mi.ship_labels_json IS NULL OR mi.ship_labels_json='' "
+        "            THEN 0 ELSE JSON_LENGTH(mi.ship_labels_json) END AS n_labels "
         "FROM transport_manifest_items mi "
         "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
         "WHERE mi.manifest_id=%s "
@@ -22854,14 +22971,15 @@ def tr_actualizar_etiquetas_fedex(mid):
         "  AND mi.master_tracking_number <> '' "
         "  AND mi.ship_cancelled_at IS NULL "
         "  AND COALESCE(mi.ship_bultos, 1) > 1 "
-        "  AND (mi.ship_labels_json IS NULL OR mi.ship_labels_json = '') "
+        "  AND ( mi.ship_labels_json IS NULL OR mi.ship_labels_json = '' "
+        "        OR JSON_LENGTH(mi.ship_labels_json) < COALESCE(mi.ship_bultos, 1) ) "
         + only_clause +
         " ORDER BY mi.orden, mi.id",
         (mid,) + only_params) or []
 
     if not rows:
         return jsonify({"ok": True, "actualizadas": 0,
-                        "msg": "No hay etiquetas que actualizar — todos los envíos ya tienen sus piezas."})
+                        "msg": "No hay etiquetas que actualizar — todos los envíos ya tienen una etiqueta por bulto."})
 
     actualizadas = []   # [{item_id, doc, old_tn, new_tn, n_bultos}]
     errores = []        # [{item_id, doc, error, expired?}]

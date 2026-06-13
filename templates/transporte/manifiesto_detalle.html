@@ -432,9 +432,17 @@
               </button>
             </div>
             {% if item.get('ship_bultos') and item.ship_bultos > 1 %}
-            <div class="text-muted" style="font-size:.7rem;margin-top:2px">
-              <i class="bi bi-box-seam me-1"></i>{{ item.ship_bultos }} bultos · {{ item.ship_bultos }} etiquetas
+            {% set nlab = item.get('n_labels') or 0 %}
+            {% if nlab < item.ship_bultos %}
+            <div style="font-size:.7rem;margin-top:2px;color:#b45309;font-weight:700"
+                 title="Faltan etiquetas por bulto. Usa el menú FedEx → Actualizar etiquetas multi-bulto.">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ item.ship_bultos }} bultos · solo {{ nlab }} etiqueta{{ 's' if nlab != 1 }}
             </div>
+            {% else %}
+            <div class="text-muted" style="font-size:.7rem;margin-top:2px">
+              <i class="bi bi-box-seam me-1"></i>{{ item.ship_bultos }} bultos · {{ nlab }} etiquetas ✓
+            </div>
+            {% endif %}
             {% endif %}
             {% else %}
             <span class="text-muted small" title="Aún sin OT FedEx creada">
