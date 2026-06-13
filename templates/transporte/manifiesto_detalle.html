@@ -405,20 +405,25 @@
             {% endif %}
           </td>
           {% if es_fedex %}
-          <td onclick="event.stopPropagation()" style="min-width:138px">
+          <td onclick="event.stopPropagation()" style="min-width:165px">
             {% if item.get('master_tracking_number') %}
-            <div class="d-flex align-items-center gap-1">
+            <div class="d-flex align-items-center gap-2">
               <a href="https://www.fedex.com/fedextrack/?trknbr={{ item.master_tracking_number }}"
                  target="_blank" class="font-monospace text-decoration-none"
-                 style="font-size:.72rem;font-weight:800;color:#4d148c"
+                 style="font-size:.95rem;font-weight:900;color:#4d148c;letter-spacing:.4px;line-height:1.1"
                  title="Ver seguimiento en FedEx.com">
-                <i class="bi bi-upc-scan me-1"></i>{{ item.master_tracking_number }}
+                {{ item.master_tracking_number }}
               </a>
               <button class="btn btn-sm btn-link p-0 text-secondary" style="line-height:1"
                       title="Copiar número de OT" onclick="copiarOT('{{ item.master_tracking_number }}', this)">
-                <i class="bi bi-clipboard"></i>
+                <i class="bi bi-clipboard fs-6"></i>
               </button>
             </div>
+            {% if item.get('ship_bultos') and item.ship_bultos > 1 %}
+            <div class="text-muted" style="font-size:.7rem;margin-top:2px">
+              <i class="bi bi-box-seam me-1"></i>{{ item.ship_bultos }} bultos · {{ item.ship_bultos }} etiquetas
+            </div>
+            {% endif %}
             {% else %}
             <span class="text-muted small" title="Aún sin OT FedEx creada">
               <i class="bi bi-dash-circle me-1"></i>Sin OT

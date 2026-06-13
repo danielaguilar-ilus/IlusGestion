@@ -20763,7 +20763,8 @@ def tr_manifiesto_etiquetas_fedex_pdf(mid):
 
     rows = mysql_fetchall(
         "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
-        "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at "
+        "       mi.ship_label_b64, mi.ship_labels_json, mi.ship_label_format, "
+        "       mi.ship_cancelled_at "
         "FROM transport_manifest_items mi "
         "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
         "WHERE mi.manifest_id=%s "
@@ -20772,48 +20773,38 @@ def tr_manifiesto_etiquetas_fedex_pdf(mid):
     if not rows:
         return "Manifiesto sin items", 400
 
-    import base64 as _b64
-    from pypdf import PdfReader, PdfWriter
-
-    writer = PdfWriter()
-    incluidos = 0
+    # Junta TODAS las etiquetas (una por bulto) de los items vivos y arma un
+    # único PDF 4×6 (cada página recortada al tamaño térmico).
+    all_labels = []
     omitidos = []
     for r in rows:
         if r.get("ship_cancelled_at"):
             omitidos.append(f"{r['tido']}{r['nudo']} (cancelado)")
             continue
-        b64 = r.get("ship_label_b64") or ""
-        fmt = (r.get("ship_label_format") or "PDF").upper()
-        if not b64:
+        labs = _fedex_item_labels(r)
+        if not labs:
             omitidos.append(f"{r['tido']}{r['nudo']} (sin etiqueta)")
             continue
-        if fmt != "PDF":
-            omitidos.append(f"{r['tido']}{r['nudo']} ({fmt})")
-            continue
-        try:
-            raw = _b64.b64decode(b64)
-            reader = PdfReader(io.BytesIO(raw), strict=False)
-            for page in reader.pages:
-                writer.add_page(page)
-            incluidos += 1
-        except Exception as e:
-            omitidos.append(f"{r['tido']}{r['nudo']} (error: {type(e).__name__})")
+        all_labels.extend(labs)
 
-    if incluidos == 0:
-        msg = "No hay etiquetas FedEx en formato PDF para imprimir."
+    if not all_labels:
+        msg = "No hay etiquetas FedEx para imprimir."
         if omitidos:
             msg += " Omitidos: " + ", ".join(omitidos[:5])
             if len(omitidos) > 5:
                 msg += f" (+{len(omitidos)-5} más)"
         return msg, 400
 
-    out = io.BytesIO()
-    writer.write(out)
-    out.seek(0)
-    data = out.getvalue()
+    try:
+        data, incluidos, _omit_render = _fedex_labels_to_4x6_pdf(all_labels)
+    except Exception as e:
+        print(f"[etiquetas-fedex pdf] {type(e).__name__}: {e}", flush=True)
+        return f"Error generando PDF: {type(e).__name__}", 500
+    if not data:
+        return "No se pudieron rasterizar las etiquetas.", 500
 
     _tr_log("manifest", mid, "etiquetas fedex pdf",
-            f"{incluidos} incluidos · {len(omitidos)} omitidos")
+            f"{incluidos} etiquetas · {len(omitidos)} items omitidos")
 
     corr = manifiesto.get("correlativo") or mid
     fname = f"etiquetas_fedex_manifiesto_{corr}.pdf"
@@ -20941,6 +20932,84 @@ def _autocrop_white(img, pad_px=10, thresh=24):
         return img
 
 
+def _fedex_item_labels(row):
+    """Devuelve TODAS las etiquetas FedEx de un item (una por bulto en multi-pieza).
+
+    Lee ship_labels_json [{tracking_number,label_b64}]; si no existe (OTs creadas
+    antes de guardar todas las piezas), cae a la única etiqueta master en
+    ship_label_b64. Devuelve list[dict] {tracking_number, label_b64, fmt}.
+    """
+    import json as _jp
+    fmt = (row.get("ship_label_format") or "PDF")
+    out = []
+    raw = row.get("ship_labels_json")
+    if raw:
+        try:
+            for it in (_jp.loads(raw) or []):
+                b64 = (it.get("label_b64") or "").strip()
+                if b64:
+                    out.append({"tracking_number": it.get("tracking_number") or "",
+                                "label_b64": b64, "fmt": fmt})
+        except Exception:
+            out = []
+    if not out:
+        b64 = (row.get("ship_label_b64") or "").strip()
+        if b64:
+            out.append({"tracking_number": row.get("master_tracking_number") or "",
+                        "label_b64": b64, "fmt": fmt})
+    return out
+
+
+def _fedex_labels_to_4x6_pdf(labels, dpi=203):
+    """Arma un PDF multipágina donde cada página es UNA etiqueta FedEx
+    rasterizada, auto-recortada y encajada en 4×6" (100×150 mm) exactos.
+
+    Resuelve dos cosas a la vez: que la descarga salga "cortada" (no en hoja
+    carta) y que traiga TODOS los bultos (una página por etiqueta).
+
+    labels: list[{label_b64, fmt, tracking_number}].
+    Returns: (pdf_bytes, n_incluidas, omitidas:list[str]) o (None, 0, [...]).
+    """
+    import base64 as _b64
+    from PIL import Image as _PILImage
+    W, H = int(4 * dpi), int(6 * dpi)   # 812×1218 @ 203 dpi
+    pages, omit = [], []
+    for i, lab in enumerate(labels, start=1):
+        fmt = (lab.get("fmt") or "PDF").upper()
+        try:
+            raw = _b64.b64decode(lab["label_b64"])
+        except Exception:
+            omit.append(f"bulto {i}: base64 inválido")
+            continue
+        if fmt == "PDF":
+            img, err = _pdf_first_page_to_pil(raw, dpi=dpi)
+        elif fmt == "PNG":
+            try:
+                img, err = _PILImage.open(io.BytesIO(raw)), None
+            except Exception as e:
+                img, err = None, type(e).__name__
+        else:
+            img, err = None, f"formato {fmt}"
+        if img is None:
+            omit.append(f"bulto {i}: {err or 'no rasterizable'}")
+            continue
+        img = _autocrop_white(img)
+        # Encajar en lienzo blanco 4×6 manteniendo proporción (sin deformar).
+        canvas = _PILImage.new("RGB", (W, H), (255, 255, 255))
+        src = img.convert("RGB")
+        scale = min(W / src.width, H / src.height)
+        nw, nh = max(1, int(src.width * scale)), max(1, int(src.height * scale))
+        src = src.resize((nw, nh), _PILImage.LANCZOS)
+        canvas.paste(src, ((W - nw) // 2, (H - nh) // 2))
+        pages.append(canvas)
+    if not pages:
+        return None, 0, omit
+    buf = io.BytesIO()
+    pages[0].save(buf, format="PDF", save_all=True,
+                  append_images=pages[1:], resolution=float(dpi))
+    return buf.getvalue(), len(pages), omit
+
+
 @app.route("/transporte/manifiestos/<int:mid>/etiquetas-fedex/print")
 @_tr_required
 def tr_manifiesto_etiquetas_fedex_print(mid):
@@ -20959,39 +21028,44 @@ def tr_manifiesto_etiquetas_fedex_print(mid):
 
     rows = mysql_fetchall(
         "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
-        "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at, "
-        "       c.cliente_nombre, c.comuna "
+        "       mi.ship_label_b64, mi.ship_labels_json, mi.ship_label_format, "
+        "       mi.ship_cancelled_at, c.cliente_nombre, c.comuna "
         "FROM transport_manifest_items mi "
         "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
         "WHERE mi.manifest_id=%s "
         "ORDER BY mi.orden, mi.id", (mid,)) or []
 
-    etiquetas = []   # las que sí se pueden imprimir
+    etiquetas = []   # una por BULTO (multi-pieza)
     omitidas  = []   # (doc, motivo) para mostrar aviso
     for r in rows:
         doc = f"{r.get('tido') or ''}{r.get('nudo') or ''}".strip() or f"#{r['id']}"
         if r.get("ship_cancelled_at"):
             omitidas.append({"doc": doc, "motivo": "OT cancelada"})
             continue
-        if not r.get("ship_label_b64"):
+        labels = _fedex_item_labels(r)
+        if not labels:
             omitidas.append({"doc": doc, "motivo": "sin etiqueta FedEx"})
             continue
-        datauri, err = _fedex_label_to_png_datauri(
-            r.get("ship_label_b64"), r.get("ship_label_format"))
-        if not datauri:
-            omitidas.append({"doc": doc, "motivo": err or "no previsualizable"})
-            continue
-        etiquetas.append({
-            "item_id":  r["id"],
-            "doc":      doc,
-            "cliente":  r.get("cliente_nombre") or "—",
-            "comuna":   r.get("comuna") or "",
-            "tracking": r.get("master_tracking_number") or "",
-            "img":      datauri,
-        })
+        n_tot = len(labels)
+        for i, lab in enumerate(labels, start=1):
+            datauri, err = _fedex_label_to_png_datauri(lab["label_b64"], lab["fmt"])
+            if not datauri:
+                omitidas.append({"doc": f"{doc} (bulto {i}/{n_tot})",
+                                 "motivo": err or "no previsualizable"})
+                continue
+            etiquetas.append({
+                "item_id":     r["id"],
+                "doc":         doc,
+                "cliente":     r.get("cliente_nombre") or "—",
+                "comuna":      r.get("comuna") or "",
+                "tracking":    lab["tracking_number"] or r.get("master_tracking_number") or "",
+                "bulto_num":   i,
+                "bulto_total": n_tot,
+                "img":         datauri,
+            })
 
     _tr_log("manifest", mid, "etiquetas fedex print",
-            f"{len(etiquetas)} imprimibles · {len(omitidas)} omitidas")
+            f"{len(etiquetas)} etiquetas · {len(omitidas)} omitidas")
 
     return render_template(
         "transporte/etiquetas_fedex_print.html",
@@ -21010,8 +21084,8 @@ def tr_item_etiqueta_fedex_print(item_id):
     Reusa el mismo template que la versión por manifiesto."""
     r = mysql_fetchone(
         "SELECT mi.id, c.tido, c.nudo, mi.master_tracking_number, "
-        "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at, "
-        "       c.cliente_nombre, c.comuna "
+        "       mi.ship_label_b64, mi.ship_labels_json, mi.ship_label_format, "
+        "       mi.ship_cancelled_at, c.cliente_nombre, c.comuna "
         "FROM transport_manifest_items mi "
         "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
         "WHERE mi.id=%s", (item_id,))
@@ -21023,21 +21097,27 @@ def tr_item_etiqueta_fedex_print(item_id):
     etiquetas, omitidas = [], []
     if r.get("ship_cancelled_at"):
         omitidas.append({"doc": doc, "motivo": "OT cancelada"})
-    elif not r.get("ship_label_b64"):
-        omitidas.append({"doc": doc, "motivo": "sin etiqueta FedEx"})
     else:
-        datauri, err = _fedex_label_to_png_datauri(
-            r.get("ship_label_b64"), r.get("ship_label_format"))
-        if datauri:
-            etiquetas.append({
-                "item_id":  r["id"], "doc": doc,
-                "cliente":  r.get("cliente_nombre") or "—",
-                "comuna":   r.get("comuna") or "",
-                "tracking": r.get("master_tracking_number") or "",
-                "img":      datauri,
-            })
+        labels = _fedex_item_labels(r)
+        if not labels:
+            omitidas.append({"doc": doc, "motivo": "sin etiqueta FedEx"})
         else:
-            omitidas.append({"doc": doc, "motivo": err or "no previsualizable"})
+            n_tot = len(labels)
+            for i, lab in enumerate(labels, start=1):
+                datauri, err = _fedex_label_to_png_datauri(lab["label_b64"], lab["fmt"])
+                if datauri:
+                    etiquetas.append({
+                        "item_id":  r["id"], "doc": doc,
+                        "cliente":  r.get("cliente_nombre") or "—",
+                        "comuna":   r.get("comuna") or "",
+                        "tracking": lab["tracking_number"] or r.get("master_tracking_number") or "",
+                        "bulto_num":   i,
+                        "bulto_total": n_tot,
+                        "img":      datauri,
+                    })
+                else:
+                    omitidas.append({"doc": f"{doc} (bulto {i}/{n_tot})",
+                                     "motivo": err or "no previsualizable"})
 
     return render_template(
         "transporte/etiquetas_fedex_print.html",
@@ -22186,6 +22266,7 @@ def tr_crear_ot_fedex(item_id):
     piece_tns = res.get("piece_trackings") or []
     label_b64 = res.get("label_b64") or ""
     label_fmt = res.get("label_format") or "PDF"
+    piece_labels = res.get("piece_labels") or []
 
     n_b = len(piece_tns) if piece_tns else int(it.get("n_bultos") or 1)
     try:
@@ -22195,6 +22276,7 @@ def tr_crear_ot_fedex(item_id):
                 tracking_number=%s,
                 piece_trackings_json=%s,
                 ship_label_b64=%s,
+                ship_labels_json=%s,
                 ship_label_format=%s,
                 ship_bultos=%s,
                 ship_label_outdated=0,
@@ -22207,6 +22289,7 @@ def tr_crear_ot_fedex(item_id):
             master_tn, master_tn,
             _jp.dumps(piece_tns) if piece_tns else None,
             label_b64 or None,
+            _jp.dumps(piece_labels) if piece_labels else None,
             label_fmt,
             n_b,
             item_id,
@@ -22327,6 +22410,7 @@ def tr_crear_ots_fedex_masivo(mid):
                     tracking_number=%s,
                     piece_trackings_json=%s,
                     ship_label_b64=%s,
+                    ship_labels_json=%s,
                     ship_label_format=%s,
                     ship_bultos=%s,
                     ship_label_outdated=0,
@@ -22339,6 +22423,7 @@ def tr_crear_ots_fedex_masivo(mid):
                 master_tn, master_tn,
                 _jp.dumps(piece_tns) if piece_tns else None,
                 res.get("label_b64") or None,
+                _jp.dumps(res.get("piece_labels") or []) if res.get("piece_labels") else None,
                 res.get("label_format") or "PDF",
                 n_b,
                 iid,
@@ -22373,13 +22458,16 @@ def tr_crear_ots_fedex_masivo(mid):
 @app.route("/transporte/api/items/<int:item_id>/etiqueta-fedex", methods=["GET"])
 @_tr_required
 def tr_etiqueta_fedex(item_id):
-    """Descarga la etiqueta FedEx (PDF / ZPL) generada por Ship API.
-    Si el item tiene piece_trackings (multi-bulto), devuelve un ZIP con
-    todas las etiquetas. Si es 1 bulto, devuelve el archivo directamente.
+    """Descarga la etiqueta FedEx de un item.
+
+    Por defecto devuelve un PDF 4×6 (100×150 mm) con UNA página por bulto
+    (multi-pieza), auto-recortado para que salga cortado al tamaño térmico.
+    Con ?original=1 devuelve el archivo crudo tal cual lo entregó FedEx
+    (útil para impresión térmica directa o debug).
     """
     r = mysql_fetchone(
-        "SELECT ship_label_b64, ship_label_format, master_tracking_number, "
-        "       piece_trackings_json "
+        "SELECT ship_label_b64, ship_labels_json, ship_label_format, "
+        "       master_tracking_number, piece_trackings_json "
         "FROM transport_manifest_items WHERE id=%s",
         (item_id,)
     )
@@ -22391,6 +22479,24 @@ def tr_etiqueta_fedex(item_id):
     if not label_b64:
         return jsonify({"error": "Este item no tiene etiqueta FedEx generada"}), 404
     import base64 as _b64
+
+    original = (request.args.get("original") or "") in ("1", "true", "yes")
+
+    # Modo 4×6 (default): rasteriza + recorta + arma PDF con todos los bultos.
+    if not original and label_fmt in ("PDF", "PNG"):
+        labels = _fedex_item_labels(r)
+        try:
+            pdf_bytes, n_inc, _omit = _fedex_labels_to_4x6_pdf(labels)
+        except Exception as e:
+            pdf_bytes, n_inc = None, 0
+            print(f"[etiqueta-fedex 4x6] {type(e).__name__}: {e}", flush=True)
+        if pdf_bytes and n_inc:
+            fname = f"fedex_{master_tn}_4x6_{n_inc}bultos.pdf"
+            return Response(pdf_bytes, mimetype="application/pdf",
+                            headers={"Content-Disposition": f'inline; filename="{fname}"'})
+        # Si por algún motivo falló, cae al crudo abajo.
+
+    # Modo original / fallback: archivo crudo tal cual FedEx.
     try:
         raw = _b64.b64decode(label_b64)
     except Exception:
@@ -22547,7 +22653,7 @@ def tr_reemitir_ot_fedex(item_id):
         mysql_execute("""
             UPDATE transport_manifest_items
             SET master_tracking_number=%s, tracking_number=%s, piece_trackings_json=%s,
-                ship_label_b64=%s, ship_label_format=%s, ship_bultos=%s,
+                ship_label_b64=%s, ship_labels_json=%s, ship_label_format=%s, ship_bultos=%s,
                 ship_created_at=NOW(), ship_cancelled_at=NULL, ship_label_outdated=0,
                 ship_error=NULL, last_carrier_source='fedex'
             WHERE id=%s
@@ -22555,6 +22661,7 @@ def tr_reemitir_ot_fedex(item_id):
             new_tn, new_tn,
             _jp.dumps(piece_tns) if piece_tns else None,
             res.get("label_b64") or None,
+            _jp.dumps(res.get("piece_labels") or []) if res.get("piece_labels") else None,
             res.get("label_format") or "PDF",
             n_b, item_id,
         ))
@@ -63718,6 +63825,7 @@ def _ensure_transport_tracking_tables():
         "ship_bultos":            "INT NULL COMMENT 'Nº de bultos con que se emitió la etiqueta FedEx vigente'",
         "ship_label_outdated":    "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=los bultos cambiaron tras emitir; etiqueta FedEx desfasada, requiere re-emisión'",
         "ship_history_json":      "LONGTEXT NULL COMMENT 'Respaldo append-only de OTs FedEx (TN viejo/nuevo, bultos, usuario, ts)'",
+        "ship_labels_json":       "LONGTEXT NULL COMMENT 'JSON [{tracking_number,label_b64}] de TODAS las etiquetas por bulto (multi-piece). ship_label_b64 = master/1er bulto'",
     }
     try:
         existing_it = {
