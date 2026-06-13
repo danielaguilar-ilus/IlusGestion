@@ -20861,13 +20861,50 @@ def _fedex_label_to_png_datauri(label_b64, label_fmt="PDF", dpi=203):
                                      first_page=1, last_page=1)
         if not paginas:
             return None, "PDF sin páginas"
+        # Auto-recorte: FedEx a veces entrega la etiqueta 4×6 dentro de una hoja
+        # carta (8.5×11) con el resto en blanco. Recortamos al contenido real
+        # para que SIEMPRE salga "cortada" al tamaño de la etiqueta, sin importar
+        # el labelStockType con que se generó.
+        img = _autocrop_white(paginas[0])
         out = io.BytesIO()
-        paginas[0].save(out, format="PNG")
+        img.save(out, format="PNG")
         out.seek(0)
         b64png = _b64.b64encode(out.getvalue()).decode("ascii")
         return "data:image/png;base64," + b64png, None
     except Exception as e:
         return None, f"render falló: {type(e).__name__}"
+
+
+def _autocrop_white(img, pad_px=10, thresh=24):
+    """Recorta los márgenes blancos de una imagen, dejando solo el contenido.
+    Usado para que una etiqueta FedEx 4×6 embebida en una hoja carta quede
+    recortada al tamaño real de la etiqueta. Si todo es blanco, devuelve la
+    imagen original sin tocar.
+
+    pad_px: margen de seguridad (px) alrededor del contenido detectado.
+    thresh: umbral de "no-blanco" (0-255). Más alto = más tolerante a grises
+            tenues / antialias.
+    """
+    try:
+        from PIL import Image as _PILImage, ImageChops
+        rgb = img.convert("RGB")
+        bg = _PILImage.new("RGB", rgb.size, (255, 255, 255))
+        diff = ImageChops.difference(rgb, bg)
+        # Amplifica el diff y resta el umbral para ignorar antialiasing tenue.
+        diff = ImageChops.add(diff, diff, 2.0, -thresh)
+        bbox = diff.getbbox()
+        if not bbox:
+            return img
+        l, t, r, b = bbox
+        l = max(0, l - pad_px); t = max(0, t - pad_px)
+        r = min(rgb.width,  r + pad_px); b = min(rgb.height, b + pad_px)
+        # Sanity: si el recorte es absurdamente pequeño (<20% del área), no
+        # recortamos (mejor mostrar todo que una franja).
+        if (r - l) * (b - t) < 0.20 * rgb.width * rgb.height:
+            return img
+        return img.crop((l, t, r, b))
+    except Exception:
+        return img
 
 
 @app.route("/transporte/manifiestos/<int:mid>/etiquetas-fedex/print")

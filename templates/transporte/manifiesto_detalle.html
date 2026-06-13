@@ -299,6 +299,7 @@
           <th class="text-end">Costo courier</th>
           <th class="text-end">Diferencia</th>
           <th style="min-width:185px">Estado entrega</th>
+          {% if es_fedex %}<th style="min-width:138px">OT FedEx</th>{% endif %}
           <th class="no-print text-end" style="min-width:118px">Acciones</th>
         </tr>
       </thead>
@@ -401,6 +402,28 @@
             </div>
             {% endif %}
           </td>
+          {% if es_fedex %}
+          <td onclick="event.stopPropagation()" style="min-width:138px">
+            {% if item.get('master_tracking_number') %}
+            <div class="d-flex align-items-center gap-1">
+              <a href="https://www.fedex.com/fedextrack/?trknbr={{ item.master_tracking_number }}"
+                 target="_blank" class="font-monospace text-decoration-none"
+                 style="font-size:.72rem;font-weight:800;color:#4d148c"
+                 title="Ver seguimiento en FedEx.com">
+                <i class="bi bi-upc-scan me-1"></i>{{ item.master_tracking_number }}
+              </a>
+              <button class="btn btn-sm btn-link p-0 text-secondary" style="line-height:1"
+                      title="Copiar número de OT" onclick="copiarOT('{{ item.master_tracking_number }}', this)">
+                <i class="bi bi-clipboard"></i>
+              </button>
+            </div>
+            {% else %}
+            <span class="text-muted small" title="Aún sin OT FedEx creada">
+              <i class="bi bi-dash-circle me-1"></i>Sin OT
+            </span>
+            {% endif %}
+          </td>
+          {% endif %}
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
             {% if item.estado_entrega == 'Entregado' %}
             <a class="btn btn-sm btn-outline-success mfd-act-btn" title="Ver prueba de entrega (foto, firma, GPS)"
@@ -492,7 +515,7 @@
         {# ── Sub-fila colapsable: productos de la factura ── #}
         <tr class="mfd-prod-row" id="prodrow-{{ item.id }}" hidden>
           <td></td>
-          <td colspan="8" class="mfd-prod-cell">
+          <td colspan="{{ 9 if es_fedex else 8 }}" class="mfd-prod-cell">
             <div class="mfd-prod-wrap">
               <div class="mfd-prod-head">
                 <i class="bi bi-box me-1"></i>Productos de la factura
@@ -543,7 +566,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="9" class="text-center py-4 text-muted">
+          <td colspan="{{ 10 if es_fedex else 9 }}" class="text-center py-4 text-muted">
             <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>Sin facturas en este manifiesto
           </td>
         </tr>
@@ -563,7 +586,7 @@
             <div class="mfd-pct-chip {{ 'mfd-pct-neg' if tot_margen < 0 else ('mfd-pct-ok' if tot_pct >= 25 else 'mfd-pct-low') }}">{{ "%.1f"|format(tot_pct) }}%</div>
             {% endif %}
           </td>
-          <td colspan="2"></td>
+          <td colspan="{{ 3 if es_fedex else 2 }}"></td>
         </tr>
       </tfoot>
       {% endif %}
@@ -671,6 +694,19 @@
       <div class="mt-2">
         {{ estado_badge(item.estado_entrega, item.id) }}
       </div>
+
+      {% if es_fedex and item.get('master_tracking_number') %}
+      <div class="mt-2 d-flex align-items-center gap-2" style="font-size:.78rem">
+        <span class="text-muted fw-semibold"><i class="bi bi-upc-scan me-1"></i>OT FedEx:</span>
+        <a href="https://www.fedex.com/fedextrack/?trknbr={{ item.master_tracking_number }}"
+           target="_blank" class="font-monospace text-decoration-none"
+           style="font-weight:800;color:#4d148c">{{ item.master_tracking_number }}</a>
+        <button class="btn btn-sm btn-link p-0 text-secondary" style="line-height:1"
+                title="Copiar OT" onclick="copiarOT('{{ item.master_tracking_number }}', this)">
+          <i class="bi bi-clipboard"></i>
+        </button>
+      </div>
+      {% endif %}
 
       {# Toggle productos mobile #}
       <button type="button" class="mfd-mprod-toggle mt-2" onclick="toggleProductos({{ item.id }})">
@@ -2426,6 +2462,30 @@ if (typeof _esc !== 'function') {
 // ══════════════════════════════════════════════════════════════════════
 //  IMPRIMIR / DESCARGAR ETIQUETAS FedEx del manifiesto
 // ══════════════════════════════════════════════════════════════════════
+// Copiar número de OT FedEx al portapapeles
+function copiarOT(tn, btn) {
+  if (!tn) return;
+  var done = function() {
+    if (window.ilusToast) ilusToast('✓ OT copiada: ' + tn, { type: 'success' });
+    if (btn) {
+      var ic = btn.querySelector('i');
+      if (ic) { var old = ic.className; ic.className = 'bi bi-clipboard-check text-success';
+        setTimeout(function(){ ic.className = old; }, 1400); }
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(tn).then(done).catch(function(){ fallbackCopy(tn); done(); });
+  } else { fallbackCopy(tn); done(); }
+}
+function fallbackCopy(txt) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+  } catch(e) {}
+}
+
 // Vista imprimible (rasterizada a 100×150mm exactos → sale cortada al imprimir)
 function verImprimirEtiquetasFedex() {
   window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/print', '_blank');
