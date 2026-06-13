@@ -21809,6 +21809,106 @@ def tr_public_tracking_status(token):
     return jsonify(payload)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  BUSCADOR PÚBLICO DE TRANSPORTE (sin login)
+#  El cliente entra a /seguimiento, pone su Nº de factura (o tracking FedEx)
+#  + opcionalmente RUT, y lo redirigimos al tracking bonito /t/<token>.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PUBLIC_SEARCH_RL = {}  # ip → [ts, ts, ...]
+_PUBLIC_SEARCH_WINDOW = 60   # 60s
+_PUBLIC_SEARCH_MAX    = 12   # 12 búsquedas / min / IP (anti-scraping)
+
+def _public_search_rate_ok(ip):
+    import time as _t
+    now = _t.time()
+    arr = _PUBLIC_SEARCH_RL.get(ip) or []
+    arr = [t for t in arr if (now - t) < _PUBLIC_SEARCH_WINDOW]
+    if len(arr) >= _PUBLIC_SEARCH_MAX:
+        _PUBLIC_SEARCH_RL[ip] = arr
+        return False
+    arr.append(now)
+    _PUBLIC_SEARCH_RL[ip] = arr
+    return True
+
+
+def _norm_rut(s):
+    """Normaliza un RUT a solo dígitos + dv en mayúscula. Ej '12.345.678-K' → '12345678K'."""
+    if not s:
+        return ""
+    return "".join(c for c in str(s).upper() if c.isalnum())
+
+
+@app.route("/seguimiento", methods=["GET"])
+def tr_public_seguimiento_form():
+    """Formulario público de seguimiento — sin login. El cliente entra acá
+    desde un link de marketing / WhatsApp / firma de email."""
+    return render_template("transporte/public_seguimiento.html",
+                           error=None, q="", rut="")
+
+
+@app.route("/seguimiento", methods=["POST"])
+def tr_public_seguimiento_buscar():
+    """Busca un envío por Nº de factura, tracking FedEx, o ambos.
+    Si encuentra match → redirige a /t/<token> (la vista bonita ya existente).
+    Si no encuentra → vuelve al form con un error amigable.
+    """
+    ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "?").split(",")[0].strip()
+    if not _public_search_rate_ok(ip):
+        return render_template("transporte/public_seguimiento.html",
+                               error="Has hecho muchas búsquedas seguidas. Espera un minuto y vuelve a intentarlo.",
+                               q="", rut=""), 429
+    q_raw   = (request.form.get("q") or "").strip()
+    rut_raw = (request.form.get("rut") or "").strip()
+    q = "".join(c for c in q_raw.upper() if c.isalnum())
+    rut_norm = _norm_rut(rut_raw)
+    if len(q) < 4:
+        return render_template("transporte/public_seguimiento.html",
+                               error="Ingresa tu Nº de factura o de seguimiento (mínimo 4 caracteres).",
+                               q=q_raw, rut=rut_raw)
+
+    # Buscamos por (a) tracking FedEx, (b) nudo (Nº doc), (c) nudo+tido concatenado.
+    # Si el cliente dio RUT, lo usamos también como filtro de seguridad.
+    rows = mysql_fetchall("""
+        SELECT id, tido, nudo, cliente_rut, cliente_nombre, public_token
+        FROM transport_commitments
+        WHERE (
+              REPLACE(UPPER(COALESCE(nudo,'')),  ' ', '') = %s
+           OR REPLACE(UPPER(CONCAT(COALESCE(tido,''), COALESCE(nudo,''))), ' ', '') = %s
+           OR id IN (
+                SELECT commitment_id FROM transport_manifest_items
+                WHERE REPLACE(UPPER(COALESCE(master_tracking_number,'')),' ','') = %s
+                   OR REPLACE(UPPER(COALESCE(tracking_number,'')),' ','') = %s
+              )
+        )
+        ORDER BY id DESC
+        LIMIT 5
+    """, (q, q, q, q)) or []
+
+    if not rows:
+        return render_template("transporte/public_seguimiento.html",
+                               error="No encontramos ese envío. Revisa que el número esté correcto o pregunta a quien te lo emitió.",
+                               q=q_raw, rut=rut_raw)
+
+    # Si el cliente puso RUT, filtramos por él (match exacto normalizado).
+    if rut_norm:
+        match = [r for r in rows if _norm_rut(r.get("cliente_rut")) == rut_norm]
+        if not match:
+            return render_template("transporte/public_seguimiento.html",
+                                   error="El RUT no coincide con este envío. Si crees que es un error, contáctanos.",
+                                   q=q_raw, rut=rut_raw)
+        cand = match[0]
+    else:
+        cand = rows[0]   # más reciente
+
+    tok = (cand.get("public_token") or "").strip() or _tr_ensure_public_token(cand["id"])
+    if not tok:
+        return render_template("transporte/public_seguimiento.html",
+                               error="No pudimos generar el link de seguimiento. Intenta de nuevo.",
+                               q=q_raw, rut=rut_raw), 500
+    return redirect(url_for("tr_public_tracking", token=tok))
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  SEGUIMIENTO público — el cliente busca por factura/boleta + RUT
 # ═══════════════════════════════════════════════════════════════════════════
