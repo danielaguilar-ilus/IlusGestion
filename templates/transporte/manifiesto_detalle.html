@@ -129,8 +129,12 @@
         <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header"><i class="bi bi-printer me-1"></i>Etiquetas</h6></li>
         <li><a class="dropdown-item" href="#" onclick="verImprimirEtiquetasFedex(); return false">
-          <i class="bi bi-file-earmark-pdf me-1"></i>Ver e imprimir etiquetas FedEx (todas)
-          <div class="small text-muted">Abre PDF con todas las etiquetas 4×6 del manifiesto · Ctrl+P para imprimir</div>
+          <i class="bi bi-printer-fill me-1"></i>Imprimir etiquetas FedEx (4×6 cortadas)
+          <div class="small text-muted">Vista imprimible con selector · sale al tamaño exacto 100×150mm</div>
+        </a></li>
+        <li><a class="dropdown-item" href="#" onclick="descargarPdfEtiquetasFedex(); return false">
+          <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF original (FedEx)
+          <div class="small text-muted">PDF crudo de FedEx con todas las etiquetas del manifiesto</div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header"><i class="bi bi-calendar-event me-1"></i>Logística</h6></li>
@@ -411,8 +415,13 @@
             </button>
             {% endif %}
             {% if es_fedex and item.get('master_tracking_number') %}
-            <button class="btn btn-sm mfd-act-btn" title="Descargar etiqueta oficial FedEx (PDF/ZPL)"
+            <button class="btn btn-sm mfd-act-btn" title="Imprimir etiqueta FedEx cortada (4×6, 100×150mm)"
                     style="background:#4d148c;color:#fff;border:none"
+                    onclick="window.open('/transporte/items/{{ item.id }}/etiqueta-fedex/print', '_blank')">
+              <i class="bi bi-printer-fill"></i>
+            </button>
+            <button class="btn btn-sm mfd-act-btn" title="Descargar etiqueta oficial FedEx (PDF/ZPL)"
+                    style="background:#6b21a8;color:#fff;border:none"
                     onclick="window.open('/transporte/api/items/{{ item.id }}/etiqueta-fedex', '_blank')">
               <i class="bi bi-file-earmark-arrow-down"></i>
             </button>
@@ -2415,9 +2424,14 @@ if (typeof _esc !== 'function') {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  VER E IMPRIMIR TODAS LAS ETIQUETAS FedEx del manifiesto (PDF concat)
+//  IMPRIMIR / DESCARGAR ETIQUETAS FedEx del manifiesto
 // ══════════════════════════════════════════════════════════════════════
+// Vista imprimible (rasterizada a 100×150mm exactos → sale cortada al imprimir)
 function verImprimirEtiquetasFedex() {
+  window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/print', '_blank');
+}
+// PDF crudo de FedEx (respaldo / impresión directa Zebra)
+function descargarPdfEtiquetasFedex() {
   window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/pdf', '_blank');
 }
 </script>

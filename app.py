@@ -20821,6 +20821,163 @@ def tr_manifiesto_etiquetas_fedex_pdf(mid):
     })
 
 
+def _fedex_label_to_png_datauri(label_b64, label_fmt="PDF", dpi=203):
+    """Rasteriza una etiqueta FedEx (PDF) a PNG y devuelve un data-URI listo
+    para <img>. Esto permite mostrarla en una página HTML de EXACTAMENTE
+    100×150 mm (4×6") y que al imprimir salga "cortada" al tamaño de la
+    etiqueta térmica — sin que el navegador la escale a carta/A4.
+
+    dpi=203 = densidad estándar de impresora térmica Zebra (4×6" → 812×1218 px),
+    así el barcode queda nítido y escaneable.
+
+    Args:
+        label_b64: etiqueta en base64 (como viene de ship_label_b64).
+        label_fmt: 'PDF' | 'PNG' | 'ZPLII' | 'EPL2'.
+
+    Returns:
+        (datauri, None) en éxito · (None, "motivo") si no se pudo rasterizar.
+    """
+    import base64 as _b64
+    if not label_b64:
+        return None, "sin etiqueta"
+    fmt = (label_fmt or "PDF").upper()
+    try:
+        raw = _b64.b64decode(label_b64)
+    except Exception:
+        return None, "etiqueta corrupta"
+
+    # PNG ya viene como imagen — se embebe directo.
+    if fmt == "PNG":
+        return "data:image/png;base64," + label_b64, None
+
+    # ZPL/EPL son lenguajes de impresora térmica, no se rasterizan acá.
+    if fmt in ("ZPLII", "EPL2"):
+        return None, f"formato {fmt} (térmico, no previsualizable)"
+
+    # PDF → PNG con poppler (pdf2image). Tomamos solo la 1ª página (la etiqueta).
+    try:
+        from pdf2image import convert_from_bytes
+        paginas = convert_from_bytes(raw, dpi=dpi, fmt="png",
+                                     first_page=1, last_page=1)
+        if not paginas:
+            return None, "PDF sin páginas"
+        out = io.BytesIO()
+        paginas[0].save(out, format="PNG")
+        out.seek(0)
+        b64png = _b64.b64encode(out.getvalue()).decode("ascii")
+        return "data:image/png;base64," + b64png, None
+    except Exception as e:
+        return None, f"render falló: {type(e).__name__}"
+
+
+@app.route("/transporte/manifiestos/<int:mid>/etiquetas-fedex/print")
+@_tr_required
+def tr_manifiesto_etiquetas_fedex_print(mid):
+    """Vista imprimible de las etiquetas FedEx del manifiesto — estilo módulo
+    ILUS de etiquetas (toolbar + selector "qué imprimir" + Ctrl+P).
+
+    Cada etiqueta oficial FedEx se rasteriza a PNG y se muestra en una página
+    HTML de EXACTAMENTE 100×150 mm, de modo que al imprimir salga cortada al
+    tamaño térmico 4×6" tal como la entrega FedEx (sin escalado del navegador).
+    """
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, courier FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        flash("Manifiesto no encontrado", "danger")
+        return redirect(url_for("transporte_index"))
+
+    rows = mysql_fetchall(
+        "SELECT mi.id, mi.tido, mi.nudo, mi.master_tracking_number, "
+        "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at, "
+        "       c.cliente_nombre, c.comuna "
+        "FROM transport_manifest_items mi "
+        "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "WHERE mi.manifest_id=%s "
+        "ORDER BY mi.orden, mi.id", (mid,)) or []
+
+    etiquetas = []   # las que sí se pueden imprimir
+    omitidas  = []   # (doc, motivo) para mostrar aviso
+    for r in rows:
+        doc = f"{r.get('tido') or ''}{r.get('nudo') or ''}".strip() or f"#{r['id']}"
+        if r.get("ship_cancelled_at"):
+            omitidas.append({"doc": doc, "motivo": "OT cancelada"})
+            continue
+        if not r.get("ship_label_b64"):
+            omitidas.append({"doc": doc, "motivo": "sin etiqueta FedEx"})
+            continue
+        datauri, err = _fedex_label_to_png_datauri(
+            r.get("ship_label_b64"), r.get("ship_label_format"))
+        if not datauri:
+            omitidas.append({"doc": doc, "motivo": err or "no previsualizable"})
+            continue
+        etiquetas.append({
+            "item_id":  r["id"],
+            "doc":      doc,
+            "cliente":  r.get("cliente_nombre") or "—",
+            "comuna":   r.get("comuna") or "",
+            "tracking": r.get("master_tracking_number") or "",
+            "img":      datauri,
+        })
+
+    _tr_log("manifest", mid, "etiquetas fedex print",
+            f"{len(etiquetas)} imprimibles · {len(omitidas)} omitidas")
+
+    return render_template(
+        "transporte/etiquetas_fedex_print.html",
+        manifiesto = manifiesto,
+        etiquetas  = etiquetas,
+        omitidas   = omitidas,
+        titulo     = f"Etiquetas FedEx · Manifiesto {manifiesto.get('correlativo') or mid}",
+        pdf_url    = url_for("tr_manifiesto_etiquetas_fedex_pdf", mid=mid),
+    )
+
+
+@app.route("/transporte/items/<int:item_id>/etiqueta-fedex/print")
+@_tr_required
+def tr_item_etiqueta_fedex_print(item_id):
+    """Vista imprimible (100×150 mm) de la etiqueta FedEx de UN item.
+    Reusa el mismo template que la versión por manifiesto."""
+    r = mysql_fetchone(
+        "SELECT mi.id, mi.tido, mi.nudo, mi.master_tracking_number, "
+        "       mi.ship_label_b64, mi.ship_label_format, mi.ship_cancelled_at, "
+        "       c.cliente_nombre, c.comuna "
+        "FROM transport_manifest_items mi "
+        "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "WHERE mi.id=%s", (item_id,))
+    if not r:
+        flash("Item no encontrado", "danger")
+        return redirect(url_for("transporte_index"))
+
+    doc = f"{r.get('tido') or ''}{r.get('nudo') or ''}".strip() or f"#{r['id']}"
+    etiquetas, omitidas = [], []
+    if r.get("ship_cancelled_at"):
+        omitidas.append({"doc": doc, "motivo": "OT cancelada"})
+    elif not r.get("ship_label_b64"):
+        omitidas.append({"doc": doc, "motivo": "sin etiqueta FedEx"})
+    else:
+        datauri, err = _fedex_label_to_png_datauri(
+            r.get("ship_label_b64"), r.get("ship_label_format"))
+        if datauri:
+            etiquetas.append({
+                "item_id":  r["id"], "doc": doc,
+                "cliente":  r.get("cliente_nombre") or "—",
+                "comuna":   r.get("comuna") or "",
+                "tracking": r.get("master_tracking_number") or "",
+                "img":      datauri,
+            })
+        else:
+            omitidas.append({"doc": doc, "motivo": err or "no previsualizable"})
+
+    return render_template(
+        "transporte/etiquetas_fedex_print.html",
+        manifiesto = None,
+        etiquetas  = etiquetas,
+        omitidas   = omitidas,
+        titulo     = f"Etiqueta FedEx · {doc}",
+        pdf_url    = url_for("tr_etiqueta_fedex", item_id=item_id),
+    )
+
+
 @app.route("/transporte/factura/<int:commitment_id>/n-bultos", methods=["POST"])
 @_tr_required
 def tr_factura_set_bultos(commitment_id):
