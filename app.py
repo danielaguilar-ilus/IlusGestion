@@ -9240,7 +9240,7 @@ def etiquetas_masivo_procesar():
             "ok": False,
             "error": f"Error procesando el Excel: {type(e_global).__name__}: {str(e_global)[:200]}",
             "detalle": tb_short,
-            "sugerencia": "Verifica que el Excel tenga columnas SKU/Descripción/Cantidad. Si el problema persiste, revisa el log Railway."
+            "sugerencia": "Verifica que el Excel tenga columnas SKU/Descripción/Cantidad. Si el problema persiste, revisa el log en Google Cloud."
         }), 500
 
 
