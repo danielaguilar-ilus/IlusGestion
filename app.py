@@ -17666,12 +17666,27 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             GROUP BY d.IDMAEEDO
         ) zz ON zz.IDMAEEDO = h.IDMAEEDO
         LEFT JOIN MAEEDOOB o ON o.IDMAEEDO = h.IDMAEEDO
-        LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
-              CASE
-                WHEN CHARINDEX('-', h.ENDO) > 0
-                  THEN LTRIM(RTRIM(SUBSTRING(h.ENDO, 1, CHARINDEX('-', h.ENDO) - 1)))
-                ELSE LTRIM(RTRIM(COALESCE(h.ENDO, '')))
-              END
+        -- Entidad/cliente. CLAVE 2026-06-13: el ENDO del documento es el KOEN
+        -- (código de entidad), NO el RUT. El join viejo por RTEN fallaba cuando
+        -- RTEN traía DV ('19090568-3') o el código difería del RUT → la grilla
+        -- mostraba "Consumidor Final" y comuna vacía. Es exactamente lo que el
+        -- motor de Asignar/Cotizar resuelve con su fallback por KOEN.
+        -- Mapa deduplicado por KOEN (1 fila por código, prefiriendo la sucursal
+        -- con nombre) y HASH JOIN — O(docs+entidades), ~0.2s para un mes vs los
+        -- ~25s que tardaba un OUTER APPLY fila-a-fila contra MAEEN.
+        LEFT JOIN (
+            SELECT k, NOKOEN, NOKOENAMP, CMEN, CIEN
+            FROM (
+                SELECT LTRIM(RTRIM(KOEN)) AS k, NOKOEN, NOKOENAMP, CMEN, CIEN,
+                       ROW_NUMBER() OVER (
+                         PARTITION BY LTRIM(RTRIM(KOEN))
+                         ORDER BY CASE WHEN LTRIM(RTRIM(COALESCE(NOKOEN, NOKOENAMP, ''))) <> ''
+                                       THEN 0 ELSE 1 END, SUEN
+                       ) AS rn
+                FROM MAEEN
+                WHERE LTRIM(RTRIM(KOEN)) <> ''
+            ) z WHERE z.rn = 1
+        ) en ON en.k = LTRIM(RTRIM(h.ENDO))
         OUTER APPLY (
             SELECT TOP 1 t.NOKOCM FROM TABCM t
              WHERE LTRIM(RTRIM(t.KOCM)) = LTRIM(RTRIM(en.CMEN))
