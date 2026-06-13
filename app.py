@@ -15211,16 +15211,17 @@ FEDEX_DEFAULT_SERVICE_CL = "FEDEX_PRIORITY"
 
 
 def _fedex_postal_cl(postal_code) -> str:
-    """FedEx Ship/Pickup en Chile usa código postal de 4 dígitos (no 7).
-    El Rate API acepta los 7 (ej. 9276181) y los recorta internamente, pero
-    Ship requiere los primeros 4 (9276). Tolera None / strings vacíos.
-    Cuando no hay código postal devuelve "" (cadena vacía) — FedEx CL doméstico
-    acepta postalCode vacío; rechaza "0000" como código inválido.
+    """FedEx CL Ship/Pickup espera código postal chileno de 7 dígitos.
+    Acepta None, strings con guiones o espacios — extrae solo dígitos. Si entran
+    menos de 7 dígitos (formato viejo de 4), los rellena a la derecha con ceros
+    para acercarse al formato actual (ej. "9276" → "9276000"). Devuelve "" si
+    no hay nada o si el valor es "0000…" (FedEx rechaza códigos compuestos solo
+    por ceros como inválidos).
     """
     s = "".join(c for c in str(postal_code or "") if c.isdigit())
-    if not s or s == "0000":
+    if not s or set(s) == {"0"}:
         return ""
-    return s[:4]
+    return (s + "0000000")[:7]
 
 
 def _fedex_clean_str(s, max_len=None) -> str:
@@ -15339,10 +15340,14 @@ def _fedex_create_shipment(
         except Exception:
             pass
     rec_comuna   = _fedex_clean_str(rec_comuna_raw, 35) or "Santiago"
-    # FedEx CL: usar los primeros 4 dígitos del código postal.
-    # "0000" no es válido — si no hay código postal, enviar cadena vacía
-    # (FedEx acepta postalCode vacío para Chile doméstico).
+    # Código postal de destino: primero el que viene en el recipient; si está
+    # vacío o inválido, caer al mapping comuna → CP de Chile (TALCA → 3460000,
+    # COPIAPO → 1530000, etc.) que ya existía en el código. FedEx CL rechaza el
+    # envío con "código postal no válido para el país" si no llega un CP de 7
+    # dígitos coherente con CL.
     rec_postal   = _fedex_postal_cl(recipient.get("cod_postal"))
+    if not rec_postal:
+        rec_postal = _fedex_postal_cl(_comuna_to_postal(rec_comuna))
 
     shipper_dir = _fedex_split_address(ILUS_REMITENTE.get("bodega") or ILUS_REMITENTE["direccion"])
 
