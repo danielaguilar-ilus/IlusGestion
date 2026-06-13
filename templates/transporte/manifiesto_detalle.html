@@ -10,6 +10,29 @@
   ${{ "{:,.0f}".format(v or 0)|replace(",", ".") }}
 {%- endmacro %}
 
+{# Badge clickeable de estado de entrega (reemplaza el <select>) #}
+{% macro estado_badge(estado, item_id) -%}
+  {%- set m = {
+    'En preparación':         {'bg':'#6b7280', 'icon':'bi-clipboard-check'},
+    'Entregado a transporte': {'bg':'#06b6d4', 'icon':'bi-truck-flatbed'},
+    'En ruta':                {'bg':'#3b82f6', 'icon':'bi-truck'},
+    'Entregado':              {'bg':'#16a34a', 'icon':'bi-check-circle-fill'},
+    'Entrega fallida':        {'bg':'#dc2626', 'icon':'bi-x-octagon-fill'},
+    'Devolución':             {'bg':'#f59e0b', 'icon':'bi-arrow-return-left'}
+  }.get(estado, {'bg':'#6b7280', 'icon':'bi-question-circle'}) -%}
+  <button type="button" class="badge-estado-entrega"
+          id="badge-estado-{{ item_id }}"
+          data-estado="{{ estado }}"
+          style="background:{{ m.bg }};color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:600;font-size:.82rem;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.12);transition:all .15s;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;line-height:1.1"
+          onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 3px 8px rgba(0,0,0,.18)'"
+          onmouseout="this.style.transform='';this.style.boxShadow='0 1px 3px rgba(0,0,0,.12)'"
+          onclick='abrirEditarEstado({{ manifiesto.id }}, {{ item_id }}, {{ estado|tojson }})'
+          title="Click para cambiar el estado">
+    <i class="bi {{ m.icon }}"></i>
+    <span>{{ estado }}</span>
+  </button>
+{%- endmacro %}
+
 {# ── Color del badge de estado del manifiesto ── #}
 {% set mcolor = {
   'En preparación':'warning',
@@ -102,6 +125,12 @@
         <li><a class="dropdown-item" href="#" onclick="refrescarTrackingManifiesto(); return false">
           <i class="bi bi-arrow-clockwise me-1"></i>Refrescar estados FedEx (todos)
           <div class="small text-muted">Consulta Track API y actualiza estados del manifiesto</div>
+        </a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header"><i class="bi bi-printer me-1"></i>Etiquetas</h6></li>
+        <li><a class="dropdown-item" href="#" onclick="verImprimirEtiquetasFedex(); return false">
+          <i class="bi bi-file-earmark-pdf me-1"></i>Ver e imprimir etiquetas FedEx (todas)
+          <div class="small text-muted">Abre PDF con todas las etiquetas 4×6 del manifiesto · Ctrl+P para imprimir</div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header"><i class="bi bi-calendar-event me-1"></i>Logística</h6></li>
@@ -360,29 +389,11 @@
             {% endif %}
             {% endif %}
           </td>
-          <td onclick="event.stopPropagation()">
-            <select class="form-select form-select-sm estado-select"
-                    data-item="{{ item.id }}"
-                    onchange="cambiarEstado({{ manifiesto.id }}, {{ item.id }}, this.value, this)">
-              {% for e in estados_entrega %}
-              <option value="{{ e }}" {% if item.estado_entrega == e %}selected{% endif %}>{{ e }}</option>
-              {% endfor %}
-            </select>
-            {% if es_fedex and item.get('master_tracking_number') %}
-            <div class="small mt-1" id="fxstat-{{ item.id }}" style="line-height:1.15">
-              {% if item.last_carrier_source == 'fedex' and item.last_carrier_poll_at %}
-              <span class="badge text-bg-info" style="font-weight:600"
-                    title="Estado reportado por FedEx Track API">
-                <i class="bi bi-truck me-1"></i>{{ item.last_carrier_status or 'sin estado' }}
-              </span>
-              <div class="text-muted" style="font-size:.68rem">
-                <i class="bi bi-clock-history me-1"></i>{{ item.last_carrier_poll_at | chile_fmt }}
-              </div>
-              {% else %}
-              <span class="text-muted" style="font-size:.7rem">
-                <i class="bi bi-question-circle me-1"></i>sin estado FedEx aún
-              </span>
-              {% endif %}
+          <td onclick="event.stopPropagation()" style="min-width:180px">
+            {{ estado_badge(item.estado_entrega, item.id) }}
+            {% if es_fedex and item.get('master_tracking_number') and item.last_carrier_source == 'fedex' and item.last_carrier_poll_at %}
+            <div class="text-muted text-center mt-1" style="font-size:.68rem;line-height:1.1">
+              <i class="bi bi-broadcast me-1"></i>FedEx · {{ item.last_carrier_poll_at | chile_fmt }}
             </div>
             {% endif %}
           </td>
@@ -649,13 +660,7 @@
       </div>
 
       <div class="mt-2">
-        <select class="form-select form-select-sm estado-select"
-                data-item="{{ item.id }}"
-                onchange="cambiarEstado({{ manifiesto.id }}, {{ item.id }}, this.value, this)">
-          {% for e in estados_entrega %}
-          <option value="{{ e }}" {% if item.estado_entrega == e %}selected{% endif %}>{{ e }}</option>
-          {% endfor %}
-        </select>
+        {{ estado_badge(item.estado_entrega, item.id) }}
       </div>
 
       {# Toggle productos mobile #}
@@ -1258,6 +1263,28 @@
   .mfd-prod-row[hidden] .mfd-prod-wrap{ display:block!important; }
 }
 </style>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: cambiar estado de entrega (reemplaza el dropdown nativo)
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalEditarEstado" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:16px 20px">
+        <h5 class="modal-title">
+          <i class="bi bi-arrow-repeat me-2"></i>Cambiar estado de entrega
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="padding:18px 20px 22px">
+        <div class="small text-muted mb-3">
+          <span id="mee-doc"></span>
+        </div>
+        <div id="mee-buttons" class="d-grid gap-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
 
@@ -2271,6 +2298,127 @@ async function ejecutarCrearPickup() {
     btn.disabled = false;
     msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  CAMBIO DE ESTADO via badge + modal (reemplaza el <select> nativo)
+// ══════════════════════════════════════════════════════════════════════
+
+var ESTADOS_META = {
+  'En preparación':         { bg:'#6b7280', icon:'bi-clipboard-check' },
+  'Entregado a transporte': { bg:'#06b6d4', icon:'bi-truck-flatbed' },
+  'En ruta':                { bg:'#3b82f6', icon:'bi-truck' },
+  'Entregado':              { bg:'#16a34a', icon:'bi-check-circle-fill' },
+  'Entrega fallida':        { bg:'#dc2626', icon:'bi-x-octagon-fill' },
+  'Devolución':             { bg:'#f59e0b', icon:'bi-arrow-return-left' }
+};
+var _modalEstado = null;
+var _editEstadoCtx = null;
+
+function abrirEditarEstado(mid, itemId, currentEstado) {
+  _editEstadoCtx = { mid: mid, itemId: itemId, currentEstado: currentEstado };
+  if (!_modalEstado) {
+    _modalEstado = new bootstrap.Modal(document.getElementById('modalEditarEstado'));
+  }
+  // Texto contexto (doc + cliente) — leemos de la fila
+  var row = document.getElementById('row-' + itemId) || document.getElementById('card-' + itemId);
+  var docTxt = 'Item #' + itemId;
+  if (row) {
+    var docEl = row.querySelector('.mfd-doc, [data-doc]');
+    if (docEl) docTxt = (docEl.textContent || docTxt).trim();
+  }
+  document.getElementById('mee-doc').innerHTML =
+    '<i class="bi bi-receipt me-1"></i><strong>' + _esc(docTxt) + '</strong> · estado actual: <span style="color:' +
+    (ESTADOS_META[currentEstado] || {}).bg + ';font-weight:600">' + _esc(currentEstado) + '</span>';
+
+  var box = document.getElementById('mee-buttons');
+  box.innerHTML = '';
+  Object.keys(ESTADOS_META).forEach(function(estado) {
+    var m = ESTADOS_META[estado];
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn d-flex align-items-center w-100';
+    btn.style.background = m.bg;
+    btn.style.color = '#fff';
+    btn.style.fontWeight = '600';
+    btn.style.padding = '13px 16px';
+    btn.style.borderRadius = '10px';
+    btn.style.border = 'none';
+    btn.style.fontSize = '.95rem';
+    btn.style.boxShadow = '0 1px 4px rgba(0,0,0,.1)';
+    var actualTag = '';
+    if (estado === currentEstado) {
+      btn.style.boxShadow = 'inset 0 0 0 3px #fff, 0 0 0 3px ' + m.bg + ', 0 4px 10px rgba(0,0,0,.2)';
+      actualTag = '<span class="ms-auto small" style="opacity:.85"><i class="bi bi-check2-circle me-1"></i>actual</span>';
+    }
+    btn.innerHTML = '<i class="bi ' + m.icon + ' me-2" style="font-size:1.25rem"></i>' +
+                    '<span>' + _esc(estado) + '</span>' + actualTag;
+    btn.onclick = function() {
+      if (estado === currentEstado) { _modalEstado.hide(); return; }
+      aplicarCambioEstado(estado, btn);
+    };
+    box.appendChild(btn);
+  });
+
+  _modalEstado.show();
+}
+
+async function aplicarCambioEstado(nuevoEstado, btnEl) {
+  if (!_editEstadoCtx) return;
+  var mid = _editEstadoCtx.mid, itemId = _editEstadoCtx.itemId;
+  if (btnEl) { btnEl.disabled = true; btnEl.style.opacity = '.6'; }
+  try {
+    var r = await fetch('/transporte/manifiestos/' + mid + '/items/' + itemId + '/estado', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado_entrega: nuevoEstado })
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo guardar', { type: 'error' });
+      if (btnEl) { btnEl.disabled = false; btnEl.style.opacity = ''; }
+      return;
+    }
+    // Update inline del badge (sin reload)
+    var badge = document.getElementById('badge-estado-' + itemId);
+    if (badge) {
+      var m = ESTADOS_META[nuevoEstado] || { bg:'#6b7280', icon:'bi-question-circle' };
+      badge.style.background = m.bg;
+      badge.setAttribute('data-estado', nuevoEstado);
+      badge.innerHTML = '<i class="bi ' + m.icon + '"></i><span>' + _esc(nuevoEstado) + '</span>';
+      badge.setAttribute('onclick',
+        'abrirEditarEstado(' + mid + ', ' + itemId + ', ' + JSON.stringify(nuevoEstado) + ')');
+      // Flash verde de confirmación
+      var row = document.getElementById('row-' + itemId) || document.getElementById('card-' + itemId);
+      if (row) {
+        row.style.transition = 'background .3s';
+        row.style.background = '#e8f5e9';
+        setTimeout(function(){ row.style.background = ''; }, 1000);
+      }
+    }
+    _modalEstado.hide();
+    ilusToast('✓ Estado actualizado: ' + nuevoEstado, { type: 'success' });
+    if (typeof actualizarResumen === 'function') actualizarResumen();
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+    if (btnEl) { btnEl.disabled = false; btnEl.style.opacity = ''; }
+  }
+}
+
+// Helper de escape si no estaba definido a este nivel
+if (typeof _esc !== 'function') {
+  window._esc = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  VER E IMPRIMIR TODAS LAS ETIQUETAS FedEx del manifiesto (PDF concat)
+// ══════════════════════════════════════════════════════════════════════
+function verImprimirEtiquetasFedex() {
+  window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/pdf', '_blank');
 }
 </script>
 {% endblock %}
