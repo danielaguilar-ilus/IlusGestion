@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ titulo or 'Etiquetas FedEx' }}</title>
+<link rel="preload" as="style"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+      onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"></noscript>
+<style>
+:root {
+  --ilus-red:   #dc2626;
+  --ilus-black: #0a0a0a;
+  --ilus-white: #ffffff;
+  --ilus-gray:  #6b7280;
+  --fedex-purple: #4d148c;
+  --fedex-orange: #ff6600;
+  --label-w: 100mm;
+  --label-h: 150mm;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* La pieza clave: cada página impresa mide EXACTAMENTE 100×150 mm,
+   sin márgenes → la etiqueta sale "cortada" al tamaño térmico 4×6". */
+@page {
+  size: var(--label-w) var(--label-h);
+  margin: 0;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #e5e7eb;
+  font-family: Arial, Helvetica, sans-serif;
+  color: var(--ilus-black);
+}
+
+/* ── Barra de acciones (solo pantalla, NUNCA impresa) ── */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--ilus-black);
+  color: var(--ilus-white);
+}
+.toolbar .tb-title {
+  font-weight: 800;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar .tb-title .fx {
+  background: var(--fedex-purple);
+  color: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .3px;
+}
+.toolbar .tb-title .fx span { color: var(--fedex-orange); }
+.toolbar .tb-title .badge {
+  background: var(--ilus-red);
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.toolbar .tb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+}
+.btn-print { background: var(--ilus-red); color: #fff; }
+.btn-print:hover { background: #b91c1c; }
+.btn-back { background: #374151; color: #fff; }
+.btn-back:hover { background: #1f2937; }
+.btn-pdf { background: var(--fedex-purple); color: #fff; }
+.btn-pdf:hover { background: #3a0f6b; }
+
+.empty {
+  max-width: 520px;
+  margin: 60px auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 28px;
+  text-align: center;
+  color: var(--ilus-gray);
+}
+.empty i { font-size: 38px; color: var(--ilus-red); }
+
+/* ═══ SELECTOR (solo pantalla) ═══ */
+.selector-panel {
+  max-width: 900px;
+  margin: 14px auto 4px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px 16px 14px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.04);
+}
+.sp-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.sp-title {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 900; font-size: 14px; color: #0a0a0a;
+}
+.sp-title i { color: #dc2626; }
+.sp-counter { font-size: 12px; color: #6b7280; font-weight: 700; }
+.sp-counter strong { color: #dc2626; font-size: 13px; }
+
+.sp-quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.sp-chip {
+  border: 1.5px solid #e5e7eb;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.sp-chip:hover { background: #f3f4f6; border-color: #9ca3af; }
+.sp-chip.is-active { background: #0a0a0a; color: #fff; border-color: #0a0a0a; }
+
+.sp-note {
+  margin-top: 10px;
+  padding: 9px 12px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 9px;
+  font-size: 12px;
+  color: #075985;
+  font-weight: 600;
+  display: flex; align-items: flex-start; gap: 7px;
+}
+.sp-note i { color: #0284c7; font-size: 15px; margin-top: 1px; }
+
+.sp-omit {
+  margin-top: 10px;
+  padding: 9px 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 9px;
+  font-size: 12px;
+  color: #9a3412;
+  font-weight: 600;
+}
+.sp-omit b { color: #7c2d12; }
+
+/* ═══ HOJA DE ETIQUETAS ═══ */
+.sheet {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.et-wrap { position: relative; }
+
+/* Checkbox flotante (solo pantalla) */
+.et-overlay {
+  position: absolute;
+  top: 10px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(10,10,10,.92);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 10;
+  box-shadow: 0 4px 14px rgba(0,0,0,.3);
+  max-width: 92mm;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.et-overlay input[type=checkbox] {
+  width: 18px; height: 18px;
+  accent-color: #dc2626;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.et-overlay label {
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* La ETIQUETA FedEx — imagen oficial encajada a 100×150 mm exactos */
+.etiqueta-fedex {
+  width: var(--label-w);
+  height: var(--label-h);
+  background: var(--ilus-white);
+  overflow: hidden;
+  display: block;
+  position: relative;
+  box-shadow: 0 4px 18px rgba(0,0,0,.18);
+}
+.etiqueta-fedex img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;   /* la etiqueta ya es 4×6, mismo ratio → llena sin deformar */
+  display: block;
+}
+
+.et-wrap.is-off .etiqueta-fedex { opacity: .22; filter: grayscale(1); }
+.et-wrap.is-off .et-overlay { background: rgba(107,114,128,.92); }
+
+/* ── Impresión: una etiqueta por página, exacta, sin adornos de pantalla ── */
+@media print {
+  html, body { background: #fff; }
+  .toolbar, .selector-panel, .et-overlay { display: none !important; }
+  .sheet { padding: 0; gap: 0; }
+  .etiqueta-fedex {
+    box-shadow: none;
+    page-break-after: always;
+    break-after: page;
+  }
+  .et-wrap:last-child .etiqueta-fedex {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  /* Etiquetas desmarcadas: fuera de la impresión */
+  .et-wrap.is-off { display: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="tb-title">
+    <span class="fx">Fed<span>Ex</span></span>
+    <span>{{ titulo or 'Etiquetas FedEx' }}</span>
+    {% if etiquetas %}<span class="badge">{{ etiquetas|length }} etiqueta{{ 's' if etiquetas|length != 1 else '' }}</span>{% endif %}
+  </div>
+  <div class="tb-actions">
+    {% if manifiesto %}
+    <a class="btn btn-back" href="{{ url_for('tr_manifiesto_detalle', mid=manifiesto.id) }}"><i class="bi bi-arrow-left"></i> Volver al manifiesto</a>
+    {% else %}
+    <a class="btn btn-back" href="javascript:window.close()"><i class="bi bi-x-lg"></i> Cerrar</a>
+    {% endif %}
+    {% if pdf_url %}
+    <a class="btn btn-pdf" href="{{ pdf_url }}" target="_blank" title="Descargar el PDF original de FedEx"><i class="bi bi-file-earmark-pdf-fill"></i> PDF original</a>
+    {% endif %}
+    {% if etiquetas %}
+    <button type="button" class="btn btn-print" onclick="window.print()"><i class="bi bi-printer-fill"></i> Imprimir (4×6)</button>
+    {% endif %}
+  </div>
+</div>
+
+{% if etiquetas %}
+<div class="selector-panel">
+  <div class="sp-head">
+    <div class="sp-title">
+      <i class="bi bi-sliders"></i>
+      <span>Qu&eacute; imprimir</span>
+    </div>
+    <div class="sp-counter">
+      Seleccionadas: <strong id="sp-cnt">{{ etiquetas|length }}</strong>
+      <span style="color:#9ca3af"> / {{ etiquetas|length }}</span>
+    </div>
+  </div>
+
+  {% if etiquetas|length > 1 %}
+  <div class="sp-quick">
+    <button type="button" class="sp-chip is-active" data-quick="all">
+      <i class="bi bi-check-all"></i> Todas ({{ etiquetas|length }})
+    </button>
+    <button type="button" class="sp-chip" data-quick="none">
+      <i class="bi bi-x-circle"></i> Ninguna
+    </button>
+    <button type="button" class="sp-chip" data-quick="invert">
+      <i class="bi bi-arrow-left-right"></i> Invertir
+    </button>
+  </div>
+  {% endif %}
+
+  <div class="sp-note">
+    <i class="bi bi-printer"></i>
+    <span>Al imprimir, en el di&aacute;logo elige <b>Tama&ntilde;o de papel: 100&times;150&nbsp;mm</b> (o "4×6") y
+    <b>M&aacute;rgenes: ninguno</b> / <b>Escala: 100%</b>. As&iacute; la etiqueta sale cortada
+    al tama&ntilde;o exacto, como la entrega FedEx. Para impresora t&eacute;rmica Zebra, selecciona
+    la impresora y deja la escala en 100%.</span>
+  </div>
+
+  {% if omitidas %}
+  <div class="sp-omit">
+    <b><i class="bi bi-exclamation-triangle-fill"></i> {{ omitidas|length }} sin previsualizar:</b>
+    {% for o in omitidas %}{{ o.doc }} ({{ o.motivo }}){{ ', ' if not loop.last }}{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if not etiquetas %}
+  <div class="empty">
+    <i class="bi bi-inbox"></i>
+    <h2 style="margin:.4em 0 .2em">Sin etiquetas FedEx para imprimir</h2>
+    <p>Ninguno de los env&iacute;os de este manifiesto tiene etiqueta FedEx en formato imprimible (PDF/PNG).</p>
+    {% if omitidas %}
+    <p style="font-size:13px;color:#9a3412">
+      {% for o in omitidas %}<div>{{ o.doc }} — {{ o.motivo }}</div>{% endfor %}
+    </p>
+    {% endif %}
+  </div>
+{% else %}
+<div class="sheet" id="sheet">
+  {% for e in etiquetas %}
+  <div class="et-wrap" data-item="{{ e.item_id }}">
+    <div class="et-overlay">
+      <input type="checkbox" id="ck-{{ e.item_id }}" checked>
+      <label for="ck-{{ e.item_id }}">
+        {{ e.doc }} · {{ e.cliente }}{% if e.comuna %} · {{ e.comuna }}{% endif %}
+      </label>
+    </div>
+    <div class="etiqueta-fedex">
+      <img src="{{ e.img }}" alt="Etiqueta FedEx {{ e.doc }}" loading="lazy">
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script>
+(function() {
+  var wraps = Array.from(document.querySelectorAll(".et-wrap"));
+  var cntEl = document.getElementById("sp-cnt");
+  var total = wraps.length;
+
+  function refresh() {
+    var on = 0;
+    wraps.forEach(function(w) {
+      var ck = w.querySelector('input[type=checkbox]');
+      if (ck && ck.checked) { w.classList.remove("is-off"); on++; }
+      else { w.classList.add("is-off"); }
+    });
+    if (cntEl) cntEl.textContent = on;
+    document.querySelectorAll(".sp-chip[data-quick]").forEach(function(c){ c.classList.remove("is-active"); });
+    if (on === total) {
+      var a = document.querySelector('.sp-chip[data-quick="all"]'); if (a) a.classList.add("is-active");
+    } else if (on === 0) {
+      var n = document.querySelector('.sp-chip[data-quick="none"]'); if (n) n.classList.add("is-active");
+    }
+  }
+  function setAll(state) {
+    wraps.forEach(function(w){ var ck = w.querySelector('input[type=checkbox]'); if (ck) ck.checked = state; });
+    refresh();
+  }
+  function invert() {
+    wraps.forEach(function(w){ var ck = w.querySelector('input[type=checkbox]'); if (ck) ck.checked = !ck.checked; });
+    refresh();
+  }
+
+  document.querySelectorAll(".sp-chip").forEach(function(chip) {
+    chip.addEventListener("click", function() {
+      var q = chip.dataset.quick;
+      if (q === "all") setAll(true);
+      else if (q === "none") setAll(false);
+      else if (q === "invert") invert();
+    });
+  });
+  wraps.forEach(function(w) {
+    var ck = w.querySelector('input[type=checkbox]');
+    if (ck) ck.addEventListener("change", refresh);
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>
