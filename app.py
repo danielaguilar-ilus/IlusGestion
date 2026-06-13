@@ -15272,6 +15272,12 @@ def _fedex_create_shipment(
     notify_email: str = "",
     notify_name: str = "",
     pickup_type: str = "USE_SCHEDULED_PICKUP",
+    # Auto-fallback a OTs individuales si FedEx solo devuelve 1 etiqueta para
+    # >1 bultos (FedEx CL doméstico a veces no entrega las N etiquetas en MPS,
+    # ni como N PDFs separados ni como PDF multipágina). En ese caso cancela
+    # la MPS recién creada y hace N llamadas con 1 paquete c/u para garantizar
+    # que las N etiquetas (1/N, 2/N, …, N/N) realmente bajen.
+    auto_fallback_individual: bool = True,
 ) -> dict:
     """Crea un envío FedEx y devuelve tracking number + etiqueta en base64.
 
@@ -15336,18 +15342,42 @@ def _fedex_create_shipment(
     # Si llegó un código (2-4 chars), resolver contra TABCM del ERP.
     if 2 <= len(rec_comuna_raw) <= 4:
         try:
-            rec_comuna_raw = _resolve_comuna_erp(rec_comuna_raw) or rec_comuna_raw
+            resolved = _resolve_comuna_erp(rec_comuna_raw) or ""
+            # Si _resolve_comuna_erp devolvió lo mismo que entró (no encontró
+            # match en TABCM), intentamos con la tabla externa de Chile
+            # (cl_codigos_postales) que conoce 481 comunas.
+            if (not resolved or resolved.upper() == rec_comuna_raw.upper()):
+                try:
+                    cand = _cl_resolve_short_code(rec_comuna_raw,
+                                                  region_hint=recipient.get("region"))
+                    if cand:
+                        resolved = cand
+                except Exception:
+                    pass
+            if resolved:
+                rec_comuna_raw = resolved
         except Exception:
             pass
     rec_comuna   = _fedex_clean_str(rec_comuna_raw, 35) or "Santiago"
     # Código postal de destino: primero el que viene en el recipient; si está
-    # vacío o inválido, caer al mapping comuna → CP de Chile (TALCA → 3460000,
-    # COPIAPO → 1530000, etc.) que ya existía en el código. FedEx CL rechaza el
-    # envío con "código postal no válido para el país" si no llega un CP de 7
-    # dígitos coherente con CL.
+    # vacío o inválido, caer al mapping comuna → CP de Chile. Cadena de fallbacks:
+    #   1) recipient.cod_postal (lo más confiable si vino del cliente)
+    #   2) dict hardcoded _comuna_to_postal (38 comunas grandes)
+    #   3) tabla externa _codigo_postal_chile (481 comunas, incluye CARAHUE,
+    #      TALCA, COPIAPO, comunas chicas, etc.)
+    # FedEx CL rechaza el envío con "código postal no válido para el país" si no
+    # llega un CP de 7 dígitos coherente con CL.
     rec_postal   = _fedex_postal_cl(recipient.get("cod_postal"))
     if not rec_postal:
         rec_postal = _fedex_postal_cl(_comuna_to_postal(rec_comuna))
+    if not rec_postal:
+        # Fallback final: tabla externa con 481 comunas (incluye CARAHUE).
+        try:
+            cp_ext = _codigo_postal_chile(rec_comuna)
+            if cp_ext:
+                rec_postal = _fedex_postal_cl(cp_ext)
+        except Exception:
+            pass
 
     shipper_dir = _fedex_split_address(ILUS_REMITENTE.get("bodega") or ILUS_REMITENTE["direccion"])
 
@@ -15585,6 +15615,56 @@ def _fedex_create_shipment(
     except Exception:
         pass
 
+    # ── Auto-fallback CRÍTICO: MPS sin todas las etiquetas → N OTs individuales
+    # Si FedEx CL doméstico devolvió menos etiquetas que bultos (típicamente 1
+    # etiqueta para N), cancelamos esta MPS y hacemos N llamadas con 1 paquete
+    # cada una. Cada llamada SÍ devuelve su etiqueta (es un mono-bulto), así que
+    # el resultado final es N TNs + N etiquetas (1/N, 2/N, ..., N/N).
+    # auto_fallback_individual=False evita recursión cuando entramos desde
+    # _fedex_create_individual_pieces.
+    n_packages = len(packages)
+    if (auto_fallback_individual and n_packages > 1
+            and len(piece_labels) < n_packages):
+        try:
+            print(f"[FEDEX FALLBACK] MPS entregó {len(piece_labels)} etiquetas "
+                  f"para {n_packages} bultos — disparando OTs individuales", flush=True)
+        except Exception:
+            pass
+        # Cancelar la MPS mal armada para evitar cargo duplicado.
+        try:
+            _fedex_cancel_shipment(master_tn)
+        except Exception as e_cancel:
+            try:
+                print(f"[FEDEX FALLBACK] no se pudo cancelar MPS {master_tn}: "
+                      f"{type(e_cancel).__name__}", flush=True)
+            except Exception:
+                pass
+        ind_res = _fedex_create_individual_pieces(
+            recipient=recipient,
+            packages=packages,
+            reference=reference,
+            ship_date=ship_date,
+            service_type=service_type,
+            label_format=label_format,
+            label_stock=label_stock,
+            notify_email=notify_email,
+            notify_name=notify_name,
+            pickup_type=pickup_type,
+        )
+        # Si el fallback funcionó (al menos 1 OT individual creada), devolvemos
+        # eso. Si falló totalmente, devolvemos el resultado MPS original con
+        # warning para que el operador re-emita manualmente.
+        if ind_res.get("ok"):
+            ind_res["_fallback_from_mps"] = {
+                "original_master_tn": master_tn,
+                "mps_labels":         len(piece_labels),
+                "mps_pieces":         n_packages,
+            }
+            return ind_res
+        # Si el fallback falló, dejamos el MPS original (con 1 etiqueta) para
+        # que al menos algo se vea, pero marcamos el debug.
+        debug["fallback_individual_error"] = ind_res.get("error", "")[:160]
+
     return {
         "ok":                       True,
         "master_tracking_number":   master_tn,
@@ -15595,6 +15675,105 @@ def _fedex_create_shipment(
         "service_type":             service_type,
         "label_format":             label_format,
         "_debug":                   debug,
+    }
+
+
+def _fedex_create_individual_pieces(
+    *,
+    recipient: dict,
+    packages: list,
+    reference: str = "",
+    ship_date: str = None,
+    service_type: str = None,
+    label_format: str = "PDF",
+    label_stock: str = "STOCK_4X6",
+    notify_email: str = "",
+    notify_name: str = "",
+    pickup_type: str = "USE_SCHEDULED_PICKUP",
+) -> dict:
+    """Crea N OTs FedEx SEPARADAS, una por bulto (1 paquete cada llamada).
+
+    Modo de operación cuando FedEx CL no entrega las N etiquetas en MPS.
+    Cada bulto se transforma en un envío independiente con SU propio tracking
+    y SU propia etiqueta — el cliente recibe N etiquetas con N TNs y FedEx
+    los procesa por separado. Resultado combinado para que el caller (que
+    espera el formato MPS) no necesite saber qué pasó por debajo:
+        master_tracking_number = primer TN
+        piece_trackings        = [TN1, TN2, ..., TNn]
+        piece_labels           = [{tracking_number, label_b64}, ...]
+        _mode                  = "individual"
+
+    Costo: 1 llamada por bulto (N llamadas FedEx). Cada una tiene su tarifa
+    base. Es MÁS caro que un MPS verdadero, pero garantiza las etiquetas.
+    """
+    if not packages:
+        return {"ok": False, "error": "packages vacío"}
+    all_pieces  = []   # tracking numbers
+    all_labels  = []   # [{tracking_number, label_b64}, ...]
+    raw_labels  = []   # [label_b64, ...] (para debug / si pides el master)
+    errors      = []
+    n_tot = len(packages)
+    for idx, pkg in enumerate(packages, start=1):
+        # Referencia por bulto: "FCV 12345 1/3"
+        ref_i = (reference or "").strip()
+        if ref_i:
+            ref_i = f"{ref_i} {idx}/{n_tot}"
+        # OJO: notificación por email solo en la 1ª pieza (evita N emails al
+        # cliente).
+        ne = notify_email if idx == 1 else ""
+        nn = notify_name  if idx == 1 else ""
+        res_i = _fedex_create_shipment(
+            recipient=recipient,
+            packages=[pkg],
+            reference=ref_i,
+            ship_date=ship_date,
+            service_type=service_type,
+            label_format=label_format,
+            label_stock=label_stock,
+            notify_email=ne,
+            notify_name=nn,
+            pickup_type=pickup_type,
+            auto_fallback_individual=False,   # crítico: evita recursión
+        )
+        if not res_i.get("ok"):
+            errors.append({
+                "bulto": f"{idx}/{n_tot}",
+                "error": (res_i.get("error") or "")[:140],
+            })
+            continue
+        tn_i = res_i.get("master_tracking_number") or ""
+        if not tn_i:
+            errors.append({"bulto": f"{idx}/{n_tot}",
+                           "error": "FedEx no devolvió tracking number"})
+            continue
+        all_pieces.append(tn_i)
+        # Etiqueta: preferir piece_labels[0], si no, el master_label_b64.
+        pl = res_i.get("piece_labels") or []
+        b64_i = ""
+        if pl and pl[0].get("label_b64"):
+            b64_i = pl[0]["label_b64"]
+        elif res_i.get("label_b64"):
+            b64_i = res_i["label_b64"]
+        if b64_i:
+            all_labels.append({"tracking_number": tn_i, "label_b64": b64_i})
+            raw_labels.append(b64_i)
+    if not all_pieces:
+        # Todos fallaron — devolver el primer error como mensaje.
+        first_err = (errors[0]["error"] if errors else "FedEx no creó ningún envío")
+        return {"ok": False, "error": first_err, "_errors_individual": errors}
+    return {
+        "ok":                       True,
+        "master_tracking_number":   all_pieces[0],
+        "piece_trackings":          all_pieces,
+        "label_b64":                raw_labels[0] if raw_labels else "",
+        "piece_labels":             all_labels,
+        "shipment_id":              "",
+        "service_type":             service_type or "",
+        "label_format":             label_format,
+        "_mode":                    "individual",
+        "_n_requested":             n_tot,
+        "_n_succeeded":             len(all_pieces),
+        "_errors_individual":       errors,
     }
 
 
@@ -24962,6 +25141,62 @@ def _cl_norm_comuna(s):
     s = _re.sub(r"[^a-z0-9 ]+", " ", s)
     s = _re.sub(r"\s+", " ", s).strip()
     return s
+
+def _cl_resolve_short_code(code, region_hint=""):
+    """Resuelve un código CMEN corto del ERP (ej. 'TAL', 'COP', 'CAR') al nombre
+    completo de la comuna usando la tabla externa cl_codigos_postales.
+
+    Si hay ambigüedad (ej. TAL = TALCA o TALAGANTE), usa region_hint para decidir.
+    Si no, devuelve la primera coincidencia por starts-with.
+
+    Usado como último fallback cuando _resolve_comuna_erp falló (TABCM no cargó
+    o no tiene la comuna). Devuelve nombre completo (con primera letra mayúscula)
+    o "" si no resuelve.
+    """
+    global _CL_POSTAL_CACHE
+    if _CL_POSTAL_CACHE is None:
+        try:
+            from cl_codigos_postales import CODIGOS_POSTALES_CL
+            _CL_POSTAL_CACHE = CODIGOS_POSTALES_CL
+        except Exception:
+            _CL_POSTAL_CACHE = {}
+    if not _CL_POSTAL_CACHE or not code:
+        return ""
+    pfx = str(code).strip().lower()
+    if len(pfx) < 2:
+        return ""
+    candidates = [k for k in _CL_POSTAL_CACHE.keys() if k.startswith(pfx)]
+    if not candidates:
+        return ""
+    if len(candidates) == 1:
+        return candidates[0].title()
+    # Múltiples candidatos (ej. TAL → TALAGANTE, TALCA, TALCAHUANO).
+    # Si tenemos hint de región, usamos un mapeo conocido.
+    region_hint_low = (region_hint or "").strip().lower()
+    REGION_HINTS = {
+        # comuna_lower → keywords de región esperadas (cualquiera matchea)
+        "talca":      ["maule", "vii", "07", "7"],
+        "talagante":  ["metropolitana", "rm", "santiago", "xiii", "13"],
+        "talcahuano": ["bio", "biobio", "viii", "08", "8"],
+        "copiapo":    ["atacama", "iii", "03", "3"],
+        "carahue":    ["araucania", "ix", "09", "9", "cautin"],
+        "valparaiso": ["valparaiso", "v", "05", "5"],
+        "valdivia":   ["rios", "los rios", "xiv", "14"],
+    }
+    if region_hint_low:
+        for cand in candidates:
+            hints = REGION_HINTS.get(cand.lower(), [])
+            if any(h in region_hint_low for h in hints):
+                return cand.title()
+    # Sin región (o sin hint útil): devolver la primera por orden alfabético.
+    # En la práctica TAL → talagante alfabéticamente, NO es lo ideal para Talca.
+    # Damos prioridad a la candidata más "esperada" si está en REGION_HINTS.
+    PRIORITY = ["talca", "copiapo", "valparaiso", "valdivia", "talcahuano"]
+    for p in PRIORITY:
+        if p in candidates:
+            return p.title()
+    return candidates[0].title()
+
 
 def _codigo_postal_chile(comuna):
     """Devuelve el código postal de una comuna chilena para la carga masiva

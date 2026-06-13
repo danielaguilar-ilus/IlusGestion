@@ -95,6 +95,18 @@
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
     </a>
     {% if es_fedex %}
+    {# Botón premium destacado: imprimir TODAS las etiquetas FedEx del manifiesto.
+       Solo visible si hay al menos 1 OT FedEx emitida (no muestra si todas están "sin OT"). #}
+    {% set n_con_ot = items|selectattr('master_tracking_number')|reject('equalto', None)|list|length %}
+    {% if n_con_ot > 0 %}
+    <button class="btn btn-sm mfd-btn-print-all fw-bold"
+            onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/print', '_blank')"
+            title="Vista imprimible 4×6 (100×150mm) con todas las etiquetas oficiales FedEx del manifiesto, una por bulto">
+      <i class="bi bi-printer-fill me-1"></i>
+      Imprimir etiquetas
+      <span class="mfd-print-badge">{{ tot_bultos or n_con_ot }}</span>
+    </button>
+    {% endif %}
     <div class="dropdown">
       <button class="btn btn-sm btn-ilus-fedex fw-bold dropdown-toggle" data-bs-toggle="dropdown">
         <i class="bi bi-truck-front me-1"></i>FedEx
@@ -1288,6 +1300,32 @@
 }
 .mfd-btn-labels:hover{ background:#000; color:#fff; transform:translateY(-1px); }
 .mfd-btn-labels:active{ transform:scale(.97); }
+/* Botón premium "Imprimir todas las etiquetas" — destacado con badge del total */
+.mfd-btn-print-all{
+  background:linear-gradient(135deg,#dc2626 0%,#991b1b 100%);
+  color:#fff !important; border:none; border-radius:8px;
+  font-weight:800; padding:.42rem .85rem .42rem .8rem;
+  display:inline-flex; align-items:center; gap:6px;
+  box-shadow:0 4px 14px -6px rgba(220,38,38,.55);
+  transition:transform .12s, box-shadow .15s, filter .15s;
+  letter-spacing:.2px;
+}
+.mfd-btn-print-all:hover{
+  transform:translateY(-1px);
+  box-shadow:0 6px 18px -6px rgba(220,38,38,.7);
+  filter:brightness(1.05);
+  color:#fff !important;
+}
+.mfd-btn-print-all:active{ transform:scale(.97); }
+.mfd-btn-print-all i{ font-size:1rem; }
+.mfd-print-badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,.22); color:#fff;
+  font-size:.72rem; font-weight:900;
+  min-width:22px; height:20px; padding:0 7px;
+  border-radius:999px; margin-left:4px;
+  letter-spacing:.3px;
+}
 /* Botón OTs FedEx */
 .btn-ilus-fedex{
   background:#4d148c; color:#fff; border:none; border-radius:6px;
