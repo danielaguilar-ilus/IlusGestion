@@ -1,74 +1,25 @@
 # ════════════════════════════════════════════════════════════════════
-#  ⚠️  NIXPACKS.TOML — CONFIGURACIÓN DE BUILD DE RAILWAY
+#  NIXPACKS.TOML — RAILWAY = SOLO REDIRECTOR A GOOGLE  (2026-06-13)
 # ════════════════════════════════════════════════════════════════════
+#  Railway dejó de correr la app completa: ahora SOLO reenvía el link
+#  viejo (web-production-85732.up.railway.app) al nuevo de Google
+#  (https://ilus-app-469212710544.southamerica-west1.run.app), preservando
+#  ruta + query. La lógica está en railway_redirect.py.
 #
-#  🔴 NO CREAR railway.toml NI railpack.toml — los deploys fallaban con
-#     "pip: command not found" (ver commit 43f91f5).
+#  POR QUÉ: la app completa (requirements.txt con greenlet/pymssql/GCS +
+#  Chromium de playwright) NO levantaba en el build de Railway → 502
+#  constante. El redirector solo necesita flask + gunicorn → build rápido
+#  y a prueba de fallos.
 #
-#  Estrategia anti-frágil para Chromium:
-#    1. Build descarga Chromium en /app/.pw-browsers (path FIJO).
-#    2. La env var PLAYWRIGHT_BROWSERS_PATH se setea con [variables]
-#       (afecta build Y runtime).
-#    3. app.py también fuerza `os.environ.setdefault(...)` al inicio
-#       como cinturón + tirante. Esto garantiza que aunque Railway
-#       no propague la var a gunicorn, Python la setea antes que
-#       playwright se importe.
-#    4. Si el build falla descargando, app.py tiene auto-install
-#       en runtime (_pw_install_chromium_runtime) que reintenta.
+#  ⚠️  ESTE ARCHIVO LO USA SOLO RAILWAY. Google Cloud Run usa el Dockerfile
+#      y la app completa (`app:app`) — NO toca este archivo. No mezclar.
+#  🔴 NO crear railway.toml ni railpack.toml (rompía con "pip: command not
+#     found" — ver commit 43f91f5).
+#  Cambiar destino sin tocar código: env var ILUS_REDIRECT_TO en Railway.
 # ════════════════════════════════════════════════════════════════════
 
 [phases.install]
-cmds = [
-  "pip install -r requirements.txt",
-  # Crear el directorio explícitamente antes del install
-  "mkdir -p /app/.pw-browsers",
-  # Instalar Chromium en el path fijo (no en /root/.cache donde no llega gunicorn)
-  "PLAYWRIGHT_BROWSERS_PATH=/app/.pw-browsers playwright install chromium --with-deps || (echo '[BUILD WARN] playwright install falló — runtime hará fallback' && true)",
-  # Mostrar lo que se instaló para debug visible en logs Railway
-  "ls -la /app/.pw-browsers/ || echo '(directorio vacío)'",
-]
-
-[variables]
-PLAYWRIGHT_BROWSERS_PATH = "/app/.pw-browsers"
-
-# ════════════════════════════════════════════════════════════════════
-#  ⚠️  START COMMAND — FORZAR GUNICORN (no Flask dev server)
-# ════════════════════════════════════════════════════════════════════
-#
-#  HALLAZGO 2026-05-17: los deploys anteriores corrían con Flask dev
-#  server (warning "Debugger is active! Debugger PIN: ..." en logs).
-#  Esto era CRÍTICO:
-#    1. Debugger expuesto en producción — riesgo de seguridad alto
-#       (cualquiera con el PIN puede ejecutar código arbitrario)
-#    2. Sin workers — 1 thread, no escala
-#    3. Restarting with stat — causaba 502 transitorios
-#
-#  Aunque Procfile dice "web: gunicorn ..." Nixpacks usa auto-detection
-#  para Python y prefiere `python app.py` si encuentra
-#  `if __name__ == "__main__"`. Este bloque [start] OVERRIDE eso.
-#
-#  Workers: 2 (proud-endurance es plan Hobby; con plan Pro subir a 4).
-#  Threads: 8 por worker → 16 reqs concurrentes (--threads activa
-#  worker class gthread). Subido de 4 → 8 (2026-05-17 perf audit):
-#  app es I/O-bound (mysql + erp + cloudinary), no CPU-bound.
-#
-#  Timeout 120s (antes 300s): con MySQL ya optimizado (read_timeout=5,
-#  pool con ping=7) ningún request normal debería tardar >60s. Si lo
-#  hace, lo más probable es bug (loop infinito) y mejor matarlo que
-#  acumular workers colgados. PDFs Playwright suelen tardar 5-15s.
-#
-#  --max-requests 5000 + jitter 500 (subido 2026-05-18 perf audit): antes
-#  era 1000/100, lo que reciclaba workers cada ~10-30 min de tráfico
-#  moderado. Cada reciclaje paga el cold-start (272 ALTER TABLE + carga
-#  de módulos + first-request latency). 5000 reciclar cada ~1-2 horas
-#  es suficiente para mitigar leaks de Playwright sin matar perf.
-#  ALTERNATIVA: setear ILUS_SKIP_MIGRATIONS=1 en Railway env vars una
-#  vez que el schema esté estable — recorta cold-start de ~3s a <500ms.
-#
-#  --keep-alive 30 (subido de 5): el navegador puede reusar la TCP+TLS
-#  por 30s. Para una sesión activa de Daniel revisando OTs, esto evita
-#  ~6 handshakes TLS por minuto.
-# ════════════════════════════════════════════════════════════════════
+cmds = ["pip install flask gunicorn"]
 
 [start]
-cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --worker-class gthread --timeout 120 --graceful-timeout 30 --keep-alive 30 --max-requests 5000 --max-requests-jitter 500 --access-logfile - --error-logfile - app:app"
+cmd = "gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --access-logfile - --error-logfile - railway_redirect:app"
