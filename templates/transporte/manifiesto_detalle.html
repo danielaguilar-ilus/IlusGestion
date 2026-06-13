@@ -2001,7 +2001,7 @@ async function refrescarTrackingItem(itemId, btn) {
     var msg = 'FedEx: ' + (d.fedex_label || d.estado);
     if (d.changed) msg = '✓ Estado actualizado: ' + d.anterior + ' → ' + d.estado;
     ilusToast(msg, { type: d.changed ? 'success' : 'info' });
-    if (d.changed) setTimeout(function(){ location.reload(); }, 1200);
+    setTimeout(function(){ location.reload(); }, 1200);
   } catch(e) {
     ilusToast('Error de conexión', { type: 'error' });
   } finally {
@@ -2026,7 +2026,7 @@ async function refrescarTrackingManifiesto() {
     var msg = '✓ ' + d.polled + ' consulta(s) · ' + d.changed + ' cambio(s)';
     if (d.errores && d.errores.length) msg += ' · ' + d.errores.length + ' error(es)';
     ilusToast(msg, { type: d.changed ? 'success' : 'info' });
-    if (d.changed) setTimeout(function(){ location.reload(); }, 1500);
+    setTimeout(function(){ location.reload(); }, 1500);
   } catch(e) {
     ilusToast('Error de conexión', { type: 'error' });
   }
