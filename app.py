@@ -15145,9 +15145,9 @@ def _fedex_track_get_token() -> str:
 # Fuente: docs FedEx Track API REST v1 (statusCode).
 _FEDEX_STATUS_MAP = {
     # Pre-shipment
-    "OC": 'En preparación',        # Order Created (label generated, not yet picked up)
-    "PU": 'Entregado a transporte',# Picked Up
-    "AR": 'Entregado a transporte',# Arrived at FedEx location
+    "OC": 'Entregado a transporte', # Order Created — etiqueta creada, FedEx lo tiene en su sistema
+    "PU": 'Entregado a transporte', # Picked Up
+    "AR": 'Entregado a transporte', # Arrived at FedEx location
     "AF": 'Entregado a transporte',# At FedEx facility
     "DP": 'En ruta',               # Departed FedEx location
     # In transit
@@ -15192,7 +15192,7 @@ def _fedex_estado_a_ilus(status_code: str, description: str = "") -> str:
     if "exception" in desc or "delivery refused" in desc:
         return 'Entrega fallida'
     if "label created" in desc or "shipment information" in desc:
-        return 'En preparación'
+        return 'Entregado a transporte'
     return 'En ruta'   # default seguro: si FedEx tiene algo, está moviéndose
 
 
@@ -15268,7 +15268,7 @@ def _fedex_create_shipment(
     ship_date: str = None,
     service_type: str = None,
     label_format: str = "PDF",         # PDF | ZPLII | EPL2 | PNG
-    label_stock: str = "PAPER_4X6",    # PAPER_4X6 | STOCK_4X6
+    label_stock: str = "STOCK_4X6",    # STOCK_4X6 = térmica 100x150mm pura | PAPER_4X6 = hoja con marco
     notify_email: str = "",
     notify_name: str = "",
     pickup_type: str = "USE_SCHEDULED_PICKUP",
@@ -21930,7 +21930,7 @@ def tr_crear_ot_fedex(item_id):
         reference=(f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip(),
         service_type=body.get("service_type"),
         label_format=(body.get("label_format") or "PDF"),
-        label_stock=(body.get("label_stock") or "PAPER_4X6"),
+        label_stock=(body.get("label_stock") or "STOCK_4X6"),
         pickup_type=(body.get("pickup_type") or "USE_SCHEDULED_PICKUP"),
         notify_email=notify_email,
         notify_name=recipient.get("nombre"),
@@ -22044,7 +22044,7 @@ def tr_crear_ots_fedex_masivo(mid):
     common_opts = {
         "service_type":  body.get("service_type"),
         "label_format":  body.get("label_format") or "PDF",
-        "label_stock":   body.get("label_stock")  or "PAPER_4X6",
+        "label_stock":   body.get("label_stock")  or "STOCK_4X6",
         "pickup_type":   body.get("pickup_type")  or "USE_SCHEDULED_PICKUP",
         "notificar":     bool(body.get("notificar")),
     }
@@ -22294,7 +22294,7 @@ def tr_reemitir_ot_fedex(item_id):
         reference=(f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip(),
         service_type=body.get("service_type"),
         label_format=(body.get("label_format") or r.get("ship_label_format") or "PDF"),
-        label_stock=(body.get("label_stock") or "PAPER_4X6"),
+        label_stock=(body.get("label_stock") or "STOCK_4X6"),
         pickup_type=(body.get("pickup_type") or "USE_SCHEDULED_PICKUP"),
         notify_email=(recipient["email"] if body.get("notificar") else ""),
         notify_name=recipient.get("nombre"),
