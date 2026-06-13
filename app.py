@@ -20127,8 +20127,14 @@ def tr_commitment_logs(cid):
 def tr_manifiestos():
     # Filtros + búsqueda libre + paginación.
     # Búsqueda (q) matchea contra correlativo, courier y notas (LIKE %q%).
-    # page=1 default. Page size = 50 (balance entre fluidez y scroll mobile).
-    PAGE_SIZE = 50
+    # page=1 default. Page size dinámico (10/25/50/100) elegible por el usuario.
+    DEFAULT_PAGE_SIZE = 10
+    try:
+        page_size = int(request.args.get("page_size", DEFAULT_PAGE_SIZE))
+        if page_size not in (10, 25, 50, 100):
+            page_size = DEFAULT_PAGE_SIZE
+    except Exception:
+        page_size = DEFAULT_PAGE_SIZE
     filtros = {
         "courier": request.args.get("courier", "").strip(),
         "estado":  request.args.get("estado", "").strip(),
@@ -20150,21 +20156,31 @@ def tr_manifiestos():
         params.extend([q_like, q_like, q_like])
 
     where_sql = " AND ".join(where)
-    # Total para paginación (count separado, barato con WHERE indexado)
-    total_row = mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM transport_manifests WHERE " + where_sql,
+    # KPIs globales (respetan los filtros, NO la paginación)
+    kpi_row = mysql_fetchone(
+        "SELECT COUNT(*) AS total, "
+        "       COALESCE(SUM(total_items), 0) AS items, "
+        "       COALESCE(SUM(costo_total), 0) AS costo, "
+        "       SUM(CASE WHEN estado='En preparación' THEN 1 ELSE 0 END) AS en_prep "
+        "  FROM transport_manifests WHERE " + where_sql,
         tuple(params)
     ) or {}
-    total = int(total_row.get("n") or 0)
-    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    total = int(kpi_row.get("total") or 0)
+    kpis = {
+        "total":    total,
+        "items":    int(kpi_row.get("items") or 0),
+        "costo":    float(kpi_row.get("costo") or 0),
+        "en_prep":  int(kpi_row.get("en_prep") or 0),
+    }
+    total_pages = max(1, (total + page_size - 1) // page_size)
     if page > total_pages:
         page = total_pages
 
-    offset = (page - 1) * PAGE_SIZE
+    offset = (page - 1) * page_size
     manifiestos = mysql_fetchall(
         "SELECT * FROM transport_manifests WHERE " + where_sql +
         " ORDER BY fecha DESC, id DESC LIMIT %s OFFSET %s",
-        tuple(params) + (PAGE_SIZE, offset)
+        tuple(params) + (page_size, offset)
     )
     return render_template(
         "transporte/manifiestos.html",
@@ -20172,11 +20188,12 @@ def tr_manifiestos():
         filtros=filtros,
         couriers=COURIERS,
         estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
+        kpis=kpis,
         paginacion={
             "page": page,
             "total_pages": total_pages,
             "total": total,
-            "page_size": PAGE_SIZE,
+            "page_size": page_size,
             "has_prev": page > 1,
             "has_next": page < total_pages,
         },
