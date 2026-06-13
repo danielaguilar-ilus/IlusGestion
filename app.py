@@ -2159,6 +2159,7 @@ def init_transporte_tables():
                     valor_neto      DECIMAL(14,2) DEFAULT 0,
                     valor_bruto     DECIMAL(14,2) DEFAULT 0,
                     costo_zz        DECIMAL(10,2) DEFAULT 0,
+                    costo_envio     DECIMAL(10,2) DEFAULT 0,
                     tiene_saldo     TINYINT(1) DEFAULT 1,
                     guia_numero     VARCHAR(20),
                     estado          VARCHAR(50) DEFAULT 'Pendiente',
@@ -2203,6 +2204,10 @@ def init_transporte_tables():
                 "ALTER TABLE transport_commitments ADD COLUMN cod_postal VARCHAR(20) NULL COMMENT 'Código postal destino (recipientPostcode FedEx)'",
                 "ALTER TABLE transport_commitments ADD COLUMN peso_export DECIMAL(10,3) DEFAULT 0 COMMENT 'Peso total kg para carga masiva (editable en manifiesto)'",
                 "ALTER TABLE transport_commitments ADD COLUMN n_bultos INT DEFAULT 1 COMMENT 'Nº de bultos/paquetes para carga masiva'",
+                # MIGRACIÓN 2026-06-13: monto del ENVÍO aislado (VANELI de la línea
+                # ZZENVIO). costo_zz sigue siendo el total de líneas ZZ; costo_envio
+                # es solo lo que se cobró por el flete — lo que el monitor muestra.
+                "ALTER TABLE transport_commitments ADD COLUMN costo_envio DECIMAL(10,2) DEFAULT 0 COMMENT 'Monto del envío: VANELI de la línea ZZENVIO'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -17207,6 +17212,40 @@ def _parse_obdo(obdo: str) -> dict:
     return result
 
 
+# Tokens de ruido típicos en la parte local de un email (no son nombre).
+_EMAIL_NOISE_TOKENS = {
+    "fb", "ig", "tw", "site", "web", "mail", "email", "cl", "com", "net",
+    "gmail", "hotmail", "yahoo", "outlook", "live", "icloud", "duocuc",
+}
+# Buzones genéricos: no representan a una persona.
+_EMAIL_GENERIC_LOCAL = {
+    "info", "ventas", "contacto", "compras", "hola", "soporte", "admin",
+    "noreply", "no-reply", "cobranza", "facturacion", "pagos", "gerencia",
+}
+
+
+def _name_from_email(email: str) -> str:
+    """Deriva un nombre legible desde la parte local de un email cuando el ERP
+    NO entrega entidad (boletas web a consumidor final, ~75% de las BLV).
+
+    Ej: 'scarleth.ortiz.urra@gmail.com' -> 'Scarleth Ortiz Urra'.
+    Devuelve '' si la parte local no parece nombre de persona
+    (buzón genérico tipo 'ventas@', o un handle puramente numérico)."""
+    if not email or "@" not in email:
+        return ""
+    import re as _re
+    local = email.split("@", 1)[0].strip().lower()
+    if not local or local in _EMAIL_GENERIC_LOCAL:
+        return ""
+    out = []
+    for p in _re.split(r"[._\-+]+", local):
+        p = _re.sub(r"\d+$", "", p)          # 'juan2024' -> 'juan'
+        if len(p) >= 2 and p.isalpha() and p not in _EMAIL_NOISE_TOKENS:
+            out.append(p.capitalize())
+    nombre = " ".join(out[:3])
+    return nombre if len(nombre) >= 3 else ""
+
+
 # ════════════════════════════════════════════════════════════════════════
 # NORMALIZADOR ERP RANDOM — UNA SOLA FUENTE DE VERDAD
 # ════════════════════════════════════════════════════════════════════════
@@ -17570,61 +17609,62 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             LTRIM(RTRIM(h.TIDO)) AS TIDO,
             LTRIM(RTRIM(h.NUDO)) AS NUDO,
             LTRIM(RTRIM(COALESCE(h.ENDO, ''))) AS ENDO,
-            LTRIM(RTRIM(COALESCE(h.SUENDO, ''))) AS SUENDO,
             h.FEEMDO,
             h.FEER,
-            -- Nombre del cliente con fallback en cascada:
-            --  1. MAEEN.NOKOENAMP (nombre largo registrado en entidades)
-            --  2. MAEEN.NOKOEN (nombre corto)
-            --  3. MAEEDO.SUENDO (subcliente del documento — clave para BLV
-            --     a consumidor final donde no hay ENDO en MAEEN)
-            --  4. string vacío si nada existe — Python pone el texto canónico
-            --     "Cliente no informado por ERP" (NO persistir "Consumidor final").
-            LTRIM(RTRIM(COALESCE(
-                NULLIF(LTRIM(RTRIM(en.NOKOENAMP)), ''),
-                NULLIF(LTRIM(RTRIM(en.NOKOEN)),    ''),
-                NULLIF(LTRIM(RTRIM(h.SUENDO)),     ''),
-                ''
-            ))) AS NOKOEN,
+            -- Nombre: se traen AMBOS campos de MAEEN y Python elige el primero
+            -- NO-placeholder (NOKOENAMP a veces trae 'BOLETA' tapando el nombre
+            -- real de NOKOEN). Si no hay entidad (boleta a consumidor final),
+            -- Python deriva el nombre desde el email del OBDO.
+            LTRIM(RTRIM(COALESCE(en.NOKOEN,    ''))) AS NOKOEN,
+            LTRIM(RTRIM(COALESCE(en.NOKOENAMP, ''))) AS NOKOENAMP,
             LTRIM(RTRIM(COALESCE(o.OBDO, o.TEXTO1, ''))) AS OBDO,
             LTRIM(RTRIM(COALESCE(o.DIENDESP, ''))) AS DIENDESP,
             COALESCE(h.VANEDO, 0) AS VANEDO,
             COALESCE(h.VABRDO, 0) AS VABRDO,
-            LTRIM(RTRIM(COALESCE(en.CMEN, ''))) AS COMUNA,
-            -- NUDGIA no existe como columna directa en MAEEDO de SQL Server.
-            -- 2026-05-20: dejamos string vacío. La lógica Python clasifica como
-            -- 'Pendiente' (sin guía) cuando NUDGIA='', y como 'Despachado parcial'
-            -- solo cuando hay valor. Para detectar guía-relacionada habría que
-            -- hacer JOIN a MAEDOREL o consultar otra tabla — fuera de scope ahora.
+            -- Comuna: código CMEN de la entidad + nombre real resuelto en TABCM.
+            -- La clave de TABCM es (KOCM, KOCI): el código se repite entre
+            -- ciudades (COL = Colina / Colbún / Colchane…), hay que desambiguar
+            -- con la ciudad (CIEN) de la entidad.
+            LTRIM(RTRIM(COALESCE(en.CMEN, ''))) AS CMEN,
+            LTRIM(RTRIM(COALESCE(tc.NOKOCM, ''))) AS COMUNA_NOMBRE,
+            -- NUDGIA no existe directo en SQL Server: '' → Python clasifica
+            -- 'Pendiente' (sin guía) vs 'Despachado parcial' (con valor).
             '' AS NUDGIA,
-            (SELECT COALESCE(SUM(d.CAPRCO1), 0)
-               FROM MAEDDO d
-              WHERE d.IDMAEEDO = h.IDMAEEDO
-                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS cant_total_zz,
-            (SELECT COALESCE(SUM(COALESCE(d.CAPRAD1, 0)), 0)
-               FROM MAEDDO d
-              WHERE d.IDMAEEDO = h.IDMAEEDO
-                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS cant_despachada_zz,
-            (SELECT COALESCE(SUM(
-                       CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0) > 0
-                            THEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0)
-                            ELSE 0 END), 0)
-               FROM MAEDDO d
-              WHERE d.IDMAEEDO = h.IDMAEEDO
-                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS saldo_zz,
-            (SELECT COALESCE(SUM(COALESCE(d.PPPRNE, 0)), 0)
-               FROM MAEDDO d
-              WHERE d.IDMAEEDO = h.IDMAEEDO
-                AND UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})) AS costo_zz_sum,
-            STUFF(
-                (SELECT ',' + UPPER(LTRIM(RTRIM(d2.KOPRCT)))
-                   FROM MAEDDO d2
-                  WHERE d2.IDMAEEDO = h.IDMAEEDO
-                    AND UPPER(LTRIM(RTRIM(d2.KOPRCT))) IN ({zz_in})
-                  GROUP BY UPPER(LTRIM(RTRIM(d2.KOPRCT)))
-                  ORDER BY UPPER(LTRIM(RTRIM(d2.KOPRCT)))
-                  FOR XML PATH('')), 1, 1, '') AS zz_skus
+            zz.cant_total_zz,
+            zz.cant_despachada_zz,
+            zz.saldo_zz,
+            zz.costo_zz_sum,
+            zz.valor_envio,
+            zz.valor_retiro,
+            zz.zz_skus
         FROM MAEEDO h
+        -- PERF 2026-06-13: UNA sola agregación de MAEDDO por documento (GROUP BY)
+        -- en vez de 4 subqueries correlacionadas + EXISTS. El JOIN (no LEFT) ya
+        -- restringe a documentos con líneas ZZ. El costo sale de VANELI (valor
+        -- neto de la línea) — más exacto que PPPRNE (precio unitario) — y se
+        -- aísla el monto del ENVÍO (ZZENVIO) y del RETIRO (ZZRETIRO).
+        JOIN (
+            SELECT d.IDMAEEDO,
+                SUM(d.CAPRCO1) AS cant_total_zz,
+                SUM(COALESCE(d.CAPRAD1, 0)) AS cant_despachada_zz,
+                SUM(CASE WHEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0) > 0
+                         THEN d.CAPRCO1 - COALESCE(d.CAPRAD1, 0)
+                         ELSE 0 END) AS saldo_zz,
+                SUM(COALESCE(d.VANELI, 0)) AS costo_zz_sum,
+                SUM(CASE WHEN UPPER(LTRIM(RTRIM(d.KOPRCT))) = 'ZZENVIO'
+                         THEN COALESCE(d.VANELI, 0) ELSE 0 END) AS valor_envio,
+                SUM(CASE WHEN UPPER(LTRIM(RTRIM(d.KOPRCT))) = 'ZZRETIRO'
+                         THEN COALESCE(d.VANELI, 0) ELSE 0 END) AS valor_retiro,
+                STUFF((SELECT ',' + x.k FROM (
+                          SELECT DISTINCT UPPER(LTRIM(RTRIM(d2.KOPRCT))) AS k
+                            FROM MAEDDO d2
+                           WHERE d2.IDMAEEDO = d.IDMAEEDO
+                             AND UPPER(LTRIM(RTRIM(d2.KOPRCT))) IN ({zz_in})
+                      ) x ORDER BY x.k FOR XML PATH('')), 1, 1, '') AS zz_skus
+            FROM MAEDDO d
+            WHERE UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})
+            GROUP BY d.IDMAEEDO
+        ) zz ON zz.IDMAEEDO = h.IDMAEEDO
         LEFT JOIN MAEEDOOB o ON o.IDMAEEDO = h.IDMAEEDO
         LEFT JOIN MAEEN en ON LTRIM(RTRIM(en.RTEN)) =
               CASE
@@ -17632,30 +17672,25 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
                   THEN LTRIM(RTRIM(SUBSTRING(h.ENDO, 1, CHARINDEX('-', h.ENDO) - 1)))
                 ELSE LTRIM(RTRIM(COALESCE(h.ENDO, '')))
               END
+        OUTER APPLY (
+            SELECT TOP 1 t.NOKOCM FROM TABCM t
+             WHERE LTRIM(RTRIM(t.KOCM)) = LTRIM(RTRIM(en.CMEN))
+               AND LTRIM(RTRIM(t.KOCI)) = LTRIM(RTRIM(en.CIEN))
+        ) tc
         WHERE LTRIM(RTRIM(h.TIDO)) IN ({tido_in})
           AND h.FEEMDO >= %s
           AND h.FEEMDO <= %s
-          AND EXISTS (
-                SELECT 1 FROM MAEDDO d3
-                 WHERE d3.IDMAEEDO = h.IDMAEEDO
-                   AND UPPER(LTRIM(RTRIM(d3.KOPRCT))) IN ({zz_in})
-          )
           AND (h.ESDO IS NULL OR LTRIM(RTRIM(h.ESDO)) <> 'NULO')
         ORDER BY h.FEEMDO DESC
     """
 
-    # Params: 5 grupos de zz (4 subqueries + EXISTS + STUFF) + tidos + 2 fechas.
-    # Recuento por orden de aparición en el SQL:
-    #   subquery cant_total, cant_despachada, saldo, costo, STUFF, EXISTS  = 6
+    # Params (orden textual en el SQL): STUFF(zz) dentro de la agregación,
+    # WHERE de la agregación de MAEDDO (zz), tidos, 2 fechas.
     params = (
-        zz_list +  # cant_total_zz
-        zz_list +  # cant_despachada_zz
-        zz_list +  # saldo_zz
-        zz_list +  # costo_zz_sum
-        zz_list +  # STUFF (zz_skus)
+        zz_list +              # STUFF zz_skus dentro de la agregación
+        zz_list +              # WHERE de la agregación de MAEDDO
         list(TIDOS_VALIDOS) +
-        [fecha_desde, fecha_hasta] +
-        zz_list    # EXISTS
+        [fecha_desde, fecha_hasta]
     )
 
     try:
@@ -17707,22 +17742,42 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             endo  = "" if _erp_is_placeholder_rut(row.get("ENDO")) else (row.get("ENDO") or "").strip()
             # _erp_is_placeholder_name descarta placeholders, el canónico Y
             # códigos numéricos (SUENDO '000411' NO es un nombre de cliente).
-            _nom_raw = _erp_clean(row.get("NOKOEN"))
-            nombre = "" if _erp_is_placeholder_name(_nom_raw) else _nom_raw.title()
+            # ── Nombre del cliente ──────────────────────────────────────
+            # Probar NOKOEN (canónico) y NOKOENAMP (ampliado): quedarse con el
+            # PRIMERO que no sea placeholder. NOKOENAMP a veces trae 'BOLETA' y
+            # taparía el nombre real de NOKOEN, por eso NOKOEN va primero.
+            nombre = ""
+            for _cand in (row.get("NOKOEN"), row.get("NOKOENAMP")):
+                _c = _erp_clean(_cand)
+                if not _erp_is_placeholder_name(_c):
+                    nombre = _c.title()
+                    break
             obdo  = _erp_clean(row.get("OBDO"))
             parsed = _parse_obdo(obdo) if obdo else {"direccion":"","telefono":"","email":"","comuna":"","nombre":""}
-            # Nombre desde OBDO si quedó vacío (boletas a consumidor final)
+            # Nombre desde OBDO (formato 'Nombre - dirección …')
             if not nombre and parsed.get("nombre"):
                 nombre = parsed["nombre"].title()
+            # Último recurso ANTES del placeholder: derivar del email (boletas
+            # web a consumidor final — el ERP no registra entidad para ellas).
+            if not nombre and parsed.get("email"):
+                nombre = _name_from_email(parsed["email"])
             if not nombre:
                 nombre = ERP_NO_CLIENT
             dir_  = parsed["direccion"] or _erp_clean(row.get("DIENDESP"))
             tel   = parsed["telefono"]
             mail  = parsed["email"]
-            comuna = _erp_clean(row.get("COMUNA"))
+            # ── Comuna ──────────────────────────────────────────────────
+            # 1º el nombre real resuelto en TABCM (KOCM+KOCI); 2º la detectada
+            # en el OBDO (boletas sin entidad); 3º el código CMEN crudo.
+            comuna = (_erp_clean(row.get("COMUNA_NOMBRE"))
+                      or parsed.get("comuna", "")
+                      or _erp_clean(row.get("CMEN")))
+            if comuna and comuna.isupper():
+                comuna = comuna.title()   # 'COQUIMBO' -> 'Coquimbo'
             vneto  = float(row.get("VANEDO") or 0)
             vbruto = float(row.get("VABRDO") or 0)
-            costo_zz = float(row.get("costo_zz_sum") or 0)
+            costo_zz    = float(row.get("costo_zz_sum") or 0)   # total líneas ZZ (VANELI)
+            costo_envio = float(row.get("valor_envio") or 0)    # solo línea ZZENVIO
             guia  = (row.get("NUDGIA") or "").strip() or None
             cant_total      = float(row.get("cant_total_zz") or 0)
             cant_despachada = float(row.get("cant_despachada_zz") or 0)
@@ -17759,7 +17814,7 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
                 nombre, endo, comuna, dir_, tel, mail,
                 obdo[:2000] if obdo else None,
                 zz_present[:120] if zz_present else None,
-                vneto, vbruto, costo_zz,
+                vneto, vbruto, costo_zz, costo_envio,
                 tiene_saldo_flag, guia, clasif, estado_auto,
                 cobertura_pct, cant_total, cant_despachada,
                 _sync_now, 'sync', 'sync',
@@ -17794,11 +17849,11 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
            cliente_nombre,cliente_rut,
            comuna,direccion,telefono,email,
            observaciones,zz_skus,
-           valor_neto,valor_bruto,costo_zz,
+           valor_neto,valor_bruto,costo_zz,costo_envio,
            tiene_saldo,guia_numero,clasificacion,estado,
            cobertura_pct,cant_total_zz,cant_despachada_zz,
            erp_synced_at,created_by,updated_by)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
           fecha_emision =VALUES(fecha_emision),
           fecha_entrega =VALUES(fecha_entrega),
@@ -17813,6 +17868,7 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           valor_neto    =VALUES(valor_neto),
           valor_bruto   =VALUES(valor_bruto),
           costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
+          costo_envio   =VALUES(costo_envio),
           tiene_saldo   =VALUES(tiene_saldo),
           guia_numero   =VALUES(guia_numero),
           clasificacion =VALUES(clasificacion),
@@ -18214,6 +18270,7 @@ def tr_compromisos_json():
             "zz_skus":      r.get("zz_skus") or "",
             "estado":       r["estado"] or "Pendiente",
             "costo_zz":     float(r["costo_zz"] or 0),
+            "costo_envio":  float(r.get("costo_envio") or 0),
             "clasificacion":r["clasificacion"] or "despacho",
             "guia_numero":  r.get("guia_numero") or "",
             "cobertura_pct":float(r.get("cobertura_pct") or 0),
