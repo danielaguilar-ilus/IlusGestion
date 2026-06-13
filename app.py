@@ -21709,6 +21709,89 @@ def _tr_item_para_ship(item_id):
     return it, recipient, packages
 
 
+@app.route("/transporte/api/diagnostico/fedex", methods=["GET"])
+@_tr_required
+def tr_diag_fedex():
+    """Diagnóstico de credenciales FedEx Ship/Rate API (solo admin/superadmin).
+
+    Responde la pregunta '¿por qué FedEx dice que falta configuración?' SIN
+    exponer los valores secretos. Reporta:
+      - app_usa: lo que el PROCESO vivo está usando (globales leídas al arrancar)
+      - os_environ_ahora: lo que el CONTENEDOR tiene en os.environ en este momento
+        (si difiere de app_usa, las vars se cambiaron sin reiniciar el proceso)
+      - faltan: qué variables obligatorias están vacías
+      - token_test (solo con ?token=1): prueba REAL contra FedEx para confirmar
+        que las credenciales no solo están presentes sino que son VÁLIDAS.
+
+    Nunca devuelve el valor de un secreto: solo set/len/preview enmascarado.
+    """
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") not in ("admin", "superadmin"):
+        return jsonify({"ok": False, "error": "Solo admin/superadmin"}), 403
+
+    def _mask(v):
+        v = (v or "")
+        if not v:
+            return {"set": False, "len": 0, "preview": ""}
+        prev = (v[:2] + "…" + v[-2:]) if len(v) >= 6 else "•••"
+        # Detecta espacios accidentales al inicio/fin (causa típica de fallo).
+        return {"set": True, "len": len(v), "preview": prev,
+                "espacios_extra": (v != v.strip())}
+
+    obligatorias = ("FEDEX_RATE_CLIENT_ID", "FEDEX_RATE_CLIENT_SECRET", "FEDEX_ACCOUNT")
+    extras       = ("FEDEX_ORIGIN_POSTAL", "FEDEX_ORIGIN_CITY")
+
+    app_vals = {
+        "FEDEX_RATE_CLIENT_ID":     _mask(FEDEX_RATE_CLIENT_ID),
+        "FEDEX_RATE_CLIENT_SECRET": _mask(FEDEX_RATE_CLIENT_SECRET),
+        "FEDEX_ACCOUNT":            _mask(FEDEX_ACCOUNT),
+        "FEDEX_ORIGIN_POSTAL":      _mask(FEDEX_ORIGIN_POSTAL),
+        "FEDEX_ORIGIN_CITY":        _mask(FEDEX_ORIGIN_CITY),
+    }
+    env_now = {k: _mask(os.environ.get(k, "")) for k in (obligatorias + extras)}
+
+    faltan = [k for k in obligatorias if not app_vals[k]["set"]]
+    configurado = (len(faltan) == 0)
+
+    # ¿La env del contenedor difiere de lo que la app cargó al arrancar?
+    desfasado = any(
+        env_now[k]["set"] != app_vals[k]["set"] or env_now[k]["len"] != app_vals[k]["len"]
+        for k in obligatorias
+    )
+
+    out = {
+        "ok": True,
+        "configurado": configurado,
+        "faltan": faltan,
+        "app_usa": app_vals,
+        "os_environ_ahora": env_now,
+        "desfase_env_vs_proceso": desfasado,
+        "nota": ("Las credenciales se leen UNA sola vez al arrancar el proceso. "
+                 "Si cambiaste las env vars hay que generar una nueva revisión "
+                 "(redeploy o cambio de variable en Cloud Run) para que tomen "
+                 "efecto. En este proyecto el deploy sobrescribe TODAS las env "
+                 "vars con el secret GCP_ENV_VARS de GitHub: las variables FedEx "
+                 "DEBEN estar en ese secret para sobrevivir un deploy."),
+    }
+
+    if (request.args.get("token") or "") == "1":
+        if not configurado:
+            out["token_test"] = {"ok": False,
+                                 "error": "Credenciales incompletas; no se probó token."}
+        else:
+            try:
+                _fedex_token_cache["token"] = None
+                _fedex_token_cache["expires_at"] = 0
+                tok = _fedex_get_token()
+                out["token_test"] = {"ok": bool(tok),
+                                     "msg": "FedEx aceptó las credenciales (token OK)."}
+            except Exception as e:
+                out["token_test"] = {"ok": False,
+                                     "error": f"FedEx rechazó las credenciales: {str(e)[:240]}"}
+
+    return jsonify(out)
+
+
 @app.route("/transporte/api/items/<int:item_id>/crear-ot-fedex", methods=["POST"])
 @_tr_required
 def tr_crear_ot_fedex(item_id):
