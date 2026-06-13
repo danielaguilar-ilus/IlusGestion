@@ -14947,6 +14947,12 @@ FEDEX_RATE_CLIENT_SECRET = os.environ.get("FEDEX_RATE_CLIENT_SECRET", "").strip(
 FEDEX_ACCOUNT            = os.environ.get("FEDEX_ACCOUNT", "").strip()
 FEDEX_ORIGIN_POSTAL      = os.environ.get("FEDEX_ORIGIN_POSTAL", "9276181").strip()
 FEDEX_ORIGIN_CITY        = os.environ.get("FEDEX_ORIGIN_CITY", "Maipu").strip()
+# Declared value (seguro de carga) en la Ship API. FedEx Chile doméstico
+# rechaza ciertas monedas en este campo ("El tipo de moneda que seleccionó no
+# es válido"), por eso se OMITE por defecto y la OT se crea sin valor declarado
+# (cobertura estándar del courier). Para reactivar el seguro, setear
+# FEDEX_DECLARED_CURRENCY a una moneda que la cuenta acepte (ej. "CLP" o "USD").
+FEDEX_DECLARED_CURRENCY  = os.environ.get("FEDEX_DECLARED_CURRENCY", "").strip().upper()
 FEDEX_OAUTH_URL          = "https://apis.fedex.com/oauth/token"
 FEDEX_RATE_URL           = "https://apis.fedex.com/rate/v1/rates/quotes"
 
@@ -15351,10 +15357,15 @@ def _fedex_create_shipment(
         item = {
             "groupPackageCount": 1,
             "itemDescriptionForClearance": _fedex_clean_str(pkg.get("descripcion") or reference or "Mercaderia", 50),
-            "declaredValue": {"amount": f"{valor:.2f}", "currency": "CLP"},
             "weight":     {"units": "KG", "value": peso},
             "dimensions": {"length": largo, "width": ancho, "height": alto, "units": "CM"},
         }
+        # Valor declarado (seguro): OPCIONAL. Se incluye sólo si se configuró
+        # una moneda aceptada por la cuenta (FEDEX_DECLARED_CURRENCY). Si no, se
+        # omite para evitar el rechazo "El tipo de moneda no es válido" que
+        # bloquea la creación de la OT en Chile doméstico.
+        if FEDEX_DECLARED_CURRENCY and valor > 0:
+            item["declaredValue"] = {"amount": f"{valor:.2f}", "currency": FEDEX_DECLARED_CURRENCY}
         if reference:
             item["customerReferences"] = [
                 {"customerReferenceType": "CUSTOMER_REFERENCE", "value": _fedex_clean_str(reference, 30)},
