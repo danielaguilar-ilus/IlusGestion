@@ -2212,6 +2212,12 @@ def init_transporte_tables():
                 # MIGRACIÓN 2026-06-13: bandera Preventa. 1 cuando el doc tiene
                 # producto vendido sin stock físico suficiente (MAEPR.STFI1).
                 "ALTER TABLE transport_commitments ADD COLUMN preventa TINYINT(1) DEFAULT 0 COMMENT 'Preventa: producto sin stock fisico para cubrir lo pedido (MAEPR.STFI1)'",
+                # MIGRACIÓN 2026-06-14: índices para que la búsqueda del Monitor
+                # (por nº de documento, cliente o comuna) sea instantánea. Antes
+                # el LIKE sin índice forzaba full-scan de toda la tabla (>10s).
+                "ALTER TABLE transport_commitments ADD INDEX idx_nudo (nudo)",
+                "ALTER TABLE transport_commitments ADD INDEX idx_cliente_nombre (cliente_nombre)",
+                "ALTER TABLE transport_commitments ADD INDEX idx_comuna (comuna)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -13545,6 +13551,27 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
             _erpe.cmen_to_comuna("", cmen_line) if cmen_line else ""
         ) or cmen_line
 
+    # MOSTRAR la comuna LEGIBLE (fix encoding 2026-06-14):
+    # El SQL Server guarda Ñ como "¥" (CP850). Cuando _resolve_comuna_erp no
+    # encuentra el código en TABCM, devuelve el código CRUDO → el usuario veía
+    # "ÑU¥"/"¥U¥" en /asignar. Acá: si quedó un código sin resolver, reintentamos
+    # contra TABCM (probando el código crudo Y el decodificado) y SIEMPRE
+    # decodificamos ¥→Ñ para que jamás se muestre el carácter yen. El lookup
+    # contra el ERP sigue usando el código crudo (así está guardado en TABCM).
+    if comuna_final:
+        _cf = comuna_final.strip()
+        if ("¥" in _cf) or (2 <= len(_cf) <= 7):
+            for _cand in (_cf.upper(), _erpe.fix_yen_to_n(_cf).upper()):
+                _rs = _resolve_comuna_erp(_cand)
+                if _rs and _rs.upper() != _cand and "¥" not in (_rs or ""):
+                    comuna_final = _rs
+                    break
+        # Decodificar SOLO si quedó algún "¥" (fix_yen_to_n sobre un nombre ya
+        # correcto como "Ñuñoa" lo dañaría a "ñuñoa").
+        if "¥" in comuna_final:
+            comuna_final = _erpe.fix_yen_to_n(comuna_final)
+        comuna_final = comuna_final.strip()
+
     # ── Formatear fecha ─────────────────────────────────────────────────
     fecha_raw = header_row.get("E_FEEMDO")
     if fecha_raw:
@@ -20209,18 +20236,37 @@ def transporte_index():
         "fecha_hasta":   fecha_hasta,
     }
 
-    where, params = ["tiene_saldo=1"], []
-    if filtros["estado"]:
-        where.append("estado=%s"); params.append(filtros["estado"])
-    if filtros["clasificacion"]:
-        where.append("clasificacion=%s"); params.append(filtros["clasificacion"])
-    if filtros["q"]:
-        where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s)")
-        q = f"%{filtros['q']}%"; params += [q, q, q, q]
-    if filtros["fecha_desde"]:
-        where.append("fecha_emision >= %s"); params.append(filtros["fecha_desde"])
-    if filtros["fecha_hasta"]:
-        where.append("fecha_emision <= %s"); params.append(filtros["fecha_hasta"])
+    # ── Construcción del WHERE ──────────────────────────────────────────────
+    # Cuando el usuario BUSCA algo puntual (q), la búsqueda es GLOBAL: ignora
+    # tiene_saldo / fecha / clasificación, para que encuentre el documento
+    # exista donde exista (antes "no traía nada" porque esos filtros lo
+    # escondían: una factura ya entregada o más vieja que el rango quedaba
+    # fuera). Si NO hay q, se mantiene el comportamiento normal (pendientes
+    # con saldo en el rango de fechas).
+    q = (filtros["q"] or "").strip()
+    if q:
+        where, params = [], []
+        if q.isdigit():
+            # Nº de documento: match EXACTO (usa índice) cubriendo los ceros a
+            # la izquierda (el ERP guarda "0000021464"); + sufijo y cliente como
+            # red de seguridad para búsquedas parciales.
+            where.append("(nudo = %s OR nudo = LPAD(%s, 10, '0') "
+                         "OR nudo LIKE %s OR cliente_nombre LIKE %s)")
+            params += [q, q, f"%{q}", f"%{q}%"]
+        else:
+            where.append("(cliente_nombre LIKE %s OR comuna LIKE %s "
+                         "OR nudo LIKE %s OR tido LIKE %s)")
+            ql = f"%{q}%"; params += [ql, ql, ql, ql]
+    else:
+        where, params = ["tiene_saldo=1"], []
+        if filtros["estado"]:
+            where.append("estado=%s"); params.append(filtros["estado"])
+        if filtros["clasificacion"]:
+            where.append("clasificacion=%s"); params.append(filtros["clasificacion"])
+        if filtros["fecha_desde"]:
+            where.append("fecha_emision >= %s"); params.append(filtros["fecha_desde"])
+        if filtros["fecha_hasta"]:
+            where.append("fecha_emision <= %s"); params.append(filtros["fecha_hasta"])
 
     sql = ("SELECT * FROM transport_commitments WHERE " +
            " AND ".join(where) + " ORDER BY fecha_emision DESC LIMIT 500")
