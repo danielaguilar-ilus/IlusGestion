@@ -11,7 +11,7 @@
 {%- endmacro %}
 
 {# Badge clickeable de estado de entrega (reemplaza el <select>) #}
-{% macro estado_badge(estado, item_id) -%}
+{% macro estado_badge(estado, item_id, editable=True) -%}
   {%- set m = {
     'En preparación':         {'bg':'#6b7280', 'icon':'bi-clipboard-check'},
     'Entregado a transporte': {'bg':'#06b6d4', 'icon':'bi-truck-flatbed'},
@@ -20,16 +20,24 @@
     'Entrega fallida':        {'bg':'#dc2626', 'icon':'bi-x-octagon-fill'},
     'Devolución':             {'bg':'#f59e0b', 'icon':'bi-arrow-return-left'}
   }.get(estado, {'bg':'#6b7280', 'icon':'bi-question-circle'}) -%}
+  {# editable=False (envío FedEx, usuario no-admin): badge informativo, NO
+     clickeable. El estado lo mueve solo la Track API; el cambio manual queda
+     restringido a admin/superadmin (decisión Daniel 2026-06-14). #}
   <button type="button" class="badge-estado-entrega"
           id="badge-estado-{{ item_id }}"
           data-estado="{{ estado }}"
-          style="background:{{ m.bg }};color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:600;font-size:.82rem;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.12);transition:all .15s;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;line-height:1.1"
+          style="background:{{ m.bg }};color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:600;font-size:.82rem;cursor:{{ 'pointer' if editable else 'default' }};box-shadow:0 1px 3px rgba(0,0,0,.12);transition:all .15s;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;line-height:1.1"
+          {% if editable -%}
           onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 3px 8px rgba(0,0,0,.18)'"
           onmouseout="this.style.transform='';this.style.boxShadow='0 1px 3px rgba(0,0,0,.12)'"
           onclick='abrirEditarEstado({{ manifiesto.id }}, {{ item_id }}, {{ estado|tojson }})'
-          title="Click para cambiar el estado">
+          title="Click para cambiar el estado"
+          {%- else -%}
+          title="Este envío se actualiza solo con FedEx · el cambio manual es solo para administradores"
+          {%- endif %}>
     <i class="bi {{ m.icon }}"></i>
     <span>{{ estado }}</span>
+    {%- if not editable %} <i class="bi bi-lock-fill" style="font-size:.68rem;opacity:.75"></i>{% endif %}
   </button>
 {%- endmacro %}
 
@@ -40,6 +48,12 @@
   'Cerrado':'secondary',
   'Entregado completo':'success'
 }.get(manifiesto.estado, 'secondary') %}
+
+{# ── ¿Puede el usuario cambiar el estado a mano? ──
+   Los envíos FedEx se actualizan solos (Track API). El cambio manual en FedEx
+   queda restringido a admin/superadmin. En couriers manuales, todos pueden. #}
+{% set _es_admin = (current_user and (current_user.role in ('admin','superadmin'))) %}
+{% set puede_editar_estado = ((not es_fedex) or _es_admin) %}
 
 {# ── Totales financieros del manifiesto ── #}
 {% set tot_cobrado = items|sum(attribute='zz_envio') %}
@@ -421,7 +435,7 @@
             {% endif %}
           </td>
           <td onclick="event.stopPropagation()" style="min-width:180px">
-            {{ estado_badge(item.estado_entrega, item.id) }}
+            {{ estado_badge(item.estado_entrega, item.id, editable=puede_editar_estado) }}
             {% if es_fedex and item.get('master_tracking_number') and item.last_carrier_source == 'fedex' and item.last_carrier_poll_at %}
             <div class="text-muted text-center mt-1" style="font-size:.68rem;line-height:1.1">
               <i class="bi bi-broadcast me-1"></i>FedEx · {{ item.last_carrier_poll_at | chile_fmt }}
@@ -747,7 +761,7 @@
       </div>
 
       <div class="mt-2">
-        {{ estado_badge(item.estado_entrega, item.id) }}
+        {{ estado_badge(item.estado_entrega, item.id, editable=puede_editar_estado) }}
       </div>
 
       {% if es_fedex and item.get('master_tracking_number') %}
