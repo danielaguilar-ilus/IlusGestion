@@ -439,16 +439,29 @@
               <button type="button" class="btn-menu" onclick="toggleMenu(event, 'menu-{{ m.id }}')">
                 <i class="bi bi-three-dots-vertical"></i>
               </button>
+              {# Menú inteligente: para manifiestos FedEx ofrecemos las
+                 etiquetas OFICIALES FedEx (4×6 cortadas / PDF); para el resto,
+                 las etiquetas ILUS. Los endpoints ya existen en el backend. #}
+              {% set es_fedex = 'fedex' in (m.courier or '')|lower %}
               <div id="menu-{{ m.id }}" class="menu-dropdown">
                 <a href="{{ url_for('tr_manifiesto_detalle', mid=m.id) }}">
-                  <i class="bi bi-pencil-square"></i> Ver / editar
+                  <i class="bi bi-eye-fill"></i> Ver detalle
                 </a>
-                <a href="{{ url_for('tr_manifiesto_etiquetas', mid=m.id) }}">
-                  <i class="bi bi-tags-fill"></i> Etiquetas
+                {% if es_fedex %}
+                <a href="{{ url_for('tr_manifiesto_etiquetas_fedex_print', mid=m.id) }}" target="_blank">
+                  <i class="bi bi-printer-fill"></i> Imprimir etiquetas FedEx (4×6)
+                </a>
+                <a href="{{ url_for('tr_manifiesto_etiquetas_fedex_pdf', mid=m.id) }}" target="_blank">
+                  <i class="bi bi-file-earmark-pdf"></i> PDF FedEx (todas)
+                </a>
+                {% else %}
+                <a href="{{ url_for('tr_manifiesto_etiquetas', mid=m.id) }}" target="_blank">
+                  <i class="bi bi-tags-fill"></i> Etiquetas ILUS
                 </a>
                 <a href="{{ url_for('tr_manifiesto_etiquetas_pdf', mid=m.id) }}" target="_blank">
                   <i class="bi bi-file-earmark-pdf"></i> Etiquetas PDF
                 </a>
+                {% endif %}
               </div>
             </div>
           </td>
