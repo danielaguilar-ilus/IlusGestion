@@ -222,9 +222,9 @@ def register_pickup_routes(app, ctx):
     _send_whatsapp = ctx["_send_whatsapp"]
     # Brand config (Daniel 2026-05-23): para notificación al operador en
     # caso de que el cliente rechace la propuesta. Opcional — si no viene,
-    # caemos al default fijo "servicio.tecnico@ilusfitness.com".
+    # caemos al default fijo "soportetec@sphs.cl".
     _get_brand_cfg = ctx.get("_get_brand_cfg") or (
-        lambda: {"support_email": "servicio.tecnico@ilusfitness.com"}
+        lambda: {"support_email": "soportetec@sphs.cl"}
     )
     # Rate limiter de app.py (persistido en BD, cross-worker). Si no está
     # disponible (entorno de tests), creamos un no-op para no romper.
@@ -1441,7 +1441,7 @@ def register_pickup_routes(app, ctx):
                 try:
                     with app.app_context():
                         brand_cfg = _get_brand_cfg() or {}
-                        dest = brand_cfg.get("support_email") or "servicio.tecnico@ilusfitness.com"
+                        dest = brand_cfg.get("support_email") or "soportetec@sphs.cl"
                         if not dest:
                             return
                         code = _req.get("code") or "?"

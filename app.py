@@ -36,10 +36,10 @@ except ImportError:
         "name":          "ILUS Sport & Health",
         "from_name":     "ILUS",
         "from_email":    "no-reply@ilusfitness.com",
-        "reply_to":      "servicio.tecnico@ilusfitness.com",
+        "reply_to":      "soportetec@sphs.cl",
         "wa_name":       "ILUS",
-        "support_url":   "https://ilusfitness.com/soporte",
-        "support_email": "servicio.tecnico@ilusfitness.com",
+        "support_url":   "https://ilusfitness.com/pages/soporte-tecnico",
+        "support_email": "soportetec@sphs.cl",
     }
 try:
     from config import ANTHROPIC_API_KEY as _ANTHROPIC_KEY_CFG
@@ -6222,6 +6222,143 @@ def logout():
 #  Plantilla maestra ILUS para todos los correos
 # ─────────────────────────────────────────────
 
+# ══════════════════════════════════════════════════════════════════════
+#  ESTÁNDAR ÚNICO DE CORREOS ILUS (2026-06-14, Daniel — diseño aprobado)
+#  Header negro + logo 180px + borde rojo. Footer negro con botón "Crear
+#  ticket de soporte" → ilusfitness.com/pages/soporte-tecnico y soporte
+#  soportetec@sphs.cl. SIN "LIKE U STRONG", redes ni correos personales.
+#  Renderiza por f-string (no depende de contexto Flask → sirve en cron).
+# ══════════════════════════════════════════════════════════════════════
+
+ILUS_SOPORTE_EMAIL = "soportetec@sphs.cl"
+ILUS_SOPORTE_URL = "https://ilusfitness.com/pages/soporte-tecnico"
+
+
+def _ilus_email_rows(pairs) -> str:
+    """Filas clave/valor (HTML) para el bloque de detalles del correo maestro.
+    pairs = [(label, value), ...]. Escapa cada celda. Omite valores vacíos."""
+    from markupsafe import escape as _esc
+    out = []
+    for label, value in (pairs or []):
+        if value is None or str(value).strip() == "":
+            continue
+        out.append(
+            '<tr>'
+            '<td class="email-detail-label" style="padding:7px 0;font-size:13px;'
+            'line-height:19px;color:#282d33;font-weight:700;vertical-align:top;width:150px">'
+            f'{_esc(label)}</td>'
+            '<td class="email-detail-value" style="padding:7px 0 7px 14px;font-size:13px;'
+            f'line-height:19px;color:#515862;vertical-align:top">{_esc(value)}</td>'
+            '</tr>'
+        )
+    return "".join(out)
+
+
+def _ilus_email_master(ctx: dict) -> str:
+    """Render ÚNICO del estándar de correo ILUS. Devuelve documento HTML completo.
+    ctx: subject, preheader, status_label, title, subtitle, customer_name,
+    message (HTML safe), detail_rows_html (HTML safe), primary_cta_url,
+    primary_cta_label, closing_message, support_email, year, logo_url.
+    Texto se escapa; message/detail_rows_html/closing los provee el caller (safe)."""
+    from markupsafe import escape as _esc
+    ctx = dict(ctx or {})
+    try:
+        _marca = _get_marca()
+    except Exception:
+        _marca = {}
+    logo_url = (ctx.get("logo_url") or _marca.get("logo_url")
+                or "https://ilusfitness.com/cdn/shop/files/"
+                   "Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png")
+    support_email = (ctx.get("support_email") or ILUS_SOPORTE_EMAIL).strip()
+    try:
+        year = int(ctx.get("year") or datetime.now().year)
+    except Exception:
+        year = 2026
+    subject       = _esc(ctx.get("subject") or "ILUS")
+    preheader     = _esc(ctx.get("preheader") or "")
+    status_label  = _esc(ctx.get("status_label") or "")
+    title         = _esc(ctx.get("title") or "")
+    subtitle      = _esc(ctx.get("subtitle") or "")
+    customer_name = _esc(ctx.get("customer_name") or "")
+    se            = _esc(support_email)
+    message     = ctx.get("message") or ""            # HTML safe (caller)
+    detail_rows = ctx.get("detail_rows_html") or ""   # HTML safe (caller)
+    cta_url     = (ctx.get("primary_cta_url") or "").strip()
+    cta_label   = _esc(ctx.get("primary_cta_label") or "Ver más")
+    closing     = ctx.get("closing_message") or ""    # HTML safe (caller)
+
+    badge_html = (f'<tr><td><span style="display:inline-block;background:#fff0f1;'
+                  f'border:1px solid #ffd2d5;border-radius:999px;padding:7px 12px;color:#c70010;'
+                  f'font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase">'
+                  f'{status_label}</span></td></tr>') if status_label else ''
+    subtitle_html = (f'<tr><td style="padding-top:10px;font-size:14px;line-height:21px;'
+                     f'color:#68707c">{subtitle}</td></tr>') if subtitle else ''
+    saludo_html = (f'<p style="margin:0 0 18px;font-size:15px;line-height:24px;color:#24272c">'
+                   f'Hola <strong style="color:#d90012">{customer_name}</strong>,</p>') if customer_name else ''
+    detail_html = (f'<tr><td class="email-pad" style="padding:24px 44px 0">'
+                   f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+                   f'style="background:#f6f7f9;border-left:4px solid #e30613;border-radius:5px">'
+                   f'<tr><td style="padding:18px 20px"><table role="presentation" width="100%" '
+                   f'cellspacing="0" cellpadding="0" border="0">{detail_rows}</table></td></tr>'
+                   f'</table></td></tr>') if detail_rows else ''
+    cta_html = (f'<tr><td class="email-pad" style="padding:25px 44px 0">'
+                f'<table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>'
+                f'<td class="email-button" align="center" bgcolor="#e30613" style="border-radius:5px">'
+                f'<a href="{_esc(cta_url)}" target="_blank" style="display:inline-block;padding:14px 24px;'
+                f'color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;border-radius:5px">'
+                f'{cta_label}</a></td></tr></table></td></tr>') if cta_url else ''
+    closing_html = (f'<tr><td class="email-pad" style="padding:22px 44px 36px">'
+                    f'<p style="margin:0;font-size:13px;line-height:21px;color:#6b7280">{closing}</p>'
+                    f'</td></tr>') if closing else ''
+
+    # Cuerpo: si el caller pasa body_html crudo (wrappers de retiros/mant/interna
+    # que ya traen su propio fragmento), se inserta tal cual; si no, el cuerpo
+    # estándar saludo + mensaje + detalles + CTA + cierre.
+    if ctx.get("body_html"):
+        body_block = (f'<tr><td class="email-pad" style="padding:22px 44px 30px">'
+                      f'{ctx["body_html"]}</td></tr>')
+    else:
+        body_block = (f'<tr><td class="email-pad" style="padding:20px 44px 0">{saludo_html}'
+                      f'<p style="margin:0;font-size:15px;line-height:24px;color:#454b54">{message}</p>'
+                      f'</td></tr>{detail_html}{cta_html}{closing_html}')
+
+    return f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light"><title>{subject}</title>
+<style>@media only screen and (max-width:640px){{.email-shell{{width:100%!important}}
+.email-pad{{padding-left:22px!important;padding-right:22px!important}}
+.email-title{{font-size:25px!important;line-height:31px!important}}
+.email-detail-label,.email-detail-value{{display:block!important;width:100%!important}}
+.email-detail-value{{padding-top:3px!important;padding-left:0!important;text-align:left!important}}
+.email-button{{display:block!important;width:100%!important}}}}</style></head>
+<body style="margin:0;padding:0;background:#eef0f3;font-family:Arial,Helvetica,sans-serif;color:#15171a">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">{preheader}</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#eef0f3">
+<tr><td align="center" style="padding:32px 12px">
+<table role="presentation" class="email-shell" width="620" cellspacing="0" cellpadding="0" border="0" style="width:620px;max-width:620px;background:#ffffff;border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;box-shadow:0 12px 35px rgba(15,23,42,.10)">
+<tr><td align="center" style="background:#050505;padding:25px 32px 22px;border-bottom:4px solid #e30613">
+<img src="{logo_url}" width="180" alt="ILUS Fitness" style="display:block;width:180px;max-width:180px;height:auto;border:0;outline:none;text-decoration:none"></td></tr>
+<tr><td class="email-pad" style="padding:34px 44px 12px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">{badge_html}
+<tr><td class="email-title" style="padding-top:17px;font-size:30px;line-height:36px;font-weight:800;color:#111111">{title}</td></tr>{subtitle_html}
+</table></td></tr>
+{body_block}
+<tr><td style="background:#101010;padding:30px 32px 27px;border-top:1px solid #252525">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+<tr><td align="center" style="font-size:16px;line-height:22px;font-weight:800;color:#ffffff">¿Necesitas ayuda con tu solicitud?</td></tr>
+<tr><td align="center" style="padding-top:8px;font-size:13px;line-height:20px;color:#aeb4bd">Nuestro equipo de soporte técnico puede ayudarte y dar seguimiento a tu caso.</td></tr>
+<tr><td align="center" style="padding-top:17px"><table role="presentation" cellspacing="0" cellpadding="0" border="0">
+<tr><td align="center" style="border:1px solid #e30613;border-radius:5px">
+<a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700">Crear ticket de soporte</a>
+</td></tr></table></td></tr>
+<tr><td align="center" style="padding-top:18px;font-size:12px;line-height:19px;color:#858c96">Soporte:
+<a href="mailto:{se}" style="color:#ffffff;text-decoration:none;font-weight:700">{se}</a></td></tr>
+<tr><td align="center" style="padding-top:17px;font-size:11px;line-height:18px;color:#646b74">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
+</table></td></tr>
+</table></td></tr></table></body></html>"""
+
+
 def _ilus_email_html(
     titulo: str,
     subtitulo: str = "",
@@ -6237,132 +6374,41 @@ def _ilus_email_html(
     Genera HTML de correo con el diseño oficial ILUS:
     Header negro con logo → banda oscura título/subtítulo → cuerpo blanco → botones → footer negro.
     """
-    # ── Logo y empresa desde marca dinámica (BD comm_client_config) ─────
-    # Marca cambia desde /comunicaciones sin tocar código.
-    try:
-        marca    = _get_marca()
-        logo_src = marca["logo_url"]
-        company  = marca["name"]
-    except Exception:
-        logo_src = "https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png"
-        company  = "ILUS Fitness"
-
-    # ── Info box ─────────────────────────────────────────────────────────────
-    info_html = ""
+    # 2026-06-14 (Daniel): DELEGA AL MAESTRO ILUS. Se mantiene la firma (9 args)
+    # para no tocar los ~10 call-sites (password, accesos, OT pendiente, retiros
+    # fallback, recordatorio 24h, prueba Resend); el render usa el nuevo estándar
+    # (header negro + logo 180px, footer con "Crear ticket de soporte" +
+    # soportetec@sphs.cl, SIN "LIKE U STRONG" ni correo viejo).
+    parts = []
+    if saludo:
+        parts.append(f'<p style="margin:0 0 16px;font-size:15px;line-height:24px;color:#24272c">'
+                     f'Hola <strong style="color:#d90012">{saludo}</strong>,</p>')
+    for _p in (parrafos or []):
+        parts.append(f'<p style="margin:0 0 14px;font-size:15px;line-height:24px;color:#454b54">{_p}</p>')
     if info_lineas:
-        rows_html = "".join(
-            f'<p style="margin:0 0 4px;font-size:13px;color:#333">'
-            f'<strong>{k}:</strong> {v}</p>'
-            for _, k, v in info_lineas
-        )
-        info_html = (
-            f'<div style="background:#f8f8f8;border-left:4px solid #DC143C;'
-            f'padding:15px 18px;margin:20px 0;border-radius:6px">'
-            f'{rows_html}</div>'
-        )
-
-    # ── Párrafos ─────────────────────────────────────────────────────────────
-    saludo_html = (
-        f'<p style="font-size:14px;color:#111827;line-height:1.6;margin:0 0 14px">'
-        f'Hola <strong>{saludo}</strong>,</p>'
-    ) if saludo else ""
-
-    body_html = "".join(
-        f'<p style="font-size:14px;color:#111827;line-height:1.6;margin:0 0 14px">{p}</p>'
-        for p in (parrafos or [])
-    )
-
-    # ── Botones ──────────────────────────────────────────────────────────────
-    btn1 = ""
+        _rows = _ilus_email_rows([(k, v) for (_ic, k, v) in info_lineas])
+        if _rows:
+            parts.append('<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
+                         'border="0" style="background:#f6f7f9;border-left:4px solid #e30613;'
+                         'border-radius:5px;margin:18px 0"><tr><td style="padding:16px 18px">'
+                         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
+                         f'border="0">{_rows}</table></td></tr></table>')
+    _btns = []
     if btn_primario_txt and btn_primario_url:
-        btn1 = (
-            f'<a href="{btn_primario_url}" style="display:inline-block;background:#DC143C;'
-            f'color:#ffffff;padding:12px 25px;text-decoration:none;font-size:13px;'
-            f'border-radius:5px;margin:5px;font-weight:bold">{btn_primario_txt}</a>'
-        )
-    btn2 = ""
+        _btns.append(f'<a href="{btn_primario_url}" style="display:inline-block;background:#e30613;'
+                     f'color:#fff;padding:13px 24px;text-decoration:none;font-size:14px;'
+                     f'border-radius:5px;margin:5px;font-weight:700">{btn_primario_txt}</a>')
     if btn_secundario_txt and btn_secundario_url:
-        btn2 = (
-            f'<a href="{btn_secundario_url}" style="display:inline-block;background:#000;'
-            f'color:#ffffff;padding:12px 25px;text-decoration:none;font-size:13px;'
-            f'border-radius:5px;margin:5px;font-weight:bold">{btn_secundario_txt}</a>'
-        )
-    btns_html = (
-        f'<div style="padding:0 30px 30px;text-align:center">{btn1}{btn2}</div>'
-    ) if (btn1 or btn2) else ""
-
-    # ── Branding del footer: usa la misma marca dinámica ───────────────
-    try:
-        marca2 = _get_marca()
-    except Exception:
-        marca2 = {
-            "name": "ILUS Fitness",
-            "support_email": "servicio.tecnico@ilusfitness.com",
-            "support_url":   "https://ilusfitness.com/soporte",
-        }
-    brand_name    = marca2.get("name") or company
-    support_email = marca2.get("support_email") or "servicio.tecnico@ilusfitness.com"
-    support_url   = marca2.get("support_url") or ""
-    año_actual    = datetime.now().year if 'datetime' in globals() else 2026
-
-    soporte_html = (
-        f'<a href="mailto:{support_email}" '
-        f'style="color:#DC143C;text-decoration:none">{support_email}</a>'
-    )
-    portal_html = (
-        f' &middot; <a href="{support_url}" '
-        f'style="color:#9ca3af;text-decoration:none">Portal de soporte</a>'
-    ) if support_url else ""
-
-    return f"""<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{titulo}</title>
-</head>
-<body style="margin:0;padding:0;background:#f1f2f4;font-family:Arial,Helvetica,sans-serif;color:#111827">
-
-<div style="max-width:580px;margin:28px auto;background:#ffffff;border-radius:10px;
-            overflow:hidden;box-shadow:0 6px 20px rgba(15,23,42,.10)">
-
-  <!-- HEADER: negro + logo -->
-  <div style="background:#000;padding:24px 28px;text-align:center">
-    <img src="{logo_src}" alt="{brand_name}"
-         style="height:48px;display:block;margin:0 auto;max-width:230px;width:auto;object-fit:contain">
-  </div>
-
-  <!-- TÍTULO: banda oscura -->
-  <div style="background:#111;color:#fff;text-align:center;padding:28px 32px;border-top:1px solid #202020">
-    <h1 style="margin:0;font-size:22px;line-height:1.25;font-weight:800">{titulo}</h1>
-    {f'<p style="margin-top:8px;font-size:13px;line-height:1.45;color:#f3f4f6;margin-bottom:0">{subtitulo}</p>' if subtitulo else ''}
-  </div>
-
-  <!-- CONTENIDO -->
-  <div style="padding:32px 30px">
-    {saludo_html}
-    {body_html}
-    {info_html}
-  </div>
-
-  <!-- BOTONES -->
-  {btns_html}
-
-  <!-- FOOTER: negro -->
-  <div style="background:#000;padding:24px 32px;text-align:center">
-    <div style="color:#DC143C;font-size:13px;font-weight:700;text-transform:uppercase">{brand_name}</div>
-    <div style="color:#9ca3af;font-size:11px;margin-top:5px">
-      Equipamiento profesional para alto rendimiento &middot; {año_actual}
-    </div>
-    <div style="margin-top:14px;font-size:11px;line-height:1.6;color:#6b7280">
-      Este mensaje fue enviado automáticamente desde una dirección que no recibe respuestas.<br>
-      Para soporte, escribe a {soporte_html}{portal_html}
-    </div>
-  </div>
-
-</div>
-</body>
-</html>"""
+        _btns.append(f'<a href="{btn_secundario_url}" style="display:inline-block;background:#101010;'
+                     f'color:#fff;padding:13px 24px;text-decoration:none;font-size:14px;'
+                     f'border-radius:5px;margin:5px;font-weight:700">{btn_secundario_txt}</a>')
+    if _btns:
+        parts.append(f'<div style="text-align:center;margin-top:22px">{"".join(_btns)}</div>')
+    return _ilus_email_master({
+        "title":     titulo,
+        "subtitle":  subtitulo,
+        "body_html": "".join(parts),
+    })
 
 
 def _smtp_ipv4(host: str) -> str:
@@ -6928,10 +6974,10 @@ def _get_brand_cfg() -> dict:
         "name":          (_os_b.environ.get("ILUS_BRAND_NAME")       or BRAND_CONFIG.get("name")       or "ILUS Sport & Health").strip(),
         "from_name":     (_os_b.environ.get("ILUS_BRAND_FROM_NAME")  or BRAND_CONFIG.get("from_name")  or "ILUS").strip(),
         "from_email":    (_os_b.environ.get("ILUS_BRAND_FROM_EMAIL") or BRAND_CONFIG.get("from_email") or "no-reply@ilusfitness.com").strip(),
-        "reply_to":      (_os_b.environ.get("ILUS_BRAND_REPLY_TO")   or BRAND_CONFIG.get("reply_to")   or "servicio.tecnico@ilusfitness.com").strip(),
+        "reply_to":      (_os_b.environ.get("ILUS_BRAND_REPLY_TO")   or BRAND_CONFIG.get("reply_to")   or "soportetec@sphs.cl").strip(),
         "wa_name":       (_os_b.environ.get("ILUS_BRAND_WA_NAME")    or BRAND_CONFIG.get("wa_name")    or "ILUS").strip(),
-        "support_url":   (_os_b.environ.get("ILUS_BRAND_SUPPORT_URL")  or BRAND_CONFIG.get("support_url")   or "https://ilusfitness.com/soporte").strip(),
-        "support_email": (_os_b.environ.get("ILUS_BRAND_SUPPORT_EMAIL")or BRAND_CONFIG.get("support_email") or "servicio.tecnico@ilusfitness.com").strip(),
+        "support_url":   (_os_b.environ.get("ILUS_BRAND_SUPPORT_URL")  or BRAND_CONFIG.get("support_url")   or "https://ilusfitness.com/pages/soporte-tecnico").strip(),
+        "support_email": (_os_b.environ.get("ILUS_BRAND_SUPPORT_EMAIL")or BRAND_CONFIG.get("support_email") or "soportetec@sphs.cl").strip(),
     }
 
 
@@ -6998,11 +7044,11 @@ def _get_marca() -> dict:
         # los emails sin tocar env vars. Igual para wa_name (WhatsApp si vuelve).
         "from_name":     (name or be.get("from_name") or "ILUS Fitness").strip(),
         "from_email":    (be.get("from_email") or "no-reply@ilusfitness.com").strip(),
-        "reply_to":      (cc.get("reply_to") or be.get("reply_to") or "servicio.tecnico@ilusfitness.com").strip(),
+        "reply_to":      (cc.get("reply_to") or be.get("reply_to") or "soportetec@sphs.cl").strip(),
         "wa_name":       (name or be.get("wa_name") or "ILUS Fitness").strip(),
         "logo_url":      logo,
-        "support_email": (cc.get("support_email") or be.get("support_email") or "servicio.tecnico@ilusfitness.com").strip(),
-        "support_url":   (be.get("support_url") or "https://ilusfitness.com/soporte").strip(),
+        "support_email": (cc.get("support_email") or be.get("support_email") or "soportetec@sphs.cl").strip(),
+        "support_url":   (be.get("support_url") or "https://ilusfitness.com/pages/soporte-tecnico").strip(),
         "footer":        f"{name} · Plataforma operacional",
         "corp_color":    (cc.get("corp_color") or "#DC143C").strip(),
         "support_phone": (cc.get("support_phone") or "").strip(),
@@ -17135,76 +17181,77 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         track_url = f"/t/{tok}"
     doc = f"{c.get('tido') or ''} {c.get('nudo') or ''}".strip()
     cliente = c.get("cliente_nombre") or ""
+    from markupsafe import escape as _esc
     if estado == 'En preparación':
         asunto = _brand_subject(f"Tu pedido {doc} está en preparación")
-        titulo = "Tu pedido está en preparación 📦"
+        status_label = "Pedido programado"
+        titulo = "Tu pedido está en preparación"
         cuerpo = ("Recibimos tu pedido y ya lo estamos preparando para el despacho. "
-                  "Te avisaremos apenas salga. Puedes seguir su estado aquí:")
+                  "Te avisaremos apenas salga de nuestra bodega.")
+        cta_label = "Revisar estado del pedido"
     elif estado == 'Entregado a transporte':
         asunto = _brand_subject(f"Entregamos tu pedido {doc} al courier")
-        titulo = "Tu pedido va en manos del courier 🚚"
+        status_label = "En camino al courier"
+        titulo = "Tu pedido va en manos del courier"
         cuerpo = ("Preparamos tu pedido y lo entregamos a FedEx para su despacho. "
-                  "Desde aquí FedEx lo lleva hasta tu dirección; te seguimos avisando "
-                  "los cambios. Sigue el estado en vivo:")
+                  "Desde aquí FedEx lo lleva hasta tu dirección; te seguimos avisando los cambios.")
+        cta_label = "Ver seguimiento en vivo"
     elif estado == 'En ruta':
         asunto = _brand_subject(f"Tu despacho {doc} va en camino")
-        titulo = "Tu despacho va en camino 🚚"
-        cuerpo = ("Buenas noticias: tu pedido salió a ruta y va camino a tu dirección. "
-                  "Puedes ver el estado actualizado en tiempo real en el siguiente link:")
+        status_label = "En ruta"
+        titulo = "Tu despacho va en camino"
+        cuerpo = "Buenas noticias: tu pedido salió a ruta y va camino a tu dirección."
+        cta_label = "Ver seguimiento en vivo"
     elif estado == 'Entrega fallida':
         asunto = _brand_subject(f"Problema con la entrega de tu despacho {doc}")
-        titulo = "Tuvimos un inconveniente con la entrega ⚠️"
-        cuerpo = ("FedEx reportó un problema al intentar entregar tu pedido. Estamos "
-                  "pendientes para reprogramar la entrega. Revisa el detalle aquí:")
+        status_label = "Entrega fallida"
+        titulo = "Tuvimos un inconveniente con la entrega"
+        cuerpo = ("FedEx reportó un problema al intentar entregar tu pedido. "
+                  "Estamos pendientes para reprogramar la entrega.")
+        cta_label = "Ver detalle"
     else:   # Entregado
         asunto = _brand_subject(f"Tu despacho {doc} fue entregado")
-        titulo = "¡Tu despacho fue entregado! ✅"
+        status_label = "Entregado"
+        titulo = "¡Tu despacho fue entregado!"
         cuerpo = ("Confirmamos la entrega de tu pedido. Si tienes alguna observación "
-                  "sobre el producto recibido, contáctanos. Puedes ver el detalle "
-                  "completo de la entrega (foto, firma) en el link:")
-    html = _ilus_email_html_tracking(titulo, cliente, doc, cuerpo, track_url, comentario)
+                  "sobre el producto recibido, contáctanos.")
+        cta_label = "Ver detalle de entrega"
+    _closing = (f"«{_esc(comentario)}»" if comentario else
+                "Conserva este correo como referencia. El enlace de seguimiento es personal "
+                "y contiene información asociada a tu pedido.")
+    html = _ilus_email_master({
+        "subject":           asunto,
+        "preheader":         cuerpo[:100],
+        "status_label":      status_label,
+        "title":             titulo,
+        "subtitle":          "Actualización de despacho · ILUS Fitness",
+        "customer_name":     cliente,
+        "message":           str(_esc(cuerpo)),
+        "detail_rows_html":  _ilus_email_rows([("N° de documento", doc), ("Courier", "FedEx")]),
+        "primary_cta_url":   track_url,
+        "primary_cta_label": cta_label,
+        "closing_message":   _closing,
+    })
     _send_ilus_email(c["email"].strip(), asunto, html,
                      evento=f"tracking_{estado.lower().replace(' ','_')}",
                      modulo="transporte")
 
 
 def _ilus_email_html_tracking(titulo, cliente, doc, cuerpo, track_url, comentario=None):
-    """Plantilla email HTML simple, ILUS branding. Sin dependencias externas
-    (los clientes de email son notoriamente caprichosos: tablas + estilos inline).
-    """
-    com_html = ""
-    if comentario:
-        com_html = (f'<p style="margin:8px 0 0;color:#6b7280;font-size:13px;font-style:italic">'
-                    f'"{comentario}"</p>')
-    return f"""<!doctype html>
-<html><body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
-<table cellpadding="0" cellspacing="0" width="100%" style="background:#f4f4f5;padding:24px 0">
-  <tr><td align="center">
-    <table cellpadding="0" cellspacing="0" width="560" style="max-width:560px;width:100%;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.05)">
-      <tr><td style="background:#0a0a0a;padding:24px 28px">
-        <table cellpadding="0" cellspacing="0"><tr>
-          <td style="background:#dc2626;width:42px;height:42px;border-radius:11px;text-align:center;color:#fff;font-weight:900;font-size:18px">IL</td>
-          <td style="padding-left:12px;color:#fff;font-weight:800;font-size:17px">ILUS Sport &amp; Health</td>
-        </tr></table>
-      </td></tr>
-      <tr><td style="padding:30px 28px 10px">
-        <h1 style="margin:0;color:#0a0a0a;font-size:22px;font-weight:800">{titulo}</h1>
-        <p style="margin:10px 0 4px;color:#6b7280;font-size:14px">Hola {cliente or ''},</p>
-        <p style="margin:6px 0 16px;color:#374151;font-size:15px;line-height:1.5">{cuerpo}</p>
-        {com_html}
-        <table cellpadding="0" cellspacing="0" style="margin:22px 0"><tr><td>
-          <a href="{track_url}" style="background:#dc2626;color:#fff;text-decoration:none;font-weight:800;padding:14px 28px;border-radius:11px;font-size:15px;display:inline-block">Ver seguimiento en vivo &rarr;</a>
-        </td></tr></table>
-        <p style="margin:18px 0 0;color:#9ca3af;font-size:12px">N° de documento: <strong style="color:#374151;font-family:monospace">{doc}</strong></p>
-      </td></tr>
-      <tr><td style="background:#fafafa;padding:18px 28px;border-top:1px solid #f3f4f6;color:#9ca3af;font-size:12px;text-align:center">
-        ¿Dudas? Escríbenos a <a href="mailto:servicio.tecnico@ilusfitness.com" style="color:#dc2626;text-decoration:none">servicio.tecnico@ilusfitness.com</a><br>
-        © <strong style="color:#0a0a0a">ILUS Sport &amp; Health</strong>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body></html>"""
+    """COMPAT: delega en el maestro ILUS. (Antes tenía su propia plantilla con
+    el correo viejo; quedó sin uso al migrar _tr_notificar_cliente, pero se
+    mantiene la firma por si algún caller externo la usa.)"""
+    from markupsafe import escape as _esc
+    return _ilus_email_master({
+        "title":             titulo,
+        "subtitle":          "Actualización de despacho · ILUS Fitness",
+        "customer_name":     cliente or "",
+        "message":           str(_esc(cuerpo or "")),
+        "detail_rows_html":  _ilus_email_rows([("N° de documento", doc)]),
+        "primary_cta_url":   track_url,
+        "primary_cta_label": "Ver seguimiento en vivo",
+        "closing_message":   (f"«{_esc(comentario)}»" if comentario else ""),
+    })
 
 
 def _tr_ensure_public_token(commitment_id):
@@ -23236,6 +23283,17 @@ def tr_crear_ots_fedex_masivo(mid):
         _tr_ship_snapshot(iid, "ot_creada", {"tn": master_tn, "bultos": n_b, "via": "masivo"})
         _tr_log("manifest_item", iid, "OT FedEx creada (masivo)",
                 f"TN {master_tn} ({len(piece_tns)} bulto/s)")
+        # 2026-06-14 (Daniel) — FIX: el OT MASIVO no notificaba (a diferencia
+        # del unitario), por eso no llegaba el correo de las OT creadas en lote.
+        # Igual que el unitario, pasamos el item a "Entregado a transporte" y
+        # avisamos al cliente. _tr_apply_carrier_status hace dedup (solo si
+        # cambió) y respeta el kill switch.
+        try:
+            _tr_apply_carrier_status(iid, 'Entregado a transporte', fuente='sistema',
+                                     comentario='Etiqueta FedEx generada (masivo)',
+                                     notify_cliente=True)
+        except Exception as _e_ot_ev_m:
+            print(f"[tr_event ot_fedex masivo] item={iid}: {_e_ot_ev_m}", flush=True)
         resultados.append({
             "item_id":                iid,
             "ok":                     True,
@@ -30033,14 +30091,17 @@ def _comm_render_email_document(title, body_html, subtitle=""):
     if _email_html_is_full_document(body_html):
         return body_html
 
-    cc = _get_client_cfg()
-    color = cc.get("corp_color") or "#CC0000"
-    company = cc.get("company_name") or "ILUS Fitness · Sport & Health Solutions"
-    logo = cc.get("logo_url") or ""
-    header = _email_header_ilus(title, subtitle, color, logo, company)
-    body = _email_body_section(body_html)
-    footer = _email_footer_ilus(company)
-    return _email_wrapper(_email_card(header, body, footer), company)
+    # 2026-06-14 (Daniel): NUEVO ESTÁNDAR — delegamos al maestro ILUS. El
+    # `body_html` (fragmento del módulo: retiros / mantenciones / interna) va al
+    # cuerpo; el maestro aporta el header negro + logo 180px + borde rojo y el
+    # footer nuevo (botón "Crear ticket de soporte" + soportetec@sphs.cl, SIN
+    # "LIKE U STRONG", redes ni correos personales). Así todos esos correos
+    # adoptan el estándar sin tocar la capa de envío ni sus call-sites.
+    return _ilus_email_master({
+        "title":     title,
+        "subtitle":  subtitle,
+        "body_html": body_html,
+    })
 
 
 def _email_html_is_full_document(html: str) -> bool:
@@ -30288,31 +30349,28 @@ def _email_body_section(content):
 
 
 def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
-    """Footer de marca ILUS con el ESLOGAN 'I LIKE U STRONG' en MAYÚSCULAS
-    (las letras I·L·U·S en rojo = el significado del acrónimo) + nombre legal.
-    (Juan Daniel 2026-06-05: 'el eslogan de ILUS es I LIKE U STRONG, todo en
-    mayúscula; es ILUS Fitness Sport & Health Solutions'.)"""
+    """Footer NUEVO estándar ILUS (2026-06-14, Daniel): botón "Crear ticket de
+    soporte" + soportetec@sphs.cl. SIN "LIKE U STRONG", redes ni correo viejo.
+    (Lo usan los pocos correos que aún no pasan por _ilus_email_master: prueba
+    SMTP y un aviso interno.)"""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#000000">
-  <tr><td style="height:3px;background:#E20F2E;font-size:0;line-height:0">&nbsp;</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#101010">
+  <tr><td style="height:1px;background:#252525;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td style="padding:34px 32px 18px 32px;text-align:center">
-      <div style="font-size:21px;font-weight:900;letter-spacing:.22em;line-height:1.2"><span style="color:#E20F2E">I</span><span style="color:#ffffff"> LIKE </span><span style="color:#E20F2E">U</span><span style="color:#ffffff"> </span><span style="color:#E20F2E">S</span><span style="color:#ffffff">TRONG</span></div>
-      <div style="width:52px;height:2px;background:#E20F2E;margin:16px auto 18px auto;font-size:0;line-height:0">&nbsp;</div>
-      <table cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 18px"><tr>
-        <td style="padding:0 7px"><a href="https://instagram.com/ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">INSTAGRAM</a></td>
-        <td style="color:#555">&middot;</td>
-        <td style="padding:0 7px"><a href="https://tiktok.com/@ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">TIKTOK</a></td>
-        <td style="color:#555">&middot;</td>
-        <td style="padding:0 7px"><a href="https://youtube.com/@ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">YOUTUBE</a></td>
-        <td style="color:#555">&middot;</td>
-        <td style="padding:0 7px"><a href="https://www.facebook.com/ilusfitness/" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">FACEBOOK</a></td>
+    <td style="padding:30px 32px 27px 32px;text-align:center">
+      <div style="font-size:16px;line-height:22px;font-weight:800;color:#ffffff">¿Necesitas ayuda con tu solicitud?</div>
+      <div style="padding-top:8px;font-size:13px;line-height:20px;color:#aeb4bd">Nuestro equipo de soporte técnico puede ayudarte y dar seguimiento a tu caso.</div>
+      <table cellpadding="0" cellspacing="0" align="center" style="margin:17px auto 0"><tr>
+        <td align="center" style="border:1px solid #e30613;border-radius:5px">
+          <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700">Crear ticket de soporte</a>
+        </td>
       </tr></table>
-      <div style="color:#E20F2E;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase">{company}</div>
-      <div style="color:#9a9a9a;font-size:12px;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
-      <div style="color:#6b6b6b;font-size:11px;line-height:1.7;margin-top:16px;border-top:1px solid #1c1c1c;padding-top:16px">
-        Este correo fue generado automaticamente. Para soporte escribenos a <a href="mailto:servicio.tecnico@ilusfitness.com" style="color:#bbb;text-decoration:none">servicio.tecnico@ilusfitness.com</a><br>
-        &copy; 2026 ILUS Fitness &middot; Todos los derechos reservados.
+      <div style="padding-top:18px;font-size:12px;line-height:19px;color:#858c96">Soporte:
+        <a href="mailto:{ILUS_SOPORTE_EMAIL}" style="color:#ffffff;text-decoration:none;font-weight:700">{ILUS_SOPORTE_EMAIL}</a>
+      </div>
+      <div style="padding-top:17px;font-size:11px;line-height:18px;color:#646b74">
+        Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>
+        &copy; 2026 ILUS Fitness &middot; Equipamiento profesional para alto rendimiento
       </div>
     </td>
   </tr>
@@ -62226,22 +62284,20 @@ def mant_notif_enviar(nid):
     if not destinatario:
         return jsonify({"error":"Sin email destinatario"}), 400
 
-    html_body = f"""
-    <div style="font-family:sans-serif;max-width:600px;margin:auto">
-      <div style="background:#CC0000;padding:20px;text-align:center">
-        <h2 style="color:#fff;margin:0">ILUS Sport & Health</h2>
-      </div>
-      <div style="padding:24px;background:#f9f9f9">
-        <h3 style="color:#111">{notif['titulo']}</h3>
-        <p style="color:#374151;line-height:1.6">{notif['mensaje']}</p>
-        <p style="color:#6b7280;font-size:.85rem">
-          Cliente: <strong>{notif.get('razon_social','')}</strong>
-        </p>
-      </div>
-      <div style="padding:12px;text-align:center;color:#9ca3af;font-size:.78rem">
-        ILUS Sport & Health Solution SPA · Sistema de Mantenciones
-      </div>
-    </div>"""
+    # 2026-06-14 (Daniel): migrado al maestro ILUS (antes HTML inline con diseño
+    # viejo #CC0000 y campos sin escapar → riesgo XSS). markupsafe escapa
+    # titulo/mensaje/cliente (vienen de mant_notificaciones).
+    from markupsafe import escape as _esc
+    _titulo  = str(notif.get('titulo') or 'Notificación')
+    _mensaje = str(_esc(notif.get('mensaje') or '')).replace("\n", "<br>")
+    html_body = _ilus_email_master({
+        "subject":          _brand_subject(_titulo),
+        "status_label":     "Mantenciones",
+        "title":            _titulo,
+        "subtitle":         "Servicio Técnico · ILUS Fitness",
+        "customer_name":    notif.get('razon_social') or "",
+        "message":          _mensaje,
+    })
 
     try:
         # Pasa por el wrapper para respetar kill switch global + llave por módulo
