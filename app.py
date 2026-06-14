@@ -6976,7 +6976,7 @@ def _get_brand_cfg() -> dict:
         "from_email":    (_os_b.environ.get("ILUS_BRAND_FROM_EMAIL") or BRAND_CONFIG.get("from_email") or "no-reply@ilusfitness.com").strip(),
         "reply_to":      (_os_b.environ.get("ILUS_BRAND_REPLY_TO")   or BRAND_CONFIG.get("reply_to")   or "soportetec@sphs.cl").strip(),
         "wa_name":       (_os_b.environ.get("ILUS_BRAND_WA_NAME")    or BRAND_CONFIG.get("wa_name")    or "ILUS").strip(),
-        "support_url":   (_os_b.environ.get("ILUS_BRAND_SUPPORT_URL")  or BRAND_CONFIG.get("support_url")   or "https://ilusfitness.com/soporte").strip(),
+        "support_url":   (_os_b.environ.get("ILUS_BRAND_SUPPORT_URL")  or BRAND_CONFIG.get("support_url")   or "https://ilusfitness.com/pages/soporte-tecnico").strip(),
         "support_email": (_os_b.environ.get("ILUS_BRAND_SUPPORT_EMAIL")or BRAND_CONFIG.get("support_email") or "soportetec@sphs.cl").strip(),
     }
 
@@ -7048,7 +7048,7 @@ def _get_marca() -> dict:
         "wa_name":       (name or be.get("wa_name") or "ILUS Fitness").strip(),
         "logo_url":      logo,
         "support_email": (cc.get("support_email") or be.get("support_email") or "soportetec@sphs.cl").strip(),
-        "support_url":   (be.get("support_url") or "https://ilusfitness.com/soporte").strip(),
+        "support_url":   (be.get("support_url") or "https://ilusfitness.com/pages/soporte-tecnico").strip(),
         "footer":        f"{name} · Plataforma operacional",
         "corp_color":    (cc.get("corp_color") or "#DC143C").strip(),
         "support_phone": (cc.get("support_phone") or "").strip(),
@@ -62284,22 +62284,20 @@ def mant_notif_enviar(nid):
     if not destinatario:
         return jsonify({"error":"Sin email destinatario"}), 400
 
-    html_body = f"""
-    <div style="font-family:sans-serif;max-width:600px;margin:auto">
-      <div style="background:#CC0000;padding:20px;text-align:center">
-        <h2 style="color:#fff;margin:0">ILUS Sport & Health</h2>
-      </div>
-      <div style="padding:24px;background:#f9f9f9">
-        <h3 style="color:#111">{notif['titulo']}</h3>
-        <p style="color:#374151;line-height:1.6">{notif['mensaje']}</p>
-        <p style="color:#6b7280;font-size:.85rem">
-          Cliente: <strong>{notif.get('razon_social','')}</strong>
-        </p>
-      </div>
-      <div style="padding:12px;text-align:center;color:#9ca3af;font-size:.78rem">
-        ILUS Sport & Health Solution SPA · Sistema de Mantenciones
-      </div>
-    </div>"""
+    # 2026-06-14 (Daniel): migrado al maestro ILUS (antes HTML inline con diseño
+    # viejo #CC0000 y campos sin escapar → riesgo XSS). markupsafe escapa
+    # titulo/mensaje/cliente (vienen de mant_notificaciones).
+    from markupsafe import escape as _esc
+    _titulo  = str(notif.get('titulo') or 'Notificación')
+    _mensaje = str(_esc(notif.get('mensaje') or '')).replace("\n", "<br>")
+    html_body = _ilus_email_master({
+        "subject":          _brand_subject(_titulo),
+        "status_label":     "Mantenciones",
+        "title":            _titulo,
+        "subtitle":         "Servicio Técnico · ILUS Fitness",
+        "customer_name":    notif.get('razon_social') or "",
+        "message":          _mensaje,
+    })
 
     try:
         # Pasa por el wrapper para respetar kill switch global + llave por módulo
