@@ -627,6 +627,25 @@ def chile_fmt_filter(value, fmt="%d/%m/%Y %H:%M"):
         return str(converted)
 
 
+# 2026-06-14 (Daniel) — Fecha en español con mes en LETRAS, sin depender del
+# locale del sistema (Cloud Run corre en C/POSIX → %B saldría en inglés).
+# Para columnas DATE puras (sin hora). Ej: {{ manifiesto.fecha | fecha_es }}
+# → "14 de junio de 2026". Para DATETIME en UTC usar chile_fmt (REGLA #6).
+_MESES_ES = ('enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+             'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre')
+
+
+@app.template_filter('fecha_es')
+def fecha_es_filter(value, con_anio=True):
+    if not value:
+        return "—"
+    try:
+        txt = f"{value.day} de {_MESES_ES[value.month - 1]}"
+        return txt + (f" de {value.year}" if con_anio else "")
+    except Exception:
+        return str(value)
+
+
 @app.template_filter('rut_fmt')
 def rut_fmt_filter(value):
     """Filtro Jinja: {{ cliente.rut | rut_fmt }} → '25.547.065-2'.
@@ -16312,6 +16331,12 @@ def api_asignar_documento():
     for l in lineas:
         if l.get("es_zz"):
             continue
+        # 2026-06-14 (Daniel): excluir líneas de DESCUENTO (SKU 'DE' /
+        # "DESCUENTO VENTAS"). No son ítems físicos: no se cubican ni se
+        # envían, y su "cantidad" es el monto del descuento (ensucia totales,
+        # bultos y predominante). Solo se filtra en la salida (ERP read-only).
+        if (l.get("sku") or "").strip().upper() == "DE":
+            continue
         qty          = l["cantidad"]
         peso_kg_u    = l["peso_kg_u"]
         peso_vol_u   = l["peso_vol_u"]
@@ -17054,10 +17079,15 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
             evt_id = cur.lastrowid
         conn.commit()
         # Notificación al cliente (best-effort, no bloquea si falla).
-        # Solo en estados clave: En ruta y Entregado (no spamear con todos los pasos).
-        # notify_cliente=False lo usa el poller automático: actualiza el estado
-        # pero NO le manda correo al cliente (decisión de Daniel 2026-06-14).
-        if notify_cliente and estado in ('En ruta', 'Entregado') and commitment_id:
+        # 2026-06-14 (Daniel) — estados que notifican al cliente:
+        #   En preparación        → al asignar la factura a un manifiesto
+        #   Entregado a transporte → al generar la etiqueta FedEx
+        #   En ruta / Entregado    → cambios detectados desde FedEx (autopoll)
+        #   Entrega fallida        → FedEx reportó problema de entrega
+        # El anti-spam (600s) en _tr_notificar_cliente evita duplicados.
+        if (notify_cliente and commitment_id and
+                estado in ('En preparación', 'Entregado a transporte',
+                           'En ruta', 'Entregado', 'Entrega fallida')):
             try:
                 _tr_notificar_cliente(commitment_id, estado, comentario=comentario)
             except Exception as _ne:
@@ -17105,11 +17135,27 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         track_url = f"/t/{tok}"
     doc = f"{c.get('tido') or ''} {c.get('nudo') or ''}".strip()
     cliente = c.get("cliente_nombre") or ""
-    if estado == 'En ruta':
+    if estado == 'En preparación':
+        asunto = _brand_subject(f"Tu pedido {doc} está en preparación")
+        titulo = "Tu pedido está en preparación 📦"
+        cuerpo = ("Recibimos tu pedido y ya lo estamos preparando para el despacho. "
+                  "Te avisaremos apenas salga. Puedes seguir su estado aquí:")
+    elif estado == 'Entregado a transporte':
+        asunto = _brand_subject(f"Entregamos tu pedido {doc} al courier")
+        titulo = "Tu pedido va en manos del courier 🚚"
+        cuerpo = ("Preparamos tu pedido y lo entregamos a FedEx para su despacho. "
+                  "Desde aquí FedEx lo lleva hasta tu dirección; te seguimos avisando "
+                  "los cambios. Sigue el estado en vivo:")
+    elif estado == 'En ruta':
         asunto = _brand_subject(f"Tu despacho {doc} va en camino")
         titulo = "Tu despacho va en camino 🚚"
         cuerpo = ("Buenas noticias: tu pedido salió a ruta y va camino a tu dirección. "
                   "Puedes ver el estado actualizado en tiempo real en el siguiente link:")
+    elif estado == 'Entrega fallida':
+        asunto = _brand_subject(f"Problema con la entrega de tu despacho {doc}")
+        titulo = "Tuvimos un inconveniente con la entrega ⚠️"
+        cuerpo = ("FedEx reportó un problema al intentar entregar tu pedido. Estamos "
+                  "pendientes para reprogramar la entrega. Revisa el detalle aquí:")
     else:   # Entregado
         asunto = _brand_subject(f"Tu despacho {doc} fue entregado")
         titulo = "¡Tu despacho fue entregado! ✅"
@@ -20344,6 +20390,18 @@ def tr_update_compromiso(cid):
     if "n_bultos" in data:
         try: campos["n_bultos"] = max(1, int(float(data["n_bultos"] or 1)))
         except: pass
+    # 2026-06-14 (Daniel) — C4 (red de seguridad del validador de dirección):
+    # si llega comuna pero el código postal viene vacío, lo derivamos de la
+    # comuna para que NUNCA quede un CP desfasado respecto a la comuna (caso
+    # comuna TEMUCO con CP 8000000 de Santiago). NO pisamos un CP preciso que
+    # ya venga de Google; el front mantiene comuna↔CP coherentes, esto rellena.
+    if campos.get("comuna") and not campos.get("cod_postal"):
+        try:
+            _cp_der = _comuna_to_postal(campos["comuna"])
+            if _cp_der:
+                campos["cod_postal"] = str(_cp_der)[:20]
+        except Exception:
+            pass
     if not campos:
         return jsonify({"error": "sin campos válidos"}), 400
 
@@ -23035,6 +23093,15 @@ def tr_crear_ot_fedex(item_id):
     _tr_ship_snapshot(item_id, "ot_creada", {"tn": master_tn, "bultos": n_b})
     _tr_log("manifest_item", item_id, "OT FedEx creada",
             f"TN {master_tn} ({len(piece_tns)} bulto/s)")
+    # 2026-06-14 (Daniel): al generar la etiqueta FedEx el pedido pasa a
+    # "Entregado a transporte" (delegado a FedEx) y se avisa al cliente.
+    # _tr_apply_carrier_status solo emite/notifica si el estado CAMBIÓ (dedup).
+    try:
+        _tr_apply_carrier_status(item_id, 'Entregado a transporte', fuente='sistema',
+                                 comentario='Etiqueta FedEx generada',
+                                 notify_cliente=True)
+    except Exception as _e_ot_ev:
+        print(f"[tr_event ot_fedex] item={item_id}: {_e_ot_ev}", flush=True)
 
     return jsonify({
         "ok":                      True,
@@ -23984,9 +24051,13 @@ def _fedex_poll_batch(limit=25, dry=False):
                 "scans":        (r.get("scans") or [])[:5],
             }},
             comentario=comentario or None,
-            # Decisión Daniel 2026-06-14: el poller automático actualiza el
-            # estado pero NO le manda correo al cliente.
-            notify_cliente=False,
+            # 2026-06-14 (Daniel, 2ª decisión): el poller automático AHORA SÍ
+            # avisa al cliente cuando FedEx cambia el estado (en ruta/entregado/
+            # entrega fallida). Es la base de la detección 24/7: con Cloud
+            # Scheduler despertando este poll, los cambios de madrugada también
+            # se notifican. El gate de _tr_event filtra los estados; el
+            # anti-spam (600s) evita duplicados por re-polls.
+            notify_cliente=True,
         )
         if apply_res.get("changed"):
             changed_count += 1
@@ -26003,6 +26074,7 @@ def tr_asignar_a_manifiesto():
             correlativo = None
 
         added, dupes = 0, 0
+        nuevos_items = []  # (manifest_item_id, commitment_id) recién asignados
         for cid in commitment_ids:
             try:
                 cur.execute(
@@ -26012,6 +26084,7 @@ def tr_asignar_a_manifiesto():
                 )
                 if cur.rowcount:
                     added += 1
+                    nuevos_items.append((cur.lastrowid, cid))
                 else:
                     dupes += 1
             except Exception:
@@ -26024,6 +26097,19 @@ def tr_asignar_a_manifiesto():
         )
 
     conn.commit()
+
+    # 2026-06-14 (Daniel): avisar al cliente "tu pedido está en preparación" por
+    # cada factura RECIÉN asignada. El item nace 'En preparación' (default del
+    # ENUM), así que emitimos el evento de notificación directo (no hay cambio
+    # de estado que dispare _tr_apply_carrier_status). El anti-spam (600s) +
+    # clave por commitment evita duplicados si la factura tiene varias líneas.
+    for _mi_id, _cid in nuevos_items:
+        try:
+            _tr_event(_mi_id, 'En preparación', fuente='sistema',
+                      commitment_id=_cid, notify_cliente=True)
+        except Exception as _e_prep:
+            print(f"[tr_event preparacion] item={_mi_id}: {_e_prep}", flush=True)
+
     return jsonify({"ok": True, "manifest_id": mid, "correlativo": correlativo, "added": added, "duplicados": dupes})
 
 
@@ -26333,6 +26419,7 @@ def tr_cubicador_enviar_manifiesto():
                 (mid, comm_id)
             )
             added = bool(cur.rowcount)
+            _new_item_id = cur.lastrowid if added else None
 
             # 5) Recalcular totales del manifiesto
             cur.execute("""
@@ -26358,6 +26445,15 @@ def tr_cubicador_enviar_manifiesto():
             f"commitment_id={comm_id} tido={tido} nudo={nudo} courier={courier}"
         )
     except Exception: pass
+
+    # 2026-06-14 (Daniel): "tu pedido está en preparación" al asignar desde el
+    # cubicador (solo si la factura se agregó nueva, no en duplicados).
+    if added and _new_item_id:
+        try:
+            _tr_event(_new_item_id, 'En preparación', fuente='sistema',
+                      commitment_id=comm_id, notify_cliente=True)
+        except Exception as _e_prep2:
+            print(f"[tr_event preparacion cub] item={_new_item_id}: {_e_prep2}", flush=True)
 
     return jsonify({
         "ok": True,

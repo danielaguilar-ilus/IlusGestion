@@ -267,6 +267,11 @@
   margin-bottom:16px;
   box-shadow:0 2px 8px rgba(15,23,42,.04);
 }
+/* 2026-06-14 (Daniel): la card de "Datos del Documento" contiene el dropdown
+   de comuna (#acDropdown, position:absolute). Con overflow:hidden quedaba
+   RECORTADO al abrirse. Liberamos SOLO esta card (no todas, para no perder
+   el border-radius del resto). */
+#cardDatos{ overflow:visible; }
 .ac-card-hdr{
   display:flex; align-items:center; justify-content:space-between;
   padding:11px 18px;
@@ -851,7 +856,7 @@
           <div class="client-cell">
             <div class="client-lbl">Teléfono <i class="bi bi-pencil editable-ico"></i></div>
             <input class="client-input" type="tel" id="cli-tel" placeholder="+56 9 XXXX XXXX"
-                   oninput="validarTelefono(this)">
+                   oninput="validarTelefono(this)" onblur="normalizarTelefonoBlur(this)">
             <div class="tel-hint" id="tel-hint"></div>
           </div>
           <div class="client-cell">
@@ -1414,15 +1419,41 @@ function onComunaChange(val){
 }
 
 // ════════════════════════════════════════════════════════════
-//  VALIDAR TELÉFONO
+//  VALIDAR + NORMALIZAR TELÉFONO CHILENO (inteligente, Daniel 2026-06-14)
+//  Acepta "9 1234 5678", "912345678", "56912345678", "+56 9 1234 5678",
+//  "0912345678" → normaliza a "+56 9 XXXX XXXX". Le pone el +56 9 solo.
 // ════════════════════════════════════════════════════════════
+function _normalizarTelefonoCl(raw){
+  let d = (raw || '').replace(/[^\d]/g, '');     // solo dígitos
+  if (d.startsWith('56')) d = d.slice(2);        // quita código país
+  d = d.replace(/^0+/, '');                       // quita ceros iniciales
+  if (d.length === 9 && d[0] === '9') return '+56' + d;   // móvil completo 9XXXXXXXX
+  if (d.length === 8) return '+569' + d;          // faltó el 9 → asumir móvil
+  return null;                                    // no se pudo normalizar con confianza
+}
+function _telPretty(norm){
+  const n = norm.slice(3);                        // 9XXXXXXXX
+  return `+56 ${n.slice(0,1)} ${n.slice(1,5)} ${n.slice(5)}`;
+}
 function validarTelefono(input){
-  const v = input.value.replace(/\s/g,'');
   const hint = document.getElementById('tel-hint');
-  const ok = /^\+56\d{9}$/.test(v);
-  hint.textContent = !v ? '' : ok ? '✓ Formato válido' : 'Formato: +56 9 XXXX XXXX';
-  hint.className = 'tel-hint ' + (!v?'': ok?'ok':'err');
-  input.classList.toggle('required-empty', !ok && v.length>0);
+  const raw = (input.value || '').trim();
+  if (!raw){ hint.textContent = ''; hint.className = 'tel-hint'; input.classList.remove('required-empty'); return; }
+  const norm = _normalizarTelefonoCl(raw);
+  if (norm){
+    hint.textContent = '✓ ' + _telPretty(norm);
+    hint.className = 'tel-hint ok';
+    input.classList.remove('required-empty');
+  } else {
+    hint.textContent = 'Teléfono chileno: +56 9 XXXX XXXX';
+    hint.className = 'tel-hint err';
+    input.classList.add('required-empty');
+  }
+}
+// Al salir del campo, deja el número ya formateado bonito (+56 9 XXXX XXXX).
+function normalizarTelefonoBlur(input){
+  const norm = _normalizarTelefonoCl(input.value || '');
+  if (norm){ input.value = _telPretty(norm); validarTelefono(input); }
 }
 
 // ════════════════════════════════════════════════════════════
