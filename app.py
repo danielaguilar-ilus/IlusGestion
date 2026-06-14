@@ -627,6 +627,25 @@ def chile_fmt_filter(value, fmt="%d/%m/%Y %H:%M"):
         return str(converted)
 
 
+# 2026-06-14 (Daniel) — Fecha en español con mes en LETRAS, sin depender del
+# locale del sistema (Cloud Run corre en C/POSIX → %B saldría en inglés).
+# Para columnas DATE puras (sin hora). Ej: {{ manifiesto.fecha | fecha_es }}
+# → "14 de junio de 2026". Para DATETIME en UTC usar chile_fmt (REGLA #6).
+_MESES_ES = ('enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+             'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre')
+
+
+@app.template_filter('fecha_es')
+def fecha_es_filter(value, con_anio=True):
+    if not value:
+        return "—"
+    try:
+        txt = f"{value.day} de {_MESES_ES[value.month - 1]}"
+        return txt + (f" de {value.year}" if con_anio else "")
+    except Exception:
+        return str(value)
+
+
 @app.template_filter('rut_fmt')
 def rut_fmt_filter(value):
     """Filtro Jinja: {{ cliente.rut | rut_fmt }} → '25.547.065-2'.
@@ -16311,6 +16330,12 @@ def api_asignar_documento():
 
     for l in lineas:
         if l.get("es_zz"):
+            continue
+        # 2026-06-14 (Daniel): excluir líneas de DESCUENTO (SKU 'DE' /
+        # "DESCUENTO VENTAS"). No son ítems físicos: no se cubican ni se
+        # envían, y su "cantidad" es el monto del descuento (ensucia totales,
+        # bultos y predominante). Solo se filtra en la salida (ERP read-only).
+        if (l.get("sku") or "").strip().upper() == "DE":
             continue
         qty          = l["cantidad"]
         peso_kg_u    = l["peso_kg_u"]

@@ -85,7 +85,7 @@
     <div class="mfd-hero-sub">
       <span><i class="bi bi-truck me-1"></i>{{ manifiesto.courier or '—' }}</span>
       <span class="mfd-dot">·</span>
-      <span><i class="bi bi-calendar3 me-1"></i>{{ manifiesto.fecha.strftime('%d/%m/%Y') if manifiesto.fecha else '—' }}</span>
+      <span><i class="bi bi-calendar3 me-1"></i>{{ manifiesto.fecha | fecha_es }}</span>
       <span class="mfd-dot">·</span>
       <span><i class="bi bi-receipt me-1"></i>{{ items|length }} factura{{ 's' if items|length != 1 }}</span>
       <span class="mfd-dot">·</span>
@@ -837,7 +837,7 @@
   </div>
   <div class="p-3" style="font-size:.8rem">
     {% for l in logs %}
-    {% set dt = l.created_at.strftime('%d/%m/%y %H:%M') if l.created_at else '—' %}
+    {% set dt = (l.created_at | chile_fmt('%d/%m/%Y %H:%M')) if l.created_at else '—' %}
     <div class="d-flex gap-2 py-1 border-bottom">
       <span class="text-muted" style="min-width:105px;flex-shrink:0">{{ dt }}</span>
       <span class="fw-semibold" style="min-width:80px;flex-shrink:0">{{ l.usuario or '?' }}</span>

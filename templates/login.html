@@ -63,7 +63,8 @@ body{background:#0a0a0a;}
 /* Responsive: clamp evita que se desborde en mobile pequeño */
 .login-brand-top{margin-bottom:auto;}
 .login-brand-top img{
-  width:clamp(260px, 36vw, 495px);
+  /* 2026-06-14 (Daniel): logo más grande */
+  width:clamp(320px, 44vw, 600px);
   height:auto;display:block;
   filter:drop-shadow(0 4px 18px rgba(0,0,0,.7));
 }
@@ -134,7 +135,7 @@ body{background:#0a0a0a;}
    se DESBORDABA (tarjetas cortadas, logo encima de la foto). Ahora el
    contenido se achica por etapas y nunca se corta. */
 @media (max-width:1280px){
-  .login-brand-top img{width:clamp(200px,24vw,360px);}
+  .login-brand-top img{width:clamp(240px,30vw,440px);}
   .login-tagline-hero{font-size:clamp(1.9rem,3.4vw,2.8rem);}
 }
 @media (max-width:1100px){
@@ -180,7 +181,7 @@ body{background:#0a0a0a;}
     <div class="login-hero-overlay"></div>
     {% endif %}
 
-    <div class="login-hero-content" style="padding:52px;">
+    <div class="login-hero-content" style="padding:48px 52px 48px 30px;">
       {# Logo arriba #}
       <div class="login-brand-top">
         {% if has_logo %}

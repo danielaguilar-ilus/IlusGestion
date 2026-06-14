@@ -536,20 +536,23 @@ body {
 
 /* — Logo area — */
 .sidebar-logo-area {
-  padding: 24px 18px 20px;
+  /* 2026-06-14 (Daniel): menos padding-left para anclar el logo a la izquierda */
+  padding: 24px 18px 20px 10px;
   border-bottom: 1px solid rgba(255,255,255,.07);
   flex-shrink: 0;
 }
 .sidebar-brand {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   text-decoration: none;
 }
 .sidebar-logo-img {
   display: block;
-  width: 100%;
-  max-width: 180px;
+  /* width:auto (no estirar al 100%) → el logo respeta su tamaño y queda a la izquierda */
+  width: auto;
+  max-width: 172px;
   height: auto;
   object-fit: contain;
   filter: drop-shadow(0 2px 8px rgba(0,0,0,.55));
@@ -1281,7 +1284,8 @@ body {
   background: #0a0a0a;
   display: flex;
   align-items: flex-end;
-  padding: 52px;
+  /* 2026-06-14 (Daniel): menos padding-left para que el logo quede más a la izquierda */
+  padding: 52px 52px 52px 36px;
   overflow: hidden;
 }
 .login-hero-overlay {

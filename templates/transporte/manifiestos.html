@@ -412,7 +412,7 @@
         <tr>
           <td data-label="Correlativo" class="cell-corr">{{ m.correlativo }}</td>
           <td data-label="Fecha" class="cell-fecha">
-            {{ m.fecha.strftime('%d/%m/%Y') if m.fecha else '—' }}
+            {{ m.fecha | fecha_es }}
           </td>
           <td data-label="Courier" class="cell-courier">{{ m.courier }}</td>
           <td data-label="Items" class="center">
