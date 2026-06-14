@@ -1847,14 +1847,10 @@ async function quitarItem(mid, itemId) {
     .then(function(r){ return r.json(); })
     .then(function(d) {
       if (d.ok) {
-        var row  = document.getElementById('row-' + itemId);
-        var prow = document.getElementById('prodrow-' + itemId);
-        var card = document.getElementById('card-' + itemId);
-        if (row)  row.remove();
-        if (prow) prow.remove();
-        if (card) card.remove();
-        if (window.ilusToast) ilusToast('✓ Factura quitada del manifiesto', { type: 'success' });
-        actualizarResumen();
+        if (window.ilusToast) ilusToast('✓ Factura quitada · actualizando montos…', { type: 'success' });
+        // Recargar para que TODOS los montos (cobrado, costo, margen, bultos,
+        // KPIs y la columna costo_total) queden recalculados sin desfase.
+        setTimeout(function(){ window.location.reload(); }, 600);
       } else {
         if (window.ilusToast) ilusToast(d.error || 'No se pudo quitar', { type: 'error' });
       }

@@ -21745,6 +21745,25 @@ def tr_factura_set_bultos(commitment_id):
     })
 
 
+def _tr_recalc_totales_manifiesto(cur, mid):
+    """Recalcula los totales PERSISTIDOS del manifiesto a partir de sus items
+    vivos. FUENTE ÚNICA DE VERDAD: la llaman agregar, quitar y cualquier flujo
+    que cambie los items, para que total_items y costo_total del listado/KPIs
+    nunca queden desfasados (antes el borrado no recalculaba costo_total → los
+    montos quedaban viejos). Recibe un cursor abierto (corre en la misma
+    transacción del caller)."""
+    cur.execute("""
+        UPDATE transport_manifests m SET
+          total_items = (SELECT COUNT(*) FROM transport_manifest_items
+                         WHERE manifest_id = m.id),
+          costo_total = (SELECT COALESCE(SUM(c.costo_zz), 0)
+                         FROM transport_manifest_items mi
+                         JOIN transport_commitments c ON c.id = mi.commitment_id
+                         WHERE mi.manifest_id = m.id)
+        WHERE m.id = %s
+    """, (mid,))
+
+
 @app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
 @_tr_required
 def tr_agregar_item(mid):
@@ -21758,40 +21777,66 @@ def tr_agregar_item(mid):
                 "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
                 "VALUES (%s,%s)", (mid, cid)
             )
-            # Recalcular totales
-            cur.execute("""
-                UPDATE transport_manifests m SET
-                  total_items=(SELECT COUNT(*) FROM transport_manifest_items WHERE manifest_id=m.id),
-                  costo_total=(SELECT COALESCE(SUM(c.costo_zz),0)
-                               FROM transport_manifest_items mi
-                               JOIN transport_commitments c ON c.id=mi.commitment_id
-                               WHERE mi.manifest_id=m.id)
-                WHERE m.id=%s
-            """, (mid,))
+            _tr_recalc_totales_manifiesto(cur, mid)
         conn.commit()
     finally:
         conn.close()
-    _tr_log("manifest", mid, "item agregado", f"commitment_id={cid}")
+    # Trazabilidad legible: documento + cliente (no solo el id).
+    _info = mysql_fetchone(
+        "SELECT tido, nudo, cliente_nombre FROM transport_commitments WHERE id=%s", (cid,))
+    if _info:
+        _doc = f"{_info.get('tido') or ''} {_info.get('nudo') or ''}".strip()
+        _detalle = f"{_doc} · {_info.get('cliente_nombre') or '—'}"
+    else:
+        _detalle = f"commitment_id={cid}"
+    _tr_log("manifest", mid, "factura agregada", _detalle)
     return jsonify({"ok": True})
 
 
 @app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>", methods=["DELETE"])
 @_tr_required
 def tr_quitar_item(mid, item_id):
+    # Capturar datos del item ANTES de borrar, para una trazabilidad legible
+    # (qué factura, de qué cliente, cuánto flete, cuántos bultos se quitaron).
+    info = mysql_fetchone(
+        "SELECT mi.commitment_id, c.tido, c.nudo, c.cliente_nombre, "
+        "       COALESCE(c.costo_zz, 0) AS costo_zz, COALESCE(c.n_bultos, 1) AS n_bultos "
+        "FROM transport_manifest_items mi "
+        "JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "WHERE mi.id=%s AND mi.manifest_id=%s",
+        (item_id, mid)
+    )
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
             "DELETE FROM transport_manifest_items WHERE id=%s AND manifest_id=%s",
             (item_id, mid)
         )
+        # Recalcular TODOS los totales (antes solo total_items → costo_total
+        # quedaba viejo). Ahora montos del listado/KPIs siempre cuadran.
+        _tr_recalc_totales_manifiesto(cur, mid)
+        # Totales nuevos para devolver al frontend.
         cur.execute(
-            "UPDATE transport_manifests SET "
-            "total_items=(SELECT COUNT(*) FROM transport_manifest_items WHERE manifest_id=%s) "
-            "WHERE id=%s", (mid, mid)
-        )
+            "SELECT total_items, costo_total FROM transport_manifests WHERE id=%s", (mid,))
+        _tot = cur.fetchone() or {}
     conn.commit()
-    _tr_log("manifest", mid, "item eliminado", f"item_id={item_id}")
-    return jsonify({"ok": True})
+
+    # Trazabilidad legible: "FCV 10599 · Cipax Limitada · flete $559.478 · 114 bultos"
+    if info:
+        doc = f"{info.get('tido') or ''} {info.get('nudo') or ''}".strip()
+        cli = info.get("cliente_nombre") or "—"
+        flete = int(info.get("costo_zz") or 0)
+        nb = info.get("n_bultos") or 1
+        detalle = (f"{doc} · {cli} · flete ${flete:,}".replace(",", ".")
+                   + f" · {nb} bulto/s")
+    else:
+        detalle = f"item_id={item_id}"
+    _tr_log("manifest", mid, "factura quitada", detalle)
+    return jsonify({
+        "ok": True,
+        "total_items": (_tot.get("total_items") if _tot else None),
+        "costo_total": float(_tot.get("costo_total") or 0) if _tot else None,
+    })
 
 
 @app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>/estado", methods=["PUT"])
