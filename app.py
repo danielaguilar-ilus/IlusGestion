@@ -2161,6 +2161,7 @@ def init_transporte_tables():
                     costo_zz        DECIMAL(10,2) DEFAULT 0,
                     costo_envio     DECIMAL(10,2) DEFAULT 0,
                     tiene_saldo     TINYINT(1) DEFAULT 1,
+                    preventa        TINYINT(1) DEFAULT 0,
                     guia_numero     VARCHAR(20),
                     estado          VARCHAR(50) DEFAULT 'Pendiente',
                     clasificacion   ENUM('despacho','retiro','instalacion','mantencion','garantia') DEFAULT 'despacho',
@@ -2208,6 +2209,9 @@ def init_transporte_tables():
                 # ZZENVIO). costo_zz sigue siendo el total de líneas ZZ; costo_envio
                 # es solo lo que se cobró por el flete — lo que el monitor muestra.
                 "ALTER TABLE transport_commitments ADD COLUMN costo_envio DECIMAL(10,2) DEFAULT 0 COMMENT 'Monto del envío: VANELI de la línea ZZENVIO'",
+                # MIGRACIÓN 2026-06-13: bandera Preventa. 1 cuando el doc tiene
+                # producto vendido sin stock físico suficiente (MAEPR.STFI1).
+                "ALTER TABLE transport_commitments ADD COLUMN preventa TINYINT(1) DEFAULT 0 COMMENT 'Preventa: producto sin stock fisico para cubrir lo pedido (MAEPR.STFI1)'",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -17589,18 +17593,27 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
     inexistentes en SQL Server). Va vía `_random_sql_query` (read-only
     blindado).
 
-    UPDATE 2026-05-19 (Daniel): el sync por defecto sólo trae **BLV** (Boleta)
-    y **GDV** (Guía Despacho). El resto de TIDOs (FCV, NVV, NVI, COV…) se
-    importan vía el endpoint manual `/transporte/api/importar-forzado`
-    cuando el usuario superadmin lo necesita. Esto evita engordar el monitor
-    con ventas-internas que no son despachos reales.
-    `tidos_override` permite forzar otra lista desde código (ej. backfill).
+    UPDATE 2026-06-13 (Daniel): el sync por defecto trae **BLV** (Boleta) y
+    **FCV** (Factura de venta) — los documentos que el monitor debe gestionar.
+    YA NO trae **GDV** (Guía de Despacho): "en el monitor quiero boletas y
+    facturas, no guías". El resto de TIDOs (NVV, NVI, COV…) se importan vía el
+    endpoint manual `/transporte/api/importar-forzado` cuando el superadmin lo
+    necesita. `tidos_override` permite forzar otra lista desde código (backfill).
+
+    PREVENTA 2026-06-13 (Daniel): cada documento se marca `preventa=1` cuando
+    el STOCK físico del producto (MAEPR.STFI1) NO alcanza para cubrir lo pedido
+    (alguna línea de PRODUCTO real, KOPRCT que no empieza con 'ZZ', con
+    CAPRCO1 > STFI1). Se calcula con un EXISTS blindado en la query del sync.
 
     Retorna (count_ok, list_errors).
     """
     zz_list      = [s.upper() for s in ZZ_SKUS]
     zz_in        = ",".join(["%s"] * len(zz_list))
-    TIDOS_VALIDOS = tuple(tidos_override) if tidos_override else ("BLV", "GDV")
+    # 2026-06-13 (Daniel): el monitor muestra BOLETAS (BLV) y FACTURAS (FCV)
+    # de venta, NO guías de despacho (GDV). "En el monitor quiero boletas y
+    # facturas, no guías". `tidos_override` sigue permitiendo forzar otra
+    # lista desde código (backfill / importación manual).
+    TIDOS_VALIDOS = tuple(tidos_override) if tidos_override else ("BLV", "FCV")
     tido_in      = ",".join(["%s"] * len(TIDOS_VALIDOS))
 
     # T-SQL: agregación por header con subqueries blindadas.
@@ -17642,7 +17655,22 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             zz.costo_zz_sum,
             zz.valor_envio,
             zz.valor_retiro,
-            zz.zz_skus
+            zz.zz_skus,
+            -- PREVENTA 2026-06-13: 1 si alguna línea de PRODUCTO real (KOPRCT
+            -- que NO empieza con 'ZZ') pide más unidades de las que hay en
+            -- stock físico (MAEPR.STFI1). EXISTS correlacionado por documento;
+            -- el LEFT/COALESCE evita falsos negativos cuando el SKU no está en
+            -- MAEPR (producto sin ficha → stock 0 → si pide >0 cuenta preventa).
+            -- Read-only: solo SELECT, sin tokens prohibidos.
+            CASE WHEN EXISTS (
+                SELECT 1
+                  FROM MAEDDO dp
+                  LEFT JOIN MAEPR pr
+                         ON LTRIM(RTRIM(pr.KOPR)) = LTRIM(RTRIM(dp.KOPRCT))
+                 WHERE dp.IDMAEEDO = h.IDMAEEDO
+                   AND LEFT(UPPER(LTRIM(RTRIM(dp.KOPRCT))), 2) <> 'ZZ'
+                   AND dp.CAPRCO1 > COALESCE(pr.STFI1, 0)
+            ) THEN 1 ELSE 0 END AS preventa_flag
         FROM MAEEDO h
         -- PERF 2026-06-13: UNA sola agregación de MAEDDO por documento (GROUP BY)
         -- en vez de 4 subqueries correlacionadas + EXISTS. El JOIN (no LEFT) ya
@@ -17827,6 +17855,19 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             if cant_total > 0:
                 cobertura_pct = round((cant_despachada / cant_total) * 100, 1)
 
+            # ── PREVENTA 2026-06-13 (Daniel) ──────────────────────────────
+            # El doc es "Preventa" cuando hay producto vendido SIN stock para
+            # cubrirlo (preventa_flag del SQL) Y el doc todavía tiene saldo por
+            # despachar (tiene_saldo_flag=1). Si ya está entregado completo no
+            # tiene sentido marcarlo preventa. La regla del gate la pidió el
+            # task; si en producción casi ningún doc con saldo queda preventa,
+            # se evalúa relajar el gate (ver reporte).
+            # Preventa = hay producto vendido SIN stock para cubrirlo. Es por
+            # STOCK del producto, INDEPENDIENTE del saldo del flete ZZ (que es lo
+            # que mide tiene_saldo). Por eso NO se gatea con tiene_saldo: si se
+            # gateara, casi ningún doc quedaría preventa (validado contra el ERP).
+            preventa_flag = 1 if int(row.get("preventa_flag") or 0) == 1 else 0
+
             fecha_em  = _pd(row.get("FEEMDO"))
             fecha_ent = _pd(row.get("FEER"))
 
@@ -17838,6 +17879,7 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
                 vneto, vbruto, costo_zz, costo_envio,
                 tiene_saldo_flag, guia, clasif, estado_auto,
                 cobertura_pct, cant_total, cant_despachada,
+                preventa_flag,
                 _sync_now, 'sync', 'sync',
             ))
             refs.append((tido, nudo))
@@ -17873,8 +17915,9 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
            valor_neto,valor_bruto,costo_zz,costo_envio,
            tiene_saldo,guia_numero,clasificacion,estado,
            cobertura_pct,cant_total_zz,cant_despachada_zz,
+           preventa,
            erp_synced_at,created_by,updated_by)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
           fecha_emision =VALUES(fecha_emision),
           fecha_entrega =VALUES(fecha_entrega),
@@ -17901,6 +17944,7 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           cobertura_pct =VALUES(cobertura_pct),
           cant_total_zz =VALUES(cant_total_zz),
           cant_despachada_zz=VALUES(cant_despachada_zz),
+          preventa      =VALUES(preventa),
           erp_synced_at =VALUES(erp_synced_at)
     """
 
@@ -18216,16 +18260,29 @@ def tr_sync():
 def tr_compromisos_json():
     """Versión JSON del monitor para carga AJAX.
 
-    NUEVO 2026-05-14: parámetro `vista` permite filtrar por la categoría
-    del flujo de transporte (en vez de mezclar todo en una sola lista):
+    MODELO DE GESTIÓN 2026-06-13 (Daniel) — 3 estados que particionan el
+    universo de documentos (cada doc cae en exactamente UNO):
 
-      vista=pendientes  → docs aún por despachar (tiene_saldo=1, sin guía)
-      vista=parciales   → docs con guía pero saldo > 0 (despacho parcial)
-      vista=entregados  → docs completamente despachados (tiene_saldo=0)
-      vista=todos       → todo (default)
+      pendiente   → tiene_saldo=1 Y NO está en manifiesto
+                    (lo que hay que ATACAR: sin gestión todavía)
+      en_gestion  → está en algún manifiesto (commitment_id en
+                    transport_manifest_items) — en preparación
+      entregado   → tiene_saldo=0 Y NO está en manifiesto
 
-    También devuelve `cobertura_pct`, `guia_numero` y los conteos de cada
-    categoría para que el frontend pinte los badges del tab.
+    `vista` filtra por ese estado:
+      vista=pendientes  → solo gestión "pendiente"
+      vista=en_gestion  → solo gestión "en_gestion"
+      vista=entregados  → solo gestión "entregado"
+      vista=todos       → todo
+      (compat: vista=parciales se trata como en_gestion)
+
+    Cada compromiso del JSON trae además:
+      gestion      → "pendiente" | "en_gestion" | "entregado"
+      dias_atraso  → días desde fecha_emision (solo si gestion=pendiente, sino 0)
+      preventa     → 1 si el producto no tiene stock físico para cubrir lo pedido
+
+    `conteos` devuelve pendientes / en_gestion / entregados / preventa /
+    atrasados / total para que el frontend pinte los badges sin 2ª llamada.
     """
     from datetime import date as _date, timedelta as _td
     periodo = request.args.get("periodo", "")
@@ -18246,26 +18303,35 @@ def tr_compromisos_json():
     vista  = (request.args.get("vista","") or "").strip().lower()
 
     where, params = [], []
-    # 2026-06-13 (Daniel): "Pendientes" = lo que aún hay que GESTIONAR. Es:
-    #   - tiene SALDO pendiente (falta despachar), O
-    #   - está asignado a un MANIFIESTO (en preparación), aunque su saldo sea 0,
-    # …siempre que NO tenga guía todavía (con guía → ya va en camino).
-    # "Entregados" = sin saldo Y que NO esté en un manifiesto en preparación.
-    # Así, un doc sin saldo y sin manifiesto se va a Entregados (desaparece de
-    # Pendientes), y uno en manifiesto sin guía se reconoce como "en transición".
-    _EN_MANIF = "id IN (SELECT commitment_id FROM transport_manifest_items)"
+    # 2026-06-14 (Daniel): el monitor muestra Boletas + Facturas, NO guías.
+    # Oculta las GDV viejas que ya estén en la BD (sin borrarlas). Usamos
+    # `tido <> 'GDV'` (no `IN ('BLV','FCV')`) para no esconder documentos
+    # importados manualmente con /importar-forzado (NVV/COV/FCV puntuales).
+    where.append("tido <> 'GDV'")
+    # MODELO DE GESTIÓN 2026-06-13 (Daniel) — 3 estados mutuamente excluyentes
+    # que particionan TODO el universo de documentos:
+    #   en_gestion  = está en un manifiesto (en preparación)            → EN_MANIF
+    #   pendiente   = tiene saldo Y NO está en manifiesto               → hay que atacar
+    #   entregado   = sin saldo  Y NO está en manifiesto                → cerrado
+    # Nota: el predicado de manifiesto manda — un doc en manifiesto es
+    # "en_gestion" aunque su tiene_saldo sea 0 o 1.
+    _EN_MANIF      = "id IN (SELECT commitment_id FROM transport_manifest_items)"
+    _NOT_EN_MANIF  = "id NOT IN (SELECT commitment_id FROM transport_manifest_items)"
+    _SQL_PENDIENTE = f"(tiene_saldo=1 AND {_NOT_EN_MANIF})"
+    _SQL_ENGESTION = f"({_EN_MANIF})"
+    _SQL_ENTREGADO = f"(tiene_saldo=0 AND {_NOT_EN_MANIF})"
     # Filtro por vista (categoría del flujo)
     if vista == "pendientes":
-        where.append(f"(guia_numero IS NULL OR guia_numero='') AND (tiene_saldo=1 OR {_EN_MANIF})")
-    elif vista == "parciales":
-        where.append("tiene_saldo=1 AND guia_numero IS NOT NULL AND guia_numero<>''")
+        where.append(_SQL_PENDIENTE)
+    elif vista in ("en_gestion", "parciales"):   # compat: 'parciales' → en_gestion
+        where.append(_SQL_ENGESTION)
     elif vista == "entregados":
-        where.append(f"tiene_saldo=0 AND NOT ({_EN_MANIF} AND (guia_numero IS NULL OR guia_numero=''))")
+        where.append(_SQL_ENTREGADO)
     elif vista == "todos":
         pass  # sin filtro adicional
     else:
         # default (compat con clientes que no mandan vista): lo que hay que gestionar
-        where.append(f"(tiene_saldo=1 OR {_EN_MANIF})")
+        where.append(_SQL_PENDIENTE)
 
     if estado: where.append("estado=%s"); params.append(estado)
     if clasif: where.append("clasificacion=%s"); params.append(clasif)
@@ -18275,9 +18341,12 @@ def tr_compromisos_json():
     if fecha_desde: where.append("fecha_emision >= %s"); params.append(fecha_desde)
     if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
 
+    # `WHERE 1=1` como base: con vista=todos sin más filtros, `where` puede
+    # quedar vacío y romper el SQL. El 1=1 lo blinda sin cambiar resultados.
+    where_sql = (" AND " + " AND ".join(where)) if where else ""
     rows = mysql_fetchall(
         "SELECT *, (" + _EN_MANIF + ") AS en_manifiesto "
-        "FROM transport_commitments WHERE " + " AND ".join(where) +
+        "FROM transport_commitments WHERE 1=1" + where_sql +
         " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
     )
 
@@ -18287,6 +18356,24 @@ def tr_compromisos_json():
         # el monitor pueda mostrarlos sin re-consultar el ERP.
         # Las columnas pueden no existir todavía en BDs viejas — usar .get()
         # con default, ya que DictCursor de pymysql devuelve dicts reales.
+        en_manif    = int(r.get("en_manifiesto") or 0)
+        tiene_saldo = int(r.get("tiene_saldo") or 0)
+        # ── GESTIÓN 2026-06-13: 3 estados que particionan el universo ──
+        #   en_gestion (en manifiesto) manda sobre saldo.
+        if en_manif:
+            gestion = "en_gestion"
+        elif tiene_saldo == 1:
+            gestion = "pendiente"
+        else:
+            gestion = "entregado"
+        # ── Días de atraso: solo aplica a "pendiente" (lo que falta gestionar).
+        #   Desde fecha_emision hasta hoy, mínimo 0. Otros estados → 0.
+        dias_atraso = 0
+        if gestion == "pendiente" and r.get("fecha_emision"):
+            try:
+                dias_atraso = max(0, (hoy - r["fecha_emision"]).days)
+            except Exception:
+                dias_atraso = 0
         result.append({
             "id":           r["id"],
             "tido":         r["tido"],
@@ -18304,13 +18391,17 @@ def tr_compromisos_json():
             "clasificacion":r["clasificacion"] or "despacho",
             "guia_numero":  r.get("guia_numero") or "",
             "cobertura_pct":float(r.get("cobertura_pct") or 0),
-            "tiene_saldo":  int(r.get("tiene_saldo") or 0),
-            "en_manifiesto":int(r.get("en_manifiesto") or 0),
+            "tiene_saldo":  tiene_saldo,
+            "en_manifiesto":en_manif,
+            "gestion":      gestion,
+            "dias_atraso":  int(dias_atraso),
+            "preventa":     int(r.get("preventa") or 0),
+            "fecha_agenda": r["fecha_agenda"].strftime("%d/%m/%Y") if r.get("fecha_agenda") else "",
         })
 
     # Conteos por categoría — independientes del filtro `vista` aplicado.
     # Permite al frontend mostrar badge "Pendientes: 12" sin segunda llamada.
-    base_where, base_params = [], []
+    base_where, base_params = ["tido <> 'GDV'"], []   # conteos también ocultan guías
     if clasif: base_where.append("clasificacion=%s"); base_params.append(clasif)
     if q:
         base_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
@@ -18319,12 +18410,19 @@ def tr_compromisos_json():
     if fecha_hasta: base_where.append("fecha_emision <= %s"); base_params.append(fecha_hasta)
     base_w = (" WHERE " + " AND ".join(base_where)) if base_where else ""
 
+    # Conteos del nuevo modelo de gestión (las 3 reglas PARTICIONAN el universo,
+    # así que pendientes + en_gestion + entregados = total). Además:
+    #   preventa  → docs marcados preventa (producto sin stock)
+    #   atrasados → pendientes con > 3 días desde la emisión (urgentes)
     conteos_row = mysql_fetchone(
         "SELECT "
-        " SUM(CASE WHEN (guia_numero IS NULL OR guia_numero='') AND (tiene_saldo=1 OR " + _EN_MANIF + ") THEN 1 ELSE 0 END) AS pendientes,"
-        " SUM(CASE WHEN tiene_saldo=1 AND guia_numero IS NOT NULL AND guia_numero<>'' THEN 1 ELSE 0 END) AS parciales,"
-        " SUM(CASE WHEN tiene_saldo=0 AND NOT (" + _EN_MANIF + " AND (guia_numero IS NULL OR guia_numero='')) THEN 1 ELSE 0 END) AS entregados,"
-        " COUNT(*) AS total"
+        "  SUM(CASE WHEN " + _SQL_PENDIENTE + " THEN 1 ELSE 0 END) AS pendientes,"
+        "  SUM(CASE WHEN " + _SQL_ENGESTION + " THEN 1 ELSE 0 END) AS en_gestion,"
+        "  SUM(CASE WHEN " + _SQL_ENTREGADO + " THEN 1 ELSE 0 END) AS entregados,"
+        "  SUM(CASE WHEN preventa=1 THEN 1 ELSE 0 END) AS preventa,"
+        "  SUM(CASE WHEN " + _SQL_PENDIENTE + " AND fecha_emision IS NOT NULL"
+        "            AND DATEDIFF(CURDATE(), fecha_emision) > 3 THEN 1 ELSE 0 END) AS atrasados,"
+        "  COUNT(*) AS total"
         " FROM transport_commitments" + base_w,
         tuple(base_params)
     ) or {}
@@ -18335,8 +18433,10 @@ def tr_compromisos_json():
         "total": len(result),
         "conteos": {
             "pendientes": int(conteos_row.get("pendientes") or 0),
-            "parciales":  int(conteos_row.get("parciales") or 0),
+            "en_gestion": int(conteos_row.get("en_gestion") or 0),
             "entregados": int(conteos_row.get("entregados") or 0),
+            "preventa":   int(conteos_row.get("preventa") or 0),
+            "atrasados":  int(conteos_row.get("atrasados") or 0),
             "total":      int(conteos_row.get("total") or 0),
         },
         "vista": vista or "default",
@@ -64679,6 +64779,7 @@ def _ensure_transporte_columns():
         "cod_postal":         "VARCHAR(20) NULL",
         "peso_export":        "DECIMAL(10,3) DEFAULT 0",
         "n_bultos":           "INT DEFAULT 1",
+        "preventa":           "TINYINT(1) DEFAULT 0",  # producto sin stock fisico suficiente (MAEPR.STFI1)
         "cobertura_pct":      "DECIMAL(5,1) DEFAULT 0",
         "cant_total_zz":      "DECIMAL(12,3) DEFAULT 0",
         "cant_despachada_zz": "DECIMAL(12,3) DEFAULT 0",

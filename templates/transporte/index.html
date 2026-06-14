@@ -148,14 +148,16 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
 {% endif %}
 
 {# ════════════════════════════════════════════════════════════════
-   KPIs — 4 cards horizontales con números grandes
-   Total pendiente · En camino · Entregados · Atrasados
-   Los valores se completan desde JS al cargar el monitor.
+   KPIs — resumen inteligente "lo que hay que atacar"
+   Pendientes (a atacar) · En gestión (en manifiesto) · Entregados ·
+   Atrasados (más días sin gestión) · Preventa (esperan stock).
+   Los valores salen de conteos.{pendientes,en_gestion,entregados,
+   atrasados,preventa} que entrega el backend; se completan desde JS.
    ════════════════════════════════════════════════════════════════ #}
-<div class="tr-kpis">
+<div class="tr-kpis tr-kpis-5">
   <div class="tr-kpi tr-kpi-red" role="button" tabindex="0"
        onclick="setVistaMonitorById('pendientes')"
-       title="Ver compromisos pendientes de despacho">
+       title="Con saldo y sin manifiesto — hay que atacar">
     <div class="tr-kpi-icon"><i class="bi bi-hourglass-split"></i></div>
     <div class="tr-kpi-body">
       <div class="tr-kpi-num" id="kpiPendientes">—</div>
@@ -163,17 +165,17 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
     </div>
   </div>
   <div class="tr-kpi tr-kpi-blue" role="button" tabindex="0"
-       onclick="setVistaMonitorById('parciales')"
-       title="Documentos con despacho parcial">
-    <div class="tr-kpi-icon"><i class="bi bi-truck"></i></div>
+       onclick="setVistaMonitorById('en_gestion')"
+       title="Incluidos en un manifiesto — en preparación">
+    <div class="tr-kpi-icon"><i class="bi bi-clipboard-check"></i></div>
     <div class="tr-kpi-body">
-      <div class="tr-kpi-num" id="kpiParciales">—</div>
-      <div class="tr-kpi-label">En camino</div>
+      <div class="tr-kpi-num" id="kpiEnGestion">—</div>
+      <div class="tr-kpi-label">En gestión</div>
     </div>
   </div>
   <div class="tr-kpi tr-kpi-green" role="button" tabindex="0"
        onclick="setVistaMonitorById('entregados')"
-       title="Documentos completamente entregados">
+       title="Documentos completamente entregados (sin saldo)">
     <div class="tr-kpi-icon"><i class="bi bi-check2-all"></i></div>
     <div class="tr-kpi-body">
       <div class="tr-kpi-num" id="kpiEntregados">—</div>
@@ -181,11 +183,20 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
     </div>
   </div>
   <div class="tr-kpi tr-kpi-amber" role="button" tabindex="0"
-       title="Compromisos pendientes con más de 7 días desde la emisión">
+       onclick="setVistaMonitorById('pendientes')"
+       title="Pendientes con más días sin gestión — atención prioritaria">
     <div class="tr-kpi-icon"><i class="bi bi-clock-history"></i></div>
     <div class="tr-kpi-body">
       <div class="tr-kpi-num" id="kpiAtrasados">—</div>
       <div class="tr-kpi-label">Atrasados</div>
+    </div>
+  </div>
+  <div class="tr-kpi tr-kpi-violet" role="button" tabindex="0"
+       title="Pedidos sin stock suficiente — esperan reposición (preventa)">
+    <div class="tr-kpi-icon"><i class="bi bi-hourglass-bottom"></i></div>
+    <div class="tr-kpi-body">
+      <div class="tr-kpi-num" id="kpiPreventa">—</div>
+      <div class="tr-kpi-label">Preventa</div>
     </div>
   </div>
 </div>
@@ -402,23 +413,29 @@ async function limpiarYResync(){
 </form>
 
 {# ─────────────────────────────────────────────────────────────
-   Pestañas de VISTA (flujo del documento) — segmented control
-   Pendientes → sin despachar · Parciales → en camino · Entregados · Todos
+   Pestañas de GESTIÓN (modelo de 3 estados) — segmented control
+   Pendientes → con saldo y SIN manifiesto (a atacar)
+   En gestión → en un manifiesto (en preparación)
+   Entregados → sin saldo · Todos
+   El backend resuelve esto con ?vista=pendientes|en_gestion|entregados|todos
+   y devuelve conteos.pendientes/en_gestion/entregados/total.
    ───────────────────────────────────────────────────────────── #}
 <div class="tr-segment">
-  <span class="tr-segment-label">Vista</span>
+  <span class="tr-segment-label">Gestión</span>
   <div class="tr-segment-group" role="tablist">
     <button type="button" class="tr-segment-btn active" data-vista="pendientes"
-            onclick="setVistaMonitor(this,'pendientes')" role="tab">
+            onclick="setVistaMonitor(this,'pendientes')" role="tab"
+            title="Con saldo y sin manifiesto — hay que atacar">
       <i class="bi bi-hourglass-split"></i>
       <span>Pendientes</span>
       <span class="tr-segment-badge tr-segment-badge-red" id="vbPendientes">0</span>
     </button>
-    <button type="button" class="tr-segment-btn" data-vista="parciales"
-            onclick="setVistaMonitor(this,'parciales')" role="tab">
-      <i class="bi bi-truck"></i>
-      <span>En camino</span>
-      <span class="tr-segment-badge tr-segment-badge-blue" id="vbParciales">0</span>
+    <button type="button" class="tr-segment-btn" data-vista="en_gestion"
+            onclick="setVistaMonitor(this,'en_gestion')" role="tab"
+            title="Incluidos en un manifiesto — en preparación">
+      <i class="bi bi-clipboard-check"></i>
+      <span>En gestión</span>
+      <span class="tr-segment-badge tr-segment-badge-blue" id="vbEnGestion">0</span>
     </button>
     <button type="button" class="tr-segment-btn" data-vista="entregados"
             onclick="setVistaMonitor(this,'entregados')" role="tab">
@@ -706,7 +723,13 @@ async function limpiarYResync(){
   display:grid; grid-template-columns:repeat(4, 1fr);
   gap:10px; margin-bottom:16px;
 }
-@media (max-width:900px) { .tr-kpis { grid-template-columns:repeat(2, 1fr); } }
+/* Variante de 5 columnas (resumen inteligente con Atrasados + Preventa) */
+.tr-kpis-5 { grid-template-columns:repeat(5, 1fr); }
+@media (max-width:1100px) { .tr-kpis-5 { grid-template-columns:repeat(3, 1fr); } }
+@media (max-width:900px) {
+  .tr-kpis { grid-template-columns:repeat(2, 1fr); }
+  .tr-kpis-5 { grid-template-columns:repeat(2, 1fr); }
+}
 .tr-kpi {
   display:flex; align-items:center; gap:12px;
   padding:14px 16px;
@@ -739,10 +762,11 @@ async function limpiarYResync(){
   letter-spacing:.6px; color:var(--tr-text-muted);
   margin-top:2px;
 }
-.tr-kpi-red   { color:#dc2626; }
-.tr-kpi-blue  { color:#3b82f6; }
-.tr-kpi-green { color:#16a34a; }
-.tr-kpi-amber { color:#f59e0b; }
+.tr-kpi-red    { color:#dc2626; }
+.tr-kpi-blue   { color:#3b82f6; }
+.tr-kpi-green  { color:#16a34a; }
+.tr-kpi-amber  { color:#f59e0b; }
+.tr-kpi-violet { color:#7c3aed; }
 
 /* ── FILTROS ── */
 .tr-filters {
@@ -1186,9 +1210,9 @@ async function limpiarYResync(){
       </div>
     </div>
     <div class="tr-kcol" data-group="encamino" data-accent="#0a0a0a"
-         data-estado="Despachado" data-icon="bi-truck">
+         data-estado="Despachado" data-icon="bi-clipboard-check">
       <div class="tr-kcol-hdr">
-        <span class="tr-kcol-title"><i class="bi bi-truck"></i> En Camino</span>
+        <span class="tr-kcol-title"><i class="bi bi-clipboard-check"></i> En gestión</span>
         <span class="tr-kcol-count js-kcount" data-group="encamino">0</span>
       </div>
       <div class="tr-kcol-body js-kbody" data-group="encamino">
@@ -1289,6 +1313,56 @@ async function limpiarYResync(){
   font-size:.66rem; font-weight:700; padding:2px 7px; border-radius:99px;
   background:#eef2ff; color:#3730a3; border:1px solid #c7d2fe;
 }
+.tr-kcard-agenda {
+  display:inline-flex; align-items:center; gap:3px;
+  color:#155e75; font-weight:600;
+}
+.tr-kcard-agenda i { color:#155e75 !important; }
+
+/* ════════════════════════════════════════════════════════════════
+   BADGES DE GESTIÓN compartidos — tabla, cards mobile y Kanban.
+   "En manifiesto" (azul), "PREVENTA" (ámbar), atraso (color por días),
+   agenda de retiro. Mismo look en las 3 vistas para coherencia.
+   ════════════════════════════════════════════════════════════════ */
+/* Stack vertical en la celda Estado de la tabla */
+.tr-estado-stack { display:inline-flex; flex-direction:column; gap:4px; align-items:flex-start; }
+.tr-estado-stack > * { white-space:nowrap; }
+
+.tr-manif-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.66rem; font-weight:700; padding:2px 8px; border-radius:99px;
+  background:#eef2ff; color:#3730a3; border:1px solid #c7d2fe;
+}
+.tr-manif-badge i { font-size:.7rem; }
+
+.tr-preventa-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.66rem; font-weight:800; padding:2px 8px; border-radius:99px;
+  background:#fff8e1; color:#92400e; border:1px solid #fde68a;
+  letter-spacing:.3px;
+}
+.tr-preventa-badge i { font-size:.7rem; color:#f59e0b; }
+
+.tr-atraso-chip {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.66rem; font-weight:800; padding:2px 8px; border-radius:99px;
+  border:1px solid currentColor; font-feature-settings:"tnum";
+}
+.tr-atraso-chip i { font-size:.7rem; }
+
+.tr-agenda-chip {
+  display:inline-flex; align-items:center; gap:4px;
+  margin-top:5px; font-size:.66rem; font-weight:700; padding:2px 8px; border-radius:99px;
+  background:#ecfeff; color:#155e75; border:1px solid #a5f3fc;
+}
+.tr-agenda-chip i { font-size:.72rem; }
+.tr-agenda-chip-todo { background:#fff8e1; color:#92400e; border-color:#fde68a; }
+
+/* Fila de badges de la card mobile */
+.tr-mcard-badges {
+  display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px;
+}
+.tr-mcard-badges .tr-agenda-chip { margin-top:0; }
 
 /* Columna destino bajo el drag: highlight verde suave */
 .tr-kcol.drop-ok {
@@ -2895,11 +2969,16 @@ var ESTADO_COLORS = {
   'Indemnización rechazada':'danger','Regalo':'info','Reentrega':'warning'
 };
 
-// Vista actual del flujo (pendientes/parciales/entregados/todos)
-// Por defecto: pendientes (es lo que el operador ve al llegar)
+// Vista actual de GESTIÓN (pendientes/en_gestion/entregados/todos)
+// Por defecto: pendientes (es lo que el operador ve al llegar).
+// Migración: una preferencia vieja guardada como 'parciales' (modelo anterior
+// "En camino") se mapea al nuevo bucket 'en_gestion'.
 var _vistaActual = (function(){
-  try { return localStorage.getItem('tr_vista_actual') || 'pendientes'; }
-  catch(e){ return 'pendientes'; }
+  try {
+    var v = localStorage.getItem('tr_vista_actual') || 'pendientes';
+    if (v === 'parciales') v = 'en_gestion';
+    return v;
+  } catch(e){ return 'pendientes'; }
 })();
 
 function setVistaMonitor(btn, vista){
@@ -2937,7 +3016,8 @@ var _monitorViewMode = (function(){
   catch(e){ return 'tabla'; }
 })();
 
-// Map estado del compromiso → columna Kanban (3 buckets).
+// Map estado del compromiso → columna Kanban (3 buckets). Fallback legacy
+// usado solo si el compromiso no trae el campo de gestión del backend.
 function _kanbanBucket(estado) {
   switch ((estado || '').trim()) {
     case 'Despachado':
@@ -2950,6 +3030,54 @@ function _kanbanBucket(estado) {
       // Pendiente, vacío, En proceso, Problema, Prioridad y cualquier otro → Pendientes
       return 'pendientes';
   }
+}
+
+// Bucket Kanban a partir del NUEVO modelo de gestión que entrega el backend:
+//   gestion = pendiente | en_gestion | entregado
+// (pendiente→Pendientes, en_gestion→En gestión [col "encamino"], entregado→Entregados)
+// Si el compromiso no trae 'gestion' (fila vieja sin re-sync), derivamos un
+// equivalente con en_manifiesto / cobertura / estado para no perder la tarjeta.
+function _gestionBucket(c) {
+  var g = (c && c.gestion ? String(c.gestion) : '').trim();
+  if (g === 'pendiente')  return 'pendientes';
+  if (g === 'en_gestion') return 'encamino';
+  if (g === 'entregado')  return 'entregados';
+  // Fallback derivado
+  if (c && c.en_manifiesto) return 'encamino';
+  if (c && (c.cobertura_pct || 0) >= 100) return 'entregados';
+  if (c && c.tiene_saldo === 0) return 'entregados';
+  return _kanbanBucket(c ? c.estado : '');
+}
+
+// Etiqueta humana de la gestión (para tooltips/badges).
+function _gestionLabel(g) {
+  return ({ pendientes:'Pendiente', encamino:'En gestión', entregados:'Entregado' }[g] || 'Pendiente');
+}
+
+// Días de atraso → HTML del mini-indicador (ámbar >3, rojo >7). Devuelve ''
+// si no aplica (0 o sin dato). Usa el campo dias_atraso del backend.
+function _diasAtrasoHtml(c) {
+  var d = (c && c.dias_atraso != null) ? parseInt(c.dias_atraso, 10) : 0;
+  if (!d || d <= 0 || isNaN(d)) return '';
+  var color = d > 7 ? '#dc2626' : (d > 3 ? '#f59e0b' : '#94a3b8');
+  var bg    = d > 7 ? '#fee2e2' : (d > 3 ? '#fff8e1' : '#f1f5f9');
+  return '<span class="tr-atraso-chip" style="color:' + color + ';background:' + bg + '" ' +
+    'title="' + d + ' día(s) desde la emisión sin gestión">' +
+    '<i class="bi bi-clock-history"></i>' + d + ' d</span>';
+}
+
+// Badge PREVENTA (sin stock suficiente → preventa). Usa el campo preventa (0/1).
+function _preventaBadge(c) {
+  if (!c || !c.preventa) return '';
+  return '<span class="tr-preventa-badge" title="Sin stock suficiente — preventa">' +
+    '<i class="bi bi-hourglass-split"></i>PREVENTA</span>';
+}
+
+// Badge "En manifiesto / En gestión" (cuando el doc ya está en un manifiesto).
+function _enManifiestoBadge(c) {
+  if (!c || !c.en_manifiesto) return '';
+  return '<span class="tr-manif-badge" title="Incluido en un manifiesto — en preparación">' +
+    '<i class="bi bi-clipboard-check"></i>En manifiesto</span>';
 }
 
 // Estado representativo que se persiste al soltar en cada columna.
@@ -3013,16 +3141,19 @@ function _kanbanCardHtml(c) {
   };
   var tipo = clasifMap[c.clasificacion] || clasifMap.despacho;
 
-  var manifBadge = c.en_manifiesto
-    ? '<span class="tr-kcard-manif" title="Incluido en un manifiesto">📋 En manifiesto</span>'
+  // Badge "En manifiesto" (reusa el helper compartido — coherente con tabla/cards).
+  var manifBadge = _enManifiestoBadge(c);
+  // Badge PREVENTA + mini-indicador de días de atraso (modelo de gestión nuevo).
+  var preventaBadge = _preventaBadge(c);
+  var atrasoHtml    = _diasAtrasoHtml(c);
+  // Fecha de agenda (retiros): se muestra como pista de la acción "agendar".
+  var agendaHtml = (c.clasificacion === 'retiro' && c.fecha_agenda)
+    ? '<span class="tr-kcard-agenda" title="Retiro agendado"><i class="bi bi-calendar-check"></i> ' + esc(c.fecha_agenda) + '</span>'
     : '';
-
-  // Escape para VALORES de atributo (esc() no cubre comillas dobles).
-  var attr = function(s){ return esc(s).replace(/"/g, '&quot;'); };
 
   return '<div class="tr-kcard ' + rowFlow + '" draggable="true" ' +
             'data-id="' + c.id + '" data-estado="' + attr(c.estado||'') + '" ' +
-            'data-group="' + _kanbanBucket(c.estado) + '" tabindex="0" role="button" ' +
+            'data-group="' + _gestionBucket(c) + '" tabindex="0" role="button" ' +
             'title="Ver detalle de ' + attr((c.tido||'') + ' ' + (c.nudo||'')) + '">' +
     '<div class="tr-kcard-top">' +
       '<div class="tr-kcard-doc">' +
@@ -3034,11 +3165,14 @@ function _kanbanCardHtml(c) {
     '<div class="tr-kcard-cliente">' + esc(c.cliente||'—') + '</div>' +
     '<div class="tr-kcard-meta">' +
       (c.comuna ? '<span><i class="bi bi-geo-alt"></i> ' + esc(c.comuna) + '</span>' : '') +
+      (agendaHtml || '') +
       (costo ? '<span class="tr-kcard-costo">' + costo + '</span>' : '') +
     '</div>' +
     '<div class="tr-kcard-badges">' +
       '<span class="tr-tipo-badge ' + tipo.cls + '"><i class="bi ' + tipo.icon + '"></i>' + tipo.label + '</span>' +
+      preventaBadge +
       manifBadge +
+      atrasoHtml +
     '</div>' +
   '</div>';
 }
@@ -3049,10 +3183,10 @@ function renderKanban() {
   if (!board) return;
   var data = _monitorData || [];
 
-  // Repartir por bucket
+  // Repartir por bucket de GESTIÓN (pendiente/en_gestion/entregado).
   var grupos = { pendientes: [], encamino: [], entregados: [] };
   data.forEach(function(c){
-    var g = _kanbanBucket(c.estado);
+    var g = _gestionBucket(c);
     (grupos[g] || grupos.pendientes).push(c);
   });
 
@@ -3155,9 +3289,15 @@ function renderKanban() {
       try { d = await r.json(); } catch(_){}
       if (!r.ok || !d.ok) throw new Error('HTTP ' + r.status);
 
-      // Sincronizar la cache local para que un re-render no revierta el cambio
+      // Sincronizar la cache local para que un re-render no revierta el cambio.
+      // Actualizamos también 'gestion' (que es lo que ahora usa _gestionBucket)
+      // según la columna destino, para que renderKanban no devuelva la tarjeta.
+      var _GESTION_BY_GRUPO = { pendientes:'pendiente', encamino:'en_gestion', entregados:'entregado' };
       var item = (_monitorData || []).find(function(x){ return String(x.id) === String(card.dataset.id); });
-      if (item) item.estado = nuevoEstado;
+      if (item) {
+        item.estado  = nuevoEstado;
+        item.gestion = _GESTION_BY_GRUPO[grupoDestino] || item.gestion;
+      }
 
       ilusToast('✓ Estado actualizado', { type: 'success' });
     } catch (err){
@@ -3271,29 +3411,45 @@ function cargarMonitor() {
           var el = document.getElementById(id);
           if (el) el.textContent = n;
         };
+        // Conteos del modelo de gestión. Compat: si el backend aún manda el
+        // campo viejo 'parciales' (sin 'en_gestion'), lo usamos como fallback.
+        var cEnGestion = (d.conteos.en_gestion != null) ? d.conteos.en_gestion
+                       : (d.conteos.parciales  || 0);
         setBadge('vbPendientes', d.conteos.pendientes || 0);
-        setBadge('vbParciales',  d.conteos.parciales  || 0);
+        setBadge('vbEnGestion',  cEnGestion);
         setBadge('vbEntregados', d.conteos.entregados || 0);
         setBadge('vbTodos',      d.conteos.total      || 0);
         // KPI cards en hero
         setBadge('kpiPendientes', d.conteos.pendientes || 0);
-        setBadge('kpiParciales',  d.conteos.parciales  || 0);
+        setBadge('kpiEnGestion',  cEnGestion);
         setBadge('kpiEntregados', d.conteos.entregados || 0);
-        // Atrasados: en la vista pendientes, cuántos tienen > 7 días desde la emisión
-        var atrasados = 0;
-        try {
-          (_monitorData || []).forEach(function(c){
-            if (c.fecha) {
-              var d2 = new Date(c.fecha);
-              if (!isNaN(d2.getTime())) {
-                var dias = Math.floor((Date.now() - d2.getTime()) / 86400000);
-                // Solo cuentan los que aún no están entregados
-                if (dias > 7 && (c.cobertura_pct||0) < 100) atrasados++;
+
+        // Atrasados: lo entrega el backend (conteos.atrasados). Fallback al
+        // cálculo client-side por si una respuesta vieja no lo trae.
+        var atrasados = d.conteos.atrasados;
+        if (atrasados == null) {
+          atrasados = 0;
+          try {
+            (_monitorData || []).forEach(function(c){
+              var dias = (c.dias_atraso != null) ? parseInt(c.dias_atraso, 10) : 0;
+              if ((!dias || isNaN(dias)) && c.fecha) {
+                var d2 = new Date(c.fecha);
+                if (!isNaN(d2.getTime())) dias = Math.floor((Date.now() - d2.getTime()) / 86400000);
               }
-            }
-          });
-        } catch(e){}
-        setBadge('kpiAtrasados', atrasados);
+              if (dias > 7 && (c.cobertura_pct||0) < 100) atrasados++;
+            });
+          } catch(e){}
+        }
+        setBadge('kpiAtrasados', atrasados || 0);
+
+        // Preventa: pedidos que esperan stock (conteos.preventa). Fallback:
+        // contar items con preventa==1 en la data cargada.
+        var preventa = d.conteos.preventa;
+        if (preventa == null) {
+          preventa = 0;
+          try { (_monitorData || []).forEach(function(c){ if (c.preventa) preventa++; }); } catch(e){}
+        }
+        setBadge('kpiPreventa', preventa || 0);
       }
       // Marcar timestamp de sync para el indicador en el header
       _trLastSync = Date.now();
@@ -3311,10 +3467,10 @@ function cargarMonitor() {
               sub:   'No hay documentos pendientes de despacho. ¡Buen trabajo!',
               cta:   null,
             },
-            parciales: {
-              icon:  'bi-truck',
-              title: 'Sin despachos parciales',
-              sub:   'Cuando un documento salga parcialmente del bodega, aparecerá aquí.',
+            en_gestion: {
+              icon:  'bi-clipboard-check',
+              title: 'Nada en gestión',
+              sub:   'Cuando agregues un documento a un manifiesto aparecerá aquí, en preparación.',
               cta:   null,
             },
             entregados: {
@@ -3370,6 +3526,13 @@ function cargarMonitor() {
             var tipo = clasifMap[c.clasificacion] || clasifMap.despacho;
             var clasificHtml = '<span class="tr-tipo-badge ' + tipo.cls + '">' +
               '<i class="bi ' + tipo.icon + '"></i>' + tipo.label + '</span>';
+            // Para RETIROS: mostrar la fecha de agenda (acción "agendar") si existe,
+            // o una pista "Por agendar" si no. Para despachos no aplica.
+            if (c.clasificacion === 'retiro') {
+              clasificHtml += c.fecha_agenda
+                ? '<div class="tr-agenda-chip" title="Retiro agendado"><i class="bi bi-calendar-check"></i> ' + esc(c.fecha_agenda) + '</div>'
+                : '<div class="tr-agenda-chip tr-agenda-chip-todo" title="Falta agendar el retiro"><i class="bi bi-calendar-plus"></i> Por agendar</div>';
+            }
 
             // Borde lateral por estado (orientado a flujo)
             var rowFlowClass = '';
@@ -3445,8 +3608,15 @@ function cargarMonitor() {
                 return '<td><div class="tr-cell-truncate" title="' + esc(obs) + '">' + esc(obs) + '</div></td>';
               })() +
 
-              /* ── Estado ── */
-              '<td><span class="tr-estado-pill ' + pillClass + '">' + (c.estado||'—') + '</span></td>' +
+              /* ── Estado (+ badges de gestión: En manifiesto · PREVENTA · atraso) ── */
+              '<td>' +
+                '<div class="tr-estado-stack">' +
+                  '<span class="tr-estado-pill ' + pillClass + '">' + esc(c.estado||'—') + '</span>' +
+                  _enManifiestoBadge(c) +
+                  _preventaBadge(c) +
+                  _diasAtrasoHtml(c) +
+                '</div>' +
+              '</td>' +
 
               /* ── Guía de despacho (NUDGIA del ERP) ── */
               '<td class="text-center">' +
@@ -3493,7 +3663,7 @@ function cargarMonitor() {
         if (!_monitorData.length) {
           var emptyConf = ({
             pendientes: { icon:'bi-check2-circle', title:'Sin pendientes', sub:'Buen trabajo, no hay documentos por despachar.' },
-            parciales:  { icon:'bi-truck', title:'Sin despachos parciales', sub:'Cuando salga algo parcial, aparecerá aquí.' },
+            en_gestion: { icon:'bi-clipboard-check', title:'Nada en gestión', sub:'Cuando agregues algo a un manifiesto aparecerá aquí.' },
             entregados: { icon:'bi-box-seam', title:'Sin entregados', sub:'Aún no hay documentos completados.' },
             todos:      { icon:'bi-cloud-download', title:'Aún no hay datos', sub:'Sincroniza con el ERP para empezar.' },
           })[_vistaActual] || { icon:'bi-inbox', title:'Sin compromisos', sub:'' };
@@ -3524,20 +3694,30 @@ function cargarMonitor() {
             else rowFlow = 'tr-row-pendiente';
             var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\u0027");
             var cliEsc = (c.cliente||'').replace(/'/g,"\\u0027");
+            // Badges de gestión (mismos helpers que tabla/Kanban) + agenda de retiro.
+            var mcardBadges = _enManifiestoBadge(c) + _preventaBadge(c) + _diasAtrasoHtml(c);
+            var mcardAgenda = (c.clasificacion === 'retiro')
+              ? (c.fecha_agenda
+                  ? '<span class="tr-agenda-chip" title="Retiro agendado"><i class="bi bi-calendar-check"></i> ' + esc(c.fecha_agenda) + '</span>'
+                  : '<span class="tr-agenda-chip tr-agenda-chip-todo" title="Falta agendar el retiro"><i class="bi bi-calendar-plus"></i> Por agendar</span>')
+              : '';
             return '<div class="tr-mcard ' + rowFlow + '" onclick="openVista(' + c.id + ')">' +
               '<div class="tr-mcard-top">' +
                 '<div>' +
-                  '<span class="tr-doc-tido">' + c.tido + '</span>' +
-                  '<span class="tr-doc-num">' + c.nudo + '</span>' +
+                  '<span class="tr-doc-tido">' + esc(c.tido) + '</span>' +
+                  '<span class="tr-doc-num">' + esc(c.nudo) + '</span>' +
                 '</div>' +
-                '<span class="tr-estado-pill ' + pillClass + '">' + (c.estado||'') + '</span>' +
+                '<span class="tr-estado-pill ' + pillClass + '">' + esc(c.estado||'') + '</span>' +
               '</div>' +
-              '<div class="tr-mcard-cliente">' + (c.cliente||'—') + '</div>' +
+              '<div class="tr-mcard-cliente">' + esc(c.cliente||'—') + '</div>' +
               '<div class="tr-mcard-meta">' +
-                (c.comuna ? '<span><i class="bi bi-geo-alt"></i> ' + c.comuna + '</span>' : '') +
-                (c.fecha ? '<span><i class="bi bi-calendar3"></i> ' + c.fecha + '</span>' : '') +
+                (c.comuna ? '<span><i class="bi bi-geo-alt"></i> ' + esc(c.comuna) + '</span>' : '') +
+                (c.fecha ? '<span><i class="bi bi-calendar3"></i> ' + esc(c.fecha) + '</span>' : '') +
                 (costo ? '<span class="tr-mcard-costo">' + costo + '</span>' : '') +
               '</div>' +
+              ((mcardBadges || mcardAgenda)
+                ? '<div class="tr-mcard-badges">' + mcardBadges + mcardAgenda + '</div>'
+                : '') +
               '<div class="tr-mcard-actions" onclick="event.stopPropagation()">' +
                 '<button class="tr-btn tr-btn-ghost tr-btn-sm" style="flex:1" onclick="openVista(' + c.id + ')">' +
                   '<i class="bi bi-eye"></i><span>Ver detalle</span></button>' +
@@ -4318,6 +4498,9 @@ async function _asignarAPI(cids, mid) {
 }
 
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// Escape para VALORES de atributo (esc() no cubre comillas). Global para que
+// tabla, cards y Kanban lo reusen sin redefinirlo localmente.
+function attr(s){ return esc(s).replace(/"/g,'&quot;'); }
 
 // ── COTIZADOR ───────────────────────────────────────────────────
 var _cotizarCid = null;
