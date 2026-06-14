@@ -22888,6 +22888,291 @@ def _haversine_m(lat1, lng1, lat2, lng2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  GEOFENCE DE OT (2026-06-12, Daniel) — estilo Fracttal / DispatchTrack
+#
+#  Objetivo: el técnico NO puede gestionar la OT si no verifica su ubicación
+#  dentro de un radio (default 100m, ajustable) de la dirección Google de la
+#  OT. Clona el patrón YA PROBADO del módulo Transporte (pod_geocerca_m +
+#  bloqueo 409 + override), reusando _haversine_m y las coords Google que ya
+#  se guardan (mant_visitas.direccion_lat/lng con fallback a mant_clientes).
+#
+#  Modelo "check-in": el técnico hace UN check-in de ubicación al llegar (se
+#  valida la distancia en el SERVIDOR, no en el cliente que es evadible).
+#  Mientras haya un check-in válido y fresco (o un override de supervisor),
+#  los endpoints de escritura permiten gestionar. Sin él → 409.
+#
+#  Decisiones de Daniel (2026-06-12): interruptor GLOBAL + exención por OT;
+#  radio 100m ajustable; si el GPS es imposible (sótano/sin señal) la
+#  excepción la autoriza un SUPERVISOR a distancia, con evidencia en BD.
+# ═══════════════════════════════════════════════════════════════════════
+
+GEOFENCE_CHECKIN_TTL_H = 12      # un check-in vale para la jornada (12h)
+_GEOFENCE_SCHEMA_READY = False
+_GEOFENCE_CFG_CACHE = {"activo": None, "radio_m": 100, "ts": 0}
+_GEOFENCE_CFG_TTL = 30           # segundos de cache de la config global
+
+
+def _gf_col_exists(table, col):
+    """True si la columna ya existe (para ALTER idempotente)."""
+    try:
+        r = mysql_fetchone(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema=DATABASE() AND table_name=%s AND column_name=%s LIMIT 1",
+            (table, col))
+        return bool(r)
+    except Exception:
+        return True  # si el check falla, asumir que existe (no romper)
+
+
+def _ensure_geofence_schema():
+    """Crea/expande el esquema del geofence (idempotente, una vez por proceso).
+    Sigue el patrón _ensure_* del proyecto: no depende de las migraciones de
+    arranque (funciona con ILUS_SKIP_MIGRATIONS=1)."""
+    global _GEOFENCE_SCHEMA_READY
+    if _GEOFENCE_SCHEMA_READY:
+        return
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_geofence_config (
+              id TINYINT PRIMARY KEY,
+              activo TINYINT(1) DEFAULT 0,
+              radio_m INT DEFAULT 100,
+              updated_by VARCHAR(190),
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_geofence_log (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              visita_id INT NOT NULL,
+              user_id VARCHAR(190),
+              evento VARCHAR(40) NOT NULL,
+              gps_lat DECIMAL(10,7), gps_lng DECIMAL(10,7), gps_accuracy DECIMAL(8,2),
+              dest_lat DECIMAL(10,7), dest_lng DECIMAL(10,7), dest_fuente VARCHAR(20),
+              dist_m INT, radio_m INT,
+              override_by VARCHAR(190), override_motivo VARCHAR(300),
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              INDEX idx_visita (visita_id),
+              INDEX idx_visita_evento (visita_id, evento)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        for col, ddl in (
+            ("geofence_radio_m",       "INT NULL"),
+            ("geofence_exento",        "TINYINT(1) DEFAULT 0"),
+            ("geofence_checkin_at",    "DATETIME NULL"),
+            ("geofence_checkin_lat",   "DECIMAL(10,7) NULL"),
+            ("geofence_checkin_lng",   "DECIMAL(10,7) NULL"),
+            ("geofence_checkin_acc",   "DECIMAL(8,2) NULL"),
+            ("geofence_checkin_dist_m","INT NULL"),
+            ("geofence_override_by",   "VARCHAR(190) NULL"),
+            ("geofence_override_at",   "DATETIME NULL"),
+        ):
+            if not _gf_col_exists("mant_visitas", col):
+                try:
+                    mysql_execute(f"ALTER TABLE mant_visitas ADD COLUMN {col} {ddl}")
+                except Exception:
+                    pass
+        _GEOFENCE_SCHEMA_READY = True
+    except Exception as e:
+        print(f"[geofence] ensure schema: {e}", flush=True)
+
+
+def _geofence_global_cfg():
+    """Config global del geofence: {'activo': bool, 'radio_m': int}.
+    Default: desactivado, 100m. Cacheado 30s en proceso."""
+    import time as _t
+    now = _t.time()
+    if (now - _GEOFENCE_CFG_CACHE["ts"]) < _GEOFENCE_CFG_TTL and _GEOFENCE_CFG_CACHE["activo"] is not None:
+        return {"activo": bool(_GEOFENCE_CFG_CACHE["activo"]),
+                "radio_m": int(_GEOFENCE_CFG_CACHE["radio_m"])}
+    _ensure_geofence_schema()
+    activo, radio = False, 100
+    try:
+        row = mysql_fetchone("SELECT activo, radio_m FROM mant_geofence_config WHERE id=1")
+        if row:
+            activo = bool(row.get("activo"))
+            radio = int(row.get("radio_m") or 100)
+    except Exception:
+        pass
+    _GEOFENCE_CFG_CACHE.update({"activo": activo, "radio_m": radio, "ts": now})
+    return {"activo": activo, "radio_m": radio}
+
+
+def _ot_geofence_cfg(vid):
+    """Config efectiva para UNA OT: {activo, radio_m, exento}.
+    activo = global activo Y la OT no está exenta. radio = override de la OT o global."""
+    g_cfg = _geofence_global_cfg()
+    row = {}
+    try:
+        row = mysql_fetchone(
+            "SELECT geofence_radio_m, geofence_exento FROM mant_visitas WHERE id=%s",
+            (vid,)) or {}
+    except Exception:
+        row = {}
+    exento = bool(row.get("geofence_exento"))
+    try:
+        radio = int(row.get("geofence_radio_m") or g_cfg["radio_m"])
+    except (TypeError, ValueError):
+        radio = g_cfg["radio_m"]
+    return {"activo": bool(g_cfg["activo"]) and not exento,
+            "radio_m": radio, "exento": exento}
+
+
+def _ot_geofence_destino(vid):
+    """Coords del DESTINO de la OT (centro de la geocerca) con cascada:
+    1) OT (mant_visitas.direccion_lat/lng) → 2) cliente (mant_clientes).
+    Devuelve (lat, lng, fuente) o (None, None, 'sin_destino')."""
+    try:
+        row = mysql_fetchone(
+            "SELECT v.direccion_lat AS olat, v.direccion_lng AS olng, "
+            "       c.direccion_lat AS clat, c.direccion_lng AS clng "
+            "  FROM mant_visitas v "
+            "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+            " WHERE v.id=%s", (vid,)) or {}
+    except Exception:
+        row = {}
+    for la, ln, fuente in ((row.get("olat"), row.get("olng"), "ot"),
+                           (row.get("clat"), row.get("clng"), "cliente")):
+        try:
+            if la is not None and ln is not None:
+                return (float(la), float(ln), fuente)
+        except (TypeError, ValueError):
+            continue
+    return (None, None, "sin_destino")
+
+
+def _geofence_log(vid, user, evento, glat=None, glng=None, gacc=None,
+                  dlat=None, dlng=None, fuente=None, dist_i=None, radio=None,
+                  override_by=None, motivo=None):
+    """Bitácora de cada intento/evento de geofence (auditoría — la 'prueba')."""
+    try:
+        _ensure_geofence_schema()
+        mysql_execute(
+            "INSERT INTO mant_geofence_log (visita_id, user_id, evento, gps_lat, gps_lng, "
+            "  gps_accuracy, dest_lat, dest_lng, dest_fuente, dist_m, radio_m, override_by, "
+            "  override_motivo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (vid, user, evento, glat, glng, gacc, dlat, dlng, fuente, dist_i, radio,
+             override_by, motivo))
+    except Exception as e:
+        print(f"[geofence] log vid={vid}: {e}", flush=True)
+
+
+def _geofence_persistir_checkin(vid, lat, lng, acc, dist_i):
+    """Guarda el último check-in válido en la OT (+ compat exec_gps_* la 1a vez)."""
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET geofence_checkin_lat=%s, geofence_checkin_lng=%s, "
+            "  geofence_checkin_acc=%s, geofence_checkin_dist_m=%s, geofence_checkin_at=NOW() "
+            "WHERE id=%s", (lat, lng, acc, dist_i, vid))
+        v = mysql_fetchone("SELECT exec_gps_lat FROM mant_visitas WHERE id=%s", (vid,))
+        if v and v.get("exec_gps_lat") is None:
+            mysql_execute(
+                "UPDATE mant_visitas SET exec_gps_lat=%s, exec_gps_lng=%s, exec_gps_at=NOW() "
+                "WHERE id=%s", (lat, lng, vid))
+    except Exception as e:
+        print(f"[geofence] persistir checkin vid={vid}: {e}", flush=True)
+
+
+def _ot_geofence_estado(vid, cfg=None):
+    """Estado del geofence para la OT: {activo, radio_m, exento, checkin_ok,
+    override, dist_m, checkin_at}. checkin_ok = hay override de supervisor, o
+    un check-in fresco (<=TTL) y dentro de radio."""
+    from datetime import datetime as _dt
+    cfg = cfg or _ot_geofence_cfg(vid)
+    out = {**cfg, "checkin_ok": False, "override": False,
+           "dist_m": None, "checkin_at": None}
+    try:
+        row = mysql_fetchone(
+            "SELECT geofence_checkin_at, geofence_checkin_dist_m, geofence_override_at "
+            "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    except Exception:
+        row = {}
+    if row.get("geofence_override_at"):
+        out["override"] = True
+        out["checkin_ok"] = True
+    cin = row.get("geofence_checkin_at")
+    if cin:
+        out["checkin_at"] = cin
+        dist = row.get("geofence_checkin_dist_m")
+        try:
+            fresh = (_dt.utcnow() - cin).total_seconds() <= GEOFENCE_CHECKIN_TTL_H * 3600
+        except Exception:
+            fresh = True  # si no podemos comparar (tipo raro), no invalidar
+        # B2 FIX (2026-06-12): con el geofence ACTIVO exigimos una distancia
+        # REAL validada (dist is not None) y dentro del radio. Un check-in
+        # registrado "sin destino" (dist NULL) NO concede pase — si después
+        # aparecen coords, el técnico debe re-verificar de verdad.
+        if fresh and (dist is not None) and (dist <= cfg["radio_m"]):
+            out["checkin_ok"] = True
+            if out["dist_m"] is None:
+                out["dist_m"] = dist
+    return out
+
+
+def _ot_geofence_solicitud_pendiente(vid):
+    """True si el técnico solicitó una excepción de GPS que aún no fue
+    aprobada (para que el supervisor vea el aviso al abrir la OT)."""
+    try:
+        row = mysql_fetchone(
+            "SELECT MAX(CASE WHEN evento='override_solicitado' THEN id END) AS sol, "
+            "       MAX(CASE WHEN evento='override_aprobado'   THEN id END) AS apr "
+            "  FROM mant_geofence_log WHERE visita_id=%s", (vid,)) or {}
+        sol = row.get("sol")
+        if not sol:
+            return False
+        return (row.get("apr") or 0) < sol
+    except Exception:
+        return False
+
+
+def _requiere_geofence(view_func):
+    """Decorador para endpoints de ESCRITURA de la OT. Si el geofence está
+    activo para esa OT y el técnico no tiene un check-in válido (ni override),
+    devuelve 409 'geofence_checkin'. Aplica DESPUÉS de @_tecnico_owns_visita.
+
+    NO afecta el GET de la pantalla (modo lectura) — solo las acciones POST.
+    Exime: gestión a distancia (admin/supervisor/ejecutivo), ventana de
+    corrección / OT sellada (no es ejecución física fresca), y OTs sin coords
+    de destino (no se puede exigir lo que no se puede medir). Fail-open ante
+    cualquier error: un bug del geofence JAMÁS debe trabar la operación."""
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        try:
+            cfg = _ot_geofence_cfg(vid)
+            if not cfg["activo"]:
+                return view_func(vid, *args, **kwargs)
+            # Gestión a distancia (admin/supervisor/ejecutivo SSTT) no requiere presencia.
+            if _is_supervisor_user():
+                return view_func(vid, *args, **kwargs)
+            # Ventana de corrección / OT sellada: no es ejecución física fresca.
+            vrow = mysql_fetchone(
+                "SELECT estado, firma_tecnico_url, firma_cliente_url "
+                "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
+            est = (vrow.get("estado") or "").lower()
+            if (vrow.get("firma_cliente_url") or vrow.get("firma_tecnico_url")
+                    or est in ("firmada_tecnico", "pendiente_aprobacion",
+                               "completada", "cerrada")):
+                return view_func(vid, *args, **kwargs)
+            # Sin coords de destino → no se puede geo-cercar (MVP: no bloquea).
+            dlat, dlng, _f = _ot_geofence_destino(vid)
+            if dlat is None:
+                return view_func(vid, *args, **kwargs)
+            estado_gf = _ot_geofence_estado(vid, cfg)
+            if estado_gf["checkin_ok"]:
+                return view_func(vid, *args, **kwargs)
+            return jsonify({
+                "error": "geofence_checkin",
+                "msg": "Para gestionar esta OT primero verifica tu ubicación en el sitio "
+                       f"(máx {cfg['radio_m']} m de la dirección).",
+                "radio_m": cfg["radio_m"],
+            }), 409
+        except Exception as e:
+            print(f"[geofence] gate error vid={vid}: {e}", flush=True)
+            return view_func(vid, *args, **kwargs)  # fail-open
+    return wrapped
+
+
 @app.route("/chofer/manifiesto/<int:mid>/ruta")
 @_chofer_required
 def chofer_ruta(mid):
@@ -39555,6 +39840,7 @@ def mant_tecnico_externo_subir_foto(eid):
 @app.route("/mantenciones/api/visitas/<int:vid>/grabacion", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_grabacion_video(vid):
     """
     Recibe un Blob de video grabado in-app desde el navegador.
@@ -44132,6 +44418,7 @@ def mant_visita_validacion_cierre(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/cerrar", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_cerrar(vid):
     """Cierra la visita aplicando las 4 reglas de cierre auditable (FASE 5).
     Bloquea cierre si falta alguna:
@@ -44287,6 +44574,7 @@ def _ot_visita_equipo_link_ok(vid, mid):
 )
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_equipo_saltar(vid, mid):
     """El técnico salta un equipo durante la OT: registra razón +
     observación obligatoria (mín 5 chars). Idempotente vía upsert.
@@ -44350,6 +44638,7 @@ def mant_visita_equipo_saltar(vid, mid):
 )
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_equipo_marcar(vid, mid):
     """Cambia el estado de revisión del equipo en la visita sin requerir
     completar tareas. Estados: verificado | con_cambios | saltado |
@@ -44425,6 +44714,7 @@ def mant_visita_equipo_marcar(vid, mid):
 )
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_equipo_observacion(vid, mid):
     """Guarda observación libre del técnico sobre este equipo en esta
     visita, sin cambiar el estado_revision (queda como esté, default
@@ -48746,6 +49036,7 @@ def mant_visita_aplicar_plantilla(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/responder", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_tarea_responder(vid, tid):
     """Guarda la respuesta a una tarea de checklist según su tipo_respuesta.
     Body acepta cualquiera de:
@@ -49052,6 +49343,25 @@ def mant_ot_ejecutar(vid):
     # firma). La puede capturar el técnico asignado (en sitio, aunque ya no
     # pueda EDITAR el contenido tras su propia firma) o el ejecutivo SSTT.
     puede_firmar_cliente_flag = _puede_ot_accion(vid, "firmar_cliente", u)
+    # 2026-06-12 (Daniel) — GEOFENCE 100m: config efectiva + destino (cascada
+    # OT→cliente) + estado del check-in. Fail-soft: cualquier error deja el
+    # geofence inactivo (nunca traba la pantalla).
+    try:
+        _gf_cfg = _ot_geofence_cfg(vid)
+        _gf_dlat, _gf_dlng, _gf_fuente = _ot_geofence_destino(vid)
+        _gf_estado = _ot_geofence_estado(vid, _gf_cfg)
+        _gf_es_gestion = _is_supervisor_user()
+        _gf_solicitud = (_ot_geofence_solicitud_pendiente(vid)
+                         if (_gf_cfg["activo"] and _gf_es_gestion
+                             and not _gf_estado.get("override")) else False)
+    except Exception as _e_gf:
+        print(f"[geofence] view vid={vid}: {_e_gf}", flush=True)
+        _gf_cfg = {"activo": False, "radio_m": 100, "exento": False}
+        _gf_dlat = _gf_dlng = None
+        _gf_fuente = "sin_destino"
+        _gf_estado = {"checkin_ok": False, "override": False}
+        _gf_es_gestion = False
+        _gf_solicitud = False
     # Comparar created_by (varchar username) con el username del user actual,
     # case insensitive y trim, igual que en `_puede_ot_accion`.
     _creator_username = (visita.get("created_by") or "").strip().lower()
@@ -49395,6 +49705,17 @@ def mant_ot_ejecutar(vid):
         puede_aprobar=puede_aprobar_flag,
         # 2026-06-12 (Daniel) — capturar firma del cliente (segunda firma).
         puede_firmar_cliente=puede_firmar_cliente_flag,
+        # 2026-06-12 (Daniel) — GEOFENCE 100m (estilo Fracttal).
+        geofence_activo=_gf_cfg["activo"],
+        geofence_radio_m=_gf_cfg["radio_m"],
+        geofence_exento=_gf_cfg["exento"],
+        geofence_destino_lat=_gf_dlat,
+        geofence_destino_lng=_gf_dlng,
+        geofence_destino_fuente=_gf_fuente,
+        geofence_checkin_ok=_gf_estado.get("checkin_ok", False),
+        geofence_override=_gf_estado.get("override", False),
+        geofence_es_gestion=_gf_es_gestion,
+        geofence_solicitud_pendiente=_gf_solicitud,
         es_creador=es_creador_flag,
         es_superadmin=es_superadmin_flag,
         # 2026-05-22 (OT 2026-00004 Vitacura) — flags para el panel
@@ -49409,6 +49730,7 @@ def mant_ot_ejecutar(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/datos", methods=["PATCH"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_ot_equipo_datos(vid, mid):
     """Actualiza los datos del equipo en el contexto de la OT.
 
@@ -49761,6 +50083,7 @@ def _mirror_ot_equipo_a_levantamiento(vid, mid, payload):
 @app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/foto", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_ot_equipo_foto(vid, mid):
     """Sube una foto del equipo en el contexto de una OT.
 
@@ -50202,6 +50525,175 @@ def mant_ot_exec_gps(vid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  GEOFENCE OT — endpoints (check-in, override, config). Ver helpers junto a
+#  _haversine_m. El bloqueo real lo aplica @_requiere_geofence en los
+#  endpoints de escritura; estos endpoints capturan/configuran/auditan.
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/visitas/<int:vid>/geofence/checkin", methods=["POST"])
+@_mant_required
+@_tecnico_owns_visita
+def mant_ot_geofence_checkin(vid):
+    """Check-in de ubicación del técnico. Valida la distancia al destino EN EL
+    SERVIDOR (no se confía en el cliente). Si OK, habilita la gestión de la OT
+    por la jornada. Rechaza ubicación por IP o precisión insuficiente."""
+    _ensure_geofence_schema()
+    d = request.get_json(silent=True) or {}
+    cfg = _ot_geofence_cfg(vid)
+    try:
+        lat = float(d.get("lat")); lng = float(d.get("lng"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Coordenadas inválidas"}), 400
+    try:
+        acc = float(d.get("accuracy")) if d.get("accuracy") is not None else None
+    except (TypeError, ValueError):
+        acc = None
+    source = (d.get("source") or "").lower()
+    user = (current_username() or "técnico")[:190]
+    dlat, dlng, fuente = _ot_geofence_destino(vid)
+
+    # Geofence inactivo o sin destino: registramos el check-in pero no bloquea.
+    if not cfg["activo"] or dlat is None:
+        _geofence_persistir_checkin(vid, lat, lng, acc, None)
+        _geofence_log(vid, user, "checkin_ok", lat, lng, acc, dlat, dlng, fuente,
+                      None, cfg["radio_m"])
+        return jsonify({"ok": True, "activo": cfg["activo"],
+                        "sin_destino": dlat is None})
+
+    # Calidad de la lectura: la IP (±5km) NO sirve para un radio de metros.
+    if source == "ip":
+        _geofence_log(vid, user, "checkin_impreciso", lat, lng, acc, dlat, dlng,
+                      fuente, None, cfg["radio_m"])
+        return jsonify({"ok": False, "error": "ubicacion_ip",
+                        "msg": "La ubicación aproximada por internet no sirve para "
+                               "verificar el sitio. Activa el GPS del dispositivo."}), 422
+    acc_max = max(cfg["radio_m"], 80)
+    if acc is None or acc > acc_max:
+        _geofence_log(vid, user, "checkin_impreciso", lat, lng, acc, dlat, dlng,
+                      fuente, None, cfg["radio_m"])
+        return jsonify({"ok": False, "error": "impreciso",
+                        "msg": f"La precisión del GPS (±{int(acc) if acc else '—'} m) es "
+                               "insuficiente. Espera unos segundos a que mejore la señal.",
+                        "accuracy": acc}), 422
+
+    dist = _haversine_m(dlat, dlng, lat, lng)
+    dist_i = int(dist) if dist is not None else None
+    if dist_i is not None and dist_i > cfg["radio_m"]:
+        _geofence_log(vid, user, "checkin_fuera", lat, lng, acc, dlat, dlng,
+                      fuente, dist_i, cfg["radio_m"])
+        return jsonify({"ok": False, "error": "geofence",
+                        "msg": f"Estás a {dist_i} m del sitio (máximo {cfg['radio_m']} m). "
+                               "Acércate a la dirección de la OT y vuelve a verificar.",
+                        "dist_m": dist_i, "radio_m": cfg["radio_m"]}), 409
+
+    _geofence_persistir_checkin(vid, lat, lng, acc, dist_i)
+    _geofence_log(vid, user, "checkin_ok", lat, lng, acc, dlat, dlng, fuente,
+                  dist_i, cfg["radio_m"])
+    return jsonify({"ok": True, "dist_m": dist_i, "radio_m": cfg["radio_m"],
+                    "fuente": fuente})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/geofence/override", methods=["POST"])
+@_mant_required
+def mant_ot_geofence_override(vid):
+    """Excepción de geofence (caso GPS imposible: sótano, sin señal, permiso
+    negado). Flujo Fracttal (Daniel 2026-06-12):
+      - SUPERVISOR/admin → AUTORIZA: la OT queda destrabada, con evidencia.
+      - TÉCNICO dueño     → SOLICITA: queda registrada la solicitud para que
+        un supervisor la apruebe a distancia (no se auto-destraba)."""
+    _ensure_geofence_schema()
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:300]
+    user = (current_username() or "usuario")[:190]
+    u = getattr(g, "user", None) or {}
+
+    if _is_supervisor_user():
+        motivo = motivo or "Excepción autorizada por supervisor"
+        try:
+            mysql_execute(
+                "UPDATE mant_visitas SET geofence_override_by=%s, geofence_override_at=NOW() "
+                "WHERE id=%s", (user, vid))
+            _geofence_log(vid, user, "override_aprobado", override_by=user, motivo=motivo)
+            _mant_log("visita", vid, "geofence_override",
+                      f"{user} autorizó gestionar sin verificación GPS en sitio — {motivo}")
+            return jsonify({"ok": True, "aprobado": True})
+        except Exception as e:
+            print(f"[geofence] override vid={vid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo registrar la excepción"}), 500
+
+    # Técnico (u otro con permiso de ver la OT): SOLICITA, no aprueba.
+    if not _puede_ot_accion(vid, "ver", u):
+        return jsonify({"ok": False, "error": "Sin permiso sobre esta OT."}), 403
+    motivo = motivo or "Solicitud de excepción GPS (sin señal en sitio)"
+    try:
+        _geofence_log(vid, user, "override_solicitado", motivo=motivo)
+        _mant_log("visita", vid, "geofence_override_solicitado",
+                  f"{user} solicitó excepción GPS — {motivo}")
+        return jsonify({"ok": True, "aprobado": False, "pendiente": True,
+                        "msg": "Solicitud registrada. Un supervisor debe autorizarla."})
+    except Exception as e:
+        print(f"[geofence] solicitud override vid={vid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo registrar la solicitud"}), 500
+
+
+@app.route("/mantenciones/api/geofence/config", methods=["GET", "POST"])
+@_mant_required
+def mant_geofence_config():
+    """Config global del geofence. GET: cualquiera logueado lo lee (la UI lo
+    necesita). POST: solo admin/superadmin."""
+    _ensure_geofence_schema()
+    if request.method == "GET":
+        return jsonify({"ok": True, **_geofence_global_cfg()})
+    perms = g.get("permissions") or {}
+    if not (perms.get("admin") or perms.get("superadmin")):
+        return jsonify({"ok": False,
+                        "error": "Solo un admin puede cambiar la configuración."}), 403
+    d = request.get_json(silent=True) or {}
+    activo = 1 if d.get("activo") else 0
+    try:
+        radio = int(d.get("radio_m") or 100)
+    except (TypeError, ValueError):
+        radio = 100
+    radio = max(20, min(2000, radio))
+    user = (current_username() or "admin")[:190]
+    try:
+        mysql_execute(
+            "INSERT INTO mant_geofence_config (id, activo, radio_m, updated_by) "
+            "VALUES (1,%s,%s,%s) ON DUPLICATE KEY UPDATE activo=VALUES(activo), "
+            "radio_m=VALUES(radio_m), updated_by=VALUES(updated_by)",
+            (activo, radio, user))
+        _GEOFENCE_CFG_CACHE["ts"] = 0  # invalidar cache
+        _mant_log("config", 0, "geofence_config",
+                  f"{user} configuró geofence activo={activo} radio={radio}m")
+        return jsonify({"ok": True, "activo": bool(activo), "radio_m": radio})
+    except Exception as e:
+        print(f"[geofence] config: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar la configuración"}), 500
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/geofence/exento", methods=["POST"])
+@_mant_required
+def mant_ot_geofence_exento(vid):
+    """Marca/desmarca una OT como exenta del geofence (ej: taller propio, OT
+    sin dirección fija). Solo supervisor/admin."""
+    if not _is_supervisor_user():
+        return jsonify({"ok": False, "error": "Solo supervisor/admin."}), 403
+    _ensure_geofence_schema()
+    d = request.get_json(silent=True) or {}
+    exento = 1 if d.get("exento") else 0
+    user = (current_username() or "admin")[:190]
+    try:
+        mysql_execute("UPDATE mant_visitas SET geofence_exento=%s WHERE id=%s",
+                      (exento, vid))
+        _mant_log("visita", vid, "geofence_exento",
+                  f"{user} marcó geofence_exento={exento}")
+        return jsonify({"ok": True, "exento": bool(exento)})
+    except Exception as e:
+        print(f"[geofence] exento vid={vid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo actualizar"}), 500
+
+
 def _ot_firmante_cliente(vid):
     """Última identidad del firmante cliente (mant_ot_signatures) para mostrar
     su RUT/cargo en el PDF y el detalle de la OT. Devuelve {} si no hay firma."""
@@ -50218,6 +50710,7 @@ def _ot_firmante_cliente(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_ot_firmar_revision(vid):
     """El TÉCNICO firma la OT (primera firma). La OT pasa a 'firmada_tecnico'.
 
@@ -50922,6 +51415,7 @@ def mant_ot_rechazar_cierre(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>/respuesta", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_tarea_respuesta(vid, tid):
     """Guarda la respuesta capturada por el técnico para una tarea con
     tipo_respuesta avanzado (texto, numero, sino, verificacion, lista,
@@ -51940,6 +52434,7 @@ def mant_visita_tarea_nueva(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/tareas/<int:tid>", methods=["POST", "PATCH", "DELETE"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_tarea_update(vid, tid):
     """Actualiza, completa o elimina una tarea."""
     if request.method == "DELETE":
@@ -52249,6 +52744,7 @@ def mant_visita_fotos_get(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos/subir", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_fotos_subir(vid):
     """Sube una o varias fotos a la OT.
 
@@ -52461,6 +52957,7 @@ def mant_visita_adjuntos_list(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/adjuntos", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_adjuntos_upload(vid):
     """Sube un adjunto a la OT — PDF, video, documento. Persistente
     en Cloudinary (resource_type según el tipo). Fallback filesystem
@@ -52588,6 +53085,7 @@ def mant_visita_adjuntos_upload(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/adjuntos/<int:aid>", methods=["DELETE"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_adjunto_delete(vid, aid):
     """Elimina un adjunto de la OT (Cloudinary + BD)."""
     row = mysql_fetchone(
@@ -52617,6 +53115,7 @@ def mant_visita_adjunto_delete(vid, aid):
 @app.route("/mantenciones/api/visitas/<int:vid>/fotos/<int:fid>", methods=["DELETE"])
 @_mant_required
 @_tecnico_owns_visita
+@_requiere_geofence
 def mant_visita_foto_delete(vid, fid):
     """Elimina una foto de la OT (archivo + registro).
 

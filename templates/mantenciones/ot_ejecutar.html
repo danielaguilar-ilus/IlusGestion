@@ -1413,6 +1413,42 @@
   </div>
   {% endif %}
 
+  {# ════════════════════════════════════════════════════════
+     GEOFENCE 100m (Daniel 2026-06-12, estilo Fracttal) — el técnico
+     verifica que está en sitio (≤ radio config) para poder gestionar la OT.
+     El bloqueo real está en el backend (@_requiere_geofence); esto guía y
+     captura el check-in. Solo se renderiza si el geofence está activo. #}
+  {% if geofence_activo %}
+  <style>
+    .gf-bar{display:flex;flex-direction:column;gap:10px;border-radius:14px;
+      padding:14px 16px;margin:10px 0 14px;font-size:.86rem;
+      animation:ilus-fade-up 320ms cubic-bezier(.16,1,.3,1) both}
+    .gf-need{background:linear-gradient(135deg,#fff8e1 0%,#fffaf2 100%);
+      border:1.5px solid #f59e0b;color:#7c2d12}
+    .gf-ok{flex-direction:row;align-items:center;gap:10px;background:#dcfce7;
+      border:1.5px solid #16a34a;color:#14532d}
+    .gf-ok i{font-size:1.5rem;color:#16a34a}
+    .gf-head{display:flex;align-items:flex-start;gap:10px}
+    .gf-head i{font-size:1.4rem;color:#dc2626;flex:none}
+    .gf-sub{font-size:.74rem;font-weight:500;opacity:.85;margin-top:2px}
+    .gf-steps{margin:2px 0 0;padding-left:20px;font-size:.78rem;line-height:1.6;
+      font-weight:600;color:#92400e}
+    .gf-steps li{margin:0}
+    .gf-status{font-size:.8rem;font-weight:600;min-height:0;border-radius:8px}
+    .gf-status.info{color:#1e40af;background:#dbeafe;padding:8px 10px}
+    .gf-status.err{color:#991b1b;background:#fee2e2;padding:8px 10px}
+    .gf-actions{display:flex;flex-wrap:wrap;gap:8px}
+    .gf-btn-primary{background:#dc2626;color:#fff;border:none;border-radius:9px;
+      padding:11px 16px;font-size:.86rem;font-weight:700;min-height:44px;
+      display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+      box-shadow:0 2px 8px rgba(220,38,38,.25)}
+    .gf-btn-ghost{background:#fff;color:#92400e;border:1.5px solid #f59e0b;
+      border-radius:9px;padding:9px 14px;font-size:.78rem;font-weight:600;
+      min-height:44px;display:inline-flex;align-items:center;cursor:pointer}
+  </style>
+  <div id="geofenceBar" class="gf-bar" style="display:none"></div>
+  {% endif %}
+
   {# ─── TABS PRINCIPALES: Información · Gestión de tareas ─── #}
   <div class="tx-tabs" role="tablist">
     <button type="button" class="tx-tab-btn" id="tabBtn-info" onclick="cambiarTabOT('info')"
@@ -2809,10 +2845,22 @@ const VISITA_LEVANTAMIENTO_ID = {{ (visita.levantamiento_id or 0) | tojson }};
 const ES_LEVANTAMIENTO = (
   VISITA_TIPO === 'levantamiento' || !!VISITA_LEVANTAMIENTO_ID
 );
-const DESTINO_LAT = {{ (visita.direccion_lat | float) | tojson if visita.direccion_lat else 'null' }};
-const DESTINO_LNG = {{ (visita.direccion_lng | float) | tojson if visita.direccion_lng else 'null' }};
+// 2026-06-12 (Daniel) — DESTINO con cascada OT→cliente (resuelto en backend
+// por _ot_geofence_destino). Cierra el hueco: antes leía solo visita.direccion_lat
+// y se apagaba el geofence en OTs sin coords propias aunque el cliente sí las tuviera.
+const DESTINO_LAT = {{ geofence_destino_lat | tojson if geofence_destino_lat is not none else 'null' }};
+const DESTINO_LNG = {{ geofence_destino_lng | tojson if geofence_destino_lng is not none else 'null' }};
 const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
+const DESTINO_FUENTE = {{ geofence_destino_fuente | tojson }};
 const RUTA_YA_INICIADA = {{ 'true' if visita.ruta_iniciada_at else 'false' }};
+
+// ── GEOFENCE 100m (estilo Fracttal) — config + estado inyectados ──
+const GEOFENCE_ACTIVO     = {{ 'true' if geofence_activo else 'false' }};
+const GEOFENCE_RADIO_M    = {{ geofence_radio_m | int }};
+const GEOFENCE_CHECKIN_OK = {{ 'true' if geofence_checkin_ok else 'false' }};
+const GEOFENCE_OVERRIDE   = {{ 'true' if geofence_override else 'false' }};
+const GEOFENCE_ES_GESTION = {{ 'true' if geofence_es_gestion else 'false' }};
+const GEOFENCE_SOLICITUD_PENDIENTE = {{ 'true' if geofence_solicitud_pendiente else 'false' }};
 
 const EQUIPOS = {{ equipos | tojson }};
 const EQUIPOS_IDX = {{ equipos_idx | tojson }};
@@ -4713,6 +4761,8 @@ if (typeof window !== 'undefined'){
 //  ACCIONES DE TAREAS (guardado + actualización in-memory)
 // ════════════════════════════════════════════════════════
 async function toggleCheck(tid, mid, pid){
+  // ── Geofence: exige check-in de ubicación antes de gestionar ──
+  if (!_geofenceGate()) return;
   // Encontrar tarea en data
   const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   const tar = grupo.tareas.find(t => t.id === tid);
@@ -4726,6 +4776,8 @@ async function toggleCheck(tid, mid, pid){
     });
     if (r.status === 409){
       const d = await r.json();
+      // Geofence (red de seguridad): no es conflicto de versión, no recargar.
+      if (_geofenceManejar409(d)){ return; }
       await ilusAlert({
         title: 'Cambio detectado',
         message: 'Otro técnico modificó esta tarea mientras la estabas viendo.',
@@ -4748,6 +4800,8 @@ async function toggleCheck(tid, mid, pid){
 }
 
 async function guardarResp(tid, valor, mid, pid){
+  // ── Geofence: exige check-in de ubicación antes de gestionar ──
+  if (!_geofenceGate()) return;
   // ── Lock + version check (concurrencia multitécnico) ──
   if (!await tomarLockTarea(tid)) return;
   const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
@@ -4760,6 +4814,10 @@ async function guardarResp(tid, valor, mid, pid){
     });
     if (r.status === 409){
       const d = await r.json();
+      // Geofence (red de seguridad por si el guard local no alcanzó): NO es
+      // un conflicto de versión, así que no recargamos — mostramos el panel.
+      // (El lock de la tarea expira solo por TTL; no lo liberamos a mano.)
+      if (_geofenceManejar409(d)){ return; }
       await ilusAlert({
         title: 'Cambio detectado',
         message: 'Otro técnico modificó esta tarea mientras la estabas respondiendo.',
@@ -4835,8 +4893,13 @@ function _textoOnBlur(inputEl, tid, mid, pid, minChars){
 //  VALIDACIÓN DE RADIO — distancia entre GPS y destino OT
 //  (Base para bloqueo futuro: <200m del cliente = OK)
 // ════════════════════════════════════════════════════════
-const RADIO_MAX_METROS = 200;   // 200m — futuro: bloquear ejecución si excedido
-const RADIO_BLOQUEO_ACTIVO = false;  // por ahora solo advierte, no bloquea
+// 2026-06-12 (Daniel) — el radio del aviso legacy usa el radio configurado del
+// geofence. El BLOQUEO real lo hacen el panel #geofenceBar + el backend
+// (@_requiere_geofence); por eso el _validarRadio legacy queda SOLO en modo
+// advertencia (RADIO_BLOQUEO_ACTIVO=false) para no duplicar el modal.
+const RADIO_MAX_METROS = (typeof GEOFENCE_RADIO_M === 'number' && GEOFENCE_RADIO_M > 0)
+  ? GEOFENCE_RADIO_M : 200;
+const RADIO_BLOQUEO_ACTIVO = false;
 
 function _distanciaMetros(lat1, lng1, lat2, lng2){
   // Fórmula Haversine
@@ -4873,6 +4936,258 @@ async function _validarRadio(lat, lng){
   });
   return { ok:true, dist, fuera:true };
 }
+
+// ════════════════════════════════════════════════════════════════
+//  GEOFENCE 100m — CHECK-IN DE UBICACIÓN (estilo Fracttal, Daniel 2026-06-12)
+//  El técnico verifica que está a ≤ radio de la dirección de la OT para
+//  poder gestionarla. El bloqueo REAL vive en el backend (@_requiere_geofence);
+//  esto es la guía visual + la captura del check-in (watchPosition convergente).
+// ════════════════════════════════════════════════════════════════
+let _geofenceOK = (!GEOFENCE_ACTIVO || GEOFENCE_ES_GESTION ||
+                   GEOFENCE_CHECKIN_OK || GEOFENCE_OVERRIDE);
+let _geofenceBusy = false;
+let _geofenceUltimaDist = null;
+
+// ¿La OT exige check-in y aún no se hizo? (sin destino no se puede exigir)
+function _geofenceRequiereCheckin(){
+  return GEOFENCE_ACTIVO && !GEOFENCE_ES_GESTION && !_geofenceOK &&
+         (DESTINO_LAT != null && DESTINO_LNG != null);
+}
+// ¿Puede gestionar la OT ahora mismo (sin tropezar con el geofence)?
+function _geofencePuedeGestionar(){
+  if (!GEOFENCE_ACTIVO || GEOFENCE_ES_GESTION || _geofenceOK) return true;
+  if (DESTINO_LAT == null || DESTINO_LNG == null) return true; // sin destino: no se exige
+  return false;
+}
+function _gfBar(){ return document.getElementById('geofenceBar'); }
+
+function _geofenceRender(){
+  const bar = _gfBar();
+  if (!bar) return;
+  // Supervisor/gestión: si el técnico solicitó una excepción de GPS, mostrar
+  // el aviso para AUTORIZARLA a distancia (cierra el flujo Fracttal).
+  if (GEOFENCE_ACTIVO && GEOFENCE_ES_GESTION && GEOFENCE_SOLICITUD_PENDIENTE && !GEOFENCE_OVERRIDE){
+    bar.style.display = '';
+    bar.className = 'gf-bar gf-need';
+    bar.innerHTML = `
+      <div class="gf-head"><i class="bi bi-shield-exclamation"></i>
+        <div><strong>El técnico solicitó una excepción de ubicación</strong>
+        <div class="gf-sub">No puede verificar su GPS en el sitio (sin señal). Si confirmas que está trabajando ahí, autoriza la excepción.</div></div>
+      </div>
+      <div class="gf-actions">
+        <button type="button" class="gf-btn-primary" onclick="_geofenceAutorizarExcepcion()">
+          <i class="bi bi-check2-circle"></i> Autorizar excepción</button>
+      </div>`;
+    return;
+  }
+  if (!_geofenceRequiereCheckin()){
+    // Verificado mientras el geofence está activo → chip verde compacto.
+    if (GEOFENCE_ACTIVO && _geofenceOK && !GEOFENCE_ES_GESTION){
+      const distTxt = (_geofenceUltimaDist != null) ? ` a ${_geofenceUltimaDist} m` : '';
+      bar.style.display = '';
+      bar.className = 'gf-bar gf-ok';
+      bar.innerHTML = `<i class="bi bi-shield-check"></i>
+        <div><strong>Ubicación verificada${distTxt}</strong>
+        <div class="gf-sub">Estás en el sitio. Puedes gestionar esta OT.</div></div>`;
+    } else {
+      bar.style.display = 'none';
+    }
+    return;
+  }
+  bar.style.display = '';
+  bar.className = 'gf-bar gf-need';
+  bar.innerHTML = `
+    <div class="gf-head"><i class="bi bi-geo-alt-fill"></i>
+      <div><strong>Verifica tu ubicación para gestionar la OT</strong>
+      <div class="gf-sub">Debes estar a ${GEOFENCE_RADIO_M} m o menos de la dirección del cliente.</div></div>
+    </div>
+    <ol class="gf-steps">
+      <li>Permite el acceso a tu ubicación</li>
+      <li>Espera a que la precisión sea buena</li>
+      <li>Confirma que estás en el sitio</li>
+      <li>Gestiona la OT</li>
+    </ol>
+    <div id="gfStatus" class="gf-status"></div>
+    <div class="gf-actions">
+      <button type="button" class="gf-btn-primary" onclick="_geofenceCheckin()">
+        <i class="bi bi-crosshair"></i> Verificar mi ubicación</button>
+      <button type="button" class="gf-btn-ghost" onclick="_geofencePedirExcepcion()">
+        ¿GPS imposible? Solicitar excepción</button>
+    </div>`;
+}
+
+function _gfSetStatus(html, cls){
+  const s = document.getElementById('gfStatus');
+  if (s){ s.className = 'gf-status ' + (cls || ''); s.innerHTML = html; }
+}
+
+async function _geofenceCheckin(){
+  if (_geofenceBusy) return;
+  _geofenceBusy = true;
+  _gfSetStatus('<span class="spinner-border spinner-border-sm"></span> Obteniendo ubicación precisa…', 'info');
+  try {
+    const pos = await _geofenceMejorPosicion(12000);
+    if (!pos){
+      _gfSetStatus('No pudimos obtener tu ubicación. Revisa el permiso de GPS del dispositivo y reintenta.', 'err');
+      return;
+    }
+    _gfSetStatus(`Precisión ±${Math.round(pos.accuracy)} m — verificando distancia al sitio…`, 'info');
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/geofence/checkin`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lat:pos.lat, lng:pos.lng, accuracy:pos.accuracy, source:pos.method || 'gps' })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok){
+      _geofenceOK = true;
+      _geofenceUltimaDist = (d.dist_m != null) ? d.dist_m : null;
+      ilusToast('✓ Ubicación verificada', { type:'success' });
+      _geofenceRender();
+      return;
+    }
+    if (d.error === 'geofence'){
+      _gfSetStatus(`Estás a <strong>${d.dist_m} m</strong> del sitio (máx ${d.radio_m} m). Acércate a la dirección de la OT y vuelve a verificar.`, 'err');
+    } else if (d.error === 'impreciso'){
+      _gfSetStatus(`Precisión insuficiente${d.accuracy ? ` (±${Math.round(d.accuracy)} m)` : ''}. Sal a un lugar con cielo despejado y reintenta.`, 'err');
+    } else if (d.error === 'ubicacion_ip'){
+      _gfSetStatus('Tu navegador entregó una ubicación aproximada por internet, que no sirve para verificar el sitio. Activa el GPS del dispositivo y reintenta.', 'err');
+    } else {
+      _gfSetStatus(d.msg || d.error || 'No se pudo verificar la ubicación. Reintenta.', 'err');
+    }
+  } catch(e){
+    console.error('[geofence] checkin', e);
+    _gfSetStatus('Error de red al verificar. Reintenta.', 'err');
+  } finally {
+    _geofenceBusy = false;
+  }
+}
+
+// watchPosition con convergencia: se queda con la MEJOR lectura (menor
+// accuracy). Corta antes si llega a ≤30m. Fallback al motor en cascada.
+function _geofenceWatch(timeoutMs){
+  return new Promise((resolve) => {
+    if (!navigator.geolocation){ resolve(null); return; }
+    let best = null, watchId = null, done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      if (watchId != null){ try { navigator.geolocation.clearWatch(watchId); } catch(_){} }
+      resolve(best);
+    };
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        (p) => {
+          const acc = p.coords.accuracy;
+          if (!best || acc < best.accuracy){
+            best = { lat:p.coords.latitude, lng:p.coords.longitude, accuracy:acc, method:'gps' };
+          }
+          if (acc <= 30) finish();
+        },
+        () => { finish(); },
+        { enableHighAccuracy:true, timeout:timeoutMs, maximumAge:0 }
+      );
+    } catch(_){ finish(); return; }
+    setTimeout(finish, timeoutMs + 500);
+  });
+}
+async function _geofenceMejorPosicion(timeoutMs){
+  const viaWatch = await _geofenceWatch(timeoutMs);
+  if (viaWatch) return viaWatch;
+  // Fallback al motor GPS en cascada existente (puede devolver method:'ip',
+  // que el backend rechaza para geofence — y la UI guía a activar el GPS).
+  try {
+    if (typeof _gpsCascade === 'function'){
+      const r = await _gpsCascade();
+      if (r && r.lat != null){
+        return { lat:r.lat, lng:r.lng, accuracy:(r.accuracy || 999), method:(r.method || 'gps') };
+      }
+    }
+  } catch(_){}
+  return null;
+}
+
+async function _geofencePedirExcepcion(){
+  const motivo = await ilusPrompt({
+    title: 'Solicitar excepción de ubicación',
+    message: '¿Por qué no puedes verificar tu ubicación en el sitio?',
+    placeholder: 'Ej: sótano sin señal, sala blindada…',
+    required: true,
+  });
+  if (!motivo) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/geofence/override`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ motivo })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok){
+      if (d.aprobado){
+        _geofenceOK = true; _geofenceRender();
+        ilusToast('✓ Excepción autorizada', { type:'success' });
+      } else {
+        await ilusAlert({
+          title: 'Solicitud registrada',
+          message: 'Un supervisor debe autorizar la excepción desde su sesión.',
+          sub: 'Avísale para que la apruebe y puedas continuar.',
+          type: 'info',
+        });
+      }
+    } else {
+      ilusToast(d.error || 'No se pudo registrar la solicitud', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+// Supervisor autoriza la excepción solicitada por el técnico (a distancia).
+async function _geofenceAutorizarExcepcion(){
+  const ok = await ilusConfirm({
+    title: 'Autorizar excepción de ubicación',
+    message: '¿Confirmas que el técnico está trabajando en el sitio aunque no pueda verificar su GPS?',
+    sub: 'Quedará registrado que tú autorizaste esta excepción.',
+    okLabel: 'Sí, autorizar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/geofence/override`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ motivo: 'Autorizada por supervisor (técnico sin señal en sitio)' })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok && d.aprobado){
+      ilusToast('✓ Excepción autorizada', { type:'success' });
+      const bar = _gfBar(); if (bar) bar.style.display = 'none';
+    } else {
+      ilusToast(d.error || 'No se pudo autorizar', { type:'error' });
+    }
+  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+// Guard llamado por las acciones de escritura: si requiere check-in, muestra
+// el panel y bloquea localmente (el backend bloquea igual con 409).
+function _geofenceGate(){
+  if (_geofencePuedeGestionar()) return true;
+  _geofenceRender();
+  const bar = _gfBar();
+  if (bar){ bar.scrollIntoView({ behavior:'smooth', block:'center' }); }
+  ilusToast('Primero verifica tu ubicación en el sitio', { type:'warning' });
+  return false;
+}
+
+// Si el backend responde 409 geofence (red de seguridad), mostramos el panel.
+function _geofenceManejar409(d){
+  if (d && (d.error === 'geofence_checkin' || d.error === 'geofence')){
+    _geofenceOK = false;
+    _geofenceRender();
+    const bar = _gfBar();
+    if (bar){ bar.scrollIntoView({ behavior:'smooth', block:'center' }); }
+    if (d.error === 'geofence' && d.dist_m != null){
+      _gfSetStatus(`Estás a ${d.dist_m} m del sitio (máx ${d.radio_m} m). Acércate y verifica.`, 'err');
+    }
+    ilusToast(d.msg || 'Verifica tu ubicación para gestionar la OT', { type:'warning' });
+    return true;
+  }
+  return false;
+}
+
+document.addEventListener('DOMContentLoaded', _geofenceRender);
 
 // ════════════════════════════════════════════════════════════════
 //  GPS — MOTOR DE 5 ESTRATEGIAS EN CASCADA (iOS Safari bulletproof)

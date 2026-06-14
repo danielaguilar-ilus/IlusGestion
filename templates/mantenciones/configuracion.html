@@ -75,6 +75,77 @@
   </div>
 </div>
 
+{# 2026-06-12 (Daniel) — GEOFENCE 100m: activar/desactivar + radio máximo. #}
+<div id="gfConfigCard" style="background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:18px 20px;margin-bottom:18px">
+  <div class="d-flex align-items-start gap-3 flex-wrap">
+    <div style="font-size:1.7rem;color:#dc2626;flex:none"><i class="bi bi-geo-alt-fill"></i></div>
+    <div class="flex-grow-1">
+      <h5 class="fw-bold mb-1">Verificación de ubicación en sitio (geocerca)</h5>
+      <div class="text-muted small mb-3" style="max-width:660px">
+        Si la activas, el técnico debe hacer un <b>check-in de ubicación</b> al llegar
+        (estar a la distancia máxima de la dirección de la OT) para poder gestionarla:
+        marcar tareas, subir fotos, firmar o cerrar. Un supervisor puede autorizar
+        excepciones cuando no hay señal de GPS. Cada verificación queda registrada.
+      </div>
+      <div class="d-flex align-items-center gap-3 flex-wrap">
+        <div class="form-check form-switch m-0">
+          <input class="form-check-input" type="checkbox" id="gfActivo"
+                 style="width:3rem;height:1.5rem;cursor:pointer">
+          <label class="form-check-label fw-semibold ms-2" for="gfActivo">Exigir ubicación</label>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <label for="gfRadio" class="small fw-semibold text-nowrap mb-0">Radio máximo:</label>
+          <input type="range" id="gfRadio" min="20" max="500" step="10" value="100" style="width:160px">
+          <span id="gfRadioVal" class="fw-bold" style="color:#dc2626;min-width:62px">100 m</span>
+        </div>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="gfGuardar" onclick="gfGuardarConfig()">
+          <i class="bi bi-check-circle-fill me-1"></i>Guardar
+        </button>
+        <span id="gfStatus" class="small fw-semibold"></span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  function gfPintRadio(){ const v = $('gfRadio'); if (v && $('gfRadioVal')) $('gfRadioVal').textContent = v.value + ' m'; }
+  async function gfCargar(){
+    try {
+      const r = await fetch('/mantenciones/api/geofence/config');
+      const d = await r.json();
+      if (d && d.ok){
+        if ($('gfActivo')) $('gfActivo').checked = !!d.activo;
+        if ($('gfRadio')){ $('gfRadio').value = d.radio_m || 100; gfPintRadio(); }
+      }
+    } catch(_){}
+  }
+  window.gfGuardarConfig = async function(){
+    const btn = $('gfGuardar'), st = $('gfStatus');
+    if (btn) btn.disabled = true;
+    if (st){ st.textContent = 'Guardando…'; st.style.color = '#6b7280'; }
+    try {
+      const r = await fetch('/mantenciones/api/geofence/config', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ activo: $('gfActivo').checked, radio_m: parseInt($('gfRadio').value, 10) })
+      });
+      const d = await r.json();
+      if (r.ok && d.ok){
+        if (st){ st.textContent = '✓ Guardado'; st.style.color = '#16a34a'; }
+        if (window.ilusToast) ilusToast('✓ Configuración de geocerca guardada', { type:'success' });
+      } else {
+        if (st){ st.textContent = (d && d.error) || 'Error'; st.style.color = '#dc2626'; }
+      }
+    } catch(_){ if (st){ st.textContent = 'Error de red'; st.style.color = '#dc2626'; } }
+    finally { if (btn) btn.disabled = false; setTimeout(() => { if (st) st.textContent = ''; }, 2500); }
+  };
+  document.addEventListener('DOMContentLoaded', function(){
+    const rg = $('gfRadio'); if (rg) rg.addEventListener('input', gfPintRadio);
+    gfCargar();
+  });
+})();
+</script>
+
 <div id="ag_root">
   <div class="text-center py-5 text-muted">
     <div class="spinner-border spinner-border-sm me-2"></div>Cargando reglas…
