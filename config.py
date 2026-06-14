@@ -187,10 +187,10 @@ BRAND_CONFIG = {
     "name":         _env('ILUS_BRAND_NAME',        'ILUS Sport & Health'),
     "from_name":    _env('ILUS_BRAND_FROM_NAME',   'ILUS'),
     "from_email":   _env('ILUS_BRAND_FROM_EMAIL',  'no-reply@ilusfitness.com'),
-    "reply_to":     _env('ILUS_BRAND_REPLY_TO',    'servicio.tecnico@ilusfitness.com'),
+    "reply_to":     _env('ILUS_BRAND_REPLY_TO',    'soportetec@sphs.cl'),
     "wa_name":      _env('ILUS_BRAND_WA_NAME',     'ILUS'),
-    "support_url":  _env('ILUS_BRAND_SUPPORT_URL', 'https://ilusfitness.com/soporte'),
-    "support_email":_env('ILUS_BRAND_SUPPORT_EMAIL','servicio.tecnico@ilusfitness.com'),
+    "support_url":  _env('ILUS_BRAND_SUPPORT_URL', 'https://ilusfitness.com/pages/soporte-tecnico'),
+    "support_email":_env('ILUS_BRAND_SUPPORT_EMAIL','soportetec@sphs.cl'),
 }
 
 

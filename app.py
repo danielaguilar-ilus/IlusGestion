@@ -36,10 +36,10 @@ except ImportError:
         "name":          "ILUS Sport & Health",
         "from_name":     "ILUS",
         "from_email":    "no-reply@ilusfitness.com",
-        "reply_to":      "servicio.tecnico@ilusfitness.com",
+        "reply_to":      "soportetec@sphs.cl",
         "wa_name":       "ILUS",
-        "support_url":   "https://ilusfitness.com/soporte",
-        "support_email": "servicio.tecnico@ilusfitness.com",
+        "support_url":   "https://ilusfitness.com/pages/soporte-tecnico",
+        "support_email": "soportetec@sphs.cl",
     }
 try:
     from config import ANTHROPIC_API_KEY as _ANTHROPIC_KEY_CFG
@@ -6974,10 +6974,10 @@ def _get_brand_cfg() -> dict:
         "name":          (_os_b.environ.get("ILUS_BRAND_NAME")       or BRAND_CONFIG.get("name")       or "ILUS Sport & Health").strip(),
         "from_name":     (_os_b.environ.get("ILUS_BRAND_FROM_NAME")  or BRAND_CONFIG.get("from_name")  or "ILUS").strip(),
         "from_email":    (_os_b.environ.get("ILUS_BRAND_FROM_EMAIL") or BRAND_CONFIG.get("from_email") or "no-reply@ilusfitness.com").strip(),
-        "reply_to":      (_os_b.environ.get("ILUS_BRAND_REPLY_TO")   or BRAND_CONFIG.get("reply_to")   or "servicio.tecnico@ilusfitness.com").strip(),
+        "reply_to":      (_os_b.environ.get("ILUS_BRAND_REPLY_TO")   or BRAND_CONFIG.get("reply_to")   or "soportetec@sphs.cl").strip(),
         "wa_name":       (_os_b.environ.get("ILUS_BRAND_WA_NAME")    or BRAND_CONFIG.get("wa_name")    or "ILUS").strip(),
         "support_url":   (_os_b.environ.get("ILUS_BRAND_SUPPORT_URL")  or BRAND_CONFIG.get("support_url")   or "https://ilusfitness.com/soporte").strip(),
-        "support_email": (_os_b.environ.get("ILUS_BRAND_SUPPORT_EMAIL")or BRAND_CONFIG.get("support_email") or "servicio.tecnico@ilusfitness.com").strip(),
+        "support_email": (_os_b.environ.get("ILUS_BRAND_SUPPORT_EMAIL")or BRAND_CONFIG.get("support_email") or "soportetec@sphs.cl").strip(),
     }
 
 
@@ -7044,10 +7044,10 @@ def _get_marca() -> dict:
         # los emails sin tocar env vars. Igual para wa_name (WhatsApp si vuelve).
         "from_name":     (name or be.get("from_name") or "ILUS Fitness").strip(),
         "from_email":    (be.get("from_email") or "no-reply@ilusfitness.com").strip(),
-        "reply_to":      (cc.get("reply_to") or be.get("reply_to") or "servicio.tecnico@ilusfitness.com").strip(),
+        "reply_to":      (cc.get("reply_to") or be.get("reply_to") or "soportetec@sphs.cl").strip(),
         "wa_name":       (name or be.get("wa_name") or "ILUS Fitness").strip(),
         "logo_url":      logo,
-        "support_email": (cc.get("support_email") or be.get("support_email") or "servicio.tecnico@ilusfitness.com").strip(),
+        "support_email": (cc.get("support_email") or be.get("support_email") or "soportetec@sphs.cl").strip(),
         "support_url":   (be.get("support_url") or "https://ilusfitness.com/soporte").strip(),
         "footer":        f"{name} · Plataforma operacional",
         "corp_color":    (cc.get("corp_color") or "#DC143C").strip(),
@@ -17238,42 +17238,20 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
 
 
 def _ilus_email_html_tracking(titulo, cliente, doc, cuerpo, track_url, comentario=None):
-    """Plantilla email HTML simple, ILUS branding. Sin dependencias externas
-    (los clientes de email son notoriamente caprichosos: tablas + estilos inline).
-    """
-    com_html = ""
-    if comentario:
-        com_html = (f'<p style="margin:8px 0 0;color:#6b7280;font-size:13px;font-style:italic">'
-                    f'"{comentario}"</p>')
-    return f"""<!doctype html>
-<html><body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
-<table cellpadding="0" cellspacing="0" width="100%" style="background:#f4f4f5;padding:24px 0">
-  <tr><td align="center">
-    <table cellpadding="0" cellspacing="0" width="560" style="max-width:560px;width:100%;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.05)">
-      <tr><td style="background:#0a0a0a;padding:24px 28px">
-        <table cellpadding="0" cellspacing="0"><tr>
-          <td style="background:#dc2626;width:42px;height:42px;border-radius:11px;text-align:center;color:#fff;font-weight:900;font-size:18px">IL</td>
-          <td style="padding-left:12px;color:#fff;font-weight:800;font-size:17px">ILUS Sport &amp; Health</td>
-        </tr></table>
-      </td></tr>
-      <tr><td style="padding:30px 28px 10px">
-        <h1 style="margin:0;color:#0a0a0a;font-size:22px;font-weight:800">{titulo}</h1>
-        <p style="margin:10px 0 4px;color:#6b7280;font-size:14px">Hola {cliente or ''},</p>
-        <p style="margin:6px 0 16px;color:#374151;font-size:15px;line-height:1.5">{cuerpo}</p>
-        {com_html}
-        <table cellpadding="0" cellspacing="0" style="margin:22px 0"><tr><td>
-          <a href="{track_url}" style="background:#dc2626;color:#fff;text-decoration:none;font-weight:800;padding:14px 28px;border-radius:11px;font-size:15px;display:inline-block">Ver seguimiento en vivo &rarr;</a>
-        </td></tr></table>
-        <p style="margin:18px 0 0;color:#9ca3af;font-size:12px">N° de documento: <strong style="color:#374151;font-family:monospace">{doc}</strong></p>
-      </td></tr>
-      <tr><td style="background:#fafafa;padding:18px 28px;border-top:1px solid #f3f4f6;color:#9ca3af;font-size:12px;text-align:center">
-        ¿Dudas? Escríbenos a <a href="mailto:servicio.tecnico@ilusfitness.com" style="color:#dc2626;text-decoration:none">servicio.tecnico@ilusfitness.com</a><br>
-        © <strong style="color:#0a0a0a">ILUS Sport &amp; Health</strong>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body></html>"""
+    """COMPAT: delega en el maestro ILUS. (Antes tenía su propia plantilla con
+    el correo viejo; quedó sin uso al migrar _tr_notificar_cliente, pero se
+    mantiene la firma por si algún caller externo la usa.)"""
+    from markupsafe import escape as _esc
+    return _ilus_email_master({
+        "title":             titulo,
+        "subtitle":          "Actualización de despacho · ILUS Fitness",
+        "customer_name":     cliente or "",
+        "message":           str(_esc(cuerpo or "")),
+        "detail_rows_html":  _ilus_email_rows([("N° de documento", doc)]),
+        "primary_cta_url":   track_url,
+        "primary_cta_label": "Ver seguimiento en vivo",
+        "closing_message":   (f"«{_esc(comentario)}»" if comentario else ""),
+    })
 
 
 def _tr_ensure_public_token(commitment_id):
@@ -30371,31 +30349,28 @@ def _email_body_section(content):
 
 
 def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
-    """Footer de marca ILUS con el ESLOGAN 'I LIKE U STRONG' en MAYÚSCULAS
-    (las letras I·L·U·S en rojo = el significado del acrónimo) + nombre legal.
-    (Juan Daniel 2026-06-05: 'el eslogan de ILUS es I LIKE U STRONG, todo en
-    mayúscula; es ILUS Fitness Sport & Health Solutions'.)"""
+    """Footer NUEVO estándar ILUS (2026-06-14, Daniel): botón "Crear ticket de
+    soporte" + soportetec@sphs.cl. SIN "LIKE U STRONG", redes ni correo viejo.
+    (Lo usan los pocos correos que aún no pasan por _ilus_email_master: prueba
+    SMTP y un aviso interno.)"""
     return f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#000000">
-  <tr><td style="height:3px;background:#E20F2E;font-size:0;line-height:0">&nbsp;</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#101010">
+  <tr><td style="height:1px;background:#252525;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
-    <td style="padding:34px 32px 18px 32px;text-align:center">
-      <div style="font-size:21px;font-weight:900;letter-spacing:.22em;line-height:1.2"><span style="color:#E20F2E">I</span><span style="color:#ffffff"> LIKE </span><span style="color:#E20F2E">U</span><span style="color:#ffffff"> </span><span style="color:#E20F2E">S</span><span style="color:#ffffff">TRONG</span></div>
-      <div style="width:52px;height:2px;background:#E20F2E;margin:16px auto 18px auto;font-size:0;line-height:0">&nbsp;</div>
-      <table cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 18px"><tr>
-        <td style="padding:0 7px"><a href="https://instagram.com/ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">INSTAGRAM</a></td>
-        <td style="color:#555">&middot;</td>
-        <td style="padding:0 7px"><a href="https://tiktok.com/@ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">TIKTOK</a></td>
-        <td style="color:#555">&middot;</td>
-        <td style="padding:0 7px"><a href="https://youtube.com/@ilusfitness" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">YOUTUBE</a></td>
-        <td style="color:#555">&middot;</td>
-        <td style="padding:0 7px"><a href="https://www.facebook.com/ilusfitness/" style="color:#cfcfcf;font-size:11px;font-weight:700;text-decoration:none;letter-spacing:.04em">FACEBOOK</a></td>
+    <td style="padding:30px 32px 27px 32px;text-align:center">
+      <div style="font-size:16px;line-height:22px;font-weight:800;color:#ffffff">¿Necesitas ayuda con tu solicitud?</div>
+      <div style="padding-top:8px;font-size:13px;line-height:20px;color:#aeb4bd">Nuestro equipo de soporte técnico puede ayudarte y dar seguimiento a tu caso.</div>
+      <table cellpadding="0" cellspacing="0" align="center" style="margin:17px auto 0"><tr>
+        <td align="center" style="border:1px solid #e30613;border-radius:5px">
+          <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700">Crear ticket de soporte</a>
+        </td>
       </tr></table>
-      <div style="color:#E20F2E;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase">{company}</div>
-      <div style="color:#9a9a9a;font-size:12px;margin-top:5px">Equipamiento profesional para alto rendimiento</div>
-      <div style="color:#6b6b6b;font-size:11px;line-height:1.7;margin-top:16px;border-top:1px solid #1c1c1c;padding-top:16px">
-        Este correo fue generado automaticamente. Para soporte escribenos a <a href="mailto:servicio.tecnico@ilusfitness.com" style="color:#bbb;text-decoration:none">servicio.tecnico@ilusfitness.com</a><br>
-        &copy; 2026 ILUS Fitness &middot; Todos los derechos reservados.
+      <div style="padding-top:18px;font-size:12px;line-height:19px;color:#858c96">Soporte:
+        <a href="mailto:{ILUS_SOPORTE_EMAIL}" style="color:#ffffff;text-decoration:none;font-weight:700">{ILUS_SOPORTE_EMAIL}</a>
+      </div>
+      <div style="padding-top:17px;font-size:11px;line-height:18px;color:#646b74">
+        Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>
+        &copy; 2026 ILUS Fitness &middot; Equipamiento profesional para alto rendimiento
       </div>
     </td>
   </tr>
