@@ -16031,7 +16031,7 @@ def _fedex_track_lookup(tracking_numbers):
 
 def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
                              tracking_number=None, payload=None,
-                             comentario=None):
+                             comentario=None, notify_cliente=True):
     """Aplica el estado venido del courier al item.
 
     Si el estado cambió respecto al actual del item:
@@ -16040,6 +16040,9 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
       - Cachea delivered_at si pasó a 'Entregado'
     Siempre actualiza last_carrier_* (incluso si el estado no cambió, para
     saber que sí pollers se conectó).
+
+    notify_cliente=False → actualiza el estado pero NO manda correo al cliente
+    (lo usa el poller automático; el refresco manual mantiene True).
 
     Returns: dict {changed: bool, estado_actual: str, comentario: str}
     """
@@ -16090,7 +16093,8 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
         _tr_event(item_id, estado_ilus, fuente=fuente,
                   comentario=comentario,
                   payload_json=payload,
-                  commitment_id=cur_item["commitment_id"])
+                  commitment_id=cur_item["commitment_id"],
+                  notify_cliente=notify_cliente)
     return {
         "changed":   changed,
         "anterior":  actual,
@@ -16964,7 +16968,7 @@ def _tr_fedex_mark_stale(commitment_id, old_bultos, new_bultos):
 
 def _tr_event(manifest_item_id, estado, fuente='manual',
               comentario=None, lat=None, lng=None, payload_json=None,
-              commitment_id=None):
+              commitment_id=None, notify_cliente=True):
     """Registra UN evento de tracking en transport_tracking_events (append-only).
 
     Esta tabla es la línea de tiempo visible en el tracking público del cliente
@@ -17009,7 +17013,9 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
         conn.commit()
         # Notificación al cliente (best-effort, no bloquea si falla).
         # Solo en estados clave: En ruta y Entregado (no spamear con todos los pasos).
-        if estado in ('En ruta', 'Entregado') and commitment_id:
+        # notify_cliente=False lo usa el poller automático: actualiza el estado
+        # pero NO le manda correo al cliente (decisión de Daniel 2026-06-14).
+        if notify_cliente and estado in ('En ruta', 'Entregado') and commitment_id:
             try:
                 _tr_notificar_cliente(commitment_id, estado, comentario=comentario)
             except Exception as _ne:
@@ -21695,6 +21701,27 @@ def tr_estado_entrega(mid, item_id):
     estado = body.get("estado_entrega", "")
     if estado not in ESTADOS_ENTREGA:
         return jsonify({"error": "estado inválido"}), 400
+
+    # Protección (decisión Daniel 2026-06-14): los envíos FedEx se actualizan
+    # SOLOS por la Track API. Para que nadie los desincronice por accidente, el
+    # cambio MANUAL de estado en un item con OT FedEx queda restringido a
+    # admin/superadmin. Los couriers manuales (sin tracking) no se afectan.
+    es_fedex_item = mysql_fetchone(
+        "SELECT 1 AS x FROM transport_manifest_items "
+        "WHERE id=%s AND manifest_id=%s "
+        "  AND ((tracking_number IS NOT NULL AND tracking_number <> '') "
+        "       OR (master_tracking_number IS NOT NULL AND master_tracking_number <> ''))",
+        (item_id, mid)
+    )
+    if es_fedex_item:
+        _u = getattr(g, "user", None) or {}
+        if (_u.get("role") or "") not in ("admin", "superadmin"):
+            return jsonify({
+                "ok": False,
+                "error": ("Este envío FedEx se actualiza automáticamente. "
+                          "Solo un administrador puede cambiar su estado a mano."),
+            }), 403
+
     comentario = (body.get("comentario") or "").strip() or None
     conn = get_db()
     with conn.cursor() as cur:
@@ -23692,34 +23719,23 @@ def _fedex_cron_token_required(token_received):
     return request.remote_addr in ("127.0.0.1", "::1", "localhost")
 
 
-@app.route("/transporte/cron/fedex-track-poll", methods=["GET", "POST"])
-def tr_cron_fedex_poll():
-    """Polling masivo de los items con tracking FedEx que aún no están en
-    estado terminal. Pensado para Cloud Scheduler (cada 15-30 min).
+def _fedex_poll_batch(limit=25, dry=False):
+    """Lógica PURA de un ciclo de polling FedEx (sin HTTP/auth). La comparten
+    el endpoint manual (tr_cron_fedex_poll) y el hilo daemon automático
+    (_fedex_track_poll_loop).
 
-    Seguridad: protegido con FEDEX_CRON_TOKEN (header X-Cron-Token o query ?token=).
-    Si no se configura el token, solo acepta requests desde 127.0.0.1.
+    Selecciona hasta `limit` items con tracking_number, NO en estado terminal,
+    nunca polleados o polleados hace > 15 min. Consulta la Track API en batch
+    y aplica el estado a cada item (que registra el evento en
+    transport_tracking_events y actualiza estado_entrega).
 
-    Query params:
-      - limit (default 25, max 30 por límite FedEx por request)
-      - dry  (1 = solo lista, no actualiza)
-
-    Returns: { ok, polled, changed, errors, ratelimit_hit }
+    Returns: dict {ok, polled, changed, items, msg?, error?}
     """
-    tok = (request.headers.get("X-Cron-Token")
-           or request.args.get("token") or "").strip()
-    if not _fedex_cron_token_required(tok):
-        return jsonify({"error": "forbidden"}), 403
-
     if not (FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET):
-        return jsonify({"ok": False,
-                        "error": "FedEx Track API no configurada"}), 503
+        return {"ok": False, "error": "FedEx Track API no configurada",
+                "polled": 0, "changed": 0, "items": []}
 
-    limit = min(int(request.args.get("limit") or 25), 30)
-    dry   = request.args.get("dry") in ("1", "true", "yes")
-
-    # Items elegibles: tienen tracking_number, NO están en estado terminal,
-    # y o nunca se han polleado, o se polearon hace > 15 min.
+    limit = min(int(limit or 25), 30)
     rows = mysql_fetchall("""
         SELECT id, tracking_number
         FROM transport_manifest_items
@@ -23731,23 +23747,22 @@ def tr_cron_fedex_poll():
         LIMIT %s
     """, (limit,)) or []
     if not rows:
-        return jsonify({"ok": True, "polled": 0, "changed": 0,
-                        "items": [], "msg": "nada que pollear"})
+        return {"ok": True, "polled": 0, "changed": 0,
+                "items": [], "msg": "nada que pollear"}
 
     if dry:
-        return jsonify({
-            "ok": True, "polled": 0, "changed": 0,
-            "items": [{"id": r["id"], "tn": r["tracking_number"]} for r in rows],
-            "msg": "dry-run",
-        })
+        return {"ok": True, "polled": 0, "changed": 0,
+                "items": [{"id": r["id"], "tn": r["tracking_number"]} for r in rows],
+                "msg": "dry-run"}
 
     by_tn = {r["tracking_number"]: r["id"] for r in rows}
     tns = list(by_tn.keys())
     try:
         results = _fedex_track_lookup(tns)
     except Exception as _e_fx:
-        return jsonify({"ok": False,
-                        "error": f"FedEx Track API falló: {str(_e_fx)[:200]}"}), 502
+        return {"ok": False,
+                "error": f"FedEx Track API falló: {str(_e_fx)[:200]}",
+                "polled": 0, "changed": 0, "items": []}
 
     changed_count = 0
     items_log = []
@@ -23766,6 +23781,9 @@ def tr_cron_fedex_poll():
                 "scans":        (r.get("scans") or [])[:5],
             }},
             comentario=comentario or None,
+            # Decisión Daniel 2026-06-14: el poller automático actualiza el
+            # estado pero NO le manda correo al cliente.
+            notify_cliente=False,
         )
         if apply_res.get("changed"):
             changed_count += 1
@@ -23777,12 +23795,201 @@ def tr_cron_fedex_poll():
             "anterior": apply_res.get("anterior"),
             "fedex":    r.get("status_label"),
         })
-    return jsonify({
-        "ok": True,
-        "polled":  len(results),
-        "changed": changed_count,
-        "items":   items_log,
-    })
+    return {"ok": True, "polled": len(results),
+            "changed": changed_count, "items": items_log}
+
+
+@app.route("/transporte/cron/fedex-track-poll", methods=["GET", "POST"])
+def tr_cron_fedex_poll():
+    """Polling masivo de los items con tracking FedEx que aún no están en
+    estado terminal. Invocable manualmente o por Cloud Scheduler externo.
+    (El polling automático interno corre en _fedex_track_poll_loop.)
+
+    Seguridad: protegido con FEDEX_CRON_TOKEN (header X-Cron-Token o query ?token=).
+    Si no se configura el token, solo acepta requests desde 127.0.0.1.
+
+    Query params:
+      - limit (default 25, max 30 por límite FedEx por request)
+      - dry  (1 = solo lista, no actualiza)
+
+    Returns: { ok, polled, changed, items, msg }
+    """
+    tok = (request.headers.get("X-Cron-Token")
+           or request.args.get("token") or "").strip()
+    if not _fedex_cron_token_required(tok):
+        return jsonify({"error": "forbidden"}), 403
+
+    limit = min(int(request.args.get("limit") or 25), 30)
+    dry   = request.args.get("dry") in ("1", "true", "yes")
+    res = _fedex_poll_batch(limit=limit, dry=dry)
+    status = 200 if res.get("ok") else (503 if "no configurada" in (res.get("error") or "") else 502)
+    return jsonify(res), status
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AUTO-POLLER FEDEX (hilo daemon interno) — estados que se mueven solos
+#  ---------------------------------------------------------------------------
+#  Cada FEDEX_AUTOPOLL_INTERVAL_MIN (default 20) dispara _fedex_poll_batch para
+#  actualizar los estados de los envíos FedEx activos. NO manda correos al
+#  cliente (el poll usa notify_cliente=False; decisión de Daniel 2026-06-14).
+#
+#  Lock por LEASE en tabla fedex_poll_lock: con 2 workers Gunicorn (y/o varias
+#  instancias de Cloud Run) solo UNO corre cada ciclo. El UPDATE condicional es
+#  atómico (InnoDB bloquea la fila), así no se duplican consultas a FedEx.
+#
+#  Cloud Run escala a 0 sin tráfico → el hilo vive mientras la instancia esté
+#  arriba (horas laborales). El estado vive en MySQL; al re-levantar, sigue.
+#  Si se necesita 24/7 garantizado, el endpoint /transporte/cron/fedex-track-poll
+#  ya existe para un Cloud Scheduler externo (no requiere tocar este hilo).
+# ─────────────────────────────────────────────────────────────────────────────
+def _ensure_fedex_poll_lock_table():
+    """Tabla idempotente para coordinar el auto-poll cross-worker (lease lock)."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fedex_poll_lock (
+                    id           INT PRIMARY KEY,
+                    locked_until DATETIME     DEFAULT NULL,
+                    worker_id    INT          DEFAULT 0,
+                    last_run     DATETIME     DEFAULT NULL,
+                    last_result  VARCHAR(255) DEFAULT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            # Fila única id=1 (INSERT IGNORE = idempotente).
+            cur.execute("INSERT IGNORE INTO fedex_poll_lock (id) VALUES (1)")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[fedex-autopoll] no se pudo asegurar fedex_poll_lock: {e}", flush=True)
+
+
+def _fedex_poll_acquire_lease(lease_seconds=600):
+    """Intenta tomar el lease del poll. UPDATE condicional ATÓMICO: solo gana el
+    worker que encuentra el lock libre o vencido. Devuelve True si ganó."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE fedex_poll_lock
+                SET locked_until = DATE_ADD(NOW(), INTERVAL %s SECOND),
+                    worker_id    = %s,
+                    last_run     = NOW()
+                WHERE id = 1
+                  AND (locked_until IS NULL OR locked_until < NOW())
+            """, (lease_seconds, os.getpid()))
+            won = (cur.rowcount == 1)
+        conn.commit()
+        conn.close()
+        return won
+    except Exception as e:
+        print(f"[fedex-autopoll] lease error: {e}", flush=True)
+        return False
+
+
+def _fedex_poll_release_lease(result_msg=""):
+    """Libera el lease al terminar (lo deja vencido para que el próximo ciclo
+    pueda re-tomarlo de inmediato) y guarda un resumen del último resultado."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE fedex_poll_lock SET locked_until=NULL, last_result=%s "
+                "WHERE id=1 AND worker_id=%s",
+                ((result_msg or "")[:255], os.getpid())
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[fedex-autopoll] release error: {e}", flush=True)
+
+
+def _fedex_autopoll_enabled():
+    """Auto-poll habilitado si hay credenciales Track API y no se apagó por env.
+    Apagar con FEDEX_AUTOPOLL=off (o 0/false)."""
+    flag = (os.environ.get("FEDEX_AUTOPOLL", "on") or "on").strip().lower()
+    if flag in ("0", "off", "false", "no"):
+        return False
+    return bool(FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET)
+
+
+def _fedex_track_poll_loop():
+    """Hilo daemon: cada FEDEX_AUTOPOLL_INTERVAL_MIN dispara el polling de
+    estados FedEx. Toma el lease antes de correr (anti-doble-worker). Corre
+    varios batches por ciclo hasta agotar los items elegibles o un máximo,
+    con pausa entre batches para respetar el rate-limit de FedEx Track API."""
+    import time as _time
+    try:
+        interval_min = int(os.environ.get("FEDEX_AUTOPOLL_INTERVAL_MIN", "20"))
+    except Exception:
+        interval_min = 20
+    interval_min = max(5, min(interval_min, 120))   # entre 5 y 120 min
+    MAX_BATCHES_POR_CICLO = 6                        # hasta ~180 envíos/ciclo
+
+    _ensure_fedex_poll_lock_table()
+    print(f"[fedex-autopoll] arrancado pid={os.getpid()} "
+          f"(cada {interval_min} min · enabled={_fedex_autopoll_enabled()})", flush=True)
+
+    # Primer ciclo: esperar 2 min tras el boot (deja que la app levante y
+    # evita correr durante el arranque/migraciones).
+    _time.sleep(120)
+
+    while True:
+        try:
+            if not _fedex_autopoll_enabled():
+                _time.sleep(interval_min * 60)
+                continue
+
+            # Lease de 10 min: cubre la ejecución del ciclo sin bloquear de más.
+            if not _fedex_poll_acquire_lease(lease_seconds=600):
+                # Otro worker está corriendo este ciclo. Saltar.
+                _time.sleep(interval_min * 60)
+                continue
+
+            total_polled = total_changed = 0
+            msg = "sin items"
+            try:
+                for _ in range(MAX_BATCHES_POR_CICLO):
+                    res = _fedex_poll_batch(limit=30, dry=False)
+                    if not res.get("ok"):
+                        print(f"[fedex-autopoll] batch error: {res.get('error')}", flush=True)
+                        break
+                    p = res.get("polled", 0)
+                    total_polled  += p
+                    total_changed += res.get("changed", 0)
+                    if p == 0:
+                        break          # ya no quedan items que pollear
+                    _time.sleep(3)     # respeta rate-limit FedEx entre batches
+                if total_polled:
+                    msg = f"polled={total_polled} changed={total_changed}"
+                    print(f"[fedex-autopoll] ciclo OK · {msg}", flush=True)
+            finally:
+                _fedex_poll_release_lease(msg)
+
+            _time.sleep(interval_min * 60)
+        except Exception as e:
+            print(f"[fedex-autopoll] loop error: {e}", flush=True)
+            _time.sleep(300)   # 5 min ante error inesperado
+
+
+def _start_fedex_poll_scheduler_once():
+    """Arranca el hilo del auto-poller (evita doble arranque por nombre)."""
+    import threading as _th
+    nombre = "fedex-autopoll"
+    for t in _th.enumerate():
+        if t.name == nombre and t.is_alive():
+            return
+    try:
+        t = _th.Thread(target=_fedex_track_poll_loop, daemon=True, name=nombre)
+        t.start()
+    except Exception as e:
+        print(f"[fedex-autopoll] no se pudo arrancar: {e}", flush=True)
+
+
+try:
+    _start_fedex_poll_scheduler_once()
+except Exception as _e_fxpoll:
+    print(f"[fedex-autopoll] startup error: {_e_fxpoll}", flush=True)
 
 
 @app.route("/transporte/api/items/<int:item_id>/refrescar-tracking", methods=["POST"])
