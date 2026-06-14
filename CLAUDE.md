@@ -358,5 +358,50 @@ sueltos del código.
 
 ---
 
+## 🚀 REGLA #12 — DEPLOY: producción es **Google Cloud Run**, NUNCA Railway
+
+**La aplicación de producción vive SOLO en Google Cloud Run.** Railway ya
+NO corre la app — quedó como un simple "vigilante" que redirige el link
+viejo al nuevo de Google.
+
+### Cómo se despliega (lo único válido)
+
+- `git push` a la rama → PR → **merge a `main`**.
+- El push a `main` dispara **GitHub Actions** (`.github/workflows/deploy.yml`)
+  que corre `gcloud run deploy ilus-app --source .` → usa el **Dockerfile**
+  (app completa, `app:app`). Región `southamerica-west1`, proyecto
+  `ilus-app-498503`.
+- URL de producción:
+  `https://ilus-app-469212710544.southamerica-west1.run.app`
+- **Pide OK a Daniel antes de cada merge a main** (= deploy a producción).
+
+### Railway = SOLO redirector (no es producción, no es respaldo)
+
+- `railway_redirect.py` reenvía (302) el link viejo de Railway al de Google,
+  preservando ruta + query. Lo arranca el **`Procfile`** y el **`nixpacks.toml`**,
+  que apuntan a `railway_redirect:app` (NO a `app:app`).
+- 🔴 **NUNCA** poner `app:app` en el `Procfile` ni en `nixpacks.toml`: la app
+  completa NO levanta en Railway (faltan greenlet/pymssql/playwright) →
+  "Deployment crashed" en cada PR. Eso fue un bug, ya corregido.
+- El **`Procfile` y `nixpacks.toml` son SOLO de Railway.** Google usa el
+  **Dockerfile**. No mezclar.
+
+### Los correos de "Railway Deployment crashed / Deployed to …-pr-XX"
+
+- Son del **GitHub App de Railway** reaccionando a CADA PR (crea un preview).
+  **NO significan que estemos desplegando a Railway** — el deploy real es a
+  Google. Con el `Procfile` apuntando al redirector, esos previews ya no
+  crashean. Para que dejen de llegar del todo, **Daniel** debe desactivar los
+  "PR environments" o desinstalar el GitHub App de Railway (no se puede desde
+  el código).
+
+### Regla de oro
+
+**Si la tarea es "subir / desplegar / ver los cambios en producción" → es
+Google Cloud Run vía merge a `main`. Railway NUNCA. No tocar `Procfile`/
+`nixpacks.toml` salvo para mantener el redirector.**
+
+---
+
 _Última actualización: 2026-05-17_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
