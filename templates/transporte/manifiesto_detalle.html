@@ -1891,11 +1891,16 @@ function guardarEstadoManifiesto() {
 // ── Editar contacto + medidas de un ítem (alimenta el export de carga masiva) ──
 var _edModal = null;
 
+// Normaliza texto sin acentos para comparar comunas (Ñuñoa == Nunoa).
+function _edNorm(s){ return (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim(); }
+function _edEsc(s){ return (s||'').replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
 // Parsea address_components de Google Places y rellena comuna/región/CP.
 // onlyEmpty=true (auto-verificar): solo escribe en los campos vacíos, respeta
 // lo que el operador ya puso. onlyEmpty falsy (elegir sugerencia): sobrescribe.
+// Devuelve {comuna, region, cp} para que el caller pueda comparar coherencia.
 function _edParseComponentes(componentes, onlyEmpty) {
-  if (!Array.isArray(componentes)) return;
+  if (!Array.isArray(componentes)) return null;
   var loc = '', l3 = '', l2 = '', region = '', cp = '';
   componentes.forEach(function(c){
     var t = c.types || [], n = c.long_name || '';
@@ -1923,6 +1928,7 @@ function _edParseComponentes(componentes, onlyEmpty) {
   _set('edComuna',    comuna);
   _set('edRegion',    region);
   _set('edCodPostal', cp);
+  return { comuna: comuna, region: region, cp: cp };
 }
 
 function _edInitPlaces() {
@@ -1947,6 +1953,25 @@ function _edInitPlaces() {
                                + '<span style="color:#92400e">Elige una sugerencia para verificar la dirección</span>';
     }
   });
+  // 2026-06-14 (Daniel) — EL VALIDADOR debe impedir comuna↔dirección
+  // desincronizadas (caso real: dirección de Santiago con comuna TEMUCO →
+  // cotiza la zona FedEx mal SIEMPRE). Si el operador EDITA la dirección a
+  // mano (teclea, no elige sugerencia), las que dependen de la dirección
+  // quedan inválidas: las LIMPIAMOS y exigimos elegir una sugerencia (que SÍ
+  // arrastra comuna+región+CP juntos). Setear input.value por código (al
+  // elegir sugerencia) NO dispara 'input', así que esto corre solo al teclear.
+  input.addEventListener('input', function(){
+    var elC = document.getElementById('edComuna');
+    var elR = document.getElementById('edRegion');
+    var elP = document.getElementById('edCodPostal');
+    if (elC) elC.value = '';
+    if (elR) elR.value = '';
+    if (elP) elP.value = '';
+    input.dataset.addrDirty = '1';
+    if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle" style="color:#f59e0b"></i> '
+                             + '<span style="color:#92400e">Elige una sugerencia para verificar '
+                             + '(comuna y región se completan solas)</span>';
+  });
   input.dataset.placesInit = '1';
 }
 
@@ -1961,8 +1986,11 @@ function _edAutoVerificar() {
   var elC = document.getElementById('edComuna');
   var elR = document.getElementById('edRegion');
   var elP = document.getElementById('edCodPostal');
-  var faltan = (elC && !elC.value.trim()) || (elR && !elR.value.trim()) || (elP && !elP.value.trim());
-  if (!faltan) return;                                // ya está completo: no gastamos llamada
+  // 2026-06-14 (Daniel): ya NO retornamos temprano si está completo.
+  // Geocodificamos SIEMPRE (1 vez por apertura, gateado por autoVerif) para
+  // detectar incoherencias comuna↔dirección en registros viejos guardados mal
+  // (ej. dirección de Santiago con comuna TEMUCO → zona FedEx y precio mal).
+  var comunaAlAbrir = (elC && elC.value || '').trim();
   if (!window.google || !window.google.maps || !window.google.maps.Geocoder) {
     // El SDK de Maps aún no cargó → reintenta cuando esté listo (mismo buffer que el autocomplete)
     if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_edAutoVerificar);
@@ -1976,9 +2004,18 @@ function _edAutoVerificar() {
       { address: input.value.trim(), componentRestrictions: { country: 'cl' }, language: 'es' },
       function(results, status){
         if (status === 'OK' && results && results[0] && results[0].address_components) {
-          _edParseComponentes(results[0].address_components, true);  // solo rellena vacíos
-          if (hint) hint.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> '
-                                   + '<span style="color:#16a34a">Dirección verificada con Google</span>';
+          var parsed = _edParseComponentes(results[0].address_components, true);  // rellena vacíos
+          if (parsed && parsed.comuna && comunaAlAbrir &&
+              _edNorm(comunaAlAbrir) !== _edNorm(parsed.comuna)) {
+            // 🔴 INCOHERENCIA: la comuna cargada NO coincide con la dirección.
+            if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle-fill" style="color:#dc2626"></i> '
+              + '<span style="color:#991b1b">La comuna <b>' + _edEsc(comunaAlAbrir) + '</b> no coincide con la '
+              + 'dirección (parece <b>' + _edEsc(parsed.comuna) + '</b>). Elige una sugerencia para corregir '
+              + 'y cotizar bien.</span>';
+          } else {
+            if (hint) hint.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> '
+                                     + '<span style="color:#16a34a">Dirección verificada con Google</span>';
+          }
         } else {
           if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle" style="color:#f59e0b"></i> '
                                    + '<span style="color:#92400e">No pudimos verificarla — escribe y elige una sugerencia</span>';

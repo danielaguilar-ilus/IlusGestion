@@ -20369,6 +20369,18 @@ def tr_update_compromiso(cid):
     if "n_bultos" in data:
         try: campos["n_bultos"] = max(1, int(float(data["n_bultos"] or 1)))
         except: pass
+    # 2026-06-14 (Daniel) — C4 (red de seguridad del validador de dirección):
+    # si llega comuna pero el código postal viene vacío, lo derivamos de la
+    # comuna para que NUNCA quede un CP desfasado respecto a la comuna (caso
+    # comuna TEMUCO con CP 8000000 de Santiago). NO pisamos un CP preciso que
+    # ya venga de Google; el front mantiene comuna↔CP coherentes, esto rellena.
+    if campos.get("comuna") and not campos.get("cod_postal"):
+        try:
+            _cp_der = _comuna_to_postal(campos["comuna"])
+            if _cp_der:
+                campos["cod_postal"] = str(_cp_der)[:20]
+        except Exception:
+            pass
     if not campos:
         return jsonify({"error": "sin campos válidos"}), 400
 
