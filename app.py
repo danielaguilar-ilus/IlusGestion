@@ -13399,9 +13399,13 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     _th_lineas.start()
     if rut_obdo:
         _th_rut.start()
-    _th_lineas.join(timeout=15)
+    # Topes cortos (Daniel 2026-06-14): si una query del ERP tarda más que esto,
+    # está colgada → no esperamos 15s. Las líneas (productos) son lo importante;
+    # el RUT es secundario (el cliente ya viene del JOIN inicial). Esto evita el
+    # "queda procesando" sin sacrificar el caso normal (~300ms).
+    _th_lineas.join(timeout=6)
     if rut_obdo:
-        _th_rut.join(timeout=15)
+        _th_rut.join(timeout=4)
     print(f"[cub-sql-mssql] paralelo lineas+rut: "
           f"{int((time.time()-t_para)*1000)}ms "
           f"(rut_obdo={rut_obdo or '—'}, lineas={len(_results['lineas'])})",
@@ -13676,9 +13680,14 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     return doc
 
 
-def _cubicador_fetch(tido, nudo):
+def _cubicador_fetch(tido, nudo, fast=False):
     """
     SHIM de compatibilidad sobre erp_engine.ERPClient.
+
+    fast=True (Daniel 2026-06-14): modo rápido para el modal "Ver factura".
+    Salta el enriquecimiento REST cosmético (que puede tardar segundos cuando
+    la REST de Random está lenta) — el modal muestra la descripción de la BD
+    local. El resto del flujo (SQL directo + cruce app_bultos) es igual.
 
     🔒 BLINDADO — NO TOCAR salvo bug confirmado por el usuario
     ════════════════════════════════════════════════════════════════════
@@ -13896,7 +13905,9 @@ def _cubicador_fetch(tido, nudo):
     # cerrado intentamos enriquecer vía REST (con timeouts cortos).
     _enr_prefer_sql = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
                        in ("1", "true", "yes", "on"))
-    _enr_skip_rest = _enr_prefer_sql or _erp_breaker_is_open()
+    # fast=True (modal "Ver factura") SIEMPRE salta el REST cosmético, sin
+    # depender de la env var: garantiza que el modal nunca espere la REST lenta.
+    _enr_skip_rest = fast or _enr_prefer_sql or _erp_breaker_is_open()
 
     desc_erp_map = {}   # {sku: nombre_erp}
     if skus_sin_desc and not _enr_skip_rest:
@@ -20381,7 +20392,8 @@ def tr_detalle(cid):
     nudo = (c["nudo"] or "").strip()
 
     try:
-        header, lineas = _cubicador_fetch(tido, nudo)
+        # fast=True: modo rápido (sin REST cosmético) — como mantenciones.
+        header, lineas = _cubicador_fetch(tido, nudo, fast=True)
     except Exception as e:
         return jsonify({"error": f"ERP no disponible: {e}"}), 503
 

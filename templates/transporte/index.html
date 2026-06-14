@@ -2657,28 +2657,43 @@ function openVista(cid) {
   document.getElementById('vistaEmailBlock').style.display = 'none';
   document.getElementById('vistaFotoUpload').style.display = 'none';
   document.getElementById('vistaFotoGallery').innerHTML    = '';
-  document.getElementById('vistaLoading').style.display  = '';
+  document.getElementById('vistaLoading').style.display  = 'none';
   document.getElementById('vistaTablaWrap').style.display = 'none';
   document.getElementById('vistaError').style.display    = 'none';
   document.getElementById('vistaSinPeso').style.display  = 'none';
 
-  _vistaModal.show();
+  // Proceso de espera ILUS (overlay premium con el logo). El modal se abre
+  // cuando los productos están listos (con caché es casi instantáneo).
+  if (window.ilusLoader) ilusLoader.show({ text: 'Trayendo productos del documento…',
+                                           sub: 'un momento' });
 
-  fetch('/transporte/api/compromisos/' + cid + '/detalle')
+  // Timeout DURO: si el backend no responde en 9s, abortamos y avisamos — el
+  // modal NUNCA queda "procesando" sin fin (Daniel 2026-06-14).
+  var _ctrl = new AbortController();
+  var _to = setTimeout(function(){ try { _ctrl.abort(); } catch(_e){} }, 9000);
+
+  fetch('/transporte/api/compromisos/' + cid + '/detalle', { signal: _ctrl.signal })
     .then(function(r){ return r.json(); })
     .then(function(d) {
-      document.getElementById('vistaLoading').style.display = 'none';
+      clearTimeout(_to);
+      if (window.ilusLoader) ilusLoader.hide();
       if (!d.ok) {
-        document.getElementById('vistaErrorMsg').textContent = d.error || 'Error desconocido';
-        document.getElementById('vistaError').style.display = '';
+        if (window.ilusToast) ilusToast(d.error || 'No se pudo abrir el documento', { type: 'error' });
+        else { document.getElementById('vistaErrorMsg').textContent = d.error || 'Error';
+               document.getElementById('vistaError').style.display = ''; _vistaModal.show(); }
         return;
       }
+      _vistaModal.show();
       renderVista(d);
     })
     .catch(function(e) {
-      document.getElementById('vistaLoading').style.display = 'none';
-      document.getElementById('vistaErrorMsg').textContent = 'Error de conexión: ' + e;
-      document.getElementById('vistaError').style.display = '';
+      clearTimeout(_to);
+      if (window.ilusLoader) ilusLoader.hide();
+      if (e && e.name === 'AbortError') {
+        if (window.ilusToast) ilusToast('El ERP está lento ahora. Intenta de nuevo en unos segundos.', { type: 'warning' });
+      } else if (window.ilusToast) {
+        ilusToast('Error de conexión: ' + e, { type: 'error' });
+      }
     });
 }
 
