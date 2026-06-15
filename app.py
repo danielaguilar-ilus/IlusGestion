@@ -19759,11 +19759,27 @@ def _mantenciones_cron_run_once(slot_str=""):
                 continue
             if not email:
                 continue
-            # Modo ON: enviar email real
+            # Modo ON: enviar email real (plantilla editable + diseño maestro)
             try:
+                _rec_asunto = _brand_subject(asunto)
+                _rec_body = (f"<p>Recordatorio: visita programada para "
+                             f"{f.strftime('%d/%m/%Y')}</p>")
+                try:
+                    _rt = _render_comm_template("recordatorio_visita", "email", {
+                        "cliente": r.get("razon_social") or "",
+                        "fecha": f.strftime('%d/%m/%Y'),
+                        "ot": r.get("titulo") or "",
+                    }, modulo="mantenciones")
+                    if _rt and (_rt[1] or "").strip():
+                        if (_rt[0] or "").strip():
+                            _rec_asunto = _brand_subject(_rt[0].strip())
+                        _rec_body = _rt[1]
+                except Exception:
+                    pass
+                _rec_html = _comm_render_email_document(_rec_asunto, _rec_body,
+                                                        "Recordatorio de visita")
                 _send_ilus_email(
-                    email, _brand_subject(asunto),
-                    f"<p>Recordatorio: visita programada para {f.strftime('%d/%m/%Y')}</p>",
+                    email, _rec_asunto, _rec_html,
                     evento="mant_recordatorio_visita", modulo="mantenciones",
                 )
                 mysql_execute(
@@ -54879,6 +54895,29 @@ def _mant_get_cliente_emails(cid):
     return out
 
 
+def _mant_get_tecnico_emails(vid):
+    """Emails de los técnicos asignados a una visita (mant_tecnicos.email vía
+    mant_visita_tecnicos). Daniel (2026-06-14): los correos de mantención van al
+    cliente Y a los técnicos asignados. Deduplicado, minúsculas. [] si no hay o
+    si la columna/tabla no existe (degradación segura, nunca rompe el envío)."""
+    out, vistos = [], set()
+    try:
+        rows = mysql_fetchall(
+            "SELECT t.email FROM mant_visita_tecnicos vt "
+            "JOIN mant_tecnicos t ON t.id=vt.tecnico_id "
+            "WHERE vt.visita_id=%s", (int(vid),)
+        ) or []
+    except Exception as _e:
+        print(f"[mant-tec-emails] {_e}", flush=True)
+        rows = []
+    for r in rows:
+        e = (r.get("email") or "").strip().lower()
+        if e and "@" in e and 6 <= len(e) <= 180 and e not in vistos:
+            vistos.add(e)
+            out.append(e)
+    return out
+
+
 def _mant_send_email_multi(cid, asunto, html, evento="", emails=None,
                            attachments=None):
     """Envía un email de mantenciones a TODOS los destinatarios, UNO POR UNO.
@@ -55163,6 +55202,15 @@ def mant_visita_enviar_email(vid):
             destinos = [(v.get("contacto_email") or "").strip()]
     if not destinos:
         return jsonify({"error": "El cliente no tiene email registrado. Indica un destinatario."}), 400
+
+    # Daniel (2026-06-14): el correo de mantención va al cliente Y a los técnicos
+    # asignados. Solo cuando NO hay override manual de destinatario.
+    if not destino_override:
+        _dest_lower = {x.lower() for x in destinos}
+        for _te in _mant_get_tecnico_emails(vid):
+            if _te not in _dest_lower:
+                destinos.append(_te)
+                _dest_lower.add(_te)
 
     # Cargar técnicos asignados
     tecs = mysql_fetchall(
@@ -61187,10 +61235,28 @@ def mant_reporte_enviar(rid):
 
     # Construir HTML del email — siempre con la plantilla corporativa
     html_reporte = _reporte_to_html(rep, cliente)
-    body_email = (
+    # Texto de acompañamiento EDITABLE desde /comunicaciones (mantenciones /
+    # 'ot_completada'); si no hay plantilla, cae al texto actual (REGLA #4.2).
+    # El informe en sí (html_reporte) y el adjunto Word se conservan siempre.
+    _intro = (
         f"<p>Estimado/a {cliente['contacto_nombre'] or cliente['razon_social']},</p>"
         f"<p>Adjunto encontrarás el informe de servicio realizado. {mensaje_extra}</p>"
         f"<p>Saludos,<br><strong>Equipo {ILUS_BRAND}</strong></p>"
+    )
+    try:
+        _it = _render_comm_template("ot_completada", "email", {
+            "cliente": cliente.get("contacto_nombre") or cliente.get("razon_social") or "",
+            "ot": rep.get("ticket_num") or f"#{rid}",
+            "mensaje_extra": mensaje_extra,
+        }, modulo="mantenciones")
+        if _it and (_it[1] or "").strip():
+            if (_it[0] or "").strip():
+                asunto = _it[0].strip()
+            _intro = _it[1]
+    except Exception:
+        pass
+    body_email = (
+        f"{_intro}"
         f"<hr style='border:none;border-top:1px solid #eaecf0;margin:18px 0'>"
         f"{html_reporte}"
     )

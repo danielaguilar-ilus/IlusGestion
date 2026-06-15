@@ -1199,13 +1199,32 @@ def register_pickup_routes(app, ctx):
 
 
     def _get_pickup_template(estado, canal):
-        """Lee plantilla de comm_templates para retiros (modulo='retiros')."""
+        """Lee plantilla de comm_templates para retiros (modulo='retiros').
+        Respeta la columna 'activo' (apagar desde el editor → None → fallback),
+        igual que _render_comm_template. Doble try: si la columna 'activo' no
+        existe todavía (no corrió el ensure), reintenta sin ella para NO romper
+        el comportamiento actual de retiros."""
         try:
-            row = mysql_fetchone(
-                "SELECT asunto, cuerpo FROM comm_templates "
-                "WHERE modulo='retiros' AND estado=%s AND canal=%s LIMIT 1",
-                (estado, canal)
-            )
+            try:
+                row = mysql_fetchone(
+                    "SELECT asunto, cuerpo, COALESCE(activo,1) AS activo "
+                    "FROM comm_templates "
+                    "WHERE modulo='retiros' AND estado=%s AND canal=%s LIMIT 1",
+                    (estado, canal)
+                )
+            except Exception:
+                row = mysql_fetchone(
+                    "SELECT asunto, cuerpo FROM comm_templates "
+                    "WHERE modulo='retiros' AND estado=%s AND canal=%s LIMIT 1",
+                    (estado, canal)
+                )
+            if not row:
+                return None
+            try:
+                if "activo" in row and not int(row.get("activo", 1) or 0):
+                    return None  # plantilla apagada desde el editor → fallback
+            except Exception:
+                pass
             return row
         except Exception:
             return None
