@@ -61,6 +61,36 @@ PICKUP_STATUS_COLORS = {
     "cerrada": "secondary",
 }
 
+# ════════════════════════════════════════════════════════════════════
+#  MODELO CANÓNICO DE TRACKING — UNA SOLA FUENTE DE VERDAD
+#  Daniel 2026-06-15: el correo, el seguimiento público del cliente y el
+#  stepper interno deben mostrar LOS MISMOS hitos. Estos 5 hitos (+ el
+#  terminal negativo "Cancelada") son el modelo único. Tanto el email
+#  (_ret_stepper en app.py, que importa PICKUP_JOURNEY) como el seguimiento
+#  (templates/retiros/public_tracking.html, que recibe journey/journey_idx)
+#  y el stepper interno se alinean a esto. NO duplicar etiquetas: editar acá.
+# ════════════════════════════════════════════════════════════════════
+PICKUP_JOURNEY = [
+    {"label": "Solicitada",  "sub": "Recibimos tu solicitud",    "emoji": "📩", "icon": "envelope-paper"},
+    {"label": "Propuesta",   "sub": "Esperando tu confirmación",  "emoji": "🗓️", "icon": "calendar-event"},
+    {"label": "Confirmada",  "sub": "Cita acordada",              "emoji": "✅", "icon": "calendar-check"},
+    {"label": "Preparación", "sub": "Bodega lista",               "emoji": "📦", "icon": "box-seam"},
+    {"label": "Retirada",    "sub": "Completado",                 "emoji": "🎉", "icon": "check2-circle"},
+]
+# Estado canónico → índice del hito (0-4). -1 = terminal NEGATIVO (Cancelada).
+PICKUP_JOURNEY_IDX = {
+    "solicitud_recibida": 0, "en_revision": 0, "informacion_incompleta": 0,
+    "propuesta_enviada": 1, "esperando_cliente": 1, "reagendada": 1,
+    "agenda_confirmada": 2,
+    "en_preparacion": 3,
+    "retirada": 4, "cerrada": 4,
+    "rechazada": -1, "fallida": -1,
+}
+
+def pickup_journey_idx(status):
+    """Índice del hito canónico (0-4) para un estado; -1 = cancelado/fallido."""
+    return PICKUP_JOURNEY_IDX.get(status or "", 0)
+
 # ── PIPELINE_GROUPS (2026-05-26 Daniel) ──────────────────────────────
 # Agrupación VISUAL del kanban del monitor de retiros: los 12 estados
 # de PICKUP_STATUS se consolidan en 6 columnas para reducir saturación.
@@ -2956,6 +2986,11 @@ def register_pickup_routes(app, ctx):
                                logs=logs, attachments=attachments,
                                docs_asociados=docs_asociados,
                                settings=cfg, status_badge=status_badge,
+                               # Daniel 2026-06-15: modelo canónico ÚNICO de tracking
+                               # (mismos hitos que el correo). journey_idx = hito
+                               # actual (0-4) o -1 (cancelado/fallido).
+                               journey=PICKUP_JOURNEY,
+                               journey_idx=pickup_journey_idx(req.get("status")),
                                created=request.args.get("created"))
 
     # ══════════════════════════════════════════════════════════════════════

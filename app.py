@@ -28930,13 +28930,11 @@ def init_comunicaciones_tables():
                 Nodo: verde=completado (i<active), rojo=actual (i==active), gris=pendiente.
                 Leg (línea): verde la ya pasada, roja la que sale del actual, gris las pendientes.
                 Fila 1 = 5 nodos + 4 legs (9 celdas). Fila 2 = 5 labels al 20% (centradas)."""
-                pasos = [
-                    ("📩", "Solicitada"),
-                    ("🔎", "Revisada"),
-                    ("📅", "Confirmada"),
-                    ("📦", "Preparando"),
-                    ("✓", "Retirada"),
-                ]
+                # Daniel 2026-06-15: hitos del MODELO CANÓNICO ÚNICO
+                # (pickups_module.PICKUP_JOURNEY) para que el correo y el
+                # seguimiento del cliente muestren EXACTAMENTE los mismos pasos.
+                from pickups_module import PICKUP_JOURNEY as _PJ
+                pasos = [(p["emoji"], p["label"]) for p in _PJ]
                 celdas = []      # nodos + legs (fila superior)
                 labels_tds = []  # labels (fila inferior)
                 n = len(pasos)
@@ -29156,7 +29154,7 @@ def init_comunicaciones_tables():
                      "Necesitamos completar algunos datos",
                      "Revisa el detalle adentro y vuelve a enviarnos"
                  ) +
-                 _ret_stepper(1) +
+                 _ret_stepper(0) +  # info incompleta = fase inicial (Solicitada), aún sin propuesta
                  '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
                  'Hola <strong>{{persona_retira}}</strong>, para avanzar con tu retiro '
                  '<strong>{{code}}</strong> necesitamos completar información del documento, '
@@ -66263,6 +66261,35 @@ def _ensure_comm_template_general():
         return 0
 
 
+def _ensure_comm_template_retiros():
+    """Daniel 2026-06-15: alinea el stepper del CORREO de retiros al modelo
+    canónico único (pickups_module.PICKUP_JOURNEY) — Revisada→Propuesta y
+    Preparando→Preparación — en las plantillas YA sembradas en comm_templates,
+    AUNQUE ILUS_SKIP_MIGRATIONS=1 (prod). El cuerpo del correo vive congelado en
+    la BD (notify() lo lee de ahí, no re-renderiza _ret_stepper en vivo), así
+    que sin esto el correo seguiría mostrando los labels viejos mientras el
+    seguimiento ya muestra los 5 hitos nuevos.
+
+    Solo corrige las ETIQUETAS del stepper (celdas <td>…</td> exactas), no
+    re-renderiza el cuerpo → no pisa el texto que Daniel haya editado a mano.
+    Idempotente: el WHERE evita re-tocar lo ya migrado. Parametrizado para no
+    chocar con el '%' de los LIKE."""
+    try:
+        mysql_execute(
+            "UPDATE comm_templates "
+            "SET cuerpo = REPLACE(REPLACE(cuerpo, %s, %s), %s, %s) "
+            "WHERE modulo='retiros' AND canal='email' "
+            "  AND (cuerpo LIKE %s OR cuerpo LIKE %s)",
+            ('>Revisada</td>', '>Propuesta</td>',
+             '>Preparando</td>', '>Preparación</td>',
+             '%>Revisada</td>%', '%>Preparando</td>%'),
+        )
+        print("[ensure_comm_tpl] stepper de correo de retiros alineado al canónico",
+              flush=True)
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo alinear stepper de retiros: {e}", flush=True)
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -66408,6 +66435,7 @@ try:
         _ensure_comm_templates_columns()
         _ensure_comm_template_transporte()
         _ensure_comm_template_general()
+        _ensure_comm_template_retiros()  # Daniel 2026-06-15: stepper de correo al canónico
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
 

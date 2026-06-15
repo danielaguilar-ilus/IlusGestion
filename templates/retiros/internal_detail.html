@@ -1927,7 +1927,7 @@
     <div class="pipe-step done" onclick="document.getElementById('paso-1').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 1</span>
       <div class="pipe-circle">1</div>
-      <div class="pipe-label">Recibida</div>
+      <div class="pipe-label">Solicitada</div>
       <div class="pipe-sub">{{ req.created_at|string|truncate(10,True,'') if req.created_at else '—' }}</div>
     </div>
     <div class="pipe-step {% if _doc_ok %}done{% elif _doc_incomp %}fail{% else %}active{% endif %}" onclick="document.getElementById('paso-2').scrollIntoView({behavior:'smooth',block:'center'})">
@@ -1954,11 +1954,11 @@
       <div class="pipe-label">Confirmada</div>
       <div class="pipe-sub">{% if req.confirmed_date %}{{ req.confirmed_date }}{% elif req.proposed_date %}Esperando cliente{% else %}—{% endif %}</div>
     </div>
-    <div class="pipe-step {% if req.status == 'retirada' %}done{% elif req.status == 'en_preparacion' %}active{% endif %}">
+    <div class="pipe-step {% if req.status == 'retirada' or req.status == 'cerrada' %}done{% elif req.status == 'en_preparacion' %}active{% elif req.status in ['rechazada','fallida'] %}fail{% endif %}">
       <span class="pipe-step-num">Paso 6</span>
       <div class="pipe-circle">6</div>
-      <div class="pipe-label">Retiro</div>
-      <div class="pipe-sub">{% if req.status == 'retirada' %}✓ Completado{% elif req.status == 'en_preparacion' %}En preparación{% else %}Pendiente{% endif %}</div>
+      <div class="pipe-label">Retirada</div>
+      <div class="pipe-sub">{% if req.status == 'retirada' %}✓ Completado{% elif req.status == 'cerrada' %}Cerrada{% elif req.status == 'en_preparacion' %}En preparación{% elif req.status == 'rechazada' %}✗ Cancelada{% elif req.status == 'fallida' %}✗ Fallida{% else %}Pendiente{% endif %}</div>
     </div>
   </div>
 </div>

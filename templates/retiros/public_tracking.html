@@ -965,52 +965,40 @@
       </div>
     </div>
 
-    {# ──────── STEPPER COMPACTO (4 nodos clave) — Daniel mayo 2026 ──────── #}
-    {# Compacto = no scroll lateral en mobile + más legible #}
-    {%- set _flow = [
-      ('solicitud_recibida','Solicitada',  'envelope-paper', 'Enviada'),
-      ('agenda_confirmada', 'Confirmada',  'calendar-check', 'Cita acordada'),
-      ('en_preparacion',    'Preparada',   'box-seam',       'Bodega lista'),
-      ('retirada',          'Retirada',    'check2-circle',  'Completado'),
-    ] -%}
-
-    {# Calcular índice del paso actual — colapsa estados intermedios #}
-    {%- set _status_to_idx = {
-      'solicitud_recibida': 0,
-      'en_revision': 0,
-      'informacion_incompleta': 0,
-      'propuesta_enviada': 0,
-      'esperando_cliente': 0,
-      'reagendada': 0,
-      'agenda_confirmada': 1,
-      'en_preparacion': 2,
-      'retirada': 3,
-      'cerrada': 3,
-      'rechazada': -1,
-      'fallida': -1,
-    } -%}
-    {%- set _idx_actual = _status_to_idx.get(req.status, 0) -%}
+    {# ──────── STEPPER del MODELO CANÓNICO ÚNICO (5 hitos) ────────
+       Daniel 2026-06-15: los mismos hitos que el correo y el interno
+       (pickups_module.PICKUP_JOURNEY). `journey` (5 hitos) y `journey_idx`
+       (hito actual 0-4, o -1 = Cancelada/Fallida) vienen del backend, así que
+       el seguimiento y el correo NUNCA se desincronizan. #}
+    {%- set _flow = journey if journey is defined else [] -%}
+    {%- set _idx_actual = journey_idx if journey_idx is defined else 0 -%}
 
     <div class="progress-card">
       <h6><i class="bi bi-graph-up-arrow"></i>Avance de tu retiro · paso a paso</h6>
-      <div class="stepper stepper-4" id="stepperRoot" data-idx="{{ _idx_actual }}">
+      {%- if _idx_actual == -1 -%}
+      <div class="step-cancel-banner" style="display:flex;align-items:center;gap:10px;background:#fee2e2;border:1px solid #fca5a5;border-radius:12px;padding:12px 16px;margin-bottom:14px;color:#991b1b;font-weight:700">
+        <i class="bi bi-x-octagon-fill" style="font-size:1.2rem"></i>
+        <span>Esta solicitud fue cancelada. Si fue un error, escríbenos respondiendo el correo.</span>
+      </div>
+      {%- endif -%}
+      <div class="stepper stepper-5" id="stepperRoot" data-idx="{{ _idx_actual }}">
         {# stepper-fill: ancho dinámico calculado por JS #}
         <div class="stepper-fill" id="stepperFill"></div>
 
-        {% for s, l, i, sub in _flow %}
+        {% for paso in _flow %}
           {%- if _idx_actual == -1 -%}
-            {%- set _cls = 'done' if loop.index0 == 0 else '' -%}
+            {%- set _cls = '' -%}
           {%- else -%}
             {%- set _cls = 'done' if loop.index0 < _idx_actual else ('active' if loop.index0 == _idx_actual else '') -%}
           {%- endif -%}
           <div class="step {{ _cls }}">
             <div class="circle">
-              <i class="bi bi-{{ i }} ico-default"></i>
+              <i class="bi bi-{{ paso.icon }} ico-default"></i>
               <i class="bi bi-check-lg ico-done"></i>
             </div>
             <div>
-              <div class="label">{{ l }}</div>
-              <div class="sub">{{ sub }}</div>
+              <div class="label">{{ paso.label }}</div>
+              <div class="sub">{{ paso.sub }}</div>
             </div>
           </div>
         {% endfor %}
@@ -1856,11 +1844,12 @@
       const fill    = document.getElementById('stepperFill');
       if (!stepper || !fill) return;
       const idx = parseInt(stepper.dataset.idx, 10);
-      // 4 nodos → 3 segmentos. Mapeo: idx 0=0%, 1=33%, 2=66%, 3=100%, -1=20%
+      // Daniel 2026-06-15: 5 nodos → 4 segmentos. idx 0=0%, 1=25%, 2=50%,
+      // 3=75%, 4=100%, -1=10% (cancelada, casi sin avance).
       let pct = 0;
-      if (idx === -1)      pct = 20;
-      else if (idx >= 3)   pct = 100;
-      else                 pct = (idx / 3) * 100;
+      if (idx === -1)      pct = 10;
+      else if (idx >= 4)   pct = 100;
+      else                 pct = (idx / 4) * 100;
       requestAnimationFrame(() => {
         fill.style.width = `calc(${pct}% * 0.84)`;  // 84% del ancho para alinear con los círculos
       });
