@@ -613,16 +613,43 @@ def to_chile_filter(value):
     return value
 
 
+# Nombres de días/meses en español (independiente del locale del SO).
+# Cloud Run corre con locale C/en_US, así que strftime('%A') daría
+# "Wednesday" en vez de "miércoles". Sustituimos los tokens de día/mes
+# ANTES del strftime para garantizar español SIEMPRE (Daniel: la app habla
+# español). weekday(): 0=lunes … 6=domingo. month: 1=enero … 12=diciembre.
+_DIAS_ES       = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+_DIAS_ES_ABBR  = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom']
+_MESES_ES      = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+_MESES_ES_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
+                  'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+
+
 @app.template_filter('chile_fmt')
 def chile_fmt_filter(value, fmt="%d/%m/%Y %H:%M"):
     """Atajo: convierte a Chile y formatea de una. Más cómodo en plantillas
     que encadenar dos filtros. Ej: {{ user.last_login_at|chile_fmt }}
+
+    Localiza %A/%a (día) y %B/%b (mes) al español sin depender del locale
+    del SO — en Cloud Run strftime daría inglés ("Wednesday").
     """
     converted = to_chile_filter(value)
     if not converted:
         return ""
     try:
-        return converted.strftime(fmt)
+        f = fmt
+        # Sustituir tokens de nombre de día/mes por su versión española
+        # antes de strftime (los nombres no contienen '%', es seguro).
+        if "%A" in f:
+            f = f.replace("%A", _DIAS_ES[converted.weekday()])
+        if "%a" in f:
+            f = f.replace("%a", _DIAS_ES_ABBR[converted.weekday()])
+        if "%B" in f:
+            f = f.replace("%B", _MESES_ES[converted.month - 1])
+        if "%b" in f:
+            f = f.replace("%b", _MESES_ES_ABBR[converted.month - 1])
+        return converted.strftime(f)
     except Exception:
         return str(converted)
 

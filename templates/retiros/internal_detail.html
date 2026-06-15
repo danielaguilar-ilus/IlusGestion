@@ -352,6 +352,42 @@
   }
   .iw-client-card .btn-modify-req:hover{background:#fef3c7;border-color:#f59e0b}
 
+  /* Daniel 2026-06-15: "Día del retiro" estilizado a la paleta ILUS (antes
+     usaba el date nativo gris del navegador, "no iba asociado al diseño").
+     Borde redondeado, sombra suave, foco rojo, touch 44px y 16px anti-zoom
+     iOS (REGLA #3). El input de Motivo se iguala para que el row se vea parejo. */
+  .iw-date-ilus, #iwProposeReason{
+    border:1.5px solid var(--gray-2,#e5e7eb);border-radius:12px;
+    padding:10px 14px;font-weight:700;color:var(--ink,#0a0a0a);
+    background:#fff;min-height:44px;width:100%;
+    box-shadow:0 1px 2px rgba(10,10,10,.05),inset 0 1px 0 rgba(255,255,255,.6);
+    transition:border-color .15s ease,box-shadow .15s ease;
+  }
+  .iw-date-ilus{font-size:16px}
+  .iw-date-ilus:hover, #iwProposeReason:hover{border-color:var(--gray-3,#9ca3af)}
+  .iw-date-ilus:focus, #iwProposeReason:focus{
+    outline:none;border-color:var(--ilus-red,#dc2626);
+    box-shadow:0 0 0 3px rgba(220,38,38,.14);
+  }
+  .iw-date-ilus::-webkit-calendar-picker-indicator{
+    cursor:pointer;opacity:.7;
+    filter:invert(18%) sepia(96%) saturate(5200%) hue-rotate(353deg);
+  }
+  .iw-date-ilus::-webkit-calendar-picker-indicator:hover{opacity:1}
+
+  /* Medio cupo (1/2): badge más grande/legible + nombre del dueño del otro
+     medio cupo VISIBLE (antes solo en tooltip). Daniel: "el usuario tiene que
+     saber quién tiene el otro bloque". */
+  .ilus-cal-wrap .ilus-cal-slot.is-busy .ilus-cal-badge{
+    font-size:.66rem;padding:2px 7px;font-weight:800;
+    background:linear-gradient(135deg,#f97316 0%,#ea580c 100%);
+  }
+  .ilus-cal-wrap .ilus-cal-owner-line{
+    font-size:.6rem;font-weight:700;color:#9a3412;
+    display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;line-height:1.1;margin-top:1px;
+  }
+
   /* SLOT del calendario: bandera ★ ESTE (oro) */
   .ilus-cal-slot.is-current-request{
     border:2px solid #f59e0b !important;
@@ -2462,10 +2498,15 @@
             </div>
             {% endif %}
 
+            {# Daniel 2026-06-15: el picker manual (fecha + calendario) arranca
+               OCULTO cuando el cliente pidió una hora — el operador usa los
+               botones "Aceptar como propuesta" / "Modificar" de la card. Si el
+               cliente NO pidió hora (sin card) se muestra de inmediato. #}
+            <div id="iwManualPicker"{% if req.requested_date %} style="display:none"{% endif %}>
             <div class="row g-2 mb-3">
               <div class="col-md-6">
                 <label class="form-label fw-bold mb-1" style="font-size:.92rem">Día del retiro</label>
-                <input type="date" id="iwProposeDate" class="form-control form-control-sm" required>
+                <input type="date" id="iwProposeDate" class="form-control form-control-sm iw-date-ilus" required>
                 <small class="text-muted" style="font-size:.82rem">Como operador puedes elegir cualquier fecha desde hoy. Si necesitas, puedes cruzar la colación (13:00–14:00) para facturas grandes.</small>
               </div>
               <div class="col-md-6">
@@ -2503,8 +2544,8 @@
                     <i class="bi bi-stopwatch-fill"></i>~{{ req.tiempo_estimado_min }} min
                   </span>
                   {% endif %}
-                  <span class="iw-est-chip" style="background:#3b82f6" title="Puedes seleccionar varios bloques contiguos">
-                    <i class="bi bi-arrows-collapse"></i>Estirable
+                  <span class="iw-est-chip" style="background:#16a34a" title="Cada retiro ocupa un bloque de 30 minutos — escoge uno solo">
+                    <i class="bi bi-clock-fill"></i>1 bloque (30 min)
                   </span>
                 </div>
                 <div class="legend" style="font-size:.78rem">
@@ -2519,24 +2560,24 @@
               </div>
               <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
                 <i class="bi bi-lightbulb-fill" style="color:#f59e0b"></i>
-                <span><strong>Tip:</strong> click en un bloque marca el inicio; <strong>shift+click</strong> en otro slot define el fin. O simplemente arrastra para seleccionar varios.</span>
+                <span><strong>Tip:</strong> toca el bloque de la hora a la que el cliente <strong>llegará</strong>. Cada retiro ocupa <strong>una media hora</strong>. Si un bloque está a ½ cupo, verás quién tiene la otra mitad.</span>
               </div>
               <div id="iwProposeGrid">
                 <div class="ilus-cal-skel" aria-hidden="true">
                   {% for _ in range(10) %}<div></div>{% endfor %}
                 </div>
               </div>
+              {# Daniel 2026-06-15: SIEMPRE un solo bloque. Quitamos los chips de
+                 duración (30 min/1 h/2 h) que armaban rangos; dejamos solo
+                 "Limpiar" para deshacer una selección equivocada. #}
               <div class="ilus-cal-quick-actions" id="iwProposeQuick" style="display:none">
-                <span class="text-muted small me-1">Sugerido por tiempo estimado:</span>
-                <span class="ilus-cal-quick-chip" data-ilus-cal-quick="0.5">30 min</span>
-                <span class="ilus-cal-quick-chip" data-ilus-cal-quick="1">1 h</span>
-                <span class="ilus-cal-quick-chip" data-ilus-cal-quick="2">2 h</span>
-                <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar</span>
+                <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
               </div>
               <div class="ilus-cal-summary mt-2" id="iwProposeSummary">
                 <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
               </div>
             </div>
+            </div>{# /#iwManualPicker — fin del picker manual toggleable #}
 
             <input type="hidden" name="date" id="iwProposeHidDate">
             <input type="hidden" name="time_from" id="iwProposeHidTf">
@@ -2992,7 +3033,7 @@ if ('IntersectionObserver' in window){
 }
 </script>
 
-<script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
+<script defer src="{{ url_for('static', filename='retiros_calendar.js') }}?v=20260615-pingpong2"></script>
 
 <script>
 // ════════════════════════════════════════════════════════════════════
@@ -4318,12 +4359,14 @@ function _mountProposeCalendar(){
     // 🔵 en el rango que pidió el cliente + drag para estirar.
     currentRequestId: {{ req.id|int }},
     requestedRange:   requestedRange,
-    enableDragSelect: true,
-    // Sugerencia inicial: tiempo estimado según peso/volumen.
-    // Daniel 2026-05-24 quote: "está sobredimensionado en horas y pidió
-    // media hora, se ven que necesitamos cuatro". Por eso si el cálculo
-    // por peso da MÁS de lo que pidió el cliente, sugerimos lo nuestro.
-    suggestedDurationMin: {{ (req.tiempo_estimado_min or 30)|int }},
+    // Daniel 2026-06-15: SIEMPRE un solo bloque de 30 min. Desactivamos el
+    // drag y los rangos multi-bloque (shift+click / botones de duración). El
+    // operador escoge UNA sola media hora — a la que el cliente llegará.
+    // No auto-seleccionamos por tiempo estimado (suggestedDurationMin:30 ⇒ 1
+    // bloque, sin pre-selección sorpresa).
+    enableDragSelect: false,
+    enableMultiBlock: false,
+    suggestedDurationMin: 30,
     onChange: (sel) => {
       const quick = document.getElementById('iwProposeQuick');
       if (quick) quick.style.display = sel || (document.getElementById('iwProposeDate') || {}).value ? 'flex' : 'none';
@@ -4440,80 +4483,56 @@ function _iwRefreshPreview(){
   const btnAccept = document.getElementById('iwBtnAcceptClient');
   const btnModify = document.getElementById('iwBtnModifyClient');
   if (btnAccept){
-    btnAccept.addEventListener('click', () => {
-      const inst = window._proposeCalInstance;
-      if (!inst){
-        if (typeof ilusToast === 'function') ilusToast('Espera a que cargue el calendario.', { type:'warning' });
-        return;
-      }
+    // Daniel 2026-06-15: "Aceptar como propuesta" envía DIRECTO la hora exacta
+    // que pidió el cliente, SIN abrir el calendario. Un clic (con confirmación)
+    // y el cliente recibe el correo.
+    btnAccept.addEventListener('click', async () => {
       const reqDate = card.dataset.reqDate || '';
       const reqTf = card.dataset.reqTf || '';
       const reqTt = card.dataset.reqTt || '';
       if (!reqDate || !reqTf || !reqTt){
-        if (typeof ilusToast === 'function') ilusToast('El cliente no envió hora exacta.', { type:'warning' });
+        if (typeof ilusToast === 'function') ilusToast('El cliente no envió una hora exacta. Usa "Modificar" para elegir.', { type:'warning' });
         return;
       }
-      // Setear fecha y dejar que el cálculo de slots se haga al cargar
-      const dateInp = document.getElementById('iwProposeDate');
-      if (dateInp){
-        dateInp.value = reqDate;
-        dateInp.dispatchEvent(new Event('change'));
+      // Enviar un correo al cliente es una acción hacia afuera → confirmamos.
+      // Deshabilitamos el botón durante el confirm para evitar doble-clic.
+      btnAccept.disabled = true;
+      let ok = true;
+      if (typeof ilusConfirm === 'function'){
+        ok = await ilusConfirm({
+          title: 'Enviar propuesta al cliente',
+          message: '¿Proponer al cliente exactamente la fecha y hora que pidió?',
+          sub: reqDate + ' · ' + reqTf + '–' + reqTt,
+          okLabel: 'Sí, enviar propuesta', cancelLabel: 'Cancelar',
+        });
       }
-      // Intentar pre-seleccionar el rango. setQuickRange busca el primer
-      // hueco compatible — necesitamos forzar al rango exacto del cliente.
-      // Como el widget no expone setRange por hora directa, usamos un
-      // pequeño retraso para esperar el render de slots y luego clickeamos
-      // los índices correspondientes.
-      setTimeout(() => {
-        try {
-          const st = inst._state ? inst._state() : null;
-          if (!st || !st.slots) return;
-          const idxStart = st.slots.findIndex(s => (s.time_from || s.hora || '').slice(0,5) === reqTf);
-          const idxEnd = st.slots.findIndex(s => {
-            const tt = s.time_to || '';
-            return tt.slice(0,5) === reqTt;
-          });
-          if (idxStart < 0){
-            if (typeof ilusToast === 'function') ilusToast('La hora pedida no tiene un bloque exacto. Selecciónala manualmente.', { type:'warning' });
-            return;
-          }
-          // Pre-verificamos disponibilidad: si el slot inicial está LLENO,
-          // BLOQUEADO o (sin allowCrossLunch) en COLACIÓN, no podemos
-          // aceptar y avisamos al operador para que elija manualmente.
-          const sStart = st.slots[idxStart];
-          const eStart = sStart.estado || '';
-          if (eStart === 'completo' || eStart === 'bloqueado'){
-            if (typeof ilusToast === 'function'){
-              ilusToast(`La hora pedida (${reqTf}) ya está ${eStart === 'completo' ? 'llena' : 'bloqueada'}. Sugiere otra al cliente.`, { type:'warning' });
-            }
-            return;
-          }
-          // El widget no expone método público para set por índice. Lo
-          // hacemos vía 2 clicks simulados: click idxStart, shift+click idxEnd.
-          const grid = document.getElementById('iwProposeGrid');
-          if (!grid) return;
-          const slotStart = grid.querySelector(`[data-ilus-cal-idx="${idxStart}"]`);
-          if (slotStart) slotStart.click();
-          if (idxEnd >= 0 && idxEnd !== idxStart){
-            const slotEnd = grid.querySelector(`[data-ilus-cal-idx="${idxEnd}"]`);
-            if (slotEnd){
-              const fakeEv = new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true });
-              slotEnd.dispatchEvent(fakeEv);
-            }
-          }
-          if (typeof ilusToast === 'function') ilusToast('Hora del cliente aceptada. Revisa y envía la propuesta.', { type:'success' });
-        } catch(e){ console.warn('aceptar pedido cliente', e); }
-      }, 380);
+      if (!ok){ btnAccept.disabled = false; return; }
+      // Poblar los hidden inputs con la hora EXACTA del cliente, sin tocar el
+      // calendario. enviarPropuestaWizard() los lee directamente.
+      const hd = document.getElementById('iwProposeHidDate');
+      const ht = document.getElementById('iwProposeHidTf');
+      const he = document.getElementById('iwProposeHidTt');
+      const dInp = document.getElementById('iwProposeDate');
+      if (hd) hd.value = reqDate;
+      if (ht) ht.value = reqTf;
+      if (he) he.value = reqTt;
+      if (dInp) dInp.value = reqDate;
+      enviarPropuestaWizard();
     });
   }
   if (btnModify){
+    // Daniel 2026-06-15: "Modificar" REVELA el calendario (oculto por defecto)
+    // para que el operador escoja otro bloque único. Montaje lazy.
     btnModify.addEventListener('click', () => {
-      // No la cerramos del todo — el operador puede querer verla de
-      // referencia. Solo le bajamos opacidad y desactivamos botón aceptar.
-      card.style.opacity = '.55';
+      const picker = document.getElementById('iwManualPicker');
+      if (picker) picker.style.display = '';
+      if (typeof _mountProposeCalendar === 'function' && !window._calMounted){
+        try { _mountProposeCalendar(); window._calMounted = true; } catch(_e){}
+      }
+      card.style.opacity = '.7';
       card.style.borderStyle = 'dashed';
-      if (btnAccept) btnAccept.disabled = true;
-      if (typeof ilusToast === 'function') ilusToast('Listo, elige libremente abajo. La referencia del cliente sigue arriba.', { type:'info' });
+      if (picker && picker.scrollIntoView){ picker.scrollIntoView({ behavior:'smooth', block:'center' }); }
+      if (typeof ilusToast === 'function') ilusToast('Elige el bloque que prefieras abajo y envía la propuesta.', { type:'info' });
     });
   }
 })();
@@ -4543,7 +4562,11 @@ if (_reproBtn){
     if (form) form.style.display = '';
     const summary = document.getElementById('iwStep4Summary');
     if (summary) summary.style.display = 'none';
+    // Re-proponer = elegir nueva fecha → revelar el picker manual y montar.
+    const picker = document.getElementById('iwManualPicker');
+    if (picker) picker.style.display = '';
     _mountProposeCalendar();
+    window._calMounted = true;
     if (form && form.scrollIntoView){ form.scrollIntoView({behavior:'smooth', block:'center'}); }
   });
 }
@@ -4597,6 +4620,10 @@ async function aceptarContrapropuesta(btn){
 //  PASO 5 — ENVIAR PROPUESTA AL CLIENTE
 // ════════════════════════════════════════════════════════════════════
 async function enviarPropuestaWizard(){
+  // Daniel 2026-06-15: guard de re-entrada (anti doble-envío). El correo es
+  // SÍNCRONO ahora → la ventana de doble-clic es mayor; sin esto el cliente
+  // podría recibir DOS correos de propuesta (dos POST a /proposal).
+  if (window._iwSendingProposal) return;
   const date = (document.getElementById('iwProposeHidDate') || {}).value || '';
   const tf   = (document.getElementById('iwProposeHidTf')   || {}).value || '';
   const tt   = (document.getElementById('iwProposeHidTt')   || {}).value || '';
@@ -4611,6 +4638,7 @@ async function enviarPropuestaWizard(){
     return;
   }
 
+  window._iwSendingProposal = true;
   // UI loading
   btn.disabled = true;
   btn.classList.add('is-loading');
@@ -4640,16 +4668,28 @@ async function enviarPropuestaWizard(){
       ilusToast(msg, { type:'error' });
       return;
     }
-    if (fb) fb.innerHTML = `<div class="smart-hint is-success" style="margin:0"><i class="bi bi-check-circle"></i><div>Propuesta enviada en ${ms} ms. El cliente recibirá email en breve.</div></div>`;
-    ilusToast(`✓ Propuesta enviada (${ms} ms)`, { type:'success' });
-    setTimeout(() => { window.location.reload(); }, 1200);
+    // Daniel 2026-06-15: reflejar el resultado REAL del correo (el backend lo
+    // envía síncrono y devuelve email_enviado). Si el correo no salió, avisamos
+    // claro en vez de prometer un email que nunca llegó.
+    const _emailOk = (d.email_enviado !== false);
+    const _msgTxt = d.message || (_emailOk
+      ? 'Propuesta enviada. El cliente recibió el correo.'
+      : 'Propuesta registrada, pero el correo al cliente no salió. Revisa la llave de correo de Retiros.');
+    if (fb) fb.innerHTML = `<div class="smart-hint ${_emailOk ? 'is-success' : 'is-warn'}" style="margin:0"><i class="bi bi-${_emailOk ? 'check-circle' : 'exclamation-triangle'}"></i><div>${_esc(_msgTxt)}</div></div>`;
+    ilusToast((_emailOk ? '✓ ' : '⚠ ') + _msgTxt, { type: _emailOk ? 'success' : 'warning' });
+    setTimeout(() => { window.location.reload(); }, _emailOk ? 1200 : 2800);
   } catch(err){
     if (fb) fb.innerHTML = `<div class="smart-hint is-danger" style="margin:0"><i class="bi bi-x-circle"></i><div>Error de red: ${_esc(err.message)}</div></div>`;
     ilusToast('Error de red: ' + err.message, { type:'error' });
   } finally {
+    window._iwSendingProposal = false;
     btn.disabled = false;
     btn.classList.remove('is-loading');
     btn.innerHTML = _orig;
+    // Reactivar "Aceptar como propuesta" si quedó deshabilitado (en fallo; en
+    // éxito la página recarga de todos modos).
+    var _ba = document.getElementById('iwBtnAcceptClient');
+    if (_ba) _ba.disabled = false;
   }
 }
 
@@ -5867,7 +5907,13 @@ document.addEventListener('DOMContentLoaded', function(){
   //    (DOMContentLoaded) ya está disponible. Antes esto se montaba en
   //    pleno parseo y bloqueaba; ahora va después del primer paint.
   if (window._shouldMountProposeCal && !window._calMounted){
-    try { _mountProposeCalendar(); window._calMounted = true; } catch(_e){}
+    // Daniel 2026-06-15: si hay card "El cliente pidió", el calendario arranca
+    // OCULTO y se monta al pulsar "Modificar" (lazy). Si NO hay card (cliente
+    // sin hora exacta), el picker ya está visible → montamos de inmediato.
+    var _hasClientCard = !!document.getElementById('iwClientCard');
+    if (!_hasClientCard){
+      try { _mountProposeCalendar(); window._calMounted = true; } catch(_e){}
+    }
   }
 
   // Hint de peso (instantáneo, sin red).

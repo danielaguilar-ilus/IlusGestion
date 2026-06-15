@@ -111,6 +111,11 @@
       // "estirar" su selección con click+arrastre. Si false, sigue
       // funcionando con click-1 = inicio, click-2 = fin.
       enableDragSelect: false,
+      // Daniel 2026-06-15: rangos multi-bloque (shift+click / drag / botones de
+      // duración 1h/2h). En el flujo de propuesta del operador se monta en
+      // false → SIEMPRE un solo bloque de 30 min. El código de rango queda
+      // intacto y reversible (REGLA #4.2), solo se desactiva por flag.
+      enableMultiBlock: false,
     }, opts || {});
 
     const grid     = (typeof cfg.container === 'string') ? _qs(cfg.container) : cfg.container;
@@ -253,13 +258,20 @@
           flagLine = `<span class="ilus-cal-flag is-requested" title="Hora pedida por el cliente">🔵 Pedido</span>`;
         }
 
-        // Solo modo INTERNO: mostrar dueños del slot bajo la hora
+        // Solo modo INTERNO: mostrar dueños del slot bajo la hora.
+        // Daniel 2026-06-15: mostrar QUIÉN tiene el (otro) medio cupo de forma
+        // VISIBLE — el nombre del cliente, no solo el código RET-XXX (ese queda
+        // en el tooltip). El operador necesita saber con quién compartiría.
         if (cfg.includeOwners && owners.length > 0){
+          const _firstName = (nm) => _esc(String(nm || '').trim().split(/\s+/)[0] || '');
           if (owners.length === 1){
             const o = owners[0];
-            ownersLine = `<span class="ilus-cal-owner-line" title="${_esc(o.code)} · ${_esc(o.customer_name)}">${_esc(o.code)}</span>`;
+            const _nm = (o.customer_name || '').trim();
+            ownersLine = `<span class="ilus-cal-owner-line" title="${_esc(o.code)} · ${_esc(_nm)}">${_nm ? _esc(_nm) : _esc(o.code)}</span>`;
           } else {
-            ownersLine = `<span class="ilus-cal-owner-line">${owners.length} retiros</span>`;
+            const _full  = owners.map(o => _esc(o.code) + ' · ' + _esc(o.customer_name || '')).join('  /  ');
+            const _short = owners.map(o => _firstName(o.customer_name || o.code)).join(' · ');
+            ownersLine = `<span class="ilus-cal-owner-line" title="${_full}">${_short}</span>`;
           }
         }
 
@@ -316,8 +328,11 @@
             return;
           }
           const i = parseInt(el.dataset.ilusCalIdx, 10);
-          // Shift+click → seleccionar rango desde startIdx actual hasta i
-          if (ev.shiftKey && state.startIdx !== null){
+          // Shift+click → seleccionar rango desde startIdx actual hasta i.
+          // Daniel 2026-06-15: solo si la vista permite multi-bloque; en el
+          // flujo de propuesta (bloque único) el shift+click se trata como
+          // click normal → un solo bloque.
+          if (cfg.enableMultiBlock && ev.shiftKey && state.startIdx !== null){
             tryExtendSelection(state.startIdx, i);
           } else {
             onSlotClick(i);
@@ -462,58 +477,21 @@
         if (estado === 'bloqueado'){ _toast(s.razon || 'Esa franja está bloqueada.', 'warning'); return; }
       }
 
-      if (state.startIdx === null){
-        state.startIdx = state.endIdx = i;
-      } else if (state.startIdx === i && state.endIdx === i){
+      // Daniel 2026-06-15: CLICK SIMPLE = UN SOLO BLOQUE de 30 min.
+      // El operador pidió explícitamente "seleccionar un solo bloque, no
+      // todos". El modelo viejo (1er click = inicio, 2º click = fin) armaba
+      // rangos gigantes (ej. 09:00→15:30 cruzando la colación) cuando quedaba
+      // un inicio "pegado". Ahora cada click simple resetea a ese único bloque.
+      // En la vista de propuesta del operador (enableMultiBlock=false) las vías
+      // multi-bloque (shift+click, arrastrar, botones de duración) están
+      // DESACTIVADAS por flag → siempre un solo bloque. Solo se reactivan si se
+      // monta el widget con enableMultiBlock=true (otra vista futura).
+      if (state.startIdx === i && state.endIdx === i){
+        // Toggle: click en el bloque ya seleccionado solo → deseleccionar.
         state.startIdx = state.endIdx = null;
       } else {
-        const from = Math.min(state.startIdx, i);
-        const to   = Math.max(state.startIdx, i);
-        let invalido = null;
-        let cruzaColacion = false;
-        for (let k = from; k <= to; k++){
-          const ek = _estadoDeSlot(state.slots[k]);
-          if (ek === 'colacion'){
-            // Daniel 2026-05-24: el operador con allowCrossLunch puede
-            // cruzar; en ese caso solo guardamos flag para avisar.
-            if (cfg.allowCrossLunch){ cruzaColacion = true; }
-            else { invalido = 'colacion'; break; }
-          }
-          if (ek === 'completo'){ invalido = 'completo'; break; }
-          if (ek === 'bloqueado'){ invalido = 'bloqueado'; break; }
-          // En vista pública, 'ocupado' tambien invalida el rango.
-          if (!internalView && ek === 'ocupado'){ invalido = 'completo'; break; }
-        }
-        if (invalido === 'colacion'){
-          if (internalView){
-            const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
-            const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
-            _toast(`El horario debe ser solo MAÑANA o solo TARDE — no puede cruzar la colación (${ls}-${le}).`, 'warning');
-          } else {
-            _toast('El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
-          }
-          state.startIdx = state.endIdx = i;
-        } else if (invalido === 'completo'){
-          _toast(internalView
-            ? 'El rango cruza un bloque lleno. Acórtalo o elige otra hora.'
-            : 'El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
-          state.startIdx = state.endIdx = i;
-        } else if (invalido === 'bloqueado'){
-          _toast(internalView
-            ? 'El rango cruza una franja bloqueada.'
-            : 'El rango cruza una hora no disponible. Acórtalo o elige otra hora.', 'warning');
-          state.startIdx = state.endIdx = i;
-        } else {
-          state.startIdx = from; state.endIdx = to;
-          // Daniel 2026-05-24: si el operador armó un rango que cruza la
-          // colación (permitido por allowCrossLunch), avisamos para que
-          // confirme con bodega — pero no bloqueamos.
-          if (cruzaColacion && cfg.allowCrossLunch){
-            const ls = (state.payload && state.payload.lunch_start) || cfg.lunchStartFallback;
-            const le = (state.payload && state.payload.lunch_end) || cfg.lunchEndFallback;
-            _toast(`Este rango cruza la colación del equipo (${ls}-${le}). Confirma con bodega.`, 'warning');
-          }
-        }
+        // Cualquier otro click → SOLO este bloque (sin rango automático).
+        state.startIdx = state.endIdx = i;
       }
       updateSummary();
       renderGrid();
@@ -522,7 +500,9 @@
     function setQuickRange(hours){
       if (!hours || hours <= 0){ clearSelection(); return; }
       const slotMin = (state.payload && state.payload.slot_minutes) || cfg.slotMinFallback;
-      const slotsNeeded = Math.max(1, Math.round(hours * 60 / slotMin));
+      // Daniel 2026-06-15: en modo bloque único (!enableMultiBlock) cualquier
+      // duración colapsa a 1 bloque — nunca arma rangos.
+      const slotsNeeded = cfg.enableMultiBlock ? Math.max(1, Math.round(hours * 60 / slotMin)) : 1;
       const internalView = !!cfg.includeOwners;
       let foundStart = -1, foundEnd = -1;
       for (let i = 0; i < state.slots.length; i++){
@@ -616,6 +596,13 @@
         let url = cfg.apiUrl;
         if (cfg.includeOwners){
           url += (url.indexOf('?') >= 0 ? '&' : '?') + 'include_owners=1';
+          // FIX Daniel 2026-06-15: excluir el retiro EN GESTIÓN del conteo de
+          // ocupación. Sin esto, el propio retiro se cuenta a sí mismo y su
+          // bloque sale "completo" (ej: 2/2) cuando en realidad hay cupo. El
+          // backend solo lo honra para operadores autenticados (include_owners).
+          if (cfg.currentRequestId){
+            url += '&exclude_id=' + encodeURIComponent(cfg.currentRequestId);
+          }
         }
         const r = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -681,8 +668,11 @@
       state.slots = dia.slots || [];
       renderGrid();
       if (quickEl) quickEl.style.display = state.slots.some(s => s.puede_iniciar) ? 'flex' : 'none';
-      // Auto-seleccionar duración sugerida (solo si no hay nada seleccionado)
-      if (state.suggestedMin && state.suggestedMin > 0){
+      // Auto-seleccionar duración sugerida (solo en modo multi-bloque y si no
+      // hay nada seleccionado). Daniel 2026-06-15: en bloque único NO
+      // pre-seleccionamos nada — el operador escoge la media hora a mano,
+      // evitando el "bloque pegado" sorpresa.
+      if (cfg.enableMultiBlock && state.suggestedMin && state.suggestedMin > 0){
         const hours = Math.max(0.5, state.suggestedMin / 60);
         setQuickRange(hours);
       }
@@ -692,7 +682,8 @@
     function suggestDurationMinutes(min){
       state.suggestedMin = Math.max(0, min || 0);
       // Re-aplicar inmediato si el día está cargado y NO hay selección activa
-      if (state.payload && state.slots.length && state.startIdx === null){
+      // (solo modo multi-bloque; en bloque único no auto-seleccionamos).
+      if (cfg.enableMultiBlock && state.payload && state.slots.length && state.startIdx === null){
         const hours = Math.max(0.5, state.suggestedMin / 60);
         setQuickRange(hours);
       }

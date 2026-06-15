@@ -1310,6 +1310,8 @@ def register_pickup_routes(app, ctx):
                     "created": "Solicitud de retiro recibida",
                     "proposal": "ILUS propuso una agenda de retiro",
                     "confirmed": "Agenda de retiro confirmada",
+                    "preparing": "Estamos preparando tu retiro",
+                    "done": "Tu retiro fue completado",
                     "reminder_24h": "Recordatorio: tu retiro es mañana",
                     "message": "Actualización de tu solicitud de retiro",
                 }
@@ -1329,6 +1331,17 @@ def register_pickup_routes(app, ctx):
                     paragraphs = [
                         "Tu agenda de retiro fue confirmada.",
                         "Recuerda presentar documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.",
+                    ]
+                elif kind == "preparing":
+                    paragraphs = [
+                        "<strong>Estamos preparando tu retiro.</strong> Nuestro equipo está alistando tus productos en bodega.",
+                        f"Fecha agendada: <strong>{variables['horario']}</strong>.",
+                        "Recuerda presentar documento de identidad. Si retira un tercero, debe coincidir con la persona autorizada.",
+                    ]
+                elif kind == "done":
+                    paragraphs = [
+                        "<strong>Tu retiro fue completado.</strong> ¡Gracias por preferir ILUS!",
+                        "Si necesitas un comprobante o tienes alguna consulta sobre este retiro, responde a este correo o escríbenos por soporte.",
                     ]
                 elif kind == "reminder_24h":
                     paragraphs = [
@@ -1380,6 +1393,8 @@ def register_pickup_routes(app, ctx):
                         "created": "Solicitud de retiro recibida",
                         "proposal": "ILUS propuso una agenda de retiro",
                         "confirmed": "Agenda de retiro confirmada",
+                        "preparing": "Estamos preparando tu retiro",
+                        "done": "Tu retiro fue completado",
                         "reminder_24h": "Recordatorio: tu retiro es mañana",
                         "message": "Actualización de tu retiro",
                     }
@@ -2417,7 +2432,9 @@ def register_pickup_routes(app, ctx):
             return redirect(url_for("pickup_public_request"))
         # Validar formato: 6-12 chars alfanuméricos + guion. Si no calza,
         # rechazamos sin tocar BD (evita LIKE costoso con basura).
-        if not re.match(r"^(RET[-_]?)?\d{1,12}$", code_raw):
+        # FIX 2026-06-15: regex anterior (\d+) rechazaba los códigos nuevos
+        # alfanuméricos tipo RET-H29JRR (alphabet ABCDEFGHJKLMNPQRSTUVWXYZ23456789).
+        if not re.match(r"^(RET[-_]?)?[A-Z0-9]{4,12}$", code_raw):
             flash("Código inválido. Usa el formato RET-XXXXXX.", "warning")
             return redirect(url_for("pickup_public_request"))
         # Buscar por código exacto primero (más rápido)
@@ -6648,6 +6665,19 @@ def register_pickup_routes(app, ctx):
                       f"Intento de proponer {date} {tf}-{tt}: {motivo}", "interno")
             return _resp_err(f"Slot no disponible: {motivo}", status=409)
 
+        # ── Daniel 2026-06-15: la propuesta DEBE poder notificarse al cliente.
+        #    El ping-pong con el cliente arranca con este correo, así que si el
+        #    retiro no tiene NINGÚN email válido (contacto / extra / ERP), no
+        #    tiene sentido avanzar a 'propuesta_enviada' — el cliente jamás se
+        #    enteraría. Bloqueamos y pedimos al operador agregar el email.
+        if not _get_pickup_all_emails(req):
+            return _resp_err(
+                "Este retiro no tiene un correo de cliente válido. Agrega el email "
+                "del cliente (paso 2) antes de enviar la propuesta — el cliente lo "
+                "necesita para aceptar o contraproponer.",
+                status=409,
+            )
+
         # ── FASE 3 (2026-05-29): ping-pong. Antes de crear la propuesta nueva,
         #    marcar las propuestas pending anteriores como 'superseded' (solo
         #    puede haber UNA propuesta vigente a la vez). expires_at = ahora
@@ -6676,45 +6706,76 @@ def register_pickup_routes(app, ctx):
         log_event(rid, "propuesta_enviada", req["status"], "propuesta_enviada",
                   f"{date} {tf}-{tt}", "interno")
 
-        # ── Todo lo no-crítico va a un BACKGROUND THREAD ──
-        # Daniel 2026-05-23 (perf): el operador recibe respuesta inmediata
-        # (<500ms) sin esperar al envío de email/SMS/WhatsApp del notify ni
-        # al re-fetch del retiro completo ni al invalidado de caches.
-        # IMPORTANTE: capturamos los valores ANTES de spawn (request.* no
-        # vive en el thread daemon una vez retornada la response).
-        import threading
+        # ── Notificación al cliente — SÍNCRONA (Daniel 2026-06-15) ──
+        # El correo de propuesta es el evento MÁS crítico del ping-pong.
+        # Antes iba en un thread daemon con las excepciones tragadas: si el
+        # envío fallaba, el operador veía "Propuesta enviada" pero al cliente
+        # NO le llegaba nada (caso real reportado: "me agendé y no pasó nada").
+        # Ahora lo enviamos de forma síncrona y reflejamos el resultado REAL en
+        # la respuesta, para que el operador sepa con certeza si salió o no.
         _msg = request.form.get("message", "")
-        def _bg_post_proposal():
-            try:
-                with app.app_context():
-                    fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
-                    try:
-                        notify(fresh, "proposal", proposal={
-                            "date": date, "time_from": tf, "time_to": tt, "message": _msg,
-                        })
-                    except Exception as _e:
-                        print(f"[pickup_create_proposal bg notify] {_e}", flush=True)
-                    try:
-                        tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
-                        if tok_p: _POLL_CACHE.pop(tok_p, None)
-                    except Exception: pass
-                    try: _DISPO_CACHE["payload"] = None
-                    except Exception: pass
-            except Exception as _eg:
-                print(f"[pickup_create_proposal bg] {_eg}", flush=True)
+        fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+        try:
+            n_destinatarios = len(_get_pickup_all_emails(fresh))
+        except Exception:
+            n_destinatarios = 0
+        email_enviado = False
+        try:
+            _res = notify(fresh, "proposal", proposal={
+                "date": date, "time_from": tf, "time_to": tt, "message": _msg,
+            })
+            # notify() devuelve (sent_mail, sent_wa); defensivo por si cambia.
+            if isinstance(_res, (tuple, list)) and _res:
+                email_enviado = bool(_res[0])
+            else:
+                email_enviado = bool(_res)
+        except Exception as _e:
+            print(f"[pickup_create_proposal notify] {_e}", flush=True)
+            email_enviado = False
 
-        t = threading.Thread(target=_bg_post_proposal, daemon=True,
-                             name=f"pickup-proposal-bg-{rid}")
-        t.start()
+        # Si el correo NO salió, dejamos rastro en el tracking para que el
+        # equipo lo reintente/avise (la propuesta igual queda registrada y
+        # visible en el seguimiento del cliente).
+        if not email_enviado:
+            try:
+                log_event(rid, "propuesta_email_no_enviado", "propuesta_enviada",
+                          "propuesta_enviada",
+                          f"Propuesta {date} {tf}-{tt} registrada pero el correo al cliente NO salió "
+                          f"(destinatarios={n_destinatarios}). Revisar llave de correo de Retiros o "
+                          f"el email del cliente.", "interno")
+            except Exception:
+                pass
+
+        # Invalidación de caches (no crítico).
+        try:
+            tok_p = (fresh or {}).get("public_token") if isinstance(fresh, dict) else None
+            if tok_p: _POLL_CACHE.pop(tok_p, None)
+        except Exception: pass
+        try: _DISPO_CACHE["payload"] = None
+        except Exception: pass
 
         if is_ajax:
+            if email_enviado:
+                _ok_msg = (f"Propuesta enviada al cliente ✓ "
+                           f"(correo a {n_destinatarios} destinatario"
+                           f"{'s' if n_destinatarios != 1 else ''}).")
+            else:
+                _ok_msg = ("Propuesta registrada y visible en el seguimiento del cliente, "
+                           "pero el correo NO se pudo enviar ahora. Revisa la llave de correo "
+                           "de Retiros o el email del cliente.")
             return jsonify({
                 "ok": True,
-                "message": "Propuesta enviada al cliente.",
+                "message": _ok_msg,
+                "email_enviado": email_enviado,
+                "destinatarios": n_destinatarios,
                 "proposal": {"date": date, "time_from": tf, "time_to": tt},
                 "redirect_url": url_for("pickup_detail", rid=rid),
             })
-        flash("Propuesta enviada al cliente.", "success")
+        if email_enviado:
+            flash("Propuesta enviada al cliente.", "success")
+        else:
+            flash("Propuesta registrada, pero el correo al cliente no salió. "
+                  "Revisa la llave de correo de Retiros.", "warning")
         return redirect(url_for("pickup_detail", rid=rid))
 
     @app.route("/retiros/<int:rid>/aceptar-contrapropuesta", methods=["POST"])
@@ -7484,6 +7545,24 @@ def register_pickup_routes(app, ctx):
                     exclude_request_id = int(_own["id"])
             except Exception:
                 exclude_request_id = None
+
+        # ── Operador autenticado: excluir el retiro EN GESTIÓN por id ──
+        # FIX Daniel 2026-06-15 (bug "slot lleno por contarse a sí mismo"):
+        # Al proponer hora para el retiro X desde /retiros/<X>, su PROPIA
+        # reserva (requested/proposed/confirmed) estaba contando contra el
+        # cupo del bloque. Con parallel_capacity=2, un bloque con SOLO el
+        # propio retiro + 1 cliente más salía "completo" (2/2) y el operador
+        # no podía agendar la hora que el mismo cliente pidió.
+        # Solución: el operador puede pasar ?exclude_id=<id> y excluimos ese
+        # retiro del conteo — mismo criterio que `_validar_disponibilidad_slot`
+        # y la transacción FOR UPDATE del POST (id <> %s). Solo se honra para
+        # callers autenticados como operador (is_operator); el cliente público
+        # nunca puede excluir por id (sigue usando exclude_token de su propio
+        # retiro). La garantía real anti-doble-cupo vive en el POST, no aquí.
+        if exclude_request_id is None and is_operator:
+            _exc_id_raw = (request.args.get("exclude_id") or "").strip()
+            if _exc_id_raw.isdigit():
+                exclude_request_id = int(_exc_id_raw)
 
         # Cache hit: SOLO sirve para la shape pública sin filtro de fecha
         # (el grid de 30 días es global y no cambia por cliente). Las
