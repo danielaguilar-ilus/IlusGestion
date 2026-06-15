@@ -7088,6 +7088,27 @@ def _brand_wa_prefix(asunto: str) -> str:
     return f"🔧 {prefijo}\n\n"
 
 
+def _apply_test_redirect(to_addr, subject):
+    """MODO PRUEBA (2026-06-14): si ILUS_COMM_TEST_TO está seteada, redirige el
+    correo a ese buzón (mostrando el destinatario real en el asunto) y devuelve
+    (to_addr, subject) ya ajustados. Sin la env var = passthrough exacto (cero
+    impacto en producción).
+
+    Se aplica en TODAS las rutas de envío de email para que durante la fase de
+    prueba ningún correo alcance a un destinatario real:
+      - `_send_ilus_email_real` (cron / OT / recovery / retiros / transporte)
+      - `_send_email_dinamico`  (invitación a técnico externo + CC/BCC globales)
+    Si se agrega una ruta de envío nueva, debe llamar a este helper.
+    """
+    _test_to = (os.environ.get("ILUS_COMM_TEST_TO") or "").strip()
+    if _test_to and to_addr and str(to_addr).strip().lower() != _test_to.lower():
+        _orig_to = to_addr
+        to_addr = _test_to
+        subject = f"[PRUEBA→{_orig_to}] {subject}"
+        print(f"[TEST_MODE] correo redirigido: real={_orig_to} -> {to_addr}", flush=True)
+    return to_addr, subject
+
+
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
                           attachments=None) -> bool:
     """
@@ -7118,6 +7139,11 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     Branding: el From siempre es genérico (BRAND_CONFIG.from_name +
     from_email). El Reply-To apunta al buzón de soporte.
     """
+    # ── MODO PRUEBA (2026-06-14) ─────────────────────────────────────────
+    # Redirige a ILUS_COMM_TEST_TO si está seteada (helper compartido). Esta es
+    # la ruta principal de envío (cron/OT/recovery/retiros/transporte); la otra
+    # ruta, `_send_email_dinamico` (técnico externo), también aplica el helper.
+    to_addr, subject = _apply_test_redirect(to_addr, subject)
     marca = _get_marca()
     att_norm = _email_normalize_attachments(attachments)
     provider = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
@@ -17216,6 +17242,37 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         cuerpo = ("Confirmamos la entrega de tu pedido. Si tienes alguna observación "
                   "sobre el producto recibido, contáctanos.")
         cta_label = "Ver detalle de entrega"
+    # ── Plantilla EDITABLE (comm_templates / módulo 'transporte') ─────────
+    # Si Daniel editó la plantilla en /comunicaciones, su ASUNTO y MENSAJE
+    # mandan; si no existe / está apagada / vacía, cae al texto de arriba
+    # (REGLA #4.2: el correo nunca deja de salir). El armazón (status, título,
+    # botón de seguimiento, courier) se conserva siempre desde el maestro.
+    _message_html = str(_esc(cuerpo))   # default: texto fijo, escapado
+    _slug = {
+        'En preparación':         'programado',
+        'Entregado a transporte': 'en_ruta',
+        'En ruta':                'en_camino',
+        'Entregado':              'entregado',
+        'Entrega fallida':        'fallido',
+    }.get(estado, 'entregado')
+    try:
+        _vars = {
+            "cliente":    cliente,
+            "documento":  doc,
+            "id_pedido":  doc,
+            "track_url":  track_url,
+            "courier":    "FedEx",
+            "comentario": comentario or "",
+        }
+        _tpl = _render_comm_template(_slug, "email", _vars, modulo="transporte")
+        if _tpl:
+            _asu, _cue = _tpl
+            if (_asu or "").strip():
+                asunto = _brand_subject(_asu.strip())
+            if (_cue or "").strip():
+                _message_html = _cue   # HTML editable → NO escapar
+    except Exception as _e_tpl:
+        print(f"[tr_notify] plantilla editable no usada: {_e_tpl}", flush=True)
     _closing = (f"«{_esc(comentario)}»" if comentario else
                 "Conserva este correo como referencia. El enlace de seguimiento es personal "
                 "y contiene información asociada a tu pedido.")
@@ -17226,7 +17283,7 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         "title":             titulo,
         "subtitle":          "Actualización de despacho · ILUS Fitness",
         "customer_name":     cliente,
-        "message":           str(_esc(cuerpo)),
+        "message":           _message_html,
         "detail_rows_html":  _ilus_email_rows([("N° de documento", doc), ("Courier", "FedEx")]),
         "primary_cta_url":   track_url,
         "primary_cta_label": cta_label,
@@ -19715,11 +19772,27 @@ def _mantenciones_cron_run_once(slot_str=""):
                 continue
             if not email:
                 continue
-            # Modo ON: enviar email real
+            # Modo ON: enviar email real (plantilla editable + diseño maestro)
             try:
+                _rec_asunto = _brand_subject(asunto)
+                _rec_body = (f"<p>Recordatorio: visita programada para "
+                             f"{f.strftime('%d/%m/%Y')}</p>")
+                try:
+                    _rt = _render_comm_template("recordatorio_visita", "email", {
+                        "cliente": r.get("razon_social") or "",
+                        "fecha": f.strftime('%d/%m/%Y'),
+                        "ot": r.get("titulo") or "",
+                    }, modulo="mantenciones")
+                    if _rt and (_rt[1] or "").strip():
+                        if (_rt[0] or "").strip():
+                            _rec_asunto = _brand_subject(_rt[0].strip())
+                        _rec_body = _rt[1]
+                except Exception:
+                    pass
+                _rec_html = _comm_render_email_document(_rec_asunto, _rec_body,
+                                                        "Recordatorio de visita")
                 _send_ilus_email(
-                    email, _brand_subject(asunto),
-                    f"<p>Recordatorio: visita programada para {f.strftime('%d/%m/%Y')}</p>",
+                    email, _rec_asunto, _rec_html,
                     evento="mant_recordatorio_visita", modulo="mantenciones",
                 )
                 mysql_execute(
@@ -29911,6 +29984,11 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
     espera el default. 10s es suficiente para LAN razonable.
     """
     import ssl as _ssl
+    # MODO PRUEBA (2026-06-14): redirige al buzón de prueba y, si está activo,
+    # suprime CC/BCC globales para no copiar a ningún buzón real durante la
+    # prueba (cubre la invitación a técnico externo de app.py).
+    _test_to = (os.environ.get("ILUS_COMM_TEST_TO") or "").strip()
+    to, subject = _apply_test_redirect(to, subject)
     cfg = cfg or _get_smtp_cfg()
     cc = _get_client_cfg()
     msg = MIMEMultipart("alternative")
@@ -29922,6 +30000,8 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
         msg["Reply-To"] = cc["reply_to"]
     cc_addrs = [a.strip() for a in (cc.get("email_cc") or "").replace(";", ",").split(",") if a.strip()]
     bcc_addrs = [a.strip() for a in (cc.get("email_bcc") or "").replace(";", ",").split(",") if a.strip()]
+    if _test_to:
+        cc_addrs, bcc_addrs = [], []  # en modo prueba no copiamos a nadie real
     if cc_addrs:
         msg["Cc"] = ", ".join(cc_addrs)
     recipients.extend(cc_addrs + bcc_addrs)
@@ -30158,6 +30238,15 @@ def _render_comm_template(estado, canal, variables, *, modulo="comunicacion_inte
         tok, tok2 = "{{" + str(k) + "}}", "{{ " + str(k) + " }}"
         asunto = asunto.replace(tok, sv).replace(tok2, sv)
         cuerpo = cuerpo.replace(tok, sv).replace(tok2, sv)
+    # Barrido de seguridad (2026-06-14): elimina cualquier {{token}} que la
+    # plantilla declare pero el caller NO haya provisto. Sin esto el cliente
+    # recibiría tokens literales en el correo. Cubre: filas legacy de transporte
+    # ({{nombre_cliente}}/{{numero_seguimiento}}/{{direccion_entrega}}), estados
+    # de mantención con {{horario}}/{{tecnico}}/{{direccion}}/{{maquina}}/etc.
+    # Solo limpia {{ identificador }} simple — nunca toca HTML ni el diseño.
+    _stray_tok = re.compile(r"\{\{\s*\w+\s*\}\}")
+    asunto = _stray_tok.sub("", asunto)
+    cuerpo = _stray_tok.sub("", cuerpo)
     return (asunto, cuerpo)
 
 
@@ -30672,7 +30761,10 @@ def _comm_resend_test_inner():
         info_lineas = [("", "Enviado por", current_username() or "ILUS"),
                        ("", "Fecha", _now_chile_str("%d/%m/%Y %H:%M"))],
     )
-    ok = _send_via_resend(to, "✅ Prueba Resend API — ILUS", html)
+    # MODO PRUEBA: si ILUS_COMM_TEST_TO está seteada y el destinatario tecleado
+    # difiere, redirige también esta prueba diagnóstica (no alcanza a nadie real).
+    to, _rt_subject = _apply_test_redirect(to, "✅ Prueba Resend API — ILUS")
+    ok = _send_via_resend(to, _rt_subject, html)
     err = getattr(g, "_last_resend_error", None) or {}
     if not isinstance(err, dict):
         err = {"raw_body": str(err), "message": str(err), "name": "", "http_code": 0, "status_code": 0}
@@ -54835,6 +54927,45 @@ def _mant_get_cliente_emails(cid):
     return out
 
 
+def _mant_get_tecnico_emails(vid):
+    """Emails de los técnicos asignados a una visita. Daniel (2026-06-14): los
+    correos de mantención van al cliente Y a los técnicos asignados.
+
+    Cubre las DOS vías de asignación (algunas OT usan una u otra):
+      - mant_visita_tecnicos -> mant_tecnicos.email  (multi-técnico, catálogo legacy)
+      - mant_visitas.tecnico_user_id -> app_users.username  (técnico interno moderno;
+        en app_users el `username` ES el email de login)
+    Cada vía va en su propio try/except: si una falla, la otra sigue aportando
+    (degradación segura, nunca rompe el envío). Deduplicado, minúsculas. [] si nada."""
+    out, vistos = [], set()
+    def _add(e):
+        e = (e or "").strip().lower()
+        if e and "@" in e and 6 <= len(e) <= 180 and e not in vistos:
+            vistos.add(e)
+            out.append(e)
+    # Vía 1 — multi-técnico (catálogo mant_tecnicos)
+    try:
+        for r in (mysql_fetchall(
+            "SELECT t.email FROM mant_visita_tecnicos vt "
+            "JOIN mant_tecnicos t ON t.id=vt.tecnico_id "
+            "WHERE vt.visita_id=%s", (int(vid),)
+        ) or []):
+            _add(r.get("email"))
+    except Exception as _e:
+        print(f"[mant-tec-emails:legacy] {_e}", flush=True)
+    # Vía 2 — técnico interno moderno (app_users.username = email)
+    try:
+        for r in (mysql_fetchall(
+            "SELECT u.username AS email FROM mant_visitas v "
+            "JOIN app_users u ON u.id=v.tecnico_user_id "
+            "WHERE v.id=%s AND v.tecnico_user_id IS NOT NULL", (int(vid),)
+        ) or []):
+            _add(r.get("email"))
+    except Exception as _e:
+        print(f"[mant-tec-emails:user] {_e}", flush=True)
+    return out
+
+
 def _mant_send_email_multi(cid, asunto, html, evento="", emails=None,
                            attachments=None):
     """Envía un email de mantenciones a TODOS los destinatarios, UNO POR UNO.
@@ -55119,6 +55250,15 @@ def mant_visita_enviar_email(vid):
             destinos = [(v.get("contacto_email") or "").strip()]
     if not destinos:
         return jsonify({"error": "El cliente no tiene email registrado. Indica un destinatario."}), 400
+
+    # Daniel (2026-06-14): el correo de mantención va al cliente Y a los técnicos
+    # asignados. Solo cuando NO hay override manual de destinatario.
+    if not destino_override:
+        _dest_lower = {x.lower() for x in destinos}
+        for _te in _mant_get_tecnico_emails(vid):
+            if _te not in _dest_lower:
+                destinos.append(_te)
+                _dest_lower.add(_te)
 
     # Cargar técnicos asignados
     tecs = mysql_fetchall(
@@ -61143,10 +61283,28 @@ def mant_reporte_enviar(rid):
 
     # Construir HTML del email — siempre con la plantilla corporativa
     html_reporte = _reporte_to_html(rep, cliente)
-    body_email = (
+    # Texto de acompañamiento EDITABLE desde /comunicaciones (mantenciones /
+    # 'ot_completada'); si no hay plantilla, cae al texto actual (REGLA #4.2).
+    # El informe en sí (html_reporte) y el adjunto Word se conservan siempre.
+    _intro = (
         f"<p>Estimado/a {cliente['contacto_nombre'] or cliente['razon_social']},</p>"
         f"<p>Adjunto encontrarás el informe de servicio realizado. {mensaje_extra}</p>"
         f"<p>Saludos,<br><strong>Equipo {ILUS_BRAND}</strong></p>"
+    )
+    try:
+        _it = _render_comm_template("ot_completada", "email", {
+            "cliente": cliente.get("contacto_nombre") or cliente.get("razon_social") or "",
+            "ot": rep.get("ticket_num") or f"#{rid}",
+            "mensaje_extra": mensaje_extra,
+        }, modulo="mantenciones")
+        if _it and (_it[1] or "").strip():
+            if (_it[0] or "").strip():
+                asunto = _it[0].strip()
+            _intro = _it[1]
+    except Exception:
+        pass
+    body_email = (
+        f"{_intro}"
         f"<hr style='border:none;border-top:1px solid #eaecf0;margin:18px 0'>"
         f"{html_reporte}"
     )
@@ -65946,6 +66104,136 @@ def _ensure_comm_template_plan_propuesto():
         return False
 
 
+def _ensure_comm_templates_columns():
+    """Garantiza que comm_templates.activo exista SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). Sin esta columna el toggle 'activo' del editor de
+    /comunicaciones no persiste y _render_comm_template no puede apagar
+    plantillas (afecta a TODOS los módulos, no solo retiros). Idempotente: 1
+    SELECT barato; solo hace ALTER la 1ª vez."""
+    try:
+        col = mysql_fetchone(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='comm_templates' "
+            "  AND COLUMN_NAME='activo' LIMIT 1"
+        )
+        if col:
+            return False  # ya existe
+        mysql_execute(
+            "ALTER TABLE comm_templates ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1"
+        )
+        print("[ensure_comm_tpl] columna comm_templates.activo agregada", flush=True)
+        return True
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo garantizar columna activo: {e}", flush=True)
+        return False
+
+
+def _transporte_tpl_seed():
+    """Source of truth de las plantillas EDITABLES de transporte (email).
+    {slug: (asunto, cuerpo_html)}. Las semillas reproducen EXACTAMENTE el texto
+    que hoy envía _tr_notificar_cliente (hardcodeado), para que CONECTAR el
+    editor NO cambie ningún correo mientras nadie edite. Placeholders:
+    {{cliente}}, {{documento}}, {{track_url}}, {{courier}}. El armazón visual
+    (status, título, botón de seguimiento) lo sigue aportando
+    _tr_notificar_cliente; aquí solo se controla el ASUNTO y el MENSAJE.
+    Slugs alineados al editor del front (TPL_ESTADOS_TRANSPORTE)."""
+    return {
+        'programado': (
+            "Tu pedido {{documento}} está en preparación",
+            "Recibimos tu pedido y ya lo estamos preparando para el despacho. "
+            "Te avisaremos apenas salga de nuestra bodega."),
+        'en_ruta': (
+            "Entregamos tu pedido {{documento}} al courier",
+            "Preparamos tu pedido y lo entregamos a {{courier}} para su despacho. "
+            "Desde aquí {{courier}} lo lleva hasta tu dirección; te seguimos "
+            "avisando los cambios."),
+        'en_camino': (
+            "Tu despacho {{documento}} va en camino",
+            "Buenas noticias: tu pedido salió a ruta y va camino a tu dirección."),
+        'entregado': (
+            "Tu despacho {{documento}} fue entregado",
+            "Confirmamos la entrega de tu pedido. Si tienes alguna observación "
+            "sobre el producto recibido, contáctanos."),
+        'fallido': (
+            "Problema con la entrega de tu despacho {{documento}}",
+            "FedEx reportó un problema al intentar entregar tu pedido. Estamos "
+            "pendientes para reprogramar la entrega."),
+    }
+
+
+def _ensure_comm_template_transporte():
+    """Siembra idempotente de las plantillas EDITABLES de transporte (email)
+    AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → respeta ediciones de Daniel
+    (UNIQUE modulo+estado+canal). Slugs alineados a _tr_notificar_cliente y al
+    front."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _transporte_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='transporte' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates "
+                "(modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('transporte',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de transporte sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar transporte: {e}", flush=True)
+        return 0
+
+
+def _general_tpl_seed():
+    """Source of truth de las plantillas EDITABLES del módulo GENERAL (email):
+    comunicados/avisos/recordatorios libres. Heredan el diseño maestro vía
+    _comm_render_email_document. Placeholders: {{cliente}}, {{titulo}},
+    {{mensaje}}."""
+    return {
+        'comunicado': (
+            "{{titulo}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">{{mensaje}}</p>"),
+        'aviso': (
+            "Aviso · {{titulo}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">{{mensaje}}</p>"),
+        'recordatorio': (
+            "Recordatorio · {{titulo}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Te recordamos: {{mensaje}}</p>"),
+    }
+
+
+def _ensure_comm_template_general():
+    """Siembra idempotente de las plantillas del módulo 'general' (email)
+    AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → no pisa ediciones de Daniel."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _general_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='general' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates "
+                "(modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('general',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de general sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar general: {e}", flush=True)
+        return 0
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -66082,6 +66370,17 @@ try:
         _ensure_comm_template_plan_propuesto()
 except Exception as _ensure_pp_err:
     print(f"[ILUS][WARN] _ensure_comm_template_plan_propuesto: {_ensure_pp_err}", flush=True)
+
+# Editor de plantillas por módulo (2026-06-14) — SIEMPRE, incluso skip-migrations:
+# garantizar la columna 'activo' (toggle del editor) y sembrar transporte +
+# general para que /comunicaciones controle de verdad esos correos. Idempotente.
+try:
+    with app.app_context():
+        _ensure_comm_templates_columns()
+        _ensure_comm_template_transporte()
+        _ensure_comm_template_general()
+except Exception as _ensure_ed_err:
+    print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
 
 
 def _reparar_ruts_clientes_corruptos():
