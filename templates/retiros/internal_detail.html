@@ -4482,6 +4482,11 @@ function _iwRefreshPreview(){
   if (!card) return;
   const btnAccept = document.getElementById('iwBtnAcceptClient');
   const btnModify = document.getElementById('iwBtnModifyClient');
+  // Daniel 2026-06-15: "2026-06-17" (ISO/inglés) → "17/06/2026" (día/mes/año).
+  const _iwFechaDMY = (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    return m ? (m[3] + '/' + m[2] + '/' + m[1]) : String(iso || '');
+  };
   if (btnAccept){
     // Daniel 2026-06-15: "Aceptar como propuesta" envía DIRECTO la hora exacta
     // que pidió el cliente, SIN abrir el calendario. Un clic (con confirmación)
@@ -4502,7 +4507,7 @@ function _iwRefreshPreview(){
         ok = await ilusConfirm({
           title: 'Enviar propuesta al cliente',
           message: '¿Proponer al cliente exactamente la fecha y hora que pidió?',
-          sub: reqDate + ' · ' + reqTf + '–' + reqTt,
+          sub: _iwFechaDMY(reqDate) + ' · ' + reqTf + '–' + reqTt,
           okLabel: 'Sí, enviar propuesta', cancelLabel: 'Cancelar',
         });
       }

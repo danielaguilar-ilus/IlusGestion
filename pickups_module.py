@@ -4768,40 +4768,46 @@ def register_pickup_routes(app, ctx):
                     except Exception as _e_log:
                         print(f"[pickup_doc_agregar async-log] {_e_log}", flush=True)
 
-                    # Auto-marcar validación OK si el doc tiene saldo
-                    if con_saldo_val == 1:
-                        try:
+                    # Daniel 2026-06-15: auto-validar la documentación al asociar
+                    # un doc, TENGA O NO saldo. El "sin saldo" ya NO bloquea (es
+                    # solo un indicador), así que no debe impedir proponer fecha.
+                    # Antes solo auto-validaba CON saldo → los docs sin saldo
+                    # dejaban el retiro trabado en 'pendiente' sin botón visible.
+                    try:
+                        _saldo_txt = ("con saldo disponible" if con_saldo_val == 1
+                                      else ("sin saldo verificado" if con_saldo_val == 0
+                                            else "saldo no verificado"))
+                        cur.execute(
+                            f"SELECT doc_validation_status FROM `{REQ}` WHERE id=%s",
+                            (rid,)
+                        )
+                        cur_status = cur.fetchone() or {}
+                        if (cur_status.get("doc_validation_status") or "") != "ok":
                             cur.execute(
-                                f"SELECT doc_validation_status FROM `{REQ}` WHERE id=%s",
-                                (rid,)
+                                f"""UPDATE `{REQ}`
+                                    SET doc_validation_status='ok',
+                                        doc_validated_at=NOW(),
+                                        doc_validated_by=%s,
+                                        doc_validation_notes=CONCAT(
+                                          COALESCE(doc_validation_notes,''),
+                                          IF(doc_validation_notes IS NULL OR doc_validation_notes='','','\\n'),
+                                          'Auto-validado: doc ', %s, ' ', %s, ' (', %s, ')'
+                                        )
+                                    WHERE id=%s""",
+                                (added_by[:120], tipo, numero, _saldo_txt, rid)
                             )
-                            cur_status = cur.fetchone() or {}
-                            if (cur_status.get("doc_validation_status") or "") != "ok":
-                                cur.execute(
-                                    f"""UPDATE `{REQ}`
-                                        SET doc_validation_status='ok',
-                                            doc_validated_at=NOW(),
-                                            doc_validated_by=%s,
-                                            doc_validation_notes=CONCAT(
-                                              COALESCE(doc_validation_notes,''),
-                                              IF(doc_validation_notes IS NULL OR doc_validation_notes='','','\\n'),
-                                              'Auto-validado: doc ', %s, ' ', %s, ' con saldo disponible'
-                                            )
-                                        WHERE id=%s""",
-                                    (added_by[:120], tipo, numero, rid)
-                                )
-                                cur.execute(
-                                    f"""INSERT INTO `{LOG}`
-                                        (request_id,actor_type,actor_name,action,old_status,new_status,notes,ip,user_agent)
-                                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                    (rid, "sistema", "Sistema", "doc_validacion_auto",
-                                     None, "ok",
-                                     f"Auto-validado al asociar {tipo} {numero} con saldo",
-                                     _ip_meta, _ua_meta)
-                                )
-                        except Exception as _e_auto:
-                            print(f"[pickup_doc_agregar async-autovalidate] {_e_auto}",
-                                  flush=True)
+                            cur.execute(
+                                f"""INSERT INTO `{LOG}`
+                                    (request_id,actor_type,actor_name,action,old_status,new_status,notes,ip,user_agent)
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                (rid, "sistema", "Sistema", "doc_validacion_auto",
+                                 None, "ok",
+                                 f"Auto-validado al asociar {tipo} {numero} ({_saldo_txt})",
+                                 _ip_meta, _ua_meta)
+                            )
+                    except Exception as _e_auto:
+                        print(f"[pickup_doc_agregar async-autovalidate] {_e_auto}",
+                              flush=True)
                 conn.commit()
             except Exception as _e_outer:
                 print(f"[pickup_doc_agregar async-outer] {_e_outer}", flush=True)
@@ -6601,9 +6607,32 @@ def register_pickup_routes(app, ctx):
             if is_ajax: return jsonify({"ok": False, "error": "Retiro no encontrado"}), 404
             return redirect(url_for("pickup_dashboard"))
 
-        # WORKFLOW: bloquear propuesta si la documentación no fue validada
+        # WORKFLOW: la propuesta requiere documentación cargada.
+        # Daniel 2026-06-15: si el retiro YA tiene documentos asociados NO
+        # bloqueamos por la "validación formal" — los docs SIN SALDO no
+        # auto-validaban y dejaban el retiro trabado sin un botón visible para
+        # validar. El "sin saldo" es un indicador, no un bloqueante. Entonces:
+        # con docs asociados → auto-marcamos validado y seguimos; solo
+        # bloqueamos si NO hay ningún documento (ahí sí falta el Paso 2).
         if req.get("doc_validation_status") not in ("ok",):
-            return _resp_err("Antes de proponer fecha, valida la documentación del cliente (paso 1).")
+            _ndoc = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM pickup_request_docs WHERE request_id=%s",
+                (rid,)
+            ) or {}
+            if int(_ndoc.get("n") or 0) <= 0:
+                return _resp_err("Antes de proponer fecha, asocia al menos un "
+                                 "documento del cliente en el Paso 2 (cargar factura/boleta).")
+            try:
+                mysql_execute(
+                    f"UPDATE `{REQ}` SET doc_validation_status='ok', "
+                    f"doc_validated_at=NOW() WHERE id=%s", (rid,)
+                )
+                log_event(rid, "doc_validacion_auto", req.get("status") or "",
+                          req.get("status") or "",
+                          "Auto-validado al proponer fecha (docs asociados; sin saldo no bloquea)",
+                          "interno")
+            except Exception:
+                pass
 
         # WIZARD (Daniel 2026-05-23): bloquear si NINGÚN doc asociado tiene
         # saldo disponible. Permitimos pasar si no hay docs todavía o si
