@@ -6225,8 +6225,10 @@ def logout():
 # ══════════════════════════════════════════════════════════════════════
 #  ESTÁNDAR ÚNICO DE CORREOS ILUS (2026-06-14, Daniel — diseño aprobado)
 #  Header negro + logo 180px + borde rojo. Footer negro con botón "Crear
-#  ticket de soporte" → ilusfitness.com/pages/soporte-tecnico y soporte
-#  soportetec@sphs.cl. SIN "LIKE U STRONG", redes ni correos personales.
+#  ticket de soporte" → ilusfitness.com/pages/soporte-tecnico como ÚNICO CTA
+#  (2026-06-14, Daniel: el ticket predomina; correo de soporte quitado del
+#  footer visible — el Reply-To sigue apuntando a soporte). SIN "LIKE U
+#  STRONG", redes ni correos personales.
 #  Renderiza por f-string (no depende de contexto Flask → sirve en cron).
 # ══════════════════════════════════════════════════════════════════════
 
@@ -6352,9 +6354,7 @@ def _ilus_email_master(ctx: dict) -> str:
 <tr><td align="center" style="border:1px solid #e30613;border-radius:5px">
 <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700">Crear ticket de soporte</a>
 </td></tr></table></td></tr>
-<tr><td align="center" style="padding-top:18px;font-size:12px;line-height:19px;color:#858c96">Soporte:
-<a href="mailto:{se}" style="color:#ffffff;text-decoration:none;font-weight:700">{se}</a></td></tr>
-<tr><td align="center" style="padding-top:17px;font-size:11px;line-height:18px;color:#646b74">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
+<tr><td align="center" style="padding-top:20px;font-size:11px;line-height:18px;color:#646b74">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
 </table></td></tr>
 </table></td></tr></table></body></html>"""
 
@@ -6377,8 +6377,8 @@ def _ilus_email_html(
     # 2026-06-14 (Daniel): DELEGA AL MAESTRO ILUS. Se mantiene la firma (9 args)
     # para no tocar los ~10 call-sites (password, accesos, OT pendiente, retiros
     # fallback, recordatorio 24h, prueba Resend); el render usa el nuevo estándar
-    # (header negro + logo 180px, footer con "Crear ticket de soporte" +
-    # soportetec@sphs.cl, SIN "LIKE U STRONG" ni correo viejo).
+    # (header negro + logo 180px, footer con botón "Crear ticket de soporte"
+    # como único CTA — sin correo visible, SIN "LIKE U STRONG" ni correo viejo).
     parts = []
     if saludo:
         parts.append(f'<p style="margin:0 0 16px;font-size:15px;line-height:24px;color:#24272c">'
@@ -30174,8 +30174,8 @@ def _comm_render_email_document(title, body_html, subtitle=""):
     # 2026-06-14 (Daniel): NUEVO ESTÁNDAR — delegamos al maestro ILUS. El
     # `body_html` (fragmento del módulo: retiros / mantenciones / interna) va al
     # cuerpo; el maestro aporta el header negro + logo 180px + borde rojo y el
-    # footer nuevo (botón "Crear ticket de soporte" + soportetec@sphs.cl, SIN
-    # "LIKE U STRONG", redes ni correos personales). Así todos esos correos
+    # footer nuevo (botón "Crear ticket de soporte" como único CTA, sin correo
+    # visible, SIN "LIKE U STRONG", redes ni correos personales). Así todos esos correos
     # adoptan el estándar sin tocar la capa de envío ni sus call-sites.
     return _ilus_email_master({
         "title":     title,
@@ -30439,7 +30439,8 @@ def _email_body_section(content):
 
 def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
     """Footer NUEVO estándar ILUS (2026-06-14, Daniel): botón "Crear ticket de
-    soporte" + soportetec@sphs.cl. SIN "LIKE U STRONG", redes ni correo viejo.
+    soporte" como único CTA (correo de soporte quitado del footer visible; el
+    Reply-To sigue yendo a soporte). SIN "LIKE U STRONG", redes ni correo viejo.
     (Lo usan los pocos correos que aún no pasan por _ilus_email_master: prueba
     SMTP y un aviso interno.)"""
     return f"""
@@ -30454,10 +30455,7 @@ def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
           <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700">Crear ticket de soporte</a>
         </td>
       </tr></table>
-      <div style="padding-top:18px;font-size:12px;line-height:19px;color:#858c96">Soporte:
-        <a href="mailto:{ILUS_SOPORTE_EMAIL}" style="color:#ffffff;text-decoration:none;font-weight:700">{ILUS_SOPORTE_EMAIL}</a>
-      </div>
-      <div style="padding-top:17px;font-size:11px;line-height:18px;color:#646b74">
+      <div style="padding-top:20px;font-size:11px;line-height:18px;color:#646b74">
         Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>
         &copy; 2026 ILUS Fitness &middot; Equipamiento profesional para alto rendimiento
       </div>
