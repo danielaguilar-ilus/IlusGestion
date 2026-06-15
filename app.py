@@ -7118,6 +7118,19 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     Branding: el From siempre es genérico (BRAND_CONFIG.from_name +
     from_email). El Reply-To apunta al buzón de soporte.
     """
+    # ── MODO PRUEBA (2026-06-14) ─────────────────────────────────────────
+    # Si ILUS_COMM_TEST_TO está seteada, TODOS los correos se redirigen a ese
+    # buzón (con el destinatario real visible en el asunto). Permite probar los
+    # flujos REALES de cada módulo sin alcanzar a clientes/técnicos. Sin la env
+    # var = comportamiento idéntico a hoy (cero impacto en producción). Punto
+    # único: toda ruta de envío (real y la prueba de /admin/comunicaciones-test)
+    # pasa por aquí.
+    _test_to = (os.environ.get("ILUS_COMM_TEST_TO") or "").strip()
+    if _test_to and to_addr and to_addr.strip().lower() != _test_to.lower():
+        _orig_to = to_addr
+        to_addr = _test_to
+        subject = f"[PRUEBA→{_orig_to}] {subject}"
+        print(f"[TEST_MODE] correo redirigido: real={_orig_to} -> {to_addr}", flush=True)
     marca = _get_marca()
     att_norm = _email_normalize_attachments(attachments)
     provider = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
@@ -17216,6 +17229,37 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         cuerpo = ("Confirmamos la entrega de tu pedido. Si tienes alguna observación "
                   "sobre el producto recibido, contáctanos.")
         cta_label = "Ver detalle de entrega"
+    # ── Plantilla EDITABLE (comm_templates / módulo 'transporte') ─────────
+    # Si Daniel editó la plantilla en /comunicaciones, su ASUNTO y MENSAJE
+    # mandan; si no existe / está apagada / vacía, cae al texto de arriba
+    # (REGLA #4.2: el correo nunca deja de salir). El armazón (status, título,
+    # botón de seguimiento, courier) se conserva siempre desde el maestro.
+    _message_html = str(_esc(cuerpo))   # default: texto fijo, escapado
+    _slug = {
+        'En preparación':         'programado',
+        'Entregado a transporte': 'en_ruta',
+        'En ruta':                'en_camino',
+        'Entregado':              'entregado',
+        'Entrega fallida':        'fallido',
+    }.get(estado, 'entregado')
+    try:
+        _vars = {
+            "cliente":    cliente,
+            "documento":  doc,
+            "id_pedido":  doc,
+            "track_url":  track_url,
+            "courier":    "FedEx",
+            "comentario": comentario or "",
+        }
+        _tpl = _render_comm_template(_slug, "email", _vars, modulo="transporte")
+        if _tpl:
+            _asu, _cue = _tpl
+            if (_asu or "").strip():
+                asunto = _brand_subject(_asu.strip())
+            if (_cue or "").strip():
+                _message_html = _cue   # HTML editable → NO escapar
+    except Exception as _e_tpl:
+        print(f"[tr_notify] plantilla editable no usada: {_e_tpl}", flush=True)
     _closing = (f"«{_esc(comentario)}»" if comentario else
                 "Conserva este correo como referencia. El enlace de seguimiento es personal "
                 "y contiene información asociada a tu pedido.")
@@ -17226,7 +17270,7 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         "title":             titulo,
         "subtitle":          "Actualización de despacho · ILUS Fitness",
         "customer_name":     cliente,
-        "message":           str(_esc(cuerpo)),
+        "message":           _message_html,
         "detail_rows_html":  _ilus_email_rows([("N° de documento", doc), ("Courier", "FedEx")]),
         "primary_cta_url":   track_url,
         "primary_cta_label": cta_label,
@@ -65946,6 +65990,136 @@ def _ensure_comm_template_plan_propuesto():
         return False
 
 
+def _ensure_comm_templates_columns():
+    """Garantiza que comm_templates.activo exista SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). Sin esta columna el toggle 'activo' del editor de
+    /comunicaciones no persiste y _render_comm_template no puede apagar
+    plantillas (afecta a TODOS los módulos, no solo retiros). Idempotente: 1
+    SELECT barato; solo hace ALTER la 1ª vez."""
+    try:
+        col = mysql_fetchone(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='comm_templates' "
+            "  AND COLUMN_NAME='activo' LIMIT 1"
+        )
+        if col:
+            return False  # ya existe
+        mysql_execute(
+            "ALTER TABLE comm_templates ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1"
+        )
+        print("[ensure_comm_tpl] columna comm_templates.activo agregada", flush=True)
+        return True
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo garantizar columna activo: {e}", flush=True)
+        return False
+
+
+def _transporte_tpl_seed():
+    """Source of truth de las plantillas EDITABLES de transporte (email).
+    {slug: (asunto, cuerpo_html)}. Las semillas reproducen EXACTAMENTE el texto
+    que hoy envía _tr_notificar_cliente (hardcodeado), para que CONECTAR el
+    editor NO cambie ningún correo mientras nadie edite. Placeholders:
+    {{cliente}}, {{documento}}, {{track_url}}, {{courier}}. El armazón visual
+    (status, título, botón de seguimiento) lo sigue aportando
+    _tr_notificar_cliente; aquí solo se controla el ASUNTO y el MENSAJE.
+    Slugs alineados al editor del front (TPL_ESTADOS_TRANSPORTE)."""
+    return {
+        'programado': (
+            "Tu pedido {{documento}} está en preparación",
+            "Recibimos tu pedido y ya lo estamos preparando para el despacho. "
+            "Te avisaremos apenas salga de nuestra bodega."),
+        'en_ruta': (
+            "Entregamos tu pedido {{documento}} al courier",
+            "Preparamos tu pedido y lo entregamos a {{courier}} para su despacho. "
+            "Desde aquí {{courier}} lo lleva hasta tu dirección; te seguimos "
+            "avisando los cambios."),
+        'en_camino': (
+            "Tu despacho {{documento}} va en camino",
+            "Buenas noticias: tu pedido salió a ruta y va camino a tu dirección."),
+        'entregado': (
+            "Tu despacho {{documento}} fue entregado",
+            "Confirmamos la entrega de tu pedido. Si tienes alguna observación "
+            "sobre el producto recibido, contáctanos."),
+        'fallido': (
+            "Problema con la entrega de tu despacho {{documento}}",
+            "FedEx reportó un problema al intentar entregar tu pedido. Estamos "
+            "pendientes para reprogramar la entrega."),
+    }
+
+
+def _ensure_comm_template_transporte():
+    """Siembra idempotente de las plantillas EDITABLES de transporte (email)
+    AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → respeta ediciones de Daniel
+    (UNIQUE modulo+estado+canal). Slugs alineados a _tr_notificar_cliente y al
+    front."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _transporte_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='transporte' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates "
+                "(modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('transporte',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de transporte sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar transporte: {e}", flush=True)
+        return 0
+
+
+def _general_tpl_seed():
+    """Source of truth de las plantillas EDITABLES del módulo GENERAL (email):
+    comunicados/avisos/recordatorios libres. Heredan el diseño maestro vía
+    _comm_render_email_document. Placeholders: {{cliente}}, {{titulo}},
+    {{mensaje}}."""
+    return {
+        'comunicado': (
+            "{{titulo}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">{{mensaje}}</p>"),
+        'aviso': (
+            "Aviso · {{titulo}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">{{mensaje}}</p>"),
+        'recordatorio': (
+            "Recordatorio · {{titulo}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Te recordamos: {{mensaje}}</p>"),
+    }
+
+
+def _ensure_comm_template_general():
+    """Siembra idempotente de las plantillas del módulo 'general' (email)
+    AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → no pisa ediciones de Daniel."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _general_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='general' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates "
+                "(modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('general',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de general sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar general: {e}", flush=True)
+        return 0
+
+
 if _SKIP_MIGS:
     print("[init_tables] ILUS_SKIP_MIGRATIONS=1 — saltando init_db / "
           "init_transporte_tables / init_comunicaciones_tables / "
@@ -66082,6 +66256,17 @@ try:
         _ensure_comm_template_plan_propuesto()
 except Exception as _ensure_pp_err:
     print(f"[ILUS][WARN] _ensure_comm_template_plan_propuesto: {_ensure_pp_err}", flush=True)
+
+# Editor de plantillas por módulo (2026-06-14) — SIEMPRE, incluso skip-migrations:
+# garantizar la columna 'activo' (toggle del editor) y sembrar transporte +
+# general para que /comunicaciones controle de verdad esos correos. Idempotente.
+try:
+    with app.app_context():
+        _ensure_comm_templates_columns()
+        _ensure_comm_template_transporte()
+        _ensure_comm_template_general()
+except Exception as _ensure_ed_err:
+    print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
 
 
 def _reparar_ruts_clientes_corruptos():

@@ -1538,7 +1538,14 @@ const TPL_ESTADOS_COMUNICACION_INTERNA = [
     color:'#16a34a', desc:'Confirmación al usuario de que su contraseña fue actualizada' },
 ];
 
-const TPL_ESTADOS_GENERAL = [];
+const TPL_ESTADOS_GENERAL = [
+  { key:'comunicado',   label:'Comunicado',    icon:'bi-megaphone',   grupo:'general',
+    color:'#dc2626', desc:'Comunicado general a clientes (texto libre con el diseño ILUS)' },
+  { key:'aviso',        label:'Aviso',         icon:'bi-info-circle', grupo:'general',
+    color:'#f59e0b', desc:'Aviso puntual (mantención de sistema, cambios, novedades)' },
+  { key:'recordatorio', label:'Recordatorio',  icon:'bi-bell',        grupo:'general',
+    color:'#3b82f6', desc:'Recordatorio general (texto libre con el diseño ILUS)' },
+];
 
 // Devuelve los estados según el módulo seleccionado en la UI
 function getCurrentModulo(){
@@ -1619,6 +1626,11 @@ const TPL_VARS = {
     { v:'{{fecha_hora}}',       label:'Fecha y hora' },
     { v:'{{ip_acceso}}',        label:'IP de acceso' },
     { v:'{{creado_por}}',       label:'Quien creó la cuenta' },
+  ],
+  general: [
+    { v:'{{cliente}}',  label:'Nombre / razón social' },
+    { v:'{{titulo}}',   label:'Título del comunicado' },
+    { v:'{{mensaje}}',  label:'Mensaje (texto libre)' },
   ],
 };
 
@@ -2177,6 +2189,7 @@ const GRUPO_LABELS = {
   retiro:     { label:'Retiros',              icon:'bi-box-arrow-up' },
   mantencion: { label:'Mantenciones',         icon:'bi-wrench-adjustable' },
   interna:    { label:'Comunicación interna', icon:'bi-people' },
+  general:    { label:'General',              icon:'bi-megaphone' },
 };
 
 function renderTplEstados() {
