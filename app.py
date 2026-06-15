@@ -7088,6 +7088,27 @@ def _brand_wa_prefix(asunto: str) -> str:
     return f"🔧 {prefijo}\n\n"
 
 
+def _apply_test_redirect(to_addr, subject):
+    """MODO PRUEBA (2026-06-14): si ILUS_COMM_TEST_TO está seteada, redirige el
+    correo a ese buzón (mostrando el destinatario real en el asunto) y devuelve
+    (to_addr, subject) ya ajustados. Sin la env var = passthrough exacto (cero
+    impacto en producción).
+
+    Se aplica en TODAS las rutas de envío de email para que durante la fase de
+    prueba ningún correo alcance a un destinatario real:
+      - `_send_ilus_email_real` (cron / OT / recovery / retiros / transporte)
+      - `_send_email_dinamico`  (invitación a técnico externo + CC/BCC globales)
+    Si se agrega una ruta de envío nueva, debe llamar a este helper.
+    """
+    _test_to = (os.environ.get("ILUS_COMM_TEST_TO") or "").strip()
+    if _test_to and to_addr and str(to_addr).strip().lower() != _test_to.lower():
+        _orig_to = to_addr
+        to_addr = _test_to
+        subject = f"[PRUEBA→{_orig_to}] {subject}"
+        print(f"[TEST_MODE] correo redirigido: real={_orig_to} -> {to_addr}", flush=True)
+    return to_addr, subject
+
+
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
                           attachments=None) -> bool:
     """
@@ -7119,18 +7140,10 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     from_email). El Reply-To apunta al buzón de soporte.
     """
     # ── MODO PRUEBA (2026-06-14) ─────────────────────────────────────────
-    # Si ILUS_COMM_TEST_TO está seteada, TODOS los correos se redirigen a ese
-    # buzón (con el destinatario real visible en el asunto). Permite probar los
-    # flujos REALES de cada módulo sin alcanzar a clientes/técnicos. Sin la env
-    # var = comportamiento idéntico a hoy (cero impacto en producción). Punto
-    # único: toda ruta de envío (real y la prueba de /admin/comunicaciones-test)
-    # pasa por aquí.
-    _test_to = (os.environ.get("ILUS_COMM_TEST_TO") or "").strip()
-    if _test_to and to_addr and to_addr.strip().lower() != _test_to.lower():
-        _orig_to = to_addr
-        to_addr = _test_to
-        subject = f"[PRUEBA→{_orig_to}] {subject}"
-        print(f"[TEST_MODE] correo redirigido: real={_orig_to} -> {to_addr}", flush=True)
+    # Redirige a ILUS_COMM_TEST_TO si está seteada (helper compartido). Esta es
+    # la ruta principal de envío (cron/OT/recovery/retiros/transporte); la otra
+    # ruta, `_send_email_dinamico` (técnico externo), también aplica el helper.
+    to_addr, subject = _apply_test_redirect(to_addr, subject)
     marca = _get_marca()
     att_norm = _email_normalize_attachments(attachments)
     provider = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
@@ -29971,6 +29984,11 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
     espera el default. 10s es suficiente para LAN razonable.
     """
     import ssl as _ssl
+    # MODO PRUEBA (2026-06-14): redirige al buzón de prueba y, si está activo,
+    # suprime CC/BCC globales para no copiar a ningún buzón real durante la
+    # prueba (cubre la invitación a técnico externo de app.py).
+    _test_to = (os.environ.get("ILUS_COMM_TEST_TO") or "").strip()
+    to, subject = _apply_test_redirect(to, subject)
     cfg = cfg or _get_smtp_cfg()
     cc = _get_client_cfg()
     msg = MIMEMultipart("alternative")
@@ -29982,6 +30000,8 @@ def _send_email_dinamico(to, subject, html_body, cfg=None):
         msg["Reply-To"] = cc["reply_to"]
     cc_addrs = [a.strip() for a in (cc.get("email_cc") or "").replace(";", ",").split(",") if a.strip()]
     bcc_addrs = [a.strip() for a in (cc.get("email_bcc") or "").replace(";", ",").split(",") if a.strip()]
+    if _test_to:
+        cc_addrs, bcc_addrs = [], []  # en modo prueba no copiamos a nadie real
     if cc_addrs:
         msg["Cc"] = ", ".join(cc_addrs)
     recipients.extend(cc_addrs + bcc_addrs)
@@ -30218,6 +30238,15 @@ def _render_comm_template(estado, canal, variables, *, modulo="comunicacion_inte
         tok, tok2 = "{{" + str(k) + "}}", "{{ " + str(k) + " }}"
         asunto = asunto.replace(tok, sv).replace(tok2, sv)
         cuerpo = cuerpo.replace(tok, sv).replace(tok2, sv)
+    # Barrido de seguridad (2026-06-14): elimina cualquier {{token}} que la
+    # plantilla declare pero el caller NO haya provisto. Sin esto el cliente
+    # recibiría tokens literales en el correo. Cubre: filas legacy de transporte
+    # ({{nombre_cliente}}/{{numero_seguimiento}}/{{direccion_entrega}}), estados
+    # de mantención con {{horario}}/{{tecnico}}/{{direccion}}/{{maquina}}/etc.
+    # Solo limpia {{ identificador }} simple — nunca toca HTML ni el diseño.
+    _stray_tok = re.compile(r"\{\{\s*\w+\s*\}\}")
+    asunto = _stray_tok.sub("", asunto)
+    cuerpo = _stray_tok.sub("", cuerpo)
     return (asunto, cuerpo)
 
 
@@ -30732,7 +30761,10 @@ def _comm_resend_test_inner():
         info_lineas = [("", "Enviado por", current_username() or "ILUS"),
                        ("", "Fecha", _now_chile_str("%d/%m/%Y %H:%M"))],
     )
-    ok = _send_via_resend(to, "✅ Prueba Resend API — ILUS", html)
+    # MODO PRUEBA: si ILUS_COMM_TEST_TO está seteada y el destinatario tecleado
+    # difiere, redirige también esta prueba diagnóstica (no alcanza a nadie real).
+    to, _rt_subject = _apply_test_redirect(to, "✅ Prueba Resend API — ILUS")
+    ok = _send_via_resend(to, _rt_subject, html)
     err = getattr(g, "_last_resend_error", None) or {}
     if not isinstance(err, dict):
         err = {"raw_body": str(err), "message": str(err), "name": "", "http_code": 0, "status_code": 0}
@@ -54896,25 +54928,41 @@ def _mant_get_cliente_emails(cid):
 
 
 def _mant_get_tecnico_emails(vid):
-    """Emails de los técnicos asignados a una visita (mant_tecnicos.email vía
-    mant_visita_tecnicos). Daniel (2026-06-14): los correos de mantención van al
-    cliente Y a los técnicos asignados. Deduplicado, minúsculas. [] si no hay o
-    si la columna/tabla no existe (degradación segura, nunca rompe el envío)."""
+    """Emails de los técnicos asignados a una visita. Daniel (2026-06-14): los
+    correos de mantención van al cliente Y a los técnicos asignados.
+
+    Cubre las DOS vías de asignación (algunas OT usan una u otra):
+      - mant_visita_tecnicos -> mant_tecnicos.email  (multi-técnico, catálogo legacy)
+      - mant_visitas.tecnico_user_id -> app_users.username  (técnico interno moderno;
+        en app_users el `username` ES el email de login)
+    Cada vía va en su propio try/except: si una falla, la otra sigue aportando
+    (degradación segura, nunca rompe el envío). Deduplicado, minúsculas. [] si nada."""
     out, vistos = [], set()
-    try:
-        rows = mysql_fetchall(
-            "SELECT t.email FROM mant_visita_tecnicos vt "
-            "JOIN mant_tecnicos t ON t.id=vt.tecnico_id "
-            "WHERE vt.visita_id=%s", (int(vid),)
-        ) or []
-    except Exception as _e:
-        print(f"[mant-tec-emails] {_e}", flush=True)
-        rows = []
-    for r in rows:
-        e = (r.get("email") or "").strip().lower()
+    def _add(e):
+        e = (e or "").strip().lower()
         if e and "@" in e and 6 <= len(e) <= 180 and e not in vistos:
             vistos.add(e)
             out.append(e)
+    # Vía 1 — multi-técnico (catálogo mant_tecnicos)
+    try:
+        for r in (mysql_fetchall(
+            "SELECT t.email FROM mant_visita_tecnicos vt "
+            "JOIN mant_tecnicos t ON t.id=vt.tecnico_id "
+            "WHERE vt.visita_id=%s", (int(vid),)
+        ) or []):
+            _add(r.get("email"))
+    except Exception as _e:
+        print(f"[mant-tec-emails:legacy] {_e}", flush=True)
+    # Vía 2 — técnico interno moderno (app_users.username = email)
+    try:
+        for r in (mysql_fetchall(
+            "SELECT u.username AS email FROM mant_visitas v "
+            "JOIN app_users u ON u.id=v.tecnico_user_id "
+            "WHERE v.id=%s AND v.tecnico_user_id IS NOT NULL", (int(vid),)
+        ) or []):
+            _add(r.get("email"))
+    except Exception as _e:
+        print(f"[mant-tec-emails:user] {_e}", flush=True)
     return out
 
 

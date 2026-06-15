@@ -2375,6 +2375,14 @@ async function tplGuardar() {
 async function tplRestaurar() {
   if (!_tplEstado) return;
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  const def = (TPL_DEFAULTS[_tplEstado] || {})[_tplCanal] || {asunto:'', cuerpo:''};
+  // Guard anti-pérdida (2026-06-14): módulos sin default cliente-side (ej:
+  // General) no tienen una "versión original" cargada aquí. Restaurar mandaría
+  // un cuerpo vacío y borraría el contenido sin recuperación. Mejor abortar.
+  if (!String(def.asunto || '').trim() && !String(def.cuerpo || '').trim()) {
+    ilusToast('Esta plantilla no tiene una versión original para restaurar desde aquí. Edita el texto y guarda tus cambios.', { type: 'warning' });
+    return;
+  }
   const ok = await ilusConfirm({
     title: 'Restaurar plantilla',
     message: `¿Restaurar la plantilla "${meta.label}" — ${_tplCanal} a su versión original?`,
@@ -2382,7 +2390,6 @@ async function tplRestaurar() {
     okLabel: 'Sí, restaurar', danger: true,
   });
   if (!ok) return;
-  const def = (TPL_DEFAULTS[_tplEstado] || {})[_tplCanal] || {asunto:'', cuerpo:''};
   const r   = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({...def, modulo: getCurrentModulo()})
