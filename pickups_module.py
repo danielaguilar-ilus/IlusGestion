@@ -1195,6 +1195,12 @@ def register_pickup_routes(app, ctx):
         for k, v in variables.items():
             text = text.replace("{{" + k + "}}", str(v))
             text = text.replace("{{ " + k + " }}", str(v))
+        # Barrido de seguridad (2026-06-14): si desde el editor se introduce un
+        # {{token}} nuevo o con tipeo que no está en `variables`, NO lo dejamos
+        # llegar literal al cliente. Solo limpia {{ identificador }} simple.
+        # Mismo patrón que el barrido central de _render_comm_template (app.py).
+        import re as _re
+        text = _re.sub(r"\{\{\s*\w+\s*\}\}", "", text)
         return text
 
 

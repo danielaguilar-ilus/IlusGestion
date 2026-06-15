@@ -19911,6 +19911,10 @@ def _mantenciones_cron_run_once(slot_str=""):
                 for k, v in vars_.items():
                     asunto = asunto.replace("{{" + k + "}}", str(v)).replace("{{ " + k + " }}", str(v))
                     cuerpo = cuerpo.replace("{{" + k + "}}", str(v)).replace("{{ " + k + " }}", str(v))
+                # Barrido de tokens no resueltos (2026-06-14): no enviar {{...}}
+                # literal si el editor introduce un token fuera de vars_.
+                asunto = re.sub(r"\{\{\s*\w+\s*\}\}", "", asunto)
+                cuerpo = re.sub(r"\{\{\s*\w+\s*\}\}", "", cuerpo)
                 # Envoltorio HTML ILUS
                 html = _ilus_email_html(
                     titulo=asunto,
