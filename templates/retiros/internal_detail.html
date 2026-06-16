@@ -5305,10 +5305,22 @@ function _rbaPrewarmDocs(docs){
 function rbaRenderCliDocs(docs, modo, fetchMs){
   const cont = document.getElementById('rbaCliResult');
   const modoTxt = { rut: 'RUT', numero: 'N° doc', nombre: 'Nombre' }[modo] || modo;
+  const _conSaldo = docs.filter(d => d.tiene_saldo && !d.ya_tiene_retiro).length;
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;font-size:.82rem">
     <div><strong>${docs.length}</strong> documento${docs.length===1?'':'s'} por <strong>${_esc(modoTxt)}</strong></div>
     <span style="color:#9ca3af;font-size:.72rem">${fetchMs} ms</span>
   </div>`;
+  // Daniel 2026-06-16: un click para asociar TODAS las facturas con saldo del
+  // cliente al retiro (omite las que ya están en otro retiro).
+  if (_conSaldo > 0){
+    html += `<div style="margin-bottom:10px">
+      <button type="button" id="rbaAsocTodasBtn" class="btn btn-sm fw-bold"
+        style="background:#16a34a;color:#fff;border:none;border-radius:10px;padding:8px 14px"
+        onclick="rbaAsociarTodasConSaldo()">
+        <i class="bi bi-lightning-charge-fill me-1"></i>Asociar las ${_conSaldo} factura${_conSaldo===1?'':'s'} con saldo a este retiro
+      </button>
+    </div>`;
+  }
   html += '<div class="rba-results">';
   docs.forEach((doc, i) => {
     const clsArr = [];
@@ -5506,6 +5518,45 @@ async function rbaAsociarDocCompleto(idx){
   } catch(e){
     ilusToast('Error: ' + e.message, { type:'error' });
   }
+}
+
+// Daniel 2026-06-16: asocia de un click TODAS las facturas con saldo del cliente
+// al retiro. Omite las que ya están en otro retiro (409). Muestra progreso.
+async function rbaAsociarTodasConSaldo(){
+  const docs = (_RBA.loaded.cliQuery && _RBA.loaded.cliQuery.docs) || [];
+  const objetivo = docs.filter(d => d.tiene_saldo && !d.ya_tiene_retiro);
+  if (!objetivo.length){ ilusToast('No hay facturas con saldo para asociar.', { type:'info' }); return; }
+  const ok = await ilusConfirm({
+    title: 'Asociar facturas con saldo',
+    message: `¿Asociar las ${objetivo.length} factura(s) con saldo de este cliente a este retiro?`,
+    sub: 'Las que ya están en otro retiro se omiten automáticamente.',
+    okLabel: 'Sí, asociar todas', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const btn = document.getElementById('rbaAsocTodasBtn');
+  const _orig = btn ? btn.innerHTML : '';
+  if (btn) btn.disabled = true;
+  let okN = 0, dupN = 0, errN = 0, i = 0;
+  for (const doc of objetivo){
+    i++;
+    if (btn) btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Asociando ${i}/${objetivo.length}…`;
+    try {
+      const d = await _fetchJsonSafe(`/retiros/${_RID}/docs/agregar`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ document_type: doc.tido_display, document_number: doc.nudo_display })
+      });
+      if (d._http_status === 409) dupN++;
+      else if (d.ok) okN++;
+      else errN++;
+    } catch(_){ errN++; }
+  }
+  await refrescarDocsAsociados(_RID);
+  cargarSaldoCliente(_RID);
+  if (btn){ btn.disabled = false; btn.innerHTML = _orig; }
+  let msg = `✓ ${okN} factura(s) asociada(s)`;
+  if (dupN) msg += ` · ${dupN} ya estaban`;
+  if (errN) msg += ` · ${errN} con error`;
+  ilusToast(msg, { type: errN ? 'warning' : 'success' });
 }
 
 // ──────────────────────────────────────────────────────────────

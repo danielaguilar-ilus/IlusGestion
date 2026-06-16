@@ -2981,7 +2981,7 @@ def register_pickup_routes(app, ctx):
         # Sanitizar: eliminar campos internos antes de pasar al template público.
         req_safe = dict(_strip_internal(req))
         req_safe["m3_calculado"] = _m3
-        return render_template("retiros/public_tracking.html",
+        _tracking_html = render_template("retiros/public_tracking.html",
                                req=req_safe, packages=packages, proposals=proposals,
                                logs=logs, attachments=attachments,
                                docs_asociados=docs_asociados,
@@ -2992,6 +2992,16 @@ def register_pickup_routes(app, ctx):
                                journey=PICKUP_JOURNEY,
                                journey_idx=pickup_journey_idx(req.get("status")),
                                created=request.args.get("created"))
+        # Daniel 2026-06-15: NO cachear la página de seguimiento — el cliente
+        # debe ver SIEMPRE el estado actual (si la propuesta cambia, al recargar
+        # ve el hito nuevo). Sin esto el navegador servía HTML viejo (stepper
+        # desactualizado). El polling de /status (cada 30s) recarga si cambia.
+        from flask import make_response as _make_response
+        _resp = _make_response(_tracking_html)
+        _resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        _resp.headers["Pragma"] = "no-cache"
+        _resp.headers["Expires"] = "0"
+        return _resp
 
     # ══════════════════════════════════════════════════════════════════════
     #  XLSX RESUMEN PÚBLICO — descarga del cliente desde el tracking

@@ -113,22 +113,52 @@
               <input name="total_volume_m3" type="number" min="0" step="0.001" value="0" class="form-control form-control-sm">
             </div>
 
-            {# Agenda #}
+            {# Agenda — Daniel 2026-06-16: MISMO slot-picker del formulario público
+               / Paso 4 (window.IlusRetirosCalendar). Bloque único, cupos y medio
+               cupo reales del módulo (endpoint /retiros/api/disponibilidad-publica).
+               Reemplaza los inputs Desde/Hasta nativos. #}
             <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-calendar-check me-1"></i>Agenda (entrega)</div></div>
-            <div class="col-12 col-md-4">
-              <label class="form-label small fw-semibold">Fecha *</label>
-              <input name="date" id="nri_date" type="date" class="form-control form-control-sm" required>
-              {# Hint informativo de cupos del día (se llena por JS vía /retiros/api/disponibilidad-publica) #}
+            <div class="col-12 col-md-5">
+              <label class="form-label small fw-semibold">Día del retiro *</label>
+              <input id="nri_date" type="date" class="form-control form-control-sm" required style="font-weight:700;border-radius:10px">
+              {# Hint informativo de cupos del día (se llena por JS) #}
               <div id="nriDispoHint" class="small mt-1" style="display:none"></div>
             </div>
-            <div class="col-6 col-md-4">
-              <label class="form-label small fw-semibold">Desde *</label>
-              <input name="time_from" type="time" step="1800" class="form-control form-control-sm" value="09:00" required>
+            <div class="col-12">
+              <div class="ilus-cal-wrap mt-1">
+                <div class="ilus-cal-head">
+                  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+                    <strong style="font-size:.9rem">Bloque horario</strong>
+                    <span style="display:inline-flex;align-items:center;gap:4px;background:#16a34a;color:#fff;font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:50px" title="Cada retiro ocupa un bloque de 30 minutos"><i class="bi bi-clock-fill"></i>1 bloque (30 min)</span>
+                  </div>
+                  <div class="legend" style="font-size:.76rem">
+                    <span><span class="dot" style="background:#fff;border:1.5px solid #e5e7eb"></span>Libre</span>
+                    <span><span class="dot" style="background:var(--ilus-red,#dc2626)"></span>Seleccionado</span>
+                    <span><span class="dot" style="background:#fff7ed;border:1.5px solid #fdba74"></span>1/2</span>
+                    <span><span class="dot" style="background:#fee2e2;border:1.5px solid #fca5a5"></span>Lleno</span>
+                  </div>
+                </div>
+                <div class="text-muted small mb-2" style="font-size:.74rem;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                  <i class="bi bi-lightbulb-fill" style="color:#f59e0b"></i>
+                  <span><strong>Tip:</strong> toca la media hora a la que el cliente llegará. Si un bloque está a ½ cupo, verás quién tiene la otra mitad.</span>
+                </div>
+                <div id="nriGrid">
+                  <div class="ilus-cal-skel" aria-hidden="true">
+                    {% for _ in range(10) %}<div></div>{% endfor %}
+                  </div>
+                </div>
+                <div class="ilus-cal-quick-actions" id="nriQuick" style="display:none">
+                  <span class="ilus-cal-quick-chip clear" data-ilus-cal-quick="0" data-ilus-cal-clear="1">Limpiar selección</span>
+                </div>
+                <div class="ilus-cal-summary mt-2" id="nriSummary">
+                  <span class="ilus-cal-sum-empty"><i class="bi bi-arrow-up me-1"></i>Selecciona un bloque arriba</span>
+                </div>
+              </div>
             </div>
-            <div class="col-6 col-md-4">
-              <label class="form-label small fw-semibold">Hasta *</label>
-              <input name="time_to" type="time" step="1800" class="form-control form-control-sm" value="09:30" required>
-            </div>
+            {# hidden inputs que el widget sincroniza — MISMOS names que espera pickup_create_internal #}
+            <input type="hidden" name="date" id="nriHidDate">
+            <input type="hidden" name="time_from" id="nriHidTf">
+            <input type="hidden" name="time_to" id="nriHidTt">
 
             {# Canal de aceptación (obligatorio para confirmar directo) #}
             <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-2"><i class="bi bi-check2-circle me-1"></i>El cliente ya aceptó por</div></div>
@@ -158,6 +188,8 @@
   </div>
 </div>
 
+{# Daniel 2026-06-16: widget de calendario (mismo del formulario público / Paso 4) #}
+<script defer src="{{ url_for('static', filename='retiros_calendar.js') }}?v=20260616-internal"></script>
 <script>
 // ── Nuevo retiro interno / backoffice (Daniel 2026-05-29) ──
 (function(){
@@ -221,6 +253,41 @@
     } catch(_){}
   });
 
+  // ── Slot-picker (Daniel 2026-06-16): mismo widget del formulario público.
+  //    Se monta cuando el modal YA es visible (shown), para que el grid mida
+  //    bien. Bloque único, operador (puede HOY + cruzar colación), cupos reales.
+  modalEl.addEventListener('shown.bs.modal', function(){
+    try {
+      if (!window.IlusRetirosCalendar) return;  // retiros_calendar.js carga con defer
+      const inp = document.getElementById('nri_date');
+      if (!window._nriCalInstance){
+        window._nriCalInstance = window.IlusRetirosCalendar.mount({
+          container:      '#nriGrid',
+          dateInput:      '#nri_date',
+          summaryEl:      '#nriSummary',
+          quickActionsEl: '#nriQuick',
+          hiddenDate:     '#nriHidDate',
+          hiddenTimeFrom: '#nriHidTf',
+          hiddenTimeTo:   '#nriHidTt',
+          includeOwners:    true,   // operador: ve 1/2 y quién comparte cupo
+          allowToday:       true,   // backoffice puede agendar HOY
+          allowCrossLunch:  true,   // puede cruzar colación (aviso amarillo)
+          enableDragSelect: false,  // bloque único
+          enableMultiBlock: false,  // bloque único (sin rangos)
+          currentRequestId: null,   // retiro NUEVO: aún sin id
+          requestedRange:   null,
+          suggestedDurationMin: 30,
+        });
+        // Pintar el día actual ya con cupos.
+        if (window._nriCalInstance && window._nriCalInstance.setDate && inp && inp.value){
+          window._nriCalInstance.setDate(inp.value);
+        }
+      } else if (window._nriCalInstance.reload){
+        window._nriCalInstance.reload();  // refrescar cupos al reabrir
+      }
+    } catch(e){ console.warn('nri calendar mount', e); }
+  });
+
   // ── Auto-apertura por query params (responsive_retiros 2026-06-09) ──
   // ?new=1 abre el modal al cargar; date/from/to (YYYY-MM-DD / HH:MM)
   // prellenan fecha y horario. Bootstrap carga con defer → esperar DOM ready.
@@ -228,12 +295,10 @@
     const qs = new URLSearchParams(window.location.search);
     if (qs.get('new') === '1'){
       const form = document.getElementById('formNuevoRetiroInterno');
-      const qd = qs.get('date') || '', qf = qs.get('from') || '', qt = qs.get('to') || '';
+      // Daniel 2026-06-16: solo prellenamos el DÍA; la hora la elige el operador
+      // tocando un bloque del calendario (el widget se monta al abrir el modal).
+      const qd = qs.get('date') || '';
       if (/^\d{4}-\d{2}-\d{2}$/.test(qd) && nriDateInp) nriDateInp.value = qd;
-      if (form){
-        if (/^\d{2}:\d{2}$/.test(qf)){ const i = form.querySelector('input[name="time_from"]'); if (i) i.value = qf; }
-        if (/^\d{2}:\d{2}$/.test(qt)){ const i = form.querySelector('input[name="time_to"]');   if (i) i.value = qt; }
-      }
       const abrir = function(){
         try { window.bootstrap && bootstrap.Modal.getOrCreateInstance(modalEl).show(); } catch(_){}
       };
@@ -245,6 +310,15 @@
   btn?.addEventListener('click', async function(){
     const form = document.getElementById('formNuevoRetiroInterno');
     if (!form.reportValidity()) return;   // valida required nativos
+    // Daniel 2026-06-16: exigir bloque horario seleccionado en el calendario
+    // (el widget en bloque único NO auto-selecciona; el operador toca uno).
+    const _hd = document.getElementById('nriHidDate'),
+          _hf = document.getElementById('nriHidTf'),
+          _ht = document.getElementById('nriHidTt');
+    if (!_hd || !_hd.value || !_hf || !_hf.value || !_ht || !_ht.value){
+      await ilusAlert({ title:'Falta el bloque horario', message:'Toca la media hora del retiro en el calendario (sección Agenda).', type:'warning' });
+      return;
+    }
     btn.disabled = true;
     const _orig = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
