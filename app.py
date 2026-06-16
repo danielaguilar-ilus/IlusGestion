@@ -3757,10 +3757,20 @@ def delete_photo_file(filename):
 
 
 def _photo_src(filename, subfolder="uploads"):
-    """URL de la foto: directa si es Cloudinary, estática local si no."""
+    """URL de la foto según cómo esté guardada:
+      - Cloudinary u otra URL absoluta (http…)          → tal cual.
+      - GCS app-proxy (/f/<key>) o cualquier ruta que   → tal cual.
+        ya empiece con "/" (ej. /static/…)
+      - Solo un nombre de archivo (legacy disco local)  → /static/<subfolder>/<archivo>.
+
+    FIX 2026-06-15 (Daniel — fotos de producto rotas): con GCS activo (default
+    en Cloud Run) las fotos nuevas se guardan como '/f/<key>'. Antes esta función
+    solo reconocía 'http…' y a una '/f/…' le anteponía '/static/uploads/' →
+    '/static/uploads//f/<key>' → 404. Ahora cualquier ruta que ya empiece con
+    '/' se devuelve intacta y la sirve la ruta /f/<key> (lee de GCS)."""
     if not filename:
         return ""
-    if filename.startswith("http"):
+    if filename.startswith("http") or filename.startswith("/"):
         return filename
     return url_for("static", filename=f"{subfolder}/{filename}")
 
