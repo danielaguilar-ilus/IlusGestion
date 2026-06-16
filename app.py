@@ -38066,6 +38066,20 @@ def _es_tel_ilus(tel):
     return bool(dig) and dig in _ILUS_TEL_DIGITOS
 
 
+def _marcador_ilus_cerca(texto, ini, fin, radio=90):
+    """True si la ventana alrededor de [ini,fin] contiene marcadores de ILUS:
+    nombre legal, dirección conocida o un ROL de prestador (arrendador/vendedor/
+    comodante). Permite descartar un correo o RUT que es de ILUS aunque su
+    dominio/cuerpo NO esté en la lista (p.ej. el gmail del representante de ILUS,
+    o un RUT de holding). Los roles del cliente (arrendatario/comodatario/
+    comprador/mandante) NO cuentan, así no se descarta al cliente."""
+    import re as _re
+    ventana = (texto or "")[max(0, ini - radio):fin + radio]
+    if _es_nombre_ilus(ventana) or _es_direccion_ilus(ventana):
+        return True
+    return bool(_re.search(r"arrendador|prestador|comodante|vendedor", ventana, _re.I))
+
+
 def _parece_email(s):
     import re as _re
     return bool(_re.search(r"[\w.\-]+@[\w\-]+\.[\w]{2,}", s or ""))
@@ -38134,7 +38148,12 @@ def _contrato_partes(t):
                       r"acuerdan|acordando|vienen en celebrar|han convenido|"
                       r"se ha convenido|PRIMERO\s*[:.])", cuerpo, _re.I)
     pre = cuerpo[:mfin.start()] if mfin else cuerpo[:2000]
-    msplit = _re.search(r"\bpor\s+la\s+otra\b", pre, _re.I)
+    # Conector que separa a la 2ª parte (el cliente). Las redacciones reales
+    # varían: "por la otra", "de la otra parte", "en segundo lugar", etc.
+    msplit = _re.search(r"\bpor\s+la\s+otra\b|\bde\s+la\s+otra\s+parte\b|"
+                        r"\bde\s+otra\s+parte\b|\bpor\s+la\s+segunda\b|"
+                        r"\ben\s+segundo\s+lugar\b|\bla\s+segunda\s+parte\b|"
+                        r"\bla\s+contraparte\b|\by\s+por\s+la\s+otra\b", pre, _re.I)
     if not msplit:
         return t, "", "plano"
     bloque_a = pre[:msplit.start()]
@@ -38192,28 +38211,47 @@ def _contrato_extraer_determinista(texto):
         avisos.append("Algunos caracteres especiales (ñ, tildes) no se leyeron "
                       "bien en este PDF; verifica comuna/dirección o sube el .docx original.")
 
-    def _ruts_en(s):
-        return [r.replace(" ", "") for r in
-                re.findall(r'\b\d{1,2}[.\s]?\d{3}[.\s]?\d{3}\s*-\s*[\dkK]\b', s or "")]
+    _RUT_RE   = r'\b\d{1,2}[.\s]?\d{3}[.\s]?\d{3}\s*-\s*[\dkK]\b'
+    _EMAIL_RE = r'[\w.\-]{1,64}@[\w\-]{1,63}\.[\w.\-]{2,24}'   # cuantif. acotado (anti-ReDoS)
 
-    # ── RUTs: todos menos el de ILUS; los del bloque del cliente van primero.
-    #    El endpoint elige el que el ERP reconozca como cliente.
-    ruts_cli = [r for r in _ruts_en(base) if not _es_rut_ilus(r)]
-    ruts_all = [r for r in _ruts_en(t)    if not _es_rut_ilus(r)]
-    ruts = list(dict.fromkeys(ruts_cli + ruts_all))   # dedup, cliente primero
+    # ── RUTs: excluye el de ILUS; los adyacentes a marcadores de ILUS (RUT de
+    #    holding/representante) van al final. El endpoint cruza con el ERP para
+    #    confirmar cuál es el cliente.
+    def _ruts_ordenados(s):
+        cerca, lejos = [], []
+        for mm in re.finditer(_RUT_RE, s or ""):
+            r = mm.group(0).replace(" ", "")
+            if _es_rut_ilus(r):
+                continue
+            (cerca if _marcador_ilus_cerca(s, mm.start(), mm.end()) else lejos).append(r)
+        return lejos + cerca
+    ruts = list(dict.fromkeys(_ruts_ordenados(base) + _ruts_ordenados(t)))
     if ruts:
         cli["rut"] = ruts[0]
-    elif not _ruts_en(t):
+    elif not re.search(_RUT_RE, t):
         avisos.append("No se detectó RUT en dígitos (puede venir escrito en palabras).")
+    if re.search(r'\b(ambos|los|las)\s+arrendatari|\bcoarrendatari', low):
+        avisos.append("El contrato menciona más de un cliente (arrendatarios); "
+                      "se precargó el primero — revisa el resto.")
 
-    # ── Correo del CLIENTE (excluye dominios de ILUS, p.ej. @sphs.cl) ──
-    em_cli   = [e.rstrip(".") for e in re.findall(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', base) if not _es_email_ilus(e)]
-    em_otros = [e.rstrip(".") for e in re.findall(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', t)    if not _es_email_ilus(e)]
-    email_final = (em_cli or em_otros or [None])[0]
+    # ── Correo del CLIENTE: excluye dominios de ILUS Y correos pegados a un
+    #    marcador de ILUS (p.ej. el correo externo del representante del
+    #    arrendador). Así el bug "correo de ILUS como cliente" no vuelve por la
+    #    puerta de un dominio fuera de la lista.
+    def _emails_cliente(s):
+        out = []
+        for mm in re.finditer(_EMAIL_RE, s or ""):
+            e = mm.group(0).rstrip(".")
+            if _es_email_ilus(e) or _marcador_ilus_cerca(s, mm.start(), mm.end()):
+                continue
+            out.append(e)
+        return out
+    email_final = (_emails_cliente(base) or _emails_cliente(t) or [None])[0]
     if email_final:
         cli["contacto_email"] = email_final
-    elif re.search(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', t):
-        avisos.append("El único correo del documento es de ILUS; ingresa el correo del cliente.")
+    elif re.search(_EMAIL_RE, t):
+        avisos.append("El correo del documento parece de ILUS (no del cliente); "
+                      "ingresa el correo del cliente.")
 
     # ── Teléfono del CLIENTE (excluye el de ILUS) ──
     for s in (base, t):
@@ -38246,8 +38284,20 @@ def _contrato_extraer_determinista(texto):
     if rs:
         cli["razon_social"] = re.sub(r'\s+', ' ', rs).strip(' .,:-')
 
-    # ── Representante / contacto del cliente ──
-    m = re.search(r'representad[oa]s?\s+por\s+(?:el\s+|la\s+)?'
+    # ── Representante / contacto del cliente (nombre + cargo) ──
+    _CARGOS = (r'gerente\s+general|gerente|administrador(?:a)?(?:\s+general)?|'
+               r'representante\s+legal|director(?:a)?(?:\s+general)?|presidente|'
+               r'jefe\s+de\s+operaciones|due[nñ][oa]|propietari[oa]|encargad[oa]')
+    # cargo (puede ir entre "representada por (su)" y "don/doña")
+    mc = re.search(r'representad[oa]s?\s+por\s+'
+                   r'(?:su\s+|el\s+|la\s+|en\s+(?:su\s+)?calidad\s+de\s+)?'
+                   r'(' + _CARGOS + r')\b', base_flat, re.I)
+    if mc:
+        cli["contacto_cargo"] = re.sub(r'\s+', ' ', mc.group(1)).strip().title()
+    # nombre (tolera un cargo opcional antes de don/doña)
+    m = re.search(r'representad[oa]s?\s+por\s+'
+                  r'(?:(?:su|el|la|en\s+(?:su\s+)?calidad\s+de)\s+)?'
+                  r'(?:(?:' + _CARGOS + r')[,\s]+)?'
                   r'(?:don|do[nñ]a|sr\.?|sra\.?|se[nñ]or[a]?)\s+'
                   r'([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ ]{4,55}?)\s*'
                   r'(?=,|\bc[ée]dula\b|\bc\.?i\.?\b|\brut\b|chilen[oa]\b)', base_flat, re.I)
@@ -38269,14 +38319,17 @@ def _contrato_extraer_determinista(texto):
             cli["direccion"] = d
 
     # ── Comuna / Ciudad / Región del cliente ──
-    _STOP_LUG = (r'(?=,|;|\.|\bciudad\b|\bregi[oó]n\b|\bprovincia\b|\bchile\b|'
+    #    Se busca sobre `base` (con saltos de línea): en contratos etiquetados la
+    #    comuna está en su propia línea, y el \n evita arrastrar la frase siguiente
+    #    (ej: "Comuna Iquique\nSe incluyen 2 mantenciones" → 'Iquique', no None).
+    _STOP_LUG = (r'(?=,|;|\.|\n|\bciudad\b|\bregi[oó]n\b|\bprovincia\b|\bchile\b|'
                  r'\bfrecuencia\b|\bmantenc|\bvalor\b|\bmonto\b|\btel|\bcorreo\b|'
-                 r'\brut\b|\bgiro\b|\bde\s+paso\b|\ben\s+adelante\b|$)')
+                 r'\brut\b|\bgiro\b|\bde\s+paso\b|\ben\s+adelante\b|\bse\s+incluye|$)')
 
     def _campo_lugar(label_re):
         m2 = re.search(r'\b' + label_re + r'\b\s*[:\s]\s*'
                        r'(?:de\s+|del\s+|metropolitana\s+de\s+)?'
-                       r'([A-Za-zÁÉÍÓÚÑáéíóúñ .]{3,30}?)' + _STOP_LUG, base_flat, re.I)
+                       r'([A-Za-zÁÉÍÓÚÑáéíóúñ .]{3,30}?)' + _STOP_LUG, base, re.I)
         return _valida_comuna(m2.group(1)) if m2 else None
 
     cmn = _campo_lugar('comuna')
@@ -38308,12 +38361,31 @@ def _contrato_extraer_determinista(texto):
     m = re.search(r'(\d{1,2})\s+visitas?\s+(?:al\s+a[nñ]o|anuales)', low)
     if m: ct["visitas_anuales"] = int(m.group(1))
 
-    montos = [int(x.replace('.', '')) for x in re.findall(r'\$\s?([\d.]{4,})', t)
-              if x.replace('.', '').isdigit()]
+    # Montos clasificados por CONTEXTO: el mayor suele ser una multa/penalización,
+    # no el valor del contrato → se excluyen multa/interés/indemnización.
+    montos, montos_mult, monto_mensual_ctx = [], [], None
+    for mm in re.finditer(r'\$\s?([\d.]{4,})', t):
+        x = mm.group(1).replace('.', '')
+        if not x.isdigit():
+            continue
+        val = int(x)
+        # Ventana HACIA ATRÁS: en español el descriptor precede al monto
+        # ("la renta mensual de $X", "una multa de $X"). Mirar hacia adelante
+        # contaminaría con la frase siguiente (la multa que viene después).
+        ctx = low[max(0, mm.start() - 60):mm.end()]
+        if re.search(r'multa|penaliz|indemniz|incumplimiento|cl[aá]usula\s+penal|'
+                     r'sanci[oó]n|inter[eé]s', ctx):
+            montos_mult.append(val)
+            continue
+        montos.append(val)
+        if monto_mensual_ctx is None and re.search(r'mensual|renta|arriendo|cuota', ctx):
+            monto_mensual_ctx = val
     if montos:
         ct["costo_total"] = max(montos)
-        if "mensual" in low:
-            ct["monto_mensual"] = min(montos)
+        ct["monto_mensual"] = monto_mensual_ctx or (min(montos) if "mensual" in low else None)
+    elif montos_mult:
+        avisos.append("Solo se detectaron montos de multa/penalización; "
+                      "verifica el valor real del contrato.")
     if re.search(r'\buf\b', low):
         ct["moneda"] = "UF"
 
@@ -38328,9 +38400,11 @@ def _contrato_extraer_determinista(texto):
     if "indefinid" in low:
         ct["es_indefinido"] = True
 
-    if re.search(r'mantenci[oó]n(?:es)?\s+gratuit', low) or "sin costo" in low:
+    mg = re.search(r'mantenci[oó]n(?:es)?\s+gratuit', low)
+    if (mg and not re.search(r'\bno\b', low[max(0, mg.start() - 15):mg.start()])) or "sin costo" in low:
         ct["incluye_mant_gratis"] = True
-    if "repuesto" in low and ("incluye" in low or "incluid" in low):
+    mr = re.search(r'(?:incluye[n]?|incluid[oa]s?)[^.\n]{0,40}repuesto', low)
+    if mr and not re.search(r'\bno\b', low[max(0, mr.start() - 12):mr.start()]):
         ct["incluye_repuestos"] = True
 
     if "preventiv" in low and "correctiv" in low: ct["tipo_contrato"] = "Mixto"
@@ -38339,7 +38413,9 @@ def _contrato_extraer_determinista(texto):
     elif "leasing" in low: ct["tipo_contrato"] = "Leasing"
     elif "comodato" in low: ct["tipo_contrato"] = "Comodato"
     elif "arrend" in low or "arriendo" in low: ct["tipo_contrato"] = "Arriendo"
-    elif "garant" in low: ct["tipo_contrato"] = "Garantía"
+    elif "mantenci" in low or "servicio t" in low: ct["tipo_contrato"] = "Mantención"
+    # 'Garantía' solo si es el OBJETO del contrato, no una cláusula ("boleta de garantía").
+    elif re.search(r'contrato\s+de\s+garant', low): ct["tipo_contrato"] = "Garantía"
 
     # Plazo escrito en meses ("vigente por 14 meses") — útil cuando las fechas
     # vienen en palabras y no se pudieron parsear.
@@ -38442,12 +38518,22 @@ def mant_agente_contrato():
         else:
             import docx as _docx
             doc = _docx.Document(tmp_path)
-            texto = "\n".join(p.text for p in doc.paragraphs)
-            for _tb in doc.tables:
+            # cap de párrafos/celdas: el .docx no tiene el límite de 20 páginas
+            # del PDF; evita procesar documentos enormes.
+            texto = "\n".join(p.text for p in doc.paragraphs[:4000])
+            for _tb in doc.tables[:60]:
                 for _row in _tb.rows:
                     texto += "\n" + " | ".join(c.text for c in _row.cells)
+                if len(texto) > 250000:
+                    break
     except Exception as e:
         print(f"[agente-contrato] lectura: {e}", flush=True)
+        if ext == "doc":
+            # .doc binario antiguo: python-docx solo abre .docx (OOXML).
+            return jsonify({"ok": True, "motor": "agente-ilus", "requiere_rut": True,
+                            "mensaje": "El formato Word antiguo (.doc) no se puede leer aquí. "
+                                       "Guárdalo como .docx o PDF, o escribe el RUT y traigo "
+                                       "todo del cliente desde el ERP."})
         return jsonify({"error": "No se pudo leer el archivo. Prueba con el PDF o escribe el RUT."}), 500
     finally:
         try: os.remove(tmp_path)
@@ -38457,6 +38543,11 @@ def mant_agente_contrato():
         return jsonify({"ok": True, "motor": "agente-ilus", "requiere_rut": True,
                         "mensaje": "No pude extraer texto (puede ser un PDF escaneado). "
                                    "Escribe el RUT y traigo todo del ERP."})
+
+    # Cota de tamaño: los datos del cliente están al inicio del documento; evita
+    # que un archivo enorme/adversarial sature el worker (la extracción es síncrona).
+    if len(texto) > 200000:
+        texto = texto[:200000]
 
     resultado = _contrato_extraer_determinista(texto)
 
