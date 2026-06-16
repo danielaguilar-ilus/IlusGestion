@@ -16556,6 +16556,23 @@ def api_asignar_documento():
     hdr["email"]         = _erp_clean(hdr.get("email"))
     hdr["observaciones"] = _erp_clean(hdr.get("observaciones"))
 
+    # ── Resolver CÓDIGO de comuna del ERP → nombre real (fix Osorno 2026-06-15)
+    # El ERP guarda el código CMEN corto (ej. "OSO"); si llega así, el cubicador
+    # mostraba "OSO" y la cotización de couriers + el código postal NO hacían
+    # match → "Sin cobertura". Lo decodificamos vía TABCM (READ-ONLY, solo
+    # SELECT). Heurística "parece código": ≤4 chars y sin espacios; los nombres
+    # normales ("Osorno", "Lo Barnechea") pasan intactos. Degrada al valor
+    # original si TABCM no resuelve.
+    _com_cod = (hdr.get("comuna") or "").strip()
+    if _com_cod and len(_com_cod) <= 4 and " " not in _com_cod:
+        try:
+            _com_nom = _resolve_comuna_erp(_com_cod, pais_code="CL")
+            if _com_nom and _com_nom.strip() and _com_nom.strip().upper() != _com_cod.upper():
+                print(f"[asignar_documento] comuna '{_com_cod}' → '{_com_nom.strip()}' (TABCM)", flush=True)
+                hdr["comuna"] = _com_nom.strip()
+        except Exception as _e_com:
+            print(f"[asignar_documento] resolver comuna '{_com_cod}' falló: {_e_com}", flush=True)
+
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
 
     return jsonify({
@@ -16701,6 +16718,16 @@ def api_asignar_cotizar_couriers():
     peso_kg    = float(data.get("peso_kg") or 0)
     peso_pred  = float(data.get("peso_pred_kg") or peso_kg or 0)
     comuna     = (data.get("comuna") or "").strip()
+    # Defensa: si llega un CÓDIGO ERP de comuna (ej. "OSO"), resolverlo a
+    # nombre ("Osorno") vía TABCM para que el match con transport_courier_comunas
+    # funcione. Nombres normales (con espacio o >4 chars) pasan intactos.
+    if comuna and len(comuna) <= 4 and " " not in comuna:
+        try:
+            _cr = _resolve_comuna_erp(comuna, pais_code="CL")
+            if _cr and _cr.strip():
+                comuna = _cr.strip()
+        except Exception as _e_cr:
+            print(f"[cotizar-couriers] resolver comuna falló: {_e_cr}", flush=True)
     es_resid   = bool(data.get("es_residencial", False))
     valor_neto = float(data.get("valor_neto", 0) or 0)
     # Contexto del documento para audit trail (opcional)
