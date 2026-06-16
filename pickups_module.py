@@ -7836,7 +7836,16 @@ def register_pickup_routes(app, ctx):
             _min_notice_h = int(cfg.get("min_notice_hours") or 24)
         except (TypeError, ValueError):
             _min_notice_h = 24
-        _min_dt = _now_cl + _td(hours=_min_notice_h)
+        # Daniel 2026-06-16: BUFFER de visualización (60 min). El calendario NO
+        # ofrece bloques que estén a punto de cruzar el límite de min_notice
+        # mientras el cliente llena el formulario. CAUSA del bug: la página
+        # carga la disponibilidad una vez, pero el cliente puede tardar minutos
+        # en enviar; un bloque que estaba a 24h05m al cargar quedaba a 23h50m al
+        # enviar → el calendario lo mostraba disponible pero el validador de 24h
+        # lo rechazaba ("Se requieren al menos 24 horas"). Con el buffer, lo que
+        # se OFRECE pasa cómodamente el submit (display más estricto que el POST).
+        _display_buffer_min = 60
+        _min_dt = _now_cl + _td(hours=_min_notice_h) + _td(minutes=_display_buffer_min)
 
         # Generar disponibilidad por día.
         # Si pidieron un día específico (?date=) iteramos solo ese; si no,
