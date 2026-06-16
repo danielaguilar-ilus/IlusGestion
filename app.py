@@ -38008,8 +38008,163 @@ def _contrato_equipos(t):
     return out
 
 
+# ════════════════════════════════════════════════════════════════════════
+#  IDENTIDAD PROPIA DE ILUS — para EXCLUIRLA al leer un contrato
+#  ───────────────────────────────────────────────────────────────────────
+#  Un contrato siempre tiene DOS partes: ILUS (el ARRENDADOR/PRESTADOR) y el
+#  CLIENTE. El lector tomaba el PRIMER match de cada dato y terminaba guardando
+#  datos de ILUS como si fueran del cliente (caso real: el correo del
+#  representante de ILUS, felipe.gomez@sphs.cl, caía en el campo dirección).
+#  Estos marcadores permiten reconocer y descartar lo que es de ILUS.
+# ════════════════════════════════════════════════════════════════════════
+_ILUS_RUT_CUERPOS    = {"76996964"}                      # 76.996.964-0 (ILUS_REMITENTE)
+_ILUS_EMAIL_DOMINIOS = ("sphs.cl", "ilusfitness.com", "ilus.cl")
+_ILUS_DIR_TOKENS     = ("apoquindo 4499", "frei montalva 9770", "eduardo frei montalva")
+_ILUS_TEL_DIGITOS    = ("229465970", "56229465970")
+
+
+def _norm_txt(s):
+    """minúsculas, sin tildes/ñ, espacios colapsados — para comparar identidades."""
+    import unicodedata, re as _re
+    s = (s or "").lower()
+    s = "".join(c for c in unicodedata.normalize("NFD", s)
+                if unicodedata.category(c) != "Mn")
+    return _re.sub(r"\s+", " ", s).strip()
+
+
+def _es_rut_ilus(rut):
+    c = _rut_cuerpo(rut or "")
+    return bool(c) and c in _ILUS_RUT_CUERPOS
+
+
+def _es_email_ilus(email):
+    e = _norm_txt(email).rstrip(".")
+    return bool(e) and any(("@" + d) in e or e.endswith(d) for d in _ILUS_EMAIL_DOMINIOS)
+
+
+def _es_nombre_ilus(nombre):
+    """True si el nombre/razón social corresponde a ILUS (no al cliente)."""
+    import re as _re
+    n = _norm_txt(nombre)
+    if not n:
+        return False
+    if any(tok in n for tok in ("sport and health", "sports and health",
+                                "health solution", "health solutions", "sport & health")):
+        return True
+    # 'ilus'/'sphs' SOLO como palabra suelta (evita falsos positivos: 'ilusión').
+    return bool(_re.search(r"\b(ilus|sphs)\b", n))
+
+
+def _es_direccion_ilus(direccion):
+    d = _norm_txt(direccion)
+    return bool(d) and any(tok in d for tok in _ILUS_DIR_TOKENS)
+
+
+def _es_tel_ilus(tel):
+    import re as _re
+    dig = _re.sub(r"\D", "", tel or "")
+    return bool(dig) and dig in _ILUS_TEL_DIGITOS
+
+
+def _parece_email(s):
+    import re as _re
+    return bool(_re.search(r"[\w.\-]+@[\w\-]+\.[\w]{2,}", s or ""))
+
+
+def _parece_rut(s):
+    import re as _re
+    return bool(_re.search(r"\b\d{1,2}[.\s]?\d{3}[.\s]?\d{3}\s*-\s*[\dkK]\b", s or ""))
+
+
+def _valida_direccion(s):
+    """Devuelve una dirección VÁLIDA y limpia, o None.
+
+    Bloquea el bug clásico: una dirección NUNCA puede ser un correo, un RUT
+    suelto o la dirección de ILUS. Debe tener al menos una letra (no solo
+    números/símbolos)."""
+    import re as _re
+    d = (s or "").strip(" .:-,|")
+    if not d or len(d) < 5:
+        return None
+    if "@" in d or _parece_email(d):
+        return None                       # ← correo en dirección: rechazado
+    if _es_direccion_ilus(d):
+        return None
+    if not _re.search(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]", d):
+        return None                       # sin letras → no es una dirección
+    # un RUT/teléfono suelto con casi nada de texto tampoco es dirección
+    if _parece_rut(d) and len(_re.sub(r"[^A-Za-zÁÉÍÓÚÑáéíóúñ]", "", d)) < 4:
+        return None
+    return _re.sub(r"\s+", " ", d)[:120]
+
+
+def _valida_comuna(s):
+    """Comuna/ciudad/región: alfabética (letras/espacios), 3-40 chars, sin
+    dígitos ni '@'. Corta arrastres ('Viña del Mar Ciudad…'). Devuelve None si
+    no parece un nombre de lugar (p.ej. quedó un correo o un RUT)."""
+    import re as _re
+    c = (s or "").strip(" .:-,|")
+    c = _re.split(r"\b(?:ciudad|regi[oó]n|provincia|chile)\b", c, 1, _re.I)[0].strip(" .,-")
+    if not c or len(c) < 3 or len(c) > 40:
+        return None
+    if "@" in c or _re.search(r"\d", c):
+        return None
+    if not _re.fullmatch(r"[A-Za-zÁÉÍÓÚÑáéíóúñ ]+", c):
+        return None
+    return c.title()
+
+
+def _contrato_partes(t):
+    """Separa la comparecencia en (bloque_cliente, bloque_ilus, modo).
+
+    En contratos tipo 'comparecencia' las dos partes se describen al inicio:
+    una 'por una parte' (ILUS) y la otra 'por la otra' (el cliente). Cortamos en
+    'por la otra' y clasificamos cada bloque por marcadores de identidad de ILUS
+    (nombre legal, RUT propio, rol 'arrendador/prestador', dirección conocida),
+    así da igual el orden en que aparezcan.
+
+    Si no detecta la estructura → modo='plano' y bloque_cliente = texto completo
+    (igual se aplica validación + exclusión de ILUS sobre cada campo)."""
+    import re as _re
+    if not t:
+        return "", "", "plano"
+    mc = _re.search(r"\bcomparecen\b", t, _re.I)
+    cuerpo = t[mc.start():] if mc else t
+    mfin = _re.search(r"\b(los comparecientes|quienes exponen|exponen que|expone que|"
+                      r"acuerdan|acordando|vienen en celebrar|han convenido|"
+                      r"se ha convenido|PRIMERO\s*[:.])", cuerpo, _re.I)
+    pre = cuerpo[:mfin.start()] if mfin else cuerpo[:2000]
+    msplit = _re.search(r"\bpor\s+la\s+otra\b", pre, _re.I)
+    if not msplit:
+        return t, "", "plano"
+    bloque_a = pre[:msplit.start()]
+    bloque_b = pre[msplit.end():]
+
+    def _puntaje_ilus(b):
+        n = 0
+        if _es_nombre_ilus(b):
+            n += 2
+        for r in _re.findall(r"\b\d{1,2}[.\s]?\d{3}[.\s]?\d{3}\s*-\s*[\dkK]\b", b):
+            if _es_rut_ilus(r):
+                n += 3
+        if _re.search(r"arrendador|prestador|vendedor|comodante|mandatari", b, _re.I):
+            n += 1
+        if _es_direccion_ilus(b):
+            n += 1
+        return n
+
+    if _puntaje_ilus(bloque_a) >= _puntaje_ilus(bloque_b):
+        return bloque_b, bloque_a, "comparecencia"   # cliente = la otra parte (B)
+    return bloque_a, bloque_b, "comparecencia"        # cliente = A
+
+
 def _contrato_extraer_determinista(texto):
-    """Extrae datos de un contrato (texto plano) con reglas/regex. CERO IA, CERO tokens."""
+    """Extrae datos de un contrato (texto plano) con reglas/regex. CERO IA, CERO tokens.
+
+    Inteligente respecto a las DOS partes: aísla el bloque del CLIENTE (no el de
+    ILUS), valida el tipo de cada dato (una dirección no puede ser un correo) y
+    excluye la identidad propia de ILUS (RUT 76.996.964-0, dominios @sphs.cl,
+    nombre legal, direcciones de oficina/bodega)."""
     import re
     t = texto or ""
     low = t.lower()
@@ -38023,23 +38178,113 @@ def _contrato_extraer_determinista(texto):
           "moneda": "CLP", "incluye_mant_gratis": False, "incluye_repuestos": False,
           "resumen": None, "clausulas_criticas": [], "alertas": []}
 
-    # RUTs (todos; el endpoint elige el que el ERP reconozca como cliente)
-    ruts = re.findall(r'\b(\d{1,2}[.\s]?\d{3}[.\s]?\d{3}\s*-\s*[\dkK])\b', t)
-    ruts = [r.replace(" ", "") for r in ruts]
+    avisos = []  # transparencia: qué se filtró de ILUS / qué falta del cliente
+
+    # ── Aislar el bloque del CLIENTE (no el de ILUS) ──
+    seg_cli, seg_ilus, modo = _contrato_partes(t)
+    base = seg_cli or t                       # de dónde extraer los datos del cliente
+    base_flat = re.sub(r'\s+', ' ', base)     # sin saltos de línea: el PDF parte
+                                              # las frases ("...PARADERO 5\nACHUPALLAS")
+    if modo == "comparecencia":
+        avisos.append("Se identificaron dos partes; se excluyeron los datos de "
+                      "ILUS (arrendador/prestador) y se tomaron los del cliente.")
+    if "�" in t:
+        avisos.append("Algunos caracteres especiales (ñ, tildes) no se leyeron "
+                      "bien en este PDF; verifica comuna/dirección o sube el .docx original.")
+
+    def _ruts_en(s):
+        return [r.replace(" ", "") for r in
+                re.findall(r'\b\d{1,2}[.\s]?\d{3}[.\s]?\d{3}\s*-\s*[\dkK]\b', s or "")]
+
+    # ── RUTs: todos menos el de ILUS; los del bloque del cliente van primero.
+    #    El endpoint elige el que el ERP reconozca como cliente.
+    ruts_cli = [r for r in _ruts_en(base) if not _es_rut_ilus(r)]
+    ruts_all = [r for r in _ruts_en(t)    if not _es_rut_ilus(r)]
+    ruts = list(dict.fromkeys(ruts_cli + ruts_all))   # dedup, cliente primero
     if ruts:
         cli["rut"] = ruts[0]
+    elif not _ruts_en(t):
+        avisos.append("No se detectó RUT en dígitos (puede venir escrito en palabras).")
 
-    em = re.search(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', t)
-    if em: cli["contacto_email"] = em.group(0)
-    tel = re.search(r'(\+?56\s?9\s?\d{4}\s?\d{4}|\b9\d{8}\b)', t)
-    if tel: cli["contacto_tel"] = tel.group(0).strip()
+    # ── Correo del CLIENTE (excluye dominios de ILUS, p.ej. @sphs.cl) ──
+    em_cli   = [e.rstrip(".") for e in re.findall(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', base) if not _es_email_ilus(e)]
+    em_otros = [e.rstrip(".") for e in re.findall(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', t)    if not _es_email_ilus(e)]
+    email_final = (em_cli or em_otros or [None])[0]
+    if email_final:
+        cli["contacto_email"] = email_final
+    elif re.search(r'[\w.\-]+@[\w\-]+\.[\w.\-]+', t):
+        avisos.append("El único correo del documento es de ILUS; ingresa el correo del cliente.")
 
-    m = re.search(r'raz[oó]n social[:\s]+([A-ZÁÉÍÓÚÑ0-9][^\n]{3,80})', t, re.I)
-    if m: cli["razon_social"] = m.group(1).strip(' .:-')
-    m = re.search(r'(?:domicili[ao]|direcci[oó]n)[:\s]+([^\n]{5,90})', t, re.I)
-    if m: cli["direccion"] = m.group(1).strip(' .:-')
-    m = re.search(r'comuna[:\s]+([A-Za-zÁÉÍÓÚÑáéíóúñ ]{3,40})', t, re.I)
-    if m: cli["comuna"] = m.group(1).strip(' .:-')
+    # ── Teléfono del CLIENTE (excluye el de ILUS) ──
+    for s in (base, t):
+        hit = next((m.group(0).strip() for m in
+                    re.finditer(r'(\+?56\s?9\s?\d{4}\s?\d{4}|\b9\d{8}\b)', s or "")
+                    if not _es_tel_ilus(m.group(0))), None)
+        if hit:
+            cli["contacto_tel"] = hit
+            break
+
+    # ── Razón social del cliente ──
+    rs = None
+    # 1) etiquetado explícito ("Razón social: X")
+    m = re.search(r'raz[oó]n\s+social\s*[:\s]\s*([A-ZÁÉÍÓÚÑ0-9][^\n]{3,80})', base, re.I)
+    if m and not _es_nombre_ilus(m.group(1)):
+        rs = m.group(1)
+    # 2) nombre en MAYÚSCULAS seguido de su RUT / Rol único / "persona jurídica"
+    #    o terminado en sufijo societario (SpA/LTDA/EIRL/SA). SIN re.I: el nombre
+    #    legal va en mayúsculas y así no se confunde con texto suelto en minúscula.
+    if not rs:
+        for pat in (
+            r'\b([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ0-9&. ]{3,69}?)\s*,?\s*'
+            r'(?:RUT\b|R\.U\.T|Rol\s+[úuÚU]nico|persona\s+jur|sociedad\s+del|,\s*c[ée]dula)',
+            r'\b([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ0-9&. ]{2,69}?\b(?:SpA|LTDA|LIMITADA|EIRL|E\.I\.R\.L|S\.?P\.?A|S\.A\.?))\b',
+        ):
+            m = re.search(pat, base_flat)
+            if m and not _es_nombre_ilus(m.group(1)):
+                rs = m.group(1)
+                break
+    if rs:
+        cli["razon_social"] = re.sub(r'\s+', ' ', rs).strip(' .,:-')
+
+    # ── Representante / contacto del cliente ──
+    m = re.search(r'representad[oa]s?\s+por\s+(?:el\s+|la\s+)?'
+                  r'(?:don|do[nñ]a|sr\.?|sra\.?|se[nñ]or[a]?)\s+'
+                  r'([A-ZÑÁÉÍÓÚ][A-ZÑÁÉÍÓÚ ]{4,55}?)\s*'
+                  r'(?=,|\bc[ée]dula\b|\bc\.?i\.?\b|\brut\b|chilen[oa]\b)', base_flat, re.I)
+    if m and not _es_nombre_ilus(m.group(1)):
+        cli["contacto_nombre"] = re.sub(r'\s+', ' ', m.group(1)).strip(' .,:-').title()
+
+    # ── Domicilio del cliente (corta antes de Comuna/Ciudad/Región/etc.) ──
+    #    Cubre prosa ("domiciliados [para estos efectos] en X, Comuna…") y
+    #    etiqueta ("Domicilio: X" / "Dirección: X"). _valida_direccion rechaza
+    #    correos/RUT/dirección de ILUS.
+    _STOP_DIR = (r'(?=,?\s*(?:comuna|ciudad|regi[oó]n|provincia)\b|\ben\s+adelante\b|'
+                 r'\bde\s+paso\b|\bfrecuencia\b|\bmantenc|\bvalor\b|\bmonto\b|\btel|'
+                 r'\bcorreo\b|\brut\b|\bgiro\b|;|$)')
+    m = re.search(r'(?:domiciliad[oa]s?\b[^,]{0,40}?\ben|domicili[ao]|direcci[oó]n)'
+                  r'\s*[:\s]?\s*(.{5,80}?)' + _STOP_DIR, base_flat, re.I)
+    if m:
+        d = _valida_direccion(m.group(1))
+        if d:
+            cli["direccion"] = d
+
+    # ── Comuna / Ciudad / Región del cliente ──
+    _STOP_LUG = (r'(?=,|;|\.|\bciudad\b|\bregi[oó]n\b|\bprovincia\b|\bchile\b|'
+                 r'\bfrecuencia\b|\bmantenc|\bvalor\b|\bmonto\b|\btel|\bcorreo\b|'
+                 r'\brut\b|\bgiro\b|\bde\s+paso\b|\ben\s+adelante\b|$)')
+
+    def _campo_lugar(label_re):
+        m2 = re.search(r'\b' + label_re + r'\b\s*[:\s]\s*'
+                       r'(?:de\s+|del\s+|metropolitana\s+de\s+)?'
+                       r'([A-Za-zÁÉÍÓÚÑáéíóúñ .]{3,30}?)' + _STOP_LUG, base_flat, re.I)
+        return _valida_comuna(m2.group(1)) if m2 else None
+
+    cmn = _campo_lugar('comuna')
+    if cmn: cli["comuna"] = cmn
+    cd = _campo_lugar('ciudad')
+    if cd: cli["ciudad"] = cd
+    rg = _campo_lugar(r'regi[oó]n')
+    if rg: cli["region"] = rg
 
     freq_map = {"mensual": 1, "bimestral": 2, "trimestral": 3, "cuatrimestral": 4,
                 "semestral": 6, "anual": 12}
@@ -38077,6 +38322,9 @@ def _contrato_extraer_determinista(texto):
         ct["vigencia_inicio"] = fechas[0]
         if len(fechas) > 1:
             ct["vigencia_fin"] = fechas[-1]
+    elif re.search(r'\bdos mil\s+(?:diez|veinte|veinti|treinta|once|doce|trece|catorce|'
+                   r'quince|diecis|diecio|diecin)', low):
+        avisos.append("Las fechas vienen escritas en palabras; ingrésalas a mano.")
     if "indefinid" in low:
         ct["es_indefinido"] = True
 
@@ -38088,7 +38336,17 @@ def _contrato_extraer_determinista(texto):
     if "preventiv" in low and "correctiv" in low: ct["tipo_contrato"] = "Mixto"
     elif "preventiv" in low: ct["tipo_contrato"] = "Preventivo"
     elif "correctiv" in low: ct["tipo_contrato"] = "Correctivo"
+    elif "leasing" in low: ct["tipo_contrato"] = "Leasing"
+    elif "comodato" in low: ct["tipo_contrato"] = "Comodato"
+    elif "arrend" in low or "arriendo" in low: ct["tipo_contrato"] = "Arriendo"
     elif "garant" in low: ct["tipo_contrato"] = "Garantía"
+
+    # Plazo escrito en meses ("vigente por 14 meses") — útil cuando las fechas
+    # vienen en palabras y no se pudieron parsear.
+    mpl = re.search(r'(?:vigente|vigencia|plazo|duraci[oó]n|durar[aá]n?)\s+'
+                    r'(?:de\s+|por\s+un\s+per[ií]odo\s+de\s+|por\s+)?(\d{1,3})\s+mes', low)
+    if mpl:
+        avisos.append(f"Plazo del contrato detectado: {int(mpl.group(1))} meses.")
 
     ct["nombre"] = f"Contrato {ct['tipo_contrato']}" if ct["tipo_contrato"] else "Contrato de mantención"
     ct["resumen"] = ("Datos leídos del documento por el Agente ILUS (sin IA). "
@@ -38115,7 +38373,8 @@ def _contrato_extraer_determinista(texto):
     ct["score"] = score
     ct["nivel_riesgo"] = "alto" if score < 45 else ("medio" if score < 70 else "bajo")
     ct["clausulas_criticas"] = clausulas
-    ct["alertas"] = alertas
+    # avisos de transparencia (qué se filtró de ILUS / qué falta) van PRIMERO
+    ct["alertas"] = avisos + alertas
     ct["mejoras_prioritarias"] = mejoras or ["Completar los datos faltantes del contrato y del cliente."]
 
     return {"cliente": cli, "contrato": ct, "equipos": _contrato_equipos(t), "_ruts": ruts}
