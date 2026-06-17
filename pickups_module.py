@@ -72,7 +72,7 @@ PICKUP_STATUS_COLORS = {
 # ════════════════════════════════════════════════════════════════════
 PICKUP_JOURNEY = [
     {"label": "Solicitada",  "sub": "Recibimos tu solicitud",    "emoji": "📩", "icon": "envelope-paper"},
-    {"label": "Propuesta",   "sub": "Esperando tu confirmación",  "emoji": "🗓️", "icon": "calendar-event"},
+    {"label": "Propuesta",   "sub": "Esperando tu confirmación",  "emoji": "📅", "icon": "calendar-event"},
     {"label": "Confirmada",  "sub": "Cita acordada",              "emoji": "✅", "icon": "calendar-check"},
     {"label": "Preparación", "sub": "Bodega lista",               "emoji": "📦", "icon": "box-seam"},
     {"label": "Retirada",    "sub": "Completado",                 "emoji": "🎉", "icon": "check2-circle"},

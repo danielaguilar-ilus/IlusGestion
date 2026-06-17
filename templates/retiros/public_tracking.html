@@ -188,87 +188,46 @@
     }
     .progress-card h6 i{color:var(--ilus-red);font-size:1rem}
 
-    .stepper{
-      position:relative;display:grid;grid-template-columns:repeat(5,1fr);gap:0;
-    }
-    /* Stepper de 4 nodos (versión compacta) — Daniel mayo 2026 */
-    .stepper.stepper-4{
-      grid-template-columns:repeat(4,1fr);
-    }
-    /* línea base */
-    .stepper::before{
-      content:'';position:absolute;left:8%;right:8%;top:32px;height:5px;
-      background:#e5e7eb;border-radius:50px;z-index:0;
-    }
-    /* línea progreso (se llena con gradiente rojo) */
-    .stepper-fill{
-      position:absolute;left:8%;top:32px;height:5px;border-radius:50px;
-      background:linear-gradient(90deg,var(--ok-green-2) 0%, var(--ok-green-2) 70%, var(--ilus-red) 100%);
-      box-shadow:0 0 12px rgba(34,197,94,.30);
-      z-index:1;
-      transition:width 1.2s cubic-bezier(.16,1,.3,1);
-    }
-
-    .step{
-      position:relative;z-index:2;text-align:center;padding:0 4px;
-    }
-    .step .circle{
-      position:relative;width:68px;height:68px;border-radius:50%;
-      margin:0 auto 12px;display:flex;align-items:center;justify-content:center;
-      font-size:1.7rem;color:#9ca3af;background:#fff;
-      border:4px solid #e5e7eb;
-      transition:all .4s cubic-bezier(.16,1,.3,1);
-    }
-    .step .circle .ico-default,.step .circle .ico-done{transition:opacity .3s}
-    .step .circle .ico-done{position:absolute;opacity:0;color:#fff}
-    .step .label{
-      font-size:.78rem;font-weight:800;color:#9ca3af;line-height:1.25;
-      text-transform:uppercase;letter-spacing:.04em;
-    }
-    .step .sub{font-size:.7rem;color:#9ca3af;margin-top:4px;line-height:1.3}
-
-    /* DONE: verde con check */
-    .step.done .circle{
-      background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);
-      border-color:#16a34a;color:#fff;
-      box-shadow:0 6px 14px rgba(22,163,74,.30);
-      transform:scale(1);
-    }
-    .step.done .circle .ico-default{opacity:0}
-    .step.done .circle .ico-done{opacity:1}
-    .step.done .label{color:#16a34a}
-    .step.done .sub{color:#16a34a}
-    .step.done .sub::before{content:'✓ ';font-weight:900}
-
-    /* ACTIVE: rojo con halo pulsante */
-    .step.active .circle{
-      background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);
-      border-color:#dc2626;color:#fff;
-      box-shadow:0 0 0 6px rgba(220,38,38,.18), 0 8px 18px rgba(220,38,38,.28);
-      animation:stepPulse 2s ease-in-out infinite;
-      transform:scale(1.05);
-    }
-    .step.active .circle .ico-default{opacity:1}
+    /* ─── Stepper v6 (Daniel 2026-06-16): círculos blancos con EMOJI a color,
+       completado con anillo verde + badge ✓, activo con anillo rojo + pulso,
+       pendiente OPACO y atenuado (la línea nunca lo atraviesa), línea fina
+       limpia (sin degradado). Mismo look del correo que le gustó a Daniel. ─── */
+    .stepper{position:relative;display:grid;grid-template-columns:repeat(5,1fr);gap:0}
+    /* línea base (detrás de los círculos) */
+    .stepper::before{content:'';position:absolute;left:10%;right:10%;top:34px;height:3px;background:#e9ebee;border-radius:50px;z-index:0}
+    /* línea de progreso (verde limpio; ancho = idx*20% desde left:10%) */
+    .stepper-fill{position:absolute;left:10%;top:34px;height:3px;border-radius:50px;background:#16a34a;z-index:1;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
+    .step{position:relative;z-index:2;text-align:center;padding:0 4px}
+    .step .circle{position:relative;width:64px;height:64px;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:1.85rem;line-height:1;background:#f6f8fb;border:3px solid #e5e7eb;box-shadow:0 0 0 5px #fff;transition:transform .35s cubic-bezier(.16,1,.3,1),border-color .35s,background .35s}
+    .step .circle .ico-done{display:none}
+    .step .emoji{line-height:1}
+    .step .label{font-size:.78rem;font-weight:800;color:#aeb2ba;line-height:1.25;text-transform:uppercase;letter-spacing:.04em;transition:color .35s}
+    .step .sub{font-size:.7rem;color:#aeb2ba;margin-top:4px;line-height:1.3;transition:color .35s}
+    /* PENDIENTE: círculo OPACO (la línea queda detrás) + emoji atenuado */
+    .step:not(.done):not(.active) .circle{filter:grayscale(.55)}
+    .step:not(.done):not(.active) .circle .emoji{opacity:.5}
+    /* DONE: anillo verde + badge ✓, emoji visible */
+    .step.done .circle{border-color:#16a34a;background:#f0fdf4}
+    .step.done .circle::after{content:'✓';position:absolute;right:-3px;bottom:-3px;width:21px;height:21px;border-radius:50%;background:#16a34a;color:#fff;font-size:.74rem;font-weight:900;display:flex;align-items:center;justify-content:center;border:2.5px solid #fff;font-family:Arial,sans-serif}
+    .step.done .label{color:#15803d}
+    .step.done .sub{color:#15803d}
+    /* ACTIVE: anillo rojo + halo pulsante */
+    .step.active .circle{border-color:#e60000;background:#fff5f5;transform:scale(1.06);animation:stepPulse 2s ease-in-out infinite}
     .step.active .label{color:var(--ilus-red);font-size:.84rem}
     .step.active .sub{color:var(--ilus-red);font-weight:700}
-    @keyframes stepPulse{
-      0%,100%{box-shadow:0 0 0 6px rgba(220,38,38,.18), 0 8px 18px rgba(220,38,38,.28)}
-      50%    {box-shadow:0 0 0 14px rgba(220,38,38,.04), 0 10px 22px rgba(220,38,38,.32)}
-    }
-    @media(prefers-reduced-motion:reduce){
-      .step.active .circle{animation:none}
-      .stepper-fill{transition:width 0s}
-    }
-
+    @keyframes stepPulse{0%,100%{box-shadow:0 0 0 5px #fff,0 0 0 8px rgba(230,0,0,.16)}50%{box-shadow:0 0 0 5px #fff,0 0 0 15px rgba(230,0,0,0)}}
+    /* Toques premium: el ícono activo flota suave; el check de completado entra con un pop */
+    .step.active .emoji{display:inline-block;animation:emojiFloat 2.6s ease-in-out infinite}
+    @keyframes emojiFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+    .step.done .circle::after{animation:badgePop .5s cubic-bezier(.34,1.56,.64,1) both}
+    @keyframes badgePop{0%{transform:scale(0)}60%{transform:scale(1.28)}100%{transform:scale(1)}}
+    @media(prefers-reduced-motion:reduce){.step.active .circle,.step.active .emoji,.step.done .circle::after{animation:none}.stepper-fill{transition:width 0s}}
     @media(max-width:600px){
-      /* Daniel 30/05/2026 (responsive_retiros): el stepper de 4 nodos NO debe
-         quedar en fila en celular (se superponía el texto). Incluimos
-         `.stepper.stepper-4` para igualar la especificidad de la regla
-         desktop `.stepper.stepper-4{...}` y forzar el apilado vertical. */
-      .stepper,.stepper.stepper-4{grid-template-columns:1fr;gap:14px}
+      .stepper{grid-template-columns:1fr;gap:14px}
       .stepper::before,.stepper-fill{display:none}
       .step{display:grid;grid-template-columns:auto 1fr;gap:16px;text-align:left;align-items:center}
-      .step .circle{width:54px;height:54px;font-size:1.3rem;margin:0}
+      .step .circle{width:54px;height:54px;font-size:1.5rem;margin:0;box-shadow:none}
+      .step.active .circle{box-shadow:0 0 0 4px rgba(230,0,0,.12)}
       .step .label{font-size:.86rem}
       .step .sub{font-size:.74rem}
     }
@@ -992,10 +951,7 @@
             {%- set _cls = 'done' if loop.index0 < _idx_actual else ('active' if loop.index0 == _idx_actual else '') -%}
           {%- endif -%}
           <div class="step {{ _cls }}">
-            <div class="circle">
-              <i class="bi bi-{{ paso.icon }} ico-default"></i>
-              <i class="bi bi-check-lg ico-done"></i>
-            </div>
+            <div class="circle"><span class="emoji">{{ paso.emoji }}</span></div>
             <div>
               <div class="label">{{ paso.label }}</div>
               <div class="sub">{{ paso.sub }}</div>
@@ -1844,15 +1800,13 @@
       const fill    = document.getElementById('stepperFill');
       if (!stepper || !fill) return;
       const idx = parseInt(stepper.dataset.idx, 10);
-      // Daniel 2026-06-15: 5 nodos → 4 segmentos. idx 0=0%, 1=25%, 2=50%,
-      // 3=75%, 4=100%, -1=10% (cancelada, casi sin avance).
+      // Daniel 2026-06-16: línea con left:10% y ancho idx*20% (5 nodos = centros
+      // en 10%,30%,50%,70%,90%). El relleno termina EXACTO en el centro del nodo
+      // activo, sin el hack *0.84 anterior. idx -1 (cancelada) = casi sin avance.
       let pct = 0;
-      if (idx === -1)      pct = 10;
-      else if (idx >= 4)   pct = 100;
-      else                 pct = (idx / 4) * 100;
-      requestAnimationFrame(() => {
-        fill.style.width = `calc(${pct}% * 0.84)`;  // 84% del ancho para alinear con los círculos
-      });
+      if (idx === -1)      pct = 4;
+      else                 pct = Math.min(Math.max(idx, 0), 4) * 20;
+      requestAnimationFrame(() => { fill.style.width = pct + '%'; });
     }
 
     // ── 2) Polling silencioso del estado ────────────────────────

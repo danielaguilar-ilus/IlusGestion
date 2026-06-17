@@ -933,61 +933,70 @@
   /* ════════════════════════════════════════════════════════════════
      PIPELINE 6 PASOS (mantener visual del actual)
      ════════════════════════════════════════════════════════════════ */
-  /* Pipeline COMPACTA — Daniel 2026-05-23: "está muy grande la pipeline, no me gusta" */
-  .pipe-wrap{padding:10px 14px;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);border-radius:10px;margin-bottom:12px;color:#fff;border-bottom:2px solid var(--ilus-red,#e60000)}
-  .pipe-wrap-title{font-size:.62rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px}
+  /* Pipeline v6 (Daniel 2026-06-16): panel BLANCO con EMOJIS a color (mismo look
+     del correo/seguimiento). Un solo paso activo (rojo+pulso), completados con
+     anillo verde + check, pendientes OPACOS, línea fina verde→gris. Hover: solo
+     escala el círculo (no el paso) → la línea ya NO se descuadra. */
+  .pipe-wrap{padding:16px 16px 12px;background:#fff;border-radius:12px;margin-bottom:12px;color:#0a0a0a;border:0.5px solid #ececef;box-shadow:0 1px 3px rgba(10,10,10,.05)}
+  .pipe-wrap-title{font-size:.62rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:12px}
   .pipe-row{
-    --pipe-circle-size:34px;
+    --pipe-circle-size:42px;
     --pipe-num-row:12px;
     --pipe-pad-top:4px;
     --pipe-line-top:calc(var(--pipe-pad-top) + var(--pipe-num-row) + (var(--pipe-circle-size) / 2) - 1px);
     display:grid;grid-template-columns:repeat(6,1fr);gap:0;
     align-items:flex-start;position:relative;
   }
-  .pipe-step{position:relative;text-align:center;padding:var(--pipe-pad-top) 4px 4px;cursor:pointer;transition:transform .15s}
-  .pipe-step:hover{transform:translateY(-2px)}
+  .pipe-step{position:relative;text-align:center;padding:var(--pipe-pad-top) 4px 4px;cursor:pointer}
+  .pipe-step .pipe-circle{transition:transform .18s ease,border-color .3s,background .3s}
+  .pipe-step:hover .pipe-circle{transform:scale(1.1)}
   .pipe-step::before,.pipe-step::after{
     content:'';position:absolute;top:var(--pipe-line-top);height:3px;
-    background:rgba(255,255,255,.10);z-index:0;border-radius:50px;
+    background:#e9ebee;z-index:0;border-radius:50px;
   }
   .pipe-step::before{left:0;right:calc(50% + (var(--pipe-circle-size) / 2) - 2px)}
   .pipe-step::after{left:calc(50% + (var(--pipe-circle-size) / 2) - 2px);right:0}
   .pipe-step:first-child::before{display:none}
   .pipe-step:last-child::after{display:none}
-  .pipe-step.done::before,.pipe-step.done::after{background:#22c55e}
-  .pipe-step.active::before{background:#22c55e}
-  .pipe-step.active::after{background:linear-gradient(90deg,var(--ilus-red,#e60000),rgba(255,255,255,.10))}
-  .pipe-step.fail::before,.pipe-step.fail::after{background:#dc2626}
+  .pipe-step.done::before,.pipe-step.done::after{background:#16a34a}
+  .pipe-step.active::before{background:#16a34a}
+  .pipe-step.fail::before{background:#16a34a}
   .pipe-circle{
     position:relative;z-index:2;
     width:var(--pipe-circle-size);height:var(--pipe-circle-size);
-    border-radius:50%;background:#1c1c1c;
-    border:2px solid rgba(255,255,255,.15);color:#9ca3af;
+    border-radius:50%;background:#f6f8fb;
+    border:2.5px solid #e5e7eb;
     display:flex;align-items:center;justify-content:center;
-    font-size:.95rem;font-weight:900;margin:0 auto 4px;
-    transition:all .25s;font-family:'Bebas Neue',sans-serif;letter-spacing:0;
-    box-shadow:0 0 0 3px #0a0a0a;
+    font-size:1.15rem;line-height:1;margin:0 auto 5px;
+    box-shadow:0 0 0 4px #fff;
   }
-  .pipe-step.done .pipe-circle{background:#22c55e;border-color:#22c55e;color:#fff;box-shadow:0 0 0 4px #0a0a0a, 0 6px 14px rgba(34,197,94,.30)}
-  .pipe-step.active .pipe-circle{background:var(--ilus-red,#e60000);border-color:var(--ilus-red,#e60000);color:#fff;box-shadow:0 0 0 4px #0a0a0a, 0 0 0 8px rgba(230,0,0,.18);animation:pipe-pulse 2s ease-in-out infinite}
-  .pipe-step.fail .pipe-circle{background:#dc2626;border-color:#dc2626;color:#fff;box-shadow:0 0 0 4px #0a0a0a, 0 6px 14px rgba(220,38,38,.30)}
-  @keyframes pipe-pulse{0%,100%{box-shadow:0 0 0 4px #0a0a0a, 0 0 0 8px rgba(230,0,0,.18)}50%{box-shadow:0 0 0 4px #0a0a0a, 0 0 0 14px rgba(230,0,0,.04)}}
-  .pipe-step-num{display:block;font-size:.52rem;font-weight:800;color:#6b7280;letter-spacing:.12em;margin-bottom:3px;text-transform:uppercase;line-height:1}
-  .pipe-step.done .pipe-step-num{color:#22c55e}
+  .pipe-emoji{line-height:1}
+  .pipe-step:not(.done):not(.active):not(.fail) .pipe-circle{filter:grayscale(.55)}
+  .pipe-step:not(.done):not(.active):not(.fail) .pipe-emoji{opacity:.5}
+  .pipe-step.done .pipe-circle{border-color:#16a34a;background:#f0fdf4}
+  .pipe-step.done .pipe-circle::after{content:'✓';position:absolute;right:-3px;bottom:-3px;width:17px;height:17px;border-radius:50%;background:#16a34a;color:#fff;font-size:.6rem;font-weight:900;display:flex;align-items:center;justify-content:center;border:2px solid #fff;font-family:Arial,sans-serif}
+  .pipe-step.active .pipe-circle{border-color:#e60000;background:#fff5f5;animation:pipe-pulse 2s ease-in-out infinite}
+  .pipe-step.fail .pipe-circle{border-color:#dc2626;background:#fef2f2}
+  .pipe-step.fail .pipe-circle::after{content:'✕';position:absolute;right:-3px;bottom:-3px;width:17px;height:17px;border-radius:50%;background:#dc2626;color:#fff;font-size:.6rem;font-weight:900;display:flex;align-items:center;justify-content:center;border:2px solid #fff;font-family:Arial,sans-serif}
+  @keyframes pipe-pulse{0%,100%{box-shadow:0 0 0 4px #fff, 0 0 0 7px rgba(230,0,0,.16)}50%{box-shadow:0 0 0 4px #fff, 0 0 0 13px rgba(230,0,0,0)}}
+  .pipe-step.active .pipe-emoji{display:inline-block;animation:pipeFloat 2.6s ease-in-out infinite}
+  @keyframes pipeFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+  .pipe-step-num{display:block;font-size:.52rem;font-weight:800;color:#b0b4bb;letter-spacing:.12em;margin-bottom:3px;text-transform:uppercase;line-height:1}
+  .pipe-step.done .pipe-step-num{color:#16a34a}
   .pipe-step.active .pipe-step-num{color:var(--ilus-red,#e60000)}
-  .pipe-label{font-size:.62rem;font-weight:800;color:#cbd5e1;line-height:1.15;text-transform:uppercase;letter-spacing:.03em;margin-top:1px}
-  .pipe-step.done .pipe-label{color:#86efac}
-  .pipe-step.active .pipe-label{color:#fff;font-size:.66rem}
-  .pipe-step.fail .pipe-label{color:#fca5a5}
+  .pipe-step.fail .pipe-step-num{color:#dc2626}
+  .pipe-label{font-size:.62rem;font-weight:800;color:#9ca3af;line-height:1.15;text-transform:uppercase;letter-spacing:.03em;margin-top:3px}
+  .pipe-step.done .pipe-label{color:#15803d}
+  .pipe-step.active .pipe-label{color:var(--ilus-red,#e60000);font-size:.66rem}
+  .pipe-step.fail .pipe-label{color:#dc2626}
   .pipe-sub{font-size:.58rem;color:#9ca3af;margin-top:1px;font-weight:500;line-height:1.1}
+  @media(prefers-reduced-motion:reduce){.pipe-step.active .pipe-circle,.pipe-step.active .pipe-emoji{animation:none}}
   @media(max-width:768px){
     .pipe-row{grid-template-columns:1fr;gap:8px;--pipe-line-top:0px}
-    .pipe-step{display:grid;grid-template-columns:60px 1fr;gap:12px;text-align:left;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;position:relative}
+    .pipe-step{display:grid;grid-template-columns:54px 1fr;gap:12px;text-align:left;padding:8px;background:#fafbfc;border-radius:8px;position:relative}
     .pipe-step::before,.pipe-step::after{display:none}
-    .pipe-step:not(:last-child)::after{content:'';display:block;position:absolute;left:36px;top:60px;bottom:-8px;width:3px;height:auto;background:rgba(255,255,255,.10);border-radius:50px;z-index:0}
-    .pipe-step.done:not(:last-child)::after{background:#22c55e}
-    .pipe-step.active:not(:last-child)::after{background:linear-gradient(180deg,#22c55e,var(--ilus-red,#e60000))}
-    .pipe-step.fail:not(:last-child)::after{background:#dc2626}
+    .pipe-step:not(:last-child)::after{content:'';display:block;position:absolute;left:31px;top:58px;bottom:-8px;width:3px;height:auto;background:#e9ebee;border-radius:50px;z-index:0}
+    .pipe-step.done:not(:last-child)::after{background:#16a34a}
     .pipe-circle{margin:0;box-shadow:none}
     .pipe-step-num{margin-bottom:0;font-size:.62rem}
     .pipe-label{font-size:.85rem}
@@ -1942,37 +1951,37 @@
   <div class="pipe-row">
     <div class="pipe-step {% if 1 < _pipe_active %}done{% elif 1 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-1').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 1</span>
-      <div class="pipe-circle">1</div>
+      <div class="pipe-circle"><span class="pipe-emoji">📩</span></div>
       <div class="pipe-label">Solicitada</div>
       <div class="pipe-sub">{{ req.created_at|string|truncate(10,True,'') if req.created_at else '—' }}</div>
     </div>
     <div class="pipe-step {% if 2 < _pipe_active %}done{% elif _doc_incomp %}fail{% elif 2 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-2').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 2</span>
-      <div class="pipe-circle">2</div>
+      <div class="pipe-circle"><span class="pipe-emoji">📄</span></div>
       <div class="pipe-label">Documentos</div>
       <div class="pipe-sub">{% if _doc_incomp %}⚠ Incompletos{% elif _doc_ok %}✓ Validados{% elif 2 == _pipe_active %}Por validar{% else %}—{% endif %}</div>
     </div>
     <div class="pipe-step {% if 3 < _pipe_active %}done{% elif 3 == _pipe_active and _pipe_fail %}fail{% elif 3 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-3').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 3</span>
-      <div class="pipe-circle">3</div>
+      <div class="pipe-circle"><span class="pipe-emoji">⚖️</span></div>
       <div class="pipe-label">Carga</div>
       <div class="pipe-sub">{% if _cubic_ok %}{{ req.peso_real_kg }}kg · {{ req.tiempo_estimado_min }}min{% elif 3 == _pipe_active %}Pendiente{% else %}—{% endif %}</div>
     </div>
     <div class="pipe-step {% if 4 < _pipe_active %}done{% elif 4 == _pipe_active and _pipe_fail %}fail{% elif 4 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-4').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 4</span>
-      <div class="pipe-circle">4</div>
+      <div class="pipe-circle"><span class="pipe-emoji">📅</span></div>
       <div class="pipe-label">Propuesta</div>
       <div class="pipe-sub">{% if req.proposed_date %}{{ req.proposed_date }}{% elif 4 == _pipe_active %}Por proponer{% else %}—{% endif %}</div>
     </div>
     <div class="pipe-step {% if 5 < _pipe_active %}done{% elif 5 == _pipe_active and _pipe_fail %}fail{% elif 5 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 5</span>
-      <div class="pipe-circle">5</div>
+      <div class="pipe-circle"><span class="pipe-emoji">✅</span></div>
       <div class="pipe-label">Confirmada</div>
       <div class="pipe-sub">{% if req.confirmed_date %}{{ req.confirmed_date }}{% elif req.status == 'rechazada' %}✗ Rechazada{% elif 5 == _pipe_active %}Esperando cliente{% else %}—{% endif %}</div>
     </div>
     <div class="pipe-step {% if 6 < _pipe_active %}done{% elif 6 == _pipe_active and _pipe_fail %}fail{% elif 6 == _pipe_active %}active{% endif %}">
       <span class="pipe-step-num">Paso 6</span>
-      <div class="pipe-circle">6</div>
+      <div class="pipe-circle"><span class="pipe-emoji">🎉</span></div>
       <div class="pipe-label">Retirada</div>
       <div class="pipe-sub">{% if req.status == 'retirada' %}✓ Completado{% elif req.status == 'cerrada' %}Cerrada{% elif req.status == 'fallida' %}✗ Fallida{% elif req.status == 'en_preparacion' %}En preparación{% elif 6 == _pipe_active %}Agendado{% else %}Pendiente{% endif %}</div>
     </div>
