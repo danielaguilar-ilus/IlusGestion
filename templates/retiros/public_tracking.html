@@ -194,21 +194,21 @@
        limpia (sin degradado). Mismo look del correo que le gustó a Daniel. ─── */
     .stepper{position:relative;display:grid;grid-template-columns:repeat(5,1fr);gap:0}
     /* línea base (detrás de los círculos) */
-    .stepper::before{content:'';position:absolute;left:10%;right:10%;top:34px;height:3px;background:#e9ebee;border-radius:50px;z-index:0}
+    .stepper::before{content:'';position:absolute;left:10%;right:10%;top:42px;height:4px;background:#e9ebee;border-radius:50px;z-index:0}
     /* línea de progreso (verde limpio; ancho = idx*20% desde left:10%) */
-    .stepper-fill{position:absolute;left:10%;top:34px;height:3px;border-radius:50px;background:#16a34a;z-index:1;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
-    .step{position:relative;z-index:2;text-align:center;padding:0 4px}
-    .step .circle{position:relative;width:64px;height:64px;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:1.85rem;line-height:1;background:#f6f8fb;border:3px solid #e5e7eb;box-shadow:0 0 0 5px #fff;transition:transform .35s cubic-bezier(.16,1,.3,1),border-color .35s,background .35s}
+    .stepper-fill{position:absolute;left:10%;top:42px;height:4px;border-radius:50px;background:#16a34a;z-index:1;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
+    .step{position:relative;z-index:2;text-align:center;padding:0 6px}
+    .step .circle{position:relative;width:80px;height:80px;border-radius:50%;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;font-size:2.35rem;line-height:1;background:#f6f8fb;border:3.5px solid #e5e7eb;box-shadow:0 0 0 6px #fff;transition:transform .35s cubic-bezier(.16,1,.3,1),border-color .35s,background .35s}
     .step .circle .ico-done{display:none}
     .step .emoji{line-height:1}
-    .step .label{font-size:.78rem;font-weight:800;color:#aeb2ba;line-height:1.25;text-transform:uppercase;letter-spacing:.04em;transition:color .35s}
-    .step .sub{font-size:.7rem;color:#aeb2ba;margin-top:4px;line-height:1.3;transition:color .35s}
+    .step .label{font-size:.86rem;font-weight:800;color:#9ca3af;line-height:1.2;text-transform:uppercase;letter-spacing:.03em;transition:color .35s}
+    .step .sub{font-size:.76rem;color:#9ca3af;margin-top:5px;line-height:1.3;transition:color .35s}
     /* PENDIENTE: círculo OPACO (la línea queda detrás) + emoji atenuado */
     .step:not(.done):not(.active) .circle{filter:grayscale(.55)}
     .step:not(.done):not(.active) .circle .emoji{opacity:.5}
     /* DONE: anillo verde + badge ✓, emoji visible */
     .step.done .circle{border-color:#16a34a;background:#f0fdf4}
-    .step.done .circle::after{content:'✓';position:absolute;right:-3px;bottom:-3px;width:21px;height:21px;border-radius:50%;background:#16a34a;color:#fff;font-size:.74rem;font-weight:900;display:flex;align-items:center;justify-content:center;border:2.5px solid #fff;font-family:Arial,sans-serif}
+    .step.done .circle::after{content:'✓';position:absolute;right:-2px;bottom:-2px;width:25px;height:25px;border-radius:50%;background:#16a34a;color:#fff;font-size:.82rem;font-weight:900;display:flex;align-items:center;justify-content:center;border:3px solid #fff;font-family:Arial,sans-serif}
     .step.done .label{color:#15803d}
     .step.done .sub{color:#15803d}
     /* ACTIVE: anillo rojo + halo pulsante */
@@ -226,10 +226,10 @@
       .stepper{grid-template-columns:1fr;gap:14px}
       .stepper::before,.stepper-fill{display:none}
       .step{display:grid;grid-template-columns:auto 1fr;gap:16px;text-align:left;align-items:center}
-      .step .circle{width:54px;height:54px;font-size:1.5rem;margin:0;box-shadow:none}
+      .step .circle{width:62px;height:62px;font-size:1.85rem;margin:0;box-shadow:none}
       .step.active .circle{box-shadow:0 0 0 4px rgba(230,0,0,.12)}
-      .step .label{font-size:.86rem}
-      .step .sub{font-size:.74rem}
+      .step .label{font-size:.92rem}
+      .step .sub{font-size:.78rem}
     }
 
     /* ─── HERO STATUS contextual (banner según estado) ──────────── */
@@ -732,6 +732,27 @@
       border:1px solid rgba(255,255,255,.10);
     }
     .mkt-social-row a:hover{background:var(--ilus-red);border-color:var(--ilus-red);transform:translateY(-2px) scale(1.05);color:#fff}
+
+    /* ── Color de marca en iconos sociales (Daniel 2026-06-17: "más color
+       con las redes") — el ícono se tiñe con el color de cada red sobre el
+       fondo oscuro; en hover se rellena el círculo con ese mismo color.
+       Especificidad scoped por contenedor → gana sin !important. ────────── */
+    .mkt-social-row a.soc-ig{color:#ff5fa2}
+    .mkt-social-row a.soc-fb{color:#4d97ff}
+    .mkt-social-row a.soc-in{color:#4aa3ff}
+    .mkt-social-row a.soc-web{color:#ff6b6b}
+    .mkt-social-row a.soc-ig:hover{background:linear-gradient(45deg,#f58529,#dd2a7b 55%,#8134af);border-color:transparent;color:#fff}
+    .mkt-social-row a.soc-fb:hover{background:#1877f2;border-color:#1877f2;color:#fff}
+    .mkt-social-row a.soc-in:hover{background:#0a66c2;border-color:#0a66c2;color:#fff}
+    .mkt-social-row a.soc-web:hover{background:var(--ilus-red);border-color:var(--ilus-red);color:#fff}
+    .footer .social a.soc-ig{color:#ff5fa2}
+    .footer .social a.soc-wa{color:#4ade80}
+    .footer .social a.soc-mail{color:#ff8a7a}
+    .footer .social a.soc-web{color:#ff6b6b}
+    .footer .social a.soc-ig:hover{background:linear-gradient(45deg,#f58529,#dd2a7b 55%,#8134af);color:#fff}
+    .footer .social a.soc-wa:hover{background:#25d366;color:#fff}
+    .footer .social a.soc-mail:hover{background:var(--ilus-red);color:#fff}
+    .footer .social a.soc-web:hover{background:var(--ilus-red);color:#fff}
 
     /* Animación reveal-on-scroll (IntersectionObserver) */
     .reveal-on-scroll{
@@ -1595,16 +1616,17 @@
               <i class="bi bi-whatsapp"></i>WhatsApp directo
             </a>
             <a href="mailto:servicio.tecnico@ilusfitness.com?subject=Consulta%20retiro%20{{ req.code }}"
-               class="mkt-cta mkt-cta-mail">
+               class="mkt-cta mkt-cta-mail" id="ctaMailSoporte"
+               data-mail="servicio.tecnico@ilusfitness.com">
               <i class="bi bi-envelope"></i>Email soporte
             </a>
           </div>
           <div class="mkt-dark-social-label">Síguenos en redes</div>
           <div class="mkt-social-row">
-            <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram"><i class="bi bi-instagram"></i></a>
-            <a href="https://www.facebook.com/ilusfitness" target="_blank" rel="noopener" aria-label="Facebook"><i class="bi bi-facebook"></i></a>
-            <a href="https://www.linkedin.com/company/ilus-sport-health" target="_blank" rel="noopener" aria-label="LinkedIn"><i class="bi bi-linkedin"></i></a>
-            <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Sitio web"><i class="bi bi-globe2"></i></a>
+            <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
+            <a href="https://www.facebook.com/ilusfitness" target="_blank" rel="noopener" aria-label="Facebook" class="soc-fb"><i class="bi bi-facebook"></i></a>
+            <a href="https://www.linkedin.com/company/ilus-sport-health" target="_blank" rel="noopener" aria-label="LinkedIn" class="soc-in"><i class="bi bi-linkedin"></i></a>
+            <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Sitio web" class="soc-web"><i class="bi bi-globe2"></i></a>
           </div>
         </div>
       </div>
@@ -1620,10 +1642,10 @@
     <div class="name">ILUS Sport &amp; Health</div>
     <div class="small">Equipamiento profesional para alto rendimiento</div>
     <div class="social" aria-label="Redes sociales">
-      <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram"><i class="bi bi-instagram"></i></a>
-      <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp"><i class="bi bi-whatsapp"></i></a>
-      <a href="mailto:servicio.tecnico@ilusfitness.com" aria-label="Email"><i class="bi bi-envelope"></i></a>
-      <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Web"><i class="bi bi-globe2"></i></a>
+      <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
+      <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp" class="soc-wa"><i class="bi bi-whatsapp"></i></a>
+      <a href="mailto:servicio.tecnico@ilusfitness.com" aria-label="Email" class="soc-mail"><i class="bi bi-envelope"></i></a>
+      <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Web" class="soc-web"><i class="bi bi-globe2"></i></a>
     </div>
     <div class="links">
       <a href="{{ url_for('pickup_public_request') }}">Nueva solicitud</a> ·
@@ -1812,6 +1834,21 @@
     // ── 2) Polling silencioso del estado ────────────────────────
     let pollTimer = null;
     let pollFailures = 0;
+    // Índice del hito con que se RENDERIZÓ la página (baseline del servidor).
+    const _sr = document.getElementById('stepperRoot');
+    const CURRENT_IDX = _sr ? parseInt(_sr.dataset.idx, 10) : NaN;
+    // Firma del estado: cualquier cambio en estos campos = novedad visible para
+    // el cliente. Incluye journey_idx (refresca aunque el `status` exacto pase a
+    // otro estado del MISMO hito) y la fecha/propuesta (caso ping-pong: nueva
+    // propuesta sin cambiar de estado). Daniel 2026-06-17 (canal EN VIVO).
+    let lastSig = null;
+    function _stateSig(d) {
+      return [
+        d.status, d.journey_idx,
+        d.has_pending_proposal ? 1 : 0,
+        d.confirmed_date || '', d.confirmed_time_from || ''
+      ].join('|');
+    }
 
     function startPolling() {
       // Si el estado es terminal, no polleamos
@@ -1831,8 +1868,21 @@
         if (!resp.ok) { pollFailures++; return; }
         const data = await resp.json();
         pollFailures = 0;
-        if (data && data.status && data.status !== CURRENT_STATUS) {
-          // El estado cambió — recargar con un fade-out suave
+        if (!data || !data.ok || !data.status) return;
+        const sig = _stateSig(data);
+        if (lastSig === null) {
+          // Primer poll: fijamos baseline. Si YA difiere del estado con que se
+          // renderizó la página (cambió entre el render y este poll), refrescamos.
+          lastSig = sig;
+          const idxChanged = Number.isFinite(CURRENT_IDX) && data.journey_idx !== CURRENT_IDX;
+          if (data.status !== CURRENT_STATUS || idxChanged) {
+            showStatusChangeAlert(data.status_label || data.status);
+            setTimeout(() => { window.location.reload(); }, 1400);
+          }
+          return;
+        }
+        if (sig !== lastSig) {
+          // Cualquier novedad visible (estado, hito, propuesta o fecha) → refrescar
           showStatusChangeAlert(data.status_label || data.status);
           setTimeout(() => { window.location.reload(); }, 1400);
         }
@@ -1928,11 +1978,33 @@
     }
 
     // ── 6) BOOT ──────────────────────────────────────────────────
+    // Botón "Email soporte" robusto (Daniel 2026-06-17: "nunca me abrió").
+    // Mantenemos el mailto (si hay cliente de correo, se abre) PERO copiamos la
+    // dirección al portapapeles y avisamos, por si el equipo no tiene cliente de
+    // correo asociado (típico en kioscos / demos). REGLA #1: nada de alert nativo.
+    function initMailFallback(){
+      const btn = document.getElementById('ctaMailSoporte');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const mail = btn.dataset.mail || 'servicio.tecnico@ilusfitness.com';
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(mail)
+              .then(() => _toast('Correo copiado: ' + mail, 'success'))
+              .catch(() => _toast('Escríbenos a ' + mail, 'info'));
+          } else {
+            _toast('Escríbenos a ' + mail, 'info');
+          }
+        } catch(_){ _toast('Escríbenos a ' + mail, 'info'); }
+      });
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       animateStepperFill();
       initRating();
       initRevealOnScroll();
       initFlashToasts();
+      initMailFallback();
       // Iniciar polling después de 8s (no martillar al cargar)
       setTimeout(startPolling, 8000);
     });

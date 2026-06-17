@@ -1893,6 +1893,15 @@ def register_pickup_routes(app, ctx):
                 if _POLL_CACHE[k]["fetched_at"] < cutoff:
                     _POLL_CACHE.pop(k, None)
 
+    def _no_store_json(payload):
+        """jsonify + Cache-Control:no-store. El polling EN VIVO no debe ser
+        cacheado por el navegador/CDN: cada poll debe reflejar el estado real
+        (el cache de 10s de _POLL_CACHE es del lado servidor, suficiente)."""
+        resp = jsonify(payload)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
+
     @app.route("/retiros/seguimiento/<token>/status", methods=["GET"])
     def pickup_public_tracking_status(token):
         """Devuelve estado actual del retiro en JSON ligero — usado por el
@@ -1928,7 +1937,7 @@ def register_pickup_routes(app, ctx):
 
         cached = _polling_cached(token)
         if cached is not None:
-            return jsonify(cached)
+            return _no_store_json(cached)
 
         req = mysql_fetchone(
             f"SELECT id, status, confirmed_date, confirmed_time_from, "
@@ -1952,6 +1961,10 @@ def register_pickup_routes(app, ctx):
             "status":               status,
             "status_label":         PICKUP_STATUS.get(status, status),
             "status_color":         PICKUP_STATUS_COLORS.get(status, "secondary"),
+            # journey_idx: hito canónico (0-4, -1=cancelado). Lo usa el polling
+            # para refrescar el stepper EN VIVO aunque el `status` exacto cambie
+            # a otro estado del MISMO hito (ej: solicitud_recibida→en_revision).
+            "journey_idx":          pickup_journey_idx(status),
             "has_pending_proposal": bool(pend),
             "updated_at":           str(req.get("updated_at") or "")[:19],
             "confirmed_date":       str(req.get("confirmed_date") or ""),
@@ -1959,7 +1972,7 @@ def register_pickup_routes(app, ctx):
             "confirmed_time_to":    str(req.get("confirmed_time_to") or "")[:5],
         }
         _polling_store(token, payload)
-        return jsonify(payload)
+        return _no_store_json(payload)
 
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
     @_rate_limited("pickup_public_request", max_attempts=40, window_seconds=3600)
@@ -3784,6 +3797,15 @@ def register_pickup_routes(app, ctx):
                       f"Datos ERP cargados · peso={peso_real}kg vol={peso_vol}kg m3={vol_m3}",
                       "interno")
             flash("Datos del ERP cargados al retiro.", "success")
+
+        # EN VIVO: invalidar cache de polling para que el seguimiento del cliente
+        # refleje el cambio de estado (solicitud_recibida→en_revision, etc.) en su
+        # próximo poll sin esperar el TTL de 10s. (req es SELECT *, trae public_token)
+        try:
+            tok = req.get("public_token") if isinstance(req, dict) else None
+            if tok:
+                _POLL_CACHE.pop(tok, None)
+        except Exception: pass
 
         return redirect(url_for("pickup_detail", rid=rid))
 
