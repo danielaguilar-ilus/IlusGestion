@@ -2392,5 +2392,104 @@
     });
   })();
   </script>
+
+  {# ════════ CHAT EN VIVO con ILUS (Daniel 2026-06-17) ════════ #}
+  <style>
+    #ilusChatBtn{position:fixed;right:18px;bottom:18px;z-index:10600;width:62px;height:62px;border-radius:50%;
+      background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;box-shadow:0 10px 26px rgba(220,38,38,.42);
+      display:grid;place-items:center;font-size:1.6rem;cursor:pointer;transition:transform .2s}
+    #ilusChatBtn:hover{transform:scale(1.08)}
+    #ilusChatBtn .cdot{position:absolute;top:-3px;right:-3px;min-width:22px;height:22px;border-radius:50px;background:#16a34a;
+      color:#fff;font-size:.72rem;font-weight:900;display:none;align-items:center;justify-content:center;padding:0 5px;
+      border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+    #ilusChatPanel{position:fixed;right:18px;bottom:90px;z-index:10600;width:min(360px,calc(100vw - 28px));
+      height:min(520px,calc(100vh - 130px));background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.32);
+      display:none;flex-direction:column;overflow:hidden;border:1px solid #eee}
+    #ilusChatPanel.open{display:flex;animation:chatPop .22s cubic-bezier(.16,1,.3,1)}
+    @keyframes chatPop{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+    .ic-head{background:#0a0a0a;color:#fff;padding:13px 16px;display:flex;align-items:center;gap:10px}
+    .ic-head .av{width:34px;height:34px;border-radius:50%;background:#dc2626;display:grid;place-items:center;font-size:1rem}
+    .ic-head .t{font-weight:800;font-size:.95rem;line-height:1.1}
+    .ic-head .s{font-size:.72rem;color:#86efac}
+    .ic-head .x{margin-left:auto;background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer;opacity:.8}
+    .ic-body{flex:1;overflow-y:auto;padding:14px;background:#f4f6f8;display:flex;flex-direction:column;gap:8px}
+    .ic-msg{max-width:80%;padding:8px 12px;border-radius:14px;font-size:.88rem;line-height:1.4;word-wrap:break-word;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+    .ic-msg .h{font-size:.64rem;opacity:.6;margin-top:3px;text-align:right}
+    .ic-msg.op{background:#fff;color:#0a0a0a;align-self:flex-start;border-bottom-left-radius:4px}
+    .ic-msg.cl{background:#dcf8c6;color:#0a0a0a;align-self:flex-end;border-bottom-right-radius:4px}
+    .ic-empty{text-align:center;color:#9ca3af;font-size:.82rem;margin:auto 10px}
+    .ic-foot{display:flex;gap:8px;padding:10px;border-top:1px solid #eee;background:#fff}
+    .ic-foot input{flex:1;border:1.5px solid #e5e7eb;border-radius:50px;padding:10px 14px;font-size:16px;outline:none}
+    .ic-foot input:focus{border-color:#dc2626}
+    .ic-foot button{background:#dc2626;color:#fff;border:none;width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:1.1rem;flex:0 0 auto}
+    .ic-foot button:disabled{opacity:.5}
+  </style>
+  <button id="ilusChatBtn" aria-label="Chatear con ILUS" title="¿Dudas? Escríbenos">
+    <i class="bi bi-chat-dots-fill"></i><span class="cdot" id="ilusChatDot">0</span>
+  </button>
+  <div id="ilusChatPanel" role="dialog" aria-label="Chat con ILUS">
+    <div class="ic-head">
+      <div class="av"><i class="bi bi-headset"></i></div>
+      <div><div class="t">Soporte ILUS</div><div class="s">● En línea · te respondemos pronto</div></div>
+      <button class="x" id="ilusChatClose" aria-label="Cerrar">&times;</button>
+    </div>
+    <div class="ic-body" id="ilusChatBody"></div>
+    <div class="ic-foot">
+      <input id="ilusChatInput" type="text" placeholder="Escribe tu mensaje…" maxlength="2000" autocomplete="off">
+      <button id="ilusChatSend" aria-label="Enviar"><i class="bi bi-send-fill"></i></button>
+    </div>
+  </div>
+  <script>
+  (function(){
+    'use strict';
+    const TOKEN = "{{ req.public_token }}";
+    const URL_LIST = `/retiros/seguimiento/${TOKEN}/mensajes`;
+    const URL_SEND = `/retiros/seguimiento/${TOKEN}/mensaje`;
+    const btn = document.getElementById('ilusChatBtn'), panel = document.getElementById('ilusChatPanel');
+    const body = document.getElementById('ilusChatBody'), input = document.getElementById('ilusChatInput');
+    const sendBtn = document.getElementById('ilusChatSend'), dot = document.getElementById('ilusChatDot'), closeBtn = document.getElementById('ilusChatClose');
+    let open = false, lastCount = 0, seenOp = 0, pollT = null;
+    const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+    function render(msgs){
+      if(!msgs.length){ body.innerHTML = '<div class="ic-empty">👋 ¿Tienes una duda sobre tu retiro?<br>Escríbenos aquí y te respondemos.</div>'; return; }
+      body.innerHTML = msgs.map(m => `<div class="ic-msg ${m.sender==='operador'?'op':'cl'}">
+        ${esc(m.cuerpo)}<div class="h">${esc(m.autor)} · ${esc(m.hora)}</div></div>`).join('');
+      body.scrollTop = body.scrollHeight;
+    }
+    async function load(markSeen){
+      try{
+        const r = await fetch(URL_LIST, {cache:'no-store', credentials:'same-origin'});
+        const d = await r.json(); if(!d || !d.ok) return;
+        const ops = d.mensajes.filter(m => m.sender==='operador').length;
+        if(open){ render(d.mensajes); seenOp = ops; dot.style.display='none'; }
+        else { const nuevos = ops - seenOp; if(nuevos>0){ dot.textContent = nuevos; dot.style.display='flex'; } }
+        lastCount = d.mensajes.length;
+      }catch(e){}
+    }
+    async function send(){
+      const t = input.value.trim(); if(!t) return;
+      input.value=''; sendBtn.disabled=true;
+      // Optimista
+      const tmp = document.createElement('div'); tmp.className='ic-msg cl'; tmp.innerHTML = esc(t)+'<div class="h">Tú · enviando…</div>';
+      if(body.querySelector('.ic-empty')) body.innerHTML='';
+      body.appendChild(tmp); body.scrollTop = body.scrollHeight;
+      try{
+        const r = await fetch(URL_SEND, {method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({mensaje:t})});
+        const d = await r.json(); if(d && d.ok){ await load(true); } else { tmp.querySelector('.h').textContent='No se pudo enviar'; }
+      }catch(e){ tmp.querySelector('.h').textContent='Error de red'; }
+      sendBtn.disabled=false; input.focus();
+    }
+    function openPanel(){ open=true; panel.classList.add('open'); dot.style.display='none'; load(true); input.focus();
+      if(!pollT) pollT=setInterval(load, 9000); }
+    function closePanel(){ open=false; panel.classList.remove('open'); }
+    btn.addEventListener('click', ()=> open?closePanel():openPanel());
+    closeBtn.addEventListener('click', closePanel);
+    sendBtn.addEventListener('click', send);
+    input.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); send(); } });
+    // Sondeo de fondo para la burbuja (cada 25s aunque esté cerrado)
+    setTimeout(()=>{ load(false); setInterval(()=>{ if(!open) load(false); }, 25000); }, 3000);
+  })();
+  </script>
 </body>
 </html>

@@ -6008,4 +6008,84 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 </script>
 
+{# ════════ CHAT con el CLIENTE (operador) — Daniel 2026-06-17 ════════ #}
+<style>
+  #opChatBtn{position:fixed;right:18px;bottom:18px;z-index:10600;width:62px;height:62px;border-radius:50%;
+    background:linear-gradient(135deg,#0a0a0a,#262626);color:#fff;border:none;box-shadow:0 10px 26px rgba(0,0,0,.4);
+    display:grid;place-items:center;font-size:1.5rem;cursor:pointer;transition:transform .2s}
+  #opChatBtn:hover{transform:scale(1.08)}
+  #opChatBtn .cdot{position:absolute;top:-3px;right:-3px;min-width:22px;height:22px;border-radius:50px;background:#dc2626;
+    color:#fff;font-size:.72rem;font-weight:900;display:none;align-items:center;justify-content:center;padding:0 5px;border:2px solid #fff}
+  #opChatPanel{position:fixed;right:18px;bottom:90px;z-index:10600;width:min(370px,calc(100vw - 28px));
+    height:min(520px,calc(100vh - 130px));background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.32);
+    display:none;flex-direction:column;overflow:hidden;border:1px solid #eee}
+  #opChatPanel.open{display:flex}
+  .opc-head{background:#dc2626;color:#fff;padding:13px 16px;display:flex;align-items:center;gap:10px}
+  .opc-head .t{font-weight:800;font-size:.95rem}
+  .opc-head .x{margin-left:auto;background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer}
+  .opc-body{flex:1;overflow-y:auto;padding:14px;background:#f4f6f8;display:flex;flex-direction:column;gap:8px}
+  .opc-msg{max-width:80%;padding:8px 12px;border-radius:14px;font-size:.88rem;line-height:1.4;word-wrap:break-word;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .opc-msg .h{font-size:.64rem;opacity:.6;margin-top:3px;text-align:right}
+  .opc-msg.cl{background:#fff;color:#0a0a0a;align-self:flex-start;border-bottom-left-radius:4px}
+  .opc-msg.op{background:#dcf8c6;color:#0a0a0a;align-self:flex-end;border-bottom-right-radius:4px}
+  .opc-empty{text-align:center;color:#9ca3af;font-size:.82rem;margin:auto 10px}
+  .opc-foot{display:flex;gap:8px;padding:10px;border-top:1px solid #eee;background:#fff}
+  .opc-foot input{flex:1;border:1.5px solid #e5e7eb;border-radius:50px;padding:10px 14px;font-size:15px;outline:none}
+  .opc-foot input:focus{border-color:#dc2626}
+  .opc-foot button{background:#dc2626;color:#fff;border:none;width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:1.1rem;flex:0 0 auto}
+</style>
+<button id="opChatBtn" title="Chat con el cliente"><i class="bi bi-chat-dots-fill"></i><span class="cdot" id="opChatDot">0</span></button>
+<div id="opChatPanel" role="dialog" aria-label="Chat con el cliente">
+  <div class="opc-head"><i class="bi bi-whatsapp"></i><div class="t">Chat con el cliente</div>
+    <button class="x" id="opChatClose">&times;</button></div>
+  <div class="opc-body" id="opChatBody"></div>
+  <div class="opc-foot">
+    <input id="opChatInput" type="text" placeholder="Responder al cliente…" maxlength="2000" autocomplete="off">
+    <button id="opChatSend"><i class="bi bi-send-fill"></i></button>
+  </div>
+</div>
+<script>
+(function(){
+  'use strict';
+  const RID = {{ req.id }};
+  const btn=document.getElementById('opChatBtn'), panel=document.getElementById('opChatPanel');
+  const body=document.getElementById('opChatBody'), input=document.getElementById('opChatInput');
+  const sendBtn=document.getElementById('opChatSend'), dot=document.getElementById('opChatDot'), closeBtn=document.getElementById('opChatClose');
+  let open=false, seenCl=0, pollT=null;
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function render(msgs){
+    if(!msgs.length){ body.innerHTML='<div class="opc-empty">Aún no hay mensajes con el cliente.</div>'; return; }
+    body.innerHTML=msgs.map(m=>`<div class="opc-msg ${m.sender==='operador'?'op':'cl'}">${esc(m.cuerpo)}<div class="h">${esc(m.autor)} · ${esc(m.hora)}</div></div>`).join('');
+    body.scrollTop=body.scrollHeight;
+  }
+  async function load(){
+    try{
+      const r=await fetch(`/retiros/${RID}/mensajes`,{cache:'no-store',credentials:'same-origin'});
+      const d=await r.json(); if(!d||!d.ok) return;
+      const cl=d.mensajes.filter(m=>m.sender==='cliente').length;
+      if(open){ render(d.mensajes); seenCl=cl; dot.style.display='none'; }
+      else { const nuevos=cl-seenCl; if(nuevos>0){ dot.textContent=nuevos; dot.style.display='flex'; } }
+    }catch(e){}
+  }
+  async function send(){
+    const t=input.value.trim(); if(!t) return; input.value=''; sendBtn.disabled=true;
+    if(body.querySelector('.opc-empty')) body.innerHTML='';
+    const tmp=document.createElement('div'); tmp.className='opc-msg op'; tmp.innerHTML=esc(t)+'<div class="h">Tú · enviando…</div>';
+    body.appendChild(tmp); body.scrollTop=body.scrollHeight;
+    try{
+      const r=await fetch(`/retiros/${RID}/mensaje`,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({mensaje:t})});
+      const d=await r.json(); if(d&&d.ok){ await load(); } else { tmp.querySelector('.h').textContent='No se pudo enviar'; }
+    }catch(e){ tmp.querySelector('.h').textContent='Error de red'; }
+    sendBtn.disabled=false; input.focus();
+  }
+  function openP(){ open=true; panel.classList.add('open'); dot.style.display='none'; load(); input.focus(); if(!pollT) pollT=setInterval(()=>{if(open)load();},9000); }
+  function closeP(){ open=false; panel.classList.remove('open'); }
+  btn.addEventListener('click',()=>open?closeP():openP());
+  closeBtn.addEventListener('click',closeP);
+  sendBtn.addEventListener('click',send);
+  input.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();send();} });
+  setTimeout(()=>{ load(); setInterval(()=>{if(!open)load();},20000); },2000);
+})();
+</script>
+
 {% endblock %}

@@ -490,6 +490,27 @@ def register_pickup_routes(app, ctx):
             try: mysql_execute(idx_sql)
             except Exception: pass
 
+        # ── Chat en vivo cliente↔operador (Daniel 2026-06-17) ───────────
+        # Mensajes del seguimiento público (burbuja estilo WhatsApp en el
+        # monitor). leido_operador/leido_cliente para badges de "no leído".
+        try:
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS pickup_messages (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id      INT NOT NULL,
+                    sender          VARCHAR(12) NOT NULL,
+                    autor           VARCHAR(160),
+                    cuerpo          VARCHAR(2000) NOT NULL,
+                    leido_operador  TINYINT(1) NOT NULL DEFAULT 0,
+                    leido_cliente   TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_pm_req (request_id, id),
+                    INDEX idx_pm_unread (request_id, sender, leido_operador)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        except Exception as _e_pm:
+            print(f"[ensure_multidoc_tables] pickup_messages: {_e_pm}", flush=True)
+
         # ✅ Marcamos como listas: nadie más perderá tiempo aquí en el hot path
         _MULTIDOC_TABLES_READY["v"] = True
         print("[ensure_multidoc_tables] OK (cached, los endpoints saltan en el hot path)", flush=True)
@@ -2244,6 +2265,151 @@ def register_pickup_routes(app, ctx):
         }
         _polling_store(token, payload)
         return _no_store_json(payload)
+
+    # ══════════════════════════════════════════════════════════════════
+    #  CHAT EN VIVO cliente ↔ operador (Daniel 2026-06-17)
+    #  El cliente escribe desde la pancarta del seguimiento; el operador lo
+    #  ve en el monitor con burbuja "nuevo mensaje" (estilo WhatsApp) y
+    #  responde. Best-effort, tabla pickup_messages.
+    # ══════════════════════════════════════════════════════════════════
+    def _msg_time(dt):
+        """Formatea created_at (UTC en BD) a hora Chile 'dd/mm HH:MM'."""
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            from datetime import datetime as _dt
+            if dt is None:
+                return ""
+            if not isinstance(dt, _dt):
+                dt = _dt.strptime(str(dt)[:19], "%Y-%m-%d %H:%M:%S")
+            return dt.replace(tzinfo=_ZI("UTC")).astimezone(_ZI("America/Santiago")).strftime("%d/%m %H:%M")
+        except Exception:
+            return str(dt or "")[:16]
+
+    def _msg_rows(rid, limit=300):
+        rows = mysql_fetchall(
+            "SELECT id, sender, autor, cuerpo, created_at "
+            "FROM pickup_messages WHERE request_id=%s ORDER BY id ASC LIMIT %s",
+            (int(rid), int(limit))
+        ) or []
+        return [{
+            "id":     r.get("id"),
+            "sender": r.get("sender") or "cliente",
+            "autor":  r.get("autor") or "",
+            "cuerpo": r.get("cuerpo") or "",
+            "hora":   _msg_time(r.get("created_at")),
+        } for r in rows]
+
+    @app.route("/retiros/seguimiento/<token>/mensajes", methods=["GET"])
+    def pickup_public_mensajes(token):
+        """Lista de mensajes del chat (vista del CLIENTE). Marca como leídos por
+        el cliente los mensajes del operador."""
+        if not token or len(token) < 16 or len(token) > 200 \
+                or not re.match(r"^[A-Za-z0-9_\-]+$", token):
+            return jsonify({"ok": False, "error": "invalid_token"}), 400
+        if not _token_rate_ok(token):
+            return jsonify({"ok": False, "error": "rate_limited"}), 429
+        req = mysql_fetchone(f"SELECT id FROM `{REQ}` WHERE public_token=%s LIMIT 1", (token,))
+        if not req:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        try:
+            mysql_execute("UPDATE pickup_messages SET leido_cliente=1 "
+                          "WHERE request_id=%s AND sender='operador' AND leido_cliente=0",
+                          (req["id"],))
+        except Exception:
+            pass
+        resp = jsonify({"ok": True, "mensajes": _msg_rows(req["id"])})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.route("/retiros/seguimiento/<token>/mensaje", methods=["POST"])
+    @_rate_limited("pickup_msg_publico", max_attempts=40, window_seconds=300, methods=("POST",))
+    def pickup_public_mensaje_post(token):
+        """El cliente envía un mensaje desde la pancarta del seguimiento."""
+        if not token or len(token) < 16 or len(token) > 200 \
+                or not re.match(r"^[A-Za-z0-9_\-]+$", token):
+            return jsonify({"ok": False, "error": "invalid_token"}), 400
+        body = request.get_json(silent=True) or {}
+        texto = (body.get("mensaje") or request.form.get("mensaje") or "").strip()[:2000]
+        if not texto:
+            return jsonify({"ok": False, "error": "mensaje_vacio"}), 400
+        req = mysql_fetchone(
+            f"SELECT id, code, customer_name, contact_name FROM `{REQ}` "
+            f"WHERE public_token=%s LIMIT 1", (token,))
+        if not req:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        autor = (req.get("contact_name") or req.get("customer_name") or "Cliente")[:160]
+        try:
+            mysql_execute(
+                "INSERT INTO pickup_messages (request_id, sender, autor, cuerpo, "
+                "leido_operador, leido_cliente) VALUES (%s,'cliente',%s,%s,0,1)",
+                (req["id"], autor, texto))
+        except Exception as exc:
+            print(f"[pickup-msg] insert cliente: {exc}", flush=True)
+            return jsonify({"ok": False, "error": "no_guardado"}), 500
+        # Notificar al equipo (campana + email) — best-effort
+        try:
+            _notificar_equipo_retiros(
+                f"💬 Nuevo mensaje del cliente · retiro {req.get('code') or '?'}",
+                f"{autor} escribió: \"{texto[:300]}\"",
+                req["id"], req.get("code") or "?",
+                prioridad="alta", tipo="retiro_mensaje", send_email=True)
+        except Exception as _e_n:
+            print(f"[pickup-msg] notif: {_e_n}", flush=True)
+        return jsonify({"ok": True, "mensaje": {
+            "sender": "cliente", "autor": autor, "cuerpo": texto, "hora": _msg_time(None) or ""}})
+
+    @app.route("/retiros/<int:rid>/mensajes", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_op_mensajes(rid):
+        """Lista de mensajes del chat (vista del OPERADOR). Marca como leídos por
+        el operador los mensajes del cliente."""
+        try:
+            mysql_execute("UPDATE pickup_messages SET leido_operador=1 "
+                          "WHERE request_id=%s AND sender='cliente' AND leido_operador=0",
+                          (rid,))
+        except Exception:
+            pass
+        return jsonify({"ok": True, "mensajes": _msg_rows(rid)})
+
+    @app.route("/retiros/<int:rid>/mensaje", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_op_mensaje_post(rid):
+        """El operador responde al cliente desde el monitor/ficha."""
+        body = request.get_json(silent=True) or {}
+        texto = (body.get("mensaje") or request.form.get("mensaje") or "").strip()[:2000]
+        if not texto:
+            return jsonify({"ok": False, "error": "mensaje_vacio"}), 400
+        req = mysql_fetchone(f"SELECT id, code FROM `{REQ}` WHERE id=%s LIMIT 1", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        autor = ((getattr(g, "user", None) or {}).get("nombre") or "Equipo ILUS")[:160]
+        try:
+            mysql_execute(
+                "INSERT INTO pickup_messages (request_id, sender, autor, cuerpo, "
+                "leido_operador, leido_cliente) VALUES (%s,'operador',%s,%s,1,0)",
+                (rid, autor, texto))
+        except Exception as exc:
+            print(f"[pickup-msg] insert operador: {exc}", flush=True)
+            return jsonify({"ok": False, "error": "no_guardado"}), 500
+        return jsonify({"ok": True, "mensaje": {
+            "sender": "operador", "autor": autor, "cuerpo": texto, "hora": _msg_time(None) or ""}})
+
+    @app.route("/retiros/api/mensajes-no-leidos", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_mensajes_no_leidos():
+        """Conteo de mensajes del cliente sin leer, por retiro — alimenta la
+        burbuja 'nuevo mensaje' del monitor."""
+        try:
+            rows = mysql_fetchall(
+                "SELECT request_id, COUNT(*) AS n FROM pickup_messages "
+                "WHERE sender='cliente' AND leido_operador=0 GROUP BY request_id") or []
+            por = {str(r["request_id"]): int(r["n"]) for r in rows}
+            resp = jsonify({"ok": True, "total": sum(por.values()), "por_retiro": por})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        except Exception as exc:
+            print(f"[pickup-msg] no-leidos: {exc}", flush=True)
+            return jsonify({"ok": True, "total": 0, "por_retiro": {}})
 
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
     @_rate_limited("pickup_public_request", max_attempts=40, window_seconds=3600)

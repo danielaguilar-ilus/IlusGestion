@@ -933,4 +933,38 @@ async function eliminarSolicitudDesdeMonitor(rid, code, cliente){
   </form></div>
 </div>
 {% endif %}
+
+{# ════════ Burbuja "nuevo mensaje" del cliente en las cards (Daniel 2026-06-17) ════════ #}
+<style>
+  .kanban-card{position:relative}
+  .card-chat-bubble{position:absolute;top:-8px;right:-8px;z-index:5;background:#16a34a;color:#fff;
+    min-width:24px;height:24px;border-radius:50px;display:flex;align-items:center;justify-content:center;
+    gap:3px;font-size:.72rem;font-weight:900;padding:0 7px;border:2px solid #fff;
+    box-shadow:0 3px 10px rgba(22,163,74,.45);animation:chatPulse 1.6s ease-in-out infinite}
+  @keyframes chatPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.14)}}
+  @media(prefers-reduced-motion:reduce){.card-chat-bubble{animation:none}}
+</style>
+<script>
+(function(){
+  'use strict';
+  async function refreshBubbles(){
+    try{
+      const r = await fetch('/retiros/api/mensajes-no-leidos', {cache:'no-store', credentials:'same-origin'});
+      const d = await r.json(); if(!d || !d.ok) return;
+      const por = d.por_retiro || {};
+      document.querySelectorAll('.kanban-card').forEach(card => {
+        const rid = card.getAttribute('data-rid');
+        const n = por[rid] || 0;
+        let b = card.querySelector('.card-chat-bubble');
+        if(n > 0){
+          if(!b){ b = document.createElement('span'); b.className='card-chat-bubble';
+            b.title='Nuevos mensajes del cliente'; card.appendChild(b); }
+          b.innerHTML = '<i class="bi bi-chat-dots-fill"></i>' + n;
+        } else if(b){ b.remove(); }
+      });
+    }catch(e){}
+  }
+  setTimeout(()=>{ refreshBubbles(); setInterval(refreshBubbles, 15000); }, 1500);
+})();
+</script>
 {% endblock %}
