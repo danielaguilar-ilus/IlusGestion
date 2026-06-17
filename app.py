@@ -5228,6 +5228,77 @@ def get_erp_product_by_sku(sku):
     return None
 
 
+def get_erp_stock_by_sku(sku):
+    """Stock GLOBAL de un producto en el ERP Random (READ-ONLY, MAEPR.STFI1).
+    Daniel 2026-06-17 ('saber si hay/no hay stock'). Usa el MISMO camino blindado
+    (_random_sql_one → solo SELECT, autocommit OFF) que ya usa el flag de preventa
+    del Monitor de Transporte. NUNCA escribe al ERP (REGLA #4.1). Devuelve dict o
+    None si el SKU no existe en MAEPR.
+
+    Semántica de campos (confirmar con Random antes de BLOQUEAR operaciones):
+      fisico       = STFI1   (stock físico unidad primaria)
+      comprometido = STDV1   (devengado a ventas pendientes de despacho)
+      disponible  ≈ STFI1 - STDV1
+    """
+    sku_u = (sku or "").strip().upper()
+    if not sku_u:
+        return None
+    try:
+        r = _random_sql_one(
+            f"""SELECT TOP 1
+                       LTRIM(RTRIM(KOPR))   AS sku,
+                       LTRIM(RTRIM(NOKOPR)) AS nombre,
+                       STFI1                AS fisico,
+                       STDV1                AS comprometido,
+                       STOCNV1              AS comprometido_nv
+                  FROM {ERP_TABLE_PRODUCTS}
+                 WHERE UPPER(LTRIM(RTRIM(KOPR))) = %s""",
+            (sku_u,),
+        )
+        if not r:
+            return None
+        def _f(v):
+            try:
+                return float(v or 0)
+            except Exception:
+                return 0.0
+        fisico = _f(r.get("fisico"))
+        comprometido = _f(r.get("comprometido"))
+        disponible = fisico - comprometido
+        return {
+            "sku":          (r.get("sku") or sku_u).strip().upper(),
+            "nombre":       (r.get("nombre") or "").strip(),
+            "fisico":       round(fisico, 2),
+            "comprometido": round(comprometido, 2),
+            "disponible":   round(disponible, 2),
+            "hay_stock":    disponible > 0,
+        }
+    except Exception as _e:
+        print(f"[get_erp_stock_by_sku] {sku_u}: {type(_e).__name__}: {str(_e)[:160]}", flush=True)
+        return None
+
+
+@app.route("/api/erp/stock", methods=["GET"])
+@require_permission("retiros")
+def api_erp_stock():
+    """Consulta de stock en vivo de un SKU en el ERP (READ-ONLY). Daniel
+    2026-06-17. Útil para picking/preparación de retiros. Solo lectura.
+    GET /api/erp/stock?sku=XXXX → {ok, stock:{fisico,comprometido,disponible,hay_stock}}
+    """
+    sku = (request.args.get("sku") or "").strip()
+    if not sku:
+        return jsonify(ok=False, error="Falta el parámetro sku"), 400
+    try:
+        st = get_erp_stock_by_sku(sku)
+        if not st:
+            return jsonify(ok=True, encontrado=False,
+                           mensaje="SKU no encontrado en el ERP (MAEPR)."), 200
+        return jsonify(ok=True, encontrado=True, stock=st)
+    except Exception as e:
+        print(f"[api_erp_stock] {e}", flush=True)
+        return jsonify(ok=False, error="No fue posible consultar el stock del ERP."), 500
+
+
 def get_full(product_id):
     product = mysql_fetchone(f"SELECT * FROM `{PRODUCTS_TABLE}` WHERE id=%s", (product_id,))
     if not product:
@@ -6189,8 +6260,13 @@ def login():
                         print(f"[login-track-async] outer error: {_e_lt_outer}", flush=True)
 
                     try:
+                        # Daniel 2026-06-17: guardar UA + IP + dispositivo-nuevo en
+                        # details para que el HISTORIAL de conexiones muestre desde
+                        # qué navegador/dispositivo se conectó cada usuario.
                         _audit("login_ok",
                                target_type="user", target_id=_uid,
+                               details={"ua": _alert_ua, "ip": ip,
+                                        "new_device": bool(_is_new_device)},
                                user_override={"id": _uid, "username": _uname, "role": _urole})
                     except Exception as _e_au:
                         print(f"[login-track-async] audit falló: {_e_au}", flush=True)
@@ -7245,10 +7321,25 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
         msg.attach(_alt)
         for _fn, _fb, _fm in att_norm:
             try:
-                _sub = "octet-stream"
-                if _fm and "/" in _fm:
-                    _sub = _fm.split("/", 1)[1] or "octet-stream"
-                _part = MIMEApplication(_fb, _subtype=_sub)
+                if _fm and _fm.lower().startswith("text/"):
+                    # text/* (ej. .ics): usar MIMEText para PRESERVAR el Content-Type
+                    # real (text/calendar). Con MIMEApplication se degradaba a
+                    # application/calendar y Gmail/Apple Mail no ofrecían el botón
+                    # "Agregar a calendario". Para .ics agregamos method=PUBLISH
+                    # (coincide con el METHOD:PUBLISH del VCALENDAR). (review 2026-06-17)
+                    _txt = _fb.decode("utf-8", "replace") if isinstance(_fb, (bytes, bytearray)) else str(_fb)
+                    _tsub = (_fm.split("/", 1)[1] or "plain")
+                    _part = MIMEText(_txt, _tsub, "utf-8")
+                    if _tsub == "calendar":
+                        try:
+                            _part.set_param("method", "PUBLISH")
+                        except Exception:
+                            pass
+                else:
+                    _sub = "octet-stream"
+                    if _fm and "/" in _fm:
+                        _sub = _fm.split("/", 1)[1] or "octet-stream"
+                    _part = MIMEApplication(_fb, _subtype=_sub)
                 _part.add_header("Content-Disposition", "attachment", filename=_fn)
                 msg.attach(_part)
             except Exception as _e_att:
@@ -9833,6 +9924,83 @@ def admin_users_backfill_last_login():
         import traceback as _tb_bf
         print(f"[backfill-last-login] FAIL: {e}\n{_tb_bf.format_exc()}", flush=True)
         return jsonify(ok=False, error="No fue posible reparar el tracking. Revisa los logs."), 500
+
+
+def _ua_resumen(ua):
+    """Resumen legible de un User-Agent: 'Navegador · Sistema'. Best-effort,
+    sin dependencias. Para el historial de conexiones (Daniel 2026-06-17)."""
+    s = (ua or "").lower()
+    if not s:
+        return ""
+    if "edg/" in s or "edga" in s:        nav = "Edge"
+    elif "opr/" in s or "opera" in s:     nav = "Opera"
+    elif "chrome" in s and "chromium" not in s: nav = "Chrome"
+    elif "firefox" in s:                  nav = "Firefox"
+    elif "safari" in s:                   nav = "Safari"
+    else:                                 nav = "Navegador"
+    if "iphone" in s or "ipad" in s or "ios" in s: so = "iOS"
+    elif "android" in s:                  so = "Android"
+    elif "windows" in s:                  so = "Windows"
+    elif "mac os" in s or "macintosh" in s: so = "Mac"
+    elif "linux" in s:                    so = "Linux"
+    else:                                 so = ""
+    return f"{nav} · {so}" if so else nav
+
+
+@app.route("/admin/api/users/<int:user_id>/historial", methods=["GET"])
+@require_permission("admin")
+def admin_user_historial_conexiones(user_id):
+    """Historial de conexiones de un usuario (Daniel 2026-06-17). Lee los eventos
+    login_ok / login_fail / logout de app_audit_log (que ya se graban con IP +
+    timestamp + User-Agent), para auditar cuándo y desde dónde se conecta cada
+    usuario sin que ellos se enteren. Solo admin/superadmin. Tiempos en hora Chile.
+    """
+    try:
+        u = mysql_fetchone(
+            f"SELECT id, username, nombre, role, last_login_at, last_seen_at, "
+            f"       last_login_ip, login_count "
+            f"FROM `{AUTH_TABLE}` WHERE id=%s", (user_id,)
+        )
+        if not u:
+            return jsonify(ok=False, error="Usuario no encontrado"), 404
+        rows = mysql_fetchall(
+            "SELECT ts, action, ip, status, details "
+            "FROM app_audit_log "
+            "WHERE target_type='user' AND target_id=%s "
+            "  AND action IN ('login_ok','login_fail','logout') "
+            "ORDER BY ts DESC LIMIT 100",
+            (str(user_id),)
+        ) or []
+        eventos = []
+        for r in rows:
+            ua = ""
+            try:
+                det = json.loads(r.get("details") or "{}")
+                ua = det.get("ua") or ""
+            except Exception:
+                ua = ""
+            eventos.append({
+                "ts":          chile_fmt_filter(r.get("ts")) if r.get("ts") else "",
+                "action":      r.get("action"),
+                "ip":          r.get("ip") or "",
+                "status":      r.get("status") or "",
+                "dispositivo": _ua_resumen(ua),
+            })
+        return jsonify(
+            ok=True,
+            usuario={
+                "id": u["id"], "username": u["username"],
+                "nombre": u["nombre"], "role": u["role"],
+                "login_count": u.get("login_count") or 0,
+                "last_login_at": chile_fmt_filter(u.get("last_login_at")) if u.get("last_login_at") else "",
+                "last_seen_at": chile_fmt_filter(u.get("last_seen_at")) if u.get("last_seen_at") else "",
+                "last_login_ip": u.get("last_login_ip") or "",
+            },
+            eventos=eventos,
+        )
+    except Exception as e:
+        print(f"[admin_user_historial] {e}", flush=True)
+        return jsonify(ok=False, error="No fue posible cargar el historial de conexiones."), 500
 
 
 def _normalizar_telefono_cl(raw):
@@ -28764,6 +28932,31 @@ def _build_retiro_email_templates():
             f'</td></tr></table>'
         )
 
+    def _ret_calendar_btns():
+        """Bloque 'Agregar a tu calendario' (Daniel 2026-06-17): botones Google
+        y Outlook + nota del adjunto .ics. Usa los tokens {{link_google_calendar}}
+        y {{link_outlook_calendar}} que provee _render_pickup_vars (pickups_module).
+        Solo se incrusta en plantillas con cita confirmada (fecha/hora definidas)."""
+        return (
+            '<table cellpadding="0" cellspacing="0" width="100%" '
+            'style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;'
+            'margin:6px 0 8px;padding:16px 18px">'
+            '<tr><td align="center">'
+            '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;'
+            'letter-spacing:.08em;font-weight:800;margin-bottom:10px">📅 Agéndalo en tu calendario</div>'
+            '<a href="{{link_google_calendar}}" target="_blank" '
+            'style="display:inline-block;background:#ffffff;border:1.5px solid #dc2626;'
+            'color:#dc2626;padding:9px 18px;margin:3px;text-decoration:none;font-size:13px;'
+            'font-weight:800;border-radius:8px">Google Calendar</a>'
+            '<a href="{{link_outlook_calendar}}" target="_blank" '
+            'style="display:inline-block;background:#ffffff;border:1.5px solid #0a0a0a;'
+            'color:#0a0a0a;padding:9px 18px;margin:3px;text-decoration:none;font-size:13px;'
+            'font-weight:800;border-radius:8px">Outlook</a>'
+            '<div style="font-size:11px;color:#9ca3af;line-height:1.5;margin-top:10px">'
+            'En iPhone/Mac, abre el archivo <strong>.ics</strong> adjunto para agregarlo a tu calendario.</div>'
+            '</td></tr></table>'
+        )
+
     def _ret_stepper(active_idx):
         """Stepper de 5 nodos CON LÍNEA CONECTORA (email-safe, tabla).
         (Juan Daniel 2026-06-05: 'que tenga la conexión, como en retiros'.)
@@ -28912,7 +29105,7 @@ def _build_retiro_email_templates():
          '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
          'Hola <strong>{{persona_retira}}</strong>, tu cita quedó <strong style="color:#16a34a">CONFIRMADA</strong>. '
          'Te esperamos puntual en bodega.</p>' +
-         _ret_info_card(_DATOS_AGENDA_CONF) +
+         _ret_info_card(_DATOS_AGENDA_CONF) + '{{productos_html}}' +
          '<table cellpadding="0" cellspacing="0" width="100%" '
          'style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;'
          'margin:18px 0;padding:14px 18px">'
@@ -28921,6 +29114,7 @@ def _build_retiro_email_templates():
          '✓ Cédula de identidad (debe coincidir con quien retira)<br>'
          '✓ Vehículo apto para {{n_bultos}} bulto(s) — {{kg}} kg / {{m3}} m³<br>'
          '✓ Este correo o el código <strong>{{code}}</strong></td></tr></table>' +
+         _ret_calendar_btns() +
          _ret_cta("link_seguimiento", "Ver detalle del retiro") +
          '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
          '¿Necesitas reagendar o tienes una duda? Responde este correo y te ayudamos.</p>'),
@@ -28942,7 +29136,7 @@ def _build_retiro_email_templates():
          'Hola <strong>{{persona_retira}}</strong>, nuestro equipo de bodega ya está '
          'preparando tu retiro <strong>{{code}}</strong>. Cuando llegues, '
          'todo estará listo para que te lleves los productos sin esperas.</p>' +
-         _ret_info_card(_DATOS_AGENDA_CONF) +
+         _ret_info_card(_DATOS_AGENDA_CONF) + '{{productos_html}}' +
          _ret_cta("link_seguimiento", "Ver estado en vivo") +
          '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
          'Recuerda llegar dentro del horario confirmado y presentar tu cédula al ingreso.</p>'),
@@ -29062,7 +29256,7 @@ def _build_retiro_email_templates():
          'Hola <strong>{{persona_retira}}</strong>, te recordamos que '
          '<strong>mañana</strong> retiras tus productos en ILUS. '
          'Aquí van los datos finales para que llegues sin problemas:</p>' +
-         _ret_info_card(_DATOS_AGENDA_CONF) +
+         _ret_info_card(_DATOS_AGENDA_CONF) + '{{productos_html}}' +
          '<table cellpadding="0" cellspacing="0" width="100%" '
          'style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;'
          'margin:18px 0;padding:14px 18px">'
@@ -29071,6 +29265,7 @@ def _build_retiro_email_templates():
          '✓ Lleva tu cédula de identidad<br>'
          '✓ Confirma vehículo apto para {{n_bultos}} bulto(s) · {{kg}} kg / {{m3}} m³<br>'
          '✓ Llega dentro del horario confirmado</td></tr></table>' +
+         _ret_calendar_btns() +
          _ret_cta("link_seguimiento", "Ver detalle del retiro") +
          '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
          '¿Imprevistos? Responde este correo o llámanos. Es mejor avisar a no llegar.</p>'),

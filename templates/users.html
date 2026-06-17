@@ -257,6 +257,12 @@
               <div class="d-flex justify-content-center gap-1">
                 <a href="{{ url_for('edit_user', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary"
                    title="Editar"><i class="bi bi-pencil"></i></a>
+                <button type="button" class="btn btn-sm btn-outline-dark"
+                        title="Historial de conexiones"
+                        aria-label="Historial de conexiones"
+                        onclick="verHistorialConexiones({{ user.id }}, '{{ user.nombre|e }}', '{{ user.username|e }}')">
+                  <i class="bi bi-clock-history"></i>
+                </button>
                 <button type="button" class="btn btn-sm btn-outline-primary"
                         title="Solicitar cambio de contraseña por email"
                         aria-label="Solicitar cambio de contraseña por email"
@@ -297,6 +303,52 @@
 
 {% block scripts %}
 <script>
+// ── Historial de conexiones (Daniel 2026-06-17) ───────────────────────
+// Audita cuándo y desde dónde se conecta cada usuario (login_ok/login_fail/
+// logout de app_audit_log) sin que ellos se enteren. Solo admin/superadmin.
+async function verHistorialConexiones(uid, nombre, email) {
+  const modalEl = document.getElementById('histConexModal');
+  const body = document.getElementById('histConexBody');
+  const titulo = document.getElementById('histConexTitulo');
+  titulo.textContent = nombre + ' · ' + email;
+  body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Cargando historial…</div>';
+  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  modal.show();
+  try {
+    const r = await fetch(`/admin/api/users/${uid}/historial`, { credentials: 'same-origin', cache: 'no-store' });
+    const d = await r.json();
+    if (!d || !d.ok) { body.innerHTML = '<div class="alert alert-warning mb-0">No se pudo cargar el historial.</div>'; return; }
+    const u = d.usuario || {};
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const iconA = { login_ok: '🟢', login_fail: '🔴', logout: '⚪' };
+    const labelA = { login_ok: 'Inició sesión', login_fail: 'Intento fallido', logout: 'Cerró sesión' };
+    let head = `<div class="d-flex flex-wrap gap-3 mb-3 pb-3" style="border-bottom:1px solid #eee">
+      <div><div class="text-muted" style="font-size:.7rem;text-transform:uppercase;font-weight:700">Total logins</div><div class="fw-bold" style="font-size:1.1rem">${esc(u.login_count)}</div></div>
+      <div><div class="text-muted" style="font-size:.7rem;text-transform:uppercase;font-weight:700">Último login</div><div class="fw-bold">${esc(u.last_login_at) || '—'}</div></div>
+      <div><div class="text-muted" style="font-size:.7rem;text-transform:uppercase;font-weight:700">Visto por última vez</div><div class="fw-bold">${esc(u.last_seen_at) || '—'}</div></div>
+      <div><div class="text-muted" style="font-size:.7rem;text-transform:uppercase;font-weight:700">IP último login</div><div class="fw-bold" style="font-family:monospace">${esc(u.last_login_ip) || '—'}</div></div>
+    </div>`;
+    const ev = d.eventos || [];
+    if (!ev.length) {
+      body.innerHTML = head + '<div class="text-muted text-center py-3">Sin eventos de conexión registrados todavía.</div>';
+      return;
+    }
+    let rows = ev.map(e => `<tr>
+      <td style="white-space:nowrap">${iconA[e.action] || '•'} ${esc(labelA[e.action] || e.action)}</td>
+      <td style="white-space:nowrap">${esc(e.ts)}</td>
+      <td style="font-family:monospace;font-size:.82rem">${esc(e.ip) || '—'}</td>
+      <td style="font-size:.82rem">${esc(e.dispositivo) || '—'}</td>
+    </tr>`).join('');
+    body.innerHTML = head + `<div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0">
+      <thead><tr style="font-size:.72rem;text-transform:uppercase;color:#6b7280">
+        <th>Evento</th><th>Cuándo</th><th>IP</th><th>Dispositivo</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+      <div class="text-muted mt-2" style="font-size:.72rem">Se muestran las últimas ${ev.length} conexiones. <strong>Visto</strong> = última actividad en el sistema (cualquier acción), distinto del <strong>login</strong> (inicio de sesión por el formulario).</div>`;
+  } catch (e) {
+    body.innerHTML = '<div class="alert alert-danger mb-0">Error de red al cargar el historial.</div>';
+  }
+}
+
 async function enviarPasswordLink(uid, nombre, email, btn) {
   // REGLA #1 CLAUDE.md — usar ilusConfirm (no confirm nativo)
   const ok = await ilusConfirm({
@@ -489,6 +541,25 @@ async function definirClaveManual(uid, nombre, btn) {
 })();
 </script>
 {% endblock %}
+
+{# ── Modal compartido: Historial de conexiones (Daniel 2026-06-17) ── #}
+<div class="modal fade" id="histConexModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h5 class="modal-title"><i class="bi bi-clock-history me-2"></i>Historial de conexiones</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="text-muted mb-2" id="histConexTitulo" style="font-weight:700"></div>
+        <div id="histConexBody"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% for user in users %}
 {% if current_user.id != user.id %}

@@ -1184,6 +1184,228 @@ def register_pickup_routes(app, ctx):
 
         return True, ""
 
+    # ── CALENDARIO (.ics + links Google/Outlook) — Daniel 2026-06-17 ─────
+    #  El cliente (y el equipo) puede AGENDAR el retiro en su calendario desde
+    #  el correo. Las columnas confirmed_date/time_* están en hora de PARED de
+    #  Chile (NO UTC), así que para el .ics y los links convertimos a UTC con
+    #  zoneinfo('America/Santiago') (DST-aware) y emitimos sufijo Z — formato
+    #  inequívoco y compatible con Gmail/Outlook/Apple sin VTIMEZONE.
+    def _pickup_event_dt(req, proposal=None):
+        """(start, end) como datetime NAIVE en hora local Chile para el evento,
+        o (None, None) si no hay fecha/hora. Prioridad confirmed > proposed >
+        requested (mismo orden que el horario mostrado)."""
+        from datetime import datetime as _dt, date as _date, timedelta as _tdelta
+        def _as_date(v):
+            if not v:
+                return None
+            if isinstance(v, _date) and not isinstance(v, _dt):
+                return v
+            if isinstance(v, _dt):
+                return v.date()
+            try:
+                return _dt.strptime(str(v)[:10], "%Y-%m-%d").date()
+            except Exception:
+                return None
+        def _as_hm(v):
+            # v puede ser time, timedelta o str 'HH:MM[:SS]'
+            s = str(v) if v is not None else ""
+            if not s:
+                return None
+            parts = s.split(":")
+            try:
+                h = int(parts[0]); m = int(parts[1]) if len(parts) > 1 else 0
+                return h % 24, max(0, min(59, m))
+            except Exception:
+                return None
+        p = proposal or {}
+        d = _as_date(p.get("date")) or _as_date(req.get("confirmed_date")) \
+            or _as_date(req.get("proposed_date")) or _as_date(req.get("requested_date"))
+        if not d:
+            return None, None
+        tf = p.get("time_from") or req.get("confirmed_time_from") \
+            or req.get("proposed_time_from") or req.get("requested_time_from")
+        tt = p.get("time_to") or req.get("confirmed_time_to") \
+            or req.get("proposed_time_to") or req.get("requested_time_to")
+        hm_f = _as_hm(tf)
+        if not hm_f:
+            return None, None
+        start = _dt(d.year, d.month, d.day, hm_f[0], hm_f[1])
+        hm_t = _as_hm(tt)
+        if hm_t:
+            end = _dt(d.year, d.month, d.day, hm_t[0], hm_t[1])
+            if end <= start:
+                end = start + _tdelta(hours=1)
+        else:
+            end = start + _tdelta(hours=1)
+        return start, end
+
+    def _pickup_event_location(req):
+        cfg = settings()
+        wn = cfg.get("warehouse_name") or "Bodega ILUS"
+        wa = cfg.get("warehouse_addr") or ""
+        return (wn + (", " + wa if wa else "")).strip()
+
+    def _build_pickup_ics(req, proposal=None):
+        """Bytes del .ics (VEVENT) del retiro, o None si no hay fecha/hora.
+        UID ESTABLE por retiro (retiro-{code}@ilusfitness.com) → un reenvío
+        ACTUALIZA el evento en vez de duplicarlo. Hora en UTC (sufijo Z)."""
+        try:
+            from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo as _ZI
+            start, end = _pickup_event_dt(req, proposal)
+            if not start or not end:
+                return None
+            _tz = _ZI("America/Santiago"); _utc = _ZI("UTC")
+            su = start.replace(tzinfo=_tz).astimezone(_utc)
+            eu = end.replace(tzinfo=_tz).astimezone(_utc)
+            code = (req.get("code") or "RETIRO").strip()
+            location = _pickup_event_location(req)
+            persona = req.get("pickup_person_name") or req.get("contact_name") or ""
+            link = _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or "")
+            def _esc(s):
+                return (str(s or "").replace("\\", "\\\\").replace(",", "\\,")
+                        .replace(";", "\\;").replace("\n", "\\n").replace("\r", ""))
+            desc = f"Retiro ILUS {code}."
+            if persona:
+                desc += f" Persona que retira: {persona}."
+            if req.get("public_token"):
+                desc += f" Seguimiento: {link}"
+            lines = [
+                "BEGIN:VCALENDAR", "VERSION:2.0",
+                "PRODID:-//ILUS Sport & Health//Retiros//ES",
+                "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+                "BEGIN:VEVENT",
+                f"UID:retiro-{code}@ilusfitness.com",
+                f"DTSTAMP:{_dt.utcnow().strftime('%Y%m%dT%H%M%SZ')}",
+                f"DTSTART:{su.strftime('%Y%m%dT%H%M%SZ')}",
+                f"DTEND:{eu.strftime('%Y%m%dT%H%M%SZ')}",
+                f"SUMMARY:{_esc('Retiro ILUS ' + code)}",
+                f"LOCATION:{_esc(location)}",
+                f"DESCRIPTION:{_esc(desc)}",
+            ]
+            if req.get("public_token"):
+                lines.append(f"URL:{_esc(link)}")
+            lines += [
+                "STATUS:CONFIRMED",
+                "BEGIN:VALARM", "TRIGGER:-PT2H", "ACTION:DISPLAY",
+                f"DESCRIPTION:{_esc('Recordatorio retiro ILUS ' + code)}",
+                "END:VALARM",
+                "END:VEVENT", "END:VCALENDAR",
+            ]
+            return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+        except Exception as exc:
+            try:
+                print(f"[pickup-ics] no se pudo construir .ics: {exc}", flush=True)
+            except Exception:
+                pass
+            return None
+
+    def _pickup_calendar_links(req, proposal=None):
+        """{'google':url, 'outlook':url} para 'Agregar a calendario' desde el
+        cuerpo del correo. Vacío si no hay fecha/hora. Google usa UTC (Z)."""
+        try:
+            from urllib.parse import quote_plus
+            from zoneinfo import ZoneInfo as _ZI
+            start, end = _pickup_event_dt(req, proposal)
+            if not start or not end:
+                return {"google": "", "outlook": ""}
+            _tz = _ZI("America/Santiago"); _utc = _ZI("UTC")
+            su = start.replace(tzinfo=_tz).astimezone(_utc)
+            eu = end.replace(tzinfo=_tz).astimezone(_utc)
+            code = (req.get("code") or "RETIRO").strip()
+            title = f"Retiro ILUS {code}"
+            location = _pickup_event_location(req)
+            link = _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or "")
+            details = f"Retiro ILUS {code}." + (f" Seguimiento: {link}" if req.get("public_token") else "")
+            google = (
+                "https://calendar.google.com/calendar/render?action=TEMPLATE"
+                "&text=" + quote_plus(title)
+                + "&dates=" + su.strftime("%Y%m%dT%H%M%SZ") + "/" + eu.strftime("%Y%m%dT%H%M%SZ")
+                + "&location=" + quote_plus(location)
+                + "&details=" + quote_plus(details)
+            )
+            outlook = (
+                "https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent"
+                "&subject=" + quote_plus(title)
+                # UTC con sufijo Z (igual que Google). Sin Z, Outlook interpreta
+                # la hora en la zona del DESTINATARIO → evento corrido si no está
+                # en Chile. Con Z queda inequívoco para cualquier zona. (review 2026-06-17)
+                + "&startdt=" + su.strftime("%Y-%m-%dT%H:%M:%SZ")
+                + "&enddt=" + eu.strftime("%Y-%m-%dT%H:%M:%SZ")
+                + "&location=" + quote_plus(location)
+                + "&body=" + quote_plus(details)
+            )
+            return {"google": google, "outlook": outlook}
+        except Exception:
+            return {"google": "", "outlook": ""}
+
+    def _pickup_productos_html(req):
+        """Tabla HTML con los productos del retiro para el correo (Daniel
+        2026-06-17: 'información completa del producto'). Cada línea muestra
+        producto + SKU + cantidad + indicador de STOCK (✓ en stock / ⚠ sin
+        saldo ERP, usando el flag marcada_sin_saldo ya persistido — NO consulta
+        el ERP en el hilo de envío). Vacío si el retiro aún no tiene productos.
+        Best-effort: '' ante cualquier error (nunca rompe el correo)."""
+        try:
+            import html as _h
+            rid = req.get("id")
+            if not rid:
+                return ""
+            data = _pickup_lineas_consolidadas(int(rid)) or {}
+            lineas = data.get("lineas") or []
+            if not lineas:
+                return ""
+            MAX = 12
+            filas = []
+            for ln in lineas[:MAX]:
+                desc = (ln.get("descripcion") or ln.get("sku") or "Producto").strip()
+                sku = (ln.get("sku") or "").strip()
+                qty = ln.get("cantidad") or 0
+                try:
+                    qty_str = str(int(qty)) if float(qty) == int(float(qty)) else f"{float(qty):.2f}"
+                except Exception:
+                    qty_str = str(qty)
+                if bool(ln.get("marcada_sin_saldo")):
+                    badge = ('<span style="display:inline-block;background:#fff8e1;color:#92400e;'
+                             'border:1px solid #fcd34d;border-radius:50px;font-size:10px;font-weight:800;'
+                             'padding:2px 8px">⚠ sin saldo ERP</span>')
+                else:
+                    badge = ('<span style="display:inline-block;background:#dcfce7;color:#14532d;'
+                             'border:1px solid #86efac;border-radius:50px;font-size:10px;font-weight:800;'
+                             'padding:2px 8px">✓ en stock</span>')
+                filas.append(
+                    '<tr>'
+                    f'<td style="padding:8px 10px;border-bottom:1px solid #f0f0f0;font-size:13px;color:#0a0a0a">{_h.escape(desc)}'
+                    + (f'<br><span style="font-size:11px;color:#9ca3af">SKU {_h.escape(sku)}</span>' if sku else '')
+                    + '</td>'
+                    f'<td align="center" style="padding:8px 10px;border-bottom:1px solid #f0f0f0;font-size:14px;font-weight:800;color:#0a0a0a">{qty_str}</td>'
+                    f'<td align="center" style="padding:8px 10px;border-bottom:1px solid #f0f0f0">{badge}</td>'
+                    '</tr>'
+                )
+            extra = ""
+            if len(lineas) > MAX:
+                extra = ('<tr><td colspan="3" style="padding:8px 10px;font-size:12px;'
+                         f'color:#6b7280;text-align:center">… y {len(lineas) - MAX} producto(s) más</td></tr>')
+            return (
+                '<table cellpadding="0" cellspacing="0" width="100%" '
+                'style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;margin:0 0 18px;overflow:hidden">'
+                '<tr><td style="background:#0a0a0a;color:#fff;padding:10px 14px;font-size:12px;'
+                'font-weight:800;text-transform:uppercase;letter-spacing:.06em">📦 Productos de tu retiro</td></tr>'
+                '<tr><td style="padding:2px 6px 6px"><table cellpadding="0" cellspacing="0" width="100%">'
+                '<tr style="background:#f8fafc">'
+                '<td style="padding:8px 10px;font-size:10px;color:#6b7280;text-transform:uppercase;font-weight:700">Producto</td>'
+                '<td align="center" style="padding:8px 10px;font-size:10px;color:#6b7280;text-transform:uppercase;font-weight:700">Cant.</td>'
+                '<td align="center" style="padding:8px 10px;font-size:10px;color:#6b7280;text-transform:uppercase;font-weight:700">Stock</td></tr>'
+                + "".join(filas) + extra +
+                '</table></td></tr></table>'
+            )
+        except Exception as exc:
+            try:
+                print(f"[pickup-productos-html] {exc}", flush=True)
+            except Exception:
+                pass
+            return ""
+
     def _render_pickup_vars(req, proposal=None):
         """Construye el dict de variables disponibles en plantillas de retiros."""
         cfg = settings()
@@ -1215,6 +1437,14 @@ def register_pickup_routes(app, ctx):
             # daemon (notify_async / _bg_post_insert) donde url_for(_external=True)
             # lanza "Unable to build URLs outside an active request".
             "link_seguimiento":  _public_base_url() + "/retiros/seguimiento/" + str(req.get("public_token") or ""),
+            # Calendario (Daniel 2026-06-17): links 'Agregar a calendario'. Vacíos
+            # si el retiro aún no tiene fecha/hora definida. El editor de plantillas
+            # puede incrustarlos con {{link_google_calendar}} / {{link_outlook_calendar}}.
+            "link_google_calendar":  _pickup_calendar_links(req, proposal).get("google", ""),
+            "link_outlook_calendar": _pickup_calendar_links(req, proposal).get("outlook", ""),
+            # Tabla de productos del retiro (Daniel 2026-06-17). Vacía si el
+            # retiro aún no tiene documentos/productos asociados.
+            "productos_html":        _pickup_productos_html(req),
         }
 
 
@@ -1298,6 +1528,21 @@ def register_pickup_routes(app, ctx):
         variables = _render_pickup_vars(req, proposal)
         estado = _KIND_TO_ESTADO.get(kind)
 
+        # ── CALENDARIO (.ics) — Daniel 2026-06-17 ──────────────────────
+        # Adjuntamos el evento SOLO cuando el retiro tiene cita confirmada
+        # (kind confirmed / reminder_24h). UID estable por retiro → un reenvío
+        # ACTUALIZA el evento, no lo duplica. Best-effort: si falla, el correo
+        # igual sale sin adjunto (no rompemos el envío al cliente).
+        _ics_att = None
+        if kind in ("confirmed", "reminder_24h"):
+            try:
+                _ics_bytes = _build_pickup_ics(req, proposal)
+                if _ics_bytes:
+                    _ics_att = [(f"retiro_{(req.get('code') or 'cita')}.ics",
+                                 _ics_bytes, "text/calendar")]
+            except Exception:
+                _ics_att = None
+
         # ── EMAIL ──────────────────────────────────────────────────────
         sent_mail = False
         try:
@@ -1329,7 +1574,7 @@ def register_pickup_routes(app, ctx):
                         btn_primario_url=follow_url,
                     )
                 # Multi-email: envía al cliente declarado + extra_emails + emails del ERP
-                _multi = _send_pickup_email_multi(req, f"ILUS — {asunto}", html)
+                _multi = _send_pickup_email_multi(req, f"ILUS — {asunto}", html, attachments=_ics_att)
                 sent_mail = len(_multi["sent"]) > 0
                 if _multi["sent"]:
                     print(f"[pickup-email] {asunto} → {_multi['total']} dest: "
@@ -1398,7 +1643,7 @@ def register_pickup_routes(app, ctx):
                     ],
                 )
                 # Multi-email (Daniel 2026-05-23)
-                _multi = _send_pickup_email_multi(req, f"ILUS - {title} {req['code']}", html)
+                _multi = _send_pickup_email_multi(req, f"ILUS - {title} {req['code']}", html, attachments=_ics_att)
                 sent_mail = len(_multi["sent"]) > 0
         except Exception as exc:
             try:
@@ -1654,6 +1899,32 @@ def register_pickup_routes(app, ctx):
                                         dests.append(_sup)
                                 except Exception:
                                     pass
+                                # Daniel 2026-06-17: además del CSV + soporte, avisar al
+                                # CORREO PERSONAL de cada RESPONSABLE por ROL. El email es
+                                # la columna `username` de app_users. Robusto a roles nuevos:
+                                # incluye a quien tenga el módulo 'retiros' encendido en
+                                # rol_permisos + todos los superadmin/admin/supervisor (estos
+                                # NO siempre tienen fila en rol_permisos). Best-effort.
+                                try:
+                                    _auth_table = ctx.get("AUTH_TABLE") or "app_users"
+                                    rows_rol = mysql_fetchall(
+                                        f"SELECT DISTINCT u.username AS email "
+                                        f"FROM `{_auth_table}` u "
+                                        f"LEFT JOIN rol_permisos rp ON rp.rol_slug = u.role "
+                                        f"   AND rp.modulo='retiros' AND rp.accion='ver' "
+                                        f"   AND rp.permitido=1 "
+                                        f"WHERE u.active=1 AND ("
+                                        f"     rp.rol_slug IS NOT NULL "
+                                        f"  OR u.role LIKE 'superadmin%%' "
+                                        f"  OR u.role LIKE 'admin%%' "
+                                        f"  OR u.role LIKE 'supervisor%%')"
+                                    ) or []
+                                    for r in rows_rol:
+                                        em = str(r.get("email") or "").strip().lower()
+                                        if em and is_valid_email(em) and em not in dests:
+                                            dests.append(em)
+                                except Exception as _e_rol:
+                                    print(f"[ILUS][PICKUP TEAM NOTIF] dests por rol: {_e_rol}", flush=True)
                                 if dests:
                                     import html as _html_esc
                                     link = _public_base_url() + f"/retiros/{rid_snap}"
@@ -5114,6 +5385,14 @@ def register_pickup_routes(app, ctx):
             }), 500
 
     def _pickup_lineas_resumen_impl(rid):
+        """Wrapper HTTP: jsonify del helper puro (para la ruta /lineas-resumen)."""
+        return jsonify(_pickup_lineas_consolidadas(rid))
+
+    def _pickup_lineas_consolidadas(rid):
+        """Núcleo puro (Daniel 2026-06-17): devuelve dict {ok, lineas, totales}
+        SIN jsonify, para reusarlo desde el correo (producto en el email) además
+        de la ruta /lineas-resumen. Cada línea trae sku/descripcion/doc_tipo/
+        doc_numero/cantidad/peso/vol + marcada_sin_saldo (indicador de stock)."""
         import json as _json_res
         # Traer todos los docs asociados al retiro
         try:
@@ -5136,11 +5415,11 @@ def register_pickup_routes(app, ctx):
             ) or []
 
         if not docs:
-            return jsonify({
+            return {
                 "ok": True,
                 "lineas": [],
                 "totales": {"n_lineas": 0, "peso_total_kg": 0.0, "vol_total_m3": 0.0},
-            })
+            }
 
         lineas_out = []
         peso_total_acum = 0.0
@@ -5242,7 +5521,7 @@ def register_pickup_routes(app, ctx):
                     peso_total_acum += peso_tot
                     vol_total_acum  += vol_tot
 
-        return jsonify({
+        return {
             "ok": True,
             "lineas": lineas_out,
             "totales": {
@@ -5250,7 +5529,7 @@ def register_pickup_routes(app, ctx):
                 "peso_total_kg": round(peso_total_acum, 2),
                 "vol_total_m3":  round(vol_total_acum, 4),
             },
-        })
+        }
 
     @app.route("/retiros/<int:rid>/docs/<int:doc_id>/lineas", methods=["POST"])
     @require_permission("retiros")
@@ -6324,9 +6603,14 @@ def register_pickup_routes(app, ctx):
         })
 
     # Wrapper de envío que multiplica el mensaje a todos los destinos
-    def _send_pickup_email_multi(rid_or_req, subject, html):
+    def _send_pickup_email_multi(rid_or_req, subject, html, attachments=None):
         """Envía email a TODOS los destinatarios del retiro (multi-email).
         Devuelve dict {sent: [emails], failed: [emails]}.
+
+        attachments (Daniel 2026-06-17): lista de adjuntos (filename, bytes,
+        mimetype) — ej. el .ics del retiro. Viaja transparente vía **kwargs hasta
+        _send_ilus_email_real, que ya soporta adjuntos (SMTP multipart / Resend
+        base64). Si es None, el flujo es idéntico al de antes.
         """
         emails = _get_pickup_all_emails(rid_or_req)
         sent, failed = [], []
@@ -6335,7 +6619,10 @@ def register_pickup_routes(app, ctx):
                 # Juan Daniel 2026-06-05: pasar modulo="retiros" para que el correo
                 # se rija por la LLAVE DE PASO de Retiros (no la de "general", que era
                 # el default y bloqueaba el envío aunque Retiros estuviera abierta).
-                ok = _send_ilus_email(e, subject, html, evento="pickup_created", modulo="retiros")
+                _kw = {"evento": "pickup_created", "modulo": "retiros"}
+                if attachments:
+                    _kw["attachments"] = attachments
+                ok = _send_ilus_email(e, subject, html, **_kw)
                 if ok:
                     sent.append(e)
                 else:
