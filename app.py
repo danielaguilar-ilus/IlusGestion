@@ -38939,8 +38939,8 @@ def mant_contrato_ai_editar(ctid):
     d = request.get_json(silent=True) or {}
     editable_fields = [
         "nombre", "fecha_inicio", "fecha_vencimiento", "es_indefinido",
-        "monto_mensual", "monto_anual", "frecuencia_meses", "notas", "estado",
-        "sla_horas", "incluye_repuestos", "incluye_mant_gratis",
+        "monto_mensual", "monto_anual", "frecuencia_meses", "ai_frecuencia_sug",
+        "notas", "estado", "sla_horas", "incluye_repuestos", "incluye_mant_gratis",
         "costo_por_mant", "costo_total", "nivel_riesgo",
         "ai_tipo_contrato", "ai_cobertura", "ai_vigencia_inicio", "ai_vigencia_fin",
     ]

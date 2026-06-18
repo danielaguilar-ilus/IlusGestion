@@ -3122,8 +3122,11 @@ async function confirmarVisitaMulti() {
               {% elif ct.fecha_vencimiento %}
               <span><i class="bi bi-calendar-x me-1"></i>Vence: <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong></span>
               {% endif %}
-              {% if ct.frecuencia_meses %}
-              <span><i class="bi bi-arrow-repeat me-1"></i>Frecuencia: <strong>cada {{ ct.frecuencia_meses }} meses</strong></span>
+              {% if ct.nombre != 'Contenedor de documentos' %}
+              <span><i class="bi bi-arrow-repeat me-1"></i>Frecuencia:
+                {% if ct.frecuencia_meses %}<strong id="ct-freq-val-{{ ct.id }}">cada {{ ct.frecuencia_meses }} {{ 'mes' if ct.frecuencia_meses == 1 else 'meses' }}</strong>{% else %}<strong id="ct-freq-val-{{ ct.id }}" style="color:#9ca3af">sin definir</strong>{% endif %}
+                {% if puede_gestionar_visitas %}<button type="button" class="btn btn-link p-0 ms-1 align-baseline" style="font-size:.72rem;text-decoration:none;color:#dc2626" onclick="ctEditarFrecuencia({{ ct.id }}, {{ ct.frecuencia_meses or 0 }})" title="Cambiar la frecuencia de las mantenciones (la que usa el planificador)"><i class="bi bi-pencil-square"></i> Cambiar</button>{% endif %}
+              </span>
               {% endif %}
             </div>
           </div>

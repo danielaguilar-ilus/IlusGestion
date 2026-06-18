@@ -4867,6 +4867,42 @@ async function ctConfirmarFirma(ctid, estado) {
   } catch (e) { ilusToast('Error de red: ' + e.message, { type: 'error' }); }
 }
 
+// Cambiar la frecuencia de las mantenciones del contrato. Es la que usa el
+// planificador para agendar las visitas → reemplaza lo que propuso el agente.
+// Escribimos frecuencia_meses Y ai_frecuencia_sug al mismo valor porque la
+// precedencia entre ambos varía según el flujo; así el cambio manual SIEMPRE manda.
+async function ctEditarFrecuencia(ctid, actual) {
+  const val = await ilusPrompt({
+    title: 'Frecuencia de mantenciones',
+    message: '¿Cada cuántos meses se hace la mantención preventiva?',
+    sub: 'Es lo que usa el planificador para agendar las visitas. Reemplaza lo que propuso el agente.',
+    placeholder: 'Ej: 3',
+    defaultValue: actual ? String(actual) : '',
+    inputType: 'number',
+    okLabel: 'Guardar frecuencia',
+    type: 'question',
+  });
+  if (val === null) return;                       // canceló
+  const n = parseInt(String(val).replace(/\D/g, ''), 10);
+  if (!n || n < 1 || n > 24) {
+    ilusToast('Ingresa un número de meses entre 1 y 24', { type: 'warning' });
+    return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/contratos/${ctid}/ai-editar`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frecuencia_meses: n, ai_frecuencia_sug: n }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) { throw new Error(d.error || ('HTTP ' + r.status)); }
+    const el = document.getElementById('ct-freq-val-' + ctid);
+    if (el) { el.textContent = 'cada ' + n + (n === 1 ? ' mes' : ' meses'); el.style.color = ''; }
+    ilusToast('✓ Frecuencia actualizada: cada ' + n + (n === 1 ? ' mes' : ' meses'), { type: 'success' });
+  } catch (e) {
+    await ilusAlert({ title: 'No se pudo guardar', message: e.message, type: 'error' });
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════
 // MANTENCIÓN HISTÓRICA (LEGACY) — SUPERADO por la versión inline en
 // ficha.html (abrirVisitaHistorica/vhPreview/vhGuardar). Estas viejas
