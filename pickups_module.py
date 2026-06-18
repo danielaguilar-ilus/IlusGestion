@@ -1517,6 +1517,48 @@ def register_pickup_routes(app, ctx):
             return None
 
 
+    def _pickup_email_stepper(active_idx):
+        """Stepper de 5 hitos email-safe (tabla) para el correo del cliente.
+        Mismo modelo canónico PICKUP_JOURNEY que el seguimiento y las plantillas
+        de BD. Verde=hecho, rojo=actual, gris=pendiente. (Daniel 2026-06-17: el
+        tracking debe ir SIEMPRE en el correo, también en el fallback.)"""
+        try:
+            pasos = [(p["emoji"], p["label"]) for p in PICKUP_JOURNEY]
+            celdas, labels = [], []
+            n = len(pasos)
+            for i, (ic, lb) in enumerate(pasos):
+                if i < active_idx:
+                    bg, fg, ex = "#16a34a", "#ffffff", ""
+                elif i == active_idx:
+                    bg, fg, ex = "#dc2626", "#ffffff", "box-shadow:0 0 0 4px rgba(220,38,38,.15);"
+                else:
+                    bg, fg, ex = "#f3f4f6", "#9ca3af", "border:1px solid #e5e7eb;"
+                celdas.append(
+                    f'<td align="center" width="11%" style="padding:0">'
+                    f'<div style="width:34px;height:34px;line-height:34px;border-radius:17px;'
+                    f'background:{bg};color:{fg};font-family:Helvetica,Arial,sans-serif;font-size:15px;'
+                    f'font-weight:900;text-align:center;margin:0 auto;{ex}">{ic}</div></td>')
+                if i < n - 1:
+                    leg = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#e5e7eb")
+                    celdas.append(
+                        f'<td width="11.5%" style="padding:0 2px"><div style="height:4px;'
+                        f'background:{leg};border-radius:2px;font-size:0;line-height:0">&nbsp;</div></td>')
+                lc = "#16a34a" if i < active_idx else ("#dc2626" if i == active_idx else "#9ca3af")
+                lw = "800" if i == active_idx else "600"
+                labels.append(
+                    f'<td align="center" width="20%" style="font-family:Helvetica,Arial,sans-serif;'
+                    f'font-size:10px;color:{lc};text-transform:uppercase;font-weight:{lw};'
+                    f'letter-spacing:.04em">{lb}</td>')
+            return (
+                '<table cellpadding="0" cellspacing="0" width="100%" '
+                'style="background:#ffffff;border:1px solid #ececef;border-radius:12px;margin:0 0 18px">'
+                '<tr><td style="padding:20px 14px 16px">'
+                '<table cellpadding="0" cellspacing="0" width="100%"><tr>' + "".join(celdas) +
+                '</tr></table><table cellpadding="0" cellspacing="0" width="100%" style="margin-top:9px"><tr>' +
+                "".join(labels) + '</tr></table></td></tr></table>')
+        except Exception:
+            return ""
+
     # Mapeo: kind del notify() → estado en comm_templates
     # Cada kind dispara una plantilla del módulo 'retiros'. Si la plantilla
     # no existe, notify() cae al template hardcoded del wrapper ILUS.
@@ -1648,6 +1690,12 @@ def register_pickup_routes(app, ctx):
                     ]
                 else:
                     paragraphs = [custom_message or "Hay una actualización disponible para tu solicitud de retiro."]
+                # Tracking dentro del correo también en el fallback (Daniel
+                # 2026-06-17): el modelo canónico de 5 hitos, email-safe. Solo
+                # para kinds con journey válido (no en rechazada/cancelación, idx -1).
+                _aidx = pickup_journey_idx(estado) if estado else 0
+                if estado and _aidx >= 0:
+                    paragraphs = [_pickup_email_stepper(_aidx)] + paragraphs
                 html = _ilus_email_html(
                     titulo=title,
                     subtitulo=f"{req['code']} - {variables['documento']}",
@@ -7226,6 +7274,76 @@ def register_pickup_routes(app, ctx):
                 "necesita para aceptar o contraproponer.",
                 status=409,
             )
+
+        # ── AUTO-CONFIRMACIÓN POR COINCIDENCIA (Daniel 2026-06-17, jefa e-commerce) ──
+        # Si el operador propone EXACTAMENTE la fecha+hora que el cliente ya
+        # contrapropuso (propuesta pending, proposed_by='cliente'), NO reabrimos
+        # el ping-pong: el operador está ACEPTANDO lo que el cliente pidió → lo
+        # confirmamos directo, sin pedirle al cliente que confirme de nuevo lo
+        # que él mismo propuso. El slot ya se validó arriba (_validar_disponibilidad_slot).
+        _pend_cli = mysql_fetchone(
+            f"SELECT id, date, time_from, time_to FROM `{PROP}` "
+            f"WHERE request_id=%s AND status='pending' AND LOWER(proposed_by)='cliente' "
+            f"ORDER BY id DESC LIMIT 1", (rid,)
+        )
+        def _slot_coincide(p):
+            try:
+                return (str(p.get("date"))[:10] == str(date)[:10]
+                        and _td_to_hhmm(p.get("time_from")) == str(tf)[:5]
+                        and _td_to_hhmm(p.get("time_to")) == str(tt)[:5])
+            except Exception:
+                return False
+        if _pend_cli and _slot_coincide(_pend_cli):
+            try:
+                mysql_execute(
+                    f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() "
+                    f"WHERE request_id=%s AND status='pending'", (rid,)
+                )
+                mysql_execute(
+                    f"UPDATE `{REQ}` SET status='agenda_confirmada', "
+                    f"confirmed_date=%s, confirmed_time_from=%s, confirmed_time_to=%s, "
+                    f"proposed_date=%s, proposed_time_from=%s, proposed_time_to=%s "
+                    f"WHERE id=%s",
+                    (date, tf, tt, date, tf, tt, rid)
+                )
+                log_event(rid, "auto_confirmada_coincidencia", req.get("status") or "",
+                          "agenda_confirmada",
+                          f"El operador coincidió con la contrapropuesta del cliente "
+                          f"({date} {tf}-{tt}) → confirmado directo, sin re-confirmación.",
+                          "interno")
+            except Exception as _e_ac:
+                print(f"[pickup-autoconfirm] error: {_e_ac}", flush=True)
+                return _resp_err("No se pudo confirmar automáticamente. Reintenta.", status=500)
+            # Invalidar caches para que el cliente lo vea EN VIVO
+            try:
+                _tok_ac = req.get("public_token") if isinstance(req, dict) else None
+                if _tok_ac:
+                    _POLL_CACHE.pop(_tok_ac, None)
+            except Exception:
+                pass
+            try:
+                _DISPO_CACHE["payload"] = None
+            except Exception:
+                pass
+            # Correo de CONFIRMACIÓN al cliente (con .ics + calendario), síncrono
+            _fresh_ac = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+            _sent_ac = False
+            try:
+                _sent_ac, _ = notify(_fresh_ac, "confirmed")
+            except Exception as _e_nc:
+                print(f"[pickup-autoconfirm] notify confirmed: {_e_nc}", flush=True)
+            try:
+                _alertar_si_sin_saldo(rid, req.get("code") or "?")
+            except Exception:
+                pass
+            _ac_msg = ("Coincidiste con la fecha que pidió el cliente: el retiro quedó "
+                       "CONFIRMADO directo (no se le pidió confirmar de nuevo).")
+            if is_ajax:
+                return jsonify({"ok": True, "auto_confirmado": True, "message": _ac_msg,
+                                "email_enviado": bool(_sent_ac),
+                                "redirect_url": url_for("pickup_detail", rid=rid)})
+            flash(_ac_msg, "success")
+            return redirect(url_for("pickup_detail", rid=rid))
 
         # ── FASE 3 (2026-05-29): ping-pong. Antes de crear la propuesta nueva,
         #    marcar las propuestas pending anteriores como 'superseded' (solo
