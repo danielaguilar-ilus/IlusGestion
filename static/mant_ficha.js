@@ -7823,11 +7823,124 @@ async function cargarCentroControl() {
   panel.style.display = '';
 }
 
-// Hidratar el Centro de control al cargar la ficha (deferido, no bloquea el paint).
+// ════════════════════════════════════════════════════════════════════
+// LÍNEA DE TIEMPO DE VISITAS (pasado → HOY → futuro). Data-driven desde
+// window.VIS_TL (emitido por ficha.html). Posiciona cada visita por fecha
+// (porcentaje), clasifica realizada/programada/vencida y pinta el héroe del
+// tab Visitas + una versión mini en el Resumen. Sin backend; cero riesgo.
+// ════════════════════════════════════════════════════════════════════
+function _vtlFmtFecha(s) {
+  if (!s) return '';
+  const M = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const p = String(s).split('-');
+  if (p.length < 3) return s;
+  return parseInt(p[2], 10) + ' ' + (M[parseInt(p[1], 10) - 1] || '');
+}
+function _vtlCap(t) { t = t || ''; return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; }
+function _vtlNodos(data, hoyStr) {
+  const out = [];
+  (data || []).forEach(v => {
+    const e = (v.e || '').toLowerCase();
+    let clase = null, fecha = null;
+    if (e === 'completada') { clase = 'done'; fecha = v.fr || v.fp; }
+    else if (e === 'programada' && v.fp) { clase = (v.fp < hoyStr ? 'overdue' : 'pending'); fecha = v.fp; }
+    if (clase && fecha) out.push({ clase, fecha, tipo: v.t, titulo: v.ti, tecnico: v.tc });
+  });
+  out.sort((a, b) => a.fecha < b.fecha ? -1 : (a.fecha > b.fecha ? 1 : 0));
+  return out;
+}
+function _vtlRender(bodyId, opts) {
+  opts = opts || {};
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const h = new Date();
+  const hoyStr = h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+  let nodos = _vtlNodos(window.VIS_TL || [], hoyStr);
+  const loT = Date.parse(hoyStr) - 460 * 864e5, hiT = Date.parse(hoyStr) + 460 * 864e5;   // ventana ~15 meses
+  nodos = nodos.filter(n => { const t = Date.parse(n.fecha); return t >= loT && t <= hiT; });
+  if (!nodos.length) {
+    if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = 'none'; }
+    else body.innerHTML = '<div class="vtl-empty"><i class="bi bi-calendar-x me-1"></i>Aún no hay visitas para mostrar en la línea de tiempo.</div>';
+    return;
+  }
+  const ts = nodos.map(n => Date.parse(n.fecha)).concat([Date.parse(hoyStr)]);
+  const minT = Math.min.apply(null, ts) - 15 * 864e5, maxT = Math.max.apply(null, ts) + 15 * 864e5;
+  const span = Math.max(maxT - minT, 864e5);
+  const pct = t => ((t - minT) / span) * 100;
+  const hoyPct = pct(Date.parse(hoyStr)).toFixed(1);
+  const done = nodos.filter(n => n.clase === 'done').length;
+  const pend = nodos.filter(n => n.clase === 'pending').length;
+  const venc = nodos.filter(n => n.clase === 'overdue').length;
+  const cumpl = (done + venc) ? Math.round(done / (done + venc) * 100) : 100;
+  if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = ''; }
+
+  if (opts.mini) {
+    const dots = nodos.map(n => {
+      const col = n.clase === 'done' ? '#22c55e' : (n.clase === 'overdue' ? '#ef4444' : 'transparent');
+      const bd = n.clase === 'pending' ? 'border:2px dashed #60a5fa;' : '';
+      return `<div class="vtl-mini-dot" style="left:${pct(Date.parse(n.fecha)).toFixed(1)}%;background:${col};${bd}" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></div>`;
+    }).join('');
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#9ca3af"><i class="bi bi-bar-chart-steps me-1" style="color:#dc2626"></i>Visitas</span>
+        <span style="font-size:.66rem;color:#9ca3af"><span style="color:#22c55e">${done} hechas</span> · <span style="color:#60a5fa">${pend} pend.</span>${venc ? ` · <span style="color:#ef4444">${venc} venc.</span>` : ''}</span>
+      </div>
+      <div class="vtl-mini-track">
+        <div class="vtl-axis"></div>
+        <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
+        <div style="position:absolute;top:7px;bottom:0;left:${hoyPct}%;border-left:2px dashed #dc2626"></div>
+        ${dots}
+      </div>`;
+    return;
+  }
+
+  const stats = `
+    <div class="vtl-stats">
+      <div class="vtl-stat"><div class="vs-num" style="color:#22c55e">${done}</div><div class="vs-lbl">Realizadas</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:#60a5fa">${pend}</div><div class="vs-lbl">Pendientes</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:#ef4444">${venc}</div><div class="vs-lbl">Vencidas</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:${cumpl >= 75 ? '#22c55e' : cumpl >= 45 ? '#f59e0b' : '#ef4444'}">${cumpl}%</div><div class="vs-lbl">Cumplimiento</div></div>
+    </div>`;
+  const nodesHtml = nodos.map((n, i) => {
+    const x = pct(Date.parse(n.fecha)).toFixed(1);
+    const above = (i % 2 === 0);
+    let dotCls = 'pending', dotInner = '';
+    if (n.clase === 'done') dotCls = 'done';
+    else if (n.clase === 'overdue') { dotCls = 'overdue'; dotInner = '<i class="bi bi-exclamation-triangle" style="font-size:.66rem;color:#fff"></i>'; }
+    const lblcol = n.clase === 'overdue' ? '#fca5a5' : (n.clase === 'pending' ? '#93c5fd' : '#e5e7eb');
+    const cap = n.clase === 'overdue' ? 'Vencida' : (n.clase === 'pending' ? 'Programada' : _vtlCap(n.tipo));
+    const tip = _intelEsc((n.titulo || _vtlCap(n.tipo) || 'Visita') + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha));
+    return `<div class="vtl-node" style="left:${x}%" title="${tip}">
+      <div class="vtl-dot ${dotCls}">${dotInner}</div>
+      <div class="vtl-lbl ${above ? 'above' : 'below'}">
+        <div class="vtl-date" style="color:${lblcol}">${_vtlFmtFecha(n.fecha)}</div>
+        <div class="vtl-cap">${_intelEsc(cap)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  body.innerHTML = `${stats}
+    <div class="vtl-track-wrap">
+      <div class="vtl-axis"></div>
+      <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
+      <div class="vtl-hoy" style="left:${hoyPct}%"></div>
+      <div class="vtl-hoy-pill" style="left:${hoyPct}%">HOY</div>
+      ${nodesHtml}
+    </div>
+    <div class="vtl-leg">
+      <span><span class="vtl-leg-dot" style="background:#22c55e"></span>Realizada</span>
+      <span><span class="vtl-leg-dot" style="background:#ef4444"></span>Vencida (no se hizo)</span>
+      <span><span class="vtl-leg-dot" style="border:2px dashed #60a5fa"></span>Programada</span>
+    </div>`;
+}
+
+// Hidratar Centro de control + Línea de tiempo de visitas al cargar (deferido, no bloquea el paint).
 (function () {
-  const _ccInit = () => { try { if (typeof cargarCentroControl === 'function') cargarCentroControl(); } catch (e) {} };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(_ccInit, 300));
-  else setTimeout(_ccInit, 300);
+  const _init = () => {
+    try { if (typeof cargarCentroControl === 'function') cargarCentroControl(); } catch (e) {}
+    try { if (typeof _vtlRender === 'function') { _vtlRender('vtlHeroBody'); _vtlRender('vtlMini', { mini: true, cardId: 'vtlMiniCard' }); } } catch (e) {}
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(_init, 300));
+  else setTimeout(_init, 300);
 })();
 
 // Construye el HTML completo del diagnóstico y lo pinta en #intelPanel.
