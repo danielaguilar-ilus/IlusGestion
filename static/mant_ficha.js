@@ -7873,13 +7873,20 @@ function _vtlFmtFecha(s) {
   return parseInt(p[2], 10) + ' ' + (M[parseInt(p[1], 10) - 1] || '');
 }
 function _vtlCap(t) { t = t || ''; return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; }
+// Clasificación ALINEADA con el server (ficha.html ~6210): realizada =
+// completada+cerrada; cancelada/anulada se excluyen; el resto (estados vivos
+// como programada/asignada/en_curso/… + desconocidos) son pendientes y, si la
+// fecha ya pasó, vencidas. (Antes solo veía 'completada' → perdía las cerradas.)
+var _VTL_DONE = ['completada', 'cerrada'];
+var _VTL_CANC = ['cancelada', 'anulada'];
 function _vtlNodos(data, hoyStr) {
   const out = [];
   (data || []).forEach(v => {
     const e = (v.e || '').toLowerCase();
     let clase = null, fecha = null;
-    if (e === 'completada') { clase = 'done'; fecha = v.fr || v.fp; }
-    else if (e === 'programada' && v.fp) { clase = (v.fp < hoyStr ? 'overdue' : 'pending'); fecha = v.fp; }
+    if (_VTL_DONE.indexOf(e) !== -1) { clase = 'done'; fecha = v.fr || v.fp; }
+    else if (_VTL_CANC.indexOf(e) !== -1) { return; }
+    else if (v.fp) { clase = (v.fp < hoyStr ? 'overdue' : 'pending'); fecha = v.fp; }
     if (clase && fecha) out.push({ clase, fecha, tipo: v.t, titulo: v.ti, tecnico: v.tc });
   });
   out.sort((a, b) => a.fecha < b.fecha ? -1 : (a.fecha > b.fecha ? 1 : 0));
@@ -7896,7 +7903,7 @@ function _vtlRender(bodyId, opts) {
   nodos = nodos.filter(n => { const t = Date.parse(n.fecha); return t >= loT && t <= hiT; });
   if (!nodos.length) {
     if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = 'none'; }
-    else body.innerHTML = '<div class="vtl-empty"><i class="bi bi-calendar-x me-1"></i>Aún no hay visitas para mostrar en la línea de tiempo.</div>';
+    else body.innerHTML = '<div class="vtl-empty"><i class="bi bi-calendar-x me-1"></i>Aún no hay visitas registradas.<div style="margin-top:10px"><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"><i class="bi bi-calendar-plus me-1"></i>Agendar la primera</button></div></div>';
     return;
   }
   const ts = nodos.map(n => Date.parse(n.fecha)).concat([Date.parse(hoyStr)]);
@@ -7930,12 +7937,23 @@ function _vtlRender(bodyId, opts) {
     return;
   }
 
-  const stats = `
+  // CTA inteligente: el agente te dice la próxima acción y te deja agendar.
+  const total = done + pend + venc;
+  let cta;
+  if (venc > 0) {
+    cta = `<div class="vtl-cta vtl-cta-danger"><div><i class="bi bi-exclamation-octagon-fill me-1"></i><strong>${venc} visita${venc > 1 ? 's' : ''} vencida${venc > 1 ? 's' : ''}</strong> sin realizar — conviene agendar.</div><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar ahora</button></div>`;
+  } else if (pend === 0) {
+    cta = `<div class="vtl-cta vtl-cta-warn"><div><i class="bi bi-calendar-x me-1"></i>No hay próxima mantención programada.</div><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar mantención</button></div>`;
+  } else {
+    const _px = nodos.filter(n => n.clase === 'pending')[0];
+    cta = `<div class="vtl-cta vtl-cta-ok"><div><i class="bi bi-check-circle-fill me-1"></i>Todo al día. Próxima: <strong>${_px ? _vtlFmtFecha(_px.fecha) : '—'}</strong>.</div><button class="vtl-cta-btn ghost" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar otra</button></div>`;
+  }
+  const stats = `${cta}
     <div class="vtl-stats">
       <div class="vtl-stat"><div class="vs-num" style="color:#22c55e">${done}</div><div class="vs-lbl">Realizadas</div></div>
-      <div class="vtl-stat"><div class="vs-num" style="color:#60a5fa">${pend}</div><div class="vs-lbl">Pendientes</div></div>
-      <div class="vtl-stat"><div class="vs-num" style="color:#ef4444">${venc}</div><div class="vs-lbl">Vencidas</div></div>
-      <div class="vtl-stat"><div class="vs-num" style="color:${cumpl >= 75 ? '#22c55e' : cumpl >= 45 ? '#f59e0b' : '#ef4444'}">${cumpl}%</div><div class="vs-lbl">Cumplimiento</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:#60a5fa">${pend}</div><div class="vs-lbl">Por venir</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:${venc ? '#ef4444' : '#6b7280'}">${venc}</div><div class="vs-lbl">Vencidas</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:#fff">${total}</div><div class="vs-lbl">Total</div></div>
     </div>`;
   const nodesHtml = nodos.map((n, i) => {
     const x = pct(Date.parse(n.fecha)).toFixed(1);
@@ -7946,8 +7964,9 @@ function _vtlRender(bodyId, opts) {
     const lblcol = n.clase === 'overdue' ? '#fca5a5' : (n.clase === 'pending' ? '#93c5fd' : '#e5e7eb');
     const cap = n.clase === 'overdue' ? 'Vencida' : (n.clase === 'pending' ? 'Programada' : _vtlCap(n.tipo));
     const tip = _intelEsc((n.titulo || _vtlCap(n.tipo) || 'Visita') + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha));
+    const dotClick = n.clase === 'overdue' ? ' onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"' : '';
     return `<div class="vtl-node" style="left:${x}%" title="${tip}">
-      <div class="vtl-dot ${dotCls}">${dotInner}</div>
+      <div class="vtl-dot ${dotCls}"${dotClick}>${dotInner}</div>
       <div class="vtl-lbl ${above ? 'above' : 'below'}">
         <div class="vtl-date" style="color:${lblcol}">${_vtlFmtFecha(n.fecha)}</div>
         <div class="vtl-cap">${_intelEsc(cap)}</div>
