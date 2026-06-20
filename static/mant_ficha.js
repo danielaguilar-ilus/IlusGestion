@@ -7918,10 +7918,14 @@ function _vtlRender(bodyId, opts) {
   if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = ''; }
 
   if (opts.mini) {
-    const dots = nodos.map(n => {
+    const _Nm = nodos.length;
+    const _pastM = nodos.filter(n => n.clase !== 'pending').length;
+    const _hoyM = Math.min(96, Math.max(4, (_pastM / _Nm) * 100)).toFixed(1);
+    const dots = nodos.map((n, i) => {
       const col = n.clase === 'done' ? '#22c55e' : (n.clase === 'overdue' ? '#ef4444' : 'transparent');
       const bd = n.clase === 'pending' ? 'border:2px dashed #60a5fa;' : '';
-      return `<div class="vtl-mini-dot" style="left:${pct(Date.parse(n.fecha)).toFixed(1)}%;background:${col};${bd}" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></div>`;
+      const xm = (((i + 0.5) / _Nm) * 100).toFixed(2);
+      return `<div class="vtl-mini-dot" style="left:${xm}%;background:${col};${bd}" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></div>`;
     }).join('');
     body.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
@@ -7930,8 +7934,8 @@ function _vtlRender(bodyId, opts) {
       </div>
       <div class="vtl-mini-track">
         <div class="vtl-axis"></div>
-        <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
-        <div style="position:absolute;top:7px;bottom:0;left:${hoyPct}%;border-left:2px dashed #dc2626"></div>
+        <div class="vtl-axis-done" style="width:${_hoyM}%"></div>
+        <div style="position:absolute;top:7px;bottom:0;left:${_hoyM}%;border-left:2px dashed #dc2626"></div>
         ${dots}
       </div>`;
     return;
@@ -7955,45 +7959,39 @@ function _vtlRender(bodyId, opts) {
       <div class="vtl-stat"><div class="vs-num" style="color:${venc ? '#ef4444' : '#6b7280'}">${venc}</div><div class="vs-lbl">Vencidas</div></div>
       <div class="vtl-stat"><div class="vs-num" style="color:#fff">${total}</div><div class="vs-lbl">Total</div></div>
     </div>`;
-  // Carriles de etiqueta (tops): arriba-lejos, abajo-lejos, arriba-cerca,
-  // abajo-cerca. Asignados por índice → hasta 4 visitas pegadas no se enciman.
-  const _TIERS = [6, 180, 48, 138];
+  // ESPACIADO IGUAL: los eventos se reparten PAREJO en el ancho (no se agrupan
+  // ni dejan huecos); la fecha va sobre cada punto y el divisor HOY separa
+  // pasado (izq) de futuro (der). numPast = realizadas+vencidas (fecha < hoy),
+  // que por el orden cronológico van siempre antes que las programadas.
+  const N = nodos.length;
+  const numPast = nodos.filter(n => n.clase !== 'pending').length;
+  const hoyB = Math.min(97, Math.max(3, (numPast / N) * 100));
   const nodesHtml = nodos.map((n, i) => {
-    const x = pct(Date.parse(n.fecha)).toFixed(1);
+    const x = (((i + 0.5) / N) * 100).toFixed(2);
+    const above = (i % 2 === 0);
     let dotCls = 'pending', dotInner = '';
     if (n.clase === 'done') dotCls = 'done';
     else if (n.clase === 'overdue') { dotCls = 'overdue'; dotInner = '<i class="bi bi-exclamation-triangle" style="font-size:.66rem;color:#fff"></i>'; }
-    const lblcol = n.clase === 'overdue' ? '#fca5a5' : (n.clase === 'pending' ? '#93c5fd' : '#e5e7eb');
-    const cap = n.clase === 'overdue' ? 'Vencida' : (n.clase === 'pending' ? 'Programada' : _vtlCap(n.tipo));
-    const tip = _intelEsc((n.titulo || _vtlCap(n.tipo) || 'Visita') + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha));
+    const chipTxt = n.clase === 'overdue' ? 'Vencida' : (n.clase === 'pending' ? 'Programada' : 'Realizada');
+    const tipoLbl = _vtlCap(n.tipo) || 'Visita';
+    const tip = _intelEsc((n.titulo || tipoLbl) + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha));
     const dotClick = n.clase === 'overdue' ? ' onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"' : '';
     return `<div class="vtl-node" style="left:${x}%" title="${tip}">
+      <div class="vtl-guide"></div>
       <div class="vtl-dot ${dotCls}"${dotClick}>${dotInner}</div>
-      <div class="vtl-lbl" style="top:${_TIERS[i % 4]}px">
-        <div class="vtl-date" style="color:${lblcol}">${_vtlFmtFecha(n.fecha)}</div>
-        <div class="vtl-cap">${_intelEsc(cap)}</div>
+      <div class="vtl-lbl ${above ? 'above' : 'below'}">
+        <div class="vtl-date">${_vtlFmtFecha(n.fecha)}</div>
+        <div class="vtl-cap">${_intelEsc(tipoLbl)}</div>
+        <span class="vtl-chip ${n.clase}">${chipTxt}</span>
       </div>
     </div>`;
   }).join('');
-  // Líneas y nombres de mes — dan contexto al eje y quitan la sensación de vacío.
-  const _MM = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-  let mesesHtml = '';
-  let _cur = new Date(new Date(minT).getFullYear(), new Date(minT).getMonth(), 1);
-  for (let g = 0; g < 36 && _cur.getTime() <= maxT; g++) {
-    const xm = pct(_cur.getTime());
-    if (xm >= 1 && xm <= 99) {
-      const _lbl = _MM[_cur.getMonth()] + (_cur.getMonth() === 0 ? (" '" + String(_cur.getFullYear()).slice(2)) : '');
-      mesesHtml += `<div class="vtl-mgrid" style="left:${xm.toFixed(1)}%"></div><div class="vtl-mlbl" style="left:${xm.toFixed(1)}%">${_lbl}</div>`;
-    }
-    _cur = new Date(_cur.getFullYear(), _cur.getMonth() + 1, 1);
-  }
   body.innerHTML = `${stats}
     <div class="vtl-track-wrap">
-      ${mesesHtml}
       <div class="vtl-axis"></div>
-      <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
-      <div class="vtl-hoy" style="left:${hoyPct}%"></div>
-      <div class="vtl-hoy-pill" style="left:${hoyPct}%">HOY</div>
+      <div class="vtl-axis-done" style="width:${hoyB.toFixed(1)}%"></div>
+      <div class="vtl-hoy" style="left:${hoyB.toFixed(1)}%"></div>
+      <div class="vtl-hoy-pill" style="left:${hoyB.toFixed(1)}%">HOY</div>
       ${nodesHtml}
     </div>
     <div class="vtl-leg">
