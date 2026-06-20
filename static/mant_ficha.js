@@ -7955,9 +7955,11 @@ function _vtlRender(bodyId, opts) {
       <div class="vtl-stat"><div class="vs-num" style="color:${venc ? '#ef4444' : '#6b7280'}">${venc}</div><div class="vs-lbl">Vencidas</div></div>
       <div class="vtl-stat"><div class="vs-num" style="color:#fff">${total}</div><div class="vs-lbl">Total</div></div>
     </div>`;
+  // Carriles de etiqueta (tops): arriba-lejos, abajo-lejos, arriba-cerca,
+  // abajo-cerca. Asignados por índice → hasta 4 visitas pegadas no se enciman.
+  const _TIERS = [6, 180, 48, 138];
   const nodesHtml = nodos.map((n, i) => {
     const x = pct(Date.parse(n.fecha)).toFixed(1);
-    const above = (i % 2 === 0);
     let dotCls = 'pending', dotInner = '';
     if (n.clase === 'done') dotCls = 'done';
     else if (n.clase === 'overdue') { dotCls = 'overdue'; dotInner = '<i class="bi bi-exclamation-triangle" style="font-size:.66rem;color:#fff"></i>'; }
@@ -7967,14 +7969,27 @@ function _vtlRender(bodyId, opts) {
     const dotClick = n.clase === 'overdue' ? ' onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"' : '';
     return `<div class="vtl-node" style="left:${x}%" title="${tip}">
       <div class="vtl-dot ${dotCls}"${dotClick}>${dotInner}</div>
-      <div class="vtl-lbl ${above ? 'above' : 'below'}">
+      <div class="vtl-lbl" style="top:${_TIERS[i % 4]}px">
         <div class="vtl-date" style="color:${lblcol}">${_vtlFmtFecha(n.fecha)}</div>
         <div class="vtl-cap">${_intelEsc(cap)}</div>
       </div>
     </div>`;
   }).join('');
+  // Líneas y nombres de mes — dan contexto al eje y quitan la sensación de vacío.
+  const _MM = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  let mesesHtml = '';
+  let _cur = new Date(new Date(minT).getFullYear(), new Date(minT).getMonth(), 1);
+  for (let g = 0; g < 36 && _cur.getTime() <= maxT; g++) {
+    const xm = pct(_cur.getTime());
+    if (xm >= 1 && xm <= 99) {
+      const _lbl = _MM[_cur.getMonth()] + (_cur.getMonth() === 0 ? (" '" + String(_cur.getFullYear()).slice(2)) : '');
+      mesesHtml += `<div class="vtl-mgrid" style="left:${xm.toFixed(1)}%"></div><div class="vtl-mlbl" style="left:${xm.toFixed(1)}%">${_lbl}</div>`;
+    }
+    _cur = new Date(_cur.getFullYear(), _cur.getMonth() + 1, 1);
+  }
   body.innerHTML = `${stats}
     <div class="vtl-track-wrap">
+      ${mesesHtml}
       <div class="vtl-axis"></div>
       <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
       <div class="vtl-hoy" style="left:${hoyPct}%"></div>
