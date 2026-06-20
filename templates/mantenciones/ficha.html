@@ -1041,6 +1041,21 @@
       </div>
       {# /6 KPIs #}
 
+      {# ── CENTRO DE CONTROL: consolida KPIs financieros/operativos + brechas y
+         oportunidades que ya calcula el Agente (endpoint /inteligencia). Read-only;
+         las acciones se resuelven en la pestaña Agente. Se hidrata por JS al cargar. #}
+      <div class="f-card mb-3" id="ccPanel" style="display:none;border-left:3px solid #dc2626">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-speedometer2 me-1"></i>Centro de control</span>
+          <button class="btn btn-xs btn-outline-secondary ms-auto" onclick="switchTab('intel');if(window.cargarInteligencia)cargarInteligencia()" title="Abrir el Agente">
+            <i class="bi bi-robot me-1"></i>Abrir Agente
+          </button>
+        </div>
+        <div class="f-card-body" id="ccBody">
+          <div class="text-muted" style="font-size:.8rem"><span class="spinner-border spinner-border-sm me-1"></span>El Agente está revisando al cliente…</div>
+        </div>
+      </div>
+
       {# ── INFORMACIÓN PRINCIPAL ── #}
       <div class="f-card mb-3">
         <div class="f-card-header">
