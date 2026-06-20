@@ -7760,6 +7760,76 @@ async function cargarInteligencia(force = false) {
   }
 }
 
+// CENTRO DE CONTROL en el Resumen: consolida los KPIs financieros/operativos del
+// Agente + las brechas y oportunidades accionables, y rutea al Agente (tab Intel)
+// para resolverlas. READ-ONLY: reusa el mismo endpoint/cache que cargarInteligencia,
+// no recalcula nada. Falla en silencio: si el endpoint no responde, oculta el panel
+// sin afectar el resto de la ficha.
+async function cargarCentroControl() {
+  const panel = document.getElementById('ccPanel');
+  const body  = document.getElementById('ccBody');
+  if (!panel || !body) return;
+  let d = (typeof _intelCache !== 'undefined') ? _intelCache : null;
+  try {
+    if (!d) {
+      const r = await fetch(`/mantenciones/api/clientes/${CID}/inteligencia`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      d = await r.json();
+      if (!d || typeof d !== 'object' || d.error) throw new Error('sin datos');
+      _intelCache = d;   // comparte cache con el tab Agente (evita re-fetch)
+    }
+  } catch (e) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  const tono = { ok: '#16a34a', warn: '#f59e0b', danger: '#dc2626' };
+  const kpis = (d.kpis || []).map(k => {
+    const c = tono[k.tono] || '#374151';
+    return `<div style="text-align:center;min-width:74px">
+      <div style="font-size:1.05rem;font-weight:800;color:${c};line-height:1.1">${_intelEsc(String(k.valor))}${k.sufijo ? `<span style="font-size:.7rem;font-weight:600">${_intelEsc(k.sufijo)}</span>` : ''}</div>
+      <div style="font-size:.61rem;color:#6b7280;text-transform:uppercase;letter-spacing:.03em">${_intelEsc(k.label)}</div>
+    </div>`;
+  }).join('');
+
+  const sevRank = { alta: 0, media: 1, baja: 2 };
+  const sevColor = { alta: '#dc2626', media: '#f59e0b', baja: '#6b7280' };
+  const sevBg = { alta: '#fef2f2', media: '#fffbeb', baja: '#f9fafb' };
+  const cons = (d.consultas || [])
+    .filter(c => c.severidad === 'alta' || c.severidad === 'media')
+    .sort((a, b) => (sevRank[a.severidad] ?? 9) - (sevRank[b.severidad] ?? 9))
+    .slice(0, 6);
+  const brechas = cons.length ? cons.map(c => {
+    const col = sevColor[c.severidad] || '#6b7280';
+    const ic = c.severidad === 'alta' ? 'exclamation-octagon-fill' : 'exclamation-triangle-fill';
+    return `<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 9px;border-radius:7px;background:${sevBg[c.severidad] || '#f9fafb'};border-left:3px solid ${col};margin-bottom:6px">
+      <i class="bi bi-${ic}" style="color:${col};font-size:.85rem;margin-top:1px"></i>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.76rem;font-weight:600;color:#374151">${_intelEsc(c.pregunta || '')}</div>
+        ${c.detalle ? `<div style="font-size:.68rem;color:#6b7280">${_intelEsc(c.detalle)}</div>` : ''}
+      </div>
+      <button class="btn btn-xs btn-link p-0" style="font-size:.7rem;text-decoration:none;color:${col};white-space:nowrap"
+              onclick="switchTab('intel');if(window.cargarInteligencia)cargarInteligencia()">Resolver &rarr;</button>
+    </div>`;
+  }).join('') : `<div style="font-size:.78rem;color:#16a34a"><i class="bi bi-check-circle-fill me-1"></i>Sin brechas abiertas. Todo al día.</div>`;
+
+  body.innerHTML = `
+    ${d.resumen_ejecutivo ? `<div style="font-size:.78rem;color:#374151;margin-bottom:10px;line-height:1.5">${_intelEsc(d.resumen_ejecutivo)}</div>` : ''}
+    <div style="display:flex;flex-wrap:wrap;gap:14px;padding:6px 0 12px;border-bottom:1px solid #f3f4f6;margin-bottom:10px">${kpis}</div>
+    <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px">
+      <i class="bi bi-flag-fill me-1"></i>Brechas y oportunidades
+    </div>
+    ${brechas}`;
+  panel.style.display = '';
+}
+
+// Hidratar el Centro de control al cargar la ficha (deferido, no bloquea el paint).
+(function () {
+  const _ccInit = () => { try { if (typeof cargarCentroControl === 'function') cargarCentroControl(); } catch (e) {} };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(_ccInit, 300));
+  else setTimeout(_ccInit, 300);
+})();
+
 // Construye el HTML completo del diagnóstico y lo pinta en #intelPanel.
 function _intelRender(d){
   const panel = document.getElementById('intelPanel');
