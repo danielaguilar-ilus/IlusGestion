@@ -6121,10 +6121,12 @@ function abrirEmailManual() {
   .vtl-mini-chips{margin-left:auto;display:flex;gap:11px;flex-wrap:wrap;}
   .vtl-mc{font-size:.63rem;color:#cbd5e1;display:inline-flex;align-items:center;gap:5px;font-weight:600;}
   .vtl-mc::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--c);box-shadow:0 0 9px var(--c);}
-  .vtl-mini-track{position:relative;height:26px;margin:4px 2px 2px;}
+  .vtl-mini-track{position:relative;height:40px;margin:6px 2px 2px;}
   .vtl-mini .vtl-axis,.vtl-mini .vtl-axis-done{top:13px;height:3px;}
-  .vtl-mhoy{position:absolute;top:4px;bottom:0;width:0;border-left:2px dashed #dc2626;}
-  .vtl-md{position:absolute;top:8px;margin-left:-5px;width:11px;height:11px;border-radius:50%;border:2px solid #0c0c10;transition:transform .15s;cursor:pointer;}
+  .vtl-mhoy{position:absolute;top:4px;bottom:19px;width:0;border-left:2px dashed #dc2626;z-index:2;}
+  .vtl-mm-grid{position:absolute;top:6px;height:15px;width:0;border-left:1px solid rgba(255,255,255,.07);}
+  .vtl-mm-lbl{position:absolute;top:26px;transform:translateX(-50%);font-size:.54rem;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
+  .vtl-md{position:absolute;top:8px;margin-left:-5px;width:11px;height:11px;border-radius:50%;border:2px solid #0c0c10;transition:transform .15s;cursor:pointer;z-index:1;}
   .vtl-md:hover{transform:scale(1.55);}
   .vtl-md.mdone{background:#22c55e;box-shadow:0 0 9px rgba(34,197,94,.7);}
   .vtl-md.mporc{background:#f59e0b;box-shadow:0 0 9px rgba(245,158,11,.75);}

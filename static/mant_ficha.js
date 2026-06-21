@@ -7923,14 +7923,28 @@ function _vtlRender(bodyId, opts) {
   if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = ''; }
 
   if (opts.mini) {
-    const _Nm = nodos.length;
-    const _pastM = nodos.filter(n => n.clase !== 'pending').length;
-    const _hoyM = Math.min(96, Math.max(4, (_pastM / _Nm) * 100)).toFixed(1);
-    const dots = nodos.map((n, i) => {
+    // Eje de AÑO (ene→dic) compacto: meses visibles + HOY en el día real.
+    const _yr = nodos.map(n => parseInt(n.fecha.slice(0, 4), 10)).filter(y => y).concat([h.getFullYear()]);
+    const _yA = Math.min.apply(null, _yr), _yB = Math.max.apply(null, _yr);
+    const _wS = Date.parse(_yA + '-01-01'), _wE = Date.parse(_yB + '-12-31');
+    const _sp = Math.max(_wE - _wS, 864e5);
+    const _pY = t => ((t - _wS) / _sp) * 100;
+    const _hoyM = Math.min(99, Math.max(1, _pY(Date.parse(hoyStr)))).toFixed(2);
+    const dots = nodos.map(n => {
       const cls = n.clase === 'done' ? 'mdone' : (n.clase === 'overdue' ? 'mover' : (n.clase === 'porcerrar' ? 'mporc' : 'mpend'));
-      const xm = (((i + 0.5) / _Nm) * 100).toFixed(2);
-      return `<span class="vtl-md ${cls}" style="left:${xm}%" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></span>`;
+      return `<span class="vtl-md ${cls}" style="left:${_pY(Date.parse(n.fecha)).toFixed(2)}%" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></span>`;
     }).join('');
+    // Meses: línea en los 12, etiqueta cada 3 (ene con año, abr, jul, oct) → liviano.
+    const _MM2 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    let _mh = '';
+    let _c2 = new Date(_yA, 0, 1);
+    for (let g = 0; g < 60 && _c2.getTime() <= _wE; g++) {
+      const m = _c2.getMonth();
+      const xm = _pY(_c2.getTime()).toFixed(2);
+      _mh += `<span class="vtl-mm-grid" style="left:${xm}%"></span>`;
+      if (m % 3 === 0) _mh += `<span class="vtl-mm-lbl" style="left:${xm}%">${m === 0 ? (_MM2[m] + " '" + String(_c2.getFullYear()).slice(2)) : _MM2[m]}</span>`;
+      _c2 = new Date(_c2.getFullYear(), m + 1, 1);
+    }
     // Número focal: lo más importante para este cliente.
     let foColor, foIcon, foNum, foTxt, foPulse = '';
     if (venc > 0) { foColor = '#ef4444'; foIcon = 'exclamation-octagon-fill'; foNum = venc; foTxt = venc > 1 ? 'visitas vencidas' : 'visita vencida'; foPulse = ' pulse'; }
@@ -7941,7 +7955,7 @@ function _vtlRender(bodyId, opts) {
     body.innerHTML = `
       <div class="vtl-mini-glow" style="background:radial-gradient(62% 120% at 12% -10%, ${foColor}26, transparent 60%)"></div>
       <div class="vtl-mini-top">
-        <span class="vtl-mini-ttl"><i class="bi bi-bar-chart-steps me-1"></i>Visitas</span>
+        <span class="vtl-mini-ttl"><i class="bi bi-bar-chart-steps me-1"></i>Visitas · ${_yA === _yB ? _yA : (_yA + '–' + _yB)}</span>
         <span class="vtl-mini-see">ver todas <i class="bi bi-arrow-right"></i></span>
       </div>
       <div class="vtl-mini-focal">
@@ -7955,6 +7969,7 @@ function _vtlRender(bodyId, opts) {
         </span>
       </div>
       <div class="vtl-mini-track">
+        ${_mh}
         <div class="vtl-axis"></div>
         <div class="vtl-axis-done" style="width:${_hoyM}%"></div>
         <div class="vtl-mhoy" style="left:${_hoyM}%"></div>
