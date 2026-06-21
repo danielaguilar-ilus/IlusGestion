@@ -7896,7 +7896,8 @@ function _vtlNodos(data, hoyStr) {
     const faltaFact = !esGarantia && ['sin_cotizar', 'cotizado', 'con_oc'].indexOf((v.ef || '').toLowerCase()) !== -1;
     out.push({
       clase, fecha, tipo: v.t, titulo: v.ti, tecnico: v.tc,
-      faltaFC: !v.fc, faltaFT: !v.ft, faltaFact: faltaFact, garantia: esGarantia,
+      ot: v.ot || '', costo: (typeof v.co === 'number' ? v.co : parseFloat(v.co) || 0),
+      cobertura: (v.cb || ''), faltaFC: !v.fc, faltaFT: !v.ft, faltaFact: faltaFact, garantia: esGarantia,
     });
   });
   out.sort((a, b) => a.fecha < b.fecha ? -1 : (a.fecha > b.fecha ? 1 : 0));
@@ -7930,9 +7931,13 @@ function _vtlRender(bodyId, opts) {
     const _sp = Math.max(_wE - _wS, 864e5);
     const _pY = t => ((t - _wS) / _sp) * 100;
     const _hoyM = Math.min(99, Math.max(1, _pY(Date.parse(hoyStr)))).toFixed(2);
+    let _lastX = -99;
     const dots = nodos.map(n => {
       const cls = n.clase === 'done' ? 'mdone' : (n.clase === 'overdue' ? 'mover' : (n.clase === 'porcerrar' ? 'mporc' : 'mpend'));
-      return `<span class="vtl-md ${cls}" style="left:${_pY(Date.parse(n.fecha)).toFixed(2)}%" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></span>`;
+      let xm = _pY(Date.parse(n.fecha));
+      if (xm - _lastX < 2.2) xm = _lastX + 2.2;   // separar puntos pegados (no "montados")
+      _lastX = xm;
+      return `<span class="vtl-md ${cls}" style="left:${Math.min(99, xm).toFixed(2)}%" title="${_intelEsc((n.ot ? n.ot + ' · ' : '') + _vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></span>`;
     }).join('');
     // Meses: línea en los 12, etiqueta cada 3 (ene con año, abr, jul, oct) → liviano.
     const _MM2 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -8040,7 +8045,7 @@ function _vtlRender(bodyId, opts) {
     }
     const faltasTxt = faltas.length ? `<div class="vtl-falta"><i class="bi bi-exclamation-circle"></i> falta ${_intelEsc(faltas.join(' · '))}</div>` : '';
     const estadoFull = chipTxt + (faltas.length ? (' · falta ' + faltas.join(', ')) : ((n.garantia && (n.clase === 'done' || n.clase === 'porcerrar')) ? ' · garantía (sin cobro)' : ''));
-    const tip = _intelEsc((n.titulo || tipoLbl) + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha) + ' · ' + estadoFull);
+    const tip = _intelEsc((n.ot ? (n.ot + ' · ') : '') + (n.titulo || tipoLbl) + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha) + ' · ' + estadoFull);
     const dotClick = n.clase === 'overdue' ? ' onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"' : '';
     return `<div class="vtl-node" style="left:${x}%" title="${tip}">
       <div class="vtl-guide"></div>
@@ -8052,6 +8057,21 @@ function _vtlRender(bodyId, opts) {
       </div>
     </div>`;
   }).join('');
+  // Resumen de intervenciones (vista gerencia): cuántas veces fuimos a este
+  // cliente, por qué cobertura y cuánto costó. Datos de las OT reales.
+  const _gar = nodos.filter(n => n.garantia).length;
+  const _ctr = nodos.filter(n => n.cobertura === 'contrato' && !n.garantia).length;
+  const _cli = nodos.filter(n => n.cobertura === 'cliente' && !n.garantia).length;
+  const _costoT = nodos.reduce((s, n) => s + (n.costo || 0), 0);
+  const _interv = `
+    <div class="vtl-interv">
+      <span class="vti"><i class="bi bi-wrench-adjustable me-1"></i><b>${nodos.length}</b>&nbsp;veces a este cliente</span>
+      <span class="vti">${_gar} por <b style="color:#93c5fd">garantía</b></span>
+      <span class="vti">${_ctr} por <b style="color:#86efac">contrato</b></span>
+      <span class="vti">${_cli} con <b style="color:#fcd34d">cobro</b></span>
+      ${_costoT > 0 ? `<span class="vti">costo: <b>$${Math.round(_costoT).toLocaleString('es-CL')}</b></span>` : ''}
+      <span class="vti vti-link" onclick="switchTab('finanzas');if(window.cargarFinanzas)cargarFinanzas()">ver finanzas <i class="bi bi-arrow-right"></i></span>
+    </div>`;
   body.innerHTML = `${stats}
     <div class="vtl-track-wrap">
       ${mesesHtml}
@@ -8066,7 +8086,8 @@ function _vtlRender(bodyId, opts) {
       <span><span class="vtl-leg-dot" style="background:#f59e0b"></span>Por cerrar (falta firma/factura)</span>
       <span><span class="vtl-leg-dot" style="background:#ef4444"></span>Vencida</span>
       <span><span class="vtl-leg-dot" style="border:2px dashed #60a5fa"></span>Programada</span>
-    </div>`;
+    </div>
+    ${_interv}`;
 }
 
 // Hidratar Centro de control + Línea de tiempo de visitas al cargar (deferido, no bloquea el paint).

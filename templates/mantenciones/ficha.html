@@ -6091,6 +6091,11 @@ function abrirEmailManual() {
   .vtl-leg{display:flex;flex-wrap:wrap;gap:14px;font-size:.66rem;color:#9ca3af;margin-top:14px;border-top:1px solid rgba(255,255,255,.07);padding-top:10px;}
   .vtl-leg span{display:inline-flex;align-items:center;gap:5px;}
   .vtl-leg-dot{width:11px;height:11px;border-radius:50%;}
+  .vtl-interv{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:.72rem;color:#cbd5e1;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.07);}
+  .vtl-interv .vti{display:inline-flex;align-items:center;}
+  .vtl-interv .vti b{font-weight:800;color:#fff;}
+  .vtl-interv .vti-link{margin-left:auto;color:#9ca3af;cursor:pointer;}
+  .vtl-interv .vti-link:hover{color:#fff;}
   .vtl-cta{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:10px;font-size:.8rem;margin-bottom:14px;line-height:1.4;}
   .vtl-cta-danger{background:rgba(239,68,68,.13);border:1px solid rgba(239,68,68,.38);color:#fecaca;}
   .vtl-cta-warn{background:rgba(245,158,11,.13);border:1px solid rgba(245,158,11,.32);color:#fde68a;}
@@ -6142,7 +6147,7 @@ function abrirEmailManual() {
   </div>
   <script>
   window.VIS_TL = [
-  {% for v in visitas %}{"fp":"{{ v.fecha_programada.strftime('%Y-%m-%d') if v.fecha_programada else '' }}","fr":"{{ v.fecha_realizada.strftime('%Y-%m-%d') if v.fecha_realizada else '' }}","e":"{{ v.estado }}","t":"{{ v.tipo }}","ti":{{ (v.titulo or '')|tojson }},"tc":{{ (v.tecnico or '')|tojson }},"fc":{{ 1 if v.firma_cliente_url else 0 }},"ft":{{ 1 if v.firma_tecnico_url else 0 }},"ef":"{{ v.estado_facturacion or '' }}","mc":"{{ v.modalidad_cobro or '' }}","cb":"{{ v.cubierto_por or '' }}"}{{ "," if not loop.last }}
+  {% for v in visitas %}{"fp":"{{ v.fecha_programada.strftime('%Y-%m-%d') if v.fecha_programada else '' }}","fr":"{{ v.fecha_realizada.strftime('%Y-%m-%d') if v.fecha_realizada else '' }}","e":"{{ v.estado }}","t":"{{ v.tipo }}","ti":{{ (v.titulo or '')|tojson }},"tc":{{ (v.tecnico or '')|tojson }},"ot":{{ (v.numero_ot or '')|tojson }},"co":{{ (v.costo or 0)|float }},"fc":{{ 1 if v.firma_cliente_url else 0 }},"ft":{{ 1 if v.firma_tecnico_url else 0 }},"ef":"{{ v.estado_facturacion or '' }}","mc":"{{ v.modalidad_cobro or '' }}","cb":"{{ v.cubierto_por or '' }}"}{{ "," if not loop.last }}
   {% endfor %}];
   </script>
 
