@@ -7877,7 +7877,9 @@ function _vtlCap(t) { t = t || ''; return t ? t.charAt(0).toUpperCase() + t.slic
 // completada+cerrada; cancelada/anulada se excluyen; el resto (estados vivos
 // como programada/asignada/en_curso/… + desconocidos) son pendientes y, si la
 // fecha ya pasó, vencidas. (Antes solo veía 'completada' → perdía las cerradas.)
-var _VTL_DONE = ['completada', 'cerrada'];
+var _VTL_DONE = ['completada', 'cerrada'];                                  // cerrada/auditada
+var _VTL_PORCERRAR = ['firmada_tecnico', 'pendiente_aprobacion', 'pendiente_info',
+                      'pendiente_repuesto', 'en_ejecucion', 'en_curso'];     // ejecutada, falta cerrar
 var _VTL_CANC = ['cancelada', 'anulada'];
 function _vtlNodos(data, hoyStr) {
   const out = [];
@@ -7885,9 +7887,17 @@ function _vtlNodos(data, hoyStr) {
     const e = (v.e || '').toLowerCase();
     let clase = null, fecha = null;
     if (_VTL_DONE.indexOf(e) !== -1) { clase = 'done'; fecha = v.fr || v.fp; }
+    else if (_VTL_PORCERRAR.indexOf(e) !== -1) { clase = 'porcerrar'; fecha = v.fr || v.fp; }
     else if (_VTL_CANC.indexOf(e) !== -1) { return; }
     else if (v.fp) { clase = (v.fp < hoyStr ? 'overdue' : 'pending'); fecha = v.fp; }
-    if (clase && fecha) out.push({ clase, fecha, tipo: v.t, titulo: v.ti, tecnico: v.tc });
+    if (!clase || !fecha) return;
+    // Pendientes por cerrar (solo aplican a una visita ya ejecutada).
+    const esGarantia = (v.mc === 'garantia' || v.cb === 'garantia');
+    const faltaFact = !esGarantia && ['sin_cotizar', 'cotizado', 'con_oc'].indexOf((v.ef || '').toLowerCase()) !== -1;
+    out.push({
+      clase, fecha, tipo: v.t, titulo: v.ti, tecnico: v.tc,
+      faltaFC: !v.fc, faltaFT: !v.ft, faltaFact: faltaFact, garantia: esGarantia,
+    });
   });
   out.sort((a, b) => a.fecha < b.fecha ? -1 : (a.fecha > b.fecha ? 1 : 0));
   return out;
@@ -7906,15 +7916,10 @@ function _vtlRender(bodyId, opts) {
     else body.innerHTML = '<div class="vtl-empty"><i class="bi bi-calendar-x me-1"></i>Aún no hay visitas registradas.<div style="margin-top:10px"><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"><i class="bi bi-calendar-plus me-1"></i>Agendar la primera</button></div></div>';
     return;
   }
-  const ts = nodos.map(n => Date.parse(n.fecha)).concat([Date.parse(hoyStr)]);
-  const minT = Math.min.apply(null, ts) - 15 * 864e5, maxT = Math.max.apply(null, ts) + 15 * 864e5;
-  const span = Math.max(maxT - minT, 864e5);
-  const pct = t => ((t - minT) / span) * 100;
-  const hoyPct = pct(Date.parse(hoyStr)).toFixed(1);
   const done = nodos.filter(n => n.clase === 'done').length;
+  const porc = nodos.filter(n => n.clase === 'porcerrar').length;
   const pend = nodos.filter(n => n.clase === 'pending').length;
   const venc = nodos.filter(n => n.clase === 'overdue').length;
-  const cumpl = (done + venc) ? Math.round(done / (done + venc) * 100) : 100;
   if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = ''; }
 
   if (opts.mini) {
@@ -7922,14 +7927,15 @@ function _vtlRender(bodyId, opts) {
     const _pastM = nodos.filter(n => n.clase !== 'pending').length;
     const _hoyM = Math.min(96, Math.max(4, (_pastM / _Nm) * 100)).toFixed(1);
     const dots = nodos.map((n, i) => {
-      const cls = n.clase === 'done' ? 'mdone' : (n.clase === 'overdue' ? 'mover' : 'mpend');
+      const cls = n.clase === 'done' ? 'mdone' : (n.clase === 'overdue' ? 'mover' : (n.clase === 'porcerrar' ? 'mporc' : 'mpend'));
       const xm = (((i + 0.5) / _Nm) * 100).toFixed(2);
       return `<span class="vtl-md ${cls}" style="left:${xm}%" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></span>`;
     }).join('');
-    // Número focal: lo más importante para este cliente (vencidas > por venir > al día).
+    // Número focal: lo más importante para este cliente.
     let foColor, foIcon, foNum, foTxt, foPulse = '';
     if (venc > 0) { foColor = '#ef4444'; foIcon = 'exclamation-octagon-fill'; foNum = venc; foTxt = venc > 1 ? 'visitas vencidas' : 'visita vencida'; foPulse = ' pulse'; }
-    else if (pend > 0) { foColor = '#60a5fa'; foIcon = 'calendar-event-fill'; foNum = pend; foTxt = pend > 1 ? 'por venir' : 'por venir'; }
+    else if (porc > 0) { foColor = '#f59e0b'; foIcon = 'pencil-square'; foNum = porc; foTxt = 'por cerrar'; }
+    else if (pend > 0) { foColor = '#60a5fa'; foIcon = 'calendar-event-fill'; foNum = pend; foTxt = 'por venir'; }
     else if (done > 0) { foColor = '#22c55e'; foIcon = 'check-circle-fill'; foNum = done; foTxt = 'al día'; }
     else { foColor = '#9ca3af'; foIcon = 'calendar-x'; foNum = 0; foTxt = 'sin visitas aún'; }
     body.innerHTML = `
@@ -7943,6 +7949,7 @@ function _vtlRender(bodyId, opts) {
         <span class="vtl-mini-fotxt">${foTxt}</span>
         <span class="vtl-mini-chips">
           <span class="vtl-mc" style="--c:#22c55e">${done} hechas</span>
+          ${porc ? `<span class="vtl-mc" style="--c:#f59e0b">${porc} por cerrar</span>` : ''}
           <span class="vtl-mc" style="--c:#60a5fa">${pend} por venir</span>
           <span class="vtl-mc" style="--c:#ef4444">${venc} venc.</span>
         </span>
@@ -7956,11 +7963,22 @@ function _vtlRender(bodyId, opts) {
     return;
   }
 
-  // CTA inteligente: el agente te dice la próxima acción y te deja agendar.
-  const total = done + pend + venc;
+  // ── HÉROE: AÑO COMPLETO (ene→dic) con líneas de mes y HOY en el día real.
+  //    Cada visita va en su FECHA real; etiquetas en 4 carriles + línea guía
+  //    para que fechas cercanas no se enciman. Estados: realizada / por cerrar
+  //    (ejecutada, falta firma o facturar) / vencida / programada.
+  const yrs = nodos.map(n => parseInt(n.fecha.slice(0, 4), 10)).filter(y => y).concat([h.getFullYear()]);
+  const yMin = Math.min.apply(null, yrs), yMax = Math.max.apply(null, yrs);
+  const winS = Date.parse(yMin + '-01-01'), winE = Date.parse(yMax + '-12-31');
+  const spanY = Math.max(winE - winS, 864e5);
+  const pY = t => ((t - winS) / spanY) * 100;
+  const hoyPct = Math.min(99.4, Math.max(0.6, pY(Date.parse(hoyStr)))).toFixed(2);
+
   let cta;
   if (venc > 0) {
     cta = `<div class="vtl-cta vtl-cta-danger"><div><i class="bi bi-exclamation-octagon-fill me-1"></i><strong>${venc} visita${venc > 1 ? 's' : ''} vencida${venc > 1 ? 's' : ''}</strong> sin realizar — conviene agendar.</div><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar ahora</button></div>`;
+  } else if (porc > 0) {
+    cta = `<div class="vtl-cta vtl-cta-warn"><div><i class="bi bi-pencil-square me-1"></i><strong>${porc} realizada${porc > 1 ? 's' : ''} por cerrar</strong> — falta firma o facturación.</div></div>`;
   } else if (pend === 0) {
     cta = `<div class="vtl-cta vtl-cta-warn"><div><i class="bi bi-calendar-x me-1"></i>No hay próxima mantención programada.</div><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar mantención</button></div>`;
   } else {
@@ -7970,48 +7988,68 @@ function _vtlRender(bodyId, opts) {
   const stats = `${cta}
     <div class="vtl-stats">
       <div class="vtl-stat"><div class="vs-num" style="color:#22c55e">${done}</div><div class="vs-lbl">Realizadas</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:${porc ? '#f59e0b' : '#6b7280'}">${porc}</div><div class="vs-lbl">Por cerrar</div></div>
       <div class="vtl-stat"><div class="vs-num" style="color:#60a5fa">${pend}</div><div class="vs-lbl">Por venir</div></div>
       <div class="vtl-stat"><div class="vs-num" style="color:${venc ? '#ef4444' : '#6b7280'}">${venc}</div><div class="vs-lbl">Vencidas</div></div>
-      <div class="vtl-stat"><div class="vs-num" style="color:#fff">${total}</div><div class="vs-lbl">Total</div></div>
     </div>`;
-  // ESPACIADO IGUAL: los eventos se reparten PAREJO en el ancho (no se agrupan
-  // ni dejan huecos); la fecha va sobre cada punto y el divisor HOY separa
-  // pasado (izq) de futuro (der). numPast = realizadas+vencidas (fecha < hoy),
-  // que por el orden cronológico van siempre antes que las programadas.
-  const N = nodos.length;
-  const numPast = nodos.filter(n => n.clase !== 'pending').length;
-  const hoyB = Math.min(97, Math.max(3, (numPast / N) * 100));
+
+  // Líneas y nombres de mes (ene…dic), con el año en enero.
+  const _MM = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const stepM = ((yMax - yMin + 1) * 12) > 18 ? 2 : 1;
+  let mesesHtml = '';
+  let _cur = new Date(yMin, 0, 1);
+  for (let g = 0; g < 60 && _cur.getTime() <= winE; g++) {
+    const m = _cur.getMonth();
+    if (m % stepM === 0) {
+      const xm = pY(_cur.getTime()).toFixed(2);
+      const lbl = m === 0 ? `<b style="color:#cbd5e1">${_MM[m]} '${String(_cur.getFullYear()).slice(2)}</b>` : _MM[m];
+      mesesHtml += `<div class="vtl-mgrid" style="left:${xm}%"></div><div class="vtl-mlbl" style="left:${xm}%">${lbl}</div>`;
+    }
+    _cur = new Date(_cur.getFullYear(), m + 1, 1);
+  }
+
+  const _TIERS = [8, 188, 52, 144];   // 4 carriles (arriba/abajo × lejos/cerca)
   const nodesHtml = nodos.map((n, i) => {
-    const x = (((i + 0.5) / N) * 100).toFixed(2);
-    const above = (i % 2 === 0);
-    let dotCls = 'pending', dotInner = '';
-    if (n.clase === 'done') dotCls = 'done';
-    else if (n.clase === 'overdue') { dotCls = 'overdue'; dotInner = '<i class="bi bi-exclamation-triangle" style="font-size:.66rem;color:#fff"></i>'; }
-    const chipTxt = n.clase === 'overdue' ? 'Vencida' : (n.clase === 'pending' ? 'Programada' : 'Realizada');
+    const x = pY(Date.parse(n.fecha)).toFixed(2);
+    let dotCls, dotInner = '', chipTxt;
+    if (n.clase === 'done') { dotCls = 'done'; chipTxt = 'Realizada'; }
+    else if (n.clase === 'porcerrar') { dotCls = 'porcerrar'; dotInner = '<i class="bi bi-pencil" style="font-size:.58rem;color:#1a1206"></i>'; chipTxt = 'Por cerrar'; }
+    else if (n.clase === 'overdue') { dotCls = 'overdue'; dotInner = '<i class="bi bi-exclamation-triangle" style="font-size:.62rem;color:#fff"></i>'; chipTxt = 'Vencida'; }
+    else { dotCls = 'pending'; chipTxt = 'Programada'; }
     const tipoLbl = _vtlCap(n.tipo) || 'Visita';
-    const tip = _intelEsc((n.titulo || tipoLbl) + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha));
+    const faltas = [];
+    if (n.clase === 'done' || n.clase === 'porcerrar') {
+      if (n.faltaFT) faltas.push('firma téc.');
+      if (n.faltaFC) faltas.push('firma cliente');
+      if (n.faltaFact) faltas.push('facturar');
+    }
+    const faltasTxt = faltas.length ? `<div class="vtl-falta"><i class="bi bi-exclamation-circle"></i> falta ${_intelEsc(faltas.join(' · '))}</div>` : '';
+    const estadoFull = chipTxt + (faltas.length ? (' · falta ' + faltas.join(', ')) : ((n.garantia && (n.clase === 'done' || n.clase === 'porcerrar')) ? ' · garantía (sin cobro)' : ''));
+    const tip = _intelEsc((n.titulo || tipoLbl) + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha) + ' · ' + estadoFull);
     const dotClick = n.clase === 'overdue' ? ' onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"' : '';
     return `<div class="vtl-node" style="left:${x}%" title="${tip}">
       <div class="vtl-guide"></div>
       <div class="vtl-dot ${dotCls}"${dotClick}>${dotInner}</div>
-      <div class="vtl-lbl ${above ? 'above' : 'below'}">
+      <div class="vtl-lbl" style="top:${_TIERS[i % 4]}px">
         <div class="vtl-date">${_vtlFmtFecha(n.fecha)}</div>
-        <div class="vtl-cap">${_intelEsc(tipoLbl)}</div>
         <span class="vtl-chip ${n.clase}">${chipTxt}</span>
+        ${faltasTxt}
       </div>
     </div>`;
   }).join('');
   body.innerHTML = `${stats}
     <div class="vtl-track-wrap">
+      ${mesesHtml}
       <div class="vtl-axis"></div>
-      <div class="vtl-axis-done" style="width:${hoyB.toFixed(1)}%"></div>
-      <div class="vtl-hoy" style="left:${hoyB.toFixed(1)}%"></div>
-      <div class="vtl-hoy-pill" style="left:${hoyB.toFixed(1)}%">HOY</div>
+      <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
+      <div class="vtl-hoy" style="left:${hoyPct}%"></div>
+      <div class="vtl-hoy-pill" style="left:${hoyPct}%">HOY</div>
       ${nodesHtml}
     </div>
     <div class="vtl-leg">
       <span><span class="vtl-leg-dot" style="background:#22c55e"></span>Realizada</span>
-      <span><span class="vtl-leg-dot" style="background:#ef4444"></span>Vencida (no se hizo)</span>
+      <span><span class="vtl-leg-dot" style="background:#f59e0b"></span>Por cerrar (falta firma/factura)</span>
+      <span><span class="vtl-leg-dot" style="background:#ef4444"></span>Vencida</span>
       <span><span class="vtl-leg-dot" style="border:2px dashed #60a5fa"></span>Programada</span>
     </div>`;
 }
