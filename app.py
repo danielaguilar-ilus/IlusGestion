@@ -52958,6 +52958,36 @@ def mant_ot_firmar_revision(vid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/mantenciones/api/visitas/<int:vid>/liberar-firma-tecnico", methods=["POST"])
+@_mant_required
+def mant_ot_liberar_firma_tecnico(vid):
+    """SUPERADMIN: libera la firma del técnico de una OT en 'firmada_tecnico'
+    (cuando el técnico no pudo firmar bien o hay que rehacer). La OT vuelve a
+    'en_ejecucion' para que el técnico firme de nuevo. NO se permite si el
+    cliente ya firmó (la OT estaría sellada). Queda en la bitácora."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede liberar la firma del técnico."}), 403
+    v = mysql_fetchone(
+        "SELECT estado, firma_cliente_url, firma_tecnico_nombre FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    if v.get("firma_cliente_url"):
+        return jsonify({"ok": False, "error": "El cliente ya firmó: la OT está sellada. Para liberar hay que reabrir el cierre."}), 400
+    if (v.get("estado") or "").lower() != "firmada_tecnico":
+        return jsonify({"ok": False, "error": "La OT no está en estado 'firmada por el técnico'."}), 400
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET firma_tecnico_url=NULL, firma_tecnico_user_id=NULL, "
+            "  firma_tecnico_nombre=NULL, firma_tecnico_at=NULL, estado='en_ejecucion' "
+            " WHERE id=%s", (vid,))
+        _mant_log("visita", vid, "firma_tecnico_liberada",
+                  f"Superadmin {current_username()} liberó la firma del técnico "
+                  f"({v.get('firma_tecnico_nombre') or '—'}); OT vuelve a en_ejecucion para re-firmar.")
+        return jsonify({"ok": True, "estado": "en_ejecucion"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-cliente", methods=["POST"])
 @_mant_required
 def mant_ot_firmar_cliente(vid):

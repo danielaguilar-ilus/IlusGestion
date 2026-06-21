@@ -2248,6 +2248,15 @@
         </span>
       </div>
     {% endif %}
+    {% if _es_superadmin %}
+      <button class="tx-btn-firmar" onclick="liberarFirmaTecnico()"
+              style="background:linear-gradient(135deg,#b45309,#92400e);margin-bottom:8px">
+        <i class="bi bi-arrow-counterclockwise"></i> Liberar firma del técnico (re-firmar)
+      </button>
+      <small class="d-block text-center mb-2" style="color:#b45309;font-size:.72rem;font-weight:600">
+        Solo superadmin · vuelve la OT a edición para que el técnico firme de nuevo.
+      </small>
+    {% endif %}
     {% if puede_firmar_cliente %}
       <button class="tx-btn-firmar" id="btnFirmarCliente" onclick="abrirModalFirmaCliente()"
               style="background:linear-gradient(135deg,#2563eb,#1d4ed8)">
@@ -7594,6 +7603,27 @@ function abrirModalFirmaCliente(){
   _firmaSetStage('cliente');
   new bootstrap.Modal(document.getElementById('modalFirma')).show();
   setTimeout(() => { initCanvas('canvasCli'); }, 250);
+}
+
+// SUPERADMIN: liberar la firma del técnico → la OT vuelve a 'en_ejecucion' para
+// que el técnico pueda firmar de nuevo (caso: no alcanzó a firmar bien en sitio).
+async function liberarFirmaTecnico(){
+  const ok = await ilusConfirm({
+    title: 'Liberar firma del técnico',
+    message: '¿Liberar la firma del técnico de esta OT?',
+    sub: 'La OT vuelve a edición (en ejecución) y el técnico podrá firmar de nuevo. Queda registrado en la bitácora. Solo superadmin.',
+    okLabel: 'Liberar firma', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/liberar-firma-tecnico`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){ await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' }); return; }
+    ilusToast('✓ Firma del técnico liberada — la OT volvió a edición', { type: 'success' });
+    setTimeout(() => location.reload(), 900);
+  } catch (e){ await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' }); }
 }
 
 async function enviarFirma(){
