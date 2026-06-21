@@ -7922,20 +7922,35 @@ function _vtlRender(bodyId, opts) {
     const _pastM = nodos.filter(n => n.clase !== 'pending').length;
     const _hoyM = Math.min(96, Math.max(4, (_pastM / _Nm) * 100)).toFixed(1);
     const dots = nodos.map((n, i) => {
-      const col = n.clase === 'done' ? '#22c55e' : (n.clase === 'overdue' ? '#ef4444' : 'transparent');
-      const bd = n.clase === 'pending' ? 'border:2px dashed #60a5fa;' : '';
+      const cls = n.clase === 'done' ? 'mdone' : (n.clase === 'overdue' ? 'mover' : 'mpend');
       const xm = (((i + 0.5) / _Nm) * 100).toFixed(2);
-      return `<div class="vtl-mini-dot" style="left:${xm}%;background:${col};${bd}" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></div>`;
+      return `<span class="vtl-md ${cls}" style="left:${xm}%" title="${_intelEsc(_vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></span>`;
     }).join('');
+    // Número focal: lo más importante para este cliente (vencidas > por venir > al día).
+    let foColor, foIcon, foNum, foTxt, foPulse = '';
+    if (venc > 0) { foColor = '#ef4444'; foIcon = 'exclamation-octagon-fill'; foNum = venc; foTxt = venc > 1 ? 'visitas vencidas' : 'visita vencida'; foPulse = ' pulse'; }
+    else if (pend > 0) { foColor = '#60a5fa'; foIcon = 'calendar-event-fill'; foNum = pend; foTxt = pend > 1 ? 'por venir' : 'por venir'; }
+    else if (done > 0) { foColor = '#22c55e'; foIcon = 'check-circle-fill'; foNum = done; foTxt = 'al día'; }
+    else { foColor = '#9ca3af'; foIcon = 'calendar-x'; foNum = 0; foTxt = 'sin visitas aún'; }
     body.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <span style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#9ca3af"><i class="bi bi-bar-chart-steps me-1" style="color:#dc2626"></i>Visitas</span>
-        <span style="font-size:.66rem;color:#9ca3af"><span style="color:#22c55e">${done} hechas</span> · <span style="color:#60a5fa">${pend} pend.</span>${venc ? ` · <span style="color:#ef4444">${venc} venc.</span>` : ''}</span>
+      <div class="vtl-mini-glow" style="background:radial-gradient(62% 120% at 12% -10%, ${foColor}26, transparent 60%)"></div>
+      <div class="vtl-mini-top">
+        <span class="vtl-mini-ttl"><i class="bi bi-bar-chart-steps me-1"></i>Visitas</span>
+        <span class="vtl-mini-see">ver todas <i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="vtl-mini-focal">
+        <span class="vtl-mini-num${foPulse}" style="color:${foColor};text-shadow:0 0 20px ${foColor}66"><i class="bi bi-${foIcon}"></i>${foNum}</span>
+        <span class="vtl-mini-fotxt">${foTxt}</span>
+        <span class="vtl-mini-chips">
+          <span class="vtl-mc" style="--c:#22c55e">${done} hechas</span>
+          <span class="vtl-mc" style="--c:#60a5fa">${pend} por venir</span>
+          <span class="vtl-mc" style="--c:#ef4444">${venc} venc.</span>
+        </span>
       </div>
       <div class="vtl-mini-track">
         <div class="vtl-axis"></div>
         <div class="vtl-axis-done" style="width:${_hoyM}%"></div>
-        <div style="position:absolute;top:7px;bottom:0;left:${_hoyM}%;border-left:2px dashed #dc2626"></div>
+        <div class="vtl-mhoy" style="left:${_hoyM}%"></div>
         ${dots}
       </div>`;
     return;
