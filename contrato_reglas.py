@@ -278,6 +278,10 @@ _TIPO_KEYWORDS = {
                     "transferencia de dominio", "transferencia de propiedad", "precio de venta"],
     "garantia": ["certificado de garantia", "poliza de garantia", "carta de garantia",
                  "garantia del fabricante"],
+    "pedido": ["nro de pedido", "numero de pedido", "orden de pedido", "solped",
+               "solicitud de pedido", "orden de compra", "purchase order",
+               "condiciones del pedido", "condiciones generales del pedido",
+               "centro de costo", "codigo sap"],
 }
 
 
@@ -295,6 +299,10 @@ def _detectar_tipo_documento(t_norm):
             ganador, mejor = tipo, sc
     if mejor == 0:
         return "otro", scores
+    # Un PEDIDO / orden de compra con señal fuerte NO debe perder ante
+    # "mantención" (un pedido de servicio sigue siendo un pedido, no un contrato).
+    if scores.get("pedido", 0) >= 2 and scores["pedido"] >= mant:
+        return "pedido", scores
     # Empate o cercanía: mantención gana (es el caso de negocio principal ILUS).
     if mant > 0 and mant >= mejor:
         return "mantencion", scores
@@ -683,6 +691,15 @@ _CONTRACT_NEG = [
     ("nota de credito", "una NOTA DE CRÉDITO", 45),
     ("guia de despacho", "una GUÍA DE DESPACHO", 45),
     ("orden de compra", "una ORDEN DE COMPRA", 35),
+    ("nro de pedido", "un PEDIDO / ORDEN DE COMPRA", 40),
+    ("numero de pedido", "un PEDIDO / ORDEN DE COMPRA", 40),
+    ("n de pedido", "un PEDIDO / ORDEN DE COMPRA", 35),
+    ("orden de pedido", "un PEDIDO / ORDEN DE COMPRA", 40),
+    ("solicitud de pedido", "un PEDIDO / ORDEN DE COMPRA", 40),
+    ("solped", "un PEDIDO / ORDEN DE COMPRA", 45),
+    ("condiciones del pedido", "un PEDIDO / ORDEN DE COMPRA", 35),
+    ("condiciones generales del pedido", "un PEDIDO / ORDEN DE COMPRA", 40),
+    ("condiciones general del pedido", "un PEDIDO / ORDEN DE COMPRA", 40),
     ("cotizacion n", "una COTIZACIÓN", 30),
     ("presupuesto n", "un PRESUPUESTO", 25),
     ("boleta", "una BOLETA", 30),
@@ -750,6 +767,13 @@ def evaluar_contractualidad(texto):
             neg.append(kw)
             if w > peor:
                 parece, peor = etiqueta, w
+    # "PEDIDO" como TÍTULO (las clínicas y el retail llaman así a su orden de
+    # compra): penaliza fuerte si aparece arriba y el encabezado NO dice contrato.
+    if "pedido" in t[:400] and "contrato" not in t[:400]:
+        score -= 40
+        neg.append("titulo: pedido")
+        if 40 > peor:
+            parece, peor = "un PEDIDO / ORDEN DE COMPRA", 40
     score = max(0, min(100, score))
     if score >= 55:
         veredicto = "contrato"
