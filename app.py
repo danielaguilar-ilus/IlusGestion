@@ -4381,6 +4381,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/webhook/",                # webhooks externos (Twilio, etc.)
     "/webhooks/",               # alias plural
     "/t/",                      # tracking público de transporte (token URL)
+    "/firmar-ot/",              # firma remota pública de OT (token HMAC)
     "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
     "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
     "/chofer",                  # app del chofer (sesión driver_id propia)
@@ -53093,6 +53094,186 @@ def mant_ot_firmar_cliente(vid):
         except Exception as e_n:
             print(f"[notif-pend-aprob] fail vid={vid}: {e_n}", flush=True)
         return jsonify({"ok": True, "estado": "pendiente_aprobacion"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# FIRMA REMOTA DEL CLIENTE — por correo (cuando el cliente NO está en sitio)
+# El cliente recibe un link con token, firma en una página pública, y al
+# firmar la OT pasa a 'pendiente_aprobacion' avisando al equipo (reusa la
+# misma notificación). Token = HMAC(secret, vid:exp) → SIN columna nueva en BD.
+# ═════════════════════════════════════════════════════════════════════
+def _ot_firma_key():
+    import hashlib as _hl
+    k = app.secret_key
+    return k.encode() if isinstance(k, str) else (k or b"ilus-firma")
+
+
+def _ot_firma_token(vid, ttl_horas=120):
+    """Token firmado (HMAC) que codifica la OT + expiración. Sin estado en BD."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64
+    exp = int(time.time()) + int(ttl_horas) * 3600
+    sig = _hmac.new(_ot_firma_key(), f"{vid}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
+    return _b64.urlsafe_b64encode(f"{vid}:{exp}:{sig}".encode()).decode().rstrip("=")
+
+
+def _ot_firma_token_validar(token):
+    """Devuelve vid si el token es válido y no expiró; si no, None."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64
+    try:
+        if not token or len(token) > 200:
+            return None
+        raw = _b64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+        vid_s, exp_s, sig = raw.split(":")
+        vid, exp = int(vid_s), int(exp_s)
+        good = _hmac.new(_ot_firma_key(), f"{vid}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
+        if not _hmac.compare_digest(good, sig) or time.time() > exp:
+            return None
+        return vid
+    except Exception:
+        return None
+
+
+def _ot_resumen_firma(vid):
+    """Resumen liviano de la OT para la página pública de firma."""
+    return mysql_fetchone(
+        "SELECT v.id, v.numero_ot, v.estado, v.fecha_programada, v.titulo, v.tipo, "
+        "       v.firma_tecnico_url, v.firma_tecnico_nombre, v.firma_cliente_url, "
+        "       COALESCE(ut.nombre, ut.username, v.tecnico) AS tecnico_nombre, "
+        "       c.razon_social, "
+        "       (SELECT COUNT(*) FROM mant_visita_equipos e WHERE e.visita_id=v.id) AS n_equipos "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN app_users ut ON ut.id=v.tecnico_user_id "
+        " WHERE v.id=%s", (vid,))
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/enviar-firma-remota", methods=["POST"])
+@_mant_required
+def mant_ot_enviar_firma_remota(vid):
+    """Envía al cliente un correo con un link para firmar la OT a distancia.
+    Requiere OT en 'firmada_tecnico' (técnico ya firmó) y cliente sin firmar."""
+    if not _puede_ot_accion(vid, "firmar_cliente"):
+        return jsonify({"ok": False, "error": "No tienes permiso para gestionar la firma de esta OT."}), 403
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip()[:190]
+    v = _ot_resumen_firma(vid)
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    if not v.get("firma_tecnico_url"):
+        return jsonify({"ok": False, "error": "El técnico debe firmar antes de enviar la firma remota al cliente."}), 400
+    if v.get("firma_cliente_url"):
+        return jsonify({"ok": False, "error": "El cliente ya firmó esta OT."}), 400
+    if (v.get("estado") or "").lower() != "firmada_tecnico":
+        return jsonify({"ok": False, "error": f"La OT no está lista para la firma del cliente (estado: {v.get('estado')})."}), 400
+    if not email or "@" not in email:
+        cli = mysql_fetchone(
+            "SELECT c.contacto_email, c.email_empresa FROM mant_clientes c "
+            "JOIN mant_visitas v ON v.cliente_id=c.id WHERE v.id=%s", (vid,)) or {}
+        email = (cli.get("contacto_email") or cli.get("email_empresa") or "").strip()
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "error": "Falta el correo del cliente. Escríbelo para enviar el link."}), 400
+
+    token = _ot_firma_token(vid)
+    link = _public_base_url() + "/firmar-ot/" + token
+    numero = v.get("numero_ot") or f"OT #{vid}"
+    razon = v.get("razon_social") or "estimado cliente"
+    try:
+        html = _ilus_email_master({
+            "subject": f"Firma tu orden de trabajo {numero}",
+            "title": "Firma de conformidad",
+            "subtitle": numero,
+            "customer_name": razon,
+            "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
+                        "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
+                        "El enlace es personal y vence en 5 días."),
+            "primary_cta_url": link,
+            "primary_cta_label": "Revisar y firmar la OT",
+        })
+    except Exception:
+        html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
+                f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
+    try:
+        ok = _send_ilus_email(email, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
+                              evento="ot_firma_remota", modulo="mantenciones")
+    except Exception as _e:
+        print(f"[firma-remota] email fail vid={vid}: {_e}", flush=True)
+        ok = False
+    _mant_log("visita", vid, "firma_remota_enviada",
+              f"Link de firma enviado a {email} por {current_username()}.")
+    return jsonify({"ok": True, "enviado": bool(ok), "email": email, "link": link,
+                    "mensaje": (f"Link de firma enviado a {email}." if ok else
+                                "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
+
+
+@app.route("/firmar-ot/<token>", methods=["GET"])
+def ot_firma_publica(token):
+    """Página pública (sin login): el cliente revisa y firma su OT."""
+    vid = _ot_firma_token_validar(token)
+    v = _ot_resumen_firma(vid) if vid else None
+    if not vid or not v:
+        estado = "invalido"
+    elif v.get("firma_cliente_url"):
+        estado = "ya_firmada"
+    elif (v.get("estado") or "").lower() != "firmada_tecnico":
+        estado = "no_disponible"
+    else:
+        estado = "firmar"
+    return render_template("mantenciones/firma_publica.html", estado=estado, token=token, ot=v)
+
+
+@app.route("/firmar-ot/<token>", methods=["POST"])
+def ot_firma_publica_submit(token):
+    """El cliente firma desde la página pública (sin login). Token-gated."""
+    vid = _ot_firma_token_validar(token)
+    if not vid:
+        return jsonify({"ok": False, "error": "El enlace no es válido o ya venció."}), 400
+    d = request.get_json(silent=True) or {}
+    firma = (d.get("firma_cliente") or "").strip()
+    nombre = (d.get("firma_cliente_nombre") or "").strip()[:200]
+    rut = (d.get("firma_cliente_rut") or "").strip()
+    if not firma:
+        return jsonify({"ok": False, "error": "Falta tu firma."}), 400
+    if not nombre:
+        return jsonify({"ok": False, "error": "Falta tu nombre."}), 400
+    _ok_rut, _rut_res = validar_rut(rut)
+    if not _ok_rut:
+        return jsonify({"ok": False, "error": f"RUT inválido: {_rut_res}"}), 400
+    rut_norm = _formato_rut_chile(_rut_res) or _rut_res
+    v = mysql_fetchone("SELECT estado, firma_tecnico_url, firma_cliente_url FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    if not v.get("firma_tecnico_url"):
+        return jsonify({"ok": False, "error": "La OT aún no está lista para firmar."}), 400
+    if v.get("firma_cliente_url"):
+        return jsonify({"ok": False, "error": "Esta OT ya fue firmada."}), 400
+    if (v.get("estado") or "").lower() != "firmada_tecnico":
+        return jsonify({"ok": False, "error": "La OT no está disponible para firma."}), 400
+    try:
+        firma_url = _subir_firma_cloudinary(firma, vid, "cliente")
+        mysql_execute(
+            "UPDATE mant_visitas SET firma_cliente_url=%s, firma_cliente_nombre=%s, "
+            "  firma_cliente_at=NOW(), estado='pendiente_aprobacion' WHERE id=%s",
+            (firma_url, nombre, vid))
+        try:
+            _ua = (request.headers.get("User-Agent") or "")[:400]
+            _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+                   or request.remote_addr or "")[:64]
+            mysql_execute(
+                "INSERT INTO mant_ot_signatures "
+                "(ot_id, signer_name, signer_rut, signer_role, signature_url, ip, user_agent) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (vid, nombre, rut_norm, "cliente_remoto", firma_url, _ip, _ua))
+        except Exception as _e:
+            print(f"[firma-remota] audit fail vid={vid}: {_e}", flush=True)
+        _mant_log("visita", vid, "firmada_cliente_remoto",
+                  f"{nombre} firmó remotamente (por correo) → pendiente_aprobacion")
+        try:
+            _notificar_ot_pendiente_aprobacion_async(vid, _public_base_url())
+        except Exception as e_n:
+            print(f"[notif-firma-remota] fail vid={vid}: {e_n}", flush=True)
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
