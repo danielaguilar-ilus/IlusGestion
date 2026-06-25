@@ -1785,10 +1785,61 @@ function abrirSolicitudCambio(eq) { abrirAccionEquipo('garantia', eq); }
 // ════════════════════════════════════════════════════════════════════
 let _modalSucursal = null;
 
+// Inicializa Google Places en el campo dirección del modal de sucursal (idempotente).
+// Mismo motor que la OT / editar-cliente → muestra "Powered by Google" y autollena
+// comuna/ciudad/región + lat/lng/place_id.
+function _ilusInitDireccionSucursal() {
+  const input = document.getElementById('suc_direccion');
+  if (!input || input.dataset.placesBound === '1') return;
+  if (typeof ilusPlacesAutocomplete !== 'function') {
+    if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_ilusInitDireccionSucursal);
+    return;
+  }
+  input.dataset.placesBound = '1';
+  ilusPlacesAutocomplete('suc_direccion', {
+    country: 'cl',
+    types: ['address'],
+    onPlaceSelected: function (place) {
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+      set('suc_direccion_lat',      place.lat || '');
+      set('suc_direccion_lng',      place.lng || '');
+      set('suc_direccion_place_id', place.place_id || '');
+      const comps = place.componentes || [];
+      const pick = function () {
+        for (let i = 0; i < arguments.length; i++) {
+          const c = comps.find(x => (x.types || []).indexOf(arguments[i]) >= 0);
+          if (c) return c.long_name;
+        }
+        return '';
+      };
+      const region = pick('administrative_area_level_1');
+      const comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+      const ciudad = pick('locality', 'administrative_area_level_2') || comuna;
+      const setIf  = (id, v) => { const e = document.getElementById(id); if (e && v) e.value = v; };
+      setIf('suc_region', _ilusLimpiaRegion(region));
+      setIf('suc_comuna', comuna);
+      setIf('suc_ciudad', ciudad);
+      const hint = document.getElementById('suc_direccion_hint');
+      if (hint) {
+        const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
+        const ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
+        hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>' +
+          'Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      }
+    },
+    onNoSelection: function () {
+      const hint = document.getElementById('suc_direccion_hint');
+      if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>' +
+        'Selecciona una opción del menú para validar la dirección.';
+    }
+  });
+}
+
 function abrirSucursal(s) {
   if (!_modalSucursal) _modalSucursal = new bootstrap.Modal(document.getElementById('modalSucursal'));
   // Reset
   ['suc_id','suc_nombre','suc_direccion','suc_comuna','suc_ciudad','suc_region',
+   'suc_direccion_lat','suc_direccion_lng','suc_direccion_place_id',
    'suc_enc_nombre','suc_enc_cargo','suc_enc_tel','suc_enc_email',
    'suc_c2_nombre','suc_c2_cargo','suc_c2_tel','suc_c2_email','suc_notas']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -1805,6 +1856,9 @@ function abrirSucursal(s) {
     document.getElementById('suc_comuna').value       = s.comuna || '';
     document.getElementById('suc_ciudad').value       = s.ciudad || '';
     document.getElementById('suc_region').value       = s.region || '';
+    document.getElementById('suc_direccion_lat').value      = s.direccion_lat || '';
+    document.getElementById('suc_direccion_lng').value      = s.direccion_lng || '';
+    document.getElementById('suc_direccion_place_id').value = s.direccion_place_id || '';
     document.getElementById('suc_enc_nombre').value   = s.encargado_nombre || '';
     document.getElementById('suc_enc_cargo').value    = s.encargado_cargo || '';
     document.getElementById('suc_enc_tel').value      = s.encargado_tel || '';
@@ -1819,6 +1873,14 @@ function abrirSucursal(s) {
     document.getElementById('suc_modal_title').textContent = 'Nueva sucursal';
     document.getElementById('suc_btn_label').textContent  = 'Guardar sucursal';
   }
+  // Hint de dirección + Google Places (idempotente). Mismo motor que la OT.
+  const _sucHint = document.getElementById('suc_direccion_hint');
+  if (_sucHint) {
+    _sucHint.innerHTML = (s && s.direccion_place_id)
+      ? '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada — elige otra del menú para actualizar comuna, ciudad y región.'
+      : '<i class="bi bi-geo-alt me-1" style="color:#6b7280"></i>Escribe la dirección y selecciona del menú: comuna, ciudad y región se completan solas.';
+  }
+  _ilusInitDireccionSucursal();
   _modalSucursal.show();
 }
 
@@ -1967,6 +2029,9 @@ async function guardarSucursal() {
   const data = {
     nombre:           $v('suc_nombre'),
     direccion:        $v('suc_direccion'),
+    direccion_lat:        $v('suc_direccion_lat'),
+    direccion_lng:        $v('suc_direccion_lng'),
+    direccion_place_id:   $v('suc_direccion_place_id'),
     comuna:           $v('suc_comuna'),
     ciudad:           $v('suc_ciudad'),
     region:           $v('suc_region'),

@@ -42482,15 +42482,23 @@ def mant_sucursal_add(cid):
                     "UPDATE mant_sucursales SET es_principal=0 WHERE cliente_id=%s AND es_principal=1",
                     (cid,)
                 )
+            # Google Places: dirección validada → lat/lng/place_id (opcionales).
+            try: _slat = float(d.get("direccion_lat")) if d.get("direccion_lat") else None
+            except (TypeError, ValueError): _slat = None
+            try: _slng = float(d.get("direccion_lng")) if d.get("direccion_lng") else None
+            except (TypeError, ValueError): _slng = None
+            _splace = (d.get("direccion_place_id") or "").strip()[:200] or None
             cur.execute(
                 """INSERT INTO mant_sucursales
-                   (cliente_id,nombre,direccion,comuna,ciudad,region,
+                   (cliente_id,nombre,direccion,direccion_lat,direccion_lng,direccion_place_id,
+                    comuna,ciudad,region,
                     encargado_nombre,encargado_cargo,encargado_tel,encargado_email,
                     contacto2_nombre,contacto2_cargo,contacto2_tel,contacto2_email,
                     notas,es_principal,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, nombre,
                  (d.get("direccion") or "").strip()[:300] or None,
+                 _slat, _slng, _splace,
                  (d.get("comuna") or "").strip()[:100] or None,
                  (d.get("ciudad") or "").strip()[:100] or None,
                  (d.get("region") or "").strip()[:100] or None,
@@ -42528,6 +42536,18 @@ def mant_sucursal_update(sid):
             v = (d[f] or "").strip() if isinstance(d[f], str) else d[f]
             sets.append(f"{f}=%s")
             vals.append(v if v else None)
+    # Google Places: lat/lng (float) y place_id (string) — solo si vienen en el payload.
+    if "direccion_lat" in d:
+        try: _ul = float(d["direccion_lat"]) if str(d.get("direccion_lat") or "").strip() else None
+        except (TypeError, ValueError): _ul = None
+        sets.append("direccion_lat=%s"); vals.append(_ul)
+    if "direccion_lng" in d:
+        try: _ug = float(d["direccion_lng"]) if str(d.get("direccion_lng") or "").strip() else None
+        except (TypeError, ValueError): _ug = None
+        sets.append("direccion_lng=%s"); vals.append(_ug)
+    if "direccion_place_id" in d:
+        sets.append("direccion_place_id=%s")
+        vals.append((str(d.get("direccion_place_id") or "").strip()[:200]) or None)
     # Manejo de es_principal con lógica única (solo una principal por cliente)
     es_principal = d.get("es_principal")
     conn = get_mysql()
@@ -50668,13 +50688,24 @@ def mant_ots_list():
             else:
                 # No tiene id de usuario ni técnico legacy → no muestra nada
                 where.append("1=0")
-            # Por defecto, técnico solo ve OTs activas (no cerradas históricas)
+            # Por defecto, técnico/ejecutivo solo oculta el HISTÓRICO archivado
+            # (cerrada/cancelada/anulada). Antes era una lista BLANCA de 3 estados
+            # que escondía OTs asignadas en pleno trabajo (creada, asignada,
+            # en_ejecucion, firmada_tecnico, pendiente_*, completada) → el técnico
+            # no veía su propia OT en la lista aunque sí salía en el calendario.
+            # Lista NEGRA: todo el trabajo activo queda visible, coherente con el
+            # calendario y la ficha. No toca el filtro de asignación (sin IDOR).
             if (uid or me_tec) and not estado:
-                where.append("v.estado IN ('programada','en_curso','reagendada')")
+                where.append("v.estado NOT IN ('cerrada','cancelada','anulada')")
         except Exception as e_tec:
             print(f"[mant_ots_list solo_mias] error: {e_tec}", flush=True)
 
-    if estado in ("programada", "completada", "cancelada", "reagendada", "en_curso"):
+    if estado in (
+        "creada", "programada", "asignada", "en_curso", "en_ejecucion",
+        "firmada_tecnico", "pendiente_info", "pendiente_repuesto",
+        "pendiente_aprobacion", "completada", "cerrada", "cancelada",
+        "anulada", "reagendada",
+    ):
         where.append("v.estado=%s")
         params.append(estado)
     if tipo in ("preventiva", "correctiva", "garantia", "inspeccion", "levantamiento", "instalacion"):
@@ -66601,6 +66632,37 @@ def _ensure_mant_reportes_columns():
     return faltantes
 
 
+def _ensure_mant_sucursales_geo_columns():
+    """Garantiza mant_sucursales.direccion_lat/lng/place_id SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). El modal de sucursal ahora valida la dirección con
+    Google Places (mismo motor que la OT / editar-cliente) y guarda lat/lng/
+    place_id. Sin estas columnas, guardar la sucursal daría 'Unknown column'.
+    1 SELECT barato en cold-start; ALTER solo la 1ª vez. CERO IA."""
+    needed = {
+        "direccion_lat":      "DECIMAL(10,7) NULL",
+        "direccion_lng":      "DECIMAL(10,7) NULL",
+        "direccion_place_id": "VARCHAR(200) NULL COMMENT 'Google Places place_id (verificado)'",
+    }
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_sucursales'"
+            ) or [])
+        }
+    except Exception:
+        return []
+    faltantes = [c for c in needed if c.lower() not in existing]
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE mant_sucursales ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_suc_geo] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_suc_geo] no se pudo agregar {col}: {e_add}", flush=True)
+    return faltantes
+
+
 def _ensure_mant_intel_tables():
     """Garantiza tablas/columnas del Agente de Inteligencia SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Idempotente. CERO IA."""
@@ -67228,6 +67290,18 @@ try:
               f"{_faltaron_rep}", flush=True)
 except Exception as _ensure_rep_err:
     print(f"[ILUS][WARN] _ensure_mant_reportes_columns: {_ensure_rep_err}", flush=True)
+
+# CRÍTICO: garantizar mant_sucursales.direccion_lat/lng/place_id SIEMPRE (incluso
+# con ILUS_SKIP_MIGRATIONS=1). El modal de sucursal valida con Google Places y
+# guarda lat/lng/place_id igual que cliente/OT. Sin esto: 'Unknown column'.
+try:
+    with app.app_context():
+        _faltaron_suc_geo = _ensure_mant_sucursales_geo_columns()
+    if _faltaron_suc_geo:
+        print(f"[ILUS] Columnas geo de mant_sucursales agregadas (skip-migrations): "
+              f"{_faltaron_suc_geo}", flush=True)
+except Exception as _ensure_suc_geo_err:
+    print(f"[ILUS][WARN] _ensure_mant_sucursales_geo_columns: {_ensure_suc_geo_err}", flush=True)
 
 # CRÍTICO: garantizar `target_field` SIEMPRE (OT Levantamiento → Ficha),
 # incluso con ILUS_SKIP_MIGRATIONS=1. Sin esta columna, el editor de plantillas,

@@ -9021,23 +9021,24 @@ async function vhGuardar(){
             <input type="text" id="suc_nombre" class="form-control" placeholder="Ej: Sede Vitacura, Sucursal Las Condes..." maxlength="200">
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold small">
-              Dirección
-              <span id="suc_dir_validating" class="ms-1" style="display:none">
-                <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+            <label class="form-label fw-semibold small d-flex align-items-center justify-content-between">
+              <span>
+                Dirección
+                <span id="suc_dir_validating" class="ms-1" style="display:none">
+                  <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+                </span>
               </span>
-              <span id="suc_dir_ok" class="ms-1 text-success" style="display:none"><i class="bi bi-check-circle-fill"></i></span>
+              <small class="text-muted" style="font-weight:400;font-size:.72rem">Validada con Google Maps</small>
             </label>
-            <div class="position-relative">
-              <input type="text" id="suc_direccion" class="form-control" autocomplete="off"
-                     placeholder="Escribe y elige de la lista — busca en OpenStreetMap + Photon"
-                     oninput="sucDirDebounce()" onkeydown="sucDirKeydown(event)">
-              <div id="suc_dir_dropdown" class="ac-dropdown" style="display:none"></div>
-            </div>
-            <div class="form-text" style="font-size:.7rem">
+            <input type="text" id="suc_direccion" class="form-control" autocomplete="off"
+                   placeholder="Empieza a escribir y elige una sugerencia…">
+            <input type="hidden" id="suc_direccion_lat">
+            <input type="hidden" id="suc_direccion_lng">
+            <input type="hidden" id="suc_direccion_place_id">
+            <small id="suc_direccion_hint" class="d-block mt-1" style="font-size:.74rem; color:#6b7280">
               <i class="bi bi-geo-alt me-1"></i>
-              Sugerencias automáticas con tolerancia a abreviaturas (Av/Avda) y typos.
-            </div>
+              Escribe la dirección y selecciona del menú: comuna, ciudad y región se completan solas.
+            </small>
           </div>
           <div class="col-4">
             <label class="form-label fw-semibold small">Comuna</label>
