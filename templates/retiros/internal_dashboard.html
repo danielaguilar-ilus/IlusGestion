@@ -78,7 +78,7 @@
             </div>
             <div class="col-12 col-md-6">
               <label class="form-label small fw-semibold">Email (opcional — para avisarle)</label>
-              <input name="contact_email" type="email" class="form-control form-control-sm" maxlength="190" placeholder="cliente@correo.cl">
+              <input name="contact_email" type="email" class="form-control form-control-sm" maxlength="180" placeholder="cliente@correo.cl">
             </div>
 
             {# Persona que retira #}
@@ -373,6 +373,31 @@
    "Enviar recordatorios 24h" junto con su JS. Los endpoints del backend
    (informe-mes.xlsx y pickup_enviar_recordatorios_24h) siguen vivos. #}
 
+{# ── KPIs ejecutivos (Daniel 2026-06-20, levantamiento) ── #}
+<style>
+  .rk-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
+  .rk-kpi{background:#fff;border:1px solid #ececef;border-radius:14px;padding:14px 16px;position:relative;overflow:hidden;box-shadow:0 2px 8px rgba(10,10,10,.04)}
+  .rk-kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--rk-accent,#dc2626)}
+  .rk-kpi .num{font-size:1.65rem;font-weight:900;line-height:1.1;color:#0a0a0a}
+  .rk-kpi .lbl{font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;font-weight:700;margin-top:2px}
+  .rk-kpi .ico{position:absolute;right:12px;top:10px;font-size:1.3rem;opacity:.18}
+  @media(max-width:600px){.rk-kpi-row{grid-template-columns:repeat(2,1fr)}}
+</style>
+<div class="rk-kpi-row">
+  <div class="rk-kpi" style="--rk-accent:#dc2626"><i class="bi bi-calendar-week ico"></i>
+    <div class="num">{{ kpis.semana }}</div><div class="lbl">Retiros esta semana</div></div>
+  <div class="rk-kpi" style="--rk-accent:#16a34a"><i class="bi bi-graph-up-arrow ico"></i>
+    <div class="num">{{ kpis.tasa_conf ~ '%' if kpis.tasa_conf is not none else '—' }}</div><div class="lbl">Tasa confirmación 30d</div></div>
+  <div class="rk-kpi" style="--rk-accent:#3b82f6"><i class="bi bi-stopwatch ico"></i>
+    <div class="num">{{ kpis.ciclo_h ~ ' h' if kpis.ciclo_h is not none else '—' }}</div><div class="lbl">Ciclo promedio 90d</div></div>
+  <div class="rk-kpi" style="--rk-accent:#f59e0b"><i class="bi bi-box-seam ico"></i>
+    <div class="num">{{ stats.get('en_preparacion', 0) }}</div><div class="lbl">En preparación</div></div>
+  <div class="rk-kpi" style="--rk-accent:#8b5cf6"><i class="bi bi-inbox ico"></i>
+    <div class="num">{{ stats.get('solicitud_recibida', 0) + stats.get('en_revision', 0) + stats.get('informacion_incompleta', 0) }}</div><div class="lbl">Por revisar</div></div>
+  <div class="rk-kpi" style="--rk-accent:#16a34a"><i class="bi bi-chat-dots ico"></i>
+    <div class="num" id="rkKpiMsgs">{{ kpis.msgs }}</div><div class="lbl">Mensajes sin leer</div></div>
+</div>
+
 <div class="row g-3 mb-3">
   <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Retiros hoy</div><div class="fs-3 fw-black">{{ day.total or 0 }}</div></div></div>
   <div class="col-6 col-xl-3"><div class="ilus-card p-3 text-center"><div class="text-muted small">Bultos hoy</div><div class="fs-3 fw-black">{{ day.bultos or 0 }}</div></div></div>
@@ -385,7 +410,12 @@
     <div class="col-md-4"><input name="q" value="{{ filtros.q }}" class="form-control form-control-sm" placeholder="Buscar solicitud, documento, cliente, telefono"></div>
     <div class="col-md-3"><select name="status" class="form-select form-select-sm"><option value="">Todos los estados</option>{% for k,v in statuses.items() %}<option value="{{ k }}" {% if filtros.status==k %}selected{% endif %}>{{ v }} ({{ stats.get(k,0) }})</option>{% endfor %}</select></div>
     <div class="col-md-2"><input type="date" name="date" value="{{ filtros.date }}" class="form-control form-control-sm"></div>
-    <div class="col-md-3 d-flex gap-2"><button class="btn btn-sm btn-ilus">Filtrar</button><a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a></div>
+    <div class="col-md-3 d-flex gap-2 flex-wrap"><button class="btn btn-sm btn-ilus">Filtrar</button><a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+      {# Informe KPIs (Daniel 2026-06-20): Excel gerencial del período #}
+      <button type="button" class="btn btn-sm btn-outline-success" onclick="descargarInformeKpis()" title="Descargar informe Excel con KPIs y detalle del período">
+        <i class="bi bi-file-earmark-excel me-1"></i>Informe
+      </button>
+    </div>
   </div>
   {# responsive_retiros (2026-06-09): flex-wrap evita que el selector de vistas se clipee en móvil #}
   <div class="btn-group btn-group-sm mt-3 flex-wrap">
@@ -780,14 +810,15 @@
   <div class="table-responsive">
     {# responsive_retiros: .table-mobile-cards (patrón mobile.css) → en móvil cada fila se ve como card con data-label #}
     <table class="table ilus-table table-mobile-cards mb-0 align-middle">
-      <thead><tr><th>Solicitud</th><th>Cliente</th><th>Documento</th><th>Fecha solicitada</th><th>Estado</th><th>Calidad</th><th class="text-end">Carga</th><th class="text-end" style="width:60px">Acción</th></tr></thead>
+      <thead><tr><th>Solicitud</th><th>Cliente</th><th>Documento</th><th>Responsable</th><th>Fecha solicitada</th><th>Estado</th><th>Calidad</th><th class="text-end">Carga</th><th class="text-end" style="width:60px">Acción</th></tr></thead>
       <tbody>
         {% for r in rows %}
         {% set b = status_badge(r.status) %}
-        <tr data-href="{{ url_for('pickup_detail', rid=r.id) }}" class="row-clickable" style="cursor:pointer">
-          <td class="fw-bold font-monospace" data-label="Solicitud">{{ r.code }}</td>
+        <tr data-href="{{ url_for('pickup_detail', rid=r.id) }}" data-rid="{{ r.id }}" class="row-clickable" style="cursor:pointer;position:relative">
+          <td class="fw-bold font-monospace" data-label="Solicitud">{{ r.code }} <span class="js-row-chat"></span></td>
           <td data-label="Cliente">{{ r.customer_name }}<div class="small text-muted">{{ r.contact_name }} · {{ r.contact_phone }}</div></td>
-          <td data-label="Documento">{{ r.document_type|upper }} {{ r.document_number }}</td>
+          <td data-label="Documento">{% if r.document_number %}{{ r.document_type|upper }} {{ r.document_number }}{% else %}<span class="text-muted fst-italic">Sin factura</span>{% endif %}</td>
+          <td data-label="Responsable">{% if r.responsable_nombre %}<i class="bi bi-person-check me-1 text-success"></i>{{ r.responsable_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
           <td data-label="Fecha solicitada">{{ r.requested_date }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
           <td data-label="Estado"><span class="badge bg-{{ b.color }}">{{ b.label }}</span></td>
           <td data-label="Calidad">
@@ -820,7 +851,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
+        <tr><td colspan="9" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -1015,9 +1046,45 @@ async function eliminarSolicitudDesdeMonitor(rid, code, cliente){
           b.innerHTML = '<i class="bi bi-chat-dots-fill"></i>' + n;
         } else if(b){ b.remove(); }
       });
+      // También en la LISTA/tabla (Daniel 2026-06-20: antes la burbuja solo
+      // funcionaba en el kanban; la vista default es la tabla).
+      document.querySelectorAll('tr[data-rid] .js-row-chat').forEach(slot => {
+        const rid = slot.closest('tr').getAttribute('data-rid');
+        const n = por[rid] || 0;
+        slot.innerHTML = n > 0
+          ? '<span class="badge rounded-pill" style="background:#16a34a;font-size:.66rem;vertical-align:2px" title="Mensajes del cliente sin leer"><i class="bi bi-chat-dots-fill"></i> ' + n + '</span>'
+          : '';
+      });
+      // KPI "Mensajes sin leer" en vivo
+      const k = document.getElementById('rkKpiMsgs');
+      if (k && typeof d.total === 'number') k.textContent = d.total;
     }catch(e){}
   }
   setTimeout(()=>{ refreshBubbles(); setInterval(refreshBubbles, 15000); }, 1500);
+
+  // ── Informe KPIs (Daniel 2026-06-20): descarga Excel del período ──
+  window.descargarInformeKpis = async function(){
+    const hoy = new Date();
+    const d1 = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    const iso = dt => dt.toISOString().slice(0,10);
+    const desde = await ilusPrompt({
+      title: 'Informe de retiros',
+      message: '¿Desde qué fecha? (YYYY-MM-DD)',
+      placeholder: iso(d1), defaultValue: iso(d1),
+    });
+    if (desde === null) return;
+    const hasta = await ilusPrompt({
+      title: 'Informe de retiros',
+      message: '¿Hasta qué fecha? (YYYY-MM-DD)',
+      placeholder: iso(hoy), defaultValue: iso(hoy),
+    });
+    if (hasta === null) return;
+    const rx = /^\d{4}-\d{2}-\d{2}$/;
+    const f1 = rx.test((desde||'').trim()) ? desde.trim() : iso(d1);
+    const f2 = rx.test((hasta||'').trim()) ? hasta.trim() : iso(hoy);
+    ilusToast('Generando informe…', { type: 'info' });
+    window.location = '/retiros/informe.xlsx?desde=' + f1 + '&hasta=' + f2;
+  };
 })();
 </script>
 {% endblock %}

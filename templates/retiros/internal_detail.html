@@ -2736,24 +2736,41 @@
         <div class="d-flex gap-2 flex-wrap align-items-center">
           {% if req.status in ['retirada','cerrada'] %}
             <span class="step-badge-ok"><i class="bi bi-check2-circle me-1"></i>Retiro completado</span>
-            <span class="text-muted small">Proceso cerrado{% if req.closed_at %} · {{ req.closed_at|chile_fmt }}{% endif %}</span>
+            <span class="text-muted small">Proceso cerrado{% if req.closed_at %} · {{ req.closed_at|chile_fmt }}{% endif %}
+              {% if req.retirado_por_nombre %} · <i class="bi bi-person-check"></i> Retirado por <strong>{{ req.retirado_por_nombre }}</strong>{% if req.retirado_por_rut %} ({{ req.retirado_por_rut }}){% endif %}{% endif %}
+            </span>
           {% elif req.status == 'en_preparacion' %}
             <span class="badge bg-warning text-dark px-3 py-2"><i class="bi bi-box-seam me-1"></i>En preparación</span>
-            <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" style="display:inline"
-                  onsubmit="return _confirmRetirar(this)">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="status" value="retirada">
-              <button type="submit" class="btn btn-success fw-bold"><i class="bi bi-check-circle me-1"></i>Marcar como RETIRADO</button>
-            </form>
+            <button type="button" class="btn btn-success fw-bold" onclick="abrirModalRetirar()">
+              <i class="bi bi-check-circle me-1"></i>Marcar como RETIRADO
+            </button>
           {% else %}
             <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="status" value="en_preparacion">
               <button type="submit" class="btn btn-warning fw-bold"><i class="bi bi-box-seam me-1"></i>Enviar a PREPARACIÓN</button>
             </form>
-            <span class="text-muted small">El cliente ya confirmó — cuando bodega arme el pedido, envíalo a preparación.</span>
+            <span class="text-muted small">El cliente ya confirmó — cuando bodega arme el pedido, envíalo a preparación. Se generará el checklist de picking.</span>
           {% endif %}
         </div>
+
+        {% if req.status == 'en_preparacion' %}
+        {# ── CHECK WMS de preparación (Daniel 2026-06-20) ── #}
+        <div class="ilus-card mt-3" id="wmsCard" style="border-left:4px solid #f59e0b">
+          <div class="d-flex justify-content-between align-items-center p-3 pb-2">
+            <div class="fw-bold"><i class="bi bi-ui-checks me-2" style="color:#f59e0b"></i>Checklist de preparación (WMS)</div>
+            <span class="badge bg-light text-dark" id="wmsProgTxt">…</span>
+          </div>
+          <div class="px-3 pb-1">
+            <div class="progress" style="height:8px;border-radius:50px">
+              <div class="progress-bar bg-success" id="wmsProgBar" style="width:0%;transition:width .4s"></div>
+            </div>
+          </div>
+          <div class="p-3 pt-2" id="wmsItems">
+            <div class="text-muted small"><span class="spinner-border spinner-border-sm me-2"></span>Cargando checklist…</div>
+          </div>
+        </div>
+        {% endif %}
         {% else %}
         <div class="d-flex gap-2 flex-wrap">
           <button type="button" class="btn btn-outline-dark" onclick="cambiarTabInfo('comunicacion'); document.getElementById('infoTabs').scrollIntoView({behavior:'smooth',block:'start'})">
@@ -6019,22 +6036,117 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 </script>
 
-{# Confirmación al marcar RETIRADO (acción terminal). REGLA #1: ilusConfirm. #}
+{# ════════ MARCAR RETIRADO con EVIDENCIA + CHECK WMS (Daniel 2026-06-20) ════════ #}
+{% if req.status == 'en_preparacion' %}
+<div class="modal fade" id="modalRetirar" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#16a34a;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-check-circle me-2"></i>Marcar como retirado</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" enctype="multipart/form-data">
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="status" value="retirada">
+          <div id="retWmsWarn" class="alert alert-warning py-2 px-3 small" style="display:none">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            <span id="retWmsWarnTxt"></span> — puedes cerrar igual, pero quedará registrado.
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold">¿Quién retiró el pedido? *</label>
+            <input name="retirado_por" class="form-control" maxlength="190" required
+                   value="{{ req.pickup_person_name or '' }}" placeholder="Nombre de quien retira">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold">RUT (opcional)</label>
+            <input name="retirado_por_rut" class="form-control" maxlength="30"
+                   value="{{ req.pickup_person_rut or '' }}" placeholder="12.345.678-9">
+          </div>
+          <div class="mb-1">
+            <label class="form-label small fw-bold">📸 Foto de evidencia (opcional)</label>
+            <input name="evidencia_foto" type="file" class="form-control" accept="image/*" capture="environment">
+            <div class="form-text">Ej: el pedido cargado en el vehículo o la persona retirando. Queda en los adjuntos del retiro.</div>
+          </div>
+          <div class="text-muted small mt-2"><i class="bi bi-info-circle me-1"></i>Esto CIERRA el proceso: el cliente recibe el correo de "retiro completado".</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-success fw-bold"><i class="bi bi-check-circle me-1"></i>Confirmar retiro</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 <script>
-  function _confirmRetirar(form){
-    if (form.dataset.confirmed === '1') return true;   // ya confirmado → deja enviar
-    (async () => {
-      const ok = await ilusConfirm({
-        title: 'Marcar como retirado',
-        message: '¿El cliente ya retiró físicamente sus productos?',
-        sub: 'Esto CIERRA el proceso: el retiro queda completado y el cliente recibe el correo de "retiro completado". No se puede deshacer fácilmente.',
-        okLabel: 'Sí, marcar retirado', cancelLabel: 'Cancelar',
-        type: 'question',
-      });
-      if (ok){ form.dataset.confirmed = '1'; form.submit(); }
-    })();
-    return false;   // frena el submit síncrono; lo reenvía el callback si confirma
+  // ── Check WMS + modal retirar (Daniel 2026-06-20) ──
+  const _WMS_RID = {{ req.id }};
+  let _wmsEstado = null;
+  const _wmsEsc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  async function _wmsCargar(){
+    const cont = document.getElementById('wmsItems');
+    if (!cont) return;
+    try {
+      const r = await fetch(`/retiros/${_WMS_RID}/picking`, {credentials:'same-origin', cache:'no-store'});
+      const d = await r.json();
+      if (!d || !d.ok) { cont.innerHTML = '<div class="text-muted small">No se pudo cargar el checklist.</div>'; return; }
+      _wmsEstado = d;
+      _wmsRender(d);
+    } catch(e) { cont.innerHTML = '<div class="text-muted small">Error de red al cargar el checklist.</div>'; }
   }
+  function _wmsRender(d){
+    const cont = document.getElementById('wmsItems');
+    const bar = document.getElementById('wmsProgBar');
+    const txt = document.getElementById('wmsProgTxt');
+    if (!cont) return;
+    if (!d.items.length){
+      cont.innerHTML = '<div class="text-muted small">Este retiro no tiene productos con detalle — puedes cerrar directo con "Marcar como RETIRADO".</div>';
+      if (txt) txt.textContent = 'Sin ítems';
+      return;
+    }
+    const pct = d.total ? Math.round(d.hechos * 100 / d.total) : 0;
+    if (bar) bar.style.width = pct + '%';
+    if (txt) txt.textContent = `${d.hechos}/${d.total} · ${pct}%`;
+    cont.innerHTML = d.items.map(it => `
+      <label class="d-flex align-items-center gap-2 py-2 px-2 rounded" style="cursor:pointer;border-bottom:1px solid #f3f4f6;${it.picked ? 'background:#f0fdf4' : ''}">
+        <input type="checkbox" class="form-check-input mt-0" style="width:1.25em;height:1.25em" ${it.picked ? 'checked' : ''}
+               onchange="_wmsToggle(${it.id}, this.checked, this)">
+        <span class="flex-grow-1 ${it.picked ? 'text-decoration-line-through text-muted' : ''}">
+          ${_wmsEsc(it.descripcion)}
+          <span class="text-muted small">· SKU ${_wmsEsc(it.sku)} · x${it.cantidad}</span>
+        </span>
+        ${it.picked && it.picked_by ? `<span class="badge bg-success-subtle text-success" style="font-size:.66rem">✓ ${_wmsEsc(it.picked_by)}</span>` : ''}
+      </label>`).join('');
+    if (d.completo){
+      cont.insertAdjacentHTML('beforeend',
+        '<div class="alert alert-success py-2 px-3 mt-2 mb-0 small"><i class="bi bi-check2-all me-1"></i><strong>Pedido LISTO para entrega</strong> — checklist completo.</div>');
+    }
+  }
+  async function _wmsToggle(itemId, picked, cb){
+    cb.disabled = true;
+    try {
+      const r = await fetch(`/retiros/${_WMS_RID}/picking/toggle`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
+        body: JSON.stringify({item_id: itemId, picked: picked})});
+      const d = await r.json();
+      if (d && d.ok){ _wmsEstado = d; _wmsRender(d); }
+      else { cb.checked = !picked; ilusToast(d.error || 'No se pudo guardar', {type:'error'}); }
+    } catch(e){ cb.checked = !picked; ilusToast('Error de red', {type:'error'}); }
+    cb.disabled = false;
+  }
+  function abrirModalRetirar(){
+    // Proceso EXIGENTE: si el checklist existe y está incompleto, advertimos.
+    const warn = document.getElementById('retWmsWarn');
+    const wtxt = document.getElementById('retWmsWarnTxt');
+    if (warn && wtxt && _wmsEstado && _wmsEstado.total > 0 && !_wmsEstado.completo){
+      wtxt.textContent = `Faltan ${_wmsEstado.total - _wmsEstado.hechos} de ${_wmsEstado.total} ítems del checklist por chequear`;
+      warn.style.display = '';
+    } else if (warn) { warn.style.display = 'none'; }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRetirar')).show();
+  }
+  document.addEventListener('DOMContentLoaded', _wmsCargar);
 </script>
 
 {# ════════ CHAT con el CLIENTE (operador) — Daniel 2026-06-17 ════════ #}

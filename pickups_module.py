@@ -406,9 +406,36 @@ def register_pickup_routes(app, ctx):
             # responsabiliza de entregar el pedido. Distinto de created_by (quién lo creó).
             f"ALTER TABLE `{REQ}` ADD COLUMN responsable_user_id INT NULL",
             f"ALTER TABLE `{REQ}` ADD COLUMN responsable_nombre VARCHAR(190) NULL",
+            # Evidencia de retiro (Daniel 2026-06-20): quién retiró físicamente.
+            f"ALTER TABLE `{REQ}` ADD COLUMN retirado_por_nombre VARCHAR(190) NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN retirado_por_rut VARCHAR(30) NULL",
+            # Tipo del adjunto (evidencia_retiro | cliente | otro)
+            f"ALTER TABLE `{ATT}` ADD COLUMN tipo VARCHAR(30) NULL",
         ]:
             try: mysql_execute(col_sql)
             except Exception: pass
+
+        # ── Check WMS de preparación (Daniel 2026-06-20) ─────────────────
+        # Checklist de picking por producto: se genera al pasar a en_preparacion
+        # desde las líneas consolidadas del retiro; bodega marca ítem por ítem.
+        try:
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS pickup_picking_items (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    request_id  INT NOT NULL,
+                    sku         VARCHAR(80) NOT NULL DEFAULT '',
+                    descripcion VARCHAR(300),
+                    cantidad    DECIMAL(12,2) DEFAULT 1,
+                    picked      TINYINT(1) NOT NULL DEFAULT 0,
+                    picked_by   VARCHAR(190) NULL,
+                    picked_at   DATETIME NULL,
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_ppi (request_id, sku),
+                    INDEX idx_ppi_req (request_id, picked)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        except Exception as _e_ppi:
+            print(f"[ensure_multidoc_tables] pickup_picking_items: {_e_ppi}", flush=True)
 
         # 4. Tabla pickup_doc_lineas (selección granular)
         try:
@@ -3819,7 +3846,7 @@ def register_pickup_routes(app, ctx):
                        tiempo_estimado_min, doc_validation_status,
                        information_quality_score, risk_score,
                        request_source, created_by_user_name, responsable_nombre,
-                       created_at, updated_at
+                       public_token, created_at, updated_at
                 FROM `{REQ}`
                 WHERE {' AND '.join(where)}
                 ORDER BY created_at DESC LIMIT 250""",
@@ -3835,11 +3862,50 @@ def register_pickup_routes(app, ctx):
                 FROM `{REQ}` WHERE requested_date=%s OR confirmed_date=%s""",
             (today, today),
         ) or {}
+        # ── KPIs del monitor (Daniel 2026-06-20, levantamiento) ────────────────
+        # Métricas ejecutivas arriba del monitor. Best-effort: si una query falla
+        # (columna vieja, etc.) el dashboard igual carga con el KPI en 0.
+        kpis = {"semana": 0, "tasa_conf": None, "ciclo_h": None, "msgs": 0}
+        try:
+            from zoneinfo import ZoneInfo as _ZI_k
+            _hoy_cl = datetime.now(_ZI_k("America/Santiago")).date()
+            _lun = _hoy_cl - timedelta(days=_hoy_cl.weekday())
+            _dom = _lun + timedelta(days=6)
+            _r = mysql_fetchone(
+                f"SELECT COUNT(*) AS n FROM `{REQ}` "
+                f"WHERE COALESCE(confirmed_date, requested_date) BETWEEN %s AND %s "
+                f"  AND status NOT IN ('rechazada','fallida')",
+                (_lun.isoformat(), _dom.isoformat())) or {}
+            kpis["semana"] = int(_r.get("n") or 0)
+        except Exception: pass
+        try:
+            _r = mysql_fetchone(
+                f"SELECT SUM(status IN ('agenda_confirmada','reagendada','en_preparacion',"
+                f"'retirada','cerrada')) AS conf, COUNT(*) AS tot FROM `{REQ}` "
+                f"WHERE created_at >= NOW() - INTERVAL 30 DAY") or {}
+            _tot = int(_r.get("tot") or 0)
+            if _tot:
+                kpis["tasa_conf"] = round(int(_r.get("conf") or 0) * 100.0 / _tot)
+        except Exception: pass
+        try:
+            _r = mysql_fetchone(
+                f"SELECT AVG(TIMESTAMPDIFF(HOUR, created_at, closed_at)) AS h FROM `{REQ}` "
+                f"WHERE status IN ('retirada','cerrada') AND closed_at IS NOT NULL "
+                f"  AND created_at >= NOW() - INTERVAL 90 DAY") or {}
+            if _r.get("h") is not None:
+                kpis["ciclo_h"] = round(float(_r["h"]), 1)
+        except Exception: pass
+        try:
+            _r = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM pickup_messages "
+                "WHERE sender='cliente' AND leido_operador=0") or {}
+            kpis["msgs"] = int(_r.get("n") or 0)
+        except Exception: pass
         templates = mysql_fetchall(f"SELECT id, code, title, body, channel, active FROM `{TPL}` WHERE active=1 ORDER BY title")
         return render_template(
             "retiros/internal_dashboard.html",
             rows=rows, filtros=filtros, statuses=PICKUP_STATUS, stats=stats,
-            day=day, settings=settings(), templates=templates,
+            day=day, kpis=kpis, settings=settings(), templates=templates,
             status_badge=status_badge,
             # 2026-05-26 (Daniel) — Pipeline consolidada: 12 estados → 6 columnas
             # visuales. El template usa pipeline_groups en el kanban del monitor.
@@ -3931,6 +3997,15 @@ def register_pickup_routes(app, ctx):
             return _err("Falta la fecha y hora del retiro.")
         if canal not in ("telefono", "correo", "whatsapp", "presencial"):
             return _err("Para confirmar directo, marca el canal por el que el cliente aceptó.")
+        # FIX 2026-06-20 (Daniel): el email tecleado A MANO no se validaba (el form
+        # público SÍ valida) → typos como 'juan gmail.com' se guardaban y el correo
+        # de confirmación jamás salía, en silencio. Ahora: normalizar + validar acá,
+        # con error visible para el operador. [:180] = ancho real de la columna
+        # (antes [:190] podía reventar el INSERT con emails largos).
+        contact_email = (f.get("contact_email") or "").strip().lower()[:180]
+        if contact_email and not is_valid_email(contact_email):
+            return _err("El email del cliente no es válido. Usa el formato nombre@dominio.cl "
+                        "(o déjalo vacío si no quieres notificarlo).")
 
         cfg = settings()
         # Validación temporal central (modo interno: NO exige min_notice y
@@ -3991,7 +4066,7 @@ def register_pickup_routes(app, ctx):
                     (code, uid, uname, now_cl,
                      document_type, document_number, customer_name, (f.get("customer_rut") or "").strip()[:20],
                      (f.get("contact_name") or pickup_person_name)[:180],
-                     (f.get("contact_email") or "").strip()[:190], (f.get("contact_phone") or "").strip()[:40],
+                     contact_email, (f.get("contact_phone") or "").strip()[:40],
                      pickup_person_name, (f.get("pickup_person_rut") or "").strip()[:20],
                      (f.get("pickup_person_phone") or "").strip()[:40], (f.get("pickup_person_relation") or "otro")[:30],
                      date, tf, tt,  date, tf, tt,  date, tf, tt,
@@ -4014,9 +4089,9 @@ def register_pickup_routes(app, ctx):
         log_event(rid, "retiro_interno_creado", None, "agenda_confirmada",
                   f"Retiro backoffice creado por {uname} — confirmación directa (canal: {canal})",
                   "interno", uname)
-        # Notificar al cliente si dejó email (no bloqueante)
+        # Notificar al cliente si dejó email VÁLIDO (no bloqueante)
         try:
-            if (f.get("contact_email") or "").strip():
+            if contact_email:
                 _fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
                 if _fresh:
                     notify_async(_fresh, "confirmed")
@@ -4255,6 +4330,86 @@ def register_pickup_routes(app, ctx):
                          _eff_upd("proposed_time_to", "requested_time_to"), rid))
             except Exception as _e_cd:
                 print(f"[pickup-updstatus] copia confirmed_date: {_e_cd}", flush=True)
+
+        # ── CHECK WMS (Daniel 2026-06-20): al entrar a PREPARACIÓN se genera el
+        # checklist de picking desde las líneas consolidadas del retiro. Bodega
+        # marca ítem por ítem en la ficha. INSERT IGNORE = idempotente (re-entrar
+        # a preparación no duplica ni borra checks ya hechos).
+        if new_status == "en_preparacion" and old_status != new_status:
+            try:
+                _data_pk = _pickup_lineas_consolidadas(rid) or {}
+                # PRE-AGREGAR por SKU (review 2026-06-20): un retiro multidoc puede
+                # traer el MISMO SKU en 2+ facturas. Sin agregación, el INSERT IGNORE
+                # contra UNIQUE(request_id, sku) descartaba las ocurrencias extra y
+                # bodega veía x2 cuando el total real era 5 → preparaba de menos.
+                _agg = {}
+                _n_sin_sku = 0
+                for _ln in (_data_pk.get("lineas") or [])[:200]:
+                    _sku = (str(_ln.get("sku") or "").strip())[:80]
+                    if not _sku:
+                        # SKU vacío → clave ÚNICA por índice (fallback constante
+                        # colapsaría todas las líneas sin SKU en una sola).
+                        _n_sin_sku += 1
+                        _sku = f"item-{_n_sin_sku}"
+                    if _sku in _agg:
+                        _agg[_sku]["cantidad"] += float(_ln.get("cantidad") or 1)
+                    else:
+                        _agg[_sku] = {
+                            "descripcion": (str(_ln.get("descripcion") or _sku))[:300],
+                            "cantidad": float(_ln.get("cantidad") or 1),
+                        }
+                for _sku, _it in _agg.items():
+                    mysql_execute(
+                        "INSERT IGNORE INTO pickup_picking_items "
+                        "(request_id, sku, descripcion, cantidad) VALUES (%s,%s,%s,%s)",
+                        (rid, _sku, _it["descripcion"], _it["cantidad"]))
+            except Exception as _e_pk:
+                print(f"[pickup-updstatus] picking gen: {_e_pk}", flush=True)
+
+        # ── EVIDENCIA DE RETIRO (Daniel 2026-06-20): quién retiró + foto opcional.
+        # Llega desde el modal de la ficha (multipart). Best-effort: nada de esto
+        # rompe el cambio de estado ni el correo al cliente.
+        if new_status == "retirada":
+            try:
+                _ret_por = (request.form.get("retirado_por") or "").strip()[:190]
+                _ret_rut = (request.form.get("retirado_por_rut") or "").strip()[:30]
+                if _ret_por or _ret_rut:
+                    mysql_execute(
+                        f"UPDATE `{REQ}` SET retirado_por_nombre=%s, retirado_por_rut=%s WHERE id=%s",
+                        (_ret_por or None, _ret_rut or None, rid))
+                    log_event(rid, "retiro_evidencia", old_status, "retirada",
+                              f"Retirado por: {_ret_por or '—'}"
+                              + (f" (RUT {_ret_rut})" if _ret_rut else ""), "interno")
+            except Exception as _e_ev:
+                print(f"[pickup-updstatus] retirado_por: {_e_ev}", flush=True)
+            try:
+                _foto = request.files.get("evidencia_foto")
+                if _foto and getattr(_foto, "filename", ""):
+                    _validate_img = ctx.get("_validate_uploaded_image")
+                    _upl = ctx.get("_uploader_upload")
+                    _ok_img = True
+                    if _validate_img:
+                        try:
+                            _ok_img, _msg_img = _validate_img(_foto)
+                        except Exception:
+                            _ok_img = True
+                    if _ok_img and _upl:
+                        import time as _t_ev
+                        _res_ev = _upl(_foto,
+                                       public_id=f"retiro_{rid}_evidencia_{int(_t_ev.time())}",
+                                       folder="ilus/retiros/evidencia")
+                        _url_ev = (_res_ev or {}).get("secure_url") or ""
+                        if _url_ev:
+                            mysql_execute(
+                                f"INSERT INTO `{ATT}` (request_id, filename, original_name, "
+                                f"mime_type, uploaded_by, tipo) VALUES (%s,%s,%s,%s,'interno','evidencia_retiro')",
+                                (rid, _url_ev[:260],
+                                 (getattr(_foto, "filename", "evidencia.jpg") or "evidencia.jpg")[:260],
+                                 (getattr(_foto, "mimetype", "") or "image/jpeg")[:120]))
+                            log_event(rid, "retiro_evidencia_foto", old_status, "retirada",
+                                      "Foto de evidencia del retiro adjuntada", "interno")
+            except Exception as _e_ef:
+                print(f"[pickup-updstatus] evidencia foto: {_e_ef}", flush=True)
 
         # ─── Notificar al cliente cuando ILUS cambia estado desde el calendario ─
         # Antes este endpoint NO mandaba email/WA, dejando al cliente sin saber
@@ -6868,7 +7023,14 @@ def register_pickup_routes(app, ctx):
         def _add(e):
             if not e: return
             e = str(e).strip().lower()
-            if "@" in e and len(e) >= 6 and len(e) <= 180:
+            # FIX 2026-06-20 (Daniel: "corregir el correo del cliente al ingresarlo
+            # manualmente"). Antes el check era débil ('@' + largo): un correo con
+            # espacio interno o doble @ ENTRABA a la lista y reventaba en SMTP; y
+            # esto era la última defensa contra basura ya guardada en BD. Ahora
+            # validamos de verdad con is_valid_email (mismo criterio que el form
+            # público). Los typos sin @ siguen descartándose, pero las capas de
+            # entrada (modal/inline) ahora los rechazan ANTES de guardar.
+            if is_valid_email(e) and len(e) <= 180:
                 emails.add(e)
 
         # 1) Email principal del contacto declarado
@@ -7013,6 +7175,29 @@ def register_pickup_routes(app, ctx):
                 value_norm = value_norm[:max_len]
             if value_norm == "":
                 value_norm = None
+
+        # FIX 2026-06-20 (Daniel): el email editado A MANO en la ficha se guardaba
+        # sin validar ('✓ guardado' con cualquier basura) y el correo al cliente
+        # fallaba en silencio. Ahora: normalizar + validar con is_valid_email (el
+        # JS inline ya pinta d.error en rojo y revierte — cero cambios de front).
+        if field == "contact_email" and value_norm:
+            value_norm = value_norm.lower()
+            if not is_valid_email(value_norm):
+                return jsonify({
+                    "ok": False,
+                    "error": "Email inválido — usa el formato nombre@dominio.cl",
+                    "error_codigo": "EMAIL_INVALIDO",
+                }), 400
+        elif field == "extra_emails" and value_norm:
+            _parts = [p.strip().lower() for p in re.split(r"[,;\s]+", value_norm) if p.strip()]
+            _bad = [p for p in _parts if not is_valid_email(p)]
+            if _bad:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Email(s) inválido(s): {', '.join(_bad[:3])} — usa nombre@dominio.cl separados por coma",
+                    "error_codigo": "EMAIL_INVALIDO",
+                }), 400
+            value_norm = ", ".join(dict.fromkeys(_parts)) or None
 
         # Verificar que existe + obtener old value
         req = mysql_fetchone(
@@ -7265,6 +7450,154 @@ def register_pickup_routes(app, ctx):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name=fname,
+        )
+
+    # ══════════════════════════════════════════════════════════════════
+    #  INFORME KPIs (Daniel 2026-06-20, levantamiento): Excel gerencial
+    #  Hoja 1 = KPIs del período · Hoja 2 = detalle de retiros.
+    # ══════════════════════════════════════════════════════════════════
+    @app.route("/retiros/informe.xlsx", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_informe_kpis_xlsx():
+        """GET /retiros/informe.xlsx?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+        Default: mes actual (hora Chile). Filtra por DATE(created_at)."""
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from io import BytesIO
+        except ImportError:
+            return jsonify({"error": "openpyxl no instalado en el servidor."}), 500
+
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            _hoy = datetime.now(_ZI("America/Santiago")).date()
+        except Exception:
+            _hoy = datetime.now().date()
+        desde = (request.args.get("desde") or "").strip()
+        hasta = (request.args.get("hasta") or "").strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", desde or ""):
+            desde = _hoy.replace(day=1).isoformat()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", hasta or ""):
+            hasta = _hoy.isoformat()
+
+        rows = mysql_fetchall(
+            f"""SELECT code, customer_name, document_type, document_number,
+                       status, request_source, responsable_nombre, retirado_por_nombre,
+                       confirmed_date, confirmed_time_from,
+                       COALESCE(peso_real_kg, total_weight_kg) AS kg,
+                       total_volume_m3, total_packages, created_at, closed_at
+                FROM `{REQ}`
+                WHERE DATE(created_at) BETWEEN %s AND %s
+                ORDER BY created_at ASC""",
+            (desde, hasta)) or []
+
+        # ── KPIs en Python (testeable, sin SQL exótico) ────────────────
+        _CONF = ("agenda_confirmada", "reagendada", "en_preparacion", "retirada", "cerrada")
+        total = len(rows)
+        n_conf = sum(1 for r in rows if (r.get("status") in _CONF or r.get("confirmed_date")))
+        n_ret  = sum(1 for r in rows if r.get("status") in ("retirada", "cerrada"))
+        n_rech = sum(1 for r in rows if r.get("status") in ("rechazada", "fallida"))
+        kg_tot = sum(float(r.get("kg") or 0) for r in rows)
+        m3_tot = sum(float(r.get("total_volume_m3") or 0) for r in rows)
+        _ciclos = []
+        for r in rows:
+            if r.get("closed_at") and r.get("created_at") and r.get("status") in ("retirada", "cerrada"):
+                try:
+                    _ciclos.append((r["closed_at"] - r["created_at"]).total_seconds() / 3600.0)
+                except Exception:
+                    pass
+        ciclo_prom = round(sum(_ciclos) / len(_ciclos), 1) if _ciclos else None
+        por_estado = {}
+        for r in rows:
+            _lbl = PICKUP_STATUS.get(r.get("status") or "", r.get("status") or "?")
+            por_estado[_lbl] = por_estado.get(_lbl, 0) + 1
+        por_resp = {}
+        for r in rows:
+            _rn = r.get("responsable_nombre") or "(sin responsable)"
+            por_resp[_rn] = por_resp.get(_rn, 0) + 1
+        por_origen = {}
+        for r in rows:
+            _src = r.get("request_source") or "web"
+            por_origen[_src] = por_origen.get(_src, 0) + 1
+
+        RED_FILL = PatternFill("solid", fgColor="DC2626")
+        BLACK_FILL = PatternFill("solid", fgColor="0A0A0A")
+        WHITE_FONT = Font(color="FFFFFF", bold=True, size=11)
+        CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "KPIs"
+        ws.cell(1, 1, "ILUS · Informe de Retiros").font = Font(bold=True, size=15, color="DC2626")
+        ws.cell(2, 1, f"Período: {desde} → {hasta}").font = Font(size=11, color="6B7280")
+        _ri = 4
+        def _sec(titulo):
+            nonlocal _ri
+            c = ws.cell(_ri, 1, titulo); c.fill = BLACK_FILL; c.font = WHITE_FONT
+            ws.cell(_ri, 2, "").fill = BLACK_FILL
+            _ri += 1
+        def _kv(k, v):
+            nonlocal _ri
+            ws.cell(_ri, 1, k).font = Font(bold=True)
+            ws.cell(_ri, 2, v)
+            _ri += 1
+        _sec("KPIs del período")
+        _kv("Total solicitudes", total)
+        _kv("Confirmadas", f"{n_conf} ({round(n_conf*100.0/total) if total else 0}%)")
+        _kv("Retiradas (completadas)", f"{n_ret} ({round(n_ret*100.0/total) if total else 0}%)")
+        _kv("Rechazadas / fallidas", n_rech)
+        _kv("Tiempo promedio de ciclo", f"{ciclo_prom} h" if ciclo_prom is not None else "—")
+        _kv("Kg totales", round(kg_tot, 1))
+        _kv("m³ totales", round(m3_tot, 3))
+        _ri += 1
+        _sec("Por estado")
+        for k, v in sorted(por_estado.items(), key=lambda x: -x[1]):
+            _kv(k, v)
+        _ri += 1
+        _sec("Por responsable")
+        for k, v in sorted(por_resp.items(), key=lambda x: -x[1]):
+            _kv(k, v)
+        _ri += 1
+        _sec("Por origen")
+        for k, v in sorted(por_origen.items(), key=lambda x: -x[1]):
+            _kv("Formulario web" if k == "web" else ("Backoffice" if k == "backoffice" else k), v)
+        ws.column_dimensions["A"].width = 34
+        ws.column_dimensions["B"].width = 24
+
+        ws2 = wb.create_sheet("Detalle")
+        _hdrs = ["Código", "Cliente", "Documento", "Estado", "Origen", "Responsable",
+                 "Retirado por", "Fecha confirmada", "Hora", "Kg", "m³", "Bultos",
+                 "Creado", "Cerrado"]
+        for ci, h in enumerate(_hdrs, 1):
+            c = ws2.cell(1, ci, h); c.fill = RED_FILL; c.font = WHITE_FONT; c.alignment = CENTER
+        for ri, r in enumerate(rows, 2):
+            ws2.cell(ri, 1, r.get("code") or "")
+            ws2.cell(ri, 2, r.get("customer_name") or "")
+            ws2.cell(ri, 3, f"{(r.get('document_type') or '').upper()} {r.get('document_number') or ''}".strip())
+            ws2.cell(ri, 4, PICKUP_STATUS.get(r.get("status") or "", r.get("status") or ""))
+            ws2.cell(ri, 5, r.get("request_source") or "web")
+            ws2.cell(ri, 6, r.get("responsable_nombre") or "")
+            ws2.cell(ri, 7, r.get("retirado_por_nombre") or "")
+            ws2.cell(ri, 8, str(r.get("confirmed_date") or ""))
+            ws2.cell(ri, 9, str(r.get("confirmed_time_from") or "")[:5])
+            ws2.cell(ri, 10, float(r.get("kg") or 0))
+            ws2.cell(ri, 11, float(r.get("total_volume_m3") or 0))
+            ws2.cell(ri, 12, int(r.get("total_packages") or 0))
+            ws2.cell(ri, 13, str(r.get("created_at") or "")[:16])
+            ws2.cell(ri, 14, str(r.get("closed_at") or "")[:16])
+        for col, w in zip("ABCDEFGHIJKLMN", (12, 28, 18, 18, 12, 20, 20, 14, 8, 8, 8, 8, 16, 16)):
+            ws2.column_dimensions[col].width = w
+        ws2.freeze_panes = "A2"
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        from flask import send_file
+        return send_file(
+            buf,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f"ILUS_Informe_Retiros_{desde}_{hasta}.xlsx",
         )
 
 
@@ -8014,11 +8347,16 @@ def register_pickup_routes(app, ctx):
         )
         if not row:
             return "No encontrado", 404
+        fname = row.get("filename") or ""
+        # Evidencia de retiro en GCS (Daniel 2026-06-20): el filename es una URL
+        # interna '/f/<key>' → redirigimos al proxy de storage (durable, cache 30d).
+        # Va ANTES de la defensa anti-traversal (que rechaza '/').
+        if fname.startswith("/f/"):
+            return redirect(fname)
         # Defensa anti path-traversal: si por alguna razón el filename
         # en BD viene con `..` o `/`, rechazamos el download. Los uploads
         # son saneados con `secure_filename` al guardar, así que esto
         # solo dispara en caso de manipulación directa de la BD.
-        fname = row.get("filename") or ""
         if not fname or ".." in fname or "/" in fname or "\\" in fname:
             return "Archivo no válido", 400
         # Sanitizar también el download_name (lo que ve el cliente al
@@ -8028,6 +8366,84 @@ def register_pickup_routes(app, ctx):
         if any(c in orig for c in ("..", "/", "\\", "\x00")):
             orig = fname
         return send_from_directory(upload_dir, fname, as_attachment=False, download_name=orig)
+
+    # ══════════════════════════════════════════════════════════════════
+    #  CHECK WMS DE PREPARACIÓN (Daniel 2026-06-20)
+    #  Checklist de picking por producto. Se genera al pasar a en_preparacion
+    #  (pickup_update_status); bodega marca ítem por ítem desde la ficha.
+    # ══════════════════════════════════════════════════════════════════
+    def _picking_estado(rid):
+        rows = mysql_fetchall(
+            "SELECT id, sku, descripcion, cantidad, picked, picked_by, picked_at "
+            "FROM pickup_picking_items WHERE request_id=%s ORDER BY descripcion, sku",
+            (int(rid),)) or []
+        total = len(rows)
+        hechos = sum(1 for r in rows if r.get("picked"))
+        return {
+            "items": [{
+                "id": r["id"], "sku": r.get("sku") or "",
+                "descripcion": r.get("descripcion") or r.get("sku") or "Ítem",
+                "cantidad": float(r.get("cantidad") or 1),
+                "picked": bool(r.get("picked")),
+                "picked_by": r.get("picked_by") or "",
+            } for r in rows],
+            "total": total, "hechos": hechos,
+            "completo": total > 0 and hechos == total,
+        }
+
+    @app.route("/retiros/<int:rid>/picking", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_picking_list(rid):
+        try:
+            resp = jsonify({"ok": True, **_picking_estado(rid)})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        except Exception as e:
+            print(f"[pickup-picking] list rid={rid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo cargar el checklist."}), 500
+
+    @app.route("/retiros/<int:rid>/picking/toggle", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_picking_toggle(rid):
+        """Marca/desmarca un ítem del picking. Al completar el 100% avisa al
+        equipo (campana): 'Pedido listo para entrega'."""
+        body = request.get_json(silent=True) or {}
+        try:
+            item_id = int(body.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        picked = 1 if body.get("picked") else 0
+        if not item_id:
+            return jsonify({"ok": False, "error": "Falta item_id"}), 400
+        quien = ((getattr(g, "user", None) or {}).get("nombre") or "interno")[:190]
+        try:
+            antes = _picking_estado(rid)
+            n = mysql_execute(
+                "UPDATE pickup_picking_items "
+                "SET picked=%s, picked_by=IF(%s=1,%s,NULL), picked_at=IF(%s=1,NOW(),NULL) "
+                "WHERE id=%s AND request_id=%s",
+                (picked, picked, quien, picked, item_id, rid))
+            estado = _picking_estado(rid)
+            # Aviso 'pedido listo' SOLO en la transición incompleto→completo
+            if estado["completo"] and not antes["completo"]:
+                try:
+                    _rq = mysql_fetchone(
+                        f"SELECT code, customer_name FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+                    log_event(rid, "picking_completo", "en_preparacion", "en_preparacion",
+                              f"Checklist WMS completo ({estado['total']} ítems) por {quien}",
+                              "interno", quien)
+                    _notificar_equipo_retiros(
+                        f"📦✅ Pedido {(_rq.get('code') or '?')} LISTO para entrega",
+                        f"{_rq.get('customer_name') or 'Cliente'} — bodega completó el "
+                        f"checklist de preparación ({estado['total']} ítems).",
+                        rid, _rq.get("code") or "?",
+                        prioridad="media", tipo="retiro_listo", send_email=False)
+                except Exception:
+                    pass
+            return jsonify({"ok": True, **estado})
+        except Exception as e:
+            print(f"[pickup-picking] toggle rid={rid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo guardar el check."}), 500
 
     # ══════════════════════════════════════════════════════════════════
     #  CALENDARIO OPERATIVO — vista por día/franja con capacidad
