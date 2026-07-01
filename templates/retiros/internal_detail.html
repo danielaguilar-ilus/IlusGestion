@@ -1764,7 +1764,7 @@
     <a href="{{ url_for('pickup_dashboard') }}" class="btn btn-sm btn-dark-ilus"><i class="bi bi-arrow-left"></i></a>
     <div>
       <h4><i class="bi bi-calendar2-check me-2" style="color:var(--ilus-red)"></i>{{ req.code }} <span class="badge bg-{{ b.color }}">{{ b.label }}</span></h4>
-      <div class="sub">{{ req.customer_name }} · {{ req.document_type|upper }} {{ req.document_number }}</div>
+      <div class="sub">{{ req.customer_name }}{% if req.document_number %} · {{ req.document_type|upper }} {{ req.document_number }}{% endif %}{% if req.responsable_nombre %} · <i class="bi bi-person-check"></i> Responsable: <strong>{{ req.responsable_nombre }}</strong>{% endif %}</div>
     </div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
@@ -2731,17 +2731,28 @@
           </div>
         </div>
         {% elif _step5_done %}
-        <div class="d-flex gap-2 flex-wrap">
-          <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="status" value="en_preparacion">
-            <button type="submit" class="btn btn-warning fw-bold"><i class="bi bi-tools me-1"></i>Marcar EN PREPARACIÓN</button>
-          </form>
-          <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="status" value="retirada">
-            <button type="submit" class="btn btn-success fw-bold"><i class="bi bi-check-circle me-1"></i>Marcar RETIRADA</button>
-          </form>
+        {# Secuencia natural del cierre (Daniel 2026-06-19): Confirmada →
+           Enviar a preparación → Marcar retirado (con confirmación). #}
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+          {% if req.status in ['retirada','cerrada'] %}
+            <span class="step-badge-ok"><i class="bi bi-check2-circle me-1"></i>Retiro completado</span>
+            <span class="text-muted small">Proceso cerrado{% if req.closed_at %} · {{ req.closed_at|chile_fmt }}{% endif %}</span>
+          {% elif req.status == 'en_preparacion' %}
+            <span class="badge bg-warning text-dark px-3 py-2"><i class="bi bi-box-seam me-1"></i>En preparación</span>
+            <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" style="display:inline"
+                  onsubmit="return _confirmRetirar(this)">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="retirada">
+              <button type="submit" class="btn btn-success fw-bold"><i class="bi bi-check-circle me-1"></i>Marcar como RETIRADO</button>
+            </form>
+          {% else %}
+            <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="en_preparacion">
+              <button type="submit" class="btn btn-warning fw-bold"><i class="bi bi-box-seam me-1"></i>Enviar a PREPARACIÓN</button>
+            </form>
+            <span class="text-muted small">El cliente ya confirmó — cuando bodega arme el pedido, envíalo a preparación.</span>
+          {% endif %}
         </div>
         {% else %}
         <div class="d-flex gap-2 flex-wrap">
@@ -6006,6 +6017,24 @@ document.addEventListener('DOMContentLoaded', function(){
   // Activar edición inline en todos los elementos marcados.
   setupInlineEdit();
 });
+</script>
+
+{# Confirmación al marcar RETIRADO (acción terminal). REGLA #1: ilusConfirm. #}
+<script>
+  function _confirmRetirar(form){
+    if (form.dataset.confirmed === '1') return true;   // ya confirmado → deja enviar
+    (async () => {
+      const ok = await ilusConfirm({
+        title: 'Marcar como retirado',
+        message: '¿El cliente ya retiró físicamente sus productos?',
+        sub: 'Esto CIERRA el proceso: el retiro queda completado y el cliente recibe el correo de "retiro completado". No se puede deshacer fácilmente.',
+        okLabel: 'Sí, marcar retirado', cancelLabel: 'Cancelar',
+        type: 'question',
+      });
+      if (ok){ form.dataset.confirmed = '1'; form.submit(); }
+    })();
+    return false;   // frena el submit síncrono; lo reenvía el callback si confirma
+  }
 </script>
 
 {# ════════ CHAT con el CLIENTE (operador) — Daniel 2026-06-17 ════════ #}

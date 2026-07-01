@@ -402,6 +402,10 @@ def register_pickup_routes(app, ctx):
             f"ALTER TABLE `{REQ}` ADD COLUMN peso_real_kg DECIMAL(10,2) DEFAULT NULL",
             f"ALTER TABLE `{REQ}` ADD COLUMN peso_vol_kg DECIMAL(10,2) DEFAULT NULL",
             f"ALTER TABLE `{REQ}` ADD COLUMN tiempo_estimado_min INT DEFAULT NULL",
+            # Responsable de la ENTREGA del retiro (Daniel 2026-06-19): quién se
+            # responsabiliza de entregar el pedido. Distinto de created_by (quién lo creó).
+            f"ALTER TABLE `{REQ}` ADD COLUMN responsable_user_id INT NULL",
+            f"ALTER TABLE `{REQ}` ADD COLUMN responsable_nombre VARCHAR(190) NULL",
         ]:
             try: mysql_execute(col_sql)
             except Exception: pass
@@ -1614,6 +1618,19 @@ def register_pickup_routes(app, ctx):
                 # Plantilla configurada en BD: usar con variables interpoladas
                 asunto = _apply_template(tpl_email.get("asunto") or "", variables)
                 cuerpo = _apply_template(tpl_email.get("cuerpo") or "", variables)
+                # FIX 2026-06-19 (Daniel: "los correos me llegan SIN tracking, un
+                # perfil distinto al que enviamos"). CAUSA RAÍZ: si la plantilla de
+                # BD fue editada a mano (o quedó vieja) su `cuerpo` NO trae el
+                # stepper, y el re-seed no la pisa por el guard updated_by. FIX
+                # bulletproof: inyectamos el tracking AL VUELO si el cuerpo no lo
+                # tiene ya. Marcador: el círculo del stepper usa border-radius:17px.
+                # Solo hitos válidos (idx>=0; no en cancelación).
+                try:
+                    _aidx_db = pickup_journey_idx(estado) if estado else -99
+                    if _aidx_db >= 0 and "border-radius:17px" not in cuerpo:
+                        cuerpo = _pickup_email_stepper(_aidx_db) + cuerpo
+                except Exception:
+                    pass
                 # Envolver en el wrapper HTML oficial ILUS
                 # El `cuerpo` de la plantilla de retiros YA es un email completo y
                 # autosuficiente (hero + stepper + datos + CTA — diseño 2026-06).
@@ -3801,7 +3818,7 @@ def register_pickup_routes(app, ctx):
                        total_volume_m3, peso_real_kg, peso_vol_kg,
                        tiempo_estimado_min, doc_validation_status,
                        information_quality_score, risk_score,
-                       request_source, created_by_user_name,
+                       request_source, created_by_user_name, responsable_nombre,
                        created_at, updated_at
                 FROM `{REQ}`
                 WHERE {' AND '.join(where)}
@@ -3829,6 +3846,32 @@ def register_pickup_routes(app, ctx):
             pipeline_groups=PIPELINE_GROUPS,
         )
 
+    @app.route("/retiros/api/responsables", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_responsables():
+        """Usuarios internos que pueden ser RESPONSABLES de entregar un retiro
+        (rol con acceso a retiros). Alimenta el selector del modal 'Nuevo retiro'.
+        (Daniel 2026-06-19)"""
+        try:
+            _auth_t = ctx.get("AUTH_TABLE") or "app_users"
+            rows = mysql_fetchall(
+                f"SELECT DISTINCT u.id, u.nombre, u.username "
+                f"FROM `{_auth_t}` u "
+                f"LEFT JOIN rol_permisos rp ON rp.rol_slug=u.role "
+                f"   AND rp.modulo='retiros' AND rp.accion='ver' AND rp.permitido=1 "
+                f"WHERE u.active=1 AND ("
+                f"     rp.rol_slug IS NOT NULL "
+                f"  OR u.role LIKE 'superadmin%%' OR u.role LIKE 'admin%%' "
+                f"  OR u.role LIKE 'supervisor%%') "
+                f"ORDER BY u.nombre") or []
+            users = [{"id": r["id"],
+                      "nombre": (r.get("nombre") or r.get("username") or "Usuario")}
+                     for r in rows]
+            return jsonify({"ok": True, "responsables": users})
+        except Exception as e:
+            print(f"[pickup-responsables] {e}", flush=True)
+            return jsonify({"ok": True, "responsables": []})
+
     # ══════════════════════════════════════════════════════════════════
     #  NUEVO RETIRO INTERNO / BACKOFFICE (Daniel 2026-05-29)
     #  Botón [+ Nuevo retiro interno] en el monitor → modal → POST aquí.
@@ -3854,11 +3897,34 @@ def register_pickup_routes(app, ctx):
         tt   = (f.get("time_to") or "").strip()
         canal = (f.get("canal") or "").strip().lower()[:30]
 
+        # RESPONSABLE de la entrega (Daniel 2026-06-19): OBLIGATORIO. Quién se
+        # encarga de entregar el pedido. Se resuelve el nombre desde app_users
+        # (autoritativo, snapshot para que sobreviva si el usuario cambia).
+        try:
+            responsable_user_id = int(f.get("responsable_user_id") or 0) or None
+        except (TypeError, ValueError):
+            responsable_user_id = None
+        responsable_nombre = ""
+        if responsable_user_id:
+            try:
+                _auth_t = ctx.get("AUTH_TABLE") or "app_users"
+                _ru = mysql_fetchone(
+                    f"SELECT nombre, username FROM `{_auth_t}` WHERE id=%s AND active=1",
+                    (responsable_user_id,))
+                responsable_nombre = ((_ru or {}).get("nombre")
+                                      or (_ru or {}).get("username") or "")[:190]
+            except Exception:
+                responsable_nombre = ""
+
         # ── FASE 8: validaciones obligatorias para confirmación directa ──
         if len(customer_name) < 2:
             return _err("Falta el nombre del cliente.")
-        if not document_type or not document_number:
-            return _err("Falta el documento (tipo y número).")
+        # Documento OPCIONAL (Daniel 2026-06-19): el retiro se crea SIN factura y
+        # la factura se asocia después por cliente/rubro. Si no viene, va vacío.
+        if not document_type:
+            document_type = "sin_documento"
+        if not responsable_user_id or not responsable_nombre:
+            return _err("Falta el RESPONSABLE del retiro (quién se encarga de entregar el pedido).")
         if len(pickup_person_name) < 2:
             return _err("Falta la persona que retira.")
         if not (date and tf and tt):
@@ -3910,7 +3976,8 @@ def register_pickup_routes(app, ctx):
                          proposed_date, proposed_time_from, proposed_time_to,
                          confirmed_date, confirmed_time_from, confirmed_time_to,
                          status, total_packages, total_weight_kg, total_volumetric_weight, total_volume_m3,
-                         observations, public_token, signature_status, created_ip, created_user_agent)
+                         observations, public_token, signature_status, created_ip, created_user_agent,
+                         responsable_user_id, responsable_nombre)
                         VALUES (%s,'backoffice',%s,%s,%s,0,1,
                                 %s,%s,%s,%s,
                                 %s,%s,%s,
@@ -3919,7 +3986,8 @@ def register_pickup_routes(app, ctx):
                                 %s,%s,%s,
                                 %s,%s,%s,
                                 'agenda_confirmada',%s,%s,%s,%s,
-                                %s,%s,'pendiente',%s,%s)""",
+                                %s,%s,'pendiente',%s,%s,
+                                %s,%s)""",
                     (code, uid, uname, now_cl,
                      document_type, document_number, customer_name, (f.get("customer_rut") or "").strip()[:20],
                      (f.get("contact_name") or pickup_person_name)[:180],
@@ -3929,7 +3997,8 @@ def register_pickup_routes(app, ctx):
                      date, tf, tt,  date, tf, tt,  date, tf, tt,
                      bultos, wkg, pv, m3,
                      (f.get("observations") or "").strip()[:2000], token,
-                     request.remote_addr, (request.user_agent.string or "")[:300]),
+                     request.remote_addr, (request.user_agent.string or "")[:300],
+                     responsable_user_id, responsable_nombre),
                 )
                 rid = cur.lastrowid
             conn.commit()
@@ -4148,8 +4217,44 @@ def register_pickup_routes(app, ctx):
             flash("Estado no valido.", "danger")
             return redirect(url_for("pickup_detail", rid=rid))
         old_status = req.get("status") or ""
+
+        # ── GUARDA DE SECUENCIA (Daniel 2026-06-19) ────────────────────────────
+        # No se puede pasar a PREPARACIÓN ni marcar RETIRADO sin una cita
+        # confirmada. Evita cierres accidentales por drag-drop del monitor o el
+        # <select> genérico (antes se podía saltar directo a 'retirada').
+        if new_status in ("en_preparacion", "retirada") \
+                and not req.get("confirmed_date") \
+                and old_status not in ("agenda_confirmada", "en_preparacion"):
+            flash("Antes de preparar o marcar como retirado, el retiro debe tener "
+                  "una cita confirmada.", "warning")
+            return redirect(url_for("pickup_detail", rid=rid))
+
         mysql_execute(f"UPDATE `{REQ}` SET status=%s, closed_at=IF(%s IN ('cerrada','rechazada','retirada'),NOW(),closed_at) WHERE id=%s", (new_status, new_status, rid))
         log_event(rid, "estado_actualizado", old_status, new_status, notes, "interno")
+
+        # ── 2º CAMINO ROTO (Daniel 2026-06-19): confirmar manualmente sin fecha ──
+        # Si el operador pasa a 'agenda_confirmada' desde el <select> o el monitor
+        # y el retiro aún NO tiene confirmed_date, la copiamos de proposed/requested.
+        # Antes quedaba status=confirmada pero confirmed_date NULL → el correo salía
+        # sin fecha y el EN VIVO mostraba "Confirmada" sin día/hora.
+        if new_status == "agenda_confirmada" and not req.get("confirmed_date"):
+            def _eff_upd(*keys):
+                for k in keys:
+                    v = req.get(k)
+                    if v not in (None, ""):
+                        return v
+                return None
+            try:
+                _cd = _eff_upd("proposed_date", "requested_date")
+                if _cd:
+                    mysql_execute(
+                        f"UPDATE `{REQ}` SET confirmed_date=%s, confirmed_time_from=%s, "
+                        f"confirmed_time_to=%s WHERE id=%s",
+                        (_cd,
+                         _eff_upd("proposed_time_from", "requested_time_from"),
+                         _eff_upd("proposed_time_to", "requested_time_to"), rid))
+            except Exception as _e_cd:
+                print(f"[pickup-updstatus] copia confirmed_date: {_e_cd}", flush=True)
 
         # ─── Notificar al cliente cuando ILUS cambia estado desde el calendario ─
         # Antes este endpoint NO mandaba email/WA, dejando al cliente sin saber
@@ -4191,6 +4296,31 @@ def register_pickup_routes(app, ctx):
         # Invalidar cache global del calendario (cambio de status puede liberar/ocupar slot)
         try: _DISPO_CACHE["payload"] = None
         except Exception: pass
+
+        # ── AVISO INTERNO AL EQUIPO en transiciones clave (Daniel 2026-06-19) ──
+        # Antes pickup_update_status NO avisaba al equipo: el cliente se enteraba
+        # por correo pero el equipo no tenía campana/email del avance ni del cierre.
+        try:
+            if old_status != new_status:
+                _cod = req.get("code") or "?"
+                _cli = req.get("customer_name") or "Cliente"
+                if new_status == "en_preparacion":
+                    _notificar_equipo_retiros(
+                        f"📦 Retiro {_cod} en preparación",
+                        f"{_cli} — bodega alistando el pedido para el retiro.",
+                        rid, _cod, prioridad="media", tipo="retiro_preparacion", send_email=False)
+                elif new_status == "retirada":
+                    _notificar_equipo_retiros(
+                        f"🎉 Retiro {_cod} COMPLETADO",
+                        f"{_cli} retiró sus productos. Proceso cerrado.",
+                        rid, _cod, prioridad="media", tipo="retiro_cerrado", send_email=True)
+                elif new_status == "agenda_confirmada":
+                    _notificar_equipo_retiros(
+                        f"✅ Retiro {_cod} confirmado",
+                        f"{_cli} — cita confirmada, listo para preparar.",
+                        rid, _cod, prioridad="media", tipo="retiro_confirmado", send_email=False)
+        except Exception as _e_team:
+            print(f"[pickup-updstatus] aviso equipo: {_e_team}", flush=True)
 
         flash("Estado actualizado.", "success")
         return redirect(url_for("pickup_detail", rid=rid))
@@ -7275,12 +7405,15 @@ def register_pickup_routes(app, ctx):
                 status=409,
             )
 
-        # ── AUTO-CONFIRMACIÓN POR COINCIDENCIA (Daniel 2026-06-17, jefa e-commerce) ──
-        # Si el operador propone EXACTAMENTE la fecha+hora que el cliente ya
-        # contrapropuso (propuesta pending, proposed_by='cliente'), NO reabrimos
-        # el ping-pong: el operador está ACEPTANDO lo que el cliente pidió → lo
-        # confirmamos directo, sin pedirle al cliente que confirme de nuevo lo
-        # que él mismo propuso. El slot ya se validó arriba (_validar_disponibilidad_slot).
+        # ── AUTO-CONFIRMACIÓN POR COINCIDENCIA (Daniel 2026-06-17/19) ──────────
+        # Si el operador propone EXACTAMENTE la fecha+hora que el cliente ya pidió
+        # (sea en su CONTRAPROPUESTA pending, o en el FORMULARIO INICIAL con que
+        # creó el retiro), NO reabrimos el ping-pong: el operador está ACEPTANDO
+        # lo que el cliente pidió → confirmamos directo, sin pedirle al cliente
+        # que confirme de nuevo lo que él mismo propuso. Fix del "no me quedaba
+        # confirmada": el caso más común (aceptar la fecha del formulario) antes
+        # NO auto-confirmaba porque la solicitud inicial no crea fila en pickup_
+        # proposals. El slot ya se validó arriba (_validar_disponibilidad_slot).
         _pend_cli = mysql_fetchone(
             f"SELECT id, date, time_from, time_to FROM `{PROP}` "
             f"WHERE request_id=%s AND status='pending' AND LOWER(proposed_by)='cliente' "
@@ -7293,7 +7426,23 @@ def register_pickup_routes(app, ctx):
                         and _td_to_hhmm(p.get("time_to")) == str(tt)[:5])
             except Exception:
                 return False
-        if _pend_cli and _slot_coincide(_pend_cli):
+        _match_counter = bool(_pend_cli and _slot_coincide(_pend_cli))
+        # ¿La fecha/hora propuesta coincide con la que el cliente pidió en el
+        # formulario inicial (requested_*)? Ese es el caso "Aceptar como propuesta".
+        # OJO (review 2026-06-19): SOLO si NO hay una contrapropuesta VIVA del
+        # cliente. Si el cliente ya contrapropuso otra fecha (_pend_cli existe) y
+        # el operador re-propone la fecha ORIGINAL del formulario, NO auto-
+        # confirmamos la vieja (pisaría la contrapropuesta viva) → ping-pong normal.
+        # Si _pend_cli coincide con lo propuesto, ya lo cubre _match_counter.
+        _match_requested = (
+            _slot_coincide({
+                "date":      req.get("requested_date"),
+                "time_from": req.get("requested_time_from"),
+                "time_to":   req.get("requested_time_to"),
+            })
+            if (req.get("requested_date") and not _pend_cli) else False
+        )
+        if _match_counter or _match_requested:
             try:
                 mysql_execute(
                     f"UPDATE `{PROP}` SET status='accepted', answered_at=NOW() "
@@ -7306,11 +7455,22 @@ def register_pickup_routes(app, ctx):
                     f"WHERE id=%s",
                     (date, tf, tt, date, tf, tt, rid)
                 )
+                _origen_match = "contrapropuesta del cliente" if _match_counter else "fecha pedida por el cliente en el formulario"
                 log_event(rid, "auto_confirmada_coincidencia", req.get("status") or "",
                           "agenda_confirmada",
-                          f"El operador coincidió con la contrapropuesta del cliente "
+                          f"El operador coincidió con la {_origen_match} "
                           f"({date} {tf}-{tt}) → confirmado directo, sin re-confirmación.",
                           "interno")
+                # Aviso interno al equipo: se confirmó una cita
+                try:
+                    _notificar_equipo_retiros(
+                        f"✅ Retiro {req.get('code') or '?'} CONFIRMADO",
+                        f"{req.get('customer_name') or 'Cliente'} — cita {date} {tf}-{tt} "
+                        f"(el operador aceptó la fecha que pidió el cliente).",
+                        rid, req.get("code") or "?",
+                        prioridad="media", tipo="retiro_confirmado", send_email=False)
+                except Exception:
+                    pass
             except Exception as _e_ac:
                 print(f"[pickup-autoconfirm] error: {_e_ac}", flush=True)
                 return _resp_err("No se pudo confirmar automáticamente. Reintenta.", status=500)

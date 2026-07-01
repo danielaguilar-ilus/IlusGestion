@@ -40,11 +40,13 @@
         </div>
         <form id="formNuevoRetiroInterno">
           <div class="row g-2">
-            {# Documento #}
-            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-1"><i class="bi bi-file-earmark-text me-1"></i>Documento</div></div>
+            {# Documento (OPCIONAL — Daniel 2026-06-19: se puede crear el retiro
+               sin factura y asociarla después por cliente/rubro) #}
+            <div class="col-12"><div class="fw-bold small text-uppercase text-muted mt-1"><i class="bi bi-file-earmark-text me-1"></i>Documento <span class="fw-normal text-lowercase">(opcional)</span></div></div>
             <div class="col-6 col-md-4">
-              <label class="form-label small fw-semibold">Tipo *</label>
-              <select name="document_type" class="form-select form-select-sm" required>
+              <label class="form-label small fw-semibold">Tipo</label>
+              <select name="document_type" class="form-select form-select-sm">
+                <option value="">— Sin factura aún —</option>
                 <option value="factura">Factura</option>
                 <option value="boleta">Boleta</option>
                 <option value="nota_venta">Nota de venta</option>
@@ -53,8 +55,11 @@
               </select>
             </div>
             <div class="col-6 col-md-4">
-              <label class="form-label small fw-semibold">N° documento *</label>
-              <input name="document_number" class="form-control form-control-sm" maxlength="60" required>
+              <label class="form-label small fw-semibold">N° documento</label>
+              <input name="document_number" class="form-control form-control-sm" maxlength="60" placeholder="Opcional">
+            </div>
+            <div class="col-12 col-md-4 d-flex align-items-end pb-1">
+              <div class="text-muted" style="font-size:.72rem;line-height:1.35"><i class="bi bi-info-circle me-1"></i>Puedes crear el retiro sin factura y asociarla luego por cliente/rubro desde la ficha.</div>
             </div>
 
             {# Cliente #}
@@ -95,6 +100,15 @@
                 <option value="transporte">Transporte</option>
                 <option value="autorizado">Autorizado</option>
                 <option value="otro" selected>Otro</option>
+              </select>
+            </div>
+
+            {# Responsable del retiro (OBLIGATORIO — Daniel 2026-06-19) #}
+            <div class="col-12"><div class="fw-bold small text-uppercase mt-2" style="color:var(--ilus-red)"><i class="bi bi-person-check me-1"></i>Responsable del retiro *</div></div>
+            <div class="col-12 col-md-7">
+              <label class="form-label small fw-semibold">¿Quién se responsabiliza de entregar este pedido? *</label>
+              <select name="responsable_user_id" id="nriResponsable" class="form-select form-select-sm" required>
+                <option value="">Cargando responsables…</option>
               </select>
             </div>
 
@@ -257,6 +271,21 @@
   //    Se monta cuando el modal YA es visible (shown), para que el grid mida
   //    bien. Bloque único, operador (puede HOY + cruzar colación), cupos reales.
   modalEl.addEventListener('shown.bs.modal', function(){
+    // Poblar el selector de RESPONSABLES (una sola vez). Daniel 2026-06-19.
+    (function(){
+      const sel = document.getElementById('nriResponsable');
+      if (!sel || sel.dataset.loaded === '1') return;
+      fetch('/retiros/api/responsables', { credentials:'same-origin', cache:'no-store' })
+        .then(r => r.json())
+        .then(d => {
+          if (!d || !d.ok) { sel.innerHTML = '<option value="">(no se pudo cargar)</option>'; return; }
+          const esc = s => String(s==null?'':s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+          const opts = (d.responsables||[]).map(u => `<option value="${u.id}">${esc(u.nombre)}</option>`).join('');
+          sel.innerHTML = '<option value="">Selecciona un responsable…</option>' + opts;
+          sel.dataset.loaded = '1';
+        })
+        .catch(() => { sel.innerHTML = '<option value="">(error de red — reintenta)</option>'; });
+    })();
     try {
       if (!window.IlusRetirosCalendar) return;  // retiros_calendar.js carga con defer
       const inp = document.getElementById('nri_date');
@@ -465,7 +494,9 @@
               </button>
             </div>
             <div class="small">{{ r.customer_name }}</div>
-            <div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
+            {% if r.document_number %}<div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
+            {% else %}<div class="small text-muted fst-italic">Sin factura asociada</div>{% endif %}
+            {% if r.responsable_nombre %}<div class="small text-muted"><i class="bi bi-person-check me-1"></i>{{ r.responsable_nombre }}</div>{% endif %}
             <span class="badge bg-{{ b.color }} mt-2 js-card-badge">{{ b.label }}</span>
           </div>
         {% endfor %}
@@ -539,12 +570,34 @@
     if (!nuevoEstado || nuevoEstado === estadoActual) return;
     const code = card.dataset.code;
 
+    // Guarda de secuencia (review 2026-06-19): NO preparar ni retirar sin una
+    // cita confirmada. Refleja la guarda del backend (pickup_update_status) y
+    // evita el "falso éxito": antes el backend rechazaba con 302 y el drag-drop
+    // lo confundía con éxito, mostrando un toast verde aunque no cambió nada.
+    if ((nuevoEstado === 'en_preparacion' || nuevoEstado === 'retirada')
+        && !['agenda_confirmada', 'en_preparacion'].includes(estadoActual)){
+      ilusToast('Primero el retiro ' + code + ' debe tener una cita confirmada.', { type: 'warning' });
+      return;
+    }
+
     if (nuevoEstado === 'rechazada'){
       const ok = await ilusConfirm({
         title: 'Cancelar retiro',
         message: '¿Marcar ' + code + ' como rechazada? El cliente recibirá un correo.',
         okLabel: 'Sí, rechazar', cancelLabel: 'Cancelar',
         danger: true,
+      });
+      if (!ok) return;
+    }
+
+    // Acción terminal: marcar retirado CIERRA el proceso (Daniel 2026-06-19).
+    if (nuevoEstado === 'retirada'){
+      const ok = await ilusConfirm({
+        title: 'Marcar como retirado',
+        message: '¿' + code + ' ya fue retirado por el cliente?',
+        sub: 'Cierra el proceso y el cliente recibe el correo de "retiro completado".',
+        okLabel: 'Sí, marcar retirado', cancelLabel: 'Cancelar',
+        type: 'question',
       });
       if (!ok) return;
     }
