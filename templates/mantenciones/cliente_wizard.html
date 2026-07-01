@@ -356,23 +356,28 @@
                oninput="qfRutValidar(this);qfActualizar()" onblur="qfRutFormat(this)">
       </div>
       <div class="col-12 col-md-8">
-        <label class="form-label fw-semibold">
-          Dirección
-          <span id="dir_validating" class="ms-1" style="display:none">
-            <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+        <label class="form-label fw-semibold d-flex align-items-center justify-content-between">
+          <span>
+            Dirección
+            <span id="dir_validating" class="ms-1" style="display:none">
+              <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+            </span>
+            <span id="dir_ok" class="ms-1 text-success" style="display:none"><i class="bi bi-check-circle-fill"></i></span>
+            <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
+               title="Dirección física donde se realizan los servicios. Se valida con Google Maps."></i>
           </span>
-          <span id="dir_ok" class="ms-1 text-success" style="display:none"><i class="bi bi-check-circle-fill"></i></span>
-          <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
-             title="Dirección física donde se realizan los servicios. Se valida con OpenStreetMap."></i>
+          <small class="text-muted" style="font-weight:400;font-size:.72rem">Validada con Google Maps</small>
         </label>
         <div class="ac-wrap">
           <input type="text" id="s1_direccion" class="form-control" autocomplete="off"
-                 placeholder="Av. Ejemplo 1234 — escribe y elige de la lista"
-                 oninput="dirDebounce();document.getElementById('dir_ok').style.display='none';qfActualizar();['s1_comuna','s1_ciudad'].forEach(id=>{var el=document.getElementById(id);el.style.borderColor='';el.style.background='';})"
-                 onkeydown="dirKeydown(event)">
-          <div class="ac-dropdown" id="dir_dropdown"></div>
+                 placeholder="Empieza a escribir y elige una sugerencia…"
+                 oninput="document.getElementById('dir_ok').style.display='none';qfActualizar();['s1_comuna','s1_ciudad'].forEach(id=>{var el=document.getElementById(id);el.style.borderColor='';el.style.background='';})">
+          <div class="ac-dropdown" id="dir_dropdown" style="display:none"></div>
         </div>
-        <div class="form-text text-muted" style="font-size:.7rem"><i class="bi bi-geo-alt me-1"></i>Sugerencias automáticas de direcciones en Chile</div>
+        <input type="hidden" id="s1_direccion_lat">
+        <input type="hidden" id="s1_direccion_lng">
+        <input type="hidden" id="s1_direccion_place_id">
+        <div class="form-text text-muted" id="s1_direccion_hint" style="font-size:.7rem"><i class="bi bi-geo-alt me-1"></i>Escribe la dirección y elígela del menú: comuna y ciudad se completan solas.</div>
       </div>
       <div class="col-12 col-md-4">
         <label class="form-label fw-semibold">
@@ -1353,8 +1358,61 @@ function qfFocusField(fieldId) {
 // Inicializar al cargar
 document.addEventListener('DOMContentLoaded', () => {
   qfActualizar();
+  _wzInitDireccionGoogle();
 });
 window.qfActualizar = qfActualizar;
+
+// Dirección del paso 1 validada con Google Places (mismo motor que la OT) →
+// muestra "Powered by Google", autollena comuna/ciudad + lat/lng/place_id.
+function _wzInitDireccionGoogle() {
+  if (typeof ilusPlacesAutocomplete !== 'function') {
+    if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_wzInitDireccionGoogle);
+    return;
+  }
+  const input = document.getElementById('s1_direccion');
+  if (!input || input.dataset.placesBound === '1') return;
+  input.dataset.placesBound = '1';
+  ilusPlacesAutocomplete('s1_direccion', {
+    country: 'cl',
+    types: ['address'],
+    onPlaceSelected: function (place) {
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+      set('s1_direccion_lat',      place.lat || '');
+      set('s1_direccion_lng',      place.lng || '');
+      set('s1_direccion_place_id', place.place_id || '');
+      const comps = place.componentes || [];
+      const pick = function () {
+        for (let i = 0; i < arguments.length; i++) {
+          const c = comps.find(x => (x.types || []).indexOf(arguments[i]) >= 0);
+          if (c) return c.long_name;
+        }
+        return '';
+      };
+      const comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+      const ciudad = pick('locality', 'administrative_area_level_2') || comuna;
+      const setIf = (id, v) => {
+        const e = document.getElementById(id);
+        if (e && v) { e.value = v; e.style.borderColor = '#1a7a1a'; e.style.background = '#f1f8e9'; }
+      };
+      setIf('s1_comuna', comuna);
+      setIf('s1_ciudad', ciudad);
+      const ok = document.getElementById('dir_ok'); if (ok) ok.style.display = '';
+      const hint = document.getElementById('s1_direccion_hint');
+      if (hint) {
+        const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
+        const ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
+        hint.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>' +
+          'Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      }
+      if (window.qfActualizar) window.qfActualizar();
+    },
+    onNoSelection: function () {
+      const hint = document.getElementById('s1_direccion_hint');
+      if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle text-warning me-1"></i>' +
+        'Selecciona una opción del menú para validar la dirección.';
+    }
+  });
+}
 
 // ══ AUTOCOMPLETE ═════════════════════════════════════════════
 let acTimer = null;
@@ -3130,6 +3188,9 @@ async function crearCliente(){
   fd.append('tel_empresa',     $v('s1_tel_empresa'));
   fd.append('giro',            $v('s1_giro'));
   fd.append('direccion',       $v('s1_direccion'));
+  fd.append('direccion_lat',       $v('s1_direccion_lat'));
+  fd.append('direccion_lng',       $v('s1_direccion_lng'));
+  fd.append('direccion_place_id',  $v('s1_direccion_place_id'));
   fd.append('comuna',          $v('s1_comuna'));
   fd.append('ciudad',          $v('s1_ciudad'));
   fd.append('region',          $v('s1_ciudad')); // Ciudad/Región = región ERP

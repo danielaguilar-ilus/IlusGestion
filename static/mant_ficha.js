@@ -1785,10 +1785,61 @@ function abrirSolicitudCambio(eq) { abrirAccionEquipo('garantia', eq); }
 // ════════════════════════════════════════════════════════════════════
 let _modalSucursal = null;
 
+// Inicializa Google Places en el campo dirección del modal de sucursal (idempotente).
+// Mismo motor que la OT / editar-cliente → muestra "Powered by Google" y autollena
+// comuna/ciudad/región + lat/lng/place_id.
+function _ilusInitDireccionSucursal() {
+  const input = document.getElementById('suc_direccion');
+  if (!input || input.dataset.placesBound === '1') return;
+  if (typeof ilusPlacesAutocomplete !== 'function') {
+    if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_ilusInitDireccionSucursal);
+    return;
+  }
+  input.dataset.placesBound = '1';
+  ilusPlacesAutocomplete('suc_direccion', {
+    country: 'cl',
+    types: ['address'],
+    onPlaceSelected: function (place) {
+      const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+      set('suc_direccion_lat',      place.lat || '');
+      set('suc_direccion_lng',      place.lng || '');
+      set('suc_direccion_place_id', place.place_id || '');
+      const comps = place.componentes || [];
+      const pick = function () {
+        for (let i = 0; i < arguments.length; i++) {
+          const c = comps.find(x => (x.types || []).indexOf(arguments[i]) >= 0);
+          if (c) return c.long_name;
+        }
+        return '';
+      };
+      const region = pick('administrative_area_level_1');
+      const comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+      const ciudad = pick('locality', 'administrative_area_level_2') || comuna;
+      const setIf  = (id, v) => { const e = document.getElementById(id); if (e && v) e.value = v; };
+      setIf('suc_region', _ilusLimpiaRegion(region));
+      setIf('suc_comuna', comuna);
+      setIf('suc_ciudad', ciudad);
+      const hint = document.getElementById('suc_direccion_hint');
+      if (hint) {
+        const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
+        const ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
+        hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>' +
+          'Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      }
+    },
+    onNoSelection: function () {
+      const hint = document.getElementById('suc_direccion_hint');
+      if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>' +
+        'Selecciona una opción del menú para validar la dirección.';
+    }
+  });
+}
+
 function abrirSucursal(s) {
   if (!_modalSucursal) _modalSucursal = new bootstrap.Modal(document.getElementById('modalSucursal'));
   // Reset
   ['suc_id','suc_nombre','suc_direccion','suc_comuna','suc_ciudad','suc_region',
+   'suc_direccion_lat','suc_direccion_lng','suc_direccion_place_id',
    'suc_enc_nombre','suc_enc_cargo','suc_enc_tel','suc_enc_email',
    'suc_c2_nombre','suc_c2_cargo','suc_c2_tel','suc_c2_email','suc_notas']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -1805,6 +1856,9 @@ function abrirSucursal(s) {
     document.getElementById('suc_comuna').value       = s.comuna || '';
     document.getElementById('suc_ciudad').value       = s.ciudad || '';
     document.getElementById('suc_region').value       = s.region || '';
+    document.getElementById('suc_direccion_lat').value      = s.direccion_lat || '';
+    document.getElementById('suc_direccion_lng').value      = s.direccion_lng || '';
+    document.getElementById('suc_direccion_place_id').value = s.direccion_place_id || '';
     document.getElementById('suc_enc_nombre').value   = s.encargado_nombre || '';
     document.getElementById('suc_enc_cargo').value    = s.encargado_cargo || '';
     document.getElementById('suc_enc_tel').value      = s.encargado_tel || '';
@@ -1819,6 +1873,14 @@ function abrirSucursal(s) {
     document.getElementById('suc_modal_title').textContent = 'Nueva sucursal';
     document.getElementById('suc_btn_label').textContent  = 'Guardar sucursal';
   }
+  // Hint de dirección + Google Places (idempotente). Mismo motor que la OT.
+  const _sucHint = document.getElementById('suc_direccion_hint');
+  if (_sucHint) {
+    _sucHint.innerHTML = (s && s.direccion_place_id)
+      ? '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada — elige otra del menú para actualizar comuna, ciudad y región.'
+      : '<i class="bi bi-geo-alt me-1" style="color:#6b7280"></i>Escribe la dirección y selecciona del menú: comuna, ciudad y región se completan solas.';
+  }
+  _ilusInitDireccionSucursal();
   _modalSucursal.show();
 }
 
@@ -1967,6 +2029,9 @@ async function guardarSucursal() {
   const data = {
     nombre:           $v('suc_nombre'),
     direccion:        $v('suc_direccion'),
+    direccion_lat:        $v('suc_direccion_lat'),
+    direccion_lng:        $v('suc_direccion_lng'),
+    direccion_place_id:   $v('suc_direccion_place_id'),
     comuna:           $v('suc_comuna'),
     ciudad:           $v('suc_ciudad'),
     region:           $v('suc_region'),
@@ -7795,6 +7860,310 @@ async function cargarInteligencia(force = false) {
     if (window.ilusLoader) { try { ilusLoader.hide(); } catch(e){} }
   }
 }
+
+// CENTRO DE CONTROL en el Resumen: consolida los KPIs financieros/operativos del
+// Agente + las brechas y oportunidades accionables, y rutea al Agente (tab Intel)
+// para resolverlas. READ-ONLY: reusa el mismo endpoint/cache que cargarInteligencia,
+// no recalcula nada. Falla en silencio: si el endpoint no responde, oculta el panel
+// sin afectar el resto de la ficha.
+async function cargarCentroControl() {
+  const panel = document.getElementById('ccPanel');
+  const body  = document.getElementById('ccBody');
+  if (!panel || !body) return;
+  let d = (typeof _intelCache !== 'undefined') ? _intelCache : null;
+  try {
+    if (!d) {
+      const r = await fetch(`/mantenciones/api/clientes/${CID}/inteligencia`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      d = await r.json();
+      if (!d || typeof d !== 'object' || d.error) throw new Error('sin datos');
+      _intelCache = d;   // comparte cache con el tab Agente (evita re-fetch)
+    }
+  } catch (e) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  const tono = { ok: '#16a34a', warn: '#f59e0b', danger: '#dc2626' };
+  const kpis = (d.kpis || []).map(k => {
+    const c = tono[k.tono] || '#374151';
+    return `<div style="text-align:center;min-width:74px">
+      <div style="font-size:1.05rem;font-weight:800;color:${c};line-height:1.1">${_intelEsc(String(k.valor))}${k.sufijo ? `<span style="font-size:.7rem;font-weight:600">${_intelEsc(k.sufijo)}</span>` : ''}</div>
+      <div style="font-size:.61rem;color:#6b7280;text-transform:uppercase;letter-spacing:.03em">${_intelEsc(k.label)}</div>
+    </div>`;
+  }).join('');
+
+  const sevRank = { alta: 0, media: 1, baja: 2 };
+  const sevColor = { alta: '#dc2626', media: '#f59e0b', baja: '#6b7280' };
+  const sevBg = { alta: '#fef2f2', media: '#fffbeb', baja: '#f9fafb' };
+  const cons = (d.consultas || [])
+    .filter(c => c.severidad === 'alta' || c.severidad === 'media')
+    .sort((a, b) => (sevRank[a.severidad] ?? 9) - (sevRank[b.severidad] ?? 9))
+    .slice(0, 6);
+  const brechas = cons.length ? cons.map(c => {
+    const col = sevColor[c.severidad] || '#6b7280';
+    const ic = c.severidad === 'alta' ? 'exclamation-octagon-fill' : 'exclamation-triangle-fill';
+    return `<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 9px;border-radius:7px;background:${sevBg[c.severidad] || '#f9fafb'};border-left:3px solid ${col};margin-bottom:6px">
+      <i class="bi bi-${ic}" style="color:${col};font-size:.85rem;margin-top:1px"></i>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.76rem;font-weight:600;color:#374151">${_intelEsc(c.pregunta || '')}</div>
+        ${c.detalle ? `<div style="font-size:.68rem;color:#6b7280">${_intelEsc(c.detalle)}</div>` : ''}
+      </div>
+      <button class="btn btn-xs btn-link p-0" style="font-size:.7rem;text-decoration:none;color:${col};white-space:nowrap"
+              onclick="switchTab('intel');if(window.cargarInteligencia)cargarInteligencia()">Resolver &rarr;</button>
+    </div>`;
+  }).join('') : `<div style="font-size:.78rem;color:#16a34a"><i class="bi bi-check-circle-fill me-1"></i>Sin brechas abiertas. Todo al día.</div>`;
+
+  body.innerHTML = `
+    ${d.resumen_ejecutivo ? `<div style="font-size:.78rem;color:#374151;margin-bottom:10px;line-height:1.5">${_intelEsc(d.resumen_ejecutivo)}</div>` : ''}
+    <div style="display:flex;flex-wrap:wrap;gap:14px;padding:6px 0 12px;border-bottom:1px solid #f3f4f6;margin-bottom:10px">${kpis}</div>
+    <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px">
+      <i class="bi bi-flag-fill me-1"></i>Brechas y oportunidades
+    </div>
+    ${brechas}`;
+  panel.style.display = '';
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LÍNEA DE TIEMPO DE VISITAS (pasado → HOY → futuro). Data-driven desde
+// window.VIS_TL (emitido por ficha.html). Posiciona cada visita por fecha
+// (porcentaje), clasifica realizada/programada/vencida y pinta el héroe del
+// tab Visitas + una versión mini en el Resumen. Sin backend; cero riesgo.
+// ════════════════════════════════════════════════════════════════════
+function _vtlFmtFecha(s) {
+  if (!s) return '';
+  const M = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const p = String(s).split('-');
+  if (p.length < 3) return s;
+  return parseInt(p[2], 10) + ' ' + (M[parseInt(p[1], 10) - 1] || '');
+}
+function _vtlCap(t) { t = t || ''; return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; }
+// Clasificación ALINEADA con el server (ficha.html ~6210): realizada =
+// completada+cerrada; cancelada/anulada se excluyen; el resto (estados vivos
+// como programada/asignada/en_curso/… + desconocidos) son pendientes y, si la
+// fecha ya pasó, vencidas. (Antes solo veía 'completada' → perdía las cerradas.)
+var _VTL_DONE = ['completada', 'cerrada'];                                  // cerrada/auditada
+var _VTL_PORCERRAR = ['firmada_tecnico', 'pendiente_aprobacion', 'pendiente_info',
+                      'pendiente_repuesto', 'en_ejecucion', 'en_curso'];     // ejecutada, falta cerrar
+var _VTL_CANC = ['cancelada', 'anulada'];
+function _vtlNodos(data, hoyStr) {
+  const out = [];
+  (data || []).forEach(v => {
+    const e = (v.e || '').toLowerCase();
+    let clase = null, fecha = null;
+    if (_VTL_DONE.indexOf(e) !== -1) { clase = 'done'; fecha = v.fr || v.fp; }
+    else if (_VTL_PORCERRAR.indexOf(e) !== -1) { clase = 'porcerrar'; fecha = v.fr || v.fp; }
+    else if (_VTL_CANC.indexOf(e) !== -1) { return; }
+    else if (v.fp) { clase = (v.fp < hoyStr ? 'overdue' : 'pending'); fecha = v.fp; }
+    if (!clase || !fecha) return;
+    // Pendientes por cerrar (solo aplican a una visita ya ejecutada).
+    const esGarantia = (v.mc === 'garantia' || v.cb === 'garantia');
+    const faltaFact = !esGarantia && ['sin_cotizar', 'cotizado', 'con_oc'].indexOf((v.ef || '').toLowerCase()) !== -1;
+    out.push({
+      clase, fecha, tipo: v.t, titulo: v.ti, tecnico: v.tc,
+      ot: v.ot || '', costo: (typeof v.co === 'number' ? v.co : parseFloat(v.co) || 0),
+      cobertura: (v.cb || ''), faltaFC: !v.fc, faltaFT: !v.ft, faltaFact: faltaFact, garantia: esGarantia,
+    });
+  });
+  out.sort((a, b) => a.fecha < b.fecha ? -1 : (a.fecha > b.fecha ? 1 : 0));
+  return out;
+}
+function _vtlRender(bodyId, opts) {
+  opts = opts || {};
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const h = new Date();
+  const hoyStr = h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+  let nodos = _vtlNodos(window.VIS_TL || [], hoyStr);
+  const loT = Date.parse(hoyStr) - 460 * 864e5, hiT = Date.parse(hoyStr) + 460 * 864e5;   // ventana ~15 meses
+  nodos = nodos.filter(n => { const t = Date.parse(n.fecha); return t >= loT && t <= hiT; });
+  if (!nodos.length) {
+    if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = 'none'; }
+    else body.innerHTML = '<div class="vtl-empty"><i class="bi bi-calendar-x me-1"></i>Aún no hay visitas registradas.<div style="margin-top:10px"><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"><i class="bi bi-calendar-plus me-1"></i>Agendar la primera</button></div></div>';
+    return;
+  }
+  const done = nodos.filter(n => n.clase === 'done').length;
+  const porc = nodos.filter(n => n.clase === 'porcerrar').length;
+  const pend = nodos.filter(n => n.clase === 'pending').length;
+  const venc = nodos.filter(n => n.clase === 'overdue').length;
+  if (opts.cardId) { const c = document.getElementById(opts.cardId); if (c) c.style.display = ''; }
+
+  if (opts.mini) {
+    // Eje de AÑO (ene→dic) compacto: meses visibles + HOY en el día real.
+    const _yr = nodos.map(n => parseInt(n.fecha.slice(0, 4), 10)).filter(y => y).concat([h.getFullYear()]);
+    const _yA = Math.min.apply(null, _yr), _yB = Math.max.apply(null, _yr);
+    const _wS = Date.parse(_yA + '-01-01'), _wE = Date.parse(_yB + '-12-31');
+    const _sp = Math.max(_wE - _wS, 864e5);
+    const _pY = t => ((t - _wS) / _sp) * 100;
+    const _hoyM = Math.min(99, Math.max(1, _pY(Date.parse(hoyStr)))).toFixed(2);
+    let _lastX = -99;
+    const dots = nodos.map(n => {
+      const cls = n.clase === 'done' ? 'mdone' : (n.clase === 'overdue' ? 'mover' : (n.clase === 'porcerrar' ? 'mporc' : 'mpend'));
+      let xm = _pY(Date.parse(n.fecha));
+      if (xm - _lastX < 2.2) xm = _lastX + 2.2;   // separar puntos pegados (no "montados")
+      _lastX = xm;
+      return `<span class="vtl-md ${cls}" style="left:${Math.min(99, xm).toFixed(2)}%" title="${_intelEsc((n.ot ? n.ot + ' · ' : '') + _vtlFmtFecha(n.fecha) + ' · ' + (n.titulo || _vtlCap(n.tipo)))}"></span>`;
+    }).join('');
+    // Meses: línea en los 12, etiqueta cada 3 (ene con año, abr, jul, oct) → liviano.
+    const _MM2 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    let _mh = '';
+    let _c2 = new Date(_yA, 0, 1);
+    for (let g = 0; g < 60 && _c2.getTime() <= _wE; g++) {
+      const m = _c2.getMonth();
+      const xm = _pY(_c2.getTime()).toFixed(2);
+      _mh += `<span class="vtl-mm-grid" style="left:${xm}%"></span>`;
+      if (m % 3 === 0) _mh += `<span class="vtl-mm-lbl" style="left:${xm}%">${m === 0 ? (_MM2[m] + " '" + String(_c2.getFullYear()).slice(2)) : _MM2[m]}</span>`;
+      _c2 = new Date(_c2.getFullYear(), m + 1, 1);
+    }
+    // Número focal: lo más importante para este cliente.
+    let foColor, foIcon, foNum, foTxt, foPulse = '';
+    if (venc > 0) { foColor = '#ef4444'; foIcon = 'exclamation-octagon-fill'; foNum = venc; foTxt = venc > 1 ? 'visitas vencidas' : 'visita vencida'; foPulse = ' pulse'; }
+    else if (porc > 0) { foColor = '#f59e0b'; foIcon = 'pencil-square'; foNum = porc; foTxt = 'por cerrar'; }
+    else if (pend > 0) { foColor = '#60a5fa'; foIcon = 'calendar-event-fill'; foNum = pend; foTxt = 'por venir'; }
+    else if (done > 0) { foColor = '#22c55e'; foIcon = 'check-circle-fill'; foNum = done; foTxt = 'al día'; }
+    else { foColor = '#9ca3af'; foIcon = 'calendar-x'; foNum = 0; foTxt = 'sin visitas aún'; }
+    body.innerHTML = `
+      <div class="vtl-mini-glow" style="background:radial-gradient(62% 120% at 12% -10%, ${foColor}26, transparent 60%)"></div>
+      <div class="vtl-mini-top">
+        <span class="vtl-mini-ttl"><i class="bi bi-bar-chart-steps me-1"></i>Visitas · ${_yA === _yB ? _yA : (_yA + '–' + _yB)}</span>
+        <span class="vtl-mini-see">ver todas <i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="vtl-mini-focal">
+        <span class="vtl-mini-num${foPulse}" style="color:${foColor};text-shadow:0 0 20px ${foColor}66"><i class="bi bi-${foIcon}"></i>${foNum}</span>
+        <span class="vtl-mini-fotxt">${foTxt}</span>
+        <span class="vtl-mini-chips">
+          <span class="vtl-mc" style="--c:#22c55e">${done} hechas</span>
+          ${porc ? `<span class="vtl-mc" style="--c:#f59e0b">${porc} por cerrar</span>` : ''}
+          <span class="vtl-mc" style="--c:#60a5fa">${pend} por venir</span>
+          <span class="vtl-mc" style="--c:#ef4444">${venc} venc.</span>
+        </span>
+      </div>
+      <div class="vtl-mini-track">
+        ${_mh}
+        <div class="vtl-axis"></div>
+        <div class="vtl-axis-done" style="width:${_hoyM}%"></div>
+        <div class="vtl-mhoy" style="left:${_hoyM}%"></div>
+        ${dots}
+      </div>`;
+    return;
+  }
+
+  // ── HÉROE: AÑO COMPLETO (ene→dic) con líneas de mes y HOY en el día real.
+  //    Cada visita va en su FECHA real; etiquetas en 4 carriles + línea guía
+  //    para que fechas cercanas no se enciman. Estados: realizada / por cerrar
+  //    (ejecutada, falta firma o facturar) / vencida / programada.
+  const yrs = nodos.map(n => parseInt(n.fecha.slice(0, 4), 10)).filter(y => y).concat([h.getFullYear()]);
+  const yMin = Math.min.apply(null, yrs), yMax = Math.max.apply(null, yrs);
+  const winS = Date.parse(yMin + '-01-01'), winE = Date.parse(yMax + '-12-31');
+  const spanY = Math.max(winE - winS, 864e5);
+  const pY = t => ((t - winS) / spanY) * 100;
+  const hoyPct = Math.min(99.4, Math.max(0.6, pY(Date.parse(hoyStr)))).toFixed(2);
+
+  let cta;
+  if (venc > 0) {
+    cta = `<div class="vtl-cta vtl-cta-danger"><div><i class="bi bi-exclamation-octagon-fill me-1"></i><strong>${venc} visita${venc > 1 ? 's' : ''} vencida${venc > 1 ? 's' : ''}</strong> sin realizar — conviene agendar.</div><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar ahora</button></div>`;
+  } else if (porc > 0) {
+    cta = `<div class="vtl-cta vtl-cta-warn"><div><i class="bi bi-pencil-square me-1"></i><strong>${porc} realizada${porc > 1 ? 's' : ''} por cerrar</strong> — falta firma o facturación.</div></div>`;
+  } else if (pend === 0) {
+    cta = `<div class="vtl-cta vtl-cta-warn"><div><i class="bi bi-calendar-x me-1"></i>No hay próxima mantención programada.</div><button class="vtl-cta-btn" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar mantención</button></div>`;
+  } else {
+    const _px = nodos.filter(n => n.clase === 'pending')[0];
+    cta = `<div class="vtl-cta vtl-cta-ok"><div><i class="bi bi-check-circle-fill me-1"></i>Todo al día. Próxima: <strong>${_px ? _vtlFmtFecha(_px.fecha) : '—'}</strong>.</div><button class="vtl-cta-btn ghost" onclick="if(window.abrirNuevaVisita)abrirNuevaVisita('preventiva')"><i class="bi bi-calendar-plus me-1"></i>Agendar otra</button></div>`;
+  }
+  const stats = `${cta}
+    <div class="vtl-stats">
+      <div class="vtl-stat"><div class="vs-num" style="color:#22c55e">${done}</div><div class="vs-lbl">Realizadas</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:${porc ? '#f59e0b' : '#6b7280'}">${porc}</div><div class="vs-lbl">Por cerrar</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:#60a5fa">${pend}</div><div class="vs-lbl">Por venir</div></div>
+      <div class="vtl-stat"><div class="vs-num" style="color:${venc ? '#ef4444' : '#6b7280'}">${venc}</div><div class="vs-lbl">Vencidas</div></div>
+    </div>`;
+
+  // Líneas y nombres de mes (ene…dic), con el año en enero.
+  const _MM = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const stepM = ((yMax - yMin + 1) * 12) > 18 ? 2 : 1;
+  let mesesHtml = '';
+  let _cur = new Date(yMin, 0, 1);
+  for (let g = 0; g < 60 && _cur.getTime() <= winE; g++) {
+    const m = _cur.getMonth();
+    if (m % stepM === 0) {
+      const xm = pY(_cur.getTime()).toFixed(2);
+      const lbl = m === 0 ? `<b style="color:#cbd5e1">${_MM[m]} '${String(_cur.getFullYear()).slice(2)}</b>` : _MM[m];
+      mesesHtml += `<div class="vtl-mgrid" style="left:${xm}%"></div><div class="vtl-mlbl" style="left:${xm}%">${lbl}</div>`;
+    }
+    _cur = new Date(_cur.getFullYear(), m + 1, 1);
+  }
+
+  const _TIERS = [8, 188, 52, 144];   // 4 carriles (arriba/abajo × lejos/cerca)
+  const nodesHtml = nodos.map((n, i) => {
+    const x = pY(Date.parse(n.fecha)).toFixed(2);
+    let dotCls, dotInner = '', chipTxt;
+    if (n.clase === 'done') { dotCls = 'done'; chipTxt = 'Realizada'; }
+    else if (n.clase === 'porcerrar') { dotCls = 'porcerrar'; dotInner = '<i class="bi bi-pencil" style="font-size:.58rem;color:#1a1206"></i>'; chipTxt = 'Por cerrar'; }
+    else if (n.clase === 'overdue') { dotCls = 'overdue'; dotInner = '<i class="bi bi-exclamation-triangle" style="font-size:.62rem;color:#fff"></i>'; chipTxt = 'Vencida'; }
+    else { dotCls = 'pending'; chipTxt = 'Programada'; }
+    const tipoLbl = _vtlCap(n.tipo) || 'Visita';
+    const faltas = [];
+    if (n.clase === 'done' || n.clase === 'porcerrar') {
+      if (n.faltaFT) faltas.push('firma téc.');
+      if (n.faltaFC) faltas.push('firma cliente');
+      if (n.faltaFact) faltas.push('facturar');
+    }
+    const faltasTxt = faltas.length ? `<div class="vtl-falta"><i class="bi bi-exclamation-circle"></i> falta ${_intelEsc(faltas.join(' · '))}</div>` : '';
+    const estadoFull = chipTxt + (faltas.length ? (' · falta ' + faltas.join(', ')) : ((n.garantia && (n.clase === 'done' || n.clase === 'porcerrar')) ? ' · garantía (sin cobro)' : ''));
+    const tip = _intelEsc((n.ot ? (n.ot + ' · ') : '') + (n.titulo || tipoLbl) + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha) + ' · ' + estadoFull);
+    const dotClick = n.clase === 'overdue' ? ' onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"' : '';
+    return `<div class="vtl-node" style="left:${x}%" title="${tip}">
+      <div class="vtl-guide"></div>
+      <div class="vtl-dot ${dotCls}"${dotClick}>${dotInner}</div>
+      <div class="vtl-lbl" style="top:${_TIERS[i % 4]}px">
+        <div class="vtl-date">${_vtlFmtFecha(n.fecha)}</div>
+        <span class="vtl-chip ${n.clase}">${chipTxt}</span>
+        ${faltasTxt}
+      </div>
+    </div>`;
+  }).join('');
+  // Resumen de intervenciones (vista gerencia): cuántas veces fuimos a este
+  // cliente, por qué cobertura y cuánto costó. Datos de las OT reales.
+  const _gar = nodos.filter(n => n.garantia).length;
+  const _ctr = nodos.filter(n => n.cobertura === 'contrato' && !n.garantia).length;
+  const _cli = nodos.filter(n => n.cobertura === 'cliente' && !n.garantia).length;
+  const _costoT = nodos.reduce((s, n) => s + (n.costo || 0), 0);
+  const _interv = `
+    <div class="vtl-interv">
+      <span class="vti"><i class="bi bi-wrench-adjustable me-1"></i><b>${nodos.length}</b>&nbsp;veces a este cliente</span>
+      <span class="vti">${_gar} por <b style="color:#93c5fd">garantía</b></span>
+      <span class="vti">${_ctr} por <b style="color:#86efac">contrato</b></span>
+      <span class="vti">${_cli} con <b style="color:#fcd34d">cobro</b></span>
+      ${_costoT > 0 ? `<span class="vti">costo: <b>$${Math.round(_costoT).toLocaleString('es-CL')}</b></span>` : ''}
+      <span class="vti vti-link" onclick="switchTab('finanzas');if(window.cargarFinanzas)cargarFinanzas()">ver finanzas <i class="bi bi-arrow-right"></i></span>
+    </div>`;
+  body.innerHTML = `${stats}
+    <div class="vtl-track-wrap">
+      ${mesesHtml}
+      <div class="vtl-axis"></div>
+      <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
+      <div class="vtl-hoy" style="left:${hoyPct}%"></div>
+      <div class="vtl-hoy-pill" style="left:${hoyPct}%">HOY</div>
+      ${nodesHtml}
+    </div>
+    <div class="vtl-leg">
+      <span><span class="vtl-leg-dot" style="background:#22c55e"></span>Realizada</span>
+      <span><span class="vtl-leg-dot" style="background:#f59e0b"></span>Por cerrar (falta firma/factura)</span>
+      <span><span class="vtl-leg-dot" style="background:#ef4444"></span>Vencida</span>
+      <span><span class="vtl-leg-dot" style="border:2px dashed #60a5fa"></span>Programada</span>
+    </div>
+    ${_interv}`;
+}
+
+// Hidratar Centro de control + Línea de tiempo de visitas al cargar (deferido, no bloquea el paint).
+(function () {
+  const _init = () => {
+    try { if (typeof cargarCentroControl === 'function') cargarCentroControl(); } catch (e) {}
+    try { if (typeof _vtlRender === 'function') { _vtlRender('vtlHeroBody'); _vtlRender('vtlMini', { mini: true, cardId: 'vtlMiniCard' }); } } catch (e) {}
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(_init, 300));
+  else setTimeout(_init, 300);
+})();
 
 // Construye el HTML completo del diagnóstico y lo pinta en #intelPanel.
 function _intelRender(d){

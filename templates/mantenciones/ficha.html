@@ -1041,6 +1041,26 @@
       </div>
       {# /6 KPIs #}
 
+      {# ── CENTRO DE CONTROL: consolida KPIs financieros/operativos + brechas y
+         oportunidades que ya calcula el Agente (endpoint /inteligencia). Read-only;
+         las acciones se resuelven en la pestaña Agente. Se hidrata por JS al cargar. #}
+      <div class="f-card mb-3" id="ccPanel" style="display:none;border-left:3px solid #dc2626">
+        <div class="f-card-header">
+          <span class="f-card-title"><i class="bi bi-speedometer2 me-1"></i>Centro de control</span>
+          <button class="btn btn-xs btn-outline-secondary ms-auto" onclick="switchTab('intel');if(window.cargarInteligencia)cargarInteligencia()" title="Abrir el Agente">
+            <i class="bi bi-robot me-1"></i>Abrir Agente
+          </button>
+        </div>
+        <div class="f-card-body" id="ccBody">
+          <div class="text-muted" style="font-size:.8rem"><span class="spinner-border spinner-border-sm me-1"></span>El Agente está revisando al cliente…</div>
+        </div>
+      </div>
+
+      {# ── Mini línea de tiempo de visitas (versión compacta del héroe del tab Visitas) ── #}
+      <div class="vtl-mini" id="vtlMiniCard" style="display:none;cursor:pointer" onclick="switchTab('visitas')" title="Ver todas las visitas en el tab Visitas">
+        <div id="vtlMini"></div>
+      </div>
+
       {# ── INFORMACIÓN PRINCIPAL ── #}
       <div class="f-card mb-3">
         <div class="f-card-header">
@@ -6035,6 +6055,103 @@ function abrirEmailManual() {
   </style>
 
   {# ══════════════════════════════════════════════════════════════════
+     LÍNEA DE TIEMPO DE VISITAS (héroe) — pasado → HOY → futuro.
+     Premium ILUS (negro/rojo). Data-driven: window.VIS_TL + _vtlRender (JS).
+     ══════════════════════════════════════════════════════════════════ #}
+  <style>
+  .vtl-hero{background:linear-gradient(135deg,#0b0b0d,#17171a);border:1px solid #2a2a2f;border-radius:16px;padding:18px 20px 14px;margin-bottom:18px;color:#fff;box-shadow:0 6px 26px rgba(0,0,0,.18);}
+  .vtl-head{display:flex;align-items:center;gap:8px;font-size:.74rem;text-transform:uppercase;letter-spacing:.6px;font-weight:800;color:#9ca3af;margin-bottom:14px;}
+  .vtl-head i{color:#dc2626;font-size:.95rem;}
+  .vtl-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;}
+  .vtl-stat{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:9px 12px;}
+  .vtl-stat .vs-num{font-size:1.5rem;font-weight:900;line-height:1;}
+  .vtl-stat .vs-lbl{font-size:.6rem;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;font-weight:700;margin-top:3px;}
+  .vtl-track-wrap{position:relative;height:262px;margin:8px 6px 0;}
+  .vtl-axis{position:absolute;left:0;right:0;top:122px;height:3px;border-radius:2px;background:#2e2e34;}
+  .vtl-axis-done{position:absolute;left:0;top:122px;height:3px;border-radius:2px;background:linear-gradient(90deg,#7f1d1d,#dc2626);}
+  .vtl-hoy{position:absolute;top:16px;bottom:34px;width:0;border-left:2px dashed #dc2626;z-index:2;}
+  .vtl-hoy-pill{position:absolute;top:0;transform:translateX(-50%);background:#dc2626;color:#fff;font-size:.6rem;font-weight:800;padding:2px 10px;border-radius:50px;letter-spacing:.6px;white-space:nowrap;z-index:3;}
+  .vtl-mgrid{position:absolute;top:28px;height:202px;width:0;border-left:1px solid rgba(255,255,255,.06);}
+  .vtl-mlbl{position:absolute;top:240px;transform:translateX(-50%);font-size:.58rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;}
+  .vtl-guide{position:absolute;top:24px;bottom:38px;width:0;border-left:1px solid rgba(255,255,255,.05);}
+  .vtl-node{position:absolute;top:0;bottom:0;width:0;}
+  .vtl-dot{position:absolute;top:113px;left:-9px;width:18px;height:18px;border-radius:50%;border:3px solid #0b0b0d;z-index:1;}
+  .vtl-dot.done{background:#22c55e;box-shadow:0 0 0 1px #22c55e,0 0 14px rgba(34,197,94,.5);}
+  .vtl-dot.porcerrar{top:111px;left:-11px;width:22px;height:22px;background:#f59e0b;box-shadow:0 0 0 2px #f59e0b,0 0 14px rgba(245,158,11,.55);display:flex;align-items:center;justify-content:center;}
+  .vtl-dot.pending{background:transparent;border:2px dashed #60a5fa;}
+  .vtl-dot.overdue{top:111px;left:-11px;width:22px;height:22px;background:#ef4444;box-shadow:0 0 0 2px #ef4444,0 0 16px rgba(239,68,68,.6);display:flex;align-items:center;justify-content:center;}
+  .vtl-lbl{position:absolute;left:-50px;width:100px;text-align:center;}
+  .vtl-date{font-size:.76rem;font-weight:700;line-height:1.15;color:#f3f4f6;}
+  .vtl-chip{display:inline-block;font-size:.55rem;font-weight:700;padding:1px 8px;border-radius:50px;text-transform:uppercase;letter-spacing:.3px;margin-top:3px;}
+  .vtl-chip.done{background:rgba(34,197,94,.18);color:#86efac;}
+  .vtl-chip.porcerrar{background:rgba(245,158,11,.2);color:#fcd34d;}
+  .vtl-chip.overdue{background:rgba(239,68,68,.2);color:#fca5a5;}
+  .vtl-chip.pending{background:rgba(96,165,250,.18);color:#93c5fd;}
+  .vtl-falta{font-size:.56rem;color:#fbbf24;margin-top:3px;line-height:1.2;}
+  .vtl-leg{display:flex;flex-wrap:wrap;gap:14px;font-size:.66rem;color:#9ca3af;margin-top:14px;border-top:1px solid rgba(255,255,255,.07);padding-top:10px;}
+  .vtl-leg span{display:inline-flex;align-items:center;gap:5px;}
+  .vtl-leg-dot{width:11px;height:11px;border-radius:50%;}
+  .vtl-interv{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:.72rem;color:#cbd5e1;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.07);}
+  .vtl-interv .vti{display:inline-flex;align-items:center;}
+  .vtl-interv .vti b{font-weight:800;color:#fff;}
+  .vtl-interv .vti-link{margin-left:auto;color:#9ca3af;cursor:pointer;}
+  .vtl-interv .vti-link:hover{color:#fff;}
+  .vtl-cta{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:10px;font-size:.8rem;margin-bottom:14px;line-height:1.4;}
+  .vtl-cta-danger{background:rgba(239,68,68,.13);border:1px solid rgba(239,68,68,.38);color:#fecaca;}
+  .vtl-cta-warn{background:rgba(245,158,11,.13);border:1px solid rgba(245,158,11,.32);color:#fde68a;}
+  .vtl-cta-ok{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.28);color:#bbf7d0;}
+  .vtl-cta-btn{background:#dc2626;color:#fff;border:0;border-radius:8px;padding:7px 13px;font-size:.76rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .12s;}
+  .vtl-cta-btn:hover{background:#b91c1c;}
+  .vtl-cta-btn.ghost{background:rgba(255,255,255,.09);}
+  .vtl-cta-btn.ghost:hover{background:rgba(255,255,255,.18);}
+  .vtl-dot.overdue{cursor:pointer;}
+  .vtl-empty{text-align:center;color:#9ca3af;padding:22px;font-size:.85rem;}
+  /* ── Mini VISITAS del Resumen — espectacular: profundidad 3D, glow, pulso ── */
+  .vtl-mini{position:relative;background:linear-gradient(150deg,#0c0c10 0%,#16161c 58%,#1b1217 100%);
+    border:1px solid #2a2a33;border-radius:16px;padding:14px 16px 12px;color:#fff;margin-bottom:16px;
+    overflow:hidden;cursor:pointer;box-shadow:0 8px 28px rgba(0,0,0,.32);
+    transition:transform .28s cubic-bezier(.2,.7,.3,1),box-shadow .28s,border-color .28s;}
+  .vtl-mini:hover{transform:perspective(950px) rotateX(2.4deg) translateY(-3px);
+    box-shadow:0 20px 52px rgba(0,0,0,.5),0 0 26px rgba(220,38,38,.22);border-color:#3b3b46;}
+  .vtl-mini-glow{position:absolute;inset:0;pointer-events:none;}
+  .vtl-mini-top{position:relative;display:flex;align-items:center;justify-content:space-between;}
+  .vtl-mini-ttl{font-size:.68rem;text-transform:uppercase;letter-spacing:.6px;font-weight:800;color:#9ca3af;}
+  .vtl-mini-ttl i{color:#dc2626;}
+  .vtl-mini-see{font-size:.62rem;color:#9ca3af;opacity:0;transform:translateX(-4px);transition:opacity .2s,transform .2s;}
+  .vtl-mini:hover .vtl-mini-see{opacity:1;transform:translateX(0);}
+  .vtl-mini-focal{position:relative;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin:9px 0 12px;}
+  .vtl-mini-num{font-size:1.75rem;font-weight:900;line-height:1;letter-spacing:-.02em;display:inline-flex;align-items:center;gap:7px;}
+  .vtl-mini-num.pulse{animation:vtlnumpulse 2.2s ease-in-out infinite;}
+  .vtl-mini-fotxt{font-size:.8rem;color:#9ca3af;font-weight:600;}
+  .vtl-mini-chips{margin-left:auto;display:flex;gap:11px;flex-wrap:wrap;}
+  .vtl-mc{font-size:.63rem;color:#cbd5e1;display:inline-flex;align-items:center;gap:5px;font-weight:600;}
+  .vtl-mc::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--c);box-shadow:0 0 9px var(--c);}
+  .vtl-mini-track{position:relative;height:40px;margin:6px 2px 2px;}
+  .vtl-mini .vtl-axis,.vtl-mini .vtl-axis-done{top:13px;height:3px;}
+  .vtl-mhoy{position:absolute;top:4px;bottom:19px;width:0;border-left:2px dashed #dc2626;z-index:2;}
+  .vtl-mm-grid{position:absolute;top:6px;height:15px;width:0;border-left:1px solid rgba(255,255,255,.07);}
+  .vtl-mm-lbl{position:absolute;top:26px;transform:translateX(-50%);font-size:.54rem;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
+  .vtl-md{position:absolute;top:8px;margin-left:-5px;width:11px;height:11px;border-radius:50%;border:2px solid #0c0c10;transition:transform .15s;cursor:pointer;z-index:1;}
+  .vtl-md:hover{transform:scale(1.55);}
+  .vtl-md.mdone{background:#22c55e;box-shadow:0 0 9px rgba(34,197,94,.7);}
+  .vtl-md.mporc{background:#f59e0b;box-shadow:0 0 9px rgba(245,158,11,.75);}
+  .vtl-md.mpend{background:transparent;border:2px dashed #60a5fa;}
+  .vtl-md.mover{background:#ef4444;box-shadow:0 0 10px rgba(239,68,68,.85);animation:vtlpulse 1.8s ease-in-out infinite;}
+  @keyframes vtlpulse{0%,100%{box-shadow:0 0 7px rgba(239,68,68,.55);}50%{box-shadow:0 0 17px rgba(239,68,68,1);}}
+  @keyframes vtlnumpulse{0%,100%{opacity:1;}50%{opacity:.74;}}
+  @media(max-width:768px){.vtl-stats{grid-template-columns:repeat(2,1fr);}.vtl-track-wrap{height:300px;}}
+  </style>
+  <div class="vtl-hero" id="vtlHero">
+    <div class="vtl-head"><i class="bi bi-bar-chart-steps"></i>Línea de tiempo de visitas</div>
+    <div id="vtlHeroBody"><div class="vtl-empty"><span class="spinner-border spinner-border-sm me-1"></span>Ordenando las visitas…</div></div>
+  </div>
+  <script>
+  window.VIS_TL = [
+  {% for v in visitas %}{"fp":"{{ v.fecha_programada.strftime('%Y-%m-%d') if v.fecha_programada else '' }}","fr":"{{ v.fecha_realizada.strftime('%Y-%m-%d') if v.fecha_realizada else '' }}","e":"{{ v.estado }}","t":"{{ v.tipo }}","ti":{{ (v.titulo or '')|tojson }},"tc":{{ (v.tecnico or '')|tojson }},"ot":{{ (v.numero_ot or '')|tojson }},"co":{{ (v.costo or 0)|float }},"fc":{{ 1 if v.firma_cliente_url else 0 }},"ft":{{ 1 if v.firma_tecnico_url else 0 }},"ef":"{{ v.estado_facturacion or '' }}","mc":"{{ v.modalidad_cobro or '' }}","cb":"{{ v.cubierto_por or '' }}"}{{ "," if not loop.last }}
+  {% endfor %}];
+  </script>
+
+  {# ══════════════════════════════════════════════════════════════════
      NUEVO 2026-05-21 — Resumen ejecutivo de visitas (Plan + Últimas + Ritmo)
      Se renderiza dinámicamente vía JS abajo. No depende de visitas|length
      porque queremos invitar al usuario a calendarizar si no hay nada.
@@ -8904,23 +9021,24 @@ async function vhGuardar(){
             <input type="text" id="suc_nombre" class="form-control" placeholder="Ej: Sede Vitacura, Sucursal Las Condes..." maxlength="200">
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold small">
-              Dirección
-              <span id="suc_dir_validating" class="ms-1" style="display:none">
-                <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+            <label class="form-label fw-semibold small d-flex align-items-center justify-content-between">
+              <span>
+                Dirección
+                <span id="suc_dir_validating" class="ms-1" style="display:none">
+                  <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem"></span>
+                </span>
               </span>
-              <span id="suc_dir_ok" class="ms-1 text-success" style="display:none"><i class="bi bi-check-circle-fill"></i></span>
+              <small class="text-muted" style="font-weight:400;font-size:.72rem">Validada con Google Maps</small>
             </label>
-            <div class="position-relative">
-              <input type="text" id="suc_direccion" class="form-control" autocomplete="off"
-                     placeholder="Escribe y elige de la lista — busca en OpenStreetMap + Photon"
-                     oninput="sucDirDebounce()" onkeydown="sucDirKeydown(event)">
-              <div id="suc_dir_dropdown" class="ac-dropdown" style="display:none"></div>
-            </div>
-            <div class="form-text" style="font-size:.7rem">
+            <input type="text" id="suc_direccion" class="form-control" autocomplete="off"
+                   placeholder="Empieza a escribir y elige una sugerencia…">
+            <input type="hidden" id="suc_direccion_lat">
+            <input type="hidden" id="suc_direccion_lng">
+            <input type="hidden" id="suc_direccion_place_id">
+            <small id="suc_direccion_hint" class="d-block mt-1" style="font-size:.74rem; color:#6b7280">
               <i class="bi bi-geo-alt me-1"></i>
-              Sugerencias automáticas con tolerancia a abreviaturas (Av/Avda) y typos.
-            </div>
+              Escribe la dirección y selecciona del menú: comuna, ciudad y región se completan solas.
+            </small>
           </div>
           <div class="col-4">
             <label class="form-label fw-semibold small">Comuna</label>

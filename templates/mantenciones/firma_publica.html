@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Firma de conformidad · ILUS</title>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+      background:#0a0a0a;color:#fff;min-height:100vh;padding:18px 14px 36px;}
+    .wrap{max-width:520px;margin:0 auto;}
+    .brand{display:flex;align-items:center;gap:10px;font-size:1.35rem;font-weight:800;letter-spacing:-.5px;margin:6px 2px 18px;}
+    .brand span{color:#dc2626}
+    .card{background:#141417;border:1px solid #262629;border-radius:16px;padding:18px 18px 16px;box-shadow:0 16px 50px rgba(0,0,0,.4);}
+    .ot-num{display:inline-block;background:#fee2e2;color:#991b1b;font-weight:800;font-size:.8rem;padding:3px 10px;border-radius:8px;letter-spacing:.4px;}
+    h1{font-size:1.12rem;font-weight:700;margin:14px 0 4px;}
+    .muted{color:#9ca3af;font-size:.86rem;line-height:1.5;}
+    .rows{margin:14px 0;border-top:1px solid #262629;padding-top:12px;}
+    .row{display:flex;justify-content:space-between;gap:12px;font-size:.86rem;padding:5px 0;}
+    .row .k{color:#9ca3af}
+    .row .v{color:#f3f4f6;font-weight:600;text-align:right}
+    label{display:block;font-size:.78rem;color:#9ca3af;font-weight:600;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.4px}
+    input[type=text]{width:100%;background:#0e0e10;border:1px solid #303034;border-radius:10px;color:#fff;
+      font-size:16px;padding:12px 13px;min-height:46px;outline:none;}
+    input[type=text]:focus{border-color:#dc2626;}
+    .sig-wrap{position:relative;margin-top:6px;}
+    canvas{width:100%;height:190px;background:#fff;border-radius:12px;border:2px dashed #d1d5db;touch-action:none;display:block;}
+    .sig-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#9ca3af;font-size:.85rem;pointer-events:none;}
+    .sig-tools{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
+    .lnk{background:none;border:0;color:#9ca3af;font-size:.8rem;font-weight:600;cursor:pointer;padding:6px 4px;}
+    .lnk:active{color:#fff}
+    .btn{display:block;width:100%;background:#dc2626;color:#fff;border:0;border-radius:12px;font-size:1rem;font-weight:700;
+      padding:15px;min-height:52px;margin-top:18px;cursor:pointer;transition:background .15s;}
+    .btn:hover{background:#b91c1c}.btn:disabled{opacity:.6}
+    .foot{text-align:center;color:#6b7280;font-size:.72rem;margin-top:18px;line-height:1.5}
+    .state{text-align:center;padding:28px 10px}
+    .state .ico{font-size:2.6rem;margin-bottom:10px}
+    .ok-ico{color:#22c55e}.warn-ico{color:#f59e0b}.err-ico{color:#ef4444}
+    .err{color:#fca5a5;font-size:.82rem;margin-top:8px;min-height:18px;text-align:center}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">ILUS<span>.</span></div>
+
+    {% if estado == 'firmar' %}
+    <div class="card">
+      <span class="ot-num">{{ ot.numero_ot or ('OT #' ~ ot.id) }}</span>
+      <h1>Firma de conformidad</h1>
+      <p class="muted">El servicio técnico de tus equipos fue realizado. Revisa el detalle y firma para dejarlo conforme.</p>
+      <div class="rows">
+        <div class="row"><span class="k">Cliente</span><span class="v">{{ ot.razon_social }}</span></div>
+        {% if ot.tecnico_nombre %}<div class="row"><span class="k">Técnico</span><span class="v">{{ ot.tecnico_nombre }}</span></div>{% endif %}
+        {% if ot.fecha_programada %}<div class="row"><span class="k">Fecha</span><span class="v">{{ ot.fecha_programada.strftime('%d/%m/%Y') if ot.fecha_programada.strftime is defined else ot.fecha_programada }}</span></div>{% endif %}
+        {% if ot.n_equipos %}<div class="row"><span class="k">Equipos atendidos</span><span class="v">{{ ot.n_equipos }}</span></div>{% endif %}
+      </div>
+
+      <label for="fNombre">Tu nombre</label>
+      <input type="text" id="fNombre" placeholder="Nombre de quien firma" autocomplete="name">
+      <label for="fRut">Tu RUT</label>
+      <input type="text" id="fRut" placeholder="12.345.678-9" inputmode="text" autocomplete="off">
+
+      <label>Tu firma</label>
+      <div class="sig-wrap">
+        <canvas id="sig"></canvas>
+        <div class="sig-hint" id="sigHint">Firma aquí con el dedo o el mouse</div>
+      </div>
+      <div class="sig-tools">
+        <button class="lnk" type="button" onclick="limpiarFirma()">↺ Borrar firma</button>
+        <span class="muted" style="font-size:.74rem">Conforme con el servicio</span>
+      </div>
+
+      <div class="err" id="err"></div>
+      <button class="btn" id="btnFirmar" onclick="enviar()">Firmar y enviar</button>
+      <div class="foot">Al firmar declaras conformidad con el servicio realizado.<br>Enlace seguro · ILUS Sport &amp; Health.</div>
+    </div>
+
+    {% elif estado == 'ya_firmada' %}
+    <div class="card"><div class="state">
+      <div class="ico ok-ico">✓</div>
+      <h1>Esta orden ya fue firmada</h1>
+      <p class="muted">Gracias. La orden de trabajo {{ ot.numero_ot or '' }} ya tiene la firma de conformidad registrada.</p>
+    </div></div>
+
+    {% elif estado == 'no_disponible' %}
+    <div class="card"><div class="state">
+      <div class="ico warn-ico">⏳</div>
+      <h1>Aún no disponible para firmar</h1>
+      <p class="muted">Esta orden todavía no está lista para tu firma. Si crees que es un error, contacta a tu ejecutivo de ILUS.</p>
+    </div></div>
+
+    {% else %}
+    <div class="card"><div class="state">
+      <div class="ico err-ico">⚠️</div>
+      <h1>Enlace no válido o vencido</h1>
+      <p class="muted">Este enlace de firma no es válido o ya expiró. Pídele a ILUS que te envíe uno nuevo.</p>
+    </div></div>
+    {% endif %}
+  </div>
+
+  {% if estado == 'firmar' %}
+  <script>
+    const TOKEN = {{ token|tojson }};
+    const cv = document.getElementById('sig'), ctx = cv.getContext('2d');
+    let drawing = false, has = false;
+    function fit(){ const r = cv.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
+      cv.width = r.width * dpr; cv.height = r.height * dpr; ctx.scale(dpr, dpr);
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111'; }
+    fit(); window.addEventListener('resize', () => { const d = cv.toDataURL(); fit(); });
+    function pos(e){ const r = cv.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e;
+      return { x: t.clientX - r.left, y: t.clientY - r.top }; }
+    function start(e){ e.preventDefault(); drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y);
+      document.getElementById('sigHint').style.display = 'none'; }
+    function move(e){ if(!drawing) return; e.preventDefault(); const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); has = true; }
+    function end(e){ drawing = false; }
+    cv.addEventListener('mousedown', start); cv.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    cv.addEventListener('touchstart', start, {passive:false}); cv.addEventListener('touchmove', move, {passive:false});
+    cv.addEventListener('touchend', end);
+    function limpiarFirma(){ ctx.clearRect(0,0,cv.width,cv.height); has = false; document.getElementById('sigHint').style.display = ''; }
+    async function enviar(){
+      const nombre = document.getElementById('fNombre').value.trim();
+      const rut = document.getElementById('fRut').value.trim();
+      const err = document.getElementById('err'); err.textContent = '';
+      if(!nombre){ err.textContent = 'Escribe tu nombre.'; return; }
+      if(!rut){ err.textContent = 'Escribe tu RUT.'; return; }
+      if(!has){ err.textContent = 'Falta tu firma.'; return; }
+      const btn = document.getElementById('btnFirmar');
+      btn.disabled = true; btn.textContent = 'Enviando…';
+      try{
+        const r = await fetch('/firmar-ot/' + encodeURIComponent(TOKEN), {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ firma_cliente: cv.toDataURL('image/png'), firma_cliente_nombre: nombre, firma_cliente_rut: rut })
+        });
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok || !d.ok){ err.textContent = (d.error || 'No se pudo registrar la firma.'); btn.disabled = false; btn.textContent = 'Firmar y enviar'; return; }
+        document.querySelector('.wrap').innerHTML =
+          '<div class="brand">ILUS<span>.</span></div><div class="card"><div class="state">' +
+          '<div class="ico ok-ico">✓</div><h1>¡Gracias! Firma registrada</h1>' +
+          '<p class="muted">Tu conformidad quedó guardada. El equipo de ILUS ya fue notificado. Puedes cerrar esta página.</p></div></div>';
+      }catch(e){ err.textContent = 'Error de conexión. Intenta de nuevo.'; btn.disabled = false; btn.textContent = 'Firmar y enviar'; }
+    }
+  </script>
+  {% endif %}
+</body>
+</html>

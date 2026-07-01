@@ -4381,6 +4381,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/webhook/",                # webhooks externos (Twilio, etc.)
     "/webhooks/",               # alias plural
     "/t/",                      # tracking público de transporte (token URL)
+    "/firmar-ot/",              # firma remota pública de OT (token HMAC)
     "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
     "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
     "/chofer",                  # app del chofer (sesión driver_id propia)
@@ -42481,15 +42482,23 @@ def mant_sucursal_add(cid):
                     "UPDATE mant_sucursales SET es_principal=0 WHERE cliente_id=%s AND es_principal=1",
                     (cid,)
                 )
+            # Google Places: dirección validada → lat/lng/place_id (opcionales).
+            try: _slat = float(d.get("direccion_lat")) if d.get("direccion_lat") else None
+            except (TypeError, ValueError): _slat = None
+            try: _slng = float(d.get("direccion_lng")) if d.get("direccion_lng") else None
+            except (TypeError, ValueError): _slng = None
+            _splace = (d.get("direccion_place_id") or "").strip()[:200] or None
             cur.execute(
                 """INSERT INTO mant_sucursales
-                   (cliente_id,nombre,direccion,comuna,ciudad,region,
+                   (cliente_id,nombre,direccion,direccion_lat,direccion_lng,direccion_place_id,
+                    comuna,ciudad,region,
                     encargado_nombre,encargado_cargo,encargado_tel,encargado_email,
                     contacto2_nombre,contacto2_cargo,contacto2_tel,contacto2_email,
                     notas,es_principal,created_by)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cid, nombre,
                  (d.get("direccion") or "").strip()[:300] or None,
+                 _slat, _slng, _splace,
                  (d.get("comuna") or "").strip()[:100] or None,
                  (d.get("ciudad") or "").strip()[:100] or None,
                  (d.get("region") or "").strip()[:100] or None,
@@ -42527,6 +42536,18 @@ def mant_sucursal_update(sid):
             v = (d[f] or "").strip() if isinstance(d[f], str) else d[f]
             sets.append(f"{f}=%s")
             vals.append(v if v else None)
+    # Google Places: lat/lng (float) y place_id (string) — solo si vienen en el payload.
+    if "direccion_lat" in d:
+        try: _ul = float(d["direccion_lat"]) if str(d.get("direccion_lat") or "").strip() else None
+        except (TypeError, ValueError): _ul = None
+        sets.append("direccion_lat=%s"); vals.append(_ul)
+    if "direccion_lng" in d:
+        try: _ug = float(d["direccion_lng"]) if str(d.get("direccion_lng") or "").strip() else None
+        except (TypeError, ValueError): _ug = None
+        sets.append("direccion_lng=%s"); vals.append(_ug)
+    if "direccion_place_id" in d:
+        sets.append("direccion_place_id=%s")
+        vals.append((str(d.get("direccion_place_id") or "").strip()[:200]) or None)
     # Manejo de es_principal con lógica única (solo una principal por cliente)
     es_principal = d.get("es_principal")
     conn = get_mysql()
@@ -50667,13 +50688,24 @@ def mant_ots_list():
             else:
                 # No tiene id de usuario ni técnico legacy → no muestra nada
                 where.append("1=0")
-            # Por defecto, técnico solo ve OTs activas (no cerradas históricas)
+            # Por defecto, técnico/ejecutivo solo oculta el HISTÓRICO archivado
+            # (cerrada/cancelada/anulada). Antes era una lista BLANCA de 3 estados
+            # que escondía OTs asignadas en pleno trabajo (creada, asignada,
+            # en_ejecucion, firmada_tecnico, pendiente_*, completada) → el técnico
+            # no veía su propia OT en la lista aunque sí salía en el calendario.
+            # Lista NEGRA: todo el trabajo activo queda visible, coherente con el
+            # calendario y la ficha. No toca el filtro de asignación (sin IDOR).
             if (uid or me_tec) and not estado:
-                where.append("v.estado IN ('programada','en_curso','reagendada')")
+                where.append("v.estado NOT IN ('cerrada','cancelada','anulada')")
         except Exception as e_tec:
             print(f"[mant_ots_list solo_mias] error: {e_tec}", flush=True)
 
-    if estado in ("programada", "completada", "cancelada", "reagendada", "en_curso"):
+    if estado in (
+        "creada", "programada", "asignada", "en_curso", "en_ejecucion",
+        "firmada_tecnico", "pendiente_info", "pendiente_repuesto",
+        "pendiente_aprobacion", "completada", "cerrada", "cancelada",
+        "anulada", "reagendada",
+    ):
         where.append("v.estado=%s")
         params.append(estado)
     if tipo in ("preventiva", "correctiva", "garantia", "inspeccion", "levantamiento", "instalacion"):
@@ -52958,6 +52990,36 @@ def mant_ot_firmar_revision(vid):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/mantenciones/api/visitas/<int:vid>/liberar-firma-tecnico", methods=["POST"])
+@_mant_required
+def mant_ot_liberar_firma_tecnico(vid):
+    """SUPERADMIN: libera la firma del técnico de una OT en 'firmada_tecnico'
+    (cuando el técnico no pudo firmar bien o hay que rehacer). La OT vuelve a
+    'en_ejecucion' para que el técnico firme de nuevo. NO se permite si el
+    cliente ya firmó (la OT estaría sellada). Queda en la bitácora."""
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede liberar la firma del técnico."}), 403
+    v = mysql_fetchone(
+        "SELECT estado, firma_cliente_url, firma_tecnico_nombre FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    if v.get("firma_cliente_url"):
+        return jsonify({"ok": False, "error": "El cliente ya firmó: la OT está sellada. Para liberar hay que reabrir el cierre."}), 400
+    if (v.get("estado") or "").lower() != "firmada_tecnico":
+        return jsonify({"ok": False, "error": "La OT no está en estado 'firmada por el técnico'."}), 400
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET firma_tecnico_url=NULL, firma_tecnico_user_id=NULL, "
+            "  firma_tecnico_nombre=NULL, firma_tecnico_at=NULL, estado='en_ejecucion' "
+            " WHERE id=%s", (vid,))
+        _mant_log("visita", vid, "firma_tecnico_liberada",
+                  f"Superadmin {current_username()} liberó la firma del técnico "
+                  f"({v.get('firma_tecnico_nombre') or '—'}); OT vuelve a en_ejecucion para re-firmar.")
+        return jsonify({"ok": True, "estado": "en_ejecucion"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-cliente", methods=["POST"])
 @_mant_required
 def mant_ot_firmar_cliente(vid):
@@ -53063,6 +53125,186 @@ def mant_ot_firmar_cliente(vid):
         except Exception as e_n:
             print(f"[notif-pend-aprob] fail vid={vid}: {e_n}", flush=True)
         return jsonify({"ok": True, "estado": "pendiente_aprobacion"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ═════════════════════════════════════════════════════════════════════
+# FIRMA REMOTA DEL CLIENTE — por correo (cuando el cliente NO está en sitio)
+# El cliente recibe un link con token, firma en una página pública, y al
+# firmar la OT pasa a 'pendiente_aprobacion' avisando al equipo (reusa la
+# misma notificación). Token = HMAC(secret, vid:exp) → SIN columna nueva en BD.
+# ═════════════════════════════════════════════════════════════════════
+def _ot_firma_key():
+    import hashlib as _hl
+    k = app.secret_key
+    return k.encode() if isinstance(k, str) else (k or b"ilus-firma")
+
+
+def _ot_firma_token(vid, ttl_horas=120):
+    """Token firmado (HMAC) que codifica la OT + expiración. Sin estado en BD."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64
+    exp = int(time.time()) + int(ttl_horas) * 3600
+    sig = _hmac.new(_ot_firma_key(), f"{vid}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
+    return _b64.urlsafe_b64encode(f"{vid}:{exp}:{sig}".encode()).decode().rstrip("=")
+
+
+def _ot_firma_token_validar(token):
+    """Devuelve vid si el token es válido y no expiró; si no, None."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64
+    try:
+        if not token or len(token) > 200:
+            return None
+        raw = _b64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+        vid_s, exp_s, sig = raw.split(":")
+        vid, exp = int(vid_s), int(exp_s)
+        good = _hmac.new(_ot_firma_key(), f"{vid}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
+        if not _hmac.compare_digest(good, sig) or time.time() > exp:
+            return None
+        return vid
+    except Exception:
+        return None
+
+
+def _ot_resumen_firma(vid):
+    """Resumen liviano de la OT para la página pública de firma."""
+    return mysql_fetchone(
+        "SELECT v.id, v.numero_ot, v.estado, v.fecha_programada, v.titulo, v.tipo, "
+        "       v.firma_tecnico_url, v.firma_tecnico_nombre, v.firma_cliente_url, "
+        "       COALESCE(ut.nombre, ut.username, v.tecnico) AS tecnico_nombre, "
+        "       c.razon_social, "
+        "       (SELECT COUNT(*) FROM mant_visita_equipos e WHERE e.visita_id=v.id) AS n_equipos "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN app_users ut ON ut.id=v.tecnico_user_id "
+        " WHERE v.id=%s", (vid,))
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/enviar-firma-remota", methods=["POST"])
+@_mant_required
+def mant_ot_enviar_firma_remota(vid):
+    """Envía al cliente un correo con un link para firmar la OT a distancia.
+    Requiere OT en 'firmada_tecnico' (técnico ya firmó) y cliente sin firmar."""
+    if not _puede_ot_accion(vid, "firmar_cliente"):
+        return jsonify({"ok": False, "error": "No tienes permiso para gestionar la firma de esta OT."}), 403
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip()[:190]
+    v = _ot_resumen_firma(vid)
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    if not v.get("firma_tecnico_url"):
+        return jsonify({"ok": False, "error": "El técnico debe firmar antes de enviar la firma remota al cliente."}), 400
+    if v.get("firma_cliente_url"):
+        return jsonify({"ok": False, "error": "El cliente ya firmó esta OT."}), 400
+    if (v.get("estado") or "").lower() != "firmada_tecnico":
+        return jsonify({"ok": False, "error": f"La OT no está lista para la firma del cliente (estado: {v.get('estado')})."}), 400
+    if not email or "@" not in email:
+        cli = mysql_fetchone(
+            "SELECT c.contacto_email, c.email_empresa FROM mant_clientes c "
+            "JOIN mant_visitas v ON v.cliente_id=c.id WHERE v.id=%s", (vid,)) or {}
+        email = (cli.get("contacto_email") or cli.get("email_empresa") or "").strip()
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "error": "Falta el correo del cliente. Escríbelo para enviar el link."}), 400
+
+    token = _ot_firma_token(vid)
+    link = _public_base_url() + "/firmar-ot/" + token
+    numero = v.get("numero_ot") or f"OT #{vid}"
+    razon = v.get("razon_social") or "estimado cliente"
+    try:
+        html = _ilus_email_master({
+            "subject": f"Firma tu orden de trabajo {numero}",
+            "title": "Firma de conformidad",
+            "subtitle": numero,
+            "customer_name": razon,
+            "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
+                        "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
+                        "El enlace es personal y vence en 5 días."),
+            "primary_cta_url": link,
+            "primary_cta_label": "Revisar y firmar la OT",
+        })
+    except Exception:
+        html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
+                f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
+    try:
+        ok = _send_ilus_email(email, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
+                              evento="ot_firma_remota", modulo="mantenciones")
+    except Exception as _e:
+        print(f"[firma-remota] email fail vid={vid}: {_e}", flush=True)
+        ok = False
+    _mant_log("visita", vid, "firma_remota_enviada",
+              f"Link de firma enviado a {email} por {current_username()}.")
+    return jsonify({"ok": True, "enviado": bool(ok), "email": email, "link": link,
+                    "mensaje": (f"Link de firma enviado a {email}." if ok else
+                                "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
+
+
+@app.route("/firmar-ot/<token>", methods=["GET"])
+def ot_firma_publica(token):
+    """Página pública (sin login): el cliente revisa y firma su OT."""
+    vid = _ot_firma_token_validar(token)
+    v = _ot_resumen_firma(vid) if vid else None
+    if not vid or not v:
+        estado = "invalido"
+    elif v.get("firma_cliente_url"):
+        estado = "ya_firmada"
+    elif (v.get("estado") or "").lower() != "firmada_tecnico":
+        estado = "no_disponible"
+    else:
+        estado = "firmar"
+    return render_template("mantenciones/firma_publica.html", estado=estado, token=token, ot=v)
+
+
+@app.route("/firmar-ot/<token>", methods=["POST"])
+def ot_firma_publica_submit(token):
+    """El cliente firma desde la página pública (sin login). Token-gated."""
+    vid = _ot_firma_token_validar(token)
+    if not vid:
+        return jsonify({"ok": False, "error": "El enlace no es válido o ya venció."}), 400
+    d = request.get_json(silent=True) or {}
+    firma = (d.get("firma_cliente") or "").strip()
+    nombre = (d.get("firma_cliente_nombre") or "").strip()[:200]
+    rut = (d.get("firma_cliente_rut") or "").strip()
+    if not firma:
+        return jsonify({"ok": False, "error": "Falta tu firma."}), 400
+    if not nombre:
+        return jsonify({"ok": False, "error": "Falta tu nombre."}), 400
+    _ok_rut, _rut_res = validar_rut(rut)
+    if not _ok_rut:
+        return jsonify({"ok": False, "error": f"RUT inválido: {_rut_res}"}), 400
+    rut_norm = _formato_rut_chile(_rut_res) or _rut_res
+    v = mysql_fetchone("SELECT estado, firma_tecnico_url, firma_cliente_url FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    if not v.get("firma_tecnico_url"):
+        return jsonify({"ok": False, "error": "La OT aún no está lista para firmar."}), 400
+    if v.get("firma_cliente_url"):
+        return jsonify({"ok": False, "error": "Esta OT ya fue firmada."}), 400
+    if (v.get("estado") or "").lower() != "firmada_tecnico":
+        return jsonify({"ok": False, "error": "La OT no está disponible para firma."}), 400
+    try:
+        firma_url = _subir_firma_cloudinary(firma, vid, "cliente")
+        mysql_execute(
+            "UPDATE mant_visitas SET firma_cliente_url=%s, firma_cliente_nombre=%s, "
+            "  firma_cliente_at=NOW(), estado='pendiente_aprobacion' WHERE id=%s",
+            (firma_url, nombre, vid))
+        try:
+            _ua = (request.headers.get("User-Agent") or "")[:400]
+            _ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+                   or request.remote_addr or "")[:64]
+            mysql_execute(
+                "INSERT INTO mant_ot_signatures "
+                "(ot_id, signer_name, signer_rut, signer_role, signature_url, ip, user_agent) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (vid, nombre, rut_norm, "cliente_remoto", firma_url, _ip, _ua))
+        except Exception as _e:
+            print(f"[firma-remota] audit fail vid={vid}: {_e}", flush=True)
+        _mant_log("visita", vid, "firmada_cliente_remoto",
+                  f"{nombre} firmó remotamente (por correo) → pendiente_aprobacion")
+        try:
+            _notificar_ot_pendiente_aprobacion_async(vid, _public_base_url())
+        except Exception as e_n:
+            print(f"[notif-firma-remota] fail vid={vid}: {e_n}", flush=True)
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -66390,6 +66632,37 @@ def _ensure_mant_reportes_columns():
     return faltantes
 
 
+def _ensure_mant_sucursales_geo_columns():
+    """Garantiza mant_sucursales.direccion_lat/lng/place_id SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). El modal de sucursal ahora valida la dirección con
+    Google Places (mismo motor que la OT / editar-cliente) y guarda lat/lng/
+    place_id. Sin estas columnas, guardar la sucursal daría 'Unknown column'.
+    1 SELECT barato en cold-start; ALTER solo la 1ª vez. CERO IA."""
+    needed = {
+        "direccion_lat":      "DECIMAL(10,7) NULL",
+        "direccion_lng":      "DECIMAL(10,7) NULL",
+        "direccion_place_id": "VARCHAR(200) NULL COMMENT 'Google Places place_id (verificado)'",
+    }
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_sucursales'"
+            ) or [])
+        }
+    except Exception:
+        return []
+    faltantes = [c for c in needed if c.lower() not in existing]
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE mant_sucursales ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_suc_geo] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_suc_geo] no se pudo agregar {col}: {e_add}", flush=True)
+    return faltantes
+
+
 def _ensure_mant_intel_tables():
     """Garantiza tablas/columnas del Agente de Inteligencia SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Idempotente. CERO IA."""
@@ -67017,6 +67290,18 @@ try:
               f"{_faltaron_rep}", flush=True)
 except Exception as _ensure_rep_err:
     print(f"[ILUS][WARN] _ensure_mant_reportes_columns: {_ensure_rep_err}", flush=True)
+
+# CRÍTICO: garantizar mant_sucursales.direccion_lat/lng/place_id SIEMPRE (incluso
+# con ILUS_SKIP_MIGRATIONS=1). El modal de sucursal valida con Google Places y
+# guarda lat/lng/place_id igual que cliente/OT. Sin esto: 'Unknown column'.
+try:
+    with app.app_context():
+        _faltaron_suc_geo = _ensure_mant_sucursales_geo_columns()
+    if _faltaron_suc_geo:
+        print(f"[ILUS] Columnas geo de mant_sucursales agregadas (skip-migrations): "
+              f"{_faltaron_suc_geo}", flush=True)
+except Exception as _ensure_suc_geo_err:
+    print(f"[ILUS][WARN] _ensure_mant_sucursales_geo_columns: {_ensure_suc_geo_err}", flush=True)
 
 # CRÍTICO: garantizar `target_field` SIEMPRE (OT Levantamiento → Ficha),
 # incluso con ILUS_SKIP_MIGRATIONS=1. Sin esta columna, el editor de plantillas,

@@ -2248,6 +2248,15 @@
         </span>
       </div>
     {% endif %}
+    {% if _es_superadmin %}
+      <button class="tx-btn-firmar" onclick="liberarFirmaTecnico()"
+              style="background:linear-gradient(135deg,#b45309,#92400e);margin-bottom:8px">
+        <i class="bi bi-arrow-counterclockwise"></i> Liberar firma del técnico (re-firmar)
+      </button>
+      <small class="d-block text-center mb-2" style="color:#b45309;font-size:.72rem;font-weight:600">
+        Solo superadmin · vuelve la OT a edición para que el técnico firme de nuevo.
+      </small>
+    {% endif %}
     {% if puede_firmar_cliente %}
       <button class="tx-btn-firmar" id="btnFirmarCliente" onclick="abrirModalFirmaCliente()"
               style="background:linear-gradient(135deg,#2563eb,#1d4ed8)">
@@ -2255,6 +2264,13 @@
       </button>
       <small class="d-block text-center mt-1" style="color:#2563eb;font-size:.72rem;font-weight:600">
         Cuando el cliente esté conforme, captura su firma para enviar a aprobación.
+      </small>
+      <button class="tx-btn-firmar mt-2" onclick="enviarFirmaRemota()"
+              style="background:linear-gradient(135deg,#0f766e,#115e59)">
+        <i class="bi bi-envelope-paper"></i> Enviar firma al cliente por correo
+      </button>
+      <small class="d-block text-center mt-1" style="color:#0d9488;font-size:.72rem;font-weight:600">
+        Si el cliente no está en sitio: le llega un link y firma a distancia; al firmar nos avisa a todos.
       </small>
     {% else %}
       <button class="tx-btn-firmar" disabled>
@@ -7594,6 +7610,51 @@ function abrirModalFirmaCliente(){
   _firmaSetStage('cliente');
   new bootstrap.Modal(document.getElementById('modalFirma')).show();
   setTimeout(() => { initCanvas('canvasCli'); }, 250);
+}
+
+// SUPERADMIN: liberar la firma del técnico → la OT vuelve a 'en_ejecucion' para
+// que el técnico pueda firmar de nuevo (caso: no alcanzó a firmar bien en sitio).
+async function liberarFirmaTecnico(){
+  const ok = await ilusConfirm({
+    title: 'Liberar firma del técnico',
+    message: '¿Liberar la firma del técnico de esta OT?',
+    sub: 'La OT vuelve a edición (en ejecución) y el técnico podrá firmar de nuevo. Queda registrado en la bitácora. Solo superadmin.',
+    okLabel: 'Liberar firma', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/liberar-firma-tecnico`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){ await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' }); return; }
+    ilusToast('✓ Firma del técnico liberada — la OT volvió a edición', { type: 'success' });
+    setTimeout(() => location.reload(), 900);
+  } catch (e){ await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' }); }
+}
+
+// Enviar al cliente un link para firmar la OT a distancia (cuando no está en sitio).
+async function enviarFirmaRemota(){
+  const email = await ilusPrompt({
+    title: 'Enviar firma al cliente',
+    message: 'Correo del cliente para enviarle el link de firma:',
+    sub: 'Déjalo vacío para usar el correo registrado del cliente. El link vence en 5 días; al firmar nos avisa a todos.',
+    placeholder: 'cliente@correo.cl', inputType: 'email', required: false,
+  });
+  if (email === null) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: (email || '').trim() }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){ await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' }); return; }
+    if (d.enviado){
+      await ilusAlert({ title: '✅ Link enviado', message: d.mensaje || ('Link de firma enviado a ' + d.email), type: 'success' });
+    } else {
+      await ilusAlert({ title: 'Link generado', message: (d.mensaje || ''), sub: (d.link || ''), type: 'warning' });
+    }
+  } catch (e){ await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' }); }
 }
 
 async function enviarFirma(){
