@@ -2042,17 +2042,92 @@ def register_pickup_routes(app, ctx):
                                     import html as _html_esc
                                     link = _public_base_url() + f"/retiros/{rid_snap}"
                                     subject = f"ILUS - {titulo_snap}"
-                                    html = _ilus_email_html(
-                                        titulo=titulo_snap,
-                                        subtitulo=f"Retiro {code_snap}",
-                                        saludo="Equipo ILUS",
-                                        parrafos=[
-                                            _html_esc.escape(cuerpo_snap).replace("\n", "<br>"),
-                                            "Revisa la solicitud en el panel interno de retiros.",
-                                        ],
-                                        btn_primario_txt="Abrir retiro",
-                                        btn_primario_url=link,
-                                    )
+                                    # ── FORMATO PREMIUM (Daniel 2026-06-21: "quiero el
+                                    # mejor formato") — mismo lenguaje visual que los
+                                    # correos del cliente: héroe con código en rojo +
+                                    # tracking de 5 hitos + card de datos + CTA al panel.
+                                    # Best-effort: si algo falla, cae al formato clásico.
+                                    html = None
+                                    try:
+                                        _rq_mail = mysql_fetchone(
+                                            f"SELECT status, customer_name, responsable_nombre "
+                                            f"FROM `{REQ}` WHERE id=%s", (rid_snap,)) or {}
+                                        _st_mail = _rq_mail.get("status") or ""
+                                        _idx_mail = pickup_journey_idx(_st_mail)
+                                        _chips = {
+                                            "retiro_nuevo":       ("Nueva solicitud", "#dbeafe", "#1e3a8a"),
+                                            "retiro_respuesta":   ("Respuesta del cliente", "#fed7aa", "#9a3412"),
+                                            "retiro_confirmado":  ("Cita confirmada", "#dcfce7", "#14532d"),
+                                            "retiro_preparacion": ("En preparación", "#fef3c7", "#78350f"),
+                                            "retiro_listo":       ("Pedido listo", "#dcfce7", "#14532d"),
+                                            "retiro_cerrado":     ("Completado", "#dcfce7", "#14532d"),
+                                            "retiro_mensaje":     ("Mensaje del cliente", "#dcfce7", "#14532d"),
+                                            "retiro_sin_saldo":   ("Revisar saldo ERP", "#fee2e2", "#7f1d1d"),
+                                        }
+                                        _ch_txt, _ch_bg, _ch_fg = _chips.get(
+                                            tipo_snap, ("Aviso interno", "#f3f4f6", "#374151"))
+                                        def _fila(lbl, val):
+                                            if not val:
+                                                return ""
+                                            return (
+                                                '<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:10px"><tr>'
+                                                f'<td style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.07em;font-weight:700;width:40%;padding:4px 0">{lbl}</td>'
+                                                f'<td style="font-size:14px;color:#0a0a0a;font-weight:700;padding:4px 0">{_html_esc.escape(str(val))}</td>'
+                                                '</tr></table>')
+                                        _cuerpo_html = (
+                                            # Héroe (card blanca, riel rojo, código grande)
+                                            '<table cellpadding="0" cellspacing="0" width="100%" '
+                                            'style="background:#ffffff;border:1px solid #ececef;border-left:5px solid #dc2626;'
+                                            'border-radius:12px;margin:0 0 20px;box-shadow:0 2px 8px rgba(10,10,10,.05)">'
+                                            '<tr><td style="padding:24px 26px;text-align:center">'
+                                            f'<div style="display:inline-block;background:{_ch_bg};color:{_ch_fg};font-size:11px;'
+                                            'font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:6px 14px;'
+                                            f'border-radius:50px;margin-bottom:16px">🔔 Aviso interno · {_ch_txt}</div>'
+                                            '<div style="font-family:Helvetica,Arial,sans-serif;color:#9ca3af;font-size:12px;'
+                                            'letter-spacing:.14em;text-transform:uppercase;font-weight:700;margin-bottom:2px">Orden de retiro</div>'
+                                            '<div style="font-family:Helvetica,Arial,sans-serif;color:#dc2626;font-size:34px;'
+                                            f'line-height:1.1;font-weight:900;letter-spacing:.03em;margin-bottom:8px">{_html_esc.escape(code_snap)}</div>'
+                                            f'<div style="color:#1f2937;font-size:14px;font-weight:600;line-height:1.45">{_html_esc.escape(titulo_snap)}</div>'
+                                            '</td></tr></table>'
+                                            # Tracking canónico (posición actual del retiro)
+                                            + (_pickup_email_stepper(_idx_mail) if _idx_mail >= 0 else "")
+                                            # Detalle del evento
+                                            + '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+                                            + _html_esc.escape(cuerpo_snap).replace("\n", "<br>") + '</p>'
+                                            # Card de datos
+                                            + '<table cellpadding="0" cellspacing="0" width="100%" '
+                                            'style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;margin:0 0 18px">'
+                                            '<tr><td style="padding:18px 22px">'
+                                            + _fila("Cliente", _rq_mail.get("customer_name"))
+                                            + _fila("Estado actual", PICKUP_STATUS.get(_st_mail, _st_mail))
+                                            + _fila("Responsable", _rq_mail.get("responsable_nombre"))
+                                            + '</td></tr></table>'
+                                            # CTA al panel
+                                            + '<table cellpadding="0" cellspacing="0" width="100%" style="margin:24px 0 8px">'
+                                            '<tr><td align="center">'
+                                            f'<a href="{link}" style="display:inline-block;background:#dc2626;color:#ffffff;'
+                                            'padding:14px 32px;text-decoration:none;font-size:14px;font-weight:800;'
+                                            'letter-spacing:.04em;border-radius:8px;box-shadow:0 4px 14px rgba(220,38,38,.30)">'
+                                            'Abrir retiro en el panel →</a></td></tr></table>'
+                                            + '<p style="font-size:11px;color:#9ca3af;text-align:center;margin:16px 0 0">'
+                                            'Aviso interno ILUS — solo para el equipo. El cliente recibe su propio correo con seguimiento.</p>'
+                                        )
+                                        from app import _comm_render_email_document
+                                        html = _comm_render_email_document(titulo_snap, _cuerpo_html)
+                                    except Exception as _e_pretty:
+                                        print(f"[ILUS][PICKUP TEAM NOTIF] formato premium falló, fallback clásico: {_e_pretty}", flush=True)
+                                    if not html:
+                                        html = _ilus_email_html(
+                                            titulo=titulo_snap,
+                                            subtitulo=f"Retiro {code_snap}",
+                                            saludo="Equipo ILUS",
+                                            parrafos=[
+                                                _html_esc.escape(cuerpo_snap).replace("\n", "<br>"),
+                                                "Revisa la solicitud en el panel interno de retiros.",
+                                            ],
+                                            btn_primario_txt="Abrir retiro",
+                                            btn_primario_url=link,
+                                        )
                                     for dest in dests:
                                         try:
                                             _send_ilus_email(
