@@ -939,9 +939,26 @@
     }.get(req.status, {'ico':'circle','accent':'accent-blue','title':b.label,'msg':'Estado actualizado por nuestro equipo.'}) %}
     <div class="hero-status {{ _hero_msg.accent }}" id="heroStatusCard">
       <div class="ico-wrap"><i class="bi bi-{{ _hero_msg.ico }}"></i></div>
-      <div>
+      <div style="flex:1">
         <h3 class="title" id="heroStatusTitle">{{ _hero_msg.title }}</h3>
         <p class="msg" id="heroStatusMsg">{{ _hero_msg.msg }}</p>
+        {# ── CONECTIVIDAD (Daniel 2026-06-21): el cliente VE cómo bodega
+           prepara su pedido ítem por ítem, EN VIVO. ── #}
+        {% if req.status == 'en_preparacion' and (req.prep_total or 0) > 0 %}
+        {% set _pct = ((req.prep_hechos or 0) * 100 / req.prep_total) | round | int %}
+        <div style="margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:.74rem;font-weight:800;margin-bottom:4px">
+            <span style="color:#6b7280;text-transform:uppercase;letter-spacing:.06em">📦 Preparación de tu pedido</span>
+            <span style="color:{{ '#16a34a' if _pct >= 100 else '#8b5cf6' }}">{{ req.prep_hechos }}/{{ req.prep_total }} ítems · {{ _pct }}%</span>
+          </div>
+          <div style="height:9px;background:#e9ebee;border-radius:50px;overflow:hidden">
+            <div style="height:100%;width:{{ _pct }}%;border-radius:50px;transition:width .6s;background:{{ '#16a34a' if _pct >= 100 else 'linear-gradient(90deg,#8b5cf6,#a78bfa)' }}"></div>
+          </div>
+          {% if _pct >= 100 %}
+          <div style="margin-top:6px;font-size:.8rem;font-weight:800;color:#16a34a">✅ ¡Tu pedido está LISTO! Te esperamos en el horario confirmado.</div>
+          {% endif %}
+        </div>
+        {% endif %}
       </div>
     </div>
 
@@ -1846,7 +1863,10 @@
       return [
         d.status, d.journey_idx,
         d.has_pending_proposal ? 1 : 0,
-        d.confirmed_date || '', d.confirmed_time_from || ''
+        d.confirmed_date || '', d.confirmed_time_from || '',
+        // CONECTIVIDAD (2026-06-21): cada check de bodega en el picking WMS
+        // cambia la firma → la barra de preparación avanza EN VIVO.
+        (d.prep_hechos || 0) + '/' + (d.prep_total || 0)
       ].join('|');
     }
 

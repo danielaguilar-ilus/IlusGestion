@@ -2340,11 +2340,26 @@ def register_pickup_routes(app, ctx):
         )
 
         status = req.get("status") or ""
+        # CONECTIVIDAD (Daniel 2026-06-21): progreso del picking WMS visible para
+        # el cliente mientras su pedido está en preparación (bodega marca ítems
+        # → el seguimiento avanza EN VIVO). Cheap: 1 COUNT solo en ese estado.
+        prep_total, prep_hechos = 0, 0
+        if status == "en_preparacion":
+            try:
+                _pk = mysql_fetchone(
+                    "SELECT COUNT(*) AS t, COALESCE(SUM(picked),0) AS h "
+                    "FROM pickup_picking_items WHERE request_id=%s", (req["id"],)) or {}
+                prep_total = int(_pk.get("t") or 0)
+                prep_hechos = int(_pk.get("h") or 0)
+            except Exception:
+                pass
         payload = {
             "ok":                   True,
             "status":               status,
             "status_label":         PICKUP_STATUS.get(status, status),
             "status_color":         PICKUP_STATUS_COLORS.get(status, "secondary"),
+            "prep_total":           prep_total,
+            "prep_hechos":          prep_hechos,
             # journey_idx: hito canónico (0-4, -1=cancelado). Lo usa el polling
             # para refrescar el stepper EN VIVO aunque el `status` exacto cambie
             # a otro estado del MISMO hito (ej: solicitud_recibida→en_revision).
@@ -3523,6 +3538,19 @@ def register_pickup_routes(app, ctx):
         # Sanitizar: eliminar campos internos antes de pasar al template público.
         req_safe = dict(_strip_internal(req))
         req_safe["m3_calculado"] = _m3
+        # Progreso de preparación (WMS) para el cliente (Daniel 2026-06-21)
+        prep_total, prep_hechos = 0, 0
+        if (req.get("status") or "") == "en_preparacion":
+            try:
+                _pk = mysql_fetchone(
+                    "SELECT COUNT(*) AS t, COALESCE(SUM(picked),0) AS h "
+                    "FROM pickup_picking_items WHERE request_id=%s", (req["id"],)) or {}
+                prep_total = int(_pk.get("t") or 0)
+                prep_hechos = int(_pk.get("h") or 0)
+            except Exception:
+                pass
+        req_safe["prep_total"] = prep_total
+        req_safe["prep_hechos"] = prep_hechos
         _tracking_html = render_template("retiros/public_tracking.html",
                                req=req_safe, packages=packages, proposals=proposals,
                                logs=logs, attachments=attachments,
@@ -8440,6 +8468,15 @@ def register_pickup_routes(app, ctx):
                         prioridad="media", tipo="retiro_listo", send_email=False)
                 except Exception:
                     pass
+            # CONECTIVIDAD (Daniel 2026-06-21): el cliente ve el progreso de
+            # preparación EN VIVO en su seguimiento → invalidar su cache de poll.
+            try:
+                _tokp = (mysql_fetchone(
+                    f"SELECT public_token FROM `{REQ}` WHERE id=%s", (rid,)) or {}).get("public_token")
+                if _tokp:
+                    _POLL_CACHE.pop(_tokp, None)
+            except Exception:
+                pass
             return jsonify({"ok": True, **estado})
         except Exception as e:
             print(f"[pickup-picking] toggle rid={rid}: {e}", flush=True)
