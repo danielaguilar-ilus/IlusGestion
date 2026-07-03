@@ -16,7 +16,7 @@
 
   /* ───────────────────────── CSS embebido ───────────────────────── */
   var CSS = [
-    '.ife-backdrop{position:fixed;inset:0;z-index:20000;background:rgba(4,4,6,.96);',
+    '.ife-backdrop{position:fixed;inset:0;z-index:20000;background:#060608;',
     ' display:flex;flex-direction:column;animation:ifeIn .18s ease}',
     '@keyframes ifeIn{from{opacity:0}to{opacity:1}}',
     '.ife-head{display:flex;align-items:center;gap:10px;padding:10px 14px;',
@@ -88,8 +88,23 @@
     '.ife-upov .pct{font-size:.75rem;font-weight:700}',
     '@media (max-width:768px){',
     ' .ife-backdrop{height:100dvh}',
-    ' .ife-tools{gap:6px;padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px))}',
-    ' .ife-iconbtn{width:42px;height:42px}',
+    ' .ife-tools{gap:6px;padding:8px 10px calc(10px + env(safe-area-inset-bottom,0px));',
+    '  flex-wrap:wrap;justify-content:center;overflow-x:visible}',
+    ' .ife-tools .ife-spacer{display:none}',
+    ' .ife-tools .ife-sep{display:none}',
+    ' .ife-iconbtn{width:46px;height:46px;font-size:1.25rem}',
+    ' .ife-save{flex:1 1 100%;order:99;justify-content:center;min-height:50px;',
+    '  font-size:1rem;margin-top:2px}',
+    ' .ife-adjust label{width:70px}',
+    ' .ife-adjust input[type=range]{min-height:40px}',
+    ' .ife-cropbar button{flex:1;max-width:220px}',
+    '}',
+    '@media (pointer:coarse){',
+    ' .ife-crop .ife-h{width:36px;height:36px;border-width:4px}',
+    ' .ife-crop .ife-h.nw{left:-19px;top:-19px}',
+    ' .ife-crop .ife-h.ne{right:-19px;top:-19px}',
+    ' .ife-crop .ife-h.sw{left:-19px;bottom:-19px}',
+    ' .ife-crop .ife-h.se{right:-19px;bottom:-19px}',
     '}'
   ].join('');
 
@@ -591,6 +606,18 @@
       stage.addEventListener('dblclick', function () {
         if (!st || st.cropMode) return;
         setZoom(st.zoom > 1 ? 1 : 2);
+      });
+      /* doble TAP táctil (en iOS/Android dblclick no siempre dispara) */
+      var lastTap = 0;
+      stage.addEventListener('pointerup', function (e) {
+        if (!st || st.cropMode || e.pointerType === 'mouse') return;
+        var now = Date.now();
+        if (now - lastTap < 320) {
+          lastTap = 0;
+          setZoom(st.zoom > 1 ? 1 : 2);
+        } else {
+          lastTap = now;
+        }
       });
     }
 
