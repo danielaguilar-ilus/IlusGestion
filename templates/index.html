@@ -521,6 +521,7 @@ function loadScannerLib() {
 }
 /* Precarga en tiempo muerto: al abrir el escáner ya suele estar lista */
 (window.requestIdleCallback || function (f) { setTimeout(f, 2500); })(function () {
+  if ('BarcodeDetector' in window) return;   /* Chrome/Edge usan el motor NATIVO */
   loadScannerLib().catch(function () {});
 });
 </script>
@@ -716,6 +717,14 @@ function clearKpiFilter() {
 (function(){
   var SKU_LOOKUP_URL = "{{ url_for('sku_lookup') }}";
   var html5QrCode  = null;
+  /* Formatos 1D de las etiquetas ILUS (CODE128 primero) */
+  var FORMATS_1D = ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf'];
+  /* ¿El navegador trae detector de códigos NATIVO? (Chrome/Edge/Android sí) */
+  var NATIVE_OK = ('BarcodeDetector' in window)
+    ? window.BarcodeDetector.getSupportedFormats()
+        .then(function(f){ return f.indexOf('code_128') >= 0; })
+        .catch(function(){ return false; })
+    : Promise.resolve(false);
   var scannerModal = document.getElementById('scannerModal');
   var scanBtn      = document.getElementById('scanBtn');
   var manualBtn    = document.getElementById('manualSearchBtn');
@@ -734,17 +743,122 @@ function clearKpiFilter() {
 
   scanBtn.addEventListener('click', function(){
     resetModal();
-    loadScannerLib().catch(function(){});   /* arranca la descarga YA */
+    NATIVE_OK.then(function(ok){ if (!ok) loadScannerLib().catch(function(){}); });
     new bootstrap.Modal(scannerModal).show();
   });
 
   scannerModal.addEventListener('shown.bs.modal', function(){
     statusEl.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-2"></div>Iniciando cámara…';
-    loadScannerLib().then(startCamera).catch(function(){
-      statusEl.innerHTML = '<i class="bi bi-wifi-off me-1 text-warning"></i>'
-                         + 'No se pudo cargar el escáner (sin internet). Usa el campo manual.';
+    NATIVE_OK.then(function(ok){
+      if (!scannerModal.classList.contains('show')) return;
+      if (ok) { startNative(); return; }
+      loadScannerLib().then(startCamera).catch(function(){
+        statusEl.innerHTML = '<i class="bi bi-wifi-off me-1 text-warning"></i>'
+                           + 'No se pudo cargar el escáner (sin internet). Usa el campo manual.';
+      });
     });
   });
+
+  /* ══════════════════════════════════════════════════════════════
+     MOTOR NATIVO — BarcodeDetector del navegador (Daniel 2026-07-03)
+     Chrome/Edge/Android decodifican CODE128 a nivel del navegador:
+     la cámara arranca en ~0.5s (sin librería de 400KB) y detecta
+     cuadro a cuadro casi al instante. iPhone/Safari no lo trae →
+     cae automáticamente a html5-qrcode (flujo de siempre).
+  ══════════════════════════════════════════════════════════════ */
+  var natDetector = null, natStream = null, natVideo = null,
+      natTimer = null, natActive = false;
+
+  function beep() {
+    try {
+      var C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return;
+      var actx = new C(), o = actx.createOscillator(), g = actx.createGain();
+      o.connect(g); g.connect(actx.destination);
+      o.frequency.value = 1400; g.gain.value = 0.12;
+      o.start();
+      setTimeout(function(){ try { o.stop(); actx.close(); } catch (e) {} }, 120);
+    } catch (e) { /* sin audio no pasa nada */ }
+  }
+
+  function startNative() {
+    if (!scannerModal.classList.contains('show')) return;
+    try {
+      natDetector = new window.BarcodeDetector({ formats: FORMATS_1D });
+    } catch (e) {
+      loadScannerLib().then(startCamera).catch(function(){});
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    }).then(function(stream){
+      natStream = stream;
+      var reader = document.getElementById('qr-reader');
+      reader.innerHTML = '';
+      reader.style.position = 'relative';
+      natVideo = document.createElement('video');
+      natVideo.setAttribute('playsinline', '');
+      natVideo.muted = true;
+      natVideo.srcObject = stream;
+      natVideo.style.cssText = 'width:100%;display:block;max-height:340px;object-fit:cover';
+      reader.appendChild(natVideo);
+      /* marco guía con línea de escaneo estilo pistola */
+      var ov = document.createElement('div');
+      ov.style.cssText = 'position:absolute;left:10%;right:10%;top:30%;bottom:30%;'
+        + 'border:2px solid rgba(220,38,38,.9);border-radius:10px;pointer-events:none;'
+        + 'box-shadow:0 0 0 9999px rgba(0,0,0,.25)';
+      ov.innerHTML = '<div style="position:absolute;left:6px;right:6px;top:50%;height:2px;'
+        + 'background:rgba(220,38,38,.85);box-shadow:0 0 8px rgba(220,38,38,.8)"></div>';
+      reader.appendChild(ov);
+      return natVideo.play();
+    }).then(function(){
+      natActive = true;
+      statusEl.innerHTML = '<i class="bi bi-lightning-charge-fill me-1" style="color:var(--ilus-red)"></i>'
+                         + 'Apunta al código — detección instantánea';
+      natTick();
+    }).catch(function(){
+      stopNative();
+      /* sin permiso/cámara con el nativo → intentar con la librería */
+      loadScannerLib().then(startCamera).catch(function(){
+        statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>'
+                           + 'Cámara no disponible. Usa el campo manual.';
+      });
+    });
+  }
+
+  function natTick() {
+    if (!natActive || !natVideo) return;
+    if (natVideo.readyState < 2) { natTimer = setTimeout(natTick, 120); return; }
+    natDetector.detect(natVideo).then(function(codes){
+      if (natActive && codes && codes.length && codes[0].rawValue) {
+        natActive = false;                 /* pausa hasta "Escanear otro" */
+        handleScanResult(codes[0].rawValue, natResume);
+        return;
+      }
+      natTimer = setTimeout(natTick, 90);
+    }).catch(function(){
+      natTimer = setTimeout(natTick, 250);
+    });
+  }
+
+  function natResume() {
+    if (!natStream) return;
+    natActive = true;
+    statusEl.innerHTML = '<i class="bi bi-lightning-charge-fill me-1" style="color:var(--ilus-red)"></i>'
+                       + 'Apunta al código — detección instantánea';
+    natTick();
+  }
+
+  function stopNative() {
+    natActive = false;
+    if (natTimer) { clearTimeout(natTimer); natTimer = null; }
+    if (natStream) {
+      natStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} });
+      natStream = null;
+    }
+    natVideo = null;
+  }
 
   function startCamera(){
     if (!scannerModal.classList.contains('show')) return;  /* la cerró antes */
@@ -777,16 +891,31 @@ function clearKpiFilter() {
       { facingMode: 'environment' },
       config,
       function onSuccess(decodedText){
-        var sku = decodedText.trim().toUpperCase();
         html5QrCode.pause();
+        handleScanResult(decodedText, function(){ if (html5QrCode) html5QrCode.resume(); });
+      },
+      function onError(){ /* ignorar errores de frame */ }
+    ).then(function(){
+      statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>'
+                         + 'Apunta al código — detección automática';
+    }).catch(function(err){
+      statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>'
+                         + 'Cámara no disponible. Usa el campo manual.';
+    });
+  }
 
-        /* Feedback inmediato visible — spinner en la barra de estado */
-        statusEl.innerHTML =
-          '<span class="spinner-border spinner-border-sm me-2 text-danger"></span>'
-          + 'Buscando <strong>' + sku + '</strong>…';
-        if (scanResultEl) { scanResultEl.style.display = 'none'; scanResultEl.innerHTML = ''; }
+  /* ══ Resultado del escaneo — COMPARTIDO por motor nativo, librería
+     y pistola USB. `resume` reanuda la cámara para "Escanear otro". ══ */
+  function handleScanResult(decodedText, resume) {
+    var sku = String(decodedText || '').trim().toUpperCase();
+    beep();
+    if (navigator.vibrate) navigator.vibrate(60);
+    statusEl.innerHTML =
+      '<span class="spinner-border spinner-border-sm me-2 text-danger"></span>'
+      + 'Buscando <strong>' + sku + '</strong>…';
+    if (scanResultEl) { scanResultEl.style.display = 'none'; scanResultEl.innerHTML = ''; }
 
-        fetch(SKU_LOOKUP_URL + '?sku=' + encodeURIComponent(sku))
+    fetch(SKU_LOOKUP_URL + '?sku=' + encodeURIComponent(sku))
           .then(function(r){ return r.json(); })
           .then(function(d){
             if (d.status === 'found_app') {
@@ -796,7 +925,7 @@ function clearKpiFilter() {
                 + 'Abriendo <strong>' + d.sku + '</strong>…';
               window.location.href = d.edit_url;
 
-            } else if (d.status === 'found_erp') {
+            } else if (d.status === 'found_erp') {   /* dentro de handleScanResult */
               /* 🔶 En ERP pero sin ficha */
               if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
               statusEl.innerHTML =
@@ -815,7 +944,7 @@ function clearKpiFilter() {
                 document.getElementById('retryScan').onclick = function(){
                   scanResultEl.style.display = 'none';
                   statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>Apunta al código';
-                  html5QrCode.resume();
+                  resume();
                 };
               }
 
@@ -835,7 +964,7 @@ function clearKpiFilter() {
                 document.getElementById('retryScan2').onclick = function(){
                   scanResultEl.style.display = 'none';
                   statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>Apunta al código';
-                  html5QrCode.resume();
+                  resume();
                 };
               }
             }
@@ -846,21 +975,13 @@ function clearKpiFilter() {
               + 'Error de red — <button class="btn btn-sm btn-link p-0" id="retryScan3">reintentar</button>';
             document.getElementById('retryScan3').onclick = function(){
               statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>Apunta al código';
-              html5QrCode.resume();
+              resume();
             };
           });
-      },
-      function onError(){ /* ignorar errores de frame */ }
-    ).then(function(){
-      statusEl.innerHTML = '<i class="bi bi-camera-fill me-1" style="color:var(--ilus-red)"></i>'
-                         + 'Apunta al código — detección automática';
-    }).catch(function(err){
-      statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>'
-                         + 'Cámara no disponible. Usa el campo manual.';
-    });
   }
 
   scannerModal.addEventListener('hide.bs.modal', function(){
+    stopNative();
     if(html5QrCode){
       html5QrCode.stop().catch(function(){});
       html5QrCode.clear();
