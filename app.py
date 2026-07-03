@@ -38182,6 +38182,424 @@ def mant_clientes():
     )
 
 
+@app.route("/mantenciones/clientes/reporte.xlsx")
+@_mant_required
+@_no_tecnico
+def mant_clientes_reporte_xlsx():
+    """Reporte Excel de clientes + situación de contrato (para cruce con Finanzas).
+
+    Una fila por cliente con lo que pidió Daniel: RUT, razón social, dirección,
+    comuna + CONDICIÓN (estado del contrato) y TIPO de contrato; más columnas de
+    apoyo (giro, vigencia, montos, N° máquinas, próxima visita) y una columna
+    'Observaciones' con banderas de calidad de dato (sin RUT / sin dirección /
+    sin contrato / contrato vencido / sin tipo) pensada justamente para detectar
+    diferencias con la data del área de Finanzas. Segunda hoja 'Resumen' con los
+    totales. Toma el contrato MÁS RECIENTE por cliente. 100% lectura, sin IA.
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from io import BytesIO
+    except Exception:
+        flash("Falta la librería openpyxl para generar el Excel.", "danger")
+        return redirect(url_for("mant_clientes"))
+
+    # ¿Existe la columna ai_tipo_contrato? (ALTER que puede faltar en prod).
+    _has_tipo = False
+    try:
+        _c = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_contratos' "
+            "  AND COLUMN_NAME='ai_tipo_contrato'"
+        )
+        _has_tipo = bool((_c or {}).get("n"))
+    except Exception:
+        _has_tipo = False
+    tipo_outer = "c_latest.ai_tipo_contrato AS contrato_tipo," if _has_tipo else "NULL AS contrato_tipo,"
+    tipo_inner = "ct.ai_tipo_contrato," if _has_tipo else ""
+
+    # ── Filtros de alcance (los elige el usuario en el modal de descarga) ──
+    f_estado   = (request.args.get("estado") or "").strip().lower()
+    f_contrato = (request.args.get("contrato") or "").strip().lower()
+    wh, wparams, filtros_desc = ["1=1"], [], []
+    if f_estado in ("activo", "inactivo", "prospecto", "suspendido"):
+        wh.append("c.estado=%s")
+        wparams.append(f_estado)
+        filtros_desc.append({"activo": "solo activos", "inactivo": "solo inactivos",
+                             "prospecto": "solo prospectos",
+                             "suspendido": "solo suspendidos"}[f_estado])
+    if f_contrato == "con":
+        wh.append("COALESCE(c_agg.cnt,0) > 0")
+        filtros_desc.append("solo con contrato")
+    elif f_contrato == "sin":
+        wh.append("COALESCE(c_agg.cnt,0) = 0")
+        filtros_desc.append("solo sin contrato")
+
+    rows = mysql_fetchall(f"""
+        SELECT c.id, c.razon_social, c.rut, c.estado, c.giro,
+               c.direccion, c.comuna, c.ciudad, c.region,
+               c.email_empresa, c.tel_empresa,
+               c.contacto_nombre, c.contacto_email, c.contacto_tel,
+               COALESCE(m_agg.cnt, 0)     AS maquinas_count,
+               COALESCE(c_agg.cnt, 0)     AS contratos_count,
+               {tipo_outer}
+               c_latest.estado            AS contrato_estado,
+               c_latest.frecuencia_meses  AS contrato_freq,
+               c_latest.fecha_inicio      AS contrato_inicio,
+               c_latest.fecha_vencimiento AS contrato_vencimiento,
+               c_latest.es_indefinido     AS contrato_indef,
+               c_latest.monto_mensual     AS contrato_monto_mensual,
+               c_latest.monto_anual       AS contrato_monto_anual,
+               v_next.fecha_programada    AS prox_visita
+        FROM mant_clientes c
+        LEFT JOIN (
+            SELECT cliente_id, COUNT(*) AS cnt FROM mant_maquinas
+            WHERE estado='activo' GROUP BY cliente_id
+        ) m_agg ON m_agg.cliente_id = c.id
+        LEFT JOIN (
+            SELECT cliente_id, COUNT(*) AS cnt FROM mant_contratos GROUP BY cliente_id
+        ) c_agg ON c_agg.cliente_id = c.id
+        LEFT JOIN (
+            SELECT ct.cliente_id, {tipo_inner} ct.estado, ct.frecuencia_meses,
+                   ct.fecha_inicio, ct.fecha_vencimiento, ct.es_indefinido,
+                   ct.monto_mensual, ct.monto_anual
+            FROM mant_contratos ct
+            INNER JOIN (
+                SELECT cliente_id, MAX(id) AS max_id FROM mant_contratos GROUP BY cliente_id
+            ) latest ON latest.cliente_id = ct.cliente_id AND latest.max_id = ct.id
+        ) c_latest ON c_latest.cliente_id = c.id
+        LEFT JOIN (
+            SELECT cliente_id, MIN(fecha_programada) AS fecha_programada
+            FROM mant_visitas
+            WHERE estado='programada' AND fecha_programada >= CURDATE()
+            GROUP BY cliente_id
+        ) v_next ON v_next.cliente_id = c.id
+        WHERE {' AND '.join(wh)}
+        ORDER BY c.razon_social
+    """, tuple(wparams)) or []
+    rows = [dict(r) for r in rows]
+
+    COND_MAP = {"vigente": "Vigente", "vencido": "Vencido",
+                "por_vencer": "Por vencer", "indefinido": "Indefinido"}
+    EST_CLI_MAP = {"activo": "Activo", "inactivo": "Inactivo",
+                   "prospecto": "Prospecto", "suspendido": "Suspendido"}
+
+    def _d(v):
+        try: return v.strftime("%d/%m/%Y") if v else ""
+        except Exception: return str(v) if v else ""
+
+    def _num(v):
+        try: return float(v) if v is not None else None
+        except (TypeError, ValueError): return None
+
+    BLACK, LGRAY, AMBER, GREENL, REDL = "0A0A0A", "F5F5F5", "FFF8E1", "DCFCE7", "FEE2E2"
+    thin = Side(style="thin", color="E5E7EB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _hdr(cell, val):
+        cell.value = val
+        cell.font = Font(bold=True, color="FFFFFF", size=9)
+        cell.fill = PatternFill("solid", fgColor=BLACK)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+    from datetime import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo
+        _now = _dt.now(ZoneInfo("America/Santiago"))
+    except Exception:
+        _now = _dt.now()
+    fecha_gen = _now.strftime("%d/%m/%Y %H:%M")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Clientes"
+
+    NCOLS = 24
+    alcance_txt = (" · ".join(filtros_desc)) if filtros_desc else "todos los clientes"
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
+    tcell = ws.cell(row=1, column=1,
+                    value=f"ILUS · Reporte de Clientes y Contratos  —  {alcance_txt}  —  generado {fecha_gen}")
+    tcell.font = Font(bold=True, size=13, color="FFFFFF")
+    tcell.fill = PatternFill("solid", fgColor=BLACK)
+    tcell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 26
+
+    headers = [
+        "ID ILUS", "RUT", "Razón social", "Estado cliente", "Giro",
+        "Dirección", "Comuna", "Ciudad", "Región",
+        "Email empresa", "Teléfono empresa", "Contacto",
+        "¿Tiene contrato?", "N° contratos", "Condición contrato", "Tipo de contrato",
+        "Frecuencia (meses)", "Vigencia desde", "Vigencia hasta",
+        "Monto mensual", "Monto anual", "N° máquinas", "Próxima visita",
+        "Observaciones (revisar)",
+    ]
+    for ci, h in enumerate(headers, 1):
+        _hdr(ws.cell(row=2, column=ci), h)
+    ws.row_dimensions[2].height = 30
+
+    stats = {"total": 0, "con_contrato": 0, "sin_contrato": 0, "vigente": 0,
+             "vencido": 0, "por_vencer": 0, "indefinido": 0, "sin_rut": 0,
+             "sin_direccion": 0, "sin_comuna": 0, "sin_tipo": 0,
+             "activo": 0, "inactivo": 0, "prospecto": 0, "suspendido": 0}
+
+    r = 3
+    for c in rows:
+        stats["total"] += 1
+        tiene_ct = (c.get("contratos_count") or 0) > 0
+        cond = c.get("contrato_estado")
+        obs = []
+        if not (c.get("rut") or "").strip():
+            obs.append("Sin RUT"); stats["sin_rut"] += 1
+        if not (c.get("direccion") or "").strip():
+            obs.append("Sin dirección"); stats["sin_direccion"] += 1
+        if not (c.get("comuna") or "").strip():
+            obs.append("Sin comuna"); stats["sin_comuna"] += 1
+        if not tiene_ct:
+            obs.append("Sin contrato"); stats["sin_contrato"] += 1
+        else:
+            stats["con_contrato"] += 1
+            if cond in stats:
+                stats[cond] += 1
+            if cond == "vencido":
+                obs.append("Contrato VENCIDO")
+            elif cond == "por_vencer":
+                obs.append("Contrato por vencer")
+            if not (c.get("contrato_tipo") or "").strip():
+                obs.append("Contrato sin tipo"); stats["sin_tipo"] += 1
+        est_cli = (c.get("estado") or "activo")
+        if est_cli in stats:
+            stats[est_cli] += 1
+        if est_cli == "inactivo":
+            obs.append("Cliente inactivo")
+        elif est_cli == "prospecto":
+            obs.append("Prospecto")
+        elif est_cli == "suspendido":
+            obs.append("Cliente suspendido")
+
+        vig_hasta = "Indefinido" if c.get("contrato_indef") else _d(c.get("contrato_vencimiento"))
+        vals = [
+            c.get("id"),
+            _formato_rut_chile(c.get("rut")) if c.get("rut") else "",
+            c.get("razon_social") or "",
+            EST_CLI_MAP.get(est_cli, est_cli),
+            c.get("giro") or "",
+            c.get("direccion") or "",
+            c.get("comuna") or "",
+            c.get("ciudad") or "",
+            c.get("region") or "",
+            c.get("email_empresa") or "",
+            c.get("tel_empresa") or "",
+            c.get("contacto_nombre") or "",
+            "Sí" if tiene_ct else "No",
+            int(c.get("contratos_count") or 0),
+            COND_MAP.get(cond, "") if tiene_ct else "—",
+            (c.get("contrato_tipo") or "") if tiene_ct else "",
+            int(c["contrato_freq"]) if c.get("contrato_freq") else "",
+            _d(c.get("contrato_inicio")),
+            vig_hasta,
+            _num(c.get("contrato_monto_mensual")),
+            _num(c.get("contrato_monto_anual")),
+            int(c.get("maquinas_count") or 0),
+            _d(c.get("prox_visita")),
+            " · ".join(obs),
+        ]
+        bg = LGRAY if r % 2 == 0 else "FFFFFF"
+        for ci, val in enumerate(vals, 1):
+            cell = ws.cell(row=r, column=ci, value=val)
+            cell.font = Font(size=9)
+            cell.alignment = Alignment(
+                horizontal="center" if ci in (1, 13, 14, 17, 22) else ("right" if ci in (20, 21) else "left"),
+                vertical="center", wrap_text=(ci in (6, 24)))
+            cell.border = border
+            fill = bg
+            if ci == 15 and tiene_ct:
+                if cond == "vencido": fill = REDL
+                elif cond == "por_vencer": fill = AMBER
+                elif cond == "vigente": fill = GREENL
+            if ci == 13 and not tiene_ct:
+                fill = REDL
+            if ci == 24 and obs:
+                fill = AMBER
+            cell.fill = PatternFill("solid", fgColor=fill)
+            if ci in (20, 21) and val is not None:
+                cell.number_format = "#,##0"
+        r += 1
+
+    widths = [8, 13, 34, 13, 20, 34, 16, 14, 16, 26, 16, 22, 13, 11, 16, 20,
+              14, 13, 13, 14, 14, 11, 13, 34]
+    for ci, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+    ws.freeze_panes = "C3"
+    ws.auto_filter.ref = f"A2:{get_column_letter(NCOLS)}{max(2, r - 1)}"
+
+    # ── Hoja Productos por cliente (pedido Daniel/Félix 2026-06: inventario
+    # por RUT para compartir con área general + Finanzas — existe la info
+    # aunque el cliente no tenga contrato) ──────────────────────────────
+    prod_rows = []
+    _cli_ids = [int(c["id"]) for c in rows if c.get("id")]
+    if _cli_ids:
+        _ph = ",".join(["%s"] * len(_cli_ids))
+        try:
+            # Intento completo (columnas de la ficha de equipo enriquecida).
+            prod_rows = mysql_fetchall(f"""
+                SELECT m.cliente_id, cl.rut, cl.razon_social,
+                       m.sku, m.nombre, m.marca, m.modelo, m.serie,
+                       m.codigo_interno, m.familia_equipo, m.cantidad, m.estado,
+                       m.ubicacion_cliente, m.ubicacion_sala,
+                       m.fecha_instalacion, m.fecha_fin_garantia,
+                       m.doc_origen, m.doc_fecha, m.observaciones, m.notas
+                FROM mant_maquinas m
+                JOIN mant_clientes cl ON cl.id = m.cliente_id
+                WHERE m.cliente_id IN ({_ph})
+                ORDER BY cl.razon_social, m.nombre
+            """, tuple(_cli_ids)) or []
+        except Exception as e_prod_full:
+            # Fallback: solo columnas del CREATE TABLE base (prod con
+            # ILUS_SKIP_MIGRATIONS=1 podría no tener las enriquecidas).
+            print(f"[reporte_xlsx productos] full falló, fallback base: {e_prod_full}", flush=True)
+            try:
+                prod_rows = mysql_fetchall(f"""
+                    SELECT m.cliente_id, cl.rut, cl.razon_social,
+                           m.sku, m.nombre, m.serie, m.cantidad, m.estado,
+                           m.doc_origen, m.doc_fecha, m.notas
+                    FROM mant_maquinas m
+                    JOIN mant_clientes cl ON cl.id = m.cliente_id
+                    WHERE m.cliente_id IN ({_ph})
+                    ORDER BY cl.razon_social, m.nombre
+                """, tuple(_cli_ids)) or []
+            except Exception as e_prod_base:
+                print(f"[reporte_xlsx productos] fallback también falló: {e_prod_base}", flush=True)
+                prod_rows = []
+    prod_rows = [dict(p) for p in prod_rows]
+
+    wsp = wb.create_sheet("Productos")
+    NPCOLS = 16
+    wsp.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NPCOLS)
+    tp = wsp.cell(row=1, column=1,
+                  value=f"ILUS · Productos / Equipos por cliente  —  {len(prod_rows)} registros  —  generado {fecha_gen}")
+    tp.font = Font(bold=True, size=13, color="FFFFFF")
+    tp.fill = PatternFill("solid", fgColor=BLACK)
+    tp.alignment = Alignment(horizontal="left", vertical="center")
+    wsp.row_dimensions[1].height = 26
+
+    p_headers = [
+        "RUT", "Cliente", "SKU", "Producto / Equipo", "Marca", "Modelo",
+        "N° serie", "Código interno", "Familia", "Cant.", "Estado",
+        "Ubicación", "Fecha instalación", "Fin garantía",
+        "Doc. origen", "Observaciones",
+    ]
+    for ci, h in enumerate(p_headers, 1):
+        _hdr(wsp.cell(row=2, column=ci), h)
+    wsp.row_dimensions[2].height = 30
+
+    EST_EQ_MAP = {"activo": "Activo", "baja": "De baja", "garantia": "En garantía"}
+    pr = 3
+    for p in prod_rows:
+        ubic = " · ".join([x for x in (p.get("ubicacion_cliente"), p.get("ubicacion_sala")) if x])
+        doc = " ".join([x for x in (p.get("doc_origen"), _d(p.get("doc_fecha"))) if x])
+        est_eq = (p.get("estado") or "activo")
+        pvals = [
+            _formato_rut_chile(p.get("rut")) if p.get("rut") else "",
+            p.get("razon_social") or "",
+            p.get("sku") or "",
+            p.get("nombre") or "",
+            p.get("marca") or "",
+            p.get("modelo") or "",
+            p.get("serie") or "",
+            p.get("codigo_interno") or "",
+            p.get("familia_equipo") or "",
+            int(p.get("cantidad") or 1),
+            EST_EQ_MAP.get(est_eq, est_eq),
+            ubic,
+            _d(p.get("fecha_instalacion")),
+            _d(p.get("fecha_fin_garantia")),
+            doc,
+            (p.get("observaciones") or p.get("notas") or ""),
+        ]
+        bgp = LGRAY if pr % 2 == 0 else "FFFFFF"
+        for ci, val in enumerate(pvals, 1):
+            cell = wsp.cell(row=pr, column=ci, value=val)
+            cell.font = Font(size=9)
+            cell.alignment = Alignment(
+                horizontal="center" if ci in (10, 11) else "left",
+                vertical="center", wrap_text=(ci in (4, 16)))
+            cell.border = border
+            fillp = bgp
+            if ci == 11:
+                if est_eq == "baja": fillp = REDL
+                elif est_eq == "garantia": fillp = AMBER
+            cell.fill = PatternFill("solid", fgColor=fillp)
+        pr += 1
+
+    p_widths = [13, 34, 14, 38, 14, 16, 16, 14, 16, 7, 12, 26, 14, 12, 18, 36]
+    for ci, w in enumerate(p_widths, 1):
+        wsp.column_dimensions[get_column_letter(ci)].width = w
+    wsp.freeze_panes = "C3"
+    wsp.auto_filter.ref = f"A2:{get_column_letter(NPCOLS)}{max(2, pr - 1)}"
+
+    # ── Hoja Resumen ───────────────────────────────────────────────────
+    ws2 = wb.create_sheet("Resumen")
+    ws2.merge_cells("A1:B1")
+    t2 = ws2.cell(row=1, column=1, value="Resumen del reporte")
+    t2.font = Font(bold=True, size=13, color="FFFFFF")
+    t2.fill = PatternFill("solid", fgColor=BLACK)
+    t2.alignment = Alignment(horizontal="left", vertical="center")
+    ws2.row_dimensions[1].height = 24
+    resumen = [
+        ("Fecha de generación", fecha_gen),
+        ("Alcance del reporte", alcance_txt.capitalize()),
+        ("Total de clientes", stats["total"]),
+        ("Con contrato", stats["con_contrato"]),
+        ("Sin contrato", stats["sin_contrato"]),
+        ("Contratos vigentes", stats["vigente"]),
+        ("Contratos por vencer", stats["por_vencer"]),
+        ("Contratos vencidos", stats["vencido"]),
+        ("Contratos indefinidos", stats["indefinido"]),
+        ("Productos / equipos registrados (hoja Productos)", len(prod_rows)),
+        ("— Calidad de dato (revisar con Finanzas) —", ""),
+        ("Clientes sin RUT", stats["sin_rut"]),
+        ("Clientes sin dirección", stats["sin_direccion"]),
+        ("Clientes sin comuna", stats["sin_comuna"]),
+        ("Contratos sin tipo definido", stats["sin_tipo"]),
+        ("— Estado del cliente —", ""),
+        ("Activos", stats["activo"]),
+        ("Inactivos", stats["inactivo"]),
+        ("Prospectos", stats["prospecto"]),
+        ("Suspendidos", stats["suspendido"]),
+    ]
+    rr = 2
+    for k, v in resumen:
+        kc = ws2.cell(row=rr, column=1, value=k)
+        vc = ws2.cell(row=rr, column=2, value=v)
+        is_section = str(k).startswith("—")
+        kc.font = Font(bold=True, size=10, color=("DC2626" if is_section else "000000"))
+        vc.font = Font(size=10, bold=not is_section)
+        vc.alignment = Alignment(horizontal="left")
+        rr += 1
+    ws2.column_dimensions["A"].width = 42
+    ws2.column_dimensions["B"].width = 22
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    _mant_log("cliente", 0, "reporte_clientes_xlsx",
+              f"{stats['total']} clientes exportados a Excel ({alcance_txt})")
+    _suf = ""
+    if f_estado in ("activo", "inactivo", "prospecto", "suspendido"):
+        _suf += f"_{f_estado}s"
+    if f_contrato in ("con", "sin"):
+        _suf += f"_{f_contrato}_contrato"
+    fname = f"ILUS_clientes_contratos{_suf}_{_now.strftime('%Y%m%d')}.xlsx"
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=fname,
+    )
+
+
 @app.route("/mantenciones/clientes/wizard")
 @_mant_required
 def mant_cliente_wizard():
