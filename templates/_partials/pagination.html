@@ -16,6 +16,7 @@
 {% set _pg_sz = page_size if page_size is defined else 100 %}
 {% set _pg_tp = total_pages if total_pages is defined else 1 %}
 {% set _pg_t  = total if total is defined else (products|length if products is defined else 0) %}
+{% set _pg_f  = foto_filter if foto_filter is defined and foto_filter else '' %}
 {% set _pg_first = ((_pg_p - 1) * _pg_sz) + 1 if _pg_t > 0 else 0 %}
 {% set _pg_last  = (_pg_first + (products|length) - 1) if _pg_t > 0 else 0 %}
 
@@ -39,7 +40,7 @@
 
     {# Selector de tamaño (recarga al cambiar) #}
     <select class="form-select form-select-sm pagination-size-select"
-            data-q="{{ _pg_q }}"
+            data-q="{{ _pg_q }}" data-fotos="{{ _pg_f }}"
             style="width:auto;font-size:.78rem;padding:2px 24px 2px 8px;border-radius:6px;
                    background:#1a1a1a;color:#fff;border:1px solid #2d2d2d">
       <option value="100" {% if _pg_sz == 100 %}selected{% endif %}>100 por pagina</option>
@@ -49,7 +50,7 @@
 
     {# Botón anterior #}
     {% if _pg_p > 1 %}
-      <a href="?page={{ _pg_p - 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}"
+      <a href="?page={{ _pg_p - 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}"
          class="btn btn-sm btn-outline-secondary fw-bold" style="font-size:.78rem">
         <i class="bi bi-chevron-left"></i> Anterior
       </a>
@@ -69,7 +70,7 @@
 
     {# Botón siguiente #}
     {% if _pg_p < _pg_tp %}
-      <a href="?page={{ _pg_p + 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}"
+      <a href="?page={{ _pg_p + 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}"
          class="btn btn-sm btn-ilus fw-bold" style="font-size:.78rem">
         Siguiente <i class="bi bi-chevron-right"></i>
       </a>
@@ -93,8 +94,9 @@
     if (!t || !t.classList || !t.classList.contains('pagination-size-select')) return;
     var sz = encodeURIComponent(t.value);
     var q  = encodeURIComponent(t.dataset.q || '');
+    var f  = encodeURIComponent(t.dataset.fotos || '');
     // Reset a página 1 al cambiar tamaño (más predecible)
-    var url = '?page=1&size=' + sz + (q ? ('&q=' + q) : '');
+    var url = '?page=1&size=' + sz + (q ? ('&q=' + q) : '') + (f ? ('&fotos=' + f) : '');
     window.location.href = url;
   });
 })();

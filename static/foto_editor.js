@@ -921,5 +921,31 @@
     render();
   }
 
-  window.ilusFotos = { init: init };
+  /* ═══════════════ VISOR STANDALONE (modal rápido del catálogo) ═══════════
+     Abre el visor/editor sobre una foto sin necesidad del grid.
+     cfg: { key, sku, csrf, canEdit, canDelete, urls:{del,replace},
+            photo:{id,url}, onReplaced(id,url), onDeleted(id) }        */
+  var _viewers = {};
+  function view(cfg) {
+    injectCss();
+    var key = cfg.key || cfg.sku;
+    var v = _viewers[key];
+    if (!v) {
+      v = _viewers[key] = { cbs: {}, ed: null };
+      v.ed = createEditor({
+        sku: cfg.sku,
+        csrf: cfg.csrf,
+        canEdit: !!cfg.canEdit,
+        canDelete: !!cfg.canDelete,
+        urls: cfg.urls,
+        onReplaced: function (id, url) { if (v.cbs.onReplaced) v.cbs.onReplaced(id, url); },
+        onDeleted:  function (id)      { if (v.cbs.onDeleted)  v.cbs.onDeleted(id); }
+      });
+    }
+    v.cbs.onReplaced = cfg.onReplaced;
+    v.cbs.onDeleted  = cfg.onDeleted;
+    v.ed.open(cfg.photo);
+  }
+
+  window.ilusFotos = { init: init, view: view };
 })();

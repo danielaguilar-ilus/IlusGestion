@@ -33,10 +33,13 @@
   {# ── Stats: Cobertura fotográfica (vienen de Python, suman TODA la BD) ── #}
   {# total/foto0/foto1/foto2 ahora se calculan en backend para todo el universo #}
   {# de productos, no solo la página visible — así las estadísticas son reales. #}
-  {% set cob_pct = ((foto1 + foto2) / total * 100)|round(1) if total > 0 else 0 %}
-  {% set p0      = (foto0 / total * 100)|round(1) if total > 0 else 0 %}
-  {% set p1      = (foto1 / total * 100)|round(1) if total > 0 else 0 %}
-  {% set p2      = (foto2 / total * 100)|round(1) if total > 0 else 0 %}
+  {# total = total FILTRADO (paginación); los % se calculan sobre el universo #}
+  {% set tot_g   = total_global if total_global is defined else total %}
+  {% set cob_pct = ((foto1 + foto2) / tot_g * 100)|round(1) if tot_g > 0 else 0 %}
+  {% set p0      = (foto0 / tot_g * 100)|round(1) if tot_g > 0 else 0 %}
+  {% set p1      = (foto1 / tot_g * 100)|round(1) if tot_g > 0 else 0 %}
+  {% set p2      = (foto2 / tot_g * 100)|round(1) if tot_g > 0 else 0 %}
+  {% set ff      = foto_filter if foto_filter is defined and foto_filter else '' %}
 
   {# Botón actualizar caché (pequeño, arriba a la derecha del bloque) #}
   <div class="d-flex justify-content-end mb-1">
@@ -71,7 +74,7 @@
         <div>
           <div class="stat-num" style="font-size:1.45rem;line-height:1;color:#198754">{{ foto1 + foto2 }}</div>
           <div class="stat-label" style="font-size:.66rem;margin-top:1px">Con foto</div>
-          <div style="font-size:.62rem;color:#666;margin-top:1px">de {{ total }} total</div>
+          <div style="font-size:.62rem;color:#666;margin-top:1px">de {{ tot_g }} total</div>
         </div>
       </div>
     </div>
@@ -156,6 +159,7 @@
   <form method="get" class="ilus-search mb-3" id="searchForm">
     {# exact=1 lo activa el JS cuando detecta un scanner físico o cámara #}
     <input type="hidden" name="exact" id="exactFlag" value="0">
+    {% if ff %}<input type="hidden" name="fotos" value="{{ ff }}">{% endif %}
     <div class="input-group shadow-sm">
       <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
       <input type="text" name="q" value="{{ q }}" class="form-control border-start-0"
@@ -490,6 +494,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script defer src="{{ url_for('static', filename='foto_editor.js') }}?v=20260703a"></script>
 <script>
 /* ══════════════════════════════════════════════════════════════
    Carga PEREZOSA de html5-qrcode (antes era un <script> bloqueante
@@ -521,71 +526,49 @@ function loadScannerLib() {
 </script>
 <script>
 /* ══════════════════════════════════════════
-   FILTRO KPI CLIENT-SIDE (solo página visible)
+   FILTRO KPI SERVER-SIDE (Daniel 2026-07-03)
    ══════════════════════════════════════════
-   ⚡ Refactor 2026-05-24 (Daniel): la paginación ahora es SERVER-SIDE.
-   El filtro KPI solo oculta filas dentro de la página visible.
-   Para filtrar TODA la BD por "sin foto" haría falta una query backend
-   con WHERE total_fotos = X (se puede agregar después si Daniel lo pide).
+   Antes el filtro solo ocultaba filas de la página visible ("1 foto: 90"
+   mostraba solo los de la página actual). Ahora cada tarjeta navega con
+   ?fotos=con|0|1|2 y el backend pagina sobre TODO el universo filtrado.
 ══════════════════════════════════════════ */
-var _kpiFilter = null;   // null = todos | 'con_foto' | '0' | '1' | '2'
+var KPI_FILTER = "{{ ff }}";   // filtro activo que viene del servidor
 
-function _pasaFiltro(fotos) {
-  if (_kpiFilter === 'con_foto') return fotos >= 1;
-  if (_kpiFilter === '0')        return fotos === 0;
-  if (_kpiFilter === '1')        return fotos === 1;
-  if (_kpiFilter === '2')        return fotos >= 2;
-  return true; // sin filtro
+function _kpiUrl(f) {
+  var params = new URLSearchParams(window.location.search);
+  params.delete('page');            // siempre volver a página 1
+  if (f) { params.set('fotos', f); } else { params.delete('fotos'); }
+  var qs = params.toString();
+  return window.location.pathname + (qs ? '?' + qs : '');
 }
 
-function applyTableFilters() {
-  /* ── Desktop: filas de la tabla ── */
-  document.querySelectorAll('#productTable tbody tr').forEach(function(row) {
-    var fotos = parseInt(row.dataset.fotos || '0', 10);
-    row.style.display = _pasaFiltro(fotos) ? '' : 'none';
-  });
-
-  /* ── Mobile: cards ── */
-  document.querySelectorAll('.mobile-product-card').forEach(function(card) {
-    var fotos = parseInt(card.dataset.fotos || '0', 10);
-    card.style.display = _pasaFiltro(fotos) ? '' : 'none';
-  });
-}
-
-/* KPI cards cliqueables */
+/* KPI cards → navegación server-side (toggle si ya está activa) */
 document.querySelectorAll('.kpi-card').forEach(function(card) {
+  /* data-filter viejo 'con_foto' → param nuevo 'con' */
+  var f = card.dataset.filter === 'con_foto' ? 'con' : card.dataset.filter;
   card.addEventListener('click', function() {
-    var f = card.dataset.filter;
-    if (_kpiFilter === f) {
-      clearKpiFilter();
-    } else {
-      _kpiFilter = f;
-      /* Highlight activo */
-      document.querySelectorAll('.kpi-card').forEach(function(c) {
-        c.style.outline = '';
-        c.style.boxShadow = '';
-      });
-      card.style.outline    = '2px solid var(--ilus-red)';
-      card.style.boxShadow  = '0 0 0 4px rgba(204,0,0,.15)';
-      /* Banner de filtro activo */
-      var labels = { 'con_foto':'Con foto (≥1)', '0':'Sin foto', '1':'1 foto', '2':'2 fotos (mismo SKU)' };
-      document.getElementById('kpiFilterLabel').textContent =
-        'Filtro activo (solo en esta pagina): ' + (labels[f] || f);
-      document.getElementById('kpiFilterBanner').style.display = '';
-      applyTableFilters();
-    }
+    window.location.href = _kpiUrl(KPI_FILTER === f ? null : f);
   });
+  /* Highlight de la tarjeta activa (server-rendered) */
+  if (KPI_FILTER && KPI_FILTER === f) {
+    card.style.outline   = '2px solid var(--ilus-red)';
+    card.style.boxShadow = '0 0 0 4px rgba(204,0,0,.15)';
+  }
 });
 
 function clearKpiFilter() {
-  _kpiFilter = null;
-  document.querySelectorAll('.kpi-card').forEach(function(c) {
-    c.style.outline = '';
-    c.style.boxShadow = '';
-  });
-  document.getElementById('kpiFilterBanner').style.display = 'none';
-  applyTableFilters();
+  window.location.href = _kpiUrl(null);
 }
+
+/* Banner de filtro activo (con el total REAL filtrado del backend) */
+(function(){
+  if (!KPI_FILTER) return;
+  var labels = { 'con':'Con foto (≥1)', '0':'Sin foto', '1':'1 foto', '2':'2 fotos' };
+  document.getElementById('kpiFilterLabel').textContent =
+    'Filtro activo: ' + (labels[KPI_FILTER] || KPI_FILTER)
+    + ' — {{ total }} producto(s) en total, paginados';
+  document.getElementById('kpiFilterBanner').style.display = '';
+})();
 
 /* ══════════════════════════════════════════
    ESCÁNER FÍSICO DE CÓDIGO DE BARRAS
@@ -927,6 +910,8 @@ var DETAIL_TPL = "{{ url_for('product_detail', pid=0) }}";
 var QUICK_TPL  = "{{ url_for('product_quick',  pid=0) }}";
 var CAN_EDIT   = {{ 'true' if permissions.edit  else 'false' }};
 var CAN_PRINT  = {{ 'true' if permissions.print else 'false' }};
+var CAN_DELETE = {{ 'true' if permissions.delete else 'false' }};
+var CSRF_TOKEN = {{ csrf_token()|tojson }};
 
 function _stat(val, label, color) {
   return '<div style="text-align:center;padding:12px 6px;border-right:1px solid #eee">'
@@ -955,14 +940,18 @@ function quickView(pid) {
       skuEl.textContent = d.sku;
       nomEl.textContent = d.nombre;
 
-      // ── Fotos (primero y grande) ──
+      // ── Fotos (primero y grande) — clic abre el visor/editor PRO ──
       var photos = '';
-      if (d.photos && d.photos.length > 0) {
+      var pfull = d.photos_full || (d.photos || []).map(function(u){ return {id: 0, url: u}; });
+      if (pfull.length > 0) {
         photos = '<div style="background:#111;padding:12px;display:flex;gap:10px;justify-content:center;align-items:center;min-height:180px;border-bottom:2px solid #CC0000">';
-        d.photos.forEach(function(url) {
-          photos += '<a href="' + url + '" target="_blank" style="display:block;flex:1;max-width:50%">'
-            + '<img src="' + url + '" loading="lazy" decoding="async" style="width:100%;height:200px;object-fit:contain;border-radius:6px;cursor:zoom-in">'
-            + '</a>';
+        pfull.forEach(function(ph, idx) {
+          photos += '<div style="display:block;flex:1;max-width:50%;position:relative;cursor:zoom-in" class="qm-photo" data-idx="' + idx + '">'
+            + '<img src="' + ph.url + '" loading="lazy" decoding="async" style="width:100%;height:200px;object-fit:contain;border-radius:6px">'
+            + '<span style="position:absolute;right:8px;bottom:8px;background:rgba(10,10,10,.72);color:#fff;'
+            + 'border-radius:8px;padding:4px 9px;font-size:.72rem;display:inline-flex;align-items:center;gap:5px">'
+            + '<i class="bi bi-arrows-fullscreen"></i>' + (CAN_EDIT ? 'Ver / Editar' : 'Ver') + '</span>'
+            + '</div>';
         });
         photos += '</div>';
       } else {
@@ -1002,6 +991,35 @@ function quickView(pid) {
         + '</div>';
 
       body.innerHTML = photos + stats + table + info;
+
+      /* Clic en una foto → visor/editor profesional (foto_editor.js) */
+      body.querySelectorAll('.qm-photo').forEach(function(el) {
+        el.addEventListener('click', function() {
+          var ph = pfull[parseInt(el.dataset.idx, 10)];
+          if (!ph || !window.ilusFotos || !ph.id) {           /* fallback legacy */
+            if (ph) window.open(ph.url, '_blank');
+            return;
+          }
+          window.ilusFotos.view({
+            key: 'p' + pid,
+            sku: d.sku,
+            csrf: CSRF_TOKEN,
+            canEdit: CAN_EDIT,
+            canDelete: CAN_DELETE,
+            urls: {
+              del:     '/products/' + pid + '/photos/{id}/delete',
+              replace: '/products/' + pid + '/photos/{id}/replace'
+            },
+            photo: ph,
+            onReplaced: function(id, url) {
+              ph.url = url;
+              var img = el.querySelector('img');
+              if (img) img.src = url;
+            },
+            onDeleted: function() { quickView(pid); }   /* refresca el modal */
+          });
+        });
+      });
 
       // Footer con links
       if (CAN_EDIT || (CAN_PRINT && d.total_bultos > 0)) {

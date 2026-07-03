@@ -5037,8 +5037,15 @@ def _product_listing_base_sql(search_query=""):
     return sql_inner, erp_params + app_params
 
 
-def get_product_listing_paginated(search_query="", page=1, page_size=100):
+def get_product_listing_paginated(search_query="", page=1, page_size=100, foto_filter=None):
     """Devuelve {rows, total, page, page_size, total_pages, foto0, foto1, foto2}.
+
+    foto_filter (Daniel 2026-07-03): 'con' | '0' | '1' | '2' | None.
+    Filtra en el SERVIDOR por cantidad de fotos — antes el filtro KPI solo
+    ocultaba filas de la página visible y "1 foto (90)" mostraba solo los
+    de la página actual. Ahora pagina sobre el universo filtrado completo.
+    `total` = total FILTRADO (para paginar); `total_global` = universo;
+    los KPIs foto0/1/2 siguen siendo globales.
 
     ⚡ PERF MEJORA 2026-05-24 (Daniel): paginación server-side. Antes traíamos
     TODA la BD (puede ser 5K-15K SKUs) en cada visita a /, ahora solo 100.
@@ -5061,8 +5068,10 @@ def get_product_listing_paginated(search_query="", page=1, page_size=100):
         page_size = 100
     if page_size not in (100, 200, 500):
         page_size = 100  # default seguro
+    if foto_filter not in ("con", "0", "1", "2"):
+        foto_filter = None
 
-    cache_key = (search_query.strip().lower(), page, page_size)
+    cache_key = (search_query.strip().lower(), page, page_size, foto_filter)
     now = time.time()
     with _listing_cache_lock:
         entry = _listing_cache.get(cache_key)
@@ -5094,14 +5103,35 @@ def get_product_listing_paginated(search_query="", page=1, page_size=100):
         with _listing_cache_lock:
             _listing_cache[count_key] = ((total_count, foto0, foto1, foto2), time.time())
 
-    total_pages = max(1, (total_count + page_size - 1) // page_size) if total_count else 1
+    # ── Total FILTRADO para paginar (los KPIs quedan globales) ──
+    if foto_filter == "con":
+        filtered_total = foto1 + foto2
+    elif foto_filter == "0":
+        filtered_total = foto0
+    elif foto_filter == "1":
+        filtered_total = foto1
+    elif foto_filter == "2":
+        filtered_total = foto2
+    else:
+        filtered_total = total_count
+
+    total_pages = max(1, (filtered_total + page_size - 1) // page_size) if filtered_total else 1
     if page > total_pages:
         page = total_pages
+
+    _FOTO_WHERE = {
+        "con": "WHERE u.total_fotos >= 1",
+        "0":   "WHERE u.total_fotos = 0",
+        "1":   "WHERE u.total_fotos = 1",
+        "2":   "WHERE u.total_fotos >= 2",
+    }
+    foto_where = _FOTO_WHERE.get(foto_filter, "")
 
     # ── 2) Página actual (LIMIT + OFFSET) ──
     offset = (page - 1) * page_size
     sql_page = f"""
         SELECT * FROM ({sql_inner}) AS u
+        {foto_where}
         ORDER BY nombre, sku
         LIMIT %s OFFSET %s
     """
@@ -5109,7 +5139,9 @@ def get_product_listing_paginated(search_query="", page=1, page_size=100):
 
     result = {
         "rows": rows,
-        "total": total_count,
+        "total": filtered_total,
+        "total_global": total_count,
+        "foto_filter": foto_filter,
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
@@ -8572,9 +8604,15 @@ def index():
     if page_size not in (100, 200, 500):
         page_size = 100
 
-    listing = get_product_listing_paginated(q, page=page, page_size=page_size)
+    # Filtro server-side por cantidad de fotos (Daniel 2026-07-03):
+    # ?fotos=con|0|1|2 — pagina sobre TODO el universo filtrado, no solo
+    # la página visible.
+    fotos_f = request.args.get("fotos") or None
+
+    listing = get_product_listing_paginated(q, page=page, page_size=page_size,
+                                            foto_filter=fotos_f)
     products    = listing["rows"]
-    total       = listing["total"]
+    total       = listing["total"]          # total FILTRADO (para paginar)
     total_pages = listing["total_pages"]
     page        = listing["page"]   # puede haberse normalizado si page > total_pages
     foto0       = listing["foto0"]
@@ -8583,7 +8621,9 @@ def index():
 
     return render_template("index.html", products=products, q=q,
                            foto0=foto0, foto1=foto1, foto2=foto2,
-                           total=total, page=page, page_size=page_size,
+                           total=total, total_global=listing["total_global"],
+                           foto_filter=listing["foto_filter"],
+                           page=page, page_size=page_size,
                            total_pages=total_pages)
 
 
@@ -8608,6 +8648,8 @@ def product_quick(pid):
     photo_urls = [_photo_src(ph["filename"]) for ph in photos]
     return jsonify({
         "id":          product["id"],
+        # photos_full: con id — el visor/editor del modal rápido lo necesita
+        "photos_full": [{"id": ph["id"], "url": _photo_src(ph["filename"])} for ph in photos],
         "sku":         product["sku"],
         "nombre":      product["nombre"],
         "estado":      product["estado"],
