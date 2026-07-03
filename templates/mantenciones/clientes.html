@@ -384,11 +384,18 @@
     <a href="{{ url_for('mant_cliente_wizard') }}" class="btn btn-ilus fw-bold px-3">
       <i class="bi bi-building-add me-1"></i>Nuevo cliente
     </a>
+    {# Reporte Excel Clientes+Contratos+Productos — también aquí (además de la
+       portada de mantenciones) para que se encuentre desde ambas pantallas.
+       Esta página ya es @_no_tecnico, no requiere gate extra. #}
+    <button type="button" class="btn fw-bold px-3" onclick="abrirReporteExcel()"
+            style="background:#14532d;color:#fff;border:0"
+            title="Descargar Excel de clientes: RUT, dirección, contrato (condición y tipo) + hoja de productos por RUT — para cruzar con Finanzas">
+      <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
+    </button>
   </div>
 </div>
 
-{# El botón "Reporte Excel" (clientes+contratos+productos) vive en la PORTADA
-   de Mantenciones (index.html), junto a "Nuevo cliente" — pedido Daniel 2026-06-23. #}
+{% include "mantenciones/_reporte_excel_modal.html" %}
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: FICHAS OCULTAS — buscador y restaurador de clientes
