@@ -8945,54 +8945,76 @@ def delete_product(pid):
 #  Fotos
 # ─────────────────────────────────────────────
 
+def _foto_ajax():
+    """True si la petición viene del componente JS de fotos (fetch/XHR)."""
+    return (
+        request.args.get("ajax") == "1"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    )
+
+
+def _guardar_foto_archivo(file, pid, sufijo=""):
+    """Sube el archivo a GCS/Cloudinary (o disco local como fallback) y
+    devuelve el filename/URL a guardar en BD. Lanza excepción si falla."""
+    ext = file.filename.rsplit(".", 1)[1].lower()
+    ts  = int(datetime.now().timestamp())
+    if _gcs_ready() or _CLD_READY:
+        filename = _cloud_upload(file, public_id=f"p{pid}_{ts}{sufijo}", folder="ilus/products")
+        print(f"[ILUS] Foto subida a la nube: {filename}")
+    else:
+        filename = f"p{pid}_{ts}{sufijo}.{ext}"
+        file.save(os.path.join(UPLOAD_FOLDER, filename))
+        print(f"[ILUS] Foto guardada localmente: {filename}")
+    return filename
+
+
 @app.route("/products/<int:pid>/photos", methods=["POST"])
 @require_permission("edit")
 def upload_photo(pid):
+    ajax = _foto_ajax()
+
+    def _err(msg, cat="warning", code=400):
+        if ajax:
+            return jsonify({"ok": False, "error": msg}), code
+        flash(msg, cat)
+        return redirect(url_for("product_detail", pid=pid))
+
     product, _, photos = get_full(pid)
     if not product:
+        if ajax:
+            return jsonify({"ok": False, "error": "Producto no encontrado."}), 404
         flash("Producto no encontrado.", "danger")
         return redirect(url_for("index"))
     if len(photos) >= MAX_PHOTOS:
-        flash(f"Maximo {MAX_PHOTOS} fotos por producto.", "warning")
-        return redirect(url_for("product_detail", pid=pid))
+        return _err(f"Maximo {MAX_PHOTOS} fotos por producto.")
 
     file = request.files.get("photo")
     if not file or not file.filename:
-        flash("No se selecciono archivo.", "warning")
-        return redirect(url_for("product_detail", pid=pid))
+        return _err("No se selecciono archivo.")
     if not allowed_file(file.filename):
-        flash("Formato no permitido. Usa JPG, PNG, WEBP o GIF.", "danger")
-        return redirect(url_for("product_detail", pid=pid))
+        return _err("Formato no permitido. Usa JPG, PNG, WEBP o GIF.", "danger")
 
-    ext       = file.filename.rsplit(".", 1)[1].lower()
-    ts        = int(datetime.now().timestamp())
-    if _gcs_ready() or _CLD_READY:
-        try:
-            filename = _cloud_upload(file, public_id=f"p{pid}_{ts}", folder="ilus/products")
-            print(f"[ILUS] Foto subida a Cloudinary: {filename}")
-        except Exception as exc:
-            print(f"[ILUS] Cloudinary upload error: {exc}", flush=True)
-            flash("Error al subir la foto a la nube. Intenta nuevamente.", "danger")
-            return redirect(url_for("product_detail", pid=pid))
-    else:
-        filename = f"p{pid}_{ts}.{ext}"
-        try:
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
-            print(f"[ILUS] Foto guardada localmente: {filename}")
-        except Exception as exc:
-            print(f"[ILUS] Error guardando foto local: {exc}", flush=True)
-            flash("Error al guardar la foto. Intenta nuevamente.", "danger")
-            return redirect(url_for("product_detail", pid=pid))
+    try:
+        filename = _guardar_foto_archivo(file, pid)
+    except Exception as exc:
+        print(f"[ILUS] Error subiendo foto: {exc}", flush=True)
+        return _err("Error al subir la foto. Intenta nuevamente.", "danger", 502)
 
-    # Guardamos URL completa (Cloudinary) o nombre local
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
             f"INSERT INTO `{PHOTOS_TABLE}` (product_id,filename,orden) VALUES (%s,%s,%s)",
             (pid, filename, len(photos) + 1),
         )
+        new_id = cur.lastrowid
     conn.commit()
 
+    if ajax:
+        return jsonify({
+            "ok": True, "id": new_id,
+            "url": _photo_src(filename),
+            "count": len(photos) + 1,
+        })
     flash("Foto agregada correctamente.", "success")
     return redirect(url_for("product_detail", pid=pid))
 
@@ -9000,14 +9022,19 @@ def upload_photo(pid):
 @app.route("/products/<int:pid>/photos/<int:photo_id>/delete", methods=["POST"])
 @require_permission("delete")
 def delete_photo(pid, photo_id):
+    ajax = _foto_ajax()
     product, _, _ = get_full(pid)
     if not product:
+        if ajax:
+            return jsonify({"ok": False, "error": "Producto no encontrado."}), 404
         flash("Producto no encontrado.", "danger")
         return redirect(url_for("index"))
 
     # Verificar confirmación por SKU
     confirm = request.form.get("confirm_sku", "").strip().upper()
     if confirm != product["sku"]:
+        if ajax:
+            return jsonify({"ok": False, "error": "Confirmación incorrecta. La foto NO fue eliminada."}), 400
         flash("Confirmación incorrecta. La foto NO fue eliminada.", "danger")
         return redirect(url_for("product_detail", pid=pid))
 
@@ -9020,10 +9047,55 @@ def delete_photo(pid, photo_id):
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM `{PHOTOS_TABLE}` WHERE id=%s", (photo_id,))
         conn.commit()
+        if ajax:
+            return jsonify({"ok": True})
         flash("Foto eliminada.", "success")
     else:
+        if ajax:
+            return jsonify({"ok": False, "error": "Foto no encontrada."}), 404
         flash("Foto no encontrada.", "danger")
     return redirect(url_for("product_detail", pid=pid))
+
+
+@app.route("/products/<int:pid>/photos/<int:photo_id>/replace", methods=["POST"])
+@require_permission("edit")
+def replace_photo(pid, photo_id):
+    """Guarda la versión EDITADA de una foto (editor: rotar/voltear/recortar/
+    brillo/contraste). Sube el resultado como archivo NUEVO (key con timestamp
+    distinto → el cache de /f/ nunca sirve la versión vieja), actualiza la fila
+    y recién después borra el archivo anterior (best-effort). Siempre JSON."""
+    product, _, _ = get_full(pid)
+    if not product:
+        return jsonify({"ok": False, "error": "Producto no encontrado."}), 404
+    photo = mysql_fetchone(
+        f"SELECT * FROM `{PHOTOS_TABLE}` WHERE id=%s AND product_id=%s", (photo_id, pid)
+    )
+    if not photo:
+        return jsonify({"ok": False, "error": "Foto no encontrada."}), 404
+
+    file = request.files.get("photo")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "No llegó la imagen editada."}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"ok": False, "error": "Formato no permitido."}), 400
+
+    try:
+        filename = _guardar_foto_archivo(file, pid, sufijo="e")
+    except Exception as exc:
+        print(f"[ILUS] Error subiendo foto editada: {exc}", flush=True)
+        return jsonify({"ok": False, "error": "Error al guardar la imagen editada."}), 502
+
+    old = photo["filename"]
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE `{PHOTOS_TABLE}` SET filename=%s WHERE id=%s", (filename, photo_id))
+    conn.commit()
+    if old and old != filename:
+        try:
+            delete_photo_file(old)
+        except Exception as exc:
+            print(f"[ILUS] No se pudo borrar la foto anterior {old}: {exc}", flush=True)
+    return jsonify({"ok": True, "url": _photo_src(filename)})
 
 
 # ─────────────────────────────────────────────

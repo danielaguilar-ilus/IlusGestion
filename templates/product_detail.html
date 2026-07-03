@@ -67,69 +67,12 @@
 
   <div class="ilus-card mb-3 mx-2 mx-md-0">
     <div class="ilus-card-header">
-      <span><i class="bi bi-images me-2"></i>Fotos del producto <span class="badge bg-secondary ms-1">{{ photos|length }}/2</span></span>
+      <span><i class="bi bi-images me-2"></i>Fotos del producto <span class="badge bg-secondary ms-1" id="fotoCountBadge">{{ photos|length }}/2</span></span>
+      <span class="text-muted small fw-normal d-none d-md-inline">Toca una foto para verla y editarla</span>
     </div>
-    <div class="photos-grid">
-      {% for ph in photos %}
-      <div class="photo-card">
-        <button type="button" class="photo-preview-btn" data-bs-toggle="modal" data-bs-target="#photoModal{{ ph.id }}">
-          <img src="{{ photo_src(ph.filename) }}" alt="Foto {{ loop.index }}" loading="lazy">
-        </button>
-        {% if permissions.delete %}
-        <button type="button" class="photo-delete-btn" data-bs-toggle="modal" data-bs-target="#deletePhotoModal{{ ph.id }}" title="Eliminar foto">
-          <i class="bi bi-x-lg"></i>
-        </button>
-        {% endif %}
-      </div>
-      {% endfor %}
-
-      {% if permissions.edit and can_add_photo %}
-      {# ── Desktop: zona drag/click ── #}
-      <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
-            enctype="multipart/form-data" id="photoFormDesk" class="d-none d-md-block">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label class="photo-upload-zone d-flex flex-column align-items-center justify-content-center h-100"
-               style="min-height:120px;cursor:pointer" for="photoInputDesk">
-          <div class="up-icon"><i class="bi bi-camera-plus"></i></div>
-          <div class="up-text">Agregar foto<br><span style="color:#bbb;font-size:.7rem">JPG, PNG, WEBP, GIF</span></div>
-        </label>
-        <input type="file" name="photo" id="photoInputDesk" accept="image/*" style="display:none"
-               onchange="this.form.submit()">
-      </form>
-
-      {# ── Mobile: botones separados Cámara / Galería ── #}
-      <div class="d-flex d-md-none flex-column gap-2 p-2" style="min-width:140px">
-        {# Cámara (capture=environment) #}
-        <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
-              enctype="multipart/form-data" id="photoFormCam">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label for="photoInputCam"
-                 class="btn btn-dark-ilus w-100 d-flex align-items-center justify-content-center gap-2 py-3"
-                 style="cursor:pointer;border-radius:8px;font-size:.9rem">
-            <i class="bi bi-camera-fill fs-5"></i>
-            <span>Tomar foto</span>
-          </label>
-          <input type="file" name="photo" id="photoInputCam"
-                 accept="image/*" capture="environment"
-                 style="display:none" onchange="this.form.submit()">
-        </form>
-        {# Galería #}
-        <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
-              enctype="multipart/form-data" id="photoFormGal">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label for="photoInputGal"
-                 class="btn btn-outline-secondary w-100 d-flex align-items-center justify-content-center gap-2 py-3"
-                 style="cursor:pointer;border-radius:8px;font-size:.9rem">
-            <i class="bi bi-images fs-5"></i>
-            <span>Desde galería</span>
-          </label>
-          <input type="file" name="photo" id="photoInputGal"
-                 accept="image/*"
-                 style="display:none" onchange="this.form.submit()">
-        </form>
-      </div>
-      {% endif %}
-    </div>
+    {# El grid, la subida AJAX (con compresión en el navegador) y el editor
+       (rotar/voltear/recortar/brillo/contraste) los maneja foto_editor.js #}
+    <div class="photos-grid" id="ilusFotosZone"></div>
   </div>
 
   <div class="ilus-card mb-3 mx-2 mx-md-0">
@@ -197,55 +140,6 @@
   {% endif %}
 </div>
 
-{% for ph in photos %}
-<div class="modal fade" id="photoModal{{ ph.id }}" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-lg">
-    <div class="modal-content bg-dark border-0">
-      <div class="modal-header border-0">
-        <h5 class="modal-title text-white">Vista de imagen</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body text-center pt-0">
-        <img src="{{ photo_src(ph.filename) }}" alt="Foto ampliada" class="img-fluid rounded">
-      </div>
-    </div>
-  </div>
-</div>
-
-{% if permissions.delete %}
-<div class="modal fade" id="deletePhotoModal{{ ph.id }}" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
-        <h5 class="modal-title"><i class="bi bi-trash me-2"></i>Eliminar foto</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="alert alert-warning py-2 mb-3 small">
-          <strong>Esta acción es permanente.</strong> La foto será eliminada del producto.
-        </div>
-        <p class="mb-1">Producto: <strong>{{ product.sku }}</strong></p>
-        <p class="mb-2">Escribe el SKU para confirmar la eliminación:</p>
-        <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}"
-              id="deletePhotoForm{{ ph.id }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="text" id="photoSkuInput{{ ph.id }}" name="confirm_sku"
-                 class="form-control font-monospace text-uppercase mb-3"
-                 placeholder="{{ product.sku }}" autocomplete="off">
-          <div class="d-flex gap-2 justify-content-end">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-            <button type="submit" class="btn btn-danger fw-bold" id="photoDeleteBtn{{ ph.id }}" disabled>
-              <i class="bi bi-trash me-1"></i>Eliminar foto
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-{% endfor %}
-
 {% if permissions.delete %}
 <div class="modal fade no-print" id="deleteProductModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
@@ -299,26 +193,31 @@ document.getElementById('deleteProductModal').addEventListener('hidden.bs.modal'
   document.getElementById('confirmSkuInput').value = '';
   document.getElementById('confirmDeleteBtn').disabled = true;
 });
-
-// ── Eliminar foto: confirmar SKU ──
-{% for ph in photos %}
-(function() {
-  var inp = document.getElementById('photoSkuInput{{ ph.id }}');
-  var btn = document.getElementById('photoDeleteBtn{{ ph.id }}');
-  var modal = document.getElementById('deletePhotoModal{{ ph.id }}');
-  if (inp && btn) {
-    inp.addEventListener('input', function() {
-      btn.disabled = (inp.value.trim().toUpperCase() !== skuReal);
-    });
-  }
-  if (modal) {
-    modal.addEventListener('hidden.bs.modal', function() {
-      if (inp) { inp.value = ''; }
-      if (btn) { btn.disabled = true; }
-    });
-  }
-})();
-{% endfor %}
 </script>
 {% endif %}
+
+{# ── Fotos: grid + subida AJAX comprimida + visor/editor profesional ── #}
+<script defer src="{{ url_for('static', filename='foto_editor.js') }}?v=20260702a"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  window.ilusFotos.init({
+    mount: '#ilusFotosZone',
+    badge: '#fotoCountBadge',
+    productId: {{ product.id }},
+    sku: {{ product.sku|tojson }},
+    csrf: {{ csrf_token()|tojson }},
+    canEdit: {{ 'true' if permissions.edit else 'false' }},
+    canDelete: {{ 'true' if permissions.delete else 'false' }},
+    maxPhotos: 2,
+    photos: [
+      {% for ph in photos %}{ id: {{ ph.id }}, url: {{ photo_src(ph.filename)|tojson }} }{{ "," if not loop.last }}{% endfor %}
+    ],
+    urls: {
+      upload:  "/products/{{ product.id }}/photos",
+      del:     "/products/{{ product.id }}/photos/{id}/delete",
+      replace: "/products/{{ product.id }}/photos/{id}/replace"
+    }
+  });
+});
+</script>
 {% endblock %}
