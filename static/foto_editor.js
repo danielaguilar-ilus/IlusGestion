@@ -139,7 +139,10 @@
       var cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
       var cv = document.createElement('canvas');
       cv.width = cw; cv.height = ch;
-      cv.getContext('2d').drawImage(img, 0, 0, cw, ch);
+      var cctx = cv.getContext('2d');
+      cctx.fillStyle = '#fff';           // PNG transparente -> fondo blanco
+      cctx.fillRect(0, 0, cw, ch);
+      cctx.drawImage(img, 0, 0, cw, ch);
       return new Promise(function (res) {
         cv.toBlob(function (blob) {
           URL.revokeObjectURL(url);
@@ -176,9 +179,10 @@
   }
 
   function filtersSupported() {
-    var c = document.createElement('canvas').getContext('2d');
-    c.filter = 'brightness(0.9)';
-    return c.filter !== 'none' && c.filter !== '';
+    /* OJO: NO detectar asignando ctx.filter y releyéndolo — en navegadores
+       sin soporte la asignación crea una propiedad expando que devuelve el
+       mismo string y da falso positivo (Safari guardaba sin filtros). */
+    return ('filter' in CanvasRenderingContext2D.prototype);
   }
 
   /* Aplica brillo/contraste píxel a píxel (fallback Safari sin ctx.filter) */
@@ -206,7 +210,8 @@
     var cropBox = null, adjustPanel = null, cropBar = null;
     var btnSave = null, btnCrop = null, btnAdjust = null, spinner = null, titleEl = null;
 
-    var st = null;   // estado por foto abierta
+    var st = null;      // estado por foto abierta
+    var openGen = 0;    // token de generación: invalida cargas/respuestas tardías
 
     function build() {
       if (root) return;
@@ -278,10 +283,11 @@
     /* ── apertura ─────────────────────────────────────────────── */
     function open(photo) {
       build();
+      var gen = ++openGen;   // invalida cualquier carga anterior en vuelo
       st = {
         photo: photo, img: null, work: null,
-        bright: 100, contrast: 100, dirty: false, tainted: false,
-        zoom: 1, panX: 0, panY: 0, cropMode: false, saving: false
+        bright: 100, contrast: 100, geomDirty: false, editSeq: 0,
+        tainted: false, zoom: 1, panX: 0, panY: 0, cropMode: false, saving: false
       };
       titleEl.innerHTML = '<i class="bi bi-image me-2"></i>' + opts.sku +
                           ' <small>· foto del producto</small>';
@@ -295,6 +301,7 @@
       spinner.style.display = 'flex';
       canvas.style.display = 'none';
       loadImg(photo.url, true).then(function (img) {
+        if (gen !== openGen || !st || st.photo !== photo) return;  // llegó tarde
         st.img = img;
         st.work = document.createElement('canvas');
         st.work.width = img.naturalWidth; st.work.height = img.naturalHeight;
@@ -308,20 +315,31 @@
           toast('Esta foto antigua no permite edición (solo vista).', 'warning');
         }
       }).catch(function () {
+        if (gen !== openGen || !st) return;   // ya se cerró o abrió otra
         spinner.style.display = 'none';
         toast('No se pudo cargar la imagen.', 'error');
         close();
       });
     }
 
+    function isDirty() {
+      return !!st && (st.geomDirty || st.bright !== 100 || st.contrast !== 100);
+    }
+
     function close() {
+      /* limpiar overlays para que la próxima apertura arranque limpia */
+      if (cropBox) cropBox.style.display = 'none';
+      cropBar.classList.remove('open');
+      if (btnCrop) btnCrop.classList.remove('active');
+      adjustPanel.classList.remove('open');
+      if (btnAdjust) btnAdjust.classList.remove('active');
       root.style.display = 'none';
       document.body.style.overflow = '';
       st = null;
     }
 
     function requestClose() {
-      if (st && st.dirty && opts.canEdit && !st.tainted) {
+      if (st && isDirty() && opts.canEdit && !st.tainted) {
         var ask = window.ilusConfirm
           ? window.ilusConfirm({
               title: 'Descartar cambios',
@@ -363,9 +381,15 @@
       if (st.cropMode) positionCropBox();
     }
 
-    function markDirty() {
-      st.dirty = true;
-      if (btnSave && !st.tainted) btnSave.disabled = false;
+    function updateSaveBtn() {
+      if (btnSave) btnSave.disabled = !st || st.tainted || st.saving || !isDirty();
+    }
+
+    /* Operación geométrica (rotar/voltear/recortar): siempre ensucia */
+    function markGeomDirty() {
+      st.geomDirty = true;
+      st.editSeq++;
+      updateSaveBtn();
     }
 
     /* ── operaciones ──────────────────────────────────────────── */
@@ -378,7 +402,7 @@
       c.rotate(dir * Math.PI / 2);
       c.drawImage(st.work, -w / 2, -h / 2);
       st.work = nc;
-      resetView(); markDirty(); draw();
+      resetView(); markGeomDirty(); draw();
     }
 
     function flip(horizontal) {
@@ -390,7 +414,7 @@
       else            { c.translate(0, h); c.scale(1, -1); }
       c.drawImage(st.work, 0, 0);
       st.work = nc;
-      markDirty(); draw();
+      markGeomDirty(); draw();
     }
 
     function resetAll() {
@@ -399,8 +423,9 @@
       st.work.width = img.naturalWidth; st.work.height = img.naturalHeight;
       st.work.getContext('2d').drawImage(img, 0, 0);
       st.bright = 100; st.contrast = 100;
-      st.dirty = false;
-      if (btnSave) btnSave.disabled = true;
+      st.geomDirty = false;
+      st.editSeq++;
+      updateSaveBtn();
       resetSliders(); exitCrop(); resetView(); draw();
       toast('Foto restablecida al original.', 'info');
     }
@@ -419,7 +444,8 @@
       var k = e.target.getAttribute('data-adj');
       st[k] = parseInt(e.target.value, 10);
       adjustPanel.querySelector('[data-v="' + k + '"]').textContent = e.target.value + '%';
-      if (st.bright !== 100 || st.contrast !== 100) markDirty();
+      st.editSeq++;
+      updateSaveBtn();
       draw();
     }
 
@@ -475,14 +501,16 @@
       nc.width = Math.round(sw); nc.height = Math.round(sh);
       nc.getContext('2d').drawImage(st.work, sx, sy, sw, sh, 0, 0, nc.width, nc.height);
       st.work = nc;
-      exitCrop(); markDirty(); resetView(); draw();
+      exitCrop(); markGeomDirty(); resetView(); draw();
     }
 
     function bindCropGestures() {
-      var mode = null, startX = 0, startY = 0, orig = null;
+      var mode = null, startX = 0, startY = 0, orig = null, dragId = null;
       function down(e) {
         if (!st || !st.cropMode) return;
+        if (mode) return;                 // ya hay un dedo arrastrando
         e.preventDefault(); e.stopPropagation();
+        dragId = e.pointerId;
         var t = e.target;
         mode = t.classList.contains('ife-h')
           ? (t.classList.contains('nw') ? 'nw' : t.classList.contains('ne') ? 'ne'
@@ -494,6 +522,7 @@
       }
       function move(e) {
         if (!mode || !st || !st.cropMode) return;
+        if (e.pointerId !== dragId) return;   // ignorar segundo dedo
         var dx = e.clientX - startX, dy = e.clientY - startY;
         var g = st._geom, MIN = 40;
         var c = st.crop;
@@ -511,7 +540,7 @@
         }
         positionCropBox();
       }
-      function up() { mode = null; }
+      function up(e) { if (e.pointerId === dragId) { mode = null; dragId = null; } }
       cropBox.addEventListener('pointerdown', down);
       cropBox.addEventListener('pointermove', move);
       cropBox.addEventListener('pointerup', up);
@@ -543,6 +572,10 @@
           if (lastDist) setZoom(st.zoom * (d / lastDist));
           lastDist = d;
         } else if (ids.length === 1 && panStart && st.zoom > 1) {
+          if (e.pointerType === 'mouse' && e.buttons === 0) {
+            /* solto el boton fuera del stage: cortar el pan fantasma */
+            delete pointers[e.pointerId]; panStart = null; return;
+          }
           st.panX = e.clientX - panStart.x;
           st.panY = e.clientY - panStart.y;
           draw();
@@ -584,6 +617,8 @@
       var out = document.createElement('canvas');
       out.width = st.work.width; out.height = st.work.height;
       var c = out.getContext('2d');
+      c.fillStyle = '#fff';                       // JPEG no tiene alfa: fondo
+      c.fillRect(0, 0, out.width, out.height);    // blanco, no negro
       if (st.bright !== 100 || st.contrast !== 100) {
         if (filtersSupported()) {
           c.filter = 'brightness(' + st.bright + '%) contrast(' + st.contrast + '%)';
@@ -611,44 +646,60 @@
     }
 
     function save() {
-      if (!st.dirty || st.saving || st.tainted) return;
-      st.saving = true;
+      if (!st || !isDirty() || st.saving || st.tainted) return;
+      /* Capturar el estado LOCAL: si el usuario cierra el editor o abre otra
+         foto mientras el XHR vuela, la respuesta no debe tocar el estado nuevo */
+      var mySt = st;
+      var seqAtSave = mySt.editSeq;
+      mySt.saving = true;
       btnSave.disabled = true;
       btnSave.innerHTML = '<span class="spinner-border spinner-border-sm"></span>Guardando…';
-      bake().toBlob(function (blob) {
-        if (!blob) { saveDone(false, 'No se pudo generar la imagen.'); return; }
+      var baked = bake();
+      baked.toBlob(function (blob) {
+        if (!blob) { saveDone(mySt, false, 'No se pudo generar la imagen.'); return; }
         var fd = new FormData();
         fd.append('photo', new File([blob], 'foto.jpg', { type: 'image/jpeg' }));
         fd.append('csrf_token', opts.csrf);
-        var url = opts.urls.replace.replace('{id}', st.photo.id) + '?ajax=1';
+        var url = opts.urls.replace.replace('{id}', mySt.photo.id) + '?ajax=1';
         xhrUpload(url, fd).then(function (j) {
-          st.photo.url = j.url;
-          if (opts.onReplaced) opts.onReplaced(st.photo.id, j.url);
-          st.dirty = false;
-          saveDone(true);
-        }).catch(function (err) { saveDone(false, err); });
+          mySt.photo.url = j.url;
+          if (opts.onReplaced) opts.onReplaced(mySt.photo.id, j.url);  // grid SIEMPRE
+          if (mySt.editSeq === seqAtSave) {
+            /* nada cambió durante el guardado → re-basar: lo guardado (con
+               filtros ya horneados) pasa a ser el nuevo original visible */
+            mySt.work = baked;
+            mySt.geomDirty = false;
+            mySt.bright = 100; mySt.contrast = 100;
+            if (st === mySt) { resetSliders(); draw(); }
+          }
+          /* si editSeq avanzó, los cambios nuevos siguen pendientes (dirty) */
+          saveDone(mySt, true);
+        }).catch(function (err) { saveDone(mySt, false, err); });
       }, 'image/jpeg', 0.9);
     }
 
-    function saveDone(ok, err) {
-      st.saving = false;
-      btnSave.innerHTML = '<i class="bi bi-floppy2"></i>Guardar';
-      btnSave.disabled = ok;
+    function saveDone(mySt, ok, err) {
+      mySt.saving = false;
+      if (st === mySt) {   // solo tocar la UI si el editor sigue en esta foto
+        btnSave.innerHTML = '<i class="bi bi-floppy2"></i>Guardar';
+        updateSaveBtn();
+      }
       if (ok) toast('✓ Foto guardada con los cambios.', 'success');
       else toast(String(err || 'Error al guardar.'), 'error');
     }
 
     function removePhoto() {
+      if (!st) return;
+      var mySt = st;   // sobrevive a cierres/cambios de foto durante el XHR
       var doDelete = function (confirmSku) {
         var fd = new FormData();
         fd.append('confirm_sku', confirmSku);
         fd.append('csrf_token', opts.csrf);
-        var url = opts.urls.del.replace('{id}', st.photo.id) + '?ajax=1';
+        var url = opts.urls.del.replace('{id}', mySt.photo.id) + '?ajax=1';
         xhrUpload(url, fd).then(function () {
           toast('Foto eliminada.', 'success');
-          var id = st.photo.id;
-          close();
-          if (opts.onDeleted) opts.onDeleted(id);
+          if (st === mySt) close();
+          if (opts.onDeleted) opts.onDeleted(mySt.photo.id);
         }).catch(function (err) { toast(String(err), 'error'); });
       };
       if (window.ilusPrompt) {
@@ -673,7 +724,10 @@
     function onAction(e) {
       var b = e.target.closest('[data-a]');
       if (!b || !st) return;
-      switch (b.getAttribute('data-a')) {
+      var a = b.getAttribute('data-a');
+      /* mientras la imagen carga (st.work=null) solo permitir cerrar/eliminar */
+      if (!st.work && a !== 'close' && a !== 'delete') return;
+      switch (a) {
         case 'close':       requestClose(); break;
         case 'download':    download(); break;
         case 'delete':      removePhoto(); break;
@@ -726,12 +780,15 @@
     }
 
     function render() {
+      /* no destruir tarjetas de subidas EN VUELO (subidas concurrentes) */
+      var pending = Array.prototype.slice.call(zone.querySelectorAll('.ife-upcard'));
       zone.innerHTML = '';
       photos.forEach(function (p) { zone.appendChild(card(p)); });
-      if (cfg.canEdit && photos.length < cfg.maxPhotos) {
+      pending.forEach(function (c) { zone.appendChild(c); });
+      if (cfg.canEdit && photos.length + pending.length < cfg.maxPhotos) {
         zone.appendChild(uploadZoneDesktop());
         zone.appendChild(uploadZoneMobile());
-      } else if (photos.length >= cfg.maxPhotos) {
+      } else if (cfg.canEdit && photos.length >= cfg.maxPhotos) {
         var full = document.createElement('div');
         full.className = 'd-flex flex-column align-items-center justify-content-center';
         full.style.cssText = 'min-height:120px;border:2px dashed #ddd;border-radius:6px;background:#fafafa';

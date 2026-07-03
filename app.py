@@ -9022,14 +9022,23 @@ def upload_photo(pid):
         print(f"[ILUS] Error subiendo foto: {exc}", flush=True)
         return _err("Error al subir la foto. Intenta nuevamente.", "danger", 502)
 
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(
-            f"INSERT INTO `{PHOTOS_TABLE}` (product_id,filename,orden) VALUES (%s,%s,%s)",
-            (pid, filename, len(photos) + 1),
-        )
-        new_id = cur.lastrowid
-    conn.commit()
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO `{PHOTOS_TABLE}` (product_id,filename,orden) VALUES (%s,%s,%s)",
+                (pid, filename, len(photos) + 1),
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+    except Exception as exc:
+        # el archivo ya subió a GCS: limpiarlo para no dejar blob huérfano
+        print(f"[ILUS] Error registrando foto en BD: {exc}", flush=True)
+        try:
+            delete_photo_file(filename)
+        except Exception:
+            pass
+        return _err("Error al registrar la foto. Intenta nuevamente.", "danger", 500)
 
     if ajax:
         return jsonify({
@@ -9111,15 +9120,36 @@ def replace_photo(pid, photo_id):
         return jsonify({"ok": False, "error": "Error al guardar la imagen editada."}), 502
 
     old = photo["filename"]
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(f"UPDATE `{PHOTOS_TABLE}` SET filename=%s WHERE id=%s", (filename, photo_id))
-    conn.commit()
-    if old and old != filename:
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE `{PHOTOS_TABLE}` SET filename=%s WHERE id=%s AND product_id=%s",
+                (filename, photo_id, pid),
+            )
+            updated = cur.rowcount
+        conn.commit()
+    except Exception as exc:
+        print(f"[ILUS] Error actualizando foto editada en BD: {exc}", flush=True)
         try:
-            delete_photo_file(old)
-        except Exception as exc:
-            print(f"[ILUS] No se pudo borrar la foto anterior {old}: {exc}", flush=True)
+            delete_photo_file(filename)
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "Error al registrar la imagen editada."}), 500
+
+    if not updated:
+        # la foto fue eliminada por otro usuario mientras se editaba
+        try:
+            delete_photo_file(filename)
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "La foto ya no existe (fue eliminada)."}), 409
+
+    # El archivo ANTERIOR se conserva a propósito (filosofía soft-delete,
+    # REGLA #5): permite recuperar el original si una edición salió mal y
+    # evita que un rol con 'edit' pero sin 'delete' destruya contenido.
+    if old and old != filename:
+        print(f"[ILUS] Foto {photo_id} editada: archivo anterior conservado en {old}", flush=True)
     return jsonify({"ok": True, "url": _photo_src(filename)})
 
 
