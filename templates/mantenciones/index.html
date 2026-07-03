@@ -50,12 +50,16 @@
         <i class="bi bi-building-add me-1"></i>Nuevo cliente
       </a>
       {# Reporte Excel Clientes+Contratos+Productos — pedido Daniel/Félix 2026-06:
-         cruce de cartera con área general + Finanzas. #}
+         cruce de cartera con área general + Finanzas. Oculto para técnicos
+         (el endpoint es @_no_tecnico — info comercial, no operativa). #}
+      {% set _role_low = (current_user.role if current_user else '') | lower %}
+      {% if not _role_low.startswith('tecnico') %}
       <button type="button" class="btn fw-bold px-3" onclick="abrirReporteExcel()"
               style="background:#14532d;color:#fff;border:0"
               title="Descargar Excel de clientes: RUT, dirección, contrato (condición y tipo) + hoja de productos por RUT — para cruzar con Finanzas">
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
       </button>
+      {% endif %}
       {# Plan 2026-05-21 Capa 9-C: dashboard puede cargar visitas históricas
          eligiendo el cliente vía autocomplete. #}
       <button type="button" class="btn btn-outline-secondary" onclick="abrirVisitaHistDashboard()"
