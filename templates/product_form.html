@@ -268,91 +268,18 @@
 
 {# ══ FOTOS (solo en edición) ════════════════════════════════════════════ #}
 {% if product and permissions.edit %}
-{% set can_add   = (photos is defined and photos|length < 2) or (photos is not defined) %}
 {% set photo_list = photos if photos is defined else [] %}
 <div class="ilus-card mt-1 mb-4">
   <div class="ilus-card-header">
     <span><i class="bi bi-images me-2"></i>Fotos del producto
-      <span class="badge bg-secondary ms-1">{{ photo_list|length }}/2</span>
+      <span class="badge bg-secondary ms-1" id="fotoCountBadge">{{ photo_list|length }}/2</span>
     </span>
-    <span class="text-muted small fw-normal">Se guardan al seleccionarlas</span>
+    <span class="text-muted small fw-normal d-none d-md-inline">Toca una foto para verla y editarla</span>
   </div>
-  <div class="photos-grid">
-    {% for ph in photo_list %}
-    <div class="photo-card">
-      <a href="{{ photo_src(ph.filename) }}" target="_blank" class="photo-preview-btn">
-        <img src="{{ photo_src(ph.filename) }}"
-             alt="Foto {{ loop.index }}" loading="lazy">
-      </a>
-      {% if permissions.delete %}
-      <button type="button" class="photo-delete-btn"
-              data-bs-toggle="modal" data-bs-target="#delFotoModal{{ ph.id }}"
-              title="Eliminar foto">
-        <i class="bi bi-x-lg"></i>
-      </button>
-      {% endif %}
-    </div>
-    {% endfor %}
-
-    {% if can_add %}
-    <form method="post" action="{{ url_for('upload_photo', pid=product.id) }}"
-          enctype="multipart/form-data" id="photoFormEdit">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label class="photo-upload-zone d-flex flex-column align-items-center justify-content-center h-100"
-             style="min-height:120px" for="photoInputEdit">
-        <div class="up-icon"><i class="bi bi-camera-plus"></i></div>
-        <div class="up-text">
-          Agregar foto<br>
-          <span style="color:#bbb;font-size:.7rem">JPG, PNG, WEBP · máx. 2</span>
-        </div>
-        <input type="file" name="photo" id="photoInputEdit" accept="image/*"
-               onchange="document.getElementById('photoFormEdit').submit()">
-      </label>
-    </form>
-    {% else %}
-    <div class="d-flex flex-column align-items-center justify-content-center"
-         style="min-height:120px;border:2px dashed #ddd;border-radius:6px;background:#fafafa">
-      <i class="bi bi-check-circle text-success fs-4 mb-1"></i>
-      <div class="small text-muted">Límite de 2 fotos alcanzado</div>
-    </div>
-    {% endif %}
-  </div>
+  {# El grid, la subida AJAX (con compresión en el navegador) y el editor
+     (rotar/voltear/recortar/brillo/contraste) los maneja foto_editor.js #}
+  <div class="photos-grid" id="ilusFotosZone"></div>
 </div>
-
-{# ── Modales de confirmación para eliminar cada foto ── #}
-{% if product and permissions.delete %}
-{% for ph in photo_list %}
-<div class="modal fade" id="delFotoModal{{ ph.id }}" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
-        <h5 class="modal-title"><i class="bi bi-trash me-2"></i>Eliminar foto {{ loop.index }}</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="alert alert-warning py-2 mb-3 small">
-          <strong>Esta acción es permanente.</strong> La foto será eliminada del producto.
-        </div>
-        <p class="mb-1">Producto: <strong>{{ product.sku }}</strong></p>
-        <p class="mb-3">Escribe el SKU para confirmar la eliminación:</p>
-        <form method="post" action="{{ url_for('delete_photo', pid=product.id, photo_id=ph.id) }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="text" id="delFotoInput{{ ph.id }}" name="confirm_sku"
-                 class="form-control font-monospace text-uppercase mb-3"
-                 placeholder="{{ product.sku }}" autocomplete="off">
-          <div class="d-flex gap-2 justify-content-end">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-            <button type="submit" class="btn btn-danger fw-bold" id="delFotoBtn{{ ph.id }}" disabled>
-              <i class="bi bi-trash me-1"></i>Eliminar foto
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-</div>
-{% endfor %}
-{% endif %}
 {% endif %}
 
 {% endblock %}
@@ -376,23 +303,6 @@
   }
 })();
 
-/* ── Modales eliminar fotos — validación SKU ───────────────── */
-{% for ph in (photos if photos is defined else []) %}
-(function() {
-  var sku   = {{ product.sku | tojson }};
-  var inp   = document.getElementById('delFotoInput{{ ph.id }}');
-  var btn   = document.getElementById('delFotoBtn{{ ph.id }}');
-  var modal = document.getElementById('delFotoModal{{ ph.id }}');
-  if (!inp) return;
-  inp.addEventListener('input', function() {
-    btn.disabled = (inp.value.trim().toUpperCase() !== sku);
-  });
-  modal.addEventListener('hidden.bs.modal', function() {
-    inp.value  = '';
-    btn.disabled = true;
-  });
-})();
-{% endfor %}
 {% endif %}
 
 /* ─────────────────────────────────────────────────────────────
@@ -701,4 +611,31 @@ const FORM_DATA = {
 })();
 {% endif %}
 </script>
+
+{# ── Fotos: grid + subida AJAX comprimida + visor/editor profesional ── #}
+{% if product and permissions.edit %}
+<script defer src="{{ url_for('static', filename='foto_editor.js') }}?v=20260703a"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  window.ilusFotos.init({
+    mount: '#ilusFotosZone',
+    badge: '#fotoCountBadge',
+    productId: {{ product.id }},
+    sku: {{ product.sku|tojson }},
+    csrf: {{ csrf_token()|tojson }},
+    canEdit: {{ 'true' if permissions.edit else 'false' }},
+    canDelete: {{ 'true' if permissions.delete else 'false' }},
+    maxPhotos: 2,
+    photos: [
+      {% for ph in (photos if photos is defined else []) %}{ id: {{ ph.id }}, url: {{ photo_src(ph.filename)|tojson }} }{{ "," if not loop.last }}{% endfor %}
+    ],
+    urls: {
+      upload:  "/products/{{ product.id }}/photos",
+      del:     "/products/{{ product.id }}/photos/{id}/delete",
+      replace: "/products/{{ product.id }}/photos/{id}/replace"
+    }
+  });
+});
+</script>
+{% endif %}
 {% endblock %}
