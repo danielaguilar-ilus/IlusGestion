@@ -490,7 +490,35 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+/* ══════════════════════════════════════════════════════════════
+   Carga PEREZOSA de html5-qrcode (antes era un <script> bloqueante
+   de ~400KB desde unpkg en CADA carga del catálogo, se usara o no).
+   Ahora: se precarga en idle y se garantiza al abrir el escáner.
+   jsdelivr primero (más rápido/estable en Chile), unpkg de respaldo.
+══════════════════════════════════════════════════════════════ */
+var _qrLibPromise = null;
+function loadScannerLib() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (_qrLibPromise) return _qrLibPromise;
+  _qrLibPromise = new Promise(function (res, rej) {
+    function inject(src, onFail) {
+      var s = document.createElement('script');
+      s.src = src; s.async = true;
+      s.onload = res; s.onerror = onFail;
+      document.head.appendChild(s);
+    }
+    inject('https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js', function () {
+      inject('https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js', rej);
+    });
+  });
+  return _qrLibPromise;
+}
+/* Precarga en tiempo muerto: al abrir el escáner ya suele estar lista */
+(window.requestIdleCallback || function (f) { setTimeout(f, 2500); })(function () {
+  loadScannerLib().catch(function () {});
+});
+</script>
 <script>
 /* ══════════════════════════════════════════
    FILTRO KPI CLIENT-SIDE (solo página visible)
@@ -723,11 +751,20 @@ function clearKpiFilter() {
 
   scanBtn.addEventListener('click', function(){
     resetModal();
+    loadScannerLib().catch(function(){});   /* arranca la descarga YA */
     new bootstrap.Modal(scannerModal).show();
   });
 
   scannerModal.addEventListener('shown.bs.modal', function(){
     statusEl.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-2"></div>Iniciando cámara…';
+    loadScannerLib().then(startCamera).catch(function(){
+      statusEl.innerHTML = '<i class="bi bi-wifi-off me-1 text-warning"></i>'
+                         + 'No se pudo cargar el escáner (sin internet). Usa el campo manual.';
+    });
+  });
+
+  function startCamera(){
+    if (!scannerModal.classList.contains('show')) return;  /* la cerró antes */
     html5QrCode = new Html5Qrcode('qr-reader');
 
     var config = {
@@ -743,7 +780,14 @@ function clearKpiFilter() {
         Html5QrcodeSupportedFormats.ITF,
       ],
       aspectRatio: 1.7,
-      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      /* Resolución alta = el decodificador 1D lee el código MUCHO antes
+         (con la resolución por defecto ~640px los CODE128 tardaban) */
+      videoConstraints: {
+        facingMode: 'environment',
+        width:  { ideal: 1280 },
+        height: { ideal: 720 }
+      }
     };
 
     html5QrCode.start(
@@ -831,7 +875,7 @@ function clearKpiFilter() {
       statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>'
                          + 'Cámara no disponible. Usa el campo manual.';
     });
-  });
+  }
 
   scannerModal.addEventListener('hide.bs.modal', function(){
     if(html5QrCode){
@@ -853,7 +897,11 @@ function clearKpiFilter() {
   });
 
   scannerModal.addEventListener('shown.bs.modal', function(){
-    setTimeout(function(){ manualInput.focus(); }, 600);
+    /* Solo en desktop: en el teléfono el autofocus abría el TECLADO
+       encima de la cámara y hacía sentir el escaneo lentísimo */
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      setTimeout(function(){ manualInput.focus(); }, 600);
+    }
   });
 })();
 
