@@ -1043,6 +1043,16 @@ def serve_archivo(key):
     Reemplaza las URLs públicas de Cloudinary. La app lee de GCS (el bucket NO
     es público); las keys son no-adivinables → misma seguridad que antes."""
     import mimetypes
+    import hashlib as _hl
+    # ETag por key: las fotos se versionan con key nueva (timestamp), así que
+    # el contenido de una key no cambia → revalidar con If-None-Match evita
+    # descargar de GCS y re-enviar los bytes (304 en vez de 200 completo).
+    etag = '"' + _hl.md5(key.encode("utf-8")).hexdigest() + '"'
+    if etag in (request.headers.get("If-None-Match") or ""):
+        resp = Response(status=304)
+        resp.headers["ETag"] = etag
+        resp.headers["Cache-Control"] = "public, max-age=2592000"
+        return resp
     b = _gcs_bucket()
     if not b:
         return "Almacenamiento no disponible", 503
@@ -1065,6 +1075,7 @@ def serve_archivo(key):
     resp = Response(data, mimetype=ct)
     resp.headers["Cache-Control"] = "public, max-age=2592000"
     resp.headers["Content-Disposition"] = "inline"
+    resp.headers["ETag"] = etag
     return resp
 
 
@@ -8953,6 +8964,14 @@ def _foto_ajax():
     )
 
 
+MAX_FOTO_BYTES = 20 * 1024 * 1024   # 20 MB — el JS comprime a ~300KB; esto
+                                    # solo frena abusos/errores (OOM del worker)
+
+
+def _foto_demasiado_grande():
+    return bool(request.content_length and request.content_length > MAX_FOTO_BYTES)
+
+
 def _guardar_foto_archivo(file, pid, sufijo=""):
     """Sube el archivo a GCS/Cloudinary (o disco local como fallback) y
     devuelve el filename/URL a guardar en BD. Lanza excepción si falla."""
@@ -8987,6 +9006,9 @@ def upload_photo(pid):
         return redirect(url_for("index"))
     if len(photos) >= MAX_PHOTOS:
         return _err(f"Maximo {MAX_PHOTOS} fotos por producto.")
+
+    if _foto_demasiado_grande():
+        return _err("La imagen supera el máximo de 20 MB.", "danger", 413)
 
     file = request.files.get("photo")
     if not file or not file.filename:
@@ -9072,6 +9094,9 @@ def replace_photo(pid, photo_id):
     )
     if not photo:
         return jsonify({"ok": False, "error": "Foto no encontrada."}), 404
+
+    if _foto_demasiado_grande():
+        return jsonify({"ok": False, "error": "La imagen supera el máximo de 20 MB."}), 413
 
     file = request.files.get("photo")
     if not file or not file.filename:
