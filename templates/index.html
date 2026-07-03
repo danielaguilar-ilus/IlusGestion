@@ -520,9 +520,40 @@ function loadScannerLib() {
   return _qrLibPromise;
 }
 /* Precarga en tiempo muerto: al abrir el escáner ya suele estar lista */
+/* Polyfill del BarcodeDetector para iPhone/Safari: zxing-cpp compilado a
+   WebAssembly — el mismo motor rápido en TODOS los teléfonos. Si no existe
+   el nativo, el polyfill define window.BarcodeDetector automáticamente. */
+var _bdPolyPromise = null;
+function loadDetectorPolyfill() {
+  if (window.BarcodeDetectionAPI) return Promise.resolve();
+  if (_bdPolyPromise) return _bdPolyPromise;
+  _bdPolyPromise = new Promise(function (res, rej) {
+    function inject(src, onFail) {
+      var sc = document.createElement('script');
+      sc.src = src; sc.async = true;
+      sc.onload = res; sc.onerror = onFail;
+      document.head.appendChild(sc);
+    }
+    inject('https://cdn.jsdelivr.net/npm/barcode-detector@3/dist/iife/index.js', function () {
+      inject('https://unpkg.com/barcode-detector@3/dist/iife/index.js', rej);
+    });
+  });
+  return _bdPolyPromise;
+}
+
 (window.requestIdleCallback || function (f) { setTimeout(f, 2500); })(function () {
-  if ('BarcodeDetector' in window) return;   /* Chrome/Edge usan el motor NATIVO */
-  loadScannerLib().catch(function () {});
+  if ('BarcodeDetector' in window) return;   /* Chrome/Edge: motor nativo, nada que bajar */
+  /* iPhone/Safari: precargar el polyfill Y calentar el WASM en tiempo muerto,
+     para que el primer escaneo real sea instantáneo */
+  loadDetectorPolyfill().then(function () {
+    try {
+      var C = (window.BarcodeDetectionAPI && window.BarcodeDetectionAPI.BarcodeDetector) || window.BarcodeDetector;
+      if (!C) return;
+      var d = new C({ formats: ['code_128'] });
+      var cv = document.createElement('canvas'); cv.width = 4; cv.height = 4;
+      d.detect(cv).catch(function () {});      /* fuerza la descarga/compilación del WASM */
+    } catch (e) { /* mejor esfuerzo */ }
+  }).catch(function () {});
 });
 </script>
 <script>
@@ -719,12 +750,30 @@ function clearKpiFilter() {
   var html5QrCode  = null;
   /* Formatos 1D de las etiquetas ILUS (CODE128 primero) */
   var FORMATS_1D = ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf'];
-  /* ¿El navegador trae detector de códigos NATIVO? (Chrome/Edge/Android sí) */
-  var NATIVE_OK = ('BarcodeDetector' in window)
-    ? window.BarcodeDetector.getSupportedFormats()
-        .then(function(f){ return f.indexOf('code_128') >= 0; })
-        .catch(function(){ return false; })
-    : Promise.resolve(false);
+  /* Motor de detección: NATIVO (Chrome/Edge/Android) o polyfill WASM
+     (iPhone/Safari). detectorReady() resuelve true y deja la clase lista
+     en DetectorClass; false solo si ni siquiera el polyfill cargó. */
+  var DetectorClass = null;
+  function detectorReady() {
+    if (DetectorClass) return Promise.resolve(true);
+    var tryNative = ('BarcodeDetector' in window && !window.BarcodeDetectionAPI)
+      ? window.BarcodeDetector.getSupportedFormats()
+          .then(function(f){
+            if (f.indexOf('code_128') >= 0) { DetectorClass = window.BarcodeDetector; return true; }
+            return false;
+          }).catch(function(){ return false; })
+      : Promise.resolve(false);
+    return tryNative.then(function(ok){
+      if (ok) return true;
+      return loadDetectorPolyfill().then(function(){
+        var C = (window.BarcodeDetectionAPI && window.BarcodeDetectionAPI.BarcodeDetector)
+                || window.BarcodeDetector;
+        if (!C) return false;
+        DetectorClass = C;
+        return true;
+      }).catch(function(){ return false; });
+    });
+  }
   var scannerModal = document.getElementById('scannerModal');
   var scanBtn      = document.getElementById('scanBtn');
   var manualBtn    = document.getElementById('manualSearchBtn');
@@ -743,13 +792,13 @@ function clearKpiFilter() {
 
   scanBtn.addEventListener('click', function(){
     resetModal();
-    NATIVE_OK.then(function(ok){ if (!ok) loadScannerLib().catch(function(){}); });
+    detectorReady().then(function(ok){ if (!ok) loadScannerLib().catch(function(){}); });
     new bootstrap.Modal(scannerModal).show();
   });
 
   scannerModal.addEventListener('shown.bs.modal', function(){
     statusEl.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-2"></div>Iniciando cámara…';
-    NATIVE_OK.then(function(ok){
+    detectorReady().then(function(ok){
       if (!scannerModal.classList.contains('show')) return;
       if (ok) { startNative(); return; }
       loadScannerLib().then(startCamera).catch(function(){
@@ -781,18 +830,32 @@ function clearKpiFilter() {
     } catch (e) { /* sin audio no pasa nada */ }
   }
 
+  var natStarting = false;   /* evita doble getUserMedia (cerrar/reabrir rápido) */
+
   function startNative() {
     if (!scannerModal.classList.contains('show')) return;
+    if (natStarting || natStream) return;      /* ya arrancando o arrancado */
+    natStarting = true;
     try {
-      natDetector = new window.BarcodeDetector({ formats: FORMATS_1D });
+      natDetector = new DetectorClass({ formats: FORMATS_1D });
     } catch (e) {
-      loadScannerLib().then(startCamera).catch(function(){});
+      natStarting = false;
+      loadScannerLib().then(startCamera).catch(function(){
+        statusEl.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>'
+                           + 'Cámara no disponible. Usa el campo manual.';
+      });
       return;
     }
     navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     }).then(function(stream){
+      /* el usuario pudo cerrar el modal mientras aceptaba el permiso:
+         detener el stream YA o el LED de la cámara queda encendido */
+      if (!scannerModal.classList.contains('show') || natStream) {
+        stream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} });
+        return Promise.reject('__abortado__');
+      }
       natStream = stream;
       var reader = document.getElementById('qr-reader');
       reader.innerHTML = '';
@@ -813,11 +876,15 @@ function clearKpiFilter() {
       reader.appendChild(ov);
       return natVideo.play();
     }).then(function(){
+      natStarting = false;
+      if (!scannerModal.classList.contains('show')) { stopNative(); return; }
       natActive = true;
       statusEl.innerHTML = '<i class="bi bi-lightning-charge-fill me-1" style="color:var(--ilus-red)"></i>'
                          + 'Apunta al código — detección instantánea';
       natTick();
-    }).catch(function(){
+    }).catch(function(err){
+      natStarting = false;
+      if (err === '__abortado__') return;   /* cierre limpio, no es error */
       stopNative();
       /* sin permiso/cámara con el nativo → intentar con la librería */
       loadScannerLib().then(startCamera).catch(function(){
@@ -990,10 +1057,18 @@ function clearKpiFilter() {
     resetModal();
   });
 
+  /* Reanuda el motor que esté activo (nativo o librería) */
+  function resumeActiveEngine(){
+    if (natStream) { natResume(); }
+    else if (html5QrCode) { try { html5QrCode.resume(); } catch (e) {} }
+  }
+
   function doManualSearch(){
     var v = manualInput.value.trim().toUpperCase();
     if(!v) return;
-    skuLookup(v);
+    /* FIX 2026-07-03: antes llamaba skuLookup() de OTRO IIFE (fuera de
+       alcance) → ReferenceError y el campo manual no hacía nada. */
+    handleScanResult(v, resumeActiveEngine);
   }
   manualBtn.addEventListener('click', doManualSearch);
   manualInput.addEventListener('keydown', function(e){
