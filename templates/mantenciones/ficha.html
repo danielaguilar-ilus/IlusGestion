@@ -9929,6 +9929,56 @@ window.__FICHA_DATA = {
               automáticamente la plantilla estándar a todos los equipos seleccionados.
             </div>
 
+            {# ── MODALIDAD del levantamiento (Daniel 2026-06-23): visible SIEMPRE
+                  que el tipo sea levantamiento, tenga o no equipos el cliente ── #}
+            <style>
+              .lev-modo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+              @media (max-width:576px){.lev-modo-grid{grid-template-columns:1fr}}
+              .lev-modo-card{position:relative;border:2px solid #e5e7eb;border-radius:14px;background:#fff;
+                padding:14px 14px 12px;cursor:pointer;transition:all .15s;user-select:none}
+              .lev-modo-card:hover{border-color:#cbd5e1;transform:translateY(-1px)}
+              .lev-modo-card.on{border-color:#dc2626;background:linear-gradient(180deg,#fff 0%,#fef2f2 100%);
+                box-shadow:0 8px 22px rgba(220,38,38,.18)}
+              .lev-modo-card .chk{position:absolute;top:10px;right:12px;width:22px;height:22px;border-radius:50%;
+                border:2px solid #d1d5db;display:flex;align-items:center;justify-content:center;
+                font-size:.72rem;color:#fff;background:#fff}
+              .lev-modo-card.on .chk{border-color:#dc2626;background:#dc2626}
+              .lev-modo-card .ico{font-size:1.5rem;line-height:1}
+              .lev-modo-card .tit{font-weight:800;font-size:.9rem;color:#0f172a;margin-top:6px}
+              .lev-modo-card .sub{font-size:.74rem;color:#6b7280;margin-top:3px;line-height:1.45}
+              .lev-modo-card .tag{display:inline-block;margin-top:7px;font-size:.62rem;font-weight:800;
+                letter-spacing:.4px;border-radius:6px;padding:2px 8px}
+            </style>
+            <div id="otModoLevWrap" style="display:none">
+              <div class="small fw-bold mt-3" style="color:#0f172a">
+                <i class="bi bi-signpost-split me-1" style="color:#dc2626"></i>Modalidad del levantamiento
+              </div>
+              <div class="lev-modo-grid">
+                <div class="lev-modo-card on" id="levModoEquipos" onclick="levModoSet('equipos')">
+                  <div class="chk"><i class="bi bi-check-lg"></i></div>
+                  <div class="ico">📋</div>
+                  <div class="tit">Con equipos de la ficha</div>
+                  <div class="sub">Marca abajo los equipos ya registrados que el técnico
+                    debe documentar. Ideal para clientes con inventario cargado.</div>
+                  <span class="tag" style="background:#f3f4f6;color:#374151">CLÁSICO</span>
+                </div>
+                <div class="lev-modo-card" id="levModoDescubrir" onclick="levModoSet('descubrimiento')">
+                  <div class="chk"><i class="bi bi-check-lg"></i></div>
+                  <div class="ico">🔭</div>
+                  <div class="tit">Descubrimiento en terreno</div>
+                  <div class="sub">El técnico crea el inventario allá: foto + nombre +
+                    N° de serie de cada máquina. Al cerrar la OT, los equipos quedan
+                    solos en la ficha — perfecto para partir con el informe.</div>
+                  <span class="tag" style="background:#fee2e2;color:#b91c1c">NUEVO · SIN MARCAR EQUIPOS</span>
+                </div>
+              </div>
+              <div id="levModoHint" class="small mt-2" style="display:none;background:#fff8e1;border:1px solid #fde68a;color:#78350f;border-radius:10px;padding:8px 11px;font-size:.76rem">
+                <i class="bi bi-binoculars-fill me-1"></i>
+                <strong>Descubrimiento activado:</strong> no necesitas marcar equipos (si marcas
+                algunos, igual valen — el técnico podrá <em>agregar los que encuentre de más</em> en terreno).
+              </div>
+            </div>
+
             {# ── Flag opcional: garantía aplica a CUALQUIER tipo (excepto levantamiento) ── #}
             <div class="mt-2 p-2 rounded border" id="otGarantiaWrap" style="background:#f8fafc;display:none">
               <div class="form-check form-switch">

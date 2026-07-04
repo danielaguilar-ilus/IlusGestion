@@ -1027,6 +1027,17 @@ function onTipoOtChange(){
       garWrap.style.display = '';
     }
   }
+  // Modalidad del levantamiento (Daniel 2026-06-23): selector visible SOLO
+  // para tipo levantamiento. Al cambiar de tipo vuelve al modo clásico.
+  const modoWrap = document.getElementById('otModoLevWrap');
+  if (modoWrap){
+    if (tipo === 'levantamiento'){
+      modoWrap.style.display = '';
+    } else {
+      modoWrap.style.display = 'none';
+      levModoSet('equipos');
+    }
+  }
   // Sugerir título según tipo si está vacío o tiene un prefijo conocido
   const tit = document.getElementById('levSelectTitulo');
   if (tit && (!tit.value || tit.value.startsWith('Levantamiento ') || tit.value.startsWith('Instalación ') || tit.value.startsWith('Mantención ') || tit.value.startsWith('Visita ') || tit.value.startsWith('Inspección '))){
@@ -1041,6 +1052,19 @@ function onTipoOtChange(){
     };
     tit.value = `${labels[tipo] || 'OT'} ${fecha}`;
   }
+}
+
+// ── Modalidad del levantamiento: 'equipos' (clásico) | 'descubrimiento'
+//    (el técnico crea el inventario en terreno). Daniel 2026-06-23.
+window._LEV_MODO = 'equipos';
+function levModoSet(modo){
+  window._LEV_MODO = (modo === 'descubrimiento') ? 'descubrimiento' : 'equipos';
+  const cEq  = document.getElementById('levModoEquipos');
+  const cDes = document.getElementById('levModoDescubrir');
+  const hint = document.getElementById('levModoHint');
+  if (cEq)  cEq.classList.toggle('on',  window._LEV_MODO === 'equipos');
+  if (cDes) cDes.classList.toggle('on', window._LEV_MODO === 'descubrimiento');
+  if (hint) hint.style.display = (window._LEV_MODO === 'descubrimiento') ? '' : 'none';
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1313,12 +1337,14 @@ async function levIniciar(){
   // CREAR la OT de levantamiento. No abre captura en este modal.
   const ids = Array.from(document.querySelectorAll('.lev-eq-chk:checked')).map(c => parseInt(c.dataset.id));
   // ── Levantamiento PURO de descubrimiento (Daniel 2026-06-23) ──────
-  // Sin equipos seleccionados + tipo levantamiento → OT válida: el técnico
-  // captura los equipos EN TERRENO (foto + nombre + serie) desde Ejecutar
-  // OT, y al cerrarla se crean solos en la ficha del cliente.
-  let esDescubrimiento = false;
-  if (!ids.length){
-    const _tipoSel = document.getElementById('otTipo')?.value || 'levantamiento';
+  // El selector de MODALIDAD del paso 1 manda: si eligió "Descubrimiento
+  // en terreno", la OT es válida con o sin equipos marcados — el técnico
+  // captura los equipos allá (foto + nombre + serie) y al cerrar la OT se
+  // crean solos en la ficha. Fallback: modo clásico con 0 equipos y tipo
+  // levantamiento → confirmación explícita (por si no vio el selector).
+  const _tipoSel = document.getElementById('otTipo')?.value || 'levantamiento';
+  let esDescubrimiento = (_tipoSel === 'levantamiento' && window._LEV_MODO === 'descubrimiento');
+  if (!ids.length && !esDescubrimiento){
     if (_tipoSel !== 'levantamiento'){
       ilusToast('Selecciona al menos un equipo', { type:'warning' });
       return;
@@ -1332,6 +1358,9 @@ async function levIniciar(){
     });
     if (!_okDesc) return;
     esDescubrimiento = true;
+    // Mantener sincronizada la fuente de verdad (selector + global) para
+    // que las tarjetas de modalidad reflejen lo que realmente se creará.
+    if (typeof levModoSet === 'function') levModoSet('descubrimiento');
   }
 
   // Validaciones programación

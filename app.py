@@ -37603,10 +37603,16 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                     obs_parts.append("DAÑO: " + it["anomalias"].strip())
                 obs_full = " · ".join(obs_parts) or None
 
+                # Factura de origen del ERP asociada por el técnico en terreno
+                # (ej 'FCV 12345') → doc_origen/doc_fecha reales del equipo;
+                # si no la asoció, queda trazado al levantamiento.
+                _doc_it = (it.get("doc_origen") or "").strip()[:80] or doc_origen
+                _fec_it = it.get("fecha_documento") or v.get("fecha_programada")
+
                 cols = ["cliente_id", "sku", "nombre", "serie", "doc_origen",
                         "doc_fecha", "cantidad", "notas", "estado", "created_by"]
-                vals = [cid, sku, nombre, serie, doc_origen,
-                        v.get("fecha_programada"), 1,
+                vals = [cid, sku, nombre, serie, _doc_it,
+                        _fec_it, 1,
                         f"Descubierto en terreno ({doc_origen})", "activo", user]
                 # Enriquecidas solo si la columna existe en esta BD:
                 extra = {
@@ -65062,6 +65068,52 @@ def mant_lev_detalle(lid):
     return jsonify({"ok": True, "levantamiento": lev, "items": items})
 
 
+@app.route("/mantenciones/api/erp/doc-info", methods=["POST"])
+@_mant_required
+def mant_erp_doc_info():
+    """Consulta liviana de un documento del ERP (read-only, REGLA #4.1) para
+    que el TÉCNICO asocie un equipo a su factura de origen desde terreno
+    (Daniel 2026-06-23). Devuelve datos mínimos + análisis de RUT contra el
+    cliente del levantamiento (informativo, no bloqueante).
+    body: {tipo: FCV|FCE|BLV|BLE|GDV, numero, lid?}"""
+    d = request.get_json(silent=True) or {}
+    tipo = (d.get("tipo") or "FCV").strip().upper()[:5]
+    if tipo not in ("FCV", "FCE", "BLV", "BLE", "GDV"):
+        tipo = "FCV"
+    numero = re.sub(r"[^0-9]", "", str(d.get("numero") or ""))
+    if not numero:
+        return jsonify({"ok": False, "error": "Indica el número del documento."}), 400
+    try:
+        doc = erp_engine.get_client().fetch_document(tipo, numero)
+    except Exception as e:
+        print(f"[erp_doc_info] {tipo} {numero}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."}), 502
+    if not doc:
+        return jsonify({"ok": False, "error": f"No se encontró {tipo} N° {numero} en el ERP."}), 404
+    analisis = None
+    try:
+        lid = int(d.get("lid") or 0)
+        if lid:
+            _lc = mysql_fetchone(
+                "SELECT c.rut FROM mant_levantamientos l "
+                "JOIN mant_clientes c ON c.id=l.cliente_id WHERE l.id=%s", (lid,))
+            if _lc and _lc.get("rut"):
+                analisis = _rut_analisis_comparacion(_lc["rut"], doc.get("cliente_rut"))
+    except Exception:
+        analisis = None
+    try:
+        _monto = float(doc.get("valor_bruto") or 0) or None
+    except (TypeError, ValueError):
+        _monto = None
+    return jsonify({"ok": True, "doc": {
+        "tipo": tipo, "numero": numero,
+        "fecha": str(doc.get("fecha") or "")[:10],
+        "cliente_nombre": doc.get("cliente_nombre") or "",
+        "cliente_rut": doc.get("cliente_rut") or "",
+        "monto": _monto,
+    }, "analisis": analisis})
+
+
 @app.route("/mantenciones/api/levantamientos/<int:lid>/items", methods=["POST"])
 @_mant_required
 def mant_lev_item_crear(lid):
@@ -65107,20 +65159,54 @@ def mant_lev_item_crear(lid):
     if _est_cap not in ('operativo','advertencia','fuera_servicio',
                         'en_reparacion','dado_baja','no_encontrado'):
         _est_cap = "operativo"
+    # Factura de origen del equipo (opcional — verificada vía /api/erp/doc-info)
+    _doc_origen = None
+    _doc_fecha = None
+    _dt_doc = (d.get("doc_tido") or "").strip().upper()[:5]
+    _dn_doc = re.sub(r"[^0-9]", "", str(d.get("doc_numero") or ""))
+    if _dt_doc and _dn_doc:
+        _doc_origen = f"{_dt_doc} {_dn_doc}"[:80]
+        _df = str(d.get("doc_fecha") or "").strip()[:10]
+        _doc_fecha = _df if re.match(r"^\d{4}-\d{2}-\d{2}$", _df) else None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO mant_levantamiento_items "
-                "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
-                " estado_capturado, ubicacion, observaciones, anomalias) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
-                 _est_cap,
-                 (d.get("ubicacion") or "").strip()[:200],
-                 (d.get("observaciones") or "").strip() or None,
-                 (d.get("anomalias") or "").strip() or None)
-            )
+            try:
+                cur.execute(
+                    "INSERT INTO mant_levantamiento_items "
+                    "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                    " estado_capturado, ubicacion, observaciones, anomalias, "
+                    " doc_origen, fecha_documento) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
+                     _est_cap,
+                     (d.get("ubicacion") or "").strip()[:200],
+                     (d.get("observaciones") or "").strip() or None,
+                     (d.get("anomalias") or "").strip() or None,
+                     _doc_origen, _doc_fecha)
+                )
+            except Exception as _e_full:
+                # Fallback SOLO si la columna doc_origen aún no existe
+                # (ILUS_SKIP_MIGRATIONS + _ensure no corrió todavía). Cualquier
+                # OTRO error (lock timeout, data-too-long, etc.) se re-lanza:
+                # no queremos descartar en silencio la factura que el técnico
+                # verificó ni enmascarar un fallo real como "sin documento".
+                _msg = str(_e_full).lower()
+                if not ("doc_origen" in _msg or "unknown column" in _msg or "1054" in _msg):
+                    raise
+                print(f"[lev_item_crear] columna doc_origen no disponible ({_e_full}); "
+                      f"fallback sin factura", flush=True)
+                cur.execute(
+                    "INSERT INTO mant_levantamiento_items "
+                    "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                    " estado_capturado, ubicacion, observaciones, anomalias) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
+                     _est_cap,
+                     (d.get("ubicacion") or "").strip()[:200],
+                     (d.get("observaciones") or "").strip() or None,
+                     (d.get("anomalias") or "").strip() or None)
+                )
             iid = cur.lastrowid
             cur.execute(
                 "UPDATE mant_levantamientos SET total_equipos = "
@@ -67683,6 +67769,28 @@ def _ensure_reglas_terreno():
     return n
 
 
+def _ensure_lev_items_doc_col():
+    """Garantiza mant_levantamiento_items.doc_origen SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). El técnico puede asociar el equipo descubierto
+    a su factura del ERP (Daniel 2026-06-23) — 'FCV 12345' + fecha_documento
+    (columna que ya existe). Al materializar, viaja a mant_maquinas."""
+    try:
+        _c = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_levantamiento_items' "
+            "  AND COLUMN_NAME='doc_origen'")
+        if not (_c or {}).get("n"):
+            mysql_execute(
+                "ALTER TABLE mant_levantamiento_items "
+                "ADD COLUMN doc_origen VARCHAR(80) NULL "
+                "COMMENT 'Doc ERP de origen del equipo (ej FCV 12345)'")
+            print("[ensure_lev_doc] doc_origen agregada", flush=True)
+            return True
+    except Exception as e:
+        print(f"[ensure_lev_doc] {e}", flush=True)
+    return False
+
+
 def _ensure_mant_visitas_factura_cols():
     """Garantiza las columnas del SELLO factura↔OT SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Sin ellas, asociar factura / firmar el cierre
@@ -68375,6 +68483,13 @@ try:
         _ensure_reglas_terreno()
 except Exception as _ensure_terr_err:
     print(f"[ILUS][WARN] _ensure_reglas_terreno: {_ensure_terr_err}", flush=True)
+
+# Columna doc_origen del item de levantamiento (equipo↔factura ERP en terreno).
+try:
+    with app.app_context():
+        _ensure_lev_items_doc_col()
+except Exception as _ensure_ldoc_err:
+    print(f"[ILUS][WARN] _ensure_lev_items_doc_col: {_ensure_ldoc_err}", flush=True)
 
 # CRÍTICO: garantizar `target_field` SIEMPRE (OT Levantamiento → Ficha),
 # incluso con ILUS_SKIP_MIGRATIONS=1. Sin esta columna, el editor de plantillas,

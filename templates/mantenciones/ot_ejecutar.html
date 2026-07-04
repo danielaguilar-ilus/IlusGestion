@@ -2180,6 +2180,35 @@
             <label class="form-label fw-semibold small mb-1 mt-2">Observación <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
             <textarea id="levd_obs" class="form-control" rows="2" placeholder="Lo que valga la pena registrar"></textarea>
 
+            {# ── Factura de origen ERP (opcional) — Daniel 2026-06-23: el técnico
+                  puede amarrar el equipo a su documento de compra/venta ── #}
+            <div class="mt-2 p-2" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
+              <div class="d-flex align-items-center justify-content-between" style="cursor:pointer"
+                   onclick="const w=document.getElementById('levdDocWrap');w.style.display=w.style.display==='none'?'':'none'">
+                <span class="fw-semibold small">
+                  <i class="bi bi-receipt me-1" style="color:#dc2626"></i>Factura de origen del equipo
+                  <span class="text-muted fw-normal" style="font-size:.7rem">(opcional — ERP)</span>
+                </span>
+                <i class="bi bi-chevron-expand text-muted"></i>
+              </div>
+              <div id="levdDocWrap" style="display:none" class="mt-2">
+                <div class="d-flex gap-2">
+                  <select id="levd_doc_tipo" class="form-select" style="max-width:100px">
+                    <option value="FCV" selected>FCV</option>
+                    <option value="FCE">FCE</option>
+                    <option value="BLV">BLV</option>
+                    <option value="GDV">GDV</option>
+                  </select>
+                  <input type="text" id="levd_doc_num" class="form-control" inputmode="numeric"
+                         placeholder="N° documento" autocomplete="off"
+                         oninput="_levdDoc=null;document.getElementById('levdDocInfo').innerHTML=''">
+                  <button type="button" class="btn btn-dark" id="levdDocBtn" onclick="levdDocVerificar()"
+                          style="min-width:46px"><i class="bi bi-search"></i></button>
+                </div>
+                <div id="levdDocInfo" class="small mt-2" style="min-height:16px;font-size:.76rem"></div>
+              </div>
+            </div>
+
             <div class="levd-sw">
               <span class="lbl">¿Está operativa?</span>
               <div class="form-check form-switch m-0">
@@ -8179,6 +8208,7 @@ let _levdFotos = [];      // fotos pendientes del modal actual [{blob,url}]
 let _levdUltimo = null;   // último equipo guardado (para Duplicar)
 let _levdSeq = 1;         // correlativo para la serie sugerida
 let _levdModal = null;
+let _levdDoc = null;      // factura ERP verificada {tido, numero, fecha}
 
 function _levdEl(id){ return document.getElementById(id); }
 
@@ -8215,7 +8245,7 @@ function levdRender(){
           ${dano ? '<span class="levd-badge dano">DAÑO</span>' : ''}
           ${fs ? '<span class="levd-badge fs">FUERA DE SERVICIO</span>' : ''}
         </div>
-        <div class="mt">${it.serie_snap ? 'Serie: ' + it.serie_snap : ''}${it.sku_snap ? ' · SKU: ' + it.sku_snap : ''} · ${(it.fotos||[]).length || it.n_fotos || 0} foto(s)</div>
+        <div class="mt">${it.serie_snap ? 'Serie: ' + it.serie_snap : ''}${it.sku_snap ? ' · SKU: ' + it.sku_snap : ''} · ${(it.fotos||[]).length || it.n_fotos || 0} foto(s)${it.doc_origen ? ' · 🧾 ' + it.doc_origen : ''}</div>
       </div>
       <button type="button" class="del" onclick="levdEliminar(${it.id})" title="Eliminar"><i class="bi bi-trash"></i></button>
     </div>`;
@@ -8241,6 +8271,11 @@ function levdAbrir(prefill){
   _levdEl('levdDanoWrap').style.display = 'none';
   _levdEl('levdErr').textContent = '';
   _levdEl('levdModalSeq').textContent = '#' + _levdSeq;
+  // Factura de origen: siempre parte limpia y colapsada (no se duplica)
+  _levdDoc = null;
+  _levdEl('levd_doc_num').value = '';
+  _levdEl('levdDocInfo').innerHTML = '';
+  _levdEl('levdDocWrap').style.display = 'none';
   _levdModal.show();
   if (!prefill) setTimeout(() => { try { _levdEl('levdFotoInput').click(); } catch(_e){} }, 450);
 }
@@ -8248,6 +8283,45 @@ function levdAbrir(prefill){
 function levdDuplicar(){
   if (!_levdUltimo) return;
   levdAbrir({ nombre: _levdUltimo.nombre, sku: _levdUltimo.sku, ubicacion: _levdUltimo.ubicacion });
+}
+
+// ── Factura de origen ERP (opcional): verificación read-only ──
+async function levdDocVerificar(){
+  const info = _levdEl('levdDocInfo');
+  const num = (_levdEl('levd_doc_num').value || '').replace(/\D/g, '');
+  if (!num){ info.innerHTML = '<span class="text-danger">Escribe el número del documento.</span>'; return; }
+  const btn = _levdEl('levdDocBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  _levdDoc = null;
+  try {
+    const r = await fetch('/mantenciones/api/erp/doc-info', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tipo: _levdEl('levd_doc_tipo').value, numero: num,
+                             lid: VISITA_LEVANTAMIENTO_ID }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      info.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>' +
+        (d.error || 'No se pudo verificar.') + '</span>';
+      return;
+    }
+    const doc = d.doc || {};
+    _levdDoc = { tido: doc.tipo, numero: doc.numero, fecha: doc.fecha || '' };
+    const rutOk = !d.analisis || d.analisis.match;
+    info.innerHTML =
+      '<span style="color:#15803d"><i class="bi bi-check-circle-fill me-1"></i>' +
+      `${doc.tipo} ${doc.numero}${doc.fecha ? ' · ' + doc.fecha : ''}` +
+      (doc.monto ? ' · ' + _factMonto(doc.monto) : '') + '</span>' +
+      `<div class="text-muted">${doc.cliente_nombre || ''}</div>` +
+      (rutOk ? '' :
+        `<div style="color:#b45309"><i class="bi bi-exclamation-triangle-fill me-1"></i>${(d.analisis && d.analisis.detalle) || 'El RUT no coincide con el cliente.'} Se guarda igual (informativo).</div>`);
+  } catch(_e){
+    info.innerHTML = '<span class="text-danger">Error de conexión con el servidor.</span>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-search"></i>';
+  }
 }
 
 // ── Fotos: compresión en el navegador (4G friendly) ──
@@ -8317,6 +8391,15 @@ async function levdGuardar(){
   const danoTxt = _levdEl('levd_dano_txt').value.trim();
   if (dano && !danoTxt){ err.textContent = 'Describe brevemente el daño.'; _levdEl('levd_dano_txt').focus(); return; }
 
+  // Factura de origen: si escribió un número pero NO lo verificó, pedimos
+  // verificar (o borrar el campo) — evita amarrar documentos inexistentes.
+  const _docNum = (_levdEl('levd_doc_num').value || '').replace(/\D/g, '');
+  if (_docNum && (!_levdDoc || _levdDoc.numero !== _docNum)){
+    _levdEl('levdDocWrap').style.display = '';
+    err.textContent = 'Verifica la factura con la lupa (o borra el número) antes de guardar.';
+    return;
+  }
+
   const payload = {
     nombre,
     sku:    _levdEl('levd_sku').value.trim(),
@@ -8325,6 +8408,9 @@ async function levdGuardar(){
     observaciones: _levdEl('levd_obs').value.trim(),
     anomalias: dano ? danoTxt : '',
     estado_capturado: !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo'),
+    doc_tido:   _levdDoc ? _levdDoc.tido : '',
+    doc_numero: _levdDoc ? _levdDoc.numero : '',
+    doc_fecha:  _levdDoc ? _levdDoc.fecha : '',
   };
 
   const btn = _levdEl('levdGuardarBtn');
