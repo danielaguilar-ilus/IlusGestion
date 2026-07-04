@@ -8487,4 +8487,87 @@ async function factAsociar(){
 }
 </script>
 
+<script>
+// ════════════════════════════════════════════════════════════════
+// GEOFENCE CHECK-IN (Daniel 2026-06-23) — habilitable desde
+// /mantenciones/configuracion (regla ot_geofence_activo + radio).
+// El técnico solo puede GESTIONAR la OT si está a ≤ N metros del
+// cliente. Estilo Fracttal: overlay de check-in al entrar; una vez
+// verificado queda liberado para esa OT en este dispositivo/sesión.
+// Gestión (admin/supervisor/ejecutivo) NO se bloquea — solo quien
+// ejecuta en terreno.
+// ════════════════════════════════════════════════════════════════
+const REGLAS_TERRENO = {{ (reglas_terreno or {}) | tojson }};
+const GEOF_PUEDE_EJECUTAR = {{ 'true' if puede_ejecutar else 'false' }};
+
+(function(){
+  const R = REGLAS_TERRENO || {};
+  const estadosTrabajo = ['creada','programada','asignada','en_curso','en_ejecucion','reagendada'];
+  if (!R.geofence_activo) return;
+  if (!GEOF_PUEDE_EJECUTAR) return;                    // solo quien ejecuta
+  if (typeof VISITA_TIPO !== 'undefined' && !estadosTrabajo.includes(VISITA_ESTADO)) return;
+  if (DESTINO_LAT === null || DESTINO_LNG === null) return;  // sin coords → no bloquea
+  if (sessionStorage.getItem('geoOK_' + VID) === '1') return;
+
+  const radio = Math.max(50, parseInt(R.geofence_radio_m || 200, 10));
+
+  function _havM(lat1, lon1, lat2, lon2){
+    const rad = Math.PI / 180, RT = 6371000;
+    const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+    const a = Math.sin(dLat/2)**2 +
+      Math.cos(lat1*rad) * Math.cos(lat2*rad) * Math.sin(dLon/2)**2;
+    return 2 * RT * Math.asin(Math.sqrt(a));
+  }
+
+  const ov = document.createElement('div');
+  ov.id = 'geofOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(10,10,10,.96);' +
+    'display:flex;align-items:center;justify-content:center;padding:22px;';
+  ov.innerHTML =
+    '<div style="max-width:420px;width:100%;text-align:center;color:#fff">' +
+      '<div style="font-size:2.6rem;margin-bottom:8px">📍</div>' +
+      '<div style="font-weight:800;font-size:1.15rem">Check-in de ubicación</div>' +
+      '<div style="color:#9ca3af;font-size:.88rem;margin:10px 0 4px;line-height:1.5">' +
+        'Para gestionar esta OT debes estar a menos de <b style="color:#fff">' + radio + ' m</b> del cliente.<br>' +
+        '<span style="font-size:.8rem">' + (DESTINO_DIR || '') + '</span></div>' +
+      '<div id="geofMsg" style="min-height:40px;font-size:.85rem;color:#fca5a5;margin:8px 0"></div>' +
+      '<button id="geofBtn" style="width:100%;background:#dc2626;color:#fff;border:0;border-radius:12px;' +
+        'font-weight:800;font-size:1rem;padding:15px;min-height:52px;cursor:pointer">' +
+        '<i class="bi bi-crosshair"></i> Verificar mi ubicación</button>' +
+      '<div style="color:#6b7280;font-size:.72rem;margin-top:12px">Activado por ILUS en Configuración · ' +
+        'Si crees que es un error, contacta a tu supervisor.</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  document.body.style.overflow = 'hidden';
+
+  document.getElementById('geofBtn').addEventListener('click', () => {
+    const msg = document.getElementById('geofMsg');
+    const btn = document.getElementById('geofBtn');
+    if (!navigator.geolocation){ msg.textContent = 'Este dispositivo no tiene GPS disponible.'; return; }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Obteniendo GPS…';
+    navigator.geolocation.getCurrentPosition(pos => {
+      const d = Math.round(_havM(pos.coords.latitude, pos.coords.longitude, DESTINO_LAT, DESTINO_LNG));
+      if (d <= radio){
+        sessionStorage.setItem('geoOK_' + VID, '1');
+        msg.style.color = '#86efac';
+        msg.textContent = '✓ Estás a ' + d + ' m — check-in correcto. ¡Buen trabajo!';
+        setTimeout(() => { ov.remove(); document.body.style.overflow = ''; }, 900);
+      } else {
+        msg.style.color = '#fca5a5';
+        msg.textContent = 'Estás a ~' + (d >= 1000 ? (d/1000).toFixed(1) + ' km' : d + ' m') +
+          ' del cliente (límite ' + radio + ' m). Acércate al lugar y vuelve a verificar.';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-crosshair"></i> Reintentar';
+      }
+    }, err => {
+      msg.textContent = 'No se pudo obtener tu ubicación (' + (err.message || 'GPS apagado') +
+        '). Activa el GPS y otorga el permiso de ubicación.';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-crosshair"></i> Reintentar';
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+  });
+})();
+</script>
+
 {% endblock %}

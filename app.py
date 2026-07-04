@@ -52845,6 +52845,14 @@ def mant_ot_ejecutar(vid):
         # 2026-06-12 (Daniel) — capturar firma del cliente (segunda firma).
         puede_firmar_cliente=puede_firmar_cliente_flag,
         es_creador=es_creador_flag,
+        # 2026-06-23 (Daniel) — controles de TERRENO habilitables desde
+        # /mantenciones/configuracion (geofence check-in + control de tiempo).
+        reglas_terreno={
+            "geofence_activo": bool((_reglas_cargar() or {}).get("ot_geofence_activo")),
+            "geofence_radio_m": int((_reglas_cargar() or {}).get("ot_geofence_radio_m") or 200),
+            "tiempo_activo": bool((_reglas_cargar() or {}).get("ot_tiempo_control_activo")),
+            "tiempo_tolerancia_min": int((_reglas_cargar() or {}).get("ot_tiempo_tolerancia_min") or 10),
+        },
         es_superadmin=es_superadmin_flag,
         # 2026-05-22 (OT 2026-00004 Vitacura) — flags para el panel
         # "Configurar OT": solo aparece al creador/admin/supervisor y
@@ -54474,8 +54482,14 @@ def mant_ot_aprobar_cierre(vid):
     # firme el cierre. Excepciones: garantía (no se factura) y sin_costo
     # (levantamientos / cortesías). El RUT de la factura se validó al
     # asociarla (con justificación obligatoria si no coincide).
+    # Interruptor en /mantenciones/configuracion (regla ot_factura_gate_activo,
+    # default ON) — Daniel puede dar holgura apagándolo sin deploy.
+    try:
+        _gate_on = bool(_reglas_cargar().get("ot_factura_gate_activo", True))
+    except Exception:
+        _gate_on = True
     _mod_cobro = (v.get("modalidad_cobro") or "").strip().lower()
-    if _mod_cobro not in ("garantia", "sin_costo") and not (v.get("factura_nudo") or "").strip():
+    if _gate_on and _mod_cobro not in ("garantia", "sin_costo") and not (v.get("factura_nudo") or "").strip():
         return jsonify({
             "ok": False,
             "error_codigo": "SIN_FACTURA",
@@ -59049,6 +59063,13 @@ _REGLAS_DEFAULTS = {
     # 2026-06-10 (Daniel): el módulo Cotizaciones sale del menú HASTA que esté
     # habilitado. Esta regla lo enciende/apaga desde Configuración sin deploy.
     "modulo_cotizaciones_activo": ("0",     "bool",   "politica",   "Módulo Cotizaciones visible (menú y botones)",     ""),
+    # ── TERRENO (Daniel 2026-06-23): controles habilitables para dar holgura
+    #    al equipo antes de exigirlos. Todo editable sin deploy. ──
+    "ot_geofence_activo":         ("0",     "bool",   "terreno",    "Exigir ubicación (check-in GPS) para gestionar la OT en terreno", ""),
+    "ot_geofence_radio_m":        ("200",   "int",    "terreno",    "Radio permitido alrededor del cliente para el check-in", "metros"),
+    "ot_tiempo_control_activo":   ("0",     "bool",   "terreno",    "Control de duración: pedir justificación si difiere de lo estimado", ""),
+    "ot_tiempo_tolerancia_min":   ("10",    "int",    "terreno",    "Tolerancia de diferencia de duración antes de exigir justificación", "min"),
+    "ot_factura_gate_activo":     ("1",     "bool",   "politica",   "Exigir factura asociada para firmar el cierre de OT (salvo garantía/sin costo)", ""),
 }
 _REGLAS_CACHE = None
 
@@ -67631,6 +67652,37 @@ def _ensure_mant_sucursales_geo_columns():
     return faltantes
 
 
+def _ensure_reglas_terreno():
+    """Siembra las reglas de TERRENO + gate de factura en mant_reglas_negocio
+    SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1). INSERT IGNORE → jamás pisa
+    los valores que Daniel edite en /mantenciones/configuracion."""
+    seeds = [
+        # (clave, valor, tipo, categoria, label, unidad, orden)
+        ("ot_geofence_activo", "0", "bool", "terreno",
+         "Exigir ubicación (check-in GPS) para gestionar la OT en terreno", "", 10),
+        ("ot_geofence_radio_m", "200", "int", "terreno",
+         "Radio permitido alrededor del cliente para el check-in", "metros", 11),
+        ("ot_tiempo_control_activo", "0", "bool", "terreno",
+         "Control de duración: pedir justificación si difiere de lo estimado", "", 20),
+        ("ot_tiempo_tolerancia_min", "10", "int", "terreno",
+         "Tolerancia de diferencia de duración antes de exigir justificación", "min", 21),
+        ("ot_factura_gate_activo", "1", "bool", "politica",
+         "Exigir factura asociada para firmar el cierre de OT (salvo garantía/sin costo)", "", 30),
+    ]
+    n = 0
+    for clave, valor, tipo, cat, label, unidad, orden in seeds:
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_reglas_negocio "
+                "(clave, valor, tipo_dato, categoria, label, unidad, orden) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (clave, valor, tipo, cat, label, unidad, orden))
+            n += 1
+        except Exception as e_seed:
+            print(f"[ensure_reglas_terreno] {clave}: {e_seed}", flush=True)
+    return n
+
+
 def _ensure_mant_visitas_factura_cols():
     """Garantiza las columnas del SELLO factura↔OT SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Sin ellas, asociar factura / firmar el cierre
@@ -68315,6 +68367,14 @@ try:
               f"{_faltaron_fact}", flush=True)
 except Exception as _ensure_fact_err:
     print(f"[ILUS][WARN] _ensure_mant_visitas_factura_cols: {_ensure_fact_err}", flush=True)
+
+# Reglas de TERRENO (geofence + control de tiempo) + gate de factura,
+# sembradas SIEMPRE para que aparezcan en /mantenciones/configuracion.
+try:
+    with app.app_context():
+        _ensure_reglas_terreno()
+except Exception as _ensure_terr_err:
+    print(f"[ILUS][WARN] _ensure_reglas_terreno: {_ensure_terr_err}", flush=True)
 
 # CRÍTICO: garantizar `target_field` SIEMPRE (OT Levantamiento → Ficha),
 # incluso con ILUS_SKIP_MIGRATIONS=1. Sin esta columna, el editor de plantillas,

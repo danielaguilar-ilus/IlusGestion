@@ -691,7 +691,7 @@
   </div>
   <div class="right">
     <div class="otn">N° <b>{{ visita.numero_ot or visita.id }}</b></div>
-    <span class="badge-estado">Cerrada</span>
+    <span class="badge-estado">{{ (visita.estado or 'cerrada')|replace('_',' ')|title }}</span>
   </div>
 </div>
 <div class="head-sep"></div>
@@ -734,16 +734,16 @@
 <section class="sheet">
   {{ header_block(1, total_pg) }}
 
-  {# ── Datos generales: 3 columnas ── #}
-  <div class="sec-title">Datos generales</div>
+  {# ── Información de la OT: 3 columnas (header estilo OT_316 — Daniel 2026-06-23) ── #}
+  <div class="sec-title">Información de la OT</div>
   <div class="info-3col">
-    {# Col 1 – Técnico/Ticket #}
+    {# Col 1 – Técnico/s + Ticket #}
     <div class="info-card">
       <div class="ic-row">
         <div class="ic-ico">👤</div>
         <div class="ic-text">
-          <span class="lbl">Técnico principal</span>
-          <span class="val">{{ visita.tecnico_principal or '—' }}</span>
+          <span class="lbl">Técnico/s</span>
+          <span class="val">{{ visita.tecnico_principal or '—' }}{% if tecnicos_extra %}{% for t in tecnicos_extra %} · {{ t.nombre }}{% endfor %}{% endif %}</span>
         </div>
       </div>
       <div class="ic-row">
@@ -760,9 +760,9 @@
       <div class="ic-row">
         <div class="ic-ico">📅</div>
         <div class="ic-text">
-          <span class="lbl">Fecha programada</span>
+          <span class="lbl">Fecha</span>
           <span class="val">
-            {{ visita.fecha_programada or '—' }}{% if visita.hora_inicio %} {{ visita.hora_inicio }}{% endif %}
+            {{ visita.fecha_programada or '—' }}{% if visita.hora_inicio %} a las {{ visita.hora_inicio }}{% endif %}
           </span>
         </div>
       </div>
