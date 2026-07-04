@@ -54455,13 +54455,28 @@ def mant_ot_aprobar_cierre(vid):
     # manda, usamos el display name del usuario actual (nombre o username).
     firma_sup_nombre = (d.get("firma_supervisor_nombre") or "").strip()[:200]
     # Validar estado actual
-    v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
+    v = mysql_fetchone(
+        "SELECT estado, modalidad_cobro, factura_nudo FROM mant_visitas WHERE id=%s",
+        (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
     if v.get("estado") not in ("pendiente_aprobacion", "completada"):
         return jsonify({
             "ok": False,
             "error": f"La OT no está en estado pendiente_aprobacion (actual: {v.get('estado')})",
+        }), 400
+    # ── SELLO 2026-06-23 (Daniel): OT amarrada a FACTURA antes de firmar ──
+    # Toda OT cobrable debe tener factura asociada para que el responsable
+    # firme el cierre. Excepciones: garantía (no se factura) y sin_costo
+    # (levantamientos / cortesías). El RUT de la factura se validó al
+    # asociarla (con justificación obligatoria si no coincide).
+    _mod_cobro = (v.get("modalidad_cobro") or "").strip().lower()
+    if _mod_cobro not in ("garantia", "sin_costo") and not (v.get("factura_nudo") or "").strip():
+        return jsonify({
+            "ok": False,
+            "error_codigo": "SIN_FACTURA",
+            "error": "Esta OT es cobrable y aún NO tiene factura asociada. "
+                     "Asocia la factura (o marca la OT como garantía) antes de firmar el cierre.",
         }), 400
     try:
         u = getattr(g, "user", None) or {}
@@ -54503,6 +54518,150 @@ def mant_ot_aprobar_cierre(vid):
         return jsonify({"ok": True, "estado": "cerrada"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _rut_analisis_comparacion(rut_cliente, rut_factura):
+    """Compara el RUT del cliente vs el de la factura con inteligencia de
+    dígito verificador (Daniel 2026-06-23 — sello de cierre de OT).
+
+    Returns dict: {match: bool, nivel, detalle} donde nivel ∈
+    igual | dv_distinto (mismo cuerpo, typo en DV → se acepta) |
+    parecido (1 dígito o transposición) | distinto | incompleto.
+    """
+    def _norm(r):
+        return re.sub(r"[^0-9kK]", "", str(r or "")).upper()
+
+    def _dv_mod11(cuerpo):
+        s, m = 0, 2
+        for d in reversed(cuerpo):
+            s += int(d) * m
+            m = 2 if m == 7 else m + 1
+        r = 11 - (s % 11)
+        return "0" if r == 11 else ("K" if r == 10 else str(r))
+
+    def _fmt(r):
+        if len(r) < 2:
+            return r or "—"
+        c, dv = r[:-1], r[-1]
+        out, n = "", 0
+        for ch in reversed(c):
+            out = ch + out
+            n += 1
+            if n % 3 == 0 and n < len(c):
+                out = "." + out
+        return f"{out}-{dv}"
+
+    a, b = _norm(rut_cliente), _norm(rut_factura)
+    if not a or not b or len(a) < 2 or len(b) < 2:
+        return {"match": False, "nivel": "incompleto",
+                "detalle": "Falta el RUT del cliente o el de la factura para comparar."}
+    ca, da = a[:-1], a[-1]
+    cb, db = b[:-1], b[-1]
+    if ca == cb:
+        if da == db:
+            return {"match": True, "nivel": "igual",
+                    "detalle": f"RUT idéntico ({_fmt(a)})."}
+        dv_ok = _dv_mod11(ca) if ca.isdigit() else "?"
+        return {"match": True, "nivel": "dv_distinto",
+                "detalle": (f"Mismo RUT {_fmt(a)[:-2]} pero difiere el dígito verificador "
+                            f"({da} vs {db}); el DV correcto es {dv_ok}. "
+                            f"Probable error de tipeo — se considera el mismo contribuyente.")}
+    notas = []
+    if ca.isdigit() and _dv_mod11(ca) != da:
+        notas.append(f"el DV del RUT del cliente no cuadra (sería {_dv_mod11(ca)})")
+    if cb.isdigit() and _dv_mod11(cb) != db:
+        notas.append(f"el DV del RUT de la factura no cuadra (sería {_dv_mod11(cb)})")
+    nivel, extra = "distinto", ""
+    if len(ca) == len(cb):
+        difs = [i for i in range(len(ca)) if ca[i] != cb[i]]
+        transp = (len(difs) == 2 and difs[1] == difs[0] + 1
+                  and ca[difs[0]] == cb[difs[1]] and ca[difs[1]] == cb[difs[0]])
+        if len(difs) == 1:
+            nivel, extra = "parecido", f"Difieren en 1 solo dígito (posición {difs[0]+1}). "
+        elif transp:
+            nivel, extra = "parecido", "Parece una transposición de 2 dígitos vecinos. "
+        else:
+            extra = f"Difieren en {len(difs)} dígito(s). "
+    detalle = (f"RUT distinto: cliente {_fmt(a)} vs factura {_fmt(b)}. {extra}"
+               + ("; ".join(notas).capitalize() + "." if notas else ""))
+    return {"match": False, "nivel": nivel, "detalle": detalle.strip()}
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/asociar-factura", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_ot_asociar_factura(vid):
+    """Asocia una factura del ERP (read-only) a la OT — SELLO de cierre.
+
+    Daniel 2026-06-23: toda OT cobrable debe quedar amarrada a una factura
+    antes de que el responsable firme el cierre (excepción: garantía y sin
+    costo). El RUT de la factura debe coincidir con el del cliente; si no,
+    se exige una justificación en texto. body: {tipo, numero, confirmar,
+    justificacion}. confirmar=false → solo preview (consulta ERP + análisis).
+    """
+    d = request.get_json(silent=True) or {}
+    tipo = (d.get("tipo") or "FCV").strip().upper()[:5]
+    if tipo not in ("FCV", "FCE", "BLV", "BLE"):
+        tipo = "FCV"
+    numero = re.sub(r"[^0-9]", "", str(d.get("numero") or ""))
+    if not numero:
+        return jsonify({"ok": False, "error": "Indica el número de la factura/boleta."}), 400
+    justif = (d.get("justificacion") or "").strip()[:1000]
+    confirmar = bool(d.get("confirmar"))
+
+    v = mysql_fetchone(
+        "SELECT v.id, v.estado, v.modalidad_cobro, v.numero_ot, "
+        "       c.rut AS cli_rut, c.razon_social "
+        "  FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE v.id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+
+    # Consulta al ERP — SOLO lectura (fetch_document, REGLA #4.1)
+    try:
+        doc = erp_engine.get_client().fetch_document(tipo, numero)
+    except Exception as e:
+        print(f"[asociar-factura] vid={vid} ERP error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar el ERP en este momento. Reintenta."}), 502
+    if not doc:
+        return jsonify({"ok": False, "error": f"No se encontró la {tipo} N° {numero} en el ERP."}), 404
+
+    rut_fact = (doc.get("cliente_rut") or "").strip()
+    analisis = _rut_analisis_comparacion(v.get("cli_rut"), rut_fact)
+    try:
+        _monto = float(doc.get("valor_bruto") or 0) or None
+    except (TypeError, ValueError):
+        _monto = None
+    fact = {"tipo": tipo, "numero": numero, "rut": rut_fact,
+            "nombre": doc.get("cliente_nombre") or "",
+            "monto": _monto, "fecha": str(doc.get("fecha") or "")[:10]}
+
+    if not confirmar:
+        return jsonify({"ok": True, "preview": True, "factura": fact,
+                        "analisis": analisis,
+                        "requiere_justificacion": not analisis["match"]})
+
+    if not analisis["match"] and not justif:
+        return jsonify({"ok": False, "error_codigo": "RUT_NO_COINCIDE",
+                        "error": "El RUT de la factura no coincide con el del cliente. "
+                                 "Explica en texto por qué corresponde igual.",
+                        "analisis": analisis}), 409
+
+    mysql_execute(
+        "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
+        "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
+        "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
+        "  factura_rut_justif=%s, factura_asociada_por=%s, "
+        "  estado_facturacion='facturado' "
+        " WHERE id=%s",
+        (tipo, numero[:20], rut_fact[:20] or None, _monto,
+         1 if analisis["match"] else 0, justif or None,
+         current_username(), vid))
+    _mant_log("visita", vid, "factura_asociada",
+              f"{tipo} {numero} · ${_monto or 0:,.0f} · RUT "
+              + ("coincide" if analisis["match"]
+                 else f"NO coincide ({analisis['nivel']}) — justif: {justif[:150]}"))
+    return jsonify({"ok": True, "guardado": True, "factura": fact, "analisis": analisis})
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/rechazar-cierre", methods=["POST"])
@@ -67468,6 +67627,40 @@ def _ensure_mant_sucursales_geo_columns():
     return faltantes
 
 
+def _ensure_mant_visitas_factura_cols():
+    """Garantiza las columnas del SELLO factura↔OT SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). Sin ellas, asociar factura / firmar el cierre
+    daría 'Unknown column'. 1 SELECT barato; ALTER solo la 1ª vez."""
+    needed = {
+        "factura_tido":         "VARCHAR(5) NULL",
+        "factura_nudo":         "VARCHAR(20) NULL",
+        "factura_emitida_at":   "DATETIME NULL",
+        "factura_rut":          "VARCHAR(20) NULL COMMENT 'RUT del receptor según ERP'",
+        "factura_monto":        "DECIMAL(14,2) NULL COMMENT 'Bruto de la factura (ERP)'",
+        "factura_rut_ok":       "TINYINT(1) NULL COMMENT '1=RUT coincide con el cliente'",
+        "factura_rut_justif":   "TEXT NULL COMMENT 'Justificación si el RUT no coincide'",
+        "factura_asociada_por": "VARCHAR(190) NULL",
+    }
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas'"
+            ) or [])
+        }
+    except Exception:
+        return []
+    faltantes = [c for c in needed if c.lower() not in existing]
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE mant_visitas ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_fact_cols] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_fact_cols] no se pudo agregar {col}: {e_add}", flush=True)
+    return faltantes
+
+
 def _ensure_mant_intel_tables():
     """Garantiza tablas/columnas del Agente de Inteligencia SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Idempotente. CERO IA."""
@@ -68107,6 +68300,17 @@ try:
               f"{_faltaron_suc_geo}", flush=True)
 except Exception as _ensure_suc_geo_err:
     print(f"[ILUS][WARN] _ensure_mant_sucursales_geo_columns: {_ensure_suc_geo_err}", flush=True)
+
+# CRÍTICO: columnas del SELLO factura↔OT (asociar factura + gate de firma
+# del responsable) SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _faltaron_fact = _ensure_mant_visitas_factura_cols()
+    if _faltaron_fact:
+        print(f"[ILUS] Columnas factura de mant_visitas agregadas (skip-migrations): "
+              f"{_faltaron_fact}", flush=True)
+except Exception as _ensure_fact_err:
+    print(f"[ILUS][WARN] _ensure_mant_visitas_factura_cols: {_ensure_fact_err}", flush=True)
 
 # CRÍTICO: garantizar `target_field` SIEMPRE (OT Levantamiento → Ficha),
 # incluso con ILUS_SKIP_MIGRATIONS=1. Sin esta columna, el editor de plantillas,

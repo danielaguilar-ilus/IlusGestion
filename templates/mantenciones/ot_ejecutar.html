@@ -2786,6 +2786,68 @@
           y el PDF quedará disponible para descarga.
         </div>
 
+        {# ── SELLO factura↔OT (Daniel 2026-06-23): OT cobrable NO se firma
+              sin factura asociada. Garantía y sin costo quedan exentas. ── #}
+        {% set _mod_cobro = (visita.modalidad_cobro or '')|lower %}
+        {% if _mod_cobro in ('garantia', 'sin_costo') %}
+        <div class="alert py-2 small mb-3" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">
+          <i class="bi bi-shield-fill-check me-1"></i>
+          <strong>Cobertura: {{ 'GARANTÍA' if _mod_cobro == 'garantia' else 'SIN COSTO' }}.</strong>
+          Esta OT no requiere factura para cerrarse.
+        </div>
+        {% elif visita.factura_nudo %}
+        <div class="alert py-2 small mb-3" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
+          <i class="bi bi-receipt me-1"></i>
+          <strong>Factura asociada:</strong> {{ visita.factura_tido or 'FCV' }} N° {{ visita.factura_nudo }}
+          {% if visita.factura_monto %} · ${{ '{:,.0f}'.format(visita.factura_monto|float).replace(',', '.') }}{% endif %}
+          {% if visita.factura_rut_ok == 0 %}
+          <div class="mt-1" style="color:#92400e"><i class="bi bi-exclamation-triangle-fill me-1"></i>
+            RUT no coincidía — justificado: {{ (visita.factura_rut_justif or '')[:180] }}</div>
+          {% endif %}
+        </div>
+        {% else %}
+        <div class="mb-3 p-3" id="factGate" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px">
+          <div class="fw-bold small mb-1" style="color:#991b1b">
+            <i class="bi bi-lock-fill me-1"></i>Firma bloqueada: OT cobrable sin factura
+          </div>
+          <div class="small mb-2" style="color:#7f1d1d">
+            Asocia la factura del ERP para poder firmar el cierre. El RUT debe
+            coincidir con el del cliente ({{ (visita.cli_rut or '—') }}) — si no coincide,
+            deberás explicar por qué.
+          </div>
+          <div class="d-flex gap-2 flex-wrap align-items-end">
+            <div>
+              <label class="form-label small fw-semibold mb-1">Tipo</label>
+              <select id="factTipo" class="form-select form-select-sm" style="width:auto">
+                <option value="FCV" selected>FCV — Factura</option>
+                <option value="FCE">FCE — Factura exenta</option>
+                <option value="BLV">BLV — Boleta</option>
+              </select>
+            </div>
+            <div style="flex:1;min-width:150px">
+              <label class="form-label small fw-semibold mb-1">N° documento</label>
+              <input type="text" id="factNumero" class="form-control form-control-sm" inputmode="numeric" placeholder="Ej: 12456">
+            </div>
+            <button type="button" class="btn btn-sm btn-dark fw-bold" id="factBuscarBtn" onclick="factConsultar()">
+              <i class="bi bi-search me-1"></i>Consultar
+            </button>
+          </div>
+          <div id="factPreview" class="mt-2" style="display:none"></div>
+          <div id="factJustifWrap" class="mt-2" style="display:none">
+            <label class="form-label small fw-semibold mb-1" style="color:#92400e">
+              ¿Por qué corresponde esta factura si el RUT no coincide? <span class="text-danger">*</span>
+            </label>
+            <textarea id="factJustif" class="form-control form-control-sm" rows="2"
+                      placeholder="Ej: factura emitida al holding / casa matriz del cliente"></textarea>
+          </div>
+          <button type="button" class="btn btn-sm fw-bold mt-2" id="factAsociarBtn"
+                  style="background:#dc2626;color:#fff;display:none" onclick="factAsociar()">
+            <i class="bi bi-link-45deg me-1"></i>Asociar factura a esta OT
+          </button>
+          <div class="small text-danger mt-1" id="factErr" style="min-height:16px"></div>
+        </div>
+        {% endif %}
+
         {# ─── RESPONSABILIDADES DE LA FIRMA DEL SUPERVISOR (Daniel 22/05/2026)
              Procedimiento interno ILUS. La firma como supervisor implica
              un compromiso explícito de revisión. Mostrarlo aquí refuerza
@@ -8331,6 +8393,96 @@ async function levdEliminar(iid){
     }
   } catch(_e){
     if (typeof ilusToast === 'function') ilusToast('Error de red', { type:'error' });
+  }
+}
+</script>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+// SELLO factura↔OT (Daniel 2026-06-23) — la OT cobrable no se firma
+// sin factura asociada. Consulta al ERP (read-only) + análisis de RUT
+// con dígito verificador + justificación obligatoria si no coincide.
+// ════════════════════════════════════════════════════════════════
+let _factPreviewOk = false;
+
+function _factEl(id){ return document.getElementById(id); }
+
+function _factMonto(m){
+  if (m === null || m === undefined) return '—';
+  try { return '$' + Math.round(m).toLocaleString('es-CL'); } catch(_e){ return '$' + m; }
+}
+
+async function factConsultar(){
+  const err = _factEl('factErr'); err.textContent = '';
+  const numero = (_factEl('factNumero').value || '').replace(/\D/g, '');
+  if (!numero){ err.textContent = 'Escribe el número del documento.'; return; }
+  const btn = _factEl('factBuscarBtn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP…';
+  _factPreviewOk = false;
+  _factEl('factPreview').style.display = 'none';
+  _factEl('factJustifWrap').style.display = 'none';
+  _factEl('factAsociarBtn').style.display = 'none';
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/asociar-factura`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tipo: _factEl('factTipo').value, numero, confirmar: false }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){ err.textContent = d.error || 'No se pudo consultar.'; return; }
+    const f = d.factura || {}, a = d.analisis || {};
+    const okRut = !!(a.match);
+    _factEl('factPreview').innerHTML =
+      `<div class="p-2" style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;font-size:.82rem">
+        <div class="fw-bold">${f.tipo} N° ${f.numero} · ${_factMonto(f.monto)} ${f.fecha ? '· ' + f.fecha : ''}</div>
+        <div>${(f.nombre || '—')} · RUT ${(f.rut || '—')}</div>
+        <div class="mt-1 fw-semibold" style="color:${okRut ? '#15803d' : '#b45309'}">
+          <i class="bi ${okRut ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'} me-1"></i>${a.detalle || ''}
+        </div>
+      </div>`;
+    _factEl('factPreview').style.display = '';
+    if (d.requiere_justificacion) _factEl('factJustifWrap').style.display = '';
+    _factEl('factAsociarBtn').style.display = '';
+    _factPreviewOk = true;
+  } catch(_e){
+    err.textContent = 'Error de conexión con el servidor.';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+async function factAsociar(){
+  const err = _factEl('factErr'); err.textContent = '';
+  if (!_factPreviewOk){ err.textContent = 'Primero consulta el documento.'; return; }
+  const numero = (_factEl('factNumero').value || '').replace(/\D/g, '');
+  const justif = (_factEl('factJustif') ? _factEl('factJustif').value : '').trim();
+  const btn = _factEl('factAsociarBtn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Asociando…';
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/asociar-factura`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tipo: _factEl('factTipo').value, numero,
+                             confirmar: true, justificacion: justif }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      err.textContent = d.error || 'No se pudo asociar.';
+      if (d.error_codigo === 'RUT_NO_COINCIDE') _factEl('factJustifWrap').style.display = '';
+      return;
+    }
+    if (typeof ilusToast === 'function'){
+      ilusToast('✓ Factura asociada — ya puedes firmar el cierre', { type:'success' });
+    }
+    setTimeout(() => window.location.reload(), 900);
+  } catch(_e){
+    err.textContent = 'Error de conexión con el servidor.';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
   }
 }
 </script>
