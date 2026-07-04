@@ -1312,9 +1312,26 @@ async function levIniciar(){
   // Aunque la función se llama levIniciar (legacy), su acción ahora es
   // CREAR la OT de levantamiento. No abre captura en este modal.
   const ids = Array.from(document.querySelectorAll('.lev-eq-chk:checked')).map(c => parseInt(c.dataset.id));
+  // ── Levantamiento PURO de descubrimiento (Daniel 2026-06-23) ──────
+  // Sin equipos seleccionados + tipo levantamiento → OT válida: el técnico
+  // captura los equipos EN TERRENO (foto + nombre + serie) desde Ejecutar
+  // OT, y al cerrarla se crean solos en la ficha del cliente.
+  let esDescubrimiento = false;
   if (!ids.length){
-    ilusToast('Selecciona al menos un equipo', { type:'warning' });
-    return;
+    const _tipoSel = document.getElementById('otTipo')?.value || 'levantamiento';
+    if (_tipoSel !== 'levantamiento'){
+      ilusToast('Selecciona al menos un equipo', { type:'warning' });
+      return;
+    }
+    const _okDesc = await ilusConfirm({
+      title: 'Levantamiento de descubrimiento',
+      message: '¿Crear la OT sin equipos preseleccionados?',
+      sub: 'El técnico capturará los equipos en terreno (foto + nombre + N° serie de cada máquina). Al cerrar la OT quedarán creados automáticamente en la ficha del cliente.',
+      okLabel: 'Sí, descubrir en terreno',
+      cancelLabel: 'Volver a elegir',
+    });
+    if (!_okDesc) return;
+    esDescubrimiento = true;
   }
 
   // Validaciones programación
@@ -1395,6 +1412,7 @@ async function levIniciar(){
         titulo: document.getElementById('levSelectTitulo').value.trim(),
         notas:  document.getElementById('levSelectNotas').value.trim(),
         equipo_ids: ids,
+        descubrimiento: esDescubrimiento,
         fecha_programada: fechaProg,
         hora_inicio: horaIni || null,
         hora_fin: horaFin || null,

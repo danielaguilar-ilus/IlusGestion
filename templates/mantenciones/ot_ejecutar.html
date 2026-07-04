@@ -2008,6 +2008,19 @@
     <div class="tx-section-title"><i class="bi bi-boxes"></i>Selecciona una máquina</div>
 
     {% if not equipos %}
+    {% if visita.levantamiento_id and visita.estado in ('creada','programada','asignada','en_curso','en_ejecucion','reagendada') %}
+    {# Levantamiento PURO (descubrimiento): el vacío es NORMAL — el técnico
+       captura los equipos en terreno con el botón grande de abajo. #}
+    <div class="tx-empty" style="border-color:#fecaca;background:#fff">
+      <i class="bi bi-binoculars" style="color:#dc2626"></i>
+      <div class="fw-bold" style="color:#0f172a">Levantamiento de descubrimiento</div>
+      <div class="small mt-1" style="color:#374151">
+        Este cliente parte <strong>sin equipos registrados</strong>. Recorre el lugar y
+        captura cada máquina con el botón <strong style="color:#dc2626">＋ Agregar equipo</strong>:
+        foto + nombre + N° de serie. Al cerrar la OT quedarán creadas en la ficha del cliente.
+      </div>
+    </div>
+    {% else %}
     <div class="tx-empty">
       <i class="bi bi-exclamation-triangle"></i>
       <div class="fw-bold" style="color:#0f172a">Sin máquinas en esta OT</div>
@@ -2036,6 +2049,165 @@
       {% else %}
         <div class="small mt-1">Pide al administrador que revise el levantamiento.</div>
       {% endif %}
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {# ══════════════════════════════════════════════════════════════
+       LEVANTAMIENTO PURO (descubrimiento) — Daniel 2026-06-23
+       El técnico agrega equipos NUEVOS en terreno: foto(s) obligatoria(s)
+       + nombre obligatorio + SKU opcional + serie sugerida editable +
+       observación + ¿operativa? + ¿daño?. Al cerrar la OT se crean en
+       mant_maquinas (ficha del cliente). Solo OTs con levantamiento
+       vinculado y en estado de trabajo.
+       ══════════════════════════════════════════════════════════════ #}
+    {% if visita.levantamiento_id and visita.estado in ('creada','programada','asignada','en_curso','en_ejecucion','reagendada') %}
+    <style>
+      .levd-wrap{margin:14px 0 18px}
+      .levd-head{display:flex;align-items:center;justify-content:space-between;
+        font-weight:800;font-size:.95rem;color:#0f172a;margin:0 2px 10px}
+      .levd-head .cnt{background:#dc2626;color:#fff;border-radius:999px;
+        font-size:.78rem;padding:2px 10px;font-weight:800}
+      .levd-list{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+      .levd-card{display:flex;gap:10px;align-items:center;background:#fff;
+        border:1px solid #e5e7eb;border-left:4px solid #16a34a;border-radius:12px;
+        padding:9px 10px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+      .levd-card img{width:52px;height:52px;object-fit:cover;border-radius:9px;background:#f3f4f6}
+      .levd-card .inf{flex:1;min-width:0}
+      .levd-card .nm{font-weight:700;font-size:.88rem;color:#0f172a;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .levd-card .mt{font-size:.72rem;color:#6b7280}
+      .levd-card .del{border:0;background:#fee2e2;color:#b91c1c;border-radius:9px;
+        min-width:40px;min-height:40px;font-size:1rem}
+      .levd-badge{display:inline-block;font-size:.62rem;font-weight:800;border-radius:6px;
+        padding:1px 6px;margin-left:5px;vertical-align:1px}
+      .levd-badge.dano{background:#fee2e2;color:#b91c1c}
+      .levd-badge.fs{background:#f3f4f6;color:#4b5563}
+      .levd-add{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
+        background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:0;border-radius:14px;
+        font-weight:800;font-size:1.02rem;padding:16px;min-height:56px;
+        box-shadow:0 6px 18px rgba(220,38,38,.35);cursor:pointer}
+      .levd-add:active{transform:scale(.985)}
+      .levd-dup{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+        background:#fff;color:#0f172a;border:1.5px dashed #cbd5e1;border-radius:12px;
+        font-weight:700;font-size:.88rem;padding:11px;min-height:46px;margin-top:8px;cursor:pointer}
+      /* Modal de captura */
+      #modalLevDesc .modal-header{background:#0a0a0a;color:#fff}
+      .levd-fotos{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+      .levd-foto-th{position:relative;width:74px;height:74px}
+      .levd-foto-th img{width:100%;height:100%;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb}
+      .levd-foto-th .x{position:absolute;top:-7px;right:-7px;width:24px;height:24px;border:0;
+        border-radius:50%;background:#dc2626;color:#fff;font-size:.75rem;line-height:1}
+      .levd-foto-add{width:74px;height:74px;border:2px dashed #dc2626;border-radius:10px;
+        background:#fff5f5;color:#dc2626;font-size:1.5rem;display:flex;align-items:center;justify-content:center}
+      .levd-sw{display:flex;align-items:center;justify-content:space-between;background:#f9fafb;
+        border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-top:8px}
+      .levd-sw .lbl{font-weight:700;font-size:.88rem;color:#0f172a}
+      .levd-sw .form-check-input{width:2.6em;height:1.4em}
+    </style>
+
+    <div class="levd-wrap" id="levdWrap">
+      <div class="levd-head">
+        <span><i class="bi bi-binoculars-fill me-1" style="color:#dc2626"></i>Equipos descubiertos en terreno</span>
+        <span class="cnt" id="levdCount">0</span>
+      </div>
+      <div class="levd-list" id="levdList"></div>
+      <button type="button" class="levd-add" onclick="levdAbrir()">
+        <i class="bi bi-plus-circle-fill"></i> Agregar equipo
+      </button>
+      <button type="button" class="levd-dup" id="levdDupBtn" style="display:none" onclick="levdDuplicar()">
+        <i class="bi bi-copy"></i> Duplicar último (misma máquina, serie nueva)
+      </button>
+    </div>
+
+    {# Modal captura rápida — mobile-first #}
+    <div class="modal fade" id="modalLevDesc" tabindex="-1" data-bs-backdrop="static">
+      <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content" style="border-radius:14px">
+          <div class="modal-header py-2">
+            <h6 class="modal-title fw-bold">
+              <i class="bi bi-camera-fill me-2" style="color:#dc2626"></i>Nuevo equipo
+              <span class="badge bg-danger ms-1" id="levdModalSeq">#1</span>
+            </h6>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body pt-2">
+            <label class="form-label fw-semibold small mb-1 mt-1">
+              Fotos del equipo <span class="text-danger">*</span>
+              <span class="text-muted fw-normal" style="font-size:.72rem">— mínimo 1, puedes tomar varias</span>
+            </label>
+            <div class="levd-fotos" id="levdFotos">
+              <button type="button" class="levd-foto-add" onclick="document.getElementById('levdFotoInput').click()">
+                <i class="bi bi-camera"></i>
+              </button>
+            </div>
+            <input type="file" id="levdFotoInput" accept="image/*" capture="environment" multiple style="display:none">
+
+            <label class="form-label fw-semibold small mb-1 mt-3">Nombre del equipo <span class="text-danger">*</span></label>
+            <input type="text" id="levd_nombre" class="form-control" list="levdNombres"
+                   placeholder="Ej: Trotadora Life Fitness" autocomplete="off">
+            <datalist id="levdNombres">
+              <option value="Trotadora"></option><option value="Elíptica"></option>
+              <option value="Bicicleta estática"></option><option value="Bicicleta spinning"></option>
+              <option value="Remo"></option><option value="Escaladora"></option>
+              <option value="Multifuerza"></option><option value="Prensa de piernas"></option>
+              <option value="Press de banca"></option><option value="Press de hombros"></option>
+              <option value="Rack de sentadillas"></option><option value="Smith machine"></option>
+              <option value="Polea alta / Dorsalera"></option><option value="Polea baja / Remo sentado"></option>
+              <option value="Extensión de piernas"></option><option value="Curl femoral"></option>
+              <option value="Abductor / Aductor"></option><option value="Glúteo machine"></option>
+              <option value="Pec deck / Contractora"></option><option value="Curl de bíceps"></option>
+              <option value="Fondos / Tríceps"></option><option value="Banco ajustable"></option>
+              <option value="Set de mancuernas"></option><option value="Rack de discos"></option>
+              <option value="Kinesis / Cable cross"></option><option value="Air bike"></option>
+            </datalist>
+
+            <div class="row g-2 mt-1">
+              <div class="col-6">
+                <label class="form-label fw-semibold small mb-1">SKU <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
+                <input type="text" id="levd_sku" class="form-control" placeholder="Puede ir vacío" autocomplete="off">
+              </div>
+              <div class="col-6">
+                <label class="form-label fw-semibold small mb-1">N° de serie</label>
+                <input type="text" id="levd_serie" class="form-control" autocomplete="off">
+                <small class="text-muted d-block" style="font-size:.68rem">Sugerida — reemplázala si encuentras la real</small>
+              </div>
+            </div>
+
+            <label class="form-label fw-semibold small mb-1 mt-2">Ubicación en el recinto <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
+            <input type="text" id="levd_ubicacion" class="form-control" placeholder="Ej: Sala cardio · piso 2" autocomplete="off">
+
+            <label class="form-label fw-semibold small mb-1 mt-2">Observación <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
+            <textarea id="levd_obs" class="form-control" rows="2" placeholder="Lo que valga la pena registrar"></textarea>
+
+            <div class="levd-sw">
+              <span class="lbl">¿Está operativa?</span>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="levd_operativa" checked>
+              </div>
+            </div>
+            <div class="levd-sw">
+              <span class="lbl">¿Tiene daño?</span>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="levd_dano"
+                       onchange="document.getElementById('levdDanoWrap').style.display=this.checked?'':'none'">
+              </div>
+            </div>
+            <div id="levdDanoWrap" style="display:none" class="mt-2">
+              <textarea id="levd_dano_txt" class="form-control" rows="2"
+                        placeholder="Describe el daño (queda en la ficha del equipo)"></textarea>
+            </div>
+            <div class="text-danger small mt-2" id="levdErr" style="min-height:18px"></div>
+          </div>
+          <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Listo</button>
+            <button type="button" class="btn fw-bold px-4" id="levdGuardarBtn"
+                    style="background:#dc2626;color:#fff;min-height:46px" onclick="levdGuardar()">
+              <i class="bi bi-check-lg me-1"></i>Guardar equipo
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
     {% endif %}
 
@@ -7930,6 +8102,236 @@ async function mostrarInstrIosInstall(){
     type: 'info',
     okLabel: 'Entendido',
   });
+}
+</script>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+// LEVANTAMIENTO PURO (descubrimiento) — captura rápida de equipos
+// nuevos en terreno. Daniel 2026-06-23. Los items van a
+// mant_levantamiento_items (maquina_id NULL) y al cerrar la OT se
+// materializan en mant_maquinas (ficha del cliente).
+// ════════════════════════════════════════════════════════════════
+let _levdItems = [];      // items descubiertos (maquina_id NULL) ya guardados
+let _levdFotos = [];      // fotos pendientes del modal actual [{blob,url}]
+let _levdUltimo = null;   // último equipo guardado (para Duplicar)
+let _levdSeq = 1;         // correlativo para la serie sugerida
+let _levdModal = null;
+
+function _levdEl(id){ return document.getElementById(id); }
+
+async function levdInit(){
+  if (!_levdEl('levdWrap') || !VISITA_LEVANTAMIENTO_ID) return;
+  try {
+    const r = await fetch(`/mantenciones/api/levantamientos/${VISITA_LEVANTAMIENTO_ID}`);
+    const d = await r.json();
+    if (!d.ok) return;
+    _levdItems = (d.items || []).filter(it => !it.maquina_id);
+    // La serie sugerida sigue desde el total de items del levantamiento
+    _levdSeq = (d.items || []).length + 1;
+    levdRender();
+  } catch(e){ console.warn('[levd] init:', e); }
+}
+
+function levdRender(){
+  const list = _levdEl('levdList'), cnt = _levdEl('levdCount');
+  if (!list) return;
+  cnt.textContent = _levdItems.length;
+  if (!_levdItems.length){
+    list.innerHTML = '<div class="text-muted small" style="padding:2px 4px">' +
+      'Aún no capturas equipos. Toca el botón rojo para partir. 📸</div>';
+    return;
+  }
+  list.innerHTML = _levdItems.map(it => {
+    const foto = (it.fotos && it.fotos.length) ? it.fotos[0].url : '';
+    const dano = (it.anomalias || '').trim();
+    const fs = (it.estado_capturado === 'fuera_servicio');
+    return `<div class="levd-card">
+      ${foto ? `<img src="${foto}" alt="">` : `<div style="width:52px;height:52px;border-radius:9px;background:#f3f4f6;display:flex;align-items:center;justify-content:center"><i class="bi bi-camera text-muted"></i></div>`}
+      <div class="inf">
+        <div class="nm">${(it.nombre_snap||'Equipo')}
+          ${dano ? '<span class="levd-badge dano">DAÑO</span>' : ''}
+          ${fs ? '<span class="levd-badge fs">FUERA DE SERVICIO</span>' : ''}
+        </div>
+        <div class="mt">${it.serie_snap ? 'Serie: ' + it.serie_snap : ''}${it.sku_snap ? ' · SKU: ' + it.sku_snap : ''} · ${(it.fotos||[]).length || it.n_fotos || 0} foto(s)</div>
+      </div>
+      <button type="button" class="del" onclick="levdEliminar(${it.id})" title="Eliminar"><i class="bi bi-trash"></i></button>
+    </div>`;
+  }).join('');
+}
+
+function _levdSerieSugerida(){
+  return `LEV${VID}-${String(_levdSeq).padStart(3,'0')}`;
+}
+
+function levdAbrir(prefill){
+  if (!_levdModal) _levdModal = new bootstrap.Modal(_levdEl('modalLevDesc'));
+  _levdFotos = [];
+  _levdRenderFotos();
+  _levdEl('levd_nombre').value    = (prefill && prefill.nombre) || '';
+  _levdEl('levd_sku').value       = (prefill && prefill.sku) || '';
+  _levdEl('levd_serie').value     = _levdSerieSugerida();
+  _levdEl('levd_ubicacion').value = (prefill && prefill.ubicacion) || '';
+  _levdEl('levd_obs').value       = '';
+  _levdEl('levd_operativa').checked = true;
+  _levdEl('levd_dano').checked = false;
+  _levdEl('levd_dano_txt').value = '';
+  _levdEl('levdDanoWrap').style.display = 'none';
+  _levdEl('levdErr').textContent = '';
+  _levdEl('levdModalSeq').textContent = '#' + _levdSeq;
+  _levdModal.show();
+  if (!prefill) setTimeout(() => { try { _levdEl('levdFotoInput').click(); } catch(_e){} }, 450);
+}
+
+function levdDuplicar(){
+  if (!_levdUltimo) return;
+  levdAbrir({ nombre: _levdUltimo.nombre, sku: _levdUltimo.sku, ubicacion: _levdUltimo.ubicacion });
+}
+
+// ── Fotos: compresión en el navegador (4G friendly) ──
+function _levdComprimir(file){
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        try {
+          const MAX = 1600;
+          let w = img.width, h = img.height;
+          if (w > MAX || h > MAX){
+            const k = Math.min(MAX / w, MAX / h);
+            w = Math.round(w * k); h = Math.round(h * k);
+          }
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          cv.getContext('2d').drawImage(img, 0, 0, w, h);
+          cv.toBlob(b => { URL.revokeObjectURL(url); resolve(b || file); }, 'image/jpeg', 0.82);
+        } catch(_e){ URL.revokeObjectURL(url); resolve(file); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    } catch(_e){ resolve(file); }
+  });
+}
+
+function _levdRenderFotos(){
+  const wrap = _levdEl('levdFotos');
+  const addBtn = '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInput\').click()"><i class="bi bi-camera"></i></button>';
+  wrap.innerHTML = _levdFotos.map((f, i) =>
+    `<div class="levd-foto-th"><img src="${f.url}" alt="">` +
+    `<button type="button" class="x" onclick="levdQuitarFoto(${i})">✕</button></div>`
+  ).join('') + addBtn;
+}
+
+function levdQuitarFoto(i){
+  try { URL.revokeObjectURL(_levdFotos[i].url); } catch(_e){}
+  _levdFotos.splice(i, 1);
+  _levdRenderFotos();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = _levdEl('levdFotoInput');
+  if (inp) inp.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    for (const f of files){
+      const blob = await _levdComprimir(f);
+      _levdFotos.push({ blob, url: URL.createObjectURL(blob) });
+    }
+    _levdRenderFotos();
+  });
+  levdInit();
+});
+
+async function levdGuardar(){
+  const err = _levdEl('levdErr');
+  err.textContent = '';
+  const nombre = _levdEl('levd_nombre').value.trim();
+  if (!nombre){ err.textContent = 'El nombre del equipo es obligatorio.'; _levdEl('levd_nombre').focus(); return; }
+  if (!_levdFotos.length){ err.textContent = 'Toma al menos 1 foto del equipo.'; return; }
+
+  const operativa = _levdEl('levd_operativa').checked;
+  const dano = _levdEl('levd_dano').checked;
+  const danoTxt = _levdEl('levd_dano_txt').value.trim();
+  if (dano && !danoTxt){ err.textContent = 'Describe brevemente el daño.'; _levdEl('levd_dano_txt').focus(); return; }
+
+  const payload = {
+    nombre,
+    sku:    _levdEl('levd_sku').value.trim(),
+    serie:  _levdEl('levd_serie').value.trim(),
+    ubicacion: _levdEl('levd_ubicacion').value.trim(),
+    observaciones: _levdEl('levd_obs').value.trim(),
+    anomalias: dano ? danoTxt : '',
+    estado_capturado: !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo'),
+  };
+
+  const btn = _levdEl('levdGuardarBtn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  try {
+    const r = await fetch(`/mantenciones/api/levantamientos/${VISITA_LEVANTAMIENTO_ID}/items`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){ err.textContent = d.error || 'No se pudo guardar el equipo.'; return; }
+    const iid = d.id;
+
+    // Subir fotos en cadena (la 1ª será la foto principal de la ficha)
+    let subidas = 0;
+    for (let i = 0; i < _levdFotos.length; i++){
+      btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Foto ${i+1}/${_levdFotos.length}…`;
+      try {
+        const fd = new FormData();
+        fd.append('foto', _levdFotos[i].blob, `equipo_${iid}_${i+1}.jpg`);
+        fd.append('tipo_foto', i === 0 ? 'general' : 'detalle');
+        const rf = await fetch(`/mantenciones/api/levantamiento-items/${iid}/fotos`, { method:'POST', body: fd });
+        const df = await rf.json().catch(() => ({}));
+        if (rf.ok && df.ok) subidas++;
+      } catch(_e){ /* la siguiente foto sigue */ }
+    }
+    if (!subidas){
+      err.textContent = '⚠ El equipo se guardó pero NINGUNA foto subió. Revisa tu señal y vuelve a intentar las fotos.';
+    }
+
+    _levdUltimo = { nombre, sku: payload.sku, ubicacion: payload.ubicacion };
+    _levdSeq++;
+    if (typeof ilusToast === 'function'){
+      ilusToast(`✓ ${nombre} guardado (${subidas} foto${subidas === 1 ? '' : 's'})`, { type:'success' });
+    }
+    await levdInit();          // refresca lista + contador
+    _levdEl('levdDupBtn').style.display = '';
+    // Encadenar: modal listo para el SIGUIENTE equipo
+    levdAbrir();
+  } catch(e){
+    err.textContent = 'Error de conexión. Reintenta.';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+async function levdEliminar(iid){
+  const ok = await ilusConfirm({
+    title: 'Eliminar equipo capturado',
+    message: '¿Quitar este equipo del levantamiento?',
+    sub: 'Se borran también sus fotos. Esta acción no se puede deshacer.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/levantamiento-items/${iid}`, { method:'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (d.ok){
+      if (typeof ilusToast === 'function') ilusToast('Equipo eliminado', { type:'info' });
+      await levdInit();
+    } else if (typeof ilusToast === 'function'){
+      ilusToast(d.error || 'No se pudo eliminar', { type:'error' });
+    }
+  } catch(_e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red', { type:'error' });
+  }
 }
 </script>
 

@@ -37533,6 +37533,189 @@ def _promover_levantamiento_async(vid, usuario=None):
               flush=True)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# LEVANTAMIENTO PURO (descubrimiento) — Daniel 2026-06-23
+# El técnico captura en terreno equipos que NO existen en la BD (items de
+# mant_levantamiento_items con maquina_id NULL: foto(s) + nombre + serie
+# sugerida editable + sku opcional + observación + estado + daño). Al
+# CERRAR la OT/levantamiento, este materializador CREA las máquinas en
+# mant_maquinas y deja los items/fotos apuntando al equipo nuevo, para
+# que la promoción congelada (_promover_levantamiento_a_maquina, FROZEN)
+# los tome como cualquier equipo existente. NO modifica el bloque frozen.
+# ══════════════════════════════════════════════════════════════════════
+
+def _lev_materializar_equipos_nuevos(vid, usuario=None):
+    """Crea mant_maquinas para los items de levantamiento SIN maquina_id.
+
+    Idempotente: tras materializar, el item queda con maquina_id poblado y
+    no vuelve a procesarse. Cada item es try/except independiente.
+    Returns: dict {creados, errores, skipped}.
+    """
+    out = {"creados": 0, "errores": 0, "skipped": False}
+    try:
+        v = mysql_fetchone(
+            "SELECT id, cliente_id, levantamiento_id, numero_ot, fecha_programada "
+            "  FROM mant_visitas WHERE id=%s", (vid,))
+        if not v or not v.get("levantamiento_id"):
+            out["skipped"] = True
+            return out
+        lev_id = v["levantamiento_id"]
+        cid = v["cliente_id"]
+        items = mysql_fetchall(
+            "SELECT * FROM mant_levantamiento_items "
+            " WHERE levantamiento_id=%s AND maquina_id IS NULL "
+            "   AND COALESCE(nombre_snap,'') <> ''",
+            (lev_id,)
+        ) or []
+        if not items:
+            out["skipped"] = True
+            return out
+
+        # Columnas enriquecidas disponibles en mant_maquinas (prod puede no
+        # tenerlas todas por ILUS_SKIP_MIGRATIONS=1) — detección 1 sola vez.
+        try:
+            _cols = {
+                (r.get("COLUMN_NAME") or "").lower()
+                for r in (mysql_fetchall(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_maquinas'"
+                ) or [])
+            }
+        except Exception:
+            _cols = set()
+
+        user = usuario or "sistema"
+        doc_origen = f"Levantamiento {v.get('numero_ot') or ('#' + str(lev_id))}"[:80]
+        for it in items:
+            try:
+                nombre = (it.get("nombre_snap") or "").strip()[:400]
+                sku = (it.get("sku_snap") or "").strip()[:100] or None
+                serie = (it.get("serie_snap") or "").strip()[:100]
+                if not serie:
+                    try:
+                        serie = _generar_serie_ilus(cid, sku or "")
+                    except Exception:
+                        serie = f"LEV-{lev_id}-{it['id']}"
+                obs_parts = []
+                if (it.get("observaciones") or "").strip():
+                    obs_parts.append(it["observaciones"].strip())
+                if (it.get("anomalias") or "").strip():
+                    obs_parts.append("DAÑO: " + it["anomalias"].strip())
+                obs_full = " · ".join(obs_parts) or None
+
+                cols = ["cliente_id", "sku", "nombre", "serie", "doc_origen",
+                        "doc_fecha", "cantidad", "notas", "estado", "created_by"]
+                vals = [cid, sku, nombre, serie, doc_origen,
+                        v.get("fecha_programada"), 1,
+                        f"Descubierto en terreno ({doc_origen})", "activo", user]
+                # Enriquecidas solo si la columna existe en esta BD:
+                extra = {
+                    "estado_capturado": (it.get("estado_capturado") or "operativo"),
+                    "tiene_dano": 1 if (it.get("anomalias") or "").strip() else 0,
+                    "observaciones": obs_full,
+                    "ubicacion_sala": (it.get("ubicacion") or "").strip()[:200] or None,
+                    "ultimo_levantamiento_vid": vid,
+                    "marca": (it.get("marca") or "").strip()[:120] or None if "marca" in _cols else None,
+                    "modelo": (it.get("modelo") or "").strip()[:120] or None if "modelo" in _cols else None,
+                }
+                for k in ("estado_capturado", "tiene_dano", "observaciones",
+                          "ubicacion_sala", "ultimo_levantamiento_vid",
+                          "marca", "modelo"):
+                    if k in _cols:
+                        cols.append(k)
+                        vals.append(extra[k])
+                # foto principal del equipo = primera foto del item
+                foto1 = mysql_fetchone(
+                    "SELECT cloudinary_url FROM mant_levantamiento_fotos "
+                    " WHERE item_id=%s ORDER BY id LIMIT 1", (it["id"],))
+                if foto1 and foto1.get("cloudinary_url") and "foto_url" in _cols:
+                    cols.append("foto_url")
+                    vals.append(foto1["cloudinary_url"])
+
+                conn = get_mysql()
+                try:
+                    with conn.cursor() as cur:
+                        marks = ",".join(["%s"] * len(cols))
+                        cur.execute(
+                            f"INSERT INTO mant_maquinas ({','.join(cols)}) "
+                            f"VALUES ({marks})", tuple(vals))
+                        mid_new = cur.lastrowid
+                        # Item + fotos del levantamiento apuntan a la máquina nueva
+                        cur.execute(
+                            "UPDATE mant_levantamiento_items SET maquina_id=%s WHERE id=%s",
+                            (mid_new, it["id"]))
+                        cur.execute(
+                            "UPDATE mant_levantamiento_fotos SET maquina_id=%s WHERE item_id=%s",
+                            (mid_new, it["id"]))
+                        # Replicar fotos a la galería de la ficha del equipo
+                        cur.execute(
+                            "SELECT cloudinary_url, cloudinary_public_id, tipo_foto, "
+                            "       descripcion, tomada_por "
+                            "  FROM mant_levantamiento_fotos WHERE item_id=%s", (it["id"],))
+                        for f in (cur.fetchall() or []):
+                            try:
+                                cur.execute(
+                                    "INSERT INTO mant_maquina_fotos "
+                                    "(maquina_id, archivo_path, cloudinary_url, "
+                                    " cloudinary_public_id, levantamiento_id, descripcion, "
+                                    " tomada_por, tomada_at) "
+                                    "VALUES (%s,'',%s,%s,%s,%s,%s,NOW())",
+                                    (mid_new, f.get("cloudinary_url"),
+                                     f.get("cloudinary_public_id"), lev_id,
+                                     (f"[{f.get('tipo_foto') or 'general'}] "
+                                      f"{f.get('descripcion') or ''}").strip()[:500],
+                                     (f.get("tomada_por") or user)[:190]))
+                            except Exception as _e_f:
+                                print(f"[lev_materializar] foto item={it['id']}: {_e_f}", flush=True)
+                    conn.commit()
+                finally:
+                    conn.close()
+                out["creados"] += 1
+                try:
+                    _lev_registrar_evento(
+                        mid_new, cid, "creado_por_levantamiento",
+                        f"Equipo descubierto en terreno y creado desde {doc_origen}",
+                        "mant_levantamientos", lev_id,
+                        {"item_id": it["id"], "serie": serie})
+                except Exception:
+                    pass
+                print(f"[lev_materializar] vid={vid} item={it['id']} → "
+                      f"maquina={mid_new} '{nombre[:40]}'", flush=True)
+            except Exception as e_it:
+                out["errores"] += 1
+                print(f"[lev_materializar] vid={vid} item={it.get('id')} ERROR: {e_it}",
+                      flush=True)
+        if out["creados"]:
+            try:
+                _mant_log("cliente", cid, "equipos_descubiertos",
+                          f"{out['creados']} equipo(s) creados desde {doc_origen}")
+            except Exception:
+                pass
+    except Exception as e:
+        out["errores"] += 1
+        print(f"[lev_materializar] vid={vid} ERROR global: {e}", flush=True)
+    return out
+
+
+def _lev_promover_full_async(vid, usuario=None):
+    """Materializa equipos descubiertos y DESPUÉS corre la promoción
+    congelada, en un solo hilo (orden garantizado, sin carrera). Reemplaza
+    a _promover_levantamiento_async en los cierres de OT."""
+    def _run():
+        try:
+            _lev_materializar_equipos_nuevos(vid, usuario=usuario)
+        except Exception as e:
+            print(f"[lev_promover_full] materializar vid={vid}: {e}", flush=True)
+        try:
+            _promover_levantamiento_a_maquina(vid, usuario=usuario)
+        except Exception as e:
+            print(f"[lev_promover_full] promover vid={vid}: {e}", flush=True)
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception as e:
+        print(f"[lev_promover_full] no se pudo iniciar hilo vid={vid}: {e}", flush=True)
+
+
 def _next_ot_number():
     """
     Genera el proximo numero de Orden de Trabajo correlativo.
@@ -47474,7 +47657,9 @@ def mant_visita_cerrar(vid):
     # poblado (caso Vitacura — preventiva creada desde modal del cliente).
     # El wrapper interno (_promover_levantamiento_a_maquina) hace el filtro
     # fino y descarta silenciosamente si no corresponde.
-    _promover_levantamiento_async(vid, usuario=user)
+    # 2026-06-23: _lev_promover_full_async además MATERIALIZA los equipos
+    # descubiertos en terreno (items sin maquina_id) antes de promover.
+    _lev_promover_full_async(vid, usuario=user)
     return jsonify({
         "ok": True,
         "estado": "cerrada",
@@ -54306,7 +54491,8 @@ def mant_ot_aprobar_cierre(vid):
         # ficha del equipo (mant_maquinas) + historial cronológico. El
         # wrapper interno (_promover_levantamiento_a_maquina) hace el filtro
         # fino: solo promueve si tipo='levantamiento' o levantamiento_id NOT NULL.
-        _promover_levantamiento_async(vid, usuario=current_username())
+        # 2026-06-23: full = materializa equipos descubiertos + promueve.
+        _lev_promover_full_async(vid, usuario=current_username())
         # 2026-05-22 (Daniel) — Notificar al técnico (campana) y opcionalmente
         # al cliente por email (env MANT_NOTIF_CLIENTE_EMAIL_ENABLED).
         try:
@@ -64052,7 +64238,12 @@ def mant_lev_crear_o_listar(cid):
     titulo = (data.get("titulo") or "").strip()[:200] or f"Levantamiento {_now_chile_str('%d/%m/%Y')}"
     notas = (data.get("notas") or "").strip()
     equipo_ids = data.get("equipo_ids") or []
-    if not equipo_ids:
+    # ── Levantamiento PURO de descubrimiento (Daniel 2026-06-23) ──────
+    # Cliente nuevo sin equipos registrados: la OT parte con 0 equipos y
+    # el TÉCNICO los captura en terreno (foto + nombre + serie) desde
+    # Ejecutar OT. Al cerrar, se materializan en mant_maquinas.
+    descubrimiento = bool(data.get("descubrimiento"))
+    if not equipo_ids and not descubrimiento:
         return jsonify({
             "ok": False,
             "error": "Debes seleccionar al menos 1 equipo para el levantamiento.",
@@ -64187,13 +64378,17 @@ def mant_lev_crear_o_listar(cid):
             lev_id = cur.lastrowid
 
             # ─── Items del levantamiento (1 por equipo) ────────────
-            ph = ",".join(["%s"] * len(equipo_ids))
-            cur.execute(
-                f"SELECT id, nombre, sku, serie, doc_fecha FROM mant_maquinas "
-                f"WHERE id IN ({ph}) AND cliente_id=%s",
-                tuple(list(equipo_ids) + [cid])
-            )
-            maquinas = cur.fetchall() or []
+            # Descubrimiento: sin equipos preseleccionados → 0 items; el
+            # técnico los agrega en terreno vía /levantamientos/<lid>/items.
+            maquinas = []
+            if equipo_ids:
+                ph = ",".join(["%s"] * len(equipo_ids))
+                cur.execute(
+                    f"SELECT id, nombre, sku, serie, doc_fecha FROM mant_maquinas "
+                    f"WHERE id IN ({ph}) AND cliente_id=%s",
+                    tuple(list(equipo_ids) + [cid])
+                )
+                maquinas = cur.fetchall() or []
             n_items = 0
             for m in maquinas:
                 cur.execute(
@@ -64707,7 +64902,12 @@ def mant_lev_item_crear(lid):
     if not maquina_id and not nombre:
         return jsonify({"ok": False, "error": "Indica una máquina existente o un nombre nuevo"}), 400
 
-    snap = {"nombre": nombre, "sku": "", "serie": ""}
+    # Ad-hoc (equipo DESCUBIERTO en terreno): acepta sku/serie del payload
+    # (levantamiento puro 2026-06-23 — el técnico bautiza el equipo con
+    # nombre + serie sugerida editable + sku opcional).
+    snap = {"nombre": nombre,
+            "sku": (d.get("sku") or "").strip()[:120],
+            "serie": (d.get("serie") or "").strip()[:120]}
     if maquina_id:
         m = mysql_fetchone(
             "SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s AND cliente_id=%s",
@@ -64719,17 +64919,23 @@ def mant_lev_item_crear(lid):
                 "sku": m.get("sku") or "",
                 "serie": m.get("serie") or ""}
 
+    _est_cap = d.get("estado_capturado") or "operativo"
+    if _est_cap not in ('operativo','advertencia','fuera_servicio',
+                        'en_reparacion','dado_baja','no_encontrado'):
+        _est_cap = "operativo"
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO mant_levantamiento_items "
                 "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
-                " estado_capturado, ubicacion) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                " estado_capturado, ubicacion, observaciones, anomalias) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
-                 d.get("estado_capturado") or "operativo",
-                 (d.get("ubicacion") or "")[:200])
+                 _est_cap,
+                 (d.get("ubicacion") or "").strip()[:200],
+                 (d.get("observaciones") or "").strip() or None,
+                 (d.get("anomalias") or "").strip() or None)
             )
             iid = cur.lastrowid
             cur.execute(
@@ -65015,6 +65221,18 @@ def mant_lev_cerrar(lid):
         "WHERE id=%s",
         (user, lid)
     )
+    # 2026-06-23 — Levantamiento PURO: materializar SINCRÓNICO los equipos
+    # descubiertos en terreno (items sin maquina_id → mant_maquinas) ANTES
+    # de leer los items, para que el timeline, la vinculación de fotos y la
+    # promoción posterior los traten como equipos existentes.
+    if lev.get("visita_id"):
+        try:
+            _mat = _lev_materializar_equipos_nuevos(lev["visita_id"], usuario=user)
+            if _mat.get("creados"):
+                print(f"[lev_cerrar] {_mat['creados']} equipo(s) descubiertos "
+                      f"materializados en mant_maquinas", flush=True)
+        except Exception as _e_mat:
+            print(f"[lev_cerrar] materializar descubiertos: {_e_mat}", flush=True)
     # Registrar evento por cada equipo levantado
     items = mysql_fetchall(
         "SELECT id, maquina_id, n_fotos, estado_capturado, nombre_snap, "
