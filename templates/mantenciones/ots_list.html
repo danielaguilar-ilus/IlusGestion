@@ -388,6 +388,39 @@ async function resetearOTs(){
         <span class="ot-pill"><i class="bi bi-cash"></i>${{ "{:,.0f}".format(o.costo|float).replace(",",".") }}</span>
         {% endif %}
       </div>
+      {# ── Rumbo del técnico (Daniel 2026-06-23): a dónde va + con quién
+            hablar + WhatsApp/llamar en 1 toque, SIN abrir la OT. ── #}
+      {% set _dir = (o.direccion_visita or o.cli_direccion or '')|trim %}
+      {% if _dir or o.contacto_nombre %}
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;align-items:center">
+        {% if _dir %}
+        {% set _dirfull = _dir ~ (', ' ~ o.cli_comuna if o.cli_comuna and (o.cli_comuna|lower not in _dir|lower) else '') %}
+        <a href="https://www.google.com/maps/dir/?api=1&destination={{ _dirfull|urlencode }}"
+           target="_blank" rel="noopener" title="Abrir ruta en Google Maps"
+           style="display:inline-flex;align-items:center;gap:5px;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:8px;padding:5px 9px;font-size:.74rem;font-weight:600;text-decoration:none;max-width:100%">
+          <i class="bi bi-geo-alt-fill"></i>
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px">{{ _dirfull }}</span>
+        </a>
+        {% endif %}
+        {% if o.contacto_nombre %}
+        <span style="display:inline-flex;align-items:center;gap:5px;background:#f9fafb;border:1px solid #e5e7eb;color:#374151;border-radius:8px;padding:5px 9px;font-size:.74rem;font-weight:600">
+          <i class="bi bi-person-fill"></i>{{ o.contacto_nombre }}{% if o.contacto_cargo %} · {{ o.contacto_cargo }}{% endif %}
+        </span>
+        {% endif %}
+        {% if o.contacto_tel %}
+        <a href="#" onclick="return otWhatsApp(this)" data-tel="{{ o.contacto_tel }}"
+           data-nombre="{{ o.contacto_nombre or '' }}" data-ot="{{ o.numero_ot or ('OT #' ~ o.id) }}"
+           title="Escribir por WhatsApp"
+           style="display:inline-flex;align-items:center;gap:5px;background:#dcfce7;border:1px solid #86efac;color:#15803d;border-radius:8px;padding:5px 10px;font-size:.74rem;font-weight:700;text-decoration:none">
+          <i class="bi bi-whatsapp"></i>WhatsApp
+        </a>
+        <a href="tel:{{ o.contacto_tel|replace(' ','') }}" title="Llamar"
+           style="display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:8px;padding:5px 9px;font-size:.74rem;font-weight:700;text-decoration:none">
+          <i class="bi bi-telephone-fill"></i>
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
 
     {# Stats (tareas / completas / fotos) #}
@@ -1131,5 +1164,28 @@ async function eliminarOTRapido(otId, numeroOt) {
 }
 </script>
 {% endif %}
+
+<script>
+// ── Rumbo del técnico (Daniel 2026-06-23): WhatsApp en 1 toque desde la
+// lista de OTs. Normaliza el teléfono chileno a formato wa.me y prellena
+// un mensaje con el N° de OT. tel: y Maps van por href directo.
+function otWhatsApp(el){
+  try {
+    let dig = String(el.dataset.tel || '').replace(/\D/g, '');
+    if (!dig) return false;
+    if (dig.startsWith('56')) { /* ya viene con país */ }
+    else if (dig.length === 9 && dig.startsWith('9')) dig = '56' + dig;
+    else if (dig.length === 8) dig = '569' + dig;
+    else dig = '56' + dig;
+    const nombre = (el.dataset.nombre || '').trim();
+    const ot = el.dataset.ot || 'la visita';
+    const msg = 'Hola' + (nombre ? ' ' + nombre : '') +
+      ', le escribe el técnico de ILUS Sport & Health por la ' + ot +
+      '. Quedo atento(a) para coordinar la visita.';
+    window.open('https://wa.me/' + dig + '?text=' + encodeURIComponent(msg), '_blank');
+  } catch (e) { console.warn('otWhatsApp:', e); }
+  return false;
+}
+</script>
 
 {% endblock %}
