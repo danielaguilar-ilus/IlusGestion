@@ -2058,10 +2058,17 @@
        El técnico agrega equipos NUEVOS en terreno: foto(s) obligatoria(s)
        + nombre obligatorio + SKU opcional + serie sugerida editable +
        observación + ¿operativa? + ¿daño?. Al cerrar la OT se crean en
-       mant_maquinas (ficha del cliente). Solo OTs con levantamiento
-       vinculado y en estado de trabajo.
+       mant_maquinas (ficha del cliente).
+
+       2026-07-06 (Daniel — ventana de corrección + trazabilidad): la
+       sección se ve en CUALQUIER estado vivo del levantamiento (incluso
+       tras la firma del técnico, para transparencia — "hay que evidenciar
+       que algo se movió"), pero el CRUD (agregar/editar/eliminar) solo se
+       habilita mientras `lev_editable` (antes de firmar_tecnico). Tras
+       firmar: editar queda bloqueado para todos; eliminar solo para
+       superadmin (`es_superadmin_lev`), con auditoría server-side.
        ══════════════════════════════════════════════════════════════ #}
-    {% if visita.levantamiento_id and visita.estado in ('creada','programada','asignada','en_curso','en_ejecucion','reagendada') %}
+    {% if visita.levantamiento_id and visita.estado not in ('cancelada', 'anulada') %}
     <style>
       .levd-wrap{margin:14px 0 18px}
       .levd-head{display:flex;align-items:center;justify-content:space-between;
@@ -2111,13 +2118,23 @@
         <span><i class="bi bi-binoculars-fill me-1" style="color:#dc2626"></i>Equipos descubiertos en terreno</span>
         <span class="cnt" id="levdCount">0</span>
       </div>
+      {% if not lev_editable %}
+      <div class="small mb-2" style="background:#f3f4f6;border:1px solid #e5e7eb;color:#4b5563;
+           border-radius:10px;padding:8px 12px">
+        <i class="bi bi-lock-fill me-1"></i>
+        <strong>Congelado:</strong> el técnico ya firmó esta OT — el registro de equipos quedó
+        fijo{% if es_superadmin_lev %} (como superadmin puedes eliminar en caso excepcional; queda auditado){% endif %}.
+      </div>
+      {% endif %}
       <div class="levd-list" id="levdList"></div>
+      {% if lev_editable %}
       <button type="button" class="levd-add" onclick="levdAbrir()">
         <i class="bi bi-plus-circle-fill"></i> Agregar equipo
       </button>
       <button type="button" class="levd-dup" id="levdDupBtn" style="display:none" onclick="levdDuplicar()">
         <i class="bi bi-copy"></i> Duplicar último (misma máquina, serie nueva)
       </button>
+      {% endif %}
     </div>
 
     {# Modal captura rápida — mobile-first #}
@@ -2126,7 +2143,7 @@
         <div class="modal-content" style="border-radius:14px">
           <div class="modal-header py-2">
             <h6 class="modal-title fw-bold">
-              <i class="bi bi-camera-fill me-2" style="color:#dc2626"></i>Nuevo equipo
+              <i class="bi bi-camera-fill me-2" id="levdModalIco" style="color:#dc2626"></i><span id="levdModalTitulo">Nuevo equipo</span>
               <span class="badge bg-danger ms-1" id="levdModalSeq">#1</span>
             </h6>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -2232,7 +2249,7 @@
             <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Listo</button>
             <button type="button" class="btn fw-bold px-4" id="levdGuardarBtn"
                     style="background:#dc2626;color:#fff;min-height:46px" onclick="levdGuardar()">
-              <i class="bi bi-check-lg me-1"></i>Guardar equipo
+              <i class="bi bi-check-lg me-1"></i><span id="levdGuardarLbl">Guardar equipo</span>
             </button>
           </div>
         </div>
@@ -3088,6 +3105,11 @@ const VISITA_LEVANTAMIENTO_ID = {{ (visita.levantamiento_id or 0) | tojson }};
 const ES_LEVANTAMIENTO = (
   VISITA_TIPO === 'levantamiento' || !!VISITA_LEVANTAMIENTO_ID
 );
+// 2026-07-06 (Daniel) — CRUD de equipos descubiertos: editable mientras el
+// técnico no haya firmado (misma regla que enforcea el backend en
+// mant_lev_item_update, ver _LEV_ESTADOS_EDITABLES en app.py).
+const LEV_EDITABLE = {{ 'true' if lev_editable else 'false' }};
+const ES_SUPERADMIN_LEV = {{ 'true' if es_superadmin_lev else 'false' }};
 const DESTINO_LAT = {{ (visita.direccion_lat | float) | tojson if visita.direccion_lat else 'null' }};
 const DESTINO_LNG = {{ (visita.direccion_lng | float) | tojson if visita.direccion_lng else 'null' }};
 const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
@@ -8234,11 +8256,13 @@ async function mostrarInstrIosInstall(){
 // materializan en mant_maquinas (ficha del cliente).
 // ════════════════════════════════════════════════════════════════
 let _levdItems = [];      // items descubiertos (maquina_id NULL) ya guardados
-let _levdFotos = [];      // fotos pendientes del modal actual [{blob,url}]
+let _levdFotos = [];      // fotos pendientes (nuevas) del modal actual [{blob,url}]
+let _levdFotosExistentes = []; // fotos YA subidas del item en edición [{id,url}]
 let _levdUltimo = null;   // último equipo guardado (para Duplicar)
 let _levdSeq = 1;         // correlativo para la serie sugerida
 let _levdModal = null;
 let _levdDoc = null;      // factura ERP verificada {tido, numero, fecha}
+let _levdEditId = null;   // 2026-07-06: id del item en edición (null = modo crear)
 
 function _levdEl(id){ return document.getElementById(id); }
 
@@ -8273,6 +8297,21 @@ function levdRender(){
     const foto = (it.fotos && it.fotos.length) ? it.fotos[0].url : '';
     const dano = (it.anomalias || '').trim();
     const fs = (it.estado_capturado === 'fuera_servicio');
+    // 2026-07-06 (Daniel — ventana de corrección): editar/eliminar libres
+    // mientras LEV_EDITABLE; tras firmar, eliminar solo para superadmin
+    // (estilo de advertencia) y editar queda bloqueado para todos.
+    let acciones;
+    if (LEV_EDITABLE){
+      acciones = `<button type="button" class="del" style="background:#eff6ff;color:#1d4ed8;margin-right:6px" onclick="levdEditar(${it.id})" title="Editar"><i class="bi bi-pencil-fill"></i></button>` +
+                 `<button type="button" class="del" onclick="levdEliminar(${it.id})" title="Eliminar"><i class="bi bi-trash"></i></button>`;
+    } else if (ES_SUPERADMIN_LEV){
+      acciones = `<button type="button" class="del" style="background:#fef3c7;color:#92400e" onclick="levdEliminar(${it.id})" title="Eliminar (post-firma — queda auditado)"><i class="bi bi-trash"></i></button>`;
+    } else {
+      acciones = `<span style="color:#9ca3af;font-size:1.1rem" title="Congelado tras la firma del técnico"><i class="bi bi-lock-fill"></i></span>`;
+    }
+    const editInfo = it.modificado_por
+      ? `<div class="mt" style="color:#b45309"><i class="bi bi-pencil-square me-1"></i>Editado por ${it.modificado_por}${it.modificado_at ? ' · ' + it.modificado_at.slice(0,16).replace('T',' ') : ''}</div>`
+      : '';
     return `<div class="levd-card">
       ${foto ? `<img src="${foto}" alt="">` : `<div style="width:52px;height:52px;border-radius:9px;background:#f3f4f6;display:flex;align-items:center;justify-content:center"><i class="bi bi-camera text-muted"></i></div>`}
       <div class="inf">
@@ -8281,8 +8320,9 @@ function levdRender(){
           ${fs ? '<span class="levd-badge fs">FUERA DE SERVICIO</span>' : ''}
         </div>
         <div class="mt">${it.serie_snap ? 'Serie: ' + it.serie_snap : ''}${it.sku_snap ? ' · SKU: ' + it.sku_snap : ''} · ${(it.fotos||[]).length || it.n_fotos || 0} foto(s)${it.doc_origen ? ' · 🧾 ' + it.doc_origen : ''}</div>
+        ${editInfo}
       </div>
-      <button type="button" class="del" onclick="levdEliminar(${it.id})" title="Eliminar"><i class="bi bi-trash"></i></button>
+      ${acciones}
     </div>`;
   }).join('');
 }
@@ -8291,33 +8331,83 @@ function _levdSerieSugerida(){
   return `LEV${VID}-${String(_levdSeq).padStart(3,'0')}`;
 }
 
-function levdAbrir(prefill){
+function levdAbrir(prefill, editId){
   if (!_levdModal) _levdModal = new bootstrap.Modal(_levdEl('modalLevDesc'));
+  _levdEditId = editId || null;
   _levdFotos = [];
+  _levdFotosExistentes = (editId && prefill && prefill.fotos) ? prefill.fotos.map(f => ({id: f.id, url: f.url})) : [];
   _levdRenderFotos();
   _levdEl('levd_nombre').value    = (prefill && prefill.nombre) || '';
   _levdEl('levd_sku').value       = (prefill && prefill.sku) || '';
-  _levdEl('levd_serie').value     = _levdSerieSugerida();
+  _levdEl('levd_serie').value     = (editId && prefill && prefill.serie) ? prefill.serie : _levdSerieSugerida();
   _levdEl('levd_ubicacion').value = (prefill && prefill.ubicacion) || '';
-  _levdEl('levd_obs').value       = '';
-  _levdEl('levd_operativa').checked = true;
-  _levdEl('levd_dano').checked = false;
-  _levdEl('levd_dano_txt').value = '';
-  _levdEl('levdDanoWrap').style.display = 'none';
+  _levdEl('levd_obs').value       = (editId && prefill && prefill.observaciones) || '';
+  const _danoInicial = !!(editId && prefill && (prefill.anomalias || '').trim());
+  _levdEl('levd_operativa').checked = !(editId && prefill && prefill.estado_capturado === 'fuera_servicio');
+  _levdEl('levd_dano').checked = _danoInicial;
+  _levdEl('levd_dano_txt').value = _danoInicial ? prefill.anomalias : '';
+  _levdEl('levdDanoWrap').style.display = _danoInicial ? '' : 'none';
   _levdEl('levdErr').textContent = '';
-  _levdEl('levdModalSeq').textContent = '#' + _levdSeq;
-  // Factura de origen: siempre parte limpia y colapsada (no se duplica)
+
+  // 2026-07-06 (Daniel): título/ícono/botón cambian según modo crear/editar.
+  const _tit = _levdEl('levdModalTitulo'), _ico = _levdEl('levdModalIco');
+  const _seqBadge = _levdEl('levdModalSeq'), _lbl = _levdEl('levdGuardarLbl');
+  if (editId){
+    if (_tit) _tit.textContent = 'Editar equipo';
+    if (_ico) _ico.className = 'bi bi-pencil-fill me-2';
+    if (_seqBadge) _seqBadge.style.display = 'none';
+    if (_lbl) _lbl.textContent = 'Guardar cambios';
+  } else {
+    if (_tit) _tit.textContent = 'Nuevo equipo';
+    if (_ico) _ico.className = 'bi bi-camera-fill me-2';
+    if (_seqBadge){ _seqBadge.style.display = ''; _seqBadge.textContent = '#' + _levdSeq; }
+    if (_lbl) _lbl.textContent = 'Guardar equipo';
+  }
+
+  // Factura de origen: en edición se precarga desde doc_origen ("FCV 12345");
+  // al crear, siempre parte limpia y colapsada (no se duplica).
   _levdDoc = null;
   _levdEl('levd_doc_num').value = '';
   _levdEl('levdDocInfo').innerHTML = '';
   _levdEl('levdDocWrap').style.display = 'none';
+  if (editId && prefill && prefill.doc_origen){
+    const m = String(prefill.doc_origen).trim().match(/^([A-Za-z]+)\s+(\d+)$/);
+    if (m){
+      _levdEl('levd_doc_tipo').value = m[1].toUpperCase();
+      _levdEl('levd_doc_num').value = m[2];
+      _levdDoc = { tido: m[1].toUpperCase(), numero: m[2], fecha: '' };
+      _levdEl('levdDocInfo').innerHTML = `<span style="color:#15803d"><i class="bi bi-check-circle-fill me-1"></i>${prefill.doc_origen}</span>`;
+      _levdEl('levdDocWrap').style.display = '';
+    }
+  }
+
   _levdModal.show();
-  if (!prefill) setTimeout(() => { try { _levdEl('levdFotoInput').click(); } catch(_e){} }, 450);
+  // Nunca abrir la cámara automáticamente al editar — solo al crear "de cero".
+  if (!prefill && !editId) setTimeout(() => { try { _levdEl('levdFotoInput').click(); } catch(_e){} }, 450);
 }
 
 function levdDuplicar(){
   if (!_levdUltimo) return;
   levdAbrir({ nombre: _levdUltimo.nombre, sku: _levdUltimo.sku, ubicacion: _levdUltimo.ubicacion });
+}
+
+// 2026-07-06 (Daniel — "somos seres humanos y nos podemos equivocar"): editar
+// un equipo ya descubierto, mientras la OT siga editable (ver LEV_EDITABLE).
+// Reusa el MISMO modal de captura, precargado con los datos reales del item.
+function levdEditar(iid){
+  const it = _levdItems.find(x => String(x.id) === String(iid));
+  if (!it) return;
+  levdAbrir({
+    nombre: it.nombre_snap || '',
+    sku: it.sku_snap || '',
+    serie: it.serie_snap || '',
+    ubicacion: it.ubicacion || '',
+    observaciones: it.observaciones || '',
+    anomalias: it.anomalias || '',
+    estado_capturado: it.estado_capturado || 'operativo',
+    doc_origen: it.doc_origen || '',
+    fotos: it.fotos || [],
+  }, iid);
 }
 
 // ── Factura de origen ERP (opcional): verificación read-only ──
@@ -8388,10 +8478,40 @@ function _levdComprimir(file){
 function _levdRenderFotos(){
   const wrap = _levdEl('levdFotos');
   const addBtn = '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInput\').click()"><i class="bi bi-camera"></i></button>';
-  wrap.innerHTML = _levdFotos.map((f, i) =>
+  // 2026-07-06: en modo edición, primero las fotos YA subidas (borrado real
+  // vía DELETE al servidor), luego las nuevas pendientes (solo en memoria).
+  const existentesHtml = _levdFotosExistentes.map((f, i) =>
+    `<div class="levd-foto-th"><img src="${f.url}" alt="">` +
+    `<button type="button" class="x" onclick="levdFotoEliminarExistente(${i})">✕</button></div>`
+  ).join('');
+  const nuevasHtml = _levdFotos.map((f, i) =>
     `<div class="levd-foto-th"><img src="${f.url}" alt="">` +
     `<button type="button" class="x" onclick="levdQuitarFoto(${i})">✕</button></div>`
-  ).join('') + addBtn;
+  ).join('');
+  wrap.innerHTML = existentesHtml + nuevasHtml + addBtn;
+}
+
+async function levdFotoEliminarExistente(i){
+  const f = _levdFotosExistentes[i];
+  if (!f) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar foto',
+    message: '¿Quitar esta foto del equipo?',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/levantamiento-fotos/${f.id}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok){
+      _levdFotosExistentes.splice(i, 1);
+      _levdRenderFotos();
+    } else if (typeof ilusToast === 'function'){
+      ilusToast(d.error || 'No se pudo eliminar la foto', { type: 'error' });
+    }
+  } catch(_e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red', { type: 'error' });
+  }
 }
 
 function levdQuitarFoto(i){
@@ -8417,9 +8537,14 @@ document.addEventListener('DOMContentLoaded', () => {
 async function levdGuardar(){
   const err = _levdEl('levdErr');
   err.textContent = '';
+  const editando = !!_levdEditId;
   const nombre = _levdEl('levd_nombre').value.trim();
   if (!nombre){ err.textContent = 'El nombre del equipo es obligatorio.'; _levdEl('levd_nombre').focus(); return; }
-  if (!_levdFotos.length){ err.textContent = 'Toma al menos 1 foto del equipo.'; return; }
+  // 2026-07-06: en edición, las fotos EXISTENTES cuentan para el mínimo —
+  // no se exige subir una foto nueva si ya tiene al menos 1.
+  if ((_levdFotosExistentes.length + _levdFotos.length) === 0){
+    err.textContent = 'Toma al menos 1 foto del equipo.'; return;
+  }
 
   const operativa = _levdEl('levd_operativa').checked;
   const dano = _levdEl('levd_dano').checked;
@@ -8451,31 +8576,52 @@ async function levdGuardar(){
   const btn = _levdEl('levdGuardarBtn');
   const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${editando ? 'Guardando cambios…' : 'Guardando…'}`;
   try {
-    const r = await fetch(`/mantenciones/api/levantamientos/${VISITA_LEVANTAMIENTO_ID}/items`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
+    const url = editando
+      ? `/mantenciones/api/levantamiento-items/${_levdEditId}`
+      : `/mantenciones/api/levantamientos/${VISITA_LEVANTAMIENTO_ID}/items`;
+    const r = await fetch(url, {
+      method: editando ? 'PATCH' : 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify(payload),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok){ err.textContent = d.error || 'No se pudo guardar el equipo.'; return; }
-    const iid = d.id;
+    if (!r.ok || !d.ok){
+      err.textContent = d.error ||
+        (d.error_codigo === 'LEV_CONGELADO' ? 'La OT ya fue firmada — no se puede editar.' : 'No se pudo guardar el equipo.');
+      return;
+    }
+    const iid = editando ? _levdEditId : d.id;
 
-    // Subir fotos en cadena (la 1ª será la foto principal de la ficha)
+    // Subir fotos NUEVAS en cadena (si no hay ninguna existente, la 1ª nueva
+    // será la foto principal de la ficha al materializar)
     let subidas = 0;
     for (let i = 0; i < _levdFotos.length; i++){
       btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Foto ${i+1}/${_levdFotos.length}…`;
       try {
         const fd = new FormData();
         fd.append('foto', _levdFotos[i].blob, `equipo_${iid}_${i+1}.jpg`);
-        fd.append('tipo_foto', i === 0 ? 'general' : 'detalle');
+        fd.append('tipo_foto', (i === 0 && !_levdFotosExistentes.length) ? 'general' : 'detalle');
         const rf = await fetch(`/mantenciones/api/levantamiento-items/${iid}/fotos`, { method:'POST', body: fd });
         const df = await rf.json().catch(() => ({}));
         if (rf.ok && df.ok) subidas++;
       } catch(_e){ /* la siguiente foto sigue */ }
     }
-    if (!subidas){
-      err.textContent = '⚠ El equipo se guardó pero NINGUNA foto subió. Revisa tu señal y vuelve a intentar las fotos.';
+    if (_levdFotos.length && !subidas){
+      err.textContent = '⚠ Se guardó pero NINGUNA foto nueva subió. Revisa tu señal y reintenta.';
+    }
+
+    const estLbl = payload.estado_capturado === 'fuera_servicio' ? ' · ⚠️ FUERA DE SERVICIO'
+                 : payload.estado_capturado === 'advertencia'    ? ' · ⚠️ con DAÑO reportado'
+                 : '';
+    if (editando){
+      if (typeof ilusToast === 'function'){
+        ilusToast(`✓ ${nombre} actualizado${estLbl}`, { type: estLbl ? 'warning' : 'success' });
+      }
+      _levdEditId = null;
+      await levdInit();          // refresca lista + contador
+      _levdModal.hide();         // en edición NO se encadena a un nuevo equipo
+      return;
     }
 
     _levdUltimo = { nombre, sku: payload.sku, ubicacion: payload.ubicacion };
@@ -8485,10 +8631,7 @@ async function levdGuardar(){
       // técnico reportó un equipo marcado "DAÑO" sin haber tocado el toggle
       // (no se encontró bug de código; lo más probable es un toque accidental
       // en terreno). Esta confirmación le da una oportunidad inmediata de
-      // notarlo y corregirlo (eliminar + volver a capturar) antes de seguir.
-      const estLbl = payload.estado_capturado === 'fuera_servicio' ? ' · ⚠️ FUERA DE SERVICIO'
-                   : payload.estado_capturado === 'advertencia'    ? ' · ⚠️ con DAÑO reportado'
-                   : '';
+      // notarlo y corregirlo (editar o eliminar) antes de seguir.
       ilusToast(`✓ ${nombre} guardado (${subidas} foto${subidas === 1 ? '' : 's'})${estLbl}`,
                 { type: estLbl ? 'warning' : 'success' });
     }

@@ -52851,6 +52851,12 @@ def mant_ot_ejecutar(vid):
         # 2026-06-12 (Daniel) — capturar firma del cliente (segunda firma).
         puede_firmar_cliente=puede_firmar_cliente_flag,
         es_creador=es_creador_flag,
+        # 2026-07-06 (Daniel) — CRUD de equipos descubiertos habilitado
+        # mientras la OT no esté firmada por el técnico (misma regla que
+        # enforcea el backend en mant_lev_item_update). Evita repetir la
+        # tupla de estados en Jinja/JS por separado.
+        lev_editable=((visita.get("estado") or "") in _LEV_ESTADOS_EDITABLES),
+        es_superadmin_lev=bool((getattr(g, "permissions", None) or {}).get("superadmin")),
         # 2026-06-23 (Daniel) — controles de TERRENO habilitables desde
         # /mantenciones/configuracion (geofence check-in + control de tiempo).
         reglas_terreno={
@@ -65059,7 +65065,10 @@ def mant_lev_detalle(lid):
     for it in items:
         it["fotos"] = fotos_por_item.get(it["id"], [])
         it["estado_label"] = _lev_estado_label(it.get("estado_capturado", "operativo"))
-        for k in ('created_at', 'updated_at'):
+        # 'modificado_at' (trazabilidad de edición 2026-07-06) también es
+        # DATETIME — sin normalizar, jsonify() falla en cuanto un item tenga
+        # esta columna poblada (justo el caso que acabamos de habilitar).
+        for k in ('created_at', 'updated_at', 'modificado_at'):
             if it.get(k): it[k] = str(it[k])[:16]
 
     lev = dict(lev)
@@ -65257,18 +65266,62 @@ def mant_lev_item_crear(lid):
         except Exception: pass
 
 
+_LEV_ESTADOS_EDITABLES = ('creada', 'programada', 'asignada', 'en_curso',
+                          'en_ejecucion', 'reagendada')
+
+
 @app.route("/mantenciones/api/levantamiento-items/<int:iid>", methods=["PATCH", "DELETE"])
 @_mant_required
 def mant_lev_item_update(iid):
-    """Actualizar estado/observaciones/ubicación de un item."""
+    """Actualizar o eliminar un equipo descubierto en terreno.
+
+    REGLA (Daniel 2026-07-06 — ventana de corrección + trazabilidad):
+    "somos seres humanos y nos podemos equivocar" — MIENTRAS la OT no esté
+    firmada por el técnico (estado en _LEV_ESTADOS_EDITABLES), el equipo se
+    puede editar y eliminar libremente. Una vez firmada:
+      - PATCH (editar): BLOQUEADO para todos — el registro queda congelado,
+        es la fuente de verdad de lo que el técnico reportó en terreno.
+      - DELETE: bloqueado para usuarios normales; SOLO superadmin puede
+        eliminar (caso excepcional), y queda auditado con snapshot completo
+        (el row se pierde al borrar).
+    Toda edición ANTES de firmar también queda auditada campo a campo en
+    mant_logs — para proteger al técnico si alguien alega que él reportó
+    algo distinto a lo que terminó quedando (REGLA #5 CLAUDE.md: audit log
+    en acción destructiva/sensible, antes no después).
+    """
     item = mysql_fetchone(
-        "SELECT id, levantamiento_id, maquina_id FROM mant_levantamiento_items WHERE id=%s",
-        (iid,)
+        "SELECT * FROM mant_levantamiento_items WHERE id=%s", (iid,)
     )
     if not item:
         return jsonify({"ok": False, "error": "Item no encontrado"}), 404
 
+    v = mysql_fetchone(
+        "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",
+        (item["levantamiento_id"],)
+    )
+    _visita_estado = (v or {}).get("estado") or ""
+    _editable = _visita_estado in _LEV_ESTADOS_EDITABLES
+    _es_superadmin = bool((getattr(g, "permissions", None) or {}).get("superadmin"))
+    user = current_username() or "sistema"
+
     if request.method == "DELETE":
+        if not _editable and not _es_superadmin:
+            return jsonify({
+                "ok": False,
+                "error": "Esta OT ya fue firmada por el técnico — los equipos descubiertos "
+                         "quedaron congelados. Solo el superadministrador puede eliminarlos.",
+                "error_codigo": "LEV_CONGELADO",
+            }), 403
+        # Snapshot completo ANTES de borrar (el row se pierde) — trazabilidad.
+        _snap = (f"nombre='{item.get('nombre_snap')}' sku='{item.get('sku_snap')}' "
+                 f"serie='{item.get('serie_snap')}' estado='{item.get('estado_capturado')}' "
+                 f"anomalias='{(item.get('anomalias') or '')[:200]}'")
+        try:
+            _mant_log("levantamiento_item", iid,
+                      "eliminado_post_firma" if not _editable else "eliminado",
+                      f"{user} eliminó equipo descubierto (OT estado={_visita_estado}) — {_snap}")
+        except Exception:
+            pass
         mysql_execute("DELETE FROM mant_levantamiento_items WHERE id=%s", (iid,))
         mysql_execute(
             "UPDATE mant_levantamientos SET total_equipos = "
@@ -65278,36 +65331,97 @@ def mant_lev_item_update(iid):
         )
         return jsonify({"ok": True})
 
+    # ── PATCH ──
+    if not _editable:
+        return jsonify({
+            "ok": False,
+            "error": "Esta OT ya fue firmada por el técnico — los equipos descubiertos "
+                     "quedaron congelados y no se pueden editar.",
+            "error_codigo": "LEV_CONGELADO",
+        }), 403
+
     d = request.get_json(silent=True) or {}
-    sets, vals = [], []
+    # Alias amigables (mismos nombres que ya usa el payload de CREACIÓN del
+    # modal de terreno) → columna real de la tabla. Así el frontend reusa el
+    # MISMO payload para crear (POST) y editar (PATCH) sin duplicar lógica.
+    _alias = {"nombre": "nombre_snap", "sku": "sku_snap", "serie": "serie_snap"}
+    d2 = {_alias.get(k, k): v for k, v in d.items()}
+    # FIX (revisión adversarial 2026-07-06): el payload de levdGuardar() SIEMPRE
+    # incluye doc_tido/doc_numero/doc_fecha (vacíos si el usuario no tocó la
+    # sección de factura, ej. al editar solo el nombre). Antes, "vacío" se
+    # traducía a doc_origen=None, BORRANDO en silencio una factura ya asociada
+    # en CUALQUIER edición que no reconfirmara la factura. Ahora solo se toca
+    # doc_origen/fecha_documento si el usuario aportó un valor real — si vino
+    # vacío, NO se incluye la key y el valor existente en la BD queda intacto.
+    _dt = (d.get("doc_tido") or "").strip().upper()[:5]
+    _dn = re.sub(r"[^0-9]", "", str(d.get("doc_numero") or ""))
+    if _dt and _dn:
+        d2["doc_origen"] = f"{_dt} {_dn}"[:80]
+    else:
+        d2.pop("doc_tido", None); d2.pop("doc_numero", None)
+    _df = str(d.get("doc_fecha") or "").strip()[:10]
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", _df):
+        d2["fecha_documento"] = _df
+    else:
+        d2.pop("doc_fecha", None)
+    d = d2
+
+    sets, vals, cambios = [], [], []
     estados_validos = ('operativo','advertencia','fuera_servicio','en_reparacion','dado_baja','no_encontrado')
-    # Campos editables del item (incluye los nuevos campos de calidad fitness)
+    # Campos editables del item (incluye snap de identidad para el modo
+    # edición del modal de terreno + los campos ya existentes de calidad fitness)
     for k in (
+        "nombre_snap", "sku_snap", "serie_snap", "doc_origen",
         "estado_capturado", "ubicacion", "horas_uso", "anomalias", "observaciones",
         "completado",
-        # Nuevos campos relevantes para máquinas fitness:
         "fecha_documento", "marca", "modelo", "anio_fabricacion",
         "voltaje", "ultima_intervencion", "componentes_json",
     ):
         if k in d:
-            v = d[k]
-            if k == "estado_capturado" and v not in estados_validos:
+            v_new = d[k]
+            if k == "estado_capturado" and v_new not in estados_validos:
                 continue
             if k in ("horas_uso", "anio_fabricacion"):
-                try: v = int(v) if v not in (None, "") else None
+                try: v_new = int(v_new) if v_new not in (None, "") else None
                 except Exception: continue
             if k in ("fecha_documento", "ultima_intervencion"):
                 # Espera string YYYY-MM-DD o None. Si viene "", lo guardamos como NULL.
-                if v in ("", None): v = None
+                if v_new in ("", None): v_new = None
             if k == "completado":
-                v = 1 if v else 0
+                v_new = 1 if v_new else 0
+            if k in ("nombre_snap","sku_snap","serie_snap","ubicacion",
+                     "observaciones","anomalias","doc_origen") and isinstance(v_new, str):
+                v_new = v_new.strip() or None
+            # Defensa en profundidad: el modal ya exige nombre obligatorio,
+            # pero el servidor no debe confiar solo en eso — un nombre_snap
+            # vacío hace que el equipo se salte en silencio la materialización
+            # a mant_maquinas al cerrar la OT (WHERE nombre_snap <> '').
+            if k == "nombre_snap" and v_new is None:
+                return jsonify({"ok": False, "error": "El nombre del equipo no puede quedar vacío."}), 400
+            v_old = item.get(k)
+            if str(v_old if v_old is not None else "") != str(v_new if v_new is not None else ""):
+                cambios.append(f"{k}: '{v_old if v_old is not None else '—'}' → "
+                                f"'{v_new if v_new is not None else '—'}'")
             sets.append(f"{k}=%s")
-            vals.append(v)
+            vals.append(v_new)
     if not sets:
         return jsonify({"ok": True, "noop": True})
+    # 2026-07-06 (revisión adversarial): modificado_por/modificado_at solo se
+    # estampan si HUBO un cambio real — si no, un guardado sin tocar nada
+    # ensuciaría la trazabilidad ("editado por X") que esta función existe
+    # para proteger.
+    if cambios:
+        sets.append("modificado_por=%s"); vals.append(user)
+        sets.append("modificado_at=NOW()")
     vals.append(iid)
     mysql_execute(f"UPDATE mant_levantamiento_items SET {', '.join(sets)} WHERE id=%s", tuple(vals))
-    return jsonify({"ok": True})
+    if cambios:
+        try:
+            _mant_log("levantamiento_item", iid, "editado",
+                      f"{user} editó equipo descubierto: " + " · ".join(cambios))
+        except Exception:
+            pass
+    return jsonify({"ok": True, "modificado_por": user})
 
 
 @app.route("/mantenciones/api/levantamiento-items/<int:iid>/fotos", methods=["POST"])
@@ -65430,7 +65544,14 @@ def mant_lev_item_subir_foto(iid):
 @app.route("/mantenciones/api/levantamiento-fotos/<int:fid>", methods=["DELETE"])
 @_mant_required
 def mant_lev_foto_del(fid):
-    """Elimina una foto del levantamiento (también de Cloudinary)."""
+    """Elimina una foto del levantamiento (también de Cloudinary).
+
+    Mismo gate que `mant_lev_item_update` (Daniel 2026-07-06): mientras la OT
+    no esté firmada por el técnico, cualquiera con acceso puede corregir
+    (incluida una foto mal tomada); tras firmar, solo superadmin — evita que
+    alguien borre evidencia fotográfica del reporte del técnico sin dejar
+    rastro server-side, aunque el frontend ya oculte el botón en ese caso.
+    """
     foto = mysql_fetchone(
         "SELECT cloudinary_public_id, item_id, levantamiento_id "
         "  FROM mant_levantamiento_fotos WHERE id=%s",
@@ -65438,6 +65559,26 @@ def mant_lev_foto_del(fid):
     )
     if not foto:
         return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
+
+    v = mysql_fetchone(
+        "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",
+        (foto["levantamiento_id"],)
+    )
+    _editable = ((v or {}).get("estado") or "") in _LEV_ESTADOS_EDITABLES
+    _es_superadmin = bool((getattr(g, "permissions", None) or {}).get("superadmin"))
+    if not _editable and not _es_superadmin:
+        return jsonify({
+            "ok": False,
+            "error": "Esta OT ya fue firmada por el técnico — las fotos quedaron "
+                     "congeladas. Solo el superadministrador puede eliminarlas.",
+            "error_codigo": "LEV_CONGELADO",
+        }), 403
+    try:
+        _mant_log("levantamiento_item", foto["item_id"],
+                  "foto_eliminada_post_firma" if not _editable else "foto_eliminada",
+                  f"{current_username() or 'sistema'} eliminó foto id={fid}")
+    except Exception:
+        pass
 
     if foto.get("cloudinary_public_id"):
         try:
@@ -68001,6 +68142,38 @@ def _ensure_lev_items_doc_col():
     return False
 
 
+def _ensure_lev_items_edicion_cols():
+    """Garantiza mant_levantamiento_items.modificado_por/modificado_at
+    SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1). Daniel 2026-07-06:
+    "somos seres humanos y nos podemos equivocar" — mientras la OT no esté
+    firmada por el técnico, los equipos descubiertos SÍ se pueden editar
+    (CRUD completo). Estas 2 columnas dan trazabilidad de quién editó y
+    cuándo, para proteger al técnico si alguien alega que él reportó algo
+    distinto a lo que quedó al final."""
+    needed = {
+        "modificado_por": "VARCHAR(190) NULL",
+        "modificado_at":  "DATETIME NULL",
+    }
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_levantamiento_items'"
+            ) or [])
+        }
+    except Exception:
+        return []
+    faltantes = [c for c in needed if c.lower() not in existing]
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE mant_levantamiento_items ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_lev_edicion] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_lev_edicion] no se pudo agregar {col}: {e_add}", flush=True)
+    return faltantes
+
+
 def _ensure_mant_visitas_factura_cols():
     """Garantiza las columnas del SELLO factura↔OT SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Sin ellas, asociar factura / firmar el cierre
@@ -68685,6 +68858,13 @@ try:
               f"{_faltaron_fact}", flush=True)
 except Exception as _ensure_fact_err:
     print(f"[ILUS][WARN] _ensure_mant_visitas_factura_cols: {_ensure_fact_err}", flush=True)
+
+# Columnas de trazabilidad de EDICIÓN de equipos descubiertos (Daniel 2026-07-06).
+try:
+    with app.app_context():
+        _ensure_lev_items_edicion_cols()
+except Exception as _ensure_lev_ed_err:
+    print(f"[ILUS][WARN] _ensure_lev_items_edicion_cols: {_ensure_lev_ed_err}", flush=True)
 
 # Reglas de TERRENO (geofence + control de tiempo) + gate de factura,
 # sembradas SIEMPRE para que aparezcan en /mantenciones/configuracion.
