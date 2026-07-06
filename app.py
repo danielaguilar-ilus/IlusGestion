@@ -67769,6 +67769,180 @@ def _ensure_reglas_terreno():
     return n
 
 
+def _ensure_plantillas_estandar_seed():
+    """Siembra las 4 plantillas ESTÁNDAR SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). El seed original (~app.py:34475) solo corría
+    dentro del bloque de migraciones completo — en prod (skip=1) JAMÁS se
+    ejecutó, dejando mant_tarea_plantillas VACÍA. Sin la plantilla
+    'Levantamiento fotográfico estándar', el modo clásico de Generar OT
+    no tiene checklist que auto-aplicar y el desplegable de 'Plantillas
+    extra' (paso 5) queda vacío — el creador de la OT no puede avanzar.
+    Idempotente por NOMBRE (no por conteo total): si Daniel ya creó
+    plantillas propias, esto NO las duplica ni las toca; solo agrega las
+    que falten de esta lista base. Daniel 2026-07-04 (urgente — técnico
+    probando ahora)."""
+    # Autosuficiente: garantiza las tablas ANTES de sembrar. Con
+    # ILUS_SKIP_MIGRATIONS=1 el CREATE TABLE original nunca corre, así que
+    # esta función no puede asumir que ya existen.
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_tarea_plantillas (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                nombre        VARCHAR(200) NOT NULL,
+                descripcion   TEXT,
+                tipo_visita   ENUM('preventiva','correctiva','garantia','levantamiento',
+                                   'inspeccion','instalacion','otro') DEFAULT 'preventiva',
+                tiempo_estimado_min INT NULL,
+                activa        TINYINT(1) DEFAULT 1,
+                es_sistema    TINYINT(1) DEFAULT 0,
+                familia_activo ENUM('cardio','selectorizado','carga_libre','racks_estructuras',
+                                    'bancos','accesorios','bicicletas','trotadoras','otros','todas')
+                               DEFAULT 'todas',
+                familia_checklist ENUM('instalacion','preventiva','correctivo','desinstalacion',
+                                       'capacitacion','registro_productos','operacional_interno',
+                                       'rendiciones','otro') DEFAULT 'otro',
+                created_by    VARCHAR(190),
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_activa (activa),
+                INDEX idx_tipo   (tipo_visita)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        # Defensivo: si la tabla ya existía sin estas 2 columnas (deploy previo
+        # sin skip), agregarlas. Ignorable si ya están.
+        for _alt in (
+            "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_activo "
+            "ENUM('cardio','selectorizado','carga_libre','racks_estructuras',"
+            "     'bancos','accesorios','bicicletas','trotadoras','otros','todas') DEFAULT 'todas'",
+            "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_checklist "
+            "ENUM('instalacion','preventiva','correctivo','desinstalacion',"
+            "     'capacitacion','registro_productos','operacional_interno',"
+            "     'rendiciones','otro') DEFAULT 'otro'",
+        ):
+            try: mysql_execute(_alt)
+            except Exception: pass
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_tarea_plantilla_items (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                plantilla_id  INT NOT NULL,
+                orden         INT DEFAULT 0,
+                titulo        VARCHAR(300) NOT NULL,
+                descripcion   TEXT,
+                tipo_respuesta ENUM('check','texto','sino','numero','verificacion',
+                                    'gps','lista','fecha_hora','foto') DEFAULT 'check',
+                obligatoria   TINYINT(1) DEFAULT 0,
+                requiere_foto TINYINT(1) DEFAULT 0,
+                unidad        VARCHAR(30) NULL,
+                rango_min     DECIMAL(14,4) NULL,
+                rango_max     DECIMAL(14,4) NULL,
+                opciones_lista_json TEXT NULL,
+                target_field  VARCHAR(40) NULL,
+                FOREIGN KEY (plantilla_id) REFERENCES mant_tarea_plantillas(id) ON DELETE CASCADE,
+                INDEX idx_plant (plantilla_id),
+                INDEX idx_orden (plantilla_id, orden)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e_tbl:
+        print(f"[ensure_plantillas_seed] CREATE TABLE falló: {e_tbl}", flush=True)
+        return []
+    # Si la tabla ya existía de un deploy previo (sin skip), puede no tener
+    # target_field todavía — ALTER defensivo, ignorable si ya está.
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_tarea_plantilla_items ADD COLUMN target_field VARCHAR(40) NULL")
+    except Exception:
+        pass
+
+    _seeds = [
+        ("Levantamiento fotográfico estándar", "levantamiento",
+         "Captura visual del equipo con datos técnicos. Genera 1 tarea por equipo del cliente.",
+         [
+             (1, "Foto general del equipo", "Plano completo mostrando el equipo en su ubicación", "foto", 1, 1, None, None, None, None),
+             (2, "Foto del N° de serie", "Acercamiento legible del serial", "foto", 1, 1, None, None, None, None),
+             (3, "Foto de placa de marca/modelo", "Placa identificadora", "foto", 1, 1, None, None, None, None),
+             (4, "Estado general del equipo", "Calificación visual", "verificacion", 1, 0, None, None, None, None),
+             (5, "¿Tiene daños visibles?", "", "sino", 1, 0, None, None, None, None),
+             (6, "Observaciones del técnico", "Comentarios libres", "texto", 0, 0, None, None, None, None),
+             (7, "Ubicación GPS del equipo", "Validar coordenadas reales del cliente", "gps", 0, 0, None, None, None, None),
+         ]),
+        ("Mantención preventiva trotadora", "preventiva",
+         "Checklist estándar para mantención preventiva de trotadoras (cinta de correr).",
+         [
+             (1, "Limpieza general del equipo", "Aspirado, paños húmedos, etc.", "check", 1, 0, None, None, None, None),
+             (2, "Tensión de la cinta", "Verificar que no patine", "verificacion", 1, 0, None, None, None, None),
+             (3, "Alineación de la cinta", "Centrada al rodillo", "verificacion", 1, 0, None, None, None, None),
+             (4, "Lubricación de cinta (siliconado)", "", "check", 1, 1, None, None, None, None),
+             (5, "Voltaje de alimentación", "Lectura con multímetro", "numero", 0, 0, "V", "200", "250", None),
+             (6, "Velocidad de prueba", "", "numero", 0, 0, "km/h", "0", "20", None),
+             (7, "Foto antes de la mantención", "", "foto", 1, 1, None, None, None, None),
+             (8, "Foto después de la mantención", "", "foto", 1, 1, None, None, None, None),
+             (9, "Repuesto cambiado (si aplica)", "Banda, motor, electrónica…", "lista", 0, 0, None, None, None,
+              '["Ninguno", "Banda", "Motor", "Electronica", "Rodillo delantero", "Rodillo trasero", "Otro"]'),
+             (10, "Observaciones técnicas", "", "texto", 0, 0, None, None, None, None),
+         ]),
+        ("Garantía — diagnóstico inicial", "garantia",
+         "Levantamiento de información para evaluar cobertura de garantía.",
+         [
+             (1, "Foto del N° de serie", "", "foto", 1, 1, None, None, None, None),
+             (2, "Fecha de compra estimada", "", "fecha_hora", 1, 0, None, None, None, None),
+             (3, "¿Tiene factura disponible?", "", "sino", 1, 0, None, None, None, None),
+             (4, "Falla declarada por el cliente", "Lo que dice el cliente", "texto", 1, 0, None, None, None, None),
+             (5, "Falla constatada por técnico", "Lo que observa el técnico", "texto", 1, 0, None, None, None, None),
+             (6, "Foto del problema", "", "foto", 1, 1, None, None, None, None),
+             (7, "Diagnóstico", "", "verificacion", 1, 0, None, None, None, None),
+             (8, "GPS de la visita", "", "gps", 0, 0, None, None, None, None),
+         ]),
+        ("Instalación nueva", "instalacion",
+         "Checklist de instalación de equipo nuevo.",
+         [
+             (1, "Foto del lugar antes de la instalación", "", "foto", 1, 1, None, None, None, None),
+             (2, "Equipo desempacado en buen estado", "", "sino", 1, 0, None, None, None, None),
+             (3, "Voltaje en el toma corriente", "", "numero", 1, 0, "V", "200", "250", None),
+             (4, "Nivel/plomada del equipo", "", "verificacion", 1, 0, None, None, None, None),
+             (5, "Prueba de encendido", "", "verificacion", 1, 0, None, None, None, None),
+             (6, "Capacitación al cliente", "Explicación de uso y mantención básica", "check", 1, 0, None, None, None, None),
+             (7, "Foto de la instalación terminada", "", "foto", 1, 1, None, None, None, None),
+             (8, "Hora de finalización", "", "fecha_hora", 0, 0, None, None, None, None),
+         ]),
+    ]
+    creadas = []
+    for nombre, tipo_v, desc, items in _seeds:
+        try:
+            ya = mysql_fetchone(
+                "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s LIMIT 1", (nombre,))
+            if ya:
+                continue
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO mant_tarea_plantillas "
+                        "(nombre, descripcion, tipo_visita, activa, es_sistema, created_by) "
+                        "VALUES (%s,%s,%s,1,1,'seed')",
+                        (nombre, desc, tipo_v)
+                    )
+                    plant_id = cur.lastrowid
+                    for it in items:
+                        (orden, titulo, descripcion_it, tipo_r, oblig, req_foto,
+                         unidad, rmin, rmax, opciones_json) = it
+                        cur.execute(
+                            "INSERT INTO mant_tarea_plantilla_items "
+                            "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                            " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (plant_id, orden, titulo, descripcion_it, tipo_r,
+                             oblig, req_foto, unidad, rmin, rmax, opciones_json)
+                        )
+                conn.commit()
+                creadas.append(nombre)
+                print(f"[ensure_plantillas_seed] creada: {nombre}", flush=True)
+            finally:
+                conn.close()
+        except Exception as e_p:
+            print(f"[ensure_plantillas_seed] '{nombre}' falló: {e_p}", flush=True)
+    return creadas
+
+
 def _ensure_lev_items_doc_col():
     """Garantiza mant_levantamiento_items.doc_origen SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). El técnico puede asociar el equipo descubierto
@@ -68490,6 +68664,19 @@ try:
         _ensure_lev_items_doc_col()
 except Exception as _ensure_ldoc_err:
     print(f"[ILUS][WARN] _ensure_lev_items_doc_col: {_ensure_ldoc_err}", flush=True)
+
+# CRÍTICO: plantillas ESTÁNDAR (incl. 'Levantamiento fotográfico estándar')
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto la tabla queda vacía
+# en prod (el seed original solo corría en migración completa) y bloquea
+# tanto el auto-checklist del levantamiento clásico como el desplegable de
+# "Plantillas extra" en Generar OT. Daniel 2026-07-04 (urgente).
+try:
+    with app.app_context():
+        _creadas_plant = _ensure_plantillas_estandar_seed()
+    if _creadas_plant:
+        print(f"[ILUS] Plantillas estándar sembradas (skip-migrations): {_creadas_plant}", flush=True)
+except Exception as _ensure_plant_err:
+    print(f"[ILUS][WARN] _ensure_plantillas_estandar_seed: {_ensure_plant_err}", flush=True)
 
 # CRÍTICO: garantizar `target_field` SIEMPRE (OT Levantamiento → Ficha),
 # incluso con ILUS_SKIP_MIGRATIONS=1. Sin esta columna, el editor de plantillas,
