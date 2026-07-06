@@ -67821,6 +67821,33 @@ def _ensure_plantillas_estandar_seed():
         ):
             try: mysql_execute(_alt)
             except Exception: pass
+
+        # ── Blindaje de carrera (Daniel 2026-07-06): con >1 instancia de Cloud
+        # Run arrancando en frío al mismo tiempo, dos procesos pueden pasar el
+        # "SELECT ... WHERE nombre=%s" (más abajo) ANTES de que cualquiera
+        # inserte, duplicando la plantilla. Primero dedupe lo que ya exista
+        # (conserva la fila más antigua, borra el resto — el FK de items tiene
+        # ON DELETE CASCADE, no deja huérfanos), luego un UNIQUE KEY real hace
+        # la protección atómica de aquí en adelante.
+        try:
+            dups = mysql_fetchall(
+                "SELECT nombre, MIN(id) AS keep_id, COUNT(*) AS n "
+                "  FROM mant_tarea_plantillas GROUP BY nombre HAVING COUNT(*) > 1"
+            ) or []
+            for d in dups:
+                mysql_execute(
+                    "DELETE FROM mant_tarea_plantillas WHERE nombre=%s AND id<>%s",
+                    (d["nombre"], d["keep_id"]))
+                print(f"[ensure_plantillas_seed] dedupe: '{d['nombre']}' "
+                      f"tenía {d['n']} copias — se conservó id={d['keep_id']}", flush=True)
+        except Exception as e_dedupe:
+            print(f"[ensure_plantillas_seed] dedupe falló: {e_dedupe}", flush=True)
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_tarea_plantillas ADD UNIQUE KEY uq_plant_nombre (nombre)")
+        except Exception:
+            pass  # ya existía, o hay un choque puntual — no bloquea el boot
+
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_tarea_plantilla_items (
                 id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -67915,13 +67942,22 @@ def _ensure_plantillas_estandar_seed():
             conn = get_mysql()
             try:
                 with conn.cursor() as cur:
+                    # INSERT IGNORE: si otra instancia (cold start concurrente)
+                    # ya insertó este nombre entre el SELECT de arriba y este
+                    # INSERT, el UNIQUE KEY uq_plant_nombre descarta esta fila
+                    # sin lanzar error — evita duplicados por condición de carrera.
                     cur.execute(
-                        "INSERT INTO mant_tarea_plantillas "
+                        "INSERT IGNORE INTO mant_tarea_plantillas "
                         "(nombre, descripcion, tipo_visita, activa, es_sistema, created_by) "
                         "VALUES (%s,%s,%s,1,1,'seed')",
                         (nombre, desc, tipo_v)
                     )
                     plant_id = cur.lastrowid
+                    if not plant_id:
+                        # Perdió la carrera: otra instancia ya la insertó.
+                        # No hay items que crear para un id inexistente.
+                        conn.commit()
+                        continue
                     for it in items:
                         (orden, titulo, descripcion_it, tipo_r, oblig, req_foto,
                          unidad, rmin, rmax, opciones_json) = it
