@@ -5869,6 +5869,36 @@ function actualizarLockFirmar(ctxOrTotal, completas){
     `<span style="color:#6b7280;font-weight:600">Opcionales: ${opcComp}/${opcTot}</span>`;
 
   if (total === 0){
+    // 2026-07-06 (fix Daniel — choque de reglas): en LEVANTAMIENTO PURO de
+    // descubrimiento no hay equipos clásicos (EQUIPOS.length===0) ni
+    // PLANTILLAS_POR_MAQUINA, así que `total` siempre da 0 aunque el técnico
+    // ya haya descubierto equipos en terreno (_levdItems). Ahí el gate real
+    // es "¿ya capturó al menos 1 equipo?", no el conteo de tareas clásicas.
+    const _esDescubrimientoPuro = ES_LEVANTAMIENTO && (typeof EQUIPOS !== 'undefined') && EQUIPOS.length === 0;
+    if (_esDescubrimientoPuro){
+      const nDesc = (typeof _levdItems !== 'undefined') ? _levdItems.length : 0;
+      if (nDesc > 0){
+        btn.disabled = false;
+        btn.dataset.locked = '0';
+        btn.innerHTML = '<i class="bi bi-pen-fill"></i> <span id="btnFirmarLabel">' +
+          `Completar y firmar OT — ${nDesc} equipo${nDesc>1?'s':''} descubierto${nDesc>1?'s':''} documentado${nDesc>1?'s':''}</span>`;
+        btn.style.background = 'linear-gradient(135deg,#15803d,#16a34a)';
+        if (hint){
+          hint.innerHTML = `${nDesc} equipo${nDesc>1?'s':''} descubierto${nDesc>1?'s':''} documentado${nDesc>1?'s':''}. Puedes firmar cuando termines.`;
+          hint.style.color = '#15803d';
+        }
+        return;
+      }
+      btn.disabled = true;
+      btn.dataset.locked = '1';
+      btn.innerHTML = '<i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Agrega al menos 1 equipo</span>';
+      btn.style.background = '#cbd5e1';
+      if (hint){
+        hint.innerHTML = 'Agrega al menos 1 equipo descubierto en terreno antes de firmar.';
+        hint.style.color = '#94a3b8';
+      }
+      return;
+    }
     btn.disabled = true;
     btn.dataset.locked = '1';
     btn.innerHTML = '<i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Sin tareas asignadas</span>';
@@ -8222,6 +8252,11 @@ async function levdInit(){
     // La serie sugerida sigue desde el total de items del levantamiento
     _levdSeq = (d.items || []).length + 1;
     levdRender();
+    // Recalcular lock del botón firmar: en descubrimiento puro el conteo
+    // de equipos descubiertos cambia el estado habilitado/bloqueado.
+    // levdInit() es el único punto que refresca _levdItems (carga inicial +
+    // tras cada guardar/eliminar), así que un solo hook cubre los 3 flujos.
+    try { actualizarLockFirmar(_calcCtxGlobal()); } catch(_) {}
   } catch(e){ console.warn('[levd] init:', e); }
 }
 
@@ -8446,7 +8481,16 @@ async function levdGuardar(){
     _levdUltimo = { nombre, sku: payload.sku, ubicacion: payload.ubicacion };
     _levdSeq++;
     if (typeof ilusToast === 'function'){
-      ilusToast(`✓ ${nombre} guardado (${subidas} foto${subidas === 1 ? '' : 's'})`, { type:'success' });
+      // 2026-07-06 (Daniel): el toast ahora avisa el estado capturado — un
+      // técnico reportó un equipo marcado "DAÑO" sin haber tocado el toggle
+      // (no se encontró bug de código; lo más probable es un toque accidental
+      // en terreno). Esta confirmación le da una oportunidad inmediata de
+      // notarlo y corregirlo (eliminar + volver a capturar) antes de seguir.
+      const estLbl = payload.estado_capturado === 'fuera_servicio' ? ' · ⚠️ FUERA DE SERVICIO'
+                   : payload.estado_capturado === 'advertencia'    ? ' · ⚠️ con DAÑO reportado'
+                   : '';
+      ilusToast(`✓ ${nombre} guardado (${subidas} foto${subidas === 1 ? '' : 's'})${estLbl}`,
+                { type: estLbl ? 'warning' : 'success' });
     }
     await levdInit();          // refresca lista + contador
     _levdEl('levdDupBtn').style.display = '';
