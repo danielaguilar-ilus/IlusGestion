@@ -37700,6 +37700,13 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
     except Exception as e:
         out["errores"] += 1
         print(f"[lev_materializar] vid={vid} ERROR global: {e}", flush=True)
+        # Auditar en mant_logs (visible en la app) — antes solo quedaba en
+        # logs de Cloud Run, invisibles para Daniel. Este era exactamente
+        # el punto donde se tragó en silencio el bug de app_context.
+        try:
+            _mant_log("visita", vid, "levantamiento_materializar_error", str(e)[:500])
+        except Exception:
+            pass
     return out
 
 
@@ -37708,18 +37715,68 @@ def _lev_promover_full_async(vid, usuario=None):
     congelada, en un solo hilo (orden garantizado, sin carrera). Reemplaza
     a _promover_levantamiento_async en los cierres de OT."""
     def _run():
-        try:
-            _lev_materializar_equipos_nuevos(vid, usuario=usuario)
-        except Exception as e:
-            print(f"[lev_promover_full] materializar vid={vid}: {e}", flush=True)
-        try:
-            _promover_levantamiento_a_maquina(vid, usuario=usuario)
-        except Exception as e:
-            print(f"[lev_promover_full] promover vid={vid}: {e}", flush=True)
+        # FIX CRÍTICO 2026-07-08 (Daniel — OT-2026-00031, 11 equipos nunca
+        # llegaron a la ficha del cliente): faltaba `with app.app_context()`.
+        # Sin contexto de Flask, la PRIMERA query de _lev_materializar_
+        # equipos_nuevos (mysql_fetchone → get_db() → g) revienta con
+        # "RuntimeError: Working outside of application context", atrapada
+        # por el except global de esa función → 0 equipos materializados,
+        # SIEMPRE (falla antes del loop, por eso los 11 fallaron TODOS, no
+        # algunos). Mismo patrón ya corregido en otros 4+ threads de este
+        # archivo (ver comentarios "FIX: el hilo necesita contexto Flask").
+        with app.app_context():
+            try:
+                _lev_materializar_equipos_nuevos(vid, usuario=usuario)
+            except Exception as e:
+                print(f"[lev_promover_full] materializar vid={vid}: {e}", flush=True)
+            try:
+                _promover_levantamiento_a_maquina(vid, usuario=usuario)
+            except Exception as e:
+                print(f"[lev_promover_full] promover vid={vid}: {e}", flush=True)
     try:
         threading.Thread(target=_run, daemon=True).start()
     except Exception as e:
         print(f"[lev_promover_full] no se pudo iniciar hilo vid={vid}: {e}", flush=True)
+
+
+def _ensure_lev_backfill_materializacion():
+    """Repara OTs YA cerradas que quedaron con equipos descubiertos huérfanos
+    (maquina_id IS NULL) por el bug de app_context de _lev_promover_full_async
+    (Daniel 2026-07-08 — caso real: OT-2026-00031, 11 equipos nunca llegaron
+    a la ficha del cliente). SIEMPRE en boot (idempotente — una OT reparada
+    no vuelve a aparecer en la búsqueda porque sus items ya tienen
+    maquina_id). Reusa _lev_materializar_equipos_nuevos tal cual (misma
+    lógica que corre en el cierre normal), solo que aquí SÍ corre dentro de
+    app_context (llamada síncrona en boot, no en un thread nuevo)."""
+    try:
+        huerfanas = mysql_fetchall(
+            "SELECT DISTINCT v.id AS vid "
+            "  FROM mant_visitas v "
+            "  JOIN mant_levantamiento_items li ON li.levantamiento_id = v.levantamiento_id "
+            " WHERE v.estado='cerrada' AND li.maquina_id IS NULL "
+            "   AND COALESCE(li.nombre_snap,'') <> ''"
+        ) or []
+    except Exception as e:
+        print(f"[lev_backfill] no se pudo consultar OTs huérfanas: {e}", flush=True)
+        return []
+    reparadas = []
+    for row in huerfanas:
+        vid = row["vid"]
+        try:
+            out = _lev_materializar_equipos_nuevos(vid, usuario="reparacion-backfill")
+            if out.get("creados"):
+                reparadas.append({"vid": vid, "creados": out["creados"], "errores": out.get("errores", 0)})
+                print(f"[lev_backfill] OT vid={vid}: {out['creados']} equipo(s) materializado(s) "
+                      f"(errores={out.get('errores', 0)})", flush=True)
+                try:
+                    _mant_log("visita", vid, "levantamiento_backfill_reparado",
+                              f"{out['creados']} equipo(s) descubierto(s) materializado(s) "
+                              f"retroactivamente (bug app_context corregido 2026-07-08)")
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[lev_backfill] OT vid={vid} error: {e}", flush=True)
+    return reparadas
 
 
 def _next_ot_number():
@@ -52891,6 +52948,22 @@ def mant_ot_ejecutar(vid):
     except Exception as _e_ve:
         print(f"[ot_ejecutar] equipos_estado_revision load error: {_e_ve}", flush=True)
 
+    # 2026-07-08 (Daniel — OT-2026-00031) — cuenta equipos descubiertos que
+    # quedaron sin materializar (maquina_id NULL) para ofrecer el botón de
+    # reparación manual "Re-materializar equipos" cuando la OT ya cerró.
+    lev_huerfanos_count = 0
+    if visita.get("levantamiento_id"):
+        try:
+            _row_huerf = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
+                "WHERE levantamiento_id=%s AND maquina_id IS NULL "
+                "  AND COALESCE(nombre_snap,'') <> ''",
+                (visita["levantamiento_id"],)
+            )
+            lev_huerfanos_count = (_row_huerf or {}).get("n") or 0
+        except Exception as _e_lh:
+            print(f"[ot_ejecutar] lev_huerfanos_count error: {_e_lh}", flush=True)
+
     return render_template(
         "mantenciones/ot_ejecutar.html",
         visita=visita,
@@ -52921,7 +52994,7 @@ def mant_ot_ejecutar(vid):
         # enforcea el backend en mant_lev_item_update). Evita repetir la
         # tupla de estados en Jinja/JS por separado.
         lev_editable=((visita.get("estado") or "") in _LEV_ESTADOS_EDITABLES),
-        es_superadmin_lev=bool((getattr(g, "permissions", None) or {}).get("superadmin")),
+        lev_huerfanos_count=lev_huerfanos_count,
         # 2026-06-23 (Daniel) — controles de TERRENO habilitables desde
         # /mantenciones/configuracion (geofence check-in + control de tiempo).
         reglas_terreno={
@@ -65340,15 +65413,16 @@ _LEV_ESTADOS_EDITABLES = ('creada', 'programada', 'asignada', 'en_curso',
 def mant_lev_item_update(iid):
     """Actualizar o eliminar un equipo descubierto en terreno.
 
-    REGLA (Daniel 2026-07-06 — ventana de corrección + trazabilidad):
-    "somos seres humanos y nos podemos equivocar" — MIENTRAS la OT no esté
-    firmada por el técnico (estado en _LEV_ESTADOS_EDITABLES), el equipo se
-    puede editar y eliminar libremente. Una vez firmada:
-      - PATCH (editar): BLOQUEADO para todos — el registro queda congelado,
+    REGLA (Daniel 2026-07-06, ENDURECIDA 2026-07-08 — ventana de corrección
+    + trazabilidad): "somos seres humanos y nos podemos equivocar" — MIENTRAS
+    la OT no esté firmada por el técnico (estado en _LEV_ESTADOS_EDITABLES),
+    el equipo se puede editar y eliminar libremente. Una vez firmada:
+      - PATCH (editar): BLOQUEADO para TODOS — el registro queda congelado,
         es la fuente de verdad de lo que el técnico reportó en terreno.
-      - DELETE: bloqueado para usuarios normales; SOLO superadmin puede
-        eliminar (caso excepcional), y queda auditado con snapshot completo
-        (el row se pierde al borrar).
+      - DELETE: BLOQUEADO para TODOS, incluido superadmin (2026-07-08: Daniel
+        endureció la regla — "solo se podrá visualizar por todas las
+        personas, tanto superadministrador como ejecutivo y técnico"; antes
+        superadmin tenía una excepción para casos excepcionales, ya no).
     Toda edición ANTES de firmar también queda auditada campo a campo en
     mant_logs — para proteger al técnico si alguien alega que él reportó
     algo distinto a lo que terminó quedando (REGLA #5 CLAUDE.md: audit log
@@ -65366,15 +65440,14 @@ def mant_lev_item_update(iid):
     )
     _visita_estado = (v or {}).get("estado") or ""
     _editable = _visita_estado in _LEV_ESTADOS_EDITABLES
-    _es_superadmin = bool((getattr(g, "permissions", None) or {}).get("superadmin"))
     user = current_username() or "sistema"
 
     if request.method == "DELETE":
-        if not _editable and not _es_superadmin:
+        if not _editable:
             return jsonify({
                 "ok": False,
                 "error": "Esta OT ya fue firmada por el técnico — los equipos descubiertos "
-                         "quedaron congelados. Solo el superadministrador puede eliminarlos.",
+                         "quedaron congelados. Nadie puede eliminarlos, solo visualizarlos.",
                 "error_codigo": "LEV_CONGELADO",
             }), 403
         # Snapshot completo ANTES de borrar (el row se pierde) — trazabilidad.
@@ -65382,8 +65455,7 @@ def mant_lev_item_update(iid):
                  f"serie='{item.get('serie_snap')}' estado='{item.get('estado_capturado')}' "
                  f"anomalias='{(item.get('anomalias') or '')[:200]}'")
         try:
-            _mant_log("levantamiento_item", iid,
-                      "eliminado_post_firma" if not _editable else "eliminado",
+            _mant_log("levantamiento_item", iid, "eliminado",
                       f"{user} eliminó equipo descubierto (OT estado={_visita_estado}) — {_snap}")
         except Exception:
             pass
@@ -65611,11 +65683,12 @@ def mant_lev_item_subir_foto(iid):
 def mant_lev_foto_del(fid):
     """Elimina una foto del levantamiento (también de Cloudinary).
 
-    Mismo gate que `mant_lev_item_update` (Daniel 2026-07-06): mientras la OT
-    no esté firmada por el técnico, cualquiera con acceso puede corregir
-    (incluida una foto mal tomada); tras firmar, solo superadmin — evita que
-    alguien borre evidencia fotográfica del reporte del técnico sin dejar
-    rastro server-side, aunque el frontend ya oculte el botón en ese caso.
+    Mismo gate que `mant_lev_item_update` (Daniel 2026-07-06, ENDURECIDO
+    2026-07-08): mientras la OT no esté firmada por el técnico, cualquiera
+    con acceso puede corregir (incluida una foto mal tomada); tras firmar,
+    BLOQUEADO PARA TODOS (incluido superadmin) — solo visualización. Evita
+    que alguien borre evidencia fotográfica del reporte del técnico sin
+    dejar rastro server-side, aunque el frontend ya oculte el botón en ese caso.
     """
     foto = mysql_fetchone(
         "SELECT cloudinary_public_id, item_id, levantamiento_id "
@@ -65630,17 +65703,15 @@ def mant_lev_foto_del(fid):
         (foto["levantamiento_id"],)
     )
     _editable = ((v or {}).get("estado") or "") in _LEV_ESTADOS_EDITABLES
-    _es_superadmin = bool((getattr(g, "permissions", None) or {}).get("superadmin"))
-    if not _editable and not _es_superadmin:
+    if not _editable:
         return jsonify({
             "ok": False,
             "error": "Esta OT ya fue firmada por el técnico — las fotos quedaron "
-                     "congeladas. Solo el superadministrador puede eliminarlas.",
+                     "congeladas. Nadie puede eliminarlas, solo visualizarlas.",
             "error_codigo": "LEV_CONGELADO",
         }), 403
     try:
-        _mant_log("levantamiento_item", foto["item_id"],
-                  "foto_eliminada_post_firma" if not _editable else "foto_eliminada",
+        _mant_log("levantamiento_item", foto["item_id"], "foto_eliminada",
                   f"{current_username() or 'sistema'} eliminó foto id={fid}")
     except Exception:
         pass
@@ -65853,6 +65924,54 @@ def mant_lev_cerrar(lid):
         "fotos_vinculadas_a_ot": fotos_vinculadas,
         "tareas_cerradas": tareas_cerradas,
     })
+
+
+@app.route("/mantenciones/api/levantamientos/<int:lid>/rematerializar", methods=["POST"])
+@_mant_required
+def mant_lev_rematerializar(lid):
+    """Reparación manual bajo demanda: re-intenta materializar a mant_maquinas
+    los equipos descubiertos que quedaron huérfanos (maquina_id IS NULL) en un
+    levantamiento cuya OT ya cerró. Caso real: OT-2026-00031, 11 equipos
+    nunca llegaron a la ficha del cliente porque el hilo de materialización
+    en el cierre corría sin app.app_context() (fix aplicado en
+    _lev_promover_full_async, 2026-07-08).
+
+    Complementa el backfill automático de boot (_ensure_lev_backfill_
+    materializacion, corre solo al desplegar) con un botón que no depende de
+    un redeploy: útil si aparece otro caso similar entre despliegues. Corre
+    SÍNCRONO dentro del propio request (contexto Flask válido de por sí,
+    a diferencia del hilo en background) — reusa la misma función que ya usa
+    el cierre normal y el backfill, sin duplicar lógica.
+    """
+    lev = mysql_fetchone("SELECT * FROM mant_levantamientos WHERE id=%s", (lid,))
+    if not lev:
+        return jsonify({"ok": False, "error": "Levantamiento no encontrado."}), 404
+    vid = lev.get("visita_id")
+    if not vid:
+        return jsonify({"ok": False, "error": "Este levantamiento no tiene una OT asociada."}), 400
+
+    u = getattr(g, "user", None) or {}
+    if not _puede_ot_accion(vid, "aprobar", u):
+        return jsonify({"ok": False, "error": "No tienes permiso para reparar esta OT."}), 403
+
+    pendientes = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
+        "WHERE levantamiento_id=%s AND maquina_id IS NULL AND COALESCE(nombre_snap,'') <> ''",
+        (lid,)
+    )
+    if not pendientes or not pendientes.get("n"):
+        return jsonify({"ok": True, "creados": 0, "errores": 0,
+                         "mensaje": "No hay equipos pendientes de materializar — todo al día."})
+
+    user = current_username() or "sistema"
+    out = _lev_materializar_equipos_nuevos(vid, usuario=user)
+    try:
+        _mant_log("visita", vid, "levantamiento_rematerializado_manual",
+                   f"{out.get('creados', 0)} equipo(s) materializado(s) manualmente por "
+                   f"{user} (pendientes antes={pendientes['n']}, errores={out.get('errores', 0)})")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "creados": out.get("creados", 0), "errores": out.get("errores", 0)})
 
 
 @app.route("/mantenciones/maquinas/<int:mid>")
@@ -68930,6 +69049,18 @@ try:
         _ensure_lev_items_edicion_cols()
 except Exception as _ensure_lev_ed_err:
     print(f"[ILUS][WARN] _ensure_lev_items_edicion_cols: {_ensure_lev_ed_err}", flush=True)
+
+# CRÍTICO: repara OTs cerradas con equipos descubiertos huérfanos (bug de
+# app_context en _lev_promover_full_async, Daniel 2026-07-08 — caso real
+# OT-2026-00031). Corre SIEMPRE en boot, idempotente.
+try:
+    with app.app_context():
+        _reparadas_lev = _ensure_lev_backfill_materializacion()
+    if _reparadas_lev:
+        print(f"[ILUS] Backfill levantamiento: {len(_reparadas_lev)} OT(s) reparada(s): "
+              f"{_reparadas_lev}", flush=True)
+except Exception as _ensure_lev_bf_err:
+    print(f"[ILUS][WARN] _ensure_lev_backfill_materializacion: {_ensure_lev_bf_err}", flush=True)
 
 # Reglas de TERRENO (geofence + control de tiempo) + gate de factura,
 # sembradas SIEMPRE para que aparezcan en /mantenciones/configuracion.

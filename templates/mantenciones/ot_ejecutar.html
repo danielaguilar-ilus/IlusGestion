@@ -1960,6 +1960,83 @@
         {% endif %}
       </div>
     </div>
+
+    {# ════════════════════════════════════════════════════════════
+       Card: FIRMAS DE ESTA OT (visualización, solo lectura) — Daniel
+       2026-07-08 (OT-2026-00031): quería auditar quién firmó sin tener
+       que descargar el PDF. Solo aparece si ya existe al menos 1 firma.
+       No requiere chequeo de rol adicional: esta vista completa ya está
+       protegida por _puede_ot_accion(vid, 'ver', u) más arriba.
+       ════════════════════════════════════════════════════════════ #}
+    {% if visita.firma_tecnico_url or visita.firma_cliente_url or visita.firma_supervisor_url %}
+    <div class="info-card">
+      <h5>
+        <i class="bi bi-vector-pen"></i>Firmas de esta OT
+        <small class="ms-auto text-muted" style="font-weight:500;font-size:.7rem;text-transform:none;letter-spacing:0">
+          Solo lectura
+        </small>
+      </h5>
+      <div class="row g-2">
+        {# ── Técnico ── #}
+        <div class="col-12 col-sm-4">
+          <div style="height:100%;border:1.5px solid {{ '#16a34a' if visita.firma_tecnico_url else '#e2e8f0' }};
+                      background:{{ '#f0fdf4' if visita.firma_tecnico_url else '#f8fafc' }};
+                      border-radius:10px;padding:10px;text-align:center">
+            <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;
+                        color:{{ '#15803d' if visita.firma_tecnico_url else '#94a3b8' }}">
+              <i class="bi bi-tools me-1"></i>Técnico
+            </div>
+            {% if visita.firma_tecnico_url %}
+              <img src="{{ visita.firma_tecnico_url }}" alt="Firma técnico"
+                   style="max-width:100%;max-height:56px;background:#fff;border-radius:4px;display:block;margin:0 auto 6px">
+              <div class="fw-bold" style="font-size:.8rem;color:#0f172a">{{ visita.firma_tecnico_nombre or visita.tecnico_principal or '—' }}</div>
+              <div class="text-muted" style="font-size:.7rem">{{ visita.firma_tecnico_at | chile_fmt if visita.firma_tecnico_at else '' }}</div>
+            {% else %}
+              <div class="text-muted small" style="padding:14px 0"><i class="bi bi-hourglass-split"></i> Pendiente</div>
+            {% endif %}
+          </div>
+        </div>
+        {# ── Cliente ── #}
+        <div class="col-12 col-sm-4">
+          <div style="height:100%;border:1.5px solid {{ '#16a34a' if visita.firma_cliente_url else '#e2e8f0' }};
+                      background:{{ '#f0fdf4' if visita.firma_cliente_url else '#f8fafc' }};
+                      border-radius:10px;padding:10px;text-align:center">
+            <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;
+                        color:{{ '#15803d' if visita.firma_cliente_url else '#94a3b8' }}">
+              <i class="bi bi-person-badge me-1"></i>Cliente
+            </div>
+            {% if visita.firma_cliente_url %}
+              <img src="{{ visita.firma_cliente_url }}" alt="Firma cliente"
+                   style="max-width:100%;max-height:56px;background:#fff;border-radius:4px;display:block;margin:0 auto 6px">
+              <div class="fw-bold" style="font-size:.8rem;color:#0f172a">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
+              <div class="text-muted" style="font-size:.7rem">{{ visita.firma_cliente_at | chile_fmt if visita.firma_cliente_at else '' }}</div>
+            {% else %}
+              <div class="text-muted small" style="padding:14px 0"><i class="bi bi-hourglass-split"></i> Pendiente</div>
+            {% endif %}
+          </div>
+        </div>
+        {# ── Responsable (supervisor / ejecutivo SSTT que certifica el cierre) ── #}
+        <div class="col-12 col-sm-4">
+          <div style="height:100%;border:1.5px solid {{ '#16a34a' if visita.firma_supervisor_url else '#e2e8f0' }};
+                      background:{{ '#f0fdf4' if visita.firma_supervisor_url else '#f8fafc' }};
+                      border-radius:10px;padding:10px;text-align:center">
+            <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;
+                        color:{{ '#15803d' if visita.firma_supervisor_url else '#94a3b8' }}">
+              <i class="bi bi-shield-check me-1"></i>Responsable
+            </div>
+            {% if visita.firma_supervisor_url %}
+              <img src="{{ visita.firma_supervisor_url }}" alt="Firma responsable"
+                   style="max-width:100%;max-height:56px;background:#fff;border-radius:4px;display:block;margin:0 auto 6px">
+              <div class="fw-bold" style="font-size:.8rem;color:#0f172a">{{ visita.firma_supervisor_nombre or visita.cerrada_por or '—' }}</div>
+              <div class="text-muted" style="font-size:.7rem">{{ visita.firma_supervisor_at | chile_fmt if visita.firma_supervisor_at else '' }}</div>
+            {% else %}
+              <div class="text-muted small" style="padding:14px 0"><i class="bi bi-hourglass-split"></i> Pendiente</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   {# ════════════════════════════════════════════════════════
@@ -2024,7 +2101,26 @@
     <div class="tx-empty">
       <i class="bi bi-exclamation-triangle"></i>
       <div class="fw-bold" style="color:#0f172a">Sin máquinas en esta OT</div>
-      {% if puede_configurar %}
+      {% if visita.estado in ('cerrada', 'cancelada', 'anulada') %}
+        {# FIX 2026-07-08 (Daniel — OT-2026-00031): en estado terminal
+           "Configurar OT" ya no aplica (no hay nada que armar). Antes se
+           mostraba igual para superadmin porque _puede_ot_accion() bypasea
+           el chequeo de estado para ese rol — se corta el CTA aquí de forma
+           explícita, sin depender de puede_configurar. #}
+        <div class="small mt-2" style="color:#374151">
+          Esta OT quedó <strong>{{ visita.estado }}</strong> sin equipos ni
+          checklist asociados a nivel de plantilla.
+          {% if visita.levantamiento_id %}
+            Revisa el detalle en "Equipos descubiertos en terreno" más abajo.
+          {% endif %}
+        </div>
+        <div class="d-flex gap-2 justify-content-center flex-wrap mt-3">
+          <a href="{{ url_for('mant_ficha', cid=visita.cliente_id) }}"
+             class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-building me-1"></i>Ver ficha del cliente
+          </a>
+        </div>
+      {% elif puede_configurar %}
         {# 2026-05-22 (OT 2026-00004 Vitacura) — Banner accionable para
            creador/admin: panel "Configurar OT" cuando está huérfana. #}
         <div class="small mt-2" style="color:#374151">
@@ -2060,13 +2156,13 @@
        observación + ¿operativa? + ¿daño?. Al cerrar la OT se crean en
        mant_maquinas (ficha del cliente).
 
-       2026-07-06 (Daniel — ventana de corrección + trazabilidad): la
-       sección se ve en CUALQUIER estado vivo del levantamiento (incluso
-       tras la firma del técnico, para transparencia — "hay que evidenciar
-       que algo se movió"), pero el CRUD (agregar/editar/eliminar) solo se
-       habilita mientras `lev_editable` (antes de firmar_tecnico). Tras
-       firmar: editar queda bloqueado para todos; eliminar solo para
-       superadmin (`es_superadmin_lev`), con auditoría server-side.
+       2026-07-06 (Daniel — ventana de corrección + trazabilidad), ENDURECIDO
+       2026-07-08: la sección se ve en CUALQUIER estado vivo del
+       levantamiento (incluso tras la firma del técnico, para transparencia
+       — "hay que evidenciar que algo se movió"), pero el CRUD (agregar/
+       editar/eliminar) solo se habilita mientras `lev_editable` (antes de
+       firmar_tecnico). Tras firmar: TODOS (incluido superadmin) solo
+       pueden visualizar — nadie edita, nadie elimina.
        ══════════════════════════════════════════════════════════════ #}
     {% if visita.levantamiento_id and visita.estado not in ('cancelada', 'anulada') %}
     <style>
@@ -2123,8 +2219,27 @@
            border-radius:10px;padding:8px 12px">
         <i class="bi bi-lock-fill me-1"></i>
         <strong>Congelado:</strong> el técnico ya firmó esta OT — el registro de equipos quedó
-        fijo{% if es_superadmin_lev %} (como superadmin puedes eliminar en caso excepcional; queda auditado){% endif %}.
+        fijo. Solo visualización para todos (superadmin, ejecutivo y técnico).
       </div>
+      {# 2026-07-08 (Daniel — OT-2026-00031): reparación manual para equipos
+         descubiertos que quedaron sin llegar a la ficha del cliente (bug de
+         contexto Flask en el hilo de cierre, ya corregido de raíz + backfill
+         automático en boot). Este botón cubre además cualquier caso similar
+         que aparezca entre despliegues, sin depender de un redeploy.
+         Mismo permiso que certificar el cierre (superadmin/admin/supervisor/
+         ejecutivo) — Aaron Urbina o el superadmin. #}
+      {% if lev_huerfanos_count and lev_huerfanos_count > 0 and puede_aprobar %}
+      <div class="small mb-2" style="background:#fff8e1;border:1px solid #fde68a;color:#78350f;
+           border-radius:10px;padding:8px 12px">
+        <i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>
+        <strong>{{ lev_huerfanos_count }} equipo(s)</strong> descubiertos aún no aparecen en la
+        ficha del cliente.
+        <button type="button" class="btn btn-sm fw-bold mt-2 d-block w-100" id="levdRematBtn"
+                style="background:#f59e0b;color:#fff" onclick="levdRematerializar({{ visita.levantamiento_id }})">
+          <i class="bi bi-arrow-repeat me-1"></i>Re-materializar equipos ahora
+        </button>
+      </div>
+      {% endif %}
       {% endif %}
       <div class="levd-list" id="levdList"></div>
       {% if lev_editable %}
@@ -3109,7 +3224,6 @@ const ES_LEVANTAMIENTO = (
 // técnico no haya firmado (misma regla que enforcea el backend en
 // mant_lev_item_update, ver _LEV_ESTADOS_EDITABLES en app.py).
 const LEV_EDITABLE = {{ 'true' if lev_editable else 'false' }};
-const ES_SUPERADMIN_LEV = {{ 'true' if es_superadmin_lev else 'false' }};
 const DESTINO_LAT = {{ (visita.direccion_lat | float) | tojson if visita.direccion_lat else 'null' }};
 const DESTINO_LNG = {{ (visita.direccion_lng | float) | tojson if visita.direccion_lng else 'null' }};
 const DESTINO_DIR = {{ (visita.direccion_visita or visita.cli_direccion or '') | tojson }};
@@ -8297,17 +8411,16 @@ function levdRender(){
     const foto = (it.fotos && it.fotos.length) ? it.fotos[0].url : '';
     const dano = (it.anomalias || '').trim();
     const fs = (it.estado_capturado === 'fuera_servicio');
-    // 2026-07-06 (Daniel — ventana de corrección): editar/eliminar libres
-    // mientras LEV_EDITABLE; tras firmar, eliminar solo para superadmin
-    // (estilo de advertencia) y editar queda bloqueado para todos.
+    // 2026-07-06 (Daniel — ventana de corrección), ENDURECIDO 2026-07-08:
+    // editar/eliminar libres mientras LEV_EDITABLE; tras firmar, TODOS
+    // (incluido superadmin) solo pueden VISUALIZAR — candado para todos,
+    // sin excepción de rol.
     let acciones;
     if (LEV_EDITABLE){
       acciones = `<button type="button" class="del" style="background:#eff6ff;color:#1d4ed8;margin-right:6px" onclick="levdEditar(${it.id})" title="Editar"><i class="bi bi-pencil-fill"></i></button>` +
                  `<button type="button" class="del" onclick="levdEliminar(${it.id})" title="Eliminar"><i class="bi bi-trash"></i></button>`;
-    } else if (ES_SUPERADMIN_LEV){
-      acciones = `<button type="button" class="del" style="background:#fef3c7;color:#92400e" onclick="levdEliminar(${it.id})" title="Eliminar (post-firma — queda auditado)"><i class="bi bi-trash"></i></button>`;
     } else {
-      acciones = `<span style="color:#9ca3af;font-size:1.1rem" title="Congelado tras la firma del técnico"><i class="bi bi-lock-fill"></i></span>`;
+      acciones = `<span style="color:#9ca3af;font-size:1.1rem" title="Congelado tras la firma del técnico — solo visualización"><i class="bi bi-lock-fill"></i></span>`;
     }
     const editInfo = it.modificado_por
       ? `<div class="mt" style="color:#b45309"><i class="bi bi-pencil-square me-1"></i>Editado por ${it.modificado_por}${it.modificado_at ? ' · ' + it.modificado_at.slice(0,16).replace('T',' ') : ''}</div>`
@@ -8666,6 +8779,51 @@ async function levdEliminar(iid){
     }
   } catch(_e){
     if (typeof ilusToast === 'function') ilusToast('Error de red', { type:'error' });
+  }
+}
+
+// 2026-07-08 (Daniel — OT-2026-00031): reparación manual de equipos
+// descubiertos que quedaron sin llegar a la ficha del cliente. Complementa
+// el backfill automático de boot — sirve para no depender de un redeploy
+// si aparece otro caso similar. Solo se ve el botón si el backend calculó
+// lev_huerfanos_count > 0 y el usuario puede aprobar (mismo permiso que
+// certifica el cierre de la OT).
+async function levdRematerializar(lid){
+  const ok = await ilusConfirm({
+    title: 'Re-materializar equipos',
+    message: 'Se intentará crear en la ficha del cliente los equipos descubiertos que aún no aparecen ahí.',
+    sub: 'Es seguro repetir esta acción — los equipos ya materializados no se duplican.',
+    okLabel: 'Re-materializar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const btn = document.getElementById('levdRematBtn');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Materializando…';
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/levantamientos/${lid}/rematerializar`, { method:'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (d.ok){
+      const n = d.creados || 0;
+      if (n > 0 && typeof ilusAlert === 'function'){
+        await ilusAlert({
+          title: 'Equipos materializados',
+          message: `${n} equipo(s) fueron creados en la ficha del cliente.`,
+          type: 'success',
+        });
+      } else if (typeof ilusToast === 'function'){
+        ilusToast(d.mensaje || (n > 0 ? `${n} equipo(s) materializado(s)` : 'No había equipos pendientes'), { type: n > 0 ? 'success' : 'info' });
+      }
+      window.location.reload();
+    } else {
+      if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudo materializar', { type:'error' });
+      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+    }
+  } catch(_e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red', { type:'error' });
+    if (btn){ btn.disabled = false; btn.innerHTML = orig; }
   }
 }
 </script>
