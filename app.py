@@ -37599,6 +37599,32 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
         user = usuario or "sistema"
         doc_origen = f"Levantamiento {v.get('numero_ot') or ('#' + str(lev_id))}"[:80]
         for it in items:
+            # FIX 2026-07-08 (Daniel — OT-2026-00031): Cloud Run puede
+            # arrancar 2+ instancias en frío tras un deploy, cada una
+            # corriendo este mismo backfill al mismo tiempo. Sin esto, AMBAS
+            # leen el mismo item pendiente y lo procesan en paralelo — caso
+            # real visto en logs: 2 equipos quedaron DUPLICADOS (2 filas en
+            # mant_maquinas para el mismo item) y 2 se perdieron (ambos
+            # intentos chocaron por serie). "Reclama" el item con un UPDATE
+            # condicional — usa la fila como lock natural: solo el proceso
+            # que gane el UPDATE (rowcount=1) continúa; el resto salta el
+            # item sin contarlo como error (el ganador lo materializa).
+            claimed = False
+            try:
+                _conn_c = get_mysql()
+                try:
+                    with _conn_c.cursor() as _cur_c:
+                        _cur_c.execute(
+                            "UPDATE mant_levantamiento_items SET maquina_id=-1 "
+                            "WHERE id=%s AND maquina_id IS NULL", (it["id"],))
+                        claimed = (_cur_c.rowcount == 1)
+                    _conn_c.commit()
+                finally:
+                    _conn_c.close()
+            except Exception:
+                claimed = False
+            if not claimed:
+                continue
             try:
                 nombre = (it.get("nombre_snap") or "").strip()[:400]
                 sku = (it.get("sku_snap") or "").strip()[:100] or None
@@ -37728,6 +37754,21 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                 out["errores"] += 1
                 print(f"[lev_materializar] vid={vid} item={it.get('id')} ERROR: {e_it}",
                       flush=True)
+                # Libera el claim (-1 → NULL) para que un intento futuro
+                # pueda reintentar este item — si no, un fallo real (no una
+                # carrera con otro proceso) lo dejaría bloqueado para siempre.
+                try:
+                    _conn_rel = get_mysql()
+                    try:
+                        with _conn_rel.cursor() as _cur_rel:
+                            _cur_rel.execute(
+                                "UPDATE mant_levantamiento_items SET maquina_id=NULL "
+                                "WHERE id=%s AND maquina_id=-1", (it.get("id"),))
+                        _conn_rel.commit()
+                    finally:
+                        _conn_rel.close()
+                except Exception:
+                    pass
         if out["creados"]:
             try:
                 _mant_log("cliente", cid, "equipos_descubiertos",
