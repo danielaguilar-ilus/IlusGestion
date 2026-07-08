@@ -38482,6 +38482,35 @@ def mant_clientes_reporte_xlsx():
         try: return float(v) if v is not None else None
         except (TypeError, ValueError): return None
 
+    # 2026-07-07 (Daniel — pedido explícito): columna corta "Clasificación"
+    # para distinguir de un vistazo Mantención / Leasing / Arriendo (y el
+    # resto de tipos) — el motor ahora los separa (ver contrato_reglas.py),
+    # pero contratos ANALIZADOS ANTES de este cambio quedaron con el label
+    # viejo combinado "Arriendo / Leasing (revisar)" — para esos, honesto
+    # mostrar el caso ambiguo tal cual en vez de adivinar cuál de los dos es
+    # (se resuelve re-analizando el contrato desde la ficha del cliente).
+    def _clasificar_tipo_corto(tipo_raw, tiene_contrato):
+        if not tiene_contrato:
+            return "—"
+        t = (tipo_raw or "").strip().lower()
+        if not t:
+            return "Sin definir"
+        if "leasing" in t and "arriendo" in t:
+            return "Arriendo/Leasing (revisar)"
+        if "leasing" in t:
+            return "Leasing"
+        if "arriendo" in t:
+            return "Arriendo"
+        if "mantenci" in t:
+            return "Mantención"
+        if "comodato" in t:
+            return "Comodato"
+        if "compraventa" in t:
+            return "Compraventa"
+        if "garant" in t:
+            return "Garantía"
+        return "Otro"
+
     BLACK, LGRAY, AMBER, GREENL, REDL = "0A0A0A", "F5F5F5", "FFF8E1", "DCFCE7", "FEE2E2"
     thin = Side(style="thin", color="E5E7EB")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -38505,7 +38534,7 @@ def mant_clientes_reporte_xlsx():
     ws = wb.active
     ws.title = "Clientes"
 
-    NCOLS = 24
+    NCOLS = 25
     alcance_txt = (" · ".join(filtros_desc)) if filtros_desc else "todos los clientes"
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
     tcell = ws.cell(row=1, column=1,
@@ -38520,6 +38549,7 @@ def mant_clientes_reporte_xlsx():
         "Dirección", "Comuna", "Ciudad", "Región",
         "Email empresa", "Teléfono empresa", "Contacto",
         "¿Tiene contrato?", "N° contratos", "Condición contrato", "Tipo de contrato",
+        "Clasificación",
         "Frecuencia (meses)", "Vigencia desde", "Vigencia hasta",
         "Monto mensual", "Monto anual", "N° máquinas", "Próxima visita",
         "Observaciones (revisar)",
@@ -38531,7 +38561,10 @@ def mant_clientes_reporte_xlsx():
     stats = {"total": 0, "con_contrato": 0, "sin_contrato": 0, "vigente": 0,
              "vencido": 0, "por_vencer": 0, "indefinido": 0, "sin_rut": 0,
              "sin_direccion": 0, "sin_comuna": 0, "sin_tipo": 0,
-             "activo": 0, "inactivo": 0, "prospecto": 0, "suspendido": 0}
+             "activo": 0, "inactivo": 0, "prospecto": 0, "suspendido": 0,
+             # Clasificación (pedido Daniel 2026-07-07): desglose para el Resumen.
+             "clasif_mantencion": 0, "clasif_leasing": 0, "clasif_arriendo": 0,
+             "clasif_revisar": 0, "clasif_otro": 0}
 
     r = 3
     for c in rows:
@@ -38568,6 +38601,15 @@ def mant_clientes_reporte_xlsx():
             obs.append("Cliente suspendido")
 
         vig_hasta = "Indefinido" if c.get("contrato_indef") else _d(c.get("contrato_vencimiento"))
+        _clasif_calc = _clasificar_tipo_corto(c.get("contrato_tipo"), tiene_ct)
+        _clasif_stat_key = {
+            "Mantención": "clasif_mantencion", "Leasing": "clasif_leasing",
+            "Arriendo": "clasif_arriendo", "Arriendo/Leasing (revisar)": "clasif_revisar",
+        }.get(_clasif_calc)
+        if _clasif_stat_key:
+            stats[_clasif_stat_key] += 1
+        elif tiene_ct:
+            stats["clasif_otro"] += 1
         vals = [
             c.get("id"),
             _formato_rut_chile(c.get("rut")) if c.get("rut") else "",
@@ -38585,6 +38627,7 @@ def mant_clientes_reporte_xlsx():
             int(c.get("contratos_count") or 0),
             COND_MAP.get(cond, "") if tiene_ct else "—",
             (c.get("contrato_tipo") or "") if tiene_ct else "",
+            _clasif_calc,
             int(c["contrato_freq"]) if c.get("contrato_freq") else "",
             _d(c.get("contrato_inicio")),
             vig_hasta,
@@ -38595,12 +38638,13 @@ def mant_clientes_reporte_xlsx():
             " · ".join(obs),
         ]
         bg = LGRAY if r % 2 == 0 else "FFFFFF"
+        _clasif = vals[16]  # columna 17 "Clasificación" (0-based idx 16)
         for ci, val in enumerate(vals, 1):
             cell = ws.cell(row=r, column=ci, value=val)
-            cell.font = Font(size=9)
+            cell.font = Font(size=9, bold=(ci == 17))
             cell.alignment = Alignment(
-                horizontal="center" if ci in (1, 13, 14, 17, 22) else ("right" if ci in (20, 21) else "left"),
-                vertical="center", wrap_text=(ci in (6, 24)))
+                horizontal="center" if ci in (1, 13, 14, 17, 18, 23) else ("right" if ci in (21, 22) else "left"),
+                vertical="center", wrap_text=(ci in (6, 25)))
             cell.border = border
             fill = bg
             if ci == 15 and tiene_ct:
@@ -38609,14 +38653,22 @@ def mant_clientes_reporte_xlsx():
                 elif cond == "vigente": fill = GREENL
             if ci == 13 and not tiene_ct:
                 fill = REDL
-            if ci == 24 and obs:
+            # Columna "Clasificación" (17): color por categoría — de un
+            # vistazo se distingue Mantención/Leasing/Arriendo (pedido
+            # Daniel 2026-07-07).
+            if ci == 17:
+                if _clasif == "Mantención": fill = GREENL
+                elif _clasif == "Leasing": fill = "DBEAFE"       # azul info (REGLA #2)
+                elif _clasif == "Arriendo": fill = AMBER
+                elif _clasif == "Arriendo/Leasing (revisar)": fill = "F3F4F6"  # gris neutro
+            if ci == 25 and obs:
                 fill = AMBER
             cell.fill = PatternFill("solid", fgColor=fill)
-            if ci in (20, 21) and val is not None:
+            if ci in (21, 22) and val is not None:
                 cell.number_format = "#,##0"
         r += 1
 
-    widths = [8, 13, 34, 13, 20, 34, 16, 14, 16, 26, 16, 22, 13, 11, 16, 20,
+    widths = [8, 13, 34, 13, 20, 34, 16, 14, 16, 26, 16, 22, 13, 11, 16, 20, 18,
               14, 13, 13, 14, 14, 11, 13, 34]
     for ci, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
@@ -38747,6 +38799,12 @@ def mant_clientes_reporte_xlsx():
         ("Contratos vencidos", stats["vencido"]),
         ("Contratos indefinidos", stats["indefinido"]),
         ("Productos / equipos registrados (hoja Productos)", len(prod_rows)),
+        ("— Clasificación de contrato —", ""),
+        ("Mantención", stats["clasif_mantencion"]),
+        ("Leasing", stats["clasif_leasing"]),
+        ("Arriendo", stats["clasif_arriendo"]),
+        ("Arriendo/Leasing sin distinguir (revisar)", stats["clasif_revisar"]),
+        ("Otro (comodato/compraventa/garantía/sin definir)", stats["clasif_otro"]),
         ("— Calidad de dato (revisar con Finanzas) —", ""),
         ("Clientes sin RUT", stats["sin_rut"]),
         ("Clientes sin dirección", stats["sin_direccion"]),
@@ -46431,8 +46489,15 @@ cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a
     #    FALLBACK a los metadatos ya guardados en mant_contratos ──
     _campos = _an.get("campos_extraidos") or {}
     _tipo_doc_motor = _an.get("tipo_documento")
+    # 2026-07-07 (Daniel — reporte Finanzas): "leasing" ya no vive mezclado
+    # dentro de "arriendo" (antes ambos se mostraban como el mismo label
+    # combinado "Arriendo / Leasing (revisar)", sin poder distinguirlos).
+    # Ver _TIPO_KEYWORDS en contrato_reglas.py — el motor determinista ahora
+    # separa las señales de leasing financiero (opción de compra, valor
+    # residual) de un arriendo simple.
     _TIPO_LABEL_APP = {
-        "mantencion": "Servicio de mantención", "arriendo": "Arriendo / Leasing (revisar)",
+        "mantencion": "Servicio de mantención", "arriendo": "Arriendo",
+        "leasing": "Leasing",
         "comodato": "Comodato", "compraventa": "Compraventa",
         "garantia": "Garantía", "otro": "Otro / atípico",
     }

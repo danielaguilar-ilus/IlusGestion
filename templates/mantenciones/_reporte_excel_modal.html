@@ -19,8 +19,8 @@
         <div class="small text-muted mb-2 fw-semibold text-uppercase" style="letter-spacing:.4px;font-size:.7rem">Qué incluye cada cliente</div>
         <div class="d-flex flex-wrap gap-1 mb-3">
           {% for chip in ['RUT','Razón social','Dirección','Comuna','¿Tiene contrato?',
-                          'Condición del contrato','Tipo de contrato','Vigencia','Montos',
-                          'N° máquinas','Próxima visita'] %}
+                          'Condición del contrato','Tipo de contrato','Clasificación (Mantención/Leasing/Arriendo)',
+                          'Vigencia','Montos','N° máquinas','Próxima visita'] %}
           <span class="badge rounded-pill" style="background:#f3f4f6;color:#374151;font-weight:600;font-size:.72rem">{{ chip }}</span>
           {% endfor %}
         </div>

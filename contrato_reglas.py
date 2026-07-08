@@ -271,8 +271,15 @@ _TIPO_KEYWORDS = {
                    "mantencion preventiva", "mantencion correctiva", "mantenimiento",
                    "servicio tecnico", "prestacion de servicios"],
     "arriendo": ["contrato de arriendo", "contrato de arrendamiento", "arrendamiento de equipos",
-                 "arriendo de equipos", "el arrendador", "el arrendatario", "canon de arriendo",
-                 "leasing", "arrendamiento financiero"],
+                 "arriendo de equipos", "el arrendador", "el arrendatario", "canon de arriendo"],
+    # Leasing separado de arriendo (Daniel 2026-07-07 — clasificación real
+    # para el reporte de Finanzas): antes "leasing" era solo una keyword más
+    # dentro de "arriendo" y el sistema los mostraba mezclados como
+    # "Arriendo/Leasing" sin distinguir. Señales propias del leasing
+    # financiero: opción de compra al final del contrato, valor residual.
+    "leasing": ["leasing", "arrendamiento financiero", "contrato de leasing",
+                "opcion de compra", "opción de compra", "valor residual",
+                "cuota de leasing", "leaseback"],
     "comodato": ["comodato", "prestamo de uso", "cesion de uso", "equipos en consignacion"],
     "compraventa": ["compraventa", "contrato de compra", "venta de equipos", "venta de maquinas",
                     "transferencia de dominio", "transferencia de propiedad", "precio de venta"],
@@ -311,8 +318,8 @@ def _detectar_tipo_documento(t_norm):
 
 # Etiquetas legibles para el resumen.
 _TIPO_LABEL = {
-    "mantencion": "SERVICIO DE MANTENCIÓN", "arriendo": "ARRIENDO/LEASING",
-    "comodato": "COMODATO", "compraventa": "COMPRAVENTA",
+    "mantencion": "SERVICIO DE MANTENCIÓN", "arriendo": "ARRIENDO",
+    "leasing": "LEASING", "comodato": "COMODATO", "compraventa": "COMPRAVENTA",
     "garantia": "GARANTÍA", "otro": "OTRO",
 }
 
