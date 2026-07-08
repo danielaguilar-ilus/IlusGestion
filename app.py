@@ -37544,6 +37544,18 @@ def _promover_levantamiento_async(vid, usuario=None):
 # los tome como cualquier equipo existente. NO modifica el bloque frozen.
 # ══════════════════════════════════════════════════════════════════════
 
+# 2026-07-08 (Daniel — OT-2026-00031): placeholders comunes que un técnico
+# escribe cuando el equipo no tiene serie visible de fábrica. Comparar
+# siempre contra la versión normalizada (minúsculas, sin espacios/acentos/
+# puntuación) de serie_snap — nunca deben usarse como serie real porque
+# distintos equipos del MISMO cliente los repiten, y uq_cliente_serie
+# (cliente_id, serie) rechaza el 2do+ intento con Duplicate entry.
+_LEV_SERIE_PLACEHOLDERS = {
+    'na', 'noaplica', 'sn', 's', 'snserie', 'sinnumero', 'sinnumerodeserie',
+    'sinserie', 'sinetiqueta', 'notiene', 'noposee', 'noindicado',
+    'desconocido', 'sinregistro', 'noaplicable', 'ninguna', 'nose',
+}
+
 def _lev_materializar_equipos_nuevos(vid, usuario=None):
     """Crea mant_maquinas para los items de levantamiento SIN maquina_id.
 
@@ -37591,7 +37603,17 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                 nombre = (it.get("nombre_snap") or "").strip()[:400]
                 sku = (it.get("sku_snap") or "").strip()[:100] or None
                 serie = (it.get("serie_snap") or "").strip()[:100]
-                if not serie:
+                # FIX 2026-07-08 (Daniel — OT-2026-00031, 5 de 11 equipos
+                # quedaron huérfanos): varios equipos sin etiqueta de fábrica
+                # llegan con la MISMA serie textual ("Sin etiqueta", "N/A",
+                # etc.) para el mismo cliente. La UNIQUE KEY uq_cliente_serie
+                # (cliente_id, serie) rechaza el 2do+ equipo con Duplicate
+                # entry y el item queda huérfano para siempre (nunca más se
+                # reintenta). Cualquier placeholder conocido se trata como
+                # "sin serie real" y se genera una serie única, igual que
+                # cuando el campo viene vacío.
+                _serie_norm = re.sub(r'[^a-z0-9]', '', serie.lower())
+                if not serie or _serie_norm in _LEV_SERIE_PLACEHOLDERS:
                     try:
                         serie = _generar_serie_ilus(cid, sku or "")
                     except Exception:
@@ -37642,9 +37664,24 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                 try:
                     with conn.cursor() as cur:
                         marks = ",".join(["%s"] * len(cols))
-                        cur.execute(
-                            f"INSERT INTO mant_maquinas ({','.join(cols)}) "
-                            f"VALUES ({marks})", tuple(vals))
+                        insert_sql = (f"INSERT INTO mant_maquinas ({','.join(cols)}) "
+                                      f"VALUES ({marks})")
+                        try:
+                            cur.execute(insert_sql, tuple(vals))
+                        except Exception as _e_ins:
+                            # FIX 2026-07-08 (Daniel — OT-2026-00031): red de
+                            # seguridad adicional a la normalización de
+                            # placeholders de arriba — cubre serie real que
+                            # por coincidencia ya existe, o carrera entre
+                            # instancias concurrentes (ej. boot en frío del
+                            # backfill). Reintenta UNA vez con serie generada
+                            # en vez de perder el equipo silenciosamente.
+                            if "uq_cliente_serie" in str(_e_ins):
+                                serie = _generar_serie_ilus(cid, sku or "", _intento=1)
+                                vals[cols.index("serie")] = serie
+                                cur.execute(insert_sql, tuple(vals))
+                            else:
+                                raise
                         mid_new = cur.lastrowid
                         # Item + fotos del levantamiento apuntan a la máquina nueva
                         cur.execute(
