@@ -3549,6 +3549,8 @@ function _ftNormalizarMarca(valor) {
 function ftAbrirEditar() {
   const eq = _ftCurrentData ? _ftCurrentData.equipo : null;
   if (!eq) return;
+  document.getElementById('ft_edit_nombre').value = eq.nombre || '';
+  document.getElementById('ft_edit_sku').value = eq.sku || '';
   document.getElementById('ft_edit_serie').value = eq.serie_actual || eq.serie || '';
   document.getElementById('ft_edit_estado').value = (eq.estado || 'activo').toLowerCase();
   document.getElementById('ft_edit_estado_op').value = (eq.estado_op || 'operativo').toLowerCase();
@@ -3588,6 +3590,8 @@ async function ftGuardarEditar() {
   if (marcaInp) marcaInp.value = marcaNorm;
   const aplicaChk = document.getElementById('ft_edit_aplica');
   const payload = {
+    nombre: document.getElementById('ft_edit_nombre').value.trim(),
+    sku: document.getElementById('ft_edit_sku').value.trim(),
     serie: document.getElementById('ft_edit_serie').value.trim(),
     estado: document.getElementById('ft_edit_estado').value,
     estado_op: document.getElementById('ft_edit_estado_op').value,
@@ -3606,6 +3610,8 @@ async function ftGuardarEditar() {
   // Validación local: si cambia serial o estado, exigir motivo
   const cambia_serial = (payload.serie || '') !== (eq.serie_actual || eq.serie || '');
   const cambia_estado = (payload.estado || '') !== ((eq.estado || 'activo').toLowerCase());
+  const cambia_nombre = payload.nombre !== (eq.nombre || '');
+  const cambia_sku = payload.sku !== (eq.sku || '');
   if ((cambia_serial || cambia_estado) && payload.motivo.length < 5) {
     await ilusAlert({
       title: 'Motivo requerido',
@@ -3613,6 +3619,17 @@ async function ftGuardarEditar() {
       type: 'warning',
     });
     document.getElementById('ft_edit_motivo').focus();
+    return;
+  }
+  // El nombre es la identidad visible del equipo — no se permite dejarlo
+  // vacío por accidente (a diferencia de SKU, que sí puede no venir).
+  if (!payload.nombre) {
+    await ilusAlert({
+      title: 'Nombre requerido',
+      message: 'El nombre del equipo no puede quedar vacío.',
+      type: 'warning',
+    });
+    document.getElementById('ft_edit_nombre').focus();
     return;
   }
   try {
@@ -3635,13 +3652,27 @@ async function ftGuardarEditar() {
     if (typeof _eqRefrescarChipPlan === 'function') {
       _eqRefrescarChipPlan(_ftCurrentMid, payload.aplica_mantencion);
     }
-    // Refrescar el modal con los datos nuevos
+    // Refrescar el modal con los datos nuevos (usa el nombre YA corregido
+    // para que el título del modal no parpadee con el nombre viejo mientras
+    // recarga — 2026-07-08).
     document.getElementById('ft_edit_panel').style.display = 'none';
-    if (_ftCurrentMid) await verFichaTecnicaEquipo(_ftCurrentMid, eq.nombre);
-    // Actualizar la fila en la tabla (al menos el serial)
+    if (_ftCurrentMid) await verFichaTecnicaEquipo(_ftCurrentMid, payload.nombre || eq.nombre);
+    // Actualizar la fila en la tabla (serial, nombre y SKU)
     if (cambia_serial) {
       const span = document.getElementById('serie-' + _ftCurrentMid);
       if (span) span.textContent = payload.serie || '—';
+    }
+    if (cambia_nombre) {
+      const spanN = document.getElementById('nombre-' + _ftCurrentMid);
+      if (spanN) spanN.textContent = payload.nombre || 'Equipo sin nombre';
+    }
+    if (cambia_sku) {
+      const cellSku = document.getElementById('sku-cell-' + _ftCurrentMid);
+      if (cellSku) {
+        cellSku.innerHTML = payload.sku
+          ? `<span class="eq-sku">${escHtml(payload.sku)}</span>`
+          : `<span class="text-muted">—</span>`;
+      }
     }
   } catch(e) {
     await ilusAlert({

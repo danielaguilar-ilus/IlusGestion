@@ -41418,8 +41418,29 @@ def mant_maquina_add(cid):
         with conn.cursor() as cur:
             # Modo SPLIT: N filas con cantidad=1 (cada equipo con su propia serie)
             if split_rows and cantidad > 1:
-                for _ in range(cantidad):
-                    serie_nueva = _generar_serie_ilus(cid, sku)
+                # FIX 2026-07-08 (Daniel — OT-2026-00031, garantía de serie
+                # única): antes, CADA unidad del lote llamaba a
+                # _generar_serie_ilus(cid, sku) por separado. Esa función
+                # lee 'usados' con la conexión pooled del request
+                # (get_db()), que NO ve los INSERTs de las unidades
+                # anteriores de ESTE MISMO lote — viven en `conn` (conexión
+                # aparte abierta arriba) sin commitear hasta el final de
+                # este bloque. Resultado: las N unidades pedían la MISMA
+                # serie base y dependían de la ruleta aleatoria de
+                # _insert_con_retry para no chocar ENTRE SÍ — funcionaba,
+                # pero con lotes grandes podía agotar los 5 reintentos.
+                # Ahora la serie base se calcula 1 sola vez y se incrementa
+                # en memoria dentro del lote (única por construcción);
+                # _insert_con_retry se mantiene como red de seguridad por
+                # si choca con series creadas por OTRA request en paralelo.
+                serie_base = _generar_serie_ilus(cid, sku)
+                try:
+                    _pref_lote, _suf_lote = serie_base.rsplit("-", 1)
+                    _seq_lote = int(_suf_lote)
+                except (ValueError, AttributeError):
+                    _pref_lote, _seq_lote = serie_base, 1
+                for _i_lote in range(cantidad):
+                    serie_nueva = f"{_pref_lote}-{_seq_lote + _i_lote}"
                     def build(s, _r=d):
                         return (cid, sku, _r.get("nombre",""), s,
                                 doc_origen, _r.get("doc_fecha") or None, 1,
@@ -41438,7 +41459,14 @@ def mant_maquina_add(cid):
             else:
                 # Modo CLÁSICO: 1 fila con cantidad=N
                 serie = (d.get("serie") or "").strip()
-                if not serie or serie.startswith("(auto"):
+                # FIX 2026-07-08 (Daniel — OT-2026-00031): si el usuario
+                # escribe manualmente un placeholder conocido ("N/A", "sin
+                # etiqueta", "s/n", etc.) lo tratamos igual que un campo
+                # vacío — se reemplaza por una serie auto-generada única.
+                # Reutiliza _LEV_SERIE_PLACEHOLDERS (misma lista que usa el
+                # materializador de levantamiento) para no duplicar criterio.
+                _serie_norm = re.sub(r'[^a-z0-9]', '', serie.lower())
+                if not serie or serie.startswith("(auto") or _serie_norm in _LEV_SERIE_PLACEHOLDERS:
                     serie = _generar_serie_ilus(cid, sku)
                 def build(s, _r=d, _q=cantidad):
                     return (cid, sku, _r.get("nombre",""), s,
@@ -42007,6 +42035,28 @@ def mant_maquina_actualizar_serie(mid):
             "serie_anterior": serie_anterior,
             "usuario": current_username(),
         })
+    except Exception as e:
+        # FIX 2026-07-08 (Daniel — OT-2026-00031, "el serial siempre debe
+        # ser único"): este endpoint dedicado a cambiar la serie (usado
+        # desde la ficha del equipo vía static/mant_ficha.js) no tenía
+        # NINGÚN manejo de errores — un choque contra uq_cliente_serie
+        # (cliente_id, serie) se propagaba como excepción cruda sin
+        # capturar. Mismo criterio que mant_maquina_patch: la edición
+        # MANUAL sí puede fallar si el usuario elige una serie que ya
+        # existe (decisión consciente) — solo damos un mensaje claro en
+        # vez de dejar que reviente sin control.
+        try: conn.rollback()
+        except Exception: pass
+        msg = str(e)
+        print(f"[mant_maquina_actualizar_serie] mid={mid} falló: {msg}", flush=True)
+        if "uq_cliente_serie" in msg or "Duplicate entry" in msg:
+            return jsonify({
+                "ok": False,
+                "error": "Ya existe un equipo con esa serie para este cliente. "
+                         "Cada N° de serie debe ser único.",
+                "error_codigo": "SERIE_DUPLICADA",
+            }), 409
+        return jsonify({"ok": False, "error": "Error guardando los cambios."}), 500
     finally:
         conn.close()
 
@@ -67187,6 +67237,8 @@ def mant_maquina_sync_fotos_lev(mid):
 # PATCH equipo — Edición desde el modal "Ficha técnica" (Daniel 2026-05-21)
 # Permite cambiar serial / estado / observaciones / ubicación con audit log
 # automático. Whitelist estricto de campos editables.
+# AMPLIADO 2026-07-08 (Daniel): también nombre y SKU, auditados sin motivo
+# obligatorio (corrige errores de tipeo del técnico en terreno).
 # ════════════════════════════════════════════════════════════════════════
 @app.route("/mantenciones/api/maquinas/<int:mid>", methods=["PATCH"])
 @_mant_required
@@ -67194,16 +67246,23 @@ def mant_maquina_patch(mid):
     """Actualiza campos editables del equipo con auditoría completa.
 
     Campos permitidos (whitelist):
-      serie, marca, modelo, voltaje, anio_fabricacion,
+      nombre, sku, serie, marca, modelo, voltaje, anio_fabricacion,
       ubicacion_sala, observaciones, estado, estado_op,
       fecha_instalacion, fecha_fin_garantia, tag_1, tag_2
 
-    Cada cambio en un campo CRÍTICO (serie, estado, estado_op) genera un
-    insert en mant_maquina_audit con valor_antes / valor_nuevo / motivo /
-    usuario / fecha. Requiere `motivo` (≥5 chars) para cambios críticos.
+    Cada cambio en un campo CRÍTICO (nombre, sku, serie, estado, estado_op)
+    genera un insert en mant_maquina_audit con valor_antes / valor_nuevo /
+    motivo / usuario / fecha. Requiere `motivo` (≥5 chars) SOLO para
+    serie/estado (cambios operativamente delicados). 'nombre' y 'sku'
+    quedan auditados automáticamente SIN exigir motivo — 2026-07-08
+    (Daniel): un técnico escribió mal el nombre de un equipo en terreno
+    ("B8sicleta de Spinning..." en vez de "Bicicleta...") y ni Daniel ni
+    Aarón podían corregirlo desde la ficha. El pedido explícito es
+    trazabilidad automática (quién/cuándo/antes→después), no fricción
+    para quien corrige un error de tipeo.
     """
     eq = mysql_fetchone(
-        "SELECT id, cliente_id, serie, marca, modelo, voltaje, "
+        "SELECT id, cliente_id, nombre, sku, serie, marca, modelo, voltaje, "
         "       anio_fabricacion, ubicacion_sala, observaciones, "
         "       estado, estado_op, fecha_instalacion, fecha_fin_garantia, "
         "       tag_1, tag_2, COALESCE(aplica_mantencion,1) AS aplica_mantencion, "
@@ -67230,32 +67289,52 @@ def mant_maquina_patch(mid):
     d = request.get_json(silent=True) or {}
     motivo = (d.get("motivo") or "").strip()[:500]
 
-    # Whitelist con tipo y longitud máxima
+    # Whitelist con tipo y longitud máxima. 'nombre' y 'sku' respetan el
+    # tamaño real de las columnas (VARCHAR(400) / VARCHAR(100) en
+    # mant_maquinas — mismo maxlen usado en el resto del código, ej.
+    # _lev_materializar_equipos_nuevos) para que el truncado sea consistente.
     str_fields = {
         "serie": 100, "marca": 120, "modelo": 120, "voltaje": 40,
         "ubicacion_sala": 200, "observaciones": 5000,
         "tag_1": 80, "tag_2": 80,
         "dimensiones": 120, "color": 60,
+        "nombre": 400, "sku": 100,
     }
     estado_values = ("activo", "inactivo", "baja")
     estado_op_values = ("operativo", "advertencia", "critico",
                         "fuera_servicio", "en_mantencion", "en_reparacion")
     sets, vals, cambios_criticos = [], [], []
 
+    # Campos que quedan auditados en mant_maquina_audit sin exigir motivo
+    # (a diferencia de 'serie', que sí lo exige justo abajo). Ver docstring.
+    _campos_audit_libre = ("nombre", "sku")
+
     # Campos string
     for k, maxlen in str_fields.items():
         if k in d:
             v_nuevo = (str(d.get(k) or "").strip())[:maxlen] or None
             v_antes = eq.get(k) or None
+            # El nombre es la identidad visible del equipo: el front ya lo
+            # exige no-vacío, pero blindamos también acá por si alguien
+            # llama al PATCH directo (Postman, integración futura, etc.)
+            # sin pasar por el modal.
+            if k == "nombre" and not v_nuevo:
+                return jsonify({
+                    "ok": False,
+                    "error": "El nombre del equipo no puede quedar vacío.",
+                }), 400
             sets.append(f"{k}=%s"); vals.append(v_nuevo)
-            if k == "serie" and (v_antes or "") != (v_nuevo or ""):
-                if len(motivo) < 5:
-                    return jsonify({
-                        "ok": False,
-                        "error": "El cambio de N° serie requiere un motivo "
-                                 "de al menos 5 caracteres.",
-                    }), 400
-                cambios_criticos.append(("serie", v_antes, v_nuevo))
+            if (v_antes or "") != (v_nuevo or ""):
+                if k == "serie":
+                    if len(motivo) < 5:
+                        return jsonify({
+                            "ok": False,
+                            "error": "El cambio de N° serie requiere un motivo "
+                                     "de al menos 5 caracteres.",
+                        }), 400
+                    cambios_criticos.append(("serie", v_antes, v_nuevo))
+                elif k in _campos_audit_libre:
+                    cambios_criticos.append((k, v_antes, v_nuevo))
 
     # Estado / estado_op (validar enum)
     if "estado" in d:
@@ -67339,6 +67418,23 @@ def mant_maquina_patch(mid):
             tuple(vals)
         )
     except Exception as e:
+        # FIX 2026-07-08 (Daniel — OT-2026-00031, "el serial siempre debe
+        # ser único"): un choque contra uq_cliente_serie (cliente_id,
+        # serie) devolvía el error crudo de MySQL al cliente. La edición
+        # MANUAL de serie SÍ debe poder fallar cuando el usuario elige a
+        # propósito una serie que ya existe (a diferencia de la creación
+        # automática, acá es una decisión consciente) — solo mejoramos el
+        # mensaje, no el comportamiento de fondo (REGLA #4: no exponer
+        # detalles internos de MySQL al cliente).
+        msg = str(e)
+        print(f"[mant_maquina_patch] UPDATE mid={mid} falló: {msg}", flush=True)
+        if "uq_cliente_serie" in msg or "Duplicate entry" in msg:
+            return jsonify({
+                "ok": False,
+                "error": "Ya existe un equipo con esa serie para este cliente. "
+                         "Cada N° de serie debe ser único.",
+                "error_codigo": "SERIE_DUPLICADA",
+            }), 409
         return jsonify({"ok": False, "error": f"Error guardando: {e}"}), 500
 
     # Audit log para cambios críticos

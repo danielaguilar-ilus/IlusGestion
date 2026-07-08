@@ -1900,7 +1900,7 @@
                  class="text-decoration-none text-dark"
                  title="Ver ficha del equipo (historial de OTs, fotos, eventos)">
                 <div class="eq-name-main" style="cursor:pointer">
-                  {{ m.nombre }}
+                  <span id="nombre-{{ m.id }}">{{ m.nombre }}</span>
                   <i class="bi bi-arrow-up-right-square ms-1 text-muted" style="font-size:.75rem;opacity:.5"></i>
                 </div>
               </a>
@@ -1911,7 +1911,7 @@
               <div class="eq-name-sub"><i class="bi bi-layers me-1"></i>{{ m.cantidad }} unidades</div>
               {% endif %}
             </td>
-            <td>
+            <td id="sku-cell-{{ m.id }}">
               {% if m.sku %}
               <span class="eq-sku">{{ m.sku }}</span>
               {% else %}
@@ -8783,6 +8783,25 @@ async function vhGuardar(){
               <i class="bi bi-pencil-square me-1"></i>Editar equipo
             </h6>
             <div class="row g-2 small">
+              {# Nombre y SKU — 2026-07-08 (Daniel): un técnico escribió mal el
+                 nombre de un equipo en terreno y no había forma de corregirlo
+                 desde la ficha. Editable por admin/superadmin/ejecutivo (NO
+                 técnico) y auditado automáticamente en mant_maquina_audit. #}
+              <div class="col-12 col-md-8">
+                <label class="form-label small fw-semibold">Nombre del equipo</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_nombre" maxlength="400"
+                       placeholder="Ej: Bicicleta de Spinning XRS Exercise">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small fw-semibold">SKU</label>
+                <input type="text" class="form-control form-control-sm" id="ft_edit_sku" maxlength="100"
+                       placeholder="Ej: BIC-XRS-001">
+              </div>
+              <div class="col-12" style="margin-top:-6px">
+                <div style="font-size:.68rem;color:#94a3b8">
+                  <i class="bi bi-shield-check me-1"></i>Los cambios de nombre y SKU quedan registrados en el historial de auditoría (quién y cuándo).
+                </div>
+              </div>
               <div class="col-12 col-md-6">
                 <label class="form-label small fw-semibold">N° serie</label>
                 <input type="text" class="form-control form-control-sm" id="ft_edit_serie" maxlength="100">

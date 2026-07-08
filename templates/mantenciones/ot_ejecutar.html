@@ -8501,7 +8501,17 @@ function levdAbrir(prefill, editId){
 
 function levdDuplicar(){
   if (!_levdUltimo) return;
+  // 2026-07-08 (Daniel — OT-2026-00031, "el serial siempre debe ser único"):
+  // "Duplicar" precarga nombre/sku/ubicación del último equipo capturado
+  // para agilizar una 2da unidad IDÉNTICA, pero la serie NUNCA debe
+  // copiarse — cada máquina física tiene su propio N° de serie. Como acá
+  // no se pasa editId, levdAbrir() ya cae en la rama de "nuevo equipo" y
+  // recalcula _levdSerieSugerida() por su cuenta — pero la forzamos
+  // explícitamente para blindar este flujo aunque cambie esa lógica
+  // compartida con levdEditar() en el futuro.
   levdAbrir({ nombre: _levdUltimo.nombre, sku: _levdUltimo.sku, ubicacion: _levdUltimo.ubicacion });
+  const _serieEl = _levdEl('levd_serie');
+  if (_serieEl) _serieEl.value = _levdSerieSugerida();
 }
 
 // 2026-07-06 (Daniel — "somos seres humanos y nos podemos equivocar"): editar
