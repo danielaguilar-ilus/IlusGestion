@@ -37608,37 +37608,22 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
         user = usuario or "sistema"
         doc_origen = f"Levantamiento {v.get('numero_ot') or ('#' + str(lev_id))}"[:80]
         for it in items:
-            # FIX 2026-07-08 (Daniel — OT-2026-00031): Cloud Run puede
-            # arrancar 2+ instancias en frío tras un deploy, cada una
-            # corriendo este mismo backfill al mismo tiempo. Sin esto, AMBAS
-            # leen el mismo item pendiente y lo procesan en paralelo — caso
-            # real visto en logs: 2 equipos quedaron DUPLICADOS (2 filas en
-            # mant_maquinas para el mismo item) y 2 se perdieron (ambos
-            # intentos chocaron por serie). "Reclama" el item con un UPDATE
-            # condicional — usa la fila como lock natural: solo el proceso
-            # que gane el UPDATE (rowcount=1) continúa; el resto salta el
-            # item sin contarlo como error (el ganador lo materializa).
-            claimed = False
-            try:
-                _conn_c = get_mysql()
-                try:
-                    with _conn_c.cursor() as _cur_c:
-                        _cur_c.execute(
-                            "UPDATE mant_levantamiento_items SET maquina_id=-1 "
-                            "WHERE id=%s AND maquina_id IS NULL", (it["id"],))
-                        claimed = (_cur_c.rowcount == 1)
-                    _conn_c.commit()
-                finally:
-                    _conn_c.close()
-            except Exception as _e_claim:
-                # 2026-07-10: un claim fallido por EXCEPCIÓN (conexión caída,
-                # timeout) es distinto de "otro proceso lo ganó" (rowcount=0,
-                # legítimamente mudo) — el primero merece log.
-                print(f"[lev_materializar] vid={vid} item={it.get('id')} "
-                      f"claim error: {_e_claim}", flush=True)
-                claimed = False
-            if not claimed:
-                continue
+            # ══ CLAIM ATÓMICO v2 (2026-07-10) ═══════════════════════════
+            # v1 (2026-07-08) reclamaba el item ANTES de crear la máquina
+            # marcando maquina_id=-1 como sentinel. FALLABA SIEMPRE en
+            # producción: mant_levantamiento_items.maquina_id tiene FOREIGN
+            # KEY a mant_maquinas(id) y no existe máquina -1 → error 1452
+            # en cada claim → continue silencioso → 0 materializados (caso
+            # real: OT-2026-00032, 40 equipos; el dry-run no modelaba la FK
+            # y por eso pasó). v2 invierte el orden DENTRO de una sola
+            # transacción (autocommit=False en get_mysql): (1) INSERT de la
+            # máquina, (2) UPDATE items SET maquina_id=<id real> WHERE
+            # maquina_id IS NULL — la FK se satisface porque la máquina
+            # existe en la misma transacción. Si rowcount=0 (otra instancia
+            # concurrente ya materializó este item), ROLLBACK: nuestra
+            # máquina recién insertada se esfuma limpia — ni duplicado ni
+            # pérdida. El row-lock de InnoDB en el UPDATE serializa a los
+            # procesos en competencia.
             try:
                 nombre = (it.get("nombre_snap") or "").strip()[:400]
                 sku = (it.get("sku_snap") or "").strip()[:100] or None
@@ -37723,10 +37708,19 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                             else:
                                 raise
                         mid_new = cur.lastrowid
-                        # Item + fotos del levantamiento apuntan a la máquina nueva
+                        # CLAIM: el item apunta a la máquina nueva SOLO si
+                        # sigue sin materializar (maquina_id IS NULL). Si
+                        # otra instancia ganó la carrera → rowcount=0 →
+                        # rollback (la máquina de este proceso se descarta).
                         cur.execute(
-                            "UPDATE mant_levantamiento_items SET maquina_id=%s WHERE id=%s",
+                            "UPDATE mant_levantamiento_items SET maquina_id=%s "
+                            "WHERE id=%s AND maquina_id IS NULL",
                             (mid_new, it["id"]))
+                        if cur.rowcount != 1:
+                            conn.rollback()
+                            print(f"[lev_materializar] vid={vid} item={it['id']} "
+                                  f"ya materializado por otro proceso — skip", flush=True)
+                            continue
                         cur.execute(
                             "UPDATE mant_levantamiento_fotos SET maquina_id=%s WHERE item_id=%s",
                             (mid_new, it["id"]))
@@ -37765,24 +37759,13 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                 print(f"[lev_materializar] vid={vid} item={it['id']} → "
                       f"maquina={mid_new} '{nombre[:40]}'", flush=True)
             except Exception as e_it:
+                # No hay claim que liberar: en v2 el claim vive DENTRO de la
+                # transacción de la máquina — si algo falló antes del commit,
+                # conn.close() sin commit descarta todo (autocommit=False) y
+                # el item queda con maquina_id NULL, reintentable.
                 out["errores"] += 1
                 print(f"[lev_materializar] vid={vid} item={it.get('id')} ERROR: {e_it}",
                       flush=True)
-                # Libera el claim (-1 → NULL) para que un intento futuro
-                # pueda reintentar este item — si no, un fallo real (no una
-                # carrera con otro proceso) lo dejaría bloqueado para siempre.
-                try:
-                    _conn_rel = get_mysql()
-                    try:
-                        with _conn_rel.cursor() as _cur_rel:
-                            _cur_rel.execute(
-                                "UPDATE mant_levantamiento_items SET maquina_id=NULL "
-                                "WHERE id=%s AND maquina_id=-1", (it.get("id"),))
-                        _conn_rel.commit()
-                    finally:
-                        _conn_rel.close()
-                except Exception:
-                    pass
         if out["creados"]:
             try:
                 _mant_log("cliente", cid, "equipos_descubiertos",
