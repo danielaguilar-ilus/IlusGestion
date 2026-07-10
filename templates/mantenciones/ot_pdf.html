@@ -2,6 +2,11 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+{# 2026-07-10 (Daniel): Playwright renderiza con set_content() → documento
+   en about:blank SIN base URL. Sin esto, TODA imagen con ruta relativa
+   (/f/<key> de GCS, /static/uploads/, incluidas LAS FIRMAS) sale en blanco
+   en el PDF descargado. En el navegador normal es inofensivo. #}
+{% if base_url %}<base href="{{ base_url }}">{% endif %}
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OT {{ visita.numero_ot or visita.id }} — Reporte técnico ILUS</title>
 <style>

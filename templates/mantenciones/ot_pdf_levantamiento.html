@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+{# 2026-07-10 (Daniel — OT-2026-00032 Universidad De Las Américas):
+   INFORME DE LEVANTAMIENTO TÉCNICO — template dedicado para OTs
+   tipo='levantamiento' con equipos descubiertos/capturados en terreno
+   (mant_levantamiento_items + mant_levantamiento_fotos). Formato de
+   documento comercial chileno (referencia: cotización SPORT AND HEALTH
+   SOLUTION SPA): caja de documento arriba a la derecha, grilla de datos
+   del cliente con bordes, tabla de inventario estandarizada, resumen
+   ejecutivo, anexo fotográfico y bloque de firmas.
+
+   Se renderiza por las MISMAS 2 rutas que el PDF clásico (selección de
+   template en mant_visita_pdf / mant_ot_pdf_render); las OTs no-levantamiento
+   siguen usando ot_pdf.html sin cambios.
+
+   <base href>: Playwright carga esto con set_content() (about:blank) —
+   sin base URL las imágenes relativas (/f/ de GCS, firmas) salen en blanco. #}
+{% if base_url %}<base href="{{ base_url }}">{% endif %}
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ visita.numero_ot or visita.id }} — Informe de Levantamiento ILUS</title>
+<style>
+  :root{
+    --rojo:   #dc2626;
+    --rojo-d: #991b1b;
+    --negro:  #0a0a0a;
+    --gris-b: #d1d5db;   /* bordes de grillas */
+    --gris-t: #4b5563;   /* texto secundario */
+    --fondo:  #f3f4f6;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ background:#e5e7eb; }
+  body{
+    font-family:'Segoe UI', Arial, Helvetica, sans-serif;
+    font-size:10px; color:#111827; line-height:1.35;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .doc{
+    width:210mm; min-height:297mm; margin:0 auto; background:#fff;
+    padding:14mm 13mm; box-shadow:0 2px 14px rgba(0,0,0,.18);
+  }
+
+  /* ── Toolbar solo pantalla ─────────────────────────────────── */
+  .toolbar{
+    max-width:210mm; margin:10px auto; display:flex; gap:8px;
+    justify-content:flex-end; padding:0 4px;
+  }
+  .toolbar a,.toolbar button{
+    border:0; border-radius:8px; padding:9px 16px; font-weight:700;
+    font-size:13px; cursor:pointer; text-decoration:none;
+    font-family:inherit;
+  }
+  .tb-print{ background:var(--rojo); color:#fff; }
+  .tb-back{ background:#fff; color:#111827; border:1px solid var(--gris-b) !important; }
+
+  /* ── Encabezado: empresa + caja de documento ───────────────── */
+  .enc{ display:flex; justify-content:space-between; align-items:flex-start; gap:10mm; }
+  .enc-izq{ display:flex; gap:5mm; align-items:flex-start; }
+  .enc-logo img{ height:17mm; display:block; }
+  .enc-logo .logo-txt{
+    font-size:24px; font-weight:900; letter-spacing:1px; color:var(--negro);
+  }
+  .enc-emp .nom{ font-size:12.5px; font-weight:800; letter-spacing:.3px; }
+  .enc-emp .giro{ font-size:9px; color:var(--gris-t); text-transform:uppercase;
+                  letter-spacing:.4px; margin-top:1px; }
+  .enc-emp .dato{ font-size:9px; color:#374151; margin-top:1px; }
+  .caja-doc{
+    border:2.2px solid var(--rojo); border-radius:6px; min-width:62mm;
+    text-align:center; padding:3.2mm 5mm; color:var(--rojo-d); flex-shrink:0;
+  }
+  .caja-doc .rut{ font-size:10px; font-weight:700; letter-spacing:.4px; }
+  .caja-doc .tipo{ font-size:12.5px; font-weight:900; letter-spacing:.6px; margin:1.2mm 0; }
+  .caja-doc .num{ font-size:12px; font-weight:800; }
+  .caja-doc .fec{ font-size:9px; color:#7f1d1d; margin-top:1.2mm; }
+
+  /* ── Grilla de datos del cliente ───────────────────────────── */
+  .grilla{
+    width:100%; border-collapse:collapse; margin-top:6mm;
+    border:1.4px solid #9ca3af;
+  }
+  .grilla td{
+    border:.8px solid var(--gris-b); padding:1.8mm 2.4mm; vertical-align:top;
+    font-size:9.5px;
+  }
+  .grilla .lbl{
+    font-weight:800; color:#374151; font-size:8px; text-transform:uppercase;
+    letter-spacing:.5px; white-space:nowrap; background:#f9fafb; width:26mm;
+  }
+
+  /* ── Título de sección ─────────────────────────────────────── */
+  .sec{
+    margin-top:6mm; padding:1.8mm 2.6mm; background:var(--negro); color:#fff;
+    font-size:10px; font-weight:800; letter-spacing:.8px; text-transform:uppercase;
+    border-radius:3px; display:flex; justify-content:space-between; align-items:center;
+    page-break-after:avoid; break-after:avoid;
+  }
+  .sec .mini{ font-weight:600; font-size:8.5px; color:#d1d5db; letter-spacing:.3px; }
+
+  /* ── Resumen ejecutivo (KPIs) ──────────────────────────────── */
+  .kpis{ display:flex; gap:2.6mm; margin-top:3mm; page-break-inside:avoid; break-inside:avoid; }
+  .kpi{
+    flex:1; border:1px solid var(--gris-b); border-radius:5px; text-align:center;
+    padding:2.6mm 1mm; background:#fff;
+  }
+  .kpi .n{ font-size:17px; font-weight:900; line-height:1.05; }
+  .kpi .t{ font-size:7.4px; font-weight:700; color:var(--gris-t);
+           text-transform:uppercase; letter-spacing:.5px; margin-top:1mm; }
+  .kpi.ok .n{ color:#16a34a; }  .kpi.adv .n{ color:#d97706; }
+  .kpi.mal .n{ color:var(--rojo); } .kpi.neu .n{ color:var(--negro); }
+
+  /* ── Tabla de inventario ───────────────────────────────────── */
+  table.inv{ width:100%; border-collapse:collapse; margin-top:3mm; }
+  table.inv thead{ display:table-header-group; }
+  table.inv th{
+    background:var(--negro); color:#fff; font-size:8px; font-weight:800;
+    text-transform:uppercase; letter-spacing:.5px; padding:1.8mm 1.8mm;
+    text-align:left; border:.8px solid var(--negro);
+  }
+  table.inv td{
+    border:.8px solid var(--gris-b); padding:1.6mm 1.8mm; font-size:8.8px;
+    vertical-align:top;
+  }
+  table.inv tr{ page-break-inside:avoid; break-inside:avoid; }
+  table.inv tbody tr:nth-child(even) td{ background:#f9fafb; }
+  .eq-nom{ font-weight:700; }
+  .eq-sku{ font-size:7.6px; color:var(--gris-t); }
+  .pill{
+    display:inline-block; font-size:7.2px; font-weight:800; letter-spacing:.3px;
+    border-radius:999px; padding:.6mm 2mm; white-space:nowrap; border:1px solid;
+  }
+  .obs-dano{ color:var(--rojo-d); font-weight:700; }
+
+  /* ── Bloques de texto ──────────────────────────────────────── */
+  .txtbox{
+    border:1px solid var(--gris-b); border-radius:5px; padding:2.6mm 3mm;
+    margin-top:3mm; font-size:9.4px; color:#1f2937; min-height:12mm;
+    page-break-inside:avoid; break-inside:avoid; white-space:pre-wrap;
+  }
+
+  /* ── Firmas ────────────────────────────────────────────────── */
+  .firmas{ display:flex; gap:4mm; margin-top:4mm; page-break-inside:avoid; break-inside:avoid; }
+  .firma{
+    flex:1; border:1px solid var(--gris-b); border-radius:6px; text-align:center;
+    padding:3mm 2mm 2.4mm;
+  }
+  .firma .rol{
+    font-size:7.6px; font-weight:800; text-transform:uppercase; letter-spacing:.6px;
+    color:var(--gris-t); margin-bottom:1.6mm;
+  }
+  .firma img{ max-height:16mm; max-width:90%; display:block; margin:0 auto 1.4mm; }
+  .firma .sin{ height:16mm; display:flex; align-items:center; justify-content:center;
+               color:#9ca3af; font-size:8.5px; }
+  .firma .nom{ font-weight:800; font-size:9.2px; border-top:1px solid var(--gris-b);
+               padding-top:1.4mm; }
+  .firma .det{ font-size:7.8px; color:var(--gris-t); margin-top:.6mm; }
+
+  /* ── Anexo fotográfico ─────────────────────────────────────── */
+  .anexo{ display:flex; flex-wrap:wrap; gap:3mm; margin-top:3mm; }
+  .fcard{
+    width:calc((100% - 6mm) / 3); border:1px solid var(--gris-b); border-radius:6px;
+    overflow:hidden; page-break-inside:avoid; break-inside:avoid; background:#fff;
+  }
+  .fcard img{ width:100%; height:42mm; object-fit:cover; display:block; background:#f3f4f6; }
+  .fcard .cuerpo{ padding:1.8mm 2.2mm 2mm; }
+  .fcard .nom{ font-weight:800; font-size:8.4px; line-height:1.2;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fcard .ser{ font-size:7.4px; color:var(--gris-t); margin-top:.4mm; }
+  .fcard .extra{ font-size:7.2px; color:#374151; margin-top:.6mm; }
+  .fcard .masfotos{ font-size:7px; color:var(--gris-t); font-style:italic; }
+
+  /* ── Pie de documento ──────────────────────────────────────── */
+  .pie{
+    margin-top:6mm; border-top:1.4px solid var(--negro); padding-top:2mm;
+    display:flex; justify-content:space-between; font-size:7.6px; color:var(--gris-t);
+    page-break-inside:avoid; break-inside:avoid;
+  }
+
+  @page{ size:A4; margin:12mm; }
+  @media print{
+    html,body{ background:#fff; }
+    .doc{ width:auto; min-height:0; margin:0; padding:0; box-shadow:none; }
+    .toolbar{ display:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <a class="tb-back" href="/mantenciones/ot/{{ visita.id }}/ejecutar">← Volver a la OT</a>
+  <button class="tb-print" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+</div>
+
+<div class="doc">
+
+  {# ══ ENCABEZADO ══════════════════════════════════════════════ #}
+  <div class="enc">
+    <div class="enc-izq">
+      <div class="enc-logo">
+        {% if logo_b64 %}
+          <img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS">
+        {% else %}
+          <div class="logo-txt">ILUS<span style="color:var(--rojo)">.</span></div>
+        {% endif %}
+      </div>
+      <div class="enc-emp">
+        <div class="nom">SPORT AND HEALTH SOLUTION SPA</div>
+        <div class="giro">Importación y venta de máquinas deportivas · Servicio técnico</div>
+        <div class="dato">Av. Apoquindo 4499, Las Condes — Santiago</div>
+        <div class="dato">+56 2 2946 5970 · servicio.tecnico@ilusfitness.com</div>
+      </div>
+    </div>
+    <div class="caja-doc">
+      <div class="rut">R.U.T. 76.996.964-0</div>
+      <div class="tipo">INFORME DE LEVANTAMIENTO</div>
+      <div class="num">N° {{ visita.numero_ot or ('OT-' ~ visita.id) }}</div>
+      <div class="fec">
+        FECHA EMISIÓN:
+        {% if visita.cerrada_at %}{{ visita.cerrada_at | chile_fmt('%d-%m-%Y') }}{% else %}{{ generated_at[:10] }}{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# ══ DATOS DEL CLIENTE / SERVICIO ════════════════════════════ #}
+  {% set fp = (visita.fecha_programada | string)[:10] if visita.fecha_programada else '' %}
+  <table class="grilla">
+    <tr>
+      <td class="lbl">Señor(es)</td>
+      <td style="font-weight:700">{{ visita.razon_social or '—' }}</td>
+      <td class="lbl">R.U.T.</td>
+      <td>{{ visita.cli_rut | rut_fmt if visita.cli_rut else '—' }}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Dirección</td>
+      <td>{{ visita.direccion_visita or visita.cli_direccion or '—' }}</td>
+      <td class="lbl">Comuna</td>
+      <td>{{ visita.cli_comuna or '—' }}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Recibe en sitio</td>
+      <td>
+        {{ visita.contacto_nombre or visita.cli_contacto or '—' }}
+        {%- if visita.contacto_cargo %} — {{ visita.contacto_cargo }}{% endif %}
+      </td>
+      <td class="lbl">Fono contacto</td>
+      <td>{{ visita.contacto_tel or visita.cli_contacto_tel or '—' }}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Fecha servicio</td>
+      <td>{% if fp %}{{ fp[8:10] }}-{{ fp[5:7] }}-{{ fp[0:4] }}{% else %}—{% endif %}</td>
+      <td class="lbl">Técnico responsable</td>
+      <td>
+        {{ visita.tecnico_principal or '—' }}
+        {%- if tecnicos_extra %}{% for t in tecnicos_extra %} · {{ t.nombre or t.username }}{% endfor %}{% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td class="lbl">Tipo de servicio</td>
+      <td style="font-weight:700">LEVANTAMIENTO TÉCNICO DE EQUIPOS</td>
+      <td class="lbl">Estado OT</td>
+      <td style="font-weight:700; color:#166534">CERRADA — SERVICIO REALIZADO</td>
+    </tr>
+  </table>
+
+  {# ══ RESUMEN EJECUTIVO ═══════════════════════════════════════ #}
+  <div class="sec">Resumen ejecutivo del levantamiento</div>
+  <div class="kpis">
+    <div class="kpi neu"><div class="n">{{ lev_stats.total or 0 }}</div><div class="t">Equipos levantados</div></div>
+    <div class="kpi ok"><div class="n">{{ lev_stats.operativos or 0 }}</div><div class="t">Operativos</div></div>
+    <div class="kpi adv"><div class="n">{{ lev_stats.con_observacion or 0 }}</div><div class="t">Con observación / daño</div></div>
+    <div class="kpi mal"><div class="n">{{ lev_stats.fuera_servicio or 0 }}</div><div class="t">Fuera de servicio</div></div>
+    <div class="kpi neu"><div class="n">{{ lev_stats.pct_operativos or 0 }}%</div><div class="t">Operatividad del parque</div></div>
+  </div>
+
+  {# ══ TABLA DE INVENTARIO ═════════════════════════════════════ #}
+  {% set EST = {
+      'operativo':      ('OPERATIVO',         '#166534', '#dcfce7', '#86efac'),
+      'advertencia':    ('CON OBSERVACIÓN',   '#92400e', '#fef3c7', '#fcd34d'),
+      'fuera_servicio': ('FUERA DE SERVICIO', '#991b1b', '#fee2e2', '#fca5a5'),
+      'en_reparacion':  ('EN REPARACIÓN',     '#1e40af', '#dbeafe', '#93c5fd'),
+      'dado_baja':      ('DADO DE BAJA',      '#374151', '#f3f4f6', '#d1d5db'),
+      'no_encontrado':  ('NO ENCONTRADO',     '#374151', '#f3f4f6', '#d1d5db'),
+  } %}
+  <div class="sec">
+    Inventario levantado en terreno
+    <span class="mini">{{ lev_stats.total or 0 }} equipo(s) · {{ lev_stats.total_fotos or 0 }} foto(s) de respaldo</span>
+  </div>
+  <table class="inv">
+    <thead>
+      <tr>
+        <th style="width:6mm">#</th>
+        <th>Equipo</th>
+        <th style="width:30mm">Marca / Modelo</th>
+        <th style="width:27mm">N° Serie</th>
+        <th style="width:24mm">Ubicación</th>
+        <th style="width:24mm">Estado</th>
+        <th style="width:38mm">Observaciones</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in lev_items %}
+      {% set e = EST.get(it.estado_capturado or 'operativo', EST['operativo']) %}
+      <tr>
+        <td style="text-align:center; color:var(--gris-t); font-weight:700">{{ loop.index }}</td>
+        <td>
+          <div class="eq-nom">{{ it.nombre_snap }}</div>
+          {% if it.sku_snap %}<div class="eq-sku">SKU: {{ it.sku_snap }}</div>{% endif %}
+        </td>
+        <td>
+          {{ it.marca or '' }}{% if it.marca and it.modelo %} / {% endif %}{{ it.modelo or '' }}
+          {%- if not it.marca and not it.modelo %}—{% endif %}
+          {% if it.anio_fabricacion %}<div class="eq-sku">Año {{ it.anio_fabricacion }}</div>{% endif %}
+        </td>
+        <td>
+          {{ it.serie_snap or '—' }}
+          {% if it.doc_origen %}<div class="eq-sku">{{ it.doc_origen }}</div>{% endif %}
+        </td>
+        <td>{{ it.ubicacion or '—' }}</td>
+        <td>
+          <span class="pill" style="color:{{ e[1] }}; background:{{ e[2] }}; border-color:{{ e[3] }}">{{ e[0] }}</span>
+        </td>
+        <td>
+          {% if (it.anomalias or '').strip() %}<div class="obs-dano">⚠ {{ it.anomalias }}</div>{% endif %}
+          {% if (it.observaciones or '').strip() %}<div>{{ it.observaciones }}</div>{% endif %}
+          {% if it.horas_uso %}<div class="eq-sku">{{ it.horas_uso }} h de uso</div>{% endif %}
+          {% if not (it.anomalias or '').strip() and not (it.observaciones or '').strip() and not it.horas_uso %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {# ══ OBSERVACIONES DEL SERVICIO ══════════════════════════════ #}
+  {% set obs_txt = (visita.diagnostico or visita.observaciones or visita.descripcion or '') | trim %}
+  <div class="sec">Observaciones del servicio</div>
+  <div class="txtbox">{{ obs_txt if obs_txt else 'Levantamiento técnico ejecutado conforme, sin observaciones adicionales a las detalladas por equipo.' }}</div>
+
+  {# ══ FIRMAS ══════════════════════════════════════════════════ #}
+  <div class="sec">Conformidad del servicio</div>
+  <div class="firmas">
+    <div class="firma">
+      <div class="rol">Realizado por — Técnico</div>
+      {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="Firma técnico">
+      {% else %}<div class="sin">Sin firma registrada</div>{% endif %}
+      <div class="nom">{{ visita.firma_tecnico_nombre or visita.tecnico_principal or '—' }}</div>
+      <div class="det">{% if visita.firma_tecnico_at %}{{ visita.firma_tecnico_at | chile_fmt }}{% endif %}</div>
+    </div>
+    <div class="firma">
+      <div class="rol">Recibido conforme — Cliente</div>
+      {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="Firma cliente">
+      {% else %}<div class="sin">Sin firma registrada</div>{% endif %}
+      <div class="nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
+      <div class="det">
+        {% if firmante_cliente and firmante_cliente.signer_rut %}RUT {{ firmante_cliente.signer_rut | rut_fmt }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %} · {% endif %}
+        {% if visita.firma_cliente_at %}{{ visita.firma_cliente_at | chile_fmt }}{% endif %}
+      </div>
+    </div>
+    <div class="firma">
+      <div class="rol">Validado por — Responsable ILUS</div>
+      {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="Firma responsable">
+      {% else %}<div class="sin">Sin firma registrada</div>{% endif %}
+      <div class="nom">{{ visita.firma_supervisor_nombre or visita.cerrada_por or '—' }}</div>
+      <div class="det">{% if visita.firma_supervisor_at %}{{ visita.firma_supervisor_at | chile_fmt }}{% endif %}</div>
+    </div>
+  </div>
+
+  {# ══ ANEXO FOTOGRÁFICO ═══════════════════════════════════════ #}
+  {% if lev_stats.total_fotos %}
+  <div class="sec" style="page-break-before:always; break-before:page;">
+    Anexo fotográfico — registro en terreno
+    <span class="mini">1 foto principal por equipo · respaldo completo disponible en ILUS Gestión</span>
+  </div>
+  <div class="anexo">
+    {% for it in lev_items %}
+      {% set fts = lev_fotos_idx.get(it.id) or [] %}
+      {% if fts %}
+      {% set e = EST.get(it.estado_capturado or 'operativo', EST['operativo']) %}
+      <div class="fcard">
+        <img src="{{ fts[0].cloudinary_url }}" alt="{{ it.nombre_snap }}">
+        <div class="cuerpo">
+          <div class="nom">{{ loop.index }}. {{ it.nombre_snap }}</div>
+          <div class="ser">Serie: {{ it.serie_snap or '—' }}{% if it.ubicacion %} · {{ it.ubicacion }}{% endif %}</div>
+          <div class="extra">
+            <span class="pill" style="color:{{ e[1] }}; background:{{ e[2] }}; border-color:{{ e[3] }}">{{ e[0] }}</span>
+            {% if fts | length > 1 %}<span class="masfotos"> +{{ fts | length - 1 }} foto(s) adicional(es)</span>{% endif %}
+          </div>
+          {% if (it.anomalias or '').strip() %}<div class="extra obs-dano">⚠ {{ it.anomalias | truncate(70) }}</div>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ══ PIE ═════════════════════════════════════════════════════ #}
+  <div class="pie">
+    <div>
+      <strong>ILUS Sport &amp; Health</strong> — Documento generado electrónicamente por ILUS Gestión
+      el {{ generated_at }} (hora Chile). Validez respaldada por firmas digitales capturadas en sitio.
+    </div>
+    <div style="text-align:right; white-space:nowrap">
+      {{ visita.numero_ot or visita.id }}
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

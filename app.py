@@ -37569,6 +37569,11 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
             "SELECT id, cliente_id, levantamiento_id, numero_ot, fecha_programada "
             "  FROM mant_visitas WHERE id=%s", (vid,))
         if not v or not v.get("levantamiento_id"):
+            # 2026-07-10: los early-exits ya NO son mudos — el caso OT-32
+            # (40 equipos, 0 materializados, CERO líneas de log) demostró
+            # que un skip silencioso es indistinguible de "nunca corrió".
+            print(f"[lev_materializar] vid={vid} SKIP: visita sin levantamiento_id",
+                  flush=True)
             out["skipped"] = True
             return out
         lev_id = v["levantamiento_id"]
@@ -37580,8 +37585,12 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
             (lev_id,)
         ) or []
         if not items:
+            print(f"[lev_materializar] vid={vid} lev={lev_id} SKIP: 0 items pendientes",
+                  flush=True)
             out["skipped"] = True
             return out
+        print(f"[lev_materializar] vid={vid} lev={lev_id}: {len(items)} item(s) pendientes",
+              flush=True)
 
         # Columnas enriquecidas disponibles en mant_maquinas (prod puede no
         # tenerlas todas por ILUS_SKIP_MIGRATIONS=1) — detección 1 sola vez.
@@ -37621,7 +37630,12 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                     _conn_c.commit()
                 finally:
                     _conn_c.close()
-            except Exception:
+            except Exception as _e_claim:
+                # 2026-07-10: un claim fallido por EXCEPCIÓN (conexión caída,
+                # timeout) es distinto de "otro proceso lo ganó" (rowcount=0,
+                # legítimamente mudo) — el primero merece log.
+                print(f"[lev_materializar] vid={vid} item={it.get('id')} "
+                      f"claim error: {_e_claim}", flush=True)
                 claimed = False
             if not claimed:
                 continue
@@ -37789,24 +37803,33 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
 
 
 def _lev_promover_full_async(vid, usuario=None):
-    """Materializa equipos descubiertos y DESPUÉS corre la promoción
-    congelada, en un solo hilo (orden garantizado, sin carrera). Reemplaza
-    a _promover_levantamiento_async en los cierres de OT."""
+    """Materializa equipos descubiertos (SÍNCRONO, dentro del request del
+    cierre) y después corre la promoción congelada en un hilo aparte.
+    Reemplaza a _promover_levantamiento_async en los cierres de OT.
+
+    FIX CRÍTICO 2026-07-10 (Daniel — OT-2026-00032, 40 equipos de la
+    Universidad De Las Américas NO llegaron a la ficha al cerrar, incluso
+    DESPUÉS del fix de app_context del 07-08): en Cloud Run, la CPU del
+    contenedor se congela apenas se envía el response HTTP. Un hilo
+    daemon fire-and-forget queda a merced de que llegue otro request a la
+    misma instancia para recibir ciclos de CPU — en la OT-32 la promoción
+    alcanzó a loguear pero la materialización quedó muda (0 equipos, ni un
+    print). La materialización — lo que el usuario NECESITA ver reflejado
+    en la ficha del cliente — ahora corre síncrona en el request (2-3s
+    para 40 equipos, aceptable para un cierre): garantizada, con errores
+    visibles en el log del request. La promoción FROZEN (enriquecimiento
+    de fichas ya existentes, no crítica) se mantiene en hilo aparte con
+    app_context (fix 2026-07-08)."""
+    try:
+        out = _lev_materializar_equipos_nuevos(vid, usuario=usuario) or {}
+        if out.get("creados") or out.get("errores"):
+            print(f"[lev_promover_full] vid={vid} materializados={out.get('creados', 0)} "
+                  f"errores={out.get('errores', 0)}", flush=True)
+    except Exception as e:
+        print(f"[lev_promover_full] materializar vid={vid}: {e}", flush=True)
+
     def _run():
-        # FIX CRÍTICO 2026-07-08 (Daniel — OT-2026-00031, 11 equipos nunca
-        # llegaron a la ficha del cliente): faltaba `with app.app_context()`.
-        # Sin contexto de Flask, la PRIMERA query de _lev_materializar_
-        # equipos_nuevos (mysql_fetchone → get_db() → g) revienta con
-        # "RuntimeError: Working outside of application context", atrapada
-        # por el except global de esa función → 0 equipos materializados,
-        # SIEMPRE (falla antes del loop, por eso los 11 fallaron TODOS, no
-        # algunos). Mismo patrón ya corregido en otros 4+ threads de este
-        # archivo (ver comentarios "FIX: el hilo necesita contexto Flask").
         with app.app_context():
-            try:
-                _lev_materializar_equipos_nuevos(vid, usuario=usuario)
-            except Exception as e:
-                print(f"[lev_promover_full] materializar vid={vid}: {e}", flush=True)
             try:
                 _promover_levantamiento_a_maquina(vid, usuario=usuario)
             except Exception as e:
@@ -55837,6 +55860,59 @@ def _ot_pdf_context(vid):
     except Exception:
         pass
 
+    # ── Equipos DESCUBIERTOS en levantamiento (2026-07-10, Daniel — caso
+    # OT-2026-00032 Universidad De Las Américas): en un levantamiento por
+    # descubrimiento TODO el trabajo del técnico (40 equipos + fotos +
+    # estado + anomalías) vive en mant_levantamiento_items /
+    # mant_levantamiento_fotos — tablas que este contexto no consultaba,
+    # por lo que el PDF salía como cascarón administrativo vacío. Se
+    # cargan SIN filtrar por maquina_id (materializados o no: el informe
+    # documenta lo que el técnico levantó en terreno). ──────────────────
+    lev_items, lev_fotos_idx, lev_stats = [], {}, {}
+    _lev_id_pdf = visita.get("levantamiento_id")
+    if _lev_id_pdf:
+        try:
+            lev_items = mysql_fetchall(
+                "SELECT * FROM mant_levantamiento_items "
+                " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                " ORDER BY id ASC", (_lev_id_pdf,)) or []
+            _lev_fotos = mysql_fetchall(
+                "SELECT item_id, cloudinary_url, tipo_foto, descripcion "
+                "  FROM mant_levantamiento_fotos "
+                " WHERE levantamiento_id=%s AND item_id IS NOT NULL "
+                " ORDER BY id ASC", (_lev_id_pdf,)) or []
+            for _f in _lev_fotos:
+                lev_fotos_idx.setdefault(_f["item_id"], []).append(_f)
+            _n_op = sum(1 for i in lev_items
+                        if (i.get("estado_capturado") or "operativo") == "operativo")
+            _n_adv = sum(1 for i in lev_items
+                         if (i.get("estado_capturado") or "") == "advertencia"
+                         or (i.get("anomalias") or "").strip())
+            _n_fs = sum(1 for i in lev_items
+                        if (i.get("estado_capturado") or "") in
+                        ("fuera_servicio", "en_reparacion", "dado_baja", "no_encontrado"))
+            lev_stats = {
+                "total": len(lev_items),
+                "operativos": _n_op,
+                "con_observacion": _n_adv,
+                "fuera_servicio": _n_fs,
+                "total_fotos": len(_lev_fotos),
+                "pct_operativos": round(_n_op * 100 / len(lev_items)) if lev_items else 0,
+            }
+        except Exception as _e_lvp:
+            print(f"[ot_pdf_ctx] lev items vid={vid}: {_e_lvp}", flush=True)
+
+    # ── Base URL absoluta para el render (2026-07-10): Playwright carga el
+    # HTML con set_content() → documento en about:blank SIN base URL. Toda
+    # imagen con ruta relativa (/f/<key> de GCS, /static/uploads/, incl.
+    # LAS FIRMAS) quedaba en blanco en el PDF descargado. El template la
+    # inyecta como <base href> para que Chromium resuelva contra el host
+    # público real. ──────────────────────────────────────────────────────
+    try:
+        base_url = request.host_url
+    except Exception:
+        base_url = ""
+
     ctx = {
         "visita": visita,
         "firmante_cliente": _ot_firmante_cliente(vid),
@@ -55850,6 +55926,10 @@ def _ot_pdf_context(vid):
         "eq_check_resumen": eq_check_resumen,
         "paginas_equipos": paginas_equipos,
         "logo_b64": logo_b64,
+        "lev_items": lev_items,
+        "lev_fotos_idx": lev_fotos_idx,
+        "lev_stats": lev_stats,
+        "base_url": base_url,
         "generated_at": _now_chile_str('%d/%m/%Y %H:%M'),
     }
     return ctx, "ok", []
@@ -55895,7 +55975,14 @@ def mant_visita_pdf(vid):
         }), 409
 
     # Render HTML (contexto compartido con mant_ot_pdf_render → no divergen)
-    html = render_template("mantenciones/ot_pdf.html", **ctx)
+    # 2026-07-10 (Daniel — OT-2026-00032): los levantamientos usan su propio
+    # informe formal (inventario + anexo fotográfico + firmas); el resto de
+    # OTs conserva el template clásico sin cambios.
+    _es_informe_lev = bool((ctx["visita"].get("tipo") or "") == "levantamiento"
+                           and ctx.get("lev_items"))
+    _tpl_pdf = ("mantenciones/ot_pdf_levantamiento.html" if _es_informe_lev
+                else "mantenciones/ot_pdf.html")
+    html = render_template(_tpl_pdf, **ctx)
 
     # PDF
     try:
@@ -55905,6 +55992,10 @@ def mant_visita_pdf(vid):
                 "left": "12mm", "right": "12mm",
             },
             wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
+            # Un levantamiento puede traer 40+ fotos reales vía /f/ — darles
+            # tiempo de cargar dentro de Chromium (si igual no alcanzan, el
+            # PDF sale con lo que haya, como siempre).
+            wait_timeout=20000 if _es_informe_lev else 5000,
         )
     except PDFEngineUnavailable:
         # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
@@ -55964,7 +56055,11 @@ def mant_ot_pdf_render(vid):
         )
         return redirect(url_for("mant_ot_ejecutar", vid=vid))
     # Contexto compartido con mant_visita_pdf (fuente única → no divergen)
-    return render_template("mantenciones/ot_pdf.html", **ctx)
+    # 2026-07-10: misma selección de template que mant_visita_pdf.
+    _tpl_pdf = ("mantenciones/ot_pdf_levantamiento.html"
+                if (ctx["visita"].get("tipo") or "") == "levantamiento" and ctx.get("lev_items")
+                else "mantenciones/ot_pdf.html")
+    return render_template(_tpl_pdf, **ctx)
 
 
 # ═════════════════════════════════════════════════════════════════════
