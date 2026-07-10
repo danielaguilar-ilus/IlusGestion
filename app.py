@@ -951,6 +951,45 @@ def _img_resize_bytes(file_obj, max_dim=1600, quality=82):
         return raw, (getattr(file_obj, "content_type", None) or "application/octet-stream")
 
 
+def _img_a_data_uri(url, cache=None):
+    """Convierte una URL de imagen /f/<key> (GCS) a data-URI embebida.
+
+    2026-07-10 (Daniel — urgente, informe de la Universidad de las
+    Américas): el PDF con <base href> forzaba a Chromium a descargar cada
+    foto por la RED PÚBLICA de Cloud Run (round-trip completo: TLS +
+    load balancer), uno por uno. Con 40+ fotos esto era lento y a veces
+    tan lento que la espera expiraba y el endpoint caía al fallback HTML
+    (mismo documento sin PDF real). Leer los bytes DIRECTO de GCS —el
+    mismo proceso ya tiene el cliente listo, sin red pública de por
+    medio— es muchísimo más rápido y no puede fallar por timeout externo.
+    Cachea por url dentro del mismo request para no releer 2 veces la
+    misma foto (ej. si aparece en el resumen y en el anexo).
+    """
+    if not url:
+        return url
+    if cache is not None and url in cache:
+        return cache[url]
+    out = url
+    if url.startswith("/f/"):
+        try:
+            key = url[3:]
+            b = _gcs_bucket()
+            if b:
+                blob = b.blob(key)
+                data = blob.download_as_bytes()
+                ext = ("." + key.rsplit(".", 1)[1].lower()) if "." in key else ""
+                ct = {".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                      ".png": "image/png", ".gif": "image/gif"}.get(ext, "image/jpeg")
+                import base64 as _b64
+                out = f"data:{ct};base64,{_b64.b64encode(data).decode('ascii')}"
+        except Exception as _e_datauri:
+            print(f"[_img_a_data_uri] {url}: {_e_datauri}", flush=True)
+            out = url
+    if cache is not None:
+        cache[url] = out
+    return out
+
+
 def _storage_upload_bytes(data, key, content_type):
     """Sube bytes a GCS bajo 'key'. Devuelve la URL app-proxy /f/<key>."""
     b = _gcs_bucket()
@@ -55610,8 +55649,16 @@ def mant_seguimiento_vista():
 # PDF — Reporte completo de OT con firmas y fotos
 # ═════════════════════════════════════════════════════════════════════
 
-def _ot_pdf_context(vid):
+def _ot_pdf_context(vid, embed_images=False):
     """Construye el contexto COMPLETO para renderizar `mantenciones/ot_pdf.html`.
+
+    embed_images=True (2026-07-10, Daniel — urgente): usado SOLO por el
+    generador de PDF real (Playwright). Convierte firmas y fotos /f/<key>
+    a data-URI leyendo los bytes directo de GCS (ver _img_a_data_uri) —
+    evita que Chromium tenga que descargar cada imagen por la red pública
+    de Cloud Run (lento con 40+ fotos, y a veces tan lento que expiraba el
+    timeout y el PDF caía al fallback HTML). La vista HTML normal en el
+    navegador (embed_images=False, default) sigue usando /f/ liviano.
 
     Fuente ÚNICA de verdad de las variables del PDF/HTML de la OT — la usan
     tanto `mant_visita_pdf` (Playwright → PDF real) como `mant_ot_pdf_render`
@@ -55885,16 +55932,38 @@ def _ot_pdf_context(vid):
         except Exception as _e_lvp:
             print(f"[ot_pdf_ctx] lev items vid={vid}: {_e_lvp}", flush=True)
 
-    # ── Base URL absoluta para el render (2026-07-10): Playwright carga el
-    # HTML con set_content() → documento en about:blank SIN base URL. Toda
-    # imagen con ruta relativa (/f/<key> de GCS, /static/uploads/, incl.
-    # LAS FIRMAS) quedaba en blanco en el PDF descargado. El template la
-    # inyecta como <base href> para que Chromium resuelva contra el host
-    # público real. ──────────────────────────────────────────────────────
+    # ── Base URL absoluta (fallback ligero para <a>/<link>, ya no crítico
+    # para imágenes desde que embed_images resuelve /f/ a data-URI). ─────
     try:
         base_url = request.host_url
     except Exception:
         base_url = ""
+
+    # ── 2026-07-10 (Daniel, urgente): embeber imágenes como data-URI SOLO
+    # para el render de Playwright (embed_images=True). Ver docstring de
+    # arriba — evita que Chromium dependa de la red pública para 40+ fotos.
+    if embed_images:
+        _cache = {}
+        for _campo in ("firma_tecnico_url", "firma_cliente_url", "firma_supervisor_url"):
+            if visita.get(_campo):
+                visita[_campo] = _img_a_data_uri(visita[_campo], _cache)
+        for _e in equipos:
+            if _e.get("foto_url"):
+                _e["foto_url"] = _img_a_data_uri(_e["foto_url"], _cache)
+        for _f in fotos:
+            if _f.get("url"):
+                _f["url"] = _img_a_data_uri(_f["url"], _cache)
+        for _lst in eq_fotos_idx.values():
+            for _f in _lst:
+                if _f.get("url"):
+                    _f["url"] = _img_a_data_uri(_f["url"], _cache)
+        for _f in fotos_generales:
+            if _f.get("url"):
+                _f["url"] = _img_a_data_uri(_f["url"], _cache)
+        for _lst in lev_fotos_idx.values():
+            for _f in _lst:
+                if _f.get("cloudinary_url"):
+                    _f["cloudinary_url"] = _img_a_data_uri(_f["cloudinary_url"], _cache)
 
     ctx = {
         "visita": visita,
@@ -55935,7 +56004,7 @@ def mant_visita_pdf(vid):
     imprimible (mismo documento) para que la OT SIEMPRE se pueda visualizar.
     Contexto vía `_ot_pdf_context` (compartido con `mant_ot_pdf_render`).
     """
-    ctx, status, razones = _ot_pdf_context(vid)
+    ctx, status, razones = _ot_pdf_context(vid, embed_images=True)
     if status == "not_found":
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
     if status == "incompleto":
@@ -55974,11 +56043,12 @@ def mant_visita_pdf(vid):
                 "top": "15mm", "bottom": "15mm",
                 "left": "12mm", "right": "12mm",
             },
+            # 2026-07-10: con embed_images=True las fotos ya vienen como
+            # data-URI dentro del HTML (sin red que esperar) — timeout
+            # corto de sobra; el wait real anterior (20s) era precisamente
+            # lo que causaba lentitud/caída a fallback con 40+ fotos.
             wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
-            # Un levantamiento puede traer 40+ fotos reales vía /f/ — darles
-            # tiempo de cargar dentro de Chromium (si igual no alcanzan, el
-            # PDF sale con lo que haya, como siempre).
-            wait_timeout=20000 if _es_informe_lev else 5000,
+            wait_timeout=5000,
         )
     except PDFEngineUnavailable:
         # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
