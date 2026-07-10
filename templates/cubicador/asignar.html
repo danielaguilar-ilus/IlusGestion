@@ -2051,13 +2051,18 @@ function renderCubaje(){
   tbody.innerHTML = rows;
 
   // ── Persistir totales recalculados (los lee actualizarTarifas / resumen)
+  // Si el operador ya cargó medidas MANUALES (documento sin ficha técnica,
+  // ver cotizarConMedidasManuales), NO las pisamos recalculando desde líneas
+  // vacías/sin ficha — eso volvería a dejar los totales en 0.
   _docData.totales = _docData.totales || {};
-  _docData.totales.total_qty    = Math.round(tQty);
-  _docData.totales.total_bultos = Math.round(tBult);
-  _docData.totales.peso_kg      = Math.round(tKg   * 1000) / 1000;
-  _docData.totales.peso_pv      = Math.round(tPv   * 1000) / 1000;
-  _docData.totales.vol_cm3      = Math.round(tVol  * 10)   / 10;
-  _docData.totales.peso_pred    = Math.round(tPred * 1000) / 1000;
+  if(!_docData._medidasManuales){
+    _docData.totales.total_qty    = Math.round(tQty);
+    _docData.totales.total_bultos = Math.round(tBult);
+    _docData.totales.peso_kg      = Math.round(tKg   * 1000) / 1000;
+    _docData.totales.peso_pv      = Math.round(tPv   * 1000) / 1000;
+    _docData.totales.vol_cm3      = Math.round(tVol  * 10)   / 10;
+    _docData.totales.peso_pred    = Math.round(tPred * 1000) / 1000;
+  }
 
   const tot = _docData.totales;
   setText('tot-qty',  tot.total_qty  ?? '—');
@@ -2217,6 +2222,41 @@ async function _actualizarCotizacionesReal(){
   renderCouriers();
 }
 
+// Cotiza con medidas ingresadas MANUALMENTE por el operador (Daniel
+// 2026-06-16): cuando el documento no trae ficha técnica (0 productos en
+// cubicaje), en vez de bloquear la cotización se puede escribir el peso y
+// bultos reales a mano y cotizar igual. Queda marcado con _medidasManuales
+// para trazabilidad (se muestra un aviso junto a las cotizaciones) — NO se
+// guarda en la ficha técnica del producto ni se envía nada al ERP.
+async function cotizarConMedidasManuales(){
+  const pesoInput   = document.getElementById('manualPesoKg');
+  const bultosInput = document.getElementById('manualBultos');
+  const peso   = parseFloat(pesoInput  ? pesoInput.value   : '') || 0;
+  const bultos = parseInt(bultosInput  ? bultosInput.value : '') || 0;
+  if(peso <= 0){
+    if(window.ilusToast) ilusToast('Ingresa un peso mayor a 0 para cotizar', {type:'warning'});
+    if(pesoInput) pesoInput.focus();
+    return;
+  }
+  if(!_docData) return;
+
+  _docData.totales = _docData.totales || {};
+  _docData.totales.peso_kg      = peso;
+  _docData.totales.peso_pred    = peso;
+  _docData.totales.total_bultos = bultos > 0 ? bultos : 1;
+  _docData._medidasManuales = true;
+
+  // Refleja las medidas manuales en el resumen visible (mismos ids que usa
+  // renderCubaje/actualizarTarifas, para que quede coherente en toda la vista).
+  setText('tot-kg',     fCl(peso));
+  setText('tot-pred',   fCl(peso));
+  setText('tot-bult',   _docData.totales.total_bultos);
+  setText('res-bultos', _docData.totales.total_bultos);
+
+  if(window.ilusToast) ilusToast('Cotizando con medidas ingresadas manualmente', {type:'info'});
+  await _actualizarCotizacionesReal();
+}
+
 function renderCouriers(opts){
   const list = document.getElementById('courierList');
   if(!list) return;
@@ -2242,11 +2282,39 @@ function renderCouriers(opts){
   // NO se cotizó (no se inventan precios de couriers para un envío vacío).
   if(opts && opts.sinDatos){
     list.innerHTML = `
-      <div class="empty-state">
+      <div class="empty-state" style="padding-bottom:24px">
         <i class="bi bi-box-seam"></i>
         <p>Este documento no tiene productos con datos de cubicaje (peso/bultos).
-           No se puede cotizar hasta cargar la ficha técnica del producto o
-           revisar el documento en el ERP.</p>
+           No se puede cotizar automáticamente.</p>
+        <p style="margin-top:-4px">Si conoces el peso y bultos reales, puedes
+           ingresarlos manualmente para cotizar igual:</p>
+        <div style="display:flex;gap:10px;justify-content:center;align-items:flex-end;
+                    flex-wrap:wrap;margin-top:8px;text-align:left">
+          <div>
+            <label style="font-size:.7rem;color:#6b7280;display:block;margin-bottom:2px">Peso real (kg)</label>
+            <input type="number" id="manualPesoKg" min="0" step="0.1" placeholder="0.0"
+                   style="width:100px;border:1.5px solid #d1d5db;border-radius:6px;
+                          padding:6px 8px;font-size:.85rem;font-weight:600;color:#111827"
+                   onkeydown="if(event.key==='Enter') cotizarConMedidasManuales()">
+          </div>
+          <div>
+            <label style="font-size:.7rem;color:#6b7280;display:block;margin-bottom:2px">Bultos</label>
+            <input type="number" id="manualBultos" min="1" step="1" placeholder="1"
+                   style="width:70px;border:1.5px solid #d1d5db;border-radius:6px;
+                          padding:6px 8px;font-size:.85rem;font-weight:600;color:#111827"
+                   onkeydown="if(event.key==='Enter') cotizarConMedidasManuales()">
+          </div>
+          <button type="button" onclick="cotizarConMedidasManuales()"
+                  style="background:#dc2626;border:none;color:#fff;font-weight:700;
+                         font-size:.8rem;padding:7px 16px;border-radius:6px;cursor:pointer;
+                         white-space:nowrap">
+            <i class="bi bi-calculator me-1"></i>Cotizar con estas medidas
+          </button>
+        </div>
+        <p style="font-size:.7rem;color:#b45309;margin-top:10px">
+          <i class="bi bi-info-circle me-1"></i>Esto NO reemplaza la ficha técnica
+          del producto — es solo para esta cotización puntual.
+        </p>
       </div>`;
     if(toggleWrap) toggleWrap.style.display = 'none';
     if(compTop)    compTop.style.display    = 'none';
@@ -2278,10 +2346,23 @@ function renderCouriers(opts){
 
   // Header: recomendado + ZZ envío comparativa
   let head = '';
+  // Aviso persistente (Daniel 2026-06-16): estas cotizaciones se calcularon
+  // con peso/bultos ingresados A MANO (el documento no traía ficha técnica),
+  // no con datos verificados del ERP/ficha del producto. Transparencia para
+  // quien revise el precio después.
+  if(_docData && _docData._medidasManuales){
+    head += `
+      <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;
+                  padding:7px 10px;margin-bottom:10px;font-size:.74rem;color:#1e40af;
+                  display:flex;align-items:center;gap:6px">
+        <i class="bi bi-pencil-square"></i>
+        <span>Cotizado con medidas ingresadas manualmente — no vienen de la ficha técnica del producto.</span>
+      </div>`;
+  }
   if(_recomendadoId){
     const rec = conCob.find(c => c.courier_id === _recomendadoId);
     if(rec){
-      head = `
+      head += `
         <div style="background:linear-gradient(90deg,#fffbeb 0%,#fff 100%);border:1.5px solid #f59e0b;
                     border-radius:9px;padding:8px 12px;margin-bottom:10px;font-size:.82rem;
                     display:flex;align-items:center;gap:8px">
