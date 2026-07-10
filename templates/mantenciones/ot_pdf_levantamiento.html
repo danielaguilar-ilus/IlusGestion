@@ -55,7 +55,14 @@
   .tb-back{ background:#fff; color:#111827; border:1px solid var(--gris-b) !important; }
 
   /* ── Encabezado: empresa + caja de documento ───────────────── */
-  .enc{ display:flex; justify-content:space-between; align-items:flex-start; gap:10mm; }
+  .enc{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:10mm;
+    border-bottom:1mm solid var(--negro); padding-bottom:4mm; position:relative;
+  }
+  .enc::after{
+    content:''; position:absolute; bottom:-1mm; left:0; width:34mm; height:1mm;
+    background:var(--rojo);
+  }
   .enc-izq{ display:flex; gap:5mm; align-items:flex-start; }
   .enc-logo img{ height:17mm; display:block; }
   .enc-logo .logo-txt{
@@ -93,6 +100,7 @@
     margin-top:6mm; padding:1.8mm 2.6mm; background:var(--negro); color:#fff;
     font-size:10px; font-weight:800; letter-spacing:.8px; text-transform:uppercase;
     border-radius:3px; display:flex; justify-content:space-between; align-items:center;
+    border-left:2.4mm solid var(--rojo);
     page-break-after:avoid; break-after:avoid;
   }
   .sec .mini{ font-weight:600; font-size:8.5px; color:#d1d5db; letter-spacing:.3px; }
@@ -155,19 +163,42 @@
                padding-top:1.4mm; }
   .firma .det{ font-size:7.8px; color:var(--gris-t); margin-top:.6mm; }
 
-  /* ── Anexo fotográfico ─────────────────────────────────────── */
-  .anexo{ display:flex; flex-wrap:wrap; gap:3mm; margin-top:3mm; }
-  .fcard{
-    width:calc((100% - 6mm) / 3); border:1px solid var(--gris-b); border-radius:6px;
-    overflow:hidden; page-break-inside:avoid; break-inside:avoid; background:#fff;
+  /* ── Anexo fotográfico (2026-07-10, Daniel: "TODAS las instancias en
+        las fotografías y observaciones") — un bloque por equipo con el
+        registro fotográfico COMPLETO y el texto íntegro, sin recortes. ── */
+  .anexo{ margin-top:3mm; }
+  .an-eq{
+    border:1px solid var(--gris-b); border-left:1.4mm solid var(--negro);
+    border-radius:5px; margin-bottom:3mm; padding:2.4mm 2.8mm;
+    page-break-inside:avoid; break-inside:avoid; background:#fff;
   }
-  .fcard img{ width:100%; height:42mm; object-fit:cover; display:block; background:#f3f4f6; }
-  .fcard .cuerpo{ padding:1.8mm 2.2mm 2mm; }
-  .fcard .nom{ font-weight:800; font-size:8.4px; line-height:1.2;
-               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .fcard .ser{ font-size:7.4px; color:var(--gris-t); margin-top:.4mm; }
-  .fcard .extra{ font-size:7.2px; color:#374151; margin-top:.6mm; }
-  .fcard .masfotos{ font-size:7px; color:var(--gris-t); font-style:italic; }
+  .an-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:3mm; }
+  .an-tit{ font-weight:800; font-size:9.6px; }
+  .an-meta{ font-size:7.8px; color:var(--gris-t); margin-top:.6mm; }
+  .an-dano{
+    margin-top:1.6mm; font-size:8.6px; color:var(--rojo-d); font-weight:700;
+    background:#fef2f2; border:1px solid #fecaca; border-radius:4px; padding:1.4mm 2mm;
+    white-space:pre-wrap;
+  }
+  .an-obs{
+    margin-top:1.4mm; font-size:8.6px; color:#1f2937; background:#f9fafb;
+    border:1px solid #e5e7eb; border-radius:4px; padding:1.4mm 2mm; white-space:pre-wrap;
+  }
+  .an-fotos{ display:flex; flex-wrap:wrap; gap:2.4mm; margin-top:2.2mm; }
+  .an-fotos figure{
+    width:calc((100% - 4.8mm) / 3); margin:0; page-break-inside:avoid; break-inside:avoid;
+  }
+  .an-fotos img{
+    width:100%; height:40mm; object-fit:cover; display:block; background:#f3f4f6;
+    border:1px solid var(--gris-b); border-radius:4px;
+  }
+  .an-fotos figcaption{
+    font-size:7px; color:var(--gris-t); margin-top:.6mm; text-align:center;
+    font-weight:700; text-transform:uppercase; letter-spacing:.3px;
+  }
+  .an-sinfoto{
+    margin-top:1.6mm; font-size:8px; color:#9ca3af; font-style:italic;
+  }
 
   /* ── Pie de documento ──────────────────────────────────────── */
   .pie{
@@ -364,33 +395,57 @@
     </div>
   </div>
 
-  {# ══ ANEXO FOTOGRÁFICO ═══════════════════════════════════════ #}
-  {% if lev_stats.total_fotos %}
+  {# ══ ANEXO FOTOGRÁFICO Y DETALLE POR EQUIPO ══════════════════
+     2026-07-10 (Daniel): registro COMPLETO — todos los equipos, todas
+     sus fotos (con etiqueta del tipo de captura) y las observaciones/
+     anomalías íntegras, sin truncar. #}
+  {% set TIPO_FOTO = {
+      'general': '', 'serie': 'N° de serie', 'display': 'Display',
+      'daño': 'Daño', 'dano': 'Daño', 'conexion': 'Conexión',
+      'detalle': 'Detalle', 'otro': '',
+  } %}
   <div class="sec" style="page-break-before:always; break-before:page;">
-    Anexo fotográfico — registro en terreno
-    <span class="mini">1 foto principal por equipo · respaldo completo disponible en ILUS Gestión</span>
+    Anexo — registro fotográfico y detalle por equipo
+    <span class="mini">{{ lev_stats.total or 0 }} equipo(s) · {{ lev_stats.total_fotos or 0 }} captura(s) del técnico en terreno</span>
   </div>
   <div class="anexo">
     {% for it in lev_items %}
       {% set fts = lev_fotos_idx.get(it.id) or [] %}
-      {% if fts %}
       {% set e = EST.get(it.estado_capturado or 'operativo', EST['operativo']) %}
-      <div class="fcard">
-        <img src="{{ fts[0].cloudinary_url }}" alt="{{ it.nombre_snap }}">
-        <div class="cuerpo">
-          <div class="nom">{{ loop.index }}. {{ it.nombre_snap }}</div>
-          <div class="ser">Serie: {{ it.serie_snap or '—' }}{% if it.ubicacion %} · {{ it.ubicacion }}{% endif %}</div>
-          <div class="extra">
-            <span class="pill" style="color:{{ e[1] }}; background:{{ e[2] }}; border-color:{{ e[3] }}">{{ e[0] }}</span>
-            {% if fts | length > 1 %}<span class="masfotos"> +{{ fts | length - 1 }} foto(s) adicional(es)</span>{% endif %}
+      <div class="an-eq">
+        <div class="an-head">
+          <div>
+            <div class="an-tit">{{ loop.index }}. {{ it.nombre_snap }}</div>
+            <div class="an-meta">
+              Serie: {{ it.serie_snap or '—' }}
+              {%- if it.sku_snap %} · SKU: {{ it.sku_snap }}{% endif %}
+              {%- if it.marca or it.modelo %} · {{ it.marca or '' }}{% if it.marca and it.modelo %} / {% endif %}{{ it.modelo or '' }}{% endif %}
+              {%- if it.ubicacion %} · {{ it.ubicacion }}{% endif %}
+              {%- if it.horas_uso %} · {{ it.horas_uso }} h de uso{% endif %}
+            </div>
           </div>
-          {% if (it.anomalias or '').strip() %}<div class="extra obs-dano">⚠ {{ it.anomalias | truncate(70) }}</div>{% endif %}
+          <span class="pill" style="color:{{ e[1] }}; background:{{ e[2] }}; border-color:{{ e[3] }}">{{ e[0] }}</span>
         </div>
+        {% if (it.anomalias or '').strip() %}<div class="an-dano">⚠ DAÑO / ANOMALÍA: {{ it.anomalias }}</div>{% endif %}
+        {% if (it.observaciones or '').strip() %}<div class="an-obs">{{ it.observaciones }}</div>{% endif %}
+        {% if fts %}
+        <div class="an-fotos">
+          {% for f in fts %}
+          <figure>
+            <img src="{{ f.cloudinary_url }}" alt="{{ it.nombre_snap }} — foto {{ loop.index }}">
+            <figcaption>
+              {%- set _tf = TIPO_FOTO.get((f.tipo_foto or 'general') | lower, f.tipo_foto or '') -%}
+              {{ f.descripcion or _tf or ('Foto ' ~ loop.index) }}
+            </figcaption>
+          </figure>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="an-sinfoto">Sin registro fotográfico para este equipo.</div>
+        {% endif %}
       </div>
-      {% endif %}
     {% endfor %}
   </div>
-  {% endif %}
 
   {# ══ PIE ═════════════════════════════════════════════════════ #}
   <div class="pie">
