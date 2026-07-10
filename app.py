@@ -17111,13 +17111,30 @@ def api_asignar_cotizar_couriers():
     doc_tido   = (data.get("tido") or "").strip() or None
     doc_nudo   = (data.get("nudo") or "").strip() or None
 
+    if not comuna:
+        return jsonify({"error": "Comuna requerida para cotizar"}), 400
+
+    # Sin datos REALES de peso/cubicaje (documento sin líneas, o con líneas
+    # pero sin ficha técnica registrada → peso_kg_u=0) → NO fabricar una
+    # cotización con el piso de 0.5kg de abajo. Eso mostraría precios
+    # completos y creíbles de couriers para un envío que no existe.
+    # Daniel 2026-06-16: VD 10131 (0 productos en cubicaje) mostraba
+    # cotizaciones reales igual. El front ya no debería ni llamar a este
+    # endpoint en ese caso, pero esta es la defensa de fondo (cualquier
+    # otro caller queda protegido también).
+    if peso_kg <= 0 and peso_pred <= 0:
+        return jsonify({
+            "ok": True, "cotizaciones": [], "recomendado_id": None,
+            "peso_facturable": 0, "comuna_resuelta": comuna,
+            "mensaje": "Sin datos de peso/cubicaje para cotizar: el documento no tiene "
+                       "productos con ficha técnica registrada.",
+        })
+
     # El peso facturable es max(peso_pred, peso_kg, 0.5)
     peso_fact = max(peso_pred, peso_kg, 0.5)
 
     if peso_fact <= 0:
         return jsonify({"error": "Peso debe ser mayor a 0"}), 400
-    if not comuna:
-        return jsonify({"error": "Comuna requerida para cotizar"}), 400
 
     # 1) Couriers activos + tarifas de la comuna en UN solo round-trip
     # Esto evita 9 queries serializadas (200ms cada una = 1.8s ahorrados).

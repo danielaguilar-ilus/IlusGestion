@@ -2152,6 +2152,22 @@ async function _actualizarCotizacionesReal(){
     renderCouriers();
     return;
   }
+
+  // Guard (Daniel 2026-06-16): sin datos REALES de cubicaje (documento sin
+  // líneas, o con líneas pero sin ficha técnica → peso/bultos en 0) → NO
+  // cotizar. El backend tiene un piso de 0.5kg que, si llamamos igual,
+  // fabricaría precios completos y creíbles de couriers para un envío que
+  // no existe (ej. VD 10131: "Sin productos en la cotización" pero mostraba
+  // cotizaciones reales). Mejor decir explícitamente que no hay datos.
+  const _tot = _docData.totales || {};
+  const sinCubicaje = !((_tot.total_bultos > 0) || (_tot.peso_kg > 0) || (_tot.peso_pred > 0));
+  if(sinCubicaje){
+    _cotizaciones  = [];
+    _recomendadoId = null;
+    renderCouriers({sinDatos:true});
+    return;
+  }
+
   const resid = document.getElementById('chkResid')?.checked || false;
 
   const cacheKey = JSON.stringify({
@@ -2215,6 +2231,22 @@ function renderCouriers(opts){
       <div style="text-align:center;padding:24px 12px;color:#9ca3af">
         <i class="bi bi-arrow-clockwise" style="font-size:1.6rem;animation:spin 1s linear infinite;display:inline-block"></i>
         <div style="margin-top:8px;font-size:.82rem">Cotizando con todos los couriers…</div>
+      </div>`;
+    if(toggleWrap) toggleWrap.style.display = 'none';
+    if(compTop)    compTop.style.display    = 'none';
+    return;
+  }
+
+  // Sin datos reales de cubicaje (Daniel 2026-06-16): distinto de "falta
+  // comuna" — aquí el documento no tiene productos con peso/bultos, así que
+  // NO se cotizó (no se inventan precios de couriers para un envío vacío).
+  if(opts && opts.sinDatos){
+    list.innerHTML = `
+      <div class="empty-state">
+        <i class="bi bi-box-seam"></i>
+        <p>Este documento no tiene productos con datos de cubicaje (peso/bultos).
+           No se puede cotizar hasta cargar la ficha técnica del producto o
+           revisar el documento en el ERP.</p>
       </div>`;
     if(toggleWrap) toggleWrap.style.display = 'none';
     if(compTop)    compTop.style.display    = 'none';
