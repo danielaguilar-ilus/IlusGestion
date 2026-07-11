@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Ticket — ILUS{% endblock %}
+{% block head_extra %}
+<link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
+{% endblock %}
 {% block content %}
 <style>
 .tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
@@ -23,15 +27,51 @@
 .tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;}
 .tk-dl{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;font-size:.87rem;}
 .tk-dl dt{color:#6b7280;font-weight:600;} .tk-dl dd{margin:0;color:#0f172a;font-weight:600;}
-.tk-msg{border:1px solid #eaecf0;border-radius:10px;padding:10px 13px;margin-bottom:8px;background:#fff;}
-.tk-msg.evento{background:#f9fafb;border-style:dashed;font-size:.8rem;color:#6b7280;}
-.tk-msg.interno{background:#fffbeb;border-color:#fde68a;}
-.tk-msg .meta{font-size:.68rem;color:#9ca3af;margin-bottom:2px;display:flex;gap:6px;align-items:center;}
 .tk-eq{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;
   border-radius:8px;padding:8px 11px;margin-bottom:6px;font-size:.85rem;}
-.tk-adj{display:inline-flex;align-items:center;gap:5px;border:1px solid #eaecf0;border-radius:8px;
-  padding:6px 10px;margin:0 6px 6px 0;font-size:.8rem;text-decoration:none;color:#374151;background:#fff;}
 .tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:34px;text-align:center;color:#9ca3af;}
+
+/* ── Respuestas (conversacion) ── */
+.rp-offline-bar{background:#7c2d12;color:#fff;padding:7px 14px;border-radius:9px;font-size:.8rem;
+  display:none;align-items:center;gap:8px;margin-bottom:10px;}
+.rp-offline-bar.show{display:flex;}
+.rp-thread{max-height:460px;overflow-y:auto;padding:4px 2px;margin-bottom:14px;}
+.rp-msg{display:flex;margin-bottom:12px;}
+.rp-msg.out{justify-content:flex-end;}
+.rp-bubble{max-width:72%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.45;}
+.rp-msg.in .rp-bubble{background:#f1f5f9;color:#0f172a;border-bottom-left-radius:4px;}
+.rp-msg.out .rp-bubble{background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;border-bottom-right-radius:4px;}
+.rp-msg.interno .rp-bubble{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-bottom-right-radius:4px;}
+.rp-msg.evento{justify-content:center;}
+.rp-msg.evento .rp-bubble{background:transparent;color:#9ca3af;font-size:.74rem;padding:2px 8px;max-width:100%;text-align:center;}
+.rp-meta{font-size:.66rem;opacity:.85;margin-bottom:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.rp-msg.out .rp-meta{color:#fecaca;} .rp-msg.in .rp-meta{color:#64748b;} .rp-msg.interno .rp-meta{color:#92400e;}
+.rp-estado-ok{color:#bbf7d0;} .rp-msg.interno .rp-estado-ok,.rp-msg.in .rp-estado-ok{color:#16a34a;}
+.rp-estado-fail{color:#fca5a5;font-weight:700;}
+.rp-adj-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.18);
+  border-radius:7px;padding:3px 8px;margin:4px 4px 0 0;font-size:.72rem;text-decoration:none;color:inherit;}
+.rp-msg.in .rp-adj-chip,.rp-msg.interno .rp-adj-chip{background:#e2e8f0;color:#0f172a;}
+.rp-adj-chip img{width:16px;height:16px;object-fit:cover;border-radius:3px;}
+.rp-composer{border:1px solid #eaecf0;border-radius:13px;overflow:hidden;}
+.rp-mode-tabs{display:flex;background:#f9fafb;border-bottom:1px solid #eaecf0;}
+.rp-mode-tab{flex:1;text-align:center;padding:9px;font-size:.8rem;font-weight:700;color:#94a3b8;cursor:pointer;
+  border-bottom:3px solid transparent;}
+.rp-mode-tab.active[data-mode="cliente"]{color:#dc2626;border-bottom-color:#dc2626;background:#fff;}
+.rp-mode-tab.active[data-mode="interno"]{color:#b45309;border-bottom-color:#f59e0b;background:#fffbeb;}
+.rp-headers{padding:10px 14px;background:#fcfcfd;border-bottom:1px solid #f1f5f9;display:none;}
+.rp-headers.show{display:block;}
+.rp-headers .row-h{display:flex;align-items:center;gap:8px;font-size:.78rem;margin-bottom:6px;}
+.rp-headers .row-h label{color:#6b7280;font-weight:700;width:44px;flex-shrink:0;}
+.rp-headers .row-h input{border:none;background:transparent;font-size:.82rem;flex:1;outline:none;}
+.rp-headers .row-h input:focus{background:#fff;}
+.rp-editor-wrap .ql-toolbar{border:none;border-bottom:1px solid #eaecf0;background:#fafafa;}
+.rp-editor-wrap .ql-container{border:none;font-size:.87rem;min-height:110px;max-height:260px;overflow-y:auto;}
+.rp-toolbar-extra{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
+  background:#fafafa;border-top:1px solid #eaecf0;flex-wrap:wrap;gap:8px;}
+.rp-adj-preview{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px;}
+.rp-adj-preview .chip{display:flex;align-items:center;gap:5px;background:#f1f5f9;border-radius:7px;
+  padding:4px 8px;font-size:.74rem;}
+.rp-adj-preview .chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
 </style>
 
 <div class="tk-hero" id="tkHero">
@@ -45,7 +85,7 @@
 
 <div class="tk-tabs">
   <div class="tk-tab active" data-pane="info">Información</div>
-  <div class="tk-tab" data-pane="conv">Conversación <span class="badge" id="convBadge" style="display:none;">0</span></div>
+  <div class="tk-tab" data-pane="conv">Respuestas <span class="badge" id="convBadge" style="display:none;">0</span></div>
   <div class="tk-tab" data-pane="acc">Acciones</div>
 </div>
 
@@ -96,26 +136,43 @@
   </div>
 </div>
 
-<!-- CONVERSACIÓN -->
+<!-- RESPUESTAS (conversacion) -->
 <div class="tk-pane" id="pane-conv">
-  <div class="tk-card">
-    <h6>Conversación y bitácora</h6>
-    <div id="listaMsgs"></div>
-    <div style="margin-top:12px;border-top:1px solid #eee;padding-top:12px;">
-      <textarea id="inpComent" class="form-control" rows="2" placeholder="Escribe un comentario interno…"></textarea>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-        <label style="font-size:.78rem;color:#6b7280;">
-          <input type="checkbox" id="chkInterno" checked> Comentario interno (no visible al cliente)
-        </label>
-        <div style="display:flex;gap:8px;">
-          <label class="btn btn-sm btn-ilus-outline" style="margin:0;">
-            <i class="bi bi-paperclip"></i> Adjuntar
-            <input type="file" id="inpAdjunto" hidden accept="image/*,video/*,application/pdf">
-          </label>
-          <button class="btn btn-sm btn-ilus" id="btnComent"><i class="bi bi-send me-1"></i>Comentar</button>
-        </div>
+  <div class="rp-offline-bar" id="rpOffline"><i class="bi bi-wifi-off"></i> Sin conexión a internet — no podrás enviar hasta reconectar.</div>
+
+  <div class="tk-card" style="padding:14px 16px;">
+    <div class="rp-thread" id="rpThread"></div>
+
+    <div class="rp-composer">
+      <div class="rp-mode-tabs">
+        <div class="rp-mode-tab active" data-mode="cliente"><i class="bi bi-send me-1"></i>Responder al cliente</div>
+        <div class="rp-mode-tab" data-mode="interno"><i class="bi bi-lock me-1"></i>Comentario interno</div>
       </div>
-      <div id="listaAdj" style="margin-top:10px;"></div>
+      <div class="rp-headers show" id="rpHeaders">
+        <div class="row-h"><label>De</label><span style="color:#0f172a;">ILUS Sport &amp; Health <span style="color:#9ca3af;">(soporte)</span></span></div>
+        <div class="row-h"><label>Para</label><input type="email" id="rpTo" placeholder="correo@cliente.cl"></div>
+        <div class="row-h"><label>CC</label><input type="text" id="rpCc" placeholder="opcional, separado por comas"></div>
+      </div>
+      <div class="rp-editor-wrap">
+        <div id="rpEditor" style="background:#fff;"></div>
+      </div>
+      <div class="rp-adj-preview" id="rpAdjPreview"></div>
+      <div class="rp-toolbar-extra">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label class="btn btn-sm btn-outline-secondary" style="margin:0;" title="Adjuntar fotos o archivos">
+            <i class="bi bi-paperclip"></i>
+            <input type="file" id="rpFile" hidden multiple accept="image/*,video/*,application/pdf">
+          </label>
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+              <i class="bi bi-file-earmark-text me-1"></i>Plantillas</button>
+            <ul class="dropdown-menu" id="rpPlantillasMenu" style="max-height:260px;overflow-y:auto;"></ul>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" id="rpGuardarPlantilla" title="Guardar el texto actual como plantilla">
+            <i class="bi bi-bookmark-plus"></i></button>
+        </div>
+        <button class="btn btn-sm btn-ilus" id="rpBtnEnviar"><i class="bi bi-send-fill me-1"></i>Enviar</button>
+      </div>
     </div>
   </div>
 </div>
@@ -133,7 +190,9 @@
 const TID = {{ ticket_id }};
 const ESTADO_LABEL = {{ estado_label|tojson }};
 const TIPO_LABEL = {{ tipo_label|tojson }};
-let _adjuntoFile = null;
+let ticketActual = null;
+let rpAdjuntos = [];   // [{id, url, nombre}] ya subidos, pendientes de enviar con el proximo mensaje
+let rpModo = 'cliente'; // 'cliente' | 'interno'
 
 // Escapa TAMBIÉN comillas (esc se usa en atributos href/onclick, no solo texto) → anti-XSS.
 function esc(s){ return (s==null?'':String(s))
@@ -143,6 +202,7 @@ function esc(s){ return (s==null?'':String(s))
 function fmtFechaHora(s){ return s || ''; }
 // href seguro: solo rutas internas /f/ o http(s) — evita esquemas peligrosos.
 function safeUrl(u){ u=String(u||''); return (u.startsWith('/') || /^https?:/i.test(u)) ? u : '#'; }
+function esImagen(mime){ return /^image\//.test(mime||''); }
 
 document.querySelectorAll('.tk-tab').forEach(function(tab){
   tab.addEventListener('click', function(){
@@ -153,12 +213,45 @@ document.querySelectorAll('.tk-tab').forEach(function(tab){
   });
 });
 
+// ══════════════ Editor Quill (caja de texto "potente") ══════════════
+const rpQuill = new Quill('#rpEditor', {
+  theme: 'snow',
+  placeholder: 'Escribe tu respuesta…',
+  modules: { toolbar: [['bold','italic','underline'], [{list:'ordered'},{list:'bullet'}], ['link','clean']] },
+});
+
+// ══════════════ Conexión — envío "inteligente" ══════════════
+const rpOfflineBar = document.getElementById('rpOffline');
+function actualizarConexion(){
+  const offline = !navigator.onLine;
+  rpOfflineBar.classList.toggle('show', offline);
+  document.getElementById('rpBtnEnviar').disabled = offline;
+}
+window.addEventListener('online', actualizarConexion);
+window.addEventListener('offline', actualizarConexion);
+actualizarConexion();
+
+// ══════════════ Modo: responder al cliente vs comentario interno ══════════════
+document.querySelectorAll('.rp-mode-tab').forEach(function(el){
+  el.addEventListener('click', function(){
+    document.querySelectorAll('.rp-mode-tab').forEach(x=>x.classList.remove('active'));
+    el.classList.add('active');
+    rpModo = el.dataset.mode;
+    document.getElementById('rpHeaders').classList.toggle('show', rpModo === 'cliente');
+    const btn = document.getElementById('rpBtnEnviar');
+    btn.innerHTML = rpModo === 'cliente'
+      ? '<i class="bi bi-send-fill me-1"></i>Enviar'
+      : '<i class="bi bi-chat-left-text me-1"></i>Comentar';
+  });
+});
+
 async function cargar(){
   let d;
   try{ const r = await fetch('/tickets/api/tickets/'+TID); d = await r.json(); }
   catch(e){ ilusToast('No se pudo cargar el ticket','error'); return; }
   if(!d.ok){ ilusToast(d.error||'Error','error'); return; }
   const t = d.ticket;
+  ticketActual = t;
 
   document.getElementById('hNum').textContent = t.numero_ticket || ('#'+t.id);
   document.getElementById('hCliente').textContent = t.empresa || t.nombre_contacto || t.rut || 'Sin cliente';
@@ -169,6 +262,7 @@ async function cargar(){
   document.getElementById('selPrio').value = t.prioridad;
   document.getElementById('inpAsignado').value = t.asignado_a || '';
   document.getElementById('txtDesc').textContent = t.descripcion || '—';
+  if(!document.getElementById('rpTo').value) document.getElementById('rpTo').value = t.email || '';
 
   const dl = document.getElementById('dlCliente');
   const rows = [
@@ -192,23 +286,7 @@ async function cargar(){
     ? d.documentos.map(x=>esc((x.erp_tido||'')+' '+(x.erp_nudo||''))).join(', ')
     : '<span style="color:#9ca3af;">Sin documentos asociados.</span>';
 
-  // Mensajes / conversación
-  const lm = document.getElementById('listaMsgs');
-  lm.innerHTML = d.mensajes.length ? d.mensajes.map(function(m){
-    const evento = !['comentario','mensaje','client_message'].includes(m.tipo);
-    const cls = evento ? 'evento' : (m.es_interno ? 'interno' : '');
-    const who = m.usuario || (m.tipo==='client_message'?'Cliente':'Sistema');
-    return '<div class="tk-msg '+cls+'"><div class="meta">'+esc(who)+' · '+fmtFechaHora(m.created_at)
-      + (m.es_interno && !evento ? ' · <i class="bi bi-lock-fill"></i> interno':'')+'</div>'
-      + '<div>'+esc(m.contenido||'')+'</div></div>';
-  }).join('') : '<div style="color:#9ca3af;font-size:.85rem;">Aún no hay mensajes.</div>';
-
-  // Adjuntos
-  const la = document.getElementById('listaAdj');
-  la.innerHTML = d.adjuntos.map(function(a){
-    return '<a class="tk-adj" href="'+esc(safeUrl(a.archivo_url))+'" target="_blank" rel="noopener">'
-      + '<i class="bi bi-paperclip"></i>'+ esc(a.archivo_nombre||'archivo')+'</a>';
-  }).join('');
+  renderThread(d.mensajes, d.adjuntos);
 
   const nuevos = d.mensajes.filter(m=>m.tipo==='client_message').length;
   const cb = document.getElementById('convBadge');
@@ -216,6 +294,47 @@ async function cargar(){
 
   // marcar leído
   fetch('/tickets/api/tickets/'+TID+'/marcar-leido',{method:'PATCH'}).catch(()=>{});
+}
+
+function renderThread(mensajes, adjuntos){
+  const adjPorMensaje = {};
+  (adjuntos||[]).forEach(function(a){
+    const k = a.mensaje_id || 'sin_mensaje';
+    (adjPorMensaje[k] = adjPorMensaje[k] || []).push(a);
+  });
+  const th = document.getElementById('rpThread');
+  if(!mensajes.length){
+    th.innerHTML = '<div style="color:#9ca3af;font-size:.85rem;text-align:center;padding:20px;">Aún no hay mensajes.</div>';
+    return;
+  }
+  th.innerHTML = mensajes.map(function(m){
+    const esEvento = !['comentario','mensaje','client_message'].includes(m.tipo);
+    if(esEvento){
+      return '<div class="rp-msg evento"><div class="rp-bubble">'+esc(m.contenido||'')+' · '+fmtFechaHora(m.created_at)+'</div></div>';
+    }
+    const esCliente = m.tipo === 'client_message';
+    const esInterno = !!m.es_interno && m.tipo !== 'client_message';
+    const cls = esCliente ? 'in' : (esInterno ? 'interno' : 'out');
+    const who = esCliente ? (esc(ticketActual && ticketActual.nombre_contacto || 'Cliente')) : esc(m.usuario || 'Sistema');
+    let estadoTag = '';
+    if(!esCliente && !esInterno){
+      estadoTag = m.estado_envio === 'fallido'
+        ? ' · <span class="rp-estado-fail"><i class="bi bi-exclamation-triangle-fill"></i> no se pudo enviar</span>'
+        : ' · <span class="rp-estado-ok"><i class="bi bi-check2-all"></i> enviado</span>';
+    }
+    const adjs = adjPorMensaje[m.id] || [];
+    const adjHtml = adjs.map(function(a){
+      const url = safeUrl(a.archivo_url);
+      const thumb = esImagen(a.mime_type) ? '<img src="'+esc(url)+'">' : '<i class="bi bi-paperclip"></i>';
+      return '<a class="rp-adj-chip" href="'+esc(url)+'" target="_blank" rel="noopener">'+thumb+esc(a.archivo_nombre||'archivo')+'</a>';
+    }).join('');
+    return '<div class="rp-msg '+cls+'"><div class="rp-bubble">'
+      + '<div class="rp-meta">'+who+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>'
+      + '<div>'+(m.contenido||'')+'</div>'
+      + (adjHtml? '<div>'+adjHtml+'</div>':'')
+      + '</div></div>';
+  }).join('');
+  th.scrollTop = th.scrollHeight;
 }
 
 document.getElementById('btnGuardar').addEventListener('click', async function(){
@@ -248,36 +367,116 @@ async function delEquipo(eid){
   const d = await r.json(); if(d.ok) cargar(); else ilusToast(d.error||'Error','error');
 }
 
-document.getElementById('btnComent').addEventListener('click', async function(){
-  const cont = document.getElementById('inpComent').value.trim();
-  if(!cont && !_adjuntoFile){ ilusToast('Escribe un comentario o adjunta un archivo','warning'); return; }
-  if(cont){
-    const r = await fetch('/tickets/api/tickets/'+TID+'/comentario', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({contenido:cont, es_interno:document.getElementById('chkInterno').checked})});
-    const d = await r.json();
-    if(!d.ok){ ilusToast(d.error||'Error','error'); return; }
-    document.getElementById('inpComent').value='';
-  }
-  if(_adjuntoFile){ await subirAdjunto(); }
-  cargar();
+// ══════════════ Adjuntos del composer (subida inmediata, se linkean al enviar) ══════════════
+document.getElementById('rpFile').addEventListener('change', async function(e){
+  const files = Array.from(e.target.files || []);
+  this.value = '';
+  for(const f of files){ await rpSubirArchivo(f); }
 });
-
-document.getElementById('inpAdjunto').addEventListener('change', function(e){
-  _adjuntoFile = e.target.files[0] || null;
-  if(_adjuntoFile) ilusToast('Archivo listo: '+_adjuntoFile.name+' (se sube al comentar)','info');
-});
-
-async function subirAdjunto(){
-  const fd = new FormData(); fd.append('file', _adjuntoFile);
-  ilusLoader.show('Subiendo archivo…');
+async function rpSubirArchivo(file){
+  const fd = new FormData(); fd.append('file', file);
+  ilusLoader.show('Subiendo '+file.name+'…');
   try{
     const r = await fetch('/tickets/api/tickets/'+TID+'/adjuntos', {method:'POST', body:fd});
     const d = await r.json(); ilusLoader.hide();
-    if(d.ok){ _adjuntoFile=null; document.getElementById('inpAdjunto').value=''; ilusToast('✓ Adjunto subido','success'); }
-    else ilusToast(d.error||'Error al subir','error');
-  }catch(e){ ilusLoader.hide(); ilusToast('Error al subir','error'); }
+    if(!d.ok){ ilusToast(d.error||'No se pudo subir '+file.name,'error'); return; }
+    rpAdjuntos.push({id:d.id, url:d.url, nombre:d.nombre});
+    renderRpAdjPreview();
+  }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión — no se pudo subir '+file.name,'error'); }
 }
+function renderRpAdjPreview(){
+  const c = document.getElementById('rpAdjPreview');
+  c.innerHTML = rpAdjuntos.map((a,i)=>'<span class="chip"><i class="bi bi-paperclip"></i>'+esc(a.nombre)
+    + ' <span class="x" onclick="rpQuitarAdjunto('+i+')">&times;</span></span>').join('');
+}
+window.rpQuitarAdjunto = function(i){ rpAdjuntos.splice(i,1); renderRpAdjPreview(); };
+
+// ══════════════ Plantillas ══════════════
+async function rpCargarPlantillas(){
+  const menu = document.getElementById('rpPlantillasMenu');
+  try{
+    const r = await fetch('/tickets/api/plantillas');
+    const d = await r.json();
+    const pls = (d.ok && d.plantillas) || [];
+    menu.innerHTML = pls.length ? pls.map((p,i)=>
+      '<li><a class="dropdown-item" href="#" data-i="'+i+'">'+esc(p.titulo)+'</a></li>').join('')
+      : '<li><span class="dropdown-item-text text-muted">Sin plantillas aún</span></li>';
+    menu.querySelectorAll('a.dropdown-item').forEach(function(a){
+      a.addEventListener('click', function(ev){
+        ev.preventDefault();
+        rpQuill.clipboard.dangerouslyPasteHTML(pls[+a.dataset.i].cuerpo || '');
+      });
+    });
+  }catch(e){ menu.innerHTML = '<li><span class="dropdown-item-text text-muted">No se pudieron cargar</span></li>'; }
+}
+rpCargarPlantillas();
+
+document.getElementById('rpGuardarPlantilla').addEventListener('click', async function(){
+  const cuerpo = rpQuill.root.innerHTML;
+  if(!rpQuill.getText().trim()){ ilusToast('Escribe algo antes de guardarlo como plantilla','warning'); return; }
+  const titulo = await ilusPrompt({title:'Guardar plantilla', message:'Nombre de la plantilla', placeholder:'Ej: Pedir fotos del equipo', required:true});
+  if(!titulo) return;
+  try{
+    const r = await fetch('/tickets/api/plantillas', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({titulo:titulo, cuerpo:cuerpo})});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Plantilla guardada','success'); rpCargarPlantillas(); }
+    else ilusToast(d.error||'Error al guardar','error');
+  }catch(e){ ilusToast('Sin conexión','error'); }
+});
+
+// ══════════════ Envío "inteligente" ══════════════
+document.getElementById('rpBtnEnviar').addEventListener('click', async function(){
+  if(!navigator.onLine){
+    ilusToast('Sin conexión a internet. Revisa tu red e intenta de nuevo — tu texto no se perdió.','error');
+    return;
+  }
+  const html = rpQuill.root.innerHTML;
+  const soloTexto = rpQuill.getText().trim();
+  if(!soloTexto && !rpAdjuntos.length){
+    ilusToast('Escribe un mensaje o adjunta un archivo','warning'); return;
+  }
+  const btn = this;
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
+
+  const adjIds = rpAdjuntos.map(a=>a.id);
+  let url, payload;
+  if(rpModo === 'interno'){
+    url = '/tickets/api/tickets/'+TID+'/comentario';
+    payload = {contenido: html, es_interno: true, adjunto_ids: adjIds};
+  }else{
+    const to = document.getElementById('rpTo').value.trim();
+    if(!to){ ilusToast('Falta el correo del destinatario ("Para")','warning'); btn.disabled=false; btn.innerHTML=originalHtml; return; }
+    url = '/tickets/api/tickets/'+TID+'/responder-cliente';
+    payload = {contenido: html, to: to, cc: document.getElementById('rpCc').value.trim(), adjunto_ids: adjIds};
+  }
+
+  let d, huboErrorRed = false;
+  try{
+    const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    d = await r.json();
+  }catch(e){
+    huboErrorRed = true;
+  }
+  btn.disabled = false; btn.innerHTML = originalHtml;
+
+  if(huboErrorRed){
+    ilusToast('No se pudo enviar: sin conexión o el servidor no respondió. Tu mensaje no se perdió, intenta de nuevo.','error');
+    return; // conserva texto y adjuntos para reintentar
+  }
+  if(!d.ok){
+    ilusToast(d.error || 'No se pudo enviar', 'error');
+    // Si el servidor igual guardo el intento (ver estado_envio='fallido'), refrescamos
+    // el hilo para que se vea el mensaje marcado como "no se pudo enviar".
+    if(d.mensaje_id){ rpQuill.setText(''); rpAdjuntos = []; renderRpAdjPreview(); cargar(); }
+    return;
+  }
+  rpQuill.setText('');
+  rpAdjuntos = []; renderRpAdjPreview();
+  ilusToast(rpModo==='interno' ? '✓ Comentario guardado' : '✓ Enviado al cliente', 'success');
+  cargar();
+});
 
 cargar();
 </script>

@@ -6710,7 +6710,7 @@ def _email_normalize_attachments(attachments):
 
 
 def _send_via_resend(to, subject: str, html: str, from_addr: str = None,
-                     reply_to: str = None, attachments=None) -> bool:
+                     reply_to: str = None, attachments=None, cc=None) -> bool:
     """
     Envía email vía API HTTPS de Resend (no usa puertos SMTP).
     Funciona desde cualquier IP, incluyendo cloud hosting (Railway, Heroku, AWS).
@@ -6750,6 +6750,9 @@ def _send_via_resend(to, subject: str, html: str, from_addr: str = None,
     if reply_to:
         # Resend acepta string o lista
         payload_dict["reply_to"] = reply_to
+    if cc:
+        # Ticket con copia (2026-07-11): Resend acepta string o lista.
+        payload_dict["cc"] = [c.strip() for c in cc.split(",")] if isinstance(cc, str) else list(cc)
     # Adjuntos (FIX 2026-06-11): Resend acepta [{"filename","content"(base64)}]
     att_norm = _email_normalize_attachments(attachments)
     if att_norm:
@@ -7306,7 +7309,7 @@ def _apply_test_redirect(to_addr, subject):
 
 
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
-                          attachments=None) -> bool:
+                          attachments=None, cc=None) -> bool:
     """
     Implementación real con fallback configurable por env var.
 
@@ -7373,7 +7376,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
         if _send_via_resend(to_addr, subject, html_body,
                             from_addr=from_for_resend,
                             reply_to=marca["reply_to"],
-                            attachments=att_norm):
+                            attachments=att_norm, cc=cc):
             return True
         # Resend falló — guardar error legible y caer a SMTP
         err = getattr(g, "_last_resend_error", None) or {}
@@ -7435,6 +7438,12 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     msg["To"]      = to_addr
     if reply_to:
         msg["Reply-To"] = reply_to
+    # CC (2026-07-11, respuesta de tickets): acepta string "a@x.cl,b@y.cl" o
+    # lista. El header Cc es solo display -- el envio real depende de incluir
+    # estos destinatarios en la lista de sendmail() mas abajo.
+    cc_list = ([c.strip() for c in cc.split(",") if c.strip()] if isinstance(cc, str) else list(cc)) if cc else []
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
 
     host      = cfg["smtp_host"]
     port      = int(cfg.get("smtp_port", 587))
@@ -7442,6 +7451,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     user      = cfg["smtp_user"]
     passwd    = cfg.get("smtp_pass", "")
     from_addr = from_addr_cfg or user
+    todos_destinatarios = [to_addr] + cc_list
 
     def _try_send(p, sec, timeout=10):
         # Timeout reducido a 10s/intento (antes 30s). Si el endpoint
@@ -7452,13 +7462,13 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
         if sec:
             with _open_smtp_client(host, p, True, timeout=timeout) as srv:
                 srv.login(user, passwd)
-                srv.sendmail(from_addr, [to_addr], msg.as_string())
+                srv.sendmail(from_addr, todos_destinatarios, msg.as_string())
         else:
             with _open_smtp_client(host, p, False, timeout=timeout) as srv:
                 srv.ehlo()
                 srv.starttls()
                 srv.login(user, passwd)
-                srv.sendmail(from_addr, [to_addr], msg.as_string())
+                srv.sendmail(from_addr, todos_destinatarios, msg.as_string())
 
     # Intentos: puerto configurado → puerto alternativo automático
     attempts = [(port, secure)]
@@ -7494,7 +7504,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
         if _send_via_resend(to_addr, subject, html_body,
                             from_addr=from_for_resend,
                             reply_to=marca["reply_to"],
-                            attachments=att_norm):
+                            attachments=att_norm, cc=cc):
             print(f"[ILUS][EMAIL] Enviado a {to_addr} via Resend (fallback de SMTP)")
             return True
 

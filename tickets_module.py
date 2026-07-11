@@ -17,9 +17,12 @@ Ver BLUEPRINT-TICKETS-CENTRAL.md para el diseno completo (fases 2..7:
 formulario publico, correo bidireccional, pestana Acciones, cotizaciones,
 documentos ERP, migracion desde mant_tickets).
 """
+import html as _html_mod
 import json
+import re
 import time
 from functools import wraps
+from html.parser import HTMLParser
 from datetime import datetime, timezone, date
 
 try:
@@ -105,6 +108,66 @@ _MANT_BITACORA_TIPO_MAP = {
     "otro": "otro",
 }
 
+# ─────────────────────────────────────────────────────────────────────────
+#  Sanitizador de HTML para el contenido de tk_mensajes (whitelist, solo
+#  libreria estandar -- sin agregar dependencias nuevas al deploy).
+#
+#  El composer de Respuestas usa un editor rico (Quill) que genera HTML
+#  (negrita/listas/links). Ese HTML se guarda TAL CUAL y se re-renderiza
+#  sin escapar en la conversacion (necesario para mostrar el formato) --
+#  eso es una superficie de XSS real: cualquier <script>/onerror/etc que
+#  llegue en `contenido` (via API directa, no solo desde la UI) se
+#  ejecutaria en la sesion de OTRO miembro del staff que vea el ticket, y
+#  a futuro en mensajes entrantes de clientes (Fase 3). Se sanitiza aqui,
+#  al momento de guardar, quedandonos solo con las etiquetas que el
+#  toolbar de Quill puede producir + <a href="http(s)/mailto"> segura.
+# ─────────────────────────────────────────────────────────────────────────
+_TAGS_PERMITIDOS = {"p", "br", "b", "strong", "i", "em", "u", "ol", "ul", "li", "a", "span"}
+_HREF_OK = re.compile(r"^(https?://|mailto:)", re.I)
+
+
+class _SanitizadorHTMLMensaje(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in _TAGS_PERMITIDOS:
+            return
+        extra = ""
+        if tag == "a":
+            for k, v in attrs:
+                if k == "href" and v and _HREF_OK.match(v.strip()):
+                    extra = f' href="{_html_mod.escape(v.strip(), quote=True)}" target="_blank" rel="noopener"'
+                    break
+        self.out.append(f"<{tag}{extra}>")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == "br":
+            self.out.append("<br>")
+
+    def handle_endtag(self, tag):
+        if tag in _TAGS_PERMITIDOS:
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.out.append(_html_mod.escape(data))
+
+
+def _sanitizar_html_mensaje(raw):
+    """Whitelist de tags: p/br/b/strong/i/em/u/ol/ul/li/span/a(href seguro).
+    Todo el resto (script, on*, style, iframe, svg, atributos no listados)
+    se descarta; el texto se preserva escapado."""
+    if not raw:
+        return ""
+    parser = _SanitizadorHTMLMensaje()
+    try:
+        parser.feed(raw)
+        parser.close()
+        return "".join(parser.out)
+    except Exception:
+        return _html_mod.escape(str(raw))
+
 
 def register_tickets_routes(app, ctx):
     # ── Dependencias inyectadas desde app.py (globals) ──
@@ -126,6 +189,10 @@ def register_tickets_routes(app, ctx):
     _rut_cuerpo = ctx.get("_rut_cuerpo")
     _RANDOM_TIDOS_VENTA = ctx.get("_RANDOM_TIDOS_VENTA") or (
         "FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "GTR", "GRD", "FCO", "COV")
+    # Correo saliente real al cliente: reusar el estandar de marca ILUS
+    # (Regla: un solo `_ilus_email_master`/`_send_ilus_email`, no duplicar).
+    _send_ilus_email = ctx.get("_send_ilus_email")
+    _brand_subject = ctx.get("_brand_subject") or (lambda tema: tema)
 
     def _fmt_dt(value, only_date=False):
         """Formatea un datetime/date de MySQL (UTC naive) a hora Chile como
@@ -247,6 +314,16 @@ def register_tickets_routes(app, ctx):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
         mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_plantillas (
+              id           INT AUTO_INCREMENT PRIMARY KEY,
+              titulo       VARCHAR(150) NOT NULL,
+              cuerpo       MEDIUMTEXT NOT NULL,
+              created_by   VARCHAR(190) NULL,
+              created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_titulo (titulo)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        mysql_execute("""
             CREATE TABLE IF NOT EXISTS tk_adjuntos (
               id             INT AUTO_INCREMENT PRIMARY KEY,
               ticket_id      INT NOT NULL,
@@ -354,9 +431,34 @@ def register_tickets_routes(app, ctx):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+    def _ensure_tk_mensajes_columns():
+        """Migracion aditiva por columnas (patron _ensure_transporte_columns):
+        agrega to_email/cc_email/estado_envio a tk_mensajes si faltan. Necesario
+        para el composer de respuesta al cliente (De/Para/CC + estado de envio)."""
+        try:
+            existentes = {r["COLUMN_NAME"] for r in mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tk_mensajes'")}
+        except Exception as _e:
+            print(f"[ILUS][WARN] _ensure_tk_mensajes_columns (schema check): {_e}", flush=True)
+            return
+        alters = []
+        if "to_email" not in existentes:
+            alters.append("ADD COLUMN to_email VARCHAR(150) NULL")
+        if "cc_email" not in existentes:
+            alters.append("ADD COLUMN cc_email VARCHAR(300) NULL")
+        if "estado_envio" not in existentes:
+            alters.append("ADD COLUMN estado_envio ENUM('enviado','fallido') NULL")
+        for a in alters:
+            try:
+                mysql_execute(f"ALTER TABLE tk_mensajes {a}")
+            except Exception as _e:
+                print(f"[ILUS][WARN] tk_mensajes {a}: {_e}", flush=True)
+
     with app.app_context():
         try:
             _ensure_tickets_tables()
+            _ensure_tk_mensajes_columns()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_tickets_tables: {_e}", flush=True)
@@ -390,19 +492,42 @@ def register_tickets_routes(app, ctx):
             return view(*a, **k)
         return login_required(wrapped)
 
-    def _tk_log(ticket_id, tipo, contenido, usuario=None, metadata=None, es_interno=True):
-        """Escribe un evento/mensaje en tk_mensajes. Nunca rompe el flujo."""
+    def _tk_log(ticket_id, tipo, contenido, usuario=None, metadata=None, es_interno=True,
+                to_email=None, cc_email=None, estado_envio=None):
+        """Escribe un evento/mensaje en tk_mensajes. Nunca rompe el flujo.
+        Devuelve el id del mensaje insertado (o None si fallo) -- lo usan
+        responder-cliente/comentario para vincular adjuntos al mensaje."""
+        base_user = usuario or (current_username() or "sistema")
         try:
             mysql_execute(
-                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
-                "VALUES (%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO tk_mensajes "
+                "(ticket_id, tipo, contenido, metadata, usuario, es_interno, to_email, cc_email, estado_envio) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (ticket_id, tipo, contenido,
                  json.dumps(metadata, ensure_ascii=False) if metadata else None,
-                 usuario or (current_username() or "sistema"),
-                 1 if es_interno else 0),
+                 base_user, 1 if es_interno else 0, to_email, cc_email, estado_envio),
             )
         except Exception as _e:
-            print(f"[tk_log] error: {_e}", flush=True)
+            # Fallback defensivo: si la migracion de columnas (to_email/cc_email/
+            # estado_envio) no llego a correr por algun motivo, no debe romperse
+            # TODA la conversacion -- se guarda igual sin esas columnas.
+            print(f"[tk_log] insert con columnas nuevas fallo, fallback: {_e}", flush=True)
+            try:
+                mysql_execute(
+                    "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
+                    (ticket_id, tipo, contenido,
+                     json.dumps(metadata, ensure_ascii=False) if metadata else None,
+                     base_user, 1 if es_interno else 0),
+                )
+            except Exception as _e2:
+                print(f"[tk_log] error: {_e2}", flush=True)
+                return None
+        try:
+            row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id")
+            return int(row["id"]) if row and row.get("id") else None
+        except Exception:
+            return None
 
     def _norm_enum(value, allowed, default):
         v = (value or "").strip().lower()
@@ -660,9 +785,20 @@ def register_tickets_routes(app, ctx):
         documentos = mysql_fetchall(
             "SELECT id, erp_tido, erp_nudo, fecha, monto FROM tk_ticket_documentos "
             "WHERE ticket_id=%s ORDER BY id", (tid,))
-        mensajes = mysql_fetchall(
-            "SELECT id, tipo, contenido, metadata, usuario, es_interno, message_date, created_at "
-            "FROM tk_mensajes WHERE ticket_id=%s ORDER BY created_at ASC, id ASC", (tid,))
+        try:
+            mensajes = mysql_fetchall(
+                "SELECT id, tipo, contenido, metadata, usuario, es_interno, message_date, created_at, "
+                "       to_email, cc_email, estado_envio "
+                "FROM tk_mensajes WHERE ticket_id=%s ORDER BY created_at ASC, id ASC", (tid,))
+        except Exception as _e:
+            # Defensivo: si la migracion de columnas (to_email/cc_email/
+            # estado_envio) no corrio, no debe romperse la ficha entera.
+            print(f"[tk_api_get] mensajes con columnas nuevas fallo, fallback: {_e}", flush=True)
+            mensajes = mysql_fetchall(
+                "SELECT id, tipo, contenido, metadata, usuario, es_interno, message_date, created_at "
+                "FROM tk_mensajes WHERE ticket_id=%s ORDER BY created_at ASC, id ASC", (tid,))
+            for _m in mensajes:
+                _m["to_email"] = None; _m["cc_email"] = None; _m["estado_envio"] = None
         adjuntos = mysql_fetchall(
             "SELECT id, mensaje_id, archivo_url, archivo_nombre, mime_type, file_size_kb, origen, created_at "
             "FROM tk_adjuntos WHERE ticket_id=%s ORDER BY id", (tid,))
@@ -753,6 +889,20 @@ def register_tickets_routes(app, ctx):
         mysql_execute("DELETE FROM tk_tickets WHERE id=%s", (tid,))
         return jsonify({"ok": True})
 
+    def _tk_link_adjuntos(tid, mensaje_id, adjunto_ids):
+        """Vincula adjuntos ya subidos (POST .../adjuntos) al mensaje recien
+        creado, para que la conversacion los agrupe correctamente."""
+        ids = [int(i) for i in (adjunto_ids or []) if str(i).isdigit()]
+        if not ids or not mensaje_id:
+            return
+        try:
+            placeholders = ",".join(["%s"] * len(ids))
+            mysql_execute(
+                f"UPDATE tk_adjuntos SET mensaje_id=%s WHERE ticket_id=%s AND id IN ({placeholders})",
+                (mensaje_id, tid, *ids))
+        except Exception as _e:
+            print(f"[tk_link_adjuntos] error: {_e}", flush=True)
+
     # ─────────────────────────────────────────────────────────────────
     #  API — comentario interno (conversacion Fase 1)
     # ─────────────────────────────────────────────────────────────────
@@ -762,12 +912,89 @@ def register_tickets_routes(app, ctx):
         if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
         d = request.get_json(silent=True) or {}
-        contenido = (d.get("contenido") or "").strip()
+        contenido = _sanitizar_html_mensaje((d.get("contenido") or "").strip())
         if not contenido:
             return jsonify({"ok": False, "error": "El comentario esta vacio"}), 400
         es_interno = bool(d.get("es_interno", True))
-        _tk_log(tid, "comentario", contenido[:5000], es_interno=es_interno)
+        msg_id = _tk_log(tid, "comentario", contenido[:20000], es_interno=es_interno)
+        _tk_link_adjuntos(tid, msg_id, d.get("adjunto_ids"))
         mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
+        return jsonify({"ok": True, "mensaje_id": msg_id})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — RESPONDER AL CLIENTE (correo real, De/Para/CC)
+    #  Reusa el estandar de marca ILUS (_send_ilus_email/_brand_subject) --
+    #  el MISMO que usan retiros/mantenciones/transporte. El "envio
+    #  inteligente" (detectar sin conexion, mostrar que paso) vive en el
+    #  front (ficha.html); aca devolvemos ok:false con detalle claro si
+    #  el correo no se pudo enviar, y SIEMPRE dejamos registro en
+    #  tk_mensajes (estado_envio='enviado'|'fallido') para trazabilidad.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/tickets/<int:tid>/responder-cliente", methods=["POST"])
+    @_tickets_required
+    def tk_api_responder_cliente(tid):
+        t = mysql_fetchone("SELECT numero_ticket, email FROM tk_tickets WHERE id=%s", (tid,))
+        if not t:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        d = request.get_json(silent=True) or {}
+        contenido = _sanitizar_html_mensaje((d.get("contenido") or "").strip())
+        to_email = (d.get("to") or t.get("email") or "").strip()
+        cc_email = (d.get("cc") or "").strip()
+        if not contenido:
+            return jsonify({"ok": False, "error": "El mensaje esta vacio"}), 400
+        if not to_email or "@" not in to_email:
+            return jsonify({"ok": False, "error": "Falta un correo de destino valido"}), 400
+        if not _send_ilus_email:
+            return jsonify({"ok": False, "error": "El envio de correo no esta disponible en este entorno"}), 200
+
+        numero = t.get("numero_ticket") or f"#{tid}"
+        subject = _brand_subject(f"Ticket {numero}")
+        try:
+            kwargs = {"evento": "ticket_respuesta", "modulo": "tickets"}
+            if cc_email:
+                kwargs["cc"] = cc_email
+            enviado = _send_ilus_email(to_email, subject, contenido, **kwargs)
+        except Exception as _e:
+            print(f"[tk_responder_cliente] error enviando tid={tid}: {_e}", flush=True)
+            enviado = False
+
+        msg_id = _tk_log(
+            tid, "mensaje", contenido[:20000], es_interno=False,
+            to_email=to_email[:150], cc_email=cc_email[:300] or None,
+            estado_envio="enviado" if enviado else "fallido",
+            metadata={"subject": subject})
+        _tk_link_adjuntos(tid, msg_id, d.get("adjunto_ids"))
+        mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
+
+        if not enviado:
+            return jsonify({
+                "ok": False, "mensaje_id": msg_id,
+                "error": "El correo no se pudo enviar (revisa la config de correo o intenta de nuevo). "
+                         "Tu mensaje quedó guardado, puedes reintentar.",
+            }), 200
+        return jsonify({"ok": True, "mensaje_id": msg_id})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — Plantillas de mensajes (canned responses)
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/plantillas", methods=["GET"])
+    @_tickets_required
+    def tk_api_plantillas_list():
+        rows = mysql_fetchall(
+            "SELECT id, titulo, cuerpo FROM tk_plantillas ORDER BY titulo LIMIT 100")
+        return jsonify({"ok": True, "plantillas": [dict(r) for r in rows]})
+
+    @app.route("/tickets/api/plantillas", methods=["POST"])
+    @_tickets_required
+    def tk_api_plantillas_create():
+        d = request.get_json(silent=True) or {}
+        titulo = (d.get("titulo") or "").strip()[:150]
+        cuerpo = (d.get("cuerpo") or "").strip()
+        if not titulo or not cuerpo:
+            return jsonify({"ok": False, "error": "Falta título o contenido"}), 400
+        mysql_execute(
+            "INSERT INTO tk_plantillas (titulo, cuerpo, created_by) VALUES (%s,%s,%s)",
+            (titulo, cuerpo, current_username() or "sistema"))
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
