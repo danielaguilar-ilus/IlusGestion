@@ -630,6 +630,17 @@
         <span class="small text-muted" id="tplModuloHelp">
           Plantillas que se envían al cliente por cada estado del proceso
         </span>
+        {# Ayuda específica de Tickets — visible solo con ese módulo seleccionado #}
+        <div id="tkTplAyuda" class="w-100"
+             style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
+                    padding:10px 14px;font-size:.8rem;color:#166534;line-height:1.5">
+          <i class="bi bi-envelope-open me-1"></i>
+          El cliente recibe este correo y puede <strong>responderlo directamente</strong>:
+          su respuesta entra sola al ticket. Al final del correo se agrega automáticamente
+          la invitación a responder y el diseño de marca ILUS — aquí editas solo el
+          contenido del centro. Usa <strong>Vista previa</strong> para ver el correo
+          completo tal como le llegará.
+        </div>
       </div>
 
       <div class="row g-0" style="min-height:600px;border-radius:.5rem;overflow:hidden;border:1px solid #dee2e6">
@@ -733,7 +744,18 @@
             <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
               <h6 id="tplEditorEstadoTitulo" class="mb-0 fw-bold"></h6>
               <span class="badge bg-danger" id="tplCanalBadge"></span>
-              <div class="ms-auto d-flex gap-1">
+              <div class="ms-auto d-flex gap-1 flex-wrap">
+                {# Solo módulo Tickets: preview real del servidor + restaurar semilla #}
+                <button class="btn btn-sm btn-outline-secondary" id="tplBtnRestaurarTk"
+                        style="display:none" onclick="tkTplRestaurarOriginal()"
+                        title="Volver a la versión original ILUS de esta plantilla">
+                  <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar original
+                </button>
+                <button class="btn btn-sm btn-outline-info" id="tplBtnPreviewTk"
+                        style="display:none" onclick="tkTplVistaPrevia()"
+                        title="Vista previa real: el correo completo tal como lo verá el cliente">
+                  <i class="bi bi-eye me-1"></i>Vista previa
+                </button>
                 <button class="btn btn-sm btn-outline-secondary" onclick="tplCancelarEdicion()">
                   <i class="bi bi-x me-1"></i>Cancelar
                 </button>
@@ -961,6 +983,38 @@ window.addEventListener('DOMContentLoaded', () => {
       </div>
       <div class="modal-body p-0">
         <iframe id="tplPreviewFrame" style="width:100%;height:520px;border:0"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════
+   MODAL: Vista previa REAL — plantillas de Tickets
+   (render del SERVIDOR: borrador + invitación a responder
+    + diseño maestro de marca, igual que un envío real)
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalTkPreview" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content border-0">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title">
+          <i class="bi bi-envelope-paper me-2 text-danger"></i>Vista previa real — así lo verá el cliente
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="d-flex align-items-center gap-2 px-3 py-2"
+             style="background:#f8f9fa;border-bottom:1px solid #dee2e6">
+          <span class="small text-muted fw-semibold flex-shrink-0">Asunto:</span>
+          <span id="tkPreviewAsunto" class="small fw-bold text-truncate" style="color:#111"></span>
+          <button type="button" class="btn btn-sm btn-outline-secondary ms-auto flex-shrink-0"
+                  onclick="tkTplVistaPrevia(true)"
+                  title="Volver a generar la vista previa con el contenido actual del editor">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refrescar
+          </button>
+        </div>
+        <iframe id="tkPreviewFrame" sandbox="" title="Vista previa real del correo"
+                style="width:100%;height:540px;border:0;background:#f1f2f4"></iframe>
       </div>
     </div>
   </div>
@@ -2266,6 +2320,10 @@ async function cargarPlantillas(force=false) {
   const help = document.getElementById('tplModuloHelp');
   if (help) help.textContent = info.help;
 
+  // Ayuda específica de Tickets (flujo real del correo) — solo ese módulo
+  const tkHelp = document.getElementById('tkTplAyuda');
+  if (tkHelp) tkHelp.style.display = (modulo === 'tickets') ? '' : 'none';
+
   if (force) {
     _tplLoaded = false;
     _tplData = {};
@@ -2418,6 +2476,14 @@ function tplActivarEdicion() {
   document.getElementById('tplCanalBadge').textContent   = '📧 Email';
   document.getElementById('tplMsg').innerHTML = '';
 
+  // Botones exclusivos del módulo Tickets (preview real + restaurar semilla
+  // del servidor). Los demás módulos siguen exactamente igual (Regla #4.2).
+  const esTickets = getCurrentModulo() === 'tickets';
+  const btnPrevTk = document.getElementById('tplBtnPreviewTk');
+  const btnRestTk = document.getElementById('tplBtnRestaurarTk');
+  if (btnPrevTk) btnPrevTk.style.display = esTickets ? '' : 'none';
+  if (btnRestTk) btnRestTk.style.display = esTickets ? '' : 'none';
+
   // Variables clicables (con color ILUS)
   const vars = TPL_VARS[meta.grupo] || [];
   document.getElementById('tplVarsContainer').innerHTML = vars.map(v =>
@@ -2484,6 +2550,18 @@ async function tplGuardar() {
 async function tplRestaurar() {
   if (!_tplEstado) return;
   const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  // Tickets: la versión original vive en el SERVIDOR (semilla de app.py),
+  // no en TPL_DEFAULTS del front — antes este botón caía al aviso de
+  // "sin versión original"; ahora restaura de verdad vía endpoint dedicado.
+  if (getCurrentModulo() === 'tickets') {
+    const d = await _tkRestaurarPlantillaServidor(meta);
+    if (!d) return;
+    if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+    _tplData[_tplEstado]['email'] = { asunto: d.asunto || '', cuerpo: d.cuerpo || '' };
+    tplMostrarVista();
+    ilusToast('Plantilla restaurada a la versión original ILUS', { type:'success' });
+    return;
+  }
   const def = (TPL_DEFAULTS[_tplEstado] || {})[_tplCanal] || {asunto:'', cuerpo:''};
   // Guard anti-pérdida (2026-06-14): módulos sin default cliente-side (ej:
   // General) no tienen una "versión original" cargada aquí. Restaurar mandaría
@@ -2512,6 +2590,87 @@ async function tplRestaurar() {
       '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Plantilla restaurada</span>';
     setTimeout(() => document.getElementById('tvMsg').innerHTML = '', 3000);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// TICKETS · Editor "bien potente" (Daniel 2026-07-12):
+//  - Vista previa REAL: POST del borrador actual (sin guardar) al backend,
+//    que lo arma con el MISMO pipeline de un envío real (datos de muestra +
+//    invitación verde a responder + diseño maestro de marca ILUS).
+//  - Restaurar original: la semilla vive en el servidor (app.py), no en
+//    TPL_DEFAULTS del front.
+// ══════════════════════════════════════════════════════════════════════
+let _modalTkPreview = null;
+
+async function tkTplVistaPrevia(esRefresh = false) {
+  const asuntoEl = document.getElementById('tplAsunto');
+  const cuerpoEl = document.getElementById('tplCuerpoVisual');
+  if (!asuntoEl || !cuerpoEl) return;
+  try {
+    const r = await fetch('/tickets/api/config/preview-plantilla', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ asunto: asuntoEl.value, cuerpo: cuerpoEl.innerHTML }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo generar la vista previa', { type:'error' });
+      return;
+    }
+    document.getElementById('tkPreviewAsunto').textContent = d.asunto || '';
+    document.getElementById('tkPreviewFrame').srcdoc = d.html || '';
+    if (esRefresh) {
+      ilusToast('Vista previa actualizada', { type:'success' });
+    } else {
+      _modalTkPreview = _modalTkPreview ||
+        new bootstrap.Modal(document.getElementById('modalTkPreview'));
+      _modalTkPreview.show();
+    }
+  } catch (e) {
+    console.error('[tk] vista previa plantilla', e);
+    ilusToast('No se pudo generar la vista previa (¿sin conexión?)', { type:'error' });
+  }
+}
+
+// Confirma + llama al endpoint de restaurar. Devuelve {asunto, cuerpo} o null.
+// Compartido por el botón del editor y el "Restaurar" del modo vista.
+async function _tkRestaurarPlantillaServidor(meta) {
+  const ok = await ilusConfirm({
+    title: 'Restaurar plantilla original',
+    message: `Se reemplazará la plantilla "${(meta && meta.label) || _tplEstado}" por la versión original de ILUS.`,
+    sub: 'Tus cambios actuales se perderán.',
+    okLabel: 'Restaurar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return null;
+  try {
+    const r = await fetch('/tickets/api/config/restaurar-plantilla', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado: _tplEstado }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo restaurar la plantilla', { type:'error' });
+      return null;
+    }
+    return d;
+  } catch (e) {
+    console.error('[tk] restaurar plantilla', e);
+    ilusToast('No se pudo restaurar la plantilla (¿sin conexión?)', { type:'error' });
+    return null;
+  }
+}
+
+async function tkTplRestaurarOriginal() {
+  if (!_tplEstado) return;
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  const d = await _tkRestaurarPlantillaServidor(meta);
+  if (!d) return;
+  // Refrescar el editor EN VIVO, sin recargar la página
+  document.getElementById('tplAsunto').value = d.asunto || '';
+  document.getElementById('tplCuerpoVisual').innerHTML = d.cuerpo || '';
+  document.getElementById('tplCuerpoHtml').value = d.cuerpo || '';
+  if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+  _tplData[_tplEstado]['email'] = { asunto: d.asunto || '', cuerpo: d.cuerpo || '' };
+  ilusToast('Plantilla restaurada a la versión original ILUS', { type:'success' });
 }
 
 async function tplRestaurarTodo() {

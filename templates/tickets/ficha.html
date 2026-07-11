@@ -205,6 +205,32 @@
   width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:50%;
   background:rgba(255,255,255,.14);flex-shrink:0;}
 .tk-lightbox-close:hover{background:rgba(255,255,255,.26);}
+/* ── Actividad del ticket (línea de tiempo de supervisión) ── */
+.tk-act-filtros{display:flex;gap:6px;flex-wrap:wrap;}
+.tk-act-chip{padding:4px 12px;border-radius:50px;font-size:.72rem;font-weight:700;cursor:pointer;
+  background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb;user-select:none;
+  transition:background .12s,color .12s,border-color .12s;}
+.tk-act-chip:hover{border-color:#dc2626;color:#dc2626;}
+.tk-act-chip.active{background:#dc2626;color:#fff;border-color:#dc2626;}
+.tk-act-chip.active:hover{color:#fff;}
+.tk-act-item{position:relative;display:flex;gap:12px;padding-bottom:16px;}
+.tk-act-item::before{content:'';position:absolute;left:15px;top:34px;bottom:0;width:2px;background:#eaecf0;}
+.tk-act-item:last-child{padding-bottom:0;}
+.tk-act-item:last-child::before{display:none;}
+.tk-act-nodo{width:32px;height:32px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:.85rem;position:relative;z-index:1;border:2px solid #fff;
+  box-shadow:0 0 0 1px #eaecf0;}
+.tk-act-body{flex:1;min-width:0;padding-top:5px;}
+.tk-act-linea{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.tk-act-texto{font-size:.85rem;color:#374151;line-height:1.4;overflow-wrap:anywhere;}
+.tk-act-texto b{color:#0f172a;font-weight:700;}
+.tk-act-fecha{font-size:.7rem;color:#9ca3af;margin-left:auto;white-space:nowrap;}
+.tk-act-extracto{font-size:.78rem;color:#6b7280;margin-top:2px;overflow-wrap:anywhere;}
+.tk-act-tag{display:inline-flex;align-items:center;gap:4px;border-radius:50px;padding:1px 8px;font-size:.6rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;vertical-align:middle;}
+.tk-act-tag.env-ok,.tk-act-tag.cliente{background:#dcfce7;color:#166534;}
+.tk-act-tag.env-fail{background:#fee2e2;color:#991b1b;}
+.tk-act-tag.interno{background:#fff8e1;color:#b45309;}
 </style>
 
 <div class="tk-hero" id="tkHero">
@@ -367,6 +393,22 @@
   <div class="tk-card" id="cardNotas" style="display:none;">
     <h6><i class="bi bi-lock"></i>Notas internas</h6>
     <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
+  </div>
+
+  <!-- Actividad del ticket — línea de tiempo de supervisión (quién hizo qué y cuándo).
+       Se alimenta de d.mensajes + d.vistas que YA llegan con el ticket: cero backend nuevo. -->
+  <div class="tk-card" id="cardActividad">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+      <h6 style="margin:0;"><i class="bi bi-activity"></i>Actividad del ticket</h6>
+      <div class="tk-act-filtros" id="actFiltros">
+        <span class="tk-act-chip active" data-filtro="todo">Todo</span>
+        <span class="tk-act-chip" data-filtro="cambios">Cambios</span>
+        <span class="tk-act-chip" data-filtro="mensajes">Mensajes</span>
+        <span class="tk-act-chip" data-filtro="archivos">Archivos</span>
+      </div>
+    </div>
+    <div class="tk-act-timeline" id="actTimeline"></div>
+    <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" id="actVerTodo" style="display:none;"></button>
   </div>
 
   <!-- Visor universal de adjuntos (imagen / PDF / video / descarga) -->
@@ -609,6 +651,9 @@ async function cargar(){
 
   renderThread(d.mensajes, d.adjuntos);
 
+  // Línea de tiempo de actividad (supervisión) — tarjeta al final de Información
+  renderActividad(d);
+
   const nuevos = d.mensajes.filter(m=>m.tipo==='client_message').length;
   const cb = document.getElementById('convBadge');
   if(nuevos>0){ cb.style.display='inline-block'; cb.textContent=nuevos; } else cb.style.display='none';
@@ -826,6 +871,12 @@ function renderThread(mensajes, adjuntos){
     (adjPorMensaje[k] = adjPorMensaje[k] || []).push(a);
   });
   const th = document.getElementById('rpThread');
+  // Auto-refresco silencioso cada 20s (ver abajo del archivo) re-renderiza
+  // este hilo aunque el usuario este leyendo mensajes antiguos -- sin esto,
+  // el scroll saltaba al fondo cada 20s y era imposible leer historial.
+  // Solo se autoscrollea si el usuario YA estaba abajo (o es la carga inicial).
+  const yaEstabaAbajo = th.childElementCount === 0
+    || (th.scrollHeight - th.scrollTop - th.clientHeight) < 60;
   if(!mensajes.length){
     th.innerHTML = '<div style="color:#9ca3af;font-size:.85rem;text-align:center;padding:20px;">Aún no hay mensajes.</div>';
     return;
@@ -863,7 +914,7 @@ function renderThread(mensajes, adjuntos){
       + (adjHtml? '<div>'+adjHtml+'</div>':'')
       + '</div></div>';
   }).join('');
-  th.scrollTop = th.scrollHeight;
+  if(yaEstabaAbajo) th.scrollTop = th.scrollHeight;
 }
 
 // ══════════════ Adjuntos — tarjeta "Información" (galería de miniaturas) ══════════════
@@ -917,6 +968,187 @@ function renderAdjuntosInfo(adjuntos){
     });
   });
 }
+
+// ══════════════ Actividad del ticket — línea de tiempo de supervisión ══════════════
+// Pedido de Daniel: ver TODO lo que pasó en el ticket (quién lo creó, cambios
+// de estado, asignaciones, correos y si llegaron, respuestas del cliente,
+// archivos, quién lo vio). Se alimenta de d.mensajes + d.vistas que YA vienen
+// con el ticket — filtros y expansión 100% client-side, sin re-fetch.
+const ACT_DEFS = {
+  creacion:       {icon:'bi-flag-fill',              color:'#dc2626', bg:'#fee2e2'},
+  cambio_estado:  {icon:'bi-arrow-left-right',       color:'#3b82f6', bg:'#dbeafe'},
+  asignacion:     {icon:'bi-person-check-fill',      color:'#3b82f6', bg:'#dbeafe'},
+  mensaje:        {icon:'bi-envelope-fill',          color:'#16a34a', bg:'#dcfce7'},
+  client_message: {icon:'bi-chat-dots-fill',         color:'#16a34a', bg:'#dcfce7'},
+  comentario:     {icon:'bi-chat-left-text',         color:'#f59e0b', bg:'#fff8e1'},
+  archivo:        {icon:'bi-paperclip',              color:'#6b7280', bg:'#f3f4f6'},
+  cierre:         {icon:'bi-archive-fill',           color:'#6b7280', bg:'#f3f4f6'},
+  reapertura:     {icon:'bi-arrow-counterclockwise', color:'#f59e0b', bg:'#fff8e1'},
+  vista:          {icon:'bi-eye',                    color:'#6b7280', bg:'#f3f4f6'},
+  otro:           {icon:'bi-dot',                    color:'#6b7280', bg:'#f3f4f6'},
+};
+const ACT_FILTROS = {
+  cambios:  ['creacion','cambio_estado','asignacion','cierre','reapertura'],
+  mensajes: ['mensaje','client_message','comentario'],
+  archivos: ['archivo'],
+};
+const ACT_LIMITE = 15;
+let actEventos = [];
+let actFiltro = 'todo';
+let actMostrarTodo = false;
+
+// "dd/mm/aaaa HH:MM" (hora Chile, ya formateada por el server — Regla #6)
+// → clave ordenable como string "aaaa-mm-dd HH:MM". Si no calza el formato,
+// se devuelve tal cual (queda al fondo del orden, pero no rompe nada).
+function actKeyFecha(s){
+  const m = String(s||'').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})(.*)$/);
+  return m ? (m[3]+'-'+m[2]+'-'+m[1]+m[4]) : String(s||'');
+}
+// metadata puede venir como string JSON, objeto o null.
+function actMeta(raw){
+  if(!raw) return {};
+  if(typeof raw === 'object') return raw;
+  try{ return JSON.parse(raw) || {}; }catch(e){ return {}; }
+}
+// Extracto de texto plano (~120 chars) desde HTML o texto. DOMParser NO
+// ejecuta scripts NI carga recursos (a diferencia de un div temporal con
+// innerHTML) — importante porque client_message aún no pasa por sanitizador.
+function actExtracto(html){
+  if(!html) return '';
+  let txt = '';
+  try{ txt = new DOMParser().parseFromString(String(html), 'text/html').body.textContent || ''; }
+  catch(e){ txt = String(html); }
+  txt = txt.replace(/\s+/g,' ').trim();
+  return txt.length > 120 ? (txt.slice(0,120)+'…') : txt;
+}
+
+function actConstruirEventos(mensajes, vistas){
+  const evts = [];
+  (mensajes||[]).forEach(function(m, i){
+    evts.push({tipo: (ACT_DEFS[m.tipo] ? m.tipo : 'otro'), m: m, key: actKeyFecha(m.created_at), seq: i});
+  });
+  (vistas||[]).forEach(function(v, i){
+    evts.push({tipo:'vista', v: v, key: actKeyFecha(v.visto_at), seq: 100000+i});
+  });
+  // Más reciente ARRIBA; a igual fecha/hora, gana el que se registró después.
+  evts.sort(function(a,b){
+    if(a.key === b.key) return b.seq - a.seq;
+    return a.key < b.key ? 1 : -1;
+  });
+  return evts;
+}
+
+function actEventoHtml(ev){
+  let def = ACT_DEFS[ev.tipo] || ACT_DEFS.otro;
+  let texto = '', extracto = '', tags = '', fecha = '';
+  if(ev.tipo === 'vista'){
+    const v = ev.v;
+    fecha = v.visto_at || '';
+    texto = '<b>'+esc(v.usuario||'Alguien')+'</b> abrió el ticket';
+  } else {
+    const m = ev.m;
+    const meta = actMeta(m.metadata);
+    fecha = m.created_at || '';
+    const who = esc(m.usuario || (ev.tipo==='client_message'
+      ? ((ticketActual && ticketActual.nombre_contacto) || 'Cliente') : 'Sistema'));
+    switch(ev.tipo){
+      case 'creacion':
+        texto = '<b>'+who+'</b> creó el ticket';
+        extracto = actExtracto(m.contenido);
+        break;
+      case 'cambio_estado':
+        // El contenido ya trae "Estado: X → Y" — va inline, es el dato clave.
+        texto = '<b>'+who+'</b> cambió el estado'
+          + (m.contenido ? ' · '+esc(actExtracto(m.contenido)) : '');
+        break;
+      case 'asignacion':
+        texto = '<b>'+who+'</b>'
+          + (m.contenido ? ' · '+esc(actExtracto(m.contenido)) : ' asignó el ticket');
+        break;
+      case 'mensaje': {
+        const to = m.to_email || meta.to || meta.to_email || '';
+        const fallo = m.estado_envio === 'fallido';
+        if(fallo) def = {icon: def.icon, color:'#dc2626', bg:'#fee2e2'};
+        texto = '<b>'+who+'</b> — Correo a '+(to ? '<b>'+esc(to)+'</b>' : 'cliente');
+        if(fallo) tags = '<span class="tk-act-tag env-fail"><i class="bi bi-exclamation-triangle-fill"></i>Fallido</span>';
+        else if(m.estado_envio === 'enviado') tags = '<span class="tk-act-tag env-ok"><i class="bi bi-check2-all"></i>Enviado</span>';
+        extracto = actExtracto(m.contenido);
+        break;
+      }
+      case 'client_message':
+        texto = '<b>'+who+'</b>';
+        tags = '<span class="tk-act-tag cliente"><i class="bi bi-chat-dots-fill"></i>El cliente respondió</span>';
+        extracto = actExtracto(m.contenido);
+        break;
+      case 'comentario':
+        texto = '<b>'+who+'</b> comentó';
+        if(m.es_interno) tags = '<span class="tk-act-tag interno"><i class="bi bi-lock-fill"></i>Interno</span>';
+        extracto = actExtracto(m.contenido);
+        break;
+      case 'archivo':
+        texto = '<b>'+who+'</b> subió un archivo'
+          + (m.contenido ? ' · '+esc(actExtracto(m.contenido)) : '');
+        break;
+      case 'cierre':
+        texto = '<b>'+who+'</b> cerró el ticket';
+        extracto = actExtracto(m.contenido);
+        break;
+      case 'reapertura':
+        texto = '<b>'+who+'</b> reabrió el ticket';
+        extracto = actExtracto(m.contenido);
+        break;
+      default:
+        texto = '<b>'+who+'</b>'
+          + (m.contenido ? ' · '+esc(actExtracto(m.contenido)) : ' · actividad');
+    }
+  }
+  return '<div class="tk-act-item">'
+    + '<div class="tk-act-nodo" style="background:'+def.bg+';color:'+def.color+';"><i class="bi '+def.icon+'"></i></div>'
+    + '<div class="tk-act-body"><div class="tk-act-linea">'
+    + '<span class="tk-act-texto">'+texto+(tags ? ' '+tags : '')+'</span>'
+    + '<span class="tk-act-fecha">'+esc(fecha)+'</span></div>'
+    + (extracto ? '<div class="tk-act-extracto">'+esc(extracto)+'</div>' : '')
+    + '</div></div>';
+}
+
+function actPintarTimeline(){
+  const cont = document.getElementById('actTimeline');
+  const btn = document.getElementById('actVerTodo');
+  const tipos = ACT_FILTROS[actFiltro];
+  const filtrados = tipos ? actEventos.filter(e=>tipos.includes(e.tipo)) : actEventos;
+  if(!filtrados.length){
+    cont.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-activity"></i><span>Sin actividad registrada'
+      + (actFiltro!=='todo' ? ' para este filtro' : '')+'.</span></div>';
+    btn.style.display = 'none';
+    return;
+  }
+  const visibles = actMostrarTodo ? filtrados : filtrados.slice(0, ACT_LIMITE);
+  cont.innerHTML = visibles.map(actEventoHtml).join('');
+  if(!actMostrarTodo && filtrados.length > ACT_LIMITE){
+    btn.style.display = 'block';
+    btn.innerHTML = '<i class="bi bi-chevron-down me-1"></i>Ver toda la actividad ('+filtrados.length+')';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function renderActividad(d){
+  actEventos = actConstruirEventos(d.mensajes, d.vistas);
+  actPintarTimeline();
+}
+
+document.querySelectorAll('#actFiltros .tk-act-chip').forEach(function(ch){
+  ch.addEventListener('click', function(){
+    document.querySelectorAll('#actFiltros .tk-act-chip').forEach(x=>x.classList.remove('active'));
+    ch.classList.add('active');
+    actFiltro = ch.dataset.filtro;
+    actPintarTimeline();
+  });
+});
+document.getElementById('actVerTodo').addEventListener('click', function(){
+  actMostrarTodo = true;
+  actPintarTimeline();
+});
 
 // ══════════════ Visor universal de adjuntos (imagen / PDF / video / descarga) ══════════════
 // Reutiliza esImagen()/iconoAdjunto() ya existentes para detectar el tipo.
@@ -1174,5 +1406,34 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
 
 cargarEjecutivos();
 cargar();
+
+// ══════════════ Auto-refresco silencioso (Daniel 2026-07-12: "necesito que
+// sea inmediata la velocidad") ══════════════
+// Cada vez que se carga esta ficha, el backend ya dispara un chequeo del
+// buzon de correo (ver tk_api_get). Pero si la respuesta del cliente entra
+// DESPUES de que la pagina ya cargo, antes había que recargar a mano para
+// verla. Este refresco silencioso (sin loader, sin mover el scroll del
+// hilo si el usuario esta leyendo) reintenta cada 20s mientras la pestana
+// siga abierta -- se detiene solo si la pestana pasa a segundo plano.
+let _tkAutoRefreshTimer = null;
+function _tkAutoRefreshSeguro(){
+  // No interrumpir si el usuario esta escribiendo algo (campo inline del
+  // cliente, "Declarar equipo", el composer de Respuestas) o con un modal
+  // Bootstrap abierto -- recargar por debajo le borraria lo que esta
+  // tecleando. Se reintenta en el proximo ciclo, no se pierde el refresco.
+  const ae = document.activeElement;
+  const editando = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
+  const enEditorQuill = ae && ae.closest && ae.closest('.ql-editor');
+  const modalAbierto = document.querySelector('.modal.show');
+  return !(editando || enEditorQuill || modalAbierto);
+}
+function _tkProgramarAutoRefresh(){
+  clearTimeout(_tkAutoRefreshTimer);
+  _tkAutoRefreshTimer = setTimeout(async function(){
+    if (!document.hidden && _tkAutoRefreshSeguro()) { try { await cargar(); } catch(e) {} }
+    _tkProgramarAutoRefresh();
+  }, 20000);
+}
+_tkProgramarAutoRefresh();
 </script>
 {% endblock %}

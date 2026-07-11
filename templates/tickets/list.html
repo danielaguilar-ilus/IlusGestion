@@ -775,6 +775,25 @@ async function tkCargarResponsables(){
 tkCargarResponsables();
 cargarTickets();
 
+// ══════════════ Auto-refresco silencioso de la bandeja (Daniel 2026-07-12:
+// "necesito que sea inmediata la velocidad") -- cada 20s, se salta si el
+// usuario esta escribiendo en un filtro o con un modal abierto, para no
+// interrumpir. ══════════════
+let _tkListaAutoTimer = null;
+function _tkListaAutoSeguro(){
+  const ae = document.activeElement;
+  const escribiendo = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
+  return !(escribiendo || document.querySelector('.modal.show'));
+}
+function _tkProgramarAutoRefrescoLista(){
+  clearTimeout(_tkListaAutoTimer);
+  _tkListaAutoTimer = setTimeout(async function(){
+    if (!document.hidden && _tkListaAutoSeguro()) { try { await cargarTickets(); } catch(e) {} }
+    _tkProgramarAutoRefrescoLista();
+  }, 20000);
+}
+_tkProgramarAutoRefrescoLista();
+
 // ══════════════ MODAL Nuevo Ticket — logica ══════════════
 // TODO este bloque va dentro de DOMContentLoaded a proposito: bootstrap.bundle
 // (base.html) e ilus_ui.js cargan con <script defer>, que se ejecuta DESPUES

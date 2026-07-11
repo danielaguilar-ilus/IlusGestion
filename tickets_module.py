@@ -434,7 +434,6 @@ def register_tickets_routes(app, ctx):
     # (bloquea y loguea en email_log) -- esto solo sirve para dar un mensaje
     # de error claro en la UI en vez de un generico "no se pudo enviar".
     _modulo_canal_bloqueado = ctx.get("_modulo_canal_bloqueado")
-
     def _fmt_dt(value, only_date=False):
         """Formatea un datetime/date de MySQL (UTC naive) a hora Chile como
         string listo para la UI (Regla #6). Usa el chile_fmt del proyecto si
@@ -1230,6 +1229,15 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/tickets/<int:tid>", methods=["GET"])
     @_tickets_required
     def tk_api_get(tid):
+        # FIX 2026-07-12 (Daniel, en vivo): el auto-barrido del buzon SOLO
+        # estaba en tk_api_list (la bandeja) -- si el staff entra directo a
+        # la ficha de un ticket (como paso probando el ping-pong: ficha ->
+        # Respuestas) sin haber cargado la bandeja antes, la respuesta del
+        # cliente nunca se revisaba. Ahora TAMBIEN se dispara aca.
+        try:
+            _tk_autopoll_correo()
+        except Exception:
+            pass
         t = mysql_fetchone("SELECT * FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
@@ -1709,6 +1717,102 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass
         return jsonify({"ok": True, "reply_to": correo})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — VISTA PREVIA REAL de plantilla (editor de /comunicaciones)
+    #  Daniel 2026-07-12: el editor de plantillas de tickets debe ser
+    #  "bien potente" -- hoy Daniel edita a ciegas porque el cuerpo se
+    #  envuelve SIEMPRE server-side con el diseno maestro de marca.
+    #  Este endpoint toma el BORRADOR actual (sin guardar), reemplaza
+    #  los placeholders con datos de muestra y arma el HTML COMPLETO
+    #  con el MISMO pipeline de un envio real (cuerpo + invitacion a
+    #  responder + _comm_render_email_document). Solo previsualiza --
+    #  no guarda ni envia nada.
+    # ─────────────────────────────────────────────────────────────────
+    TK_TPL_ESTADOS_VALIDOS = ("creacion", "respuesta", "resuelto", "cerrado")
+
+    @app.route("/tickets/api/config/preview-plantilla", methods=["POST"])
+    @_tickets_required
+    def tk_api_config_preview_plantilla():
+        d = request.get_json(silent=True) or {}
+        asunto = str(d.get("asunto") or "").strip()
+        cuerpo = str(d.get("cuerpo") or "")
+        # Datos de muestra realistas (mismos placeholders que el envio real)
+        muestras = {
+            "cliente": "Ana Contreras",
+            "numero_ticket": "TK-2026-00123",
+            "mensaje": ("Revisamos tu equipo y el repuesto ya está en camino. "
+                        "Te avisaremos apenas llegue para coordinar la visita."),
+        }
+        for var, valor in muestras.items():
+            for tok in ("{{%s}}" % var, "{{ %s }}" % var):
+                asunto = asunto.replace(tok, valor)
+                cuerpo = cuerpo.replace(tok, valor)
+        if not asunto:
+            asunto = "Vista previa de plantilla"
+        # Igual que _tk_notificar_lifecycle / tk_api_responder_cliente:
+        # invitacion verde a responder el correo al final del cuerpo.
+        try:
+            cuerpo_final = cuerpo + _tk_boton_portal_html(0)
+        except Exception as _e:
+            print(f"[tk_preview_plantilla] invitacion no agregada: {_e}", flush=True)
+            cuerpo_final = cuerpo
+        asunto_final = _brand_subject(asunto)
+        html_final = (_comm_render_email_document(
+                          asunto_final, cuerpo_final,
+                          subtitle="Ticket TK-2026-00123 · ILUS Fitness")
+                      if _comm_render_email_document else cuerpo_final)
+        return jsonify({"ok": True, "html": html_final, "asunto": asunto_final})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — RESTAURAR plantilla a la version original ILUS
+    #  La semilla vive en app.py (_tickets_tpl_seed, inyectada por ctx)
+    #  -- fuente unica de verdad, la misma que siembra comm_templates
+    #  al boot. UPDATE parametrizado + audit log (Reglas #4 y #5).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/config/restaurar-plantilla", methods=["POST"])
+    @_tickets_required
+    def tk_api_config_restaurar_plantilla():
+        d = request.get_json(silent=True) or {}
+        estado = (d.get("estado") or "").strip().lower()
+        if estado not in TK_TPL_ESTADOS_VALIDOS:
+            return jsonify({"ok": False, "error": "Estado de plantilla no válido."}), 400
+        # Resuelto en TIEMPO DE REQUEST (no al registrar el modulo): app.py
+        # define _tickets_tpl_seed() ~1500 lineas DESPUES de la linea donde
+        # llama register_tickets_routes(app, globals()) -- extraerlo ahi
+        # (a nivel de modulo, como se hace con _send_ilus_email y otros)
+        # capturaria None para siempre, porque en ese momento la funcion aun
+        # no existe en el dict. Pero ctx SI es el dict vivo de globals(), y
+        # por la hora en que llega una request real el arranque de app.py ya
+        # termino -- por eso se resuelve aqui adentro, no arriba.
+        _tickets_tpl_seed = ctx.get("_tickets_tpl_seed")
+        if not _tickets_tpl_seed:
+            return jsonify({"ok": False,
+                            "error": "La versión original no está disponible en este entorno."}), 200
+        try:
+            seed = _tickets_tpl_seed() or {}
+        except Exception as _e:
+            print(f"[tk_restaurar_plantilla] error leyendo semilla: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo leer la versión original."}), 500
+        if estado not in seed:
+            return jsonify({"ok": False,
+                            "error": "Esta plantilla no tiene una versión original."}), 200
+        asunto, cuerpo = seed[estado]
+        try:
+            mysql_execute(
+                "UPDATE comm_templates SET asunto=%s, cuerpo=%s "
+                "WHERE modulo='tickets' AND canal='email' AND estado=%s",
+                (asunto, cuerpo, estado))
+        except Exception as _e:
+            print(f"[tk_restaurar_plantilla] error guardando: {_e}", flush=True)
+            return jsonify({"ok": False,
+                            "error": "No se pudo restaurar la plantilla, intenta de nuevo."}), 500
+        try:
+            _audit("tk_plantilla_restaurada", target_type="comm_templates",
+                   target_id=estado, details={"modulo": "tickets", "canal": "email"})
+        except Exception:
+            pass
+        return jsonify({"ok": True, "asunto": asunto, "cuerpo": cuerpo})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — marcar leido (sin subir el ticket en la bandeja)
@@ -3146,11 +3250,17 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "No autorizado"}), 403
         return jsonify({"ok": True, "resumen": _tk_leer_correo_entrante()})
 
-    # Auto-poll oportunista: cada vez que alguien mira la bandeja y el ultimo
-    # barrido tiene mas de 5 minutos, se dispara uno en segundo plano (hilo
-    # con app_context -- leccion del bug OT-31). Asi el "cada 5 minutos" de
-    # Triple A funciona sin depender de Cloud Scheduler mientras alguien use
-    # el sistema; Scheduler puede sumarse despues via el endpoint de arriba.
+    # Auto-poll oportunista: cada vez que alguien mira la bandeja O la ficha
+    # de un ticket y el ultimo barrido tiene mas de _TK_AUTOPOLL_SEG, se
+    # dispara uno en segundo plano (hilo con app_context -- leccion del bug
+    # OT-31). Daniel 2026-07-12: "necesito que sea inmediata la velocidad" --
+    # se bajo de 300s a 45s (Gmail IMAP tolera esta frecuencia sin problema
+    # para un solo buzon). Para verdadera inmediatez 24/7 (sin depender de
+    # que alguien tenga la app abierta) hace falta Cloud Scheduler golpeando
+    # /tickets/api/cron/leer-correo -- pendiente, requiere agregar
+    # TK_MAIL_CRON_TOKEN a la config persistente (GCP_ENV_VARS), no algo que
+    # se deba hacer por fuera del pipeline de deploy.
+    _TK_AUTOPOLL_SEG = 45
     _TK_MAIL_POLL = {"ts": 0.0, "lock": threading.Lock()}
 
     def _tk_autopoll_correo():
@@ -3158,7 +3268,7 @@ def register_tickets_routes(app, ctx):
         if not (user and pwd):
             return
         ahora = time.monotonic()
-        if ahora - _TK_MAIL_POLL["ts"] < 300:
+        if ahora - _TK_MAIL_POLL["ts"] < _TK_AUTOPOLL_SEG:
             return
         if not _TK_MAIL_POLL["lock"].acquire(blocking=False):
             return  # ya hay un barrido corriendo
