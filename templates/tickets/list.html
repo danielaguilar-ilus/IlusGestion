@@ -107,6 +107,9 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 .bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
 .bs-ot_pending_approval,.bs-ot_generated,.bs-ot_in_progress{background:#ede9fe;color:#5b21b6;}
 .tk-unread{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;font-weight:800;padding:2px 7px;white-space:nowrap;}
+.tk-unread-banner{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;
+  padding:10px 14px;margin:0 0 12px;font-size:.85rem;font-weight:700;display:flex;align-items:center;gap:8px;}
+.tk-unread-banner i{font-size:1.05rem;}
 /* ── Mini-stepper de avance (columna "Avance"): 4 puntos + linea, mismo
    espiritu/paleta que el stepper grande de ficha.html (verde=completado,
    rojo ILUS=actual, gris=pendiente) pero compacto para caber en una celda. ── */
@@ -313,6 +316,7 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
   </div>
 </div>
 
+<div id="tkUnreadBanner" class="tk-unread-banner" style="display:none"></div>
 <div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 
 <!-- ══════════════ MODAL: Nuevo Ticket ══════════════ -->
@@ -598,6 +602,38 @@ async function cargarTickets(){
     + data.tickets.map(tkFilaHtml).join('')
     + '</tbody></table></div>'
     + tkFooterHtml(data);
+
+  tkActualizarUnread();
+}
+
+// ── Aviso de mensajes nuevos (Daniel 2026-07-12: "la bandeja te indica que
+// tienes mensajes nuevos"): banner arriba de la tabla + toast cuando el
+// conteo SUBE respecto al ultimo chequeo (nuevo mensaje mientras la bandeja
+// esta abierta). Usa /unread-summary (cuenta mensajes de cliente sin leer
+// en tickets activos), independiente de la pagina/filtro actual. ──
+let _tkUnreadPrev = null;
+async function tkActualizarUnread(){
+  let d;
+  try{
+    const r = await fetch('/tickets/api/unread-summary');
+    d = await r.json();
+  }catch(e){ return; }
+  if(!d || !d.ok) return;
+  const n = d.unread || 0;
+  const banner = document.getElementById('tkUnreadBanner');
+  if(banner){
+    if(n > 0){
+      banner.style.display = '';
+      banner.innerHTML = '<i class="bi bi-envelope-exclamation-fill"></i> Tienes <strong>'+n+'</strong> mensaje'
+        +(n>1?'s':'')+' nuevo'+(n>1?'s':'')+' de cliente'+(n>1?'s':'')+' sin leer.';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+  if(_tkUnreadPrev !== null && n > _tkUnreadPrev){
+    ilusToast('📩 Tienes nuevos mensajes de cliente', {type:'info'});
+  }
+  _tkUnreadPrev = n;
 }
 
 // ── Columna Tipo: icono circular de color + label (paleta TIPO_VISUAL, misma del modal) ──
@@ -776,9 +812,9 @@ tkCargarResponsables();
 cargarTickets();
 
 // ══════════════ Auto-refresco silencioso de la bandeja (Daniel 2026-07-12:
-// "necesito que sea inmediata la velocidad") -- cada 20s, se salta si el
-// usuario esta escribiendo en un filtro o con un modal abierto, para no
-// interrumpir. ══════════════
+// "necesito que sea inmediata la velocidad, menos de diez segundos") -- cada
+// 10s, se salta si el usuario esta escribiendo en un filtro o con un modal
+// abierto, para no interrumpir. ══════════════
 let _tkListaAutoTimer = null;
 function _tkListaAutoSeguro(){
   const ae = document.activeElement;
@@ -790,7 +826,7 @@ function _tkProgramarAutoRefrescoLista(){
   _tkListaAutoTimer = setTimeout(async function(){
     if (!document.hidden && _tkListaAutoSeguro()) { try { await cargarTickets(); } catch(e) {} }
     _tkProgramarAutoRefrescoLista();
-  }, 20000);
+  }, 10000);
 }
 _tkProgramarAutoRefrescoLista();
 

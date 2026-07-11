@@ -1413,8 +1413,11 @@ cargar();
 // buzon de correo (ver tk_api_get). Pero si la respuesta del cliente entra
 // DESPUES de que la pagina ya cargo, antes había que recargar a mano para
 // verla. Este refresco silencioso (sin loader, sin mover el scroll del
-// hilo si el usuario esta leyendo) reintenta cada 20s mientras la pestana
+// hilo si el usuario esta leyendo) reintenta cada 6s mientras la pestana
 // siga abierta -- se detiene solo si la pestana pasa a segundo plano.
+// Daniel 2026-07-12: "menos de diez segundos" -- 6s cliente + 8s de
+// throttle del autopoll server (tickets_module.py) da un peor caso
+// realista de ~14s y un caso tipico bastante por debajo de 10s.
 let _tkAutoRefreshTimer = null;
 function _tkAutoRefreshSeguro(){
   // No interrumpir si el usuario esta escribiendo algo (campo inline del
@@ -1432,7 +1435,7 @@ function _tkProgramarAutoRefresh(){
   _tkAutoRefreshTimer = setTimeout(async function(){
     if (!document.hidden && _tkAutoRefreshSeguro()) { try { await cargar(); } catch(e) {} }
     _tkProgramarAutoRefresh();
-  }, 20000);
+  }, 6000);
 }
 _tkProgramarAutoRefresh();
 </script>

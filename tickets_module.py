@@ -27,7 +27,7 @@ import re
 import threading
 import time
 from email.header import decode_header, make_header
-from email.utils import parseaddr
+from email.utils import parseaddr, parsedate_to_datetime
 from functools import wraps
 from html.parser import HTMLParser
 from datetime import datetime, timezone, date, timedelta
@@ -819,19 +819,23 @@ def register_tickets_routes(app, ctx):
         return login_required(wrapped)
 
     def _tk_log(ticket_id, tipo, contenido, usuario=None, metadata=None, es_interno=True,
-                to_email=None, cc_email=None, estado_envio=None):
+                to_email=None, cc_email=None, estado_envio=None, message_date=None):
         """Escribe un evento/mensaje en tk_mensajes. Nunca rompe el flujo.
         Devuelve el id del mensaje insertado (o None si fallo) -- lo usan
-        responder-cliente/comentario para vincular adjuntos al mensaje."""
+        responder-cliente/comentario para vincular adjuntos al mensaje.
+        message_date: fecha REAL del mensaje (ej. header Date del correo del
+        cliente) -- distinta de created_at (hora de INGESTA/registro). Sin
+        esto el hilo se ordena por cuando el barrido IMAP alcanzo a leer el
+        correo, no por cuando el cliente realmente lo envio."""
         base_user = usuario or (current_username() or "sistema")
         try:
             mysql_execute(
                 "INSERT INTO tk_mensajes "
-                "(ticket_id, tipo, contenido, metadata, usuario, es_interno, to_email, cc_email, estado_envio) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "(ticket_id, tipo, contenido, metadata, usuario, es_interno, to_email, cc_email, estado_envio, message_date) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (ticket_id, tipo, contenido,
                  json.dumps(metadata, ensure_ascii=False) if metadata else None,
-                 base_user, 1 if es_interno else 0, to_email, cc_email, estado_envio),
+                 base_user, 1 if es_interno else 0, to_email, cc_email, estado_envio, message_date),
             )
         except Exception as _e:
             # Fallback defensivo: si la migracion de columnas (to_email/cc_email/
@@ -1251,14 +1255,16 @@ def register_tickets_routes(app, ctx):
             mensajes = mysql_fetchall(
                 "SELECT id, tipo, contenido, metadata, usuario, es_interno, message_date, created_at, "
                 "       to_email, cc_email, estado_envio "
-                "FROM tk_mensajes WHERE ticket_id=%s ORDER BY created_at ASC, id ASC", (tid,))
+                "FROM tk_mensajes WHERE ticket_id=%s "
+                "ORDER BY COALESCE(message_date, created_at) ASC, id ASC", (tid,))
         except Exception as _e:
             # Defensivo: si la migracion de columnas (to_email/cc_email/
             # estado_envio) no corrio, no debe romperse la ficha entera.
             print(f"[tk_api_get] mensajes con columnas nuevas fallo, fallback: {_e}", flush=True)
             mensajes = mysql_fetchall(
                 "SELECT id, tipo, contenido, metadata, usuario, es_interno, message_date, created_at "
-                "FROM tk_mensajes WHERE ticket_id=%s ORDER BY created_at ASC, id ASC", (tid,))
+                "FROM tk_mensajes WHERE ticket_id=%s "
+                "ORDER BY COALESCE(message_date, created_at) ASC, id ASC", (tid,))
             for _m in mensajes:
                 _m["to_email"] = None; _m["cc_email"] = None; _m["estado_envio"] = None
         adjuntos = mysql_fetchall(
@@ -2972,9 +2978,9 @@ def register_tickets_routes(app, ctx):
         # Solo mensajes NO internos (nunca notas_internas, cambios de estado/
         # asignacion/equipos, ni comentarios marcados como internos por staff).
         mensajes = mysql_fetchall(
-            "SELECT id, tipo, contenido, usuario, created_at FROM tk_mensajes "
+            "SELECT id, tipo, contenido, usuario, message_date, created_at FROM tk_mensajes "
             "WHERE ticket_id=%s AND es_interno=0 AND tipo IN ('mensaje','client_message','comentario') "
-            "ORDER BY created_at ASC, id ASC", (tid,))
+            "ORDER BY COALESCE(message_date, created_at) ASC, id ASC", (tid,))
         adjuntos = mysql_fetchall(
             "SELECT id, mensaje_id, archivo_url, archivo_nombre, mime_type, created_at FROM tk_adjuntos "
             "WHERE ticket_id=%s ORDER BY id", (tid,))
@@ -3171,9 +3177,22 @@ def register_tickets_routes(app, ctx):
                     cuerpo = _tk_extraer_cuerpo_mail(msg) or "(Mensaje sin texto)"
                     remitente = (from_nombre or ticket.get("nombre_contacto")
                                  or from_email or "Cliente")[:190]
+                    # Fecha REAL del correo (header Date), no la hora de
+                    # ingesta/barrido -- si el cliente responde y el staff
+                    # manda otro mensaje ANTES del siguiente barrido, sin
+                    # esto el mensaje del cliente queda despues en el hilo
+                    # (Daniel 2026-07-12: orden tipo WhatsApp).
+                    msg_date = None
+                    try:
+                        _dt = parsedate_to_datetime(msg.get("Date", ""))
+                        if _dt is not None:
+                            msg_date = (_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                                        if _dt.tzinfo else _dt)
+                    except Exception:
+                        msg_date = None
                     msg_id_db = _tk_log(
                         ticket["id"], "client_message", cuerpo[:20000],
-                        usuario=remitente, es_interno=False,
+                        usuario=remitente, es_interno=False, message_date=msg_date,
                         metadata={"via": "email", "message_id": message_id,
                                   "from": from_email, "subject": subject[:300]})
                     # Adjuntos del correo -> GCS -> tk_adjuntos (mismas
@@ -3253,14 +3272,16 @@ def register_tickets_routes(app, ctx):
     # Auto-poll oportunista: cada vez que alguien mira la bandeja O la ficha
     # de un ticket y el ultimo barrido tiene mas de _TK_AUTOPOLL_SEG, se
     # dispara uno en segundo plano (hilo con app_context -- leccion del bug
-    # OT-31). Daniel 2026-07-12: "necesito que sea inmediata la velocidad" --
-    # se bajo de 300s a 45s (Gmail IMAP tolera esta frecuencia sin problema
-    # para un solo buzon). Para verdadera inmediatez 24/7 (sin depender de
-    # que alguien tenga la app abierta) hace falta Cloud Scheduler golpeando
+    # OT-31). Daniel 2026-07-12: "necesito que sea inmediata la velocidad,
+    # menos de diez segundos" -- bajado de 300s a 45s y ahora a 8s (el lock
+    # global asegura maximo 1 login IMAP real cada 8s sin importar cuanta
+    # gente tenga la app abierta, asi que el buzon de Gmail no se satura).
+    # Para verdadera inmediatez 24/7 (sin depender de que alguien tenga la
+    # app abierta) hace falta Cloud Scheduler golpeando
     # /tickets/api/cron/leer-correo -- pendiente, requiere agregar
     # TK_MAIL_CRON_TOKEN a la config persistente (GCP_ENV_VARS), no algo que
     # se deba hacer por fuera del pipeline de deploy.
-    _TK_AUTOPOLL_SEG = 45
+    _TK_AUTOPOLL_SEG = 8
     _TK_MAIL_POLL = {"ts": 0.0, "lock": threading.Lock()}
 
     def _tk_autopoll_correo():
