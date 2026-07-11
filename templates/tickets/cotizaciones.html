@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Cotizaciones — ILUS{% endblock %}
+{% block content %}
+<style>
+.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.tk-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
+.tk-hero .sub{font-size:.86rem;color:#cfd3da;}
+.tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:14px;padding:40px;text-align:center;color:#9ca3af;}
+.tk-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;margin-bottom:8px;
+  display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;}
+.tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;white-space:nowrap;}
+.tk-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;}
+.cb-draft{background:#f3f4f6;color:#6b7280;} .cb-sent{background:#dbeafe;color:#1e40af;}
+.cb-approved{background:#dcfce7;color:#166534;} .cb-rejected{background:#fee2e2;color:#991b1b;}
+.cb-expired{background:#fef3c7;color:#92400e;}
+</style>
+
+<div class="tk-hero">
+  <div>
+    <h4><i class="bi bi-file-earmark-text me-2"></i>Cotizaciones</h4>
+    <div class="sub">Módulo en construcción — se arma de a poco, siguiente fase de Tickets central</div>
+  </div>
+</div>
+
+{% if cotizaciones %}
+{% for c in cotizaciones %}
+<div class="tk-row">
+  <span class="tk-num">{{ c.numero_cotizacion or ('#' ~ c.id) }}</span>
+  <div><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></div>
+  <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
+  <span style="font-size:.8rem;color:#6b7280;">{{ c.created_at }}</span>
+</div>
+{% endfor %}
+{% else %}
+<div class="tk-soon">
+  <i class="bi bi-file-earmark-plus" style="font-size:2.2rem;display:block;margin-bottom:10px;"></i>
+  <div style="font-weight:700;color:#6b7280;">Todavía no hay cotizaciones</div>
+  <div style="font-size:.84rem;margin-top:4px;">
+    La tabla ya existe (<code>tk_cotizaciones</code>) — falta el flujo de creación:<br>
+    armar ítems desde un ticket o desde un documento ERP, calcular totales con IVA, generar PDF y enviar por correo.
+  </div>
+</div>
+{% endif %}
+{% endblock %}

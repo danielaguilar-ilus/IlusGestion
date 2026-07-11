@@ -18,6 +18,7 @@ formulario publico, correo bidireccional, pestana Acciones, cotizaciones,
 documentos ERP, migracion desde mant_tickets).
 """
 import json
+import time
 from functools import wraps
 from datetime import datetime, timezone, date
 
@@ -282,6 +283,60 @@ def register_tickets_routes(app, ctx):
                  REFERENCES tk_tickets(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # Esqueleto del modulo Cotizaciones (Blueprint §2.8-2.9). Tablas
+        # creadas ahora; la logica (armar items, PDF, enviar) se construye
+        # de a poco en fases siguientes -- Daniel pidio el modulo vacio
+        # primero para no bloquear Tickets con un scope enorme de una vez.
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_cotizaciones (
+              id                INT AUTO_INCREMENT PRIMARY KEY,
+              numero_cotizacion VARCHAR(30) NULL UNIQUE,
+              ticket_id         INT NULL,
+              estado            ENUM('draft','sent','approved','rejected','expired')
+                                    NOT NULL DEFAULT 'draft',
+              erp_idmaeen       INT NULL,
+              erp_koen          VARCHAR(50) NULL,
+              rut               VARCHAR(12) NULL,
+              empresa           VARCHAR(150) NULL,
+              costo_tecnico     INT NOT NULL DEFAULT 0,
+              costo_ruta        INT NOT NULL DEFAULT 0,
+              subtotal_items    INT NOT NULL DEFAULT 0,
+              subtotal          INT NOT NULL DEFAULT 0,
+              descuento_pct     DECIMAL(5,2) NOT NULL DEFAULT 0,
+              descuento_monto   INT NOT NULL DEFAULT 0,
+              iva_pct           DECIMAL(5,2) NOT NULL DEFAULT 19,
+              iva_monto         INT NOT NULL DEFAULT 0,
+              total             INT NOT NULL DEFAULT 0,
+              valida_hasta      DATE NULL,
+              notas             TEXT NULL,
+              created_by        VARCHAR(190) NULL,
+              created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              KEY idx_ticket (ticket_id),
+              KEY idx_estado (estado),
+              CONSTRAINT fk_tkcot_ticket FOREIGN KEY (ticket_id)
+                 REFERENCES tk_tickets(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_cotizacion_items (
+              id             INT AUTO_INCREMENT PRIMARY KEY,
+              cotizacion_id  INT NOT NULL,
+              item_tipo      ENUM('producto','servicio','ruta','otro') NOT NULL DEFAULT 'producto',
+              erp_kopr       VARCHAR(100) NULL,
+              descripcion    VARCHAR(300) NULL,
+              cantidad       INT NOT NULL DEFAULT 1,
+              precio_unitario INT NOT NULL DEFAULT 0,
+              subtotal       INT NOT NULL DEFAULT 0,
+              descuento_pct  DECIMAL(5,2) NOT NULL DEFAULT 0,
+              total          INT NOT NULL DEFAULT 0,
+              desde_ticket   TINYINT(1) NOT NULL DEFAULT 0,
+              notas          TEXT NULL,
+              KEY idx_cotizacion (cotizacion_id),
+              CONSTRAINT fk_tkcotit_cot FOREIGN KEY (cotizacion_id)
+                 REFERENCES tk_cotizaciones(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS tk_ticket_documentos (
               id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -389,6 +444,18 @@ def register_tickets_routes(app, ctx):
             estado_label=ESTADO_LABEL, tipo_label=TIPO_LABEL,
             tk_estados=TK_ESTADOS, tk_tipos=TK_TIPOS, tk_prioridades=TK_PRIORIDADES,
         )
+
+    # ─────────────────────────────────────────────────────────────────
+    #  PAGINA — Cotizaciones (esqueleto, Fase 5 del blueprint)
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/cotizaciones")
+    @_tickets_required
+    def tk_cotizaciones_list():
+        rows = mysql_fetchall(
+            "SELECT id, numero_cotizacion, estado, empresa, rut, total, created_at "
+            "FROM tk_cotizaciones ORDER BY created_at DESC LIMIT 100")
+        return render_template("tickets/cotizaciones.html",
+                                cotizaciones=[_fmt_row(r) for r in rows])
 
     # ─────────────────────────────────────────────────────────────────
     #  API — listado + KPIs
@@ -823,9 +890,154 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "id": adj_id, "url": url, "nombre": f.filename})
 
     # ─────────────────────────────────────────────────────────────────
+    #  API — ERP: previsualizar CUALQUIER documento (no solo ventas) para
+    #  detonar un ticket desde ahi. Reusa el motor unificado erp_engine
+    #  (Regla: nunca duplicar logica ERP fuera del motor) -- el mismo que
+    #  usan cubicador/asignar/mantenciones-stock. Read-only.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/erp/documento/<tido>/<nudo>", methods=["GET"])
+    @_tickets_required
+    def tk_api_erp_documento(tido, nudo):
+        try:
+            import erp_engine
+            doc = erp_engine.get_client().fetch_document((tido or "").strip(), (nudo or "").strip())
+        except Exception as _e:
+            print(f"[tk_erp_documento] error tido={tido} nudo={nudo}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "ERP no disponible ahora"}), 200
+        if not doc:
+            return jsonify({"ok": False, "error": "Documento no encontrado en el ERP"}), 200
+
+        lineas = []
+        for ln in (doc.get("lineas_raw") or []):
+            sku = str(ln.get("KOPRCT") or ln.get("koprct") or "").strip()
+            nombre = str(ln.get("NOKOPR") or ln.get("nokopr") or "").strip()
+            if not (sku or nombre):
+                continue
+            lineas.append({"sku": sku, "nombre": nombre,
+                            "cantidad": ln.get("CAPRCO1") or ln.get("caprco1") or 1})
+
+        return jsonify({"ok": True, "documento": {
+            "tido": tido, "nudo": nudo,
+            "fecha": str(doc.get("fecha") or "")[:10],
+            "cliente_nombre": doc.get("cliente_nombre") or "",
+            "cliente_rut": doc.get("cliente_rut") or "",
+            "email": doc.get("email") or "", "telefono": doc.get("telefono") or "",
+            "direccion": doc.get("direccion") or "", "comuna": doc.get("comuna") or "",
+            "lineas": lineas,
+        }})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — crear TICKET a partir de uno o varios documentos ERP
+    #  (cualquier tipo: factura, boleta, guia, orden, etc.)
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/tickets/desde-documento", methods=["POST"])
+    @_tickets_required
+    def tk_api_crear_desde_documento():
+        d = request.get_json(silent=True) or {}
+        docs = d.get("documentos") or []  # [{tido, nudo}]
+        if not docs:
+            return jsonify({"ok": False, "error": "Falta al menos un documento"}), 400
+        try:
+            import erp_engine
+            engine = erp_engine.get_client()
+        except Exception as _e:
+            return jsonify({"ok": False, "error": f"ERP no disponible: {_e}"}), 200
+
+        primero = None
+        todas_lineas, docs_ok = [], []
+        for item in docs[:10]:
+            tido = str(item.get("tido") or "").strip()
+            nudo = str(item.get("nudo") or "").strip()
+            if not (tido and nudo):
+                continue
+            try:
+                doc = engine.fetch_document(tido, nudo)
+            except Exception as _e:
+                print(f"[tk_desde_documento] error {tido}/{nudo}: {_e}", flush=True)
+                doc = None
+            if not doc:
+                continue
+            if primero is None:
+                primero = doc
+            docs_ok.append({"tido": tido, "nudo": nudo, "fecha": doc.get("fecha")})
+            for ln in (doc.get("lineas_raw") or []):
+                sku = str(ln.get("KOPRCT") or ln.get("koprct") or "").strip()
+                nombre = str(ln.get("NOKOPR") or ln.get("nokopr") or "").strip()
+                if sku or nombre:
+                    todas_lineas.append({"sku": sku, "nombre": nombre,
+                                          "cantidad": ln.get("CAPRCO1") or ln.get("caprco1") or 1})
+
+        if primero is None:
+            return jsonify({"ok": False, "error": "Ningún documento fue encontrado en el ERP"}), 200
+
+        tipo = _norm_enum(d.get("tipo"), TK_TIPOS, "tech_support")
+        prio = _norm_enum(d.get("prioridad"), TK_PRIORIDADES, "media")
+        user = current_username() or "sistema"
+        rut = (primero.get("cliente_rut") or "").strip()[:12] or None
+
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tk_tickets "
+                    "(origen, estado, tipo, prioridad, descripcion, rut, empresa, email, phone, "
+                    " direccion, comuna_nombre, numero_documento, asignado_a, created_by) "
+                    "VALUES ('erp','open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (tipo, prio, (d.get("descripcion") or "").strip()[:5000] or None,
+                     rut, (primero.get("cliente_nombre") or "")[:150] or None,
+                     (primero.get("email") or "")[:150] or None,
+                     (primero.get("telefono") or "")[:20] or None,
+                     (primero.get("direccion") or "")[:255] or None,
+                     (primero.get("comuna") or "")[:120] or None,
+                     ", ".join(f"{x['tido']}-{x['nudo']}" for x in docs_ok)[:1000] or None,
+                     user, user))
+                tid = cur.lastrowid
+                cur.execute(
+                    "UPDATE tk_tickets SET numero_ticket = "
+                    "CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                    (_chile_now_year(), tid))
+                for dc in docs_ok:
+                    try:
+                        cur.execute(
+                            "INSERT IGNORE INTO tk_ticket_documentos (ticket_id, erp_tido, erp_nudo) "
+                            "VALUES (%s,%s,%s)", (tid, dc["tido"][:10], dc["nudo"][:40]))
+                    except Exception:
+                        pass
+                vistos = set()
+                for ln in todas_lineas:
+                    key = ln["sku"] or ln["nombre"]
+                    if key in vistos:
+                        continue
+                    vistos.add(key)
+                    try:
+                        cur.execute(
+                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad) "
+                            "VALUES (%s,%s,%s,%s)",
+                            (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo",
+                             int(ln.get("cantidad") or 1) if str(ln.get("cantidad") or 1).isdigit() else 1))
+                    except Exception:
+                        pass
+            conn.commit()
+        finally:
+            conn.close()
+
+        numero = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (tid,))
+        numero = numero["numero_ticket"] if numero else None
+        _tk_log(tid, "creacion", f"Ticket {numero} creado desde documento(s) ERP: "
+                + ", ".join(f"{x['tido']}-{x['nudo']}" for x in docs_ok))
+        return jsonify({"ok": True, "id": tid, "numero_ticket": numero})
+
+    # ─────────────────────────────────────────────────────────────────
     #  API — ERP: buscar cliente (por RUT o razon social) — read-only
-    #  Reusa _erp_buscar_clientes (pymssql -> MAEEN), el mismo motor que
-    #  usan Mantenciones/Transporte (por eso SI encuentra al cliente).
+    #
+    #  NO reusamos _erp_buscar_clientes tal cual: esa funcion filtra
+    #  "AND TIEN IN ('C','A')" (pensado para clientes empresa de
+    #  Mantenciones). Un RUT de PERSONA NATURAL (ej. el de Daniel) puede
+    #  tener otro TIEN y ese filtro lo excluye en silencio (el query corre
+    #  bien, devuelve 0 filas) -- exactamente el bug reportado: ilus-front
+    #  SI lo encuentra porque no aplica ese filtro. Aca hacemos la MISMA
+    #  query sobre MAEEN pero sin restringir por TIEN, y logueamos
+    #  timing+filas para poder diagnosticar sin volver a re-desplegar.
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/erp/buscar-cliente", methods=["GET"])
     @_tickets_required
@@ -833,15 +1045,47 @@ def register_tickets_routes(app, ctx):
         q = (request.args.get("q") or "").strip()
         if len(q) < 2:
             return jsonify({"ok": True, "resultados": []})
-        if not _erp_buscar_clientes:
+        if not (_random_sql_query and _rut_cuerpo):
             return jsonify({"ok": False, "error": "Motor ERP no disponible", "resultados": []}), 200
+
+        q_upper = q.upper()
+        q_like = f"%{q_upper}%"
+        q_cuerpo = _rut_cuerpo(q)
+        q_cuerpo_like = f"%{q_cuerpo}%" if (q_cuerpo and len(q_cuerpo) >= 4) else q_like
+
+        t0 = time.time()
         try:
-            rows = _erp_buscar_clientes(q, limit=15) or []
+            rows = _random_sql_query(
+                """
+                SELECT DISTINCT TOP 15
+                       LTRIM(RTRIM(COALESCE(en.NOKOENAMP, en.NOKOEN, ''))) AS razon_social,
+                       LTRIM(RTRIM(COALESCE(en.RTEN, '')))                 AS rut,
+                       LTRIM(RTRIM(COALESCE(en.TIEN, '')))                 AS tien
+                  FROM MAEEN en
+                 WHERE (
+                       UPPER(LTRIM(RTRIM(COALESCE(en.NOKOEN,    '')))) LIKE %s
+                    OR UPPER(LTRIM(RTRIM(COALESCE(en.NOKOENAMP, '')))) LIKE %s
+                    OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
+                    OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
+                 )
+                 ORDER BY
+                    CASE WHEN LTRIM(RTRIM(COALESCE(en.TIEN,''))) IN ('C','A') THEN 0 ELSE 1 END,
+                    razon_social
+                """,
+                (q_like, q_like, q_like, q_cuerpo_like),
+                max_rows=15,
+            ) or []
         except Exception as _e:
-            print(f"[tk_erp_buscar_cliente] error: {_e}", flush=True)
+            print(f"[tk_erp_buscar_cliente] error q={q!r}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "ERP no disponible ahora", "resultados": []}), 200
-        return jsonify({"ok": True, "resultados": [
-            {"empresa": r.get("razon_social") or "", "rut": r.get("rut") or ""} for r in rows]})
+
+        elapsed_ms = int((time.time() - t0) * 1000)
+        print(f"[tk_erp_buscar_cliente] q={q!r} -> {len(rows)} filas en {elapsed_ms}ms "
+              f"tien={[r.get('tien') for r in rows]}", flush=True)
+
+        resultados = [{"empresa": r.get("razon_social") or "", "rut": r.get("rut") or ""}
+                      for r in rows if r.get("razon_social") or r.get("rut")]
+        return jsonify({"ok": True, "resultados": resultados})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — ERP: buscar EQUIPO/producto del cliente por SKU o nombre

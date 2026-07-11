@@ -36,6 +36,39 @@
 .tk-tipo{font-size:.65rem;color:#6b7280;background:#f9fafb;border:1px solid #e5e7eb;border-radius:50px;padding:2px 8px;}
 .empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 30px;text-align:center;}
 .empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
+
+/* ── Modal Nuevo Ticket ── */
+.nt-card{background:#fafafa;border:1px solid #eaecf0;border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+.nt-card h6{font-weight:800;color:#0f172a;margin:0 0 4px;font-size:.85rem;display:flex;align-items:center;gap:8px;}
+.nt-card h6 .n{background:#dc2626;color:#fff;width:20px;height:20px;border-radius:50%;display:inline-flex;
+  align-items:center;justify-content:center;font-size:.7rem;font-weight:800;}
+.nt-card .hint{font-size:.74rem;color:#94a3b8;margin:0 0 10px 28px;}
+.nt-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;}
+.nt-grid .full{grid-column:1/-1;}
+.nt-field{position:relative;}
+.nt-field label{font-size:.72rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
+.nt-tipos{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:7px;}
+.nt-tipo-pill{border:1.5px solid #e5e7eb;border-radius:9px;padding:8px 6px;text-align:center;cursor:pointer;
+  font-size:.76rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;}
+.nt-tipo-pill:hover{border-color:#dc2626;color:#dc2626;}
+.nt-tipo-pill.sel{border-color:#dc2626;background:#fef2f2;color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.1);}
+.nt-ac{position:absolute;z-index:1060;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;
+  border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14);max-height:220px;overflow:auto;margin-top:3px;display:none;}
+.nt-ac.open{display:block;}
+.nt-ac-item{padding:8px 11px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.83rem;}
+.nt-ac-item:hover,.nt-ac-item.hi{background:#fef2f2;}
+.nt-ac-item .rut{color:#dc2626;font-weight:800;font-family:'JetBrains Mono',monospace;font-size:.76rem;}
+.nt-ac-empty{padding:11px;color:#94a3b8;font-size:.8rem;text-align:center;}
+.nt-chip{display:inline-flex;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #86efac;color:#166534;
+  border-radius:9px;padding:7px 11px;font-size:.83rem;font-weight:700;}
+.nt-chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
+.nt-eqrow{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;border-radius:8px;
+  padding:7px 11px;margin-bottom:5px;font-size:.83rem;background:#fff;}
+.nt-eqrow .sku{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#6b7280;}
+.nt-vfeed{font-size:.7rem;margin-top:3px;display:none;}
+.nt-vfeed.ok{color:#16a34a;display:block;} .nt-vfeed.err{color:#dc2626;display:block;}
+.nt-counter{font-size:.7rem;color:#94a3b8;text-align:right;}
+@media(max-width:640px){.nt-grid{grid-template-columns:1fr;}}
 </style>
 
 <div class="tk-hero">
@@ -43,7 +76,16 @@
     <h4><i class="bi bi-ticket-perforated me-2"></i>Tickets</h4>
     <div class="sub">Central de soporte — solicitudes, fallas, garantías, repuestos y cotizaciones</div>
   </div>
-  <a href="{{ url_for('tk_nuevo') }}" class="btn btn-ilus"><i class="bi bi-plus-lg me-1"></i>Nuevo Ticket</a>
+  <div class="d-flex gap-2">
+    {% if permissions.superadmin %}
+    <button class="btn btn-sm btn-outline-light" id="btnImportarMant" title="Importar tickets de Mantenciones">
+      <i class="bi bi-database-down me-1"></i>Importar de Mantenciones</button>
+    {% endif %}
+    <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket desde un documento del ERP (factura, boleta, guía, etc.)">
+      <i class="bi bi-file-earmark-text me-1"></i>Desde documento ERP</button>
+    <button class="btn btn-ilus" data-bs-toggle="modal" data-bs-target="#ntModal">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo Ticket</button>
+  </div>
 </div>
 
 <div class="tk-kpi-row">
@@ -72,6 +114,95 @@
 
 <div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 
+<!-- ══════════════ MODAL: Nuevo Ticket ══════════════ -->
+<div class="modal fade" id="ntModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;">
+        <h5 class="modal-title"><i class="bi bi-ticket-perforated me-2"></i>Nuevo Ticket</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="nt-card">
+          <h6><span class="n">1</span>Tipo de solicitud</h6>
+          <div class="nt-tipos" id="ntTipos">
+            {% for t in tk_tipos_publicos %}
+            <div class="nt-tipo-pill" data-tipo="{{ t }}">{{ tipo_label[t] }}</div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="nt-card">
+          <h6><span class="n">2</span>Cliente</h6>
+          <div class="hint">Escribe el RUT o el nombre y elige del ERP.</div>
+          <div class="nt-grid">
+            <div class="nt-field full">
+              <label>Buscar cliente en el ERP (RUT o empresa)</label>
+              <input type="text" id="ntBuscarCli" class="form-control" placeholder="Ej: 76.123.456-7 o Deportes Vitacura" autocomplete="off">
+              <div class="nt-ac" id="ntAcCli"></div>
+            </div>
+            <div class="nt-field full" id="ntCliChipWrap" style="display:none;">
+              <div class="nt-chip"><i class="bi bi-building-check"></i><span id="ntCliChipTxt"></span>
+                <span class="x" id="ntCliChipX" title="Quitar">&times;</span></div>
+            </div>
+            <div class="nt-field"><label>Nombre de contacto</label><input type="text" id="ntContacto" class="form-control"></div>
+            <div class="nt-field"><label>Teléfono</label>
+              <input type="tel" id="ntPhone" class="form-control" placeholder="+56 9 1234 5678">
+              <div class="nt-vfeed" id="ntVPhone"></div></div>
+            <div class="nt-field"><label>Correo</label>
+              <input type="email" id="ntEmail" class="form-control" placeholder="cliente@correo.cl">
+              <div class="nt-vfeed" id="ntVEmail"></div></div>
+            <div class="nt-field"><label>Sucursal <span style="color:#cbd5e1">(opcional)</span></label>
+              <input type="text" id="ntSucursal" class="form-control"></div>
+          </div>
+        </div>
+
+        <div class="nt-card">
+          <h6><span class="n">3</span>Dirección del equipo</h6>
+          <div class="hint">Empieza a escribir y elige una sugerencia de Google para validarla.</div>
+          <div class="nt-field full">
+            <input type="text" id="ntDireccion" class="form-control" placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off">
+            <input type="hidden" id="ntDirLat"><input type="hidden" id="ntDirLng"><input type="hidden" id="ntDirPlace"><input type="hidden" id="ntComuna">
+            <small id="ntDirHint" class="text-muted d-block mt-1" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.</small>
+          </div>
+        </div>
+
+        <div class="nt-card">
+          <h6><span class="n">4</span>Equipo</h6>
+          <div class="hint">Busca por SKU o nombre entre los equipos que el cliente compró (ERP).</div>
+          <div class="nt-field full">
+            <input type="text" id="ntBuscarEq" class="form-control" placeholder="Selecciona primero un cliente…" autocomplete="off" disabled>
+            <div class="nt-ac" id="ntAcEq"></div>
+          </div>
+          <div id="ntListaEq" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="nt-card mb-0">
+          <h6><span class="n">5</span>Problema</h6>
+          <div class="nt-grid">
+            <div class="nt-field full">
+              <label>¿Qué está pasando?</label>
+              <textarea id="ntDesc" class="form-control" rows="3" maxlength="2000" placeholder="Describe el problema o la solicitud…"></textarea>
+              <div class="nt-counter"><span id="ntDescCount">0</span>/2000</div>
+            </div>
+            <div class="nt-field"><label>Prioridad</label>
+              <select id="ntPrio" class="form-select">
+                {% for p in tk_prioridades %}<option value="{{ p }}"{% if p=='media' %} selected{% endif %}>{{ p|capitalize }}</option>{% endfor %}
+              </select></div>
+            <div class="nt-field"><label>N° boleta / factura <span style="color:#cbd5e1">(opcional)</span></label>
+              <input type="text" id="ntDoc" class="form-control"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-ilus" id="ntBtnCrear"><i class="bi bi-check-lg me-1"></i>Crear Ticket</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const ESTADO_LABEL = {{ estado_label|tojson }};
 const TIPO_LABEL = {{ tipo_label|tojson }};
@@ -84,6 +215,7 @@ function fmtFecha(s){ return s || ''; }
 function esc(s){ return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments,c=this; t=setTimeout(()=>fn.apply(c,a),ms); }; }
 
 async function cargarTickets(){
   const p = new URLSearchParams();
@@ -136,5 +268,263 @@ document.getElementById('btnLimpiar').addEventListener('click', function(){
   document.getElementById('fTipo').value=''; document.getElementById('fPrio').value=''; cargarTickets();
 });
 cargarTickets();
+
+// ══════════════ MODAL Nuevo Ticket — logica ══════════════
+let ntTipoSel = '';
+let ntCliente = null;      // {empresa, rut}
+const ntEquipos = [];      // [{sku, nombre}]
+const ntModalEl = document.getElementById('ntModal');
+const ntModal = new bootstrap.Modal(ntModalEl);
+
+function ntReset(){
+  ntTipoSel = ''; ntCliente = null; ntEquipos.length = 0;
+  document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
+  document.getElementById('ntBuscarCli').value=''; document.getElementById('ntBuscarCli').style.display='block';
+  document.getElementById('ntCliChipWrap').style.display='none';
+  document.getElementById('ntContacto').value=''; document.getElementById('ntPhone').value='';
+  document.getElementById('ntEmail').value=''; document.getElementById('ntSucursal').value='';
+  document.getElementById('ntDireccion').value=''; document.getElementById('ntDirLat').value='';
+  document.getElementById('ntDirLng').value=''; document.getElementById('ntDirPlace').value='';
+  document.getElementById('ntComuna').value=''; document.getElementById('ntDirHint').innerHTML =
+    '<i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.';
+  const eq = document.getElementById('ntBuscarEq'); eq.disabled = true; eq.value=''; eq.placeholder='Selecciona primero un cliente…';
+  document.getElementById('ntDesc').value=''; document.getElementById('ntDescCount').textContent='0';
+  document.getElementById('ntDoc').value=''; document.getElementById('ntPrio').value='media';
+  document.getElementById('ntVPhone').className='nt-vfeed'; document.getElementById('ntVEmail').className='nt-vfeed';
+  renderNtEquipos();
+}
+ntModalEl.addEventListener('hidden.bs.modal', ntReset);
+
+document.querySelectorAll('.nt-tipo-pill').forEach(el=>el.addEventListener('click',()=>{
+  document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
+  el.classList.add('sel'); ntTipoSel = el.dataset.tipo;
+}));
+
+// ── Autocomplete cliente (ERP) ──
+const ntAcCli = document.getElementById('ntAcCli');
+const ntBuscarCliente = debounce(async function(){
+  const q = document.getElementById('ntBuscarCli').value.trim();
+  if(q.length < 2){ ntAcCli.classList.remove('open'); return; }
+  ntAcCli.innerHTML = '<div class="nt-ac-empty">Buscando en el ERP…</div>'; ntAcCli.classList.add('open');
+  try{
+    const r = await fetch('/tickets/api/erp/buscar-cliente?q='+encodeURIComponent(q));
+    const d = await r.json();
+    const rows = d.resultados || [];
+    if(!d.ok && d.error){ ntAcCli.innerHTML = '<div class="nt-ac-empty">'+esc(d.error)+'</div>'; return; }
+    if(!rows.length){ ntAcCli.innerHTML = '<div class="nt-ac-empty">Sin resultados en el ERP</div>'; return; }
+    ntAcCli.innerHTML = rows.map((c,i)=>'<div class="nt-ac-item" data-i="'+i+'">'
+      + '<div>'+esc(c.empresa)+'</div><div class="rut">'+esc(c.rut||'—')+'</div></div>').join('');
+    ntAcCli.querySelectorAll('.nt-ac-item').forEach(it=>it.addEventListener('click',()=>ntSelCliente(rows[+it.dataset.i])));
+  }catch(e){ ntAcCli.innerHTML = '<div class="nt-ac-empty">ERP no disponible</div>'; }
+}, 320);
+document.getElementById('ntBuscarCli').addEventListener('input', ntBuscarCliente);
+
+function ntSelCliente(c){
+  ntCliente = c;
+  ntAcCli.classList.remove('open');
+  document.getElementById('ntBuscarCli').style.display = 'none';
+  document.getElementById('ntCliChipTxt').textContent = c.empresa + (c.rut? '  ·  '+c.rut : '');
+  document.getElementById('ntCliChipWrap').style.display = 'block';
+  const eq = document.getElementById('ntBuscarEq');
+  eq.disabled = false; eq.placeholder = 'Buscar equipo por SKU o nombre…';
+}
+document.getElementById('ntCliChipX').addEventListener('click',()=>{
+  ntCliente = null;
+  document.getElementById('ntCliChipWrap').style.display = 'none';
+  const b = document.getElementById('ntBuscarCli'); b.style.display = 'block'; b.value=''; b.focus();
+  const eq = document.getElementById('ntBuscarEq'); eq.disabled = true; eq.value=''; eq.placeholder='Selecciona primero un cliente…';
+});
+
+// ── Validación teléfono chileno ──
+function ntNormTel(v){ return String(v||'').replace(/[^\d]/g,'').replace(/^56/,''); }
+document.getElementById('ntPhone').addEventListener('blur', function(){
+  const v = this.value.trim(); const f = document.getElementById('ntVPhone');
+  if(!v){ f.className='nt-vfeed'; f.textContent=''; return; }
+  const n = ntNormTel(v);
+  if(/^9\d{8}$/.test(n)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Móvil válido';
+    this.value = '+56 9 '+n.slice(1,5)+' '+n.slice(5); }
+  else if(/^\d{8,9}$/.test(n)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Número válido'; }
+  else { f.className='nt-vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Teléfono chileno inválido (9 dígitos)'; }
+});
+
+// ── Validación correo ──
+document.getElementById('ntEmail').addEventListener('blur', function(){
+  const v = this.value.trim(); const f = document.getElementById('ntVEmail');
+  if(!v){ f.className='nt-vfeed'; f.textContent=''; return; }
+  if(/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(v)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Correo válido'; }
+  else { f.className='nt-vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Correo inválido'; }
+});
+
+// ── Google Places (dirección) — siempre validar (perfil logístico de Daniel) ──
+document.addEventListener('DOMContentLoaded', function(){
+  function initDir(){
+    if(typeof ilusPlacesAutocomplete !== 'function'){
+      if(window.__ilusGmapsPending){ window.__ilusGmapsPending.push(initDir); } return;
+    }
+    ilusPlacesAutocomplete('ntDireccion', { country:'cl', types:['address'],
+      onPlaceSelected:function(place){
+        document.getElementById('ntDirLat').value = place.lat;
+        document.getElementById('ntDirLng').value = place.lng;
+        document.getElementById('ntDirPlace').value = place.place_id || '';
+        if(place.componentes){
+          const cm = place.componentes.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
+          if(cm) document.getElementById('ntComuna').value = cm.long_name;
+        }
+        const h = document.getElementById('ntDirHint');
+        h.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Dirección verificada · <small>'
+          + place.lat.toFixed(4)+', '+place.lng.toFixed(4)+'</small>';
+      } });
+  }
+  initDir();
+});
+
+// ── Autocomplete equipo (ERP, del cliente) ──
+const ntAcEq = document.getElementById('ntAcEq');
+const ntBuscarEquipo = debounce(async function(){
+  const q = document.getElementById('ntBuscarEq').value.trim();
+  if(!ntCliente){ return; }
+  if(q.length < 2){ ntAcEq.classList.remove('open'); return; }
+  ntAcEq.innerHTML = '<div class="nt-ac-empty">Buscando equipos del cliente…</div>'; ntAcEq.classList.add('open');
+  try{
+    const r = await fetch('/tickets/api/erp/buscar-producto?rut='+encodeURIComponent(ntCliente.rut)+'&q='+encodeURIComponent(q));
+    const d = await r.json();
+    const rows = d.resultados || [];
+    if(!d.ok && d.error){ ntAcEq.innerHTML = '<div class="nt-ac-empty">'+esc(d.error)+'</div>'; return; }
+    if(!rows.length){ ntAcEq.innerHTML = '<div class="nt-ac-empty">Sin equipos que coincidan</div>'; return; }
+    ntAcEq.innerHTML = rows.map((pr,i)=>'<div class="nt-ac-item" data-i="'+i+'"><div>'+esc(pr.nombre)+'</div>'
+      + '<div class="rut">'+esc(pr.sku||'')+(pr.fecha? '  ·  '+esc(pr.fecha):'')+'</div></div>').join('');
+    ntAcEq.querySelectorAll('.nt-ac-item').forEach(it=>it.addEventListener('click',()=>ntAddEquipo(rows[+it.dataset.i])));
+  }catch(e){ ntAcEq.innerHTML = '<div class="nt-ac-empty">ERP no disponible</div>'; }
+}, 320);
+document.getElementById('ntBuscarEq').addEventListener('input', ntBuscarEquipo);
+
+function ntAddEquipo(p){
+  if(ntEquipos.some(e=>(e.sku && e.sku===p.sku) || e.nombre===p.nombre)){ ilusToast('Ese equipo ya está agregado','info'); }
+  else ntEquipos.push({sku:p.sku||'', nombre:p.nombre||''});
+  ntAcEq.classList.remove('open'); document.getElementById('ntBuscarEq').value='';
+  renderNtEquipos();
+}
+function renderNtEquipos(){
+  const l = document.getElementById('ntListaEq');
+  l.innerHTML = ntEquipos.map((e,i)=>'<div class="nt-eqrow"><span>'+esc(e.nombre)
+    + (e.sku? ' <span class="sku">· '+esc(e.sku)+'</span>':'')
+    + '</span><button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ntDelEquipo('+i+')"><i class="bi bi-x-lg"></i></button></div>').join('');
+}
+window.ntDelEquipo = function(i){ ntEquipos.splice(i,1); renderNtEquipos(); };
+
+document.getElementById('ntDesc').addEventListener('input', function(){ document.getElementById('ntDescCount').textContent = this.value.length; });
+
+document.addEventListener('click', function(e){
+  if(!e.target.closest('#ntBuscarCli') && !e.target.closest('#ntAcCli')) ntAcCli.classList.remove('open');
+  if(!e.target.closest('#ntBuscarEq') && !e.target.closest('#ntAcEq')) ntAcEq.classList.remove('open');
+});
+
+document.getElementById('ntBtnCrear').addEventListener('click', async function(){
+  const desc = document.getElementById('ntDesc').value.trim();
+  if(!ntCliente && !desc){ ilusToast('Elige un cliente o describe el problema','warning'); return; }
+  const btn = this; btn.disabled = true;
+  const payload = {
+    tipo: ntTipoSel || null,
+    prioridad: document.getElementById('ntPrio').value,
+    rut: ntCliente ? ntCliente.rut : '',
+    empresa: ntCliente ? ntCliente.empresa : '',
+    nombre_contacto: document.getElementById('ntContacto').value.trim(),
+    phone: document.getElementById('ntPhone').value.trim(),
+    email: document.getElementById('ntEmail').value.trim(),
+    sucursal: document.getElementById('ntSucursal').value.trim(),
+    direccion: document.getElementById('ntDireccion').value.trim(),
+    direccion_lat: document.getElementById('ntDirLat').value || null,
+    direccion_lng: document.getElementById('ntDirLng').value || null,
+    direccion_place_id: document.getElementById('ntDirPlace').value || null,
+    comuna_nombre: document.getElementById('ntComuna').value || null,
+    numero_documento: document.getElementById('ntDoc').value.trim(),
+    producto: ntEquipos.map(e=>e.nombre).join(' · '),
+    sku: ntEquipos.map(e=>e.sku).filter(Boolean).join(', '),
+    descripcion: desc,
+    equipos: ntEquipos.map(e=>({kopr:e.sku, nombre:e.nombre, sku:e.sku})),
+  };
+  try{
+    const r = await fetch('/tickets/api/tickets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error||'Error al crear','error'); btn.disabled=false; return; }
+    ilusToast('✓ '+(d.numero_ticket||'Ticket')+' creado','success');
+    ntModal.hide();
+    setTimeout(()=>location.href='/tickets/'+d.id, 400);
+  }catch(e){ ilusToast('Error de red','error'); btn.disabled=false; }
+});
+
+// ══════════════ Crear ticket desde documento ERP (cualquier tipo) ══════════════
+document.getElementById('btnDesdeDoc').addEventListener('click', async function(){
+  const tido = await ilusPrompt({title:'Documento ERP', message:'Tipo de documento (ej: FCV, BLV, NVV, COV, GDV…)',
+    placeholder:'FCV', required:true});
+  if(!tido) return;
+  const nudo = await ilusPrompt({title:'Documento ERP', message:'Número de documento',
+    placeholder:'Ej: 21577', required:true});
+  if(!nudo) return;
+  ilusLoader.show('Buscando documento en el ERP…');
+  let prev;
+  try{
+    const r = await fetch('/tickets/api/erp/documento/'+encodeURIComponent(tido.trim().toUpperCase())+'/'+encodeURIComponent(nudo.trim()));
+    prev = await r.json();
+  }catch(e){ ilusLoader.hide(); ilusToast('ERP no disponible','error'); return; }
+  ilusLoader.hide();
+  if(!prev.ok){ ilusToast(prev.error||'Documento no encontrado','error'); return; }
+  const doc = prev.documento;
+  const ok = await ilusConfirm({
+    title:'Crear ticket desde '+esc(doc.tido)+'-'+esc(doc.nudo),
+    message:'Cliente: '+esc(doc.cliente_nombre||'—')+' · RUT: '+esc(doc.cliente_rut||'—'),
+    sub: doc.lineas.length + ' línea(s) de producto se asociarán como equipo del ticket.',
+    okLabel:'Crear ticket', cancelLabel:'Cancelar',
+  });
+  if(!ok) return;
+  ilusLoader.show('Creando ticket…');
+  try{
+    const r2 = await fetch('/tickets/api/tickets/desde-documento', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({documentos:[{tido:doc.tido, nudo:doc.nudo}], tipo:'tech_support',
+        descripcion:'Ticket generado desde documento ERP '+doc.tido+'-'+doc.nudo})});
+    const d2 = await r2.json();
+    ilusLoader.hide();
+    if(!d2.ok){ ilusToast(d2.error||'Error al crear','error'); return; }
+    ilusToast('✓ '+(d2.numero_ticket||'Ticket')+' creado','success');
+    setTimeout(()=>location.href='/tickets/'+d2.id, 400);
+  }catch(e){ ilusLoader.hide(); ilusToast('Error de red','error'); }
+});
+
+// ══════════════ Importar tickets de Mantenciones (superadmin) ══════════════
+const btnImportar = document.getElementById('btnImportarMant');
+if(btnImportar){
+  btnImportar.addEventListener('click', async function(){
+    ilusLoader.show('Previsualizando migración…');
+    let dry;
+    try{
+      const r = await fetch('/tickets/api/admin/importar-mant?dry_run=1', {method:'POST'});
+      dry = (await r.json()).resumen;
+    }catch(e){ ilusLoader.hide(); ilusToast('Error al previsualizar','error'); return; }
+    ilusLoader.hide();
+    if(dry && dry.error){ ilusToast(dry.error,'error'); return; }
+    const pendientes = (dry.origen_total||0) - (dry.ya_migrados||0);
+    if(pendientes <= 0){
+      await ilusAlert({title:'Nada que migrar', message:'Todos los tickets de Mantenciones ya están en el módulo central ('+(dry.ya_migrados||0)+' ya migrados).', type:'info'});
+      return;
+    }
+    const ok = await ilusConfirm({
+      title:'Importar tickets de Mantenciones',
+      message:'Se migrarán '+pendientes+' ticket(s) nuevo(s) al módulo central (de '+(dry.origen_total||0)+' totales, '+(dry.ya_migrados||0)+' ya migrados antes).',
+      sub:'Es aditivo: NO modifica ni borra los tickets originales de Mantenciones.',
+      okLabel:'Importar ahora', cancelLabel:'Cancelar',
+    });
+    if(!ok) return;
+    ilusLoader.show('Importando tickets…');
+    try{
+      const r2 = await fetch('/tickets/api/admin/importar-mant?dry_run=0', {method:'POST'});
+      const res = (await r2.json()).resumen;
+      ilusLoader.hide();
+      if(res && res.errores){ ilusToast(res.migrados+' migrados, '+res.errores+' con error (revisa logs)', 'warning'); }
+      else { ilusToast('✓ '+(res.migrados||0)+' ticket(s) importado(s)','success'); }
+      cargarTickets();
+    }catch(e){ ilusLoader.hide(); ilusToast('Error al importar','error'); }
+  });
+}
 </script>
 {% endblock %}

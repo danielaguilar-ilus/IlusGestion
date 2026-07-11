@@ -504,12 +504,16 @@
     </button>
     <div class="sg-items" id="sg-tickets">
       <a href="{{ url_for('tk_list') }}"
-         class="sidebar-link{% if request.endpoint in ['tk_list','tk_ficha'] %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint in ['tk_list','tk_ficha','tk_nuevo'] %} active{% endif %}">
         <i class="bi bi-inboxes"></i><span>Bandeja</span>
       </a>
-      <a href="{{ url_for('tk_nuevo') }}"
-         class="sidebar-link{% if request.endpoint == 'tk_nuevo' %} active{% endif %}">
-        <i class="bi bi-plus-circle"></i><span>Nuevo ticket</span>
+      {# 2026-07-11 (Daniel): "Nuevo ticket" ya NO es una pagina aparte -- es un
+         modal en la Bandeja (boton "Nuevo Ticket" de tickets/list.html). Se
+         quita el link del menu. La ruta /tickets/nuevo sigue viva
+         (compatibilidad hacia atras), solo sin linkear desde el sidebar. #}
+      <a href="{{ url_for('tk_cotizaciones_list') }}"
+         class="sidebar-link{% if request.endpoint == 'tk_cotizaciones_list' %} active{% endif %}">
+        <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
       </a>
     </div>
     {% endif %}
