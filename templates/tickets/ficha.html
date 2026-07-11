@@ -106,7 +106,11 @@
 .rp-offline-bar{background:#7c2d12;color:#fff;padding:7px 14px;border-radius:9px;font-size:.8rem;
   display:none;align-items:center;gap:8px;margin-bottom:10px;}
 .rp-offline-bar.show{display:flex;}
-.rp-thread{max-height:460px;overflow-y:auto;padding:4px 2px;margin-bottom:14px;}
+/* Sin alto fijo ni scroll propio (Daniel 2026-07-12: "no me gusta que
+   tenga scroll, trata de contenerlo todo en la misma pantalla") -- el
+   hilo crece libre con el contenido; si hay mucho historial, es la
+   PAGINA la que se desplaza, no un cuadro anidado. */
+.rp-thread{padding:4px 2px;margin-bottom:14px;}
 .rp-msg{display:flex;margin-bottom:12px;}
 .rp-msg.out{justify-content:flex-end;}
 .rp-bubble{max-width:72%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.45;}
@@ -136,7 +140,10 @@
 .rp-headers .row-h input{border:none;background:transparent;font-size:.82rem;flex:1;outline:none;}
 .rp-headers .row-h input:focus{background:#fff;}
 .rp-editor-wrap .ql-toolbar{border:none;border-bottom:1px solid #eaecf0;background:#fafafa;}
-.rp-editor-wrap .ql-container{border:none;font-size:.87rem;min-height:110px;max-height:260px;overflow-y:auto;}
+/* Caja de texto lo mas grande posible (Daniel 2026-07-12: "el scroll que
+   debe tener es la caja de texto") -- el UNICO scroll interno que queda
+   en la pestaña Respuestas es este, no el del hilo de arriba. */
+.rp-editor-wrap .ql-container{border:none;font-size:.87rem;min-height:240px;max-height:520px;overflow-y:auto;}
 .rp-toolbar-extra{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
   background:#fafafa;border-top:1px solid #eaecf0;flex-wrap:wrap;gap:8px;}
 .rp-adj-preview{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px;}
@@ -508,8 +515,8 @@ document.querySelectorAll('.tk-tab').forEach(function(tab){
     // layout real ya calculado (requestAnimationFrame), reintentar el scroll.
     if(tab.dataset.pane === 'conv'){
       requestAnimationFrame(function(){
-        const th = document.getElementById('rpThread');
-        if(th) th.scrollTop = th.scrollHeight;
+        const composer = document.querySelector('.rp-composer');
+        if(composer) composer.scrollIntoView({block:'end', behavior:'auto'});
       });
     }
   });
@@ -882,12 +889,14 @@ function renderThread(mensajes, adjuntos){
     (adjPorMensaje[k] = adjPorMensaje[k] || []).push(a);
   });
   const th = document.getElementById('rpThread');
-  // Auto-refresco silencioso cada 20s (ver abajo del archivo) re-renderiza
+  // Auto-refresco silencioso cada 6s (ver abajo del archivo) re-renderiza
   // este hilo aunque el usuario este leyendo mensajes antiguos -- sin esto,
-  // el scroll saltaba al fondo cada 20s y era imposible leer historial.
+  // el scroll saltaba al fondo cada vez y era imposible leer historial.
   // Solo se autoscrollea si el usuario YA estaba abajo (o es la carga inicial).
+  // El hilo ya NO tiene scroll propio (Daniel 2026-07-12), asi que "abajo"
+  // se mide contra la PAGINA (window), no contra el div.
   const yaEstabaAbajo = th.childElementCount === 0
-    || (th.scrollHeight - th.scrollTop - th.clientHeight) < 60;
+    || (document.documentElement.scrollHeight - window.scrollY - window.innerHeight) < 80;
   if(!mensajes.length){
     th.innerHTML = '<div style="color:#9ca3af;font-size:.85rem;text-align:center;padding:20px;">Aún no hay mensajes.</div>';
     return;
@@ -925,7 +934,12 @@ function renderThread(mensajes, adjuntos){
       + (adjHtml? '<div>'+adjHtml+'</div>':'')
       + '</div></div>';
   }).join('');
-  if(yaEstabaAbajo) th.scrollTop = th.scrollHeight;
+  if(yaEstabaAbajo){
+    requestAnimationFrame(function(){
+      const composer = document.querySelector('.rp-composer');
+      if(composer) composer.scrollIntoView({block:'end', behavior:'auto'});
+    });
+  }
 }
 
 // ══════════════ Adjuntos — tarjeta "Información" (galería de miniaturas) ══════════════

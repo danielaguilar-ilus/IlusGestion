@@ -3130,7 +3130,9 @@ def register_tickets_routes(app, ctx):
     _TK_QUOTE_RE = re.compile(
         r"^\s*(El\s.{0,120}escribi[oó]:?\s*$|On\s.{0,120}wrote:?\s*$|"
         r"-{2,}\s*(Mensaje original|Original Message|Forwarded message)|"
-        r"_{5,}\s*$|De:\s.+|From:\s.+)", re.I)
+        r"_{5,}\s*$|De:\s.+|From:\s.+|"
+        r"(Enviado|Sent)\s+(desde|from)\s+(mi|my)\s*(iPhone|iPad|Android|celular|tel[eé]fono).*$|"
+        r"Get\s+Outlook\s+for\s+(iOS|Android).*$)", re.I)
 
     def _tk_imap_creds():
         user = (os.environ.get("SMTP_USER") or "").strip()
