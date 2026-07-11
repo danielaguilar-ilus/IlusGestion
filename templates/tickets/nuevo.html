@@ -2,32 +2,58 @@
 {% block title %}Nuevo Ticket — ILUS{% endblock %}
 {% block content %}
 <style>
-.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
-  color:#fff;border-radius:14px;padding:16px 22px;margin-bottom:18px;display:flex;align-items:center;gap:12px;}
-.tk-hero h4{margin:0;font-weight:900;}
-.tk-card{background:#fff;border:1px solid #eaecf0;border-radius:13px;padding:20px 22px;margin-bottom:16px;
-  max-width:820px;}
-.tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.9rem;
-  text-transform:uppercase;letter-spacing:.04em;}
+.tk-head{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:14px 20px;margin-bottom:16px;box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.tk-head img{height:34px;width:auto;}
+.tk-head .t{font-weight:900;font-size:1.05rem;line-height:1.1;}
+.tk-head .s{font-size:.78rem;color:#cfd3da;}
+.tk-head .sep{width:1px;height:30px;background:rgba(255,255,255,.18);}
+.tk-card{background:#fff;border:1px solid #eaecf0;border-radius:13px;padding:18px 20px;margin-bottom:14px;max-width:860px;}
+.tk-card h6{font-weight:800;color:#0f172a;margin:0 0 4px;font-size:.9rem;display:flex;align-items:center;gap:8px;}
+.tk-card h6 .n{background:#dc2626;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;
+  align-items:center;justify-content:center;font-size:.75rem;font-weight:800;}
+.tk-card .hint{font-size:.76rem;color:#94a3b8;margin:0 0 12px 30px;}
 .tk-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;}
 .tk-grid .full{grid-column:1/-1;}
+.tk-field{position:relative;}
 .tk-field label{font-size:.74rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
-.tk-tipos{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:4px;}
+.tk-tipos{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;}
 .tk-tipo-pill{border:1.5px solid #e5e7eb;border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;
   font-size:.8rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;}
 .tk-tipo-pill:hover{border-color:#dc2626;color:#dc2626;}
 .tk-tipo-pill.sel{border-color:#dc2626;background:#fef2f2;color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.1);}
-.tk-actions{display:flex;gap:10px;justify-content:flex-end;max-width:820px;}
+.tk-ac{position:absolute;z-index:50;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;
+  border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:260px;overflow:auto;margin-top:3px;display:none;}
+.tk-ac.open{display:block;}
+.tk-ac-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.85rem;}
+.tk-ac-item:hover,.tk-ac-item.hi{background:#fef2f2;}
+.tk-ac-item .rut{color:#dc2626;font-weight:800;font-family:'JetBrains Mono',monospace;font-size:.78rem;}
+.tk-ac-empty{padding:12px;color:#94a3b8;font-size:.82rem;text-align:center;}
+.tk-chip{display:inline-flex;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #86efac;color:#166534;
+  border-radius:9px;padding:8px 12px;font-size:.85rem;font-weight:700;}
+.tk-chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
+.tk-eqrow{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;border-radius:9px;
+  padding:8px 12px;margin-bottom:6px;font-size:.85rem;background:#fafafa;}
+.tk-eqrow .sku{font-family:'JetBrains Mono',monospace;font-size:.72rem;color:#6b7280;}
+.vfeed{font-size:.72rem;margin-top:3px;display:none;}
+.vfeed.ok{color:#16a34a;display:block;} .vfeed.err{color:#dc2626;display:block;}
+.tk-actions{display:flex;gap:10px;justify-content:flex-end;max-width:860px;}
+.tk-counter{font-size:.72rem;color:#94a3b8;text-align:right;}
 @media(max-width:640px){.tk-grid{grid-template-columns:1fr;}}
 </style>
 
-<div class="tk-hero">
-  <a href="{{ url_for('tk_list') }}" class="btn btn-sm btn-outline-light"><i class="bi bi-arrow-left"></i></a>
-  <h4><i class="bi bi-ticket-perforated me-2"></i>Nuevo Ticket</h4>
+<div class="tk-head">
+  <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS" onerror="this.style.display='none'">
+  <div class="sep"></div>
+  <div>
+    <div class="t"><i class="bi bi-ticket-perforated me-1"></i>Nuevo Ticket</div>
+    <div class="s">Soporte ILUS · registra la solicitud y la asociamos al cliente y su equipo</div>
+  </div>
+  <a href="{{ url_for('tk_list') }}" class="btn btn-sm btn-outline-light ms-auto"><i class="bi bi-arrow-left me-1"></i>Bandeja</a>
 </div>
 
 <div class="tk-card">
-  <h6>1 · Tipo de solicitud</h6>
+  <h6><span class="n">1</span>Tipo de solicitud</h6>
   <div class="tk-tipos" id="tkTipos">
     {% for t in tk_tipos_publicos %}
     <div class="tk-tipo-pill" data-tipo="{{ t }}">{{ tipo_label[t] }}</div>
@@ -36,49 +62,65 @@
 </div>
 
 <div class="tk-card">
-  <h6>2 · Cliente</h6>
+  <h6><span class="n">2</span>Cliente</h6>
+  <div class="hint">Escribe el RUT o el nombre y elige del ERP. Autocompleta la empresa.</div>
   <div class="tk-grid">
-    <div class="tk-field">
-      <label>RUT</label>
-      <div style="display:flex;gap:6px;">
-        <input type="text" id="fRut" class="form-control" placeholder="76.123.456-7">
-        <button class="btn btn-ilus-outline" id="btnErp" type="button" title="Buscar en ERP" style="white-space:nowrap;">
-          <i class="bi bi-search"></i> ERP</button>
-      </div>
+    <div class="tk-field full">
+      <label>Buscar cliente en el ERP (RUT o empresa)</label>
+      <input type="text" id="fBuscarCli" class="form-control" placeholder="Ej: 76.123.456-7 o Deportes Vitacura" autocomplete="off">
+      <div class="tk-ac" id="acCli"></div>
     </div>
-    <div class="tk-field"><label>Empresa / persona</label><input type="text" id="fEmpresa" class="form-control"></div>
+    <div class="tk-field full" id="cliChipWrap" style="display:none;">
+      <div class="tk-chip"><i class="bi bi-building-check"></i><span id="cliChipTxt"></span>
+        <span class="x" id="cliChipX" title="Quitar">&times;</span></div>
+    </div>
     <div class="tk-field"><label>Nombre de contacto</label><input type="text" id="fContacto" class="form-control"></div>
-    <div class="tk-field"><label>Teléfono</label><input type="tel" id="fPhone" class="form-control" placeholder="+56 9 1234 5678"></div>
-    <div class="tk-field"><label>Correo</label><input type="email" id="fEmail" class="form-control"></div>
-    <div class="tk-field"><label>Sucursal</label><input type="text" id="fSucursal" class="form-control"></div>
-    <div class="tk-field full"><label>Dirección</label><input type="text" id="fDireccion" class="form-control"></div>
+    <div class="tk-field"><label>Teléfono</label>
+      <input type="tel" id="fPhone" class="form-control" placeholder="+56 9 1234 5678">
+      <div class="vfeed" id="vPhone"></div></div>
+    <div class="tk-field"><label>Correo</label>
+      <input type="email" id="fEmail" class="form-control" placeholder="cliente@correo.cl">
+      <div class="vfeed" id="vEmail"></div></div>
+    <div class="tk-field"><label>Sucursal <span style="color:#cbd5e1">(opcional)</span></label>
+      <input type="text" id="fSucursal" class="form-control"></div>
   </div>
 </div>
 
 <div class="tk-card">
-  <h6>3 · Equipo y documento</h6>
-  <div class="tk-grid">
-    <div class="tk-field"><label>Producto / equipo</label><input type="text" id="fProducto" class="form-control"></div>
-    <div class="tk-field"><label>Marca</label><input type="text" id="fMarca" class="form-control"></div>
-    <div class="tk-field"><label>SKU</label><input type="text" id="fSku" class="form-control"></div>
-    <div class="tk-field"><label>N° boleta / factura</label><input type="text" id="fDoc" class="form-control"></div>
+  <h6><span class="n">3</span>Dirección del equipo</h6>
+  <div class="hint">Empieza a escribir y elige una sugerencia de Google para validarla.</div>
+  <div class="tk-field full">
+    <input type="text" id="fDireccion" class="form-control" placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off">
+    <input type="hidden" id="fDirLat"><input type="hidden" id="fDirLng"><input type="hidden" id="fDirPlace"><input type="hidden" id="fComuna">
+    <small id="fDirHint" class="text-muted d-block mt-1" style="font-size:.74rem">
+      <i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.</small>
   </div>
 </div>
 
 <div class="tk-card">
-  <h6>4 · Problema y prioridad</h6>
+  <h6><span class="n">4</span>Equipo</h6>
+  <div class="hint">Busca por SKU o nombre entre los equipos que el cliente compró (ERP). Puedes agregar varios.</div>
+  <div class="tk-field full">
+    <input type="text" id="fBuscarEq" class="form-control" placeholder="Selecciona primero un cliente…" autocomplete="off" disabled>
+    <div class="tk-ac" id="acEq"></div>
+  </div>
+  <div id="listaEq" style="margin-top:10px;"></div>
+</div>
+
+<div class="tk-card">
+  <h6><span class="n">5</span>Problema</h6>
   <div class="tk-grid">
     <div class="tk-field full">
       <label>¿Qué está pasando?</label>
-      <textarea id="fDesc" class="form-control" rows="3" maxlength="2000"
-        placeholder="Describe el problema o la solicitud…"></textarea>
+      <textarea id="fDesc" class="form-control" rows="3" maxlength="2000" placeholder="Describe el problema o la solicitud…"></textarea>
+      <div class="tk-counter"><span id="descCount">0</span>/2000</div>
     </div>
-    <div class="tk-field">
-      <label>Prioridad</label>
+    <div class="tk-field"><label>Prioridad</label>
       <select id="fPrio" class="form-select">
         {% for p in tk_prioridades %}<option value="{{ p }}"{% if p=='media' %} selected{% endif %}>{{ p|capitalize }}</option>{% endfor %}
-      </select>
-    </div>
+      </select></div>
+    <div class="tk-field"><label>N° boleta / factura <span style="color:#cbd5e1">(opcional)</span></label>
+      <input type="text" id="fDoc" class="form-control"></div>
   </div>
 </div>
 
@@ -89,65 +131,172 @@
 
 <script>
 let tipoSel = '';
-document.querySelectorAll('.tk-tipo-pill').forEach(function(el){
-  el.addEventListener('click', function(){
-    document.querySelectorAll('.tk-tipo-pill').forEach(x=>x.classList.remove('sel'));
-    el.classList.add('sel'); tipoSel = el.dataset.tipo;
-  });
-});
+let cliente = null;          // {empresa, rut}
+const equipos = [];          // [{sku, nombre}]
 
-document.getElementById('btnErp').addEventListener('click', async function(){
-  const rut = document.getElementById('fRut').value.trim();
-  if(!rut){ ilusToast('Ingresa un RUT primero','warning'); return; }
-  ilusLoader.show('Buscando en el ERP…');
+function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments,c=this; t=setTimeout(()=>fn.apply(c,a),ms); }; }
+
+// ── Tipo ──
+document.querySelectorAll('.tk-tipo-pill').forEach(el=>el.addEventListener('click',()=>{
+  document.querySelectorAll('.tk-tipo-pill').forEach(x=>x.classList.remove('sel'));
+  el.classList.add('sel'); tipoSel = el.dataset.tipo;
+}));
+
+// ── Autocomplete cliente (ERP) ──
+const acCli = document.getElementById('acCli');
+const buscarCli = debounce(async function(){
+  const q = document.getElementById('fBuscarCli').value.trim();
+  if(q.length < 2){ acCli.classList.remove('open'); return; }
+  acCli.innerHTML = '<div class="tk-ac-empty">Buscando en el ERP…</div>'; acCli.classList.add('open');
   try{
-    const r = await fetch('/tickets/api/erp/cliente?rut='+encodeURIComponent(rut));
+    const r = await fetch('/tickets/api/erp/buscar-cliente?q='+encodeURIComponent(q));
     const d = await r.json();
-    ilusLoader.hide();
-    if(!d.ok){ ilusToast(d.error||'No encontrado','warning'); return; }
-    const c = d.cliente;
-    if(c.empresa) document.getElementById('fEmpresa').value = c.empresa;
-    if(c.email) document.getElementById('fEmail').value = c.email;
-    if(c.phone) document.getElementById('fPhone').value = c.phone;
-    if(c.direccion) document.getElementById('fDireccion').value = c.direccion;
-    if(c.rut) document.getElementById('fRut').dataset.rutErp = c.rut;
-    document.getElementById('btnCrear').dataset.erpIdmaeen = c.idmaeen||'';
-    document.getElementById('btnCrear').dataset.erpKoen = c.koen||'';
-    ilusToast('✓ Cliente cargado del ERP','success');
-  }catch(err){ ilusLoader.hide(); ilusToast('ERP no disponible','error'); }
+    const rows = d.resultados || [];
+    if(!d.ok && d.error){ acCli.innerHTML = '<div class="tk-ac-empty">'+esc(d.error)+'</div>'; return; }
+    if(!rows.length){ acCli.innerHTML = '<div class="tk-ac-empty">Sin resultados en el ERP</div>'; return; }
+    acCli.innerHTML = rows.map((c,i)=>'<div class="tk-ac-item" data-i="'+i+'">'
+      + '<div>'+esc(c.empresa)+'</div><div class="rut">'+esc(c.rut||'—')+'</div></div>').join('');
+    acCli.querySelectorAll('.tk-ac-item').forEach(it=>it.addEventListener('click',()=>selCliente(rows[+it.dataset.i])));
+  }catch(e){ acCli.innerHTML = '<div class="tk-ac-empty">ERP no disponible</div>'; }
+}, 320);
+document.getElementById('fBuscarCli').addEventListener('input', buscarCli);
+
+function selCliente(c){
+  cliente = c;
+  acCli.classList.remove('open');
+  document.getElementById('fBuscarCli').style.display = 'none';
+  document.getElementById('cliChipTxt').textContent = c.empresa + (c.rut? '  ·  '+c.rut : '');
+  document.getElementById('cliChipWrap').style.display = 'block';
+  const eq = document.getElementById('fBuscarEq');
+  eq.disabled = false; eq.placeholder = 'Buscar equipo por SKU o nombre…';
+}
+document.getElementById('cliChipX').addEventListener('click',()=>{
+  cliente = null;
+  document.getElementById('cliChipWrap').style.display = 'none';
+  const b = document.getElementById('fBuscarCli'); b.style.display = 'block'; b.value=''; b.focus();
+  const eq = document.getElementById('fBuscarEq'); eq.disabled = true; eq.value=''; eq.placeholder='Selecciona primero un cliente…';
 });
 
+// ── Validación teléfono chileno ──
+function normTel(v){ return String(v||'').replace(/[^\d]/g,'').replace(/^56/,''); }
+document.getElementById('fPhone').addEventListener('blur', function(){
+  const v = this.value.trim(); const f = document.getElementById('vPhone');
+  if(!v){ f.className='vfeed'; f.textContent=''; return; }
+  const n = normTel(v);
+  if(/^9\d{8}$/.test(n)){ f.className='vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Móvil válido';
+    this.value = '+56 9 '+n.slice(1,5)+' '+n.slice(5); }
+  else if(/^\d{8,9}$/.test(n)){ f.className='vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Número válido'; }
+  else { f.className='vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Teléfono chileno inválido (9 dígitos)'; }
+});
+
+// ── Validación correo ──
+document.getElementById('fEmail').addEventListener('blur', function(){
+  const v = this.value.trim(); const f = document.getElementById('vEmail');
+  if(!v){ f.className='vfeed'; f.textContent=''; return; }
+  if(/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(v)){ f.className='vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Correo válido'; }
+  else { f.className='vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Correo inválido'; }
+});
+
+// ── Google Places (dirección) — preferencia del logístico: siempre validar ──
+document.addEventListener('DOMContentLoaded', function(){
+  function initDir(){
+    if(typeof ilusPlacesAutocomplete !== 'function'){
+      if(window.__ilusGmapsPending){ window.__ilusGmapsPending.push(initDir); } return;
+    }
+    ilusPlacesAutocomplete('fDireccion', { country:'cl', types:['address'],
+      onPlaceSelected:function(place){
+        document.getElementById('fDirLat').value = place.lat;
+        document.getElementById('fDirLng').value = place.lng;
+        document.getElementById('fDirPlace').value = place.place_id || '';
+        if(place.componentes){
+          const cm = place.componentes.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
+          if(cm) document.getElementById('fComuna').value = cm.long_name;
+        }
+        const h = document.getElementById('fDirHint');
+        h.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Dirección verificada · <small>'
+          + place.lat.toFixed(4)+', '+place.lng.toFixed(4)+'</small>';
+      } });
+  }
+  initDir();
+});
+
+// ── Autocomplete equipo (ERP, del cliente) ──
+const acEq = document.getElementById('acEq');
+const buscarEq = debounce(async function(){
+  const q = document.getElementById('fBuscarEq').value.trim();
+  if(!cliente){ return; }
+  if(q.length < 2){ acEq.classList.remove('open'); return; }
+  acEq.innerHTML = '<div class="tk-ac-empty">Buscando equipos del cliente…</div>'; acEq.classList.add('open');
+  try{
+    const r = await fetch('/tickets/api/erp/buscar-producto?rut='+encodeURIComponent(cliente.rut)+'&q='+encodeURIComponent(q));
+    const d = await r.json();
+    const rows = d.resultados || [];
+    if(!d.ok && d.error){ acEq.innerHTML = '<div class="tk-ac-empty">'+esc(d.error)+'</div>'; return; }
+    if(!rows.length){ acEq.innerHTML = '<div class="tk-ac-empty">Sin equipos que coincidan</div>'; return; }
+    acEq.innerHTML = rows.map((p,i)=>'<div class="tk-ac-item" data-i="'+i+'"><div>'+esc(p.nombre)+'</div>'
+      + '<div class="rut">'+esc(p.sku||'')+(p.fecha? '  ·  '+esc(p.fecha):'')+'</div></div>').join('');
+    acEq.querySelectorAll('.tk-ac-item').forEach(it=>it.addEventListener('click',()=>addEquipo(rows[+it.dataset.i])));
+  }catch(e){ acEq.innerHTML = '<div class="tk-ac-empty">ERP no disponible</div>'; }
+}, 320);
+document.getElementById('fBuscarEq').addEventListener('input', buscarEq);
+
+function addEquipo(p){
+  if(equipos.some(e=>(e.sku && e.sku===p.sku) || e.nombre===p.nombre)){ ilusToast('Ese equipo ya está agregado','info'); }
+  else equipos.push({sku:p.sku||'', nombre:p.nombre||''});
+  acEq.classList.remove('open'); document.getElementById('fBuscarEq').value='';
+  renderEquipos();
+}
+function renderEquipos(){
+  const l = document.getElementById('listaEq');
+  l.innerHTML = equipos.map((e,i)=>'<div class="tk-eqrow"><span>'+esc(e.nombre)
+    + (e.sku? ' <span class="sku">· '+esc(e.sku)+'</span>':'')
+    + '</span><button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="delEquipo('+i+')"><i class="bi bi-x-lg"></i></button></div>').join('');
+}
+window.delEquipo = function(i){ equipos.splice(i,1); renderEquipos(); };
+
+// ── Contador ──
+document.getElementById('fDesc').addEventListener('input', function(){ document.getElementById('descCount').textContent = this.value.length; });
+
+// cerrar dropdowns al clicar fuera
+document.addEventListener('click', function(e){
+  if(!e.target.closest('#fBuscarCli') && !e.target.closest('#acCli')) acCli.classList.remove('open');
+  if(!e.target.closest('#fBuscarEq') && !e.target.closest('#acEq')) acEq.classList.remove('open');
+});
+
+// ── Crear ──
 document.getElementById('btnCrear').addEventListener('click', async function(){
   const desc = document.getElementById('fDesc').value.trim();
-  const empresa = document.getElementById('fEmpresa').value.trim();
-  if(!desc && !empresa){ ilusToast('Ingresa al menos empresa o una descripción','warning'); return; }
+  if(!cliente && !desc){ ilusToast('Elige un cliente o describe el problema','warning'); return; }
   const btn = this; btn.disabled = true;
   const payload = {
     tipo: tipoSel || null,
     prioridad: document.getElementById('fPrio').value,
-    rut: document.getElementById('fRut').value.trim(),
-    empresa: empresa,
+    rut: cliente ? cliente.rut : '',
+    empresa: cliente ? cliente.empresa : '',
     nombre_contacto: document.getElementById('fContacto').value.trim(),
     phone: document.getElementById('fPhone').value.trim(),
     email: document.getElementById('fEmail').value.trim(),
     sucursal: document.getElementById('fSucursal').value.trim(),
     direccion: document.getElementById('fDireccion').value.trim(),
-    producto: document.getElementById('fProducto').value.trim(),
-    marca: document.getElementById('fMarca').value.trim(),
-    sku: document.getElementById('fSku').value.trim(),
+    direccion_lat: document.getElementById('fDirLat').value || null,
+    direccion_lng: document.getElementById('fDirLng').value || null,
+    direccion_place_id: document.getElementById('fDirPlace').value || null,
+    comuna_nombre: document.getElementById('fComuna').value || null,
     numero_documento: document.getElementById('fDoc').value.trim(),
+    producto: equipos.map(e=>e.nombre).join(' · '),
+    sku: equipos.map(e=>e.sku).filter(Boolean).join(', '),
     descripcion: desc,
-    erp_idmaeen: btn.dataset.erpIdmaeen || null,
-    erp_koen: btn.dataset.erpKoen || null,
+    equipos: equipos.map(e=>({kopr:e.sku, nombre:e.nombre, sku:e.sku})),
   };
   try{
-    const r = await fetch('/tickets/api/tickets', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const r = await fetch('/tickets/api/tickets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     const d = await r.json();
     if(!d.ok){ ilusToast(d.error||'Error al crear','error'); btn.disabled=false; return; }
     ilusToast('✓ '+(d.numero_ticket||'Ticket')+' creado','success');
     setTimeout(()=>location.href='/tickets/'+d.id, 500);
-  }catch(err){ ilusToast('Error de red','error'); btn.disabled=false; }
+  }catch(e){ ilusToast('Error de red','error'); btn.disabled=false; }
 });
 </script>
 {% endblock %}

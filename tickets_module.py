@@ -118,6 +118,13 @@ def register_tickets_routes(app, ctx):
     validar_rut = ctx.get("validar_rut")
     _audit = ctx.get("_audit") or (lambda *a, **k: None)
     chile_fmt = ctx.get("chile_fmt")
+    # ERP read-only: reusamos los helpers PROBADOS de app.py (pymssql directo a
+    # SQL Server sobre MAEEN/MAEDDO/MAEEDO). NO la REST API (que no responde en prod).
+    _erp_buscar_clientes = ctx.get("_erp_buscar_clientes")
+    _random_sql_query = ctx.get("_random_sql_query")
+    _rut_cuerpo = ctx.get("_rut_cuerpo")
+    _RANDOM_TIDOS_VENTA = ctx.get("_RANDOM_TIDOS_VENTA") or (
+        "FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "GTR", "GRD", "FCO", "COV")
 
     def _fmt_dt(value, only_date=False):
         """Formatea un datetime/date de MySQL (UTC naive) a hora Chile como
@@ -816,42 +823,88 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "id": adj_id, "url": url, "nombre": f.filename})
 
     # ─────────────────────────────────────────────────────────────────
-    #  API — ERP: autocompletar cliente por RUT (read-only, defensivo)
+    #  API — ERP: buscar cliente (por RUT o razon social) — read-only
+    #  Reusa _erp_buscar_clientes (pymssql -> MAEEN), el mismo motor que
+    #  usan Mantenciones/Transporte (por eso SI encuentra al cliente).
     # ─────────────────────────────────────────────────────────────────
-    @app.route("/tickets/api/erp/cliente", methods=["GET"])
+    @app.route("/tickets/api/erp/buscar-cliente", methods=["GET"])
     @_tickets_required
-    def tk_api_erp_cliente():
-        rut = (request.args.get("rut") or "").strip()
-        if not rut:
-            return jsonify({"ok": False, "error": "Falta el RUT"}), 400
+    def tk_api_erp_buscar_cliente():
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "resultados": []})
+        if not _erp_buscar_clientes:
+            return jsonify({"ok": False, "error": "Motor ERP no disponible", "resultados": []}), 200
         try:
-            import erp_engine
-            ent = erp_engine.get_client().fetch_entity(rut)
+            rows = _erp_buscar_clientes(q, limit=15) or []
         except Exception as _e:
-            print(f"[tk_erp_cliente] ERP no disponible: {_e}", flush=True)
-            return jsonify({"ok": False, "error": "ERP no disponible ahora"}), 200
-        if not ent:
-            return jsonify({"ok": False, "error": "No se encontro el cliente en el ERP"}), 200
+            print(f"[tk_erp_buscar_cliente] error: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "ERP no disponible ahora", "resultados": []}), 200
+        return jsonify({"ok": True, "resultados": [
+            {"empresa": r.get("razon_social") or "", "rut": r.get("rut") or ""} for r in rows]})
 
-        def pick(*keys):
-            for k in keys:
-                for variant in (k, k.lower(), k.upper()):
-                    v = ent.get(variant)
-                    if v not in (None, ""):
-                        return str(v).strip()
-            return ""
+    # ─────────────────────────────────────────────────────────────────
+    #  API — ERP: buscar EQUIPO/producto del cliente por SKU o nombre
+    #  Busca en los documentos del cliente (lo que realmente compro),
+    #  asi el equipo queda asociado al cliente. Read-only.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/erp/buscar-producto", methods=["GET"])
+    @_tickets_required
+    def tk_api_erp_buscar_producto():
+        rut = (request.args.get("rut") or "").strip()
+        q = (request.args.get("q") or "").strip()
+        if not rut:
+            return jsonify({"ok": False, "error": "Selecciona primero el cliente", "resultados": []}), 200
+        if len(q) < 2:
+            return jsonify({"ok": True, "resultados": []})
+        if not (_random_sql_query and _rut_cuerpo):
+            return jsonify({"ok": False, "error": "Motor ERP no disponible", "resultados": []}), 200
+        rut_base = _rut_cuerpo(rut)
+        if not rut_base:
+            return jsonify({"ok": False, "error": "RUT invalido", "resultados": []}), 200
+        q_like = f"%{q.upper()[:60]}%"
+        tidos_in = "','".join(_RANDOM_TIDOS_VENTA)
+        try:
+            rows = _random_sql_query(f"""
+                SELECT TOP 40
+                    LTRIM(RTRIM(d.KOPRCT)) AS sku,
+                    LTRIM(RTRIM(d.NOKOPR)) AS nombre,
+                    LTRIM(RTRIM(d.TIDO))   AS tido,
+                    LTRIM(RTRIM(d.NUDO))   AS nudo,
+                    e.FEEMDO               AS fecha,
+                    SUM(d.CAPRCO1)         AS cantidad
+                FROM MAEDDO d
+                JOIN MAEEDO e
+                    ON LTRIM(RTRIM(e.TIDO)) = LTRIM(RTRIM(d.TIDO))
+                   AND LTRIM(RTRIM(e.NUDO)) = LTRIM(RTRIM(d.NUDO))
+                WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
+                  AND (UPPER(d.NOKOPR) LIKE %s OR UPPER(d.KOPRCT) LIKE %s)
+                  AND d.PRCT = '.f.'
+                  AND LTRIM(RTRIM(d.TIDO)) IN ('{tidos_in}')
+                  AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                GROUP BY d.KOPRCT, d.NOKOPR, d.TIDO, d.NUDO, e.FEEMDO
+                ORDER BY e.FEEMDO DESC
+            """, (f"{rut_base}%", f"{rut_base}-%", q_like, q_like), max_rows=40) or []
+        except Exception as _e:
+            print(f"[tk_erp_buscar_producto] error: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "ERP no disponible ahora", "resultados": []}), 200
 
-        cliente = {
-            "empresa": pick("NOKOEN", "NRAZON", "NOMENT", "RAZONSOCIAL"),
-            "rut": pick("RTEN", "ENDO"),
-            "koen": pick("KOEN"),
-            "idmaeen": pick("IDMAEEN"),
-            "email": pick("EMAIL", "EMAILEN", "CORREO"),
-            "phone": pick("FOEN", "FONO", "TELEFONO"),
-            "direccion": pick("DIEN", "DIRECCION"),
-            "comuna": pick("NOKOCM", "COMUNA", "CMEN"),
-        }
-        return jsonify({"ok": True, "cliente": cliente})
+        # dedup por SKU (el mismo producto puede venir en varios documentos)
+        vistos, out = set(), []
+        for r in rows:
+            sku = (r.get("sku") or "").strip()
+            key = sku or (r.get("nombre") or "")
+            if key in vistos:
+                continue
+            vistos.add(key)
+            fecha = r.get("fecha")
+            try:
+                fstr = fecha.strftime("%d/%m/%Y") if hasattr(fecha, "strftime") else ""
+            except Exception:
+                fstr = ""
+            out.append({"sku": sku, "nombre": (r.get("nombre") or "").strip(),
+                        "tido": r.get("tido"), "nudo": r.get("nudo"), "fecha": fstr})
+        return jsonify({"ok": True, "resultados": out})
 
     # ─────────────────────────────────────────────────────────────────
     #  MIGRACION / CENTRALIZACION desde mant_tickets (Blueprint §7)
