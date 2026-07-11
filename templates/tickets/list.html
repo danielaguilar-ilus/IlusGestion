@@ -17,23 +17,67 @@
 .tk-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:10px 12px;margin-bottom:12px;
   display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
 .tk-filtros .form-control,.tk-filtros .form-select{max-width:210px;}
-.tk-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;margin-bottom:8px;
-  display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;
-  transition:all .12s;border-left:4px solid #e5e7eb;cursor:pointer;}
-.tk-row:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.07);}
-.tk-row.prio-urgente{border-left-color:#dc2626;} .tk-row.prio-alta{border-left-color:#f59e0b;}
-.tk-row.prio-media{border-left-color:#6b7280;} .tk-row.prio-baja{border-left-color:#94a3b8;}
+/* ── Bandeja de tickets: TABLA (Daniel, feedback 2026-07-11: "necesito
+   que sea una TABLA... bien elegante que me contenga cincuenta tickets"
+   -- reemplaza el layout anterior de tarjetas/cards, que fue descartado). ── */
+.tk-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow-x:auto;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);}
+table.tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:960px;}
+table.tk-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.66rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
+  border-bottom:1px solid #eaecf0;white-space:nowrap;}
+table.tk-table thead th:first-child{border-left:3px solid transparent;}
+@media(max-width:767px){table.tk-table thead th{top:var(--topbar-h,90px);}}
+table.tk-table tbody tr{cursor:pointer;transition:background .1s;}
+table.tk-table tbody tr:hover{background:#fafbfc;}
+table.tk-table tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6;}
+table.tk-table td{padding:10px 14px;vertical-align:middle;}
+table.tk-table td:first-child{border-left:3px solid transparent;}
+table.tk-table tbody tr.prio-urgente td:first-child{border-left-color:#dc2626;}
+table.tk-table tbody tr.prio-alta td:first-child{border-left-color:#f59e0b;}
+table.tk-table tbody tr.prio-media td:first-child{border-left-color:#6b7280;}
+table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 .tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
   font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;letter-spacing:.04em;white-space:nowrap;}
-.tk-meta{min-width:0;} .tk-cliente{font-weight:800;font-size:.95rem;color:#0f172a;}
-.tk-titulo{font-size:.82rem;color:#374151;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tkc-num{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.tkc-cliente{font-weight:800;font-size:.87rem;color:#0f172a;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:240px;}
+.tkc-titulo{font-size:.75rem;color:#9ca3af;margin-top:2px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:240px;}
+.tkc-tipo{display:flex;align-items:center;gap:7px;white-space:nowrap;}
+.tkc-tipo .ic{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:.72rem;flex-shrink:0;}
+.tkc-tipo .lbl{font-size:.76rem;color:#374151;font-weight:600;}
+.tkc-asignado{font-size:.8rem;color:#374151;}
+.tkc-asignado.none{color:#9ca3af;font-style:italic;}
+.tkc-fecha{font-size:.78rem;color:#374151;white-space:nowrap;}
+.tkc-fecha .hora{font-size:.68rem;color:#9ca3af;display:block;}
 .tk-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;}
 .bs-open{background:#dbeafe;color:#1e40af;} .bs-in_progress{background:#fef3c7;color:#92400e;}
 .bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
 .bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
 .bs-ot_pending_approval,.bs-ot_generated,.bs-ot_in_progress{background:#ede9fe;color:#5b21b6;}
-.tk-unread{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;font-weight:800;padding:2px 7px;}
-.tk-tipo{font-size:.65rem;color:#6b7280;background:#f9fafb;border:1px solid #e5e7eb;border-radius:50px;padding:2px 8px;}
+.tk-unread{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;font-weight:800;padding:2px 7px;white-space:nowrap;}
+/* ── Mini-stepper de avance (columna "Avance"): 4 puntos + linea, mismo
+   espiritu/paleta que el stepper grande de ficha.html (verde=completado,
+   rojo ILUS=actual, gris=pendiente) pero compacto para caber en una celda. ── */
+.tk-mini-wrap{display:flex;align-items:center;gap:8px;}
+.tk-mini-stepper{display:flex;align-items:center;}
+.tk-mini-dot{width:9px;height:9px;border-radius:50%;background:#e5e7eb;flex-shrink:0;}
+.tk-mini-dot.done{background:#16a34a;}
+.tk-mini-dot.current{background:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.18);}
+.tk-mini-line{width:13px;height:2px;background:#e5e7eb;flex-shrink:0;}
+.tk-mini-line.done{background:#16a34a;}
+.tk-mini-extra{font-size:.62rem;font-weight:800;padding:2px 6px;border-radius:50px;white-space:nowrap;
+  display:inline-flex;align-items:center;}
+.tk-mini-extra.pending{background:#fff8e1;color:#b45309;}
+.tk-mini-extra.cancel{background:#fee2e2;color:#991b1b;}
+/* ── Origen (WEB / Interno) ── */
+.tk-origen-pill{display:inline-flex;align-items:center;gap:5px;font-size:.64rem;font-weight:800;padding:3px 9px;
+  border-radius:50px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;}
+.tk-origen-pill.web{background:#dbeafe;color:#1e40af;}
+.tk-origen-pill.backoffice{background:#f3f4f6;color:#374151;}
+.tk-origen-pill.otro{background:#f9fafb;color:#6b7280;border:1px solid #e5e7eb;}
 .empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 30px;text-align:center;}
 .empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
 
@@ -116,6 +160,27 @@
 .nt-err-msg{font-size:.7rem;color:#dc2626;margin-top:3px;display:none;}
 .nt-err-msg.show{display:block;}
 #fTipoWrap.err .nt-tipos{box-shadow:0 0 0 3px rgba(220,38,38,.15);border-radius:10px;}
+
+/* ── Adjuntos (Nuevo Ticket, tarjeta 5) ── */
+.nt-drop{border:2px dashed #d1d5db;border-radius:12px;padding:22px 14px;text-align:center;cursor:pointer;
+  transition:all .12s;background:#fff;}
+.nt-drop:hover,.nt-drop.drag{border-color:#dc2626;background:#fef2f2;}
+.nt-drop i{font-size:1.4rem;color:#9ca3af;display:block;margin-bottom:6px;}
+.nt-drop .t1{font-weight:700;font-size:.82rem;color:#374151;}
+.nt-drop .t2{font-size:.72rem;color:#9ca3af;margin-top:3px;}
+.nt-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+.nt-file-chip{display:flex;align-items:center;gap:6px;background:#f1f5f9;border-radius:8px;padding:6px 10px;
+  font-size:.76rem;max-width:190px;}
+.nt-file-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.nt-file-chip .sz{color:#94a3b8;font-size:.68rem;white-space:nowrap;}
+.nt-file-chip .x{cursor:pointer;color:#94a3b8;font-weight:900;flex-shrink:0;margin-left:2px;}
+.nt-file-chip.up-ok{background:#dcfce7;}
+.nt-file-chip.up-ok i{color:#16a34a;}
+.nt-file-chip.up-err{background:#fee2e2;}
+.nt-file-chip.up-err i{color:#dc2626;}
+.nt-file-chip.up-going i{color:#dc2626;animation:nt-spin 1s linear infinite;}
+@keyframes nt-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@media(max-width:480px){.nt-file-chip{max-width:140px;}}
 </style>
 
 <div class="tk-hero">
@@ -125,8 +190,6 @@
   </div>
   <div class="d-flex gap-2">
     {% if permissions.superadmin %}
-    <button class="btn btn-sm btn-outline-light" id="btnImportarMant" title="Importar tickets de Mantenciones">
-      <i class="bi bi-database-down me-1"></i>Importar de Mantenciones</button>
     <button class="btn btn-sm btn-outline-light" id="btnImportarTaa" title="Importar los tickets históricos del sistema Triple A (CSV Reporte Tickets + Reporte SLA)">
       <i class="bi bi-file-earmark-arrow-up me-1"></i>Importar CSV Triple A</button>
     <input type="file" id="taaFileTickets" accept=".csv" style="display:none">
@@ -265,7 +328,7 @@
 
         <div class="nt-card">
           <h6><span class="n">4</span>Equipo <span style="color:#94a3b8;font-weight:600;font-size:.7rem;">(opcional)</span></h6>
-          <div class="hint">Busca por SKU o nombre. Si ya identificaste al cliente prioriza lo que compró; si no, busca en el catálogo general.</div>
+          <div class="hint">Busca por SKU o nombre en el catálogo completo de equipos (bodega de soporte).</div>
           <div class="nt-field full">
             <div class="nt-search">
               <i class="bi bi-search"></i>
@@ -292,6 +355,16 @@
               </select></div>
             <div class="nt-field"><label for="ntDoc">N° boleta / factura <span style="color:#cbd5e1">(opcional)</span></label>
               <input type="text" id="ntDoc" class="form-control"></div>
+            <div class="nt-field full" style="margin-top:2px;">
+              <label>Adjuntos <span style="color:#cbd5e1">(opcional)</span></label>
+              <div class="nt-drop" id="ntDrop">
+                <i class="bi bi-paperclip"></i>
+                <div class="t1">Arrastra archivos aquí o haz clic para elegir</div>
+                <div class="t2">Fotos, videos, PDF, informes, OTs u otros documentos · hasta 15 archivos (25 MB c/u)</div>
+              </div>
+              <input type="file" id="ntFile" multiple hidden accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx">
+              <div class="nt-files" id="ntFiles"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -306,10 +379,19 @@
 <script>
 const ESTADO_LABEL = {{ estado_label|tojson }};
 const TIPO_LABEL = {{ tipo_label|tojson }};
+// Mismo mapeo tipo→(icono, color, fondo) que usan los tipo-pills del modal
+// "Nuevo Ticket" (variable Jinja `tipo_visual` definida arriba, tarjeta 1) --
+// se reutiliza aca para la columna Tipo de la tabla (NO se inventa paleta nueva).
+const TIPO_VISUAL = {{ tipo_visual|tojson }};
 let _tkTimer = null;
 
-// El servidor ya envía las fechas formateadas en hora Chile (Regla #6).
+// El servidor ya envía las fechas formateadas en hora Chile (Regla #6, "%d/%m/%Y %H:%M").
 function fmtFecha(s){ return s || ''; }
+function fmtFechaPartes(s){
+  if(!s) return {f:'—', h:''};
+  const i = s.indexOf(' ');
+  return i < 0 ? {f:s, h:''} : {f:s.slice(0,i), h:s.slice(i+1)};
+}
 // Escapa TAMBIÉN comillas: esc() se usa en contexto de atributo (href/onclick),
 // no solo texto — sin escapar comillas habría riesgo de XSS almacenado.
 function esc(s){ return (s==null?'':String(s))
@@ -343,22 +425,74 @@ async function cargarTickets(){
     cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay tickets con estos filtros.</div>';
     return;
   }
-  cont.innerHTML = data.tickets.map(function(tk){
-    const cliente = tk.empresa || tk.nombre_contacto || tk.rut || 'Sin cliente';
-    const titulo = tk.titulo || tk.tipo && TIPO_LABEL[tk.tipo] || '—';
-    const unread = tk.unread_count > 0
-      ? '<span class="tk-unread">'+tk.unread_count+' nuevo'+(tk.unread_count>1?'s':'')+'</span>' : '';
-    const tipoPill = tk.tipo ? '<span class="tk-tipo">'+esc(TIPO_LABEL[tk.tipo]||tk.tipo)+'</span>' : '';
-    const garBadge = tk.es_garantia ? ' <span class="tk-gar-badge"><i class="bi bi-shield-check"></i> Garantía</span>' : '';
-    return '<div class="tk-row prio-'+(tk.prioridad||'media')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
-      + '<span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'
-      + '<div class="tk-meta"><div class="tk-cliente">'+esc(cliente)+' '+unread+garBadge+'</div>'
-      + '<div class="tk-titulo">'+esc(titulo)+'</div></div>'
-      + tipoPill
-      + '<span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span>'
-      + '<span style="font-size:.72rem;color:#9ca3af;white-space:nowrap;">'+fmtFecha(tk.updated_at)+'</span>'
-      + '</div>';
-  }).join('');
+  cont.innerHTML = '<div class="tk-table-wrap"><table class="tk-table"><thead><tr>'
+    + '<th>Ticket</th><th>Cliente</th><th>Tipo</th><th>Estado</th><th>Avance</th><th>Asignado</th><th>Origen</th><th>Fecha</th>'
+    + '</tr></thead><tbody>'
+    + data.tickets.map(tkFilaHtml).join('')
+    + '</tbody></table></div>';
+}
+
+// ── Columna Tipo: icono circular de color + label (paleta TIPO_VISUAL, misma del modal) ──
+function tkTipoCelda(tk){
+  if(!tk.tipo) return '<span class="text-muted" style="font-size:.78rem;">—</span>';
+  const tv = TIPO_VISUAL[tk.tipo] || ['bi-question-circle','#6b7280','#f9fafb'];
+  return '<div class="tkc-tipo"><span class="ic" style="background:'+tv[2]+';color:'+tv[1]+';"><i class="bi '+tv[0]+'"></i></span>'
+    + '<span class="lbl">'+esc(TIPO_LABEL[tk.tipo]||tk.tipo)+'</span></div>';
+}
+
+// ── Columna Origen: form→WEB, backoffice→Interno, cualquier otro tal cual en mayúsculas ──
+function tkOrigenCelda(origen){
+  if(origen==='form') return '<span class="tk-origen-pill web"><i class="bi bi-globe"></i>WEB</span>';
+  if(origen==='backoffice') return '<span class="tk-origen-pill backoffice"><i class="bi bi-building"></i>Interno</span>';
+  return '<span class="tk-origen-pill otro">'+esc((origen||'—').toString().toUpperCase())+'</span>';
+}
+
+// ── Columna Avance: mini-stepper de 4 puntos (Abierto/En Curso/Resuelto/Cerrado),
+// mismo indice que tkStepIndexParaEstado en ficha.html. 'pending'/'cancelado' no
+// consumen su propio nodo -- se superponen como icono/color especial (nt pedido). ──
+const TK_MINI_EN_CURSO = ['in_progress','ot_pending_approval','ot_generated','ot_in_progress'];
+function tkMiniIndice(estado){
+  if(estado==='open') return 0;
+  if(TK_MINI_EN_CURSO.includes(estado)) return 1;
+  if(estado==='resolved') return 2;
+  if(estado==='closed') return 3;
+  return 0; // pending/cancelado/desconocido: no rompen el stepper de 4 nodos
+}
+function tkMiniStepper(tk){
+  const idx = tkMiniIndice(tk.estado);
+  let dots = '';
+  for(let i=0;i<4;i++){
+    if(i>0) dots += '<span class="tk-mini-line'+(i<=idx?' done':'')+'"></span>';
+    let cls = 'tk-mini-dot';
+    if(i<idx) cls += ' done'; else if(i===idx) cls += ' current';
+    dots += '<span class="'+cls+'"></span>';
+  }
+  let extra = '';
+  if(tk.estado==='pending') extra = '<span class="tk-mini-extra pending" title="En espera"><i class="bi bi-hourglass-split"></i></span>';
+  else if(tk.estado==='cancelado') extra = '<span class="tk-mini-extra cancel" title="Cancelado"><i class="bi bi-x-circle-fill"></i></span>';
+  return '<div class="tk-mini-wrap"><div class="tk-mini-stepper">'+dots+'</div>'+extra+'</div>';
+}
+
+function tkFilaHtml(tk){
+  const cliente = tk.empresa || tk.nombre_contacto || tk.rut || 'Sin cliente';
+  const titulo = tk.titulo || '';
+  const unread = tk.unread_count > 0
+    ? '<span class="tk-unread">'+tk.unread_count+' nuevo'+(tk.unread_count>1?'s':'')+'</span>' : '';
+  const garBadge = tk.es_garantia ? '<span class="tk-gar-badge"><i class="bi bi-shield-check"></i> Garantía</span>' : '';
+  const asignado = (tk.asignado_a && String(tk.asignado_a).trim())
+    ? '<span class="tkc-asignado">'+esc(tk.asignado_a)+'</span>'
+    : '<span class="tkc-asignado none">Sin asignar</span>';
+  const fp = fmtFechaPartes(fmtFecha(tk.updated_at));
+  return '<tr class="prio-'+(tk.prioridad||'media')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
+    + '<td><div class="tkc-num"><span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'+garBadge+unread+'</div></td>'
+    + '<td><div class="tkc-cliente">'+esc(cliente)+'</div>'+(titulo?'<div class="tkc-titulo">'+esc(titulo)+'</div>':'')+'</td>'
+    + '<td>'+tkTipoCelda(tk)+'</td>'
+    + '<td><span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span></td>'
+    + '<td>'+tkMiniStepper(tk)+'</td>'
+    + '<td>'+asignado+'</td>'
+    + '<td>'+tkOrigenCelda(tk.origen)+'</td>'
+    + '<td><div class="tkc-fecha">'+esc(fp.f)+(fp.h?'<span class="hora">'+esc(fp.h)+'</span>':'')+'</div></td>'
+    + '</tr>';
 }
 
 function debounced(){ clearTimeout(_tkTimer); _tkTimer = setTimeout(cargarTickets, 350); }
@@ -387,6 +521,9 @@ let ntTipoSel = '';
 let ntEsGarantia = 0;      // garantia SEPARADA del tipo (aplica a cualquiera)
 let ntCliente = null;      // {empresa, rut}
 const ntEquipos = [];      // [{sku, nombre}]
+let ntArchivos = [];       // [{file, estado:'pendiente'|'subiendo'|'ok'|'error', nombre}] -- adjuntos del nuevo ticket
+const NT_MAX_ADJ = 15;     // mismo tope que el formulario publico /soporte
+const NT_MAX_MB = 25;      // idem MAX_ADJUNTO_MB en tickets_module.py
 const ntModalEl = document.getElementById('ntModal');
 const ntModal = new bootstrap.Modal(ntModalEl);
 
@@ -428,8 +565,81 @@ function ntReset(){
   document.getElementById('ntVPhone').className='nt-vfeed'; document.getElementById('ntVEmail').className='nt-vfeed';
   NT_REQ_WRAPS.forEach(limpiarNtErr);
   renderNtEquipos();
+  ntArchivos = []; document.getElementById('ntFile').value=''; ntRenderArchivos();
 }
 ntModalEl.addEventListener('hidden.bs.modal', ntReset);
+
+// ── Adjuntos: elegir/soltar/listar/quitar (subida real ocurre tras crear el ticket) ──
+function ntIconArchivo(nombreOMime){
+  const s = (nombreOMime||'').toLowerCase();
+  if (/\.(jpg|jpeg|png|webp|gif|heic|bmp)$/.test(s) || s.startsWith('image')) return 'bi-file-image-fill';
+  if (/\.(mp4|mov|webm|avi|mkv)$/.test(s) || s.startsWith('video')) return 'bi-file-play-fill';
+  if (/\.pdf$/.test(s)) return 'bi-file-earmark-pdf-fill';
+  if (/\.(doc|docx)$/.test(s)) return 'bi-file-earmark-word-fill';
+  if (/\.(xls|xlsx)$/.test(s)) return 'bi-file-earmark-excel-fill';
+  return 'bi-file-earmark-fill';
+}
+function ntFmtSize(bytes){
+  if (bytes >= 1024*1024) return (bytes/(1024*1024)).toFixed(1)+' MB';
+  return Math.max(1, Math.round(bytes/1024))+' KB';
+}
+const ntDrop = document.getElementById('ntDrop');
+const ntFileInput = document.getElementById('ntFile');
+ntDrop.addEventListener('click', ()=>ntFileInput.click());
+['dragover','dragleave','drop'].forEach(ev=>ntDrop.addEventListener(ev, function(e){
+  e.preventDefault(); e.stopPropagation();
+  if (ev==='dragover') ntDrop.classList.add('drag'); else ntDrop.classList.remove('drag');
+  if (ev==='drop') ntAgregarArchivos(e.dataTransfer.files);
+}));
+ntFileInput.addEventListener('change', function(e){ ntAgregarArchivos(e.target.files); this.value=''; });
+
+function ntAgregarArchivos(fileList){
+  const restantes = NT_MAX_ADJ - ntArchivos.length;
+  if (restantes <= 0){ ilusToast('Máximo '+NT_MAX_ADJ+' archivos por ticket','warning'); return; }
+  Array.from(fileList).slice(0, restantes).forEach(function(file){
+    if (file.size > NT_MAX_MB*1024*1024){ ilusToast(file.name+' supera '+NT_MAX_MB+' MB','error'); return; }
+    ntArchivos.push({file:file, estado:'pendiente', nombre:file.name});
+  });
+  if (fileList.length > restantes) ilusToast('Solo se agregaron '+restantes+' archivo(s), máximo '+NT_MAX_ADJ,'warning');
+  ntRenderArchivos();
+}
+function ntRenderArchivos(){
+  document.getElementById('ntFiles').innerHTML = ntArchivos.map(function(a,i){
+    const icon = a.estado==='ok' ? 'bi-check-circle-fill' : a.estado==='error' ? 'bi-exclamation-circle-fill'
+      : a.estado==='subiendo' ? 'bi-arrow-repeat' : ntIconArchivo(a.nombre);
+    const cls = a.estado==='ok' ? 'up-ok' : a.estado==='error' ? 'up-err' : a.estado==='subiendo' ? 'up-going' : '';
+    const quitar = a.estado==='pendiente' || a.estado==='error'
+      ? '<span class="x" onclick="ntQuitarArchivo('+i+')">&times;</span>' : '';
+    return '<span class="nt-file-chip '+cls+'"><i class="bi '+icon+'"></i><span class="nm">'+esc(a.nombre)+'</span>'
+      + '<span class="sz">'+ntFmtSize(a.file.size)+'</span>' + quitar + '</span>';
+  }).join('');
+}
+window.ntQuitarArchivo = function(i){ ntArchivos.splice(i,1); ntRenderArchivos(); };
+
+async function ntSubirArchivos(ticketId){
+  const pendientes = ntArchivos.filter(a=>a.estado==='pendiente' || a.estado==='error');
+  let ok = 0, fallidos = 0;
+  for (let idx=0; idx<pendientes.length; idx++){
+    const a = pendientes[idx];
+    a.estado = 'subiendo'; ntRenderArchivos();
+    ilusLoader.show({text:'Subiendo '+(idx+1)+' de '+pendientes.length+' archivo(s)…', sub:a.nombre,
+      progress: Math.round((idx/pendientes.length)*100)});
+    const fd = new FormData(); fd.append('file', a.file);
+    try{
+      const r = await fetch('/tickets/api/tickets/'+ticketId+'/adjuntos', {method:'POST', body:fd});
+      const d = await r.json();
+      a.estado = d.ok ? 'ok' : 'error';
+      if (d.ok) ok++; else fallidos++;
+    }catch(e){ a.estado = 'error'; fallidos++; }
+    ntRenderArchivos();
+  }
+  ilusLoader.hide();
+  if (pendientes.length){
+    if (fallidos===0) ilusToast('✓ '+ok+' adjunto(s) subido(s)','success');
+    else if (ok===0) ilusToast('No se pudo subir ningún adjunto ('+fallidos+' fallido(s))','error');
+    else ilusToast(ok+' adjunto(s) subido(s), '+fallidos+' fallido(s)','warning');
+  }
+}
 
 function ntSeleccionarTipo(el){
   document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
@@ -647,6 +857,9 @@ document.getElementById('ntBtnCrear').addEventListener('click', async function()
     if(!d.ok){ ilusToast(d.error||'Error al crear','error'); btn.disabled=false; return; }
     ilusToast('✓ '+(d.numero_ticket||'Ticket')+' creado','success');
     ntModal.hide();
+    if (ntArchivos.length){
+      await ntSubirArchivos(d.id);
+    }
     setTimeout(()=>location.href='/tickets/'+d.id, 400);
   }catch(e){ ilusToast('Error de red','error'); btn.disabled=false; }
 });
@@ -691,42 +904,6 @@ document.getElementById('btnDesdeDoc').addEventListener('click', async function(
     setTimeout(()=>location.href='/tickets/'+d2.id, 400);
   }catch(e){ ilusLoader.hide(); ilusToast('Error de red','error'); }
 });
-
-// ══════════════ Importar tickets de Mantenciones (superadmin) ══════════════
-const btnImportar = document.getElementById('btnImportarMant');
-if(btnImportar){
-  btnImportar.addEventListener('click', async function(){
-    ilusLoader.show('Previsualizando migración…');
-    let dry;
-    try{
-      const r = await fetch('/tickets/api/admin/importar-mant?dry_run=1', {method:'POST'});
-      dry = (await r.json()).resumen;
-    }catch(e){ ilusLoader.hide(); ilusToast('Error al previsualizar','error'); return; }
-    ilusLoader.hide();
-    if(dry && dry.error){ ilusToast(dry.error,'error'); return; }
-    const pendientes = (dry.origen_total||0) - (dry.ya_migrados||0);
-    if(pendientes <= 0){
-      await ilusAlert({title:'Nada que migrar', message:'Todos los tickets de Mantenciones ya están en el módulo central ('+(dry.ya_migrados||0)+' ya migrados).', type:'info'});
-      return;
-    }
-    const ok = await ilusConfirm({
-      title:'Importar tickets de Mantenciones',
-      message:'Se migrarán '+pendientes+' ticket(s) nuevo(s) al módulo central (de '+(dry.origen_total||0)+' totales, '+(dry.ya_migrados||0)+' ya migrados antes).',
-      sub:'Es aditivo: NO modifica ni borra los tickets originales de Mantenciones.',
-      okLabel:'Importar ahora', cancelLabel:'Cancelar',
-    });
-    if(!ok) return;
-    ilusLoader.show('Importando tickets…');
-    try{
-      const r2 = await fetch('/tickets/api/admin/importar-mant?dry_run=0', {method:'POST'});
-      const res = (await r2.json()).resumen;
-      ilusLoader.hide();
-      if(res && res.errores){ ilusToast(res.migrados+' migrados, '+res.errores+' con error (revisa logs)', 'warning'); }
-      else { ilusToast('✓ '+(res.migrados||0)+' ticket(s) importado(s)','success'); }
-      cargarTickets();
-    }catch(e){ ilusLoader.hide(); ilusToast('Error al importar','error'); }
-  });
-}
 
 // ══════════════ Importar CSV Triple A (superadmin) ══════════════
 // Flujo: elegir "Reporte Tickets.csv" (obligatorio) → opcionalmente el

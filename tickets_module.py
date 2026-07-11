@@ -205,8 +205,6 @@ def register_tickets_routes(app, ctx):
     _erp_buscar_clientes = ctx.get("_erp_buscar_clientes")
     _random_sql_query = ctx.get("_random_sql_query")
     _rut_cuerpo = ctx.get("_rut_cuerpo")
-    _RANDOM_TIDOS_VENTA = ctx.get("_RANDOM_TIDOS_VENTA") or (
-        "FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "GTR", "GRD", "FCO", "COV")
 
     # Bodega desde la que se busca el catalogo general (Daniel 2026-07-11:
     # "necesito que traiga todos los productos de la bodega 02"). Codigo
@@ -259,6 +257,11 @@ def register_tickets_routes(app, ctx):
     _brand_subject = ctx.get("_brand_subject") or (lambda tema: tema)
     _render_comm_template = ctx.get("_render_comm_template")
     _comm_render_email_document = ctx.get("_comm_render_email_document")
+    # Llave de paso por modulo (Daniel 2026-07-11): "tickets" nace CERRADA.
+    # _send_ilus_email(..., modulo="tickets") YA la respeta automaticamente
+    # (bloquea y loguea en email_log) -- esto solo sirve para dar un mensaje
+    # de error claro en la UI en vez de un generico "no se pudo enviar".
+    _modulo_canal_bloqueado = ctx.get("_modulo_canal_bloqueado")
 
     def _fmt_dt(value, only_date=False):
         """Formatea un datetime/date de MySQL (UTC naive) a hora Chile como
@@ -493,6 +496,23 @@ def register_tickets_routes(app, ctx):
               UNIQUE KEY uq_ticket_doc (ticket_id, erp_tido, erp_nudo),
               KEY idx_ticket (ticket_id),
               CONSTRAINT fk_tkdoc_ticket FOREIGN KEY (ticket_id)
+                 REFERENCES tk_tickets(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        # Daniel 2026-07-11: "tengo que tener datos de quien lo abrio, cuando
+        # lo abrio, la hora, el dia" -- 1 fila por (ticket,usuario), se
+        # actualiza cada vez que ese usuario abre la ficha (ON DUPLICATE KEY).
+        # No usa tk_mensajes a proposito: no queremos spamear el hilo de
+        # conversacion con un evento cada vez que alguien recarga la pagina.
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_vistas (
+              ticket_id     INT NOT NULL,
+              usuario       VARCHAR(190) NOT NULL,
+              primera_vez   DATETIME DEFAULT CURRENT_TIMESTAMP,
+              visto_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP,
+              PRIMARY KEY (ticket_id, usuario),
+              CONSTRAINT fk_tkvista_ticket FOREIGN KEY (ticket_id)
                  REFERENCES tk_tickets(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
@@ -735,6 +755,10 @@ def register_tickets_routes(app, ctx):
         total_row = mysql_fetchone(f"SELECT COUNT(*) AS n FROM tk_tickets t{wsql}", tuple(params))
         total = int(total_row["n"]) if total_row else 0
 
+        # Daniel 2026-07-11: "cuando el cliente responda... las respuestas mas
+        # nuevas se van posicionando mas arriba" -- un ticket con mensajes de
+        # cliente sin leer sube al tope de la bandeja, ANTES que el orden por
+        # estado/prioridad (para que nunca se pierda una respuesta nueva).
         rows = mysql_fetchall(
             "SELECT t.id, t.numero_ticket, t.origen, t.estado, t.tipo, t.prioridad, "
             "       t.titulo, t.empresa, t.rut, t.nombre_contacto, t.asignado_a, "
@@ -743,7 +767,11 @@ def register_tickets_routes(app, ctx):
             "          WHERE m.ticket_id=t.id AND m.tipo='client_message' "
             "            AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS unread_count "
             f"FROM tk_tickets t{wsql} "
-            "ORDER BY FIELD(t.estado,'open','in_progress','pending','ot_pending_approval',"
+            "ORDER BY "
+            "  (SELECT COUNT(*) FROM tk_mensajes m2 "
+            "     WHERE m2.ticket_id=t.id AND m2.tipo='client_message' "
+            "       AND m2.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) > 0 DESC, "
+            "  FIELD(t.estado,'open','in_progress','pending','ot_pending_approval',"
             "'ot_generated','ot_in_progress','resolved','closed','cancelado'), "
             "FIELD(t.prioridad,'urgente','alta','media','baja'), t.updated_at DESC, t.id DESC "
             "LIMIT %s OFFSET %s",
@@ -891,6 +919,10 @@ def register_tickets_routes(app, ctx):
                    details={"numero": numero, "tipo": tipo})
         except Exception:
             pass
+        try:
+            _tk_notificar_lifecycle(tid, "creacion")
+        except Exception as _e:
+            print(f"[tk_api_create] notificacion creacion no enviada tid={tid}: {_e}", flush=True)
         return jsonify({"ok": True, "id": tid, "numero_ticket": numero})
 
     # ─────────────────────────────────────────────────────────────────
@@ -925,6 +957,24 @@ def register_tickets_routes(app, ctx):
         adjuntos = mysql_fetchall(
             "SELECT id, mensaje_id, archivo_url, archivo_nombre, mime_type, file_size_kb, origen, created_at "
             "FROM tk_adjuntos WHERE ticket_id=%s ORDER BY id", (tid,))
+
+        # Registrar la vista de ESTE usuario (quien lo abrio, cuando) -- 1 fila
+        # por usuario, se actualiza cada vez que reabre. No bloquea la
+        # respuesta si falla (ej. tabla no migrada aun).
+        _user_actual = current_username() or "desconocido"
+        try:
+            mysql_execute(
+                "INSERT INTO tk_vistas (ticket_id, usuario) VALUES (%s,%s) "
+                "ON DUPLICATE KEY UPDATE visto_at=NOW()", (tid, _user_actual))
+        except Exception as _e:
+            print(f"[tk_api_get] no se pudo registrar vista tid={tid} user={_user_actual}: {_e}", flush=True)
+        try:
+            vistas = mysql_fetchall(
+                "SELECT usuario, primera_vez, visto_at FROM tk_vistas "
+                "WHERE ticket_id=%s ORDER BY visto_at DESC", (tid,))
+        except Exception:
+            vistas = []
+
         return jsonify({
             "ok": True,
             "ticket": _fmt_row(t),
@@ -932,6 +982,7 @@ def register_tickets_routes(app, ctx):
             "documentos": [_fmt_row(r) for r in documentos],
             "mensajes": [_fmt_row(r) for r in mensajes],
             "adjuntos": [_fmt_row(r) for r in adjuntos],
+            "vistas": [_fmt_row(r) for r in vistas],
             "estado_label": ESTADO_LABEL, "tipo_label": TIPO_LABEL,
         })
 
@@ -952,6 +1003,9 @@ def register_tickets_routes(app, ctx):
             "nombre_contacto", "email", "phone", "direccion", "empresa", "rut",
             "asignado_a", "tecnico_id", "fecha_limite", "notas_internas",
             "producto", "marca", "sku",
+            # Daniel 2026-07-11: la ficha ahora tambien edita region/comuna
+            # (antes solo se guardaban al crear el ticket, nunca al editar).
+            "region_nombre", "comuna_nombre", "numero_documento",
         )
         sets, params = [], []
         for key in allowed:
@@ -989,6 +1043,19 @@ def register_tickets_routes(app, ctx):
             _tk_log(tid, "asignacion",
                     f"Asignado a: {d.get('asignado_a') or '(sin asignar)'}", usuario=user,
                     metadata={"campo": "asignado_a", "antes": prev["asignado_a"], "nuevo": d.get("asignado_a")})
+
+        # Notificacion automatica al cliente en los hitos resuelto/cerrado
+        # (Daniel 2026-07-11) -- respeta la llave de paso del modulo 'tickets'.
+        if nuevo_estado == "resolved" and prev["estado"] not in ("resolved", "closed"):
+            try:
+                _tk_notificar_lifecycle(tid, "resuelto")
+            except Exception as _e:
+                print(f"[tk_api_update] notificacion resuelto no enviada tid={tid}: {_e}", flush=True)
+        elif nuevo_estado == "closed" and prev["estado"] != "closed":
+            try:
+                _tk_notificar_lifecycle(tid, "cerrado")
+            except Exception as _e:
+                print(f"[tk_api_update] notificacion cerrado no enviada tid={tid}: {_e}", flush=True)
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
@@ -1037,6 +1104,91 @@ def register_tickets_routes(app, ctx):
                 (mensaje_id, tid, *ids))
         except Exception as _e:
             print(f"[tk_link_adjuntos] error: {_e}", flush=True)
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Notificaciones automaticas del ciclo de vida (creacion/resuelto/
+    #  cerrado) -- Daniel 2026-07-11: "que funcione la mensajeria por los
+    #  tickets". Reusan el MISMO estandar de marca + plantilla editable que
+    #  la respuesta manual, y respetan la MISMA llave de paso del modulo
+    #  'tickets' (via _send_ilus_email(modulo="tickets")) -- nace cerrada,
+    #  asi que hoy no envian nada real hasta que Daniel la abra desde
+    #  /comunicaciones. Si el ticket no tiene email de contacto, no hacen
+    #  nada (no hay a quien avisar).
+    # ─────────────────────────────────────────────────────────────────
+    _TK_LIFECYCLE_DEFAULTS = {
+        "creacion": (
+            "Recibimos tu solicitud — ticket {numero}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {cliente},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Ya registramos tu solicitud. A partir de "
+            "ahora puedes seguirla con el número <strong>{numero}</strong>.</p>"),
+        "resuelto": (
+            "Tu ticket {numero} fue resuelto",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {cliente},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Te contamos que tu solicitud "
+            "<strong>{numero}</strong> ya fue resuelta por nuestro equipo.</p>"),
+        "cerrado": (
+            "Tu ticket {numero} fue cerrado",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {cliente},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Tu ticket <strong>{numero}</strong> "
+            "ha sido cerrado. Gracias por confiar en ILUS Sport &amp; Health.</p>"),
+    }
+
+    def _tk_notificar_lifecycle(tid, estado_slug):
+        if not _send_ilus_email or estado_slug not in _TK_LIFECYCLE_DEFAULTS:
+            return
+        t = mysql_fetchone(
+            "SELECT numero_ticket, email, empresa, nombre_contacto FROM tk_tickets WHERE id=%s", (tid,))
+        if not t or not (t.get("email") or "").strip():
+            return
+        to_email = t["email"].strip()
+        numero = t.get("numero_ticket") or f"#{tid}"
+        cliente_nombre = t.get("nombre_contacto") or t.get("empresa") or "cliente"
+
+        tema_default, cuerpo_tpl = _TK_LIFECYCLE_DEFAULTS[estado_slug]
+        tema = tema_default.format(numero=numero)
+        cuerpo_email = cuerpo_tpl.format(cliente=_html_mod.escape(cliente_nombre), numero=numero)
+        if _render_comm_template:
+            try:
+                tpl = _render_comm_template(
+                    estado_slug, "email", {"cliente": cliente_nombre, "numero_ticket": numero},
+                    modulo="tickets")
+                if tpl:
+                    _asu, _cue = tpl
+                    if (_asu or "").strip():
+                        tema = _asu.strip()
+                    if (_cue or "").strip():
+                        cuerpo_email = _cue
+            except Exception as _e:
+                print(f"[tk_notificar_lifecycle] plantilla '{estado_slug}' no usada: {_e}", flush=True)
+
+        # Salvaguarda: el numero de ticket SIEMPRE debe estar en el asunto
+        # (identificacion del cliente + futura agrupacion de hilos por
+        # asunto), aunque Daniel edite la plantilla en Comunicaciones y
+        # se le olvide incluir {{numero_ticket}}.
+        if numero not in tema:
+            tema = f"{tema} · {numero}"
+
+        subject = _brand_subject(tema)
+        # El boton solo va en el CORREO -- lo que se persiste en tk_mensajes
+        # (y por tanto se ve en la ficha interna y en el hilo del portal) es
+        # solo el texto del mensaje, sin el boton que apunta al mismo portal.
+        try:
+            cuerpo_correo = cuerpo_email + _tk_boton_portal_html(tid)
+        except Exception as _e:
+            print(f"[tk_notificar_lifecycle] boton portal no agregado: {_e}", flush=True)
+            cuerpo_correo = cuerpo_email
+        html_final = (_comm_render_email_document(subject, cuerpo_correo, subtitle=f"Ticket {numero} · ILUS Fitness")
+                      if _comm_render_email_document else cuerpo_correo)
+        try:
+            enviado = _send_ilus_email(to_email, subject, html_final,
+                                        evento=f"ticket_{estado_slug}", modulo="tickets")
+        except Exception as _e:
+            print(f"[tk_notificar_lifecycle] error enviando tid={tid} estado={estado_slug}: {_e}", flush=True)
+            enviado = False
+
+        _tk_log(tid, "mensaje", cuerpo_email, es_interno=False,
+                to_email=to_email[:150], estado_envio="enviado" if enviado else "fallido",
+                metadata={"subject": subject, "auto": True, "estado_slug": estado_slug})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — comentario interno (conversacion Fase 1)
@@ -1112,7 +1264,18 @@ def register_tickets_routes(app, ctx):
             except Exception as _e:
                 print(f"[tk_responder_cliente] plantilla editable no usada: {_e}", flush=True)
 
+        # Salvaguarda: el numero de ticket SIEMPRE debe estar en el asunto
+        # (identificacion del cliente + futura agrupacion de hilos por
+        # asunto), aunque Daniel edite la plantilla en Comunicaciones y
+        # se le olvide incluir {{numero_ticket}}.
+        if numero not in tema:
+            tema = f"{tema} · {numero}"
+
         subject = _brand_subject(tema)
+        try:
+            cuerpo_email = cuerpo_email + _tk_boton_portal_html(tid)
+        except Exception as _e:
+            print(f"[tk_responder_cliente] boton portal no agregado: {_e}", flush=True)
         html_final = (_comm_render_email_document(subject, cuerpo_email, subtitle=f"Ticket {numero} · ILUS Fitness")
                       if _comm_render_email_document else cuerpo_email)
 
@@ -1136,11 +1299,14 @@ def register_tickets_routes(app, ctx):
         mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
 
         if not enviado:
-            return jsonify({
-                "ok": False, "mensaje_id": msg_id,
-                "error": "El correo no se pudo enviar (revisa la config de correo o intenta de nuevo). "
-                         "Tu mensaje quedó guardado, puedes reintentar.",
-            }), 200
+            if _modulo_canal_bloqueado and _modulo_canal_bloqueado("tickets", "email"):
+                error_msg = ("Los envíos de correo del módulo Tickets están CERRADOS "
+                             "(llave de paso). Actívalos en Comunicaciones → Tickets. "
+                             "Tu mensaje quedó guardado, puedes reintentar cuando se abra.")
+            else:
+                error_msg = ("El correo no se pudo enviar (revisa la config de correo o intenta de nuevo). "
+                             "Tu mensaje quedó guardado, puedes reintentar.")
+            return jsonify({"ok": False, "mensaje_id": msg_id, "error": error_msg}), 200
         return jsonify({"ok": True, "mensaje_id": msg_id})
 
     # ─────────────────────────────────────────────────────────────────
@@ -1205,12 +1371,14 @@ def register_tickets_routes(app, ctx):
         except Exception:
             cant = 1
         mysql_execute(
-            "INSERT INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, tipo, sku, cantidad, notas) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE cantidad=VALUES(cantidad), notas=VALUES(notas)",
+            "INSERT INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, tipo, sku, cantidad, notas, serie) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE cantidad=VALUES(cantidad), notas=VALUES(notas), serie=VALUES(serie)",
             (tid, kopr[:100] or None, nombre[:300] or None,
              (d.get("tipo") or "").strip()[:100] or None,
              (d.get("sku") or "").strip()[:100] or None,
-             cant, (d.get("notas") or "").strip()[:500] or None))
+             cant, (d.get("notas") or "").strip()[:500] or None,
+             (d.get("serie") or "").strip()[:120] or None))
         _tk_log(tid, "otro", f"Equipo agregado: {nombre or kopr}")
         return jsonify({"ok": True})
 
@@ -1220,6 +1388,64 @@ def register_tickets_routes(app, ctx):
         mysql_execute("DELETE FROM tk_ticket_equipos WHERE id=%s AND ticket_id=%s", (eid, tid))
         _tk_log(tid, "otro", f"Equipo #{eid} quitado")
         return jsonify({"ok": True})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — traer equipos a un ticket YA EXISTENTE desde un documento ERP
+    #  (Daniel 2026-07-11: "ya tenemos las conexiones a random, así que no
+    #  debería hacérsenos difícil" -- reusa erp_engine, mismo motor que
+    #  "crear ticket desde documento", pero para un ticket que ya existe).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/tickets/<int:tid>/equipos-desde-documento", methods=["POST"])
+    @_tickets_required
+    def tk_api_equipos_desde_documento(tid):
+        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        d = request.get_json(silent=True) or {}
+        tido = (d.get("tido") or "").strip().upper()
+        nudo = (d.get("nudo") or "").strip()
+        if not (tido and nudo):
+            return jsonify({"ok": False, "error": "Falta tipo y número de documento"}), 400
+        try:
+            import erp_engine
+            doc = erp_engine.get_client().fetch_document(tido, nudo)
+        except Exception as _e:
+            print(f"[tk_equipos_desde_doc] error tid={tid} {tido}/{nudo}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "ERP no disponible ahora"}), 200
+        if not doc:
+            return jsonify({"ok": False, "error": "Documento no encontrado en el ERP"}), 200
+
+        lineas = []
+        for ln in (doc.get("lineas_raw") or []):
+            sku = str(ln.get("KOPRCT") or ln.get("koprct") or "").strip()
+            nombre = str(ln.get("NOKOPR") or ln.get("nokopr") or "").strip()
+            if sku or nombre:
+                lineas.append({"sku": sku, "nombre": nombre,
+                                "cantidad": ln.get("CAPRCO1") or ln.get("caprco1") or 1})
+        if not lineas:
+            return jsonify({"ok": False, "error": "El documento no tiene líneas de producto"}), 200
+
+        agregados = 0
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO tk_ticket_documentos (ticket_id, erp_tido, erp_nudo, fecha) "
+                "VALUES (%s,%s,%s,%s)",
+                (tid, tido[:10], nudo[:40], str(doc.get("fecha") or "")[:10] or None))
+        except Exception as _e:
+            print(f"[tk_equipos_desde_doc] documento no registrado tid={tid}: {_e}", flush=True)
+        for ln in lineas:
+            try:
+                cant = int(ln.get("cantidad") or 1) if str(ln.get("cantidad") or 1).isdigit() else 1
+                mysql_execute(
+                    "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, sku, cantidad) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo",
+                     ln["sku"][:100] or None, cant))
+                agregados += 1
+            except Exception as _e:
+                print(f"[tk_equipos_desde_doc] equipo no insertado tid={tid} sku={ln.get('sku')}: {_e}", flush=True)
+
+        _tk_log(tid, "otro", f"{agregados} equipo(s) agregado(s) desde documento ERP {tido}-{nudo}")
+        return jsonify({"ok": True, "agregados": agregados, "total_lineas": len(lineas)})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — adjuntos (subida a GCS via /f/<key>)
@@ -1518,72 +1744,33 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "resultados": resultados})
 
     # ─────────────────────────────────────────────────────────────────
-    #  API — ERP: buscar EQUIPO/producto del cliente por SKU o nombre
-    #  Busca en los documentos del cliente (lo que realmente compro),
-    #  asi el equipo queda asociado al cliente. Read-only.
+    #  API — ERP: buscar EQUIPO/producto (catalogo general, bodega de
+    #  soporte). Read-only.
+    #
+    #  FIX 2026-07-12 (Daniel): antes esta ruta buscaba primero en el
+    #  HISTORIAL DE COMPRAS del cliente (por RUT) y solo caia al catalogo
+    #  general si esa busqueda no encontraba nada. Daniel senalo que eso es
+    #  una restriccion real y equivocada: un cliente puede haber comprado el
+    #  mismo equipo con OTRA razon social (RUT personal vs RUT empresa), asi
+    #  que limitar la sugerencia a "lo que este RUT especifico compro" deja
+    #  fuera equipos que el cliente si tiene. La logica correcta es mas
+    #  simple: siempre mostrar el catalogo completo de bodega 02 (donde estan
+    #  TODOS los productos para la venta) sin importar el RUT seleccionado.
+    #  Los repuestos no entran aca por diseno: bodega 02 es la bodega de
+    #  equipos/maquinas para la venta (confirmado contra el ERP real), y un
+    #  repuesto de todas formas se asocia a la MAQUINA del ticket, no se
+    #  selecciona como si fuera un equipo en si mismo.
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/erp/buscar-producto", methods=["GET"])
     @_tickets_required
     def tk_api_erp_buscar_producto():
-        rut = (request.args.get("rut") or "").strip()
         q = (request.args.get("q") or "").strip()
         if len(q) < 2:
             return jsonify({"ok": True, "resultados": []})
-        # Sin cliente aun seleccionado: catalogo general (bodega configurada)
-        # en vez de bloquear la busqueda de equipo por completo.
-        if not rut:
-            resultados, err = _buscar_catalogo_bodega(q)
-            if err:
-                return jsonify({"ok": False, "error": err, "resultados": []}), 200
-            return jsonify({"ok": True, "resultados": resultados, "catalogo_general": True})
-        if not (_random_sql_query and _rut_cuerpo):
-            return jsonify({"ok": False, "error": "Motor ERP no disponible", "resultados": []}), 200
-        rut_base = _rut_cuerpo(rut)
-        if not rut_base:
-            return jsonify({"ok": False, "error": "RUT invalido", "resultados": []}), 200
-        q_like = f"%{q.upper()[:60]}%"
-        tidos_in = "','".join(_RANDOM_TIDOS_VENTA)
-        try:
-            rows = _random_sql_query(f"""
-                SELECT TOP 40
-                    LTRIM(RTRIM(d.KOPRCT)) AS sku,
-                    LTRIM(RTRIM(d.NOKOPR)) AS nombre,
-                    LTRIM(RTRIM(d.TIDO))   AS tido,
-                    LTRIM(RTRIM(d.NUDO))   AS nudo,
-                    e.FEEMDO               AS fecha,
-                    SUM(d.CAPRCO1)         AS cantidad
-                FROM MAEDDO d
-                JOIN MAEEDO e
-                    ON LTRIM(RTRIM(e.TIDO)) = LTRIM(RTRIM(d.TIDO))
-                   AND LTRIM(RTRIM(e.NUDO)) = LTRIM(RTRIM(d.NUDO))
-                WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
-                  AND (UPPER(d.NOKOPR) LIKE %s OR UPPER(d.KOPRCT) LIKE %s)
-                  AND d.PRCT = 0
-                  AND LTRIM(RTRIM(d.TIDO)) IN ('{tidos_in}')
-                  AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
-                GROUP BY d.KOPRCT, d.NOKOPR, d.TIDO, d.NUDO, e.FEEMDO
-                ORDER BY e.FEEMDO DESC
-            """, (f"{rut_base}%", f"{rut_base}-%", q_like, q_like), max_rows=40) or []
-        except Exception as _e:
-            print(f"[tk_erp_buscar_producto] error: {_e}", flush=True)
-            return jsonify({"ok": False, "error": "ERP no disponible ahora", "resultados": []}), 200
-
-        # dedup por SKU (el mismo producto puede venir en varios documentos)
-        vistos, out = set(), []
-        for r in rows:
-            sku = (r.get("sku") or "").strip()
-            key = sku or (r.get("nombre") or "")
-            if key in vistos:
-                continue
-            vistos.add(key)
-            fecha = r.get("fecha")
-            try:
-                fstr = fecha.strftime("%d/%m/%Y") if hasattr(fecha, "strftime") else ""
-            except Exception:
-                fstr = ""
-            out.append({"sku": sku, "nombre": (r.get("nombre") or "").strip(),
-                        "tido": r.get("tido"), "nudo": r.get("nudo"), "fecha": fstr})
-        return jsonify({"ok": True, "resultados": out})
+        resultados, err = _buscar_catalogo_bodega(q)
+        if err:
+            return jsonify({"ok": False, "error": err, "resultados": []}), 200
+        return jsonify({"ok": True, "resultados": resultados, "catalogo_general": True})
 
     # ─────────────────────────────────────────────────────────────────
     #  MIGRACION / CENTRALIZACION desde mant_tickets (Blueprint §7)
@@ -2144,6 +2331,10 @@ def register_tickets_routes(app, ctx):
                    details={"numero": numero, "tipo": tipo, "ip": _ip_cliente()})
         except Exception:
             pass
+        try:
+            _tk_notificar_lifecycle(tid, "creacion")
+        except Exception as _e:
+            print(f"[tk_soporte_api_crear] notificacion creacion no enviada tid={tid}: {_e}", flush=True)
 
         return jsonify({
             "ok": True, "id": tid, "numero_ticket": numero,
@@ -2158,7 +2349,12 @@ def register_tickets_routes(app, ctx):
         token = request.form.get("token") or request.headers.get("X-Upload-Token") or ""
         if not _tk_upload_token_validar(token, tid):
             return jsonify({"ok": False, "error": "Token de subida inválido o expirado"}), 403
-        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s AND origen='form'", (tid,)):
+        # FIX 2026-07-11: antes exigia origen='form' -- bloqueaba el portal de
+        # respuesta del cliente (Daniel) para tickets creados internamente
+        # (origen='backoffice'/'erp'). El TOKEN HMAC ya es la proteccion real
+        # (solo quien recibio el correo de ESE ticket lo tiene); el origen no
+        # agrega seguridad, solo limitaba el caso de uso sin necesidad.
+        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
         if not _uploader_upload:
             return jsonify({"ok": False, "error": "Almacenamiento no disponible"}), 503
@@ -2200,6 +2396,126 @@ def register_tickets_routes(app, ctx):
             "VALUES (%s,%s,%s,%s,%s,%s,'form','cliente')",
             (tid, url[:500], (res.get("public_id") or "")[:500] or None,
              f.filename[:300], mime[:150] or None, int(size_mb * 1024)))
-        return jsonify({"ok": True, "url": url, "nombre": f.filename})
+        # id del adjunto recien insertado -- lo necesita el portal del cliente
+        # para vincularlo al mensaje via _tk_link_adjuntos (adjunto_ids).
+        adj_id = None
+        try:
+            row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id")
+            adj_id = int(row["id"]) if row and row.get("id") else None
+        except Exception:
+            pass
+        return jsonify({"ok": True, "id": adj_id, "url": url, "nombre": f.filename})
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  PORTAL DE RESPUESTA DEL CLIENTE (Daniel 2026-07-11)
+    #  "recibir y enviar mensajes... con toda la calidad de informacion,
+    #  imagenes... datos persistentes dentro del ticket". En vez de recepcion
+    #  real de correo (requeriria OAuth a Gmail o esperar el DNS de Resend --
+    #  Daniel pidio explicitamente dejar Resend fuera por ahora), cada correo
+    #  saliente incluye un boton "Responder" a este portal publico: pagina
+    #  sin login, gateada por el MISMO token HMAC que ya protege la subida de
+    #  adjuntos del formulario publico (_tk_upload_token, vida larga aqui).
+    #  El cliente ve el hilo (sin notas internas) y responde con texto +
+    #  adjuntos, que quedan en tk_mensajes/tk_adjuntos como cualquier otro
+    #  mensaje -- persistente, visible para el staff en la ficha normal.
+    # ═══════════════════════════════════════════════════════════════════
+    def _tk_portal_url(tid):
+        """Link de por vida (1 anio) para el boton 'Responder' de los correos.
+        Se regenera solo -- no se guarda en BD, es determinístico por HMAC."""
+        token = _tk_upload_token(tid, ttl_horas=24 * 365)
+        base = (os.environ.get("ILUS_APP_BASE_URL")
+                or "https://ilus-app-469212710544.southamerica-west1.run.app").rstrip("/")
+        return f"{base}/portal/ticket/{tid}?token={token}"
+
+    def _tk_boton_portal_html(tid):
+        """HTML del boton 'Responder' que se agrega a TODO correo saliente de
+        tickets (creacion/resuelto/cerrado/respuesta manual) -- estilos inline
+        (los clientes de correo no cargan CSS externo)."""
+        url = _tk_portal_url(tid)
+        url_esc = _html_mod.escape(url, quote=True)
+        return (
+            '<div style="text-align:center;margin:24px 0 8px">'
+            f'<a href="{url_esc}" style="background:#dc2626;color:#ffffff;text-decoration:none;'
+            'font-weight:700;font-size:14px;padding:12px 28px;border-radius:8px;display:inline-block">'
+            'Responder en el portal</a></div>'
+            '<p style="font-size:12px;color:#9ca3af;text-align:center;margin:8px 0 0">'
+            f'O copia este enlace: <a href="{url_esc}" style="color:#dc2626">{url_esc}</a></p>'
+        )
+
+    @app.route("/portal/ticket/<int:tid>")
+    def tk_portal_ver(tid):
+        token = (request.args.get("token") or "").strip()
+        if not _tk_upload_token_validar(token, tid):
+            return render_template("tickets/portal_error.html"), 403
+        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
+            return render_template("tickets/portal_error.html"), 404
+        return render_template("tickets/portal_cliente.html", tid=tid, token=token,
+                                max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB)
+
+    @app.route("/portal/ticket/<int:tid>/datos")
+    def tk_portal_datos(tid):
+        token = (request.args.get("token") or "").strip()
+        if not _tk_upload_token_validar(token, tid):
+            return jsonify({"ok": False, "error": "Enlace inválido o expirado"}), 403
+        t = mysql_fetchone(
+            "SELECT numero_ticket, estado, tipo, empresa, nombre_contacto, created_at "
+            "FROM tk_tickets WHERE id=%s", (tid,))
+        if not t:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        # Solo mensajes NO internos (nunca notas_internas, cambios de estado/
+        # asignacion/equipos, ni comentarios marcados como internos por staff).
+        mensajes = mysql_fetchall(
+            "SELECT id, tipo, contenido, usuario, created_at FROM tk_mensajes "
+            "WHERE ticket_id=%s AND es_interno=0 AND tipo IN ('mensaje','client_message','comentario') "
+            "ORDER BY created_at ASC, id ASC", (tid,))
+        adjuntos = mysql_fetchall(
+            "SELECT id, mensaje_id, archivo_url, archivo_nombre, mime_type, created_at FROM tk_adjuntos "
+            "WHERE ticket_id=%s ORDER BY id", (tid,))
+        return jsonify({
+            "ok": True,
+            "ticket": {
+                "numero_ticket": t["numero_ticket"], "estado": t["estado"],
+                "estado_label": ESTADO_LABEL.get(t["estado"], t["estado"]),
+                "tipo_label": TIPO_LABEL.get(t["tipo"], t["tipo"] or ""),
+                "cliente": t.get("nombre_contacto") or t.get("empresa") or "",
+                "creado": _fmt_dt(t.get("created_at")),
+            },
+            "mensajes": [{
+                "id": m["id"], "contenido": m["contenido"], "usuario": m["usuario"],
+                "es_cliente": m["tipo"] == "client_message",
+                "fecha": _fmt_dt(m.get("created_at")),
+            } for m in mensajes],
+            "adjuntos": [{"id": a["id"], "mensaje_id": a.get("mensaje_id"),
+                          "url": a["archivo_url"], "nombre": a["archivo_nombre"],
+                          "mime": a.get("mime_type"), "fecha": _fmt_dt(a.get("created_at"))}
+                         for a in adjuntos],
+        })
+
+    @app.route("/portal/ticket/<int:tid>/responder", methods=["POST"])
+    def tk_portal_responder(tid):
+        if not _rl_ok("portal:" + _ip_cliente(), 20, 300):
+            return jsonify({"ok": False, "error": "Demasiados envíos, espera un momento"}), 429
+        d = request.get_json(silent=True) or {}
+        token = (d.get("token") or "").strip()
+        if not _tk_upload_token_validar(token, tid):
+            return jsonify({"ok": False, "error": "Enlace inválido o expirado"}), 403
+        t = mysql_fetchone(
+            "SELECT numero_ticket, nombre_contacto, empresa FROM tk_tickets WHERE id=%s", (tid,))
+        if not t:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        contenido = _sanitizar_html_mensaje((d.get("contenido") or "").strip())
+        if not contenido:
+            return jsonify({"ok": False, "error": "Escribe un mensaje"}), 400
+        adjunto_ids = d.get("adjunto_ids") or []
+        cliente_nombre = t.get("nombre_contacto") or t.get("empresa") or "Cliente"
+        msg_id = _tk_log(tid, "client_message", contenido[:20000], usuario=cliente_nombre, es_interno=False)
+        _tk_link_adjuntos(tid, msg_id, adjunto_ids)
+        mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
+        try:
+            _audit("tk_portal_respuesta_cliente", target_type="tk_ticket", target_id=tid,
+                   details={"numero": t.get("numero_ticket")})
+        except Exception:
+            pass
+        return jsonify({"ok": True, "mensaje_id": msg_id})
 
     print("[ILUS] Modulo Tickets central registrado (/tickets).", flush=True)

@@ -7001,6 +7001,7 @@ _MODULOS_KILLSWITCH_VALIDOS = (
     "mantenciones",
     "comunicacion_interna",
     "general",
+    "tickets",
 )
 
 _KILLSWITCH_CACHE = {"data": None, "ts": 0}
@@ -31856,6 +31857,7 @@ _COMM_MODULOS_VALIDOS = (
     "mantenciones",
     "comunicacion_interna",
     "general",
+    "tickets",
 )
 
 
@@ -31967,6 +31969,7 @@ def comm_killswitch_get():
         "mantenciones":         "Mantenciones",
         "comunicacion_interna": "Comunicación interna",
         "general":              "General",
+        "tickets":              "Tickets",
     }
     modulos = []
     for mod in _MODULOS_KILLSWITCH_VALIDOS:
@@ -69276,13 +69279,30 @@ def _ensure_comm_template_general():
 
 
 def _tickets_tpl_seed():
-    """Source of truth de la plantilla EDITABLE del módulo TICKETS (email).
-    Daniel 2026-07-11: toda respuesta al cliente desde un ticket debe salir
-    con el diseño de marca ILUS (header negro+logo, footer con CTA de
+    """Source of truth de las plantillas EDITABLES del módulo TICKETS (email).
+    Daniel 2026-07-11: toda comunicación con el cliente desde un ticket debe
+    salir con el diseño de marca ILUS (header negro+logo, footer con CTA de
     soporte) de forma PERSISTENTE, y el texto debe poder editarse desde
     /comunicaciones sin tocar código — mismo patrón que 'general'/retiros/
-    transporte. Placeholders: {{cliente}}, {{numero_ticket}}, {{mensaje}}."""
+    transporte. Placeholders comunes: {{cliente}}, {{numero_ticket}};
+    'respuesta' además usa {{mensaje}}.
+
+    Set completo del ciclo de vida (Daniel: "todo bien estructurado"):
+      creacion  -> confirma que el ticket quedó registrado (al crearse)
+      respuesta -> ya existia; respuesta manual del equipo al cliente
+      resuelto  -> aviso cuando el ticket pasa a 'resolved'
+      cerrado   -> aviso cuando el ticket pasa a 'closed'
+    """
     return {
+        'creacion': (
+            "Recibimos tu solicitud — ticket {{numero_ticket}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Ya registramos tu solicitud. A partir de "
+            "ahora puedes seguirla con el número <strong>{{numero_ticket}}</strong>.</p>"
+            "<p style=\"font-size:14px;color:#374151\">Nuestro equipo técnico la revisará a la "
+            "brevedad y te contactaremos apenas tengamos novedades.</p>"
+            "<p style=\"font-size:13px;color:#6b7280;margin-top:16px\">"
+            "Si necesitas agregar información, puedes responder directamente este correo.</p>"),
         'respuesta': (
             "Respuesta a tu ticket {{numero_ticket}}",
             "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
@@ -69290,6 +69310,20 @@ def _tickets_tpl_seed():
             "<p style=\"font-size:13px;color:#6b7280;margin-top:16px\">"
             "Este mensaje es parte del seguimiento de tu ticket <strong>{{numero_ticket}}</strong>."
             "</p>"),
+        'resuelto': (
+            "Tu ticket {{numero_ticket}} fue resuelto",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Te contamos que tu solicitud "
+            "<strong>{{numero_ticket}}</strong> ya fue resuelta por nuestro equipo.</p>"
+            "<p style=\"font-size:14px;color:#374151\">Si el problema persiste o tienes dudas, "
+            "puedes responder este mismo correo y retomamos tu caso.</p>"),
+        'cerrado': (
+            "Tu ticket {{numero_ticket}} fue cerrado",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">Tu ticket <strong>{{numero_ticket}}</strong> "
+            "ha sido cerrado. Gracias por confiar en ILUS Sport &amp; Health.</p>"
+            "<p style=\"font-size:13px;color:#6b7280;margin-top:16px\">"
+            "Si necesitas algo más, no dudes en contactarnos.</p>"),
     }
 
 
@@ -69317,6 +69351,40 @@ def _ensure_comm_template_tickets():
     except Exception as e:
         print(f"[ensure_comm_tpl] no se pudo sembrar tickets: {e}", flush=True)
         return 0
+
+
+def _ensure_tickets_killswitch_cerrado():
+    """Daniel 2026-07-11: la llave de paso del módulo 'tickets' debe nacer
+    CERRADA (bloqueada) hasta que el revise las plantillas nuevas — a
+    diferencia de los demás módulos que se siembran abiertos.
+
+    INSERT IGNORE: si la fila ya existe (Daniel ya la tocó desde
+    /comunicaciones), esto NO la pisa — solo establece el default la
+    primera vez que corre en cada base de datos."""
+    try:
+        # Defensivo: garantiza la tabla exista aunque ILUS_SKIP_MIGRATIONS=1
+        # haya saltado init_comunicaciones_tables() en produccion.
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS comm_killswitch (
+                modulo               VARCHAR(50) NOT NULL,
+                email_bloqueado      TINYINT(1) DEFAULT 0,
+                whatsapp_bloqueado   TINYINT(1) DEFAULT 0,
+                sms_bloqueado        TINYINT(1) DEFAULT 0,
+                motivo               TEXT,
+                actualizado_por      VARCHAR(190),
+                actualizado_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+                                     ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (modulo)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        mysql_execute(
+            "INSERT IGNORE INTO comm_killswitch "
+            "(modulo, email_bloqueado, whatsapp_bloqueado, sms_bloqueado, motivo, actualizado_por) "
+            "VALUES ('tickets', 1, 1, 1, "
+            "'Módulo nuevo — cerrado por defecto hasta revisión de plantillas', 'sistema')"
+        )
+    except Exception as e:
+        print(f"[ensure_tickets_killswitch] no se pudo sembrar: {e}", flush=True)
 
 
 def _ensure_comm_template_retiros():
@@ -69598,7 +69666,8 @@ try:
         _ensure_comm_template_transporte()
         _ensure_comm_template_general()
         _ensure_comm_template_retiros()  # Daniel 2026-06-15: stepper de correo al canónico
-        _ensure_comm_template_tickets()  # Daniel 2026-07-11: correo de respuesta de tickets
+        _ensure_comm_template_tickets()  # Daniel 2026-07-11: set completo de plantillas de tickets
+        _ensure_tickets_killswitch_cerrado()  # Daniel 2026-07-11: llave de tickets nace CERRADA
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
 

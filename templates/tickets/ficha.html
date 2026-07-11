@@ -60,14 +60,34 @@
   color:#1d4ed8;border-radius:8px;padding:6px 11px;font-size:.78rem;font-weight:700;text-decoration:none;
   margin:12px 0 0 24px;}
 .tk-map-link:hover{background:#dbeafe;}
-/* ── Equipos: grid de tarjetas ── */
-.tk-eq-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
-.tk-eq{border:1px solid #eaecf0;border-radius:10px;padding:10px 12px;font-size:.85rem;background:#fafbfc;}
-.tk-eq .eq-top{display:flex;justify-content:space-between;align-items:start;gap:6px;}
-.tk-eq .eq-nombre{font-weight:700;color:#0f172a;}
-.tk-eq .eq-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
-.tk-eq .eq-tag{background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:1px 7px;font-size:.68rem;color:#6b7280;font-weight:600;}
-.tk-eq .btn-link{opacity:.5;} .tk-eq .btn-link:hover{opacity:1;}
+/* ── Equipos: tabla real ── */
+.tk-eq-table th{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;
+  border-bottom:2px solid #eaecf0;font-weight:800;padding:6px 10px;}
+.tk-eq-table td{font-size:.85rem;border-bottom:1px solid #f1f5f9;padding:8px 10px;color:#0f172a;}
+.tk-eq-table tr:last-child td{border-bottom:none;}
+.tk-eq-table .btn-link{opacity:.5;} .tk-eq-table .btn-link:hover{opacity:1;}
+/* ── Identificación del cliente: grilla editable ── */
+.tk-id-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px;}
+.tk-id-field label{display:block;font-size:.68rem;font-weight:800;color:#6b7280;margin-bottom:3px;
+  text-transform:uppercase;letter-spacing:.04em;}
+@media (max-width:760px){.tk-id-grid{grid-template-columns:repeat(2,1fr);}}
+@media (max-width:520px){.tk-id-grid{grid-template-columns:1fr;}}
+.tk-origen-badge{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:50px;
+  padding:2px 10px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+.tk-visto-por{font-size:.72rem;color:#9ca3af;margin-top:10px;}
+.tk-visto-por b{color:#475569;font-weight:700;}
+/* ── Adjuntos: galería de miniaturas ── */
+.tk-adj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px;}
+.tk-adj-item{border:1px solid #eaecf0;border-radius:10px;overflow:hidden;background:#fafbfc;
+  text-decoration:none;color:#374151;display:flex;flex-direction:column;transition:box-shadow .15s,border-color .15s;}
+.tk-adj-item:hover{box-shadow:0 3px 12px rgba(0,0,0,.09);border-color:#dc2626;color:#dc2626;}
+.tk-adj-thumb{height:86px;display:flex;align-items:center;justify-content:center;background:#f1f5f9;
+  font-size:1.9rem;color:#94a3b8;overflow:hidden;}
+.tk-adj-thumb img{width:100%;height:100%;object-fit:cover;}
+.tk-adj-thumb .bi-file-earmark-pdf{color:#dc2626;} .tk-adj-thumb .bi-file-earmark-word{color:#3b82f6;}
+.tk-adj-thumb .bi-file-earmark-excel{color:#16a34a;} .tk-adj-thumb .bi-file-earmark-play{color:#f59e0b;}
+.tk-adj-name{font-size:.68rem;font-weight:700;padding:5px 7px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tk-adj-meta{font-size:.6rem;color:#9ca3af;padding:1px 7px 6px;}
 /* ── Documentos ERP ── */
 .tk-doc{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid #eaecf0;
   border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:.84rem;}
@@ -122,6 +142,53 @@
 .rp-adj-preview .chip{display:flex;align-items:center;gap:5px;background:#f1f5f9;border-radius:7px;
   padding:4px 8px;font-size:.74rem;}
 .rp-adj-preview .chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
+
+/* ── Stepper de estado (tracking visual de avance) ── */
+.tk-stepper-card{padding-bottom:14px;}
+.tk-stepper{display:flex;align-items:flex-start;}
+.tk-step{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;}
+.tk-step:not(:first-child)::before{content:'';position:absolute;top:19px;left:-50%;width:100%;height:3px;
+  background:#e5e7eb;z-index:0;}
+.tk-step.done:not(:first-child)::before,.tk-step.current:not(:first-child)::before{background:#16a34a;}
+.tk-step-circle{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:1.05rem;background:#f3f4f6;color:#9ca3af;position:relative;z-index:1;transition:background .15s,color .15s;}
+.tk-step-label{font-size:.72rem;font-weight:700;color:#9ca3af;margin-top:7px;}
+.tk-step.done .tk-step-circle{background:#dcfce7;color:#166534;}
+.tk-step.done .tk-step-label{color:#166534;}
+.tk-step.current .tk-step-circle{background:var(--ilus-red,#dc2626);color:#fff;box-shadow:0 0 0 5px rgba(220,38,38,.15);}
+.tk-step.current .tk-step-label{color:#dc2626;font-weight:800;}
+.tk-step-badge{position:absolute;top:-10px;background:#fff;border:1px solid #dc2626;color:#dc2626;
+  font-size:.56rem;font-weight:800;border-radius:50px;padding:1px 8px;white-space:nowrap;z-index:2;}
+.tk-pending-pill{background:#fff8e1;color:#b45309;border-radius:50px;padding:6px 14px;font-size:.78rem;
+  font-weight:800;display:inline-flex;align-items:center;gap:6px;margin-top:14px;}
+.tk-cancel-banner{background:#fee2e2;color:#991b1b;border-radius:10px;padding:12px 16px;font-weight:800;
+  display:flex;align-items:center;gap:10px;font-size:.92rem;}
+@media (max-width:520px){
+  .tk-stepper{flex-direction:column;gap:2px;}
+  .tk-step{flex-direction:row;justify-content:flex-start;text-align:left;gap:12px;padding:8px 0;}
+  .tk-step-label{margin-top:0;}
+  .tk-step:not(:first-child)::before{top:-6px;left:19px;width:3px;height:16px;}
+  .tk-step-badge{position:static;margin-left:6px;}
+}
+/* ── "¿Qué falta?" ── */
+.tk-qf-contador{font-size:.8rem;font-weight:700;color:#6b7280;margin-bottom:10px;}
+.tk-qf-item{display:flex;align-items:center;gap:9px;font-size:.85rem;padding:4px 0;}
+.tk-qf-item i{font-size:1.05rem;}
+.tk-qf-item.ok{color:#166534;} .tk-qf-item.ok i{color:#16a34a;}
+.tk-qf-item.falta{color:#78350f;} .tk-qf-item.falta i{color:#f59e0b;}
+/* ── Identificación del cliente: vista compacta ── */
+.tk-id-nombre{font-size:1.05rem;font-weight:800;color:#0f172a;margin-bottom:10px;}
+/* ── Adjuntos: encabezado de grupo por fecha + lightbox ── */
+.tk-adj-grupo-titulo{font-size:.68rem;font-weight:800;color:#9ca3af;text-transform:uppercase;
+  letter-spacing:.06em;margin:14px 0 8px;}
+.tk-adj-grupo-titulo:first-child{margin-top:0;}
+.tk-lightbox{position:fixed;inset:0;background:rgba(10,10,10,.92);z-index:2000;
+  align-items:center;justify-content:center;padding:32px;}
+.tk-lightbox img{max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.5);}
+.tk-lightbox-close{position:absolute;top:18px;right:22px;color:#fff;font-size:1.3rem;cursor:pointer;
+  width:38px;height:38px;display:flex;align-items:center;justify-content:center;border-radius:50%;
+  background:rgba(255,255,255,.14);}
+.tk-lightbox-close:hover{background:rgba(255,255,255,.26);}
 </style>
 
 <div class="tk-hero" id="tkHero">
@@ -148,11 +215,22 @@
 
 <!-- INFORMACIÓN -->
 <div class="tk-pane active" id="pane-info">
+  <!-- Tracking de avance del ticket (stepper visual) -->
+  <div class="tk-card tk-stepper-card" id="tkStepperWrap"></div>
+
+  <!-- "¿Qué falta?" — el sistema avisa en vez de depender de que alguien se acuerde -->
+  <div class="tk-card">
+    <h6><i class="bi bi-list-check"></i>¿Qué falta?</h6>
+    <div class="tk-qf-contador" id="queFaltaContador"></div>
+    <div id="queFaltaLista"></div>
+  </div>
+
   <div class="tk-card">
     <h6><i class="bi bi-sliders"></i>Estado y gestión</h6>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
-      <div style="flex:1;min-width:150px;">
-        <label style="font-size:.72rem;font-weight:700;color:#475569;">Estado</label>
+      <div style="flex:1;min-width:170px;">
+        <label style="font-size:.68rem;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.03em;">
+          Estado detallado / casos especiales</label>
         <select id="selEstado" class="form-select form-select-sm">
           {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
         </select>
@@ -163,20 +241,63 @@
           {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
         </select>
       </div>
-      <div style="flex:1;min-width:130px;">
-        <label style="font-size:.72rem;font-weight:700;color:#475569;">Asignado a</label>
-        <input id="inpAsignado" class="form-control form-control-sm" placeholder="usuario">
+      <div style="flex:1;min-width:170px;">
+        <label style="font-size:.72rem;font-weight:700;color:#475569;">Ejecutivo asignado</label>
+        <select id="selEjecutivo" class="form-select form-select-sm">
+          <option value="">Sin asignar</option>
+        </select>
       </div>
       <button class="btn btn-sm btn-ilus" id="btnGuardar"><i class="bi bi-save me-1"></i>Guardar</button>
     </div>
+    <div class="tk-visto-por" id="vistoPor" style="display:none;"></div>
   </div>
   <div class="tk-card">
-    <h6><i class="bi bi-person-vcard"></i>Cliente</h6>
-    <dl class="tk-dl" id="dlCliente"></dl>
-  </div>
-  <div class="tk-card">
-    <h6><i class="bi bi-geo-alt"></i>Ubicación</h6>
-    <div id="ubiWrap"></div>
+    <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+      <h6 style="margin:0;"><i class="bi bi-person-vcard"></i>Identificación del Cliente</h6>
+      <div style="display:flex;align-items:center;gap:8px;font-size:.76rem;color:#6b7280;font-weight:600;">
+        <span id="idFechaIngreso"></span>
+        <span class="tk-origen-badge" id="idOrigenBadge" style="display:none;"></span>
+        <button class="btn btn-sm btn-ilus-outline" id="btnIdEditar" title="Editar identificación">
+          <i class="bi bi-pencil me-1"></i>Editar</button>
+      </div>
+    </div>
+
+    <!-- Vista compacta (solo lectura) -->
+    <div id="idVistaCompacta">
+      <div class="tk-id-nombre" id="idCompactoNombre">—</div>
+      <dl class="tk-dl" id="idCompactoDatos"></dl>
+      <span class="tk-badge" id="idCompactoTipoBadge"
+        style="display:none;background:#f3f4f6;color:#374151;margin-top:12px;"></span>
+    </div>
+
+    <!-- Vista edición (grilla existente, misma lógica de guardado) -->
+    <div id="idVistaEdicion" style="display:none;">
+      <div class="tk-id-grid">
+        <div class="tk-id-field"><label>RUT</label><input id="idRut" class="form-control form-control-sm" placeholder="Ej: 12.345.678-9"></div>
+        <div class="tk-id-field"><label>Nombre empresa</label><input id="idEmpresa" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>Nombre contacto</label><input id="idContacto" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>Correo</label><input id="idCorreo" type="email" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>Teléfono</label><input id="idTelefono" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>Dirección</label><input id="idDireccion" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>Región</label><input id="idRegion" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>Comuna</label><input id="idComuna" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>Sucursal</label><input id="idSucursal" class="form-control form-control-sm"></div>
+        <div class="tk-id-field"><label>N° de Documento</label><input id="idNumDoc" class="form-control form-control-sm"></div>
+        <div class="tk-id-field">
+          <label>Tipo de Tarea</label>
+          <select id="idTipo" class="form-select form-select-sm">
+            <option value="">—</option>
+            {% for tp in tk_tipos %}<option value="{{ tp }}">{{ tipo_label[tp] }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:10px;">
+        <a class="tk-map-link" id="idMapLink" href="#" target="_blank" rel="noopener" style="margin:0;display:none;">
+          <i class="bi bi-signpost-2"></i>Ver en Google Maps</a>
+        <button class="btn btn-sm btn-ilus" id="btnGuardarCliente" style="margin-left:auto;">
+          <i class="bi bi-save me-1"></i>Guardar identificación</button>
+      </div>
+    </div>
   </div>
   <div class="tk-card">
     <h6><i class="bi bi-exclamation-circle"></i>Problema</h6>
@@ -185,21 +306,82 @@
     <div class="tk-chips" id="chipsProblema"></div>
   </div>
   <div class="tk-card">
-    <h6><i class="bi bi-tools"></i>Equipo(s)</h6>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px;">
+      <h6 style="margin:0;"><i class="bi bi-tools"></i>Equipo(s)</h6>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-ilus-outline" id="btnEqDesdeDoc">
+          <i class="bi bi-file-earmark-arrow-down me-1"></i>Asignar desde documento</button>
+        <button class="btn btn-sm btn-ilus" id="btnDeclararEquipo" data-bs-toggle="modal" data-bs-target="#modalDeclararEquipo">
+          <i class="bi bi-plus-lg me-1"></i>Declarar equipo</button>
+      </div>
+    </div>
     <div id="listaEquipos"></div>
-    <div style="display:flex;gap:6px;margin-top:10px;">
-      <input id="inpEqNombre" class="form-control form-control-sm" placeholder="Nombre del equipo/producto">
-      <input id="inpEqSku" class="form-control form-control-sm" placeholder="SKU" style="max-width:130px;">
-      <button class="btn btn-sm btn-ilus-outline" id="btnAddEq"><i class="bi bi-plus-lg"></i></button>
+  </div>
+
+  <!-- Modal: declarar equipo (cuando no está en el buscador ERP) -->
+  <div class="modal fade" id="modalDeclararEquipo" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-tools me-2"></i>Declarar equipo</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Nombre <span class="text-danger">*</span></label>
+            <input type="text" id="deqNombre" class="form-control" placeholder="Ej: Trotadora Life Fitness T3">
+          </div>
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label">Tipo</label>
+              <select id="deqTipo" class="form-select">
+                <option value="">—</option>
+                <option value="Cardio">Cardio</option>
+                <option value="Fuerza">Fuerza</option>
+                <option value="Funcional">Funcional</option>
+                <option value="Accesorio">Accesorio</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label">Cantidad</label>
+              <input type="number" id="deqCantidad" class="form-control" value="1" min="1">
+            </div>
+            <div class="col-6">
+              <label class="form-label">SKU</label>
+              <input type="text" id="deqSku" class="form-control" placeholder="Opcional">
+            </div>
+            <div class="col-6">
+              <label class="form-label">N° de Serie</label>
+              <input type="text" id="deqSerie" class="form-control" placeholder="Opcional">
+            </div>
+          </div>
+          <div class="form-text mt-2"><i class="bi bi-info-circle me-1"></i>Usa esto cuando el equipo no aparece en el buscador del ERP.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-ilus" id="btnDeqGuardar"><i class="bi bi-save me-1"></i>Declarar equipo</button>
+        </div>
+      </div>
     </div>
   </div>
   <div class="tk-card">
     <h6><i class="bi bi-file-earmark-text"></i>Documentos ERP</h6>
     <div id="listaDocs"></div>
   </div>
+  <div class="tk-card">
+    <h6><i class="bi bi-paperclip"></i>Adjuntos</h6>
+    <div id="listaAdjuntosInfo"></div>
+  </div>
   <div class="tk-card" id="cardNotas" style="display:none;">
     <h6><i class="bi bi-lock"></i>Notas internas</h6>
     <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
+  </div>
+
+  <!-- Lightbox de fotos (adjuntos imagen) -->
+  <div class="tk-lightbox" id="tkLightbox" style="display:none;">
+    <span class="tk-lightbox-close" id="tkLightboxClose"><i class="bi bi-x-lg"></i></span>
+    <img id="tkLightboxImg" src="" alt="">
   </div>
 </div>
 
@@ -320,6 +502,9 @@ async function cargar(){
   const t = d.ticket;
   ticketActual = t;
 
+  renderStepper(t, d.mensajes);
+  renderQueFalta(t, d);
+
   document.getElementById('hNum').textContent = t.numero_ticket || ('#'+t.id);
   document.getElementById('hCliente').textContent = t.empresa || t.nombre_contacto || t.rut || 'Sin cliente';
   const be = document.getElementById('hEstado');
@@ -327,7 +512,7 @@ async function cargar(){
 
   document.getElementById('selEstado').value = t.estado;
   document.getElementById('selPrio').value = t.prioridad;
-  document.getElementById('inpAsignado').value = t.asignado_a || '';
+  poblarSelectEjecutivo();
   document.getElementById('txtDesc').textContent = t.descripcion || '—';
   if(!document.getElementById('rpTo').value) document.getElementById('rpTo').value = t.email || '';
 
@@ -355,30 +540,38 @@ async function cargar(){
   } else hSla.style.display='none';
   document.getElementById('hSub').textContent = 'Creado '+fmtFechaHora(t.created_at)+(t.created_by?' · '+t.created_by:'');
 
-  // ── Cliente ──
-  const ICONS = {Empresa:'building', RUT:'fingerprint', Contacto:'person', Correo:'envelope', Teléfono:'telephone', Sucursal:'signpost'};
-  const dl = document.getElementById('dlCliente');
-  const rows = [
-    ['Empresa', t.empresa], ['RUT', t.rut], ['Contacto', t.nombre_contacto],
-    ['Correo', t.email ? '<a href="mailto:'+esc(t.email)+'">'+esc(t.email)+'</a>' : ''],
-    ['Teléfono', t.phone ? '<a href="tel:'+esc(t.phone)+'">'+esc(t.phone)+'</a>' : ''],
-    ['Sucursal', t.sucursal],
-  ].filter(r=>r[1]);
-  dl.innerHTML = rows.length ? rows.map(r=>'<i class="bi bi-'+ICONS[r[0]]+'"></i><dt>'+esc(r[0])+'</dt><dd>'+r[1]+'</dd>').join('')
-    : '<div class="tk-empty-mini" style="grid-column:1/-1;"><i class="bi bi-person-x"></i><span>Sin datos de cliente asociados.</span></div>';
+  // ── Visto por (quién lo abrió, cuándo) — línea discreta en Estado y gestión ──
+  const vp = document.getElementById('vistoPor');
+  if(d.vistas && d.vistas.length){
+    vp.style.display = 'block';
+    vp.innerHTML = '<i class="bi bi-eye me-1"></i>Visto por: ' + d.vistas.map(function(v){
+      return '<b>'+esc(v.usuario)+'</b> ('+esc(v.visto_at)+')';
+    }).join(' · ');
+  } else vp.style.display = 'none';
 
-  // ── Ubicación ──
-  const ubi = document.getElementById('ubiWrap');
+  // ── Identificación del Cliente (editable) ──
+  document.getElementById('idRut').value = t.rut || '';
+  document.getElementById('idEmpresa').value = t.empresa || '';
+  document.getElementById('idContacto').value = t.nombre_contacto || '';
+  document.getElementById('idCorreo').value = t.email || '';
+  document.getElementById('idTelefono').value = t.phone || '';
+  document.getElementById('idDireccion').value = t.direccion || '';
+  document.getElementById('idRegion').value = t.region_nombre || '';
+  document.getElementById('idComuna').value = t.comuna_nombre || '';
+  document.getElementById('idSucursal').value = t.sucursal || '';
+  document.getElementById('idNumDoc').value = t.numero_documento || '';
+  document.getElementById('idTipo').value = t.tipo || '';
+  document.getElementById('idFechaIngreso').textContent = t.created_at ? ('Ingreso: '+fmtFechaHora(t.created_at)) : '';
+  const idOrigenBadge = document.getElementById('idOrigenBadge');
+  if(t.origen){ idOrigenBadge.style.display='inline-block'; idOrigenBadge.textContent = String(t.origen).toUpperCase(); }
+  else idOrigenBadge.style.display='none';
+  const idMapLink = document.getElementById('idMapLink');
   if(t.direccion){
-    const sub = [t.comuna_nombre, t.region_nombre].filter(Boolean).join(', ');
     const destino = (t.direccion||'') + (t.comuna_nombre ? (', '+t.comuna_nombre) : '');
-    ubi.innerHTML = '<div class="tk-ubi-main"><i class="bi bi-geo-alt-fill"></i><span>'+esc(t.direccion)+'</span></div>'
-      + (sub ? '<div class="tk-ubi-sub">'+esc(sub)+'</div>' : '')
-      + '<a class="tk-map-link" href="https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destino)+'" target="_blank" rel="noopener">'
-      + '<i class="bi bi-signpost-2"></i>Ver en Google Maps</a>';
-  } else {
-    ubi.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-geo-alt-slash"></i><span>Sin dirección registrada para este ticket.</span></div>';
-  }
+    idMapLink.href = 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destino);
+    idMapLink.style.display = 'inline-flex';
+  } else idMapLink.style.display = 'none';
+  renderIdentificacionCompacta(t);
 
   // ── Problema: título + chips de metadata ──
   const tTitulo = document.getElementById('txtTitulo');
@@ -395,22 +588,25 @@ async function cargar(){
   if(t.notas_internas){ cardNotas.style.display='block'; document.getElementById('txtNotas').textContent = t.notas_internas; }
   else cardNotas.style.display='none';
 
-  // Equipos
+  // Equipos — tabla real (Código | Nombre | Tipo | Cantidad | acción)
   const le = document.getElementById('listaEquipos');
   if(d.equipos.length){
-    le.innerHTML = '<div class="tk-eq-grid">' + d.equipos.map(function(eq){
-      const tags = [];
-      if(eq.sku) tags.push('<span class="eq-tag">SKU '+esc(eq.sku)+'</span>');
-      if(eq.serie) tags.push('<span class="eq-tag">Serie '+esc(eq.serie)+'</span>');
-      if(eq.cantidad && eq.cantidad>1) tags.push('<span class="eq-tag">x'+esc(eq.cantidad)+'</span>');
-      if(eq.tipo) tags.push('<span class="eq-tag">'+esc(eq.tipo)+'</span>');
-      return '<div class="tk-eq"><div class="eq-top"><span class="eq-nombre"><i class="bi bi-box-seam me-1" style="color:#dc2626;"></i>'
-        +esc(eq.nombre||eq.erp_kopr||'—')+'</span>'
-        + '<button class="btn btn-sm btn-link text-danger p-0" onclick="delEquipo('+eq.id+')"><i class="bi bi-trash"></i></button></div>'
-        + (tags.length?'<div class="eq-tags">'+tags.join('')+'</div>':'')
-        + (eq.notas?'<div style="font-size:.74rem;color:#9ca3af;margin-top:5px;">'+esc(eq.notas)+'</div>':'')
-        + '</div>';
-    }).join('') + '</div>';
+    le.innerHTML = '<div class="table-responsive"><table class="table table-sm tk-eq-table align-middle mb-0"><thead><tr>'
+      + '<th>Código</th><th>Nombre</th><th>Tipo</th><th>Cantidad</th><th></th></tr></thead><tbody>'
+      + d.equipos.map(function(eq){
+          const codigo = eq.sku || eq.erp_kopr;
+          return '<tr>'
+            + '<td>'+(codigo?esc(codigo):'<span class="text-muted">—</span>')+'</td>'
+            + '<td><span class="fw-bold">'+esc(eq.nombre||eq.erp_kopr||'—')+'</span>'
+              + (eq.serie?'<div class="small text-muted">Serie '+esc(eq.serie)+'</div>':'')
+              + (eq.notas?'<div class="small text-muted">'+esc(eq.notas)+'</div>':'')
+            + '</td>'
+            + '<td>'+(eq.tipo?esc(eq.tipo):'<span class="text-muted">—</span>')+'</td>'
+            + '<td>'+(eq.cantidad||1)+'</td>'
+            + '<td class="text-end"><button class="btn btn-sm btn-link text-danger p-0" onclick="delEquipo('+eq.id+')" title="Quitar equipo"><i class="bi bi-trash"></i></button></td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table></div>';
   } else {
     le.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-tools"></i><span>Sin equipos asociados a este ticket.</span></div>';
   }
@@ -425,6 +621,9 @@ async function cargar(){
       + (meta?'<span class="doc-meta">'+esc(meta)+'</span>':'')+'</div>';
   }).join('') : '<div class="tk-empty-mini"><i class="bi bi-file-earmark-x"></i><span>Sin documentos ERP asociados a este ticket.</span></div>';
 
+  // Adjuntos (galería) — pestaña Información, aditivo a lo que ya se ve en Respuestas
+  renderAdjuntosInfo(d.adjuntos);
+
   renderThread(d.mensajes, d.adjuntos);
 
   const nuevos = d.mensajes.filter(m=>m.tipo==='client_message').length;
@@ -433,6 +632,125 @@ async function cargar(){
 
   // marcar leído
   fetch('/tickets/api/tickets/'+TID+'/marcar-leido',{method:'PATCH'}).catch(()=>{});
+}
+
+// ══════════════ Stepper de estado (tracking visual de avance) ══════════════
+// 4 nodos fijos; 'pending' es transversal (no consume nodo, se muestra como
+// píldora); 'cancelado' reemplaza todo el stepper por un banner.
+const TK_STEP_DEFS = [
+  {estado:'open', label:'Abierto', icon:'bi-inbox-fill'},
+  {estado:'in_progress', label:'En Curso', icon:'bi-gear-fill'},
+  {estado:'resolved', label:'Resuelto', icon:'bi-check-circle-fill'},
+  {estado:'closed', label:'Cerrado', icon:'bi-archive-fill'},
+];
+const TK_EN_CURSO_SET = ['in_progress','ot_pending_approval','ot_generated','ot_in_progress'];
+function tkStepIndexParaEstado(e){
+  if(e==='open') return 0;
+  if(TK_EN_CURSO_SET.includes(e)) return 1;
+  if(e==='resolved') return 2;
+  if(e==='closed') return 3;
+  return 0;
+}
+function tkEstadoDesdeLabel(label){
+  for(const k in ESTADO_LABEL){ if(ESTADO_LABEL[k]===label) return k; }
+  return null;
+}
+// 'pending' puede pasar en cualquier punto del flujo. Como el ticket solo
+// guarda el estado actual (no un historial estructurado), reconstruimos el
+// "último estado activo" leyendo la bitácora de cambios (tk_mensajes tipo
+// 'cambio_estado', ya cargada con el ticket) para no romper el stepper de 4 nodos.
+function tkEstadoBaseParaStepper(t, mensajes){
+  if(t.estado !== 'pending') return t.estado;
+  const cambios = (mensajes||[]).filter(m=>m.tipo==='cambio_estado');
+  for(let i=cambios.length-1;i>=0;i--){
+    const partes = String(cambios[i].contenido||'').split('→');
+    if(partes.length===2){
+      const destEstado = tkEstadoDesdeLabel(partes[1].trim());
+      if(destEstado && destEstado!=='pending') return destEstado;
+    }
+  }
+  return 'open'; // sin bitácora previa: asumimos que recién se abrió
+}
+function renderStepper(t, mensajes){
+  const wrap = document.getElementById('tkStepperWrap');
+  if(t.estado === 'cancelado'){
+    wrap.innerHTML = '<div class="tk-cancel-banner"><i class="bi bi-x-circle-fill"></i>Ticket cancelado</div>';
+    return;
+  }
+  const base = tkEstadoBaseParaStepper(t, mensajes);
+  const curIdx = tkStepIndexParaEstado(base);
+  const targetPorIdx = ['open','in_progress','resolved','closed'];
+  const stepsHtml = TK_STEP_DEFS.map(function(s, i){
+    let cls = 'tk-step';
+    if(i < curIdx) cls += ' done'; else if(i === curIdx) cls += ' current';
+    let badge = '';
+    if(i===1 && curIdx===1 && TK_EN_CURSO_SET.includes(t.estado) && t.estado!=='in_progress'){
+      badge = '<span class="tk-step-badge">'+esc(ESTADO_LABEL[t.estado]||t.estado)+'</span>';
+    }
+    return '<div class="'+cls+'" data-idx="'+i+'">'+badge
+      + '<div class="tk-step-circle"><i class="bi '+s.icon+'"></i></div>'
+      + '<div class="tk-step-label">'+s.label+'</div></div>';
+  }).join('');
+  const pendingPill = t.estado === 'pending'
+    ? '<div class="tk-pending-pill"><i class="bi bi-hourglass-split"></i>En espera</div>' : '';
+  wrap.innerHTML = '<div class="tk-stepper">'+stepsHtml+'</div>' + pendingPill;
+  wrap.querySelectorAll('.tk-step').forEach(function(el){
+    el.addEventListener('click', async function(){
+      const idx = +el.dataset.idx;
+      if(idx === curIdx) return;
+      const nuevoEstado = targetPorIdx[idx];
+      const label = ESTADO_LABEL[nuevoEstado] || nuevoEstado;
+      const ok = await ilusConfirm({title:'Cambiar estado', message:'¿Cambiar el estado del ticket a "'+label+'"?',
+        okLabel:'Cambiar', cancelLabel:'Cancelar'});
+      if(!ok) return;
+      const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({estado: nuevoEstado})});
+      const d2 = await r.json();
+      if(d2.ok){ ilusToast('✓ Estado actualizado','success'); cargar(); }
+      else ilusToast(d2.error||'Error','error');
+    });
+  });
+}
+
+// ══════════════ "¿Qué falta?" — informativo, no bloquea nada ══════════════
+function renderQueFalta(t, d){
+  const checks = [
+    ['Ejecutivo asignado', !!(t.asignado_a && String(t.asignado_a).trim())],
+    ['Al menos un equipo asociado', ((d.equipos)||[]).length > 0],
+    ['N° de documento o boleta', !!(t.numero_documento && String(t.numero_documento).trim())],
+    ['Al menos un adjunto', ((d.adjuntos)||[]).length > 0],
+    ['Dirección registrada', !!(t.direccion && String(t.direccion).trim())],
+  ];
+  const completos = checks.filter(c=>c[1]).length;
+  document.getElementById('queFaltaContador').textContent = completos+' de '+checks.length+' completos';
+  document.getElementById('queFaltaLista').innerHTML = checks.map(function(c){
+    const ok = c[1];
+    return '<div class="tk-qf-item '+(ok?'ok':'falta')+'"><i class="bi '
+      + (ok?'bi-check-circle-fill':'bi-exclamation-circle-fill')+'"></i>'+esc(c[0])+'</div>';
+  }).join('');
+}
+
+// ══════════════ Identificación del Cliente — vista compacta ══════════════
+function renderIdentificacionCompacta(t){
+  document.getElementById('idCompactoNombre').textContent = t.empresa || t.nombre_contacto || 'Sin nombre registrado';
+  const filas = [];
+  if(t.rut) filas.push(['person-badge','RUT', esc(t.rut)]);
+  if(t.nombre_contacto && t.empresa) filas.push(['person','Contacto', esc(t.nombre_contacto)]);
+  if(t.phone) filas.push(['telephone','Teléfono', '<a href="tel:'+esc(t.phone)+'">'+esc(t.phone)+'</a>']);
+  if(t.email) filas.push(['envelope','Correo', '<a href="mailto:'+esc(t.email)+'">'+esc(t.email)+'</a>']);
+  if(t.direccion){
+    const dirTxt = esc(t.direccion) + (t.comuna_nombre ? ', '+esc(t.comuna_nombre) : '');
+    const destino = (t.direccion||'') + (t.comuna_nombre ? (', '+t.comuna_nombre) : '');
+    const mapsHref = 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destino);
+    filas.push(['geo-alt','Dirección', dirTxt + ' <a href="'+mapsHref+'" target="_blank" rel="noopener">Ver en mapa</a>']);
+  }
+  if(t.sucursal) filas.push(['building','Sucursal', esc(t.sucursal)]);
+  if(t.numero_documento) filas.push(['file-earmark-ruled','N° Documento', esc(t.numero_documento)]);
+  const dl = document.getElementById('idCompactoDatos');
+  dl.innerHTML = filas.length ? filas.map(f=>'<i class="bi bi-'+f[0]+'"></i><dt>'+f[1]+'</dt><dd>'+f[2]+'</dd>').join('')
+    : '<dd style="grid-column:1/-1;color:#9ca3af;font-weight:600;">Sin datos de contacto registrados.</dd>';
+  const badge = document.getElementById('idCompactoTipoBadge');
+  if(t.tipo){ badge.style.display='inline-block'; badge.textContent = TIPO_LABEL[t.tipo]||t.tipo; } else badge.style.display='none';
 }
 
 function renderThread(mensajes, adjuntos){
@@ -482,11 +800,106 @@ function renderThread(mensajes, adjuntos){
   th.scrollTop = th.scrollHeight;
 }
 
+// ══════════════ Adjuntos — tarjeta "Información" (galería de miniaturas) ══════════════
+function iconoAdjunto(mime, nombre){
+  const ext = String(nombre||'').split('.').pop().toLowerCase();
+  if(/^video\//.test(mime||'')) return 'bi-file-earmark-play';
+  if(mime==='application/pdf' || ext==='pdf') return 'bi-file-earmark-pdf';
+  if(/word/.test(mime||'') || ['doc','docx'].includes(ext)) return 'bi-file-earmark-word';
+  if(/excel|spreadsheet/.test(mime||'') || ['xls','xlsx','csv'].includes(ext)) return 'bi-file-earmark-excel';
+  return 'bi-file-earmark';
+}
+function renderAdjuntosInfo(adjuntos){
+  const c = document.getElementById('listaAdjuntosInfo');
+  if(!adjuntos || !adjuntos.length){
+    c.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-paperclip"></i><span>Sin adjuntos en este ticket.</span></div>';
+    return;
+  }
+  // Agrupar por fecha — el backend ya entrega created_at formateado en hora
+  // Chile como "dd/mm/aaaa HH:MM" (Regla #6); usamos solo la parte de fecha
+  // como encabezado de grupo, preservando el orden de llegada.
+  const grupos = []; const porFecha = {};
+  adjuntos.forEach(function(a){
+    const fecha = String(a.created_at||'').trim().split(' ')[0] || 'Sin fecha';
+    if(!porFecha[fecha]){ porFecha[fecha] = []; grupos.push(fecha); }
+    porFecha[fecha].push(a);
+  });
+  c.innerHTML = grupos.map(function(fecha){
+    const items = porFecha[fecha].map(function(a){
+      const url = safeUrl(a.archivo_url);
+      const esImg = esImagen(a.mime_type);
+      const thumb = esImg ? '<img src="'+esc(url)+'" loading="lazy">' : '<i class="bi '+iconoAdjunto(a.mime_type, a.archivo_nombre)+'"></i>';
+      const meta = [a.file_size_kb ? (a.file_size_kb+' KB') : null, a.created_at ? fmtFechaHora(a.created_at) : null]
+        .filter(Boolean).join(' · ');
+      // Las imágenes abren en el lightbox (no en pestaña nueva); el resto
+      // (pdf/word/excel/video) sigue abriendo en pestaña nueva como antes.
+      const atributos = esImg
+        ? ' data-lightbox="1" data-url="'+esc(url)+'"'
+        : ' target="_blank" rel="noopener"';
+      return '<a class="tk-adj-item" href="'+esc(url)+'"'+atributos+' title="'+esc(a.archivo_nombre||'archivo')+'">'
+        + '<div class="tk-adj-thumb">'+thumb+'</div>'
+        + '<div class="tk-adj-name">'+esc(a.archivo_nombre||'archivo')+'</div>'
+        + (meta?'<div class="tk-adj-meta">'+esc(meta)+'</div>':'')
+        + '</a>';
+    }).join('');
+    return '<div class="tk-adj-grupo-titulo">'+esc(fecha)+'</div><div class="tk-adj-grid">'+items+'</div>';
+  }).join('');
+  c.querySelectorAll('.tk-adj-item[data-lightbox]').forEach(function(el){
+    el.addEventListener('click', function(e){
+      e.preventDefault();
+      tkAbrirLightbox(el.dataset.url, el.getAttribute('title'));
+    });
+  });
+}
+
+// ══════════════ Lightbox simple para adjuntos-imagen ══════════════
+function tkAbrirLightbox(url, nombre){
+  document.getElementById('tkLightboxImg').src = url;
+  document.getElementById('tkLightboxImg').alt = nombre || '';
+  document.getElementById('tkLightbox').style.display = 'flex';
+}
+function tkCerrarLightbox(){
+  document.getElementById('tkLightbox').style.display = 'none';
+  document.getElementById('tkLightboxImg').src = '';
+}
+document.getElementById('tkLightbox').addEventListener('click', function(e){
+  if(e.target === this) tkCerrarLightbox();
+});
+document.getElementById('tkLightboxClose').addEventListener('click', tkCerrarLightbox);
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape') tkCerrarLightbox();
+});
+
+// ══════════════ Ejecutivo asignado — select poblado desde /mantenciones/api/ejecutivos ══════════════
+let listaEjecutivos = [];
+async function cargarEjecutivos(){
+  try{
+    const r = await fetch('/mantenciones/api/ejecutivos');
+    listaEjecutivos = await r.json();
+    if(!Array.isArray(listaEjecutivos)) listaEjecutivos = [];
+  }catch(e){ listaEjecutivos = []; }
+  poblarSelectEjecutivo();
+}
+function poblarSelectEjecutivo(){
+  const sel = document.getElementById('selEjecutivo');
+  const actual = ticketActual ? (ticketActual.asignado_a || '') : '';
+  let opts = '<option value="">Sin asignar</option>' + listaEjecutivos.map(function(e){
+    return '<option value="'+esc(e.nombre)+'">'+esc(e.nombre)+'</option>';
+  }).join('');
+  // Si el valor guardado no calza con ningún ejecutivo activo (ej. texto libre
+  // histórico o usuario dado de baja), se agrega igual para no perder el dato.
+  if(actual && !listaEjecutivos.some(e=>e.nombre===actual)){
+    opts += '<option value="'+esc(actual)+'">'+esc(actual)+' (no activo)</option>';
+  }
+  sel.innerHTML = opts;
+  sel.value = actual;
+}
+
 document.getElementById('btnGuardar').addEventListener('click', async function(){
   const payload = {
     estado: document.getElementById('selEstado').value,
     prioridad: document.getElementById('selPrio').value,
-    asignado_a: document.getElementById('inpAsignado').value.trim(),
+    asignado_a: document.getElementById('selEjecutivo').value,
   };
   const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
@@ -494,15 +907,96 @@ document.getElementById('btnGuardar').addEventListener('click', async function()
   if(d.ok){ ilusToast('✓ Guardado','success'); cargar(); } else ilusToast(d.error||'Error','error');
 });
 
-document.getElementById('btnAddEq').addEventListener('click', async function(){
-  const nombre = document.getElementById('inpEqNombre').value.trim();
-  if(!nombre){ ilusToast('Falta el nombre','warning'); return; }
-  const r = await fetch('/tickets/api/tickets/'+TID+'/equipos', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({nombre:nombre, sku:document.getElementById('inpEqSku').value.trim()})});
-  const d = await r.json();
-  if(d.ok){ document.getElementById('inpEqNombre').value=''; document.getElementById('inpEqSku').value=''; cargar(); }
-  else ilusToast(d.error||'Error','error');
+// ══════════════ Identificación del cliente — vista compacta ↔ edición ══════════════
+document.getElementById('btnIdEditar').addEventListener('click', function(){
+  document.getElementById('idVistaCompacta').style.display = 'none';
+  document.getElementById('idVistaEdicion').style.display = 'block';
+});
+
+// ══════════════ Identificación del cliente — guardado propio (misma ruta PATCH) ══════════════
+document.getElementById('btnGuardarCliente').addEventListener('click', async function(){
+  const payload = {
+    rut: document.getElementById('idRut').value.trim(),
+    empresa: document.getElementById('idEmpresa').value.trim(),
+    nombre_contacto: document.getElementById('idContacto').value.trim(),
+    email: document.getElementById('idCorreo').value.trim(),
+    phone: document.getElementById('idTelefono').value.trim(),
+    direccion: document.getElementById('idDireccion').value.trim(),
+    region_nombre: document.getElementById('idRegion').value.trim(),
+    comuna_nombre: document.getElementById('idComuna').value.trim(),
+    sucursal: document.getElementById('idSucursal').value.trim(),
+    numero_documento: document.getElementById('idNumDoc').value.trim(),
+    tipo: document.getElementById('idTipo').value,
+  };
+  const btn = this;
+  const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.ok){
+      ilusToast('✓ Identificación guardada','success');
+      document.getElementById('idVistaEdicion').style.display = 'none';
+      document.getElementById('idVistaCompacta').style.display = 'block';
+      cargar();
+    } else ilusToast(d.error||'Error','error');
+  }catch(e){ ilusToast('Sin conexión','error'); }
+  btn.disabled = false; btn.innerHTML = original;
+});
+
+// ══════════════ Equipos — asignar desde documento ERP (tido + nudo) ══════════════
+document.getElementById('btnEqDesdeDoc').addEventListener('click', async function(){
+  const tido = await ilusPrompt({title:'Documento ERP', message:'Tipo de documento (ej: FCV, BLV, NVV, GDV…)',
+    placeholder:'FCV', required:true});
+  if(!tido) return;
+  const nudo = await ilusPrompt({title:'Documento ERP', message:'Número de documento',
+    placeholder:'Ej: 21577', required:true});
+  if(!nudo) return;
+  ilusLoader.show('Buscando equipos en el documento…');
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID+'/equipos-desde-documento', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({tido: tido.trim().toUpperCase(), nudo: nudo.trim()})});
+    const d = await r.json();
+    ilusLoader.hide();
+    if(d.ok){ ilusToast('✓ '+d.agregados+' equipo(s) agregado(s) de '+d.total_lineas+' línea(s) del documento','success'); cargar(); }
+    else ilusToast(d.error||'No se pudo obtener el documento','error');
+  }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión o ERP no disponible','error'); }
+});
+
+// ══════════════ Declarar equipo (modal — cuando no está en el buscador ERP) ══════════════
+document.getElementById('btnDeqGuardar').addEventListener('click', async function(){
+  const nombre = document.getElementById('deqNombre').value.trim();
+  if(!nombre){ ilusToast('Falta el nombre del equipo','warning'); return; }
+  const payload = {
+    nombre: nombre,
+    tipo: document.getElementById('deqTipo').value,
+    sku: document.getElementById('deqSku').value.trim(),
+    serie: document.getElementById('deqSerie').value.trim(),
+    cantidad: +document.getElementById('deqCantidad').value || 1,
+  };
+  const btn = this;
+  const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID+'/equipos', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    btn.disabled = false; btn.innerHTML = original;
+    if(d.ok){
+      document.getElementById('deqNombre').value = '';
+      document.getElementById('deqTipo').value = '';
+      document.getElementById('deqSku').value = '';
+      document.getElementById('deqSerie').value = '';
+      document.getElementById('deqCantidad').value = '1';
+      const modalEl = document.getElementById('modalDeclararEquipo');
+      const modalInst = bootstrap.Modal.getOrCreateInstance(modalEl);
+      modalInst.hide();
+      ilusToast('✓ Equipo declarado','success');
+      cargar();
+    } else ilusToast(d.error||'Error','error');
+  }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión','error'); }
 });
 
 async function delEquipo(eid){
@@ -623,6 +1117,7 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
   cargar();
 });
 
+cargarEjecutivos();
 cargar();
 </script>
 {% endblock %}

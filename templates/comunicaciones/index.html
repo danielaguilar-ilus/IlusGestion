@@ -569,6 +569,13 @@
           <div class="tmc-titulo">Mantenciones</div>
           <div class="tmc-sub">OTs, visitas, técnicos</div>
         </button>
+        <button type="button" class="tpl-modulo-card" data-modulo="tickets"
+                onclick="seleccionarModulo('tickets', this)">
+          <span class="tmc-warn" id="tmcWarn-tickets" title=""><i class="bi bi-exclamation-lg"></i></span>
+          <div class="tmc-icon"><i class="bi bi-ticket-perforated"></i></div>
+          <div class="tmc-titulo">Tickets</div>
+          <div class="tmc-sub">Soporte técnico, garantías</div>
+        </button>
         <button type="button" class="tpl-modulo-card" data-modulo="comunicacion_interna"
                 onclick="seleccionarModulo('comunicacion_interna', this)">
           <span class="tmc-warn" id="tmcWarn-comunicacion_interna" title=""><i class="bi bi-exclamation-lg"></i></span>
@@ -1312,6 +1319,7 @@ function poblarPlantillasManual() {
     { label:'Retiros',              lista:TPL_ESTADOS_RETIROS },
     { label:'Mantenciones',         lista:TPL_ESTADOS_MANTENCIONES },
     { label:'Comunicación interna', lista:TPL_ESTADOS_COMUNICACION_INTERNA },
+    { label:'Tickets',              lista:TPL_ESTADOS_TICKETS },
   ];
   grupos.forEach(g => {
     if (!g.lista || !g.lista.length) return;
@@ -1538,6 +1546,17 @@ const TPL_ESTADOS_COMUNICACION_INTERNA = [
     color:'#16a34a', desc:'Confirmación al usuario de que su contraseña fue actualizada' },
 ];
 
+const TPL_ESTADOS_TICKETS = [
+  { key:'creacion',  label:'Ticket creado',        icon:'bi-ticket-detailed', grupo:'tickets',
+    color:'#3b82f6', desc:'Confirma al cliente que su solicitud quedó registrada (al crearse)' },
+  { key:'respuesta', label:'Respuesta al cliente',  icon:'bi-reply-fill',     grupo:'tickets',
+    color:'#dc2626', desc:'Usada cuando el equipo responde manualmente desde la ficha del ticket' },
+  { key:'resuelto',  label:'Ticket resuelto',       icon:'bi-check-circle-fill', grupo:'tickets',
+    color:'#16a34a', desc:'Aviso cuando el ticket pasa a estado Resuelto' },
+  { key:'cerrado',   label:'Ticket cerrado',        icon:'bi-lock-fill',      grupo:'tickets',
+    color:'#6b7280', desc:'Aviso cuando el ticket pasa a estado Cerrado' },
+];
+
 const TPL_ESTADOS_GENERAL = [
   { key:'comunicado',   label:'Comunicado',    icon:'bi-megaphone',   grupo:'general',
     color:'#dc2626', desc:'Comunicado general a clientes (texto libre con el diseño ILUS)' },
@@ -1557,6 +1576,7 @@ function getEstadosForModulo(){
   if (m === 'retiros')              return TPL_ESTADOS_RETIROS;
   if (m === 'mantenciones')         return TPL_ESTADOS_MANTENCIONES;
   if (m === 'comunicacion_interna') return TPL_ESTADOS_COMUNICACION_INTERNA;
+  if (m === 'tickets')              return TPL_ESTADOS_TICKETS;
   if (m === 'general')              return TPL_ESTADOS_GENERAL;
   return TPL_ESTADOS_TRANSPORTE;
 }
@@ -1631,6 +1651,11 @@ const TPL_VARS = {
     { v:'{{cliente}}',  label:'Nombre / razón social' },
     { v:'{{titulo}}',   label:'Título del comunicado' },
     { v:'{{mensaje}}',  label:'Mensaje (texto libre)' },
+  ],
+  tickets: [
+    { v:'{{cliente}}',       label:'Nombre de contacto / empresa' },
+    { v:'{{numero_ticket}}', label:'N° de ticket (TK-AAAA-NNNNN)' },
+    { v:'{{mensaje}}',       label:'Mensaje (solo en "Respuesta al cliente")' },
   ],
 };
 
@@ -1884,6 +1909,7 @@ const KS_MODULOS_LABELS = {
   mantenciones:         { label:'Mantenciones',         icon:'bi-wrench-adjustable' },
   comunicacion_interna: { label:'Comunicación interna', icon:'bi-people' },
   general:              { label:'General',              icon:'bi-folder' },
+  tickets:              { label:'Tickets',              icon:'bi-ticket-perforated' },
 };
 const KS_CANAL_LABELS = {
   email:    'Email',
@@ -2140,6 +2166,7 @@ const MODULO_LABELS = {
   mantenciones:         { name:'Mantenciones',         help:'Plantillas operacionales: OTs, visitas técnicas y notificaciones al cliente' },
   comunicacion_interna: { name:'Comunicación interna', help:'Plantillas del ciclo de vida del usuario: bienvenida, claves y accesos' },
   general:              { name:'General',              help:'Plantillas que no caen en ningún módulo específico' },
+  tickets:              { name:'Tickets',              help:'Plantillas del ciclo de vida del ticket: creación, respuesta, resolución y cierre' },
 };
 
 async function cargarPlantillas(force=false) {
@@ -2189,6 +2216,7 @@ const GRUPO_LABELS = {
   mantencion: { label:'Mantenciones',         icon:'bi-wrench-adjustable' },
   interna:    { label:'Comunicación interna', icon:'bi-people' },
   general:    { label:'General',              icon:'bi-megaphone' },
+  tickets:    { label:'Tickets',              icon:'bi-ticket-perforated' },
 };
 
 function renderTplEstados() {

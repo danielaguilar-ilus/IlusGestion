@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Tu ticket · ILUS Fitness</title>
+<link rel="icon" href="{{ url_for('static', filename='Logo.png') }}">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<style>
+:root{--ilus-red:#dc2626;--ilus-black:#0a0a0a;}
+*{box-sizing:border-box;}
+body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#15171a;}
+.pc-wrap{max-width:640px;margin:0 auto;padding:0 0 60px;}
+.pc-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;padding:28px 26px 24px;
+  border-bottom:4px solid var(--ilus-red);}
+.pc-hero .pc-num{font-size:.76rem;font-weight:800;color:#fca5a5;text-transform:uppercase;letter-spacing:.05em;}
+.pc-hero h1{margin:6px 0 0;font-size:1.5rem;font-weight:900;line-height:1.25;}
+.pc-hero .pc-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;}
+.pc-pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:50px;
+  padding:5px 12px;font-size:.72rem;font-weight:700;color:#e5e7eb;}
+.pc-pill.estado{background:var(--ilus-red);border-color:var(--ilus-red);color:#fff;}
+.pc-card{background:#fff;border-radius:13px;margin:16px 16px 0;padding:22px 24px;box-shadow:0 6px 20px rgba(15,23,42,.06);}
+.pc-card h2{font-size:1rem;font-weight:800;margin:0 0 14px;display:flex;align-items:center;gap:8px;color:#0f172a;}
+.pc-card h2 i{color:var(--ilus-red);}
+.pc-loading{text-align:center;padding:40px 20px;color:#94a3b8;}
+.pc-loading i{font-size:1.6rem;display:block;margin-bottom:10px;animation:pcspin 1s linear infinite;}
+@keyframes pcspin{to{transform:rotate(360deg);}}
+.pc-hidden{display:none!important;}
+/* Hilo */
+.pc-thread{display:flex;flex-direction:column;gap:12px;max-height:420px;overflow-y:auto;padding-right:2px;}
+.pc-bubble{max-width:82%;border-radius:13px;padding:11px 14px;font-size:.87rem;line-height:1.45;}
+.pc-bubble.staff{background:#f1f5f9;color:#1f2937;align-self:flex-start;border-bottom-left-radius:3px;}
+.pc-bubble.cliente{background:linear-gradient(135deg,var(--ilus-red),#991b1b);color:#fff;align-self:flex-end;border-bottom-right-radius:3px;}
+.pc-bubble .who{font-size:.68rem;font-weight:800;opacity:.75;margin-bottom:3px;text-transform:uppercase;letter-spacing:.03em;}
+.pc-bubble .when{font-size:.66rem;opacity:.65;margin-top:6px;}
+.pc-bubble p{margin:0 0 6px;}
+.pc-bubble p:last-child{margin-bottom:0;}
+.pc-bubble a{color:inherit;text-decoration:underline;}
+.pc-empty{text-align:center;color:#94a3b8;font-size:.85rem;padding:24px 10px;}
+.pc-empty i{font-size:1.6rem;display:block;margin-bottom:8px;opacity:.5;}
+/* Adjuntos */
+.pc-adj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;margin-top:14px;}
+.pc-adj-item{display:flex;flex-direction:column;align-items:center;gap:4px;text-decoration:none;color:#475569;}
+.pc-adj-thumb{width:100%;aspect-ratio:1;border-radius:9px;background:#f1f5f9;display:flex;align-items:center;
+  justify-content:center;overflow:hidden;border:1px solid #e5e7eb;}
+.pc-adj-thumb img{width:100%;height:100%;object-fit:cover;}
+.pc-adj-thumb i{font-size:1.3rem;color:#9ca3af;}
+.pc-adj-name{font-size:.64rem;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;}
+/* Responder */
+.pc-field textarea{width:100%;border:1.5px solid #e5e7eb;border-radius:10px;padding:12px 13px;font-size:16px;
+  background:#fbfbfc;resize:vertical;min-height:90px;font-family:inherit;}
+.pc-field textarea:focus{outline:none;border-color:var(--ilus-red);background:#fff;box-shadow:0 0 0 3px rgba(220,38,38,.1);}
+.pc-drop{border:2px dashed #d1d5db;border-radius:12px;padding:18px 14px;text-align:center;cursor:pointer;
+  transition:all .12s;background:#fafafa;margin-top:12px;}
+.pc-drop:hover,.pc-drop.drag{border-color:var(--ilus-red);background:#fef2f2;}
+.pc-drop i{font-size:1.3rem;color:#9ca3af;display:block;margin-bottom:6px;}
+.pc-drop .t1{font-weight:700;font-size:.82rem;color:#374151;}
+.pc-drop .t2{font-size:.72rem;color:#9ca3af;margin-top:3px;}
+.pc-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+.pc-file-chip{display:flex;align-items:center;gap:6px;background:#f1f5f9;border-radius:8px;padding:6px 10px;font-size:.78rem;max-width:180px;}
+.pc-file-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pc-file-chip .x{cursor:pointer;color:#94a3b8;font-weight:900;flex-shrink:0;}
+.pc-file-chip.up-ok i{color:#16a34a;}
+.pc-file-chip.up-err i{color:#dc2626;}
+.pc-btn{width:100%;background:linear-gradient(135deg,var(--ilus-red),#991b1b);color:#fff;border:none;
+  border-radius:11px;padding:14px;font-size:.95rem;font-weight:800;cursor:pointer;min-height:48px;
+  box-shadow:0 8px 20px rgba(220,38,38,.25);margin-top:14px;}
+.pc-btn:disabled{opacity:.6;cursor:not-allowed;}
+.pc-priv{text-align:center;font-size:.72rem;color:#94a3b8;margin-top:26px;padding:0 16px;}
+.pc-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#0f172a;color:#fff;
+  padding:12px 20px;border-radius:10px;font-size:.86rem;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:90vw;
+  display:none;border-left:4px solid var(--ilus-red);}
+.pc-toast.show{display:block;}
+.pc-toast.ok{border-left-color:#16a34a;}
+</style>
+</head>
+<body>
+<div class="pc-toast" id="pcToast"></div>
+
+<div class="pc-wrap">
+  <div class="pc-hero">
+    <div class="pc-num" id="pcNumero">Cargando…</div>
+    <h1 id="pcTitulo">Tu ticket</h1>
+    <div class="pc-meta" id="pcMeta"></div>
+  </div>
+
+  <div class="pc-card" id="pcCargando">
+    <div class="pc-loading"><i class="bi bi-hourglass-split"></i>Cargando tu ticket…</div>
+  </div>
+
+  <div id="pcContenido" class="pc-hidden">
+    <div class="pc-card">
+      <h2><i class="bi bi-chat-dots-fill"></i>Conversación</h2>
+      <div class="pc-thread" id="pcThread"></div>
+    </div>
+
+    <div class="pc-card" id="pcAdjCard" style="display:none;">
+      <h2><i class="bi bi-paperclip"></i>Archivos compartidos</h2>
+      <div class="pc-adj-grid" id="pcAdjGrid"></div>
+    </div>
+
+    <div class="pc-card">
+      <h2><i class="bi bi-reply-fill"></i>Responder</h2>
+      <div class="pc-field">
+        <textarea id="pcMsg" maxlength="4000" placeholder="Escribe tu respuesta…"></textarea>
+      </div>
+      <div class="pc-drop" id="pcDrop">
+        <i class="bi bi-image"></i>
+        <div class="t1">Adjuntar fotos, videos o documentos</div>
+        <div class="t2">Hasta {{ max_adjuntos }} archivos ({{ max_adjunto_mb }} MB c/u)</div>
+      </div>
+      <input type="file" id="pcFile" multiple hidden accept=".jpg,.jpeg,.png,.webp,.gif,.heic,.mp4,.mov,.webm,.avi,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv">
+      <div class="pc-files" id="pcFiles"></div>
+      <button class="pc-btn" id="pcBtnEnviar">Enviar respuesta</button>
+    </div>
+  </div>
+
+  <div class="pc-card pc-hidden" id="pcErrorCard">
+    <div class="pc-empty"><i class="bi bi-exclamation-triangle"></i>No pudimos cargar tu ticket. El enlace podría haber expirado.</div>
+  </div>
+
+  <div class="pc-priv"><i class="bi bi-lock-fill"></i> Este enlace es privado y personal — no lo compartas.</div>
+</div>
+
+<script>
+const TID = {{ tid|tojson }};
+const TOKEN = {{ token|tojson }};
+const MAX_ADJ = {{ max_adjuntos }};
+const MAX_MB = {{ max_adjunto_mb }};
+let archivos = []; // [{file, estado, nombre}]
+
+let _toastT = null;
+function pcToast(msg, tipo){
+  const el = document.getElementById('pcToast');
+  el.textContent = msg; el.className = 'pc-toast show' + (tipo==='success' ? ' ok' : '');
+  clearTimeout(_toastT); _toastT = setTimeout(()=>el.classList.remove('show'), 3500);
+}
+function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function esImagen(mime){ return !!mime && mime.startsWith('image'); }
+function iconoAdjunto(mime, nombre){
+  const m = (mime||'').toLowerCase(), n = (nombre||'').toLowerCase();
+  if(m.startsWith('video') || /\.(mp4|mov|webm|avi)$/.test(n)) return 'bi-camera-reels-fill';
+  if(m.includes('pdf') || n.endsWith('.pdf')) return 'bi-file-earmark-pdf-fill';
+  if(n.endsWith('.doc') || n.endsWith('.docx')) return 'bi-file-earmark-word-fill';
+  if(n.endsWith('.xls') || n.endsWith('.xlsx')) return 'bi-file-earmark-excel-fill';
+  return 'bi-file-earmark-fill';
+}
+
+async function cargar(){
+  let d;
+  try{
+    const r = await fetch('/portal/ticket/'+TID+'/datos?token='+encodeURIComponent(TOKEN));
+    d = await r.json();
+  }catch(e){ mostrarError(); return; }
+  if(!d.ok){ mostrarError(); return; }
+
+  document.getElementById('pcNumero').textContent = d.ticket.numero_ticket || ('#'+TID);
+  document.getElementById('pcTitulo').textContent = d.ticket.tipo_label || 'Tu ticket';
+  document.getElementById('pcMeta').innerHTML =
+    '<span class="pc-pill estado">'+esc(d.ticket.estado_label)+'</span>' +
+    '<span class="pc-pill">'+esc(d.ticket.cliente || '')+'</span>';
+
+  const thread = document.getElementById('pcThread');
+  if(!d.mensajes.length){
+    thread.innerHTML = '<div class="pc-empty"><i class="bi bi-chat-square-text"></i>Aún no hay mensajes en este ticket.</div>';
+  } else {
+    thread.innerHTML = d.mensajes.map(function(m){
+      const cls = m.es_cliente ? 'cliente' : 'staff';
+      const who = m.es_cliente ? 'Tú' : 'ILUS Sport &amp; Health';
+      return '<div class="pc-bubble '+cls+'"><div class="who">'+who+'</div>'+m.contenido+
+        '<div class="when">'+esc(m.fecha||'')+'</div></div>';
+    }).join('');
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  const adjGrid = document.getElementById('pcAdjGrid');
+  if(d.adjuntos && d.adjuntos.length){
+    document.getElementById('pcAdjCard').style.display = '';
+    adjGrid.innerHTML = d.adjuntos.map(function(a){
+      const inner = esImagen(a.mime) ? '<img src="'+esc(a.url)+'" alt="">' : '<i class="bi '+iconoAdjunto(a.mime,a.nombre)+'"></i>';
+      return '<a class="pc-adj-item" href="'+esc(a.url)+'" target="_blank" rel="noopener">' +
+        '<div class="pc-adj-thumb">'+inner+'</div><span class="pc-adj-name">'+esc(a.nombre||'')+'</span></a>';
+    }).join('');
+  }
+
+  document.getElementById('pcCargando').classList.add('pc-hidden');
+  document.getElementById('pcContenido').classList.remove('pc-hidden');
+}
+function mostrarError(){
+  document.getElementById('pcCargando').classList.add('pc-hidden');
+  document.getElementById('pcErrorCard').classList.remove('pc-hidden');
+}
+cargar();
+
+// ── Adjuntos ──
+const pcDrop = document.getElementById('pcDrop');
+pcDrop.addEventListener('click', ()=>document.getElementById('pcFile').click());
+['dragover','dragleave','drop'].forEach(ev=>pcDrop.addEventListener(ev, function(e){
+  e.preventDefault();
+  if(ev==='dragover') pcDrop.classList.add('drag'); else pcDrop.classList.remove('drag');
+  if(ev==='drop') agregarArchivos(e.dataTransfer.files);
+}));
+document.getElementById('pcFile').addEventListener('change', function(e){ agregarArchivos(e.target.files); this.value=''; });
+
+function agregarArchivos(fileList){
+  const restantes = MAX_ADJ - archivos.length;
+  if(restantes <= 0){ pcToast('Máximo '+MAX_ADJ+' archivos', 'error'); return; }
+  Array.from(fileList).slice(0, restantes).forEach(function(file){
+    if(file.size > MAX_MB*1024*1024){ pcToast(file.name+' supera '+MAX_MB+' MB', 'error'); return; }
+    archivos.push({file:file, estado:'pendiente', nombre:file.name, id:null});
+  });
+  renderArchivos();
+}
+function renderArchivos(){
+  document.getElementById('pcFiles').innerHTML = archivos.map(function(a,i){
+    const icon = a.estado==='ok' ? 'bi-check-circle-fill' : a.estado==='error' ? 'bi-exclamation-circle-fill'
+      : a.estado==='subiendo' ? 'bi-arrow-repeat' : 'bi-paperclip';
+    const cls = a.estado==='ok' ? 'up-ok' : a.estado==='error' ? 'up-err' : '';
+    return '<span class="pc-file-chip '+cls+'"><i class="bi '+icon+'"></i><span class="nm">'+esc(a.nombre)+'</span>'
+      + '<span class="x" onclick="pcQuitarArchivo('+i+')">&times;</span></span>';
+  }).join('');
+}
+window.pcQuitarArchivo = function(i){ archivos.splice(i,1); renderArchivos(); };
+
+async function pcSubirArchivos(){
+  const ids = [];
+  for(const a of archivos){
+    if(a.estado === 'ok'){ if(a.id) ids.push(a.id); continue; }
+    a.estado = 'subiendo'; renderArchivos();
+    const fd = new FormData(); fd.append('file', a.file); fd.append('token', TOKEN);
+    try{
+      const r = await fetch('/soporte/api/adjuntos/'+TID, {method:'POST', body:fd});
+      const d = await r.json();
+      a.estado = d.ok ? 'ok' : 'error';
+      if(d.ok && d.id){ a.id = d.id; ids.push(d.id); }
+    }catch(e){ a.estado = 'error'; }
+    renderArchivos();
+  }
+  return ids;
+}
+
+// ── Enviar respuesta ──
+document.getElementById('pcBtnEnviar').addEventListener('click', async function(){
+  const contenido = document.getElementById('pcMsg').value.trim();
+  if(!contenido){ pcToast('Escribe un mensaje antes de enviar', 'error'); return; }
+  const btn = this; btn.disabled = true; btn.textContent = 'Enviando…';
+  try{
+    const adjunto_ids = archivos.length ? await pcSubirArchivos() : [];
+    const r = await fetch('/portal/ticket/'+TID+'/responder', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({token: TOKEN, contenido: contenido, adjunto_ids: adjunto_ids}) });
+    const d = await r.json();
+    if(!d.ok){ pcToast(d.error || 'No se pudo enviar tu mensaje', 'error'); btn.disabled=false; btn.textContent='Enviar respuesta'; return; }
+    pcToast('Mensaje enviado', 'success');
+    document.getElementById('pcMsg').value = '';
+    archivos = []; renderArchivos();
+    btn.disabled = false; btn.textContent = 'Enviar respuesta';
+    cargar();
+  }catch(e){
+    pcToast('Sin conexión. Intenta de nuevo.', 'error');
+    btn.disabled = false; btn.textContent = 'Enviar respuesta';
+  }
+});
+</script>
+</body>
+</html>
