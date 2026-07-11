@@ -115,12 +115,22 @@
 .rp-msg.out{justify-content:flex-end;}
 .rp-bubble{max-width:72%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.45;}
 .rp-msg.in .rp-bubble{background:#f1f5f9;color:#0f172a;border-bottom-left-radius:4px;}
-.rp-msg.out .rp-bubble{background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;border-bottom-right-radius:4px;}
+/* "out" (lo que TU envias) en negro ILUS en vez de rojo -- Daniel 2026-07-12
+   pidio opinion de UI: el rojo ya es el color de acento/CTA/peligro de toda
+   la app (botones, badges, "Responder al cliente"); usarlo TAMBIEN para
+   cada burbuja enviada satura la pantalla y se puede leer como alerta. El
+   negro es el otro color primario ILUS (Regla #2), se ve serio/profesional
+   y deja el rojo exclusivo para lo que necesita llamar la atencion. */
+.rp-msg.out .rp-bubble{background:linear-gradient(135deg,#1f2937,#0a0a0a);color:#fff;border-bottom-right-radius:4px;}
 .rp-msg.interno .rp-bubble{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-bottom-right-radius:4px;}
 .rp-msg.evento{justify-content:center;}
 .rp-msg.evento .rp-bubble{background:transparent;color:#9ca3af;font-size:.74rem;padding:2px 8px;max-width:100%;text-align:center;}
 .rp-meta{font-size:.66rem;opacity:.85;margin-bottom:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
-.rp-msg.out .rp-meta{color:#fecaca;} .rp-msg.in .rp-meta{color:#64748b;} .rp-msg.interno .rp-meta{color:#92400e;}
+.rp-msg.out .rp-meta{color:#9ca3af;} .rp-msg.in .rp-meta{color:#64748b;} .rp-msg.interno .rp-meta{color:#92400e;}
+/* client_message es texto plano escapado (no trae <br>/<p>) -- preserva
+   saltos de linea reales del correo (Daniel 2026-07-12: "no respeta los
+   saltos de pagina"). */
+.rp-content-plano{white-space:pre-wrap;}
 .rp-estado-ok{color:#bbf7d0;} .rp-msg.interno .rp-estado-ok,.rp-msg.in .rp-estado-ok{color:#16a34a;}
 .rp-estado-fail{color:#fca5a5;font-weight:700;}
 .rp-adj-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.18);
@@ -928,9 +938,14 @@ function renderThread(mensajes, adjuntos){
     // de clientes por correo/whatsapp) que aun no sanitiza nada -- mientras
     // no exista ese sanitizador, se escapa como texto plano (fail-safe).
     const contenidoHtml = esCliente ? esc(m.contenido||'') : (m.contenido||'');
+    // client_message es texto plano escapado (sin <p>/<br> de Quill) -- sin
+    // white-space:pre-wrap los saltos de linea del correo original se
+    // colapsaban en una sola linea visual (Daniel 2026-07-12: "no respeta
+    // los saltos de pagina"). Solo se aplica a "in" (cliente): los tipos
+    // con HTML real (mensaje/comentario) ya traen sus propios <br>/<p>.
     return '<div class="rp-msg '+cls+'"><div class="rp-bubble">'
       + '<div class="rp-meta">'+who+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>'
-      + '<div>'+contenidoHtml+'</div>'
+      + '<div'+(esCliente?' class="rp-content-plano"':'')+'>'+contenidoHtml+'</div>'
       + (adjHtml? '<div>'+adjHtml+'</div>':'')
       + '</div></div>';
   }).join('');
