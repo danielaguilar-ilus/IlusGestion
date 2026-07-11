@@ -69,6 +69,23 @@
 .nt-vfeed.ok{color:#16a34a;display:block;} .nt-vfeed.err{color:#dc2626;display:block;}
 .nt-counter{font-size:.7rem;color:#94a3b8;text-align:right;}
 @media(max-width:640px){.nt-grid{grid-template-columns:1fr;}}
+
+/* ── Buscador ERP (cliente / equipo) ── */
+.nt-search{position:relative;}
+.nt-search i.bi-search{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:.85rem;pointer-events:none;}
+.nt-search input{padding-left:32px;}
+.nt-search.has-tag input{padding-right:64px;}
+.nt-search-tag{position:absolute;right:7px;top:50%;transform:translateY(-50%);background:#dcfce7;color:#166534;
+  font-size:.64rem;font-weight:800;padding:3px 8px;border-radius:50px;display:none;align-items:center;gap:3px;white-space:nowrap;}
+.nt-search.has-tag .nt-search-tag{display:inline-flex;}
+
+/* ── Campos obligatorios + estados de validación ── */
+.nt-field.req>label::after{content:' *';color:#dc2626;font-weight:900;}
+.nt-field.err input,.nt-field.err select,.nt-field.err textarea{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.08);}
+.nt-field.ok input,.nt-field.ok select,.nt-field.ok textarea{border-color:#86efac;}
+.nt-err-msg{font-size:.7rem;color:#dc2626;margin-top:3px;display:none;}
+.nt-err-msg.show{display:block;}
+#fTipoWrap.err .nt-tipos{box-shadow:0 0 0 3px rgba(220,38,38,.15);border-radius:10px;}
 </style>
 
 <div class="tk-hero">
@@ -124,32 +141,42 @@
       </div>
       <div class="modal-body">
         <div class="nt-card">
-          <h6><span class="n">1</span>Tipo de solicitud</h6>
-          <div class="nt-tipos" id="ntTipos">
-            {% for t in tk_tipos_publicos %}
-            <div class="nt-tipo-pill" data-tipo="{{ t }}">{{ tipo_label[t] }}</div>
-            {% endfor %}
+          <h6><span class="n">1</span>Tipo de solicitud <span style="color:#dc2626">*</span></h6>
+          <div id="fTipoWrap">
+            <div class="nt-tipos" id="ntTipos">
+              {% for t in tk_tipos_publicos %}
+              <div class="nt-tipo-pill" data-tipo="{{ t }}">{{ tipo_label[t] }}</div>
+              {% endfor %}
+            </div>
+            <div class="nt-err-msg" id="ntErrTipo">Selecciona un tipo de solicitud.</div>
           </div>
         </div>
 
         <div class="nt-card">
           <h6><span class="n">2</span>Cliente</h6>
-          <div class="hint">Escribe el RUT o el nombre y elige del ERP.</div>
-          <div class="nt-grid">
-            <div class="nt-field full">
-              <label>Buscar cliente en el ERP (RUT o empresa)</label>
-              <input type="text" id="ntBuscarCli" class="form-control" placeholder="Ej: 76.123.456-7 o Deportes Vitacura" autocomplete="off">
-              <div class="nt-ac" id="ntAcCli"></div>
+          <div class="hint">Busca en el ERP por RUT o nombre; los campos de abajo se completan y quedan editables.</div>
+          <div class="nt-field full" id="ntBuscarCliWrap">
+            <div class="nt-search">
+              <i class="bi bi-search"></i>
+              <input type="text" id="ntBuscarCli" class="form-control" placeholder="Buscar en el ERP: RUT o nombre de empresa…" autocomplete="off">
+              <span class="nt-search-tag" id="ntSearchTag"><i class="bi bi-check-circle-fill"></i>ERP</span>
             </div>
-            <div class="nt-field full" id="ntCliChipWrap" style="display:none;">
-              <div class="nt-chip"><i class="bi bi-building-check"></i><span id="ntCliChipTxt"></span>
-                <span class="x" id="ntCliChipX" title="Quitar">&times;</span></div>
-            </div>
-            <div class="nt-field"><label>Nombre de contacto</label><input type="text" id="ntContacto" class="form-control"></div>
-            <div class="nt-field"><label>Teléfono</label>
+            <div class="nt-ac" id="ntAcCli"></div>
+          </div>
+          <div class="nt-grid" style="margin-top:10px;">
+            <div class="nt-field req" id="fRutWrap"><label>RUT</label>
+              <input type="text" id="ntRut" class="form-control" placeholder="Ej: 76.123.456-7">
+              <div class="nt-err-msg" id="ntErrRut">El RUT es obligatorio.</div></div>
+            <div class="nt-field req" id="fEmpresaWrap"><label>Empresa</label>
+              <input type="text" id="ntEmpresa" class="form-control" placeholder="Nombre de la empresa">
+              <div class="nt-err-msg" id="ntErrEmpresa">El nombre de la empresa es obligatorio.</div></div>
+            <div class="nt-field req" id="fContactoWrap"><label>Nombre de contacto</label>
+              <input type="text" id="ntContacto" class="form-control">
+              <div class="nt-err-msg" id="ntErrContacto">El nombre de contacto es obligatorio.</div></div>
+            <div class="nt-field req" id="fPhoneWrap"><label>Teléfono</label>
               <input type="tel" id="ntPhone" class="form-control" placeholder="+56 9 1234 5678">
               <div class="nt-vfeed" id="ntVPhone"></div></div>
-            <div class="nt-field"><label>Correo</label>
+            <div class="nt-field req" id="fEmailWrap"><label>Correo</label>
               <input type="email" id="ntEmail" class="form-control" placeholder="cliente@correo.cl">
               <div class="nt-vfeed" id="ntVEmail"></div></div>
             <div class="nt-field"><label>Sucursal <span style="color:#cbd5e1">(opcional)</span></label>
@@ -158,21 +185,25 @@
         </div>
 
         <div class="nt-card">
-          <h6><span class="n">3</span>Dirección del equipo</h6>
+          <h6><span class="n">3</span>Dirección del equipo <span style="color:#dc2626">*</span></h6>
           <div class="hint">Empieza a escribir y elige una sugerencia de Google para validarla.</div>
-          <div class="nt-field full">
+          <div class="nt-field full" id="fDirWrap">
             <input type="text" id="ntDireccion" class="form-control" placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off">
             <input type="hidden" id="ntDirLat"><input type="hidden" id="ntDirLng"><input type="hidden" id="ntDirPlace"><input type="hidden" id="ntComuna">
             <small id="ntDirHint" class="text-muted d-block mt-1" style="font-size:.72rem">
               <i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.</small>
+            <div class="nt-err-msg" id="ntErrDir">Selecciona una dirección sugerida por Google para validarla.</div>
           </div>
         </div>
 
         <div class="nt-card">
-          <h6><span class="n">4</span>Equipo</h6>
-          <div class="hint">Busca por SKU o nombre entre los equipos que el cliente compró (ERP).</div>
+          <h6><span class="n">4</span>Equipo <span style="color:#94a3b8;font-weight:600;font-size:.7rem;">(opcional)</span></h6>
+          <div class="hint">Busca por SKU o nombre. Si ya identificaste al cliente prioriza lo que compró; si no, busca en el catálogo general.</div>
           <div class="nt-field full">
-            <input type="text" id="ntBuscarEq" class="form-control" placeholder="Selecciona primero un cliente…" autocomplete="off" disabled>
+            <div class="nt-search">
+              <i class="bi bi-search"></i>
+              <input type="text" id="ntBuscarEq" class="form-control" placeholder="Buscar equipo por SKU o nombre…" autocomplete="off">
+            </div>
             <div class="nt-ac" id="ntAcEq"></div>
           </div>
           <div id="ntListaEq" style="margin-top:8px;"></div>
@@ -181,10 +212,11 @@
         <div class="nt-card mb-0">
           <h6><span class="n">5</span>Problema</h6>
           <div class="nt-grid">
-            <div class="nt-field full">
+            <div class="nt-field full req" id="fDescWrap">
               <label>¿Qué está pasando?</label>
               <textarea id="ntDesc" class="form-control" rows="3" maxlength="2000" placeholder="Describe el problema o la solicitud…"></textarea>
               <div class="nt-counter"><span id="ntDescCount">0</span>/2000</div>
+              <div class="nt-err-msg" id="ntErrDesc">Describe el problema o la solicitud.</div>
             </div>
             <div class="nt-field"><label>Prioridad</label>
               <select id="ntPrio" class="form-select">
@@ -270,27 +302,59 @@ document.getElementById('btnLimpiar').addEventListener('click', function(){
 cargarTickets();
 
 // ══════════════ MODAL Nuevo Ticket — logica ══════════════
+// TODO este bloque va dentro de DOMContentLoaded a proposito: bootstrap.bundle
+// (base.html) e ilus_ui.js cargan con <script defer>, que se ejecuta DESPUES
+// de parsear el HTML pero ANTES de DOMContentLoaded. Este <script> (inline,
+// SIN defer) corre en el momento en que el parser lo encuentra -- es decir
+// ANTES que los defer. `new bootstrap.Modal(...)` a nivel superior del script
+// (fuera de un listener) lanzaba "bootstrap is not defined" y mataba TODO el
+// resto de este bloque (busqueda de cliente, validadores telefono/correo,
+// Google Places, busqueda de equipo jamas se registraban -- exactamente lo
+// que Daniel reporto: "no hace nada"). Mismo patron ya usado en
+// comunicaciones/index.html (_modalTplPreview = new bootstrap.Modal(...)
+// DENTRO de DOMContentLoaded) -- aca faltaba aplicarlo.
+document.addEventListener('DOMContentLoaded', function(){
 let ntTipoSel = '';
 let ntCliente = null;      // {empresa, rut}
 const ntEquipos = [];      // [{sku, nombre}]
 const ntModalEl = document.getElementById('ntModal');
 const ntModal = new bootstrap.Modal(ntModalEl);
 
+// ── Validación visual (obligatorios) ──
+const NT_REQ_WRAPS = ['fTipoWrap','fRutWrap','fEmpresaWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap','fDescWrap'];
+function marcarNtOk(id){
+  const el = document.getElementById(id); if(!el) return;
+  el.classList.remove('err'); el.classList.add('ok');
+  const em = el.querySelector('.nt-err-msg'); if(em) em.classList.remove('show');
+}
+function marcarNtErr(id){
+  const el = document.getElementById(id); if(!el) return;
+  el.classList.remove('ok'); el.classList.add('err');
+  const em = el.querySelector('.nt-err-msg'); if(em) em.classList.add('show');
+}
+function limpiarNtErr(id){
+  const el = document.getElementById(id); if(!el) return;
+  el.classList.remove('err','ok');
+  const em = el.querySelector('.nt-err-msg'); if(em) em.classList.remove('show');
+}
+
 function ntReset(){
   ntTipoSel = ''; ntCliente = null; ntEquipos.length = 0;
   document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
-  document.getElementById('ntBuscarCli').value=''; document.getElementById('ntBuscarCli').style.display='block';
-  document.getElementById('ntCliChipWrap').style.display='none';
+  document.getElementById('ntBuscarCli').value='';
+  document.querySelector('#ntBuscarCliWrap .nt-search').classList.remove('has-tag');
+  document.getElementById('ntRut').value=''; document.getElementById('ntEmpresa').value='';
   document.getElementById('ntContacto').value=''; document.getElementById('ntPhone').value='';
   document.getElementById('ntEmail').value=''; document.getElementById('ntSucursal').value='';
   document.getElementById('ntDireccion').value=''; document.getElementById('ntDirLat').value='';
   document.getElementById('ntDirLng').value=''; document.getElementById('ntDirPlace').value='';
   document.getElementById('ntComuna').value=''; document.getElementById('ntDirHint').innerHTML =
     '<i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.';
-  const eq = document.getElementById('ntBuscarEq'); eq.disabled = true; eq.value=''; eq.placeholder='Selecciona primero un cliente…';
+  document.getElementById('ntBuscarEq').value='';
   document.getElementById('ntDesc').value=''; document.getElementById('ntDescCount').textContent='0';
   document.getElementById('ntDoc').value=''; document.getElementById('ntPrio').value='media';
   document.getElementById('ntVPhone').className='nt-vfeed'; document.getElementById('ntVEmail').className='nt-vfeed';
+  NT_REQ_WRAPS.forEach(limpiarNtErr);
   renderNtEquipos();
 }
 ntModalEl.addEventListener('hidden.bs.modal', ntReset);
@@ -298,6 +362,7 @@ ntModalEl.addEventListener('hidden.bs.modal', ntReset);
 document.querySelectorAll('.nt-tipo-pill').forEach(el=>el.addEventListener('click',()=>{
   document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
   el.classList.add('sel'); ntTipoSel = el.dataset.tipo;
+  marcarNtOk('fTipoWrap');
 }));
 
 // ── Autocomplete cliente (ERP) ──
@@ -322,71 +387,72 @@ document.getElementById('ntBuscarCli').addEventListener('input', ntBuscarCliente
 function ntSelCliente(c){
   ntCliente = c;
   ntAcCli.classList.remove('open');
-  document.getElementById('ntBuscarCli').style.display = 'none';
-  document.getElementById('ntCliChipTxt').textContent = c.empresa + (c.rut? '  ·  '+c.rut : '');
-  document.getElementById('ntCliChipWrap').style.display = 'block';
-  const eq = document.getElementById('ntBuscarEq');
-  eq.disabled = false; eq.placeholder = 'Buscar equipo por SKU o nombre…';
+  document.getElementById('ntBuscarCli').value = c.empresa || c.rut || '';
+  document.getElementById('ntRut').value = c.rut || '';
+  document.getElementById('ntEmpresa').value = c.empresa || '';
+  limpiarNtErr('fRutWrap'); limpiarNtErr('fEmpresaWrap');
+  if((c.rut||'').trim()) marcarNtOk('fRutWrap');
+  if((c.empresa||'').trim()) marcarNtOk('fEmpresaWrap');
+  document.querySelector('#ntBuscarCliWrap .nt-search').classList.add('has-tag');
 }
-document.getElementById('ntCliChipX').addEventListener('click',()=>{
-  ntCliente = null;
-  document.getElementById('ntCliChipWrap').style.display = 'none';
-  const b = document.getElementById('ntBuscarCli'); b.style.display = 'block'; b.value=''; b.focus();
-  const eq = document.getElementById('ntBuscarEq'); eq.disabled = true; eq.value=''; eq.placeholder='Selecciona primero un cliente…';
-});
+// El RUT/Empresa quedan editables tras seleccionar — si el usuario los borra
+// a mano, vuelven a marcarse como pendientes al validar (validarNtTodo).
+['ntRut','ntEmpresa'].forEach(id=>document.getElementById(id).addEventListener('input', function(){
+  document.querySelector('#ntBuscarCliWrap .nt-search').classList.remove('has-tag');
+}));
 
 // ── Validación teléfono chileno ──
 function ntNormTel(v){ return String(v||'').replace(/[^\d]/g,'').replace(/^56/,''); }
 document.getElementById('ntPhone').addEventListener('blur', function(){
   const v = this.value.trim(); const f = document.getElementById('ntVPhone');
-  if(!v){ f.className='nt-vfeed'; f.textContent=''; return; }
+  if(!v){ f.className='nt-vfeed'; f.textContent=''; marcarNtErr('fPhoneWrap'); return; }
   const n = ntNormTel(v);
   if(/^9\d{8}$/.test(n)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Móvil válido';
-    this.value = '+56 9 '+n.slice(1,5)+' '+n.slice(5); }
-  else if(/^\d{8,9}$/.test(n)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Número válido'; }
-  else { f.className='nt-vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Teléfono chileno inválido (9 dígitos)'; }
+    this.value = '+56 9 '+n.slice(1,5)+' '+n.slice(5); marcarNtOk('fPhoneWrap'); }
+  else if(/^\d{8,9}$/.test(n)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Número válido'; marcarNtOk('fPhoneWrap'); }
+  else { f.className='nt-vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Teléfono chileno inválido (9 dígitos)'; marcarNtErr('fPhoneWrap'); }
 });
 
 // ── Validación correo ──
 document.getElementById('ntEmail').addEventListener('blur', function(){
   const v = this.value.trim(); const f = document.getElementById('ntVEmail');
-  if(!v){ f.className='nt-vfeed'; f.textContent=''; return; }
-  if(/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(v)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Correo válido'; }
-  else { f.className='nt-vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Correo inválido'; }
+  if(!v){ f.className='nt-vfeed'; f.textContent=''; marcarNtErr('fEmailWrap'); return; }
+  if(/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(v)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Correo válido'; marcarNtOk('fEmailWrap'); }
+  else { f.className='nt-vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Correo inválido'; marcarNtErr('fEmailWrap'); }
 });
 
 // ── Google Places (dirección) — siempre validar (perfil logístico de Daniel) ──
-document.addEventListener('DOMContentLoaded', function(){
-  function initDir(){
-    if(typeof ilusPlacesAutocomplete !== 'function'){
-      if(window.__ilusGmapsPending){ window.__ilusGmapsPending.push(initDir); } return;
-    }
-    ilusPlacesAutocomplete('ntDireccion', { country:'cl', types:['address'],
-      onPlaceSelected:function(place){
-        document.getElementById('ntDirLat').value = place.lat;
-        document.getElementById('ntDirLng').value = place.lng;
-        document.getElementById('ntDirPlace').value = place.place_id || '';
-        if(place.componentes){
-          const cm = place.componentes.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
-          if(cm) document.getElementById('ntComuna').value = cm.long_name;
-        }
-        const h = document.getElementById('ntDirHint');
-        h.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Dirección verificada · <small>'
-          + place.lat.toFixed(4)+', '+place.lng.toFixed(4)+'</small>';
-      } });
+// (ya estamos dentro de DOMContentLoaded, ilusPlacesAutocomplete existe)
+function ntInitDir(){
+  if(typeof ilusPlacesAutocomplete !== 'function'){
+    if(window.__ilusGmapsPending){ window.__ilusGmapsPending.push(ntInitDir); } return;
   }
-  initDir();
-});
+  ilusPlacesAutocomplete('ntDireccion', { country:'cl', types:['address'],
+    onPlaceSelected:function(place){
+      document.getElementById('ntDirLat').value = place.lat;
+      document.getElementById('ntDirLng').value = place.lng;
+      document.getElementById('ntDirPlace').value = place.place_id || '';
+      if(place.componentes){
+        const cm = place.componentes.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
+        if(cm) document.getElementById('ntComuna').value = cm.long_name;
+      }
+      marcarNtOk('fDirWrap');
+      const h = document.getElementById('ntDirHint');
+      h.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Dirección verificada · <small>'
+        + place.lat.toFixed(4)+', '+place.lng.toFixed(4)+'</small>';
+    } });
+}
+ntInitDir();
 
-// ── Autocomplete equipo (ERP, del cliente) ──
+// ── Autocomplete equipo (ERP: del cliente si ya se identifico, si no catalogo general) ──
 const ntAcEq = document.getElementById('ntAcEq');
 const ntBuscarEquipo = debounce(async function(){
   const q = document.getElementById('ntBuscarEq').value.trim();
-  if(!ntCliente){ return; }
   if(q.length < 2){ ntAcEq.classList.remove('open'); return; }
-  ntAcEq.innerHTML = '<div class="nt-ac-empty">Buscando equipos del cliente…</div>'; ntAcEq.classList.add('open');
+  const rut = document.getElementById('ntRut').value.trim();
+  ntAcEq.innerHTML = '<div class="nt-ac-empty">Buscando equipos…</div>'; ntAcEq.classList.add('open');
   try{
-    const r = await fetch('/tickets/api/erp/buscar-producto?rut='+encodeURIComponent(ntCliente.rut)+'&q='+encodeURIComponent(q));
+    const r = await fetch('/tickets/api/erp/buscar-producto?rut='+encodeURIComponent(rut)+'&q='+encodeURIComponent(q));
     const d = await r.json();
     const rows = d.resultados || [];
     if(!d.ok && d.error){ ntAcEq.innerHTML = '<div class="nt-ac-empty">'+esc(d.error)+'</div>'; return; }
@@ -419,15 +485,50 @@ document.addEventListener('click', function(e){
   if(!e.target.closest('#ntBuscarEq') && !e.target.closest('#ntAcEq')) ntAcEq.classList.remove('open');
 });
 
+function validarNtTodo(){
+  let ok = true;
+  if(!ntTipoSel){ marcarNtErr('fTipoWrap'); ok=false; } else marcarNtOk('fTipoWrap');
+
+  const rutVal = document.getElementById('ntRut').value.trim();
+  if(!rutVal){ marcarNtErr('fRutWrap'); ok=false; } else marcarNtOk('fRutWrap');
+
+  const empresaVal = document.getElementById('ntEmpresa').value.trim();
+  if(!empresaVal){ marcarNtErr('fEmpresaWrap'); ok=false; } else marcarNtOk('fEmpresaWrap');
+
+  const contactoVal = document.getElementById('ntContacto').value.trim();
+  if(!contactoVal){ marcarNtErr('fContactoWrap'); ok=false; } else marcarNtOk('fContactoWrap');
+
+  const phoneEl = document.getElementById('ntPhone');
+  if(!phoneEl.value.trim()) phoneEl.dispatchEvent(new Event('blur'));
+  if(!document.getElementById('ntVPhone').classList.contains('ok')) ok=false;
+
+  const emailEl = document.getElementById('ntEmail');
+  if(!emailEl.value.trim()) emailEl.dispatchEvent(new Event('blur'));
+  if(!document.getElementById('ntVEmail').classList.contains('ok')) ok=false;
+
+  const dirVal = document.getElementById('ntDireccion').value.trim();
+  const dirLat = document.getElementById('ntDirLat').value;
+  if(!dirVal || !dirLat){ marcarNtErr('fDirWrap'); ok=false; } else marcarNtOk('fDirWrap');
+
+  const descVal = document.getElementById('ntDesc').value.trim();
+  if(!descVal){ marcarNtErr('fDescWrap'); ok=false; } else marcarNtOk('fDescWrap');
+
+  return ok;
+}
+
 document.getElementById('ntBtnCrear').addEventListener('click', async function(){
-  const desc = document.getElementById('ntDesc').value.trim();
-  if(!ntCliente && !desc){ ilusToast('Elige un cliente o describe el problema','warning'); return; }
+  if(!validarNtTodo()){
+    ilusToast('Revisa los campos marcados en rojo','warning');
+    const firstErr = document.querySelector('#ntModal .nt-card .err, #ntModal .nt-field.err');
+    if(firstErr) firstErr.scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
   const btn = this; btn.disabled = true;
   const payload = {
-    tipo: ntTipoSel || null,
+    tipo: ntTipoSel,
     prioridad: document.getElementById('ntPrio').value,
-    rut: ntCliente ? ntCliente.rut : '',
-    empresa: ntCliente ? ntCliente.empresa : '',
+    rut: document.getElementById('ntRut').value.trim(),
+    empresa: document.getElementById('ntEmpresa').value.trim(),
     nombre_contacto: document.getElementById('ntContacto').value.trim(),
     phone: document.getElementById('ntPhone').value.trim(),
     email: document.getElementById('ntEmail').value.trim(),
@@ -440,7 +541,7 @@ document.getElementById('ntBtnCrear').addEventListener('click', async function()
     numero_documento: document.getElementById('ntDoc').value.trim(),
     producto: ntEquipos.map(e=>e.nombre).join(' · '),
     sku: ntEquipos.map(e=>e.sku).filter(Boolean).join(', '),
-    descripcion: desc,
+    descripcion: document.getElementById('ntDesc').value.trim(),
     equipos: ntEquipos.map(e=>({kopr:e.sku, nombre:e.nombre, sku:e.sku})),
   };
   try{
@@ -526,5 +627,6 @@ if(btnImportar){
     }catch(e){ ilusLoader.hide(); ilusToast('Error al importar','error'); }
   });
 }
+}); // cierre de document.addEventListener('DOMContentLoaded', ...)
 </script>
 {% endblock %}

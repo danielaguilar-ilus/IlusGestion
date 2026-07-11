@@ -240,6 +240,16 @@ def _diagnose_env_status():
     return req_missing, opt_missing
 
 
+# Consolas Windows (cp1252) no soportan emojis en stdout/stderr → forzar UTF-8
+# con reemplazo para que un print de diagnóstico nunca tumbe el arranque.
+try:
+    import sys as _sys
+    for _stream in (_sys.stdout, _sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # Reporte al boot — log claro de configuración
 _req_missing, _opt_missing = _diagnose_env_status()
 if _req_missing:

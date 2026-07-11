@@ -192,6 +192,47 @@ def register_tickets_routes(app, ctx):
     _rut_cuerpo = ctx.get("_rut_cuerpo")
     _RANDOM_TIDOS_VENTA = ctx.get("_RANDOM_TIDOS_VENTA") or (
         "FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "GTR", "GRD", "FCO", "COV")
+
+    # Bodega desde la que se busca el catalogo general (Daniel 2026-07-11:
+    # "necesito que traiga todos los productos de la bodega 02"). Codigo
+    # TABBO.KOBO real segun docs/erp/TABLAS-BD-Random.pdf; configurable por
+    # env var por si el codigo exacto no es '02'. Usado tanto por el
+    # formulario publico como por el buscador de equipo del modal interno
+    # cuando aun no hay cliente seleccionado (Daniel: "no me deja avanzar
+    # porque no me muestra los equipos, necesita un cliente" -- ahora cae
+    # al catalogo general en vez de bloquearse).
+    BODEGA_SOPORTE = os.environ.get("TK_BODEGA_SOPORTE", "02").strip()
+    MAX_PRODUCTOS_BUSCADOS = 20
+
+    def _buscar_catalogo_bodega(q):
+        """Catalogo general (MAEPR) con stock en BODEGA_SOPORTE (MAEST).
+        Compartido por /soporte/api/erp/productos (publico) y
+        /tickets/api/erp/buscar-producto (interno, sin cliente aun)."""
+        if not _random_sql_query:
+            return None, "Catálogo no disponible"
+        q_like = f"%{q.upper()[:60]}%"
+        try:
+            rows = _random_sql_query(
+                f"""
+                SELECT DISTINCT TOP {MAX_PRODUCTOS_BUSCADOS}
+                       LTRIM(RTRIM(pr.KOPR)) AS sku, LTRIM(RTRIM(pr.NOKOPR)) AS nombre
+                  FROM MAEPR pr
+                 WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
+                   AND EXISTS (
+                       SELECT 1 FROM MAEST st
+                        WHERE LTRIM(RTRIM(st.KOPR)) = LTRIM(RTRIM(pr.KOPR))
+                          AND LTRIM(RTRIM(st.KOBO)) = %s
+                   )
+                 ORDER BY nombre
+                """,
+                (q_like, q_like, BODEGA_SOPORTE), max_rows=MAX_PRODUCTOS_BUSCADOS,
+            ) or []
+        except Exception as _e:
+            print(f"[_buscar_catalogo_bodega] error (bodega={BODEGA_SOPORTE}): {_e}", flush=True)
+            return None, "Catálogo no disponible ahora"
+        return [{"sku": r.get("sku") or "", "nombre": r.get("nombre") or ""}
+                for r in rows if r.get("nombre")], None
+
     # Correo saliente real al cliente: reusar el estandar de marca ILUS
     # (Regla: un solo `_ilus_email_master`/`_send_ilus_email`, no duplicar).
     # La plantilla de tickets vive en comm_templates (modulo='tickets',
@@ -687,8 +728,21 @@ def register_tickets_routes(app, ctx):
         d = request.get_json(silent=True) or {}
         descripcion = (d.get("descripcion") or "").strip()
         empresa = (d.get("empresa") or "").strip()
-        if not descripcion and not empresa and not (d.get("titulo") or "").strip():
-            return jsonify({"ok": False, "error": "Ingresa al menos empresa/cliente o una descripcion."}), 400
+        tipo_in = (d.get("tipo") or "").strip()
+
+        # Obligatorios pedidos por Daniel (equipo NO es obligatorio):
+        # tipo, RUT, empresa, contacto, telefono, correo, direccion, descripcion.
+        faltantes = []
+        if not tipo_in: faltantes.append("tipo de solicitud")
+        if not (d.get("rut") or "").strip(): faltantes.append("RUT")
+        if not empresa: faltantes.append("empresa")
+        if not (d.get("nombre_contacto") or "").strip(): faltantes.append("nombre de contacto")
+        if not (d.get("phone") or "").strip(): faltantes.append("teléfono")
+        if not (d.get("email") or "").strip(): faltantes.append("correo")
+        if not (d.get("direccion") or "").strip(): faltantes.append("dirección")
+        if not descripcion: faltantes.append("descripción del problema")
+        if faltantes:
+            return jsonify({"ok": False, "error": "Faltan campos obligatorios: " + ", ".join(faltantes)}), 400
 
         tipo = _norm_enum(d.get("tipo"), TK_TIPOS, None)
         prio = _norm_enum(d.get("prioridad"), TK_PRIORIDADES, "media")
@@ -1368,10 +1422,15 @@ def register_tickets_routes(app, ctx):
     def tk_api_erp_buscar_producto():
         rut = (request.args.get("rut") or "").strip()
         q = (request.args.get("q") or "").strip()
-        if not rut:
-            return jsonify({"ok": False, "error": "Selecciona primero el cliente", "resultados": []}), 200
         if len(q) < 2:
             return jsonify({"ok": True, "resultados": []})
+        # Sin cliente aun seleccionado: catalogo general (bodega configurada)
+        # en vez de bloquear la busqueda de equipo por completo.
+        if not rut:
+            resultados, err = _buscar_catalogo_bodega(q)
+            if err:
+                return jsonify({"ok": False, "error": err, "resultados": []}), 200
+            return jsonify({"ok": True, "resultados": resultados, "catalogo_general": True})
         if not (_random_sql_query and _rut_cuerpo):
             return jsonify({"ok": False, "error": "Motor ERP no disponible", "resultados": []}), 200
         rut_base = _rut_cuerpo(rut)
@@ -1564,14 +1623,8 @@ def register_tickets_routes(app, ctx):
     #  hay gate global). Prefijo /soporte/ exento de CSRF (app.py). Rate
     #  limit propio (in-memory, por IP) en creacion/busqueda/adjuntos.
     # ═══════════════════════════════════════════════════════════════════
-    # Bodega desde la que se busca el catalogo en el formulario publico
-    # (Daniel 2026-07-11: "necesito que traiga todos los productos de la
-    # bodega 02"). Codigo TABBO.KOBO real segun docs/erp/TABLAS-BD-Random.pdf;
-    # configurable por env var por si el codigo exacto no es '02' (LTRIM/RTRIM
-    # ya normaliza el padding de espacios de los char, pero el DIGITO puede
-    # variar segun como este cargado en Random -- confirmar en vivo).
-    BODEGA_SOPORTE = os.environ.get("TK_BODEGA_SOPORTE", "02").strip()
-    MAX_PRODUCTOS_BUSCADOS = 20
+    # (BODEGA_SOPORTE / MAX_PRODUCTOS_BUSCADOS ya definidos arriba, junto a
+    # _buscar_catalogo_bodega -- compartidos con el buscador interno.)
     MAX_ADJUNTOS = 15
     MAX_ADJUNTO_MB = 25  # Cloud Run limita CADA request HTTP a 32MB; se sube
                          # 1 archivo por request (igual que el composer interno),
@@ -1653,38 +1706,13 @@ def register_tickets_routes(app, ctx):
         q = (request.args.get("q") or "").strip()
         if len(q) < 2:
             return jsonify({"ok": True, "resultados": []})
-        if not _random_sql_query:
-            return jsonify({"ok": False, "error": "Catálogo no disponible", "resultados": []}), 200
-        q_like = f"%{q.upper()[:60]}%"
-        # Daniel 2026-07-11: la busqueda SOLO consultaba MAEPR (catalogo
-        # maestro, sin bodega) -- por eso "no traia todos los productos":
-        # MAEPR es el maestro completo (todas las bodegas mezcladas), asi que
-        # en realidad sobraban productos de otras bodegas/descontinuados en
-        # vez de faltar. El stock POR bodega vive en MAEST (KOBO=codigo de
-        # bodega, KOPR=producto), segun docs/erp/TABLAS-BD-Random.pdf. Se
-        # exige EXISTS contra MAEST con KOBO=BODEGA_SOPORTE para traer solo
-        # productos con stock real en esa bodega.
-        try:
-            rows = _random_sql_query(
-                f"""
-                SELECT DISTINCT TOP {MAX_PRODUCTOS_BUSCADOS}
-                       LTRIM(RTRIM(pr.KOPR)) AS sku, LTRIM(RTRIM(pr.NOKOPR)) AS nombre
-                  FROM MAEPR pr
-                 WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
-                   AND EXISTS (
-                       SELECT 1 FROM MAEST st
-                        WHERE LTRIM(RTRIM(st.KOPR)) = LTRIM(RTRIM(pr.KOPR))
-                          AND LTRIM(RTRIM(st.KOBO)) = %s
-                   )
-                 ORDER BY nombre
-                """,
-                (q_like, q_like, BODEGA_SOPORTE), max_rows=MAX_PRODUCTOS_BUSCADOS,
-            ) or []
-        except Exception as _e:
-            print(f"[tk_soporte_productos] error (bodega={BODEGA_SOPORTE}): {_e}", flush=True)
-            return jsonify({"ok": False, "error": "Catálogo no disponible ahora", "resultados": []}), 200
-        return jsonify({"ok": True, "resultados": [
-            {"sku": r.get("sku") or "", "nombre": r.get("nombre") or ""} for r in rows if r.get("nombre")]})
+        # Comparte la MISMA query que el buscador interno sin cliente
+        # (_buscar_catalogo_bodega, definida arriba) -- una sola fuente de
+        # verdad para "catalogo general filtrado por bodega".
+        resultados, err = _buscar_catalogo_bodega(q)
+        if err:
+            return jsonify({"ok": False, "error": err, "resultados": []}), 200
+        return jsonify({"ok": True, "resultados": resultados})
 
     # ── POST /soporte/api/crear — crea el ticket publico ──
     @app.route("/soporte/api/crear", methods=["POST"])
