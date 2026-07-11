@@ -70,6 +70,12 @@ table.tk-table thead th.tk-th-sort.on i{opacity:1;color:#dc2626;}
    que sea una TABLA... bien elegante que me contenga cincuenta tickets"
    -- reemplaza el layout anterior de tarjetas/cards, que fue descartado). ── */
 .tk-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow-x:auto;
+  /* overflow-y:clip (no "hidden"): evita que este wrapper se convierta en el
+     "nearest scrolling ancestor" del thead sticky de abajo -- "clip" NO crea
+     un contenedor de scroll para position:sticky (a diferencia de "hidden"/
+     "auto"), asi el sticky se calcula contra el scroll real de la pagina.
+     Cambio neutro: hoy nada se desborda verticalmente dentro del wrapper. */
+  overflow-y:clip;
   box-shadow:0 1px 3px rgba(0,0,0,.04);}
 table.tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:1040px;}
 table.tk-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.66rem;
@@ -238,6 +244,55 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 .nt-file-chip.up-going i{color:#dc2626;animation:nt-spin 1s linear infinite;}
 @keyframes nt-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 @media(max-width:480px){.nt-file-chip{max-width:140px;}}
+
+/* ══════════════════════════════════════════════════════════════════
+   AUDITORÍA MOBILE 2026-07 — fixes acotados a mobile (breakpoints ya
+   usados en static/mobile.css: 768px principal, 480px teléfonos chicos).
+   Ningún cambio aquí toca comportamiento de escritorio. ══════════════ */
+@media(max-width:768px){
+  /* Hallazgo 1 (alta): el grupo de botones del hero (Importar CSV Triple A /
+     Purgar tickets / Desde documento ERP / Nuevo Ticket) no envolvía entre sí
+     -- desbordaba el hero. .tk-hero ya tiene flex-wrap pero solo entre sus
+     DOS hijos directos (título+sub y el grupo de botones). */
+  .tk-hero .d-flex.gap-2{flex-wrap:wrap;width:100%;}
+  .tk-hero .d-flex.gap-2 .btn{flex:1 1 auto;justify-content:center;}
+
+  /* Hallazgo 2 (alta): .tk-act (Ver/Cerrar/Eliminar) y .tk-pg-btn (prev/next)
+     no llevan clase .btn -- quedan en 30px, bajo el mínimo táctil. Se replica
+     el mismo tamaño de 38px que ya usa el proyecto para icon-only en tablas
+     (.btn-xs.btn-icon-only/.btn-sm.btn-icon-only en mobile.css). */
+  .tk-act,.tk-pg-btn{width:38px;height:38px;min-height:38px;min-width:38px;}
+  .tk-acciones{gap:6px;}
+
+  /* Hallazgo 3 (media): toggle "¿Aplica garantía?" -- control crítico (afecta
+     si el servicio se cobra) con tap target de solo 32px. */
+  .nt-gar-pill{min-height:44px;padding:10px 16px;}
+
+  /* Hallazgo 4 (media): botón "quitar equipo" (.p-0 de Bootstrap deja ~20px de
+     ancho de toque) y la "x" de quitar adjunto (span sin padding, ~10-14px). */
+  .nt-eqrow .btn-link.p-0{padding:8px 12px !important;}
+  .nt-file-chip .x{display:inline-flex;align-items:center;justify-content:center;
+    width:26px;height:26px;font-size:1.05rem;}
+
+  /* Hallazgo 7 (baja): encabezados ordenables (thead th, clickeables vía
+     tkSortClick) con altura ~35px, bajo el mínimo táctil recomendado. */
+  table.tk-table thead th{padding:14px 14px;}
+
+  /* Hallazgo 9 (baja): dropdown de autocomplete de Equipo (#ntAcEq) puede
+     quedar tapado por el teclado virtual en un modal largo -- se acota su alto. */
+  .nt-ac{max-height:160px;}
+}
+
+@media(max-width:480px){
+  /* Hallazgo 8 (baja): "Reporte tickets" / "Reporte SLA" (textos largos)
+     podían competir de forma dispareja por el ancho junto a Hoy/Refrescar/
+     Limpiar filtros -- se agrupan en pares de 2 columnas parejas. */
+  .tk-toolbar .btn{flex:1 1 calc(50% - 8px);}
+
+  /* Hallazgo 10 (baja): badges de Estado/Origen/no-leídos en ~9.6-10.2px,
+     bajo el mínimo de 12px recomendado para texto legible. */
+  .tk-badge,.tk-origen-pill,.tk-unread{font-size:.7rem;}
+}
 </style>
 
 <div class="tk-hero">
@@ -598,7 +653,11 @@ async function cargarTickets(){
     cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay tickets con estos filtros.</div>';
     return;
   }
-  cont.innerHTML = '<div class="tk-table-wrap"><table class="tk-table"><thead>'
+  // "table-responsive" (Bootstrap) hereda el fade-hint de scroll horizontal
+  // ya definido en mobile.css (.table-responsive:not(.scroll-hint-disabled)),
+  // sin efecto en escritorio (Bootstrap solo agrega overflow-x:auto, ya
+  // presente en .tk-table-wrap).
+  cont.innerHTML = '<div class="tk-table-wrap table-responsive"><table class="tk-table"><thead>'
     + tkTheadHtml()
     + '</thead><tbody>'
     + data.tickets.map(tkFilaHtml).join('')

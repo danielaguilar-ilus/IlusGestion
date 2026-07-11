@@ -106,14 +106,17 @@
 .rp-offline-bar{background:#7c2d12;color:#fff;padding:7px 14px;border-radius:9px;font-size:.8rem;
   display:none;align-items:center;gap:8px;margin-bottom:10px;}
 .rp-offline-bar.show{display:flex;}
-/* Sin alto fijo ni scroll propio (Daniel 2026-07-12: "no me gusta que
-   tenga scroll, trata de contenerlo todo en la misma pantalla") -- el
-   hilo crece libre con el contenido; si hay mucho historial, es la
-   PAGINA la que se desplaza, no un cuadro anidado. */
-.rp-thread{padding:4px 2px;margin-bottom:14px;}
+/* CORRECCION 2026-07-12 (entendido al reves antes): Daniel SI quiere que
+   el hilo tenga su propio scroll contenido -- lo que NO quiere es que la
+   PAGINA/aplicacion completa scrollee. "La caja de texto debe estar
+   contenida... el scroll de la caja [el hilo] que se baje hasta abajo
+   para leer los mensajes... lo que no quiero que tenga scroll es la
+   aplicacion, no la caja." */
+.rp-thread{max-height:460px;overflow-y:auto;padding:4px 2px;margin-bottom:14px;}
 .rp-msg{display:flex;margin-bottom:12px;}
 .rp-msg.out{justify-content:flex-end;}
-.rp-bubble{max-width:72%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.45;}
+.rp-bubble{max-width:72%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.45;
+  overflow-wrap:anywhere;word-break:break-word;}
 .rp-msg.in .rp-bubble{background:#f1f5f9;color:#0f172a;border-bottom-left-radius:4px;}
 /* "out" (lo que TU envias) en negro ILUS en vez de rojo -- Daniel 2026-07-12
    pidio opinion de UI: el rojo ya es el color de acento/CTA/peligro de toda
@@ -183,10 +186,16 @@
   display:flex;align-items:center;gap:10px;font-size:.92rem;}
 @media (max-width:520px){
   .tk-stepper{flex-direction:column;gap:2px;}
-  .tk-step{flex-direction:row;justify-content:flex-start;text-align:left;gap:12px;padding:8px 0;}
+  .tk-step{flex-direction:row;justify-content:flex-start;text-align:left;gap:12px;padding:8px 0;
+    flex-wrap:wrap;}
   .tk-step-label{margin-top:0;}
   .tk-step:not(:first-child)::before{top:-6px;left:19px;width:3px;height:16px;}
   .tk-step-badge{position:static;margin-left:6px;}
+  /* Label de sub-estado largo (ej. "Pendiente aprobación OT") junto al
+     círculo de 40px puede no caber en el ancho de la tarjeta -- que baje
+     de línea completa en vez de recortarse (sin flex-wrap arriba no había
+     dónde bajar). */
+  .tk-step-badge{flex-basis:100%;margin-left:0;margin-bottom:2px;white-space:normal;}
 }
 /* ── "¿Qué falta?" ── */
 .tk-qf-contador{font-size:.8rem;font-weight:700;color:#6b7280;margin-bottom:10px;}
@@ -248,6 +257,79 @@
 .tk-act-tag.env-ok,.tk-act-tag.cliente{background:#dcfce7;color:#166534;}
 .tk-act-tag.env-fail{background:#fee2e2;color:#991b1b;}
 .tk-act-tag.interno{background:#fff8e1;color:#b45309;}
+
+/* ════════════════════════════════════════════════════════════════════
+   MOBILE — Ficha de ticket (auditoría mobile 2026-07-12)
+   Solo aditivo dentro de @media: nada de esto toca escritorio, y no se
+   quita ni oculta ninguna funcionalidad existente (Regla #4.2).
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width:768px){
+  /* Composer Quill: en escritorio mide 240-520px (Daniel 2026-07-12, ver
+     nota más arriba), pero en un teléfono eso solo -- sumado al hero +
+     tabs + rp-mode-tabs + headers De/Para/CC -- ya ocupa casi toda la
+     pantalla y tapa el botón Enviar y el hilo. El scroll interno del
+     propio editor (ya existente) sigue siendo el ÚNICO scroll interno de
+     la pestaña Respuestas -- NO se le vuelve a poner scroll a .rp-thread
+     (pedido explícito de Daniel, no se revierte). */
+  .rp-editor-wrap .ql-container{ min-height:140px; max-height:300px; }
+
+  /* "Creado <fecha> · <correo>" con margin-left:auto y nowrap se desborda
+     del hero cuando created_by es un correo largo, en vez de bajar de
+     línea dentro del flex-wrap ya existente de .tk-hero-meta. */
+  .tk-hero-sub{ margin-left:0; white-space:normal; overflow-wrap:anywhere;
+    flex-basis:100%; text-align:left; margin-top:4px; }
+
+  /* Problema / Notas internas usan pre-wrap (respeta saltos de línea) pero
+     no rompen un token largo sin espacios (URL, serie, código de error)
+     que podría desbordar la tarjeta y generar scroll horizontal de página. */
+  #txtDesc, #txtNotas, #txtTitulo{ overflow-wrap:anywhere; word-break:break-word; }
+
+  /* Tabs de navegación (.tk-tab) y de modo del composer (.rp-mode-tab) no
+     usan .btn, así que no reciben el min-height:44px global de mobile.css
+     -- son zonas de tap muy frecuentes (Información/Respuestas/Acciones,
+     Responder al cliente/Comentario interno). */
+  .tk-tab, .rp-mode-tab{ min-height:44px; display:flex; align-items:center; justify-content:center; }
+
+  /* Botón "×" para quitar un adjunto ya subido: solo un carácter sin
+     padding, área de tap real de pocos píxeles. */
+  .rp-adj-preview .chip .x{ display:inline-flex; align-items:center; justify-content:center;
+    min-width:24px; min-height:24px; padding:2px; margin-left:2px; }
+
+  /* Toolbar de Quill (negrita/cursiva/listas/link/limpiar): tamaño default
+     de la librería, muy juntos en una pantalla de 375px. */
+  .rp-editor-wrap .ql-toolbar .ql-formats{ margin-right:10px; }
+  .rp-editor-wrap .ql-toolbar button{ width:32px; height:32px; padding:5px; }
+
+  /* Botón Guardar de "Estado y gestión": queda solo en su propia fila
+     cuando los 3 selects no caben -- que sea una acción clara de cierre
+     de formulario en vez de quedar alineado a la izquierda. */
+  #btnGuardar{ width:100%; justify-content:center; margin-top:4px; }
+
+  /* Visor universal de adjuntos: padding fijo de 32px resta espacio útil
+     a la imagen/PDF/video, y el botón de cerrar (único control para salir
+     de la vista fullscreen) queda bajo el mínimo táctil recomendado. */
+  .tk-lightbox{ padding:14px; }
+  .tk-lightbox-close{ width:40px; height:40px; }
+}
+@media (max-width:768px), (hover:none){
+  /* Lápiz de edición inline de Identificación del Cliente: solo aparecía
+     en :hover, y el override táctil existente (más abajo) era a 520px --
+     el breakpoint "mobile" del proyecto es 768px, y además cualquier
+     dispositivo sin hover real (aunque el viewport sea >768px, ej.
+     tablets/phablets) tampoco lo dispara. Aditivo: no reemplaza la regla
+     de 520px existente, solo la extiende. */
+  .tk-edit-pencil{ opacity:1; }
+}
+@media (max-width:430px){
+  /* Teléfonos chicos: el composer aún más compacto. */
+  .rp-editor-wrap .ql-container{ min-height:120px; max-height:240px; }
+}
+@media (max-width:360px){
+  /* Modal "Declarar equipo": Tipo/Cantidad/SKU/Serie usan col-6 (50%)
+     siempre; en un teléfono muy chico cada campo queda en ~150px,
+     apretado para un select o un input numérico con su label. */
+  #modalDeclararEquipo .row.g-2 > .col-6{ flex:0 0 100%; max-width:100%; }
+}
 </style>
 
 <div class="tk-hero" id="tkHero">
@@ -525,8 +607,8 @@ document.querySelectorAll('.tk-tab').forEach(function(tab){
     // layout real ya calculado (requestAnimationFrame), reintentar el scroll.
     if(tab.dataset.pane === 'conv'){
       requestAnimationFrame(function(){
-        const composer = document.querySelector('.rp-composer');
-        if(composer) composer.scrollIntoView({block:'end', behavior:'auto'});
+        const th = document.getElementById('rpThread');
+        if(th) th.scrollTop = th.scrollHeight;
       });
     }
   });
@@ -682,7 +764,11 @@ async function cargar(){
   // Línea de tiempo de actividad (supervisión) — tarjeta al final de Información
   renderActividad(d);
 
-  const nuevos = d.mensajes.filter(m=>m.tipo==='client_message').length;
+  // Daniel 2026-07-12: "cuando las lea ya, quiero que se borren" -- antes
+  // se contaban TODOS los mensajes de cliente del historial (nunca bajaba
+  // de ahi). d.unread_count ya viene calculado en el backend comparando
+  // contra staff_last_read_at (fix real, no en JS -- ver tk_api_get).
+  const nuevos = d.unread_count || 0;
   const cb = document.getElementById('convBadge');
   if(nuevos>0){ cb.style.display='inline-block'; cb.textContent=nuevos; } else cb.style.display='none';
 
@@ -903,10 +989,10 @@ function renderThread(mensajes, adjuntos){
   // este hilo aunque el usuario este leyendo mensajes antiguos -- sin esto,
   // el scroll saltaba al fondo cada vez y era imposible leer historial.
   // Solo se autoscrollea si el usuario YA estaba abajo (o es la carga inicial).
-  // El hilo ya NO tiene scroll propio (Daniel 2026-07-12), asi que "abajo"
-  // se mide contra la PAGINA (window), no contra el div.
+  // CORRECCION 2026-07-12: el hilo SI tiene scroll propio (contenido) --
+  // "abajo" se mide contra el DIV, no contra la pagina (ver .rp-thread arriba).
   const yaEstabaAbajo = th.childElementCount === 0
-    || (document.documentElement.scrollHeight - window.scrollY - window.innerHeight) < 80;
+    || (th.scrollHeight - th.scrollTop - th.clientHeight) < 60;
   if(!mensajes.length){
     th.innerHTML = '<div style="color:#9ca3af;font-size:.85rem;text-align:center;padding:20px;">Aún no hay mensajes.</div>';
     return;
@@ -950,10 +1036,7 @@ function renderThread(mensajes, adjuntos){
       + '</div></div>';
   }).join('');
   if(yaEstabaAbajo){
-    requestAnimationFrame(function(){
-      const composer = document.querySelector('.rp-composer');
-      if(composer) composer.scrollIntoView({block:'end', behavior:'auto'});
-    });
+    requestAnimationFrame(function(){ th.scrollTop = th.scrollHeight; });
   }
 }
 

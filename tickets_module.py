@@ -1288,6 +1288,24 @@ def register_tickets_routes(app, ctx):
         except Exception:
             vistas = []
 
+        # Contador de mensajes de cliente sin leer PARA ESTA ficha (badge de
+        # la pestaña Respuestas). Daniel 2026-07-12: "cuando las lea ya,
+        # quiero que se borren" -- antes el badge contaba TODOS los
+        # client_message del historial (nunca bajaba de ahi). Se calcula
+        # en SQL (no en JS) porque comparar los datetimes ya formateados a
+        # texto Chile (dd/mm/aaaa) no ordena cronologicamente. `t` aqui
+        # todavia es el dict CRUDO (antes de _fmt_row), asi que
+        # staff_last_read_at es un datetime real, no un string.
+        try:
+            unread_row = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM tk_mensajes WHERE ticket_id=%s "
+                "AND tipo='client_message' "
+                "AND created_at > COALESCE(%s, '1970-01-01')",
+                (tid, t.get("staff_last_read_at")))
+            unread_count = int(unread_row["n"]) if unread_row else 0
+        except Exception:
+            unread_count = 0
+
         return jsonify({
             "ok": True,
             "ticket": _fmt_row(t),
@@ -1296,6 +1314,7 @@ def register_tickets_routes(app, ctx):
             "mensajes": [_fmt_row(r) for r in mensajes],
             "adjuntos": [_fmt_row(r) for r in adjuntos],
             "vistas": [_fmt_row(r) for r in vistas],
+            "unread_count": unread_count,
             "estado_label": ESTADO_LABEL, "tipo_label": TIPO_LABEL,
         })
 
