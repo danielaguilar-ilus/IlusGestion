@@ -1888,6 +1888,19 @@ def register_tickets_routes(app, ctx):
         # updated_at = updated_at para NO disparar ON UPDATE CURRENT_TIMESTAMP.
         mysql_execute(
             "UPDATE tk_tickets SET staff_last_read_at=NOW(), updated_at=updated_at WHERE id=%s", (tid,))
+        # Limpia tambien el aviso de la campana de notificaciones (Daniel
+        # 2026-07-12: "cuando entra la respuesta y se visualice el mensaje,
+        # borre la notificacion") -- mismo "ya lo vi" que staff_last_read_at
+        # de arriba, pero para el otro canal de aviso (visible en toda la
+        # app, no solo esta ficha). Se matchea por url_accion, el mismo valor
+        # usado al crearla en _tk_leer_correo_entrante.
+        try:
+            mysql_execute(
+                "UPDATE mant_notificaciones SET leida_at=NOW() "
+                "WHERE url_accion=%s AND leida_at IS NULL",
+                (f"/tickets/{tid}",))
+        except Exception as _e:
+            print(f"[tk_marcar_leido] no se pudo limpiar notif interna: {_e}", flush=True)
         return jsonify({"ok": True})
 
     @app.route("/tickets/api/unread-summary", methods=["GET"])

@@ -501,6 +501,17 @@ document.querySelectorAll('.tk-tab').forEach(function(tab){
     document.querySelectorAll('.tk-pane').forEach(p=>p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('pane-'+tab.dataset.pane).classList.add('active');
+    // Respuestas: renderThread() ya intenta bajar el scroll al fondo, pero si
+    // el pane estaba oculto (display:none) en ese momento, scrollHeight leia 0
+    // y el scroll quedaba en 0 -- se veian los mensajes mas antiguos primero
+    // (Daniel 2026-07-12: "esta invertida"). Al mostrar recien el pane, con el
+    // layout real ya calculado (requestAnimationFrame), reintentar el scroll.
+    if(tab.dataset.pane === 'conv'){
+      requestAnimationFrame(function(){
+        const th = document.getElementById('rpThread');
+        if(th) th.scrollTop = th.scrollHeight;
+      });
+    }
   });
 });
 
