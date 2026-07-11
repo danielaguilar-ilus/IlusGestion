@@ -69217,6 +69217,50 @@ def _ensure_comm_template_general():
         return 0
 
 
+def _tickets_tpl_seed():
+    """Source of truth de la plantilla EDITABLE del módulo TICKETS (email).
+    Daniel 2026-07-11: toda respuesta al cliente desde un ticket debe salir
+    con el diseño de marca ILUS (header negro+logo, footer con CTA de
+    soporte) de forma PERSISTENTE, y el texto debe poder editarse desde
+    /comunicaciones sin tocar código — mismo patrón que 'general'/retiros/
+    transporte. Placeholders: {{cliente}}, {{numero_ticket}}, {{mensaje}}."""
+    return {
+        'respuesta': (
+            "Respuesta a tu ticket {{numero_ticket}}",
+            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
+            "<p style=\"font-size:14px;color:#374151\">{{mensaje}}</p>"
+            "<p style=\"font-size:13px;color:#6b7280;margin-top:16px\">"
+            "Este mensaje es parte del seguimiento de tu ticket <strong>{{numero_ticket}}</strong>."
+            "</p>"),
+    }
+
+
+def _ensure_comm_template_tickets():
+    """Siembra idempotente de la plantilla del módulo 'tickets' (email)
+    AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → no pisa ediciones de Daniel
+    (UNIQUE modulo+estado+canal)."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _tickets_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='tickets' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates "
+                "(modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('tickets',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de tickets sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar tickets: {e}", flush=True)
+        return 0
+
+
 def _ensure_comm_template_retiros():
     """Daniel 2026-06-15/17: garantiza que el CORREO de retiros use el diseño
     COLORIDO con el stepper de 5 hitos canónicos (pickups_module.PICKUP_JOURNEY)
@@ -69496,6 +69540,7 @@ try:
         _ensure_comm_template_transporte()
         _ensure_comm_template_general()
         _ensure_comm_template_retiros()  # Daniel 2026-06-15: stepper de correo al canónico
+        _ensure_comm_template_tickets()  # Daniel 2026-07-11: correo de respuesta de tickets
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
 

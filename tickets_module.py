@@ -191,8 +191,15 @@ def register_tickets_routes(app, ctx):
         "FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "GTR", "GRD", "FCO", "COV")
     # Correo saliente real al cliente: reusar el estandar de marca ILUS
     # (Regla: un solo `_ilus_email_master`/`_send_ilus_email`, no duplicar).
+    # La plantilla de tickets vive en comm_templates (modulo='tickets',
+    # estado='respuesta') -- editable por Daniel desde /comunicaciones,
+    # sembrada al boot por _ensure_comm_template_tickets(). El cuerpo
+    # SIEMPRE se envuelve con _comm_render_email_document (header negro+logo
+    # + footer de marca) -- ningun correo de tickets sale "pelado".
     _send_ilus_email = ctx.get("_send_ilus_email")
     _brand_subject = ctx.get("_brand_subject") or (lambda tema: tema)
+    _render_comm_template = ctx.get("_render_comm_template")
+    _comm_render_email_document = ctx.get("_comm_render_email_document")
 
     def _fmt_dt(value, only_date=False):
         """Formatea un datetime/date de MySQL (UTC naive) a hora Chile como
@@ -933,7 +940,8 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/tickets/<int:tid>/responder-cliente", methods=["POST"])
     @_tickets_required
     def tk_api_responder_cliente(tid):
-        t = mysql_fetchone("SELECT numero_ticket, email FROM tk_tickets WHERE id=%s", (tid,))
+        t = mysql_fetchone(
+            "SELECT numero_ticket, email, empresa, nombre_contacto FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
         d = request.get_json(silent=True) or {}
@@ -948,16 +956,49 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "El envio de correo no esta disponible en este entorno"}), 200
 
         numero = t.get("numero_ticket") or f"#{tid}"
-        subject = _brand_subject(f"Ticket {numero}")
+        cliente_nombre = t.get("nombre_contacto") or t.get("empresa") or "cliente"
+
+        # Plantilla EDITABLE (comm_templates / modulo 'tickets') + diseno
+        # maestro ILUS. Si Daniel edita la plantilla en /comunicaciones, su
+        # asunto/cuerpo mandan; si no existe/esta apagada/vacia, cae al texto
+        # de abajo (Regla #4.2: el correo nunca deja de salir con buen diseno).
+        tema_default = f"Respuesta a tu ticket {numero}"
+        cuerpo_default = (
+            f'<p style="font-size:14px;color:#374151">Estimado/a {_html_mod.escape(cliente_nombre)},</p>'
+            f'<p style="font-size:14px;color:#374151">{contenido}</p>'
+            f'<p style="font-size:13px;color:#6b7280;margin-top:16px">'
+            f'Este mensaje es parte del seguimiento de tu ticket <strong>{_html_mod.escape(numero)}</strong>.</p>')
+        tema, cuerpo_email = tema_default, cuerpo_default
+        if _render_comm_template:
+            try:
+                tpl = _render_comm_template(
+                    "respuesta", "email",
+                    {"cliente": cliente_nombre, "numero_ticket": numero, "mensaje": contenido},
+                    modulo="tickets")
+                if tpl:
+                    _asu, _cue = tpl
+                    if (_asu or "").strip():
+                        tema = _asu.strip()
+                    if (_cue or "").strip():
+                        cuerpo_email = _cue  # HTML editable por Daniel -> NO escapar
+            except Exception as _e:
+                print(f"[tk_responder_cliente] plantilla editable no usada: {_e}", flush=True)
+
+        subject = _brand_subject(tema)
+        html_final = (_comm_render_email_document(subject, cuerpo_email, subtitle=f"Ticket {numero} · ILUS Fitness")
+                      if _comm_render_email_document else cuerpo_email)
+
         try:
             kwargs = {"evento": "ticket_respuesta", "modulo": "tickets"}
             if cc_email:
                 kwargs["cc"] = cc_email
-            enviado = _send_ilus_email(to_email, subject, contenido, **kwargs)
+            enviado = _send_ilus_email(to_email, subject, html_final, **kwargs)
         except Exception as _e:
             print(f"[tk_responder_cliente] error enviando tid={tid}: {_e}", flush=True)
             enviado = False
 
+        # Se persiste el mensaje SANITIZADO plano (sin el envoltorio de marca)
+        # -- el hilo interno muestra el contenido, no el email completo con logo.
         msg_id = _tk_log(
             tid, "mensaje", contenido[:20000], es_interno=False,
             to_email=to_email[:150], cc_email=cc_email[:300] or None,
