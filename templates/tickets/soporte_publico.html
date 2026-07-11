@@ -29,9 +29,10 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
 .sp-tipo{border:1.5px solid #e5e7eb;border-radius:11px;padding:14px 8px;text-align:center;cursor:pointer;
   font-size:.82rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;min-height:44px;}
 .sp-tipo .em{display:block;font-size:1.4rem;margin-bottom:4px;}
-.sp-tipo:hover{border-color:var(--ilus-red);}
-.sp-tipo:focus-visible{outline:2px solid var(--ilus-red);outline-offset:2px;}
-.sp-tipo.sel{border-color:var(--ilus-red);background:#fef2f2;color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.12);}
+.sp-tipo:hover{border-color:var(--tc,var(--ilus-red));color:var(--tc,var(--ilus-red));}
+.sp-tipo:focus-visible{outline:2px solid var(--tc,var(--ilus-red));outline-offset:2px;}
+.sp-tipo.sel{border-color:var(--tc,var(--ilus-red));background:var(--tbg,#fef2f2);color:var(--tc,var(--ilus-red));
+  box-shadow:inset 0 0 0 1px var(--tc,var(--ilus-red));font-weight:800;}
 .sp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 @media(max-width:480px){.sp-grid{grid-template-columns:1fr;}}
 .sp-field{position:relative;}
@@ -53,7 +54,11 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
 .sp-ac.open{display:block;}
 .sp-ac-item{padding:10px 13px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.86rem;}
 .sp-ac-item:hover{background:#fef2f2;}
-.sp-ac-empty{padding:12px;color:#94a3b8;font-size:.82rem;text-align:center;}
+.sp-ac-empty{padding:16px 10px;color:#94a3b8;font-size:.8rem;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:5px;}
+.sp-ac-empty i{font-size:1.25rem;opacity:.5;}
+.sp-ac-empty.err{color:#b91c1c;}
+.sp-ac-empty.err i{opacity:.85;color:var(--ilus-red);}
 .sp-chip{display:inline-flex;align-items:center;gap:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;
   border-radius:8px;padding:8px 12px;font-size:.84rem;font-weight:700;margin:0 6px 6px 0;}
 .sp-chip .x{cursor:pointer;color:#f87171;font-weight:900;margin-left:2px;}
@@ -107,10 +112,23 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
   <div class="sp-card">
     <h2><span class="n">1</span>¿Qué necesitas?</h2>
     <div class="hint">Elige el tipo de solicitud que mejor describe tu caso.</div>
+    {# Mismo mapeo de color que el modal interno (templates/tickets/list.html)
+       para que ambos formularios se vean coherentes -- feedback Daniel 2026-07-11. #}
+    {% set tipo_visual = {
+      'install': ('🔧', '#3b82f6', '#eff6ff'),
+      'tech_support': ('🛠️', '#dc2626', '#fef2f2'),
+      'maintenance': ('⚙️', '#f59e0b', '#fffbeb'),
+      'warranty': ('🛡️', '#16a34a', '#f0fdf4'),
+      'spare_parts': ('🧩', '#3b82f6', '#eff6ff'),
+      'quotation': ('💬', '#16a34a', '#f0fdf4'),
+      'shipping': ('🚚', '#1d4ed8', '#eff6ff'),
+      'return': ('↩️', '#6b7280', '#f9fafb'),
+    } %}
     <div class="sp-tipos" id="spTipos">
       {% for t in tk_tipos_publicos %}
-      <div class="sp-tipo" data-tipo="{{ t }}" tabindex="0" role="button">
-        <span class="em">{{ {'install':'🔧','tech_support':'🛠️','maintenance':'⚙️','warranty':'🛡️','spare_parts':'🧩','quotation':'💬','shipping':'🚚','return':'↩️'}[t] }}</span>
+      {% set tv = tipo_visual.get(t, ('❔', '#6b7280', '#f9fafb')) %}
+      <div class="sp-tipo" data-tipo="{{ t }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button">
+        <span class="em">{{ tv[0] }}</span>
         {{ tipo_label[t] }}
       </div>
       {% endfor %}
@@ -295,12 +313,12 @@ const spAcProd = document.getElementById('spAcProd');
 const buscarProd = debounce(async function(){
   const q = document.getElementById('spBuscarProd').value.trim();
   if(q.length < 2){ spAcProd.classList.remove('open'); return; }
-  spAcProd.innerHTML = '<div class="sp-ac-empty">Buscando…</div>'; spAcProd.classList.add('open');
+  spAcProd.innerHTML = '<div class="sp-ac-empty"><i class="bi bi-hourglass-split"></i>Buscando…</div>'; spAcProd.classList.add('open');
   try{
     const r = await fetch('/soporte/api/erp/productos?q='+encodeURIComponent(q));
     const d = await r.json();
     const rows = d.resultados || [];
-    if(!rows.length){ spAcProd.innerHTML = '<div class="sp-ac-empty">Sin resultados</div>'; return; }
+    if(!rows.length){ spAcProd.innerHTML = '<div class="sp-ac-empty"><i class="bi bi-search"></i>Sin resultados</div>'; return; }
     spAcProd.innerHTML = rows.map((p,i)=>'<div class="sp-ac-item" data-i="'+i+'">'+esc(p.nombre)+'</div>').join('');
     spAcProd.querySelectorAll('.sp-ac-item').forEach(it=>it.addEventListener('click',()=>{
       const p = rows[+it.dataset.i];
@@ -308,7 +326,7 @@ const buscarProd = debounce(async function(){
       spAcProd.classList.remove('open'); document.getElementById('spBuscarProd').value='';
       renderChips(); marcarError('fProdWrap', false);
     }));
-  }catch(e){ spAcProd.innerHTML = '<div class="sp-ac-empty">Catálogo no disponible</div>'; }
+  }catch(e){ spAcProd.innerHTML = '<div class="sp-ac-empty err"><i class="bi bi-wifi-off"></i>Catálogo no disponible</div>'; }
 }, 320);
 document.getElementById('spBuscarProd').addEventListener('input', buscarProd);
 document.addEventListener('click', function(e){

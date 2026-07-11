@@ -47,12 +47,19 @@
 .nt-grid .full{grid-column:1/-1;}
 .nt-field{position:relative;}
 .nt-field label{font-size:.72rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
-.nt-tipos{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:7px;}
-.nt-tipo-pill{border:1.5px solid #e5e7eb;border-radius:9px;padding:8px 6px;text-align:center;cursor:pointer;
-  font-size:.76rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;}
-.nt-tipo-pill:hover{border-color:#dc2626;color:#dc2626;}
-.nt-tipo-pill:focus-visible{outline:2px solid #dc2626;outline-offset:2px;}
-.nt-tipo-pill.sel{border-color:#dc2626;background:#fef2f2;color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.1);}
+/* Grid de columnas FIJAS (no auto-fit) para que la ultima fila nunca quede
+   con celdas gigantes desproporcionadas -- feedback Daniel 2026-07-11. */
+.nt-tipos{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+@media(max-width:760px){.nt-tipos{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:480px){.nt-tipos{grid-template-columns:repeat(2,1fr);}}
+.nt-tipo-pill{border:1.5px solid #e5e7eb;border-radius:10px;padding:10px 6px;text-align:center;cursor:pointer;
+  font-size:.72rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:62px;line-height:1.15;}
+.nt-tipo-pill i{font-size:1.05rem;color:var(--tc,#94a3b8);}
+.nt-tipo-pill:hover{border-color:var(--tc,#dc2626);color:var(--tc,#dc2626);}
+.nt-tipo-pill:focus-visible{outline:2px solid var(--tc,#dc2626);outline-offset:2px;}
+.nt-tipo-pill.sel{border-color:var(--tc,#dc2626);background:var(--tbg,#fef2f2);color:var(--tc,#dc2626);
+  box-shadow:inset 0 0 0 1px var(--tc,#dc2626);font-weight:800;}
 .nt-gar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;
   background:#fff;border:1px dashed #e5e7eb;border-radius:10px;padding:9px 13px;}
 .nt-gar .lbl{font-size:.8rem;font-weight:700;color:#475569;}
@@ -70,13 +77,24 @@
 .nt-ac-item{padding:8px 11px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.83rem;}
 .nt-ac-item:hover,.nt-ac-item.hi{background:#fef2f2;}
 .nt-ac-item .rut{color:#dc2626;font-weight:800;font-family:'JetBrains Mono',monospace;font-size:.76rem;}
-.nt-ac-empty{padding:11px;color:#94a3b8;font-size:.8rem;text-align:center;}
+.nt-ac-empty{padding:16px 10px;color:#94a3b8;font-size:.78rem;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:5px;}
+.nt-ac-empty i{font-size:1.25rem;opacity:.5;}
+.nt-ac-empty.err{color:#b91c1c;}
+.nt-ac-empty.err i{opacity:.85;color:#dc2626;}
 .nt-chip{display:inline-flex;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #86efac;color:#166534;
   border-radius:9px;padding:7px 11px;font-size:.83rem;font-weight:700;}
 .nt-chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
 .nt-eqrow{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;border-radius:8px;
   padding:7px 11px;margin-bottom:5px;font-size:.83rem;background:#fff;}
 .nt-eqrow .sku{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#6b7280;}
+.nt-eq-count{display:none;align-items:center;gap:6px;font-size:.72rem;font-weight:800;color:#475569;
+  background:#f3f4f6;border-radius:50px;padding:4px 11px;margin:8px 0 6px;width:fit-content;}
+.nt-eq-count i{color:#dc2626;}
+.nt-eq-count.show{display:inline-flex;}
+/* Lista con scroll interno (no empuja el modal completo) al crecer -- Daniel
+   pidio "dinamismo" para 1 a 50+ equipos (feedback 2026-07-11). */
+.nt-lista-eq{max-height:230px;overflow-y:auto;padding-right:3px;}
 .nt-vfeed{font-size:.7rem;margin-top:3px;display:none;}
 .nt-vfeed.ok{color:#16a34a;display:block;} .nt-vfeed.err{color:#dc2626;display:block;}
 .nt-counter{font-size:.7rem;color:#94a3b8;text-align:right;}
@@ -159,9 +177,30 @@
         <div class="nt-card">
           <h6><span class="n">1</span>Tipo de solicitud <span style="color:#dc2626">*</span></h6>
           <div id="fTipoWrap">
+            {# Color + icono distintivo por tipo (paleta ILUS: rojo/variaciones +
+               verde/ambar/azul/gris de apoyo -- feedback Daniel 2026-07-11:
+               "me gustaria que fuera mas colorida"). Mismo mapeo en soporte_publico.html. #}
+            {% set tipo_visual = {
+              'install': ('bi-house-gear-fill', '#3b82f6', '#eff6ff'),
+              'tech_support': ('bi-headset', '#dc2626', '#fef2f2'),
+              'shipping': ('bi-truck', '#1d4ed8', '#eff6ff'),
+              'quotation': ('bi-cash-coin', '#16a34a', '#f0fdf4'),
+              'return': ('bi-arrow-return-left', '#6b7280', '#f9fafb'),
+              'tech_evaluation': ('bi-clipboard-check', '#94a3b8', '#f8fafc'),
+              'maintenance': ('bi-tools', '#f59e0b', '#fffbeb'),
+              'spare_parts': ('bi-boxes', '#3b82f6', '#eff6ff'),
+              'equipment_transfer': ('bi-arrows-move', '#1d4ed8', '#eff6ff'),
+              'warranty': ('bi-shield-check', '#16a34a', '#f0fdf4'),
+              'repair': ('bi-wrench-adjustable-circle-fill', '#991b1b', '#fef2f2'),
+              'spare_parts_store': ('bi-building', '#6b7280', '#f9fafb'),
+              'spare_parts_import': ('bi-globe-americas', '#3b82f6', '#eff6ff'),
+            } %}
             <div class="nt-tipos" id="ntTipos">
               {% for t in tk_tipos_publicos %}
-              <div class="nt-tipo-pill" data-tipo="{{ t }}" tabindex="0" role="button">{{ tipo_label[t] }}</div>
+              {% set tv = tipo_visual.get(t, ('bi-question-circle', '#6b7280', '#f9fafb')) %}
+              <div class="nt-tipo-pill" data-tipo="{{ t }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button">
+                <i class="bi {{ tv[0] }}"></i><span>{{ tipo_label[t] }}</span>
+              </div>
               {% endfor %}
             </div>
             <div class="nt-err-msg" id="ntErrTipo">Selecciona un tipo de solicitud.</div>
@@ -234,7 +273,8 @@
             </div>
             <div class="nt-ac" id="ntAcEq"></div>
           </div>
-          <div id="ntListaEq" style="margin-top:8px;"></div>
+          <div class="nt-eq-count" id="ntEqCount"><i class="bi bi-box-seam-fill"></i><span id="ntEqCountTxt">0 equipos agregados</span></div>
+          <div id="ntListaEq" class="nt-lista-eq" style="margin-top:8px;"></div>
         </div>
 
         <div class="nt-card mb-0">
@@ -420,17 +460,17 @@ const ntAcCli = document.getElementById('ntAcCli');
 const ntBuscarCliente = debounce(async function(){
   const q = document.getElementById('ntBuscarCli').value.trim();
   if(q.length < 2){ ntAcCli.classList.remove('open'); return; }
-  ntAcCli.innerHTML = '<div class="nt-ac-empty">Buscando en el ERP…</div>'; ntAcCli.classList.add('open');
+  ntAcCli.innerHTML = '<div class="nt-ac-empty"><i class="bi bi-hourglass-split"></i>Buscando en el ERP…</div>'; ntAcCli.classList.add('open');
   try{
     const r = await fetch('/tickets/api/erp/buscar-cliente?q='+encodeURIComponent(q));
     const d = await r.json();
     const rows = d.resultados || [];
-    if(!d.ok && d.error){ ntAcCli.innerHTML = '<div class="nt-ac-empty">'+esc(d.error)+'</div>'; return; }
-    if(!rows.length){ ntAcCli.innerHTML = '<div class="nt-ac-empty">Sin resultados en el ERP</div>'; return; }
+    if(!d.ok && d.error){ ntAcCli.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-exclamation-triangle"></i>'+esc(d.error)+'</div>'; return; }
+    if(!rows.length){ ntAcCli.innerHTML = '<div class="nt-ac-empty"><i class="bi bi-search"></i>Sin resultados en el ERP</div>'; return; }
     ntAcCli.innerHTML = rows.map((c,i)=>'<div class="nt-ac-item" data-i="'+i+'">'
       + '<div>'+esc(c.empresa)+'</div><div class="rut">'+esc(c.rut||'—')+'</div></div>').join('');
     ntAcCli.querySelectorAll('.nt-ac-item').forEach(it=>it.addEventListener('click',()=>ntSelCliente(rows[+it.dataset.i])));
-  }catch(e){ ntAcCli.innerHTML = '<div class="nt-ac-empty">ERP no disponible</div>'; }
+  }catch(e){ ntAcCli.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-wifi-off"></i>ERP no disponible</div>'; }
 }, 320);
 document.getElementById('ntBuscarCli').addEventListener('input', ntBuscarCliente);
 
@@ -500,17 +540,17 @@ const ntBuscarEquipo = debounce(async function(){
   const q = document.getElementById('ntBuscarEq').value.trim();
   if(q.length < 2){ ntAcEq.classList.remove('open'); return; }
   const rut = document.getElementById('ntRut').value.trim();
-  ntAcEq.innerHTML = '<div class="nt-ac-empty">Buscando equipos…</div>'; ntAcEq.classList.add('open');
+  ntAcEq.innerHTML = '<div class="nt-ac-empty"><i class="bi bi-hourglass-split"></i>Buscando equipos…</div>'; ntAcEq.classList.add('open');
   try{
     const r = await fetch('/tickets/api/erp/buscar-producto?rut='+encodeURIComponent(rut)+'&q='+encodeURIComponent(q));
     const d = await r.json();
     const rows = d.resultados || [];
-    if(!d.ok && d.error){ ntAcEq.innerHTML = '<div class="nt-ac-empty">'+esc(d.error)+'</div>'; return; }
-    if(!rows.length){ ntAcEq.innerHTML = '<div class="nt-ac-empty">Sin equipos que coincidan</div>'; return; }
+    if(!d.ok && d.error){ ntAcEq.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-exclamation-triangle"></i>'+esc(d.error)+'</div>'; return; }
+    if(!rows.length){ ntAcEq.innerHTML = '<div class="nt-ac-empty"><i class="bi bi-search"></i>Sin equipos que coincidan</div>'; return; }
     ntAcEq.innerHTML = rows.map((pr,i)=>'<div class="nt-ac-item" data-i="'+i+'"><div>'+esc(pr.nombre)+'</div>'
       + '<div class="rut">'+esc(pr.sku||'')+(pr.fecha? '  ·  '+esc(pr.fecha):'')+'</div></div>').join('');
     ntAcEq.querySelectorAll('.nt-ac-item').forEach(it=>it.addEventListener('click',()=>ntAddEquipo(rows[+it.dataset.i])));
-  }catch(e){ ntAcEq.innerHTML = '<div class="nt-ac-empty">ERP no disponible</div>'; }
+  }catch(e){ ntAcEq.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-wifi-off"></i>ERP no disponible</div>'; }
 }, 320);
 document.getElementById('ntBuscarEq').addEventListener('input', ntBuscarEquipo);
 
@@ -522,6 +562,12 @@ function ntAddEquipo(p){
 }
 function renderNtEquipos(){
   const l = document.getElementById('ntListaEq');
+  // Contador visible (Daniel: "puede ser un equipo, veinte, cincuenta... tiene
+  // que tener ese dinamismo") -- se actualiza en vivo con cada add/quitar.
+  const counter = document.getElementById('ntEqCount');
+  const n = ntEquipos.length;
+  counter.classList.toggle('show', n > 0);
+  document.getElementById('ntEqCountTxt').textContent = n===1 ? '1 equipo agregado' : n+' equipos agregados';
   l.innerHTML = ntEquipos.map((e,i)=>'<div class="nt-eqrow"><span>'+esc(e.nombre)
     + (e.sku? ' <span class="sku">· '+esc(e.sku)+'</span>':'')
     + '</span><button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ntDelEquipo('+i+')"><i class="bi bi-x-lg"></i></button></div>').join('');

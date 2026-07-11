@@ -17,6 +17,17 @@
 .bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
 .bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
 .bs-ot_pending_approval,.bs-ot_generated,.bs-ot_in_progress{background:#ede9fe;color:#5b21b6;}
+/* ── Fila secundaria del hero: prioridad / tipo / garantía / SLA / meta ── */
+.tk-hero-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;
+  padding-top:12px;border-top:1px solid rgba(255,255,255,.14);}
+.tk-hero-meta .tk-tipo{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.18);color:#e2e8f0;}
+.pr-urgente{background:#fee2e2;color:#991b1b;} .pr-alta{background:#fff8e1;color:#b45309;}
+.pr-media{background:#f3f4f6;color:#374151;} .pr-baja{background:#f3f4f6;color:#6b7280;}
+.tk-gar-badge{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:50px;
+  font-size:.6rem;font-weight:800;padding:3px 10px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+.tk-sla{padding:3px 10px;border-radius:50px;font-size:.64rem;font-weight:800;background:rgba(255,255,255,.12);color:#fff;white-space:nowrap;}
+.tk-sla.venc{background:#fee2e2;color:#991b1b;} .tk-sla.pronto{background:#fff8e1;color:#b45309;}
+.tk-hero-sub{font-size:.74rem;color:rgba(255,255,255,.5);margin-left:auto;white-space:nowrap;}
 .tk-tabs{display:flex;gap:4px;border-bottom:2px solid #eaecf0;margin-bottom:16px;flex-wrap:wrap;}
 .tk-tab{padding:9px 16px;font-weight:700;font-size:.85rem;color:#6b7280;cursor:pointer;
   border-bottom:2px solid transparent;margin-bottom:-2px;}
@@ -24,11 +35,50 @@
 .tk-tab .badge{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;padding:1px 6px;margin-left:4px;}
 .tk-pane{display:none;} .tk-pane.active{display:block;}
 .tk-card{background:#fff;border:1px solid #eaecf0;border-radius:13px;padding:18px 20px;margin-bottom:14px;}
-.tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;}
-.tk-dl{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;font-size:.87rem;}
-.tk-dl dt{color:#6b7280;font-weight:600;} .tk-dl dd{margin:0;color:#0f172a;font-weight:600;}
-.tk-eq{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;
-  border-radius:8px;padding:8px 11px;margin-bottom:6px;font-size:.85rem;}
+.tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.82rem;text-transform:uppercase;letter-spacing:.08em;
+  display:flex;align-items:center;gap:7px;}
+.tk-card h6 i{color:#dc2626;font-size:.95rem;}
+.tk-dl{display:grid;grid-template-columns:26px 130px 1fr;gap:9px 10px;font-size:.87rem;align-items:start;}
+.tk-dl i{color:#c4c9d2;font-size:.92rem;margin-top:1px;}
+.tk-dl dt{color:#6b7280;font-weight:600;grid-column:2;}
+.tk-dl dd{margin:0;color:#0f172a;font-weight:700;grid-column:3;overflow-wrap:anywhere;}
+.tk-dl dd a{color:#0f172a;text-decoration:none;border-bottom:1px dashed #cbd5e1;}
+.tk-dl dd a:hover{color:#dc2626;border-color:#dc2626;}
+@media (max-width:520px){ .tk-dl{grid-template-columns:22px 1fr;}
+  .tk-dl dt{grid-column:2;} .tk-dl dd{grid-column:2;margin-bottom:4px;} }
+/* ── Chips de metadata (Problema) ── */
+.tk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+.tk-chip{display:inline-flex;align-items:center;gap:5px;background:#f8fafc;border:1px solid #e5e7eb;
+  border-radius:8px;padding:4px 10px;font-size:.76rem;color:#475569;font-weight:600;}
+.tk-chip i{color:#94a3b8;}
+.tk-chip b{color:#0f172a;font-weight:700;}
+/* ── Ubicación ── */
+.tk-ubi-main{display:flex;align-items:start;gap:9px;font-size:.92rem;font-weight:700;color:#0f172a;}
+.tk-ubi-main i{color:#dc2626;font-size:1.05rem;margin-top:2px;}
+.tk-ubi-sub{margin:6px 0 0 24px;font-size:.78rem;color:#6b7280;}
+.tk-map-link{display:inline-flex;align-items:center;gap:6px;background:#eff6ff;border:1px solid #bfdbfe;
+  color:#1d4ed8;border-radius:8px;padding:6px 11px;font-size:.78rem;font-weight:700;text-decoration:none;
+  margin:12px 0 0 24px;}
+.tk-map-link:hover{background:#dbeafe;}
+/* ── Equipos: grid de tarjetas ── */
+.tk-eq-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
+.tk-eq{border:1px solid #eaecf0;border-radius:10px;padding:10px 12px;font-size:.85rem;background:#fafbfc;}
+.tk-eq .eq-top{display:flex;justify-content:space-between;align-items:start;gap:6px;}
+.tk-eq .eq-nombre{font-weight:700;color:#0f172a;}
+.tk-eq .eq-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+.tk-eq .eq-tag{background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:1px 7px;font-size:.68rem;color:#6b7280;font-weight:600;}
+.tk-eq .btn-link{opacity:.5;} .tk-eq .btn-link:hover{opacity:1;}
+/* ── Documentos ERP ── */
+.tk-doc{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid #eaecf0;
+  border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:.84rem;}
+.tk-doc:last-child{margin-bottom:0;}
+.tk-doc .doc-id{display:flex;align-items:center;gap:8px;font-weight:700;color:#0f172a;}
+.tk-doc .doc-id i{color:#dc2626;}
+.tk-doc .doc-meta{color:#6b7280;font-size:.78rem;}
+/* ── Estado vacío compacto (dentro de tarjetas) ── */
+.tk-empty-mini{background:#f9fafb;border:1px dashed #d1d5db;border-radius:10px;padding:20px 14px;text-align:center;color:#9ca3af;}
+.tk-empty-mini i{font-size:1.5rem;display:block;margin-bottom:6px;opacity:.6;}
+.tk-empty-mini span{font-size:.82rem;font-weight:600;}
 .tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:34px;text-align:center;color:#9ca3af;}
 
 /* ── Respuestas (conversacion) ── */
@@ -81,6 +131,13 @@
     <h4 id="hCliente">Cargando…</h4>
     <span class="tk-badge" id="hEstado"></span>
   </div>
+  <div class="tk-hero-meta" id="hMetaRow">
+    <span class="tk-badge" id="hPrio" style="display:none;"></span>
+    <span class="tk-tipo" id="hTipo" style="display:none;"></span>
+    <span class="tk-gar-badge" id="hGarantia" style="display:none;"><i class="bi bi-shield-check"></i> Garantía</span>
+    <span class="tk-sla" id="hSla" style="display:none;"></span>
+    <span class="tk-hero-sub" id="hSub"></span>
+  </div>
 </div>
 
 <div class="tk-tabs">
@@ -92,7 +149,7 @@
 <!-- INFORMACIÓN -->
 <div class="tk-pane active" id="pane-info">
   <div class="tk-card">
-    <h6>Estado y gestión</h6>
+    <h6><i class="bi bi-sliders"></i>Estado y gestión</h6>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
       <div style="flex:1;min-width:150px;">
         <label style="font-size:.72rem;font-weight:700;color:#475569;">Estado</label>
@@ -114,25 +171,35 @@
     </div>
   </div>
   <div class="tk-card">
-    <h6>Cliente</h6>
+    <h6><i class="bi bi-person-vcard"></i>Cliente</h6>
     <dl class="tk-dl" id="dlCliente"></dl>
   </div>
   <div class="tk-card">
-    <h6>Problema declarado</h6>
-    <div id="txtDesc" style="font-size:.9rem;color:#374151;white-space:pre-wrap;">—</div>
+    <h6><i class="bi bi-geo-alt"></i>Ubicación</h6>
+    <div id="ubiWrap"></div>
   </div>
   <div class="tk-card">
-    <h6>Equipos</h6>
+    <h6><i class="bi bi-exclamation-circle"></i>Problema</h6>
+    <div id="txtTitulo" style="font-size:1rem;font-weight:800;color:#0f172a;margin-bottom:6px;display:none;"></div>
+    <div id="txtDesc" style="font-size:.9rem;color:#374151;white-space:pre-wrap;line-height:1.5;">—</div>
+    <div class="tk-chips" id="chipsProblema"></div>
+  </div>
+  <div class="tk-card">
+    <h6><i class="bi bi-tools"></i>Equipo(s)</h6>
     <div id="listaEquipos"></div>
-    <div style="display:flex;gap:6px;margin-top:8px;">
+    <div style="display:flex;gap:6px;margin-top:10px;">
       <input id="inpEqNombre" class="form-control form-control-sm" placeholder="Nombre del equipo/producto">
       <input id="inpEqSku" class="form-control form-control-sm" placeholder="SKU" style="max-width:130px;">
       <button class="btn btn-sm btn-ilus-outline" id="btnAddEq"><i class="bi bi-plus-lg"></i></button>
     </div>
   </div>
   <div class="tk-card">
-    <h6>Documentos ERP</h6>
-    <div id="listaDocs" style="font-size:.85rem;color:#6b7280;">—</div>
+    <h6><i class="bi bi-file-earmark-text"></i>Documentos ERP</h6>
+    <div id="listaDocs"></div>
+  </div>
+  <div class="tk-card" id="cardNotas" style="display:none;">
+    <h6><i class="bi bi-lock"></i>Notas internas</h6>
+    <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
   </div>
 </div>
 
@@ -264,27 +331,99 @@ async function cargar(){
   document.getElementById('txtDesc').textContent = t.descripcion || '—';
   if(!document.getElementById('rpTo').value) document.getElementById('rpTo').value = t.email || '';
 
+  // ── Fila secundaria del hero: prioridad / tipo / garantía / SLA / meta ──
+  const hPrio = document.getElementById('hPrio');
+  if(t.prioridad){ hPrio.style.display='inline-block'; hPrio.textContent = t.prioridad.charAt(0).toUpperCase()+t.prioridad.slice(1); hPrio.className = 'tk-badge pr-'+t.prioridad; }
+  else hPrio.style.display='none';
+  const hTipo = document.getElementById('hTipo');
+  if(t.tipo){ hTipo.style.display='inline-block'; hTipo.textContent = TIPO_LABEL[t.tipo]||t.tipo; } else hTipo.style.display='none';
+  document.getElementById('hGarantia').style.display = t.es_garantia ? 'inline-flex' : 'none';
+  const hSla = document.getElementById('hSla');
+  if(t.fecha_limite){
+    hSla.style.display='inline-block';
+    const partes = String(t.fecha_limite).split('/');
+    let venc=false, pronto=false;
+    if(partes.length===3){
+      const dLimite = new Date(+partes[2], +partes[1]-1, +partes[0]);
+      const hoy = new Date(); hoy.setHours(0,0,0,0);
+      const dias = Math.round((dLimite-hoy)/86400000);
+      venc = dias<0; pronto = !venc && dias<=2;
+    }
+    hSla.className = 'tk-sla'+(venc?' venc':(pronto?' pronto':''));
+    hSla.innerHTML = '<i class="bi bi-'+(venc?'alarm-fill':'calendar-event')+' me-1"></i>'
+      + (venc?'Vencido ':'Vence ')+esc(t.fecha_limite);
+  } else hSla.style.display='none';
+  document.getElementById('hSub').textContent = 'Creado '+fmtFechaHora(t.created_at)+(t.created_by?' · '+t.created_by:'');
+
+  // ── Cliente ──
+  const ICONS = {Empresa:'building', RUT:'fingerprint', Contacto:'person', Correo:'envelope', Teléfono:'telephone', Sucursal:'signpost'};
   const dl = document.getElementById('dlCliente');
   const rows = [
     ['Empresa', t.empresa], ['RUT', t.rut], ['Contacto', t.nombre_contacto],
-    ['Correo', t.email], ['Teléfono', t.phone], ['Dirección', t.direccion],
-    ['Sucursal', t.sucursal], ['Tipo', t.tipo ? (TIPO_LABEL[t.tipo]||t.tipo) : ''],
-    ['Origen', t.origen], ['Creado', fmtFechaHora(t.created_at)],
+    ['Correo', t.email ? '<a href="mailto:'+esc(t.email)+'">'+esc(t.email)+'</a>' : ''],
+    ['Teléfono', t.phone ? '<a href="tel:'+esc(t.phone)+'">'+esc(t.phone)+'</a>' : ''],
+    ['Sucursal', t.sucursal],
   ].filter(r=>r[1]);
-  dl.innerHTML = rows.map(r=>'<dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd>').join('');
+  dl.innerHTML = rows.length ? rows.map(r=>'<i class="bi bi-'+ICONS[r[0]]+'"></i><dt>'+esc(r[0])+'</dt><dd>'+r[1]+'</dd>').join('')
+    : '<div class="tk-empty-mini" style="grid-column:1/-1;"><i class="bi bi-person-x"></i><span>Sin datos de cliente asociados.</span></div>';
+
+  // ── Ubicación ──
+  const ubi = document.getElementById('ubiWrap');
+  if(t.direccion){
+    const sub = [t.comuna_nombre, t.region_nombre].filter(Boolean).join(', ');
+    const destino = (t.direccion||'') + (t.comuna_nombre ? (', '+t.comuna_nombre) : '');
+    ubi.innerHTML = '<div class="tk-ubi-main"><i class="bi bi-geo-alt-fill"></i><span>'+esc(t.direccion)+'</span></div>'
+      + (sub ? '<div class="tk-ubi-sub">'+esc(sub)+'</div>' : '')
+      + '<a class="tk-map-link" href="https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destino)+'" target="_blank" rel="noopener">'
+      + '<i class="bi bi-signpost-2"></i>Ver en Google Maps</a>';
+  } else {
+    ubi.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-geo-alt-slash"></i><span>Sin dirección registrada para este ticket.</span></div>';
+  }
+
+  // ── Problema: título + chips de metadata ──
+  const tTitulo = document.getElementById('txtTitulo');
+  if(t.titulo){ tTitulo.style.display='block'; tTitulo.textContent = t.titulo; } else tTitulo.style.display='none';
+  const chips = [
+    ['box-seam','Producto', t.producto], ['tag','Marca', t.marca], ['upc-scan','SKU', t.sku],
+    ['file-earmark-ruled','N° documento', t.numero_documento], ['diagram-3','Origen', t.origen],
+  ].filter(c=>c[2]);
+  document.getElementById('chipsProblema').innerHTML = chips.map(c=>
+    '<span class="tk-chip"><i class="bi bi-'+c[0]+'"></i>'+esc(c[1])+': <b>'+esc(c[2])+'</b></span>').join('');
+
+  // ── Notas internas ──
+  const cardNotas = document.getElementById('cardNotas');
+  if(t.notas_internas){ cardNotas.style.display='block'; document.getElementById('txtNotas').textContent = t.notas_internas; }
+  else cardNotas.style.display='none';
 
   // Equipos
   const le = document.getElementById('listaEquipos');
-  le.innerHTML = d.equipos.length ? d.equipos.map(function(eq){
-    return '<div class="tk-eq"><span>'+esc(eq.nombre||eq.erp_kopr||'—')
-      + (eq.sku?' <small style="color:#9ca3af;">· '+esc(eq.sku)+'</small>':'')+'</span>'
-      + '<button class="btn btn-sm btn-link text-danger p-0" onclick="delEquipo('+eq.id+')"><i class="bi bi-trash"></i></button></div>';
-  }).join('') : '<div style="color:#9ca3af;font-size:.85rem;">Sin equipos.</div>';
+  if(d.equipos.length){
+    le.innerHTML = '<div class="tk-eq-grid">' + d.equipos.map(function(eq){
+      const tags = [];
+      if(eq.sku) tags.push('<span class="eq-tag">SKU '+esc(eq.sku)+'</span>');
+      if(eq.serie) tags.push('<span class="eq-tag">Serie '+esc(eq.serie)+'</span>');
+      if(eq.cantidad && eq.cantidad>1) tags.push('<span class="eq-tag">x'+esc(eq.cantidad)+'</span>');
+      if(eq.tipo) tags.push('<span class="eq-tag">'+esc(eq.tipo)+'</span>');
+      return '<div class="tk-eq"><div class="eq-top"><span class="eq-nombre"><i class="bi bi-box-seam me-1" style="color:#dc2626;"></i>'
+        +esc(eq.nombre||eq.erp_kopr||'—')+'</span>'
+        + '<button class="btn btn-sm btn-link text-danger p-0" onclick="delEquipo('+eq.id+')"><i class="bi bi-trash"></i></button></div>'
+        + (tags.length?'<div class="eq-tags">'+tags.join('')+'</div>':'')
+        + (eq.notas?'<div style="font-size:.74rem;color:#9ca3af;margin-top:5px;">'+esc(eq.notas)+'</div>':'')
+        + '</div>';
+    }).join('') + '</div>';
+  } else {
+    le.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-tools"></i><span>Sin equipos asociados a este ticket.</span></div>';
+  }
 
   // Documentos
-  document.getElementById('listaDocs').innerHTML = d.documentos.length
-    ? d.documentos.map(x=>esc((x.erp_tido||'')+' '+(x.erp_nudo||''))).join(', ')
-    : '<span style="color:#9ca3af;">Sin documentos asociados.</span>';
+  const ld = document.getElementById('listaDocs');
+  ld.innerHTML = d.documentos.length ? d.documentos.map(function(x){
+    const meta = [x.fecha, (x.monto!=null && x.monto!=='') ? '$'+Number(x.monto).toLocaleString('es-CL') : null]
+      .filter(Boolean).join(' · ');
+    return '<div class="tk-doc"><span class="doc-id"><i class="bi bi-file-earmark-text"></i>'
+      + esc((x.erp_tido||'')+' '+(x.erp_nudo||''))+'</span>'
+      + (meta?'<span class="doc-meta">'+esc(meta)+'</span>':'')+'</div>';
+  }).join('') : '<div class="tk-empty-mini"><i class="bi bi-file-earmark-x"></i><span>Sin documentos ERP asociados a este ticket.</span></div>';
 
   renderThread(d.mensajes, d.adjuntos);
 

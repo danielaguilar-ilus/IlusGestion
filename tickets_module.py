@@ -1558,7 +1558,7 @@ def register_tickets_routes(app, ctx):
                    AND LTRIM(RTRIM(e.NUDO)) = LTRIM(RTRIM(d.NUDO))
                 WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
                   AND (UPPER(d.NOKOPR) LIKE %s OR UPPER(d.KOPRCT) LIKE %s)
-                  AND d.PRCT = '.f.'
+                  AND d.PRCT = 0
                   AND LTRIM(RTRIM(d.TIDO)) IN ('{tidos_in}')
                   AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
                 GROUP BY d.KOPRCT, d.NOKOPR, d.TIDO, d.NUDO, e.FEEMDO
