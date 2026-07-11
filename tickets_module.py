@@ -3301,6 +3301,30 @@ def register_tickets_routes(app, ctx):
                     resumen["ingresados"] += 1
                     print(f"[tk_mail] respuesta de {from_email} ingresada en "
                           f"{numero} (msg {msg_id_db})", flush=True)
+                    # Aviso app-wide (campana de notificaciones, ya visible en
+                    # TODA la app, no solo la bandeja de tickets) -- Daniel
+                    # 2026-07-12: "estuvo como WhatsApp... metamos la
+                    # tecnologia" -- si solo avisamos en la bandeja/ficha, un
+                    # mensaje nuevo pasa desapercibido si el staff esta en
+                    # otro modulo, y se "lee" solo con abrir la ficha (antes
+                    # de que alguien note el aviso). broadcast (destino=None)
+                    # = lo ve cualquier admin/superadmin; se resuelve en
+                    # tiempo de request (mismo patron que _tickets_tpl_seed).
+                    try:
+                        _mant_notificar = ctx.get("_mant_notificar")
+                        if _mant_notificar:
+                            # tipo='otro': el ENUM de mant_notificaciones (app.py
+                            # ~linea 35634) no incluye un valor propio de tickets
+                            # y agregar uno requeriria una migracion ALTER TABLE:
+                            # 'otro' ya es el catch-all valido: el titulo/url_accion
+                            # (unicos por ticket) siguen distinguiendo cada aviso.
+                            extracto = cuerpo[:180] + ("…" if len(cuerpo) > 180 else "")
+                            _mant_notificar(
+                                None, "otro",
+                                f"Nuevo mensaje en {numero}", cuerpo=extracto,
+                                url_accion=f"/tickets/{ticket['id']}", prioridad="alta")
+                    except Exception as _en:
+                        print(f"[tk_mail] no se pudo crear notif interna: {_en}", flush=True)
                 except Exception as _em:
                     resumen["errores"] += 1
                     print(f"[tk_mail] error procesando correo: {_em}", flush=True)
