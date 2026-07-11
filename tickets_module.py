@@ -17,14 +17,20 @@ Ver BLUEPRINT-TICKETS-CENTRAL.md para el diseno completo (fases 2..7:
 formulario publico, correo bidireccional, pestana Acciones, cotizaciones,
 documentos ERP, migracion desde mant_tickets).
 """
+import email as _email_mod
 import html as _html_mod
+import imaplib
+import io
 import json
 import os
 import re
+import threading
 import time
+from email.header import decode_header, make_header
+from email.utils import parseaddr
 from functools import wraps
 from html.parser import HTMLParser
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 
 try:
     from zoneinfo import ZoneInfo
@@ -33,6 +39,10 @@ except Exception:  # pragma: no cover
     _CL_TZ = None
 
 from flask import request, jsonify, render_template, redirect, url_for, g
+
+# Validacion server-side del "correo que da la cara" (Reply-To de tickets).
+# Mismo patron que app._EMAIL_RE, para no confiar solo en el front (Regla #4).
+_TK_REPLY_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 
 def _chile_now_year():
@@ -105,6 +115,138 @@ _ESTADO_ORDER = {e: i for i, e in enumerate(
      "ot_generated", "ot_in_progress", "resolved", "closed", "cancelado"]
 )}
 _PRIO_ORDER = {"urgente": 0, "alta": 1, "media": 2, "baja": 3}
+
+# ── Orden por columna del listado (tabla help-desk estilo Triple A) ──
+# WHITELIST ESTRICTA param -> expresion SQL. JAMAS se interpola el valor
+# crudo del request en el SQL: solo lo que sale de este dict (Regla #4).
+_TK_SORT_COLS = {
+    "id": "t.id",
+    "numero_ticket": "t.numero_ticket",
+    "created_at": "t.created_at",
+    "updated_at": "t.updated_at",
+    "origen": "t.origen",
+    "asignado_a": "t.asignado_a",
+    "rut": "t.rut",
+    "empresa": "t.empresa",
+    # estado/prioridad se ordenan por su ORDEN DE NEGOCIO (no alfabetico):
+    # asc = abiertos/urgentes primero.
+    "estado": ("FIELD(t.estado,'open','in_progress','pending','ot_pending_approval',"
+               "'ot_generated','ot_in_progress','resolved','closed','cancelado')"),
+    "tipo": "t.tipo",
+    "prioridad": "FIELD(t.prioridad,'urgente','alta','media','baja')",
+}
+
+# ORDER BY "inteligente" por defecto de la bandeja (comportamiento historico,
+# NO cambiar sin permiso): primero tickets con mensajes de cliente sin leer,
+# luego estado, prioridad, updated_at DESC.
+_TK_ORDER_DEFAULT = (
+    "  (SELECT COUNT(*) FROM tk_mensajes m2 "
+    "     WHERE m2.ticket_id=t.id AND m2.tipo='client_message' "
+    "       AND m2.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) > 0 DESC, "
+    "  FIELD(t.estado,'open','in_progress','pending','ot_pending_approval',"
+    "'ot_generated','ot_in_progress','resolved','closed','cancelado'), "
+    "FIELD(t.prioridad,'urgente','alta','media','baja'), t.updated_at DESC, t.id DESC"
+)
+
+_TK_FECHA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _tk_tz_offset():
+    """Offset ACTUAL de Chile vs UTC como string MySQL ('-04:00' invierno,
+    '-03:00' verano) para CONVERT_TZ con offsets numericos (que SI funciona
+    sin las tablas de zona horaria de MySQL). Honesto: justo en el borde de
+    un cambio de DST el corte del dia puede correr 1 hora para fechas
+    historicas -- aceptable para un filtro de fechas de tickets."""
+    try:
+        if _CL_TZ is not None:
+            off = datetime.now(timezone.utc).astimezone(_CL_TZ).utcoffset()
+            mins = int(off.total_seconds() // 60)
+            sign = "-" if mins < 0 else "+"
+            mins = abs(mins)
+            return f"{sign}{mins // 60:02d}:{mins % 60:02d}"
+    except Exception:
+        pass
+    return "-04:00"
+
+
+def _tk_sort_order(args):
+    """ORDER BY explicito si viene ?sort= valido (whitelist); None si no.
+    dir solo asc|desc (default desc). t.id DESC como desempate SIEMPRE."""
+    expr = _TK_SORT_COLS.get((args.get("sort") or "").strip().lower())
+    if not expr:
+        return None
+    direction = "ASC" if (args.get("dir") or "").strip().lower() == "asc" else "DESC"
+    return f"{expr} {direction}, t.id DESC"
+
+
+def _tk_list_where(args):
+    """Construye el WHERE del listado de tickets desde los query params.
+    COMPARTIDO por tk_api_list y los reportes CSV (una sola fuente de
+    verdad, sin duplicar logica). Devuelve (wsql, params) con SQL SIEMPRE
+    parametrizado %s (Regla #4)."""
+    where, params = [], []
+    estado = (args.get("estado") or "").strip().lower()
+    if estado in TK_ESTADOS:
+        where.append("t.estado=%s"); params.append(estado)
+    tipo = (args.get("tipo") or "").strip().lower()
+    if tipo in TK_TIPOS:
+        where.append("t.tipo=%s"); params.append(tipo)
+    prio = (args.get("prioridad") or "").strip().lower()
+    if prio in TK_PRIORIDADES:
+        where.append("t.prioridad=%s"); params.append(prio)
+    origen = (args.get("origen") or "").strip().lower()
+    if origen in TK_ORIGENES:
+        where.append("t.origen=%s"); params.append(origen)
+    asign = (args.get("asignado_a") or "").strip()
+    if asign == "__sin_asignar__":
+        # Sentinel del select "Responsable" de la bandeja (frontend list.html):
+        # tickets SIN ejecutivo responsable (NULL o vacio). Aplica tambien a
+        # los reportes CSV porque comparten este WHERE.
+        where.append("(t.asignado_a IS NULL OR t.asignado_a='')")
+    elif asign:
+        where.append("t.asignado_a=%s"); params.append(asign)
+    rut = (args.get("rut") or "").strip()
+    if rut:
+        where.append("t.rut LIKE %s"); params.append(f"%{rut}%")
+    q = (args.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        where.append(
+            "(t.numero_ticket LIKE %s OR t.empresa LIKE %s OR t.nombre_contacto LIKE %s "
+            "OR t.descripcion LIKE %s OR t.titulo LIKE %s OR t.rut LIKE %s)"
+        )
+        params.extend([like, like, like, like, like, like])
+
+    # ── Filtros nuevos (tabla help-desk) ──
+    # ticket: id exacto (si es numerico) O numero_ticket parcial, para que
+    # "355" y "TK-2026-00355" encuentren el mismo ticket.
+    ticket = (args.get("ticket") or "").strip()
+    if ticket:
+        if ticket.isdigit():
+            where.append("(t.id=%s OR t.numero_ticket LIKE %s)")
+            params.extend([int(ticket), f"%{ticket}%"])
+        else:
+            where.append("t.numero_ticket LIKE %s")
+            params.append(f"%{ticket}%")
+
+    # Rango de fechas sobre created_at, pensado en HORA CHILE (Regla #6):
+    # created_at se guarda en UTC -> se convierte con CONVERT_TZ + offset
+    # numerico actual antes de tomar el DATE(). hoy=1 es el atajo de
+    # fecha_desde=fecha_hasta=hoy (hora Chile).
+    fecha_desde = (args.get("fecha_desde") or "").strip()
+    fecha_hasta = (args.get("fecha_hasta") or "").strip()
+    if (args.get("hoy") or "").strip() == "1":
+        fecha_desde = fecha_hasta = _chile_hoy().isoformat()
+    tz_off = _tk_tz_offset()
+    if fecha_desde and _TK_FECHA_RE.match(fecha_desde):
+        where.append("DATE(CONVERT_TZ(t.created_at, '+00:00', %s)) >= %s")
+        params.extend([tz_off, fecha_desde])
+    if fecha_hasta and _TK_FECHA_RE.match(fecha_hasta):
+        where.append("DATE(CONVERT_TZ(t.created_at, '+00:00', %s)) <= %s")
+        params.extend([tz_off, fecha_hasta])
+
+    wsql = (" WHERE " + " AND ".join(where)) if where else ""
+    return wsql, params
 
 # ── Mapas de migracion desde los tickets de Mantenciones (mant_tickets*) ──
 # Blueprint §7. Se usan al centralizar; conservan el dato sin romper el origen.
@@ -224,9 +366,28 @@ def register_tickets_routes(app, ctx):
     # necesita un Reply-To propio, apuntando al buzon que se integrara con
     # Gmail API para leer las respuestas de los clientes (pendiente: cuenta de
     # servicio + delegacion de dominio en Google Workspace, autorizada por un
-    # super-admin -- ver conversacion). Configurable por env var para no
-    # requerir otro deploy si cambia el buzon.
-    TK_SUPPORT_REPLY_TO = os.environ.get("TK_SUPPORT_REPLY_TO", "daniel.aguilar@sphs.cl").strip()
+    # super-admin -- ver conversacion). Ahora es EDITABLE EN VIVO desde
+    # Comunicaciones -> Tickets (tabla tk_settings, clave 'reply_to') sin
+    # depender de una env var ni de un deploy (Daniel 2026-07-12: "necesito
+    # que en la parte de comunicaciones si configures cual es el correo que va
+    # a estar dando la cara"). _tk_reply_to() resuelve el valor efectivo en
+    # cada envio (1 SELECT liviano) con prioridad tk_settings -> env -> default.
+    def _tk_reply_to():
+        """Correo que da la cara (Reply-To) de los correos de TICKETS.
+        Prioridad: (1) tk_settings.reply_to si existe y no esta vacio,
+        (2) env var TK_SUPPORT_REPLY_TO, (3) default daniel.aguilar@sphs.cl.
+        Independiente del Reply-To de marca GLOBAL (comm_brand) que usan
+        retiros/transporte/mantenciones."""
+        try:
+            row = mysql_fetchone(
+                "SELECT valor FROM tk_settings WHERE clave='reply_to'")
+            if row:
+                v = (row.get("valor") or "").strip()
+                if v:
+                    return v
+        except Exception as _e:
+            print(f"[_tk_reply_to] fallback a env/default: {_e}", flush=True)
+        return (os.environ.get("TK_SUPPORT_REPLY_TO") or "daniel.aguilar@sphs.cl").strip()
 
     def _buscar_catalogo_bodega(q):
         """Catalogo general (MAEPR) con stock en BODEGA_SOPORTE (MAEST).
@@ -527,6 +688,43 @@ def register_tickets_routes(app, ctx):
                  REFERENCES tk_tickets(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # Settings clave-valor del modulo Tickets (Daniel 2026-07-12): guarda el
+        # "correo que da la cara" (Reply-To de los correos de tickets) editable
+        # desde Comunicaciones sin depender de una env var ni de un deploy. Es
+        # PROPIO de tickets — NO se reutiliza comm_brand (ese es el Reply-To de
+        # marca GLOBAL de todos los modulos). Se siembra la clave 'reply_to' con
+        # INSERT IGNORE para no pisar un valor ya editado por el admin.
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_settings (
+              clave       VARCHAR(64) PRIMARY KEY,
+              valor       VARCHAR(255) NULL,
+              updated_by  VARCHAR(190) NULL,
+              updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                          ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO tk_settings (clave, valor) VALUES ('reply_to', %s)",
+                ("daniel.aguilar@sphs.cl",))
+        except Exception as _e:
+            print(f"[ILUS][WARN] seed tk_settings.reply_to: {_e}", flush=True)
+
+        # Deduplicacion del lector IMAP de respuestas de clientes (Daniel
+        # 2026-07-12: "responde el correo, tu ubicas el asunto y listo").
+        # Cada correo ingresado se registra por su Message-ID; si el lector
+        # vuelve a ver el mismo correo (corre cada pocos minutos sobre una
+        # ventana de dias), lo salta. PRIMARY KEY = idempotencia real.
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_mail_ingeridos (
+              message_id  VARCHAR(255) PRIMARY KEY,
+              ticket_id   INT NULL,
+              from_email  VARCHAR(190) NULL,
+              subject     VARCHAR(300) NULL,
+              created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_ticket (ticket_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
 
     def _ensure_tk_tickets_columns():
         """Migracion aditiva de tk_tickets (patron _ensure_transporte_columns):
@@ -723,35 +921,17 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/tickets", methods=["GET"])
     @_tickets_required
     def tk_api_list():
-        where, params = [], []
-        estado = (request.args.get("estado") or "").strip().lower()
-        if estado in TK_ESTADOS:
-            where.append("t.estado=%s"); params.append(estado)
-        tipo = (request.args.get("tipo") or "").strip().lower()
-        if tipo in TK_TIPOS:
-            where.append("t.tipo=%s"); params.append(tipo)
-        prio = (request.args.get("prioridad") or "").strip().lower()
-        if prio in TK_PRIORIDADES:
-            where.append("t.prioridad=%s"); params.append(prio)
-        origen = (request.args.get("origen") or "").strip().lower()
-        if origen in TK_ORIGENES:
-            where.append("t.origen=%s"); params.append(origen)
-        asign = (request.args.get("asignado_a") or "").strip()
-        if asign:
-            where.append("t.asignado_a=%s"); params.append(asign)
-        rut = (request.args.get("rut") or "").strip()
-        if rut:
-            where.append("t.rut LIKE %s"); params.append(f"%{rut}%")
-        q = (request.args.get("q") or "").strip()
-        if q:
-            like = f"%{q}%"
-            where.append(
-                "(t.numero_ticket LIKE %s OR t.empresa LIKE %s OR t.nombre_contacto LIKE %s "
-                "OR t.descripcion LIKE %s OR t.titulo LIKE %s OR t.rut LIKE %s)"
-            )
-            params.extend([like, like, like, like, like, like])
-
-        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        # Auto-barrido del buzon de respuestas (fire-and-forget, hilo con
+        # app_context; se auto-limita a 1 barrido cada 5 min). Definido mas
+        # abajo en este mismo closure -- resuelve en tiempo de llamada.
+        try:
+            _tk_autopoll_correo()
+        except Exception:
+            pass
+        # WHERE compartido con los reportes CSV (una sola fuente de verdad).
+        # Filtros: estado, tipo, prioridad, origen, asignado_a, rut, q,
+        # + nuevos: ticket, fecha_desde, fecha_hasta, hoy=1.
+        wsql, params = _tk_list_where(request.args)
 
         try:
             page = max(1, int(request.args.get("page", 1)))
@@ -765,11 +945,17 @@ def register_tickets_routes(app, ctx):
 
         total_row = mysql_fetchone(f"SELECT COUNT(*) AS n FROM tk_tickets t{wsql}", tuple(params))
         total = int(total_row["n"]) if total_row else 0
+        pages = (total + limit - 1) // limit  # ceil(total/limit); 0 si no hay filas
 
-        # Daniel 2026-07-11: "cuando el cliente responda... las respuestas mas
-        # nuevas se van posicionando mas arriba" -- un ticket con mensajes de
-        # cliente sin leer sube al tope de la bandeja, ANTES que el orden por
-        # estado/prioridad (para que nunca se pierda una respuesta nueva).
+        # ORDER BY: si viene ?sort= valido (whitelist _TK_SORT_COLS) se ordena
+        # SOLO por esa columna + dir (t.id DESC de desempate). Si NO viene,
+        # se mantiene EXACTO el orden inteligente historico (Daniel 2026-07-11:
+        # "cuando el cliente responda... las respuestas mas nuevas se van
+        # posicionando mas arriba" -- un ticket con mensajes de cliente sin
+        # leer sube al tope de la bandeja, ANTES que el orden por estado/
+        # prioridad). order_sql sale SOLO del dict whitelist o de la
+        # constante: jamas del request crudo.
+        order_sql = _tk_sort_order(request.args) or _TK_ORDER_DEFAULT
         rows = mysql_fetchall(
             "SELECT t.id, t.numero_ticket, t.origen, t.estado, t.tipo, t.prioridad, "
             "       t.titulo, t.empresa, t.rut, t.nombre_contacto, t.asignado_a, "
@@ -778,13 +964,7 @@ def register_tickets_routes(app, ctx):
             "          WHERE m.ticket_id=t.id AND m.tipo='client_message' "
             "            AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS unread_count "
             f"FROM tk_tickets t{wsql} "
-            "ORDER BY "
-            "  (SELECT COUNT(*) FROM tk_mensajes m2 "
-            "     WHERE m2.ticket_id=t.id AND m2.tipo='client_message' "
-            "       AND m2.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) > 0 DESC, "
-            "  FIELD(t.estado,'open','in_progress','pending','ot_pending_approval',"
-            "'ot_generated','ot_in_progress','resolved','closed','cancelado'), "
-            "FIELD(t.prioridad,'urgente','alta','media','baja'), t.updated_at DESC, t.id DESC "
+            f"ORDER BY {order_sql} "
             "LIMIT %s OFFSET %s",
             tuple(params) + (limit, offset),
         )
@@ -807,7 +987,7 @@ def register_tickets_routes(app, ctx):
         return jsonify({
             "ok": True,
             "tickets": [_fmt_row(r) for r in rows],
-            "total": total, "page": page, "limit": limit,
+            "total": total, "page": page, "limit": limit, "pages": pages,
             "kpis": {
                 "total": int(kpi.get("total") or 0),
                 "activos": int(kpi.get("activos") or 0),
@@ -815,6 +995,113 @@ def register_tickets_routes(app, ctx):
                 "vencidos": int(kpi.get("vencidos") or 0),
             },
         })
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — Reportes CSV (Excel es-CL: delimitador ';' + BOM UTF-8 para
+    #  que las tildes abran bien). Respetan los MISMOS filtros que
+    #  tk_api_list via _tk_list_where (una sola fuente del WHERE).
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_csv_response(filename, header, rows):
+        import csv as _csv
+        import io as _io
+        buf = _io.StringIO()
+        w = _csv.writer(buf, delimiter=";", lineterminator="\r\n")
+        w.writerow(header)
+        for r in rows:
+            w.writerow(r)
+        # BOM UTF-8 explicito para que Excel es-CL abra las tildes bien.
+        resp = app.response_class(
+            chr(0xFEFF) + buf.getvalue(), mimetype="text/csv; charset=utf-8")
+        resp.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        return resp
+
+    @app.route("/tickets/api/reporte/tickets.csv", methods=["GET"])
+    @_tickets_required
+    def tk_reporte_tickets_csv():
+        wsql, params = _tk_list_where(request.args)
+        # Reporte orientado a fechas: created_at DESC por defecto; honra
+        # ?sort=&dir= (misma whitelist del listado) si vienen.
+        order_sql = _tk_sort_order(request.args) or "t.created_at DESC, t.id DESC"
+        rows = mysql_fetchall(
+            "SELECT t.numero_ticket, t.created_at, t.origen, t.asignado_a, t.rut, "
+            "       t.empresa, t.nombre_contacto, t.estado, t.tipo, t.prioridad, "
+            "       t.es_garantia, t.titulo "
+            f"FROM tk_tickets t{wsql} "
+            f"ORDER BY {order_sql} "
+            "LIMIT 10000",  # tope de proteccion
+            tuple(params),
+        ) or []
+        salida = []
+        for r in rows:
+            salida.append([
+                r.get("numero_ticket") or "",
+                _fmt_dt(r.get("created_at")) or "",       # hora Chile (Regla #6)
+                r.get("origen") or "",
+                r.get("asignado_a") or "",
+                r.get("rut") or "",
+                (r.get("empresa") or r.get("nombre_contacto") or ""),
+                ESTADO_LABEL.get(r.get("estado"), r.get("estado") or ""),
+                TIPO_LABEL.get(r.get("tipo"), r.get("tipo") or ""),
+                r.get("prioridad") or "",
+                "Si" if r.get("es_garantia") else "No",
+                r.get("titulo") or "",
+            ])
+        return _tk_csv_response(
+            "reporte_tickets_ILUS.csv",
+            ["numero_ticket", "fecha_ingreso", "origen", "responsable", "rut",
+             "cliente", "estado", "tipo", "prioridad", "es_garantia", "titulo"],
+            salida)
+
+    @app.route("/tickets/api/reporte/sla.csv", methods=["GET"])
+    @_tickets_required
+    def tk_reporte_sla_csv():
+        wsql, params = _tk_list_where(request.args)
+        rows = mysql_fetchall(
+            "SELECT t.numero_ticket, t.empresa, t.nombre_contacto, t.rut, t.tipo, "
+            "       t.estado, t.created_at, t.updated_at, t.fecha_limite "
+            f"FROM tk_tickets t{wsql} "
+            "ORDER BY t.created_at DESC, t.id DESC "
+            "LIMIT 10000",
+            tuple(params),
+        ) or []
+        hoy_cl = _chile_hoy()
+        ahora_utc = datetime.utcnow()  # created_at/updated_at son UTC naive
+        terminales = ("resolved", "closed", "cancelado")
+        salida = []
+        for r in rows:
+            estado = r.get("estado") or ""
+            creado = r.get("created_at")
+            cambiado = r.get("updated_at")
+            # duracion_dias: estados terminales -> created_at..updated_at;
+            # el resto -> created_at..ahora (ticket aun corriendo).
+            dur = ""
+            if isinstance(creado, datetime):
+                fin = cambiado if (estado in terminales and isinstance(cambiado, datetime)) else ahora_utc
+                try:
+                    dur = round(max(0.0, (fin - creado).total_seconds()) / 86400.0, 1)
+                except Exception:
+                    dur = ""
+            fl = r.get("fecha_limite")
+            if isinstance(fl, datetime):
+                fl = fl.date()
+            vencido = "Si" if (isinstance(fl, date) and fl < hoy_cl
+                               and estado not in terminales) else "No"
+            salida.append([
+                r.get("numero_ticket") or "",
+                (r.get("empresa") or r.get("nombre_contacto") or ""),
+                r.get("rut") or "",
+                TIPO_LABEL.get(r.get("tipo"), r.get("tipo") or ""),
+                ESTADO_LABEL.get(estado, estado),
+                _fmt_dt(creado) or "",
+                _fmt_dt(cambiado) or "",
+                dur,
+                vencido,
+            ])
+        return _tk_csv_response(
+            "reporte_sla_tickets_ILUS.csv",
+            ["numero_ticket", "cliente", "rut", "tipo", "estado", "fecha_creacion",
+             "fecha_ultimo_cambio", "duracion_dias", "vencido"],
+            salida)
 
     # ─────────────────────────────────────────────────────────────────
     #  API — crear (backoffice)
@@ -1087,8 +1374,17 @@ def register_tickets_routes(app, ctx):
 
         numero = (t.get("numero_ticket") or "").strip()
         d = request.get_json(silent=True) or {}
-        confirm = (d.get("confirm_text") or "").strip().upper()
-        if not numero or confirm != numero.upper():
+        # Confirmacion obligatoria (Regla #5: hard delete = superadmin +
+        # confirmacion). Se acepta 'confirm' (body JSON o query param, nombre
+        # que usa el frontend de la tabla) o 'confirm_text' (nombre historico),
+        # y debe coincidir con el numero_ticket (TK-...) o con el id del ticket.
+        confirm = (str(d.get("confirm") or d.get("confirm_text") or "").strip()
+                   or (request.args.get("confirm") or "").strip())
+        coincide = bool(confirm) and (
+            (bool(numero) and confirm.upper() == numero.upper())
+            or confirm == str(tid)
+        )
+        if not coincide:
             return jsonify({
                 "ok": False,
                 "error": "Para confirmar, escribe exactamente el número del ticket.",
@@ -1127,22 +1423,32 @@ def register_tickets_routes(app, ctx):
     #  /comunicaciones. Si el ticket no tiene email de contacto, no hacen
     #  nada (no hay a quien avisar).
     # ─────────────────────────────────────────────────────────────────
+    # REDISENO 2026-07-12 (Daniel): mensaje protagonista, tipografia grande,
+    # sin texto de relleno. Mismo bloque destacado que la respuesta manual.
     _TK_LIFECYCLE_DEFAULTS = {
         "creacion": (
             "Recibimos tu solicitud — ticket {numero}",
-            "<p style=\"font-size:14px;color:#374151\">Estimado/a {cliente},</p>"
-            "<p style=\"font-size:14px;color:#374151\">Ya registramos tu solicitud. A partir de "
-            "ahora puedes seguirla con el número <strong>{numero}</strong>.</p>"),
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Ya registramos tu solicitud "
+            "con el número <strong>{numero}</strong>. Nuestro equipo la revisará y te contactará "
+            "a la brevedad.</div></div>"),
         "resuelto": (
             "Tu ticket {numero} fue resuelto",
-            "<p style=\"font-size:14px;color:#374151\">Estimado/a {cliente},</p>"
-            "<p style=\"font-size:14px;color:#374151\">Te contamos que tu solicitud "
-            "<strong>{numero}</strong> ya fue resuelta por nuestro equipo.</p>"),
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #16a34a;background:#f0fdf4;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">✅ Tu solicitud "
+            "<strong>{numero}</strong> ya fue resuelta por nuestro equipo.</div></div>"),
         "cerrado": (
             "Tu ticket {numero} fue cerrado",
-            "<p style=\"font-size:14px;color:#374151\">Estimado/a {cliente},</p>"
-            "<p style=\"font-size:14px;color:#374151\">Tu ticket <strong>{numero}</strong> "
-            "ha sido cerrado. Gracias por confiar en ILUS Sport &amp; Health.</p>"),
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #6b7280;background:#f9fafb;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
+            "<strong>{numero}</strong> ha sido cerrado. Gracias por confiar en "
+            "ILUS Sport &amp; Health.</div></div>"),
     }
 
     def _tk_notificar_lifecycle(tid, estado_slug):
@@ -1200,7 +1506,7 @@ def register_tickets_routes(app, ctx):
         try:
             enviado = _send_ilus_email(to_envio, subject_envio, html_final,
                                         evento=f"ticket_{estado_slug}", modulo="tickets",
-                                        reply_to=TK_SUPPORT_REPLY_TO)
+                                        reply_to=_tk_reply_to())
         except Exception as _e:
             print(f"[tk_notificar_lifecycle] error enviando tid={tid} estado={estado_slug}: {_e}", flush=True)
             enviado = False
@@ -1261,12 +1567,19 @@ def register_tickets_routes(app, ctx):
         # maestro ILUS. Si Daniel edita la plantilla en /comunicaciones, su
         # asunto/cuerpo mandan; si no existe/esta apagada/vacia, cae al texto
         # de abajo (Regla #4.2: el correo nunca deja de salir con buen diseno).
+        # REDISENO 2026-07-12 (Daniel, con screenshot del correo recibido):
+        # "lo menos que se hace entender es el mensaje... queremos transmitir
+        # que le llegue el mensaje al cliente". El mensaje del ejecutivo es
+        # EL PROTAGONISTA: tipografia mas grande, bloque destacado con acento
+        # rojo ILUS, y CERO texto de relleno alrededor (se quito la linea
+        # "parte del seguimiento" -- el numero ya va en asunto y subtitulo).
         tema_default = f"Respuesta a tu ticket {numero}"
         cuerpo_default = (
-            f'<p style="font-size:14px;color:#374151">Estimado/a {_html_mod.escape(cliente_nombre)},</p>'
-            f'<p style="font-size:14px;color:#374151">{contenido}</p>'
-            f'<p style="font-size:13px;color:#6b7280;margin-top:16px">'
-            f'Este mensaje es parte del seguimiento de tu ticket <strong>{_html_mod.escape(numero)}</strong>.</p>')
+            f'<p style="font-size:14px;color:#6b7280;margin:0 0 14px">Hola {_html_mod.escape(cliente_nombre)},</p>'
+            f'<div style="border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;'
+            f'padding:18px 20px;margin:0 0 6px">'
+            f'<div style="font-size:16px;color:#111827;line-height:1.6">{contenido}</div>'
+            f'</div>')
         tema, cuerpo_email = tema_default, cuerpo_default
         if _render_comm_template:
             try:
@@ -1305,7 +1618,7 @@ def register_tickets_routes(app, ctx):
                       if _comm_render_email_document else cuerpo_email)
 
         try:
-            kwargs = {"evento": "ticket_respuesta", "modulo": "tickets", "reply_to": TK_SUPPORT_REPLY_TO}
+            kwargs = {"evento": "ticket_respuesta", "modulo": "tickets", "reply_to": _tk_reply_to()}
             if cc_envio:
                 kwargs["cc"] = cc_envio
             enviado = _send_ilus_email(to_envio, subject_envio, html_final, **kwargs)
@@ -1356,6 +1669,46 @@ def register_tickets_routes(app, ctx):
             "INSERT INTO tk_plantillas (titulo, cuerpo, created_by) VALUES (%s,%s,%s)",
             (titulo, cuerpo, current_username() or "sistema"))
         return jsonify({"ok": True})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — config del modulo: "correo que da la cara" (Reply-To tickets)
+    #  Editable desde Comunicaciones -> Tickets sin env var ni deploy.
+    #  Persiste en tk_settings (clave 'reply_to'). Independiente del
+    #  Reply-To de marca GLOBAL (comm_brand) de los demas modulos.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/config/reply-to", methods=["GET"])
+    @_tickets_required
+    def tk_api_config_reply_to_get():
+        return jsonify({"ok": True, "reply_to": _tk_reply_to()})
+
+    @app.route("/tickets/api/config/reply-to", methods=["POST", "PUT"])
+    @_tickets_required
+    def tk_api_config_reply_to_set():
+        d = request.get_json(silent=True) or {}
+        correo = (d.get("correo") or "").strip().lower()
+        if not correo:
+            return jsonify({"ok": False, "error": "El correo no puede estar vacío."}), 400
+        if len(correo) > 200:
+            return jsonify({"ok": False, "error": "Correo muy largo (máx 200 caracteres)."}), 400
+        if not _TK_REPLY_EMAIL_RE.match(correo):
+            return jsonify({"ok": False, "error": "Formato de correo inválido."}), 400
+        user = current_username() or "sistema"
+        try:
+            mysql_execute(
+                "INSERT INTO tk_settings (clave, valor, updated_by) "
+                "VALUES ('reply_to', %s, %s) "
+                "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
+                (correo, user))
+        except Exception as _e:
+            print(f"[tk_config_reply_to] error guardando: {_e}", flush=True)
+            return jsonify({"ok": False,
+                            "error": "No se pudo guardar el correo, intenta de nuevo."}), 500
+        try:
+            _audit("tk_config_reply_to_set", target_type="tk_settings",
+                   target_id="reply_to", details={"reply_to": correo})
+        except Exception:
+            pass
+        return jsonify({"ok": True, "reply_to": correo})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — marcar leido (sin subir el ticket en la bandeja)
@@ -2453,32 +2806,25 @@ def register_tickets_routes(app, ctx):
         return f"{base}/portal/ticket/{tid}?token={token}"
 
     def _tk_boton_portal_html(tid):
-        """HTML del boton 'Responder' que se agrega a TODO correo saliente de
-        tickets (creacion/resuelto/cerrado/respuesta manual) -- estilos inline
-        (los clientes de correo no cargan CSS externo).
+        """Pie de respuesta que se agrega a TODO correo saliente de tickets
+        (creacion/resuelto/cerrado/respuesta manual) -- estilos inline (los
+        clientes de correo no cargan CSS externo).
 
-        FIX 2026-07-12 (Daniel, prueba en vivo): probo respondiendo el correo
-        directamente (como en Gmail) y su respuesta no aparecio en el ticket --
-        no es un bug, es que este correo NUNCA recibe respuestas (no hay buzon
-        de entrada monitoreado detras); el UNICO camino de vuelta es el portal.
-        Eso no quedaba claro a simple vista, asi que se agrega un aviso
-        explicito ANTES del boton para que no haya ninguna duda de "que correo
-        predomina" -- este correo es de salida solamente."""
-        url = _tk_portal_url(tid)
-        url_esc = _html_mod.escape(url, quote=True)
+        GIRO 2026-07-12 (Daniel, orden explicita): "necesito que reciba las
+        respuestas directas, olvida esa metodologia [portal]... responde el
+        correo, tu ubicas el asunto y listo". El correo ahora INVITA a
+        responder directo (como Triple A): la respuesta llega al buzon de
+        soporte (Reply-To = _tk_reply_to()) y el lector IMAP la ubica por el
+        numero de ticket del asunto y la ingresa al ticket como mensaje del
+        cliente. El portal ya NO se ofrece en el correo; sus rutas siguen
+        vivas (Regla #4.2) pero sin linkear."""
         return (
-            '<div style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;'
-            'padding:10px 14px;margin:20px 0 0;text-align:center">'
-            '<p style="font-size:12px;color:#92400e;margin:0;font-weight:600">'
-            '⚠️ Este correo no recibe respuestas directas (no lo respondas desde tu '
-            'bandeja). Para escribirnos o adjuntar fotos, usa el botón de abajo.</p>'
+            '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;'
+            'padding:12px 16px;margin:20px 0 8px;text-align:center">'
+            '<p style="font-size:13px;color:#166534;margin:0;font-weight:600">'
+            '💬 ¿Necesitas agregar algo? Simplemente <strong>responde a este correo</strong> '
+            '(sin cambiar el asunto) y tu mensaje quedará registrado en tu ticket.</p>'
             '</div>'
-            '<div style="text-align:center;margin:12px 0 8px">'
-            f'<a href="{url_esc}" style="background:#dc2626;color:#ffffff;text-decoration:none;'
-            'font-weight:700;font-size:14px;padding:12px 28px;border-radius:8px;display:inline-block">'
-            'Responder en el portal</a></div>'
-            '<p style="font-size:12px;color:#9ca3af;text-align:center;margin:8px 0 0">'
-            f'O copia este enlace: <a href="{url_esc}" style="color:#dc2626">{url_esc}</a></p>'
         )
 
     def _tk_test_redirect(to_email, subject):
@@ -2574,5 +2920,263 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass
         return jsonify({"ok": True, "mensaje_id": msg_id})
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  LECTOR DE CORREO ENTRANTE (Daniel 2026-07-12, orden explicita):
+    #  "necesito que reciba las respuestas directas... yo mando una
+    #  respuesta, llega el correo al cliente, el responde... tu ubicas el
+    #  asunto y listo". Metodologia Triple A (gmail-thread-monitor):
+    #  el cliente responde el correo en su Gmail -> la respuesta llega al
+    #  buzon de soporte (Reply-To de tickets) -> este lector la ubica por
+    #  el numero TK-AAAA-NNNNN del asunto y la ingresa al ticket como
+    #  mensaje del cliente (con sus adjuntos).
+    #
+    #  Acceso al buzon: IMAP (imap.gmail.com) con la MISMA app password que
+    #  ya usa el SMTP saliente (SMTP_USER/SMTP_PASS) -- factibilidad
+    #  verificada en vivo el 2026-07-12 (LOGIN_OK). Sin Gmail API, sin
+    #  delegacion de dominio, sin credenciales nuevas.
+    #
+    #  Seguridad/casa ajena: el buzon es la casilla de TRABAJO de Daniel.
+    #  Por eso: (1) SIEMPRE BODY.PEEK y select readonly -- JAMAS se marca
+    #  nada como leido ni se modifica el buzon; (2) solo se consideran
+    #  correos con "TK-" en el asunto dentro de una ventana de dias;
+    #  (3) dedup por Message-ID en tk_mail_ingeridos.
+    # ═══════════════════════════════════════════════════════════════════
+    _TK_NUM_TICKET_RE = re.compile(r"TK-\d{4}-\d{5}", re.I)
+    # Marcadores tipicos donde empieza la cola citada de una respuesta
+    # (Gmail/Outlook es/en). Todo lo que siga se descarta del mensaje.
+    _TK_QUOTE_RE = re.compile(
+        r"^\s*(El\s.{0,120}escribi[oó]:?\s*$|On\s.{0,120}wrote:?\s*$|"
+        r"-{2,}\s*(Mensaje original|Original Message|Forwarded message)|"
+        r"_{5,}\s*$|De:\s.+|From:\s.+)", re.I)
+
+    def _tk_imap_creds():
+        user = (os.environ.get("SMTP_USER") or "").strip()
+        pwd = (os.environ.get("SMTP_PASS") or os.environ.get("SMTP_PASSWORD") or "").strip()
+        return user, pwd
+
+    def _tk_extraer_cuerpo_mail(msg):
+        """Texto del mensaje del cliente, SIN la cola citada del hilo.
+        Prefiere text/plain; si solo hay HTML, quita etiquetas (el hilo
+        interno renderiza client_message escapado como texto plano)."""
+        plano, html = None, None
+        for part in msg.walk():
+            if part.get_content_maintype() == "multipart" or part.get_filename():
+                continue
+            ctype = part.get_content_type()
+            try:
+                payload = part.get_payload(decode=True)
+                if payload is None:
+                    continue
+                charset = part.get_content_charset() or "utf-8"
+                texto = payload.decode(charset, "replace")
+            except Exception:
+                continue
+            if ctype == "text/plain" and plano is None:
+                plano = texto
+            elif ctype == "text/html" and html is None:
+                html = texto
+        if plano is None and html is not None:
+            # HTML -> texto: fuera tags, entidades decodificadas
+            sin_tags = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html,
+                              flags=re.S | re.I)
+            sin_tags = re.sub(r"<br\s*/?>|</p>|</div>", "\n", sin_tags, flags=re.I)
+            sin_tags = re.sub(r"<[^>]+>", " ", sin_tags)
+            try:
+                import html as _h
+                plano = _h.unescape(sin_tags)
+            except Exception:
+                plano = sin_tags
+        if not plano:
+            return ""
+        lineas = []
+        for ln in plano.replace("\r\n", "\n").split("\n"):
+            if _TK_QUOTE_RE.match(ln):
+                break  # empezo la cola citada -> el resto no es del cliente
+            if ln.lstrip().startswith(">"):
+                continue  # linea citada suelta
+            lineas.append(ln.rstrip())
+        cuerpo = "\n".join(lineas).strip()
+        # colapsar saltos multiples
+        return re.sub(r"\n{3,}", "\n\n", cuerpo)
+
+    def _tk_leer_correo_entrante(dias=7, max_correos=50):
+        """Barrido del buzon de soporte: ubica respuestas por numero de
+        ticket en el asunto y las ingresa como mensajes del cliente.
+        Devuelve resumen dict. Nunca lanza (errores -> resumen)."""
+        user, pwd = _tk_imap_creds()
+        resumen = {"ok": True, "candidatos": 0, "ingresados": 0, "duplicados": 0,
+                   "sin_ticket": 0, "propios": 0, "adjuntos": 0, "errores": 0}
+        if not (user and pwd):
+            return {"ok": False, "error": "Sin credenciales SMTP_USER/SMTP_PASS para IMAP"}
+        # Fecha IMAP en ingles SIEMPRE (strftime %b depende del locale)
+        _MES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+        d = datetime.now(timezone.utc) - timedelta(days=max(1, int(dias)))
+        desde_imap = f"{d.day:02d}-{_MES[d.month - 1]}-{d.year}"
+        try:
+            M = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+            M.login(user, pwd)
+            M.select("INBOX", readonly=True)  # readonly: JAMAS tocar el buzon
+        except Exception as _e:
+            print(f"[tk_mail] no se pudo conectar a IMAP: {_e}", flush=True)
+            return {"ok": False, "error": f"IMAP no disponible: {_e}"}
+        try:
+            # Gmail tokeniza la busqueda (encuentra "TK-2026-..." aunque el
+            # SUBJECT sea aproximado); el regex de abajo es el filtro REAL.
+            typ, data = M.search(None, f'(SINCE {desde_imap} SUBJECT "TK-")')
+            ids = (data[0].split() if data and data[0] else [])[-max_correos:]
+            for mid in ids:
+                try:
+                    typ, msgdata = M.fetch(mid, "(BODY.PEEK[])")
+                    raw = msgdata[0][1] if msgdata and msgdata[0] else None
+                    if not raw:
+                        continue
+                    msg = _email_mod.message_from_bytes(raw)
+                    subject = str(make_header(decode_header(msg.get("Subject", "") or "")))
+                    m = _TK_NUM_TICKET_RE.search(subject)
+                    if not m:
+                        continue  # "TK FRESHDESK" y similares: no son nuestros
+                    resumen["candidatos"] += 1
+                    numero = m.group(0).upper()
+                    from_nombre, from_email = parseaddr(
+                        str(make_header(decode_header(msg.get("From", "") or ""))))
+                    from_email = (from_email or "").strip().lower()
+                    # No ingresar nuestros propios envios ni rebotes
+                    if (not from_email or from_email == user.lower()
+                            or "mailer-daemon" in from_email
+                            or "noreply" in from_email or "no-reply" in from_email):
+                        resumen["propios"] += 1
+                        continue
+                    ticket = mysql_fetchone(
+                        "SELECT id, numero_ticket, nombre_contacto, empresa "
+                        "FROM tk_tickets WHERE numero_ticket=%s", (numero,))
+                    if not ticket:
+                        resumen["sin_ticket"] += 1
+                        continue
+                    message_id = (msg.get("Message-ID") or "").strip()[:255]
+                    if not message_id:
+                        # fallback estable para correos sin Message-ID
+                        import hashlib
+                        message_id = "sin-id-" + hashlib.sha1(raw).hexdigest()[:40]
+                    if mysql_fetchone(
+                            "SELECT message_id FROM tk_mail_ingeridos WHERE message_id=%s",
+                            (message_id,)):
+                        resumen["duplicados"] += 1
+                        continue
+                    cuerpo = _tk_extraer_cuerpo_mail(msg) or "(Mensaje sin texto)"
+                    remitente = (from_nombre or ticket.get("nombre_contacto")
+                                 or from_email or "Cliente")[:190]
+                    msg_id_db = _tk_log(
+                        ticket["id"], "client_message", cuerpo[:20000],
+                        usuario=remitente, es_interno=False,
+                        metadata={"via": "email", "message_id": message_id,
+                                  "from": from_email, "subject": subject[:300]})
+                    # Adjuntos del correo -> GCS -> tk_adjuntos (mismas
+                    # validaciones de extension/tamano que el resto)
+                    adj_ids = []
+                    if _uploader_upload:
+                        for part in msg.walk():
+                            fn = part.get_filename()
+                            if not fn or part.get_content_maintype() == "multipart":
+                                continue
+                            try:
+                                fn_dec = str(make_header(decode_header(fn)))[:300]
+                                ext = ("." + fn_dec.rsplit(".", 1)[-1].lower()) if "." in fn_dec else ""
+                                if ext not in _EXT_PERMITIDAS:
+                                    continue
+                                contenido_adj = part.get_payload(decode=True) or b""
+                                if not contenido_adj or len(contenido_adj) > MAX_ADJUNTO_MB * 1024 * 1024:
+                                    continue
+                                from werkzeug.datastructures import FileStorage
+                                ctype_adj = part.get_content_type() or "application/octet-stream"
+                                fs = FileStorage(stream=io.BytesIO(contenido_adj),
+                                                 filename=fn_dec, content_type=ctype_adj)
+                                rt = ("image" if ctype_adj.startswith("image")
+                                      else "video" if ctype_adj.startswith("video") else "raw")
+                                res = _uploader_upload(fs, folder="tickets", resource_type=rt)
+                                url = res.get("secure_url") or res.get("url")
+                                if not url:
+                                    continue
+                                mysql_execute(
+                                    "INSERT INTO tk_adjuntos "
+                                    "(ticket_id, mensaje_id, archivo_url, archivo_path, archivo_nombre, "
+                                    " mime_type, file_size_kb, origen, subido_por) "
+                                    "VALUES (%s,%s,%s,%s,%s,%s,%s,'cliente',%s)",
+                                    (ticket["id"], msg_id_db, url[:500],
+                                     (res.get("public_id") or "")[:500] or None,
+                                     fn_dec, ctype_adj[:150],
+                                     max(1, len(contenido_adj) // 1024), from_email[:190]))
+                                resumen["adjuntos"] += 1
+                            except Exception as _ea:
+                                print(f"[tk_mail] adjunto no ingresado ({fn}): {_ea}", flush=True)
+                    mysql_execute(
+                        "INSERT IGNORE INTO tk_mail_ingeridos "
+                        "(message_id, ticket_id, from_email, subject) VALUES (%s,%s,%s,%s)",
+                        (message_id, ticket["id"], from_email[:190], subject[:300]))
+                    mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s",
+                                  (ticket["id"],))
+                    resumen["ingresados"] += 1
+                    print(f"[tk_mail] respuesta de {from_email} ingresada en "
+                          f"{numero} (msg {msg_id_db})", flush=True)
+                except Exception as _em:
+                    resumen["errores"] += 1
+                    print(f"[tk_mail] error procesando correo: {_em}", flush=True)
+        finally:
+            try:
+                M.logout()
+            except Exception:
+                pass
+        return resumen
+
+    # Endpoint para Cloud Scheduler (token) o disparo manual (admin logueado)
+    @app.route("/tickets/api/cron/leer-correo", methods=["GET", "POST"])
+    def tk_cron_leer_correo():
+        token = (request.args.get("token") or request.headers.get("X-Cron-Token") or "").strip()
+        token_cfg = (os.environ.get("TK_MAIL_CRON_TOKEN") or "").strip()
+        token_ok = bool(token_cfg) and token == token_cfg
+        sesion_ok = False
+        try:
+            perms = getattr(g, "permissions", None) or {}
+            sesion_ok = bool(perms.get("superadmin") or perms.get("admin")
+                             or perms.get("mantenciones"))
+        except Exception:
+            pass
+        if not (token_ok or sesion_ok):
+            return jsonify({"ok": False, "error": "No autorizado"}), 403
+        return jsonify({"ok": True, "resumen": _tk_leer_correo_entrante()})
+
+    # Auto-poll oportunista: cada vez que alguien mira la bandeja y el ultimo
+    # barrido tiene mas de 5 minutos, se dispara uno en segundo plano (hilo
+    # con app_context -- leccion del bug OT-31). Asi el "cada 5 minutos" de
+    # Triple A funciona sin depender de Cloud Scheduler mientras alguien use
+    # el sistema; Scheduler puede sumarse despues via el endpoint de arriba.
+    _TK_MAIL_POLL = {"ts": 0.0, "lock": threading.Lock()}
+
+    def _tk_autopoll_correo():
+        user, pwd = _tk_imap_creds()
+        if not (user and pwd):
+            return
+        ahora = time.monotonic()
+        if ahora - _TK_MAIL_POLL["ts"] < 300:
+            return
+        if not _TK_MAIL_POLL["lock"].acquire(blocking=False):
+            return  # ya hay un barrido corriendo
+        _TK_MAIL_POLL["ts"] = ahora
+
+        def _correr():
+            try:
+                with app.app_context():
+                    r = _tk_leer_correo_entrante()
+                    if r.get("ingresados"):
+                        print(f"[tk_mail_autopoll] {r}", flush=True)
+            except Exception as _e:
+                print(f"[tk_mail_autopoll] error: {_e}", flush=True)
+            finally:
+                _TK_MAIL_POLL["lock"].release()
+
+        threading.Thread(target=_correr, daemon=True).start()
+
+    ctx["_tk_autopoll_correo"] = _tk_autopoll_correo  # visible para diagnostico
 
     print("[ILUS] Modulo Tickets central registrado (/tickets).", flush=True)

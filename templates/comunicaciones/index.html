@@ -547,6 +547,37 @@
         </div>
       </div>
 
+      {# ── TICKETS · Correo que da la cara (Reply-To de tickets) ── #}
+      <div class="ks-panel" id="tkReplyToPanel">
+        <div class="ks-panel-header">
+          <div class="ks-title">
+            <i class="bi bi-reply-fill"></i>Tickets · Correo que da la cara
+          </div>
+          <div class="ks-panel-sub">
+            Es el correo al que responden los clientes de tickets (Reply-To).
+            Independiente del correo de marca global de los demás módulos.
+          </div>
+        </div>
+        <div class="d-flex align-items-end gap-2 flex-wrap">
+          <div style="flex:1;min-width:220px">
+            <label for="tkReplyToInput" class="form-label small fw-semibold mb-1">
+              Correo que da la cara (Reply-To de tickets)
+            </label>
+            <input type="email" class="form-control form-control-sm" id="tkReplyToInput"
+                   placeholder="ej: soporte@ilusfitness.com" autocomplete="off"
+                   inputmode="email" maxlength="200">
+          </div>
+          <button type="button" class="btn btn-sm btn-danger fw-bold" id="tkReplyToSaveBtn"
+                  onclick="tkGuardarReplyTo()">
+            <i class="bi bi-check-lg me-1"></i>Guardar
+          </button>
+        </div>
+        <div class="small text-muted mt-2">
+          Es el correo al que responden los clientes de tickets.
+          Independiente del correo de marca global.
+        </div>
+      </div>
+
       <div class="tpl-modulo-grid" id="tplModuloGrid">
         <button type="button" class="tpl-modulo-card active" data-modulo="transporte"
                 onclick="seleccionarModulo('transporte', this)">
@@ -1898,7 +1929,61 @@ document.addEventListener('DOMContentLoaded', () => {
   cargarPlantillas();
   // Cargar estado de la llave de paso al abrir la pestaña Plantillas
   ksCargarEstado();
+  // Cargar el "correo que da la cara" (Reply-To de tickets)
+  tkCargarReplyTo();
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// TICKETS · Correo que da la cara (Reply-To de tickets) — editable en vivo
+// GET precarga el valor actual; PUT lo guarda en tk_settings (backend valida).
+// ══════════════════════════════════════════════════════════════════════
+async function tkCargarReplyTo() {
+  const input = document.getElementById('tkReplyToInput');
+  if (!input) return;
+  try {
+    const r = await fetch('/tickets/api/config/reply-to?t=' + Date.now(), { cache:'no-store' });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      input.value = d.reply_to || '';
+    }
+  } catch (e) {
+    console.error('[tk] cargar reply-to', e);
+  }
+}
+
+async function tkGuardarReplyTo() {
+  const input = document.getElementById('tkReplyToInput');
+  const btn   = document.getElementById('tkReplyToSaveBtn');
+  if (!input) return;
+  const correo = (input.value || '').trim();
+  if (!correo) {
+    if (typeof ilusToast === 'function') ilusToast('Ingresa un correo antes de guardar.', { type:'warning' });
+    input.focus();
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/tickets/api/config/reply-to', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ correo }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) {
+      throw new Error(d.error || 'No se pudo guardar');
+    }
+    input.value = d.reply_to || correo;
+    if (typeof ilusToast === 'function') {
+      ilusToast('✓ Correo que da la cara actualizado: ' + (d.reply_to || correo), { type:'success' });
+    }
+  } catch (e) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('Error: ' + (e.message || e), { type:'error' });
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // LLAVE DE PASO POR MÓDULO — UI handlers

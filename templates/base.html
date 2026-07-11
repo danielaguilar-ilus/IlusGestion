@@ -399,8 +399,10 @@
     {# Helper: el técnico solo ve Mantenciones (Dashboard, Calendario, OTs).
        Se filtra módulo por módulo abajo. is_tecnico viene del context_processor. #}
 
+    {# ══ CATÁLOGO ══ #}
     {# ── ETIQUETAS ── #}
     {% if (permissions.etiquetas or permissions.superadmin) and not is_tecnico %}
+    <div class="sg-section-label">Catálogo</div>
     <button class="sg-toggle" data-sg="etiquetas">
       <i class="bi bi-tags"></i>Etiquetas
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -425,75 +427,9 @@
     </div>
     {% endif %}
 
-    {# ── RETIROS (módulo independiente) ── #}
-    {% if (permissions.retiros or permissions.superadmin) and not is_tecnico %}
-    <button class="sg-toggle" data-sg="retiros">
-      <i class="bi bi-box-arrow-up-right"></i>Retiros
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-retiros">
-      <a href="{{ url_for('pickup_dashboard') }}"
-         class="sidebar-link{% if request.endpoint == 'pickup_dashboard' %} active{% endif %}">
-        <i class="bi bi-display"></i><span>Monitor</span>
-      </a>
-      <a href="{{ url_for('pickup_calendar') }}"
-         class="sidebar-link{% if request.endpoint == 'pickup_calendar' %} active{% endif %}">
-        <i class="bi bi-calendar2-week-fill"></i><span>Calendario</span>
-      </a>
-      <a href="{{ url_for('pickup_public_request') }}" target="_blank"
-         class="sidebar-link">
-        <i class="bi bi-box-arrow-up-right"></i><span>Form. público</span>
-      </a>
-    </div>
-    {% endif %}
-
-    {# ── TRANSPORTE (Cubicador + Transporte unificado) ── #}
-    {% if (permissions.cubicador or permissions.transporte) and not is_tecnico %}
-    <button class="sg-toggle" data-sg="transporte">
-      <i class="bi bi-truck"></i>Transporte
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-transporte">
-      {% if permissions.cubicador %}
-      <a href="{{ url_for('cubicador') }}"
-         class="sidebar-link{% if request.endpoint == 'cubicador' %} active{% endif %}">
-        <i class="bi bi-calculator"></i><span>Cubicador</span>
-      </a>
-      <a href="{{ url_for('asignar_cotizar') }}"
-         class="sidebar-link{% if request.endpoint == 'asignar_cotizar' %} active{% endif %}">
-        <i class="bi bi-send-check"></i><span>Asignar y Cotizar</span>
-      </a>
-      {% endif %}
-      {% if permissions.transporte %}
-      <a href="{{ url_for('tr_dashboard_hoy') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_dashboard_hoy'] %} active{% endif %}">
-        <i class="bi bi-speedometer2"></i><span>Dashboard</span>
-      </a>
-      <a href="{{ url_for('transporte_index') }}"
-         class="sidebar-link{% if request.endpoint in ['transporte_index'] %} active{% endif %}">
-        <i class="bi bi-display"></i><span>Monitor</span>
-      </a>
-      <a href="{{ url_for('tr_manifiestos') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_manifiestos','tr_manifiesto_detalle'] %} active{% endif %}">
-        <i class="bi bi-clipboard-check"></i><span>Manifiestos</span>
-      </a>
-      <a href="{{ url_for('tr_couriers') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_couriers'] %} active{% endif %}">
-        <i class="bi bi-building"></i><span>Couriers</span>
-      </a>
-      <a href="{{ url_for('tr_choferes') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_choferes'] %} active{% endif %}">
-        <i class="bi bi-person-badge"></i><span>Choferes</span>
-      </a>
-      {# 'Monitor en vivo' y 'Buscar despacho' temporalmente fuera del sidebar
-         (Daniel 2026-06-13). Las rutas siguen vivas para no romper enlaces;
-         se mantienen accesibles desde la búsqueda global o links directos. #}
-      <a href="/transporte/ot-masivo"
-         class="sidebar-link{% if request.endpoint in ['tr_ot_masivo_ui'] %} active{% endif %}">
-        <i class="bi bi-file-earmark-arrow-up"></i><span>OT Masivo FedEx</span>
-      </a>
-      {% endif %}
-    </div>
+    {# ══ SERVICIO TÉCNICO ══ #}
+    {% if permissions.mantenciones or (permissions.superadmin and not is_tecnico) %}
+    <div class="sg-section-label">Servicio Técnico</div>
     {% endif %}
 
     {# ── TICKETS (central) ── #}
@@ -606,6 +542,82 @@
          class="sidebar-link{% if request.endpoint == 'mant_analytics_page' %} active{% endif %}">
         <i class="bi bi-bar-chart-fill"></i><span>Analytics</span>
       </a> #}
+    </div>
+    {% endif %}
+
+    {# ══ LOGÍSTICA ══ #}
+    {% if (permissions.retiros or permissions.superadmin or permissions.cubicador or permissions.transporte) and not is_tecnico %}
+    <div class="sg-section-label">Logística</div>
+    {% endif %}
+
+    {# ── RETIROS (módulo independiente) ── #}
+    {% if (permissions.retiros or permissions.superadmin) and not is_tecnico %}
+    <button class="sg-toggle" data-sg="retiros">
+      <i class="bi bi-box-arrow-up-right"></i>Retiros
+      <i class="bi bi-chevron-right sg-chevron"></i>
+    </button>
+    <div class="sg-items" id="sg-retiros">
+      <a href="{{ url_for('pickup_dashboard') }}"
+         class="sidebar-link{% if request.endpoint == 'pickup_dashboard' %} active{% endif %}">
+        <i class="bi bi-display"></i><span>Monitor</span>
+      </a>
+      <a href="{{ url_for('pickup_calendar') }}"
+         class="sidebar-link{% if request.endpoint == 'pickup_calendar' %} active{% endif %}">
+        <i class="bi bi-calendar2-week-fill"></i><span>Calendario</span>
+      </a>
+      <a href="{{ url_for('pickup_public_request') }}" target="_blank"
+         class="sidebar-link">
+        <i class="bi bi-box-arrow-up-right"></i><span>Form. público</span>
+      </a>
+    </div>
+    {% endif %}
+
+    {# ── TRANSPORTE (Cubicador + Transporte unificado) ── #}
+    {% if (permissions.cubicador or permissions.transporte) and not is_tecnico %}
+    <button class="sg-toggle" data-sg="transporte">
+      <i class="bi bi-truck"></i>Transporte
+      <i class="bi bi-chevron-right sg-chevron"></i>
+    </button>
+    <div class="sg-items" id="sg-transporte">
+      {% if permissions.cubicador %}
+      <a href="{{ url_for('cubicador') }}"
+         class="sidebar-link{% if request.endpoint == 'cubicador' %} active{% endif %}">
+        <i class="bi bi-calculator"></i><span>Cubicador</span>
+      </a>
+      <a href="{{ url_for('asignar_cotizar') }}"
+         class="sidebar-link{% if request.endpoint == 'asignar_cotizar' %} active{% endif %}">
+        <i class="bi bi-send-check"></i><span>Asignar y Cotizar</span>
+      </a>
+      {% endif %}
+      {% if permissions.transporte %}
+      <a href="{{ url_for('tr_dashboard_hoy') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_dashboard_hoy'] %} active{% endif %}">
+        <i class="bi bi-speedometer2"></i><span>Dashboard</span>
+      </a>
+      <a href="{{ url_for('transporte_index') }}"
+         class="sidebar-link{% if request.endpoint in ['transporte_index'] %} active{% endif %}">
+        <i class="bi bi-display"></i><span>Monitor</span>
+      </a>
+      <a href="{{ url_for('tr_manifiestos') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_manifiestos','tr_manifiesto_detalle'] %} active{% endif %}">
+        <i class="bi bi-clipboard-check"></i><span>Manifiestos</span>
+      </a>
+      <a href="{{ url_for('tr_couriers') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_couriers'] %} active{% endif %}">
+        <i class="bi bi-building"></i><span>Couriers</span>
+      </a>
+      <a href="{{ url_for('tr_choferes') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_choferes'] %} active{% endif %}">
+        <i class="bi bi-person-badge"></i><span>Choferes</span>
+      </a>
+      {# 'Monitor en vivo' y 'Buscar despacho' temporalmente fuera del sidebar
+         (Daniel 2026-06-13). Las rutas siguen vivas para no romper enlaces;
+         se mantienen accesibles desde la búsqueda global o links directos. #}
+      <a href="/transporte/ot-masivo"
+         class="sidebar-link{% if request.endpoint in ['tr_ot_masivo_ui'] %} active{% endif %}">
+        <i class="bi bi-file-earmark-arrow-up"></i><span>OT Masivo FedEx</span>
+      </a>
+      {% endif %}
     </div>
     {% endif %}
 

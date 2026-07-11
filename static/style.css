@@ -656,6 +656,20 @@ body {
   margin: 8px 14px;
 }
 
+/* Encabezado de sección que agrupa varios grupos del sidebar
+   (Servicio Técnico / Logística / Catálogo). Etiqueta sutil, no un banner. */
+.sg-section-label {
+  color: rgba(255,255,255,.4);
+  font-size: .6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  padding: 14px 16px 4px 14px;
+  margin-top: 4px;
+  user-select: none;
+  pointer-events: none;
+}
+
 /* Sección Ajustes — estilo especial */
 .sg-toggle.sg-ajustes { color: #94a3b8; }
 .sg-toggle.sg-ajustes i { color: #94a3b8; }

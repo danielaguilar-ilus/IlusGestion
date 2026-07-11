@@ -17,12 +17,61 @@
 .tk-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:10px 12px;margin-bottom:12px;
   display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
 .tk-filtros .form-control,.tk-filtros .form-select{max-width:210px;}
+/* ── Fila de filtros help-desk (referencia Triple A que a Daniel le gusto):
+   cada filtro con su mini-label arriba, fila envolvente, apilado en mobile. ── */
+.tk-f-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;width:100%;}
+.tk-f{display:flex;flex-direction:column;gap:2px;flex:1 1 128px;min-width:118px;max-width:220px;}
+.tk-f>label{font-size:.6rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;
+  margin:0 0 0 2px;white-space:nowrap;}
+.tk-f .form-control,.tk-f .form-select{max-width:100%;width:100%;}
+.tk-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;
+  margin-top:10px;padding-top:10px;border-top:1px dashed #eaecf0;}
+.tk-toolbar .spacer{flex:1 1 auto;}
+.tk-btn-hoy{border:1px solid #e5e7eb;background:#fff;color:#374151;font-weight:700;}
+.tk-btn-hoy:hover{border-color:#dc2626;color:#dc2626;}
+.tk-btn-hoy.on,.tk-btn-hoy.on:hover{background:#dc2626;border-color:#dc2626;color:#fff;}
+.tk-btn-rep{border:1px solid #16a34a;background:#fff;color:#16a34a;font-weight:700;}
+.tk-btn-rep:hover{background:#f0fdf4;border-color:#15803d;color:#15803d;}
+@media(max-width:640px){
+  .tk-f{flex:1 1 100%;max-width:100%;}
+  .tk-toolbar .btn{flex:1 1 auto;}
+}
+/* ── Encabezados ordenables ── */
+table.tk-table thead th.tk-th-sort{cursor:pointer;user-select:none;transition:background .12s,color .12s;}
+table.tk-table thead th.tk-th-sort:hover{background:#eef1f5;color:#374151;}
+table.tk-table thead th.tk-th-sort i{font-size:.7rem;opacity:.4;margin-left:3px;}
+table.tk-table thead th.tk-th-sort.on{color:#dc2626;}
+table.tk-table thead th.tk-th-sort.on i{opacity:1;color:#dc2626;}
+/* ── Columna Acciones ── */
+.tk-acciones{display:flex;gap:3px;align-items:center;white-space:nowrap;}
+.tk-act{border:none;background:transparent;width:30px;height:30px;min-height:30px;border-radius:8px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:.88rem;cursor:pointer;
+  padding:0;transition:background .12s;}
+.tk-act.ver{color:#3b82f6;} .tk-act.ver:hover{background:#dbeafe;}
+.tk-act.cerrar{color:#16a34a;} .tk-act.cerrar:hover{background:#dcfce7;}
+.tk-act.del{color:#dc2626;} .tk-act.del:hover{background:#fee2e2;}
+/* ── Footer de paginacion ── */
+.tk-foot{background:#fff;border:1px solid #eaecf0;border-radius:11px;margin-top:8px;
+  padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  font-size:.78rem;color:#6b7280;}
+.tk-foot-info b{color:#0f172a;}
+.tk-foot-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tk-foot-ctrl .lbl-pp{display:flex;align-items:center;gap:6px;font-size:.7rem;font-weight:700;color:#9ca3af;
+  text-transform:uppercase;letter-spacing:.04em;margin:0;}
+.tk-foot-ctrl select{border:1px solid #e5e7eb;border-radius:7px;padding:3px 6px;font-size:.78rem;
+  color:#374151;background:#fff;}
+.tk-pg-btn{border:1px solid #e5e7eb;background:#fff;border-radius:8px;width:30px;height:30px;min-height:30px;
+  display:inline-flex;align-items:center;justify-content:center;color:#374151;cursor:pointer;
+  padding:0;transition:all .12s;}
+.tk-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626;}
+.tk-pg-btn:disabled{opacity:.35;cursor:default;}
+.tk-pg-num{font-weight:800;color:#0f172a;font-size:.78rem;min-width:52px;text-align:center;white-space:nowrap;}
 /* ── Bandeja de tickets: TABLA (Daniel, feedback 2026-07-11: "necesito
    que sea una TABLA... bien elegante que me contenga cincuenta tickets"
    -- reemplaza el layout anterior de tarjetas/cards, que fue descartado). ── */
 .tk-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow-x:auto;
   box-shadow:0 1px 3px rgba(0,0,0,.04);}
-table.tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:960px;}
+table.tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:1040px;}
 table.tk-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.66rem;
   font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
   border-bottom:1px solid #eaecf0;white-space:nowrap;}
@@ -215,20 +264,53 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 </div>
 
 <div class="tk-filtros">
-  <input type="text" id="fQ" class="form-control form-control-sm" placeholder="Buscar (N°, empresa, RUT, texto)…">
-  <select id="fEstado" class="form-select form-select-sm">
-    <option value="">Todos los estados</option>
-    {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
-  </select>
-  <select id="fTipo" class="form-select form-select-sm">
-    <option value="">Todos los tipos</option>
-    {% for t in tk_tipos %}<option value="{{ t }}">{{ tipo_label[t] }}</option>{% endfor %}
-  </select>
-  <select id="fPrio" class="form-select form-select-sm">
-    <option value="">Prioridad</option>
-    {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
-  </select>
-  <button class="btn btn-sm btn-ilus-outline" id="btnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar</button>
+  {# ── Fila de filtros estilo help-desk (referencia Triple A, 2026-07-11) ──
+     fQ se conserva (param q del backend) reetiquetado como "Cliente". #}
+  <div class="tk-f-row">
+    <div class="tk-f"><label for="fTicket">Ticket</label>
+      <input type="text" id="fTicket" class="form-control form-control-sm" placeholder="N° o ID (ej: 355)"></div>
+    <div class="tk-f"><label for="fQ">Cliente</label>
+      <input type="text" id="fQ" class="form-control form-control-sm" placeholder="Empresa, contacto, texto…"></div>
+    <div class="tk-f"><label for="fRut">RUT</label>
+      <input type="text" id="fRut" class="form-control form-control-sm" placeholder="76.123.456-7"></div>
+    <div class="tk-f"><label for="fDesde">Desde</label>
+      <input type="date" id="fDesde" class="form-control form-control-sm"></div>
+    <div class="tk-f"><label for="fHasta">Hasta</label>
+      <input type="date" id="fHasta" class="form-control form-control-sm"></div>
+    <div class="tk-f"><label for="fResp">Responsable</label>
+      <select id="fResp" class="form-select form-select-sm">
+        <option value="">Todos</option>
+        <option value="__sin_asignar__">Sin asignar</option>
+      </select></div>
+    <div class="tk-f"><label for="fEstado">Estado</label>
+      <select id="fEstado" class="form-select form-select-sm">
+        <option value="">Todos los estados</option>
+        {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
+      </select></div>
+    <div class="tk-f"><label for="fTipo">Tipo</label>
+      <select id="fTipo" class="form-select form-select-sm">
+        <option value="">Todos los tipos</option>
+        {% for t in tk_tipos %}<option value="{{ t }}">{{ tipo_label[t] }}</option>{% endfor %}
+      </select></div>
+    <div class="tk-f"><label for="fPrio">Prioridad</label>
+      <select id="fPrio" class="form-select form-select-sm">
+        <option value="">Todas</option>
+        {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
+      </select></div>
+  </div>
+  {# ── Toolbar: Hoy (toggle) · refrescar · reportes CSV · limpiar ── #}
+  <div class="tk-toolbar">
+    <button type="button" class="btn btn-sm tk-btn-hoy" id="btnHoy" title="Solo tickets ingresados hoy (hora Chile)">
+      <i class="bi bi-calendar-day me-1"></i>Hoy</button>
+    <button type="button" class="btn btn-sm tk-btn-hoy" id="btnRefrescar" title="Refrescar la bandeja">
+      <i class="bi bi-arrow-clockwise"></i></button>
+    <button type="button" class="btn btn-sm tk-btn-rep" id="btnRepTickets" title="Descargar reporte de tickets (CSV) con los filtros actuales">
+      <i class="bi bi-file-earmark-spreadsheet me-1"></i>Reporte tickets</button>
+    <button type="button" class="btn btn-sm tk-btn-rep" id="btnRepSla" title="Descargar reporte SLA (CSV) con los filtros actuales">
+      <i class="bi bi-stopwatch me-1"></i>Reporte SLA</button>
+    <span class="spacer"></span>
+    <button class="btn btn-sm btn-ilus-outline" id="btnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
+  </div>
 </div>
 
 <div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
@@ -388,7 +470,17 @@ const TIPO_LABEL = {{ tipo_label|tojson }};
 // "Nuevo Ticket" (variable Jinja `tipo_visual` definida arriba, tarjeta 1) --
 // se reutiliza aca para la columna Tipo de la tabla (NO se inventa paleta nueva).
 const TIPO_VISUAL = {{ tipo_visual|tojson }};
+const IS_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
 let _tkTimer = null;
+
+// ── Estado de la bandeja (orden / paginacion / toggle Hoy) ──
+// sort vacio = orden inteligente del backend (no-leidos primero, etc.).
+let tkSort = '';          // columna activa (whitelist backend) o ''
+let tkDir = 'desc';       // 'desc' | 'asc'
+let tkPage = 1;
+let tkLimit = 50;         // default 50 (selector 10/25/50/100)
+let tkHoy = false;        // toggle boton "Hoy" (manda hoy=1)
+let _tkCache = {};        // id → ticket de la ultima carga (acciones por fila)
 
 // El servidor ya envía las fechas formateadas en hora Chile (Regla #6, "%d/%m/%Y %H:%M").
 function fmtFecha(s){ return s || ''; }
@@ -404,14 +496,74 @@ function esc(s){ return (s==null?'':String(s))
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments,c=this; t=setTimeout(()=>fn.apply(c,a),ms); }; }
 
-async function cargarTickets(){
+// ── Filtros actuales → URLSearchParams. COMPARTIDO por el listado y los dos
+// reportes CSV (asi el CSV descarga EXACTAMENTE lo que se esta viendo).
+// conOrden=false para el reporte SLA (no acepta sort/dir).
+function tkParamsFiltros(conOrden){
   const p = new URLSearchParams();
-  const q = document.getElementById('fQ').value.trim();
-  if(q) p.set('q', q);
+  const tk = document.getElementById('fTicket').value.trim(); if(tk) p.set('ticket', tk);
+  const q = document.getElementById('fQ').value.trim(); if(q) p.set('q', q);
+  const rut = document.getElementById('fRut').value.trim(); if(rut) p.set('rut', rut);
   const e = document.getElementById('fEstado').value; if(e) p.set('estado', e);
   const t = document.getElementById('fTipo').value; if(t) p.set('tipo', t);
   const pr = document.getElementById('fPrio').value; if(pr) p.set('prioridad', pr);
-  p.set('limit','100');
+  const resp = document.getElementById('fResp').value; if(resp) p.set('asignado_a', resp);
+  if(tkHoy){ p.set('hoy','1'); }
+  else{
+    const fd = document.getElementById('fDesde').value; if(fd) p.set('fecha_desde', fd);
+    const fh = document.getElementById('fHasta').value; if(fh) p.set('fecha_hasta', fh);
+  }
+  if(conOrden && tkSort){ p.set('sort', tkSort); p.set('dir', tkDir); }
+  return p;
+}
+
+// ── Encabezados: [label, columna sort del backend o '' = no ordenable] ──
+const TK_COLS = [
+  ['Ticket','numero_ticket'], ['Cliente','empresa'], ['Tipo','tipo'], ['Estado','estado'],
+  ['Avance',''], ['Asignado','asignado_a'], ['Origen','origen'], ['Fecha','updated_at'], ['Acciones',''],
+];
+function tkTheadHtml(){
+  return '<tr>' + TK_COLS.map(function(c){
+    if(!c[1]) return '<th>'+c[0]+'</th>';
+    let cls = 'tk-th-sort', ic = 'bi-arrow-down-up';
+    if(tkSort === c[1]){ cls += ' on'; ic = (tkDir === 'asc' ? 'bi-sort-up' : 'bi-sort-down'); }
+    return '<th class="'+cls+'" onclick="tkSortClick(\''+c[1]+'\')" title="Ordenar por '+c[0]+'">'
+      + c[0] + ' <i class="bi '+ic+'"></i></th>';
+  }).join('') + '</tr>';
+}
+// Ciclo por clic: sin orden → desc → asc → sin orden (vuelve al inteligente)
+window.tkSortClick = function(col){
+  if(tkSort !== col){ tkSort = col; tkDir = 'desc'; }
+  else if(tkDir === 'desc'){ tkDir = 'asc'; }
+  else { tkSort = ''; tkDir = 'desc'; }
+  tkPage = 1; cargarTickets();
+};
+
+// ── Footer: "Mostrando X - Y de Z" + tamano de pagina + prev/next ──
+function tkFooterHtml(data){
+  const total = data.total||0, page = data.page||tkPage, pages = data.pages||0,
+        limit = data.limit||tkLimit;
+  const desde = total ? ((page-1)*limit+1) : 0;
+  const hasta = Math.min(page*limit, total);
+  return '<div class="tk-foot">'
+    + '<div class="tk-foot-info">Mostrando <b>'+desde+' - '+hasta+'</b> de <b>'+total+'</b> registro'+(total===1?'':'s')+'</div>'
+    + '<div class="tk-foot-ctrl">'
+    +   '<label class="lbl-pp">Por página '
+    +     '<select onchange="tkCambiarLimit(this.value)">'
+    +       [10,25,50,100].map(n=>'<option value="'+n+'"'+(n===tkLimit?' selected':'')+'>'+n+'</option>').join('')
+    +     '</select></label>'
+    +   '<button type="button" class="tk-pg-btn" '+(page<=1?'disabled':'')+' onclick="tkPagina(-1)" title="Página anterior"><i class="bi bi-chevron-left"></i></button>'
+    +   '<span class="tk-pg-num">'+page+' / '+Math.max(pages,1)+'</span>'
+    +   '<button type="button" class="tk-pg-btn" '+(page>=pages?'disabled':'')+' onclick="tkPagina(1)" title="Página siguiente"><i class="bi bi-chevron-right"></i></button>'
+    + '</div></div>';
+}
+window.tkPagina = function(d){ tkPage = Math.max(1, tkPage + d); cargarTickets(); };
+window.tkCambiarLimit = function(v){ tkLimit = parseInt(v,10)||50; tkPage = 1; cargarTickets(); };
+
+async function cargarTickets(){
+  const p = tkParamsFiltros(true);
+  p.set('page', String(tkPage));
+  p.set('limit', String(tkLimit));
   let data;
   try{
     const r = await fetch('/tickets/api/tickets?'+p.toString());
@@ -420,21 +572,32 @@ async function cargarTickets(){
     '<div class="empty-state"><i class="bi bi-wifi-off"></i>No se pudo cargar. Reintenta.</div>'; return; }
   if(!data.ok){ ilusToast(data.error||'Error al cargar','error'); return; }
 
+  // Si la pagina quedo fuera de rango (ej: se borro el ultimo ticket de la
+  // ultima pagina), retroceder a la ultima valida y recargar una vez.
+  if(!data.tickets.length && (data.total||0) > 0 && tkPage > 1){
+    tkPage = Math.max(1, data.pages||1);
+    return cargarTickets();
+  }
+
   document.getElementById('kpiTotal').textContent = data.kpis.total;
   document.getElementById('kpiActivos').textContent = data.kpis.activos;
   document.getElementById('kpiUrgentes').textContent = data.kpis.urgentes;
   document.getElementById('kpiVencidos').textContent = data.kpis.vencidos;
+
+  _tkCache = {};
+  data.tickets.forEach(function(t){ _tkCache[t.id] = t; });
 
   const cont = document.getElementById('tkLista');
   if(!data.tickets.length){
     cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay tickets con estos filtros.</div>';
     return;
   }
-  cont.innerHTML = '<div class="tk-table-wrap"><table class="tk-table"><thead><tr>'
-    + '<th>Ticket</th><th>Cliente</th><th>Tipo</th><th>Estado</th><th>Avance</th><th>Asignado</th><th>Origen</th><th>Fecha</th>'
-    + '</tr></thead><tbody>'
+  cont.innerHTML = '<div class="tk-table-wrap"><table class="tk-table"><thead>'
+    + tkTheadHtml()
+    + '</thead><tbody>'
     + data.tickets.map(tkFilaHtml).join('')
-    + '</tbody></table></div>';
+    + '</tbody></table></div>'
+    + tkFooterHtml(data);
 }
 
 // ── Columna Tipo: icono circular de color + label (paleta TIPO_VISUAL, misma del modal) ──
@@ -478,6 +641,69 @@ function tkMiniStepper(tk){
   return '<div class="tk-mini-wrap"><div class="tk-mini-stepper">'+dots+'</div>'+extra+'</div>';
 }
 
+// ── Columna Acciones: Ver (todos) · Cerrar / Eliminar (solo superadmin).
+// stopPropagation en cada icono para NO disparar la navegacion del click-en-fila.
+// Solo se pasa el id numerico; el resto del ticket sale de _tkCache (evita
+// meter strings del usuario dentro de atributos onclick).
+function tkAccionesCelda(tk){
+  let h = '<button type="button" class="tk-act ver" title="Ver ticket"'
+    + ' onclick="event.stopPropagation();location.href=\'/tickets/'+tk.id+'\'"><i class="bi bi-eye"></i></button>';
+  if(IS_SUPERADMIN && tk.estado !== 'closed' && tk.estado !== 'cancelado'){
+    h += '<button type="button" class="tk-act cerrar" title="Cerrar ticket"'
+      + ' onclick="tkAccionCerrar(event,'+tk.id+')"><i class="bi bi-check-circle"></i></button>';
+  }
+  if(IS_SUPERADMIN){
+    h += '<button type="button" class="tk-act del" title="Eliminar ticket (superadmin)"'
+      + ' onclick="tkAccionEliminar(event,'+tk.id+')"><i class="bi bi-trash"></i></button>';
+  }
+  return '<div class="tk-acciones">'+h+'</div>';
+}
+
+window.tkAccionCerrar = async function(ev, id){
+  ev.stopPropagation();
+  const tk = _tkCache[id] || {};
+  const num = tk.numero_ticket || ('#'+id);
+  const ok = await ilusConfirm({
+    title: 'Cerrar ticket',
+    message: '¿Marcar el ticket '+num+' como cerrado?',
+    sub: 'El ticket pasará al estado Cerrado y saldrá de la bandeja de activos.',
+    okLabel: 'Cerrar ticket', cancelLabel: 'Cancelar',
+    type: 'question',
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/tickets/api/tickets/'+id, {method:'PATCH',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({estado:'closed'})});
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error||'No se pudo cerrar el ticket','error'); return; }
+    ilusToast('✓ '+num+' cerrado','success');
+    cargarTickets();
+  }catch(e){ ilusToast('Error de red al cerrar el ticket','error'); }
+};
+
+window.tkAccionEliminar = async function(ev, id){
+  ev.stopPropagation();
+  const tk = _tkCache[id] || {};
+  // El backend exige confirm == numero_ticket (o el id como string si no hay numero).
+  const numConfirm = (tk.numero_ticket && String(tk.numero_ticket).trim()) || String(id);
+  const ok = await ilusConfirm({
+    title: 'Eliminar ticket',
+    message: '¿Eliminar permanentemente el ticket '+numConfirm+'?',
+    sub: 'Esta acción no se puede deshacer.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/tickets/api/tickets/'+id+'?confirm='+encodeURIComponent(numConfirm),
+      {method:'DELETE'});
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error||'No se pudo eliminar el ticket','error'); return; }
+    ilusToast('✓ Ticket '+numConfirm+' eliminado','success');
+    cargarTickets();
+  }catch(e){ ilusToast('Error de red al eliminar el ticket','error'); }
+};
+
 function tkFilaHtml(tk){
   const cliente = tk.empresa || tk.nombre_contacto || tk.rut || 'Sin cliente';
   const titulo = tk.titulo || '';
@@ -497,16 +723,56 @@ function tkFilaHtml(tk){
     + '<td>'+asignado+'</td>'
     + '<td>'+tkOrigenCelda(tk.origen)+'</td>'
     + '<td><div class="tkc-fecha">'+esc(fp.f)+(fp.h?'<span class="hora">'+esc(fp.h)+'</span>':'')+'</div></td>'
+    + '<td>'+tkAccionesCelda(tk)+'</td>'
     + '</tr>';
 }
 
-function debounced(){ clearTimeout(_tkTimer); _tkTimer = setTimeout(cargarTickets, 350); }
-document.getElementById('fQ').addEventListener('input', debounced);
-['fEstado','fTipo','fPrio'].forEach(function(id){ document.getElementById(id).addEventListener('change', cargarTickets); });
-document.getElementById('btnLimpiar').addEventListener('click', function(){
-  document.getElementById('fQ').value=''; document.getElementById('fEstado').value='';
-  document.getElementById('fTipo').value=''; document.getElementById('fPrio').value=''; cargarTickets();
+// Cualquier cambio de filtro resetea a la pagina 1 (el resultado cambia).
+function tkFiltroCambio(){ tkPage = 1; cargarTickets(); }
+function debounced(){ clearTimeout(_tkTimer); _tkTimer = setTimeout(tkFiltroCambio, 350); }
+['fTicket','fQ','fRut'].forEach(function(id){ document.getElementById(id).addEventListener('input', debounced); });
+['fEstado','fTipo','fPrio','fResp','fDesde','fHasta'].forEach(function(id){
+  document.getElementById(id).addEventListener('change', tkFiltroCambio);
 });
+
+// ── Toolbar ──
+const btnHoy = document.getElementById('btnHoy');
+btnHoy.addEventListener('click', function(){
+  tkHoy = !tkHoy;
+  btnHoy.classList.toggle('on', tkHoy);
+  tkFiltroCambio();
+});
+document.getElementById('btnRefrescar').addEventListener('click', function(){ cargarTickets(); });
+// Los reportes CSV descargan con los MISMOS filtros del listado actual.
+document.getElementById('btnRepTickets').addEventListener('click', function(){
+  window.location = '/tickets/api/reporte/tickets.csv?'+tkParamsFiltros(true).toString();
+});
+document.getElementById('btnRepSla').addEventListener('click', function(){
+  window.location = '/tickets/api/reporte/sla.csv?'+tkParamsFiltros(false).toString();
+});
+document.getElementById('btnLimpiar').addEventListener('click', function(){
+  ['fTicket','fQ','fRut','fDesde','fHasta','fEstado','fTipo','fPrio','fResp']
+    .forEach(function(id){ document.getElementById(id).value=''; });
+  tkHoy = false; btnHoy.classList.remove('on');
+  tkSort = ''; tkDir = 'desc'; tkPage = 1;
+  cargarTickets();
+});
+
+// ── Select Responsable: usuarios activos (mismo endpoint que la ficha) ──
+async function tkCargarResponsables(){
+  try{
+    const r = await fetch('/mantenciones/api/ejecutivos');
+    const rows = await r.json();
+    if(!Array.isArray(rows) || !rows.length) return;
+    const sel = document.getElementById('fResp');
+    const actual = sel.value;
+    sel.innerHTML = '<option value="">Todos</option>'
+      + '<option value="__sin_asignar__">Sin asignar</option>'
+      + rows.map(function(e){ return '<option value="'+esc(e.nombre)+'">'+esc(e.nombre)+'</option>'; }).join('');
+    sel.value = actual; // conserva la seleccion si ya habia una
+  }catch(e){ /* sin red: quedan Todos / Sin asignar */ }
+}
+tkCargarResponsables();
 cargarTickets();
 
 // ══════════════ MODAL Nuevo Ticket — logica ══════════════

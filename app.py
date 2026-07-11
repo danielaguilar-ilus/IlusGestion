@@ -69299,37 +69299,43 @@ def _tickets_tpl_seed():
       resuelto  -> aviso cuando el ticket pasa a 'resolved'
       cerrado   -> aviso cuando el ticket pasa a 'closed'
     """
+    # REDISENO 2026-07-12 (Daniel, con screenshot del correo real): "lo menos
+    # que se hace entender es el mensaje". El mensaje es EL PROTAGONISTA:
+    # bloque destacado con acento de color, tipografia 16px, saludo minimo y
+    # CERO relleno ("parte del seguimiento" eliminado; el numero ya viaja en
+    # asunto y subtitulo). La invitacion a responder el correo la agrega
+    # tickets_module (_tk_boton_portal_html) al final de TODO correo.
     return {
         'creacion': (
             "Recibimos tu solicitud — ticket {{numero_ticket}}",
-            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
-            "<p style=\"font-size:14px;color:#374151\">Ya registramos tu solicitud. A partir de "
-            "ahora puedes seguirla con el número <strong>{{numero_ticket}}</strong>.</p>"
-            "<p style=\"font-size:14px;color:#374151\">Nuestro equipo técnico la revisará a la "
-            "brevedad y te contactaremos apenas tengamos novedades.</p>"
-            "<p style=\"font-size:13px;color:#6b7280;margin-top:16px\">"
-            "Si necesitas agregar información, puedes responder directamente este correo.</p>"),
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Ya registramos tu solicitud "
+            "con el número <strong>{{numero_ticket}}</strong>. Nuestro equipo la revisará y te "
+            "contactará a la brevedad.</div></div>"),
         'respuesta': (
             "Respuesta a tu ticket {{numero_ticket}}",
-            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
-            "<p style=\"font-size:14px;color:#374151\">{{mensaje}}</p>"
-            "<p style=\"font-size:13px;color:#6b7280;margin-top:16px\">"
-            "Este mensaje es parte del seguimiento de tu ticket <strong>{{numero_ticket}}</strong>."
-            "</p>"),
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">{{mensaje}}</div></div>"),
         'resuelto': (
             "Tu ticket {{numero_ticket}} fue resuelto",
-            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
-            "<p style=\"font-size:14px;color:#374151\">Te contamos que tu solicitud "
-            "<strong>{{numero_ticket}}</strong> ya fue resuelta por nuestro equipo.</p>"
-            "<p style=\"font-size:14px;color:#374151\">Si el problema persiste o tienes dudas, "
-            "puedes responder este mismo correo y retomamos tu caso.</p>"),
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #16a34a;background:#f0fdf4;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">✅ Tu solicitud "
+            "<strong>{{numero_ticket}}</strong> ya fue resuelta por nuestro equipo. Si el problema "
+            "persiste, responde este correo y retomamos tu caso.</div></div>"),
         'cerrado': (
             "Tu ticket {{numero_ticket}} fue cerrado",
-            "<p style=\"font-size:14px;color:#374151\">Estimado/a {{cliente}},</p>"
-            "<p style=\"font-size:14px;color:#374151\">Tu ticket <strong>{{numero_ticket}}</strong> "
-            "ha sido cerrado. Gracias por confiar en ILUS Sport &amp; Health.</p>"
-            "<p style=\"font-size:13px;color:#6b7280;margin-top:16px\">"
-            "Si necesitas algo más, no dudes en contactarnos.</p>"),
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #6b7280;background:#f9fafb;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
+            "<strong>{{numero_ticket}}</strong> ha sido cerrado. Gracias por confiar en "
+            "ILUS Sport &amp; Health.</div></div>"),
     }
 
 
@@ -69341,9 +69347,20 @@ def _ensure_comm_template_tickets():
         sembradas = 0
         for slug, (asunto, cuerpo) in _tickets_tpl_seed().items():
             existe = mysql_fetchone(
-                "SELECT id FROM comm_templates WHERE modulo='tickets' "
+                "SELECT id, cuerpo FROM comm_templates WHERE modulo='tickets' "
                 "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
             if existe:
+                # REFRESH dirigido 2026-07-12: las filas sembradas ANTES del
+                # rediseno (marcador inequivoco: abren con "Estimado/a
+                # {{cliente}}", la semilla nueva abre con "Hola {{cliente}}")
+                # se actualizan a la semilla nueva. Una plantilla que Daniel
+                # haya editado a mano NO conserva ese marcador exacto de
+                # apertura, asi que sus ediciones no se pisan.
+                if "Estimado/a {{cliente}}" in (existe.get("cuerpo") or ""):
+                    mysql_execute(
+                        "UPDATE comm_templates SET asunto=%s, cuerpo=%s "
+                        "WHERE id=%s", (asunto, cuerpo, existe["id"]))
+                    sembradas += 1
                 continue
             mysql_execute(
                 "INSERT IGNORE INTO comm_templates "
@@ -69351,7 +69368,7 @@ def _ensure_comm_template_tickets():
                 "VALUES ('tickets',%s,'email',%s,%s)", (slug, asunto, cuerpo))
             sembradas += 1
         if sembradas:
-            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de tickets sembradas",
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de tickets sembradas/actualizadas",
                   flush=True)
         return sembradas
     except Exception as e:
