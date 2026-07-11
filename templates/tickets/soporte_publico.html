@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Solicitud de Soporte · ILUS Fitness</title>
+<link rel="icon" href="{{ url_for('static', filename='Logo.png') }}">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<style>
+:root{--ilus-red:#dc2626;--ilus-black:#0a0a0a;}
+*{box-sizing:border-box;}
+body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#15171a;}
+.sp-wrap{max-width:640px;margin:0 auto;padding:0 0 60px;}
+.sp-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;padding:30px 26px 26px;
+  border-bottom:4px solid var(--ilus-red);position:relative;}
+.sp-hero h1{margin:0;font-size:1.7rem;font-weight:900;}
+.sp-hero h1 .r{color:var(--ilus-red);}
+.sp-hero p{margin:8px 0 0;font-size:.88rem;color:#cbd0d6;max-width:420px;}
+.sp-badge{position:absolute;top:26px;right:26px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
+  border-radius:50px;padding:6px 12px;font-size:.72rem;font-weight:700;display:flex;align-items:center;gap:6px;}
+.sp-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--ilus-red);}
+.sp-card{background:#fff;border-radius:13px;margin:16px 16px 0;padding:22px 24px;box-shadow:0 6px 20px rgba(15,23,42,.06);}
+.sp-card h2{font-size:1.02rem;font-weight:800;margin:0;display:flex;align-items:center;gap:10px;color:#0f172a;}
+.sp-card h2 .n{background:var(--ilus-red);color:#fff;width:26px;height:26px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;flex-shrink:0;}
+.sp-card .hint{font-size:.8rem;color:#94a3b8;margin:4px 0 16px 36px;}
+.sp-tipos{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+@media(min-width:480px){.sp-tipos{grid-template-columns:repeat(4,1fr);}}
+.sp-tipo{border:1.5px solid #e5e7eb;border-radius:11px;padding:14px 8px;text-align:center;cursor:pointer;
+  font-size:.82rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;min-height:44px;}
+.sp-tipo .em{display:block;font-size:1.4rem;margin-bottom:4px;}
+.sp-tipo:hover{border-color:var(--ilus-red);}
+.sp-tipo.sel{border-color:var(--ilus-red);background:#fef2f2;color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.12);}
+.sp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media(max-width:480px){.sp-grid{grid-template-columns:1fr;}}
+.sp-field{position:relative;}
+.sp-field.full{grid-column:1/-1;}
+.sp-field label{font-size:.83rem;font-weight:700;color:#1f2937;margin-bottom:5px;display:block;}
+.sp-field label .req{color:var(--ilus-red);}
+.sp-field label .op{font-size:.65rem;font-weight:800;color:#94a3b8;background:#f3f4f6;border-radius:5px;
+  padding:1px 6px;margin-left:6px;text-transform:uppercase;vertical-align:middle;}
+.sp-field input,.sp-field textarea{width:100%;border:1.5px solid #e5e7eb;border-radius:10px;padding:12px 13px;
+  font-size:16px;background:#fbfbfc;transition:border-color .12s;}
+.sp-field input:focus,.sp-field textarea:focus{outline:none;border-color:var(--ilus-red);background:#fff;
+  box-shadow:0 0 0 3px rgba(220,38,38,.1);}
+.sp-field .fh{font-size:.72rem;color:#94a3b8;margin-top:5px;}
+.sp-field .fe{font-size:.72rem;color:var(--ilus-red);margin-top:5px;display:none;}
+.sp-field.err input,.sp-field.err textarea{border-color:var(--ilus-red);}
+.sp-field.err .fe{display:block;}
+.sp-ac{position:absolute;z-index:50;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;
+  border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:240px;overflow:auto;margin-top:3px;display:none;}
+.sp-ac.open{display:block;}
+.sp-ac-item{padding:10px 13px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.86rem;}
+.sp-ac-item:hover{background:#fef2f2;}
+.sp-ac-empty{padding:12px;color:#94a3b8;font-size:.82rem;text-align:center;}
+.sp-chip{display:inline-flex;align-items:center;gap:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;
+  border-radius:8px;padding:8px 12px;font-size:.84rem;font-weight:700;margin:0 6px 6px 0;}
+.sp-chip .x{cursor:pointer;color:#f87171;font-weight:900;margin-left:2px;}
+.sp-counter{font-size:.72rem;color:#94a3b8;text-align:right;margin-top:4px;}
+.sp-drop{border:2px dashed #d1d5db;border-radius:12px;padding:28px 16px;text-align:center;cursor:pointer;
+  transition:all .12s;background:#fafafa;}
+.sp-drop:hover,.sp-drop.drag{border-color:var(--ilus-red);background:#fef2f2;}
+.sp-drop i{font-size:1.6rem;color:#9ca3af;display:block;margin-bottom:8px;}
+.sp-drop .t1{font-weight:700;font-size:.88rem;color:#374151;}
+.sp-drop .t2{font-size:.76rem;color:#9ca3af;margin-top:3px;}
+.sp-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+.sp-file-chip{display:flex;align-items:center;gap:6px;background:#f1f5f9;border-radius:8px;padding:6px 10px;font-size:.78rem;
+  max-width:180px;}
+.sp-file-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sp-file-chip .x{cursor:pointer;color:#94a3b8;font-weight:900;flex-shrink:0;}
+.sp-file-chip.up-ok i{color:#16a34a;}
+.sp-file-chip.up-err i{color:#dc2626;}
+.sp-submit{margin:20px 16px 0;}
+.sp-btn{width:100%;background:linear-gradient(135deg,var(--ilus-red),#991b1b);color:#fff;border:none;
+  border-radius:11px;padding:16px;font-size:1rem;font-weight:800;cursor:pointer;min-height:52px;
+  box-shadow:0 8px 20px rgba(220,38,38,.25);}
+.sp-btn:disabled{opacity:.6;cursor:not-allowed;}
+.sp-priv{text-align:center;font-size:.74rem;color:#94a3b8;margin-top:12px;}
+.sp-ok{background:#fff;border-radius:16px;margin:40px 16px;padding:44px 28px;text-align:center;
+  box-shadow:0 10px 30px rgba(15,23,42,.08);}
+.sp-ok i{font-size:3rem;color:#16a34a;display:block;margin-bottom:14px;}
+.sp-ok h2{font-weight:900;margin:0 0 8px;}
+.sp-ok .num{background:#fef3c7;color:#92400e;display:inline-block;border-radius:8px;padding:8px 16px;
+  font-family:monospace;font-weight:800;margin-top:14px;font-size:1.1rem;}
+.sp-hidden{display:none!important;}
+/* Toast propio (pagina standalone, sin ilus_ui.js) */
+.sp-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#0f172a;color:#fff;
+  padding:12px 20px;border-radius:10px;font-size:.86rem;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:90vw;
+  display:none;border-left:4px solid var(--ilus-red);}
+.sp-toast.show{display:block;}
+.sp-toast.ok{border-left-color:#16a34a;}
+/* Google Places dropdown por encima de todo */
+.pac-container{z-index:9999!important;}
+</style>
+</head>
+<body>
+<div class="sp-toast" id="spToast"></div>
+
+<div class="sp-wrap" id="spForm">
+  <div class="sp-hero">
+    <span class="sp-badge"><span class="dot"></span>Te toma 2 minutos</span>
+    <h1>Solicitud de <span class="r">Soporte</span></h1>
+    <p>Cuéntanos qué pasó y nuestro equipo técnico te contactará. Rápido y sin vueltas.</p>
+  </div>
+
+  <div class="sp-card">
+    <h2><span class="n">1</span>¿Qué necesitas?</h2>
+    <div class="hint">Elige el tipo de solicitud que mejor describe tu caso.</div>
+    <div class="sp-tipos" id="spTipos">
+      {% for t in tk_tipos_publicos %}
+      <div class="sp-tipo" data-tipo="{{ t }}">
+        <span class="em">{{ {'install':'🔧','tech_support':'🛠️','maintenance':'⚙️','warranty':'🛡️','spare_parts':'🧩','quotation':'💬','shipping':'🚚','return':'↩️'}[t] }}</span>
+        {{ tipo_label[t] }}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="fe" id="errTipo" style="display:none;color:#dc2626;font-size:.75rem;margin-top:8px;">Selecciona un tipo de solicitud.</div>
+  </div>
+
+  <div class="sp-card">
+    <h2><span class="n">2</span>Tus datos</h2>
+    <div class="hint">Con quién nos contactamos y a nombre de quién está la compra.</div>
+    <div class="sp-grid">
+      <div class="sp-field" id="fRutWrap">
+        <label>RUT de compra <span class="req">*</span></label>
+        <input type="text" id="spRut" placeholder="Ej: 76.123.456-7">
+        <div class="fh">El RUT con el que se hizo la compra. Con o sin puntos, da igual.</div>
+        <div class="fe">Ingresa un RUT válido.</div>
+      </div>
+      <div class="sp-field">
+        <label>Empresa o persona</label>
+        <input type="text" id="spEmpresa" placeholder="Ej: Gimnasio Vital SpA">
+        <div class="fh">Tal como aparece en la boleta o factura.</div>
+      </div>
+      <div class="sp-field" id="fContactoWrap">
+        <label>Nombre de contacto <span class="req">*</span></label>
+        <input type="text" id="spContacto" placeholder="Ej: Juan Pérez">
+        <div class="fe">Ingresa un nombre de contacto.</div>
+      </div>
+      <div class="sp-field" id="fPhoneWrap">
+        <label>Teléfono <span class="req">*</span></label>
+        <input type="tel" id="spPhone" placeholder="+56 9 1234 5678">
+        <div class="fe">Ingresa un teléfono válido.</div>
+      </div>
+      <div class="sp-field full" id="fEmailWrap">
+        <label>Correo <span class="req">*</span></label>
+        <input type="email" id="spEmail" placeholder="tucorreo@empresa.cl">
+        <div class="fh">Aquí te avisaremos del avance de tu solicitud.</div>
+        <div class="fe">Ingresa un correo válido.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sp-card">
+    <h2><span class="n">3</span>¿Dónde está el equipo?</h2>
+    <div class="hint">La dirección donde se encuentra la máquina. Empieza a escribir y elígela.</div>
+    <div class="sp-grid">
+      <div class="sp-field full" id="fDirWrap">
+        <label>Dirección <span class="req">*</span></label>
+        <input type="text" id="spDireccion" placeholder="Ej: Av. Colón 1265, Las Condes" autocomplete="off">
+        <input type="hidden" id="spDirLat"><input type="hidden" id="spDirLng">
+        <input type="hidden" id="spDirPlace"><input type="hidden" id="spComuna">
+        <div class="fh" id="spDirHint">Direcciones sugeridas por Google</div>
+        <div class="fe">Ingresa una dirección.</div>
+      </div>
+      <div class="sp-field full">
+        <label>Sucursal <span class="op">Opcional</span></label>
+        <input type="text" id="spSucursal" placeholder="Ej: Sede Providencia">
+      </div>
+    </div>
+  </div>
+
+  <div class="sp-card">
+    <h2><span class="n">4</span>El equipo</h2>
+    <div class="hint">Busca y selecciona la máquina o producto. Puedes agregar varios.</div>
+    <div class="sp-field full" id="fProdWrap">
+      <label>Productos <span class="req">*</span></label>
+      <input type="text" id="spBuscarProd" placeholder="Escribe el nombre del equipo…" autocomplete="off">
+      <div class="sp-ac" id="spAcProd"></div>
+      <div class="fe">Selecciona al menos un producto.</div>
+    </div>
+    <div id="spProdChips" style="margin-top:8px;"></div>
+    <div class="sp-field full" style="margin-top:14px;">
+      <label>N° de boleta o factura <span class="op">Opcional</span></label>
+      <input type="text" id="spDoc" placeholder="Ej: 10683">
+      <div class="fh">Aparece en la parte superior de tu documento. Nos ayuda a ubicar tu compra.</div>
+    </div>
+  </div>
+
+  <div class="sp-card">
+    <h2><span class="n">5</span>Cuéntanos el problema</h2>
+    <div class="hint">Mientras más detalle, más rápido lo resolvemos. Puedes adjuntar fotos, videos o documentos.</div>
+    <div class="sp-field full" id="fDescWrap">
+      <label>¿Qué está pasando? <span class="req">*</span></label>
+      <textarea id="spDesc" rows="3" maxlength="260" placeholder="Ej: La consola de la trotadora se apaga sola después de unos minutos de uso…"></textarea>
+      <div class="sp-counter"><span id="spDescCount">260</span> caracteres restantes</div>
+      <div class="fe">Describe el problema.</div>
+    </div>
+    <div class="sp-field full" style="margin-top:14px;">
+      <label>Fotos, videos o documentos <span class="op">Opcional</span></label>
+      <div class="sp-drop" id="spDrop">
+        <i class="bi bi-paperclip"></i>
+        <div class="t1">Arrastra tus archivos aquí o haz clic para elegir</div>
+        <div class="t2">Fotos, videos, PDF o documentos · hasta {{ max_adjuntos }} archivos ({{ max_adjunto_mb }} MB c/u)</div>
+      </div>
+      <input type="file" id="spFile" multiple hidden accept=".jpg,.jpeg,.png,.webp,.gif,.heic,.mp4,.mov,.webm,.avi,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv">
+      <div class="sp-files" id="spFiles"></div>
+    </div>
+  </div>
+
+  <div class="sp-submit">
+    <button class="sp-btn" id="spBtnEnviar">Enviar solicitud</button>
+    <div class="sp-priv"><i class="bi bi-lock-fill"></i> Tus datos solo se usan para gestionar tu solicitud.</div>
+  </div>
+</div>
+
+<div class="sp-ok sp-hidden" id="spOk">
+  <i class="bi bi-check-circle-fill"></i>
+  <h2>¡Solicitud recibida!</h2>
+  <p style="color:#6b7280;">Un ejecutivo revisará tu caso y te contactará al correo que nos dejaste.</p>
+  <div style="color:#9ca3af;font-size:.8rem;margin-top:6px;">N° de solicitud:</div>
+  <div class="num" id="spNumOk">—</div>
+  <div style="margin-top:22px;"><button class="sp-btn" id="spBtnOtra" style="width:auto;padding:12px 24px;">Enviar otra solicitud</button></div>
+</div>
+
+{% if google_maps_api_key %}
+<script>
+  window.__ILUS_GMAPS_KEY = {{ google_maps_api_key|tojson }};
+  window.__ilusGmapsPending = window.__ilusGmapsPending || [];
+  window.__ilusGmapsReady = function(){
+    window.__ilusGmapsLoaded = true;
+    (window.__ilusGmapsPending || []).forEach(function(fn){ try { fn(); } catch(e) { console.warn('gmaps init:', e); } });
+    window.__ilusGmapsPending = [];
+  };
+</script>
+{% endif %}
+<script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
+<script>
+// ── Toast propio (esta pagina no extiende base.html) ──
+let _toastT = null;
+function spToast(msg, tipo){
+  const el = document.getElementById('spToast');
+  el.textContent = msg; el.className = 'sp-toast show' + (tipo==='success' ? ' ok' : '');
+  clearTimeout(_toastT); _toastT = setTimeout(()=>el.classList.remove('show'), 3500);
+}
+
+let tipoSel = '';
+let productos = [];      // [{sku, nombre}]
+let archivos = [];       // [{file, estado:'pendiente'|'subiendo'|'ok'|'error', url, nombre}]
+let ticketId = null, uploadToken = null;
+
+function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments,c=this; t=setTimeout(()=>fn.apply(c,a),ms); }; }
+function marcarError(id, on){ document.getElementById(id).classList.toggle('err', !!on); }
+
+// ── Paso 1: tipo ──
+document.querySelectorAll('.sp-tipo').forEach(function(el){
+  el.addEventListener('click', function(){
+    document.querySelectorAll('.sp-tipo').forEach(x=>x.classList.remove('sel'));
+    el.classList.add('sel'); tipoSel = el.dataset.tipo;
+    document.getElementById('errTipo').style.display = 'none';
+  });
+});
+
+// ── Paso 3: Google Places (dirección) — siempre validar ──
+document.addEventListener('DOMContentLoaded', function(){
+  function initDir(){
+    if(typeof ilusPlacesAutocomplete !== 'function'){
+      if(window.__ilusGmapsPending){ window.__ilusGmapsPending.push(initDir); } return;
+    }
+    ilusPlacesAutocomplete('spDireccion', { country:'cl', types:['address'],
+      onPlaceSelected:function(place){
+        document.getElementById('spDirLat').value = place.lat;
+        document.getElementById('spDirLng').value = place.lng;
+        document.getElementById('spDirPlace').value = place.place_id || '';
+        if(place.componentes){
+          const cm = place.componentes.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
+          if(cm) document.getElementById('spComuna').value = cm.long_name;
+        }
+        marcarError('fDirWrap', false);
+        document.getElementById('spDirHint').innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> Dirección verificada';
+      } });
+  }
+  initDir();
+});
+
+// ── Paso 4: buscador de productos (ERP, catalogo general) ──
+const spAcProd = document.getElementById('spAcProd');
+const buscarProd = debounce(async function(){
+  const q = document.getElementById('spBuscarProd').value.trim();
+  if(q.length < 2){ spAcProd.classList.remove('open'); return; }
+  spAcProd.innerHTML = '<div class="sp-ac-empty">Buscando…</div>'; spAcProd.classList.add('open');
+  try{
+    const r = await fetch('/soporte/api/erp/productos?q='+encodeURIComponent(q));
+    const d = await r.json();
+    const rows = d.resultados || [];
+    if(!rows.length){ spAcProd.innerHTML = '<div class="sp-ac-empty">Sin resultados</div>'; return; }
+    spAcProd.innerHTML = rows.map((p,i)=>'<div class="sp-ac-item" data-i="'+i+'">'+esc(p.nombre)+'</div>').join('');
+    spAcProd.querySelectorAll('.sp-ac-item').forEach(it=>it.addEventListener('click',()=>{
+      const p = rows[+it.dataset.i];
+      if(!productos.some(x=>x.nombre===p.nombre)) productos.push(p);
+      spAcProd.classList.remove('open'); document.getElementById('spBuscarProd').value='';
+      renderChips(); marcarError('fProdWrap', false);
+    }));
+  }catch(e){ spAcProd.innerHTML = '<div class="sp-ac-empty">Catálogo no disponible</div>'; }
+}, 320);
+document.getElementById('spBuscarProd').addEventListener('input', buscarProd);
+document.addEventListener('click', function(e){
+  if(!e.target.closest('#spBuscarProd') && !e.target.closest('#spAcProd')) spAcProd.classList.remove('open');
+});
+function renderChips(){
+  document.getElementById('spProdChips').innerHTML = productos.map((p,i)=>
+    '<span class="sp-chip">'+esc(p.nombre)+'<span class="x" onclick="quitarProd('+i+')">&times;</span></span>').join('');
+}
+window.quitarProd = function(i){ productos.splice(i,1); renderChips(); };
+
+// ── Paso 5: contador + archivos ──
+document.getElementById('spDesc').addEventListener('input', function(){
+  document.getElementById('spDescCount').textContent = 260 - this.value.length;
+});
+
+const MAX_ADJ = {{ max_adjuntos }};
+const MAX_MB = {{ max_adjunto_mb }};
+const spDrop = document.getElementById('spDrop');
+spDrop.addEventListener('click', ()=>document.getElementById('spFile').click());
+['dragover','dragleave','drop'].forEach(ev=>spDrop.addEventListener(ev, function(e){
+  e.preventDefault();
+  if(ev==='dragover') spDrop.classList.add('drag'); else spDrop.classList.remove('drag');
+  if(ev==='drop') agregarArchivos(e.dataTransfer.files);
+}));
+document.getElementById('spFile').addEventListener('change', function(e){ agregarArchivos(e.target.files); this.value=''; });
+
+function agregarArchivos(fileList){
+  const restantes = MAX_ADJ - archivos.length;
+  if(restantes <= 0){ spToast('Máximo '+MAX_ADJ+' archivos', 'error'); return; }
+  Array.from(fileList).slice(0, restantes).forEach(function(file){
+    if(file.size > MAX_MB*1024*1024){ spToast(file.name+' supera '+MAX_MB+' MB', 'error'); return; }
+    archivos.push({file:file, estado:'pendiente', nombre:file.name});
+  });
+  renderArchivos();
+  // Si ya existe el ticket (reintento tras error), subimos de inmediato.
+  if(ticketId) subirPendientes();
+}
+function renderArchivos(){
+  document.getElementById('spFiles').innerHTML = archivos.map(function(a,i){
+    const icon = a.estado==='ok' ? 'bi-check-circle-fill' : a.estado==='error' ? 'bi-exclamation-circle-fill'
+      : a.estado==='subiendo' ? 'bi-arrow-repeat' : 'bi-paperclip';
+    const cls = a.estado==='ok' ? 'up-ok' : a.estado==='error' ? 'up-err' : '';
+    return '<span class="sp-file-chip '+cls+'"><i class="bi '+icon+'"></i><span class="nm">'+esc(a.nombre)+'</span>'
+      + '<span class="x" onclick="quitarArchivo('+i+')">&times;</span></span>';
+  }).join('');
+}
+window.quitarArchivo = function(i){ archivos.splice(i,1); renderArchivos(); };
+
+async function subirPendientes(){
+  for(const a of archivos){
+    if(a.estado !== 'pendiente') continue;
+    a.estado = 'subiendo'; renderArchivos();
+    const fd = new FormData(); fd.append('file', a.file); fd.append('token', uploadToken);
+    try{
+      const r = await fetch('/soporte/api/adjuntos/'+ticketId, {method:'POST', body:fd});
+      const d = await r.json();
+      a.estado = d.ok ? 'ok' : 'error';
+    }catch(e){ a.estado = 'error'; }
+    renderArchivos();
+  }
+}
+
+// ── Validación + envío ──
+function validarTodo(){
+  let ok = true;
+  if(!tipoSel){ document.getElementById('errTipo').style.display='block'; ok=false; }
+  if(!document.getElementById('spRut').value.trim()){ marcarError('fRutWrap', true); ok=false; } else marcarError('fRutWrap', false);
+  if(!document.getElementById('spContacto').value.trim()){ marcarError('fContactoWrap', true); ok=false; } else marcarError('fContactoWrap', false);
+  const tel = document.getElementById('spPhone').value.trim();
+  if(!/^(\+?56)?\s?9\s?\d{4}\s?\d{4}$|^(\+?56)?\s?[2-9]\d{7,8}$/.test(tel.replace(/[^\d+]/g,''))){ marcarError('fPhoneWrap', true); ok=false; } else marcarError('fPhoneWrap', false);
+  const em = document.getElementById('spEmail').value.trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(em)){ marcarError('fEmailWrap', true); ok=false; } else marcarError('fEmailWrap', false);
+  if(!document.getElementById('spDireccion').value.trim()){ marcarError('fDirWrap', true); ok=false; } else marcarError('fDirWrap', false);
+  if(!productos.length){ marcarError('fProdWrap', true); ok=false; } else marcarError('fProdWrap', false);
+  if(!document.getElementById('spDesc').value.trim()){ marcarError('fDescWrap', true); ok=false; } else marcarError('fDescWrap', false);
+  return ok;
+}
+
+document.getElementById('spBtnEnviar').addEventListener('click', async function(){
+  if(!validarTodo()){ spToast('Revisa los campos marcados en rojo', 'error'); return; }
+  const btn = this; btn.disabled = true; btn.textContent = 'Enviando…';
+  const payload = {
+    tipo: tipoSel,
+    rut: document.getElementById('spRut').value.trim(),
+    empresa: document.getElementById('spEmpresa').value.trim(),
+    nombre_contacto: document.getElementById('spContacto').value.trim(),
+    phone: document.getElementById('spPhone').value.trim(),
+    email: document.getElementById('spEmail').value.trim(),
+    direccion: document.getElementById('spDireccion').value.trim(),
+    direccion_lat: document.getElementById('spDirLat').value || null,
+    direccion_lng: document.getElementById('spDirLng').value || null,
+    direccion_place_id: document.getElementById('spDirPlace').value || null,
+    comuna_nombre: document.getElementById('spComuna').value || null,
+    sucursal: document.getElementById('spSucursal').value.trim(),
+    productos: productos,
+    numero_documento: document.getElementById('spDoc').value.trim(),
+    descripcion: document.getElementById('spDesc').value.trim(),
+  };
+  let d;
+  try{
+    const r = await fetch('/soporte/api/crear', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    d = await r.json();
+  }catch(e){
+    spToast('Sin conexión. Revisa tu internet e intenta de nuevo — no se perdió tu información.', 'error');
+    btn.disabled = false; btn.textContent = 'Enviar solicitud'; return;
+  }
+  if(!d.ok){
+    spToast(d.error || 'No se pudo enviar la solicitud', 'error');
+    btn.disabled = false; btn.textContent = 'Enviar solicitud'; return;
+  }
+  ticketId = d.id; uploadToken = d.upload_token;
+  if(archivos.length) await subirPendientes();
+  document.getElementById('spForm').classList.add('sp-hidden');
+  document.getElementById('spOk').classList.remove('sp-hidden');
+  document.getElementById('spNumOk').textContent = d.numero_ticket || ('#'+d.id);
+  window.scrollTo(0,0);
+});
+
+document.getElementById('spBtnOtra').addEventListener('click', function(){ location.reload(); });
+</script>
+</body>
+</html>

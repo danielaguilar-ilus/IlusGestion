@@ -4435,6 +4435,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
     "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
     "/chofer",                  # app del chofer (sesión driver_id propia)
+    "/soporte",                 # formulario publico de Tickets (sin sesion)
 )
 
 

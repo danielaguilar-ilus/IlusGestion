@@ -19,6 +19,7 @@ documentos ERP, migracion desde mant_tickets).
 """
 import html as _html_mod
 import json
+import os
 import re
 import time
 from functools import wraps
@@ -68,12 +69,14 @@ ESTADO_LABEL = {
     "cancelado": "Cancelado",
 }
 TIPO_LABEL = {
-    "install": "Instalacion", "tech_support": "Soporte Tecnico",
-    "shipping": "Despacho", "quotation": "Cotizacion", "return": "Devolucion",
-    "tech_evaluation": "Evaluacion Tecnica", "maintenance": "Mantenimiento",
-    "spare_parts": "Repuestos", "equipment_transfer": "Movimiento de Equipos",
-    "warranty": "Garantia", "repair": "Reparacion",
-    "spare_parts_store": "Repuestos bodega", "spare_parts_import": "Repuestos importacion",
+    # Con tildes correctas (calcan el texto EXACTO del formulario de
+    # referencia que Daniel pidio copiar -- ilus-front/formulario.html).
+    "install": "Instalación", "tech_support": "Soporte técnico",
+    "shipping": "Despacho", "quotation": "Cotización", "return": "Devolución",
+    "tech_evaluation": "Evaluación técnica", "maintenance": "Mantenimiento",
+    "spare_parts": "Repuesto y piezas", "equipment_transfer": "Movimiento de equipos",
+    "warranty": "Garantía", "repair": "Reparación",
+    "spare_parts_store": "Repuestos bodega", "spare_parts_import": "Repuestos importación",
 }
 # Los 8 tipos expuestos al publico / mas usados en el backoffice.
 TK_TIPOS_PUBLICOS = (
@@ -1554,5 +1557,280 @@ def register_tickets_routes(app, ctx):
 
     # exponer para tests / uso programatico
     app.config["_tk_import_desde_mant"] = _tk_import_desde_mant
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  FORMULARIO PUBLICO (Fase 2) — copia fiel de ilus-front/formulario.html
+    #  Sin login (Regla: una ruta sin @login_required ya es publica -- no
+    #  hay gate global). Prefijo /soporte/ exento de CSRF (app.py). Rate
+    #  limit propio (in-memory, por IP) en creacion/busqueda/adjuntos.
+    # ═══════════════════════════════════════════════════════════════════
+    # Bodega desde la que se busca el catalogo en el formulario publico
+    # (Daniel 2026-07-11: "necesito que traiga todos los productos de la
+    # bodega 02"). Codigo TABBO.KOBO real segun docs/erp/TABLAS-BD-Random.pdf;
+    # configurable por env var por si el codigo exacto no es '02' (LTRIM/RTRIM
+    # ya normaliza el padding de espacios de los char, pero el DIGITO puede
+    # variar segun como este cargado en Random -- confirmar en vivo).
+    BODEGA_SOPORTE = os.environ.get("TK_BODEGA_SOPORTE", "02").strip()
+    MAX_PRODUCTOS_BUSCADOS = 20
+    MAX_ADJUNTOS = 15
+    MAX_ADJUNTO_MB = 25  # Cloud Run limita CADA request HTTP a 32MB; se sube
+                         # 1 archivo por request (igual que el composer interno),
+                         # asi que el techo real es por-archivo, no por-lote.
+    _EXT_PERMITIDAS = {
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic",
+        ".mp4", ".mov", ".webm", ".avi",
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt", ".csv",
+    }
+
+    _RL_PUBLICO = {}  # ip -> [timestamps] (ventana deslizante, in-memory)
+
+    def _rl_ok(clave, max_req, ventana_seg):
+        ahora = time.time()
+        arr = [t for t in (_RL_PUBLICO.get(clave) or []) if (ahora - t) < ventana_seg]
+        if len(arr) >= max_req:
+            _RL_PUBLICO[clave] = arr
+            return False
+        arr.append(ahora)
+        _RL_PUBLICO[clave] = arr
+        return True
+
+    def _ip_cliente():
+        # Cloud Run va detras de un proxy -- X-Forwarded-For trae la IP real.
+        xff = request.headers.get("X-Forwarded-For", "")
+        return (xff.split(",")[0].strip() if xff else request.remote_addr) or "desconocida"
+
+    def _tk_upload_key():
+        k = app.secret_key
+        return k.encode() if isinstance(k, str) else (k or b"ilus-tickets")
+
+    def _tk_upload_token(tid, ttl_horas=72):
+        """Token firmado (HMAC) sin estado en BD -- mismo patron que
+        _ot_firma_token. Gatea la subida de adjuntos del formulario publico:
+        sin el token de ESTE ticket, nadie puede subir archivos a otro."""
+        import hmac as _hmac, hashlib as _hl, base64 as _b64
+        exp = int(time.time()) + int(ttl_horas) * 3600
+        sig = _hmac.new(_tk_upload_key(), f"{tid}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
+        return _b64.urlsafe_b64encode(f"{tid}:{exp}:{sig}".encode()).decode().rstrip("=")
+
+    def _tk_upload_token_validar(token, tid):
+        import hmac as _hmac, hashlib as _hl, base64 as _b64
+        try:
+            if not token or len(token) > 200:
+                return False
+            raw = _b64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+            tid_s, exp_s, sig = raw.split(":")
+            if int(tid_s) != int(tid):
+                return False
+            exp = int(exp_s)
+            good = _hmac.new(_tk_upload_key(), f"{tid_s}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
+            if not _hmac.compare_digest(good, sig) or time.time() > exp:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _tel_chileno_valido(v):
+        n = re.sub(r"[^\d]", "", str(v or ""))
+        n = n[2:] if n.startswith("56") else n
+        return bool(re.match(r"^(9\d{8}|[2-9]\d{7,8})$", n))
+
+    def _email_valido(v):
+        return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$", str(v or "").strip()))
+
+    # ── GET /soporte — pagina publica (standalone, sin sidebar) ──
+    @app.route("/soporte")
+    def tk_soporte_publico():
+        return render_template(
+            "tickets/soporte_publico.html",
+            tk_tipos_publicos=TK_TIPOS_PUBLICOS, tipo_label=TIPO_LABEL,
+            max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB)
+
+    # ── GET /soporte/api/erp/productos — catalogo general (read-only) ──
+    @app.route("/soporte/api/erp/productos", methods=["GET"])
+    def tk_soporte_api_productos():
+        if not _rl_ok("prod:" + _ip_cliente(), 30, 60):
+            return jsonify({"ok": False, "error": "Demasiadas búsquedas, espera un momento", "resultados": []}), 200
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "resultados": []})
+        if not _random_sql_query:
+            return jsonify({"ok": False, "error": "Catálogo no disponible", "resultados": []}), 200
+        q_like = f"%{q.upper()[:60]}%"
+        # Daniel 2026-07-11: la busqueda SOLO consultaba MAEPR (catalogo
+        # maestro, sin bodega) -- por eso "no traia todos los productos":
+        # MAEPR es el maestro completo (todas las bodegas mezcladas), asi que
+        # en realidad sobraban productos de otras bodegas/descontinuados en
+        # vez de faltar. El stock POR bodega vive en MAEST (KOBO=codigo de
+        # bodega, KOPR=producto), segun docs/erp/TABLAS-BD-Random.pdf. Se
+        # exige EXISTS contra MAEST con KOBO=BODEGA_SOPORTE para traer solo
+        # productos con stock real en esa bodega.
+        try:
+            rows = _random_sql_query(
+                f"""
+                SELECT DISTINCT TOP {MAX_PRODUCTOS_BUSCADOS}
+                       LTRIM(RTRIM(pr.KOPR)) AS sku, LTRIM(RTRIM(pr.NOKOPR)) AS nombre
+                  FROM MAEPR pr
+                 WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
+                   AND EXISTS (
+                       SELECT 1 FROM MAEST st
+                        WHERE LTRIM(RTRIM(st.KOPR)) = LTRIM(RTRIM(pr.KOPR))
+                          AND LTRIM(RTRIM(st.KOBO)) = %s
+                   )
+                 ORDER BY nombre
+                """,
+                (q_like, q_like, BODEGA_SOPORTE), max_rows=MAX_PRODUCTOS_BUSCADOS,
+            ) or []
+        except Exception as _e:
+            print(f"[tk_soporte_productos] error (bodega={BODEGA_SOPORTE}): {_e}", flush=True)
+            return jsonify({"ok": False, "error": "Catálogo no disponible ahora", "resultados": []}), 200
+        return jsonify({"ok": True, "resultados": [
+            {"sku": r.get("sku") or "", "nombre": r.get("nombre") or ""} for r in rows if r.get("nombre")]})
+
+    # ── POST /soporte/api/crear — crea el ticket publico ──
+    @app.route("/soporte/api/crear", methods=["POST"])
+    def tk_soporte_api_crear():
+        if not _rl_ok("crear:" + _ip_cliente(), 8, 300):
+            return jsonify({"ok": False, "error": "Demasiadas solicitudes desde tu conexión. Intenta en unos minutos."}), 429
+        d = request.get_json(silent=True) or {}
+
+        tipo = (d.get("tipo") or "").strip().lower()
+        if tipo not in TK_TIPOS_PUBLICOS:
+            return jsonify({"ok": False, "error": "Selecciona un tipo de solicitud válido."}), 400
+
+        rut_raw = (d.get("rut") or "").strip()
+        rut = rut_raw
+        if validar_rut:
+            ok_rut, rut_or_msg = validar_rut(rut_raw)
+            if not ok_rut:
+                return jsonify({"ok": False, "error": f"RUT inválido: {rut_or_msg}"}), 400
+            rut = rut_or_msg
+        if not rut:
+            return jsonify({"ok": False, "error": "Ingresa un RUT válido."}), 400
+
+        nombre_contacto = (d.get("nombre_contacto") or "").strip()
+        if not nombre_contacto:
+            return jsonify({"ok": False, "error": "Ingresa un nombre de contacto."}), 400
+
+        phone = (d.get("phone") or "").strip()
+        if not _tel_chileno_valido(phone):
+            return jsonify({"ok": False, "error": "Ingresa un teléfono válido."}), 400
+
+        email = (d.get("email") or "").strip()
+        if not _email_valido(email):
+            return jsonify({"ok": False, "error": "Ingresa un correo válido."}), 400
+
+        direccion = (d.get("direccion") or "").strip()
+        if not direccion:
+            return jsonify({"ok": False, "error": "Ingresa una dirección."}), 400
+
+        productos = d.get("productos") or []  # [{sku, nombre}]
+        if not productos:
+            return jsonify({"ok": False, "error": "Selecciona al menos un producto."}), 400
+
+        descripcion = (d.get("descripcion") or "").strip()
+        if not descripcion:
+            return jsonify({"ok": False, "error": "Describe el problema."}), 400
+
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tk_tickets "
+                    "(origen, estado, tipo, prioridad, descripcion, rut, empresa, nombre_contacto, "
+                    " email, phone, direccion, direccion_lat, direccion_lng, direccion_place_id, "
+                    " comuna_nombre, sucursal, producto, sku, numero_documento, created_by) "
+                    "VALUES ('form','open',%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'cliente')",
+                    (tipo, descripcion[:2000], rut[:12],
+                     (d.get("empresa") or "").strip()[:150] or None,
+                     nombre_contacto[:150], email[:150], phone[:20],
+                     direccion[:255],
+                     d.get("direccion_lat") or None, d.get("direccion_lng") or None,
+                     (d.get("direccion_place_id") or "").strip()[:200] or None,
+                     (d.get("comuna_nombre") or "").strip()[:120] or None,
+                     (d.get("sucursal") or "").strip()[:100] or None,
+                     ", ".join(p.get("nombre", "") for p in productos if p.get("nombre"))[:2000] or None,
+                     ", ".join(p.get("sku", "") for p in productos if p.get("sku"))[:500] or None,
+                     (d.get("numero_documento") or "").strip()[:500] or None))
+                tid = cur.lastrowid
+                cur.execute(
+                    "UPDATE tk_tickets SET numero_ticket = "
+                    "CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                    (_chile_now_year(), tid))
+                for p in productos[:20]:
+                    try:
+                        cur.execute(
+                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad) "
+                            "VALUES (%s,%s,%s,1)",
+                            (tid, (p.get("sku") or "").strip()[:100] or None,
+                             (p.get("nombre") or "").strip()[:300] or "Equipo"))
+                    except Exception:
+                        pass
+            conn.commit()
+        finally:
+            conn.close()
+
+        numero_row = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (tid,))
+        numero = numero_row["numero_ticket"] if numero_row else None
+        _tk_log(tid, "creacion", f"Ticket {numero} creado desde el formulario público", usuario="cliente")
+        try:
+            _audit("tk_ticket_create_publico", target_type="tk_ticket", target_id=tid,
+                   details={"numero": numero, "tipo": tipo, "ip": _ip_cliente()})
+        except Exception:
+            pass
+
+        return jsonify({
+            "ok": True, "id": tid, "numero_ticket": numero,
+            "upload_token": _tk_upload_token(tid),
+        })
+
+    # ── POST /soporte/api/adjuntos/<tid> — 1 archivo por request, gated por token ──
+    @app.route("/soporte/api/adjuntos/<int:tid>", methods=["POST"])
+    def tk_soporte_api_adjuntos(tid):
+        if not _rl_ok("adj:" + _ip_cliente(), 30, 300):
+            return jsonify({"ok": False, "error": "Demasiadas subidas, espera un momento"}), 429
+        token = request.form.get("token") or request.headers.get("X-Upload-Token") or ""
+        if not _tk_upload_token_validar(token, tid):
+            return jsonify({"ok": False, "error": "Token de subida inválido o expirado"}), 403
+        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s AND origen='form'", (tid,)):
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        if not _uploader_upload:
+            return jsonify({"ok": False, "error": "Almacenamiento no disponible"}), 503
+
+        f = request.files.get("file")
+        if not f or not f.filename:
+            return jsonify({"ok": False, "error": "No llegó ningún archivo"}), 400
+
+        actuales = mysql_fetchone("SELECT COUNT(*) n FROM tk_adjuntos WHERE ticket_id=%s", (tid,))
+        if actuales and int(actuales["n"]) >= MAX_ADJUNTOS:
+            return jsonify({"ok": False, "error": f"Máximo {MAX_ADJUNTOS} archivos por solicitud"}), 400
+
+        ext = ("." + f.filename.rsplit(".", 1)[-1].lower()) if "." in f.filename else ""
+        if ext not in _EXT_PERMITIDAS:
+            return jsonify({"ok": False, "error": f"Tipo de archivo no permitido ({ext or 'sin extensión'})"}), 400
+
+        f.seek(0, 2)
+        size_mb = f.tell() / (1024 * 1024)
+        f.seek(0)
+        if size_mb > MAX_ADJUNTO_MB:
+            return jsonify({"ok": False, "error": f"El archivo supera el máximo de {MAX_ADJUNTO_MB} MB"}), 400
+
+        mime = (f.mimetype or "").lower()
+        rt = "image" if mime.startswith("image") else ("video" if mime.startswith("video") else "raw")
+        try:
+            res = _uploader_upload(f, folder="tickets", resource_type=rt)
+        except Exception as _e:
+            print(f"[tk_soporte_adjuntos] error subiendo tid={tid}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo subir el archivo"}), 500
+        url = res.get("secure_url") or res.get("url")
+        if not url:
+            return jsonify({"ok": False, "error": "Subida sin URL"}), 500
+
+        mysql_execute(
+            "INSERT INTO tk_adjuntos "
+            "(ticket_id, archivo_url, archivo_path, archivo_nombre, mime_type, file_size_kb, origen, subido_por) "
+            "VALUES (%s,%s,%s,%s,%s,%s,'form','cliente')",
+            (tid, url[:500], (res.get("public_id") or "")[:500] or None,
+             f.filename[:300], mime[:150] or None, int(size_mb * 1024)))
+        return jsonify({"ok": True, "url": url, "nombre": f.filename})
 
     print("[ILUS] Modulo Tickets central registrado (/tickets).", flush=True)
