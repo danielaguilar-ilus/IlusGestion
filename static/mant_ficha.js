@@ -492,6 +492,33 @@ function _ilusSetupEditarCliente(modalEl) {
     });
   } catch (e) {}
   try { _ilusInitDireccionCliente(); } catch (e) {}
+  try { _ilusCargarEjecutivos(); } catch (e) {}
+}
+
+// ─── Ejecutivo asignado (2026-07-11) ────────────────────────────────
+// Puebla el <select id="ec_ejecutivo_user_id"> del modal Editar cliente con
+// TODOS los usuarios activos de app_users (no filtra por rol — no existe un
+// rol formal "ejecutivo"). Se recarga cada vez que se abre el modal para
+// reflejar altas/bajas recientes de usuarios. Usa textContent (no innerHTML
+// con interpolación) para no arriesgar inyección con nombres de usuario.
+async function _ilusCargarEjecutivos() {
+  const sel = document.getElementById('ec_ejecutivo_user_id');
+  if (!sel) return;
+  const current = sel.getAttribute('data-current') || '';
+  sel.innerHTML = '<option value="">— Sin asignar —</option>';
+  try {
+    const r = await fetch('/mantenciones/api/ejecutivos');
+    const lista = await r.json();
+    (Array.isArray(lista) ? lista : []).forEach(function (u) {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = u.nombre || u.email || ('Usuario #' + u.id);
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    // Si falla el fetch, queda solo "Sin asignar" — no rompe el resto del modal.
+  }
+  sel.value = current;
 }
 
 function abrirEditarCliente() {
@@ -3799,6 +3826,9 @@ async function guardarCliente() {
     contacto2_cargo:   $v('ec_contacto2_cargo'),
     contacto2_tel:     $v('ec_contacto2_tel'),
     contacto2_email:   $v('ec_contacto2_email'),
+    // Ejecutivo asignado (2026-07-11): responsable de comunicarse con el
+    // cliente. Vacío ('— Sin asignar —') → null, el backend desasigna.
+    ejecutivo_user_id: $v('ec_ejecutivo_user_id') || null,
     // Notas
     notas:             $v('ec_notas'),
   };

@@ -1119,6 +1119,31 @@
             {% endif %}
           </div>
 
+          {# ── Ejecutivo asignado (2026-07-11): responsable de comunicarse
+             con el cliente / atender sus falencias. Cualquier usuario activo
+             de app_users, asignado a mano por el superadmin — no hay rol
+             formal "ejecutivo". ── #}
+          <div class="info-section-h mt-4" style="font-size:.66rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">
+            <i class="bi bi-person-badge me-1"></i>Ejecutivo asignado
+          </div>
+          <div class="info-grid">
+            <div class="info-row">
+              <span class="info-lbl">Responsable</span>
+              <span class="info-val">
+                {% if cliente.ejecutivo_nombre %}
+                <span class="cli-badge" style="background:#dc2626;color:#fff;font-size:.68rem;padding:3px 10px;font-weight:800">
+                  <i class="bi bi-person-check-fill me-1"></i>{{ cliente.ejecutivo_nombre }}
+                </span>
+                {% if cliente.ejecutivo_email %}<span class="text-muted ms-2" style="font-size:.76rem">{{ cliente.ejecutivo_email }}</span>{% endif %}
+                {% else %}
+                <span class="text-muted" style="font-size:.82rem">
+                  <i class="bi bi-person-dash me-1"></i>Sin asignar — edita el cliente para asignar quién lo atiende
+                </span>
+                {% endif %}
+              </span>
+            </div>
+          </div>
+
           {# ── Contacto principal ── #}
           {% if cliente.contacto_nombre or cliente.contacto_email or cliente.contacto_tel %}
           <div class="info-section-h mt-4" style="font-size:.66rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">
@@ -8151,6 +8176,22 @@ async function vhGuardar(){
           <div class="col-12 col-md-4">
             <label class="form-label fw-semibold">Email</label>
             <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}">
+          </div>
+
+          {# ── Ejecutivo asignado (2026-07-11) ──
+             Responsable de comunicarse con el cliente / atender la falencia.
+             Se puebla por JS (fetch a /mantenciones/api/ejecutivos) con TODOS
+             los usuarios activos de app_users — no filtra por rol, porque no
+             existe un rol formal "ejecutivo" en el sistema de permisos. #}
+          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
+            <i class="bi bi-person-badge me-1"></i>Ejecutivo asignado
+            <span class="text-muted fw-normal" style="font-size:.72rem">— quién se encarga de comunicarse con este cliente</span>
+          </div></div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold">Responsable</label>
+            <select id="ec_ejecutivo_user_id" class="form-select" data-current="{{ cliente.ejecutivo_user_id or '' }}">
+              <option value="">— Sin asignar —</option>
+            </select>
           </div>
 
           {# ── Contacto secundario ── #}

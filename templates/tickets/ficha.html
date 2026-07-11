@@ -328,9 +328,15 @@ function renderThread(mensajes, adjuntos){
       const thumb = esImagen(a.mime_type) ? '<img src="'+esc(url)+'">' : '<i class="bi bi-paperclip"></i>';
       return '<a class="rp-adj-chip" href="'+esc(url)+'" target="_blank" rel="noopener">'+thumb+esc(a.archivo_nombre||'archivo')+'</a>';
     }).join('');
+    // 'comentario'/'mensaje' YA pasan por _sanitizar_html_mensaje() en el
+    // backend antes de guardarse, por eso se renderizan como HTML crudo.
+    // 'client_message' es un tipo RESERVADO para Fase 3 (mensajes entrantes
+    // de clientes por correo/whatsapp) que aun no sanitiza nada -- mientras
+    // no exista ese sanitizador, se escapa como texto plano (fail-safe).
+    const contenidoHtml = esCliente ? esc(m.contenido||'') : (m.contenido||'');
     return '<div class="rp-msg '+cls+'"><div class="rp-bubble">'
       + '<div class="rp-meta">'+who+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>'
-      + '<div>'+(m.contenido||'')+'</div>'
+      + '<div>'+contenidoHtml+'</div>'
       + (adjHtml? '<div>'+adjHtml+'</div>':'')
       + '</div></div>';
   }).join('');

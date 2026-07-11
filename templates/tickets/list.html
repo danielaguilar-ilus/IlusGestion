@@ -51,7 +51,19 @@
 .nt-tipo-pill{border:1.5px solid #e5e7eb;border-radius:9px;padding:8px 6px;text-align:center;cursor:pointer;
   font-size:.76rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;}
 .nt-tipo-pill:hover{border-color:#dc2626;color:#dc2626;}
+.nt-tipo-pill:focus-visible{outline:2px solid #dc2626;outline-offset:2px;}
 .nt-tipo-pill.sel{border-color:#dc2626;background:#fef2f2;color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.1);}
+.nt-gar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;
+  background:#fff;border:1px dashed #e5e7eb;border-radius:10px;padding:9px 13px;}
+.nt-gar .lbl{font-size:.8rem;font-weight:700;color:#475569;}
+.nt-gar-opts{display:flex;gap:7px;}
+.nt-gar-pill{border:1.5px solid #e5e7eb;border-radius:50px;padding:5px 15px;cursor:pointer;
+  font-size:.78rem;font-weight:700;color:#6b7280;background:#fff;transition:all .12s;min-height:32px;}
+.nt-gar-pill:hover{border-color:#dc2626;color:#dc2626;}
+.nt-gar-pill.sel{border-color:#dc2626;background:#dc2626;color:#fff;}
+.nt-gar-pill:focus-visible{outline:2px solid #dc2626;outline-offset:2px;}
+.tk-gar-badge{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:50px;
+  font-size:.6rem;font-weight:800;padding:2px 8px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
 .nt-ac{position:absolute;z-index:1060;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;
   border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14);max-height:220px;overflow:auto;margin-top:3px;display:none;}
 .nt-ac.open{display:block;}
@@ -97,6 +109,10 @@
     {% if permissions.superadmin %}
     <button class="btn btn-sm btn-outline-light" id="btnImportarMant" title="Importar tickets de Mantenciones">
       <i class="bi bi-database-down me-1"></i>Importar de Mantenciones</button>
+    <button class="btn btn-sm btn-outline-light" id="btnImportarTaa" title="Importar los tickets históricos del sistema Triple A (CSV Reporte Tickets + Reporte SLA)">
+      <i class="bi bi-file-earmark-arrow-up me-1"></i>Importar CSV Triple A</button>
+    <input type="file" id="taaFileTickets" accept=".csv" style="display:none">
+    <input type="file" id="taaFileSla" accept=".csv" style="display:none">
     {% endif %}
     <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket desde un documento del ERP (factura, boleta, guía, etc.)">
       <i class="bi bi-file-earmark-text me-1"></i>Desde documento ERP</button>
@@ -145,10 +161,20 @@
           <div id="fTipoWrap">
             <div class="nt-tipos" id="ntTipos">
               {% for t in tk_tipos_publicos %}
-              <div class="nt-tipo-pill" data-tipo="{{ t }}">{{ tipo_label[t] }}</div>
+              <div class="nt-tipo-pill" data-tipo="{{ t }}" tabindex="0" role="button">{{ tipo_label[t] }}</div>
               {% endfor %}
             </div>
             <div class="nt-err-msg" id="ntErrTipo">Selecciona un tipo de solicitud.</div>
+          </div>
+          {# Garantia SEPARADA del tipo (pedido Daniel 2026-07-11): puede
+             aplicar a cualquier tipo de solicitud. Regla de negocio futura:
+             si aplica garantia, el servicio no se cobra. #}
+          <div class="nt-gar" id="ntGarWrap">
+            <span class="lbl"><i class="bi bi-shield-check me-1"></i>¿Aplica garantía?</span>
+            <div class="nt-gar-opts">
+              <div class="nt-gar-pill sel" data-gar="0" tabindex="0" role="button">No</div>
+              <div class="nt-gar-pill" data-gar="1" tabindex="0" role="button">Sí, es garantía</div>
+            </div>
           </div>
         </div>
 
@@ -164,22 +190,24 @@
             <div class="nt-ac" id="ntAcCli"></div>
           </div>
           <div class="nt-grid" style="margin-top:10px;">
-            <div class="nt-field req" id="fRutWrap"><label>RUT</label>
+            <div class="nt-field req" id="fRutWrap"><label for="ntRut">RUT</label>
               <input type="text" id="ntRut" class="form-control" placeholder="Ej: 76.123.456-7">
               <div class="nt-err-msg" id="ntErrRut">El RUT es obligatorio.</div></div>
-            <div class="nt-field req" id="fEmpresaWrap"><label>Empresa</label>
+            <div class="nt-field req" id="fEmpresaWrap"><label for="ntEmpresa">Empresa</label>
               <input type="text" id="ntEmpresa" class="form-control" placeholder="Nombre de la empresa">
               <div class="nt-err-msg" id="ntErrEmpresa">El nombre de la empresa es obligatorio.</div></div>
-            <div class="nt-field req" id="fContactoWrap"><label>Nombre de contacto</label>
+            <div class="nt-field req" id="fContactoWrap"><label for="ntContacto">Nombre de contacto</label>
               <input type="text" id="ntContacto" class="form-control">
               <div class="nt-err-msg" id="ntErrContacto">El nombre de contacto es obligatorio.</div></div>
-            <div class="nt-field req" id="fPhoneWrap"><label>Teléfono</label>
+            <div class="nt-field req" id="fPhoneWrap"><label for="ntPhone">Teléfono</label>
               <input type="tel" id="ntPhone" class="form-control" placeholder="+56 9 1234 5678">
-              <div class="nt-vfeed" id="ntVPhone"></div></div>
-            <div class="nt-field req" id="fEmailWrap"><label>Correo</label>
+              <div class="nt-vfeed" id="ntVPhone"></div>
+              <div class="nt-err-msg" id="ntErrPhone">Teléfono obligatorio.</div></div>
+            <div class="nt-field req" id="fEmailWrap"><label for="ntEmail">Correo</label>
               <input type="email" id="ntEmail" class="form-control" placeholder="cliente@correo.cl">
-              <div class="nt-vfeed" id="ntVEmail"></div></div>
-            <div class="nt-field"><label>Sucursal <span style="color:#cbd5e1">(opcional)</span></label>
+              <div class="nt-vfeed" id="ntVEmail"></div>
+              <div class="nt-err-msg" id="ntErrEmail">Correo obligatorio.</div></div>
+            <div class="nt-field"><label for="ntSucursal">Sucursal <span style="color:#cbd5e1">(opcional)</span></label>
               <input type="text" id="ntSucursal" class="form-control"></div>
           </div>
         </div>
@@ -213,16 +241,16 @@
           <h6><span class="n">5</span>Problema</h6>
           <div class="nt-grid">
             <div class="nt-field full req" id="fDescWrap">
-              <label>¿Qué está pasando?</label>
+              <label for="ntDesc">¿Qué está pasando?</label>
               <textarea id="ntDesc" class="form-control" rows="3" maxlength="2000" placeholder="Describe el problema o la solicitud…"></textarea>
               <div class="nt-counter"><span id="ntDescCount">0</span>/2000</div>
               <div class="nt-err-msg" id="ntErrDesc">Describe el problema o la solicitud.</div>
             </div>
-            <div class="nt-field"><label>Prioridad</label>
+            <div class="nt-field"><label for="ntPrio">Prioridad</label>
               <select id="ntPrio" class="form-select">
                 {% for p in tk_prioridades %}<option value="{{ p }}"{% if p=='media' %} selected{% endif %}>{{ p|capitalize }}</option>{% endfor %}
               </select></div>
-            <div class="nt-field"><label>N° boleta / factura <span style="color:#cbd5e1">(opcional)</span></label>
+            <div class="nt-field"><label for="ntDoc">N° boleta / factura <span style="color:#cbd5e1">(opcional)</span></label>
               <input type="text" id="ntDoc" class="form-control"></div>
           </div>
         </div>
@@ -281,9 +309,10 @@ async function cargarTickets(){
     const unread = tk.unread_count > 0
       ? '<span class="tk-unread">'+tk.unread_count+' nuevo'+(tk.unread_count>1?'s':'')+'</span>' : '';
     const tipoPill = tk.tipo ? '<span class="tk-tipo">'+esc(TIPO_LABEL[tk.tipo]||tk.tipo)+'</span>' : '';
+    const garBadge = tk.es_garantia ? ' <span class="tk-gar-badge"><i class="bi bi-shield-check"></i> Garantía</span>' : '';
     return '<div class="tk-row prio-'+(tk.prioridad||'media')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
       + '<span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'
-      + '<div class="tk-meta"><div class="tk-cliente">'+esc(cliente)+' '+unread+'</div>'
+      + '<div class="tk-meta"><div class="tk-cliente">'+esc(cliente)+' '+unread+garBadge+'</div>'
       + '<div class="tk-titulo">'+esc(titulo)+'</div></div>'
       + tipoPill
       + '<span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span>'
@@ -315,6 +344,7 @@ cargarTickets();
 // DENTRO de DOMContentLoaded) -- aca faltaba aplicarlo.
 document.addEventListener('DOMContentLoaded', function(){
 let ntTipoSel = '';
+let ntEsGarantia = 0;      // garantia SEPARADA del tipo (aplica a cualquiera)
 let ntCliente = null;      // {empresa, rut}
 const ntEquipos = [];      // [{sku, nombre}]
 const ntModalEl = document.getElementById('ntModal');
@@ -340,6 +370,8 @@ function limpiarNtErr(id){
 
 function ntReset(){
   ntTipoSel = ''; ntCliente = null; ntEquipos.length = 0;
+  ntEsGarantia = 0;
+  document.querySelectorAll('.nt-gar-pill').forEach(x=>x.classList.toggle('sel', x.dataset.gar==='0'));
   document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
   document.getElementById('ntBuscarCli').value='';
   document.querySelector('#ntBuscarCliWrap .nt-search').classList.remove('has-tag');
@@ -359,11 +391,29 @@ function ntReset(){
 }
 ntModalEl.addEventListener('hidden.bs.modal', ntReset);
 
-document.querySelectorAll('.nt-tipo-pill').forEach(el=>el.addEventListener('click',()=>{
+function ntSeleccionarTipo(el){
   document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
   el.classList.add('sel'); ntTipoSel = el.dataset.tipo;
   marcarNtOk('fTipoWrap');
-}));
+}
+document.querySelectorAll('.nt-tipo-pill').forEach(el=>{
+  el.addEventListener('click', ()=>ntSeleccionarTipo(el));
+  el.addEventListener('keydown', function(e){
+    if(e.key==='Enter' || e.key===' '){ e.preventDefault(); ntSeleccionarTipo(el); }
+  });
+});
+
+// ── Toggle garantía (separado del tipo) ──
+function ntSeleccionarGar(el){
+  document.querySelectorAll('.nt-gar-pill').forEach(x=>x.classList.remove('sel'));
+  el.classList.add('sel'); ntEsGarantia = el.dataset.gar === '1' ? 1 : 0;
+}
+document.querySelectorAll('.nt-gar-pill').forEach(el=>{
+  el.addEventListener('click', ()=>ntSeleccionarGar(el));
+  el.addEventListener('keydown', function(e){
+    if(e.key==='Enter' || e.key===' '){ e.preventDefault(); ntSeleccionarGar(el); }
+  });
+});
 
 // ── Autocomplete cliente (ERP) ──
 const ntAcCli = document.getElementById('ntAcCli');
@@ -526,6 +576,7 @@ document.getElementById('ntBtnCrear').addEventListener('click', async function()
   const btn = this; btn.disabled = true;
   const payload = {
     tipo: ntTipoSel,
+    es_garantia: ntEsGarantia,
     prioridad: document.getElementById('ntPrio').value,
     rut: document.getElementById('ntRut').value.trim(),
     empresa: document.getElementById('ntEmpresa').value.trim(),
@@ -571,9 +622,12 @@ document.getElementById('btnDesdeDoc').addEventListener('click', async function(
   ilusLoader.hide();
   if(!prev.ok){ ilusToast(prev.error||'Documento no encontrado','error'); return; }
   const doc = prev.documento;
+  // NOTA: ilusConfirm ya escapa `message`/`sub` internamente (default
+  // messageHtml/subHtml=false) -- NO envolver con esc() aca o el texto
+  // queda doble-escapado (ej: "Gimnasio &amp;amp; Fitness").
   const ok = await ilusConfirm({
     title:'Crear ticket desde '+esc(doc.tido)+'-'+esc(doc.nudo),
-    message:'Cliente: '+esc(doc.cliente_nombre||'—')+' · RUT: '+esc(doc.cliente_rut||'—'),
+    message:'Cliente: '+(doc.cliente_nombre||'—')+' · RUT: '+(doc.cliente_rut||'—'),
     sub: doc.lineas.length + ' línea(s) de producto se asociarán como equipo del ticket.',
     okLabel:'Crear ticket', cancelLabel:'Cancelar',
   });
@@ -626,6 +680,74 @@ if(btnImportar){
       cargarTickets();
     }catch(e){ ilusLoader.hide(); ilusToast('Error al importar','error'); }
   });
+}
+
+// ══════════════ Importar CSV Triple A (superadmin) ══════════════
+// Flujo: elegir "Reporte Tickets.csv" (obligatorio) → opcionalmente el
+// "Reporte SLA.csv" → dry-run con resumen → confirmar → importar real.
+const btnTaa = document.getElementById('btnImportarTaa');
+if(btnTaa){
+  const fTk = document.getElementById('taaFileTickets');
+  const fSla = document.getElementById('taaFileSla');
+
+  async function taaEnviar(dry){
+    const fd = new FormData();
+    fd.append('csv_tickets', fTk.files[0]);
+    if(fSla.files[0]) fd.append('csv_sla', fSla.files[0]);
+    const r = await fetch('/tickets/api/admin/importar-taa?dry_run='+(dry?'1':'0'), {method:'POST', body:fd});
+    return (await r.json());
+  }
+
+  async function taaFlujo(){
+    ilusLoader.show('Analizando CSV de Triple A…');
+    let prev;
+    try{ prev = await taaEnviar(true); }
+    catch(e){ ilusLoader.hide(); ilusToast('No se pudo analizar el CSV','error'); return; }
+    ilusLoader.hide();
+    if(!prev.ok){ ilusToast(prev.error||'CSV inválido','error'); return; }
+    const rz = prev.resumen || {};
+    if(rz.error){ ilusToast(rz.error,'error'); return; }
+    if(!rz.importados){
+      await ilusAlert({title:'Nada nuevo que importar',
+        message:(rz.ya_importados||0)+' ticket(s) del CSV ya están en el sistema.',
+        sub:(rz.invalidos? rz.invalidos+' fila(s) ilegibles del export se omiten.':''), type:'info'});
+      return;
+    }
+    const ok = await ilusConfirm({
+      title:'Importar tickets de Triple A',
+      message:'Se importarán '+rz.importados+' ticket(s) nuevo(s) de '+rz.validos+' válidos en el CSV'
+        +(rz.ya_importados? ' ('+rz.ya_importados+' ya estaban)':'')+'.',
+      sub:'El correo de contacto quedará como daniel.aguilar@sphs.cl (editable); el original se conserva en las notas.'
+        +(rz.invalidos? ' · '+rz.invalidos+' fila(s) ilegibles se omiten.':''),
+      okLabel:'Importar ahora', cancelLabel:'Cancelar',
+    });
+    if(!ok) return;
+    ilusLoader.show('Importando tickets de Triple A…');
+    try{
+      const res = await taaEnviar(false);
+      ilusLoader.hide();
+      const rr = res.resumen || {};
+      if(!res.ok){ ilusToast(res.error||'Error al importar','error'); return; }
+      if(rr.errores){ ilusToast(rr.importados+' importados, '+rr.errores+' con error (revisa logs)','warning'); }
+      else { ilusToast('✓ '+(rr.importados||0)+' ticket(s) de Triple A importados','success'); }
+      cargarTickets();
+    }catch(e){ ilusLoader.hide(); ilusToast('Error al importar','error'); }
+  }
+
+  btnTaa.addEventListener('click', function(){ fTk.value=''; fSla.value=''; fTk.click(); });
+  fTk.addEventListener('change', async function(){
+    if(!fTk.files[0]) return;
+    const conSla = await ilusConfirm({
+      title:'Reporte SLA (opcional)',
+      message:'¿Quieres adjuntar también el "Reporte SLA" CSV?',
+      sub:'Aporta la fecha real de resolución y la duración de cada ticket. Si no lo tienes, continúa sin él.',
+      okLabel:'Sí, adjuntar SLA', cancelLabel:'Continuar sin SLA',
+    });
+    if(conSla){ fSla.click(); } else { taaFlujo(); }
+  });
+  fSla.addEventListener('change', function(){ taaFlujo(); });
+  // Si cierra el selector del SLA sin elegir archivo, seguir sin SLA
+  fSla.addEventListener('cancel', function(){ taaFlujo(); });
 }
 }); // cierre de document.addEventListener('DOMContentLoaded', ...)
 </script>

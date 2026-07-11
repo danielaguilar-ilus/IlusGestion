@@ -32977,6 +32977,11 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_clientes ADD COLUMN contacto2_email VARCHAR(200)",
                 "ALTER TABLE mant_clientes ADD COLUMN notas_confidenciales TEXT COMMENT 'Notas internas confidenciales para análisis IA'",
                 "ALTER TABLE mant_clientes MODIFY estado ENUM('activo','inactivo','prospecto','suspendido') DEFAULT 'activo'",
+                # Ejecutivo asignado (2026-07-11): responsable de comunicarse con el
+                # cliente / atender sus falencias. Sin FK estricta (mismo criterio
+                # que mant_visitas.tecnico_user_id) — apunta a app_users.id.
+                "ALTER TABLE mant_clientes ADD COLUMN ejecutivo_user_id INT NULL COMMENT 'FK app_users.id — responsable de comunicarse con este cliente'",
+                "CREATE INDEX idx_cli_ejecutivo ON mant_clientes (ejecutivo_user_id)",
             ]:
                 try:
                     cur.execute(_mig_sql)
@@ -40317,6 +40322,24 @@ def _mant_ficha_impl(cid):
     except Exception:
         pass
 
+    # ── Ejecutivo asignado (2026-07-11): resolver nombre/email para mostrar
+    # en la ficha. Cualquier usuario activo de app_users puede ser ejecutivo
+    # (no existe un rol formal "ejecutivo" — lo asigna el superadmin a mano).
+    cliente["ejecutivo_nombre"] = None
+    cliente["ejecutivo_email"] = None
+    if cliente.get("ejecutivo_user_id"):
+        try:
+            _ejec = mysql_fetchone(
+                "SELECT COALESCE(nombre, username) AS nombre, username AS email "
+                "  FROM app_users WHERE id=%s",
+                (cliente["ejecutivo_user_id"],)
+            )
+            if _ejec:
+                cliente["ejecutivo_nombre"] = _ejec.get("nombre")
+                cliente["ejecutivo_email"] = _ejec.get("email")
+        except Exception:
+            pass
+
     # ── Helper: normaliza datetime/date de MySQL a datetime.date ──────────
     def _d(val):
         """Convierte datetime o date a date para comparaciones seguras."""
@@ -40811,7 +40834,10 @@ def mant_cliente_update(cid):
               "direccion_lat","direccion_lng","direccion_place_id",
               "notas","notas_confidenciales","estado","tipo_cliente",
               # PLANIFICADOR 2026-06-10: día del mes preferido para mantención (1-28)
-              "dia_mantencion_pref"]
+              "dia_mantencion_pref",
+              # EJECUTIVO ASIGNADO 2026-07-11: responsable de comunicarse con el
+              # cliente (cualquier usuario activo de app_users, sin rol formal).
+              "ejecutivo_user_id"]
     # Día preferido: int 1-28 o None (28 máx → jamás falla en febrero).
     if "dia_mantencion_pref" in d:
         try:
@@ -40819,6 +40845,14 @@ def mant_cliente_update(cid):
             d["dia_mantencion_pref"] = _dp if 1 <= _dp <= 28 else None
         except (TypeError, ValueError):
             d["dia_mantencion_pref"] = None
+    # Ejecutivo asignado: int válido o None. Vacío/'null'/inválido → NULL
+    # (no falla el UPDATE, simplemente desasigna).
+    if "ejecutivo_user_id" in d:
+        try:
+            _eu = int(d.get("ejecutivo_user_id"))
+            d["ejecutivo_user_id"] = _eu if _eu > 0 else None
+        except (TypeError, ValueError):
+            d["ejecutivo_user_id"] = None
     # Validación dura del ENUM tipo_cliente — si llega valor distinto, lo descartamos
     # silenciosamente para no romper el UPDATE.
     if "tipo_cliente" in d:
@@ -42488,6 +42522,29 @@ def mant_tecnicos_list_api():
         sql += " AND active=1"
     sql += " ORDER BY nombre"
     rows = mysql_fetchall(sql, ()) or []
+    return jsonify([dict(r) for r in rows])
+
+
+# ══════════════════════════════════════════════════════════════════════
+# EJECUTIVO ASIGNADO — responsable de comunicarse con el cliente (2026-07-11)
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/ejecutivos", methods=["GET"])
+@_mant_required
+def mant_ejecutivos_list_api():
+    """JSON ligero para el dropdown 'Ejecutivo asignado' de la ficha cliente.
+
+    A diferencia de /mantenciones/api/tecnicos, acá NO se filtra por rol:
+    cualquier usuario activo de app_users puede ser el ejecutivo responsable
+    de un cliente (no existe un rol formal "ejecutivo" en el sistema de
+    roles/permisos). El superadmin asigna a mano quién es el responsable.
+    """
+    rows = mysql_fetchall(
+        "SELECT id, COALESCE(nombre, username) AS nombre, "
+        "       username AS email, active AS activo "
+        "  FROM app_users WHERE active=1 ORDER BY nombre",
+        ()
+    ) or []
     return jsonify([dict(r) for r in rows])
 
 

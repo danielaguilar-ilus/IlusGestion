@@ -30,6 +30,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
   font-size:.82rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;min-height:44px;}
 .sp-tipo .em{display:block;font-size:1.4rem;margin-bottom:4px;}
 .sp-tipo:hover{border-color:var(--ilus-red);}
+.sp-tipo:focus-visible{outline:2px solid var(--ilus-red);outline-offset:2px;}
 .sp-tipo.sel{border-color:var(--ilus-red);background:#fef2f2;color:var(--ilus-red);box-shadow:0 0 0 3px rgba(220,38,38,.12);}
 .sp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 @media(max-width:480px){.sp-grid{grid-template-columns:1fr;}}
@@ -108,7 +109,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <div class="hint">Elige el tipo de solicitud que mejor describe tu caso.</div>
     <div class="sp-tipos" id="spTipos">
       {% for t in tk_tipos_publicos %}
-      <div class="sp-tipo" data-tipo="{{ t }}">
+      <div class="sp-tipo" data-tipo="{{ t }}" tabindex="0" role="button">
         <span class="em">{{ {'install':'🔧','tech_support':'🛠️','maintenance':'⚙️','warranty':'🛡️','spare_parts':'🧩','quotation':'💬','shipping':'🚚','return':'↩️'}[t] }}</span>
         {{ tipo_label[t] }}
       </div>
@@ -122,28 +123,28 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <div class="hint">Con quién nos contactamos y a nombre de quién está la compra.</div>
     <div class="sp-grid">
       <div class="sp-field" id="fRutWrap">
-        <label>RUT de compra <span class="req">*</span></label>
+        <label for="spRut">RUT de compra <span class="req">*</span></label>
         <input type="text" id="spRut" placeholder="Ej: 76.123.456-7">
         <div class="fh">El RUT con el que se hizo la compra. Con o sin puntos, da igual.</div>
         <div class="fe">Ingresa un RUT válido.</div>
       </div>
       <div class="sp-field">
-        <label>Empresa o persona</label>
+        <label for="spEmpresa">Empresa o persona</label>
         <input type="text" id="spEmpresa" placeholder="Ej: Gimnasio Vital SpA">
         <div class="fh">Tal como aparece en la boleta o factura.</div>
       </div>
       <div class="sp-field" id="fContactoWrap">
-        <label>Nombre de contacto <span class="req">*</span></label>
+        <label for="spContacto">Nombre de contacto <span class="req">*</span></label>
         <input type="text" id="spContacto" placeholder="Ej: Juan Pérez">
         <div class="fe">Ingresa un nombre de contacto.</div>
       </div>
       <div class="sp-field" id="fPhoneWrap">
-        <label>Teléfono <span class="req">*</span></label>
+        <label for="spPhone">Teléfono <span class="req">*</span></label>
         <input type="tel" id="spPhone" placeholder="+56 9 1234 5678">
         <div class="fe">Ingresa un teléfono válido.</div>
       </div>
       <div class="sp-field full" id="fEmailWrap">
-        <label>Correo <span class="req">*</span></label>
+        <label for="spEmail">Correo <span class="req">*</span></label>
         <input type="email" id="spEmail" placeholder="tucorreo@empresa.cl">
         <div class="fh">Aquí te avisaremos del avance de tu solicitud.</div>
         <div class="fe">Ingresa un correo válido.</div>
@@ -156,7 +157,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <div class="hint">La dirección donde se encuentra la máquina. Empieza a escribir y elígela.</div>
     <div class="sp-grid">
       <div class="sp-field full" id="fDirWrap">
-        <label>Dirección <span class="req">*</span></label>
+        <label for="spDireccion">Dirección <span class="req">*</span></label>
         <input type="text" id="spDireccion" placeholder="Ej: Av. Colón 1265, Las Condes" autocomplete="off">
         <input type="hidden" id="spDirLat"><input type="hidden" id="spDirLng">
         <input type="hidden" id="spDirPlace"><input type="hidden" id="spComuna">
@@ -164,7 +165,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
         <div class="fe">Ingresa una dirección.</div>
       </div>
       <div class="sp-field full">
-        <label>Sucursal <span class="op">Opcional</span></label>
+        <label for="spSucursal">Sucursal <span class="op">Opcional</span></label>
         <input type="text" id="spSucursal" placeholder="Ej: Sede Providencia">
       </div>
     </div>
@@ -174,14 +175,14 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <h2><span class="n">4</span>El equipo</h2>
     <div class="hint">Busca y selecciona la máquina o producto. Puedes agregar varios.</div>
     <div class="sp-field full" id="fProdWrap">
-      <label>Productos <span class="req">*</span></label>
+      <label for="spBuscarProd">Productos <span class="req">*</span></label>
       <input type="text" id="spBuscarProd" placeholder="Escribe el nombre del equipo…" autocomplete="off">
       <div class="sp-ac" id="spAcProd"></div>
       <div class="fe">Selecciona al menos un producto.</div>
     </div>
     <div id="spProdChips" style="margin-top:8px;"></div>
     <div class="sp-field full" style="margin-top:14px;">
-      <label>N° de boleta o factura <span class="op">Opcional</span></label>
+      <label for="spDoc">N° de boleta o factura <span class="op">Opcional</span></label>
       <input type="text" id="spDoc" placeholder="Ej: 10683">
       <div class="fh">Aparece en la parte superior de tu documento. Nos ayuda a ubicar tu compra.</div>
     </div>
@@ -191,13 +192,13 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <h2><span class="n">5</span>Cuéntanos el problema</h2>
     <div class="hint">Mientras más detalle, más rápido lo resolvemos. Puedes adjuntar fotos, videos o documentos.</div>
     <div class="sp-field full" id="fDescWrap">
-      <label>¿Qué está pasando? <span class="req">*</span></label>
+      <label for="spDesc">¿Qué está pasando? <span class="req">*</span></label>
       <textarea id="spDesc" rows="3" maxlength="260" placeholder="Ej: La consola de la trotadora se apaga sola después de unos minutos de uso…"></textarea>
       <div class="sp-counter"><span id="spDescCount">260</span> caracteres restantes</div>
       <div class="fe">Describe el problema.</div>
     </div>
     <div class="sp-field full" style="margin-top:14px;">
-      <label>Fotos, videos o documentos <span class="op">Opcional</span></label>
+      <label for="spFile">Fotos, videos o documentos <span class="op">Opcional</span></label>
       <div class="sp-drop" id="spDrop">
         <i class="bi bi-paperclip"></i>
         <div class="t1">Arrastra tus archivos aquí o haz clic para elegir</div>
@@ -255,11 +256,15 @@ function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arg
 function marcarError(id, on){ document.getElementById(id).classList.toggle('err', !!on); }
 
 // ── Paso 1: tipo ──
+function spSeleccionarTipo(el){
+  document.querySelectorAll('.sp-tipo').forEach(x=>x.classList.remove('sel'));
+  el.classList.add('sel'); tipoSel = el.dataset.tipo;
+  document.getElementById('errTipo').style.display = 'none';
+}
 document.querySelectorAll('.sp-tipo').forEach(function(el){
-  el.addEventListener('click', function(){
-    document.querySelectorAll('.sp-tipo').forEach(x=>x.classList.remove('sel'));
-    el.classList.add('sel'); tipoSel = el.dataset.tipo;
-    document.getElementById('errTipo').style.display = 'none';
+  el.addEventListener('click', function(){ spSeleccionarTipo(el); });
+  el.addEventListener('keydown', function(e){
+    if(e.key==='Enter' || e.key===' '){ e.preventDefault(); spSeleccionarTipo(el); }
   });
 });
 
@@ -377,7 +382,9 @@ function validarTodo(){
   if(!/^(\+?56)?\s?9\s?\d{4}\s?\d{4}$|^(\+?56)?\s?[2-9]\d{7,8}$/.test(tel.replace(/[^\d+]/g,''))){ marcarError('fPhoneWrap', true); ok=false; } else marcarError('fPhoneWrap', false);
   const em = document.getElementById('spEmail').value.trim();
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(em)){ marcarError('fEmailWrap', true); ok=false; } else marcarError('fEmailWrap', false);
-  if(!document.getElementById('spDireccion').value.trim()){ marcarError('fDirWrap', true); ok=false; } else marcarError('fDirWrap', false);
+  const dirVal = document.getElementById('spDireccion').value.trim();
+  const dirLat = document.getElementById('spDirLat').value;
+  if(!dirVal || !dirLat){ marcarError('fDirWrap', true); ok=false; } else marcarError('fDirWrap', false);
   if(!productos.length){ marcarError('fProdWrap', true); ok=false; } else marcarError('fProdWrap', false);
   if(!document.getElementById('spDesc').value.trim()){ marcarError('fDescWrap', true); ok=false; } else marcarError('fDescWrap', false);
   return ok;

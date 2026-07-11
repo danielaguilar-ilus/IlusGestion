@@ -46,6 +46,17 @@ def _chile_now_year():
     return datetime.utcnow().year
 
 
+def _chile_hoy():
+    """Fecha de HOY en hora Chile (Regla #6 -- MySQL CURDATE() usa UTC, lo
+    que corre el corte del dia varias horas antes de medianoche en Chile)."""
+    try:
+        if _CL_TZ is not None:
+            return datetime.now(timezone.utc).astimezone(_CL_TZ).date()
+    except Exception:
+        pass
+    return datetime.utcnow().date()
+
+
 # ─────────────────────────────────────────────────────────────────────────
 #  Enums (fuente unica — tomados del modelo ilus-back ticket_details_*_enum)
 # ─────────────────────────────────────────────────────────────────────────
@@ -83,6 +94,10 @@ TK_TIPOS_PUBLICOS = (
     "install", "tech_support", "maintenance", "warranty",
     "spare_parts", "quotation", "shipping", "return",
 )
+# Tipos del MODAL interno (backoffice): TODOS menos 'warranty' — la garantia
+# es un toggle separado (es_garantia) porque puede aplicar a cualquier tipo
+# (pedido de Daniel 2026-07-11: "la garantia puede ser de todo").
+TK_TIPOS_MODAL = tuple(t for t in TK_TIPOS if t != "warranty")
 
 # Orden de negocio para el listado (bandeja): abiertos primero.
 _ESTADO_ORDER = {e: i for i, e in enumerate(
@@ -482,6 +497,37 @@ def register_tickets_routes(app, ctx):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+    def _ensure_tk_tickets_columns():
+        """Migracion aditiva de tk_tickets (patron _ensure_transporte_columns):
+        - es_garantia: la garantia es un flag SEPARADO del tipo (puede aplicar
+          a cualquier tipo de solicitud — pedido de Daniel 2026-07-11).
+        - resuelto_at: fecha real de resolucion/cierre (base para SLA).
+        - legacy_taa_id: ID del ticket en el sistema Triple A (CSV importado);
+          UNIQUE para que la importacion sea idempotente."""
+        try:
+            existentes = {r["COLUMN_NAME"] for r in mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tk_tickets'")}
+        except Exception as _e:
+            print(f"[ILUS][WARN] _ensure_tk_tickets_columns (schema check): {_e}", flush=True)
+            return
+        alters = []
+        if "es_garantia" not in existentes:
+            alters.append("ADD COLUMN es_garantia TINYINT(1) NOT NULL DEFAULT 0")
+        if "resuelto_at" not in existentes:
+            alters.append("ADD COLUMN resuelto_at DATETIME NULL")
+        if "legacy_taa_id" not in existentes:
+            alters.append("ADD COLUMN legacy_taa_id INT NULL")
+        for a in alters:
+            try:
+                mysql_execute(f"ALTER TABLE tk_tickets {a}")
+            except Exception as _e:
+                print(f"[ILUS][WARN] ALTER tk_tickets {a}: {_e}", flush=True)
+        try:
+            mysql_execute("CREATE UNIQUE INDEX uq_tk_legacy_taa ON tk_tickets (legacy_taa_id)")
+        except Exception:
+            pass  # ya existe
+
     def _ensure_tk_mensajes_columns():
         """Migracion aditiva por columnas (patron _ensure_transporte_columns):
         agrega to_email/cc_email/estado_envio a tk_mensajes si faltan. Necesario
@@ -509,6 +555,7 @@ def register_tickets_routes(app, ctx):
     with app.app_context():
         try:
             _ensure_tickets_tables()
+            _ensure_tk_tickets_columns()
             _ensure_tk_mensajes_columns()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
@@ -593,10 +640,16 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets")
     @_tickets_required
     def tk_list():
+        # BUG FIX 2026-07-11: tk_tipos_publicos NO se estaba pasando -> el modal
+        # renderizaba CERO pastillas de tipo, y como el tipo es obligatorio era
+        # IMPOSIBLE crear un ticket desde el modal (reporte de Daniel).
+        # El modal interno muestra TODOS los tipos menos 'warranty': la garantia
+        # ahora es un toggle SEPARADO (puede aplicar a cualquier tipo).
         return render_template(
             "tickets/list.html",
             estado_label=ESTADO_LABEL, tipo_label=TIPO_LABEL,
             tk_tipos=TK_TIPOS, tk_estados=TK_ESTADOS, tk_prioridades=TK_PRIORIDADES,
+            tk_tipos_publicos=TK_TIPOS_MODAL,
         )
 
     @app.route("/tickets/nuevo")
@@ -685,7 +738,7 @@ def register_tickets_routes(app, ctx):
         rows = mysql_fetchall(
             "SELECT t.id, t.numero_ticket, t.origen, t.estado, t.tipo, t.prioridad, "
             "       t.titulo, t.empresa, t.rut, t.nombre_contacto, t.asignado_a, "
-            "       t.created_at, t.updated_at, t.fecha_limite, "
+            "       t.created_at, t.updated_at, t.fecha_limite, t.es_garantia, "
             "       (SELECT COUNT(*) FROM tk_mensajes m "
             "          WHERE m.ticket_id=t.id AND m.tipo='client_message' "
             "            AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS unread_count "
@@ -697,14 +750,19 @@ def register_tickets_routes(app, ctx):
             tuple(params) + (limit, offset),
         )
 
+        # KPIs deben respetar los MISMOS filtros (wsql/params) que el listado
+        # de arriba -- si no, el conteo siempre escanea la tabla completa sin
+        # importar lo que el usuario esta filtrando. "Hoy" se calcula en hora
+        # Chile (Regla #6), no con CURDATE() de MySQL (UTC).
         kpi = mysql_fetchone(
             "SELECT "
             "  COUNT(*) AS total, "
             "  SUM(estado IN ('open','in_progress')) AS activos, "
             "  SUM(prioridad='urgente' AND estado NOT IN ('resolved','closed','cancelado')) AS urgentes, "
-            "  SUM(fecha_limite IS NOT NULL AND fecha_limite < CURDATE() "
+            "  SUM(fecha_limite IS NOT NULL AND fecha_limite < %s "
             "      AND estado NOT IN ('resolved','closed','cancelado')) AS vencidos "
-            "FROM tk_tickets"
+            f"FROM tk_tickets t{wsql}",
+            (_chile_hoy(),) + tuple(params),
         ) or {}
 
         return jsonify({
@@ -763,9 +821,9 @@ def register_tickets_routes(app, ctx):
                     " sucursal, nombre_contacto, email, phone, direccion, direccion_lat, "
                     " direccion_lng, direccion_place_id, region_nombre, comuna_nombre, "
                     " producto, marca, sku, numero_documento, erp_idmaeen, erp_koen, "
-                    " asignado_a, fecha_limite, notas_internas, created_by) "
+                    " asignado_a, fecha_limite, notas_internas, created_by, es_garantia) "
                     "VALUES (%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                    "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         _norm_enum(d.get("origen"), TK_ORIGENES, "backoffice"),
                         tipo, prio,
@@ -792,6 +850,7 @@ def register_tickets_routes(app, ctx):
                         d.get("fecha_limite") or None,
                         (d.get("notas_internas") or "").strip()[:5000] or None,
                         user,
+                        1 if d.get("es_garantia") else 0,
                     ),
                 )
                 tid = cur.lastrowid
@@ -815,8 +874,8 @@ def register_tickets_routes(app, ctx):
                              (eq.get("sku") or "").strip()[:100] or None,
                              int(eq.get("cantidad") or 1)),
                         )
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        print(f"[tk_api_create] equipo no insertado tid={tid}: {_e}", flush=True)
             conn.commit()
         finally:
             conn.close()
@@ -933,7 +992,9 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
-    #  API — eliminar (superadmin o creador; audit ANTES de borrar)
+    #  API — eliminar (SOLO superadmin + confirm_text=numero_ticket;
+    #  hard delete en cascada -- Regla #5: tabla critica -> triple
+    #  proteccion: solo superadmin, confirm_text exacto, audit ANTES de borrar)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>", methods=["DELETE"])
     @_tickets_required
@@ -942,12 +1003,22 @@ def register_tickets_routes(app, ctx):
         if not t:
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
         perms = g.get("permissions") or {}
-        user = current_username() or ""
-        if not (perms.get("superadmin") or (t.get("created_by") and t["created_by"] == user)):
-            return jsonify({"ok": False, "error": "Solo el creador o un superadministrador puede eliminar."}), 403
+        if not perms.get("superadmin"):
+            return jsonify({"ok": False, "error": "Solo un superadministrador puede eliminar un ticket."}), 403
+
+        numero = (t.get("numero_ticket") or "").strip()
+        d = request.get_json(silent=True) or {}
+        confirm = (d.get("confirm_text") or "").strip().upper()
+        if not numero or confirm != numero.upper():
+            return jsonify({
+                "ok": False,
+                "error": "Para confirmar, escribe exactamente el número del ticket.",
+                "expected": numero,
+            }), 400
+
         try:
             _audit("tk_ticket_delete", target_type="tk_ticket", target_id=tid,
-                   details={"numero": t.get("numero_ticket")})
+                   details={"numero": numero})
         except Exception:
             pass
         mysql_execute("DELETE FROM tk_tickets WHERE id=%s", (tid,))
@@ -1164,6 +1235,22 @@ def register_tickets_routes(app, ctx):
         if not f or not f.filename:
             return jsonify({"ok": False, "error": "No llego ningun archivo"}), 400
 
+        # Mismas validaciones que el endpoint publico equivalente
+        # (tk_soporte_api_adjuntos): extension whitelist + tope de MB.
+        # _EXT_PERMITIDAS / MAX_ADJUNTO_MB se definen mas abajo en este
+        # mismo closure (seccion formulario publico) pero ya estan
+        # asignadas cuando esta ruta se ejecuta (se registran todas al
+        # llamar register_tickets_routes antes de que Flask reciba pedidos).
+        ext = ("." + f.filename.rsplit(".", 1)[-1].lower()) if "." in f.filename else ""
+        if ext not in _EXT_PERMITIDAS:
+            return jsonify({"ok": False, "error": f"Tipo de archivo no permitido ({ext or 'sin extensión'})"}), 400
+
+        f.seek(0, 2)
+        size_mb = f.tell() / (1024 * 1024)
+        f.seek(0)
+        if size_mb > MAX_ADJUNTO_MB:
+            return jsonify({"ok": False, "error": f"El archivo supera el máximo de {MAX_ADJUNTO_MB} MB"}), 400
+
         mime = (f.mimetype or "").lower()
         rt = "image"
         if mime.startswith("video"):
@@ -1326,8 +1413,9 @@ def register_tickets_routes(app, ctx):
                         cur.execute(
                             "INSERT IGNORE INTO tk_ticket_documentos (ticket_id, erp_tido, erp_nudo) "
                             "VALUES (%s,%s,%s)", (tid, dc["tido"][:10], dc["nudo"][:40]))
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        print(f"[tk_desde_documento] documento no insertado tid={tid} "
+                              f"{dc.get('tido')}/{dc.get('nudo')}: {_e}", flush=True)
                 vistos = set()
                 for ln in todas_lineas:
                     key = ln["sku"] or ln["nombre"]
@@ -1340,8 +1428,9 @@ def register_tickets_routes(app, ctx):
                             "VALUES (%s,%s,%s,%s)",
                             (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo",
                              int(ln.get("cantidad") or 1) if str(ln.get("cantidad") or 1).isdigit() else 1))
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        print(f"[tk_desde_documento] equipo no insertado tid={tid} "
+                              f"sku={ln.get('sku')}: {_e}", flush=True)
             conn.commit()
         finally:
             conn.close()
@@ -1380,12 +1469,29 @@ def register_tickets_routes(app, ctx):
 
         t0 = time.time()
         try:
+            # FIX 2026-07-11 (verificado contra el ERP real con pymssql):
+            # 1) La version anterior fallaba en SQL Server con error 145:
+            #    "ORDER BY items must appear in the select list if SELECT
+            #    DISTINCT is specified" (el CASE del ORDER BY no estaba en el
+            #    SELECT). _random_sql_query devolvia vacio y el modal mostraba
+            #    "Sin resultados" para CUALQUIER busqueda. Ahora ord_tien va
+            #    en el select list.
+            # 2) COALESCE(NOKOENAMP, NOKOEN) devolvia '' cuando NOKOENAMP es
+            #    cadena VACIA (no NULL) aunque NOKOEN tuviera el nombre real
+            #    (caso RUT 25547065), y devolvia el placeholder 'BOLETA' en
+            #    boletas sin entidad. Ahora se elige el primer campo con
+            #    contenido real.
             rows = _random_sql_query(
                 """
                 SELECT DISTINCT TOP 15
-                       LTRIM(RTRIM(COALESCE(en.NOKOENAMP, en.NOKOEN, ''))) AS razon_social,
-                       LTRIM(RTRIM(COALESCE(en.RTEN, '')))                 AS rut,
-                       LTRIM(RTRIM(COALESCE(en.TIEN, '')))                 AS tien
+                       CASE WHEN LTRIM(RTRIM(COALESCE(en.NOKOEN,'')))
+                                 NOT IN ('','BOLETA','FACTURA','CLIENTE')
+                            THEN LTRIM(RTRIM(en.NOKOEN))
+                            ELSE LTRIM(RTRIM(COALESCE(en.NOKOENAMP,''))) END AS razon_social,
+                       LTRIM(RTRIM(COALESCE(en.RTEN, '')))                   AS rut,
+                       LTRIM(RTRIM(COALESCE(en.TIEN, '')))                   AS tien,
+                       CASE WHEN LTRIM(RTRIM(COALESCE(en.TIEN,''))) IN ('C','A')
+                            THEN 0 ELSE 1 END                                AS ord_tien
                   FROM MAEEN en
                  WHERE (
                        UPPER(LTRIM(RTRIM(COALESCE(en.NOKOEN,    '')))) LIKE %s
@@ -1393,9 +1499,7 @@ def register_tickets_routes(app, ctx):
                     OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
                     OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
                  )
-                 ORDER BY
-                    CASE WHEN LTRIM(RTRIM(COALESCE(en.TIEN,''))) IN ('C','A') THEN 0 ELSE 1 END,
-                    razon_social
+                 ORDER BY ord_tien, razon_social
                 """,
                 (q_like, q_like, q_like, q_cuerpo_like),
                 max_rows=15,
@@ -1408,8 +1512,9 @@ def register_tickets_routes(app, ctx):
         print(f"[tk_erp_buscar_cliente] q={q!r} -> {len(rows)} filas en {elapsed_ms}ms "
               f"tien={[r.get('tien') for r in rows]}", flush=True)
 
-        resultados = [{"empresa": r.get("razon_social") or "", "rut": r.get("rut") or ""}
-                      for r in rows if r.get("razon_social") or r.get("rut")]
+        resultados = [{"empresa": (r.get("razon_social") or "").strip() or "(Sin nombre en el ERP)",
+                       "rut": r.get("rut") or ""}
+                      for r in rows if (r.get("razon_social") or "").strip() or r.get("rut")]
         return jsonify({"ok": True, "resultados": resultados})
 
     # ─────────────────────────────────────────────────────────────────
@@ -1617,6 +1722,209 @@ def register_tickets_routes(app, ctx):
     # exponer para tests / uso programatico
     app.config["_tk_import_desde_mant"] = _tk_import_desde_mant
 
+    # ─────────────────────────────────────────────────────────────────
+    #  IMPORTADOR CSV TRIPLE A — "la migracion" que pidio Daniel:
+    #  trae los tickets historicos del sistema Triple A (Reporte Tickets
+    #  + Reporte SLA exportados en CSV con ';'). Idempotente por
+    #  legacy_taa_id (UNIQUE). El email de contacto queda en
+    #  daniel.aguilar@sphs.cl (editable) para que los correos de PRUEBA
+    #  le lleguen a el y JAMAS a clientes reales; el email original se
+    #  conserva en notas_internas.
+    # ─────────────────────────────────────────────────────────────────
+    _TAA_EMAIL_PRUEBAS = "daniel.aguilar@sphs.cl"
+    _TAA_ESTADO = {
+        "resuelto": "resolved", "cerrado": "closed", "en curso": "in_progress",
+        "abierto": "open", "pendiente": "pending", "ot generada": "ot_generated",
+        "ot pendiente de aprobación": "ot_pending_approval",
+        "ot pendiente de aprobacion": "ot_pending_approval",
+        "ot en curso": "ot_in_progress", "cancelado": "cancelado",
+    }
+    _TAA_TIPO = {
+        "instalación": "install", "instalacion": "install",
+        "garantía": "warranty", "garantia": "warranty",
+        "mantenimiento": "maintenance", "soporte técnico": "tech_support",
+        "soporte tecnico": "tech_support", "repuestos": "spare_parts",
+        "reparación": "repair", "reparacion": "repair",
+        "cotización": "quotation", "cotizacion": "quotation",
+        "envío": "shipping", "envio": "shipping",
+        "evaluación técnica": "tech_evaluation", "evaluacion tecnica": "tech_evaluation",
+        "devolución": "return", "devolucion": "return",
+        "repuestos importación": "spare_parts_import",
+        "repuestos importacion": "spare_parts_import",
+        "repuestos bodega": "spare_parts_store",
+        "movimiento de equipos": "equipment_transfer",
+    }
+
+    def _taa_fecha(s):
+        """'03-02-2026 09:00' (DD-MM-YYYY HH:MM) -> datetime | None."""
+        s = (s or "").strip()
+        if not s:
+            return None
+        for fmt in ("%d-%m-%Y %H:%M", "%d-%m-%Y", "%d/%m/%Y %H:%M", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
+
+    def _tk_import_desde_taa(csv_tickets_text, csv_sla_text=None, dry_run=True):
+        import csv as _csv
+        import io as _io
+        resumen = {"filas_csv": 0, "validos": 0, "ya_importados": 0,
+                   "importados": 0, "invalidos": 0, "errores": 0,
+                   "dry_run": dry_run, "muestra": []}
+
+        # SLA por Ticket ID (para resuelto_at + duracion)
+        sla = {}
+        if csv_sla_text:
+            try:
+                for r in _csv.DictReader(_io.StringIO(csv_sla_text), delimiter=";"):
+                    tid_raw = (r.get("Ticket ID") or "").strip()
+                    if tid_raw.isdigit():
+                        sla[int(tid_raw)] = {
+                            "resuelto": _taa_fecha(r.get("Resuelto/Cerrado En")),
+                            "duracion": (r.get("Duración (Días)") or r.get("Duracion (Dias)") or "").strip(),
+                        }
+            except Exception as _e:
+                print(f"[tk_import_taa] CSV SLA ilegible (se ignora): {_e}", flush=True)
+
+        try:
+            filas = list(_csv.DictReader(_io.StringIO(csv_tickets_text), delimiter=";"))
+        except Exception as _e:
+            resumen["error"] = f"CSV de tickets ilegible: {_e}"
+            return resumen
+        resumen["filas_csv"] = len(filas)
+
+        ya = set()
+        try:
+            ya = {r["legacy_taa_id"] for r in mysql_fetchall(
+                "SELECT legacy_taa_id FROM tk_tickets WHERE legacy_taa_id IS NOT NULL") or []}
+        except Exception:
+            pass
+
+        user = current_username() or "importador_taa"
+        conn = None if dry_run else get_mysql()
+        try:
+            for r in filas:
+                tid_raw = (r.get("Ticket ID") or "").strip()
+                if not tid_raw.isdigit():
+                    # filas corridas por comillas rotas en el export de Triple A
+                    resumen["invalidos"] += 1
+                    continue
+                taa_id = int(tid_raw)
+                resumen["validos"] += 1
+                if taa_id in ya:
+                    resumen["ya_importados"] += 1
+                    continue
+
+                estado = _TAA_ESTADO.get((r.get("Estado") or "").strip().lower(), "open")
+                tipo_raw = (r.get("Tipo") or "").strip().lower()
+                tipo = _TAA_TIPO.get(tipo_raw)
+                es_garantia = 1 if tipo == "warranty" else 0
+                origen = (r.get("Origen") or "").strip().lower()
+                if origen not in TK_ORIGENES:
+                    origen = "backoffice"
+                creado = _taa_fecha(r.get("Fecha Creación") or r.get("Fecha Creacion"))
+                actualizado = _taa_fecha(r.get("Fecha Actualización") or r.get("Fecha Actualizacion"))
+                s = sla.get(taa_id) or {}
+
+                email_orig = (r.get("Email") or "").strip()
+                notas = [f"Importado del sistema Triple A (Ticket #{taa_id})."]
+                if email_orig:
+                    notas.append(f"Email original del cliente: {email_orig}")
+                if s.get("duracion"):
+                    notas.append(f"SLA Triple A: {s['duracion']} día(s) hasta resolver/cerrar.")
+
+                if len(resumen["muestra"]) < 5:
+                    resumen["muestra"].append(
+                        f"TAA-{taa_id} · {r.get('Empresa') or r.get('Nombre Contacto') or 'sin cliente'}"
+                        f" · {estado}" + (f" · {tipo}" if tipo else ""))
+                if dry_run:
+                    resumen["importados"] += 1
+                    continue
+
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT IGNORE INTO tk_tickets "
+                            "(numero_ticket, legacy_taa_id, origen, estado, tipo, es_garantia, "
+                            " prioridad, descripcion, rut, empresa, nombre_contacto, phone, "
+                            " email, region_nombre, comuna_nombre, direccion, asignado_a, "
+                            " producto, marca, sku, notas_internas, created_by, created_at, "
+                            " updated_at, resuelto_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                            "        %s,%s,%s,%s,%s,%s,COALESCE(%s,NOW()),COALESCE(%s,NOW()),%s)",
+                            (
+                                f"TAA-{taa_id}", taa_id, origen, estado, tipo, es_garantia,
+                                (r.get("Descripción") or r.get("Descripcion") or "").strip()[:5000] or None,
+                                (r.get("RUT") or "").strip()[:12] or None,
+                                (r.get("Empresa") or "").strip()[:150] or None,
+                                (r.get("Nombre Contacto") or "").strip()[:150] or None,
+                                (r.get("Teléfono") or r.get("Telefono") or "").strip()[:20] or None,
+                                _TAA_EMAIL_PRUEBAS,
+                                (r.get("Región") or r.get("Region") or "").strip()[:120] or None,
+                                (r.get("Comuna") or "").strip()[:120] or None,
+                                (r.get("Dirección") or r.get("Direccion") or "").strip()[:255] or None,
+                                (r.get("Ejecutivo") or "").strip()[:190] or None,
+                                (r.get("Producto") or "").strip() or None,
+                                (r.get("Marca") or "").strip()[:100] or None,
+                                (r.get("SKU") or "").strip()[:100] or None,
+                                " | ".join(notas)[:5000],
+                                user, creado, actualizado, s.get("resuelto"),
+                            ),
+                        )
+                        if cur.rowcount:
+                            nuevo_id = cur.lastrowid
+                            resumen["importados"] += 1
+                            cur.execute(
+                                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                                "VALUES (%s,'creacion',%s,%s,1)",
+                                (nuevo_id,
+                                 f"Ticket importado del sistema Triple A (#{taa_id})"
+                                 + (f" · SLA: {s['duracion']} día(s)" if s.get("duracion") else ""),
+                                 user))
+                        else:
+                            resumen["ya_importados"] += 1
+                except Exception as _e:
+                    resumen["errores"] += 1
+                    print(f"[tk_import_taa] error TAA-{taa_id}: {_e}", flush=True)
+            if conn is not None:
+                conn.commit()
+        finally:
+            if conn is not None:
+                conn.close()
+        return resumen
+
+    @app.route("/tickets/api/admin/importar-taa", methods=["POST"])
+    @_tickets_required
+    def tk_api_import_taa():
+        perms = g.get("permissions") or {}
+        if not perms.get("superadmin"):
+            return jsonify({"ok": False, "error": "Solo superadministrador"}), 403
+        f_tickets = request.files.get("csv_tickets")
+        if not f_tickets or not f_tickets.filename:
+            return jsonify({"ok": False, "error": "Adjunta el CSV 'Reporte Tickets' de Triple A."}), 400
+        f_sla = request.files.get("csv_sla")
+        try:
+            texto_tickets = f_tickets.read().decode("utf-8-sig", errors="replace")
+            texto_sla = f_sla.read().decode("utf-8-sig", errors="replace") if (f_sla and f_sla.filename) else None
+        except Exception as _e:
+            print(f"[tk_import_taa] error leyendo archivos: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudieron leer los archivos."}), 400
+        dry = str(request.args.get("dry_run", "1")).lower() in ("1", "true", "yes")
+        resumen = _tk_import_desde_taa(texto_tickets, texto_sla, dry_run=dry)
+        if not dry:
+            try:
+                _audit("tk_import_taa", target_type="tk_ticket",
+                       details={"importados": resumen.get("importados"),
+                                "errores": resumen.get("errores")})
+            except Exception:
+                pass
+        return jsonify({"ok": True, "resumen": resumen})
+
+    # exponer para tests / uso programatico
+    app.config["_tk_import_desde_taa"] = _tk_import_desde_taa
+
     # ═══════════════════════════════════════════════════════════════════
     #  FORMULARIO PUBLICO (Fase 2) — copia fiel de ilus-front/formulario.html
     #  Sin login (Regla: una ruta sin @login_required ya es publica -- no
@@ -1634,6 +1942,34 @@ def register_tickets_routes(app, ctx):
         ".mp4", ".mov", ".webm", ".avi",
         ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt", ".csv",
     }
+
+    # Firmas (magic bytes) de los tipos mas comunes -- validacion LIGERA sin
+    # librerias nuevas. Solo cubre jpg/png/gif/pdf (firma simple); el resto
+    # (webp/heic/mp4/doc/docx/xls/xlsx/etc.) queda sin chequear porque sus
+    # firmas son mas complejas de validar sin dependencias. Ademas se rechaza
+    # cualquier archivo cuyo contenido empiece como ejecutable/script, sin
+    # importar la extension declarada (mismatch claro = sospechoso).
+    _MAGIC_BYTES = {
+        ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",),
+        ".png": (b"\x89PNG",), ".gif": (b"GIF8",), ".pdf": (b"%PDF",),
+    }
+    _FIRMAS_SOSPECHOSAS = (b"MZ", b"#!")  # ejecutables Windows / scripts
+
+    def _tk_magic_bytes_ok(ext, file_storage):
+        try:
+            file_storage.stream.seek(0)
+            head = file_storage.stream.read(16)
+            file_storage.stream.seek(0)
+        except Exception:
+            return True  # si no se puede leer la cabecera, no bloqueamos (fail-open)
+        if not head:
+            return True
+        if any(head.startswith(f) for f in _FIRMAS_SOSPECHOSAS):
+            return False
+        firmas = _MAGIC_BYTES.get(ext)
+        if firmas and not any(head.startswith(f) for f in firmas):
+            return False
+        return True
 
     _RL_PUBLICO = {}  # ip -> [timestamps] (ventana deslizante, in-memory)
 
@@ -1750,6 +2086,8 @@ def register_tickets_routes(app, ctx):
         direccion = (d.get("direccion") or "").strip()
         if not direccion:
             return jsonify({"ok": False, "error": "Ingresa una dirección."}), 400
+        if d.get("direccion_lat") in (None, "", "null") or d.get("direccion_lng") in (None, "", "null"):
+            return jsonify({"ok": False, "error": "Selecciona una dirección sugerida por Google para validarla."}), 400
 
         productos = d.get("productos") or []  # [{sku, nombre}]
         if not productos:
@@ -1791,8 +2129,9 @@ def register_tickets_routes(app, ctx):
                             "VALUES (%s,%s,%s,1)",
                             (tid, (p.get("sku") or "").strip()[:100] or None,
                              (p.get("nombre") or "").strip()[:300] or "Equipo"))
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        print(f"[tk_soporte_api_crear] equipo no insertado tid={tid} "
+                              f"sku={p.get('sku')}: {_e}", flush=True)
             conn.commit()
         finally:
             conn.close()
@@ -1835,6 +2174,8 @@ def register_tickets_routes(app, ctx):
         ext = ("." + f.filename.rsplit(".", 1)[-1].lower()) if "." in f.filename else ""
         if ext not in _EXT_PERMITIDAS:
             return jsonify({"ok": False, "error": f"Tipo de archivo no permitido ({ext or 'sin extensión'})"}), 400
+        if not _tk_magic_bytes_ok(ext, f):
+            return jsonify({"ok": False, "error": "El contenido del archivo no coincide con su extensión"}), 400
 
         f.seek(0, 2)
         size_mb = f.tell() / (1024 * 1024)
