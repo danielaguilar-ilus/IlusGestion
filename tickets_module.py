@@ -1413,6 +1413,65 @@ def register_tickets_routes(app, ctx):
         mysql_execute("DELETE FROM tk_tickets WHERE id=%s", (tid,))
         return jsonify({"ok": True})
 
+    # ─────────────────────────────────────────────────────────────────
+    #  API — purga masiva "dejar solo los tickets de un correo" (Daniel
+    #  2026-07-12: limpieza antes de operar en serio, confirmado
+    #  explicitamente que SI incluye los migrados de Triple A). Mismo
+    #  patron que el importador CSV: dry_run por defecto (nunca borra sin
+    #  que el front pida dry_run=false explicitamente) + confirm exacto
+    #  ligado al correo (evita reusar el mismo texto para otro alcance) +
+    #  audit ANTES de borrar (Regla #5). El DELETE en tk_tickets cascadea
+    #  via FK a tk_mensajes/tk_adjuntos/tk_ticket_equipos/
+    #  tk_ticket_documentos/tk_vistas; tk_cotizaciones queda con
+    #  ticket_id=NULL (ON DELETE SET NULL, la cotizacion no se borra).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/admin/purgar-por-correo", methods=["POST"])
+    @_tickets_required
+    def tk_api_purgar_por_correo():
+        perms = g.get("permissions") or {}
+        if not perms.get("superadmin"):
+            return jsonify({"ok": False, "error": "Solo un superadministrador puede purgar tickets."}), 403
+        d = request.get_json(silent=True) or {}
+        keep_email = (d.get("keep_email") or "").strip().lower()
+        if not keep_email or "@" not in keep_email:
+            return jsonify({"ok": False, "error": "Falta un correo válido a conservar."}), 400
+        dry_run = d.get("dry_run", True)
+        if isinstance(dry_run, str):
+            dry_run = dry_run.strip().lower() not in ("0", "false", "no")
+
+        where = "WHERE LOWER(TRIM(COALESCE(email,''))) != %s"
+        total = int((mysql_fetchone("SELECT COUNT(*) AS n FROM tk_tickets") or {}).get("n") or 0)
+        a_borrar = int((mysql_fetchone(f"SELECT COUNT(*) AS n FROM tk_tickets {where}",
+                                       (keep_email,)) or {}).get("n") or 0)
+        a_borrar_taa = int((mysql_fetchone(
+            f"SELECT COUNT(*) AS n FROM tk_tickets {where} AND legacy_taa_id IS NOT NULL",
+            (keep_email,)) or {}).get("n") or 0)
+        resumen = {"total": total, "a_borrar": a_borrar, "a_borrar_triple_a": a_borrar_taa,
+                   "a_conservar": total - a_borrar, "keep_email": keep_email}
+
+        if dry_run:
+            return jsonify({"ok": True, "dry_run": True, "resumen": resumen})
+
+        confirm_esperado = "BORRAR " + keep_email.upper()
+        confirm = (d.get("confirm") or "").strip().upper()
+        if confirm != confirm_esperado:
+            return jsonify({
+                "ok": False,
+                "error": f"Para confirmar, escribe exactamente: {confirm_esperado}",
+                "expected": confirm_esperado, "resumen": resumen,
+            }), 400
+
+        try:
+            _audit("tk_purga_masiva_por_correo", details=resumen)
+        except Exception:
+            pass
+        try:
+            mysql_execute(f"DELETE FROM tk_tickets {where}", (keep_email,))
+        except Exception as _e:
+            print(f"[tk_purgar_por_correo] error: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo completar la purga, intenta de nuevo."}), 500
+        return jsonify({"ok": True, "dry_run": False, "eliminados": a_borrar, "resumen": resumen})
+
     def _tk_link_adjuntos(tid, mensaje_id, adjunto_ids):
         """Vincula adjuntos ya subidos (POST .../adjuntos) al mensaje recien
         creado, para que la conversacion los agrupe correctamente."""

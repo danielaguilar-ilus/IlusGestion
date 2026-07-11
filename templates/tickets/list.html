@@ -251,6 +251,8 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
       <i class="bi bi-file-earmark-arrow-up me-1"></i>Importar CSV Triple A</button>
     <input type="file" id="taaFileTickets" accept=".csv" style="display:none">
     <input type="file" id="taaFileSla" accept=".csv" style="display:none">
+    <button class="btn btn-sm btn-outline-light" id="btnPurgarTickets" title="Borrar todos los tickets excepto los de un correo (limpieza)">
+      <i class="bi bi-trash3 me-1"></i>Purgar tickets</button>
     {% endif %}
     <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket desde un documento del ERP (factura, boleta, guía, etc.)">
       <i class="bi bi-file-earmark-text me-1"></i>Desde documento ERP</button>
@@ -1309,6 +1311,66 @@ if(btnTaa){
   fSla.addEventListener('change', function(){ taaFlujo(); });
   // Si cierra el selector del SLA sin elegir archivo, seguir sin SLA
   fSla.addEventListener('cancel', function(){ taaFlujo(); });
+}
+
+// ══════════════ Purgar tickets por correo (superadmin, 2026-07-12) ══════════════
+// Deja SOLO los tickets de un correo; borra el resto (incluye migrados de
+// Triple A si no coinciden -- confirmado explícitamente por Daniel). Mismo
+// patron dry-run -> confirmar con el conteo real -> ejecutar que el
+// importador CSV de arriba, pero con confirmacion ESCRITA (no solo Sí/No)
+// por el alcance/tamaño de lo que se borra permanentemente.
+const btnPurgar = document.getElementById('btnPurgarTickets');
+if(btnPurgar){
+  async function purgarEnviar(keepEmail, dryRun, confirmText){
+    const r = await fetch('/tickets/api/admin/purgar-por-correo', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({keep_email:keepEmail, dry_run:dryRun, confirm:confirmText||''}),
+    });
+    return await r.json();
+  }
+
+  btnPurgar.addEventListener('click', async function(){
+    const keepEmail = await ilusPrompt({
+      title:'Purgar tickets',
+      message:'¿Qué correo de cliente quieres CONSERVAR? Se borrarán todos los tickets que NO tengan ese correo.',
+      placeholder:'correo@ejemplo.com', defaultValue:'juandaniel.aguilar17@gmail.com',
+      required:true,
+    });
+    if(!keepEmail) return;
+
+    ilusLoader.show('Calculando cuántos tickets se borrarían…');
+    let prev;
+    try{ prev = await purgarEnviar(keepEmail, true); }
+    catch(e){ ilusLoader.hide(); ilusToast('No se pudo calcular la purga','error'); return; }
+    ilusLoader.hide();
+    if(!prev.ok){ ilusToast(prev.error||'Error al calcular la purga','error'); return; }
+    const rz = prev.resumen || {};
+    if(!rz.a_borrar){
+      await ilusAlert({title:'Nada que purgar',
+        message:'Todos los tickets ya tienen el correo '+keepEmail+' (o no hay tickets).', type:'info'});
+      return;
+    }
+    const confirmEsperado = 'BORRAR ' + keepEmail.toUpperCase();
+    const texto = await ilusPrompt({
+      title:'Confirmar purga PERMANENTE',
+      message:'Se borrarán '+rz.a_borrar+' de '+rz.total+' ticket(s), incluyendo '+rz.a_borrar_triple_a
+        +' migrado(s) de Triple A. Quedarán '+rz.a_conservar+' ticket(s) con correo '+keepEmail+'.',
+      sub:'Esta acción NO se puede deshacer. Para confirmar, escribe exactamente: '+confirmEsperado,
+      placeholder:confirmEsperado, type:'danger', required:true,
+    });
+    if(!texto || texto.trim().toUpperCase() !== confirmEsperado){
+      if(texto) ilusToast('Texto de confirmación incorrecto, no se borró nada','warning');
+      return;
+    }
+    ilusLoader.show('Purgando tickets…');
+    try{
+      const res = await purgarEnviar(keepEmail, false, texto);
+      ilusLoader.hide();
+      if(!res.ok){ ilusToast(res.error||'No se pudo purgar','error'); return; }
+      ilusToast('✓ '+res.eliminados+' ticket(s) eliminados permanentemente','success');
+      cargarTickets();
+    }catch(e){ ilusLoader.hide(); ilusToast('Error de red al purgar','error'); }
+  });
 }
 }); // cierre de document.addEventListener('DOMContentLoaded', ...)
 </script>
