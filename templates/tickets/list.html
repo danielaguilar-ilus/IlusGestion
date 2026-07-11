@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Tickets — ILUS{% endblock %}
+{% block content %}
+<style>
+.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.tk-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
+.tk-hero .sub{font-size:.86rem;color:#cfd3da;}
+.tk-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
+.tk-kpi{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;}
+.tk-kpi .num{font-size:1.5rem;font-weight:900;line-height:1;}
+.tk-kpi .lbl{font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+.tk-kpi.t .num{color:#0f172a;} .tk-kpi.a .num{color:#1d4ed8;}
+.tk-kpi.u .num{color:#dc2626;} .tk-kpi.v .num{color:#b91c1c;}
+.tk-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:10px 12px;margin-bottom:12px;
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.tk-filtros .form-control,.tk-filtros .form-select{max-width:210px;}
+.tk-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;margin-bottom:8px;
+  display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;
+  transition:all .12s;border-left:4px solid #e5e7eb;cursor:pointer;}
+.tk-row:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.07);}
+.tk-row.prio-urgente{border-left-color:#dc2626;} .tk-row.prio-alta{border-left-color:#f59e0b;}
+.tk-row.prio-media{border-left-color:#6b7280;} .tk-row.prio-baja{border-left-color:#94a3b8;}
+.tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;letter-spacing:.04em;white-space:nowrap;}
+.tk-meta{min-width:0;} .tk-cliente{font-weight:800;font-size:.95rem;color:#0f172a;}
+.tk-titulo{font-size:.82rem;color:#374151;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tk-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;}
+.bs-open{background:#dbeafe;color:#1e40af;} .bs-in_progress{background:#fef3c7;color:#92400e;}
+.bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
+.bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
+.bs-ot_pending_approval,.bs-ot_generated,.bs-ot_in_progress{background:#ede9fe;color:#5b21b6;}
+.tk-unread{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;font-weight:800;padding:2px 7px;}
+.tk-tipo{font-size:.65rem;color:#6b7280;background:#f9fafb;border:1px solid #e5e7eb;border-radius:50px;padding:2px 8px;}
+.empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 30px;text-align:center;}
+.empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
+</style>
+
+<div class="tk-hero">
+  <div>
+    <h4><i class="bi bi-ticket-perforated me-2"></i>Tickets</h4>
+    <div class="sub">Central de soporte — solicitudes, fallas, garantías, repuestos y cotizaciones</div>
+  </div>
+  <a href="{{ url_for('tk_nuevo') }}" class="btn btn-ilus"><i class="bi bi-plus-lg me-1"></i>Nuevo Ticket</a>
+</div>
+
+<div class="tk-kpi-row">
+  <div class="tk-kpi t"><span class="num" id="kpiTotal">—</span><span class="lbl">Total</span></div>
+  <div class="tk-kpi a"><span class="num" id="kpiActivos">—</span><span class="lbl">Activos</span></div>
+  <div class="tk-kpi u"><span class="num" id="kpiUrgentes">—</span><span class="lbl">Urgentes</span></div>
+  <div class="tk-kpi v"><span class="num" id="kpiVencidos">—</span><span class="lbl">Vencidos (SLA)</span></div>
+</div>
+
+<div class="tk-filtros">
+  <input type="text" id="fQ" class="form-control form-control-sm" placeholder="Buscar (N°, empresa, RUT, texto)…">
+  <select id="fEstado" class="form-select form-select-sm">
+    <option value="">Todos los estados</option>
+    {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
+  </select>
+  <select id="fTipo" class="form-select form-select-sm">
+    <option value="">Todos los tipos</option>
+    {% for t in tk_tipos %}<option value="{{ t }}">{{ tipo_label[t] }}</option>{% endfor %}
+  </select>
+  <select id="fPrio" class="form-select form-select-sm">
+    <option value="">Prioridad</option>
+    {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
+  </select>
+  <button class="btn btn-sm btn-ilus-outline" id="btnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar</button>
+</div>
+
+<div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
+
+<script>
+const ESTADO_LABEL = {{ estado_label|tojson }};
+const TIPO_LABEL = {{ tipo_label|tojson }};
+let _tkTimer = null;
+
+// El servidor ya envía las fechas formateadas en hora Chile (Regla #6).
+function fmtFecha(s){ return s || ''; }
+// Escapa TAMBIÉN comillas: esc() se usa en contexto de atributo (href/onclick),
+// no solo texto — sin escapar comillas habría riesgo de XSS almacenado.
+function esc(s){ return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+async function cargarTickets(){
+  const p = new URLSearchParams();
+  const q = document.getElementById('fQ').value.trim();
+  if(q) p.set('q', q);
+  const e = document.getElementById('fEstado').value; if(e) p.set('estado', e);
+  const t = document.getElementById('fTipo').value; if(t) p.set('tipo', t);
+  const pr = document.getElementById('fPrio').value; if(pr) p.set('prioridad', pr);
+  p.set('limit','100');
+  let data;
+  try{
+    const r = await fetch('/tickets/api/tickets?'+p.toString());
+    data = await r.json();
+  }catch(err){ document.getElementById('tkLista').innerHTML =
+    '<div class="empty-state"><i class="bi bi-wifi-off"></i>No se pudo cargar. Reintenta.</div>'; return; }
+  if(!data.ok){ ilusToast(data.error||'Error al cargar','error'); return; }
+
+  document.getElementById('kpiTotal').textContent = data.kpis.total;
+  document.getElementById('kpiActivos').textContent = data.kpis.activos;
+  document.getElementById('kpiUrgentes').textContent = data.kpis.urgentes;
+  document.getElementById('kpiVencidos').textContent = data.kpis.vencidos;
+
+  const cont = document.getElementById('tkLista');
+  if(!data.tickets.length){
+    cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay tickets con estos filtros.</div>';
+    return;
+  }
+  cont.innerHTML = data.tickets.map(function(tk){
+    const cliente = tk.empresa || tk.nombre_contacto || tk.rut || 'Sin cliente';
+    const titulo = tk.titulo || tk.tipo && TIPO_LABEL[tk.tipo] || '—';
+    const unread = tk.unread_count > 0
+      ? '<span class="tk-unread">'+tk.unread_count+' nuevo'+(tk.unread_count>1?'s':'')+'</span>' : '';
+    const tipoPill = tk.tipo ? '<span class="tk-tipo">'+esc(TIPO_LABEL[tk.tipo]||tk.tipo)+'</span>' : '';
+    return '<div class="tk-row prio-'+(tk.prioridad||'media')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
+      + '<span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'
+      + '<div class="tk-meta"><div class="tk-cliente">'+esc(cliente)+' '+unread+'</div>'
+      + '<div class="tk-titulo">'+esc(titulo)+'</div></div>'
+      + tipoPill
+      + '<span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span>'
+      + '<span style="font-size:.72rem;color:#9ca3af;white-space:nowrap;">'+fmtFecha(tk.updated_at)+'</span>'
+      + '</div>';
+  }).join('');
+}
+
+function debounced(){ clearTimeout(_tkTimer); _tkTimer = setTimeout(cargarTickets, 350); }
+document.getElementById('fQ').addEventListener('input', debounced);
+['fEstado','fTipo','fPrio'].forEach(function(id){ document.getElementById(id).addEventListener('change', cargarTickets); });
+document.getElementById('btnLimpiar').addEventListener('click', function(){
+  document.getElementById('fQ').value=''; document.getElementById('fEstado').value='';
+  document.getElementById('fTipo').value=''; document.getElementById('fPrio').value=''; cargarTickets();
+});
+cargarTickets();
+</script>
+{% endblock %}

@@ -496,6 +496,24 @@
     </div>
     {% endif %}
 
+    {# ── TICKETS (central) ── #}
+    {% if (permissions.mantenciones or permissions.superadmin) and not is_tecnico %}
+    <button class="sg-toggle" data-sg="tickets">
+      <i class="bi bi-ticket-perforated"></i>Tickets
+      <i class="bi bi-chevron-right sg-chevron"></i>
+    </button>
+    <div class="sg-items" id="sg-tickets">
+      <a href="{{ url_for('tk_list') }}"
+         class="sidebar-link{% if request.endpoint in ['tk_list','tk_ficha'] %} active{% endif %}">
+        <i class="bi bi-inboxes"></i><span>Bandeja</span>
+      </a>
+      <a href="{{ url_for('tk_nuevo') }}"
+         class="sidebar-link{% if request.endpoint == 'tk_nuevo' %} active{% endif %}">
+        <i class="bi bi-plus-circle"></i><span>Nuevo ticket</span>
+      </a>
+    </div>
+    {% endif %}
+
     {# ── MANTENCIONES ── #}
     {% if permissions.mantenciones %}
     <button class="sg-toggle" data-sg="mant">

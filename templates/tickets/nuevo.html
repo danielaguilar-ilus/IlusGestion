@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Nuevo Ticket — ILUS{% endblock %}
+{% block content %}
+<style>
+.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:16px 22px;margin-bottom:18px;display:flex;align-items:center;gap:12px;}
+.tk-hero h4{margin:0;font-weight:900;}
+.tk-card{background:#fff;border:1px solid #eaecf0;border-radius:13px;padding:20px 22px;margin-bottom:16px;
+  max-width:820px;}
+.tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.9rem;
+  text-transform:uppercase;letter-spacing:.04em;}
+.tk-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;}
+.tk-grid .full{grid-column:1/-1;}
+.tk-field label{font-size:.74rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
+.tk-tipos{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:4px;}
+.tk-tipo-pill{border:1.5px solid #e5e7eb;border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;
+  font-size:.8rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;}
+.tk-tipo-pill:hover{border-color:#dc2626;color:#dc2626;}
+.tk-tipo-pill.sel{border-color:#dc2626;background:#fef2f2;color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.1);}
+.tk-actions{display:flex;gap:10px;justify-content:flex-end;max-width:820px;}
+@media(max-width:640px){.tk-grid{grid-template-columns:1fr;}}
+</style>
+
+<div class="tk-hero">
+  <a href="{{ url_for('tk_list') }}" class="btn btn-sm btn-outline-light"><i class="bi bi-arrow-left"></i></a>
+  <h4><i class="bi bi-ticket-perforated me-2"></i>Nuevo Ticket</h4>
+</div>
+
+<div class="tk-card">
+  <h6>1 · Tipo de solicitud</h6>
+  <div class="tk-tipos" id="tkTipos">
+    {% for t in tk_tipos_publicos %}
+    <div class="tk-tipo-pill" data-tipo="{{ t }}">{{ tipo_label[t] }}</div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="tk-card">
+  <h6>2 · Cliente</h6>
+  <div class="tk-grid">
+    <div class="tk-field">
+      <label>RUT</label>
+      <div style="display:flex;gap:6px;">
+        <input type="text" id="fRut" class="form-control" placeholder="76.123.456-7">
+        <button class="btn btn-ilus-outline" id="btnErp" type="button" title="Buscar en ERP" style="white-space:nowrap;">
+          <i class="bi bi-search"></i> ERP</button>
+      </div>
+    </div>
+    <div class="tk-field"><label>Empresa / persona</label><input type="text" id="fEmpresa" class="form-control"></div>
+    <div class="tk-field"><label>Nombre de contacto</label><input type="text" id="fContacto" class="form-control"></div>
+    <div class="tk-field"><label>Teléfono</label><input type="tel" id="fPhone" class="form-control" placeholder="+56 9 1234 5678"></div>
+    <div class="tk-field"><label>Correo</label><input type="email" id="fEmail" class="form-control"></div>
+    <div class="tk-field"><label>Sucursal</label><input type="text" id="fSucursal" class="form-control"></div>
+    <div class="tk-field full"><label>Dirección</label><input type="text" id="fDireccion" class="form-control"></div>
+  </div>
+</div>
+
+<div class="tk-card">
+  <h6>3 · Equipo y documento</h6>
+  <div class="tk-grid">
+    <div class="tk-field"><label>Producto / equipo</label><input type="text" id="fProducto" class="form-control"></div>
+    <div class="tk-field"><label>Marca</label><input type="text" id="fMarca" class="form-control"></div>
+    <div class="tk-field"><label>SKU</label><input type="text" id="fSku" class="form-control"></div>
+    <div class="tk-field"><label>N° boleta / factura</label><input type="text" id="fDoc" class="form-control"></div>
+  </div>
+</div>
+
+<div class="tk-card">
+  <h6>4 · Problema y prioridad</h6>
+  <div class="tk-grid">
+    <div class="tk-field full">
+      <label>¿Qué está pasando?</label>
+      <textarea id="fDesc" class="form-control" rows="3" maxlength="2000"
+        placeholder="Describe el problema o la solicitud…"></textarea>
+    </div>
+    <div class="tk-field">
+      <label>Prioridad</label>
+      <select id="fPrio" class="form-select">
+        {% for p in tk_prioridades %}<option value="{{ p }}"{% if p=='media' %} selected{% endif %}>{{ p|capitalize }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="tk-actions">
+  <a href="{{ url_for('tk_list') }}" class="btn btn-outline-secondary">Cancelar</a>
+  <button class="btn btn-ilus" id="btnCrear"><i class="bi bi-check-lg me-1"></i>Crear Ticket</button>
+</div>
+
+<script>
+let tipoSel = '';
+document.querySelectorAll('.tk-tipo-pill').forEach(function(el){
+  el.addEventListener('click', function(){
+    document.querySelectorAll('.tk-tipo-pill').forEach(x=>x.classList.remove('sel'));
+    el.classList.add('sel'); tipoSel = el.dataset.tipo;
+  });
+});
+
+document.getElementById('btnErp').addEventListener('click', async function(){
+  const rut = document.getElementById('fRut').value.trim();
+  if(!rut){ ilusToast('Ingresa un RUT primero','warning'); return; }
+  ilusLoader.show('Buscando en el ERP…');
+  try{
+    const r = await fetch('/tickets/api/erp/cliente?rut='+encodeURIComponent(rut));
+    const d = await r.json();
+    ilusLoader.hide();
+    if(!d.ok){ ilusToast(d.error||'No encontrado','warning'); return; }
+    const c = d.cliente;
+    if(c.empresa) document.getElementById('fEmpresa').value = c.empresa;
+    if(c.email) document.getElementById('fEmail').value = c.email;
+    if(c.phone) document.getElementById('fPhone').value = c.phone;
+    if(c.direccion) document.getElementById('fDireccion').value = c.direccion;
+    if(c.rut) document.getElementById('fRut').dataset.rutErp = c.rut;
+    document.getElementById('btnCrear').dataset.erpIdmaeen = c.idmaeen||'';
+    document.getElementById('btnCrear').dataset.erpKoen = c.koen||'';
+    ilusToast('✓ Cliente cargado del ERP','success');
+  }catch(err){ ilusLoader.hide(); ilusToast('ERP no disponible','error'); }
+});
+
+document.getElementById('btnCrear').addEventListener('click', async function(){
+  const desc = document.getElementById('fDesc').value.trim();
+  const empresa = document.getElementById('fEmpresa').value.trim();
+  if(!desc && !empresa){ ilusToast('Ingresa al menos empresa o una descripción','warning'); return; }
+  const btn = this; btn.disabled = true;
+  const payload = {
+    tipo: tipoSel || null,
+    prioridad: document.getElementById('fPrio').value,
+    rut: document.getElementById('fRut').value.trim(),
+    empresa: empresa,
+    nombre_contacto: document.getElementById('fContacto').value.trim(),
+    phone: document.getElementById('fPhone').value.trim(),
+    email: document.getElementById('fEmail').value.trim(),
+    sucursal: document.getElementById('fSucursal').value.trim(),
+    direccion: document.getElementById('fDireccion').value.trim(),
+    producto: document.getElementById('fProducto').value.trim(),
+    marca: document.getElementById('fMarca').value.trim(),
+    sku: document.getElementById('fSku').value.trim(),
+    numero_documento: document.getElementById('fDoc').value.trim(),
+    descripcion: desc,
+    erp_idmaeen: btn.dataset.erpIdmaeen || null,
+    erp_koen: btn.dataset.erpKoen || null,
+  };
+  try{
+    const r = await fetch('/tickets/api/tickets', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error||'Error al crear','error'); btn.disabled=false; return; }
+    ilusToast('✓ '+(d.numero_ticket||'Ticket')+' creado','success');
+    setTimeout(()=>location.href='/tickets/'+d.id, 500);
+  }catch(err){ ilusToast('Error de red','error'); btn.disabled=false; }
+});
+</script>
+{% endblock %}

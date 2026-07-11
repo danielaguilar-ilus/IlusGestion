@@ -67689,6 +67689,18 @@ try:
 except Exception as _pickup_reg_err:
     print(f"[ILUS][WARN] register_pickup_routes: {_pickup_reg_err}")
 
+# Modulo TICKETS CENTRAL (fork de ilus-back/front replicado en Flask). Fase 1:
+# CRUD interno + conversacion interna + adjuntos GCS + autocompletar cliente
+# desde el ERP. Ver BLUEPRINT-TICKETS-CENTRAL.md. No toca mant_tickets (Regla #4.2).
+# El _ensure_tickets_tables() corre dentro del register (idempotente, funciona
+# aun con ILUS_SKIP_MIGRATIONS=1).
+try:
+    from tickets_module import register_tickets_routes
+    register_tickets_routes(app, globals())
+    print("[ILUS] Modulo Tickets central registrado.")
+except Exception as _tickets_reg_err:
+    print(f"[ILUS][WARN] register_tickets_routes: {_tickets_reg_err}")
+
 try:
     from transporte_pod import register_pod_routes
     register_pod_routes(app, globals())

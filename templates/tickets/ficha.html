@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block title %}Ticket — ILUS{% endblock %}
+{% block content %}
+<style>
+.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:16px 22px;margin-bottom:16px;}
+.tk-hero .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.tk-num{background:#fef3c7;color:#92400e;padding:5px 11px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:800;}
+.tk-hero h4{margin:0;font-weight:900;font-size:1.05rem;}
+.tk-badge{padding:3px 10px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
+.bs-open{background:#dbeafe;color:#1e40af;} .bs-in_progress{background:#fef3c7;color:#92400e;}
+.bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
+.bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
+.bs-ot_pending_approval,.bs-ot_generated,.bs-ot_in_progress{background:#ede9fe;color:#5b21b6;}
+.tk-tabs{display:flex;gap:4px;border-bottom:2px solid #eaecf0;margin-bottom:16px;flex-wrap:wrap;}
+.tk-tab{padding:9px 16px;font-weight:700;font-size:.85rem;color:#6b7280;cursor:pointer;
+  border-bottom:2px solid transparent;margin-bottom:-2px;}
+.tk-tab.active{color:#dc2626;border-bottom-color:#dc2626;}
+.tk-tab .badge{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;padding:1px 6px;margin-left:4px;}
+.tk-pane{display:none;} .tk-pane.active{display:block;}
+.tk-card{background:#fff;border:1px solid #eaecf0;border-radius:13px;padding:18px 20px;margin-bottom:14px;}
+.tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;}
+.tk-dl{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;font-size:.87rem;}
+.tk-dl dt{color:#6b7280;font-weight:600;} .tk-dl dd{margin:0;color:#0f172a;font-weight:600;}
+.tk-msg{border:1px solid #eaecf0;border-radius:10px;padding:10px 13px;margin-bottom:8px;background:#fff;}
+.tk-msg.evento{background:#f9fafb;border-style:dashed;font-size:.8rem;color:#6b7280;}
+.tk-msg.interno{background:#fffbeb;border-color:#fde68a;}
+.tk-msg .meta{font-size:.68rem;color:#9ca3af;margin-bottom:2px;display:flex;gap:6px;align-items:center;}
+.tk-eq{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;
+  border-radius:8px;padding:8px 11px;margin-bottom:6px;font-size:.85rem;}
+.tk-adj{display:inline-flex;align-items:center;gap:5px;border:1px solid #eaecf0;border-radius:8px;
+  padding:6px 10px;margin:0 6px 6px 0;font-size:.8rem;text-decoration:none;color:#374151;background:#fff;}
+.tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:34px;text-align:center;color:#9ca3af;}
+</style>
+
+<div class="tk-hero" id="tkHero">
+  <div class="top">
+    <a href="{{ url_for('tk_list') }}" class="btn btn-sm btn-outline-light"><i class="bi bi-arrow-left"></i></a>
+    <span class="tk-num" id="hNum">…</span>
+    <h4 id="hCliente">Cargando…</h4>
+    <span class="tk-badge" id="hEstado"></span>
+  </div>
+</div>
+
+<div class="tk-tabs">
+  <div class="tk-tab active" data-pane="info">Información</div>
+  <div class="tk-tab" data-pane="conv">Conversación <span class="badge" id="convBadge" style="display:none;">0</span></div>
+  <div class="tk-tab" data-pane="acc">Acciones</div>
+</div>
+
+<!-- INFORMACIÓN -->
+<div class="tk-pane active" id="pane-info">
+  <div class="tk-card">
+    <h6>Estado y gestión</h6>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
+      <div style="flex:1;min-width:150px;">
+        <label style="font-size:.72rem;font-weight:700;color:#475569;">Estado</label>
+        <select id="selEstado" class="form-select form-select-sm">
+          {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="flex:1;min-width:130px;">
+        <label style="font-size:.72rem;font-weight:700;color:#475569;">Prioridad</label>
+        <select id="selPrio" class="form-select form-select-sm">
+          {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="flex:1;min-width:130px;">
+        <label style="font-size:.72rem;font-weight:700;color:#475569;">Asignado a</label>
+        <input id="inpAsignado" class="form-control form-control-sm" placeholder="usuario">
+      </div>
+      <button class="btn btn-sm btn-ilus" id="btnGuardar"><i class="bi bi-save me-1"></i>Guardar</button>
+    </div>
+  </div>
+  <div class="tk-card">
+    <h6>Cliente</h6>
+    <dl class="tk-dl" id="dlCliente"></dl>
+  </div>
+  <div class="tk-card">
+    <h6>Problema declarado</h6>
+    <div id="txtDesc" style="font-size:.9rem;color:#374151;white-space:pre-wrap;">—</div>
+  </div>
+  <div class="tk-card">
+    <h6>Equipos</h6>
+    <div id="listaEquipos"></div>
+    <div style="display:flex;gap:6px;margin-top:8px;">
+      <input id="inpEqNombre" class="form-control form-control-sm" placeholder="Nombre del equipo/producto">
+      <input id="inpEqSku" class="form-control form-control-sm" placeholder="SKU" style="max-width:130px;">
+      <button class="btn btn-sm btn-ilus-outline" id="btnAddEq"><i class="bi bi-plus-lg"></i></button>
+    </div>
+  </div>
+  <div class="tk-card">
+    <h6>Documentos ERP</h6>
+    <div id="listaDocs" style="font-size:.85rem;color:#6b7280;">—</div>
+  </div>
+</div>
+
+<!-- CONVERSACIÓN -->
+<div class="tk-pane" id="pane-conv">
+  <div class="tk-card">
+    <h6>Conversación y bitácora</h6>
+    <div id="listaMsgs"></div>
+    <div style="margin-top:12px;border-top:1px solid #eee;padding-top:12px;">
+      <textarea id="inpComent" class="form-control" rows="2" placeholder="Escribe un comentario interno…"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+        <label style="font-size:.78rem;color:#6b7280;">
+          <input type="checkbox" id="chkInterno" checked> Comentario interno (no visible al cliente)
+        </label>
+        <div style="display:flex;gap:8px;">
+          <label class="btn btn-sm btn-ilus-outline" style="margin:0;">
+            <i class="bi bi-paperclip"></i> Adjuntar
+            <input type="file" id="inpAdjunto" hidden accept="image/*,video/*,application/pdf">
+          </label>
+          <button class="btn btn-sm btn-ilus" id="btnComent"><i class="bi bi-send me-1"></i>Comentar</button>
+        </div>
+      </div>
+      <div id="listaAdj" style="margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ACCIONES (Fase 4) -->
+<div class="tk-pane" id="pane-acc">
+  <div class="tk-soon">
+    <i class="bi bi-tools" style="font-size:2rem;display:block;margin-bottom:8px;"></i>
+    <div style="font-weight:700;color:#6b7280;">Pestaña de Acciones</div>
+    <div style="font-size:.82rem;margin-top:4px;">Agendar hotel del técnico, coordinar visita, logística de acceso.<br>Se habilita en la Fase 4.</div>
+  </div>
+</div>
+
+<script>
+const TID = {{ ticket_id }};
+const ESTADO_LABEL = {{ estado_label|tojson }};
+const TIPO_LABEL = {{ tipo_label|tojson }};
+let _adjuntoFile = null;
+
+// Escapa TAMBIÉN comillas (esc se usa en atributos href/onclick, no solo texto) → anti-XSS.
+function esc(s){ return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// El servidor ya envía las fechas formateadas en hora Chile (Regla #6).
+function fmtFechaHora(s){ return s || ''; }
+// href seguro: solo rutas internas /f/ o http(s) — evita esquemas peligrosos.
+function safeUrl(u){ u=String(u||''); return (u.startsWith('/') || /^https?:/i.test(u)) ? u : '#'; }
+
+document.querySelectorAll('.tk-tab').forEach(function(tab){
+  tab.addEventListener('click', function(){
+    document.querySelectorAll('.tk-tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.tk-pane').forEach(p=>p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('pane-'+tab.dataset.pane).classList.add('active');
+  });
+});
+
+async function cargar(){
+  let d;
+  try{ const r = await fetch('/tickets/api/tickets/'+TID); d = await r.json(); }
+  catch(e){ ilusToast('No se pudo cargar el ticket','error'); return; }
+  if(!d.ok){ ilusToast(d.error||'Error','error'); return; }
+  const t = d.ticket;
+
+  document.getElementById('hNum').textContent = t.numero_ticket || ('#'+t.id);
+  document.getElementById('hCliente').textContent = t.empresa || t.nombre_contacto || t.rut || 'Sin cliente';
+  const be = document.getElementById('hEstado');
+  be.textContent = ESTADO_LABEL[t.estado]||t.estado; be.className = 'tk-badge bs-'+t.estado;
+
+  document.getElementById('selEstado').value = t.estado;
+  document.getElementById('selPrio').value = t.prioridad;
+  document.getElementById('inpAsignado').value = t.asignado_a || '';
+  document.getElementById('txtDesc').textContent = t.descripcion || '—';
+
+  const dl = document.getElementById('dlCliente');
+  const rows = [
+    ['Empresa', t.empresa], ['RUT', t.rut], ['Contacto', t.nombre_contacto],
+    ['Correo', t.email], ['Teléfono', t.phone], ['Dirección', t.direccion],
+    ['Sucursal', t.sucursal], ['Tipo', t.tipo ? (TIPO_LABEL[t.tipo]||t.tipo) : ''],
+    ['Origen', t.origen], ['Creado', fmtFechaHora(t.created_at)],
+  ].filter(r=>r[1]);
+  dl.innerHTML = rows.map(r=>'<dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd>').join('');
+
+  // Equipos
+  const le = document.getElementById('listaEquipos');
+  le.innerHTML = d.equipos.length ? d.equipos.map(function(eq){
+    return '<div class="tk-eq"><span>'+esc(eq.nombre||eq.erp_kopr||'—')
+      + (eq.sku?' <small style="color:#9ca3af;">· '+esc(eq.sku)+'</small>':'')+'</span>'
+      + '<button class="btn btn-sm btn-link text-danger p-0" onclick="delEquipo('+eq.id+')"><i class="bi bi-trash"></i></button></div>';
+  }).join('') : '<div style="color:#9ca3af;font-size:.85rem;">Sin equipos.</div>';
+
+  // Documentos
+  document.getElementById('listaDocs').innerHTML = d.documentos.length
+    ? d.documentos.map(x=>esc((x.erp_tido||'')+' '+(x.erp_nudo||''))).join(', ')
+    : '<span style="color:#9ca3af;">Sin documentos asociados.</span>';
+
+  // Mensajes / conversación
+  const lm = document.getElementById('listaMsgs');
+  lm.innerHTML = d.mensajes.length ? d.mensajes.map(function(m){
+    const evento = !['comentario','mensaje','client_message'].includes(m.tipo);
+    const cls = evento ? 'evento' : (m.es_interno ? 'interno' : '');
+    const who = m.usuario || (m.tipo==='client_message'?'Cliente':'Sistema');
+    return '<div class="tk-msg '+cls+'"><div class="meta">'+esc(who)+' · '+fmtFechaHora(m.created_at)
+      + (m.es_interno && !evento ? ' · <i class="bi bi-lock-fill"></i> interno':'')+'</div>'
+      + '<div>'+esc(m.contenido||'')+'</div></div>';
+  }).join('') : '<div style="color:#9ca3af;font-size:.85rem;">Aún no hay mensajes.</div>';
+
+  // Adjuntos
+  const la = document.getElementById('listaAdj');
+  la.innerHTML = d.adjuntos.map(function(a){
+    return '<a class="tk-adj" href="'+esc(safeUrl(a.archivo_url))+'" target="_blank" rel="noopener">'
+      + '<i class="bi bi-paperclip"></i>'+ esc(a.archivo_nombre||'archivo')+'</a>';
+  }).join('');
+
+  const nuevos = d.mensajes.filter(m=>m.tipo==='client_message').length;
+  const cb = document.getElementById('convBadge');
+  if(nuevos>0){ cb.style.display='inline-block'; cb.textContent=nuevos; } else cb.style.display='none';
+
+  // marcar leído
+  fetch('/tickets/api/tickets/'+TID+'/marcar-leido',{method:'PATCH'}).catch(()=>{});
+}
+
+document.getElementById('btnGuardar').addEventListener('click', async function(){
+  const payload = {
+    estado: document.getElementById('selEstado').value,
+    prioridad: document.getElementById('selPrio').value,
+    asignado_a: document.getElementById('inpAsignado').value.trim(),
+  };
+  const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  const d = await r.json();
+  if(d.ok){ ilusToast('✓ Guardado','success'); cargar(); } else ilusToast(d.error||'Error','error');
+});
+
+document.getElementById('btnAddEq').addEventListener('click', async function(){
+  const nombre = document.getElementById('inpEqNombre').value.trim();
+  if(!nombre){ ilusToast('Falta el nombre','warning'); return; }
+  const r = await fetch('/tickets/api/tickets/'+TID+'/equipos', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({nombre:nombre, sku:document.getElementById('inpEqSku').value.trim()})});
+  const d = await r.json();
+  if(d.ok){ document.getElementById('inpEqNombre').value=''; document.getElementById('inpEqSku').value=''; cargar(); }
+  else ilusToast(d.error||'Error','error');
+});
+
+async function delEquipo(eid){
+  const ok = await ilusConfirm({title:'Quitar equipo',message:'¿Quitar este equipo del ticket?',danger:true,okLabel:'Quitar'});
+  if(!ok) return;
+  const r = await fetch('/tickets/api/tickets/'+TID+'/equipos/'+eid, {method:'DELETE'});
+  const d = await r.json(); if(d.ok) cargar(); else ilusToast(d.error||'Error','error');
+}
+
+document.getElementById('btnComent').addEventListener('click', async function(){
+  const cont = document.getElementById('inpComent').value.trim();
+  if(!cont && !_adjuntoFile){ ilusToast('Escribe un comentario o adjunta un archivo','warning'); return; }
+  if(cont){
+    const r = await fetch('/tickets/api/tickets/'+TID+'/comentario', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({contenido:cont, es_interno:document.getElementById('chkInterno').checked})});
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error||'Error','error'); return; }
+    document.getElementById('inpComent').value='';
+  }
+  if(_adjuntoFile){ await subirAdjunto(); }
+  cargar();
+});
+
+document.getElementById('inpAdjunto').addEventListener('change', function(e){
+  _adjuntoFile = e.target.files[0] || null;
+  if(_adjuntoFile) ilusToast('Archivo listo: '+_adjuntoFile.name+' (se sube al comentar)','info');
+});
+
+async function subirAdjunto(){
+  const fd = new FormData(); fd.append('file', _adjuntoFile);
+  ilusLoader.show('Subiendo archivo…');
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID+'/adjuntos', {method:'POST', body:fd});
+    const d = await r.json(); ilusLoader.hide();
+    if(d.ok){ _adjuntoFile=null; document.getElementById('inpAdjunto').value=''; ilusToast('✓ Adjunto subido','success'); }
+    else ilusToast(d.error||'Error al subir','error');
+  }catch(e){ ilusLoader.hide(); ilusToast('Error al subir','error'); }
+}
+
+cargar();
+</script>
+{% endblock %}
