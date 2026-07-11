@@ -41,11 +41,18 @@
 .tk-dl{display:grid;grid-template-columns:26px 130px 1fr;gap:9px 10px;font-size:.87rem;align-items:start;}
 .tk-dl i{color:#c4c9d2;font-size:.92rem;margin-top:1px;}
 .tk-dl dt{color:#6b7280;font-weight:600;grid-column:2;}
-.tk-dl dd{margin:0;color:#0f172a;font-weight:700;grid-column:3;overflow-wrap:anywhere;}
+.tk-dl dd{margin:0;color:#0f172a;font-weight:700;grid-column:3;overflow-wrap:anywhere;
+  display:flex;align-items:center;gap:8px;}
+.tk-dl dd .tk-dd-val{flex:1;min-width:0;overflow-wrap:anywhere;}
 .tk-dl dd a{color:#0f172a;text-decoration:none;border-bottom:1px dashed #cbd5e1;}
 .tk-dl dd a:hover{color:#dc2626;border-color:#dc2626;}
+.tk-edit-pencil{flex-shrink:0;color:#c4c9d2;cursor:pointer;font-size:.82rem;opacity:0;transition:opacity .1s,color .1s;}
+.tk-dl dd:hover .tk-edit-pencil{opacity:1;}
+.tk-edit-pencil:hover{color:#dc2626;}
+.tk-dd-input{flex:1;min-width:0;}
 @media (max-width:520px){ .tk-dl{grid-template-columns:22px 1fr;}
-  .tk-dl dt{grid-column:2;} .tk-dl dd{grid-column:2;margin-bottom:4px;} }
+  .tk-dl dt{grid-column:2;} .tk-dl dd{grid-column:2;margin-bottom:4px;}
+  .tk-edit-pencil{opacity:1;} }
 /* ── Chips de metadata (Problema) ── */
 .tk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
 .tk-chip{display:inline-flex;align-items:center;gap:5px;background:#f8fafc;border:1px solid #e5e7eb;
@@ -66,12 +73,6 @@
 .tk-eq-table td{font-size:.85rem;border-bottom:1px solid #f1f5f9;padding:8px 10px;color:#0f172a;}
 .tk-eq-table tr:last-child td{border-bottom:none;}
 .tk-eq-table .btn-link{opacity:.5;} .tk-eq-table .btn-link:hover{opacity:1;}
-/* ── Identificación del cliente: grilla editable ── */
-.tk-id-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px;}
-.tk-id-field label{display:block;font-size:.68rem;font-weight:800;color:#6b7280;margin-bottom:3px;
-  text-transform:uppercase;letter-spacing:.04em;}
-@media (max-width:760px){.tk-id-grid{grid-template-columns:repeat(2,1fr);}}
-@media (max-width:520px){.tk-id-grid{grid-template-columns:1fr;}}
 .tk-origen-badge{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:50px;
   padding:2px 10px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
 .tk-visto-por{font-size:.72rem;color:#9ca3af;margin-top:10px;}
@@ -184,10 +185,25 @@
 .tk-adj-grupo-titulo:first-child{margin-top:0;}
 .tk-lightbox{position:fixed;inset:0;background:rgba(10,10,10,.92);z-index:2000;
   align-items:center;justify-content:center;padding:32px;}
-.tk-lightbox img{max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.5);}
-.tk-lightbox-close{position:absolute;top:18px;right:22px;color:#fff;font-size:1.3rem;cursor:pointer;
-  width:38px;height:38px;display:flex;align-items:center;justify-content:center;border-radius:50%;
-  background:rgba(255,255,255,.14);}
+.tk-lightbox-panel{display:flex;flex-direction:column;max-width:min(94vw,1100px);max-height:94vh;width:100%;}
+.tk-lightbox-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;}
+.tk-lightbox-nombre{color:#fff;font-size:.85rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
+.tk-lightbox-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.tk-lightbox-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.14);color:#fff;
+  border-radius:8px;padding:6px 12px;font-size:.78rem;font-weight:700;text-decoration:none;white-space:nowrap;}
+.tk-lightbox-btn:hover{background:rgba(255,255,255,.26);color:#fff;}
+.tk-lightbox-body{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;}
+.tk-lightbox-body img{max-width:100%;max-height:78vh;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.5);}
+.tk-lightbox-body iframe{width:100%;height:75vh;border:none;border-radius:8px;background:#fff;}
+.tk-lightbox-body video{max-width:100%;max-height:75vh;border-radius:8px;background:#000;}
+.tk-lightbox-fallback{background:#1a1a1a;border-radius:12px;padding:40px 50px;text-align:center;color:#e5e7eb;max-width:420px;}
+.tk-lightbox-fallback i{font-size:3rem;color:#dc2626;display:block;margin-bottom:14px;}
+.tk-lightbox-fallback .nombre{font-weight:700;margin-bottom:6px;word-break:break-word;}
+.tk-lightbox-fallback .msg{font-size:.82rem;color:#9ca3af;}
+.tk-lightbox-close{color:#fff;font-size:1.1rem;cursor:pointer;
+  width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:50%;
+  background:rgba(255,255,255,.14);flex-shrink:0;}
 .tk-lightbox-close:hover{background:rgba(255,255,255,.26);}
 </style>
 
@@ -257,46 +273,17 @@
       <div style="display:flex;align-items:center;gap:8px;font-size:.76rem;color:#6b7280;font-weight:600;">
         <span id="idFechaIngreso"></span>
         <span class="tk-origen-badge" id="idOrigenBadge" style="display:none;"></span>
-        <button class="btn btn-sm btn-ilus-outline" id="btnIdEditar" title="Editar identificación">
-          <i class="bi bi-pencil me-1"></i>Editar</button>
       </div>
     </div>
 
-    <!-- Vista compacta (solo lectura) -->
+    <!-- Vista compacta con edición campo por campo: cada dato tiene su propio
+         ícono de lápiz — clic convierte SOLO esa fila en un input inline
+         (blur/Enter guarda con PATCH de ese campo, Escape cancela). -->
     <div id="idVistaCompacta">
       <div class="tk-id-nombre" id="idCompactoNombre">—</div>
       <dl class="tk-dl" id="idCompactoDatos"></dl>
       <span class="tk-badge" id="idCompactoTipoBadge"
         style="display:none;background:#f3f4f6;color:#374151;margin-top:12px;"></span>
-    </div>
-
-    <!-- Vista edición (grilla existente, misma lógica de guardado) -->
-    <div id="idVistaEdicion" style="display:none;">
-      <div class="tk-id-grid">
-        <div class="tk-id-field"><label>RUT</label><input id="idRut" class="form-control form-control-sm" placeholder="Ej: 12.345.678-9"></div>
-        <div class="tk-id-field"><label>Nombre empresa</label><input id="idEmpresa" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>Nombre contacto</label><input id="idContacto" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>Correo</label><input id="idCorreo" type="email" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>Teléfono</label><input id="idTelefono" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>Dirección</label><input id="idDireccion" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>Región</label><input id="idRegion" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>Comuna</label><input id="idComuna" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>Sucursal</label><input id="idSucursal" class="form-control form-control-sm"></div>
-        <div class="tk-id-field"><label>N° de Documento</label><input id="idNumDoc" class="form-control form-control-sm"></div>
-        <div class="tk-id-field">
-          <label>Tipo de Tarea</label>
-          <select id="idTipo" class="form-select form-select-sm">
-            <option value="">—</option>
-            {% for tp in tk_tipos %}<option value="{{ tp }}">{{ tipo_label[tp] }}</option>{% endfor %}
-          </select>
-        </div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:10px;">
-        <a class="tk-map-link" id="idMapLink" href="#" target="_blank" rel="noopener" style="margin:0;display:none;">
-          <i class="bi bi-signpost-2"></i>Ver en Google Maps</a>
-        <button class="btn btn-sm btn-ilus" id="btnGuardarCliente" style="margin-left:auto;">
-          <i class="bi bi-save me-1"></i>Guardar identificación</button>
-      </div>
     </div>
   </div>
   <div class="tk-card">
@@ -356,7 +343,11 @@
               <input type="text" id="deqSerie" class="form-control" placeholder="Opcional">
             </div>
           </div>
-          <div class="form-text mt-2"><i class="bi bi-info-circle me-1"></i>Usa esto cuando el equipo no aparece en el buscador del ERP.</div>
+          <div class="mb-3 mt-2">
+            <label class="form-label">Notas / Observación <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
+            <textarea id="deqNotas" class="form-control" rows="2" placeholder="Ej: hace un ruido metálico al frenar, botón de encendido no prende..."></textarea>
+          </div>
+          <div class="form-text"><i class="bi bi-info-circle me-1"></i>Usa esto cuando el equipo no aparece en el buscador del ERP.</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -378,10 +369,19 @@
     <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
   </div>
 
-  <!-- Lightbox de fotos (adjuntos imagen) -->
+  <!-- Visor universal de adjuntos (imagen / PDF / video / descarga) -->
   <div class="tk-lightbox" id="tkLightbox" style="display:none;">
-    <span class="tk-lightbox-close" id="tkLightboxClose"><i class="bi bi-x-lg"></i></span>
-    <img id="tkLightboxImg" src="" alt="">
+    <div class="tk-lightbox-panel">
+      <div class="tk-lightbox-topbar">
+        <span class="tk-lightbox-nombre" id="tkLightboxNombre"></span>
+        <div class="tk-lightbox-actions">
+          <a class="tk-lightbox-btn" id="tkLightboxDescargar" href="#" download target="_blank" rel="noopener" title="Descargar">
+            <i class="bi bi-download"></i> Descargar</a>
+          <span class="tk-lightbox-close" id="tkLightboxClose" title="Cerrar"><i class="bi bi-x-lg"></i></span>
+        </div>
+      </div>
+      <div class="tk-lightbox-body" id="tkLightboxBody"></div>
+    </div>
   </div>
 </div>
 
@@ -549,28 +549,11 @@ async function cargar(){
     }).join(' · ');
   } else vp.style.display = 'none';
 
-  // ── Identificación del Cliente (editable) ──
-  document.getElementById('idRut').value = t.rut || '';
-  document.getElementById('idEmpresa').value = t.empresa || '';
-  document.getElementById('idContacto').value = t.nombre_contacto || '';
-  document.getElementById('idCorreo').value = t.email || '';
-  document.getElementById('idTelefono').value = t.phone || '';
-  document.getElementById('idDireccion').value = t.direccion || '';
-  document.getElementById('idRegion').value = t.region_nombre || '';
-  document.getElementById('idComuna').value = t.comuna_nombre || '';
-  document.getElementById('idSucursal').value = t.sucursal || '';
-  document.getElementById('idNumDoc').value = t.numero_documento || '';
-  document.getElementById('idTipo').value = t.tipo || '';
+  // ── Identificación del Cliente ──
   document.getElementById('idFechaIngreso').textContent = t.created_at ? ('Ingreso: '+fmtFechaHora(t.created_at)) : '';
   const idOrigenBadge = document.getElementById('idOrigenBadge');
   if(t.origen){ idOrigenBadge.style.display='inline-block'; idOrigenBadge.textContent = String(t.origen).toUpperCase(); }
   else idOrigenBadge.style.display='none';
-  const idMapLink = document.getElementById('idMapLink');
-  if(t.direccion){
-    const destino = (t.direccion||'') + (t.comuna_nombre ? (', '+t.comuna_nombre) : '');
-    idMapLink.href = 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destino);
-    idMapLink.style.display = 'inline-flex';
-  } else idMapLink.style.display = 'none';
   renderIdentificacionCompacta(t);
 
   // ── Problema: título + chips de metadata ──
@@ -730,27 +713,110 @@ function renderQueFalta(t, d){
   }).join('');
 }
 
-// ══════════════ Identificación del Cliente — vista compacta ══════════════
+// ══════════════ Identificación del Cliente — vista compacta con edición campo por campo ══════════════
+// Reemplaza el patrón anterior de "Editar" único que revelaba toda la grilla
+// (pedido explícito de Daniel): cada dato tiene su propio lápiz; un clic
+// convierte SOLO esa fila en un input inline (ver tkIdEmpezarEdicion).
+const TK_ID_CAMPOS = [
+  {key:'rut',              label:'RUT',           icon:'person-badge'},
+  {key:'empresa',          label:'Empresa',       icon:'briefcase'},
+  {key:'nombre_contacto',  label:'Contacto',      icon:'person'},
+  {key:'email',            label:'Correo',        icon:'envelope', tipo:'email'},
+  {key:'phone',            label:'Teléfono',      icon:'telephone'},
+  {key:'direccion',        label:'Dirección',     icon:'geo-alt'},
+  {key:'region_nombre',    label:'Región',        icon:'map'},
+  {key:'comuna_nombre',    label:'Comuna',        icon:'pin-map'},
+  {key:'sucursal',         label:'Sucursal',      icon:'building'},
+  {key:'numero_documento', label:'N° Documento',  icon:'file-earmark-ruled'},
+  {key:'tipo',             label:'Tipo',          icon:'tag', tipo:'select'},
+];
+function tkIdCampoConfig(key){ return TK_ID_CAMPOS.find(c=>c.key===key); }
+function tkIdValorMostrado(campo, t){
+  const v = t[campo.key];
+  if(campo.key === 'tipo') return v ? esc(TIPO_LABEL[v]||v) : '<span class="text-muted fw-normal">—</span>';
+  if(campo.key === 'email') return v ? '<a href="mailto:'+esc(v)+'">'+esc(v)+'</a>' : '<span class="text-muted fw-normal">—</span>';
+  if(campo.key === 'phone') return v ? '<a href="tel:'+esc(v)+'">'+esc(v)+'</a>' : '<span class="text-muted fw-normal">—</span>';
+  if(campo.key === 'direccion'){
+    if(!v) return '<span class="text-muted fw-normal">—</span>';
+    const destino = v + (t.comuna_nombre ? (', '+t.comuna_nombre) : '');
+    const mapsHref = 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destino);
+    return esc(v) + ' <a href="'+mapsHref+'" target="_blank" rel="noopener">Ver en mapa</a>';
+  }
+  return v ? esc(v) : '<span class="text-muted fw-normal">—</span>';
+}
 function renderIdentificacionCompacta(t){
   document.getElementById('idCompactoNombre').textContent = t.empresa || t.nombre_contacto || 'Sin nombre registrado';
-  const filas = [];
-  if(t.rut) filas.push(['person-badge','RUT', esc(t.rut)]);
-  if(t.nombre_contacto && t.empresa) filas.push(['person','Contacto', esc(t.nombre_contacto)]);
-  if(t.phone) filas.push(['telephone','Teléfono', '<a href="tel:'+esc(t.phone)+'">'+esc(t.phone)+'</a>']);
-  if(t.email) filas.push(['envelope','Correo', '<a href="mailto:'+esc(t.email)+'">'+esc(t.email)+'</a>']);
-  if(t.direccion){
-    const dirTxt = esc(t.direccion) + (t.comuna_nombre ? ', '+esc(t.comuna_nombre) : '');
-    const destino = (t.direccion||'') + (t.comuna_nombre ? (', '+t.comuna_nombre) : '');
-    const mapsHref = 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destino);
-    filas.push(['geo-alt','Dirección', dirTxt + ' <a href="'+mapsHref+'" target="_blank" rel="noopener">Ver en mapa</a>']);
-  }
-  if(t.sucursal) filas.push(['building','Sucursal', esc(t.sucursal)]);
-  if(t.numero_documento) filas.push(['file-earmark-ruled','N° Documento', esc(t.numero_documento)]);
   const dl = document.getElementById('idCompactoDatos');
-  dl.innerHTML = filas.length ? filas.map(f=>'<i class="bi bi-'+f[0]+'"></i><dt>'+f[1]+'</dt><dd>'+f[2]+'</dd>').join('')
-    : '<dd style="grid-column:1/-1;color:#9ca3af;font-weight:600;">Sin datos de contacto registrados.</dd>';
+  dl.innerHTML = TK_ID_CAMPOS.map(function(campo){
+    return '<i class="bi bi-'+campo.icon+'"></i><dt>'+esc(campo.label)+'</dt>'
+      + '<dd data-field="'+campo.key+'">'
+      + '<span class="tk-dd-val">'+tkIdValorMostrado(campo, t)+'</span>'
+      + '<i class="bi bi-pencil-fill tk-edit-pencil" data-field="'+campo.key+'" title="Editar '+esc(campo.label)+'"></i>'
+      + '</dd>';
+  }).join('');
+  dl.querySelectorAll('.tk-edit-pencil').forEach(function(p){
+    p.addEventListener('click', function(){ tkIdEmpezarEdicion(p.dataset.field); });
+  });
   const badge = document.getElementById('idCompactoTipoBadge');
   if(t.tipo){ badge.style.display='inline-block'; badge.textContent = TIPO_LABEL[t.tipo]||t.tipo; } else badge.style.display='none';
+}
+
+// Convierte la fila del campo indicado en un input/select editable inline.
+function tkIdEmpezarEdicion(key){
+  const dd = document.querySelector('#idCompactoDatos dd[data-field="'+key+'"]');
+  if(!dd || dd.dataset.editing === '1') return;
+  const campo = tkIdCampoConfig(key);
+  const valorActual = (ticketActual && ticketActual[key]) || '';
+  dd.dataset.editing = '1';
+  let inputHtml;
+  if(campo.tipo === 'select'){
+    const opts = ['<option value="">—</option>'].concat(Object.keys(TIPO_LABEL).map(function(k){
+      return '<option value="'+esc(k)+'"'+(k===valorActual?' selected':'')+'>'+esc(TIPO_LABEL[k])+'</option>';
+    }));
+    inputHtml = '<select class="form-select form-select-sm tk-dd-input">'+opts.join('')+'</select>';
+  } else {
+    const tipoInput = campo.tipo === 'email' ? 'email' : 'text';
+    inputHtml = '<input type="'+tipoInput+'" class="form-control form-control-sm tk-dd-input" value="'+esc(valorActual)+'">';
+  }
+  dd.innerHTML = inputHtml;
+  const input = dd.querySelector('.tk-dd-input');
+  input.focus();
+  if(input.select) input.select();
+  let resuelto = false;
+  function cancelar(){
+    if(resuelto) return; resuelto = true;
+    renderIdentificacionCompacta(ticketActual);
+  }
+  function guardar(){
+    if(resuelto) return; resuelto = true;
+    tkIdGuardarCampo(key, input.value.trim());
+  }
+  input.addEventListener('blur', guardar);
+  input.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); input.blur(); }
+    else if(e.key === 'Escape'){ e.preventDefault(); cancelar(); }
+  });
+}
+
+async function tkIdGuardarCampo(key, valor){
+  const payload = {}; payload[key] = valor;
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.ok){
+      ticketActual[key] = valor;
+      renderIdentificacionCompacta(ticketActual);
+      ilusToast('✓ Guardado','success');
+      cargar();
+    } else {
+      renderIdentificacionCompacta(ticketActual);
+      ilusToast(d.error||'Error al guardar','error');
+    }
+  }catch(e){
+    renderIdentificacionCompacta(ticketActual);
+    ilusToast('Sin conexión — no se pudo guardar','error');
+  }
 }
 
 function renderThread(mensajes, adjuntos){
@@ -831,12 +897,12 @@ function renderAdjuntosInfo(adjuntos){
       const thumb = esImg ? '<img src="'+esc(url)+'" loading="lazy">' : '<i class="bi '+iconoAdjunto(a.mime_type, a.archivo_nombre)+'"></i>';
       const meta = [a.file_size_kb ? (a.file_size_kb+' KB') : null, a.created_at ? fmtFechaHora(a.created_at) : null]
         .filter(Boolean).join(' · ');
-      // Las imágenes abren en el lightbox (no en pestaña nueva); el resto
-      // (pdf/word/excel/video) sigue abriendo en pestaña nueva como antes.
-      const atributos = esImg
-        ? ' data-lightbox="1" data-url="'+esc(url)+'"'
-        : ' target="_blank" rel="noopener"';
-      return '<a class="tk-adj-item" href="'+esc(url)+'"'+atributos+' title="'+esc(a.archivo_nombre||'archivo')+'">'
+      // TODOS los tipos abren en el visor universal (#tkLightbox) — nada
+      // navega a pestaña nueva (pedido explícito de Daniel: "un visor
+      // potente, con superpoderes", sin abrir otra página).
+      return '<a class="tk-adj-item" href="'+esc(url)+'" data-lightbox="1" data-url="'+esc(url)+'"'
+        + ' data-mime="'+esc(a.mime_type||'')+'" data-nombre="'+esc(a.archivo_nombre||'archivo')+'"'
+        + ' title="'+esc(a.archivo_nombre||'archivo')+'">'
         + '<div class="tk-adj-thumb">'+thumb+'</div>'
         + '<div class="tk-adj-name">'+esc(a.archivo_nombre||'archivo')+'</div>'
         + (meta?'<div class="tk-adj-meta">'+esc(meta)+'</div>':'')
@@ -847,20 +913,45 @@ function renderAdjuntosInfo(adjuntos){
   c.querySelectorAll('.tk-adj-item[data-lightbox]').forEach(function(el){
     el.addEventListener('click', function(e){
       e.preventDefault();
-      tkAbrirLightbox(el.dataset.url, el.getAttribute('title'));
+      tkAbrirAdjunto(el.dataset.url, el.dataset.mime, el.dataset.nombre);
     });
   });
 }
 
-// ══════════════ Lightbox simple para adjuntos-imagen ══════════════
-function tkAbrirLightbox(url, nombre){
-  document.getElementById('tkLightboxImg').src = url;
-  document.getElementById('tkLightboxImg').alt = nombre || '';
+// ══════════════ Visor universal de adjuntos (imagen / PDF / video / descarga) ══════════════
+// Reutiliza esImagen()/iconoAdjunto() ya existentes para detectar el tipo.
+function esVideo(mime){ return /^video\//.test(mime||''); }
+function esPdfArchivo(mime, nombre){
+  const ext = String(nombre||'').split('.').pop().toLowerCase();
+  return mime === 'application/pdf' || ext === 'pdf';
+}
+function tkAbrirAdjunto(url, mime, nombre){
+  url = safeUrl(url);
+  document.getElementById('tkLightboxNombre').textContent = nombre || 'archivo';
+  const descargar = document.getElementById('tkLightboxDescargar');
+  descargar.href = url;
+  descargar.setAttribute('download', nombre || '');
+  const body = document.getElementById('tkLightboxBody');
+  if(esImagen(mime)){
+    body.innerHTML = '<img src="'+esc(url)+'" alt="'+esc(nombre||'')+'">';
+  } else if(esPdfArchivo(mime, nombre)){
+    // Los navegadores modernos renderizan PDF nativamente dentro de un iframe.
+    body.innerHTML = '<iframe src="'+esc(url)+'" title="'+esc(nombre||'PDF')+'"></iframe>';
+  } else if(esVideo(mime)){
+    body.innerHTML = '<video src="'+esc(url)+'" controls></video>';
+  } else {
+    // Word/Excel/otros: no se puede previsualizar en el navegador sin
+    // librerías nuevas — estado amigable + botón Descargar (ya visible arriba).
+    body.innerHTML = '<div class="tk-lightbox-fallback"><i class="bi '+iconoAdjunto(mime, nombre)+'"></i>'
+      + '<div class="nombre">'+esc(nombre||'archivo')+'</div>'
+      + '<div class="msg">Vista previa no disponible para este tipo de archivo.<br>Usa el botón "Descargar" para abrirlo.</div>'
+      + '</div>';
+  }
   document.getElementById('tkLightbox').style.display = 'flex';
 }
 function tkCerrarLightbox(){
   document.getElementById('tkLightbox').style.display = 'none';
-  document.getElementById('tkLightboxImg').src = '';
+  document.getElementById('tkLightboxBody').innerHTML = '';
 }
 document.getElementById('tkLightbox').addEventListener('click', function(e){
   if(e.target === this) tkCerrarLightbox();
@@ -907,44 +998,6 @@ document.getElementById('btnGuardar').addEventListener('click', async function()
   if(d.ok){ ilusToast('✓ Guardado','success'); cargar(); } else ilusToast(d.error||'Error','error');
 });
 
-// ══════════════ Identificación del cliente — vista compacta ↔ edición ══════════════
-document.getElementById('btnIdEditar').addEventListener('click', function(){
-  document.getElementById('idVistaCompacta').style.display = 'none';
-  document.getElementById('idVistaEdicion').style.display = 'block';
-});
-
-// ══════════════ Identificación del cliente — guardado propio (misma ruta PATCH) ══════════════
-document.getElementById('btnGuardarCliente').addEventListener('click', async function(){
-  const payload = {
-    rut: document.getElementById('idRut').value.trim(),
-    empresa: document.getElementById('idEmpresa').value.trim(),
-    nombre_contacto: document.getElementById('idContacto').value.trim(),
-    email: document.getElementById('idCorreo').value.trim(),
-    phone: document.getElementById('idTelefono').value.trim(),
-    direccion: document.getElementById('idDireccion').value.trim(),
-    region_nombre: document.getElementById('idRegion').value.trim(),
-    comuna_nombre: document.getElementById('idComuna').value.trim(),
-    sucursal: document.getElementById('idSucursal').value.trim(),
-    numero_documento: document.getElementById('idNumDoc').value.trim(),
-    tipo: document.getElementById('idTipo').value,
-  };
-  const btn = this;
-  const original = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
-  try{
-    const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-    const d = await r.json();
-    if(d.ok){
-      ilusToast('✓ Identificación guardada','success');
-      document.getElementById('idVistaEdicion').style.display = 'none';
-      document.getElementById('idVistaCompacta').style.display = 'block';
-      cargar();
-    } else ilusToast(d.error||'Error','error');
-  }catch(e){ ilusToast('Sin conexión','error'); }
-  btn.disabled = false; btn.innerHTML = original;
-});
-
 // ══════════════ Equipos — asignar desde documento ERP (tido + nudo) ══════════════
 document.getElementById('btnEqDesdeDoc').addEventListener('click', async function(){
   const tido = await ilusPrompt({title:'Documento ERP', message:'Tipo de documento (ej: FCV, BLV, NVV, GDV…)',
@@ -975,6 +1028,7 @@ document.getElementById('btnDeqGuardar').addEventListener('click', async functio
     sku: document.getElementById('deqSku').value.trim(),
     serie: document.getElementById('deqSerie').value.trim(),
     cantidad: +document.getElementById('deqCantidad').value || 1,
+    notas: document.getElementById('deqNotas').value.trim(),
   };
   const btn = this;
   const original = btn.innerHTML;
@@ -990,6 +1044,7 @@ document.getElementById('btnDeqGuardar').addEventListener('click', async functio
       document.getElementById('deqSku').value = '';
       document.getElementById('deqSerie').value = '';
       document.getElementById('deqCantidad').value = '1';
+      document.getElementById('deqNotas').value = '';
       const modalEl = document.getElementById('modalDeclararEquipo');
       const modalInst = bootstrap.Modal.getOrCreateInstance(modalEl);
       modalInst.hide();

@@ -217,6 +217,17 @@ def register_tickets_routes(app, ctx):
     BODEGA_SOPORTE = os.environ.get("TK_BODEGA_SOPORTE", "02").strip()
     MAX_PRODUCTOS_BUSCADOS = 20
 
+    # Buzon de soporte de Tickets (Daniel 2026-07-12): "necesito que el cliente
+    # vea su version en Gmail... y me responda por correo, y eso lo vea
+    # reflejado yo en el ticket". El Reply-To de marca compartido apunta a
+    # soportetec@sphs.cl (usado por retiros/transporte/mantenciones) -- Tickets
+    # necesita un Reply-To propio, apuntando al buzon que se integrara con
+    # Gmail API para leer las respuestas de los clientes (pendiente: cuenta de
+    # servicio + delegacion de dominio en Google Workspace, autorizada por un
+    # super-admin -- ver conversacion). Configurable por env var para no
+    # requerir otro deploy si cambia el buzon.
+    TK_SUPPORT_REPLY_TO = os.environ.get("TK_SUPPORT_REPLY_TO", "daniel.aguilar@sphs.cl").strip()
+
     def _buscar_catalogo_bodega(q):
         """Catalogo general (MAEPR) con stock en BODEGA_SOPORTE (MAEST).
         Compartido por /soporte/api/erp/productos (publico) y
@@ -895,12 +906,13 @@ def register_tickets_routes(app, ctx):
                     try:
                         cur.execute(
                             "INSERT IGNORE INTO tk_ticket_equipos "
-                            "(ticket_id, erp_kopr, nombre, tipo, sku, cantidad) VALUES (%s,%s,%s,%s,%s,%s)",
+                            "(ticket_id, erp_kopr, nombre, tipo, sku, cantidad, notas) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                             (tid, (eq.get("kopr") or "").strip()[:100] or None,
                              (eq.get("nombre") or "").strip()[:300] or None,
                              (eq.get("tipo") or "").strip()[:100] or None,
                              (eq.get("sku") or "").strip()[:100] or None,
-                             int(eq.get("cantidad") or 1)),
+                             int(eq.get("cantidad") or 1),
+                             (eq.get("notas") or "").strip()[:500] or None),
                         )
                     except Exception as _e:
                         print(f"[tk_api_create] equipo no insertado tid={tid}: {_e}", flush=True)
@@ -1177,11 +1189,18 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[tk_notificar_lifecycle] boton portal no agregado: {_e}", flush=True)
             cuerpo_correo = cuerpo_email
-        html_final = (_comm_render_email_document(subject, cuerpo_correo, subtitle=f"Ticket {numero} · ILUS Fitness")
+        # MODO PRUEBA (TK_TEST_EMAIL_TO): to_email/subject de arriba se
+        # conservan intactos para el log (_tk_log mas abajo) -- solo el
+        # ENVIO real se redirige, para que la trazabilidad del ticket siga
+        # mostrando el destinatario real aunque el correo haya salido a
+        # la casilla de pruebas.
+        to_envio, subject_envio = _tk_test_redirect(to_email, subject)
+        html_final = (_comm_render_email_document(subject_envio, cuerpo_correo, subtitle=f"Ticket {numero} · ILUS Fitness")
                       if _comm_render_email_document else cuerpo_correo)
         try:
-            enviado = _send_ilus_email(to_email, subject, html_final,
-                                        evento=f"ticket_{estado_slug}", modulo="tickets")
+            enviado = _send_ilus_email(to_envio, subject_envio, html_final,
+                                        evento=f"ticket_{estado_slug}", modulo="tickets",
+                                        reply_to=TK_SUPPORT_REPLY_TO)
         except Exception as _e:
             print(f"[tk_notificar_lifecycle] error enviando tid={tid} estado={estado_slug}: {_e}", flush=True)
             enviado = False
@@ -1276,14 +1295,20 @@ def register_tickets_routes(app, ctx):
             cuerpo_email = cuerpo_email + _tk_boton_portal_html(tid)
         except Exception as _e:
             print(f"[tk_responder_cliente] boton portal no agregado: {_e}", flush=True)
-        html_final = (_comm_render_email_document(subject, cuerpo_email, subtitle=f"Ticket {numero} · ILUS Fitness")
+        # MODO PRUEBA (TK_TEST_EMAIL_TO): to_email/subject originales se
+        # conservan para el log de abajo; solo el envio real se redirige.
+        # El CC se descarta en modo prueba -- un cc real igual llegaria a un
+        # cliente real si solo redirigimos el "to".
+        to_envio, subject_envio = _tk_test_redirect(to_email, subject)
+        cc_envio = cc_email if to_envio == to_email else ""
+        html_final = (_comm_render_email_document(subject_envio, cuerpo_email, subtitle=f"Ticket {numero} · ILUS Fitness")
                       if _comm_render_email_document else cuerpo_email)
 
         try:
-            kwargs = {"evento": "ticket_respuesta", "modulo": "tickets"}
-            if cc_email:
-                kwargs["cc"] = cc_email
-            enviado = _send_ilus_email(to_email, subject, html_final, **kwargs)
+            kwargs = {"evento": "ticket_respuesta", "modulo": "tickets", "reply_to": TK_SUPPORT_REPLY_TO}
+            if cc_envio:
+                kwargs["cc"] = cc_envio
+            enviado = _send_ilus_email(to_envio, subject_envio, html_final, **kwargs)
         except Exception as _e:
             print(f"[tk_responder_cliente] error enviando tid={tid}: {_e}", flush=True)
             enviado = False
@@ -2430,17 +2455,49 @@ def register_tickets_routes(app, ctx):
     def _tk_boton_portal_html(tid):
         """HTML del boton 'Responder' que se agrega a TODO correo saliente de
         tickets (creacion/resuelto/cerrado/respuesta manual) -- estilos inline
-        (los clientes de correo no cargan CSS externo)."""
+        (los clientes de correo no cargan CSS externo).
+
+        FIX 2026-07-12 (Daniel, prueba en vivo): probo respondiendo el correo
+        directamente (como en Gmail) y su respuesta no aparecio en el ticket --
+        no es un bug, es que este correo NUNCA recibe respuestas (no hay buzon
+        de entrada monitoreado detras); el UNICO camino de vuelta es el portal.
+        Eso no quedaba claro a simple vista, asi que se agrega un aviso
+        explicito ANTES del boton para que no haya ninguna duda de "que correo
+        predomina" -- este correo es de salida solamente."""
         url = _tk_portal_url(tid)
         url_esc = _html_mod.escape(url, quote=True)
         return (
-            '<div style="text-align:center;margin:24px 0 8px">'
+            '<div style="background:#fff8e1;border:1px solid #fde68a;border-radius:8px;'
+            'padding:10px 14px;margin:20px 0 0;text-align:center">'
+            '<p style="font-size:12px;color:#92400e;margin:0;font-weight:600">'
+            '⚠️ Este correo no recibe respuestas directas (no lo respondas desde tu '
+            'bandeja). Para escribirnos o adjuntar fotos, usa el botón de abajo.</p>'
+            '</div>'
+            '<div style="text-align:center;margin:12px 0 8px">'
             f'<a href="{url_esc}" style="background:#dc2626;color:#ffffff;text-decoration:none;'
             'font-weight:700;font-size:14px;padding:12px 28px;border-radius:8px;display:inline-block">'
             'Responder en el portal</a></div>'
             '<p style="font-size:12px;color:#9ca3af;text-align:center;margin:8px 0 0">'
             f'O copia este enlace: <a href="{url_esc}" style="color:#dc2626">{url_esc}</a></p>'
         )
+
+    def _tk_test_redirect(to_email, subject):
+        """MODO PRUEBA especifico de Tickets (Daniel 2026-07-12): mientras se
+        prueba el ping-pong de correo con los tickets reales migrados de
+        Triple A, ningun correo debe llegarle a un cliente real. En vez de
+        borrar datos (que no vamos a hacer -- puede haber tickets organicos
+        sin respaldo en Triple A), si la env var TK_TEST_EMAIL_TO esta seteada,
+        CUALQUIER correo saliente de tickets se redirige a esa casilla,
+        mostrando el destinatario real en el asunto. Deliberadamente separado
+        de ILUS_COMM_TEST_TO (ese es global y afectaria retiros/transporte/
+        mantenciones tambien mientras se prueba tickets) -- sin la env var,
+        passthrough exacto, cero impacto."""
+        test_to = (os.environ.get("TK_TEST_EMAIL_TO") or "").strip()
+        if test_to and to_email and str(to_email).strip().lower() != test_to.lower():
+            real_to = to_email
+            print(f"[TK_TEST_MODE] correo de ticket redirigido: real={real_to} -> {test_to}", flush=True)
+            return test_to, f"[PRUEBA→{real_to}] {subject}"
+        return to_email, subject
 
     @app.route("/portal/ticket/<int:tid>")
     def tk_portal_ver(tid):

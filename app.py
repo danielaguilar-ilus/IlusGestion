@@ -7311,9 +7311,15 @@ def _apply_test_redirect(to_addr, subject):
 
 
 def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
-                          attachments=None, cc=None) -> bool:
+                          attachments=None, cc=None, reply_to=None) -> bool:
     """
     Implementación real con fallback configurable por env var.
+
+    reply_to (FIX 2026-07-12 — Tickets/Gmail): override puntual del Reply-To
+    de marca (por defecto "soportetec@sphs.cl", compartido por TODOS los
+    módulos). Tickets lo necesita apuntando a un buzón específico (el que
+    se vaya a integrar con Gmail API para leer respuestas de clientes) sin
+    tocar el default global que usan retiros/transporte/mantenciones.
 
     attachments (FIX 2026-06-11 — informe post-servicio): lista opcional de
     tuplas (filename, bytes, mimetype) — también acepta dicts
@@ -7397,7 +7403,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     # Branding desde la marca (BD), SMTP credentials no se tocan
     from_name     = marca["from_name"]  or cfg.get("from_name") or "ILUS Fitness"
     from_addr_cfg = marca["from_email"] or cfg.get("from_addr") or cfg.get("smtp_user", "")
-    reply_to      = marca["reply_to"]   or cfg.get("reply_to") or ""
+    reply_to      = reply_to or marca["reply_to"] or cfg.get("reply_to") or ""
 
     # ── Envío vía SMTP (único método; configurable desde el front) ──────
     # Con adjuntos el contenedor debe ser multipart/mixed (el HTML va en un

@@ -132,6 +132,11 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 .nt-eqrow{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;border-radius:8px;
   padding:7px 11px;margin-bottom:5px;font-size:.83rem;background:#fff;}
 .nt-eqrow .sku{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#6b7280;}
+/* Observación por equipo (Daniel 2026-07-11: "no puede ser la misma [observacion]
+   por las cinco [maquinas]") -- una fila = un equipo, cada uno con su propia nota. */
+.nt-eq-item{margin-bottom:8px;}
+.nt-eq-item .nt-eqrow{margin-bottom:4px;}
+.nt-eq-notas{font-size:.76rem;padding:5px 9px;}
 .nt-eq-count{display:none;align-items:center;gap:6px;font-size:.72rem;font-weight:800;color:#475569;
   background:#f3f4f6;border-radius:50px;padding:4px 11px;margin:8px 0 6px;width:fit-content;}
 .nt-eq-count i{color:#dc2626;}
@@ -766,7 +771,7 @@ document.getElementById('ntBuscarEq').addEventListener('input', ntBuscarEquipo);
 
 function ntAddEquipo(p){
   if(ntEquipos.some(e=>(e.sku && e.sku===p.sku) || e.nombre===p.nombre)){ ilusToast('Ese equipo ya está agregado','info'); }
-  else ntEquipos.push({sku:p.sku||'', nombre:p.nombre||''});
+  else ntEquipos.push({sku:p.sku||'', nombre:p.nombre||'', notas:''});
   ntAcEq.classList.remove('open'); document.getElementById('ntBuscarEq').value='';
   renderNtEquipos();
 }
@@ -778,9 +783,21 @@ function renderNtEquipos(){
   const n = ntEquipos.length;
   counter.classList.toggle('show', n > 0);
   document.getElementById('ntEqCountTxt').textContent = n===1 ? '1 equipo agregado' : n+' equipos agregados';
-  l.innerHTML = ntEquipos.map((e,i)=>'<div class="nt-eqrow"><span>'+esc(e.nombre)
+  // Cada equipo agregado lleva su propia observación (Daniel 2026-07-11: con
+  // varias maquinas con problemas distintos, la descripcion general del
+  // ticket no alcanza -- se necesita una nota por maquina).
+  l.innerHTML = ntEquipos.map((e,i)=>'<div class="nt-eq-item">'
+    + '<div class="nt-eqrow"><span>'+esc(e.nombre)
     + (e.sku? ' <span class="sku">· '+esc(e.sku)+'</span>':'')
-    + '</span><button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ntDelEquipo('+i+')"><i class="bi bi-x-lg"></i></button></div>').join('');
+    + '</span><button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ntDelEquipo('+i+')"><i class="bi bi-x-lg"></i></button></div>'
+    + '<input type="text" class="form-control form-control-sm nt-eq-notas" data-i="'+i+'" placeholder="Observación de este equipo (opcional)" value="'+esc(e.notas||'')+'">'
+    + '</div>').join('');
+  l.querySelectorAll('.nt-eq-notas').forEach(function(inp){
+    inp.addEventListener('input', function(){
+      const idx = +this.dataset.i;
+      if(ntEquipos[idx]) ntEquipos[idx].notas = this.value;
+    });
+  });
 }
 window.ntDelEquipo = function(i){ ntEquipos.splice(i,1); renderNtEquipos(); };
 
@@ -849,7 +866,7 @@ document.getElementById('ntBtnCrear').addEventListener('click', async function()
     producto: ntEquipos.map(e=>e.nombre).join(' · '),
     sku: ntEquipos.map(e=>e.sku).filter(Boolean).join(', '),
     descripcion: document.getElementById('ntDesc').value.trim(),
-    equipos: ntEquipos.map(e=>({kopr:e.sku, nombre:e.nombre, sku:e.sku})),
+    equipos: ntEquipos.map(e=>({kopr:e.sku, nombre:e.nombre, sku:e.sku, notas:e.notas||''})),
   };
   try{
     const r = await fetch('/tickets/api/tickets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
