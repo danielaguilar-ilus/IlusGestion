@@ -2,12 +2,6 @@
 {% block title %}Tickets — ILUS{% endblock %}
 {% block content %}
 <style>
-.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
-  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
-  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
-  box-shadow:0 4px 18px rgba(0,0,0,.14);}
-.tk-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
-.tk-hero .sub{font-size:.86rem;color:#cfd3da;}
 .tk-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
 .tk-kpi{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;}
 .tk-kpi .num{font-size:1.5rem;font-weight:900;line-height:1;}
@@ -256,8 +250,8 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
      Purgar tickets / Desde documento ERP / Nuevo Ticket) no envolvía entre sí
      -- desbordaba el hero. .tk-hero ya tiene flex-wrap pero solo entre sus
      DOS hijos directos (título+sub y el grupo de botones). */
-  .tk-hero .d-flex.gap-2{flex-wrap:wrap;width:100%;}
-  .tk-hero .d-flex.gap-2 .btn{flex:1 1 auto;justify-content:center;}
+  .page-header .d-flex.gap-2{flex-wrap:wrap;width:100%;}
+  .page-header .d-flex.gap-2 .btn{flex:1 1 auto;justify-content:center;}
 
   /* Hallazgo 2 (alta): .tk-act (Ver/Cerrar/Eliminar) y .tk-pg-btn (prev/next)
      no llevan clase .btn -- quedan en 30px, bajo el mínimo táctil. Se replica
@@ -297,7 +291,7 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 }
 </style>
 
-<div class="tk-hero">
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-ticket-perforated me-2"></i>Tickets</h4>
     <div class="sub">Central de soporte — solicitudes, fallas, garantías, repuestos y cotizaciones</div>

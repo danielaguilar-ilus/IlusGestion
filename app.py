@@ -40662,35 +40662,13 @@ def plantillas_hub():
 @_mant_required
 @_no_tecnico
 def calendario_hub():
-    """Calendario BÁSICO de solo lectura (v1): próximas visitas agrupadas
-    por fecha. NO reemplaza /mantenciones/calendario (módulo completo ya
-    existente con drill-down por día) — es una vista simple pensada para
-    el grupo 'Servicio Técnico' del sidebar. Regla #4.2: nada se elimina."""
-    hoy = datetime.now().date()
-    rows = mysql_fetchall(
-        "SELECT v.id, v.fecha_programada, v.tecnico, v.tipo, v.estado, v.titulo, "
-        "       c.razon_social "
-        "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id = v.cliente_id "
-        " WHERE v.fecha_programada >= %s "
-        " ORDER BY v.fecha_programada ASC LIMIT 300",
-        (hoy,)
-    ) or []
-
-    agrupado = {}
-    orden_fechas = []
-    for r in rows:
-        r = dict(r)
-        f = r["fecha_programada"]
-        if f not in agrupado:
-            agrupado[f] = []
-            orden_fechas.append(f)
-        agrupado[f].append(r)
-
-    return render_template(
-        "clientes_hub/calendario.html",
-        orden_fechas=orden_fechas, agrupado=agrupado, hoy=hoy,
-    )
+    """2026-07-12 (Daniel): "el calendario tiene que ver un calendario, no
+    una lista". La v1 (lista agrupada por fecha) se reemplaza por el
+    calendario COMPLETO real (semana/mes con drill-down por día) que ya
+    existe en Mantenciones -- mismo patron de reuso que Clientes/OTs/
+    Plantillas (return directo a la vista real, sin reconstruirla).
+    Regla #4.2: /mantenciones/calendario sigue viva sin cambios."""
+    return mant_calendario()
 
 
 @app.route("/cotizaciones")

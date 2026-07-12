@@ -3,15 +3,12 @@
 {% block content %}
 <style>
 /* ══════════════ Catálogo de Productos — mismo patrón visual "Triple A"
-   que templates/tickets/list.html (hero negro/rojo, tabla sticky ordenable,
-   footer con paginación, modales Bootstrap). Prefijo cat- para no chocar
-   con las clases tk- de Tickets si algún día conviven en el mismo bundle. ══ */
-.cat-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
-  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
-  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
-  box-shadow:0 4px 18px rgba(0,0,0,.14);}
-.cat-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
-.cat-hero .sub{font-size:.86rem;color:#cfd3da;}
+   que templates/tickets/list.html (tabla sticky ordenable, footer con
+   paginación, modales Bootstrap). Prefijo cat- para no chocar con las
+   clases tk- de Tickets si algún día conviven en el mismo bundle.
+   2026-07-12: el hero usa .page-header (clase global de style.css,
+   mismo estandar que Técnicos/Plantillas/etc) en vez de un .cat-hero
+   local propio. ══ */
 
 .cat-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:10px 12px;margin-bottom:12px;
   display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
@@ -176,7 +173,7 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
 }
 </style>
 
-<div class="cat-hero">
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-box-seam me-2"></i>Catálogo de Productos</h4>
     <div class="sub">Ficha técnica de referencia — fotos y manual PDF por producto</div>
