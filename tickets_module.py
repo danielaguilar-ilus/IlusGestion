@@ -917,6 +917,11 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN resuelto_at DATETIME NULL")
         if "legacy_taa_id" not in existentes:
             alters.append("ADD COLUMN legacy_taa_id INT NULL")
+        # 2026-07-13 (Daniel, URGENTE): "que mande... el codigo postal aparte"
+        # -- Google Places lo trae como componente 'postal_code', separado de
+        # comuna/region (ya soportados). Columna propia para no perderlo.
+        if "codigo_postal" not in existentes:
+            alters.append("ADD COLUMN codigo_postal VARCHAR(20) NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_tickets {a}")
@@ -4687,8 +4692,8 @@ def register_tickets_routes(app, ctx):
                     "INSERT INTO tk_tickets "
                     "(origen, estado, tipo, prioridad, descripcion, rut, empresa, nombre_contacto, "
                     " email, phone, direccion, direccion_lat, direccion_lng, direccion_place_id, "
-                    " comuna_nombre, region_nombre, sucursal, producto, sku, numero_documento, created_by) "
-                    "VALUES ('form','open',%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'cliente')",
+                    " comuna_nombre, region_nombre, codigo_postal, sucursal, producto, sku, numero_documento, created_by) "
+                    "VALUES ('form','open',%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'cliente')",
                     (tipo, descripcion[:2000], rut[:12],
                      (d.get("empresa") or "").strip()[:150] or None,
                      nombre_contacto[:150], email[:150], phone[:20],
@@ -4697,6 +4702,7 @@ def register_tickets_routes(app, ctx):
                      (d.get("direccion_place_id") or "").strip()[:200] or None,
                      (d.get("comuna_nombre") or "").strip()[:120] or None,
                      (d.get("region_nombre") or "").strip()[:120] or None,
+                     (d.get("codigo_postal") or "").strip()[:20] or None,
                      (d.get("sucursal") or "").strip()[:100] or None,
                      ", ".join(p.get("nombre", "") for p in productos if p.get("nombre"))[:2000] or None,
                      ", ".join(p.get("sku", "") for p in productos if p.get("sku"))[:500] or None,

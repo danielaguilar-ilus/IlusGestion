@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Solicitud de Soporte · ILUS Fitness</title>
 <link rel="icon" href="{{ url_for('static', filename='Logo.png') }}">
-<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+{# 2026-07-13 (Daniel, URGENTE): "termina los logos... los que tienen signo de
+   interrogacion" -- los iconos (bi-*) se veian como el simbolo de "fuente
+   faltante" cuando esta pagina esta embebida en el iframe de Shopify (el
+   CDN de jsdelivr no siempre carga ahi). Se auto-hospeda el font localmente
+   (mismo dominio que la pagina, sin depender de un CDN externo) para que
+   esto no vuelva a pasar en el formulario mas critico de cara al cliente. #}
+<link href="{{ url_for('static', filename='bootstrap-icons.css') }}" rel="stylesheet">
 <style>
 :root{--ilus-red:#dc2626;--ilus-black:#0a0a0a;}
 *{box-sizing:border-box;}
@@ -189,6 +195,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
         <input type="text" id="spDireccion" placeholder="Ej: Av. Colón 1265, Las Condes" autocomplete="off">
         <input type="hidden" id="spDirLat"><input type="hidden" id="spDirLng">
         <input type="hidden" id="spDirPlace"><input type="hidden" id="spComuna"><input type="hidden" id="spRegion">
+        <input type="hidden" id="spCodigoPostal">
         <div class="fh" id="spDirHint">Direcciones sugeridas por Google</div>
         <div class="fe">Ingresa una dirección.</div>
       </div>
@@ -249,7 +256,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <h2>¡Solicitud recibida!</h2>
     <div style="color:#9ca3af;font-size:.8rem;margin-top:6px;">N° de solicitud:</div>
     <div class="num" id="spNumOk">—</div>
-    <p style="color:#6b7280;margin-top:16px;">Revisa tu correo — ese será el canal por el que te contactaremos con la información y el seguimiento de tu caso.</p>
+    <p style="color:#6b7280;margin-top:16px;">Revisa tu correo — ese será el canal por el que te contactaremos con la información y el seguimiento de tu caso. Si respondes ese correo, <strong>no cambies el asunto</strong>: ahí va tu número de ticket y así lo asociamos automáticamente a tu caso.</p>
     <div class="sp-ok-bar"><div class="sp-ok-bar-fill" id="spOkBarFill"></div></div>
   </div>
 </div>
@@ -316,6 +323,10 @@ document.addEventListener('DOMContentLoaded', function(){
           // que ya usa el modal interno de tickets (list.html).
           const rg = place.componentes.find(c=>c.types.indexOf('administrative_area_level_1')>=0);
           if(rg) document.getElementById('spRegion').value = rg.long_name;
+          // 2026-07-13 (Daniel, URGENTE): "el codigo postal aparte" -- mismo
+          // criterio de extraccion por tipo de componente de Google Places.
+          const cp = place.componentes.find(c=>c.types.indexOf('postal_code')>=0);
+          document.getElementById('spCodigoPostal').value = cp ? cp.long_name : '';
         }
         marcarError('fDirWrap', false);
         document.getElementById('spDirHint').innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> Dirección verificada';
@@ -334,14 +345,27 @@ const buscarProd = debounce(async function(){
     const r = await fetch('/soporte/api/erp/productos?q='+encodeURIComponent(q));
     const d = await r.json();
     const rows = d.resultados || [];
-    if(!rows.length){ spAcProd.innerHTML = '<div class="sp-ac-empty"><i class="bi bi-search"></i>Sin resultados</div>'; return; }
-    spAcProd.innerHTML = rows.map((p,i)=>'<div class="sp-ac-item" data-i="'+i+'">'+esc(p.nombre)+'</div>').join('');
-    spAcProd.querySelectorAll('.sp-ac-item').forEach(it=>it.addEventListener('click',()=>{
+    // 2026-07-13 (Daniel, URGENTE): "el equipo tambien puede hacer una
+    // escritura manual" -- si no aparece en el catalogo del ERP, se puede
+    // agregar igual como texto libre (sin sku), para no bloquear al cliente
+    // que compro un equipo que aun no esta sincronizado.
+    const manualHtml = '<div class="sp-ac-item sp-ac-manual" data-manual="1">'
+      + '<i class="bi bi-pencil-square me-1"></i>No lo encuentro — agregar "'+esc(q)+'" manualmente</div>';
+    spAcProd.innerHTML = (rows.length
+      ? rows.map((p,i)=>'<div class="sp-ac-item" data-i="'+i+'">'+esc(p.nombre)+'</div>').join('')
+      : '<div class="sp-ac-empty"><i class="bi bi-search"></i>Sin resultados</div>') + manualHtml;
+    spAcProd.querySelectorAll('.sp-ac-item[data-i]').forEach(it=>it.addEventListener('click',()=>{
       const p = rows[+it.dataset.i];
       if(!productos.some(x=>x.nombre===p.nombre)) productos.push(p);
       spAcProd.classList.remove('open'); document.getElementById('spBuscarProd').value='';
       renderChips(); marcarError('fProdWrap', false);
     }));
+    const manualEl = spAcProd.querySelector('.sp-ac-manual');
+    if(manualEl) manualEl.addEventListener('click', function(){
+      if(!productos.some(x=>x.nombre===q)) productos.push({sku:'', nombre:q});
+      spAcProd.classList.remove('open'); document.getElementById('spBuscarProd').value='';
+      renderChips(); marcarError('fProdWrap', false);
+    });
   }catch(e){ spAcProd.innerHTML = '<div class="sp-ac-empty err"><i class="bi bi-wifi-off"></i>Catálogo no disponible</div>'; }
 }, 320);
 document.getElementById('spBuscarProd').addEventListener('input', buscarProd);
@@ -406,6 +430,25 @@ async function subirPendientes(){
   }
 }
 
+// ── RUT chileno: puntos de mil + guion-DV SOLO si ya se escribio el DV ──
+// (Daniel 2026-07-13, URGENTE: "le agreguen los puntos... como RUT chileno...
+// asi no lleve el codigo verificador... si lo agregas a un numero mas, ahi
+// le colocas el guion, si no, que no lleve el guion").
+function spFormatearRut(raw){
+  let v = String(raw||'').replace(/[^0-9kK]/g,'').toUpperCase();
+  if(!v) return '';
+  let dv = '', cuerpo = v;
+  if(v.length > 1){ dv = v.slice(-1); cuerpo = v.slice(0,-1); }
+  cuerpo = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
+  return dv ? cuerpo+'-'+dv : cuerpo;
+}
+(function(){
+  const spRut = document.getElementById('spRut');
+  // Formateo simple: cursor al final -- el RUT es corto y se escribe de
+  // una sola pasada, no hace falta preservar posicion de cursor mid-string.
+  spRut.addEventListener('input', function(){ this.value = spFormatearRut(this.value); });
+})();
+
 // ── Validación + envío ──
 function validarTodo(){
   let ok = true;
@@ -440,6 +483,7 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
     direccion_place_id: document.getElementById('spDirPlace').value || null,
     comuna_nombre: document.getElementById('spComuna').value || null,
     region_nombre: document.getElementById('spRegion').value || null,
+    codigo_postal: document.getElementById('spCodigoPostal').value || null,
     sucursal: document.getElementById('spSucursal').value.trim(),
     productos: productos,
     numero_documento: document.getElementById('spDoc').value.trim(),
@@ -496,7 +540,7 @@ function spResetFormulario(){
   document.querySelectorAll('.sp-tipo').forEach(x=>x.classList.remove('sel'));
   document.getElementById('errTipo').style.display = 'none';
   ['spRut','spEmpresa','spContacto','spPhone','spEmail','spDireccion','spSucursal',
-   'spDoc','spDesc','spBuscarProd','spDirLat','spDirLng','spDirPlace','spComuna','spRegion']
+   'spDoc','spDesc','spBuscarProd','spDirLat','spDirLng','spDirPlace','spComuna','spRegion','spCodigoPostal']
     .forEach(function(id){ const el = document.getElementById(id); if(el) el.value = ''; });
   ['fRutWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap','fProdWrap','fDescWrap']
     .forEach(function(id){ marcarError(id, false); });
