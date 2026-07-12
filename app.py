@@ -37981,6 +37981,16 @@ def _next_ot_number():
     """
     Genera el proximo numero de Orden de Trabajo correlativo.
     Formato: OT-YYYY-NNNNN (ej. OT-2026-00042)
+
+    ⚠️ NO usar bajo concurrencia real (ver _next_ot_number_atomic): esta
+    función lee MAX(numero_ot) vía mysql_fetchone -> g._db, la conexión
+    POOLEADA por-request (autocommit=False, REPEATABLE READ). Esa conexión
+    congela su snapshot en la 1ª lectura del request y nunca ve commits
+    ajenos durante el resto del request -- confirmado que produce
+    numero_ot duplicados bajo tráfico concurrente real (race condition
+    2026-07-12, tickets "Generar OT"). Se mantiene solo para call-sites
+    legacy no tocados en ese fix; usar SIEMPRE _next_ot_number_atomic()
+    en código nuevo o tocado.
     """
     year = datetime.now().year
     prefix = f"OT-{year}-"
@@ -37998,6 +38008,195 @@ def _next_ot_number():
         except Exception:
             next_n = 1
     return f"{prefix}{next_n:05d}"
+
+
+def _ensure_mant_ot_secuencia():
+    """Tabla de secuencia dedicada (mant_ot_secuencia) para numero_ot,
+    consumida por _next_ot_number_atomic(). Idempotente, corre SIEMPRE en
+    boot (incluso con ILUS_SKIP_MIGRATIONS=1) — Regla #5 + fix race
+    condition 2026-07-12 (ver _next_ot_number_atomic para el detalle).
+
+    Sembrada con el MÁXIMO ya existente en mant_visitas por año, para que
+    el primer numero_ot atómico continúe el correlativo real y jamás
+    colisione con un numero_ot ya usado por el método viejo (_next_ot_number).
+    Solo SUBE el valor sembrado (nunca lo baja) — re-ejecutar este ensure
+    en cada boot es seguro.
+    """
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_ot_secuencia ("
+            " anio INT PRIMARY KEY,"
+            " n INT NOT NULL DEFAULT 0"
+            ") ENGINE=InnoDB"
+        )
+    except Exception as e:
+        print(f"[ensure_ot_seq] no se pudo crear mant_ot_secuencia: {e}", flush=True)
+        return
+    try:
+        # NOTA: patrón LIKE pasado como parámetro %s (Regla #4) -- NUNCA
+        # embebido como literal en el texto de la query. mysql_fetchall/
+        # mysql_execute pasan siempre `params or ()` a pymysql (nunca None
+        # puro), así que un "%" crudo en el string de la query dispara el
+        # % de formato de Python en mogrify() y revienta con
+        # "unsupported format character" (ver LIKE '%%fedex%%' -- doble %%
+        # -- en otras queries del proyecto que sí embeben el patrón crudo).
+        filas = mysql_fetchall(
+            "SELECT SUBSTRING(numero_ot, 4, 4) AS anio_txt, "
+            "       MAX(CAST(SUBSTRING_INDEX(numero_ot, '-', -1) AS UNSIGNED)) AS max_n "
+            "  FROM mant_visitas "
+            " WHERE numero_ot LIKE %s "
+            " GROUP BY SUBSTRING(numero_ot, 4, 4)",
+            ("OT-____-%",)
+        ) or []
+    except Exception as e:
+        print(f"[ensure_ot_seq] no se pudo leer máximos existentes: {e}", flush=True)
+        return
+    for f in filas:
+        try:
+            anio = int(f["anio_txt"])
+            max_n = int(f["max_n"] or 0)
+        except (TypeError, ValueError):
+            continue
+        try:
+            existente = mysql_fetchone(
+                "SELECT n FROM mant_ot_secuencia WHERE anio=%s", (anio,))
+            if existente is None:
+                mysql_execute(
+                    "INSERT INTO mant_ot_secuencia (anio, n) VALUES (%s, %s)",
+                    (anio, max_n))
+            elif max_n > (existente.get("n") or 0):
+                mysql_execute(
+                    "UPDATE mant_ot_secuencia SET n=%s WHERE anio=%s",
+                    (max_n, anio))
+        except Exception as e:
+            print(f"[ensure_ot_seq] no se pudo sembrar año {anio}: {e}", flush=True)
+
+
+def _next_ot_number_atomic(conn=None):
+    """
+    Genera el próximo numero_ot (OT-YYYY-NNNNN) de forma ATÓMICA vía la
+    tabla de secuencia dedicada mant_ot_secuencia (ver _ensure_mant_ot_secuencia).
+
+    FIX race condition 2026-07-12 (wizard "Generar OT" de Tickets, 5/6
+    requests fallando bajo concurrencia real): _next_ot_number() leía
+    MAX(numero_ot) vía mysql_fetchone -> g._db, la conexión POOLEADA
+    por-request (autocommit=False, REPEATABLE READ). Esa conexión congela
+    su snapshot en la 1ª lectura del request y NUNCA ve commits ajenos
+    durante el resto del request -- ni siquiera en un retry tras
+    IntegrityError, porque relee por la MISMA conexión/snapshot. Bajo
+    concurrencia real esto garantizaba colisión de numero_ot.
+
+    Por qué este fix SÍ es correcto: `INSERT ... ON DUPLICATE KEY UPDATE
+    n = n+1` es una escritura, no una lectura de snapshot -- toma un
+    row-lock EXCLUSIVO de InnoDB sobre la fila (anio) del año en curso.
+    Cualquier llamada concurrente a esta función (mismo proceso u otro,
+    mismo técnico o distinto, cualquier módulo) queda serializada por ese
+    row-lock: la 2ª transacción se BLOQUEA hasta que la 1ª haga commit o
+    rollback, y al desbloquearse relee el valor YA incrementado (los
+    row-lock de escritura siempre ven el último dato comprometido, a
+    diferencia de un SELECT bajo REPEATABLE READ). No se necesita un
+    segundo GET_LOCK nombrado para numero_ot: el propio row-lock de esta
+    fila ES el mutex global.
+
+    Si se pasa `conn` (conexión ya abierta -- ej. la que sostiene el
+    GET_LOCK del wizard de Tickets, o la del lote del Plan Anual), el
+    incremento ocurre en esa MISMA transacción: si el INSERT posterior en
+    mant_visitas falla y se hace rollback, el número reclamado se revierte
+    junto con él (sin fuga permanente de correlativos y sin riesgo de
+    duplicado real, porque nunca queda persistida una fila con ese
+    numero_ot). Si no se pasa `conn`, abre y cierra una conexión propia
+    con commit inmediato.
+    """
+    year = datetime.now().year
+    own_conn = conn is None
+    c = conn if conn is not None else get_mysql()
+    try:
+        with c.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_ot_secuencia (anio, n) VALUES (%s, LAST_INSERT_ID(1)) "
+                "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)",
+                (year,)
+            )
+            cur.execute("SELECT LAST_INSERT_ID() AS n")
+            row = cur.fetchone()
+            next_n = int(row["n"]) if row and row.get("n") else 1
+        if own_conn:
+            c.commit()
+        return f"OT-{year}-{next_n:05d}"
+    finally:
+        if own_conn:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+
+def _validar_disponibilidad_visita(tecnico_user_id, fecha_programada,
+                                    hora_inicio=None, hora_fin=None,
+                                    exclude_visita_id=None):
+    """Nunca bloquea la operación: solo DETECTA advertencias (feriado y/o
+    choque de horario de un técnico) para que el caller decida si pide
+    confirmación antes de agendar. Devuelve {} si no hay ninguna advertencia.
+
+    fecha_programada: str 'YYYY-MM-DD' o date.
+
+    Reutilizable por Mantenciones (mant_visita_crear/mant_visita_multi,
+    Fase 2 — pendiente, no se tocan en este ticket) y por el wizard
+    "Generar OT" de Tickets (tickets_module.py) — misma query, un solo
+    lugar versionado (Regla #5: el índice composite idx_v_choque_horario
+    cubre el WHERE de esta consulta).
+    """
+    from datetime import date as _date
+    from cl_feriados import es_dia_habil, feriados_chile
+    out = {}
+    fecha_dt = fecha_programada if isinstance(fecha_programada, _date) \
+        else _date.fromisoformat(str(fecha_programada))
+
+    if not es_dia_habil(fecha_dt):
+        nombre = feriados_chile(fecha_dt.year).get(fecha_dt.isoformat())
+        out["feriado"] = {"fecha": fecha_dt.isoformat(), "nombre": nombre or "Fin de semana"}
+
+    try:
+        tec_uid = int(tecnico_user_id) if tecnico_user_id else None
+    except (TypeError, ValueError):
+        tec_uid = None
+
+    if tec_uid:
+        exclude_id = exclude_visita_id or 0
+        choques = mysql_fetchall(
+            "SELECT id, numero_ot, titulo, hora_inicio, hora_fin, tecnico, estado "
+            "  FROM mant_visitas "
+            " WHERE tecnico_user_id = %s "
+            "   AND fecha_programada = %s "
+            "   AND estado NOT IN ('cancelada') "
+            "   AND id <> %s "
+            "   AND ("
+            "        hora_inicio IS NULL OR hora_fin IS NULL "
+            "        OR %s IS NULL OR %s IS NULL "
+            "        OR (hora_inicio < %s AND hora_fin > %s)"
+            "   ) "
+            " ORDER BY hora_inicio",
+            (tec_uid, fecha_dt.isoformat(), exclude_id,
+             hora_inicio, hora_fin, hora_fin, hora_inicio)
+        ) or []
+        if choques:
+            tec = mysql_fetchone(
+                "SELECT COALESCE(nombre, username) AS nm FROM app_users WHERE id=%s",
+                (tec_uid,))
+            out["choque"] = {
+                "tecnico_nombre": (tec or {}).get("nm") or "Técnico",
+                "visitas": [
+                    {
+                        "visita_id": c["id"],
+                        "numero_ot": c.get("numero_ot"),
+                        "hora_inicio": str(c["hora_inicio"]) if c.get("hora_inicio") is not None else None,
+                        "hora_fin": str(c["hora_fin"]) if c.get("hora_fin") is not None else None,
+                        "titulo": c.get("titulo"),
+                    }
+                    for c in choques
+                ],
+            }
+    return out
 
 
 def _next_cotizacion_number():
@@ -42384,9 +42583,6 @@ def mant_visita_multi(cid):
     elif repuestos_total > 0 and costo is None:
         costo = repuestos_total
 
-    # Generar número de OT correlativo
-    numero_ot = _next_ot_number()
-
     # Cargar todos los equipos seleccionados (verificar que pertenecen al cliente)
     placeholders = ",".join(["%s"] * len(mids))
     rows = mysql_fetchall(
@@ -42419,6 +42615,11 @@ def mant_visita_multi(cid):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
+            # FIX GAP 2 (re-verificación 2026-07-12): _next_ot_number() legacy
+            # (SELECT MAX() sin lock) reemplazado por el contador atómico
+            # (mant_ot_secuencia + row-lock), en la MISMA conexión/transacción
+            # `conn` que hace el INSERT — ver _next_ot_number_atomic en app.py.
+            numero_ot = _next_ot_number_atomic(conn)
             # 1. Crear la visita única (con número de OT correlativo)
             # 2026-05-22 (Aaron Urbina): incluir created_by_user_id (FK).
             _u_mv = getattr(g, "user", None) or {}
@@ -51560,7 +51761,11 @@ def mant_ticket_convertir_ot(tid):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            numero_ot = _next_ot_number()
+            # FIX GAP 2 (re-verificación 2026-07-12): _next_ot_number() legacy
+            # (SELECT MAX() sin lock) reemplazado por el contador atómico
+            # (mant_ot_secuencia + row-lock), en la MISMA conexión/transacción
+            # `conn` que hace el INSERT — ver _next_ot_number_atomic en app.py.
+            numero_ot = _next_ot_number_atomic(conn)
             try:
                 cur.execute(
                     """INSERT INTO mant_visitas
@@ -61115,14 +61320,6 @@ def mant_planificador_generar_ots():
         except (TypeError, ValueError):
             uid = None
         creadas = 0; omitidas = []
-        # numero_ot correlativo (FIX 2026-06-11): base UNA vez vía
-        # _next_ot_number() — igual que mant_visita_crear — y se incrementa
-        # localmente por cada OT del lote (los INSERT de esta transacción aún
-        # no son visibles para _next_ot_number, que lee por otra conexión;
-        # llamarlo por fila repetiría el mismo número).
-        _ot_base = _next_ot_number()                    # ej: OT-2026-00042
-        _ot_prefix, _ot_seq = _ot_base.rsplit("-", 1)
-        _ot_seq = int(_ot_seq)
         # FIX 2026-06-11 dedup: TODOS los estados vivos (antes faltaban
         # cerrada/asignada/en_ejecucion/pendiente_* → riesgo de OT duplicada).
         _vivos_ph = ",".join(["%s"] * len(_PLAN_ESTADOS_VIVOS))
@@ -61142,8 +61339,16 @@ def mant_planificador_generar_ots():
                         omitidas.append({"cliente_id": cid, "razon_social": cand["razon_social"],
                                          "motivo": "ya tiene visita ese mes"})
                         continue
-                    numero_ot = f"{_ot_prefix}-{_ot_seq:05d}"
-                    _ot_seq += 1
+                    # numero_ot atómico (FIX 2026-07-12, consistencia con
+                    # tickets_module.tk_api_generar_ot): _next_ot_number()
+                    # local + incremento en memoria dependía de que ESTA
+                    # transacción fuera la única generando OTs -- si el
+                    # wizard de Tickets u otro lote corrían en paralelo,
+                    # ambos podían calcular el mismo número. Ahora cada
+                    # numero_ot se reserva vía row-lock atómico sobre
+                    # mant_ot_secuencia, en la MISMA conexión/transacción
+                    # `conn` (se revierte junto con el resto si hay rollback).
+                    numero_ot = _next_ot_number_atomic(conn)
                     # fecha_override: solo se aplica cuando es una OT individual
                     fecha_ot = (fecha_override if fecha_override and len(candidatas) == 1
                                 else cand["fecha"])
@@ -65146,7 +65351,14 @@ def mant_lev_crear_o_listar(cid):
             # CREAR OT (mant_visitas) ESPEJO con fecha/hora/multi-técnico
             # ══════════════════════════════════════════════════════════
             try:
-                numero_ot = _next_ot_number()
+                # FIX GAP 2 (re-verificación 2026-07-12): _next_ot_number()
+                # legacy reemplazado por el contador atómico, en la MISMA
+                # conexión/transacción `conn` que hace el INSERT de la OT
+                # espejo más abajo — ver _next_ot_number_atomic en app.py.
+                # Se conserva el fallback "LEV-<timestamp>" existente por si
+                # el contador atómico falla (ej. mant_ot_secuencia no
+                # disponible aún en esta instancia).
+                numero_ot = _next_ot_number_atomic(conn)
             except Exception:
                 numero_ot = f"LEV-{int(time.time())}"
             visita_id = None
@@ -67811,6 +68023,17 @@ try:
 except Exception as _tickets_reg_err:
     print(f"[ILUS][WARN] register_tickets_routes: {_tickets_reg_err}")
 
+# Modulo CATALOGO DE PRODUCTOS (nuevo, independiente de Tickets y del
+# cubicador). Prefijo de tablas cat_ (NO colisiona con PRODUCTS_TABLE/
+# PHOTOS_TABLE del cubicador). _ensure_catalogo_tables() corre dentro del
+# register (idempotente, funciona aun con ILUS_SKIP_MIGRATIONS=1).
+try:
+    from catalogo_module import register_catalogo_routes
+    register_catalogo_routes(app, globals())
+    print("[ILUS] Modulo Catalogo de Productos registrado.")
+except Exception as _catalogo_reg_err:
+    print(f"[ILUS][WARN] register_catalogo_routes: {_catalogo_reg_err}")
+
 try:
     from transporte_pod import register_pod_routes
     register_pod_routes(app, globals())
@@ -68853,6 +69076,18 @@ def _ensure_mant_visitas_factura_cols():
     return faltantes
 
 
+def _ensure_mant_visitas_choque_index():
+    """Indice composite para la deteccion de choque de horario tecnico+fecha
+    (Regla #5, usado por _validar_disponibilidad_visita). Corre SIEMPRE en
+    boot, aunque ILUS_SKIP_MIGRATIONS=1."""
+    try:
+        mysql_execute(
+            "CREATE INDEX idx_v_choque_horario ON mant_visitas "
+            "(tecnico_user_id, fecha_programada, estado)")
+    except Exception:
+        pass  # ya existe
+
+
 def _ensure_mant_intel_tables():
     """Garantiza tablas/columnas del Agente de Inteligencia SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Idempotente. CERO IA."""
@@ -69651,6 +69886,24 @@ try:
               f"{_faltaron_fact}", flush=True)
 except Exception as _ensure_fact_err:
     print(f"[ILUS][WARN] _ensure_mant_visitas_factura_cols: {_ensure_fact_err}", flush=True)
+
+# CRÍTICO: índice composite para la detección de choque de horario técnico+fecha
+# (Regla #5 — usado por _validar_disponibilidad_visita / wizard "Generar OT" de
+# Tickets). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_visitas_choque_index()
+except Exception as _idx_err:
+    print(f"[ILUS][WARN] _ensure_mant_visitas_choque_index: {_idx_err}", flush=True)
+
+# CRÍTICO: tabla de secuencia dedicada para numero_ot (fix race condition
+# 2026-07-12, wizard "Generar OT" de Tickets). SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1 -- ver _next_ot_number_atomic().
+try:
+    with app.app_context():
+        _ensure_mant_ot_secuencia()
+except Exception as _seq_err:
+    print(f"[ILUS][WARN] _ensure_mant_ot_secuencia: {_seq_err}", flush=True)
 
 # Columnas de trazabilidad de EDICIÓN de equipos descubiertos (Daniel 2026-07-06).
 try:
@@ -71883,7 +72136,11 @@ def mant_cotizacion_convertir_ot(cid):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            numero_ot = _next_ot_number()
+            # FIX GAP 2 (re-verificación 2026-07-12): _next_ot_number() legacy
+            # reemplazado por el contador atómico, en la MISMA conexión/
+            # transacción `conn` que hace el INSERT — ver
+            # _next_ot_number_atomic en app.py.
+            numero_ot = _next_ot_number_atomic(conn)
             titulo = co.get("titulo") or f"Servicios cotización {co['numero']}"
             cur.execute(
                 """INSERT INTO mant_visitas
