@@ -136,6 +136,14 @@
 .estado-pill.cancelada {background:#fee2e2;color:#991b1b}
 .estado-pill.reagendada{background:#ede9fe;color:#7c3aed}
 
+/* Modal de detalle — vista informativa (2026-07-12) */
+.vi-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 20px;}
+@media (max-width:576px){.vi-info-grid{grid-template-columns:1fr;}}
+.vi-info-full{grid-column:1 / -1;}
+.vi-info-lbl{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+  color:#9ca3af;margin-bottom:3px;}
+.vi-info-val{font-size:.94rem;font-weight:600;color:#0f172a;line-height:1.4;}
+
 /* ── AGENDA (cronológica vertical) ──────────────────── */
 .agenda-day{
   background:#fff;border:1px solid #e5e7eb;border-radius:12px;
@@ -610,69 +618,114 @@
       </div>
       <div class="modal-body">
         <input type="hidden" id="vi_id">
-        <div class="row g-3">
-          <div class="col-12 col-md-8">
-            <label class="form-label fw-semibold small">Cliente <span class="text-danger">*</span></label>
-            <select id="vi_cliente" class="form-select">
-              <option value="">— Selecciona cliente —</option>
-              {% for c in clientes %}
-              <option value="{{ c.id }}">{{ c.razon_social }}</option>
-              {% endfor %}
-            </select>
+
+        {# ═══ VISTA INFORMATIVA (2026-07-12, Daniel: "necesito algo
+           informativo, que le diga al tecnico que es, cuando es, por que,
+           como") — default para TODOS. Reemplaza el formulario-con-inputs-
+           deshabilitados que Daniel califico de "modal inutil". ═══ #}
+        <div id="vi_info_view">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+            <span class="badge" id="vi_info_estado" style="font-size:.8rem;padding:6px 14px;"></span>
+            <span class="font-monospace fw-bold text-muted" id="vi_info_numero"></span>
           </div>
-          <div class="col-12 col-md-4">
-            <label class="form-label fw-semibold small">Tipo</label>
-            <select id="vi_tipo" class="form-select">
-              <option value="preventiva">Preventiva</option>
-              <option value="correctiva">Correctiva</option>
-              <option value="garantia">Garantía</option>
-              <option value="inspeccion">Inspección</option>
-            </select>
-          </div>
-          <div class="col-12">
-            <label class="form-label fw-semibold small">Título</label>
-            <input type="text" id="vi_titulo" class="form-control" maxlength="200">
-          </div>
-          <div class="col-12 col-md-4">
-            <label class="form-label fw-semibold small">Fecha</label>
-            <input type="date" id="vi_fecha" class="form-control">
-          </div>
-          <div class="col-6 col-md-4">
-            <label class="form-label fw-semibold small">Hora inicio</label>
-            <input type="time" id="vi_hora_inicio" class="form-control">
-          </div>
-          <div class="col-6 col-md-4">
-            <label class="form-label fw-semibold small">Hora fin</label>
-            <input type="time" id="vi_hora_fin" class="form-control">
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Estado</label>
-            <select id="vi_estado" class="form-select">
-              <option value="programada">Programada</option>
-              <option value="completada">Completada</option>
-              <option value="cancelada">Cancelada</option>
-              <option value="reagendada">Reagendada</option>
-            </select>
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold small">Costo (CLP)</label>
-            <div class="input-group">
-              <span class="input-group-text">$</span>
-              <input type="number" id="vi_costo" class="form-control" min="0" step="1000">
+          <div class="vi-info-grid">
+            <div class="vi-info-item">
+              <div class="vi-info-lbl"><i class="bi bi-building me-1"></i>Cliente</div>
+              <div class="vi-info-val" id="vi_info_cliente">—</div>
+            </div>
+            <div class="vi-info-item">
+              <div class="vi-info-lbl"><i class="bi bi-tag me-1"></i>Tipo</div>
+              <div class="vi-info-val" id="vi_info_tipo">—</div>
+            </div>
+            <div class="vi-info-item">
+              <div class="vi-info-lbl"><i class="bi bi-calendar3 me-1"></i>Fecha agendada</div>
+              <div class="vi-info-val" id="vi_info_fecha">—</div>
+            </div>
+            <div class="vi-info-item">
+              <div class="vi-info-lbl"><i class="bi bi-clock me-1"></i>Hora agendada</div>
+              <div class="vi-info-val" id="vi_info_hora">—</div>
+            </div>
+            <div class="vi-info-item">
+              <div class="vi-info-lbl"><i class="bi bi-people me-1"></i>Técnicos asignados</div>
+              <div class="vi-info-val" id="vi_info_tecnicos">—</div>
+            </div>
+            <div class="vi-info-item">
+              <div class="vi-info-lbl"><i class="bi bi-cash-coin me-1"></i>Costo</div>
+              <div class="vi-info-val" id="vi_info_costo">—</div>
+            </div>
+            <div class="vi-info-item vi-info-full">
+              <div class="vi-info-lbl"><i class="bi bi-geo-alt me-1"></i>Dirección</div>
+              <div class="vi-info-val" id="vi_info_direccion">—</div>
+            </div>
+            <div class="vi-info-item vi-info-full">
+              <div class="vi-info-lbl"><i class="bi bi-card-text me-1"></i>Motivo / Observaciones</div>
+              <div class="vi-info-val" id="vi_info_descripcion">—</div>
             </div>
           </div>
-          <div class="col-12">
-            <label class="form-label fw-semibold small">Técnicos asignados</label>
-            <input type="text" id="vi_tecnico" class="form-control"
-                   placeholder="Nombre(s) de técnicos (texto libre — para multi-asignación, edita la visita desde la ficha del cliente)">
-          </div>
-          <div class="col-12">
-            <label class="form-label fw-semibold small">Descripción</label>
-            <textarea id="vi_descripcion" class="form-control" rows="3"></textarea>
-          </div>
-          <div class="col-12" id="vi_extra_info" style="display:none">
-            <div class="alert alert-light border" style="font-size:.85rem">
-              <div id="vi_extra_html"></div>
+        </div>
+
+        {# ═══ VISTA EDICIÓN — solo para quien puede gestionar visitas,
+           detras del boton "Editar" (ya no se muestra por defecto). ═══ #}
+        <div id="vi_form_view" style="display:none">
+          <div class="row g-3">
+            <div class="col-12 col-md-8">
+              <label class="form-label fw-semibold small">Cliente <span class="text-danger">*</span></label>
+              <select id="vi_cliente" class="form-select">
+                <option value="">— Selecciona cliente —</option>
+                {% for c in clientes %}
+                <option value="{{ c.id }}">{{ c.razon_social }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label fw-semibold small">Tipo</label>
+              <select id="vi_tipo" class="form-select">
+                <option value="preventiva">Preventiva</option>
+                <option value="correctiva">Correctiva</option>
+                <option value="garantia">Garantía</option>
+                <option value="inspeccion">Inspección</option>
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold small">Título</label>
+              <input type="text" id="vi_titulo" class="form-control" maxlength="200">
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label fw-semibold small">Fecha</label>
+              <input type="date" id="vi_fecha" class="form-control">
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label fw-semibold small">Hora inicio</label>
+              <input type="time" id="vi_hora_inicio" class="form-control">
+            </div>
+            <div class="col-6 col-md-4">
+              <label class="form-label fw-semibold small">Hora fin</label>
+              <input type="time" id="vi_hora_fin" class="form-control">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-semibold small">Estado</label>
+              <select id="vi_estado" class="form-select">
+                <option value="programada">Programada</option>
+                <option value="completada">Completada</option>
+                <option value="cancelada">Cancelada</option>
+                <option value="reagendada">Reagendada</option>
+              </select>
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-semibold small">Costo (CLP)</label>
+              <div class="input-group">
+                <span class="input-group-text">$</span>
+                <input type="number" id="vi_costo" class="form-control" min="0" step="1000">
+              </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold small">Técnicos asignados</label>
+              <input type="text" id="vi_tecnico" class="form-control"
+                     placeholder="Nombre(s) de técnicos (texto libre — para multi-asignación, edita la visita desde la ficha del cliente)">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold small">Descripción</label>
+              <textarea id="vi_descripcion" class="form-control" rows="3"></textarea>
             </div>
           </div>
         </div>
@@ -695,15 +748,20 @@
         {% endif %}
         <div class="d-flex gap-2">
           <a id="btnAbrirOT" href="#" class="btn btn-dark fw-bold" style="display:none;background:linear-gradient(135deg,#0a0a0a,#2a0d0d);border:0">
-            <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT
+            <i class="bi bi-clipboard2-pulse me-1"></i>Abrir OT / Gestionar
           </a>
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-            {% if puede_gestionar_visitas %}Cancelar{% else %}Cerrar{% endif %}
-          </button>
           {% if puede_gestionar_visitas %}
-          <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarVisita()">
+          <button type="button" class="btn btn-outline-secondary" id="btnEditarVisita" onclick="toggleEdicionVisita(true)">
+            <i class="bi bi-pencil me-1"></i>Editar
+          </button>
+          <button type="button" class="btn btn-outline-secondary" id="btnCancelarEdicionVisita" onclick="toggleEdicionVisita(false)" style="display:none">
+            Cancelar
+          </button>
+          <button type="button" class="btn btn-ilus fw-bold px-4" id="btnGuardarVisita" onclick="guardarVisita()" style="display:none">
             <i class="bi bi-check-circle me-1"></i>Guardar
           </button>
+          {% else %}
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
           {% endif %}
         </div>
       </div>
@@ -1290,6 +1348,11 @@ function renderSidebar(){
 }
 
 // ── Modal de visita ──────────────────────────────────────────────────
+// 2026-07-12 (Daniel): "necesito algo informativo, que le diga al tecnico
+// que es, cuando es, por que, como, y gestionarlo cuando se pueda". Se
+// abre SIEMPRE en modo informativo (tarjetas de solo lectura); el
+// formulario editable queda detras del boton "Editar" (solo para quien
+// puede gestionar visitas).
 function abrirVisitaModal(vid){
   const ev = calEventos.find(e => e.id === vid);
   if (!ev) return;
@@ -1304,11 +1367,35 @@ function abrirVisitaModal(vid){
   document.getElementById('vi_costo').value = ev.costo || '';
   document.getElementById('vi_tecnico').value = ev.tecnicos.map(t => t.nombre).join(', ');
   document.getElementById('vi_descripcion').value = ev.descripcion || '';
+
+  // ── Vista informativa (siempre poblada, es lo primero que se ve) ──
+  const est = _DIA_EST[ev.estado] || {label: (ev.estado || '—'), badge: 'programada'};
+  const badge = document.getElementById('vi_info_estado');
+  badge.textContent = est.label;
+  badge.className = 'badge estado-pill ' + est.badge;
+  document.getElementById('vi_info_numero').textContent =
+    ev.numero_ot || ('VS-' + String(ev.id).padStart(5, '0'));
+  document.getElementById('vi_info_cliente').textContent = ev.cliente.razon_social || ev.title || '—';
+  document.getElementById('vi_info_tipo').textContent = _DIA_TIPO[ev.tipo] || (ev.tipo || '—');
+  document.getElementById('vi_info_fecha').textContent = ev.fecha
+    ? new Date(ev.fecha + 'T00:00:00').toLocaleDateString('es-CL', {weekday:'long', day:'numeric', month:'long', year:'numeric'})
+    : '—';
+  const horaTxt = (ev.hora_inicio ? String(ev.hora_inicio).slice(0,5) : '') +
+    (ev.hora_fin ? ' – ' + String(ev.hora_fin).slice(0,5) : '');
+  document.getElementById('vi_info_hora').textContent = horaTxt || 'Sin horario definido';
+  document.getElementById('vi_info_tecnicos').textContent = ev.tecnicos.length
+    ? ev.tecnicos.map(t => t.nombre + (t.especialidad ? ' (' + t.especialidad + ')' : '')).join(', ')
+    : 'Sin asignar';
+  document.getElementById('vi_info_costo').textContent = ev.costo ? fmtCLP(ev.costo) : 'Sin costo asociado';
+  document.getElementById('vi_info_direccion').textContent = ev.cliente.direccion
+    ? (ev.cliente.direccion + (ev.cliente.comuna ? ', ' + ev.cliente.comuna : ''))
+    : 'Sin dirección registrada';
+  document.getElementById('vi_info_descripcion').textContent = ev.title || ev.descripcion || 'Sin observaciones.';
+
   // 2026-06-09 (Daniel — REVISIÓN): los roles de GESTIÓN (admin, supervisor,
   // ejecutivo, superadmin) SÍ pueden editar/reagendar una visita existente.
-  // Solo roles sin gestión (ej. técnico de campo) quedan en modo "vista de
-  // detalle" (inputs disabled + sin botón Guardar). Espejo exacto del gate
-  // backend `_puede_ot_accion('metadata')` vía `puede_gestionar_visitas`.
+  // Espejo exacto del gate backend `_puede_ot_accion('metadata')` vía
+  // `puede_gestionar_visitas`.
   const _puedeEditar = {{ 'true' if puede_gestionar_visitas else 'false' }};
   const _camposVisita = ['vi_cliente','vi_tipo','vi_titulo','vi_fecha',
                          'vi_hora_inicio','vi_hora_fin','vi_estado','vi_costo',
@@ -1319,7 +1406,7 @@ function abrirVisitaModal(vid){
   });
   // Botón Eliminar solo existe para superadmin (Jinja); defensivo si no.
   const _btnDel = document.getElementById('btnEliminarVisita');
-  if (_btnDel) _btnDel.style.display = '';
+  if (_btnDel) _btnDel.style.display = 'none';   // reaparece solo en modo edición
 
   // Botón "Abrir OT" — apunta a la ficha completa con tabs Tareas/Fotos/Técnicos
   const btnOT = document.getElementById('btnAbrirOT');
@@ -1328,18 +1415,27 @@ function abrirVisitaModal(vid){
     btnOT.style.display = '';
   }
 
-  const extra = document.getElementById('vi_extra_info');
-  const xH    = document.getElementById('vi_extra_html');
-  const partes = [];
-  if (ev.cliente.direccion) partes.push(`<i class="bi bi-geo-alt me-1"></i><strong>Dirección:</strong> ${escHtml(ev.cliente.direccion)}, ${escHtml(ev.cliente.comuna)}`);
-  if (ev.tecnicos.length){
-    const lista = ev.tecnicos.map(t => `${escHtml(t.nombre)}${t.especialidad ? ' <span class="text-muted">('+escHtml(t.especialidad)+')</span>' : ''}`).join(' · ');
-    partes.push(`<i class="bi bi-people me-1"></i><strong>Técnicos (${ev.n_tecnicos}):</strong> ${lista}`);
-  }
-  if (partes.length){ xH.innerHTML = partes.join('<br>'); extra.style.display = 'block'; }
-  else { extra.style.display = 'none'; }
-
+  toggleEdicionVisita(false);   // siempre arranca en modo informativo
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
+}
+
+// Alterna entre la vista informativa y el formulario de edición dentro
+// del mismo modal (solo existe boton Editar para quien puede gestionar).
+function toggleEdicionVisita(mostrarForm){
+  const info = document.getElementById('vi_info_view');
+  const form = document.getElementById('vi_form_view');
+  if (info) info.style.display = mostrarForm ? 'none' : '';
+  if (form) form.style.display = mostrarForm ? '' : 'none';
+  const btnEditar = document.getElementById('btnEditarVisita');
+  const btnCancelar = document.getElementById('btnCancelarEdicionVisita');
+  const btnGuardar = document.getElementById('btnGuardarVisita');
+  const btnDel = document.getElementById('btnEliminarVisita');
+  if (btnEditar) btnEditar.style.display = mostrarForm ? 'none' : '';
+  if (btnCancelar) btnCancelar.style.display = mostrarForm ? '' : 'none';
+  if (btnGuardar) btnGuardar.style.display = mostrarForm ? '' : 'none';
+  // Eliminar visita solo tiene sentido en modo edición (es una visita YA
+  // creada, no la nueva) -- se re-muestra al editar, se oculta al ver info.
+  if (btnDel && document.getElementById('vi_id').value) btnDel.style.display = mostrarForm ? '' : 'none';
 }
 
 function abrirNuevaVisita(){
@@ -1383,10 +1479,11 @@ function abrirNuevaVisita(){
   // Botón Eliminar solo existe para superadmin (Jinja); defensivo si no.
   const _btnDel2 = document.getElementById('btnEliminarVisita');
   if (_btnDel2) _btnDel2.style.display = 'none';
-  document.getElementById('vi_extra_info').style.display = 'none';
   // Ocultar "Abrir OT" en modo nueva visita
   const btnOT = document.getElementById('btnAbrirOT');
   if (btnOT) btnOT.style.display = 'none';
+  // Nueva visita: no hay info que mostrar todavía -- directo al formulario.
+  toggleEdicionVisita(true);
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
 }
 
