@@ -16,22 +16,22 @@
 @media (max-width: 576px){.cot-table th:nth-child(5),.cot-table td:nth-child(5){display:none}}
 </style>
 
-<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h4 class="mb-0"><i class="bi bi-file-earmark-text"></i> Cotizaciones</h4>
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-file-earmark-text me-2"></i>Cotizaciones</h4>
+    <div class="sub">Vista unificada de las cotizaciones creadas desde <strong>Tickets</strong> y desde
+      <strong>Servicio Técnico</strong>. Cada fila abre su ficha original — no se fusionaron
+      las tablas, solo la puerta de entrada.</div>
+  </div>
   <div class="d-flex gap-2">
-    <a href="{{ url_for('tk_cotizaciones_list') }}" class="btn btn-outline-dark btn-sm">
-      <i class="bi bi-ticket-perforated"></i> Nueva (Ticket)
+    <a href="{{ url_for('tk_cotizaciones_list') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-ticket-perforated me-1"></i>Nueva (Ticket)
     </a>
-    <a href="{{ url_for('mant_cotizacion_nueva') }}" class="btn btn-danger btn-sm">
-      <i class="bi bi-plus-lg"></i> Nueva (Servicio Técnico)
+    <a href="{{ url_for('mant_cotizacion_nueva') }}" class="btn btn-ilus btn-sm fw-bold">
+      <i class="bi bi-plus-lg me-1"></i>Nueva (Servicio Técnico)
     </a>
   </div>
 </div>
-<p class="text-muted small">
-  Vista unificada de las cotizaciones creadas desde <strong>Tickets</strong> y desde
-  <strong>Servicio Técnico</strong>. Cada fila abre su ficha original — no se fusionaron
-  las tablas, solo la puerta de entrada.
-</p>
 
 <form method="get" class="mb-3" style="max-width:360px">
   <div class="input-group">

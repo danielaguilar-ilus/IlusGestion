@@ -3,20 +3,9 @@
 
 {% block content %}
 <style>
-.ots-hero{
-  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
-  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
-  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
-  box-shadow:0 6px 24px rgba(0,0,0,.18), 0 2px 6px rgba(220,38,38,.08);
-  border-left:5px solid #dc2626;
-  position:relative;overflow:hidden;
-}
-.ots-hero::after{content:'';position:absolute;top:-40px;right:-40px;width:200px;height:200px;
-  border-radius:50%;background:radial-gradient(circle,rgba(220,38,38,.18) 0%,transparent 65%);
-  pointer-events:none;}
-.ots-hero > *{position:relative;z-index:1;}
-.ots-hero h4{margin:0;font-weight:900;letter-spacing:-.02em;font-size:1.4rem;}
-.ots-hero .sub{font-size:.86rem;color:#cfd3da;letter-spacing:.01em;}
+/* 2026-07-12: el hero usa .page-header (clase global de style.css,
+   mismo estandar que Tecnicos/Plantillas/Catalogo/Tickets) -- se quita
+   el .ots-hero local, que no tenia el icono en rojo ("logo rojo"). */
 
 .ots-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
   gap:10px;margin-bottom:18px;}
@@ -195,7 +184,7 @@
    en pantalla completa (sin iframe). */
 </style>
 
-<div class="ots-hero">
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-clipboard2-pulse me-2"></i>Órdenes de Trabajo</h4>
     <div class="sub">Todas las OTs · {{ ots|length }} resultado(s) · gestiona tareas, fotos y técnicos</div>
