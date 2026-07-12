@@ -144,9 +144,17 @@
 .kban-final .kanban-col-header{color:#166534;border-bottom-color:#16a34a;}
 .kban-card{
   background:#fff;border:1px solid #e5e7eb;border-radius:9px;
-  padding:10px;margin-bottom:8px;cursor:pointer;transition:all .12s;
+  padding:10px;margin-bottom:8px;cursor:pointer;transition:all .12s;position:relative;
 }
 .kban-card:hover{box-shadow:0 3px 10px rgba(0,0,0,.08);border-color:#dc2626;transform:translateY(-1px);}
+.kban-card:active{cursor:grabbing;}
+.kban-card.is-dragging{opacity:.45;transform:scale(.97);}
+.kban-card .kc-move-btn{position:absolute;top:6px;right:6px;border:none;background:transparent;
+  color:#9ca3af;width:26px;height:26px;border-radius:6px;display:none;align-items:center;justify-content:center;}
+.kban-card .kc-move-btn:hover{background:#f3f4f6;color:#0a0a0a;}
+@media (hover:none){.kban-card .kc-move-btn{display:flex;}}
+.kanban-col.drop-ok{outline:2px dashed #16a34a;outline-offset:-2px;background:#f0fdf4;}
+.kanban-col.drop-no{outline:2px dashed #dc2626;outline-offset:-2px;background:#fef2f2;cursor:not-allowed;}
 .kban-card .kc-num{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:800;color:#991b1b;background:#fee2e2;padding:2px 7px;border-radius:5px;display:inline-block;}
 .kban-card .kc-cli{font-weight:700;font-size:.86rem;color:#0f172a;margin-top:6px;line-height:1.2;}
 .kban-card .kc-meta{font-size:.7rem;color:#6b7280;margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;}
@@ -533,7 +541,7 @@ async function resetearOTs(){
    Mapeo: pendiente | proceso | verificacion | finalizada
    ════════════════════════════════════════════════════════════ #}
 <div id="vista-kanban" style="display:none">
-  <div class="kanban-grid">
+  <div class="kanban-grid" id="kanbanBoard">
     <div class="kanban-col kban-pendiente" data-col="pendiente">
       <div class="kanban-col-header">
         <span><i class="bi bi-clock me-1"></i>Pendientes</span>
@@ -675,7 +683,7 @@ function renderKanban(){
     const cnt = document.getElementById('kban-c-' + g);
     cnt.textContent = cols[g].length;
     if (!cols[g].length){
-      list.innerHTML = '<div class="text-muted small text-center py-3" style="opacity:.5">Sin OTs</div>';
+      list.innerHTML = '<div class="text-muted small text-center py-3 kc-empty-ph" style="opacity:.5">Sin OTs</div>';
       return;
     }
     list.innerHTML = cols[g].map(o => {
@@ -686,8 +694,14 @@ function renderKanban(){
       // OJO: evitamos <button> dentro de <a> (HTML inválido). Cuando hay
       // botón Revisar, renderizamos un <div> con click handler en el body
       // (que navega) + el botón como elemento separado.
+      // Draggable 2026-07-12 (Daniel): mismo patron de Retiros?view=kanban.
+      // data-estado = estado REAL de la BD (no el grupo visual), lo necesita
+      // el motor de drag para decidir si la transicion es segura.
+      const moveBtn = `<button type="button" class="kc-move-btn" title="Mover a..." aria-label="Mover ${numEsc} a otra columna">
+        <i class="bi bi-three-dots-vertical"></i></button>`;
       if (showRevisar) {
-        return `<div class="kban-card" style="cursor:default">
+        return `<div class="kban-card" draggable="true" data-vid="${o.id}" data-estado="${_escHtml(o.estado)}" data-num="${numEsc}">
+          ${moveBtn}
           <div onclick="location.href='/mantenciones/ot/${o.id}'" style="cursor:pointer">
             <div class="kc-num">${numEsc}</div>
             <div class="kc-cli">${_escHtml(o.razon_social || 'Cliente')}</div>
@@ -705,7 +719,9 @@ function renderKanban(){
           </button>
         </div>`;
       }
-      return `<a href="/mantenciones/ot/${o.id}" class="kban-card text-decoration-none text-dark d-block">
+      return `<div class="kban-card" draggable="true" data-vid="${o.id}" data-estado="${_escHtml(o.estado)}"
+             data-num="${numEsc}" data-href="/mantenciones/ot/${o.id}">
+        ${moveBtn}
         <div class="kc-num">${numEsc}</div>
         <div class="kc-cli">${_escHtml(o.razon_social || 'Cliente')}</div>
         <div class="kc-meta">
@@ -714,10 +730,184 @@ function renderKanban(){
           ${o.tecnico_nombre ? `<span><i class="bi bi-person"></i> ${_escHtml(o.tecnico_nombre)}</span>` : ''}
         </div>
         ${o.n_tareas > 0 ? `<div class="kc-progress"><div style="width:${prog}%"></div></div>` : ''}
-      </a>`;
+      </div>`;
     }).join('');
   });
 }
+
+// ════════════════════════════════════════════════════════════
+//  KANBAN — arrastrable (2026-07-12, Daniel: "llevame el kanban de
+//  retiros a las OTs"). Mismo patron HTML5 drag&drop de
+//  retiros/internal_dashboard.html, PERO adaptado a un flujo con
+//  reglas de negocio reales (checklist + diagnostico + fotos + 3
+//  firmas para cerrar) -- a diferencia de Retiros, NO todas las
+//  columnas se pueden mover libremente. Solo se automatiza la
+//  transicion seguridad-cero: Pendiente(programada) -> En proceso
+//  (mismo endpoint que ya usa "Iniciar visita"). El resto se bloquea
+//  con un mensaje que explica donde hacerlo (Ejecutar OT / Revisar /
+//  Cerrar), igual que Retiros bloquea Propuesta/Agendada.
+// ════════════════════════════════════════════════════════════
+(function(){
+  const board = document.getElementById('kanbanBoard');
+  if (!board) return;
+
+  // clave = "grupoOrigen|grupoDestino" -> transicion automatizable
+  const TRANSICIONES = {
+    'pendiente|proceso': {
+      endpoint: vid => '/mantenciones/api/visitas/' + vid + '/iniciar',
+      estadoFinal: 'en_curso',
+      origenValido: estado => estado === 'programada',
+      mensajeOrigenInvalido: 'Esta OT no está en estado "programada" — no se puede iniciar así.',
+    },
+  };
+  const MENSAJE_BLOQUEO = {
+    'proceso': 'El estado pasa a "En proceso" solo iniciando la visita.',
+    'verificacion': 'Pasa a "En verificación" automáticamente al completar el checklist en Ejecutar OT.',
+    'finalizada': 'Usa el botón "Revisar" o cierra la OT (checklist + diagnóstico + firmas) para finalizarla — no se puede saltar el proceso.',
+    'pendiente': 'No se puede retroceder el estado de una OT desde el Kanban.',
+  };
+
+  let dragging = false, dragCard = null;
+
+  function colOf(grupo){ return board.querySelector('.kanban-col[data-col="' + grupo + '"]'); }
+  function listOf(grupo){ return document.getElementById('kban-list-' + grupo); }
+  function countOf(grupo){ return document.getElementById('kban-c-' + grupo); }
+
+  function ajustarPlaceholder(grupo){
+    const list = listOf(grupo);
+    const hayCards = !!list.querySelector('.kban-card');
+    let ph = list.querySelector('.kc-empty-ph');
+    if (hayCards){ if (ph) ph.remove(); return; }
+    if (!ph){
+      ph = document.createElement('div');
+      ph.className = 'text-muted small text-center py-3 kc-empty-ph';
+      ph.style.opacity = '.5';
+      ph.textContent = 'Sin OTs';
+      list.appendChild(ph);
+    }
+  }
+
+  function moverDom(card, grupoDestino){
+    const grupoOrigen = card.closest('.kanban-col').dataset.col;
+    listOf(grupoDestino).insertBefore(card, listOf(grupoDestino).querySelector('.kc-empty-ph'));
+    if (grupoOrigen !== grupoDestino){
+      const cO = countOf(grupoOrigen), cD = countOf(grupoDestino);
+      cO.textContent = Math.max(0, (parseInt(cO.textContent, 10) || 0) - 1);
+      cD.textContent = (parseInt(cD.textContent, 10) || 0) + 1;
+      ajustarPlaceholder(grupoOrigen);
+      ajustarPlaceholder(grupoDestino);
+    }
+  }
+
+  async function moverCard(card, grupoDestino){
+    const grupoOrigen = card.closest('.kanban-col').dataset.col;
+    if (grupoOrigen === grupoDestino) return;
+    const num = card.dataset.num, estadoActual = card.dataset.estado;
+    const trans = TRANSICIONES[grupoOrigen + '|' + grupoDestino];
+    if (!trans){
+      ilusToast(MENSAJE_BLOQUEO[grupoDestino] || 'Esa transición no está permitida desde el Kanban.', { type: 'warning' });
+      return;
+    }
+    if (trans.origenValido && !trans.origenValido(estadoActual)){
+      ilusToast(trans.mensajeOrigenInvalido, { type: 'warning' });
+      return;
+    }
+    const snapCol = grupoOrigen, snapNext = card.nextElementSibling;
+    moverDom(card, grupoDestino);
+    card.dataset.estado = trans.estadoFinal;
+    try{
+      const r = await fetch(trans.endpoint(card.dataset.vid), { method: 'POST' });
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || ('HTTP ' + r.status));
+      ilusToast('✓ ' + num + ' → En proceso', { type: 'success' });
+    }catch(err){
+      // Revertir
+      const listDestOrigen = listOf(snapCol);
+      listDestOrigen.insertBefore(card, (snapNext && snapNext.parentNode === listDestOrigen) ? snapNext : listDestOrigen.querySelector('.kc-empty-ph'));
+      card.dataset.estado = estadoActual;
+      const cO = countOf(grupoDestino), cD = countOf(snapCol);
+      cO.textContent = Math.max(0, (parseInt(cO.textContent, 10) || 0) - 1);
+      cD.textContent = (parseInt(cD.textContent, 10) || 0) + 1;
+      ajustarPlaceholder(grupoDestino);
+      ajustarPlaceholder(snapCol);
+      ilusToast('No se pudo mover ' + num + ' — ' + (err.message || 'error') , { type: 'error' });
+    }
+  }
+
+  board.addEventListener('dragstart', function(e){
+    const card = e.target.closest('.kban-card');
+    if (!card) return;
+    dragCard = card; dragging = true;
+    card.classList.add('is-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try{ e.dataTransfer.setData('text/plain', card.dataset.vid); }catch(_){}
+  });
+  board.addEventListener('dragend', function(){
+    if (dragCard) dragCard.classList.remove('is-dragging');
+    dragCard = null;
+    board.querySelectorAll('.drop-ok,.drop-no').forEach(c => c.classList.remove('drop-ok', 'drop-no'));
+    setTimeout(() => { dragging = false; }, 60);
+  });
+  board.addEventListener('dragover', function(e){
+    if (!dragCard) return;
+    const col = e.target.closest('.kanban-col');
+    board.querySelectorAll('.drop-ok,.drop-no').forEach(c => { if (c !== col) c.classList.remove('drop-ok', 'drop-no'); });
+    if (!col) return;
+    const grupoOrigen = dragCard.closest('.kanban-col').dataset.col;
+    const permitido = grupoOrigen === col.dataset.col || !!TRANSICIONES[grupoOrigen + '|' + col.dataset.col];
+    e.preventDefault();
+    e.dataTransfer.dropEffect = permitido ? 'move' : 'none';
+    col.classList.toggle('drop-ok', permitido);
+    col.classList.toggle('drop-no', !permitido);
+  });
+  board.addEventListener('dragleave', function(e){
+    const col = e.target.closest('.kanban-col');
+    if (col && !col.contains(e.relatedTarget)) col.classList.remove('drop-ok', 'drop-no');
+  });
+  board.addEventListener('drop', function(e){
+    const col = e.target.closest('.kanban-col');
+    if (!col || !dragCard) return;
+    e.preventDefault();
+    col.classList.remove('drop-ok', 'drop-no');
+    const card = dragCard;
+    moverCard(card, col.dataset.col);
+  });
+
+  board.addEventListener('click', function(e){
+    const btn = e.target.closest('.kc-move-btn');
+    if (btn){
+      e.preventDefault(); e.stopPropagation();
+      abrirMenuMoverOT(btn.closest('.kban-card'));
+      return;
+    }
+    const card = e.target.closest('.kban-card');
+    if (!card || dragging || !card.dataset.href) return;
+    if (e.target.closest('button, a')) return;
+    window.location.href = card.dataset.href;
+  });
+
+  async function abrirMenuMoverOT(card){
+    if (!card) return;
+    const grupoOrigen = card.closest('.kanban-col').dataset.col;
+    const opciones = [];
+    board.querySelectorAll('.kanban-col').forEach(function(col){
+      const g = col.dataset.col;
+      if (g === grupoOrigen || !TRANSICIONES[grupoOrigen + '|' + g]) return;
+      const lbl = col.querySelector('.kanban-col-header span');
+      opciones.push({ label: lbl ? lbl.textContent.trim() : g, value: g, icon: 'bi-arrow-right' });
+    });
+    if (!opciones.length){
+      ilusToast('No hay ningún movimiento automático disponible para esta OT — usa Ejecutar/Revisar/Cerrar en su ficha.', { type: 'info' });
+      return;
+    }
+    const destino = await ilusActionSheet({
+      title: 'Mover ' + card.dataset.num,
+      message: 'Elige la columna destino',
+      options: opciones,
+    });
+    if (destino) moverCard(card, destino);
+  }
+})();
 
 // ════════════════════════════════════════════════════════════
 //  CARDS — render
