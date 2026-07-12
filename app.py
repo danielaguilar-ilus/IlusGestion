@@ -40552,6 +40552,157 @@ def mant_enriquecer_cliente():
         return jsonify({"error": str(ex), "encontrado": False}), 503
 
 
+# ════════════════════════════════════════════════════════════════════
+#  MÓDULO CLIENTES (central) — 2026-07-12
+#  Segunda "puerta" de acceso a mant_clientes, pensada para vivir bajo
+#  el grupo "Servicio Técnico" del sidebar (junto a Tickets/Catálogo),
+#  independiente del acceso ya existente en /mantenciones/clientes.
+#  MISMA TABLA, MISMOS PERMISOS (@_mant_required + @_no_tecnico, igual
+#  que mant_clientes/mant_ficha) — no se crea ningún sistema paralelo.
+#  No se elimina ni se oculta el acceso de Mantenciones (Regla #4.2).
+# ════════════════════════════════════════════════════════════════════
+
+@app.route("/clientes")
+@_mant_required
+@_no_tecnico
+def clientes_hub_list():
+    """Listado de clientes con filtro por tipo_cliente (chips) + búsqueda.
+    Lee mant_clientes directamente — misma tabla que usa Mantenciones."""
+    tipo = (request.args.get("tipo") or "").strip().lower()
+    q    = (request.args.get("q") or "").strip()
+
+    where = ["1=1"]
+    params = []
+    if tipo in ("mantencion", "arriendo", "leasing", "instalacion", "prospecto"):
+        where.append("tipo_cliente = %s")
+        params.append(tipo)
+    if q:
+        where.append("(razon_social LIKE %s OR rut LIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like])
+
+    rows = mysql_fetchall(
+        f"SELECT id, razon_social, rut, comuna, ciudad, estado, tipo_cliente, "
+        f"       contacto_nombre, contacto_email, contacto_tel "
+        f"  FROM mant_clientes WHERE {' AND '.join(where)} "
+        f" ORDER BY razon_social ASC LIMIT 500",
+        tuple(params)
+    ) or []
+
+    conteos = {}
+    for r in mysql_fetchall(
+        "SELECT tipo_cliente, COUNT(*) AS n FROM mant_clientes GROUP BY tipo_cliente", ()
+    ) or []:
+        conteos[r["tipo_cliente"]] = r["n"]
+
+    return render_template(
+        "clientes_hub/list.html",
+        clientes=[dict(r) for r in rows],
+        tipo_actual=tipo, q=q, conteos=conteos,
+    )
+
+
+@app.route("/clientes/<int:cid>")
+@_mant_required
+@_no_tecnico
+def clientes_hub_ficha(cid):
+    """Ficha de cliente: datos base + resumen (solo lectura) de contratos
+    y visitas asociadas + selector de tipo_cliente. Misma tabla/FKs que
+    la ficha de Mantenciones — NO la reemplaza (Regla #4.2)."""
+    cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        flash("Cliente no encontrado.", "warning")
+        return redirect(url_for("clientes_hub_list"))
+    cliente = dict(cliente)
+
+    contratos = mysql_fetchall(
+        "SELECT id, nombre, estado, fecha_inicio, fecha_vencimiento, monto_mensual "
+        "  FROM mant_contratos WHERE cliente_id=%s ORDER BY fecha_vencimiento DESC LIMIT 20",
+        (cid,)
+    ) or []
+    visitas = mysql_fetchall(
+        "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, tecnico "
+        "  FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 20",
+        (cid,)
+    ) or []
+
+    return render_template(
+        "clientes_hub/ficha.html",
+        cliente=cliente,
+        contratos=[dict(r) for r in contratos],
+        visitas=[dict(r) for r in visitas],
+    )
+
+
+@app.route("/clientes/<int:cid>/tipo-relacion", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def clientes_hub_tipo_relacion(cid):
+    """Actualiza SOLO mant_clientes.tipo_cliente (update acotado, no toca
+    el resto de la ficha). Con audit log en mant_logs (Regla #5)."""
+    data = request.get_json(silent=True) or request.form
+    nuevo = (data.get("tipo_cliente") or data.get("tipo_relacion") or "").strip().lower()
+    validos = ("mantencion", "arriendo", "leasing", "instalacion", "prospecto")
+    if nuevo not in validos:
+        return jsonify({"ok": False, "error": f"tipo_cliente inválido. Válidos: {validos}"}), 400
+
+    actual = mysql_fetchone("SELECT tipo_cliente FROM mant_clientes WHERE id=%s", (cid,))
+    if not actual:
+        return jsonify({"ok": False, "error": "Cliente no encontrado."}), 404
+
+    try:
+        mysql_execute(
+            "UPDATE mant_clientes SET tipo_cliente=%s WHERE id=%s",
+            (nuevo, cid)
+        )
+        u = getattr(g, "user", None) or {}
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('cliente', %s, 'tipo_cliente_actualizado', %s, %s)",
+            (cid, f"{actual.get('tipo_cliente')} -> {nuevo}", u.get("username") or "sistema")
+        )
+    except Exception as e:
+        print(f"[clientes_hub_tipo_relacion] cid={cid} ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo actualizar. Intenta de nuevo."}), 500
+
+    return jsonify({"ok": True, "tipo_cliente": nuevo})
+
+
+@app.route("/calendario")
+@_mant_required
+@_no_tecnico
+def calendario_hub():
+    """Calendario BÁSICO de solo lectura (v1): próximas visitas agrupadas
+    por fecha. NO reemplaza /mantenciones/calendario (módulo completo ya
+    existente con drill-down por día) — es una vista simple pensada para
+    el grupo 'Servicio Técnico' del sidebar. Regla #4.2: nada se elimina."""
+    hoy = datetime.now().date()
+    rows = mysql_fetchall(
+        "SELECT v.id, v.fecha_programada, v.tecnico, v.tipo, v.estado, v.titulo, "
+        "       c.razon_social "
+        "  FROM mant_visitas v "
+        "  JOIN mant_clientes c ON c.id = v.cliente_id "
+        " WHERE v.fecha_programada >= %s "
+        " ORDER BY v.fecha_programada ASC LIMIT 300",
+        (hoy,)
+    ) or []
+
+    agrupado = {}
+    orden_fechas = []
+    for r in rows:
+        r = dict(r)
+        f = r["fecha_programada"]
+        if f not in agrupado:
+            agrupado[f] = []
+            orden_fechas.append(f)
+        agrupado[f].append(r)
+
+    return render_template(
+        "clientes_hub/calendario.html",
+        orden_fechas=orden_fechas, agrupado=agrupado, hoy=hoy,
+    )
+
+
 @app.route("/mantenciones/clientes/<int:cid>")
 @_mant_required
 @_no_tecnico
@@ -41124,7 +41275,7 @@ def mant_cliente_update(cid):
     # silenciosamente para no romper el UPDATE.
     if "tipo_cliente" in d:
         _tc = str(d.get("tipo_cliente") or "").strip().lower()
-        if _tc not in ("mantencion", "arriendo", "leasing"):
+        if _tc not in ("mantencion", "arriendo", "leasing", "instalacion", "prospecto"):
             d.pop("tipo_cliente", None)
         else:
             d["tipo_cliente"] = _tc
@@ -69887,6 +70038,39 @@ def _ensure_tickets_killswitch_cerrado():
         print(f"[ensure_tickets_killswitch] no se pudo sembrar: {e}", flush=True)
 
 
+def _ensure_mant_clientes_tipo_relacion():
+    """Daniel 2026-07-12 (módulo Clientes central): amplía el ENUM
+    `mant_clientes.tipo_cliente` (ya existente desde 2026-05-21, ver
+    init_mantenciones_tables) agregando 'instalacion' y 'prospecto' a los
+    valores que ya tenía ('mantencion','arriendo','leasing').
+
+    DECISIÓN DE DISEÑO (documentar): el contrato original de este módulo
+    pedía una columna NUEVA `tipo_relacion`. Se descartó esa idea al
+    verificar que `tipo_cliente` YA CUMPLE ese mismo propósito (clasificación
+    comercial del cliente) — crear una segunda columna paralela habría sido
+    duplicación de dato y una fuente de confusión peor que la que se quería
+    evitar. Se amplía el ENUM existente en su lugar (aditivo, no se pierde
+    ningún valor ni fila).
+
+    OJO — NO CONFUNDIR con `mant_clientes.estado` (activo/inactivo/
+    prospecto/suspendido): esa columna es CICLO DE VIDA/actividad. La
+    palabra 'prospecto' existe en AMBAS columnas con significado distinto
+    (estado='prospecto' = cliente aún no activo; tipo_cliente='prospecto' =
+    aún no es instalación/mantención/leasing/arriendo). Ojo al filtrar.
+
+    Idempotente: MODIFY COLUMN con el ENUM ampliado no borra filas ni
+    valores existentes, solo agrega las 2 opciones nuevas."""
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_clientes MODIFY COLUMN tipo_cliente "
+            "  ENUM('mantencion','arriendo','leasing','instalacion','prospecto') "
+            "  NOT NULL DEFAULT 'mantencion' "
+            "  COMMENT 'Categoría comercial del cliente — usado para filtros y reportes'"
+        )
+    except Exception as e:
+        print(f"[ensure_mant_clientes_tipo_relacion] no se aplicó (probablemente ya estaba): {e}", flush=True)
+
+
 def _ensure_comm_template_retiros():
     """Daniel 2026-06-15/17: garantiza que el CORREO de retiros use el diseño
     COLORIDO con el stepper de 5 hitos canónicos (pickups_module.PICKUP_JOURNEY)
@@ -70188,6 +70372,14 @@ try:
         _ensure_tickets_killswitch_cerrado()  # Daniel 2026-07-11: llave de tickets nace CERRADA
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
+
+# Módulo Clientes central (2026-07-12): amplía tipo_cliente con
+# 'instalacion'/'prospecto'. SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_clientes_tipo_relacion()
+except Exception as _ensure_tr_err:
+    print(f"[ILUS][WARN] _ensure_mant_clientes_tipo_relacion: {_ensure_tr_err}", flush=True)
 
 
 def _reparar_ruts_clientes_corruptos():

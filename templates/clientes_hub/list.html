@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Clientes — ILUS{% endblock %}
+{% block content %}
+<style>
+.ch-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:50px;
+  font-size:.8rem;font-weight:600;border:1px solid #e5e7eb;color:#374151;background:#fff;
+  text-decoration:none;margin-right:6px;margin-bottom:6px}
+.ch-chip.active{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.ch-chip .n{opacity:.65;font-weight:700}
+.ch-table{width:100%;border-collapse:collapse}
+.ch-table th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;
+  color:#6b7280;padding:8px 10px;border-bottom:2px solid #e5e7eb}
+.ch-table td{padding:10px;border-bottom:1px solid #f1f1f1;font-size:.88rem}
+.ch-table tr:hover{background:#fafafa}
+.ch-badge{font-size:.66rem;font-weight:700;padding:2px 9px;border-radius:50px;white-space:nowrap}
+.ch-tipo-mantencion{background:#dbeafe;color:#1d4ed8}
+.ch-tipo-arriendo{background:#fef9c3;color:#854d0e}
+.ch-tipo-leasing{background:#ede9fe;color:#5b21b6}
+.ch-tipo-instalacion{background:#fee2e2;color:#991b1b}
+.ch-tipo-prospecto{background:#f3f4f6;color:#6b7280}
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-building-check"></i> Clientes</h4>
+</div>
+
+<form method="get" class="mb-3">
+  <div class="mb-2">
+    <a class="ch-chip {{ 'active' if not tipo_actual }}" href="{{ url_for('clientes_hub_list') }}">
+      Todos <span class="n">{{ conteos.values() | sum if conteos else 0 }}</span>
+    </a>
+    {% for t, label in [('instalacion','Instalación'),('mantencion','Mantención'),
+                        ('leasing','Leasing'),('arriendo','Arriendo'),('prospecto','Prospecto')] %}
+    <a class="ch-chip {{ 'active' if tipo_actual == t }}" href="{{ url_for('clientes_hub_list', tipo=t, q=q) }}">
+      {{ label }} <span class="n">{{ conteos.get(t, 0) }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  <input type="hidden" name="tipo" value="{{ tipo_actual }}">
+  <input class="form-control" style="max-width:320px" type="text" name="q" value="{{ q }}"
+         placeholder="Buscar por razón social o RUT...">
+</form>
+
+<div class="table-responsive">
+  <table class="ch-table">
+    <thead>
+      <tr>
+        <th>Razón social</th><th>RUT</th><th>Comuna</th><th>Contacto</th>
+        <th>Tipo</th><th>Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in clientes %}
+      <tr onclick="window.location='{{ url_for('clientes_hub_ficha', cid=c.id) }}'" style="cursor:pointer">
+        <td><strong>{{ c.razon_social }}</strong></td>
+        <td>{{ c.rut | rut_fmt if c.rut else '—' }}</td>
+        <td>{{ c.comuna or '—' }}</td>
+        <td>{{ c.contacto_nombre or '—' }}</td>
+        <td><span class="ch-badge ch-tipo-{{ c.tipo_cliente }}">{{ c.tipo_cliente }}</span></td>
+        <td>{{ c.estado }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">Sin clientes para este filtro.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

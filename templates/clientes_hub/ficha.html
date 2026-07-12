@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ cliente.razon_social }} — Clientes ILUS{% endblock %}
+{% block content %}
+<style>
+.cf-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;margin-bottom:16px}
+.cf-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280}
+.cf-val{font-size:.94rem;margin-bottom:10px}
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-building-check"></i> {{ cliente.razon_social }}</h4>
+  <a href="{{ url_for('clientes_hub_list') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left"></i> Volver
+  </a>
+</div>
+
+<div class="cf-card">
+  <div class="row">
+    <div class="col-md-3">
+      <div class="cf-label">RUT</div>
+      <div class="cf-val">{{ cliente.rut | rut_fmt if cliente.rut else '—' }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="cf-label">Comuna / Ciudad</div>
+      <div class="cf-val">{{ cliente.comuna or '—' }} / {{ cliente.ciudad or '—' }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="cf-label">Contacto</div>
+      <div class="cf-val">{{ cliente.contacto_nombre or '—' }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="cf-label">Estado (ciclo de vida)</div>
+      <div class="cf-val">{{ cliente.estado }}</div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="cf-label">Tipo de relación comercial</div>
+  <select id="selTipoRelacion" class="form-select" style="max-width:280px">
+    {% for t, label in [('instalacion','Instalación'),('mantencion','Mantención'),
+                        ('leasing','Leasing'),('arriendo','Arriendo'),('prospecto','Prospecto')] %}
+    <option value="{{ t }}" {{ 'selected' if cliente.tipo_cliente == t }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <div class="form-text">
+    No confundir con "Estado" (arriba): eso es actividad del cliente; esto es su
+    clasificación comercial (instalación/mantención/leasing/arriendo/prospecto).
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-md-6">
+    <div class="cf-card">
+      <h6><i class="bi bi-file-earmark-text"></i> Contratos (solo lectura)</h6>
+      <table class="table table-sm">
+        <thead><tr><th>Nombre</th><th>Estado</th><th>Vence</th></tr></thead>
+        <tbody>
+          {% for c in contratos %}
+          <tr><td>{{ c.nombre or '—' }}</td><td>{{ c.estado }}</td><td>{{ c.fecha_vencimiento or '—' }}</td></tr>
+          {% else %}
+          <tr><td colspan="3" class="text-muted text-center">Sin contratos.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="cf-card">
+      <h6><i class="bi bi-calendar-check"></i> Visitas (solo lectura)</h6>
+      <table class="table table-sm">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for v in visitas %}
+          <tr><td>{{ v.fecha_programada }}</td><td>{{ v.tipo }}</td><td>{{ v.estado }}</td></tr>
+          {% else %}
+          <tr><td colspan="3" class="text-muted text-center">Sin visitas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('selTipoRelacion').addEventListener('change', async function(){
+  const nuevo = this.value;
+  try{
+    const resp = await fetch("{{ url_for('clientes_hub_tipo_relacion', cid=cliente.id) }}", {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({tipo_cliente: nuevo})
+    });
+    const d = await resp.json();
+    if (d.ok) {
+      ilusToast('✓ Tipo de relación actualizado', {type:'success'});
+    } else {
+      ilusToast(d.error || 'No se pudo actualizar', {type:'error'});
+    }
+  } catch(e) {
+    ilusToast('Error de red al actualizar', {type:'error'});
+  }
+});
+</script>
+{% endblock %}

@@ -459,6 +459,18 @@
          class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
         <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
       </a>
+      {# Clientes (central) 2026-07-12: segunda puerta a mant_clientes, aditiva.
+         El acceso ya existente en Mantenciones → Clientes NO se toca. #}
+      <a href="{{ url_for('clientes_hub_list') }}"
+         class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha'] %} active{% endif %}">
+        <i class="bi bi-building-check"></i><span>Clientes</span>
+      </a>
+      {# Calendario básico (central) 2026-07-12: vista simple de solo lectura.
+         El calendario completo de Mantenciones (mant_calendario) NO se toca. #}
+      <a href="{{ url_for('calendario_hub') }}"
+         class="sidebar-link{% if request.endpoint == 'calendario_hub' %} active{% endif %}">
+        <i class="bi bi-calendar3"></i><span>Calendario</span>
+      </a>
     </div>
     {% endif %}
 
