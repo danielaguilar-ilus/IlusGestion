@@ -4728,10 +4728,23 @@ def register_tickets_routes(app, ctx):
                    details={"numero": numero, "tipo": tipo, "ip": _ip_cliente()})
         except Exception:
             pass
-        try:
-            _tk_notificar_lifecycle(tid, "creacion")
-        except Exception as _e:
-            print(f"[tk_soporte_api_crear] notificacion creacion no enviada tid={tid}: {_e}", flush=True)
+        # 2026-07-13 (Daniel, URGENTE — gerente general probando el formulario
+        # para Shopify): "optimiza la velocidad... necesito que suba de manera
+        # inmediata". _tk_notificar_lifecycle manda un correo real por SMTP de
+        # forma SINCRONA -- eso podia tardar varios segundos (o mas si el SMTP
+        # esta lento) y el navegador quedaba esperando esa respuesta antes de
+        # mostrar la confirmacion. El ticket YA esta creado en este punto; el
+        # correo de aviso se manda en un hilo de fondo para no bloquear la
+        # respuesta HTTP. Necesita su propio app_context (get_db() usa `g`,
+        # que no existe fuera del request/hilo original).
+        import threading as _threading
+        def _notificar_creacion_bg(_tid=tid):
+            with app.app_context():
+                try:
+                    _tk_notificar_lifecycle(_tid, "creacion")
+                except Exception as _e:
+                    print(f"[tk_soporte_api_crear] notificacion creacion no enviada tid={_tid}: {_e}", flush=True)
+        _threading.Thread(target=_notificar_creacion_bg, daemon=True).start()
 
         return jsonify({
             "ok": True, "id": tid, "numero_ticket": numero,

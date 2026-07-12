@@ -82,12 +82,22 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
   box-shadow:0 8px 20px rgba(220,38,38,.25);}
 .sp-btn:disabled{opacity:.6;cursor:not-allowed;}
 .sp-priv{text-align:center;font-size:.74rem;color:#94a3b8;margin-top:12px;}
-.sp-ok{background:#fff;border-radius:16px;margin:40px 16px;padding:44px 28px;text-align:center;
-  box-shadow:0 10px 30px rgba(15,23,42,.08);}
+/* 2026-07-13 (Daniel, URGENTE): antes esto reemplazaba TODO el formulario por
+   una tarjeta de "listo" -- ahora es un MODAL flotante encima del formulario
+   (que se limpia en el sitio, sin location.reload(), para no romper el
+   iframe embebido en Shopify) y se autocierra solo en 5s. */
+.sp-ok-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9998;
+  display:flex;align-items:center;justify-content:center;padding:16px;}
+.sp-ok{background:#fff;border-radius:16px;padding:44px 28px;text-align:center;
+  box-shadow:0 20px 50px rgba(15,23,42,.25);max-width:420px;width:100%;position:relative;}
 .sp-ok i{font-size:3rem;color:#16a34a;display:block;margin-bottom:14px;}
 .sp-ok h2{font-weight:900;margin:0 0 8px;}
 .sp-ok .num{background:#fef3c7;color:#92400e;display:inline-block;border-radius:8px;padding:8px 16px;
   font-family:monospace;font-weight:800;margin-top:14px;font-size:1.1rem;}
+.sp-ok .sp-ok-bar{height:4px;background:#e5e7eb;border-radius:99px;margin-top:22px;overflow:hidden;}
+.sp-ok .sp-ok-bar-fill{height:100%;background:var(--ilus-red);width:100%;transform-origin:left;
+  animation:spOkShrink 5s linear forwards;}
+@keyframes spOkShrink{from{transform:scaleX(1);}to{transform:scaleX(0);}}
 .sp-hidden{display:none!important;}
 /* Toast propio (pagina standalone, sin ilus_ui.js) */
 .sp-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#0f172a;color:#fff;
@@ -233,13 +243,15 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
   </div>
 </div>
 
-<div class="sp-ok sp-hidden" id="spOk">
-  <i class="bi bi-check-circle-fill"></i>
-  <h2>¡Solicitud recibida!</h2>
-  <p style="color:#6b7280;">Un ejecutivo revisará tu caso y te contactará al correo que nos dejaste.</p>
-  <div style="color:#9ca3af;font-size:.8rem;margin-top:6px;">N° de solicitud:</div>
-  <div class="num" id="spNumOk">—</div>
-  <div style="margin-top:22px;"><button class="sp-btn" id="spBtnOtra" style="width:auto;padding:12px 24px;">Enviar otra solicitud</button></div>
+<div class="sp-ok-overlay sp-hidden" id="spOkOverlay">
+  <div class="sp-ok" id="spOk">
+    <i class="bi bi-check-circle-fill"></i>
+    <h2>¡Solicitud recibida!</h2>
+    <div style="color:#9ca3af;font-size:.8rem;margin-top:6px;">N° de solicitud:</div>
+    <div class="num" id="spNumOk">—</div>
+    <p style="color:#6b7280;margin-top:16px;">Revisa tu correo — ese será el canal por el que te contactaremos con la información y el seguimiento de tu caso.</p>
+    <div class="sp-ok-bar"><div class="sp-ok-bar-fill" id="spOkBarFill"></div></div>
+  </div>
 </div>
 
 {% if google_maps_api_key %}
@@ -455,14 +467,45 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
   // sensacion de que nada paso, aunque el ticket si se haya guardado.
   // Ahora la confirmacion sale de inmediato; los adjuntos se suben
   // despues, en segundo plano, sin bloquear el aviso de exito.
-  document.getElementById('spForm').classList.add('sp-hidden');
-  document.getElementById('spOk').classList.remove('sp-hidden');
+  //
+  // 2026-07-13 (Daniel, URGENTE -- gerente general probando para Shopify):
+  // "no le coloques nada despues... vacia el formulario para que la pagina
+  // de Shopify no tenga problema... un modal con el numero de ticket...
+  // se bajara en 5 segundos y volvera con el formulario en blanco" -- ya
+  // NO se reemplaza toda la pagina por la tarjeta de exito (eso rompia el
+  // embed de Shopify al dejar la pagina en un estado sin formulario visible
+  // permanentemente). Ahora es un MODAL flotante que se autocierra solo en
+  // 5s y el formulario vuelve a quedar en blanco listo para otra solicitud,
+  // SIN recargar la pagina (location.reload() podia darle problemas al
+  // iframe de Shopify).
+  document.getElementById('spOkOverlay').classList.remove('sp-hidden');
   document.getElementById('spNumOk').textContent = d.numero_ticket || ('#'+d.id);
   window.scrollTo(0,0);
   if(archivos.length) subirPendientes();
+  setTimeout(function(){
+    document.getElementById('spOkOverlay').classList.add('sp-hidden');
+    spResetFormulario();
+  }, 5000);
 });
 
-document.getElementById('spBtnOtra').addEventListener('click', function(){ location.reload(); });
+// Limpia el formulario COMPLETO en el sitio (sin location.reload()) para
+// que quede listo para otra solicitud sin recargar la pagina embebida.
+function spResetFormulario(){
+  tipoSel = ''; productos = []; archivos = [];
+  ticketId = null; uploadToken = null;
+  document.querySelectorAll('.sp-tipo').forEach(x=>x.classList.remove('sel'));
+  document.getElementById('errTipo').style.display = 'none';
+  ['spRut','spEmpresa','spContacto','spPhone','spEmail','spDireccion','spSucursal',
+   'spDoc','spDesc','spBuscarProd','spDirLat','spDirLng','spDirPlace','spComuna','spRegion']
+    .forEach(function(id){ const el = document.getElementById(id); if(el) el.value = ''; });
+  ['fRutWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap','fProdWrap','fDescWrap']
+    .forEach(function(id){ marcarError(id, false); });
+  const h = document.getElementById('spDirHint'); if(h) h.innerHTML = 'Direcciones sugeridas por Google';
+  renderChips(); renderArchivos();
+  const btn = document.getElementById('spBtnEnviar');
+  btn.disabled = false; btn.textContent = 'Enviar solicitud';
+  window.scrollTo(0,0);
+}
 </script>
 </body>
 </html>
