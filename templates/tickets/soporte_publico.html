@@ -130,12 +130,21 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <div class="hint">Elige el tipo de solicitud que mejor describe tu caso.</div>
     {# Mismo mapeo de color que el modal interno (templates/tickets/list.html)
        para que ambos formularios se vean coherentes -- feedback Daniel 2026-07-11. #}
+    {# 2026-07-13 (Daniel, URGENTE): "termina los logos... los que tienen
+       signo de interrogacion" -- faltaban 5 tipos en este mapeo (los que
+       TK_TIPOS_PUBLICOS agrego despues de esta lista original) y caian al
+       fallback ('❔', ...) de la linea de abajo. Se completan todos. #}
     {% set tipo_visual = {
       'install': ('🔧', '#3b82f6', '#eff6ff'),
       'tech_support': ('🛠️', '#dc2626', '#fef2f2'),
+      'tech_evaluation': ('🔍', '#7c3aed', '#f5f3ff'),
       'maintenance': ('⚙️', '#f59e0b', '#fffbeb'),
       'warranty': ('🛡️', '#16a34a', '#f0fdf4'),
+      'repair': ('🔩', '#dc2626', '#fef2f2'),
       'spare_parts': ('🧩', '#3b82f6', '#eff6ff'),
+      'spare_parts_store': ('📦', '#3b82f6', '#eff6ff'),
+      'spare_parts_import': ('✈️', '#1d4ed8', '#eff6ff'),
+      'equipment_transfer': ('🚛', '#1d4ed8', '#eff6ff'),
       'quotation': ('💬', '#16a34a', '#f0fdf4'),
       'shipping': ('🚚', '#1d4ed8', '#eff6ff'),
       'return': ('↩️', '#6b7280', '#f9fafb'),

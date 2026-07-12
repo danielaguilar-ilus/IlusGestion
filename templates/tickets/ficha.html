@@ -728,20 +728,7 @@
   </div>
   {% endif %}
 
-  <!-- Visor universal de adjuntos (imagen / PDF / video / descarga) -->
-  <div class="tk-lightbox" id="tkLightbox" style="display:none;">
-    <div class="tk-lightbox-panel">
-      <div class="tk-lightbox-topbar">
-        <span class="tk-lightbox-nombre" id="tkLightboxNombre"></span>
-        <div class="tk-lightbox-actions">
-          <a class="tk-lightbox-btn" id="tkLightboxDescargar" href="#" download target="_blank" rel="noopener" title="Descargar">
-            <i class="bi bi-download"></i> Descargar</a>
-          <span class="tk-lightbox-close" id="tkLightboxClose" title="Cerrar"><i class="bi bi-x-lg"></i></span>
-        </div>
-      </div>
-      <div class="tk-lightbox-body" id="tkLightboxBody"></div>
-    </div>
-  </div>
+
 </div>
 
 <!-- RESPUESTAS (conversacion) -->
@@ -818,6 +805,32 @@
         <button class="btn btn-sm btn-ilus" id="rpBtnEnviar"><i class="bi bi-send-fill me-1"></i>Enviar</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Visor universal de adjuntos (imagen / PDF / video / descarga).
+     2026-07-13 (Daniel, URGENTE): "el modal se ve solamente por debajo...
+     cuando voy y salgo de Respuestas a Informacion, ahi se ve" -- el visor
+     estaba anidado DENTRO de #pane-info (la pestaña "Informacion"), que
+     tiene display:none cuando esa pestaña no esta activa. display:none en
+     un ancestro oculta CUALQUIER descendiente (aunque sea position:fixed),
+     asi que abrir el visor desde un adjunto en la pestaña "Respuestas"
+     jamas podia mostrarse -- recien se veia si el usuario cambiaba a
+     Informacion (donde el ancestro pasa a display:block). Se mueve el
+     visor a ser HERMANO de ambas pestañas (como ya lo son el resto de los
+     modales de esta pagina), para que sea visible sin importar la pestaña
+     activa. -->
+<div class="tk-lightbox" id="tkLightbox" style="display:none;">
+  <div class="tk-lightbox-panel">
+    <div class="tk-lightbox-topbar">
+      <span class="tk-lightbox-nombre" id="tkLightboxNombre"></span>
+      <div class="tk-lightbox-actions">
+        <a class="tk-lightbox-btn" id="tkLightboxDescargar" href="#" download target="_blank" rel="noopener" title="Descargar">
+          <i class="bi bi-download"></i> Descargar</a>
+        <span class="tk-lightbox-close" id="tkLightboxClose" title="Cerrar"><i class="bi bi-x-lg"></i></span>
+      </div>
+    </div>
+    <div class="tk-lightbox-body" id="tkLightboxBody"></div>
   </div>
 </div>
 
@@ -1472,6 +1485,32 @@ const rpQuill = new Quill('#rpEditor', {
     ['link','clean'],
   ] },
 });
+// 2026-07-13 (Daniel, URGENTE): "en las herramientas de la caja de texto
+// quiero que le dejes un placeholder para saber que es, porque mucha gente
+// va a tener curiosidad" -- Quill (tema snow) no trae tooltips nativos para
+// varios de estos controles nuevos (header/color/background/blockquote).
+// Se agregan atributos title a mano sobre los botones que Quill genera.
+(function(){
+  const tb = document.querySelector('.rp-editor-wrap .ql-toolbar');
+  if(!tb) return;
+  const titulos = {
+    '.ql-header': 'Encabezado',
+    '.ql-bold': 'Negrita',
+    '.ql-italic': 'Cursiva',
+    '.ql-underline': 'Subrayado',
+    '.ql-strike': 'Tachado',
+    '.ql-color': 'Color de texto',
+    '.ql-background': 'Color de resaltado',
+    '.ql-list[value="ordered"]': 'Lista numerada',
+    '.ql-list[value="bullet"]': 'Lista con viñetas',
+    '.ql-blockquote': 'Cita',
+    '.ql-link': 'Insertar enlace',
+    '.ql-clean': 'Borrar formato',
+  };
+  Object.keys(titulos).forEach(function(sel){
+    tb.querySelectorAll(sel).forEach(function(el){ el.setAttribute('title', titulos[sel]); });
+  });
+})();
 
 // ══════════════ Dictado por voz — Google Cloud Speech-to-Text (2026-07-12) ══
 // Daniel: el dictado nativo del navegador (SpeechRecognition) daba
@@ -1819,7 +1858,12 @@ async function cargar(){
   // Documentos ERP del ticket — ahora renderizados dentro de la tarjeta Equipo(s)
   const ld = document.getElementById('listaDocs');
   ld.innerHTML = d.documentos.length ? d.documentos.map(function(x){
-    const meta = [x.fecha, (x.monto!=null && x.monto!=='') ? '$'+Number(x.monto).toLocaleString('es-CL') : null]
+    // 2026-07-13 (Daniel, URGENTE): "0000-00-00" -- MySQL puede guardar una
+    // fecha "cero" literal (no NULL) en columnas DATE cuando nunca se
+    // especifico una; se trata igual que "sin fecha" en vez de mostrar el
+    // valor crudo.
+    const fechaOk = x.fecha && !/^0000-00-00/.test(String(x.fecha)) ? x.fecha : null;
+    const meta = [fechaOk, (x.monto!=null && x.monto!=='') ? '$'+Number(x.monto).toLocaleString('es-CL') : null]
       .filter(Boolean).join(' · ');
     return '<div class="tk-doc"><span class="doc-id"><i class="bi bi-file-earmark-text"></i>'
       + esc((x.erp_tido||'')+' '+(x.erp_nudo||''))+'</span>'
