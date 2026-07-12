@@ -397,11 +397,12 @@
        Técnicos se movió al sidebar de Servicio Técnico (es dotación, no
        gestión de clientes). Rutas Flask sin cambios. #}
     <div class="dropdown">
-      <button type="button" class="btn btn-outline-light fw-semibold px-3 dropdown-toggle"
+      <button type="button" class="btn btn-outline-light fw-semibold px-3 d-flex align-items-center gap-2"
               style="border-color:rgba(255,255,255,.3);color:#fff"
               data-bs-toggle="dropdown" aria-expanded="false"
               title="Herramientas del agente inteligente: Plan Anual, Radar y Reglas">
-        <i class="bi bi-cpu me-1"></i>Agente
+        <i class="bi bi-cpu"></i>Agente
+        <i class="bi bi-chevron-down" style="font-size:.7rem"></i>
       </button>
       <ul class="dropdown-menu dropdown-menu-end">
         <li><a class="dropdown-item" href="{{ url_for('mant_planificador_page') }}">
