@@ -149,6 +149,8 @@
 .rp-msg.in .rp-adj-chip,.rp-msg.interno .rp-adj-chip{background:#e2e8f0;color:#0f172a;}
 .rp-adj-chip img{width:16px;height:16px;object-fit:cover;border-radius:3px;}
 .rp-composer{border:1px solid #eaecf0;border-radius:13px;overflow:hidden;}
+#rpBtnDictar.rp-dictando{color:#fff;background:#dc2626;border-color:#dc2626;animation:rpPulseMic 1.2s ease-in-out infinite;}
+@keyframes rpPulseMic{0%,100%{opacity:1;}50%{opacity:.55;}}
 .rp-mode-tabs{display:flex;background:#f9fafb;border-bottom:1px solid #eaecf0;}
 .rp-mode-tab{flex:1;text-align:center;padding:9px;font-size:.8rem;font-weight:700;color:#94a3b8;cursor:pointer;
   border-bottom:3px solid transparent;}
@@ -551,14 +553,14 @@
     <div class="rp-thread" id="rpThread"></div>
 
     <div class="rp-composer">
+      <div class="rp-headers show" id="rpHeaders">
+        <div class="row-h"><label>De</label><span style="color:#0f172a;">ILUS Fitness</span></div>
+        <div class="row-h"><label>Para</label><input type="email" id="rpTo" placeholder="correo@cliente.cl"></div>
+        <div class="row-h"><label>CC</label><input type="text" id="rpCc" placeholder="opcional, separado por comas"></div>
+      </div>
       <div class="rp-mode-tabs">
         <div class="rp-mode-tab active" data-mode="cliente"><i class="bi bi-send me-1"></i>Responder al cliente</div>
         <div class="rp-mode-tab" data-mode="interno"><i class="bi bi-lock me-1"></i>Comentario interno</div>
-      </div>
-      <div class="rp-headers show" id="rpHeaders">
-        <div class="row-h"><label>De</label><span style="color:#0f172a;">ILUS Sport &amp; Health <span style="color:#9ca3af;">(soporte)</span></span></div>
-        <div class="row-h"><label>Para</label><input type="email" id="rpTo" placeholder="correo@cliente.cl"></div>
-        <div class="row-h"><label>CC</label><input type="text" id="rpCc" placeholder="opcional, separado por comas"></div>
       </div>
       <div class="rp-editor-wrap">
         <div id="rpEditor" style="background:#fff;"></div>
@@ -570,6 +572,8 @@
             <i class="bi bi-paperclip"></i>
             <input type="file" id="rpFile" hidden multiple accept="image/*,video/*,application/pdf">
           </label>
+          <button class="btn btn-sm btn-outline-secondary" id="rpBtnDictar" type="button" title="Dictar mensaje por voz">
+            <i class="bi bi-mic"></i></button>
           <div class="dropdown">
             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
               <i class="bi bi-file-earmark-text me-1"></i>Plantillas</button>
@@ -693,6 +697,52 @@ const rpQuill = new Quill('#rpEditor', {
   placeholder: 'Escribe tu respuesta…',
   modules: { toolbar: [['bold','italic','underline'], [{list:'ordered'},{list:'bullet'}], ['link','clean']] },
 });
+
+// ══════════════ Dictado por voz (Daniel 2026-07-12: "se podria agregar
+// dictar por voz los mensajes... esto lo vamos a automatizar si o si") ══
+(function(){
+  const btnDictar = document.getElementById('rpBtnDictar');
+  if (!btnDictar) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR){ btnDictar.style.display = 'none'; return; }
+  let rec = null, escuchando = false;
+  function detener(){
+    escuchando = false;
+    btnDictar.classList.remove('rp-dictando');
+    btnDictar.title = 'Dictar mensaje por voz';
+  }
+  btnDictar.addEventListener('click', function(){
+    if (escuchando){ rec && rec.stop(); return; }
+    rec = new SR();
+    rec.lang = 'es-CL';
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onstart = function(){
+      escuchando = true;
+      btnDictar.classList.add('rp-dictando');
+      btnDictar.title = 'Escuchando… clic para detener';
+    };
+    rec.onresult = function(ev){
+      let texto = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++){
+        if (ev.results[i].isFinal) texto += ev.results[i][0].transcript;
+      }
+      texto = texto.trim();
+      if (!texto) return;
+      const range = rpQuill.getSelection(true) || { index: rpQuill.getLength(), length: 0 };
+      rpQuill.insertText(range.index, texto + ' ', 'user');
+      rpQuill.setSelection(range.index + texto.length + 1);
+    };
+    rec.onerror = function(ev){
+      if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
+        ilusToast('No se pudo escuchar: ' + (ev.error || 'error desconocido'), { type: 'error' });
+      }
+      detener();
+    };
+    rec.onend = detener;
+    rec.start();
+  });
+})();
 
 // ══════════════ Conexión — envío "inteligente" ══════════════
 const rpOfflineBar = document.getElementById('rpOffline');
