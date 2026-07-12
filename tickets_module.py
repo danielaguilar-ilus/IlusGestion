@@ -3248,7 +3248,7 @@ def register_tickets_routes(app, ctx):
         finally:
             conn.close()
         _tk_log(tid, "archivo", f"Adjunto: {f.filename}")
-        return jsonify({"ok": True, "id": adj_id, "url": url, "nombre": f.filename})
+        return jsonify({"ok": True, "id": adj_id, "url": url, "nombre": f.filename, "mime": mime})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — ERP: previsualizar CUALQUIER documento (no solo ventas) para

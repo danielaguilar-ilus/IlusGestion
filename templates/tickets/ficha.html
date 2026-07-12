@@ -2648,14 +2648,25 @@ async function rpSubirArchivo(file){
     const r = await fetch('/tickets/api/tickets/'+TID+'/adjuntos', {method:'POST', body:fd});
     const d = await r.json(); ilusLoader.hide();
     if(!d.ok){ ilusToast(d.error||'No se pudo subir '+file.name, {type:'error'}); return; }
-    rpAdjuntos.push({id:d.id, url:d.url, nombre:d.nombre});
+    rpAdjuntos.push({id:d.id, url:d.url, nombre:d.nombre, mime:d.mime||''});
     renderRpAdjPreview();
   }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión — no se pudo subir '+file.name, {type:'error'}); }
 }
+// 2026-07-12 (Daniel): "no puedo ver los adjuntos que estoy enviando" -- el
+// chip de vista previa del composer solo mostraba el nombre, sin forma de
+// verlo antes de mandarlo. Ahora abre el MISMO visor universal (#tkLightbox)
+// que ya usa el hilo de mensajes (imagenes/PDF/video/Word/Excel/PowerPoint).
 function renderRpAdjPreview(){
   const c = document.getElementById('rpAdjPreview');
-  c.innerHTML = rpAdjuntos.map((a,i)=>'<span class="chip"><i class="bi bi-paperclip"></i>'+esc(a.nombre)
-    + ' <span class="x" onclick="rpQuitarAdjunto('+i+')">&times;</span></span>').join('');
+  c.innerHTML = rpAdjuntos.map((a,i)=>'<span class="chip" style="cursor:pointer" title="Ver adjunto">'
+    + '<i class="bi '+iconoAdjunto(a.mime, a.nombre)+'"></i>'+esc(a.nombre)
+    + ' <span class="x" title="Quitar" onclick="event.stopPropagation();rpQuitarAdjunto('+i+')">&times;</span></span>').join('');
+  c.querySelectorAll('.chip').forEach(function(chip, i){
+    chip.addEventListener('click', function(){
+      const a = rpAdjuntos[i];
+      if (a) tkAbrirAdjunto(a.url, a.mime, a.nombre);
+    });
+  });
 }
 window.rpQuitarAdjunto = function(i){ rpAdjuntos.splice(i,1); renderRpAdjPreview(); };
 
