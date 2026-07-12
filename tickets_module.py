@@ -2366,6 +2366,39 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "mensaje_id": msg_id})
 
     # ─────────────────────────────────────────────────────────────────
+    #  API — Usuarios asignables como "responsable" de un ticket.
+    #  2026-07-12 (Daniel, insistiendo): "cuando tienes que asignar un
+    #  responsable, salen TODOS -- nosotros habíamos definido en la matriz
+    #  de roles quién es ejecutivo/técnico, esa lista no puede ser tan
+    #  amplia". El dropdown usaba /mantenciones/api/ejecutivos (a
+    #  propósito SIN filtrar por rol, según su propio docstring -- ese
+    #  endpoint es de Mantenciones, anterior a que existieran los flags
+    #  tk_es_ejecutivo/tk_es_tecnico). Este es el reemplazo específico de
+    #  Tickets: solo usuarios cuyo ROL tiene el flag tickets.es_ejecutivo
+    #  (superadmin/admin heredan el flag automáticamente, igual que en
+    #  _legacy_permission_set) O tickets.es_tecnico (para asignar también
+    #  a un técnico como responsable si aplica).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/asignables", methods=["GET"])
+    @_tickets_required
+    def tk_api_asignables():
+        rows = mysql_fetchall(
+            "SELECT u.id, COALESCE(u.nombre, u.username) AS nombre, "
+            "       u.username AS email, u.role "
+            "  FROM app_users u "
+            " WHERE u.active=1 "
+            "   AND ( "
+            "     u.role IN ('superadmin','admin') "
+            "     OR EXISTS (SELECT 1 FROM rol_permisos rp "
+            "                 WHERE rp.rol_slug=u.role AND rp.modulo='tickets' "
+            "                   AND rp.accion IN ('es_ejecutivo','es_tecnico') "
+            "                   AND rp.permitido=1) "
+            "   ) "
+            " ORDER BY nombre"
+        ) or []
+        return jsonify([dict(r) for r in rows])
+
+    # ─────────────────────────────────────────────────────────────────
     #  API — Plantillas de mensajes (canned responses)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/plantillas", methods=["GET"])

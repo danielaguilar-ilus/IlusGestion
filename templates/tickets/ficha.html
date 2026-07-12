@@ -2440,11 +2440,13 @@ document.addEventListener('keydown', function(e){
   if(e.key === 'Escape') tkCerrarLightbox();
 });
 
-// ══════════════ Ejecutivo asignado — select poblado desde /mantenciones/api/ejecutivos ══════════════
+// ══════════════ Ejecutivo asignado — select poblado desde /tickets/api/asignables
+// (2026-07-12: SOLO usuarios cuyo rol tiene el flag es_ejecutivo/es_tecnico en
+// la matriz de permisos de Tickets -- ya no la lista completa de usuarios) ══════
 let listaEjecutivos = [];
 async function cargarEjecutivos(){
   try{
-    const r = await fetch('/mantenciones/api/ejecutivos');
+    const r = await fetch('/tickets/api/asignables');
     listaEjecutivos = await r.json();
     if(!Array.isArray(listaEjecutivos)) listaEjecutivos = [];
   }catch(e){ listaEjecutivos = []; }
