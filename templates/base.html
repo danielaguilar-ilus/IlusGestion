@@ -466,10 +466,35 @@
       <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
     </a>
     {% if not is_tecnico %}
-    <a href="{{ url_for('clientes_hub_list') }}"
-       class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha','mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
-      <i class="bi bi-building-check"></i><span>Clientes</span>
-    </a>
+    {# 2026-07-12 (Daniel): "el radar, el plan, el agente... se esta
+       perdiendo... son necesarios en el menu de clientes" -- Clientes
+       pasa a ser un grupo expandible (como Tickets) con Plan Anual/Radar/
+       Agente-Reglas adentro, en vez de un dropdown en el header de la
+       pagina (ahi no se notaba). #}
+    <button class="sg-toggle" data-sg="clientes">
+      <i class="bi bi-building-check"></i>Clientes
+      <i class="bi bi-chevron-right sg-chevron"></i>
+    </button>
+    <div class="sg-items" id="sg-clientes">
+      <a href="{{ url_for('clientes_hub_list') }}"
+         class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha','mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
+        <i class="bi bi-building-check"></i><span>Clientes</span>
+      </a>
+      <a href="{{ url_for('mant_planificador_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_planificador_page' %} active{% endif %}">
+        <i class="bi bi-grid-3x3-gap"></i><span>Plan Anual</span>
+      </a>
+      {% if permissions.admin or permissions.superadmin %}
+      <a href="{{ url_for('mant_radar_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_radar_page' %} active{% endif %}">
+        <i class="bi bi-radar"></i><span>Radar</span>
+      </a>
+      <a href="{{ url_for('mant_configuracion') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_configuracion' %} active{% endif %}">
+        <i class="bi bi-sliders"></i><span>Agente · Reglas</span>
+      </a>
+      {% endif %}
+    </div>
     {% endif %}
     {% if current_user and current_user.role != 'tecnico' %}
     <a href="{{ url_for('cotizaciones_hub_list') }}"
