@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Cotizaciones — ILUS{% endblock %}
+{% block content %}
+<style>
+.cot-badge{font-size:.66rem;font-weight:700;padding:2px 9px;border-radius:50px;white-space:nowrap;display:inline-block}
+.cot-origen-ticket{background:#dbeafe;color:#1d4ed8}
+.cot-origen-servicio_tecnico{background:#fee2e2;color:#991b1b}
+.cot-estado{background:#f3f4f6;color:#6b7280}
+.cot-table-wrap{overflow-x:auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
+.cot-table{width:100%;border-collapse:collapse;min-width:640px}
+.cot-table th{font-size:.72rem;text-transform:uppercase;color:#6b7280;padding:10px 14px;text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap}
+.cot-table td{padding:10px 14px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+.cot-table tr:last-child td{border-bottom:none}
+.cot-table a.cot-link{color:#0a0a0a;font-weight:600;text-decoration:none}
+.cot-table a.cot-link:hover{color:#dc2626}
+@media (max-width: 576px){.cot-table th:nth-child(5),.cot-table td:nth-child(5){display:none}}
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h4 class="mb-0"><i class="bi bi-file-earmark-text"></i> Cotizaciones</h4>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('tk_cotizaciones_list') }}" class="btn btn-outline-dark btn-sm">
+      <i class="bi bi-ticket-perforated"></i> Nueva (Ticket)
+    </a>
+    <a href="{{ url_for('mant_cotizacion_nueva') }}" class="btn btn-danger btn-sm">
+      <i class="bi bi-plus-lg"></i> Nueva (Servicio Técnico)
+    </a>
+  </div>
+</div>
+<p class="text-muted small">
+  Vista unificada de las cotizaciones creadas desde <strong>Tickets</strong> y desde
+  <strong>Servicio Técnico</strong>. Cada fila abre su ficha original — no se fusionaron
+  las tablas, solo la puerta de entrada.
+</p>
+
+<form method="get" class="mb-3" style="max-width:360px">
+  <div class="input-group">
+    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+    <input type="text" name="q" value="{{ filtro_q }}" class="form-control"
+           placeholder="Buscar por número, empresa o RUT..." style="font-size:16px">
+    {% if filtro_q %}
+    <a href="{{ url_for('cotizaciones_hub_list') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-x-lg"></i>
+    </a>
+    {% endif %}
+  </div>
+</form>
+
+<div class="cot-table-wrap">
+  <table class="cot-table">
+    <thead>
+      <tr>
+        <th>Número</th>
+        <th>Origen</th>
+        <th>Empresa</th>
+        <th>RUT</th>
+        <th>Total</th>
+        <th>Estado</th>
+        <th>Fecha</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in cotizaciones %}
+      <tr>
+        <td><a class="cot-link" href="{{ c.url }}">{{ c.numero }}</a></td>
+        <td><span class="cot-badge cot-origen-{{ c.origen }}">{{ c.origen_label }}</span></td>
+        <td>{{ c.empresa }}</td>
+        <td>{{ c.rut }}</td>
+        <td>${{ '{:,.0f}'.format(c.total|float).replace(',', '.') if c.total else 0 }}</td>
+        <td><span class="cot-badge cot-estado">{{ c.estado }}</span></td>
+        <td class="text-muted small">{{ c.created_at.strftime('%d/%m/%Y') if c.created_at and c.created_at.strftime else (c.created_at or '—') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">No hay cotizaciones que coincidan con la búsqueda.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

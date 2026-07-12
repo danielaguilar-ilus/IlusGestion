@@ -447,95 +447,56 @@
          modal en la Bandeja (boton "Nuevo Ticket" de tickets/list.html). Se
          quita el link del menu. La ruta /tickets/nuevo sigue viva
          (compatibilidad hacia atras), solo sin linkear desde el sidebar. #}
-      <a href="{{ url_for('tk_cotizaciones_list') }}"
-         class="sidebar-link{% if request.endpoint == 'tk_cotizaciones_list' %} active{% endif %}">
-        <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
-      </a>
-      {# Catálogo de Productos: ficha general (fotos + manual PDF) por SKU,
-         INDEPENDIENTE del catálogo de Etiquetas (ese es 1:1 con el ERP para
-         /cubicador). Nombre completo en el menú a propósito para no confundir
-         a quien ya conoce "Catálogo" de Etiquetas. #}
-      <a href="{{ url_for('cat_list') }}"
-         class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
-        <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
-      </a>
-      {# Clientes (central) 2026-07-12: segunda puerta a mant_clientes, aditiva.
-         El acceso ya existente en Mantenciones → Clientes NO se toca. #}
-      <a href="{{ url_for('clientes_hub_list') }}"
-         class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha'] %} active{% endif %}">
-        <i class="bi bi-building-check"></i><span>Clientes</span>
-      </a>
-      {# Calendario básico (central) 2026-07-12: vista simple de solo lectura.
-         El calendario completo de Mantenciones (mant_calendario) NO se toca. #}
-      <a href="{{ url_for('calendario_hub') }}"
-         class="sidebar-link{% if request.endpoint == 'calendario_hub' %} active{% endif %}">
-        <i class="bi bi-calendar3"></i><span>Calendario</span>
-      </a>
     </div>
     {% endif %}
 
-    {# ── MANTENCIONES ── #}
+    {# ── SERVICIO TÉCNICO: 8 módulos unificados (2026-07-12) ──
+       Reemplaza el grupo "Mantenciones" y absorbe sus enlaces. Ninguna
+       ruta /mantenciones/* se elimina — solo se reorganizan los enlaces
+       del sidebar (Regla #4.2). #}
     {% if permissions.mantenciones %}
-    <button class="sg-toggle" data-sg="mant">
-      <i class="bi bi-wrench-adjustable"></i>Mantenciones
+    <button class="sg-toggle" data-sg="servtec">
+      <i class="bi bi-wrench-adjustable"></i>Servicio Técnico
       <i class="bi bi-chevron-right sg-chevron"></i>
     </button>
-    <div class="sg-items" id="sg-mant">
-      {# 2026-05-22 (Daniel) — link "Mi día" eliminado por decisión del producto.
-         El técnico ve sus OTs en /mantenciones/ots con filtro solo_mias=True
-         automático según rol. #}
+    <div class="sg-items" id="sg-servtec">
       <a href="{{ url_for('mant_index') }}"
          class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
         <i class="bi bi-speedometer2"></i><span>Dashboard</span>
       </a>
-      {# Clientes: oculto para rol técnico — solo gestiona OTs asignadas #}
       {% if not is_tecnico %}
-      <a href="{{ url_for('mant_clientes') }}"
-         class="sidebar-link{% if request.endpoint in ['mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
+      <a href="{{ url_for('clientes_hub_list') }}"
+         class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha','mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
         <i class="bi bi-building-check"></i><span>Clientes</span>
       </a>
       {% endif %}
-      {# Calendario integrado dentro de Órdenes de Trabajo como vista — ya no link separado.
-         La ruta /mantenciones/calendario sigue existiendo (compat) pero no aparece en menú. #}
       <a href="{{ url_for('mant_ots_list') }}"
          class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
         <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
       </a>
-      {# ── OCULTOS DEL MENÚ POR PEDIDO DEL USUARIO (2026-05-12) ──
-           Las rutas Flask siguen existiendo (no romper enlaces antiguos),
-           solo se removieron del sidebar:
-
-           - Tickets: pendiente para fase posterior. NO eliminar código,
-             se va a retomar más adelante. Endpoint: mant_tickets_list,
-             mant_ticket_nuevo, mant_ticket_ficha
-           - Análisis: absorbido por el Dashboard (tab "Análisis económico").
-             Endpoint /mantenciones/analisis sigue accesible si alguien
-             tiene URL guardada.
-           - Analytics: absorbido por el Dashboard (tab "Analytics
-             operacional"). Endpoint /mantenciones/analytics sigue accesible.
-
-         Si quieres re-mostrar alguno, descomenta el bloque correspondiente.
-         #}
-      {# <a href="{{ url_for('mant_tickets_list') }}"
-         class="sidebar-link{% if request.endpoint in ['mant_tickets_list','mant_ticket_nuevo','mant_ticket_ficha'] %} active{% endif %}">
-        <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
-      </a> #}
-      {# Cotizaciones y Plantillas: ocultas para rol 'tecnico'. #}
+      <a href="{{ url_for('calendario_hub') }}"
+         class="sidebar-link{% if request.endpoint == 'calendario_hub' %} active{% endif %}">
+        <i class="bi bi-calendar3"></i><span>Calendario</span>
+      </a>
       {% if current_user and current_user.role != 'tecnico' %}
-      {# 2026-06-10 (Daniel): Cotizaciones FUERA del menú hasta habilitar el
-         módulo. Se reactiva desde Configuración → regla
-         'Módulo Cotizaciones visible' (sin tocar código). #}
-      {% if mant_cotizaciones_on %}
-      <a href="{{ url_for('mant_cotizaciones_list') }}"
-         class="sidebar-link{% if request.endpoint in ['mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
+      {# Cotizaciones: entrada unificada (Tickets + Servicio Técnico) #}
+      <a href="{{ url_for('cotizaciones_hub_list') }}"
+         class="sidebar-link{% if request.endpoint in ['cotizaciones_hub_list','tk_cotizaciones_list','mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
         <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
       </a>
-      {% endif %}
       <a href="{{ url_for('mant_plantillas_page') }}"
          class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
         <i class="bi bi-list-check"></i><span>Plantillas</span>
       </a>
+      <a href="{{ url_for('repuestos_hub_list') }}"
+         class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
+        <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
+      </a>
       {% endif %}
+      <a href="{{ url_for('cat_list') }}"
+         class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
+        <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
+      </a>
       {# Plan Anual de mantenciones (2026-06-10): gestión, no técnicos #}
       {% if current_user and current_user.role != 'tecnico' %}
       <a href="{{ url_for('mant_planificador_page') }}"
@@ -554,14 +515,13 @@
         <i class="bi bi-sliders"></i><span>Agente · Reglas</span>
       </a>
       {% endif %}
-      {# <a href="{{ url_for('mant_analisis') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_analisis' %} active{% endif %}">
-        <i class="bi bi-graph-up-arrow"></i><span>Análisis</span>
+      {# Técnicos (dotación) — oculto para el propio técnico #}
+      {% if not is_tecnico %}
+      <a href="{{ url_for('mant_tecnicos_externos_index') }}"
+         class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">
+        <i class="bi bi-person-badge"></i><span>Técnicos</span>
       </a>
-      <a href="{{ url_for('mant_analytics_page') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_analytics_page' %} active{% endif %}">
-        <i class="bi bi-bar-chart-fill"></i><span>Analytics</span>
-      </a> #}
+      {% endif %}
     </div>
     {% endif %}
 

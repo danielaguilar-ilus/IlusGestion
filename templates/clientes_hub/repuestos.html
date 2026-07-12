@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Repuestos — ILUS{% endblock %}
+{% block content %}
+<style>
+.rep-badge{font-size:.66rem;font-weight:700;padding:2px 9px;border-radius:50px;white-space:nowrap;display:inline-block}
+.rep-cotizado{background:#f3f4f6;color:#6b7280}
+.rep-aprobado{background:#dbeafe;color:#1d4ed8}
+.rep-instalado{background:#dcfce7;color:#166534}
+.rep-facturado{background:#fff8e1;color:#b45309}
+.rep-cancelado{background:#fee2e2;color:#991b1b}
+.rep-table-wrap{overflow-x:auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
+.rep-table{width:100%;border-collapse:collapse;min-width:700px}
+.rep-table th{font-size:.72rem;text-transform:uppercase;color:#6b7280;padding:10px 14px;text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap}
+.rep-table td{padding:10px 14px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+.rep-table tr:last-child td{border-bottom:none}
+.rep-table a.rep-link{color:#0a0a0a;font-weight:600;text-decoration:none}
+.rep-table a.rep-link:hover{color:#dc2626}
+.rep-filters .btn{min-height:44px}
+@media (max-width: 576px){.rep-table th:nth-child(6),.rep-table td:nth-child(6){display:none}}
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h4 class="mb-0"><i class="bi bi-gear-wide-connected"></i> Repuestos</h4>
+</div>
+<p class="text-muted small">
+  Vista de todos los repuestos cotizados/instalados por cliente. Para agregar o editar
+  un repuesto puntual, ábrelo desde la ficha del cliente (pestaña "Repuestos").
+</p>
+
+<form method="get" class="mb-3 d-flex flex-wrap gap-2 align-items-center rep-filters">
+  <div class="input-group" style="max-width:300px">
+    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+    <input type="text" name="q" value="{{ filtro_q }}" class="form-control"
+           placeholder="Buscar por nombre, SKU o cliente..." style="font-size:16px">
+  </div>
+  <select name="estado" class="form-select" style="max-width:200px;font-size:16px" onchange="this.form.submit()">
+    <option value="">Todos los estados</option>
+    {% for e in estados %}
+    <option value="{{ e }}" {% if filtro_estado==e %}selected{% endif %}>{{ e|capitalize }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-danger" type="submit">Filtrar</button>
+  {% if filtro_q or filtro_estado %}
+  <a href="{{ url_for('repuestos_hub_list') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-x-lg"></i> Limpiar
+  </a>
+  {% endif %}
+</form>
+
+<div class="rep-table-wrap">
+  <table class="rep-table">
+    <thead>
+      <tr>
+        <th>Repuesto</th>
+        <th>Cliente</th>
+        <th>Cant.</th>
+        <th>Costo</th>
+        <th>Venta</th>
+        <th>Tipo</th>
+        <th>Estado</th>
+        <th>Fecha</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in repuestos %}
+      <tr>
+        <td>
+          <a class="rep-link" href="{{ url_for('clientes_hub_ficha', cid=r.cliente_id) }}#tab-repuestos">
+            {{ r.nombre }}
+          </a>
+          {% if r.sku %}<div class="text-muted small">SKU {{ r.sku }}</div>{% endif %}
+        </td>
+        <td>{{ r.cliente_nombre }}</td>
+        <td>{{ r.cantidad }}</td>
+        <td>${{ '{:,.0f}'.format(r.costo_unitario|float).replace(',', '.') if r.costo_unitario else 0 }}</td>
+        <td>${{ '{:,.0f}'.format(r.precio_venta|float).replace(',', '.') if r.precio_venta else 0 }}</td>
+        <td class="text-muted small">{{ r.tipo }}</td>
+        <td><span class="rep-badge rep-{{ r.estado }}">{{ r.estado }}</span></td>
+        <td class="text-muted small">{{ r.fecha.strftime('%d/%m/%Y') if r.fecha and r.fecha.strftime else (r.fecha or '—') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="text-center text-muted py-4">No hay repuestos que coincidan con el filtro.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -40626,6 +40626,38 @@ def clientes_hub_tipo_relacion(cid):
     return jsonify({"ok": True, "tipo_cliente": nuevo})
 
 
+# ════════════════════════════════════════════════════════════════════
+#  HUB TOP-LEVEL — Dashboard / Órdenes de Trabajo / Plantillas
+#  (2026-07-12, Daniel: rediseño de sidebar sin duplicar lógica)
+#  MISMA VISTA, MISMOS PERMISOS -- reuso directo de las páginas globales
+#  que YA existían bajo /mantenciones/*. No se crea ningún dato/query
+#  nuevo aquí; NO se elimina /mantenciones/* (Regla #4.2).
+# ════════════════════════════════════════════════════════════════════
+
+@app.route("/dashboard")
+@_mant_required
+def dashboard_hub():
+    """Dashboard general = mismo dashboard agregado de Mantenciones
+    (mant_index), solo con URL de nivel superior."""
+    return mant_index()
+
+
+@app.route("/ordenes-trabajo")
+@_mant_required
+def ordenes_trabajo_hub():
+    """Órdenes de Trabajo = mismo listado global cross-cliente que ya
+    existía en /mantenciones/ots (mant_ots_list), con URL top-level."""
+    return mant_ots_list()
+
+
+@app.route("/plantillas")
+@_mant_required
+def plantillas_hub():
+    """Plantillas de checklist = misma página global que ya existía en
+    /mantenciones/plantillas (mant_plantillas_page), URL top-level."""
+    return mant_plantillas_page()
+
+
 @app.route("/calendario")
 @_mant_required
 @_no_tecnico
@@ -40658,6 +40690,116 @@ def calendario_hub():
     return render_template(
         "clientes_hub/calendario.html",
         orden_fechas=orden_fechas, agrupado=agrupado, hoy=hoy,
+    )
+
+
+@app.route("/cotizaciones")
+@_mant_required
+@_no_tecnico
+def cotizaciones_hub_list():
+    """Cotizaciones (central) — 2026-07-12: entrada ÚNICA que UNE los dos
+    sistemas existentes SIN fusionar tablas (esquemas distintos, migrar
+    sería innecesario y riesgoso — Regla #4.2):
+      - tk_cotizaciones  (tickets_module): ligada a un ticket.
+      - mant_cotizaciones (Mantenciones): ligada a cliente + contrato.
+    Cada fila enlaza a su ficha NATIVA (tk_cotizacion_ficha o
+    mant_cotizacion_ficha). Ninguna ruta/tabla existente se toca."""
+    filtro_q = (request.args.get("q") or "").strip()
+
+    tk_rows = mysql_fetchall(
+        "SELECT id, numero_cotizacion AS numero, estado, empresa, rut, total, "
+        "       created_at, ticket_id "
+        "  FROM tk_cotizaciones "
+        " ORDER BY created_at DESC LIMIT 200"
+    ) or []
+    mant_rows = []
+    if _mant_cotizaciones_on():
+        mant_rows = mysql_fetchall(
+            "SELECT q.id, q.numero, q.estado, c.razon_social AS empresa, c.rut, "
+            "       q.total_final AS total, q.created_at, q.cliente_id "
+            "  FROM mant_cotizaciones q "
+            "  JOIN mant_clientes c ON c.id = q.cliente_id "
+            " ORDER BY q.created_at DESC LIMIT 200"
+        ) or []
+
+    unificado = []
+    for r in tk_rows:
+        r = dict(r)
+        unificado.append({
+            "origen": "ticket", "origen_label": "Ticket",
+            "id": r["id"], "numero": r.get("numero") or f"TK-COT-{r['id']}",
+            "estado": r.get("estado"), "empresa": r.get("empresa") or "—",
+            "rut": r.get("rut") or "—", "total": r.get("total") or 0,
+            "created_at": r.get("created_at"),
+            "url": url_for("tk_cotizaciones_list"),
+        })
+    for r in mant_rows:
+        r = dict(r)
+        unificado.append({
+            "origen": "servicio_tecnico", "origen_label": "Servicio Técnico",
+            "id": r["id"], "numero": r.get("numero") or f"COT-{r['id']}",
+            "estado": r.get("estado"), "empresa": r.get("empresa") or "—",
+            "rut": r.get("rut") or "—", "total": r.get("total") or 0,
+            "created_at": r.get("created_at"),
+            "url": url_for("mant_cotizacion_ficha", cid=r["id"]),
+        })
+
+    if filtro_q:
+        fq = filtro_q.lower()
+        unificado = [
+            u for u in unificado
+            if fq in (u["numero"] or "").lower()
+            or fq in (u["empresa"] or "").lower()
+            or fq in (u["rut"] or "").lower()
+        ]
+
+    unificado.sort(key=lambda u: u["created_at"] or datetime.min, reverse=True)
+
+    return render_template(
+        "clientes_hub/cotizaciones.html",
+        cotizaciones=unificado, filtro_q=filtro_q,
+    )
+
+
+@app.route("/repuestos")
+@_mant_required
+@_no_tecnico
+def repuestos_hub_list():
+    """Repuestos (central) — 2026-07-12: ÚNICA vista NUEVA de este
+    rediseño (Repuestos hoy solo vivía por-cliente, dentro de la pestaña
+    'Repuestos' de la ficha). Lista repuestos de TODOS los clientes,
+    reusando la MISMA tabla mant_repuestos (sin cliente_id fijo) — no se
+    crea ninguna tabla/estructura nueva."""
+    filtro_estado = (request.args.get("estado") or "").strip()
+    filtro_q = (request.args.get("q") or "").strip()
+
+    sql = (
+        "SELECT r.id, r.sku, r.nombre, r.cantidad, r.costo_unitario, "
+        "       r.precio_venta, r.tipo, r.estado, r.proveedor, r.fecha, "
+        "       r.cliente_id, c.razon_social AS cliente_nombre, "
+        "       r.visita_id "
+        "  FROM mant_repuestos r "
+        "  JOIN mant_clientes c ON c.id = r.cliente_id "
+        " WHERE 1=1 "
+    )
+    params = []
+    if filtro_estado:
+        sql += " AND r.estado = %s "
+        params.append(filtro_estado)
+    if filtro_q:
+        sql += " AND (r.nombre LIKE %s OR r.sku LIKE %s OR c.razon_social LIKE %s) "
+        like = f"%{filtro_q}%"
+        params.extend([like, like, like])
+    sql += " ORDER BY r.fecha DESC, r.id DESC LIMIT 300"
+
+    repuestos = mysql_fetchall(sql, tuple(params)) or []
+
+    estados = ["cotizado", "aprobado", "instalado", "facturado", "cancelado"]
+
+    return render_template(
+        "clientes_hub/repuestos.html",
+        repuestos=repuestos, estados=estados,
+        filtro_estado=filtro_estado, filtro_q=filtro_q,
     )
 
 
