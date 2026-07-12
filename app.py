@@ -48168,6 +48168,18 @@ def mant_visita_iniciar(vid):
         )
     except Exception:
         pass
+    # Sincronizar estado del ticket vinculado (si lo hay): OT en curso.
+    # Aditivo -- nunca debe romper el inicio de la OT.
+    try:
+        _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
+        if _tk_set_estado_automatico:
+            _tk_row = mysql_fetchone("SELECT id FROM tk_tickets WHERE visita_id=%s", (vid,))
+            if _tk_row:
+                _tk_set_estado_automatico(
+                    _tk_row["id"], "ot_in_progress",
+                    "Técnico inició la OT en terreno", visita_id=vid)
+    except Exception as _e_tk_est:
+        print(f"[mant_visita_iniciar] sync estado ticket fallo vid={vid}: {_e_tk_est}", flush=True)
     return jsonify({"ok": True, "estado": "en_curso"})
 
 
@@ -48544,6 +48556,18 @@ def mant_visita_cerrar(vid):
     # 2026-06-23: _lev_promover_full_async además MATERIALIZA los equipos
     # descubiertos en terreno (items sin maquina_id) antes de promover.
     _lev_promover_full_async(vid, usuario=user)
+    # Sincronizar estado del ticket vinculado (si lo hay). Aditivo -- nunca
+    # debe romper el cierre de la OT si falla.
+    try:
+        _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
+        if _tk_set_estado_automatico:
+            _tk_row = mysql_fetchone("SELECT id FROM tk_tickets WHERE visita_id=%s", (vid,))
+            if _tk_row:
+                _tk_set_estado_automatico(
+                    _tk_row["id"], "resolved",
+                    "OT cerrada con las 3 firmas y checklist completo", visita_id=vid)
+    except Exception as _e_tk_est:
+        print(f"[mant_visita_cerrar] sync estado ticket fallo vid={vid}: {_e_tk_est}", flush=True)
     return jsonify({
         "ok": True,
         "estado": "cerrada",
@@ -54818,6 +54842,18 @@ def mant_ot_firmar_cliente(vid):
             _notificar_ot_pendiente_aprobacion_async(vid, request.host_url)
         except Exception as e_n:
             print(f"[notif-pend-aprob] fail vid={vid}: {e_n}", flush=True)
+        # Sincronizar estado del ticket vinculado (si lo hay). Aditivo.
+        try:
+            _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
+            if _tk_set_estado_automatico:
+                _tk_row = mysql_fetchone("SELECT id FROM tk_tickets WHERE visita_id=%s", (vid,))
+                if _tk_row:
+                    _tk_set_estado_automatico(
+                        _tk_row["id"], "ot_pending_approval",
+                        "Cliente y técnico firmaron; falta aprobación del supervisor",
+                        visita_id=vid)
+        except Exception as _e_tk_est:
+            print(f"[mant_ot_firmar_cliente] sync estado ticket fallo vid={vid}: {_e_tk_est}", flush=True)
         return jsonify({"ok": True, "estado": "pendiente_aprobacion"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -54998,6 +55034,18 @@ def ot_firma_publica_submit(token):
             _notificar_ot_pendiente_aprobacion_async(vid, _public_base_url())
         except Exception as e_n:
             print(f"[notif-firma-remota] fail vid={vid}: {e_n}", flush=True)
+        # Sincronizar estado del ticket vinculado (si lo hay). Aditivo.
+        try:
+            _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
+            if _tk_set_estado_automatico:
+                _tk_row = mysql_fetchone("SELECT id FROM tk_tickets WHERE visita_id=%s", (vid,))
+                if _tk_row:
+                    _tk_set_estado_automatico(
+                        _tk_row["id"], "ot_pending_approval",
+                        "Cliente firmó remotamente; falta aprobación del supervisor",
+                        visita_id=vid)
+        except Exception as _e_tk_est:
+            print(f"[firma-remota] sync estado ticket fallo vid={vid}: {_e_tk_est}", flush=True)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -55443,6 +55491,19 @@ def mant_ot_aprobar_cierre(vid):
                                        motivo=comentario, host_url=request.host_url)
         except Exception as _e_nca:
             print(f"[aprobar-cierre notif] {_e_nca}", flush=True)
+        # Sincronizar estado del ticket vinculado (si lo hay): OT cerrada con
+        # las 3 firmas -> ticket 'resolved' (queda a criterio del staff pasarlo
+        # a 'closed' como paso administrativo aparte). Aditivo.
+        try:
+            _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
+            if _tk_set_estado_automatico:
+                _tk_row = mysql_fetchone("SELECT id FROM tk_tickets WHERE visita_id=%s", (vid,))
+                if _tk_row:
+                    _tk_set_estado_automatico(
+                        _tk_row["id"], "resolved",
+                        "OT cerrada con las 3 firmas y checklist completo", visita_id=vid)
+        except Exception as _e_tk_est:
+            print(f"[aprobar-cierre] sync estado ticket fallo vid={vid}: {_e_tk_est}", flush=True)
         return jsonify({"ok": True, "estado": "cerrada"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -65889,6 +65950,20 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 visita_id = None
 
         conn.commit()
+
+        # Sincronizar estado del ticket vinculado: OT generada (aditivo,
+        # post-commit -- si algo falla acá la OT ya quedó persistida y no
+        # debe revertirse por esto). Nunca rompe la creación de la OT.
+        if ticket_id and visita_id:
+            try:
+                _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
+                if _tk_set_estado_automatico:
+                    _tk_set_estado_automatico(
+                        ticket_id, "ot_generated",
+                        f"OT {numero_ot} generada", visita_id=visita_id)
+            except Exception as _e_tk_est:
+                print(f"[lev_crear] sync estado ticket (ot_generated) fallo "
+                      f"(ticket_id={ticket_id}): {_e_tk_est}", flush=True)
 
         # ══════════════════════════════════════════════════════════════
         # APLICAR PLANTILLAS (POST-commit, defensivo)

@@ -74,6 +74,12 @@ TK_ESTADOS = (
     "open", "in_progress", "pending", "resolved", "closed",
     "ot_pending_approval", "ot_generated", "ot_in_progress", "cancelado",
 )
+# Subconjunto que el STAFF puede setear a mano desde el <select> de la ficha.
+# Los 3 automaticos (ot_generated/ot_in_progress/ot_pending_approval) los
+# controla EXCLUSIVAMENTE _tk_set_estado_automatico (ciclo de vida de la OT
+# vinculada) -- ver tk_api_update, que rechaza estos valores via PATCH manual.
+TK_ESTADOS_MANUALES = ("open", "in_progress", "pending", "resolved", "closed", "cancelado")
+TK_ESTADOS_AUTOMATICOS = ("ot_generated", "ot_in_progress", "ot_pending_approval")
 TK_TIPOS = (
     "install", "tech_support", "shipping", "quotation", "return",
     "tech_evaluation", "maintenance", "spare_parts", "equipment_transfer",
@@ -1272,7 +1278,11 @@ def register_tickets_routes(app, ctx):
             "tickets/ficha.html",
             ticket_id=tid,
             estado_label=ESTADO_LABEL, tipo_label=TIPO_LABEL,
-            tk_estados=TK_ESTADOS, tk_tipos=TK_TIPOS, tk_prioridades=TK_PRIORIDADES,
+            # El <select> de estado solo ofrece los estados MANUALES -- los
+            # 3 automaticos (ot_generated/ot_in_progress/ot_pending_approval)
+            # los controla el ciclo de vida de la OT vinculada, no el staff
+            # a mano (ver _tk_set_estado_automatico + tk_api_update).
+            tk_estados=TK_ESTADOS_MANUALES, tk_tipos=TK_TIPOS, tk_prioridades=TK_PRIORIDADES,
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -1721,6 +1731,17 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
 
         d = request.get_json(silent=True) or {}
+        # 🔐 Los 3 estados AUTOMATICOS del ciclo de vida de la OT
+        # (ot_generated/ot_in_progress/ot_pending_approval) no se pueden
+        # setear a mano via este PATCH -- solo _tk_set_estado_automatico
+        # (invocado internamente desde la OT) los controla. Esto blinda el
+        # backend aunque alguien edite el DOM o llame el PATCH directo.
+        if "estado" in d and (d.get("estado") or "").strip().lower() in TK_ESTADOS_AUTOMATICOS:
+            return jsonify({
+                "ok": False,
+                "error": "Ese estado lo controla automáticamente la OT vinculada; no se puede setear a mano.",
+                "error_codigo": "ESTADO_AUTOMATICO_NO_MANUAL",
+            }), 400
         allowed = (
             "titulo", "descripcion", "tipo", "prioridad", "estado", "sucursal",
             "nombre_contacto", "email", "phone", "direccion", "empresa", "rut",
@@ -2073,6 +2094,73 @@ def register_tickets_routes(app, ctx):
         _tk_log(tid, "mensaje", cuerpo_email, es_interno=False,
                 to_email=to_email[:150], estado_envio="enviado" if enviado else "fallido",
                 metadata={"subject": subject, "auto": True, "estado_slug": estado_slug})
+
+    def _tk_set_estado_automatico(tid, nuevo_estado_tk, motivo, visita_id=None):
+        """Sincroniza tk_tickets.estado automáticamente desde el ciclo de vida
+        de la OT vinculada (mant_visitas). NUNCA se expone como ruta Flask --
+        solo la invocan otras funciones del backend (creación de OT, inicio,
+        firmas, cierre). Diseñado para no romper jamás el flujo llamador:
+        cualquier error se traga y se loguea, retornando False.
+
+        Reutiliza el mismo mecanismo de bitácora que ya usa tk_api_update
+        (_tk_log con tipo='cambio_estado', tabla tk_mensajes) y el mismo
+        mapeo de notificación al cliente (_ESTADO_NOTIF_SLUG) para que un
+        cambio automático de estado avise igual que uno manual.
+
+        Retorna True si aplicó el cambio, False si fue no-op o falló
+        (ticket inexistente, estado invalido, o ya estaba en ese estado).
+        """
+        try:
+            nuevo_estado_tk = _norm_enum(nuevo_estado_tk, TK_ESTADOS, None)
+            if not nuevo_estado_tk:
+                print(f"[tk_set_estado_automatico] estado invalido tid={tid}: {nuevo_estado_tk}", flush=True)
+                return False
+            prev = mysql_fetchone("SELECT estado FROM tk_tickets WHERE id=%s", (tid,))
+            if not prev:
+                return False
+            if prev["estado"] == nuevo_estado_tk:
+                return False  # no-op: evita bitácora/correos duplicados en reintentos
+            # 🔒 Hallazgo de revisión adversarial 2026-07-12: 'closed'/'cancelado'
+            # son estados TERMINALES decididos por una persona -- un evento
+            # posterior de la OT (reinicio de visita, segunda vía de cierre)
+            # no debe "resucitar" el ticket ni reenviar notificaciones de un
+            # ticket que el cliente ya cree cerrado/cancelado.
+            if prev["estado"] in ("closed", "cancelado"):
+                print(f"[tk_set_estado_automatico] tid={tid} en estado terminal "
+                      f"'{prev['estado']}' -- se ignora el intento de pasarlo a '{nuevo_estado_tk}'", flush=True)
+                return False
+
+            user = "sistema"
+            sets, params = ["estado=%s"], [nuevo_estado_tk]
+            if nuevo_estado_tk in ("resolved", "closed") and prev["estado"] not in ("resolved", "closed"):
+                sets.append("cerrado_at=NOW()"); sets.append("cerrado_por=%s"); params.append(user)
+            params.append(tid)
+            mysql_execute(f"UPDATE tk_tickets SET {', '.join(sets)} WHERE id=%s", tuple(params))
+
+            _tk_log(tid, "cambio_estado",
+                    f"Estado: {ESTADO_LABEL.get(prev['estado'], prev['estado'])} → "
+                    f"{ESTADO_LABEL.get(nuevo_estado_tk, nuevo_estado_tk)} ({motivo})",
+                    usuario=user,
+                    metadata={"campo": "estado", "antes": prev["estado"], "nuevo": nuevo_estado_tk,
+                              "motivo": motivo, "origen": "automatico", "visita_id": visita_id})
+
+            _ESTADO_NOTIF_SLUG_AUTO = {
+                "resolved": "resuelto", "closed": "cerrado", "in_progress": "en_curso",
+                "pending": "pendiente", "ot_generated": "ot_generada",
+                "ot_in_progress": "ot_en_curso", "cancelado": "cancelado",
+            }
+            if nuevo_estado_tk in _ESTADO_NOTIF_SLUG_AUTO:
+                if not (nuevo_estado_tk == "resolved" and prev["estado"] in ("resolved", "closed")):
+                    try:
+                        _tk_notificar_lifecycle(tid, _ESTADO_NOTIF_SLUG_AUTO[nuevo_estado_tk])
+                    except Exception as _e:
+                        print(f"[tk_set_estado_automatico] notif '{nuevo_estado_tk}' no enviada tid={tid}: {_e}", flush=True)
+            return True
+        except Exception as e:
+            print(f"[tk_set_estado_automatico] error tid={tid} nuevo={nuevo_estado_tk}: {e}", flush=True)
+            return False
+
+    ctx["_tk_set_estado_automatico"] = _tk_set_estado_automatico  # visible desde app.py (OT lifecycle)
 
     def _tk_notificar_asignacion(tid, asignado_a_nuevo, numero, titulo, actor_username=None):
         """Notifica (campana + correo) al usuario que quedó asignado a un

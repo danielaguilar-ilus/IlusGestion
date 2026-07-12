@@ -580,6 +580,9 @@
         <select id="selEstado" class="form-select form-select-sm">
           {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
         </select>
+        <div id="notaEstadoAuto" style="display:none;font-size:.68rem;color:#9ca3af;margin-top:4px;">
+          Este estado lo controla automáticamente la OT vinculada.
+        </div>
       </div>
       <div style="flex:1;min-width:130px;">
         <label style="font-size:.72rem;font-weight:700;color:#475569;">Prioridad</label>
@@ -1674,7 +1677,21 @@ async function cargar(){
   const be = document.getElementById('hEstado');
   be.textContent = ESTADO_LABEL[t.estado]||t.estado; be.className = 'tk-badge bs-'+t.estado;
 
-  document.getElementById('selEstado').value = t.estado;
+  // El estado puede ser uno de los 3 AUTOMATICOS del ciclo de vida de la OT
+  // (ot_generated/ot_in_progress/ot_pending_approval), que no aparecen como
+  // <option> en selEstado (el backend tampoco los acepta via PATCH manual).
+  // En ese caso el select se deshabilita y se muestra el badge de solo lectura.
+  const selEstadoEl = document.getElementById('selEstado');
+  const notaEstadoAuto = document.getElementById('notaEstadoAuto');
+  const esEstadoAutomatico = !selEstadoEl.querySelector('option[value="'+t.estado+'"]');
+  if(esEstadoAutomatico){
+    selEstadoEl.disabled = true;
+    if(notaEstadoAuto) notaEstadoAuto.style.display = 'block';
+  } else {
+    selEstadoEl.disabled = false;
+    selEstadoEl.value = t.estado;
+    if(notaEstadoAuto) notaEstadoAuto.style.display = 'none';
+  }
   document.getElementById('selPrio').value = t.prioridad;
   poblarSelectEjecutivo();
   document.getElementById('txtDesc').textContent = t.descripcion || '—';
@@ -2449,11 +2466,16 @@ function poblarSelectEjecutivo(){
 }
 
 document.getElementById('btnGuardar').addEventListener('click', async function(){
+  const selEstadoBtn = document.getElementById('selEstado');
   const payload = {
-    estado: document.getElementById('selEstado').value,
     prioridad: document.getElementById('selPrio').value,
     asignado_a: document.getElementById('selEjecutivo').value,
   };
+  // Si el select está deshabilitado (estado automático de la OT), NO se
+  // manda 'estado' en el payload -- ese campo lo controla exclusivamente
+  // _tk_set_estado_automatico, y el backend igual lo rechazaría (ver
+  // tk_api_update / ESTADO_AUTOMATICO_NO_MANUAL).
+  if(!selEstadoBtn.disabled) payload.estado = selEstadoBtn.value;
   const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
   const d = await r.json();
