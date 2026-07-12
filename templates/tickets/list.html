@@ -69,16 +69,18 @@ table.tk-table thead th.tk-th-sort.on i{opacity:1;color:#dc2626;}
 /* ── Bandeja de tickets: TABLA (Daniel, feedback 2026-07-11: "necesito
    que sea una TABLA... bien elegante que me contenga cincuenta tickets"
    -- reemplaza el layout anterior de tarjetas/cards, que fue descartado). ── */
-.tk-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow-x:auto;
-  /* overflow-y:clip (no "hidden"): evita que este wrapper se convierta en el
-     "nearest scrolling ancestor" del thead sticky de abajo -- "clip" NO crea
-     un contenedor de scroll para position:sticky (a diferencia de "hidden"/
-     "auto"), asi el sticky se calcula contra el scroll real de la pagina.
-     Cambio neutro: hoy nada se desborda verticalmente dentro del wrapper. */
-  overflow-y:clip;
+.tk-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+  /* Daniel 2026-07-13: "que quepa dentro de la pantalla y no necesite scroll
+     de pagina, que le de scroll a la tabla" -- antes usaba overflow-y:clip
+     a proposito para que el scroll fuera de la PAGINA (con el thead sticky
+     contra ella). Ahora el wrapper mismo es el contenedor de scroll: el
+     thead sticky se recalcula automaticamente contra ESTE scroll en vez
+     del de la pagina (position:sticky funciona igual contra cualquier
+     ancestro con overflow scrolleable, no solo la pagina). */
+  overflow:auto;max-height:calc(100vh - 300px);
   box-shadow:0 1px 3px rgba(0,0,0,.04);}
-table.tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:1040px;}
-table.tk-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.66rem;
+table.tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.9rem;min-width:1040px;}
+table.tk-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.7rem;
   font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
   border-bottom:1px solid #eaecf0;white-space:nowrap;}
 table.tk-table thead th:first-child{border-left:3px solid transparent;}

@@ -124,6 +124,49 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .catf-drop .t1{font-weight:700;font-size:.8rem;color:#374151;}
 .catf-drop .t2{font-size:.7rem;color:#9ca3af;margin-top:2px;}
 
+/* ── Piolas (cables de máquinas) ── */
+.catp-badge{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.7rem;font-weight:800;white-space:nowrap;}
+.catp-badge.full{background:#fee2e2;color:#991b1b;}
+.catp-table-wrap{overflow-x:auto;border:1px solid #eaecf0;border-radius:10px;}
+table.catp-table{width:100%;border-collapse:collapse;font-size:.83rem;min-width:420px;}
+table.catp-table thead th{background:#f8f9fb;color:#6b7280;font-size:.64rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:8px 10px;border-bottom:1px solid #eaecf0;white-space:nowrap;}
+table.catp-table td{padding:7px 10px;vertical-align:middle;border-bottom:1px solid #f1f3f6;}
+table.catp-table tbody tr:last-child td{border-bottom:none;}
+.catp-medida{font-weight:800;color:#0f172a;white-space:nowrap;}
+.catp-obs{color:#374151;}
+.catp-acciones{display:flex;gap:3px;align-items:center;white-space:nowrap;}
+.catp-act{border:none;background:transparent;width:30px;height:30px;min-height:30px;border-radius:8px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:.85rem;cursor:pointer;padding:0;transition:background .12s;}
+.catp-act.edit{color:#6b7280;} .catp-act.edit:hover{background:#f3f4f6;}
+.catp-act.del{color:#dc2626;} .catp-act.del:hover{background:#fee2e2;}
+.catp-empty{padding:16px;text-align:center;color:#9ca3af;font-size:.82rem;}
+.catp-add-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;padding:10px;
+  background:#fafbfc;border:1px dashed #d1d5db;border-radius:10px;}
+.catp-add-row .fld{display:flex;flex-direction:column;gap:2px;}
+.catp-add-row .fld label{font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;}
+.catp-add-row .fld.medida{width:110px;}
+.catp-add-row .fld.obs{flex:1 1 200px;}
+.catp-edit-row input{font-size:.83rem;}
+@media(max-width:560px){
+  .catp-add-row{flex-direction:column;align-items:stretch;}
+  .catp-add-row .fld.medida{width:100%;}
+}
+@media(max-width:768px){
+  .catp-act{width:38px;height:38px;min-height:38px;min-width:38px;}
+  .catp-add-row input,.catp-add-row textarea{font-size:16px;}
+}
+.catp-hist-item{border-bottom:1px solid #f1f3f6;padding:10px 2px;font-size:.83rem;}
+.catp-hist-item:last-child{border-bottom:none;}
+.catp-hist-item .hd{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:3px;}
+.catp-hist-item .quien{font-weight:800;color:#0f172a;}
+.catp-hist-item .cuando{color:#9ca3af;font-size:.74rem;}
+.catp-hist-item .accion{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:2px 8px;border-radius:50px;}
+.catp-hist-item .accion.crear{background:#dcfce7;color:#166534;}
+.catp-hist-item .accion.editar{background:#dbeafe;color:#1e40af;}
+.catp-hist-item .accion.eliminar{background:#fee2e2;color:#991b1b;}
+.catp-hist-item .detalle{color:#6b7280;font-size:.78rem;}
+
 /* ── Mobile: botones/inputs táctiles (Regla #3) ── */
 @media(max-width:768px){
   .cat-act,.cat-pg-btn{width:38px;height:38px;min-height:38px;min-width:38px;}
@@ -246,6 +289,23 @@ table.cat-table tbody tr.archivado{opacity:.55;}
           <div id="catfManualWrap"></div>
           <input type="file" id="catfManualInput" accept="application/pdf" hidden>
         </div>
+
+        <div class="catf-section">
+          <h6><span><i class="bi bi-cable me-1"></i>Piolas</span>
+            <span>
+              <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="catpBtnHistorial" title="Ver historial">
+                <i class="bi bi-clock-history me-1"></i>Historial</button>
+              <span class="catp-badge" id="catpBadge">0/10</span>
+            </span>
+          </h6>
+          <div class="catp-table-wrap">
+            <table class="catp-table">
+              <thead><tr><th>Medida (cm)</th><th>Observación</th><th>Acciones</th></tr></thead>
+              <tbody id="catpTbody"></tbody>
+            </table>
+          </div>
+          <div id="catpAddWrap"></div>
+        </div>
       </div>
       <div class="modal-footer" style="justify-content:space-between;">
         <div>
@@ -260,11 +320,31 @@ table.cat-table tbody tr.archivado{opacity:.55;}
   </div>
 </div>
 
+<!-- ══════════════ MODAL: Historial de piolas (solo lectura, Regla #8) ══════════════ -->
+<div class="modal fade" id="catpHistModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-clock-history me-2"></i>Historial de piolas</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="catpHistBody">
+        <div class="catp-empty">Cargando…</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 const IS_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
 const MAX_FOTOS = 10;
+const MAX_PIOLAS = 10;
 let _catTimer = null;
+let _catfPiolas = [];
 
 // ── Estado de la bandeja (orden / paginacion) ──
 let catSort = 'updated_at';
@@ -548,11 +628,14 @@ async function catfCargar(){
       +   '<div class="sz">'+esc(fmtKb(d.manual.size_kb))+'</div></div>'
       + '<a class="btn btn-sm btn-outline-secondary" href="/catalogo/api/productos/'+catfProductoId+'/manual/descargar">'
       +   '<i class="bi bi-download me-1"></i>Descargar</a>'
+      + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualEnviar">'
+      +   '<i class="bi bi-envelope me-1"></i>Enviar por correo</button>'
       + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualReemplazar">'
       +   '<i class="bi bi-arrow-repeat me-1"></i>Reemplazar</button>'
       + '<button type="button" class="btn btn-sm btn-outline-danger" id="catfManualQuitar">'
       +   '<i class="bi bi-trash me-1"></i>Quitar</button>'
       + '</div>';
+    document.getElementById('catfManualEnviar').addEventListener('click', catfEnviarManualCorreo);
     document.getElementById('catfManualReemplazar').addEventListener('click', function(){
       document.getElementById('catfManualInput').click();
     });
@@ -569,6 +652,187 @@ async function catfCargar(){
 
   // Eliminar definitivamente: solo superadmin
   document.getElementById('catfBtnEliminarDef').style.display = IS_SUPERADMIN ? 'inline-block' : 'none';
+
+  // Piolas: vienen en el mismo payload de detalle (d.piolas), 1 sola llamada.
+  _catfPiolas = d.piolas || [];
+  catpRender();
+}
+
+// ══════════════ Piolas ══════════════
+function catpRender(){
+  const tbody = document.getElementById('catpTbody');
+  document.getElementById('catpBadge').textContent = _catfPiolas.length + '/' + MAX_PIOLAS;
+  const cls = _catfPiolas.length >= MAX_PIOLAS ? ' full' : '';
+  document.getElementById('catpBadge').className = 'catp-badge' + cls;
+
+  if(!_catfPiolas.length){
+    tbody.innerHTML = '<tr><td colspan="3" class="catp-empty">Sin piolas registradas.</td></tr>';
+  } else {
+    tbody.innerHTML = _catfPiolas.map(function(p){
+      return '<tr data-piola-id="'+p.id+'">'
+        + '<td class="catp-medida">'+esc(String(p.medida_cm))+' cm</td>'
+        + '<td class="catp-obs">'+esc(p.observacion||'')+'</td>'
+        + '<td><div class="catp-acciones">'
+        +   '<button type="button" class="catp-act edit" title="Editar" onclick="catpEditarFila('+p.id+')"><i class="bi bi-pencil"></i></button>'
+        +   '<button type="button" class="catp-act del" title="Eliminar" onclick="catpEliminar('+p.id+')"><i class="bi bi-trash"></i></button>'
+        + '</div></td></tr>';
+    }).join('');
+  }
+  catpRenderAddRow();
+}
+
+function catpRenderAddRow(){
+  const wrap = document.getElementById('catpAddWrap');
+  if(_catfPiolas.length >= MAX_PIOLAS){
+    wrap.innerHTML = '<div class="catp-empty">Máximo '+MAX_PIOLAS+' piolas por producto.</div>';
+    return;
+  }
+  wrap.innerHTML = '<div class="catp-add-row">'
+    + '<div class="fld medida"><label>Medida (cm)</label>'
+    +   '<input type="number" step="0.1" min="0.1" class="form-control form-control-sm" id="catpNuevaMedida"></div>'
+    + '<div class="fld obs"><label>Observación</label>'
+    +   '<input type="text" class="form-control form-control-sm" id="catpNuevaObs" placeholder="Ej: cable lateral izquierdo, polea alta" maxlength="300"></div>'
+    + '<button type="button" class="btn btn-sm btn-ilus" id="catpBtnAgregar"><i class="bi bi-plus-lg me-1"></i>Agregar piola</button>'
+    + '</div>';
+  document.getElementById('catpBtnAgregar').addEventListener('click', catpAgregar);
+}
+
+async function catpAgregar(){
+  const medidaEl = document.getElementById('catpNuevaMedida');
+  const obsEl = document.getElementById('catpNuevaObs');
+  const medida = parseFloat(medidaEl.value);
+  const obs = obsEl.value.trim();
+  if(!medida || medida <= 0){ ilusToast('Ingresa una medida válida (cm)', {type:'warning'}); return; }
+  if(!obs){ ilusToast('La observación es obligatoria (para distinguir el cable)', {type:'warning'}); return; }
+  const btn = document.getElementById('catpBtnAgregar');
+  btn.disabled = true;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({medida_cm: medida, observacion: obs})});
+    const d = await r.json();
+    if(d.ok){
+      ilusToast('✓ Piola agregada', {type:'success'});
+      await catpRecargar();
+    } else { ilusToast(d.error||'No se pudo agregar la piola', {type:'error'}); btn.disabled = false; }
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); btn.disabled = false; }
+}
+
+async function catpRecargar(){
+  // No hay endpoint propio en el contrato para refrescar solo piolas dentro
+  // de la ficha ya abierta — se reusa GET detalle (mismo que abre la ficha),
+  // que ya trae "piolas" en el payload.
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId);
+    const d = await r.json();
+    if(d.ok){ _catfPiolas = d.piolas || []; catpRender(); }
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+}
+
+window.catpEditarFila = function(piolaId){
+  const tr = document.querySelector('tr[data-piola-id="'+piolaId+'"]');
+  if(!tr || tr.classList.contains('catp-edit-row')) return;
+  const p = _catfPiolas.find(function(x){ return x.id === piolaId; });
+  if(!p) return;
+  tr.classList.add('catp-edit-row');
+  tr.innerHTML = '<td><input type="number" step="0.1" min="0.1" class="form-control form-control-sm" id="catpEdMedida" value="'+esc(String(p.medida_cm))+'"></td>'
+    + '<td><input type="text" class="form-control form-control-sm" id="catpEdObs" maxlength="300" value="'+esc(p.observacion||'')+'"></td>'
+    + '<td><div class="catp-acciones">'
+    +   '<button type="button" class="catp-act edit" title="Guardar" onclick="catpGuardarFila('+piolaId+')"><i class="bi bi-check-lg"></i></button>'
+    +   '<button type="button" class="catp-act del" title="Cancelar" onclick="catpRender()"><i class="bi bi-x-lg"></i></button>'
+    + '</div></td>';
+};
+
+window.catpGuardarFila = async function(piolaId){
+  const medida = parseFloat(document.getElementById('catpEdMedida').value);
+  const obs = document.getElementById('catpEdObs').value.trim();
+  if(!medida || medida <= 0){ ilusToast('Ingresa una medida válida (cm)', {type:'warning'}); return; }
+  if(!obs){ ilusToast('La observación es obligatoria', {type:'warning'}); return; }
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId, {method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({medida_cm: medida, observacion: obs})});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Piola actualizada', {type:'success'}); await catpRecargar(); }
+    else ilusToast(d.error||'No se pudo guardar', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+};
+
+window.catpEliminar = async function(piolaId){
+  const ok = await ilusConfirm({
+    title: 'Eliminar piola',
+    message: '¿Quitar esta piola del registro?',
+    sub: 'Queda igual en el historial de auditoría.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId, {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Piola eliminada', {type:'success'}); await catpRecargar(); }
+    else ilusToast(d.error||'No se pudo eliminar', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+};
+
+// ── Historial de piolas (modal Bootstrap: lista puede ser larga, Regla #8) ──
+const catpHistModalEl = document.getElementById('catpHistModal');
+const catpHistModal = new bootstrap.Modal(catpHistModalEl);
+document.getElementById('catpBtnHistorial').addEventListener('click', async function(){
+  catpHistModal.show();
+  const body = document.getElementById('catpHistBody');
+  body.innerHTML = '<div class="catp-empty">Cargando…</div>';
+  let d;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/historial');
+    d = await r.json();
+  }catch(e){ body.innerHTML = '<div class="catp-empty">No se pudo cargar el historial.</div>'; return; }
+  if(!d.ok){ body.innerHTML = '<div class="catp-empty">'+esc(d.error||'No se pudo cargar el historial.')+'</div>'; return; }
+  const eventos = d.eventos || [];
+  if(!eventos.length){ body.innerHTML = '<div class="catp-empty">Sin eventos registrados.</div>'; return; }
+  const accionLbl = {cat_piola_crear:'Creó', cat_piola_editar:'Editó', cat_piola_eliminar:'Eliminó'};
+  const accionCls = {cat_piola_crear:'crear', cat_piola_editar:'editar', cat_piola_eliminar:'eliminar'};
+  body.innerHTML = eventos.map(function(ev){
+    const det = ev.detalle || {};
+    let diff = '';
+    if(det.medida_cm_antes != null || det.medida_cm_despues != null){
+      diff += 'Medida: '+esc(det.medida_cm_antes!=null?String(det.medida_cm_antes)+' cm':'—')
+        +' → '+esc(det.medida_cm_despues!=null?String(det.medida_cm_despues)+' cm':'—')+'. ';
+    }
+    if(det.observacion_antes != null || det.observacion_despues != null){
+      diff += 'Observación: "'+esc(det.observacion_antes||'—')+'" → "'+esc(det.observacion_despues||'—')+'".';
+    }
+    const accion = ev.accion || '';
+    return '<div class="catp-hist-item">'
+      + '<div class="hd"><span class="quien">'+esc(ev.usuario||'—')+' <span class="text-muted" style="font-weight:400;">('+esc(ev.rol||'')+')</span></span>'
+      +   '<span class="cuando">'+esc(ev.fecha||'')+'</span></div>'
+      + '<span class="accion '+(accionCls[accion]||'')+'">'+esc(accionLbl[accion]||accion)+'</span>'
+      + '<div class="detalle">'+diff+'</div>'
+      + '</div>';
+  }).join('');
+});
+
+// ── Enviar manual por correo (Regla #1: ilusPrompt, no prompt() nativo) ──
+async function catfEnviarManualCorreo(){
+  const email = await ilusPrompt({
+    title: 'Enviar manual por correo',
+    message: 'Correo de destino',
+    placeholder: 'cliente@dominio.cl',
+    required: true,
+  });
+  if(email === null || email === undefined) return;
+  const correo = String(email).trim();
+  const reEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if(!reEmail.test(correo)){ ilusToast('Correo inválido', {type:'warning'}); return; }
+  ilusLoader.show('Enviando manual…');
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/manual/enviar-correo', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: correo})});
+    const d = await r.json();
+    ilusLoader.hide();
+    if(d.ok) ilusToast('✓ Manual enviado a '+correo, {type:'success'});
+    else ilusToast(d.error||'No se pudo enviar el correo', {type:'error'});
+  }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión', {type:'error'}); }
 }
 
 // ── Edición inline de Datos (mismo patrón "clic en el lápiz" de tickets/ficha.html) ──

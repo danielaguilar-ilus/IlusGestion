@@ -304,48 +304,122 @@
 .otw-ot-existente .lbl{font-size:.76rem;color:#166534;}
 .otw-ot-existente a{margin-left:auto;flex-shrink:0;}
 
-/* ── Wizard "Generar OT" — mismo lenguaje visual que .tk-step (Regla de
-   colores ILUS), clases propias para no colisionar con el stepper de
-   estado del ticket que ya usa .tk-step/.tk-stepper. ── */
-.otw-steps{display:flex;margin-bottom:22px;}
-.otw-step{flex:1;text-align:center;position:relative;}
-.otw-step:not(:first-child)::before{content:'';position:absolute;top:15px;left:-50%;width:100%;height:3px;background:#e5e7eb;z-index:0;}
-.otw-step.done:not(:first-child)::before,.otw-step.current:not(:first-child)::before{background:#16a34a;}
-.otw-circle{width:32px;height:32px;border-radius:50%;background:#f3f4f6;color:#9ca3af;display:inline-flex;
-  align-items:center;justify-content:center;font-weight:800;font-size:.85rem;position:relative;z-index:1;
-  transition:background .15s,color .15s;}
-.otw-step.current .otw-circle{background:#dc2626;color:#fff;box-shadow:0 0 0 5px rgba(220,38,38,.15);}
-.otw-step.done .otw-circle{background:#dcfce7;color:#166534;}
-.otw-label{font-size:.68rem;font-weight:700;color:#9ca3af;margin-top:6px;}
-.otw-step.current .otw-label{color:#dc2626;font-weight:800;}
-.otw-step.done .otw-label{color:#166534;}
-.otw-pane{display:none;} .otw-pane.active{display:block;}
-.otw-field{margin-bottom:14px;}
-.otw-field label{font-size:.72rem;font-weight:700;color:#475569;display:block;margin-bottom:4px;}
-.otw-cliente-box{position:relative;}
-.otw-cliente-results{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;
-  border-radius:0 0 10px 10px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:260px;overflow-y:auto;z-index:50;}
-.otw-cliente-item{padding:9px 12px;font-size:.85rem;cursor:pointer;border-bottom:1px solid #f3f4f6;}
-.otw-cliente-item:last-child{border-bottom:none;}
-.otw-cliente-item:hover{background:#fef2f2;}
-.otw-cliente-item .nom{font-weight:700;color:#0f172a;}
-.otw-cliente-item .met{font-size:.72rem;color:#9ca3af;}
-.otw-cliente-item.erp .met{color:#b45309;}
-.otw-cliente-sel{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 12px;
-  font-size:.85rem;display:flex;align-items:center;gap:10px;}
-.otw-cliente-sel i{color:#16a34a;font-size:1.1rem;}
-.otw-cliente-sel .x{margin-left:auto;cursor:pointer;color:#9ca3af;}
-.otw-eq-item{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid #f3f4f6;font-size:.85rem;}
-.otw-eq-item:last-child{border-bottom:none;}
-.otw-eq-item input{width:18px;height:18px;flex-shrink:0;}
-.otw-warn-card{background:#fff8e1;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;
-  margin-bottom:10px;font-size:.85rem;color:#78350f;display:flex;gap:10px;align-items:flex-start;}
-.otw-warn-card i{color:#f59e0b;flex-shrink:0;margin-top:1px;}
-.otw-warn-card b{display:block;margin-bottom:2px;}
-.otw-resumen dt{color:#6b7280;font-weight:600;font-size:.78rem;}
-.otw-resumen dd{color:#0f172a;font-weight:700;font-size:.86rem;margin-bottom:10px;}
-@media (max-width:520px){
-  .otw-label{display:none;}
+/* ── Modal "Generar OT" — MISMO lenguaje visual que #modalLevSelector de
+   Mantenciones (templates/mantenciones/ficha.html + static/mant_ficha.js).
+   Daniel rechazó el wizard genérico anterior (.otw-*); este bloque replica
+   las tarjetas .lev-step-card tal cual, no un wizard de pasos con "Siguiente". ── */
+.lev-step-card {
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  margin-bottom: 14px;
+  overflow: hidden;
+  transition: border-color .2s, box-shadow .2s;
+}
+.lev-step-card:hover { border-color: #cbd5e1; }
+.lev-step-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #fff, #fafafa);
+  border-bottom: 1px solid #f1f5f9;
+}
+.lev-step-num {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #dc2626, #991b1b);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .82rem; font-weight: 700;
+  flex-shrink: 0;
+}
+.lev-step-title { font-weight: 700; font-size: .92rem; color: #0f172a; }
+.lev-step-sub   { font-size: .73rem; color: #94a3b8; margin-left: auto; }
+.lev-step-body  { padding: 14px; }
+.lev-table-eq tr { cursor: pointer; }
+.lev-table-eq tr:hover { background: #f8fafc; }
+.lev-table-eq tr.row-selected { background: #fef2f2 !important; }
+
+/* ── Modalidad del levantamiento (2 tarjetas clicables) ── */
+.lev-modo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+@media (max-width:576px){.lev-modo-grid{grid-template-columns:1fr}}
+.lev-modo-card{position:relative;border:2px solid #e5e7eb;border-radius:14px;background:#fff;
+  padding:14px 14px 12px;cursor:pointer;transition:all .15s;user-select:none}
+.lev-modo-card:hover{border-color:#cbd5e1;transform:translateY(-1px)}
+.lev-modo-card.on{border-color:#dc2626;background:linear-gradient(180deg,#fff 0%,#fef2f2 100%);
+  box-shadow:0 8px 22px rgba(220,38,38,.18)}
+.lev-modo-card .chk{position:absolute;top:10px;right:12px;width:22px;height:22px;border-radius:50%;
+  border:2px solid #d1d5db;display:flex;align-items:center;justify-content:center;
+  font-size:.72rem;color:#fff;background:#fff}
+.lev-modo-card.on .chk{border-color:#dc2626;background:#dc2626}
+.lev-modo-card .ico{font-size:1.5rem;line-height:1}
+.lev-modo-card .tit{font-weight:800;font-size:.9rem;color:#0f172a;margin-top:6px}
+.lev-modo-card .sub{font-size:.74rem;color:#6b7280;margin-top:3px;line-height:1.45}
+.lev-modo-card .tag{display:inline-block;margin-top:7px;font-size:.62rem;font-weight:800;
+  letter-spacing:.4px;border-radius:6px;padding:2px 8px}
+
+/* ── Acceso y logística — toggles Sí/No estilo segmented ── */
+.lev-yn-group { display:inline-flex; border-radius:8px; overflow:hidden; border:1px solid #d1d5db; background:#fff; }
+.lev-yn-btn {
+  border:0; background:transparent; padding:.45rem .9rem;
+  font-size:.82rem; font-weight:600; cursor:pointer; color:#475569;
+  min-height:44px; min-width:64px;
+  transition: background .15s, color .15s;
+}
+.lev-yn-btn + .lev-yn-btn { border-left:1px solid #e5e7eb; }
+.lev-yn-btn:hover { background:#f8fafc; }
+.lev-yn-btn.active.yes { background:#dcfce7; color:#15803d; }
+.lev-yn-btn.active.no  { background:#fee2e2; color:#b91c1c; }
+
+/* ── Adjuntos preliminares ── */
+.lev-adj-zone {
+  border:2px dashed #cbd5e1; border-radius:10px;
+  padding:18px 14px; text-align:center; cursor:pointer;
+  background:#fafafa; transition: border-color .2s, background .2s;
+}
+.lev-adj-zone:hover { border-color:#dc2626; background:#fef2f2; }
+.lev-adj-zone.dragover { border-color:#dc2626; background:#fee2e2; }
+.lev-adj-item {
+  display:flex; align-items:center; gap:.6rem;
+  padding:.55rem .7rem; border-radius:8px;
+  background:#fff; border:1px solid #e5e7eb;
+  margin-top:.4rem;
+}
+.lev-adj-item .lev-adj-thumb {
+  width:36px; height:36px; border-radius:6px;
+  background:#f3f4f6; display:flex; align-items:center; justify-content:center;
+  color:#6b7280; flex-shrink:0;
+}
+.lev-adj-item .lev-adj-info { flex:1; min-width:0; }
+.lev-adj-item .lev-adj-name {
+  font-size:.82rem; font-weight:600; color:#0f172a;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lev-adj-item .lev-adj-meta { font-size:.7rem; color:#6b7280; }
+.lev-adj-rm {
+  border:0; background:transparent; color:#dc2626;
+  padding:.25rem .45rem; border-radius:6px; cursor:pointer;
+  min-height:36px; min-width:36px;
+}
+.lev-adj-rm:hover { background:#fee2e2; }
+.lev-adj-pill-input{
+  display:inline-flex;align-items:center;gap:.4rem;
+  padding:8px 14px;border:1.5px solid #cbd5e1;background:#fff;
+  border-radius:9999px;font-size:.78rem;font-weight:600;color:#475569;
+  cursor:pointer;transition:all .12s;min-height:44px;
+  user-select:none;
+}
+.lev-adj-pill-input:hover{filter:brightness(.97);transform:translateY(-1px);
+  box-shadow:0 3px 8px rgba(0,0,0,.08)}
+.lev-adj-pill-input:active{transform:scale(.97)}
+.lev-adj-pill-input i{font-size:.95rem}
+
+/* ── Equipos del ticket sin ficha de cliente: preseleccionados y bloqueados ── */
+.lev-eq-forzado{opacity:.85;cursor:not-allowed !important}
+.lev-eq-forzado input[type=checkbox]{cursor:not-allowed}
+
+@media (max-width: 575.98px){
+  .lev-yn-btn { min-width:70px; }
+  .lev-step-sub { display:none; }
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -734,99 +808,465 @@
   </div>
 </div>
 
-<!-- Modal: wizard "Generar OT" -->
-<div class="modal fade" id="modalGenerarOT" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-bottom:3px solid #dc2626;">
-        <h5 class="modal-title"><i class="bi bi-clipboard2-check me-2" style="color:#dc2626;"></i>Generar Orden de Trabajo</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+<!-- Modal "Generar OT" — MISMO modal que Mantenciones (#modalLevSelector),
+     adaptado a que la fuente de equipos es el TICKET (tk_ticket_equipos),
+     no una ficha de cliente ya renderizada en el DOM. Daniel rechazó el
+     wizard genérico anterior de 3 pasos (.otw-*) — este reemplaza esa UI. -->
+<div class="modal fade" id="modalGenerarOT" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;border:0">
+        <div>
+          <h5 class="modal-title fw-bold mb-0">
+            <i class="bi bi-clipboard2-plus me-2"></i>Generar Orden de Trabajo
+          </h5>
+          <small class="d-block mt-1" style="opacity:.85">
+            Crea una OT desde este ticket. El técnico la gestionará desde el módulo "Órdenes de Trabajo".
+          </small>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
-        <div class="otw-steps">
-          <div class="otw-step current" data-step="1"><div class="otw-circle">1</div><div class="otw-label">Cliente y equipo</div></div>
-          <div class="otw-step" data-step="2"><div class="otw-circle">2</div><div class="otw-label">Técnico y horario</div></div>
-          <div class="otw-step" data-step="3"><div class="otw-circle">3</div><div class="otw-label">Confirmación</div></div>
-        </div>
+      <div class="modal-body" style="background:#fafafa">
 
-        <!-- Paso 1: Cliente y equipo -->
-        <div class="otw-pane active" data-pane="1">
-          <div class="otw-field">
-            <label>Cliente <span class="text-danger">*</span></label>
-            <div class="otw-cliente-box">
-              <input type="text" id="otwClienteInput" class="form-control" placeholder="Buscar por RUT o razón social…" autocomplete="off">
-              <div class="otw-cliente-results" id="otwClienteResults" style="display:none;"></div>
-            </div>
-            <div class="otw-cliente-sel" id="otwClienteSel" style="display:none;margin-top:8px;">
-              <i class="bi bi-check-circle-fill"></i>
-              <span id="otwClienteSelTxt"></span>
-              <span class="x" id="otwClienteQuitar" title="Quitar selección"><i class="bi bi-x-lg"></i></span>
-            </div>
-            <div class="form-text" id="otwClienteHint"><i class="bi bi-info-circle me-1"></i>Solo se puede agendar una OT para clientes ya registrados en Mantenciones.</div>
-          </div>
-          <div class="otw-field">
-            <label>Equipo(s)</label>
-            <div id="otwEquiposList"></div>
+        {# ── Aviso: cliente sin ficha en Mantenciones (instalación de cliente nuevo) ── #}
+        <div id="tkotSinFichaWarn" class="d-flex gap-2 align-items-start p-2 rounded border mb-3"
+             style="display:none;background:#fff8e1;border-color:#fde68a !important">
+          <i class="bi bi-exclamation-triangle-fill text-warning mt-1"></i>
+          <div class="small" style="color:#78350f">
+            <strong>Este cliente todavía no tiene ficha en Mantenciones.</strong>
+            No hay equipos "de la ficha" que elegir — se incluirán <u>todos</u> los equipos
+            declarados en este ticket, tal cual quedaron registrados aquí.
           </div>
         </div>
 
-        <!-- Paso 2: Técnico y horario -->
-        <div class="otw-pane" data-pane="2">
-          <div class="otw-field">
-            <label>Técnico <span class="text-danger">*</span></label>
-            <select id="otwTecnico" class="form-select">
-              <option value="">Selecciona un técnico…</option>
-            </select>
+        {# ─── Paso 1: Tipo de OT ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">1</div>
+            <div class="lev-step-title">Tipo de orden de trabajo</div>
+            <div class="lev-step-sub">Selecciona qué se va a realizar</div>
           </div>
-          <div class="row g-2">
-            <div class="col-6 otw-field">
-              <label>Fecha <span class="text-danger">*</span></label>
-              <input type="date" id="otwFecha" class="form-control">
+          <div class="lev-step-body">
+            <div class="d-flex gap-2 align-items-end">
+              <div class="flex-grow-1">
+                <label class="form-label small fw-semibold">Tipo *</label>
+                <select id="otTipo" class="form-select form-select-sm" onchange="tkotTipoChange()">
+                  <option value="levantamiento">Levantamiento de ficha</option>
+                  <option value="instalacion">Instalación</option>
+                  <option value="preventiva">Mantención preventiva</option>
+                  <option value="visita_tecnica">Visita técnica</option>
+                  <option value="correctiva">Mantención correctiva</option>
+                  <option value="inspeccion">Inspección</option>
+                </select>
+              </div>
+              {% if permissions.superadmin %}
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      onclick="tkotAbrirCrearTipoOT()"
+                      title="Crear un tipo personalizado de OT">
+                <i class="bi bi-plus-lg me-1"></i>Nuevo tipo
+              </button>
+              {% endif %}
             </div>
-            <div class="col-6 otw-field">
-              <label>Tipo de visita</label>
-              <select id="otwTipoVisita" class="form-select">
-                <option value="correctiva">Correctiva</option>
-                <option value="preventiva">Preventiva</option>
-                <option value="garantia">Garantía</option>
-                <option value="inspeccion">Inspección</option>
-                <option value="levantamiento">Levantamiento</option>
-                <option value="instalacion">Instalación</option>
-              </select>
+            <div id="otTipoDescripcion" class="small text-muted mt-2" style="font-size:.78rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Levantamiento de ficha: documentación visual de cada equipo. Se aplica
+              automáticamente la plantilla estándar a todos los equipos seleccionados.
             </div>
-            <div class="col-6 otw-field">
-              <label>Hora inicio <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
-              <input type="time" id="otwHoraInicio" class="form-control">
+
+            {# ── Modalidad del levantamiento: idéntica a Mantenciones ── #}
+            <div id="otModoLevWrap" style="display:none">
+              <div class="small fw-bold mt-3" style="color:#0f172a">
+                <i class="bi bi-signpost-split me-1" style="color:#dc2626"></i>Modalidad del levantamiento
+              </div>
+              <div class="lev-modo-grid">
+                <div class="lev-modo-card on" id="levModoEquipos" onclick="tkotModoSet('equipos')">
+                  <div class="chk"><i class="bi bi-check-lg"></i></div>
+                  <div class="ico">📋</div>
+                  <div class="tit">Con equipos del ticket</div>
+                  <div class="sub">Marca abajo los equipos declarados en este ticket que el
+                    técnico debe documentar.</div>
+                  <span class="tag" style="background:#f3f4f6;color:#374151">CLÁSICO</span>
+                </div>
+                <div class="lev-modo-card" id="levModoDescubrir" onclick="tkotModoSet('descubrimiento')">
+                  <div class="chk"><i class="bi bi-check-lg"></i></div>
+                  <div class="ico">🔭</div>
+                  <div class="tit">Descubrimiento en terreno</div>
+                  <div class="sub">El técnico crea el inventario allá: foto + nombre +
+                    N° de serie de cada máquina. Al cerrar la OT, los equipos quedan
+                    solos en la ficha del cliente.</div>
+                  <span class="tag" style="background:#fee2e2;color:#b91c1c">NUEVO · SIN MARCAR EQUIPOS</span>
+                </div>
+              </div>
+              <div id="levModoHint" class="small mt-2" style="display:none;background:#fff8e1;border:1px solid #fde68a;color:#78350f;border-radius:10px;padding:8px 11px;font-size:.76rem">
+                <i class="bi bi-binoculars-fill me-1"></i>
+                <strong>Descubrimiento activado:</strong> no necesitas marcar equipos (si marcas
+                algunos, igual valen — el técnico podrá <em>agregar los que encuentre de más</em> en terreno).
+              </div>
             </div>
-            <div class="col-6 otw-field">
-              <label>Hora término <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
-              <input type="time" id="otwHoraFin" class="form-control">
+
+            {# ── Garantía (cualquier tipo excepto levantamiento) ── #}
+            <div class="mt-2 p-2 rounded border" id="otGarantiaWrap" style="background:#f8fafc;display:none">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="otAplicaGarantia" role="switch">
+                <label class="form-check-label small fw-semibold" for="otAplicaGarantia">
+                  <i class="bi bi-shield-check me-1 text-success"></i>
+                  ¿Aplica garantía? <span class="text-muted">(sin cargo al cliente)</span>
+                </label>
+              </div>
+              <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                Si activas garantía, la OT queda con modalidad de cobro <em>garantía</em>
+                (cubierta por el fabricante/proveedor — el cliente no paga).
+              </small>
             </div>
-          </div>
-          <div class="otw-field">
-            <label>Título de la OT</label>
-            <input type="text" id="otwTitulo" class="form-control" placeholder="Ej: Cambio banda trotadora — ILUS Fitness Vitacura">
           </div>
         </div>
 
-        <!-- Paso 3: Confirmación -->
-        <div class="otw-pane" data-pane="3">
-          <div id="otwAdvertencias"></div>
-          <dl class="otw-resumen row">
-            <dt class="col-5">Cliente</dt><dd class="col-7" id="otwResCliente">—</dd>
-            <dt class="col-5">Equipo(s)</dt><dd class="col-7" id="otwResEquipos">—</dd>
-            <dt class="col-5">Técnico</dt><dd class="col-7" id="otwResTecnico">—</dd>
-            <dt class="col-5">Fecha</dt><dd class="col-7" id="otwResFecha">—</dd>
-            <dt class="col-5">Horario</dt><dd class="col-7" id="otwResHorario">—</dd>
-            <dt class="col-5">Tipo de visita</dt><dd class="col-7" id="otwResTipo">—</dd>
-          </dl>
+        {# ─── Paso 2: Información básica + dirección ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">2</div>
+            <div class="lev-step-title">Información básica</div>
+            <div class="lev-step-sub">Título, notas y dirección</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="row g-2">
+              <div class="col-md-7">
+                <label class="form-label small fw-semibold">Título de la OT *</label>
+                <input type="text" id="levSelectTitulo" class="form-control form-control-sm"
+                       placeholder="Ej: Levantamiento inicial sala A">
+              </div>
+              <div class="col-md-5">
+                <label class="form-label small fw-semibold">Notas (opcional)</label>
+                <input type="text" id="levSelectNotas" class="form-control form-control-sm"
+                       placeholder="Ej: Pre-contrato anual 2026">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-geo-alt-fill text-danger me-1"></i>Dirección de la visita *</span>
+                  <small class="text-muted" style="font-weight:400;font-size:.7rem">
+                    Google Maps verifica y guía al técnico
+                  </small>
+                </label>
+                <div class="position-relative">
+                  <input type="text" id="levDireccion" class="form-control form-control-sm"
+                         placeholder="Empieza a escribir la dirección…"
+                         autocomplete="off">
+                  <small id="levDireccionHint" class="text-muted d-block mt-1" style="font-size:.72rem">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Default: dirección informada en el ticket. Selecciona una sugerencia para validar.
+                  </small>
+                </div>
+              </div>
+
+              {# ─── Contacto / contraparte que recibe en sitio ─── #}
+              <div class="col-12">
+                <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-person-vcard text-primary me-1"></i>Contacto en sitio (contraparte) *</span>
+                  <small class="text-muted" style="font-weight:400;font-size:.7rem">
+                    Persona que recibe al técnico
+                  </small>
+                </label>
+                <div class="d-flex gap-2 align-items-start">
+                  <select id="levContactoSel" class="form-select form-select-sm" style="flex:1"
+                          onchange="tkotContactoChange()">
+                    <option value="">— Cargando contactos… —</option>
+                  </select>
+                  <button type="button" class="btn btn-sm btn-outline-secondary"
+                          onclick="tkotToggleContactoManual()" title="Ingresar manualmente">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                </div>
+                <div id="levContactoBox" class="mt-2 p-2 rounded" style="background:#f8fafc;border:1px solid #e5e7eb;display:none">
+                  <div class="row g-2">
+                    <div class="col-md-7">
+                      <input type="text" id="levContactoNombre" class="form-control form-control-sm"
+                             placeholder="Nombre completo" maxlength="200">
+                    </div>
+                    <div class="col-md-5">
+                      <input type="text" id="levContactoCargo" class="form-control form-control-sm"
+                             placeholder="Cargo (opcional)" maxlength="120">
+                    </div>
+                    <div class="col-md-6">
+                      <input type="text" id="levContactoTel" class="form-control form-control-sm"
+                             placeholder="Teléfono" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                      <input type="email" id="levContactoEmail" class="form-control form-control-sm"
+                             placeholder="Email (opcional)" maxlength="200">
+                    </div>
+                  </div>
+                  <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Este contacto queda registrado en la OT y el técnico lo verá al llegar.
+                  </small>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
+
+        {# ─── Paso 3: Programación ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">3</div>
+            <div class="lev-step-title">Programación</div>
+            <div class="lev-step-sub">Fecha y horario</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Fecha programada *</label>
+                <input type="date" id="levFechaProg" class="form-control form-control-sm" required>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Hora inicio</label>
+                <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Hora término</label>
+                <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00">
+              </div>
+            </div>
+            <div class="form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" id="levRangoDias"
+                     onchange="document.getElementById('levFechaFinWrap').style.display = this.checked ? '' : 'none';">
+              <label class="form-check-label small" for="levRangoDias">
+                ¿Se extenderá más de un día?
+              </label>
+            </div>
+            <div id="levFechaFinWrap" class="mt-3 p-3 rounded" style="display:none;background:#fef3c7;border:1px solid #fcd34d">
+              <div class="small fw-bold mb-2 text-warning-emphasis">
+                <i class="bi bi-calendar-range me-1"></i>Último día de la visita extendida
+              </div>
+              <div class="row g-2">
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold">Fecha término *</label>
+                  <input type="date" id="levFechaFin" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold">Hora inicio (último día)</label>
+                  <input type="time" id="levHoraIniFin" class="form-control form-control-sm" value="09:00">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold">Hora término (último día)</label>
+                  <input type="time" id="levHoraFinFin" class="form-control form-control-sm" value="13:00">
+                </div>
+              </div>
+              <small class="text-muted d-block mt-2" style="font-size:.72rem">
+                <i class="bi bi-info-circle me-1"></i>
+                Para visitas multi-día. Si el técnico va a estar más de 1 día, indica fecha y horario del último día.
+              </small>
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 4: Técnicos asignados ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">4</div>
+            <div class="lev-step-title">Técnicos asignados *</div>
+            <div class="lev-step-sub">
+              <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
+            </div>
+          </div>
+          <div class="lev-step-body">
+            <div id="levTecnicosBox" class="d-flex flex-wrap gap-2" style="min-height:42px">
+              <span class="text-muted small">Cargando técnicos…</span>
+            </div>
+            <small class="text-muted d-block mt-2" style="font-size:.74rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Puedes asignar varios técnicos. Cada uno verá la OT en su listado.
+            </small>
+          </div>
+        </div>
+
+        {# ─── Paso 5: Equipos (del TICKET) + multi-plantilla por equipo ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">5</div>
+            <div class="lev-step-title">Equipos y plantillas *</div>
+            <div class="lev-step-sub">
+              <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
+            </div>
+          </div>
+          <div class="lev-step-body" style="padding:0">
+            <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;gap:8px;flex-wrap:wrap">
+              <small class="text-muted" style="font-size:.74rem">
+                <i class="bi bi-info-circle me-1"></i>
+                Equipos declarados en este ticket. Cada uno puede tener varias plantillas.
+              </small>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <button class="btn btn-sm btn-outline-secondary" id="btnLevToggleTodos" onclick="tkotToggleTodos()">
+                  <i class="bi bi-check2-square me-1"></i>Marcar todos
+                </button>
+              </div>
+            </div>
+            <div class="table-responsive" style="max-height:38vh">
+              <table class="table table-sm mb-0 lev-table-eq">
+                <thead style="background:#f8fafc;position:sticky;top:0;z-index:1">
+                  <tr>
+                    <th style="width:40px"></th>
+                    <th>Equipo / SKU</th>
+                    <th style="width:200px">Plantillas extra</th>
+                  </tr>
+                </thead>
+                <tbody id="levSelectTbody"></tbody>
+              </table>
+            </div>
+            <div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:.72rem;color:#6b7280">
+              <i class="bi bi-lightbulb me-1 text-warning"></i>
+              <strong>Auto:</strong> el tipo seleccionado en el Paso 1 aplica su plantilla estándar.
+              Las plantillas extra agregan tareas adicionales.
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 6: Acceso y logística del sitio ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">6</div>
+            <div class="lev-step-title">Acceso y logística</div>
+            <div class="lev-step-sub">Info crítica para el técnico</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold d-block mb-2">
+                  <i class="bi bi-building text-primary me-1"></i>¿Tiene ascensor?
+                </label>
+                <div class="lev-yn-group" role="group" aria-label="¿Tiene ascensor?">
+                  <button type="button" class="lev-yn-btn yes" data-target="acceso_ascensor" data-val="1"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-check-lg me-1"></i>Sí
+                  </button>
+                  <button type="button" class="lev-yn-btn no" data-target="acceso_ascensor" data-val="0"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-x-lg me-1"></i>No
+                  </button>
+                </div>
+                <input type="hidden" id="acceso_ascensor" name="acceso_ascensor" value="">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold d-block mb-2">
+                  <i class="bi bi-p-square text-primary me-1"></i>¿Hay estacionamiento?
+                </label>
+                <div class="lev-yn-group" role="group" aria-label="¿Hay estacionamiento?">
+                  <button type="button" class="lev-yn-btn yes" data-target="acceso_estacionamiento" data-val="1"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-check-lg me-1"></i>Sí
+                  </button>
+                  <button type="button" class="lev-yn-btn no" data-target="acceso_estacionamiento" data-val="0"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-x-lg me-1"></i>No
+                  </button>
+                </div>
+                <input type="hidden" id="acceso_estacionamiento" name="acceso_estacionamiento" value="">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">
+                  <i class="bi bi-layers text-primary me-1"></i>Piso / nivel
+                </label>
+                <input type="text" id="acceso_piso" name="acceso_piso"
+                       class="form-control form-control-sm" maxlength="50"
+                       placeholder="Ej: piso 3, subterráneo 1">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">
+                  <i class="bi bi-journal-text text-primary me-1"></i>Notas adicionales de acceso
+                </label>
+                <textarea id="acceso_notas" name="acceso_notas"
+                          class="form-control form-control-sm" rows="2" maxlength="2000"
+                          placeholder="Ej: timbre 102, código del portón 1234, llamar al guardia 30 min antes, etc."></textarea>
+                <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                  <i class="bi bi-info-circle me-1"></i>
+                  Esta información llega completa al técnico para que esté preparado al llegar.
+                </small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 7: Documentos y archivos preliminares ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">7</div>
+            <div class="lev-step-title">Documentos y archivos preliminares</div>
+            <div class="lev-step-sub">
+              <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
+            </div>
+          </div>
+          <div class="lev-step-body">
+            <input type="file" id="levAdjInput" multiple style="display:none"
+                   accept="image/*,application/pdf,video/*,audio/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                   onchange="tkotAdjFiles(this.files)">
+            <div class="lev-adj-zone" id="levAdjZone"
+                 onclick="document.getElementById('levAdjInput').click()"
+                 ondragover="event.preventDefault(); this.classList.add('dragover')"
+                 ondragleave="this.classList.remove('dragover')"
+                 ondrop="event.preventDefault(); this.classList.remove('dragover'); tkotAdjFiles(event.dataTransfer.files)">
+              <div style="font-size:1.9rem;color:#94a3b8;margin-bottom:.4rem">
+                <i class="bi bi-cloud-arrow-up-fill"></i>
+              </div>
+              <div class="fw-semibold" style="color:#475569;font-size:.92rem">
+                Toca o arrastra para subir
+              </div>
+              <div class="text-muted" style="font-size:.74rem">
+                PDFs, fotos, videos, audios o cualquier archivo (máx 100 MB)
+              </div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <label class="lev-adj-pill-input" style="background:#fee2e2;border-color:#fca5a5;color:#dc2626">
+                <i class="bi bi-file-earmark-pdf-fill"></i> PDF
+                <input type="file" accept="application/pdf" multiple style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+                <i class="bi bi-camera-fill"></i> Foto (cámara)
+                <input type="file" accept="image/*" capture="environment" style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+                <i class="bi bi-images"></i> Galería
+                <input type="file" accept="image/*" multiple style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dbeafe;border-color:#93c5fd;color:#1e40af">
+                <i class="bi bi-camera-video-fill"></i> Video
+                <input type="file" accept="video/*" capture="environment" style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#f3e8ff;border-color:#d8b4fe;color:#7c3aed">
+                <i class="bi bi-mic-fill"></i> Audio
+                <input type="file" accept="audio/*" capture style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#fef3c7;border-color:#fcd34d;color:#a16207">
+                <i class="bi bi-file-earmark-text-fill"></i> Documento
+                <input type="file" accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt" multiple style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+            </div>
+
+            <div id="levAdjList" class="mt-2"></div>
+            <small class="text-muted d-block mt-2" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Los archivos se suben automáticamente DESPUÉS de crear la OT.
+              El técnico podrá verlos como información — no podrá modificarlos.
+            </small>
+          </div>
+        </div>
+
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" id="otwBtnAtras" style="display:none;">Atrás</button>
-        <button type="button" class="btn btn-ilus" id="otwBtnSiguiente">Siguiente</button>
-        <button type="button" class="btn btn-ilus" id="otwBtnGenerar" style="display:none;">
-          <i class="bi bi-clipboard2-check me-1"></i>Generar OT</button>
+      <div class="modal-footer" style="background:#fff;border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-x-lg me-1"></i>Cancelar
+        </button>
+        <button type="button" class="btn fw-bold text-white" id="btnLevIniciar"
+                style="background:linear-gradient(135deg,#7c2d12,#dc2626);padding:.55rem 1.4rem"
+                onclick="tkotGenerar()">
+          <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
+        </button>
       </div>
     </div>
   </div>
@@ -2039,295 +2479,709 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
   cargar();
 });
 
-// ══════════════ Generar OT (wizard paso a paso, pestaña Acciones) ══════════════
-// Contrato acordado con el backend (tickets_module.py):
-//   POST /tickets/api/tickets/<id>/generar-ot
-//   body: {cliente_id, maquina_ids[], tecnico_user_id, fecha_programada,
-//          hora_inicio, hora_fin, tipo_visita, titulo, descripcion,
-//          forzar_feriado, forzar_choque}
-//   200 {ok:true, visita_id, numero_ot, fecha_programada, tareas_creadas}
-//   200 {ok:false, requiere_confirmacion:true, advertencias:{feriado,choque}}
-//   400/404/409/503 {ok:false, error, [visita_id_existente, numero_ot_existente]}
-function otwEstadoInicial(){
-  return {
-    step: 1,
-    clienteId: null, clienteLabel: '',
-    maquinaIds: [],
-    tecnicoUserId: null, tecnicoLabel: '',
-    fecha: '', horaInicio: '', horaFin: '',
-    tipoVisita: 'correctiva',
-    titulo: '', descripcion: '',
-    forzarFeriado: false, forzarChoque: false,
-  };
-}
-let otwState = otwEstadoInicial();
+// ══════════════ Generar OT — adaptación del modal REAL de Mantenciones
+// (#modalLevSelector, static/mant_ficha.js) a la ficha de Ticket. Daniel
+// rechazó el wizard genérico de 3 pasos anterior (.otw-*) -- este bloque
+// lo reemplaza por completo, copiando el MISMO lenguaje visual/JS del
+// modal real y adaptando SOLO 2 cosas: (1) la fuente de los equipos, que
+// aquí viene de tk_ticket_equipos (equiposCache) en vez de leerse del DOM
+// de una ficha de cliente ya renderizada; y (2) la lógica especial de
+// "instalación sin ficha" (cliente sin mant_clientes -> se preseleccionan
+// TODOS los equipos del ticket, bloqueados).
+//
+// NOTA IMPORTANTE (alcance de esta tarea = SOLO frontend): el submit
+// sigue apuntando a POST /tickets/api/tickets/<TID>/generar-ot, que HOY
+// (tickets_module.py ~línea 2210) espera un contrato viejo (cliente_id,
+// maquina_ids[], tecnico_user_id ÚNICO, tipo_visita). El payload que arma
+// tkotGenerar() de abajo ya sigue el contrato NUEVO descrito para ese
+// endpoint (arreglo de equipos con maquina_id O datos crudos del ticket,
+// tecnico_ids[] plural, dirección/contacto/acceso/plantillas, etc.) --
+// el backend todavía NO fue adaptado a este contrato (es trabajo aparte,
+// ver "riesgos_abiertos" del contrato). Hasta que se adapte el backend,
+// el submit devolverá error 400 (campos que el backend viejo no reconoce
+// o no encuentra) — es el comportamiento esperado mientras tanto.
+// ════════════════════════════════════════════════════════════
 
-function otwFechaLegible(iso){
-  if(!iso) return '—';
-  const p = String(iso).split('-');
-  return p.length===3 ? (p[2]+'/'+p[1]+'/'+p[0]) : iso;
-}
+const _TKOT = {
+  cid: null,               // cliente_id resuelto por RUT en mant_clientes (null = sin ficha)
+  clienteResuelto: false,
+  modo: 'equipos',          // 'equipos' | 'descubrimiento' (solo tipo=levantamiento)
+  forzarTodosEquipos: false, // true = instalación + cliente sin ficha (preselección total bloqueada)
+  tecnicosDisponibles: [],
+  tecnicosSel: new Set(),
+  plantillas: { all: [], cargadas: false },
+  eqPlantillas: {},         // { claveEquipo: Set<plantillaId> }
+  contactos: { lista: [], cargados: false },
+  adjuntos: [],
+};
 
-function otwIrPaso(n){
-  otwState.step = n;
-  document.querySelectorAll('#modalGenerarOT .otw-pane').forEach(function(p){
-    p.classList.toggle('active', +p.dataset.pane===n);
-  });
-  document.querySelectorAll('#modalGenerarOT .otw-step').forEach(function(s){
-    const sp = +s.dataset.step;
-    s.classList.toggle('current', sp===n);
-    s.classList.toggle('done', sp<n);
-  });
-  document.getElementById('otwBtnAtras').style.display = n>1 ? '' : 'none';
-  document.getElementById('otwBtnSiguiente').style.display = n<3 ? '' : 'none';
-  document.getElementById('otwBtnGenerar').style.display = n===3 ? '' : 'none';
-  if(n===3) otwRenderResumen();
-}
+// ── Clave estable por fila de equipo: usa maquina_id si existe (para que
+//    cruce con plantillas/lo que sea de la ficha real), si no usa el id
+//    propio de tk_ticket_equipos con prefijo (equipo aún sin ficha). ──
+function _tkotEqKey(e){ return e.maquina_id ? String(e.maquina_id) : ('teq_' + e.id); }
 
-function otwValidarPaso1(){
-  if(!otwState.clienteId){
-    ilusToast('Selecciona un cliente ya registrado en Mantenciones para continuar', {type:'warning'});
-    return false;
-  }
-  return true;
+// ── Resolver si el cliente del ticket YA tiene ficha en Mantenciones
+//    (mismo patrón que app.py: SELECT id, razon_social FROM mant_clientes
+//    WHERE rut=%s). Reutiliza el autocomplete existente (no hay endpoint
+//    dedicado de "buscar por rut exacto"), filtrando por coincidencia
+//    exacta de RUT normalizado + origen local. ──
+function _tkotNormRut(r){
+  return String(r||'').replace(/[.\s]/g,'').toUpperCase();
 }
-function otwValidarPaso2(){
-  const selTec = document.getElementById('otwTecnico');
-  otwState.tecnicoUserId = selTec.value ? +selTec.value : null;
-  otwState.tecnicoLabel = selTec.selectedIndex>0 ? selTec.options[selTec.selectedIndex].text : '';
-  otwState.fecha = document.getElementById('otwFecha').value;
-  otwState.horaInicio = document.getElementById('otwHoraInicio').value;
-  otwState.horaFin = document.getElementById('otwHoraFin').value;
-  otwState.tipoVisita = document.getElementById('otwTipoVisita').value;
-  otwState.titulo = document.getElementById('otwTitulo').value.trim();
-  if(!otwState.tecnicoUserId){ ilusToast('Selecciona un técnico', {type:'warning'}); return false; }
-  if(!otwState.fecha){ ilusToast('Selecciona la fecha de la visita', {type:'warning'}); return false; }
-  return true;
-}
-
-document.getElementById('otwBtnSiguiente').addEventListener('click', function(){
-  if(otwState.step===1 && !otwValidarPaso1()) return;
-  if(otwState.step===2 && !otwValidarPaso2()) return;
-  otwIrPaso(Math.min(3, otwState.step+1));
-});
-document.getElementById('otwBtnAtras').addEventListener('click', function(){
-  otwIrPaso(Math.max(1, otwState.step-1));
-});
-
-// ── Paso 1: equipos del ticket (checklist, preseleccionados por maquina_id) ──
-function otwRenderEquipos(){
-  const cont = document.getElementById('otwEquiposList');
-  const eqs = equiposCache || [];
-  if(!eqs.length){
-    cont.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-tools"></i><span>Este ticket no tiene equipos asociados.</span></div>';
-    otwState.maquinaIds = [];
-    return;
-  }
-  otwState.maquinaIds = eqs.filter(function(e){ return !!e.maquina_id; }).map(function(e){ return e.maquina_id; });
-  cont.innerHTML = eqs.map(function(e){
-    const puedeLigar = !!e.maquina_id;
-    const nombre = e.nombre || e.erp_kopr || 'Equipo';
-    return '<label class="otw-eq-item">'
-      + '<input type="checkbox" data-mid="'+(e.maquina_id||'')+'" '+(puedeLigar?'checked':'disabled')+'>'
-      + '<span>'+esc(nombre)+(e.serie?' <span class="text-muted">— Serie '+esc(e.serie)+'</span>':'')
-      + (!puedeLigar?' <span class="text-muted">(sin ficha de equipo — no se enviará)</span>':'')
-      + '</span></label>';
-  }).join('');
-  cont.querySelectorAll('input[type=checkbox]').forEach(function(cb){
-    cb.addEventListener('change', function(){
-      const mid = +this.dataset.mid;
-      if(this.checked){ if(otwState.maquinaIds.indexOf(mid)===-1) otwState.maquinaIds.push(mid); }
-      else { otwState.maquinaIds = otwState.maquinaIds.filter(function(x){ return x!==mid; }); }
-    });
-  });
-}
-
-// ── Paso 1: autocomplete de cliente (reutiliza /mantenciones/api/clientes/autocomplete) ──
-let _otwBuscarTo = null;
-document.getElementById('otwClienteInput').addEventListener('input', function(){
-  const q = this.value.trim();
-  clearTimeout(_otwBuscarTo);
-  if(q.length<2){ document.getElementById('otwClienteResults').style.display='none'; return; }
-  _otwBuscarTo = setTimeout(function(){ otwBuscarCliente(q); }, 300);
-});
-async function otwBuscarCliente(q){
-  const dropCont = document.getElementById('otwClienteResults');
+async function _tkotResolverCliente(){
+  _TKOT.cid = null; _TKOT.clienteResuelto = false;
+  const t = ticketActual || {};
+  const rut = (t.rut || '').trim();
+  const q = rut || (t.empresa || '').trim();
+  if(q.length < 2){ _TKOT.clienteResuelto = true; return; }
   try{
     const r = await fetch('/mantenciones/api/clientes/autocomplete?q='+encodeURIComponent(q));
     let arr = await r.json();
     if(!Array.isArray(arr)) arr = [];
-    if(!arr.length){
-      dropCont.innerHTML = '<div class="otw-cliente-item text-muted">Sin resultados</div>';
-    } else {
-      dropCont.innerHTML = arr.slice(0,12).map(function(c,i){
-        const esLocal = c.origen==='local' && c.id;
-        return '<div class="otw-cliente-item'+(esLocal?'':' erp')+'" data-i="'+i+'">'
-          + '<div class="nom">'+esc(c.razon_social||'—')+'</div>'
-          + '<div class="met">'+(c.rut?esc(c.rut)+' · ':'')
-          + (esLocal?'Registrado en Mantenciones':'Solo en ERP — créalo primero en Mantenciones')+'</div>'
-          + '</div>';
-      }).join('');
-      dropCont.querySelectorAll('.otw-cliente-item').forEach(function(el){
-        el.addEventListener('click', function(){ otwSeleccionarCliente(arr[+this.dataset.i]); });
-      });
+    let match = null;
+    if(rut){
+      match = arr.find(function(c){ return c.origen==='local' && c.id && _tkotNormRut(c.rut)===_tkotNormRut(rut); });
     }
-    dropCont.style.display = 'block';
-  }catch(e){
-    dropCont.innerHTML = '<div class="otw-cliente-item text-muted">Sin conexión</div>';
-    dropCont.style.display = 'block';
+    if(!match && !rut){
+      match = arr.find(function(c){ return c.origen==='local' && c.id; });
+    }
+    if(match){ _TKOT.cid = match.id; }
+  }catch(e){ console.warn('tkot resolver cliente:', e); }
+  _TKOT.clienteResuelto = true;
+}
+
+// ── Contactos: solo si hay ficha de cliente (CID). Sin ficha, cae con
+//    gracia a contacto 100% manual prellenado con los datos del ticket. ──
+async function _tkotCargarContactos(){
+  _TKOT.contactos.lista = [];
+  if(!_TKOT.cid) return;
+  try{
+    const r = await fetch('/mantenciones/api/clientes/'+_TKOT.cid+'/contactos');
+    const d = await r.json();
+    _TKOT.contactos.lista = (d.ok && d.contactos) ? d.contactos : [];
+  }catch(e){ console.warn('tkot contactos:', e); }
+  _TKOT.contactos.cargados = true;
+}
+function _tkotRenderContactosSelector(){
+  const sel = document.getElementById('levContactoSel');
+  if(!sel) return;
+  const lista = _TKOT.contactos.lista || [];
+  let html = lista.length ? '<option value="">— Selecciona un contacto —</option>' : '<option value="">— Sin contactos registrados —</option>';
+  lista.forEach(function(c, i){
+    const meta = [c.cargo, c.tel].filter(Boolean).join(' · ');
+    html += '<option value="'+i+'">'+esc(c.label || c.nombre)+' — '+esc(c.nombre)+(meta?' ('+esc(meta)+')':'')+'</option>';
+  });
+  html += '<option value="__manual">+ Ingresar manualmente</option>';
+  sel.innerHTML = html;
+}
+function tkotContactoChange(){
+  const sel = document.getElementById('levContactoSel');
+  const box = document.getElementById('levContactoBox');
+  const v = sel.value;
+  if(v === '__manual'){
+    box.style.display = '';
+    document.getElementById('levContactoNombre').value = '';
+    document.getElementById('levContactoCargo').value = '';
+    document.getElementById('levContactoTel').value = '';
+    document.getElementById('levContactoEmail').value = '';
+    sel.dataset.origen = 'manual';
+  } else if(v === ''){
+    box.style.display = 'none';
+    sel.dataset.origen = '';
+  } else {
+    const idx = parseInt(v);
+    const c = _TKOT.contactos.lista[idx];
+    if(c){
+      box.style.display = '';
+      document.getElementById('levContactoNombre').value = c.nombre || '';
+      document.getElementById('levContactoCargo').value = c.cargo || '';
+      document.getElementById('levContactoTel').value = c.tel || '';
+      document.getElementById('levContactoEmail').value = c.email || '';
+      sel.dataset.origen = c.origen || 'principal';
+    }
   }
 }
-function otwSeleccionarCliente(c){
-  if(!(c.origen==='local' && c.id)){
-    ilusToast('Este cliente aún no está registrado en Mantenciones — créalo ahí primero para poder generar la OT.', {type:'warning'});
+function tkotToggleContactoManual(){
+  const sel = document.getElementById('levContactoSel');
+  sel.value = '__manual';
+  tkotContactoChange();
+}
+
+// ── Plantillas activas (idéntico a Mantenciones) ──
+async function _tkotCargarPlantillas(){
+  if(_TKOT.plantillas.cargadas) return _TKOT.plantillas.all;
+  try{
+    const r = await fetch('/mantenciones/api/plantillas?activa=1');
+    const d = await r.json();
+    _TKOT.plantillas.all = Array.isArray(d) ? d : (d.plantillas || []);
+    _TKOT.plantillas.cargadas = true;
+  }catch(e){ console.warn('tkot plantillas:', e); }
+  return _TKOT.plantillas.all;
+}
+
+// ── Técnicos (multi-select, idéntico a Mantenciones) ──
+function tkotRenderTecnicos(){
+  const box = document.getElementById('levTecnicosBox');
+  if(!box) return;
+  const techs = _TKOT.tecnicosDisponibles || [];
+  if(!techs.length){
+    box.innerHTML = '<div class="alert alert-warning py-2 mb-0 small w-100">'
+      + '<i class="bi bi-exclamation-triangle me-1"></i>No hay técnicos activos. '
+      + 'Solicita a un administrador que cree un usuario con rol "Técnico".</div>';
+    document.getElementById('levTecCount').textContent = '0';
     return;
   }
-  otwState.clienteId = c.id;
-  otwState.clienteLabel = c.razon_social + (c.rut ? ' ('+c.rut+')' : '');
-  document.getElementById('otwClienteResults').style.display = 'none';
-  document.getElementById('otwClienteInput').style.display = 'none';
-  document.getElementById('otwClienteSel').style.display = 'flex';
-  document.getElementById('otwClienteSelTxt').textContent = otwState.clienteLabel;
+  box.innerHTML = techs.map(function(t){
+    const isSel = _TKOT.tecnicosSel.has(t.id);
+    const bg = isSel ? 'background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;border-color:#1e40af' : 'background:#fff;color:#0f172a;border-color:#cbd5e1';
+    const icon = isSel ? 'bi-check-circle-fill' : 'bi-person';
+    return '<span class="badge rounded-pill border" style="cursor:pointer;padding:.5rem .85rem;font-size:.82rem;font-weight:500;'+bg+'" '
+      + 'onclick="tkotToggleTecnico('+t.id+')"><i class="bi '+icon+' me-1"></i>'+esc(t.nombre || t.email || ('Téc #'+t.id))+'</span>';
+  }).join('');
+  document.getElementById('levTecCount').textContent = String(_TKOT.tecnicosSel.size);
 }
-document.getElementById('otwClienteQuitar').addEventListener('click', function(){
-  otwState.clienteId = null; otwState.clienteLabel = '';
-  document.getElementById('otwClienteSel').style.display = 'none';
-  document.getElementById('otwClienteInput').style.display = '';
-  document.getElementById('otwClienteInput').value = '';
-  document.getElementById('otwClienteInput').focus();
-});
-document.addEventListener('click', function(ev){
-  const box = document.querySelector('#modalGenerarOT .otw-cliente-box');
-  if(box && !box.contains(ev.target)) document.getElementById('otwClienteResults').style.display='none';
-});
+function tkotToggleTecnico(tid){
+  if(_TKOT.tecnicosSel.has(tid)) _TKOT.tecnicosSel.delete(tid); else _TKOT.tecnicosSel.add(tid);
+  tkotRenderTecnicos();
+}
 
-// ── Paso 2: técnicos (reutiliza /mantenciones/api/tecnicos) ──
-async function otwCargarTecnicos(){
-  const sel = document.getElementById('otwTecnico');
-  sel.innerHTML = '<option value="">Cargando…</option>';
+// ── Paso 1: tipo de OT (idéntico a Mantenciones) ──
+const _TKOT_TIPO_DESC = {
+  levantamiento:  'Levantamiento de ficha: documentación visual de cada equipo. Se aplica automáticamente la plantilla estándar a todos los equipos seleccionados.',
+  instalacion:    'Instalación: registro de equipos nuevos puestos en sitio. Incluye verificación de embalaje, conexión, encendido y capacitación.',
+  preventiva:     'Mantención preventiva: visita planificada con checklist estándar (limpieza, lubricación, ajustes, test de carga).',
+  visita_tecnica: 'Visita técnica: atención puntual al cliente para diagnóstico, ajustes o consultas técnicas.',
+  correctiva:     'Mantención correctiva: reparación de falla específica reportada por el cliente.',
+  inspeccion:     'Inspección: revisión visual + funcional sin intervención, para diagnóstico o auditoría.',
+};
+function tkotTipoChange(){
+  const tipo = document.getElementById('otTipo')?.value;
+  const desc = document.getElementById('otTipoDescripcion');
+  if(desc && tipo) desc.innerHTML = '<i class="bi bi-info-circle me-1"></i>' + (_TKOT_TIPO_DESC[tipo] || '');
+
+  const garWrap = document.getElementById('otGarantiaWrap');
+  if(garWrap){
+    if(tipo === 'levantamiento'){
+      garWrap.style.display = 'none';
+      const g = document.getElementById('otAplicaGarantia'); if(g) g.checked = false;
+    } else garWrap.style.display = '';
+  }
+
+  const modoWrap = document.getElementById('otModoLevWrap');
+  if(modoWrap){
+    if(tipo === 'levantamiento') modoWrap.style.display = '';
+    else { modoWrap.style.display = 'none'; tkotModoSet('equipos'); }
+  }
+
+  const tit = document.getElementById('levSelectTitulo');
+  if(tit && (!tit.value || /^(Levantamiento|Instalación|Mantención|Visita|Inspección) /.test(tit.value))){
+    const fecha = new Date().toLocaleDateString('es-CL');
+    const labels = { levantamiento:'Levantamiento', instalacion:'Instalación', preventiva:'Mantención preventiva',
+      visita_tecnica:'Visita técnica', correctiva:'Mantención correctiva', inspeccion:'Inspección' };
+    tit.value = (labels[tipo] || 'OT') + ' ' + fecha;
+  }
+
+  // Instalación + cliente SIN ficha -> forzar preselección total bloqueada.
+  tkotAplicarForzadoInstalacion();
+}
+
+function tkotModoSet(modo){
+  _TKOT.modo = (modo === 'descubrimiento') ? 'descubrimiento' : 'equipos';
+  const cEq = document.getElementById('levModoEquipos');
+  const cDes = document.getElementById('levModoDescubrir');
+  const hint = document.getElementById('levModoHint');
+  if(cEq) cEq.classList.toggle('on', _TKOT.modo === 'equipos');
+  if(cDes) cDes.classList.toggle('on', _TKOT.modo === 'descubrimiento');
+  if(hint) hint.style.display = (_TKOT.modo === 'descubrimiento') ? '' : 'none';
+}
+
+async function tkotAbrirCrearTipoOT(){
+  await ilusAlert({
+    title: 'Crear nuevo tipo de OT',
+    message: 'Esta función está en desarrollo (próxima fase).',
+    sub: 'Los tipos están definidos en el ENUM de mant_visitas. Para agregar uno nuevo se requiere migración manual.',
+    type: 'info',
+  });
+}
+
+// ── Paso 5: equipos DEL TICKET (no del DOM de una ficha) ──
+function tkotRenderEquipos(){
+  const tbody = document.getElementById('levSelectTbody');
+  if(!tbody) return;
+  const eqs = equiposCache || [];
+  Object.keys(_TKOT.eqPlantillas).forEach(function(k){ delete _TKOT.eqPlantillas[k]; });
+  if(!eqs.length){
+    tbody.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">'
+      + 'Este ticket no tiene equipos declarados.</td></tr>';
+    document.getElementById('levEqCount').textContent = '0';
+    return;
+  }
+  const forzado = _TKOT.forzarTodosEquipos;
+  tbody.innerHTML = eqs.map(function(e){
+    const key = _tkotEqKey(e);
+    const nombre = e.nombre || e.erp_kopr || 'Equipo';
+    const sinFicha = !e.maquina_id;
+    const rowCls = forzado ? ' lev-eq-forzado' : '';
+    const checkedAttr = forzado ? 'checked disabled' : '';
+    return '<tr class="'+rowCls+'" style="cursor:'+(forzado?'not-allowed':'pointer')+'" '
+      + (forzado ? '' : 'onclick="const c=this.querySelector(\'.lev-eq-chk\');c.checked=!c.checked;tkotRecalcEqCount();event.stopPropagation();"') + '>'
+      + '<td><input type="checkbox" class="lev-eq-chk" data-key="'+esc(key)+'" '+checkedAttr+' '
+      + (forzado?'':'onchange="tkotRecalcEqCount()" onclick="event.stopPropagation()"') + '></td>'
+      + '<td><strong>'+esc(nombre)+'</strong>'
+      + (sinFicha ? ' <span style="font-size:.63rem;color:#9ca3af;margin-left:5px;font-weight:400">(sin ficha aún)</span>' : '')
+      + (e.sku ? '<div class="small text-muted">'+esc(e.sku)+'</div>' : '')
+      + (e.serie ? '<div class="small text-muted">S/N: '+esc(e.serie)+'</div>' : '') + '</td>'
+      + '<td onclick="event.stopPropagation()">'
+      + (forzado
+          ? '<span class="small text-muted"><i class="bi bi-lock me-1"></i>incluido completo</span>'
+          : '<button id="lev-pl-btn-'+esc(key)+'" class="btn btn-xs btn-outline-primary w-100" '
+            + 'style="font-size:.72rem;padding:.25rem .4rem;opacity:.4;pointer-events:none" '
+            + 'onclick="tkotAbrirMultiPlantilla(\''+esc(key)+'\', \''+esc(nombre)+'\')" title="Selecciona el equipo primero">'
+            + '<i class="bi bi-lock me-1"></i><span id="lev-pl-count-'+esc(key)+'">marca el equipo</span></button>')
+      + '</td></tr>';
+  }).join('');
+  tkotRecalcEqCount();
+}
+
+// Instalación + cliente sin ficha (CID null): todos los equipos del ticket
+// van completos, marcados y bloqueados (no hay "ficha" contra la cual
+// elegir un subconjunto -- Daniel: "ya lo requeriría de un plan, porque
+// el cliente no existe").
+function tkotAplicarForzadoInstalacion(){
+  const tipo = document.getElementById('otTipo')?.value;
+  const warn = document.getElementById('tkotSinFichaWarn');
+  const debeForzar = (tipo === 'instalacion') && _TKOT.clienteResuelto && !_TKOT.cid && (equiposCache||[]).length > 0;
+  if(warn) warn.style.display = (_TKOT.clienteResuelto && !_TKOT.cid) ? '' : 'none';
+  if(debeForzar !== _TKOT.forzarTodosEquipos){
+    _TKOT.forzarTodosEquipos = debeForzar;
+    tkotRenderEquipos();
+  }
+}
+
+function tkotToggleTodos(){
+  if(_TKOT.forzarTodosEquipos) return; // bloqueado -- no se puede desmarcar
+  const checks = document.querySelectorAll('.lev-eq-chk');
+  const marcados = document.querySelectorAll('.lev-eq-chk:checked').length;
+  const newState = marcados < checks.length;
+  checks.forEach(function(c){ c.checked = newState; });
+  tkotRecalcEqCount();
+}
+
+function tkotRecalcEqCount(){
+  const checks = document.querySelectorAll('.lev-eq-chk');
+  const n = document.querySelectorAll('.lev-eq-chk:checked').length;
+  const el = document.getElementById('levEqCount');
+  if(el) el.textContent = String(n);
+  const tBtn = document.getElementById('btnLevToggleTodos');
+  if(tBtn){
+    tBtn.innerHTML = (n === checks.length && checks.length > 0)
+      ? '<i class="bi bi-square me-1"></i>Desmarcar todos'
+      : '<i class="bi bi-check2-square me-1"></i>Marcar todos';
+  }
+  checks.forEach(function(c){
+    const key = c.dataset.key;
+    const plBtn = document.getElementById('lev-pl-btn-' + key);
+    if(!plBtn) return;
+    const seleccionado = c.checked;
+    if(seleccionado){
+      plBtn.style.opacity = '1'; plBtn.style.pointerEvents = 'auto';
+      plBtn.title = 'Agregar plantillas extra a este equipo';
+      const countSpan = document.getElementById('lev-pl-count-' + key);
+      if(countSpan){
+        const n2 = (_TKOT.eqPlantillas[key] && _TKOT.eqPlantillas[key].size) || 0;
+        countSpan.textContent = n2 ? (n2 + ' plantilla' + (n2>1?'s':'') + ' extra') : '0 plantillas';
+      }
+    } else {
+      plBtn.style.opacity = '.4'; plBtn.style.pointerEvents = 'none';
+      plBtn.title = 'Selecciona el equipo primero';
+    }
+  });
+}
+
+// ── Multi-plantilla por equipo (idéntico a Mantenciones, clave = _tkotEqKey) ──
+function tkotAbrirMultiPlantilla(key, eqNombre){
+  const plantillas = _TKOT.plantillas.all || [];
+  if(!plantillas.length){
+    ilusAlert({ title:'Sin plantillas', message:'No hay plantillas activas en el sistema.',
+      sub:'Pide a un administrador que cree plantillas en /mantenciones/plantillas.', type:'warning' });
+    return;
+  }
+  let modal = document.getElementById('modalMultiPlantilla');
+  if(modal){ try{ bootstrap.Modal.getInstance(modal)?.dispose(); }catch(e){} modal.remove(); }
+  modal = document.createElement('div');
+  modal.id = 'modalMultiPlantilla';
+  modal.className = 'modal fade';
+  modal.tabIndex = -1;
+  const seleccionadas = _TKOT.eqPlantillas[key] || new Set();
+  const tipoActual = document.getElementById('otTipo')?.value || '';
+  modal.innerHTML = '<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">'
+    + '<div class="modal-content" style="border-radius:12px">'
+    + '<div class="modal-header" style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff">'
+    + '<div><h6 class="modal-title fw-bold mb-0"><i class="bi bi-list-check me-2"></i>Plantillas extra</h6>'
+    + '<small style="opacity:.85">'+esc(eqNombre)+'</small></div>'
+    + '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>'
+    + '<div class="modal-body"><div class="alert alert-info py-2 small mb-2"><i class="bi bi-info-circle me-1"></i>'
+    + 'La plantilla del tipo de OT ('+esc(tipoActual||'—')+') ya se aplica automáticamente. '
+    + 'Aquí puedes agregar plantillas <strong>adicionales</strong> para este equipo.</div>'
+    + '<div id="multiPlantillaList">' + plantillas.map(function(p){
+        return '<label class="d-flex align-items-start gap-2 p-2 mb-1 border rounded" style="cursor:pointer;background:'+(seleccionadas.has(p.id)?'#eff6ff':'#fff')+'">'
+          + '<input type="checkbox" class="mp-chk" data-pid="'+p.id+'" '+(seleccionadas.has(p.id)?'checked':'')+' style="margin-top:3px">'
+          + '<div class="flex-grow-1"><div class="fw-bold small">'+esc(p.nombre)+'</div>'
+          + '<div class="text-muted" style="font-size:.7rem">'
+          + (p.tipo_visita?'<span class="badge bg-secondary me-1">'+esc(p.tipo_visita)+'</span>':'')
+          + (p.items_count||0)+' tarea(s)'
+          + (p.descripcion?' · '+esc(p.descripcion.substring(0,80)):'') + '</div></div></label>';
+      }).join('') + '</div></div>'
+    + '<div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>'
+    + '<button type="button" class="btn btn-primary" onclick="tkotGuardarMultiPlantilla(\''+esc(key)+'\')">'
+    + '<i class="bi bi-check-lg me-1"></i>Guardar selección</button></div></div></div>';
+  document.body.appendChild(modal);
+  new bootstrap.Modal(modal).show();
+}
+function tkotGuardarMultiPlantilla(key){
+  const modal = document.getElementById('modalMultiPlantilla');
+  if(!modal) return;
+  const ids = Array.from(modal.querySelectorAll('.mp-chk:checked')).map(function(c){ return parseInt(c.dataset.pid); });
+  if(ids.length) _TKOT.eqPlantillas[key] = new Set(ids); else delete _TKOT.eqPlantillas[key];
+  const counter = document.getElementById('lev-pl-count-' + key);
+  if(counter) counter.textContent = ids.length ? (ids.length + ' plantilla' + (ids.length>1?'s':'') + ' extra') : '0 plantillas';
+  bootstrap.Modal.getInstance(modal)?.hide();
+  ilusToast('✓ ' + ids.length + ' plantilla(s) asignada(s) al equipo', {type:'success', duration:2000});
+}
+
+// ── Acceso y logística (idéntico a Mantenciones) ──
+function tkotSetAccesoYN(btn){
+  const target = btn.dataset.target, val = btn.dataset.val;
+  const hidden = document.getElementById(target);
+  if(!hidden) return;
+  if(hidden.value === val){
+    hidden.value = '';
+    document.querySelectorAll('.lev-yn-btn[data-target="'+target+'"]').forEach(function(b){ b.classList.remove('active'); });
+    return;
+  }
+  hidden.value = val;
+  document.querySelectorAll('.lev-yn-btn[data-target="'+target+'"]').forEach(function(b){
+    b.classList.toggle('active', b.dataset.val === val);
+  });
+}
+function tkotResetAccesoLogistica(){
+  ['acceso_ascensor','acceso_estacionamiento'].forEach(function(id){
+    const h = document.getElementById(id);
+    if(h) h.value = '';
+    document.querySelectorAll('.lev-yn-btn[data-target="'+id+'"]').forEach(function(b){ b.classList.remove('active'); });
+  });
+  const piso = document.getElementById('acceso_piso');
+  const notas = document.getElementById('acceso_notas');
+  if(piso) piso.value = '';
+  if(notas) notas.value = '';
+}
+
+// ── Adjuntos preliminares (idéntico a Mantenciones) ──
+function _tkotBytesPretty(n){
+  if(!n && n!==0) return '';
+  if(n < 1024) return n + ' B';
+  if(n < 1024*1024) return (n/1024).toFixed(0) + ' KB';
+  return (n/(1024*1024)).toFixed(1) + ' MB';
+}
+function _tkotAdjIconClass(file){
+  const m=(file.type||'').toLowerCase(), n=(file.name||'').toLowerCase();
+  if(m.startsWith('image/')) return 'bi-camera text-primary';
+  if(m==='application/pdf'||n.endsWith('.pdf')) return 'bi-file-earmark-pdf text-danger';
+  if(m.startsWith('video/')) return 'bi-film text-info';
+  if(m.startsWith('audio/')) return 'bi-mic text-purple';
+  if(/\.(docx?|xlsx?|pptx?|txt|csv)$/i.test(n)) return 'bi-file-earmark-text text-secondary';
+  return 'bi-file-earmark text-muted';
+}
+const _TKOT_ADJ_MAX = { foto:15*1024*1024, pdf:30*1024*1024, video:100*1024*1024, audio:30*1024*1024, documento:25*1024*1024, otro:25*1024*1024 };
+function _tkotAdjTipo(file){
+  const m=(file.type||'').toLowerCase(), n=(file.name||'').toLowerCase();
+  if(m.startsWith('image/')) return 'foto';
+  if(m==='application/pdf'||n.endsWith('.pdf')) return 'pdf';
+  if(m.startsWith('video/')) return 'video';
+  if(m.startsWith('audio/')) return 'audio';
+  if(/\.(docx?|xlsx?|pptx?|txt|csv)$/i.test(n)) return 'documento';
+  return 'otro';
+}
+function tkotAdjFiles(fileList){
+  if(!fileList || !fileList.length) return;
+  const rechazados = [];
+  Array.from(fileList).forEach(function(f){
+    const tipo = _tkotAdjTipo(f);
+    const max = _TKOT_ADJ_MAX[tipo] || _TKOT_ADJ_MAX.otro;
+    if(f.size > max){ rechazados.push(f.name+' ('+_tkotBytesPretty(f.size)+', máx '+_tkotBytesPretty(max)+')'); return; }
+    _TKOT.adjuntos.push(f);
+  });
+  const inp = document.getElementById('levAdjInput');
+  if(inp) inp.value = '';
+  _tkotRenderAdjList();
+  if(rechazados.length) ilusToast('Archivo(s) muy grande(s): '+rechazados[0]+(rechazados.length>1?' y '+(rechazados.length-1)+' más':''), {type:'warning'});
+}
+function _tkotRenderAdjList(){
+  const wrap = document.getElementById('levAdjList');
+  const counter = document.getElementById('levAdjCount');
+  if(!wrap) return;
+  const arr = _TKOT.adjuntos || [];
+  if(counter) counter.textContent = arr.length;
+  if(!arr.length){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = arr.map(function(f, idx){
+    return '<div class="lev-adj-item"><div class="lev-adj-thumb"><i class="bi '+_tkotAdjIconClass(f)+'"></i></div>'
+      + '<div class="lev-adj-info"><div class="lev-adj-name" title="'+esc(f.name)+'">'+esc(f.name)+'</div>'
+      + '<div class="lev-adj-meta">'+_tkotAdjTipo(f).toUpperCase()+' · '+_tkotBytesPretty(f.size)+'</div></div>'
+      + '<button type="button" class="lev-adj-rm" onclick="tkotRemoveAdj('+idx+')" title="Quitar"><i class="bi bi-x-lg"></i></button></div>';
+  }).join('');
+}
+function tkotRemoveAdj(idx){ _TKOT.adjuntos.splice(idx,1); _tkotRenderAdjList(); }
+function tkotResetAdjuntos(){ _TKOT.adjuntos = []; _tkotRenderAdjList(); }
+async function _tkotSubirAdjuntos(vid){
+  const arr = _TKOT.adjuntos || [];
+  if(!arr.length || !vid) return {ok:0, fail:0};
+  let ok=0, fail=0;
+  for(let i=0;i<arr.length;i++){
+    const f = arr[i];
+    try{
+      ilusToast('Subiendo '+(i+1)+'/'+arr.length+': '+f.name, {type:'info', duration:1500});
+      const fd = new FormData();
+      fd.append('archivo', f);
+      fd.append('tipo', _tkotAdjTipo(f));
+      const r = await fetch('/mantenciones/api/visitas/'+vid+'/adjuntos', {method:'POST', body:fd});
+      const d = await r.json().catch(function(){ return {}; });
+      if(r.ok && d.ok) ok++; else fail++;
+    }catch(e){ fail++; }
+  }
+  return {ok, fail};
+}
+
+// ── Abrir el modal: reset + resolución de cliente + carga de todo ──
+document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', async function(){
+  const tbody = document.getElementById('levSelectTbody');
+  tbody.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">Cargando…</td></tr>';
+  document.getElementById('tkotSinFichaWarn').style.display = 'none';
+
+  await _tkotResolverCliente();
+  await _tkotCargarPlantillas();
+  await _tkotCargarContactos();
+  _tkotRenderContactosSelector();
+  if(_TKOT.contactos.lista.length > 0){
+    const sel = document.getElementById('levContactoSel');
+    sel.value = '0';
+    tkotContactoChange();
+  } else {
+    // Sin ficha o sin contactos registrados -> manual, prellenado con lo
+    // que ya declaró el ticket (nombre_contacto/phone/email).
+    const t = ticketActual || {};
+    document.getElementById('levContactoSel').value = '__manual';
+    tkotContactoChange();
+    document.getElementById('levContactoNombre').value = t.nombre_contacto || '';
+    document.getElementById('levContactoTel').value = t.phone || '';
+    document.getElementById('levContactoEmail').value = t.email || '';
+  }
+
+  const tipoSel = document.getElementById('otTipo');
+  if(tipoSel) tipoSel.value = 'levantamiento';
+  tkotModoSet('equipos');
+  tkotTipoChange();
+
+  document.getElementById('levSelectNotas').value = '';
+
+  // Dirección: default = la del ticket (jobsite real), no la del cliente.
+  const dirInput = document.getElementById('levDireccion');
+  const t0 = ticketActual || {};
+  dirInput.value = t0.direccion || '';
+  if(t0.direccion_lat) dirInput.dataset.lat = t0.direccion_lat;
+  if(t0.direccion_lng) dirInput.dataset.lng = t0.direccion_lng;
+  if(t0.direccion_place_id) dirInput.dataset.placeId = t0.direccion_place_id;
+  if(!dirInput.dataset.placesInit && typeof ilusPlacesAutocomplete === 'function'){
+    ilusPlacesAutocomplete(dirInput, {
+      country: 'cl', types: ['address'],
+      onPlaceSelected: function(place){
+        const hint = document.getElementById('levDireccionHint');
+        if(hint) hint.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Dirección verificada por Google Maps · <small>'+place.lat.toFixed(4)+', '+place.lng.toFixed(4)+'</small>';
+        dirInput.dataset.lat = place.lat;
+        dirInput.dataset.lng = place.lng;
+        dirInput.dataset.placeId = place.place_id || '';
+      },
+    });
+    dirInput.dataset.placesInit = '1';
+  }
+
+  const hoy = new Date();
+  const _fechaDef = hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-'+String(hoy.getDate()).padStart(2,'0');
+  document.getElementById('levFechaProg').value = _fechaDef;
+  document.getElementById('levFechaFin').value = '';
+  document.getElementById('levRangoDias').checked = false;
+  document.getElementById('levFechaFinWrap').style.display = 'none';
+  document.getElementById('levHoraIni').value = '09:00';
+  document.getElementById('levHoraFin').value = '13:00';
+
+  _TKOT.tecnicosSel.clear();
+  const tBtn = document.getElementById('btnLevToggleTodos');
+  if(tBtn) tBtn.innerHTML = '<i class="bi bi-check2-square me-1"></i>Marcar todos';
+
+  tkotResetAccesoLogistica();
+  tkotResetAdjuntos();
+
+  tkotRenderEquipos();
+  tkotAplicarForzadoInstalacion();
+  tkotRenderTecnicos();
+
   try{
     const r = await fetch('/mantenciones/api/tecnicos');
-    const arr = await r.json();
-    sel.innerHTML = '<option value="">Selecciona un técnico…</option>' + (Array.isArray(arr)?arr:[]).map(function(tc){
-      return '<option value="'+tc.id+'">'+esc(tc.nombre)+'</option>';
-    }).join('');
-  }catch(e){ sel.innerHTML = '<option value="">No se pudo cargar — sin conexión</option>'; }
-}
-
-// ── Paso 3: resumen + advertencias ──
-function otwRenderResumen(){
-  document.getElementById('otwResCliente').textContent = otwState.clienteLabel || '—';
-  const eqNombres = (equiposCache||[]).filter(function(e){ return otwState.maquinaIds.indexOf(e.maquina_id)!==-1; })
-    .map(function(e){ return e.nombre || e.erp_kopr || 'Equipo'; });
-  document.getElementById('otwResEquipos').textContent = eqNombres.length ? eqNombres.join(', ') : 'Sin equipos vinculados';
-  document.getElementById('otwResTecnico').textContent = otwState.tecnicoLabel || '—';
-  document.getElementById('otwResFecha').textContent = otwFechaLegible(otwState.fecha);
-  document.getElementById('otwResHorario').textContent = (otwState.horaInicio || otwState.horaFin)
-    ? (otwState.horaInicio||'—')+' a '+(otwState.horaFin||'—') : 'Sin horario definido';
-  const tipoLbl = {correctiva:'Correctiva', preventiva:'Preventiva', garantia:'Garantía',
-    inspeccion:'Inspección', levantamiento:'Levantamiento', instalacion:'Instalación'};
-  document.getElementById('otwResTipo').textContent = tipoLbl[otwState.tipoVisita] || otwState.tipoVisita;
-}
-function otwRenderAdvertencias(adv){
-  let html = '';
-  if(adv.feriado){
-    html += '<div class="otw-warn-card"><i class="bi bi-calendar-x"></i><div><b>La fecha elegida es feriado</b>'
-      + esc(adv.feriado.nombre || 'Feriado') + (adv.feriado.fecha?' ('+esc(adv.feriado.fecha)+')':'')
-      + ' — ¿agendar de todas formas?</div></div>';
+    const d = await r.json();
+    _TKOT.tecnicosDisponibles = Array.isArray(d) ? d : (d.tecnicos || []);
+    tkotRenderTecnicos();
+  }catch(e){
+    document.getElementById('levTecnicosBox').innerHTML = '<span class="text-danger small">⚠ No se pudieron cargar los técnicos</span>';
   }
-  if(adv.choque){
-    const visitas = adv.choque.visitas || [];
-    html += '<div class="otw-warn-card"><i class="bi bi-exclamation-triangle"></i><div><b>'
-      + esc(adv.choque.tecnico_nombre || 'El técnico') + ' ya tiene otra visita agendada a esa hora</b>'
-      + visitas.map(function(v){
-          return esc(v.numero_ot||'')+' · '+esc(v.hora_inicio||'—')+'–'+esc(v.hora_fin||'—')
-            + (v.titulo?' · '+esc(v.titulo):'');
-        }).join('<br>')
-      + '</div></div>';
-  }
-  document.getElementById('otwAdvertencias').innerHTML = html;
-}
-
-// ── Abrir el modal: reset de estado + prefill desde el ticket ──
-document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', function(){
-  otwState = otwEstadoInicial();
-  const t = ticketActual || {};
-  otwState.titulo = t.titulo ? ('OT — ' + t.titulo) : '';
-  otwState.tipoVisita = t.es_garantia ? 'garantia' : 'correctiva';
-  document.getElementById('otwTipoVisita').value = otwState.tipoVisita;
-  document.getElementById('otwTitulo').value = otwState.titulo;
-  document.getElementById('otwFecha').value = '';
-  document.getElementById('otwFecha').min = new Date().toISOString().slice(0,10);
-  document.getElementById('otwHoraInicio').value = '';
-  document.getElementById('otwHoraFin').value = '';
-  document.getElementById('otwClienteInput').value = t.empresa || t.rut || '';
-  document.getElementById('otwClienteInput').style.display = '';
-  document.getElementById('otwClienteResults').style.display = 'none';
-  document.getElementById('otwClienteSel').style.display = 'none';
-  document.getElementById('otwAdvertencias').innerHTML = '';
-  document.getElementById('otwBtnGenerar').innerHTML = '<i class="bi bi-clipboard2-check me-1"></i>Generar OT';
-  otwIrPaso(1);
-  otwRenderEquipos();
-  otwCargarTecnicos();
-  const qInicial = (t.rut || t.empresa || '').trim();
-  if(qInicial.length>=2) otwBuscarCliente(qInicial);
 });
 
-// ── Envío final (con reintento "forzar" ante feriado/choque) ──
-document.getElementById('otwBtnGenerar').addEventListener('click', otwGenerar);
-async function otwGenerar(){
-  const btn = document.getElementById('otwBtnGenerar');
-  const original = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generando…';
-  const payload = {
-    cliente_id: otwState.clienteId,
-    maquina_ids: otwState.maquinaIds,
-    tecnico_user_id: otwState.tecnicoUserId,
-    fecha_programada: otwState.fecha,
-    hora_inicio: otwState.horaInicio || null,
-    hora_fin: otwState.horaFin || null,
-    tipo_visita: otwState.tipoVisita,
-    titulo: otwState.titulo,
-    descripcion: otwState.descripcion,
-    forzar_feriado: !!otwState.forzarFeriado,
-    forzar_choque: !!otwState.forzarChoque,
-  };
-  let d, huboErrorRed = false;
-  try{
-    const r = await fetch('/tickets/api/tickets/'+TID+'/generar-ot', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-    d = await r.json();
-  }catch(e){ huboErrorRed = true; }
-  btn.disabled = false; btn.innerHTML = original;
+// ── Envío final ──
+async function tkotGenerar(){
+  const tipoSel = document.getElementById('otTipo')?.value || 'levantamiento';
+  const eqs = equiposCache || [];
+  const keysMarcados = _TKOT.forzarTodosEquipos
+    ? eqs.map(function(e){ return _tkotEqKey(e); })
+    : Array.from(document.querySelectorAll('.lev-eq-chk:checked')).map(function(c){ return c.dataset.key; });
 
-  if(huboErrorRed){ ilusToast('Sin conexión — no se pudo generar la OT', {type:'error'}); return; }
+  let esDescubrimiento = (tipoSel === 'levantamiento' && _TKOT.modo === 'descubrimiento');
+  if(!keysMarcados.length && !esDescubrimiento){
+    if(tipoSel !== 'levantamiento'){ ilusToast('Selecciona al menos un equipo', {type:'warning'}); return; }
+    const okDesc = await ilusConfirm({
+      title: 'Levantamiento de descubrimiento',
+      message: '¿Crear la OT sin equipos preseleccionados?',
+      sub: 'El técnico capturará los equipos en terreno (foto + nombre + N° serie). Al cerrar la OT quedarán creados en la ficha del cliente.',
+      okLabel: 'Sí, descubrir en terreno', cancelLabel: 'Volver a elegir',
+    });
+    if(!okDesc) return;
+    esDescubrimiento = true;
+    tkotModoSet('descubrimiento');
+  }
 
-  if(d.ok){
-    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGenerarOT'));
-    modalInst.hide();
-    ilusToast('✓ OT '+(d.numero_ot||'')+' generada', {type:'success'});
-    if(d.tipo_visita && otwState.tipoVisita && d.tipo_visita !== otwState.tipoVisita){
-      ilusToast('Se guardó como "'+d.tipo_visita+'" (tipo ajustado automáticamente)', {type:'warning'});
+  const fechaProg = document.getElementById('levFechaProg').value;
+  if(!fechaProg){ ilusToast('Indica la fecha programada', {type:'warning'}); return; }
+  const horaIni = document.getElementById('levHoraIni').value || '';
+  const horaFin = document.getElementById('levHoraFin').value || '';
+  if(horaIni && horaFin && horaIni >= horaFin){ ilusToast('La hora de término debe ser posterior a la de inicio', {type:'warning'}); return; }
+  const usaRango = document.getElementById('levRangoDias').checked;
+  let fechaFin = '';
+  if(usaRango){
+    fechaFin = document.getElementById('levFechaFin').value;
+    if(!fechaFin){ ilusToast('Indica la fecha de término', {type:'warning'}); return; }
+    if(fechaFin < fechaProg){ ilusToast('La fecha de término no puede ser anterior a la de inicio', {type:'warning'}); return; }
+  }
+
+  const dirVal = (document.getElementById('levDireccion')?.value || '').trim();
+  if(!dirVal){ ilusToast('Indica la dirección de la visita', {type:'warning'}); document.getElementById('levDireccion')?.focus(); return; }
+  const contactoNombre = (document.getElementById('levContactoNombre')?.value || '').trim();
+  if(!contactoNombre){ ilusToast('Indica el contacto que recibirá al técnico en sitio', {type:'warning'}); document.getElementById('levContactoSel')?.focus(); return; }
+
+  const tecnicoIds = Array.from(_TKOT.tecnicosSel);
+  if(!tecnicoIds.length){
+    const hay = (_TKOT.tecnicosDisponibles||[]).length > 0;
+    if(!hay){
+      await ilusAlert({ title:'Sin técnicos disponibles', message:'No es posible crear la OT porque no hay técnicos activos.', type:'warning' });
+    } else {
+      ilusToast('Asigna al menos un técnico que ejecute la OT', {type:'warning'});
     }
+    return;
+  }
+
+  // Equipos: separa los que ya tienen maquina_id (ficha real) de los que
+  // solo existen en el ticket (sin ficha aún) -- el backend necesita ambos
+  // caminos para poder crear la OT de instalación-sin-ficha.
+  const equiposPorKey = {};
+  eqs.forEach(function(e){ equiposPorKey[_tkotEqKey(e)] = e; });
+  const equipoIds = [];       // maquina_id ya existentes en mant_maquinas
+  const equiposTicket = [];   // datos crudos de tk_ticket_equipos sin maquina_id
+  keysMarcados.forEach(function(key){
+    const e = equiposPorKey[key];
+    if(!e) return;
+    if(e.maquina_id) equipoIds.push(e.maquina_id);
+    else equiposTicket.push({ ticket_equipo_id: e.id, nombre: e.nombre, sku: e.sku, serie: e.serie, cantidad: e.cantidad, tipo: e.tipo });
+  });
+  const plantillasPorEq = {};
+  keysMarcados.forEach(function(key){
+    if(_TKOT.eqPlantillas[key] && _TKOT.eqPlantillas[key].size > 0) plantillasPorEq[key] = Array.from(_TKOT.eqPlantillas[key]);
+  });
+
+  const btn = document.getElementById('btnLevIniciar');
+  const btnHTMLOrig = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando OT…';
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID+'/generar-ot', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        ticket_id: TID,
+        cliente_id: _TKOT.cid,
+        titulo: document.getElementById('levSelectTitulo').value.trim(),
+        notas: document.getElementById('levSelectNotas').value.trim(),
+        equipo_ids: equipoIds,
+        equipos_ticket: equiposTicket,
+        descubrimiento: esDescubrimiento,
+        fecha_programada: fechaProg,
+        hora_inicio: horaIni || null,
+        hora_fin: horaFin || null,
+        fecha_fin: usaRango ? fechaFin : null,
+        hora_inicio_fin: usaRango ? (document.getElementById('levHoraIniFin')?.value || null) : null,
+        hora_fin_fin: usaRango ? (document.getElementById('levHoraFinFin')?.value || null) : null,
+        tecnico_ids: tecnicoIds,
+        tipo_ot: tipoSel,
+        aplica_garantia: document.getElementById('otAplicaGarantia')?.checked || false,
+        plantillas_por_equipo: plantillasPorEq,
+        direccion_visita: dirVal,
+        direccion_lat: parseFloat(document.getElementById('levDireccion')?.dataset.lat) || null,
+        direccion_lng: parseFloat(document.getElementById('levDireccion')?.dataset.lng) || null,
+        direccion_place_id: document.getElementById('levDireccion')?.dataset.placeId || null,
+        contacto_nombre: contactoNombre,
+        contacto_cargo: (document.getElementById('levContactoCargo')?.value || '').trim(),
+        contacto_tel: (document.getElementById('levContactoTel')?.value || '').trim(),
+        contacto_email: (document.getElementById('levContactoEmail')?.value || '').trim(),
+        contacto_origen: document.getElementById('levContactoSel')?.dataset.origen || 'manual',
+        acceso_ascensor: document.getElementById('acceso_ascensor')?.value || null,
+        acceso_estacionamiento: document.getElementById('acceso_estacionamiento')?.value || null,
+        acceso_piso: (document.getElementById('acceso_piso')?.value || '').trim(),
+        acceso_notas: (document.getElementById('acceso_notas')?.value || '').trim(),
+      })
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'Error', {type:'error'}); return; }
+
+    const visitaId = d.visita_id;
+    const modalInst = bootstrap.Modal.getInstance(document.getElementById('modalGenerarOT'));
+    if(modalInst){
+      await new Promise(function(resolve){
+        let resolved = false;
+        const done = function(){ if(!resolved){ resolved = true; resolve(); } };
+        document.getElementById('modalGenerarOT').addEventListener('hidden.bs.modal', done, {once:true});
+        modalInst.hide();
+        setTimeout(done, 600);
+      });
+    }
+    if(typeof ilusCleanModalBackdrops === 'function') ilusCleanModalBackdrops();
+
+    let adjResult = null;
+    if(_TKOT.adjuntos.length > 0 && visitaId) adjResult = await _tkotSubirAdjuntos(visitaId);
+
+    const otHtml = d.ot_url ? '<a href="'+d.ot_url+'" class="fw-bold text-decoration-underline" style="color:#dc2626">'+esc(d.numero_ot)+'</a>' : '';
+    let subMsg = 'La OT está disponible para que el/los técnico(s) la gestionen desde su módulo de Órdenes de Trabajo. '
+      + (d.items_plantilla_aplicados||0) + ' tarea(s) generadas por las plantillas aplicadas.';
+    if(adjResult){
+      subMsg += adjResult.fail === 0
+        ? ' ' + adjResult.ok + ' archivo(s) preliminar(es) adjunto(s).'
+        : ' ' + adjResult.ok + '/' + (adjResult.ok+adjResult.fail) + ' archivo(s) preliminares subidos.';
+    }
+    await ilusAlert({
+      title: '✅ Orden de Trabajo creada',
+      message: 'Se generó la OT ' + otHtml + ' con ' + (d.n_items||keysMarcados.length) + ' equipo(s) y ' + (d.tecnicos_asignados||tecnicoIds.length) + ' técnico(s) asignado(s).',
+      sub: subMsg, messageHtml: true, type: 'success', okLabel: 'Entendido',
+    });
+    tkotResetAccesoLogistica();
+    tkotResetAdjuntos();
     cargar();
-    return;
+  }catch(e){
+    ilusToast('Error de red: ' + e.message, {type:'error'});
+  }finally{
+    btn.disabled = false; btn.innerHTML = btnHTMLOrig;
   }
-  if(d.requiere_confirmacion){
-    const adv = d.advertencias || {};
-    otwRenderAdvertencias(adv);
-    if(adv.feriado) otwState.forzarFeriado = true;
-    if(adv.choque) otwState.forzarChoque = true;
-    btn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Agendar de todas formas';
-    return;
-  }
-  if(d.visita_id_existente){
-    ilusToast(d.error || 'Este ticket ya tiene una OT vinculada', {type:'warning'});
-    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGenerarOT'));
-    modalInst.hide();
-    cargar();
-    return;
-  }
-  ilusToast(d.error || 'No se pudo generar la OT', {type:'error'});
 }
 
 // ── Tarjeta de estado en Acciones (llamada desde cargar()) ──
