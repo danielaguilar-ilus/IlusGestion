@@ -99,10 +99,13 @@ TIPO_LABEL = {
     "warranty": "Garantía", "repair": "Reparación",
     "spare_parts_store": "Repuestos bodega", "spare_parts_import": "Repuestos importación",
 }
-# Los 8 tipos expuestos al publico / mas usados en el backoffice.
+# Daniel 2026-07-13: "pienso que los 8 tipos del formulario se quedan
+# cortos" -- se amplia a los 12 tipos reales de TK_TIPOS (antes solo se
+# exponian 8 al publico, aunque el backoffice ya usaba los 12).
 TK_TIPOS_PUBLICOS = (
-    "install", "tech_support", "maintenance", "warranty",
-    "spare_parts", "quotation", "shipping", "return",
+    "install", "tech_support", "shipping", "quotation", "return",
+    "tech_evaluation", "maintenance", "spare_parts", "equipment_transfer",
+    "warranty", "repair", "spare_parts_store", "spare_parts_import",
 )
 # Tipos del MODAL interno (backoffice): TODOS menos 'warranty' — la garantia
 # es un toggle separado (es_garantia) porque puede aplicar a cualquier tipo
