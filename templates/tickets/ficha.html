@@ -185,6 +185,12 @@
 .rp-adj-chip i{color:#dc2626;font-size:.95rem;}
 .rp-msg:not(.in):not(.interno) .rp-adj-chip i{color:#fecaca;}
 .rp-composer{border:1px solid #eaecf0;border-radius:13px;overflow:hidden;}
+.rp-btn-traducir{margin-top:6px;border:none;background:transparent;color:#3b82f6;font-size:.72rem;font-weight:700;
+  padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;}
+.rp-btn-traducir:hover{text-decoration:underline;}
+.rp-msg.in .rp-btn-traducir{color:#1d4ed8;}
+.rp-traduccion{margin-top:4px;padding:8px 10px;background:#fff;border:1px dashed #93c5fd;border-radius:8px;
+  font-size:.82rem;color:#1e3a5f;white-space:pre-wrap;}
 #rpBtnDictar.rp-dictando{color:#fff;background:#dc2626;border-color:#dc2626;animation:rpPulseMic 1.2s ease-in-out infinite;}
 @keyframes rpPulseMic{0%,100%{opacity:1;}50%{opacity:.55;}}
 .rp-mode-tabs{display:flex;background:#f9fafb;border-bottom:1px solid #eaecf0;}
@@ -741,6 +747,20 @@
         <div id="rpEditor" style="background:#fff;"></div>
       </div>
       <div class="rp-adj-preview" id="rpAdjPreview"></div>
+      {# Traductor nativo (Google Cloud Translation) 2026-07-12 (Daniel):
+         "yo escribo en español y tu me traduces inmediatamente" -- se
+         traduce lo que escribiste en el editor al idioma elegido, con
+         vista previa + boton para usarla (reemplaza el texto del editor). #}
+      <div id="rpTradPreview" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;
+           border-radius:10px;padding:10px 12px;margin:0 10px 8px;font-size:.85rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+          <strong style="color:#1d4ed8;"><i class="bi bi-translate me-1"></i>Traducción
+            (<span id="rpTradIdiomaNombre"></span>)</strong>
+          <button type="button" class="btn-close btn-sm" onclick="document.getElementById('rpTradPreview').style.display='none'"></button>
+        </div>
+        <div id="rpTradTexto" style="color:#1e3a5f;white-space:pre-wrap;"></div>
+        <button class="btn btn-sm btn-ilus mt-2" id="rpBtnUsarTraduccion" type="button">Usar esta traducción</button>
+      </div>
       <div class="rp-toolbar-extra">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <label class="btn btn-sm btn-outline-secondary" style="margin:0;" title="Adjuntar fotos o archivos">
@@ -756,6 +776,20 @@
           </div>
           <button class="btn btn-sm btn-outline-secondary" id="rpGuardarPlantilla" title="Guardar el texto actual como plantilla">
             <i class="bi bi-bookmark-plus"></i></button>
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                    title="Idioma al que se traduce tu mensaje">
+              <i class="bi bi-translate me-1"></i><span id="rpTradIdiomaLabel">Inglés</span></button>
+            <ul class="dropdown-menu" id="rpTradIdiomaMenu">
+              <li><a class="dropdown-item" href="#" data-lang="en" data-nombre="Inglés">Inglés</a></li>
+              <li><a class="dropdown-item" href="#" data-lang="zh-CN" data-nombre="Chino (simplificado)">Chino (simplificado)</a></li>
+              <li><a class="dropdown-item" href="#" data-lang="pt" data-nombre="Portugués">Portugués</a></li>
+              <li><a class="dropdown-item" href="#" data-lang="fr" data-nombre="Francés">Francés</a></li>
+              <li><a class="dropdown-item" href="#" data-lang="de" data-nombre="Alemán">Alemán</a></li>
+            </ul>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" id="rpBtnTraducir" type="button" title="Traducir tu mensaje">
+            <i class="bi bi-translate"></i></button>
         </div>
         <button class="btn btn-sm btn-ilus" id="rpBtnEnviar"><i class="bi bi-send-fill me-1"></i>Enviar</button>
       </div>
@@ -1402,6 +1436,69 @@ const rpQuill = new Quill('#rpEditor', {
   });
 })();
 
+// ══════════════ Traductor (Google Cloud Translation) 2026-07-12 ══════════════
+(function(){
+  let rpTradLang = 'en';
+  document.getElementById('rpTradIdiomaMenu').addEventListener('click', function(ev){
+    const a = ev.target.closest('a[data-lang]');
+    if (!a) return;
+    ev.preventDefault();
+    rpTradLang = a.dataset.lang;
+    document.getElementById('rpTradIdiomaLabel').textContent = a.dataset.nombre;
+  });
+
+  async function llamarTraductor(texto, target){
+    const r = await fetch('/tickets/api/traducir', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texto: texto, target: target }),
+    });
+    return r.json();
+  }
+
+  const btnTraducir = document.getElementById('rpBtnTraducir');
+  btnTraducir.addEventListener('click', async function(){
+    const texto = (rpQuill.getText() || '').trim();
+    if (!texto){ ilusToast('Escribe tu mensaje primero.', { type: 'info' }); return; }
+    const original = btnTraducir.innerHTML;
+    btnTraducir.disabled = true;
+    btnTraducir.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    try{
+      const d = await llamarTraductor(texto, rpTradLang);
+      if (!d.ok){ ilusToast(d.error || 'No se pudo traducir', { type: 'error' }); return; }
+      document.getElementById('rpTradIdiomaNombre').textContent =
+        document.getElementById('rpTradIdiomaLabel').textContent;
+      document.getElementById('rpTradTexto').textContent = d.traduccion;
+      document.getElementById('rpTradPreview').style.display = 'block';
+    }catch(e){ ilusToast('Error de red al traducir', { type: 'error' }); }
+    finally{ btnTraducir.disabled = false; btnTraducir.innerHTML = original; }
+  });
+
+  document.getElementById('rpBtnUsarTraduccion').addEventListener('click', function(){
+    const texto = document.getElementById('rpTradTexto').textContent || '';
+    rpQuill.setText(texto);
+    document.getElementById('rpTradPreview').style.display = 'none';
+  });
+
+  // Traducir un mensaje del hilo (cliente/proveedor) al español -- delegado
+  // porque el hilo se re-renderiza en cada cargar().
+  window.tkTraducirMensaje = async function(btn, mid){
+    const cont = document.getElementById('rpTrad_' + mid);
+    if (cont.style.display !== 'none'){ cont.style.display = 'none'; return; }
+    const texto = btn.dataset.texto || '';
+    if (!texto.trim()) return;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    try{
+      const d = await llamarTraductor(texto, 'es');
+      if (!d.ok){ ilusToast(d.error || 'No se pudo traducir', { type: 'error' }); return; }
+      cont.textContent = d.traduccion;
+      cont.style.display = 'block';
+    }catch(e){ ilusToast('Error de red al traducir', { type: 'error' }); }
+    finally{ btn.disabled = false; btn.innerHTML = original; }
+  };
+})();
+
 // ══════════════ Conexión — envío "inteligente" ══════════════
 const rpOfflineBar = document.getElementById('rpOffline');
 function actualizarConexion(){
@@ -1874,10 +1971,19 @@ function renderThread(mensajes, adjuntos){
     // colapsaban en una sola linea visual (Daniel 2026-07-12: "no respeta
     // los saltos de pagina"). Solo se aplica a "in" (cliente): los tipos
     // con HTML real (mensaje/comentario) ya traen sus propios <br>/<p>.
+    // Traductor 2026-07-12 (Daniel): boton "Traducir" solo en mensajes del
+    // cliente/proveedor (cls==='in') -- el texto va en data-texto (mismo
+    // esc() que ya usa el resto del bubble, atributo HTML-safe).
+    const tradHtml = esCliente
+      ? '<button type="button" class="rp-btn-traducir" data-texto="'+esc(m.contenido||'')+'" '
+        + 'onclick="tkTraducirMensaje(this,'+m.id+')"><i class="bi bi-translate"></i> Traducir</button>'
+        + '<div class="rp-traduccion" id="rpTrad_'+m.id+'" style="display:none"></div>'
+      : '';
     return '<div class="rp-msg '+cls+'"><div class="rp-bubble">'
       + '<div class="rp-meta">'+who+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>'
       + '<div'+(esCliente?' class="rp-content-plano"':'')+'>'+contenidoHtml+'</div>'
       + (adjHtml? '<div>'+adjHtml+'</div>':'')
+      + tradHtml
       + '</div></div>';
   }).join('');
   th.querySelectorAll('.rp-adj-chip[data-lightbox]').forEach(function(el){

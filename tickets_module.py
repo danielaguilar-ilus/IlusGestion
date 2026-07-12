@@ -1112,6 +1112,62 @@ def register_tickets_routes(app, ctx):
         return mysql_fetchone(sql, params)
 
     # ─────────────────────────────────────────────────────────────────
+    #  TRADUCTOR (Google Cloud Translation) — 2026-07-12 (Daniel)
+    #  "quiero un traductor nativo... yo escribo en español y me lo
+    #  traduces, y con un boton traducir lo que envia el cliente/
+    #  proveedor". Usa el mismo patron de credenciales que GCS
+    #  (Application Default Credentials del propio servicio de Cloud
+    #  Run — el proyecto ya es el mismo "hosting", sin API key nueva).
+    #  Requiere que la Cloud Translation API este habilitada en el
+    #  proyecto GCP; si no, degrada con un error claro (no rompe nada).
+    # ─────────────────────────────────────────────────────────────────
+    _GT_CLIENT = [None]
+    _GT_INIT_DONE = [False]
+
+    def _gt_client():
+        if _GT_INIT_DONE[0]:
+            return _GT_CLIENT[0]
+        _GT_INIT_DONE[0] = True
+        try:
+            from google.cloud import translate_v2 as _gt_lib
+            _GT_CLIENT[0] = _gt_lib.Client()
+            print("[tickets] Google Translate listo", flush=True)
+        except Exception as e:
+            print(f"[tickets] Google Translate no disponible: {e}", flush=True)
+            _GT_CLIENT[0] = None
+        return _GT_CLIENT[0]
+
+    @app.route("/tickets/api/traducir", methods=["POST"])
+    @_tickets_required
+    def tk_api_traducir():
+        d = request.get_json(silent=True) or {}
+        texto = (d.get("texto") or "").strip()
+        target = (d.get("target") or "en").strip()[:10]
+        if not texto:
+            return jsonify({"ok": False, "error": "Texto vacío"}), 400
+        if len(texto) > 5000:
+            texto = texto[:5000]
+        cli = _gt_client()
+        if not cli:
+            return jsonify({
+                "ok": False,
+                "error": "El traductor no está disponible todavía — falta habilitar "
+                         "\"Cloud Translation API\" en el proyecto de Google Cloud "
+                         "(ilus-app-498503) y darle el rol al servicio.",
+            }), 503
+        try:
+            res = cli.translate(texto, target_language=target)
+            traduccion = _html_mod.unescape(res.get("translatedText") or "")
+            return jsonify({
+                "ok": True,
+                "traduccion": traduccion,
+                "idioma_detectado": res.get("detectedSourceLanguage") or "",
+            })
+        except Exception as e:
+            print(f"[tk_api_traducir] error: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo traducir en este momento."}), 500
+
+    # ─────────────────────────────────────────────────────────────────
     #  PAGINAS (HTML)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets")
