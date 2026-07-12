@@ -1430,24 +1430,18 @@ document.getElementById('btnGuardar').addEventListener('click', async function()
   if(d.ok){ ilusToast('✓ Guardado','success'); cargar(); } else ilusToast(d.error||'Error','error');
 });
 
-// ══════════════ Equipos — asignar desde documento ERP (tido + nudo) ══════════════
-document.getElementById('btnEqDesdeDoc').addEventListener('click', async function(){
-  const tido = await ilusPrompt({title:'Documento ERP', message:'Tipo de documento (ej: FCV, BLV, NVV, GDV…)',
-    placeholder:'FCV', required:true});
-  if(!tido) return;
-  const nudo = await ilusPrompt({title:'Documento ERP', message:'Número de documento',
-    placeholder:'Ej: 21577', required:true});
-  if(!nudo) return;
-  ilusLoader.show('Buscando equipos en el documento…');
-  try{
-    const r = await fetch('/tickets/api/tickets/'+TID+'/equipos-desde-documento', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({tido: tido.trim().toUpperCase(), nudo: nudo.trim()})});
-    const d = await r.json();
-    ilusLoader.hide();
-    if(d.ok){ ilusToast('✓ '+d.agregados+' equipo(s) agregado(s) de '+d.total_lineas+' línea(s) del documento','success'); cargar(); }
-    else ilusToast(d.error||'No se pudo obtener el documento','error');
-  }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión o ERP no disponible','error'); }
+// ══════════════ Equipos — asignar desde documento ERP (búsqueda avanzada) ══════════════
+// Daniel 2026-07-12: reemplaza el flujo viejo de 2 ilusPrompt() (tipo+numero
+// a ciegas) por el modal "tka" (mismo componente que list.html, contexto
+// 'agregar' -- agrega equipos a ESTE ticket ya existente). Ver
+// templates/tickets/_tka_modal.html.
+document.getElementById('btnEqDesdeDoc').addEventListener('click', function(){
+  tkaOpen({
+    mode: 'agregar',
+    ticketId: TID,
+    onDone: cargar,
+    rutPrefill: (ticketActual && ticketActual.rut) || '',
+  });
 });
 
 // ══════════════ Declarar equipo (modal — cuando no está en el buscador ERP) ══════════════
@@ -1639,4 +1633,6 @@ function _tkProgramarAutoRefresh(){
 }
 _tkProgramarAutoRefresh();
 </script>
+
+{% include "tickets/_tka_modal.html" %}
 {% endblock %}

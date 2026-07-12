@@ -418,6 +418,134 @@ def register_tickets_routes(app, ctx):
         return [{"sku": r.get("sku") or "", "nombre": r.get("nombre") or ""}
                 for r in rows if r.get("nombre")], None
 
+    # ─────────────────────────────────────────────────────────────────
+    #  ERP — motor UNICO para "documento -> lineas con saldo real"
+    #  (Daniel 2026-07-12: "que se busque por factura, que se busque por
+    #  RUT y que se asigne... que vea si tiene saldo o no tiene saldo,
+    #  tal cual como lo haciamos en los retiros").
+    #
+    #  _cubicador_fetch (app.py) es el MISMO motor que usan retiros/
+    #  cubicador/asignar/mantenciones: ya calcula el saldo oficial por
+    #  linea (CAPRCO1-CAPRAD1-CAPREX1-CAPRNC1, forzado a 0 si ESLIDO
+    #  indica despacho total) y ya filtra/marca servicios ZZ. Reusarlo
+    #  aca evita duplicar esa formula por TERCERA vez (Regla: un solo
+    #  motor ERP). Fallback a erp_engine.fetch_document (sin saldo real,
+    #  saldo=cantidad total) SOLO si _cubicador_fetch no esta disponible,
+    #  para que el flujo nunca quede muerto.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_fetch_doc_lineas(tido, nudo):
+        """Trae cabecera+lineas de un documento ERP con saldo por linea.
+
+        Devuelve (hdr:dict|None, lineas:list[dict], via:str).
+        hdr:    {cliente_nombre, cliente_rut, email, telefono, direccion,
+                 comuna, fecha}
+        lineas: [{sku, nombre, cantidad, saldo, es_zz}, ...]
+        """
+        try:
+            from app import _cubicador_fetch
+            hdr_raw, lineas_raw = _cubicador_fetch((tido or "").strip().upper(), (nudo or "").strip())
+        except Exception as _e:
+            print(f"[_tk_fetch_doc_lineas] _cubicador_fetch fallo {tido}/{nudo}: {_e}", flush=True)
+            hdr_raw, lineas_raw = None, None
+        if hdr_raw:
+            lineas = []
+            for ln in (lineas_raw or []):
+                sku = (ln.get("sku") or "").strip()
+                if not sku:
+                    continue
+                nombre = (ln.get("descripcion_erp") or ln.get("nombre_app") or "").strip() or "Equipo"
+                try:
+                    cantidad = float(ln.get("cantidad") or 0)
+                except Exception:
+                    cantidad = 0.0
+                try:
+                    saldo = float(ln.get("saldo") or 0)
+                except Exception:
+                    saldo = 0.0
+                lineas.append({"sku": sku, "nombre": nombre, "cantidad": cantidad,
+                                "saldo": saldo, "es_zz": bool(ln.get("es_zz"))})
+            hdr = {
+                "cliente_nombre": hdr_raw.get("cliente_nombre") or "",
+                "cliente_rut":    hdr_raw.get("cliente_rut") or "",
+                "email":          hdr_raw.get("email") or "",
+                "telefono":       hdr_raw.get("telefono") or "",
+                "direccion":      hdr_raw.get("direccion") or "",
+                "comuna":         hdr_raw.get("comuna") or "",
+                "fecha":          hdr_raw.get("fecha") or "",
+            }
+            return hdr, lineas, "cubicador"
+
+        # Fallback: erp_engine (motor viejo, sin saldo real -- se asume
+        # saldo = cantidad total de la linea).
+        try:
+            import erp_engine
+            doc = erp_engine.get_client().fetch_document((tido or "").strip().upper(), (nudo or "").strip())
+        except Exception as _e:
+            print(f"[_tk_fetch_doc_lineas] erp_engine fallo {tido}/{nudo}: {_e}", flush=True)
+            return None, [], "error"
+        if not doc:
+            return None, [], "not_found"
+        lineas = []
+        for ln in (doc.get("lineas_raw") or []):
+            sku = str(ln.get("KOPRCT") or ln.get("koprct") or "").strip()
+            nombre = str(ln.get("NOKOPR") or ln.get("nokopr") or "").strip()
+            if not (sku or nombre):
+                continue
+            try:
+                cantidad = float(ln.get("CAPRCO1") or ln.get("caprco1") or 1)
+            except Exception:
+                cantidad = 1.0
+            lineas.append({"sku": sku, "nombre": nombre or "Equipo", "cantidad": cantidad,
+                            "saldo": cantidad, "es_zz": sku.upper().startswith("ZZ")})
+        hdr = {
+            "cliente_nombre": doc.get("cliente_nombre") or "",
+            "cliente_rut":    doc.get("cliente_rut") or "",
+            "email":          doc.get("email") or "",
+            "telefono":       doc.get("telefono") or "",
+            "direccion":      doc.get("direccion") or "",
+            "comuna":         doc.get("comuna") or "",
+            "fecha":          doc.get("fecha") or "",
+        }
+        return hdr, lineas, "erp_engine_fallback"
+
+    def _tk_filtrar_lineas_seleccion(lineas_reales, seleccion):
+        """Aplica una seleccion GRANULAR de lineas (checkboxes del modal)
+        sobre las lineas REALES del documento (nunca confiar a ciegas en
+        lo que manda el navegador -- la cantidad pedida se clampa contra
+        la cantidad real del ERP).
+
+        seleccion: [{sku, cantidad|qty, nombre?}, ...] (del frontend).
+        Si viene vacia/None: comportamiento HISTORICO -- todas las lineas
+        no-ZZ del documento (para no romper llamadas viejas sin seleccion).
+        """
+        no_zz = [l for l in lineas_reales if not l.get("es_zz")]
+        if not seleccion:
+            return no_zz
+        by_sku = {l["sku"].upper(): l for l in no_zz if l.get("sku")}
+        out = []
+        for sel in seleccion:
+            sku = str((sel or {}).get("sku") or "").strip()
+            if not sku:
+                continue
+            real = by_sku.get(sku.upper())
+            if not real:
+                continue  # SKU que no pertenece a este documento -- se ignora
+            qty_raw = sel.get("cantidad")
+            if qty_raw is None:
+                qty_raw = sel.get("qty")
+            try:
+                qty_pedida = float(qty_raw or 0)
+            except Exception:
+                qty_pedida = 0.0
+            cantidad_real = real.get("cantidad") or 0
+            qty_final = max(0.0, min(qty_pedida, cantidad_real)) if cantidad_real else 0.0
+            if qty_final <= 0:
+                continue
+            out.append({"sku": real["sku"],
+                        "nombre": (sel.get("nombre") or real.get("nombre") or "Equipo"),
+                        "cantidad": qty_final})
+        return out
+
     # Correo saliente real al cliente: reusar el estandar de marca ILUS
     # (Regla: un solo `_ilus_email_master`/`_send_ilus_email`, no duplicar).
     # La plantilla de tickets vive en comm_templates (modulo='tickets',
@@ -1977,8 +2105,11 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     #  API — traer equipos a un ticket YA EXISTENTE desde un documento ERP
     #  (Daniel 2026-07-11: "ya tenemos las conexiones a random, así que no
-    #  debería hacérsenos difícil" -- reusa erp_engine, mismo motor que
-    #  "crear ticket desde documento", pero para un ticket que ya existe).
+    #  debería hacérsenos difícil"). Extendido 2026-07-12 para aceptar
+    #  seleccion GRANULAR de lineas (checkboxes del modal de busqueda
+    #  avanzada, con saldo por linea -- mismo motor que Retiros via
+    #  _tk_fetch_doc_lineas/_cubicador_fetch). Si no vienen `lineas`,
+    #  mantiene el comportamiento historico (todas las lineas no-ZZ).
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/equipos-desde-documento", methods=["POST"])
     @_tickets_required
@@ -1990,36 +2121,29 @@ def register_tickets_routes(app, ctx):
         nudo = (d.get("nudo") or "").strip()
         if not (tido and nudo):
             return jsonify({"ok": False, "error": "Falta tipo y número de documento"}), 400
-        try:
-            import erp_engine
-            doc = erp_engine.get_client().fetch_document(tido, nudo)
-        except Exception as _e:
-            print(f"[tk_equipos_desde_doc] error tid={tid} {tido}/{nudo}: {_e}", flush=True)
-            return jsonify({"ok": False, "error": "ERP no disponible ahora"}), 200
-        if not doc:
+
+        hdr, lineas_reales, via = _tk_fetch_doc_lineas(tido, nudo)
+        if not hdr:
             return jsonify({"ok": False, "error": "Documento no encontrado en el ERP"}), 200
 
-        lineas = []
-        for ln in (doc.get("lineas_raw") or []):
-            sku = str(ln.get("KOPRCT") or ln.get("koprct") or "").strip()
-            nombre = str(ln.get("NOKOPR") or ln.get("nokopr") or "").strip()
-            if sku or nombre:
-                lineas.append({"sku": sku, "nombre": nombre,
-                                "cantidad": ln.get("CAPRCO1") or ln.get("caprco1") or 1})
+        seleccion = d.get("lineas") or []
+        if not isinstance(seleccion, list):
+            seleccion = []
+        lineas = _tk_filtrar_lineas_seleccion(lineas_reales, seleccion)
         if not lineas:
-            return jsonify({"ok": False, "error": "El documento no tiene líneas de producto"}), 200
+            return jsonify({"ok": False, "error": "El documento no tiene líneas de producto seleccionables"}), 200
 
         agregados = 0
         try:
             mysql_execute(
                 "INSERT IGNORE INTO tk_ticket_documentos (ticket_id, erp_tido, erp_nudo, fecha) "
                 "VALUES (%s,%s,%s,%s)",
-                (tid, tido[:10], nudo[:40], str(doc.get("fecha") or "")[:10] or None))
+                (tid, tido[:10], nudo[:40], str(hdr.get("fecha") or "")[:10] or None))
         except Exception as _e:
             print(f"[tk_equipos_desde_doc] documento no registrado tid={tid}: {_e}", flush=True)
         for ln in lineas:
             try:
-                cant = int(ln.get("cantidad") or 1) if str(ln.get("cantidad") or 1).isdigit() else 1
+                cant = max(1, int(round(ln.get("cantidad") or 1)))
                 mysql_execute(
                     "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, sku, cantidad) "
                     "VALUES (%s,%s,%s,%s,%s)",
@@ -2029,8 +2153,10 @@ def register_tickets_routes(app, ctx):
             except Exception as _e:
                 print(f"[tk_equipos_desde_doc] equipo no insertado tid={tid} sku={ln.get('sku')}: {_e}", flush=True)
 
-        _tk_log(tid, "otro", f"{agregados} equipo(s) agregado(s) desde documento ERP {tido}-{nudo}")
-        return jsonify({"ok": True, "agregados": agregados, "total_lineas": len(lineas)})
+        _tk_log(tid, "otro", f"{agregados} equipo(s) agregado(s) desde documento ERP {tido}-{nudo}"
+                + (" (selección manual)" if seleccion else ""))
+        return jsonify({"ok": True, "agregados": agregados, "total_lineas": len(lineas),
+                         "seleccion_aplicada": bool(seleccion), "motor": via})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — adjuntos (subida a GCS via /f/<key>)
@@ -2152,43 +2278,40 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     #  API — crear TICKET a partir de uno o varios documentos ERP
     #  (cualquier tipo: factura, boleta, guia, orden, etc.)
+    #
+    #  Extendido 2026-07-12: cada documento puede traer, ADEMAS de
+    #  {tido, nudo}, una lista OPCIONAL `lineas` con la seleccion GRANULAR
+    #  hecha en el modal de busqueda avanzada (checkboxes con saldo real,
+    #  mismo patron que Retiros). Si un documento NO trae `lineas`,
+    #  mantiene el comportamiento historico: se importan TODAS sus lineas
+    #  no-ZZ (no rompe nada que ya funcione).
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/desde-documento", methods=["POST"])
     @_tickets_required
     def tk_api_crear_desde_documento():
         d = request.get_json(silent=True) or {}
-        docs = d.get("documentos") or []  # [{tido, nudo}]
+        docs = d.get("documentos") or []  # [{tido, nudo, lineas?:[{sku,cantidad,nombre}]}]
         if not docs:
             return jsonify({"ok": False, "error": "Falta al menos un documento"}), 400
-        try:
-            import erp_engine
-            engine = erp_engine.get_client()
-        except Exception as _e:
-            return jsonify({"ok": False, "error": f"ERP no disponible: {_e}"}), 200
 
         primero = None
         todas_lineas, docs_ok = [], []
         for item in docs[:10]:
-            tido = str(item.get("tido") or "").strip()
-            nudo = str(item.get("nudo") or "").strip()
+            tido = str((item or {}).get("tido") or "").strip()
+            nudo = str((item or {}).get("nudo") or "").strip()
             if not (tido and nudo):
                 continue
-            try:
-                doc = engine.fetch_document(tido, nudo)
-            except Exception as _e:
-                print(f"[tk_desde_documento] error {tido}/{nudo}: {_e}", flush=True)
-                doc = None
-            if not doc:
+            hdr, lineas_reales, via = _tk_fetch_doc_lineas(tido, nudo)
+            if not hdr:
                 continue
             if primero is None:
-                primero = doc
-            docs_ok.append({"tido": tido, "nudo": nudo, "fecha": doc.get("fecha")})
-            for ln in (doc.get("lineas_raw") or []):
-                sku = str(ln.get("KOPRCT") or ln.get("koprct") or "").strip()
-                nombre = str(ln.get("NOKOPR") or ln.get("nokopr") or "").strip()
-                if sku or nombre:
-                    todas_lineas.append({"sku": sku, "nombre": nombre,
-                                          "cantidad": ln.get("CAPRCO1") or ln.get("caprco1") or 1})
+                primero = hdr
+            docs_ok.append({"tido": tido, "nudo": nudo, "fecha": hdr.get("fecha")})
+            seleccion = (item or {}).get("lineas") or []
+            if not isinstance(seleccion, list):
+                seleccion = []
+            for ln in _tk_filtrar_lineas_seleccion(lineas_reales, seleccion):
+                todas_lineas.append(ln)
 
         if primero is None:
             return jsonify({"ok": False, "error": "Ningún documento fue encontrado en el ERP"}), 200
@@ -2234,11 +2357,14 @@ def register_tickets_routes(app, ctx):
                         continue
                     vistos.add(key)
                     try:
+                        try:
+                            cant = max(1, int(round(float(ln.get("cantidad") or 1))))
+                        except Exception:
+                            cant = 1
                         cur.execute(
                             "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad) "
                             "VALUES (%s,%s,%s,%s)",
-                            (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo",
-                             int(ln.get("cantidad") or 1) if str(ln.get("cantidad") or 1).isdigit() else 1))
+                            (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo", cant))
                     except Exception as _e:
                         print(f"[tk_desde_documento] equipo no insertado tid={tid} "
                               f"sku={ln.get('sku')}: {_e}", flush=True)
@@ -2327,6 +2453,306 @@ def register_tickets_routes(app, ctx):
                        "rut": r.get("rut") or ""}
                       for r in rows if (r.get("razon_social") or "").strip() or r.get("rut")]
         return jsonify({"ok": True, "resultados": resultados})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — ERP: "Búsqueda avanzada de productos" para TICKETS -- motor B
+    #  (Daniel 2026-07-12): "algo bien inteligente... que se busque por
+    #  factura, que se busque por RUT y que se asigne... que vea si tiene
+    #  saldo o no tiene saldo, tal cual como lo haciamos en los retiros".
+    #
+    #  Replica /retiros/api/buscar-erp (pickups_module.py) pero SIN
+    #  acoplarse a conceptos de retiros: el candado aca es "documento ya
+    #  asociado a ALGUN ticket" (tk_ticket_documentos + tk_tickets), no
+    #  "ya tiene retiro". No se toca pickups_module.py (regla: es
+    #  referencia de solo lectura).
+    #
+    #  100% READ-ONLY (Regla #4.1): unicamente SELECT via _random_sql_query
+    #  (whitelist SELECT/WITH, blacklist de escritura, autocommit=False,
+    #  siempre parametrizado con %s -- jamas f-strings con el VALOR de q;
+    #  los unicos f-strings arman placeholders fijos o la lista fija de
+    #  TIDOs, nunca datos de usuario).
+    #
+    #  Body JSON: {q: str, ticket_id?: int}
+    #  Response:  {ok, modo, documentos:[{tido,nudo,tido_display,
+    #              nudo_display,rut,razon_social,fecha,fecha_iso,
+    #              valor_neto,valor_total,estado_pago,saldo_zz,
+    #              saldo_real_unidades,tiene_saldo,n_lineas,ya_asociado,
+    #              asociado_ticket_id,asociado_numero_ticket,
+    #              asociado_es_este_ticket}], count, query}
+    #
+    #  Este endpoint SOLO entrega metadata + saldo agregado por documento
+    #  (igual que en retiros). Las lineas reales con saldo POR LINEA se
+    #  piden aparte contra el motor unico /api/erp/documento (ya generico,
+    #  ya calcula saldo -- no se duplica esa logica).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/erp/buscar-cliente-documentos", methods=["POST"])
+    @_tickets_required
+    def tk_api_erp_buscar_cliente_documentos():
+        d = request.get_json(silent=True) or {}
+        q = (d.get("q") or "").strip()
+        try:
+            ticket_id_ctx = int(d.get("ticket_id")) if d.get("ticket_id") else None
+        except Exception:
+            ticket_id_ctx = None
+        if len(q) < 3:
+            return jsonify({"ok": False, "error": "Mínimo 3 caracteres", "documentos": []}), 400
+        if not _random_sql_query:
+            return jsonify({"ok": True, "documentos": [], "modo": "", "count": 0, "query": q,
+                             "error": "Motor ERP no disponible", "sin_conexion": True})
+
+        q_clean = q.replace(".", "").replace(" ", "").replace("-", "").upper()
+        is_digits = q_clean.isdigit()
+        tidos_in = "','".join(("FCV", "BLV", "NVI", "NVV", "GDV", "GDP", "VD", "WEB"))
+
+        docs, modo = [], ""
+        try:
+            # ── Modo RUT (7-9 dígitos) ──────────────────────────────
+            if is_digits and 7 <= len(q_clean) <= 9:
+                modo = "rut"
+                rut_base = q_clean[:-1] if len(q_clean) >= 8 else q_clean
+                docs = _random_sql_query(f"""
+                    SELECT TOP 80
+                        e.IDMAEEDO,
+                        LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                        LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                        LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                        LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
+                        e.FEEMDO, e.VANEDO, e.VABRDO,
+                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
+                    FROM MAEEDO e
+                    WHERE (e.ENDO LIKE %s OR e.ENDO LIKE %s)
+                      AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                      AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                    ORDER BY e.FEEMDO DESC
+                """, (f"{rut_base}%", f"%{q_clean}%"), max_rows=80) or []
+
+            # ── Modo Número documento (1-7 dígitos) ─────────────────
+            if not docs and is_digits and 1 <= len(q_clean) <= 7:
+                modo = "numero"
+                nudo_padded = q_clean.zfill(10)
+                nudo_vd  = f"VD{q_clean.zfill(8)}"
+                nudo_web = f"WEB{q_clean.zfill(7)}"
+                docs = _random_sql_query(f"""
+                    SELECT TOP 30
+                        e.IDMAEEDO,
+                        LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                        LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                        LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                        LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
+                        e.FEEMDO, e.VANEDO, e.VABRDO,
+                        LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
+                    FROM MAEEDO e
+                    WHERE e.NUDO IN (%s, %s, %s)
+                      AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                      AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                    ORDER BY e.FEEMDO DESC
+                """, (nudo_padded, nudo_vd, nudo_web), max_rows=30) or []
+
+            # ── Modo Razón social (texto) ────────────────────────────
+            if not docs and not is_digits:
+                modo = "nombre"
+                q_like = f"%{q.upper()}%"
+                ruts = _random_sql_query("""
+                    SELECT TOP 20 LTRIM(RTRIM(RTEN)) AS rut,
+                                  LTRIM(RTRIM(COALESCE(NOKOENAMP, NOKOEN, ''))) AS razon
+                      FROM MAEEN
+                     WHERE (UPPER(NOKOEN) LIKE %s OR UPPER(COALESCE(NOKOENAMP,'')) LIKE %s)
+                       AND TIEN IN ('C','A')
+                """, (q_like, q_like)) or []
+                if ruts:
+                    rut_map = {r['rut']: r['razon'] for r in ruts if r.get('rut')}
+                    if rut_map:
+                        like_clauses = " OR ".join(["e.ENDO LIKE %s"] * len(rut_map))
+                        params = tuple(f"{rk}%" for rk in rut_map.keys())
+                        docs = _random_sql_query(f"""
+                            SELECT TOP 60
+                                e.IDMAEEDO,
+                                LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                                LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                                LTRIM(RTRIM(e.ENDO)) AS ENDO,
+                                LTRIM(RTRIM(COALESCE(e.SUENDO,''))) AS SUENDO,
+                                e.FEEMDO, e.VANEDO, e.VABRDO,
+                                LTRIM(RTRIM(COALESCE(e.ESPGDO,''))) AS ESPGDO
+                            FROM MAEEDO e
+                            WHERE ({like_clauses})
+                              AND LTRIM(RTRIM(e.TIDO)) IN ('{tidos_in}')
+                              AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                            ORDER BY e.FEEMDO DESC
+                        """, params, max_rows=60) or []
+
+            # ── Deduplicar por IDMAEEDO ──────────────────────────────
+            seen_ids, unique_docs = set(), []
+            for r in docs:
+                idm = r.get("IDMAEEDO")
+                if idm in seen_ids:
+                    continue
+                seen_ids.add(idm)
+                unique_docs.append(r)
+            docs = unique_docs
+
+            # ── Enriquecer: saldo agregado por doc + nombre por RUT ──
+            if docs:
+                idmaeedos = [r.get("IDMAEEDO") for r in docs if r.get("IDMAEEDO") is not None]
+                if idmaeedos:
+                    placeholders = ",".join(["%s"] * len(idmaeedos))
+                    try:
+                        saldo_rows = _random_sql_query(f"""
+                            SELECT d.IDMAEEDO,
+                                   COALESCE(SUM(CASE
+                                       WHEN UPPER(LTRIM(RTRIM(d.KOPRCT))) LIKE 'ZZ%%'
+                                            AND (d.CAPRCO1 - COALESCE(d.CAPRAD1,0)) > 0
+                                       THEN d.CAPRCO1 - COALESCE(d.CAPRAD1,0)
+                                       ELSE 0
+                                   END), 0) AS saldo_zz,
+                                   COALESCE(SUM(CASE
+                                       WHEN UPPER(LTRIM(RTRIM(d.KOPRCT))) NOT LIKE 'ZZ%%'
+                                            AND UPPER(LTRIM(RTRIM(COALESCE(d.ESLIDO,'')))) NOT IN ('C','T','TOTAL','CERRADO','DESPACHADO')
+                                            AND (d.CAPRCO1 - COALESCE(d.CAPRAD1,0) - COALESCE(d.CAPREX1,0) - COALESCE(d.CAPRNC1,0)) > 0
+                                       THEN (d.CAPRCO1 - COALESCE(d.CAPRAD1,0) - COALESCE(d.CAPREX1,0) - COALESCE(d.CAPRNC1,0))
+                                       ELSE 0
+                                   END), 0) AS saldo_real_unidades,
+                                   COUNT(*) AS n_lineas
+                              FROM MAEDDO d
+                             WHERE d.IDMAEEDO IN ({placeholders})
+                             GROUP BY d.IDMAEEDO
+                        """, tuple(idmaeedos), max_rows=len(idmaeedos)) or []
+                        sm = {s.get("IDMAEEDO"): s for s in saldo_rows}
+                    except Exception as e:
+                        print(f"[tk_buscar_cliente_docs] saldo lookup falló: {e}", flush=True)
+                        sm = {}
+                    for r in docs:
+                        s = sm.get(r.get("IDMAEEDO")) or {}
+                        r["saldo_zz"] = s.get("saldo_zz") or 0
+                        r["saldo_real_unidades"] = s.get("saldo_real_unidades") or 0
+                        r["n_lineas"] = s.get("n_lineas") or 0
+
+                ruts_needed = set()
+                for r in docs:
+                    endo = (r.get("ENDO") or "").strip()
+                    if not endo:
+                        continue
+                    rut_clean = endo.split("-")[0] if "-" in endo else endo
+                    if rut_clean and len(rut_clean) >= 4:
+                        ruts_needed.add(rut_clean)
+                ruts_needed.discard("")
+
+                nombre_map = {}
+                if ruts_needed:
+                    rph = ",".join(["%s"] * len(ruts_needed))
+                    try:
+                        nm_rows = _random_sql_query(f"""
+                            SELECT LTRIM(RTRIM(RTEN)) AS rut,
+                                   LTRIM(RTRIM(COALESCE(
+                                       NULLIF(LTRIM(RTRIM(NOKOENAMP)),''),
+                                       NOKOEN, ''
+                                   ))) AS razon
+                              FROM MAEEN
+                             WHERE LTRIM(RTRIM(RTEN)) IN ({rph})
+                        """, tuple(ruts_needed), max_rows=len(ruts_needed) * 4) or []
+                        for nm in nm_rows:
+                            rut = (nm.get("rut") or "").strip()
+                            razon = (nm.get("razon") or "").strip()
+                            if rut and razon and not nombre_map.get(rut):
+                                nombre_map[rut] = razon
+                    except Exception as e:
+                        print(f"[tk_buscar_cliente_docs] nombre lookup falló: {e}", flush=True)
+
+                for r in docs:
+                    endo = (r.get("ENDO") or "").strip()
+                    rut_clean = endo.split("-")[0] if "-" in endo else endo
+                    nombre = nombre_map.get(rut_clean, "") or (r.get("SUENDO") or "").strip()
+                    r["NOMBRE"] = nombre or "Consumidor final"
+
+        except PermissionError as pe:
+            return jsonify({"ok": False, "error": f"Bloqueado por seguridad: {pe}",
+                             "documentos": []}), 403
+        except Exception as exc:
+            print(f"[tk_buscar_cliente_docs] error inesperado: {exc}", flush=True)
+            return jsonify({"ok": False, "error": f"Error consultando ERP: {str(exc)[:200]}",
+                             "documentos": []})
+
+        # ── Calcular tido_display/nudo_display por doc (misma logica que
+        #    /retiros/api/buscar-erp: NVV con prefijo VD/WEB en NUDO se
+        #    muestra con el tido "real" que el usuario reconoce) ──
+        for r in docs:
+            nudo_raw = (r.get("NUDO") or "").strip()
+            tido_raw = (r.get("TIDO") or "").strip()
+            if tido_raw == "NVV" and nudo_raw.startswith("VD"):
+                r["_tido_display"] = "VD"
+                r["_nudo_display"] = nudo_raw[2:].lstrip("0") or "0"
+            elif tido_raw == "NVV" and nudo_raw.startswith("WEB"):
+                r["_tido_display"] = "WEB"
+                r["_nudo_display"] = nudo_raw[3:].lstrip("0") or "0"
+            else:
+                r["_tido_display"] = tido_raw
+                r["_nudo_display"] = nudo_raw.lstrip("0") or "0"
+
+        # ── Candado: doc ya asociado a ALGUN ticket (tk_ticket_documentos).
+        #    erp_tido/erp_nudo se guardan en formato DISPLAY (lo que el
+        #    operador tipeo/vio, ej. "FCV"/"12345" -- no el NUDO crudo
+        #    zero-padded de MAEEDO), asi que comparamos contra ese mismo
+        #    formato para que el match funcione. ──
+        ya_asociados = {}
+        try:
+            pares = sorted({(r["_tido_display"], r["_nudo_display"]) for r in docs
+                            if r.get("_tido_display") and r.get("_nudo_display")})
+            if pares:
+                placeholders = ",".join(["(%s,%s)"] * len(pares))
+                params = tuple(x for par in pares for x in par)
+                rows_doc = mysql_fetchall(
+                    f"SELECT td.ticket_id, td.erp_tido, td.erp_nudo, t.numero_ticket "
+                    f"FROM tk_ticket_documentos td "
+                    f"JOIN tk_tickets t ON t.id = td.ticket_id "
+                    f"WHERE (td.erp_tido, td.erp_nudo) IN ({placeholders})",
+                    params
+                ) or []
+                for r in rows_doc:
+                    key = f"{(r.get('erp_tido') or '').upper()}|{(r.get('erp_nudo') or '').strip()}"
+                    ya_asociados[key] = {"ticket_id": r.get("ticket_id"),
+                                          "numero_ticket": r.get("numero_ticket")}
+        except Exception as e:
+            print(f"[tk_buscar_cliente_docs] ya_asociados fallback: {e}", flush=True)
+
+        # ── Formatear respuesta ──────────────────────────────────────
+        out = []
+        for r in docs:
+            tido_raw = (r.get("TIDO") or "").strip()
+            nudo_raw = (r.get("NUDO") or "").strip()
+            tido_display = r["_tido_display"]
+            nudo_display = r["_nudo_display"]
+            fe = r.get("FEEMDO")
+            saldo_zz = float(r.get("saldo_zz") or 0)
+            saldo_real_unidades = float(r.get("saldo_real_unidades") or 0)
+            endo = (r.get("ENDO") or "").strip()
+            rut_clean = endo.split("-")[0] if "-" in endo else endo
+            key = f"{tido_display.upper()}|{nudo_display}"
+            asociado = ya_asociados.get(key)
+
+            out.append({
+                "idmaeedo":     r.get("IDMAEEDO"),
+                "tido":         tido_raw,
+                "nudo":         nudo_raw,
+                "tido_display": tido_display,
+                "nudo_display": nudo_display,
+                "rut":          rut_clean,
+                "razon_social": (r.get("NOMBRE") or "").strip().title(),
+                "fecha":        fe.strftime("%d/%m/%Y") if fe else "",
+                "fecha_iso":    fe.strftime("%Y-%m-%d") if fe else "",
+                "valor_neto":   float(r.get("VANEDO") or 0),
+                "valor_total":  float(r.get("VABRDO") or 0),
+                "estado_pago":  (r.get("ESPGDO") or "").strip(),
+                "saldo_zz":            saldo_zz,
+                "saldo_real_unidades": saldo_real_unidades,
+                "tiene_saldo":         saldo_real_unidades > 0,
+                "n_lineas":            int(r.get("n_lineas") or 0),
+                "ya_asociado":            bool(asociado),
+                "asociado_ticket_id":     (asociado or {}).get("ticket_id"),
+                "asociado_numero_ticket": (asociado or {}).get("numero_ticket"),
+                "asociado_es_este_ticket": bool(
+                    asociado and ticket_id_ctx and asociado.get("ticket_id") == ticket_id_ctx),
+            })
+
+        return jsonify({"ok": True, "modo": modo, "documentos": out, "count": len(out), "query": q})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — ERP: buscar EQUIPO/producto (catalogo general, bodega de

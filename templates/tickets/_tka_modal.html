@@ -1,0 +1,1351 @@
+{# ══════════════════════════════════════════════════════════════════════
+   TKA — "Búsqueda avanzada de productos" para TICKETS
+   ────────────────────────────────────────────────────────────────────
+   Puerto del modal "rba-*" de templates/retiros/internal_detail.html
+   (NO SE TOCA ese archivo — es solo referencia de lectura). Prefijo
+   "tka-" para no chocar con nada existente.
+
+   Reusado en DOS lugares con el MISMO componente (una sola definición,
+   este include) parametrizado por contexto vía tkaOpen(opts):
+     - templates/tickets/list.html  → opts.mode = 'crear'   (ticket nuevo)
+     - templates/tickets/ficha.html → opts.mode = 'agregar' (ticket TID ya existente)
+
+   Backend (tickets_module.py, ya construido):
+     - POST /api/erp/documento                          (global, saldo real por línea)
+     - POST /tickets/api/erp/buscar-cliente-documentos  ({q, ticket_id})
+     - POST /tickets/api/tickets/desde-documento         (crear ticket, multi-doc)
+     - POST /tickets/api/tickets/<tid>/equipos-desde-documento (agregar a ticket existente)
+
+   Regla #1: nada de alert()/confirm()/prompt() nativos — solo ilusToast/
+   ilusConfirm/ilusAlert. Regla #2: paleta ILUS. Regla #4.1: solo lectura
+   contra el ERP (ambos endpoints GET/POST son SELECT-only en el backend).
+══════════════════════════════════════════════════════════════════════ #}
+<style>
+  :root{
+    /* Regla #2 CLAUDE.md: rojo acento #dc2626 (el --ilus-red global de
+       base.html/style.css es #CC0000 -- igual que Retiros, forzamos el
+       valor de marca aca en vez de heredar el global). */
+    --tka-red:          #dc2626;
+    --tka-gray-2:       #e5e7eb;
+    --tka-ease-out:     cubic-bezier(.4, 0, .2, 1);
+    --tka-ease-spring:  cubic-bezier(.34, 1.56, .64, 1);
+    --tka-ease-in-out:  cubic-bezier(.4, 0, .2, 1);
+    --tka-shadow-soft-1: 0 1px 0 rgba(255,255,255,.6) inset, 0 1px 2px rgba(15,23,42,.04), 0 8px 24px -8px rgba(15,23,42,.06);
+    --tka-shadow-soft-2: 0 1px 0 rgba(255,255,255,.7) inset, 0 1px 3px rgba(15,23,42,.05), 0 12px 32px -10px rgba(15,23,42,.10);
+    --tka-shadow-glow:   0 0 0 1px rgba(220,38,38,.08), 0 1px 2px rgba(220,38,38,.04), 0 14px 28px -10px rgba(220,38,38,.25);
+  }
+
+  .tka-backdrop{
+    position:fixed;inset:0;z-index:1085;
+    background:rgba(15,23,42,.55);
+    backdrop-filter:blur(8px) saturate(1.2);
+    -webkit-backdrop-filter:blur(8px) saturate(1.2);
+    opacity:0;pointer-events:none;
+    transition:opacity .35s var(--tka-ease-out);
+  }
+  .tka-backdrop.is-open{opacity:1;pointer-events:auto}
+  .tka-modal{
+    position:fixed;z-index:1086;
+    inset:auto 0 0 0;
+    width:100%;max-width:980px;margin:0 auto;
+    background:rgba(255,255,255,.98);
+    backdrop-filter:blur(24px) saturate(1.5);
+    -webkit-backdrop-filter:blur(24px) saturate(1.5);
+    border-radius:24px 24px 0 0;
+    box-shadow:
+      0 -2px 0 rgba(255,255,255,.7) inset,
+      0 -1px 4px rgba(15,23,42,.06),
+      0 -32px 80px -16px rgba(15,23,42,.40);
+    transform:translateY(100%);opacity:0;
+    transition:transform .5s var(--tka-ease-spring), opacity .35s var(--tka-ease-out), visibility 0s linear .5s;
+    max-height:92vh;
+    max-height:92dvh;
+    overflow:hidden;
+    display:flex;flex-direction:column;
+    pointer-events:none;
+    visibility:hidden;
+  }
+  @media(min-width:768px){
+    .tka-modal{
+      inset:50% 0 auto 0;top:50%;
+      transform:translateY(calc(-50% + 40px));
+      border-radius:20px;
+      max-height:88vh;
+    }
+  }
+  .tka-modal.is-open{
+    transform:translateY(0);opacity:1;
+    pointer-events:auto;visibility:visible;
+    transition:transform .5s var(--tka-ease-spring), opacity .35s var(--tka-ease-out), visibility 0s linear 0s;
+  }
+  @media(min-width:768px){
+    .tka-modal.is-open{transform:translateY(-50%)}
+  }
+  @media(prefers-reduced-motion:reduce){
+    .tka-modal,.tka-backdrop{transition:opacity .2s ease}
+    .tka-modal{transform:none}
+  }
+
+  .tka-handle{
+    width:42px;height:5px;border-radius:50px;background:#cbd5e1;
+    margin:10px auto 0;flex-shrink:0;
+  }
+  @media(min-width:768px){.tka-handle{display:none}}
+
+  .tka-head{
+    padding:14px 24px 12px;
+    border-bottom:1px solid var(--tka-gray-2);
+    display:flex;align-items:center;justify-content:space-between;gap:14px;flex-shrink:0;
+    position:relative;
+  }
+  .tka-head h4{
+    margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.75rem;
+    color:#0a0a0a;letter-spacing:.01em;line-height:1;
+    display:flex;align-items:center;gap:10px;
+  }
+  .tka-head h4::before{
+    content:'';width:4px;height:22px;background:var(--tka-red);border-radius:50px;
+    box-shadow:0 0 12px rgba(220,38,38,.45);
+  }
+  .tka-close{
+    width:44px;height:44px;border-radius:10px;background:#f3f4f6;border:none;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    font-size:1.2rem;color:#6b7280;
+    transition:all .18s var(--tka-ease-out);
+  }
+  .tka-close:hover{background:var(--tka-red);color:#fff;transform:scale(1.05)}
+  .tka-close:active{transform:scale(.92)}
+
+  .tka-tabs{
+    display:flex;border-bottom:1px solid var(--tka-gray-2);
+    background:#fafafa;flex-shrink:0;
+  }
+  .tka-tab{
+    flex:1;padding:14px 18px;background:transparent;border:none;
+    font-size:.94rem;font-weight:800;color:#6b7280;cursor:pointer;
+    border-bottom:3px solid transparent;
+    transition:all .2s var(--tka-ease-out);
+    display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    position:relative;letter-spacing:.01em;
+    min-height:44px;
+  }
+  .tka-tab:hover{color:#0a0a0a;background:#fff}
+  .tka-tab.is-active{
+    color:var(--tka-red);background:#fff;border-bottom-color:var(--tka-red);
+  }
+  .tka-tab.is-active::after{
+    content:'';position:absolute;left:50%;bottom:-3px;width:24px;height:3px;
+    background:var(--tka-red);border-radius:50px;
+    transform:translateX(-50%);
+    box-shadow:0 0 10px rgba(220,38,38,.6);
+  }
+
+  .tka-body{
+    padding:18px 24px;overflow-y:auto;flex:1;
+    scroll-behavior:smooth;
+    -webkit-overflow-scrolling:touch;
+  }
+  .tka-body::-webkit-scrollbar{width:8px;height:8px}
+  .tka-body::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:50px}
+  .tka-body::-webkit-scrollbar-thumb:hover{background:#94a3b8}
+
+  .tka-search-row{
+    display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;
+  }
+  .tka-search-row select, .tka-search-row input{
+    border:1.5px solid var(--tka-gray-2);border-radius:10px;padding:11px 14px;
+    font-size:16px;font-weight:600;background:#fff;
+    transition:border-color .2s var(--tka-ease-out), box-shadow .2s var(--tka-ease-out);
+  }
+  .tka-search-row select:focus, .tka-search-row input:focus{
+    outline:none;border-color:var(--tka-red);
+    box-shadow:0 0 0 3px rgba(220,38,38,.15);
+  }
+  .tka-search-row input[type="search"], .tka-search-row input[type="text"]{
+    flex:1;min-width:200px;font-family:'Inter','Segoe UI',sans-serif;
+  }
+  .tka-search-row .tka-btn-search{
+    background:linear-gradient(180deg,#0a0a0a 0%, #1c1c1c 100%);color:#fff;border:none;
+    padding:11px 22px;border-radius:10px;font-size:.94rem;font-weight:800;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;
+    box-shadow:var(--tka-shadow-soft-1);
+    transition:all .2s var(--tka-ease-out);
+    min-height:44px;
+  }
+  .tka-search-row .tka-btn-search:hover{
+    background:linear-gradient(180deg,var(--tka-red) 0%, #a60000 100%);
+    transform:translateY(-1px);box-shadow:var(--tka-shadow-glow);
+  }
+  .tka-search-row .tka-btn-search:active{transform:translateY(0) scale(.97)}
+  .tka-search-row .tka-btn-search:disabled{opacity:.6;cursor:not-allowed;transform:none}
+
+  .tka-results{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  .tka-doc-card{
+    background:#fff;border:1.5px solid var(--tka-gray-2);border-radius:12px;
+    overflow:hidden;
+    transition:border-color .2s var(--tka-ease-out), box-shadow .2s var(--tka-ease-out), transform .2s var(--tka-ease-out);
+    opacity:0;transform:translateY(8px);
+    animation:tkaDocIn .4s var(--tka-ease-spring) forwards;
+  }
+  @keyframes tkaDocIn{to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.tka-doc-card{animation:none;opacity:1;transform:none}}
+  .tka-doc-card:hover{border-color:#9ca3af;box-shadow:var(--tka-shadow-soft-2)}
+  .tka-doc-card.is-already{opacity:.55;background:#f9fafb}
+  .tka-doc-card.is-no-saldo{border-color:#fdba74;background:linear-gradient(180deg,#fff8e1 0%, #fff 80%)}
+  .tka-doc-head{
+    padding:14px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:12px;
+    cursor:pointer;user-select:none;
+  }
+  .tka-doc-num{
+    font-family:monospace;font-weight:900;color:var(--tka-red);font-size:1.08rem;
+    flex-shrink:0;min-width:140px;
+    display:flex;align-items:center;gap:6px;
+  }
+  .tka-doc-num .badge-tipo{
+    background:#0a0a0a;color:#fff;border-radius:50px;padding:3px 10px;
+    font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  }
+  .tka-doc-info{flex:1;min-width:180px;display:flex;flex-direction:column;gap:3px}
+  .tka-doc-info .td-cli{font-size:.96rem;font-weight:700;color:#0a0a0a;line-height:1.25}
+  .tka-doc-info .td-meta{font-size:.82rem;color:#6b7280;display:flex;gap:10px;flex-wrap:wrap}
+  .tka-doc-info .td-meta .td-rut{font-family:monospace;font-weight:600;font-size:.86rem}
+  .tka-doc-totals{display:flex;gap:6px;flex-wrap:wrap;font-size:.78rem}
+  .tka-doc-totals .badge-pill{
+    background:#f3f4f6;color:#374151;border:1px solid var(--tka-gray-2);
+    border-radius:50px;padding:4px 11px;font-weight:700;font-size:.74rem;
+    text-transform:uppercase;letter-spacing:.04em;display:inline-flex;align-items:center;gap:4px;
+  }
+  .tka-doc-totals .badge-pill.ok{background:#dcfce7;color:#166534;border-color:#86efac}
+  .tka-doc-totals .badge-pill.warn{background:#fff8e1;color:#92400e;border-color:#fde68a}
+  .tka-doc-totals .badge-pill.lock{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+
+  .tka-doc-actions{display:flex;gap:6px;flex-shrink:0;align-items:center}
+  .tka-doc-add-btn{
+    background:#16a34a;color:#fff;border:none;border-radius:9px;padding:9px 14px;
+    font-size:.78rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    letter-spacing:.02em;
+    transition:all .2s var(--tka-ease-out);
+    box-shadow:0 1px 0 rgba(255,255,255,.2) inset, 0 4px 10px -2px rgba(22,163,74,.30);
+    min-height:44px;
+  }
+  .tka-doc-add-btn:hover{background:#15803d;transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.2) inset, 0 8px 16px -4px rgba(22,163,74,.40)}
+  .tka-doc-add-btn:active{transform:translateY(0) scale(.96)}
+  .tka-doc-add-btn:disabled{background:#9ca3af;cursor:not-allowed;transform:none;box-shadow:none}
+  .tka-doc-toggle{
+    background:transparent;border:1px solid var(--tka-gray-2);color:#6b7280;cursor:pointer;
+    width:44px;height:44px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    transition:all .2s var(--tka-ease-out);font-size:1.1rem;
+  }
+  .tka-doc-toggle:hover{background:#f3f4f6;color:#0a0a0a;border-color:#9ca3af}
+  .tka-doc-card.is-open .tka-doc-toggle{transform:rotate(180deg);background:var(--tka-red);color:#fff;border-color:var(--tka-red)}
+
+  .tka-doc-body{
+    border-top:1px solid var(--tka-gray-2);background:#fafafa;padding:14px 16px;
+    display:none;
+    animation:tkaBodyIn .35s var(--tka-ease-out);
+  }
+  @keyframes tkaBodyIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .tka-doc-card.is-open .tka-doc-body{display:block}
+
+  .tka-line{
+    display:grid;grid-template-columns:32px 110px 1fr 110px 80px;
+    gap:10px;align-items:center;
+    padding:10px 12px;background:#fff;border:1px solid var(--tka-gray-2);border-radius:10px;
+    margin-bottom:6px;font-size:.92rem;
+    transition:all .2s var(--tka-ease-out);
+  }
+  .tka-line:hover{border-color:#9ca3af;background:#fdfdfd}
+  .tka-line.is-zero{opacity:.6;background:#fafafa}
+  .tka-line.is-zero .tka-chk{opacity:.65}
+  .tka-line.is-zero:hover{opacity:1;background:#fff8e1}
+  .tka-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
+  .tka-line-tag-zero{
+    display:inline-flex;align-items:center;gap:3px;
+    font-size:.74rem;font-weight:700;color:#16a34a;
+    background:#dcfce7;border:1px solid #86efac;
+    padding:2px 8px;border-radius:50px;margin-left:6px;
+    letter-spacing:.02em;text-transform:uppercase;cursor:help;
+  }
+  .tka-line-tag-zero i{font-size:.86rem}
+  @media(max-width:600px){
+    .tka-line{grid-template-columns:32px 1fr;gap:8px}
+    .tka-line .ln-sku,.tka-line .ln-qty,.tka-line .ln-qty-input{grid-column:2}
+  }
+  @media(max-width:430px){
+    .tka-doc-num{min-width:100%}
+    .tka-doc-info{min-width:100%}
+  }
+  .tka-line .ln-sku{font-family:monospace;font-size:.86rem;color:#6b7280;font-weight:700}
+  .tka-line .ln-desc{color:#0f172a;font-weight:600;line-height:1.35;font-size:.95rem}
+  .tka-line .ln-qty{
+    text-align:center;font-weight:800;color:#0a0a0a;
+    font-variant-numeric:tabular-nums;font-size:.92rem;
+    display:flex;flex-direction:column;gap:1px;align-items:center;
+  }
+  .tka-line .ln-qty .ln-qty-saldo{color:#16a34a;font-size:.84rem}
+  .tka-line .ln-qty .ln-qty-saldo-zero{color:#9ca3af;font-size:.78rem;text-decoration:line-through}
+  .tka-line .ln-qty-input{
+    border:1.5px solid var(--tka-gray-2);border-radius:8px;padding:6px 8px;
+    font-size:16px;font-weight:700;text-align:center;
+    font-variant-numeric:tabular-nums;
+    width:100%;max-width:82px;
+  }
+  .tka-line .ln-qty-input:focus{outline:none;border-color:var(--tka-red);box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+  .tka-line .ln-qty-input:disabled{background:#f3f4f6;color:#9ca3af;cursor:not-allowed}
+
+  .tka-chk{
+    width:24px;height:24px;border-radius:6px;border:2px solid #cbd5e1;
+    background:#fff;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    transition:all .2s var(--tka-ease-out);
+    flex-shrink:0;position:relative;
+  }
+  .tka-chk:hover{border-color:#9ca3af}
+  .tka-chk input{
+    position:absolute;opacity:0;width:100%;height:100%;cursor:pointer;
+    top:0;left:0;margin:0;
+  }
+  .tka-chk input:disabled{cursor:not-allowed}
+  .tka-chk input:disabled + .tka-chk-mark{opacity:.35}
+  .tka-chk.is-checked{
+    background:var(--tka-red);border-color:var(--tka-red);
+    box-shadow:0 4px 10px -2px rgba(220,38,38,.40);
+  }
+  .tka-chk-mark{
+    color:#fff;font-size:.94rem;font-weight:900;line-height:1;
+    transform:scale(0);transition:transform .25s var(--tka-ease-spring);
+  }
+  .tka-chk.is-checked .tka-chk-mark{transform:scale(1)}
+  @media(prefers-reduced-motion:reduce){.tka-chk-mark{transition:none}}
+
+  .tka-empty{
+    text-align:center;padding:46px 20px;color:#6b7280;
+  }
+  .tka-empty .tka-empty-icon{
+    font-size:3rem;opacity:.35;display:block;margin-bottom:10px;
+    animation:tkaEmptyFloat 3s var(--tka-ease-in-out) infinite;
+  }
+  @keyframes tkaEmptyFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  @media(prefers-reduced-motion:reduce){.tka-empty .tka-empty-icon{animation:none}}
+  .tka-empty h6{font-size:1.1rem;font-weight:800;color:#0a0a0a;margin:0 0 4px}
+  .tka-empty p{font-size:.92rem;margin:0;line-height:1.5}
+
+  .tka-skel{display:flex;flex-direction:column;gap:10px;padding:6px 0}
+  .tka-skel-row{
+    height:64px;border-radius:12px;
+    background:linear-gradient(90deg,#f3f4f6 25%,#fafafa 50%,#f3f4f6 75%);
+    background-size:200% 100%;
+    animation:tkaShimmer 1.5s var(--tka-ease-out) infinite;
+    box-shadow:var(--tka-shadow-soft-1);
+  }
+  @keyframes tkaShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  .tka-skel-row:nth-child(2){animation-delay:.1s;opacity:.85}
+  .tka-skel-row:nth-child(3){animation-delay:.2s;opacity:.7}
+  .tka-skel-row:nth-child(4){animation-delay:.3s;opacity:.55}
+  @media(prefers-reduced-motion:reduce){.tka-skel-row{animation:none}}
+
+  .tka-loading-text{
+    font-size:.84rem;font-weight:600;color:#6b7280;text-align:center;
+    padding:8px;letter-spacing:.02em;
+  }
+  .tka-loading-text .dot1, .tka-loading-text .dot2, .tka-loading-text .dot3{
+    display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--tka-red);
+    margin:0 2px;animation:tkaLoadDot 1.4s var(--tka-ease-in-out) infinite;
+  }
+  .tka-loading-text .dot2{animation-delay:.16s}
+  .tka-loading-text .dot3{animation-delay:.32s}
+  @keyframes tkaLoadDot{0%,80%,100%{transform:scale(.7);opacity:.5}40%{transform:scale(1);opacity:1}}
+
+  .tka-foot{
+    flex-shrink:0;padding:14px 24px;
+    padding-bottom:calc(14px + env(safe-area-inset-bottom, 0px));
+    background:rgba(255,255,255,.96);
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    border-top:1px solid var(--tka-gray-2);
+    display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    box-shadow:0 -8px 24px -16px rgba(15,23,42,.16);
+  }
+  .tka-counter{
+    font-size:.8rem;color:#6b7280;font-weight:600;line-height:1.3;
+  }
+  .tka-counter strong{color:#0a0a0a;font-weight:900;font-size:.92rem}
+  .tka-counter .tka-counter-pill{
+    display:inline-block;background:var(--tka-red);color:#fff;
+    padding:2px 9px;border-radius:50px;font-weight:900;font-size:.74rem;
+    margin-right:6px;letter-spacing:.02em;
+    transition:transform .25s var(--tka-ease-spring);
+  }
+  .tka-counter .tka-counter-pill.is-bump{animation:tkaBump .5s var(--tka-ease-spring)}
+  @keyframes tkaBump{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
+  .tka-btn-cancel{
+    background:#f3f4f6;color:#374151;border:none;border-radius:11px;padding:12px 20px;
+    font-size:.9rem;font-weight:700;cursor:pointer;min-height:44px;
+    transition:all .2s var(--tka-ease-out);
+  }
+  .tka-btn-cancel:hover{background:#e5e7eb}
+  .tka-btn-assoc{
+    background:linear-gradient(180deg,var(--tka-red) 0%, #c10000 100%);
+    color:#fff;border:none;border-radius:11px;padding:12px 22px;
+    font-size:.92rem;font-weight:900;cursor:pointer;
+    display:inline-flex;align-items:center;gap:8px;
+    letter-spacing:.02em;min-height:44px;
+    box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 8px 18px -4px rgba(220,38,38,.40);
+    transition:all .2s var(--tka-ease-out);
+    position:relative;overflow:hidden;
+  }
+  .tka-btn-assoc:hover{
+    background:linear-gradient(180deg,#a60000 0%, #8b0000 100%);
+    transform:translateY(-2px);
+    box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 14px 28px -6px rgba(220,38,38,.50);
+  }
+  .tka-btn-assoc:active{transform:translateY(-1px) scale(.97)}
+  .tka-btn-assoc:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+
+  .tka-mod-hint{
+    background:linear-gradient(135deg,#dbeafe 0%, #e0e7ff 100%);
+    border:1px solid #93c5fd;border-radius:10px;
+    padding:10px 14px;margin-bottom:14px;
+    font-size:.82rem;color:#1e3a8a;
+    display:flex;align-items:center;gap:10px;
+  }
+  .tka-mod-hint i{color:#1d4ed8;font-size:1.1rem;flex-shrink:0}
+
+  .tka-master-bar{
+    display:flex;align-items:center;justify-content:space-between;
+    background:#fafafa;border:1.5px solid var(--tka-gray-2);border-radius:10px;
+    padding:9px 14px;margin-bottom:10px;font-size:.84rem;
+    gap:10px;flex-wrap:wrap;
+  }
+  .tka-master-bar label{
+    display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+    font-weight:700;color:#0a0a0a;
+  }
+  .tka-master-bar .tka-master-info{color:#6b7280;font-size:.78rem}
+
+  @media(max-width:360px){
+    .tka-head h4{font-size:1.45rem}
+    .tka-body{padding:14px 14px}
+    .tka-foot{padding:12px 14px}
+  }
+</style>
+
+<div class="tka-backdrop" id="tkaBackdrop" onclick="tkaClose()" aria-hidden="true"></div>
+<div class="tka-modal" id="tkaModal" role="dialog" aria-modal="true" aria-labelledby="tkaTitle" aria-hidden="true">
+  <div class="tka-handle"></div>
+  <div class="tka-head">
+    <h4 id="tkaTitle"><i class="bi bi-stars" style="color:var(--tka-red);font-size:1.1rem"></i>Búsqueda avanzada de productos</h4>
+    <button type="button" class="tka-close" onclick="tkaClose()" aria-label="Cerrar">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+  <div class="tka-tabs" role="tablist">
+    <button type="button" class="tka-tab is-active" role="tab" id="tkaTabDoc" onclick="tkaSetTab('doc')">
+      <i class="bi bi-receipt"></i><span>Por documento</span>
+    </button>
+    <button type="button" class="tka-tab" role="tab" id="tkaTabCli" onclick="tkaSetTab('cli')">
+      <i class="bi bi-person-vcard"></i><span>Por RUT / nombre</span>
+    </button>
+  </div>
+  <div class="tka-body" id="tkaBody">
+    <div id="tkaPanelDoc" class="tka-panel">
+      <div class="tka-mod-hint">
+        <i class="bi bi-info-circle"></i>
+        <div>Ingresa <strong>tipo + número</strong> del documento (factura, boleta, guía…). Te mostraremos sus productos con saldo pendiente para que selecciones cuáles van al ticket.</div>
+      </div>
+      <div class="tka-search-row">
+        <select id="tkaDocTido" title="Tipo de documento">
+          <option value="FCV">FCV · Factura</option>
+          <option value="BLV">BLV · Boleta</option>
+          <option value="VD">VD · N. Venta</option>
+          <option value="WEB">WEB · N. Venta Web</option>
+          <option value="NVI">NVI · N. Venta Int.</option>
+          <option value="GDV">GDV · Guía despacho</option>
+        </select>
+        <input id="tkaDocNudo" type="text" placeholder="N° del documento (ej: 12345)" inputmode="numeric">
+        <button type="button" class="tka-btn-search" id="tkaDocBtn" onclick="tkaBuscarPorDoc()">
+          <i class="bi bi-search"></i><span>Buscar líneas</span>
+        </button>
+      </div>
+      <div id="tkaDocResult">
+        <div class="tka-empty">
+          <i class="bi bi-receipt tka-empty-icon"></i>
+          <h6>Buscar productos de un documento</h6>
+          <p>Ingresa tipo + número arriba y te mostramos sus líneas con saldo disponible.</p>
+        </div>
+      </div>
+    </div>
+    <div id="tkaPanelCli" class="tka-panel" style="display:none">
+      <div class="tka-mod-hint">
+        <i class="bi bi-lightbulb"></i>
+        <div>Ingresa <strong>RUT</strong> (con o sin puntos) o <strong>nombre del cliente</strong>. Te traemos todos sus documentos del ERP con su estado de saldo. Expande cada uno para ver y seleccionar productos específicos.</div>
+      </div>
+      <div class="tka-search-row">
+        <input id="tkaCliQ" type="search" placeholder="RUT o razón social… (ej: 76123456 o Sportlife)" autocomplete="off">
+        <button type="button" class="tka-btn-search" id="tkaCliBtn" onclick="tkaBuscarPorCliente()">
+          <i class="bi bi-search"></i><span>Buscar cliente</span>
+        </button>
+      </div>
+      <div id="tkaCliResult">
+        <div class="tka-empty">
+          <i class="bi bi-person-vcard tka-empty-icon"></i>
+          <h6>Buscar todos los documentos de un cliente</h6>
+          <p>Útil cuando el cliente trae varias facturas a la vez. Mostramos todos sus docs ERP en una sola lista.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tka-foot">
+    <div class="tka-counter" id="tkaCounter">
+      <span class="tka-counter-pill" id="tkaCounterPill">0</span>
+      <span id="tkaCounterLabel">productos seleccionados</span> · <strong id="tkaCounterKg">0 u.</strong> · <strong id="tkaCounterM3">0 líneas</strong>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" class="tka-btn-cancel" onclick="tkaClose()">Cancelar</button>
+      <button type="button" class="tka-btn-assoc" id="tkaAssocBtn" onclick="tkaAsociarSeleccion()" disabled>
+        <i class="bi bi-box-arrow-in-down"></i><span>Asociar</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════
+//  TKA — Búsqueda avanzada de productos (Tickets)
+//  Puerto de _RBA/rba* (templates/retiros/internal_detail.html, solo
+//  lectura). Contexto parametrizable vía tkaOpen({mode, ticketId, onDone}):
+//    mode='crear'   → crea un ticket NUEVO con las líneas seleccionadas.
+//    mode='agregar' → agrega líneas al ticket EXISTENTE ticketId.
+// ════════════════════════════════════════════════════════════════════
+const _TKA = {
+  open: false,
+  tab:  'doc',
+  selDoc: new Map(),
+  selCli: new Map(),
+  loaded: { docHeader: null, cliQuery: null },
+  ctx: { mode: 'crear', ticketId: null, onDone: null },
+  _liveTimer: null,
+};
+
+// Helpers self-contenidos (no dependen del orden de <script> de la página host)
+function _tkaEsc(s){ return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+async function _tkaFetchJsonSafe(url, opts){
+  try{
+    const r = await fetch(url, Object.assign({}, opts, {
+      headers: Object.assign({}, (opts && opts.headers) || {}, {
+        'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json'
+      })
+    }));
+    let d;
+    try{ d = await r.json(); }
+    catch(_){
+      let msg = 'Respuesta inesperada del servidor';
+      if (r.status === 401 || r.status === 403) msg = 'Sesión expirada o sin permiso';
+      else if (r.status === 404) msg = 'No encontrado';
+      else if (r.status >= 502 && r.status <= 504) msg = 'Servidor no disponible, reintenta';
+      else if (r.status >= 500) msg = 'Error interno del servidor';
+      return { ok:false, error: msg, _not_json:true, _http_status: r.status };
+    }
+    d._http_status = r.status;
+    return d;
+  }catch(e){
+    return { ok:false, error: 'Sin conexión: ' + (e.message||'error de red'), _not_json:true, _http_status:0 };
+  }
+}
+
+function _tkaResetEstado(){
+  _TKA.selDoc.clear();
+  _TKA.selCli.clear();
+  _TKA.loaded.docHeader = null;
+  _TKA.loaded.cliQuery = null;
+  _TKA.tab = 'doc';
+
+  const inpNudo = document.getElementById('tkaDocNudo');
+  if (inpNudo) inpNudo.value = '';
+  const inpCli = document.getElementById('tkaCliQ');
+  if (inpCli) inpCli.value = '';
+  const selTido = document.getElementById('tkaDocTido');
+  if (selTido) selTido.selectedIndex = 0;
+
+  const docRes = document.getElementById('tkaDocResult');
+  if (docRes){
+    docRes.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-receipt tka-empty-icon"></i>
+      <h6>Buscar productos de un documento</h6>
+      <p>Ingresa tipo + número arriba y te mostramos sus líneas con saldo disponible.</p>
+    </div>`;
+  }
+  const cliRes = document.getElementById('tkaCliResult');
+  if (cliRes){
+    cliRes.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-person-vcard tka-empty-icon"></i>
+      <h6>Buscar todos los documentos de un cliente</h6>
+      <p>Útil cuando el cliente trae varias facturas a la vez. Mostramos todos sus docs ERP en una sola lista.</p>
+    </div>`;
+  }
+
+  const tabDoc = document.getElementById('tkaTabDoc');
+  const tabCli = document.getElementById('tkaTabCli');
+  const panelDoc = document.getElementById('tkaPanelDoc');
+  const panelCli = document.getElementById('tkaPanelCli');
+  if (tabDoc) tabDoc.classList.add('is-active');
+  if (tabCli) tabCli.classList.remove('is-active');
+  if (panelDoc) panelDoc.style.display = '';
+  if (panelCli) panelCli.style.display = 'none';
+
+  if (_TKA._liveTimer){ clearInterval(_TKA._liveTimer); _TKA._liveTimer = null; }
+  try{ tkaUpdateCounter(); }catch(_){}
+}
+
+// tkaOpen({mode:'crear'|'agregar', ticketId, onDone, rutPrefill})
+function tkaOpen(opts){
+  opts = opts || {};
+  _tkaResetEstado();
+  _TKA.ctx = {
+    mode: opts.mode === 'agregar' ? 'agregar' : 'crear',
+    ticketId: opts.ticketId || null,
+    onDone: (typeof opts.onDone === 'function') ? opts.onDone : null,
+    rutPrefill: opts.rutPrefill || '',
+  };
+
+  const assocBtn = document.getElementById('tkaAssocBtn');
+  if (assocBtn){
+    const lbl = assocBtn.querySelector('span');
+    if (lbl) lbl.textContent = _TKA.ctx.mode === 'crear' ? 'Crear ticket' : 'Agregar al ticket';
+  }
+
+  _TKA.open = true;
+  const bd = document.getElementById('tkaBackdrop');
+  const md = document.getElementById('tkaModal');
+  bd.classList.add('is-open');
+  md.classList.add('is-open');
+  bd.setAttribute('aria-hidden', 'false');
+  md.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+
+  setTimeout(()=>{
+    if (_TKA.tab === 'doc'){
+      const i = document.getElementById('tkaDocNudo');
+      if (i) i.focus();
+    } else {
+      const i = document.getElementById('tkaCliQ');
+      if (i){
+        if (!i.value && _TKA.ctx.rutPrefill){
+          const clean = String(_TKA.ctx.rutPrefill).replace(/[.\-\s]/g, '');
+          const rutBase = clean.length >= 8 ? clean.slice(0, -1) : clean;
+          i.value = rutBase;
+          setTimeout(()=> tkaBuscarPorCliente(), 100);
+        }
+        i.focus();
+        i.select();
+      }
+    }
+  }, 350);
+}
+function tkaClose(){
+  _TKA.open = false;
+  try{
+    if (document.activeElement && typeof document.activeElement.blur === 'function'){
+      document.activeElement.blur();
+    }
+  }catch(_){}
+  document.getElementById('tkaBackdrop').classList.remove('is-open');
+  document.getElementById('tkaModal').classList.remove('is-open');
+  document.getElementById('tkaBackdrop').setAttribute('aria-hidden', 'true');
+  document.getElementById('tkaModal').setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  if (_TKA._liveTimer){ clearInterval(_TKA._liveTimer); _TKA._liveTimer = null; }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && _TKA.open) tkaClose();
+});
+document.addEventListener('keydown', e => {
+  if (!_TKA.open) return;
+  if (e.key === 'Enter'){
+    if (document.activeElement && document.activeElement.id === 'tkaDocNudo') tkaBuscarPorDoc();
+    if (document.activeElement && document.activeElement.id === 'tkaCliQ') tkaBuscarPorCliente();
+  }
+});
+
+function tkaSetTab(tab){
+  _TKA.tab = tab;
+  document.getElementById('tkaTabDoc').classList.toggle('is-active', tab === 'doc');
+  document.getElementById('tkaTabCli').classList.toggle('is-active', tab === 'cli');
+  document.getElementById('tkaPanelDoc').style.display = tab === 'doc' ? '' : 'none';
+  document.getElementById('tkaPanelCli').style.display = tab === 'cli' ? '' : 'none';
+}
+
+function _tkaSkel(){
+  return `<div class="tka-skel">
+    <div class="tka-skel-row"></div>
+    <div class="tka-skel-row"></div>
+    <div class="tka-skel-row"></div>
+    <div class="tka-skel-row"></div>
+  </div>`;
+}
+function _tkaLoadingText(){
+  return `<div class="tka-loading-text">
+    <span id="tkaLoadingMsg">Consultando ERP Random</span>
+    <span class="dot1"></span><span class="dot2"></span><span class="dot3"></span>
+  </div>`;
+}
+function _tkaCycleLoadingMsg(){
+  const msgs = ['Consultando ERP Random', 'Calculando saldos por línea', 'Verificando documentos ya asociados'];
+  let i = 0;
+  if (_TKA._liveTimer) clearInterval(_TKA._liveTimer);
+  _TKA._liveTimer = setInterval(()=>{
+    const el = document.getElementById('tkaLoadingMsg');
+    if (!el || !_TKA.open){
+      clearInterval(_TKA._liveTimer);
+      _TKA._liveTimer = null;
+      return;
+    }
+    i = (i + 1) % msgs.length;
+    el.style.opacity = 0;
+    setTimeout(()=>{
+      if (el) { el.textContent = msgs[i]; el.style.opacity = 1; }
+    }, 200);
+  }, 1400);
+}
+function _tkaStopLoadingMsg(){
+  if (_TKA._liveTimer){ clearInterval(_TKA._liveTimer); _TKA._liveTimer = null; }
+}
+
+// Saldo real de una línea (mismo criterio que Retiros: `l.saldo` del
+// backend, con fallback cantidad-despachada, con fallback cantidad).
+function _tkaSaldoLinea(l){
+  if (l == null) return 0;
+  const saldoBackend = parseFloat(l.saldo);
+  if (!isNaN(saldoBackend)) return Math.max(0, saldoBackend);
+  const qty  = parseFloat(l.cantidad) || 0;
+  const desp = parseFloat(l.cantidad_despachada) || 0;
+  return Math.max(0, qty - desp);
+}
+
+// ──────────────────────────────────────────────────────────────
+// TAB "POR DOCUMENTO"
+// ──────────────────────────────────────────────────────────────
+async function tkaBuscarPorDoc(){
+  const tido = (document.getElementById('tkaDocTido').value || '').toUpperCase();
+  const nudo = (document.getElementById('tkaDocNudo').value || '').trim();
+  if (!tido || !nudo){
+    ilusToast('Ingresa tipo y número', { type:'warning' });
+    return;
+  }
+  const cont = document.getElementById('tkaDocResult');
+  const btn  = document.getElementById('tkaDocBtn');
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Buscando…</span>'; }
+  cont.innerHTML = _tkaSkel() + _tkaLoadingText();
+  _tkaCycleLoadingMsg();
+  _TKA.selDoc.clear();
+  tkaUpdateCounter();
+  const t0 = performance.now();
+  try{
+    const r = await fetch('/api/erp/documento', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido, nudo })
+    });
+    const d = await r.json();
+    if (!r.ok || d.error){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-exclamation-triangle tka-empty-icon" style="color:#f59e0b"></i>
+        <h6>${_tkaEsc(d.error || 'No se encontró el documento')}</h6>
+        <p>Verifica que el tipo y número sean correctos.</p>
+      </div>`;
+      return;
+    }
+    const hdr = d.hdr || {};
+    const lineas = (d.lineas || []).filter(l => !l.es_zz);
+    if (!lineas.length){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-info-circle tka-empty-icon"></i>
+        <h6>Documento sin productos</h6>
+        <p>El documento solo tiene servicios o fletes — no hay líneas físicas que asignar.</p>
+      </div>`;
+      return;
+    }
+    _TKA.loaded.docHeader = {
+      tido: hdr.tido || tido,
+      nudo: hdr.nudo || nudo,
+      cliente: hdr.cliente_nombre || hdr.razon_social || '',
+      rut: hdr.cliente_rut || hdr.rut || '',
+      fecha: hdr.fecha || ''
+    };
+    const t1 = Math.round(performance.now() - t0);
+    tkaRenderDocLineas(lineas, t1);
+  }catch(e){
+    cont.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-x-circle tka-empty-icon" style="color:#dc2626"></i>
+      <h6>Error de red</h6>
+      <p>${_tkaEsc(e.message)}</p>
+    </div>`;
+  }finally{
+    if (btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-search"></i><span>Buscar líneas</span>'; }
+    _tkaStopLoadingMsg();
+  }
+}
+function tkaRenderDocLineas(lineas, fetchMs){
+  const cont = document.getElementById('tkaDocResult');
+  const h = _TKA.loaded.docHeader || {};
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;font-size:.82rem">
+    <div>
+      <strong style="font-family:monospace;color:var(--tka-red)">${_tkaEsc(h.tido)} ${_tkaEsc(h.nudo)}</strong>
+      <span style="color:#6b7280;margin-left:8px">${_tkaEsc(h.cliente || '—')}</span>
+      <span style="color:#9ca3af;margin-left:6px;font-size:.78rem">${_tkaEsc(h.fecha || '')}</span>
+    </div>
+    <span style="color:#9ca3af;font-size:.72rem">${lineas.length} línea${lineas.length===1?'':'s'} · ${fetchMs} ms</span>
+  </div>`;
+  html += `<div class="tka-master-bar">
+    <label>
+      <span class="tka-chk" id="tkaMasterChkDoc"><input type="checkbox" onchange="tkaToggleAllDoc(this.checked)"><span class="tka-chk-mark">✓</span></span>
+      Seleccionar todas las líneas con saldo
+    </label>
+    <span class="tka-master-info">${lineas.filter(l => _tkaSaldoLinea(l) > 0).length} con saldo · ${lineas.filter(l => _tkaSaldoLinea(l) === 0).length} sin saldo</span>
+  </div>`;
+  html += '<div>';
+  lineas.forEach((l, i) => {
+    const sku = (l.sku || '').toUpperCase();
+    const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
+    const qty = parseFloat(l.cantidad) || 0;
+    const saldo = _tkaSaldoLinea(l);
+    const isZero = saldo <= 0;
+    const lineKey = `DOC|${sku}|${i}`;
+    const initialMax = isZero ? qty : saldo;
+    const initialQty = isZero ? 0 : saldo;
+    const preChecked = !isZero;
+    html += `<div class="tka-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" style="animation:tkaDocIn .35s var(--tka-ease-spring) ${i*30}ms both">
+      <label class="tka-chk ${preChecked?'is-checked':''}" data-sku="${_tkaEsc(sku)}" data-saldo="${saldo}">
+        <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="tkaToggleLineaDoc(this)">
+        <span class="tka-chk-mark">✓</span>
+      </label>
+      <div class="ln-sku">${_tkaEsc(sku) || '—'}</div>
+      <div class="ln-desc">
+        ${_tkaEsc(nom)}
+        ${isZero ? '<span class="tka-line-tag-zero" title="Esta línea ya fue rebajada del sistema (ya entregada). Puedes marcarla igualmente si necesitas, pero por defecto no se asocia."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+      </div>
+      <div class="ln-qty">
+        <span>${qty} u.</span>
+        <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+      </div>
+      <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_tkaEsc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="tkaCambiarQtyDoc(this)">
+    </div>`;
+  });
+  html += '</div>';
+  cont.innerHTML = html;
+  setTimeout(() => {
+    document.querySelectorAll('#tkaDocResult input[type="checkbox"][data-line-key]:checked').forEach(cb => {
+      tkaToggleLineaDoc(cb, /*silent=*/true);
+    });
+  }, 50);
+}
+function tkaToggleAllDoc(checked){
+  const inputs = document.querySelectorAll('#tkaDocResult input[type="checkbox"][data-line-key]');
+  inputs.forEach(inp => {
+    if (inp.disabled) return;
+    const isZero = inp.dataset.isZero === '1';
+    if (checked && isZero) return;
+    if (inp.checked === checked) return;
+    inp.checked = checked;
+    tkaToggleLineaDoc(inp, /*silent=*/true);
+  });
+}
+function tkaToggleLineaDoc(inp, silent){
+  const chkBox = inp.closest('.tka-chk');
+  const row = inp.closest('.tka-line');
+  const key = inp.dataset.lineKey;
+  const sku = inp.dataset.sku;
+  const nombre = inp.dataset.nombre;
+  const isZero = inp.dataset.isZero === '1';
+  const qtyInp = document.querySelector(`#tkaDocResult input.ln-qty-input[data-line-key="${key}"]`);
+  if (inp.checked && isZero && !silent){
+    ilusToast(`"${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, { type:'info', duration:4500 });
+    if (qtyInp && parseFloat(qtyInp.value || 0) === 0) qtyInp.value = 1;
+  }
+  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
+  if (row) row.classList.toggle('is-selected', inp.checked);
+  const qty = parseFloat((qtyInp ? qtyInp.value : inp.dataset.qty) || 0) || 0;
+  const h = _TKA.loaded.docHeader || {};
+  if (inp.checked){
+    _TKA.selDoc.set(key, {
+      sku, nombre, qty,
+      saldo: parseFloat(inp.dataset.qty) || qty,
+      doc_tido: h.tido, doc_nudo: h.nudo,
+      marcada_sin_saldo: isZero,
+    });
+  } else {
+    _TKA.selDoc.delete(key);
+  }
+  tkaUpdateCounter();
+}
+function tkaCambiarQtyDoc(inp){
+  const key = inp.dataset.lineKey;
+  let v = parseFloat(inp.value || 0) || 0;
+  const maxDoc = parseFloat(inp.dataset.maxDoc || 0) || 0;
+  const maxSaldo = parseFloat(inp.dataset.maxSaldo || 0) || 0;
+  const max = Math.max(maxDoc, maxSaldo);
+  if (v < 0) v = 0;
+  if (max > 0 && v > max) v = max;
+  inp.value = v;
+  const item = _TKA.selDoc.get(key);
+  if (item){ item.qty = v; _TKA.selDoc.set(key, item); }
+  tkaUpdateCounter();
+}
+
+// ──────────────────────────────────────────────────────────────
+// TAB "POR RUT / NOMBRE"
+// ──────────────────────────────────────────────────────────────
+async function tkaBuscarPorCliente(){
+  const q = (document.getElementById('tkaCliQ').value || '').trim();
+  if (q.length < 3){
+    ilusToast('Mínimo 3 caracteres', { type:'warning' });
+    return;
+  }
+  const cont = document.getElementById('tkaCliResult');
+  const btn  = document.getElementById('tkaCliBtn');
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Buscando…</span>'; }
+  cont.innerHTML = _tkaSkel() + _tkaLoadingText();
+  _tkaCycleLoadingMsg();
+  const t0 = performance.now();
+  try{
+    const d = await _tkaFetchJsonSafe('/tickets/api/erp/buscar-cliente-documentos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q, ticket_id: _TKA.ctx.mode === 'agregar' ? _TKA.ctx.ticketId : null })
+    });
+    if (d.sin_conexion){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-plug tka-empty-icon" style="color:#f59e0b"></i>
+        <h6>ERP no conectado</h6>
+        <p>${_tkaEsc(d.error || 'Motor ERP no disponible ahora.')}</p>
+      </div>`;
+      return;
+    }
+    if (!d.ok || d._not_json){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-x-circle tka-empty-icon" style="color:#dc2626"></i>
+        <h6>Error de búsqueda</h6>
+        <p>${_tkaEsc(d.error || 'No se pudo consultar el ERP')}</p>
+      </div>`;
+      return;
+    }
+    const docs = d.documentos || [];
+    if (!docs.length){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-search tka-empty-icon"></i>
+        <h6>Sin resultados para "${_tkaEsc(q)}"</h6>
+        <p>Prueba con un RUT distinto o un fragmento del nombre del cliente.</p>
+      </div>`;
+      return;
+    }
+    _TKA.loaded.cliQuery = { q, modo: d.modo, docs };
+    const t1 = Math.round(performance.now() - t0);
+    tkaRenderCliDocs(docs, d.modo, t1);
+    try{ _tkaPrewarmDocs(docs); }catch(_){}
+  }catch(e){
+    cont.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-x-circle tka-empty-icon" style="color:#dc2626"></i>
+      <h6>Error de red</h6>
+      <p>${_tkaEsc(e.message)}</p>
+    </div>`;
+  }finally{
+    if (btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-search"></i><span>Buscar cliente</span>'; }
+    _tkaStopLoadingMsg();
+  }
+}
+function _tkaPrewarmDocs(docs){
+  if (!Array.isArray(docs) || docs.length === 0) return;
+  const top = docs.filter(d => d.tiene_saldo && !d.ya_asociado).slice(0, 5);
+  if (!top.length) return;
+  top.forEach(doc => {
+    fetch('/api/erp/documento', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+    }).catch(()=>{});
+  });
+}
+function tkaRenderCliDocs(docs, modo, fetchMs){
+  const cont = document.getElementById('tkaCliResult');
+  const modoTxt = { rut: 'RUT', numero: 'N° doc', nombre: 'Nombre' }[modo] || modo;
+  const _conSaldo = docs.filter(d => d.tiene_saldo && !d.ya_asociado).length;
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;font-size:.82rem">
+    <div><strong>${docs.length}</strong> documento${docs.length===1?'':'s'} por <strong>${_tkaEsc(modoTxt)}</strong></div>
+    <span style="color:#9ca3af;font-size:.72rem">${fetchMs} ms</span>
+  </div>`;
+  if (_conSaldo > 0){
+    html += `<div style="margin-bottom:10px">
+      <button type="button" id="tkaAsocTodosBtn" class="btn btn-sm fw-bold"
+        style="background:#16a34a;color:#fff;border:none;border-radius:10px;padding:8px 14px;min-height:44px"
+        onclick="tkaAsociarTodasConSaldo()">
+        <i class="bi bi-lightning-charge-fill me-1"></i>Asociar los ${_conSaldo} documento${_conSaldo===1?'':'s'} con saldo
+      </button>
+    </div>`;
+  }
+  html += '<div class="tka-results">';
+  docs.forEach((doc, i) => {
+    const clsArr = [];
+    if (doc.ya_asociado) clsArr.push('is-already');
+    if (!doc.tiene_saldo) clsArr.push('is-no-saldo');
+    const fecha = doc.fecha || '';
+    const total = doc.valor_total ? '$' + Math.round(doc.valor_total).toLocaleString('es-CL') : '—';
+    const saldoBadge = doc.tiene_saldo
+      ? '<span class="badge-pill ok"><i class="bi bi-check-circle"></i>Con saldo</span>'
+      : '<span class="badge-pill warn"><i class="bi bi-exclamation-triangle"></i>Sin saldo</span>';
+    let alreadyBadge = '';
+    if (doc.ya_asociado){
+      alreadyBadge = doc.asociado_es_este_ticket
+        ? '<span class="badge-pill lock"><i class="bi bi-check2-circle"></i>Ya en este ticket</span>'
+        : `<span class="badge-pill lock"><i class="bi bi-shield-lock"></i>En ${_tkaEsc(doc.asociado_numero_ticket || 'otro ticket')}</span>`;
+    }
+    html += `<div class="tka-doc-card ${clsArr.join(' ')}" data-cli-idx="${i}" style="animation-delay:${i*40}ms">
+      <div class="tka-doc-head" onclick="tkaToggleDocCli(${i})">
+        <div class="tka-doc-num">
+          <span class="badge-tipo">${_tkaEsc(doc.tido_display)}</span>${_tkaEsc(doc.nudo_display)}
+        </div>
+        <div class="tka-doc-info">
+          <div class="td-cli">${_tkaEsc(doc.razon_social || '—')}</div>
+          <div class="td-meta">
+            <span class="td-rut">${_tkaEsc(doc.rut || '—')}</span>
+            ${fecha ? `<span><i class="bi bi-calendar3 me-1"></i>${_tkaEsc(fecha)}</span>` : ''}
+          </div>
+        </div>
+        <div class="tka-doc-totals">
+          ${saldoBadge}
+          ${alreadyBadge}
+          <span class="badge-pill">${doc.n_lineas || 0} líneas</span>
+          <span class="badge-pill" title="Total bruto">${total}</span>
+        </div>
+        <div class="tka-doc-actions">
+          <button class="tka-doc-toggle" onclick="event.stopPropagation();tkaToggleDocCli(${i})" aria-label="Ver productos">
+            <i class="bi bi-chevron-down"></i>
+          </button>
+        </div>
+      </div>
+      <div class="tka-doc-body" id="tkaCliBody-${i}">
+        <div class="tka-loading-text">Cargando líneas <span class="dot1"></span><span class="dot2"></span><span class="dot3"></span></div>
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  cont.innerHTML = html;
+}
+async function tkaToggleDocCli(idx){
+  const card = document.querySelector(`#tkaCliResult .tka-doc-card[data-cli-idx="${idx}"]`);
+  if (!card) return;
+  const isOpen = card.classList.toggle('is-open');
+  if (!isOpen) return;
+  const body = document.getElementById('tkaCliBody-' + idx);
+  if (body.dataset.loaded === '1') return;
+  const doc = ((_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [])[idx];
+  if (!doc){ body.innerHTML = '<div class="text-muted small">No se encontró el documento.</div>'; return; }
+  body.innerHTML = _tkaSkel();
+  try{
+    const r = await fetch('/api/erp/documento', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+    });
+    const dd = await r.json();
+    if (!r.ok || dd.error){
+      body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(dd.error || 'Error consultando ERP')}</div>`;
+      return;
+    }
+    const lineas = (dd.lineas || []).filter(l => !l.es_zz);
+    if (!lineas.length){
+      body.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-info-circle me-1"></i>Sin productos (solo servicios).</div>';
+      body.dataset.loaded = '1';
+      return;
+    }
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.78rem;color:#6b7280;flex-wrap:wrap;gap:6px">
+      <span>${lineas.length} producto${lineas.length===1?'':'s'} disponibles · selecciona los que corresponden al ticket</span>
+      ${(_TKA.ctx.mode === 'agregar' && !doc.ya_asociado)
+        ? `<button class="tka-doc-add-btn" onclick="tkaAsociarDocCompleto(${idx})">
+            <i class="bi bi-plus-lg"></i>Agregar doc completo
+          </button>`
+        : (doc.ya_asociado ? '<span class="badge-pill lock"><i class="bi bi-shield-lock me-1"></i>Documento ya asociado</span>' : '')}
+    </div>`;
+    lineas.forEach((l, j) => {
+      const sku = (l.sku || '').toUpperCase();
+      const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
+      const qty = parseFloat(l.cantidad) || 0;
+      const saldo = _tkaSaldoLinea(l);
+      const isZero = saldo <= 0;
+      const lineKey = `CLI|${idx}|${sku}|${j}`;
+      const initialMax = isZero ? qty : saldo;
+      const initialQty = isZero ? 0 : saldo;
+      const preChecked = !isZero;
+      html += `<div class="tka-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}">
+        <label class="tka-chk ${preChecked?'is-checked':''}">
+          <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-doc-tido="${_tkaEsc(doc.tido_display)}" data-doc-nudo="${_tkaEsc(doc.nudo_display)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="tkaToggleLineaCli(this)">
+          <span class="tka-chk-mark">✓</span>
+        </label>
+        <div class="ln-sku">${_tkaEsc(sku) || '—'}</div>
+        <div class="ln-desc">
+          ${_tkaEsc(nom)}
+          ${isZero ? '<span class="tka-line-tag-zero" title="Esta línea ya fue rebajada del sistema (entregada). Puedes marcarla igualmente si necesitas."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+        </div>
+        <div class="ln-qty">
+          <span>${qty} u.</span>
+          <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+        </div>
+        <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_tkaEsc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="tkaCambiarQtyCli(this)">
+      </div>`;
+    });
+    body.innerHTML = html;
+    body.dataset.loaded = '1';
+    setTimeout(() => {
+      body.querySelectorAll('input[type="checkbox"][data-line-key]:checked').forEach(cb => {
+        tkaToggleLineaCli(cb, /*silent=*/true);
+      });
+    }, 50);
+  }catch(e){
+    body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
+  }
+}
+function tkaToggleLineaCli(inp, silent){
+  const chkBox = inp.closest('.tka-chk');
+  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
+  const row = inp.closest('.tka-line');
+  if (row) row.classList.toggle('is-selected', inp.checked);
+  const key = inp.dataset.lineKey;
+  const isZero = inp.dataset.isZero === '1';
+  const nombre = inp.dataset.nombre;
+  if (inp.checked && isZero && !silent){
+    ilusToast(`"${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, { type:'info', duration:4500 });
+    const qtyInpZ = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
+    if (qtyInpZ && parseFloat(qtyInpZ.value || 0) === 0) qtyInpZ.value = 1;
+  }
+  const qtyInp = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
+  const qtyEff = qtyInp ? (parseFloat(qtyInp.value || 0) || 0) : (parseFloat(inp.dataset.qty) || 0);
+  if (inp.checked){
+    _TKA.selCli.set(key, {
+      tido: inp.dataset.docTido,
+      nudo: inp.dataset.docNudo,
+      sku: inp.dataset.sku,
+      nombre: nombre,
+      qty: qtyEff,
+      saldo: parseFloat(inp.dataset.qty) || qtyEff,
+      marcada_sin_saldo: isZero,
+    });
+  } else {
+    _TKA.selCli.delete(key);
+  }
+  tkaUpdateCounter();
+}
+function tkaCambiarQtyCli(inp){
+  const key = inp.dataset.lineKey;
+  const item = _TKA.selCli.get(key);
+  if (!item) return;
+  let v = parseFloat(inp.value || 0) || 0;
+  if (v < 0) v = 0;
+  if (v > item.saldo) v = item.saldo;
+  inp.value = v;
+  item.qty = v;
+  _TKA.selCli.set(key, item);
+  tkaUpdateCounter();
+}
+// Atajo: agrega el DOCUMENTO ENTERO (todas sus líneas no-ZZ) al ticket
+// ya existente, sin pasar por la selección granular. Solo disponible en
+// mode='agregar' (en 'crear' aún no existe el ticket destino).
+async function tkaAsociarDocCompleto(idx){
+  const doc = ((_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [])[idx];
+  if (!doc || _TKA.ctx.mode !== 'agregar' || !_TKA.ctx.ticketId) return;
+  try{
+    const d = await _tkaFetchJsonSafe(`/tickets/api/tickets/${_TKA.ctx.ticketId}/equipos-desde-documento`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+    });
+    if (!d.ok){
+      ilusToast('Error: ' + (d.error || 'No se pudo agregar'), { type:'error' });
+      return;
+    }
+    ilusToast(`✓ ${d.agregados} equipo(s) agregado(s) de ${doc.tido_display} ${doc.nudo_display}`, { type:'success' });
+    if (_TKA.ctx.onDone) { try{ _TKA.ctx.onDone(); }catch(_){} }
+  }catch(e){
+    ilusToast('Error: ' + e.message, { type:'error' });
+  }
+}
+// "Asociar todos con saldo": puebla la selección con TODAS las líneas
+// con saldo de los documentos aún no asociados, y dispara el flujo normal
+// de asociación final (una sola vía de salida, sin duplicar lógica).
+async function tkaAsociarTodasConSaldo(){
+  const docs = (_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [];
+  const objetivo = docs.filter(d => d.tiene_saldo && !d.ya_asociado);
+  if (!objetivo.length){ ilusToast('No hay documentos con saldo para asociar.', { type:'info' }); return; }
+  const ok = await ilusConfirm({
+    title: 'Asociar documentos con saldo',
+    message: `¿Asociar los ${objetivo.length} documento(s) con saldo de este cliente?`,
+    sub: _TKA.ctx.mode === 'crear'
+      ? 'Se creará un ticket con todas las líneas seleccionadas.'
+      : 'Las líneas se agregarán a este ticket.',
+    okLabel: 'Sí, asociar todos', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const btn = document.getElementById('tkaAsocTodosBtn');
+  const _orig = btn ? btn.innerHTML : '';
+  if (btn) btn.disabled = true;
+  for (let i = 0; i < objetivo.length; i++){
+    const doc = objetivo[i];
+    if (btn) btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Cargando ${i+1}/${objetivo.length}…`;
+    try{
+      const r = await fetch('/api/erp/documento', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tido: doc.tido_display, nudo: doc.nudo_display })
+      });
+      const d = await r.json();
+      if (d.error) continue;
+      const lineas = (d.lineas || []).filter(l => !l.es_zz);
+      lineas.forEach((l, j) => {
+        const saldo = _tkaSaldoLinea(l);
+        if (saldo <= 0) return;
+        const sku = (l.sku || '').toUpperCase();
+        const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
+        const key = `CLI|${docs.indexOf(doc)}|${sku}|${j}`;
+        _TKA.selCli.set(key, {
+          tido: doc.tido_display, nudo: doc.nudo_display,
+          sku, nombre: nom, qty: saldo, saldo, marcada_sin_saldo: false,
+        });
+      });
+    }catch(_){ /* doc individual falla -- seguimos con el resto */ }
+  }
+  if (btn){ btn.disabled = false; btn.innerHTML = _orig; }
+  tkaUpdateCounter();
+  await tkaAsociarSeleccion();
+}
+
+// ──────────────────────────────────────────────────────────────
+// Contador
+// ──────────────────────────────────────────────────────────────
+function tkaUpdateCounter(){
+  const allSel = [..._TKA.selDoc.values(), ..._TKA.selCli.values()].filter(it => (it.qty || 0) > 0);
+  const n = allSel.length;
+  const pill = document.getElementById('tkaCounterPill');
+  if (pill){
+    pill.textContent = n;
+    pill.classList.remove('is-bump');
+    void pill.offsetWidth;
+    pill.classList.add('is-bump');
+  }
+  const label = document.getElementById('tkaCounterLabel');
+  if (label) label.textContent = (n === 1) ? 'producto seleccionado' : 'productos seleccionados';
+  const totalUnits = allSel.reduce((s, it) => s + (it.qty || 0), 0);
+  const kg = document.getElementById('tkaCounterKg');
+  const m3 = document.getElementById('tkaCounterM3');
+  if (kg) kg.textContent = `${totalUnits.toFixed(0)} u.`;
+  if (m3) m3.textContent = `${n} línea${n===1?'':'s'}`;
+  const btn = document.getElementById('tkaAssocBtn');
+  if (btn) btn.disabled = n === 0;
+}
+
+// ──────────────────────────────────────────────────────────────
+// Asociar selección final: branchea por _TKA.ctx.mode
+// ──────────────────────────────────────────────────────────────
+async function tkaAsociarSeleccion(){
+  const docsToAdd = new Map();
+
+  if (_TKA.selDoc.size > 0 && _TKA.loaded.docHeader){
+    const h = _TKA.loaded.docHeader;
+    const key = `${h.tido}|${h.nudo}`;
+    const lineas = [];
+    _TKA.selDoc.forEach(it => {
+      if ((it.qty || 0) > 0){
+        lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty });
+      }
+    });
+    if (lineas.length > 0) docsToAdd.set(key, { tido: h.tido, nudo: h.nudo, lineas });
+  }
+
+  _TKA.selCli.forEach(it => {
+    if (!it.tido || !it.nudo) return;
+    if ((it.qty || 0) <= 0) return;
+    const key = `${it.tido}|${it.nudo}`;
+    if (!docsToAdd.has(key)) docsToAdd.set(key, { tido: it.tido, nudo: it.nudo, lineas: [] });
+    docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty });
+  });
+
+  if (docsToAdd.size === 0){
+    ilusToast('Selecciona al menos un producto con cantidad mayor a 0', { type:'warning' });
+    return;
+  }
+
+  const btn = document.getElementById('tkaAssocBtn');
+  const _origBtn = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Procesando…</span>'; }
+
+  if (_TKA.ctx.mode === 'crear'){
+    // Un solo POST: el backend acepta multiples documentos en el mismo body.
+    const documentos = [...docsToAdd.values()].map(dv => ({
+      tido: dv.tido, nudo: dv.nudo,
+      lineas: dv.lineas.map(l => ({ sku: l.sku, cantidad: l.qty, nombre: l.nombre })),
+    }));
+    const etiquetas = documentos.map(dv => `${dv.tido}-${dv.nudo}`).join(', ');
+    try{
+      const d = await _tkaFetchJsonSafe('/tickets/api/tickets/desde-documento', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentos, tipo: 'tech_support',
+          descripcion: 'Ticket generado desde documento ERP ' + etiquetas,
+        })
+      });
+      if (!d.ok){
+        ilusAlert({ type:'error', title:'No se pudo crear el ticket', message: d.error || 'Error desconocido' });
+        return;
+      }
+      ilusToast('✓ ' + (d.numero_ticket || 'Ticket') + ' creado', { type:'success' });
+      tkaClose();
+      setTimeout(()=> location.href = '/tickets/' + d.id, 400);
+    }catch(e){
+      ilusAlert({ type:'error', title:'Error de red', message: e.message });
+    }finally{
+      if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
+    }
+    return;
+  }
+
+  // mode === 'agregar' → un POST por documento (el endpoint solo acepta uno a la vez)
+  let okN = 0, errN = 0;
+  const errList = [];
+  for (const [, info] of docsToAdd){
+    const label = `${info.tido} ${info.nudo}`;
+    try{
+      const d = await _tkaFetchJsonSafe(`/tickets/api/tickets/${_TKA.ctx.ticketId}/equipos-desde-documento`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tido: info.tido, nudo: info.nudo,
+          lineas: info.lineas.map(l => ({ sku: l.sku, cantidad: l.qty, nombre: l.nombre })),
+        })
+      });
+      if (!d.ok){
+        errN++;
+        errList.push({ label, motivo: (d.error || 'Error desconocido').toString().substring(0,140) });
+        continue;
+      }
+      okN++;
+    }catch(e){
+      errN++;
+      errList.push({ label, motivo: 'Sin conexión: ' + (e.message || 'error de red') });
+    }
+  }
+  if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
+
+  if (okN){
+    let msg = `✓ ${okN} documento${okN===1?'':'s'} procesado${okN===1?'':'s'}`;
+    if (errN) msg += ` · ${errN} con error`;
+    ilusToast(msg, { type:'success', duration:5000 });
+    if (errN){
+      const detalle = errList.map(e => `${e.label}: ${e.motivo}`).join('\n');
+      ilusAlert({ type:'warning', title:`${errN} no se pudieron agregar`, message:'Algunos sí se agregaron, otros fallaron:', sub: detalle, subHtml:false });
+    }
+    if (_TKA.ctx.onDone){ try{ _TKA.ctx.onDone(); }catch(_){} }
+    tkaClose();
+  } else {
+    const detalle = errList.map(e => `${e.label}: ${e.motivo}`).join('\n');
+    ilusAlert({ type:'error', title:`No se pudo agregar (${errN} error${errN===1?'':'es'})`, message:'Estos son los motivos exactos:', sub: detalle, subHtml:false });
+  }
+}
+</script>

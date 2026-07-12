@@ -1263,45 +1263,13 @@ document.getElementById('ntBtnCrear').addEventListener('click', async function()
   }catch(e){ ilusToast('Error de red','error'); btn.disabled=false; }
 });
 
-// ══════════════ Crear ticket desde documento ERP (cualquier tipo) ══════════════
-document.getElementById('btnDesdeDoc').addEventListener('click', async function(){
-  const tido = await ilusPrompt({title:'Documento ERP', message:'Tipo de documento (ej: FCV, BLV, NVV, COV, GDV…)',
-    placeholder:'FCV', required:true});
-  if(!tido) return;
-  const nudo = await ilusPrompt({title:'Documento ERP', message:'Número de documento',
-    placeholder:'Ej: 21577', required:true});
-  if(!nudo) return;
-  ilusLoader.show('Buscando documento en el ERP…');
-  let prev;
-  try{
-    const r = await fetch('/tickets/api/erp/documento/'+encodeURIComponent(tido.trim().toUpperCase())+'/'+encodeURIComponent(nudo.trim()));
-    prev = await r.json();
-  }catch(e){ ilusLoader.hide(); ilusToast('ERP no disponible','error'); return; }
-  ilusLoader.hide();
-  if(!prev.ok){ ilusToast(prev.error||'Documento no encontrado','error'); return; }
-  const doc = prev.documento;
-  // NOTA: ilusConfirm ya escapa `message`/`sub` internamente (default
-  // messageHtml/subHtml=false) -- NO envolver con esc() aca o el texto
-  // queda doble-escapado (ej: "Gimnasio &amp;amp; Fitness").
-  const ok = await ilusConfirm({
-    title:'Crear ticket desde '+esc(doc.tido)+'-'+esc(doc.nudo),
-    message:'Cliente: '+(doc.cliente_nombre||'—')+' · RUT: '+(doc.cliente_rut||'—'),
-    sub: doc.lineas.length + ' línea(s) de producto se asociarán como equipo del ticket.',
-    okLabel:'Crear ticket', cancelLabel:'Cancelar',
-  });
-  if(!ok) return;
-  ilusLoader.show('Creando ticket…');
-  try{
-    const r2 = await fetch('/tickets/api/tickets/desde-documento', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({documentos:[{tido:doc.tido, nudo:doc.nudo}], tipo:'tech_support',
-        descripcion:'Ticket generado desde documento ERP '+doc.tido+'-'+doc.nudo})});
-    const d2 = await r2.json();
-    ilusLoader.hide();
-    if(!d2.ok){ ilusToast(d2.error||'Error al crear','error'); return; }
-    ilusToast('✓ '+(d2.numero_ticket||'Ticket')+' creado','success');
-    setTimeout(()=>location.href='/tickets/'+d2.id, 400);
-  }catch(e){ ilusLoader.hide(); ilusToast('Error de red','error'); }
+// ══════════════ Crear ticket desde documento ERP (búsqueda avanzada) ══════════════
+// Daniel 2026-07-12: reemplaza el flujo viejo de 2 ilusPrompt() (tipo+numero
+// a ciegas, sin ver lineas ni saldo) por el modal "tka" -- mismo espiritu
+// que el buscador avanzado de Retiros (pestañas, saldo por linea, seleccion
+// granular, contador). Ver templates/tickets/_tka_modal.html.
+document.getElementById('btnDesdeDoc').addEventListener('click', function(){
+  tkaOpen({ mode: 'crear' });
 });
 
 // ══════════════ Importar CSV Triple A (superadmin) ══════════════
@@ -1433,4 +1401,6 @@ if(btnPurgar){
 }
 }); // cierre de document.addEventListener('DOMContentLoaded', ...)
 </script>
+
+{% include "tickets/_tka_modal.html" %}
 {% endblock %}
