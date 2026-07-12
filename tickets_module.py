@@ -2212,19 +2212,48 @@ def register_tickets_routes(app, ctx):
             print(f"[tk_notificar_asignacion] no se pudo crear notif interna tid={tid}: {_en}", flush=True)
 
         # Correo al usuario asignado (NO al cliente del ticket -- ese es
-        # _tk_notificar_lifecycle, un flujo distinto).
+        # _tk_notificar_lifecycle, un flujo distinto). 2026-07-12 (Daniel:
+        # "falta la plantilla de ticket asignado... algo completamente
+        # editable en el front") -- ahora pasa por el MISMO motor editable
+        # (comm_templates, modulo='tickets', estado='asignacion') que ya
+        # usan resuelto/cerrado/etc. El HTML hardcodeado de abajo es SOLO
+        # el fallback si la plantilla no existe/esta apagada (ver diseño
+        # de _render_comm_template: None => degradar, nunca omitir).
         if not (_send_ilus_email and destino_email):
             return
         try:
-            tema = _brand_subject(f"Te asignaron el ticket {numero}")
-            # El numero ya va en el asunto (titulo grande del correo) -- el
-            # cuerpo no lo repite, solo agrega el extracto si existe.
-            cuerpo_html = (
+            extracto_html = (
+                (": " + _html_mod.escape(extracto)) if extracto else ""
+            )
+            tema_default = f"Te asignaron el ticket {numero}"
+            cuerpo_default = (
                 "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;"
                 "border-radius:0 10px 10px 0;padding:18px 20px;margin:0 0 6px\">"
                 "<div style=\"font-size:16px;color:#111827;line-height:1.6\">"
                 + (_html_mod.escape(extracto) if extracto else "Revisa el ticket para ver el detalle.")
                 + "</div></div>")
+            tema, cuerpo_html = tema_default, cuerpo_default
+            if _render_comm_template:
+                try:
+                    tpl = _render_comm_template(
+                        "asignacion", "email",
+                        {"destinatario": row.get("nombre") or destino_email,
+                         "numero_ticket": numero, "extracto": extracto_html},
+                        modulo="tickets")
+                    if tpl:
+                        _asu, _cue = tpl
+                        if (_asu or "").strip():
+                            tema = _asu.strip()
+                        if (_cue or "").strip():
+                            cuerpo_html = _cue
+                except Exception as _e:
+                    print(f"[tk_notificar_asignacion] plantilla no usada tid={tid}: {_e}", flush=True)
+            # Salvaguarda: el numero de ticket SIEMPRE debe estar en el
+            # asunto (mismo patron que _tk_notificar_lifecycle), aunque
+            # Daniel edite la plantilla y se le olvide {{numero_ticket}}.
+            if numero not in tema:
+                tema = f"{tema} · {numero}"
+            tema = _brand_subject(tema)
             html_final = (_comm_render_email_document(tema, cuerpo_html, subtitle="Servicio Técnico · ILUS Fitness")
                           if _comm_render_email_document else cuerpo_html)
             enviado = _send_ilus_email(destino_email, tema, html_final,
@@ -2475,7 +2504,13 @@ def register_tickets_routes(app, ctx):
     #  responder + _comm_render_email_document). Solo previsualiza --
     #  no guarda ni envia nada.
     # ─────────────────────────────────────────────────────────────────
-    TK_TPL_ESTADOS_VALIDOS = ("creacion", "respuesta", "resuelto", "cerrado")
+    # 2026-07-12: estaba desactualizado (solo 4 de los 9 slugs ya sembrados
+    # en _tickets_tpl_seed) -- "Restaurar original"/"Vista previa" del
+    # editor de Comunicaciones devolvia 400 para en_curso/pendiente/
+    # ot_generada/ot_en_curso/cancelado, y ahora tambien para 'asignacion'.
+    TK_TPL_ESTADOS_VALIDOS = ("creacion", "respuesta", "asignacion", "en_curso",
+                              "pendiente", "ot_generada", "ot_en_curso",
+                              "resuelto", "cerrado", "cancelado")
 
     @app.route("/tickets/api/config/preview-plantilla", methods=["POST"])
     @_tickets_required
@@ -2489,6 +2524,8 @@ def register_tickets_routes(app, ctx):
             "numero_ticket": "TK-2026-00123",
             "mensaje": ("Revisamos tu equipo y el repuesto ya está en camino. "
                         "Te avisaremos apenas llegue para coordinar la visita."),
+            "destinatario": "Juan Pablo Martínez",
+            "extracto": ": Máquina no enciende — Gimnasio GoFit Providencia",
         }
         for var, valor in muestras.items():
             for tok in ("{{%s}}" % var, "{{ %s }}" % var):

@@ -1639,15 +1639,35 @@ const TPL_ESTADOS_COMUNICACION_INTERNA = [
     color:'#16a34a', desc:'Confirmación al usuario de que su contraseña fue actualizada' },
 ];
 
+// 2026-07-12 (Daniel): "falta la plantilla de ticket asignado... tienes que
+// asociar estas plantillas con lo que estamos enviando, algo completamente
+// editable en el front". Esta lista estaba desactualizada -- el backend
+// (_tickets_tpl_seed, app.py) ya sembraba en_curso/pendiente/ot_generada/
+// ot_en_curso/cancelado hace rato, pero nunca se agregaron aqui, asi que
+// Daniel jamas pudo verlas ni editarlas desde Comunicaciones. Se completa
+// el set 1:1 con el backend + se agrega 'asignacion' (nueva, va al
+// STAFF asignado, no al cliente).
 const TPL_ESTADOS_TICKETS = [
-  { key:'creacion',  label:'Ticket creado',        icon:'bi-ticket-detailed', grupo:'tickets',
+  { key:'creacion',    label:'Ticket creado',           icon:'bi-ticket-detailed',   grupo:'tickets',
     color:'#3b82f6', desc:'Confirma al cliente que su solicitud quedó registrada (al crearse)' },
-  { key:'respuesta', label:'Respuesta al cliente',  icon:'bi-reply-fill',     grupo:'tickets',
+  { key:'respuesta',   label:'Respuesta al cliente',    icon:'bi-reply-fill',        grupo:'tickets',
     color:'#dc2626', desc:'Usada cuando el equipo responde manualmente desde la ficha del ticket' },
-  { key:'resuelto',  label:'Ticket resuelto',       icon:'bi-check-circle-fill', grupo:'tickets',
+  { key:'asignacion',  label:'Ticket asignado',         icon:'bi-person-check-fill', grupo:'tickets',
+    color:'#3b82f6', desc:'Va al TÉCNICO/EJECUTIVO recién asignado (no al cliente) — variables: {{destinatario}}, {{numero_ticket}}, {{extracto}}' },
+  { key:'en_curso',    label:'Ticket en curso',         icon:'bi-play-circle-fill', grupo:'tickets',
+    color:'#3b82f6', desc:'Aviso cuando el ticket pasa a En Curso' },
+  { key:'pendiente',   label:'Ticket pendiente',        icon:'bi-hourglass-split', grupo:'tickets',
+    color:'#f59e0b', desc:'Aviso cuando el ticket queda Pendiente (falta información del cliente)' },
+  { key:'ot_generada', label:'OT generada',             icon:'bi-clipboard2-plus-fill', grupo:'tickets',
+    color:'#3b82f6', desc:'Aviso cuando se genera una Orden de Trabajo desde el ticket' },
+  { key:'ot_en_curso', label:'Técnico en terreno',      icon:'bi-geo-alt-fill',   grupo:'tickets',
+    color:'#0d9488', desc:'Aviso cuando el técnico inicia la OT en terreno' },
+  { key:'resuelto',    label:'Ticket resuelto',         icon:'bi-check-circle-fill', grupo:'tickets',
     color:'#16a34a', desc:'Aviso cuando el ticket pasa a estado Resuelto' },
-  { key:'cerrado',   label:'Ticket cerrado',        icon:'bi-lock-fill',      grupo:'tickets',
+  { key:'cerrado',     label:'Ticket cerrado',          icon:'bi-lock-fill',      grupo:'tickets',
     color:'#6b7280', desc:'Aviso cuando el ticket pasa a estado Cerrado' },
+  { key:'cancelado',   label:'Ticket cancelado',        icon:'bi-x-circle-fill', grupo:'tickets',
+    color:'#dc2626', desc:'Aviso cuando el ticket se cancela' },
 ];
 
 const TPL_ESTADOS_GENERAL = [
@@ -1749,6 +1769,8 @@ const TPL_VARS = {
     { v:'{{cliente}}',       label:'Nombre de contacto / empresa' },
     { v:'{{numero_ticket}}', label:'N° de ticket (TK-AAAA-NNNNN)' },
     { v:'{{mensaje}}',       label:'Mensaje (solo en "Respuesta al cliente")' },
+    { v:'{{destinatario}}',  label:'Nombre del asignado (solo en "Ticket asignado")' },
+    { v:'{{extracto}}',      label:'Extracto del título (solo en "Ticket asignado")' },
   ],
 };
 

@@ -70091,6 +70091,19 @@ def _tickets_tpl_seed():
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
             "<strong>{{numero_ticket}}</strong> fue cancelado.</div></div>"),
+        # 2026-07-12 (Daniel): "falta crear la plantilla de ticket asignado...
+        # tienes que asociar estas plantillas con lo que estamos enviando,
+        # algo completamente editable en el front". A diferencia de las
+        # anteriores (van al CLIENTE), esta va al STAFF recien asignado --
+        # mismo motor editable, placeholders distintos: {{destinatario}}
+        # (nombre de quien fue asignado) y {{extracto}} (titulo del ticket).
+        'asignacion': (
+            "Te asignaron el ticket {{numero_ticket}}",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{destinatario}},</p>"
+            "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Te asignaron el ticket "
+            "<strong>{{numero_ticket}}</strong>.{{extracto}}</div></div>"),
     }
 
 
