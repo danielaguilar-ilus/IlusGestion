@@ -35870,11 +35870,9 @@ def init_mantenciones_tables():
                                                  'saltado','falla_detectada')
                                             DEFAULT 'verificado',
                         razon_saltado       VARCHAR(40) NULL
-                                            COMMENT 'no_encontrado|dado_de_baja|'
-                                                    'dañado_inaccesible|cliente_lo_quito|otro',
+                                            COMMENT 'no_encontrado|dado_de_baja|dañado_inaccesible|cliente_lo_quito|otro',
                         observacion_tecnico TEXT NULL
-                                            COMMENT 'Observación libre del técnico sobre '
-                                                    'este equipo en esta visita',
+                                            COMMENT 'Observación libre del técnico sobre este equipo en esta visita',
                         revisado_at         DATETIME NULL,
                         revisado_por        VARCHAR(190) NULL,
                         created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -35945,8 +35943,7 @@ def init_mantenciones_tables():
                                           COMMENT 'cliente|contrato|maquina|visita|ot|cotizacion|...',
                         entidad_id        INT NULL,
                         tipo_sugerencia   VARCHAR(60) NOT NULL
-                                          COMMENT 'agendar_visita|renovar_contrato|'
-                                                  'revisar_garantia|ia_regenerar|...',
+                                          COMMENT 'agendar_visita|renovar_contrato|revisar_garantia|ia_regenerar|...',
                         origen            ENUM('cron','ia','usuario','sistema')
                                           DEFAULT 'sistema',
                         titulo            VARCHAR(200) NOT NULL,
