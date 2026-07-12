@@ -111,7 +111,15 @@
    PAGINA/aplicacion completa scrollee. "La caja de texto debe estar
    contenida... el scroll de la caja [el hilo] que se baje hasta abajo
    para leer los mensajes... lo que no quiero que tenga scroll es la
-   aplicacion, no la caja." */
+   aplicacion, no la caja."
+   CORRECCION 2026-07-12 (2): "insisto... no estoy hablando de la caja de
+   los mensajes del chat, estoy hablando de la caja de texto [el
+   composer]" -- el problema real era que al entrar a Respuestas habia
+   que bajar la PAGINA para alcanzar el composer (quedaba debajo del
+   pliegue). 460px fijo no se adapta al alto real de la ventana. Este
+   max-height es solo un FALLBACK antes de que corra el JS de abajo
+   (ajustarAltoHilo): en tiempo real, el alto del hilo se calcula para
+   que el composer quede SIEMPRE visible sin scrollear la pagina. */
 .rp-thread{max-height:460px;overflow-y:auto;padding:4px 2px;margin-bottom:14px;}
 .rp-msg{display:flex;margin-bottom:12px;}
 .rp-msg.out{justify-content:flex-end;}
@@ -584,6 +592,60 @@ let ticketActual = null;
 let rpAdjuntos = [];   // [{id, url, nombre}] ya subidos, pendientes de enviar con el proximo mensaje
 let rpModo = 'cliente'; // 'cliente' | 'interno'
 
+// ══════════════ Alto dinamico del hilo Y del editor de Respuestas ══════════════
+// Daniel 2026-07-12 ("insisto... la caja de texto [el composer]"): al
+// entrar a Respuestas habia que bajar la PAGINA para alcanzar el
+// composer -- quedaba debajo del pliegue. Un max-height fijo (460px en
+// el hilo, 240-520px en el editor Quill) no se adapta a la altura REAL
+// de la ventana -- en un laptop 1366x768 comun, o con la ventana del
+// navegador achicada, ni reduciendo el hilo al minimo alcanzaba a caber
+// el composer completo (verificado con calculos reales antes de subir
+// esto). Por eso esta funcion reparte el espacio vertical disponible
+// entre DOS partes, no solo una:
+//   1) el editor Quill (.ql-container) se encoge primero, hasta un piso
+//      minimo usable para escribir (80px);
+//   2) el hilo de mensajes se lleva lo que sobra, con su propio piso
+//      (110px, ~1 mensaje visible) para no desaparecer del todo.
+// Asi el composer completo (hasta el boton Enviar) queda SIEMPRE visible
+// sin scrollear la pagina, salvo en ventanas extremadamente bajas (celular
+// en horizontal) donde ya no hay espacio fisico para ambos aunque se
+// reduzcan al minimo -- ahi se acepta un scroll de pagina pequeño en vez
+// de romper la usabilidad de la caja de texto.
+function ajustarAltoHilo(){
+  const paneConv = document.getElementById('pane-conv');
+  if(!paneConv || !paneConv.classList.contains('active')) return; // oculto: rects en 0, no calcular
+  const th = document.getElementById('rpThread');
+  const composer = document.querySelector('.rp-composer');
+  const qlContainer = document.querySelector('.rp-editor-wrap .ql-container');
+  if(!th || !composer || !qlContainer) return;
+
+  const AIRE_INFERIOR = 24;   // respiro entre el composer y el borde de la ventana
+  const PISO_HILO = 110;      // minimo del hilo (se ve al menos algo de contexto)
+  const PISO_EDITOR = 80;     // minimo usable del editor para poder escribir
+  const TECHO_EDITOR = 520;   // igual al max-height ya definido en CSS (no crecer de mas)
+
+  const threadTop = th.getBoundingClientRect().top;
+  // "Chrome" del composer que NO es el editor (mode-tabs + headers De/Para/CC
+  // si estan visibles + barra de adjuntos/enviar) -- fijo independientemente
+  // del alto que le demos al editor.
+  const otrosComposer = composer.getBoundingClientRect().height - qlContainer.getBoundingClientRect().height;
+  const totalDisponible = window.innerHeight - threadTop - AIRE_INFERIOR;
+
+  let alturaEditor = totalDisponible - otrosComposer - PISO_HILO;
+  alturaEditor = Math.max(PISO_EDITOR, Math.min(TECHO_EDITOR, alturaEditor));
+  qlContainer.style.maxHeight = alturaEditor + 'px';
+  qlContainer.style.minHeight = Math.min(alturaEditor, 240) + 'px';
+
+  let alturaHilo = totalDisponible - otrosComposer - alturaEditor;
+  th.style.maxHeight = Math.max(PISO_HILO, alturaHilo) + 'px';
+}
+let _ajustarAltoHiloTimer = null;
+function ajustarAltoHiloDebounced(){
+  clearTimeout(_ajustarAltoHiloTimer);
+  _ajustarAltoHiloTimer = setTimeout(ajustarAltoHilo, 80);
+}
+window.addEventListener('resize', ajustarAltoHiloDebounced);
+
 // Escapa TAMBIÉN comillas (esc se usa en atributos href/onclick, no solo texto) → anti-XSS.
 function esc(s){ return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -607,6 +669,7 @@ document.querySelectorAll('.tk-tab').forEach(function(tab){
     // layout real ya calculado (requestAnimationFrame), reintentar el scroll.
     if(tab.dataset.pane === 'conv'){
       requestAnimationFrame(function(){
+        ajustarAltoHilo();
         const th = document.getElementById('rpThread');
         if(th) th.scrollTop = th.scrollHeight;
       });
@@ -643,6 +706,9 @@ document.querySelectorAll('.rp-mode-tab').forEach(function(el){
     btn.innerHTML = rpModo === 'cliente'
       ? '<i class="bi bi-send-fill me-1"></i>Enviar'
       : '<i class="bi bi-chat-left-text me-1"></i>Comentar';
+    // Mostrar/ocultar De/Para/CC cambia el alto del composer -- recalcular
+    // el alto del hilo para que el composer siga siendo visible sin scroll.
+    requestAnimationFrame(ajustarAltoHilo);
   });
 });
 
@@ -1035,9 +1101,10 @@ function renderThread(mensajes, adjuntos){
       + (adjHtml? '<div>'+adjHtml+'</div>':'')
       + '</div></div>';
   }).join('');
-  if(yaEstabaAbajo){
-    requestAnimationFrame(function(){ th.scrollTop = th.scrollHeight; });
-  }
+  requestAnimationFrame(function(){
+    ajustarAltoHilo();
+    if(yaEstabaAbajo) th.scrollTop = th.scrollHeight;
+  });
 }
 
 // ══════════════ Adjuntos — tarjeta "Información" (galería de miniaturas) ══════════════
