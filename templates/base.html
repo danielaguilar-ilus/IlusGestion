@@ -450,58 +450,57 @@
     </div>
     {% endif %}
 
-    {# ── SERVICIO TÉCNICO: 8 módulos unificados (2026-07-12) ──
-       Reemplaza el grupo "Mantenciones" y absorbe sus enlaces. Ninguna
-       ruta /mantenciones/* se elimina — solo se reorganizan los enlaces
-       del sidebar (Regla #4.2). #}
+    {# ── SERVICIO TÉCNICO: módulos planos en orden alfabético (2026-07-12) ──
+       "Servicio Técnico" es solo la ETIQUETA de sección de arriba (línea
+       432) — NO un módulo/toggle propio. Cada ítem de abajo es un enlace
+       directo (sin acordeón), igual que Tickets arriba pero sin agrupar.
+       Ninguna ruta /mantenciones/* se elimina — solo se reorganizan los
+       enlaces del sidebar (Regla #4.2). Orden: SIEMPRE alfabético. #}
     {% if permissions.mantenciones %}
-    <button class="sg-toggle" data-sg="servtec">
-      <i class="bi bi-wrench-adjustable"></i>Servicio Técnico
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-servtec">
-      <a href="{{ url_for('mant_index') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
-        <i class="bi bi-speedometer2"></i><span>Dashboard</span>
-      </a>
-      {% if not is_tecnico %}
-      <a href="{{ url_for('clientes_hub_list') }}"
-         class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha','mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
-        <i class="bi bi-building-check"></i><span>Clientes</span>
-      </a>
-      {% endif %}
-      <a href="{{ url_for('mant_ots_list') }}"
-         class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
-        <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
-      </a>
-      <a href="{{ url_for('calendario_hub') }}"
-         class="sidebar-link{% if request.endpoint == 'calendario_hub' %} active{% endif %}">
-        <i class="bi bi-calendar3"></i><span>Calendario</span>
-      </a>
-      {% if current_user and current_user.role != 'tecnico' %}
-      {# Cotizaciones: entrada unificada (Tickets + Servicio Técnico) #}
-      <a href="{{ url_for('cotizaciones_hub_list') }}"
-         class="sidebar-link{% if request.endpoint in ['cotizaciones_hub_list','tk_cotizaciones_list','mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
-        <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
-      </a>
-      <a href="{{ url_for('mant_plantillas_page') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
-        <i class="bi bi-list-check"></i><span>Plantillas</span>
-      </a>
-      <a href="{{ url_for('repuestos_hub_list') }}"
-         class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
-        <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
-      </a>
-      {% endif %}
-      <a href="{{ url_for('cat_list') }}"
-         class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
-        <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
-      </a>
-      {# 2026-07-12 (Daniel): Plan Anual / Radar / Agente·Reglas / Técnicos
-         se movieron DENTRO del módulo Clientes (botones en el header de
-         mantenciones/clientes.html) — ya no van sueltos aquí. Las rutas
-         Flask siguen intactas, solo cambió el enlace de origen. #}
-    </div>
+    <a href="{{ url_for('calendario_hub') }}"
+       class="sidebar-link{% if request.endpoint == 'calendario_hub' %} active{% endif %}">
+      <i class="bi bi-calendar3"></i><span>Calendario</span>
+    </a>
+    <a href="{{ url_for('cat_list') }}"
+       class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
+      <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
+    </a>
+    {% if not is_tecnico %}
+    <a href="{{ url_for('clientes_hub_list') }}"
+       class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha','mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
+      <i class="bi bi-building-check"></i><span>Clientes</span>
+    </a>
+    {% endif %}
+    {% if current_user and current_user.role != 'tecnico' %}
+    <a href="{{ url_for('cotizaciones_hub_list') }}"
+       class="sidebar-link{% if request.endpoint in ['cotizaciones_hub_list','tk_cotizaciones_list','mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
+      <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
+    </a>
+    {% endif %}
+    <a href="{{ url_for('mant_index') }}"
+       class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
+      <i class="bi bi-speedometer2"></i><span>Dashboard</span>
+    </a>
+    <a href="{{ url_for('mant_ots_list') }}"
+       class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
+      <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
+    </a>
+    {% if current_user and current_user.role != 'tecnico' %}
+    <a href="{{ url_for('mant_plantillas_page') }}"
+       class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
+      <i class="bi bi-list-check"></i><span>Plantillas</span>
+    </a>
+    <a href="{{ url_for('repuestos_hub_list') }}"
+       class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
+      <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
+    </a>
+    {% endif %}
+    {% if not is_tecnico %}
+    <a href="{{ url_for('mant_tecnicos_externos_index') }}"
+       class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">
+      <i class="bi bi-person-badge"></i><span>Técnicos</span>
+    </a>
+    {% endif %}
     {% endif %}
 
     {# ══ LOGÍSTICA ══ #}

@@ -392,28 +392,31 @@
             title="Descargar Excel de clientes: RUT, dirección, contrato (condición y tipo) + hoja de productos por RUT — para cruzar con Finanzas">
       <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
     </button>
-    {# 2026-07-12 (Daniel): Plan Anual / Radar / Agente·Reglas / Técnicos
-       viven DENTRO del módulo Clientes (ya no como enlaces sueltos del
-       sidebar de Servicio Técnico) — herramientas de gestión de clientes
-       y dotación, no módulos aparte. Rutas sin cambios. #}
-    <a href="{{ url_for('mant_planificador_page') }}" class="btn btn-outline-light fw-semibold px-3"
-       style="border-color:rgba(255,255,255,.3);color:#fff" title="Plan Anual de mantenciones">
-      <i class="bi bi-grid-3x3-gap me-1"></i>Plan Anual
-    </a>
-    {% if permissions.admin or permissions.superadmin %}
-    <a href="{{ url_for('mant_radar_page') }}" class="btn btn-outline-light fw-semibold px-3"
-       style="border-color:rgba(255,255,255,.3);color:#fff" title="Radar del agente inteligente">
-      <i class="bi bi-radar me-1"></i>Radar
-    </a>
-    <a href="{{ url_for('mant_configuracion') }}" class="btn btn-outline-light fw-semibold px-3"
-       style="border-color:rgba(255,255,255,.3);color:#fff" title="Reglas del agente inteligente">
-      <i class="bi bi-sliders me-1"></i>Agente · Reglas
-    </a>
-    {% endif %}
-    <a href="{{ url_for('mant_tecnicos_externos_index') }}" class="btn btn-outline-light fw-semibold px-3"
-       style="border-color:rgba(255,255,255,.3);color:#fff" title="Dotación de técnicos">
-      <i class="bi bi-person-badge me-1"></i>Técnicos
-    </a>
+    {# 2026-07-12 (Daniel): Plan Anual / Radar / Agente·Reglas viven DENTRO
+       del módulo Clientes, como un menú discreto (no botones sueltos).
+       Técnicos se movió al sidebar de Servicio Técnico (es dotación, no
+       gestión de clientes). Rutas Flask sin cambios. #}
+    <div class="dropdown">
+      <button type="button" class="btn btn-outline-light fw-semibold px-3 dropdown-toggle"
+              style="border-color:rgba(255,255,255,.3);color:#fff"
+              data-bs-toggle="dropdown" aria-expanded="false"
+              title="Herramientas del agente inteligente: Plan Anual, Radar y Reglas">
+        <i class="bi bi-cpu me-1"></i>Agente
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{{ url_for('mant_planificador_page') }}">
+          <i class="bi bi-grid-3x3-gap me-2"></i>Plan Anual
+        </a></li>
+        {% if permissions.admin or permissions.superadmin %}
+        <li><a class="dropdown-item" href="{{ url_for('mant_radar_page') }}">
+          <i class="bi bi-radar me-2"></i>Radar
+        </a></li>
+        <li><a class="dropdown-item" href="{{ url_for('mant_configuracion') }}">
+          <i class="bi bi-sliders me-2"></i>Agente · Reglas
+        </a></li>
+        {% endif %}
+      </ul>
+    </div>
   </div>
 </div>
 
