@@ -902,7 +902,8 @@ function aplicarKpiFiltro(tipo) {
    Los data-* de cada card son la fuente de verdad del filtrado. #}
 {% set FILTER_GROUPS = [
      {'key':'tipo',     'label':'Tipo',     'icon':'tag-fill',
-      'opts':[('mantencion','Mantención'),('arriendo','Arriendo'),('leasing','Leasing')]},
+      'opts':[('mantencion','Mantención'),('arriendo','Arriendo'),('leasing','Leasing'),
+              ('instalacion','Instalación'),('prospecto','Prospecto')]},
      {'key':'estado',   'label':'Estado',   'icon':'circle-fill',
       'opts':[('activo','Activo'),('inactivo','Inactivo'),('prospecto','Prospecto'),('suspendido','Suspendido')]},
      {'key':'contrato', 'label':'Contrato', 'icon':'file-earmark-text-fill',
@@ -1042,6 +1043,10 @@ function aplicarKpiFiltro(tipo) {
     {%- set tipo_bg = '#0891b2' -%}{%- set tipo_lbl = 'Arriendo' -%}{%- set tipo_icon = 'calendar-range' -%}
   {%- elif tipo_c == 'leasing' -%}
     {%- set tipo_bg = '#f59e0b' -%}{%- set tipo_lbl = 'Leasing' -%}{%- set tipo_icon = 'cash-coin' -%}
+  {%- elif tipo_c == 'instalacion' -%}
+    {%- set tipo_bg = '#0d9488' -%}{%- set tipo_lbl = 'Instalación' -%}{%- set tipo_icon = 'tools' -%}
+  {%- elif tipo_c == 'prospecto' -%}
+    {%- set tipo_bg = '#6b7280' -%}{%- set tipo_lbl = 'Prospecto' -%}{%- set tipo_icon = 'person-add' -%}
   {%- else -%}
     {%- set tipo_bg = '#dc2626' -%}{%- set tipo_lbl = 'Mantención' -%}{%- set tipo_icon = 'wrench-adjustable' -%}
   {%- endif -%}
