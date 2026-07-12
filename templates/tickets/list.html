@@ -585,7 +585,8 @@ function tkParamsFiltros(conOrden){
 // ── Encabezados: [label, columna sort del backend o '' = no ordenable] ──
 const TK_COLS = [
   ['Ticket','numero_ticket'], ['Cliente','empresa'], ['Tipo','tipo'], ['Estado','estado'],
-  ['Avance',''], ['Asignado','asignado_a'], ['Origen','origen'], ['Fecha','updated_at'], ['Acciones',''],
+  ['Avance',''], ['Asignado','asignado_a'], ['Origen','origen'],
+  ['Creado','created_at'], ['Actualizado','updated_at'], ['Acciones',''],
 ];
 function tkTheadHtml(){
   return '<tr>' + TK_COLS.map(function(c){
@@ -814,7 +815,8 @@ function tkFilaHtml(tk){
   const asignado = (tk.asignado_a && String(tk.asignado_a).trim())
     ? '<span class="tkc-asignado">'+esc(tk.asignado_a)+'</span>'
     : '<span class="tkc-asignado none">Sin asignar</span>';
-  const fp = fmtFechaPartes(fmtFecha(tk.updated_at));
+  const fpCreado = fmtFechaPartes(fmtFecha(tk.created_at));
+  const fpActualizado = fmtFechaPartes(fmtFecha(tk.updated_at));
   return '<tr class="prio-'+(tk.prioridad||'media')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
     + '<td><div class="tkc-num"><span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'+garBadge+unread+'</div></td>'
     + '<td><div class="tkc-cliente">'+esc(cliente)+'</div>'+(titulo?'<div class="tkc-titulo">'+esc(titulo)+'</div>':'')+'</td>'
@@ -823,7 +825,8 @@ function tkFilaHtml(tk){
     + '<td>'+tkMiniStepper(tk)+'</td>'
     + '<td>'+asignado+'</td>'
     + '<td>'+tkOrigenCelda(tk.origen)+'</td>'
-    + '<td><div class="tkc-fecha">'+esc(fp.f)+(fp.h?'<span class="hora">'+esc(fp.h)+'</span>':'')+'</div></td>'
+    + '<td><div class="tkc-fecha">'+esc(fpCreado.f)+(fpCreado.h?'<span class="hora">'+esc(fpCreado.h)+'</span>':'')+'</div></td>'
+    + '<td><div class="tkc-fecha">'+esc(fpActualizado.f)+(fpActualizado.h?'<span class="hora">'+esc(fpActualizado.h)+'</span>':'')+'</div></td>'
     + '<td>'+tkAccionesCelda(tk)+'</td>'
     + '</tr>';
 }

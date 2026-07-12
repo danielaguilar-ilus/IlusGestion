@@ -497,31 +497,10 @@
          class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
         <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
       </a>
-      {# Plan Anual de mantenciones (2026-06-10): gestión, no técnicos #}
-      {% if current_user and current_user.role != 'tecnico' %}
-      <a href="{{ url_for('mant_planificador_page') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_planificador_page' %} active{% endif %}">
-        <i class="bi bi-grid-3x3-gap"></i><span>Plan Anual</span>
-      </a>
-      {% endif %}
-      {# Agente de Inteligencia — solo admin/superadmin #}
-      {% if permissions.admin or permissions.superadmin %}
-      <a href="{{ url_for('mant_radar_page') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_radar_page' %} active{% endif %}">
-        <i class="bi bi-radar"></i><span>Radar</span>
-      </a>
-      <a href="{{ url_for('mant_configuracion') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_configuracion' %} active{% endif %}">
-        <i class="bi bi-sliders"></i><span>Agente · Reglas</span>
-      </a>
-      {% endif %}
-      {# Técnicos (dotación) — oculto para el propio técnico #}
-      {% if not is_tecnico %}
-      <a href="{{ url_for('mant_tecnicos_externos_index') }}"
-         class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">
-        <i class="bi bi-person-badge"></i><span>Técnicos</span>
-      </a>
-      {% endif %}
+      {# 2026-07-12 (Daniel): Plan Anual / Radar / Agente·Reglas / Técnicos
+         se movieron DENTRO del módulo Clientes (botones en el header de
+         mantenciones/clientes.html) — ya no van sueltos aquí. Las rutas
+         Flask siguen intactas, solo cambió el enlace de origen. #}
     </div>
     {% endif %}
 
