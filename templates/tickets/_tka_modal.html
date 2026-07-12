@@ -525,7 +525,36 @@ const _TKA = {
   loaded: { docHeader: null, cliQuery: null },
   ctx: { mode: 'crear', ticketId: null, onDone: null },
   _liveTimer: null,
+  ultimoMotivoSinSaldo: '',
 };
+
+// Daniel 2026-07-12: "si hay mucho equipo sin saldo... dame la oportunidad
+// de que yo pueda transmitir todo ese mensaje a todos los equipos" -- pero
+// sin perder la trazabilidad/responsabilidad de que el usuario lo declare
+// a proposito (no un default silencioso). Por eso siempre se confirma,
+// nunca se reutiliza el motivo sin que el usuario lo apruebe explicitamente
+// para ESE equipo puntual.
+async function _tkaPedirMotivoSinSaldo(nombre){
+  if (_TKA.ultimoMotivoSinSaldo){
+    const reusar = await ilusConfirm({
+      title: 'Producto sin saldo disponible',
+      message: `"${nombre}" tampoco tiene saldo. ¿Usar el mismo motivo declarado para los equipos anteriores?`,
+      sub: `"${_tkaEsc(_TKA.ultimoMotivoSinSaldo)}"`,
+      subHtml: true,
+      okLabel: 'Usar el mismo motivo', cancelLabel: 'Escribir uno distinto',
+      type: 'warning',
+    });
+    if (reusar) return _TKA.ultimoMotivoSinSaldo;
+  }
+  const motivo = await ilusPrompt({
+    title: 'Producto sin saldo disponible',
+    message: `"${nombre}" ya fue rebajado del sistema (aparentemente ya tiene guía/entrega). Explica por qué se debe incluir igual:`,
+    placeholder: 'Ej: cliente reporta que nunca llegó, se reemplaza por garantía…',
+    required: true, type: 'warning',
+  });
+  if (motivo) _TKA.ultimoMotivoSinSaldo = motivo;
+  return motivo;
+}
 
 // Helpers self-contenidos (no dependen del orden de <script> de la página host)
 function _tkaEsc(s){ return (s==null?'':String(s))
@@ -562,6 +591,7 @@ function _tkaResetEstado(){
   _TKA.loaded.docHeader = null;
   _TKA.loaded.cliQuery = null;
   _TKA.tab = 'doc';
+  _TKA.ultimoMotivoSinSaldo = ''; // no arrastrar el motivo de una sesión/documento a otro
 
   const inpNudo = document.getElementById('tkaDocNudo');
   if (inpNudo) inpNudo.value = '';
@@ -870,16 +900,9 @@ async function tkaToggleLineaDoc(inp, silent){
   const qtyInp = document.querySelector(`#tkaDocResult input.ln-qty-input[data-line-key="${key}"]`);
   let motivo = (_TKA.selDoc.get(key) || {}).motivo_sin_saldo || '';
   if (inp.checked && isZero && !silent){
-    // Daniel 2026-07-12: "la gerencia tiene que saber el por que el usuario
-    // involucro una maquina que ya tenia guia... vamos a necesitar un
-    // comentario... y todo registrado con el historial" -- ya no alcanza
-    // con un aviso informativo, ahora hay que justificar por escrito.
-    motivo = await ilusPrompt({
-      title: 'Producto sin saldo disponible',
-      message: `"${nombre}" ya fue rebajado del sistema (aparentemente ya tiene guía/entrega). Explica por qué se debe incluir igual:`,
-      placeholder: 'Ej: cliente reporta que nunca llegó, se reemplaza por garantía…',
-      required: true, type: 'warning',
-    });
+    // Daniel 2026-07-12: justificación obligatoria, con opción de reutilizar
+    // el mismo motivo entre varios equipos sin saldo (_tkaPedirMotivoSinSaldo).
+    motivo = await _tkaPedirMotivoSinSaldo(nombre);
     if (!motivo){ inp.checked = false; return; }
     if (qtyInp && parseFloat(qtyInp.value || 0) === 0) qtyInp.value = 1;
   }
@@ -1133,14 +1156,9 @@ async function tkaToggleLineaCli(inp, silent){
   const nombre = inp.dataset.nombre;
   let motivo = (_TKA.selCli.get(key) || {}).motivo_sin_saldo || '';
   if (inp.checked && isZero && !silent){
-    // Mismo criterio que tkaToggleLineaDoc: justificacion obligatoria,
-    // registrada en el historial (Daniel 2026-07-12).
-    motivo = await ilusPrompt({
-      title: 'Producto sin saldo disponible',
-      message: `"${nombre}" ya fue rebajado del sistema (aparentemente ya tiene guía/entrega). Explica por qué se debe incluir igual:`,
-      placeholder: 'Ej: cliente reporta que nunca llegó, se reemplaza por garantía…',
-      required: true, type: 'warning',
-    });
+    // Mismo criterio que tkaToggleLineaDoc: justificación obligatoria, con
+    // opción de reutilizar el mismo motivo (_tkaPedirMotivoSinSaldo).
+    motivo = await _tkaPedirMotivoSinSaldo(nombre);
     if (!motivo){ inp.checked = false; return; }
     const qtyInpZ = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
     if (qtyInpZ && parseFloat(qtyInpZ.value || 0) === 0) qtyInpZ.value = 1;
