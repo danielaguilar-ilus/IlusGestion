@@ -11,6 +11,7 @@ Wiring identico al patron ya usado por tickets_module.py:
 La migracion (_ensure_catalogo_tables) corre dentro del register, en
 app_context, para funcionar aun con ILUS_SKIP_MIGRATIONS=1 en produccion.
 """
+import json
 import math
 import os
 from functools import wraps
@@ -40,9 +41,24 @@ def register_catalogo_routes(app, ctx):
     # chile_fmt del proyecto si esta disponible; si no, cae a zoneinfo local.
     chile_fmt = ctx.get("chile_fmt")
 
+    # ── Dependencias para piolas (auditoria) / sync ERP / correo del manual ──
+    _audit = ctx.get("_audit")
+    _random_sql_query = ctx.get("_random_sql_query")
+    validar_email = ctx.get("validar_email")
+    _send_ilus_email = ctx.get("_send_ilus_email")
+    _brand_subject = ctx.get("_brand_subject")
+    _ilus_email_master = ctx.get("_ilus_email_master")
+    ILUS_SOPORTE_EMAIL = ctx.get("ILUS_SOPORTE_EMAIL") or "soportetec@sphs.cl"
+
     MAX_FOTOS_POR_PRODUCTO = 10
+    MAX_PIOLAS_POR_PRODUCTO = 10
     MAX_MANUAL_MB = 25  # mismo techo/motivo que MAX_ADJUNTO_MB en tickets_module.py:
                         # Cloud Run limita cada request HTTP a 32MB.
+
+    # Bodega de sincronizacion ERP (Regla #4.1: SOLO LECTURA, via
+    # _random_sql_query — mismo patron que _buscar_catalogo_bodega en
+    # tickets_module.py, con env var propia para no acoplar ambos modulos).
+    CAT_BODEGA_SYNC = os.environ.get("CAT_BODEGA_SYNC", "02").strip()
 
     # ─────────────────────────────────────────────────────────────────
     #  Migracion idempotente (patron _ensure_tickets_tables). Corre al
@@ -81,6 +97,25 @@ def register_catalogo_routes(app, ctx):
                   UNIQUE KEY uq_cat_foto_orden (producto_id, orden),
                   KEY idx_cat_foto_producto (producto_id),
                   CONSTRAINT fk_catfoto_producto FOREIGN KEY (producto_id)
+                     REFERENCES cat_productos(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS cat_producto_piolas (
+                  id           INT AUTO_INCREMENT PRIMARY KEY,
+                  producto_id  INT NOT NULL,
+                  medida_cm    DECIMAL(6,1) NOT NULL,
+                  observacion  VARCHAR(300) NOT NULL,
+                  orden        INT NOT NULL DEFAULT 1,
+                  activo       TINYINT(1) NOT NULL DEFAULT 1,
+                  created_by   VARCHAR(190) NULL,
+                  updated_by   VARCHAR(190) NULL,
+                  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+                                  ON UPDATE CURRENT_TIMESTAMP,
+                  UNIQUE KEY uq_cat_piola_orden (producto_id, orden),
+                  KEY idx_cat_piola_producto (producto_id, activo),
+                  CONSTRAINT fk_catpiola_producto FOREIGN KEY (producto_id)
                      REFERENCES cat_productos(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
@@ -214,6 +249,21 @@ def register_catalogo_routes(app, ctx):
         activo_arg = (request.args.get("activo") or "1").strip()
         activo = 0 if activo_arg == "0" else 1
 
+        # Auto-fill al buscar (gap-fill transparente, contrato ERP sync):
+        # si hay busqueda y no hay resultados locales, se intenta traer
+        # desde el ERP (SOLO LECTURA) los SKUs de la bodega de soporte que
+        # calcen, y se crean los que falten antes de re-ejecutar el SELECT.
+        if q and activo == 1:
+            try:
+                _n_local = int((mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM cat_productos WHERE activo=1 "
+                    "AND (sku LIKE %s OR nombre LIKE %s OR familia LIKE %s)",
+                    (f"%{q}%", f"%{q}%", f"%{q}%")) or {}).get("n") or 0)
+                if _n_local == 0:
+                    _cat_sync_erp_nuevos(q=q, limit=20)
+            except Exception as _e_gap:
+                print(f"[cat_api_list] gap-fill ERP falló: {_e_gap}", flush=True)
+
         where = ["p.activo=%s"]
         params = [activo]
         if q:
@@ -301,12 +351,17 @@ def register_catalogo_routes(app, ctx):
         fotos = mysql_fetchall(
             "SELECT id, gcs_key, orden FROM cat_producto_fotos WHERE producto_id=%s ORDER BY orden",
             (pid,))
+        piolas = mysql_fetchall(
+            "SELECT id, medida_cm, observacion, orden FROM cat_producto_piolas "
+            "WHERE producto_id=%s AND activo=1 ORDER BY orden", (pid,))
         producto = _fmt_row(p)  # Regla #6: created_at/updated_at a hora Chile
         manual_key = producto.pop("manual_pdf_key", None)
         return jsonify({
             "ok": True,
             "producto": producto,
             "fotos": [{"id": f["id"], "url": "/f/" + f["gcs_key"], "orden": f["orden"]} for f in fotos],
+            "piolas": [{"id": pl["id"], "medida_cm": float(pl["medida_cm"]),
+                        "observacion": pl["observacion"], "orden": pl["orden"]} for pl in piolas],
             "manual": {
                 "tiene": bool(manual_key),
                 "nombre": p.get("manual_pdf_nombre"),
@@ -557,3 +612,349 @@ def register_catalogo_routes(app, ctx):
         resp = Response(data, mimetype="application/pdf")
         resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
         return resp
+
+    # ─────────────────────────────────────────────────────────────────
+    #  PIOLAS — cables/piolas de la maquina, con medida (cm) + observacion
+    #  obligatoria (Daniel: "distinguir cual cable es"). Auditoria via
+    #  app_audit_log (Regla #5), soft-delete siempre, max 10 activas.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/catalogo/api/productos/<int:pid>/piolas", methods=["GET"])
+    @_catalogo_required
+    def cat_api_piolas_list(pid):
+        if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        rows = mysql_fetchall(
+            "SELECT id, medida_cm, observacion, orden FROM cat_producto_piolas "
+            "WHERE producto_id=%s AND activo=1 ORDER BY orden", (pid,))
+        return jsonify({"ok": True, "piolas": [
+            {"id": r["id"], "medida_cm": float(r["medida_cm"]),
+             "observacion": r["observacion"], "orden": r["orden"]} for r in rows]})
+
+    @app.route("/catalogo/api/productos/<int:pid>/piolas", methods=["POST"])
+    @_catalogo_required
+    def cat_api_piolas_crear(pid):
+        prod = mysql_fetchone("SELECT id, sku FROM cat_productos WHERE id=%s", (pid,))
+        if not prod:
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        d = request.get_json(silent=True) or {}
+        try:
+            medida_cm = float(d.get("medida_cm"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Medida inválida"}), 400
+        if medida_cm <= 0:
+            return jsonify({"ok": False, "error": "La medida debe ser mayor que 0"}), 400
+        observacion = (d.get("observacion") or "").strip()
+        if not observacion:
+            return jsonify({"ok": False, "error": "La observación es obligatoria (para distinguir cuál piola es)"}), 400
+        observacion = observacion[:300]
+
+        total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM cat_producto_piolas WHERE producto_id=%s AND activo=1",
+            (pid,)) or {}).get("n") or 0)
+        if total >= MAX_PIOLAS_POR_PRODUCTO:
+            return jsonify({"ok": False, "error": f"Máximo {MAX_PIOLAS_POR_PRODUCTO} piolas por producto"}), 400
+
+        user = current_username() or "sistema"
+        try:
+            mysql_execute(
+                "INSERT INTO cat_producto_piolas (producto_id, medida_cm, observacion, orden, created_by, updated_by) "
+                "VALUES (%s,%s,%s, (SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m FROM cat_producto_piolas WHERE producto_id=%s) t), %s,%s)",
+                (pid, medida_cm, observacion, pid, user, user))
+        except Exception as _e:
+            print(f"[cat_piolas_crear] error pid={pid}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo crear la piola"}), 500
+
+        row = mysql_fetchone(
+            "SELECT id, orden FROM cat_producto_piolas WHERE producto_id=%s "
+            "ORDER BY id DESC LIMIT 1", (pid,))
+        nuevo_id = row["id"] if row else None
+        if _audit:
+            _audit("cat_piola_crear", target_type="cat_producto_piola", target_id=nuevo_id,
+                   details={"producto_id": pid, "sku": prod.get("sku"),
+                             "orden": row.get("orden") if row else None,
+                             "medida_cm_antes": None, "medida_cm_despues": medida_cm,
+                             "observacion_antes": None, "observacion_despues": observacion})
+        return jsonify({"ok": True, "id": nuevo_id})
+
+    @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>", methods=["PATCH"])
+    @_catalogo_required
+    def cat_api_piolas_editar(pid, piola_id):
+        prod = mysql_fetchone("SELECT sku FROM cat_productos WHERE id=%s", (pid,))
+        if not prod:
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        prev = mysql_fetchone(
+            "SELECT medida_cm, observacion FROM cat_producto_piolas "
+            "WHERE id=%s AND producto_id=%s AND activo=1", (piola_id, pid))
+        if not prev:
+            return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
+
+        d = request.get_json(silent=True) or {}
+        sets, params = [], []
+        medida_despues = float(prev["medida_cm"])
+        obs_despues = prev["observacion"]
+
+        if "medida_cm" in d:
+            try:
+                medida_cm = float(d.get("medida_cm"))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "Medida inválida"}), 400
+            if medida_cm <= 0:
+                return jsonify({"ok": False, "error": "La medida debe ser mayor que 0"}), 400
+            sets.append("medida_cm=%s")
+            params.append(medida_cm)
+            medida_despues = medida_cm
+        if "observacion" in d:
+            observacion = (d.get("observacion") or "").strip()
+            if not observacion:
+                return jsonify({"ok": False, "error": "La observación es obligatoria"}), 400
+            observacion = observacion[:300]
+            sets.append("observacion=%s")
+            params.append(observacion)
+            obs_despues = observacion
+        if not sets:
+            return jsonify({"ok": False, "error": "Sin cambios válidos"}), 400
+
+        sets.append("updated_by=%s")
+        params.append(current_username() or "sistema")
+        params += [piola_id, pid]
+        try:
+            mysql_execute(
+                f"UPDATE cat_producto_piolas SET {', '.join(sets)} WHERE id=%s AND producto_id=%s",
+                tuple(params))
+        except Exception as _e:
+            print(f"[cat_piolas_editar] error pid={pid} piola={piola_id}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo actualizar la piola"}), 500
+
+        if _audit:
+            _audit("cat_piola_editar", target_type="cat_producto_piola", target_id=piola_id,
+                   details={"producto_id": pid, "sku": prod.get("sku"),
+                             "medida_cm_antes": float(prev["medida_cm"]), "medida_cm_despues": medida_despues,
+                             "observacion_antes": prev["observacion"], "observacion_despues": obs_despues})
+        return jsonify({"ok": True})
+
+    @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>", methods=["DELETE"])
+    @_catalogo_required
+    def cat_api_piolas_eliminar(pid, piola_id):
+        prod = mysql_fetchone("SELECT sku FROM cat_productos WHERE id=%s", (pid,))
+        if not prod:
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        prev = mysql_fetchone(
+            "SELECT medida_cm, observacion FROM cat_producto_piolas "
+            "WHERE id=%s AND producto_id=%s AND activo=1", (piola_id, pid))
+        if not prev:
+            return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
+
+        # Soft-delete SIEMPRE (Regla #5) — nunca se hard-delete una piola individual.
+        mysql_execute(
+            "UPDATE cat_producto_piolas SET activo=0, updated_by=%s WHERE id=%s AND producto_id=%s",
+            (current_username() or "sistema", piola_id, pid))
+
+        if _audit:
+            _audit("cat_piola_eliminar", target_type="cat_producto_piola", target_id=piola_id,
+                   details={"producto_id": pid, "sku": prod.get("sku"),
+                             "medida_cm_antes": float(prev["medida_cm"]), "medida_cm_despues": None,
+                             "observacion_antes": prev["observacion"], "observacion_despues": None})
+        return jsonify({"ok": True})
+
+    @app.route("/catalogo/api/productos/<int:pid>/piolas/historial", methods=["GET"])
+    @_catalogo_required
+    def cat_api_piolas_historial(pid):
+        if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        ids_rows = mysql_fetchall(
+            "SELECT id FROM cat_producto_piolas WHERE producto_id=%s", (pid,))
+        ids = [r["id"] for r in ids_rows]
+        if not ids:
+            return jsonify({"ok": True, "eventos": []})
+        placeholders = ",".join(["%s"] * len(ids))
+        rows = mysql_fetchall(
+            f"SELECT ts, username, role, action, details FROM app_audit_log "
+            f"WHERE target_type='cat_producto_piola' AND target_id IN ({placeholders}) "
+            f"ORDER BY ts DESC",
+            tuple(str(i) for i in ids))
+        eventos = []
+        for r in rows:
+            det = r.get("details")
+            if isinstance(det, str):
+                try:
+                    det = json.loads(det)
+                except Exception:
+                    pass
+            eventos.append({
+                "fecha": _fmt_dt(r.get("ts")),
+                "usuario": r.get("username"),
+                "rol": r.get("role"),
+                "accion": r.get("action"),
+                "detalle": det,
+            })
+        return jsonify({"ok": True, "eventos": eventos})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  SYNC ERP — bajo demanda (sin cron nuevo). Trae SKUs de la bodega de
+    #  soporte (Regla #4.1: SOLO LECTURA via _random_sql_query) y crea los
+    #  productos del catalogo que aun no existen localmente.
+    # ─────────────────────────────────────────────────────────────────
+    def _cat_sync_erp_nuevos(q=None, limit=200):
+        """Devuelve (creados:int, skus:list[str]) o (0, []) si el ERP no
+        esta disponible / no hay novedades. Nunca lanza excepciones."""
+        if not _random_sql_query:
+            return 0, []
+        try:
+            limit = int(limit)
+        except Exception:
+            limit = 200
+        limit = max(1, min(500, limit))
+        try:
+            if q:
+                q_like = f"%{str(q).upper()[:60]}%"
+                sql = f"""
+                    SELECT DISTINCT TOP {limit}
+                           LTRIM(RTRIM(pr.KOPR)) AS sku, LTRIM(RTRIM(pr.NOKOPR)) AS nombre
+                      FROM MAEPR pr
+                     WHERE EXISTS (SELECT 1 FROM MAEST st
+                                    WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
+                                      AND LTRIM(RTRIM(st.KOBO))=%s)
+                       AND (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
+                     ORDER BY sku
+                """
+                params = (CAT_BODEGA_SYNC, q_like, q_like)
+            else:
+                sql = f"""
+                    SELECT DISTINCT TOP {limit}
+                           LTRIM(RTRIM(pr.KOPR)) AS sku, LTRIM(RTRIM(pr.NOKOPR)) AS nombre
+                      FROM MAEPR pr
+                     WHERE EXISTS (SELECT 1 FROM MAEST st
+                                    WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
+                                      AND LTRIM(RTRIM(st.KOBO))=%s)
+                     ORDER BY sku
+                """
+                params = (CAT_BODEGA_SYNC,)
+            rows = _random_sql_query(sql, params, max_rows=limit) or []
+        except Exception as _e:
+            print(f"[_cat_sync_erp_nuevos] error ERP (bodega={CAT_BODEGA_SYNC}): {_e}", flush=True)
+            return 0, []
+
+        erp_pairs = [((r.get("sku") or "").strip(), (r.get("nombre") or "").strip())
+                     for r in rows if (r.get("sku") or "").strip()]
+        if not erp_pairs:
+            return 0, []
+        skus_erp = [s for s, _ in erp_pairs]
+
+        placeholders = ",".join(["%s"] * len(skus_erp))
+        existentes_rows = mysql_fetchall(
+            f"SELECT sku FROM cat_productos WHERE sku IN ({placeholders})", tuple(skus_erp))
+        existentes = {r["sku"] for r in existentes_rows}
+
+        creados = 0
+        creados_skus = []
+        for sku, nombre in erp_pairs:
+            if sku in existentes or not nombre:
+                continue
+            try:
+                mysql_execute(
+                    "INSERT INTO cat_productos (sku, nombre, familia, created_by, updated_by) "
+                    "VALUES (%s,%s,NULL,'sistema-erp-sync','sistema-erp-sync')",
+                    (sku[:100], nombre[:300]))
+                creados += 1
+                creados_skus.append(sku)
+            except Exception as _e_ins:
+                # Duplicado (carrera) u otro error puntual: se ignora esta fila,
+                # no se aborta el resto del sync.
+                print(f"[_cat_sync_erp_nuevos] no se pudo crear sku={sku}: {_e_ins}", flush=True)
+        return creados, creados_skus
+
+    @app.route("/catalogo/api/sync-erp", methods=["POST"])
+    @_catalogo_required
+    def cat_api_sync_erp():
+        d = request.get_json(silent=True) or {}
+        try:
+            limit = int(d.get("limit") or 200)
+        except Exception:
+            limit = 200
+        creados, skus = _cat_sync_erp_nuevos(q=None, limit=limit)
+        return jsonify({"ok": True, "creados": creados, "skus": skus})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  MANUAL — enviar por correo (adjunto, sin URL publica nueva).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/catalogo/api/productos/<int:pid>/manual/enviar-correo", methods=["POST"])
+    @_catalogo_required
+    def cat_api_manual_enviar_correo(pid):
+        p = mysql_fetchone(
+            "SELECT sku, nombre, manual_pdf_key, manual_pdf_nombre FROM cat_productos WHERE id=%s", (pid,))
+        if not p:
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        if not p.get("manual_pdf_key"):
+            return jsonify({"ok": False, "error": "Este producto no tiene manual"}), 404
+
+        d = request.get_json(silent=True) or {}
+        email = (d.get("email") or "").strip()
+        mensaje = (d.get("mensaje") or "").strip()[:1000] or None
+
+        if validar_email:
+            ok_email, val_or_err = validar_email(email)
+            if not ok_email:
+                return jsonify({"ok": False, "error": val_or_err or "Correo inválido"}), 400
+            if not val_or_err:
+                return jsonify({"ok": False, "error": "Falta el correo de destino"}), 400
+            email = val_or_err
+        elif not email:
+            return jsonify({"ok": False, "error": "Falta el correo de destino"}), 400
+
+        if not _gcs_bucket:
+            return jsonify({"ok": False, "error": "No se pudo enviar el correo (almacenamiento no disponible)"}), 502
+        b = _gcs_bucket()
+        if not b:
+            return jsonify({"ok": False, "error": "No se pudo enviar el correo (almacenamiento no disponible)"}), 502
+        try:
+            pdf_bytes = b.blob(p["manual_pdf_key"]).download_as_bytes()
+        except Exception as _e:
+            print(f"[cat_manual_enviar_correo] error lectura GCS pid={pid}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo leer el manual"}), 500
+
+        nombre_producto = p.get("nombre") or p.get("sku") or "producto"
+        subject = _brand_subject(f"Manual — {nombre_producto}") if _brand_subject else f"Manual — {nombre_producto}"
+
+        from markupsafe import escape as _esc
+        msg_html = f"<p style=\"margin:0 0 12px\">{_esc(mensaje)}</p>" if mensaje else ""
+        body_html = (
+            f"<p style=\"margin:0 0 12px;font-size:15px;line-height:24px;color:#454b54\">"
+            f"Adjunto encontrarás el manual del producto "
+            f"<strong>{_esc(p.get('sku') or '')}</strong> — {_esc(nombre_producto)}.</p>"
+            f"{msg_html}"
+        )
+        if _ilus_email_master:
+            html = _ilus_email_master({
+                "subject": subject,
+                "title": "Manual de producto",
+                "subtitle": f"{p.get('sku') or ''} · {nombre_producto}",
+                "body_html": body_html,
+                "support_email": ILUS_SOPORTE_EMAIL,
+            })
+        else:
+            html = f"<html><body>{body_html}</body></html>"
+
+        manual_nombre = p.get("manual_pdf_nombre") or f"{p.get('sku') or 'manual'}.pdf"
+        if not _send_ilus_email:
+            return jsonify({"ok": False, "error": "No se pudo enviar el correo (canal de email no disponible)"}), 502
+        try:
+            enviado = _send_ilus_email(
+                email, subject, html,
+                evento="catalogo_manual", modulo="catalogo",
+                attachments=[{"filename": manual_nombre, "content": pdf_bytes, "content_type": "application/pdf"}],
+            )
+        except Exception as _e:
+            print(f"[cat_manual_enviar_correo] error envío pid={pid}: {_e}", flush=True)
+            enviado = False
+
+        if _audit:
+            _audit("cat_manual_enviado", target_type="cat_producto", target_id=pid,
+                   details={"email": email, "sku": p.get("sku"), "manual_nombre": manual_nombre,
+                             "enviado": bool(enviado)})
+
+        if not enviado:
+            return jsonify({
+                "ok": False,
+                "error": "No se pudo enviar el correo (revisa el correo de destino o el estado del canal de email)",
+            }), 502
+        return jsonify({"ok": True})

@@ -65143,9 +65143,33 @@ def mant_lev_crear_o_listar(cid):
                     r[k] = str(r[k])[:16]
         return jsonify({"ok": True, "levantamientos": rows})
 
-    # POST: crear nuevo
+    # POST: crear nuevo -- delega al nucleo compartido (ver mas abajo),
+    # reutilizado tal cual por el wrapper de Tickets "Generar OT"
+    # (tickets_module.tk_api_generar_ot -- Regla #4, un solo motor).
     data = request.get_json(silent=True) or {}
+    payload, status = _mant_lev_crear_ot_core(cid, data)
+    return jsonify(payload), status
 
+
+def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
+    """Nucleo compartido de creacion de Levantamiento/OT (mant_levantamientos +
+    mant_levantamiento_items + OT espejo en mant_visitas + multi-tecnico +
+    plantillas). Usado por:
+      - POST /mantenciones/api/clientes/<cid>/levantamientos (modal real de
+        Mantenciones, #modalLevSelector).
+      - Wrapper "Generar OT" de Tickets (tickets_module.tk_api_generar_ot),
+        que arma el mismo payload y pasa `ticket_id` para vincular
+        tk_tickets.visita_id DENTRO de la misma transaccion.
+
+    equipos "sin ficha" (instalacion de cliente que aun no existe en
+    mant_maquinas): se declaran en data["equipos_ticket"] = [{nombre, sku,
+    serie, maquina_id?}], y se insertan en mant_levantamiento_items con
+    maquina_id=NULL (columna nullable, ON DELETE SET NULL) en vez de exigir
+    un JOIN contra mant_maquinas.
+
+    Devuelve (payload:dict, http_status:int) -- el caller HTTP hace
+    jsonify(payload), status.
+    """
     # ─── Auto-cancelar levantamientos huérfanos del mismo cliente ──
     # 2026-05-16: ya NO bloqueamos cuando hay un levantamiento abierto.
     # Cada acción crea una OT nueva (el admin gestiona desde Órdenes de
@@ -65185,12 +65209,41 @@ def mant_lev_crear_o_listar(cid):
     # el TÉCNICO los captura en terreno (foto + nombre + serie) desde
     # Ejecutar OT. Al cerrar, se materializan en mant_maquinas.
     descubrimiento = bool(data.get("descubrimiento"))
-    if not equipo_ids and not descubrimiento:
-        return jsonify({
+
+    # ─── Equipos de TICKET sin ficha en Mantenciones (2026-07-12) ─────────
+    # Caso "instalacion de cliente/equipo nuevo": no hay mant_maquinas de
+    # donde elegir, asi que el ticket ya declaro los equipos (tk_ticket_
+    # equipos) y se toman TAL CUAL, sin maquina_id. Cada item:
+    # {nombre, sku, serie, maquina_id?}. Si trae maquina_id (el equipo SI
+    # tiene ficha, ej. ticket de mantenimiento sobre equipo existente), se
+    # respeta para poder cruzar plantillas/estado igual que un equipo_id normal.
+    equipos_ticket_raw = data.get("equipos_ticket") or []
+    equipos_ticket_clean = []
+    if isinstance(equipos_ticket_raw, list):
+        for et in equipos_ticket_raw:
+            if not isinstance(et, dict):
+                continue
+            nombre_et = (et.get("nombre") or "").strip()[:300]
+            if not nombre_et:
+                continue
+            try:
+                maquina_id_et = int(et["maquina_id"]) if et.get("maquina_id") else None
+            except (TypeError, ValueError):
+                maquina_id_et = None
+            equipos_ticket_clean.append({
+                "id": maquina_id_et,
+                "nombre": nombre_et,
+                "sku": (et.get("sku") or "").strip()[:120] or None,
+                "serie": (et.get("serie") or "").strip()[:120] or None,
+                "doc_fecha": None,
+            })
+
+    if not equipo_ids and not descubrimiento and not equipos_ticket_clean:
+        return {
             "ok": False,
             "error": "Debes seleccionar al menos 1 equipo para el levantamiento.",
             "error_codigo": "SIN_EQUIPOS",
-        }), 400
+        }, 400
 
     # ─── Fecha y hora programadas (FASE 2026-05-16) ───────────────
     # fecha_programada: YYYY-MM-DD (default: hoy)
@@ -65331,6 +65384,9 @@ def mant_lev_crear_o_listar(cid):
                     tuple(list(equipo_ids) + [cid])
                 )
                 maquinas = cur.fetchall() or []
+            # Equipos del ticket SIN ficha (maquina_id NULL) -- ver docstring.
+            if equipos_ticket_clean:
+                maquinas = list(maquinas) + equipos_ticket_clean
             n_items = 0
             for m in maquinas:
                 cur.execute(
@@ -65338,7 +65394,7 @@ def mant_lev_crear_o_listar(cid):
                     "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
                     " fecha_documento) "
                     "VALUES (%s,%s,%s,%s,%s,%s)",
-                    (lev_id, m["id"], m.get("nombre"), m.get("sku"), m.get("serie"),
+                    (lev_id, m.get("id"), m.get("nombre"), m.get("sku"), m.get("serie"),
                      m.get("doc_fecha"))
                 )
                 n_items += 1
@@ -65516,8 +65572,13 @@ def mant_lev_crear_o_listar(cid):
                         pass
                 # Solo crear el fallback "📷 Documentar" si NO hay plantillas
                 # que se vayan a aplicar (evita duplicación con plantillas).
+                # Los equipos SIN maquina_id (declarados en un ticket, sin
+                # ficha previa) NO entran aqui -- ya reciben su propia tarea
+                # "📋 {tipo}" mas abajo (bloque "equipos_sin_maquina"); antes
+                # se creaban las DOS tareas para el mismo equipo (encontrado
+                # por simulacion de trafico 2026-07-13).
                 if not _tiene_plantillas:
-                    for idx, m in enumerate(maquinas, 1):
+                    for idx, m in enumerate([mm for mm in maquinas if mm.get("id")], 1):
                         cur.execute(
                             "INSERT INTO mant_visita_tareas "
                             "(visita_id, orden, titulo, descripcion, maquina_id, "
@@ -65527,8 +65588,25 @@ def mant_lev_crear_o_listar(cid):
                             (visita_id, idx,
                              f"📷 Documentar: {(m.get('nombre') or 'equipo')[:240]}",
                              "Capturar fotos generales del equipo + N° serie + placa + datos técnicos.",
-                             m["id"], current_username() or 'sistema')
+                             m.get("id"), current_username() or 'sistema')
                         )
+
+                # ─── Ticket -> OT: vinculo bidireccional ATOMICO ───────
+                # Si viene de la generacion de OT desde un Ticket, se setea
+                # tk_tickets.visita_id DENTRO de esta misma transaccion
+                # (mismo cursor/conn que el INSERT de mant_visitas de mas
+                # arriba): si algo despues falla y se hace rollback, el
+                # vinculo se revierte junto con el resto (sin ticket
+                # "fantasma" apuntando a una OT que nunca quedo persistida).
+                if ticket_id and visita_id:
+                    try:
+                        cur.execute(
+                            "UPDATE tk_tickets SET visita_id=%s WHERE id=%s",
+                            (visita_id, ticket_id)
+                        )
+                    except Exception as _e_tk_link:
+                        print(f"[lev_crear] link tk_tickets.visita_id fallo "
+                              f"(ticket_id={ticket_id}): {_e_tk_link}", flush=True)
             except Exception as e_ot:
                 print(f"[lev_crear] no se pudo crear OT espejo: {e_ot}", flush=True)
                 visita_id = None
@@ -65679,6 +65757,48 @@ def mant_lev_crear_o_listar(cid):
                 print(f"[lev_crear] plantillas extra fallaron: {e_pl2}", flush=True)
 
         # ══════════════════════════════════════════════════════════════
+        # Equipos de TICKET sin ficha (maquina_id NULL, ver equipos_ticket
+        # arriba): las plantillas de arriba solo se aplican sobre equipo_ids
+        # reales (mant_maquinas), asi que estos quedarian con 0 tareas.
+        # Se garantiza 1 tarea generica por equipo declarado en el ticket.
+        # ══════════════════════════════════════════════════════════════
+        equipos_sin_maquina = [m for m in maquinas if not m.get("id")]
+        if visita_id and equipos_sin_maquina:
+            try:
+                _conn_tk = get_mysql()
+                try:
+                    with _conn_tk.cursor() as _cur_tk:
+                        _cur_tk.execute(
+                            "SELECT COALESCE(MAX(orden),0) AS mx "
+                            "FROM mant_visita_tareas WHERE visita_id=%s",
+                            (visita_id,)
+                        )
+                        _orden_tk = int((_cur_tk.fetchone() or {}).get("mx") or 0)
+                        for _m in equipos_sin_maquina:
+                            _orden_tk += 1
+                            _nombre_tk = (_m.get("nombre") or "equipo")[:240]
+                            _titulo_tk = f"📋 {tipo_ot.capitalize()}: {_nombre_tk}"
+                            if _m.get("serie"):
+                                _titulo_tk += f" (S/N: {_m['serie']})"
+                            _cur_tk.execute(
+                                "INSERT INTO mant_visita_tareas "
+                                "(visita_id, orden, titulo, descripcion, maquina_id, "
+                                " tipo, tipo_respuesta, obligatoria, requiere_foto, "
+                                " estado_trabajo, created_by) "
+                                "VALUES (%s,%s,%s,%s,NULL,'otro','foto',1,1,'pendiente',%s)",
+                                (visita_id, _orden_tk, _titulo_tk[:300],
+                                 "Equipo declarado en el ticket, sin ficha previa en "
+                                 "Mantenciones (cliente/equipo nuevo).",
+                                 current_username() or 'sistema')
+                            )
+                            items_plantilla += 1
+                    _conn_tk.commit()
+                finally:
+                    _conn_tk.close()
+            except Exception as _e_tk_eq:
+                print(f"[lev_crear] tareas equipos sin ficha (ticket) fallaron: {_e_tk_eq}", flush=True)
+
+        # ══════════════════════════════════════════════════════════════
         # FIX 2026-05-22 (Daniel — caso Vitacura OT 161/162/163):
         # Si el chequeo previo `_tiene_plantillas` dio True porque existe
         # una plantilla con el `nombre` o `tipo_visita` esperado, pero esa
@@ -65741,7 +65861,7 @@ def mant_lev_crear_o_listar(cid):
                        f"{items_plantilla} items plantilla")
         except Exception: pass
 
-        return jsonify({
+        return {
             "ok": True,
             "id": lev_id,
             "n_items": n_items,
@@ -65757,11 +65877,11 @@ def mant_lev_crear_o_listar(cid):
                 + (f" {hora_ini}" if hora_ini else "")
                 + f" — número {numero_ot}."
             ),
-        })
+        }, 200
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return {"ok": False, "error": str(e)}, 500
     finally:
         try: conn.close()
         except Exception: pass

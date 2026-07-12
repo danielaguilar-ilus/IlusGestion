@@ -340,6 +340,7 @@ def register_tickets_routes(app, ctx):
     _uploader_upload = ctx.get("_uploader_upload")
     _uploader_destroy = ctx.get("_uploader_destroy")
     validar_rut = ctx.get("validar_rut")
+    normalizar_rut = ctx.get("normalizar_rut")
     _audit = ctx.get("_audit") or (lambda *a, **k: None)
     chile_fmt = ctx.get("chile_fmt")
     # ERP read-only: reusamos los helpers PROBADOS de app.py (pymssql directo a
@@ -357,6 +358,11 @@ def register_tickets_routes(app, ctx):
     _parse_garantia_aplica = ctx.get("_parse_garantia_aplica")
     _mapear_garantia_a_cobertura = ctx.get("_mapear_garantia_a_cobertura")
     _mant_log = ctx.get("_mant_log") or (lambda *a, **k: None)
+    # Nucleo COMPARTIDO de creacion de Levantamiento/OT (app.py) -- el mismo
+    # que usa el modal real de Mantenciones (#modalLevSelector). El wrapper
+    # "Generar OT" de Tickets (mas abajo) NO reimplementa el INSERT en
+    # mant_visitas -- arma el payload y delega aqui (Regla #4).
+    _mant_lev_crear_ot_core = ctx.get("_mant_lev_crear_ot_core")
 
     # Bodega desde la que se busca el catalogo general (Daniel 2026-07-11:
     # "necesito que traiga todos los productos de la bodega 02"). Codigo
@@ -2206,6 +2212,18 @@ def register_tickets_routes(app, ctx):
     #  lógica (Regla #4). NO confundir con
     #  /mantenciones/api/tickets/<id>/convertir-en-ot (esa es la tabla vieja
     #  mant_tickets, un sistema distinto -- no se toca, Regla #4.2).
+    #
+    #  REESCRITO 2026-07-12: este endpoint dejo de tener su PROPIO INSERT en
+    #  mant_visitas (implementacion paralela divergente -- no creaba
+    #  mant_levantamientos, no soportaba direccion_visita/contacto_*/
+    #  acceso_*/plantillas/adjuntos, y exigia cliente_id ya existente). Ahora
+    #  es un WRAPPER delgado: arma el payload que espera el nucleo
+    #  compartido _mant_lev_crear_ot_core (app.py, el MISMO que usa el modal
+    #  real de Mantenciones #modalLevSelector) y lo invoca con ticket_id=tid
+    #  para que el vinculo tk_tickets.visita_id quede atomico con la
+    #  creacion de la OT. Se CONSERVAN tal cual el GET_LOCK anti-condicion-
+    #  de-carrera y el chequeo de feriado/choque de horario ya probados en
+    #  la ronda anterior (2026-07-12) -- solo se conectan al flujo correcto.
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/generar-ot", methods=["POST"])
     @_tickets_required
@@ -2222,49 +2240,56 @@ def register_tickets_routes(app, ctx):
                 "visita_id_existente": t["visita_id"],
                 "numero_ot_existente": (_v_exist or {}).get("numero_ot"),
             }), 409
+        if not _mant_lev_crear_ot_core:
+            return jsonify({"ok": False, "error": "Motor de OT no disponible (contacta a soporte)."}), 500
 
         d = request.get_json(silent=True) or {}
 
-        # ── Campos requeridos ──
-        try:
-            cliente_id = int(d.get("cliente_id")) if d.get("cliente_id") else None
-        except (TypeError, ValueError):
-            cliente_id = None
-        try:
-            tecnico_user_id = int(d.get("tecnico_user_id")) if d.get("tecnico_user_id") else None
-        except (TypeError, ValueError):
-            tecnico_user_id = None
+        # ── Técnico(s) -- multi-tecnico igual que el modal real; se acepta
+        #    tecnico_ids (lista, preferido) o tecnico_user_id (compat) ──
+        tecnico_ids = []
+        for x in (d.get("tecnico_ids") or []):
+            try:
+                tecnico_ids.append(int(x))
+            except (TypeError, ValueError):
+                pass
+        if not tecnico_ids and d.get("tecnico_user_id"):
+            try:
+                tecnico_ids = [int(d.get("tecnico_user_id"))]
+            except (TypeError, ValueError):
+                tecnico_ids = []
+        tecnico_principal = tecnico_ids[0] if tecnico_ids else None
         fecha_programada = (d.get("fecha_programada") or "").strip()
 
-        if not cliente_id or not tecnico_user_id or not fecha_programada:
+        if not tecnico_principal or not fecha_programada:
             return jsonify({
                 "ok": False,
-                "error": "Faltan campos requeridos: cliente, técnico y fecha programada.",
+                "error": "Faltan campos requeridos: técnico y fecha programada.",
             }), 400
         try:
             datetime.strptime(fecha_programada, "%Y-%m-%d")
         except Exception:
             return jsonify({"ok": False, "error": "Fecha programada inválida (usa AAAA-MM-DD)."}), 400
 
-        if not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cliente_id,)):
-            return jsonify({"ok": False, "error": "El cliente indicado no existe."}), 400
-
         tecnico = mysql_fetchone(
             "SELECT COALESCE(nombre, username) AS nm FROM app_users "
-            "WHERE id=%s AND role='tecnico' AND active=1", (tecnico_user_id,))
+            "WHERE id=%s AND role='tecnico' AND active=1", (tecnico_principal,))
         if not tecnico:
             return jsonify({"ok": False, "error": "El técnico indicado no existe o no está activo."}), 400
-        tecnico_txt = tecnico["nm"]
 
         hora_inicio = _normalize_hora(d.get("hora_inicio")) if _normalize_hora else None
         hora_fin = _normalize_hora(d.get("hora_fin")) if _normalize_hora else None
+        fecha_fin = (d.get("fecha_fin") or "").strip()[:10] or None
 
         forzar_feriado = bool(d.get("forzar_feriado"))
         forzar_choque = bool(d.get("forzar_choque"))
 
-        # ── Advertencias (feriado + choque de horario) ANTES de tomar el lock ──
+        # ── Advertencias (feriado + choque de horario) ANTES de tomar el
+        #    lock -- solo sobre el técnico PRINCIPAL (mismo alcance que la
+        #    version anterior; extenderlo a multi-tecnico completo queda
+        #    fuera de este cambio -- ver reporte). ──
         advertencias = (_validar_disponibilidad_visita(
-            tecnico_user_id, fecha_programada, hora_inicio, hora_fin,
+            tecnico_principal, fecha_programada, hora_inicio, hora_fin,
             exclude_visita_id=0) if _validar_disponibilidad_visita else {}) or {}
         pend_feriado = advertencias.get("feriado") if not forzar_feriado else None
         pend_choque = advertencias.get("choque") if not forzar_choque else None
@@ -2275,88 +2300,182 @@ def register_tickets_routes(app, ctx):
                 "advertencias": {"feriado": pend_feriado, "choque": pend_choque},
             })
 
-        # ── tipo_visita: explícito del wizard o inferido del ticket (mismo
-        #    mapeo que el conversor legado mant_ticket_convertir_ot). ──
-        # Whitelist ampliada (FIX 2026-07-12) a las 6 opciones reales del
-        # wizard (templates/tickets/ficha.html#otwTipoVisita): faltaban
-        # "levantamiento"/"instalacion", que el ENUM real de mant_visitas.tipo
-        # SÍ admite (ver init_mantenciones_tables — ALTER MODIFY tipo ENUM
-        # incluye 'levantamiento','instalacion',...). Sin esto, si el usuario
-        # elegía esas 2 opciones en el wizard, el backend las descartaba en
-        # silencio y guardaba "preventiva"/"correctiva" en su lugar.
-        tipo_visita = (d.get("tipo_visita") or "").strip().lower()
-        if tipo_visita not in ("preventiva", "correctiva", "garantia", "inspeccion",
-                                "levantamiento", "instalacion"):
-            tipo_visita = "correctiva" if (t.get("tipo") in ("falla", "cambio", "garantia")) else "preventiva"
+        # ── tipo_ot: whitelist real del modal (#otTipo) -- mismo vocabulario
+        #    que usa mant_lev_crear_o_listar/_mant_lev_crear_ot_core (NO el
+        #    vocabulario legado tipo_visita/'garantia', que ahora es un flag
+        #    aparte -- aplica_garantia). Si el wizard no manda uno valido,
+        #    se infiere del tipo del ticket (mapeo TK_TIPOS -> tipo_ot). ──
+        tipos_ot_ok = ("levantamiento", "instalacion", "preventiva",
+                       "correctiva", "visita_tecnica", "inspeccion")
+        tipo_ot = (d.get("tipo_ot") or "").strip().lower()
+        if tipo_ot not in tipos_ot_ok:
+            _map_tk_a_ot = {
+                "install": "instalacion", "repair": "correctiva",
+                "maintenance": "preventiva", "tech_support": "visita_tecnica",
+                "tech_evaluation": "inspeccion",
+            }
+            tipo_ot = _map_tk_a_ot.get(t.get("tipo"), "preventiva")
 
-        # ── Garantía transversal del ticket (es_garantia) → cubierto_por/
-        #    modalidad_cobro/estado_facturacion (misma lógica canónica que
-        #    mant_visita_crear -- no se reinventa). Defaults seguros
-        #    (válidos contra los ENUM reales de mant_visitas) por si el
-        #    mapeo no aplica.
-        cubierto_por_ins = "contrato"
-        estado_factur_ins = "sin_cotizar"
-        modalidad_ins = "pagado"
-        if _parse_garantia_aplica and _mapear_garantia_a_cobertura:
-            gar_aplica = _parse_garantia_aplica(t.get("es_garantia"))
-            cobertura_map, _warn_gar = _mapear_garantia_a_cobertura(gar_aplica, tipo_visita)
-            if cobertura_map:
-                modalidad_ins = cobertura_map["modalidad_cobro"]
-                cubierto_por_ins = cobertura_map["cubierto_por"]
-                estado_factur_ins = cobertura_map["estado_facturacion"]
+        # ── Descubrimiento (levantamiento puro, sin equipos previos) --
+        #    SOLO tiene sentido si tipo_ot == 'levantamiento' (igual que el
+        #    modal real: las tarjetas de modalidad solo aparecen ahi). ──
+        descubrimiento = bool(d.get("descubrimiento")) and tipo_ot == "levantamiento"
+
+        # ── Garantía transversal del ticket (es_garantia) -- flag aparte,
+        #    igual que ya hace mant_visita_crear/_mant_lev_crear_ot_core
+        #    (aplica_garantia=False fuerza modalidad 'pagado', no se
+        #    reinventa la logica de cobertura aqui: la resuelve el nucleo). ──
+        aplica_garantia = bool(d.get("aplica_garantia"))
+        if not aplica_garantia and _parse_garantia_aplica:
+            try:
+                aplica_garantia = bool(_parse_garantia_aplica(t.get("es_garantia")))
+            except Exception:
+                aplica_garantia = False
 
         titulo_final = (d.get("titulo") or "").strip()
         if not titulo_final:
-            titulo_final = f"[{tipo_visita.upper()}] {t.get('titulo') or ('Ticket #' + str(tid))}"
+            titulo_final = f"{t.get('titulo') or ('Ticket #' + str(tid))}"
         titulo_final = titulo_final[:200]
+        notas_final = (d.get("notas") or "").strip()
+        if not notas_final:
+            notas_final = f"Generada desde ticket #{tid}\n\n{t.get('descripcion') or ''}"
 
-        descripcion_final = (d.get("descripcion") or "").strip()
-        if not descripcion_final:
-            descripcion_final = f"Generada desde ticket #{tid}\n\n{t.get('descripcion') or ''}"
-
-        # ── Equipos a copiar como tareas (preseleccionados en el Paso 1; si
-        #    el wizard no manda maquina_ids, se cae a TODOS los equipos con
-        #    maquina_id ya vinculados al ticket). ──
-        maq_ids_body = []
-        for m in (d.get("maquina_ids") or []):
-            try:
-                maq_ids_body.append(int(m))
-            except (TypeError, ValueError):
-                continue
-        if maq_ids_body:
-            ph = ",".join(["%s"] * len(maq_ids_body))
-            equipos = mysql_fetchall(
-                f"SELECT te.cantidad, m.id AS maquina_id, m.nombre, m.serie "
-                f"  FROM tk_ticket_equipos te JOIN mant_maquinas m ON m.id = te.maquina_id "
-                f" WHERE te.ticket_id = %s AND te.maquina_id IN ({ph})",
-                tuple([tid] + maq_ids_body)) or []
-        else:
-            equipos = mysql_fetchall(
-                "SELECT te.cantidad, m.id AS maquina_id, m.nombre, m.serie "
-                "  FROM tk_ticket_equipos te JOIN mant_maquinas m ON m.id = te.maquina_id "
-                " WHERE te.ticket_id = %s AND te.maquina_id IS NOT NULL", (tid,)) or []
-
-        _u_creator = getattr(g, "user", None) or {}
-        creador_user_id = _u_creator.get("id")
+        # ── Resolver cliente_id: (1) si el frontend ya lo trae explicito
+        #    (ficha de Mantenciones ya resuelta al abrir el modal), usarlo
+        #    validando que exista; (2) si no, buscar por RUT del ticket
+        #    (mismo patron que app.py: mant_clientes WHERE rut=%s -- Regla
+        #    contrato "fuente_de_equipos_tickets"). ──
+        cliente_id = None
         try:
-            creador_user_id = int(creador_user_id) if creador_user_id else None
+            cliente_id = int(d.get("cliente_id")) if d.get("cliente_id") else None
         except (TypeError, ValueError):
-            creador_user_id = None
+            cliente_id = None
+        if cliente_id and not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cliente_id,)):
+            cliente_id = None
 
-        # ── GET_LOCK anti condición de carrera (mismo mecanismo que ya usa
-        #    el proyecto para el backfill de fotos en app.py -- no se
-        #    inventa un patrón nuevo). Solo por (técnico, fecha) -- sirve
-        #    para serializar el re-chequeo de choque de horario del MISMO
-        #    técnico. La colisión de numero_ot (que SÍ es global, entre
-        #    cualquier técnico/fecha) ya NO depende de este lock: se cubre
-        #    aparte con _next_ot_number_atomic (row-lock atómico dedicado,
-        #    ver más abajo) — fix race condition 2026-07-12. ──
-        lock_name = f"ot_choque_{tecnico_user_id}_{fecha_programada}"
+        cliente_recien_creado = False
+        if not cliente_id:
+            rut_ticket = (t.get("rut") or "").strip()
+            rut_norm = (normalizar_rut(rut_ticket) if normalizar_rut else rut_ticket) or None
+            match = mysql_fetchone(
+                "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1",
+                (rut_norm,)) if rut_norm else None
+            if match:
+                cliente_id = match["id"]
+            else:
+                # ── Cliente/equipo 100% nuevo (instalacion sin ficha aun) ──
+                # mant_visitas.cliente_id es NOT NULL/FK -- no hay forma de
+                # crear la OT sin una fila en mant_clientes. Se crea una
+                # ficha MINIMA (razon_social+rut+contacto+direccion, todo
+                # tomado del propio ticket) en vez de bloquear "Generar OT".
+                # DECISION DE PRODUCTO ASUMIDA (no confirmada explicitamente
+                # por Daniel -- contrato la deja como riesgo abierto #1;
+                # ver reporte). Reversible: es solo un alta en mant_clientes,
+                # editable despues desde la ficha normal.
+                razon_social_nueva = (t.get("empresa") or "").strip()[:200] \
+                    or f"Cliente ticket #{tid}"
+                mysql_execute(
+                    "INSERT INTO mant_clientes "
+                    "(razon_social, rut, contacto_nombre, contacto_tel, contacto_email, "
+                    " direccion, comuna, region, estado, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'prospecto',%s)",
+                    (razon_social_nueva, rut_norm,
+                     (t.get("nombre_contacto") or "").strip()[:200] or None,
+                     (t.get("phone") or "").strip()[:50] or None,
+                     (t.get("email") or "").strip()[:200] or None,
+                     (t.get("direccion") or "").strip()[:400] or None,
+                     (t.get("comuna_nombre") or "").strip()[:100] or None,
+                     (t.get("region_nombre") or "").strip()[:100] or None,
+                     current_username() or "sistema")
+                )
+                _cli_new = mysql_fetchone("SELECT LAST_INSERT_ID() AS id")
+                cliente_id = (_cli_new or {}).get("id")
+                cliente_recien_creado = True
+                _tk_log(tid, "otro",
+                        f"Cliente creado automaticamente en Mantenciones (ficha minima, "
+                        f"sin confirmacion explicita) para poder generar la OT: "
+                        f"«{razon_social_nueva}» (ID {cliente_id}).")
+        if not cliente_id:
+            return jsonify({"ok": False, "error": "No fue posible resolver ni crear el cliente para la OT."}), 400
+
+        # ── Equipos: de tk_ticket_equipos (NO del DOM de una ficha, NO se
+        #    pide a mant_maquinas directo -- Regla contrato
+        #    "fuente_de_equipos_tickets"). Los que YA tienen maquina_id
+        #    (equipo real en la ficha) van por equipo_ids (igual que el
+        #    modal real); los que NO tienen ficha van por equipos_ticket
+        #    (nucleo los inserta con maquina_id=NULL). Si el cliente es
+        #    NUEVO (recien creado arriba), no existe ninguna ficha real
+        #    todavia -- TODOS los equipos del ticket se preseleccionan tal
+        #    cual, no hay checkboxes que ofrecer. ──
+        eq_ticket_rows = mysql_fetchall(
+            "SELECT id, nombre, sku, serie, maquina_id "
+            "  FROM tk_ticket_equipos WHERE ticket_id=%s ORDER BY id", (tid,)) or []
+        if cliente_recien_creado:
+            equipo_ids = []
+            equipos_ticket_payload = [
+                {"nombre": r.get("nombre"), "sku": r.get("sku"), "serie": r.get("serie"),
+                 "maquina_id": None}
+                for r in eq_ticket_rows
+            ]
+        else:
+            equipo_ids_body = []
+            for x in (d.get("equipo_ids") or d.get("maquina_ids") or []):
+                try:
+                    equipo_ids_body.append(int(x))
+                except (TypeError, ValueError):
+                    pass
+            if equipo_ids_body:
+                equipo_ids = equipo_ids_body
+            else:
+                # Sin seleccion explicita del wizard: cae a TODOS los equipos
+                # del ticket que YA tienen maquina_id (mismo fallback de la
+                # implementacion anterior).
+                equipo_ids = [r["maquina_id"] for r in eq_ticket_rows if r.get("maquina_id")]
+            equipos_ticket_payload = [
+                {"nombre": r.get("nombre"), "sku": r.get("sku"), "serie": r.get("serie"),
+                 "maquina_id": None}
+                for r in eq_ticket_rows if not r.get("maquina_id")
+            ]
+
+        # ── Dirección de la visita: explícita del wizard o default del
+        #    propio ticket (si el cliente no tiene ficha, no hay
+        #    DATA.cliente_direccion de donde traerla -- Regla contrato
+        #    "frontend_adaptacion"). ──
+        direccion_visita = (d.get("direccion_visita") or "").strip()[:400] \
+            or (t.get("direccion") or "").strip()[:400] or None
+        try:
+            direccion_lat = float(d.get("direccion_lat")) if d.get("direccion_lat") is not None \
+                else (float(t["direccion_lat"]) if t.get("direccion_lat") is not None else None)
+        except (TypeError, ValueError):
+            direccion_lat = None
+        try:
+            direccion_lng = float(d.get("direccion_lng")) if d.get("direccion_lng") is not None \
+                else (float(t["direccion_lng"]) if t.get("direccion_lng") is not None else None)
+        except (TypeError, ValueError):
+            direccion_lng = None
+        direccion_place_id = (d.get("direccion_place_id") or "").strip()[:200] \
+            or (t.get("direccion_place_id") or None)
+
+        # ── Contacto en sitio: explícito o default del ticket. ──
+        contacto_nombre = (d.get("contacto_nombre") or "").strip()[:200] \
+            or (t.get("nombre_contacto") or "").strip()[:200] or None
+        contacto_tel = (d.get("contacto_tel") or "").strip()[:50] \
+            or (t.get("phone") or "").strip()[:50] or None
+        contacto_email = (d.get("contacto_email") or "").strip()[:200] \
+            or (t.get("email") or "").strip()[:200] or None
+        contacto_cargo = (d.get("contacto_cargo") or "").strip()[:120] or None
+        contacto_origen = (d.get("contacto_origen") or "").strip()[:40] or "ticket"
+
+        # ── GET_LOCK anti condición de carrera (SIN CAMBIOS respecto a la
+        #    version anterior, ya probada 2026-07-12) -- serializa el
+        #    re-chequeo de choque de horario del MISMO técnico principal.
+        #    La colisión de numero_ot (global) la cubre por su cuenta
+        #    _next_ot_number_atomic (row-lock dedicado) DENTRO del nucleo
+        #    compartido, que se invoca mas abajo. ──
+        lock_name = f"ot_choque_{tecnico_principal}_{fecha_programada}"
         conn = get_mysql()
         lock_held = False
-        vid = None
-        numero_ot = None
-        tareas_creadas = 0
+        advertencias2 = {"feriado": None, "choque": None}
         try:
             with conn.cursor() as cur0:
                 cur0.execute("SELECT GET_LOCK(%s, 5) AS l", (lock_name,))
@@ -2369,25 +2488,9 @@ def register_tickets_routes(app, ctx):
                 }), 503
             lock_held = True
 
-            # ── Re-chequeo defensivo DENTRO del lock (FIX race condition
-            #    2026-07-12) — puede haber cambiado desde que el frontend
-            #    mostró el paso 3 de confirmación. ANTES esto llamaba a
-            #    _validar_disponibilidad_visita, que internamente lee vía
-            #    mysql_fetchall/mysql_fetchone -> g._db, la conexión POOLEADA
-            #    por-request (autocommit=False, REPEATABLE READ). Esa
-            #    conexión ya abrió su snapshot en el primer SELECT del
-            #    handler (arriba, "SELECT * FROM tk_tickets") y NUNCA ve
-            #    commits ajenos ocurridos después durante el resto del
-            #    request — el re-chequeo "dentro del lock" era, en la
-            #    práctica, un teatro: jamás podía ver un choque agendado por
-            #    otra petición que ganó la carrera y ya cerró su transacción.
-            #    Ahora se lee directamente por `conn` (la conexión de
-            #    get_mysql() recién abierta en este request, SIN lecturas
-            #    previas): su snapshot REPEATABLE READ arranca recién aquí,
-            #    justo tras tomar el GET_LOCK — si otra transacción ya hizo
-            #    commit antes de este punto, esta SÍ lo ve.
-            from datetime import date as _date_chk
-            _fecha_dt2 = _date_chk.fromisoformat(str(fecha_programada))
+            # ── Re-chequeo defensivo DENTRO del lock (idéntico al de la
+            #    version anterior, ver comentario historico ahi) ──
+            _fecha_dt2 = date.fromisoformat(str(fecha_programada))
             pend_feriado2 = None
             pend_choque2 = None
             if not forzar_feriado:
@@ -2413,7 +2516,7 @@ def register_tickets_routes(app, ctx):
                         "        OR (hora_inicio < %s AND hora_fin > %s)"
                         "   ) "
                         " ORDER BY hora_inicio",
-                        (tecnico_user_id, _fecha_dt2.isoformat(),
+                        (tecnico_principal, _fecha_dt2.isoformat(),
                          hora_inicio, hora_fin, hora_fin, hora_inicio)
                     )
                     _choques2 = cur_chk.fetchall() or []
@@ -2421,7 +2524,7 @@ def register_tickets_routes(app, ctx):
                     with conn.cursor() as cur_tec:
                         cur_tec.execute(
                             "SELECT COALESCE(nombre, username) AS nm FROM app_users WHERE id=%s",
-                            (tecnico_user_id,))
+                            (tecnico_principal,))
                         _tec2 = cur_tec.fetchone()
                     pend_choque2 = {
                         "tecnico_nombre": (_tec2 or {}).get("nm") or "Técnico",
@@ -2444,91 +2547,41 @@ def register_tickets_routes(app, ctx):
                     "advertencias": {"feriado": pend_feriado2, "choque": pend_choque2},
                 })
 
-            # ── numero_ot ATÓMICO (FIX race condition 2026-07-12) — ver
-            #    _next_ot_number_atomic en app.py para el detalle completo.
-            #    Se reserva DENTRO de la misma transacción `conn` que hará el
-            #    INSERT en mant_visitas: el row-lock de InnoDB sobre
-            #    mant_ot_secuencia serializa a CUALQUIER llamada concurrente
-            #    (no solo mismo técnico+fecha), sin necesitar un segundo
-            #    GET_LOCK nombrado. Si _next_ot_number_atomic no está
-            #    disponible (ctx viejo), se cae a _next_ot_number() legacy
-            #    (mismo comportamiento previo, con su gap conocido).
-            #
-            #    FIX GAP 1 (re-verificación 2026-07-12): la generación de
-            #    numero_ot ahora vive DENTRO del mismo retry-loop que el
-            #    INSERT (antes se llamaba una vez, fuera del while, sin
-            #    try/except propio -- si ese INSERT... ON DUPLICATE KEY
-            #    UPDATE de mant_ot_secuencia disparaba un errno 1205 "Lock
-            #    wait timeout exceeded" bajo contención real del nuevo punto
-            #    de serialización global, la excepción se propagaba SIN
-            #    CAPTURAR hasta el errorhandler 500 genérico -- el mismo
-            #    síntoma "HTTP 500 crudo" que este fix quería eliminar). El
-            #    except ahora también reconoce 1205 (lock wait timeout),
-            #    ademas de 1213 (deadlock) y "duplicate", con el mismo
-            #    backoff+jitter y tope de 3 reintentos.
-            with conn.cursor() as cur:
-                intentos = 0
-                while True:
-                    try:
-                        numero_ot = (_next_ot_number_atomic(conn) if _next_ot_number_atomic
-                                     else _next_ot_number())
-                        cur.execute(
-                            """INSERT INTO mant_visitas
-                               (numero_ot, cliente_id, titulo, fecha_programada, hora_inicio, hora_fin,
-                                tecnico, tecnico_user_id, tipo, estado, descripcion,
-                                modalidad_cobro, cubierto_por, estado_facturacion,
-                                created_by, created_by_user_id)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s)""",
-                            (numero_ot, cliente_id, titulo_final, fecha_programada,
-                             hora_inicio, hora_fin, tecnico_txt, tecnico_user_id,
-                             tipo_visita, descripcion_final,
-                             modalidad_ins, cubierto_por_ins, estado_factur_ins,
-                             current_username(), creador_user_id)
-                        )
-                        break
-                    except Exception as _e_dup:
-                        # Red de seguridad: con numero_ot atómico esto NO
-                        # debería dispararse por duplicado real (solo quedan
-                        # los casos de deadlock genuino de InnoDB, código
-                        # 1213, o lock wait timeout, código 1205, ambos
-                        # transitorios bajo contención y SÍ hay que
-                        # reintentar). Se sube el tope de reintentos de 1 a 3
-                        # con backoff+jitter para no martillar el lock.
-                        _msg = str(_e_dup).lower()
-                        _errno = getattr(_e_dup, "args", [None])[0] if getattr(_e_dup, "args", None) else None
-                        _es_deadlock = _errno == 1213 or "deadlock" in _msg
-                        _es_lock_timeout = _errno == 1205 or "lock wait timeout" in _msg
-                        _es_dup_numero_ot = "numero_ot" in _msg or "uq_numero_ot" in _msg or "duplicate" in _msg
-                        if intentos >= 3 or not (_es_dup_numero_ot or _es_deadlock or _es_lock_timeout):
-                            raise
-                        intentos += 1
-                        try:
-                            import random as _random_bk
-                            time.sleep(0.05 * intentos + _random_bk.uniform(0, 0.05))
-                        except Exception:
-                            pass
-                vid = cur.lastrowid
-
-                # Vincular ticket → visita (bidireccional)
-                cur.execute("UPDATE tk_tickets SET visita_id=%s WHERE id=%s", (vid, tid))
-
-                # Copiar equipos del ticket como tareas de la visita (mismo
-                # patrón que mant_ticket_convertir_ot, sobre tk_ticket_equipos).
-                for i, eq in enumerate(equipos):
-                    tipo_tarea = "cambio" if (t.get("tipo") in ("cambio", "garantia")) else "inspeccion"
-                    titulo_tarea = f"{tipo_tarea.capitalize()}: {eq.get('nombre') or 'Equipo'}"
-                    if eq.get("serie"):
-                        titulo_tarea += f" (S/N: {eq['serie']})"
-                    cur.execute(
-                        """INSERT INTO mant_visita_tareas
-                           (visita_id, orden, titulo, tipo, maquina_id, cantidad, created_by)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                        (vid, i + 1, titulo_tarea[:300], tipo_tarea,
-                         eq["maquina_id"], eq.get("cantidad") or 1, current_username())
-                    )
-                    tareas_creadas += 1
-
-            conn.commit()
+            # ── Delegar al NUCLEO COMPARTIDO (app.py) -- crea
+            #    mant_levantamientos + items + OT espejo en mant_visitas +
+            #    multi-tecnico + plantillas + vinculo tk_tickets.visita_id,
+            #    TODO dentro de su propia transaccion atomica (numero_ot vía
+            #    _next_ot_number_atomic). Mismo motor que usa el modal real
+            #    de Mantenciones -- Regla #4, no se duplica el INSERT. ──
+            lev_payload = {
+                "titulo": titulo_final,
+                "notas": notas_final,
+                "equipo_ids": equipo_ids,
+                "descubrimiento": descubrimiento,
+                "equipos_ticket": equipos_ticket_payload,
+                "fecha_programada": fecha_programada,
+                "hora_inicio": hora_inicio,
+                "hora_fin": hora_fin,
+                "fecha_fin": fecha_fin,
+                "tecnico_ids": tecnico_ids,
+                "tipo_ot": tipo_ot,
+                "aplica_garantia": aplica_garantia,
+                "direccion_visita": direccion_visita,
+                "direccion_lat": direccion_lat,
+                "direccion_lng": direccion_lng,
+                "direccion_place_id": direccion_place_id,
+                "contacto_nombre": contacto_nombre,
+                "contacto_cargo": contacto_cargo,
+                "contacto_tel": contacto_tel,
+                "contacto_email": contacto_email,
+                "contacto_origen": contacto_origen,
+                "acceso_ascensor": d.get("acceso_ascensor"),
+                "acceso_estacionamiento": d.get("acceso_estacionamiento"),
+                "acceso_piso": d.get("acceso_piso"),
+                "acceso_notas": d.get("acceso_notas"),
+                "plantillas_por_equipo": d.get("plantillas_por_equipo") or {},
+            }
+            resultado, http_status = _mant_lev_crear_ot_core(cliente_id, lev_payload, ticket_id=tid)
         finally:
             if lock_held:
                 try:
@@ -2538,6 +2591,12 @@ def register_tickets_routes(app, ctx):
                     pass
             conn.close()
 
+        if not resultado.get("ok"):
+            return jsonify(resultado), http_status
+
+        vid = resultado.get("visita_id")
+        numero_ot = resultado.get("numero_ot")
+
         # ── Bitácora (fuera del lock -- trabajo secundario no crítico) ──
         _tk_log(tid, "otro",
                 f"Ticket convertido en OT {numero_ot} (visita #{vid}) — fecha {fecha_programada}")
@@ -2545,10 +2604,6 @@ def register_tickets_routes(app, ctx):
             _mant_log("visita", vid, "creada_desde_ticket", f"Ticket #{tid} → {numero_ot}")
         except Exception:
             pass
-        # NOTA: se usa advertencias2 (el re-chequeo defensivo DENTRO del lock,
-        # el mas fresco) para el detalle del log -- evita que una advertencia
-        # nueva aparecida justo entre el chequeo inicial y la toma del lock
-        # quede sin registrar aunque el forzar_* ya viniera en true.
         if forzar_feriado and advertencias2.get("feriado"):
             _f = advertencias2["feriado"]
             _tk_log(tid, "otro",
@@ -2567,10 +2622,12 @@ def register_tickets_routes(app, ctx):
             "visita_id": vid,
             "numero_ot": numero_ot,
             "fecha_programada": fecha_programada,
-            "tareas_creadas": tareas_creadas,
-            # tipo_visita REALMENTE guardado (fix mismatch silencioso 2026-07-12):
-            # así el frontend nunca vuelve a mostrar un valor no persistido.
-            "tipo_visita": tipo_visita,
+            "tareas_creadas": resultado.get("items_plantilla_aplicados"),
+            "n_items": resultado.get("n_items"),
+            "ot_url": resultado.get("ot_url"),
+            "cliente_id": cliente_id,
+            "cliente_creado": cliente_recien_creado,
+            "tipo_ot": tipo_ot,
         })
 
     # ─────────────────────────────────────────────────────────────────
