@@ -57587,6 +57587,12 @@ def _maquina_tecnico_owns(mid):
 @app.route("/mantenciones/api/maquinas/<int:mid>/fotos", methods=["GET"])
 @_mant_required
 def mant_maquina_fotos_get(mid):
+    """Galería de fotos del equipo (todas: viejas filesystem + nuevas Cloudinary).
+    2026-07-12: fusionada con la version duplicada que registraba el mismo
+    path sin el chequeo de seguridad (mant_maquina_fotos_list) — quedaba
+    como codigo muerto por orden de registro, pero era un riesgo latente
+    si el archivo se reordenaba. Se conserva el chequeo + se agrega el
+    LIMIT 200 y la resolucion de cloudinary_url de la version eliminada."""
     # 🔐 SEGURIDAD: técnico solo ve fotos de máquinas que está atendiendo
     if not _maquina_tecnico_owns(mid):
         u = getattr(g, "user", None) or {}
@@ -57597,13 +57603,29 @@ def mant_maquina_fotos_get(mid):
         )
         return jsonify({"ok": False, "error": "No tienes acceso a esta máquina"}), 403
     rows = mysql_fetchall(
-        "SELECT id, archivo_path, archivo_nombre, tipo_foto, descripcion, "
-        "       es_principal, visita_origen, tomada_por, tomada_at "
+        "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
+        "       tomada_at AS created_at, levantamiento_id "
         "  FROM mant_maquina_fotos WHERE maquina_id=%s "
-        "ORDER BY es_principal DESC, tomada_at DESC",
+        " ORDER BY tomada_at DESC LIMIT 200",
         (mid,)
     ) or []
-    return jsonify([dict(r) for r in rows])
+    out = []
+    for r in rows:
+        url = r.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else ""
+        )
+        if not url:
+            continue
+        out.append({
+            "id": r["id"],
+            "url": url,
+            "descripcion": r.get("descripcion") or "",
+            "tomada_por": r.get("tomada_por") or "",
+            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+            "levantamiento_id": r.get("levantamiento_id"),
+            "persistente": bool(r.get("cloudinary_url")),
+        })
+    return jsonify({"ok": True, "fotos": out})
 
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/fotos/subir", methods=["POST"])
@@ -68363,37 +68385,6 @@ def mant_maquina_patch(mid):
         ],
         "actualizado_en": _now_chile_str("%d/%m/%Y %H:%M"),
     })
-
-
-@app.route("/mantenciones/api/maquinas/<int:mid>/fotos")
-@_mant_required
-def mant_maquina_fotos_list(mid):
-    """Galería de fotos del equipo (todas: viejas filesystem + nuevas Cloudinary).
-    FIX 2026-05-21: order by tomada_at — created_at puede no estar poblado."""
-    rows = mysql_fetchall(
-        "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
-        "       tomada_at AS created_at, levantamiento_id "
-        "  FROM mant_maquina_fotos WHERE maquina_id=%s "
-        " ORDER BY tomada_at DESC LIMIT 200",
-        (mid,)
-    ) or []
-    out = []
-    for r in rows:
-        url = r.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else ""
-        )
-        if not url:
-            continue
-        out.append({
-            "id": r["id"],
-            "url": url,
-            "descripcion": r.get("descripcion") or "",
-            "tomada_por": r.get("tomada_por") or "",
-            "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
-            "levantamiento_id": r.get("levantamiento_id"),
-            "persistente": bool(r.get("cloudinary_url")),
-        })
-    return jsonify({"ok": True, "fotos": out})
 
 
 # ─────────────────────────────────────────────
