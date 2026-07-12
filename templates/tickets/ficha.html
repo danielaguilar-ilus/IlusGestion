@@ -211,6 +211,19 @@
 .rp-headers .row-h label{color:#6b7280;font-weight:700;width:44px;flex-shrink:0;}
 .rp-headers .row-h input{border:1px solid #e5e7eb;background:#fff;border-radius:6px;padding:4px 8px;font-size:.82rem;flex:1;outline:none;}
 .rp-headers .row-h input:focus{border-color:#dc2626;}
+/* Chips de correo con validacion en vivo (2026-07-12, Daniel: "si el correo
+   esta bien formado que quede seleccionado y verificado, con punto y coma") */
+.email-chipbox{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex:1;
+  border:1px solid #e5e7eb;background:#fff;border-radius:6px;padding:3px 6px;min-height:30px;}
+.email-chipbox:focus-within{border-color:#dc2626;}
+.email-chip{display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;color:#166534;
+  border:1px solid #bbf7d0;border-radius:50px;padding:2px 6px 2px 10px;font-size:.76rem;font-weight:600;white-space:nowrap;}
+.email-chip.invalido{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
+.email-chip i.bi-check-circle-fill{color:#16a34a;font-size:.8rem;}
+.email-chip i.bi-exclamation-triangle-fill{color:#dc2626;font-size:.8rem;}
+.email-chip .x{cursor:pointer;opacity:.6;font-size:.7rem;padding:2px;}
+.email-chip .x:hover{opacity:1;}
+.email-chip-input{border:none;outline:none;flex:1;min-width:110px;font-size:.82rem;padding:3px 4px;}
 /* Daniel 2026-07-12: "ese logo feo... colocale un texto nomas" -- se
    probo primero una pill negra con avatar circular y no gusto; se
    simplifica a solo texto en rojo ILUS, sin fondo ni circulo. */
@@ -733,8 +746,14 @@
   <div class="tk-card" style="padding:14px 16px;">
     <div class="rp-headers show" id="rpHeaders">
       <div class="row-h"><label>De</label><span class="rp-de-badge">ILUS Fitness</span></div>
-      <div class="row-h"><label>Para</label><input type="email" id="rpTo" placeholder="correo@cliente.cl"></div>
-      <div class="row-h"><label>CC</label><input type="text" id="rpCc" placeholder="opcional, separado por comas"></div>
+      <div class="row-h"><label>Para</label>
+        <div class="email-chipbox" id="rpToBox"><input type="hidden" id="rpTo">
+          <input type="text" class="email-chip-input" placeholder="correo@cliente.cl"></div>
+      </div>
+      <div class="row-h"><label>CC</label>
+        <div class="email-chipbox" id="rpCcBox"><input type="hidden" id="rpCc">
+          <input type="text" class="email-chip-input" placeholder="opcional"></div>
+      </div>
     </div>
     <div class="rp-thread" id="rpThread"></div>
 
@@ -1361,6 +1380,69 @@ document.querySelectorAll('.tk-tab').forEach(function(tab){
   });
 });
 
+// ══════════════ Chips de correo con validación en vivo (2026-07-12) ══════════════
+// Daniel: "si el correo está bien formado que quede seleccionado y
+// verificado, con punto y coma... para no obligarme a enviar algo que no
+// va a llegar". Solo valida FORMATO (sintaxis) -- no hay forma confiable
+// de verificar que un correo realmente EXISTE sin enviarle algo (un
+// handshake SMTP de verificación es lento, muchos servidores lo bloquean,
+// y da falsos negativos). El formato ya evita el 90% de los errores reales
+// (typos, faltó el @, faltó el dominio).
+const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+function _emailChipsInit(boxId, hiddenId){
+  const box = document.getElementById(boxId);
+  const hidden = document.getElementById(hiddenId);
+  const input = box.querySelector('.email-chip-input');
+
+  function valoresValidos(){
+    return Array.from(box.querySelectorAll('.email-chip:not(.invalido)'))
+      .map(c => c.dataset.email);
+  }
+  function sync(){ hidden.value = valoresValidos().join('; '); }
+  function hayInvalidos(){ return !!box.querySelector('.email-chip.invalido'); }
+
+  function agregarChip(correo){
+    correo = correo.trim().replace(/[;,]+$/, '');
+    if (!correo) return;
+    const valido = EMAIL_RE.test(correo);
+    const chip = document.createElement('span');
+    chip.className = 'email-chip' + (valido ? '' : ' invalido');
+    chip.dataset.email = correo;
+    chip.innerHTML = '<i class="bi ' + (valido ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill')
+      + '" title="' + (valido ? 'Formato válido' : 'Formato inválido — revísalo') + '"></i>'
+      + '<span>' + esc(correo) + '</span><span class="x" title="Quitar">✕</span>';
+    chip.querySelector('.x').addEventListener('click', function(){ chip.remove(); sync(); });
+    box.insertBefore(chip, input);
+    sync();
+  }
+
+  input.addEventListener('keydown', function(e){
+    if ([',', ';', 'Enter', 'Tab'].includes(e.key) && input.value.trim()){
+      e.preventDefault();
+      agregarChip(input.value);
+      input.value = '';
+    } else if (e.key === 'Backspace' && !input.value){
+      const last = box.querySelector('.email-chip:last-of-type');
+      if (last){ last.remove(); sync(); }
+    }
+  });
+  input.addEventListener('blur', function(){
+    if (input.value.trim()){ agregarChip(input.value); input.value = ''; }
+  });
+  box.addEventListener('click', function(e){ if (e.target === box) input.focus(); });
+
+  // API pública para prefill programático (ej. autocompletar el correo del ticket).
+  return {
+    setValue: function(valor){
+      box.querySelectorAll('.email-chip').forEach(c => c.remove());
+      String(valor || '').split(/[;,]/).forEach(c => { if (c.trim()) agregarChip(c); });
+    },
+    hayInvalidos: hayInvalidos,
+  };
+}
+const rpToChips = _emailChipsInit('rpToBox', 'rpTo');
+const rpCcChips = _emailChipsInit('rpCcBox', 'rpCc');
+
 // ══════════════ Editor Quill (caja de texto "potente") ══════════════
 const rpQuill = new Quill('#rpEditor', {
   theme: 'snow',
@@ -1596,7 +1678,7 @@ async function cargar(){
   document.getElementById('selPrio').value = t.prioridad;
   poblarSelectEjecutivo();
   document.getElementById('txtDesc').textContent = t.descripcion || '—';
-  if(!document.getElementById('rpTo').value) document.getElementById('rpTo').value = t.email || '';
+  if(!document.getElementById('rpTo').value && t.email) rpToChips.setValue(t.email);
 
   // ── Fila secundaria del hero: prioridad / tipo / garantía / SLA / meta ──
   const hPrio = document.getElementById('hPrio');
@@ -2610,6 +2692,10 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
     url = '/tickets/api/tickets/'+TID+'/comentario';
     payload = {contenido: html, es_interno: true, adjunto_ids: adjIds};
   }else{
+    if(rpToChips.hayInvalidos() || rpCcChips.hayInvalidos()){
+      ilusToast('Hay un correo mal escrito en "Para" o "CC" (marcado en rojo) — corrígelo o quítalo antes de enviar.', {type:'warning'});
+      btn.disabled=false; btn.innerHTML=originalHtml; return;
+    }
     const to = document.getElementById('rpTo').value.trim();
     if(!to){ ilusToast('Falta el correo del destinatario ("Para")', {type:'warning'}); btn.disabled=false; btn.innerHTML=originalHtml; return; }
     url = '/tickets/api/tickets/'+TID+'/responder-cliente';
