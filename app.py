@@ -31065,28 +31065,61 @@ def comm_index():
     smtp_cfg  = _get_smtp_cfg()
     client_cfg = _get_client_cfg()
     wa_cfg    = _get_wa_cfg()
-    log_rows  = []
+    # FIX 2026-07-12 (Daniel: "no tengo registro de envío de mensaje... todos
+    # los módulos... se lleve por un historial"): el historial SOLO leía de
+    # comm_log, pero _send_ilus_email (el envío REAL usado por transporte,
+    # retiros, mantenciones, comunicación interna, general Y tickets) loguea
+    # cada intento en email_log, no en comm_log -- comm_log solo lo escriben
+    # los endpoints de PRUEBA manual (/admin/comunicaciones-test) y los
+    # bloqueos de WhatsApp/SMS. Por eso el historial se veía vacío pese a que
+    # SÍ había envíos reales pasando: eran dos bitácoras distintas y la
+    # pantalla solo mostraba la que casi nadie escribía. Ahora se fusionan
+    # ambas (email_log = tráfico real; comm_log = pruebas manuales + otros
+    # canales), y se expone el MÓDULO que originó el envío (guardado en el
+    # metadata JSON de email_log) para saber a simple vista quién mandó qué.
+    log_rows = []
     try:
-        # OPT 2026-05-26 (audit DevTools, abortaba a 6s):
-        # - SELECT específico (no *) — la columna `detalle` puede ser TEXT
-        #   grande con stacktraces; cuando hay 80 filas eso pesa.
-        # - LIMIT 80 → 50: suficiente para ver actividad reciente.
-        # - Trunca detalle a 500 chars en SQL (evita transferir mucho).
-        log_rows = mysql_fetchall(
+        email_rows = mysql_fetchall(
+            "SELECT id, canal, destinatario, asunto, estado, "
+            "       LEFT(COALESCE(error_msg,''), 500) AS detalle, "
+            "       actor AS enviado_por, metadata, created_at "
+            "  FROM email_log ORDER BY created_at DESC LIMIT 60"
+        ) or []
+    except Exception:
+        email_rows = []
+    try:
+        comm_rows = mysql_fetchall(
             "SELECT id, canal, destinatario, asunto, estado, "
             "       LEFT(COALESCE(detalle,''), 500) AS detalle, "
             "       enviado_por, created_at "
-            "  FROM comm_log "
-            " ORDER BY created_at DESC LIMIT 50"
-        )
+            "  FROM comm_log ORDER BY created_at DESC LIMIT 60"
+        ) or []
     except Exception:
-        pass
+        comm_rows = []
+    for r in email_rows:
+        d = dict(r)
+        modulo = None
+        try:
+            meta = json.loads(d.pop("metadata", None) or "{}")
+            modulo = (meta.get("modulo") or "").strip() or None
+        except Exception:
+            d.pop("metadata", None)
+        d["modulo"] = modulo
+        # email_log: 'enviado'|'fallido'|'bloqueado' -> la pantalla solo
+        # distingue ok/no-ok (mismo criterio que ya usaba comm_log).
+        d["estado"] = "ok" if d.get("estado") == "enviado" else "error"
+        log_rows.append(d)
+    for r in comm_rows:
+        d = dict(r)
+        d["modulo"] = None  # comm_log (pruebas manuales) no registra módulo de origen
+        log_rows.append(d)
+    log_rows.sort(key=lambda d: d.get("created_at") or datetime.min, reverse=True)
+    log_rows = log_rows[:80]
     # Convertir timestamps UTC → America/Santiago para visualización
     try:
         from zoneinfo import ZoneInfo
         _tz_scl = ZoneInfo("America/Santiago")
         _tz_utc = ZoneInfo("UTC")
-        log_rows = [dict(r) for r in log_rows]
         for r in log_rows:
             ts = r.get("created_at")
             if ts and isinstance(ts, datetime):

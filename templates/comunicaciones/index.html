@@ -870,6 +870,7 @@
                 <tr>
                   <th><i class="bi bi-calendar3 me-1"></i>Fecha</th>
                   <th>Canal</th>
+                  <th>Módulo</th>
                   <th>Destinatario</th>
                   <th>Asunto / Mensaje</th>
                   <th class="text-center">Estado</th>
@@ -879,7 +880,7 @@
               <tbody>
                 {% for l in log_rows %}
                 {% set _ts = l.created_at|to_chile if l.created_at else None %}
-                <tr data-search="{{ ((l.destinatario or '') ~ ' ' ~ (l.asunto or '') ~ ' ' ~ (l.enviado_por or ''))|lower }}"
+                <tr data-search="{{ ((l.destinatario or '') ~ ' ' ~ (l.asunto or '') ~ ' ' ~ (l.enviado_por or '') ~ ' ' ~ (l.modulo or ''))|lower }}"
                     data-canal="{{ l.canal or '' }}"
                     data-estado="{{ 'ok' if l.estado == 'ok' else 'error' }}">
                   <td class="log-date-cell" title="Hora local Chile">
@@ -893,6 +894,13 @@
                       <span class="log-channel-pill email"><i class="bi bi-envelope"></i>Email</span>
                     {% else %}
                       <span class="log-channel-pill wa"><i class="bi bi-whatsapp"></i>WA</span>
+                    {% endif %}
+                  </td>
+                  <td style="font-size:.75rem">
+                    {% if l.modulo %}
+                      <span style="background:#ede9fe;color:#5b21b6;padding:2px 9px;border-radius:50px;font-weight:700;font-size:.68rem;text-transform:uppercase;letter-spacing:.03em">{{ l.modulo }}</span>
+                    {% else %}
+                      <span class="text-muted">—</span>
                     {% endif %}
                   </td>
                   <td class="font-monospace" style="font-size:.78rem;font-weight:600">{{ l.destinatario or '—' }}</td>
@@ -909,7 +917,7 @@
                   </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="text-center text-muted py-4">
+                <tr><td colspan="7" class="text-center text-muted py-4">
                   <i class="bi bi-envelope-x me-1"></i>Sin registros de envíos aún
                 </td></tr>
                 {% endfor %}
