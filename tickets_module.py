@@ -1168,6 +1168,74 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "No se pudo traducir en este momento."}), 500
 
     # ─────────────────────────────────────────────────────────────────
+    #  DICTADO POR VOZ ROBUSTO (Google Cloud Speech-to-Text) — 2026-07-12
+    #  Daniel: el dictado nativo del navegador (SpeechRecognition) da
+    #  "not-allowed" en computador de forma persistente (una vez que Chrome
+    #  deniega el permiso de reconocimiento de voz, no vuelve a preguntar
+    #  automaticamente, y es un permiso DISTINTO al de microfono normal).
+    #  Reemplazo: se graba el audio con MediaRecorder (permiso de
+    #  microfono ESTANDAR, mucho mas confiable/consistente entre
+    #  navegadores) y se transcribe en el servidor. Mismo patron ADC que
+    #  Traductor/GCS -- sin API key nueva que gestionar.
+    # ─────────────────────────────────────────────────────────────────
+    _SPEECH_CLIENT = [None]
+    _SPEECH_INIT_DONE = [False]
+
+    def _speech_client():
+        if _SPEECH_INIT_DONE[0]:
+            return _SPEECH_CLIENT[0]
+        _SPEECH_INIT_DONE[0] = True
+        try:
+            from google.cloud import speech as _speech_lib
+            _SPEECH_CLIENT[0] = _speech_lib.SpeechClient()
+            print("[tickets] Google Speech-to-Text listo", flush=True)
+        except Exception as e:
+            print(f"[tickets] Google Speech-to-Text no disponible: {e}", flush=True)
+            _SPEECH_CLIENT[0] = None
+        return _SPEECH_CLIENT[0]
+
+    @app.route("/tickets/api/transcribir", methods=["POST"])
+    @_tickets_required
+    def tk_api_transcribir():
+        audio = request.files.get("audio")
+        if not audio or not audio.filename:
+            return jsonify({"ok": False, "error": "No se recibió audio"}), 400
+        audio_bytes = audio.read()
+        # Limite generoso (un mensaje de voz normal no pasa de 1-2 min) --
+        # evita subidas gigantes por error o abuso.
+        if len(audio_bytes) > 10 * 1024 * 1024:
+            return jsonify({"ok": False, "error": "El audio es demasiado largo (máx. ~2 min)."}), 400
+        cli = _speech_client()
+        if not cli:
+            return jsonify({
+                "ok": False,
+                "error": "El dictado por voz no está disponible todavía — falta habilitar "
+                         "\"Cloud Speech-to-Text API\" en el proyecto de Google Cloud "
+                         "(ilus-app-498503).",
+            }), 503
+        try:
+            from google.cloud import speech as _speech_lib
+            rec_audio = _speech_lib.RecognitionAudio(content=audio_bytes)
+            config = _speech_lib.RecognitionConfig(
+                encoding=_speech_lib.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+                language_code="es-CL",
+                alternative_language_codes=["es-419", "en-US"],
+                enable_automatic_punctuation=True,
+                model="latest_long",
+            )
+            res = cli.recognize(config=config, audio=rec_audio)
+            texto = " ".join(
+                r.alternatives[0].transcript.strip()
+                for r in res.results if r.alternatives
+            ).strip()
+            if not texto:
+                return jsonify({"ok": False, "error": "No se detectó voz en el audio."}), 200
+            return jsonify({"ok": True, "texto": texto})
+        except Exception as e:
+            print(f"[tk_api_transcribir] error: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo transcribir el audio."}), 500
+
+    # ─────────────────────────────────────────────────────────────────
     #  PAGINAS (HTML)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets")

@@ -1368,72 +1368,121 @@ const rpQuill = new Quill('#rpEditor', {
   modules: { toolbar: [['bold','italic','underline'], [{list:'ordered'},{list:'bullet'}], ['link','clean']] },
 });
 
-// ══════════════ Dictado por voz (Daniel 2026-07-12: "se podria agregar
-// dictar por voz los mensajes... esto lo vamos a automatizar si o si") ══
+// ══════════════ Dictado por voz — Google Cloud Speech-to-Text (2026-07-12) ══
+// Daniel: el dictado nativo del navegador (SpeechRecognition) daba
+// "not-allowed" en computador de forma PERSISTENTE incluso permitiendo el
+// micrófono -- Chrome trata el permiso de reconocimiento de voz distinto
+// al de micrófono normal, y una vez denegado no vuelve a preguntar solo.
+// Reemplazo: grabar con MediaRecorder (permiso de micrófono ESTÁNDAR,
+// mucho más confiable) y transcribir en el servidor. En Safari/iPhone
+// (sin soporte de audio/webm) se mantiene el dictado nativo, que Daniel
+// confirmó que YA funciona ahí (solo algo lento).
 (function(){
   const btnDictar = document.getElementById('rpBtnDictar');
   if (!btnDictar) return;
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR){ btnDictar.style.display = 'none'; return; }
-  let rec = null, escuchando = false;
-  function detener(){
-    escuchando = false;
-    btnDictar.classList.remove('rp-dictando');
-    btnDictar.title = 'Dictar mensaje por voz';
-  }
-  // 2026-07-12 (Daniel): "not-allowed" en computador -- el navegador nunca
-  // llegó a mostrar el permiso de micrófono, o quedó bloqueado de una vez
-  // anterior. Pedimos el permiso EXPLÍCITO con getUserMedia primero (dispara
-  // el prompt nativo del navegador de forma confiable) y solo si lo
-  // concede arrancamos el reconocimiento; si lo deniega, mensaje accionable
-  // en vez del código de error crudo.
-  function iniciarReconocimiento(){
-    rec = new SR();
-    rec.lang = 'es-CL';
-    rec.continuous = true;
-    rec.interimResults = false;
-    rec.onstart = function(){
-      escuchando = true;
-      btnDictar.classList.add('rp-dictando');
-      btnDictar.title = 'Escuchando… clic para detener';
-    };
-    rec.onresult = function(ev){
-      let texto = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++){
-        if (ev.results[i].isFinal) texto += ev.results[i][0].transcript;
-      }
-      texto = texto.trim();
-      if (!texto) return;
-      const range = rpQuill.getSelection(true) || { index: rpQuill.getLength(), length: 0 };
-      rpQuill.insertText(range.index, texto + ' ', 'user');
-      rpQuill.setSelection(range.index + texto.length + 1);
-    };
-    rec.onerror = function(ev){
-      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
-        ilusToast('El navegador bloqueó el micrófono para este sitio. Haz clic en el ícono de candado/micrófono de la barra de direcciones y permite el acceso, luego intenta de nuevo.', { type: 'error' });
-      } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
-        ilusToast('No se pudo escuchar: ' + (ev.error || 'error desconocido'), { type: 'error' });
-      }
-      detener();
-    };
-    rec.onend = detener;
-    rec.start();
-  }
-  btnDictar.addEventListener('click', function(){
-    if (escuchando){ rec && rec.stop(); return; }
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(function(stream){
-          stream.getTracks().forEach(function(t){ t.stop(); });
-          iniciarReconocimiento();
-        })
-        .catch(function(){
-          ilusToast('El navegador bloqueó el micrófono para este sitio. Haz clic en el ícono de candado/micrófono de la barra de direcciones y permite el acceso, luego intenta de nuevo.', { type: 'error' });
-        });
-    } else {
-      iniciarReconocimiento();
+
+  const MR_OK = window.MediaRecorder
+    && navigator.mediaDevices && navigator.mediaDevices.getUserMedia
+    && (MediaRecorder.isTypeSupported('audio/webm;codecs=opus') || MediaRecorder.isTypeSupported('audio/webm'));
+
+  if (MR_OK){
+    let mediaRecorder = null, chunks = [], grabando = false, streamActual = null;
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+
+    function detenerUI(){
+      grabando = false;
+      btnDictar.classList.remove('rp-dictando');
+      btnDictar.title = 'Dictar mensaje por voz';
     }
-  });
+
+    async function transcribirYInsertar(blob){
+      btnDictar.disabled = true;
+      const original = btnDictar.innerHTML;
+      btnDictar.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      try{
+        const fd = new FormData();
+        fd.append('audio', blob, 'dictado.webm');
+        const r = await fetch('/tickets/api/transcribir', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!d.ok){ ilusToast(d.error || 'No se pudo transcribir', { type: 'error' }); return; }
+        if (!d.texto){ ilusToast('No se detectó voz en la grabación.', { type: 'info' }); return; }
+        const range = rpQuill.getSelection(true) || { index: rpQuill.getLength(), length: 0 };
+        rpQuill.insertText(range.index, d.texto + ' ', 'user');
+        rpQuill.setSelection(range.index + d.texto.length + 1);
+      }catch(e){ ilusToast('Error de red al transcribir', { type: 'error' }); }
+      finally{ btnDictar.disabled = false; btnDictar.innerHTML = original; }
+    }
+
+    btnDictar.addEventListener('click', async function(){
+      if (grabando){ mediaRecorder && mediaRecorder.state === 'recording' && mediaRecorder.stop(); return; }
+      try{
+        streamActual = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }catch(e){
+        ilusToast('El navegador bloqueó el micrófono para este sitio. Haz clic en el ícono de candado/micrófono de la barra de direcciones y permite el acceso, luego intenta de nuevo.', { type: 'error' });
+        return;
+      }
+      chunks = [];
+      mediaRecorder = new MediaRecorder(streamActual, { mimeType: mimeType });
+      mediaRecorder.ondataavailable = function(ev){ if (ev.data && ev.data.size) chunks.push(ev.data); };
+      mediaRecorder.onstop = function(){
+        streamActual.getTracks().forEach(function(t){ t.stop(); });
+        detenerUI();
+        const blob = new Blob(chunks, { type: mimeType });
+        if (blob.size > 500) transcribirYInsertar(blob);
+      };
+      mediaRecorder.start();
+      grabando = true;
+      btnDictar.classList.add('rp-dictando');
+      btnDictar.title = 'Grabando… clic para detener y transcribir';
+    });
+  } else {
+    // Fallback: Web Speech API nativa (Safari/iPhone -- confirmado que
+    // funciona, solo mas lento que el motor de Google del lado servidor).
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR){ btnDictar.style.display = 'none'; return; }
+    let rec = null, escuchando = false;
+    function detener(){
+      escuchando = false;
+      btnDictar.classList.remove('rp-dictando');
+      btnDictar.title = 'Dictar mensaje por voz';
+    }
+    function iniciarReconocimiento(){
+      rec = new SR();
+      rec.lang = 'es-CL';
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.onstart = function(){
+        escuchando = true;
+        btnDictar.classList.add('rp-dictando');
+        btnDictar.title = 'Escuchando… clic para detener';
+      };
+      rec.onresult = function(ev){
+        let texto = '';
+        for (let i = ev.resultIndex; i < ev.results.length; i++){
+          if (ev.results[i].isFinal) texto += ev.results[i][0].transcript;
+        }
+        texto = texto.trim();
+        if (!texto) return;
+        const range = rpQuill.getSelection(true) || { index: rpQuill.getLength(), length: 0 };
+        rpQuill.insertText(range.index, texto + ' ', 'user');
+        rpQuill.setSelection(range.index + texto.length + 1);
+      };
+      rec.onerror = function(ev){
+        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
+          ilusToast('El navegador bloqueó el micrófono para este sitio. Permite el acceso desde la configuración del sitio.', { type: 'error' });
+        } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
+          ilusToast('No se pudo escuchar: ' + (ev.error || 'error desconocido'), { type: 'error' });
+        }
+        detener();
+      };
+      rec.onend = detener;
+      rec.start();
+    }
+    btnDictar.addEventListener('click', function(){
+      if (escuchando){ rec && rec.stop(); return; }
+      iniciarReconocimiento();
+    });
+  }
 })();
 
 // ══════════════ Traductor (Google Cloud Translation) 2026-07-12 ══════════════
