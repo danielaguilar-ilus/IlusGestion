@@ -1010,13 +1010,22 @@ def register_tickets_routes(app, ctx):
         )
 
     def _tickets_required(view):
-        """Gate de Fase 1: reutiliza el permiso 'mantenciones' (o superadmin)
-        para no tocar la matriz de roles todavia. En una fase posterior se
-        puede crear una permission key 'tickets' dedicada (ver blueprint §9)."""
+        """Gate de Tickets: acepta el permiso legacy 'mantenciones' (o
+        superadmin) Y, de forma puramente aditiva (2026-07-12), los flags
+        dedicados de la matriz de roles tk_ver/tk_es_tecnico/tk_es_ejecutivo
+        (módulo "tickets" en PERMISSIONS_MATRIX, app.py). El OR con
+        "mantenciones" se mantiene para no quitarle acceso a nadie que hoy
+        ya entra por ese camino — ver REGLA #4.2 en CLAUDE.md."""
         @wraps(view)
         def wrapped(*a, **k):
             perms = g.get("permissions") or {}
-            if not (perms.get("mantenciones") or perms.get("superadmin")):
+            if not (
+                perms.get("mantenciones")
+                or perms.get("tk_ver")
+                or perms.get("tk_es_tecnico")
+                or perms.get("tk_es_ejecutivo")
+                or perms.get("superadmin")
+            ):
                 if _is_ajaxish():
                     return jsonify({
                         "ok": False,
@@ -1529,6 +1538,13 @@ def register_tickets_routes(app, ctx):
         except Exception:
             unread_count = 0
 
+        # La pestaña Actividad (que consume "vistas") queda oculta en la UI
+        # para quien no es admin/superadmin -- pero ocultar solo en pantalla
+        # no evita que alguien inspeccione la respuesta de red y lea los
+        # datos igual. Se filtra tambien aca, a nivel de datos.
+        _perms = g.get("permissions") or {}
+        _puede_ver_actividad = bool(_perms.get("superadmin") or _perms.get("admin"))
+
         return jsonify({
             "ok": True,
             "ticket": _fmt_row(t),
@@ -1536,7 +1552,7 @@ def register_tickets_routes(app, ctx):
             "documentos": [_fmt_row(r) for r in documentos],
             "mensajes": [_fmt_row(r) for r in mensajes],
             "adjuntos": [_fmt_row(r) for r in adjuntos],
-            "vistas": [_fmt_row(r) for r in vistas],
+            "vistas": [_fmt_row(r) for r in vistas] if _puede_ver_actividad else [],
             "unread_count": unread_count,
             "estado_label": ESTADO_LABEL, "tipo_label": TIPO_LABEL,
         })
@@ -1548,7 +1564,8 @@ def register_tickets_routes(app, ctx):
     @_tickets_required
     def tk_api_update(tid):
         prev = mysql_fetchone(
-            "SELECT estado, prioridad, tipo, asignado_a FROM tk_tickets WHERE id=%s", (tid,))
+            "SELECT estado, prioridad, tipo, asignado_a, numero_ticket, titulo "
+            "FROM tk_tickets WHERE id=%s", (tid,))
         if not prev:
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
 
@@ -1604,19 +1621,45 @@ def register_tickets_routes(app, ctx):
             _tk_log(tid, "asignacion",
                     f"Asignado a: {d.get('asignado_a') or '(sin asignar)'}", usuario=user,
                     metadata={"campo": "asignado_a", "antes": prev["asignado_a"], "nuevo": d.get("asignado_a")})
+            # Notificacion de asignacion (aditivo 2026-07-12) -- campana +
+            # correo al usuario recien asignado. Nunca debe romper el
+            # guardado del ticket (try/except, mismo patron defensivo que
+            # las notificaciones de resuelto/cerrado).
+            try:
+                _tk_notificar_asignacion(
+                    tid, d.get("asignado_a"),
+                    prev.get("numero_ticket") or f"#{tid}",
+                    prev.get("titulo"), actor_username=user)
+            except Exception as _e:
+                print(f"[tk_api_update] notificacion asignacion no enviada tid={tid}: {_e}", flush=True)
 
-        # Notificacion automatica al cliente en los hitos resuelto/cerrado
-        # (Daniel 2026-07-11) -- respeta la llave de paso del modulo 'tickets'.
-        if nuevo_estado == "resolved" and prev["estado"] not in ("resolved", "closed"):
-            try:
-                _tk_notificar_lifecycle(tid, "resuelto")
-            except Exception as _e:
-                print(f"[tk_api_update] notificacion resuelto no enviada tid={tid}: {_e}", flush=True)
-        elif nuevo_estado == "closed" and prev["estado"] != "closed":
-            try:
-                _tk_notificar_lifecycle(tid, "cerrado")
-            except Exception as _e:
-                print(f"[tk_api_update] notificacion cerrado no enviada tid={tid}: {_e}", flush=True)
+        # Notificacion automatica al cliente en los hitos del lifecycle
+        # (Daniel 2026-07-11/12) -- respeta la llave de paso del modulo
+        # 'tickets'. Mapeo generico y ADITIVO (ver diseño
+        # lifecycle_estados_extra): 'ot_pending_approval' (aprobacion
+        # interna) y 'open' (reapertura) se dejan fuera a proposito, sin
+        # plantilla, hasta que Daniel pida explicitamente notificarlos.
+        _ESTADO_NOTIF_SLUG = {
+            "resolved": "resuelto",
+            "closed": "cerrado",
+            "in_progress": "en_curso",
+            "pending": "pendiente",
+            "ot_generated": "ot_generada",
+            "ot_in_progress": "ot_en_curso",
+            "cancelado": "cancelado",
+        }
+        if nuevo_estado and nuevo_estado != prev["estado"] and nuevo_estado in _ESTADO_NOTIF_SLUG:
+            # Matiz historico solo para 'resolved': evita renotificar en un
+            # bounce closed->resolved (el cliente ya recibio el aviso de
+            # cerrado). Para el resto de estados basta con != al anterior.
+            if nuevo_estado == "resolved" and prev["estado"] in ("resolved", "closed"):
+                pass
+            else:
+                slug = _ESTADO_NOTIF_SLUG[nuevo_estado]
+                try:
+                    _tk_notificar_lifecycle(tid, slug)
+                except Exception as _e:
+                    print(f"[tk_api_update] notificacion '{slug}' no enviada tid={tid}: {_e}", flush=True)
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
@@ -1773,6 +1816,45 @@ def register_tickets_routes(app, ctx):
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
             "<strong>{numero}</strong> ha sido cerrado. Gracias por confiar en "
             "ILUS Sport &amp; Health.</div></div>"),
+        # Estados extra del lifecycle (aditivo 2026-07-12). Fallback hardcoded
+        # por si _render_comm_template no encuentra la fila sembrada aun --
+        # el texto real editable vive en _tickets_tpl_seed() (app.py).
+        "en_curso": (
+            "{numero} — En curso",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu equipo ya está trabajando "
+            "en tu solicitud <strong>{numero}</strong>.</div></div>"),
+        "pendiente": (
+            "{numero} — Pendiente",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #f59e0b;background:#fff8e1;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
+            "<strong>{numero}</strong> quedó pendiente — puede que necesitemos información adicional "
+            "de tu parte.</div></div>"),
+        "ot_generada": (
+            "{numero} — Orden de Trabajo generada",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Se generó una Orden de Trabajo "
+            "para tu solicitud <strong>{numero}</strong>.</div></div>"),
+        "ot_en_curso": (
+            "{numero} — Técnico en terreno",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #0d9488;background:#f0fdfa;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">El técnico ya está trabajando "
+            "en terreno en tu Orden de Trabajo <strong>{numero}</strong>.</div></div>"),
+        "cancelado": (
+            "{numero} — Cancelado",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
+            "<div style=\"border-left:4px solid #dc2626;background:#fee2e2;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
+            "<strong>{numero}</strong> fue cancelado.</div></div>"),
     }
 
     def _tk_notificar_lifecycle(tid, estado_slug):
@@ -1838,6 +1920,73 @@ def register_tickets_routes(app, ctx):
         _tk_log(tid, "mensaje", cuerpo_email, es_interno=False,
                 to_email=to_email[:150], estado_envio="enviado" if enviado else "fallido",
                 metadata={"subject": subject, "auto": True, "estado_slug": estado_slug})
+
+    def _tk_notificar_asignacion(tid, asignado_a_nuevo, numero, titulo, actor_username=None):
+        """Notifica (campana + correo) al usuario que quedó asignado a un
+        ticket. Aditivo 2026-07-12 -- nunca debe romper el guardado del
+        ticket (se llama envuelto en try/except desde tk_api_update).
+
+        Resolucion del destinatario: 'asignado_a' guarda el NOMBRE (o
+        username si no tiene nombre) tal como lo puebla
+        /mantenciones/api/ejecutivos (COALESCE(nombre,username)), no un id.
+        Si dos usuarios activos comparten el mismo nombre para mostrar, esto
+        podria matchear al que no es (riesgo documentado, ver diseño) -- no
+        hay id disponible en el dato historico para desambiguar mejor.
+        """
+        asignado_a_nuevo = (asignado_a_nuevo or "").strip()
+        if not asignado_a_nuevo:
+            # Desasignacion: no hay a quien notificar. El _tk_log ya deja
+            # constancia en Actividad -- eso basta (ver diseño, guard abierto).
+            return
+        row = mysql_fetchone(
+            "SELECT id, username, COALESCE(nombre, username) AS nombre "
+            "FROM app_users WHERE active=1 AND COALESCE(nombre, username)=%s LIMIT 1",
+            (asignado_a_nuevo,))
+        if not row:
+            # Texto libre historico o usuario dado de baja -- ya contemplado
+            # en el frontend (linea ~2206). No hay a quien avisar.
+            return
+        destino_id = row.get("id")
+        destino_email = (row.get("username") or "").strip()
+
+        # Auto-asignacion: omitir ruido (la persona ya sabe que se asigno
+        # a si misma).
+        if actor_username and destino_email and actor_username.strip().lower() == destino_email.strip().lower():
+            return
+
+        extracto = (titulo or "").strip()[:180]
+
+        # Campana in-app (dirigida, no broadcast).
+        try:
+            _mant_notificar = ctx.get("_mant_notificar")
+            if _mant_notificar and destino_id:
+                _mant_notificar(
+                    destino_id, "otro",
+                    f"Te asignaron el ticket {numero}", cuerpo=extracto,
+                    url_accion=f"/tickets/{tid}", prioridad="media")
+        except Exception as _en:
+            print(f"[tk_notificar_asignacion] no se pudo crear notif interna tid={tid}: {_en}", flush=True)
+
+        # Correo al usuario asignado (NO al cliente del ticket -- ese es
+        # _tk_notificar_lifecycle, un flujo distinto).
+        if not (_send_ilus_email and destino_email):
+            return
+        try:
+            tema = _brand_subject(f"Te asignaron el ticket {numero}")
+            cuerpo_html = (
+                "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;"
+                "border-radius:0 10px 10px 0;padding:18px 20px;margin:0 0 6px\">"
+                f"<div style=\"font-size:16px;color:#111827;line-height:1.6\">Te asignaron el ticket "
+                f"<strong>{numero}</strong>"
+                + (f": {_html_mod.escape(extracto)}" if extracto else "")
+                + ".</div></div>")
+            html_final = (_comm_render_email_document(tema, cuerpo_html, subtitle=f"Ticket {numero} · ILUS Fitness")
+                          if _comm_render_email_document else cuerpo_html)
+            enviado = _send_ilus_email(destino_email, tema, html_final,
+                                        evento="ticket_asignacion", modulo="tickets",
+                                        reply_to=_tk_reply_to())
+        except Exception as _e:
+            print(f"[tk_notificar_asignacion] error enviando tid={tid}: {_e}", flush=True)
 
     # ─────────────────────────────────────────────────────────────────
     #  API — comentario interno (conversacion Fase 1)

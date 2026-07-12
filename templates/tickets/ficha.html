@@ -706,7 +706,10 @@
   </div>
 
   <!-- Actividad del ticket — línea de tiempo de supervisión (quién hizo qué y cuándo).
-       Se alimenta de d.mensajes + d.vistas que YA llegan con el ticket: cero backend nuevo. -->
+       Se alimenta de d.mensajes + d.vistas que YA llegan con el ticket: cero backend nuevo.
+       Visible SOLO para superadmin/admin (pedido Daniel 2026-07-12): es una vista de
+       supervisión, no algo que el resto del staff de Tickets necesite ver. -->
+  {% if permissions.superadmin or permissions.admin %}
   <div class="tk-card" id="cardActividad">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
       <h6 style="margin:0;"><i class="bi bi-activity"></i>Actividad del ticket</h6>
@@ -720,6 +723,7 @@
     <div class="tk-act-timeline" id="actTimeline"></div>
     <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" id="actVerTodo" style="display:none;"></button>
   </div>
+  {% endif %}
 
   <!-- Visor universal de adjuntos (imagen / PDF / video / descarga) -->
   <div class="tk-lightbox" id="tkLightbox" style="display:none;">
@@ -1276,6 +1280,10 @@
 const TID = {{ ticket_id }};
 const ESTADO_LABEL = {{ estado_label|tojson }};
 const TIPO_LABEL = {{ tipo_label|tojson }};
+// Tarjeta "Actividad del ticket" es solo superadmin/admin (pedido Daniel
+// 2026-07-12) — el nodo #cardActividad puede no existir en el DOM para el
+// resto del staff, así que gateamos la llamada Y protegemos el render.
+const PUEDE_VER_ACTIVIDAD = {{ 'true' if (permissions.superadmin or permissions.admin) else 'false' }};
 let ticketActual = null;
 let rpAdjuntos = [];   // [{id, url, nombre}] ya subidos, pendientes de enviar con el proximo mensaje
 let rpModo = 'cliente'; // 'cliente' | 'interno'
@@ -1569,8 +1577,9 @@ async function cargar(){
 
   renderThread(d.mensajes, d.adjuntos);
 
-  // Línea de tiempo de actividad (supervisión) — tarjeta al final de Información
-  renderActividad(d);
+  // Línea de tiempo de actividad (supervisión) — tarjeta al final de Información.
+  // Solo se llama si el nodo existe en el DOM (gate server-side en el Jinja).
+  if (PUEDE_VER_ACTIVIDAD) renderActividad(d);
 
   // Daniel 2026-07-12: "cuando las lea ya, quiero que se borren" -- antes
   // se contaban TODOS los mensajes de cliente del historial (nunca bajaba
@@ -2095,6 +2104,7 @@ function actEventoHtml(ev){
 function actPintarTimeline(){
   const cont = document.getElementById('actTimeline');
   const btn = document.getElementById('actVerTodo');
+  if(!cont || !btn) return; // tarjeta oculta (usuario sin permiso admin/superadmin)
   const tipos = ACT_FILTROS[actFiltro];
   const filtrados = tipos ? actEventos.filter(e=>tipos.includes(e.tipo)) : actEventos;
   if(!filtrados.length){
@@ -2114,6 +2124,7 @@ function actPintarTimeline(){
 }
 
 function renderActividad(d){
+  if(!PUEDE_VER_ACTIVIDAD) return; // tarjeta ni siquiera se renderizó (Jinja) para este usuario
   actEventos = actConstruirEventos(d.mensajes, d.vistas);
   actPintarTimeline();
 }
@@ -2126,10 +2137,13 @@ document.querySelectorAll('#actFiltros .tk-act-chip').forEach(function(ch){
     actPintarTimeline();
   });
 });
-document.getElementById('actVerTodo').addEventListener('click', function(){
-  actMostrarTodo = true;
-  actPintarTimeline();
-});
+const _actVerTodoBtn = document.getElementById('actVerTodo');
+if(_actVerTodoBtn){
+  _actVerTodoBtn.addEventListener('click', function(){
+    actMostrarTodo = true;
+    actPintarTimeline();
+  });
+}
 
 // ══════════════ Visor universal de adjuntos (imagen / PDF / video / descarga) ══════════════
 // Reutiliza esImagen()/iconoAdjunto() ya existentes para detectar el tipo.

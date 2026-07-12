@@ -3453,6 +3453,10 @@ PERMS_KEYS = (
     # matriz no mapeaba a NADA (chip muerto). Caso usuaria transporte
     # 2026-06-11: tenía Carga masiva ✓ pero rebotaba por no tener Imprimir.
     "masivo",
+    # tk_* — flags del módulo Tickets (aditivo 2026-07-12). El gate
+    # _tickets_required sigue aceptando "mantenciones" también, así que
+    # estos flags solo pueden SUMAR acceso, nunca quitarlo.
+    "tk_ver", "tk_es_tecnico", "tk_es_ejecutivo",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -3473,7 +3477,11 @@ def _legacy_permission_set(role):
                 "create": True, "delete": True, "admin": True, "hrm": True,
                 "cubicador": True, "transporte": True, "mantenciones": True,
                 "ajustes": True,
-                "etiquetas": True, "retiros": True, "comunicaciones": True}
+                "etiquetas": True, "retiros": True, "comunicaciones": True,
+                # Backfill opcional aditivo (2026-07-12): admin ya entraba a
+                # Tickets vía "mantenciones" — esto solo refleja ese acceso
+                # real en los flags nuevos, no otorga nada extra.
+                "tk_ver": True, "tk_es_ejecutivo": True}
     if role == "ejecutivo":
         # Ejecutivo de mantenciones — accede SOLO al módulo de mantenciones.
         # Sin view/etiquetas/print legacy (esos abrían el catálogo de productos).
@@ -3524,6 +3532,7 @@ def _build_perms_from_matrix(role):
     tra = matrix.get("transporte", {})
     com = matrix.get("comunicaciones", {})
     adm = matrix.get("admin", {})
+    tk  = matrix.get("tickets", {})
 
     # Flags de módulo (gates de sidebar)
     # Flag coarse "etiquetas" — simétrico al fix de transporte (caso usuaria
@@ -3577,6 +3586,14 @@ def _build_perms_from_matrix(role):
 
     # HRM no está en la matriz actual → fallback: lo permitimos si tiene admin general
     base["hrm"]        = bool(adm.get("usuarios") or adm.get("roles"))
+
+    # Tickets (aditivo 2026-07-12) — flags puramente aditivos, ver riesgo #1
+    # en el diseño: _tickets_required sigue aceptando "mantenciones" también,
+    # así que estos 3 flags solo pueden SUMAR acceso a Tickets, nunca quitarlo.
+    base["tk_ver"]         = bool(tk.get("ver"))
+    base["tk_es_tecnico"]  = bool(tk.get("es_tecnico"))
+    base["tk_es_ejecutivo"] = bool(tk.get("es_ejecutivo"))
+
     base["superadmin"] = False
     return base
 
@@ -10527,6 +10544,13 @@ PERMISSIONS_MATRIX = {
                        "acciones":["ver","configurar","enviar","plantillas","kill_switch"]},
     "admin":          {"label":"Administración", "icon":"bi-gear-wide-connected",
                        "acciones":["ajustes","usuarios","roles","marketing","login_imagenes"]},
+    # Tickets: módulo central de soporte/servicio técnico (replicado de ilus-dev).
+    # Aditivo 2026-07-12 — ningún rol tiene filas hoy en rol_permisos para
+    # "tickets", así que nace en False para TODOS (ver get_role_permissions()).
+    # El gate _tickets_required (tickets_module.py) sigue aceptando también
+    # "mantenciones" vía OR, así que nadie pierde acceso que ya tenía.
+    "tickets":        {"label":"Tickets",        "icon":"bi-ticket-perforated",
+                       "acciones":["ver","es_tecnico","es_ejecutivo"]},
 }
 
 # Metadata UI de cada acción — Daniel 2026-06-03: la matriz se reorganiza en
@@ -10577,6 +10601,11 @@ PERMISSIONS_META = {
         "roles":          {"label": "Roles y permisos",  "tipo": "submodulo", "icon": "bi-shield-lock"},
         "marketing":      {"label": "Marketing",         "tipo": "submodulo", "icon": "bi-megaphone"},
         "login_imagenes": {"label": "Imágenes de login", "tipo": "submodulo", "icon": "bi-image"},
+    },
+    "tickets": {
+        "ver":           {"label": "Acceso al módulo",                                   "tipo": "submodulo", "icon": "bi-ticket-perforated"},
+        "es_tecnico":     {"label": "Es técnico",                                        "tipo": "submodulo", "icon": "bi-person-gear"},
+        "es_ejecutivo":   {"label": "Es ejecutivo (ve Tickets + puede cambiar estado)",  "tipo": "submodulo", "icon": "bi-person-badge"},
     },
 }
 
@@ -69726,6 +69755,47 @@ def _tickets_tpl_seed():
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
             "<strong>{{numero_ticket}}</strong> ha sido cerrado. Gracias por confiar en "
             "ILUS Sport &amp; Health.</div></div>"),
+        # Estados extra del lifecycle (aditivo 2026-07-12, ver diseño
+        # lifecycle_estados_extra). No se crean plantillas para
+        # 'ot_pending_approval' (aprobación interna, el cliente no tiene
+        # acción que tomar) ni 'open' (reapertura, caso raro, sin pedido
+        # explícito de Daniel).
+        'en_curso': (
+            "{{numero_ticket}} — En curso",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu equipo ya está trabajando "
+            "en tu solicitud <strong>{{numero_ticket}}</strong>.</div></div>"),
+        'pendiente': (
+            "{{numero_ticket}} — Pendiente",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #f59e0b;background:#fff8e1;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
+            "<strong>{{numero_ticket}}</strong> quedó pendiente — puede que necesitemos información "
+            "adicional de tu parte.</div></div>"),
+        'ot_generada': (
+            "{{numero_ticket}} — Orden de Trabajo generada",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Se generó una Orden de Trabajo "
+            "para tu solicitud <strong>{{numero_ticket}}</strong>.</div></div>"),
+        'ot_en_curso': (
+            "{{numero_ticket}} — Técnico en terreno",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #0d9488;background:#f0fdfa;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">El técnico ya está trabajando "
+            "en terreno en tu Orden de Trabajo <strong>{{numero_ticket}}</strong>.</div></div>"),
+        'cancelado': (
+            "{{numero_ticket}} — Cancelado",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
+            "<div style=\"border-left:4px solid #dc2626;background:#fee2e2;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
+            "<strong>{{numero_ticket}}</strong> fue cancelado.</div></div>"),
     }
 
 
