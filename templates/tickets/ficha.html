@@ -30,8 +30,9 @@
 .tk-hero-sub{font-size:.74rem;color:rgba(255,255,255,.5);margin-left:auto;white-space:nowrap;}
 .tk-tabs{display:flex;gap:4px;border-bottom:2px solid #eaecf0;margin-bottom:16px;flex-wrap:wrap;}
 .tk-tab{padding:9px 16px;font-weight:700;font-size:.85rem;color:#6b7280;cursor:pointer;
-  border-bottom:2px solid transparent;margin-bottom:-2px;}
-.tk-tab.active{color:#dc2626;border-bottom-color:#dc2626;}
+  border-bottom:3px solid transparent;margin-bottom:-2px;border-radius:8px 8px 0 0;transition:background .12s,color .12s;}
+.tk-tab:hover{background:#f3f4f6;color:#374151;}
+.tk-tab.active{color:#dc2626;border-bottom-color:#dc2626;background:#fef2f2;}
 .tk-tab .badge{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;padding:1px 6px;margin-left:4px;}
 .tk-pane{display:none;} .tk-pane.active{display:block;}
 .tk-card{background:#fff;border:1px solid #eaecf0;border-radius:13px;padding:18px 20px;margin-bottom:14px;}
@@ -100,6 +101,15 @@
 .tk-empty-mini{background:#f9fafb;border:1px dashed #d1d5db;border-radius:10px;padding:20px 14px;text-align:center;color:#9ca3af;}
 .tk-empty-mini i{font-size:1.5rem;display:block;margin-bottom:6px;opacity:.6;}
 .tk-empty-mini span{font-size:.82rem;font-weight:600;}
+/* Chip de garantía por equipo (fila de la tabla Equipo(s)) — clic abre el
+   modal de edición. Verde éxito si tiene garantía vigente, gris neutro si no
+   (paleta Regla #2). */
+.tk-chip-gar{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:50px;
+  font-size:.68rem;font-weight:700;cursor:pointer;white-space:nowrap;border:none;line-height:1.4;}
+.tk-chip-gar.on{background:#dcfce7;color:#16a34a;}
+.tk-chip-gar.off{background:#f3f4f6;color:#6b7280;}
+.tk-chip-gar:hover{filter:brightness(.97);}
+#garCamposWrap{transition:opacity .15s;}
 .tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:34px;text-align:center;color:#9ca3af;}
 
 /* ── Respuestas (conversacion) ── */
@@ -156,26 +166,27 @@
 #rpBtnDictar.rp-dictando{color:#fff;background:#dc2626;border-color:#dc2626;animation:rpPulseMic 1.2s ease-in-out infinite;}
 @keyframes rpPulseMic{0%,100%{opacity:1;}50%{opacity:.55;}}
 .rp-mode-tabs{display:flex;background:#f9fafb;border-bottom:1px solid #eaecf0;}
-.rp-mode-tab{flex:1;text-align:center;padding:9px;font-size:.8rem;font-weight:700;color:#94a3b8;cursor:pointer;
-  border-bottom:3px solid transparent;}
-.rp-mode-tab.active[data-mode="cliente"]{color:#dc2626;border-bottom-color:#dc2626;background:#fff;}
-.rp-mode-tab.active[data-mode="interno"]{color:#b45309;border-bottom-color:#f59e0b;background:#fffbeb;}
+.rp-mode-tab{flex:1;text-align:center;padding:10px;font-size:.82rem;font-weight:800;color:#94a3b8;cursor:pointer;
+  border-bottom:3px solid transparent;transition:background .12s,color .12s;letter-spacing:.02em;}
+.rp-mode-tab:hover{color:#475569;background:rgba(0,0,0,.03);}
+.rp-mode-tab.active[data-mode="cliente"]{color:#dc2626;border-bottom-color:#dc2626;background:#fff;box-shadow:inset 0 2px 0 #dc2626;}
+.rp-mode-tab.active[data-mode="interno"]{color:#b45309;border-bottom-color:#f59e0b;background:#fffbeb;box-shadow:inset 0 2px 0 #f59e0b;}
 /* Diferenciar visualmente De/Para/CC del editor de abajo (Daniel
    2026-07-12: "esta todo muy blanco... el de, el para... la caja de
    texto tambien esta muy blanco") -- antes #fcfcfd era casi identico al
    blanco del editor; ahora un gris ILUS perceptible + los inputs con su
    propio campo delimitado, para que se note "esto es un dato, no el
    mensaje". */
-.rp-headers{padding:12px 14px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;display:none;}
+.rp-headers{padding:12px 14px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:12px;display:none;}
 .rp-headers.show{display:block;}
 .rp-headers .row-h{display:flex;align-items:center;gap:8px;font-size:.78rem;margin-bottom:6px;}
 .rp-headers .row-h label{color:#6b7280;font-weight:700;width:44px;flex-shrink:0;}
 .rp-headers .row-h input{border:1px solid #e5e7eb;background:#fff;border-radius:6px;padding:4px 8px;font-size:.82rem;flex:1;outline:none;}
 .rp-headers .row-h input:focus{border-color:#dc2626;}
-.rp-de-badge{display:inline-flex;align-items:center;gap:7px;background:#0a0a0a;color:#fff;
-  border-radius:20px;padding:4px 12px 4px 4px;font-weight:700;font-size:.82rem;letter-spacing:.2px;}
-.rp-de-badge .rp-de-avatar{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
-  border-radius:50%;background:#dc2626;color:#fff;font-size:.68rem;font-weight:800;}
+/* Daniel 2026-07-12: "ese logo feo... colocale un texto nomas" -- se
+   probo primero una pill negra con avatar circular y no gusto; se
+   simplifica a solo texto en rojo ILUS, sin fondo ni circulo. */
+.rp-de-badge{color:#dc2626;font-weight:700;font-size:.85rem;}
 .rp-editor-wrap .ql-toolbar{border:none;border-bottom:1px solid #eaecf0;background:#f3f4f6;}
 /* Editor compacto por defecto (Daniel 2026-07-12: "la caja de texto es
    mas grande que el visualizador de mensajes" -- el hilo es el area
@@ -285,6 +296,58 @@
 .tk-act-tag.env-fail{background:#fee2e2;color:#991b1b;}
 .tk-act-tag.interno{background:#fff8e1;color:#b45309;}
 
+/* ── Generar OT: tarjeta de estado en Acciones ── */
+.otw-ot-existente{display:flex;align-items:center;gap:12px;background:#f0fdf4;border:1px solid #bbf7d0;
+  border-radius:11px;padding:14px 16px;}
+.otw-ot-existente i.bi-clipboard2-check-fill{font-size:1.6rem;color:#16a34a;flex-shrink:0;}
+.otw-ot-existente .num{font-family:'JetBrains Mono',monospace;font-weight:800;color:#166534;font-size:.95rem;}
+.otw-ot-existente .lbl{font-size:.76rem;color:#166534;}
+.otw-ot-existente a{margin-left:auto;flex-shrink:0;}
+
+/* ── Wizard "Generar OT" — mismo lenguaje visual que .tk-step (Regla de
+   colores ILUS), clases propias para no colisionar con el stepper de
+   estado del ticket que ya usa .tk-step/.tk-stepper. ── */
+.otw-steps{display:flex;margin-bottom:22px;}
+.otw-step{flex:1;text-align:center;position:relative;}
+.otw-step:not(:first-child)::before{content:'';position:absolute;top:15px;left:-50%;width:100%;height:3px;background:#e5e7eb;z-index:0;}
+.otw-step.done:not(:first-child)::before,.otw-step.current:not(:first-child)::before{background:#16a34a;}
+.otw-circle{width:32px;height:32px;border-radius:50%;background:#f3f4f6;color:#9ca3af;display:inline-flex;
+  align-items:center;justify-content:center;font-weight:800;font-size:.85rem;position:relative;z-index:1;
+  transition:background .15s,color .15s;}
+.otw-step.current .otw-circle{background:#dc2626;color:#fff;box-shadow:0 0 0 5px rgba(220,38,38,.15);}
+.otw-step.done .otw-circle{background:#dcfce7;color:#166534;}
+.otw-label{font-size:.68rem;font-weight:700;color:#9ca3af;margin-top:6px;}
+.otw-step.current .otw-label{color:#dc2626;font-weight:800;}
+.otw-step.done .otw-label{color:#166534;}
+.otw-pane{display:none;} .otw-pane.active{display:block;}
+.otw-field{margin-bottom:14px;}
+.otw-field label{font-size:.72rem;font-weight:700;color:#475569;display:block;margin-bottom:4px;}
+.otw-cliente-box{position:relative;}
+.otw-cliente-results{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;
+  border-radius:0 0 10px 10px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:260px;overflow-y:auto;z-index:50;}
+.otw-cliente-item{padding:9px 12px;font-size:.85rem;cursor:pointer;border-bottom:1px solid #f3f4f6;}
+.otw-cliente-item:last-child{border-bottom:none;}
+.otw-cliente-item:hover{background:#fef2f2;}
+.otw-cliente-item .nom{font-weight:700;color:#0f172a;}
+.otw-cliente-item .met{font-size:.72rem;color:#9ca3af;}
+.otw-cliente-item.erp .met{color:#b45309;}
+.otw-cliente-sel{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 12px;
+  font-size:.85rem;display:flex;align-items:center;gap:10px;}
+.otw-cliente-sel i{color:#16a34a;font-size:1.1rem;}
+.otw-cliente-sel .x{margin-left:auto;cursor:pointer;color:#9ca3af;}
+.otw-eq-item{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid #f3f4f6;font-size:.85rem;}
+.otw-eq-item:last-child{border-bottom:none;}
+.otw-eq-item input{width:18px;height:18px;flex-shrink:0;}
+.otw-warn-card{background:#fff8e1;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;
+  margin-bottom:10px;font-size:.85rem;color:#78350f;display:flex;gap:10px;align-items:flex-start;}
+.otw-warn-card i{color:#f59e0b;flex-shrink:0;margin-top:1px;}
+.otw-warn-card b{display:block;margin-bottom:2px;}
+.otw-resumen dt{color:#6b7280;font-weight:600;font-size:.78rem;}
+.otw-resumen dd{color:#0f172a;font-weight:700;font-size:.86rem;margin-bottom:10px;}
+@media (max-width:520px){
+  .otw-label{display:none;}
+}
+
 /* ════════════════════════════════════════════════════════════════════
    MOBILE — Ficha de ticket (auditoría mobile 2026-07-12)
    Solo aditivo dentro de @media: nada de esto toca escritorio, y no se
@@ -316,6 +379,12 @@
      -- son zonas de tap muy frecuentes (Información/Respuestas/Acciones,
      Responder al cliente/Comentario interno). */
   .tk-tab, .rp-mode-tab{ min-height:44px; display:flex; align-items:center; justify-content:center; }
+
+  /* Chip de garantía (.tk-chip-gar): es un <span> inline por diseño (ya
+     tiene display:inline-flex en su regla base, línea ~107) pero es
+     clicable (abre el modal de garantía) y no llegaba a 44px de alto
+     táctil en mobile -- se le da altura mínima sin volverlo bloque. */
+  .tk-chip-gar{ min-height:44px; display:inline-flex; align-items:center; }
 
   /* Botón "×" para quitar un adjunto ya subido: solo un carácter sin
      padding, área de tap real de pocos píxeles. */
@@ -508,6 +577,47 @@
       </div>
     </div>
   </div>
+
+  <!-- Modal: garantía del equipo (Ley del Consumidor: 6 meses por defecto, editable) -->
+  <div class="modal fade" id="modalGarantiaEquipo" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>Garantía del equipo</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div id="garEqNombre" style="font-weight:700;color:#0f172a;margin-bottom:14px;"></div>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="garConGarantia" style="width:2.4em;height:1.3em;">
+            <label class="form-check-label" for="garConGarantia">Este equipo tiene garantía</label>
+          </div>
+          <div id="garCamposWrap">
+            <div class="mb-3">
+              <label class="form-label">Documento de garantía
+                <span class="text-muted" style="font-weight:400;">(N° boleta/factura/folio, opcional)</span></label>
+              <input type="text" id="garDocumento" class="form-control" placeholder="Ej: Boleta 12345">
+            </div>
+            <div class="row g-2">
+              <div class="col-6">
+                <label class="form-label">Fecha de emisión</label>
+                <input type="date" id="garFechaEmision" class="form-control">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Meses de garantía</label>
+                <input type="number" id="garMeses" class="form-control" value="6" min="1">
+              </div>
+            </div>
+            <div id="garVencPreview" style="margin-top:12px;font-size:.85rem;color:#374151;"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="btn btn-ilus" id="btnGarGuardar"><i class="bi bi-save me-1"></i>Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="tk-card">
     <h6><i class="bi bi-file-earmark-text"></i>Documentos ERP</h6>
     <div id="listaDocs"></div>
@@ -558,14 +668,14 @@
   <div class="rp-offline-bar" id="rpOffline"><i class="bi bi-wifi-off"></i> Sin conexión a internet — no podrás enviar hasta reconectar.</div>
 
   <div class="tk-card" style="padding:14px 16px;">
+    <div class="rp-headers show" id="rpHeaders">
+      <div class="row-h"><label>De</label><span class="rp-de-badge">ILUS Fitness</span></div>
+      <div class="row-h"><label>Para</label><input type="email" id="rpTo" placeholder="correo@cliente.cl"></div>
+      <div class="row-h"><label>CC</label><input type="text" id="rpCc" placeholder="opcional, separado por comas"></div>
+    </div>
     <div class="rp-thread" id="rpThread"></div>
 
     <div class="rp-composer">
-      <div class="rp-headers show" id="rpHeaders">
-        <div class="row-h"><label>De</label><span class="rp-de-badge"><span class="rp-de-avatar">IF</span>ILUS Fitness</span></div>
-        <div class="row-h"><label>Para</label><input type="email" id="rpTo" placeholder="correo@cliente.cl"></div>
-        <div class="row-h"><label>CC</label><input type="text" id="rpCc" placeholder="opcional, separado por comas"></div>
-      </div>
       <div class="rp-mode-tabs">
         <div class="rp-mode-tab active" data-mode="cliente"><i class="bi bi-send me-1"></i>Responder al cliente</div>
         <div class="rp-mode-tab" data-mode="interno"><i class="bi bi-lock me-1"></i>Comentario interno</div>
@@ -596,12 +706,129 @@
   </div>
 </div>
 
-<!-- ACCIONES (Fase 4) -->
+<!-- ACCIONES -->
 <div class="tk-pane" id="pane-acc">
-  <div class="tk-soon">
-    <i class="bi bi-tools" style="font-size:2rem;display:block;margin-bottom:8px;"></i>
-    <div style="font-weight:700;color:#6b7280;">Pestaña de Acciones</div>
-    <div style="font-size:.82rem;margin-top:4px;">Agendar hotel del técnico, coordinar visita, logística de acceso.<br>Se habilita en la Fase 4.</div>
+  <div class="tk-card">
+    <h6><i class="bi bi-clipboard2-check"></i>Orden de Trabajo</h6>
+    <div id="otwSinOT">
+      <p style="color:#6b7280;font-size:.85rem;margin-bottom:12px;">Este ticket todavía no tiene una OT generada.</p>
+      <button class="btn btn-ilus" id="btnGenerarOT" type="button" data-bs-toggle="modal" data-bs-target="#modalGenerarOT">
+        <i class="bi bi-plus-lg me-1"></i>Generar OT</button>
+    </div>
+    <div id="otwConOT" style="display:none;">
+      <div class="otw-ot-existente">
+        <i class="bi bi-clipboard2-check-fill"></i>
+        <div>
+          <div class="lbl">Este ticket ya tiene una OT vinculada</div>
+          <div class="num" id="otwNumeroOtTxt">—</div>
+        </div>
+        <a class="btn btn-sm btn-outline-secondary" id="otwVerOtLink" href="#" target="_blank" rel="noopener">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Ver OT</a>
+      </div>
+    </div>
+  </div>
+  <div class="tk-card">
+    <i class="bi bi-tools" style="font-size:1.6rem;color:#c4c9d2;display:block;margin-bottom:8px;"></i>
+    <div style="font-weight:700;color:#6b7280;font-size:.85rem;">Más acciones próximamente</div>
+    <div style="font-size:.8rem;color:#9ca3af;margin-top:4px;">Agendar hotel del técnico, coordinar visita, logística de acceso.</div>
+  </div>
+</div>
+
+<!-- Modal: wizard "Generar OT" -->
+<div class="modal fade" id="modalGenerarOT" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-bottom:3px solid #dc2626;">
+        <h5 class="modal-title"><i class="bi bi-clipboard2-check me-2" style="color:#dc2626;"></i>Generar Orden de Trabajo</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="otw-steps">
+          <div class="otw-step current" data-step="1"><div class="otw-circle">1</div><div class="otw-label">Cliente y equipo</div></div>
+          <div class="otw-step" data-step="2"><div class="otw-circle">2</div><div class="otw-label">Técnico y horario</div></div>
+          <div class="otw-step" data-step="3"><div class="otw-circle">3</div><div class="otw-label">Confirmación</div></div>
+        </div>
+
+        <!-- Paso 1: Cliente y equipo -->
+        <div class="otw-pane active" data-pane="1">
+          <div class="otw-field">
+            <label>Cliente <span class="text-danger">*</span></label>
+            <div class="otw-cliente-box">
+              <input type="text" id="otwClienteInput" class="form-control" placeholder="Buscar por RUT o razón social…" autocomplete="off">
+              <div class="otw-cliente-results" id="otwClienteResults" style="display:none;"></div>
+            </div>
+            <div class="otw-cliente-sel" id="otwClienteSel" style="display:none;margin-top:8px;">
+              <i class="bi bi-check-circle-fill"></i>
+              <span id="otwClienteSelTxt"></span>
+              <span class="x" id="otwClienteQuitar" title="Quitar selección"><i class="bi bi-x-lg"></i></span>
+            </div>
+            <div class="form-text" id="otwClienteHint"><i class="bi bi-info-circle me-1"></i>Solo se puede agendar una OT para clientes ya registrados en Mantenciones.</div>
+          </div>
+          <div class="otw-field">
+            <label>Equipo(s)</label>
+            <div id="otwEquiposList"></div>
+          </div>
+        </div>
+
+        <!-- Paso 2: Técnico y horario -->
+        <div class="otw-pane" data-pane="2">
+          <div class="otw-field">
+            <label>Técnico <span class="text-danger">*</span></label>
+            <select id="otwTecnico" class="form-select">
+              <option value="">Selecciona un técnico…</option>
+            </select>
+          </div>
+          <div class="row g-2">
+            <div class="col-6 otw-field">
+              <label>Fecha <span class="text-danger">*</span></label>
+              <input type="date" id="otwFecha" class="form-control">
+            </div>
+            <div class="col-6 otw-field">
+              <label>Tipo de visita</label>
+              <select id="otwTipoVisita" class="form-select">
+                <option value="correctiva">Correctiva</option>
+                <option value="preventiva">Preventiva</option>
+                <option value="garantia">Garantía</option>
+                <option value="inspeccion">Inspección</option>
+                <option value="levantamiento">Levantamiento</option>
+                <option value="instalacion">Instalación</option>
+              </select>
+            </div>
+            <div class="col-6 otw-field">
+              <label>Hora inicio <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
+              <input type="time" id="otwHoraInicio" class="form-control">
+            </div>
+            <div class="col-6 otw-field">
+              <label>Hora término <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
+              <input type="time" id="otwHoraFin" class="form-control">
+            </div>
+          </div>
+          <div class="otw-field">
+            <label>Título de la OT</label>
+            <input type="text" id="otwTitulo" class="form-control" placeholder="Ej: Cambio banda trotadora — ILUS Fitness Vitacura">
+          </div>
+        </div>
+
+        <!-- Paso 3: Confirmación -->
+        <div class="otw-pane" data-pane="3">
+          <div id="otwAdvertencias"></div>
+          <dl class="otw-resumen row">
+            <dt class="col-5">Cliente</dt><dd class="col-7" id="otwResCliente">—</dd>
+            <dt class="col-5">Equipo(s)</dt><dd class="col-7" id="otwResEquipos">—</dd>
+            <dt class="col-5">Técnico</dt><dd class="col-7" id="otwResTecnico">—</dd>
+            <dt class="col-5">Fecha</dt><dd class="col-7" id="otwResFecha">—</dd>
+            <dt class="col-5">Horario</dt><dd class="col-7" id="otwResHorario">—</dd>
+            <dt class="col-5">Tipo de visita</dt><dd class="col-7" id="otwResTipo">—</dd>
+          </dl>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" id="otwBtnAtras" style="display:none;">Atrás</button>
+        <button type="button" class="btn btn-ilus" id="otwBtnSiguiente">Siguiente</button>
+        <button type="button" class="btn btn-ilus" id="otwBtnGenerar" style="display:none;">
+          <i class="bi bi-clipboard2-check me-1"></i>Generar OT</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -612,6 +839,8 @@ const TIPO_LABEL = {{ tipo_label|tojson }};
 let ticketActual = null;
 let rpAdjuntos = [];   // [{id, url, nombre}] ya subidos, pendientes de enviar con el proximo mensaje
 let rpModo = 'cliente'; // 'cliente' | 'interno'
+let equiposCache = []; // último d.equipos cargado — para poblar el modal de garantía sin otro fetch
+let garEquipoActual = null; // equipo en edición dentro del modal de garantía
 
 // ══════════════ Alto dinamico del hilo Y del editor de Respuestas ══════════════
 // Daniel 2026-07-12: primero pidio que el composer nunca quedara debajo
@@ -783,8 +1012,8 @@ document.querySelectorAll('.rp-mode-tab').forEach(function(el){
 async function cargar(){
   let d;
   try{ const r = await fetch('/tickets/api/tickets/'+TID); d = await r.json(); }
-  catch(e){ ilusToast('No se pudo cargar el ticket','error'); return; }
-  if(!d.ok){ ilusToast(d.error||'Error','error'); return; }
+  catch(e){ ilusToast('No se pudo cargar el ticket', {type:'error'}); return; }
+  if(!d.ok){ ilusToast(d.error||'Error', {type:'error'}); return; }
   const t = d.ticket;
   ticketActual = t;
 
@@ -857,11 +1086,12 @@ async function cargar(){
   if(t.notas_internas){ cardNotas.style.display='block'; document.getElementById('txtNotas').textContent = t.notas_internas; }
   else cardNotas.style.display='none';
 
-  // Equipos — tabla real (Código | Nombre | Tipo | Cantidad | acción)
+  // Equipos — tabla real (Código | Nombre | Tipo | Cantidad | Garantía | acción)
   const le = document.getElementById('listaEquipos');
+  equiposCache = d.equipos || [];
   if(d.equipos.length){
     le.innerHTML = '<div class="table-responsive"><table class="table table-sm tk-eq-table align-middle mb-0"><thead><tr>'
-      + '<th>Código</th><th>Nombre</th><th>Tipo</th><th>Cantidad</th><th></th></tr></thead><tbody>'
+      + '<th>Código</th><th>Nombre</th><th>Tipo</th><th>Cantidad</th><th>Garantía</th><th></th></tr></thead><tbody>'
       + d.equipos.map(function(eq){
           const codigo = eq.sku || eq.erp_kopr;
           return '<tr>'
@@ -872,6 +1102,7 @@ async function cargar(){
             + '</td>'
             + '<td>'+(eq.tipo?esc(eq.tipo):'<span class="text-muted">—</span>')+'</td>'
             + '<td>'+(eq.cantidad||1)+'</td>'
+            + '<td>'+renderGarantiaChip(eq)+'</td>'
             + '<td class="text-end"><button class="btn btn-sm btn-link text-danger p-0" onclick="delEquipo('+eq.id+')" title="Quitar equipo"><i class="bi bi-trash"></i></button></td>'
             + '</tr>';
         }).join('')
@@ -879,6 +1110,9 @@ async function cargar(){
   } else {
     le.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-tools"></i><span>Sin equipos asociados a este ticket.</span></div>';
   }
+
+  // Acciones — tarjeta "Orden de Trabajo" (Generar OT / ya vinculada)
+  renderAccionesOT(t);
 
   // Documentos
   const ld = document.getElementById('listaDocs');
@@ -982,8 +1216,8 @@ function renderStepper(t, mensajes){
       const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
         headers:{'Content-Type':'application/json'}, body:JSON.stringify({estado: nuevoEstado})});
       const d2 = await r.json();
-      if(d2.ok){ ilusToast('✓ Estado actualizado','success'); cargar(); }
-      else ilusToast(d2.error||'Error','error');
+      if(d2.ok){ ilusToast('✓ Estado actualizado', {type:'success'}); cargar(); }
+      else ilusToast(d2.error||'Error', {type:'error'});
     });
   });
 }
@@ -1137,15 +1371,15 @@ async function tkIdGuardarCampo(key, valor, extra){
     if(d.ok){
       Object.assign(ticketActual, payload);
       renderIdentificacionCompacta(ticketActual);
-      ilusToast(extra ? '✓ Dirección verificada y guardada' : '✓ Guardado','success');
+      ilusToast(extra ? '✓ Dirección verificada y guardada' : '✓ Guardado', {type:'success'});
       cargar();
     } else {
       renderIdentificacionCompacta(ticketActual);
-      ilusToast(d.error||'Error al guardar','error');
+      ilusToast(d.error||'Error al guardar', {type:'error'});
     }
   }catch(e){
     renderIdentificacionCompacta(ticketActual);
-    ilusToast('Sin conexión — no se pudo guardar','error');
+    ilusToast('Sin conexión — no se pudo guardar', {type:'error'});
   }
 }
 
@@ -1547,7 +1781,7 @@ document.getElementById('btnGuardar').addEventListener('click', async function()
   const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
   const d = await r.json();
-  if(d.ok){ ilusToast('✓ Guardado','success'); cargar(); } else ilusToast(d.error||'Error','error');
+  if(d.ok){ ilusToast('✓ Guardado', {type:'success'}); cargar(); } else ilusToast(d.error||'Error', {type:'error'});
 });
 
 // ══════════════ Equipos — asignar desde documento ERP (búsqueda avanzada) ══════════════
@@ -1567,7 +1801,7 @@ document.getElementById('btnEqDesdeDoc').addEventListener('click', function(){
 // ══════════════ Declarar equipo (modal — cuando no está en el buscador ERP) ══════════════
 document.getElementById('btnDeqGuardar').addEventListener('click', async function(){
   const nombre = document.getElementById('deqNombre').value.trim();
-  if(!nombre){ ilusToast('Falta el nombre del equipo','warning'); return; }
+  if(!nombre){ ilusToast('Falta el nombre del equipo', {type:'warning'}); return; }
   const payload = {
     nombre: nombre,
     tipo: document.getElementById('deqTipo').value,
@@ -1594,18 +1828,105 @@ document.getElementById('btnDeqGuardar').addEventListener('click', async functio
       const modalEl = document.getElementById('modalDeclararEquipo');
       const modalInst = bootstrap.Modal.getOrCreateInstance(modalEl);
       modalInst.hide();
-      ilusToast('✓ Equipo declarado','success');
+      ilusToast('✓ Equipo declarado', {type:'success'});
       cargar();
-    } else ilusToast(d.error||'Error','error');
-  }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión','error'); }
+    } else ilusToast(d.error||'Error', {type:'error'});
+  }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }
 });
 
 async function delEquipo(eid){
   const ok = await ilusConfirm({title:'Quitar equipo',message:'¿Quitar este equipo del ticket?',danger:true,okLabel:'Quitar'});
   if(!ok) return;
   const r = await fetch('/tickets/api/tickets/'+TID+'/equipos/'+eid, {method:'DELETE'});
-  const d = await r.json(); if(d.ok) cargar(); else ilusToast(d.error||'Error','error');
+  const d = await r.json(); if(d.ok) cargar(); else ilusToast(d.error||'Error', {type:'error'});
 }
+
+// ══════════════ Garantía del equipo (chip por fila + modal PATCH) ══════════════
+// Convierte 'YYYY-MM-DD' (formato nativo de <input type=date> y de lo que
+// devuelve el backend) a 'dd/mm/aaaa' para mostrar. No es chile_fmt (Regla
+// #6, esa es para datetimes UTC) porque estos son DATE puros sin huso horario.
+function fmtFechaISO(iso){
+  if(!iso) return '';
+  const p = String(iso).split('-');
+  return p.length===3 ? (p[2]+'/'+p[1]+'/'+p[0]) : String(iso);
+}
+// Réplica en JS del cálculo que hace el backend (fecha_emision + N meses,
+// recortando el día al último día del mes destino) — solo para la vista
+// previa dentro del modal; el valor que realmente queda guardado siempre
+// lo calcula y devuelve el servidor en la respuesta del PATCH.
+function calcVencimiento(fechaISO, meses){
+  if(!fechaISO) return null;
+  const p = String(fechaISO).split('-');
+  if(p.length!==3) return null;
+  const anio0 = +p[0], mes0 = +p[1], dia0 = +p[2];
+  const m = +meses || 0;
+  const totalMeses = (mes0 - 1) + m;
+  const anio = anio0 + Math.floor(totalMeses/12);
+  const mes = (totalMeses % 12) + 1;
+  const ultimoDia = new Date(anio, mes, 0).getDate(); // día 0 del mes siguiente = último día de "mes"
+  const dia = Math.min(dia0, ultimoDia);
+  return anio+'-'+String(mes).padStart(2,'0')+'-'+String(dia).padStart(2,'0');
+}
+function renderGarantiaChip(eq){
+  if(eq.con_garantia){
+    const venc = eq.fecha_vencimiento ? fmtFechaISO(eq.fecha_vencimiento) : null;
+    return '<span class="tk-chip-gar on" onclick="abrirGarantia('+eq.id+')" title="Editar garantía">'
+      + '<i class="bi bi-shield-check"></i>'+(venc?('Vence '+esc(venc)):'Con garantía')+'</span>';
+  }
+  return '<span class="tk-chip-gar off" onclick="abrirGarantia('+eq.id+')" title="Editar garantía">'
+    + '<i class="bi bi-shield-slash"></i>Sin garantía</span>';
+}
+function abrirGarantia(eid){
+  const eq = (equiposCache||[]).find(x=>x.id===eid);
+  if(!eq){ ilusToast('No se encontró el equipo', {type:'error'}); return; }
+  garEquipoActual = eq;
+  document.getElementById('garEqNombre').textContent = eq.nombre || eq.erp_kopr || ('Equipo #'+eid);
+  document.getElementById('garConGarantia').checked = !!eq.con_garantia;
+  document.getElementById('garDocumento').value = eq.documento_garantia || '';
+  document.getElementById('garFechaEmision').value = eq.fecha_emision || '';
+  document.getElementById('garMeses').value = eq.garantia_meses || 6;
+  actualizarGarCampos();
+  actualizarGarVencPreview();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGarantiaEquipo')).show();
+}
+function actualizarGarCampos(){
+  const on = document.getElementById('garConGarantia').checked;
+  const wrap = document.getElementById('garCamposWrap');
+  wrap.style.opacity = on ? '1' : '.55';
+}
+function actualizarGarVencPreview(){
+  const fecha = document.getElementById('garFechaEmision').value;
+  const meses = +document.getElementById('garMeses').value || 6;
+  const venc = calcVencimiento(fecha, meses);
+  document.getElementById('garVencPreview').innerHTML = venc
+    ? '<i class="bi bi-calendar-check me-1"></i>Vence: <b>'+esc(fmtFechaISO(venc))+'</b>'
+    : '<span class="text-muted">Sin fecha de emisión — no se calculará vencimiento.</span>';
+}
+document.getElementById('garConGarantia').addEventListener('change', actualizarGarCampos);
+document.getElementById('garFechaEmision').addEventListener('input', actualizarGarVencPreview);
+document.getElementById('garMeses').addEventListener('input', actualizarGarVencPreview);
+document.getElementById('btnGarGuardar').addEventListener('click', async function(){
+  if(!garEquipoActual) return;
+  const payload = {
+    con_garantia: document.getElementById('garConGarantia').checked,
+    documento_garantia: document.getElementById('garDocumento').value.trim(),
+    fecha_emision: document.getElementById('garFechaEmision').value || '',
+    garantia_meses: +document.getElementById('garMeses').value || 6,
+  };
+  const btn = this; const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID+'/equipos/'+garEquipoActual.id, {method:'PATCH',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    btn.disabled = false; btn.innerHTML = original;
+    if(d.ok){
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGarantiaEquipo')).hide();
+      ilusToast('✓ Garantía actualizada', {type:'success'});
+      cargar();
+    } else ilusToast(d.error||'Error al guardar la garantía', {type:'error'});
+  }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }
+});
 
 // ══════════════ Adjuntos del composer (subida inmediata, se linkean al enviar) ══════════════
 document.getElementById('rpFile').addEventListener('change', async function(e){
@@ -1619,10 +1940,10 @@ async function rpSubirArchivo(file){
   try{
     const r = await fetch('/tickets/api/tickets/'+TID+'/adjuntos', {method:'POST', body:fd});
     const d = await r.json(); ilusLoader.hide();
-    if(!d.ok){ ilusToast(d.error||'No se pudo subir '+file.name,'error'); return; }
+    if(!d.ok){ ilusToast(d.error||'No se pudo subir '+file.name, {type:'error'}); return; }
     rpAdjuntos.push({id:d.id, url:d.url, nombre:d.nombre});
     renderRpAdjPreview();
-  }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión — no se pudo subir '+file.name,'error'); }
+  }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión — no se pudo subir '+file.name, {type:'error'}); }
 }
 function renderRpAdjPreview(){
   const c = document.getElementById('rpAdjPreview');
@@ -1653,28 +1974,28 @@ rpCargarPlantillas();
 
 document.getElementById('rpGuardarPlantilla').addEventListener('click', async function(){
   const cuerpo = rpQuill.root.innerHTML;
-  if(!rpQuill.getText().trim()){ ilusToast('Escribe algo antes de guardarlo como plantilla','warning'); return; }
+  if(!rpQuill.getText().trim()){ ilusToast('Escribe algo antes de guardarlo como plantilla', {type:'warning'}); return; }
   const titulo = await ilusPrompt({title:'Guardar plantilla', message:'Nombre de la plantilla', placeholder:'Ej: Pedir fotos del equipo', required:true});
   if(!titulo) return;
   try{
     const r = await fetch('/tickets/api/plantillas', {method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({titulo:titulo, cuerpo:cuerpo})});
     const d = await r.json();
-    if(d.ok){ ilusToast('✓ Plantilla guardada','success'); rpCargarPlantillas(); }
-    else ilusToast(d.error||'Error al guardar','error');
-  }catch(e){ ilusToast('Sin conexión','error'); }
+    if(d.ok){ ilusToast('✓ Plantilla guardada', {type:'success'}); rpCargarPlantillas(); }
+    else ilusToast(d.error||'Error al guardar', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
 });
 
 // ══════════════ Envío "inteligente" ══════════════
 document.getElementById('rpBtnEnviar').addEventListener('click', async function(){
   if(!navigator.onLine){
-    ilusToast('Sin conexión a internet. Revisa tu red e intenta de nuevo — tu texto no se perdió.','error');
+    ilusToast('Sin conexión a internet. Revisa tu red e intenta de nuevo — tu texto no se perdió.', {type:'error'});
     return;
   }
   const html = rpQuill.root.innerHTML;
   const soloTexto = rpQuill.getText().trim();
   if(!soloTexto && !rpAdjuntos.length){
-    ilusToast('Escribe un mensaje o adjunta un archivo','warning'); return;
+    ilusToast('Escribe un mensaje o adjunta un archivo', {type:'warning'}); return;
   }
   const btn = this;
   const originalHtml = btn.innerHTML;
@@ -1687,7 +2008,7 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
     payload = {contenido: html, es_interno: true, adjunto_ids: adjIds};
   }else{
     const to = document.getElementById('rpTo').value.trim();
-    if(!to){ ilusToast('Falta el correo del destinatario ("Para")','warning'); btn.disabled=false; btn.innerHTML=originalHtml; return; }
+    if(!to){ ilusToast('Falta el correo del destinatario ("Para")', {type:'warning'}); btn.disabled=false; btn.innerHTML=originalHtml; return; }
     url = '/tickets/api/tickets/'+TID+'/responder-cliente';
     payload = {contenido: html, to: to, cc: document.getElementById('rpCc').value.trim(), adjunto_ids: adjIds};
   }
@@ -1702,11 +2023,11 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
   btn.disabled = false; btn.innerHTML = originalHtml;
 
   if(huboErrorRed){
-    ilusToast('No se pudo enviar: sin conexión o el servidor no respondió. Tu mensaje no se perdió, intenta de nuevo.','error');
+    ilusToast('No se pudo enviar: sin conexión o el servidor no respondió. Tu mensaje no se perdió, intenta de nuevo.', {type:'error'});
     return; // conserva texto y adjuntos para reintentar
   }
   if(!d.ok){
-    ilusToast(d.error || 'No se pudo enviar', 'error');
+    ilusToast(d.error || 'No se pudo enviar', {type:'error'});
     // Si el servidor igual guardo el intento (ver estado_envio='fallido'), refrescamos
     // el hilo para que se vea el mensaje marcado como "no se pudo enviar".
     if(d.mensaje_id){ rpQuill.setText(''); rpAdjuntos = []; renderRpAdjPreview(); cargar(); }
@@ -1714,9 +2035,315 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
   }
   rpQuill.setText('');
   rpAdjuntos = []; renderRpAdjPreview();
-  ilusToast(rpModo==='interno' ? '✓ Comentario guardado' : '✓ Enviado al cliente', 'success');
+  ilusToast(rpModo==='interno' ? '✓ Comentario guardado' : '✓ Enviado al cliente', {type:'success'});
   cargar();
 });
+
+// ══════════════ Generar OT (wizard paso a paso, pestaña Acciones) ══════════════
+// Contrato acordado con el backend (tickets_module.py):
+//   POST /tickets/api/tickets/<id>/generar-ot
+//   body: {cliente_id, maquina_ids[], tecnico_user_id, fecha_programada,
+//          hora_inicio, hora_fin, tipo_visita, titulo, descripcion,
+//          forzar_feriado, forzar_choque}
+//   200 {ok:true, visita_id, numero_ot, fecha_programada, tareas_creadas}
+//   200 {ok:false, requiere_confirmacion:true, advertencias:{feriado,choque}}
+//   400/404/409/503 {ok:false, error, [visita_id_existente, numero_ot_existente]}
+function otwEstadoInicial(){
+  return {
+    step: 1,
+    clienteId: null, clienteLabel: '',
+    maquinaIds: [],
+    tecnicoUserId: null, tecnicoLabel: '',
+    fecha: '', horaInicio: '', horaFin: '',
+    tipoVisita: 'correctiva',
+    titulo: '', descripcion: '',
+    forzarFeriado: false, forzarChoque: false,
+  };
+}
+let otwState = otwEstadoInicial();
+
+function otwFechaLegible(iso){
+  if(!iso) return '—';
+  const p = String(iso).split('-');
+  return p.length===3 ? (p[2]+'/'+p[1]+'/'+p[0]) : iso;
+}
+
+function otwIrPaso(n){
+  otwState.step = n;
+  document.querySelectorAll('#modalGenerarOT .otw-pane').forEach(function(p){
+    p.classList.toggle('active', +p.dataset.pane===n);
+  });
+  document.querySelectorAll('#modalGenerarOT .otw-step').forEach(function(s){
+    const sp = +s.dataset.step;
+    s.classList.toggle('current', sp===n);
+    s.classList.toggle('done', sp<n);
+  });
+  document.getElementById('otwBtnAtras').style.display = n>1 ? '' : 'none';
+  document.getElementById('otwBtnSiguiente').style.display = n<3 ? '' : 'none';
+  document.getElementById('otwBtnGenerar').style.display = n===3 ? '' : 'none';
+  if(n===3) otwRenderResumen();
+}
+
+function otwValidarPaso1(){
+  if(!otwState.clienteId){
+    ilusToast('Selecciona un cliente ya registrado en Mantenciones para continuar', {type:'warning'});
+    return false;
+  }
+  return true;
+}
+function otwValidarPaso2(){
+  const selTec = document.getElementById('otwTecnico');
+  otwState.tecnicoUserId = selTec.value ? +selTec.value : null;
+  otwState.tecnicoLabel = selTec.selectedIndex>0 ? selTec.options[selTec.selectedIndex].text : '';
+  otwState.fecha = document.getElementById('otwFecha').value;
+  otwState.horaInicio = document.getElementById('otwHoraInicio').value;
+  otwState.horaFin = document.getElementById('otwHoraFin').value;
+  otwState.tipoVisita = document.getElementById('otwTipoVisita').value;
+  otwState.titulo = document.getElementById('otwTitulo').value.trim();
+  if(!otwState.tecnicoUserId){ ilusToast('Selecciona un técnico', {type:'warning'}); return false; }
+  if(!otwState.fecha){ ilusToast('Selecciona la fecha de la visita', {type:'warning'}); return false; }
+  return true;
+}
+
+document.getElementById('otwBtnSiguiente').addEventListener('click', function(){
+  if(otwState.step===1 && !otwValidarPaso1()) return;
+  if(otwState.step===2 && !otwValidarPaso2()) return;
+  otwIrPaso(Math.min(3, otwState.step+1));
+});
+document.getElementById('otwBtnAtras').addEventListener('click', function(){
+  otwIrPaso(Math.max(1, otwState.step-1));
+});
+
+// ── Paso 1: equipos del ticket (checklist, preseleccionados por maquina_id) ──
+function otwRenderEquipos(){
+  const cont = document.getElementById('otwEquiposList');
+  const eqs = equiposCache || [];
+  if(!eqs.length){
+    cont.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-tools"></i><span>Este ticket no tiene equipos asociados.</span></div>';
+    otwState.maquinaIds = [];
+    return;
+  }
+  otwState.maquinaIds = eqs.filter(function(e){ return !!e.maquina_id; }).map(function(e){ return e.maquina_id; });
+  cont.innerHTML = eqs.map(function(e){
+    const puedeLigar = !!e.maquina_id;
+    const nombre = e.nombre || e.erp_kopr || 'Equipo';
+    return '<label class="otw-eq-item">'
+      + '<input type="checkbox" data-mid="'+(e.maquina_id||'')+'" '+(puedeLigar?'checked':'disabled')+'>'
+      + '<span>'+esc(nombre)+(e.serie?' <span class="text-muted">— Serie '+esc(e.serie)+'</span>':'')
+      + (!puedeLigar?' <span class="text-muted">(sin ficha de equipo — no se enviará)</span>':'')
+      + '</span></label>';
+  }).join('');
+  cont.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+    cb.addEventListener('change', function(){
+      const mid = +this.dataset.mid;
+      if(this.checked){ if(otwState.maquinaIds.indexOf(mid)===-1) otwState.maquinaIds.push(mid); }
+      else { otwState.maquinaIds = otwState.maquinaIds.filter(function(x){ return x!==mid; }); }
+    });
+  });
+}
+
+// ── Paso 1: autocomplete de cliente (reutiliza /mantenciones/api/clientes/autocomplete) ──
+let _otwBuscarTo = null;
+document.getElementById('otwClienteInput').addEventListener('input', function(){
+  const q = this.value.trim();
+  clearTimeout(_otwBuscarTo);
+  if(q.length<2){ document.getElementById('otwClienteResults').style.display='none'; return; }
+  _otwBuscarTo = setTimeout(function(){ otwBuscarCliente(q); }, 300);
+});
+async function otwBuscarCliente(q){
+  const dropCont = document.getElementById('otwClienteResults');
+  try{
+    const r = await fetch('/mantenciones/api/clientes/autocomplete?q='+encodeURIComponent(q));
+    let arr = await r.json();
+    if(!Array.isArray(arr)) arr = [];
+    if(!arr.length){
+      dropCont.innerHTML = '<div class="otw-cliente-item text-muted">Sin resultados</div>';
+    } else {
+      dropCont.innerHTML = arr.slice(0,12).map(function(c,i){
+        const esLocal = c.origen==='local' && c.id;
+        return '<div class="otw-cliente-item'+(esLocal?'':' erp')+'" data-i="'+i+'">'
+          + '<div class="nom">'+esc(c.razon_social||'—')+'</div>'
+          + '<div class="met">'+(c.rut?esc(c.rut)+' · ':'')
+          + (esLocal?'Registrado en Mantenciones':'Solo en ERP — créalo primero en Mantenciones')+'</div>'
+          + '</div>';
+      }).join('');
+      dropCont.querySelectorAll('.otw-cliente-item').forEach(function(el){
+        el.addEventListener('click', function(){ otwSeleccionarCliente(arr[+this.dataset.i]); });
+      });
+    }
+    dropCont.style.display = 'block';
+  }catch(e){
+    dropCont.innerHTML = '<div class="otw-cliente-item text-muted">Sin conexión</div>';
+    dropCont.style.display = 'block';
+  }
+}
+function otwSeleccionarCliente(c){
+  if(!(c.origen==='local' && c.id)){
+    ilusToast('Este cliente aún no está registrado en Mantenciones — créalo ahí primero para poder generar la OT.', {type:'warning'});
+    return;
+  }
+  otwState.clienteId = c.id;
+  otwState.clienteLabel = c.razon_social + (c.rut ? ' ('+c.rut+')' : '');
+  document.getElementById('otwClienteResults').style.display = 'none';
+  document.getElementById('otwClienteInput').style.display = 'none';
+  document.getElementById('otwClienteSel').style.display = 'flex';
+  document.getElementById('otwClienteSelTxt').textContent = otwState.clienteLabel;
+}
+document.getElementById('otwClienteQuitar').addEventListener('click', function(){
+  otwState.clienteId = null; otwState.clienteLabel = '';
+  document.getElementById('otwClienteSel').style.display = 'none';
+  document.getElementById('otwClienteInput').style.display = '';
+  document.getElementById('otwClienteInput').value = '';
+  document.getElementById('otwClienteInput').focus();
+});
+document.addEventListener('click', function(ev){
+  const box = document.querySelector('#modalGenerarOT .otw-cliente-box');
+  if(box && !box.contains(ev.target)) document.getElementById('otwClienteResults').style.display='none';
+});
+
+// ── Paso 2: técnicos (reutiliza /mantenciones/api/tecnicos) ──
+async function otwCargarTecnicos(){
+  const sel = document.getElementById('otwTecnico');
+  sel.innerHTML = '<option value="">Cargando…</option>';
+  try{
+    const r = await fetch('/mantenciones/api/tecnicos');
+    const arr = await r.json();
+    sel.innerHTML = '<option value="">Selecciona un técnico…</option>' + (Array.isArray(arr)?arr:[]).map(function(tc){
+      return '<option value="'+tc.id+'">'+esc(tc.nombre)+'</option>';
+    }).join('');
+  }catch(e){ sel.innerHTML = '<option value="">No se pudo cargar — sin conexión</option>'; }
+}
+
+// ── Paso 3: resumen + advertencias ──
+function otwRenderResumen(){
+  document.getElementById('otwResCliente').textContent = otwState.clienteLabel || '—';
+  const eqNombres = (equiposCache||[]).filter(function(e){ return otwState.maquinaIds.indexOf(e.maquina_id)!==-1; })
+    .map(function(e){ return e.nombre || e.erp_kopr || 'Equipo'; });
+  document.getElementById('otwResEquipos').textContent = eqNombres.length ? eqNombres.join(', ') : 'Sin equipos vinculados';
+  document.getElementById('otwResTecnico').textContent = otwState.tecnicoLabel || '—';
+  document.getElementById('otwResFecha').textContent = otwFechaLegible(otwState.fecha);
+  document.getElementById('otwResHorario').textContent = (otwState.horaInicio || otwState.horaFin)
+    ? (otwState.horaInicio||'—')+' a '+(otwState.horaFin||'—') : 'Sin horario definido';
+  const tipoLbl = {correctiva:'Correctiva', preventiva:'Preventiva', garantia:'Garantía',
+    inspeccion:'Inspección', levantamiento:'Levantamiento', instalacion:'Instalación'};
+  document.getElementById('otwResTipo').textContent = tipoLbl[otwState.tipoVisita] || otwState.tipoVisita;
+}
+function otwRenderAdvertencias(adv){
+  let html = '';
+  if(adv.feriado){
+    html += '<div class="otw-warn-card"><i class="bi bi-calendar-x"></i><div><b>La fecha elegida es feriado</b>'
+      + esc(adv.feriado.nombre || 'Feriado') + (adv.feriado.fecha?' ('+esc(adv.feriado.fecha)+')':'')
+      + ' — ¿agendar de todas formas?</div></div>';
+  }
+  if(adv.choque){
+    const visitas = adv.choque.visitas || [];
+    html += '<div class="otw-warn-card"><i class="bi bi-exclamation-triangle"></i><div><b>'
+      + esc(adv.choque.tecnico_nombre || 'El técnico') + ' ya tiene otra visita agendada a esa hora</b>'
+      + visitas.map(function(v){
+          return esc(v.numero_ot||'')+' · '+esc(v.hora_inicio||'—')+'–'+esc(v.hora_fin||'—')
+            + (v.titulo?' · '+esc(v.titulo):'');
+        }).join('<br>')
+      + '</div></div>';
+  }
+  document.getElementById('otwAdvertencias').innerHTML = html;
+}
+
+// ── Abrir el modal: reset de estado + prefill desde el ticket ──
+document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', function(){
+  otwState = otwEstadoInicial();
+  const t = ticketActual || {};
+  otwState.titulo = t.titulo ? ('OT — ' + t.titulo) : '';
+  otwState.tipoVisita = t.es_garantia ? 'garantia' : 'correctiva';
+  document.getElementById('otwTipoVisita').value = otwState.tipoVisita;
+  document.getElementById('otwTitulo').value = otwState.titulo;
+  document.getElementById('otwFecha').value = '';
+  document.getElementById('otwFecha').min = new Date().toISOString().slice(0,10);
+  document.getElementById('otwHoraInicio').value = '';
+  document.getElementById('otwHoraFin').value = '';
+  document.getElementById('otwClienteInput').value = t.empresa || t.rut || '';
+  document.getElementById('otwClienteInput').style.display = '';
+  document.getElementById('otwClienteResults').style.display = 'none';
+  document.getElementById('otwClienteSel').style.display = 'none';
+  document.getElementById('otwAdvertencias').innerHTML = '';
+  document.getElementById('otwBtnGenerar').innerHTML = '<i class="bi bi-clipboard2-check me-1"></i>Generar OT';
+  otwIrPaso(1);
+  otwRenderEquipos();
+  otwCargarTecnicos();
+  const qInicial = (t.rut || t.empresa || '').trim();
+  if(qInicial.length>=2) otwBuscarCliente(qInicial);
+});
+
+// ── Envío final (con reintento "forzar" ante feriado/choque) ──
+document.getElementById('otwBtnGenerar').addEventListener('click', otwGenerar);
+async function otwGenerar(){
+  const btn = document.getElementById('otwBtnGenerar');
+  const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generando…';
+  const payload = {
+    cliente_id: otwState.clienteId,
+    maquina_ids: otwState.maquinaIds,
+    tecnico_user_id: otwState.tecnicoUserId,
+    fecha_programada: otwState.fecha,
+    hora_inicio: otwState.horaInicio || null,
+    hora_fin: otwState.horaFin || null,
+    tipo_visita: otwState.tipoVisita,
+    titulo: otwState.titulo,
+    descripcion: otwState.descripcion,
+    forzar_feriado: !!otwState.forzarFeriado,
+    forzar_choque: !!otwState.forzarChoque,
+  };
+  let d, huboErrorRed = false;
+  try{
+    const r = await fetch('/tickets/api/tickets/'+TID+'/generar-ot', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    d = await r.json();
+  }catch(e){ huboErrorRed = true; }
+  btn.disabled = false; btn.innerHTML = original;
+
+  if(huboErrorRed){ ilusToast('Sin conexión — no se pudo generar la OT', {type:'error'}); return; }
+
+  if(d.ok){
+    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGenerarOT'));
+    modalInst.hide();
+    ilusToast('✓ OT '+(d.numero_ot||'')+' generada', {type:'success'});
+    if(d.tipo_visita && otwState.tipoVisita && d.tipo_visita !== otwState.tipoVisita){
+      ilusToast('Se guardó como "'+d.tipo_visita+'" (tipo ajustado automáticamente)', {type:'warning'});
+    }
+    cargar();
+    return;
+  }
+  if(d.requiere_confirmacion){
+    const adv = d.advertencias || {};
+    otwRenderAdvertencias(adv);
+    if(adv.feriado) otwState.forzarFeriado = true;
+    if(adv.choque) otwState.forzarChoque = true;
+    btn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Agendar de todas formas';
+    return;
+  }
+  if(d.visita_id_existente){
+    ilusToast(d.error || 'Este ticket ya tiene una OT vinculada', {type:'warning'});
+    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGenerarOT'));
+    modalInst.hide();
+    cargar();
+    return;
+  }
+  ilusToast(d.error || 'No se pudo generar la OT', {type:'error'});
+}
+
+// ── Tarjeta de estado en Acciones (llamada desde cargar()) ──
+function renderAccionesOT(t){
+  const sinOT = document.getElementById('otwSinOT');
+  const conOT = document.getElementById('otwConOT');
+  if(t.visita_id){
+    sinOT.style.display = 'none';
+    conOT.style.display = 'block';
+    document.getElementById('otwNumeroOtTxt').textContent = t.visita_numero_ot || ('OT #'+t.visita_id);
+    document.getElementById('otwVerOtLink').href = '/mantenciones/ot/'+t.visita_id;
+  } else {
+    sinOT.style.display = 'block';
+    conOT.style.display = 'none';
+  }
+}
 
 cargarEjecutivos();
 cargar();

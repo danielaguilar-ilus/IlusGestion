@@ -451,6 +451,14 @@
          class="sidebar-link{% if request.endpoint == 'tk_cotizaciones_list' %} active{% endif %}">
         <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
       </a>
+      {# Catálogo de Productos: ficha general (fotos + manual PDF) por SKU,
+         INDEPENDIENTE del catálogo de Etiquetas (ese es 1:1 con el ERP para
+         /cubicador). Nombre completo en el menú a propósito para no confundir
+         a quien ya conoce "Catálogo" de Etiquetas. #}
+      <a href="{{ url_for('cat_list') }}"
+         class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
+        <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
+      </a>
     </div>
     {% endif %}
 

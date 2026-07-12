@@ -1,0 +1,724 @@
+{% extends "base.html" %}
+{% block title %}Catálogo de Productos — ILUS{% endblock %}
+{% block content %}
+<style>
+/* ══════════════ Catálogo de Productos — mismo patrón visual "Triple A"
+   que templates/tickets/list.html (hero negro/rojo, tabla sticky ordenable,
+   footer con paginación, modales Bootstrap). Prefijo cat- para no chocar
+   con las clases tk- de Tickets si algún día conviven en el mismo bundle. ══ */
+.cat-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.cat-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
+.cat-hero .sub{font-size:.86rem;color:#cfd3da;}
+
+.cat-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:10px 12px;margin-bottom:12px;
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.cat-f-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;width:100%;}
+.cat-f{display:flex;flex-direction:column;gap:2px;flex:1 1 160px;min-width:140px;max-width:260px;}
+.cat-f>label{font-size:.6rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;
+  margin:0 0 0 2px;white-space:nowrap;}
+.cat-f .form-control,.cat-f .form-select{max-width:100%;width:100%;}
+.cat-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;
+  margin-top:10px;padding-top:10px;border-top:1px dashed #eaecf0;}
+.cat-toolbar .spacer{flex:1 1 auto;}
+.cat-archivados{display:flex;align-items:center;gap:6px;font-size:.72rem;color:#9ca3af;font-weight:600;}
+@media(max-width:640px){
+  .cat-f{flex:1 1 100%;max-width:100%;}
+  .cat-toolbar .btn{flex:1 1 auto;}
+}
+
+/* ── Tabla (idéntica mecánica a tk-table: sticky, ordenable, fila clicable) ── */
+table.cat-table thead th.cat-th-sort{cursor:pointer;user-select:none;transition:background .12s,color .12s;}
+table.cat-table thead th.cat-th-sort:hover{background:#eef1f5;color:#374151;}
+table.cat-table thead th.cat-th-sort i{font-size:.7rem;opacity:.4;margin-left:3px;}
+table.cat-table thead th.cat-th-sort.on{color:#dc2626;}
+table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#dc2626;}
+.cat-acciones{display:flex;gap:3px;align-items:center;white-space:nowrap;}
+.cat-act{border:none;background:transparent;width:30px;height:30px;min-height:30px;border-radius:8px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:.88rem;cursor:pointer;
+  padding:0;transition:background .12s;}
+.cat-act.ver{color:#3b82f6;} .cat-act.ver:hover{background:#dbeafe;}
+.cat-act.del{color:#dc2626;} .cat-act.del:hover{background:#fee2e2;}
+.cat-foot{background:#fff;border:1px solid #eaecf0;border-radius:11px;margin-top:8px;
+  padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  font-size:.78rem;color:#6b7280;}
+.cat-foot-info b{color:#0f172a;}
+.cat-foot-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.cat-foot-ctrl .lbl-pp{display:flex;align-items:center;gap:6px;font-size:.7rem;font-weight:700;color:#9ca3af;
+  text-transform:uppercase;letter-spacing:.04em;margin:0;}
+.cat-foot-ctrl select{border:1px solid #e5e7eb;border-radius:7px;padding:3px 6px;font-size:.78rem;
+  color:#374151;background:#fff;}
+.cat-pg-btn{border:1px solid #e5e7eb;background:#fff;border-radius:8px;width:30px;height:30px;min-height:30px;
+  display:inline-flex;align-items:center;justify-content:center;color:#374151;cursor:pointer;
+  padding:0;transition:all .12s;}
+.cat-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626;}
+.cat-pg-btn:disabled{opacity:.35;cursor:default;}
+.cat-pg-num{font-weight:800;color:#0f172a;font-size:.78rem;min-width:52px;text-align:center;white-space:nowrap;}
+
+.cat-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow-x:auto;
+  overflow-y:clip;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:900px;}
+table.cat-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.66rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
+  border-bottom:1px solid #eaecf0;white-space:nowrap;}
+@media(max-width:767px){table.cat-table thead th{top:var(--topbar-h,90px);}}
+table.cat-table tbody tr{cursor:pointer;transition:background .1s;}
+table.cat-table tbody tr:hover{background:#fafbfc;}
+table.cat-table tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6;}
+table.cat-table td{padding:8px 14px;vertical-align:middle;}
+table.cat-table tbody tr.archivado{opacity:.55;}
+.cat-thumb{width:40px;height:40px;border-radius:8px;object-fit:cover;background:#f3f4f6;border:1px solid #eaecf0;}
+.cat-thumb-ph{width:40px;height:40px;border-radius:8px;background:#f3f4f6;border:1px solid #eaecf0;
+  display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:1.05rem;}
+.cat-sku{font-family:'JetBrains Mono',monospace;font-size:.76rem;font-weight:800;color:#0f172a;}
+.cat-nombre{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;}
+.cat-badge-fotos{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.7rem;font-weight:800;white-space:nowrap;}
+.cat-badge-fotos.full{background:#dcfce7;color:#166534;}
+.cat-manual-ic{font-size:1.05rem;}
+.cat-manual-ic.on{color:#dc2626;}
+.cat-manual-ic.off{color:#cbd5e1;}
+.empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 30px;text-align:center;}
+.empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
+
+/* ── Modal Nuevo Producto ── */
+.catn-field label{font-size:.72rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
+
+/* ── Modal Ficha de producto ── */
+.catf-datos{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-bottom:6px;}
+.catf-datos .full{grid-column:1/-1;}
+@media(max-width:560px){.catf-datos{grid-template-columns:1fr;}}
+.catf-campo{position:relative;}
+.catf-campo label{font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:2px;}
+.catf-campo .val{font-size:.9rem;color:#0f172a;font-weight:600;min-height:1.4em;padding-right:22px;cursor:text;
+  border-bottom:1px dashed transparent;}
+.catf-campo:hover .val{border-bottom-color:#e5e7eb;}
+.catf-campo .lapiz{position:absolute;right:0;top:0;font-size:.72rem;color:#9ca3af;opacity:0;transition:opacity .12s;cursor:pointer;}
+.catf-campo:hover .lapiz{opacity:1;}
+@media(max-width:768px),(hover:none){.catf-campo .lapiz{opacity:1;}}
+.catf-campo input,.catf-campo textarea{font-size:.9rem;}
+.catf-section{margin-top:18px;}
+.catf-section h6{font-weight:800;color:#0f172a;font-size:.85rem;margin-bottom:10px;display:flex;align-items:center;gap:8px;justify-content:space-between;}
+.catf-fotos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px;}
+.catf-foto{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid #eaecf0;background:#f8f9fb;}
+.catf-foto img{width:100%;height:100%;object-fit:cover;cursor:pointer;display:block;}
+.catf-foto .x{position:absolute;top:3px;right:3px;background:rgba(10,10,10,.65);color:#fff;border:none;
+  width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:.8rem;cursor:pointer;}
+.catf-foto-add{aspect-ratio:1;border:2px dashed #d1d5db;border-radius:10px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px;cursor:pointer;color:#9ca3af;transition:all .12s;background:#fff;}
+.catf-foto-add:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}
+.catf-foto-add i{font-size:1.2rem;}
+.catf-foto-add span{font-size:.62rem;font-weight:700;text-align:center;}
+.catf-manual-box{border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;display:flex;align-items:center;
+  gap:12px;flex-wrap:wrap;background:#fafbfc;}
+.catf-manual-box .ic{font-size:1.6rem;color:#dc2626;flex-shrink:0;}
+.catf-manual-box .info{flex:1;min-width:150px;}
+.catf-manual-box .info .nm{font-weight:700;font-size:.85rem;color:#0f172a;}
+.catf-manual-box .info .sz{font-size:.72rem;color:#9ca3af;}
+.catf-drop{border:2px dashed #d1d5db;border-radius:10px;padding:18px 14px;text-align:center;cursor:pointer;
+  transition:all .12s;background:#fff;}
+.catf-drop:hover{border-color:#dc2626;background:#fef2f2;}
+.catf-drop i{font-size:1.3rem;color:#9ca3af;display:block;margin-bottom:4px;}
+.catf-drop .t1{font-weight:700;font-size:.8rem;color:#374151;}
+.catf-drop .t2{font-size:.7rem;color:#9ca3af;margin-top:2px;}
+
+/* ── Mobile: botones/inputs táctiles (Regla #3) ── */
+@media(max-width:768px){
+  .cat-act,.cat-pg-btn{width:38px;height:38px;min-height:38px;min-width:38px;}
+  .cat-acciones{gap:6px;}
+  table.cat-table thead th{padding:14px 14px;}
+  .catf-foto .x{width:28px;height:28px;}
+}
+</style>
+
+<div class="cat-hero">
+  <div>
+    <h4><i class="bi bi-box-seam me-2"></i>Catálogo de Productos</h4>
+    <div class="sub">Ficha técnica de referencia — fotos y manual PDF por producto</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-ilus" data-bs-toggle="modal" data-bs-target="#catnModal">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo producto</button>
+  </div>
+</div>
+
+<div class="cat-filtros">
+  <div class="cat-f-row">
+    <div class="cat-f"><label for="catFQ">Buscar</label>
+      <input type="text" id="catFQ" class="form-control form-control-sm" placeholder="SKU, nombre o familia…"></div>
+    <div class="cat-f"><label for="catFFamilia">Familia</label>
+      <select id="catFFamilia" class="form-select form-select-sm">
+        <option value="">Todas</option>
+      </select></div>
+  </div>
+  <div class="cat-toolbar">
+    <label class="cat-archivados">
+      <input type="checkbox" id="catVerArchivados" class="form-check-input" style="margin:0;">
+      Ver archivados</label>
+    <span class="spacer"></span>
+    <button class="btn btn-sm btn-ilus-outline" id="catBtnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
+  </div>
+</div>
+
+<div id="catLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
+
+<!-- ══════════════ MODAL: Nuevo producto ══════════════ -->
+<div class="modal fade" id="catnModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;">
+        <h5 class="modal-title"><i class="bi bi-box-seam me-2"></i>Nuevo producto</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="catn-field mb-3">
+          <label>SKU <span class="text-danger">*</span></label>
+          <input type="text" id="catnSku" class="form-control" placeholder="Ej: TR-LF-T3" style="text-transform:uppercase;">
+        </div>
+        <div class="catn-field mb-3">
+          <label>Nombre <span class="text-danger">*</span></label>
+          <input type="text" id="catnNombre" class="form-control" placeholder="Ej: Trotadora Life Fitness T3">
+        </div>
+        <div class="catn-field mb-3">
+          <label>Familia <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
+          <input type="text" id="catnFamilia" class="form-control" placeholder="Ej: Cardio" list="catnFamiliaList">
+          <datalist id="catnFamiliaList"></datalist>
+        </div>
+        <div class="catn-field">
+          <label>Observación <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
+          <textarea id="catnObservacion" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus" id="catnBtnCrear"><i class="bi bi-check-lg me-1"></i>Crear producto</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: Ficha de producto ══════════════ -->
+<div class="modal fade" id="catfModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-box-seam me-2"></i><span id="catfNombre">Producto</span>
+          <span class="cat-sku ms-2" id="catfSkuTag"></span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="catf-datos">
+          <div class="catf-campo full" data-campo="sku">
+            <label>SKU</label>
+            <div class="val" id="catfValSku">—</div>
+            <i class="bi bi-pencil lapiz" onclick="catfEditar('sku')"></i>
+          </div>
+          <div class="catf-campo full" data-campo="nombre">
+            <label>Nombre</label>
+            <div class="val" id="catfValNombre">—</div>
+            <i class="bi bi-pencil lapiz" onclick="catfEditar('nombre')"></i>
+          </div>
+          <div class="catf-campo" data-campo="familia">
+            <label>Familia</label>
+            <div class="val" id="catfValFamilia">—</div>
+            <i class="bi bi-pencil lapiz" onclick="catfEditar('familia')"></i>
+          </div>
+          <div class="catf-campo full" data-campo="observacion">
+            <label>Observación</label>
+            <div class="val" id="catfValObservacion">—</div>
+            <i class="bi bi-pencil lapiz" onclick="catfEditar('observacion')"></i>
+          </div>
+        </div>
+
+        <div class="catf-section">
+          <h6><span><i class="bi bi-images me-1"></i>Fotos</span>
+            <span class="cat-badge-fotos" id="catfFotosBadge">0/10</span></h6>
+          <div class="catf-fotos-grid" id="catfFotosGrid"></div>
+          <input type="file" id="catfFotoInput" accept="image/*" hidden>
+        </div>
+
+        <div class="catf-section">
+          <h6><i class="bi bi-file-earmark-pdf me-1"></i>Manual (PDF)</h6>
+          <div id="catfManualWrap"></div>
+          <input type="file" id="catfManualInput" accept="application/pdf" hidden>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between;">
+        <div>
+          <button type="button" class="btn btn-outline-danger btn-sm" id="catfBtnEliminar">
+            <i class="bi bi-archive me-1"></i>Eliminar producto</button>
+          <button type="button" class="btn btn-link btn-sm text-danger" id="catfBtnEliminarDef" style="display:none;">
+            Eliminar definitivamente</button>
+        </div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
+<script>
+const IS_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
+const MAX_FOTOS = 10;
+let _catTimer = null;
+
+// ── Estado de la bandeja (orden / paginacion) ──
+let catSort = 'updated_at';
+let catDir = 'desc';
+let catPage = 1;
+let catLimit = 50;
+let catVerArchivados = false;
+let _catCache = {};          // id → producto de la última carga
+let _catFamilias = new Set(); // acumulado best-effort para el <select> Familia
+                               // (el contrato no define un endpoint de "familias
+                               // distintas" — se completa con lo que se va viendo).
+
+function esc(s){ return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments,c=this; t=setTimeout(()=>fn.apply(c,a),ms); }; }
+// El servidor ya envía las fechas formateadas en hora Chile (Regla #6).
+function fmtFecha(s){ return s || '—'; }
+function fmtKb(kb){
+  if(kb==null) return '';
+  return kb >= 1024 ? (kb/1024).toFixed(1)+' MB' : Math.round(kb)+' KB';
+}
+
+// ── Filtros → URLSearchParams ──
+function catParamsFiltros(conOrden){
+  const p = new URLSearchParams();
+  const q = document.getElementById('catFQ').value.trim(); if(q) p.set('q', q);
+  const fam = document.getElementById('catFFamilia').value; if(fam) p.set('familia', fam);
+  p.set('activo', catVerArchivados ? '0' : '1');
+  if(conOrden && catSort){ p.set('sort', catSort); p.set('dir', catDir); }
+  return p;
+}
+
+const CAT_COLS = [
+  ['Foto',''], ['SKU','sku'], ['Nombre','nombre'], ['Familia','familia'],
+  ['Fotos','total_fotos'], ['Manual',''], ['Actualizado','updated_at'], ['Acciones',''],
+];
+function catTheadHtml(){
+  return '<tr>' + CAT_COLS.map(function(c){
+    if(!c[1]) return '<th>'+c[0]+'</th>';
+    let cls = 'cat-th-sort', ic = 'bi-arrow-down-up';
+    if(catSort === c[1]){ cls += ' on'; ic = (catDir === 'asc' ? 'bi-sort-up' : 'bi-sort-down'); }
+    return '<th class="'+cls+'" onclick="catSortClick(\''+c[1]+'\')" title="Ordenar por '+c[0]+'">'
+      + c[0] + ' <i class="bi '+ic+'"></i></th>';
+  }).join('') + '</tr>';
+}
+window.catSortClick = function(col){
+  if(catSort !== col){ catSort = col; catDir = 'desc'; }
+  else if(catDir === 'desc'){ catDir = 'asc'; }
+  else { catSort = ''; catDir = 'desc'; }
+  catPage = 1; cargarCatalogo();
+};
+
+function catFooterHtml(data){
+  const total = data.total||0, page = data.page||catPage, pages = data.pages||0,
+        limit = data.limit||catLimit;
+  const desde = total ? ((page-1)*limit+1) : 0;
+  const hasta = Math.min(page*limit, total);
+  return '<div class="cat-foot">'
+    + '<div class="cat-foot-info">Mostrando <b>'+desde+' - '+hasta+'</b> de <b>'+total+'</b> producto'+(total===1?'':'s')+'</div>'
+    + '<div class="cat-foot-ctrl">'
+    +   '<label class="lbl-pp">Por página '
+    +     '<select onchange="catCambiarLimit(this.value)">'
+    +       [10,25,50,100].map(n=>'<option value="'+n+'"'+(n===catLimit?' selected':'')+'>'+n+'</option>').join('')
+    +     '</select></label>'
+    +   '<button type="button" class="cat-pg-btn" '+(page<=1?'disabled':'')+' onclick="catPagina(-1)" title="Página anterior"><i class="bi bi-chevron-left"></i></button>'
+    +   '<span class="cat-pg-num">'+page+' / '+Math.max(pages,1)+'</span>'
+    +   '<button type="button" class="cat-pg-btn" '+(page>=pages?'disabled':'')+' onclick="catPagina(1)" title="Página siguiente"><i class="bi bi-chevron-right"></i></button>'
+    + '</div></div>';
+}
+window.catPagina = function(d){ catPage = Math.max(1, catPage + d); cargarCatalogo(); };
+window.catCambiarLimit = function(v){ catLimit = parseInt(v,10)||50; catPage = 1; cargarCatalogo(); };
+
+async function cargarCatalogo(){
+  const p = catParamsFiltros(true);
+  p.set('page', String(catPage));
+  p.set('limit', String(catLimit));
+  let data;
+  try{
+    const r = await fetch('/catalogo/api/productos?'+p.toString());
+    data = await r.json();
+  }catch(err){
+    document.getElementById('catLista').innerHTML =
+      '<div class="empty-state"><i class="bi bi-wifi-off"></i>No se pudo cargar. Reintenta.</div>';
+    return;
+  }
+  if(!data.ok){ ilusToast(data.error||'Error al cargar', {type:'error'}); return; }
+
+  if(!data.rows.length && (data.total||0) > 0 && catPage > 1){
+    catPage = Math.max(1, data.pages||1);
+    return cargarCatalogo();
+  }
+
+  _catCache = {};
+  (data.rows||[]).forEach(function(row){
+    _catCache[row.id] = row;
+    if(row.familia) _catFamilias.add(row.familia);
+  });
+  catPoblarSelectFamilia();
+
+  const cont = document.getElementById('catLista');
+  if(!data.rows.length){
+    cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay productos con estos filtros.</div>';
+    return;
+  }
+  cont.innerHTML = '<div class="cat-table-wrap table-responsive"><table class="cat-table"><thead>'
+    + catTheadHtml()
+    + '</thead><tbody>'
+    + data.rows.map(catFilaHtml).join('')
+    + '</tbody></table></div>'
+    + catFooterHtml(data);
+}
+
+function catPoblarSelectFamilia(){
+  const sel = document.getElementById('catFFamilia');
+  const actual = sel.value;
+  const opts = Array.from(_catFamilias).sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todas</option>'
+    + opts.map(f=>'<option value="'+esc(f)+'">'+esc(f)+'</option>').join('');
+  sel.value = actual;
+  document.getElementById('catnFamiliaList').innerHTML = opts.map(f=>'<option value="'+esc(f)+'">').join('');
+}
+
+function catFilaHtml(row){
+  const foto = row.foto_thumb_url
+    ? '<img class="cat-thumb" src="'+esc(row.foto_thumb_url)+'" alt="">'
+    : '<div class="cat-thumb-ph"><i class="bi bi-image"></i></div>';
+  const totalFotos = row.total_fotos || 0;
+  const badgeFotos = '<span class="cat-badge-fotos'+(totalFotos>=MAX_FOTOS?' full':'')+'">'+totalFotos+'/'+MAX_FOTOS+'</span>';
+  const manualIc = row.tiene_manual
+    ? '<i class="bi bi-file-earmark-pdf-fill cat-manual-ic on" title="Tiene manual"></i>'
+    : '<i class="bi bi-file-earmark cat-manual-ic off" title="Sin manual"></i>';
+  return '<tr class="'+(row.activo===0?'archivado':'')+'" onclick="catAbrirFicha('+row.id+')">'
+    + '<td>'+foto+'</td>'
+    + '<td><span class="cat-sku">'+esc(row.sku)+'</span></td>'
+    + '<td><div class="cat-nombre">'+esc(row.nombre)+'</div></td>'
+    + '<td>'+(row.familia?esc(row.familia):'<span class="text-muted">—</span>')+'</td>'
+    + '<td>'+badgeFotos+'</td>'
+    + '<td>'+manualIc+'</td>'
+    + '<td>'+esc(fmtFecha(row.updated_at))+'</td>'
+    + '<td>'+catAccionesCelda(row)+'</td>'
+    + '</tr>';
+}
+
+function catAccionesCelda(row){
+  let h = '<button type="button" class="cat-act ver" title="Ver / editar ficha"'
+    + ' onclick="event.stopPropagation();catAbrirFicha('+row.id+')"><i class="bi bi-eye"></i></button>';
+  h += '<button type="button" class="cat-act del" title="Eliminar producto"'
+    + ' onclick="catEliminarRapido(event,'+row.id+')"><i class="bi bi-trash"></i></button>';
+  return '<div class="cat-acciones">'+h+'</div>';
+}
+
+window.catEliminarRapido = async function(ev, id){
+  ev.stopPropagation();
+  const row = _catCache[id] || {};
+  const ok = await ilusConfirm({
+    title: 'Eliminar producto',
+    message: '¿Archivar el producto "'+(row.nombre||row.sku||id)+'"?',
+    sub: 'Queda oculto del catálogo (se puede recuperar activando "Ver archivados").',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+id, {method:'DELETE'});
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error||'No se pudo eliminar el producto', {type:'error'}); return; }
+    ilusToast('✓ Producto eliminado', {type:'success'});
+    cargarCatalogo();
+  }catch(e){ ilusToast('Error de red al eliminar', {type:'error'}); }
+};
+
+// ── Filtros / toolbar ──
+function catFiltroCambio(){ catPage = 1; cargarCatalogo(); }
+function catDebounced(){ clearTimeout(_catTimer); _catTimer = setTimeout(catFiltroCambio, 350); }
+document.getElementById('catFQ').addEventListener('input', catDebounced);
+document.getElementById('catFFamilia').addEventListener('change', catFiltroCambio);
+document.getElementById('catVerArchivados').addEventListener('change', function(){
+  catVerArchivados = this.checked; catFiltroCambio();
+});
+document.getElementById('catBtnLimpiar').addEventListener('click', function(){
+  document.getElementById('catFQ').value = '';
+  document.getElementById('catFFamilia').value = '';
+  document.getElementById('catVerArchivados').checked = false;
+  catVerArchivados = false;
+  catSort = 'updated_at'; catDir = 'desc'; catPage = 1;
+  cargarCatalogo();
+});
+
+// ══════════════ Modal: Nuevo producto ══════════════
+document.getElementById('catnBtnCrear').addEventListener('click', async function(){
+  const sku = document.getElementById('catnSku').value.trim().toUpperCase();
+  const nombre = document.getElementById('catnNombre').value.trim();
+  if(!sku){ ilusToast('El SKU es obligatorio', {type:'warning'}); return; }
+  if(!nombre){ ilusToast('El nombre es obligatorio', {type:'warning'}); return; }
+  const payload = {
+    sku: sku, nombre: nombre,
+    familia: document.getElementById('catnFamilia').value.trim(),
+    observacion: document.getElementById('catnObservacion').value.trim(),
+  };
+  const btn = this; const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+  try{
+    const r = await fetch('/catalogo/api/productos', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    btn.disabled = false; btn.innerHTML = original;
+    if(d.ok){
+      document.getElementById('catnSku').value = '';
+      document.getElementById('catnNombre').value = '';
+      document.getElementById('catnFamilia').value = '';
+      document.getElementById('catnObservacion').value = '';
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('catnModal')).hide();
+      ilusToast('✓ Producto creado', {type:'success'});
+      cargarCatalogo();
+    } else ilusToast(d.error||'No se pudo crear el producto', {type:'error'});
+  }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }
+});
+
+// ══════════════ Modal: Ficha de producto ══════════════
+let catfProductoId = null;
+let catfProductoActual = null;
+const catfModalEl = document.getElementById('catfModal');
+const catfModal = new bootstrap.Modal(catfModalEl);
+
+window.catAbrirFicha = async function(id){
+  catfProductoId = id;
+  catfModal.show();
+  await catfCargar();
+};
+
+async function catfCargar(){
+  let d;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId);
+    d = await r.json();
+  }catch(e){ ilusToast('No se pudo cargar el producto', {type:'error'}); return; }
+  if(!d.ok){ ilusToast(d.error||'Error al cargar el producto', {type:'error'}); return; }
+  const p = d.producto;
+  catfProductoActual = p;
+  document.getElementById('catfNombre').textContent = p.nombre || p.sku;
+  document.getElementById('catfSkuTag').textContent = p.sku || '';
+  document.getElementById('catfValSku').textContent = p.sku || '—';
+  document.getElementById('catfValNombre').textContent = p.nombre || '—';
+  document.getElementById('catfValFamilia').textContent = p.familia || '—';
+  document.getElementById('catfValObservacion').textContent = p.observacion || '—';
+
+  // Fotos
+  const fotos = d.fotos || [];
+  document.getElementById('catfFotosBadge').textContent = fotos.length + '/' + MAX_FOTOS;
+  const grid = document.getElementById('catfFotosGrid');
+  grid.innerHTML = fotos.map(function(f){
+    return '<div class="catf-foto" data-foto-id="'+f.id+'">'
+      + '<img src="'+esc(f.url)+'" alt="Foto de '+esc(p.nombre||p.sku)+'">'
+      + '<button type="button" class="x" title="Eliminar foto" onclick="catfEliminarFoto('+f.id+')"><i class="bi bi-x-lg"></i></button>'
+      + '</div>';
+  }).join('') + (fotos.length < MAX_FOTOS
+    ? '<div class="catf-foto-add" id="catfFotoAdd"><i class="bi bi-camera-plus"></i><span>Agregar foto</span></div>'
+    : '');
+  const addBtn = document.getElementById('catfFotoAdd');
+  if(addBtn) addBtn.addEventListener('click', function(){ document.getElementById('catfFotoInput').click(); });
+  grid.querySelectorAll('.catf-foto img').forEach(function(img, i){
+    img.addEventListener('click', function(){
+      // Visor de zoom reutilizado de foto_editor.js (canEdit/canDelete=false:
+      // el catálogo NO tiene endpoint "replace" en el contrato, así que aquí
+      // solo se usa como visor — agregar/eliminar corre por los botones propios
+      // de esta ficha, contra las rutas EXACTAS del contrato).
+      ilusFotos.view({
+        key: 'catalogo-'+catfProductoId,
+        photo: fotos[i],
+        canEdit: false, canDelete: false,
+      });
+    });
+  });
+
+  // Manual
+  const manualWrap = document.getElementById('catfManualWrap');
+  if(d.manual && d.manual.tiene){
+    manualWrap.innerHTML = '<div class="catf-manual-box">'
+      + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
+      + '<div class="info"><div class="nm">'+esc(d.manual.nombre||'manual.pdf')+'</div>'
+      +   '<div class="sz">'+esc(fmtKb(d.manual.size_kb))+'</div></div>'
+      + '<a class="btn btn-sm btn-outline-secondary" href="/catalogo/api/productos/'+catfProductoId+'/manual/descargar">'
+      +   '<i class="bi bi-download me-1"></i>Descargar</a>'
+      + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualReemplazar">'
+      +   '<i class="bi bi-arrow-repeat me-1"></i>Reemplazar</button>'
+      + '<button type="button" class="btn btn-sm btn-outline-danger" id="catfManualQuitar">'
+      +   '<i class="bi bi-trash me-1"></i>Quitar</button>'
+      + '</div>';
+    document.getElementById('catfManualReemplazar').addEventListener('click', function(){
+      document.getElementById('catfManualInput').click();
+    });
+    document.getElementById('catfManualQuitar').addEventListener('click', catfQuitarManual);
+  } else {
+    manualWrap.innerHTML = '<div class="catf-drop" id="catfManualDrop">'
+      + '<i class="bi bi-file-earmark-arrow-up"></i>'
+      + '<div class="t1">Subir manual (PDF)</div>'
+      + '<div class="t2">Hasta 25 MB</div></div>';
+    document.getElementById('catfManualDrop').addEventListener('click', function(){
+      document.getElementById('catfManualInput').click();
+    });
+  }
+
+  // Eliminar definitivamente: solo superadmin
+  document.getElementById('catfBtnEliminarDef').style.display = IS_SUPERADMIN ? 'inline-block' : 'none';
+}
+
+// ── Edición inline de Datos (mismo patrón "clic en el lápiz" de tickets/ficha.html) ──
+window.catfEditar = function(campo){
+  const el = document.getElementById('catfVal'+campo.charAt(0).toUpperCase()+campo.slice(1));
+  if(!el || el.querySelector('input,textarea')) return;
+  const original = catfProductoActual[campo] || '';
+  const esArea = campo === 'observacion';
+  el.innerHTML = esArea
+    ? '<textarea class="form-control form-control-sm" rows="2">'+esc(original)+'</textarea>'
+    : '<input type="text" class="form-control form-control-sm" value="'+esc(original)+'">';
+  const input = el.querySelector('input,textarea');
+  input.focus();
+  if(!esArea) input.select();
+  let guardado = false;
+  async function guardar(){
+    if(guardado) return; guardado = true;
+    const nuevo = input.value.trim();
+    if(nuevo === (original||'')){ el.textContent = original || '—'; return; }
+    try{
+      const r = await fetch('/catalogo/api/productos/'+catfProductoId, {method:'PATCH',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({[campo]: nuevo})});
+      const d = await r.json();
+      if(d.ok){
+        catfProductoActual[campo] = nuevo;
+        el.textContent = nuevo || '—';
+        if(campo==='nombre') document.getElementById('catfNombre').textContent = nuevo || catfProductoActual.sku;
+        if(campo==='sku') document.getElementById('catfSkuTag').textContent = nuevo;
+        ilusToast('✓ Guardado', {type:'success'});
+        cargarCatalogo();
+      } else {
+        el.textContent = original || '—';
+        ilusToast(d.error||'No se pudo guardar', {type:'error'});
+      }
+    }catch(e){ el.textContent = original || '—'; ilusToast('Sin conexión', {type:'error'}); }
+  }
+  input.addEventListener('blur', guardar);
+  input.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && !esArea){ e.preventDefault(); input.blur(); }
+    if(e.key === 'Escape'){ guardado = true; el.textContent = original || '—'; }
+  });
+};
+
+// ── Fotos: agregar / eliminar (rutas EXACTAS del contrato) ──
+document.getElementById('catfFotoInput').addEventListener('change', async function(e){
+  const file = e.target.files && e.target.files[0];
+  this.value = '';
+  if(!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  ilusLoader.show('Subiendo foto…');
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/fotos', {method:'POST', body:fd});
+    const d = await r.json();
+    ilusLoader.hide();
+    if(d.ok){ ilusToast('✓ Foto agregada', {type:'success'}); catfCargar(); cargarCatalogo(); }
+    else ilusToast(d.error||'No se pudo subir la foto', {type:'error'});
+  }catch(err){ ilusLoader.hide(); ilusToast('Sin conexión', {type:'error'}); }
+});
+
+window.catfEliminarFoto = async function(fotoId){
+  const ok = await ilusConfirm({title:'Eliminar foto', message:'¿Eliminar esta foto del producto?', danger:true, okLabel:'Eliminar'});
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/fotos/'+fotoId, {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Foto eliminada', {type:'success'}); catfCargar(); cargarCatalogo(); }
+    else ilusToast(d.error||'No se pudo eliminar la foto', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+};
+
+// ── Manual PDF: subir / reemplazar / quitar (rutas EXACTAS del contrato) ──
+document.getElementById('catfManualInput').addEventListener('change', async function(e){
+  const file = e.target.files && e.target.files[0];
+  this.value = '';
+  if(!file) return;
+  if(!/\.pdf$/i.test(file.name) || file.type !== 'application/pdf'){
+    ilusToast('El manual debe ser un archivo PDF', {type:'warning'}); return;
+  }
+  if(file.size > 25*1024*1024){ ilusToast('El manual supera 25 MB', {type:'error'}); return; }
+  const fd = new FormData(); fd.append('file', file);
+  ilusLoader.show('Subiendo manual…');
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/manual', {method:'POST', body:fd});
+    const d = await r.json();
+    ilusLoader.hide();
+    if(d.ok){ ilusToast('✓ Manual subido', {type:'success'}); catfCargar(); cargarCatalogo(); }
+    else ilusToast(d.error||'No se pudo subir el manual', {type:'error'});
+  }catch(err){ ilusLoader.hide(); ilusToast('Sin conexión', {type:'error'}); }
+});
+
+async function catfQuitarManual(){
+  const ok = await ilusConfirm({title:'Quitar manual', message:'¿Quitar el manual PDF de este producto?', danger:true, okLabel:'Quitar'});
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/manual', {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Manual eliminado', {type:'success'}); catfCargar(); cargarCatalogo(); }
+    else ilusToast(d.error||'No se pudo quitar el manual', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+}
+
+// ── Eliminar producto (soft) / definitivamente (superadmin, requiere el SKU exacto) ──
+document.getElementById('catfBtnEliminar').addEventListener('click', async function(){
+  const p = catfProductoActual || {};
+  const ok = await ilusConfirm({
+    title: 'Eliminar producto',
+    message: '¿Archivar "'+(p.nombre||p.sku||'')+'"?',
+    sub: 'Queda oculto del catálogo (se puede recuperar activando "Ver archivados").',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId, {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){
+      ilusToast('✓ Producto eliminado', {type:'success'});
+      catfModal.hide();
+      cargarCatalogo();
+    } else ilusToast(d.error||'No se pudo eliminar', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+});
+document.getElementById('catfBtnEliminarDef').addEventListener('click', async function(){
+  const p = catfProductoActual || {};
+  const texto = await ilusPrompt({
+    title: 'Eliminar definitivamente',
+    message: 'Esta acción NO se puede deshacer. Escribe el SKU exacto para confirmar:',
+    sub: 'SKU: '+(p.sku||''),
+    placeholder: p.sku||'',
+    required: true,
+    type: 'danger',
+  });
+  if(texto === null || texto === undefined) return;
+  if(String(texto).trim().toUpperCase() !== String(p.sku||'').toUpperCase()){
+    ilusToast('El SKU no coincide. No se eliminó nada.', {type:'warning'}); return;
+  }
+  try{
+    // El backend lee confirm_text del BODY json de la request DELETE (no de
+    // query string) — cat_api_delete hace request.get_json(silent=True).
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId, {method:'DELETE',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text: String(texto).trim()})});
+    const d = await r.json();
+    if(d.ok){
+      ilusToast('✓ Producto eliminado definitivamente', {type:'success'});
+      catfModal.hide();
+      cargarCatalogo();
+    } else ilusToast(d.error||'No se pudo eliminar', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+});
+
+cargarCatalogo();
+</script>
+{% endblock %}
