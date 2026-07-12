@@ -987,6 +987,29 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass  # ya existe (MySQL permite multiples NULL en UNIQUE)
 
+    def _ensure_tk_zz_instalacion_scan_table():
+        """Tabla de control de idempotencia del automatismo 'ZZ-Instalacion'
+        (Daniel 2026-07-12): registra que documento(s) ERP (tido+nudo) ya
+        fueron revisados por el escaneo de instalaciones, para no crear el
+        mismo ticket 2 veces aunque el boton se apriete varias veces o el
+        primer intento haya fallado a mitad de camino (ticket_id nullable:
+        se reintenta mientras siga NULL). Solo LECTURA contra el ERP -- esta
+        tabla vive en MySQL Clever Cloud (Regla #4.1, el ERP nunca se toca)."""
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_zz_instalacion_scan (
+              id          INT AUTO_INCREMENT PRIMARY KEY,
+              tido        VARCHAR(10) NOT NULL,
+              nudo        VARCHAR(40) NOT NULL,
+              fecha_doc   DATETIME NULL,
+              ticket_id   INT NULL,
+              creado_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+              creado_por  VARCHAR(190) NULL,
+              UNIQUE KEY uq_tk_zzscan_doc (tido, nudo),
+              KEY idx_tk_zzscan_fecha (fecha_doc),
+              KEY idx_tk_zzscan_ticket (ticket_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
     with app.app_context():
         try:
             _ensure_tickets_tables()
@@ -994,6 +1017,7 @@ def register_tickets_routes(app, ctx):
             _ensure_tk_mensajes_columns()
             _ensure_tk_ticket_equipos_garantia_columns()
             _ensure_tk_tickets_visita_link()
+            _ensure_tk_zz_instalacion_scan_table()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_tickets_tables: {_e}", flush=True)
@@ -3157,6 +3181,205 @@ def register_tickets_routes(app, ctx):
                         f"⚠️ Equipo agregado SIN saldo disponible: {ln['nombre']} "
                         f"(SKU {ln.get('sku') or '—'}). Motivo: {motivo}")
         return jsonify({"ok": True, "id": tid, "numero_ticket": numero})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  AUTOMATISMO "ZZ-Instalacion" (Daniel 2026-07-12): boton manual,
+    #  SOLO superadmin, que revisa documentos ERP nuevos con el SKU de
+    #  servicio "ZZINSTALACION" (frozenset ZZ_CODES en erp_engine.py L663-
+    #  665 -- OJO: es una sola palabra, sin espacio) y crea un ticket
+    #  tipo='install' sin responsable asignado por cada documento nuevo,
+    #  para que ninguna instalacion se quede sin ticket. 100% READ-ONLY
+    #  contra el ERP (Regla #4.1): solo SELECT via _random_sql_query sobre
+    #  MAEEDO/MAEDDO, igual patron que /tickets/api/erp/buscar-cliente-
+    #  documentos. NO hay cron/scheduler real (no existe infraestructura
+    #  APScheduler/Cloud Scheduler en este proyecto hoy) -- es
+    #  deliberadamente bajo demanda; automatizarlo con Cloud Scheduler
+    #  externo (mismo patron que FEDEX_CRON_TOKEN) queda para una decision
+    #  de infraestructura aparte con Daniel.
+    #
+    #  Idempotencia: tabla tk_zz_instalacion_scan con UNIQUE(tido,nudo) --
+    #  barrera real a nivel de esquema, no solo chequeo en app. Si un
+    #  documento quedo registrado pero SIN ticket_id (fallo a mitad de
+    #  camino), se reintenta en la proxima corrida.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_crear_ticket_zz_instalacion(tido, nudo, user):
+        """Crea 1 ticket tipo='install' (sin responsable) a partir de un
+        documento ERP con SKU ZZINSTALACION. Reusa el MISMO motor de
+        lectura (_tk_fetch_doc_lineas) que /tickets/api/tickets/desde-
+        documento -- no se duplica logica de saldo/ERP (Regla: un solo
+        motor). Devuelve (ticket_id, numero_ticket) o (None, None) si el
+        documento ya no se pudo leer del ERP."""
+        hdr, lineas_reales, _via = _tk_fetch_doc_lineas(tido, nudo)
+        if not hdr:
+            return None, None
+        rut = (hdr.get("cliente_rut") or "").strip()[:12] or None
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tk_tickets "
+                    "(origen, estado, tipo, prioridad, descripcion, rut, empresa, email, phone, "
+                    " direccion, comuna_nombre, numero_documento, created_by) "
+                    "VALUES ('erp','open','install','media',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (f"Instalación detectada automáticamente desde documento ERP {tido}-{nudo}.",
+                     rut, (hdr.get("cliente_nombre") or "")[:150] or None,
+                     (hdr.get("email") or "")[:150] or None,
+                     (hdr.get("telefono") or "")[:20] or None,
+                     (hdr.get("direccion") or "")[:255] or None,
+                     (hdr.get("comuna") or "")[:120] or None,
+                     f"{tido}-{nudo}"[:1000], user))
+                tid = cur.lastrowid
+                cur.execute(
+                    "UPDATE tk_tickets SET numero_ticket = "
+                    "CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                    (_chile_now_year(), tid))
+                try:
+                    cur.execute(
+                        "INSERT IGNORE INTO tk_ticket_documentos (ticket_id, erp_tido, erp_nudo) "
+                        "VALUES (%s,%s,%s)", (tid, tido[:10], nudo[:40]))
+                except Exception as _e:
+                    print(f"[tk_zz_instalacion] documento no insertado tid={tid} "
+                          f"{tido}/{nudo}: {_e}", flush=True)
+                for ln in (lineas_reales or []):
+                    sku = (ln.get("sku") or "").strip()
+                    nombre = (ln.get("nombre") or "Equipo").strip()
+                    try:
+                        cant = max(1, int(round(float(ln.get("cantidad") or 1))))
+                    except Exception:
+                        cant = 1
+                    try:
+                        cur.execute(
+                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad) "
+                            "VALUES (%s,%s,%s,%s)",
+                            (tid, sku[:100] or None, nombre[:300], cant))
+                    except Exception as _e:
+                        print(f"[tk_zz_instalacion] equipo no insertado tid={tid} sku={sku}: {_e}", flush=True)
+            conn.commit()
+        finally:
+            conn.close()
+        numero = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (tid,))
+        numero = numero["numero_ticket"] if numero else None
+        _tk_log(tid, "creacion",
+                f"Ticket {numero} creado automáticamente por el escaneo ZZ-Instalación "
+                f"desde el documento ERP {tido}-{nudo}.")
+        return tid, numero
+
+    def _tk_zz_instalacion_scan(dias_default=7, actor=None):
+        """Revisa documentos ERP nuevos (MAEEDO+MAEDDO, SOLO LECTURA) con
+        SKU exacto 'ZZINSTALACION' desde la ultima fecha escaneada (o los
+        ultimos `dias_default` dias si es la primera corrida) y crea 1
+        ticket tipo='install' por cada documento nuevo. Devuelve un resumen
+        JSON-serializable."""
+        resumen = {"documentos_revisados": 0, "tickets_creados": [], "ya_existian": 0, "errores": []}
+        if not _random_sql_query:
+            resumen["errores"].append("Motor ERP no disponible")
+            return resumen
+
+        row = mysql_fetchone(
+            "SELECT MAX(fecha_doc) AS ultima FROM tk_zz_instalacion_scan")
+        desde = row.get("ultima") if row else None
+        if not desde:
+            desde = datetime.utcnow() - timedelta(days=int(dias_default))
+
+        try:
+            docs = _random_sql_query(
+                """
+                SELECT DISTINCT
+                       e.IDMAEEDO,
+                       LTRIM(RTRIM(e.TIDO)) AS TIDO,
+                       LTRIM(RTRIM(e.NUDO)) AS NUDO,
+                       e.FEEMDO
+                  FROM MAEEDO e
+                  JOIN MAEDDO d ON d.IDMAEEDO = e.IDMAEEDO
+                 WHERE UPPER(LTRIM(RTRIM(d.KOPRCT))) = 'ZZINSTALACION'
+                   AND e.FEEMDO >= %s
+                   AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO')
+                 ORDER BY e.FEEMDO ASC
+                """,
+                (desde,), max_rows=500,
+            ) or []
+        except Exception as _e:
+            print(f"[tk_zz_instalacion_scan] error consultando ERP: {_e}", flush=True)
+            resumen["errores"].append("No se pudo consultar el ERP ahora")
+            return resumen
+
+        resumen["documentos_revisados"] = len(docs)
+        for r in docs:
+            tido = (r.get("TIDO") or "").strip()
+            nudo = (r.get("NUDO") or "").strip()
+            fecha_doc = r.get("FEEMDO")
+            if not (tido and nudo):
+                continue
+            existente = mysql_fetchone(
+                "SELECT id, ticket_id FROM tk_zz_instalacion_scan WHERE tido=%s AND nudo=%s",
+                (tido, nudo))
+            if existente and existente.get("ticket_id"):
+                resumen["ya_existian"] += 1
+                continue
+            # RECLAMAR el documento ANTES de crear el ticket (no despues):
+            # la fila de control con UNIQUE(tido,nudo) es lo que serializa
+            # dos corridas concurrentes -- si el INSERT de reclamo falla por
+            # duplicado, es que otra ejecucion ya se adelanto con ESTE mismo
+            # documento justo ahora, asi que se salta sin crear un segundo
+            # ticket. Antes el ticket se creaba PRIMERO y el registro de
+            # control despues, dejando una ventana real de carrera (2 clics
+            # casi simultaneos, o 2 superadmins) donde ambas corridas pasaban
+            # el chequeo de "existente" y cada una creaba su propio ticket
+            # duplicado para el mismo documento.
+            if not existente:
+                try:
+                    mysql_execute(
+                        "INSERT INTO tk_zz_instalacion_scan (tido, nudo, fecha_doc, ticket_id, creado_por) "
+                        "VALUES (%s,%s,%s,NULL,%s)",
+                        (tido, nudo, fecha_doc, actor or "sistema"))
+                except Exception:
+                    # Ya reclamado por otra ejecucion concurrente en este mismo
+                    # instante -- se deja para la proxima corrida, no se crea
+                    # un ticket duplicado.
+                    resumen["ya_existian"] += 1
+                    continue
+            try:
+                tid, numero = _tk_crear_ticket_zz_instalacion(tido, nudo, actor or "sistema")
+            except Exception as _e:
+                print(f"[tk_zz_instalacion_scan] error creando ticket {tido}/{nudo}: {_e}", flush=True)
+                resumen["errores"].append(f"{tido}-{nudo}: {_e}")
+                continue
+            if not tid:
+                resumen["errores"].append(f"{tido}-{nudo}: documento no encontrado en el ERP")
+                continue
+            try:
+                mysql_execute(
+                    "UPDATE tk_zz_instalacion_scan SET ticket_id=%s, fecha_doc=%s WHERE tido=%s AND nudo=%s",
+                    (tid, fecha_doc, tido, nudo))
+            except Exception as _e:
+                print(f"[tk_zz_instalacion_scan] no se pudo registrar control {tido}/{nudo}: {_e}", flush=True)
+            resumen["tickets_creados"].append({"tido": tido, "nudo": nudo, "id": tid, "numero_ticket": numero})
+        return resumen
+
+    @app.route("/tickets/api/zz-instalacion/escanear", methods=["POST"])
+    @_tickets_required
+    def tk_api_zz_instalacion_escanear():
+        perms = g.get("permissions") or {}
+        if not perms.get("superadmin"):
+            return jsonify({"ok": False, "error": "Solo un superadministrador puede ejecutar este escaneo."}), 403
+        d = request.get_json(silent=True) or {}
+        try:
+            dias = int(d.get("dias") or 7)
+        except Exception:
+            dias = 7
+        dias = max(1, min(dias, 30))
+        user = current_username() or "sistema"
+        resumen = _tk_zz_instalacion_scan(dias_default=dias, actor=user)
+        try:
+            _audit("tk_zz_instalacion_scan", target_type="tk_ticket",
+                   details={"documentos_revisados": resumen.get("documentos_revisados"),
+                             "creados": len(resumen.get("tickets_creados") or []),
+                             "ya_existian": resumen.get("ya_existian")})
+        except Exception:
+            pass
+        # Campos al nivel raiz (ademas de "resumen") para el front ya
+        # cableado en templates/tickets/list.html (btnZzInstalacion).
+        return jsonify({"ok": True, "resumen": resumen, **resumen})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — ERP: buscar cliente (por RUT o razon social) — read-only

@@ -310,6 +310,8 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
     <input type="file" id="taaFileSla" accept=".csv" style="display:none">
     <button class="btn btn-sm btn-outline-light" id="btnPurgarTickets" title="Borrar todos los tickets excepto los de un correo (limpieza)">
       <i class="bi bi-trash3 me-1"></i>Purgar tickets</button>
+    <button class="btn btn-sm btn-outline-light" id="btnZzInstalacion" title="Revisa documentos ERP nuevos con línea ZZINSTALACION y crea un ticket de instalación por cada uno (sin duplicar)">
+      <i class="bi bi-search-heart me-1"></i>Revisar documentos nuevos (Instalación)</button>
     {% endif %}
     <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket desde un documento del ERP (factura, boleta, guía, etc.)">
       <i class="bi bi-file-earmark-text me-1"></i>Desde documento ERP</button>
@@ -1406,6 +1408,69 @@ if(btnPurgar){
       ilusToast('✓ '+res.eliminados+' ticket(s) eliminados permanentemente','success');
       cargarTickets();
     }catch(e){ ilusLoader.hide(); ilusToast('Error de red al purgar','error'); }
+  });
+}
+
+// ══════════════ Revisar documentos nuevos ZZ-Instalación (superadmin) ══════════════
+// Escaneo bajo demanda (no hay cron/scheduler en este proyecto -- ver
+// CLAUDE.md y blueprint de este feature): el superadmin aprieta el botón
+// cuando quiere revisar si llegaron documentos ERP nuevos con línea
+// ZZINSTALACION y aún no tienen ticket. El backend (endpoint pendiente,
+// POST /tickets/api/zz-instalacion/escanear) es responsable de la
+// idempotencia real (tabla tk_zz_instalacion_scan); este botón solo dispara
+// el escaneo y muestra el resultado.
+const btnZzInstalacion = document.getElementById('btnZzInstalacion');
+if(btnZzInstalacion){
+  btnZzInstalacion.addEventListener('click', async function(){
+    const ok = await ilusConfirm({
+      title:'Revisar documentos nuevos',
+      message:'¿Buscar en el ERP documentos recientes con línea ZZINSTALACION que todavía no tengan ticket?',
+      sub:'Se creará un ticket de instalación (sin responsable asignado) por cada documento nuevo encontrado. Los ya revisados no se duplican.',
+      okLabel:'Sí, revisar ahora', cancelLabel:'Cancelar',
+    });
+    if(!ok) return;
+    btnZzInstalacion.disabled = true;
+    const _origHtml = btnZzInstalacion.innerHTML;
+    btnZzInstalacion.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Revisando…';
+    try{
+      const r = await fetch('/tickets/api/zz-instalacion/escanear', {
+        method:'POST', headers:{'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+      });
+      let d;
+      try{ d = await r.json(); }
+      catch(_){
+        ilusAlert({type:'error', title:'Función no disponible todavía',
+          message:'El endpoint de escaneo ZZ-Instalación aún no está desplegado en el backend.'});
+        return;
+      }
+      if(!d.ok){
+        ilusAlert({type:'error', title:'No se pudo revisar', message: d.error || 'Error desconocido'});
+        return;
+      }
+      const creados = d.tickets_creados || [];
+      if(!creados.length){
+        ilusToast('Sin documentos nuevos de instalación (revisados: '+(d.documentos_revisados||0)+', ya existían: '+(d.ya_existian||0)+')', {type:'info'});
+      } else {
+        const links = creados.map(function(t){
+          return '<a href="/tickets/'+t.id+'" target="_blank" style="color:var(--ilus-red);font-weight:700">'
+            + _tkaEsc(t.numero_ticket || ('#'+t.id)) + '</a>';
+        }).join(', ');
+        await ilusAlert({
+          type:'success', title: creados.length+' ticket(s) de instalación creado(s)',
+          message:'Documentos revisados: '+(d.documentos_revisados||0)+' · Ya existían: '+(d.ya_existian||0)+'.',
+          sub:'Nuevos: '+links, subHtml:true,
+        });
+        cargarTickets();
+      }
+      if((d.errores||[]).length){
+        ilusToast((d.errores.length)+' documento(s) con error al procesar, revisa el log', {type:'warning'});
+      }
+    }catch(e){
+      ilusAlert({type:'error', title:'Error de red', message: e.message});
+    }finally{
+      btnZzInstalacion.disabled = false;
+      btnZzInstalacion.innerHTML = _origHtml;
+    }
   });
 }
 }); // cierre de document.addEventListener('DOMContentLoaded', ...)

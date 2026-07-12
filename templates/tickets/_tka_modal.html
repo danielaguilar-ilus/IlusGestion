@@ -139,6 +139,14 @@
     transform:translateX(-50%);
     box-shadow:0 0 10px rgba(220,38,38,.6);
   }
+  /* Tab 4 "Cotización interna": preparada pero deshabilitada visualmente
+     (el módulo real, tk_cotizaciones, queda para más adelante -- Daniel
+     2026-07-12: "la cotización la dejamos para mañana"). Se deja el
+     onclick funcionando para que igual muestre el mensaje honesto de
+     "en construcción" al hacer click -- no se oculta la pestaña. */
+  .tka-tab.tka-tab-disabled{opacity:.5;cursor:not-allowed}
+  .tka-tab.tka-tab-disabled:hover{color:#6b7280;background:transparent}
+  .tka-tab.tka-tab-disabled.is-active{opacity:.7}
 
   .tka-body{
     padding:18px 24px;overflow-y:auto;flex:1;
@@ -446,6 +454,12 @@
     <button type="button" class="tka-tab" role="tab" id="tkaTabCli" onclick="tkaSetTab('cli')">
       <i class="bi bi-person-vcard"></i><span>Por RUT / nombre</span>
     </button>
+    <button type="button" class="tka-tab" role="tab" id="tkaTabDeclarado" onclick="tkaSetTab('declarado')">
+      <i class="bi bi-clipboard-check"></i><span>Declarado en el ticket</span>
+    </button>
+    <button type="button" class="tka-tab tka-tab-disabled" role="tab" id="tkaTabCotizacion" onclick="tkaSetTab('cotizacion')" title="En construcción">
+      <i class="bi bi-calculator"></i><span>Cotización interna</span>
+    </button>
   </div>
   <div class="tka-body" id="tkaBody">
     <div id="tkaPanelDoc" class="tka-panel">
@@ -492,6 +506,20 @@
           <h6>Buscar todos los documentos de un cliente</h6>
           <p>Útil cuando el cliente trae varias facturas a la vez. Mostramos todos sus docs ERP en una sola lista.</p>
         </div>
+      </div>
+    </div>
+    <div id="tkaPanelDeclarado" class="tka-panel" style="display:none">
+      <div class="tka-empty">
+        <i class="bi bi-clipboard-check tka-empty-icon"></i>
+        <h6>Cargando…</h6>
+        <p></p>
+      </div>
+    </div>
+    <div id="tkaPanelCotizacion" class="tka-panel" style="display:none">
+      <div class="tka-empty">
+        <i class="bi bi-cone-striped tka-empty-icon"></i>
+        <h6>Cotización interna — en construcción</h6>
+        <p>El módulo de cotizaciones internas (tk_cotizaciones) está en construcción. Por ahora esta fuente no está disponible — vuelve pronto.</p>
       </div>
     </div>
   </div>
@@ -619,12 +647,20 @@ function _tkaResetEstado(){
 
   const tabDoc = document.getElementById('tkaTabDoc');
   const tabCli = document.getElementById('tkaTabCli');
+  const tabDeclarado = document.getElementById('tkaTabDeclarado');
+  const tabCotizacion = document.getElementById('tkaTabCotizacion');
   const panelDoc = document.getElementById('tkaPanelDoc');
   const panelCli = document.getElementById('tkaPanelCli');
+  const panelDeclarado = document.getElementById('tkaPanelDeclarado');
+  const panelCotizacion = document.getElementById('tkaPanelCotizacion');
   if (tabDoc) tabDoc.classList.add('is-active');
   if (tabCli) tabCli.classList.remove('is-active');
+  if (tabDeclarado) tabDeclarado.classList.remove('is-active');
+  if (tabCotizacion) tabCotizacion.classList.remove('is-active');
   if (panelDoc) panelDoc.style.display = '';
   if (panelCli) panelCli.style.display = 'none';
+  if (panelDeclarado) panelDeclarado.style.display = 'none';
+  if (panelCotizacion) panelCotizacion.style.display = 'none';
 
   if (_TKA._liveTimer){ clearInterval(_TKA._liveTimer); _TKA._liveTimer = null; }
   try{ tkaUpdateCounter(); }catch(_){}
@@ -711,8 +747,74 @@ function tkaSetTab(tab){
   _TKA.tab = tab;
   document.getElementById('tkaTabDoc').classList.toggle('is-active', tab === 'doc');
   document.getElementById('tkaTabCli').classList.toggle('is-active', tab === 'cli');
+  document.getElementById('tkaTabDeclarado').classList.toggle('is-active', tab === 'declarado');
+  document.getElementById('tkaTabCotizacion').classList.toggle('is-active', tab === 'cotizacion');
   document.getElementById('tkaPanelDoc').style.display = tab === 'doc' ? '' : 'none';
   document.getElementById('tkaPanelCli').style.display = tab === 'cli' ? '' : 'none';
+  document.getElementById('tkaPanelDeclarado').style.display = tab === 'declarado' ? '' : 'none';
+  document.getElementById('tkaPanelCotizacion').style.display = tab === 'cotizacion' ? '' : 'none';
+  if (tab === 'declarado') _tkaRenderDeclarado();
+}
+
+// ──────────────────────────────────────────────────────────────
+// TAB "DECLARADO EN EL TICKET" — solo lectura + visualización.
+// Reusa `equiposCache` (global de templates/tickets/ficha.html, poblado
+// con el MISMO SELECT que ya usa el backend en tk_ticket_equipos --
+// tickets_module.py ~L1479-1482) en vez de disparar un fetch nuevo:
+// cuando este modal se abre desde la ficha, esos datos ya están cargados
+// en memoria. Solo disponible en mode='agregar' (ticket ya existente).
+// Es de solo lectura a propósito (sin checkboxes ni submit): editar o
+// quitar equipos ya existe en la ficha por otra vía, y usarlos en una OT
+// se hace desde "Generar OT" -- duplicar esa lógica aquí violaría DRY.
+function _tkaRenderDeclarado(){
+  const panel = document.getElementById('tkaPanelDeclarado');
+  if (!panel) return;
+  if (_TKA.ctx.mode !== 'agregar' || !_TKA.ctx.ticketId){
+    panel.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-clipboard-check tka-empty-icon"></i>
+      <h6>Disponible una vez creado el ticket</h6>
+      <p>Los equipos declarados en el ticket aparecerán aquí después de crearlo.</p>
+    </div>`;
+    return;
+  }
+  const eqs = (typeof equiposCache !== 'undefined' && Array.isArray(equiposCache)) ? equiposCache : [];
+  if (!eqs.length){
+    panel.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-clipboard-x tka-empty-icon"></i>
+      <h6>Sin equipos declarados</h6>
+      <p>Este ticket no tiene equipos declarados todavía.</p>
+    </div>`;
+    return;
+  }
+  let html = `<div class="tka-mod-hint">
+    <i class="bi bi-info-circle"></i>
+    <div>Equipos ya <strong>declarados en este ticket</strong> (tabla interna, no vienen del ERP). Es solo lectura — para incluirlos en una Orden de Trabajo usa <strong>"Generar OT"</strong> desde la ficha.</div>
+  </div>`;
+  html += '<div class="tka-results">';
+  eqs.forEach(eq => {
+    const nombre = eq.nombre || eq.tipo || 'Equipo sin nombre';
+    const sku = eq.sku || '';
+    const serie = eq.serie || '';
+    const cant = (eq.cantidad != null && eq.cantidad !== '') ? eq.cantidad : 1;
+    const notas = eq.notas || '';
+    html += `<div class="tka-doc-card is-already" style="opacity:1;transform:none">
+      <div class="tka-doc-head" style="cursor:default">
+        <div class="tka-doc-num"><span class="badge-tipo">${_tkaEsc(sku || 'EQ')}</span></div>
+        <div class="tka-doc-info">
+          <div class="td-cli">${_tkaEsc(nombre)}</div>
+          <div class="td-meta">
+            ${serie ? `<span><i class="bi bi-upc-scan me-1"></i>${_tkaEsc(serie)}</span>` : ''}
+            ${notas ? `<span>${_tkaEsc(notas)}</span>` : ''}
+          </div>
+        </div>
+        <div class="tka-doc-totals">
+          <span class="badge-pill">${_tkaEsc(String(cant))} u.</span>
+        </div>
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  panel.innerHTML = html;
 }
 
 function _tkaSkel(){
