@@ -824,7 +824,14 @@ def register_catalogo_routes(app, ctx):
             limit = int(limit)
         except Exception:
             limit = 200
-        limit = max(1, min(500, limit))
+        # 2026-07-12 (Daniel): "cargar la bodega 02 sin los servicios ZZ" +
+        # tope de 500 nunca dejaba sincronizar mas alla de los primeros 500
+        # SKU alfabeticos (TOP siempre devolvia el mismo lote, sin paginar).
+        # Se sube el tope a 5000 (backfill completo de una bodega en un solo
+        # llamado es razonable) y se excluyen los SKU "ZZ*" (son codigos de
+        # SERVICIO -- instalacion, envio, etc. -- no productos fisicos que
+        # deban tener ficha de piolas/manual en el Catalogo).
+        limit = max(1, min(5000, limit))
         try:
             if q:
                 q_like = f"%{str(q).upper()[:60]}%"
@@ -836,9 +843,10 @@ def register_catalogo_routes(app, ctx):
                                     WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
                                       AND LTRIM(RTRIM(st.KOBO))=%s)
                        AND (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
+                       AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s
                      ORDER BY sku
                 """
-                params = (CAT_BODEGA_SYNC, q_like, q_like)
+                params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%")
             else:
                 sql = f"""
                     SELECT DISTINCT TOP {limit}
@@ -847,9 +855,10 @@ def register_catalogo_routes(app, ctx):
                      WHERE EXISTS (SELECT 1 FROM MAEST st
                                     WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
                                       AND LTRIM(RTRIM(st.KOBO))=%s)
+                       AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s
                      ORDER BY sku
                 """
-                params = (CAT_BODEGA_SYNC,)
+                params = (CAT_BODEGA_SYNC, "ZZ%")
             rows = _random_sql_query(sql, params, max_rows=limit) or []
         except Exception as _e:
             print(f"[_cat_sync_erp_nuevos] error ERP (bodega={CAT_BODEGA_SYNC}): {_e}", flush=True)

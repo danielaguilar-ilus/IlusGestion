@@ -179,6 +179,11 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
     <div class="sub">Ficha técnica de referencia — fotos y manual PDF por producto</div>
   </div>
   <div class="d-flex gap-2">
+    {% if permissions.superadmin %}
+    <button class="btn btn-sm btn-outline-light" id="btnSyncErp" type="button"
+            title="Trae del ERP todos los productos de la bodega {{ cat_bodega_sync|default('02') }} que aún no estén en este catálogo (excluye los SKU &quot;ZZ&quot;, que son servicios, no productos físicos)">
+      <i class="bi bi-cloud-download me-1"></i>Sincronizar bodega desde ERP</button>
+    {% endif %}
     <button class="btn btn-ilus" data-bs-toggle="modal" data-bs-target="#catnModal">
       <i class="bi bi-plus-lg me-1"></i>Nuevo producto</button>
   </div>
@@ -529,6 +534,32 @@ document.getElementById('catBtnLimpiar').addEventListener('click', function(){
   catSort = 'updated_at'; catDir = 'desc'; catPage = 1;
   cargarCatalogo();
 });
+
+// ══════════════ Sincronizar bodega desde ERP (2026-07-12, Daniel:
+// "carga la bodega 02 sin los servicios ZZ, ya es necesario") ══════════════
+const btnSyncErp = document.getElementById('btnSyncErp');
+if (btnSyncErp){
+  btnSyncErp.addEventListener('click', async function(){
+    const original = btnSyncErp.innerHTML;
+    btnSyncErp.disabled = true;
+    btnSyncErp.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando…';
+    try{
+      const r = await fetch('/catalogo/api/sync-erp', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({limit: 5000}),
+      });
+      const d = await r.json();
+      if (!d.ok){ ilusToast(d.error || 'No se pudo sincronizar', {type:'error'}); return; }
+      if (d.creados > 0){
+        ilusToast('✓ ' + d.creados + ' producto(s) nuevo(s) traídos de la bodega', {type:'success'});
+        cargarCatalogo();
+      } else {
+        ilusToast('El catálogo ya tenía todos los productos de la bodega (sin novedades).', {type:'info'});
+      }
+    }catch(e){ ilusToast('Error de red al sincronizar', {type:'error'}); }
+    finally{ btnSyncErp.disabled = false; btnSyncErp.innerHTML = original; }
+  });
+}
 
 // ══════════════ Modal: Nuevo producto ══════════════
 document.getElementById('catnBtnCrear').addEventListener('click', async function(){
