@@ -441,11 +441,20 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
     btn.disabled = false; btn.textContent = 'Enviar solicitud'; return;
   }
   ticketId = d.id; uploadToken = d.upload_token;
-  if(archivos.length) await subirPendientes();
+  // Daniel 2026-07-13 (probando el formulario para Shopify): "envio la
+  // informacion muy lenta... no alimenta ninguna base de datos" -- el
+  // ticket YA quedo creado en este punto (la llamada de arriba ya
+  // respondio ok:true), pero antes se esperaba a que las fotos/videos
+  // terminaran de subir ANTES de mostrar la confirmacion. Si un archivo
+  // pesa o la subida tarda, el boton se queda en "Enviando..." dando la
+  // sensacion de que nada paso, aunque el ticket si se haya guardado.
+  // Ahora la confirmacion sale de inmediato; los adjuntos se suben
+  // despues, en segundo plano, sin bloquear el aviso de exito.
   document.getElementById('spForm').classList.add('sp-hidden');
   document.getElementById('spOk').classList.remove('sp-hidden');
   document.getElementById('spNumOk').textContent = d.numero_ticket || ('#'+d.id);
   window.scrollTo(0,0);
+  if(archivos.length) subirPendientes();
 });
 
 document.getElementById('spBtnOtra').addEventListener('click', function(){ location.reload(); });
