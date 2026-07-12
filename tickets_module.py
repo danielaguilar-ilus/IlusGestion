@@ -1517,9 +1517,12 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     # REDISENO 2026-07-12 (Daniel): mensaje protagonista, tipografia grande,
     # sin texto de relleno. Mismo bloque destacado que la respuesta manual.
+    # Numero de ticket AL INICIO del asunto (Daniel 2026-07-12, con screenshot
+    # de Gmail movil): la app trunca asuntos largos en la lista de bandeja, y
+    # el numero quedaba cortado al ir al final ("...ticket TK-2026-0...").
     _TK_LIFECYCLE_DEFAULTS = {
         "creacion": (
-            "Recibimos tu solicitud — ticket {numero}",
+            "{numero} — Recibimos tu solicitud",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
@@ -1527,14 +1530,14 @@ def register_tickets_routes(app, ctx):
             "con el número <strong>{numero}</strong>. Nuestro equipo la revisará y te contactará "
             "a la brevedad.</div></div>"),
         "resuelto": (
-            "Tu ticket {numero} fue resuelto",
+            "{numero} — Resuelto",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #16a34a;background:#f0fdf4;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">✅ Tu solicitud "
             "<strong>{numero}</strong> ya fue resuelta por nuestro equipo.</div></div>"),
         "cerrado": (
-            "Tu ticket {numero} fue cerrado",
+            "{numero} — Cerrado",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #6b7280;background:#f9fafb;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
@@ -1665,7 +1668,10 @@ def register_tickets_routes(app, ctx):
         # EL PROTAGONISTA: tipografia mas grande, bloque destacado con acento
         # rojo ILUS, y CERO texto de relleno alrededor (se quito la linea
         # "parte del seguimiento" -- el numero ya va en asunto y subtitulo).
-        tema_default = f"Respuesta a tu ticket {numero}"
+        # Numero primero (Daniel 2026-07-12, screenshot Gmail movil): la app
+        # trunca asuntos largos en la lista de bandeja y el numero, al ir al
+        # final, quedaba cortado ("Respuesta a tu ticket TK-2026-0...").
+        tema_default = f"{numero} — Respuesta a tu ticket"
         cuerpo_default = (
             f'<p style="font-size:14px;color:#6b7280;margin:0 0 14px">Hola {_html_mod.escape(cliente_nombre)},</p>'
             f'<div style="border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;'

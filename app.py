@@ -69305,9 +69305,14 @@ def _tickets_tpl_seed():
     # CERO relleno ("parte del seguimiento" eliminado; el numero ya viaja en
     # asunto y subtitulo). La invitacion a responder el correo la agrega
     # tickets_module (_tk_boton_portal_html) al final de TODO correo.
+    # Numero de ticket AL INICIO del asunto (Daniel 2026-07-12, con screenshot
+    # de Gmail movil): la app de Gmail trunca asuntos largos en la lista de
+    # bandeja, y "TK-2026-00591" quedaba cortado al ir al final de la frase
+    # ("Respuesta a tu ticket TK-2026-0..."). Puesto primero, sobrevive el
+    # truncamiento aunque el resto se corte.
     return {
         'creacion': (
-            "Recibimos tu solicitud — ticket {{numero_ticket}}",
+            "{{numero_ticket}} — Recibimos tu solicitud",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
             "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
@@ -69315,13 +69320,13 @@ def _tickets_tpl_seed():
             "con el número <strong>{{numero_ticket}}</strong>. Nuestro equipo la revisará y te "
             "contactará a la brevedad.</div></div>"),
         'respuesta': (
-            "Respuesta a tu ticket {{numero_ticket}}",
+            "{{numero_ticket}} — Respuesta a tu ticket",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
             "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">{{mensaje}}</div></div>"),
         'resuelto': (
-            "Tu ticket {{numero_ticket}} fue resuelto",
+            "{{numero_ticket}} — Resuelto",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
             "<div style=\"border-left:4px solid #16a34a;background:#f0fdf4;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
@@ -69329,7 +69334,7 @@ def _tickets_tpl_seed():
             "<strong>{{numero_ticket}}</strong> ya fue resuelta por nuestro equipo. Si el problema "
             "persiste, responde este correo y retomamos tu caso.</div></div>"),
         'cerrado': (
-            "Tu ticket {{numero_ticket}} fue cerrado",
+            "{{numero_ticket}} — Cerrado",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"
             "<div style=\"border-left:4px solid #6b7280;background:#f9fafb;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
@@ -69347,7 +69352,7 @@ def _ensure_comm_template_tickets():
         sembradas = 0
         for slug, (asunto, cuerpo) in _tickets_tpl_seed().items():
             existe = mysql_fetchone(
-                "SELECT id, cuerpo FROM comm_templates WHERE modulo='tickets' "
+                "SELECT id, asunto, cuerpo FROM comm_templates WHERE modulo='tickets' "
                 "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
             if existe:
                 # REFRESH dirigido 2026-07-12: las filas sembradas ANTES del
@@ -69356,7 +69361,24 @@ def _ensure_comm_template_tickets():
                 # se actualizan a la semilla nueva. Una plantilla que Daniel
                 # haya editado a mano NO conserva ese marcador exacto de
                 # apertura, asi que sus ediciones no se pisan.
-                if "Estimado/a {{cliente}}" in (existe.get("cuerpo") or ""):
+                asunto_viejo = {
+                    'creacion': "Recibimos tu solicitud — ticket {{numero_ticket}}",
+                    'respuesta': "Respuesta a tu ticket {{numero_ticket}}",
+                    'resuelto': "Tu ticket {{numero_ticket}} fue resuelto",
+                    'cerrado': "Tu ticket {{numero_ticket}} fue cerrado",
+                }.get(slug)
+                # REFRESH 2026-07-12 (2): mismo criterio pero solo para el
+                # ASUNTO -- Daniel, con screenshot de Gmail movil, mostro que
+                # el numero de ticket quedaba al final y se truncaba en la
+                # lista de bandeja ("Respuesta a tu ticket TK-2026-0...").
+                # Ahora va primero. Match EXACTO contra el asunto viejo
+                # conocido (no un "no empieza con..." difuso) para no pisar
+                # un asunto que Daniel haya editado a mano.
+                necesita_refresh = (
+                    "Estimado/a {{cliente}}" in (existe.get("cuerpo") or "")
+                    or (existe.get("asunto") or "").strip() == asunto_viejo
+                )
+                if necesita_refresh:
                     mysql_execute(
                         "UPDATE comm_templates SET asunto=%s, cuerpo=%s "
                         "WHERE id=%s", (asunto, cuerpo, existe["id"]))
