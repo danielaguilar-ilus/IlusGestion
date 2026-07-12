@@ -3273,7 +3273,7 @@ def register_tickets_routes(app, ctx):
         if size_mb > MAX_ADJUNTO_MB:
             return jsonify({"ok": False, "error": f"El archivo supera el máximo de {MAX_ADJUNTO_MB} MB"}), 400
 
-        mime = (f.mimetype or "").lower()
+        mime = _tk_mime_confiable(f.mimetype, ext)
         rt = "image"
         if mime.startswith("video"):
             rt = "video"
@@ -4470,6 +4470,34 @@ def register_tickets_routes(app, ctx):
         ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt", ".csv",
     }
 
+    # 2026-07-12 (Daniel — tickets 590/591): fotos adjuntadas desde el celular
+    # (ej. imagen de WhatsApp guardada y subida desde el picker de archivos de
+    # iOS/Android) a veces llegan con `f.mimetype` vacío o generico
+    # ("application/octet-stream") aunque el archivo SI sea una imagen real —
+    # el navegador/SO no siempre setea el Content-Type del multipart. Eso
+    # hacia que se guardara un mime_type incorrecto en tk_adjuntos y el chip
+    # se mostrara como archivo generico (sin miniatura) y el visor universal
+    # cayera al fallback "Vista previa no disponible" para una imagen que en
+    # realidad SI se puede mostrar. Fallback por extension cuando el mime del
+    # navegador no es reconocible como imagen/video.
+    _MIME_POR_EXT = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".webp": "image/webp", ".gif": "image/gif", ".heic": "image/heic",
+        ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+        ".avi": "video/x-msvideo",
+    }
+
+    def _tk_mime_confiable(mime_navegador, ext):
+        """Devuelve un mime_type confiable para guardar/clasificar el adjunto.
+        Si el navegador ya dio un image/* o video/* coherente, se respeta tal
+        cual. Si vino vacio o generico (application/octet-stream y similares),
+        se completa por extension conocida — asi el archivo SI se reconoce
+        como imagen/video y el visor lo muestra en vez de caer al fallback."""
+        m = (mime_navegador or "").lower().strip()
+        if m.startswith("image/") or m.startswith("video/"):
+            return m
+        return _MIME_POR_EXT.get(ext, m)
+
     # Firmas (magic bytes) de los tipos mas comunes -- validacion LIGERA sin
     # librerias nuevas. Solo cubre jpg/png/gif/pdf (firma simple); el resto
     # (webp/heic/mp4/doc/docx/xls/xlsx/etc.) queda sin chequear porque sus
@@ -4719,7 +4747,7 @@ def register_tickets_routes(app, ctx):
         if size_mb > MAX_ADJUNTO_MB:
             return jsonify({"ok": False, "error": f"El archivo supera el máximo de {MAX_ADJUNTO_MB} MB"}), 400
 
-        mime = (f.mimetype or "").lower()
+        mime = _tk_mime_confiable(f.mimetype, ext)
         rt = "image" if mime.startswith("image") else ("video" if mime.startswith("video") else "raw")
         try:
             res = _uploader_upload(f, folder="tickets", resource_type=rt)

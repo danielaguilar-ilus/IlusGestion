@@ -1287,6 +1287,7 @@
 const TID = {{ ticket_id }};
 const ESTADO_LABEL = {{ estado_label|tojson }};
 const TIPO_LABEL = {{ tipo_label|tojson }};
+
 // Tarjeta "Actividad del ticket" es solo superadmin/admin (pedido Daniel
 // 2026-07-12) — el nodo #cardActividad puede no existir en el DOM para el
 // resto del staff, así que gateamos la llamada Y protegemos el render.
@@ -1360,7 +1361,15 @@ function esc(s){ return (s==null?'':String(s))
 function fmtFechaHora(s){ return s || ''; }
 // href seguro: solo rutas internas /f/ o http(s) — evita esquemas peligrosos.
 function safeUrl(u){ u=String(u||''); return (u.startsWith('/') || /^https?:/i.test(u)) ? u : '#'; }
-function esImagen(mime){ return /^image\//.test(mime||''); }
+// 2026-07-12 (Daniel — tickets 590/591): algunos adjuntos quedaron con
+// mime_type generico/incorrecto en la BD (el navegador/SO no siempre manda
+// el Content-Type real al subir, ej. fotos desde el picker de archivos del
+// celular) -- se agrega fallback por extension del nombre para que esos
+// adjuntos YA guardados tambien se vean como imagen sin migrar datos.
+const _EXT_IMAGEN = /\.(jpe?g|png|gif|webp|heic|bmp)$/i;
+function esImagen(mime, nombre){
+  return /^image\//.test(mime||'') || _EXT_IMAGEN.test(String(nombre||''));
+}
 
 document.querySelectorAll('.tk-tab').forEach(function(tab){
   tab.addEventListener('click', function(){
@@ -1450,7 +1459,16 @@ const rpCcChips = _emailChipsInit('rpCcBox', 'rpCc');
 const rpQuill = new Quill('#rpEditor', {
   theme: 'snow',
   placeholder: 'Escribe tu respuesta…',
-  modules: { toolbar: [['bold','italic','underline'], [{list:'ordered'},{list:'bullet'}], ['link','clean']] },
+  // 2026-07-12 (Daniel): "editable, con muchas herramientas, y elegante" --
+  // toolbar ampliada (antes solo bold/italic/underline/listas/link/clean).
+  modules: { toolbar: [
+    [{header: [false, 2, 3]}],
+    ['bold','italic','underline','strike'],
+    [{color: []}, {background: []}],
+    [{list:'ordered'},{list:'bullet'}],
+    ['blockquote'],
+    ['link','clean'],
+  ] },
 });
 
 // ══════════════ Dictado por voz — Google Cloud Speech-to-Text (2026-07-12) ══
@@ -2103,7 +2121,7 @@ function renderThread(mensajes, adjuntos){
     // de la pagina. Mismo patron data-lightbox que renderAdjuntosInfo().
     const adjHtml = adjs.map(function(a){
       const url = safeUrl(a.archivo_url);
-      const thumb = esImagen(a.mime_type) ? '<img src="'+esc(url)+'">' : '<i class="bi '+iconoAdjunto(a.mime_type, a.archivo_nombre)+'"></i>';
+      const thumb = esImagen(a.mime_type, a.archivo_nombre) ? '<img src="'+esc(url)+'" loading="lazy">' : '<i class="bi '+iconoAdjunto(a.mime_type, a.archivo_nombre)+'"></i>';
       return '<a class="rp-adj-chip" href="'+esc(url)+'" data-lightbox="1" data-url="'+esc(url)+'"'
         + ' data-mime="'+esc(a.mime_type||'')+'" data-nombre="'+esc(a.archivo_nombre||'archivo')+'">'
         + thumb+esc(a.archivo_nombre||'archivo')+'</a>';
@@ -2173,7 +2191,7 @@ function renderAdjuntosInfo(adjuntos){
   c.innerHTML = grupos.map(function(fecha){
     const items = porFecha[fecha].map(function(a){
       const url = safeUrl(a.archivo_url);
-      const esImg = esImagen(a.mime_type);
+      const esImg = esImagen(a.mime_type, a.archivo_nombre);
       const thumb = esImg ? '<img src="'+esc(url)+'" loading="lazy">' : '<i class="bi '+iconoAdjunto(a.mime_type, a.archivo_nombre)+'"></i>';
       const meta = [a.file_size_kb ? (a.file_size_kb+' KB') : null, a.created_at ? fmtFechaHora(a.created_at) : null]
         .filter(Boolean).join(' · ');
@@ -2403,7 +2421,7 @@ function tkAbrirAdjunto(url, mime, nombre){
   descargar.href = url;
   descargar.setAttribute('download', nombre || '');
   const body = document.getElementById('tkLightboxBody');
-  if(esImagen(mime)){
+  if(esImagen(mime, nombre)){
     body.innerHTML = '<img src="'+esc(url)+'" alt="'+esc(nombre||'')+'">';
   } else if(esPdfArchivo(mime, nombre)){
     // Los navegadores modernos renderizan PDF nativamente dentro de un iframe.

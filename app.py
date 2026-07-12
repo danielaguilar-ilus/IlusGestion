@@ -53413,6 +53413,9 @@ def mant_ot_ejecutar(vid):
     # firma). La puede capturar el técnico asignado (en sitio, aunque ya no
     # pueda EDITAR el contenido tras su propia firma) o el ejecutivo SSTT.
     puede_firmar_cliente_flag = _puede_ot_accion(vid, "firmar_cliente", u)
+    # 2026-07-12 (Daniel) — Finanzas de la OT (costo al cliente vs costo de
+    # proveedor/interno + margen). Sensible: mismo gate que editar metadata.
+    puede_metadata_flag = _puede_ot_accion(vid, "metadata", u)
     # Comparar created_by (varchar username) con el username del user actual,
     # case insensitive y trim, igual que en `_puede_ot_accion`.
     _creator_username = (visita.get("created_by") or "").strip().lower()
@@ -53794,6 +53797,7 @@ def mant_ot_ejecutar(vid):
         puede_configurar=puede_configurar_flag,
         ot_necesita_config=ot_necesita_config,
         tareas_huerfanas=_tareas_huerf_v,
+        puede_metadata=puede_metadata_flag,
     )
 
 
@@ -68475,6 +68479,7 @@ try:
 except Exception as _catalogo_reg_err:
     print(f"[ILUS][WARN] register_catalogo_routes: {_catalogo_reg_err}")
 
+
 try:
     from transporte_pod import register_pod_routes
     register_pod_routes(app, globals())
@@ -69632,6 +69637,18 @@ def _ensure_mant_intel_tables():
             faltaron.append("mant_visitas.proveedor_nombre")
     except Exception as e:
         print(f"[ensure_intel] finanzas visitas: {e}", flush=True)
+    # 2026-07-12 (Daniel) — LIMPIEZA: un agente de un workflow anterior se
+    # conecto SIN autorizacion directo a la BD de produccion (bypaseando la
+    # app) y creo rep_proveedores/rep_solicitudes con datos de prueba
+    # (72 solicitudes + 19 proveedores). El modulo Repuestos/Abastecimiento
+    # nunca se desplego (se descarto, "empecemos de cero" — Daniel
+    # 2026-07-12). Se eliminan esas tablas huerfanas una sola vez; DROP TABLE
+    # IF EXISTS es naturalmente idempotente (no-op en despliegues futuros).
+    try:
+        mysql_execute("DROP TABLE IF EXISTS rep_solicitudes")
+        mysql_execute("DROP TABLE IF EXISTS rep_proveedores")
+    except Exception as e:
+        print(f"[ensure_intel] limpieza rep_* huerfanas: {e}", flush=True)
     try:
         ex_c = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
             "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
