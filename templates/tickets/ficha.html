@@ -161,10 +161,13 @@
 .rp-headers .row-h input{border:none;background:transparent;font-size:.82rem;flex:1;outline:none;}
 .rp-headers .row-h input:focus{background:#fff;}
 .rp-editor-wrap .ql-toolbar{border:none;border-bottom:1px solid #eaecf0;background:#fafafa;}
-/* Caja de texto lo mas grande posible (Daniel 2026-07-12: "el scroll que
-   debe tener es la caja de texto") -- el UNICO scroll interno que queda
-   en la pestaña Respuestas es este, no el del hilo de arriba. */
-.rp-editor-wrap .ql-container{border:none;font-size:.87rem;min-height:240px;max-height:520px;overflow-y:auto;}
+/* Editor compacto por defecto (Daniel 2026-07-12: "la caja de texto es
+   mas grande que el visualizador de mensajes" -- el hilo es el area
+   principal, el editor no necesita ser enorme para escribir una
+   respuesta normal). Es el UNICO scroll interno que queda en la pestaña
+   Respuestas (no el del hilo de arriba). El JS (ajustarAltoHilo) ajusta
+   esto en tiempo real; este valor es solo el fallback del primer paint. */
+.rp-editor-wrap .ql-container{border:none;font-size:.87rem;min-height:150px;max-height:220px;overflow-y:auto;}
 .rp-toolbar-extra{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
   background:#fafafa;border-top:1px solid #eaecf0;flex-wrap:wrap;gap:8px;}
 .rp-adj-preview{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px;}
@@ -593,24 +596,20 @@ let rpAdjuntos = [];   // [{id, url, nombre}] ya subidos, pendientes de enviar c
 let rpModo = 'cliente'; // 'cliente' | 'interno'
 
 // ══════════════ Alto dinamico del hilo Y del editor de Respuestas ══════════════
-// Daniel 2026-07-12 ("insisto... la caja de texto [el composer]"): al
-// entrar a Respuestas habia que bajar la PAGINA para alcanzar el
-// composer -- quedaba debajo del pliegue. Un max-height fijo (460px en
-// el hilo, 240-520px en el editor Quill) no se adapta a la altura REAL
-// de la ventana -- en un laptop 1366x768 comun, o con la ventana del
-// navegador achicada, ni reduciendo el hilo al minimo alcanzaba a caber
-// el composer completo (verificado con calculos reales antes de subir
-// esto). Por eso esta funcion reparte el espacio vertical disponible
-// entre DOS partes, no solo una:
-//   1) el editor Quill (.ql-container) se encoge primero, hasta un piso
-//      minimo usable para escribir (80px);
-//   2) el hilo de mensajes se lleva lo que sobra, con su propio piso
-//      (110px, ~1 mensaje visible) para no desaparecer del todo.
-// Asi el composer completo (hasta el boton Enviar) queda SIEMPRE visible
-// sin scrollear la pagina, salvo en ventanas extremadamente bajas (celular
-// en horizontal) donde ya no hay espacio fisico para ambos aunque se
-// reduzcan al minimo -- ahi se acepta un scroll de pagina pequeño en vez
-// de romper la usabilidad de la caja de texto.
+// Daniel 2026-07-12: primero pidio que el composer nunca quedara debajo
+// del pliegue (sin scrollear la pagina) -- eso llevo a encoger el hilo
+// bastante en pantallas chicas. Corrigio: "la caja de mensaje esta
+// extremadamente pequeña... tiene que ser una mediacion entre los dos...
+// la caja de texto [el editor] es mas grande que el visualizador de
+// mensajes [el hilo]" -- el hilo es el contenido PRINCIPAL (como en
+// Triple A, "para ahorrar espacio") y debe ser >= el editor, no al
+// reves. Nueva prioridad: el editor usa un alto COMODO PERO COMPACTO
+// por defecto (150px, no necesita mas para escribir una respuesta
+// normal) y el hilo se lleva TODO el resto del espacio disponible --
+// el editor solo se encoge (hasta un piso de 70px) si ni asi alcanza a
+// darle al hilo su propio piso minimo (160px). El techo del editor
+// (220px) evita que crezca de mas aunque sobre espacio en un monitor
+// grande -- ese espacio de mas se lo lleva el hilo, no el editor.
 function ajustarAltoHilo(){
   const paneConv = document.getElementById('pane-conv');
   if(!paneConv || !paneConv.classList.contains('active')) return; // oculto: rects en 0, no calcular
@@ -619,10 +618,10 @@ function ajustarAltoHilo(){
   const qlContainer = document.querySelector('.rp-editor-wrap .ql-container');
   if(!th || !composer || !qlContainer) return;
 
-  const AIRE_INFERIOR = 24;   // respiro entre el composer y el borde de la ventana
-  const PISO_HILO = 110;      // minimo del hilo (se ve al menos algo de contexto)
-  const PISO_EDITOR = 80;     // minimo usable del editor para poder escribir
-  const TECHO_EDITOR = 520;   // igual al max-height ya definido en CSS (no crecer de mas)
+  const AIRE_INFERIOR = 24;    // respiro entre el composer y el borde de la ventana
+  const EDITOR_DEFAULT = 150;  // alto comodo y compacto por defecto (no ocupa de mas)
+  const EDITOR_MIN = 70;       // piso absoluto si el espacio es muy chico
+  const HILO_MIN = 160;        // piso del hilo (ahora el area PRINCIPAL, un poco mas generoso)
 
   const threadTop = th.getBoundingClientRect().top;
   // "Chrome" del composer que NO es el editor (mode-tabs + headers De/Para/CC
@@ -630,14 +629,19 @@ function ajustarAltoHilo(){
   // del alto que le demos al editor.
   const otrosComposer = composer.getBoundingClientRect().height - qlContainer.getBoundingClientRect().height;
   const totalDisponible = window.innerHeight - threadTop - AIRE_INFERIOR;
+  const restante = totalDisponible - otrosComposer; // a repartir entre hilo + editor
 
-  let alturaEditor = totalDisponible - otrosComposer - PISO_HILO;
-  alturaEditor = Math.max(PISO_EDITOR, Math.min(TECHO_EDITOR, alturaEditor));
+  let alturaEditor = EDITOR_DEFAULT;
+  let alturaHilo = restante - alturaEditor;
+  if(alturaHilo < HILO_MIN){
+    // no alcanza el piso del hilo con el editor en su default -> encoger
+    // el editor primero (el hilo manda), hasta su propio piso minimo.
+    alturaEditor = Math.max(EDITOR_MIN, restante - HILO_MIN);
+    alturaHilo = Math.max(HILO_MIN, restante - alturaEditor);
+  }
   qlContainer.style.maxHeight = alturaEditor + 'px';
-  qlContainer.style.minHeight = Math.min(alturaEditor, 240) + 'px';
-
-  let alturaHilo = totalDisponible - otrosComposer - alturaEditor;
-  th.style.maxHeight = Math.max(PISO_HILO, alturaHilo) + 'px';
+  qlContainer.style.minHeight = Math.min(alturaEditor, 150) + 'px';
+  th.style.maxHeight = alturaHilo + 'px';
 }
 let _ajustarAltoHiloTimer = null;
 function ajustarAltoHiloDebounced(){
