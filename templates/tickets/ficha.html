@@ -154,13 +154,19 @@
   border-bottom:3px solid transparent;}
 .rp-mode-tab.active[data-mode="cliente"]{color:#dc2626;border-bottom-color:#dc2626;background:#fff;}
 .rp-mode-tab.active[data-mode="interno"]{color:#b45309;border-bottom-color:#f59e0b;background:#fffbeb;}
-.rp-headers{padding:10px 14px;background:#fcfcfd;border-bottom:1px solid #f1f5f9;display:none;}
+/* Diferenciar visualmente De/Para/CC del editor de abajo (Daniel
+   2026-07-12: "esta todo muy blanco... el de, el para... la caja de
+   texto tambien esta muy blanco") -- antes #fcfcfd era casi identico al
+   blanco del editor; ahora un gris ILUS perceptible + los inputs con su
+   propio campo delimitado, para que se note "esto es un dato, no el
+   mensaje". */
+.rp-headers{padding:10px 14px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;display:none;}
 .rp-headers.show{display:block;}
 .rp-headers .row-h{display:flex;align-items:center;gap:8px;font-size:.78rem;margin-bottom:6px;}
 .rp-headers .row-h label{color:#6b7280;font-weight:700;width:44px;flex-shrink:0;}
-.rp-headers .row-h input{border:none;background:transparent;font-size:.82rem;flex:1;outline:none;}
-.rp-headers .row-h input:focus{background:#fff;}
-.rp-editor-wrap .ql-toolbar{border:none;border-bottom:1px solid #eaecf0;background:#fafafa;}
+.rp-headers .row-h input{border:1px solid #e5e7eb;background:#fff;border-radius:6px;padding:4px 8px;font-size:.82rem;flex:1;outline:none;}
+.rp-headers .row-h input:focus{border-color:#dc2626;}
+.rp-editor-wrap .ql-toolbar{border:none;border-bottom:1px solid #eaecf0;background:#f3f4f6;}
 /* Editor compacto por defecto (Daniel 2026-07-12: "la caja de texto es
    mas grande que el visualizador de mensajes" -- el hilo es el area
    principal, el editor no necesita ser enorme para escribir una
