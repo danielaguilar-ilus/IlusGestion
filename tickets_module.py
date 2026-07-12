@@ -357,6 +357,9 @@ def register_tickets_routes(app, ctx):
     _erp_buscar_clientes = ctx.get("_erp_buscar_clientes")
     _random_sql_query = ctx.get("_random_sql_query")
     _rut_cuerpo = ctx.get("_rut_cuerpo")
+    # Resolver de comuna (TABCM) + dirección: mismo motor ya probado que usa
+    # el resto de ILUS para direcciones ERP (Regla #4.1: solo SELECT).
+    _resolve_comuna_erp = ctx.get("_resolve_comuna_erp")
     # "Generar OT" (Tickets -> mant_visitas real): reusa el motor de OTs de
     # Mantenciones tal cual, sin duplicar logica (Regla #4 / arquitectura
     # acordada: estas funciones viven en app.py, un solo lugar versionado).
@@ -3681,6 +3684,9 @@ def register_tickets_routes(app, ctx):
                             ELSE LTRIM(RTRIM(COALESCE(en.NOKOENAMP,''))) END AS razon_social,
                        LTRIM(RTRIM(COALESCE(en.RTEN, '')))                   AS rut,
                        LTRIM(RTRIM(COALESCE(en.TIEN, '')))                   AS tien,
+                       LTRIM(RTRIM(COALESCE(en.DIEN, '')))                   AS direccion,
+                       LTRIM(RTRIM(COALESCE(en.CMEN, '')))                   AS cmen,
+                       LTRIM(RTRIM(COALESCE(en.CIEN, '')))                   AS cien,
                        CASE WHEN LTRIM(RTRIM(COALESCE(en.TIEN,''))) IN ('C','A')
                             THEN 0 ELSE 1 END                                AS ord_tien
                   FROM MAEEN en
@@ -3703,9 +3709,41 @@ def register_tickets_routes(app, ctx):
         print(f"[tk_erp_buscar_cliente] q={q!r} -> {len(rows)} filas en {elapsed_ms}ms "
               f"tien={[r.get('tien') for r in rows]}", flush=True)
 
-        resultados = [{"empresa": (r.get("razon_social") or "").strip() or "(Sin nombre en el ERP)",
-                       "rut": r.get("rut") or ""}
-                      for r in rows if (r.get("razon_social") or "").strip() or r.get("rut")]
+        # 2026-07-12 (Daniel): "hay RUT con varias direcciones -- necesito
+        # identificar cual GoFit/sucursal es" -- se agrega direccion+comuna
+        # resuelta (TABCM) a cada resultado, y si ese RUT YA tiene ficha en
+        # Clientes (mant_clientes) se marca para que la conexion sea "muy
+        # cercana" (evita duplicar un cliente que ya existe).
+        ruts_erp = [(r.get("rut") or "").strip() for r in rows if (r.get("rut") or "").strip()]
+        clientes_existentes = {}
+        if ruts_erp:
+            placeholders = ",".join(["%s"] * len(ruts_erp))
+            filas_cli = mysql_fetchall(
+                f"SELECT id, rut, razon_social FROM mant_clientes WHERE rut IN ({placeholders})",
+                tuple(ruts_erp)) or []
+            for fc in filas_cli:
+                clientes_existentes[(fc.get("rut") or "").strip()] = fc
+
+        resultados = []
+        for r in rows:
+            if not ((r.get("razon_social") or "").strip() or r.get("rut")):
+                continue
+            rut = (r.get("rut") or "").strip()
+            comuna = ""
+            if r.get("cmen") and _resolve_comuna_erp:
+                try:
+                    comuna = _resolve_comuna_erp(r.get("cmen"), r.get("cien") or "") or ""
+                except Exception:
+                    comuna = ""
+            cli_existente = clientes_existentes.get(rut)
+            resultados.append({
+                "empresa": (r.get("razon_social") or "").strip() or "(Sin nombre en el ERP)",
+                "rut": rut,
+                "direccion": (r.get("direccion") or "").strip(),
+                "comuna": comuna,
+                "ya_es_cliente": bool(cli_existente),
+                "cliente_id": cli_existente.get("id") if cli_existente else None,
+            })
         return jsonify({"ok": True, "resultados": resultados})
 
     # ─────────────────────────────────────────────────────────────────

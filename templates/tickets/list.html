@@ -175,6 +175,8 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 .nt-ac-item{padding:8px 11px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.83rem;}
 .nt-ac-item:hover,.nt-ac-item.hi{background:#fef2f2;}
 .nt-ac-item .rut{color:#dc2626;font-weight:800;font-family:'JetBrains Mono',monospace;font-size:.76rem;}
+.nt-ac-badge-cli{display:inline-flex;align-items:center;gap:3px;background:#dcfce7;color:#166534;
+  font-size:.64rem;font-weight:700;padding:1px 8px;border-radius:50px;margin-left:6px;white-space:nowrap;}
 .nt-ac-empty{padding:16px 10px;color:#94a3b8;font-size:.78rem;text-align:center;
   display:flex;flex-direction:column;align-items:center;gap:5px;}
 .nt-ac-empty i{font-size:1.25rem;opacity:.5;}
@@ -1066,8 +1068,19 @@ const ntBuscarCliente = debounce(async function(){
     const rows = d.resultados || [];
     if(!d.ok && d.error){ ntAcCli.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-exclamation-triangle"></i>'+esc(d.error)+'</div>'; return; }
     if(!rows.length){ ntAcCli.innerHTML = '<div class="nt-ac-empty"><i class="bi bi-search"></i>Sin resultados en el ERP</div>'; return; }
-    ntAcCli.innerHTML = rows.map((c,i)=>'<div class="nt-ac-item" data-i="'+i+'">'
-      + '<div>'+esc(c.empresa)+'</div><div class="rut">'+esc(c.rut||'—')+'</div></div>').join('');
+    // 2026-07-12 (Daniel): "hay RUT con varias direcciones -- necesito
+    // identificar cual sucursal es" -- se muestra direccion+comuna debajo
+    // del nombre para distinguir sucursales del mismo RUT (ej. varios
+    // GoFit), y un badge si ese RUT YA tiene ficha en el modulo Clientes
+    // (conexion cercana, para no crear un cliente duplicado sin darse cuenta).
+    ntAcCli.innerHTML = rows.map((c,i)=>{
+      const dirTxt = [c.direccion, c.comuna].filter(Boolean).join(', ');
+      const yaCliente = c.ya_es_cliente
+        ? '<span class="nt-ac-badge-cli"><i class="bi bi-patch-check-fill"></i> Ya es cliente</span>' : '';
+      return '<div class="nt-ac-item" data-i="'+i+'">'
+        + '<div>'+esc(c.empresa)+' '+yaCliente+'</div>'
+        + '<div class="rut">'+esc(c.rut||'—')+(dirTxt?' · '+esc(dirTxt):'')+'</div></div>';
+    }).join('');
     ntAcCli.querySelectorAll('.nt-ac-item').forEach(it=>it.addEventListener('click',()=>ntSelCliente(rows[+it.dataset.i])));
   }catch(e){ ntAcCli.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-wifi-off"></i>ERP no disponible</div>'; }
 }, 320);
@@ -1079,10 +1092,17 @@ function ntSelCliente(c){
   document.getElementById('ntBuscarCli').value = c.empresa || c.rut || '';
   document.getElementById('ntRut').value = c.rut || '';
   document.getElementById('ntEmpresa').value = c.empresa || '';
+  // Precarga direccion/comuna del ERP como punto de partida -- sigue siendo
+  // editable/verificable con Google Places (perfil logistico de Daniel).
+  if(c.direccion) document.getElementById('ntDireccion').value = c.direccion;
+  if(c.comuna) document.getElementById('ntComuna').value = c.comuna;
   limpiarNtErr('fRutWrap'); limpiarNtErr('fEmpresaWrap');
   if((c.rut||'').trim()) marcarNtOk('fRutWrap');
   if((c.empresa||'').trim()) marcarNtOk('fEmpresaWrap');
   document.querySelector('#ntBuscarCliWrap .nt-search').classList.add('has-tag');
+  if(c.ya_es_cliente){
+    ilusToast('Este RUT ya tiene ficha en el módulo Clientes' + (c.cliente_id ? ' (#'+c.cliente_id+')' : '') + '.', {type:'info'});
+  }
 }
 // El RUT/Empresa quedan editables tras seleccionar — si el usuario los borra
 // a mano, vuelven a marcarse como pendientes al validar (validarNtTodo).
