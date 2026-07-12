@@ -610,6 +610,13 @@ function tkaOpen(opts){
     onDone: (typeof opts.onDone === 'function') ? opts.onDone : null,
     rutPrefill: opts.rutPrefill || '',
   };
+  // Daniel 2026-07-12: "siempre recomiende el RUT del dueño de la ficha...
+  // así acortas camino cuando consultan por RUT". _tkaResetEstado() de
+  // arriba SIEMPRE deja _TKA.tab='doc' -- sin esto, la logica de abajo que
+  // pre-llena/auto-busca por RUT (mas abajo, en el setTimeout) nunca se
+  // alcanza a ejecutar porque exige tab!=='doc'. Si hay un RUT conocido de
+  // contexto, arrancamos directo en la pestaña "Por RUT/nombre".
+  if (_TKA.ctx.rutPrefill) tkaSetTab('cli');
 
   const assocBtn = document.getElementById('tkaAssocBtn');
   if (assocBtn){
