@@ -3093,43 +3093,77 @@ async function tkotGenerar(){
   const btnHTMLOrig = btn.innerHTML;
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando OT…';
   try{
-    const r = await fetch('/tickets/api/tickets/'+TID+'/generar-ot', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        ticket_id: TID,
-        cliente_id: _TKOT.cid,
-        titulo: document.getElementById('levSelectTitulo').value.trim(),
-        notas: document.getElementById('levSelectNotas').value.trim(),
-        equipo_ids: equipoIds,
-        equipos_ticket: equiposTicket,
-        descubrimiento: esDescubrimiento,
-        fecha_programada: fechaProg,
-        hora_inicio: horaIni || null,
-        hora_fin: horaFin || null,
-        fecha_fin: usaRango ? fechaFin : null,
-        hora_inicio_fin: usaRango ? (document.getElementById('levHoraIniFin')?.value || null) : null,
-        hora_fin_fin: usaRango ? (document.getElementById('levHoraFinFin')?.value || null) : null,
-        tecnico_ids: tecnicoIds,
-        tipo_ot: tipoSel,
-        aplica_garantia: document.getElementById('otAplicaGarantia')?.checked || false,
-        plantillas_por_equipo: plantillasPorEq,
-        direccion_visita: dirVal,
-        direccion_lat: parseFloat(document.getElementById('levDireccion')?.dataset.lat) || null,
-        direccion_lng: parseFloat(document.getElementById('levDireccion')?.dataset.lng) || null,
-        direccion_place_id: document.getElementById('levDireccion')?.dataset.placeId || null,
-        contacto_nombre: contactoNombre,
-        contacto_cargo: (document.getElementById('levContactoCargo')?.value || '').trim(),
-        contacto_tel: (document.getElementById('levContactoTel')?.value || '').trim(),
-        contacto_email: (document.getElementById('levContactoEmail')?.value || '').trim(),
-        contacto_origen: document.getElementById('levContactoSel')?.dataset.origen || 'manual',
-        acceso_ascensor: document.getElementById('acceso_ascensor')?.value || null,
-        acceso_estacionamiento: document.getElementById('acceso_estacionamiento')?.value || null,
-        acceso_piso: (document.getElementById('acceso_piso')?.value || '').trim(),
-        acceso_notas: (document.getElementById('acceso_notas')?.value || '').trim(),
-      })
-    });
-    const d = await r.json();
-    if(!d.ok){ ilusToast(d.error || 'Error', {type:'error'}); return; }
+    // Daniel 2026-07-13: el backend puede responder "requiere_confirmacion"
+    // (feriado y/o choque de horario) SIN "ok" ni "error" -- antes esto caia
+    // en el generico "Error" a secas, sin dar oportunidad de ver el aviso ni
+    // de forzar. Ahora se arma el payload una vez y se reintenta con los
+    // flags forzar_feriado/forzar_choque si el usuario confirma.
+    const payload = {
+      ticket_id: TID,
+      cliente_id: _TKOT.cid,
+      titulo: document.getElementById('levSelectTitulo').value.trim(),
+      notas: document.getElementById('levSelectNotas').value.trim(),
+      equipo_ids: equipoIds,
+      equipos_ticket: equiposTicket,
+      descubrimiento: esDescubrimiento,
+      fecha_programada: fechaProg,
+      hora_inicio: horaIni || null,
+      hora_fin: horaFin || null,
+      fecha_fin: usaRango ? fechaFin : null,
+      hora_inicio_fin: usaRango ? (document.getElementById('levHoraIniFin')?.value || null) : null,
+      hora_fin_fin: usaRango ? (document.getElementById('levHoraFinFin')?.value || null) : null,
+      tecnico_ids: tecnicoIds,
+      tipo_ot: tipoSel,
+      aplica_garantia: document.getElementById('otAplicaGarantia')?.checked || false,
+      plantillas_por_equipo: plantillasPorEq,
+      direccion_visita: dirVal,
+      direccion_lat: parseFloat(document.getElementById('levDireccion')?.dataset.lat) || null,
+      direccion_lng: parseFloat(document.getElementById('levDireccion')?.dataset.lng) || null,
+      direccion_place_id: document.getElementById('levDireccion')?.dataset.placeId || null,
+      contacto_nombre: contactoNombre,
+      contacto_cargo: (document.getElementById('levContactoCargo')?.value || '').trim(),
+      contacto_tel: (document.getElementById('levContactoTel')?.value || '').trim(),
+      contacto_email: (document.getElementById('levContactoEmail')?.value || '').trim(),
+      contacto_origen: document.getElementById('levContactoSel')?.dataset.origen || 'manual',
+      acceso_ascensor: document.getElementById('acceso_ascensor')?.value || null,
+      acceso_estacionamiento: document.getElementById('acceso_estacionamiento')?.value || null,
+      acceso_piso: (document.getElementById('acceso_piso')?.value || '').trim(),
+      acceso_notas: (document.getElementById('acceso_notas')?.value || '').trim(),
+      forzar_feriado: false,
+      forzar_choque: false,
+    };
+
+    let d;
+    for(let intento = 0; intento < 2; intento++){
+      const r = await fetch('/tickets/api/tickets/'+TID+'/generar-ot', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      d = await r.json();
+      if(d.ok || !d.requiere_confirmacion) break;
+
+      const adv = d.advertencias || {};
+      const partes = [];
+      if(adv.feriado) partes.push('📅 ' + (adv.feriado.nombre || 'Feriado') + ' (' + (adv.feriado.fecha || fechaProg) + ')');
+      if(adv.choque){
+        const nomTec = adv.choque.tecnico_nombre || 'el técnico';
+        const otras = (adv.choque.visitas || []).map(function(v){
+          return (v.numero_ot || ('OT #'+v.visita_id)) + ' ' + (v.hora_inicio||'') + '–' + (v.hora_fin||'');
+        }).join(', ');
+        partes.push('⏰ ' + nomTec + ' ya tiene otra visita ese día' + (otras ? ' (' + otras + ')' : ''));
+      }
+      const seguir = await ilusConfirm({
+        title: 'Antes de continuar',
+        message: partes.join('<br>'), subHtml: true,
+        sub: '¿Quieres generar la OT de todas formas?',
+        okLabel: 'Sí, continuar', cancelLabel: 'Volver a revisar',
+        type: 'warning',
+      });
+      if(!seguir) return;
+      if(adv.feriado) payload.forzar_feriado = true;
+      if(adv.choque) payload.forzar_choque = true;
+    }
+    if(!d.ok){ ilusToast(d.error || 'No se pudo generar la OT', {type:'error'}); return; }
 
     const visitaId = d.visita_id;
     const modalInst = bootstrap.Modal.getInstance(document.getElementById('modalGenerarOT'));
