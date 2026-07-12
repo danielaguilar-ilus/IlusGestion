@@ -40791,17 +40791,44 @@ def repuestos_hub_list():
     rediseño (Repuestos hoy solo vivía por-cliente, dentro de la pestaña
     'Repuestos' de la ficha). Lista repuestos de TODOS los clientes,
     reusando la MISMA tabla mant_repuestos (sin cliente_id fijo) — no se
-    crea ninguna tabla/estructura nueva."""
+    crea ninguna tabla/estructura nueva.
+
+    Ampliación 2026-07-12 (Daniel — planilla real de seguimiento): ahora
+    muestra ubicación/motivo/N°OT/ticket/garantía/marca (columnas nuevas
+    de mant_repuestos), permite filtrar/ordenar por ellas, y trae el
+    proveedor con su canal de contacto (mant_proveedores_repuesto) para
+    el botón "Asignar a ticket". cliente_id ahora puede ser NULL (repuestos
+    de la planilla sin cliente ligado) → LEFT JOIN en vez de JOIN."""
     filtro_estado = (request.args.get("estado") or "").strip()
     filtro_q = (request.args.get("q") or "").strip()
+    filtro_ticket = (request.args.get("ticket") or "").strip()  # "con"|"sin"|""
+    orden = (request.args.get("orden") or "fecha_desc").strip()
+
+    orden_map = {
+        "fecha_desc":   "r.fecha DESC, r.id DESC",
+        "fecha_asc":    "r.fecha ASC, r.id ASC",
+        "nombre_asc":   "r.nombre ASC",
+        "estado_asc":   "r.estado ASC, r.fecha DESC",
+        "cliente_asc":  "c.razon_social ASC, r.fecha DESC",
+        "ubicacion_asc":"r.ubicacion ASC, r.fecha DESC",
+    }
+    order_by = orden_map.get(orden, orden_map["fecha_desc"])
 
     sql = (
         "SELECT r.id, r.sku, r.nombre, r.cantidad, r.costo_unitario, "
         "       r.precio_venta, r.tipo, r.estado, r.proveedor, r.fecha, "
         "       r.cliente_id, c.razon_social AS cliente_nombre, "
-        "       r.visita_id "
+        "       r.cliente_texto_original, r.visita_id, "
+        "       r.marca, r.ubicacion, r.ua, r.motivo, r.numero_ot, "
+        "       r.codigo_repuesto, r.garantia, r.recomendacion, "
+        "       r.ticket_id, t.numero_ticket, "
+        "       r.proveedor_id, p.nombre AS proveedor_nombre, "
+        "       p.telefono AS proveedor_telefono, p.email AS proveedor_email, "
+        "       p.canal_preferido AS proveedor_canal, p.contacto_nombre AS proveedor_contacto "
         "  FROM mant_repuestos r "
-        "  JOIN mant_clientes c ON c.id = r.cliente_id "
+        "  LEFT JOIN mant_clientes c ON c.id = r.cliente_id "
+        "  LEFT JOIN tk_tickets t ON t.id = r.ticket_id "
+        "  LEFT JOIN mant_proveedores_repuesto p ON p.id = r.proveedor_id "
         " WHERE 1=1 "
     )
     params = []
@@ -40809,10 +40836,16 @@ def repuestos_hub_list():
         sql += " AND r.estado = %s "
         params.append(filtro_estado)
     if filtro_q:
-        sql += " AND (r.nombre LIKE %s OR r.sku LIKE %s OR c.razon_social LIKE %s) "
+        sql += (" AND (r.nombre LIKE %s OR r.sku LIKE %s OR c.razon_social LIKE %s "
+                 "OR r.cliente_texto_original LIKE %s OR r.ubicacion LIKE %s "
+                 "OR r.numero_ot LIKE %s OR r.codigo_repuesto LIKE %s) ")
         like = f"%{filtro_q}%"
-        params.extend([like, like, like])
-    sql += " ORDER BY r.fecha DESC, r.id DESC LIMIT 300"
+        params.extend([like, like, like, like, like, like, like])
+    if filtro_ticket == "con":
+        sql += " AND r.ticket_id IS NOT NULL "
+    elif filtro_ticket == "sin":
+        sql += " AND r.ticket_id IS NULL "
+    sql += f" ORDER BY {order_by} LIMIT 300"
 
     repuestos = mysql_fetchall(sql, tuple(params)) or []
 
@@ -40822,6 +40855,7 @@ def repuestos_hub_list():
         "clientes_hub/repuestos.html",
         repuestos=repuestos, estados=estados,
         filtro_estado=filtro_estado, filtro_q=filtro_q,
+        filtro_ticket=filtro_ticket, orden=orden,
     )
 
 
@@ -64778,6 +64812,76 @@ def mant_repuesto_del(rid):
         conn.close()
 
 
+@app.route("/mantenciones/api/repuestos/<int:rid>/asignar-ticket", methods=["POST"])
+@_mant_required
+def mant_repuesto_asignar_ticket(rid):
+    """Liga un repuesto (mant_repuestos) a un ticket existente (tk_tickets).
+    2026-07-12 (Daniel): "cuando abro un ticket quiero ver el repuesto y
+    el contacto del proveedor ahí mismo". body: {ticket_id: int|None}
+    ticket_id=None desvincula (permite corregir una asignación errada)."""
+    try:
+        d = request.get_json(silent=True) or {}
+        ticket_id = d.get("ticket_id")
+        rep = mysql_fetchone("SELECT id, nombre FROM mant_repuestos WHERE id=%s", (rid,))
+        if not rep:
+            return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+        if ticket_id in (None, "", 0, "0"):
+            mysql_execute("UPDATE mant_repuestos SET ticket_id=NULL WHERE id=%s", (rid,))
+            _mant_log("repuesto", rid, "desasignar_ticket", rep.get("nombre") or "")
+            return jsonify({"ok": True, "ticket_id": None})
+        try:
+            ticket_id = int(ticket_id)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "ticket_id inválido"}), 400
+        tk = mysql_fetchone("SELECT id, numero_ticket FROM tk_tickets WHERE id=%s", (ticket_id,))
+        if not tk:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        mysql_execute("UPDATE mant_repuestos SET ticket_id=%s WHERE id=%s", (ticket_id, rid))
+        _mant_log("repuesto", rid, "asignar_ticket",
+                  f"{rep.get('nombre') or ''} -> ticket {tk.get('numero_ticket') or ticket_id}")
+        return jsonify({"ok": True, "ticket_id": ticket_id, "numero_ticket": tk.get("numero_ticket")})
+    except Exception as e:
+        print(f"[mant_repuesto_asignar_ticket] CRASH rid={rid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error interno", "error_codigo": "INTERNAL_CRASH"}), 500
+
+
+@app.route("/mantenciones/api/proveedores-repuesto", methods=["GET"])
+@_mant_required
+def mant_proveedores_repuesto_list():
+    """Catálogo de proveedores de repuestos (para el selector del modal
+    de ficha de proveedor). Filtro opcional ?q="""
+    q = (request.args.get("q") or "").strip()
+    sql = "SELECT * FROM mant_proveedores_repuesto"
+    params = []
+    if q:
+        sql += " WHERE nombre LIKE %s"
+        params.append(f"%{q}%")
+    sql += " ORDER BY nombre LIMIT 100"
+    rows = mysql_fetchall(sql, tuple(params)) or []
+    return jsonify({"ok": True, "proveedores": [dict(r) for r in rows]})
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/<int:pid>", methods=["PUT"])
+@_mant_required
+def mant_proveedor_repuesto_update(pid):
+    """Edita contacto/canal preferido de un proveedor de repuestos."""
+    d = request.get_json(silent=True) or {}
+    allowed = ["contacto_nombre", "telefono", "email", "canal_preferido", "notas"]
+    sets, vals = [], []
+    for f in allowed:
+        if f in d:
+            sets.append(f"{f}=%s")
+            vals.append(d[f] if d[f] not in ("", "null") else None)
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin campos"}), 400
+    try:
+        mysql_execute(f"UPDATE mant_proveedores_repuesto SET {','.join(sets)} WHERE id=%s", tuple(vals) + (pid,))
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[mant_proveedor_repuesto_update] CRASH pid={pid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error interno"}), 500
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  FINANZAS DEL CLIENTE — agregados de ingresos/costos/margen
 # ══════════════════════════════════════════════════════════════════════
@@ -69786,7 +69890,256 @@ def _ensure_mant_intel_tables():
                 (clave, valor, tipo, categoria, label, unidad, orden))
     except Exception as e:
         print(f"[ensure_intel] seed reglas: {e}", flush=True)
+    # ════════════════════════════════════════════════════════════════
+    # 2026-07-12 (Daniel) — REPUESTOS ampliado. Daniel trajo su propia
+    # planilla de seguimiento real (repuestos_2026-07-10.csv, 72 filas)
+    # con columnas que mant_repuestos no tenía: Marca, Ubicación, UA,
+    # Motivo, N° OT, TicketID, Código Repuesto, Garantía, Recomendación.
+    # También pidió poder ligar el repuesto a un proveedor CON canal de
+    # contacto (WhatsApp/WeChat/teléfono/email) para verlo directo desde
+    # el ticket. Todo idempotente vía information_schema, patrón ya
+    # usado arriba (costo_proveedor, aplica_mantencion, etc.).
+    # ════════════════════════════════════════════════════════════════
+    try:
+        ex_rep = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos'") or [])}
+        for _col, _ddl in (
+            ("marca",                  "marca VARCHAR(120) NULL COMMENT 'Marca del repuesto/equipo'"),
+            ("ubicacion",              "ubicacion VARCHAR(160) NULL COMMENT 'Ubicación física, ej: armado 1'"),
+            ("ua",                     "ua VARCHAR(60) NULL COMMENT 'Unidad de armado / UA de la planilla original'"),
+            ("motivo",                 "motivo TEXT NULL COMMENT 'Motivo del requerimiento del repuesto'"),
+            ("numero_ot",              "numero_ot VARCHAR(60) NULL COMMENT 'N° OT relacionada (texto libre, viene de la planilla)'"),
+            ("ticket_id",              "ticket_id INT NULL COMMENT 'FK opcional a tk_tickets.id — repuesto asignado a un ticket'"),
+            ("codigo_repuesto",        "codigo_repuesto VARCHAR(120) NULL COMMENT 'Código interno del repuesto (distinto de sku ERP)'"),
+            ("garantia",               "garantia VARCHAR(120) NULL COMMENT 'Estado/nota de garantía tal como la registró Daniel'"),
+            ("recomendacion",          "recomendacion TEXT NULL COMMENT 'Recomendación del operador sobre este repuesto'"),
+            ("proveedor_id",           "proveedor_id INT NULL COMMENT 'FK opcional a mant_proveedores_repuesto.id (proveedor texto libre se mantiene en la columna proveedor)'"),
+            ("csv_uuid",               "csv_uuid VARCHAR(64) NULL COMMENT 'UUID de origen cuando el registro viene de la planilla CSV de Daniel (clave natural para import idempotente)'"),
+            ("cliente_texto_original", "cliente_texto_original VARCHAR(200) NULL COMMENT 'Texto libre de Cliente del CSV cuando no calzó con mant_clientes'"),
+        ):
+            if _col not in ex_rep:
+                mysql_execute(f"ALTER TABLE mant_repuestos ADD COLUMN {_ddl}")
+                faltaron.append(f"mant_repuestos.{_col}")
+        if "csv_uuid" not in ex_rep:
+            try:
+                mysql_execute("ALTER TABLE mant_repuestos ADD UNIQUE INDEX uq_rep_csv_uuid (csv_uuid)")
+            except Exception as e_idx:
+                print(f"[ensure_intel] uq_rep_csv_uuid: {e_idx}", flush=True)
+        if "ticket_id" not in ex_rep:
+            try:
+                mysql_execute("ALTER TABLE mant_repuestos ADD INDEX idx_rep_ticket (ticket_id)")
+            except Exception as e_idx2:
+                print(f"[ensure_intel] idx_rep_ticket: {e_idx2}", flush=True)
+        # Relajar cliente_id a NULL: el CSV de Daniel trae repuestos con
+        # "Cliente" = texto libre no ligado a un cliente real (ej "ilus")
+        # — no podemos forzarlos a un cliente_id inventado. El CRUD real
+        # (mant_repuesto_crear) sigue mandando cliente_id siempre, así
+        # que esto no cambia el comportamiento de la ficha de cliente.
+        try:
+            col_ci = mysql_fetchone(
+                "SELECT IS_NULLABLE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos' AND COLUMN_NAME='cliente_id'")
+            if col_ci and (col_ci.get("IS_NULLABLE") or "").upper() == "NO":
+                mysql_execute("ALTER TABLE mant_repuestos MODIFY COLUMN cliente_id INT NULL")
+                faltaron.append("mant_repuestos.cliente_id->NULL")
+        except Exception as e_ci:
+            print(f"[ensure_intel] cliente_id NULL: {e_ci}", flush=True)
+        # La FK original (ON DELETE CASCADE) ya no aplica bien con NULL
+        # permitido pero MySQL la respeta igual (FK con NULL simplemente
+        # no participa) — no hace falta tocarla.
+    except Exception as e:
+        print(f"[ensure_intel] mant_repuestos ampliado: {e}", flush=True)
+
+    # Tabla de proveedores de repuestos con canal de contacto preferido
+    # (WhatsApp/WeChat/teléfono/email) — Daniel: "cuando abro un ticket
+    # de Nantong quiero ver ahí mismo el contacto y por dónde escribirle".
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_proveedores_repuesto (
+                id              INT AUTO_INCREMENT PRIMARY KEY,
+                nombre          VARCHAR(200) NOT NULL,
+                contacto_nombre VARCHAR(200) NULL,
+                telefono        VARCHAR(50) NULL,
+                email           VARCHAR(200) NULL,
+                canal_preferido ENUM('whatsapp','wechat','telefono','email') NULL,
+                notas           TEXT NULL,
+                created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE INDEX uq_prov_nombre (nombre)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_intel] mant_proveedores_repuesto: {e}", flush=True)
+
+    # Resolver proveedor(texto libre) -> proveedor_id por coincidencia de
+    # nombre. Idempotente: solo toca filas con proveedor_id NULL y
+    # proveedor no vacío; usa INSERT IGNORE para no duplicar el proveedor
+    # si esto corre en cada boot.
+    try:
+        _pend = mysql_fetchall(
+            "SELECT DISTINCT TRIM(proveedor) AS nombre FROM mant_repuestos "
+            "WHERE proveedor_id IS NULL AND proveedor IS NOT NULL AND TRIM(proveedor) <> ''"
+        ) or []
+        for _p in _pend:
+            _nombre = (_p.get("nombre") or "").strip()
+            if not _nombre:
+                continue
+            try:
+                mysql_execute(
+                    "INSERT IGNORE INTO mant_proveedores_repuesto (nombre) VALUES (%s)",
+                    (_nombre,)
+                )
+                _prow = mysql_fetchone(
+                    "SELECT id FROM mant_proveedores_repuesto WHERE nombre=%s", (_nombre,)
+                )
+                if _prow and _prow.get("id"):
+                    mysql_execute(
+                        "UPDATE mant_repuestos SET proveedor_id=%s "
+                        "WHERE proveedor_id IS NULL AND TRIM(proveedor)=%s",
+                        (_prow["id"], _nombre)
+                    )
+            except Exception as e_match:
+                print(f"[ensure_intel] resolver proveedor '{_nombre}': {e_match}", flush=True)
+    except Exception as e:
+        print(f"[ensure_intel] resolver proveedores: {e}", flush=True)
+
+    # Import del CSV real de Daniel (repuestos_2026-07-10.csv) — idempotente
+    # vía csv_uuid. No falla el boot si el archivo no existe en el servidor
+    # (Cloud Run no tiene el Downloads de Daniel; esto corre en local/dev
+    # cuando el archivo está presente, y es un no-op silencioso en prod).
+    try:
+        _n_import = _ensure_import_repuestos_csv_daniel()
+        if _n_import:
+            print(f"[ensure_intel] repuestos CSV importados: {_n_import}", flush=True)
+    except Exception as e:
+        print(f"[ensure_intel] import CSV repuestos: {e}", flush=True)
+
     return faltaron
+
+
+def _ensure_import_repuestos_csv_daniel():
+    """Importa (idempotente, por csv_uuid) el CSV real de seguimiento de
+    repuestos que Daniel entregó: repuestos_2026-07-10.csv (72 filas,
+    separador ';', BOM UTF-8). Columnas del CSV:
+      ID;Marca;Ubicación;UA;SKU;Descripción;Cantidad;Motivo;Cliente;
+      NumeroOT;TicketID;CodigoRepuesto;NombreRepuesto;Proveedor;Costo;
+      Estado;Garantía;Recomendación;Creado;Actualizado
+
+    Ruta configurable vía env REPUESTOS_CSV_PATH; si no existe el archivo
+    (ej. en Cloud Run, donde no hay Downloads locales), no hace nada y no
+    revienta el boot — es exactamente el mismo patrón que los demás
+    `_ensure_*`: correr en el próximo boot cuando el archivo esté presente.
+    """
+    import csv as _csv
+    import os as _os
+    from datetime import datetime as _dt
+
+    path = _os.environ.get(
+        "REPUESTOS_CSV_PATH",
+        r"C:\Users\DANIE\Downloads\repuestos_2026-07-10.csv"
+    )
+    if not _os.path.isfile(path):
+        return 0
+
+    def _parse_fecha(s):
+        s = (s or "").strip()
+        if not s:
+            return None
+        for fmt in ("%d-%m-%Y %H:%M", "%d-%m-%Y"):
+            try:
+                return _dt.strptime(s, fmt)
+            except Exception:
+                continue
+        return None
+
+    def _num(s):
+        s = (s or "").strip().replace(".", "").replace(",", ".")
+        try:
+            return float(s) if s else 0.0
+        except Exception:
+            return 0.0
+
+    importados = 0
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = _csv.DictReader(f, delimiter=";")
+        for row in reader:
+            uuid_csv = (row.get("ID") or "").strip()
+            if not uuid_csv:
+                continue
+            ya = mysql_fetchone(
+                "SELECT id FROM mant_repuestos WHERE csv_uuid=%s", (uuid_csv,)
+            )
+            if ya:
+                continue  # idempotente: ya importado en un boot anterior
+
+            cliente_txt = (row.get("Cliente") or "").strip()
+            cliente_id = None
+            cliente_texto_original = None
+            if cliente_txt:
+                _cli = mysql_fetchone(
+                    "SELECT id FROM mant_clientes WHERE razon_social LIKE %s LIMIT 1",
+                    (f"%{cliente_txt}%",)
+                )
+                if _cli and _cli.get("id"):
+                    cliente_id = _cli["id"]
+                else:
+                    cliente_texto_original = cliente_txt
+
+            proveedor_txt = (row.get("Proveedor") or "").strip()
+            costo = _num(row.get("Costo"))
+            cantidad = _num(row.get("Cantidad")) or 1
+            estado_csv = (row.get("Estado") or "").strip().lower()
+            # Mapeo best-effort al ENUM existente de mant_repuestos.estado
+            # (cotizado/aprobado/instalado/facturado/cancelado). "pending"
+            # (valor visto en el CSV real de Daniel) → cotizado.
+            estado_map = {
+                "pending": "cotizado", "pendiente": "cotizado",
+                "aprobado": "aprobado", "instalado": "instalado",
+                "facturado": "facturado", "cancelado": "cancelado",
+            }
+            estado = estado_map.get(estado_csv, "cotizado")
+
+            creado_dt = _parse_fecha(row.get("Creado"))
+            actualizado_dt = _parse_fecha(row.get("Actualizado"))
+
+            fields = {
+                "cliente_id": cliente_id,
+                "cliente_texto_original": cliente_texto_original,
+                "sku": (row.get("SKU") or "").strip()[:120] or None,
+                "nombre": (row.get("NombreRepuesto") or row.get("Descripción") or "Repuesto sin nombre").strip()[:400],
+                "descripcion": (row.get("Descripción") or "").strip(),
+                "cantidad": cantidad,
+                "costo_unitario": costo,
+                "precio_venta": 0,
+                "moneda": "CLP",
+                "tipo": "reposicion",
+                "estado": estado,
+                "proveedor": proveedor_txt[:200] or None,
+                "marca": (row.get("Marca") or "").strip()[:120] or None,
+                "ubicacion": (row.get("Ubicación") or "").strip()[:160] or None,
+                "ua": (row.get("UA") or "").strip()[:60] or None,
+                "motivo": (row.get("Motivo") or "").strip() or None,
+                "numero_ot": (row.get("NumeroOT") or "").strip()[:60] or None,
+                "codigo_repuesto": (row.get("CodigoRepuesto") or "").strip()[:120] or None,
+                "garantia": (row.get("Garantía") or "").strip()[:120] or None,
+                "recomendacion": (row.get("Recomendación") or "").strip() or None,
+                "csv_uuid": uuid_csv,
+                "fecha": (creado_dt.date() if creado_dt else None),
+                "created_by": "import_csv_daniel",
+            }
+            cols = [c for c in fields if fields[c] is not None]
+            vals = [fields[c] for c in cols]
+            try:
+                mysql_execute(
+                    f"INSERT INTO mant_repuestos ({','.join(cols)}) "
+                    f"VALUES ({','.join(['%s']*len(cols))})",
+                    tuple(vals)
+                )
+                importados += 1
+            except Exception as e_ins:
+                print(f"[import_csv_repuestos] fila {uuid_csv}: {e_ins}", flush=True)
+    return importados
 
 
 def _ensure_levantamiento_target_field():

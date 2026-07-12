@@ -9,21 +9,68 @@
 .rep-facturado{background:#fff8e1;color:#b45309}
 .rep-cancelado{background:#fee2e2;color:#991b1b}
 .rep-table-wrap{overflow-x:auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
-.rep-table{width:100%;border-collapse:collapse;min-width:700px}
+.rep-table{width:100%;border-collapse:collapse;min-width:980px}
 .rep-table th{font-size:.72rem;text-transform:uppercase;color:#6b7280;padding:10px 14px;text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap}
 .rep-table td{padding:10px 14px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
 .rep-table tr:last-child td{border-bottom:none}
 .rep-table a.rep-link{color:#0a0a0a;font-weight:600;text-decoration:none}
 .rep-table a.rep-link:hover{color:#dc2626}
 .rep-filters .btn{min-height:44px}
-@media (max-width: 576px){.rep-table th:nth-child(6),.rep-table td:nth-child(6){display:none}}
+.rep-filters select, .rep-filters input{font-size:16px}
+.rep-meta-line{font-size:.76rem;color:#6b7280;line-height:1.5}
+.rep-ticket-badge{font-size:.7rem;font-weight:800;color:#dc2626;background:#fee2e2;border-radius:50px;padding:2px 9px;text-decoration:none;display:inline-block}
+.rep-ticket-badge:hover{background:#dc2626;color:#fff}
+.rep-btn-asignar{
+  background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:8px 12px;
+  font-size:.78rem;font-weight:700;cursor:pointer;white-space:nowrap;min-height:36px;
+}
+.rep-btn-asignar:hover{background:#dc2626}
+@media (max-width: 576px){
+  .rep-table th:nth-child(6),.rep-table td:nth-child(6),
+  .rep-table th:nth-child(7),.rep-table td:nth-child(7){display:none}
+}
+
+/* ── Modal "Asignar a ticket" (simple, mobile-first, sin bootstrap modal) ── */
+.repat-backdrop{position:fixed;inset:0;z-index:1085;background:rgba(15,23,42,.55);
+  backdrop-filter:blur(6px);opacity:0;pointer-events:none;transition:opacity .25s}
+.repat-backdrop.is-open{opacity:1;pointer-events:auto}
+.repat-modal{position:fixed;z-index:1086;inset:auto 0 0 0;width:100%;max-width:560px;margin:0 auto;
+  background:#fff;border-radius:18px 18px 0 0;box-shadow:0 -20px 60px -10px rgba(15,23,42,.4);
+  transform:translateY(100%);transition:transform .35s cubic-bezier(.34,1.56,.64,1);
+  max-height:88vh;max-height:88dvh;overflow:hidden;display:flex;flex-direction:column;
+  pointer-events:none;visibility:hidden}
+.repat-modal.is-open{transform:translateY(0);pointer-events:auto;visibility:visible}
+@media(min-width:768px){
+  .repat-modal{inset:50% 0 auto 0;top:50%;transform:translateY(calc(-50% + 30px));border-radius:16px;max-height:80vh}
+  .repat-modal.is-open{transform:translateY(-50%)}
+}
+.repat-head{padding:16px 20px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between}
+.repat-head h5{margin:0;font-weight:800;color:#0a0a0a}
+.repat-close{width:40px;height:40px;border-radius:9px;background:#f3f4f6;border:none;font-size:1.1rem;color:#6b7280}
+.repat-close:hover{background:#dc2626;color:#fff}
+.repat-body{padding:16px 20px;overflow-y:auto;flex:1}
+.repat-body input{font-size:16px;width:100%;padding:11px 14px;border:1.5px solid #e5e7eb;border-radius:10px;margin-bottom:10px}
+.repat-body input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.repat-tk-item{padding:10px 12px;border:1.5px solid #e5e7eb;border-radius:10px;margin-bottom:8px;cursor:pointer;transition:.15s}
+.repat-tk-item:hover{border-color:#dc2626;background:#fef2f2}
+.repat-tk-item .num{font-family:monospace;font-weight:800;color:#dc2626}
+.repat-tk-item .empresa{font-weight:600;color:#0a0a0a}
+.repat-prov-card{margin-top:14px;padding:14px;border-radius:12px;background:#f9fafb;border:1px solid #e5e7eb}
+.repat-prov-card h6{margin:0 0 8px;font-weight:800;font-size:.9rem;color:#0a0a0a}
+.repat-prov-chan{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;
+  font-weight:700;font-size:.85rem;text-decoration:none;color:#fff;min-height:40px}
+.repat-prov-chan.whatsapp{background:#16a34a}
+.repat-prov-chan.wechat{background:#07C160}
+.repat-prov-chan.telefono{background:#3b82f6}
+.repat-prov-chan.email{background:#6b7280}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-gear-wide-connected me-2"></i>Repuestos</h4>
     <div class="sub">Vista de todos los repuestos cotizados/instalados por cliente. Para agregar o
-      editar un repuesto puntual, ábrelo desde la ficha del cliente (pestaña "Repuestos").</div>
+      editar un repuesto puntual, ábrelo desde la ficha del cliente (pestaña "Repuestos").
+      Incluye la planilla real de seguimiento de Daniel (ubicación, motivo, N° OT, garantía).</div>
   </div>
 </div>
 
@@ -31,16 +78,29 @@
   <div class="input-group" style="max-width:300px">
     <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
     <input type="text" name="q" value="{{ filtro_q }}" class="form-control"
-           placeholder="Buscar por nombre, SKU o cliente..." style="font-size:16px">
+           placeholder="Nombre, SKU, cliente, ubicación, N° OT..." style="font-size:16px">
   </div>
-  <select name="estado" class="form-select" style="max-width:200px;font-size:16px" onchange="this.form.submit()">
+  <select name="estado" class="form-select" style="max-width:190px" onchange="this.form.submit()">
     <option value="">Todos los estados</option>
     {% for e in estados %}
     <option value="{{ e }}" {% if filtro_estado==e %}selected{% endif %}>{{ e|capitalize }}</option>
     {% endfor %}
   </select>
+  <select name="ticket" class="form-select" style="max-width:170px" onchange="this.form.submit()">
+    <option value="">Con/sin ticket</option>
+    <option value="con" {% if filtro_ticket=='con' %}selected{% endif %}>Con ticket asignado</option>
+    <option value="sin" {% if filtro_ticket=='sin' %}selected{% endif %}>Sin ticket</option>
+  </select>
+  <select name="orden" class="form-select" style="max-width:190px" onchange="this.form.submit()">
+    <option value="fecha_desc" {% if orden=='fecha_desc' %}selected{% endif %}>Más reciente</option>
+    <option value="fecha_asc" {% if orden=='fecha_asc' %}selected{% endif %}>Más antiguo</option>
+    <option value="nombre_asc" {% if orden=='nombre_asc' %}selected{% endif %}>Nombre A-Z</option>
+    <option value="estado_asc" {% if orden=='estado_asc' %}selected{% endif %}>Estado</option>
+    <option value="cliente_asc" {% if orden=='cliente_asc' %}selected{% endif %}>Cliente A-Z</option>
+    <option value="ubicacion_asc" {% if orden=='ubicacion_asc' %}selected{% endif %}>Ubicación</option>
+  </select>
   <button class="btn btn-danger" type="submit">Filtrar</button>
-  {% if filtro_q or filtro_estado %}
+  {% if filtro_q or filtro_estado or filtro_ticket or (orden and orden != 'fecha_desc') %}
   <a href="{{ url_for('repuestos_hub_list') }}" class="btn btn-outline-secondary">
     <i class="bi bi-x-lg"></i> Limpiar
   </a>
@@ -53,35 +113,191 @@
       <tr>
         <th>Repuesto</th>
         <th>Cliente</th>
-        <th>Cant.</th>
+        <th>Ubicación / Motivo</th>
         <th>Costo</th>
-        <th>Venta</th>
-        <th>Tipo</th>
         <th>Estado</th>
+        <th>Garantía</th>
+        <th>Ticket</th>
         <th>Fecha</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for r in repuestos %}
       <tr>
         <td>
+          {% if r.cliente_id %}
           <a class="rep-link" href="{{ url_for('clientes_hub_ficha', cid=r.cliente_id) }}#tab-repuestos">
             {{ r.nombre }}
           </a>
-          {% if r.sku %}<div class="text-muted small">SKU {{ r.sku }}</div>{% endif %}
+          {% else %}
+          <span class="rep-link">{{ r.nombre }}</span>
+          {% endif %}
+          <div class="rep-meta-line">
+            {% if r.sku %}SKU {{ r.sku }}{% endif %}
+            {% if r.marca %} · {{ r.marca }}{% endif %}
+            {% if r.codigo_repuesto %} · cód. {{ r.codigo_repuesto }}{% endif %}
+          </div>
         </td>
-        <td>{{ r.cliente_nombre }}</td>
-        <td>{{ r.cantidad }}</td>
+        <td>
+          {{ r.cliente_nombre or r.cliente_texto_original or '—' }}
+          {% if r.proveedor_nombre %}
+          <div class="rep-meta-line"><i class="bi bi-truck"></i> {{ r.proveedor_nombre }}</div>
+          {% elif r.proveedor %}
+          <div class="rep-meta-line"><i class="bi bi-truck"></i> {{ r.proveedor }}</div>
+          {% endif %}
+        </td>
+        <td class="rep-meta-line">
+          {% if r.ubicacion %}<div>{{ r.ubicacion }}{% if r.ua %} · {{ r.ua }}{% endif %}</div>{% endif %}
+          {% if r.motivo %}<div>{{ r.motivo[:80] }}{% if r.motivo|length > 80 %}…{% endif %}</div>{% endif %}
+          {% if r.numero_ot %}<div>OT {{ r.numero_ot }}</div>{% endif %}
+        </td>
         <td>${{ '{:,.0f}'.format(r.costo_unitario|float).replace(',', '.') if r.costo_unitario else 0 }}</td>
-        <td>${{ '{:,.0f}'.format(r.precio_venta|float).replace(',', '.') if r.precio_venta else 0 }}</td>
-        <td class="text-muted small">{{ r.tipo }}</td>
         <td><span class="rep-badge rep-{{ r.estado }}">{{ r.estado }}</span></td>
+        <td class="rep-meta-line">{{ r.garantia or '—' }}</td>
+        <td>
+          {% if r.ticket_id %}
+          <a class="rep-ticket-badge" href="{{ url_for('tk_ficha', tid=r.ticket_id) }}" target="_blank">
+            {{ r.numero_ticket or ('#' ~ r.ticket_id) }}
+          </a>
+          {% else %}
+          <span class="text-muted small">—</span>
+          {% endif %}
+        </td>
         <td class="text-muted small">{{ r.fecha.strftime('%d/%m/%Y') if r.fecha and r.fecha.strftime else (r.fecha or '—') }}</td>
+        <td>
+          <button type="button" class="rep-btn-asignar"
+                  onclick='repatOpen({{ r.id }}, {{ (r.proveedor_id or "null") }}, {{ (r.ticket_id or "null") }})'>
+            <i class="bi bi-link-45deg"></i> Ticket
+          </button>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="text-center text-muted py-4">No hay repuestos que coincidan con el filtro.</td></tr>
+      <tr><td colspan="9" class="text-center text-muted py-4">No hay repuestos que coincidan con el filtro.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+
+<!-- Modal "Asignar a ticket" + ficha rápida de proveedor -->
+<div class="repat-backdrop" id="repatBackdrop" onclick="repatClose()"></div>
+<div class="repat-modal" id="repatModal" role="dialog" aria-modal="true">
+  <div class="repat-head">
+    <h5><i class="bi bi-link-45deg me-1" style="color:#dc2626"></i>Asignar repuesto a ticket</h5>
+    <button type="button" class="repat-close" onclick="repatClose()"><i class="bi bi-x-lg"></i></button>
+  </div>
+  <div class="repat-body">
+    <input type="text" id="repatSearch" placeholder="Buscar ticket por N°, empresa o RUT..."
+           oninput="repatBuscarDebounced()">
+    <div id="repatResults"></div>
+    <div id="repatProvCard"></div>
+  </div>
+</div>
+
+<script>
+const _REPAT = { repuestoId: null, proveedorId: null, timer: null };
+
+function repatOpen(repuestoId, proveedorId, ticketIdActual){
+  _REPAT.repuestoId = repuestoId;
+  _REPAT.proveedorId = proveedorId;
+  document.getElementById('repatSearch').value = '';
+  document.getElementById('repatResults').innerHTML =
+    '<div class="text-muted small py-2">Escribe para buscar un ticket…</div>';
+  _repatRenderProveedor(proveedorId);
+  document.getElementById('repatBackdrop').classList.add('is-open');
+  document.getElementById('repatModal').classList.add('is-open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(()=> document.getElementById('repatSearch').focus(), 250);
+}
+function repatClose(){
+  document.getElementById('repatBackdrop').classList.remove('is-open');
+  document.getElementById('repatModal').classList.remove('is-open');
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') repatClose();
+});
+
+function repatBuscarDebounced(){
+  clearTimeout(_REPAT.timer);
+  _REPAT.timer = setTimeout(repatBuscar, 350);
+}
+
+async function repatBuscar(){
+  const q = (document.getElementById('repatSearch').value || '').trim();
+  const cont = document.getElementById('repatResults');
+  if (!q){ cont.innerHTML = '<div class="text-muted small py-2">Escribe para buscar un ticket…</div>'; return; }
+  cont.innerHTML = '<div class="text-muted small py-2">Buscando…</div>';
+  try{
+    const r = await fetch('/tickets/api/tickets?q=' + encodeURIComponent(q) + '&limit=10', {
+      headers: {'X-Requested-With':'XMLHttpRequest'}
+    });
+    const d = await r.json();
+    if (!d.ok || !d.tickets || !d.tickets.length){
+      cont.innerHTML = '<div class="text-muted small py-2">Sin resultados.</div>';
+      return;
+    }
+    cont.innerHTML = d.tickets.map(t => `
+      <div class="repat-tk-item" onclick="repatAsignar(${t.id}, '${(t.numero_ticket||'').replace(/'/g,"")}')">
+        <div class="num">${t.numero_ticket || ('#'+t.id)}</div>
+        <div class="empresa">${(t.empresa||t.nombre_contacto||'').replace(/</g,'&lt;')}</div>
+      </div>
+    `).join('');
+  }catch(e){
+    cont.innerHTML = '<div class="text-muted small py-2">Error de red buscando tickets.</div>';
+  }
+}
+
+async function repatAsignar(ticketId, numeroTicket){
+  if (!_REPAT.repuestoId) return;
+  let d;
+  try{
+    const r = await fetch(`/mantenciones/api/repuestos/${_REPAT.repuestoId}/asignar-ticket`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify({ ticket_id: ticketId })
+    });
+    d = await r.json();
+  }catch(e){
+    ilusToast('Sin conexión: no se pudo asignar', {type:'error'});
+    return;
+  }
+  if (!d.ok){ ilusToast(d.error || 'No se pudo asignar', {type:'error'}); return; }
+  ilusToast('Repuesto asignado a ' + (numeroTicket || ('#'+ticketId)), {type:'success'});
+  repatClose();
+  setTimeout(()=> location.reload(), 600);
+}
+
+function _repatRenderProveedor(proveedorId){
+  const card = document.getElementById('repatProvCard');
+  if (!proveedorId){ card.innerHTML = ''; return; }
+  card.innerHTML = '<div class="text-muted small py-2">Cargando datos del proveedor…</div>';
+  fetch('/mantenciones/api/proveedores-repuesto?q=')
+    .then(r => r.json())
+    .then(d => {
+      const prov = (d.proveedores || []).find(p => p.id === proveedorId);
+      if (!prov){ card.innerHTML = ''; return; }
+      let chanHtml = '';
+      const tel = (prov.telefono || '').replace(/[^0-9+]/g, '');
+      if (prov.canal_preferido === 'whatsapp' && tel){
+        chanHtml = `<a class="repat-prov-chan whatsapp" href="https://wa.me/${tel}" target="_blank">
+          <i class="bi bi-whatsapp"></i> WhatsApp ${prov.telefono}</a>`;
+      } else if (prov.canal_preferido === 'wechat'){
+        chanHtml = `<span class="repat-prov-chan wechat"><i class="bi bi-chat-dots"></i> WeChat: ${prov.contacto_nombre || prov.notas || 'sin ID registrado'}</span>`;
+      } else if (prov.canal_preferido === 'telefono' && tel){
+        chanHtml = `<a class="repat-prov-chan telefono" href="tel:${tel}"><i class="bi bi-telephone"></i> Llamar ${prov.telefono}</a>`;
+      } else if (prov.canal_preferido === 'email' && prov.email){
+        chanHtml = `<a class="repat-prov-chan email" href="mailto:${prov.email}"><i class="bi bi-envelope"></i> ${prov.email}</a>`;
+      } else {
+        chanHtml = '<span class="text-muted small">Sin canal de contacto configurado.</span>';
+      }
+      card.innerHTML = `<div class="repat-prov-card">
+        <h6><i class="bi bi-truck"></i> Proveedor: ${prov.nombre}</h6>
+        ${prov.contacto_nombre ? '<div class="small text-muted mb-2">Contacto: '+prov.contacto_nombre+'</div>' : ''}
+        ${chanHtml}
+      </div>`;
+    })
+    .catch(()=>{ card.innerHTML = ''; });
+}
+</script>
 {% endblock %}

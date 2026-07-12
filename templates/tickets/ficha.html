@@ -650,6 +650,12 @@
       <button class="btn btn-sm btn-ilus-outline" id="btnEqDesdeDoc">
         <i class="bi bi-file-earmark-arrow-down me-1"></i>Asignar desde documento</button>
     </div>
+    <!-- Documentos ERP del ticket (movido desde la ex-tarjeta "Documentos ERP" —
+         Daniel 2026-07-12: "eso lo puedes agregar a la tabla [de Equipo(s)]...
+         si bien o no viene, lo quiero ver ahí en detalle". La relación en BD
+         (tk_ticket_documentos) es a nivel de TICKET, no de equipo individual,
+         por eso se muestra como bloque propio arriba de la tabla de equipos. -->
+    <div id="listaDocs" class="tk-docs-en-equipo" style="margin-bottom:12px;"></div>
     <div id="listaEquipos"></div>
   </div>
 
@@ -692,10 +698,6 @@
         </div>
       </div>
     </div>
-  </div>
-  <div class="tk-card">
-    <h6><i class="bi bi-file-earmark-text"></i>Documentos ERP</h6>
-    <div id="listaDocs"></div>
   </div>
   <div class="tk-card">
     <h6><i class="bi bi-paperclip"></i>Adjuntos</h6>
@@ -1758,8 +1760,12 @@ async function cargar(){
   // ── Problema: título + chips de metadata ──
   const tTitulo = document.getElementById('txtTitulo');
   if(t.titulo){ tTitulo.style.display='block'; tTitulo.textContent = t.titulo; } else tTitulo.style.display='none';
+  // Nota 2026-07-12 (Daniel): 'Producto' y 'SKU' se quitaron de acá porque con
+  // varios equipos asociados llegan concatenados de forma mal-agregada
+  // (ej: "Equipo A / Equipo B · Equipo C"). Esa info ya se ve bien desglosada
+  // por equipo en la tabla de Equipo(s) más abajo — no se repite acá.
   const chips = [
-    ['box-seam','Producto', t.producto], ['tag','Marca', t.marca], ['upc-scan','SKU', t.sku],
+    ['tag','Marca', t.marca],
     ['file-earmark-ruled','N° documento', t.numero_documento], ['diagram-3','Origen', t.origen],
   ].filter(c=>c[2]);
   document.getElementById('chipsProblema').innerHTML = chips.map(c=>
@@ -1810,7 +1816,7 @@ async function cargar(){
   // Acciones — tarjeta "Orden de Trabajo" (Generar OT / ya vinculada)
   renderAccionesOT(t);
 
-  // Documentos
+  // Documentos ERP del ticket — ahora renderizados dentro de la tarjeta Equipo(s)
   const ld = document.getElementById('listaDocs');
   ld.innerHTML = d.documentos.length ? d.documentos.map(function(x){
     const meta = [x.fecha, (x.monto!=null && x.monto!=='') ? '$'+Number(x.monto).toLocaleString('es-CL') : null]

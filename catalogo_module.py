@@ -54,6 +54,10 @@ def register_catalogo_routes(app, ctx):
     MAX_PIOLAS_POR_PRODUCTO = 10
     MAX_MANUAL_MB = 25  # mismo techo/motivo que MAX_ADJUNTO_MB en tickets_module.py:
                         # Cloud Run limita cada request HTTP a 32MB.
+    MAX_MANUALES_POR_PRODUCTO = 5  # 2026-07-12 (Daniel, wizard "Registrar producto"):
+                                    # hasta 5 manuales por producto, vía cat_producto_manuales
+                                    # (tabla nueva). El manual_pdf_key legado (singular) en
+                                    # cat_productos SIGUE funcionando sin cambios — Regla #4.2.
 
     # Bodega de sincronizacion ERP (Regla #4.1: SOLO LECTURA, via
     # _random_sql_query — mismo patron que _buscar_catalogo_bodega en
@@ -116,6 +120,22 @@ def register_catalogo_routes(app, ctx):
                   UNIQUE KEY uq_cat_piola_orden (producto_id, orden),
                   KEY idx_cat_piola_producto (producto_id, activo),
                   CONSTRAINT fk_catpiola_producto FOREIGN KEY (producto_id)
+                     REFERENCES cat_productos(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS cat_producto_manuales (
+                  id              INT AUTO_INCREMENT PRIMARY KEY,
+                  producto_id     INT NOT NULL,
+                  gcs_key         VARCHAR(500) NOT NULL,
+                  nombre_archivo  VARCHAR(300) NOT NULL,
+                  size_kb         INT NULL,
+                  orden           INT NOT NULL DEFAULT 1,
+                  uploaded_by     VARCHAR(190) NULL,
+                  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE KEY uq_cat_manual_orden (producto_id, orden),
+                  KEY idx_cat_manual_producto (producto_id),
+                  CONSTRAINT fk_catmanual_producto FOREIGN KEY (producto_id)
                      REFERENCES cat_productos(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
@@ -309,7 +329,10 @@ def register_catalogo_routes(app, ctx):
                    (SELECT COUNT(*) FROM cat_producto_fotos f WHERE f.producto_id=p.id) AS total_fotos,
                    (SELECT f2.gcs_key FROM cat_producto_fotos f2
                       WHERE f2.producto_id=p.id ORDER BY f2.orden LIMIT 1) AS foto_thumb_key,
-                   CASE WHEN p.manual_pdf_key IS NOT NULL THEN 1 ELSE 0 END AS tiene_manual
+                   CASE WHEN p.manual_pdf_key IS NOT NULL THEN 1 ELSE 0 END AS tiene_manual,
+                   (SELECT COUNT(*) FROM cat_producto_manuales m WHERE m.producto_id=p.id) AS total_manuales,
+                   (SELECT COUNT(*) FROM cat_producto_piolas pi
+                      WHERE pi.producto_id=p.id AND pi.activo=1) AS total_piolas
             FROM cat_productos p
             WHERE {where_sql}
             ORDER BY {sort_col} {direction}
@@ -324,6 +347,15 @@ def register_catalogo_routes(app, ctx):
             # cat_api_detalle para las fotos (gcs_key -> URL pública).
             _key = row.pop("foto_thumb_key", None)
             row["foto_thumb_url"] = ("/f/" + _key) if _key else None
+            # "registrado" (2026-07-12, patron "impreso/no impreso" de Etiquetas
+            # aplicado al catalogo): ficha completa = familia + al menos 1 piola +
+            # al menos 1 manual (nuevo multi-manual O el legado singular).
+            tiene_manual_alguno = bool(row.get("tiene_manual")) or int(row.get("total_manuales") or 0) > 0
+            row["registrado"] = bool(
+                (row.get("familia") or "").strip()
+                and int(row.get("total_piolas") or 0) > 0
+                and tiene_manual_alguno
+            )
             rows_out.append(row)
 
         return jsonify({
@@ -375,8 +407,14 @@ def register_catalogo_routes(app, ctx):
         piolas = mysql_fetchall(
             "SELECT id, medida_cm, observacion, orden FROM cat_producto_piolas "
             "WHERE producto_id=%s AND activo=1 ORDER BY orden", (pid,))
+        manuales = mysql_fetchall(
+            "SELECT id, gcs_key, nombre_archivo, size_kb, orden FROM cat_producto_manuales "
+            "WHERE producto_id=%s ORDER BY orden", (pid,))
         producto = _fmt_row(p)  # Regla #6: created_at/updated_at a hora Chile
         manual_key = producto.pop("manual_pdf_key", None)
+        tiene_manual_alguno = bool(manual_key) or len(manuales) > 0
+        producto["registrado"] = bool(
+            (producto.get("familia") or "").strip() and piolas and tiene_manual_alguno)
         return jsonify({
             "ok": True,
             "producto": producto,
@@ -388,6 +426,10 @@ def register_catalogo_routes(app, ctx):
                 "nombre": p.get("manual_pdf_nombre"),
                 "size_kb": p.get("manual_pdf_size_kb"),
             },
+            "manuales": [{"id": m["id"], "nombre": m["nombre_archivo"], "size_kb": m["size_kb"],
+                          "orden": m["orden"],
+                          "url": "/catalogo/api/productos/%d/manuales/%d/descargar" % (pid, m["id"])}
+                         for m in manuales],
         })
 
     @app.route("/catalogo/api/productos/<int:pid>", methods=["PATCH"])
@@ -809,6 +851,127 @@ def register_catalogo_routes(app, ctx):
                 "detalle": det,
             })
         return jsonify({"ok": True, "eventos": eventos})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  MANUALES (multi) — 2026-07-12 (Daniel, wizard "Registrar producto"):
+    #  hasta 5 manuales por producto, cada uno con su propio archivo/nombre.
+    #  Convive con el manual_pdf_key legado (singular) sin tocarlo — Regla
+    #  #4.2 (no se elimina nada existente).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/catalogo/api/productos/<int:pid>/manuales", methods=["GET"])
+    @_catalogo_required
+    def cat_api_manuales_list(pid):
+        if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        rows = mysql_fetchall(
+            "SELECT id, nombre_archivo, size_kb, orden FROM cat_producto_manuales "
+            "WHERE producto_id=%s ORDER BY orden", (pid,))
+        return jsonify({"ok": True, "manuales": [
+            {"id": r["id"], "nombre": r["nombre_archivo"], "size_kb": r["size_kb"], "orden": r["orden"],
+             "url": "/catalogo/api/productos/%d/manuales/%d/descargar" % (pid, r["id"])}
+            for r in rows]})
+
+    @app.route("/catalogo/api/productos/<int:pid>/manuales", methods=["POST"])
+    @_catalogo_admin_required
+    def cat_api_manuales_upload(pid):
+        if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        if not _uploader_upload:
+            return jsonify({"ok": False, "error": "Almacenamiento no disponible"}), 503
+        f = request.files.get("file") or request.files.get("archivo")
+        if not f or not f.filename:
+            return jsonify({"ok": False, "error": "No llegó ningún archivo"}), 400
+
+        total = int((mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM cat_producto_manuales WHERE producto_id=%s", (pid,)) or {}).get("n") or 0)
+        if total >= MAX_MANUALES_POR_PRODUCTO:
+            return jsonify({"ok": False, "error": f"Máximo {MAX_MANUALES_POR_PRODUCTO} manuales por producto"}), 400
+
+        ext = ("." + f.filename.rsplit(".", 1)[-1].lower()) if "." in f.filename else ""
+        mime = (f.mimetype or "").lower()
+        if ext != ".pdf" or mime != "application/pdf":
+            return jsonify({"ok": False, "error": "El manual debe ser un archivo PDF"}), 400
+
+        f.seek(0, 2)
+        size_mb = f.tell() / (1024 * 1024)
+        f.seek(0)
+        if size_mb > MAX_MANUAL_MB:
+            return jsonify({"ok": False, "error": f"El manual supera el máximo de {MAX_MANUAL_MB} MB"}), 400
+
+        try:
+            res = _uploader_upload(f, folder="catalogo/manuales", resource_type="raw")
+        except Exception as _e:
+            print(f"[cat_manuales_upload] error pid={pid}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo subir el manual"}), 500
+        key = res.get("public_id")
+        if not key:
+            return jsonify({"ok": False, "error": "Subida sin resultado válido"}), 500
+        size_kb = None
+        try:
+            if res.get("bytes"):
+                size_kb = int(res["bytes"] // 1024)
+        except Exception:
+            pass
+
+        user = current_username() or "sistema"
+        try:
+            mysql_execute(
+                "INSERT INTO cat_producto_manuales (producto_id, gcs_key, nombre_archivo, size_kb, orden, uploaded_by) "
+                "VALUES (%s,%s,%s,%s, (SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m "
+                "FROM cat_producto_manuales WHERE producto_id=%s) t), %s)",
+                (pid, key, f.filename[:300], size_kb, pid, user))
+        except Exception as _e:
+            print(f"[cat_manuales_upload] INSERT falló, limpiando blob pid={pid}: {_e}", flush=True)
+            if _uploader_destroy:
+                try:
+                    _uploader_destroy(key)
+                except Exception:
+                    pass
+            return jsonify({"ok": False, "error": "No se pudo registrar el manual"}), 500
+
+        row = mysql_fetchone(
+            "SELECT id FROM cat_producto_manuales WHERE producto_id=%s AND gcs_key=%s "
+            "ORDER BY id DESC LIMIT 1", (pid, key))
+        return jsonify({"ok": True, "id": row["id"] if row else None, "nombre": f.filename, "size_kb": size_kb})
+
+    @app.route("/catalogo/api/productos/<int:pid>/manuales/<int:manual_id>", methods=["DELETE"])
+    @_catalogo_admin_required
+    def cat_api_manuales_delete(pid, manual_id):
+        m = mysql_fetchone(
+            "SELECT gcs_key FROM cat_producto_manuales WHERE id=%s AND producto_id=%s", (manual_id, pid))
+        if not m:
+            return jsonify({"ok": False, "error": "Manual no encontrado"}), 404
+        mysql_execute(
+            "DELETE FROM cat_producto_manuales WHERE id=%s AND producto_id=%s", (manual_id, pid))
+        if _uploader_destroy:
+            try:
+                _uploader_destroy(m["gcs_key"])
+            except Exception:
+                pass
+        return jsonify({"ok": True})
+
+    @app.route("/catalogo/api/productos/<int:pid>/manuales/<int:manual_id>/descargar", methods=["GET"])
+    @_catalogo_required
+    def cat_api_manuales_descargar(pid, manual_id):
+        m = mysql_fetchone(
+            "SELECT gcs_key, nombre_archivo FROM cat_producto_manuales WHERE id=%s AND producto_id=%s",
+            (manual_id, pid))
+        if not m:
+            return jsonify({"ok": False, "error": "Manual no encontrado"}), 404
+        if not _gcs_bucket:
+            return jsonify({"ok": False, "error": "Almacenamiento no disponible"}), 503
+        b = _gcs_bucket()
+        if not b:
+            return jsonify({"ok": False, "error": "Almacenamiento no disponible"}), 503
+        try:
+            data = b.blob(m["gcs_key"]).download_as_bytes()
+        except Exception as _e:
+            print(f"[cat_manuales_descargar] error pid={pid} manual={manual_id}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo leer el manual"}), 500
+        nombre = m.get("nombre_archivo") or "manual.pdf"
+        resp = Response(data, mimetype="application/pdf")
+        resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        return resp
 
     # ─────────────────────────────────────────────────────────────────
     #  SYNC ERP — bajo demanda (sin cron nuevo). Trae SKUs de la bodega de
