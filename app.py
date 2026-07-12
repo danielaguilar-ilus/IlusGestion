@@ -40566,72 +40566,30 @@ def mant_enriquecer_cliente():
 @_mant_required
 @_no_tecnico
 def clientes_hub_list():
-    """Listado de clientes con filtro por tipo_cliente (chips) + búsqueda.
-    Lee mant_clientes directamente — misma tabla que usa Mantenciones."""
-    tipo = (request.args.get("tipo") or "").strip().lower()
-    q    = (request.args.get("q") or "").strip()
-
-    where = ["1=1"]
-    params = []
-    if tipo in ("mantencion", "arriendo", "leasing", "instalacion", "prospecto"):
-        where.append("tipo_cliente = %s")
-        params.append(tipo)
-    if q:
-        where.append("(razon_social LIKE %s OR rut LIKE %s)")
-        like = f"%{q}%"
-        params.extend([like, like])
-
-    rows = mysql_fetchall(
-        f"SELECT id, razon_social, rut, comuna, ciudad, estado, tipo_cliente, "
-        f"       contacto_nombre, contacto_email, contacto_tel "
-        f"  FROM mant_clientes WHERE {' AND '.join(where)} "
-        f" ORDER BY razon_social ASC LIMIT 500",
-        tuple(params)
-    ) or []
-
-    conteos = {}
-    for r in mysql_fetchall(
-        "SELECT tipo_cliente, COUNT(*) AS n FROM mant_clientes GROUP BY tipo_cliente", ()
-    ) or []:
-        conteos[r["tipo_cliente"]] = r["n"]
-
-    return render_template(
-        "clientes_hub/list.html",
-        clientes=[dict(r) for r in rows],
-        tipo_actual=tipo, q=q, conteos=conteos,
-    )
+    """Daniel 2026-07-13: "los clientes están mal... se quedan como estaban
+    antes, en las tarjetas" -- el listado propio que se armó aquí (tabla
+    simple) reemplazaba sin querer el diseño real (KPI strip + tarjetas con
+    avatar/badges/contrato) que ya existe y que Daniel usa a diario en
+    mant_clientes()/mantenciones/clientes.html. En vez de mantener una
+    segunda vista más pobre con los mismos datos, /clientes reutiliza
+    EXACTAMENTE esa misma vista real -- mismo diseño, mismos datos, el
+    mismo cliente visto desde una URL de nivel superior."""
+    return mant_clientes()
 
 
 @app.route("/clientes/<int:cid>")
 @_mant_required
 @_no_tecnico
 def clientes_hub_ficha(cid):
-    """Ficha de cliente: datos base + resumen (solo lectura) de contratos
-    y visitas asociadas + selector de tipo_cliente. Misma tabla/FKs que
-    la ficha de Mantenciones — NO la reemplaza (Regla #4.2)."""
-    cliente = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
-    if not cliente:
-        flash("Cliente no encontrado.", "warning")
-        return redirect(url_for("clientes_hub_list"))
-    cliente = dict(cliente)
-
-    contratos = mysql_fetchall(
-        "SELECT id, nombre, estado, fecha_inicio, fecha_vencimiento, monto_mensual "
-        "  FROM mant_contratos WHERE cliente_id=%s ORDER BY fecha_vencimiento DESC LIMIT 20",
-        (cid,)
-    ) or []
-    visitas = mysql_fetchall(
-        "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, tecnico "
-        "  FROM mant_visitas WHERE cliente_id=%s ORDER BY fecha_programada DESC LIMIT 20",
-        (cid,)
-    ) or []
-
-    return render_template(
-        "clientes_hub/ficha.html",
-        cliente=cliente,
-        contratos=[dict(r) for r in contratos],
-        visitas=[dict(r) for r in visitas],
-    )
+    """Daniel 2026-07-13: "estos son los mismos clientes que estaban en el
+    módulo de mantenciones, repáralo" -- la ficha propia armada aquí (solo
+    lectura de contratos/visitas) era una version empobrecida de la ficha
+    real de 12+ pestañas (Resumen/Equipos/Mantenciones y Visitas/Contrato/
+    Reportes/Agente/Repuestos/Finanzas/Documentos/Evidencias/Comunicaciones/
+    Historial) que Daniel confirmó explícitamente que Clientes debe ser
+    ("Sí, todo eso también"). Se reutiliza la ficha real completa en vez de
+    mantener una segunda version reducida con los mismos datos."""
+    return mant_ficha(cid)
 
 
 @app.route("/clientes/<int:cid>/tipo-relacion", methods=["POST"])
