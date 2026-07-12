@@ -360,6 +360,13 @@ def register_tickets_routes(app, ctx):
     # Resolver de comuna (TABCM) + dirección: mismo motor ya probado que usa
     # el resto de ILUS para direcciones ERP (Regla #4.1: solo SELECT).
     _resolve_comuna_erp = ctx.get("_resolve_comuna_erp")
+    # 2026-07-12 (Daniel): "los otros [tickets] seguimos teniendo vacia la
+    # region... para eso es Google, para separarlo" -- TABCM (arriba) NO
+    # trae region, asi que los tickets creados server-side (desde documento
+    # ERP, automatizacion) usan Google Geocoding para resolver Region +
+    # Comuna (mismo criterio de administrative_area_level_1/locality que ya
+    # usa el navegador via ilusPlacesAutocomplete en el modal manual).
+    _google_geocode_region_comuna = ctx.get("_google_geocode_region_comuna")
     # "Generar OT" (Tickets -> mant_visitas real): reusa el motor de OTs de
     # Mantenciones tal cual, sin duplicar logica (Regla #4 / arquitectura
     # acordada: estas funciones viven en app.py, un solo lugar versionado).
@@ -3405,6 +3412,16 @@ def register_tickets_routes(app, ctx):
         prio = _norm_enum(d.get("prioridad"), TK_PRIORIDADES, "media")
         user = current_username() or "sistema"
         rut = (primero.get("cliente_rut") or "").strip()[:12] or None
+        # 2026-07-12 (Daniel): TABCM (comuna del ERP) no trae Region -- se
+        # resuelve por Google Geocoding server-side (creacion via ERP no
+        # pasa por el navegador). Fail-open: "" si Google no responde.
+        _geo_erp = {"region": ""}
+        try:
+            if _google_geocode_region_comuna:
+                _geo_erp = _google_geocode_region_comuna(
+                    primero.get("direccion") or "", primero.get("comuna") or "")
+        except Exception as _e_geo:
+            print(f"[tk_desde_erp] geocode region: {_e_geo}", flush=True)
 
         conn = get_mysql()
         try:
@@ -3412,14 +3429,15 @@ def register_tickets_routes(app, ctx):
                 cur.execute(
                     "INSERT INTO tk_tickets "
                     "(origen, estado, tipo, prioridad, descripcion, rut, empresa, email, phone, "
-                    " direccion, comuna_nombre, numero_documento, asignado_a, created_by) "
-                    "VALUES ('erp','open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " direccion, comuna_nombre, region_nombre, numero_documento, asignado_a, created_by) "
+                    "VALUES ('erp','open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (tipo, prio, (d.get("descripcion") or "").strip()[:5000] or None,
                      rut, (primero.get("cliente_nombre") or "")[:150] or None,
                      (primero.get("email") or "")[:150] or None,
                      (primero.get("telefono") or "")[:20] or None,
                      (primero.get("direccion") or "")[:255] or None,
                      (primero.get("comuna") or "")[:120] or None,
+                     (_geo_erp.get("region") or "")[:120] or None,
                      ", ".join(f"{x['tido']}-{x['nudo']}" for x in docs_ok)[:1000] or None,
                      user, user))
                 tid = cur.lastrowid
@@ -3504,20 +3522,30 @@ def register_tickets_routes(app, ctx):
         if not hdr:
             return None, None
         rut = (hdr.get("cliente_rut") or "").strip()[:12] or None
+        # 2026-07-12 (Daniel): misma resolucion de Region que en tk_desde_erp
+        # -- TABCM no trae region, se resuelve por Google (fail-open).
+        _geo_zz = {"region": ""}
+        try:
+            if _google_geocode_region_comuna:
+                _geo_zz = _google_geocode_region_comuna(
+                    hdr.get("direccion") or "", hdr.get("comuna") or "")
+        except Exception as _e_geo:
+            print(f"[tk_zz_auto] geocode region: {_e_geo}", flush=True)
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO tk_tickets "
                     "(origen, estado, tipo, prioridad, descripcion, rut, empresa, email, phone, "
-                    " direccion, comuna_nombre, numero_documento, created_by) "
-                    "VALUES ('erp','open','install','media',%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " direccion, comuna_nombre, region_nombre, numero_documento, created_by) "
+                    "VALUES ('erp','open','install','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (f"Instalación detectada automáticamente desde documento ERP {tido}-{nudo}.",
                      rut, (hdr.get("cliente_nombre") or "")[:150] or None,
                      (hdr.get("email") or "")[:150] or None,
                      (hdr.get("telefono") or "")[:20] or None,
                      (hdr.get("direccion") or "")[:255] or None,
                      (hdr.get("comuna") or "")[:120] or None,
+                     (_geo_zz.get("region") or "")[:120] or None,
                      f"{tido}-{nudo}"[:1000], user))
                 tid = cur.lastrowid
                 cur.execute(
@@ -4659,8 +4687,8 @@ def register_tickets_routes(app, ctx):
                     "INSERT INTO tk_tickets "
                     "(origen, estado, tipo, prioridad, descripcion, rut, empresa, nombre_contacto, "
                     " email, phone, direccion, direccion_lat, direccion_lng, direccion_place_id, "
-                    " comuna_nombre, sucursal, producto, sku, numero_documento, created_by) "
-                    "VALUES ('form','open',%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'cliente')",
+                    " comuna_nombre, region_nombre, sucursal, producto, sku, numero_documento, created_by) "
+                    "VALUES ('form','open',%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'cliente')",
                     (tipo, descripcion[:2000], rut[:12],
                      (d.get("empresa") or "").strip()[:150] or None,
                      nombre_contacto[:150], email[:150], phone[:20],
@@ -4668,6 +4696,7 @@ def register_tickets_routes(app, ctx):
                      d.get("direccion_lat") or None, d.get("direccion_lng") or None,
                      (d.get("direccion_place_id") or "").strip()[:200] or None,
                      (d.get("comuna_nombre") or "").strip()[:120] or None,
+                     (d.get("region_nombre") or "").strip()[:120] or None,
                      (d.get("sucursal") or "").strip()[:100] or None,
                      ", ".join(p.get("nombre", "") for p in productos if p.get("nombre"))[:2000] or None,
                      ", ".join(p.get("sku", "") for p in productos if p.get("sku"))[:500] or None,

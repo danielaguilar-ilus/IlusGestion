@@ -178,7 +178,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
         <label for="spDireccion">Dirección <span class="req">*</span></label>
         <input type="text" id="spDireccion" placeholder="Ej: Av. Colón 1265, Las Condes" autocomplete="off">
         <input type="hidden" id="spDirLat"><input type="hidden" id="spDirLng">
-        <input type="hidden" id="spDirPlace"><input type="hidden" id="spComuna">
+        <input type="hidden" id="spDirPlace"><input type="hidden" id="spComuna"><input type="hidden" id="spRegion">
         <div class="fh" id="spDirHint">Direcciones sugeridas por Google</div>
         <div class="fe">Ingresa una dirección.</div>
       </div>
@@ -300,6 +300,10 @@ document.addEventListener('DOMContentLoaded', function(){
         if(place.componentes){
           const cm = place.componentes.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
           if(cm) document.getElementById('spComuna').value = cm.long_name;
+          // 2026-07-12 (Daniel): separar Region de Comuna -- mismo criterio
+          // que ya usa el modal interno de tickets (list.html).
+          const rg = place.componentes.find(c=>c.types.indexOf('administrative_area_level_1')>=0);
+          if(rg) document.getElementById('spRegion').value = rg.long_name;
         }
         marcarError('fDirWrap', false);
         document.getElementById('spDirHint').innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> Dirección verificada';
@@ -423,6 +427,7 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
     direccion_lng: document.getElementById('spDirLng').value || null,
     direccion_place_id: document.getElementById('spDirPlace').value || null,
     comuna_nombre: document.getElementById('spComuna').value || null,
+    region_nombre: document.getElementById('spRegion').value || null,
     sucursal: document.getElementById('spSucursal').value.trim(),
     productos: productos,
     numero_documento: document.getElementById('spDoc').value.trim(),

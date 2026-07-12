@@ -432,22 +432,17 @@
     <div class="sg-section-label">Servicio Técnico</div>
     {% endif %}
 
-    {# ── TICKETS (central) ── #}
+    {# ── TICKETS (central) ── 2026-07-12 (Daniel): "no tiene por que ser un
+       acordeon desplegable... que al darle clic me lleve nomas a los
+       tickets" -- deja de ser un toggle con la Bandeja adentro; ahora es un
+       link plano directo a la bandeja, igual que los demas modulos de
+       Servicio Tecnico de abajo. La ruta /tickets/nuevo sigue viva
+       (compatibilidad hacia atras), solo sin linkear desde el sidebar. #}
     {% if (permissions.mantenciones or permissions.superadmin) and not is_tecnico %}
-    <button class="sg-toggle" data-sg="tickets">
-      <i class="bi bi-ticket-perforated"></i>Tickets
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-tickets">
-      <a href="{{ url_for('tk_list') }}"
-         class="sidebar-link{% if request.endpoint in ['tk_list','tk_ficha','tk_nuevo'] %} active{% endif %}">
-        <i class="bi bi-inboxes"></i><span>Bandeja</span>
-      </a>
-      {# 2026-07-11 (Daniel): "Nuevo ticket" ya NO es una pagina aparte -- es un
-         modal en la Bandeja (boton "Nuevo Ticket" de tickets/list.html). Se
-         quita el link del menu. La ruta /tickets/nuevo sigue viva
-         (compatibilidad hacia atras), solo sin linkear desde el sidebar. #}
-    </div>
+    <a href="{{ url_for('tk_list') }}"
+       class="sidebar-link{% if request.endpoint in ['tk_list','tk_ficha','tk_nuevo'] %} active{% endif %}">
+      <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
+    </a>
     {% endif %}
 
     {# ── SERVICIO TÉCNICO: módulos planos en orden alfabético (2026-07-12) ──

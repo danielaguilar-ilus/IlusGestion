@@ -1864,6 +1864,50 @@ def _resolve_comuna_erp(cmen_code: str, cien_code: str = "", pais_code: str = "C
     return c_raw
 
 
+def _google_geocode_region_comuna(direccion, comuna_hint=""):
+    """Resuelve Región (administrative_area_level_1) y Comuna
+    (locality/administrative_area_level_3) para una direccion via Google
+    Geocoding API. Uso: tickets creados por flujos SERVER-SIDE (desde
+    documento ERP, automatizacion ZZ-Instalacion, etc.) que no pasan por
+    el navegador — ahi no hay Google Places del cliente disponible, y
+    TABCM (catalogo de comunas del ERP) no trae region (Daniel 2026-07-12:
+    "los otros [tickets] seguimos teniendo vacia la region... para eso es
+    Google, para separarlo"). Same criterio de tipos que usa
+    ilusPlacesAutocomplete en static/ilus_ui.js (fields address_components).
+
+    Devuelve dict {"region": str, "comuna": str} — ambos "" si no se pudo
+    resolver o GOOGLE_MAPS_API_KEY no esta configurada. Nunca lanza
+    (fail-open: no debe bloquear la creacion del ticket)."""
+    if not GOOGLE_MAPS_API_KEY:
+        return {"region": "", "comuna": ""}
+    address = ", ".join([x for x in [
+        (direccion or "").strip(), (comuna_hint or "").strip(), "Chile",
+    ] if x])
+    if not address.strip():
+        return {"region": "", "comuna": ""}
+    try:
+        import requests as _req
+        resp = _req.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"address": address, "key": GOOGLE_MAPS_API_KEY,
+                    "components": "country:CL", "language": "es"},
+            timeout=8,
+        )
+        results = (resp.json() or {}).get("results") or []
+        if not results:
+            return {"region": "", "comuna": ""}
+        comps = results[0].get("address_components") or []
+        region = next((c["long_name"] for c in comps
+                       if "administrative_area_level_1" in (c.get("types") or [])), "")
+        comuna = next((c["long_name"] for c in comps
+                       if "locality" in (c.get("types") or [])
+                       or "administrative_area_level_3" in (c.get("types") or [])), "")
+        return {"region": region, "comuna": comuna}
+    except Exception as e:
+        print(f"[geocode_region_comuna] {e}", flush=True)
+        return {"region": "", "comuna": ""}
+
+
 # ── INSTRUMENTACIÓN SQL 2026-05-26 (Daniel — audit runtime) ──────────
 # Wrapper transparente que mide cada query: cuenta queries, suma tiempo,
 # y loguea las que duran > _SQL_SLOW_THRESHOLD_MS. Los stats se agregan
