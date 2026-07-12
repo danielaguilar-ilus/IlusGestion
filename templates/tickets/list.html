@@ -467,7 +467,7 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
           <div class="hint">Empieza a escribir y elige una sugerencia de Google para validarla.</div>
           <div class="nt-field full" id="fDirWrap">
             <input type="text" id="ntDireccion" class="form-control" placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off">
-            <input type="hidden" id="ntDirLat"><input type="hidden" id="ntDirLng"><input type="hidden" id="ntDirPlace"><input type="hidden" id="ntComuna">
+            <input type="hidden" id="ntDirLat"><input type="hidden" id="ntDirLng"><input type="hidden" id="ntDirPlace"><input type="hidden" id="ntComuna"><input type="hidden" id="ntRegion">
             <small id="ntDirHint" class="text-muted d-block mt-1" style="font-size:.72rem">
               <i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.</small>
             <div class="nt-err-msg" id="ntErrDir">Selecciona una dirección sugerida por Google para validarla.</div>
@@ -944,7 +944,8 @@ function ntReset(){
   document.getElementById('ntEmail').value=''; document.getElementById('ntSucursal').value='';
   document.getElementById('ntDireccion').value=''; document.getElementById('ntDirLat').value='';
   document.getElementById('ntDirLng').value=''; document.getElementById('ntDirPlace').value='';
-  document.getElementById('ntComuna').value=''; document.getElementById('ntDirHint').innerHTML =
+  document.getElementById('ntComuna').value=''; document.getElementById('ntRegion').value='';
+  document.getElementById('ntDirHint').innerHTML =
     '<i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.';
   document.getElementById('ntBuscarEq').value='';
   document.getElementById('ntDesc').value=''; document.getElementById('ntDescCount').textContent='0';
@@ -1122,6 +1123,11 @@ function ntInitDir(){
       if(place.componentes){
         const cm = place.componentes.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
         if(cm) document.getElementById('ntComuna').value = cm.long_name;
+        // Daniel 2026-07-12: "no me completo... region... esto tiene que ser
+        // a nivel general" -- antes solo se guardaba comuna, nunca la Region
+        // (Chile: administrative_area_level_1 en Google Places).
+        const rg = place.componentes.find(c=>c.types.indexOf('administrative_area_level_1')>=0);
+        if(rg) document.getElementById('ntRegion').value = rg.long_name;
       }
       marcarNtOk('fDirWrap');
       const h = document.getElementById('ntDirHint');
@@ -1244,6 +1250,7 @@ document.getElementById('ntBtnCrear').addEventListener('click', async function()
     direccion_lng: document.getElementById('ntDirLng').value || null,
     direccion_place_id: document.getElementById('ntDirPlace').value || null,
     comuna_nombre: document.getElementById('ntComuna').value || null,
+    region_nombre: document.getElementById('ntRegion').value || null,
     numero_documento: document.getElementById('ntDoc').value.trim(),
     producto: ntEquipos.map(e=>e.nombre).join(' · '),
     sku: ntEquipos.map(e=>e.sku).filter(Boolean).join(', '),

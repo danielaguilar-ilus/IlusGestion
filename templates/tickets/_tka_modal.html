@@ -860,7 +860,7 @@ function tkaToggleAllDoc(checked){
     tkaToggleLineaDoc(inp, /*silent=*/true);
   });
 }
-function tkaToggleLineaDoc(inp, silent){
+async function tkaToggleLineaDoc(inp, silent){
   const chkBox = inp.closest('.tka-chk');
   const row = inp.closest('.tka-line');
   const key = inp.dataset.lineKey;
@@ -868,8 +868,19 @@ function tkaToggleLineaDoc(inp, silent){
   const nombre = inp.dataset.nombre;
   const isZero = inp.dataset.isZero === '1';
   const qtyInp = document.querySelector(`#tkaDocResult input.ln-qty-input[data-line-key="${key}"]`);
+  let motivo = (_TKA.selDoc.get(key) || {}).motivo_sin_saldo || '';
   if (inp.checked && isZero && !silent){
-    ilusToast(`"${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, { type:'info', duration:4500 });
+    // Daniel 2026-07-12: "la gerencia tiene que saber el por que el usuario
+    // involucro una maquina que ya tenia guia... vamos a necesitar un
+    // comentario... y todo registrado con el historial" -- ya no alcanza
+    // con un aviso informativo, ahora hay que justificar por escrito.
+    motivo = await ilusPrompt({
+      title: 'Producto sin saldo disponible',
+      message: `"${nombre}" ya fue rebajado del sistema (aparentemente ya tiene guía/entrega). Explica por qué se debe incluir igual:`,
+      placeholder: 'Ej: cliente reporta que nunca llegó, se reemplaza por garantía…',
+      required: true, type: 'warning',
+    });
+    if (!motivo){ inp.checked = false; return; }
     if (qtyInp && parseFloat(qtyInp.value || 0) === 0) qtyInp.value = 1;
   }
   if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
@@ -882,6 +893,7 @@ function tkaToggleLineaDoc(inp, silent){
       saldo: parseFloat(inp.dataset.qty) || qty,
       doc_tido: h.tido, doc_nudo: h.nudo,
       marcada_sin_saldo: isZero,
+      motivo_sin_saldo: isZero ? motivo : '',
     });
   } else {
     _TKA.selDoc.delete(key);
@@ -1113,19 +1125,28 @@ async function tkaToggleDocCli(idx){
     body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
   }
 }
-function tkaToggleLineaCli(inp, silent){
+async function tkaToggleLineaCli(inp, silent){
   const chkBox = inp.closest('.tka-chk');
-  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
   const row = inp.closest('.tka-line');
-  if (row) row.classList.toggle('is-selected', inp.checked);
   const key = inp.dataset.lineKey;
   const isZero = inp.dataset.isZero === '1';
   const nombre = inp.dataset.nombre;
+  let motivo = (_TKA.selCli.get(key) || {}).motivo_sin_saldo || '';
   if (inp.checked && isZero && !silent){
-    ilusToast(`"${nombre}" ya fue rebajado del sistema (entregado). Lo agregamos igualmente.`, { type:'info', duration:4500 });
+    // Mismo criterio que tkaToggleLineaDoc: justificacion obligatoria,
+    // registrada en el historial (Daniel 2026-07-12).
+    motivo = await ilusPrompt({
+      title: 'Producto sin saldo disponible',
+      message: `"${nombre}" ya fue rebajado del sistema (aparentemente ya tiene guía/entrega). Explica por qué se debe incluir igual:`,
+      placeholder: 'Ej: cliente reporta que nunca llegó, se reemplaza por garantía…',
+      required: true, type: 'warning',
+    });
+    if (!motivo){ inp.checked = false; return; }
     const qtyInpZ = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
     if (qtyInpZ && parseFloat(qtyInpZ.value || 0) === 0) qtyInpZ.value = 1;
   }
+  if (chkBox) chkBox.classList.toggle('is-checked', inp.checked);
+  if (row) row.classList.toggle('is-selected', inp.checked);
   const qtyInp = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
   const qtyEff = qtyInp ? (parseFloat(qtyInp.value || 0) || 0) : (parseFloat(inp.dataset.qty) || 0);
   if (inp.checked){
@@ -1137,6 +1158,7 @@ function tkaToggleLineaCli(inp, silent){
       qty: qtyEff,
       saldo: parseFloat(inp.dataset.qty) || qtyEff,
       marcada_sin_saldo: isZero,
+      motivo_sin_saldo: isZero ? motivo : '',
     });
   } else {
     _TKA.selCli.delete(key);
@@ -1261,7 +1283,8 @@ async function tkaAsociarSeleccion(){
     const lineas = [];
     _TKA.selDoc.forEach(it => {
       if ((it.qty || 0) > 0){
-        lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty });
+        lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty,
+          marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' });
       }
     });
     if (lineas.length > 0) docsToAdd.set(key, { tido: h.tido, nudo: h.nudo, lineas });
@@ -1272,7 +1295,8 @@ async function tkaAsociarSeleccion(){
     if ((it.qty || 0) <= 0) return;
     const key = `${it.tido}|${it.nudo}`;
     if (!docsToAdd.has(key)) docsToAdd.set(key, { tido: it.tido, nudo: it.nudo, lineas: [] });
-    docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty });
+    docsToAdd.get(key).lineas.push({ sku: it.sku, nombre: it.nombre, qty: it.qty,
+      marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' });
   });
 
   if (docsToAdd.size === 0){
@@ -1288,7 +1312,8 @@ async function tkaAsociarSeleccion(){
     // Un solo POST: el backend acepta multiples documentos en el mismo body.
     const documentos = [...docsToAdd.values()].map(dv => ({
       tido: dv.tido, nudo: dv.nudo,
-      lineas: dv.lineas.map(l => ({ sku: l.sku, cantidad: l.qty, nombre: l.nombre })),
+      lineas: dv.lineas.map(l => ({ sku: l.sku, cantidad: l.qty, nombre: l.nombre,
+        marcada_sin_saldo: l.marcada_sin_saldo, motivo_sin_saldo: l.motivo_sin_saldo })),
     }));
     const etiquetas = documentos.map(dv => `${dv.tido}-${dv.nudo}`).join(', ');
     try{
@@ -1324,7 +1349,8 @@ async function tkaAsociarSeleccion(){
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tido: info.tido, nudo: info.nudo,
-          lineas: info.lineas.map(l => ({ sku: l.sku, cantidad: l.qty, nombre: l.nombre })),
+          lineas: info.lineas.map(l => ({ sku: l.sku, cantidad: l.qty, nombre: l.nombre,
+            marcada_sin_saldo: l.marcada_sin_saldo, motivo_sin_saldo: l.motivo_sin_saldo })),
         })
       });
       if (!d.ok){

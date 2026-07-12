@@ -1009,6 +1009,13 @@ function tkIdEmpezarEdicion(key){
       return '<option value="'+esc(k)+'"'+(k===valorActual?' selected':'')+'>'+esc(TIPO_LABEL[k])+'</option>';
     }));
     inputHtml = '<select class="form-select form-select-sm tk-dd-input">'+opts.join('')+'</select>';
+  } else if(key === 'direccion'){
+    // Daniel 2026-07-12 ("¿no debería estar validada?... esto tiene que ser
+    // a nivel general"): editar Dirección pasaba por un input de texto
+    // plano -- nunca completaba region/comuna/coordenadas (perfil logistico
+    // de Daniel: TODA direccion se valida con Google Places, sin excepcion).
+    inputHtml = '<input type="text" id="tkDirEditInput" class="form-control form-control-sm tk-dd-input" '
+      + 'placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off" value="'+esc(valorActual)+'">';
   } else {
     const tipoInput = campo.tipo === 'email' ? 'email' : 'text';
     inputHtml = '<input type="'+tipoInput+'" class="form-control form-control-sm tk-dd-input" value="'+esc(valorActual)+'">';
@@ -1018,13 +1025,38 @@ function tkIdEmpezarEdicion(key){
   input.focus();
   if(input.select) input.select();
   let resuelto = false;
+  let extraDireccion = null; // {region_nombre, comuna_nombre, direccion_lat/lng/place_id} si se eligio un resultado real
   function cancelar(){
     if(resuelto) return; resuelto = true;
     renderIdentificacionCompacta(ticketActual);
   }
   function guardar(){
     if(resuelto) return; resuelto = true;
-    tkIdGuardarCampo(key, input.value.trim());
+    tkIdGuardarCampo(key, input.value.trim(), extraDireccion);
+  }
+  if(key === 'direccion'){
+    // ilusPlacesAutocomplete se registra recien ahora (el input recien se
+    // creo) -- misma funcion global que ya usa el modal "Nuevo Ticket"
+    // (list.html), solo que aca vive dentro de un editor inline por campo.
+    const initDir = function(){
+      if(typeof ilusPlacesAutocomplete !== 'function'){
+        if(window.__ilusGmapsPending){ window.__ilusGmapsPending.push(initDir); }
+        return;
+      }
+      ilusPlacesAutocomplete('tkDirEditInput', { country:'cl', types:['address'],
+        onPlaceSelected:function(place){
+          const comp = place.componentes || [];
+          const cComuna = comp.find(c=>c.types.indexOf('locality')>=0 || c.types.indexOf('administrative_area_level_3')>=0);
+          const cRegion = comp.find(c=>c.types.indexOf('administrative_area_level_1')>=0);
+          extraDireccion = {
+            direccion_lat: place.lat, direccion_lng: place.lng,
+            direccion_place_id: place.place_id || null,
+            comuna_nombre: cComuna ? cComuna.long_name : null,
+            region_nombre: cRegion ? cRegion.long_name : null,
+          };
+        } });
+    };
+    initDir();
   }
   input.addEventListener('blur', guardar);
   input.addEventListener('keydown', function(e){
@@ -1033,16 +1065,21 @@ function tkIdEmpezarEdicion(key){
   });
 }
 
-async function tkIdGuardarCampo(key, valor){
+async function tkIdGuardarCampo(key, valor, extra){
   const payload = {}; payload[key] = valor;
+  // Si se eligio una direccion REAL del dropdown de Google, guardamos
+  // tambien region/comuna/coordenadas en el MISMO PATCH -- si el usuario
+  // solo escribio texto libre sin elegir sugerencia, extra es null y no
+  // se toca comuna/region existentes (no clobbear datos buenos con vacio).
+  if(extra){ Object.assign(payload, extra); }
   try{
     const r = await fetch('/tickets/api/tickets/'+TID, {method:'PATCH',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     const d = await r.json();
     if(d.ok){
-      ticketActual[key] = valor;
+      Object.assign(ticketActual, payload);
       renderIdentificacionCompacta(ticketActual);
-      ilusToast('✓ Guardado','success');
+      ilusToast(extra ? '✓ Dirección verificada y guardada' : '✓ Guardado','success');
       cargar();
     } else {
       renderIdentificacionCompacta(ticketActual);

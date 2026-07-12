@@ -543,7 +543,15 @@ def register_tickets_routes(app, ctx):
                 continue
             out.append({"sku": real["sku"],
                         "nombre": (sel.get("nombre") or real.get("nombre") or "Equipo"),
-                        "cantidad": qty_final})
+                        "cantidad": qty_final,
+                        # Daniel 2026-07-12: "la gerencia tiene que saber el
+                        # por que... vamos a necesitar un comentario... todo
+                        # registrado con el historial". marcada_sin_saldo se
+                        # RECALCULA aca contra el saldo REAL (no se confia en
+                        # lo que afirma el frontend); motivo_sin_saldo es la
+                        # justificacion que el usuario escribio en el modal.
+                        "marcada_sin_saldo": (real.get("saldo") or 0) <= 0,
+                        "motivo_sin_saldo": str((sel or {}).get("motivo_sin_saldo") or "").strip()[:500]})
         return out
 
     # Correo saliente real al cliente: reusar el estandar de marca ILUS
@@ -1466,6 +1474,12 @@ def register_tickets_routes(app, ctx):
             # Daniel 2026-07-11: la ficha ahora tambien edita region/comuna
             # (antes solo se guardaban al crear el ticket, nunca al editar).
             "region_nombre", "comuna_nombre", "numero_documento",
+            # Daniel 2026-07-12: "dame la opcion de editar, validarlo... esto
+            # tiene que ser a nivel general" -- editar Direccion ahora pasa
+            # por Google Places (perfil logistico de Daniel), asi que el
+            # guardado debe poder llevar tambien las coordenadas/place_id
+            # que antes solo se guardaban al CREAR el ticket, nunca al editar.
+            "direccion_lat", "direccion_lng", "direccion_place_id",
         )
         sets, params = [], []
         for key in allowed:
@@ -2150,6 +2164,15 @@ def register_tickets_routes(app, ctx):
                     (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo",
                      ln["sku"][:100] or None, cant))
                 agregados += 1
+                # Daniel 2026-07-12: "si voy a comprometer una maquina que no
+                # tiene saldo, la gerencia tiene que saber el por que... todo
+                # registrado con el historial". Nota INTERNA (es_interno=True
+                # por defecto en _tk_log) -- no se manda al cliente.
+                if ln.get("marcada_sin_saldo"):
+                    motivo = ln.get("motivo_sin_saldo") or "(sin justificación registrada)"
+                    _tk_log(tid, "otro",
+                            f"⚠️ Equipo agregado SIN saldo disponible: {ln['nombre']} "
+                            f"(SKU {ln['sku'] or '—'}), doc {tido}-{nudo}. Motivo: {motivo}")
             except Exception as _e:
                 print(f"[tk_equipos_desde_doc] equipo no insertado tid={tid} sku={ln.get('sku')}: {_e}", flush=True)
 
@@ -2376,6 +2399,16 @@ def register_tickets_routes(app, ctx):
         numero = numero["numero_ticket"] if numero else None
         _tk_log(tid, "creacion", f"Ticket {numero} creado desde documento(s) ERP: "
                 + ", ".join(f"{x['tido']}-{x['nudo']}" for x in docs_ok))
+        # Daniel 2026-07-12: misma trazabilidad que al agregar equipos a un
+        # ticket ya existente -- si alguna linea se incluyo sin saldo
+        # disponible, queda una nota INTERNA con el motivo que el usuario
+        # escribio en el modal (visible para superadmin en la Actividad).
+        for ln in todas_lineas:
+            if ln.get("marcada_sin_saldo"):
+                motivo = ln.get("motivo_sin_saldo") or "(sin justificación registrada)"
+                _tk_log(tid, "otro",
+                        f"⚠️ Equipo agregado SIN saldo disponible: {ln['nombre']} "
+                        f"(SKU {ln.get('sku') or '—'}). Motivo: {motivo}")
         return jsonify({"ok": True, "id": tid, "numero_ticket": numero})
 
     # ─────────────────────────────────────────────────────────────────
