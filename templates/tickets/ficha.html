@@ -1347,8 +1347,13 @@ const rpQuill = new Quill('#rpEditor', {
     btnDictar.classList.remove('rp-dictando');
     btnDictar.title = 'Dictar mensaje por voz';
   }
-  btnDictar.addEventListener('click', function(){
-    if (escuchando){ rec && rec.stop(); return; }
+  // 2026-07-12 (Daniel): "not-allowed" en computador -- el navegador nunca
+  // llegó a mostrar el permiso de micrófono, o quedó bloqueado de una vez
+  // anterior. Pedimos el permiso EXPLÍCITO con getUserMedia primero (dispara
+  // el prompt nativo del navegador de forma confiable) y solo si lo
+  // concede arrancamos el reconocimiento; si lo deniega, mensaje accionable
+  // en vez del código de error crudo.
+  function iniciarReconocimiento(){
     rec = new SR();
     rec.lang = 'es-CL';
     rec.continuous = true;
@@ -1370,13 +1375,30 @@ const rpQuill = new Quill('#rpEditor', {
       rpQuill.setSelection(range.index + texto.length + 1);
     };
     rec.onerror = function(ev){
-      if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
+        ilusToast('El navegador bloqueó el micrófono para este sitio. Haz clic en el ícono de candado/micrófono de la barra de direcciones y permite el acceso, luego intenta de nuevo.', { type: 'error' });
+      } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
         ilusToast('No se pudo escuchar: ' + (ev.error || 'error desconocido'), { type: 'error' });
       }
       detener();
     };
     rec.onend = detener;
     rec.start();
+  }
+  btnDictar.addEventListener('click', function(){
+    if (escuchando){ rec && rec.stop(); return; }
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream){
+          stream.getTracks().forEach(function(t){ t.stop(); });
+          iniciarReconocimiento();
+        })
+        .catch(function(){
+          ilusToast('El navegador bloqueó el micrófono para este sitio. Haz clic en el ícono de candado/micrófono de la barra de direcciones y permite el acceso, luego intenta de nuevo.', { type: 'error' });
+        });
+    } else {
+      iniciarReconocimiento();
+    }
   });
 })();
 
