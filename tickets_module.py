@@ -1819,30 +1819,33 @@ def register_tickets_routes(app, ctx):
     # Numero de ticket AL INICIO del asunto (Daniel 2026-07-12, con screenshot
     # de Gmail movil): la app trunca asuntos largos en la lista de bandeja, y
     # el numero quedaba cortado al ir al final ("...ticket TK-2026-0...").
+    # 2026-07-12 (Daniel): "el nombre del ticket... lo dice demasiado" --
+    # el numero ya aparece en el asunto (title) y en el subtitulo del header
+    # (ver _tk_notificar_lifecycle mas abajo), asi que el cuerpo YA NO lo
+    # repite. Primer recorte de la redundancia; el diseño completo de estos
+    # correos se retrabaja mas adelante como propuesta aparte.
     _TK_LIFECYCLE_DEFAULTS = {
         "creacion": (
             "{numero} — Recibimos tu solicitud",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
-            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Ya registramos tu solicitud "
-            "con el número <strong>{numero}</strong>. Nuestro equipo la revisará y te contactará "
-            "a la brevedad.</div></div>"),
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Ya registramos tu solicitud. "
+            "Nuestro equipo la revisará y te contactará a la brevedad.</div></div>"),
         "resuelto": (
             "{numero} — Resuelto",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #16a34a;background:#f0fdf4;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">✅ Tu solicitud "
-            "<strong>{numero}</strong> ya fue resuelta por nuestro equipo.</div></div>"),
+            "ya fue resuelta por nuestro equipo.</div></div>"),
         "cerrado": (
             "{numero} — Cerrado",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #6b7280;background:#f9fafb;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
-            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
-            "<strong>{numero}</strong> ha sido cerrado. Gracias por confiar en "
-            "ILUS Sport &amp; Health.</div></div>"),
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu solicitud ha sido cerrada. "
+            "Gracias por confiar en ILUS Sport &amp; Health.</div></div>"),
         # Estados extra del lifecycle (aditivo 2026-07-12). Fallback hardcoded
         # por si _render_comm_template no encuentra la fila sembrada aun --
         # el texto real editable vive en _tickets_tpl_seed() (app.py).
@@ -1852,36 +1855,35 @@ def register_tickets_routes(app, ctx):
             "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu equipo ya está trabajando "
-            "en tu solicitud <strong>{numero}</strong>.</div></div>"),
+            "en tu solicitud.</div></div>"),
         "pendiente": (
             "{numero} — Pendiente",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #f59e0b;background:#fff8e1;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
-            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
-            "<strong>{numero}</strong> quedó pendiente — puede que necesitemos información adicional "
-            "de tu parte.</div></div>"),
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu solicitud quedó pendiente "
+            "— puede que necesitemos información adicional de tu parte.</div></div>"),
         "ot_generada": (
             "{numero} — Orden de Trabajo generada",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Se generó una Orden de Trabajo "
-            "para tu solicitud <strong>{numero}</strong>.</div></div>"),
+            "para tu solicitud.</div></div>"),
         "ot_en_curso": (
             "{numero} — Técnico en terreno",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #0d9488;background:#f0fdfa;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">El técnico ya está trabajando "
-            "en terreno en tu Orden de Trabajo <strong>{numero}</strong>.</div></div>"),
+            "en terreno en tu Orden de Trabajo.</div></div>"),
         "cancelado": (
             "{numero} — Cancelado",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {cliente},</p>"
             "<div style=\"border-left:4px solid #dc2626;background:#fee2e2;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
-            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
-            "<strong>{numero}</strong> fue cancelado.</div></div>"),
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu solicitud fue "
+            "cancelada.</div></div>"),
     }
 
     def _tk_notificar_lifecycle(tid, estado_slug):
@@ -1934,7 +1936,7 @@ def register_tickets_routes(app, ctx):
         # mostrando el destinatario real aunque el correo haya salido a
         # la casilla de pruebas.
         to_envio, subject_envio = _tk_test_redirect(to_email, subject)
-        html_final = (_comm_render_email_document(subject_envio, cuerpo_correo, subtitle=f"Ticket {numero} · ILUS Fitness")
+        html_final = (_comm_render_email_document(subject_envio, cuerpo_correo, subtitle="Servicio Técnico · ILUS Fitness")
                       if _comm_render_email_document else cuerpo_correo)
         try:
             enviado = _send_ilus_email(to_envio, subject_envio, html_final,
@@ -2000,14 +2002,15 @@ def register_tickets_routes(app, ctx):
             return
         try:
             tema = _brand_subject(f"Te asignaron el ticket {numero}")
+            # El numero ya va en el asunto (titulo grande del correo) -- el
+            # cuerpo no lo repite, solo agrega el extracto si existe.
             cuerpo_html = (
                 "<div style=\"border-left:4px solid #3b82f6;background:#eff6ff;"
                 "border-radius:0 10px 10px 0;padding:18px 20px;margin:0 0 6px\">"
-                f"<div style=\"font-size:16px;color:#111827;line-height:1.6\">Te asignaron el ticket "
-                f"<strong>{numero}</strong>"
-                + (f": {_html_mod.escape(extracto)}" if extracto else "")
-                + ".</div></div>")
-            html_final = (_comm_render_email_document(tema, cuerpo_html, subtitle=f"Ticket {numero} · ILUS Fitness")
+                "<div style=\"font-size:16px;color:#111827;line-height:1.6\">"
+                + (_html_mod.escape(extracto) if extracto else "Revisa el ticket para ver el detalle.")
+                + "</div></div>")
+            html_final = (_comm_render_email_document(tema, cuerpo_html, subtitle="Servicio Técnico · ILUS Fitness")
                           if _comm_render_email_document else cuerpo_html)
             enviado = _send_ilus_email(destino_email, tema, html_final,
                                         evento="ticket_asignacion", modulo="tickets",
@@ -2117,7 +2120,7 @@ def register_tickets_routes(app, ctx):
         # cliente real si solo redirigimos el "to".
         to_envio, subject_envio = _tk_test_redirect(to_email, subject)
         cc_envio = cc_email if to_envio == to_email else ""
-        html_final = (_comm_render_email_document(subject_envio, cuerpo_email, subtitle=f"Ticket {numero} · ILUS Fitness")
+        html_final = (_comm_render_email_document(subject_envio, cuerpo_email, subtitle="Servicio Técnico · ILUS Fitness")
                       if _comm_render_email_document else cuerpo_email)
 
         try:
