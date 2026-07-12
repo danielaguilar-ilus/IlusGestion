@@ -208,6 +208,27 @@ def register_catalogo_routes(app, ctx):
             return view(*a, **k)
         return login_required(wrapped)
 
+    def _catalogo_admin_required(view):
+        """2026-07-12 (Daniel): "solamente yo puedo hacer el CRUD [de
+        productos/manuales], pero un tecnico/ejecutivo puede cargar piolas".
+        Gate mas estricto que _catalogo_required (solo superadmin) para
+        crear/editar/eliminar productos, fotos, manuales y sincronizar ERP.
+        Las piolas se crean con _catalogo_required (broader) a proposito --
+        editar/eliminar una piola SI queda en este gate estricto."""
+        @wraps(view)
+        def wrapped(*a, **k):
+            perms = g.get("permissions") or {}
+            if not perms.get("superadmin"):
+                if _is_ajaxish():
+                    return jsonify({
+                        "ok": False,
+                        "error": "Solo el superadministrador puede editar el Catálogo.",
+                        "error_codigo": "SIN_PERMISO_CATALOGO_ADMIN",
+                    }), 403
+                return redirect(url_for("index"))
+            return view(*a, **k)
+        return login_required(wrapped)
+
     SORT_COLS = {
         "sku": "p.sku",
         "nombre": "p.nombre",
@@ -315,7 +336,7 @@ def register_catalogo_routes(app, ctx):
     #  API — CRUD producto
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/productos", methods=["POST"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_create():
         d = request.get_json(silent=True) or {}
         sku = (d.get("sku") or "").strip().upper()
@@ -370,7 +391,7 @@ def register_catalogo_routes(app, ctx):
         })
 
     @app.route("/catalogo/api/productos/<int:pid>", methods=["PATCH"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_update(pid):
         prev = mysql_fetchone("SELECT id, sku FROM cat_productos WHERE id=%s", (pid,))
         if not prev:
@@ -408,7 +429,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>", methods=["DELETE"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_delete(pid):
         p = mysql_fetchone("SELECT sku, manual_pdf_key FROM cat_productos WHERE id=%s", (pid,))
         if not p:
@@ -454,7 +475,7 @@ def register_catalogo_routes(app, ctx):
     #  mecanismo que tk_api_upload_adjunto de tickets_module.py)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/productos/<int:pid>/fotos", methods=["POST"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_upload_foto(pid):
         if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
@@ -499,7 +520,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True, "id": row["id"] if row else None, "url": url})
 
     @app.route("/catalogo/api/productos/<int:pid>/fotos/<int:foto_id>", methods=["DELETE"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_delete_foto(pid, foto_id):
         foto = mysql_fetchone(
             "SELECT gcs_key FROM cat_producto_fotos WHERE id=%s AND producto_id=%s", (foto_id, pid))
@@ -518,7 +539,7 @@ def register_catalogo_routes(app, ctx):
     #  API — manual PDF
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/productos/<int:pid>/manual", methods=["POST"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_upload_manual(pid):
         prev = mysql_fetchone("SELECT manual_pdf_key FROM cat_productos WHERE id=%s", (pid,))
         if not prev:
@@ -568,7 +589,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True, "nombre": f.filename, "size_kb": size_kb})
 
     @app.route("/catalogo/api/productos/<int:pid>/manual", methods=["DELETE"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_delete_manual(pid):
         prev = mysql_fetchone("SELECT manual_pdf_key FROM cat_productos WHERE id=%s", (pid,))
         if not prev:
@@ -677,7 +698,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True, "id": nuevo_id})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>", methods=["PATCH"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_piolas_editar(pid, piola_id):
         prod = mysql_fetchone("SELECT sku FROM cat_productos WHERE id=%s", (pid,))
         if not prod:
@@ -733,7 +754,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>", methods=["DELETE"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_piolas_eliminar(pid, piola_id):
         prod = mysql_fetchone("SELECT sku FROM cat_productos WHERE id=%s", (pid,))
         if not prod:
@@ -864,7 +885,7 @@ def register_catalogo_routes(app, ctx):
         return creados, creados_skus
 
     @app.route("/catalogo/api/sync-erp", methods=["POST"])
-    @_catalogo_required
+    @_catalogo_admin_required
     def cat_api_sync_erp():
         d = request.get_json(silent=True) or {}
         try:
