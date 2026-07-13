@@ -4943,9 +4943,26 @@ def _perf_static_cache_and_gzip(resp):
             resp.headers["Strict-Transport-Security"] = (
                 "max-age=63072000; includeSubDomains; preload"
             )
-        if "X-Frame-Options" not in resp.headers:
+        # 2026-07-14 (Daniel, URGENTE): /soporte tiene que poder embeberse
+        # en un <iframe> DENTRO de Shopify (ilusfitness.com) -- SAMEORIGIN
+        # lo bloqueaba por completo (se veía en blanco/roto). Es la ÚNICA
+        # página pública pensada para vivir embebida en un sitio de
+        # terceros, así que es la ÚNICA excepción -- y se restringe
+        # explícitamente al dominio de Shopify (NO se abre a cualquier
+        # origen: eso permitiría que un sitio malicioso embeba el
+        # formulario en un iframe oculto/clickjacking). El resto del sitio
+        # sigue con SAMEORIGIN normal.
+        _es_soporte_publico = bool(request) and request.path.rstrip("/") == "/soporte"
+        if _es_soporte_publico:
+            resp.headers.pop("X-Frame-Options", None)
+            resp.headers["Content-Security-Policy"] = (
+                "frame-ancestors 'self' https://ilusfitness.com "
+                "https://www.ilusfitness.com"
+            )
+        elif "X-Frame-Options" not in resp.headers:
             resp.headers["X-Frame-Options"] = "SAMEORIGIN"
-        if "Content-Security-Policy-Report-Only" not in resp.headers \
+        if not _es_soporte_publico \
+                and "Content-Security-Policy-Report-Only" not in resp.headers \
                 and "Content-Security-Policy" not in resp.headers:
             resp.headers["Content-Security-Policy-Report-Only"] = (
                 "default-src 'self' https://cdn.jsdelivr.net "
