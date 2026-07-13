@@ -209,16 +209,17 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
     <div class="sub">Ficha técnica de referencia — fotos y manual PDF por producto</div>
   </div>
   <div class="d-flex gap-2">
-    {% if permissions.superadmin %}
-    <button class="btn btn-sm btn-outline-light" id="btnBuscarErp" type="button"
-            title="Busca UN producto puntual en el ERP (por SKU, documento o RUT/nombre del cliente) y lo agrega al catálogo — sin sincronizar la bodega completa">
-      <i class="bi bi-search me-1"></i>Buscar en ERP</button>
-    <button class="btn btn-sm btn-outline-light" id="btnSyncErp" type="button"
-            title="Trae del ERP todos los productos de la bodega {{ cat_bodega_sync|default('02') }} que aún no estén en este catálogo (excluye los SKU &quot;ZZ&quot;, que son servicios, no productos físicos)">
-      <i class="bi bi-cloud-download me-1"></i>Sincronizar bodega desde ERP</button>
-    {% endif %}
-    <button class="btn btn-ilus" data-bs-toggle="modal" data-bs-target="#catnModal">
-      <i class="bi bi-plus-lg me-1"></i>Nuevo producto</button>
+    {# 2026-07-14 (Daniel): "quiero que el botón rojo de nuevo producto sea
+       el que traiga el modal... que solamente exista ese botón rojo" --
+       se fusionan los 3 botones (Buscar en ERP / Sincronizar bodega /
+       Nuevo producto) en UNO solo: el rojo abre el modal ERP compartido
+       (mismo comportamiento que tenía "Buscar en ERP"). Autorización
+       explícita de Daniel para quitar los otros dos de la barra (Regla
+       #4.2) -- el modal manual #catnModal y el endpoint de sync masivo
+       (/catalogo/api/sync-erp) NO se borraron, solo quedan sin botón que
+       los abra desde acá. #}
+    <button class="btn btn-ilus" id="btnBuscarErp" type="button">
+      <i class="bi bi-search me-1"></i>Nuevo producto</button>
   </div>
 </div>
 
