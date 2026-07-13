@@ -510,6 +510,37 @@ async function subirPendientes(){
   }
 }
 
+// ── Telefono chileno: +56 9 XXXX XXXX mientras se escribe ──
+// (Daniel 2026-07-13, URGENTE: "no ha cambiado el telefono a formato
+// chileno inteligente" -- antes solo se VALIDABA el formato, nunca se
+// autoformateaba como ya se hace con el RUT).
+function spFormatearTelefono(raw){
+  let v = String(raw||'').replace(/\D/g,'');
+  // Si trae codigo de pais + numero local completo, se descarta el "56"
+  // (el numero local chileno son siempre 9 digitos: 9XXXXXXXX o 2XXXXXXXX).
+  if(v.startsWith('56') && v.length > 9) v = v.slice(2);
+  v = v.slice(0, 9);
+  if(!v) return '';
+  let out = '+56';
+  out += ' ' + v.slice(0, 1);
+  if(v.length > 1) out += ' ' + v.slice(1, 5);
+  if(v.length > 5) out += ' ' + v.slice(5, 9);
+  return out;
+}
+(function(){
+  const spPhone = document.getElementById('spPhone');
+  spPhone.addEventListener('input', function(){
+    const pos = this.selectionStart;
+    const antes = this.value.length;
+    this.value = spFormatearTelefono(this.value);
+    // Reposiciona el cursor al final -- el numero es corto (9 digitos) y
+    // se escribe de una sola pasada, igual criterio que el RUT.
+    const despues = this.value.length;
+    const nuevaPos = Math.max(0, pos + (despues - antes));
+    try { this.setSelectionRange(nuevaPos, nuevaPos); } catch(e){}
+  });
+})();
+
 // ── RUT chileno: puntos de mil + guion-DV SOLO al terminar de escribir ──
 // (Daniel 2026-07-13, URGENTE: "le agreguen los puntos... como RUT chileno...
 // asi no lleve el codigo verificador... si lo agregas a un numero mas, ahi
