@@ -4617,9 +4617,14 @@ def register_tickets_routes(app, ctx):
     # ── GET /soporte — pagina publica (standalone, sin sidebar) ──
     @app.route("/soporte")
     def tk_soporte_publico():
+        # 2026-07-13 (Daniel, URGENTE): "saca la garantia... dejemoslo mas
+        # abajo en un toggle en equipos" -- mismo criterio que el modal
+        # interno (TK_TIPOS_MODAL): la garantia deja de ser un TIPO de
+        # solicitud propio y pasa a ser el toggle transversal es_garantia
+        # (ya existe la columna, solo faltaba exponerla en este formulario).
         return render_template(
             "tickets/soporte_publico.html",
-            tk_tipos_publicos=TK_TIPOS_PUBLICOS, tipo_label=TIPO_LABEL,
+            tk_tipos_publicos=TK_TIPOS_MODAL, tipo_label=TIPO_LABEL,
             max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB)
 
     # ── GET /soporte/api/erp/productos — catalogo general (read-only) ──
@@ -4692,8 +4697,9 @@ def register_tickets_routes(app, ctx):
                     "INSERT INTO tk_tickets "
                     "(origen, estado, tipo, prioridad, descripcion, rut, empresa, nombre_contacto, "
                     " email, phone, direccion, direccion_lat, direccion_lng, direccion_place_id, "
-                    " comuna_nombre, region_nombre, codigo_postal, sucursal, producto, sku, numero_documento, created_by) "
-                    "VALUES ('form','open',%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'cliente')",
+                    " comuna_nombre, region_nombre, codigo_postal, sucursal, producto, sku, numero_documento, "
+                    " es_garantia, created_by) "
+                    "VALUES ('form','open',%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'cliente')",
                     (tipo, descripcion[:2000], rut[:12],
                      (d.get("empresa") or "").strip()[:150] or None,
                      nombre_contacto[:150], email[:150], phone[:20],
@@ -4706,7 +4712,8 @@ def register_tickets_routes(app, ctx):
                      (d.get("sucursal") or "").strip()[:100] or None,
                      ", ".join(p.get("nombre", "") for p in productos if p.get("nombre"))[:2000] or None,
                      ", ".join(p.get("sku", "") for p in productos if p.get("sku"))[:500] or None,
-                     (d.get("numero_documento") or "").strip()[:500] or None))
+                     (d.get("numero_documento") or "").strip()[:500] or None,
+                     1 if d.get("es_garantia") else 0))
                 tid = cur.lastrowid
                 cur.execute(
                     "UPDATE tk_tickets SET numero_ticket = "
