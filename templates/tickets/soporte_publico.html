@@ -4,7 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Solicitud de Soporte · ILUS Fitness</title>
-<link rel="icon" href="{{ url_for('static', filename='Logo.png') }}">
+{# 2026-07-14 (Daniel): "el logo se ve horrible, mejoralo para que se vea
+   negrito" -- Logo.png es blanco+rojo sobre fondo negro (pensado para
+   modales oscuros), como favicon de pestaña (fondo claro del navegador)
+   el blanco se perdia y se veia mal. Se usa el mismo set de favicons
+   dedicado que ya usa el resto del sitio (base.html), pensado para
+   verse bien en fondo claro. #}
+<link rel="icon" type="image/png" sizes="16x16"   href="{{ url_for('static', filename='favicon_16.png') }}">
+<link rel="icon" type="image/png" sizes="32x32"   href="{{ url_for('static', filename='favicon_32.png') }}">
+<link rel="icon" type="image/png" sizes="64x64"   href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
 {# 2026-07-13 (Daniel, URGENTE): "termina los logos... los que tienen signo de
    interrogacion" -- los iconos (bi-*) se veian como el simbolo de "fuente
    faltante" cuando esta pagina esta embebida en el iframe de Shopify (el
