@@ -72700,41 +72700,6 @@ def mant_cotizaciones_list():
     return render_template("mantenciones/cotizaciones_list.html")
 
 
-@app.route("/mantenciones/cotizaciones/nuevo")
-@_mant_required
-def mant_cotizacion_nueva():
-    """Form para crear cotización nueva."""
-    if not _mant_cotizaciones_on():
-        return redirect("/mantenciones/clientes")
-    cid_default = request.args.get("cliente_id") or ""
-    clientes = mysql_fetchall(
-        "SELECT id, razon_social, rut FROM mant_clientes "
-        " WHERE estado IN ('activo','prospecto') "
-        " ORDER BY razon_social LIMIT 500"
-    ) or []
-    servicios = mysql_fetchall(
-        "SELECT id, codigo, nombre, tipo_servicio, categoria_equipo, "
-        "       precio_base, horas_estimadas, unidad "
-        "  FROM mant_tarifas_servicio WHERE activo=1 ORDER BY nombre"
-    ) or []
-    cliente_sel = None
-    if cid_default:
-        try:
-            cliente_sel = mysql_fetchone(
-                "SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s",
-                (int(cid_default),)
-            )
-        except Exception: pass
-    return render_template(
-        "mantenciones/cotizacion_form.html",
-        clientes=[dict(c) for c in clientes],
-        servicios=[dict(s) for s in servicios],
-        cliente_sel=dict(cliente_sel) if cliente_sel else None,
-        cliente_id_default=cid_default,
-        modo="nuevo",
-    )
-
-
 @app.route("/mantenciones/cotizaciones/<int:cid>")
 @_mant_required
 def mant_cotizacion_ficha(cid):

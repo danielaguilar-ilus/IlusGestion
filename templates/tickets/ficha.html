@@ -6,6 +6,16 @@
 {% endblock %}
 {% block content %}
 <style>
+/* ── Tokens "2027" (mismo lenguaje visual portado de retiros/soporte_publico) ── */
+:root{
+  --ilus-red:#dc2626; --ilus-red-dk:#991b1b;
+  --ilus-green:#16a34a; --ilus-green-bg:#dcfce7;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.05), 0 1px 1px rgba(15,23,42,.04);
+  --shadow-md:0 4px 14px rgba(15,23,42,.07), 0 1px 3px rgba(15,23,42,.05);
+  --shadow-lg:0 12px 30px rgba(15,23,42,.10), 0 2px 6px rgba(15,23,42,.06);
+  --r-sm:10px; --r-md:14px; --r-lg:18px;
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+}
 .tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
   color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:16px;}
 .tk-hero .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
@@ -43,25 +53,36 @@
 .tk-tab.active{color:#dc2626;border-bottom-color:#dc2626;background:#fef2f2;}
 .tk-tab .badge{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;padding:1px 6px;margin-left:4px;}
 .tk-pane{display:none;} .tk-pane.active{display:block;}
-.tk-card{background:#fff;border:1px solid #eaecf0;border-radius:13px;padding:18px 20px;margin-bottom:14px;}
+.tk-card{background:#fff;border:1px solid #eaecf0;border-radius:var(--r-lg);padding:18px 20px;margin-bottom:14px;
+  box-shadow:var(--shadow-sm);transition:box-shadow .2s var(--ease-spring);}
+.tk-card:hover{box-shadow:var(--shadow-md);}
 .tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.82rem;text-transform:uppercase;letter-spacing:.08em;
   display:flex;align-items:center;gap:7px;}
 .tk-card h6 i{color:#dc2626;font-size:.95rem;}
-.tk-dl{display:grid;grid-template-columns:26px 130px 1fr;gap:9px 10px;font-size:.87rem;align-items:start;}
-.tk-dl i{color:#c4c9d2;font-size:.92rem;margin-top:1px;}
-.tk-dl dt{color:#6b7280;font-weight:600;grid-column:2;}
-.tk-dl dd{margin:0;color:#0f172a;font-weight:700;grid-column:3;overflow-wrap:anywhere;
-  display:flex;align-items:center;gap:8px;}
+/* IDENTIFICACIÓN DEL CLIENTE / PROBLEMA — jerarquía tipográfica más fresca:
+   valores grandes y legibles (pedido Daniel 2026-07-13: "letras más grandes,
+   algo más amigable"), lápiz de edición SIEMPRE junto al valor (no al fondo
+   de la tarjeta) con blanco de sobra para el dedo en mobile. */
+.tk-dl{display:grid;grid-template-columns:28px 128px 1fr;gap:12px 12px;font-size:1rem;align-items:center;}
+.tk-dl i{color:#c4c9d2;font-size:1rem;margin-top:1px;}
+.tk-dl dt{color:#64748b;font-weight:600;grid-column:2;font-size:.82rem;}
+.tk-dl dd{margin:0;color:#0f172a;font-weight:800;font-size:1.05rem;letter-spacing:-.005em;
+  grid-column:3;overflow-wrap:anywhere;display:flex;align-items:center;gap:6px;
+  padding:6px 8px;border-radius:var(--r-sm);transition:background .15s var(--ease-spring);}
+.tk-dl dd:hover{background:#f8fafc;}
 .tk-dl dd .tk-dd-val{flex:1;min-width:0;overflow-wrap:anywhere;}
 .tk-dl dd a{color:#0f172a;text-decoration:none;border-bottom:1px dashed #cbd5e1;}
 .tk-dl dd a:hover{color:#dc2626;border-color:#dc2626;}
-.tk-edit-pencil{flex-shrink:0;color:#c4c9d2;cursor:pointer;font-size:.82rem;opacity:0;transition:opacity .1s,color .1s;}
+.tk-edit-pencil{flex-shrink:0;color:#94a3b8;cursor:pointer;font-size:.86rem;opacity:.45;
+  width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;
+  background:transparent;transition:opacity .15s var(--ease-spring),color .15s,background .15s,transform .15s var(--ease-spring);}
 .tk-dl dd:hover .tk-edit-pencil{opacity:1;}
-.tk-edit-pencil:hover{color:#dc2626;}
-.tk-dd-input{flex:1;min-width:0;}
-@media (max-width:520px){ .tk-dl{grid-template-columns:22px 1fr;}
-  .tk-dl dt{grid-column:2;} .tk-dl dd{grid-column:2;margin-bottom:4px;}
-  .tk-edit-pencil{opacity:1;} }
+.tk-edit-pencil:hover{color:#fff;background:var(--ilus-red);transform:scale(1.08);}
+.tk-edit-pencil:active{transform:scale(.94);}
+.tk-dd-input{flex:1;min-width:0;font-size:1rem;}
+@media (max-width:520px){ .tk-dl{grid-template-columns:24px 1fr;font-size:.95rem;}
+  .tk-dl dt{grid-column:2;} .tk-dl dd{grid-column:2;margin-bottom:2px;padding:8px 6px;}
+  .tk-edit-pencil{opacity:.7;} }
 /* ── Chips de metadata (Problema) ── */
 .tk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
 .tk-chip{display:inline-flex;align-items:center;gap:5px;background:#f8fafc;border:1px solid #e5e7eb;
@@ -291,14 +312,14 @@
 .tk-qf-item.ok{color:#166534;} .tk-qf-item.ok i{color:#16a34a;}
 .tk-qf-item.falta{color:#78350f;} .tk-qf-item.falta i{color:#f59e0b;}
 /* ── Identificación del cliente: vista compacta ── */
-.tk-id-nombre{font-size:1.05rem;font-weight:800;color:#0f172a;margin-bottom:10px;}
+.tk-id-nombre{font-size:1.22rem;font-weight:900;color:#0f172a;margin-bottom:12px;letter-spacing:-.01em;}
 /* ── Adjuntos: encabezado de grupo por fecha + lightbox ── */
 .tk-adj-grupo-titulo{font-size:.68rem;font-weight:800;color:#9ca3af;text-transform:uppercase;
   letter-spacing:.06em;margin:14px 0 8px;}
 .tk-adj-grupo-titulo:first-child{margin-top:0;}
 .tk-lightbox{position:fixed;inset:0;background:rgba(10,10,10,.92);z-index:2000;
   align-items:center;justify-content:center;padding:32px;}
-.tk-lightbox-panel{display:flex;flex-direction:column;max-width:min(94vw,1100px);max-height:94vh;width:100%;}
+.tk-lightbox-panel{position:relative;display:flex;flex-direction:column;max-width:min(94vw,1100px);max-height:94vh;width:100%;}
 .tk-lightbox-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;}
 .tk-lightbox-nombre{color:#fff;font-size:.85rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;}
@@ -318,6 +339,18 @@
   width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:50%;
   background:rgba(255,255,255,.14);flex-shrink:0;}
 .tk-lightbox-close:hover{background:rgba(255,255,255,.26);}
+/* ── Navegación prev/next del visor (varios adjuntos-imagen en el mismo contexto) ── */
+.tk-lightbox-nav{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;
+  justify-content:space-between;pointer-events:none;padding:0 10px;}
+.tk-lightbox-navbtn{pointer-events:auto;width:48px;height:48px;min-width:44px;min-height:44px;border-radius:50%;
+  background:rgba(10,10,10,.55);border:1.5px solid rgba(220,38,38,.55);color:#fff;font-size:1.35rem;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;}
+.tk-lightbox-navbtn:hover{background:rgba(220,38,38,.55);border-color:#dc2626;}
+.tk-lightbox-contador{color:#fff;font-size:.76rem;font-weight:700;background:rgba(255,255,255,.14);
+  border-radius:20px;padding:3px 12px;white-space:nowrap;}
+@media (max-width:520px){
+  .tk-lightbox-navbtn{width:44px;height:44px;font-size:1.15rem;}
+}
 /* ── Actividad del ticket (línea de tiempo de supervisión) ── */
 .tk-act-filtros{display:flex;gap:6px;flex-wrap:wrap;}
 .tk-act-chip{padding:4px 12px;border-radius:50px;font-size:.72rem;font-weight:700;cursor:pointer;
@@ -636,8 +669,8 @@
   </div>
   <div class="tk-card">
     <h6><i class="bi bi-exclamation-circle"></i>Problema</h6>
-    <div id="txtTitulo" style="font-size:1rem;font-weight:800;color:#0f172a;margin-bottom:6px;display:none;"></div>
-    <div id="txtDesc" style="font-size:.9rem;color:#374151;white-space:pre-wrap;line-height:1.5;">—</div>
+    <div id="txtTitulo" style="font-size:1.1rem;font-weight:800;color:#0f172a;margin-bottom:8px;display:none;"></div>
+    <div id="txtDesc" style="font-size:1rem;color:#374151;white-space:pre-wrap;line-height:1.6;">—</div>
     <div class="tk-chips" id="chipsProblema"></div>
   </div>
   {# 2026-07-13 (Daniel, URGENTE): "haz un llamado de atencion... cuando el
@@ -869,12 +902,19 @@
     <div class="tk-lightbox-topbar">
       <span class="tk-lightbox-nombre" id="tkLightboxNombre"></span>
       <div class="tk-lightbox-actions">
+        <span class="tk-lightbox-contador" id="tkLightboxContador" style="display:none;"></span>
         <a class="tk-lightbox-btn" id="tkLightboxDescargar" href="#" download target="_blank" rel="noopener" title="Descargar">
           <i class="bi bi-download"></i> Descargar</a>
         <span class="tk-lightbox-close" id="tkLightboxClose" title="Cerrar"><i class="bi bi-x-lg"></i></span>
       </div>
     </div>
     <div class="tk-lightbox-body" id="tkLightboxBody"></div>
+    <!-- Navegación prev/next -- solo visible cuando hay 2+ imágenes en el
+         contexto (galería de Información o conjunto de la conversación). -->
+    <div class="tk-lightbox-nav" id="tkLightboxNav" style="display:none;">
+      <span class="tk-lightbox-navbtn" id="tkLightboxPrev" title="Anterior"><i class="bi bi-chevron-left"></i></span>
+      <span class="tk-lightbox-navbtn" id="tkLightboxNext" title="Siguiente"><i class="bi bi-chevron-right"></i></span>
+    </div>
   </div>
 </div>
 
@@ -2257,10 +2297,26 @@ function renderThread(mensajes, adjuntos){
       + tradHtml
       + '</div></div>';
   }).join('');
+  // Galería navegable de "Respuestas": Daniel pidió explícitamente "si me
+  // envían diez adjuntos, así sean diferentes, pueda pasarlos para verlos
+  // todos juntos" — se junta TODAS las imágenes de TODA la conversación
+  // visible en el DOM (no solo del mensaje clickeado), en orden cronológico
+  // de aparición (= orden del DOM, que ya viene ordenado por fecha).
   th.querySelectorAll('.rp-adj-chip[data-lightbox]').forEach(function(el){
     el.addEventListener('click', function(e){
       e.preventDefault();
-      tkAbrirAdjunto(el.dataset.url, el.dataset.mime, el.dataset.nombre);
+      const esImg = esImagen(el.dataset.mime, el.dataset.nombre);
+      if(esImg){
+        const chipsImg = Array.from(th.querySelectorAll('.rp-adj-chip[data-lightbox]'))
+          .filter(function(c){ return esImagen(c.dataset.mime, c.dataset.nombre); });
+        const imgs = chipsImg.map(function(c){
+          return {url: c.dataset.url, mime: c.dataset.mime, nombre: c.dataset.nombre};
+        });
+        const idx = chipsImg.indexOf(el);
+        tkAbrirLightboxGaleria(imgs, idx >= 0 ? idx : 0);
+      } else {
+        tkAbrirAdjunto(el.dataset.url, el.dataset.mime, el.dataset.nombre);
+      }
     });
   });
   requestAnimationFrame(function(){
@@ -2313,10 +2369,23 @@ function renderAdjuntosInfo(adjuntos){
     }).join('');
     return '<div class="tk-adj-grupo-titulo">'+esc(fecha)+'</div><div class="tk-adj-grid">'+items+'</div>';
   }).join('');
+  // Galería navegable: TODAS las imágenes de "Información" (no solo la
+  // clickeada) — pedido de Daniel ("poder pasarlas para verlas todas
+  // juntas"). Si lo clickeado no es imagen (PDF/Word/etc.), se abre solo
+  // ese archivo, sin flechas (no tiene sentido navegar entre no-imágenes).
+  const imgsInfo = (adjuntos||[])
+    .filter(function(a){ return esImagen(a.mime_type, a.archivo_nombre); })
+    .map(function(a){ return {url: a.archivo_url, mime: a.mime_type, nombre: a.archivo_nombre||'archivo'}; });
   c.querySelectorAll('.tk-adj-item[data-lightbox]').forEach(function(el){
     el.addEventListener('click', function(e){
       e.preventDefault();
-      tkAbrirAdjunto(el.dataset.url, el.dataset.mime, el.dataset.nombre);
+      const esImg = esImagen(el.dataset.mime, el.dataset.nombre);
+      if(esImg && imgsInfo.length){
+        const idx = imgsInfo.findIndex(function(it){ return it.url === el.dataset.url; });
+        tkAbrirLightboxGaleria(imgsInfo, idx >= 0 ? idx : 0);
+      } else {
+        tkAbrirAdjunto(el.dataset.url, el.dataset.mime, el.dataset.nombre);
+      }
     });
   });
 }
@@ -2519,8 +2588,28 @@ function esOfficeArchivo(mime, nombre){
   return /word|excel|spreadsheet|powerpoint|presentation|msword|officedocument/.test(mime||'')
     || ['doc','docx','xls','xlsx','csv','ppt','pptx'].includes(ext);
 }
-function tkAbrirAdjunto(url, mime, nombre){
-  url = safeUrl(url);
+// 2026-07-13 (Daniel): navegación prev/next entre TODAS las imágenes de un
+// mismo contexto (galería de "Información" o conjunto de la conversación en
+// "Respuestas"), sin perder ningún caller existente de tkAbrirAdjunto().
+// _tkLb guarda el set de imágenes navegables + el índice actual.
+const _tkLb = { items: [], idx: 0 };
+
+function tkAbrirLightboxGaleria(imagenes, indiceInicial){
+  imagenes = Array.isArray(imagenes) ? imagenes.filter(Boolean) : [];
+  if(!imagenes.length) return;
+  _tkLb.items = imagenes;
+  _tkLb.idx = Math.max(0, Math.min(indiceInicial|0, imagenes.length - 1));
+  document.getElementById('tkLightbox').style.display = 'flex';
+  _tkLbPintarActual();
+}
+// Alias con el nombre "oficial" pedido para abrir el lightbox compartido con
+// un array de imágenes + índice inicial (misma función, mismo comportamiento
+// de navegación prev/next — solo se agrega el alias, no se duplica lógica).
+function tkAbrirLightbox(imagenes, indiceInicial){ return tkAbrirLightboxGaleria(imagenes, indiceInicial); }
+function _tkLbPintarActual(){
+  const it = _tkLb.items[_tkLb.idx];
+  if(!it) return;
+  const url = safeUrl(it.url), mime = it.mime, nombre = it.nombre;
   document.getElementById('tkLightboxNombre').textContent = nombre || 'archivo';
   const descargar = document.getElementById('tkLightboxDescargar');
   descargar.href = url;
@@ -2549,18 +2638,52 @@ function tkAbrirAdjunto(url, mime, nombre){
       + '<div class="msg">Vista previa no disponible para este tipo de archivo.<br>Usa el botón "Descargar" para abrirlo.</div>'
       + '</div>';
   }
-  document.getElementById('tkLightbox').style.display = 'flex';
+  const total = _tkLb.items.length;
+  const nav = document.getElementById('tkLightboxNav');
+  const contador = document.getElementById('tkLightboxContador');
+  // Con 1 solo elemento no mostramos flechas ni "1/1" (pedido: evitar ruido
+  // confuso cuando no hay nada entre qué navegar).
+  if(nav) nav.style.display = total > 1 ? 'flex' : 'none';
+  if(contador){
+    contador.style.display = total > 1 ? '' : 'none';
+    contador.textContent = (_tkLb.idx + 1) + '/' + total;
+  }
+}
+function tkLightboxAnterior(){
+  if(_tkLb.items.length < 2) return;
+  _tkLb.idx = (_tkLb.idx - 1 + _tkLb.items.length) % _tkLb.items.length;
+  _tkLbPintarActual();
+}
+function tkLightboxSiguiente(){
+  if(_tkLb.items.length < 2) return;
+  _tkLb.idx = (_tkLb.idx + 1) % _tkLb.items.length;
+  _tkLbPintarActual();
+}
+// Compatibilidad hacia atrás: TODOS los callers existentes de un solo
+// adjunto siguen funcionando igual (galería de 1 elemento, sin flechas).
+function tkAbrirAdjunto(url, mime, nombre){
+  tkAbrirLightboxGaleria([{url:url, mime:mime, nombre:nombre}], 0);
 }
 function tkCerrarLightbox(){
   document.getElementById('tkLightbox').style.display = 'none';
   document.getElementById('tkLightboxBody').innerHTML = '';
+  _tkLb.items = []; _tkLb.idx = 0;
 }
 document.getElementById('tkLightbox').addEventListener('click', function(e){
   if(e.target === this) tkCerrarLightbox();
 });
 document.getElementById('tkLightboxClose').addEventListener('click', tkCerrarLightbox);
+document.getElementById('tkLightboxPrev').addEventListener('click', function(e){
+  e.stopPropagation(); tkLightboxAnterior();
+});
+document.getElementById('tkLightboxNext').addEventListener('click', function(e){
+  e.stopPropagation(); tkLightboxSiguiente();
+});
 document.addEventListener('keydown', function(e){
-  if(e.key === 'Escape') tkCerrarLightbox();
+  if(e.key === 'Escape'){ tkCerrarLightbox(); return; }
+  if(document.getElementById('tkLightbox').style.display === 'none') return;
+  if(e.key === 'ArrowLeft') tkLightboxAnterior();
+  else if(e.key === 'ArrowRight') tkLightboxSiguiente();
 });
 
 // ══════════════ Ejecutivo asignado — select poblado desde /tickets/api/asignables
@@ -2804,6 +2927,27 @@ document.getElementById('rpFile').addEventListener('change', async function(e){
   const files = Array.from(e.target.files || []);
   this.value = '';
   for(const f of files){ await rpSubirArchivo(f); }
+});
+// 2026-07-13 (Daniel): pegar una imagen copiada (Ctrl+V) directo en el
+// editor de la respuesta debe adjuntarla, igual que si se hubiera elegido
+// con el clip 📎 — reutiliza EXACTAMENTE el mismo flujo de subida inmediata
+// (rpSubirArchivo → rpAdjuntos → renderRpAdjPreview) para no duplicar lógica.
+rpQuill.root.addEventListener('paste', function(e){
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  let imgItem = null;
+  for(let i = 0; i < items.length; i++){
+    if(/^image\//.test(items[i].type || '')){ imgItem = items[i]; break; }
+  }
+  if(!imgItem) return; // sin imagen en el portapapeles -- pegar texto normal
+  e.preventDefault();
+  try{
+    const blob = imgItem.getAsFile();
+    if(!blob) throw new Error('sin archivo');
+    const file = new File([blob], 'pegado-'+Date.now()+'.png', {type: blob.type || 'image/png'});
+    rpSubirArchivo(file);
+  }catch(err){
+    ilusToast('No se pudo pegar la imagen', {type:'error'});
+  }
 });
 async function rpSubirArchivo(file){
   const fd = new FormData(); fd.append('file', file);

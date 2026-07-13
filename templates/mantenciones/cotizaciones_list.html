@@ -73,9 +73,9 @@
     <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-light">
       <i class="bi bi-arrow-left me-1"></i>Dashboard
     </a>
-    <a href="{{ url_for('mant_cotizacion_nueva') }}" class="btn btn-sm btn-light fw-bold">
-      <i class="bi bi-plus-circle me-1"></i>Nueva cotización
-    </a>
+    <button type="button" onclick="abrirNuevaCotizacionErp()" class="btn btn-sm btn-light fw-bold">
+      <i class="bi bi-search me-1"></i>Nueva cotización desde ERP
+    </button>
   </div>
 </div>
 
@@ -171,9 +171,9 @@ async function cargar(){
         <div class="empty-state">
           <i class="bi bi-file-earmark-text"></i>
           <div class="fw-bold">Sin cotizaciones ${q||estado||desde||hasta ? 'con esos filtros' : 'aún'}</div>
-          <a href="/mantenciones/cotizaciones/nuevo" class="btn btn-sm btn-ilus mt-2">
-            <i class="bi bi-plus-circle me-1"></i>Crear la primera cotización
-          </a>
+          <button type="button" onclick="abrirNuevaCotizacionErp()" class="btn btn-sm btn-ilus mt-2">
+            <i class="bi bi-search me-1"></i>Crear la primera cotización desde ERP
+          </button>
         </div>`;
       return;
     }
@@ -207,5 +207,35 @@ async function cargar(){
   }
 }
 cargar();
+
+// ══════════════ Nueva cotización desde ERP (camino único de creación) ══════════════
+// Reusa el modal compartido tickets/_tka_modal.html (mode:'seleccionar'). Crea en
+// tk_cotizaciones (ticket_id NULL, cotización "suelta"). Al crear, recarga la lista
+// (esta vista sigue mostrando solo mant_cotizaciones; la unificada está en /cotizaciones).
+function abrirNuevaCotizacionErp(){
+  tkaOpen({
+    mode: 'seleccionar',
+    onSeleccionar: async function(items){
+      if (!items || !items.length) return;
+      try{
+        const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ items: items })
+        });
+        const d = await r.json();
+        if (!d.ok){
+          ilusToast(d.error || 'No se pudo crear la cotización', {type:'error'});
+          return;
+        }
+        ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada — ver en /cotizaciones', {type:'success'});
+        setTimeout(function(){ window.location = '/cotizaciones'; }, 900);
+      }catch(e){
+        ilusToast('Error de conexión al crear la cotización', {type:'error'});
+      }
+    }
+  });
+}
 </script>
+
+{% include "tickets/_tka_modal.html" %}
 {% endblock %}
