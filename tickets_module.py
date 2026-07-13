@@ -4828,9 +4828,10 @@ def register_tickets_routes(app, ctx):
         if d.get("direccion_lat") in (None, "", "null") or d.get("direccion_lng") in (None, "", "null"):
             return jsonify({"ok": False, "error": "Selecciona una dirección sugerida por Google para validarla."}), 400
 
+        # 2026-07-13 (Daniel, URGENTE): "quitale el obligatorio al producto...
+        # es valido avanzar" -- el equipo ya no es requerido (antes bloqueaba
+        # el envio si el cliente no sabia el nombre exacto de la maquina).
         productos = d.get("productos") or []  # [{sku, nombre}]
-        if not productos:
-            return jsonify({"ok": False, "error": "Selecciona al menos un producto."}), 400
 
         descripcion = (d.get("descripcion") or "").strip()
         if not descripcion:

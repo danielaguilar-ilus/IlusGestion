@@ -61,6 +61,18 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
   border-radius:50%;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.25);}
 .sp-toggle input:checked + .sp-toggle-slider{background:var(--ilus-red);}
 .sp-toggle input:checked + .sp-toggle-slider::before{transform:translateX(18px);}
+/* Tarjeta "opcional" -- paso 4 (Equipo), mismo lenguaje visual que el
+   formulario de retiro que a Daniel le gusto (icono redondo + titulo con
+   badge Opcional + descripcion + switch que revela contenido extra). */
+.sp-opt-card{display:flex;gap:14px;background:#f0fdf4;border:1.5px solid #bbf7d0;
+  border-radius:12px;padding:16px;}
+.sp-opt-icon{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:#16a34a;color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:1.05rem;}
+.sp-opt-body{flex:1;min-width:0;}
+.sp-opt-title{font-weight:800;font-size:.92rem;color:#14532d;}
+.sp-opt-title .op{font-size:.62rem;font-weight:800;color:#166534;background:#dcfce7;border-radius:5px;
+  padding:1px 7px;margin-left:6px;text-transform:uppercase;vertical-align:middle;}
+.sp-opt-desc{font-size:.78rem;color:#3f6212;margin-top:3px;line-height:1.45;}
 .sp-field .fh{font-size:.72rem;color:#94a3b8;margin-top:5px;}
 .sp-field .fe{font-size:.72rem;color:var(--ilus-red);margin-top:5px;display:none;}
 .sp-field.err input,.sp-field.err textarea{border-color:var(--ilus-red);}
@@ -231,14 +243,35 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
 
   <div class="sp-card">
     <h2><span class="n">4</span>El equipo</h2>
-    <div class="hint">Busca y selecciona la máquina o producto. Puedes agregar varios.</div>
-    <div class="sp-field full" id="fProdWrap">
-      <label for="spBuscarProd">Productos <span class="req">*</span></label>
-      <input type="text" id="spBuscarProd" placeholder="Escribe el nombre del equipo…" autocomplete="off">
-      <div class="sp-ac" id="spAcProd"></div>
-      <div class="fe">Selecciona al menos un producto.</div>
+    {# 2026-07-13 (Daniel, URGENTE): "quitale el obligatorio al producto si el
+       cliente no se lo sabe... hazlo con toggle opcional pero es valido
+       avanzar, como en el formulario de retiro" -- antes bloqueaba el envio
+       si no se elegia un producto del buscador. Ahora es opcional: por
+       defecto se avanza igual (el ticket queda sin equipo especifico
+       asociado, se resuelve despues por telefono/correo), y el switch solo
+       aparece para quien SI sabe el equipo y quiere identificarlo rapido. #}
+    <div class="sp-opt-card" id="prodOptCard">
+      <div class="sp-opt-icon"><i class="bi bi-check-lg"></i></div>
+      <div class="sp-opt-body">
+        <div class="sp-opt-title">¿Sabes qué máquina es? <span class="op">Opcional</span></div>
+        <div class="sp-opt-desc">Si no conoces el nombre exacto del equipo, no hay problema — puedes avanzar igual. Marca el switch solo si quieres buscarlo para identificarlo más rápido.</div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+          <label class="sp-toggle" style="margin:0;">
+            <input type="checkbox" id="spProdToggle">
+            <span class="sp-toggle-slider"></span>
+          </label>
+          <span style="font-weight:700;font-size:.86rem;">Sí, sé qué equipo es</span>
+        </div>
+        <div id="prodBuscarWrap" class="sp-hidden" style="margin-top:14px;">
+          <div class="sp-field full" id="fProdWrap">
+            <label for="spBuscarProd">Productos</label>
+            <input type="text" id="spBuscarProd" placeholder="Escribe el nombre del equipo…" autocomplete="off">
+            <div class="sp-ac" id="spAcProd"></div>
+          </div>
+          <div id="spProdChips" style="margin-top:8px;"></div>
+        </div>
+      </div>
     </div>
-    <div id="spProdChips" style="margin-top:8px;"></div>
     <div class="sp-field full" style="margin-top:14px;">
       <label for="spDoc">N° de boleta o factura <span class="op">Opcional</span></label>
       <input type="text" id="spDoc" placeholder="Ej: 10683">
@@ -462,6 +495,12 @@ function renderMotivosPorEquipo(){
 }
 document.getElementById('spMotivoDistinto').addEventListener('change', renderMotivosPorEquipo);
 
+// Toggle "¿Sabes qué máquina es?" (paso 4) -- revela el buscador de
+// productos, que ya no es obligatorio para avanzar.
+document.getElementById('spProdToggle').addEventListener('change', function(){
+  document.getElementById('prodBuscarWrap').classList.toggle('sp-hidden', !this.checked);
+});
+
 // ── Paso 5: contador + archivos ──
 document.getElementById('spDesc').addEventListener('input', function(){
   document.getElementById('spDescCount').textContent = 260 - this.value.length;
@@ -587,7 +626,11 @@ function validarTodo(){
   const dirVal = document.getElementById('spDireccion').value.trim();
   const dirLat = document.getElementById('spDirLat').value;
   if(!dirVal || !dirLat){ marcarError('fDirWrap', true); ok=false; } else marcarError('fDirWrap', false);
-  if(!productos.length){ marcarError('fProdWrap', true); ok=false; } else marcarError('fProdWrap', false);
+  // 2026-07-13 (Daniel, URGENTE): "quitale el obligatorio al producto...
+  // es valido avanzar, como en el formulario de retiro" -- el equipo ya NO
+  // bloquea el envio; si el cliente no sabe el nombre, el ticket avanza sin
+  // el (se resuelve despues por telefono/correo, o el toggle de Repuestos
+  // que agrega Daniel a mano en la ficha).
   if(!document.getElementById('spDesc').value.trim()){ marcarError('fDescWrap', true); ok=false; } else marcarError('fDescWrap', false);
   return ok;
 }
@@ -669,6 +712,8 @@ function spResetFormulario(){
    'spDoc','spDesc','spBuscarProd','spDirLat','spDirLng','spDirPlace','spComuna','spRegion','spCodigoPostal']
     .forEach(function(id){ const el = document.getElementById(id); if(el) el.value = ''; });
   const spGar = document.getElementById('spGarantia'); if(spGar) spGar.checked = false;
+  const spProdT = document.getElementById('spProdToggle');
+  if(spProdT){ spProdT.checked = false; document.getElementById('prodBuscarWrap').classList.add('sp-hidden'); }
   ['fRutWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap','fProdWrap','fDescWrap']
     .forEach(function(id){ marcarError(id, false); });
   const h = document.getElementById('spDirHint'); if(h) h.innerHTML = 'Direcciones sugeridas por Google';
