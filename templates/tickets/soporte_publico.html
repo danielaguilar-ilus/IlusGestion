@@ -118,6 +118,12 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
   display:flex;align-items:center;justify-content:center;padding:16px;}
 .sp-ok{background:#fff;border-radius:16px;padding:44px 28px;text-align:center;
   box-shadow:0 20px 50px rgba(15,23,42,.25);max-width:420px;width:100%;position:relative;}
+{# Logo.png es blanco+rojo pensado para fondos oscuros (Regla del proyecto:
+   "usar SIEMPRE Logo.png en modales oscuros") -- este modal de exito es
+   claro, asi que el logo va sobre su propio chip oscuro para que se vea
+   correctamente, en vez de invertir colores (quedaria mal). #}
+.sp-ok-logo-wrap{background:#0a0a0a;border-radius:10px;padding:10px 18px;display:inline-block;margin:0 auto 16px;}
+.sp-ok-logo{height:26px;display:block;}
 .sp-ok i{font-size:3rem;color:#16a34a;display:block;margin-bottom:14px;}
 .sp-ok h2{font-weight:900;margin:0 0 8px;}
 .sp-ok .num{background:#fef3c7;color:#92400e;display:inline-block;border-radius:8px;padding:8px 16px;
@@ -277,21 +283,6 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
       <input type="text" id="spDoc" placeholder="Ej: 10683">
       <div class="fh">Aparece en la parte superior de tu documento. Nos ayuda a ubicar tu compra.</div>
     </div>
-    {# 2026-07-13 (Daniel, URGENTE): "saca la garantia... dejemoslo mas abajo
-       en un toggle en equipos... indica que esto sera sometido a evaluacion"
-       -- ya no es un tipo de solicitud propio (redundante con es_garantia,
-       que es transversal a cualquier tipo). Copy pensado para no generar
-       una expectativa de cobertura garantizada -- solo avisa que se evalua. #}
-    <div class="sp-toggle-row" style="margin-top:14px;">
-      <label class="sp-toggle">
-        <input type="checkbox" id="spGarantia">
-        <span class="sp-toggle-slider"></span>
-      </label>
-      <div>
-        <label for="spGarantia" style="font-weight:700;cursor:pointer;">¿Crees que esto podría estar cubierto por garantía?</label>
-        <div class="fh" style="margin-top:2px;">Márcalo y tu caso será evaluado por nuestro equipo técnico para confirmar si aplica.</div>
-      </div>
-    </div>
   </div>
 
   <div class="sp-card">
@@ -302,6 +293,23 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
       <textarea id="spDesc" rows="3" maxlength="260" placeholder="Ej: La consola de la trotadora se apaga sola después de unos minutos de uso…"></textarea>
       <div class="sp-counter"><span id="spDescCount">260</span> caracteres restantes</div>
       <div class="fe">Describe el problema.</div>
+    </div>
+    {# 2026-07-13 (Daniel, URGENTE): "saca la garantia [del paso Equipo]...
+       si vas a bloquear el equipo con un toggle, tienes que sacar el toggle
+       de la garantia y lo pasas al paso 5" -- dos toggles en la misma
+       tarjeta (Equipo) confundian. Se mueve aca, junto al resto de
+       "Cuentanos el problema". Sigue sin ser un tipo de solicitud propio
+       (redundante con es_garantia, transversal a cualquier tipo) -- copy
+       pensado para no generar una expectativa de cobertura garantizada. #}
+    <div class="sp-toggle-row" style="margin-top:14px;">
+      <label class="sp-toggle">
+        <input type="checkbox" id="spGarantia">
+        <span class="sp-toggle-slider"></span>
+      </label>
+      <div>
+        <label for="spGarantia" style="font-weight:700;cursor:pointer;">¿Crees que esto podría estar cubierto por garantía?</label>
+        <div class="fh" style="margin-top:2px;">Márcalo y tu caso será evaluado por nuestro equipo técnico para confirmar si aplica.</div>
+      </div>
     </div>
     {# 2026-07-13 (Daniel, URGENTE): "si es multimaquina, que tenga un toggle
        en el problema y diga si aplicar o no a todos el mismo error, o si se
@@ -338,8 +346,11 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
   </div>
 </div>
 
+{# 2026-07-13 (Daniel, URGENTE): "colocale nada mas un mensajito con el
+   logo, asi como el de retira" -- logo ILUS agregado al modal de exito. #}
 <div class="sp-ok-overlay sp-hidden" id="spOkOverlay">
   <div class="sp-ok" id="spOk">
+    <div class="sp-ok-logo-wrap"><img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS" class="sp-ok-logo"></div>
     <i class="bi bi-check-circle-fill"></i>
     <h2>¡Solicitud recibida!</h2>
     <div style="color:#9ca3af;font-size:.8rem;margin-top:6px;">N° de solicitud:</div>
