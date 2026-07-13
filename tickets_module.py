@@ -2995,7 +2995,7 @@ def register_tickets_routes(app, ctx):
         #    todavia -- TODOS los equipos del ticket se preseleccionan tal
         #    cual, no hay checkboxes que ofrecer. ──
         eq_ticket_rows = mysql_fetchall(
-            "SELECT id, nombre, sku, serie, maquina_id "
+            "SELECT id, nombre, sku, serie, maquina_id, notas "
             "  FROM tk_ticket_equipos WHERE ticket_id=%s ORDER BY id", (tid,)) or []
         if cliente_recien_creado:
             equipo_ids = []
@@ -3183,6 +3183,35 @@ def register_tickets_routes(app, ctx):
 
         vid = resultado.get("visita_id")
         numero_ot = resultado.get("numero_ot")
+
+        # 2026-07-13 (Daniel, URGENTE): "es necesario que le llegue esa
+        # informacion al tecnico a la orden de trabajo" -- el motivo/
+        # observacion por equipo (tk_ticket_equipos.notas, capturado en el
+        # formulario multi-maquina o cargado a mano en la ficha) NUNCA
+        # llegaba a mant_visitas.observaciones (la unica que el tecnico ve
+        # en "Datos de la OT" -- _mant_lev_crear_ot_core solo escribe la
+        # columna `notas`, de uso interno/administrativo, no la que el
+        # tecnico lee). Se arma un resumen y se actualiza observaciones
+        # DESPUES de crear la OT (update aislado, no toca el nucleo
+        # compartido) -- no bloquea la creacion si falla.
+        try:
+            partes_obs = []
+            desc_ticket = (t.get("descripcion") or "").strip()
+            if desc_ticket:
+                partes_obs.append(desc_ticket)
+            motivos_eq = [
+                f"• {r.get('nombre') or 'Equipo'}: {r['notas'].strip()}"
+                for r in eq_ticket_rows if (r.get("notas") or "").strip()
+            ]
+            if motivos_eq:
+                partes_obs.append("Detalle por equipo:\n" + "\n".join(motivos_eq))
+            observaciones_tecnico = "\n\n".join(partes_obs)[:4000]
+            if observaciones_tecnico:
+                mysql_execute(
+                    "UPDATE mant_visitas SET observaciones=%s WHERE id=%s",
+                    (observaciones_tecnico, vid))
+        except Exception as _e_obs:
+            print(f"[tk_api_generar_ot] observaciones no propagadas a la OT vid={vid}: {_e_obs}", flush=True)
 
         # ── Bitácora (fuera del lock -- trabajo secundario no crítico) ──
         _tk_log(tid, "otro",

@@ -7,11 +7,19 @@
 {% block content %}
 <style>
 .tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
-  color:#fff;border-radius:14px;padding:16px 22px;margin-bottom:16px;}
-.tk-hero .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-.tk-num{background:#fef3c7;color:#92400e;padding:5px 11px;border-radius:7px;
-  font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:800;}
-.tk-hero h4{margin:0;font-weight:900;font-size:1.05rem;}
+  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:16px;}
+.tk-hero .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+{# 2026-07-13 (Daniel, URGENTE): "el header no va con el diseño... colocale
+   el numero del ticket, sobre todo el nombre y el ticket grande" -- numero
+   y nombre del cliente pasan a ser el elemento dominante del hero, igual
+   que .page-header (h4 1.35rem) lo es en el resto de la app, pero mas
+   grande aca porque Daniel pidio explicitamente "grande" para ambos. #}
+.tk-num{background:#fef3c7;color:#92400e;padding:7px 14px;border-radius:8px;
+  font-family:'JetBrains Mono',monospace;font-size:1.15rem;font-weight:900;letter-spacing:.02em;}
+.tk-hero h4{margin:0;font-weight:900;font-size:1.5rem;line-height:1.15;}
+.tk-hero-datos{display:flex;flex-wrap:wrap;gap:4px 18px;margin-top:6px;font-size:.82rem;color:rgba(255,255,255,.75);}
+.tk-hero-datos span{display:inline-flex;align-items:center;gap:5px;}
+.tk-hero-datos i{color:rgba(255,255,255,.5);}
 .tk-badge{padding:3px 10px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
 .bs-open{background:#dbeafe;color:#1e40af;} .bs-in_progress{background:#fef3c7;color:#92400e;}
 .bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
@@ -544,6 +552,13 @@
     <span class="tk-num" id="hNum">…</span>
     <h4 id="hCliente">Cargando…</h4>
     <span class="tk-badge" id="hEstado"></span>
+  </div>
+  {# 2026-07-13 (Daniel, URGENTE): "colocale... donde queda, responsable,
+     todo eso" -- direccion/comuna y ejecutivo asignado visibles de una en
+     el header, sin tener que entrar a la tarjeta "Problema" mas abajo. #}
+  <div class="tk-hero-datos" id="hDatosRow">
+    <span id="hDireccionRow" style="display:none;"><i class="bi bi-geo-alt-fill"></i><span id="hDireccion"></span></span>
+    <span id="hResponsableRow" style="display:none;"><i class="bi bi-person-badge"></i><span id="hResponsable"></span></span>
   </div>
   <div class="tk-hero-meta" id="hMetaRow">
     <span class="tk-badge" id="hPrio" style="display:none;"></span>
@@ -1793,6 +1808,16 @@ async function cargar(){
       + (venc?'Vencido ':'Vence ')+esc(t.fecha_limite);
   } else hSla.style.display='none';
   document.getElementById('hSub').textContent = 'Creado '+fmtFechaHora(t.created_at)+(t.created_by?' · '+t.created_by:'');
+  const hDirRow = document.getElementById('hDireccionRow');
+  if(t.direccion && String(t.direccion).trim()){
+    hDirRow.style.display='inline-flex';
+    document.getElementById('hDireccion').textContent = t.direccion + (t.comuna_nombre ? ', '+t.comuna_nombre : '');
+  } else hDirRow.style.display='none';
+  const hRespRow = document.getElementById('hResponsableRow');
+  if(t.asignado_a && String(t.asignado_a).trim()){
+    hRespRow.style.display='inline-flex';
+    document.getElementById('hResponsable').textContent = t.asignado_a;
+  } else hRespRow.style.display='none';
 
   // ── Visto por (quién lo abrió, cuándo) — línea discreta en Estado y gestión ──
   const vp = document.getElementById('vistoPor');
