@@ -1424,6 +1424,90 @@ def register_tickets_routes(app, ctx):
                                 cotizaciones=[_fmt_row(r) for r in rows])
 
     # ─────────────────────────────────────────────────────────────────
+    #  API — crear cotizacion en borrador desde el modal ERP compartido
+    #  (_tka_modal.html, mode:'seleccionar'). Daniel pidio que Cotizaciones
+    #  sea el primer modulo (ademas de Tickets) que llame al ERP con ese
+    #  mismo modal. Precios quedan en 0 -- fase de tarifas es futura, no
+    #  se inventa logica de pricing aca.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/cotizaciones/desde-erp", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_desde_erp():
+        d = request.get_json(silent=True) or {}
+        items = d.get("items") or []
+        if not isinstance(items, list) or not items:
+            return jsonify({"ok": False, "error": "No se recibió ningún ítem seleccionado del ERP"}), 400
+
+        user = current_username() or "sistema"
+        empresa = (d.get("empresa") or "").strip()[:150] or None
+        rut = (d.get("rut") or "").strip()[:12] or None
+        erp_idmaeen = None
+        try:
+            first_tido = (items[0] or {}).get("tido")
+            if str(first_tido or "").strip().isdigit():
+                erp_idmaeen = int(first_tido)
+        except Exception:
+            pass
+        erp_koen = (items[0] or {}).get("koen") if items else None
+
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tk_cotizaciones "
+                    "(estado, erp_idmaeen, erp_koen, rut, empresa, created_by) "
+                    "VALUES ('draft', %s, %s, %s, %s, %s)",
+                    (erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa, user),
+                )
+                cot_id = cur.lastrowid
+                # Numeracion race-free derivada del id autoincrement, mismo
+                # patron que TK-{anio}-{id} para tk_tickets (hora Chile,
+                # Regla #6, evita numerar en el limite de anio via UTC).
+                cur.execute(
+                    "UPDATE tk_cotizaciones SET numero_cotizacion = "
+                    "CONCAT('COT-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                    (_chile_now_year(), cot_id),
+                )
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    sku = (it.get("sku") or "").strip()[:100] or None
+                    descripcion = (it.get("nombre") or "").strip()[:300] or None
+                    try:
+                        cantidad = int(it.get("qty") or 1)
+                    except Exception:
+                        cantidad = 1
+                    if cantidad < 1:
+                        cantidad = 1
+                    cur.execute(
+                        "INSERT INTO tk_cotizacion_items "
+                        "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, "
+                        " precio_unitario, subtotal, total, desde_ticket) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0)",
+                        (cot_id, sku, descripcion, cantidad),
+                    )
+            conn.commit()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"[tk_api_cotizacion_desde_erp] CRASH: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo crear la cotización"}), 500
+        finally:
+            conn.close()
+
+        numero_row = mysql_fetchone(
+            "SELECT numero_cotizacion FROM tk_cotizaciones WHERE id=%s", (cot_id,))
+        numero = numero_row["numero_cotizacion"] if numero_row else None
+        try:
+            _audit("tk_cotizacion_create", target_type="tk_cotizacion", target_id=cot_id,
+                   details={"numero": numero, "items": len(items)})
+        except Exception:
+            pass
+        return jsonify({"ok": True, "id": cot_id, "numero_cotizacion": numero})
+
+    # ─────────────────────────────────────────────────────────────────
     #  API — listado + KPIs
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets", methods=["GET"])

@@ -64845,6 +64845,63 @@ def mant_repuesto_asignar_ticket(rid):
         return jsonify({"ok": False, "error": "Error interno", "error_codigo": "INTERNAL_CRASH"}), 500
 
 
+@app.route("/mantenciones/api/repuestos/desde-erp", methods=["POST"])
+@_mant_required
+def mant_repuesto_crear_desde_erp():
+    """2026-07-12 (Daniel): botón "Buscar en ERP" de la vista central de
+    Repuestos (/repuestos) usa el modal compartido tkaOpen({mode:'seleccionar'})
+    de templates/tickets/_tka_modal.html. Recibe los items ya elegidos por el
+    usuario en el modal (misma forma que entrega su onSeleccionar) y crea UNA
+    fila en mant_repuestos por cada uno. Es un camino ADITIVO desde la vista
+    central: no toca el CRUD por ficha de cliente (Regla #4.2). cliente_id
+    queda NULL a propósito -- esta vista no tiene contexto de cliente."""
+    try:
+        d = request.get_json(silent=True) or {}
+        items = d.get("items") or []
+        if not isinstance(items, list) or not items:
+            return jsonify({"ok": False, "error": "Sin items seleccionados"}), 400
+        creados = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            sku = (it.get("sku") or "").strip()[:120]
+            nombre = (it.get("nombre") or "").strip()[:400] or sku or "Repuesto sin nombre"
+            try:
+                cantidad = float(it.get("qty") or 1)
+            except (TypeError, ValueError):
+                cantidad = 1.0
+            fields = {
+                "cliente_id":  None,
+                "sku":         sku,
+                "nombre":      nombre,
+                "cantidad":    cantidad,
+                "estado":      "cotizado",
+                "codigo_repuesto": sku or None,
+                "created_by":  current_username(),
+            }
+            cols = list(fields.keys())
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"INSERT INTO mant_repuestos ({','.join(cols)}) "
+                        f"VALUES ({','.join(['%s']*len(cols))})",
+                        tuple(fields[c] for c in cols)
+                    )
+                    new_id = cur.lastrowid
+                conn.commit()
+            finally:
+                conn.close()
+            _mant_log("repuesto", new_id, "crear_desde_erp", f"{nombre} (SKU {sku or 's/d'})")
+            creados.append(new_id)
+        if not creados:
+            return jsonify({"ok": False, "error": "Ningún item pudo crearse"}), 400
+        return jsonify({"ok": True, "creados": len(creados), "ids": creados})
+    except Exception as e:
+        print(f"[mant_repuesto_crear_desde_erp] CRASH: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error interno", "error_codigo": "INTERNAL_CRASH"}), 500
+
+
 @app.route("/mantenciones/api/proveedores-repuesto", methods=["GET"])
 @_mant_required
 def mant_proveedores_repuesto_list():

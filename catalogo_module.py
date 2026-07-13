@@ -1056,6 +1056,51 @@ def register_catalogo_routes(app, ctx):
                 print(f"[_cat_sync_erp_nuevos] no se pudo crear sku={sku}: {_e_ins}", flush=True)
         return creados, creados_skus
 
+    # ─────────────────────────────────────────────────────────────────
+    #  DESDE ERP (puntual) — 2026-07-12 (Daniel): en vez de sincronizar la
+    #  bodega COMPLETA, buscar UN producto puntual (por SKU/documento/RUT
+    #  vía el modal compartido _tka_modal.html en mode:'seleccionar') y
+    #  agregarlo al catálogo ahí mismo. Idempotente: si el SKU ya existe en
+    #  cat_productos, no se duplica -- se devuelve el id existente tal cual
+    #  (Regla #4.2, aditivo: el botón "Sincronizar bodega desde ERP" sigue
+    #  intacto, este es un camino alternativo, no un reemplazo).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/catalogo/api/productos/desde-erp", methods=["POST"])
+    @_catalogo_admin_required
+    def cat_api_producto_desde_erp():
+        d = request.get_json(silent=True) or {}
+        sku = (d.get("sku") or "").strip().upper()
+        nombre = (d.get("nombre") or "").strip()
+        if not sku:
+            return jsonify({"ok": False, "error": "Falta el SKU"}), 400
+
+        existente = mysql_fetchone("SELECT id, nombre FROM cat_productos WHERE sku=%s", (sku,))
+        if existente:
+            return jsonify({"ok": True, "id": existente["id"], "creado": False,
+                             "nombre": existente["nombre"]})
+
+        if not nombre:
+            nombre = sku  # el modal siempre trae nombre; esto es solo un resguardo
+        user = current_username() or "sistema"
+        familia = (d.get("familia") or "").strip()[:150] or None
+        try:
+            mysql_execute(
+                "INSERT INTO cat_productos (sku, nombre, familia, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (sku[:100], nombre[:300], familia, user, user))
+        except Exception as _e:
+            msg = str(_e)
+            if "Duplicate entry" in msg or "uq_cat_sku" in msg:
+                # carrera: otro request lo creó justo antes -- lo tratamos como éxito
+                row = mysql_fetchone("SELECT id, nombre FROM cat_productos WHERE sku=%s", (sku,))
+                if row:
+                    return jsonify({"ok": True, "id": row["id"], "creado": False, "nombre": row["nombre"]})
+            print(f"[cat_api_producto_desde_erp] error sku={sku}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo crear el producto"}), 500
+
+        row = mysql_fetchone("SELECT id FROM cat_productos WHERE sku=%s", (sku,))
+        return jsonify({"ok": True, "id": row["id"] if row else None, "creado": True, "nombre": nombre})
+
     @app.route("/catalogo/api/sync-erp", methods=["POST"])
     @_catalogo_admin_required
     def cat_api_sync_erp():

@@ -72,6 +72,11 @@
       editar un repuesto puntual, ábrelo desde la ficha del cliente (pestaña "Repuestos").
       Incluye la planilla real de seguimiento de Daniel (ubicación, motivo, N° OT, garantía).</div>
   </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-light" id="btnRepBuscarErp" type="button"
+            title="Busca un producto/documento en el ERP (por SKU, documento o RUT/nombre del cliente) y agrega el repuesto directamente a esta lista">
+      <i class="bi bi-search me-1"></i>Buscar en ERP</button>
+  </div>
 </div>
 
 <form method="get" class="mb-3 d-flex flex-wrap gap-2 align-items-center rep-filters">
@@ -299,5 +304,42 @@ function _repatRenderProveedor(proveedorId){
     })
     .catch(()=>{ card.innerHTML = ''; });
 }
+
+// ══════════════ Buscar en ERP (2026-07-12, Daniel: "para empezar" a usar el
+// modal compartido de búsqueda ERP también en Repuestos) ══════════════
+// Abre el modal genérico (tickets/_tka_modal.html, mode:'seleccionar' -- ver
+// contrato en ese archivo) y por cada item seleccionado crea una fila en
+// mant_repuestos vía /mantenciones/api/repuestos/desde-erp. Es un camino
+// ADITIVO: el CRUD por ficha de cliente sigue intacto (Regla #4.2).
+const btnRepBuscarErp = document.getElementById('btnRepBuscarErp');
+if (btnRepBuscarErp){
+  btnRepBuscarErp.addEventListener('click', function(){
+    tkaOpen({
+      mode: 'seleccionar',
+      onSeleccionar: async function(items){
+        if (!items || !items.length) return;
+        let d;
+        try{
+          const r = await fetch('/mantenciones/api/repuestos/desde-erp', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+            body: JSON.stringify({ items: items })
+          });
+          d = await r.json();
+        }catch(e){
+          ilusToast('Sin conexión: no se pudo crear el/los repuesto(s)', {type:'error'});
+          return;
+        }
+        if (!d.ok){ ilusToast(d.error || 'No se pudo crear el/los repuesto(s)', {type:'error'}); return; }
+        ilusToast('✓ ' + d.creados + ' repuesto(s) agregado(s) desde el ERP', {type:'success'});
+        setTimeout(()=> location.reload(), 600);
+      }
+    });
+  });
+}
 </script>
+
+{# Modal compartido de búsqueda avanzada ERP (mode:'seleccionar' -- genérico,
+   no toca nada de Tickets). Ver tkaOpen() en ese archivo. #}
+{% include "tickets/_tka_modal.html" %}
 {% endblock %}

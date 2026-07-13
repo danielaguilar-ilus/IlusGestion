@@ -24,6 +24,9 @@
     <h4><i class="bi bi-file-earmark-text me-2"></i>Cotizaciones</h4>
     <div class="sub">Módulo en construcción — se arma de a poco, siguiente fase de Tickets central</div>
   </div>
+  <button type="button" id="btnCotNuevaErp" class="btn btn-lg" style="background:#dc2626;color:#fff;font-weight:800;border-radius:10px;">
+    <i class="bi bi-search me-1"></i>Nueva cotización desde ERP
+  </button>
 </div>
 
 {% if cotizaciones %}
@@ -45,4 +48,42 @@
   </div>
 </div>
 {% endif %}
+
+<script>
+// ══════════════ Nueva cotización desde ERP — 2026-07-12 ══════════════
+// Reusa el modal compartido tickets/_tka_modal.html (mode:'seleccionar'),
+// mismo contrato que catalogo/list.html y tickets/list.html/ficha.html.
+// Precio unitario queda en 0 (la fase de tarifas/pricing se difiere).
+(function(){
+  const btn = document.getElementById('btnCotNuevaErp');
+  if (!btn) return;
+  btn.addEventListener('click', function(){
+    tkaOpen({
+      mode: 'seleccionar',
+      onSeleccionar: async function(items){
+        if (!items || !items.length) return;
+        try{
+          const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ items: items })
+          });
+          const d = await r.json();
+          if (!d.ok){
+            ilusToast(d.error || 'No se pudo crear la cotización', {type:'error'});
+            return;
+          }
+          ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada (' + items.length + ' ítems)', {type:'success'});
+          setTimeout(function(){ location.reload(); }, 800);
+        }catch(e){
+          ilusToast('Error de conexión al crear la cotización', {type:'error'});
+        }
+      }
+    });
+  });
+})();
+</script>
+
+{# Modal compartido de búsqueda ERP (mode:'seleccionar'); NO tocar ese
+   archivo -- ya está construido y compartido con catálogo/tickets. #}
+{% include "tickets/_tka_modal.html" %}
 {% endblock %}

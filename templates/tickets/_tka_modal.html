@@ -551,7 +551,7 @@ const _TKA = {
   selDoc: new Map(),
   selCli: new Map(),
   loaded: { docHeader: null, cliQuery: null },
-  ctx: { mode: 'crear', ticketId: null, onDone: null },
+  ctx: { mode: 'crear', ticketId: null, onDone: null, onSeleccionar: null },
   _liveTimer: null,
   ultimoMotivoSinSaldo: '',
 };
@@ -666,14 +666,30 @@ function _tkaResetEstado(){
   try{ tkaUpdateCounter(); }catch(_){}
 }
 
-// tkaOpen({mode:'crear'|'agregar', ticketId, onDone, rutPrefill})
+// tkaOpen({mode:'crear'|'agregar'|'seleccionar', ticketId, onDone, onSeleccionar, rutPrefill})
+//
+// mode:'seleccionar' -- modo GENÉRICO reusable por CUALQUIER módulo (Catálogo,
+// Cotizaciones, Repuestos, etc.), completamente agnóstico de Tickets: no llama
+// ningún endpoint de tickets. Solo recolecta la selección del usuario en las
+// pestañas "Por documento" / "Por RUT-nombre" (y "Cotización interna", cuando
+// exista) y al confirmar arma un array de items:
+//   [{ tido, nudo, sku, nombre, qty, saldo, marcada_sin_saldo, motivo_sin_saldo }, …]
+// y llama `opts.onSeleccionar(items)` -- el módulo llamador decide qué hacer
+// con esos items (crear producto, agregar a cotización, etc.), el modal NO
+// sabe nada de eso. Ejemplo de uso:
+//   tkaOpen({ mode:'seleccionar', onSeleccionar: async (items) => { ... } })
+// La pestaña "Declarado en el ticket" no aplica sin ticketId -- ya queda
+// cubierta por _tkaRenderDeclarado() (muestra "disponible una vez creado el
+// ticket" para cualquier mode distinto de 'agregar').
 function tkaOpen(opts){
   opts = opts || {};
   _tkaResetEstado();
+  const modoValido = ['crear', 'agregar', 'seleccionar'].includes(opts.mode) ? opts.mode : 'crear';
   _TKA.ctx = {
-    mode: opts.mode === 'agregar' ? 'agregar' : 'crear',
+    mode: modoValido,
     ticketId: opts.ticketId || null,
     onDone: (typeof opts.onDone === 'function') ? opts.onDone : null,
+    onSeleccionar: (typeof opts.onSeleccionar === 'function') ? opts.onSeleccionar : null,
     rutPrefill: opts.rutPrefill || '',
   };
   // Daniel 2026-07-12: "siempre recomiende el RUT del dueño de la ficha...
@@ -687,7 +703,8 @@ function tkaOpen(opts){
   const assocBtn = document.getElementById('tkaAssocBtn');
   if (assocBtn){
     const lbl = assocBtn.querySelector('span');
-    if (lbl) lbl.textContent = _TKA.ctx.mode === 'crear' ? 'Crear ticket' : 'Agregar al ticket';
+    if (lbl) lbl.textContent = _TKA.ctx.mode === 'crear' ? 'Crear ticket'
+      : (_TKA.ctx.mode === 'seleccionar' ? 'Usar selección' : 'Agregar al ticket');
   }
 
   _TKA.open = true;
@@ -1427,6 +1444,29 @@ async function tkaAsociarSeleccion(){
   const btn = document.getElementById('tkaAssocBtn');
   const _origBtn = btn ? btn.innerHTML : '';
   if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Procesando…</span>'; }
+
+  if (_TKA.ctx.mode === 'seleccionar'){
+    // Modo GENÉRICO: el modal NO llama ningún endpoint propio -- solo arma
+    // el array de items seleccionados y se lo entrega al módulo llamador
+    // vía onSeleccionar(items). Ver comentario de tkaOpen() más arriba.
+    const items = [];
+    for (const [, info] of docsToAdd){
+      info.lineas.forEach(l => {
+        items.push({
+          tido: info.tido, nudo: info.nudo,
+          sku: l.sku, nombre: l.nombre, qty: l.qty,
+          marcada_sin_saldo: !!l.marcada_sin_saldo,
+          motivo_sin_saldo: l.motivo_sin_saldo || '',
+        });
+      });
+    }
+    if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
+    tkaClose();
+    if (_TKA.ctx.onSeleccionar){
+      try{ await _TKA.ctx.onSeleccionar(items); }catch(e){ ilusToast('Error: ' + e.message, { type:'error' }); }
+    }
+    return;
+  }
 
   if (_TKA.ctx.mode === 'crear'){
     // Un solo POST: el backend acepta multiples documentos en el mismo body.

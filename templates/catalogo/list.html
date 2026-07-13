@@ -210,6 +210,9 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
   </div>
   <div class="d-flex gap-2">
     {% if permissions.superadmin %}
+    <button class="btn btn-sm btn-outline-light" id="btnBuscarErp" type="button"
+            title="Busca UN producto puntual en el ERP (por SKU, documento o RUT/nombre del cliente) y lo agrega al catálogo — sin sincronizar la bodega completa">
+      <i class="bi bi-search me-1"></i>Buscar en ERP</button>
     <button class="btn btn-sm btn-outline-light" id="btnSyncErp" type="button"
             title="Trae del ERP todos los productos de la bodega {{ cat_bodega_sync|default('02') }} que aún no estén en este catálogo (excluye los SKU &quot;ZZ&quot;, que son servicios, no productos físicos)">
       <i class="bi bi-cloud-download me-1"></i>Sincronizar bodega desde ERP</button>
@@ -664,6 +667,63 @@ if (btnSyncErp){
       }
     }catch(e){ ilusToast('Error de red al sincronizar', {type:'error'}); }
     finally{ btnSyncErp.disabled = false; btnSyncErp.innerHTML = original; }
+  });
+}
+
+// ══════════════ Buscar en ERP (puntual) — 2026-07-12 (Daniel: "en vez de
+// sincronizar el RP completo, llamemos al formulario/modal y hagamos
+// búsquedas por SKU, búsqueda intermedia, búsquedas por documento... para
+// ir a agregarle los productos que están con piola. Cambiemos esa
+// modalidad para agregarlo, y después que lo agregue, en el mismo
+// formulario poner cantidad de piolas y las medidas."):
+//   1. Abre el modal compartido _tka_modal.html (tickets/_tka_modal.html,
+//      mode:'seleccionar' -- genérico, no toca nada de Tickets).
+//      Ver comentario de tkaOpen() en ese archivo para el contrato exacto.
+//   2. Por cada item seleccionado: POST /catalogo/api/productos/desde-erp
+//      (crea si no existe; si ya existe, no duplica -- Regla #4.2).
+//   3. Encola los productos (nuevos o existentes) y abre el wizard de
+//      piolas (catwAbrir, ya construido) para el primero; al finalizar
+//      cada wizard, se abre automáticamente el siguiente de la cola.
+// ══════════════════════════════════════════════════════════════════════
+window._catwColaERP = [];
+function _catwAbrirSiguienteDeCola(){
+  if (!window._catwColaERP || !window._catwColaERP.length) return;
+  const next = window._catwColaERP.shift();
+  setTimeout(function(){ catwAbrir(next.id); }, 350); // esperar a que el modal previo termine su transición de cierre
+}
+const btnBuscarErp = document.getElementById('btnBuscarErp');
+if (btnBuscarErp){
+  btnBuscarErp.addEventListener('click', function(){
+    tkaOpen({
+      mode: 'seleccionar',
+      onSeleccionar: async function(items){
+        if (!items || !items.length){ return; }
+        let creados = 0, existentes = 0, errores = 0;
+        const cola = [];
+        for (const it of items){
+          try{
+            const r = await fetch('/catalogo/api/productos/desde-erp', {
+              method: 'POST', headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({ sku: it.sku, nombre: it.nombre })
+            });
+            const d = await r.json();
+            if (!d.ok || !d.id){ errores++; continue; }
+            if (d.creado) creados++; else existentes++;
+            cola.push({ id: d.id, sku: it.sku });
+          }catch(e){ errores++; }
+        }
+        let msg = '';
+        if (creados) msg += '✓ ' + creados + ' producto(s) agregado(s) al catálogo';
+        if (existentes) msg += (msg ? ' · ' : '') + existentes + ' ya existían';
+        if (errores) msg += (msg ? ' · ' : '') + errores + ' con error';
+        if (msg) ilusToast(msg, {type: errores && !creados && !existentes ? 'error' : 'success'});
+        cargarCatalogo();
+        if (cola.length){
+          window._catwColaERP = cola;
+          _catwAbrirSiguienteDeCola();
+        }
+      }
+    });
   });
 }
 
@@ -1247,6 +1307,7 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
     catwModal.hide();
     ilusToast('✓ Ficha del producto registrada', {type:'success'});
     cargarCatalogo();
+    _catwAbrirSiguienteDeCola(); // sigue con el próximo producto de "Buscar en ERP", si hay
     return;
   }
 });
@@ -1334,4 +1395,8 @@ window.catwEliminarManual = async function(manualId){
 
 cargarCatalogo();
 </script>
+
+{# Modal compartido de búsqueda avanzada ERP (mode:'seleccionar' -- genérico,
+   no toca nada de Tickets). Ver tkaOpen() en ese archivo. #}
+{% include "tickets/_tka_modal.html" %}
 {% endblock %}
