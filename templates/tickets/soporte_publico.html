@@ -12,10 +12,38 @@
    (mismo dominio que la pagina, sin depender de un CDN externo) para que
    esto no vuelva a pasar en el formulario mas critico de cara al cliente. #}
 <link href="{{ url_for('static', filename='bootstrap-icons.css') }}" rel="stylesheet">
+{# 2026-07-13 (Daniel): "desde donde dice 'agenda tu retiro' para abajo,
+   quiero que copies ese diseño... los botones, los campos, ese diseño del
+   2027" -- se porta el mismo lenguaje visual premium de
+   templates/retiros/public_request.html (tokens de sombra/radio/easing,
+   tarjetas tipo "step-section" con numero en circulo degradado, focus ring
+   rojo, boton CTA con elevacion) a las tarjetas de ESTE formulario. El hero
+   de arriba (.sp-hero) NO se toca -- Daniel fue explicito en que no quiere
+   la foto/marketing/header de retiro, solo el estilo del formulario. Inter
+   via Google Fonts (con fallback a system-ui si no carga, no rompe nada,
+   a diferencia del font de iconos que SI necesita fallback por glifo). #}
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
 <style>
-:root{--ilus-red:#dc2626;--ilus-black:#0a0a0a;}
+:root{
+  --ilus-red:#dc2626;--ilus-red-dk:#991b1b;--ilus-black:#0a0a0a;
+  --gray-1:#f3f4f6;--gray-2:#e5e7eb;--gray-3:#9ca3af;
+  --ring: 0 0 0 4px rgba(220,38,38,.14);
+  --shadow-sm: 0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+  --shadow-md: 0 4px 8px -2px rgba(15,23,42,.08), 0 12px 24px -8px rgba(15,23,42,.10);
+  --shadow-lg: 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
+  --r-sm:10px;--r-md:14px;--r-lg:18px;
+  --ease-spring: cubic-bezier(.34,1.56,.64,1);
+  --ease-out: cubic-bezier(.22,1,.36,1);
+}
 *{box-sizing:border-box;}
-body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#15171a;}
+body{margin:0;color:#15171a;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  background:
+    radial-gradient(1100px 480px at 88% -6%, rgba(220,38,38,.05) 0%, transparent 60%),
+    radial-gradient(900px 460px at 6% 2%, rgba(10,10,10,.03) 0%, transparent 55%),
+    linear-gradient(180deg, #f7f7f8 0%, #f2f3f5 100%);
+  background-attachment:fixed;}
+@supports (-webkit-touch-callout: none){ body{background-attachment:scroll;} }
 .sp-wrap{max-width:640px;margin:0 auto;padding:0 0 60px;}
 .sp-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;padding:30px 26px 26px;
   border-bottom:4px solid var(--ilus-red);position:relative;}
@@ -25,11 +53,18 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
 .sp-badge{position:absolute;top:26px;right:26px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
   border-radius:50px;padding:6px 12px;font-size:.72rem;font-weight:700;display:flex;align-items:center;gap:6px;}
 .sp-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--ilus-red);}
-.sp-card{background:#fff;border-radius:13px;margin:16px 16px 0;padding:22px 24px;box-shadow:0 6px 20px rgba(15,23,42,.06);}
-.sp-card h2{font-size:1.02rem;font-weight:800;margin:0;display:flex;align-items:center;gap:10px;color:#0f172a;}
-.sp-card h2 .n{background:var(--ilus-red);color:#fff;width:26px;height:26px;border-radius:50%;
-  display:inline-flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;flex-shrink:0;}
-.sp-card .hint{font-size:.8rem;color:#94a3b8;margin:4px 0 16px 36px;}
+.sp-card{background:rgba(255,255,255,.97);border:1.5px solid var(--gray-2);border-radius:var(--r-md);
+  margin:16px 16px 0;padding:24px 26px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;
+  transition:transform .25s var(--ease-spring), box-shadow .25s var(--ease-out), border-color .2s var(--ease-out);}
+.sp-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,var(--ilus-red),var(--ilus-red-dk));opacity:.55;}
+.sp-card:hover{box-shadow:var(--shadow-md);border-color:#d1d5db;}
+@media(prefers-reduced-motion:reduce){.sp-card{transition:none;}}
+.sp-card h2{font-size:1.1rem;font-weight:900;margin:0;display:flex;align-items:center;gap:12px;color:#0a0a0a;letter-spacing:-.01em;}
+.sp-card h2 .n{background:linear-gradient(150deg,var(--ilus-red) 0%,var(--ilus-red-dk) 100%);color:#fff;
+  width:32px;height:32px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:.92rem;font-weight:900;flex-shrink:0;box-shadow:0 6px 14px -4px rgba(220,38,38,.5), 0 1px 0 rgba(255,255,255,.25) inset;}
+.sp-card .hint{font-size:.82rem;color:#6b7280;margin:6px 0 18px 44px;line-height:1.5;}
 .sp-tipos{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
 @media(min-width:480px){.sp-tipos{grid-template-columns:repeat(4,1fr);}}
 .sp-tipo{border:1.5px solid #e5e7eb;border-radius:11px;padding:14px 8px;text-align:center;cursor:pointer;
@@ -47,10 +82,12 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
 .sp-field label .req{color:var(--ilus-red);}
 .sp-field label .op{font-size:.65rem;font-weight:800;color:#94a3b8;background:#f3f4f6;border-radius:5px;
   padding:1px 6px;margin-left:6px;text-transform:uppercase;vertical-align:middle;}
-.sp-field input,.sp-field textarea{width:100%;border:1.5px solid #e5e7eb;border-radius:10px;padding:12px 13px;
-  font-size:16px;background:#fbfbfc;transition:border-color .12s;}
+.sp-field input,.sp-field textarea{width:100%;border:1.5px solid var(--gray-2);border-radius:var(--r-sm);padding:12px 13px;
+  font-size:16px;background:#fbfbfc;color:#111827;transition:border-color .16s var(--ease-out), box-shadow .16s var(--ease-out), background-color .16s;}
+.sp-field input::placeholder,.sp-field textarea::placeholder{color:#aeb4bd;}
+.sp-field input:hover:not(:focus),.sp-field textarea:hover:not(:focus){border-color:#cbd5e1;}
 .sp-field input:focus,.sp-field textarea:focus{outline:none;border-color:var(--ilus-red);background:#fff;
-  box-shadow:0 0 0 3px rgba(220,38,38,.1);}
+  box-shadow:var(--ring);}
 /* Toggle "garantia" (paso 4, Equipo) */
 .sp-toggle-row{display:flex;gap:12px;align-items:flex-start;background:#f8fafc;border:1px solid #e5e7eb;
   border-radius:10px;padding:12px 14px;}
@@ -105,10 +142,14 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
 .sp-file-chip.up-ok i{color:#16a34a;}
 .sp-file-chip.up-err i{color:#dc2626;}
 .sp-submit{margin:20px 16px 0;}
-.sp-btn{width:100%;background:linear-gradient(135deg,var(--ilus-red),#991b1b);color:#fff;border:none;
-  border-radius:11px;padding:16px;font-size:1rem;font-weight:800;cursor:pointer;min-height:52px;
-  box-shadow:0 8px 20px rgba(220,38,38,.25);}
+.sp-btn{width:100%;background:linear-gradient(150deg,var(--ilus-red) 0%,var(--ilus-red-dk) 100%);color:#fff;border:none;
+  border-radius:var(--r-sm);padding:16px;font-size:1rem;font-weight:800;letter-spacing:-.005em;cursor:pointer;min-height:52px;
+  box-shadow:0 10px 26px -8px rgba(220,38,38,.5), 0 1px 0 rgba(255,255,255,.2) inset;
+  transition:transform .18s var(--ease-out), box-shadow .18s var(--ease-out);}
+.sp-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 14px 32px -8px rgba(220,38,38,.55), 0 1px 0 rgba(255,255,255,.2) inset;}
+.sp-btn:active:not(:disabled){transform:scale(.98);}
 .sp-btn:disabled{opacity:.6;cursor:not-allowed;}
+@media(prefers-reduced-motion:reduce){.sp-btn{transition:none;}.sp-btn:active{transform:none;}}
 .sp-priv{text-align:center;font-size:.74rem;color:#94a3b8;margin-top:12px;}
 /* 2026-07-13 (Daniel, URGENTE): antes esto reemplazaba TODO el formulario por
    una tarjeta de "listo" -- ahora es un MODAL flotante encima del formulario
