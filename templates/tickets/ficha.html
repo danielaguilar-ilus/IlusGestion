@@ -664,21 +664,35 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>Garantía del equipo</h5>
+          <h5 class="modal-title"><i class="bi bi-clipboard2-data me-2"></i>Ficha del equipo</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body">
           <div id="garEqNombre" style="font-weight:700;color:#0f172a;margin-bottom:14px;"></div>
+          {# 2026-07-13 (Daniel, URGENTE): "quiero que me diga si viene o no
+             viene de un documento, y eso queda registrado" -- documento_garantia
+             y fecha_emision YA EXISTIAN en tk_ticket_equipos (para garantia)
+             pero se podian llenar sin depender del toggle de garantia -- solo
+             estaban mal etiquetados/escondidos como "solo garantia". Se
+             reformula el modal para dejar claro que documento/fecha aplican
+             siempre (venga o no de un documento ERP), y se agrega Comentario
+             (columna `notas`, ya existia en la tabla, nunca se exponia aca). #}
+          <div class="mb-3">
+            <label class="form-label">Documento asociado
+              <span class="text-muted" style="font-weight:400;">(boleta/factura/OT — si no viene de ninguno, déjalo vacío)</span></label>
+            <input type="text" id="garDocumento" class="form-control" placeholder="Ej: Factura 10599">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Comentario</label>
+            <textarea id="garNotas" class="form-control" rows="2" maxlength="500"
+                      placeholder="Ej: llegó golpeado en el despacho, revisar antes de instalar…"></textarea>
+          </div>
+          <hr class="my-3">
           <div class="form-check form-switch mb-3">
             <input class="form-check-input" type="checkbox" role="switch" id="garConGarantia" style="width:2.4em;height:1.3em;">
             <label class="form-check-label" for="garConGarantia">Este equipo tiene garantía</label>
           </div>
           <div id="garCamposWrap">
-            <div class="mb-3">
-              <label class="form-label">Documento de garantía
-                <span class="text-muted" style="font-weight:400;">(N° boleta/factura/folio, opcional)</span></label>
-              <input type="text" id="garDocumento" class="form-control" placeholder="Ej: Boleta 12345">
-            </div>
             <div class="row g-2">
               <div class="col-6">
                 <label class="form-label">Fecha de emisión</label>
@@ -2604,7 +2618,7 @@ function calcVencimiento(fechaISO, meses){
 // (con_garantia/fecha_vencimiento/garantia_meses), no la regla fija de 180
 // días de Mantenciones (ver contrato: eso no aplica aquí).
 function renderGarantiaChip(eq){
-  const attrs = 'onclick="abrirGarantia('+eq.id+')" title="Editar garantía" style="cursor:pointer"';
+  const attrs = 'onclick="abrirGarantia('+eq.id+')" title="Editar ficha del equipo (documento, comentario, garantía)" style="cursor:pointer"';
   if(!eq.con_garantia){
     return '<span class="gar-chip gar-chip-vencida" '+attrs+'><i class="bi bi-shield-slash"></i>Sin garantía</span>';
   }
@@ -2660,6 +2674,7 @@ function abrirGarantia(eid){
   document.getElementById('garEqNombre').textContent = eq.nombre || eq.erp_kopr || ('Equipo #'+eid);
   document.getElementById('garConGarantia').checked = !!eq.con_garantia;
   document.getElementById('garDocumento').value = eq.documento_garantia || '';
+  document.getElementById('garNotas').value = eq.notas || '';
   document.getElementById('garFechaEmision').value = eq.fecha_emision || '';
   document.getElementById('garMeses').value = eq.garantia_meses || 6;
   actualizarGarCampos();
@@ -2687,6 +2702,7 @@ document.getElementById('btnGarGuardar').addEventListener('click', async functio
   const payload = {
     con_garantia: document.getElementById('garConGarantia').checked,
     documento_garantia: document.getElementById('garDocumento').value.trim(),
+    notas: document.getElementById('garNotas').value.trim(),
     fecha_emision: document.getElementById('garFechaEmision').value || '',
     garantia_meses: +document.getElementById('garMeses').value || 6,
   };
@@ -2699,7 +2715,7 @@ document.getElementById('btnGarGuardar').addEventListener('click', async functio
     btn.disabled = false; btn.innerHTML = original;
     if(d.ok){
       bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGarantiaEquipo')).hide();
-      ilusToast('✓ Garantía actualizada', {type:'success'});
+      ilusToast('✓ Ficha del equipo actualizada', {type:'success'});
       cargar();
     } else ilusToast(d.error||'Error al guardar la garantía', {type:'error'});
   }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }

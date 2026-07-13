@@ -825,6 +825,34 @@ def register_tickets_routes(app, ctx):
                  REFERENCES tk_cotizaciones(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # 2026-07-13 (Daniel, URGENTE): tabla de rutas a nivel nacional
+        # (origen QUILICURA -> comuna destino), para calcular el "costo_ruta"
+        # de tk_cotizaciones automaticamente segun la comuna del cliente.
+        # Se importa desde el CSV real que Daniel entrego (idempotente por
+        # csv_id, mismo patron que el import de repuestos).
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_cotiz_rutas (
+              id             INT AUTO_INCREMENT PRIMARY KEY,
+              csv_id         INT NULL UNIQUE,
+              origen         VARCHAR(100) NOT NULL DEFAULT 'QUILICURA',
+              region         VARCHAR(100) NULL,
+              comuna         VARCHAR(100) NOT NULL,
+              km             DECIMAL(8,1) NOT NULL DEFAULT 0,
+              peaje          INT NOT NULL DEFAULT 0,
+              tag            INT NOT NULL DEFAULT 0,
+              precio_bruto   INT NOT NULL DEFAULT 0,
+              precio_final   INT NOT NULL DEFAULT 0,
+              tiempo_min     INT NOT NULL DEFAULT 0,
+              activa         TINYINT(1) NOT NULL DEFAULT 1,
+              notas          VARCHAR(500) NULL,
+              creada_csv     DATETIME NULL,
+              actualizada_csv DATETIME NULL,
+              created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              KEY idx_comuna (comuna),
+              KEY idx_region (region)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS tk_ticket_documentos (
               id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -1034,9 +1062,92 @@ def register_tickets_routes(app, ctx):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+    def _ensure_import_rutas_csv_daniel():
+        """Importa (idempotente, por csv_id) el CSV real de rutas nacionales
+        que Daniel entrego: rutas_2026-07-13.csv (253 filas, separador ';',
+        BOM UTF-8). Columnas: ID;Origen;Region;Comuna;Km;Peaje;Tag;
+        PrecioBruto;PrecioFinal;Min;Activa;Notas;Creada;Actualizada.
+
+        FIX de encoding (Daniel: "creo que la ñ esta mal"): el CSV real trae
+        3 filas con "¥" en vez de "Ñ" (HUALA¥E, DO¥IHUE, VICU¥A) -- mojibake
+        de un guardado previo en una codificacion distinta a UTF-8. Se
+        corrige con un reemplazo literal antes de insertar.
+
+        Ruta configurable via env RUTAS_CSV_PATH; si no existe el archivo
+        (ej. en Cloud Run), no hace nada -- mismo patron que el import de
+        repuestos (corre en el proximo boot donde el archivo este presente)."""
+        import csv as _csv
+        import os as _os
+        from datetime import datetime as _dt
+
+        path = _os.environ.get(
+            "RUTAS_CSV_PATH", r"C:\Users\DANIE\Downloads\rutas_2026-07-13.csv"
+        )
+        if not _os.path.isfile(path):
+            return 0
+
+        def _fix_enye(s):
+            return (s or "").replace("¥", "Ñ")
+
+        def _parse_fecha(s):
+            s = (s or "").strip()
+            if not s:
+                return None
+            try:
+                return _dt.strptime(s, "%d-%m-%Y %H:%M")
+            except Exception:
+                return None
+
+        def _num(s):
+            s = (s or "").strip()
+            try:
+                return float(s) if s else 0.0
+            except Exception:
+                return 0.0
+
+        importados = 0
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = _csv.DictReader(f, delimiter=";")
+            for row in reader:
+                csv_id = (row.get("ID") or "").strip()
+                if not csv_id:
+                    continue
+                try:
+                    csv_id_int = int(csv_id)
+                except ValueError:
+                    continue
+                ya = mysql_fetchone(
+                    "SELECT id FROM tk_cotiz_rutas WHERE csv_id=%s", (csv_id_int,))
+                if ya:
+                    continue  # idempotente: ya importado en un boot anterior
+                try:
+                    mysql_execute(
+                        "INSERT INTO tk_cotiz_rutas "
+                        "(csv_id, origen, region, comuna, km, peaje, tag, "
+                        " precio_bruto, precio_final, tiempo_min, activa, notas, "
+                        " creada_csv, actualizada_csv) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (csv_id_int,
+                         _fix_enye((row.get("Origen") or "").strip())[:100] or "QUILICURA",
+                         _fix_enye((row.get("Region") or "").strip())[:100] or None,
+                         _fix_enye((row.get("Comuna") or "").strip())[:100],
+                         _num(row.get("Km")), int(_num(row.get("Peaje"))),
+                         int(_num(row.get("Tag"))), int(_num(row.get("PrecioBruto"))),
+                         int(_num(row.get("PrecioFinal"))), int(_num(row.get("Min"))),
+                         1 if (row.get("Activa") or "").strip().lower() == "true" else 0,
+                         (row.get("Notas") or "").strip()[:500] or None,
+                         _parse_fecha(row.get("Creada")), _parse_fecha(row.get("Actualizada"))))
+                    importados += 1
+                except Exception as _e:
+                    print(f"[rutas_import] fila csv_id={csv_id_int} no importada: {_e}", flush=True)
+        return importados
+
     with app.app_context():
         try:
             _ensure_tickets_tables()
+            _n_rutas = _ensure_import_rutas_csv_daniel()
+            if _n_rutas:
+                print(f"[ILUS] Rutas nacionales importadas: {_n_rutas}", flush=True)
             _ensure_tk_tickets_columns()
             _ensure_tk_mensajes_columns()
             _ensure_tk_ticket_equipos_garantia_columns()
@@ -3122,7 +3233,11 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
 
         d = request.get_json(silent=True) or {}
-        allowed = ("con_garantia", "documento_garantia", "fecha_emision", "garantia_meses")
+        # 2026-07-13 (Daniel, URGENTE): "quiero saber de que documento viene...
+        # y eso queda registrado" -- se agrega `notas` (comentario libre del
+        # equipo, columna ya existente en tk_ticket_equipos, nunca se
+        # exponia en este modal).
+        allowed = ("con_garantia", "documento_garantia", "notas", "fecha_emision", "garantia_meses")
         if not any(k in d for k in allowed):
             return jsonify({"ok": False, "error": "Sin cambios validos"}), 400
 
@@ -3155,6 +3270,8 @@ def register_tickets_routes(app, ctx):
 
         documento = ((d.get("documento_garantia") or "").strip()[:150] or None) \
             if "documento_garantia" in d else prev["documento_garantia"]
+        notas = ((d.get("notas") or "").strip()[:500] or None) \
+            if "notas" in d else prev["notas"]
 
         # fecha_vencimiento se recalcula SIEMPRE aqui (unico lugar que escribe
         # estos 3 campos juntos) -- suma de meses sin depender de relativedelta
@@ -3169,10 +3286,10 @@ def register_tickets_routes(app, ctx):
             fecha_vencimiento = date(anio, mes, dia)
 
         mysql_execute(
-            "UPDATE tk_ticket_equipos SET con_garantia=%s, documento_garantia=%s, "
+            "UPDATE tk_ticket_equipos SET con_garantia=%s, documento_garantia=%s, notas=%s, "
             "fecha_emision=%s, garantia_meses=%s, fecha_vencimiento=%s "
             "WHERE id=%s AND ticket_id=%s",
-            (con_garantia, documento, fecha_emision, meses, fecha_vencimiento, eid, tid))
+            (con_garantia, documento, notas, fecha_emision, meses, fecha_vencimiento, eid, tid))
 
         user = current_username() or "sistema"
         _tk_log(tid, "otro",
@@ -4721,11 +4838,20 @@ def register_tickets_routes(app, ctx):
                     (_chile_now_year(), tid))
                 for p in productos[:20]:
                     try:
+                        # 2026-07-13 (Daniel, URGENTE): "si es multimaquina...
+                        # se diferencia un problema por maquina" -- si el
+                        # cliente activo el toggle "problema distinto por
+                        # maquina", cada producto trae su propio motivo (el
+                        # frontend lo manda en p.motivo); se guarda en `notas`
+                        # (columna ya existente en tk_ticket_equipos) para
+                        # que quede registrado por equipo, no solo mezclado
+                        # en la descripcion general del ticket.
+                        motivo_eq = (p.get("motivo") or "").strip()[:500] or None
                         cur.execute(
-                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad) "
-                            "VALUES (%s,%s,%s,1)",
+                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad, notas) "
+                            "VALUES (%s,%s,%s,1,%s)",
                             (tid, (p.get("sku") or "").strip()[:100] or None,
-                             (p.get("nombre") or "").strip()[:300] or "Equipo"))
+                             (p.get("nombre") or "").strip()[:300] or "Equipo", motivo_eq))
                     except Exception as _e:
                         print(f"[tk_soporte_api_crear] equipo no insertado tid={tid} "
                               f"sku={p.get('sku')}: {_e}", flush=True)

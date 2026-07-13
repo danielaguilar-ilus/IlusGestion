@@ -266,6 +266,23 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
       <div class="sp-counter"><span id="spDescCount">260</span> caracteres restantes</div>
       <div class="fe">Describe el problema.</div>
     </div>
+    {# 2026-07-13 (Daniel, URGENTE): "si es multimaquina, que tenga un toggle
+       en el problema y diga si aplicar o no a todos el mismo error, o si se
+       diferencia un problema por maquina" -- solo aparece si hay 2+ equipos
+       seleccionados (ver actualizarMultiToggle()). El detalle general de
+       arriba sigue siendo obligatorio; esto es un detalle ADICIONAL por
+       equipo, opcional, para cuando el problema no es el mismo en todas. #}
+    <div class="sp-toggle-row sp-hidden" id="spMultiToggleWrap" style="margin-top:14px;">
+      <label class="sp-toggle">
+        <input type="checkbox" id="spMotivoDistinto">
+        <span class="sp-toggle-slider"></span>
+      </label>
+      <div>
+        <label for="spMotivoDistinto" style="font-weight:700;cursor:pointer;">¿El problema es distinto en cada máquina?</label>
+        <div class="fh" style="margin-top:2px;">Si lo activas, puedes contarnos el detalle específico de cada equipo por separado.</div>
+      </div>
+    </div>
+    <div id="spMotivosPorEquipo" style="margin-top:10px;"></div>
     <div class="sp-field full" style="margin-top:14px;">
       <label for="spFile">Fotos, videos o documentos <span class="op">Opcional</span></label>
       <div class="sp-drop" id="spDrop">
@@ -409,8 +426,37 @@ document.addEventListener('click', function(e){
 function renderChips(){
   document.getElementById('spProdChips').innerHTML = productos.map((p,i)=>
     '<span class="sp-chip">'+esc(p.nombre)+'<span class="x" onclick="quitarProd('+i+')">&times;</span></span>').join('');
+  actualizarMultiToggle();
 }
 window.quitarProd = function(i){ productos.splice(i,1); renderChips(); };
+
+// ── Toggle "problema distinto por maquina" (paso 5) — solo con 2+ equipos ──
+function actualizarMultiToggle(){
+  const wrap = document.getElementById('spMultiToggleWrap');
+  const chk = document.getElementById('spMotivoDistinto');
+  if(productos.length > 1){
+    wrap.classList.remove('sp-hidden');
+  } else {
+    wrap.classList.add('sp-hidden');
+    chk.checked = false;
+  }
+  renderMotivosPorEquipo();
+}
+function renderMotivosPorEquipo(){
+  const cont = document.getElementById('spMotivosPorEquipo');
+  const activo = document.getElementById('spMotivoDistinto').checked && productos.length > 1;
+  if(!activo){ cont.innerHTML = ''; return; }
+  cont.innerHTML = productos.map((p,i)=>
+    '<div class="sp-field full" style="margin-top:8px;">'
+    + '<label style="font-size:.8rem;">'+esc(p.nombre)+' <span class="op">Opcional</span></label>'
+    + '<textarea class="sp-motivo-eq" data-i="'+i+'" rows="2" maxlength="260" '
+    + 'placeholder="Detalle especifico de este equipo (si aplica)…">'+esc(p.motivo||'')+'</textarea>'
+    + '</div>').join('');
+  cont.querySelectorAll('.sp-motivo-eq').forEach(function(ta){
+    ta.addEventListener('input', function(){ productos[+this.dataset.i].motivo = this.value; });
+  });
+}
+document.getElementById('spMotivoDistinto').addEventListener('change', renderMotivosPorEquipo);
 
 // ── Paso 5: contador + archivos ──
 document.getElementById('spDesc').addEventListener('input', function(){
