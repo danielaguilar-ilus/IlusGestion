@@ -640,6 +640,21 @@
     <div id="txtDesc" style="font-size:.9rem;color:#374151;white-space:pre-wrap;line-height:1.5;">—</div>
     <div class="tk-chips" id="chipsProblema"></div>
   </div>
+  {# 2026-07-13 (Daniel, URGENTE): "haz un llamado de atencion... cuando el
+     cliente indica que es por garantia y no los des por sentado... necesito
+     un argumento del tecnico y de la persona para discutir... el sistema
+     reconoce que si la compra fue hace 6 meses ya no hay nada que hacer por
+     Sernac". Tarjeta SOLO visible si es_garantia=1 -- nunca asume que la
+     garantia aplica; calcula meses transcurridos desde la fecha de emision
+     MAS ANTIGUA de los equipos del ticket (Ley del Consumidor chilena: 6
+     meses de garantia legal minima) y avisa si ya vencio ese plazo. #}
+  <div class="tk-card" id="cardGarantiaAlerta" style="display:none;border:1.5px solid #fecaca;background:#fef2f2;">
+    <h6 style="color:#991b1b;"><i class="bi bi-shield-exclamation"></i>El cliente indicó posible garantía</h6>
+    <div style="font-size:.85rem;color:#7f1d1d;line-height:1.5;">
+      No lo des por sentado: esto debe confirmarse con un argumento real del técnico y del cliente antes de aceptar o descartar la garantía.
+    </div>
+    <div id="garantiaCalculoBox" style="margin-top:10px;padding:10px 12px;border-radius:8px;font-size:.83rem;font-weight:700;"></div>
+  </div>
   <div class="tk-card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px;">
       <h6 style="margin:0;"><i class="bi bi-tools"></i>Equipo(s)</h6>
@@ -1858,6 +1873,7 @@ async function cargar(){
   // Icono | Equipo(+notas/+N unidades) | SKU/Código | Serie | Tipo | Fecha Emisión | Garantía | Acción
   const le = document.getElementById('listaEquipos');
   equiposCache = d.equipos || [];
+  renderGarantiaAlerta(t, equiposCache);
   if(d.equipos.length){
     le.innerHTML = '<div class="table-responsive"><table class="eq-table" id="tkEqTabla"><thead><tr>'
       + '<th style="width:32px"></th><th>Equipo</th><th>SKU / Código</th><th>Serie</th>'
@@ -2616,6 +2632,43 @@ async function delEquipo(eid){
 // Convierte 'YYYY-MM-DD' (formato nativo de <input type=date> y de lo que
 // devuelve el backend) a 'dd/mm/aaaa' para mostrar. No es chile_fmt (Regla
 // #6, esa es para datetimes UTC) porque estos son DATE puros sin huso horario.
+// 2026-07-13 (Daniel, URGENTE): tarjeta de alerta cuando el cliente indica
+// garantia -- NUNCA la da por sentada, calcula meses transcurridos desde
+// la fecha de emision mas antigua registrada entre los equipos del ticket
+// contra el plazo legal chileno (Ley del Consumidor / SERNAC: 6 meses).
+function renderGarantiaAlerta(t, equipos){
+  const card = document.getElementById('cardGarantiaAlerta');
+  if(!t.es_garantia){ card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const box = document.getElementById('garantiaCalculoBox');
+  const fechas = (equipos||[]).map(e=>e.fecha_emision).filter(Boolean).sort();
+  if(!fechas.length){
+    box.style.background = '#fff8e1'; box.style.color = '#92400e';
+    box.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>'
+      + 'Sin fecha de emisión registrada en ningún equipo — no se puede calcular el plazo legal todavía. '
+      + 'Complétala en la ficha del equipo (ícono junto a cada máquina) con la fecha de la boleta/factura.';
+    return;
+  }
+  const fechaMasAntigua = fechas[0];
+  const dEmision = new Date(fechaMasAntigua+'T00:00:00');
+  const hoy = new Date();
+  const dias = Math.floor((hoy - dEmision) / 86400000);
+  const meses = Math.floor(dias / 30.44);
+  const LIMITE_MESES = 6; // Ley del Consumidor chilena (SERNAC): garantía legal minima
+  if(meses >= LIMITE_MESES){
+    box.style.background = '#fee2e2'; box.style.color = '#991b1b';
+    box.innerHTML = '<i class="bi bi-x-octagon-fill me-1"></i>'
+      + 'Han pasado <b>'+meses+' meses</b> desde la fecha de emisión más antigua ('+fmtFechaISO(fechaMasAntigua)+') — '
+      + 'superó el plazo legal de '+LIMITE_MESES+' meses (SERNAC). No hay obligación legal de garantía; '
+      + 'si aplica igual, debe ser por una garantía extendida del proveedor, no por ley.';
+  } else {
+    box.style.background = '#dcfce7'; box.style.color = '#166534';
+    box.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>'
+      + 'Han pasado <b>'+meses+' meses</b> desde la fecha de emisión más antigua ('+fmtFechaISO(fechaMasAntigua)+') — '
+      + 'dentro del plazo legal de '+LIMITE_MESES+' meses (SERNAC). Igual debe confirmarse con el técnico que la falla '
+      + 'corresponde a un defecto de fábrica y no a mal uso.';
+  }
+}
 function fmtFechaISO(iso){
   if(!iso) return '';
   const p = String(iso).split('-');

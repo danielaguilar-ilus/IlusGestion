@@ -78,7 +78,15 @@ table.tk-table thead th{position:sticky;top:0;z-index:2;background:#0a0a0a;color
   font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
   border-bottom:2px solid #dc2626;white-space:nowrap;}
 table.tk-table thead th:first-child{border-left:3px solid transparent;}
-@media(max-width:767px){table.tk-table thead th{top:var(--topbar-h,90px);}}
+{# 2026-07-13 (Daniel, URGENTE): "la columna queda mas baja, tapandome el
+   ultimo/primer ticket" -- esta regla de mobile quedo de un diseño ANTERIOR
+   (cuando la pagina completa scrolleaba y el thead sticky necesitaba
+   despejar el topbar fijo mobile, top:90px). Desde el refactor de HOY
+   (.tk-table-wrap con su propio overflow:auto, ver comentario arriba en
+   .tk-table-wrap), el thead ya se pega contra el scroll INTERNO del wrap,
+   no contra la pagina -- top:90px en mobile lo pegaba 90px hacia ADENTRO
+   del wrap (tapando la primera fila) en vez de quedar al ras. Se elimina:
+   top:0 (regla base, sin media query) es correcto en todos los tamaños. #}
 table.tk-table tbody tr{cursor:pointer;transition:background .1s;}
 table.tk-table tbody tr:hover{background:#fafbfc;}
 table.tk-table tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6;}

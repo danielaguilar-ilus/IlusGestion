@@ -34,7 +34,7 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
 @media(min-width:480px){.sp-tipos{grid-template-columns:repeat(4,1fr);}}
 .sp-tipo{border:1.5px solid #e5e7eb;border-radius:11px;padding:14px 8px;text-align:center;cursor:pointer;
   font-size:.82rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;min-height:44px;}
-.sp-tipo .em{display:block;font-size:1.4rem;margin-bottom:4px;}
+.sp-tipo .em{display:block;font-size:1.4rem;margin-bottom:4px;color:var(--tc,#94a3b8);}
 .sp-tipo:hover{border-color:var(--tc,var(--ilus-red));color:var(--tc,var(--ilus-red));}
 .sp-tipo:focus-visible{outline:2px solid var(--tc,var(--ilus-red));outline-offset:2px;}
 .sp-tipo.sel{border-color:var(--tc,var(--ilus-red));background:var(--tbg,#fef2f2);color:var(--tc,var(--ilus-red));
@@ -140,30 +140,34 @@ body{margin:0;background:#eef0f3;font-family:-apple-system,BlinkMacSystemFont,'S
     <div class="hint">Elige el tipo de solicitud que mejor describe tu caso.</div>
     {# Mismo mapeo de color que el modal interno (templates/tickets/list.html)
        para que ambos formularios se vean coherentes -- feedback Daniel 2026-07-11. #}
-    {# 2026-07-13 (Daniel, URGENTE): "termina los logos... los que tienen
-       signo de interrogacion" -- faltaban 5 tipos en este mapeo (los que
-       TK_TIPOS_PUBLICOS agrego despues de esta lista original) y caian al
-       fallback ('❔', ...) de la linea de abajo. Se completan todos. #}
+    {# 2026-07-13 (Daniel, URGENTE): "los iconos del modal de nuevo ticket y
+       del formulario son distintos, estandarizalos" -- este formulario
+       usaba emoji, el modal interno (templates/tickets/list.html) usa
+       Bootstrap Icons (bi-*) + los MISMOS colores. Se copia el mapeo EXACTO
+       de list.html tal cual (unica fuente de verdad para ambos, evitar que
+       se desincronicen de nuevo -- si se agrega un tipo nuevo, actualizar
+       los dos). El font bi-* ya esta auto-hospedado en este formulario
+       desde el fix de logos anterior. #}
     {% set tipo_visual = {
-      'install': ('🔧', '#3b82f6', '#eff6ff'),
-      'tech_support': ('🛠️', '#dc2626', '#fef2f2'),
-      'tech_evaluation': ('🔍', '#7c3aed', '#f5f3ff'),
-      'maintenance': ('⚙️', '#f59e0b', '#fffbeb'),
-      'warranty': ('🛡️', '#16a34a', '#f0fdf4'),
-      'repair': ('🔩', '#dc2626', '#fef2f2'),
-      'spare_parts': ('🧩', '#3b82f6', '#eff6ff'),
-      'spare_parts_store': ('📦', '#3b82f6', '#eff6ff'),
-      'spare_parts_import': ('✈️', '#1d4ed8', '#eff6ff'),
-      'equipment_transfer': ('🚛', '#1d4ed8', '#eff6ff'),
-      'quotation': ('💬', '#16a34a', '#f0fdf4'),
-      'shipping': ('🚚', '#1d4ed8', '#eff6ff'),
-      'return': ('↩️', '#6b7280', '#f9fafb'),
+      'install': ('bi-house-gear-fill', '#3b82f6', '#eff6ff'),
+      'tech_support': ('bi-headset', '#dc2626', '#fef2f2'),
+      'shipping': ('bi-truck', '#1d4ed8', '#eff6ff'),
+      'quotation': ('bi-cash-coin', '#16a34a', '#f0fdf4'),
+      'return': ('bi-arrow-return-left', '#6b7280', '#f9fafb'),
+      'tech_evaluation': ('bi-clipboard-check', '#94a3b8', '#f8fafc'),
+      'maintenance': ('bi-tools', '#f59e0b', '#fffbeb'),
+      'spare_parts': ('bi-boxes', '#3b82f6', '#eff6ff'),
+      'equipment_transfer': ('bi-arrows-move', '#1d4ed8', '#eff6ff'),
+      'warranty': ('bi-shield-check', '#16a34a', '#f0fdf4'),
+      'repair': ('bi-wrench-adjustable-circle-fill', '#991b1b', '#fef2f2'),
+      'spare_parts_store': ('bi-building', '#6b7280', '#f9fafb'),
+      'spare_parts_import': ('bi-globe-americas', '#3b82f6', '#eff6ff'),
     } %}
     <div class="sp-tipos" id="spTipos">
       {% for t in tk_tipos_publicos %}
-      {% set tv = tipo_visual.get(t, ('❔', '#6b7280', '#f9fafb')) %}
+      {% set tv = tipo_visual.get(t, ('bi-question-circle', '#6b7280', '#f9fafb')) %}
       <div class="sp-tipo" data-tipo="{{ t }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button">
-        <span class="em">{{ tv[0] }}</span>
+        <i class="bi {{ tv[0] }} em"></i>
         {{ tipo_label[t] }}
       </div>
       {% endfor %}
@@ -527,18 +531,18 @@ function spFormatearTelefono(raw){
   if(v.length > 5) out += ' ' + v.slice(5, 9);
   return out;
 }
+// 2026-07-13 (Daniel, URGENTE — el gerente general probo el formulario):
+// "el telefono no lo deja modificar" -- reformatear en CADA tecla insertando
+// espacios rompe el backspace: si el cursor queda justo antes de un espacio
+// autogenerado, borrarlo no cambia ningun digito (el espacio se vuelve a
+// insertar al reformatear), asi que visualmente "no pasa nada" y el campo
+// parece trabado. Mismo criterio que ya se aplico al RUT (fix anterior,
+// mismo dia): mientras se escribe se deja el valor TAL CUAL lo tipea el
+// usuario (sin pelear con el cursor); el formato bonito con espacios se
+// aplica UNA sola vez, al salir del campo (blur).
 (function(){
   const spPhone = document.getElementById('spPhone');
-  spPhone.addEventListener('input', function(){
-    const pos = this.selectionStart;
-    const antes = this.value.length;
-    this.value = spFormatearTelefono(this.value);
-    // Reposiciona el cursor al final -- el numero es corto (9 digitos) y
-    // se escribe de una sola pasada, igual criterio que el RUT.
-    const despues = this.value.length;
-    const nuevaPos = Math.max(0, pos + (despues - antes));
-    try { this.setSelectionRange(nuevaPos, nuevaPos); } catch(e){}
-  });
+  spPhone.addEventListener('blur', function(){ this.value = spFormatearTelefono(this.value); });
 })();
 
 // ── RUT chileno: puntos de mil + guion-DV SOLO al terminar de escribir ──
@@ -596,7 +600,7 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
     rut: spFormatearRutFinal(document.getElementById('spRut').value),
     empresa: document.getElementById('spEmpresa').value.trim(),
     nombre_contacto: document.getElementById('spContacto').value.trim(),
-    phone: document.getElementById('spPhone').value.trim(),
+    phone: spFormatearTelefono(document.getElementById('spPhone').value),
     email: document.getElementById('spEmail').value.trim(),
     direccion: document.getElementById('spDireccion').value.trim(),
     direccion_lat: document.getElementById('spDirLat').value || null,
