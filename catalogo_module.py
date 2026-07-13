@@ -1069,8 +1069,21 @@ def register_catalogo_routes(app, ctx):
     @_catalogo_admin_required
     def cat_api_producto_desde_erp():
         d = request.get_json(silent=True) or {}
-        sku = (d.get("sku") or "").strip().upper()
-        nombre = (d.get("nombre") or "").strip()
+        # 2026-07-12: si `sku`/`nombre`/`familia` llegan con un tipo no-string
+        # (int/list/dict/bool -- ej. un caller directo distinto del modal, que
+        # siempre manda string), (valor or "").strip() revienta con
+        # AttributeError sin control -- 500 crudo, viola Regla #4. Se
+        # sanea a string ANTES de tocarlos (hallazgo de la simulacion de
+        # trafico 2026-07-12).
+        try:
+            sku_raw = d.get("sku")
+            nombre_raw = d.get("nombre")
+            familia_raw = d.get("familia")
+            sku = (str(sku_raw) if sku_raw is not None else "").strip().upper()
+            nombre = (str(nombre_raw) if nombre_raw is not None else "").strip()
+            familia = (str(familia_raw) if familia_raw is not None else "").strip()[:150] or None
+        except Exception:
+            return jsonify({"ok": False, "error": "Datos inválidos"}), 400
         if not sku:
             return jsonify({"ok": False, "error": "Falta el SKU"}), 400
 
@@ -1082,7 +1095,6 @@ def register_catalogo_routes(app, ctx):
         if not nombre:
             nombre = sku  # el modal siempre trae nombre; esto es solo un resguardo
         user = current_username() or "sistema"
-        familia = (d.get("familia") or "").strip()[:150] or None
         try:
             mysql_execute(
                 "INSERT INTO cat_productos (sku, nombre, familia, created_by, updated_by) "

@@ -64870,6 +64870,12 @@ def mant_repuesto_crear_desde_erp():
                 cantidad = float(it.get("qty") or 1)
             except (TypeError, ValueError):
                 cantidad = 1.0
+            if cantidad <= 0:
+                # 2026-07-12: sin este clamp, un qty negativo/0 del modal
+                # (o de un caller malformado) quedaba tal cual en
+                # mant_repuestos.cantidad, ensuciando costeo/inventario.
+                # Mismo criterio que Cotizaciones (tickets_module.py).
+                cantidad = 1.0
             fields = {
                 "cliente_id":  None,
                 "sku":         sku,
@@ -64880,20 +64886,33 @@ def mant_repuesto_crear_desde_erp():
                 "created_by":  current_username(),
             }
             cols = list(fields.keys())
-            conn = get_mysql()
+            # 2026-07-12: cada item corre su propia conexion/commit (ya era
+            # asi) -- pero si un item de la mitad de la lista fallaba (ej.
+            # timeout de BD), la excepcion escapaba sin capturarse y
+            # abortaba TODO el request con 500, dejando los items ya
+            # comprometidos como "fantasma" (el cliente no sabe que se
+            # crearon y puede reintentar el batch completo, duplicando).
+            # Ahora cada item es independiente: si uno falla, se cuenta
+            # como error y se sigue con el resto (hallazgo de la
+            # simulacion de trafico 2026-07-12).
             try:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"INSERT INTO mant_repuestos ({','.join(cols)}) "
-                        f"VALUES ({','.join(['%s']*len(cols))})",
-                        tuple(fields[c] for c in cols)
-                    )
-                    new_id = cur.lastrowid
-                conn.commit()
-            finally:
-                conn.close()
-            _mant_log("repuesto", new_id, "crear_desde_erp", f"{nombre} (SKU {sku or 's/d'})")
-            creados.append(new_id)
+                conn = get_mysql()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"INSERT INTO mant_repuestos ({','.join(cols)}) "
+                            f"VALUES ({','.join(['%s']*len(cols))})",
+                            tuple(fields[c] for c in cols)
+                        )
+                        new_id = cur.lastrowid
+                    conn.commit()
+                finally:
+                    conn.close()
+                _mant_log("repuesto", new_id, "crear_desde_erp", f"{nombre} (SKU {sku or 's/d'})")
+                creados.append(new_id)
+            except Exception as e_item:
+                print(f"[mant_repuesto_crear_desde_erp] item fallido sku={sku}: {e_item}", flush=True)
+                continue
         if not creados:
             return jsonify({"ok": False, "error": "Ningún item pudo crearse"}), 400
         return jsonify({"ok": True, "creados": len(creados), "ids": creados})

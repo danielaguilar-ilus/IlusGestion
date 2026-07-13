@@ -21,7 +21,16 @@
    de arriba (.sp-hero) NO se toca -- Daniel fue explicito en que no quiere
    la foto/marketing/header de retiro, solo el estilo del formulario. Inter
    via Google Fonts (con fallback a system-ui si no carga, no rompe nada,
-   a diferencia del font de iconos que SI necesita fallback por glifo). #}
+   a diferencia del font de iconos que SI necesita fallback por glifo).
+   Revision Shopify/iframe (2026-07-13): se agrega preconnect a los 2
+   dominios de Google Fonts para que la carga sea mas rapida/confiable
+   dentro del iframe (evita el round-trip extra de DNS+TLS antes del CSS);
+   si igual no carga (bloqueador de anuncios, red corporativa, CSP raro
+   del tema de Shopify), el fallback 'Inter',-apple-system,... de mas
+   abajo entra sin romper el layout -- no hay ningun ancho/alto fijo en
+   este archivo que asuma las metricas de Inter/Bebas Neue. #}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
 <style>
 :root{

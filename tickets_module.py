@@ -1442,13 +1442,15 @@ def register_tickets_routes(app, ctx):
         empresa = (d.get("empresa") or "").strip()[:150] or None
         rut = (d.get("rut") or "").strip()[:12] or None
         erp_idmaeen = None
+        erp_koen = None
         try:
-            first_tido = (items[0] or {}).get("tido")
+            first_item = items[0] if items and isinstance(items[0], dict) else {}
+            first_tido = first_item.get("tido")
             if str(first_tido or "").strip().isdigit():
                 erp_idmaeen = int(first_tido)
+            erp_koen = first_item.get("koen")
         except Exception:
             pass
-        erp_koen = (items[0] or {}).get("koen") if items else None
 
         conn = get_mysql()
         try:
