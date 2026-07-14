@@ -460,6 +460,9 @@
     <button type="button" class="tka-tab tka-tab-disabled" role="tab" id="tkaTabCotizacion" onclick="tkaSetTab('cotizacion')" title="En construcción">
       <i class="bi bi-calculator"></i><span>Cotización interna</span>
     </button>
+    <button type="button" class="tka-tab" role="tab" id="tkaTabBodega" onclick="tkaSetTab('bodega')" style="display:none">
+      <i class="bi bi-boxes"></i><span>Bodega 02</span>
+    </button>
   </div>
   <div class="tka-body" id="tkaBody">
     <div id="tkaPanelDoc" class="tka-panel">
@@ -522,6 +525,25 @@
         <p>El módulo de cotizaciones internas (tk_cotizaciones) está en construcción. Por ahora esta fuente no está disponible — vuelve pronto.</p>
       </div>
     </div>
+    <div id="tkaPanelBodega" class="tka-panel" style="display:none">
+      <div class="tka-mod-hint">
+        <i class="bi bi-boxes"></i>
+        <div>Búsqueda <strong>aproximada</strong> por SKU o nombre dentro de la bodega de soporte. Útil para encontrar el producto exacto que quieres agregar al catálogo.</div>
+      </div>
+      <div class="tka-search-row">
+        <input id="tkaBodegaQ" type="search" placeholder="SKU o nombre… (mín. 2 caracteres)" autocomplete="off" oninput="_tkaBodegaOnInput()">
+        <button type="button" class="tka-btn-search" id="tkaBodegaBtn" onclick="tkaBuscarPorBodega()">
+          <i class="bi bi-search"></i><span>Buscar</span>
+        </button>
+      </div>
+      <div id="tkaBodegaResult">
+        <div class="tka-empty">
+          <i class="bi bi-boxes tka-empty-icon"></i>
+          <h6>Buscar producto en bodega</h6>
+          <p>Escribe al menos 2 caracteres del SKU o nombre del producto.</p>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="tka-foot">
     <div class="tka-counter" id="tkaCounter">
@@ -550,9 +572,11 @@ const _TKA = {
   tab:  'doc',
   selDoc: new Map(),
   selCli: new Map(),
+  selBodega: new Map(),
   loaded: { docHeader: null, cliQuery: null },
-  ctx: { mode: 'crear', ticketId: null, onDone: null, onSeleccionar: null },
+  ctx: { mode: 'crear', ticketId: null, onDone: null, onSeleccionar: null, tabs: null },
   _liveTimer: null,
+  _bodegaDebounce: null,
   ultimoMotivoSinSaldo: '',
 };
 
@@ -616,6 +640,7 @@ async function _tkaFetchJsonSafe(url, opts){
 function _tkaResetEstado(){
   _TKA.selDoc.clear();
   _TKA.selCli.clear();
+  _TKA.selBodega.clear();
   _TKA.loaded.docHeader = null;
   _TKA.loaded.cliQuery = null;
   _TKA.tab = 'doc';
@@ -627,6 +652,8 @@ function _tkaResetEstado(){
   if (inpCli) inpCli.value = '';
   const selTido = document.getElementById('tkaDocTido');
   if (selTido) selTido.selectedIndex = 0;
+  const inpBodega = document.getElementById('tkaBodegaQ');
+  if (inpBodega) inpBodega.value = '';
 
   const docRes = document.getElementById('tkaDocResult');
   if (docRes){
@@ -644,26 +671,68 @@ function _tkaResetEstado(){
       <p>Útil cuando el cliente trae varias facturas a la vez. Mostramos todos sus docs ERP en una sola lista.</p>
     </div>`;
   }
+  const bodegaRes = document.getElementById('tkaBodegaResult');
+  if (bodegaRes){
+    bodegaRes.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-boxes tka-empty-icon"></i>
+      <h6>Buscar producto en bodega</h6>
+      <p>Escribe al menos 2 caracteres del SKU o nombre del producto.</p>
+    </div>`;
+  }
 
   const tabDoc = document.getElementById('tkaTabDoc');
   const tabCli = document.getElementById('tkaTabCli');
   const tabDeclarado = document.getElementById('tkaTabDeclarado');
   const tabCotizacion = document.getElementById('tkaTabCotizacion');
+  const tabBodega = document.getElementById('tkaTabBodega');
   const panelDoc = document.getElementById('tkaPanelDoc');
   const panelCli = document.getElementById('tkaPanelCli');
   const panelDeclarado = document.getElementById('tkaPanelDeclarado');
   const panelCotizacion = document.getElementById('tkaPanelCotizacion');
+  const panelBodega = document.getElementById('tkaPanelBodega');
   if (tabDoc) tabDoc.classList.add('is-active');
   if (tabCli) tabCli.classList.remove('is-active');
   if (tabDeclarado) tabDeclarado.classList.remove('is-active');
   if (tabCotizacion) tabCotizacion.classList.remove('is-active');
+  if (tabBodega) tabBodega.classList.remove('is-active');
   if (panelDoc) panelDoc.style.display = '';
   if (panelCli) panelCli.style.display = 'none';
   if (panelDeclarado) panelDeclarado.style.display = 'none';
   if (panelCotizacion) panelCotizacion.style.display = 'none';
+  if (panelBodega) panelBodega.style.display = 'none';
 
   if (_TKA._liveTimer){ clearInterval(_TKA._liveTimer); _TKA._liveTimer = null; }
+  if (_TKA._bodegaDebounce){ clearTimeout(_TKA._bodegaDebounce); _TKA._bodegaDebounce = null; }
   try{ tkaUpdateCounter(); }catch(_){}
+}
+
+// 2026-07-13 (Daniel, pedido para Catálogo): oculta/muestra pestañas según
+// _TKA.ctx.tabs (array de ids: 'doc'|'cli'|'declarado'|'cotizacion'|'bodega').
+// Si tabs es null (todos los demás call-sites: Tickets/Repuestos/Cotizaciones),
+// NO se toca nada -- se ven las 4 pestañas de siempre, comportamiento idéntico.
+function _tkaApplyTabsFilter(){
+  const map = {
+    doc: 'tkaTabDoc', cli: 'tkaTabCli', declarado: 'tkaTabDeclarado',
+    cotizacion: 'tkaTabCotizacion', bodega: 'tkaTabBodega',
+  };
+  const tabs = _TKA.ctx.tabs;
+  if (!Array.isArray(tabs)){
+    // Sin filtro: asegurar que todas las pestañas de siempre estén visibles
+    // (por si una apertura anterior con `tabs` dejó alguna oculta).
+    Object.keys(map).forEach(k => {
+      const el = document.getElementById(map[k]);
+      if (el) el.style.display = (k === 'bodega') ? 'none' : '';
+    });
+    return;
+  }
+  Object.keys(map).forEach(k => {
+    const el = document.getElementById(map[k]);
+    if (el) el.style.display = tabs.includes(k) ? '' : 'none';
+  });
+  if (!tabs.includes(_TKA.tab)){
+    const primera = tabs[0] || 'doc';
+    tkaSetTab(primera);
+  }
 }
 
 // tkaOpen({mode:'crear'|'agregar'|'seleccionar', ticketId, onDone, onSeleccionar, rutPrefill})
@@ -691,7 +760,9 @@ function tkaOpen(opts){
     onDone: (typeof opts.onDone === 'function') ? opts.onDone : null,
     onSeleccionar: (typeof opts.onSeleccionar === 'function') ? opts.onSeleccionar : null,
     rutPrefill: opts.rutPrefill || '',
+    tabs: Array.isArray(opts.tabs) ? opts.tabs : null,
   };
+  _tkaApplyTabsFilter();
   // Daniel 2026-07-12: "siempre recomiende el RUT del dueño de la ficha...
   // así acortas camino cuando consultan por RUT". _tkaResetEstado() de
   // arriba SIEMPRE deja _TKA.tab='doc' -- sin esto, la logica de abajo que
@@ -761,15 +832,21 @@ document.addEventListener('keydown', e => {
 });
 
 function tkaSetTab(tab){
+  // Si el modal fue abierto con una lista `tabs` restringida, ignorar
+  // cambios a pestañas fuera de esa lista (por seguridad; normalmente el
+  // botón ya está oculto y no debería ser alcanzable).
+  if (Array.isArray(_TKA.ctx.tabs) && !_TKA.ctx.tabs.includes(tab)) return;
   _TKA.tab = tab;
   document.getElementById('tkaTabDoc').classList.toggle('is-active', tab === 'doc');
   document.getElementById('tkaTabCli').classList.toggle('is-active', tab === 'cli');
   document.getElementById('tkaTabDeclarado').classList.toggle('is-active', tab === 'declarado');
   document.getElementById('tkaTabCotizacion').classList.toggle('is-active', tab === 'cotizacion');
+  document.getElementById('tkaTabBodega').classList.toggle('is-active', tab === 'bodega');
   document.getElementById('tkaPanelDoc').style.display = tab === 'doc' ? '' : 'none';
   document.getElementById('tkaPanelCli').style.display = tab === 'cli' ? '' : 'none';
   document.getElementById('tkaPanelDeclarado').style.display = tab === 'declarado' ? '' : 'none';
   document.getElementById('tkaPanelCotizacion').style.display = tab === 'cotizacion' ? '' : 'none';
+  document.getElementById('tkaPanelBodega').style.display = tab === 'bodega' ? '' : 'none';
   if (tab === 'declarado') _tkaRenderDeclarado();
 }
 
@@ -1387,8 +1464,94 @@ async function tkaAsociarTodasConSaldo(){
 // ──────────────────────────────────────────────────────────────
 // Contador
 // ──────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
+// TAB "BODEGA 02" (2026-07-13, Daniel: solo para Catálogo) — búsqueda
+// aproximada en vivo (debounce ~300ms, mismo patrón de otras búsquedas
+// ERP del proyecto) contra /catalogo/api/erp/bodega-buscar. Al hacer
+// click en un resultado se agrega/quita de _TKA.selBodega (sku/nombre
+// son los únicos campos que consume /catalogo/api/productos/desde-erp;
+// tido/nudo van null porque no aplica un documento).
+// ──────────────────────────────────────────────────────────────
+function _tkaBodegaOnInput(){
+  if (_TKA._bodegaDebounce) clearTimeout(_TKA._bodegaDebounce);
+  _TKA._bodegaDebounce = setTimeout(() => tkaBuscarPorBodega(), 300);
+}
+async function tkaBuscarPorBodega(){
+  const inp = document.getElementById('tkaBodegaQ');
+  const q = (inp && inp.value || '').trim();
+  const cont = document.getElementById('tkaBodegaResult');
+  if (!cont) return;
+  if (q.length < 2){
+    cont.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-boxes tka-empty-icon"></i>
+      <h6>Buscar producto en bodega</h6>
+      <p>Escribe al menos 2 caracteres del SKU o nombre del producto.</p>
+    </div>`;
+    return;
+  }
+  cont.innerHTML = _tkaSkel();
+  try{
+    const d = await _tkaFetchJsonSafe(`/catalogo/api/erp/bodega-buscar?q=${encodeURIComponent(q)}`);
+    if (!d.ok){
+      cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(d.error || 'Error al buscar')}</div>`;
+      return;
+    }
+    const items = d.items || [];
+    if (!items.length){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-search tka-empty-icon"></i>
+        <h6>Sin resultados</h6>
+        <p>No se encontraron productos en bodega para "${_tkaEsc(q)}".</p>
+      </div>`;
+      return;
+    }
+    let html = '<div class="tka-results">';
+    items.forEach((it, idx) => {
+      const key = it.sku;
+      const isSel = _TKA.selBodega.has(key);
+      const stockTxt = (it.stock != null) ? `${it.stock} u. en stock` : 'stock s/d';
+      html += `<div class="tka-line${isSel ? ' is-selected' : ''}" data-bodega-idx="${idx}">
+        <div class="tka-chk${isSel ? ' is-checked' : ''}" onclick="tkaToggleLineaBodega(${idx})">
+          <i class="bi bi-check-lg"></i>
+        </div>
+        <div class="ln-info" onclick="tkaToggleLineaBodega(${idx})" style="cursor:pointer">
+          <div class="ln-nombre">${_tkaEsc(it.nombre)}</div>
+          <div class="ln-meta"><span class="badge-tipo">${_tkaEsc(it.sku)}</span><span>${_tkaEsc(stockTxt)}</span></div>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+    cont.innerHTML = html;
+    _TKA._bodegaItems = items;
+  }catch(e){
+    cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
+  }
+}
+function tkaToggleLineaBodega(idx){
+  const items = _TKA._bodegaItems || [];
+  const it = items[idx];
+  if (!it) return;
+  const key = it.sku;
+  const row = document.querySelector(`#tkaBodegaResult [data-bodega-idx="${idx}"]`);
+  const chk = row ? row.querySelector('.tka-chk') : null;
+  if (_TKA.selBodega.has(key)){
+    _TKA.selBodega.delete(key);
+    if (row) row.classList.remove('is-selected');
+    if (chk) chk.classList.remove('is-checked');
+  } else {
+    _TKA.selBodega.set(key, {
+      tido: null, nudo: null,
+      sku: it.sku, nombre: it.nombre, qty: 1,
+      saldo: null, marcada_sin_saldo: false, motivo_sin_saldo: '',
+    });
+    if (row) row.classList.add('is-selected');
+    if (chk) chk.classList.add('is-checked');
+  }
+  tkaUpdateCounter();
+}
+
 function tkaUpdateCounter(){
-  const allSel = [..._TKA.selDoc.values(), ..._TKA.selCli.values()].filter(it => (it.qty || 0) > 0);
+  const allSel = [..._TKA.selDoc.values(), ..._TKA.selCli.values(), ..._TKA.selBodega.values()].filter(it => (it.qty || 0) > 0);
   const n = allSel.length;
   const pill = document.getElementById('tkaCounterPill');
   if (pill){
@@ -1436,7 +1599,7 @@ async function tkaAsociarSeleccion(){
       marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' });
   });
 
-  if (docsToAdd.size === 0){
+  if (docsToAdd.size === 0 && _TKA.selBodega.size === 0){
     ilusToast('Selecciona al menos un producto con cantidad mayor a 0', { type:'warning' });
     return;
   }
@@ -1460,6 +1623,14 @@ async function tkaAsociarSeleccion(){
         });
       });
     }
+    _TKA.selBodega.forEach(it => {
+      if ((it.qty || 0) <= 0) return;
+      items.push({
+        tido: null, nudo: null,
+        sku: it.sku, nombre: it.nombre, qty: it.qty,
+        marcada_sin_saldo: false, motivo_sin_saldo: '',
+      });
+    });
     if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
     tkaClose();
     if (_TKA.ctx.onSeleccionar){

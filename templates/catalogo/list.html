@@ -793,6 +793,7 @@ if (btnBuscarErp){
   btnBuscarErp.addEventListener('click', function(){
     tkaOpen({
       mode: 'seleccionar',
+      tabs: ['doc', 'cli', 'bodega'],
       onSeleccionar: async function(items){
         if (!items || !items.length){ return; }
         let creados = 0, existentes = 0, errores = 0;

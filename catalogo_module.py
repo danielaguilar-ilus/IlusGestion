@@ -1296,6 +1296,56 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True, "creados": creados, "skus": skus})
 
     # ─────────────────────────────────────────────────────────────────
+    #  BUSQUEDA APROXIMADA EN BODEGA (2026-07-13, Daniel): pestaña "Bodega
+    #  02" del modal ERP compartido, solo para Catalogo. Reusa la MISMA
+    #  bodega/exclusion ZZ de _cat_sync_erp_nuevos, pero en vivo (sin crear
+    #  productos, solo para elegir cual agregar). Regla #4.1: SOLO LECTURA
+    #  via _random_sql_query.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/catalogo/api/erp/bodega-buscar", methods=["GET"])
+    @_catalogo_admin_required
+    def cat_api_erp_bodega_buscar():
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "items": []})
+        if not _random_sql_query:
+            return jsonify({"ok": False, "error": "Catálogo ERP no disponible"}), 503
+        q_like = f"%{q.upper()[:60]}%"
+        try:
+            rows = _random_sql_query(
+                """
+                SELECT DISTINCT TOP 30
+                       LTRIM(RTRIM(pr.KOPR))   AS sku,
+                       LTRIM(RTRIM(pr.NOKOPR)) AS nombre,
+                       pr.STFI1                AS stock
+                  FROM MAEPR pr
+                 WHERE EXISTS (SELECT 1 FROM MAEST st
+                                WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
+                                  AND LTRIM(RTRIM(st.KOBO))=%s)
+                   AND (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
+                   AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s
+                 ORDER BY nombre
+                """,
+                (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%"), max_rows=30,
+            ) or []
+        except Exception as _e:
+            print(f"[cat_api_erp_bodega_buscar] error ERP (bodega={CAT_BODEGA_SYNC}): {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo buscar en el ERP"}), 502
+
+        def _stock_num(v):
+            try:
+                return float(v or 0)
+            except Exception:
+                return 0.0
+
+        items = [{
+            "sku": (r.get("sku") or "").strip(),
+            "nombre": (r.get("nombre") or "").strip(),
+            "stock": _stock_num(r.get("stock")),
+        } for r in rows if (r.get("sku") or "").strip() and (r.get("nombre") or "").strip()]
+        return jsonify({"ok": True, "items": items})
+
+    # ─────────────────────────────────────────────────────────────────
     #  MANUAL — enviar por correo (adjunto, sin URL publica nueva).
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/productos/<int:pid>/manual/enviar-correo", methods=["POST"])
