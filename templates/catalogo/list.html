@@ -476,8 +476,8 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
           </div>
           <div class="mb-2">
             <label class="form-label fw-bold small">¿Cuántas piolas distintas tiene este modelo?</label>
-            <input type="number" id="catwCantPiolas" class="form-control" min="0" max="10" step="1" placeholder="Ej: 2">
-            <div class="form-text">Se usará para pedirte la medida de cada una en el siguiente paso (máximo 10).</div>
+            <input type="number" id="catwCantPiolas" class="form-control" min="0" max="6" step="1" placeholder="Ej: 2">
+            <div class="form-text">Se usará para pedirte la medida de cada una en el siguiente paso (máximo 6).</div>
           </div>
         </div>
 
@@ -514,7 +514,7 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
 <script>
 const IS_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
 const MAX_FOTOS = 10;
-const MAX_PIOLAS = 10;
+const MAX_PIOLAS = 6;  // 2026-07-14 (Daniel): bajado de 10 a 6
 let _catTimer = null;
 let _catfPiolas = [];
 
@@ -793,7 +793,11 @@ if (btnBuscarErp){
   btnBuscarErp.addEventListener('click', function(){
     tkaOpen({
       mode: 'seleccionar',
-      tabs: ['doc', 'cli', 'bodega'],
+      // 2026-07-14 (Daniel): Bodega 02 primera pestaña visual Y activa por
+      // defecto al abrir desde Catálogo -- _tkaApplyTabsFilter() en
+      // _tka_modal.html usa tabs[0] tanto para el orden visual (CSS order)
+      // como para la pestaña activa por defecto.
+      tabs: ['bodega', 'doc', 'cli'],
       onSeleccionar: async function(items){
         if (!items || !items.length){ return; }
         let creados = 0, existentes = 0, errores = 0;
@@ -1593,7 +1597,7 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
     const clase = document.getElementById('catwClase').value;
     const cant = parseInt(document.getElementById('catwCantPiolas').value, 10);
     if(!familia){ ilusToast('Indica la familia del producto', {type:'warning'}); return; }
-    if(isNaN(cant) || cant < 0 || cant > 10){ ilusToast('La cantidad de piolas debe ser un número entre 0 y 10', {type:'warning'}); return; }
+    if(isNaN(cant) || cant < 0 || cant > 6){ ilusToast('La cantidad de piolas debe ser un número entre 0 y 6', {type:'warning'}); return; }
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
     try{
       const r = await fetch('/catalogo/api/productos/'+catwProductoId, {method:'PATCH',

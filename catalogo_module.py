@@ -51,7 +51,7 @@ def register_catalogo_routes(app, ctx):
     ILUS_SOPORTE_EMAIL = ctx.get("ILUS_SOPORTE_EMAIL") or "soportetec@sphs.cl"
 
     MAX_FOTOS_POR_PRODUCTO = 10
-    MAX_PIOLAS_POR_PRODUCTO = 10
+    MAX_PIOLAS_POR_PRODUCTO = 6  # 2026-07-14 (Daniel): bajado de 10 a 6
     MAX_MANUAL_MB = 25  # mismo techo/motivo que MAX_ADJUNTO_MB en tickets_module.py:
                         # Cloud Run limita cada request HTTP a 32MB.
     MAX_MANUALES_POR_PRODUCTO = 5  # 2026-07-12 (Daniel, wizard "Registrar producto"):

@@ -436,6 +436,30 @@
     .tka-body{padding:14px 14px}
     .tka-foot{padding:12px 14px}
   }
+
+  /* 2026-07-14: franja de "seleccionados" de Bodega 02 -- hace visible la
+     acumulación entre búsquedas (ver comentario en el HTML del panel). */
+  .tka-bodega-sel{
+    background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;
+    padding:9px 12px;margin-bottom:12px;
+  }
+  .tka-bodega-sel-label{
+    font-size:.78rem;font-weight:800;color:var(--tka-red);
+    margin-bottom:7px;display:flex;align-items:center;gap:6px;
+  }
+  .tka-bodega-sel-chips{display:flex;flex-wrap:wrap;gap:6px}
+  .tka-bodega-sel-chip{
+    display:inline-flex;align-items:center;gap:6px;
+    background:#fff;border:1px solid #fca5a5;border-radius:50px;
+    padding:4px 6px 4px 12px;font-size:.82rem;font-weight:700;color:#0a0a0a;
+  }
+  .tka-bodega-sel-chip button{
+    border:none;background:#fee2e2;color:var(--tka-red);
+    width:20px;height:20px;border-radius:50%;
+    display:inline-flex;align-items:center;justify-content:center;
+    cursor:pointer;font-size:.85rem;line-height:1;flex-shrink:0;
+  }
+  .tka-bodega-sel-chip button:hover{background:var(--tka-red);color:#fff}
 </style>
 
 <div class="tka-backdrop" id="tkaBackdrop" onclick="tkaClose()" aria-hidden="true"></div>
@@ -536,6 +560,15 @@
           <i class="bi bi-search"></i><span>Buscar</span>
         </button>
       </div>
+      <!-- 2026-07-14 (Daniel, fix diagnóstico "un click agrega múltiples
+           resultados"): la selección de Bodega 02 se ACUMULA a propósito
+           entre búsquedas (para poder buscar "Pec Fly", elegir uno, buscar
+           otra cosa y elegir otro, y asociar todo junto de una vez) -- eso
+           no es el bug. El bug real es que esa acumulación era INVISIBLE:
+           nada mostraba qué había quedado "armado" más allá del contador
+           chico del pie. Esta franja hace explícito y editable lo que está
+           efectivamente seleccionado antes de presionar "Asociar". -->
+      <div id="tkaBodegaSeleccion" class="tka-bodega-sel" style="display:none"></div>
       <div id="tkaBodegaResult">
         <div class="tka-empty">
           <i class="bi bi-boxes tka-empty-icon"></i>
@@ -679,6 +712,9 @@ function _tkaResetEstado(){
       <p>Escribe al menos 2 caracteres del SKU o nombre del producto.</p>
     </div>`;
   }
+  const bodegaSel = document.getElementById('tkaBodegaSeleccion');
+  if (bodegaSel){ bodegaSel.style.display = 'none'; bodegaSel.innerHTML = ''; }
+  _TKA._bodegaItems = [];
 
   const tabDoc = document.getElementById('tkaTabDoc');
   const tabCli = document.getElementById('tkaTabCli');
@@ -710,6 +746,18 @@ function _tkaResetEstado(){
 // _TKA.ctx.tabs (array de ids: 'doc'|'cli'|'declarado'|'cotizacion'|'bodega').
 // Si tabs es null (todos los demás call-sites: Tickets/Repuestos/Cotizaciones),
 // NO se toca nada -- se ven las 4 pestañas de siempre, comportamiento idéntico.
+//
+// 2026-07-14 (Daniel, fix bug real de Catálogo): cuando `tabs` viene seteado,
+// la PRIMERA pestaña de ese arreglo manda en DOS sentidos, no solo uno:
+//   1) Orden VISUAL: se reordenan los botones con CSS `order` (el contenedor
+//      `.tka-tabs` ya es `display:flex`) según la posición de cada id dentro
+//      de `tabs` -- antes el DOM quedaba siempre Doc→Cli→Bodega sin importar
+//      el arreglo, porque nunca se tocaba el orden, solo el display.
+//   2) Pestaña ACTIVA por defecto: antes el fallback de más abajo SOLO corría
+//      si 'doc' (hardcode de _tkaResetEstado(), línea ~646) NO estaba incluida
+//      en `tabs` -- con tabs conteniendo 'doc' en cualquier posición, 'doc'
+//      ganaba siempre y tabs[0] nunca se aplicaba. Ahora tabs[0] es SIEMPRE
+//      la default cuando `tabs` viene seteado (no un fallback condicional).
 function _tkaApplyTabsFilter(){
   const map = {
     doc: 'tkaTabDoc', cli: 'tkaTabCli', declarado: 'tkaTabDeclarado',
@@ -718,21 +766,27 @@ function _tkaApplyTabsFilter(){
   const tabs = _TKA.ctx.tabs;
   if (!Array.isArray(tabs)){
     // Sin filtro: asegurar que todas las pestañas de siempre estén visibles
-    // (por si una apertura anterior con `tabs` dejó alguna oculta).
+    // y en su orden natural del DOM (por si una apertura anterior con
+    // `tabs` dejó alguna oculta o con `order` reasignado vía CSS).
     Object.keys(map).forEach(k => {
       const el = document.getElementById(map[k]);
-      if (el) el.style.display = (k === 'bodega') ? 'none' : '';
+      if (!el) return;
+      el.style.display = (k === 'bodega') ? 'none' : '';
+      el.style.order = '';
     });
     return;
   }
   Object.keys(map).forEach(k => {
     const el = document.getElementById(map[k]);
-    if (el) el.style.display = tabs.includes(k) ? '' : 'none';
+    if (!el) return;
+    const idx = tabs.indexOf(k);
+    el.style.display = idx !== -1 ? '' : 'none';
+    el.style.order = idx !== -1 ? String(idx) : '99';
   });
-  if (!tabs.includes(_TKA.tab)){
-    const primera = tabs[0] || 'doc';
-    tkaSetTab(primera);
-  }
+  // tabs[0] es SIEMPRE la pestaña activa por defecto cuando `tabs` viene
+  // seteado (ya no es un fallback condicionado a que 'doc' esté ausente).
+  const primera = tabs[0] || 'doc';
+  tkaSetTab(primera);
 }
 
 // tkaOpen({mode:'crear'|'agregar'|'seleccionar', ticketId, onDone, onSeleccionar, rutPrefill})
@@ -1523,10 +1577,20 @@ async function tkaBuscarPorBodega(){
     html += '</div>';
     cont.innerHTML = html;
     _TKA._bodegaItems = items;
+    _tkaRenderBodegaSeleccion();
   }catch(e){
     cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
   }
 }
+// 2026-07-14 (Daniel, fix diagnóstico "un click agrega múltiples
+// resultados"): un click SIEMPRE tocó exactamente UN sku (Map keyed por
+// it.sku, sin loop sobre `items`) -- eso ya funcionaba bien. La causa real
+// del síntoma es que `_TKA.selBodega` se ACUMULA a propósito entre
+// búsquedas (para armar varios productos de distintas búsquedas y asociarlos
+// juntos) y no había forma de ver qué había quedado "armado" antes de
+// presionar el único botón "Asociar" -- fácil terminar asociando de más sin
+// darse cuenta. `_tkaRenderBodegaSeleccion()` hace esa selección visible y
+// editable (franja con chips + botón de quitar) cada vez que cambia.
 function tkaToggleLineaBodega(idx){
   const items = _TKA._bodegaItems || [];
   const it = items[idx];
@@ -1547,6 +1611,44 @@ function tkaToggleLineaBodega(idx){
     if (row) row.classList.add('is-selected');
     if (chk) chk.classList.add('is-checked');
   }
+  _tkaRenderBodegaSeleccion();
+  tkaUpdateCounter();
+}
+// Franja "Seleccionados de Bodega 02" -- refleja el contenido REAL de
+// _TKA.selBodega (no solo la búsqueda actual) para que la acumulación
+// entre búsquedas deje de ser invisible. Cada chip se puede quitar sin
+// tener que volver a buscar ese producto.
+function _tkaRenderBodegaSeleccion(){
+  const cont = document.getElementById('tkaBodegaSeleccion');
+  if (!cont) return;
+  const sel = [..._TKA.selBodega.values()];
+  if (!sel.length){
+    cont.style.display = 'none';
+    cont.innerHTML = '';
+    return;
+  }
+  cont.style.display = '';
+  cont.innerHTML = `<div class="tka-bodega-sel-label"><i class="bi bi-check2-square"></i>Seleccionados de Bodega 02 (${sel.length})</div>
+    <div class="tka-bodega-sel-chips">${sel.map(it => `<span class="tka-bodega-sel-chip">${_tkaEsc(it.nombre)}
+        <button type="button" data-sku="${_tkaEsc(it.sku)}" onclick="_tkaQuitarBodegaSel(this.dataset.sku)" title="Quitar de la selección"><i class="bi bi-x-lg"></i></button>
+      </span>`).join('')}</div>`;
+}
+// Quita un item ya staged en _TKA.selBodega (desde el chip de la franja de
+// seleccionados) sin necesidad de que su búsqueda siga visible en pantalla.
+function _tkaQuitarBodegaSel(sku){
+  if (!sku) return;
+  _TKA.selBodega.delete(sku);
+  const items = _TKA._bodegaItems || [];
+  const idx = items.findIndex(it => it.sku === sku);
+  if (idx !== -1){
+    const row = document.querySelector(`#tkaBodegaResult [data-bodega-idx="${idx}"]`);
+    if (row){
+      row.classList.remove('is-selected');
+      const chk = row.querySelector('.tka-chk');
+      if (chk) chk.classList.remove('is-checked');
+    }
+  }
+  _tkaRenderBodegaSeleccion();
   tkaUpdateCounter();
 }
 
