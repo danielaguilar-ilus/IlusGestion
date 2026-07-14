@@ -437,8 +437,16 @@
        tickets" -- deja de ser un toggle con la Bandeja adentro; ahora es un
        link plano directo a la bandeja, igual que los demas modulos de
        Servicio Tecnico de abajo. La ruta /tickets/nuevo sigue viva
-       (compatibilidad hacia atras), solo sin linkear desde el sidebar. #}
-    {% if (permissions.mantenciones or permissions.superadmin) and not is_tecnico %}
+       (compatibilidad hacia atras), solo sin linkear desde el sidebar.
+       FIX 2026-07-14 (caso Alison, rol Transporte): la condicion original
+       solo miraba "mantenciones"/"superadmin" y nunca los flags nuevos
+       tk_ver/tk_es_tecnico/tk_es_ejecutivo (aditivos, 2026-07-12) -- un rol
+       con esos flags marcados en la matriz SI pasaba el gate del backend
+       (_tickets_required en tickets_module.py acepta el mismo OR), pero el
+       link del sidebar nunca aparecia porque le faltaba esa misma condicion.
+       Alineado ahora con el gate real del backend. #}
+    {% if (permissions.mantenciones or permissions.superadmin or permissions.tk_ver
+           or permissions.tk_es_tecnico or permissions.tk_es_ejecutivo) and not is_tecnico %}
     <a href="{{ url_for('tk_list') }}"
        class="sidebar-link{% if request.endpoint in ['tk_list','tk_ficha','tk_nuevo'] %} active{% endif %}">
       <i class="bi bi-ticket-perforated"></i><span>Tickets</span>
