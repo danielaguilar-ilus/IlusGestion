@@ -241,6 +241,16 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
        #4.2) -- el modal manual #catnModal y el endpoint de sync masivo
        (/catalogo/api/sync-erp) NO se borraron, solo quedan sin botón que
        los abra desde acá. #}
+    {# 2026-07-14 (Daniel: "tráelos automáticos y déjalo vacío si da error"):
+       backfill de fotos desde la tienda ilusfitness.com para los productos
+       que aún no tienen ninguna. Solo superadmin (el backend igual lo
+       gatea con _catalogo_admin_required). Botón secundario/outline a
+       propósito — el CTA principal sigue siendo el rojo. #}
+    {% if permissions.superadmin %}
+    <button class="btn btn-ilus-outline" id="btnFotosEcom" type="button"
+            title="Buscar en ilusfitness.com la foto de cada producto sin foto (match por SKU)">
+      <i class="bi bi-images me-1"></i>Fotos desde ecommerce</button>
+    {% endif %}
     <button class="btn btn-ilus" id="btnBuscarErp" type="button">
       <i class="bi bi-search me-1"></i>Nuevo producto</button>
   </div>
@@ -802,6 +812,37 @@ if (btnSyncErp){
       }
     }catch(e){ ilusToast('Error de red al sincronizar', {type:'error'}); }
     finally{ btnSyncErp.disabled = false; btnSyncErp.innerHTML = original; }
+  });
+}
+
+// ══════════════ Fotos desde ecommerce (2026-07-14, Daniel: "tráelos
+// automáticos y déjalo vacío si da error") ══════════════
+// Recorre los productos activos SIN foto y les busca la imagen en la
+// tienda ilusfitness.com (match exacto por SKU). El botón solo se
+// renderiza para superadmin (Jinja); el backend igual lo gatea.
+const btnFotosEcom = document.getElementById('btnFotosEcom');
+if (btnFotosEcom){
+  btnFotosEcom.addEventListener('click', async function(){
+    const original = btnFotosEcom.innerHTML;
+    btnFotosEcom.disabled = true;
+    btnFotosEcom.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Buscando fotos…';
+    try{
+      const r = await fetch('/catalogo/api/fotos-desde-ecommerce', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({}),
+      });
+      const d = await r.json();
+      if (!d.ok){ ilusToast(d.error || 'No se pudo buscar las fotos', {type:'error'}); return; }
+      let msg = '';
+      if (d.con_foto) msg += '✓ ' + d.con_foto + ' producto(s) con foto nueva';
+      if (d.sin_match) msg += (msg ? ' · ' : '') + d.sin_match + ' sin foto en la tienda';
+      if (d.errores) msg += (msg ? ' · ' : '') + d.errores + ' con error';
+      if (!msg) msg = 'No había productos sin foto pendientes';
+      if (d.restantes > 0) msg += ' · quedan ' + d.restantes + ', vuelve a presionar';
+      ilusToast(msg, {type: d.con_foto ? 'success' : 'info'});
+      if (d.con_foto) cargarCatalogo();
+    }catch(e){ ilusToast('Error de red al buscar las fotos', {type:'error'}); }
+    finally{ btnFotosEcom.disabled = false; btnFotosEcom.innerHTML = original; }
   });
 }
 

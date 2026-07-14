@@ -14,6 +14,9 @@ app_context, para funcionar aun con ILUS_SKIP_MIGRATIONS=1 en produccion.
 import json
 import math
 import os
+import threading
+import time
+import urllib.request
 from functools import wraps
 from datetime import datetime, date, timezone
 
@@ -24,6 +27,98 @@ try:
     _CAT_CL_TZ = ZoneInfo("America/Santiago")
 except Exception:  # pragma: no cover
     _CAT_CL_TZ = None
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  FOTOS DESDE EL ECOMMERCE (2026-07-14, Daniel: "tráelos automáticos y
+#  déjalo vacío si da error"). La tienda Shopify de ILUS
+#  (ilusfitness.com/products.json) es pública y de SOLO LECTURA (GET) —
+#  NO es el ERP Random, la Regla #4.1 no aplica. Los SKUs de productos
+#  marca ILUS/Optimal/Dynamis coinciden exacto con cat_productos.sku;
+#  los de marcas revendidas (ej. Gymleco) no calzan y simplemente quedan
+#  sin foto (el placeholder .cat-thumb-ph de la UI ya cubre ese caso).
+#  Caché en memoria de proceso con TTL 12h — Cloud Run corre pocas
+#  réplicas, no hace falta nada más elaborado.
+# ─────────────────────────────────────────────────────────────────────
+_SHOPIFY_BASE_URL = os.environ.get(
+    "CAT_ECOMMERCE_PRODUCTS_URL", "https://ilusfitness.com/products.json").strip()
+_SHOPIFY_TTL_S = 12 * 3600
+_SHOPIFY_MAX_PAGINAS = 10       # tope de seguridad (el catálogo real son ~2 páginas de 250)
+_SHOPIFY_TIMEOUT_PAGINA_S = 10
+_SHOPIFY_MAX_IMG_MB = 10
+_SHOPIFY_CACHE = {"data": None, "ts": 0.0}
+_SHOPIFY_CACHE_LOCK = threading.Lock()
+
+
+def _shopify_fotos_cache():
+    """Dict {SKU_UPPER: url_imagen_principal} construido desde el ecommerce.
+
+    Itera ?limit=250&page=N hasta recibir página vacía (tope 10 páginas).
+    Cada producto puede tener varias variantes con SKUs distintos — todas
+    apuntan a la MISMA imagen principal del producto. Ante CUALQUIER error
+    devuelve el caché viejo si existe (o {}) — NUNCA propaga excepción.
+    """
+    now = time.time()
+    if _SHOPIFY_CACHE["data"] is not None and (now - _SHOPIFY_CACHE["ts"]) < _SHOPIFY_TTL_S:
+        return _SHOPIFY_CACHE["data"]
+    with _SHOPIFY_CACHE_LOCK:
+        # Re-chequear dentro del lock: otro request pudo llenar el caché
+        # mientras esperábamos el lock (evita descargar 2 veces la tienda).
+        now = time.time()
+        if _SHOPIFY_CACHE["data"] is not None and (now - _SHOPIFY_CACHE["ts"]) < _SHOPIFY_TTL_S:
+            return _SHOPIFY_CACHE["data"]
+        mapping = {}
+        try:
+            for page in range(1, _SHOPIFY_MAX_PAGINAS + 1):
+                url = f"{_SHOPIFY_BASE_URL}?limit=250&page={page}"
+                req = urllib.request.Request(url, headers={"User-Agent": "ILUS-Catalogo/1.0"})
+                with urllib.request.urlopen(req, timeout=_SHOPIFY_TIMEOUT_PAGINA_S) as resp:
+                    data = json.loads(resp.read().decode("utf-8", "replace"))
+                products = data.get("products") or []
+                if not products:
+                    break
+                for prod in products:
+                    if not isinstance(prod, dict):
+                        continue
+                    try:
+                        img = ((prod.get("image") or {}).get("src")
+                               or (((prod.get("images") or [None])[0]) or {}).get("src"))
+                    except Exception:
+                        img = None
+                    if not img:
+                        continue
+                    for var in (prod.get("variants") or []):
+                        if not isinstance(var, dict):
+                            continue
+                        sku = str(var.get("sku") or "").strip().upper()
+                        if sku and sku not in mapping:
+                            mapping[sku] = img
+        except Exception as _e:
+            print(f"[_shopify_fotos_cache] error leyendo la tienda: {_e}", flush=True)
+            # Caché viejo si existe; si no, lo parcial que alcanzó a juntar
+            # (posiblemente {}). No se cachea lo parcial: el próximo llamado
+            # reintenta completo.
+            return _SHOPIFY_CACHE["data"] if _SHOPIFY_CACHE["data"] is not None else mapping
+        _SHOPIFY_CACHE["data"] = mapping
+        _SHOPIFY_CACHE["ts"] = time.time()
+        print(f"[_shopify_fotos_cache] {len(mapping)} SKUs indexados desde el ecommerce", flush=True)
+        return mapping
+
+
+def _shopify_descargar_imagen(url, timeout=15):
+    """Baja los bytes de una imagen del ecommerce (CDN Shopify). Devuelve
+    None si falla, si viene vacía o si excede el tope de tamaño. NUNCA lanza."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ILUS-Catalogo/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            tope = _SHOPIFY_MAX_IMG_MB * 1024 * 1024
+            data = resp.read(tope + 1)
+        if not data or len(data) > tope:
+            return None
+        return data
+    except Exception as _e:
+        print(f"[_shopify_descargar_imagen] {url}: {_e}", flush=True)
+        return None
 
 
 def register_catalogo_routes(app, ctx):
@@ -1228,6 +1323,62 @@ def register_catalogo_routes(app, ctx):
         return creados, creados_skus
 
     # ─────────────────────────────────────────────────────────────────
+    #  FOTO DESDE ECOMMERCE — helper compartido (2026-07-14, Daniel:
+    #  "tráelos automáticos y déjalo vacío si da error"). Lo usan el alta
+    #  puntual desde ERP (cat_api_producto_desde_erp) y el backfill masivo
+    #  (cat_api_fotos_desde_ecommerce). Best-effort TOTAL: nunca lanza y
+    #  nunca afecta la creación del producto.
+    # ─────────────────────────────────────────────────────────────────
+    def _intentar_foto_ecommerce(producto_id, sku, fotos_map=None):
+        """Busca el SKU (upper/strip) en la tienda ilusfitness.com y, si hay
+        match, descarga la imagen principal y la sube por el MISMO pipeline
+        de fotos del catálogo (_uploader_upload → GCS → cat_producto_fotos,
+        mismos folder/resource_type que cat_api_upload_foto).
+        Devuelve 'ok' | 'sin_match' | 'error'."""
+        try:
+            if not _uploader_upload:
+                return "error"
+            mapa = fotos_map if fotos_map is not None else _shopify_fotos_cache()
+            img_url = mapa.get((str(sku) if sku is not None else "").strip().upper())
+            if not img_url:
+                return "sin_match"
+            data = _shopify_descargar_imagen(img_url)
+            if not data:
+                return "error"
+            # public_id explícito y único: el default de _uploader_upload es
+            # f_{segundos} — en el backfill se suben varias fotos por segundo
+            # y colisionarían en la misma key de GCS.
+            res = _uploader_upload(
+                data,
+                public_id=f"ecom_{producto_id}_{int(time.time())}",
+                folder="catalogo", resource_type="image")
+            key = (res or {}).get("public_id")
+            if not key:
+                return "error"
+            try:
+                # Mismo cálculo de orden que piolas/manuales (derivada con
+                # alias — patrón seguro para MySQL al leer y escribir la
+                # misma tabla). En productos nuevos queda orden=1.
+                mysql_execute(
+                    "INSERT INTO cat_producto_fotos (producto_id, gcs_key, orden) "
+                    "VALUES (%s,%s, (SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m "
+                    "FROM cat_producto_fotos WHERE producto_id=%s) t))",
+                    (producto_id, key, producto_id))
+            except Exception as _e_ins:
+                print(f"[_intentar_foto_ecommerce] INSERT falló pid={producto_id}, "
+                      f"limpiando blob: {_e_ins}", flush=True)
+                if _uploader_destroy:
+                    try:
+                        _uploader_destroy(key)
+                    except Exception:
+                        pass
+                return "error"
+            return "ok"
+        except Exception as _e:
+            print(f"[_intentar_foto_ecommerce] pid={producto_id} sku={sku}: {_e}", flush=True)
+            return "error"
+
+    # ─────────────────────────────────────────────────────────────────
     #  DESDE ERP (puntual) — 2026-07-12 (Daniel): en vez de sincronizar la
     #  bodega COMPLETA, buscar UN producto puntual (por SKU/documento/RUT
     #  vía el modal compartido _tka_modal.html en mode:'seleccionar') y
@@ -1282,7 +1433,20 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "No se pudo crear el producto"}), 500
 
         row = mysql_fetchone("SELECT id FROM cat_productos WHERE sku=%s", (sku,))
-        return jsonify({"ok": True, "id": row["id"] if row else None, "creado": True, "nombre": nombre})
+        nuevo_id = row["id"] if row else None
+
+        # 2026-07-14 (Daniel: "tráelos automáticos y déjalo vacío si da
+        # error"): al CREAR un producto nuevo, foto del ecommerce best-effort.
+        # Si no hay match (marcas revendidas) o falla cualquier paso, el
+        # producto queda sin foto y la creación NO se ve afectada.
+        foto_ecom = False
+        if nuevo_id:
+            try:
+                foto_ecom = _intentar_foto_ecommerce(nuevo_id, sku) == "ok"
+            except Exception as _e_ecom:
+                print(f"[cat_api_producto_desde_erp] foto ecommerce sku={sku}: {_e_ecom}", flush=True)
+        return jsonify({"ok": True, "id": nuevo_id, "creado": True, "nombre": nombre,
+                         "foto_ecommerce": foto_ecom})
 
     @app.route("/catalogo/api/sync-erp", methods=["POST"])
     @_catalogo_admin_required
@@ -1294,6 +1458,71 @@ def register_catalogo_routes(app, ctx):
             limit = 200
         creados, skus = _cat_sync_erp_nuevos(q=None, limit=limit)
         return jsonify({"ok": True, "creados": creados, "skus": skus})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  BACKFILL FOTOS DESDE ECOMMERCE — 2026-07-14 (Daniel: "tráelos
+    #  automáticos"). Recorre los productos activos SIN ninguna foto y les
+    #  busca la imagen en la tienda (match exacto por SKU). El chequeo de
+    #  match es un lookup en dict (barato, se hace para TODOS); lo caro
+    #  (descargar + subir a GCS) se acota por request con un tope de
+    #  subidas + presupuesto de tiempo, para no chocar con el timeout de
+    #  gunicorn (--timeout 90 en el Dockerfile). Si quedan matches
+    #  pendientes se informa `restantes` y se vuelve a presionar el botón.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/catalogo/api/fotos-desde-ecommerce", methods=["POST"])
+    @_catalogo_admin_required
+    def cat_api_fotos_desde_ecommerce():
+        d = request.get_json(silent=True) or {}
+        try:
+            tope = int(d.get("limit") or 100)
+        except Exception:
+            tope = 100
+        tope = max(1, min(200, tope))
+
+        rows = mysql_fetchall(
+            "SELECT p.id, p.sku FROM cat_productos p "
+            "WHERE p.activo=1 AND NOT EXISTS "
+            "  (SELECT 1 FROM cat_producto_fotos f WHERE f.producto_id=p.id) "
+            "ORDER BY p.id") or []
+
+        fotos_map = _shopify_fotos_cache()
+        if not fotos_map:
+            return jsonify({
+                "ok": False,
+                "error": "No se pudo leer el catálogo de la tienda (intenta de nuevo en unos minutos)",
+                "error_codigo": "ECOMMERCE_NO_DISPONIBLE",
+            }), 502
+
+        con_foto = sin_match = errores = restantes = 0
+        presupuesto_s = 60  # margen holgado bajo el --timeout 90 de gunicorn
+        t0 = time.monotonic()
+        agotado = False
+        for r in rows:
+            sku = (r.get("sku") or "").strip().upper()
+            if sku not in fotos_map:
+                sin_match += 1
+                continue
+            if agotado or (con_foto + errores) >= tope \
+                    or (time.monotonic() - t0) > presupuesto_s:
+                agotado = True
+                restantes += 1
+                continue
+            estado = _intentar_foto_ecommerce(r["id"], sku, fotos_map=fotos_map)
+            if estado == "ok":
+                con_foto += 1
+            elif estado == "sin_match":
+                sin_match += 1
+            else:
+                errores += 1
+
+        return jsonify({
+            "ok": True,
+            "con_foto": con_foto,
+            "sin_match": sin_match,
+            "errores": errores,
+            "restantes": restantes,
+            "total_sin_foto": len(rows),
+        })
 
     # ─────────────────────────────────────────────────────────────────
     #  BUSQUEDA APROXIMADA EN BODEGA (2026-07-13, Daniel): pestaña "Bodega
