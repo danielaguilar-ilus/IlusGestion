@@ -82,6 +82,20 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .cat-badge-reg.no{background:#fee2e2;color:#991b1b;}
 .cat-act.wiz{color:#dc2626;}
 .cat-act.wiz:hover{background:#fee2e2;}
+.cat-badge-clase{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.68rem;font-weight:800;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;}
+.catf-badge-clase{background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:50px;font-size:.7rem;font-weight:800;vertical-align:middle;margin-left:8px;}
+
+/* ── Piolas: thumbnail de foto + botones cámara/borrar (2026-07-13) ── */
+.catp-foto-thumb{width:60px;height:60px;border-radius:8px;object-fit:cover;border:1px solid #eaecf0;cursor:pointer;background:#f3f4f6;}
+.catp-foto-ph{width:60px;height:60px;border-radius:8px;background:#f8f9fb;border:1px dashed #d1d5db;
+  display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:1.1rem;cursor:pointer;}
+.catp-foto-cell{display:flex;align-items:center;gap:6px;}
+
+/* ── Visor de PDF en modal (manuales) ── */
+.catv-frame{width:100%;height:70vh;border:none;border-radius:0 0 10px 10px;background:#525659;}
+@media(max-width:768px){.catv-frame{height:60vh;}}
+.catv-manual-item .ver{color:#3b82f6;}
+.catv-manual-item .ver:hover{background:#dbeafe;}
 
 /* ── Wizard "Registrar producto" (mismo lenguaje visual del stepper de
    Tickets: circulo rojo=actual, verde=completado; ver templates/tickets/ficha.html) ── */
@@ -231,6 +245,10 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
       <select id="catFFamilia" class="form-select form-select-sm">
         <option value="">Todas</option>
       </select></div>
+    <div class="cat-f"><label for="catFClase">Clase de producto</label>
+      <select id="catFClase" class="form-select form-select-sm">
+        <option value="">Todas</option>
+      </select></div>
   </div>
   <div class="cat-toolbar">
     <label class="cat-archivados">
@@ -286,6 +304,7 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
         <h5 class="modal-title">
           <i class="bi bi-box-seam me-2"></i><span id="catfNombre">Producto</span>
           <span class="cat-sku ms-2" id="catfSkuTag"></span>
+          <span class="catf-badge-clase" id="catfBadgeClase" style="display:none;"></span>
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
@@ -305,6 +324,11 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
             <label>Familia</label>
             <div class="val" id="catfValFamilia">—</div>
             <i class="bi bi-pencil lapiz" onclick="catfEditar('familia')"></i>
+          </div>
+          <div class="catf-campo" data-campo="clase_producto">
+            <label>Clase de producto</label>
+            <div class="val" id="catfValClaseProducto">—</div>
+            <i class="bi bi-pencil lapiz" onclick="catfEditarClase()"></i>
           </div>
           <div class="catf-campo full" data-campo="observacion">
             <label>Observación</label>
@@ -326,6 +350,11 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
           <input type="file" id="catfManualInput" accept="application/pdf" hidden>
         </div>
 
+        <div class="catf-section" id="catfManualesMultiSection" style="display:none;">
+          <h6><i class="bi bi-files me-1"></i>Manuales (hasta 5)</h6>
+          <div id="catfManualesMultiLista"></div>
+        </div>
+
         <div class="catf-section">
           <h6><span><i class="bi bi-cable me-1"></i>Piolas</span>
             <span>
@@ -336,11 +365,12 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
           </h6>
           <div class="catp-table-wrap">
             <table class="catp-table">
-              <thead><tr><th>Medida (cm)</th><th>Observación</th><th>Acciones</th></tr></thead>
+              <thead><tr><th>Foto</th><th>Medida (cm)</th><th>Observación</th><th>Acciones</th></tr></thead>
               <tbody id="catpTbody"></tbody>
             </table>
           </div>
           <div id="catpAddWrap"></div>
+          <input type="file" id="catpFotoInput" accept="image/*" hidden>
         </div>
       </div>
       <div class="modal-footer" style="justify-content:space-between;">
@@ -351,6 +381,38 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
             Eliminar definitivamente</button>
         </div>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: Visor de PDF (manuales) ══════════════
+     2026-07-13: el endpoint de descarga fuerza Content-Disposition:attachment
+     (necesario para el botón "Descargar"), lo que hace que un <iframe src="...">
+     directo dispare la descarga en vez de mostrar el PDF. Solución sin tocar
+     backend: se trae el PDF con fetch() (bytes crudos, la disposition no
+     afecta a fetch) y se arma un blob URL para el iframe. El botón
+     "Descargar" del footer reutiliza el link real del endpoint (con su
+     nombre de archivo correcto), no el blob. ══ -->
+<div class="modal fade" id="catvModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;">
+        <h5 class="modal-title"><i class="bi bi-file-earmark-pdf-fill me-2"></i><span id="catvNombre">Manual</span></h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="catvBody" style="min-height:70vh;display:flex;align-items:center;justify-content:center;background:#525659;">
+          <div class="text-white-50"><span class="spinner-border spinner-border-sm me-2"></span>Cargando PDF…</div>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between;">
+        <span class="text-muted small" id="catvSub"></span>
+        <div>
+          <a class="btn btn-ilus btn-sm" id="catvBtnDescargar" href="#" target="_blank" rel="noopener">
+            <i class="bi bi-download me-1"></i>Descargar</a>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+        </div>
       </div>
     </div>
   </div>
@@ -406,6 +468,12 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
             <input type="text" id="catwFamilia" class="form-control" placeholder="Ej: Cardio" list="catwFamiliaList">
             <datalist id="catwFamiliaList"></datalist>
           </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold small">Clase de producto <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
+            <select id="catwClase" class="form-select">
+              <option value="">— Sin clase —</option>
+            </select>
+          </div>
           <div class="mb-2">
             <label class="form-label fw-bold small">¿Cuántas piolas distintas tiene este modelo?</label>
             <input type="number" id="catwCantPiolas" class="form-control" min="0" max="10" step="1" placeholder="Ej: 2">
@@ -460,6 +528,27 @@ let _catCache = {};          // id → producto de la última carga
 let _catFamilias = new Set(); // acumulado best-effort para el <select> Familia
                                // (el contrato no define un endpoint de "familias
                                // distintas" — se completa con lo que se va viendo).
+let _catClases = null;        // cache de GET /catalogo/api/clases (se pide 1 sola vez)
+
+// ── Clases de producto: fetch único + cache, reusado en filtro + wizard ──
+async function catObtenerClases(){
+  if(_catClases) return _catClases;
+  try{
+    const r = await fetch('/catalogo/api/clases');
+    const d = await r.json();
+    _catClases = (d.ok && d.clases) ? d.clases : [];
+  }catch(e){ _catClases = []; }
+  return _catClases;
+}
+async function catPoblarSelectClase(){
+  const sel = document.getElementById('catFClase');
+  if(sel.dataset.poblado) return;
+  const clases = await catObtenerClases();
+  sel.innerHTML = '<option value="">Todas</option>'
+    + clases.map(c=>'<option value="'+esc(c.value)+'">'+esc(c.label)+'</option>').join('');
+  sel.dataset.poblado = '1';
+}
+catPoblarSelectClase();
 
 function esc(s){ return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -477,13 +566,14 @@ function catParamsFiltros(conOrden){
   const p = new URLSearchParams();
   const q = document.getElementById('catFQ').value.trim(); if(q) p.set('q', q);
   const fam = document.getElementById('catFFamilia').value; if(fam) p.set('familia', fam);
+  const clase = document.getElementById('catFClase').value; if(clase) p.set('clase_producto', clase);
   p.set('activo', catVerArchivados ? '0' : '1');
   if(conOrden && catSort){ p.set('sort', catSort); p.set('dir', catDir); }
   return p;
 }
 
 const CAT_COLS = [
-  ['Foto',''], ['SKU','sku'], ['Nombre','nombre'], ['Familia','familia'],
+  ['Foto',''], ['SKU','sku'], ['Nombre','nombre'], ['Familia','familia'], ['Clase','clase_producto'],
   ['Fotos','total_fotos'], ['Manual',''], ['Estado',''], ['Actualizado','updated_at'], ['Acciones',''],
 ];
 function catTheadHtml(){
@@ -584,11 +674,15 @@ function catFilaHtml(row){
   const badgeReg = row.registrado
     ? '<span class="cat-badge-reg si"><i class="bi bi-check-circle-fill"></i>Registrado</span>'
     : '<span class="cat-badge-reg no"><i class="bi bi-exclamation-circle-fill"></i>Pendiente</span>';
+  const clase = row.clase_producto_label
+    ? '<span class="cat-badge-clase"><i class="bi bi-tag-fill"></i>'+esc(row.clase_producto_label)+'</span>'
+    : '<span class="text-muted">—</span>';
   return '<tr class="'+(row.activo===0?'archivado':'')+'" onclick="catAbrirFicha('+row.id+')">'
     + '<td>'+foto+'</td>'
     + '<td><span class="cat-sku">'+esc(row.sku)+'</span></td>'
     + '<td><div class="cat-nombre">'+esc(row.nombre)+'</div></td>'
     + '<td>'+(row.familia?esc(row.familia):'<span class="text-muted">—</span>')+'</td>'
+    + '<td>'+clase+'</td>'
     + '<td>'+badgeFotos+'</td>'
     + '<td>'+manualIc+'</td>'
     + '<td>'+badgeReg+'</td>'
@@ -633,12 +727,14 @@ function catFiltroCambio(){ catPage = 1; cargarCatalogo(); }
 function catDebounced(){ clearTimeout(_catTimer); _catTimer = setTimeout(catFiltroCambio, 350); }
 document.getElementById('catFQ').addEventListener('input', catDebounced);
 document.getElementById('catFFamilia').addEventListener('change', catFiltroCambio);
+document.getElementById('catFClase').addEventListener('change', catFiltroCambio);
 document.getElementById('catVerArchivados').addEventListener('change', function(){
   catVerArchivados = this.checked; catFiltroCambio();
 });
 document.getElementById('catBtnLimpiar').addEventListener('click', function(){
   document.getElementById('catFQ').value = '';
   document.getElementById('catFFamilia').value = '';
+  document.getElementById('catFClase').value = '';
   document.getElementById('catVerArchivados').checked = false;
   catVerArchivados = false;
   catSort = 'updated_at'; catDir = 'desc'; catPage = 1;
@@ -784,7 +880,11 @@ async function catfCargar(){
   document.getElementById('catfValSku').textContent = p.sku || '—';
   document.getElementById('catfValNombre').textContent = p.nombre || '—';
   document.getElementById('catfValFamilia').textContent = p.familia || '—';
+  document.getElementById('catfValClaseProducto').textContent = p.clase_producto_label || '—';
   document.getElementById('catfValObservacion').textContent = p.observacion || '—';
+  const badgeClase = document.getElementById('catfBadgeClase');
+  if(p.clase_producto_label){ badgeClase.textContent = p.clase_producto_label; badgeClase.style.display = 'inline-flex'; }
+  else { badgeClase.style.display = 'none'; }
 
   // Fotos
   const fotos = d.fotos || [];
@@ -821,6 +921,8 @@ async function catfCargar(){
       + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
       + '<div class="info"><div class="nm">'+esc(d.manual.nombre||'manual.pdf')+'</div>'
       +   '<div class="sz">'+esc(fmtKb(d.manual.size_kb))+'</div></div>'
+      + '<button type="button" class="btn btn-sm btn-outline-primary" id="catfManualVer">'
+      +   '<i class="bi bi-eye me-1"></i>Ver</button>'
       + '<a class="btn btn-sm btn-outline-secondary" href="/catalogo/api/productos/'+catfProductoId+'/manual/descargar">'
       +   '<i class="bi bi-download me-1"></i>Descargar</a>'
       + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualEnviar">'
@@ -830,6 +932,9 @@ async function catfCargar(){
       + '<button type="button" class="btn btn-sm btn-outline-danger" id="catfManualQuitar">'
       +   '<i class="bi bi-trash me-1"></i>Quitar</button>'
       + '</div>';
+    document.getElementById('catfManualVer').addEventListener('click', function(){
+      catvAbrir('/catalogo/api/productos/'+catfProductoId+'/manual/descargar', d.manual.nombre||'manual.pdf');
+    });
     document.getElementById('catfManualEnviar').addEventListener('click', catfEnviarManualCorreo);
     document.getElementById('catfManualReemplazar').addEventListener('click', function(){
       document.getElementById('catfManualInput').click();
@@ -844,6 +949,7 @@ async function catfCargar(){
       document.getElementById('catfManualInput').click();
     });
   }
+  catfRenderManualesMulti(d.manuales);
 
   // Eliminar definitivamente: solo superadmin
   document.getElementById('catfBtnEliminarDef').style.display = IS_SUPERADMIN ? 'inline-block' : 'none';
@@ -861,13 +967,19 @@ function catpRender(){
   document.getElementById('catpBadge').className = 'catp-badge' + cls;
 
   if(!_catfPiolas.length){
-    tbody.innerHTML = '<tr><td colspan="3" class="catp-empty">Sin piolas registradas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="catp-empty">Sin piolas registradas.</td></tr>';
   } else {
     tbody.innerHTML = _catfPiolas.map(function(p){
+      const fotoCell = p.foto_url
+        ? '<img class="catp-foto-thumb" src="'+esc(p.foto_url)+'" alt="Foto de la piola" onclick="catpVerFoto('+p.id+')">'
+        : '<div class="catp-foto-ph" title="Sin foto" onclick="catpFotoSubir('+p.id+')"><i class="bi bi-camera"></i></div>';
       return '<tr data-piola-id="'+p.id+'">'
+        + '<td><div class="catp-foto-cell">'+fotoCell+'</div></td>'
         + '<td class="catp-medida">'+esc(String(p.medida_cm))+' cm</td>'
         + '<td class="catp-obs">'+esc(p.observacion||'')+'</td>'
         + '<td><div class="catp-acciones">'
+        +   '<button type="button" class="catp-act edit" title="'+(p.foto_url?'Reemplazar foto':'Agregar foto')+'" onclick="catpFotoSubir('+p.id+')"><i class="bi bi-camera"></i></button>'
+        +   (p.foto_url ? '<button type="button" class="catp-act del" title="Quitar foto" onclick="catpFotoQuitar('+p.id+')"><i class="bi bi-image-alt"></i></button>' : '')
         +   '<button type="button" class="catp-act edit" title="Editar" onclick="catpEditarFila('+p.id+')"><i class="bi bi-pencil"></i></button>'
         +   '<button type="button" class="catp-act del" title="Eliminar" onclick="catpEliminar('+p.id+')"><i class="bi bi-trash"></i></button>'
         + '</div></td></tr>';
@@ -875,6 +987,84 @@ function catpRender(){
   }
   catpRenderAddRow();
 }
+
+// ── Piolas: foto (2026-07-13, Daniel: "las piolas van a requerir fotos") ──
+// Comprime en el navegador antes de subir (misma técnica que foto_editor.js
+// -- max 1600px, JPEG q0.85 -- pero replicada localmente porque
+// compressForUpload() es una función privada del closure de foto_editor.js,
+// no expuesta en window.ilusFotos; no había forma de reusarla sin editar
+// ese archivo, así que se copia el mismo criterio para no inventar uno nuevo).
+function catpComprimirFoto(file){
+  return new Promise(function(resolve){
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = function(){
+      URL.revokeObjectURL(url);
+      const MAXD = 1600;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      const sc = Math.min(1, MAXD / Math.max(w, h));
+      w = Math.round(w * sc); h = Math.round(h * sc);
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      cv.toBlob(function(blob){
+        resolve(blob || file);
+      }, 'image/jpeg', 0.85);
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+let _catpFotoPiolaId = null;
+window.catpFotoSubir = function(piolaId){
+  _catpFotoPiolaId = piolaId;
+  document.getElementById('catpFotoInput').click();
+};
+document.getElementById('catpFotoInput').addEventListener('change', async function(e){
+  const file = e.target.files && e.target.files[0];
+  this.value = '';
+  if(!file || !_catpFotoPiolaId) return;
+  if(!/^image\//.test(file.type)){ ilusToast('El archivo no es una imagen', {type:'warning'}); return; }
+  const piolaId = _catpFotoPiolaId;
+  ilusLoader.show('Subiendo foto…');
+  try{
+    const blob = await catpComprimirFoto(file);
+    const fd = new FormData();
+    fd.append('file', new File([blob], (file.name||'piola.jpg').replace(/\.\w+$/, '.jpg'), {type:'image/jpeg'}));
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId+'/foto', {method:'POST', body: fd});
+    const d = await r.json();
+    ilusLoader.hide();
+    if(d.ok){ ilusToast('✓ Foto de la piola guardada', {type:'success'}); await catpRecargar(); }
+    else ilusToast(d.error||'No se pudo subir la foto', {type:'error'});
+  }catch(err){ ilusLoader.hide(); ilusToast('Sin conexión al subir la foto', {type:'error'}); }
+});
+
+window.catpFotoQuitar = async function(piolaId){
+  const ok = await ilusConfirm({
+    title: 'Quitar foto de la piola', message: '¿Quitar la foto de esta piola?',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId+'/foto', {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Foto eliminada', {type:'success'}); await catpRecargar(); }
+    else ilusToast(d.error||'No se pudo quitar la foto', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+};
+
+window.catpVerFoto = function(piolaId){
+  const p = _catfPiolas.find(function(x){ return x.id === piolaId; });
+  if(!p || !p.foto_url) return;
+  // Visor de zoom reutilizado (mismo patrón que las fotos del producto),
+  // solo lectura -- reemplazar/quitar corre por los botones propios de la fila.
+  ilusFotos.view({
+    key: 'catalogo-piola-'+piolaId,
+    photo: {id: piolaId, url: p.foto_url},
+    canEdit: false, canDelete: false,
+  });
+};
 
 function catpRenderAddRow(){
   const wrap = document.getElementById('catpAddWrap');
@@ -930,7 +1120,11 @@ window.catpEditarFila = function(piolaId){
   const p = _catfPiolas.find(function(x){ return x.id === piolaId; });
   if(!p) return;
   tr.classList.add('catp-edit-row');
-  tr.innerHTML = '<td><input type="number" step="0.1" min="0.1" class="form-control form-control-sm" id="catpEdMedida" value="'+esc(String(p.medida_cm))+'"></td>'
+  const fotoCellEd = p.foto_url
+    ? '<img class="catp-foto-thumb" src="'+esc(p.foto_url)+'" alt="Foto de la piola">'
+    : '<div class="catp-foto-ph"><i class="bi bi-camera"></i></div>';
+  tr.innerHTML = '<td><div class="catp-foto-cell">'+fotoCellEd+'</div></td>'
+    + '<td><input type="number" step="0.1" min="0.1" class="form-control form-control-sm" id="catpEdMedida" value="'+esc(String(p.medida_cm))+'"></td>'
     + '<td><input type="text" class="form-control form-control-sm" id="catpEdObs" maxlength="300" value="'+esc(p.observacion||'')+'"></td>'
     + '<td><div class="catp-acciones">'
     +   '<button type="button" class="catp-act edit" title="Guardar" onclick="catpGuardarFila('+piolaId+')"><i class="bi bi-check-lg"></i></button>'
@@ -1071,6 +1265,57 @@ window.catfEditar = function(campo){
   });
 };
 
+// ── Edición de "Clase de producto" (select, no texto libre — Regla #1: sin prompt nativo) ──
+window.catfEditarClase = async function(){
+  const el = document.getElementById('catfValClaseProducto');
+  if(!el || el.querySelector('select')) return;
+  const original = catfProductoActual.clase_producto || '';
+  const clases = await catObtenerClases();
+  const sel = document.createElement('select');
+  sel.className = 'form-select form-select-sm';
+  sel.innerHTML = '<option value="">— Sin clase —</option>'
+    + clases.map(c=>'<option value="'+esc(c.value)+'"'+(c.value===original?' selected':'')+'>'+esc(c.label)+'</option>').join('');
+  el.innerHTML = ''; el.appendChild(sel);
+  sel.focus();
+  let guardado = false;
+  async function guardar(){
+    if(guardado) return; guardado = true;
+    const nuevo = sel.value;
+    if(nuevo === original){
+      const lbl = clases.find(c=>c.value===original);
+      el.textContent = (lbl && lbl.label) || '—';
+      return;
+    }
+    try{
+      const r = await fetch('/catalogo/api/productos/'+catfProductoId, {method:'PATCH',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({clase_producto: nuevo})});
+      const d = await r.json();
+      if(d.ok){
+        catfProductoActual.clase_producto = nuevo;
+        const lbl = clases.find(c=>c.value===nuevo);
+        const texto = (lbl && lbl.label) || '—';
+        catfProductoActual.clase_producto_label = nuevo ? texto : '';
+        el.textContent = texto;
+        const badgeClase = document.getElementById('catfBadgeClase');
+        if(nuevo){ badgeClase.textContent = texto; badgeClase.style.display = 'inline-flex'; }
+        else { badgeClase.style.display = 'none'; }
+        ilusToast('✓ Guardado', {type:'success'});
+        cargarCatalogo();
+      } else {
+        const lbl = clases.find(c=>c.value===original);
+        el.textContent = (lbl && lbl.label) || '—';
+        ilusToast(d.error||'No se pudo guardar', {type:'error'});
+      }
+    }catch(e){
+      const lbl = clases.find(c=>c.value===original);
+      el.textContent = (lbl && lbl.label) || '—';
+      ilusToast('Sin conexión', {type:'error'});
+    }
+  }
+  sel.addEventListener('change', guardar);
+  sel.addEventListener('blur', guardar);
+};
+
 // ── Fotos: agregar / eliminar (rutas EXACTAS del contrato) ──
 document.getElementById('catfFotoInput').addEventListener('change', async function(e){
   const file = e.target.files && e.target.files[0];
@@ -1128,6 +1373,87 @@ async function catfQuitarManual(){
     else ilusToast(d.error||'No se pudo quitar el manual', {type:'error'});
   }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
 }
+
+// ══════════════ Visor de PDF en modal (manuales, hasta 5 + legado) ══════════════
+const catvModalEl = document.getElementById('catvModal');
+const catvModal = new bootstrap.Modal(catvModalEl);
+let _catvBlobUrl = null;
+let _catvAbortCtrl = null;
+let _catvReqToken = 0;
+// 2026-07-13 (stress-test/revisión adversarial): abrir/cerrar el modal
+// repetido (o hacer click en 2 manuales seguidos) antes lanzaba fetch()
+// "zombis" que, al resolver fuera de orden, podían revocar el blob URL que
+// el iframe ACTUAL estaba usando o pisar el PDF que el usuario ya veía con
+// uno viejo. Fix: token de request + AbortController — se cancela el
+// fetch anterior y se ignora cualquier respuesta que llegue después de que
+// otra apertura (o el cierre del modal) la haya vuelto obsoleta.
+window.catvAbrir = async function(url, nombre){
+  if(_catvAbortCtrl){ try{ _catvAbortCtrl.abort(); }catch(e){} }
+  const myToken = ++_catvReqToken;
+  _catvAbortCtrl = new AbortController();
+  document.getElementById('catvNombre').textContent = nombre || 'Manual';
+  document.getElementById('catvSub').textContent = '';
+  document.getElementById('catvBtnDescargar').href = url;
+  const body = document.getElementById('catvBody');
+  body.innerHTML = '<div class="text-white-50"><span class="spinner-border spinner-border-sm me-2"></span>Cargando PDF…</div>';
+  catvModal.show();
+  try{
+    const r = await fetch(url, {signal: _catvAbortCtrl.signal});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const blob = await r.blob();
+    if(myToken !== _catvReqToken) return; // obsoleto: otra apertura/cierre tomó el control
+    if(_catvBlobUrl){ URL.revokeObjectURL(_catvBlobUrl); }
+    _catvBlobUrl = URL.createObjectURL(blob);
+    body.innerHTML = '<iframe class="catv-frame" src="'+_catvBlobUrl+'" title="'+esc(nombre||'Manual')+'"></iframe>';
+  }catch(e){
+    if(myToken !== _catvReqToken) return; // abortado a propósito, no mostrar error
+    body.innerHTML = '<div class="text-white-50 text-center p-4">No se pudo cargar la vista previa. Usa "Descargar".</div>';
+  }
+};
+catvModalEl.addEventListener('hidden.bs.modal', function(){
+  if(_catvAbortCtrl){ try{ _catvAbortCtrl.abort(); }catch(e){} }
+  _catvReqToken++; // invalida cualquier fetch en vuelo
+  if(_catvBlobUrl){ URL.revokeObjectURL(_catvBlobUrl); _catvBlobUrl = null; }
+  document.getElementById('catvBody').innerHTML = '';
+});
+
+// ── Manuales multi (hasta 5) en la ficha de detalle: Ver / Descargar / Quitar.
+//    No reemplaza el manual único legado (arriba) -- Regla #4.2, se agrega
+//    aparte con su propia sección visible solo si hay manuales cargados. ──
+function catfRenderManualesMulti(manuales){
+  const section = document.getElementById('catfManualesMultiSection');
+  const wrap = document.getElementById('catfManualesMultiLista');
+  if(!manuales || !manuales.length){ section.style.display = 'none'; wrap.innerHTML = ''; return; }
+  section.style.display = '';
+  wrap.innerHTML = manuales.map(function(m){
+    return '<div class="catw-manual-item catv-manual-item" data-manual-id="'+m.id+'">'
+      + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
+      + '<div class="nm">'+esc(m.nombre)+'</div>'
+      + '<button type="button" class="btn btn-sm btn-outline-primary ver" title="Ver" data-ver-url="'+esc(m.url)+'" data-ver-nombre="'+esc(m.nombre)+'"><i class="bi bi-eye"></i></button>'
+      + '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'" title="Descargar"><i class="bi bi-download"></i></a>'
+      + '<button type="button" class="btn btn-sm btn-outline-danger" title="Quitar" onclick="catfQuitarManualMulti('+m.id+')"><i class="bi bi-trash"></i></button>'
+      + '</div>';
+  }).join('');
+  wrap.querySelectorAll('[data-ver-url]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      catvAbrir(btn.getAttribute('data-ver-url'), btn.getAttribute('data-ver-nombre'));
+    });
+  });
+}
+
+window.catfQuitarManualMulti = async function(manualId){
+  const ok = await ilusConfirm({
+    title: 'Quitar manual', message: '¿Quitar este manual del producto?',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/manuales/'+manualId, {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Manual eliminado', {type:'success'}); catfCargar(); }
+    else ilusToast(d.error||'No se pudo quitar el manual', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+};
 
 // ── Eliminar producto (soft) / definitivamente (superadmin, requiere el SKU exacto) ──
 document.getElementById('catfBtnEliminar').addEventListener('click', async function(){
@@ -1220,6 +1546,10 @@ window.catwAbrir = async function(id){
   document.getElementById('catwFamiliaList').innerHTML =
     Array.from(_catFamilias).map(f=>'<option value="'+esc(f)+'">').join('');
   document.getElementById('catwCantPiolas').value = catwPiolasExistentes.length || '';
+  const clasesW = await catObtenerClases();
+  const claseActual = catwProducto.clase_producto || '';
+  document.getElementById('catwClase').innerHTML = '<option value="">— Sin clase —</option>'
+    + clasesW.map(c=>'<option value="'+esc(c.value)+'"'+(c.value===claseActual?' selected':'')+'>'+esc(c.label)+'</option>').join('');
 
   catwRenderManuales();
   catwMostrarPaso();
@@ -1259,13 +1589,14 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
   }
   if(catwStep === 2){
     const familia = document.getElementById('catwFamilia').value.trim();
+    const clase = document.getElementById('catwClase').value;
     const cant = parseInt(document.getElementById('catwCantPiolas').value, 10);
     if(!familia){ ilusToast('Indica la familia del producto', {type:'warning'}); return; }
     if(isNaN(cant) || cant < 0 || cant > 10){ ilusToast('La cantidad de piolas debe ser un número entre 0 y 10', {type:'warning'}); return; }
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
     try{
       const r = await fetch('/catalogo/api/productos/'+catwProductoId, {method:'PATCH',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({familia: familia})});
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({familia: familia, clase_producto: clase})});
       const d = await r.json();
       btn.disabled = false; btn.innerHTML = original;
       if(!d.ok){ ilusToast(d.error||'No se pudo guardar la familia', {type:'error'}); return; }
@@ -1344,10 +1675,16 @@ function catwRenderManuales(){
       return '<div class="catw-manual-item" data-manual-id="'+m.id+'">'
         + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
         + '<div class="nm">'+esc(m.nombre)+'</div>'
+        + '<button type="button" class="btn btn-sm btn-outline-primary" title="Ver" data-ver-url="'+esc(m.url)+'" data-ver-nombre="'+esc(m.nombre)+'"><i class="bi bi-eye"></i></button>'
         + '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'"><i class="bi bi-download"></i></a>'
         + '<button type="button" class="btn btn-sm btn-outline-danger" onclick="catwEliminarManual('+m.id+')"><i class="bi bi-trash"></i></button>'
         + '</div>';
     }).join('');
+    lista.querySelectorAll('[data-ver-url]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        catvAbrir(btn.getAttribute('data-ver-url'), btn.getAttribute('data-ver-nombre'));
+      });
+    });
   }
   const drop = document.getElementById('catwManualDrop');
   const hint = document.getElementById('catwManualHint');

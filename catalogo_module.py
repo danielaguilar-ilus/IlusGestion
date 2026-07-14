@@ -58,6 +58,27 @@ def register_catalogo_routes(app, ctx):
                                     # hasta 5 manuales por producto, vía cat_producto_manuales
                                     # (tabla nueva). El manual_pdf_key legado (singular) en
                                     # cat_productos SIGUE funcionando sin cambios — Regla #4.2.
+    MAX_FOTO_PIOLA_MB = 6  # 2026-07-13 (Daniel: "las piolas van a requerir fotos"),
+                           # mismo techo que el patron de compresion de fotos del proyecto
+                           # (foto_editor.js comprime a <300KB en navegador; este es el
+                           # tope duro del lado servidor por si llega sin comprimir).
+
+    # Taxonomia FIJA de "clase de producto" (2026-07-13, Daniel: "vamos a
+    # controlar que clase de producto es"). Distinta de `familia` (texto
+    # libre, se deja intacta — Regla #4.2). NULL permitido para productos
+    # viejos sin clasificar; "otro" es el fallback para lo que no calce.
+    CAT_CLASES_PRODUCTO = {
+        "selector_peso": "Selector de peso",
+        "rack": "Rack",
+        "rack_avanzado": "Rack avanzado",
+        "carga_disco": "Carga de disco",
+        "trotadora": "Trotadora",
+        "escaladora": "Escaladora",
+        "eliptica": "Elíptica",
+        "bicicleta": "Bicicleta",
+        "banco": "Banco",
+        "otro": "Otro",
+    }
 
     # Bodega de sincronizacion ERP (Regla #4.1: SOLO LECTURA, via
     # _random_sql_query — mismo patron que _buscar_catalogo_bodega en
@@ -158,6 +179,38 @@ def register_catalogo_routes(app, ctx):
         except Exception as _e_idx:
             print(f"[ILUS][WARN] idx_cat_activo_familia: {_e_idx}", flush=True)
 
+        # Columnas nuevas 2026-07-13 (clase de producto + foto de piola).
+        # Idempotente vía information_schema (mismo patron que arriba) para
+        # que sobreviva a ILUS_SKIP_MIGRATIONS=1 en produccion.
+        try:
+            _clase_enum_sql = "ENUM(" + ",".join(f"'{k}'" for k in CAT_CLASES_PRODUCTO.keys()) + ")"
+            _col = mysql_fetchone(
+                "SELECT 1 AS x FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cat_productos' "
+                "  AND COLUMN_NAME='clase_producto' LIMIT 1")
+            if not _col:
+                mysql_execute(
+                    f"ALTER TABLE cat_productos ADD COLUMN clase_producto {_clase_enum_sql} NULL "
+                    "AFTER familia")
+                mysql_execute(
+                    "ALTER TABLE cat_productos ADD INDEX idx_cat_clase_producto (clase_producto)")
+                print("[ensure_catalogo] columna clase_producto creada", flush=True)
+        except Exception as _e_clase:
+            print(f"[ILUS][WARN] clase_producto: {_e_clase}", flush=True)
+
+        try:
+            _col2 = mysql_fetchone(
+                "SELECT 1 AS x FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cat_producto_piolas' "
+                "  AND COLUMN_NAME='foto_key' LIMIT 1")
+            if not _col2:
+                mysql_execute(
+                    "ALTER TABLE cat_producto_piolas ADD COLUMN foto_key VARCHAR(500) NULL "
+                    "AFTER observacion")
+                print("[ensure_catalogo] columna foto_key (piolas) creada", flush=True)
+        except Exception as _e_foto:
+            print(f"[ILUS][WARN] cat_producto_piolas.foto_key: {_e_foto}", flush=True)
+
     with app.app_context():
         try:
             _ensure_catalogo_tables()
@@ -253,6 +306,7 @@ def register_catalogo_routes(app, ctx):
         "sku": "p.sku",
         "nombre": "p.nombre",
         "familia": "p.familia",
+        "clase_producto": "p.clase_producto",
         "created_at": "p.created_at",
         "updated_at": "p.updated_at",
         "total_fotos": "total_fotos",
@@ -265,6 +319,12 @@ def register_catalogo_routes(app, ctx):
     @_catalogo_required
     def cat_list():
         return render_template("catalogo/list.html")
+
+    @app.route("/catalogo/api/clases", methods=["GET"])
+    @_catalogo_required
+    def cat_api_clases():
+        return jsonify({"ok": True, "clases": [
+            {"value": k, "label": v} for k, v in CAT_CLASES_PRODUCTO.items()]})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — listado (paginacion/orden/filtro, mismo contrato que
@@ -287,6 +347,7 @@ def register_catalogo_routes(app, ctx):
 
         q = (request.args.get("q") or "").strip()
         familia = (request.args.get("familia") or "").strip()
+        clase_producto = (request.args.get("clase_producto") or "").strip()
         activo_arg = (request.args.get("activo") or "1").strip()
         activo = 0 if activo_arg == "0" else 1
 
@@ -314,6 +375,11 @@ def register_catalogo_routes(app, ctx):
         if familia:
             where.append("p.familia=%s")
             params.append(familia)
+        if clase_producto:
+            if clase_producto not in CAT_CLASES_PRODUCTO:
+                return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
+            where.append("p.clase_producto=%s")
+            params.append(clase_producto)
         where_sql = " AND ".join(where)
 
         total = int((mysql_fetchone(
@@ -325,7 +391,7 @@ def register_catalogo_routes(app, ctx):
 
         rows = mysql_fetchall(
             f"""
-            SELECT p.id, p.sku, p.nombre, p.familia, p.activo, p.updated_at,
+            SELECT p.id, p.sku, p.nombre, p.familia, p.clase_producto, p.activo, p.updated_at,
                    (SELECT COUNT(*) FROM cat_producto_fotos f WHERE f.producto_id=p.id) AS total_fotos,
                    (SELECT f2.gcs_key FROM cat_producto_fotos f2
                       WHERE f2.producto_id=p.id ORDER BY f2.orden LIMIT 1) AS foto_thumb_key,
@@ -347,6 +413,7 @@ def register_catalogo_routes(app, ctx):
             # cat_api_detalle para las fotos (gcs_key -> URL pública).
             _key = row.pop("foto_thumb_key", None)
             row["foto_thumb_url"] = ("/f/" + _key) if _key else None
+            row["clase_producto_label"] = CAT_CLASES_PRODUCTO.get(row.get("clase_producto") or "")
             # "registrado" (2026-07-12, patron "impreso/no impreso" de Etiquetas
             # aplicado al catalogo): ficha completa = familia + al menos 1 piola +
             # al menos 1 manual (nuevo multi-manual O el legado singular).
@@ -378,13 +445,16 @@ def register_catalogo_routes(app, ctx):
         if not nombre:
             return jsonify({"ok": False, "error": "Falta el nombre"}), 400
         familia = (d.get("familia") or "").strip()[:150] or None
+        clase_producto = (d.get("clase_producto") or "").strip() or None
+        if clase_producto and clase_producto not in CAT_CLASES_PRODUCTO:
+            return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
         observacion = (d.get("observacion") or "").strip() or None
         user = current_username() or "sistema"
         try:
             mysql_execute(
-                "INSERT INTO cat_productos (sku, nombre, familia, observacion, created_by, updated_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s)",
-                (sku[:100], nombre[:300], familia, observacion, user, user))
+                "INSERT INTO cat_productos (sku, nombre, familia, clase_producto, observacion, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (sku[:100], nombre[:300], familia, clase_producto, observacion, user, user))
         except Exception as _e:
             msg = str(_e)
             if "Duplicate entry" in msg or "uq_cat_sku" in msg:
@@ -405,12 +475,13 @@ def register_catalogo_routes(app, ctx):
             "SELECT id, gcs_key, orden FROM cat_producto_fotos WHERE producto_id=%s ORDER BY orden",
             (pid,))
         piolas = mysql_fetchall(
-            "SELECT id, medida_cm, observacion, orden FROM cat_producto_piolas "
+            "SELECT id, medida_cm, observacion, orden, foto_key FROM cat_producto_piolas "
             "WHERE producto_id=%s AND activo=1 ORDER BY orden", (pid,))
         manuales = mysql_fetchall(
             "SELECT id, gcs_key, nombre_archivo, size_kb, orden FROM cat_producto_manuales "
             "WHERE producto_id=%s ORDER BY orden", (pid,))
         producto = _fmt_row(p)  # Regla #6: created_at/updated_at a hora Chile
+        producto["clase_producto_label"] = CAT_CLASES_PRODUCTO.get(producto.get("clase_producto") or "")
         manual_key = producto.pop("manual_pdf_key", None)
         tiene_manual_alguno = bool(manual_key) or len(manuales) > 0
         producto["registrado"] = bool(
@@ -420,7 +491,9 @@ def register_catalogo_routes(app, ctx):
             "producto": producto,
             "fotos": [{"id": f["id"], "url": "/f/" + f["gcs_key"], "orden": f["orden"]} for f in fotos],
             "piolas": [{"id": pl["id"], "medida_cm": float(pl["medida_cm"]),
-                        "observacion": pl["observacion"], "orden": pl["orden"]} for pl in piolas],
+                        "observacion": pl["observacion"], "orden": pl["orden"],
+                        "foto_url": ("/f/" + pl["foto_key"]) if pl.get("foto_key") else None}
+                       for pl in piolas],
             "manual": {
                 "tiene": bool(manual_key),
                 "nombre": p.get("manual_pdf_nombre"),
@@ -439,7 +512,7 @@ def register_catalogo_routes(app, ctx):
         if not prev:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         d = request.get_json(silent=True) or {}
-        allowed = ("sku", "nombre", "familia", "observacion")
+        allowed = ("sku", "nombre", "familia", "clase_producto", "observacion")
         sets, params = [], []
         for key in allowed:
             if key not in d:
@@ -453,6 +526,9 @@ def register_catalogo_routes(app, ctx):
                     val = val[:150] if val else None
                 elif key == "nombre":
                     val = val[:300] if val else None
+                elif key == "clase_producto":
+                    if val and val not in CAT_CLASES_PRODUCTO:
+                        return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
             sets.append(f"{key}=%s")
             params.append(val)
         if not sets:
@@ -687,11 +763,12 @@ def register_catalogo_routes(app, ctx):
         if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         rows = mysql_fetchall(
-            "SELECT id, medida_cm, observacion, orden FROM cat_producto_piolas "
+            "SELECT id, medida_cm, observacion, orden, foto_key FROM cat_producto_piolas "
             "WHERE producto_id=%s AND activo=1 ORDER BY orden", (pid,))
         return jsonify({"ok": True, "piolas": [
             {"id": r["id"], "medida_cm": float(r["medida_cm"]),
-             "observacion": r["observacion"], "orden": r["orden"]} for r in rows]})
+             "observacion": r["observacion"], "orden": r["orden"],
+             "foto_url": ("/f/" + r["foto_key"]) if r.get("foto_key") else None} for r in rows]})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas", methods=["POST"])
     @_catalogo_required
@@ -817,6 +894,100 @@ def register_catalogo_routes(app, ctx):
                    details={"producto_id": pid, "sku": prod.get("sku"),
                              "medida_cm_antes": float(prev["medida_cm"]), "medida_cm_despues": None,
                              "observacion_antes": prev["observacion"], "observacion_despues": None})
+        return jsonify({"ok": True})
+
+    @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>/foto", methods=["POST"])
+    @_catalogo_admin_required
+    def cat_api_piolas_foto_upload(pid, piola_id):
+        # 2026-07-13 (Daniel: "las piolas van a requerir fotos"). Reusa
+        # EXACTAMENTE el mismo mecanismo de subida que fotos de producto
+        # (_uploader_upload -> GCS -> "/f/<key>", ver cat_api_upload_foto).
+        prod = mysql_fetchone("SELECT sku FROM cat_productos WHERE id=%s", (pid,))
+        if not prod:
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        prev = mysql_fetchone(
+            "SELECT foto_key FROM cat_producto_piolas WHERE id=%s AND producto_id=%s AND activo=1",
+            (piola_id, pid))
+        if not prev:
+            return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
+        if not _uploader_upload:
+            return jsonify({"ok": False, "error": "Almacenamiento no disponible"}), 503
+        f = request.files.get("file") or request.files.get("archivo")
+        if not f or not f.filename:
+            return jsonify({"ok": False, "error": "No llegó ningún archivo"}), 400
+
+        mime = (f.mimetype or "").lower()
+        if not mime.startswith("image/"):
+            return jsonify({"ok": False, "error": "La foto de la piola debe ser una imagen"}), 400
+
+        f.seek(0, 2)
+        size_mb = f.tell() / (1024 * 1024)
+        f.seek(0)
+        if size_mb > MAX_FOTO_PIOLA_MB:
+            return jsonify({"ok": False, "error": f"La foto supera el máximo de {MAX_FOTO_PIOLA_MB} MB"}), 400
+
+        try:
+            res = _uploader_upload(f, folder="catalogo/piolas", resource_type="image")
+        except Exception as _e:
+            print(f"[cat_piolas_foto_upload] error pid={pid} piola={piola_id}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo subir la foto"}), 500
+        key = res.get("public_id")
+        url = res.get("secure_url") or res.get("url") or (("/f/" + key) if key else None)
+        if not key or not url:
+            return jsonify({"ok": False, "error": "Subida sin resultado válido"}), 500
+
+        # 2026-07-13 (stress-test/revisión adversarial): NO usar el `old_key`
+        # leído en `prev` de más arriba para decidir qué blob borrar — entre
+        # ese SELECT y este UPDATE hay una subida a GCS de por medio (I/O
+        # lento), así que dos requests casi simultáneos a la MISMA piola
+        # (doble click) pueden leer el mismo `prev.foto_key`, subir cada uno
+        # su propia foto, y el que escribe SEGUNDO en la tabla pisa el
+        # foto_key del que escribió PRIMERO sin enterarse — ese primer blob
+        # queda huérfano en GCS para siempre (nadie lo referencia ni lo
+        # borra). Fix: UPDATE atómico con variable de sesión MySQL que
+        # captura el foto_key que HABÍA justo antes de esta escritura (no el
+        # que se leyó minutos/segundos antes) — mismo connection/sesión que
+        # mysql_fetchone porque get_db() reutiliza la conexión del request.
+        try:
+            mysql_execute(
+                "UPDATE cat_producto_piolas "
+                "SET foto_key=@cat_old_foto_key:=foto_key, foto_key=%s, updated_by=%s "
+                "WHERE id=%s AND producto_id=%s",
+                (key, current_username() or "sistema", piola_id, pid))
+            old_key = (mysql_fetchone("SELECT @cat_old_foto_key AS k") or {}).get("k")
+        except Exception as _e:
+            print(f"[cat_piolas_foto_upload] UPDATE falló, limpiando blob pid={pid} piola={piola_id}: {_e}", flush=True)
+            if _uploader_destroy:
+                try:
+                    _uploader_destroy(key)
+                except Exception:
+                    pass
+            return jsonify({"ok": False, "error": "No se pudo registrar la foto"}), 500
+
+        if old_key and old_key != key and _uploader_destroy:
+            try:
+                _uploader_destroy(old_key)
+            except Exception:
+                pass
+        return jsonify({"ok": True, "url": url})
+
+    @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>/foto", methods=["DELETE"])
+    @_catalogo_admin_required
+    def cat_api_piolas_foto_delete(pid, piola_id):
+        prev = mysql_fetchone(
+            "SELECT foto_key FROM cat_producto_piolas WHERE id=%s AND producto_id=%s AND activo=1",
+            (piola_id, pid))
+        if not prev:
+            return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
+        key = prev.get("foto_key")
+        mysql_execute(
+            "UPDATE cat_producto_piolas SET foto_key=NULL, updated_by=%s WHERE id=%s AND producto_id=%s",
+            (current_username() or "sistema", piola_id, pid))
+        if key and _uploader_destroy:
+            try:
+                _uploader_destroy(key)
+            except Exception:
+                pass
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/historial", methods=["GET"])
