@@ -510,6 +510,10 @@
        class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
       <i class="bi bi-list-check"></i><span>Plantillas</span>
     </a>
+    <a href="{{ url_for('mant_proveedores_repuesto_page') }}"
+       class="sidebar-link{% if request.endpoint == 'mant_proveedores_repuesto_page' %} active{% endif %}">
+      <i class="bi bi-truck"></i><span>Proveedores</span>
+    </a>
     <a href="{{ url_for('repuestos_hub_list') }}"
        class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
       <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>

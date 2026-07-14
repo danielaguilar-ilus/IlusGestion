@@ -40838,6 +40838,7 @@ def repuestos_hub_list():
         "       r.cliente_texto_original, r.visita_id, "
         "       r.marca, r.ubicacion, r.ua, r.motivo, r.numero_ot, "
         "       r.codigo_repuesto, r.garantia, r.recomendacion, "
+        "       r.familia, r.estado_seguimiento, "
         "       r.ticket_id, t.numero_ticket, "
         "       r.proveedor_id, p.nombre AS proveedor_nombre, "
         "       p.telefono AS proveedor_telefono, p.email AS proveedor_email, "
@@ -40868,11 +40869,20 @@ def repuestos_hub_list():
 
     estados = ["cotizado", "aprobado", "instalado", "facturado", "cancelado"]
 
+    # 2026-07-13: lista liviana de clientes activos para el selector del
+    # modal "Solicitar repuesto" (no se reusa autocomplete porque ese
+    # requiere q>=2 caracteres — acá queremos el combo completo).
+    clientes_select = mysql_fetchall(
+        "SELECT id, razon_social FROM mant_clientes "
+        "WHERE estado='activo' ORDER BY razon_social LIMIT 500"
+    ) or []
+
     return render_template(
         "clientes_hub/repuestos.html",
         repuestos=repuestos, estados=estados,
         filtro_estado=filtro_estado, filtro_q=filtro_q,
         filtro_ticket=filtro_ticket, orden=orden,
+        clientes_select=clientes_select,
     )
 
 
@@ -64862,6 +64872,133 @@ def mant_repuesto_asignar_ticket(rid):
         return jsonify({"ok": False, "error": "Error interno", "error_codigo": "INTERNAL_CRASH"}), 500
 
 
+@app.route("/mantenciones/api/repuestos/solicitar", methods=["POST"])
+@_mant_required
+def mant_repuesto_solicitar():
+    """2026-07-13 (Daniel): "toda solicitud de repuesto SIEMPRE crea un
+    ticket automáticamente" — no opcional. Crea el ticket (tk_tickets,
+    tipo 'spare_parts') y la fila en mant_repuestos ligada a él en una
+    sola operación desde el punto de vista del usuario. Body:
+      {marca, familia, nombre, cantidad, motivo, maquina_ids: [int,...],
+       cliente_id: int|None}
+    Si viene UNA sola máquina, además de mant_repuesto_maquinas se setea
+    también la columna legacy maquina_id (código viejo que la lee directo
+    sigue funcionando). Si falla el 2º paso (repuesto), se revierte el
+    ticket recién creado para no dejar un ticket huérfano sin repuesto."""
+    try:
+        d = request.get_json(silent=True) or {}
+        nombre = (d.get("nombre") or "").strip()
+        if not nombre:
+            return jsonify({"ok": False, "error": "Nombre del repuesto obligatorio"}), 400
+        marca = (d.get("marca") or "").strip()[:120]
+        familia = (d.get("familia") or "").strip()[:150]
+        motivo = (d.get("motivo") or "").strip()
+        cliente_id = d.get("cliente_id") or None
+        try:
+            cantidad = float(d.get("cantidad") or 1)
+        except (TypeError, ValueError):
+            cantidad = 1.0
+        if cantidad <= 0:
+            cantidad = 1.0
+        maquina_ids = d.get("maquina_ids") or []
+        if not isinstance(maquina_ids, list):
+            maquina_ids = [maquina_ids]
+        maquina_ids = [int(m) for m in maquina_ids if str(m).strip().isdigit()]
+
+        user = current_username() or "sistema"
+
+        # Descripción auto-generada: marca + nombre + motivo (lo que pidió
+        # Daniel para que el ticket se entienda sin abrir el repuesto).
+        partes_desc = [p for p in (marca, nombre) if p]
+        descripcion = " — ".join(partes_desc) if partes_desc else nombre
+        if motivo:
+            descripcion += f"\n\nMotivo: {motivo}"
+        titulo = f"Solicitud de repuesto: {nombre}"[:300]
+
+        from tickets_module import _chile_now_year
+
+        conn = get_mysql()
+        ticket_id = None
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tk_tickets "
+                    "(origen, estado, tipo, prioridad, titulo, descripcion, "
+                    " marca, producto, created_by, asignado_a) "
+                    "VALUES ('backoffice','open','spare_parts','media',%s,%s,%s,%s,%s,%s)",
+                    (titulo, descripcion, marca or None, nombre[:400], user, user),
+                )
+                ticket_id = cur.lastrowid
+                cur.execute(
+                    "UPDATE tk_tickets SET numero_ticket = "
+                    "CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                    (_chile_now_year(), ticket_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Paso 2: crear el repuesto ligado al ticket recién creado. Si algo
+        # falla acá, revertimos el ticket huérfano (no queda a mitad de camino).
+        try:
+            fields = {
+                "cliente_id": cliente_id,
+                "nombre": nombre[:400],
+                "marca": marca or None,
+                "familia": familia or None,
+                "cantidad": cantidad,
+                "motivo": motivo or None,
+                "tipo": "reposicion",
+                "estado": "cotizado",
+                "estado_seguimiento": "pending",
+                "responsable": user,
+                "ticket_id": ticket_id,
+                "maquina_id": maquina_ids[0] if len(maquina_ids) == 1 else None,
+                "created_by": user,
+            }
+            cols = [c for c in fields if fields[c] is not None]
+            vals = [fields[c] for c in cols]
+            conn2 = get_mysql()
+            try:
+                with conn2.cursor() as cur2:
+                    cur2.execute(
+                        f"INSERT INTO mant_repuestos ({','.join(cols)}) "
+                        f"VALUES ({','.join(['%s']*len(cols))})",
+                        tuple(vals)
+                    )
+                    repuesto_id = cur2.lastrowid
+                    for mid in maquina_ids:
+                        try:
+                            cur2.execute(
+                                "INSERT IGNORE INTO mant_repuesto_maquinas (repuesto_id, maquina_id) "
+                                "VALUES (%s,%s)", (repuesto_id, mid)
+                            )
+                        except Exception as e_rm:
+                            print(f"[mant_repuesto_solicitar] mant_repuesto_maquinas {mid}: {e_rm}", flush=True)
+                conn2.commit()
+            finally:
+                conn2.close()
+        except Exception as e_rep:
+            print(f"[mant_repuesto_solicitar] fallo repuesto, revirtiendo ticket {ticket_id}: {e_rep}", flush=True)
+            try:
+                mysql_execute("DELETE FROM tk_tickets WHERE id=%s", (ticket_id,))
+            except Exception as e_rb:
+                print(f"[mant_repuesto_solicitar] no se pudo revertir ticket {ticket_id}: {e_rb}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo crear el repuesto"}), 500
+
+        tk = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (ticket_id,))
+        _mant_log("repuesto", repuesto_id, "solicitar", f"{nombre} -> ticket {tk.get('numero_ticket') if tk else ticket_id}")
+        return jsonify({
+            "ok": True,
+            "repuesto_id": repuesto_id,
+            "ticket_id": ticket_id,
+            "numero_ticket": tk.get("numero_ticket") if tk else None,
+        })
+    except Exception as e:
+        print(f"[mant_repuesto_solicitar] CRASH: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error interno", "error_codigo": "INTERNAL_CRASH"}), 500
+
+
 @app.route("/mantenciones/api/repuestos/desde-erp", methods=["POST"])
 @_mant_required
 def mant_repuesto_crear_desde_erp():
@@ -64973,6 +65110,107 @@ def mant_proveedor_repuesto_update(pid):
     except Exception as e:
         print(f"[mant_proveedor_repuesto_update] CRASH pid={pid}: {e}", flush=True)
         return jsonify({"ok": False, "error": "Error interno"}), 500
+
+
+@app.route("/mantenciones/api/proveedores-repuesto", methods=["POST"])
+@_mant_required
+def mant_proveedor_repuesto_crear():
+    """2026-07-13: crea un proveedor de repuestos nuevo desde el Tarjetero
+    de Proveedores (/mantenciones/proveedores). Mismos campos editables
+    que el PUT de arriba, más 'nombre' (obligatorio, solo en el alta)."""
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()
+    if not nombre:
+        return jsonify({"ok": False, "error": "El nombre del proveedor es obligatorio"}), 400
+    canal_ok = ["whatsapp", "wechat", "telefono", "email"]
+    canal = (d.get("canal_preferido") or "").strip() or None
+    if canal and canal not in canal_ok:
+        canal = None
+    fields = {
+        "nombre": nombre[:200],
+        "contacto_nombre": (d.get("contacto_nombre") or "").strip()[:150] or None,
+        "telefono": (d.get("telefono") or "").strip()[:50] or None,
+        "email": (d.get("email") or "").strip()[:150] or None,
+        "canal_preferido": canal,
+        "notas": (d.get("notas") or "").strip() or None,
+    }
+    cols = [c for c in fields if fields[c] is not None]
+    vals = [fields[c] for c in cols]
+    try:
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO mant_proveedores_repuesto ({','.join(cols)}) "
+                    f"VALUES ({','.join(['%s']*len(cols))})",
+                    tuple(vals)
+                )
+                new_id = cur.lastrowid
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "id": new_id})
+    except Exception as e:
+        print(f"[mant_proveedor_repuesto_crear] CRASH: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error interno"}), 500
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/<int:pid>/repuestos", methods=["GET"])
+@_mant_required
+def mant_proveedor_repuesto_items(pid):
+    """Repuestos asociados a un proveedor (detalle del Tarjetero)."""
+    rows = mysql_fetchall(
+        "SELECT r.id, r.nombre, r.sku, r.estado, r.estado_seguimiento, r.cantidad, "
+        "       r.fecha, r.cliente_id, c.razon_social AS cliente_nombre "
+        "  FROM mant_repuestos r LEFT JOIN mant_clientes c ON c.id = r.cliente_id "
+        " WHERE r.proveedor_id=%s ORDER BY r.fecha DESC, r.id DESC LIMIT 200",
+        (pid,)
+    ) or []
+    return jsonify({"ok": True, "repuestos": [dict(r) for r in rows]})
+
+
+ESTADO_SEGUIMIENTO_VALORES = (
+    "pending", "awaiting_approval", "quote_request",
+    "requested_from_supplier", "recibido",
+)
+
+
+@app.route("/mantenciones/api/repuestos/<int:rid>/estado-seguimiento", methods=["PATCH"])
+@_mant_required
+def mant_repuesto_estado_seguimiento(rid):
+    """2026-07-13: edición inline del estado de seguimiento de un repuesto
+    (columna estado_seguimiento) desde la vista central /repuestos."""
+    d = request.get_json(silent=True) or {}
+    estado = (d.get("estado_seguimiento") or "").strip()
+    if estado not in ESTADO_SEGUIMIENTO_VALORES:
+        return jsonify({"ok": False, "error": "Valor de estado inválido"}), 400
+    rep = mysql_fetchone("SELECT id, nombre FROM mant_repuestos WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    try:
+        mysql_execute(
+            "UPDATE mant_repuestos SET estado_seguimiento=%s WHERE id=%s",
+            (estado, rid)
+        )
+        _mant_log("repuesto", rid, "estado_seguimiento", f"{rep.get('nombre') or ''} -> {estado}")
+        return jsonify({"ok": True, "estado_seguimiento": estado})
+    except Exception as e:
+        print(f"[mant_repuesto_estado_seguimiento] CRASH rid={rid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error interno"}), 500
+
+
+@app.route("/mantenciones/proveedores")
+@_mant_required
+@_no_tecnico
+def mant_proveedores_repuesto_page():
+    """Tarjetero de Proveedores de repuestos (2026-07-13)."""
+    rows = mysql_fetchall(
+        "SELECT p.*, COUNT(r.id) AS n_repuestos "
+        "  FROM mant_proveedores_repuesto p "
+        "  LEFT JOIN mant_repuestos r ON r.proveedor_id = p.id "
+        " GROUP BY p.id ORDER BY p.nombre"
+    ) or []
+    return render_template("mantenciones/proveedores.html", proveedores=[dict(r) for r in rows])
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -70010,6 +70248,13 @@ def _ensure_mant_intel_tables():
             ("proveedor_id",           "proveedor_id INT NULL COMMENT 'FK opcional a mant_proveedores_repuesto.id (proveedor texto libre se mantiene en la columna proveedor)'"),
             ("csv_uuid",               "csv_uuid VARCHAR(64) NULL COMMENT 'UUID de origen cuando el registro viene de la planilla CSV de Daniel (clave natural para import idempotente)'"),
             ("cliente_texto_original", "cliente_texto_original VARCHAR(200) NULL COMMENT 'Texto libre de Cliente del CSV cuando no calzó con mant_clientes'"),
+            # 2026-07-13 (Daniel) — flujo real de seguimiento de repuestos:
+            # responsable + estado_seguimiento (5 valores reales del CSV +
+            # 'recibido' nuevo, DISTINTO del ENUM `estado` legacy que no se
+            # toca — Regla #4.2) + familia (equipo/producto, texto libre).
+            ("responsable",            "responsable VARCHAR(190) NULL COMMENT 'Quién gestiona/solicitó el repuesto (username o nombre)'"),
+            ("estado_seguimiento",     "estado_seguimiento ENUM('pending','awaiting_approval','quote_request','requested_from_supplier','recibido') NOT NULL DEFAULT 'pending' COMMENT 'Estado real de seguimiento día a día (independiente del ENUM estado legacy)'"),
+            ("familia",                "familia VARCHAR(150) NULL COMMENT 'Familia del equipo/producto (texto libre, ej Rack, Trotadora) para filtrar/agrupar'"),
         ):
             if _col not in ex_rep:
                 mysql_execute(f"ALTER TABLE mant_repuestos ADD COLUMN {_ddl}")
@@ -70064,6 +70309,26 @@ def _ensure_mant_intel_tables():
         """)
     except Exception as e:
         print(f"[ensure_intel] mant_proveedores_repuesto: {e}", flush=True)
+
+    # 2026-07-13 (Daniel): "puede ser una [máquina], pueden ser varias" —
+    # relación muchos-a-muchos ADICIONAL a mant_repuestos.maquina_id (esa
+    # columna existente se deja intacta por compatibilidad, Regla #4.2).
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuesto_maquinas (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                repuesto_id INT NOT NULL,
+                maquina_id  INT NOT NULL,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE INDEX uq_rep_maq (repuesto_id, maquina_id),
+                CONSTRAINT fk_repmaq_repuesto FOREIGN KEY (repuesto_id)
+                    REFERENCES mant_repuestos(id) ON DELETE CASCADE,
+                CONSTRAINT fk_repmaq_maquina FOREIGN KEY (maquina_id)
+                    REFERENCES mant_maquinas(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_intel] mant_repuesto_maquinas: {e}", flush=True)
 
     # Resolver proveedor(texto libre) -> proveedor_id por coincidencia de
     # nombre. Idempotente: solo toca filas con proveedor_id NULL y
@@ -70192,6 +70457,18 @@ def _ensure_import_repuestos_csv_daniel():
                 "facturado": "facturado", "cancelado": "cancelado",
             }
             estado = estado_map.get(estado_csv, "cotizado")
+            # 2026-07-13: estado_seguimiento es el flujo REAL que usa el
+            # equipo (visto tal cual en el CSV) — independiente del ENUM
+            # `estado` legacy de arriba. Valor no reconocido -> 'pending'
+            # (fallback seguro, no bloquea el import).
+            estado_seg_map = {
+                "pending": "pending",
+                "awaiting_approval": "awaiting_approval",
+                "quote_request": "quote_request",
+                "requested_from_supplier": "requested_from_supplier",
+                "recibido": "recibido",
+            }
+            estado_seguimiento = estado_seg_map.get(estado_csv, "pending")
 
             creado_dt = _parse_fecha(row.get("Creado"))
             actualizado_dt = _parse_fecha(row.get("Actualizado"))
@@ -70208,6 +70485,7 @@ def _ensure_import_repuestos_csv_daniel():
                 "moneda": "CLP",
                 "tipo": "reposicion",
                 "estado": estado,
+                "estado_seguimiento": estado_seguimiento,
                 "proveedor": proveedor_txt[:200] or None,
                 "marca": (row.get("Marca") or "").strip()[:120] or None,
                 "ubicacion": (row.get("Ubicación") or "").strip()[:160] or None,

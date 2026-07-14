@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title %}Proveedores de repuestos — ILUS{% endblock %}
+{% block content %}
+<style>
+.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.prov-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px 20px;cursor:pointer;
+  box-shadow:0 1px 3px rgba(15,23,42,.06);transition:.18s;position:relative;overflow:hidden;
+}
+.prov-card:hover{box-shadow:0 10px 28px -8px rgba(220,38,38,.28);border-color:#f3c9c9;transform:translateY(-2px)}
+.prov-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:4px;
+  background:linear-gradient(90deg,#dc2626,#f87171);opacity:0;transition:.18s;
+}
+.prov-card:hover::before{opacity:1}
+.prov-name{font-weight:800;font-size:1.05rem;color:#0a0a0a;margin-bottom:4px}
+.prov-contact{font-size:.82rem;color:#6b7280;margin-bottom:10px}
+.prov-row{font-size:.82rem;color:#374151;display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.prov-row i{width:16px;color:#9ca3af}
+.prov-channel{
+  display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;
+  padding:4px 11px;border-radius:50px;color:#fff;margin-top:8px;
+}
+.prov-channel.whatsapp{background:#16a34a}
+.prov-channel.wechat{background:#07C160}
+.prov-channel.telefono{background:#3b82f6}
+.prov-channel.email{background:#6b7280}
+.prov-count{
+  position:absolute;top:14px;right:16px;font-size:.68rem;font-weight:800;color:#dc2626;
+  background:#fee2e2;padding:3px 10px;border-radius:50px;
+}
+.prov-notas{font-size:.76rem;color:#9ca3af;margin-top:8px;font-style:italic;
+  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.prov-empty{padding:60px 20px;text-align:center;color:#9ca3af}
+
+/* Modal crear/editar proveedor */
+#modalProveedor .modal-header{background:#0a0a0a;color:#fff;border-radius:.5rem .5rem 0 0}
+#modalProveedor .btn-close{filter:invert(1)}
+
+/* Detalle de repuestos asociados */
+.prov-detail-item{padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:.85rem;display:flex;justify-content:space-between;gap:8px}
+.prov-detail-item:last-child{border-bottom:none}
+.rep-badge{font-size:.66rem;font-weight:700;padding:2px 9px;border-radius:50px;white-space:nowrap;display:inline-block}
+.rep-cotizado{background:#f3f4f6;color:#6b7280}
+.rep-aprobado{background:#dbeafe;color:#1d4ed8}
+.rep-instalado{background:#dcfce7;color:#166534}
+.rep-facturado{background:#fff8e1;color:#b45309}
+.rep-cancelado{background:#fee2e2;color:#991b1b}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-truck me-2"></i>Proveedores de repuestos</h4>
+    <div class="sub">Tarjetero de contactos de proveedores — canal preferido de contacto y repuestos asociados.</div>
+  </div>
+  <button class="btn btn-sm btn-danger" type="button" onclick="provAbrirNuevo()">
+    <i class="bi bi-plus-lg me-1"></i>Nuevo proveedor</button>
+</div>
+
+{% if proveedores %}
+<div class="prov-grid">
+  {% for p in proveedores %}
+  <div class="prov-card" onclick="provVerDetalle({{ p.id }})">
+    <span class="prov-count">{{ p.n_repuestos }} producto{{ 's' if p.n_repuestos != 1 else '' }}</span>
+    <div class="prov-name">{{ p.nombre }}</div>
+    {% if p.contacto_nombre %}<div class="prov-contact">{{ p.contacto_nombre }}</div>{% endif %}
+    {% if p.telefono %}<div class="prov-row"><i class="bi bi-telephone"></i>{{ p.telefono }}</div>{% endif %}
+    {% if p.email %}<div class="prov-row"><i class="bi bi-envelope"></i>{{ p.email }}</div>{% endif %}
+    {% if p.canal_preferido %}
+    <span class="prov-channel {{ p.canal_preferido }}">
+      {% if p.canal_preferido == 'whatsapp' %}<i class="bi bi-whatsapp"></i>WhatsApp
+      {% elif p.canal_preferido == 'wechat' %}<i class="bi bi-chat-dots"></i>WeChat
+      {% elif p.canal_preferido == 'telefono' %}<i class="bi bi-telephone"></i>Teléfono
+      {% elif p.canal_preferido == 'email' %}<i class="bi bi-envelope"></i>Email
+      {% endif %}
+    </span>
+    {% endif %}
+    {% if p.notas %}<div class="prov-notas">{{ p.notas }}</div>{% endif %}
+    <div class="mt-2">
+      <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size:.72rem;padding:3px 10px"
+              onclick="event.stopPropagation(); provAbrirEditar({{ p.id }}, '{{ p.nombre|e }}', '{{ p.contacto_nombre or ''|e }}', '{{ p.telefono or ''|e }}', '{{ p.email or ''|e }}', '{{ p.canal_preferido or '' }}', '{{ (p.notas or '')|e }}')">
+        <i class="bi bi-pencil"></i> Editar</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="prov-empty">
+  <i class="bi bi-truck" style="font-size:2.5rem;opacity:.3"></i>
+  <div class="mt-2">Aún no hay proveedores registrados.</div>
+</div>
+{% endif %}
+
+<!-- Modal crear/editar -->
+<div class="modal fade" id="modalProveedor" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalProveedorTitulo"><i class="bi bi-truck me-2"></i>Nuevo proveedor</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="provId">
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Nombre *</label>
+          <input type="text" class="form-control" id="provNombre" style="font-size:16px" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Nombre de contacto</label>
+          <input type="text" class="form-control" id="provContacto" style="font-size:16px">
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label small fw-bold">Teléfono</label>
+            <input type="text" class="form-control" id="provTelefono" style="font-size:16px">
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-bold">Email</label>
+            <input type="email" class="form-control" id="provEmail" style="font-size:16px">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Canal preferido</label>
+          <select class="form-select" id="provCanal" style="font-size:16px">
+            <option value="">— Sin definir —</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="wechat">WeChat</option>
+            <option value="telefono">Teléfono</option>
+            <option value="email">Email</option>
+          </select>
+        </div>
+        <div class="mb-1">
+          <label class="form-label small fw-bold">Notas</label>
+          <textarea class="form-control" id="provNotas" rows="3" style="font-size:16px"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="btnProvGuardar" onclick="provGuardar()">
+          <i class="bi bi-check-lg me-1"></i>Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal detalle: repuestos asociados -->
+<div class="modal fade" id="modalProveedorDetalle" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="provDetalleTitulo"><i class="bi bi-box-seam me-2"></i>Repuestos asociados</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="provDetalleBody" class="p-3 text-muted small">Cargando…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _provModal, _provDetalleModal;
+document.addEventListener('DOMContentLoaded', function(){
+  _provModal = new bootstrap.Modal(document.getElementById('modalProveedor'));
+  _provDetalleModal = new bootstrap.Modal(document.getElementById('modalProveedorDetalle'));
+});
+
+function provAbrirNuevo(){
+  document.getElementById('modalProveedorTitulo').innerHTML = '<i class="bi bi-truck me-2"></i>Nuevo proveedor';
+  document.getElementById('provId').value = '';
+  document.getElementById('provNombre').value = '';
+  document.getElementById('provContacto').value = '';
+  document.getElementById('provTelefono').value = '';
+  document.getElementById('provEmail').value = '';
+  document.getElementById('provCanal').value = '';
+  document.getElementById('provNotas').value = '';
+  (_provModal || new bootstrap.Modal(document.getElementById('modalProveedor'))).show();
+}
+
+function provAbrirEditar(id, nombre, contacto, telefono, email, canal, notas){
+  document.getElementById('modalProveedorTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar proveedor';
+  document.getElementById('provId').value = id;
+  document.getElementById('provNombre').value = nombre || '';
+  document.getElementById('provContacto').value = contacto || '';
+  document.getElementById('provTelefono').value = telefono || '';
+  document.getElementById('provEmail').value = email || '';
+  document.getElementById('provCanal').value = canal || '';
+  document.getElementById('provNotas').value = notas || '';
+  (_provModal || new bootstrap.Modal(document.getElementById('modalProveedor'))).show();
+}
+
+async function provGuardar(){
+  const id = document.getElementById('provId').value;
+  const nombre = document.getElementById('provNombre').value.trim();
+  if (!nombre){ ilusToast('El nombre del proveedor es obligatorio', {type:'warning'}); return; }
+  const payload = {
+    nombre: nombre,
+    contacto_nombre: document.getElementById('provContacto').value.trim(),
+    telefono: document.getElementById('provTelefono').value.trim(),
+    email: document.getElementById('provEmail').value.trim(),
+    canal_preferido: document.getElementById('provCanal').value,
+    notas: document.getElementById('provNotas').value.trim(),
+  };
+  const url = id ? `/mantenciones/api/proveedores-repuesto/${id}` : '/mantenciones/api/proveedores-repuesto';
+  const method = id ? 'PUT' : 'POST';
+  const btn = document.getElementById('btnProvGuardar');
+  btn.disabled = true;
+  let d;
+  try{
+    const r = await fetch(url, {
+      method: method,
+      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify(payload)
+    });
+    d = await r.json();
+  }catch(e){
+    btn.disabled = false;
+    ilusToast('Sin conexión: no se pudo guardar', {type:'error'});
+    return;
+  }
+  btn.disabled = false;
+  if (!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+  ilusToast('✓ Proveedor guardado', {type:'success'});
+  (_provModal || bootstrap.Modal.getInstance(document.getElementById('modalProveedor'))).hide();
+  setTimeout(()=> location.reload(), 500);
+}
+
+async function provVerDetalle(id){
+  const body = document.getElementById('provDetalleBody');
+  body.innerHTML = '<div class="p-3 text-muted small">Cargando…</div>';
+  (_provDetalleModal || new bootstrap.Modal(document.getElementById('modalProveedorDetalle'))).show();
+  try{
+    const r = await fetch(`/mantenciones/api/proveedores-repuesto/${id}/repuestos`);
+    const d = await r.json();
+    if (!d.ok || !d.repuestos || !d.repuestos.length){
+      body.innerHTML = '<div class="p-3 text-muted small">Este proveedor no tiene repuestos asociados todavía.</div>';
+      return;
+    }
+    body.innerHTML = d.repuestos.map(it => `
+      <div class="prov-detail-item">
+        <div>
+          <strong>${(it.nombre || 'Sin nombre').replace(/</g,'&lt;')}</strong>
+          ${it.sku ? ' · SKU '+it.sku : ''}<br>
+          <span class="text-muted">${(it.cliente_nombre || 'Sin cliente').replace(/</g,'&lt;')}</span>
+        </div>
+        <span class="rep-badge rep-${it.estado || 'cotizado'}" style="align-self:flex-start">${it.estado || '—'}</span>
+      </div>
+    `).join('');
+  }catch(e){
+    body.innerHTML = '<div class="p-3 text-danger small">Error cargando repuestos del proveedor.</div>';
+  }
+}
+</script>
+{% endblock %}

@@ -26,8 +26,8 @@
 }
 .rep-btn-asignar:hover{background:#dc2626}
 @media (max-width: 576px){
-  .rep-table th:nth-child(6),.rep-table td:nth-child(6),
-  .rep-table th:nth-child(7),.rep-table td:nth-child(7){display:none}
+  .rep-table th:nth-child(7),.rep-table td:nth-child(7),
+  .rep-table th:nth-child(8),.rep-table td:nth-child(8){display:none}
 }
 
 /* ── Modal "Asignar a ticket" (simple, mobile-first, sin bootstrap modal) ── */
@@ -63,6 +63,20 @@
 .repat-prov-chan.wechat{background:#07C160}
 .repat-prov-chan.telefono{background:#3b82f6}
 .repat-prov-chan.email{background:#6b7280}
+
+/* ── Estado de seguimiento (badge + select inline) ── */
+.rep-seg-select{font-size:.7rem;font-weight:700;padding:3px 8px;border-radius:50px;border:none;
+  cursor:pointer;min-height:28px;appearance:none;-webkit-appearance:none;
+  background-repeat:no-repeat;background-position:right 6px center;padding-right:20px}
+.rep-seg-pending, .rep-seg-awaiting_approval{background:#fff8e1;color:#b45309}
+.rep-seg-quote_request, .rep-seg-requested_from_supplier{background:#dbeafe;color:#1d4ed8}
+.rep-seg-recibido{background:#dcfce7;color:#166534}
+
+/* ── Modal "Solicitar repuesto" (bootstrap modal, formulario largo Regla #8) ── */
+#modalSolicitarRepuesto .modal-header{background:#0a0a0a;color:#fff;border-radius:.5rem .5rem 0 0}
+#modalSolicitarRepuesto .btn-close{filter:invert(1)}
+#solRepMaquinas{max-height:180px;overflow-y:auto;border:1.5px solid #e5e7eb;border-radius:10px;padding:8px 12px}
+#solRepMaquinas .form-check{margin-bottom:4px}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -76,6 +90,10 @@
     <button class="btn btn-sm btn-ilus" id="btnRepBuscarErp" type="button"
             title="Busca un producto/documento en el ERP (por SKU, documento o RUT/nombre del cliente) y agrega el repuesto directamente a esta lista">
       <i class="bi bi-search me-1"></i>Buscar en ERP</button>
+    <button class="btn btn-sm btn-danger" id="btnSolicitarRepuesto" type="button"
+            data-bs-toggle="modal" data-bs-target="#modalSolicitarRepuesto"
+            title="Crea un ticket de solicitud de repuesto (spare_parts) ligado al repuesto">
+      <i class="bi bi-send-plus me-1"></i>Solicitar repuesto</button>
   </div>
 </div>
 
@@ -121,6 +139,7 @@
         <th>Ubicación / Motivo</th>
         <th>Costo</th>
         <th>Estado</th>
+        <th>Seguimiento</th>
         <th>Garantía</th>
         <th>Ticket</th>
         <th>Fecha</th>
@@ -142,6 +161,7 @@
             {% if r.sku %}SKU {{ r.sku }}{% endif %}
             {% if r.marca %} · {{ r.marca }}{% endif %}
             {% if r.codigo_repuesto %} · cód. {{ r.codigo_repuesto }}{% endif %}
+            {% if r.familia %} · {{ r.familia }}{% endif %}
           </div>
         </td>
         <td>
@@ -159,6 +179,16 @@
         </td>
         <td>${{ '{:,.0f}'.format(r.costo_unitario|float).replace(',', '.') if r.costo_unitario else 0 }}</td>
         <td><span class="rep-badge rep-{{ r.estado }}">{{ r.estado }}</span></td>
+        <td>
+          <select class="rep-seg-select rep-seg-{{ r.estado_seguimiento or 'pending' }}"
+                  onchange="repSegCambiar({{ r.id }}, this)">
+            <option value="pending" {% if (r.estado_seguimiento or 'pending')=='pending' %}selected{% endif %}>Pendiente</option>
+            <option value="awaiting_approval" {% if r.estado_seguimiento=='awaiting_approval' %}selected{% endif %}>Esperando aprobación</option>
+            <option value="quote_request" {% if r.estado_seguimiento=='quote_request' %}selected{% endif %}>Cotización solicitada</option>
+            <option value="requested_from_supplier" {% if r.estado_seguimiento=='requested_from_supplier' %}selected{% endif %}>Solicitado a proveedor</option>
+            <option value="recibido" {% if r.estado_seguimiento=='recibido' %}selected{% endif %}>Recibido</option>
+          </select>
+        </td>
         <td class="rep-meta-line">{{ r.garantia or '—' }}</td>
         <td>
           {% if r.ticket_id %}
@@ -166,7 +196,7 @@
             {{ r.numero_ticket or ('#' ~ r.ticket_id) }}
           </a>
           {% else %}
-          <span class="text-muted small">—</span>
+          <span class="text-muted small">Sin ticket</span>
           {% endif %}
         </td>
         <td class="text-muted small">{{ r.fecha.strftime('%d/%m/%Y') if r.fecha and r.fecha.strftime else (r.fecha or '—') }}</td>
@@ -178,7 +208,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="text-center text-muted py-4">No hay repuestos que coincidan con el filtro.</td></tr>
+      <tr><td colspan="10" class="text-center text-muted py-4">No hay repuestos que coincidan con el filtro.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -199,8 +229,150 @@
   </div>
 </div>
 
+
+<!-- Modal "Solicitar repuesto" (bootstrap modal, formulario largo — Regla #8) -->
+<div class="modal fade" id="modalSolicitarRepuesto" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-send-plus me-2"></i>Solicitar repuesto</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Cliente</label>
+          <select class="form-select" id="solRepCliente" style="font-size:16px" onchange="solRepCargarMaquinas()">
+            <option value="">— Sin cliente asociado —</option>
+            {% for c in (clientes_select or []) %}
+            <option value="{{ c.id }}">{{ c.razon_social }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label small fw-bold">Marca</label>
+            <input type="text" class="form-control" id="solRepMarca" style="font-size:16px">
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-bold">Familia</label>
+            <input type="text" class="form-control" id="solRepFamilia" style="font-size:16px">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Nombre / descripción *</label>
+          <input type="text" class="form-control" id="solRepNombre" required style="font-size:16px">
+        </div>
+        <div class="mb-3" style="max-width:140px">
+          <label class="form-label small fw-bold">Cantidad</label>
+          <input type="number" min="1" step="1" value="1" class="form-control" id="solRepCantidad" style="font-size:16px">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Motivo</label>
+          <textarea class="form-control" id="solRepMotivo" rows="3" style="font-size:16px"></textarea>
+        </div>
+        <div class="mb-1">
+          <label class="form-label small fw-bold">Máquina(s) asociada(s)</label>
+          <div id="solRepMaquinas" class="text-muted small">Selecciona un cliente para ver sus máquinas.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="btnSolRepEnviar" onclick="solRepEnviar()">
+          <i class="bi bi-send-plus me-1"></i>Crear solicitud</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const _REPAT = { repuestoId: null, proveedorId: null, timer: null };
+
+// ══════════════ Estado de seguimiento (editable inline) ══════════════
+async function repSegCambiar(repuestoId, selectEl){
+  const nuevo = selectEl.value;
+  const prevClass = Array.from(selectEl.classList).find(c => c.startsWith('rep-seg-') && c !== 'rep-seg-select');
+  let d;
+  try{
+    const r = await fetch(`/mantenciones/api/repuestos/${repuestoId}/estado-seguimiento`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify({ estado_seguimiento: nuevo })
+    });
+    d = await r.json();
+  }catch(e){
+    ilusToast('Sin conexión: no se pudo guardar el seguimiento', {type:'error'});
+    return;
+  }
+  if (!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+  if (prevClass) selectEl.classList.remove(prevClass);
+  selectEl.classList.add('rep-seg-' + nuevo);
+  ilusToast('✓ Seguimiento actualizado', {type:'success'});
+}
+
+// ══════════════ Solicitar repuesto (crea ticket spare_parts) ══════════════
+async function solRepCargarMaquinas(){
+  const cid = document.getElementById('solRepCliente').value;
+  const cont = document.getElementById('solRepMaquinas');
+  if (!cid){ cont.innerHTML = '<div class="text-muted small">Selecciona un cliente para ver sus máquinas.</div>'; return; }
+  cont.innerHTML = '<div class="text-muted small">Cargando máquinas…</div>';
+  try{
+    const r = await fetch(`/mantenciones/api/clientes/${cid}/maquinas-list`);
+    const maquinas = await r.json();
+    if (!Array.isArray(maquinas) || !maquinas.length){
+      cont.innerHTML = '<div class="text-muted small">Este cliente no tiene máquinas registradas.</div>';
+      return;
+    }
+    cont.innerHTML = maquinas.map(m => `
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" value="${m.id}" id="solRepMaq${m.id}">
+        <label class="form-check-label small" for="solRepMaq${m.id}">
+          ${(m.nombre || 'Sin nombre').replace(/</g,'&lt;')}${m.serie ? ' · serie '+m.serie : ''}
+        </label>
+      </div>
+    `).join('');
+  }catch(e){
+    cont.innerHTML = '<div class="text-danger small">Error cargando máquinas.</div>';
+  }
+}
+
+async function solRepEnviar(){
+  const nombre = document.getElementById('solRepNombre').value.trim();
+  if (!nombre){ ilusToast('El nombre/descripción del repuesto es obligatorio', {type:'warning'}); return; }
+  const cliente_id = document.getElementById('solRepCliente').value || null;
+  const maquina_ids = Array.from(document.querySelectorAll('#solRepMaquinas input[type=checkbox]:checked'))
+    .map(el => parseInt(el.value, 10));
+  const payload = {
+    marca: document.getElementById('solRepMarca').value.trim(),
+    familia: document.getElementById('solRepFamilia').value.trim(),
+    nombre: nombre,
+    cantidad: parseFloat(document.getElementById('solRepCantidad').value) || 1,
+    motivo: document.getElementById('solRepMotivo').value.trim(),
+    maquina_ids: maquina_ids,
+    cliente_id: cliente_id,
+  };
+  const btn = document.getElementById('btnSolRepEnviar');
+  btn.disabled = true;
+  let d;
+  try{
+    const r = await fetch('/mantenciones/api/repuestos/solicitar', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify(payload)
+    });
+    d = await r.json();
+  }catch(e){
+    btn.disabled = false;
+    ilusToast('Sin conexión: no se pudo crear la solicitud', {type:'error'});
+    return;
+  }
+  btn.disabled = false;
+  if (!d.ok){ ilusToast(d.error || 'No se pudo crear la solicitud', {type:'error'}); return; }
+  ilusToast('✓ Solicitud creada — ticket ' + (d.numero_ticket || ('#'+d.ticket_id)), {type:'success'});
+  const modalEl = document.getElementById('modalSolicitarRepuesto');
+  const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+  modal.hide();
+  setTimeout(()=> location.reload(), 700);
+}
 
 function repatOpen(repuestoId, proveedorId, ticketIdActual){
   _REPAT.repuestoId = repuestoId;
