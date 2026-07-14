@@ -54,13 +54,22 @@ table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#dc2626;}
 .cat-pg-btn:disabled{opacity:.35;cursor:default;}
 .cat-pg-num{font-weight:800;color:#0f172a;font-size:.78rem;min-width:52px;text-align:center;white-space:nowrap;}
 
-.cat-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow-x:auto;
-  overflow-y:clip;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+{# 2026-07-14: mismo fix que templates/tickets/list.html (.tk-table-wrap) --
+   antes usaba overflow-x:auto + overflow-y:clip (scroll de la PAGINA, con el
+   thead sticky despejando el topbar fijo mobile via top:90px). Eso convertia
+   a .cat-table-wrap en scroll container del sticky (por el overflow-x:auto)
+   pero SIN scroll vertical propio -- entonces top:90px en mobile empujaba el
+   thead 90px hacia ADENTRO del wrap, tapando la primera fila del tbody en
+   vez de despejar la página. Se cambia a overflow:auto + max-height (scroll
+   INTERNO real de la tabla) y se elimina top:90px mobile: top:0 (regla base)
+   ya es correcto en todos los tamaños porque el sticky ahora se ancla contra
+   el scroll del propio wrap, no contra la página. #}
+.cat-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+  overflow:auto;max-height:calc(100vh - 300px);box-shadow:0 1px 3px rgba(0,0,0,.04);}
 table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:900px;}
 table.cat-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.66rem;
   font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
   border-bottom:1px solid #eaecf0;white-space:nowrap;}
-@media(max-width:767px){table.cat-table thead th{top:var(--topbar-h,90px);}}
 table.cat-table tbody tr{cursor:pointer;transition:background .1s;}
 table.cat-table tbody tr:hover{background:#fafbfc;}
 table.cat-table tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6;}
@@ -461,18 +470,29 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
           </div>
         </div>
 
-        <!-- Paso 2: familia + cantidad de piolas -->
+        <!-- Paso 2: familia + cantidad de piolas.
+             2026-07-14: familia/clase se guardan via PATCH /catalogo/api/productos/<id>
+             (cat_api_update), que es _catalogo_admin_required (solo superadmin,
+             CRUD de producto -- decision de Daniel 2026-07-12, no se toca).
+             Para roles ampliados (CAN_CARGAR_PIOLAS sin ser superadmin) este
+             bloque se oculta (id="catwFamiliaClaseWrap") y el paso salta directo
+             a la cantidad de piolas, que SI es de su permiso (_catalogo_required). -->
         <div class="catw-panel" data-step="2">
-          <div class="mb-3">
-            <label class="form-label fw-bold small">Familia del producto</label>
-            <input type="text" id="catwFamilia" class="form-control" placeholder="Ej: Cardio" list="catwFamiliaList">
-            <datalist id="catwFamiliaList"></datalist>
+          <div id="catwFamiliaClaseWrap">
+            <div class="mb-3">
+              <label class="form-label fw-bold small">Familia del producto</label>
+              <input type="text" id="catwFamilia" class="form-control" placeholder="Ej: Cardio" list="catwFamiliaList">
+              <datalist id="catwFamiliaList"></datalist>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold small">Clase de producto <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
+              <select id="catwClase" class="form-select">
+                <option value="">— Sin clase —</option>
+              </select>
+            </div>
           </div>
-          <div class="mb-3">
-            <label class="form-label fw-bold small">Clase de producto <span class="text-muted" style="font-weight:400;">(opcional)</span></label>
-            <select id="catwClase" class="form-select">
-              <option value="">— Sin clase —</option>
-            </select>
+          <div id="catwFamiliaClaseAviso" class="text-muted small mb-3" style="display:none;">
+            <i class="bi bi-info-circle me-1"></i>La familia y la clase de este producto las completa el superadministrador. Tú puedes cargar las piolas.
           </div>
           <div class="mb-2">
             <label class="form-label fw-bold small">¿Cuántas piolas distintas tiene este modelo?</label>
@@ -487,7 +507,12 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
           <div id="catwPiolasWrap"></div>
         </div>
 
-        <!-- Paso 4: manuales -->
+        <!-- Paso 4: manuales.
+             2026-07-14: subir/eliminar manual es _catalogo_admin_required
+             (solo superadmin, decision de Daniel 2026-07-12, no se toca).
+             Para roles ampliados el dropzone y el botón de eliminar se
+             ocultan (catwRenderManuales/catwAbrir) -- pueden ver los
+             manuales ya cargados, no subir/quitar. -->
         <div class="catw-panel" data-step="4">
           <p class="text-muted small mb-2">Sube hasta 5 manuales de uso de esta máquina (solo PDF).</p>
           <div id="catwManualesLista"></div>
@@ -495,6 +520,9 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
             <i class="bi bi-file-earmark-arrow-up"></i>
             <div class="t1">Subir manual (PDF)</div>
             <div class="t2" id="catwManualHint">Hasta 25 MB · máximo 5 manuales</div>
+          </div>
+          <div id="catwManualAviso" class="text-muted small" style="display:none;">
+            <i class="bi bi-info-circle me-1"></i>Solo el superadministrador puede subir o quitar manuales.
           </div>
           <input type="file" id="catwManualInput" accept="application/pdf" hidden>
         </div>
@@ -513,6 +541,16 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 const IS_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
+// 2026-07-14 (Daniel: "no entiendo por que [la varita magica] solamente
+// deja hacerla al superadministrador, agregale los roles"): mismo criterio
+// que el gate backend _catalogo_required (catalogo_module.py) -- permiso
+// 'mantenciones' O superadmin. Úsalo SOLO para decidir si se muestra el
+// botón/wizard de la varita mágica (catwAbrir), NO reemplaza a
+// IS_SUPERADMIN en el resto del archivo (ficha completa, eliminar
+// definitivo, etc. siguen siendo solo-superadmin -- _catalogo_admin_required
+// intacto en el backend, ver catwAbrir() para el detalle de qué pasos del
+// wizard quedan visibles/editables según el rol).
+const CAN_CARGAR_PIOLAS = {{ 'true' if (permissions.mantenciones or permissions.superadmin) else 'false' }};
 const MAX_FOTOS = 10;
 const MAX_PIOLAS = 6;  // 2026-07-14 (Daniel): bajado de 10 a 6
 let _catTimer = null;
@@ -694,8 +732,8 @@ function catFilaHtml(row){
 function catAccionesCelda(row){
   let h = '<button type="button" class="cat-act ver" title="Ver / editar ficha"'
     + ' onclick="event.stopPropagation();catAbrirFicha('+row.id+')"><i class="bi bi-eye"></i></button>';
-  if(IS_SUPERADMIN && !row.registrado){
-    h += '<button type="button" class="cat-act wiz" title="Completar ficha (familia + piolas + manuales)"'
+  if(CAN_CARGAR_PIOLAS && !row.registrado){
+    h += '<button type="button" class="cat-act wiz" title="Completar ficha (piolas'+(IS_SUPERADMIN?' + familia + manuales':'')+')"'
       + ' onclick="event.stopPropagation();catwAbrir('+row.id+')"><i class="bi bi-magic"></i></button>';
   }
   h += '<button type="button" class="cat-act del" title="Eliminar producto"'
@@ -1556,6 +1594,15 @@ window.catwAbrir = async function(id){
   document.getElementById('catwClase').innerHTML = '<option value="">— Sin clase —</option>'
     + clasesW.map(c=>'<option value="'+esc(c.value)+'"'+(c.value===claseActual?' selected':'')+'>'+esc(c.label)+'</option>').join('');
 
+  // 2026-07-14: familia/clase (PATCH /catalogo/api/productos/<id>) y
+  // subir/quitar manuales son _catalogo_admin_required en el backend
+  // (solo superadmin) -- ver comentario en catalogo_module.py junto a
+  // _catalogo_admin_required. Para un rol ampliado (CAN_CARGAR_PIOLAS sin
+  // ser superadmin) esos controles se ocultan aquí para que el wizard
+  // nunca intente una llamada que el backend va a rechazar.
+  document.getElementById('catwFamiliaClaseWrap').style.display = IS_SUPERADMIN ? '' : 'none';
+  document.getElementById('catwFamiliaClaseAviso').style.display = IS_SUPERADMIN ? 'none' : '';
+
   catwRenderManuales();
   catwMostrarPaso();
 };
@@ -1593,11 +1640,15 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
     catwStep = 2; catwMostrarPaso(); return;
   }
   if(catwStep === 2){
+    const cant = parseInt(document.getElementById('catwCantPiolas').value, 10);
+    if(isNaN(cant) || cant < 0 || cant > 6){ ilusToast('La cantidad de piolas debe ser un número entre 0 y 6', {type:'warning'}); return; }
+    // 2026-07-14: familia/clase (PATCH admin-only) solo se piden/guardan
+    // si es superadmin -- para roles ampliados el bloque está oculto
+    // (ver catwAbrir) y se salta directo a piolas, que sí es su permiso.
+    if(!IS_SUPERADMIN){ catwStep = 3; catwMostrarPaso(); return; }
     const familia = document.getElementById('catwFamilia').value.trim();
     const clase = document.getElementById('catwClase').value;
-    const cant = parseInt(document.getElementById('catwCantPiolas').value, 10);
     if(!familia){ ilusToast('Indica la familia del producto', {type:'warning'}); return; }
-    if(isNaN(cant) || cant < 0 || cant > 6){ ilusToast('La cantidad de piolas debe ser un número entre 0 y 6', {type:'warning'}); return; }
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
     try{
       const r = await fetch('/catalogo/api/productos/'+catwProductoId, {method:'PATCH',
@@ -1621,12 +1672,19 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
       if(!obs){ ilusToast('Falta la observación de "'+fila.dataset.label+'"', {type:'warning'}); obsInput.focus(); return; }
     }
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+    let _omitidas = 0;
     try{
       for(const fila of filas){
         const medida = parseFloat(fila.querySelector('.catw-piola-medida').value);
         const obs = fila.querySelector('.catw-piola-obs').value.trim();
         const piolaId = fila.dataset.piolaId;
         if(piolaId){
+          // 2026-07-14: editar una piola YA existente (PATCH) es
+          // _catalogo_admin_required (solo superadmin, decisión explícita
+          // de Daniel 2026-07-12) -- crear una piola NUEVA (POST) sí es de
+          // rol ampliado. Para no lanzar un PATCH que el backend va a
+          // rechazar, un rol ampliado la omite y avisa al terminar.
+          if(!IS_SUPERADMIN){ _omitidas++; continue; }
           await fetch('/catalogo/api/productos/'+catwProductoId+'/piolas/'+piolaId, {method:'PATCH',
             headers:{'Content-Type':'application/json'}, body: JSON.stringify({medida_cm: medida, observacion: obs})});
         } else {
@@ -1635,7 +1693,11 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
         }
       }
       btn.disabled = false; btn.innerHTML = original;
-      ilusToast('✓ Piolas guardadas', {type:'success'});
+      if(_omitidas > 0){
+        ilusToast('✓ Piolas nuevas guardadas — ' + _omitidas + ' piola(s) ya existentes no se modificaron (solo el superadministrador puede editarlas)', {type:'warning'});
+      } else {
+        ilusToast('✓ Piolas guardadas', {type:'success'});
+      }
       catwStep = 4; catwMostrarPaso();
     }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión al guardar piolas', {type:'error'}); }
     return;
@@ -1660,11 +1722,17 @@ function catwRenderPiolasInputs(){
   for(let i = 0; i < cant; i++){
     const existente = catwPiolasExistentes[i];
     const label = 'Piola ' + (i+1);
+    // 2026-07-14: una piola YA existente solo la edita el superadmin
+    // (PATCH admin-only) -- para un rol ampliado se muestra bloqueada
+    // en vez de dejar que el usuario la edite y esa edición se pierda
+    // silenciosamente al guardar (ver handler de "Siguiente" paso 3).
+    const bloqueada = existente && !IS_SUPERADMIN;
+    const dis = bloqueada ? 'disabled title="Solo el superadministrador puede editar una piola ya existente"' : '';
     html += '<div class="catw-piola-row" data-piola-id="'+(existente ? existente.id : '')+'" data-label="'+label+'">'
-      + '<span class="lbl">'+label+'</span>'
-      + '<input type="number" class="form-control form-control-sm catw-piola-medida" style="max-width:110px;" min="0.1" step="0.1" '
+      + '<span class="lbl">'+label+(bloqueada ? ' <i class="bi bi-lock-fill text-muted" style="font-size:.7rem;"></i>' : '')+'</span>'
+      + '<input type="number" class="form-control form-control-sm catw-piola-medida" style="max-width:110px;" min="0.1" step="0.1" '+dis+' '
       +   'placeholder="Medida (cm)" value="'+(existente ? existente.medida_cm : '')+'">'
-      + '<input type="text" class="form-control form-control-sm catw-piola-obs" placeholder="Observación (ej: cable de polea alta)" '
+      + '<input type="text" class="form-control form-control-sm catw-piola-obs" placeholder="Observación (ej: cable de polea alta)" '+dis+' '
       +   'value="'+esc(existente ? (existente.observacion||'') : '')+'">'
       + '</div>';
   }
@@ -1677,12 +1745,18 @@ function catwRenderManuales(){
     lista.innerHTML = '';
   } else {
     lista.innerHTML = catwManuales.map(function(m){
+      // 2026-07-14: eliminar manual (DELETE) es _catalogo_admin_required
+      // (solo superadmin) -- se oculta el botón para roles ampliados,
+      // que solo pueden ver/descargar los manuales ya cargados.
+      const btnDel = IS_SUPERADMIN
+        ? '<button type="button" class="btn btn-sm btn-outline-danger" onclick="catwEliminarManual('+m.id+')"><i class="bi bi-trash"></i></button>'
+        : '';
       return '<div class="catw-manual-item" data-manual-id="'+m.id+'">'
         + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
         + '<div class="nm">'+esc(m.nombre)+'</div>'
         + '<button type="button" class="btn btn-sm btn-outline-primary" title="Ver" data-ver-url="'+esc(m.url)+'" data-ver-nombre="'+esc(m.nombre)+'"><i class="bi bi-eye"></i></button>'
         + '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'"><i class="bi bi-download"></i></a>'
-        + '<button type="button" class="btn btn-sm btn-outline-danger" onclick="catwEliminarManual('+m.id+')"><i class="bi bi-trash"></i></button>'
+        + btnDel
         + '</div>';
     }).join('');
     lista.querySelectorAll('[data-ver-url]').forEach(function(btn){
@@ -1693,10 +1767,20 @@ function catwRenderManuales(){
   }
   const drop = document.getElementById('catwManualDrop');
   const hint = document.getElementById('catwManualHint');
-  if(catwManuales.length >= MAX_MANUALES_WIZ){
+  const aviso = document.getElementById('catwManualAviso');
+  // 2026-07-14: subir manual (POST) es _catalogo_admin_required (solo
+  // superadmin) -- para roles ampliados se oculta el dropzone entero y se
+  // muestra el aviso en su lugar, en vez de dejarlos subir y recibir un
+  // 403 silencioso.
+  if(!IS_SUPERADMIN){
     drop.style.display = 'none';
+    aviso.style.display = '';
+  } else if(catwManuales.length >= MAX_MANUALES_WIZ){
+    drop.style.display = 'none';
+    aviso.style.display = 'none';
   } else {
     drop.style.display = '';
+    aviso.style.display = 'none';
     hint.textContent = 'Hasta 25 MB · ' + catwManuales.length + '/' + MAX_MANUALES_WIZ + ' manuales';
   }
 }

@@ -1530,11 +1530,22 @@ function _tkaBodegaOnInput(){
   if (_TKA._bodegaDebounce) clearTimeout(_TKA._bodegaDebounce);
   _TKA._bodegaDebounce = setTimeout(() => tkaBuscarPorBodega(), 300);
 }
+// 2026-07-14 (Daniel, diagnóstico "se agrega todo / se agregan las
+// zetas" -- hallazgo secundario confirmado): dos búsquedas concurrentes
+// contra el ERP pueden resolver fuera de orden; sin guard, la respuesta
+// VIEJA que llega después pisaba tanto el HTML como `_TKA._bodegaItems`
+// con datos obsoletos, y un click sobre lo que el usuario ve en pantalla
+// terminaba tocando el ítem que quedó en el array tras el swap silencioso
+// (no el que se veía). Mismo patrón `myToken`/reqToken ya usado en el
+// visor de PDF (catvAbrir, templates/catalogo/list.html) para descartar
+// respuestas obsoletas.
+let _tkaBodegaReqToken = 0;
 async function tkaBuscarPorBodega(){
   const inp = document.getElementById('tkaBodegaQ');
   const q = (inp && inp.value || '').trim();
   const cont = document.getElementById('tkaBodegaResult');
   if (!cont) return;
+  const myToken = ++_tkaBodegaReqToken;
   if (q.length < 2){
     cont.innerHTML = `<div class="tka-empty">
       <i class="bi bi-boxes tka-empty-icon"></i>
@@ -1546,6 +1557,7 @@ async function tkaBuscarPorBodega(){
   cont.innerHTML = _tkaSkel();
   try{
     const d = await _tkaFetchJsonSafe(`/catalogo/api/erp/bodega-buscar?q=${encodeURIComponent(q)}`);
+    if (myToken !== _tkaBodegaReqToken) return; // obsoleto: otra búsqueda más nueva ya está en curso/resuelta
     if (!d.ok){
       cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(d.error || 'Error al buscar')}</div>`;
       return;
@@ -1575,10 +1587,12 @@ async function tkaBuscarPorBodega(){
       </div>`;
     });
     html += '</div>';
+    if (myToken !== _tkaBodegaReqToken) return; // re-chequeo tras construir el HTML (por si acaso)
     cont.innerHTML = html;
     _TKA._bodegaItems = items;
     _tkaRenderBodegaSeleccion();
   }catch(e){
+    if (myToken !== _tkaBodegaReqToken) return; // abortado/obsoleto, no mostrar error de una búsqueda vieja
     cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
   }
 }

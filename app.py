@@ -14589,7 +14589,19 @@ def _cubicador_fetch(tido, nudo, fast=False):
         except Exception as _enr_err:
             print(f"[cubicador] enriquecer descripciones falló: {_enr_err}")
 
-    ZZ_CODES = {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}
+    # 2026-07-14 (fix diagnóstico "se agregan las zetas" en el modal de
+    # Catálogo): antes esto era un whitelist de coincidencia EXACTA contra
+    # 6 códigos ({"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO",
+    # "ZZINSTALACION","ZZINGARREQUIP"}), pero Random tiene más códigos de
+    # servicio/flete con prefijo ZZ (p.ej. ZZMANTENCION, ZZBODEGA — ver
+    # erp_engine.py fetch_document, que ya usa sku.startswith("ZZ") desde
+    # antes). Con el whitelist exacto, cualquier código ZZ fuera de esos 6
+    # quedaba con es_zz=False y se colaba como línea "física" seleccionable
+    # en las pestañas "Por documento"/"Por RUT" del modal (_tka_modal.html),
+    # incluido el flujo de Catálogo (que solo debe ofrecer productos reales,
+    # nunca líneas de servicio). Se cambia a match por PREFIJO, igual que
+    # erp_engine.py y tickets_module.py (tk_api_erp_documento, línea ~534),
+    # para que cubra cualquier código ZZ actual o futuro sin mantener listas.
     lineas = []
     for l in raw_lineas:
         sku         = (l.get("KOPRCT") or "").strip().upper()
@@ -14611,7 +14623,7 @@ def _cubicador_fetch(tido, nudo, fast=False):
         eslido       = (l.get("ESLIDO") or "").strip().upper()
         if eslido in ("C", "T", "TOTAL", "CERRADO", "DESPACHADO"):
             saldo_linea = 0
-        es_zz        = sku in ZZ_CODES
+        es_zz        = sku.startswith("ZZ")
 
         if not sku:
             continue
