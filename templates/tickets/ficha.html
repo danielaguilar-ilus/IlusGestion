@@ -1732,8 +1732,17 @@ function ajustarAltoHilo(){
   }
   qlContainer.style.maxHeight = alturaEditor + 'px';
   qlContainer.style.minHeight = Math.min(alturaEditor, 180) + 'px';
+  // 2026-07-15 (Daniel): "no la hagas dinamica, dejala siempre lo mas
+  // estirada posible" -- antes solo se fijaba max-height + un min-height
+  // chico (HILO_MIN=200px de piso), asi que con pocos mensajes el div
+  // (sin `height` fijo, block normal) se encogia al alto del contenido
+  // real en vez de ocupar el espacio maximo disponible. Ahora es un alto
+  // FIJO (height, no min/max): el hilo siempre mide lo mismo, tenga 1
+  // mensaje o 50 -- si esta casi vacio simplemente queda con espacio en
+  // blanco abajo, que es exactamente lo que Daniel pidio.
+  th.style.height = alturaHilo + 'px';
   th.style.maxHeight = alturaHilo + 'px';
-  th.style.minHeight = Math.min(alturaHilo, HILO_MIN) + 'px';
+  th.style.minHeight = alturaHilo + 'px';
 }
 let _ajustarAltoHiloTimer = null;
 function ajustarAltoHiloDebounced(){
