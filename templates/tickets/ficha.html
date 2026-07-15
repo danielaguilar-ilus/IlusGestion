@@ -45,6 +45,21 @@
   font-size:.6rem;font-weight:800;padding:3px 10px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
 .tk-sla{padding:3px 10px;border-radius:50px;font-size:.64rem;font-weight:800;background:rgba(255,255,255,.12);color:#fff;white-space:nowrap;}
 .tk-sla.venc{background:#fee2e2;color:#991b1b;} .tk-sla.pronto{background:#fff8e1;color:#b45309;}
+/* 2026-07-14 (Daniel): SLA de respuesta VENCIDO (campos nuevos sla_vencido/
+   sla_horas del backend) -- badge rojo pulsante en el hero: discreto en
+   tamaño pero imposible de ignorar por el pulso. Distinto de #hSla (que es
+   la fecha limite manual del ticket): este mide horas desde la creacion
+   contra el umbral configurable tk_sla_horas. */
+.tk-sla-vencido{display:none;align-items:center;gap:5px;padding:3px 11px;border-radius:50px;
+  font-size:.64rem;font-weight:800;background:#dc2626;color:#fff;text-transform:uppercase;
+  letter-spacing:.04em;white-space:nowrap;box-shadow:0 0 0 0 rgba(220,38,38,.55);
+  animation:tkSlaPulse 1.8s ease-in-out infinite;}
+.tk-sla-vencido i{font-size:.78rem;}
+@keyframes tkSlaPulse{
+  0%{box-shadow:0 0 0 0 rgba(220,38,38,.55);}
+  70%{box-shadow:0 0 0 9px rgba(220,38,38,0);}
+  100%{box-shadow:0 0 0 0 rgba(220,38,38,0);}
+}
 .tk-hero-sub{font-size:.74rem;color:rgba(255,255,255,.5);margin-left:auto;white-space:nowrap;}
 .tk-tabs{display:flex;gap:4px;border-bottom:2px solid #eaecf0;margin-bottom:16px;flex-wrap:wrap;}
 .tk-tab{padding:9px 16px;font-weight:700;font-size:.85rem;color:#6b7280;cursor:pointer;
@@ -125,6 +140,14 @@
   background:#fff;color:#dc2626;display:inline-flex;align-items:center;justify-content:center;
   min-height:32px;}
 .tk-eq-actionbtn:hover{background:#fee2e2;border-color:#fca5a5;}
+/* 2026-07-14 (Daniel): "que la tabla lleve informacion de que documento
+   viene" -- chip azul info bajo el nombre del equipo con el documento de
+   origen (tk_ticket_equipos.documento_garantia, ej. "Factura 10599"). Si el
+   equipo no viene de ningun documento, no se muestra nada (sin '—'). */
+.tk-eq-doc-chip{display:inline-flex;align-items:center;gap:4px;background:#eff6ff;border:1px solid #bfdbfe;
+  color:#1d4ed8;border-radius:50px;padding:1px 9px;font-size:.62rem;font-weight:800;white-space:nowrap;
+  margin-top:3px;max-width:220px;overflow:hidden;text-overflow:ellipsis;}
+.tk-eq-doc-chip i{font-size:.66rem;flex-shrink:0;}
 .tk-origen-badge{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:50px;
   padding:2px 10px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
 .tk-visto-por{font-size:.72rem;color:#9ca3af;margin-top:10px;}
@@ -179,9 +202,16 @@
    que bajar la PAGINA para alcanzar el composer (quedaba debajo del
    pliegue). 460px fijo no se adapta al alto real de la ventana. Este
    max-height es solo un FALLBACK antes de que corra el JS de abajo
-   (ajustarAltoHilo): en tiempo real, el alto del hilo se calcula para
-   que el composer quede SIEMPRE visible sin scrollear la pagina. */
-.rp-thread{max-height:460px;overflow-y:auto;padding:4px 2px;margin-bottom:14px;}
+   (ajustarAltoHilo).
+   CORRECCION 2026-07-14 (Daniel): "con el scroll quiero consumirme todo el
+   header y que se vea el panel completo, aprovechar los espacios para
+   agrandar la caja de mensajes" -- ahora el hilo se dimensiona para llenar
+   la pantalla COMPLETA una vez que el hero se scrollea fuera de vista (la
+   pagina SI scrollea lo justo para consumir el header, de forma natural,
+   sin sticky). ajustarAltoHilo calcula ese alto "como si el hero ya no
+   estuviera" y al entrar a Respuestas se hace un scroll suave que consume
+   el hero de una. */
+.rp-thread{max-height:calc(100vh - 340px);min-height:240px;overflow-y:auto;padding:4px 2px;margin-bottom:14px;}
 .rp-msg{display:flex;margin-bottom:12px;}
 .rp-msg.out{justify-content:flex-end;}
 .rp-bubble{max-width:72%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.45;
@@ -195,6 +225,17 @@
    y deja el rojo exclusivo para lo que necesita llamar la atencion. */
 .rp-msg.out .rp-bubble{background:linear-gradient(135deg,#1f2937,#0a0a0a);color:#fff;border-bottom-right-radius:4px;}
 .rp-msg.interno .rp-bubble{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-bottom-right-radius:4px;}
+/* 2026-07-14 (Daniel): "resaltarlo en blanco cuando es automatico" -- los
+   mensajes que manda el SISTEMA (sin usuario: respuestas automaticas,
+   notificaciones de estado que van como mensaje) se pintan en BLANCO para
+   distinguirlos de lo que escribio una persona del staff (negro ILUS). */
+.rp-msg.out.auto .rp-bubble{background:#fff;border:1px solid #e5e7eb;color:#0f172a;
+  box-shadow:0 1px 4px rgba(15,23,42,.08);}
+.rp-msg.out.auto .rp-meta{color:#6b7280;}
+.rp-msg.out.auto .rp-estado-ok{color:#16a34a;}
+.rp-auto-tag{display:inline-flex;align-items:center;gap:3px;background:#f3f4f6;color:#6b7280;
+  border:1px solid #e5e7eb;border-radius:50px;padding:1px 8px;font-size:.6rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.04em;}
 .rp-msg.evento{justify-content:center;}
 .rp-msg.evento .rp-bubble{background:transparent;color:#9ca3af;font-size:.74rem;padding:2px 8px;max-width:100%;text-align:center;}
 .rp-meta{font-size:.66rem;opacity:.85;margin-bottom:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
@@ -213,6 +254,13 @@
 .rp-adj-chip img{width:20px;height:20px;object-fit:cover;border-radius:4px;}
 .rp-adj-chip i{color:#dc2626;font-size:.95rem;}
 .rp-msg:not(.in):not(.interno) .rp-adj-chip i{color:#fecaca;}
+/* Mensajes automaticos (blancos): chips como en los mensajes claros. */
+.rp-msg.out.auto .rp-adj-chip{background:#fff;color:#0f172a;border-color:#dc2626;}
+.rp-msg.out.auto .rp-adj-chip i{color:#dc2626;}
+/* 2026-07-14: con 2+ imagenes adjuntas los chips no deben desbordarse a
+   los lados del mensaje -- hacen wrap dentro del ancho del bubble. */
+.rp-adj-lista{display:flex;flex-wrap:wrap;align-items:center;max-width:100%;}
+.rp-adj-chip{max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word;}
 .rp-composer{border:1px solid #eaecf0;border-radius:13px;overflow:hidden;}
 .rp-btn-traducir{margin-top:6px;border:none;background:transparent;color:#3b82f6;font-size:.72rem;font-weight:700;
   padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;}
@@ -222,12 +270,21 @@
   font-size:.82rem;color:#1e3a5f;white-space:pre-wrap;}
 #rpBtnDictar.rp-dictando{color:#fff;background:#dc2626;border-color:#dc2626;animation:rpPulseMic 1.2s ease-in-out infinite;}
 @keyframes rpPulseMic{0%,100%{opacity:1;}50%{opacity:.55;}}
-.rp-mode-tabs{display:flex;background:#f9fafb;border-bottom:1px solid #eaecf0;}
-.rp-mode-tab{flex:1;text-align:center;padding:10px;font-size:.82rem;font-weight:800;color:#94a3b8;cursor:pointer;
-  border-bottom:3px solid transparent;transition:background .12s,color .12s;letter-spacing:.02em;}
-.rp-mode-tab:hover{color:#475569;background:rgba(0,0,0,.03);}
-.rp-mode-tab.active[data-mode="cliente"]{color:#dc2626;border-bottom-color:#dc2626;background:#fff;box-shadow:inset 0 2px 0 #dc2626;}
-.rp-mode-tab.active[data-mode="interno"]{color:#b45309;border-bottom-color:#f59e0b;background:#fffbeb;box-shadow:inset 0 2px 0 #f59e0b;}
+/* 2026-07-14 (Daniel): los toggles "Responder al cliente / Comentario
+   interno" estaban "muy toscos" -- ahora son pills modernas (radios
+   generosos, transicion suave, sombra sutil) y el color del pill ACTIVO
+   queda ASOCIADO al color con que ese tipo de mensaje se pinta en el hilo:
+   cliente = negro ILUS (igual que .rp-msg.out), interno = ambar (igual que
+   .rp-msg.interno). Coherencia visual toggle ↔ mensaje. */
+.rp-mode-tabs{display:flex;gap:8px;background:#f9fafb;border-bottom:1px solid #eaecf0;padding:10px 12px;}
+.rp-mode-tab{flex:1;text-align:center;padding:9px 14px;font-size:.82rem;font-weight:800;color:#64748b;cursor:pointer;
+  border-radius:50px;border:1.5px solid #e5e7eb;background:#fff;letter-spacing:.02em;
+  transition:background .18s ease,color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s var(--ease-spring);}
+.rp-mode-tab:hover{color:#334155;border-color:#cbd5e1;box-shadow:0 2px 8px rgba(15,23,42,.08);transform:translateY(-1px);}
+.rp-mode-tab.active[data-mode="cliente"]{color:#fff;background:linear-gradient(135deg,#1f2937,#0a0a0a);
+  border-color:#0a0a0a;box-shadow:0 3px 12px rgba(10,10,10,.28);}
+.rp-mode-tab.active[data-mode="interno"]{color:#78350f;background:#fffbeb;
+  border-color:#fde68a;box-shadow:0 3px 12px rgba(245,158,11,.25);}
 /* Diferenciar visualmente De/Para/CC del editor de abajo (Daniel
    2026-07-12: "esta todo muy blanco... el de, el para... la caja de
    texto tambien esta muy blanco") -- antes #fcfcfd era casi identico al
@@ -264,7 +321,10 @@
    respuesta normal). Es el UNICO scroll interno que queda en la pestaña
    Respuestas (no el del hilo de arriba). El JS (ajustarAltoHilo) ajusta
    esto en tiempo real; este valor es solo el fallback del primer paint. */
-.rp-editor-wrap .ql-container{border:none;font-size:.87rem;min-height:150px;max-height:220px;overflow-y:auto;}
+/* 2026-07-14 (Daniel): la caja de escritura "mas amplia y agradable, con
+   mas altura minima" -- sube el piso a 180px (el JS ajusta en vivo). */
+.rp-editor-wrap .ql-container{border:none;font-size:.92rem;line-height:1.55;min-height:180px;max-height:280px;overflow-y:auto;}
+.rp-editor-wrap .ql-editor{padding:14px 16px;}
 .rp-toolbar-extra{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
   background:#fafafa;border-top:1px solid #eaecf0;flex-wrap:wrap;gap:8px;}
 .rp-adj-preview{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px;}
@@ -312,7 +372,27 @@
 .tk-qf-item.ok{color:#166534;} .tk-qf-item.ok i{color:#16a34a;}
 .tk-qf-item.falta{color:#78350f;} .tk-qf-item.falta i{color:#f59e0b;}
 /* ── Identificación del cliente: vista compacta ── */
-.tk-id-nombre{font-size:1.22rem;font-weight:900;color:#0f172a;margin-bottom:12px;letter-spacing:-.01em;}
+.tk-id-nombre{font-size:1.22rem;font-weight:900;color:#0f172a;margin-bottom:12px;letter-spacing:-.01em;
+  padding-bottom:10px;border-bottom:1px solid #f1f5f9;}
+/* 2026-07-14 (Daniel): "me quejo mucho de identificacion del cliente, lo veo
+   con muchos campos vacios" -- los campos SIN dato ya no ensucian la tarjeta:
+   quedan agrupados y colapsados tras un boton discreto "Ver campos vacios (N)".
+   Se pueden seguir editando con el lapiz al expandir (Regla #4.2: la
+   capacidad de editar campos vacios NO se elimina, solo se esconde por
+   defecto). */
+.tk-id-vacios-btn{display:none;align-items:center;gap:6px;margin-top:12px;border:1px dashed #d1d5db;
+  background:#fafbfc;color:#6b7280;border-radius:50px;padding:6px 14px;font-size:.74rem;font-weight:700;
+  cursor:pointer;transition:background .15s,color .15s,border-color .15s,box-shadow .2s var(--ease-spring);}
+.tk-id-vacios-btn:hover{background:#fff;color:#dc2626;border-color:#fca5a5;box-shadow:var(--shadow-sm);}
+.tk-id-vacios-btn i{font-size:.8rem;transition:transform .25s var(--ease-spring);}
+.tk-id-vacios-btn.abierto i{transform:rotate(180deg);}
+.tk-id-vacios-wrap{display:none;margin-top:12px;padding:12px 10px 6px;border:1px dashed #e5e7eb;
+  border-radius:var(--r-md);background:#fafbfc;}
+.tk-id-vacios-wrap.show{display:block;animation:tkIdVaciosIn .25s var(--ease-spring);}
+@keyframes tkIdVaciosIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+.tk-id-vacios-wrap .tk-dl dt{color:#94a3b8;}
+.tk-id-vacios-wrap .tk-dl i{color:#d1d5db;}
+.tk-id-vacios-wrap .tk-dl dd:hover{background:#fff;}
 /* ── Adjuntos: encabezado de grupo por fecha + lightbox ── */
 .tk-adj-grupo-titulo{font-size:.68rem;font-weight:800;color:#9ca3af;text-transform:uppercase;
   letter-spacing:.06em;margin:14px 0 8px;}
@@ -359,19 +439,40 @@
 .tk-act-chip:hover{border-color:#dc2626;color:#dc2626;}
 .tk-act-chip.active{background:#dc2626;color:#fff;border-color:#dc2626;}
 .tk-act-chip.active:hover{color:#fff;}
-.tk-act-item{position:relative;display:flex;gap:12px;padding-bottom:16px;}
-.tk-act-item::before{content:'';position:absolute;left:15px;top:34px;bottom:0;width:2px;background:#eaecf0;}
+/* 2026-07-14 (Daniel): "el historial de actividad quisiera mejorarlo hasta
+   el tracking, una cosa bastante desarrollada" -- rediseño estilo tracking
+   de encomienda: linea vertical continua con degradado, nodos circulares
+   mas grandes con icono por tipo de evento (colores paleta Regla #2: verde
+   completado, azul info, ambar aviso, rojo error), cuerpo de cada evento en
+   tarjeta sutil, y el evento MAS RECIENTE destacado con anillo pulsante.
+   Mismos eventos y textos de siempre -- solo cambia la presentacion. */
+.tk-act-item{position:relative;display:flex;gap:14px;padding-bottom:14px;}
+.tk-act-item::before{content:'';position:absolute;left:17px;top:40px;bottom:-4px;width:3px;border-radius:2px;
+  background:linear-gradient(180deg,#e2e8f0 0%,#f1f5f9 100%);}
 .tk-act-item:last-child{padding-bottom:0;}
 .tk-act-item:last-child::before{display:none;}
-.tk-act-nodo{width:32px;height:32px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
-  justify-content:center;font-size:.85rem;position:relative;z-index:1;border:2px solid #fff;
-  box-shadow:0 0 0 1px #eaecf0;}
-.tk-act-body{flex:1;min-width:0;padding-top:5px;}
+.tk-act-nodo{width:36px;height:36px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:.92rem;position:relative;z-index:1;border:2.5px solid #fff;
+  box-shadow:0 0 0 1.5px #e2e8f0, var(--shadow-sm);margin-top:2px;}
+/* El primer evento visible = el mas reciente ("¿dónde va el paquete?"):
+   anillo pulsante del color del propio nodo. */
+.tk-act-item:first-child .tk-act-nodo::after{content:'';position:absolute;inset:-6px;border-radius:50%;
+  border:2px solid currentColor;opacity:0;animation:tkActPing 2.2s ease-out infinite;}
+@keyframes tkActPing{0%{transform:scale(.75);opacity:.5;}80%{transform:scale(1.12);opacity:0;}100%{opacity:0;}}
+.tk-act-body{flex:1;min-width:0;background:#fafbfc;border:1px solid #f1f5f9;border-radius:var(--r-sm);
+  padding:9px 13px;transition:background .15s,border-color .15s,box-shadow .2s var(--ease-spring);}
+.tk-act-item:hover .tk-act-body{background:#fff;border-color:#e5e7eb;box-shadow:var(--shadow-sm);}
+.tk-act-item:first-child .tk-act-body{background:#fff;border-color:#e5e7eb;box-shadow:var(--shadow-sm);}
 .tk-act-linea{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
 .tk-act-texto{font-size:.85rem;color:#374151;line-height:1.4;overflow-wrap:anywhere;}
 .tk-act-texto b{color:#0f172a;font-weight:700;}
-.tk-act-fecha{font-size:.7rem;color:#9ca3af;margin-left:auto;white-space:nowrap;}
-.tk-act-extracto{font-size:.78rem;color:#6b7280;margin-top:2px;overflow-wrap:anywhere;}
+.tk-act-fecha{font-size:.7rem;color:#9ca3af;margin-left:auto;white-space:nowrap;font-weight:600;
+  font-variant-numeric:tabular-nums;}
+.tk-act-extracto{font-size:.78rem;color:#6b7280;margin-top:3px;overflow-wrap:anywhere;
+  padding-top:3px;border-top:1px dashed #f1f5f9;}
+@media (max-width:520px){
+  .tk-act-fecha{margin-left:0;flex-basis:100%;}
+}
 .tk-act-tag{display:inline-flex;align-items:center;gap:4px;border-radius:50px;padding:1px 8px;font-size:.6rem;
   font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;vertical-align:middle;}
 .tk-act-tag.env-ok,.tk-act-tag.cliente{background:#dcfce7;color:#166534;}
@@ -598,6 +699,7 @@
     <span class="tk-tipo" id="hTipo" style="display:none;"></span>
     <span class="tk-gar-badge" id="hGarantia" style="display:none;"><i class="bi bi-shield-check"></i> Garantía</span>
     <span class="tk-sla" id="hSla" style="display:none;"></span>
+    <span class="tk-sla-vencido" id="hSlaVencido" title=""><i class="bi bi-alarm-fill"></i><span id="hSlaVencidoTxt"></span></span>
     <span class="tk-hero-sub" id="hSub"></span>
   </div>
 </div>
@@ -663,6 +765,15 @@
     <div id="idVistaCompacta">
       <div class="tk-id-nombre" id="idCompactoNombre">—</div>
       <dl class="tk-dl" id="idCompactoDatos"></dl>
+      <!-- 2026-07-14: los campos SIN dato se agrupan acá, colapsados tras el
+           botón "Ver campos vacíos (N)" — siguen siendo editables con el
+           lápiz al expandir (Regla #4.2, nada se elimina). -->
+      <button type="button" class="tk-id-vacios-btn" id="idVaciosBtn">
+        <i class="bi bi-chevron-down"></i><span id="idVaciosBtnTxt"></span>
+      </button>
+      <div class="tk-id-vacios-wrap" id="idVaciosWrap">
+        <dl class="tk-dl" id="idCompactoVacios"></dl>
+      </div>
       <span class="tk-badge" id="idCompactoTipoBadge"
         style="display:none;background:#f3f4f6;color:#374151;margin-top:12px;"></span>
     </div>
@@ -1412,6 +1523,26 @@ let garEquipoActual = null; // equipo en edición dentro del modal de garantía
 // darle al hilo su propio piso minimo (160px). El techo del editor
 // (220px) evita que crezca de mas aunque sobre espacio en un monitor
 // grande -- ese espacio de mas se lo lleva el hilo, no el editor.
+// ACTUALIZACION 2026-07-14 (Daniel): "con el scroll quiero consumirme todo
+// el header y que se vea el panel completo, aprovechar los espacios para
+// agrandar la caja de mensajes". Antes se dimensionaba para que el composer
+// quedara visible SIN scrollear la pagina (con el hero ocupando pantalla) --
+// eso dejaba el hilo chico. Ahora se dimensiona como si el hero YA se
+// hubiera scrolleado fuera de vista: la pagina scrollea lo justo (el alto
+// del hero, sin sticky, de forma natural) y con el hero consumido el hilo +
+// composer llenan practicamente toda la pantalla.
+function tkHeroAltoConsumible(){
+  // Cuanto de la parte superior de la pagina (hero + su margen inferior)
+  // desaparece del viewport al scrollear hacia abajo.
+  const hero = document.getElementById('tkHero');
+  if(!hero) return 0;
+  const r = hero.getBoundingClientRect();
+  let mb = 16;
+  try{ mb = parseFloat(getComputedStyle(hero).marginBottom) || 0; }catch(e){}
+  // Borde inferior del hero (con margen) medido en el viewport: si aun es
+  // positivo, ese alto todavia se puede "consumir" scrolleando la pagina.
+  return Math.max(0, r.bottom + mb);
+}
 function ajustarAltoHilo(){
   const paneConv = document.getElementById('pane-conv');
   if(!paneConv || !paneConv.classList.contains('active')) return; // oculto: rects en 0, no calcular
@@ -1421,11 +1552,13 @@ function ajustarAltoHilo(){
   if(!th || !composer || !qlContainer) return;
 
   const AIRE_INFERIOR = 24;    // respiro entre el composer y el borde de la ventana
-  const EDITOR_DEFAULT = 150;  // alto comodo y compacto por defecto (no ocupa de mas)
-  const EDITOR_MIN = 70;       // piso absoluto si el espacio es muy chico
-  const HILO_MIN = 160;        // piso del hilo (ahora el area PRINCIPAL, un poco mas generoso)
+  const EDITOR_DEFAULT = 180;  // alto comodo del editor (Daniel 2026-07-14: "mas altura minima")
+  const EDITOR_MIN = 90;       // piso absoluto si el espacio es muy chico
+  const HILO_MIN = 200;        // piso del hilo (el area PRINCIPAL)
 
-  const threadTop = th.getBoundingClientRect().top;
+  // Tope del hilo "efectivo": donde quedara el hilo cuando el hero ya se
+  // haya scrolleado fuera de vista (tabs + cabecera del card solamente).
+  const threadTop = th.getBoundingClientRect().top - tkHeroAltoConsumible();
   // "Chrome" del composer que NO es el editor (mode-tabs + headers De/Para/CC
   // si estan visibles + barra de adjuntos/enviar) -- fijo independientemente
   // del alto que le demos al editor.
@@ -1442,8 +1575,9 @@ function ajustarAltoHilo(){
     alturaHilo = Math.max(HILO_MIN, restante - alturaEditor);
   }
   qlContainer.style.maxHeight = alturaEditor + 'px';
-  qlContainer.style.minHeight = Math.min(alturaEditor, 150) + 'px';
+  qlContainer.style.minHeight = Math.min(alturaEditor, 180) + 'px';
   th.style.maxHeight = alturaHilo + 'px';
+  th.style.minHeight = Math.min(alturaHilo, HILO_MIN) + 'px';
 }
 let _ajustarAltoHiloTimer = null;
 function ajustarAltoHiloDebounced(){
@@ -1458,6 +1592,29 @@ function esc(s){ return (s==null?'':String(s))
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 // El servidor ya envía las fechas formateadas en hora Chile (Regla #6).
 function fmtFechaHora(s){ return s || ''; }
+// 2026-07-14 (Daniel): "dice visto por Daniel Aguilar y lo dice en inglés,
+// con una fecha que no corresponde -- tiene que poner la fecha de Santiago".
+// Causa: visto_at NO pasa por _fmt_row en el backend (no está en dt_keys),
+// así que Flask/jsonify lo serializa crudo en formato RFC-1123 EN INGLÉS y
+// EN UTC/GMT ("Mon, 13 Jul 2026 22:10:05 GMT"). Este helper lo convierte a
+// hora de Santiago en dd/mm/aaaa HH:MM. Es defensivo: si el backend algún
+// día lo manda ya formateado (dd/mm/aaaa …), se usa tal cual.
+function fmtFechaVisto(s){
+  if(s == null) return '';
+  const str = String(s).trim();
+  if(!str || /^\d{2}\/\d{2}\/\d{4}/.test(str)) return str; // ya viene en hora Chile
+  const d = new Date(str);
+  if(isNaN(d.getTime())) return str;
+  try{
+    const partes = new Intl.DateTimeFormat('es-CL', {
+      timeZone:'America/Santiago', day:'2-digit', month:'2-digit',
+      year:'numeric', hour:'2-digit', minute:'2-digit', hour12:false,
+    }).formatToParts(d);
+    const g = {};
+    partes.forEach(function(p){ g[p.type] = p.value; });
+    return g.day+'/'+g.month+'/'+g.year+' '+g.hour+':'+g.minute;
+  }catch(e){ return str; }
+}
 // href seguro: solo rutas internas /f/ o http(s) — evita esquemas peligrosos.
 function safeUrl(u){ u=String(u||''); return (u.startsWith('/') || /^https?:/i.test(u)) ? u : '#'; }
 // 2026-07-12 (Daniel — tickets 590/591): algunos adjuntos quedaron con
@@ -1486,6 +1643,14 @@ document.querySelectorAll('.tk-tab').forEach(function(tab){
         ajustarAltoHilo();
         const th = document.getElementById('rpThread');
         if(th) th.scrollTop = th.scrollHeight;
+        // 2026-07-14 (Daniel): al entrar a Respuestas, consumir el header
+        // scrolleando la pagina de forma natural (sin sticky) para que el
+        // panel de conversacion ocupe practicamente toda la pantalla.
+        const consumir = tkHeroAltoConsumible();
+        if(consumir > 0){
+          try{ window.scrollTo({top: window.scrollY + consumir, behavior:'smooth'}); }
+          catch(e){ window.scrollTo(0, window.scrollY + consumir); }
+        }
       });
     }
   });
@@ -1631,7 +1796,19 @@ const rpQuill = new Quill('#rpEditor', {
         const fd = new FormData();
         fd.append('audio', blob, 'dictado.webm');
         const r = await fetch('/tickets/api/transcribir', { method: 'POST', body: fd });
-        const d = await r.json();
+        // 2026-07-14 (Daniel: "dictar por voz no está funcionando"): antes,
+        // cualquier respuesta NO-JSON (sesión expirada -> redirect a login,
+        // 413 del proxy, error HTML del servidor) reventaba en r.json() y
+        // caía al genérico "Error de red" sin pista alguna. Se diferencia el
+        // caso para poder diagnosticar de verdad.
+        let d = null;
+        try{ d = await r.json(); }catch(e){ d = null; }
+        if (!d){
+          ilusToast('El servidor no respondió como se esperaba (HTTP '+r.status+'). '
+            + (r.status === 401 || r.status === 403 || (r.redirected && /login/i.test(r.url||''))
+               ? 'Tu sesión pudo haber expirado — recarga la página.' : 'Intenta de nuevo.'), { type: 'error' });
+          return;
+        }
         if (!d.ok){ ilusToast(d.error || 'No se pudo transcribir', { type: 'error' }); return; }
         if (!d.texto){ ilusToast('No se detectó voz en la grabación.', { type: 'info' }); return; }
         const range = rpQuill.getSelection(true) || { index: rpQuill.getLength(), length: 0 };
@@ -1641,6 +1818,7 @@ const rpQuill = new Quill('#rpEditor', {
       finally{ btnDictar.disabled = false; btnDictar.innerHTML = original; }
     }
 
+    let _dictadoTimer = null; // auto-stop: recognize síncrono de Google acepta ~60s máx
     btnDictar.addEventListener('click', async function(){
       if (grabando){ mediaRecorder && mediaRecorder.state === 'recording' && mediaRecorder.stop(); return; }
       try{
@@ -1650,18 +1828,42 @@ const rpQuill = new Quill('#rpEditor', {
         return;
       }
       chunks = [];
-      mediaRecorder = new MediaRecorder(streamActual, { mimeType: mimeType });
+      try{
+        mediaRecorder = new MediaRecorder(streamActual, { mimeType: mimeType });
+      }catch(e){
+        streamActual.getTracks().forEach(function(t){ t.stop(); });
+        ilusToast('No se pudo iniciar la grabación en este navegador.', { type: 'error' });
+        return;
+      }
       mediaRecorder.ondataavailable = function(ev){ if (ev.data && ev.data.size) chunks.push(ev.data); };
+      mediaRecorder.onerror = function(){
+        clearTimeout(_dictadoTimer);
+        try{ streamActual.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+        detenerUI();
+        ilusToast('La grabación falló — intenta de nuevo.', { type: 'error' });
+      };
       mediaRecorder.onstop = function(){
+        clearTimeout(_dictadoTimer);
         streamActual.getTracks().forEach(function(t){ t.stop(); });
         detenerUI();
         const blob = new Blob(chunks, { type: mimeType });
         if (blob.size > 500) transcribirYInsertar(blob);
+        else ilusToast('La grabación quedó vacía — habla y luego detén con el mismo botón.', { type: 'info' });
       };
-      mediaRecorder.start();
+      // timeslice 250ms: junta datos DURANTE la grabación (más robusto que
+      // un único chunk al final si la pestaña pierde foco o algo interrumpe).
+      mediaRecorder.start(250);
       grabando = true;
       btnDictar.classList.add('rp-dictando');
       btnDictar.title = 'Grabando… clic para detener y transcribir';
+      // El endpoint usa recognize() síncrono de Google (límite ~60s de audio):
+      // se corta solo a los 55s para que la transcripción no falle por largo.
+      _dictadoTimer = setTimeout(function(){
+        if (grabando && mediaRecorder && mediaRecorder.state === 'recording'){
+          ilusToast('Se alcanzó el máximo de ~1 minuto de dictado — transcribiendo lo grabado.', { type: 'info' });
+          mediaRecorder.stop();
+        }
+      }, 55000);
     });
   } else {
     // Fallback: Web Speech API nativa (Safari/iPhone -- confirmado que
@@ -1862,6 +2064,19 @@ async function cargar(){
     hSla.innerHTML = '<i class="bi bi-'+(venc?'alarm-fill':'calendar-event')+' me-1"></i>'
       + (venc?'Vencido ':'Vence ')+esc(t.fecha_limite);
   } else hSla.style.display='none';
+  // ── SLA de respuesta vencido (campos nuevos del backend 2026-07-14:
+  // t.sla_vencido bool + t.sla_horas float + d.sla_umbral_horas int).
+  // Badge rojo pulsante "SLA vencido · Nh" — solo si sla_vencido===true
+  // (los estados terminales llegan con sla_horas=null / sla_vencido=false).
+  const hSlaV = document.getElementById('hSlaVencido');
+  if(t.sla_vencido === true){
+    const hrs = (typeof t.sla_horas === 'number') ? Math.round(t.sla_horas) : null;
+    document.getElementById('hSlaVencidoTxt').textContent =
+      'SLA vencido' + (hrs !== null ? ' · ' + hrs + 'h' : '');
+    hSlaV.title = 'Sin resolución hace ' + (hrs !== null ? hrs + ' horas' : 'más de lo permitido')
+      + (d.sla_umbral_horas ? ' (umbral: ' + d.sla_umbral_horas + 'h)' : '');
+    hSlaV.style.display = 'inline-flex';
+  } else hSlaV.style.display = 'none';
   document.getElementById('hSub').textContent = 'Creado '+fmtFechaHora(t.created_at)+(t.created_by?' · '+t.created_by:'');
   const hDirRow = document.getElementById('hDireccionRow');
   if(t.direccion && String(t.direccion).trim()){
@@ -1879,7 +2094,7 @@ async function cargar(){
   if(d.vistas && d.vistas.length){
     vp.style.display = 'block';
     vp.innerHTML = '<i class="bi bi-eye me-1"></i>Visto por: ' + d.vistas.map(function(v){
-      return '<b>'+esc(v.usuario)+'</b> ('+esc(v.visto_at)+')';
+      return '<b>'+esc(v.usuario)+'</b> ('+esc(fmtFechaVisto(v.visto_at))+')';
     }).join(' · ');
   } else vp.style.display = 'none';
 
@@ -1933,6 +2148,13 @@ async function cargar(){
               + nombreHtml
               + (eq.notas?'<div class="eq-name-sub text-truncate" style="max-width:220px" title="'+esc(eq.notas)+'">'+esc(eq.notas)+'</div>':'')
               + ((eq.cantidad||1) > 1 ? '<div class="eq-name-sub"><i class="bi bi-layers me-1"></i>'+eq.cantidad+' unidades</div>' : '')
+              // 2026-07-14 (Daniel): documento de origen del equipo
+              // (tk_ticket_equipos.documento_garantia, ej. "Factura 10599").
+              // Si el equipo no viene de ningun documento, no se pinta nada.
+              + (eq.documento_garantia && String(eq.documento_garantia).trim()
+                  ? '<div><span class="tk-eq-doc-chip" title="Documento de origen: '+esc(eq.documento_garantia)+'">'
+                    + '<i class="bi bi-file-earmark-text"></i>Doc: '+esc(eq.documento_garantia)+'</span></div>'
+                  : '')
             + '</td>'
             + '<td>'+(codigo?'<span class="eq-sku">'+esc(codigo)+'</span>':'<span class="text-muted">—</span>')+'</td>'
             + '<td>'+(eq.serie?'<span style="font-family:monospace;font-size:.78rem;color:#374151">'+esc(eq.serie)+'</span>':'<span class="text-muted">—</span>')+'</td>'
@@ -2113,26 +2335,71 @@ function tkIdValorMostrado(campo, t){
   }
   return v ? esc(v) : '<span class="text-muted fw-normal">—</span>';
 }
+// 2026-07-14 (Daniel): "lo veo con muchos campos vacios" -- las filas SIN
+// dato ya no se muestran de entrada: van colapsadas tras "Ver campos
+// vacios (N)". El estado expandido persiste entre re-renders (guardar/
+// cancelar una edicion re-pinta la tarjeta y no debe colapsar de vuelta).
+let tkIdVaciosAbierto = false;
+function tkIdFilaHtml(campo, t){
+  return '<i class="bi bi-'+campo.icon+'"></i><dt>'+esc(campo.label)+'</dt>'
+    + '<dd data-field="'+campo.key+'">'
+    + '<span class="tk-dd-val">'+tkIdValorMostrado(campo, t)+'</span>'
+    + '<i class="bi bi-pencil-fill tk-edit-pencil" data-field="'+campo.key+'" title="Editar '+esc(campo.label)+'"></i>'
+    + '</dd>';
+}
 function renderIdentificacionCompacta(t){
   document.getElementById('idCompactoNombre').textContent = t.empresa || t.nombre_contacto || 'Sin nombre registrado';
   const dl = document.getElementById('idCompactoDatos');
-  dl.innerHTML = TK_ID_CAMPOS.map(function(campo){
-    return '<i class="bi bi-'+campo.icon+'"></i><dt>'+esc(campo.label)+'</dt>'
-      + '<dd data-field="'+campo.key+'">'
-      + '<span class="tk-dd-val">'+tkIdValorMostrado(campo, t)+'</span>'
-      + '<i class="bi bi-pencil-fill tk-edit-pencil" data-field="'+campo.key+'" title="Editar '+esc(campo.label)+'"></i>'
-      + '</dd>';
-  }).join('');
-  dl.querySelectorAll('.tk-edit-pencil').forEach(function(p){
+  const dlVacios = document.getElementById('idCompactoVacios');
+  const btnVacios = document.getElementById('idVaciosBtn');
+  const wrapVacios = document.getElementById('idVaciosWrap');
+  const tieneDato = function(campo){
+    const v = t[campo.key];
+    return !(v === null || v === undefined || String(v).trim() === '');
+  };
+  let llenos = TK_ID_CAMPOS.filter(tieneDato);
+  let vacios = TK_ID_CAMPOS.filter(function(c){ return !tieneDato(c); });
+  // Ticket recien creado sin NINGUN dato: mostrar todo de una (una tarjeta
+  // 100% colapsada no orienta a nadie).
+  if(!llenos.length){ llenos = vacios; vacios = []; }
+  dl.innerHTML = llenos.map(function(campo){ return tkIdFilaHtml(campo, t); }).join('');
+  if(vacios.length){
+    dlVacios.innerHTML = vacios.map(function(campo){ return tkIdFilaHtml(campo, t); }).join('');
+    document.getElementById('idVaciosBtnTxt').textContent = tkIdVaciosAbierto
+      ? 'Ocultar campos vacíos' : 'Ver campos vacíos ('+vacios.length+')';
+    btnVacios.style.display = 'inline-flex';
+    btnVacios.classList.toggle('abierto', tkIdVaciosAbierto);
+    wrapVacios.classList.toggle('show', tkIdVaciosAbierto);
+  } else {
+    dlVacios.innerHTML = '';
+    btnVacios.style.display = 'none';
+    wrapVacios.classList.remove('show');
+  }
+  // Lapices de AMBAS listas (llenos + vacios) siguen editando igual.
+  document.querySelectorAll('#idVistaCompacta .tk-edit-pencil').forEach(function(p){
     p.addEventListener('click', function(){ tkIdEmpezarEdicion(p.dataset.field); });
   });
   const badge = document.getElementById('idCompactoTipoBadge');
   if(t.tipo){ badge.style.display='inline-block'; badge.textContent = TIPO_LABEL[t.tipo]||t.tipo; } else badge.style.display='none';
 }
+(function(){
+  const btn = document.getElementById('idVaciosBtn');
+  if(!btn) return;
+  btn.addEventListener('click', function(){
+    tkIdVaciosAbierto = !tkIdVaciosAbierto;
+    btn.classList.toggle('abierto', tkIdVaciosAbierto);
+    document.getElementById('idVaciosWrap').classList.toggle('show', tkIdVaciosAbierto);
+    const n = document.querySelectorAll('#idCompactoVacios dd').length;
+    document.getElementById('idVaciosBtnTxt').textContent = tkIdVaciosAbierto
+      ? 'Ocultar campos vacíos' : 'Ver campos vacíos ('+n+')';
+  });
+})();
 
 // Convierte la fila del campo indicado en un input/select editable inline.
 function tkIdEmpezarEdicion(key){
-  const dd = document.querySelector('#idCompactoDatos dd[data-field="'+key+'"]');
+  // El dd puede vivir en la lista de campos CON dato (#idCompactoDatos) o en
+  // la de campos vacios (#idCompactoVacios) -- se busca en el contenedor.
+  const dd = document.querySelector('#idVistaCompacta dd[data-field="'+key+'"]');
   if(!dd || dd.dataset.editing === '1') return;
   const campo = tkIdCampoConfig(key);
   const valorActual = (ticketActual && ticketActual[key]) || '';
@@ -2251,8 +2518,13 @@ function renderThread(mensajes, adjuntos){
     }
     const esCliente = m.tipo === 'client_message';
     const esInterno = !!m.es_interno && m.tipo !== 'client_message';
-    const cls = esCliente ? 'in' : (esInterno ? 'interno' : 'out');
+    // 2026-07-14 (Daniel): "resaltarlo en blanco cuando es automatico" --
+    // un mensaje saliente SIN usuario lo genero el SISTEMA (respuesta
+    // automatica / notificacion); recibe la clase .auto (variante blanca).
+    const esAuto = !esCliente && !esInterno && !m.usuario;
+    const cls = esCliente ? 'in' : (esInterno ? 'interno' : ('out' + (esAuto ? ' auto' : '')));
     const who = esCliente ? (esc(ticketActual && ticketActual.nombre_contacto || 'Cliente')) : esc(m.usuario || 'Sistema');
+    const autoTag = esAuto ? ' <span class="rp-auto-tag"><i class="bi bi-robot"></i>Automático</span>' : '';
     let estadoTag = '';
     if(!esCliente && !esInterno){
       estadoTag = m.estado_envio === 'fallido'
@@ -2291,9 +2563,9 @@ function renderThread(mensajes, adjuntos){
         + '<div class="rp-traduccion" id="rpTrad_'+m.id+'" style="display:none"></div>'
       : '';
     return '<div class="rp-msg '+cls+'"><div class="rp-bubble">'
-      + '<div class="rp-meta">'+who+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>'
+      + '<div class="rp-meta">'+who+autoTag+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>'
       + '<div'+(esCliente?' class="rp-content-plano"':'')+'>'+contenidoHtml+'</div>'
-      + (adjHtml? '<div>'+adjHtml+'</div>':'')
+      + (adjHtml? '<div class="rp-adj-lista">'+adjHtml+'</div>':'')
       + tradHtml
       + '</div></div>';
   }).join('');
@@ -2449,7 +2721,7 @@ function actConstruirEventos(mensajes, vistas){
     evts.push({tipo: (ACT_DEFS[m.tipo] ? m.tipo : 'otro'), m: m, key: actKeyFecha(m.created_at), seq: i});
   });
   (vistas||[]).forEach(function(v, i){
-    evts.push({tipo:'vista', v: v, key: actKeyFecha(v.visto_at), seq: 100000+i});
+    evts.push({tipo:'vista', v: v, key: actKeyFecha(fmtFechaVisto(v.visto_at)), seq: 100000+i});
   });
   // Más reciente ARRIBA; a igual fecha/hora, gana el que se registró después.
   evts.sort(function(a,b){
@@ -2464,7 +2736,7 @@ function actEventoHtml(ev){
   let texto = '', extracto = '', tags = '', fecha = '';
   if(ev.tipo === 'vista'){
     const v = ev.v;
-    fecha = v.visto_at || '';
+    fecha = fmtFechaVisto(v.visto_at) || '';
     texto = '<b>'+esc(v.usuario||'Alguien')+'</b> abrió el ticket';
   } else {
     const m = ev.m;

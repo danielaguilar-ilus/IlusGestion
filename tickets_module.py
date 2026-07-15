@@ -80,6 +80,18 @@ TK_ESTADOS = (
 # vinculada) -- ver tk_api_update, que rechaza estos valores via PATCH manual.
 TK_ESTADOS_MANUALES = ("open", "in_progress", "pending", "resolved", "closed", "cancelado")
 TK_ESTADOS_AUTOMATICOS = ("ot_generated", "ot_in_progress", "ot_pending_approval")
+# Estados TERMINALES para efectos de SLA (Daniel 2026-07-14: "nos paso los
+# SLA, me tiene que avisar con un estado"): un ticket resuelto/cerrado/
+# cancelado ya no corre reloj. Los estados ot_* SI cuentan (sigue abierto).
+TK_ESTADOS_CERRADOS = ("resolved", "closed", "cancelado")
+# Umbral de SLA por DEFECTO en horas. Orden de precedencia real en runtime
+# (ver _tk_sla_horas_umbral): regla de negocio editable 'tk_sla_horas'
+# (mant_reglas_negocio, /mantenciones/configuracion) → env TK_SLA_HORAS →
+# este default (48 h).
+try:
+    TK_SLA_HORAS_DEFAULT = max(1, int(float(os.environ.get("TK_SLA_HORAS", "48"))))
+except Exception:
+    TK_SLA_HORAS_DEFAULT = 48
 TK_TIPOS = (
     "install", "tech_support", "shipping", "quotation", "return",
     "tech_evaluation", "maintenance", "spare_parts", "equipment_transfer",
@@ -605,6 +617,9 @@ def register_tickets_routes(app, ctx):
     # (bloquea y loguea en email_log) -- esto solo sirve para dar un mensaje
     # de error claro en la UI en vez de un generico "no se pudo enviar".
     _modulo_canal_bloqueado = ctx.get("_modulo_canal_bloqueado")
+    # Reglas de negocio editables (mant_reglas_negocio, /mantenciones/
+    # configuracion) -- para el umbral de SLA de tickets ('tk_sla_horas').
+    _reglas_cargar = ctx.get("_reglas_cargar")
     def _fmt_dt(value, only_date=False):
         """Formatea un datetime/date de MySQL (UTC naive) a hora Chile como
         string listo para la UI (Regla #6). Usa el chile_fmt del proyecto si
@@ -630,7 +645,8 @@ def register_tickets_routes(app, ctx):
             return str(value)
 
     def _fmt_row(row, dt_keys=("created_at", "updated_at", "cerrado_at",
-                              "message_date", "staff_last_read_at"),
+                              "message_date", "staff_last_read_at",
+                              "visto_at", "primera_vez"),
                  date_keys=("fecha_limite", "fecha")):
         """Devuelve un dict con los campos de fecha convertidos a hora Chile."""
         d = dict(row)
@@ -641,6 +657,48 @@ def register_tickets_routes(app, ctx):
             if k in d:
                 d[k] = _fmt_dt(d[k], only_date=True)
         return d
+
+    # ─────────────────────────────────────────────────────────────────
+    #  SLA (Daniel 2026-07-14, URGENTE: "nos paso los SLA, me tiene que
+    #  avisar con un estado"). El backend expone 2 campos CALCULADOS por
+    #  ticket (sla_horas / sla_vencido) + el umbral vigente
+    #  (sla_umbral_horas) en tk_api_list y tk_api_get; el front los pinta.
+    #  NO se agrega columna nueva a tk_tickets: se calcula al vuelo desde
+    #  created_at (que MySQL guarda en UTC via NOW(), Regla #6).
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_sla_horas_umbral():
+        """Umbral de SLA en horas. Precedencia: regla editable
+        'tk_sla_horas' (mant_reglas_negocio) → env TK_SLA_HORAS →
+        default 48. Jamas rompe: ante cualquier error cae al default."""
+        if _reglas_cargar:
+            try:
+                v = (_reglas_cargar() or {}).get("tk_sla_horas")
+                if v is not None:
+                    v = int(float(v))
+                    if v > 0:
+                        return v
+            except Exception as _e:
+                print(f"[tk_sla] regla tk_sla_horas ilegible: {_e}", flush=True)
+        return TK_SLA_HORAS_DEFAULT
+
+    def _tk_sla_info(estado, created_at, umbral_horas):
+        """(sla_horas, sla_vencido) para un ticket. created_at debe ser el
+        datetime CRUDO de MySQL (UTC naive, ANTES de pasar por _fmt_row).
+        Estados terminales (TK_ESTADOS_CERRADOS) no corren reloj →
+        (None, False). Defensivo: si la fecha no se puede leer, (None, False)."""
+        if (estado or "") in TK_ESTADOS_CERRADOS:
+            return (None, False)
+        try:
+            if isinstance(created_at, str):
+                created_at = datetime.strptime(created_at[:19], "%Y-%m-%d %H:%M:%S")
+            if not isinstance(created_at, datetime):
+                return (None, False)
+            horas = (datetime.utcnow() - created_at).total_seconds() / 3600.0
+            horas = round(max(0.0, horas), 1)
+            return (horas, bool(horas > float(umbral_horas)))
+        except Exception as _e:
+            print(f"[tk_sla] created_at ilegible ({created_at!r}): {_e}", flush=True)
+            return (None, False)
 
     # ─────────────────────────────────────────────────────────────────
     #  Migracion idempotente (patron _ensure_*). Corre al registrar el
@@ -1142,6 +1200,23 @@ def register_tickets_routes(app, ctx):
                     print(f"[rutas_import] fila csv_id={csv_id_int} no importada: {_e}", flush=True)
         return importados
 
+    def _ensure_tk_sla_regla():
+        """Siembra la regla editable 'tk_sla_horas' en mant_reglas_negocio
+        (mismo patron INSERT IGNORE que _ensure_reglas_terreno de app.py:
+        jamas pisa lo que Daniel edite en /mantenciones/configuracion).
+        Si la tabla aun no existe en este boot, el try/except lo absorbe y
+        el modulo cae al env TK_SLA_HORAS / default 48 sin romper nada."""
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_reglas_negocio "
+                "(clave, valor, tipo_dato, categoria, label, unidad, orden) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                ("tk_sla_horas", str(TK_SLA_HORAS_DEFAULT), "int", "tickets",
+                 "SLA de tickets: horas maximas desde la creacion antes de marcarse vencido",
+                 "horas", 10))
+        except Exception as _e:
+            print(f"[ILUS][WARN] seed tk_sla_horas: {_e}", flush=True)
+
     with app.app_context():
         try:
             _ensure_tickets_tables()
@@ -1153,6 +1228,7 @@ def register_tickets_routes(app, ctx):
             _ensure_tk_ticket_equipos_garantia_columns()
             _ensure_tk_tickets_visita_link()
             _ensure_tk_zz_instalacion_scan_table()
+            _ensure_tk_sla_regla()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_tickets_tables: {_e}", flush=True)
@@ -1578,9 +1654,21 @@ def register_tickets_routes(app, ctx):
             (_chile_hoy(),) + tuple(params),
         ) or {}
 
+        # SLA calculado por fila (Daniel 2026-07-14). Se computa ANTES de
+        # _fmt_row porque necesita el created_at crudo (datetime UTC), no
+        # el string ya formateado a hora Chile.
+        sla_umbral = _tk_sla_horas_umbral()
+        tickets_out = []
+        for r in rows:
+            d = _fmt_row(r)
+            d["sla_horas"], d["sla_vencido"] = _tk_sla_info(
+                r.get("estado"), r.get("created_at"), sla_umbral)
+            tickets_out.append(d)
+
         return jsonify({
             "ok": True,
-            "tickets": [_fmt_row(r) for r in rows],
+            "tickets": tickets_out,
+            "sla_umbral_horas": sla_umbral,
             "total": total, "page": page, "limit": limit, "pages": pages,
             "kpis": {
                 "total": int(kpi.get("total") or 0),
@@ -1918,9 +2006,17 @@ def register_tickets_routes(app, ctx):
         _perms = g.get("permissions") or {}
         _puede_ver_actividad = bool(_perms.get("superadmin") or _perms.get("admin"))
 
+        # SLA calculado (Daniel 2026-07-14) -- mismos campos que el listado.
+        # Se computa con el created_at CRUDO de `t` (antes de _fmt_row).
+        sla_umbral = _tk_sla_horas_umbral()
+        ticket_out = _fmt_row(t)
+        ticket_out["sla_horas"], ticket_out["sla_vencido"] = _tk_sla_info(
+            t.get("estado"), t.get("created_at"), sla_umbral)
+
         return jsonify({
             "ok": True,
-            "ticket": _fmt_row(t),
+            "ticket": ticket_out,
+            "sla_umbral_horas": sla_umbral,
             "equipos": [dict(r) for r in equipos],
             "documentos": [_fmt_row(r) for r in documentos],
             "mensajes": [_fmt_row(r) for r in mensajes],
@@ -2502,7 +2598,8 @@ def register_tickets_routes(app, ctx):
     @_tickets_required
     def tk_api_responder_cliente(tid):
         t = mysql_fetchone(
-            "SELECT numero_ticket, email, empresa, nombre_contacto FROM tk_tickets WHERE id=%s", (tid,))
+            "SELECT numero_ticket, email, empresa, nombre_contacto, estado "
+            "FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
         d = request.get_json(silent=True) or {}
@@ -2594,6 +2691,33 @@ def register_tickets_routes(app, ctx):
             metadata={"subject": subject})
         _tk_link_adjuntos(tid, msg_id, d.get("adjunto_ids"))
         mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
+
+        # AUTO-ESTADO (Daniel 2026-07-14, URGENTE): "cuando respondamos un
+        # ticket, ya tiene que pasar a en curso". Solo aplica si:
+        #   1) la respuesta AL CLIENTE se envio de verdad (enviado=True) --
+        #      un envio fallido deja el mensaje guardado para reintentar,
+        #      y el estado cambiara cuando el reintento salga; y
+        #   2) el ticket sigue en su estado INICIAL 'open' -- JAMAS se
+        #      retrocede uno que ya avanzo (pending/resolved/closed/ot_*).
+        # El WHERE repite estado='open' como guarda anti-carrera (si otro
+        # usuario lo movio entre el SELECT de arriba y este UPDATE, no se
+        # pisa). Nota: NO se dispara _tk_notificar_lifecycle aqui a
+        # proposito -- el cliente acaba de recibir la respuesta; mandarle
+        # ademas el correo de "tu ticket esta en curso" seria spam.
+        if enviado and (t.get("estado") or "") == "open":
+            try:
+                mysql_execute(
+                    "UPDATE tk_tickets SET estado='in_progress' "
+                    "WHERE id=%s AND estado='open'", (tid,))
+                _tk_log(tid, "cambio_estado",
+                        f"Estado: {ESTADO_LABEL['open']} → {ESTADO_LABEL['in_progress']} "
+                        "(cambiado automáticamente al responder al cliente)",
+                        metadata={"campo": "estado", "antes": "open",
+                                  "nuevo": "in_progress", "auto": True,
+                                  "motivo": "respuesta_al_cliente"})
+            except Exception as _e:
+                # Nunca rompe el flujo de la respuesta (el correo YA salio).
+                print(f"[tk_responder_cliente] auto in_progress fallo tid={tid}: {_e}", flush=True)
 
         if not enviado:
             if _modulo_canal_bloqueado and _modulo_canal_bloqueado("tickets", "email"):
