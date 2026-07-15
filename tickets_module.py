@@ -1591,9 +1591,14 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/cotizaciones")
     @_tickets_required
     def tk_cotizaciones_list():
+        # LEFT JOIN a tk_tickets para poder pintar "Ver ticket TK-..." cuando
+        # ya existe (flujo inverso, Daniel 2026-07-15) y decidir si el boton
+        # "Generar ticket" va visible (solo si c.ticket_id es NULL).
         rows = mysql_fetchall(
-            "SELECT id, numero_cotizacion, estado, empresa, rut, total, created_at "
-            "FROM tk_cotizaciones ORDER BY created_at DESC LIMIT 100")
+            "SELECT c.id, c.numero_cotizacion, c.estado, c.empresa, c.rut, c.total, "
+            "       c.created_at, c.ticket_id, tk.numero_ticket "
+            "FROM tk_cotizaciones c LEFT JOIN tk_tickets tk ON tk.id = c.ticket_id "
+            "ORDER BY c.created_at DESC LIMIT 100")
         return render_template("tickets/cotizaciones.html",
                                 cotizaciones=[_fmt_row(r) for r in rows])
 
@@ -1633,6 +1638,22 @@ def register_tickets_routes(app, ctx):
         if email and not _TK_REPLY_EMAIL_RE.match(email):
             email = None  # dato sucio del ERP -- mejor NULL que guardar basura
         telefono = (header.get("telefono") or d.get("telefono") or "").strip()[:50] or None
+
+        # 2026-07-15 (Daniel: "generar cotizacion DENTRO del ticket"): si el
+        # llamado viene desde la ficha de un ticket abierto (botón "Generar
+        # cotización"), el frontend manda `ticket_id` en el body. Es OPCIONAL
+        # -- si no viene, el comportamiento historico (cotizacion suelta,
+        # ticket_id NULL) se mantiene exactamente igual (Regla #4.2).
+        ticket_id = None
+        _ticket_id_in = d.get("ticket_id")
+        if _ticket_id_in not in (None, "", 0, "0"):
+            try:
+                ticket_id = int(_ticket_id_in)
+            except Exception:
+                return jsonify({"ok": False, "error": "ticket_id inválido"}), 400
+            _t_check = mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (ticket_id,))
+            if not _t_check:
+                return jsonify({"ok": False, "error": "El ticket indicado no existe"}), 400
 
         erp_idmaeen = None
         erp_koen = None
@@ -1679,14 +1700,15 @@ def register_tickets_routes(app, ctx):
                         "nombre": (it.get("nombre") or "").strip(),
                     })
 
+        _anio_cot = _chile_now_year()
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO tk_cotizaciones "
-                    "(estado, erp_idmaeen, erp_koen, rut, empresa, email, telefono, created_by) "
-                    "VALUES ('draft', %s, %s, %s, %s, %s, %s, %s)",
-                    (erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa, email, telefono, user),
+                    "(estado, ticket_id, erp_idmaeen, erp_koen, rut, empresa, email, telefono, created_by) "
+                    "VALUES ('draft', %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa, email, telefono, user),
                 )
                 cot_id = cur.lastrowid
                 # Numeracion race-free derivada del id autoincrement, mismo
@@ -1695,7 +1717,7 @@ def register_tickets_routes(app, ctx):
                 cur.execute(
                     "UPDATE tk_cotizaciones SET numero_cotizacion = "
                     "CONCAT('COT-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
-                    (_chile_now_year(), cot_id),
+                    (_anio_cot, cot_id),
                 )
                 for it in items:
                     if not isinstance(it, dict):
@@ -1738,16 +1760,158 @@ def register_tickets_routes(app, ctx):
         finally:
             conn.close()
 
-        numero_row = mysql_fetchone(
-            "SELECT numero_cotizacion FROM tk_cotizaciones WHERE id=%s", (cot_id,))
-        numero = numero_row["numero_cotizacion"] if numero_row else None
+        # 2026-07-15 (bug real encontrado en pruebas de estres -- Daniel pidio
+        # "pruebas exhaustivas de trafico"): NO releer numero_cotizacion con
+        # mysql_fetchone (conexion pooled, autocommit=False) despues del
+        # commit de arriba (que corre en una conexion DISTINTA via
+        # get_mysql()). Si ESTA MISMA request ya hizo antes una lectura por
+        # el pool (el chequeo de ticket_id, o cat_productos dentro de la
+        # clasificacion -- ambas ANTES de este punto y CASI SIEMPRE presentes),
+        # esa conexion pooled ya tiene abierto un snapshot REPEATABLE READ
+        # previo al commit de la transaccion -- la relectura no ve la fila
+        # recien commiteada y devuelve numero=None (el dato SI quedo bien
+        # guardado en la BD; solo la respuesta JSON salia vacia, rompiendo el
+        # toast del frontend en CADA cotizacion creada). Confirmado
+        # reproduciendo contra MySQL real. El numero es 100% deterministico
+        # (mismo patron que la UPDATE de arriba) -- se arma en Python sin
+        # volver a tocar la BD, lo que ademas ahorra un round-trip.
+        numero = f"COT-{_anio_cot}-{cot_id:05d}"
         try:
             _audit("tk_cotizacion_create", target_type="tk_cotizacion", target_id=cot_id,
-                   details={"numero": numero, "items": len(items), "sin_clasificar": len(sin_clasificar)})
+                   details={"numero": numero, "items": len(items), "sin_clasificar": len(sin_clasificar),
+                            "ticket_id": ticket_id})
         except Exception:
             pass
+        # Si nació desde un ticket, deja rastro en la bitácora de ESE ticket
+        # (mismo patrón que cambio_estado/asignacion -- nunca bloquea el
+        # flujo si el log falla).
+        if ticket_id:
+            try:
+                _tk_log(ticket_id, "creacion",
+                        f"Cotización {numero or ('#' + str(cot_id))} generada desde este ticket "
+                        f"({len(items)} ítem(s)).",
+                        usuario=user, metadata={"cotizacion_id": cot_id, "numero_cotizacion": numero})
+            except Exception:
+                pass
         return jsonify({"ok": True, "id": cot_id, "numero_cotizacion": numero,
-                         "sin_clasificar": sin_clasificar})
+                         "sin_clasificar": sin_clasificar, "ticket_id": ticket_id})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — flujo inverso: generar un TICKET a partir de una cotización
+    #  suelta (Daniel 2026-07-15: "también quisiera generar un TICKET por
+    #  una cotización"). Una cotización solo puede tener UN ticket -- si
+    #  ya tiene uno, error 409 (mismo criterio que "Generar OT" de un
+    #  ticket: 1 ticket -> máximo 1 OT; acá es 1 cotización -> máximo 1
+    #  ticket). Usa los datos YA guardados en la cotización (empresa/rut/
+    #  email/telefono) para no pedirle nada de nuevo a quien lo dispara.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/cotizaciones/<int:cid>/generar-ticket", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_generar_ticket(cid):
+        # Atajo rapido (NO es la proteccion real -- ver FOR UPDATE abajo):
+        # evita abrir una conexion de escritura para un id que ni existe.
+        if not mysql_fetchone("SELECT id FROM tk_cotizaciones WHERE id=%s", (cid,)):
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+
+        user = current_username() or "sistema"
+        _anio_tk = _chile_now_year()
+
+        # 2026-07-15 (bug de concurrencia real, encontrado en pruebas de estres
+        # -- Daniel: "que pasa si el usuario hace doble click"): el chequeo de
+        # "ya tiene ticket" y la creacion del ticket vivian en pasos separados
+        # sin lock -- dos requests concurrentes (doble click, 2 pestañas) podian
+        # pasar la validacion LAS DOS antes de que la primera terminara de
+        # escribir, y las dos creaban un ticket propio (confirmado: 20
+        # llamadas paralelas reales sobre la MISMA cotización -> 13 tickets
+        # duplicados). Fix: todo el chequeo+escritura vive AHORA dentro de UNA
+        # sola transaccion, con `SELECT ... FOR UPDATE` bloqueando la fila de
+        # la cotización -- la segunda transaccion queda esperando aca hasta
+        # que la primera haga commit/rollback, y al despertar YA VE el
+        # ticket_id que la primera dejo (409 limpio, cero duplicados).
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT ticket_id, numero_cotizacion, empresa, rut, email, telefono "
+                    "FROM tk_cotizaciones WHERE id=%s FOR UPDATE", (cid,))
+                cot = cur.fetchone()
+                if not cot:
+                    conn.rollback()
+                    return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+                if cot.get("ticket_id"):
+                    conn.rollback()
+                    return jsonify({
+                        "ok": False,
+                        "error": "Esta cotización ya tiene un ticket asociado (una cotización no puede tener dos tickets).",
+                        "error_codigo": "YA_TIENE_TICKET",
+                        "ticket_id": cot["ticket_id"],
+                    }), 409
+
+                numero_cot = cot.get("numero_cotizacion") or f"#{cid}"
+                cur.execute(
+                    "INSERT INTO tk_tickets "
+                    "(origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, "
+                    " email, phone, created_by) "
+                    "VALUES ('backoffice','open','quotation','media',%s,%s,%s,%s,%s,%s,%s)",
+                    (
+                        f"Cotización {numero_cot}"[:300],
+                        f"Ticket generado automáticamente a partir de la cotización {numero_cot}."[:5000],
+                        (cot.get("rut") or None), (cot.get("empresa") or None),
+                        (cot.get("email") or None), (cot.get("telefono") or None),
+                        user,
+                    ),
+                )
+                tid = cur.lastrowid
+                # Numeracion race-free: mismo patron derivado del id
+                # autoincrement que el resto del modulo (TK-{anio}-{id}).
+                cur.execute(
+                    "UPDATE tk_tickets SET numero_ticket = "
+                    "CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                    (_anio_tk, tid),
+                )
+                # `AND ticket_id IS NULL` de resguardo extra (defensa en
+                # profundidad ademas del FOR UPDATE): si por algun motivo dos
+                # transacciones llegaran a pisarse igual, solo la que
+                # realmente encontro NULL logra el UPDATE -- nunca se deja un
+                # ticket recien creado "huerfano" sin que la cotización apunte
+                # a el ni se avise al caller.
+                cur.execute(
+                    "UPDATE tk_cotizaciones SET ticket_id=%s WHERE id=%s AND ticket_id IS NULL",
+                    (tid, cid))
+                if cur.rowcount == 0:
+                    conn.rollback()
+                    return jsonify({
+                        "ok": False,
+                        "error": "Esta cotización ya tiene un ticket asociado (una cotización no puede tener dos tickets).",
+                        "error_codigo": "YA_TIENE_TICKET",
+                    }), 409
+            conn.commit()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"[tk_api_cotizacion_generar_ticket] CRASH cid={cid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo generar el ticket"}), 500
+        finally:
+            conn.close()
+
+        # Mismo fix de fondo que en tk_api_cotizacion_desde_erp: NO releer por
+        # el pool (mysql_fetchone) despues de un commit hecho en otra
+        # conexion -- el numero es deterministico, se arma en Python.
+        numero_ticket = f"TK-{_anio_tk}-{tid:05d}"
+        try:
+            _tk_log(tid, "creacion",
+                    f"Ticket {numero_ticket or ''} generado a partir de la cotización {numero_cot}.",
+                    usuario=user, metadata={"cotizacion_id": cid, "numero_cotizacion": numero_cot})
+        except Exception:
+            pass
+        try:
+            _audit("tk_ticket_desde_cotizacion", target_type="tk_ticket", target_id=tid,
+                   details={"cotizacion_id": cid, "numero_cotizacion": numero_cot, "numero_ticket": numero_ticket})
+        except Exception:
+            pass
+        return jsonify({"ok": True, "id": tid, "numero_ticket": numero_ticket})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — listado + KPIs
@@ -2128,6 +2292,17 @@ def register_tickets_routes(app, ctx):
         documentos = mysql_fetchall(
             "SELECT id, erp_tido, erp_nudo, fecha, monto FROM tk_ticket_documentos "
             "WHERE ticket_id=%s ORDER BY id", (tid,))
+        # Cotizaciones generadas DESDE este ticket (Daniel 2026-07-15: "que
+        # esta se pueda generar DENTRO del ticket") -- puede haber mas de
+        # una (ej. una rechazada y una nueva re-cotizando). Se pintan en la
+        # tarjeta "Cotización" de la columna lateral (mismo patron visual
+        # que "Orden de trabajo": si existe, se muestra; si no, boton).
+        try:
+            cotizaciones = mysql_fetchall(
+                "SELECT id, numero_cotizacion, estado, total, created_at "
+                "FROM tk_cotizaciones WHERE ticket_id=%s ORDER BY created_at DESC", (tid,))
+        except Exception:
+            cotizaciones = []
         try:
             mensajes = mysql_fetchall(
                 "SELECT id, tipo, contenido, metadata, usuario, es_interno, message_date, created_at, "
@@ -2203,6 +2378,7 @@ def register_tickets_routes(app, ctx):
             "sla_umbral_horas": sla_umbral,
             "equipos": [dict(r) for r in equipos],
             "documentos": [_fmt_row(r) for r in documentos],
+            "cotizaciones": [_fmt_row(r) for r in cotizaciones],
             "mensajes": [_fmt_row(r) for r in mensajes],
             "adjuntos": [_fmt_row(r) for r in adjuntos],
             "vistas": [_fmt_row(r) for r in vistas] if _puede_ver_actividad else [],

@@ -1296,6 +1296,25 @@
         </div>
       </div>
 
+      <!-- ══════ Cotización — mismo patrón visual que "Orden de trabajo" ══════
+           2026-07-15 (Daniel: "necesito que... esta [cotización] se pueda
+           generar DENTRO del ticket"). A diferencia de la OT (1 ticket -> máx.
+           1 OT), un ticket SÍ puede tener varias cotizaciones (ej. una
+           rechazada + una nueva re-cotizando) -- así que el botón de generar
+           nunca desaparece, solo se agrega la lista de las que ya existen
+           arriba de él. Abre el MISMO modal ERP compartido
+           (tkaOpen({mode:'seleccionar', ...}), igual que /tickets/cotizaciones)
+           mandando ticket_id=TID para que quede asociada desde que nace. -->
+      <div class="tk-card tk-ot-card">
+        <h6><i class="bi bi-file-earmark-text"></i>Cotización</h6>
+        <div id="cotSideVacio" class="tk-ot-side-hint">
+          Este ticket todavía no tiene cotizaciones. Genera una llamando a un documento del ERP.
+        </div>
+        <div id="cotSideLista"></div>
+        <button class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarCotizacionSide" type="button" style="margin-top:4px;">
+          <i class="bi bi-file-earmark-plus me-1"></i>Generar cotización</button>
+      </div>
+
       <!-- Estado y gestión — 2026-07-15: dejó de vivir arriba de todo,
            ahora es lo primero y más visible de la columna lateral, con un
            badge grande de color real (mismas clases bs-* del hero). -->
@@ -2954,6 +2973,9 @@ async function cargar(){
 
   // Acciones — tarjeta "Orden de Trabajo" (Generar OT / ya vinculada)
   renderAccionesOT(t);
+
+  // Tarjeta "Cotización" — lista las generadas DESDE este ticket (número/estado/total)
+  renderCotizaciones(d.cotizaciones);
 
   // Documentos ERP del ticket — ahora renderizados dentro de la tarjeta Equipo(s)
   const ld = document.getElementById('listaDocs');
@@ -5846,6 +5868,74 @@ function renderAccionesOT(t){
       if(link) link.href = hrefOT;
     }
   });
+}
+
+// ══════════════ Cotización — generar DESDE este ticket ══════════════
+// 2026-07-15 (Daniel: "necesito que... esta se pueda generar DENTRO del
+// ticket"). Mismo modal ERP compartido (mode:'seleccionar') que usa
+// /tickets/cotizaciones, pero mandando ticket_id=TID para que la cotización
+// quede asociada desde que nace (el backend la deja suelta si no llega
+// ticket_id -- ver tk_api_cotizacion_desde_erp, comportamiento sin cambios
+// para el resto de módulos que llaman ese mismo endpoint).
+document.getElementById('btnGenerarCotizacionSide').addEventListener('click', function(){
+  tkaOpen({
+    mode: 'seleccionar',
+    onSeleccionar: async function(items, header){
+      if (!items || !items.length) return;
+      try{
+        const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ items: items, header: header || null, ticket_id: TID })
+        });
+        const d = await r.json();
+        if (!d.ok){
+          ilusToast(d.error || 'No se pudo crear la cotización', {type:'error'});
+          return;
+        }
+        ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada (' + items.length + ' ítem(s))', {type:'success'});
+        cargar();
+      }catch(e){
+        ilusToast('Error de conexión al crear la cotización', {type:'error'});
+      }
+    }
+  });
+});
+
+// Tarjeta lateral "Cotización" -- pinta número/estado/total de cada
+// cotización ya asociada a este ticket. A diferencia de "Orden de trabajo"
+// (1 ticket -> máx. 1 OT), acá puede haber varias -- el botón de generar
+// siempre queda visible, arriba solo se agrega la lista de existentes.
+const COT_ESTADO_LABEL = {draft:'Borrador', sent:'Enviada', approved:'Aprobada', rejected:'Rechazada', expired:'Expirada'};
+const COT_ESTADO_BG = {
+  draft:'background:#f3f4f6;color:#6b7280', sent:'background:#dbeafe;color:#1e40af',
+  approved:'background:#dcfce7;color:#166534', rejected:'background:#fee2e2;color:#991b1b',
+  expired:'background:#fef3c7;color:#92400e',
+};
+function renderCotizaciones(cots){
+  const vacio = document.getElementById('cotSideVacio');
+  const lista = document.getElementById('cotSideLista');
+  if (!vacio || !lista) return;
+  if (!cots || !cots.length){
+    vacio.style.display = 'block';
+    lista.innerHTML = '';
+    return;
+  }
+  vacio.style.display = 'none';
+  lista.innerHTML = cots.map(function(c){
+    const bg = COT_ESTADO_BG[c.estado] || COT_ESTADO_BG.draft;
+    const total = '$' + Number(c.total || 0).toLocaleString('es-CL');
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;'
+      + 'padding:9px 11px;border-radius:9px;background:#f9fafb;border:1px solid #eef0f3;margin-bottom:8px;">'
+      + '<div style="min-width:0;">'
+      + '<div style="font-weight:800;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere;">' + esc(c.numero_cotizacion || ('#' + c.id)) + '</div>'
+      + '<div style="font-size:.72rem;color:#6b7280;">' + esc(total) + '</div>'
+      + '</div>'
+      + '<span style="padding:3px 9px;border-radius:50px;font-size:.62rem;font-weight:800;text-transform:uppercase;white-space:nowrap;' + bg + ';">'
+      + esc(COT_ESTADO_LABEL[c.estado] || c.estado) + '</span>'
+      + '</div>';
+  }).join('') + '<a href="/tickets/cotizaciones" target="_blank" rel="noopener" '
+    + 'style="font-size:.74rem;font-weight:700;color:#6b7280;display:inline-block;margin-top:2px;">'
+    + 'Ver en Cotizaciones <i class="bi bi-box-arrow-up-right"></i></a>';
 }
 
 cargarEjecutivos();

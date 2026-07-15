@@ -10,7 +10,17 @@
 .tk-hero .sub{font-size:.86rem;color:#cfd3da;}
 .tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:14px;padding:40px;text-align:center;color:#9ca3af;}
 .tk-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;margin-bottom:8px;
-  display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;}
+  display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;}
+.tk-row-ticket-link{font-size:.72rem;font-weight:700;color:#6b7280;white-space:nowrap;text-decoration:none;}
+.tk-row-ticket-link:hover{color:#dc2626;}
+.tk-row-btn-ticket{
+  border:none;border-radius:8px;background:#f3f4f6;color:#374151;font-weight:800;font-size:.72rem;
+  padding:8px 12px;white-space:nowrap;cursor:pointer;transition:.15s;min-height:36px;
+}
+.tk-row-btn-ticket:hover{background:#0a0a0a;color:#fff;}
+.tk-row-btn-ticket:active{transform:scale(.96);}
+.tk-row-btn-ticket:disabled{opacity:.5;cursor:not-allowed;}
+@media(max-width:640px){.tk-row{grid-template-columns:1fr;justify-items:start;}}
 .tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
   font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;white-space:nowrap;}
 .tk-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;}
@@ -92,6 +102,15 @@
   <div><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></div>
   <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
   <span style="font-size:.8rem;color:#6b7280;">{{ c.created_at }}</span>
+  {% if c.ticket_id %}
+  <a class="tk-row-ticket-link" href="/tickets/{{ c.ticket_id }}" target="_blank" rel="noopener">
+    <i class="bi bi-ticket-perforated-fill me-1"></i>{{ c.numero_ticket or ('Ticket #' ~ c.ticket_id) }}
+  </a>
+  {% else %}
+  <button type="button" class="tk-row-btn-ticket" onclick="cotGenerarTicket({{ c.id }}, this)">
+    <i class="bi bi-ticket-perforated me-1"></i>Generar ticket
+  </button>
+  {% endif %}
 </div>
 {% endfor %}
 {% else %}
@@ -250,6 +269,39 @@ async function cotClasifGuardar(pid, selId, btn){
     ilusToast('✓ Producto clasificado', {type:'success'});
   }catch(e){
     ilusToast('Error de conexión al clasificar', {type:'error'});
+    btn.disabled = false; btn.innerHTML = _orig;
+  }
+}
+
+// ══════════════ Flujo inverso: generar un TICKET desde una cotización ══════════════
+// Daniel 2026-07-15: "también quisiera generar un TICKET por una cotización".
+// El botón por fila solo se pinta (ver Jinja arriba) si la cotización aún NO
+// tiene ticket_id; el backend valida de nuevo por si acaso (409 si ya tiene
+// uno -- una cotización no puede tener dos tickets). Sin redirect automático:
+// se ofrece el link para que quien lo generó decida si entra o sigue en el
+// listado (Regla #1: nada de alert()/confirm() nativos).
+async function cotGenerarTicket(cid, btn){
+  const _orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + cid + '/generar-ticket', { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok){
+      ilusToast(d.error || 'No se pudo generar el ticket', {type:'error'});
+      btn.disabled = false; btn.innerHTML = _orig;
+      return;
+    }
+    const link = '<a href="/tickets/' + d.id + '" target="_blank" rel="noopener" style="color:#dc2626;font-weight:800;">'
+      + _cotEsc(d.numero_ticket || ('Ticket #' + d.id)) + '</a>';
+    await ilusAlert({
+      title: '✅ Ticket generado',
+      message: 'Se generó el ticket ' + link + ' a partir de esta cotización.',
+      messageHtml: true, type: 'success', okLabel: 'Entendido',
+    });
+    location.reload();
+  }catch(e){
+    ilusToast('Error de conexión al generar el ticket', {type:'error'});
     btn.disabled = false; btn.innerHTML = _orig;
   }
 }
