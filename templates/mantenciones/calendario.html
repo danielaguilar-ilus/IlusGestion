@@ -91,6 +91,36 @@
 .week-event .wev-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .week-event .wev-tec{font-size:.62rem;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+/* ── FRANJA MULTI-DÍA (vista semana, 2026-07-15) ─────── */
+.week-band{grid-column:1 / -1;background:#fcfcfd;border-bottom:2px solid #e5e7eb}
+.week-band-in{
+  display:grid;grid-template-columns:60px repeat(7,1fr);
+  grid-auto-rows:24px;row-gap:3px;padding:4px 0;
+}
+.week-band-lbl{
+  grid-column:1;grid-row:1 / -1;
+  font-size:.55rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;
+  color:#9ca3af;background:#fafafa;border-right:1px solid #e5e7eb;
+  display:flex;align-items:center;justify-content:flex-end;padding-right:6px;
+}
+.wband-bar{
+  margin:0 2px;padding:3px 8px;border-radius:6px;position:relative;
+  color:#fff;font-size:.7rem;font-weight:700;line-height:1.4;
+  border-left:3px solid #0f172a;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 1px 3px rgba(0,0,0,.12);
+}
+.wband-bar:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(0,0,0,.2);z-index:10}
+.wband-bar .wb-cnt{opacity:.85;font-weight:600}
+.wband-bar.clip-l{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:0}
+.wband-bar.clip-r{border-top-right-radius:0;border-bottom-right-radius:0;margin-right:0}
+
+/* ── % DE AVANCE (strip + badge) — evento puntual y barra multi-día ── */
+.ev-prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(0,0,0,.22)}
+.ev-prog > i{display:block;height:100%;background:rgba(255,255,255,.92)}
+.ev-badge{font-size:.6rem;font-weight:800;background:rgba(0,0,0,.25);
+          border-radius:50px;padding:0 6px;margin-right:4px;vertical-align:1px}
+
 /* ── LISTA VIEW ─────────────────────────────────────── */
 .list-view{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
 .list-row{
@@ -238,6 +268,7 @@
 
 @media (max-width: 991px){
   .week-grid{grid-template-columns:50px repeat(7, 1fr)}
+  .week-band-in{grid-template-columns:50px repeat(7,1fr)}
   .list-row{grid-template-columns:100px 1fr 100px 60px;gap:8px}
   .list-row > *:nth-child(n+5):not(:last-child){display:none}
 }
@@ -819,6 +850,28 @@ function escHtml(s){
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// ── Multi-día (2026-07-15) ───────────────────────────────────────────
+// ISO YYYY-MM-DD compara lexicográficamente: sin new Date(), sin líos de TZ.
+// fecha_fin <= fecha se trata como día único (espejo del guard backend
+// _validar_disponibilidad_visita, app.py ~línea 38293).
+function esMultiDia(ev){
+  return !!(ev.fecha && ev.fecha_fin && ev.fecha_fin > ev.fecha);
+}
+
+// ── % de avance (checklist mant_visita_tareas) ───────────────────────
+// Campos servidos por /mantenciones/api/visitas: avance_pct (0-100 o null
+// si no hay checklist), n_tareas, n_tareas_ok. Aplica a evento puntual
+// (.week-event) y a barra multi-día (.wband-bar).
+function _evProgHtml(ev){
+  if (!Number.isFinite(ev.avance_pct)) return '';
+  if (['cancelada','anulada'].includes(ev.estado)) return '';
+  return `<span class="ev-prog"><i style="width:${Math.max(0,Math.min(100,ev.avance_pct))}%"></i></span>`;
+}
+function _evBadgeAvance(ev){
+  if (!ev.n_tareas) return '';
+  return `<span class="ev-badge">${ev.n_tareas_ok||0}/${ev.n_tareas}</span>`;
+}
+
 // ── Navegación / vista ───────────────────────────────────────────────
 function cambiarVista(v){
   calVista = v;
@@ -1072,6 +1125,7 @@ function renderSemana(){
   const HORAS = []; for(let h=8; h<20; h++) HORAS.push(h);
   const start = startOfWeek(calRefDate);
   const dias = []; for(let i=0; i<7; i++){ const d = new Date(start); d.setDate(d.getDate()+i); dias.push(d); }
+  const events = eventosFiltrados();
 
   const html = [];
   // Cabecera
@@ -1089,8 +1143,48 @@ function renderSemana(){
       <span class="wh-num">${d.getDate()}</span>
     </div>`);
   }
+
+  // ── Franja multi-día (OT que abarca varios días, 2026-07-15) ────────
+  const dKeys = dias.map(fmtFecha);                          // 7 claves ISO de la semana visible
+  const multi = events.filter(ev => esMultiDia(ev)
+      && ev.fecha <= dKeys[6] && ev.fecha_fin >= dKeys[0]);   // intersecta la semana visible
+  if (multi.length){
+    // Asignación de carriles (greedy de intervalos): más largas primero en empate.
+    multi.sort((a,b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1
+                      : (a.fecha_fin > b.fecha_fin ? -1 : 1));
+    const laneEnd = [];   // laneEnd[i] = fecha_fin del último bar en el carril i
+    for (const ev of multi){
+      let li = laneEnd.findIndex(end => end < ev.fecha);
+      if (li === -1){ li = laneEnd.length; laneEnd.push(ev.fecha_fin); }
+      else laneEnd[li] = ev.fecha_fin;
+      ev._lane = li;
+    }
+    html.push(`<div class="week-band"><div class="week-band-in"
+                    style="grid-template-rows:repeat(${laneEnd.length},24px)">`);
+    html.push(`<div class="week-band-lbl">Multi-día</div>`);
+    for (const ev of multi){
+      const clipL = ev.fecha     < dKeys[0];
+      const clipR = ev.fecha_fin > dKeys[6];
+      const i0 = clipL ? 0 : dKeys.indexOf(ev.fecha);
+      const i1 = clipR ? 6 : dKeys.indexOf(ev.fecha_fin);
+      const tecCol = ev.tecnicos[0] ? colorDeTec(ev.tecnicos[0].id) : ev.color_tipo;
+      const tecNames = ev.tecnicos.map(t => t.nombre.split(' ')[0]).join(', ') || 'Sin asignar';
+      const rango = ev.fecha.slice(8,10)+'/'+ev.fecha.slice(5,7)+' – '
+                  + ev.fecha_fin.slice(8,10)+'/'+ev.fecha_fin.slice(5,7);
+      html.push(`<div class="wband-bar ${clipL?'clip-l':''} ${clipR?'clip-r':''}"
+           style="grid-row:${ev._lane+1};grid-column:${i0+2} / ${i1+3};
+                  background:${ev.color_tipo};border-left-color:${tecCol}"
+           title="${escHtml(ev.cliente.razon_social)} · ${rango} · ${escHtml(tecNames)}${Number.isFinite(ev.avance_pct)?' · avance '+ev.avance_pct+'%':''}"
+           onclick="abrirVisitaModal(${ev.id});event.stopPropagation()">
+        ${clipL ? '<i class="bi bi-chevron-double-left"></i> ' : ''}${_evBadgeAvance(ev)}${ev.hora_inicio && !clipL ? ev.hora_inicio+' ' : ''}${escHtml(ev.cliente.razon_social)}
+        <span class="wb-cnt"> · ${rango} · <i class="bi bi-person"></i> ${escHtml(tecNames)}</span>${clipR ? ' <span class="wb-cnt">sigue <i class="bi bi-chevron-double-right"></i></span>' : ''}
+        ${_evProgHtml(ev)}
+      </div>`);
+    }
+    html.push('</div></div>');
+  }
+
   // Filas por hora
-  const events = eventosFiltrados();
   for (const h of HORAS){
     const lbl = `${String(h).padStart(2,'0')}:00`;
     html.push(`<div class="week-hour-lbl">${lbl}</div>`);
@@ -1099,6 +1193,7 @@ function renderSemana(){
       const wknd  = d.getDay()===0 || d.getDay()===6;
       // Eventos en este día/hora
       const evDay = events.filter(ev => {
+        if (esMultiDia(ev)) return false;   // multi-día vive en la franja, no en la celda
         if (!ev.fecha) return false;
         const f = new Date(ev.fecha + 'T00:00:00');
         if (!isSameDay(f, d)) return false;
@@ -1113,9 +1208,10 @@ function renderSemana(){
                      style="background:${ev.color_tipo};border-left-color:${tecCol};top:2px"
                      ${_calDraggableAttrs(ev)}
                      onclick="abrirVisitaModal(${ev.id});event.stopPropagation()">
-          <div class="wev-time">${horario || ''}</div>
+          <div class="wev-time">${horario || ''} ${_evBadgeAvance(ev)}</div>
           <div class="wev-title">${escHtml(ev.cliente.razon_social)}</div>
           <div class="wev-tec"><i class="bi bi-person"></i> ${escHtml(tecNames)}${ev.n_tecnicos>1?' +'+(ev.n_tecnicos-1):''}</div>
+          ${_evProgHtml(ev)}
         </div>`;
       }).join('');
       const ferC = calFeriados[fmtFecha(d)];
@@ -1377,9 +1473,13 @@ function abrirVisitaModal(vid){
     ev.numero_ot || ('VS-' + String(ev.id).padStart(5, '0'));
   document.getElementById('vi_info_cliente').textContent = ev.cliente.razon_social || ev.title || '—';
   document.getElementById('vi_info_tipo').textContent = _DIA_TIPO[ev.tipo] || (ev.tipo || '—');
-  document.getElementById('vi_info_fecha').textContent = ev.fecha
+  let _viFechaTxt = ev.fecha
     ? new Date(ev.fecha + 'T00:00:00').toLocaleDateString('es-CL', {weekday:'long', day:'numeric', month:'long', year:'numeric'})
     : '—';
+  if (ev.fecha && esMultiDia(ev)){
+    _viFechaTxt += ' → ' + new Date(ev.fecha_fin + 'T00:00:00').toLocaleDateString('es-CL', {day:'numeric', month:'long'});
+  }
+  document.getElementById('vi_info_fecha').textContent = _viFechaTxt;
   const horaTxt = (ev.hora_inicio ? String(ev.hora_inicio).slice(0,5) : '') +
     (ev.hora_fin ? ' – ' + String(ev.hora_fin).slice(0,5) : '');
   document.getElementById('vi_info_hora').textContent = horaTxt || 'Sin horario definido';

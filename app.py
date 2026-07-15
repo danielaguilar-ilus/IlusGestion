@@ -49567,7 +49567,12 @@ def mant_visitas_api():
     else:
         # Rol desconocido — denegar lectura (defense in depth)
         where.append("1=0")
-    if desde: where.append("v.fecha_programada >= %s"); params.append(desde[:10])
+    # FIX 2026-07-15: antes filtraba solo por fecha_programada >= desde, así
+    # que una OT multi-día ya iniciada (fecha_programada < desde <= fecha_fin)
+    # desaparecía del fetch aunque siguiera vigente en el rango visible. Mismo
+    # criterio COALESCE(fecha_fin, fecha_programada) que _validar_disponibilidad_visita
+    # (línea ~38266). `hasta` queda igual (se sigue filtrando por el inicio).
+    if desde: where.append("COALESCE(v.fecha_fin, v.fecha_programada) >= %s"); params.append(desde[:10])
     if hasta: where.append("v.fecha_programada <= %s"); params.append(hasta[:10])
     if cid:   where.append("v.cliente_id=%s"); params.append(int(cid))
     if tid:   where.append(
@@ -49583,7 +49588,9 @@ def mant_visitas_api():
     if estado_f:
         where.append("v.estado=%s"); params.append(estado_f)
 
-    sql = ("""SELECT v.*, c.razon_social, c.direccion, c.comuna, c.region
+    sql = ("""SELECT v.*, c.razon_social, c.direccion, c.comuna, c.region,
+                (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id) AS n_tareas,
+                (SELECT COUNT(*) FROM mant_visita_tareas WHERE visita_id=v.id AND completada=1) AS n_completas
                 FROM mant_visitas v
                 JOIN mant_clientes c ON c.id=v.cliente_id""")
     if where:
@@ -49691,6 +49698,7 @@ def mant_visitas_api():
             "id":          r["id"],
             "title":       r["titulo"] or (r.get("tipo","").capitalize() + " programada"),
             "fecha":       str(r["fecha_programada"]) if r["fecha_programada"] else None,
+            "fecha_fin":   (str(r["fecha_fin"]) if r.get("fecha_fin") else None),
             "hora_inicio": _h(r.get("hora_inicio")),
             "hora_fin":    _h(r.get("hora_fin")),
             "tipo":        r.get("tipo"),
@@ -49723,6 +49731,11 @@ def mant_visitas_api():
             "color_borde":     EST_BORDER.get(r.get("estado"), "#0f172a"),
             "color_modalidad": MODALIDAD_COLOR.get(r.get("modalidad_cobro") or "pagado", "#9ca3af"),
             "color_prioridad": PRIORIDAD_COLOR.get(r.get("prioridad") or "media", "#3b82f6"),
+            # 2026-07-15: % de avance del checklist (mant_visita_tareas), para
+            # el strip de progreso + badge "hecho/total" del calendario grande.
+            "n_tareas":    r.get("n_tareas") or 0,
+            "n_tareas_ok": r.get("n_completas") or 0,
+            "avance_pct":  round(100 * (r.get("n_completas") or 0) / r["n_tareas"]) if r.get("n_tareas") else None,
         })
     return jsonify(events)
 
