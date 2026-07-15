@@ -758,6 +758,51 @@
   /* Teléfonos chicos: el composer aún más compacto. */
   .rp-editor-wrap .ql-container{ min-height:120px; max-height:240px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   REDISEÑO #pane-info EN 2 COLUMNAS (2026-07-15, Daniel: "el estado de
+   gestión, la identificación del cliente, los equipos, el documento está
+   arriba, debería estar en una columna... dale un enfoque de diseñador
+   de proyecto... que se parezca mucho a la parte de retiros").
+   Layout inspirado en el ratio/colapso de .hero-grid de
+   templates/retiros/public_request.html (columna ancha + columna angosta,
+   1 sola columna en mobile con la lateral debajo), aplicado a nivel de
+   página: COLUMNA PRINCIPAL (identificación + problema + garantía +
+   equipos + adjuntos + notas + actividad) y COLUMNA LATERAL (estado y
+   gestión con badge grande, resumen de fechas/origen, documentos ERP,
+   "¿qué falta?"). Ningún id ni handler existente cambió de comportamiento
+   — solo cambia DÓNDE vive cada tarjeta en el DOM; el render sigue
+   siendo el mismo (Regla #4.2: cero funcionalidad eliminada). ── */
+.tk-info-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,336px);
+  gap:20px;align-items:start;margin-top:14px;}
+.tk-info-main{min-width:0;}
+.tk-info-side{min-width:0;display:flex;flex-direction:column;}
+.tk-info-side .tk-card{margin-bottom:14px;}
+.tk-info-side .tk-card:last-child{margin-bottom:0;}
+@media (min-width:992px){ .tk-info-side{position:sticky;top:16px;} }
+@media (max-width:991px){ .tk-info-grid{grid-template-columns:1fr;gap:16px;} }
+/* Estado y gestión — tarjeta prioritaria de la columna lateral: badge de
+   estado GRANDE (mismos colores semánticos bs-* ya usados en el hero:
+   verde=resuelto, ámbar=en curso, azul=abierto, gris=cerrado, rojo=cancelado)
+   en vez de un chip perdido entre selects. */
+.tk-estado-card{background:linear-gradient(180deg,#fff 0%,#fafbfc 100%);}
+.tk-badge-grande{display:inline-flex;align-items:center;gap:8px;padding:9px 18px;
+  border-radius:12px;font-size:.98rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.03em;margin-bottom:14px;transition:transform .2s var(--ease-spring);}
+.tk-badge-grande:hover{transform:translateY(-1px) scale(1.015);}
+.tk-badge-grande i{font-size:.85rem;}
+.tk-estado-card .tk-fields-col{display:flex;flex-direction:column;gap:12px;}
+.tk-estado-card select{width:100%;}
+.tk-estado-card #btnGuardar{width:100%;justify-content:center;margin-top:2px;}
+/* Resumen — metadata rápida (fecha de ingreso, origen) que antes vivía
+   suelta en la cabecera de Identificación del Cliente. */
+.tk-resumen-row{display:flex;align-items:center;gap:9px;font-size:.83rem;color:#475569;
+  padding:8px 2px;border-bottom:1px dashed #f1f5f9;}
+.tk-resumen-row:last-child{border-bottom:none;}
+.tk-resumen-row i{color:#dc2626;font-size:.85rem;width:18px;text-align:center;flex-shrink:0;}
+/* Documentos ERP en la columna lateral (antes vivía "arriba" de la tabla
+   de Equipo(s), fuera de lugar — Daniel: "el documento está arriba"). */
+.tk-docs-side .tk-doc{font-size:.8rem;}
 </style>
 
 <div class="tk-hero" id="tkHero">
@@ -791,126 +836,187 @@
 
 <!-- INFORMACIÓN -->
 <div class="tk-pane active" id="pane-info">
-  <!-- Tracking de avance del ticket (stepper visual) -->
+  <!-- Tracking de avance del ticket (stepper visual) — a todo el ancho,
+       arriba de la grilla de 2 columnas: es el "¿dónde va este ticket?"
+       de un vistazo, no le sirve estar comprimido en la columna angosta. -->
   <div class="tk-card tk-stepper-card" id="tkStepperWrap"></div>
 
-  <!-- "¿Qué falta?" — el sistema avisa en vez de depender de que alguien se acuerde -->
-  <div class="tk-card">
-    <h6><i class="bi bi-list-check"></i>¿Qué falta?</h6>
-    <div class="tk-qf-contador" id="queFaltaContador"></div>
-    <div id="queFaltaLista"></div>
-  </div>
+  <!-- ══════════ Grilla de 2 columnas (rediseño 2026-07-15) ══════════
+       COLUMNA PRINCIPAL: identificación del cliente + problema + posible
+       garantía + equipo(s) + adjuntos + notas internas + actividad.
+       COLUMNA LATERAL: estado y gestión (badge grande), resumen de fechas/
+       origen, documentos ERP y "¿qué falta?" — todo lo que antes vivía
+       "arriba", fuera de lugar, ahora acompaña el contenido en vez de
+       taparlo (Daniel: "que se parezca mucho a la parte de retiros"). -->
+  <div class="tk-info-grid">
+    <div class="tk-info-main">
+      <div class="tk-card">
+        <h6><i class="bi bi-person-vcard"></i>Identificación del Cliente</h6>
 
-  <div class="tk-card">
-    <h6><i class="bi bi-sliders"></i>Estado y gestión</h6>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
-      <div style="flex:1;min-width:170px;">
-        <label style="font-size:.68rem;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.03em;">
-          Estado detallado / casos especiales</label>
-        <select id="selEstado" class="form-select form-select-sm">
-          {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
-        </select>
-        <div id="notaEstadoAuto" style="display:none;font-size:.68rem;color:#9ca3af;margin-top:4px;">
-          Este estado lo controla automáticamente la OT vinculada.
+        <!-- Vista compacta con edición campo por campo: cada dato tiene su propio
+             ícono de lápiz — clic convierte SOLO esa fila en un input inline
+             (blur/Enter guarda con PATCH de ese campo, Escape cancela). -->
+        <div id="idVistaCompacta">
+          <div class="tk-id-nombre" id="idCompactoNombre">—</div>
+          <dl class="tk-dl" id="idCompactoDatos"></dl>
+          <!-- 2026-07-14: los campos SIN dato se agrupan acá, colapsados tras el
+               botón "Ver campos vacíos (N)" — siguen siendo editables con el
+               lápiz al expandir (Regla #4.2, nada se elimina). -->
+          <button type="button" class="tk-id-vacios-btn" id="idVaciosBtn">
+            <i class="bi bi-chevron-down"></i><span id="idVaciosBtnTxt"></span>
+          </button>
+          <div class="tk-id-vacios-wrap" id="idVaciosWrap">
+            <dl class="tk-dl" id="idCompactoVacios"></dl>
+          </div>
+          <span class="tk-badge" id="idCompactoTipoBadge"
+            style="display:none;background:#f3f4f6;color:#374151;margin-top:12px;"></span>
         </div>
       </div>
-      <div style="flex:1;min-width:130px;">
-        <label style="font-size:.72rem;font-weight:700;color:#475569;">Prioridad</label>
-        <select id="selPrio" class="form-select form-select-sm">
-          {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
-        </select>
+      <div class="tk-card">
+        <h6><i class="bi bi-exclamation-circle"></i>Problema</h6>
+        <div id="txtTitulo" style="font-size:1.1rem;font-weight:800;color:#0f172a;margin-bottom:8px;display:none;"></div>
+        <div id="txtDesc" style="font-size:1rem;color:#374151;white-space:pre-wrap;line-height:1.6;">—</div>
+        <div class="tk-chips" id="chipsProblema"></div>
       </div>
-      <div style="flex:1;min-width:170px;">
-        <label style="font-size:.72rem;font-weight:700;color:#475569;">Ejecutivo asignado</label>
-        <select id="selEjecutivo" class="form-select form-select-sm">
-          <option value="">Sin asignar</option>
-        </select>
+      {# 2026-07-13 (Daniel, URGENTE): "haz un llamado de atencion... cuando el
+         cliente indica que es por garantia y no los des por sentado... necesito
+         un argumento del tecnico y de la persona para discutir... el sistema
+         reconoce que si la compra fue hace 6 meses ya no hay nada que hacer por
+         Sernac". Tarjeta SOLO visible si es_garantia=1 -- nunca asume que la
+         garantia aplica; calcula meses transcurridos desde la fecha de emision
+         MAS ANTIGUA de los equipos del ticket (Ley del Consumidor chilena: 6
+         meses de garantia legal minima) y avisa si ya vencio ese plazo. #}
+      <div class="tk-card" id="cardGarantiaAlerta" style="display:none;border:1.5px solid #fecaca;background:#fef2f2;">
+        <h6 style="color:#991b1b;"><i class="bi bi-shield-exclamation"></i>El cliente indicó posible garantía</h6>
+        <div style="font-size:.85rem;color:#7f1d1d;line-height:1.5;">
+          No lo des por sentado: esto debe confirmarse con un argumento real del técnico y del cliente antes de aceptar o descartar la garantía.
+        </div>
+        <div id="garantiaCalculoBox" style="margin-top:10px;padding:10px 12px;border-radius:8px;font-size:.83rem;font-weight:700;"></div>
       </div>
-      <button class="btn btn-sm btn-ilus" id="btnGuardar"><i class="bi bi-save me-1"></i>Guardar</button>
-    </div>
-    <div class="tk-visto-por" id="vistoPor" style="display:none;"></div>
-  </div>
-  <div class="tk-card">
-    <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-      <h6 style="margin:0;"><i class="bi bi-person-vcard"></i>Identificación del Cliente</h6>
-      <div style="display:flex;align-items:center;gap:8px;font-size:.76rem;color:#6b7280;font-weight:600;">
-        <span id="idFechaIngreso"></span>
-        <span class="tk-origen-badge" id="idOrigenBadge" style="display:none;"></span>
+      <div class="tk-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px;">
+          <h6 style="margin:0;"><i class="bi bi-tools"></i>Equipo(s)</h6>
+        </div>
+        <!-- Barra de herramientas de Equipo(s): "Generar OT" (movido desde la ex
+             pestaña Acciones — Daniel 2026-07-12) primero, luego "Asignar desde
+             documento". "Declarar equipo" se removió (permiso explícito de
+             Daniel, ver contrato remocion_autorizada). -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <div id="otwSinOT">
+            <button class="btn btn-sm fw-bold" id="btnGenerarOT" type="button"
+                    style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
+                    data-bs-toggle="modal" data-bs-target="#modalGenerarOT">
+              <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
+          </div>
+          <div id="otwConOT" style="display:none;">
+            <a class="btn btn-sm btn-outline-secondary" id="otwVerOtLink" href="#" target="_blank" rel="noopener">
+              <i class="bi bi-clipboard2-check-fill me-1"></i>
+              <span id="otwNumeroOtTxt">OT vinculada</span>
+              <i class="bi bi-box-arrow-up-right ms-1"></i>
+            </a>
+          </div>
+          <button class="btn btn-sm btn-ilus-outline" id="btnEqDesdeDoc">
+            <i class="bi bi-file-earmark-arrow-down me-1"></i>Asignar desde documento</button>
+        </div>
+        <!-- 2026-07-15 (Daniel: "el documento está arriba, debería estar en una
+             columna"): el bloque de Documentos ERP del ticket (#listaDocs) se
+             mudó a su propia tarjeta en la columna lateral (más abajo) — ya no
+             vive "arriba" de esta tabla. El chip de documento de origen POR
+             EQUIPO (tk_ticket_equipos.documento_garantia, "Doc: XX-NNNN") sigue
+             integrado dentro de cada fila, sin cambios. -->
+        <div id="listaEquipos"></div>
       </div>
+      <div class="tk-card">
+        <h6><i class="bi bi-paperclip"></i>Adjuntos</h6>
+        <div id="listaAdjuntosInfo"></div>
+      </div>
+      <div class="tk-card" id="cardNotas" style="display:none;">
+        <h6><i class="bi bi-lock"></i>Notas internas</h6>
+        <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
+      </div>
+
+      <!-- Actividad del ticket — línea de tiempo de supervisión (quién hizo qué y cuándo).
+           Se alimenta de d.mensajes + d.vistas que YA llegan con el ticket: cero backend nuevo.
+           Visible SOLO para superadmin/admin (pedido Daniel 2026-07-12): es una vista de
+           supervisión, no algo que el resto del staff de Tickets necesite ver. -->
+      {% if permissions.superadmin or permissions.admin %}
+      <div class="tk-card" id="cardActividad">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+          <h6 style="margin:0;"><i class="bi bi-activity"></i>Actividad del ticket</h6>
+          <div class="tk-act-filtros" id="actFiltros">
+            <span class="tk-act-chip active" data-filtro="todo">Todo</span>
+            <span class="tk-act-chip" data-filtro="cambios">Cambios</span>
+            <span class="tk-act-chip" data-filtro="mensajes">Mensajes</span>
+            <span class="tk-act-chip" data-filtro="archivos">Archivos</span>
+          </div>
+        </div>
+        <div class="tk-act-timeline" id="actTimeline"></div>
+        <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" id="actVerTodo" style="display:none;"></button>
+      </div>
+      {% endif %}
     </div>
 
-    <!-- Vista compacta con edición campo por campo: cada dato tiene su propio
-         ícono de lápiz — clic convierte SOLO esa fila en un input inline
-         (blur/Enter guarda con PATCH de ese campo, Escape cancela). -->
-    <div id="idVistaCompacta">
-      <div class="tk-id-nombre" id="idCompactoNombre">—</div>
-      <dl class="tk-dl" id="idCompactoDatos"></dl>
-      <!-- 2026-07-14: los campos SIN dato se agrupan acá, colapsados tras el
-           botón "Ver campos vacíos (N)" — siguen siendo editables con el
-           lápiz al expandir (Regla #4.2, nada se elimina). -->
-      <button type="button" class="tk-id-vacios-btn" id="idVaciosBtn">
-        <i class="bi bi-chevron-down"></i><span id="idVaciosBtnTxt"></span>
-      </button>
-      <div class="tk-id-vacios-wrap" id="idVaciosWrap">
-        <dl class="tk-dl" id="idCompactoVacios"></dl>
+    <aside class="tk-info-side">
+      <!-- Estado y gestión — 2026-07-15: dejó de vivir arriba de todo,
+           ahora es lo primero y más visible de la columna lateral, con un
+           badge grande de color real (mismas clases bs-* del hero). -->
+      <div class="tk-card tk-estado-card">
+        <h6><i class="bi bi-sliders"></i>Estado y gestión</h6>
+        <span class="tk-badge-grande" id="estGestionBadge">…</span>
+        <div class="tk-fields-col">
+          <div>
+            <label style="font-size:.68rem;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.03em;">
+              Estado detallado / casos especiales</label>
+            <select id="selEstado" class="form-select form-select-sm">
+              {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
+            </select>
+            <div id="notaEstadoAuto" style="display:none;font-size:.68rem;color:#9ca3af;margin-top:4px;">
+              Este estado lo controla automáticamente la OT vinculada.
+            </div>
+          </div>
+          <div>
+            <label style="font-size:.72rem;font-weight:700;color:#475569;">Prioridad</label>
+            <select id="selPrio" class="form-select form-select-sm">
+              {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:.72rem;font-weight:700;color:#475569;">Ejecutivo asignado</label>
+            <select id="selEjecutivo" class="form-select form-select-sm">
+              <option value="">Sin asignar</option>
+            </select>
+          </div>
+          <button class="btn btn-sm btn-ilus" id="btnGuardar"><i class="bi bi-save me-1"></i>Guardar</button>
+        </div>
+        <div class="tk-visto-por" id="vistoPor" style="display:none;"></div>
       </div>
-      <span class="tk-badge" id="idCompactoTipoBadge"
-        style="display:none;background:#f3f4f6;color:#374151;margin-top:12px;"></span>
-    </div>
-  </div>
-  <div class="tk-card">
-    <h6><i class="bi bi-exclamation-circle"></i>Problema</h6>
-    <div id="txtTitulo" style="font-size:1.1rem;font-weight:800;color:#0f172a;margin-bottom:8px;display:none;"></div>
-    <div id="txtDesc" style="font-size:1rem;color:#374151;white-space:pre-wrap;line-height:1.6;">—</div>
-    <div class="tk-chips" id="chipsProblema"></div>
-  </div>
-  {# 2026-07-13 (Daniel, URGENTE): "haz un llamado de atencion... cuando el
-     cliente indica que es por garantia y no los des por sentado... necesito
-     un argumento del tecnico y de la persona para discutir... el sistema
-     reconoce que si la compra fue hace 6 meses ya no hay nada que hacer por
-     Sernac". Tarjeta SOLO visible si es_garantia=1 -- nunca asume que la
-     garantia aplica; calcula meses transcurridos desde la fecha de emision
-     MAS ANTIGUA de los equipos del ticket (Ley del Consumidor chilena: 6
-     meses de garantia legal minima) y avisa si ya vencio ese plazo. #}
-  <div class="tk-card" id="cardGarantiaAlerta" style="display:none;border:1.5px solid #fecaca;background:#fef2f2;">
-    <h6 style="color:#991b1b;"><i class="bi bi-shield-exclamation"></i>El cliente indicó posible garantía</h6>
-    <div style="font-size:.85rem;color:#7f1d1d;line-height:1.5;">
-      No lo des por sentado: esto debe confirmarse con un argumento real del técnico y del cliente antes de aceptar o descartar la garantía.
-    </div>
-    <div id="garantiaCalculoBox" style="margin-top:10px;padding:10px 12px;border-radius:8px;font-size:.83rem;font-weight:700;"></div>
-  </div>
-  <div class="tk-card">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px;">
-      <h6 style="margin:0;"><i class="bi bi-tools"></i>Equipo(s)</h6>
-    </div>
-    <!-- Barra de herramientas de Equipo(s): "Generar OT" (movido desde la ex
-         pestaña Acciones — Daniel 2026-07-12) primero, luego "Asignar desde
-         documento". "Declarar equipo" se removió (permiso explícito de
-         Daniel, ver contrato remocion_autorizada). -->
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      <div id="otwSinOT">
-        <button class="btn btn-sm fw-bold" id="btnGenerarOT" type="button"
-                style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"
-                data-bs-toggle="modal" data-bs-target="#modalGenerarOT">
-          <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
+
+      <!-- Resumen — metadata rápida (fecha de ingreso, origen) que antes
+           vivía suelta en la cabecera de Identificación del Cliente. -->
+      <div class="tk-card">
+        <h6><i class="bi bi-info-circle"></i>Resumen</h6>
+        <div class="tk-resumen-row"><i class="bi bi-calendar-check"></i><span id="idFechaIngreso"></span></div>
+        <div class="tk-resumen-row"><i class="bi bi-diagram-3"></i>Origen&nbsp;<span class="tk-origen-badge" id="idOrigenBadge" style="display:none;"></span></div>
       </div>
-      <div id="otwConOT" style="display:none;">
-        <a class="btn btn-sm btn-outline-secondary" id="otwVerOtLink" href="#" target="_blank" rel="noopener">
-          <i class="bi bi-clipboard2-check-fill me-1"></i>
-          <span id="otwNumeroOtTxt">OT vinculada</span>
-          <i class="bi bi-box-arrow-up-right ms-1"></i>
-        </a>
+
+      <!-- Documentos ERP del ticket (movido desde la ex-tarjeta "Documentos ERP" —
+           Daniel 2026-07-12: "eso lo puedes agregar a la tabla [de Equipo(s)]...
+           si bien o no viene, lo quiero ver ahí en detalle". La relación en BD
+           (tk_ticket_documentos) es a nivel de TICKET, no de equipo individual.
+           2026-07-15: se reubica a la columna lateral — Daniel: "el documento
+           está arriba, debería estar en una columna". -->
+      <div class="tk-card">
+        <h6><i class="bi bi-file-earmark-text"></i>Documentos ERP</h6>
+        <div id="listaDocs" class="tk-docs-en-equipo tk-docs-side"></div>
       </div>
-      <button class="btn btn-sm btn-ilus-outline" id="btnEqDesdeDoc">
-        <i class="bi bi-file-earmark-arrow-down me-1"></i>Asignar desde documento</button>
-    </div>
-    <!-- Documentos ERP del ticket (movido desde la ex-tarjeta "Documentos ERP" —
-         Daniel 2026-07-12: "eso lo puedes agregar a la tabla [de Equipo(s)]...
-         si bien o no viene, lo quiero ver ahí en detalle". La relación en BD
-         (tk_ticket_documentos) es a nivel de TICKET, no de equipo individual,
-         por eso se muestra como bloque propio arriba de la tabla de equipos. -->
-    <div id="listaDocs" class="tk-docs-en-equipo" style="margin-bottom:12px;"></div>
-    <div id="listaEquipos"></div>
+
+      <!-- "¿Qué falta?" — el sistema avisa en vez de depender de que alguien se acuerde -->
+      <div class="tk-card">
+        <h6><i class="bi bi-list-check"></i>¿Qué falta?</h6>
+        <div class="tk-qf-contador" id="queFaltaContador"></div>
+        <div id="queFaltaLista"></div>
+      </div>
+    </aside>
   </div>
 
   <!-- Modal: garantía del equipo (Ley del Consumidor: 6 meses por defecto, editable) -->
@@ -967,36 +1073,6 @@
       </div>
     </div>
   </div>
-  <div class="tk-card">
-    <h6><i class="bi bi-paperclip"></i>Adjuntos</h6>
-    <div id="listaAdjuntosInfo"></div>
-  </div>
-  <div class="tk-card" id="cardNotas" style="display:none;">
-    <h6><i class="bi bi-lock"></i>Notas internas</h6>
-    <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
-  </div>
-
-  <!-- Actividad del ticket — línea de tiempo de supervisión (quién hizo qué y cuándo).
-       Se alimenta de d.mensajes + d.vistas que YA llegan con el ticket: cero backend nuevo.
-       Visible SOLO para superadmin/admin (pedido Daniel 2026-07-12): es una vista de
-       supervisión, no algo que el resto del staff de Tickets necesite ver. -->
-  {% if permissions.superadmin or permissions.admin %}
-  <div class="tk-card" id="cardActividad">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
-      <h6 style="margin:0;"><i class="bi bi-activity"></i>Actividad del ticket</h6>
-      <div class="tk-act-filtros" id="actFiltros">
-        <span class="tk-act-chip active" data-filtro="todo">Todo</span>
-        <span class="tk-act-chip" data-filtro="cambios">Cambios</span>
-        <span class="tk-act-chip" data-filtro="mensajes">Mensajes</span>
-        <span class="tk-act-chip" data-filtro="archivos">Archivos</span>
-      </div>
-    </div>
-    <div class="tk-act-timeline" id="actTimeline"></div>
-    <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" id="actVerTodo" style="display:none;"></button>
-  </div>
-  {% endif %}
-
-
 </div>
 
 <!-- RESPUESTAS (conversacion) -->
@@ -2240,6 +2316,17 @@ async function cargar(){
   document.getElementById('hCliente').textContent = t.empresa || t.nombre_contacto || t.rut || 'Sin cliente';
   const be = document.getElementById('hEstado');
   be.textContent = ESTADO_LABEL[t.estado]||t.estado; be.className = 'tk-badge bs-'+t.estado;
+  // 2026-07-15: badge de estado GRANDE en la tarjeta "Estado y gestión" de la
+  // columna lateral (rediseño #pane-info) -- mismo texto/color que el badge
+  // del hero (hEstado), solo que más visible dentro de esa tarjeta.
+  const beGrande = document.getElementById('estGestionBadge');
+  if(beGrande){ beGrande.textContent = ESTADO_LABEL[t.estado]||t.estado; beGrande.className = 'tk-badge-grande bs-'+t.estado; }
+  // 2026-07-15 (Daniel): título de la pestaña dinámico por ticket (antes
+  // era "Ticket — ILUS" fijo para todos). El bloque title de Jinja (arriba
+  // del archivo) sigue siendo el fallback razonable antes de esta carga.
+  document.title = (t.numero_ticket || ('#'+t.id))
+    + (t.empresa || t.nombre_contacto ? ' · ' + (t.empresa || t.nombre_contacto) : '')
+    + ' — ILUS';
 
   // El estado puede ser uno de los 3 AUTOMATICOS del ciclo de vida de la OT
   // (ot_generated/ot_in_progress/ot_pending_approval), que no aparecen como
