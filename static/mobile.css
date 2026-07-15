@@ -632,12 +632,17 @@ body {
    ════════════════════════════════════════════════════════════════════ */
 @media (max-width: 767px) {
   /* Topbar más bajo. La var --topbar-h también la usa el dropdown de
-     notificaciones para posicionarse → se ajusta solo. */
-  :root { --topbar-h: 60px; }
-  .mobile-topbar { height: 60px; padding: 0 10px; gap: 10px; }
+     notificaciones para posicionarse → se ajusta solo.
+     2026-07-15 (Daniel, en su iPhone): "el logo se ve extremadamente
+     chiquitito, agrándalo". Antes 38px dentro de un topbar de 60px
+     (casi sin aire). Se sube el topbar a 68px y el logo a 58px —
+     +52% de tamaño real, con margen para no tocar los bordes ni
+     apretar el botón de menú/campana que comparten la barra. */
+  :root { --topbar-h: 68px; }
+  .mobile-topbar { height: 68px; padding: 0 10px; gap: 10px; }
 
-  /* Logo proporcional al topbar compacto (antes 80px). */
-  .mobile-logo { height: 38px; }
+  /* Logo proporcional al topbar compacto (antes 80px desktop → 38px). */
+  .mobile-logo { height: 58px; }
   .mobile-brand-name { font-size: 1.4rem; }
 
   /* Botón menú (hamburguesa): touch target Apple HIG 44px. */
