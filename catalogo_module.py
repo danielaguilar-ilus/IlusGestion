@@ -1386,7 +1386,88 @@ def register_catalogo_routes(app, ctx):
     #  cat_productos, no se duplica -- se devuelve el id existente tal cual
     #  (Regla #4.2, aditivo: el botón "Sincronizar bodega desde ERP" sigue
     #  intacto, este es un camino alternativo, no un reemplazo).
+    #
+    #  2026-07-15 (Blueprint Cotizaciones Fase 1): la lógica de
+    #  creación/reuso se factoriza a `_cat_crear_o_reusar_producto_desde_erp`
+    #  para que otros módulos (tickets_module.py, cotizaciones) la reusen
+    #  SIN duplicar código ni pegarle por HTTP a este mismo proceso. Se
+    #  expone vía ctx (mismo patrón que tickets_module.py hace con
+    #  `ctx['_tk_set_estado_automatico']`/`ctx['_tk_autopoll_correo']`):
+    #  como register_catalogo_routes(app.py:69191) corre DESPUÉS de
+    #  register_tickets_routes(app.py:69180), tickets_module.py NO puede
+    #  capturar esta función en el top de su closure (aún no existiría en
+    #  ese momento) -- debe leerla con ctx.get(...) en tiempo de REQUEST
+    #  (dentro del handler), momento en el que el arranque ya terminó y
+    #  ctx (globals() de app.py) ya la tiene.
     # ─────────────────────────────────────────────────────────────────
+    def _cat_crear_o_reusar_producto_desde_erp(sku, nombre="", familia=None):
+        """Crea (o reusa, idempotente por SKU) un producto de `cat_productos`
+        a partir de datos traídos del ERP. Reusable desde cualquier módulo
+        vía ctx['_cat_crear_o_reusar_producto_desde_erp'](sku, nombre).
+        NUNCA lanza -- ante error de BD devuelve id=None + 'error'.
+        Devuelve dict: {id, creado, nombre, sku, clase_producto, foto_ecommerce}
+        (clase_producto viene NULL si el producto aún no fue clasificado).
+        """
+        try:
+            sku_n = (str(sku) if sku is not None else "").strip().upper()
+        except Exception:
+            sku_n = ""
+        if not sku_n:
+            return {"id": None, "creado": False, "nombre": (nombre or ""), "sku": "",
+                    "clase_producto": None, "foto_ecommerce": False, "error": "Falta el SKU"}
+        nombre_n = (str(nombre) if nombre is not None else "").strip()
+        familia_n = (str(familia) if familia is not None else "").strip()[:150] or None
+
+        existente = mysql_fetchone(
+            "SELECT id, nombre, clase_producto FROM cat_productos WHERE sku=%s", (sku_n,))
+        if existente:
+            return {"id": existente["id"], "creado": False, "nombre": existente["nombre"],
+                     "sku": sku_n, "clase_producto": existente.get("clase_producto"),
+                     "foto_ecommerce": False}
+
+        if not nombre_n:
+            nombre_n = sku_n  # el modal siempre trae nombre; esto es solo un resguardo
+        user = current_username() or "sistema"
+        try:
+            mysql_execute(
+                "INSERT INTO cat_productos (sku, nombre, familia, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (sku_n[:100], nombre_n[:300], familia_n, user, user))
+        except Exception as _e:
+            msg = str(_e)
+            if "Duplicate entry" in msg or "uq_cat_sku" in msg:
+                # carrera: otro request lo creó justo antes -- lo tratamos como éxito
+                row = mysql_fetchone(
+                    "SELECT id, nombre, clase_producto FROM cat_productos WHERE sku=%s", (sku_n,))
+                if row:
+                    return {"id": row["id"], "creado": False, "nombre": row["nombre"],
+                             "sku": sku_n, "clase_producto": row.get("clase_producto"),
+                             "foto_ecommerce": False}
+            print(f"[_cat_crear_o_reusar_producto_desde_erp] error sku={sku_n}: {_e}", flush=True)
+            return {"id": None, "creado": False, "nombre": nombre_n, "sku": sku_n,
+                     "clase_producto": None, "foto_ecommerce": False,
+                     "error": "No se pudo crear el producto"}
+
+        row = mysql_fetchone("SELECT id FROM cat_productos WHERE sku=%s", (sku_n,))
+        nuevo_id = row["id"] if row else None
+
+        # 2026-07-14 (Daniel: "tráelos automáticos y déjalo vacío si da
+        # error"): al CREAR un producto nuevo, foto del ecommerce best-effort.
+        # Si no hay match (marcas revendidas) o falla cualquier paso, el
+        # producto queda sin foto y la creación NO se ve afectada.
+        foto_ecom = False
+        if nuevo_id:
+            try:
+                foto_ecom = _intentar_foto_ecommerce(nuevo_id, sku_n) == "ok"
+            except Exception as _e_ecom:
+                print(f"[_cat_crear_o_reusar_producto_desde_erp] foto ecommerce sku={sku_n}: {_e_ecom}", flush=True)
+        return {"id": nuevo_id, "creado": True, "nombre": nombre_n, "sku": sku_n,
+                 "clase_producto": None, "foto_ecommerce": foto_ecom}
+
+    # Visible desde otros módulos (tickets_module.py — Cotizaciones Fase 1)
+    # sin pegarle por HTTP a este mismo proceso. Ver comentario arriba.
+    ctx["_cat_crear_o_reusar_producto_desde_erp"] = _cat_crear_o_reusar_producto_desde_erp
+
     @app.route("/catalogo/api/productos/desde-erp", methods=["POST"])
     @_catalogo_admin_required
     def cat_api_producto_desde_erp():
@@ -1409,44 +1490,11 @@ def register_catalogo_routes(app, ctx):
         if not sku:
             return jsonify({"ok": False, "error": "Falta el SKU"}), 400
 
-        existente = mysql_fetchone("SELECT id, nombre FROM cat_productos WHERE sku=%s", (sku,))
-        if existente:
-            return jsonify({"ok": True, "id": existente["id"], "creado": False,
-                             "nombre": existente["nombre"]})
-
-        if not nombre:
-            nombre = sku  # el modal siempre trae nombre; esto es solo un resguardo
-        user = current_username() or "sistema"
-        try:
-            mysql_execute(
-                "INSERT INTO cat_productos (sku, nombre, familia, created_by, updated_by) "
-                "VALUES (%s,%s,%s,%s,%s)",
-                (sku[:100], nombre[:300], familia, user, user))
-        except Exception as _e:
-            msg = str(_e)
-            if "Duplicate entry" in msg or "uq_cat_sku" in msg:
-                # carrera: otro request lo creó justo antes -- lo tratamos como éxito
-                row = mysql_fetchone("SELECT id, nombre FROM cat_productos WHERE sku=%s", (sku,))
-                if row:
-                    return jsonify({"ok": True, "id": row["id"], "creado": False, "nombre": row["nombre"]})
-            print(f"[cat_api_producto_desde_erp] error sku={sku}: {_e}", flush=True)
-            return jsonify({"ok": False, "error": "No se pudo crear el producto"}), 500
-
-        row = mysql_fetchone("SELECT id FROM cat_productos WHERE sku=%s", (sku,))
-        nuevo_id = row["id"] if row else None
-
-        # 2026-07-14 (Daniel: "tráelos automáticos y déjalo vacío si da
-        # error"): al CREAR un producto nuevo, foto del ecommerce best-effort.
-        # Si no hay match (marcas revendidas) o falla cualquier paso, el
-        # producto queda sin foto y la creación NO se ve afectada.
-        foto_ecom = False
-        if nuevo_id:
-            try:
-                foto_ecom = _intentar_foto_ecommerce(nuevo_id, sku) == "ok"
-            except Exception as _e_ecom:
-                print(f"[cat_api_producto_desde_erp] foto ecommerce sku={sku}: {_e_ecom}", flush=True)
-        return jsonify({"ok": True, "id": nuevo_id, "creado": True, "nombre": nombre,
-                         "foto_ecommerce": foto_ecom})
+        res = _cat_crear_o_reusar_producto_desde_erp(sku, nombre, familia)
+        if res.get("id") is None:
+            return jsonify({"ok": False, "error": res.get("error") or "No se pudo crear el producto"}), 500
+        return jsonify({"ok": True, "id": res["id"], "creado": res["creado"],
+                         "nombre": res["nombre"], "foto_ecommerce": res["foto_ecommerce"]})
 
     @app.route("/catalogo/api/sync-erp", methods=["POST"])
     @_catalogo_admin_required

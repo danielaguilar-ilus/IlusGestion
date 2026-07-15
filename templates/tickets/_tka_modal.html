@@ -502,6 +502,7 @@
           <option value="WEB">WEB · N. Venta Web</option>
           <option value="NVI">NVI · N. Venta Int.</option>
           <option value="GDV">GDV · Guía despacho</option>
+          <option value="COV">COV · Cotización de venta</option>
         </select>
         <input id="tkaDocNudo" type="text" placeholder="N° del documento (ej: 12345)" inputmode="numeric">
         <button type="button" class="tka-btn-search" id="tkaDocBtn" onclick="tkaBuscarPorDoc()">
@@ -1060,6 +1061,8 @@ async function tkaBuscarPorDoc(){
       nudo: hdr.nudo || nudo,
       cliente: hdr.cliente_nombre || hdr.razon_social || '',
       rut: hdr.cliente_rut || hdr.rut || '',
+      email: hdr.email || '',
+      telefono: hdr.telefono || '',
       fecha: hdr.fecha || ''
     };
     const t1 = Math.round(performance.now() - t0);
@@ -1750,7 +1753,14 @@ async function tkaAsociarSeleccion(){
     if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
     tkaClose();
     if (_TKA.ctx.onSeleccionar){
-      try{ await _TKA.ctx.onSeleccionar(items); }catch(e){ ilusToast('Error: ' + e.message, { type:'error' }); }
+      // 2026-07-15 (Blueprint Cotizaciones Fase 1): el header del documento
+      // ya resuelto (cliente/rut/email/telefono, cargado al buscar por
+      // "Por documento") viaja como 2do argumento -- así el módulo llamador
+      // (ej. tickets/cotizaciones.html) puede mandar datos reales del
+      // cliente al backend sin tener que volver a pedirlos. null si la
+      // selección vino de otra pestaña (cliente/bodega) sin doc único.
+      const header = _TKA.loaded.docHeader || null;
+      try{ await _TKA.ctx.onSeleccionar(items, header); }catch(e){ ilusToast('Error: ' + e.message, { type:'error' }); }
     }
     return;
   }

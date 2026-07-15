@@ -1244,6 +1244,58 @@ def register_tickets_routes(app, ctx):
                     print(f"[rutas_import] fila csv_id={csv_id_int} no importada: {_e}", flush=True)
         return importados
 
+    def _ensure_tk_cotizaciones_columns():
+        """Migracion aditiva de tk_cotizaciones (patron _ensure_transporte_columns/
+        _ensure_tk_tickets_columns): agrega email/telefono si faltan.
+
+        Blueprint Cotizaciones Fase 1 (2026-07-15, Daniel): "traer los datos
+        reales del cliente... hoy quedan siempre NULL, es un bug confirmado".
+        empresa/rut YA existen en el CREATE TABLE original -- solo faltaban
+        email/telefono para poder guardar el header completo que ahora manda
+        el modal (_tka_modal.html) junto a los items seleccionados."""
+        try:
+            existentes = {r["COLUMN_NAME"] for r in mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tk_cotizaciones'")}
+        except Exception as _e:
+            print(f"[ILUS][WARN] _ensure_tk_cotizaciones_columns (schema check): {_e}", flush=True)
+            return
+        alters = []
+        if "email" not in existentes:
+            alters.append("ADD COLUMN email VARCHAR(190) NULL")
+        if "telefono" not in existentes:
+            alters.append("ADD COLUMN telefono VARCHAR(50) NULL")
+        for a in alters:
+            try:
+                mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
+            except Exception as _e:
+                print(f"[ILUS][WARN] ALTER tk_cotizaciones {a}: {_e}", flush=True)
+
+    def _ensure_tk_cotizacion_items_columns():
+        """Migracion aditiva de tk_cotizacion_items: clase_producto (snapshot
+        denormalizado de cat_productos.clase_producto al momento de agregar
+        el item, igual criterio que Triple A copia el precio del documento --
+        snapshot, no referencia viva) + vaneli_original (valor de linea que
+        trajo el ERP, para trazabilidad; NULL si el modal aun no lo expone).
+        Ver Blueprint Cotizaciones Fase 1, §2/§3.2.C."""
+        try:
+            existentes = {r["COLUMN_NAME"] for r in mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tk_cotizacion_items'")}
+        except Exception as _e:
+            print(f"[ILUS][WARN] _ensure_tk_cotizacion_items_columns (schema check): {_e}", flush=True)
+            return
+        alters = []
+        if "clase_producto" not in existentes:
+            alters.append("ADD COLUMN clase_producto VARCHAR(30) NULL")
+        if "vaneli_original" not in existentes:
+            alters.append("ADD COLUMN vaneli_original INT NULL")
+        for a in alters:
+            try:
+                mysql_execute(f"ALTER TABLE tk_cotizacion_items {a}")
+            except Exception as _e:
+                print(f"[ILUS][WARN] ALTER tk_cotizacion_items {a}: {_e}", flush=True)
+
     def _ensure_tk_sla_regla():
         """Siembra la regla editable 'tk_sla_horas' en mant_reglas_negocio
         (mismo patron INSERT IGNORE que _ensure_reglas_terreno de app.py:
@@ -1272,6 +1324,8 @@ def register_tickets_routes(app, ctx):
             _ensure_tk_ticket_equipos_garantia_columns()
             _ensure_tk_tickets_visita_link()
             _ensure_tk_zz_instalacion_scan_table()
+            _ensure_tk_cotizaciones_columns()
+            _ensure_tk_cotizacion_items_columns()
             _ensure_tk_sla_regla()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
@@ -1549,6 +1603,14 @@ def register_tickets_routes(app, ctx):
     #  sea el primer modulo (ademas de Tickets) que llame al ERP con ese
     #  mismo modal. Precios quedan en 0 -- fase de tarifas es futura, no
     #  se inventa logica de pricing aca.
+    #
+    #  2026-07-15 (Blueprint Cotizaciones Fase 1, Daniel): se extiende para
+    #  (a) recibir el `header` del documento (cliente/rut/email/telefono,
+    #  ya resuelto por el modal al buscar el documento) y guardarlo real en
+    #  vez de quedar siempre NULL (bug confirmado — el frontend nunca lo
+    #  mandaba), y (b) clasificar automaticamente cada item contra
+    #  cat_productos.clase_producto, devolviendo `sin_clasificar` para que
+    #  el frontend pida clasificacion inline de lo que quede pendiente.
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/cotizaciones/desde-erp", methods=["POST"])
     @_tickets_required
@@ -1559,8 +1621,19 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "No se recibió ningún ítem seleccionado del ERP"}), 400
 
         user = current_username() or "sistema"
-        empresa = (d.get("empresa") or "").strip()[:150] or None
-        rut = (d.get("rut") or "").strip()[:12] or None
+
+        # Header del documento (cliente real): _tka_modal.html lo manda como
+        # 2do argumento de onSeleccionar(items, header) -- ver comentario en
+        # tkaAsociarSeleccion() del modal. Fallback a d.get(...) directo por
+        # si algun caller viejo/futuro sigue mandando los campos sueltos.
+        header = d.get("header") if isinstance(d.get("header"), dict) else {}
+        empresa = (header.get("cliente") or header.get("empresa") or d.get("empresa") or "").strip()[:150] or None
+        rut = (header.get("rut") or d.get("rut") or "").strip()[:12] or None
+        email = (header.get("email") or d.get("email") or "").strip()[:190] or None
+        if email and not _TK_REPLY_EMAIL_RE.match(email):
+            email = None  # dato sucio del ERP -- mejor NULL que guardar basura
+        telefono = (header.get("telefono") or d.get("telefono") or "").strip()[:50] or None
+
         erp_idmaeen = None
         erp_koen = None
         try:
@@ -1572,14 +1645,48 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass
 
+        # Clasificacion automatica por SKU contra el Catalogo (Daniel:
+        # "los productos, si no tienen clasificacion, tendran que
+        # clasificarse, y eso tambien va a estar en los catalogos"). Reusa
+        # la MISMA funcion de creacion/reuso de producto que ya usa
+        # Catalogo (POST /catalogo/api/productos/desde-erp), inyectada via
+        # ctx -- ver comentario en catalogo_module.py junto a
+        # _cat_crear_o_reusar_producto_desde_erp. Si el modulo Catalogo no
+        # llego a registrar (orden de arranque) o algo falla, se degrada
+        # SIN bloquear la creacion de la cotizacion (Regla #4.2 -- aditivo,
+        # nunca rompe el flujo existente de crear en $0).
+        _cat_crear_o_reusar = ctx.get("_cat_crear_o_reusar_producto_desde_erp")
+        clases_por_sku = {}
+        sin_clasificar = []
+        if _cat_crear_o_reusar:
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                sku_cls = (it.get("sku") or "").strip().upper()
+                if not sku_cls or sku_cls in clases_por_sku:
+                    continue
+                try:
+                    res_cat = _cat_crear_o_reusar(sku_cls, (it.get("nombre") or "").strip())
+                except Exception as _e_cat:
+                    print(f"[tk_api_cotizacion_desde_erp] clasificacion sku={sku_cls}: {_e_cat}", flush=True)
+                    res_cat = None
+                clase = (res_cat or {}).get("clase_producto")
+                pid_cat = (res_cat or {}).get("id")
+                clases_por_sku[sku_cls] = clase
+                if pid_cat and not clase:
+                    sin_clasificar.append({
+                        "sku": sku_cls, "producto_id": pid_cat,
+                        "nombre": (it.get("nombre") or "").strip(),
+                    })
+
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO tk_cotizaciones "
-                    "(estado, erp_idmaeen, erp_koen, rut, empresa, created_by) "
-                    "VALUES ('draft', %s, %s, %s, %s, %s)",
-                    (erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa, user),
+                    "(estado, erp_idmaeen, erp_koen, rut, empresa, email, telefono, created_by) "
+                    "VALUES ('draft', %s, %s, %s, %s, %s, %s, %s)",
+                    (erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa, email, telefono, user),
                 )
                 cot_id = cur.lastrowid
                 # Numeracion race-free derivada del id autoincrement, mismo
@@ -1594,6 +1701,7 @@ def register_tickets_routes(app, ctx):
                     if not isinstance(it, dict):
                         continue
                     sku = (it.get("sku") or "").strip()[:100] or None
+                    sku_up = (sku or "").upper()
                     descripcion = (it.get("nombre") or "").strip()[:300] or None
                     try:
                         cantidad = int(it.get("qty") or 1)
@@ -1601,12 +1709,23 @@ def register_tickets_routes(app, ctx):
                         cantidad = 1
                     if cantidad < 1:
                         cantidad = 1
+                    clase_producto = clases_por_sku.get(sku_up)
+                    # vaneli_original: valor de linea real del ERP, si el
+                    # item lo trae -- el modal aun no lo expone (fase de
+                    # pricing es Fase 2), asi que hoy siempre queda NULL
+                    # sin bloquear nada (Blueprint §3.2.C.4).
+                    vaneli_original = None
+                    try:
+                        _v = it.get("vaneli") or it.get("valor_linea") or it.get("precio_unitario")
+                        vaneli_original = int(float(_v)) if _v not in (None, "") else None
+                    except Exception:
+                        vaneli_original = None
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, "
-                        " precio_unitario, subtotal, total, desde_ticket) "
-                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0)",
-                        (cot_id, sku, descripcion, cantidad),
+                        " precio_unitario, subtotal, total, desde_ticket, clase_producto, vaneli_original) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s)",
+                        (cot_id, sku, descripcion, cantidad, clase_producto, vaneli_original),
                     )
             conn.commit()
         except Exception as e:
@@ -1624,10 +1743,11 @@ def register_tickets_routes(app, ctx):
         numero = numero_row["numero_cotizacion"] if numero_row else None
         try:
             _audit("tk_cotizacion_create", target_type="tk_cotizacion", target_id=cot_id,
-                   details={"numero": numero, "items": len(items)})
+                   details={"numero": numero, "items": len(items), "sin_clasificar": len(sin_clasificar)})
         except Exception:
             pass
-        return jsonify({"ok": True, "id": cot_id, "numero_cotizacion": numero})
+        return jsonify({"ok": True, "id": cot_id, "numero_cotizacion": numero,
+                         "sin_clasificar": sin_clasificar})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — listado + KPIs

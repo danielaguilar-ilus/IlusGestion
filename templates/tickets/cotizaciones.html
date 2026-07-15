@@ -17,6 +17,62 @@
 .cb-draft{background:#f3f4f6;color:#6b7280;} .cb-sent{background:#dbeafe;color:#1e40af;}
 .cb-approved{background:#dcfce7;color:#166534;} .cb-rejected{background:#fee2e2;color:#991b1b;}
 .cb-expired{background:#fef3c7;color:#92400e;}
+
+/* ══════════ Panel de clasificación inline (Blueprint Cotizaciones Fase 1) ══════════ */
+.cot-clasif-backdrop{
+  position:fixed;inset:0;z-index:1090;background:rgba(10,10,10,.55);
+  backdrop-filter:blur(6px) saturate(1.2);-webkit-backdrop-filter:blur(6px) saturate(1.2);
+  display:none;align-items:flex-end;justify-content:center;padding:0;
+  animation:cotFadeIn .25s cubic-bezier(.4,0,.2,1);
+}
+@media(min-width:768px){.cot-clasif-backdrop{align-items:center;padding:20px;}}
+@keyframes cotFadeIn{from{opacity:0}to{opacity:1}}
+.cot-clasif-panel{
+  width:100%;max-width:640px;max-height:88vh;max-height:88dvh;overflow-y:auto;
+  background:rgba(255,255,255,.98);backdrop-filter:blur(20px) saturate(1.5);
+  border-radius:20px 20px 0 0;box-shadow:0 -20px 60px -12px rgba(0,0,0,.35);
+  animation:cotSlideUp .4s cubic-bezier(.34,1.56,.64,1);
+}
+@media(min-width:768px){.cot-clasif-panel{border-radius:16px;box-shadow:0 24px 70px -16px rgba(0,0,0,.4);}}
+@keyframes cotSlideUp{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
+.cot-clasif-head{
+  padding:18px 20px 8px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  border-bottom:1px solid #eaecf0;
+}
+.cot-clasif-head h5{margin:0;font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px;font-size:1.05rem;}
+.cot-clasif-head h5 i{color:#dc2626;}
+.cot-clasif-close{
+  width:38px;height:38px;border:none;border-radius:9px;background:#f3f4f6;color:#6b7280;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.15s;
+}
+.cot-clasif-close:hover{background:#dc2626;color:#fff;}
+.cot-clasif-sub{padding:10px 20px 4px;font-size:.82rem;color:#6b7280;line-height:1.4;}
+.cot-clasif-empty{padding:24px 20px;text-align:center;color:#9ca3af;font-size:.85rem;}
+#cotClasifLista{padding:10px 20px 4px;display:flex;flex-direction:column;gap:8px;}
+.cot-clasif-row{
+  display:grid;grid-template-columns:1fr auto;grid-template-areas:"info info" "select btn";
+  gap:8px 10px;align-items:center;background:#f9fafb;border:1px solid #eef0f3;border-radius:12px;
+  padding:12px;
+}
+@media(min-width:640px){
+  .cot-clasif-row{grid-template-columns:1fr 170px auto auto;grid-template-areas:"info select btn ok";}
+}
+.cot-clasif-info{grid-area:info;min-width:0;}
+.cot-clasif-sku{font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;color:#dc2626;}
+.cot-clasif-nombre{font-size:.84rem;color:#111827;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cot-clasif-select{
+  grid-area:select;min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:9px;
+  padding:0 10px;background:#fff;width:100%;
+}
+.cot-clasif-btn{
+  grid-area:btn;min-height:44px;padding:0 16px;border:none;border-radius:9px;
+  background:#0a0a0a;color:#fff;font-weight:800;font-size:.8rem;cursor:pointer;transition:.15s;white-space:nowrap;
+}
+.cot-clasif-btn:hover{background:#dc2626;}
+.cot-clasif-btn:active{transform:scale(.96);}
+.cot-clasif-btn:disabled{opacity:.5;cursor:not-allowed;}
+.cot-clasif-ok{grid-area:ok;color:#16a34a;font-size:1.3rem;display:flex;align-items:center;justify-content:center;}
+.cot-clasif-foot{padding:14px 20px 20px;display:flex;justify-content:flex-end;border-top:1px solid #eaecf0;margin-top:6px;}
 </style>
 
 <div class="tk-hero">
@@ -49,23 +105,54 @@
 </div>
 {% endif %}
 
+{# ══════════════ Panel de clasificación inline (Blueprint Cotizaciones Fase 1,
+   2026-07-15): tras crear la cotización, si algún producto quedó sin
+   `clase_producto` en el Catálogo, se pide clasificarlo AHORA MISMO sin
+   salir del flujo. Cerrar sin completar NO rompe nada -- la cotización ya
+   quedó creada en 'draft' (Regla #4.2, aditivo puro). Nada de
+   alert()/confirm() nativos (Regla #1). #}
+<div id="cotClasifModal" class="cot-clasif-backdrop">
+  <div class="cot-clasif-panel">
+    <div class="cot-clasif-head">
+      <h5><i class="bi bi-tags-fill"></i>Clasificar productos nuevos</h5>
+      <button type="button" class="cot-clasif-close" onclick="cotClasifCerrar()" aria-label="Cerrar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div class="cot-clasif-sub">
+      La cotización ya se creó. Estos productos son nuevos en el Catálogo y aún no
+      tienen una clase asignada (Rack, Trotadora, Bicicleta…) — puedes clasificarlos
+      ahora o después, desde el propio Catálogo.
+    </div>
+    <div id="cotClasifLista"></div>
+    <div class="cot-clasif-foot">
+      <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotClasifCerrar()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════ Nueva cotización desde ERP — 2026-07-12 ══════════════
 // Reusa el modal compartido tickets/_tka_modal.html (mode:'seleccionar'),
 // mismo contrato que catalogo/list.html y tickets/list.html/ficha.html.
 // Precio unitario queda en 0 (la fase de tarifas/pricing se difiere).
+//
+// 2026-07-15 (Blueprint Cotizaciones Fase 1): onSeleccionar ahora recibe
+// (items, header) -- el header trae cliente/rut/email/telefono ya
+// resueltos por el modal al cargar el documento. Se manda al backend para
+// que la cotización nazca con el cliente real (antes quedaba siempre NULL).
 (function(){
   const btn = document.getElementById('btnCotNuevaErp');
   if (!btn) return;
   btn.addEventListener('click', function(){
     tkaOpen({
       mode: 'seleccionar',
-      onSeleccionar: async function(items){
+      onSeleccionar: async function(items, header){
         if (!items || !items.length) return;
         try{
           const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ items: items })
+            body: JSON.stringify({ items: items, header: header || null })
           });
           const d = await r.json();
           if (!d.ok){
@@ -73,7 +160,11 @@
             return;
           }
           ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada (' + items.length + ' ítems)', {type:'success'});
-          setTimeout(function(){ location.reload(); }, 800);
+          if (d.sin_clasificar && d.sin_clasificar.length){
+            cotAbrirClasificacion(d.sin_clasificar);
+          } else {
+            setTimeout(function(){ location.reload(); }, 800);
+          }
         }catch(e){
           ilusToast('Error de conexión al crear la cotización', {type:'error'});
         }
@@ -81,6 +172,87 @@
     });
   });
 })();
+
+// ══════════════ Clasificación inline post-creación ══════════════
+let _cotClasesCache = null;
+async function _cotClasifCargarClases(){
+  if (_cotClasesCache) return _cotClasesCache;
+  try{
+    const r = await fetch('/catalogo/api/clases');
+    const d = await r.json();
+    _cotClasesCache = (d && d.ok && Array.isArray(d.clases)) ? d.clases : [];
+  }catch(e){
+    _cotClasesCache = [];
+  }
+  return _cotClasesCache;
+}
+function _cotEsc(s){
+  return (s == null ? '' : String(s))
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+async function cotAbrirClasificacion(pendientes){
+  const modal = document.getElementById('cotClasifModal');
+  const cont = document.getElementById('cotClasifLista');
+  if (!modal || !cont) return;
+  const clases = await _cotClasifCargarClases();
+  const opts = clases.map(function(c){
+    return '<option value="' + _cotEsc(c.value) + '">' + _cotEsc(c.label) + '</option>';
+  }).join('');
+  cont.innerHTML = pendientes.map(function(it, i){
+    const pid = parseInt(it.producto_id, 10) || 0;
+    if (!pid) return '';
+    return '<div class="cot-clasif-row" data-pid="' + pid + '">' +
+      '<div class="cot-clasif-info">' +
+        '<div class="cot-clasif-sku">' + _cotEsc(it.sku || '') + '</div>' +
+        '<div class="cot-clasif-nombre" title="' + _cotEsc(it.nombre || it.sku || '') + '">' + _cotEsc(it.nombre || it.sku || 'Producto') + '</div>' +
+      '</div>' +
+      '<select class="cot-clasif-select" id="cotClasifSel' + i + '">' +
+        '<option value="">Elegir clase…</option>' + opts +
+      '</select>' +
+      '<button type="button" class="cot-clasif-btn" onclick="cotClasifGuardar(' + pid + ', \'cotClasifSel' + i + '\', this)">Guardar</button>' +
+      '<span class="cot-clasif-ok" style="display:none"><i class="bi bi-check-circle-fill"></i></span>' +
+    '</div>';
+  }).join('') || '<div class="cot-clasif-empty">Nada pendiente por clasificar.</div>';
+  modal.classList.add('is-open');
+  modal.style.display = 'flex';
+}
+function cotClasifCerrar(){
+  const modal = document.getElementById('cotClasifModal');
+  if (modal){ modal.classList.remove('is-open'); modal.style.display = 'none'; }
+  // La cotización ya quedó creada -- cerrar sin terminar de clasificar no
+  // rompe nada (Regla #4.2). Recargamos para reflejarla en el listado.
+  location.reload();
+}
+async function cotClasifGuardar(pid, selId, btn){
+  const sel = document.getElementById(selId);
+  const val = sel ? sel.value : '';
+  if (!val){ ilusToast('Elige una clase primero', {type:'warning'}); return; }
+  const _orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try{
+    const r = await fetch('/catalogo/api/productos/' + pid, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ clase_producto: val })
+    });
+    const d = await r.json();
+    if (!d.ok){
+      ilusToast(d.error || 'No se pudo clasificar', {type:'error'});
+      btn.disabled = false; btn.innerHTML = _orig;
+      return;
+    }
+    if (sel) sel.disabled = true;
+    btn.style.display = 'none';
+    const row = btn.closest('.cot-clasif-row');
+    const ok = row ? row.querySelector('.cot-clasif-ok') : null;
+    if (ok) ok.style.display = 'inline-flex';
+    ilusToast('✓ Producto clasificado', {type:'success'});
+  }catch(e){
+    ilusToast('Error de conexión al clasificar', {type:'error'});
+    btn.disabled = false; btn.innerHTML = _orig;
+  }
+}
 </script>
 
 {# Modal compartido de búsqueda ERP (mode:'seleccionar'); NO tocar ese
