@@ -96,7 +96,28 @@ TK_TIPOS = (
     "install", "tech_support", "shipping", "quotation", "return",
     "tech_evaluation", "maintenance", "spare_parts", "equipment_transfer",
     "warranty", "repair", "spare_parts_store", "spare_parts_import",
+    # 2026-07-15 (Daniel): tipos 100% INTERNOS de bodega, sin cliente. Ver
+    # TK_TIPOS_SIN_CLIENTE mas abajo -- estos 3 NO entran a TK_TIPOS_PUBLICOS
+    # (no se ofrecen en el formulario publico ni en /tickets/nuevo).
+    "control_calidad", "trabajo_bodega", "capacitacion",
 )
+# Tipos internos SIN cliente obligatorio (Daniel 2026-07-15: "internas de
+# bodega: control de calidad, trabajos de bodega, capacitacion"). Usado por
+# tk_api_create para condicionar la validacion de RUT/empresa/contacto/
+# telefono/correo/direccion -- para estos tipos, solo tipo+descripcion son
+# obligatorios. El frontend (list.html) debe replicar esta misma condicion
+# en validarNtTodo() para no bloquear al usuario con campos que el backend
+# ya no exige.
+TK_TIPOS_SIN_CLIENTE = ("control_calidad", "trabajo_bodega", "capacitacion")
+
+# 🗓️ FASE 1 (Daniel 2026-07-15, alcance explícito): "hagamoslo por mientras
+# solamente con mi correo" -- el correo de confirmación tipo "reserva de
+# clínica" que se manda al generar una OT desde un ticket (.ics + botones
+# Google/Outlook, patrón calcado de pickups_module._build_pickup_ics) SIEMPRE
+# va a este destinatario fijo, NUNCA al técnico real todavía -- eso es una
+# fase futura explícitamente fuera de alcance por ahora. Ver
+# tk_api_generar_ot / _build_ot_ics / _tk_enviar_confirmacion_ot más abajo.
+TK_OT_CONFIRMACION_EMAIL_TEST = "daniel.aguilar@sphs.cl"
 TK_PRIORIDADES = ("baja", "media", "alta", "urgente")
 TK_ORIGENES = ("form", "backoffice", "erp")
 
@@ -116,6 +137,9 @@ TIPO_LABEL = {
     "spare_parts": "Repuesto y piezas", "equipment_transfer": "Movimiento de equipos",
     "warranty": "Garantía", "repair": "Reparación",
     "spare_parts_store": "Repuestos bodega", "spare_parts_import": "Repuestos importación",
+    # 2026-07-15: tipos internos de bodega (sin cliente) — ver TK_TIPOS_SIN_CLIENTE.
+    "control_calidad": "Control de calidad", "trabajo_bodega": "Trabajo de bodega",
+    "capacitacion": "Capacitación",
 }
 # Daniel 2026-07-13: "pienso que los 8 tipos del formulario se quedan
 # cortos" -- se amplia a los 12 tipos reales de TK_TIPOS (antes solo se
@@ -716,7 +740,8 @@ def register_tickets_routes(app, ctx):
                                      'cancelado') NOT NULL DEFAULT 'open',
               tipo              ENUM('install','tech_support','shipping','quotation','return',
                                      'tech_evaluation','maintenance','spare_parts','equipment_transfer',
-                                     'warranty','repair','spare_parts_store','spare_parts_import') NULL,
+                                     'warranty','repair','spare_parts_store','spare_parts_import',
+                                     'control_calidad','trabajo_bodega','capacitacion') NULL,
               prioridad         ENUM('baja','media','alta','urgente') NOT NULL DEFAULT 'media',
               titulo            VARCHAR(300) NULL,
               descripcion       TEXT NULL,
@@ -1017,6 +1042,25 @@ def register_tickets_routes(app, ctx):
             mysql_execute("CREATE UNIQUE INDEX uq_tk_legacy_taa ON tk_tickets (legacy_taa_id)")
         except Exception:
             pass  # ya existe
+        # 2026-07-15 (Daniel): 3 tipos nuevos 100% internos de bodega
+        # (control_calidad/trabajo_bodega/capacitacion — ver TK_TIPOS_SIN_CLIENTE).
+        # MODIFY COLUMN con el ENUM ampliado es idempotente y seguro de correr
+        # en TODO boot (patron ya usado en app.py, ej. mant_visitas.tipo,
+        # mant_clientes.tipo_cliente): amplia el ENUM preservando filas
+        # existentes, nunca las trunca. Sin esto, producción (donde la tabla
+        # ya existe) rechazaría el INSERT con "Data truncated for column 'tipo'"
+        # porque el CREATE TABLE IF NOT EXISTS de arriba no altera tablas ya
+        # creadas.
+        try:
+            mysql_execute(
+                "ALTER TABLE tk_tickets MODIFY COLUMN tipo "
+                "  ENUM('install','tech_support','shipping','quotation','return',"
+                "       'tech_evaluation','maintenance','spare_parts','equipment_transfer',"
+                "       'warranty','repair','spare_parts_store','spare_parts_import',"
+                "       'control_calidad','trabajo_bodega','capacitacion') NULL"
+            )
+        except Exception as _e:
+            print(f"[ILUS][WARN] ALTER tk_tickets MODIFY tipo (tipos internos bodega): {_e}", flush=True)
 
     def _ensure_tk_mensajes_columns():
         """Migracion aditiva por columnas (patron _ensure_transporte_columns):
@@ -1798,14 +1842,21 @@ def register_tickets_routes(app, ctx):
 
         # Obligatorios pedidos por Daniel (equipo NO es obligatorio):
         # tipo, RUT, empresa, contacto, telefono, correo, direccion, descripcion.
+        # EXCEPCION 2026-07-15: los 3 tipos internos de bodega (TK_TIPOS_SIN_CLIENTE
+        # -- control_calidad/trabajo_bodega/capacitacion) NO tienen cliente, por lo
+        # tanto solo tipo+descripcion son obligatorios. El frontend (list.html,
+        # modal "Nuevo Ticket") debe replicar esta misma condicion en
+        # validarNtTodo() -- ver contrato documentado en el reporte del agente.
+        _es_interno_sin_cliente = tipo_in in TK_TIPOS_SIN_CLIENTE
         faltantes = []
         if not tipo_in: faltantes.append("tipo de solicitud")
-        if not (d.get("rut") or "").strip(): faltantes.append("RUT")
-        if not empresa: faltantes.append("empresa")
-        if not (d.get("nombre_contacto") or "").strip(): faltantes.append("nombre de contacto")
-        if not (d.get("phone") or "").strip(): faltantes.append("teléfono")
-        if not (d.get("email") or "").strip(): faltantes.append("correo")
-        if not (d.get("direccion") or "").strip(): faltantes.append("dirección")
+        if not _es_interno_sin_cliente:
+            if not (d.get("rut") or "").strip(): faltantes.append("RUT")
+            if not empresa: faltantes.append("empresa")
+            if not (d.get("nombre_contacto") or "").strip(): faltantes.append("nombre de contacto")
+            if not (d.get("phone") or "").strip(): faltantes.append("teléfono")
+            if not (d.get("email") or "").strip(): faltantes.append("correo")
+            if not (d.get("direccion") or "").strip(): faltantes.append("dirección")
         if not descripcion: faltantes.append("descripción del problema")
         if faltantes:
             return jsonify({"ok": False, "error": "Faltan campos obligatorios: " + ", ".join(faltantes)}), 400
@@ -3000,6 +3051,194 @@ def register_tickets_routes(app, ctx):
         _tk_log(tid, "otro", f"Equipo #{eid} quitado")
         return jsonify({"ok": True})
 
+    # ── CALENDARIO de la OT (.ics + links Google/Outlook) — Daniel 2026-07-15:
+    #    "asi como en las clinicas, correo de agenda... me mandan un correo y
+    #    la reserva queda tambien se muestra en mi calendario". Patrón CALCADO
+    #    de pickups_module._build_pickup_ics / _pickup_calendar_links (Regla
+    #    #4: se replica el patrón ya probado, no se reinventa el formato
+    #    iCalendar). FASE 1: destinatario fijo TK_OT_CONFIRMACION_EMAIL_TEST
+    #    (ver constante arriba) -- NO se manda al técnico real todavía.
+    def _tk_ot_event_dt(fecha_programada, hora_inicio, hora_fin):
+        """(start, end) como datetime NAIVE en hora local Chile, o
+        (None, None) si no hay fecha resoluble. Si falta hora_fin, +1h
+        (mismo criterio que _pickup_event_dt)."""
+        try:
+            d = datetime.strptime(str(fecha_programada)[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None, None
+        def _as_hm(v):
+            s = str(v) if v else ""
+            if not s:
+                return None
+            parts = s.split(":")
+            try:
+                h = int(parts[0]); m = int(parts[1]) if len(parts) > 1 else 0
+                return h % 24, max(0, min(59, m))
+            except Exception:
+                return None
+        hm_i = _as_hm(hora_inicio)
+        if not hm_i:
+            return None, None
+        start = datetime(d.year, d.month, d.day, hm_i[0], hm_i[1])
+        hm_f = _as_hm(hora_fin)
+        if hm_f:
+            end = datetime(d.year, d.month, d.day, hm_f[0], hm_f[1])
+            if end <= start:
+                end = start + timedelta(hours=1)
+        else:
+            end = start + timedelta(hours=1)
+        return start, end
+
+    def _tk_ot_url(tid):
+        base = (os.environ.get("ILUS_APP_BASE_URL")
+                or "https://ilus-app-469212710544.southamerica-west1.run.app").rstrip("/")
+        return f"{base}/tickets/{tid}"
+
+    def _build_ot_ics(tid, numero_ot, fecha_programada, hora_inicio, hora_fin,
+                       titulo, direccion, tecnicos_nombres):
+        """Bytes del .ics (VEVENT) de la OT, o None si no hay fecha/hora
+        resoluble. UID ESTABLE por OT (ot-{numero}@ilusfitness.com) -- un
+        reenvío ACTUALIZA el evento en vez de duplicarlo (mismo criterio que
+        retiros). Hora en UTC (sufijo Z, sin VTIMEZONE)."""
+        try:
+            start, end = _tk_ot_event_dt(fecha_programada, hora_inicio, hora_fin)
+            if not start or not end:
+                return None
+            _tz = ZoneInfo("America/Santiago") if ZoneInfo else None
+            _utc = ZoneInfo("UTC") if ZoneInfo else None
+            if not _tz or not _utc:
+                return None
+            su = start.replace(tzinfo=_tz).astimezone(_utc)
+            eu = end.replace(tzinfo=_tz).astimezone(_utc)
+            numero = numero_ot or f"TID{tid}"
+            link = _tk_ot_url(tid)
+
+            def _esc(s):
+                return (str(s or "").replace("\\", "\\\\").replace(",", "\\,")
+                        .replace(";", "\\;").replace("\n", "\\n").replace("\r", ""))
+
+            resumen_titulo = f"OT {numero} — {titulo}" if titulo else f"OT {numero}"
+            desc = f"Orden de trabajo {numero}."
+            if tecnicos_nombres:
+                desc += f" Técnico(s): {', '.join(tecnicos_nombres)}."
+            desc += f" Ticket: {link}"
+            lines = [
+                "BEGIN:VCALENDAR", "VERSION:2.0",
+                "PRODID:-//ILUS Sport & Health//Tickets//ES",
+                "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+                "BEGIN:VEVENT",
+                f"UID:ot-{numero}@ilusfitness.com",
+                f"DTSTAMP:{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}",
+                f"DTSTART:{su.strftime('%Y%m%dT%H%M%SZ')}",
+                f"DTEND:{eu.strftime('%Y%m%dT%H%M%SZ')}",
+                f"SUMMARY:{_esc(resumen_titulo)}",
+                f"LOCATION:{_esc(direccion or '')}",
+                f"DESCRIPTION:{_esc(desc)}",
+                f"URL:{_esc(link)}",
+                "STATUS:CONFIRMED",
+                "BEGIN:VALARM", "TRIGGER:-PT2H", "ACTION:DISPLAY",
+                f"DESCRIPTION:{_esc('Recordatorio OT ' + numero)}",
+                "END:VALARM",
+                "END:VEVENT", "END:VCALENDAR",
+            ]
+            return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+        except Exception as exc:
+            print(f"[tk-ot-ics] no se pudo construir .ics de OT #{tid}: {exc}", flush=True)
+            return None
+
+    def _ot_calendar_links(numero_ot, fecha_programada, hora_inicio, hora_fin,
+                            titulo, direccion, tid):
+        """{'google':url,'outlook':url} para los botones 'Agregar a
+        calendario' del correo de confirmación de la OT. Vacío si no hay
+        fecha/hora resoluble. Mismo patrón que _pickup_calendar_links
+        (Google/Outlook en UTC con sufijo Z)."""
+        try:
+            from urllib.parse import quote_plus
+            start, end = _tk_ot_event_dt(fecha_programada, hora_inicio, hora_fin)
+            if not start or not end or not ZoneInfo:
+                return {"google": "", "outlook": ""}
+            _tz = ZoneInfo("America/Santiago"); _utc = ZoneInfo("UTC")
+            su = start.replace(tzinfo=_tz).astimezone(_utc)
+            eu = end.replace(tzinfo=_tz).astimezone(_utc)
+            numero = numero_ot or f"TID{tid}"
+            title = f"OT {numero}" + (f" — {titulo}" if titulo else "")
+            link = _tk_ot_url(tid)
+            details = f"Orden de trabajo {numero}. Ticket: {link}"
+            google = (
+                "https://calendar.google.com/calendar/render?action=TEMPLATE"
+                "&text=" + quote_plus(title)
+                + "&dates=" + su.strftime("%Y%m%dT%H%M%SZ") + "/" + eu.strftime("%Y%m%dT%H%M%SZ")
+                + "&location=" + quote_plus(direccion or "")
+                + "&details=" + quote_plus(details)
+            )
+            outlook = (
+                "https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent"
+                "&subject=" + quote_plus(title)
+                + "&startdt=" + su.strftime("%Y-%m-%dT%H:%M:%SZ")
+                + "&enddt=" + eu.strftime("%Y-%m-%dT%H:%M:%SZ")
+                + "&location=" + quote_plus(direccion or "")
+                + "&body=" + quote_plus(details)
+            )
+            return {"google": google, "outlook": outlook}
+        except Exception:
+            return {"google": "", "outlook": ""}
+
+    def _tk_enviar_confirmacion_ot(tid, numero_ot, fecha_programada, hora_inicio,
+                                    hora_fin, titulo, direccion, tecnicos_nombres,
+                                    cliente_nombre):
+        """Correo de confirmación 'reserva de clínica' al generar la OT desde
+        un ticket (Daniel 2026-07-15). FASE 1 (alcance explícito): SIEMPRE a
+        TK_OT_CONFIRMACION_EMAIL_TEST -- el técnico real NO recibe este correo
+        todavía (fase futura). Best-effort: nunca bloquea la creación de la OT
+        si el envío falla (mismo criterio que el resto del módulo). Devuelve
+        True/False (para loguear en tk_mensajes)."""
+        if not _send_ilus_email:
+            return False
+        try:
+            ics_bytes = _build_ot_ics(tid, numero_ot, fecha_programada, hora_inicio,
+                                       hora_fin, titulo, direccion, tecnicos_nombres)
+            links = _ot_calendar_links(numero_ot, fecha_programada, hora_inicio,
+                                        hora_fin, titulo, direccion, tid)
+            numero = numero_ot or f"TID{tid}"
+            hora_txt = f"{hora_inicio or ''}" + (f" – {hora_fin}" if hora_fin else "")
+            html = f"""
+            <p>Se agendó la <strong>OT {_html_mod.escape(numero)}</strong>
+               generada desde el ticket <a href="{_html_mod.escape(_tk_ot_url(tid))}">#{tid}</a>.</p>
+            <table style="border-collapse:collapse;margin:12px 0">
+              <tr><td style="padding:4px 12px 4px 0;color:#6b7280">Fecha</td>
+                  <td style="padding:4px 0"><strong>{_html_mod.escape(str(fecha_programada or ''))}</strong></td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#6b7280">Horario</td>
+                  <td style="padding:4px 0"><strong>{_html_mod.escape(hora_txt) or 'Sin horario definido'}</strong></td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#6b7280">Cliente</td>
+                  <td style="padding:4px 0">{_html_mod.escape(cliente_nombre or 'Sin cliente')}</td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#6b7280">Dirección</td>
+                  <td style="padding:4px 0">{_html_mod.escape(direccion or 'Sin dirección')}</td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#6b7280">Técnico(s)</td>
+                  <td style="padding:4px 0">{_html_mod.escape(', '.join(tecnicos_nombres) or 'Sin asignar')}</td></tr>
+            </table>
+            """
+            if links.get("google"):
+                html += (f'<p><a href="{_html_mod.escape(links["google"])}" '
+                          'style="background:#3b82f6;color:#fff;padding:8px 14px;'
+                          'border-radius:6px;text-decoration:none;margin-right:8px">'
+                          'Agregar a Google Calendar</a>')
+                if links.get("outlook"):
+                    html += (f'<a href="{_html_mod.escape(links["outlook"])}" '
+                              'style="background:#0078d4;color:#fff;padding:8px 14px;'
+                              'border-radius:6px;text-decoration:none">'
+                              'Agregar a Outlook</a>')
+                html += "</p>"
+            attachments = None
+            if ics_bytes:
+                attachments = [(f"ot_{numero}.ics", ics_bytes, "text/calendar")]
+            subject = _brand_subject(f"OT {numero} agendada")
+            return bool(_send_ilus_email(
+                TK_OT_CONFIRMACION_EMAIL_TEST, subject, html,
+                evento="ot_agendada", modulo="tickets", attachments=attachments))
+        except Exception as exc:
+            print(f"[tk-ot-confirmacion] no se pudo enviar correo de OT tid={tid}: {exc}", flush=True)
+            return False
+
     # ─────────────────────────────────────────────────────────────────
     #  API — Generar OT (Tickets crea una mant_visita REAL, ligada
     #  bidireccionalmente vía tk_tickets.visita_id). Wizard de 3 pasos del
@@ -3442,6 +3681,35 @@ def register_tickets_routes(app, ctx):
             _tk_log(tid, "otro",
                     f"⚠ Agendada con choque de horario contra {_c.get('tecnico_nombre')} "
                     f"({_otras}) — forzado por el usuario.")
+
+        # ── Correo de confirmación "reserva de clínica" (Daniel 2026-07-15:
+        #    "asi como en las clinicas, correo de agenda... me mandan un
+        #    correo y la reserva queda tambien se muestra en mi calendario").
+        #    FASE 1: SIEMPRE a TK_OT_CONFIRMACION_EMAIL_TEST (ver constante),
+        #    NUNCA al técnico real todavía. Best-effort -- no bloquea la
+        #    respuesta si falla. ──
+        try:
+            _tec_rows = mysql_fetchall(
+                "SELECT COALESCE(nombre, username) AS nm FROM app_users "
+                f" WHERE id IN ({','.join(['%s'] * len(tecnico_ids))})",
+                tuple(tecnico_ids)
+            ) if tecnico_ids else []
+            _tecnicos_nombres = [r["nm"] for r in (_tec_rows or []) if r.get("nm")]
+            _cliente_nombre = None
+            if cliente_id:
+                _crow = mysql_fetchone(
+                    "SELECT razon_social FROM mant_clientes WHERE id=%s", (cliente_id,))
+                _cliente_nombre = (_crow or {}).get("razon_social")
+            _cliente_nombre = _cliente_nombre or (t.get("empresa") or "").strip() or None
+            _envio_ok = _tk_enviar_confirmacion_ot(
+                tid, numero_ot, fecha_programada, hora_inicio, hora_fin,
+                titulo_final, direccion_visita, _tecnicos_nombres, _cliente_nombre)
+            _tk_log(tid, "otro",
+                    f"Correo de confirmación de agenda de {numero_ot} "
+                    f"{'enviado' if _envio_ok else 'NO pudo enviarse'} a "
+                    f"{TK_OT_CONFIRMACION_EMAIL_TEST} (fase 1 — destinatario fijo).")
+        except Exception as _e_conf:
+            print(f"[tk_api_generar_ot] correo de confirmacion no enviado vid={vid}: {_e_conf}", flush=True)
 
         return jsonify({
             "ok": True,

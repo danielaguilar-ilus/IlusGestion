@@ -567,6 +567,62 @@
 .otw-ot-existente .lbl{font-size:.76rem;color:#166534;}
 .otw-ot-existente a{margin-left:auto;flex-shrink:0;}
 
+/* ── Calendario mensual embebido en el modal "Generar OT" (Paso 4) ──
+   Daniel: "algo 2026/2027, parecido al de retiros, bien estructurado...
+   para ver quien esta agendado, con que OT, panorama general del mes,
+   sin salir del modal". Mismo lenguaje 2027 ya establecido esta sesion
+   (tokens --shadow-*/--r-*/--ease-spring, rojo ILUS). Grilla de 7
+   columnas; cada dia con OTs muestra un chip rojo con el conteo; click
+   abre el detalle (tecnico + horario + N° de OT) DENTRO del mismo panel,
+   sin cerrar el modal. */
+.tkcal-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.tkcal-navbtn{width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;
+  color:#374151;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:background .15s,border-color .15s,transform .2s var(--ease-spring);}
+.tkcal-navbtn:hover{background:#fef2f2;border-color:#fca5a5;color:#dc2626;transform:scale(1.06);}
+.tkcal-titulo{flex:1;text-align:center;font-weight:800;font-size:.92rem;color:#0f172a;text-transform:capitalize;}
+.tkcal-hoy{border:1px solid #e5e7eb;background:#fff;color:#6b7280;border-radius:50px;padding:3px 12px;
+  font-size:.7rem;font-weight:700;flex-shrink:0;transition:background .15s,color .15s,border-color .15s;}
+.tkcal-hoy:hover{background:#fef2f2;color:#dc2626;border-color:#fca5a5;}
+.tkcal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;}
+.tkcal-dow span{text-align:center;font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;}
+.tkcal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.tkcal-day{position:relative;aspect-ratio:1/1;min-height:36px;border-radius:var(--r-sm);border:1px solid #f1f5f9;
+  background:#fafbfc;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  cursor:pointer;transition:background .15s,border-color .15s,box-shadow .2s var(--ease-spring),transform .15s var(--ease-spring);}
+.tkcal-day:hover{background:#fff;border-color:#cbd5e1;box-shadow:var(--shadow-sm);transform:translateY(-1px);}
+.tkcal-day.blank{visibility:hidden;pointer-events:none;}
+.tkcal-day .num{font-size:.76rem;font-weight:700;color:#334155;}
+.tkcal-day.finde{background:#f8fafc;}
+.tkcal-day.hoy{border-color:#dc2626;}
+.tkcal-day.hoy .num{color:#dc2626;font-weight:900;}
+.tkcal-day.sel{background:linear-gradient(135deg,#fef2f2,#fee2e2);border-color:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.sel .num{color:#991b1b;}
+.tkcal-day .cnt{position:absolute;top:2px;right:3px;background:#dc2626;color:#fff;font-size:.55rem;font-weight:800;
+  border-radius:50px;min-width:14px;height:14px;display:flex;align-items:center;justify-content:center;
+  padding:0 3px;line-height:1;box-shadow:0 1px 3px rgba(220,38,38,.4);}
+.tkcal-detalle{margin-top:12px;padding:12px 14px;background:#fafbfc;border:1px solid #f1f5f9;border-radius:var(--r-md);
+  animation:tkcalDetIn .2s var(--ease-spring);}
+@keyframes tkcalDetIn{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:none;}}
+.tkcal-detalle-titulo{font-size:.78rem;font-weight:800;color:#0f172a;margin-bottom:8px;text-transform:capitalize;}
+.tkcal-det-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;font-size:.78rem;
+  background:#fff;border:1px solid #f1f5f9;margin-bottom:5px;flex-wrap:wrap;}
+.tkcal-det-item:last-child{margin-bottom:0;}
+.tkcal-det-item .hora{font-family:'JetBrains Mono',monospace;font-weight:700;color:#dc2626;white-space:nowrap;flex-shrink:0;}
+.tkcal-det-item .who{font-weight:700;color:#0f172a;}
+.tkcal-det-item .num{font-family:'JetBrains Mono',monospace;color:#6b7280;font-size:.72rem;margin-left:auto;flex-shrink:0;}
+.tkcal-det-empty{font-size:.78rem;color:#9ca3af;text-align:center;padding:6px 0;}
+/* Alerta de choque de horario EN VIVO (no bloqueante, imposible de ignorar
+   por color/posición -- entre el campo de fecha y el de técnicos). */
+.tkcal-choque-alert{display:flex;align-items:flex-start;gap:9px;background:#fef2f2;border:1px solid #fecaca;
+  color:#991b1b;border-radius:var(--r-md);padding:10px 13px;font-size:.8rem;font-weight:600;margin-bottom:12px;
+  animation:tkcalDetIn .2s var(--ease-spring);}
+.tkcal-choque-alert i{font-size:1rem;flex-shrink:0;margin-top:1px;color:#dc2626;}
+@media (max-width:520px){
+  .tkcal-day{min-height:32px;}
+  .tkcal-day .num{font-size:.7rem;}
+}
+
 /* ── Modal "Generar OT" — MISMO lenguaje visual que #modalLevSelector de
    Mantenciones (templates/mantenciones/ficha.html + static/mant_ficha.js).
    Daniel rechazó el wizard genérico anterior (.otw-*); este bloque replica
@@ -1393,15 +1449,18 @@
             <div class="row g-2">
               <div class="col-md-4">
                 <label class="form-label small fw-semibold">Fecha programada *</label>
-                <input type="date" id="levFechaProg" class="form-control form-control-sm" required>
+                <input type="date" id="levFechaProg" class="form-control form-control-sm" required
+                       onchange="tkotFechaProgChange()">
               </div>
               <div class="col-md-4">
                 <label class="form-label small fw-semibold">Hora inicio</label>
-                <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00">
+                <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00"
+                       onchange="tkotChequearChoqueDebounced()">
               </div>
               <div class="col-md-4">
                 <label class="form-label small fw-semibold">Hora término</label>
-                <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00">
+                <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00"
+                       onchange="tkotChequearChoqueDebounced()">
               </div>
             </div>
             <div class="form-check form-switch mt-2">
@@ -1437,10 +1496,53 @@
           </div>
         </div>
 
-        {# ─── Paso 4: Técnicos asignados ─── #}
+        {# ─── Paso 4: Calendario del mes (panorama de disponibilidad) ───
+           Daniel: "algo 2026/2027, parecido al de retiros, bien
+           estructurado... para ver quien esta agendado, con que OT,
+           panorama general del mes, sin salir del modal". Consume
+           GET /mantenciones/api/calendario/mes/<anio>/<mes> (contrato
+           construido en paralelo -- si el endpoint aun no existe, el
+           panel queda en un estado vacio amigable, sin romper el modal).
+           La alerta de choque de horario (#levCalWarnChoque) vive aca
+           porque queda literalmente entre el campo de fecha (Paso 3,
+           arriba) y el de tecnicos (Paso 5, abajo) -- se recalcula al
+           cambiar fecha/hora/tecnico(s). ── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">4</div>
+            <div class="lev-step-title">Calendario del mes</div>
+            <div class="lev-step-sub">Quién está agendado, panorama general</div>
+          </div>
+          <div class="lev-step-body">
+            <div id="levCalWarnChoque" class="tkcal-choque-alert" style="display:none"></div>
+            <div class="tkcal-toolbar">
+              <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(-1)" aria-label="Mes anterior">
+                <i class="bi bi-chevron-left"></i>
+              </button>
+              <div class="tkcal-titulo" id="levCalTitulo">—</div>
+              <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(1)" aria-label="Mes siguiente">
+                <i class="bi bi-chevron-right"></i>
+              </button>
+              <button type="button" class="tkcal-hoy" onclick="tkotCalHoy()">Hoy</button>
+            </div>
+            <div class="tkcal-dow">
+              <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
+            </div>
+            <div class="tkcal-grid" id="levCalGrid">
+              <div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando calendario…</div>
+            </div>
+            <div class="tkcal-detalle" id="levCalDetalle" style="display:none"></div>
+            <small class="text-muted d-block mt-2" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Los días con un número muestran cuántas OTs hay agendadas. Toca un día para ver el detalle.
+            </small>
+          </div>
+        </div>
+
+        {# ─── Paso 5: Técnicos asignados ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">5</div>
             <div class="lev-step-title">Técnicos asignados *</div>
             <div class="lev-step-sub">
               <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
@@ -1457,10 +1559,10 @@
           </div>
         </div>
 
-        {# ─── Paso 5: Equipos (del TICKET) + multi-plantilla por equipo ─── #}
+        {# ─── Paso 6: Equipos (del TICKET) + multi-plantilla por equipo ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">5</div>
+            <div class="lev-step-num">6</div>
             <div class="lev-step-title">Equipos y plantillas *</div>
             <div class="lev-step-sub">
               <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
@@ -1498,10 +1600,10 @@
           </div>
         </div>
 
-        {# ─── Paso 6: Acceso y logística del sitio ─── #}
+        {# ─── Paso 7: Acceso y logística del sitio ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">6</div>
+            <div class="lev-step-num">7</div>
             <div class="lev-step-title">Acceso y logística</div>
             <div class="lev-step-sub">Info crítica para el técnico</div>
           </div>
@@ -1563,10 +1665,10 @@
           </div>
         </div>
 
-        {# ─── Paso 7: Documentos y archivos preliminares ─── #}
+        {# ─── Paso 8: Documentos y archivos preliminares ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">7</div>
+            <div class="lev-step-num">8</div>
             <div class="lev-step-title">Documentos y archivos preliminares</div>
             <div class="lev-step-sub">
               <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
@@ -3690,6 +3792,8 @@ const _TKOT = {
   eqPlantillas: {},         // { claveEquipo: Set<plantillaId> }
   contactos: { lista: [], cargados: false },
   adjuntos: [],
+  cal: { anio: null, mes: null, cache: {}, diaSel: null }, // calendario del mes (Paso 4)
+  _choqueToken: 0, // invalida respuestas de choque obsoletas si el usuario sigue cambiando fecha/hora/tecnicos
 };
 
 // ── Clave estable por fila de equipo: usa maquina_id si existe (para que
@@ -3820,6 +3924,244 @@ function tkotRenderTecnicos(){
 function tkotToggleTecnico(tid){
   if(_TKOT.tecnicosSel.has(tid)) _TKOT.tecnicosSel.delete(tid); else _TKOT.tecnicosSel.add(tid);
   tkotRenderTecnicos();
+  tkotChequearChoqueDebounced();
+}
+
+// ════════════════════════════════════════════════════════════
+// CALENDARIO EMBEBIDO (Paso 4) + choque de horario en vivo
+// Daniel: "algo 2026/2027, parecido al de retiros, bien estructurado...
+// para ver quien esta agendado, con que OT, panorama general del mes,
+// sin salir del modal". Consume GET /mantenciones/api/calendario/mes/
+// <anio>/<mes> y GET /mantenciones/api/calendario/choque?tecnico_id=X&
+// fecha=Y&hora_ini=Z&hora_fin=W -- contratos construidos EN PARALELO por
+// otro agente sobre app.py (no se toca app.py desde este archivo). Si el
+// endpoint aun no existe al momento de probar, el catch de cada función
+// deja el panel en un estado vacío amigable en vez de romper el modal.
+// ════════════════════════════════════════════════════════════
+const TKCAL_DOW_ES = ['L','M','M','J','V','S','D'];
+const TKCAL_MES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+  'agosto','septiembre','octubre','noviembre','diciembre'];
+
+function _tkotCalKey(a, m){ return a + '-' + String(m).padStart(2, '0'); }
+
+// ── Normaliza la respuesta del endpoint de mes a { "YYYY-MM-DD": [visitas] }
+//    -- tolera 3 formas razonables de shape porque el contrato exacto lo
+//    define otro agente en paralelo (ver notas del contrato al pie). ──
+function _tkotCalNormalizarMes(d){
+  const mapa = {};
+  if(!d) return mapa;
+  if(d.dias && !Array.isArray(d.dias) && typeof d.dias === 'object'){
+    Object.keys(d.dias).forEach(function(f){
+      const dd = d.dias[f];
+      mapa[f] = Array.isArray(dd) ? dd : (dd && dd.visitas) || [];
+    });
+  } else if(Array.isArray(d.dias)){
+    d.dias.forEach(function(dd){
+      if(dd && dd.fecha) mapa[dd.fecha] = dd.visitas || [];
+    });
+  } else if(Array.isArray(d.visitas)){
+    d.visitas.forEach(function(v){
+      const f = v.fecha_programada || v.fecha;
+      if(!f) return;
+      if(!mapa[f]) mapa[f] = [];
+      mapa[f].push(v);
+    });
+  }
+  return mapa;
+}
+
+async function tkotCalCargarMes(){
+  const a = _TKOT.cal.anio, m = _TKOT.cal.mes;
+  const titEl = document.getElementById('levCalTitulo');
+  if(titEl) titEl.textContent = (TKCAL_MES_ES[m - 1] || '') + ' ' + a;
+  const key = _tkotCalKey(a, m);
+  if(_TKOT.cal.cache[key]){ tkotCalRenderGrid(); return; }
+  const grid = document.getElementById('levCalGrid');
+  if(grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando…</div>';
+  try{
+    const r = await fetch('/mantenciones/api/calendario/mes/' + a + '/' + m);
+    if(!r.ok) throw new Error('http ' + r.status);
+    const d = await r.json();
+    _TKOT.cal.cache[key] = _tkotCalNormalizarMes(d);
+  }catch(e){
+    console.warn('tkot calendario mes:', e);
+    _TKOT.cal.cache[key] = {};
+    if(grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">'
+      + '<i class="bi bi-calendar-x me-1"></i>No se pudo cargar el calendario de este mes.</div>';
+    return;
+  }
+  tkotCalRenderGrid();
+}
+
+function tkotCalMes(delta){
+  let m = _TKOT.cal.mes + delta, a = _TKOT.cal.anio;
+  if(m > 12){ m = 1; a++; } else if(m < 1){ m = 12; a--; }
+  _TKOT.cal.anio = a; _TKOT.cal.mes = m;
+  _TKOT.cal.diaSel = null;
+  const det = document.getElementById('levCalDetalle');
+  if(det) det.style.display = 'none';
+  tkotCalCargarMes();
+}
+
+function tkotCalHoy(){
+  const hoy = new Date();
+  _TKOT.cal.anio = hoy.getFullYear(); _TKOT.cal.mes = hoy.getMonth() + 1;
+  tkotCalCargarMes().then(function(){
+    const f = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+    tkotCalSelDia(f);
+  });
+}
+
+function tkotCalRenderGrid(){
+  const a = _TKOT.cal.anio, m = _TKOT.cal.mes;
+  const mapa = _TKOT.cal.cache[_tkotCalKey(a, m)] || {};
+  const grid = document.getElementById('levCalGrid');
+  if(!grid) return;
+  const primerDia = new Date(a, m - 1, 1);
+  const nDias = new Date(a, m, 0).getDate();
+  let offset = primerDia.getDay() - 1; // lunes = 0
+  if(offset < 0) offset = 6;
+  const hoy = new Date();
+  const hoyStr = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+  let html = '';
+  for(let i = 0; i < offset; i++) html += '<div class="tkcal-day blank"></div>';
+  for(let dia = 1; dia <= nDias; dia++){
+    const fecha = a + '-' + String(m).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
+    const visitas = mapa[fecha] || [];
+    const dow = new Date(a, m - 1, dia).getDay();
+    const clases = ['tkcal-day'];
+    if(dow === 0 || dow === 6) clases.push('finde');
+    if(fecha === hoyStr) clases.push('hoy');
+    if(fecha === _TKOT.cal.diaSel) clases.push('sel');
+    const tip = visitas.length ? (visitas.length + ' OT agendada(s) este día') : 'Sin OTs agendadas';
+    html += '<div class="' + clases.join(' ') + '" onclick="tkotCalSelDia(\'' + fecha + '\')" title="' + esc(tip) + '">'
+      + '<span class="num">' + dia + '</span>'
+      + (visitas.length ? '<span class="cnt">' + visitas.length + '</span>' : '')
+      + '</div>';
+  }
+  grid.innerHTML = html;
+}
+
+// ── Detalle del día: técnico + horario + N° de OT, DENTRO del modal
+//    (Daniel: "sin salir del modal ni navegar a otra pagina"). ──
+function tkotCalSelDia(fecha, opts){
+  opts = opts || {};
+  _TKOT.cal.diaSel = fecha;
+  tkotCalRenderGrid();
+  const mapa = _TKOT.cal.cache[_tkotCalKey(_TKOT.cal.anio, _TKOT.cal.mes)] || {};
+  const visitas = mapa[fecha] || [];
+  const det = document.getElementById('levCalDetalle');
+  if(!det) return;
+  const partes = fecha.split('-');
+  const fechaFmt = partes.length === 3 ? (partes[2] + '/' + partes[1] + '/' + partes[0]) : fecha;
+  let html = '<div class="tkcal-detalle-titulo"><i class="bi bi-calendar3 me-1" style="color:#dc2626"></i>' + fechaFmt + '</div>';
+  if(!visitas.length){
+    html += '<div class="tkcal-det-empty">Sin OTs agendadas este día.</div>';
+  } else {
+    visitas.forEach(function(v){
+      const tec = esc(v.tecnico_nombre || v.tecnico || 'Sin técnico asignado');
+      const hi = v.hora_inicio || '', hf = v.hora_fin || '';
+      const num = esc(v.numero_ot || ('OT #' + (v.id || v.visita_id || '?')));
+      html += '<div class="tkcal-det-item"><span class="hora">' + (hi || '--') + (hf ? '–' + hf : '') + '</span>'
+        + '<span class="who">' + tec + '</span><span class="num">' + num + '</span></div>';
+    });
+  }
+  det.innerHTML = html;
+  det.style.display = '';
+  if(!opts.silencio) det.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// ── Se llama al abrir el modal (reset) y cada vez que cambia la fecha
+//    programada, para que el calendario "salte" al mes correspondiente. ──
+function tkotCalInit(){
+  const fp = document.getElementById('levFechaProg')?.value || '';
+  const base = fp ? new Date(fp + 'T00:00:00') : new Date();
+  _TKOT.cal.anio = base.getFullYear();
+  _TKOT.cal.mes = base.getMonth() + 1;
+  _TKOT.cal.diaSel = null;
+  _TKOT.cal.cache = {};
+  const det = document.getElementById('levCalDetalle');
+  if(det) det.style.display = 'none';
+  const warn = document.getElementById('levCalWarnChoque');
+  if(warn) warn.style.display = 'none';
+  tkotCalCargarMes().then(function(){
+    if(fp) tkotCalSelDia(fp, { silencio: true });
+  });
+}
+
+function tkotFechaProgChange(){
+  const v = document.getElementById('levFechaProg')?.value || '';
+  if(v){
+    const y = parseInt(v.slice(0, 4)), m = parseInt(v.slice(5, 7));
+    if(y && m && (y !== _TKOT.cal.anio || m !== _TKOT.cal.mes)){
+      _TKOT.cal.anio = y; _TKOT.cal.mes = m;
+      tkotCalCargarMes().then(function(){ tkotCalSelDia(v, { silencio: true }); });
+    } else {
+      tkotCalSelDia(v, { silencio: true });
+    }
+  }
+  tkotChequearChoqueDebounced();
+}
+
+// ── Choque de horario EN VIVO. El backend de generar-ot solo valida al
+//    técnico PRINCIPAL antes de crear la OT (ver reporte de investigación);
+//    aquí, en el frontend, se consulta por CADA técnico seleccionado para
+//    dar visibilidad completa sin bloquear -- es un aviso, no un gate.
+//    Debounce 500ms para no saturar de requests mientras el usuario teclea. ──
+let _tkotChoqueTimer = null;
+function tkotChequearChoqueDebounced(){
+  if(_tkotChoqueTimer) clearTimeout(_tkotChoqueTimer);
+  _tkotChoqueTimer = setTimeout(tkotChequearChoque, 500);
+}
+async function tkotChequearChoque(){
+  const warn = document.getElementById('levCalWarnChoque');
+  if(!warn) return;
+  const fecha = document.getElementById('levFechaProg')?.value || '';
+  const horaIni = document.getElementById('levHoraIni')?.value || '';
+  const horaFin = document.getElementById('levHoraFin')?.value || '';
+  const tecnicoIds = Array.from(_TKOT.tecnicosSel);
+  if(!fecha || !tecnicoIds.length){ warn.style.display = 'none'; return; }
+  const idNombre = {};
+  (_TKOT.tecnicosDisponibles || []).forEach(function(t){ idNombre[t.id] = t.nombre || t.email || ('Téc #' + t.id); });
+  const miToken = ++_TKOT._choqueToken;
+  try{
+    const resultados = await Promise.all(tecnicoIds.map(function(tid){
+      const qs = new URLSearchParams({ tecnico_id: String(tid), fecha: fecha });
+      if(horaIni) qs.set('hora_ini', horaIni);
+      if(horaFin) qs.set('hora_fin', horaFin);
+      return fetch('/mantenciones/api/calendario/choque?' + qs.toString())
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){ return { tid: tid, d: d }; })
+        .catch(function(){ return { tid: tid, d: null }; });
+    }));
+    if(miToken !== _TKOT._choqueToken) return; // el usuario siguió cambiando algo -- respuesta obsoleta
+    const mensajes = [];
+    resultados.forEach(function(res){
+      const d = res.d;
+      // Contrato real del backend (/mantenciones/api/calendario/choque):
+      // { tecnicos: [{tecnico_id, tecnico_nombre, choque:bool, visitas_choque:[...]}] }
+      // -- se pide 1 tecnico_id por request, así que el técnico buscado
+      // está en tecnicos[0] (o se busca por id como refuerzo).
+      const lista = (d && Array.isArray(d.tecnicos)) ? d.tecnicos : [];
+      const entry = lista.find(function(t){ return String(t.tecnico_id) === String(res.tid); }) || lista[0];
+      if(!entry || !entry.choque) return;
+      const nombre = entry.tecnico_nombre || idNombre[res.tid] || 'El técnico';
+      const visitas = entry.visitas_choque || [];
+      const detalle = visitas.map(function(v){
+        return (v.numero_ot || ('OT #' + v.visita_id)) + ' de ' + (v.hora_inicio || '--') + ' a ' + (v.hora_fin || '--');
+      }).join(', ');
+      mensajes.push('<b>' + esc(nombre) + '</b> ya tiene una visita agendada este día'
+        + (detalle ? ' (' + esc(detalle) + ')' : '') + '.');
+    });
+    if(mensajes.length){
+      warn.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><div>' + mensajes.join('<br>') + '</div>';
+      warn.style.display = 'flex';
+    } else {
+      warn.style.display = 'none';
+    }
+  }catch(e){
+    console.warn('tkot choque:', e);
+  }
 }
 
 // ── Paso 1: tipo de OT (idéntico a Mantenciones) ──
@@ -4189,6 +4531,8 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   document.getElementById('levFechaFinWrap').style.display = 'none';
   document.getElementById('levHoraIni').value = '09:00';
   document.getElementById('levHoraFin').value = '13:00';
+
+  tkotCalInit();
 
   _TKOT.tecnicosSel.clear();
   const tBtn = document.getElementById('btnLevToggleTodos');

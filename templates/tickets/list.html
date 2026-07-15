@@ -413,9 +413,16 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
               'repair': ('bi-wrench-adjustable-circle-fill', '#991b1b', '#fef2f2'),
               'spare_parts_store': ('bi-building', '#6b7280', '#f9fafb'),
               'spare_parts_import': ('bi-globe-americas', '#3b82f6', '#eff6ff'),
+              'control_calidad': ('bi-clipboard-check', '#16a34a', '#f0fdf4'),
+              'trabajo_bodega': ('bi-box-seam', '#a16207', '#fef3c7'),
+              'capacitacion': ('bi-mortarboard', '#7c3aed', '#f3e8ff'),
             } %}
+            {# tk_tipos_modal (si el backend lo expone -- tipos internos incluidos,
+               ej. control_calidad/trabajo_bodega/capacitacion, excluye 'warranty')
+               vs tk_tipos_publicos (formulario /soporte, SIN los 3 tipos internos).
+               Este modal es interno (staff), asi que usa el primero si existe. #}
             <div class="nt-tipos" id="ntTipos">
-              {% for t in tk_tipos_publicos %}
+              {% for t in (tk_tipos_modal if tk_tipos_modal is defined else tk_tipos_publicos) %}
               {% set tv = tipo_visual.get(t, ('bi-question-circle', '#6b7280', '#f9fafb')) %}
               <div class="nt-tipo-pill" data-tipo="{{ t }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button">
                 <i class="bi {{ tv[0] }}"></i><span>{{ tipo_label[t] }}</span>
@@ -436,9 +443,13 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
           </div>
         </div>
 
-        <div class="nt-card">
+        <div class="nt-card" id="ntCardCliente">
           <h6><span class="n">2</span>Cliente</h6>
           <div class="hint">Busca en el ERP por RUT o nombre; los campos de abajo se completan y quedan editables.</div>
+          <div class="nt-vfeed ok" id="ntClienteOpcionalHint" style="display:none;margin-bottom:8px">
+            <i class="bi bi-info-circle-fill"></i> Cliente opcional para este tipo de ticket (interno) —
+            puedes igual asociar uno si corresponde.
+          </div>
           <div class="nt-field full" id="ntBuscarCliWrap">
             <div class="nt-search">
               <i class="bi bi-search"></i>
@@ -470,9 +481,12 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
           </div>
         </div>
 
-        <div class="nt-card">
-          <h6><span class="n">3</span>Dirección del equipo <span style="color:#dc2626">*</span></h6>
+        <div class="nt-card" id="ntCardDireccion">
+          <h6><span class="n">3</span>Dirección del equipo <span id="ntDirAsterisco" style="color:#dc2626">*</span></h6>
           <div class="hint">Empieza a escribir y elige una sugerencia de Google para validarla.</div>
+          <div class="nt-vfeed ok" id="ntDireccionOpcionalHint" style="display:none;margin-bottom:8px">
+            <i class="bi bi-info-circle-fill"></i> Dirección opcional para este tipo de ticket (interno).
+          </div>
           <div class="nt-field full" id="fDirWrap">
             <input type="text" id="ntDireccion" class="form-control" placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off">
             <input type="hidden" id="ntDirLat"><input type="hidden" id="ntDirLng"><input type="hidden" id="ntDirPlace"><input type="hidden" id="ntComuna"><input type="hidden" id="ntRegion">
@@ -540,6 +554,11 @@ const TIPO_LABEL = {{ tipo_label|tojson }};
 // se reutiliza aca para la columna Tipo de la tabla (NO se inventa paleta nueva).
 const TIPO_VISUAL = {{ tipo_visual|tojson }};
 const IS_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
+// Tipos 100% internos (sin cliente asociado, ej. control de calidad interno,
+// trabajo de bodega, capacitación) -- para estos, el RUT/cliente/dirección
+// NO son obligatorios en el modal "Nuevo Ticket" (validación condicional,
+// ver ntActualizarObligatoriedadCliente / validarNtTodo más abajo).
+const TK_TIPOS_SIN_CLIENTE = ['control_calidad', 'trabajo_bodega', 'capacitacion'];
 let _tkTimer = null;
 
 // ── Estado de la bandeja (orden / paginacion / toggle Hoy) ──
@@ -963,6 +982,7 @@ function ntReset(){
   document.getElementById('ntDoc').value=''; document.getElementById('ntPrio').value='media';
   document.getElementById('ntVPhone').className='nt-vfeed'; document.getElementById('ntVEmail').className='nt-vfeed';
   NT_REQ_WRAPS.forEach(limpiarNtErr);
+  ntActualizarObligatoriedadCliente();
   renderNtEquipos();
   ntArchivos = []; document.getElementById('ntFile').value=''; ntRenderArchivos();
 }
@@ -1040,10 +1060,36 @@ async function ntSubirArchivos(ticketId){
   }
 }
 
+// ── Cliente/RUT/dirección opcionales para tipos 100% internos (Regla #4.2:
+// no se elimina la posibilidad de asociar cliente -- los campos siguen
+// visibles y editables, solo dejan de exigirse). NT_CLIENTE_WRAPS son los
+// wraps de NT_REQ_WRAPS que dependen de si hay cliente asociado (tipo y
+// descripción quedan SIEMPRE obligatorios, fuera de esta lista). ──
+const NT_CLIENTE_WRAPS = ['fRutWrap','fEmpresaWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap'];
+function ntActualizarObligatoriedadCliente(){
+  const esInterno = TK_TIPOS_SIN_CLIENTE.includes(ntTipoSel);
+  NT_CLIENTE_WRAPS.forEach(function(id){
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.classList.toggle('req', !esInterno);
+    if(esInterno){
+      el.classList.remove('err','ok');
+      const em = el.querySelector('.nt-err-msg'); if(em) em.classList.remove('show');
+    }
+  });
+  const dirAst = document.getElementById('ntDirAsterisco');
+  if(dirAst) dirAst.style.display = esInterno ? 'none' : '';
+  const hintCli = document.getElementById('ntClienteOpcionalHint');
+  if(hintCli) hintCli.style.display = esInterno ? 'block' : 'none';
+  const hintDir = document.getElementById('ntDireccionOpcionalHint');
+  if(hintDir) hintDir.style.display = esInterno ? 'block' : 'none';
+}
+
 function ntSeleccionarTipo(el){
   document.querySelectorAll('.nt-tipo-pill').forEach(x=>x.classList.remove('sel'));
   el.classList.add('sel'); ntTipoSel = el.dataset.tipo;
   marcarNtOk('fTipoWrap');
+  ntActualizarObligatoriedadCliente();
 }
 document.querySelectorAll('.nt-tipo-pill').forEach(el=>{
   el.addEventListener('click', ()=>ntSeleccionarTipo(el));
@@ -1229,26 +1275,32 @@ function validarNtTodo(){
   let ok = true;
   if(!ntTipoSel){ marcarNtErr('fTipoWrap'); ok=false; } else marcarNtOk('fTipoWrap');
 
-  const rutVal = document.getElementById('ntRut').value.trim();
-  if(!rutVal){ marcarNtErr('fRutWrap'); ok=false; } else marcarNtOk('fRutWrap');
+  // Tipos 100% internos (control_calidad/trabajo_bodega/capacitacion): el
+  // cliente/RUT/dirección NO son obligatorios -- Daniel lo pidió explícito
+  // para estos 3 tipos. Tipo y descripción siguen exigidos siempre.
+  const esInterno = TK_TIPOS_SIN_CLIENTE.includes(ntTipoSel);
+  if(!esInterno){
+    const rutVal = document.getElementById('ntRut').value.trim();
+    if(!rutVal){ marcarNtErr('fRutWrap'); ok=false; } else marcarNtOk('fRutWrap');
 
-  const empresaVal = document.getElementById('ntEmpresa').value.trim();
-  if(!empresaVal){ marcarNtErr('fEmpresaWrap'); ok=false; } else marcarNtOk('fEmpresaWrap');
+    const empresaVal = document.getElementById('ntEmpresa').value.trim();
+    if(!empresaVal){ marcarNtErr('fEmpresaWrap'); ok=false; } else marcarNtOk('fEmpresaWrap');
 
-  const contactoVal = document.getElementById('ntContacto').value.trim();
-  if(!contactoVal){ marcarNtErr('fContactoWrap'); ok=false; } else marcarNtOk('fContactoWrap');
+    const contactoVal = document.getElementById('ntContacto').value.trim();
+    if(!contactoVal){ marcarNtErr('fContactoWrap'); ok=false; } else marcarNtOk('fContactoWrap');
 
-  const phoneEl = document.getElementById('ntPhone');
-  if(!phoneEl.value.trim()) phoneEl.dispatchEvent(new Event('blur'));
-  if(!document.getElementById('ntVPhone').classList.contains('ok')) ok=false;
+    const phoneEl = document.getElementById('ntPhone');
+    if(!phoneEl.value.trim()) phoneEl.dispatchEvent(new Event('blur'));
+    if(!document.getElementById('ntVPhone').classList.contains('ok')) ok=false;
 
-  const emailEl = document.getElementById('ntEmail');
-  if(!emailEl.value.trim()) emailEl.dispatchEvent(new Event('blur'));
-  if(!document.getElementById('ntVEmail').classList.contains('ok')) ok=false;
+    const emailEl = document.getElementById('ntEmail');
+    if(!emailEl.value.trim()) emailEl.dispatchEvent(new Event('blur'));
+    if(!document.getElementById('ntVEmail').classList.contains('ok')) ok=false;
 
-  const dirVal = document.getElementById('ntDireccion').value.trim();
-  const dirLat = document.getElementById('ntDirLat').value;
-  if(!dirVal || !dirLat){ marcarNtErr('fDirWrap'); ok=false; } else marcarNtOk('fDirWrap');
+    const dirVal = document.getElementById('ntDireccion').value.trim();
+    const dirLat = document.getElementById('ntDirLat').value;
+    if(!dirVal || !dirLat){ marcarNtErr('fDirWrap'); ok=false; } else marcarNtOk('fDirWrap');
+  }
 
   const descVal = document.getElementById('ntDesc').value.trim();
   if(!descVal){ marcarNtErr('fDescWrap'); ok=false; } else marcarNtOk('fDescWrap');

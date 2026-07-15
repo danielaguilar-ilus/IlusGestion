@@ -47598,6 +47598,80 @@ def mant_contrato_clausulas_get(ctid):
 #  - Resumen: total, completadas, overrun promedio
 # ══════════════════════════════════════════════════════════════════════
 
+def _mant_calendario_role_where():
+    """Filtro por rol compartido entre TODOS los endpoints de calendario que
+    listan `mant_visitas` (día / mes / futuros). Extraído 2026-07-15 desde
+    `mant_calendario_dia_drill` (Regla #5 — una sola fuente de verdad, no
+    duplicar el filtro de seguridad al agregar el endpoint de mes) — el
+    comentario original de seguridad se conserva íntegro más abajo.
+
+    🔐 SEGURIDAD 2026-05-22 (Aaron Urbina — brecha calendario-listado):
+    Aplicar filtro por rol coherente con `mant_ots_list` y
+    `mant_visitas_api`. Si el rol no puede ver la OT en el listado,
+    tampoco debe verla como visita del día/mes.
+
+    Devuelve (extra_where_sql, extra_params) — extra_where_sql arranca con
+    " AND (...)" o " AND 1=0 " o "" (admin/superadmin/supervisor sin filtro).
+    """
+    _u = getattr(g, "user", None) or {}
+    _role_raw = (_u.get("role") or "").lower()
+    _role_fam = _rol_familia(_role_raw)
+    _uid = _u.get("id")
+    _extra_where = ""
+    _extra_params = []
+    if _role_fam in ("admin", "superadmin", "supervisor"):
+        pass
+    elif _role_fam == "ejecutivo":
+        username_actual = (_u.get("username") or "").strip()
+        nombre_actual = (_u.get("nombre") or "").strip()
+        _has_cbu = False
+        try:
+            _col_check = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS "
+                " WHERE TABLE_SCHEMA = DATABASE() "
+                "   AND TABLE_NAME = 'mant_visitas' "
+                "   AND COLUMN_NAME = 'created_by_user_id'"
+            )
+            _has_cbu = bool((_col_check or {}).get("n"))
+        except Exception:
+            _has_cbu = False
+        clauses = []
+        if _has_cbu and _uid:
+            clauses.append("v.created_by_user_id=%s")
+            _extra_params.append(int(_uid))
+        if username_actual:
+            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            _extra_params.append(username_actual)
+        if nombre_actual and nombre_actual.lower() != username_actual.lower():
+            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            _extra_params.append(nombre_actual)
+        if _uid:
+            clauses.append("v.tecnico_user_id=%s")
+            _extra_params.append(int(_uid))
+            clauses.append(
+                "v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
+                "         WHERE tecnico_user_id=%s)"
+            )
+            _extra_params.append(int(_uid))
+        if clauses:
+            _extra_where = " AND (" + " OR ".join(clauses) + ") "
+        else:
+            _extra_where = " AND 1=0 "
+    elif _role_fam == "tecnico":
+        if _uid:
+            _extra_where = (
+                " AND (v.tecnico_user_id=%s OR EXISTS("
+                "  SELECT 1 FROM mant_visita_tecnicos vt "
+                "   WHERE vt.visita_id=v.id AND vt.tecnico_user_id=%s)) "
+            )
+            _extra_params.extend([int(_uid), int(_uid)])
+        else:
+            _extra_where = " AND 1=0 "
+    else:
+        _extra_where = " AND 1=0 "
+    return _extra_where, _extra_params
+
+
 @app.route("/mantenciones/api/calendario/dia/<string:fecha>", methods=["GET"])
 @_mant_required
 def mant_calendario_dia_drill(fecha):
@@ -47610,66 +47684,7 @@ def mant_calendario_dia_drill(fecha):
         return jsonify({"ok": False, "error": "Formato fecha inválido (use YYYY-MM-DD)"}), 400
 
     try:
-        # 🔐 SEGURIDAD 2026-05-22 (Aaron Urbina — brecha calendario-listado):
-        # Aplicar filtro por rol coherente con `mant_ots_list` y
-        # `mant_visitas_api`. Si el rol no puede ver la OT en el listado,
-        # tampoco debe verla como visita del día.
-        _u = getattr(g, "user", None) or {}
-        _role_raw = (_u.get("role") or "").lower()
-        _role_fam = _rol_familia(_role_raw)
-        _uid = _u.get("id")
-        _extra_where = ""
-        _extra_params = []
-        if _role_fam in ("admin", "superadmin", "supervisor"):
-            pass
-        elif _role_fam == "ejecutivo":
-            username_actual = (_u.get("username") or "").strip()
-            nombre_actual = (_u.get("nombre") or "").strip()
-            _has_cbu = False
-            try:
-                _col_check = mysql_fetchone(
-                    "SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS "
-                    " WHERE TABLE_SCHEMA = DATABASE() "
-                    "   AND TABLE_NAME = 'mant_visitas' "
-                    "   AND COLUMN_NAME = 'created_by_user_id'"
-                )
-                _has_cbu = bool((_col_check or {}).get("n"))
-            except Exception:
-                _has_cbu = False
-            clauses = []
-            if _has_cbu and _uid:
-                clauses.append("v.created_by_user_id=%s")
-                _extra_params.append(int(_uid))
-            if username_actual:
-                clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
-                _extra_params.append(username_actual)
-            if nombre_actual and nombre_actual.lower() != username_actual.lower():
-                clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
-                _extra_params.append(nombre_actual)
-            if _uid:
-                clauses.append("v.tecnico_user_id=%s")
-                _extra_params.append(int(_uid))
-                clauses.append(
-                    "v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
-                    "         WHERE tecnico_user_id=%s)"
-                )
-                _extra_params.append(int(_uid))
-            if clauses:
-                _extra_where = " AND (" + " OR ".join(clauses) + ") "
-            else:
-                _extra_where = " AND 1=0 "
-        elif _role_fam == "tecnico":
-            if _uid:
-                _extra_where = (
-                    " AND (v.tecnico_user_id=%s OR EXISTS("
-                    "  SELECT 1 FROM mant_visita_tecnicos vt "
-                    "   WHERE vt.visita_id=v.id AND vt.tecnico_user_id=%s)) "
-                )
-                _extra_params.extend([int(_uid), int(_uid)])
-            else:
-                _extra_where = " AND 1=0 "
-        else:
-            _extra_where = " AND 1=0 "
+        _extra_where, _extra_params = _mant_calendario_role_where()
 
         # Visitas del día con sus técnicos.
         # 2026-06-09 (Daniel — tablero interactivo): el técnico mostrado debe
@@ -47801,6 +47816,215 @@ def mant_calendario_dia_drill(fecha):
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"Error al consultar: {e}"}), 500
+
+
+@app.route("/mantenciones/api/calendario/mes/<int:anio>/<int:mes>", methods=["GET"])
+@_mant_required
+def mant_calendario_mes(anio, mes):
+    """Calendario MENSUAL para el mini-calendario del modal "Generar OT" de
+    Tickets (Daniel 2026-07-15: "necesito saber que esta agendado en el mes,
+    sin salir del modal"). Reusa la MISMA lógica de filtrado por rol que
+    `mant_calendario_dia_drill` vía `_mant_calendario_role_where()`,
+    extendida a un rango `fecha_programada BETWEEN primer..ultimo día del
+    mes` — no duplica la query de seguridad (Regla #5).
+
+    Path params: anio (int), mes (int, 1-12).
+
+    Shape de respuesta — ver contrato completo en el reporte del agente.
+    """
+    import calendar as _calmod
+    from datetime import date as _date
+    if mes < 1 or mes > 12:
+        return jsonify({"ok": False, "error": "Mes inválido (use 1-12)"}), 400
+    if anio < 2000 or anio > 2100:
+        return jsonify({"ok": False, "error": "Año inválido"}), 400
+    try:
+        _primer_dia = _date(anio, mes, 1)
+        _ultimo_num = _calmod.monthrange(anio, mes)[1]
+        _ultimo_dia = _date(anio, mes, _ultimo_num)
+
+        _extra_where, _extra_params = _mant_calendario_role_where()
+
+        # Misma query base de mant_calendario_dia_drill, extendida a rango de
+        # mes + LEFT JOIN a tk_tickets (vínculo 1:1 vía tk_tickets.visita_id,
+        # UNIQUE index uq_tk_tickets_visita — ver tickets_module.py
+        # _ensure_tk_tickets_visita_link) para exponer el ticket relacionado.
+        visitas = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.cliente_id, v.titulo, v.tipo, v.estado, "
+            "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.tecnico_user_id, "
+            "       c.razon_social AS cliente_nombre, c.comuna, "
+            "       COALESCE(t.id, v.tecnico_user_id) AS tecnico_id, "
+            "       COALESCE(au.nombre, au.username, t.nombre) AS tecnico_nombre, "
+            "       tk.id AS ticket_id, tk.numero_ticket "
+            "  FROM mant_visitas v "
+            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
+            "  LEFT JOIN app_users au ON au.id=v.tecnico_user_id "
+            "  LEFT JOIN tk_tickets tk ON tk.visita_id=v.id "
+            f" WHERE v.fecha_programada BETWEEN %s AND %s {_extra_where} "
+            " ORDER BY v.fecha_programada, v.hora_inicio, v.id",
+            (_primer_dia.isoformat(), _ultimo_dia.isoformat(), *_extra_params)
+        ) or []
+        visitas = [dict(v) for v in visitas]
+
+        # Serializar TIME->str y DATE->str (mismo fix 2026-06-09 que
+        # mant_calendario_dia_drill: hora_inicio/hora_fin llegan como
+        # timedelta de PyMySQL; fecha_programada es un date de PyMySQL, se
+        # normaliza a 'YYYY-MM-DD' para usarla de key en el dict `dias`).
+        for v in visitas:
+            for _campo in ("hora_inicio", "hora_fin"):
+                _val = v.get(_campo)
+                if _val is None:
+                    continue
+                if hasattr(_val, "total_seconds"):   # timedelta (TIME de PyMySQL)
+                    _tot = int(_val.total_seconds())
+                    _h, _m = divmod(_tot // 60, 60)
+                    v[_campo] = f"{int(_h):02d}:{int(_m):02d}"
+                elif not isinstance(_val, str):
+                    v[_campo] = str(_val)[:5]
+            _fp = v.get("fecha_programada")
+            v["fecha_programada"] = _fp.isoformat() if hasattr(_fp, "isoformat") else str(_fp)
+
+        # Feriados del mes (1 sola llamada, no por-día como en el endpoint de día).
+        try:
+            from cl_feriados import feriados_chile as _feriados_chile
+            _feriados_anio = _feriados_chile(anio) or {}
+        except Exception:
+            _feriados_anio = {}
+
+        dias = {}
+        for v in visitas:
+            fecha_key = v["fecha_programada"]
+            if fecha_key not in dias:
+                dias[fecha_key] = {
+                    "feriado": _feriados_anio.get(fecha_key),
+                    "visitas": [],
+                }
+            dias[fecha_key]["visitas"].append({
+                "visita_id": v["id"],
+                "numero_ot": v.get("numero_ot"),
+                "ticket_id": v.get("ticket_id"),
+                "numero_ticket": v.get("numero_ticket"),
+                "cliente_id": v.get("cliente_id"),
+                "cliente_nombre": v.get("cliente_nombre"),
+                "titulo": v.get("titulo"),
+                "tipo": v.get("tipo"),
+                "estado": v.get("estado"),
+                "hora_inicio": v.get("hora_inicio"),
+                "hora_fin": v.get("hora_fin"),
+                "tecnico_id": v.get("tecnico_id"),
+                "tecnico_nombre": v.get("tecnico_nombre"),
+            })
+        for fk in dias:
+            dias[fk]["n_visitas"] = len(dias[fk]["visitas"])
+
+        n_canceladas = sum(1 for v in visitas if v.get("estado") == "cancelada")
+        n_completadas = sum(1 for v in visitas if v.get("estado") == "completada")
+
+        return jsonify({
+            "ok": True,
+            "anio": anio, "mes": mes,
+            "dias": dias,
+            "kpis": {
+                "total_mes": len(visitas),
+                "dias_con_ot": len(dias),
+                "completadas": n_completadas,
+                "canceladas": n_canceladas,
+            },
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error al consultar calendario del mes: {e}"}), 500
+
+
+@app.route("/mantenciones/api/calendario/choque", methods=["GET"])
+@_mant_required
+def mant_calendario_choque():
+    """Detección de choque de horario para 1 o MÁS técnicos a la vez, dado
+    un fecha/hora propuestos — construido para el modal "Generar OT" de
+    Tickets (Daniel 2026-07-15: "poder ver quien esta agendado, con que OT,
+    en caso de no chocar los calendarios"). Reusa `_validar_disponibilidad_visita`
+    (línea ~38233, ya existente) por cada técnico solicitado — Regla #5, no
+    se duplica la query de solapamiento.
+
+    Query params (GET):
+      tecnico_ids        CSV de IDs de técnico (app_users.id), ej. "7,9,12"
+      tecnico_id         alternativa singular (equivalente a tecnico_ids=<id>)
+      fecha               YYYY-MM-DD (obligatorio)
+      hora_ini             HH:MM (opcional)
+      hora_fin             HH:MM (opcional)
+      exclude_visita_id   opcional, int — excluye esa visita del choque
+                           (para reagendar una OT existente sin que choque
+                           consigo misma)
+
+    Shape de respuesta — ver contrato completo en el reporte del agente.
+    """
+    import re as _re
+    fecha = (request.args.get("fecha") or "").strip()
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", fecha):
+        return jsonify({"ok": False, "error": "Formato fecha inválido (use YYYY-MM-DD)"}), 400
+
+    hora_ini = (request.args.get("hora_ini") or "").strip() or None
+    hora_fin = (request.args.get("hora_fin") or "").strip() or None
+
+    ids_raw = (request.args.get("tecnico_ids") or "").strip()
+    if not ids_raw:
+        ids_raw = (request.args.get("tecnico_id") or "").strip()
+    tecnico_ids = []
+    for _p in ids_raw.split(","):
+        _p = _p.strip()
+        if _p.isdigit():
+            tecnico_ids.append(int(_p))
+    if not tecnico_ids:
+        return jsonify({"ok": False, "error": "Falta tecnico_id o tecnico_ids"}), 400
+
+    exclude_visita_id = None
+    _exc_raw = (request.args.get("exclude_visita_id") or "").strip()
+    if _exc_raw.isdigit():
+        exclude_visita_id = int(_exc_raw)
+
+    try:
+        resultados = []
+        _feriado = None
+        hay_choque = False
+        for tid in tecnico_ids:
+            adv = _validar_disponibilidad_visita(
+                tid, fecha, hora_ini, hora_fin, exclude_visita_id=exclude_visita_id)
+            if _feriado is None and adv.get("feriado"):
+                _feriado = adv["feriado"]
+            choque = adv.get("choque")
+            if choque:
+                hay_choque = True
+            resultados.append({
+                "tecnico_id": tid,
+                "tecnico_nombre": (choque or {}).get("tecnico_nombre"),
+                "choque": bool(choque),
+                "visitas_choque": (choque or {}).get("visitas", []),
+            })
+
+        # Completar el nombre del técnico cuando NO hubo choque (en ese caso
+        # _validar_disponibilidad_visita no consulta app_users) — 1 SELECT
+        # liviano, sin duplicar la query de solapamiento.
+        _faltan_nombre = [r["tecnico_id"] for r in resultados if not r["tecnico_nombre"]]
+        if _faltan_nombre:
+            _rows = mysql_fetchall(
+                "SELECT id, COALESCE(nombre, username) AS nm FROM app_users "
+                f" WHERE id IN ({','.join(['%s'] * len(_faltan_nombre))})",
+                tuple(_faltan_nombre)
+            ) or []
+            _nombres = {r["id"]: r["nm"] for r in _rows}
+            for r in resultados:
+                if not r["tecnico_nombre"]:
+                    r["tecnico_nombre"] = _nombres.get(r["tecnico_id"])
+
+        return jsonify({
+            "ok": True,
+            "fecha": fecha, "hora_inicio": hora_ini, "hora_fin": hora_fin,
+            "feriado": _feriado,
+            "hay_choque": hay_choque,
+            "tecnicos": resultados,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Error al consultar choque: {e}"}), 500
 
 
 # ══════════════════════════════════════════════════════════════════════
