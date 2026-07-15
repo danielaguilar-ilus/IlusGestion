@@ -74,35 +74,79 @@
 .tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.82rem;text-transform:uppercase;letter-spacing:.08em;
   display:flex;align-items:center;gap:7px;}
 .tk-card h6 i{color:#dc2626;font-size:.95rem;}
-/* IDENTIFICACIÓN DEL CLIENTE / PROBLEMA — jerarquía tipográfica más fresca:
-   valores grandes y legibles (pedido Daniel 2026-07-13: "letras más grandes,
-   algo más amigable"), lápiz de edición SIEMPRE junto al valor (no al fondo
-   de la tarjeta) con blanco de sobra para el dedo en mobile. */
-.tk-dl{display:grid;grid-template-columns:28px 128px 1fr;gap:12px 12px;font-size:1rem;align-items:center;}
-.tk-dl i{color:#c4c9d2;font-size:1rem;margin-top:1px;}
-.tk-dl dt{color:#64748b;font-weight:600;grid-column:2;font-size:.82rem;}
-.tk-dl dd{margin:0;color:#0f172a;font-weight:800;font-size:1.05rem;letter-spacing:-.005em;
-  grid-column:3;overflow-wrap:anywhere;display:flex;align-items:center;gap:6px;
-  padding:6px 8px;border-radius:var(--r-sm);transition:background .15s var(--ease-spring);}
-.tk-dl dd:hover{background:#f8fafc;}
+/* Rediseño pestaña Información 2026-07-14 (Daniel: "que los tickets en
+   información también impacten") — mismo lenguaje 2027 del formulario
+   público /soporte: barra de acento lateral que aparece al hover, lift
+   sutil con spring, e icono de sección dentro de un squircle rojo tenue.
+   Scopeado a #pane-info para no tocar la pestaña Respuestas. */
+#pane-info .tk-card{position:relative;padding:20px 22px;
+  transition:box-shadow .25s var(--ease-spring),transform .25s var(--ease-spring),border-color .2s;}
+#pane-info .tk-card::before{content:'';position:absolute;left:0;top:16px;bottom:16px;width:3px;
+  border-radius:3px;background:linear-gradient(180deg,#dc2626,#7f1d1d);opacity:0;transition:opacity .25s;}
+#pane-info .tk-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px);border-color:#e2e8f0;}
+#pane-info .tk-card:hover::before{opacity:1;}
+#pane-info .tk-card h6 i{width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;
+  justify-content:center;background:linear-gradient(135deg,#fef2f2,#fee2e2);color:#dc2626;font-size:.82rem;flex-shrink:0;}
+/* IDENTIFICACIÓN DEL CLIENTE — rediseño 2026-07-14 (Daniel: "está horrible
+   como se ve... necesito que sea amigable"): tarjeta premium con cabecera
+   (avatar circular con iniciales en degradado rojo→negro, nombre grande,
+   chips de RUT y tipo) y los datos en GRID de 2 columnas (1 en mobile),
+   cada campo como mini-tarjeta con icono + label uppercase pequeñito +
+   valor grande. El lápiz de edición inline se mantiene junto a cada valor
+   (mismos handlers de siempre — solo cambia la presentación). */
+.tk-id-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-bottom:14px;
+  border-bottom:1px solid #f1f5f9;flex-wrap:wrap;}
+.tk-id-avatar{width:54px;height:54px;border-radius:50%;flex:0 0 54px;display:flex;align-items:center;
+  justify-content:center;font-weight:900;font-size:1.18rem;color:#fff;letter-spacing:.02em;user-select:none;
+  background:linear-gradient(135deg,#dc2626 0%,#7f1d1d 55%,#0a0a0a 100%);
+  box-shadow:0 4px 14px rgba(220,38,38,.30);}
+.tk-id-headtxt{flex:1;min-width:0;}
+.tk-id-headchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center;}
+.tk-id-chip{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:3px 11px;
+  font-size:.7rem;font-weight:800;background:#f8fafc;border:1px solid #e5e7eb;color:#475569;
+  letter-spacing:.02em;white-space:nowrap;}
+.tk-id-chip i{color:#dc2626;font-size:.75rem;}
+.tk-dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;font-size:1rem;}
+.tk-id-item{background:#fafbfc;border:1px solid #f1f5f9;border-radius:var(--r-md);padding:10px 12px 8px;
+  min-width:0;transition:background .15s,border-color .15s,box-shadow .25s var(--ease-spring);}
+.tk-id-item:hover{background:#fff;border-color:#e5e7eb;box-shadow:var(--shadow-sm);}
+.tk-id-item-top{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
+.tk-dl i{color:#dc2626;font-size:.8rem;opacity:.75;}
+.tk-dl dt{color:#94a3b8;font-weight:800;font-size:.62rem;text-transform:uppercase;letter-spacing:.07em;margin:0;}
+.tk-dl dd{margin:0;color:#0f172a;font-weight:800;font-size:1.02rem;letter-spacing:-.005em;
+  overflow-wrap:anywhere;display:flex;align-items:center;gap:6px;min-width:0;
+  padding:2px 0;border-radius:var(--r-sm);}
 .tk-dl dd .tk-dd-val{flex:1;min-width:0;overflow-wrap:anywhere;}
 .tk-dl dd a{color:#0f172a;text-decoration:none;border-bottom:1px dashed #cbd5e1;}
 .tk-dl dd a:hover{color:#dc2626;border-color:#dc2626;}
 .tk-edit-pencil{flex-shrink:0;color:#94a3b8;cursor:pointer;font-size:.86rem;opacity:.45;
   width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;
   background:transparent;transition:opacity .15s var(--ease-spring),color .15s,background .15s,transform .15s var(--ease-spring);}
-.tk-dl dd:hover .tk-edit-pencil{opacity:1;}
+.tk-dl dd:hover .tk-edit-pencil,.tk-id-item:hover .tk-edit-pencil{opacity:1;}
 .tk-edit-pencil:hover{color:#fff;background:var(--ilus-red);transform:scale(1.08);}
 .tk-edit-pencil:active{transform:scale(.94);}
 .tk-dd-input{flex:1;min-width:0;font-size:1rem;}
-@media (max-width:520px){ .tk-dl{grid-template-columns:24px 1fr;font-size:.95rem;}
-  .tk-dl dt{grid-column:2;} .tk-dl dd{grid-column:2;margin-bottom:2px;padding:8px 6px;}
+@media (max-width:640px){ .tk-dl{grid-template-columns:1fr;} }
+@media (max-width:520px){ .tk-dl{font-size:.95rem;}
+  .tk-id-item{padding:10px 12px;} .tk-dl dd{padding:4px 0;min-height:34px;}
+  .tk-id-avatar{width:46px;height:46px;flex-basis:46px;font-size:1rem;}
   .tk-edit-pencil{opacity:.7;} }
+/* ── Problema — rediseño 2026-07-14: título con más presencia y la
+   descripción en un panel de lectura cómodo (line-height amplio, borde de
+   acento rojo) en vez de texto plano suelto. Mismos IDs #txtTitulo /
+   #txtDesc — el JS les sigue seteando textContent/display igual. ── */
+.tk-problema-titulo{font-size:1.14rem;font-weight:800;color:#0f172a;margin-bottom:10px;
+  letter-spacing:-.01em;line-height:1.3;}
+.tk-problema-desc{font-size:.98rem;color:#334155;white-space:pre-wrap;line-height:1.7;
+  background:#fafbfc;border:1px solid #f1f5f9;border-left:3px solid #dc2626;
+  border-radius:var(--r-sm);padding:12px 16px;overflow-wrap:anywhere;}
 /* ── Chips de metadata (Problema) ── */
 .tk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
 .tk-chip{display:inline-flex;align-items:center;gap:5px;background:#f8fafc;border:1px solid #e5e7eb;
-  border-radius:8px;padding:4px 10px;font-size:.76rem;color:#475569;font-weight:600;}
-.tk-chip i{color:#94a3b8;}
+  border-radius:50px;padding:4px 12px;font-size:.76rem;color:#475569;font-weight:600;
+  transition:border-color .15s,box-shadow .2s var(--ease-spring);}
+.tk-chip:hover{border-color:#cbd5e1;box-shadow:var(--shadow-sm);}
+.tk-chip i{color:#dc2626;opacity:.75;}
 .tk-chip b{color:#0f172a;font-weight:700;}
 /* ── Ubicación ── */
 .tk-ubi-main{display:flex;align-items:start;gap:9px;font-size:.92rem;font-weight:700;color:#0f172a;}
@@ -116,30 +160,36 @@
    para lenguaje visual identico — ver contrato "diseno_tabla") ── */
 .eq-table{width:100%;border-collapse:collapse;font-size:.81rem;}
 .eq-table thead th{
-  padding:9px 12px;text-align:left;
+  padding:10px 12px;text-align:left;
   font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;
   background:#fafbfc;border-bottom:2px solid var(--border);white-space:nowrap;
 }
-.eq-table tbody tr{border-bottom:1px solid #f3f4f6;transition:background .1s;}
-.eq-table tbody tr:hover{background:#fafbfc;}
-.eq-table tbody td{padding:10px 12px;vertical-align:middle;}
+.eq-table tbody tr{border-bottom:1px solid #f3f4f6;transition:background .15s,box-shadow .2s var(--ease-spring);}
+.eq-table tbody tr:hover{background:#fcfcfd;box-shadow:inset 3px 0 0 #dc2626;}
+.eq-table tbody td{padding:12px;vertical-align:middle;}
 .eq-table tbody tr:last-child{border-bottom:none;}
-.eq-cell-icon{width:42px;height:42px;border-radius:8px;background:#f3f4f6;
+.eq-cell-icon{width:44px;height:44px;border-radius:var(--r-sm);
+              background:linear-gradient(135deg,#fef2f2,#f8fafc);border:1px solid #f1f5f9;
               display:flex;align-items:center;justify-content:center;
-              font-size:1.4rem;line-height:1;flex-shrink:0;}
-.eq-name-main{font-weight:700;color:#0f172a;font-size:.84rem;}
+              font-size:1.4rem;line-height:1;flex-shrink:0;box-shadow:var(--shadow-sm);}
+.eq-name-main{font-weight:700;color:#0f172a;font-size:.86rem;}
 .eq-name-sub{font-size:.69rem;color:#9ca3af;margin-top:1px;}
-.eq-sku{font-family:monospace;background:#f3f4f6;padding:1px 6px;border-radius:4px;font-size:.78rem;}
+.eq-sku{font-family:'JetBrains Mono',monospace;background:#f1f5f9;border:1px solid #e5e7eb;
+  padding:2px 8px;border-radius:6px;font-size:.76rem;font-weight:700;color:#334155;white-space:nowrap;}
 .gar-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;
           border-radius:50px;font-size:.65rem;font-weight:700;cursor:pointer;white-space:nowrap;border:none;}
 .gar-chip-ok{background:#dcfce7;color:#166534;}
 .gar-chip-warn{background:#fef9c3;color:#854d0e;}
 .gar-chip-vencida{background:#f3f4f6;color:#6b7280;}
 .gar-chip:hover{filter:brightness(.97);}
-.tk-eq-actionbtn{width:32px;height:32px;border:1px solid #eaecf0;border-radius:8px;
+/* Botón de acción por fila — redondo, consistente con el resto del sitio
+   (rediseño 2026-07-14; mismo onclick delEquipo de siempre). */
+.tk-eq-actionbtn{width:34px;height:34px;border:1px solid #eaecf0;border-radius:50%;
   background:#fff;color:#dc2626;display:inline-flex;align-items:center;justify-content:center;
-  min-height:32px;}
-.tk-eq-actionbtn:hover{background:#fee2e2;border-color:#fca5a5;}
+  min-height:34px;box-shadow:var(--shadow-sm);
+  transition:background .15s,border-color .15s,transform .2s var(--ease-spring),box-shadow .2s;}
+.tk-eq-actionbtn:hover{background:#fee2e2;border-color:#fca5a5;transform:scale(1.08);box-shadow:var(--shadow-md);}
+.tk-eq-actionbtn:active{transform:scale(.94);}
 /* 2026-07-14 (Daniel): "que la tabla lleve informacion de que documento
    viene" -- chip azul info bajo el nombre del equipo con el documento de
    origen (tk_ticket_equipos.documento_garantia, ej. "Factura 10599"). Si el
@@ -270,6 +320,36 @@
   font-size:.82rem;color:#1e3a5f;white-space:pre-wrap;}
 #rpBtnDictar.rp-dictando{color:#fff;background:#dc2626;border-color:#dc2626;animation:rpPulseMic 1.2s ease-in-out infinite;}
 @keyframes rpPulseMic{0%,100%{opacity:1;}50%{opacity:.55;}}
+/* 2026-07-14 (Daniel: "el mejor micrófono del planeta"): capa premium de
+   permisos del micrófono. Si el permiso está DENEGADO, el botón muestra un
+   puntito rojo de advertencia y al hacer clic se abre una guía visual paso
+   a paso (en vez de un toast seco). Si está en 'prompt', se deriva al
+   diálogo nativo del navegador sin fricción. */
+#rpBtnDictar{position:relative;}
+#rpBtnDictar.rp-mic-denegado::after{content:'';position:absolute;top:-4px;right:-4px;width:11px;height:11px;
+  border-radius:50%;background:#dc2626;border:2px solid #fff;box-shadow:0 0 0 2px rgba(220,38,38,.18);}
+.rp-mic-overlay{position:fixed;inset:0;z-index:99990;background:rgba(10,10,10,.45);backdrop-filter:blur(3px);
+  -webkit-backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:16px;
+  opacity:0;transition:opacity .2s ease;}
+.rp-mic-overlay.show{opacity:1;}
+.rp-mic-modal{background:#fff;border-radius:var(--r-lg);box-shadow:var(--shadow-lg);max-width:440px;width:100%;
+  padding:26px 26px 20px;transform:translateY(16px) scale(.96);transition:transform .28s var(--ease-spring);}
+.rp-mic-overlay.show .rp-mic-modal{transform:none;}
+.rp-mic-illus{display:flex;align-items:center;justify-content:center;gap:16px;margin:10px 0 18px;}
+.rp-mic-illus-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:1.7rem;flex:0 0 56px;}
+.rp-mic-illus-icon.off{background:#fee2e2;color:#dc2626;}
+.rp-mic-illus-icon.on{background:#dcfce7;color:#16a34a;}
+.rp-mic-illus .bi-arrow-right{font-size:1.35rem;color:#94a3b8;}
+.rp-mic-step{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px;}
+.rp-mic-step-num{width:28px;height:28px;flex:0 0 28px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-size:.8rem;font-weight:800;color:#fff;
+  background:linear-gradient(135deg,#ef4444,#b91c1c);box-shadow:0 2px 6px rgba(220,38,38,.3);}
+.rp-mic-step-txt{font-size:.86rem;color:#334155;padding-top:4px;line-height:1.4;}
+.rp-mic-ok{display:none;align-items:center;gap:8px;margin:2px 0 10px;padding:9px 12px;border-radius:var(--r-sm);
+  background:#dcfce7;color:#166534;font-weight:700;font-size:.85rem;}
+.rp-mic-ok.show{display:flex;animation:rpMicOkIn .3s var(--ease-spring);}
+@keyframes rpMicOkIn{from{transform:scale(.92);opacity:0;}to{transform:none;opacity:1;}}
 /* 2026-07-14 (Daniel): los toggles "Responder al cliente / Comentario
    interno" estaban "muy toscos" -- ahora son pills modernas (radios
    generosos, transicion suave, sombra sutil) y el color del pill ACTIVO
@@ -1774,6 +1854,117 @@ const rpQuill = new Quill('#rpEditor', {
   const btnDictar = document.getElementById('rpBtnDictar');
   if (!btnDictar) return;
 
+  // ── Capa premium de permisos (2026-07-14) ─────────────────────────────
+  // Daniel: "si pide permiso, que lo derive". Tres estados posibles:
+  //   granted → grabar directo, cero fricción.
+  //   prompt  → getUserMedia dispara el diálogo NATIVO del navegador (esa
+  //             es la derivación); si acepta, la grabación parte en el
+  //             mismo gesto.
+  //   denied  → getUserMedia fallaría EN SILENCIO (el navegador ya no
+  //             pregunta). En vez de un toast seco, guía visual paso a
+  //             paso con Reintentar + auto-detección del cambio.
+
+  async function consultarPermisoMic(){
+    // Devuelve el PermissionStatus o null si la API no está disponible
+    // (Safari viejo no soporta {name:'microphone'} y lanza TypeError).
+    try{
+      if (!navigator.permissions || !navigator.permissions.query) return null;
+      return await navigator.permissions.query({ name: 'microphone' });
+    }catch(e){ return null; }
+  }
+
+  function actualizarBadgeMic(state){
+    // Puntito rojo sobre el botón cuando el permiso está denegado, para
+    // que se entienda visualmente que requiere atención.
+    btnDictar.classList.toggle('rp-mic-denegado', state === 'denied');
+  }
+
+  // Badge inicial + auto-actualización si el usuario cambia el permiso.
+  consultarPermisoMic().then(function(st){
+    if (!st) return;
+    actualizarBadgeMic(st.state);
+    try{ st.addEventListener('change', function(){ actualizarBadgeMic(st.state); }); }catch(e){}
+  });
+
+  let _micModalAbierto = false;
+  function abrirModalMicBloqueado(onListo){
+    // onListo() se ejecuta cuando el permiso ya no está denegado
+    // (Reintentar exitoso o auto-detección del cambio).
+    if (_micModalAbierto) return;
+    _micModalAbierto = true;
+
+    const ov = document.createElement('div');
+    ov.className = 'rp-mic-overlay';
+    ov.innerHTML =
+        '<div class="rp-mic-modal" role="dialog" aria-modal="true" aria-labelledby="rpMicModalTitulo">'
+      +   '<h5 id="rpMicModalTitulo" style="font-weight:800;margin:0;color:#0f172a;">Activa tu micrófono</h5>'
+      +   '<div style="font-size:.85rem;color:#64748b;margin-top:4px;">El navegador tiene bloqueado el micrófono para este sitio. Habilitarlo toma 10 segundos:</div>'
+      +   '<div class="rp-mic-illus">'
+      +     '<span class="rp-mic-illus-icon off"><i class="bi bi-mic-mute"></i></span>'
+      +     '<i class="bi bi-arrow-right"></i>'
+      +     '<span class="rp-mic-illus-icon on"><i class="bi bi-mic-fill"></i></span>'
+      +   '</div>'
+      +   '<div class="rp-mic-step"><span class="rp-mic-step-num">1</span>'
+      +     '<span class="rp-mic-step-txt">Haz clic en el ícono de <strong>candado</strong> o <strong>ajustes</strong> junto a la dirección del sitio (arriba a la izquierda).</span></div>'
+      +   '<div class="rp-mic-step"><span class="rp-mic-step-num">2</span>'
+      +     '<span class="rp-mic-step-txt">Activa el permiso de <strong>Micrófono</strong>.</span></div>'
+      +   '<div class="rp-mic-step"><span class="rp-mic-step-num">3</span>'
+      +     '<span class="rp-mic-step-txt">Presiona <strong>Reintentar</strong> aquí abajo.</span></div>'
+      +   '<div class="rp-mic-ok"><i class="bi bi-check-circle-fill"></i> Micrófono habilitado — iniciando dictado…</div>'
+      +   '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'
+      +     '<button type="button" class="btn btn-outline-secondary rp-mic-cancelar">Cancelar</button>'
+      +     '<button type="button" class="btn btn-ilus rp-mic-reintentar"><i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button>'
+      +   '</div>'
+      + '</div>';
+    document.body.appendChild(ov);
+    requestAnimationFrame(function(){ ov.classList.add('show'); });
+
+    let statusVivo = null, autoLanzado = false;
+
+    function cerrar(){
+      if (statusVivo){ try{ statusVivo.removeEventListener('change', onCambio); }catch(e){} }
+      ov.classList.remove('show');
+      setTimeout(function(){ ov.remove(); _micModalAbierto = false; }, 220);
+    }
+
+    function habilitadoYPartir(){
+      // Check verde + partir la grabación (lo más fluido: sin pasos extra).
+      if (autoLanzado) return;
+      autoLanzado = true;
+      actualizarBadgeMic('granted');
+      ov.querySelector('.rp-mic-ok').classList.add('show');
+      setTimeout(function(){ cerrar(); onListo(); }, 700);
+    }
+
+    function onCambio(){
+      if (statusVivo && statusVivo.state === 'granted') habilitadoYPartir();
+    }
+
+    // Auto-detección: si habilita el micrófono con el modal abierto, no
+    // hace falta ni tocar Reintentar.
+    consultarPermisoMic().then(function(st){
+      if (!st) return;
+      statusVivo = st;
+      try{ st.addEventListener('change', onCambio); }catch(e){}
+    });
+
+    ov.querySelector('.rp-mic-cancelar').addEventListener('click', cerrar);
+    ov.addEventListener('click', function(ev){ if (ev.target === ov) cerrar(); });
+    ov.querySelector('.rp-mic-reintentar').addEventListener('click', async function(){
+      const st = await consultarPermisoMic();
+      if (st && st.state === 'denied'){
+        ilusToast('El micrófono sigue bloqueado — revisa los pasos 1 y 2.', { type: 'warning' });
+        return;
+      }
+      // granted, prompt o API no disponible → cerrar y dejar que
+      // getUserMedia haga su trabajo (pregunta nativa si corresponde).
+      if (autoLanzado) return;
+      autoLanzado = true;
+      cerrar();
+      onListo();
+    });
+  }
+
   const MR_OK = window.MediaRecorder
     && navigator.mediaDevices && navigator.mediaDevices.getUserMedia
     && (MediaRecorder.isTypeSupported('audio/webm;codecs=opus') || MediaRecorder.isTypeSupported('audio/webm'));
@@ -1819,14 +2010,26 @@ const rpQuill = new Quill('#rpEditor', {
     }
 
     let _dictadoTimer = null; // auto-stop: recognize síncrono de Google acepta ~60s máx
-    btnDictar.addEventListener('click', async function(){
-      if (grabando){ mediaRecorder && mediaRecorder.state === 'recording' && mediaRecorder.stop(); return; }
+
+    async function comenzarGrabacion(){
+      if (grabando) return;
       try{
         streamActual = await navigator.mediaDevices.getUserMedia({ audio: true });
       }catch(e){
-        ilusToast('El navegador bloqueó el micrófono para este sitio. Haz clic en el ícono de candado/micrófono de la barra de direcciones y permite el acceso, luego intenta de nuevo.', { type: 'error' });
+        const nombre = (e && e.name) || '';
+        if (nombre === 'NotAllowedError' || nombre === 'PermissionDeniedError' || nombre === 'SecurityError'){
+          // Permiso denegado (o la Permissions API no estaba disponible
+          // para detectarlo antes): guía visual en vez de toast seco.
+          actualizarBadgeMic('denied');
+          abrirModalMicBloqueado(comenzarGrabacion);
+        } else if (nombre === 'NotFoundError' || nombre === 'DevicesNotFoundError'){
+          ilusToast('No se encontró ningún micrófono conectado en este equipo.', { type: 'error' });
+        } else {
+          ilusToast('No se pudo acceder al micrófono' + (nombre ? ' (' + nombre + ')' : '') + ' — intenta de nuevo.', { type: 'error' });
+        }
         return;
       }
+      actualizarBadgeMic('granted');
       chunks = [];
       try{
         mediaRecorder = new MediaRecorder(streamActual, { mimeType: mimeType });
@@ -1864,6 +2067,19 @@ const rpQuill = new Quill('#rpEditor', {
           mediaRecorder.stop();
         }
       }, 55000);
+    }
+
+    btnDictar.addEventListener('click', async function(){
+      if (grabando){ mediaRecorder && mediaRecorder.state === 'recording' && mediaRecorder.stop(); return; }
+      const st = await consultarPermisoMic();
+      if (st && st.state === 'denied'){
+        // getUserMedia fallaría sin mostrar NADA: mejor la guía visual.
+        abrirModalMicBloqueado(comenzarGrabacion);
+        return;
+      }
+      // granted → parte directo. prompt → diálogo nativo del navegador en
+      // este mismo gesto. null (sin Permissions API) → getUserMedia decide.
+      comenzarGrabacion();
     });
   } else {
     // Fallback: Web Speech API nativa (Safari/iPhone -- confirmado que
@@ -1883,6 +2099,7 @@ const rpQuill = new Quill('#rpEditor', {
       rec.interimResults = false;
       rec.onstart = function(){
         escuchando = true;
+        actualizarBadgeMic('granted');
         btnDictar.classList.add('rp-dictando');
         btnDictar.title = 'Escuchando… clic para detener';
       };
@@ -1899,7 +2116,9 @@ const rpQuill = new Quill('#rpEditor', {
       };
       rec.onerror = function(ev){
         if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
-          ilusToast('El navegador bloqueó el micrófono para este sitio. Permite el acceso desde la configuración del sitio.', { type: 'error' });
+          // Misma guía visual que en el flujo MediaRecorder (2026-07-14).
+          actualizarBadgeMic('denied');
+          abrirModalMicBloqueado(iniciarReconocimiento);
         } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
           ilusToast('No se pudo escuchar: ' + (ev.error || 'error desconocido'), { type: 'error' });
         }
