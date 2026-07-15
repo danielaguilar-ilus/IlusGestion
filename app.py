@@ -34250,6 +34250,17 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_visitas ADD COLUMN hora_inicio_fin TIME NULL COMMENT 'Hora inicio último día visita extendida'",
                 "ALTER TABLE mant_visitas ADD COLUMN hora_fin_fin TIME NULL COMMENT 'Hora término último día visita extendida'",
                 # ════════════════════════════════════════════════════════════
+                # 2026-07-15 — Fix bug de datos: _mant_lev_crear_ot_core
+                # guardaba el FIN de un rango multi-día (data["fecha_fin"])
+                # en la columna fecha_realizada — que en realidad significa
+                # "cuándo se ejecutó/cerró de verdad la OT". Columna propia
+                # para el fin de rango. Ver diagnóstico/reparación manual en
+                # /mantenciones/api/admin/diagnostico-fecha-fin-corrupta y
+                # /mantenciones/api/admin/reparar-fecha-fin (solo superadmin).
+                # ════════════════════════════════════════════════════════════
+                "ALTER TABLE mant_visitas ADD COLUMN fecha_fin DATE NULL COMMENT "
+                "'Fecha de termino si la OT abarca varios dias (rango multi-dia)'",
+                # ════════════════════════════════════════════════════════════
                 # 2026-05-17 — Fix bug: archivo_path NOT NULL fallaba cuando
                 # Cloudinary subía la foto OK (no se usaba fallback fs).
                 # Schema legacy obligaba archivo_path; ahora con Cloudinary
@@ -38232,24 +38243,55 @@ def _next_ot_number_atomic(conn=None):
 
 def _validar_disponibilidad_visita(tecnico_user_id, fecha_programada,
                                     hora_inicio=None, hora_fin=None,
-                                    exclude_visita_id=None):
+                                    exclude_visita_id=None, fecha_fin=None):
     """Nunca bloquea la operación: solo DETECTA advertencias (feriado y/o
     choque de horario de un técnico) para que el caller decida si pide
     confirmación antes de agendar. Devuelve {} si no hay ninguna advertencia.
 
-    fecha_programada: str 'YYYY-MM-DD' o date.
+    fecha_programada: str 'YYYY-MM-DD' o date. Inicio del rango que se
+        está chequeando (para un chequeo de un solo día, es el único día).
+    fecha_fin: opcional, str 'YYYY-MM-DD' o date. Fin del rango que se
+        está chequeando, cuando la OT que se está creando/moviendo TAMBIÉN
+        abarca varios días. Si no se pasa (o queda antes de
+        fecha_programada, rango inválido), se trata como chequeo de un
+        solo día — mismo comportamiento que antes de que este parámetro
+        existiera.
+
+    FIX 2026-07-15: antes el choque se detectaba SOLO por igualdad exacta
+    de un día puntual (`fecha_programada = %s`), así que una OT existente
+    multi-día (fecha_programada..fecha_fin) NO se detectaba como choque en
+    sus días intermedios/último — solo si el día chequeado coincidía con
+    el PRIMER día. Ahora el WHERE compara SOLAPAMIENTO real de rango:
+        existente.inicio <= chequeo.fin  AND  chequeo.inicio <= existente.fin
+    con COALESCE(fecha_fin, fecha_programada) resolviendo el "fin" de cada
+    lado cuando ese lado es de un solo día (fecha_fin NULL). El afinado
+    por hora (hora_inicio/hora_fin) solo se sigue aplicando cuando AMBOS
+    lados —la visita existente y el rango que se está chequeando— son de
+    un solo día: no existe un campo por-día que diga qué horas ocupa cada
+    día intermedio de un rango multi-día, así que cualquier solape de
+    fecha en ese caso se trata como choque completo (más conservador:
+    prefiere advertir de más a dejar de detectar un choque real).
 
     Reutilizable por Mantenciones (mant_visita_crear/mant_visita_multi,
     Fase 2 — pendiente, no se tocan en este ticket) y por el wizard
     "Generar OT" de Tickets (tickets_module.py) — misma query, un solo
     lugar versionado (Regla #5: el índice composite idx_v_choque_horario
-    cubre el WHERE de esta consulta).
+    sigue acotando tecnico_user_id + límite superior de fecha_programada;
+    el filtro por fecha_fin ya no es 100% sargable contra ese índice pero
+    el volumen por técnico es chico, ver reporte del fix 2026-07-15).
     """
     from datetime import date as _date
     from cl_feriados import es_dia_habil, feriados_chile
     out = {}
     fecha_dt = fecha_programada if isinstance(fecha_programada, _date) \
         else _date.fromisoformat(str(fecha_programada))
+
+    fecha_fin_dt = None
+    if fecha_fin:
+        fecha_fin_dt = fecha_fin if isinstance(fecha_fin, _date) \
+            else _date.fromisoformat(str(fecha_fin))
+        if fecha_fin_dt < fecha_dt:
+            fecha_fin_dt = None  # rango invertido/inválido -> tratar como día único
 
     if not es_dia_habil(fecha_dt):
         nombre = feriados_chile(fecha_dt.year).get(fecha_dt.isoformat())
@@ -38262,20 +38304,26 @@ def _validar_disponibilidad_visita(tecnico_user_id, fecha_programada,
 
     if tec_uid:
         exclude_id = exclude_visita_id or 0
+        chk_ini = fecha_dt.isoformat()
+        chk_fin = (fecha_fin_dt or fecha_dt).isoformat()
         choques = mysql_fetchall(
             "SELECT id, numero_ot, titulo, hora_inicio, hora_fin, tecnico, estado "
             "  FROM mant_visitas "
             " WHERE tecnico_user_id = %s "
-            "   AND fecha_programada = %s "
             "   AND estado NOT IN ('cancelada') "
             "   AND id <> %s "
+            "   AND fecha_programada <= %s "
+            "   AND COALESCE(fecha_fin, fecha_programada) >= %s "
             "   AND ("
-            "        hora_inicio IS NULL OR hora_fin IS NULL "
+            "        fecha_fin IS NOT NULL "
+            "        OR %s <> %s "
+            "        OR hora_inicio IS NULL OR hora_fin IS NULL "
             "        OR %s IS NULL OR %s IS NULL "
             "        OR (hora_inicio < %s AND hora_fin > %s)"
             "   ) "
-            " ORDER BY hora_inicio",
-            (tec_uid, fecha_dt.isoformat(), exclude_id,
+            " ORDER BY fecha_programada, hora_inicio",
+            (tec_uid, exclude_id, chk_fin, chk_ini,
+             chk_ini, chk_fin,
              hora_inicio, hora_fin, hora_fin, hora_inicio)
         ) or []
         if choques:
@@ -40221,6 +40269,142 @@ def mant_ots_reset():
         pass
     return jsonify({"ok": True, "borradas": total_n,
                     "mensaje": f"{total_n} OTs respaldadas y borradas. Sistema limpio para tu ronda de prueba."})
+
+
+# ══════════════════════════════════════════════════════════════════════
+# DIAGNÓSTICO + REPARACIÓN — bug histórico fecha_fin en fecha_realizada
+# (FIX 2026-07-15). Antes del fix, _mant_lev_crear_ot_core guardaba el fin
+# de un rango multi-día (data["fecha_fin"]) en la columna fecha_realizada
+# en vez de en su propia columna. Mismo patrón que mant_ots_reset arriba:
+# dry-run de solo lectura primero (GET diagnóstico), botón "Aplicar"
+# separado (POST reparar), audit log ANTES de tocar cada fila, 100% manual
+# (nunca se llama desde el arranque ni desde otro endpoint).
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/mantenciones/api/admin/diagnostico-fecha-fin-corrupta", methods=["GET"])
+@_mant_required
+def mant_admin_diagnostico_fecha_fin_corrupta():
+    """Diagnóstico SOLO LECTURA (superadmin) de la corrupción de datos
+    causada por el bug de _mant_lev_crear_ot_core (ver comentario del
+    bloque arriba). NO escribe nada.
+
+    Huella EXACTA del bug: una OT que sigue en estado 'programada' NUNCA
+    debería tener fecha_realizada poblada -- esa columna solo se llena al
+    CERRAR la OT (ver mant_lev_cerrar). La reparación real vive en el POST
+    hermano /mantenciones/api/admin/reparar-fecha-fin (también superadmin).
+    """
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede ver este diagnóstico."}), 403
+    try:
+        filas = mysql_fetchall(
+            "SELECT id, numero_ot, cliente_id, fecha_programada, fecha_realizada, "
+            "       estado, created_at "
+            "  FROM mant_visitas "
+            " WHERE estado = 'programada' AND fecha_realizada IS NOT NULL "
+            " ORDER BY created_at DESC"
+        ) or []
+        out = []
+        for f in filas:
+            _fp = f.get("fecha_programada")
+            _fr = f.get("fecha_realizada")
+            _ca = f.get("created_at")
+            out.append({
+                "id": f.get("id"),
+                "numero_ot": f.get("numero_ot"),
+                "cliente_id": f.get("cliente_id"),
+                "fecha_programada": _fp.isoformat() if hasattr(_fp, "isoformat") else (str(_fp) if _fp is not None else None),
+                "fecha_realizada": _fr.isoformat() if hasattr(_fr, "isoformat") else (str(_fr) if _fr is not None else None),
+                "estado": f.get("estado"),
+                "created_at": _ca.isoformat() if hasattr(_ca, "isoformat") else (str(_ca) if _ca is not None else None),
+            })
+        return jsonify({"ok": True, "total": len(out), "filas": out})
+    except Exception as e:
+        print(f"[diagnostico_fecha_fin] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo generar el diagnóstico."}), 500
+
+
+@app.route("/mantenciones/api/admin/reparar-fecha-fin", methods=["POST"])
+@_mant_required
+def mant_admin_reparar_fecha_fin():
+    """Repara los datos históricos corrompidos por el bug de
+    _mant_lev_crear_ot_core (ver diagnóstico GET hermano,
+    /mantenciones/api/admin/diagnostico-fecha-fin-corrupta). SOLO superadmin.
+
+    Para cada fila que calza EXACTAMENTE la huella del bug
+    (estado='programada' AND fecha_realizada IS NOT NULL) mueve el valor de
+    fecha_realizada a fecha_fin y limpia fecha_realizada a NULL. Nunca toca
+    una OT que de verdad fue cerrada (esas tienen estado <> 'programada',
+    o si volvieran a 'programada' por algún flujo futuro, ya no tendrían
+    fecha_realizada IS NOT NULL a menos que se repita el bug -- ya corregido).
+
+    Audit log en mant_logs (entidad='visita', accion='reparar_fecha_fin_corrupta')
+    ANTES de aplicar cada UPDATE (Regla #5). Todo en una sola transacción.
+    Acción 100% manual: no se llama desde el arranque ni desde ningún otro
+    endpoint -- solo se dispara si alguien golpea esta URL a propósito.
+    """
+    if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadministrador puede ejecutar esta reparación."}), 403
+    try:
+        filas = mysql_fetchall(
+            "SELECT id, numero_ot, cliente_id, fecha_programada, fecha_realizada, "
+            "       estado, created_at "
+            "  FROM mant_visitas "
+            " WHERE estado = 'programada' AND fecha_realizada IS NOT NULL "
+            " ORDER BY created_at DESC"
+        ) or []
+        if not filas:
+            return jsonify({"ok": True, "reparadas": 0, "detalle": [],
+                            "mensaje": "No hay OTs con la huella del bug. Nada que reparar."})
+
+        conn = get_mysql()
+        reparadas = 0
+        detalle = []
+        try:
+            with conn.cursor() as cur:
+                for f in filas:
+                    vid = f.get("id")
+                    # Re-verifica CADA fila DENTRO de la transacción -- no
+                    # confiar en el SELECT de arriba si algo cambió entre el
+                    # diagnóstico y el click de "Aplicar" (ej. la OT se cerró
+                    # justo en el medio y ya tiene una fecha_realizada legítima).
+                    cur.execute(
+                        "SELECT id FROM mant_visitas "
+                        " WHERE id=%s AND estado='programada' AND fecha_realizada IS NOT NULL",
+                        (vid,)
+                    )
+                    if not cur.fetchone():
+                        continue
+                    _fr = f.get("fecha_realizada")
+                    _fr_str = _fr.isoformat() if hasattr(_fr, "isoformat") else str(_fr)
+                    # Audit ANTES de aplicar el cambio (Regla #5).
+                    cur.execute(
+                        "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        ("visita", vid, "reparar_fecha_fin_corrupta",
+                         f"OT {f.get('numero_ot')}: fecha_realizada corrupta ({_fr_str}) "
+                         f"movida a fecha_fin; fecha_realizada limpiada a NULL.",
+                         current_username())
+                    )
+                    # El valor se copia LADO SQL (fecha_fin=fecha_realizada) --
+                    # evita cualquier problema de formato/zona horaria al
+                    # rearmar la fecha desde Python.
+                    cur.execute(
+                        "UPDATE mant_visitas SET fecha_fin = fecha_realizada, "
+                        "       fecha_realizada = NULL "
+                        " WHERE id=%s",
+                        (vid,)
+                    )
+                    reparadas += 1
+                    detalle.append({"id": vid, "numero_ot": f.get("numero_ot"),
+                                     "fecha_fin_reparada": _fr_str})
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "reparadas": reparadas, "detalle": detalle,
+                        "mensaje": f"{reparadas} OT(s) reparada(s): fecha_realizada corrupta movida a fecha_fin."})
+    except Exception as e:
+        print(f"[reparar_fecha_fin] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo completar la reparación."}), 500
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/generar-calendario", methods=["POST"])
@@ -47851,7 +48035,7 @@ def mant_calendario_mes(anio, mes):
         # _ensure_tk_tickets_visita_link) para exponer el ticket relacionado.
         visitas = mysql_fetchall(
             "SELECT v.id, v.numero_ot, v.cliente_id, v.titulo, v.tipo, v.estado, "
-            "       v.fecha_programada, v.hora_inicio, v.hora_fin, v.tecnico_user_id, "
+            "       v.fecha_programada, v.fecha_fin, v.hora_inicio, v.hora_fin, v.tecnico_user_id, "
             "       c.razon_social AS cliente_nombre, c.comuna, "
             "       COALESCE(t.id, v.tecnico_user_id) AS tecnico_id, "
             "       COALESCE(au.nombre, au.username, t.nombre) AS tecnico_nombre, "
@@ -47884,6 +48068,9 @@ def mant_calendario_mes(anio, mes):
                     v[_campo] = str(_val)[:5]
             _fp = v.get("fecha_programada")
             v["fecha_programada"] = _fp.isoformat() if hasattr(_fp, "isoformat") else str(_fp)
+            _ff = v.get("fecha_fin")
+            if _ff is not None:
+                v["fecha_fin"] = _ff.isoformat() if hasattr(_ff, "isoformat") else str(_ff)
 
         # Feriados del mes (1 sola llamada, no por-día como en el endpoint de día).
         try:
@@ -47912,6 +48099,7 @@ def mant_calendario_mes(anio, mes):
                 "estado": v.get("estado"),
                 "hora_inicio": v.get("hora_inicio"),
                 "hora_fin": v.get("hora_fin"),
+                "fecha_fin": v.get("fecha_fin"),
                 "tecnico_id": v.get("tecnico_id"),
                 "tecnico_nombre": v.get("tecnico_nombre"),
             })
@@ -47950,18 +48138,29 @@ def mant_calendario_choque():
       tecnico_ids        CSV de IDs de técnico (app_users.id), ej. "7,9,12"
       tecnico_id         alternativa singular (equivalente a tecnico_ids=<id>)
       fecha               YYYY-MM-DD (obligatorio)
+      fecha_fin            YYYY-MM-DD (opcional) — fin del rango si la OT
+                           que se está creando/moviendo TAMBIÉN abarca
+                           varios días (FIX 2026-07-15, choque multi-día).
+                           Si se omite, se chequea un solo día (fecha),
+                           igual que antes de que este parámetro existiera.
       hora_ini             HH:MM (opcional)
       hora_fin             HH:MM (opcional)
       exclude_visita_id   opcional, int — excluye esa visita del choque
                            (para reagendar una OT existente sin que choque
                            consigo misma)
 
-    Shape de respuesta — ver contrato completo en el reporte del agente.
+    Shape de respuesta — NO cambia con fecha_fin (mismas claves de siempre,
+    ver contrato completo en el reporte del agente) — fecha_fin solo afina
+    la lógica interna de qué cuenta como choque.
     """
     import re as _re
     fecha = (request.args.get("fecha") or "").strip()
     if not _re.match(r"^\d{4}-\d{2}-\d{2}$", fecha):
         return jsonify({"ok": False, "error": "Formato fecha inválido (use YYYY-MM-DD)"}), 400
+
+    fecha_fin_q = (request.args.get("fecha_fin") or "").strip() or None
+    if fecha_fin_q and not _re.match(r"^\d{4}-\d{2}-\d{2}$", fecha_fin_q):
+        return jsonify({"ok": False, "error": "Formato fecha_fin inválido (use YYYY-MM-DD)"}), 400
 
     hora_ini = (request.args.get("hora_ini") or "").strip() or None
     hora_fin = (request.args.get("hora_fin") or "").strip() or None
@@ -47988,7 +48187,8 @@ def mant_calendario_choque():
         hay_choque = False
         for tid in tecnico_ids:
             adv = _validar_disponibilidad_visita(
-                tid, fecha, hora_ini, hora_fin, exclude_visita_id=exclude_visita_id)
+                tid, fecha, hora_ini, hora_fin, exclude_visita_id=exclude_visita_id,
+                fecha_fin=fecha_fin_q)
             if _feriado is None and adv.get("feriado"):
                 _feriado = adv["feriado"]
             choque = adv.get("choque")
@@ -51884,7 +52084,7 @@ def mant_visita_update(vid):
             d["costo_proveedor"] = None
     if "proveedor_nombre" in d:
         d["proveedor_nombre"] = (str(d.get("proveedor_nombre") or "").strip()[:200]) or None
-    allowed = ["titulo","fecha_programada","fecha_realizada","hora_inicio","hora_fin",
+    allowed = ["titulo","fecha_programada","fecha_fin","fecha_realizada","hora_inicio","hora_fin",
                "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
                "costo","contrato_id",
                # FASE 1 — modelo Fracttal
@@ -51893,6 +52093,9 @@ def mant_visita_update(vid):
                "cubierto_por","estado_facturacion",
                # Finanzas (margen por servicio)
                "costo_proveedor","proveedor_tipo","proveedor_nombre"]
+    # 2026-07-15 (agendador tipo clínica, Tickets §2.6): "fecha_fin" habilita
+    # reprogramar el término de una OT multi-día desde el mini-formulario
+    # inline del popover (antes solo se podía fijar al CREAR la OT).
     # tecnico_user_id: si llega, validar que sea un app_users con role='tecnico'
     if "tecnico_user_id" in d and d["tecnico_user_id"]:
         try:
@@ -66509,13 +66712,18 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                     cur.execute(
                         "INSERT INTO mant_visitas "
                         "(numero_ot, cliente_id, titulo, fecha_programada, "
-                        " fecha_realizada, hora_inicio, hora_fin, "
+                        " fecha_realizada, fecha_fin, hora_inicio, hora_fin, "
                         " tipo, estado, modalidad_cobro, prioridad, "
                         " descripcion, tecnico_user_id, levantamiento_id, created_by, created_by_user_id, "
                         " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
                         " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
                         " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,"
+                        # fecha_realizada va en NULL explicito -- una OT recien
+                        # creada (estado 'programada') nunca debe traer esa
+                        # columna poblada; solo se llena al CERRAR la OT.
+                        # fecha_fin (fin del rango multi-dia) SI se guarda aqui,
+                        # en su propia columna (FIX 2026-07-15, ver arriba).
+                        "VALUES (%s,%s,%s,%s,NULL,%s,%s,%s,"
                         " %s,'programada',%s,'media',"
                         " %s,%s,%s,%s,%s,"
                         " %s,%s,%s,%s,"
@@ -66536,13 +66744,15 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                     cur.execute(
                         "INSERT INTO mant_visitas "
                         "(numero_ot, cliente_id, titulo, fecha_programada, "
-                        " fecha_realizada, hora_inicio, hora_fin, "
+                        " fecha_realizada, fecha_fin, hora_inicio, hora_fin, "
                         " tipo, estado, modalidad_cobro, prioridad, "
                         " descripcion, tecnico_user_id, levantamiento_id, created_by, "
                         " direccion_visita, direccion_lat, direccion_lng, direccion_place_id, "
                         " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_origen, "
                         " acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,"
+                        # Mismo fix que el INSERT try de arriba: fecha_realizada
+                        # explicito NULL, fecha_fin en su propia columna.
+                        "VALUES (%s,%s,%s,%s,NULL,%s,%s,%s,"
                         " %s,'programada',%s,'media',"
                         " %s,%s,%s,%s,"
                         " %s,%s,%s,%s,"

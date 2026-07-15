@@ -9797,6 +9797,18 @@ window.__FICHA_DATA = {
   is_admin: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }},
   can_create_tecnicos: {{ 'true' if permissions and (permissions.admin or permissions.superadmin) else 'false' }}
 };
+
+// Agendador "tipo clínica" (§2 del agendador, Paso 3) — barra de acciones
+// Reprogramar/Reasignar/Cancelar del popover de una OT. Reusa el MISMO flag
+// global que ya siembra inject_globals() para el resto de la app
+// (`puede_gestionar_visitas`, espejo exacto del gate real del backend
+// `_puede_ot_accion('metadata')` en el PUT /mantenciones/api/visitas/<vid>
+// que usan esas 3 acciones): superadmin/admin/supervisor/ejecutivo. Ocultar
+// el botón aquí es solo cosmético -- la única defensa real es el backend,
+// que valida de nuevo en cada request. Portado desde templates/tickets/ficha.html
+// el 2026-07-15 -- MISMO nombre de variable (no es parte del objeto de
+// estado _TKOT/_LEV_MODAL, es un global aparte, así que no se renombra).
+window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
 </script>
 <!-- PDF.js (Mozilla) — fallback canvas renderer para PDFs que el browser no
      renderiza en iframe (caso: Cloudinary raw con Content-Disposition forzado,
@@ -9938,6 +9950,360 @@ window.__FICHA_DATA = {
 @media (max-width: 575.98px){
   .lev-yn-btn { min-width:80px; }
 }
+
+
+/* ════════════════════════════════════════════════════════════════════
+   AGENDADOR — Paso 3 "Agenda" (mini-calendario + línea de tiempo del día)
+   Portado desde templates/tickets/ficha.html el 2026-07-15 (mismo CSS,
+   ver static/mant_ficha.js para el JS y el HTML más arriba en este mismo
+   modal para el Paso 3). Este archivo YA define --ilus-red (línea 7,
+   #e63946) -- el bloque de abajo lo reusa vía var(--ilus-red) tal cual,
+   sin redefinirlo. Los tokens de sombra/radio/easing que SÍ faltaban
+   (tickets/ficha.html los trae en su propio :root) se agregan aquí,
+   acotados a este bloque, sin tocar el :root principal del archivo. ── */
+:root{
+  --shadow-sm:0 1px 2px rgba(15,23,42,.05), 0 1px 1px rgba(15,23,42,.04);
+  --shadow-md:0 4px 14px rgba(15,23,42,.07), 0 1px 3px rgba(15,23,42,.05);
+  --shadow-lg:0 12px 30px rgba(15,23,42,.10), 0 2px 6px rgba(15,23,42,.06);
+  --r-sm:10px; --r-md:14px;
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --ring:0 0 0 4px rgba(220,38,38,.16);
+}
+/* Badges de estado del popover de detalle (tkdayAbrirDetalle/_tkdayBadgeCls
+   en mant_ficha.js). Portados tal cual desde templates/tickets/ficha.html
+   (líneas 38-41 allá) -- no existían en este archivo. */
+.tk-badge{padding:3px 10px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
+.bs-open{background:#dbeafe;color:#1e40af;} .bs-in_progress{background:#fef3c7;color:#92400e;}
+.bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
+.bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
+
+/* ── Calendario mensual embebido en el modal "Generar OT" (hoy: Paso 3,
+   columna A del agendador unificado) ──
+   Daniel: "algo 2026/2027, parecido al de retiros, bien estructurado...
+   para ver quien esta agendado, con que OT, panorama general del mes,
+   sin salir del modal". Mismo lenguaje 2027 ya establecido esta sesion
+   (tokens de sombra, radio y easing del :root, rojo ILUS). Grilla de 7
+   columnas; cada dia con OTs muestra un chip rojo con el conteo; click
+   selecciona el dia y lo dibuja en la linea de tiempo de la derecha.
+
+   ⚠ CUIDADO AL EDITAR ESTE COMENTARIO (bug real corregido 2026-07-15):
+   aqui se listaban los tokens con comodin (guion-guion-shadow-asterisco
+   seguido de barra). Ese asterisco+barra CIERRA el comentario CSS antes
+   de tiempo: el texto restante se volvia un selector invalido y el
+   navegador DESCARTABA la regla .tkcal-toolbar de aqui abajo -- la barra
+   de mes (‹ › + Hoy) se quedaba sin display:flex. Nunca escribas un
+   asterisco seguido de barra dentro de un comentario CSS. */
+.tkcal-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.tkcal-navbtn{width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;
+  color:#374151;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:background .15s,border-color .15s,transform .2s var(--ease-spring);}
+.tkcal-navbtn:hover{background:#fef2f2;border-color:#fca5a5;color:#dc2626;transform:scale(1.06);}
+.tkcal-titulo{flex:1;text-align:center;font-weight:800;font-size:.92rem;color:#0f172a;text-transform:capitalize;}
+.tkcal-hoy{border:1px solid #e5e7eb;background:#fff;color:#6b7280;border-radius:50px;padding:3px 12px;
+  font-size:.7rem;font-weight:700;flex-shrink:0;transition:background .15s,color .15s,border-color .15s;}
+.tkcal-hoy:hover{background:#fef2f2;color:#dc2626;border-color:#fca5a5;}
+.tkcal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;}
+.tkcal-dow span{text-align:center;font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;}
+.tkcal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.tkcal-day{position:relative;aspect-ratio:1/1;min-height:36px;border-radius:var(--r-sm);border:1px solid #f1f5f9;
+  background:#fafbfc;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  cursor:pointer;transition:background .15s,border-color .15s,box-shadow .2s var(--ease-spring),transform .15s var(--ease-spring);}
+.tkcal-day:hover{background:#fff;border-color:#cbd5e1;box-shadow:var(--shadow-sm);transform:translateY(-1px);}
+.tkcal-day.blank{visibility:hidden;pointer-events:none;}
+.tkcal-day .num{font-size:.76rem;font-weight:700;color:#334155;}
+.tkcal-day.finde{background:#f8fafc;}
+.tkcal-day.hoy{border-color:#dc2626;}
+.tkcal-day.hoy .num{color:#dc2626;font-weight:900;}
+.tkcal-day.sel{background:linear-gradient(135deg,#fef2f2,#fee2e2);border-color:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.sel .num{color:#991b1b;}
+.tkcal-day .cnt{position:absolute;top:2px;right:3px;background:#dc2626;color:#fff;font-size:.55rem;font-weight:800;
+  border-radius:50px;min-width:14px;height:14px;display:flex;align-items:center;justify-content:center;
+  padding:0 3px;line-height:1;box-shadow:0 1px 3px rgba(220,38,38,.4);}
+.tkcal-detalle{margin-top:12px;padding:12px 14px;background:#fafbfc;border:1px solid #f1f5f9;border-radius:var(--r-md);
+  animation:tkcalDetIn .2s var(--ease-spring);}
+@keyframes tkcalDetIn{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:none;}}
+.tkcal-detalle-titulo{font-size:.78rem;font-weight:800;color:#0f172a;margin-bottom:8px;text-transform:capitalize;}
+.tkcal-det-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;font-size:.78rem;
+  background:#fff;border:1px solid #f1f5f9;margin-bottom:5px;flex-wrap:wrap;}
+.tkcal-det-item:last-child{margin-bottom:0;}
+.tkcal-det-item .hora{font-family:'JetBrains Mono',monospace;font-weight:700;color:#dc2626;white-space:nowrap;flex-shrink:0;}
+.tkcal-det-item .who{font-weight:700;color:#0f172a;}
+.tkcal-det-item .num{font-family:'JetBrains Mono',monospace;color:#6b7280;font-size:.72rem;margin-left:auto;flex-shrink:0;}
+.tkcal-det-empty{font-size:.78rem;color:#9ca3af;text-align:center;padding:6px 0;}
+/* Alerta de choque de horario EN VIVO (no bloqueante, imposible de ignorar
+   por color/posición -- entre el campo de fecha y el de técnicos). */
+.tkcal-choque-alert{display:flex;align-items:flex-start;gap:9px;background:#fef2f2;border:1px solid #fecaca;
+  color:#991b1b;border-radius:var(--r-md);padding:10px 13px;font-size:.8rem;font-weight:600;margin-bottom:12px;
+  animation:tkcalDetIn .2s var(--ease-spring);}
+.tkcal-choque-alert i{font-size:1rem;flex-shrink:0;margin-top:1px;color:#dc2626;}
+@media (max-width:520px){
+  .tkcal-day{min-height:32px;}
+  .tkcal-day .num{font-size:.7rem;}
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   AGENDADOR UNIFICADO (Paso 3 "Agenda") — mini-calendario + línea de
+   tiempo del día, sincronizados.
+   Daniel: el "globito" (title= nativo) del día NO da la información; ahora
+   las OTs del día se dibujan como BLOQUES posicionados por hora real y la
+   OT que se está creando se dibuja EN VIVO como un bloque propio que se
+   desliza al editar el horario.
+   REGLA #4.2: no se quita NADA — #levFechaProg/#levHoraIni/#levHoraFin/
+   #levRangoDias/#levFechaFinWrap/#levCalWarnChoque/#levCalTitulo/
+   #levCalGrid conservan sus IDs y siguen siendo la fuente de verdad del
+   submit (levIniciar() en mant_ficha.js los lee tal cual -- NO tkotGenerar,
+   eso es el submit del lado Tickets). #levCalDetalle se conserva como
+   fallback oculto.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Panel "premium": mismos valores que .slot-picker de retiros (línea ~530). */
+.tksched{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;
+  background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+  border:1.5px solid #e5e7eb;border-radius:var(--r-md);padding:16px;
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.03);margin-top:12px;}
+/* El modal es modal-lg/-xl: bajo 1200px la columna del calendario se achica. */
+@media (max-width:1199.98px){ .tksched{grid-template-columns:260px 1fr;gap:12px;} }
+@media (max-width:767.98px){ .tksched{grid-template-columns:1fr;gap:14px;padding:12px;} }
+.tksched-col{min-width:0;}
+
+/* Fila compacta de inputs (fuente de verdad del submit). */
+.tksched-inputs{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;}
+@media (max-width:575.98px){ .tksched-inputs{grid-template-columns:1fr;} }
+
+/* ── Mini-calendario: mejoras aditivas (hover premium + dots de técnico +
+      pintado de rango). Van DESPUÉS de las reglas originales para ganar por
+      orden con la misma especificidad — las originales no se tocan. ── */
+.tkcal-day{padding:2px 0;}
+.tkcal-day:hover{border-color:var(--ilus-red);background:#fff5f5;transform:translateY(-1px);
+  box-shadow:0 6px 12px -4px rgba(220,38,38,.2);}
+.tkcal-day .dots{display:flex;align-items:center;justify-content:center;gap:2px;
+  height:5px;margin-top:3px;pointer-events:none;}
+.tkcal-day .dots em{width:5px;height:5px;border-radius:50%;display:block;flex-shrink:0;}
+.tkcal-day .dots b{font-size:.5rem;font-weight:800;color:#9ca3af;line-height:1;}
+@media (min-width:768px){ .tkcal-day{min-height:44px;} }   /* Apple HIG táctil (REGLA #3) */
+@media (max-width:767.98px){ .tkcal-day{min-height:44px;aspect-ratio:auto;} }
+
+/* ── Fix legibilidad celda (feedback Daniel 2026-07-15: "días atravesados"):
+   número + badge pasan a UNA fila centrada (el badge deja de ser absolute
+   encima del número) y los dots se anclan al borde inferior de la celda,
+   así el número queda SIEMPRE a la misma altura tenga o no OTs el día. ── */
+.tkcal-day{flex-direction:row;align-items:center;justify-content:center;gap:3px;padding:0 2px;}
+.tkcal-day .num{line-height:1;}
+.tkcal-day .cnt{position:static;min-width:13px;height:13px;font-size:.52rem;padding:0 3px;
+  box-shadow:none;flex-shrink:0;}
+.tkcal-day .dots{position:absolute;left:0;right:0;bottom:3px;margin-top:0;justify-content:center;}
+.tkcal-day .dots b{font-size:.55rem;margin-left:1px;}
+
+/* Rango multi-día: "pill continuo". Los extremos mantienen jerarquía
+   inicio > fin (inicio sólido rojo, fin en el degradé .sel de siempre). */
+.tkcal-day.rango-in{background:#fef2f2;border-color:#fecaca;border-radius:0;}
+.tkcal-day.rango-in .num{color:#991b1b;}
+.tkcal-day.rango-ini{border-radius:var(--r-sm) 0 0 var(--r-sm);
+  background:linear-gradient(160deg,#ff2d2d 0%,#dc2626 55%,#b30000 100%);
+  border-color:#b30000;box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.rango-ini .num{color:#fff;font-weight:900;}
+.tkcal-day.rango-ini .cnt{background:#fff;color:#b30000;box-shadow:none;}
+.tkcal-day.rango-fin{border-radius:0 var(--r-sm) var(--r-sm) 0;
+  background:linear-gradient(135deg,#fef2f2,#fee2e2);border-color:#dc2626;
+  box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.rango-fin .num{color:#991b1b;font-weight:900;}
+.tkcal-day.rango-ini.rango-fin{border-radius:var(--r-sm);}
+/* Anillo del día que está mirando la línea de tiempo (puede no ser el
+   extremo del rango si se usan las flechas ‹ › del día). */
+.tkcal-day.vista::after{content:'';position:absolute;inset:-3px;border-radius:inherit;
+  border:2px solid rgba(220,38,38,.55);pointer-events:none;}
+.tkcal-leyenda{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:10px;
+  font-size:.63rem;font-weight:700;color:#9ca3af;}
+.tkcal-leyenda span{display:inline-flex;align-items:center;gap:5px;}
+.tkcal-leyenda i.k{width:12px;height:12px;border-radius:4px;display:inline-block;flex-shrink:0;}
+
+/* ── Header del día (arriba de la línea de tiempo) ── */
+.tkday-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+.tkday-fecha{font-weight:900;font-size:.95rem;color:#0f172a;text-transform:capitalize;}
+.tkday-cnt{background:#fee2e2;color:#991b1b;border-radius:50px;padding:2px 10px;
+  font-size:.66rem;font-weight:800;white-space:nowrap;}
+.tkday-chip-rango{background:#fff8e1;color:#b45309;border-radius:50px;padding:2px 10px;
+  font-size:.66rem;font-weight:800;white-space:nowrap;}
+.tkday-navd{display:inline-flex;gap:4px;}
+.tkday-navd button{width:24px;height:24px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;
+  color:#6b7280;display:inline-flex;align-items:center;justify-content:center;font-size:.62rem;
+  transition:background .15s,border-color .15s,color .15s;}
+.tkday-navd button:hover{background:#fef2f2;border-color:#fca5a5;color:#dc2626;}
+.tkday-navd button:disabled{opacity:.35;cursor:not-allowed;}
+.tkday-legend{margin-left:auto;display:flex;align-items:center;gap:10px;
+  font-size:.63rem;font-weight:700;color:#9ca3af;}
+.tkday-legend span{display:inline-flex;align-items:center;gap:5px;}
+.tkday-legend i.k{width:12px;height:12px;border-radius:4px;display:inline-block;flex-shrink:0;}
+.tkday-legend i.k.ag{background:#f8fafc;border:1px solid #cbd5e1;border-left:3px solid #475569;}
+.tkday-legend i.k.mine{background:rgba(220,38,38,.12);border:2px dashed var(--ilus-red);}
+@media (max-width:575.98px){ .tkday-legend{margin-left:0;width:100%;} }
+
+/* ── Lienzo de la línea de tiempo ──
+   Rango visible 08:00→20:00 (12h) · 48px por hora = 0.8px por minuto
+   ⇒ alto total 12*48 = 576px. El scroll es INTERNO y deliberado: el modal
+   (la página) no crece — el cuadro sí scrollea. */
+.tkday-scroll{position:relative;height:400px;overflow-y:auto;overflow-x:hidden;background:#fff;
+  border:1px solid #eef0f2;border-radius:var(--r-sm);scroll-behavior:smooth;overscroll-behavior:contain;}
+@media (max-width:767.98px){ .tkday-scroll{height:320px;} }
+.tkday-scroll.sin-dia{opacity:.6;}
+.tkday-inner{position:relative;height:576px;}
+.tkday-canvas{position:relative;height:576px;margin-left:48px;}
+.tkday-hline{position:absolute;left:0;right:0;height:0;border-top:1px solid #eef0f2;pointer-events:none;}
+.tkday-hline.half{border-top:1px dashed #f6f7f9;}
+.tkday-hlbl{position:absolute;left:0;width:48px;text-align:right;padding-right:8px;
+  font-family:'JetBrains Mono',monospace;font-size:.64rem;font-weight:600;color:#9ca3af;
+  font-variant-numeric:tabular-nums;pointer-events:none;line-height:1;}
+.tkday-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--ilus-red);
+  z-index:6;pointer-events:none;}
+.tkday-now::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--ilus-red);
+  position:absolute;left:-4px;top:-5px;}
+
+/* ── Bloque de OT existente ── */
+.tkday-blk{position:absolute;border-radius:8px;padding:3px 8px;cursor:pointer;background:#fff;
+  border:1px solid;border-left-width:3px;box-shadow:var(--shadow-sm);overflow:hidden;z-index:2;
+  transition:transform .16s var(--ease-spring), box-shadow .16s var(--ease-out);
+  font-size:.72rem;line-height:1.25;user-select:none;min-width:0;color:#0f172a;text-align:left;}
+.tkday-blk:hover{transform:translateY(-1px);box-shadow:var(--shadow-md);z-index:4;}
+.tkday-blk:focus-visible{outline:none;box-shadow:var(--ring);}
+.tkday-blk .l1{display:flex;align-items:center;gap:6px;min-width:0;}
+.tkday-blk .hora{font-family:'JetBrains Mono',monospace;font-size:.66rem;font-weight:700;
+  font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0;}
+.tkday-blk .who{font-size:.74rem;font-weight:800;color:#0f172a;white-space:nowrap;
+  text-overflow:ellipsis;overflow:hidden;min-width:0;}
+.tkday-blk .otnum{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;
+  background:rgba(15,23,42,.06);border-radius:4px;padding:0 5px;display:inline-block;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tkday-blk.blk-sm{padding:2px 8px;}
+.tkday-blk.blk-xs{padding:1px 6px;line-height:1.1;font-size:.62rem;}
+.tkday-blk.blk-xs .who{font-size:.62rem;}
+/* Estado (campo `estado` del endpoint) */
+.tkday-blk.est-done{opacity:.55;}
+.tkday-blk.est-curso{border-left-style:double;border-left-width:4px;}
+/* Sin hora de término (o fin <= inicio) */
+.tkday-blk.sin-fin{border-right-style:dashed;border-right-width:2px;}
+/* Recorte fuera del rango 08:00–20:00 */
+.tkday-blk.clamp-top::before{content:'▲';font-size:.5rem;position:absolute;top:1px;right:4px;
+  color:inherit;opacity:.7;}
+.tkday-blk.clamp-bot::after{content:'▼';font-size:.5rem;position:absolute;bottom:1px;right:4px;
+  color:inherit;opacity:.7;}
+/* Bloque existente en conflicto con "Tu OT" */
+.tkday-blk.en-choque{box-shadow:0 0 0 2px #dc2626, var(--shadow-sm);}
+/* Colapsado "+N más" cuando el cluster tiene más de 4 columnas */
+.tkday-blk.blk-mas{background:#f3f4f6;border-color:#e5e7eb;border-left-color:#9ca3af;
+  color:#6b7280;font-weight:800;}
+.tkday-blk.blk-mas .who{color:#6b7280;}
+/* Táctil: en mobile el bloque más chico sube a 22px. (El diseño proponía
+   además un ::before con inset:-4px para ampliar el área de toque, pero el
+   bloque necesita overflow:hidden para el ellipsis del nombre — ese pseudo
+   quedaría recortado y no ampliaría nada; el ::before ya se usa para el
+   chevron ▲ de recorte. Se resuelve con min-height, que sí funciona.) */
+@media (max-width:767.98px){ .tkday-blk{min-height:22px;} }
+
+/* ── "Tu OT" (la que se está creando) — overlay a ancho completo ── */
+.tkday-blk.mine{left:0;width:100%;z-index:5;cursor:default;pointer-events:none;
+  background:rgba(220,38,38,.08);
+  border:2px dashed var(--ilus-red);border-left-width:2px;border-radius:10px;
+  box-shadow:0 8px 18px -6px rgba(220,38,38,.35);overflow:visible;
+  transition:top .18s var(--ease-out), height .18s var(--ease-out);}
+.tkday-blk.mine .mine-tag{position:absolute;top:-9px;left:8px;background:var(--ilus-red);
+  color:#fff;font-size:.55rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  border-radius:50px;padding:1px 8px;box-shadow:0 2px 4px rgba(0,0,0,.15);white-space:nowrap;}
+.tkday-blk.mine .mine-body{overflow:hidden;height:100%;}
+/* La píldora ahora lleva TODO el texto de "Tu OT" (hora + técnicos):
+   puede crecer, así que se limita con ellipsis. */
+.tkday-blk.mine .mine-tag{max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;}
+/* Si el bloque arranca pegado a las 08:00 (top<12px) la píldora a top:-9px
+   quedaría recortada por el contenedor de scroll: se mete adentro. */
+.tkday-blk.mine.tag-dentro .mine-tag{top:2px;}
+.tkday-blk.mine .hora{color:var(--ilus-red);}
+.tkday-blk.mine.choque{border-style:solid;border-color:#b91c1c;
+  background:repeating-linear-gradient(45deg,rgba(220,38,38,.10) 0 8px,rgba(220,38,38,.20) 8px 16px);
+  animation:tkChoquePulse 1.6s ease-in-out infinite;}
+@keyframes tkChoquePulse{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.18)}50%{box-shadow:0 0 0 7px rgba(220,38,38,0)}}
+.tkday-blk.mine.choque .mine-tag{background:#b91c1c;}
+.tkday-blk.mine.choque .mine-tag::before{content:'⚠ ';}
+@media (prefers-reduced-motion:reduce){ .tkday-blk.mine.choque{animation:none;} }
+
+/* ── Estados vacíos (el lienzo con su rejilla NUNCA se oculta) ── */
+.tkday-ghost{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:none;z-index:1;}
+.tkday-ghost > i{font-size:1.35rem;}
+.tkday-ghost .g1{font-size:.78rem;font-weight:700;color:#9ca3af;margin-top:4px;}
+.tkday-ghost .g2{font-size:.7rem;color:#c4c9d0;margin-top:2px;}
+.tkday-ghost .g-btn{pointer-events:auto;margin-top:8px;}
+
+/* ── Detalle de un bloque: overlay propio position:fixed (NO es un modal
+      Bootstrap anidado, así se evita por completo la pelea de backdrops /
+      z-index entre 1050/1055 y la restauración de .modal-open del padre). ── */
+.tkday-pop{position:fixed;inset:0;z-index:1090;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,10,10,.45);padding:16px;animation:tkPopBd .16s var(--ease-out);}
+@keyframes tkPopBd{from{opacity:0}to{opacity:1}}
+.tkday-pop .pop-card{max-width:340px;width:calc(100vw - 32px);border-radius:var(--r-md);
+  box-shadow:var(--shadow-lg);background:#fff;overflow:hidden;max-height:82vh;
+  display:flex;flex-direction:column;animation:tkPopIn .16s var(--ease-out);}
+@keyframes tkPopIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
+.tkday-pop .pop-head{background:linear-gradient(135deg,#0a0a0a,#1a1a1a);color:#fff;
+  padding:12px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tkday-pop .pop-head .num{font-family:'JetBrains Mono',monospace;font-size:1.05rem;font-weight:900;
+  color:#fff;font-variant-numeric:tabular-nums;}
+.tkday-pop .pop-head .btn-close{margin-left:auto;}
+.tkday-pop .pop-body{padding:14px 16px;overflow-y:auto;overscroll-behavior:contain;}
+.tkday-pop .pop-row{display:flex;gap:8px;font-size:.82rem;align-items:flex-start;padding:3px 0;}
+.tkday-pop .pop-row > i{color:#9ca3af;margin-top:3px;flex-shrink:0;}
+.tkday-pop .pop-row .v{color:#0f172a;font-weight:700;min-width:0;overflow-wrap:anywhere;}
+.tkday-pop .pop-row .v.mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
+.tkday-pop .pop-grp + .pop-grp{border-top:1px dashed #f1f5f9;margin-top:8px;padding-top:8px;}
+.tkday-pop .pop-foot{padding:10px 14px;border-top:1px solid #f1f5f9;
+  display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
+@media (max-width:767.98px){ .tkday-pop .pop-card{max-height:88vh;} }
+
+/* ── "Agenda tipo clínica" §2 — barra de acciones del popover de UNA OT
+   (Reprogramar / Reasignar / Cancelar). El gate REAL sigue siendo el
+   backend (@_ot_can_metadata en PUT /mantenciones/api/visitas/<vid>) —
+   ocultar el botón aquí solo evita mostrarle a un técnico una acción que
+   de todos modos le sería rechazada. Portado desde templates/tickets/ficha.html
+   el 2026-07-15 (mismo bloque, mismos selectores). ── */
+.tkday-pop .pop-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+  padding:10px 14px;border-top:1px solid #f1f5f9;}
+@media (max-width:400px){
+  .tkday-pop .pop-actions{grid-template-columns:1fr;}
+  .tkday-pop .pop-actions .btn{min-height:44px;}
+}
+
+/* ── Mini-formularios inline (Reprogramar §2.2 / Reasignar §2.3): viven
+   DENTRO del mismo popover — nunca abren el wizard de 7 pasos en modo
+   edición (decisión de arquitectura §2.0: reusan el PUT ya existente). ── */
+.tkday-pop .pop-inline{padding:12px 14px;border-top:1px dashed #f1f5f9;
+  background:#fafbfc;animation:tkcalDetIn .16s var(--ease-out);}
+.tkday-pop .pop-inline .row-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
+.tkday-pop .pop-inline label{font-size:.68rem;font-weight:700;color:#6b7280;
+  margin-bottom:2px;display:block;}
+.tkday-pop .pop-inline .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px;}
+.tkday-pop .pop-inline .tkcal-choque-alert{margin:0 0 8px;}
+@media (max-width:400px){
+  .tkday-pop .pop-inline .row-fields{grid-template-columns:1fr;}
+}
+
+/* ── §1.1 "clic para crear": el lienzo vacío es agendable con un clic/tap.
+   Los .tkday-blk (bloques reales) ya ponen cursor:pointer encima, que gana
+   por especificidad de elemento sobre este cursor del contenedor. ── */
+#levDayCanvas{cursor:copy;}
+
+/* Feedback visual del clic directo en la línea de tiempo (sin toast, pedido
+   explícito): pulso breve de box-shadow rojo sobre "Tu OT" para confirmar
+   dónde quedó fijado el horario. */
+@keyframes tkdayFlash{
+  0%{box-shadow:0 0 0 0 rgba(220,38,38,.6);}
+  55%{box-shadow:0 0 0 9px rgba(220,38,38,0);}
+  100%{box-shadow:0 8px 18px -6px rgba(220,38,38,.35);}
+}
+#levDayMine.flash{animation:tkdayFlash .6s var(--ease-out);}
+@media (prefers-reduced-motion:reduce){ #levDayMine.flash{animation:none;} }
+
+/* ── OT cancelada (§2.4): aditivo — se sigue viendo con su historial,
+   nunca se oculta (REGLA #4.2). ── */
+.tkday-blk.est-cancel{opacity:.35;}
+.tkday-blk.est-cancel .who{text-decoration:line-through;}
 </style>
 <div class="modal fade" id="modalLevSelector" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
@@ -9956,9 +10322,11 @@ window.__FICHA_DATA = {
       <div class="modal-body" style="background:#fafafa">
 
         {# ─── Paso 1: Tipo de OT (+ flag opcional "aplica garantía") ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card lev-sc" style="--stepc:#dc2626;--stepbg:#fee2e2">
+          <i class="bi bi-clipboard2-pulse lev-step-wm" aria-hidden="true"></i>
           <div class="lev-step-header">
             <div class="lev-step-num">1</div>
+            <div class="lev-step-ico"><i class="bi bi-ui-checks-grid"></i></div>
             <div class="lev-step-title">Tipo de orden de trabajo</div>
             <div class="lev-step-sub">Selecciona qué se va a realizar</div>
           </div>
@@ -9966,14 +10334,17 @@ window.__FICHA_DATA = {
             <div class="d-flex gap-2 align-items-end">
               <div class="flex-grow-1">
                 <label class="form-label small fw-semibold">Tipo *</label>
-                <select id="otTipo" class="form-select form-select-sm" onchange="onTipoOtChange()">
-                  <option value="levantamiento">Levantamiento de ficha</option>
-                  <option value="instalacion">Instalación</option>
-                  <option value="preventiva">Mantención preventiva</option>
-                  <option value="visita_tecnica">Visita técnica</option>
-                  <option value="correctiva">Mantención correctiva</option>
-                  <option value="inspeccion">Inspección</option>
-                </select>
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text"><i class="bi bi-wrench-adjustable" style="color:#dc2626"></i></span>
+                  <select id="otTipo" class="form-select form-select-sm" onchange="onTipoOtChange()">
+                    <option value="levantamiento">Levantamiento de ficha</option>
+                    <option value="instalacion">Instalación</option>
+                    <option value="preventiva">Mantención preventiva</option>
+                    <option value="visita_tecnica">Visita técnica</option>
+                    <option value="correctiva">Mantención correctiva</option>
+                    <option value="inspeccion">Inspección</option>
+                  </select>
+                </div>
               </div>
               {% if permissions.superadmin %}
               <button type="button" class="btn btn-sm btn-outline-secondary"
@@ -10052,14 +10423,18 @@ window.__FICHA_DATA = {
                 Si activas garantía, la OT queda con modalidad de cobro <em>garantía</em>
                 (cubierta por el fabricante/proveedor — el cliente no paga).
               </small>
+              <i class="bi bi-shield-check" aria-hidden="true"
+                 style="position:absolute;right:8px;bottom:-8px;font-size:2.8rem;color:#16a34a;opacity:.12;pointer-events:none"></i>
             </div>
           </div>
         </div>
 
         {# ─── Paso 2: Información básica + dirección ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card lev-sc" style="--stepc:#3b82f6;--stepbg:#dbeafe">
+          <i class="bi bi-geo-alt lev-step-wm" aria-hidden="true"></i>
           <div class="lev-step-header">
             <div class="lev-step-num">2</div>
+            <div class="lev-step-ico"><i class="bi bi-card-text"></i></div>
             <div class="lev-step-title">Información básica</div>
             <div class="lev-step-sub">Título, notas y dirección</div>
           </div>
@@ -10067,13 +10442,19 @@ window.__FICHA_DATA = {
             <div class="row g-2">
               <div class="col-md-7">
                 <label class="form-label small fw-semibold">Título de la OT *</label>
-                <input type="text" id="levSelectTitulo" class="form-control form-control-sm"
-                       placeholder="Ej: Levantamiento inicial sala A">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text"><i class="bi bi-type" style="color:#3b82f6"></i></span>
+                  <input type="text" id="levSelectTitulo" class="form-control form-control-sm"
+                         placeholder="Ej: Levantamiento inicial sala A">
+                </div>
               </div>
               <div class="col-md-5">
                 <label class="form-label small fw-semibold">Notas (opcional)</label>
-                <input type="text" id="levSelectNotas" class="form-control form-control-sm"
-                       placeholder="Ej: Pre-contrato anual 2026">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text"><i class="bi bi-journal-text" style="color:#94a3b8"></i></span>
+                  <input type="text" id="levSelectNotas" class="form-control form-control-sm"
+                         placeholder="Ej: Pre-contrato anual 2026">
+                </div>
               </div>
               <div class="col-12">
                 <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
@@ -10083,7 +10464,8 @@ window.__FICHA_DATA = {
                   </small>
                 </label>
                 <div class="position-relative">
-                  <input type="text" id="levDireccion" class="form-control form-control-sm"
+                  <i class="bi bi-geo-alt-fill lev-dir-pin" aria-hidden="true"></i>
+                  <input type="text" id="levDireccion" class="form-control form-control-sm lev-inp-pin"
                          placeholder="Empieza a escribir la dirección…"
                          autocomplete="off">
                   <small id="levDireccionHint" class="text-muted d-block mt-1" style="font-size:.72rem">
@@ -10102,10 +10484,13 @@ window.__FICHA_DATA = {
                   </small>
                 </label>
                 <div class="d-flex gap-2 align-items-start">
-                  <select id="levContactoSel" class="form-select form-select-sm" style="flex:1"
-                          onchange="onContactoChange()">
-                    <option value="">— Cargando contactos del cliente… —</option>
-                  </select>
+                  <div class="input-group input-group-sm" style="flex:1">
+                    <span class="input-group-text"><i class="bi bi-person-vcard" style="color:#3b82f6"></i></span>
+                    <select id="levContactoSel" class="form-select form-select-sm"
+                            onchange="onContactoChange()">
+                      <option value="">— Cargando contactos del cliente… —</option>
+                    </select>
+                  </div>
                   <button type="button" class="btn btn-sm btn-outline-secondary"
                           onclick="toggleContactoManual()" title="Ingresar manualmente">
                     <i class="bi bi-pencil"></i>
@@ -10115,20 +10500,32 @@ window.__FICHA_DATA = {
                 <div id="levContactoBox" class="mt-2 p-2 rounded" style="background:#f8fafc;border:1px solid #e5e7eb;display:none">
                   <div class="row g-2">
                     <div class="col-md-7">
-                      <input type="text" id="levContactoNombre" class="form-control form-control-sm"
-                             placeholder="Nombre completo" maxlength="200">
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text"><i class="bi bi-person"></i></span>
+                        <input type="text" id="levContactoNombre" class="form-control form-control-sm"
+                               placeholder="Nombre completo" maxlength="200">
+                      </div>
                     </div>
                     <div class="col-md-5">
-                      <input type="text" id="levContactoCargo" class="form-control form-control-sm"
-                             placeholder="Cargo (opcional)" maxlength="120">
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text"><i class="bi bi-briefcase"></i></span>
+                        <input type="text" id="levContactoCargo" class="form-control form-control-sm"
+                               placeholder="Cargo (opcional)" maxlength="120">
+                      </div>
                     </div>
                     <div class="col-md-6">
-                      <input type="text" id="levContactoTel" class="form-control form-control-sm"
-                             placeholder="Teléfono" maxlength="50">
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text"><i class="bi bi-telephone"></i></span>
+                        <input type="text" id="levContactoTel" class="form-control form-control-sm"
+                               placeholder="Teléfono" maxlength="50">
+                      </div>
                     </div>
                     <div class="col-md-6">
-                      <input type="email" id="levContactoEmail" class="form-control form-control-sm"
-                             placeholder="Email (opcional)" maxlength="200">
+                      <div class="input-group input-group-sm">
+                        <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                        <input type="email" id="levContactoEmail" class="form-control form-control-sm"
+                               placeholder="Email (opcional)" maxlength="200">
+                      </div>
                     </div>
                   </div>
                   <small class="text-muted d-block mt-1" style="font-size:.72rem">
@@ -10141,31 +10538,44 @@ window.__FICHA_DATA = {
           </div>
         </div>
 
-        {# ─── Paso 3: Programación ─── #}
+        {# ─── Paso 3: AGENDA (mini-calendario + línea de tiempo del día) ───
+           Portado desde templates/tickets/ficha.html el 2026-07-15 (mismo
+           HTML/CSS/JS -- ver static/mant_ficha.js, bloque "AGENDADOR" que
+           empieza justo después de escAttr()). REGLA #4.2 -- no se elimina
+           ningún campo: #levFechaProg, #levHoraIni, #levHoraFin,
+           #levRangoDias, #levFechaFinWrap (con sus 3 inputs) conservan sus
+           IDs y siguen siendo la fuente de verdad que lee levIniciar() sin
+           cambios. #levCalDetalle se conserva OCULTO como fallback textual. #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">3</div>
-            <div class="lev-step-title">Programación</div>
-            <div class="lev-step-sub">Fecha y horario</div>
+            <div class="lev-step-title">Agenda</div>
+            <div class="lev-step-sub">Elige el día en el calendario y ajusta el horario</div>
           </div>
           <div class="lev-step-body">
-            <div class="row g-2">
-              <div class="col-md-4">
-                <label class="form-label small fw-semibold">Fecha programada *</label>
-                <input type="date" id="levFechaProg" class="form-control form-control-sm" required>
+            <div id="levCalWarnChoque" class="tkcal-choque-alert" style="display:none"></div>
+
+            {# Control fino: fecha + horario. El calendario manda para el DÍA. #}
+            <div class="tksched-inputs">
+              <div>
+                <label class="form-label small fw-semibold" for="levFechaProg">Fecha programada *</label>
+                <input type="date" id="levFechaProg" class="form-control form-control-sm" required
+                       onchange="tkotFechaProgChange()">
               </div>
-              <div class="col-md-4">
-                <label class="form-label small fw-semibold">Hora inicio</label>
-                <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00">
+              <div>
+                <label class="form-label small fw-semibold" for="levHoraIni">Hora inicio</label>
+                <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00"
+                       oninput="tkotHoraInput()" onchange="tkotHoraInput()">
               </div>
-              <div class="col-md-4">
-                <label class="form-label small fw-semibold">Hora término</label>
-                <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00">
+              <div>
+                <label class="form-label small fw-semibold" for="levHoraFin">Hora término</label>
+                <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00"
+                       oninput="tkotHoraInput()" onchange="tkotHoraInput()">
               </div>
             </div>
             <div class="form-check form-switch mt-2">
               <input class="form-check-input" type="checkbox" id="levRangoDias"
-                     onchange="document.getElementById('levFechaFinWrap').style.display = this.checked ? '' : 'none';">
+                     onchange="document.getElementById('levFechaFinWrap').style.display = this.checked ? '' : 'none'; tkotRangoChange();">
               <label class="form-check-label small" for="levRangoDias">
                 ¿Se extenderá más de un día?
               </label>
@@ -10176,16 +10586,19 @@ window.__FICHA_DATA = {
               </div>
               <div class="row g-2">
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold">Fecha término *</label>
-                  <input type="date" id="levFechaFin" class="form-control form-control-sm">
+                  <label class="form-label small fw-semibold" for="levFechaFin">Fecha término *</label>
+                  <input type="date" id="levFechaFin" class="form-control form-control-sm"
+                         oninput="tkotRangoChange()" onchange="tkotRangoChange()">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold">Hora inicio (último día)</label>
-                  <input type="time" id="levHoraIniFin" class="form-control form-control-sm" value="09:00">
+                  <label class="form-label small fw-semibold" for="levHoraIniFin">Hora inicio (último día)</label>
+                  <input type="time" id="levHoraIniFin" class="form-control form-control-sm" value="09:00"
+                         oninput="tkdayRenderMine()" onchange="tkdayRenderMine()">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold">Hora término (último día)</label>
-                  <input type="time" id="levHoraFinFin" class="form-control form-control-sm" value="13:00">
+                  <label class="form-label small fw-semibold" for="levHoraFinFin">Hora término (último día)</label>
+                  <input type="time" id="levHoraFinFin" class="form-control form-control-sm" value="13:00"
+                         oninput="tkdayRenderMine()" onchange="tkdayRenderMine()">
                 </div>
               </div>
               <small class="text-muted d-block mt-2" style="font-size:.72rem">
@@ -10193,13 +10606,86 @@ window.__FICHA_DATA = {
                 Para visitas multi-día. Si el técnico va a estar más de 1 día, indica fecha y horario del último día.
               </small>
             </div>
+
+            {# ── Las dos superficies sincronizadas ── #}
+            <div class="tksched">
+              {# Col A — mini-calendario del mes #}
+              <div class="tksched-col">
+                <div class="tkcal-toolbar">
+                  <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(-1)" aria-label="Mes anterior">
+                    <i class="bi bi-chevron-left"></i>
+                  </button>
+                  <div class="tkcal-titulo" id="levCalTitulo">—</div>
+                  <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(1)" aria-label="Mes siguiente">
+                    <i class="bi bi-chevron-right"></i>
+                  </button>
+                  <button type="button" class="tkcal-hoy" onclick="tkotCalHoy()">Hoy</button>
+                </div>
+                <div class="tkcal-dow">
+                  <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
+                </div>
+                <div class="tkcal-grid" id="levCalGrid">
+                  <div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando calendario…</div>
+                </div>
+                <div class="tkcal-leyenda">
+                  <span><i class="k" style="background:#dc2626"></i>Día seleccionado</span>
+                  <span><i class="k" style="background:#fff;border:1px solid #dc2626"></i>Hoy</span>
+                  <span><i class="k" style="background:#f8fafc;border:1px solid #e5e7eb"></i>Fin de semana</span>
+                </div>
+                {# Fallback conservado (REGLA #4.2): la lista textual del día
+                   sigue existiendo en el DOM; la info visible ahora vive en
+                   la línea de tiempo. #}
+                <div class="tkcal-detalle" id="levCalDetalle" style="display:none"></div>
+              </div>
+
+              {# Col B — línea de tiempo del día #}
+              <div class="tksched-col">
+                <div class="tkday-head">
+                  <span class="tkday-navd">
+                    <button type="button" id="levDayPrev" onclick="tkdayPaso(-1)" aria-label="Día anterior">
+                      <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <button type="button" id="levDayNext" onclick="tkdayPaso(1)" aria-label="Día siguiente">
+                      <i class="bi bi-chevron-right"></i>
+                    </button>
+                  </span>
+                  <span class="tkday-fecha" id="levDayFecha">—</span>
+                  <span class="tkday-cnt" id="levDayCnt" style="display:none"></span>
+                  <span class="tkday-chip-rango" id="levDayChipRango" style="display:none"></span>
+                  <span class="tkday-legend">
+                    <span><i class="k ag"></i>Agendada</span>
+                    <span><i class="k mine"></i>Tu OT</span>
+                  </span>
+                </div>
+                <div class="tkday-scroll" id="levDayScroll">
+                  <div class="tkday-inner" id="levDayInner">
+                    <div id="levDayGutter"></div>
+                    <div class="tkday-canvas" id="levDayCanvas" onclick="tkdaySlotClick(event)">
+                      <div id="levDayRejilla"></div>
+                      <div id="levDayNow"></div>
+                      <div id="levDayBlks"></div>
+                      <div class="tkday-blk mine" id="levDayMine" style="display:none"></div>
+                      <div class="tkday-ghost" id="levDayGhost" style="display:none"></div>
+                    </div>
+                  </div>
+                </div>
+                <small class="text-muted d-block mt-2" style="font-size:.72rem">
+                  <i class="bi bi-info-circle me-1"></i>
+                  Toca un espacio libre para fijar el horario de tu OT · toca un bloque para ver o
+                  gestionar esa OT (color por técnico). Tu OT aparece punteada en rojo y se mueve
+                  al cambiar el horario.
+                </small>
+              </div>
+            </div>
           </div>
         </div>
 
         {# ─── Paso 4: Técnicos asignados ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card lev-sc" style="--stepc:#1e40af;--stepbg:#dbeafe">
+          <i class="bi bi-people lev-step-wm" aria-hidden="true"></i>
           <div class="lev-step-header">
             <div class="lev-step-num">4</div>
+            <div class="lev-step-ico"><i class="bi bi-people-fill"></i></div>
             <div class="lev-step-title">Técnicos asignados *</div>
             <div class="lev-step-sub">
               <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
@@ -10217,16 +10703,18 @@ window.__FICHA_DATA = {
         </div>
 
         {# ─── Paso 5: Equipos + multi-plantilla por equipo ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card lev-sc" style="--stepc:#16a34a;--stepbg:#dcfce7">
+          <i class="bi bi-box-seam lev-step-wm" aria-hidden="true"></i>
           <div class="lev-step-header">
             <div class="lev-step-num">5</div>
+            <div class="lev-step-ico"><i class="bi bi-boxes"></i></div>
             <div class="lev-step-title">Equipos y plantillas *</div>
             <div class="lev-step-sub">
               <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
             </div>
           </div>
           <div class="lev-step-body" style="padding:0">
-            <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;gap:8px;flex-wrap:wrap">
+            <div class="lev-eq-toolbar" style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;gap:8px;flex-wrap:wrap">
               <small class="text-muted" style="font-size:.74rem">
                 <i class="bi bi-info-circle me-1"></i>
                 Cada equipo puede tener varias plantillas (ej: ficha + instalación + capacitación).
@@ -10252,7 +10740,7 @@ window.__FICHA_DATA = {
                 <tbody id="levSelectTbody"></tbody>
               </table>
             </div>
-            <div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:.72rem;color:#6b7280">
+            <div class="lev-eq-tip" style="padding:8px 14px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:.72rem;color:#6b7280">
               <i class="bi bi-lightbulb me-1 text-warning"></i>
               <strong>Auto:</strong> el tipo seleccionado en el Paso 1 aplica su plantilla estándar.
               Las plantillas extra agregan tareas adicionales.
@@ -10261,9 +10749,11 @@ window.__FICHA_DATA = {
         </div>
 
         {# ─── Paso 6: Acceso y logística del sitio ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card lev-sc" style="--stepc:#d97706;--stepbg:#fef3c7">
+          <i class="bi bi-buildings lev-step-wm" aria-hidden="true"></i>
           <div class="lev-step-header">
             <div class="lev-step-num">6</div>
+            <div class="lev-step-ico"><i class="bi bi-door-open-fill"></i></div>
             <div class="lev-step-title">Acceso y logística</div>
             <div class="lev-step-sub">Info crítica para el técnico</div>
           </div>
@@ -10271,7 +10761,7 @@ window.__FICHA_DATA = {
             <div class="row g-3">
               <div class="col-md-6">
                 <label class="form-label small fw-semibold d-block mb-2">
-                  <i class="bi bi-building text-primary me-1"></i>¿Tiene ascensor?
+                  <i class="bi bi-building text-primary me-1" style="color:#d97706 !important"></i>¿Tiene ascensor?
                 </label>
                 <div class="lev-yn-group" role="group" aria-label="¿Tiene ascensor?">
                   <button type="button" class="lev-yn-btn yes" data-target="acceso_ascensor" data-val="1"
@@ -10287,7 +10777,7 @@ window.__FICHA_DATA = {
               </div>
               <div class="col-md-6">
                 <label class="form-label small fw-semibold d-block mb-2">
-                  <i class="bi bi-p-square text-primary me-1"></i>¿Hay estacionamiento?
+                  <i class="bi bi-p-square text-primary me-1" style="color:#d97706 !important"></i>¿Hay estacionamiento?
                 </label>
                 <div class="lev-yn-group" role="group" aria-label="¿Hay estacionamiento?">
                   <button type="button" class="lev-yn-btn yes" data-target="acceso_estacionamiento" data-val="1"
@@ -10303,7 +10793,7 @@ window.__FICHA_DATA = {
               </div>
               <div class="col-md-6">
                 <label class="form-label small fw-semibold">
-                  <i class="bi bi-layers text-primary me-1"></i>Piso / nivel
+                  <i class="bi bi-layers text-primary me-1" style="color:#d97706 !important"></i>Piso / nivel
                 </label>
                 <input type="text" id="acceso_piso" name="acceso_piso"
                        class="form-control form-control-sm" maxlength="50"
@@ -10311,7 +10801,7 @@ window.__FICHA_DATA = {
               </div>
               <div class="col-12">
                 <label class="form-label small fw-semibold">
-                  <i class="bi bi-journal-text text-primary me-1"></i>Notas adicionales de acceso
+                  <i class="bi bi-journal-text text-primary me-1" style="color:#d97706 !important"></i>Notas adicionales de acceso
                 </label>
                 <textarea id="acceso_notas" name="acceso_notas"
                           class="form-control form-control-sm" rows="2" maxlength="2000"
@@ -10336,9 +10826,11 @@ window.__FICHA_DATA = {
            Polish: 6 pills por tipo (PDF · Foto cámara · Galería · Video · Audio · Documento)
            con inputs específicos + drag&drop genérico.
            ════════════════════════════════════════════════════════════ #}
-        <div class="lev-step-card">
+        <div class="lev-step-card lev-sc" style="--stepc:#475569;--stepbg:#f1f5f9">
+          <i class="bi bi-folder2-open lev-step-wm" aria-hidden="true"></i>
           <div class="lev-step-header">
             <div class="lev-step-num">7</div>
+            <div class="lev-step-ico"><i class="bi bi-paperclip"></i></div>
             <div class="lev-step-title">Documentos y archivos preliminares</div>
             <div class="lev-step-sub">
               <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
@@ -10423,4 +10915,133 @@ window.__FICHA_DATA = {
     </div>
   </div>
 </div>
+
+<style id="levPolish2026">
+/* ══════════════════════════════════════════════════════════════════════
+   POLISH 2026 — identidad visual por paso del modal "Generar OT".
+   Alcanza SOLO a los pasos 1, 2, 4, 5, 6 y 7 (todos los que llevan la
+   clase nueva .lev-sc). El Paso 3 "Agenda" -- el agendador recién
+   reemplazado por otro agente -- usa .lev-step-card SIN .lev-sc a
+   propósito: ninguna regla de este bloque lo alcanza, ni por accidente
+   (todo selector está anclado a .lev-sc, a un id propio de otro paso,
+   o a una clase "lev-*" que solo existe fuera del Paso 3 -- verificado
+   con grep antes de escribir esto).
+   REGLA #4.2: cero remoción, cero IDs tocados, cero cambio de
+   comportamiento -- solo color, icono, jerarquía y microinteracción
+   sobre HTML/JS que ya existía. Este bloque de estilos va DESPUÉS de
+   todos los demás bloques del modal (incluido el de las .lev-modo-card)
+   para ganar la cascada con la misma especificidad.
+   ══════════════════════════════════════════════════════════════════════ */
+#modalLevSelector{ --lev-spring: cubic-bezier(.34,1.56,.64,1); }
+
+/* ── Sistema compartido: tarjeta con acento + chip de icono + watermark ── */
+.lev-step-card.lev-sc{ position:relative; transition:border-color .2s, box-shadow .28s; }
+.lev-step-card.lev-sc::before{
+  content:''; position:absolute; top:0; left:0; right:0; height:3px; z-index:2;
+  background:linear-gradient(90deg, var(--stepc) 0%, rgba(255,255,255,0) 72%);
+  pointer-events:none;
+}
+.lev-step-card.lev-sc:hover{ border-color:#cbd5e1; box-shadow:0 10px 26px rgba(15,23,42,.07); }
+
+.lev-step-ico{
+  width:30px; height:30px; border-radius:9px; flex-shrink:0;
+  background:var(--stepbg); color:var(--stepc);
+  display:flex; align-items:center; justify-content:center; font-size:.95rem;
+}
+
+.lev-step-wm{
+  position:absolute; right:-8px; bottom:-14px; font-size:4.6rem; line-height:1;
+  color:var(--stepc); opacity:.05; pointer-events:none; user-select:none; z-index:0;
+}
+
+.lev-sc .form-label.small{
+  font-size:.7rem; font-weight:700; letter-spacing:.45px;
+  text-transform:uppercase; color:#475569;
+}
+.lev-sc .form-label.small small{ text-transform:none; letter-spacing:0; }
+
+.lev-sc .form-control:focus, .lev-sc .form-select:focus{
+  border-color:#fca5a5; box-shadow:0 0 0 .18rem rgba(220,38,38,.10);
+}
+
+.lev-sc .input-group-text{ background:#f8fafc; border-color:#e2e8f0; color:#94a3b8; }
+
+@keyframes levPopIn{ 0%{transform:scale(.4);opacity:0} 70%{transform:scale(1.18)} 100%{transform:scale(1);opacity:1} }
+
+/* ── Paso 1 — Tipo de orden de trabajo ── */
+#otTipoDescripcion{ background:#f8fafc; border-left:3px solid #dc2626; border-radius:0 8px 8px 0; padding:8px 11px; }
+
+.lev-modo-card{ transition:all .2s var(--lev-spring); }
+.lev-modo-card:active{ transform:scale(.985); }
+.lev-modo-card .ico{
+  width:42px; height:42px; border-radius:12px; font-size:1.35rem;
+  display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg,#f8fafc,#f1f5f9); border:1px solid #e2e8f0;
+}
+.lev-modo-card.on .ico{ background:linear-gradient(135deg,#fee2e2,#fecaca); border-color:#fca5a5; }
+.lev-modo-card.on .chk i{ display:inline-block; animation:levPopIn .28s var(--lev-spring); }
+
+#otGarantiaWrap{ background:linear-gradient(135deg,#f0fdf4,#dcfce7) !important; border-color:#bbf7d0 !important; border-radius:10px !important; position:relative; overflow:hidden; }
+#otAplicaGarantia:checked{ background-color:#16a34a; border-color:#16a34a; }
+
+/* ── Paso 2 — Información básica ── */
+.lev-dir-pin{ position:absolute; left:11px; top:7px; color:#dc2626; font-size:.9rem; pointer-events:none; z-index:5; }
+#levDireccion.lev-inp-pin{ padding-left:32px; }
+#levContactoBox{ background:linear-gradient(180deg,#fff,#f8fafc) !important; border-radius:10px !important; }
+
+/* ── Paso 4 — Técnicos asignados ──
+   levRenderTecnicos() (mant_ficha.js) pinta cada chip como un badge
+   rounded-pill con clases "badge rounded-pill border lev-tec-badge" (y
+   "sel" si está seleccionado) y un style="" inline; el color activo/
+   inactivo lo sigue decidiendo ese style inline (intacto, ver
+   mant_ficha.js), así que el polish nuevo NO pelea con eso: solo agrega
+   transición/hover/press vía .lev-tec-badge y el avatar de iniciales vía
+   .lev-tec-avatar (ambos insertados de forma aditiva en el JS). La clase
+   .lev-tec-chip que ya existía en el bloque de estilos de más arriba
+   (línea ~9856) nunca la aplica ese JS -- se deja tal cual, sin tocar. */
+.lev-tec-badge{ transition:transform .2s var(--lev-spring), box-shadow .2s var(--lev-spring); }
+.lev-tec-badge:hover{ transform:translateY(-1px); box-shadow:0 3px 10px rgba(15,23,42,.08); }
+.lev-tec-badge:active{ transform:scale(.96); }
+.lev-tec-avatar{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:20px; height:20px; border-radius:50%; flex-shrink:0;
+  font-size:.6rem; font-weight:800; letter-spacing:.2px; margin-right:.4rem;
+}
+.lev-tec-badge.sel .bi-check-circle-fill{ display:inline-block; animation:levPopIn .28s var(--lev-spring); }
+
+/* ── Paso 5 — Equipos y plantillas ── */
+.lev-eq-toolbar{ background:linear-gradient(180deg,#fff,#f8fafc); }
+.lev-eq-toolbar .btn{ border-radius:8px; }
+.lev-eq-tip{ background:#fffbeb !important; border-top:1px solid #fde68a !important; color:#92400e !important; }
+.lev-sc .lev-table-eq thead th{
+  font-size:.66rem; text-transform:uppercase; letter-spacing:.5px; color:#64748b;
+  border-bottom:1px solid #e2e8f0;
+}
+.lev-table-eq tbody tr{ transition:background .15s; }
+/* La selección de fila NUNCA escribe una clase .row-selected en la fila
+   (ver abrirLevantamientoSelector() en mant_ficha.js) -- la regla
+   .lev-table-eq tr.row-selected del bloque de estilos original ya estaba
+   sin uso. Se pinta con :has() sobre el propio checkbox .lev-eq-chk,
+   CSS puro, sin tocar JS del Paso 5. */
+.lev-table-eq tbody tr:has(.lev-eq-chk:checked) td:first-child{ box-shadow:inset 3px 0 0 #dc2626; }
+.lev-eq-chk{ width:17px; height:17px; accent-color:#dc2626; cursor:pointer; }
+.lev-eq-chk:checked{ background-color:#dc2626; border-color:#dc2626; } /* por si algún día pasan a .form-check-input */
+
+/* ── Paso 6 — Acceso y logística ── */
+.lev-sc .lev-yn-group{ border-radius:10px; box-shadow:0 1px 2px rgba(15,23,42,.05); }
+.lev-yn-btn{ transition:background .15s, color .15s, transform .12s; }
+.lev-yn-btn:active{ transform:scale(.96); }
+.lev-yn-btn.active.yes{ box-shadow:inset 0 0 0 1.5px #86efac; font-weight:700; }
+.lev-yn-btn.active.no{ box-shadow:inset 0 0 0 1.5px #fca5a5; font-weight:700; }
+
+/* ── Paso 7 — Documentos y archivos preliminares ── */
+.lev-adj-zone{ border-radius:14px; background:linear-gradient(180deg,#fafafa,#f8fafc); }
+.lev-adj-zone i.bi-cloud-arrow-up-fill{ display:inline-block; transition:transform .25s var(--lev-spring), color .2s; }
+.lev-adj-zone:hover i.bi-cloud-arrow-up-fill{ transform:translateY(-3px) scale(1.06); color:#dc2626; }
+.lev-adj-zone.dragover{ box-shadow:0 0 0 4px rgba(220,38,38,.12); }
+.lev-adj-pill-input{ box-shadow:0 1px 2px rgba(15,23,42,.04); }
+.lev-adj-item{ border-radius:10px; transition:border-color .15s, box-shadow .15s; }
+.lev-adj-item:hover{ border-color:#cbd5e1; box-shadow:0 2px 8px rgba(15,23,42,.06); }
+.lev-adj-item .lev-adj-thumb{ background:linear-gradient(135deg,#f8fafc,#eef2f7); border:1px solid #e2e8f0; }
+</style>
 {% endblock %}

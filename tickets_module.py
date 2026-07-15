@@ -3632,10 +3632,14 @@ def register_tickets_routes(app, ctx):
         # ── Advertencias (feriado + choque de horario) ANTES de tomar el
         #    lock -- solo sobre el técnico PRINCIPAL (mismo alcance que la
         #    version anterior; extenderlo a multi-tecnico completo queda
-        #    fuera de este cambio -- ver reporte). ──
+        #    fuera de este cambio -- ver reporte). fecha_fin (arriba) se
+        #    pasa tal cual -- FIX 2026-07-15: si la OT que se está creando
+        #    TAMBIÉN es multi-día, el chequeo debe cubrir todo su rango, no
+        #    solo el primer día (_validar_disponibilidad_visita ahora sabe
+        #    solapar rango completo). ──
         advertencias = (_validar_disponibilidad_visita(
             tecnico_principal, fecha_programada, hora_inicio, hora_fin,
-            exclude_visita_id=0) if _validar_disponibilidad_visita else {}) or {}
+            exclude_visita_id=0, fecha_fin=fecha_fin) if _validar_disponibilidad_visita else {}) or {}
         pend_feriado = advertencias.get("feriado") if not forzar_feriado else None
         pend_choque = advertencias.get("choque") if not forzar_choque else None
         if pend_feriado or pend_choque:
