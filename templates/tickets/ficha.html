@@ -15,6 +15,11 @@
   --shadow-lg:0 12px 30px rgba(15,23,42,.10), 0 2px 6px rgba(15,23,42,.06);
   --r-sm:10px; --r-md:14px; --r-lg:18px;
   --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  /* Portados EXACTOS de templates/retiros/public_request.html (:root, líneas
+     20-36) para que el agendador del modal "Generar OT" hable el mismo
+     idioma de movimiento/foco que el slot-picker de retiros. */
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --ring:0 0 0 4px rgba(220,38,38,.16);
 }
 .tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
   color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:16px;}
@@ -567,14 +572,22 @@
 .otw-ot-existente .lbl{font-size:.76rem;color:#166534;}
 .otw-ot-existente a{margin-left:auto;flex-shrink:0;}
 
-/* ── Calendario mensual embebido en el modal "Generar OT" (Paso 4) ──
+/* ── Calendario mensual embebido en el modal "Generar OT" (hoy: Paso 3,
+   columna A del agendador unificado) ──
    Daniel: "algo 2026/2027, parecido al de retiros, bien estructurado...
    para ver quien esta agendado, con que OT, panorama general del mes,
    sin salir del modal". Mismo lenguaje 2027 ya establecido esta sesion
-   (tokens --shadow-*/--r-*/--ease-spring, rojo ILUS). Grilla de 7
+   (tokens de sombra, radio y easing del :root, rojo ILUS). Grilla de 7
    columnas; cada dia con OTs muestra un chip rojo con el conteo; click
-   abre el detalle (tecnico + horario + N° de OT) DENTRO del mismo panel,
-   sin cerrar el modal. */
+   selecciona el dia y lo dibuja en la linea de tiempo de la derecha.
+
+   ⚠ CUIDADO AL EDITAR ESTE COMENTARIO (bug real corregido 2026-07-15):
+   aqui se listaban los tokens con comodin (guion-guion-shadow-asterisco
+   seguido de barra). Ese asterisco+barra CIERRA el comentario CSS antes
+   de tiempo: el texto restante se volvia un selector invalido y el
+   navegador DESCARTABA la regla .tkcal-toolbar de aqui abajo -- la barra
+   de mes (‹ › + Hoy) se quedaba sin display:flex. Nunca escribas un
+   asterisco seguido de barra dentro de un comentario CSS. */
 .tkcal-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
 .tkcal-navbtn{width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;
   color:#374151;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
@@ -622,6 +635,203 @@
   .tkcal-day{min-height:32px;}
   .tkcal-day .num{font-size:.7rem;}
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   AGENDADOR UNIFICADO (Paso 3 "Agenda") — mini-calendario + línea de
+   tiempo del día, sincronizados.
+   Daniel: el "globito" (title= nativo) del día NO da la información; ahora
+   las OTs del día se dibujan como BLOQUES posicionados por hora real y la
+   OT que se está creando se dibuja EN VIVO como un bloque propio que se
+   desliza al editar el horario.
+   REGLA #4.2: no se quita NADA — #levFechaProg/#levHoraIni/#levHoraFin/
+   #levRangoDias/#levFechaFinWrap/#levCalWarnChoque/#levCalTitulo/
+   #levCalGrid conservan sus IDs y siguen siendo la fuente de verdad del
+   submit (tkotGenerar los lee tal cual). #levCalDetalle se conserva como
+   fallback oculto.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Panel "premium": mismos valores que .slot-picker de retiros (línea ~530). */
+.tksched{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;
+  background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+  border:1.5px solid #e5e7eb;border-radius:var(--r-md);padding:16px;
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.03);margin-top:12px;}
+/* El modal es modal-lg/-xl: bajo 1200px la columna del calendario se achica. */
+@media (max-width:1199.98px){ .tksched{grid-template-columns:260px 1fr;gap:12px;} }
+@media (max-width:767.98px){ .tksched{grid-template-columns:1fr;gap:14px;padding:12px;} }
+.tksched-col{min-width:0;}
+
+/* Fila compacta de inputs (fuente de verdad del submit). */
+.tksched-inputs{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;}
+@media (max-width:575.98px){ .tksched-inputs{grid-template-columns:1fr;} }
+
+/* ── Mini-calendario: mejoras aditivas (hover premium + dots de técnico +
+      pintado de rango). Van DESPUÉS de las reglas originales para ganar por
+      orden con la misma especificidad — las originales no se tocan. ── */
+.tkcal-day{padding:2px 0;}
+.tkcal-day:hover{border-color:var(--ilus-red);background:#fff5f5;transform:translateY(-1px);
+  box-shadow:0 6px 12px -4px rgba(220,38,38,.2);}
+.tkcal-day .dots{display:flex;align-items:center;justify-content:center;gap:2px;
+  height:5px;margin-top:3px;pointer-events:none;}
+.tkcal-day .dots em{width:5px;height:5px;border-radius:50%;display:block;flex-shrink:0;}
+.tkcal-day .dots b{font-size:.5rem;font-weight:800;color:#9ca3af;line-height:1;}
+@media (min-width:768px){ .tkcal-day{min-height:44px;} }   /* Apple HIG táctil (REGLA #3) */
+@media (max-width:767.98px){ .tkcal-day{min-height:44px;aspect-ratio:auto;} }
+
+/* Rango multi-día: "pill continuo". Los extremos mantienen jerarquía
+   inicio > fin (inicio sólido rojo, fin en el degradé .sel de siempre). */
+.tkcal-day.rango-in{background:#fef2f2;border-color:#fecaca;border-radius:0;}
+.tkcal-day.rango-in .num{color:#991b1b;}
+.tkcal-day.rango-ini{border-radius:var(--r-sm) 0 0 var(--r-sm);
+  background:linear-gradient(160deg,#ff2d2d 0%,#dc2626 55%,#b30000 100%);
+  border-color:#b30000;box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.rango-ini .num{color:#fff;font-weight:900;}
+.tkcal-day.rango-ini .cnt{background:#fff;color:#b30000;box-shadow:none;}
+.tkcal-day.rango-fin{border-radius:0 var(--r-sm) var(--r-sm) 0;
+  background:linear-gradient(135deg,#fef2f2,#fee2e2);border-color:#dc2626;
+  box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.rango-fin .num{color:#991b1b;font-weight:900;}
+.tkcal-day.rango-ini.rango-fin{border-radius:var(--r-sm);}
+/* Anillo del día que está mirando la línea de tiempo (puede no ser el
+   extremo del rango si se usan las flechas ‹ › del día). */
+.tkcal-day.vista::after{content:'';position:absolute;inset:-3px;border-radius:inherit;
+  border:2px solid rgba(220,38,38,.55);pointer-events:none;}
+.tkcal-leyenda{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:10px;
+  font-size:.63rem;font-weight:700;color:#9ca3af;}
+.tkcal-leyenda span{display:inline-flex;align-items:center;gap:5px;}
+.tkcal-leyenda i.k{width:12px;height:12px;border-radius:4px;display:inline-block;flex-shrink:0;}
+
+/* ── Header del día (arriba de la línea de tiempo) ── */
+.tkday-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+.tkday-fecha{font-weight:900;font-size:.95rem;color:#0f172a;text-transform:capitalize;}
+.tkday-cnt{background:#fee2e2;color:#991b1b;border-radius:50px;padding:2px 10px;
+  font-size:.66rem;font-weight:800;white-space:nowrap;}
+.tkday-chip-rango{background:#fff8e1;color:#b45309;border-radius:50px;padding:2px 10px;
+  font-size:.66rem;font-weight:800;white-space:nowrap;}
+.tkday-navd{display:inline-flex;gap:4px;}
+.tkday-navd button{width:24px;height:24px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;
+  color:#6b7280;display:inline-flex;align-items:center;justify-content:center;font-size:.62rem;
+  transition:background .15s,border-color .15s,color .15s;}
+.tkday-navd button:hover{background:#fef2f2;border-color:#fca5a5;color:#dc2626;}
+.tkday-navd button:disabled{opacity:.35;cursor:not-allowed;}
+.tkday-legend{margin-left:auto;display:flex;align-items:center;gap:10px;
+  font-size:.63rem;font-weight:700;color:#9ca3af;}
+.tkday-legend span{display:inline-flex;align-items:center;gap:5px;}
+.tkday-legend i.k{width:12px;height:12px;border-radius:4px;display:inline-block;flex-shrink:0;}
+.tkday-legend i.k.ag{background:#f8fafc;border:1px solid #cbd5e1;border-left:3px solid #475569;}
+.tkday-legend i.k.mine{background:rgba(220,38,38,.12);border:2px dashed var(--ilus-red);}
+@media (max-width:575.98px){ .tkday-legend{margin-left:0;width:100%;} }
+
+/* ── Lienzo de la línea de tiempo ──
+   Rango visible 08:00→20:00 (12h) · 48px por hora = 0.8px por minuto
+   ⇒ alto total 12*48 = 576px. El scroll es INTERNO y deliberado: el modal
+   (la página) no crece — el cuadro sí scrollea. */
+.tkday-scroll{position:relative;height:400px;overflow-y:auto;overflow-x:hidden;background:#fff;
+  border:1px solid #eef0f2;border-radius:var(--r-sm);scroll-behavior:smooth;overscroll-behavior:contain;}
+@media (max-width:767.98px){ .tkday-scroll{height:320px;} }
+.tkday-scroll.sin-dia{opacity:.6;}
+.tkday-inner{position:relative;height:576px;}
+.tkday-canvas{position:relative;height:576px;margin-left:48px;}
+.tkday-hline{position:absolute;left:0;right:0;height:0;border-top:1px solid #eef0f2;pointer-events:none;}
+.tkday-hline.half{border-top:1px dashed #f6f7f9;}
+.tkday-hlbl{position:absolute;left:0;width:48px;text-align:right;padding-right:8px;
+  font-family:'JetBrains Mono',monospace;font-size:.64rem;font-weight:600;color:#9ca3af;
+  font-variant-numeric:tabular-nums;pointer-events:none;line-height:1;}
+.tkday-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--ilus-red);
+  z-index:6;pointer-events:none;}
+.tkday-now::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--ilus-red);
+  position:absolute;left:-4px;top:-5px;}
+
+/* ── Bloque de OT existente ── */
+.tkday-blk{position:absolute;border-radius:8px;padding:3px 8px;cursor:pointer;background:#fff;
+  border:1px solid;border-left-width:3px;box-shadow:var(--shadow-sm);overflow:hidden;z-index:2;
+  transition:transform .16s var(--ease-spring), box-shadow .16s var(--ease-out);
+  font-size:.72rem;line-height:1.25;user-select:none;min-width:0;color:#0f172a;text-align:left;}
+.tkday-blk:hover{transform:translateY(-1px);box-shadow:var(--shadow-md);z-index:4;}
+.tkday-blk:focus-visible{outline:none;box-shadow:var(--ring);}
+.tkday-blk .l1{display:flex;align-items:center;gap:6px;min-width:0;}
+.tkday-blk .hora{font-family:'JetBrains Mono',monospace;font-size:.66rem;font-weight:700;
+  font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0;}
+.tkday-blk .who{font-size:.74rem;font-weight:800;color:#0f172a;white-space:nowrap;
+  text-overflow:ellipsis;overflow:hidden;min-width:0;}
+.tkday-blk .otnum{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;
+  background:rgba(15,23,42,.06);border-radius:4px;padding:0 5px;display:inline-block;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tkday-blk.blk-sm{padding:2px 8px;}
+.tkday-blk.blk-xs{padding:1px 6px;line-height:1.1;font-size:.62rem;}
+.tkday-blk.blk-xs .who{font-size:.62rem;}
+/* Estado (campo `estado` del endpoint) */
+.tkday-blk.est-done{opacity:.55;}
+.tkday-blk.est-curso{border-left-style:double;border-left-width:4px;}
+/* Sin hora de término (o fin <= inicio) */
+.tkday-blk.sin-fin{border-right-style:dashed;border-right-width:2px;}
+/* Recorte fuera del rango 08:00–20:00 */
+.tkday-blk.clamp-top::before{content:'▲';font-size:.5rem;position:absolute;top:1px;right:4px;
+  color:inherit;opacity:.7;}
+.tkday-blk.clamp-bot::after{content:'▼';font-size:.5rem;position:absolute;bottom:1px;right:4px;
+  color:inherit;opacity:.7;}
+/* Bloque existente en conflicto con "Tu OT" */
+.tkday-blk.en-choque{box-shadow:0 0 0 2px #dc2626, var(--shadow-sm);}
+/* Colapsado "+N más" cuando el cluster tiene más de 4 columnas */
+.tkday-blk.blk-mas{background:#f3f4f6;border-color:#e5e7eb;border-left-color:#9ca3af;
+  color:#6b7280;font-weight:800;}
+.tkday-blk.blk-mas .who{color:#6b7280;}
+/* Táctil: en mobile el bloque más chico sube a 22px. (El diseño proponía
+   además un ::before con inset:-4px para ampliar el área de toque, pero el
+   bloque necesita overflow:hidden para el ellipsis del nombre — ese pseudo
+   quedaría recortado y no ampliaría nada; el ::before ya se usa para el
+   chevron ▲ de recorte. Se resuelve con min-height, que sí funciona.) */
+@media (max-width:767.98px){ .tkday-blk{min-height:22px;} }
+
+/* ── "Tu OT" (la que se está creando) — overlay a ancho completo ── */
+.tkday-blk.mine{left:0;width:100%;z-index:5;cursor:default;pointer-events:none;
+  background:rgba(220,38,38,.08);
+  border:2px dashed var(--ilus-red);border-left-width:2px;border-radius:10px;
+  box-shadow:0 8px 18px -6px rgba(220,38,38,.35);overflow:visible;
+  transition:top .18s var(--ease-out), height .18s var(--ease-out);}
+.tkday-blk.mine .mine-tag{position:absolute;top:-9px;left:8px;background:var(--ilus-red);
+  color:#fff;font-size:.55rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  border-radius:50px;padding:1px 8px;box-shadow:0 2px 4px rgba(0,0,0,.15);white-space:nowrap;}
+.tkday-blk.mine .mine-body{overflow:hidden;height:100%;}
+.tkday-blk.mine .hora{color:var(--ilus-red);}
+.tkday-blk.mine.choque{border-style:solid;border-color:#b91c1c;
+  background:repeating-linear-gradient(45deg,rgba(220,38,38,.16) 0 8px,rgba(220,38,38,.28) 8px 16px);
+  animation:tkChoquePulse 1.6s ease-in-out infinite;}
+@keyframes tkChoquePulse{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.18)}50%{box-shadow:0 0 0 7px rgba(220,38,38,0)}}
+.tkday-blk.mine.choque .mine-tag{background:#b91c1c;}
+.tkday-blk.mine.choque .mine-tag::before{content:'⚠ ';}
+@media (prefers-reduced-motion:reduce){ .tkday-blk.mine.choque{animation:none;} }
+
+/* ── Estados vacíos (el lienzo con su rejilla NUNCA se oculta) ── */
+.tkday-ghost{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:none;z-index:1;}
+.tkday-ghost > i{font-size:1.6rem;}
+.tkday-ghost .g1{font-size:.78rem;font-weight:700;color:#9ca3af;margin-top:4px;}
+.tkday-ghost .g2{font-size:.7rem;color:#c4c9d0;margin-top:2px;}
+.tkday-ghost .g-btn{pointer-events:auto;margin-top:8px;}
+
+/* ── Detalle de un bloque: overlay propio position:fixed (NO es un modal
+      Bootstrap anidado, así se evita por completo la pelea de backdrops /
+      z-index entre 1050/1055 y la restauración de .modal-open del padre). ── */
+.tkday-pop{position:fixed;inset:0;z-index:1090;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,10,10,.45);padding:16px;animation:tkPopBd .16s var(--ease-out);}
+@keyframes tkPopBd{from{opacity:0}to{opacity:1}}
+.tkday-pop .pop-card{max-width:340px;width:calc(100vw - 32px);border-radius:var(--r-md);
+  box-shadow:var(--shadow-lg);background:#fff;overflow:hidden;max-height:82vh;
+  display:flex;flex-direction:column;animation:tkPopIn .16s var(--ease-out);}
+@keyframes tkPopIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
+.tkday-pop .pop-head{background:linear-gradient(135deg,#0a0a0a,#1a1a1a);color:#fff;
+  padding:12px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tkday-pop .pop-head .num{font-family:'JetBrains Mono',monospace;font-size:1.05rem;font-weight:900;
+  color:#fff;font-variant-numeric:tabular-nums;}
+.tkday-pop .pop-head .btn-close{margin-left:auto;}
+.tkday-pop .pop-body{padding:14px 16px;overflow-y:auto;overscroll-behavior:contain;}
+.tkday-pop .pop-row{display:flex;gap:8px;font-size:.82rem;align-items:flex-start;padding:3px 0;}
+.tkday-pop .pop-row > i{color:#9ca3af;margin-top:3px;flex-shrink:0;}
+.tkday-pop .pop-row .v{color:#0f172a;font-weight:700;min-width:0;overflow-wrap:anywhere;}
+.tkday-pop .pop-row .v.mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
+.tkday-pop .pop-grp + .pop-grp{border-top:1px dashed #f1f5f9;margin-top:8px;padding-top:8px;}
+.tkday-pop .pop-foot{padding:10px 14px;border-top:1px solid #f1f5f9;
+  display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
+@media (max-width:767.98px){ .tkday-pop .pop-card{max-height:88vh;} }
 
 /* ── Modal "Generar OT" — MISMO lenguaje visual que #modalLevSelector de
    Mantenciones (templates/mantenciones/ficha.html + static/mant_ficha.js).
@@ -754,8 +964,16 @@
      pantalla y tapa el botón Enviar y el hilo. El scroll interno del
      propio editor (ya existente) sigue siendo el ÚNICO scroll interno de
      la pestaña Respuestas -- NO se le vuelve a poner scroll a .rp-thread
-     (pedido explícito de Daniel, no se revierte). */
-  .rp-editor-wrap .ql-container{ min-height:140px; max-height:300px; }
+     (pedido explícito de Daniel, no se revierte).
+     2026-07-15: esta regla es solo el FALLBACK del primer paint (antes de
+     que corra ajustarAltoHilo, que escribe estilos inline y por lo tanto
+     gana sobre esto). El JS ya distingue mobile (EDITOR_DEFAULT=110,
+     EDITOR_MIN=70) para darle al hilo todo el espacio recuperado -- estos
+     valores se bajaron de 140/300 a 110/160 para alinearse con ese criterio
+     y que no haya un salto visible entre el primer paint y el ajuste (antes
+     el fallback pintaba un editor de hasta 300px). No borrar: si el JS
+     fallara, este es el único que evita un editor gigante en el teléfono. */
+  .rp-editor-wrap .ql-container{ min-height:110px; max-height:160px; }
 
   /* "Creado <fecha> · <correo>" con margin-left:auto y nowrap se desborda
      del hero cuando created_by es un correo largo, en vez de bajar de
@@ -811,8 +1029,10 @@
   .tk-edit-pencil{ opacity:1; }
 }
 @media (max-width:430px){
-  /* Teléfonos chicos: el composer aún más compacto. */
-  .rp-editor-wrap .ql-container{ min-height:120px; max-height:240px; }
+  /* Teléfonos chicos: el composer aún más compacto. Igual que la regla de
+     768px, esto es FALLBACK del primer paint -- ajustarAltoHilo (inline)
+     manda apenas corre. Se deja como red de seguridad (Regla #4.2). */
+  .rp-editor-wrap .ql-container{ min-height:100px; max-height:150px; }
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -859,6 +1079,31 @@
 /* Documentos ERP en la columna lateral (antes vivía "arriba" de la tabla
    de Equipo(s), fuera de lugar — Daniel: "el documento está arriba"). */
 .tk-docs-side .tk-doc{font-size:.8rem;}
+/* ── Orden de trabajo: acceso destacado de la columna lateral (2026-07-15,
+   Daniel: "no veo el formulario dentro del ticket" + "que venga a innovar y
+   agregar valor el poder generar una orden de trabajo en casi cualquier
+   parte de servicio técnico"). El botón original sigue viviendo en la barra
+   de Equipo(s) (Regla #4.2: no se quita nada) — esto es un SEGUNDO acceso,
+   primero en la lateral e imposible de no ver. Es la única tarjeta con borde
+   rojo de la columna: la acción más importante del ticket se lee sola. ── */
+.tk-ot-card{border-color:#fecaca;background:linear-gradient(180deg,#fff 0%,#fef7f7 100%);}
+.tk-ot-side-hint{font-size:.78rem;color:#64748b;line-height:1.45;margin-bottom:12px;}
+.tk-ot-side-btn{background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;min-height:44px;
+  box-shadow:0 4px 14px rgba(220,38,38,.28);
+  transition:transform .2s var(--ease-spring),box-shadow .2s var(--ease-spring),filter .2s;}
+.tk-ot-side-btn:hover{color:#fff;transform:translateY(-1px);filter:brightness(1.06);
+  box-shadow:0 7px 20px rgba(220,38,38,.34);}
+.tk-ot-side-btn:active{transform:translateY(0) scale(.99);}
+.tk-ot-side-btn:focus-visible{outline:none;box-shadow:var(--ring),0 4px 14px rgba(220,38,38,.28);}
+/* Estado "ya tiene OT": mismo criterio semántico verde=hecho del resto de la
+   app; el número de OT es lo que se lee primero. */
+.tk-ot-side-ok{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:10px 12px;
+  border-radius:var(--r-md);background:var(--ilus-green-bg);color:#166534;}
+.tk-ot-side-ok > i{font-size:1.2rem;flex-shrink:0;}
+.tk-ot-side-txt{min-width:0;}
+.tk-ot-side-num{font-weight:900;font-size:.92rem;line-height:1.2;overflow-wrap:anywhere;}
+.tk-ot-side-sub{font-size:.68rem;font-weight:700;opacity:.75;margin-top:2px;
+  text-transform:uppercase;letter-spacing:.04em;}
 </style>
 
 <div class="tk-hero" id="tkHero">
@@ -1013,6 +1258,44 @@
     </div>
 
     <aside class="tk-info-side">
+      <!-- ══════ Orden de trabajo — acceso destacado ══════
+           2026-07-15 (Daniel: "no veo el formulario dentro del ticket" +
+           "que venga a innovar y agregar valor el poder generar una orden
+           de trabajo en casi cualquier parte de servicio técnico"). El
+           botón de siempre está enterrado en la barra de la tarjeta
+           "Equipo(s)", a mitad de la columna principal: existe, pero hay
+           que ir a buscarlo. Este es un SEGUNDO acceso, primero en la
+           columna lateral — el botón original SE QUEDA donde está
+           (Regla #4.2, no se quita nada).
+           IDs propios (otSide*) para no duplicar los del original. Ambos
+           accesos los pinta el MISMO renderAccionesOT(t): una sola
+           decisión (¿t.visita_id?), dos lugares pintados. -->
+      <div class="tk-card tk-ot-card">
+        <h6><i class="bi bi-clipboard2-plus"></i>Orden de trabajo</h6>
+        <div id="otSideSinOT">
+          <div class="tk-ot-side-hint">
+            Este ticket todavía no tiene OT. Genérala para que un técnico la ejecute en terreno.
+          </div>
+          <button class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarOTSide" type="button"
+                  data-bs-toggle="modal" data-bs-target="#modalGenerarOT">
+            <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
+        </div>
+        <!-- Ya hay OT: un ticket tiene UNA sola OT (el backend responde 409
+             si se intenta una segunda), así que acá no va un botón de
+             generar sino el número + el acceso a verla. -->
+        <div id="otSideConOT" style="display:none;">
+          <div class="tk-ot-side-ok">
+            <i class="bi bi-clipboard2-check-fill"></i>
+            <div class="tk-ot-side-txt">
+              <div class="tk-ot-side-num" id="otSideNumeroOtTxt">OT vinculada</div>
+              <div class="tk-ot-side-sub">Ya generada</div>
+            </div>
+          </div>
+          <a class="btn btn-sm btn-ilus-outline w-100" id="otSideVerOtLink" href="#" target="_blank" rel="noopener">
+            <i class="bi bi-box-arrow-up-right me-1"></i>Ver la OT</a>
+        </div>
+      </div>
+
       <!-- Estado y gestión — 2026-07-15: dejó de vivir arriba de todo,
            ahora es lo primero y más visible de la columna lateral, con un
            badge grande de color real (mismas clases bs-* del hero). -->
@@ -1246,7 +1529,11 @@
      no una ficha de cliente ya renderizada en el DOM. Daniel rechazó el
      wizard genérico anterior de 3 pasos (.otw-*) — este reemplaza esa UI. -->
 <div class="modal fade" id="modalGenerarOT" tabindex="-1" data-bs-backdrop="static">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
+  {# modal-xl (1140px): el agendador del Paso 3 (mini-calendario 300px +
+     línea de tiempo del día) necesita aire. El CSS de .tksched igual
+     degrada solo a 260px de calendario bajo 1200px y a 1 columna bajo
+     768px, así que también se ve bien si algún día vuelve a modal-lg. #}
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
     <div class="modal-content" style="border-radius:14px;overflow:hidden">
       <div class="modal-header" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;border:0">
         <div>
@@ -1438,34 +1725,59 @@
           </div>
         </div>
 
-        {# ─── Paso 3: Programación ─── #}
+        {# ─── Paso 3: AGENDA (Programación + Calendario UNIFICADOS) ───
+           Antes esto eran dos tarjetas desconectadas ("Paso 3 Programación"
+           y "Paso 4 Calendario del mes"): el calendario solo informaba con
+           el title= nativo del navegador (el "globito" que Daniel odia) y
+           una lista de texto. Ahora es UNA sola superficie con dos vistas
+           sincronizadas:
+             · mini-calendario mensual  = control de entrada del DÍA
+               (clic en un día ⇒ setea #levFechaProg y dispara su onchange)
+             · línea de tiempo del día  = las OTs existentes se dibujan como
+               BLOQUES posicionados por hora real, y la OT que se está
+               creando se dibuja EN VIVO como un bloque propio que se
+               desliza al editar #levHoraIni/#levHoraFin.
+           REGLA #4.2 — NO se elimina ningún campo: #levFechaProg,
+           #levHoraIni, #levHoraFin, #levRangoDias, #levFechaFinWrap (con
+           sus 3 inputs), #levCalWarnChoque, #levCalTitulo, #levCalGrid
+           conservan sus IDs y siguen siendo la fuente de verdad que lee
+           tkotGenerar(). #levCalDetalle se conserva OCULTO como fallback.
+           Datos: el mismo caché _TKOT.cal.cache de
+           GET /mantenciones/api/calendario/mes/<anio>/<mes> — cero backend
+           nuevo. El choque sigue saliendo de tkotChequearChoque()
+           (/mantenciones/api/calendario/choque): alimenta a la vez el
+           banner explicativo y las clases .choque/.en-choque de los
+           bloques (la señal pre-verbal). ── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">3</div>
-            <div class="lev-step-title">Programación</div>
-            <div class="lev-step-sub">Fecha y horario</div>
+            <div class="lev-step-title">Agenda</div>
+            <div class="lev-step-sub">Elige el día en el calendario y ajusta el horario</div>
           </div>
           <div class="lev-step-body">
-            <div class="row g-2">
-              <div class="col-md-4">
-                <label class="form-label small fw-semibold">Fecha programada *</label>
+            <div id="levCalWarnChoque" class="tkcal-choque-alert" style="display:none"></div>
+
+            {# Control fino: fecha + horario. El calendario manda para el DÍA. #}
+            <div class="tksched-inputs">
+              <div>
+                <label class="form-label small fw-semibold" for="levFechaProg">Fecha programada *</label>
                 <input type="date" id="levFechaProg" class="form-control form-control-sm" required
                        onchange="tkotFechaProgChange()">
               </div>
-              <div class="col-md-4">
-                <label class="form-label small fw-semibold">Hora inicio</label>
+              <div>
+                <label class="form-label small fw-semibold" for="levHoraIni">Hora inicio</label>
                 <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00"
-                       onchange="tkotChequearChoqueDebounced()">
+                       oninput="tkotHoraInput()" onchange="tkotHoraInput()">
               </div>
-              <div class="col-md-4">
-                <label class="form-label small fw-semibold">Hora término</label>
+              <div>
+                <label class="form-label small fw-semibold" for="levHoraFin">Hora término</label>
                 <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00"
-                       onchange="tkotChequearChoqueDebounced()">
+                       oninput="tkotHoraInput()" onchange="tkotHoraInput()">
               </div>
             </div>
             <div class="form-check form-switch mt-2">
               <input class="form-check-input" type="checkbox" id="levRangoDias"
-                     onchange="document.getElementById('levFechaFinWrap').style.display = this.checked ? '' : 'none';">
+                     onchange="document.getElementById('levFechaFinWrap').style.display = this.checked ? '' : 'none'; tkotRangoChange();">
               <label class="form-check-label small" for="levRangoDias">
                 ¿Se extenderá más de un día?
               </label>
@@ -1476,16 +1788,19 @@
               </div>
               <div class="row g-2">
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold">Fecha término *</label>
-                  <input type="date" id="levFechaFin" class="form-control form-control-sm">
+                  <label class="form-label small fw-semibold" for="levFechaFin">Fecha término *</label>
+                  <input type="date" id="levFechaFin" class="form-control form-control-sm"
+                         oninput="tkotRangoChange()" onchange="tkotRangoChange()">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold">Hora inicio (último día)</label>
-                  <input type="time" id="levHoraIniFin" class="form-control form-control-sm" value="09:00">
+                  <label class="form-label small fw-semibold" for="levHoraIniFin">Hora inicio (último día)</label>
+                  <input type="time" id="levHoraIniFin" class="form-control form-control-sm" value="09:00"
+                         oninput="tkdayRenderMine()" onchange="tkdayRenderMine()">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold">Hora término (último día)</label>
-                  <input type="time" id="levHoraFinFin" class="form-control form-control-sm" value="13:00">
+                  <label class="form-label small fw-semibold" for="levHoraFinFin">Hora término (último día)</label>
+                  <input type="time" id="levHoraFinFin" class="form-control form-control-sm" value="13:00"
+                         oninput="tkdayRenderMine()" onchange="tkdayRenderMine()">
                 </div>
               </div>
               <small class="text-muted d-block mt-2" style="font-size:.72rem">
@@ -1493,56 +1808,83 @@
                 Para visitas multi-día. Si el técnico va a estar más de 1 día, indica fecha y horario del último día.
               </small>
             </div>
+
+            {# ── Las dos superficies sincronizadas ── #}
+            <div class="tksched">
+              {# Col A — mini-calendario del mes #}
+              <div class="tksched-col">
+                <div class="tkcal-toolbar">
+                  <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(-1)" aria-label="Mes anterior">
+                    <i class="bi bi-chevron-left"></i>
+                  </button>
+                  <div class="tkcal-titulo" id="levCalTitulo">—</div>
+                  <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(1)" aria-label="Mes siguiente">
+                    <i class="bi bi-chevron-right"></i>
+                  </button>
+                  <button type="button" class="tkcal-hoy" onclick="tkotCalHoy()">Hoy</button>
+                </div>
+                <div class="tkcal-dow">
+                  <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
+                </div>
+                <div class="tkcal-grid" id="levCalGrid">
+                  <div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando calendario…</div>
+                </div>
+                <div class="tkcal-leyenda">
+                  <span><i class="k" style="background:#dc2626"></i>Día seleccionado</span>
+                  <span><i class="k" style="background:#fff;border:1px solid #dc2626"></i>Hoy</span>
+                  <span><i class="k" style="background:#f8fafc;border:1px solid #e5e7eb"></i>Fin de semana</span>
+                </div>
+                {# Fallback conservado (REGLA #4.2): la lista textual del día
+                   sigue existiendo en el DOM; la info visible ahora vive en
+                   la línea de tiempo. #}
+                <div class="tkcal-detalle" id="levCalDetalle" style="display:none"></div>
+              </div>
+
+              {# Col B — línea de tiempo del día #}
+              <div class="tksched-col">
+                <div class="tkday-head">
+                  <span class="tkday-navd">
+                    <button type="button" id="levDayPrev" onclick="tkdayPaso(-1)" aria-label="Día anterior">
+                      <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <button type="button" id="levDayNext" onclick="tkdayPaso(1)" aria-label="Día siguiente">
+                      <i class="bi bi-chevron-right"></i>
+                    </button>
+                  </span>
+                  <span class="tkday-fecha" id="levDayFecha">—</span>
+                  <span class="tkday-cnt" id="levDayCnt" style="display:none"></span>
+                  <span class="tkday-chip-rango" id="levDayChipRango" style="display:none"></span>
+                  <span class="tkday-legend">
+                    <span><i class="k ag"></i>Agendada</span>
+                    <span><i class="k mine"></i>Tu OT</span>
+                  </span>
+                </div>
+                <div class="tkday-scroll" id="levDayScroll">
+                  <div class="tkday-inner" id="levDayInner">
+                    <div id="levDayGutter"></div>
+                    <div class="tkday-canvas" id="levDayCanvas">
+                      <div id="levDayRejilla"></div>
+                      <div id="levDayNow"></div>
+                      <div id="levDayBlks"></div>
+                      <div class="tkday-blk mine" id="levDayMine" style="display:none"></div>
+                      <div class="tkday-ghost" id="levDayGhost" style="display:none"></div>
+                    </div>
+                  </div>
+                </div>
+                <small class="text-muted d-block mt-2" style="font-size:.72rem">
+                  <i class="bi bi-info-circle me-1"></i>
+                  Cada bloque es una OT ya agendada (color por técnico). Toca uno para ver su detalle.
+                  Tu OT aparece punteada en rojo y se mueve al cambiar el horario.
+                </small>
+              </div>
+            </div>
           </div>
         </div>
 
-        {# ─── Paso 4: Calendario del mes (panorama de disponibilidad) ───
-           Daniel: "algo 2026/2027, parecido al de retiros, bien
-           estructurado... para ver quien esta agendado, con que OT,
-           panorama general del mes, sin salir del modal". Consume
-           GET /mantenciones/api/calendario/mes/<anio>/<mes> (contrato
-           construido en paralelo -- si el endpoint aun no existe, el
-           panel queda en un estado vacio amigable, sin romper el modal).
-           La alerta de choque de horario (#levCalWarnChoque) vive aca
-           porque queda literalmente entre el campo de fecha (Paso 3,
-           arriba) y el de tecnicos (Paso 5, abajo) -- se recalcula al
-           cambiar fecha/hora/tecnico(s). ── #}
+        {# ─── Paso 4: Técnicos asignados ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
             <div class="lev-step-num">4</div>
-            <div class="lev-step-title">Calendario del mes</div>
-            <div class="lev-step-sub">Quién está agendado, panorama general</div>
-          </div>
-          <div class="lev-step-body">
-            <div id="levCalWarnChoque" class="tkcal-choque-alert" style="display:none"></div>
-            <div class="tkcal-toolbar">
-              <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(-1)" aria-label="Mes anterior">
-                <i class="bi bi-chevron-left"></i>
-              </button>
-              <div class="tkcal-titulo" id="levCalTitulo">—</div>
-              <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(1)" aria-label="Mes siguiente">
-                <i class="bi bi-chevron-right"></i>
-              </button>
-              <button type="button" class="tkcal-hoy" onclick="tkotCalHoy()">Hoy</button>
-            </div>
-            <div class="tkcal-dow">
-              <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
-            </div>
-            <div class="tkcal-grid" id="levCalGrid">
-              <div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando calendario…</div>
-            </div>
-            <div class="tkcal-detalle" id="levCalDetalle" style="display:none"></div>
-            <small class="text-muted d-block mt-2" style="font-size:.72rem">
-              <i class="bi bi-info-circle me-1"></i>
-              Los días con un número muestran cuántas OTs hay agendadas. Toca un día para ver el detalle.
-            </small>
-          </div>
-        </div>
-
-        {# ─── Paso 5: Técnicos asignados ─── #}
-        <div class="lev-step-card">
-          <div class="lev-step-header">
-            <div class="lev-step-num">5</div>
             <div class="lev-step-title">Técnicos asignados *</div>
             <div class="lev-step-sub">
               <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
@@ -1559,10 +1901,10 @@
           </div>
         </div>
 
-        {# ─── Paso 6: Equipos (del TICKET) + multi-plantilla por equipo ─── #}
+        {# ─── Paso 5: Equipos (del TICKET) + multi-plantilla por equipo ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">6</div>
+            <div class="lev-step-num">5</div>
             <div class="lev-step-title">Equipos y plantillas *</div>
             <div class="lev-step-sub">
               <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
@@ -1600,10 +1942,10 @@
           </div>
         </div>
 
-        {# ─── Paso 7: Acceso y logística del sitio ─── #}
+        {# ─── Paso 6: Acceso y logística del sitio ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">7</div>
+            <div class="lev-step-num">6</div>
             <div class="lev-step-title">Acceso y logística</div>
             <div class="lev-step-sub">Info crítica para el técnico</div>
           </div>
@@ -1665,10 +2007,10 @@
           </div>
         </div>
 
-        {# ─── Paso 8: Documentos y archivos preliminares ─── #}
+        {# ─── Paso 7: Documentos y archivos preliminares ─── #}
         <div class="lev-step-card">
           <div class="lev-step-header">
-            <div class="lev-step-num">8</div>
+            <div class="lev-step-num">7</div>
             <div class="lev-step-title">Documentos y archivos preliminares</div>
             <div class="lev-step-sub">
               <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
@@ -1809,9 +2151,29 @@ function ajustarAltoHilo(){
   const qlContainer = document.querySelector('.rp-editor-wrap .ql-container');
   if(!th || !composer || !qlContainer) return;
 
+  // 2026-07-15 (Daniel): "en la parte responsiva se ve muy chiquitita la caja
+  // de mensajes... si recuperamos el mayor espacio posible quiero darselo a la
+  // caja de los mensajes para que sea comodo. La caja de TEXTO puede ir hasta
+  // mas chica si es necesario... para que la caja de los MENSAJES es la que
+  // predomina". Estas constantes eran FIJAS y estaban calibradas para un
+  // monitor: en un telefono, 180px de editor + el "chrome" del composer
+  // (mode-tabs + toolbar de Quill + barra de adjuntos/enviar) se comian casi
+  // toda la pantalla y al hilo le quedaban migajas. Ahora el default del
+  // editor depende del viewport y TODO el espacio recuperado va al hilo.
+  // Mismo breakpoint mobile del proyecto (768px), MAS el alto: un telefono en
+  // horizontal mide 812x375 -- por ancho pasaria por "escritorio" y se llevaria
+  // el editor de 180px en una pantalla de 375px de alto, justo el caso donde el
+  // hilo mas necesita el espacio. Con esto, rotar el telefono recalcula bien en
+  // ambos sentidos (la funcion ya se re-ejecuta en resize).
+  const esMovil = window.innerWidth <= 768 || window.innerHeight <= 500;
   const AIRE_INFERIOR = 24;    // respiro entre el composer y el borde de la ventana
-  const EDITOR_DEFAULT = 180;  // alto comodo del editor (Daniel 2026-07-14: "mas altura minima")
-  const EDITOR_MIN = 90;       // piso absoluto si el espacio es muy chico
+  // Alto comodo del editor. Escritorio: 180 (Daniel 2026-07-14: "mas altura
+  // minima"). Mobile: 110 -- suficiente para ~4 lineas y para ver lo que
+  // escribes; si necesitas mas, el editor ya tiene su propio scroll interno.
+  const EDITOR_DEFAULT = esMovil ? 110 : 180;
+  // Piso absoluto del editor si el espacio es muy chico (ej. telefono en
+  // horizontal): en mobile baja a 70px -- el hilo manda.
+  const EDITOR_MIN = esMovil ? 70 : 90;
   const HILO_MIN = 200;        // piso del hilo (el area PRINCIPAL)
 
   // Tope del hilo "efectivo": donde quedara el hilo cuando el hero ya se
@@ -1833,7 +2195,12 @@ function ajustarAltoHilo(){
     alturaHilo = Math.max(HILO_MIN, restante - alturaEditor);
   }
   qlContainer.style.maxHeight = alturaEditor + 'px';
-  qlContainer.style.minHeight = Math.min(alturaEditor, 180) + 'px';
+  // El 180 aca era una copia hardcodeada de EDITOR_DEFAULT -- en mobile habria
+  // dejado un min-height de escritorio peleando contra el max-height nuevo.
+  // (alturaEditor nunca supera EDITOR_DEFAULT, asi que esto equivale a fijar
+  // el alto del editor; se deja el Math.min por seguridad si alguien cambia
+  // el reparto de arriba.)
+  qlContainer.style.minHeight = Math.min(alturaEditor, EDITOR_DEFAULT) + 'px';
   // 2026-07-15 (Daniel): "no la hagas dinamica, dejala siempre lo mas
   // estirada posible" -- antes solo se fijaba max-height + un min-height
   // chico (HILO_MIN=200px de piso), asi que con pocos mensajes el div
@@ -3792,7 +4159,13 @@ const _TKOT = {
   eqPlantillas: {},         // { claveEquipo: Set<plantillaId> }
   contactos: { lista: [], cargados: false },
   adjuntos: [],
-  cal: { anio: null, mes: null, cache: {}, diaSel: null }, // calendario del mes (Paso 4)
+  cal: { anio: null, mes: null, cache: {}, error: {}, diaSel: null }, // calendario del mes (Paso 3 · col A)
+  // Línea de tiempo del día (Paso 3 · col B). `fecha` = día que se está
+  // mirando (normalmente == #levFechaProg; puede diferir si se usan las
+  // flechas ‹ › para recorrer un rango multi-día). `choqueKeys` = claves de
+  // las visitas que tkotChequearChoque() marcó en conflicto, para pintarlas
+  // con .en-choque; `choqueFecha` = a qué día pertenece ese resultado.
+  day: { fecha: null, rejilla: false, choque: false, choqueFecha: null, choqueKeys: null, visitas: [] },
   _choqueToken: 0, // invalida respuestas de choque obsoletas si el usuario sigue cambiando fecha/hora/tecnicos
 };
 
@@ -3924,6 +4297,8 @@ function tkotRenderTecnicos(){
 function tkotToggleTecnico(tid){
   if(_TKOT.tecnicosSel.has(tid)) _TKOT.tecnicosSel.delete(tid); else _TKOT.tecnicosSel.add(tid);
   tkotRenderTecnicos();
+  // El bloque "Tu OT" rotula "Nueva OT · N técnicos" -> se refresca al toque.
+  if(typeof tkdayRenderMine === 'function') tkdayRenderMine();
   tkotChequearChoqueDebounced();
 }
 
@@ -3975,7 +4350,11 @@ async function tkotCalCargarMes(){
   const titEl = document.getElementById('levCalTitulo');
   if(titEl) titEl.textContent = (TKCAL_MES_ES[m - 1] || '') + ' ' + a;
   const key = _tkotCalKey(a, m);
-  if(_TKOT.cal.cache[key]){ tkotCalRenderGrid(); return; }
+  if(_TKOT.cal.cache[key]){
+    tkotCalRenderGrid();
+    if(_TKOT.cal.diaSel && _TKOT.cal.diaSel.slice(0, 7) === key) tkdayRender(_TKOT.cal.diaSel, { silencio: true });
+    return;
+  }
   const grid = document.getElementById('levCalGrid');
   if(grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando…</div>';
   try{
@@ -3986,20 +4365,32 @@ async function tkotCalCargarMes(){
   }catch(e){
     console.warn('tkot calendario mes:', e);
     _TKOT.cal.cache[key] = {};
+    _TKOT.cal.error[key] = true;
     if(grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">'
       + '<i class="bi bi-calendar-x me-1"></i>No se pudo cargar el calendario de este mes.</div>';
+    tkdayRender(_TKOT.cal.diaSel, { silencio: true });
     return;
   }
+  delete _TKOT.cal.error[key];
   tkotCalRenderGrid();
+  // El timeline NO se borra al navegar de mes: si el día que se está
+  // mirando pertenece al mes recién cargado, se repinta con los datos frescos.
+  if(_TKOT.cal.diaSel && _TKOT.cal.diaSel.slice(0, 7) === key) tkdayRender(_TKOT.cal.diaSel, { silencio: true });
+}
+
+// ── Reintento del estado de error (§8c): purga el caché del mes y recarga. ──
+function tkotCalReintentar(){
+  delete _TKOT.cal.cache[_tkotCalKey(_TKOT.cal.anio, _TKOT.cal.mes)];
+  delete _TKOT.cal.error[_tkotCalKey(_TKOT.cal.anio, _TKOT.cal.mes)];
+  tkotCalCargarMes();
 }
 
 function tkotCalMes(delta){
   let m = _TKOT.cal.mes + delta, a = _TKOT.cal.anio;
   if(m > 12){ m = 1; a++; } else if(m < 1){ m = 12; a--; }
   _TKOT.cal.anio = a; _TKOT.cal.mes = m;
-  _TKOT.cal.diaSel = null;
-  const det = document.getElementById('levCalDetalle');
-  if(det) det.style.display = 'none';
+  // Se MANTIENE la selección (_TKOT.cal.diaSel) y el timeline no se borra:
+  // navegar de mes es solo mirar, no deselecciona lo agendado.
   tkotCalCargarMes();
 }
 
@@ -4008,8 +4399,21 @@ function tkotCalHoy(){
   _TKOT.cal.anio = hoy.getFullYear(); _TKOT.cal.mes = hoy.getMonth() + 1;
   tkotCalCargarMes().then(function(){
     const f = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
-    tkotCalSelDia(f);
+    tkotCalClicDia(f);   // pasa por #levFechaProg: el calendario manda para el día
   });
+}
+
+// ── Rango multi-día activo (#levRangoDias + #levFechaFin) para pintar el
+//    "pill continuo" en el mini-calendario. Compara fechas como STRING
+//    'YYYY-MM-DD' (no índices) para que el pintado siga funcionando cuando
+//    el rango cruza de mes y se navega con ‹ ›.
+function _tkotRangoActivo(){
+  const on = document.getElementById('levRangoDias')?.checked;
+  if(!on) return null;
+  const ini = document.getElementById('levFechaProg')?.value || '';
+  const fin = document.getElementById('levFechaFin')?.value || '';
+  if(!ini || !fin || fin < ini) return null;
+  return { ini: ini, fin: fin };
 }
 
 function tkotCalRenderGrid(){
@@ -4023,6 +4427,8 @@ function tkotCalRenderGrid(){
   if(offset < 0) offset = 6;
   const hoy = new Date();
   const hoyStr = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+  const fechaProg = document.getElementById('levFechaProg')?.value || '';
+  const rango = _tkotRangoActivo();
   let html = '';
   for(let i = 0; i < offset; i++) html += '<div class="tkcal-day blank"></div>';
   for(let dia = 1; dia <= nDias; dia++){
@@ -4032,22 +4438,65 @@ function tkotCalRenderGrid(){
     const clases = ['tkcal-day'];
     if(dow === 0 || dow === 6) clases.push('finde');
     if(fecha === hoyStr) clases.push('hoy');
-    if(fecha === _TKOT.cal.diaSel) clases.push('sel');
-    const tip = visitas.length ? (visitas.length + ' OT agendada(s) este día') : 'Sin OTs agendadas';
-    html += '<div class="' + clases.join(' ') + '" onclick="tkotCalSelDia(\'' + fecha + '\')" title="' + esc(tip) + '">'
+    if(fecha === fechaProg) clases.push('sel');
+    if(rango && fecha >= rango.ini && fecha <= rango.fin){
+      clases.push('rango-in');
+      if(fecha === rango.ini) clases.push('rango-ini');
+      if(fecha === rango.fin) clases.push('rango-fin');
+    }
+    // Día que está mirando la línea de tiempo (anillo). Solo se marca aparte
+    // cuando NO coincide con la fecha programada -- si coinciden, .sel ya lo dice.
+    if(fecha === _TKOT.cal.diaSel && fecha !== fechaProg) clases.push('vista');
+    // ── Dots de técnico (máx 3 + "+"): densidad visual del día con carga.
+    //    Reemplazan al title= nativo (el "globito"): la información real
+    //    ahora vive en la línea de tiempo de la derecha.
+    let dots = '';
+    if(visitas.length){
+      const vistos = [];
+      visitas.forEach(function(v){
+        const tid = (v.tecnico_id == null ? '_' : String(v.tecnico_id));
+        if(vistos.indexOf(tid) === -1) vistos.push(tid);
+      });
+      dots = '<span class="dots">'
+        + vistos.slice(0, 3).map(function(tid){
+            return '<em style="background:' + _tkdayColor(tid)[0] + '"></em>';
+          }).join('')
+        + (vistos.length > 3 ? '<b>+</b>' : '')
+        + '</span>';
+    }
+    html += '<div class="' + clases.join(' ') + '" onclick="tkotCalClicDia(\'' + fecha + '\')"'
+      + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();tkotCalClicDia(\'' + fecha + '\');}"'
+      + ' role="button" tabindex="0"'
+      + ' aria-label="' + esc(fecha + ' — ' + (visitas.length ? (visitas.length + ' OT agendada(s)') : 'sin OTs agendadas')) + '">'
       + '<span class="num">' + dia + '</span>'
       + (visitas.length ? '<span class="cnt">' + visitas.length + '</span>' : '')
+      + dots
       + '</div>';
   }
   grid.innerHTML = html;
 }
 
-// ── Detalle del día: técnico + horario + N° de OT, DENTRO del modal
-//    (Daniel: "sin salir del modal ni navegar a otra pagina"). ──
+// ── Clic en un día del mini-calendario: el calendario MANDA para el día.
+//    Setea #levFechaProg y dispara su evento change para que TODA la lógica
+//    existente (tkotFechaProgChange → tkotCalSelDia + choque) reaccione
+//    exactamente igual que si el usuario hubiera tipeado la fecha.
+function tkotCalClicDia(fecha){
+  const fp = document.getElementById('levFechaProg');
+  if(!fp){ tkotCalSelDia(fecha); return; }
+  fp.value = fecha;
+  fp.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// ── Selección de día: repinta la grilla + la LÍNEA DE TIEMPO del día
+//    (superficie principal desde el rediseño 2026-07-15) y mantiene
+//    #levCalDetalle relleno como FALLBACK oculto (REGLA #4.2: la lista
+//    textual sigue existiendo en el DOM; solo dejó de ser la vista visible
+//    porque los bloques por hora dan la misma info y más).
 function tkotCalSelDia(fecha, opts){
   opts = opts || {};
   _TKOT.cal.diaSel = fecha;
   tkotCalRenderGrid();
+  tkdayRender(fecha, { scroll: !opts.silencio });
   const mapa = _TKOT.cal.cache[_tkotCalKey(_TKOT.cal.anio, _TKOT.cal.mes)] || {};
   const visitas = mapa[fecha] || [];
   const det = document.getElementById('levCalDetalle');
@@ -4067,8 +4516,6 @@ function tkotCalSelDia(fecha, opts){
     });
   }
   det.innerHTML = html;
-  det.style.display = '';
-  if(!opts.silencio) det.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 // ── Se llama al abrir el modal (reset) y cada vez que cambia la fecha
@@ -4080,10 +4527,19 @@ function tkotCalInit(){
   _TKOT.cal.mes = base.getMonth() + 1;
   _TKOT.cal.diaSel = null;
   _TKOT.cal.cache = {};
+  _TKOT.cal.error = {};
+  _TKOT.day.fecha = null;
+  _TKOT.day.rejilla = false;
+  _TKOT.day.choque = false;
+  _TKOT.day.choqueFecha = null;
+  _TKOT.day.choqueKeys = null;
+  _TKOT.day.visitas = [];
   const det = document.getElementById('levCalDetalle');
   if(det) det.style.display = 'none';
   const warn = document.getElementById('levCalWarnChoque');
   if(warn) warn.style.display = 'none';
+  tkdayCerrarDetalle();
+  tkdayRender(null, { silencio: true });   // estado (b) "toca un día" mientras carga
   tkotCalCargarMes().then(function(){
     if(fp) tkotCalSelDia(fp, { silencio: true });
   });
@@ -4099,8 +4555,606 @@ function tkotFechaProgChange(){
     } else {
       tkotCalSelDia(v, { silencio: true });
     }
+  } else {
+    _TKOT.cal.diaSel = null;
+    tkotCalRenderGrid();
+    tkdayRender(null, { silencio: true });
   }
   tkotChequearChoqueDebounced();
+}
+
+// ── Edición fina del horario: el bloque "Tu OT" se mueve EN VIVO (local,
+//    sin red) en cada `input`, y el chequeo de choque va aparte con su
+//    debounce de 500ms ya existente. ──
+function tkotHoraInput(){
+  tkdayRenderMine();
+  tkotChequearChoqueDebounced();
+}
+
+// ── Toggle del rango multi-día / cambio de #levFechaFin: repinta el "pill"
+//    del calendario y el chip "Día X de N" + el bloque propio. ──
+function tkotRangoChange(){
+  tkotCalRenderGrid();
+  tkdayRender(_TKOT.cal.diaSel, { silencio: true });
+}
+
+// ── Flechas ‹ › del día: recorren el día que muestra la línea de tiempo SIN
+//    tocar #levFechaProg (así se puede inspeccionar el día 2, 3, 4… de un
+//    rango multi-día, o simplemente espiar el día siguiente antes de decidir).
+function tkdayPaso(delta){
+  const base = _TKOT.day.fecha || document.getElementById('levFechaProg')?.value || '';
+  if(!base) return;
+  const p = base.split('-');
+  const d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+  d.setDate(d.getDate() + delta);
+  const f = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const y = d.getFullYear(), m = d.getMonth() + 1;
+  _TKOT.cal.diaSel = f;
+  if(y !== _TKOT.cal.anio || m !== _TKOT.cal.mes){
+    _TKOT.cal.anio = y; _TKOT.cal.mes = m;
+    tkotCalCargarMes();    // al terminar repinta grilla + timeline (ver tkotCalCargarMes)
+  } else {
+    tkotCalRenderGrid();
+    tkdayRender(f, { silencio: true });
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// LÍNEA DE TIEMPO DEL DÍA (Paso 3 · columna B)
+// ------------------------------------------------------------
+// Daniel: el title= nativo del día (el "globito") no sirve para decidir.
+// Ahora las OTs del día se DIBUJAN como bloques posicionados por su hora
+// real, y la OT que se está creando se dibuja EN VIVO encima.
+//
+// GEOMETRÍA (fórmula explícita, sin magia):
+//   DAY_START = 8*60 = 480 min · DAY_END = 20*60 = 1200 min
+//   PX_MIN    = 0.8  ⇒ 48px por hora ⇒ lienzo 12h * 48 = 576px
+//   ini    = max(toMin(hora_inicio), DAY_START)
+//   fin    = min(toMin(hora_fin || hora_inicio), DAY_END)
+//   top    = (ini - DAY_START) * PX_MIN
+//   height = max((fin - ini) * PX_MIN, 18)
+//   (+ clamp: si se sale del rango 08:00–20:00 se recorta al borde y el
+//    bloque queda con chevron ▲/▼; si no hay hora_fin o fin <= ini, altura
+//    mínima 18px y borde derecho punteado con .sin-fin)
+//
+// DATOS: el MISMO caché _TKOT.cal.cache que llena _tkotCalNormalizarMes con
+// GET /mantenciones/api/calendario/mes/<anio>/<mes>. Cero backend nuevo:
+// el timeline es solo otra vista del mismo mapa[fecha].
+// ════════════════════════════════════════════════════════════
+const TKDAY_START = 8 * 60;      // 480
+const TKDAY_END   = 20 * 60;     // 1200
+const TKDAY_PXMIN = 0.8;         // 48px/hora
+const TKDAY_H     = (TKDAY_END - TKDAY_START) * TKDAY_PXMIN;   // 576
+// Alto MINIMO pintado de un bloque (una OT de 5 min igual debe poder tocarse).
+// Su equivalente en minutos es la duracion que el bloque OCUPA de verdad en el
+// lienzo: 18px / 0.8 = 22.5 min. El layout DEBE razonar con esta duracion
+// efectiva, no con la cruda -- si no, dos bloques "sin hora_fin" a la misma
+// hora tienen duracion 0, el test de solape (estricto) nunca dispara, y se
+// pintan uno EXACTAMENTE encima del otro tapandose (el contador decia "2 OTs"
+// y solo se veia 1). Ver _tkdayLayout/tkdayRender.
+const TKDAY_MINH   = 18;
+const TKDAY_MINDUR = TKDAY_MINH / TKDAY_PXMIN;                 // 22.5 min
+const TKDAY_DOW_LARGO = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+
+// Paleta determinista por técnico (tecnico_id % 8): [borde, fondo].
+// El ROJO #dc2626 queda RESERVADO para "Tu OT" y el choque — jamás para un
+// técnico, o se pierde la señal (REGLA #2: paleta de apoyo).
+const TKDAY_PALETA = [
+  ['#3b82f6','#eff6ff'], ['#8b5cf6','#f5f3ff'], ['#0891b2','#ecfeff'], ['#16a34a','#f0fdf4'],
+  ['#d97706','#fffbeb'], ['#db2777','#fdf2f8'], ['#475569','#f8fafc'], ['#b45309','#fef3c7'],
+];
+function _tkdayColor(tid){
+  let n = parseInt(tid, 10);
+  if(isNaN(n)) n = 0;
+  return TKDAY_PALETA[((n % 8) + 8) % 8];
+}
+
+function _tkdayToMin(hhmm){
+  const p = String(hhmm == null ? '' : hhmm).split(':');
+  const h = parseInt(p[0], 10);
+  if(isNaN(h)) return null;
+  const m = parseInt(p[1], 10);
+  return h * 60 + (isNaN(m) ? 0 : m);
+}
+function _tkdayHHMM(min){
+  return String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
+}
+function _tkdayGeom(hi, hf){
+  const iniRaw = _tkdayToMin(hi);
+  if(iniRaw === null) return null;
+  let finRaw = _tkdayToMin(hf);
+  const sinFin = (finRaw === null || finRaw <= iniRaw);
+  if(sinFin) finRaw = iniRaw;                     // fin = toMin(hora_fin || hora_inicio)
+  const clampTop = iniRaw < TKDAY_START;
+  const clampBot = finRaw > TKDAY_END;
+  const ini = Math.min(Math.max(iniRaw, TKDAY_START), TKDAY_END);
+  const fin = Math.min(Math.max(finRaw, TKDAY_START), TKDAY_END);
+  let top = (ini - TKDAY_START) * TKDAY_PXMIN;
+  const height = Math.max((fin - ini) * TKDAY_PXMIN, TKDAY_MINH);
+  if(top < 0) top = 0;
+  if(top + height > TKDAY_H) top = Math.max(0, TKDAY_H - height);   // nunca fuera del lienzo
+  // finLay = fin EFECTIVO que el bloque ocupa una vez pintado (nunca menor que
+  // TKDAY_MINDUR). Es el que debe usar el reparto en columnas; finRaw es el
+  // dato crudo y se conserva para el bloque resumen "+N mas".
+  const finLay = Math.max(finRaw, iniRaw + TKDAY_MINDUR);
+  return { iniRaw: iniRaw, finRaw: finRaw, finLay: finLay, top: top, height: height,
+           sinFin: sinFin, clampTop: clampTop, clampBot: clampBot };
+}
+// Breakpoints de CONTENIDO por altura (≈duración) — ver tabla del diseño.
+function _tkdayClase(h){
+  if(h >= 64) return 'blk-lg';   // ≥ 80 min
+  if(h >= 40) return 'blk-md';   // 50–79 min
+  if(h >= 24) return 'blk-sm';   // 30–49 min
+  return 'blk-xs';               // < 30 min
+}
+function _tkdayIniciales(nombre){
+  const ps = String(nombre || '').trim().split(/\s+/).filter(Boolean);
+  if(!ps.length) return '—';
+  return (ps[0].charAt(0) + (ps[1] ? ps[1].charAt(0) : '')).toUpperCase();
+}
+function _tkdayFechaLarga(f){
+  const p = String(f || '').split('-');
+  if(p.length !== 3) return f || '—';
+  const d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+  return TKDAY_DOW_LARGO[d.getDay()] + ' ' + p[2] + '/' + p[1] + '/' + p[0];
+}
+function _tkdayVisitaKey(v){
+  if(v == null) return '';
+  if(v.visita_id != null) return String(v.visita_id);
+  if(v.id != null) return String(v.id);
+  return 'n:' + String(v.numero_ot || '');
+}
+function _tkdayHoyStr(){
+  const h = new Date();
+  return h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+}
+
+// ── Algoritmo de columnas tipo Google Calendar ──
+//  1. ordenar por ini asc, luego fin desc
+//  2. cluster = visitas encadenadas por solape (A.ini < B.fin && B.ini < A.fin);
+//     termina cuando la siguiente empieza después del max(fin) acumulado
+//  3. greedy: primera columna cuyo último fin <= ini de la visita; si no, columna nueva
+//  4. left = col*(100/nCols)% · width = calc(100/nCols% - 4px)
+//  5. si nCols > 4 ⇒ las columnas 4+ colapsan en un bloque resumen "+N más"
+// _finLay: fin EFECTIVO (lo que el bloque ocupa pintado). Sin esto, un bloque
+// sin hora_fin mide 0 min para el reparto pero 18px en pantalla, y dos de ellos
+// a la misma hora acaban uno encima del otro.
+function _finLay(it){ return it.finLay != null ? it.finLay : Math.max(it.fin, it.ini + TKDAY_MINDUR); }
+function _tkdayLayout(items){
+  const arr = items.slice().sort(function(a, b){ return (a.ini - b.ini) || (_finLay(b) - _finLay(a)); });
+  const out = [];
+  let i = 0;
+  while(i < arr.length){
+    let j = i, maxFin = _finLay(arr[i]);
+    while(j + 1 < arr.length && arr[j + 1].ini < maxFin){
+      j++;
+      if(_finLay(arr[j]) > maxFin) maxFin = _finLay(arr[j]);
+    }
+    const cluster = arr.slice(i, j + 1);
+    const colEnds = [];
+    cluster.forEach(function(it){
+      let col = -1;
+      for(let c = 0; c < colEnds.length; c++){ if(colEnds[c] <= it.ini){ col = c; break; } }
+      if(col === -1){ col = colEnds.length; colEnds.push(_finLay(it)); }
+      else colEnds[col] = _finLay(it);
+      it.col = col;
+    });
+    const n = colEnds.length;
+    if(n > 4){
+      const over = cluster.filter(function(it){ return it.col >= 3; });
+      cluster.forEach(function(it){ if(it.col < 3){ it.nCols = 4; out.push(it); } });
+      out.push({
+        grupo: over.map(function(it){ return it.idx; }),
+        ini: Math.min.apply(null, over.map(function(it){ return it.ini; })),
+        fin: Math.max.apply(null, over.map(function(it){ return it.fin; })),
+        col: 3, nCols: 4,
+      });
+    } else {
+      cluster.forEach(function(it){ it.nCols = n; out.push(it); });
+    }
+    i = j + 1;
+  }
+  return out;
+}
+
+// ── Rejilla horaria + labels del gutter. Idempotente; se construye 1 vez. ──
+function _tkdayRejilla(){
+  if(_TKOT.day.rejilla) return;
+  const rej = document.getElementById('levDayRejilla');
+  const gut = document.getElementById('levDayGutter');
+  if(!rej || !gut) return;
+  let r = '', g = '';
+  for(let h = 8; h <= 20; h++){
+    const y = (h - 8) * 48;
+    r += '<div class="tkday-hline" style="top:' + y + 'px"></div>';
+    if(h < 20) r += '<div class="tkday-hline half" style="top:' + (y + 24) + 'px"></div>';
+    g += '<div class="tkday-hlbl" style="top:' + (y - 7) + 'px">' + String(h).padStart(2, '0') + ':00</div>';
+  }
+  rej.innerHTML = r;
+  gut.innerHTML = g;
+  _TKOT.day.rejilla = true;
+}
+
+// ── Línea "ahora": solo si el día mirado es hoy y la hora ∈ [08:00, 20:00]. ──
+function _tkdayNow(fecha){
+  const el = document.getElementById('levDayNow');
+  if(!el) return;
+  if(!fecha || fecha !== _tkdayHoyStr()){ el.innerHTML = ''; return; }
+  const n = new Date();
+  const min = n.getHours() * 60 + n.getMinutes();
+  if(min < TKDAY_START || min > TKDAY_END){ el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="tkday-now" style="top:' + ((min - TKDAY_START) * TKDAY_PXMIN) + 'px"'
+    + ' aria-label="Ahora: ' + _tkdayHHMM(min) + '"></div>';
+}
+
+// ── Contenido del bloque según su altura ──
+function _tkdayInner(cls, o){
+  const chk = o.done
+    ? '<i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:.7rem;flex-shrink:0" aria-hidden="true"></i>'
+    : '';
+  const numChip = o.num ? '<div><span class="otnum">' + esc(o.num) + '</span></div>' : '';
+  if(cls === 'blk-lg'){
+    return '<div class="l1"><span class="hora" style="color:' + o.borde + '">' + esc(o.rango) + '</span>' + chk + '</div>'
+      + '<div class="who">' + esc(o.who) + '</div>' + numChip;
+  }
+  if(cls === 'blk-md'){
+    return '<div class="l1" style="justify-content:space-between"><span class="who">' + esc(o.who) + '</span>'
+      + '<span class="hora" style="color:' + o.borde + '">' + esc(o.rango) + '</span>' + chk + '</div>' + numChip;
+  }
+  if(cls === 'blk-sm'){
+    return '<div class="l1" style="justify-content:space-between"><span class="who">' + esc(o.who) + '</span>'
+      + '<span class="hora" style="color:' + o.borde + '">' + esc(o.hi) + '</span>' + chk + '</div>';
+  }
+  // blk-xs: solo iniciales + hora de inicio (todo el detalle vive en el popover)
+  return '<div class="l1" style="justify-content:space-between"><span class="who">' + esc(o.ini2) + '</span>'
+    + '<span class="hora" style="color:' + o.borde + '">' + esc(o.hi) + '</span></div>';
+}
+
+// ── Estados vacíos (§8). El lienzo con su rejilla NUNCA se oculta. ──
+function _tkdayGhostSync(){
+  const ghost = document.getElementById('levDayGhost');
+  const scroll = document.getElementById('levDayScroll');
+  const mine = document.getElementById('levDayMine');
+  if(!ghost || !scroll) return;
+  const fecha = _TKOT.day.fecha;
+  const hayBloques = (_TKOT.day.visitas || []).length > 0;
+  const hayMine = !!(mine && mine.style.display !== 'none');
+  scroll.classList.toggle('sin-dia', !fecha);
+  const key = fecha ? fecha.slice(0, 7) : null;
+  if(fecha && _TKOT.cal.error[key]){
+    // (c) error de API — el modal jamás se rompe
+    ghost.innerHTML = '<i class="bi bi-calendar-x" style="color:#fca5a5"></i>'
+      + '<div class="g1">No se pudo cargar la agenda de este mes</div>'
+      + '<div class="g-btn"><button type="button" class="btn btn-sm btn-outline-secondary" onclick="tkotCalReintentar()">'
+      + '<i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button></div>';
+    ghost.style.display = '';
+    return;
+  }
+  if(!fecha){
+    // (b) sin día elegido
+    ghost.innerHTML = '<i class="bi bi-hand-index-thumb" style="color:#cbd5e1"></i>'
+      + '<div class="g1">Toca un día en el calendario</div>'
+      + '<div class="g2">Ahí verás quién está agendado y podrás ubicar tu OT</div>';
+    ghost.style.display = '';
+    return;
+  }
+  if(!hayBloques && !hayMine){
+    // (a) día libre
+    ghost.innerHTML = '<i class="bi bi-calendar-check" style="color:#86efac"></i>'
+      + '<div class="g1">Día libre — sin OTs agendadas</div>'
+      + '<div class="g2">Tu OT se dibujará aquí al elegir horario</div>';
+    ghost.style.display = '';
+    return;
+  }
+  ghost.style.display = 'none';
+}
+
+// ── Render idempotente del día: reconstruye los bloques existentes.
+//    El bloque .mine NO se reconstruye — solo se mueve (style.top/height)
+//    para que la transición CSS opere y "se deslice" al teclear la hora.
+function tkdayRender(fecha, opts){
+  opts = opts || {};
+  const canvas = document.getElementById('levDayCanvas');
+  const blks = document.getElementById('levDayBlks');
+  if(!canvas || !blks) return;
+  _tkdayRejilla();
+  _TKOT.day.fecha = fecha || null;
+
+  // ── Header del día ──
+  const elF = document.getElementById('levDayFecha');
+  const elC = document.getElementById('levDayCnt');
+  const elR = document.getElementById('levDayChipRango');
+  const key = fecha ? _tkotCalKey(parseInt(fecha.slice(0, 4), 10), parseInt(fecha.slice(5, 7), 10)) : null;
+  const mapa = key ? (_TKOT.cal.cache[key] || {}) : {};
+  const visitas = fecha ? (mapa[fecha] || []) : [];
+  _TKOT.day.visitas = visitas;
+  if(elF) elF.textContent = fecha ? _tkdayFechaLarga(fecha) : '—';
+  if(elC){
+    if(fecha && visitas.length){
+      elC.textContent = visitas.length + (visitas.length === 1 ? ' OT' : ' OTs');
+      elC.style.display = '';
+    } else elC.style.display = 'none';
+  }
+  if(elR){
+    const rango = _tkotRangoActivo();
+    if(rango && fecha && fecha >= rango.ini && fecha <= rango.fin){
+      const d0 = new Date(rango.ini + 'T00:00:00'), d1 = new Date(rango.fin + 'T00:00:00'),
+            dv = new Date(fecha + 'T00:00:00');
+      const total = Math.round((d1 - d0) / 86400000) + 1;
+      const nro = Math.round((dv - d0) / 86400000) + 1;
+      elR.textContent = 'Día ' + nro + ' de ' + total + ' del rango';
+      elR.style.display = '';
+    } else elR.style.display = 'none';
+  }
+  const prevB = document.getElementById('levDayPrev'), nextB = document.getElementById('levDayNext');
+  if(prevB) prevB.disabled = !fecha;
+  if(nextB) nextB.disabled = !fecha;
+
+  // ── Bloques existentes ──
+  const items = [];
+  visitas.forEach(function(v, idx){
+    const g = _tkdayGeom(v.hora_inicio, v.hora_fin);
+    if(!g) return;                       // sin hora_inicio utilizable: no se puede posicionar
+    // finLay (fin efectivo pintado) va aparte de fin (crudo): el reparto en
+    // columnas usa el primero, el bloque resumen "+N mas" el segundo.
+    items.push({ idx: idx, ini: g.iniRaw, fin: g.finRaw, finLay: g.finLay, g: g, v: v });
+  });
+  const puestos = _tkdayLayout(items);
+  const choqueKeys = _TKOT.day.choqueKeys;
+  const aplicaChoque = !!(choqueKeys && _TKOT.day.choqueFecha && _TKOT.day.choqueFecha === fecha);
+  let html = '';
+  puestos.forEach(function(p){
+    const w = 'calc(' + (100 / p.nCols) + '% - 4px)';
+    const l = (p.col * (100 / p.nCols)) + '%';
+    if(p.grupo){
+      // Resumen "+N más" (cluster con más de 4 columnas)
+      const gg = _tkdayGeom(_tkdayHHMM(p.ini), _tkdayHHMM(p.fin));
+      const h = gg ? gg.height : 18;
+      html += '<div class="tkday-blk blk-mas ' + _tkdayClase(h) + '" role="button" tabindex="0"'
+        + ' style="top:' + (gg ? gg.top : 0) + 'px;height:' + h + 'px;left:' + l + ';width:' + w + ';'
+        + 'border-color:#e5e7eb;border-left-color:#9ca3af"'
+        + ' data-grupo="' + esc(p.grupo.join(',')) + '"'
+        + ' aria-label="' + esc('+' + p.grupo.length + ' OTs más en esta franja') + '"'
+        + ' onclick="tkdayVerBloque(this)"'
+        + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();tkdayVerBloque(this);}">'
+        + '<div class="l1"><span class="who">+' + p.grupo.length + ' más</span></div></div>';
+      return;
+    }
+    const v = p.v, g = p.g;
+    const pal = _tkdayColor(v.tecnico_id);
+    const who = v.tecnico_nombre || v.tecnico || 'Sin técnico asignado';
+    const num = v.numero_ot || (v.visita_id != null ? ('OT #' + v.visita_id) : '');
+    const hi = v.hora_inicio || '--';
+    const hf = v.hora_fin || '';
+    const est = String(v.estado || '').toLowerCase();
+    const done = (est === 'completada' || est === 'cerrada');
+    const cls = _tkdayClase(g.height);
+    const extra = [];
+    if(done) extra.push('est-done');
+    if(est === 'en_curso') extra.push('est-curso');
+    if(g.sinFin) extra.push('sin-fin');
+    if(g.clampTop) extra.push('clamp-top');
+    if(g.clampBot) extra.push('clamp-bot');
+    if(aplicaChoque && choqueKeys.has(_tkdayVisitaKey(v))) extra.push('en-choque');
+    // aria-label lleva TODA la info (los lectores la leen); NO se usa title=
+    // para no volver a traer el "globito" nativo.
+    const aria = who + ' · ' + hi + (hf ? ' a ' + hf : '') + (num ? ' · ' + num : '')
+      + (v.cliente_nombre ? ' · ' + v.cliente_nombre : '') + (est ? ' · ' + est : '');
+    html += '<div class="tkday-blk ' + cls + ' ' + extra.join(' ') + '" role="button" tabindex="0"'
+      + ' style="top:' + g.top + 'px;height:' + g.height + 'px;left:' + l + ';width:' + w + ';'
+      + 'border-color:' + pal[0] + ';border-left-color:' + pal[0] + ';background:' + pal[1] + '"'
+      + ' data-idx="' + p.idx + '"'
+      + ' aria-label="' + esc(aria) + '"'
+      + ' onclick="tkdayVerBloque(this)"'
+      + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();tkdayVerBloque(this);}">'
+      + _tkdayInner(cls, {
+          borde: pal[0], who: who, num: num, hi: hi,
+          rango: hi + (hf ? '–' + hf : ''), ini2: _tkdayIniciales(who), done: done,
+        })
+      + '</div>';
+  });
+  blks.innerHTML = html;
+  _tkdayNow(fecha);
+  tkdayRenderMine();
+  _tkdayAutoScroll();
+}
+
+// ── El bloque de la OT NUEVA. Se dibuja EN VIVO: en cada `input` de
+//    #levHoraIni/#levHoraFin solo se actualiza style.top/height del MISMO
+//    nodo (no se reconstruye), de modo que la transición CSS lo deslice. ──
+function tkdayRenderMine(){
+  const mine = document.getElementById('levDayMine');
+  if(!mine) return;
+  const vista = _TKOT.day.fecha;
+  const fechaProg = document.getElementById('levFechaProg')?.value || '';
+  let hi = '', hf = '';
+  let dibujar = false;
+  if(vista && fechaProg){
+    if(vista === fechaProg){
+      hi = document.getElementById('levHoraIni')?.value || '';
+      hf = document.getElementById('levHoraFin')?.value || '';
+      dibujar = true;
+    } else {
+      // Rango multi-día: "Tu OT" se dibuja en CADA día del rango al visitarlo.
+      // Último día ⇒ sus horas propias; días intermedios ⇒ horas del primer día.
+      const rango = _tkotRangoActivo();
+      if(rango && vista > rango.ini && vista <= rango.fin){
+        if(vista === rango.fin){
+          hi = document.getElementById('levHoraIniFin')?.value || '';
+          hf = document.getElementById('levHoraFinFin')?.value || '';
+        } else {
+          hi = document.getElementById('levHoraIni')?.value || '';
+          hf = document.getElementById('levHoraFin')?.value || '';
+        }
+        dibujar = true;
+      }
+    }
+  }
+  const g = dibujar ? _tkdayGeom(hi, hf) : null;
+  if(!g){ mine.style.display = 'none'; _tkdayGhostSync(); return; }
+
+  const cls = _tkdayClase(g.height);
+  const extra = ['mine', cls];
+  if(g.sinFin) extra.push('sin-fin');
+  if(g.clampTop) extra.push('clamp-top');
+  if(g.clampBot) extra.push('clamp-bot');
+  // El choque se pinta SOLO si el resultado vigente de tkotChequearChoque()
+  // corresponde al día que se está mirando (para un día intermedio del rango
+  // no hay resultado y no se inventa uno).
+  if(_TKOT.day.choque && _TKOT.day.choqueFecha === vista) extra.push('choque');
+  mine.className = 'tkday-blk ' + extra.join(' ');
+  mine.style.display = '';
+  mine.style.top = g.top + 'px';
+  mine.style.height = g.height + 'px';
+
+  const nTec = _TKOT.tecnicosSel.size;
+  const who = 'Nueva OT · ' + nTec + (nTec === 1 ? ' técnico' : ' técnicos');
+  const rangoTxt = (hi || '--') + (hf && !g.sinFin ? '–' + hf : '');
+  mine.innerHTML = '<span class="mine-tag">Tu OT</span><div class="mine-body">'
+    + _tkdayInner(cls, {
+        borde: 'var(--ilus-red)', who: who, num: '', hi: (hi || '--'),
+        rango: rangoTxt, ini2: 'TU', done: false,
+      })
+    + '</div>';
+  _tkdayGhostSync();
+}
+
+function _tkdayAutoScroll(){
+  const scroll = document.getElementById('levDayScroll');
+  const mine = document.getElementById('levDayMine');
+  if(!scroll) return;
+  let target = 48;   // 09:00 si no hay bloque propio
+  if(mine && mine.style.display !== 'none') target = (parseFloat(mine.style.top) || 0) - 40;
+  scroll.scrollTop = Math.max(0, target);
+}
+
+// ── Repinta SOLO las clases de choque (sin reconstruir el día) tras la
+//    respuesta de /mantenciones/api/calendario/choque. ──
+function tkdayAplicarChoque(){
+  const blks = document.getElementById('levDayBlks');
+  if(!blks) return;
+  const keys = _TKOT.day.choqueKeys;
+  const aplica = !!(keys && _TKOT.day.choqueFecha && _TKOT.day.choqueFecha === _TKOT.day.fecha);
+  const visitas = _TKOT.day.visitas || [];
+  blks.querySelectorAll('.tkday-blk[data-idx]').forEach(function(el){
+    const v = visitas[parseInt(el.dataset.idx, 10)];
+    el.classList.toggle('en-choque', !!(aplica && v && keys.has(_tkdayVisitaKey(v))));
+  });
+  tkdayRenderMine();
+}
+
+// ════════════════════════════════════════════════════════════
+// DETALLE DE UN BLOQUE — overlay propio position:fixed, NO un modal
+// Bootstrap anidado. Decisión de ingeniería: abrir un segundo
+// bootstrap.Modal sobre #modalGenerarOT obliga a parchear a mano el
+// z-index del modal (1080) y el de su backdrop (1079) en el tick
+// siguiente, y a vigilar que Bootstrap restaure .modal-open/overflow del
+// padre al cerrarse. Este overlay vive fuera de la pila de Bootstrap
+// (z-index 1090 > 1055 del modal), trae su propio backdrop, no toca el
+// body y no puede dejar el modal padre sin scroll. Cero bugs de backdrop.
+// ════════════════════════════════════════════════════════════
+let _tkdayPopEl = null;
+let _tkdayPopKey = null;
+
+// Reusa las clases .tk-badge .bs-* YA definidas arriba en este archivo. Los
+// estados de mant_visitas (programada/en_curso/completada/...) no tienen una
+// clase propia -- caen en `bs-closed` (gris) en vez de quedar sin fondo.
+const _TKDAY_BADGE_OK = ['open','in_progress','pending','resolved','closed','cancelado',
+  'ot_pending_approval','ot_generated','ot_in_progress'];
+function _tkdayBadgeCls(est){
+  return 'tk-badge bs-' + (_TKDAY_BADGE_OK.indexOf(est) >= 0 ? est : 'closed');
+}
+
+function tkdayVerBloque(el){
+  if(!el) return;
+  const visitas = _TKOT.day.visitas || [];
+  let lista = [];
+  if(el.dataset.grupo){
+    lista = el.dataset.grupo.split(',').map(function(s){ return visitas[parseInt(s, 10)]; }).filter(Boolean);
+  } else {
+    const v = visitas[parseInt(el.dataset.idx, 10)];
+    if(v) lista = [v];
+  }
+  if(!lista.length) return;
+  tkdayAbrirDetalle(lista);
+}
+
+function _tkdayPopFila(icono, etiqueta, valor, mono){
+  if(!valor) return '';
+  return '<div class="pop-row"><i class="bi ' + icono + '" aria-hidden="true"></i>'
+    + '<span class="text-muted" style="flex-shrink:0">' + esc(etiqueta) + '</span>'
+    + '<span class="v' + (mono ? ' mono' : '') + '" style="margin-left:auto;text-align:right">' + esc(valor) + '</span></div>';
+}
+
+function tkdayAbrirDetalle(lista){
+  tkdayCerrarDetalle();
+  const uno = lista.length === 1;
+  const v0 = lista[0];
+  const est0 = String(v0.estado || '').toLowerCase();
+  const cab = uno
+    ? '<span class="num">' + esc(v0.numero_ot || ('OT #' + (v0.visita_id != null ? v0.visita_id : '?'))) + '</span>'
+      + (est0 ? '<span class="' + _tkdayBadgeCls(est0) + '">' + esc(est0.replace(/_/g, ' ')) + '</span>' : '')
+    : '<span class="num">' + lista.length + ' OTs</span><span class="tk-badge bs-closed">misma franja</span>';
+
+  const cuerpo = lista.map(function(v){
+    const est = String(v.estado || '').toLowerCase();
+    const hi = v.hora_inicio || '--', hf = v.hora_fin || '';
+    return '<div class="pop-grp">'
+      + (uno ? '' : '<div class="pop-row"><i class="bi bi-clipboard2" aria-hidden="true"></i>'
+          + '<span class="v mono">' + esc(v.numero_ot || ('OT #' + (v.visita_id != null ? v.visita_id : '?'))) + '</span></div>')
+      // SOLO campos que el endpoint YA entrega (mant_calendario_mes):
+      // visita_id, numero_ot, ticket_id, numero_ticket, cliente_id,
+      // cliente_nombre, titulo, tipo, estado, hora_inicio, hora_fin,
+      // tecnico_id, tecnico_nombre.
+      + _tkdayPopFila('bi-person-badge', 'Técnico', v.tecnico_nombre || v.tecnico || 'Sin asignar', false)
+      + _tkdayPopFila('bi-clock', 'Horario', hi + (hf ? '–' + hf : ''), true)
+      + _tkdayPopFila('bi-calendar3', 'Fecha', _TKOT.day.fecha
+          ? _TKOT.day.fecha.split('-').reverse().join('/') : '', true)
+      + _tkdayPopFila('bi-flag', 'Estado', est ? est.replace(/_/g, ' ') : '', false)
+      + _tkdayPopFila('bi-building', 'Cliente', v.cliente_nombre || '', false)
+      + _tkdayPopFila('bi-card-text', 'Título', v.titulo || '', false)
+      + _tkdayPopFila('bi-tag', 'Tipo', v.tipo || '', false)
+      + _tkdayPopFila('bi-ticket-detailed', 'Ticket', v.numero_ticket || '', true)
+      + (uno ? '' : '<div class="pop-row" style="padding-top:6px">'
+          + '<a class="btn btn-sm btn-outline-danger" style="margin-left:auto" target="_blank" rel="noopener"'
+          + ' href="/mantenciones/ot/' + encodeURIComponent(v.visita_id != null ? v.visita_id : '') + '">'
+          + 'Abrir OT completa <i class="bi bi-box-arrow-up-right ms-1"></i></a></div>')
+      + '</div>';
+  }).join('');
+
+  const pie = uno
+    ? '<div class="pop-foot">'
+      + '<button type="button" class="btn btn-sm btn-light" onclick="tkdayCerrarDetalle()">Cerrar</button>'
+      + '<a class="btn btn-sm btn-outline-danger" target="_blank" rel="noopener"'
+      + ' href="/mantenciones/ot/' + encodeURIComponent(v0.visita_id != null ? v0.visita_id : '') + '">'
+      + 'Abrir OT completa <i class="bi bi-box-arrow-up-right ms-1"></i></a></div>'
+    : '<div class="pop-foot"><button type="button" class="btn btn-sm btn-light" onclick="tkdayCerrarDetalle()">Cerrar</button></div>';
+
+  const pop = document.createElement('div');
+  pop.className = 'tkday-pop';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-modal', 'true');
+  pop.innerHTML = '<div class="pop-card">'
+    + '<div class="pop-head">' + cab
+    + '<button type="button" class="btn-close btn-close-white" aria-label="Cerrar" onclick="tkdayCerrarDetalle()"></button></div>'
+    + '<div class="pop-body">' + cuerpo + '</div>' + pie + '</div>';
+  // Clic en el backdrop propio cierra; clic dentro de la tarjeta no.
+  pop.addEventListener('click', function(ev){ if(ev.target === pop) tkdayCerrarDetalle(); });
+  document.body.appendChild(pop);
+  _tkdayPopEl = pop;
+  // ESC: se captura ANTES de que llegue a Bootstrap, si no cerraría el
+  // modal padre "Generar OT" y se perdería todo lo cargado.
+  _tkdayPopKey = function(ev){
+    if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); tkdayCerrarDetalle(); }
+  };
+  document.addEventListener('keydown', _tkdayPopKey, true);
+  const foco = pop.querySelector('.btn-close');
+  if(foco) foco.focus();
+}
+
+function tkdayCerrarDetalle(){
+  if(_tkdayPopKey){ document.removeEventListener('keydown', _tkdayPopKey, true); _tkdayPopKey = null; }
+  if(_tkdayPopEl){ _tkdayPopEl.remove(); _tkdayPopEl = null; }
 }
 
 // ── Choque de horario EN VIVO. El backend de generar-ot solo valida al
@@ -4120,7 +5174,12 @@ async function tkotChequearChoque(){
   const horaIni = document.getElementById('levHoraIni')?.value || '';
   const horaFin = document.getElementById('levHoraFin')?.value || '';
   const tecnicoIds = Array.from(_TKOT.tecnicosSel);
-  if(!fecha || !tecnicoIds.length){ warn.style.display = 'none'; return; }
+  if(!fecha || !tecnicoIds.length){
+    warn.style.display = 'none';
+    _TKOT.day.choque = false; _TKOT.day.choqueFecha = null; _TKOT.day.choqueKeys = null;
+    tkdayAplicarChoque();
+    return;
+  }
   const idNombre = {};
   (_TKOT.tecnicosDisponibles || []).forEach(function(t){ idNombre[t.id] = t.nombre || t.email || ('Téc #' + t.id); });
   const miToken = ++_TKOT._choqueToken;
@@ -4136,6 +5195,10 @@ async function tkotChequearChoque(){
     }));
     if(miToken !== _TKOT._choqueToken) return; // el usuario siguió cambiando algo -- respuesta obsoleta
     const mensajes = [];
+    // MISMO resultado, dos consumidores: el banner explicativo (el porqué) y
+    // la geometría de los bloques (.choque en "Tu OT" + .en-choque en las
+    // visitas en conflicto = la señal pre-verbal). NO se duplica la lógica.
+    const choqueKeys = new Set();
     resultados.forEach(function(res){
       const d = res.d;
       // Contrato real del backend (/mantenciones/api/calendario/choque):
@@ -4147,6 +5210,7 @@ async function tkotChequearChoque(){
       if(!entry || !entry.choque) return;
       const nombre = entry.tecnico_nombre || idNombre[res.tid] || 'El técnico';
       const visitas = entry.visitas_choque || [];
+      visitas.forEach(function(v){ choqueKeys.add(_tkdayVisitaKey(v)); });
       const detalle = visitas.map(function(v){
         return (v.numero_ot || ('OT #' + v.visita_id)) + ' de ' + (v.hora_inicio || '--') + ' a ' + (v.hora_fin || '--');
       }).join(', ');
@@ -4159,6 +5223,10 @@ async function tkotChequearChoque(){
     } else {
       warn.style.display = 'none';
     }
+    _TKOT.day.choque = mensajes.length > 0;
+    _TKOT.day.choqueFecha = fecha;
+    _TKOT.day.choqueKeys = choqueKeys;
+    tkdayAplicarChoque();
   }catch(e){
     console.warn('tkot choque:', e);
   }
@@ -4470,6 +5538,13 @@ async function _tkotSubirAdjuntos(vid){
   return {ok, fail};
 }
 
+// ── Si el modal "Generar OT" se cierra con el detalle de un bloque abierto,
+//    el overlay (que vive en <body>, fuera de la pila de Bootstrap) quedaría
+//    huérfano tapando la pantalla. Se limpia siempre.
+document.getElementById('modalGenerarOT').addEventListener('hide.bs.modal', function(){
+  tkdayCerrarDetalle();
+});
+
 // ── Abrir el modal: reset + resolución de cliente + carga de todo ──
 document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', async function(){
   const tbody = document.getElementById('levSelectTbody');
@@ -4740,18 +5815,38 @@ async function tkotGenerar(){
 }
 
 // ── Tarjeta de estado en Acciones (llamada desde cargar()) ──
+// 2026-07-15: el acceso a "Generar OT" ahora se pinta en DOS lugares -- la
+// barra de la tarjeta "Equipo(s)" (el original, Regla #4.2: se queda) y el
+// acceso destacado de la columna lateral (Daniel: "no veo el formulario
+// dentro del ticket"). La DECISIÓN vive en un solo lugar (esta función):
+// si el ticket ya tiene visita_id hay OT y se muestra el número + link; si
+// no, se muestra el botón que abre #modalGenerarOT. Los dos lugares reciben
+// exactamente el mismo estado, así que no pueden contradecirse. Para sumar
+// un tercer acceso en otra parte de servicio técnico basta con agregarlo a
+// DESTINOS_OT con sus 4 ids -- no se toca la lógica.
+const DESTINOS_OT = [
+  // Barra de la tarjeta "Equipo(s)" (columna principal)
+  {sinOT:'otwSinOT',     conOT:'otwConOT',     num:'otwNumeroOtTxt',     link:'otwVerOtLink'},
+  // Tarjeta "Orden de trabajo" (columna lateral)
+  {sinOT:'otSideSinOT',  conOT:'otSideConOT',  num:'otSideNumeroOtTxt',  link:'otSideVerOtLink'},
+];
 function renderAccionesOT(t){
-  const sinOT = document.getElementById('otwSinOT');
-  const conOT = document.getElementById('otwConOT');
-  if(t.visita_id){
-    sinOT.style.display = 'none';
-    conOT.style.display = 'block';
-    document.getElementById('otwNumeroOtTxt').textContent = t.visita_numero_ot || ('OT #'+t.visita_id);
-    document.getElementById('otwVerOtLink').href = '/mantenciones/ot/'+t.visita_id;
-  } else {
-    sinOT.style.display = 'block';
-    conOT.style.display = 'none';
-  }
+  const hayOT = !!t.visita_id;
+  const numeroOT = hayOT ? (t.visita_numero_ot || ('OT #'+t.visita_id)) : '';
+  const hrefOT = hayOT ? ('/mantenciones/ot/'+t.visita_id) : '#';
+  DESTINOS_OT.forEach(function(d){
+    const sinOT = document.getElementById(d.sinOT);
+    const conOT = document.getElementById(d.conOT);
+    if(!sinOT || !conOT) return;   // destino no presente en este render
+    sinOT.style.display = hayOT ? 'none' : 'block';
+    conOT.style.display = hayOT ? 'block' : 'none';
+    if(hayOT){
+      const num  = document.getElementById(d.num);
+      const link = document.getElementById(d.link);
+      if(num)  num.textContent = numeroOT;
+      if(link) link.href = hrefOT;
+    }
+  });
 }
 
 cargarEjecutivos();
