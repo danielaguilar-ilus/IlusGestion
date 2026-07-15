@@ -1922,17 +1922,30 @@ def register_tickets_routes(app, ctx):
                     (_chile_now_year(), tid),
                 )
                 # Equipos que vengan del form (lista de dicts)
+                # FIX 2026-07-15: documento_garantia no se llenaba en el ALTA
+                # (solo via PATCH manual de superadmin). Si el equipo trae su
+                # PROPIO documento de origen (eq.tido/eq.nudo -- ej. seleccion
+                # granular por equipo), se usa ese; si no, cae al
+                # numero_documento a nivel de ticket. Mismo formato que
+                # tk_api_equipos_desde_documento ("TIDO-NUDO", ej. "VD-6162").
+                doc_ticket_fallback = (d.get("numero_documento") or "").strip()[:150] or None
                 for eq in (d.get("equipos") or []):
                     try:
+                        eq_tido = (eq.get("tido") or "").strip().upper()
+                        eq_nudo = (eq.get("nudo") or "").strip()
+                        doc_garantia = f"{eq_tido}-{eq_nudo}"[:150] if (eq_tido and eq_nudo) \
+                            else doc_ticket_fallback
                         cur.execute(
                             "INSERT IGNORE INTO tk_ticket_equipos "
-                            "(ticket_id, erp_kopr, nombre, tipo, sku, cantidad, notas) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            "(ticket_id, erp_kopr, nombre, tipo, sku, cantidad, notas, documento_garantia) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                             (tid, (eq.get("kopr") or "").strip()[:100] or None,
                              (eq.get("nombre") or "").strip()[:300] or None,
                              (eq.get("tipo") or "").strip()[:100] or None,
                              (eq.get("sku") or "").strip()[:100] or None,
                              int(eq.get("cantidad") or 1),
-                             (eq.get("notas") or "").strip()[:500] or None),
+                             (eq.get("notas") or "").strip()[:500] or None,
+                             doc_garantia),
                         )
                     except Exception as _e:
                         print(f"[tk_api_create] equipo no insertado tid={tid}: {_e}", flush=True)
@@ -3856,11 +3869,14 @@ def register_tickets_routes(app, ctx):
         for ln in lineas:
             try:
                 cant = max(1, int(round(ln.get("cantidad") or 1)))
+                # FIX 2026-07-15: documento_garantia no se llenaba aqui pese a
+                # que tido/nudo ya estan en scope -- mismo formato "TIDO-NUDO"
+                # que usa el log de mas abajo.
                 mysql_execute(
-                    "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, sku, cantidad) "
-                    "VALUES (%s,%s,%s,%s,%s)",
+                    "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, sku, cantidad, documento_garantia) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
                     (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo",
-                     ln["sku"][:100] or None, cant))
+                     ln["sku"][:100] or None, cant, f"{tido}-{nudo}"[:150]))
                 agregados += 1
                 # Daniel 2026-07-12: "si voy a comprometer una maquina que no
                 # tiene saldo, la gerencia tiene que saber el por que... todo
@@ -4032,6 +4048,10 @@ def register_tickets_routes(app, ctx):
             if not isinstance(seleccion, list):
                 seleccion = []
             for ln in _tk_filtrar_lineas_seleccion(lineas_reales, seleccion):
+                # FIX 2026-07-15: se marca de que documento vino cada linea
+                # para poder llenar documento_garantia al insertar (mismo
+                # formato "TIDO-NUDO" que el resto de los flujos ERP).
+                ln["_doc_garantia"] = f"{tido}-{nudo}"[:150]
                 todas_lineas.append(ln)
 
         if primero is None:
@@ -4094,9 +4114,10 @@ def register_tickets_routes(app, ctx):
                         except Exception:
                             cant = 1
                         cur.execute(
-                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad) "
-                            "VALUES (%s,%s,%s,%s)",
-                            (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo", cant))
+                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad, documento_garantia) "
+                            "VALUES (%s,%s,%s,%s,%s)",
+                            (tid, ln["sku"][:100] or None, ln["nombre"][:300] or "Equipo", cant,
+                             ln.get("_doc_garantia")))
                     except Exception as _e:
                         print(f"[tk_desde_documento] equipo no insertado tid={tid} "
                               f"sku={ln.get('sku')}: {_e}", flush=True)
@@ -4197,9 +4218,9 @@ def register_tickets_routes(app, ctx):
                         cant = 1
                     try:
                         cur.execute(
-                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad) "
-                            "VALUES (%s,%s,%s,%s)",
-                            (tid, sku[:100] or None, nombre[:300], cant))
+                            "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, cantidad, documento_garantia) "
+                            "VALUES (%s,%s,%s,%s,%s)",
+                            (tid, sku[:100] or None, nombre[:300], cant, f"{tido}-{nudo}"[:150]))
                     except Exception as _e:
                         print(f"[tk_zz_instalacion] equipo no insertado tid={tid} sku={sku}: {_e}", flush=True)
             conn.commit()

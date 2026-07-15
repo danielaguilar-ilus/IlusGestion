@@ -2915,7 +2915,7 @@ async function cargar(){
   renderGarantiaAlerta(t, equiposCache);
   if(d.equipos.length){
     le.innerHTML = '<div class="table-responsive"><table class="eq-table" id="tkEqTabla"><thead><tr>'
-      + '<th style="width:32px"></th><th>Equipo</th><th>SKU / Código</th><th>Serie</th>'
+      + '<th style="width:32px"></th><th>Equipo</th><th>SKU / Código</th><th>Documento</th><th>Serie</th>'
       + '<th>Tipo</th><th>Fecha Emisión</th><th>Garantía</th><th style="width:44px"></th>'
       + '</tr></thead><tbody>'
       + d.equipos.map(function(eq){
@@ -2932,15 +2932,14 @@ async function cargar(){
               + nombreHtml
               + (eq.notas?'<div class="eq-name-sub text-truncate" style="max-width:220px" title="'+esc(eq.notas)+'">'+esc(eq.notas)+'</div>':'')
               + ((eq.cantidad||1) > 1 ? '<div class="eq-name-sub"><i class="bi bi-layers me-1"></i>'+eq.cantidad+' unidades</div>' : '')
-              // 2026-07-14 (Daniel): documento de origen del equipo
-              // (tk_ticket_equipos.documento_garantia, ej. "Factura 10599").
-              // Si el equipo no viene de ningun documento, no se pinta nada.
-              + (eq.documento_garantia && String(eq.documento_garantia).trim()
-                  ? '<div><span class="tk-eq-doc-chip" title="Documento de origen: '+esc(eq.documento_garantia)+'">'
-                    + '<i class="bi bi-file-earmark-text"></i>Doc: '+esc(eq.documento_garantia)+'</span></div>'
-                  : '')
             + '</td>'
             + '<td>'+(codigo?'<span class="eq-sku">'+esc(codigo)+'</span>':'<span class="text-muted">—</span>')+'</td>'
+            // 2026-07-14 (Daniel): documento de origen del equipo
+            // (tk_ticket_equipos.documento_garantia, ej. "Factura 10599") ahora
+            // en columna propia (antes era un chip escondido bajo el nombre).
+            + '<td>'+(eq.documento_garantia && String(eq.documento_garantia).trim()
+                ? '<span class="eq-sku" title="Documento de origen: '+esc(eq.documento_garantia)+'">'+esc(eq.documento_garantia)+'</span>'
+                : '<span class="text-muted">—</span>')+'</td>'
             + '<td>'+(eq.serie?'<span style="font-family:monospace;font-size:.78rem;color:#374151">'+esc(eq.serie)+'</span>':'<span class="text-muted">—</span>')+'</td>'
             + '<td>'+(eq.tipo?esc(eq.tipo):'<span class="text-muted">—</span>')+'</td>'
             + '<td>'+(eq.fecha_emision?'<span style="font-size:.78rem;color:#374151">'+fmtFechaISO(eq.fecha_emision)+'</span>':'<span class="text-muted">—</span>')+'</td>'
