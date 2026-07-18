@@ -1296,6 +1296,21 @@ def register_tickets_routes(app, ctx):
             except Exception as _e:
                 print(f"[ILUS][WARN] ALTER tk_cotizacion_items {a}: {_e}", flush=True)
 
+    def _ensure_tk_plantillas_columns():
+        """Migracion aditiva de tk_plantillas (patron _ensure_tk_cotizaciones_columns):
+        agrega es_compartida si falta.
+
+        es_compartida=1 -> visible para todos ("del equipo");
+        es_compartida=0 -> personal (solo su creador la ve).
+        Backfill SOLO cuando la columna recien se crea: las plantillas
+        anteriores a este cambio pasan a compartidas para no quitarle
+        nada a nadie (REGLA #4.2)."""
+        try:
+            mysql_execute("ALTER TABLE tk_plantillas ADD COLUMN es_compartida TINYINT(1) NOT NULL DEFAULT 0")
+            mysql_execute("UPDATE tk_plantillas SET es_compartida=1")
+        except Exception:
+            pass   # columna ya existe -> no re-backfillear (pisaria personales)
+
     def _ensure_tk_sla_regla():
         """Siembra la regla editable 'tk_sla_horas' en mant_reglas_negocio
         (mismo patron INSERT IGNORE que _ensure_reglas_terreno de app.py:
@@ -1326,6 +1341,7 @@ def register_tickets_routes(app, ctx):
             _ensure_tk_zz_instalacion_scan_table()
             _ensure_tk_cotizaciones_columns()
             _ensure_tk_cotizacion_items_columns()
+            _ensure_tk_plantillas_columns()
             _ensure_tk_sla_regla()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
@@ -3129,9 +3145,32 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/plantillas", methods=["GET"])
     @_tickets_required
     def tk_api_plantillas_list():
-        rows = mysql_fetchall(
-            "SELECT id, titulo, cuerpo FROM tk_plantillas ORDER BY titulo LIMIT 100")
-        return jsonify({"ok": True, "plantillas": [dict(r) for r in rows]})
+        usuario = current_username() or ""
+        perms = g.get("permissions") or {}
+        es_admin = bool(perms.get("superadmin") or perms.get("admin"))
+        try:
+            rows = mysql_fetchall(
+                "SELECT id, titulo, cuerpo, created_by, es_compartida "
+                "  FROM tk_plantillas "
+                " WHERE es_compartida=1 OR created_by=%s "
+                " ORDER BY es_compartida, titulo LIMIT 100", (usuario,))
+        except Exception:
+            # Columna es_compartida aun no existe (prod con
+            # ILUS_SKIP_MIGRATIONS=1 antes del primer boot post-deploy):
+            # cae al SELECT viejo, asumiendo es_compartida=1 para todas
+            # (comportamiento identico al actual -- degradacion segura).
+            rows = mysql_fetchall(
+                "SELECT id, titulo, cuerpo, created_by FROM tk_plantillas ORDER BY titulo LIMIT 100")
+            for r in rows:
+                r["es_compartida"] = 1
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["propia"] = (d.get("created_by") or "") == usuario
+            d["puede_gestionar"] = d["propia"] or (bool(d.get("es_compartida")) and es_admin)
+            d.pop("created_by", None)
+            out.append(d)
+        return jsonify({"ok": True, "plantillas": out})
 
     @app.route("/tickets/api/plantillas", methods=["POST"])
     @_tickets_required
@@ -3144,6 +3183,53 @@ def register_tickets_routes(app, ctx):
         mysql_execute(
             "INSERT INTO tk_plantillas (titulo, cuerpo, created_by) VALUES (%s,%s,%s)",
             (titulo, cuerpo, current_username() or "sistema"))
+        return jsonify({"ok": True})
+
+    @app.route("/tickets/api/plantillas/<int:pid>", methods=["PUT"])
+    @_tickets_required
+    def tk_api_plantillas_update(pid):
+        row = mysql_fetchone("SELECT id, created_by, es_compartida FROM tk_plantillas WHERE id=%s", (pid,))
+        if not row:
+            return jsonify({"ok": False, "error": "Plantilla no encontrada"}), 404
+        usuario = current_username() or ""
+        perms = g.get("permissions") or {}
+        es_admin = bool(perms.get("superadmin") or perms.get("admin"))
+        propia = (row.get("created_by") or "") == usuario
+        if not (propia or (bool(row.get("es_compartida")) and es_admin)):
+            return jsonify({"ok": False, "error": "No tienes permiso para editar esta plantilla."}), 403
+        d = request.get_json(silent=True) or {}
+        campos, valores = [], []
+        if "titulo" in d:
+            titulo = (d.get("titulo") or "").strip()[:150]
+            if not titulo:
+                return jsonify({"ok": False, "error": "Falta título"}), 400
+            campos.append("titulo=%s")
+            valores.append(titulo)
+        if "cuerpo" in d:
+            cuerpo = (d.get("cuerpo") or "").strip()
+            if not cuerpo:
+                return jsonify({"ok": False, "error": "Falta contenido"}), 400
+            campos.append("cuerpo=%s")
+            valores.append(cuerpo)
+        if not campos:
+            return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
+        valores.append(pid)
+        mysql_execute(f"UPDATE tk_plantillas SET {', '.join(campos)} WHERE id=%s", tuple(valores))
+        return jsonify({"ok": True})
+
+    @app.route("/tickets/api/plantillas/<int:pid>", methods=["DELETE"])
+    @_tickets_required
+    def tk_api_plantillas_delete(pid):
+        row = mysql_fetchone("SELECT id, created_by, es_compartida FROM tk_plantillas WHERE id=%s", (pid,))
+        if not row:
+            return jsonify({"ok": False, "error": "Plantilla no encontrada"}), 404
+        usuario = current_username() or ""
+        perms = g.get("permissions") or {}
+        es_admin = bool(perms.get("superadmin") or perms.get("admin"))
+        propia = (row.get("created_by") or "") == usuario
+        if not (propia or (bool(row.get("es_compartida")) and es_admin)):
+            return jsonify({"ok": False, "error": "No tienes permiso para eliminar esta plantilla."}), 403
+        mysql_execute("DELETE FROM tk_plantillas WHERE id=%s", (pid,))
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────

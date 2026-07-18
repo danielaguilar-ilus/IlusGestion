@@ -417,6 +417,19 @@
   padding:4px 8px;font-size:.74rem;}
 .rp-adj-preview .chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
 
+/* ── Plantillas: secciones "Mis plantillas" / "Del equipo" + acciones discretas ── */
+.rp-pl-header{font-size:.62rem;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:#94a3b8;padding-bottom:2px;}
+.rp-pl-row{display:flex;align-items:center;gap:4px;}
+.rp-pl-row .dropdown-item{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.rp-pl-dots{border:0;background:transparent;color:#cbd5e1;padding:4px 8px;
+  border-radius:6px;flex-shrink:0;line-height:1;}
+.rp-pl-dots:hover{background:#f1f5f9;color:#475569;}
+.rp-pl-acciones{display:flex;align-items:center;gap:6px;padding:4px 12px;}
+.rp-pl-acciones .btn{font-size:.72rem;padding:2px 10px;min-height:30px;}
+@media (hover:hover){ .rp-pl-row .rp-pl-dots{opacity:0;transition:opacity .15s;}
+  .rp-pl-row:hover .rp-pl-dots,.rp-pl-row:focus-within .rp-pl-dots{opacity:1;} }
+
 /* ── Stepper de estado (tracking visual de avance) ── */
 .tk-stepper-card{padding-bottom:14px;}
 .tk-stepper{display:flex;align-items:flex-start;}
@@ -1568,7 +1581,8 @@
           <button class="btn btn-sm btn-outline-secondary" id="rpBtnDictar" type="button" title="Dictar mensaje por voz">
             <i class="bi bi-mic"></i></button>
           <div class="dropdown">
-            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="rpPlantillasToggle"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside">
               <i class="bi bi-file-earmark-text me-1"></i>Plantillas</button>
             <ul class="dropdown-menu" id="rpPlantillasMenu" style="max-height:260px;overflow-y:auto;"></ul>
           </div>
@@ -2492,6 +2506,19 @@ const rpQuill = new Quill('#rpEditor', {
     ['link','clean'],
   ] },
 });
+// 2026-07-18 (Daniel, bug real del Reintentar del micrófono): si el usuario
+// tuvo que recargar la página para que Chrome aplique el permiso de
+// micrófono recién activado, el borrador que estaba escribiendo se guarda
+// en sessionStorage antes del reload y se restaura aquí solo.
+try{
+  var _draftKey = 'rpDraft:' + TID;
+  var _draft = sessionStorage.getItem(_draftKey);
+  if (_draft){
+    sessionStorage.removeItem(_draftKey);
+    rpQuill.clipboard.dangerouslyPasteHTML(_draft);
+    if (window.ilusToast) ilusToast('Borrador restaurado', { type: 'info' });
+  }
+}catch(e){}
 // 2026-07-13 (Daniel, URGENTE): "en las herramientas de la caja de texto
 // quiero que le dejes un placeholder para saber que es, porque mucha gente
 // va a tener curiosidad" -- Quill (tema snow) no trae tooltips nativos para
@@ -2589,6 +2616,15 @@ const rpQuill = new Quill('#rpEditor', {
       +   '<div class="rp-mic-step"><span class="rp-mic-step-num">3</span>'
       +     '<span class="rp-mic-step-txt">Presiona <strong>Reintentar</strong> aquí abajo.</span></div>'
       +   '<div class="rp-mic-ok"><i class="bi bi-check-circle-fill"></i> Micrófono habilitado — iniciando dictado…</div>'
+      +   '<div class="rp-mic-still" style="display:none;background:#fff8e1;border:1px solid #fde68a;'
+      +   'color:#78350f;border-radius:10px;padding:10px 12px;font-size:.8rem;margin-top:12px;">'
+      +   '<i class="bi bi-info-circle-fill me-1"></i>'
+      +   'Aun aparece bloqueado. Si ya activaste el micrófono en el candado, '
+      +   '<strong>Chrome necesita recargar la página</strong> para aplicar el cambio. '
+      +   'Tu respuesta escrita se guardará y se restaurará sola.'
+      +   '<div style="margin-top:8px;text-align:right;">'
+      +   '<button type="button" class="btn btn-sm btn-outline-secondary rp-mic-recargar">'
+      +   '<i class="bi bi-arrow-clockwise me-1"></i>Recargar página</button></div></div>'
       +   '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'
       +     '<button type="button" class="btn btn-outline-secondary rp-mic-cancelar">Cancelar</button>'
       +     '<button type="button" class="btn btn-ilus rp-mic-reintentar"><i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button>'
@@ -2614,6 +2650,16 @@ const rpQuill = new Quill('#rpEditor', {
       setTimeout(function(){ cerrar(); onListo(); }, 700);
     }
 
+    function mostrarAunBloqueado(){
+      // 2026-07-18 (Daniel, bug real): Chrome puede seguir reportando el
+      // permiso como bloqueado en la Permissions API hasta que la página
+      // se recarga, aunque el usuario ya lo haya activado en el candado.
+      // getUserMedia (probado en comenzarGrabacion) es la fuente de verdad;
+      // si igual falla, ofrecemos la puerta de escape de recargar.
+      const st = ov.querySelector('.rp-mic-still');
+      if (st) st.style.display = '';
+    }
+
     function onCambio(){
       if (statusVivo && statusVivo.state === 'granted') habilitadoYPartir();
     }
@@ -2629,17 +2675,33 @@ const rpQuill = new Quill('#rpEditor', {
     ov.querySelector('.rp-mic-cancelar').addEventListener('click', cerrar);
     ov.addEventListener('click', function(ev){ if (ev.target === ov) cerrar(); });
     ov.querySelector('.rp-mic-reintentar').addEventListener('click', async function(){
-      const st = await consultarPermisoMic();
-      if (st && st.state === 'denied'){
-        ilusToast('El micrófono sigue bloqueado — revisa los pasos 1 y 2.', { type: 'warning' });
-        return;
+      const btnR = this;
+      if (btnR.disabled) return;
+      btnR.disabled = true;
+      const prev = btnR.innerHTML;
+      btnR.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Probando...';
+      try{
+        // Intento REAL en el mismo gesto del usuario: la Permissions API puede
+        // seguir reportando 'denied' hasta recargar (Chrome), aunque el permiso
+        // ya esté activado. getUserMedia es la fuente de verdad.
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+        s.getTracks().forEach(function(t){ t.stop(); });   // solo era una prueba
+        habilitadoYPartir();
+      }catch(e){
+        mostrarAunBloqueado();
+      }finally{
+        btnR.disabled = false;
+        btnR.innerHTML = prev;
       }
-      // granted, prompt o API no disponible → cerrar y dejar que
-      // getUserMedia haga su trabajo (pregunta nativa si corresponde).
-      if (autoLanzado) return;
-      autoLanzado = true;
-      cerrar();
-      onListo();
+    });
+    ov.querySelector('.rp-mic-recargar').addEventListener('click', function(){
+      // Preservar el borrador del editor antes de recargar (no perder lo escrito)
+      try{
+        if (typeof rpQuill !== 'undefined' && rpQuill && rpQuill.getLength() > 1){
+          sessionStorage.setItem('rpDraft:' + TID, rpQuill.root.innerHTML);
+        }
+      }catch(e){}
+      location.reload();
     });
   }
 
@@ -4161,23 +4223,113 @@ function renderRpAdjPreview(){
 window.rpQuitarAdjunto = function(i){ rpAdjuntos.splice(i,1); renderRpAdjPreview(); };
 
 // ══════════════ Plantillas ══════════════
+function rpPlantillaItemHtml(p){
+  return '<li><div class="rp-pl-row" data-pid="'+p.id+'">'
+    + '<a class="dropdown-item rp-pl-nombre" href="#" data-pid="'+p.id+'">'+esc(p.titulo)+'</a>'
+    + (p.puede_gestionar ? '<button type="button" class="rp-pl-dots" data-pid="'+p.id+'" aria-label="Opciones de plantilla"><i class="bi bi-three-dots-vertical"></i></button>' : '')
+    + '</div></li>';
+}
+
+function rpPlantillaCerrarDropdown(){
+  const toggle = document.getElementById('rpPlantillasToggle');
+  if (toggle) bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+}
+
 async function rpCargarPlantillas(){
   const menu = document.getElementById('rpPlantillasMenu');
   try{
     const r = await fetch('/tickets/api/plantillas');
     const d = await r.json();
     const pls = (d.ok && d.plantillas) || [];
-    menu.innerHTML = pls.length ? pls.map((p,i)=>
-      '<li><a class="dropdown-item" href="#" data-i="'+i+'">'+esc(p.titulo)+'</a></li>').join('')
-      : '<li><span class="dropdown-item-text text-muted">Sin plantillas aún</span></li>';
-    menu.querySelectorAll('a.dropdown-item').forEach(function(a){
+    const mias = pls.filter(function(p){ return p.propia; });
+    const equipo = pls.filter(function(p){ return !p.propia; });
+    let html = '<li><h6 class="dropdown-header rp-pl-header">Mis plantillas</h6></li>';
+    html += mias.length
+      ? mias.map(function(p){ return rpPlantillaItemHtml(p); }).join('')
+      : '<li><span class="dropdown-item-text text-muted small">Guarda tu primera plantilla con el botón de al lado</span></li>';
+    if (equipo.length){
+      html += '<li><h6 class="dropdown-header rp-pl-header">Del equipo</h6></li>';
+      html += equipo.map(function(p){ return rpPlantillaItemHtml(p); }).join('');
+    }
+    menu.innerHTML = html;
+    menu.querySelectorAll('a.rp-pl-nombre').forEach(function(a){
       a.addEventListener('click', function(ev){
         ev.preventDefault();
-        rpQuill.clipboard.dangerouslyPasteHTML(pls[+a.dataset.i].cuerpo || '');
+        const p = pls.find(function(x){ return String(x.id) === a.dataset.pid; });
+        if (p) rpQuill.clipboard.dangerouslyPasteHTML(p.cuerpo || '');
+        rpPlantillaCerrarDropdown();
+      });
+    });
+    menu.querySelectorAll('.rp-pl-dots').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.preventDefault();
+        ev.stopPropagation();
+        const p = pls.find(function(x){ return String(x.id) === btn.dataset.pid; });
+        if (p) rpPlantillaModoAcciones(btn.closest('.rp-pl-row'), p);
       });
     });
   }catch(e){ menu.innerHTML = '<li><span class="dropdown-item-text text-muted">No se pudieron cargar</span></li>'; }
 }
+
+function rpPlantillaModoAcciones(row, p){
+  row.innerHTML =
+      '<div class="rp-pl-acciones">'
+    +   '<button type="button" class="btn btn-sm btn-outline-secondary rp-pl-editar">Editar</button>'
+    +   '<button type="button" class="btn btn-sm btn-outline-danger rp-pl-eliminar">Eliminar</button>'
+    +   '<button type="button" class="btn-close btn-sm rp-pl-cerrar ms-auto" aria-label="Cerrar"></button>'
+    + '</div>';
+  row.querySelector('.rp-pl-cerrar').addEventListener('click', function(ev){
+    ev.preventDefault(); ev.stopPropagation();
+    rpCargarPlantillas();
+  });
+  row.querySelector('.rp-pl-editar').addEventListener('click', function(ev){
+    ev.preventDefault(); ev.stopPropagation();
+    rpPlantillaEditar(p);
+  });
+  row.querySelector('.rp-pl-eliminar').addEventListener('click', function(ev){
+    ev.preventDefault(); ev.stopPropagation();
+    rpPlantillaEliminar(p);
+  });
+}
+
+async function rpPlantillaEditar(p){
+  const nuevoTitulo = await ilusPrompt({title:'Editar plantilla', message:'Nombre de la plantilla', placeholder:'Nombre de la plantilla', defaultValue:p.titulo, required:true});
+  if(!nuevoTitulo){ rpCargarPlantillas(); return; }
+  const body = {titulo: nuevoTitulo};
+  if (rpQuill.getText().trim()){
+    const reemplazar = await ilusConfirm({
+      title:'Actualizar contenido',
+      message:'¿Reemplazar el contenido de la plantilla con el texto actual del editor?',
+      okLabel:'Sí, actualizar', cancelLabel:'Solo renombrar',
+    });
+    if (reemplazar) body.cuerpo = rpQuill.root.innerHTML;
+  }
+  try{
+    const r = await fetch('/tickets/api/plantillas/'+p.id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Plantilla actualizada', {type:'success'}); }
+    else ilusToast(d.error||'Error al actualizar', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+  rpCargarPlantillas();
+}
+
+async function rpPlantillaEliminar(p){
+  const ok = await ilusConfirm({
+    title:'Eliminar plantilla',
+    message:'¿Eliminar la plantilla "' + p.titulo + '"?',
+    sub:'Esta acción no se puede deshacer.',
+    okLabel:'Eliminar', cancelLabel:'Cancelar', danger:true,
+  });
+  if(!ok){ rpCargarPlantillas(); return; }
+  try{
+    const r = await fetch('/tickets/api/plantillas/'+p.id, {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Plantilla eliminada', {type:'success'}); }
+    else ilusToast(d.error||'Error al eliminar', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+  rpCargarPlantillas();
+}
+
 rpCargarPlantillas();
 
 document.getElementById('rpGuardarPlantilla').addEventListener('click', async function(){

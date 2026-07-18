@@ -166,6 +166,20 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 .nt-tipo-pill:focus-visible{outline:2px solid var(--tc,#dc2626);outline-offset:2px;}
 .nt-tipo-pill.sel{border-color:var(--tc,#dc2626);background:var(--tbg,#fef2f2);color:var(--tc,#dc2626);
   box-shadow:inset 0 0 0 1px var(--tc,#dc2626);font-weight:800;}
+.nt-tipos-sub{grid-column:1/-1;font-size:.68rem;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:#94a3b8;display:flex;align-items:center;gap:6px;
+  margin:2px 0 -2px;}
+.nt-tipos-sub.interno{margin-top:12px;padding-top:12px;border-top:1.5px dashed #e2e8f0;
+  color:#475569;}
+.nt-tipos-sub.interno i{color:#0a0a0a;}
+.nt-tipos-sub .nt-sub-hint{font-weight:600;letter-spacing:0;text-transform:none;
+  color:#94a3b8;margin-left:2px;}
+.nt-tipo-pill.interno-pill{background:linear-gradient(180deg,#fff,#f8fafc);
+  border-style:dashed;}
+.nt-tipo-pill.interno-pill.sel{border-style:solid;}
+.nt-tipo-pill .nt-pill-tag{font-size:.52rem;font-weight:800;letter-spacing:.06em;
+  background:#0a0a0a;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;
+  flex-shrink:0;}
 .nt-gar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;
   background:#fff;border:1px dashed #e5e7eb;border-radius:10px;padding:9px 13px;}
 .nt-gar .lbl{font-size:.8rem;font-weight:700;color:#475569;}
@@ -421,11 +435,20 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
                ej. control_calidad/trabajo_bodega/capacitacion, excluye 'warranty')
                vs tk_tipos_publicos (formulario /soporte, SIN los 3 tipos internos).
                Este modal es interno (staff), asi que usa el primero si existe. #}
+            {% set tipos_internos = ('control_calidad', 'trabajo_bodega', 'capacitacion') %}
             <div class="nt-tipos" id="ntTipos">
-              {% for t in (tk_tipos_modal if tk_tipos_modal is defined else tk_tipos_publicos) %}
+              <div class="nt-tipos-sub">Solicitudes de cliente</div>
+              {% for t in (tk_tipos_modal if tk_tipos_modal is defined else tk_tipos_publicos) if t not in tipos_internos %}
               {% set tv = tipo_visual.get(t, ('bi-question-circle', '#6b7280', '#f9fafb')) %}
               <div class="nt-tipo-pill" data-tipo="{{ t }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button">
                 <i class="bi {{ tv[0] }}"></i><span>{{ tipo_label[t] }}</span>
+              </div>
+              {% endfor %}
+              <div class="nt-tipos-sub interno"><i class="bi bi-building-lock"></i>Trabajos internos ILUS<span class="nt-sub-hint">sin cliente — bodega, calidad y capacitación</span></div>
+              {% for t in (tk_tipos_modal if tk_tipos_modal is defined else tk_tipos_publicos) if t in tipos_internos %}
+              {% set tv = tipo_visual.get(t, ('bi-question-circle', '#6b7280', '#f9fafb')) %}
+              <div class="nt-tipo-pill interno-pill" data-tipo="{{ t }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button">
+                <i class="bi {{ tv[0] }}"></i><span>{{ tipo_label[t] }}<span class="nt-pill-tag">INTERNO</span></span>
               </div>
               {% endfor %}
             </div>
