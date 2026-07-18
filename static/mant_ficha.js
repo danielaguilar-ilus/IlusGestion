@@ -956,6 +956,7 @@ function levRenderTecnicos(){
     document.getElementById('levTecCount').textContent = '0';
     return;
   }
+  const fechaProg = document.getElementById('levFechaProg')?.value || '';
   box.innerHTML = techs.map(t => {
     const isSelected = _LEV_MODAL.tecnicos_seleccionados.has(t.id);
     const bg = isSelected ? 'background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;border-color:#1e40af' : 'background:#fff;color:#0f172a;border-color:#cbd5e1';
@@ -967,10 +968,33 @@ function levRenderTecnicos(){
     const avatarSty = isSelected ? 'background:rgba(255,255,255,.25);color:#fff' : 'background:linear-gradient(135deg,#e2e8f0,#cbd5e1);color:#475569';
     return `<span class="badge rounded-pill border lev-tec-badge${isSelected ? ' sel' : ''}" style="cursor:pointer;padding:.5rem .85rem;font-size:.82rem;font-weight:500;${bg}"
                   onclick="levToggleTecnico(${t.id})">
-              <span class="lev-tec-avatar" style="${avatarSty}">${escHtml(iniciales)}</span><i class="bi ${icon} me-1"></i>${escHtml(t.nombre || t.email || ('Téc #'+t.id))}
+              <span class="lev-tec-avatar" style="${avatarSty}">${escHtml(iniciales)}</span><i class="bi ${icon} me-1"></i>${escHtml(t.nombre || t.email || ('Téc #'+t.id))}${_tkotTecCargaChip(t.id, fechaProg)}
             </span>`;
   }).join('');
   document.getElementById('levTecCount').textContent = String(_LEV_MODAL.tecnicos_seleccionados.size);
+}
+
+// ── §4B "Carga del día por técnico, donde se decide": mini-contador de OTs
+//    que ese técnico YA tiene en la fecha programada actual (mismo cache del
+//    mes que alimenta el timeline -- cero backend). Sufijo "· N ese día":
+//    gris con 1, ámbar con 2, rojo con 3+. Se refresca solo (levRenderTecnicos
+//    se llama de nuevo) cada vez que cambia #levFechaProg -- ver tkotCalSelDia
+//    en el bloque AGENDADOR más abajo. Portado desde
+//    templates/tickets/ficha.html el 2026-07-17 (allá _TKOT.cal.cache). ──
+function _tkotTecCargaChip(tecnicoId, fecha){
+  if(!fecha) return '';
+  const key = _tkotCalKey(parseInt(fecha.slice(0, 4), 10), parseInt(fecha.slice(5, 7), 10));
+  const mapa = _LEV_MODAL.cal.cache[key] || {};
+  const visitas = mapa[fecha] || [];
+  const n = visitas.filter(function(v){
+    return String(v.tecnico_id) === String(tecnicoId) && String(v.estado || '').toLowerCase() !== 'cancelada';
+  }).length;
+  if(!n) return '';
+  let colores;
+  if(n >= 3) colores = 'background:#fee2e2;color:#991b1b';        // rojo (REGLA #2)
+  else if(n === 2) colores = 'background:#fff8e1;color:#b45309';  // ámbar (REGLA #2)
+  else colores = 'background:#f3f4f6;color:#6b7280';              // gris (REGLA #2)
+  return '<span class="tkot-tec-carga" style="' + colores + '">· ' + n + ' ese día</span>';
 }
 
 function levToggleTecnico(tid){
@@ -1644,6 +1668,13 @@ const TKCAL_DOW_ES = ['L','M','M','J','V','S','D'];
 const TKCAL_MES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
   'agosto','septiembre','octubre','noviembre','diciembre'];
 
+// ── §4C "Indicador de día saturado": umbrales ajustables de carga TOTAL del
+//    día (todas las OTs, no solo las de los técnicos seleccionados) para el
+//    color del badge de conteo en el mini-calendario. Portado desde
+//    templates/tickets/ficha.html el 2026-07-17. ──
+const TKCAL_UMBRAL_AMBAR = 3;   // 3–4 OTs ese día
+const TKCAL_UMBRAL_ROJO = 5;    // 5+ OTs ese día
+
 function _tkotCalKey(a, m){ return a + '-' + String(m).padStart(2, '0'); }
 
 // ── Normaliza la respuesta del endpoint de mes a { "YYYY-MM-DD": [visitas] }
@@ -1796,7 +1827,7 @@ function tkotCalRenderGrid(){
       + ' role="button" tabindex="0"'
       + ' aria-label="' + esc(fecha + ' — ' + (visitas.length ? (visitas.length + ' OT agendada(s)') : 'sin OTs agendadas')) + '">'
       + '<span class="num">' + dia + '</span>'
-      + (visitas.length ? '<span class="cnt">' + visitas.length + '</span>' : '')
+      + (visitas.length ? '<span class="cnt' + (visitas.length >= TKCAL_UMBRAL_ROJO ? '' : visitas.length >= TKCAL_UMBRAL_AMBAR ? ' tkcal-carga-ambar' : ' tkcal-carga-normal') + '">' + visitas.length + '</span>' : '')
       + dots
       + '</div>';
   }
@@ -1824,6 +1855,12 @@ function tkotCalSelDia(fecha, opts){
   _LEV_MODAL.cal.diaSel = fecha;
   tkotCalRenderGrid();
   tkdayRender(fecha, { scroll: !opts.silencio });
+  // §4B: la fecha programada es la que manda el conteo de carga por técnico
+  // (chips del Paso 4) -- se refresca aquí, único punto de paso de todo
+  // cambio de día (clic en el mini-calendario, tipeo directo, "Hoy",
+  // apertura del modal y el nuevo tkdaySugerirHueco()). Portado desde
+  // templates/tickets/ficha.html el 2026-07-17.
+  levRenderTecnicos();
   const mapa = _LEV_MODAL.cal.cache[_tkotCalKey(_LEV_MODAL.cal.anio, _LEV_MODAL.cal.mes)] || {};
   const visitas = mapa[fecha] || [];
   const det = document.getElementById('levCalDetalle');
@@ -1976,6 +2013,22 @@ function _tkdayColor(tid){
   return TKDAY_PALETA[((n % 8) + 8) % 8];
 }
 
+// ── §4D "Icono por tipo de OT": distinción por FORMA (no por color -- el
+//    color de los bloques ya está reservado para el técnico, ver paleta de
+//    arriba). Mapa fijo; tipos personalizados (creados vía "Nuevo tipo",
+//    superadmin) caen en el ícono por defecto. Portado desde
+//    templates/tickets/ficha.html el 2026-07-17. ──
+const TKDAY_TIPO_ICONOS = {
+  preventiva: 'bi-shield-check', correctiva: 'bi-tools', instalacion: 'bi-box-seam',
+  inspeccion: 'bi-search', levantamiento: 'bi-clipboard2', visita_tecnica: 'bi-person-gear',
+  garantia: 'bi-award', capacitacion: 'bi-mortarboard', repuesto: 'bi-gear',
+  revision_interna: 'bi-clipboard-check', cambio_equipo: 'bi-arrow-repeat',
+  desinstalacion: 'bi-box-arrow-up', visita_correctiva: 'bi-tools',
+};
+function _tkdayIconoTipo(tipo){
+  return TKDAY_TIPO_ICONOS[String(tipo || '').toLowerCase()] || 'bi-clipboard-data';
+}
+
 function _tkdayToMin(hhmm){
   const p = String(hhmm == null ? '' : hhmm).split(':');
   const h = parseInt(p[0], 10);
@@ -2034,6 +2087,62 @@ function _tkdayVisitaKey(v){
 function _tkdayHoyStr(){
   const h = new Date();
   return h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+}
+
+// ════════════════════════════════════════════════════════════
+// §4A "Sugerir próximo horario libre" (propuesta Fable, tipo Doctoralia).
+// Helper PURO: solo lee _LEV_MODAL.cal.cache (ya cargado por tkotCalCargarMes)
+// y los inputs vigentes del formulario -- cero backend nuevo, cero fetch.
+// Portado desde templates/tickets/ficha.html el 2026-07-17.
+//
+//   _tkdayCalcularHueco(fecha, durMin, tecnicoIds) → 'HH:MM' | null
+//
+// Reglas:
+//  - Toma las visitas del día `fecha` desde el cache del mes que corresponda.
+//  - Si `tecnicoIds` trae elementos, filtra SOLO esos técnicos (carga real del
+//    equipo elegido); si viene vacío, no filtra -- se asume ocupado cualquier
+//    técnico (conservador: aún no se ha decidido a quién asignar).
+//  - Excluye visitas canceladas (no representan carga real).
+//  - Fusiona los intervalos ocupados y recorre candidatos cada 30 min desde
+//    max(09:00, ahora+30min si `fecha` es hoy) hasta 20:00 - durMin.
+//  - Devuelve el primer inicio sin intersección, o null si el día está lleno.
+// ════════════════════════════════════════════════════════════
+function _tkdayCalcularHueco(fecha, durMin, tecnicoIds){
+  const key = _tkotCalKey(parseInt(fecha.slice(0, 4), 10), parseInt(fecha.slice(5, 7), 10));
+  const mapa = _LEV_MODAL.cal.cache[key] || {};
+  const visitas = mapa[fecha] || [];
+  const filtro = (Array.isArray(tecnicoIds) && tecnicoIds.length) ? new Set(tecnicoIds.map(String)) : null;
+  const ocupados = [];
+  visitas.forEach(function(v){
+    if(String(v.estado || '').toLowerCase() === 'cancelada') return;
+    if(filtro && !filtro.has(String(v.tecnico_id))) return;
+    const ini = _tkdayToMin(v.hora_inicio);
+    if(ini === null) return;
+    let fin = _tkdayToMin(v.hora_fin);
+    if(fin === null || fin <= ini) fin = ini + TKDAY_MINDUR;   // mismo criterio de duración mínima que el timeline
+    ocupados.push([ini, fin]);
+  });
+  ocupados.sort(function(a, b){ return a[0] - b[0]; });
+  const fusion = [];
+  ocupados.forEach(function(iv){
+    const last = fusion[fusion.length - 1];
+    if(last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]);
+    else fusion.push(iv.slice());
+  });
+  let candidato = 9 * 60;   // 09:00
+  if(fecha === _tkdayHoyStr()){
+    const ahora = new Date();
+    let nowMin = ahora.getHours() * 60 + ahora.getMinutes() + 30;
+    nowMin = Math.ceil(nowMin / 30) * 30;   // snap a la rejilla de 30 min
+    candidato = Math.max(candidato, nowMin);
+  }
+  const fin = 20 * 60;   // 20:00
+  for(; candidato + durMin <= fin; candidato += 30){
+    const finCand = candidato + durMin;
+    const choca = fusion.some(function(iv){ return iv[0] < finCand && candidato < iv[1]; });
+    if(!choca) return _tkdayHHMM(candidato);
+  }
+  return null;
 }
 
 // ── Algoritmo de columnas tipo Google Calendar ──
@@ -2115,17 +2224,22 @@ function _tkdayNow(fecha){
 }
 
 // ── Contenido del bloque según su altura ──
+// §4D: el ícono por tipo solo se pinta en blk-lg/blk-md (variantes con
+// espacio) -- blk-sm/blk-xs son demasiado comprimidas para sumar un glifo
+// más sin atropellar hora/nombre, así que se quedan tal cual (REGLA #4.2).
+// Portado desde templates/tickets/ficha.html el 2026-07-17.
 function _tkdayInner(cls, o){
   const chk = o.done
     ? '<i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:.7rem;flex-shrink:0" aria-hidden="true"></i>'
     : '';
   const numChip = o.num ? '<div><span class="otnum">' + esc(o.num) + '</span></div>' : '';
+  const icoTipo = '<i class="bi ' + _tkdayIconoTipo(o.tipo) + ' me-1" style="font-size:.85em;flex-shrink:0" aria-hidden="true"></i>';
   if(cls === 'blk-lg'){
     return '<div class="l1"><span class="hora" style="color:' + o.borde + '">' + esc(o.rango) + '</span>' + chk + '</div>'
-      + '<div class="who">' + esc(o.who) + '</div>' + numChip;
+      + '<div class="who">' + icoTipo + esc(o.who) + '</div>' + numChip;
   }
   if(cls === 'blk-md'){
-    return '<div class="l1" style="justify-content:space-between"><span class="who">' + esc(o.who) + '</span>'
+    return '<div class="l1" style="justify-content:space-between"><span class="who">' + icoTipo + esc(o.who) + '</span>'
       + '<span class="hora" style="color:' + o.borde + '">' + esc(o.rango) + '</span>' + chk + '</div>' + numChip;
   }
   if(cls === 'blk-sm'){
@@ -2276,7 +2390,7 @@ function tkdayRender(fecha, opts){
       + ' onclick="tkdayVerBloque(this)"'
       + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();tkdayVerBloque(this);}">'
       + _tkdayInner(cls, {
-          borde: pal[0], who: who, num: num, hi: hi,
+          borde: pal[0], who: who, num: num, hi: hi, tipo: v.tipo,
           rango: hi + (hf ? '–' + hf : ''), ini2: _tkdayIniciales(who), done: done,
         })
       + '</div>';
@@ -2524,8 +2638,12 @@ function tkdayAbrirDetalle(lista){
   const est0 = String(v0.estado || '').toLowerCase();
   _tkdayPopVisita = uno ? v0 : null;
   const vid0 = v0.visita_id != null ? v0.visita_id : '';
+  // §4D: ícono por tipo también en la cabecera del popover -- solo cuando es
+  // UNA OT (con varias en la misma franja no hay un tipo único que mostrar).
+  // Portado desde templates/tickets/ficha.html el 2026-07-17.
   const cab = uno
-    ? '<span class="num">' + esc(v0.numero_ot || ('OT #' + (v0.visita_id != null ? v0.visita_id : '?'))) + '</span>'
+    ? '<i class="bi ' + _tkdayIconoTipo(v0.tipo) + '" style="font-size:1.05rem" aria-hidden="true"></i>'
+      + '<span class="num">' + esc(v0.numero_ot || ('OT #' + (v0.visita_id != null ? v0.visita_id : '?'))) + '</span>'
       + (est0 ? '<span class="' + _tkdayBadgeCls(est0) + '">' + esc(est0.replace(/_/g, ' ')) + '</span>' : '')
     : '<span class="num">' + lista.length + ' OTs</span><span class="tk-badge bs-closed">misma franja</span>';
 
@@ -2911,7 +3029,13 @@ async function tkotChequearChoque(){
         + (detalle ? ' (' + esc(detalle) + ')' : '') + '.');
     });
     if(mensajes.length){
-      warn.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><div>' + mensajes.join('<br>') + '</div>';
+      // §4A: dentro del banner de choque, un atajo directo a "buscar hueco
+      // libre" -- llama exactamente la misma tkdaySugerirHueco() del chip
+      // de la cabecera del día. Cero lógica duplicada. Portado desde
+      // templates/tickets/ficha.html el 2026-07-17.
+      warn.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><div>' + mensajes.join('<br>')
+        + '<div style="margin-top:8px"><button type="button" class="btn btn-sm btn-outline-danger" onclick="tkdaySugerirHueco()">'
+        + '<i class="bi bi-stars me-1"></i>Buscar hueco libre</button></div></div>';
       warn.style.display = 'flex';
     } else {
       warn.style.display = 'none';
@@ -2922,6 +3046,108 @@ async function tkotChequearChoque(){
     tkdayAplicarChoque();
   }catch(e){
     console.warn('tkot choque:', e);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// §4A (cont.) — orquestación de "Sugerir horario": dos puntos de entrada
+// (chip de la cabecera + botón del banner de choque) llaman a la MISMA
+// tkdaySugerirHueco(). Cero backend nuevo: _tkdayAsegurarMesCache() reusa
+// el mismo GET /mantenciones/api/calendario/mes/<anio>/<mes> que ya usa
+// tkotCalCargarMes(), solo que sin tocar _LEV_MODAL.cal.anio/mes (no mueve
+// el mes visible mientras busca "de reojo" hacia adelante).
+// Portado desde templates/tickets/ficha.html el 2026-07-17.
+// ════════════════════════════════════════════════════════════
+
+// ── Asegura que el caché del mes <anio>/<mes> esté cargado, SIN mover el
+//    mes visible (_LEV_MODAL.cal.anio/mes) ni repintar la grilla -- distinto
+//    de tkotCalCargarMes(), que sí hace ambas cosas porque asume que el mes
+//    pedido es el que se está mirando. ──
+async function _tkdayAsegurarMesCache(anio, mes){
+  const key = _tkotCalKey(anio, mes);
+  if(_LEV_MODAL.cal.cache[key]) return _LEV_MODAL.cal.cache[key];
+  try{
+    const r = await fetch('/mantenciones/api/calendario/mes/' + anio + '/' + mes);
+    if(!r.ok) throw new Error('http ' + r.status);
+    const d = await r.json();
+    _LEV_MODAL.cal.cache[key] = _tkotCalNormalizarMes(d);
+    delete _LEV_MODAL.cal.error[key];
+  }catch(e){
+    console.warn('tkday sugerir - cache mes:', e);
+    _LEV_MODAL.cal.cache[key] = _LEV_MODAL.cal.cache[key] || {};
+    _LEV_MODAL.cal.error[key] = true;
+  }
+  return _LEV_MODAL.cal.cache[key];
+}
+
+// ── Recorre `fecha` + hasta `maxDias` días hacia adelante buscando el
+//    primer hueco (ver _tkdayCalcularHueco). Devuelve {fecha, hora} o null. ──
+async function _tkdayBuscarHuecoRango(fechaInicio, durMin, tecnicoIds, maxDias){
+  const p = fechaInicio.split('-').map(function(s){ return parseInt(s, 10); });
+  const d = new Date(p[0], p[1] - 1, p[2]);
+  for(let i = 0; i <= maxDias; i++){
+    const f = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    await _tkdayAsegurarMesCache(d.getFullYear(), d.getMonth() + 1);
+    const hora = _tkdayCalcularHueco(f, durMin, tecnicoIds);
+    if(hora) return { fecha: f, hora: hora };
+    d.setDate(d.getDate() + 1);
+  }
+  return null;
+}
+
+// ── Selecciona `fecha` como si el usuario hubiera hecho clic en el
+//    mini-calendario (mismo efecto que tkotCalClicDia → tkotFechaProgChange),
+//    pero AWAIT-eable: se necesita esperar a que el día quede pintado antes
+//    de setear las horas encontradas y disparar el flash de "Tu OT". ──
+async function _tkdayIrADia(fecha){
+  const fp = document.getElementById('levFechaProg');
+  if(fp) fp.value = fecha;
+  const y = parseInt(fecha.slice(0, 4), 10), m = parseInt(fecha.slice(5, 7), 10);
+  if(y && m && (y !== _LEV_MODAL.cal.anio || m !== _LEV_MODAL.cal.mes)){
+    _LEV_MODAL.cal.anio = y; _LEV_MODAL.cal.mes = m;
+    await tkotCalCargarMes();   // repinta grilla del mes nuevo (cache ya tibio por la búsqueda)
+  }
+  tkotCalSelDia(fecha, { silencio: true });
+}
+
+// ── Punto de entrada único (chip de cabecera + botón del banner de choque).
+//    Busca el hueco, salta al día + hora encontrados y da el flash visual de
+//    "Tu OT" (reusa .flash, mismo mecanismo que tkdaySlotClick). Si no hay
+//    hueco en 14 días, toast de aviso -- NUNCA alert() nativo (REGLA #1). ──
+async function tkdaySugerirHueco(){
+  const btn = document.getElementById('levDaySugerirBtn');
+  const original = btn ? btn.innerHTML : null;
+  if(btn){ btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>Buscando…'; }
+  try{
+    const iniActual = _tkdayToMin(document.getElementById('levHoraIni')?.value || '');
+    const finActual = _tkdayToMin(document.getElementById('levHoraFin')?.value || '');
+    const durMin = (iniActual != null && finActual != null && finActual > iniActual) ? (finActual - iniActual) : 60;
+    const tecnicoIds = Array.from(_LEV_MODAL.tecnicos_seleccionados);
+    const fechaBase = _LEV_MODAL.day.fecha || document.getElementById('levFechaProg')?.value || _tkdayHoyStr();
+
+    const encontrado = await _tkdayBuscarHuecoRango(fechaBase, durMin, tecnicoIds, 14);
+    if(!encontrado){
+      ilusToast('Sin huecos en los próximos 14 días para ese equipo de técnicos', { type: 'warning' });
+      return;
+    }
+
+    await _tkdayIrADia(encontrado.fecha);
+    document.getElementById('levHoraIni').value = encontrado.hora;
+    document.getElementById('levHoraFin').value = _tkdayHHMM(_tkdayToMin(encontrado.hora) + durMin);
+    tkotHoraInput();   // repinta "Tu OT" en su nueva posición + dispara el choque (debería salir limpio)
+
+    const mine = document.getElementById('levDayMine');
+    if(mine){
+      mine.classList.remove('flash');
+      void mine.offsetWidth;   // fuerza reflow -- mismo truco que tkdaySlotClick
+      mine.classList.add('flash');
+      setTimeout(function(){ mine.classList.remove('flash'); }, 650);
+    }
+  }catch(e){
+    console.warn('tkday sugerir hueco:', e);
+    ilusToast('No se pudo calcular un horario sugerido', { type: 'error' });
+  }finally{
+    if(btn){ btn.disabled = false; btn.innerHTML = original; }
   }
 }
 

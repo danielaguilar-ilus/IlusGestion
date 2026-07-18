@@ -10139,6 +10139,28 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
 .tkday-legend i.k.mine{background:rgba(220,38,38,.12);border:2px dashed var(--ilus-red);}
 @media (max-width:575.98px){ .tkday-legend{margin-left:0;width:100%;} }
 
+/* ── "Sugerir próximo horario libre" (propuesta Fable §4A, tipo Doctoralia):
+   chip en la cabecera del día + botón gemelo dentro del banner de choque
+   (mismo tkdaySugerirHueco()). Mismo lenguaje visual que .tkcal-hoy.
+   Portado desde templates/tickets/ficha.html el 2026-07-17. ── */
+.tkday-sugerir-btn{border:1px solid #e5e7eb;background:#fff;color:#6b7280;border-radius:50px;
+  padding:3px 12px;font-size:.7rem;font-weight:700;display:inline-flex;align-items:center;gap:4px;
+  cursor:pointer;transition:background .15s,color .15s,border-color .15s;white-space:nowrap;}
+.tkday-sugerir-btn:hover{background:#fef2f2;color:#dc2626;border-color:#fca5a5;}
+.tkday-sugerir-btn:disabled{opacity:.55;cursor:wait;}
+@media (max-width:575.98px){ .tkday-sugerir-btn{width:100%;justify-content:center;order:1;} }
+
+/* ── §4C: indicador de día saturado — el badge de conteo del mini-calendario
+   escala de color según carga total del día (independiente de qué técnico).
+   Reglas base (.tkcal-day .cnt, más arriba en este bloque) quedan intactas
+   como fallback; estas clases ganan por especificidad/orden. ── */
+.tkcal-day .cnt.tkcal-carga-ambar{background:#f59e0b;box-shadow:0 1px 3px rgba(245,158,11,.4);}
+.tkcal-day .cnt.tkcal-carga-normal{background:#94a3b8;box-shadow:none;}
+
+/* ── §4B: mini-contador de carga del técnico en el chip del Paso 4 ── */
+.tkot-tec-carga{display:inline-flex;align-items:center;margin-left:6px;padding:1px 7px;
+  border-radius:50px;font-size:.66rem;font-weight:800;white-space:nowrap;}
+
 /* ── Lienzo de la línea de tiempo ──
    Rango visible 08:00→20:00 (12h) · 48px por hora = 0.8px por minuto
    ⇒ alto total 12*48 = 576px. El scroll es INTERNO y deliberado: el modal
@@ -10652,6 +10674,16 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
                   <span class="tkday-fecha" id="levDayFecha">—</span>
                   <span class="tkday-cnt" id="levDayCnt" style="display:none"></span>
                   <span class="tkday-chip-rango" id="levDayChipRango" style="display:none"></span>
+                  {# ── §4A "Sugerir próximo horario libre" (propuesta Fable): busca en el
+                     día mirado y, si está lleno, hasta 14 días hacia adelante — ver
+                     tkdaySugerirHueco()/_tkdayCalcularHueco() en static/mant_ficha.js. Cero
+                     backend nuevo, solo lee _LEV_MODAL.cal.cache. Portado desde
+                     templates/tickets/ficha.html el 2026-07-17. #}
+                  <button type="button" id="levDaySugerirBtn" class="tkday-sugerir-btn"
+                          onclick="tkdaySugerirHueco()"
+                          title="Busca el próximo horario libre para los técnicos seleccionados">
+                    <i class="bi bi-stars" aria-hidden="true"></i>Sugerir horario
+                  </button>
                   <span class="tkday-legend">
                     <span><i class="k ag"></i>Agendada</span>
                     <span><i class="k mine"></i>Tu OT</span>

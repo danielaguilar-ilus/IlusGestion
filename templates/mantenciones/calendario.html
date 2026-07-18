@@ -1246,7 +1246,13 @@ function renderMes(){
       const today = isToday(d);
       const fkey = fmtFecha(d);
       const fer  = calFeriados[fkey];
-      const evDay = events.filter(ev => ev.fecha && isSameDay(new Date(ev.fecha+'T00:00:00'), d));
+      // 2026-07-17: una OT multi-día (fecha_fin) debe aparecer en CADA día que ocupa,
+      // no solo en el día de inicio — mismo criterio que la franja de renderSemana().
+      const evDay = events.filter(ev => {
+        if (!ev.fecha) return false;
+        if (esMultiDia(ev)) return fkey >= ev.fecha && fkey <= ev.fecha_fin;
+        return isSameDay(new Date(ev.fecha+'T00:00:00'), d);
+      });
       // Semáforo de carga del día (2026-06-10): no-canceladas vs capacidad.
       const nAct = evDay.filter(ev => ev.estado !== 'cancelada').length;
       let cargaPill = '';
@@ -1273,13 +1279,27 @@ function renderMes(){
         </div>
         ${evDay.slice(0,3).map(ev => {
           const tecCol = ev.tecnicos[0] ? colorDeTec(ev.tecnicos[0].id) : ev.color_tipo;
+          // 2026-07-17: continuidad multi-día + % avance, mismo lenguaje visual que
+          // la franja de renderSemana() (chevrones dobles + badge + strip inferior).
+          const multi   = esMultiDia(ev);
+          const isStart = multi && ev.fecha === fkey;
+          const isEnd   = multi && ev.fecha_fin === fkey;
+          const isMid   = multi && !isStart && !isEnd;
+          const rango   = multi ? (ev.fecha.slice(8,10)+'/'+ev.fecha.slice(5,7)+' – '
+                                  + ev.fecha_fin.slice(8,10)+'/'+ev.fecha_fin.slice(5,7)) : '';
+          const horaTxt = (!multi || isStart) && ev.hora_inicio ? '<strong>'+ev.hora_inicio+'</strong> ' : '';
+          const tituloMulti = multi
+            ? `${escHtml(ev.cliente.razon_social)} · ${rango}${Number.isFinite(ev.avance_pct) ? ' · avance '+ev.avance_pct+'%' : ''}`
+            : '';
           return `<div style="font-size:.65rem;background:${ev.color_tipo};color:#fff;
-                              border-left:3px solid ${tecCol};
-                              padding:2px 5px;border-radius:4px;margin-bottom:2px;
-                              white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+                              border-left:3px ${isMid?'dashed':'solid'} ${tecCol};
+                              padding:2px 5px 4px;border-radius:4px;margin-bottom:2px;position:relative;
+                              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${isMid?'opacity:.85;':''}"
                        ${_calDraggableAttrs(ev)}
+                       ${multi ? `title="${tituloMulti}"` : ''}
                        onclick="abrirVisitaModal(${ev.id});event.stopPropagation()">
-            ${ev.hora_inicio ? '<strong>'+ev.hora_inicio+'</strong> ' : ''}${escHtml(ev.cliente.razon_social)}
+            ${(isMid||isEnd) ? '<i class="bi bi-chevron-double-left" style="font-size:.6rem"></i> ' : ''}${_evBadgeAvance(ev)}${horaTxt}${escHtml(ev.cliente.razon_social)}${(isStart||isMid) ? ' <i class="bi bi-chevron-double-right" style="font-size:.6rem"></i>' : ''}
+            ${_evProgHtml(ev)}
           </div>`;
         }).join('')}
         ${evDay.length>3 ? `<div style="font-size:.62rem;color:#888">+${evDay.length-3} más…</div>` : ''}
