@@ -24,6 +24,7 @@ import io
 import json
 import os
 import re
+import secrets
 import threading
 import time
 from email.header import decode_header, make_header
@@ -459,6 +460,23 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[_tk_reply_to] fallback a env/default: {_e}", flush=True)
         return (os.environ.get("TK_SUPPORT_REPLY_TO") or "daniel.aguilar@sphs.cl").strip()
+
+    # Token del cron de correo entrante (Daniel 2026-07-18): "la llave debe
+    # vivir EN EL SISTEMA" -- Daniel no tiene acceso a DNS/infra para setear
+    # TK_MAIL_CRON_TOKEN en Cloud Run sin riesgo de pisar otro secret de
+    # deploy. Mismo patron que _tk_reply_to() (arriba): se autosiembra en el
+    # arranque (INSERT IGNORE junto a los demas _ensure_tk_*) y aqui solo se
+    # LEE (1 SELECT liviano). El env var TK_MAIL_CRON_TOKEN sigue siendo
+    # valido como fallback -- REGLA #4.2, nada se quita. JAMAS loguear el
+    # valor retornado por esta funcion.
+    def _tk_mail_cron_token():
+        try:
+            row = mysql_fetchone(
+                "SELECT valor FROM tk_settings WHERE clave='mail_cron_token'")
+            return ((row.get("valor") if row else "") or "").strip()
+        except Exception as _e:
+            print(f"[_tk_mail_cron_token] error leyendo (valor no expuesto): {_e}", flush=True)
+            return ""
 
     def _buscar_catalogo_bodega(q):
         """Catalogo general (MAEPR) con stock en BODEGA_SOPORTE (MAEST).
@@ -991,6 +1009,20 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[ILUS][WARN] seed tk_settings.reply_to: {_e}", flush=True)
 
+        # Token del cron de correo entrante (Daniel 2026-07-18): autoseed en
+        # el arranque para que la llave "viva en el sistema" sin depender de
+        # una env var que nadie puede setear en produccion sin riesgo. Se
+        # genera SOLO si la clave no existe (INSERT IGNORE == idempotente,
+        # mismo patron que reply_to arriba); si ya hay una guardada (o fue
+        # rotada desde el viewer de superadmin), este INSERT no la toca.
+        # JAMAS loguear el valor generado.
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO tk_settings (clave, valor) VALUES ('mail_cron_token', %s)",
+                (secrets.token_urlsafe(32),))
+        except Exception as _e:
+            print(f"[ILUS][WARN] seed tk_settings.mail_cron_token: {_e}", flush=True)
+
         # Deduplicacion del lector IMAP de respuestas de clientes (Daniel
         # 2026-07-12: "responde el correo, tu ubicas el asunto y listo").
         # Cada correo ingresado se registra por su Message-ID; si el lector
@@ -1425,6 +1457,28 @@ def register_tickets_routes(app, ctx):
             return int(row["id"]) if row and row.get("id") else None
         except Exception:
             return None
+
+    def _tk_reabrir_si_cerrado(tid, estado_actual, usuario=None):
+        """FIX 2026-07-18 (Daniel, principio de continuidad): un ticket
+        dormido en resolved/closed/cancelado por meses REVIVE si el
+        cliente responde -- no debe quedar cerrado con un mensaje nuevo
+        sin leer. Llamado desde los 2 puntos de entrada de mensajes de
+        cliente (tk_portal_responder y _tk_leer_correo_entrante).
+        Reutiliza EXACTAMENTE el mismo mecanismo de bitacora que
+        tk_api_update usa para cualquier cambio de estado manual (tipo
+        'cambio_estado' via _tk_log), asi la reapertura queda visible en
+        la conversacion del ticket igual que un cambio hecho por un
+        agente humano. Devuelve 'open' si reabrio, None si no aplicaba
+        (el ticket no estaba en un estado terminal)."""
+        if (estado_actual or "") not in TK_ESTADOS_CERRADOS:
+            return None
+        mysql_execute("UPDATE tk_tickets SET estado='open' WHERE id=%s", (tid,))
+        _tk_log(tid, "cambio_estado",
+                "Reabierto automáticamente por respuesta del cliente",
+                usuario=usuario or "sistema",
+                metadata={"campo": "estado", "antes": estado_actual, "nuevo": "open",
+                          "motivo": "reapertura_automatica_cliente"})
+        return "open"
 
     def _norm_enum(value, allowed, default):
         v = (value or "").strip().lower()
@@ -3403,11 +3457,18 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/unread-summary", methods=["GET"])
     @_tickets_required
     def tk_api_unread_summary():
+        # FIX 2026-07-18 (auditoria + principio de continuidad de Daniel):
+        # antes este WHERE excluia resolved/closed/cancelado. Con la
+        # reapertura automatica (_tk_reabrir_si_cerrado) un ticket con
+        # mensaje nuevo del cliente vuelve a 'open' igual, pero ese filtro
+        # escondia cualquier mensaje sin leer que hubiera entrado ANTES del
+        # cambio de estado o por un camino sin reapertura -- cinturon y
+        # tirantes: la campana roja cuenta TODO mensaje de cliente sin leer,
+        # sin importar el estado actual del ticket.
         row = mysql_fetchone(
             "SELECT COUNT(DISTINCT t.id) AS n FROM tk_tickets t "
             "JOIN tk_mensajes m ON m.ticket_id=t.id AND m.tipo='client_message' "
-            "WHERE t.estado NOT IN ('resolved','closed','cancelado') "
-            "  AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')")
+            "WHERE m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')")
         return jsonify({"ok": True, "unread": int(row["n"]) if row else 0})
 
     # ─────────────────────────────────────────────────────────────────
@@ -5989,7 +6050,7 @@ def register_tickets_routes(app, ctx):
         if not _tk_upload_token_validar(token, tid):
             return jsonify({"ok": False, "error": "Enlace inválido o expirado"}), 403
         t = mysql_fetchone(
-            "SELECT numero_ticket, nombre_contacto, empresa FROM tk_tickets WHERE id=%s", (tid,))
+            "SELECT numero_ticket, nombre_contacto, empresa, estado FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
         contenido = _sanitizar_html_mensaje((d.get("contenido") or "").strip())
@@ -5999,6 +6060,10 @@ def register_tickets_routes(app, ctx):
         cliente_nombre = t.get("nombre_contacto") or t.get("empresa") or "Cliente"
         msg_id = _tk_log(tid, "client_message", contenido[:20000], usuario=cliente_nombre, es_interno=False)
         _tk_link_adjuntos(tid, msg_id, adjunto_ids)
+        # FIX 2026-07-18 (principio de continuidad de Daniel): el cliente
+        # respondio por el portal a un ticket resolved/closed/cancelado ->
+        # reabrelo automaticamente (ver _tk_reabrir_si_cerrado).
+        _tk_reabrir_si_cerrado(tid, t.get("estado"))
         mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
         try:
             _audit("tk_portal_respuesta_cliente", target_type="tk_ticket", target_id=tid,
@@ -6088,10 +6153,20 @@ def register_tickets_routes(app, ctx):
         # colapsar saltos multiples
         return re.sub(r"\n{3,}", "\n\n", cuerpo)
 
-    def _tk_leer_correo_entrante(dias=7, max_correos=50):
+    def _tk_leer_correo_entrante(dias=60, max_correos=50):
         """Barrido del buzon de soporte: ubica respuestas por numero de
         ticket en el asunto y las ingresa como mensajes del cliente.
-        Devuelve resumen dict. Nunca lanza (errores -> resumen)."""
+        Devuelve resumen dict. Nunca lanza (errores -> resumen).
+
+        dias=60 (FIX auditoria 2026-07-18, antes 7): con una ventana de
+        7 dias, si nadie abre la app por una semana (fin de semana largo,
+        vacaciones) las respuestas del cliente se pierden en silencio --
+        el correo sigue en el buzon pero queda fuera del SINCE del proximo
+        barrido. 60 dias achica esa ventana de perdida mientras no exista
+        un Cloud Scheduler 24/7 golpeando /tickets/api/cron/leer-correo.
+        Re-escanear correos ya vistos NO duplica nada: el dedup por
+        Message-ID (tk_mail_ingeridos, PRIMARY KEY) se revisa ANTES de
+        ingresar (linea ~6150) y el INSERT es ademas IGNORE."""
         user, pwd = _tk_imap_creds()
         resumen = {"ok": True, "candidatos": 0, "ingresados": 0, "duplicados": 0,
                    "sin_ticket": 0, "propios": 0, "adjuntos": 0, "errores": 0}
@@ -6137,7 +6212,7 @@ def register_tickets_routes(app, ctx):
                         resumen["propios"] += 1
                         continue
                     ticket = mysql_fetchone(
-                        "SELECT id, numero_ticket, nombre_contacto, empresa "
+                        "SELECT id, numero_ticket, nombre_contacto, empresa, estado "
                         "FROM tk_tickets WHERE numero_ticket=%s", (numero,))
                     if not ticket:
                         resumen["sin_ticket"] += 1
@@ -6215,6 +6290,11 @@ def register_tickets_routes(app, ctx):
                         "INSERT IGNORE INTO tk_mail_ingeridos "
                         "(message_id, ticket_id, from_email, subject) VALUES (%s,%s,%s,%s)",
                         (message_id, ticket["id"], from_email[:190], subject[:300]))
+                    # FIX 2026-07-18 (principio de continuidad de Daniel): el
+                    # cliente respondio por correo a un ticket resolved/
+                    # closed/cancelado -> reabrelo automaticamente (ver
+                    # _tk_reabrir_si_cerrado).
+                    _tk_reabrir_si_cerrado(ticket["id"], ticket.get("estado"))
                     mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s",
                                   (ticket["id"],))
                     resumen["ingresados"] += 1
@@ -6255,11 +6335,30 @@ def register_tickets_routes(app, ctx):
         return resumen
 
     # Endpoint para Cloud Scheduler (token) o disparo manual (admin logueado)
+    # Autorizacion (2026-07-18, Daniel: "la llave debe vivir EN EL SISTEMA" --
+    # sin acceso a DNS/infra para setear una env var nueva en Cloud Run):
+    #   1) TK_MAIL_CRON_TOKEN (env var) -- se mantiene como fallback, REGLA #4.2.
+    #   2) tk_settings.mail_cron_token (_tk_mail_cron_token(), autosembrada en
+    #      el arranque) -- comparacion constante-time con secrets.compare_digest.
+    #   3) Sesion admin/superadmin/mantenciones logueada (igual que antes).
+    # Throttle: reusa el MISMO timestamp/lock de modulo que el autopoll
+    # (_TK_MAIL_POLL, definido mas abajo -- funciona igual sin importar el
+    # orden textual porque ambas funciones son closures sobre el mismo scope
+    # de register_tickets_routes) con un umbral propio mas alto porque este
+    # endpoint puede ser golpeado desde fuera de la app (Cloud Scheduler o,
+    # en el peor caso, alguien con la URL): evita logins IMAP en cadena sin
+    # dejar de exponer el resultado a quien SI esta autorizado.
+    _TK_CRON_THROTTLE_SEG = 60
+
     @app.route("/tickets/api/cron/leer-correo", methods=["GET", "POST"])
     def tk_cron_leer_correo():
         token = (request.args.get("token") or request.headers.get("X-Cron-Token") or "").strip()
         token_cfg = (os.environ.get("TK_MAIL_CRON_TOKEN") or "").strip()
         token_ok = bool(token_cfg) and token == token_cfg
+        if not token_ok and token:
+            token_db = _tk_mail_cron_token()
+            if token_db:
+                token_ok = secrets.compare_digest(token, token_db)
         sesion_ok = False
         try:
             perms = getattr(g, "permissions", None) or {}
@@ -6269,7 +6368,54 @@ def register_tickets_routes(app, ctx):
             pass
         if not (token_ok or sesion_ok):
             return jsonify({"ok": False, "error": "No autorizado"}), 403
-        return jsonify({"ok": True, "resumen": _tk_leer_correo_entrante()})
+        ahora = time.monotonic()
+        if ahora - _TK_MAIL_POLL["ts"] < _TK_CRON_THROTTLE_SEG:
+            return jsonify({"ok": True, "skipped": True})
+        if not _TK_MAIL_POLL["lock"].acquire(blocking=False):
+            return jsonify({"ok": True, "skipped": True})
+        try:
+            _TK_MAIL_POLL["ts"] = time.monotonic()
+            resumen = _tk_leer_correo_entrante()
+        finally:
+            _TK_MAIL_POLL["lock"].release()
+        return jsonify({"ok": True, "resumen": resumen})
+
+    # Viewer de superadmin (2026-07-18): Daniel copia la llave/URL completa
+    # UNA vez, sin tener que ir a la base de datos. Mismo patron de gate que
+    # tk_api_import_mant/tk_api_import_taa (_tickets_required + chequeo
+    # inline de perms.get("superadmin"), 403 "Solo superadministrador" si
+    # no). POST {"rotar": true} regenera la llave (ej: si se filtro la URL) --
+    # invalida cualquier scheduler/URL vieja de inmediato.
+    @app.route("/tickets/api/admin/mail-cron-token", methods=["GET", "POST"])
+    @_tickets_required
+    def tk_api_mail_cron_token():
+        perms = g.get("permissions") or {}
+        if not perms.get("superadmin"):
+            return jsonify({"ok": False, "error": "Solo superadministrador"}), 403
+        if request.method == "POST":
+            d = request.get_json(silent=True) or {}
+            if d.get("rotar"):
+                nuevo = secrets.token_urlsafe(32)
+                try:
+                    mysql_execute(
+                        "INSERT INTO tk_settings (clave, valor, updated_by) "
+                        "VALUES ('mail_cron_token', %s, %s) "
+                        "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
+                        (nuevo, current_username() or "sistema"))
+                except Exception as _e:
+                    print(f"[tk_mail_cron_token] error rotando (valor no expuesto): {_e}", flush=True)
+                    return jsonify({"ok": False,
+                                    "error": "No se pudo rotar el token, intenta de nuevo."}), 500
+                try:
+                    _audit("tk_mail_cron_token_rotar", target_type="tk_settings",
+                           target_id="mail_cron_token")
+                except Exception:
+                    pass
+        token = _tk_mail_cron_token()
+        base = (os.environ.get("ILUS_APP_BASE_URL")
+                or "https://ilus-app-469212710544.southamerica-west1.run.app").rstrip("/")
+        url_cron = f"{base}/tickets/api/cron/leer-correo?token={token}"
+        return jsonify({"ok": True, "token": token, "url_cron": url_cron})
 
     # Auto-poll oportunista: cada vez que alguien mira la bandeja O la ficha
     # de un ticket y el ultimo barrido tiene mas de _TK_AUTOPOLL_SEG, se
@@ -6280,9 +6426,9 @@ def register_tickets_routes(app, ctx):
     # gente tenga la app abierta, asi que el buzon de Gmail no se satura).
     # Para verdadera inmediatez 24/7 (sin depender de que alguien tenga la
     # app abierta) hace falta Cloud Scheduler golpeando
-    # /tickets/api/cron/leer-correo -- pendiente, requiere agregar
-    # TK_MAIL_CRON_TOKEN a la config persistente (GCP_ENV_VARS), no algo que
-    # se deba hacer por fuera del pipeline de deploy.
+    # /tickets/api/cron/leer-correo -- YA NO bloqueado por env var: usa el
+    # token autosembrado en tk_settings.mail_cron_token (viewer de
+    # superadmin arriba: GET /tickets/api/admin/mail-cron-token).
     _TK_AUTOPOLL_SEG = 8
     _TK_MAIL_POLL = {"ts": 0.0, "lock": threading.Lock()}
 

@@ -7483,6 +7483,33 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     from_addr_cfg = marca["from_email"] or cfg.get("from_addr") or cfg.get("smtp_user", "")
     reply_to      = reply_to or marca["reply_to"] or cfg.get("reply_to") or ""
 
+    # ── FIX 2026-07-18 (auditoria, parche anti-spam SOLO rama SMTP) ─────
+    # Ninguno de los 2 dominios (marca ni cuenta SMTP real) tiene
+    # SPF/DKIM/DMARC hoy (verificado por nslookup) -> si el From visible
+    # (dominio de marca, ej. ilusfitness.com) NO coincide con el dominio
+    # que realmente autentica via SMTP (comm_smtp_config, tipicamente
+    # @sphs.cl), Gmail acepta el correo pero lo filtra a spam. Mientras no
+    # exista ese DNS, alineamos el From (header Y envelope) al buzon SMTP
+    # real, conservando el NOMBRE visible de marca -- ej.
+    # "ILUS <daniel.aguilar@sphs.cl>", solo cambia la casilla. Afecta TODOS
+    # los modulos que mandan por SMTP (tickets/retiros/transporte/
+    # mantenciones/etc.); es intencional, todos comparten el mismo
+    # problema de entregabilidad. El Reply-To configurado NO se toca. Si
+    # el dia de mañana se configura SPF/DKIM/DMARC del dominio de marca y
+    # Daniel cambia ILUS_BRAND_FROM_EMAIL a una casilla DEL MISMO dominio
+    # que smtp_user, este parche deja de actuar solo (dominios iguales ->
+    # no hace nada, ver comparacion abajo). La rama Resend NO se toca
+    # (usa su propio dominio verificado, aparte del SMTP).
+    _smtp_user_real = cfg.get("smtp_user", "") or ""
+
+    def _tk_email_dominio(addr):
+        return (addr or "").rsplit("@", 1)[-1].strip().lower()
+
+    if _smtp_user_real and _tk_email_dominio(from_addr_cfg) != _tk_email_dominio(_smtp_user_real):
+        print(f"[ILUS][EMAIL] From alineado a {_smtp_user_real} "
+              f"(dominio de marca sin DNS de autenticacion)")
+        from_addr_cfg = _smtp_user_real
+
     # ── Envío vía SMTP (único método; configurable desde el front) ──────
     # Con adjuntos el contenedor debe ser multipart/mixed (el HTML va en un
     # sub-multipart alternative). Sin adjuntos, igual que siempre.
