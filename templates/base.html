@@ -436,8 +436,12 @@
        acordeon desplegable... que al darle clic me lleve nomas a los
        tickets" -- deja de ser un toggle con la Bandeja adentro; ahora es un
        link plano directo a la bandeja, igual que los demas modulos de
-       Servicio Tecnico de abajo. La ruta /tickets/nuevo sigue viva
-       (compatibilidad hacia atras), solo sin linkear desde el sidebar.
+       Servicio Tecnico de abajo.
+       2026-07-18 (Daniel, autorizacion explicita): el sistema VIEJO de
+       tickets de Mantenciones (mant_tickets, rutas /mantenciones/tickets*)
+       fue jubilado -- ya no existe como pagina. Los datos historicos se
+       conservan intactos en mant_tickets*; el sistema vivo es este mismo
+       link, que apunta a tk_list (tk_tickets).
        FIX 2026-07-14 (caso Alison, rol Transporte): la condicion original
        solo miraba "mantenciones"/"superadmin" y nunca los flags nuevos
        tk_ver/tk_es_tecnico/tk_es_ejecutivo (aditivos, 2026-07-12) -- un rol
@@ -501,7 +505,7 @@
     {% endif %}
     {% if current_user and current_user.role != 'tecnico' %}
     <a href="{{ url_for('cotizaciones_hub_list') }}"
-       class="sidebar-link{% if request.endpoint in ['cotizaciones_hub_list','tk_cotizaciones_list','mant_cotizaciones_list','mant_cotizacion_nueva','mant_cotizacion_ficha'] %} active{% endif %}">
+       class="sidebar-link{% if request.endpoint in ['cotizaciones_hub_list','tk_cotizaciones_list'] %} active{% endif %}">
       <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
     </a>
     {% endif %}

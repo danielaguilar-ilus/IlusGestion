@@ -1462,8 +1462,9 @@ def register_tickets_routes(app, ctx):
         """FIX 2026-07-18 (Daniel, principio de continuidad): un ticket
         dormido en resolved/closed/cancelado por meses REVIVE si el
         cliente responde -- no debe quedar cerrado con un mensaje nuevo
-        sin leer. Llamado desde los 2 puntos de entrada de mensajes de
-        cliente (tk_portal_responder y _tk_leer_correo_entrante).
+        sin leer. Llamado desde _tk_leer_correo_entrante, el unico punto de
+        entrada real de mensajes de cliente (el portal viejo que tambien lo
+        invocaba fue jubilado 2026-07-18 con autorizacion de Daniel).
         Reutiliza EXACTAMENTE el mismo mecanismo de bitacora que
         tk_api_update usa para cualquier cambio de estado manual (tipo
         'cambio_estado' via _tk_log), asi la reapertura queda visible en
@@ -3701,9 +3702,12 @@ def register_tickets_routes(app, ctx):
     #  frontend (Cliente/equipo -> Técnico/horario -> Confirmación). Reusa
     #  el motor de OTs de Mantenciones (_next_ot_number,
     #  _validar_disponibilidad_visita, garantía) tal cual -- NO se duplica
-    #  lógica (Regla #4). NO confundir con
-    #  /mantenciones/api/tickets/<id>/convertir-en-ot (esa es la tabla vieja
-    #  mant_tickets, un sistema distinto -- no se toca, Regla #4.2).
+    #  lógica (Regla #4). Antes existía además
+    #  /mantenciones/api/tickets/<id>/convertir-en-ot, del sistema VIEJO de
+    #  tickets de Mantenciones (tabla mant_tickets) -- ese sistema fue
+    #  jubilado 2026-07-18 con autorización de Daniel (datos conservados en
+    #  mant_tickets*, tabla intacta, Regla #4.2); este wrapper de acá es el
+    #  único camino vivo para generar una OT desde un ticket.
     #
     #  REESCRITO 2026-07-12: este endpoint dejo de tener su PROPIO INSERT en
     #  mant_visitas (implementacion paralela divergente -- no creaba
@@ -5932,26 +5936,24 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "id": adj_id, "url": url, "nombre": f.filename})
 
     # ═══════════════════════════════════════════════════════════════════
-    #  PORTAL DE RESPUESTA DEL CLIENTE (Daniel 2026-07-11)
-    #  "recibir y enviar mensajes... con toda la calidad de informacion,
-    #  imagenes... datos persistentes dentro del ticket". En vez de recepcion
-    #  real de correo (requeriria OAuth a Gmail o esperar el DNS de Resend --
-    #  Daniel pidio explicitamente dejar Resend fuera por ahora), cada correo
-    #  saliente incluye un boton "Responder" a este portal publico: pagina
-    #  sin login, gateada por el MISMO token HMAC que ya protege la subida de
-    #  adjuntos del formulario publico (_tk_upload_token, vida larga aqui).
-    #  El cliente ve el hilo (sin notas internas) y responde con texto +
-    #  adjuntos, que quedan en tk_mensajes/tk_adjuntos como cualquier otro
-    #  mensaje -- persistente, visible para el staff en la ficha normal.
+    #  PORTAL DE RESPUESTA DEL CLIENTE (Daniel 2026-07-11) -- JUBILADO
+    #  2026-07-18 con autorizacion explicita de Daniel.
+    #  Diseno original: "recibir y enviar mensajes... con toda la calidad de
+    #  informacion, imagenes... datos persistentes dentro del ticket" -- una
+    #  pagina publica sin login donde el cliente veia el hilo (sin notas
+    #  internas) y respondia con texto + adjuntos. El GIRO 2026-07-12 (ver
+    #  docstring de _tk_boton_portal_html) ya habia dejado de linkearlo desde
+    #  los correos: el canal real es responder el correo, que el lector IMAP
+    #  ubica por numero de ticket. Pero ANTES del giro si se mandaron esos
+    #  links y pueden seguir guardados en bandejas de entrada de clientes
+    #  reales -- por eso la ruta no desaparece de golpe con un 404 crudo.
+    #  tk_portal_ver ahora es un aterrizaje amable unico que no valida token
+    #  ni muestra ningun dato del ticket. tk_portal_datos y
+    #  tk_portal_responder (el CRUD real del portal) se retiran junto con
+    #  _tk_portal_url (0 llamadas) y el template portal_cliente.html --
+    #  nadie los llama ni los necesita mas. Datos historicos en tk_mensajes/
+    #  tk_adjuntos generados por el portal viejo se conservan intactos.
     # ═══════════════════════════════════════════════════════════════════
-    def _tk_portal_url(tid):
-        """Link de por vida (1 anio) para el boton 'Responder' de los correos.
-        Se regenera solo -- no se guarda en BD, es determinístico por HMAC."""
-        token = _tk_upload_token(tid, ttl_horas=24 * 365)
-        base = (os.environ.get("ILUS_APP_BASE_URL")
-                or "https://ilus-app-469212710544.southamerica-west1.run.app").rstrip("/")
-        return f"{base}/portal/ticket/{tid}?token={token}"
-
     def _tk_boton_portal_html(tid):
         """Pie de respuesta que se agrega a TODO correo saliente de tickets
         (creacion/resuelto/cerrado/respuesta manual) -- estilos inline (los
@@ -5963,8 +5965,9 @@ def register_tickets_routes(app, ctx):
         responder directo (como Triple A): la respuesta llega al buzon de
         soporte (Reply-To = _tk_reply_to()) y el lector IMAP la ubica por el
         numero de ticket del asunto y la ingresa al ticket como mensaje del
-        cliente. El portal ya NO se ofrece en el correo; sus rutas siguen
-        vivas (Regla #4.2) pero sin linkear."""
+        cliente. El portal ya NO se ofrece en el correo (ni siquiera se
+        linkea) y ademas fue jubilado 2026-07-18: la ruta que queda es solo
+        un aterrizaje amable para links viejos, ver bloque de arriba."""
         return (
             '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;'
             'padding:12px 16px;margin:20px 0 8px;text-align:center">'
@@ -5994,83 +5997,14 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/portal/ticket/<int:tid>")
     def tk_portal_ver(tid):
-        token = (request.args.get("token") or "").strip()
-        if not _tk_upload_token_validar(token, tid):
-            return render_template("tickets/portal_error.html"), 403
-        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
-            return render_template("tickets/portal_error.html"), 404
-        return render_template("tickets/portal_cliente.html", tid=tid, token=token,
-                                max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB)
-
-    @app.route("/portal/ticket/<int:tid>/datos")
-    def tk_portal_datos(tid):
-        token = (request.args.get("token") or "").strip()
-        if not _tk_upload_token_validar(token, tid):
-            return jsonify({"ok": False, "error": "Enlace inválido o expirado"}), 403
-        t = mysql_fetchone(
-            "SELECT numero_ticket, estado, tipo, empresa, nombre_contacto, created_at "
-            "FROM tk_tickets WHERE id=%s", (tid,))
-        if not t:
-            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
-        # Solo mensajes NO internos (nunca notas_internas, cambios de estado/
-        # asignacion/equipos, ni comentarios marcados como internos por staff).
-        mensajes = mysql_fetchall(
-            "SELECT id, tipo, contenido, usuario, message_date, created_at FROM tk_mensajes "
-            "WHERE ticket_id=%s AND es_interno=0 AND tipo IN ('mensaje','client_message','comentario') "
-            "ORDER BY COALESCE(message_date, created_at) ASC, id ASC", (tid,))
-        adjuntos = mysql_fetchall(
-            "SELECT id, mensaje_id, archivo_url, archivo_nombre, mime_type, created_at FROM tk_adjuntos "
-            "WHERE ticket_id=%s ORDER BY id", (tid,))
-        return jsonify({
-            "ok": True,
-            "ticket": {
-                "numero_ticket": t["numero_ticket"], "estado": t["estado"],
-                "estado_label": ESTADO_LABEL.get(t["estado"], t["estado"]),
-                "tipo_label": TIPO_LABEL.get(t["tipo"], t["tipo"] or ""),
-                "cliente": t.get("nombre_contacto") or t.get("empresa") or "",
-                "creado": _fmt_dt(t.get("created_at")),
-            },
-            "mensajes": [{
-                "id": m["id"], "contenido": m["contenido"], "usuario": m["usuario"],
-                "es_cliente": m["tipo"] == "client_message",
-                "fecha": _fmt_dt(m.get("created_at")),
-            } for m in mensajes],
-            "adjuntos": [{"id": a["id"], "mensaje_id": a.get("mensaje_id"),
-                          "url": a["archivo_url"], "nombre": a["archivo_nombre"],
-                          "mime": a.get("mime_type"), "fecha": _fmt_dt(a.get("created_at"))}
-                         for a in adjuntos],
-        })
-
-    @app.route("/portal/ticket/<int:tid>/responder", methods=["POST"])
-    def tk_portal_responder(tid):
-        if not _rl_ok("portal:" + _ip_cliente(), 20, 300):
-            return jsonify({"ok": False, "error": "Demasiados envíos, espera un momento"}), 429
-        d = request.get_json(silent=True) or {}
-        token = (d.get("token") or "").strip()
-        if not _tk_upload_token_validar(token, tid):
-            return jsonify({"ok": False, "error": "Enlace inválido o expirado"}), 403
-        t = mysql_fetchone(
-            "SELECT numero_ticket, nombre_contacto, empresa, estado FROM tk_tickets WHERE id=%s", (tid,))
-        if not t:
-            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
-        contenido = _sanitizar_html_mensaje((d.get("contenido") or "").strip())
-        if not contenido:
-            return jsonify({"ok": False, "error": "Escribe un mensaje"}), 400
-        adjunto_ids = d.get("adjunto_ids") or []
-        cliente_nombre = t.get("nombre_contacto") or t.get("empresa") or "Cliente"
-        msg_id = _tk_log(tid, "client_message", contenido[:20000], usuario=cliente_nombre, es_interno=False)
-        _tk_link_adjuntos(tid, msg_id, adjunto_ids)
-        # FIX 2026-07-18 (principio de continuidad de Daniel): el cliente
-        # respondio por el portal a un ticket resolved/closed/cancelado ->
-        # reabrelo automaticamente (ver _tk_reabrir_si_cerrado).
-        _tk_reabrir_si_cerrado(tid, t.get("estado"))
-        mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
-        try:
-            _audit("tk_portal_respuesta_cliente", target_type="tk_ticket", target_id=tid,
-                   details={"numero": t.get("numero_ticket")})
-        except Exception:
-            pass
-        return jsonify({"ok": True, "mensaje_id": msg_id})
+        """Aterrizaje amable para links del portal viejo (correos previos al
+        GIRO 2026-07-12 pudieron quedar guardados en bandejas de clientes
+        reales). No valida token ni consulta el ticket -- no muestra ningun
+        dato, solo invita a responder el correo original. Reemplaza las 3
+        rutas CRUD del portal (tk_portal_ver + tk_portal_datos +
+        tk_portal_responder), jubiladas 2026-07-18 con autorizacion de
+        Daniel; datos historicos del portal viejo se conservan intactos."""
+        return render_template("tickets/portal_retirado.html")
 
     # ═══════════════════════════════════════════════════════════════════
     #  LECTOR DE CORREO ENTRANTE (Daniel 2026-07-12, orden explicita):

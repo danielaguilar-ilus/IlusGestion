@@ -5695,10 +5695,7 @@ function _erpRenderDocs() {
   cont.innerHTML = html;
 }
 
-function escHtml(s) {
-  return String(s||'').replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
+// escHtml ya esta definida arriba (linea ~1631, identica) -- duplicado retirado 2026-07-18.
 
 // ─── Modal: Productos del documento ───────────────────────────
 async function abrirModalProductos(doc) {
