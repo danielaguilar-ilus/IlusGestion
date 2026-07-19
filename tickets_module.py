@@ -531,7 +531,7 @@ def register_tickets_routes(app, ctx):
         lineas: [{sku, nombre, cantidad, saldo, es_zz}, ...]
         """
         try:
-            from app import _cubicador_fetch
+            _cubicador_fetch = ctx.get("_cubicador_fetch")  # Fase 0 modularizacion 2026-07-18: via ctx
             hdr_raw, lineas_raw = _cubicador_fetch((tido or "").strip().upper(), (nudo or "").strip())
         except Exception as _e:
             print(f"[_tk_fetch_doc_lineas] _cubicador_fetch fallo {tido}/{nudo}: {_e}", flush=True)

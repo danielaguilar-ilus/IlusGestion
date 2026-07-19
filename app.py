@@ -9853,14 +9853,25 @@ def _etiquetas_masivo_procesar_impl():
     ok_count = 0
     err_count = 0
 
+    # 🔧 PERF (N+1 -> batch, auditoria 2026-07-18): antes se hacía 1 query
+    # mysql_fetchone POR CADA SKU del Excel para buscar el producto. Mismo
+    # patrón batch ya usado en el preview (~90 líneas antes): se resuelven
+    # los SKUs únicos con UNA sola query IN y se mapea en memoria.
+    skus_unicos = list({it["sku"] for it in items})
+    prod_by_sku = {}
+    if skus_unicos:
+        ph_sku = ",".join(["%s"] * len(skus_unicos))
+        prod_rows = mysql_fetchall(
+            f"SELECT id, sku FROM `{PRODUCTS_TABLE}` WHERE UPPER(sku) IN ({ph_sku})",
+            tuple(skus_unicos)
+        ) or []
+        prod_by_sku = {(pr["sku"] or "").upper(): pr for pr in prod_rows}
+
     for it in items:
         sku = it["sku"]
         try:
-            # Buscar producto por SKU
-            prod = mysql_fetchone(
-                f"SELECT id FROM `{PRODUCTS_TABLE}` WHERE UPPER(sku)=%s LIMIT 1",
-                (sku,)
-            )
+            # Buscar producto por SKU (batch, ver arriba)
+            prod = prod_by_sku.get(sku)
             if not prod:
                 resultados.append({**it, "estado": "NO_ENCONTRADO",
                                    "mensaje": f"SKU {sku} no existe en el catálogo"})
@@ -49667,15 +49678,31 @@ def mant_visitas_api():
         "urgente": "#dc2626",
     }
 
+    # 🔧 PERF (N+1 -> batch, auditoria 2026-07-18): el fallback de tecnico_id
+    # legacy hacía 1 mysql_fetchone POR CADA visita sin técnicos N:N (hasta
+    # 500 queries). Igual que la carga N:N de arriba, se recolectan todos los
+    # tecnico_id legacy que hacen falta y se cargan con UNA sola query IN,
+    # mapeando en memoria. Resultado por visita idéntico al de antes.
+    legacy_tecnico_ids = sorted({
+        r["tecnico_id"] for r in rows
+        if not tecs_por_visita.get(r["id"]) and r.get("tecnico_id")
+    })
+    tecnicos_legacy_por_id = {}
+    if legacy_tecnico_ids:
+        ph_leg = ",".join(["%s"] * len(legacy_tecnico_ids))
+        leg_rows = mysql_fetchall(
+            f"""SELECT id,nombre,especialidad,nivel,es_externo,foto_url
+                  FROM mant_tecnicos WHERE id IN ({ph_leg})""",
+            tuple(legacy_tecnico_ids)
+        ) or []
+        tecnicos_legacy_por_id = {lr["id"]: dict(lr) for lr in leg_rows}
+
     events = []
     for r in rows:
         tecs = tecs_por_visita.get(r["id"], [])
         # Si no hay técnicos N:N pero sí hay tecnico_id legacy, fallback
         if not tecs and r.get("tecnico_id"):
-            t_legacy = mysql_fetchone(
-                "SELECT id,nombre,especialidad,nivel,es_externo,foto_url FROM mant_tecnicos WHERE id=%s",
-                (r["tecnico_id"],)
-            )
+            t_legacy = tecnicos_legacy_por_id.get(r["tecnico_id"])
             if t_legacy:
                 tecs = [dict(t_legacy)]
         # Para visitas viejas con solo el campo texto `tecnico`

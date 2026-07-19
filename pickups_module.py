@@ -1667,7 +1667,7 @@ def register_pickup_routes(app, ctx):
                 # wrapper de marca limpio: solo el logo ILUS grande arriba y el
                 # eslogan "I LIKE U STRONG" abajo. (Juan Daniel 2026-06-05.)
                 try:
-                    from app import _comm_render_email_document
+                    _comm_render_email_document = ctx.get("_comm_render_email_document")  # Fase 0 modularizacion 2026-07-18: via ctx
                     html = _comm_render_email_document(asunto, cuerpo)
                 except Exception:
                     # Fallback defensivo: si el wrapper limpio no estuviera
@@ -2112,7 +2112,7 @@ def register_pickup_routes(app, ctx):
                                             + '<p style="font-size:11px;color:#9ca3af;text-align:center;margin:16px 0 0">'
                                             'Aviso interno ILUS — solo para el equipo. El cliente recibe su propio correo con seguimiento.</p>'
                                         )
-                                        from app import _comm_render_email_document
+                                        _comm_render_email_document = ctx.get("_comm_render_email_document")  # Fase 0 modularizacion 2026-07-18: via ctx
                                         html = _comm_render_email_document(titulo_snap, _cuerpo_html)
                                     except Exception as _e_pretty:
                                         print(f"[ILUS][PICKUP TEAM NOTIF] formato premium falló, fallback clásico: {_e_pretty}", flush=True)
@@ -5028,9 +5028,10 @@ def register_pickup_routes(app, ctx):
         aunque _cubicador_fetch crashee o REST/SQL Server del motor unificado
         falle. El enrichment (peso/vol/líneas) puede hacerse después.
         """
-        try:
-            from app import _random_sql_query, _random_sql_pool
-        except ImportError:
+        # Fase 0 modularizacion 2026-07-18: via ctx
+        _random_sql_query = ctx.get("_random_sql_query")
+        _random_sql_pool = ctx.get("_random_sql_pool")
+        if not _random_sql_query or not _random_sql_pool:
             return None
         if _random_sql_pool() is None:
             return None
@@ -5300,9 +5301,8 @@ def register_pickup_routes(app, ctx):
         hdr = None
         lineas = []
         fetch_err = None
-        try:
-            from app import _cubicador_fetch
-        except ImportError:
+        _cubicador_fetch = ctx.get("_cubicador_fetch")  # Fase 0 modularizacion 2026-07-18: via ctx
+        if not _cubicador_fetch:
             return jsonify({"ok": False, "error": "Motor ERP no disponible"}), 503
 
         # ⚡ PERF Daniel 2026-05-24: cache hit del modal RUT. Cuando el
@@ -5506,7 +5506,7 @@ def register_pickup_routes(app, ctx):
         # ⚡ PERF Daniel 2026-05-24: si vienen `lineas_sel_in`, hacemos también
         # el UPSERT en pickup_doc_lineas y seteamos has_seleccion_lineas=1
         # en el MISMO INSERT (no en UPDATE separado). Todo en 1 transacción.
-        from app import get_db as _get_db_doc
+        _get_db_doc = ctx.get("get_db")  # Fase 0 modularizacion 2026-07-18: via ctx
         new_doc_id = None
         has_sel_initial = 1 if lineas_sel_in else 0
 
@@ -5691,7 +5691,7 @@ def register_pickup_routes(app, ctx):
             # Patrón correcto: get_mysql() directo + cerrar al final.
             # (Mismo patrón que _update_last_seen en app.py — bug histórico
             # del 2026-05-18 que costó "last_login_at congelado" para todos.)
-            from app import get_mysql as _get_mysql_async
+            _get_mysql_async = ctx.get("get_mysql")  # Fase 0 modularizacion 2026-07-18: via ctx
             conn = None
             try:
                 conn = _get_mysql_async()
@@ -6401,9 +6401,10 @@ def register_pickup_routes(app, ctx):
             # Hit fresco → response inmediato (~5ms vs ~1200ms cold)
             return jsonify(_hit[0])
 
-        try:
-            from app import _random_sql_query, _random_sql_pool
-        except ImportError:
+        # Fase 0 modularizacion 2026-07-18: via ctx
+        _random_sql_query = ctx.get("_random_sql_query")
+        _random_sql_pool = ctx.get("_random_sql_pool")
+        if not _random_sql_query or not _random_sql_pool:
             return jsonify({"ok": True, "docs": [], "error": "Motor ERP no disponible"})
 
         pool = _random_sql_pool()
@@ -6656,9 +6657,10 @@ def register_pickup_routes(app, ctx):
         if len(q) < 3:
             return jsonify({"ok": False, "error": "Mínimo 3 caracteres", "documentos": []}), 400
 
-        try:
-            from app import _random_sql_query, _random_sql_pool
-        except ImportError:
+        # Fase 0 modularizacion 2026-07-18: via ctx
+        _random_sql_query = ctx.get("_random_sql_query")
+        _random_sql_pool = ctx.get("_random_sql_pool")
+        if not _random_sql_query or not _random_sql_pool:
             return jsonify({"ok": True, "documentos": [],
                             "error": "Motor ERP no disponible", "sin_conexion": True})
 
@@ -9390,11 +9392,9 @@ def register_pickup_routes(app, ctx):
             tido = tido_map.get(doc_type)
             nudo = (d.get("document_number") or "").strip()
             if tido and nudo:
-                # Import directo en lugar del check frágil "in dir(__import__(...))"
-                try:
-                    from app import _cubicador_fetch
-                except ImportError:
-                    _cubicador_fetch = None
+                # Fase 0 modularizacion 2026-07-18: via ctx (antes: import directo)
+                _cubicador_fetch = ctx.get("_cubicador_fetch")
+                if not _cubicador_fetch:
                     d["erp"] = {"error": "Motor ERP no disponible (import falló)"}
 
                 if _cubicador_fetch:
