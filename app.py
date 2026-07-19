@@ -1694,7 +1694,7 @@ def _random_sql_pool():
                 mincached      = 1,
                 maxcached      = 3,
                 maxconnections = 5,
-                blocking       = True,
+                blocking       = False,  # FIX escalabilidad: igual que _db_pool (línea 1564) — si las 5 conexiones están ocupadas, lanza TooManyConnections en vez de colgar el hilo indefinidamente. _random_sql_query lo captura y degrada a None.
                 ping           = 1,
                 server         = RANDOM_SQL_CFG["server"],
                 port           = RANDOM_SQL_CFG["port"],
@@ -1750,8 +1750,16 @@ def _random_sql_query(sql: str, params=None, max_rows: int = 500):
     if pool is None:
         return None
     conn = None
+    from dbutils.pooled_db import TooManyConnections  # import local, mismo estilo lazy que _random_sql_pool
     try:
-        conn = pool.connection()
+        try:
+            conn = pool.connection()
+        except TooManyConnections:
+            # Pool agotado (5/5 en uso). Con blocking=False fallamos rápido y
+            # degradamos al mismo contrato que "ERP no configurado": None.
+            # Los callers ya manejan None sin romperse (línea 1750-1751).
+            print(f"[RANDOM SQL][POOL AGOTADO] {RANDOM_SQL_CFG['server']}: todas las conexiones en uso — degradando a None  ::  SQL={sql[:120]}")
+            return None
         with conn.cursor(as_dict=True) as cur:
             cur.execute(sql, params or ())
             rows = cur.fetchmany(max_rows) if max_rows else cur.fetchall()
@@ -21395,19 +21403,40 @@ def tr_crear_manifiesto():
     try:
         with conn.cursor() as cur:
             # Correlativo auto: MAN-YYYY-NNNN
-            cur.execute(
-                "SELECT COUNT(*)+1 AS n FROM transport_manifests "
-                "WHERE YEAR(created_at)=YEAR(NOW())"
-            )
-            n = (cur.fetchone() or {}).get("n", 1)
+            # RACE CONDITION FIX 2026-07-19 (Daniel): dos manifiestos creados en el
+            # mismo instante pueden leer el mismo COUNT(*) y chocar en el UNIQUE de
+            # 'correlativo'. Reintentamos con un COUNT fresco hasta 5 veces en vez
+            # de dejar pasar el IntegrityError (1062) como 500 crudo.
             from datetime import datetime as _dt
-            corr = f"MAN-{_dt.now().year}-{int(n):04d}"
-            cur.execute(
-                "INSERT INTO transport_manifests (correlativo,fecha,courier,notas,created_by) "
-                "VALUES (%s,%s,%s,%s,%s)",
-                (corr, fecha, courier, notas, current_username())
-            )
-            mid = cur.lastrowid
+            mid = None
+            corr = None
+            max_intentos = 5
+            for _intento in range(max_intentos):
+                cur.execute(
+                    "SELECT COUNT(*)+1 AS n FROM transport_manifests "
+                    "WHERE YEAR(created_at)=YEAR(NOW())"
+                )
+                n = (cur.fetchone() or {}).get("n", 1)
+                corr = f"MAN-{_dt.now().year}-{int(n):04d}"
+                try:
+                    cur.execute(
+                        "INSERT INTO transport_manifests (correlativo,fecha,courier,notas,created_by) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        (corr, fecha, courier, notas, current_username())
+                    )
+                    mid = cur.lastrowid
+                    break
+                except Exception as e_corr:
+                    msg = str(e_corr)
+                    if ("1062" in msg or "Duplicate entry" in msg) and "correlativo" in msg:
+                        conn.rollback()
+                        continue
+                    raise
+            if mid is None:
+                conn.rollback()
+                return jsonify({
+                    "error": "No se pudo generar un correlativo único para el manifiesto, intenta de nuevo."
+                }), 409
         conn.commit()
     finally:
         conn.close()
@@ -23182,21 +23211,17 @@ def tr_public_tracking_status(token):
 #  + opcionalmente RUT, y lo redirigimos al tracking bonito /t/<token>.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_PUBLIC_SEARCH_RL = {}  # ip → [ts, ts, ...]
 _PUBLIC_SEARCH_WINDOW = 60   # 60s
 _PUBLIC_SEARCH_MAX    = 12   # 12 búsquedas / min / IP (anti-scraping)
 
 def _public_search_rate_ok(ip):
-    import time as _t
-    now = _t.time()
-    arr = _PUBLIC_SEARCH_RL.get(ip) or []
-    arr = [t for t in arr if (now - t) < _PUBLIC_SEARCH_WINDOW]
-    if len(arr) >= _PUBLIC_SEARCH_MAX:
-        _PUBLIC_SEARCH_RL[ip] = arr
-        return False
-    arr.append(now)
-    _PUBLIC_SEARCH_RL[ip] = arr
-    return True
+    """Delega en _rl_check (persistido en app_rate_limits, cross-worker /
+    cross-instancia Cloud Run). El parámetro `ip` ya no se usa acá — el
+    identificador real lo resuelve _rl_identifier() dentro de _rl_check
+    (cae a IP vía _rl_client_ip() porque este endpoint es público, sin
+    login, así que g.user nunca está seteado). Se mantiene el parámetro
+    en la firma para no tocar el call site."""
+    return _rl_check("public_search", _PUBLIC_SEARCH_MAX, _PUBLIC_SEARCH_WINDOW)
 
 
 def _norm_rut(s):
@@ -27134,20 +27159,41 @@ def tr_cubicador_enviar_manifiesto():
                     fecha_in = datetime.now().date().isoformat()
                 notas = (data.get("notas") or "").strip()[:500]
                 # Correlativo MAN-AAAA-NNNN (sincronizado con tr_crear_manifiesto)
-                cur.execute(
-                    "SELECT COUNT(*)+1 AS n FROM transport_manifests "
-                    "WHERE YEAR(created_at)=YEAR(NOW())"
-                )
-                _r = cur.fetchone() or {}
-                n = int(_r.get("n", 1))
-                correlativo = f"MAN-{datetime.now().year}-{n:04d}"
-                cur.execute(
-                    """INSERT INTO transport_manifests
-                       (correlativo, fecha, courier, notas, created_by)
-                       VALUES (%s,%s,%s,%s,%s)""",
-                    (correlativo, fecha_in, courier, notas, current_username())
-                )
-                mid = cur.lastrowid
+                # RACE CONDITION FIX 2026-07-19 (Daniel): mismo fix que
+                # tr_crear_manifiesto — reintenta con un COUNT fresco hasta 5
+                # veces si el UNIQUE de 'correlativo' choca por concurrencia,
+                # en vez de dejar pasar el IntegrityError (1062) como 500 crudo.
+                mid = None
+                correlativo = None
+                max_intentos = 5
+                for _intento in range(max_intentos):
+                    cur.execute(
+                        "SELECT COUNT(*)+1 AS n FROM transport_manifests "
+                        "WHERE YEAR(created_at)=YEAR(NOW())"
+                    )
+                    _r = cur.fetchone() or {}
+                    n = int(_r.get("n", 1))
+                    correlativo = f"MAN-{datetime.now().year}-{n:04d}"
+                    try:
+                        cur.execute(
+                            """INSERT INTO transport_manifests
+                               (correlativo, fecha, courier, notas, created_by)
+                               VALUES (%s,%s,%s,%s,%s)""",
+                            (correlativo, fecha_in, courier, notas, current_username())
+                        )
+                        mid = cur.lastrowid
+                        break
+                    except Exception as e_corr:
+                        msg = str(e_corr)
+                        if ("1062" in msg or "Duplicate entry" in msg) and "correlativo" in msg:
+                            conn.rollback()
+                            continue
+                        raise
+                if mid is None:
+                    conn.rollback()
+                    return jsonify({
+                        "error": "No se pudo generar un correlativo único para el manifiesto, intenta de nuevo."
+                    }), 409
                 try: _tr_log("manifest", mid, "creado (cubicador)",
                             f"courier={courier} fecha={fecha_in}")
                 except Exception: pass

@@ -3413,8 +3413,8 @@ async function confirmarAccionEquipo() {
   const fecha   = document.getElementById('ae_fecha').value;
   const tecnico = document.getElementById('ae_tecnico').value.trim();
 
-  if (motivo.length < 8) { alert('El motivo debe tener al menos 8 caracteres'); return; }
-  if (!fecha) { alert('La fecha de visita es obligatoria'); return; }
+  if (motivo.length < 8) { ilusToast('El motivo debe tener al menos 8 caracteres', {type:'warning'}); return; }
+  if (!fecha) { ilusToast('La fecha de visita es obligatoria', {type:'warning'}); return; }
 
   try {
     const r = await fetch(`/mantenciones/api/maquinas/${mid}/solicitar-cambio`, {
@@ -3429,11 +3429,11 @@ async function confirmarAccionEquipo() {
       })
     });
     const d = await r.json();
-    if (!d.ok) { alert('Error: ' + (d.error||'')); return; }
+    if (!d.ok) { ilusToast('Error: ' + (d.error||''), {type:'error'}); return; }
     _modalAccionEq.hide();
     setTimeout(() => location.reload(), 200);
   } catch(e) {
-    alert('Error de red: ' + e.message);
+    ilusToast('Error de red: ' + e.message, {type:'error'});
   }
 }
 
@@ -3707,7 +3707,7 @@ async function guardarSucursal() {
     notas:            $v('suc_notas'),
     es_principal:     document.getElementById('suc_es_principal').checked,
   };
-  if (!data.nombre) { alert('El nombre de la sucursal es obligatorio'); return; }
+  if (!data.nombre) { ilusToast('El nombre de la sucursal es obligatorio', {type:'warning'}); return; }
 
   const sid = $v('suc_id');
   const url = sid
@@ -3722,8 +3722,8 @@ async function guardarSucursal() {
     });
     const d = await r.json();
     if (d.ok) { location.reload(); }
-    else { alert('Error: ' + (d.error || 'No se pudo guardar')); }
-  } catch(e) { alert('Error de red'); }
+    else { ilusToast('Error: ' + (d.error || 'No se pudo guardar'), {type:'error'}); }
+  } catch(e) { ilusToast('Error de red', {type:'error'}); }
 }
 
 async function eliminarSucursal(sid, nombre) {
@@ -3778,7 +3778,7 @@ async function confirmarCambioSerie() {
   const mid    = document.getElementById('es_mid').value;
   const serie  = document.getElementById('es_serie_nueva').value.trim();
   const motivo = document.getElementById('es_motivo').value.trim();
-  if (motivo.length < 5) { alert('El motivo debe tener al menos 5 caracteres'); return; }
+  if (motivo.length < 5) { ilusToast('El motivo debe tener al menos 5 caracteres', {type:'warning'}); return; }
 
   try {
     const r = await fetch(`/mantenciones/api/maquinas/${mid}/serie`, {
@@ -3786,9 +3786,9 @@ async function confirmarCambioSerie() {
       body: JSON.stringify({serie, motivo})
     });
     const d = await r.json();
-    if (!d.ok) { alert('Error: ' + (d.error||'')); return; }
+    if (!d.ok) { ilusToast('Error: ' + (d.error||''), {type:'error'}); return; }
     if (d.sin_cambios) {
-      alert('No hubo cambios — el N° serie es el mismo.');
+      ilusToast('No hubo cambios — el N° serie es el mismo.', {type:'info'});
       _modalEditSerie.hide();
       return;
     }
@@ -3797,11 +3797,16 @@ async function confirmarCambioSerie() {
     if (span) span.textContent = d.serie;
     _modalEditSerie.hide();
     // Toast inline
-    setTimeout(() => {
-      alert(`✓ N° serie actualizado.\n\nAntes: ${d.serie_anterior || '(vacío)'}\nAhora: ${d.serie}\n\nQuedó registrado en el historial del equipo.`);
+    setTimeout(async () => {
+      await ilusAlert({
+        title: 'N° serie actualizado',
+        message: `Antes: ${d.serie_anterior || '(vacío)'} → Ahora: ${d.serie}`,
+        sub: 'Quedó registrado en el historial del equipo.',
+        type: 'success',
+      });
     }, 200);
   } catch(e) {
-    alert('Error de red: ' + e.message);
+    ilusToast('Error de red: ' + e.message, {type:'error'});
   }
 }
 
@@ -5457,7 +5462,7 @@ async function confirmarErpMismatch() {
   if (!ta) return;
   const motivo = (ta.value || '').trim();
   if (motivo.length < 8) {
-    alert('Escribe un motivo de al menos 8 caracteres para auditoría.');
+    ilusToast('Escribe un motivo de al menos 8 caracteres para auditoría.', {type:'warning'});
     ta.focus();
     return;
   }
@@ -5475,9 +5480,9 @@ async function confirmarErpMismatch() {
       })
     });
     const d = await r.json();
-    if (!d.ok) { alert('No se pudo registrar el motivo: ' + (d.error||'')); return; }
+    if (!d.ok) { ilusToast('No se pudo registrar el motivo: ' + (d.error||''), {type:'error'}); return; }
   } catch(e) {
-    alert('Error de red al registrar motivo. Intenta de nuevo.');
+    ilusToast('Error de red al registrar motivo. Intenta de nuevo.', {type:'error'});
     return;
   }
   window._erpMismatch.confirmado = true;
@@ -5903,7 +5908,7 @@ function epActualizarContador() {
 
 async function epConfirmarMismatch() {
   const motivo = (document.getElementById('ep_motivo')?.value || '').trim();
-  if (motivo.length < 8) { alert('Mínimo 8 caracteres en el motivo.'); return; }
+  if (motivo.length < 8) { ilusToast('Mínimo 8 caracteres en el motivo.', {type:'warning'}); return; }
   if (!window._erpMismatch) return;
   try {
     const r = await fetch(`/mantenciones/api/clientes/${DATA.cid}/equipos-import-mismatch`, {
@@ -5911,12 +5916,12 @@ async function epConfirmarMismatch() {
       body: JSON.stringify({ motivo, rut_doc:window._erpMismatch.rutDoc, tido:window._erpMismatch.tido, nudo:window._erpMismatch.nudo })
     });
     const d = await r.json();
-    if (!d.ok) { alert('Error: ' + (d.error||'')); return; }
+    if (!d.ok) { ilusToast('Error: ' + (d.error||''), {type:'error'}); return; }
     window._erpMismatch.confirmado = true;
     window._erpMismatch.motivo = motivo;
     document.getElementById('ep_mismatchAlert').innerHTML =
       `<div class="alert alert-success small mb-0"><i class="bi bi-check-circle-fill me-1"></i>Importación autorizada. Motivo registrado.</div>`;
-  } catch(e) { alert('Error de red'); }
+  } catch(e) { ilusToast('Error de red', {type:'error'}); }
 }
 
 // ─── Modal de progreso dinámico (operaciones lentas: import ERP, etc.) ───────
@@ -6155,10 +6160,15 @@ function actualizarContadorErp() {
 
 async function importarDesdeErp() {
   const lineas = Object.values(erpSeleccionadas);
-  if (!lineas.length) { alert('Selecciona al menos una línea'); return; }
+  if (!lineas.length) { ilusToast('Selecciona al menos una línea', {type:'warning'}); return; }
   // Bloqueo: si hay mismatch de RUT y el usuario no lo confirmó, no se puede importar
   if (window._erpMismatch && !window._erpMismatch.confirmado) {
-    alert('Este documento pertenece a otro RUT.\nDebes escribir el motivo y confirmar antes de importar los equipos.');
+    await ilusAlert({
+      title: 'Documento de otro RUT',
+      message: 'Este documento pertenece a otro RUT.',
+      sub: 'Debes escribir el motivo y confirmar antes de importar los equipos.',
+      type: 'warning',
+    });
     const ta = document.getElementById('erpMismatchMotivo');
     if (ta) ta.focus();
     return;
@@ -6194,9 +6204,7 @@ async function importarDesdeErp() {
 async function guardarMaquinaManual() {
   const nombre = document.getElementById('mm_nombre').value.trim();
   if (!nombre) {
-    if (typeof ilusAlert === 'function') {
-      await ilusAlert({title:'Nombre requerido', message:'El nombre del equipo es obligatorio.', type:'warning'});
-    } else { alert('Nombre requerido'); }
+    await ilusAlert({title:'Nombre requerido', message:'El nombre del equipo es obligatorio.', type:'warning'});
     return;
   }
   // 2026-05-27 (Daniel): SKU y N° Serie auto si vienen vacíos. Backend genera.
@@ -6230,9 +6238,7 @@ async function guardarMaquinaManual() {
   } else {
     let err = 'Error al guardar';
     try { const d = await r.json(); err = d.error || err; } catch(_){}
-    if (typeof ilusAlert === 'function') {
-      await ilusAlert({title:'No se pudo agregar', message:err, type:'error'});
-    } else { alert(err); }
+    await ilusAlert({title:'No se pudo agregar', message:err, type:'error'});
   }
 }
 
@@ -6361,7 +6367,12 @@ async function confirmarEliminarCliente() {
     });
     const data = await r.json();
     if (data.ok) {
-      alert(`✓ Cliente "${data.razon_social}" eliminado.\n\nSe eliminaron ${Object.entries(data.eliminado||{}).map(([k,v])=>`${v} ${k}`).join(', ') || 'datos asociados'}.`);
+      await ilusAlert({
+        title: 'Cliente eliminado',
+        message: `Cliente "${data.razon_social}" eliminado.`,
+        sub: `Se eliminaron ${Object.entries(data.eliminado||{}).map(([k,v])=>`${v} ${k}`).join(', ') || 'datos asociados'}.`,
+        type: 'success',
+      });
       window.location.href = '/mantenciones/clientes';
     } else {
       errBox.textContent = data.error || 'No se pudo eliminar.';
@@ -6395,23 +6406,19 @@ async function subirContrato() {
   const btnHtmlOrig = btn ? btn.innerHTML : '';
 
   const archivo = document.getElementById('ct_archivo').files[0];
-  if (!archivo) { alert('Selecciona un archivo'); return; }
+  if (!archivo) { ilusToast('Selecciona un archivo', {type:'warning'}); return; }
 
   // Validación frontend: solo PDF (espejo del backend para feedback rápido)
   const ext = (archivo.name.split('.').pop() || '').toLowerCase();
   if (ext !== 'pdf') {
-    if (typeof ilusAlert === 'function') {
-      await ilusAlert({
-        title: 'Formato no permitido',
-        message: 'Solo se aceptan archivos PDF.',
-        sub: ['doc','docx'].includes(ext)
-             ? 'Abre el documento en Word → Archivo → Guardar como → PDF, y vuelve a subirlo.'
-             : 'Convierte el archivo a PDF antes de subirlo.',
-        type: 'warning',
-      });
-    } else {
-      alert('Solo se aceptan archivos PDF. Convierte el archivo y vuelve a intentarlo.');
-    }
+    await ilusAlert({
+      title: 'Formato no permitido',
+      message: 'Solo se aceptan archivos PDF.',
+      sub: ['doc','docx'].includes(ext)
+           ? 'Abre el documento en Word → Archivo → Guardar como → PDF, y vuelve a subirlo.'
+           : 'Convierte el archivo a PDF antes de subirlo.',
+      type: 'warning',
+    });
     return;
   }
 
@@ -6419,7 +6426,12 @@ async function subirContrato() {
   const MAX_MB = 25;
   if (archivo.size > MAX_MB * 1024 * 1024) {
     const mb = (archivo.size / 1024 / 1024).toFixed(1);
-    alert(`El archivo pesa ${mb} MB. Máximo permitido: ${MAX_MB} MB.\n\nReduce el peso con un compresor de PDF antes de subir.`);
+    await ilusAlert({
+      title: 'Archivo demasiado grande',
+      message: `El archivo pesa ${mb} MB. Máximo permitido: ${MAX_MB} MB.`,
+      sub: 'Reduce el peso con un compresor de PDF antes de subir.',
+      type: 'warning',
+    });
     return;
   }
 
@@ -6477,16 +6489,12 @@ async function subirContrato() {
 
     // Errores codificados — mensaje específico
     if (data && data.error_codigo === 'LIMITE_CONTRATOS') {
-      if (typeof ilusAlert === 'function') {
-        await ilusAlert({
-          title: 'Llegaste al máximo de contratos',
-          message: data.error,
-          sub: 'Cierra/elimina un contrato viejo o usa Documentos para anexos.',
-          type: 'warning',
-        });
-      } else {
-        alert(data.error);
-      }
+      await ilusAlert({
+        title: 'Llegaste al máximo de contratos',
+        message: data.error,
+        sub: 'Cierra/elimina un contrato viejo o usa Documentos para anexos.',
+        type: 'warning',
+      });
       return;
     }
     if (data && data.error_codigo === 'DUPLICADO_RAPIDO') {
@@ -6549,32 +6557,31 @@ async function subirContrato() {
       return;
     }
     if (data && data.error_codigo === 'FORMATO_NO_PERMITIDO') {
-      alert(data.error);
+      await ilusAlert({ title: 'Formato no permitido', message: data.error, type: 'warning' });
       return;
     }
     if (data && data.error_codigo === 'ARCHIVO_GRANDE') {
-      alert(data.error);
+      await ilusAlert({ title: 'Archivo demasiado grande', message: data.error, type: 'warning' });
       return;
     }
     if (data && data.error_codigo === 'CLOUDINARY_FAIL') {
-      alert('Cloudinary no respondió. Por favor reinténtalo en unos segundos.');
+      ilusToast('Cloudinary no respondió. Por favor reinténtalo en unos segundos.', { type:'error' });
       return;
     }
     if (data && data.error_codigo === 'ALMACENAMIENTO_NO_DISPONIBLE') {
-      alert('El almacenamiento de archivos no está disponible. Contacta al administrador.');
+      await ilusAlert({
+        title: 'Almacenamiento no disponible',
+        message: 'El almacenamiento de archivos no está disponible. Contacta al administrador.',
+        type: 'error',
+      });
       return;
     }
 
     // Error genérico
     const msg = (data && data.error) ? data.error : `Error al subir contrato (HTTP ${r.status})`;
-    if (typeof ilusToast === 'function') ilusToast(msg, { type:'error' });
-    else alert(msg);
+    ilusToast(msg, { type:'error' });
   } catch (e) {
-    if (typeof ilusToast === 'function') {
-      ilusToast('Error de red: ' + e.message, { type:'error' });
-    } else {
-      alert('Error de red: ' + e.message);
-    }
+    ilusToast('Error de red: ' + e.message, { type:'error' });
   } finally {
     // Liberar guard y restaurar UI
     _subirContratoEnCurso = false;
@@ -9172,7 +9179,7 @@ function toggleErpRutPanel() {
 async function importarDocErpRut(tido, nudo) {
   // Abre el modal ERP con los datos pre-cargados
   const modal = document.getElementById('modalErp');
-  if (!modal) { alert('Abre el modal ERP manualmente'); return; }
+  if (!modal) { ilusToast('Abre el modal ERP manualmente', {type:'warning'}); return; }
   // Pre-llenar el tab de documento
   const tabDocBtn = document.getElementById('fTabDocBtn');
   if (tabDocBtn) { fSetTab('doc'); }
@@ -9392,11 +9399,11 @@ async function gcGuardar() {
       btn.classList.add('btn-success');
       setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('btn-success'); }, 2000);
     } else {
-      alert(data.error || 'Error al guardar');
+      ilusToast(data.error || 'Error al guardar', {type:'error'});
     }
   } catch(e) {
     spin.style.display = 'none';
-    alert('Error de conexión: ' + e.message);
+    ilusToast('Error de conexión: ' + e.message, {type:'error'});
   }
 }
 
@@ -11354,7 +11361,7 @@ function repMostrarFotoUpload() {
 }
 
 async function repSubirFoto(file) {
-  if (!_repCurrentId) { alert('Guarda el informe primero'); return; }
+  if (!_repCurrentId) { ilusToast('Guarda el informe primero', {type:'warning'}); return; }
   const fd = new FormData();
   fd.append('foto', file);
   const r = await fetch(`/mantenciones/api/reportes/${_repCurrentId}/fotos`,{method:'POST',body:fd});
@@ -11674,13 +11681,13 @@ async function repAnalizarIA() {
 // ─── Reporte: Word + Enviar email ────────────────────────────────
 function repDescargarWord() {
   const rid = document.getElementById('repId').value;
-  if (!rid) { alert('Guarda el informe primero'); return; }
+  if (!rid) { ilusToast('Guarda el informe primero', {type:'warning'}); return; }
   window.open(`/mantenciones/api/reportes/${rid}/word`, '_blank');
 }
 
 async function repEnviarEmail() {
   const rid = document.getElementById('repId').value;
-  if (!rid) { alert('Guarda el informe primero'); return; }
+  if (!rid) { ilusToast('Guarda el informe primero', {type:'warning'}); return; }
   await repGuardar(true);
 
   const html = `
@@ -11745,13 +11752,17 @@ async function repEnviarEmail() {
       const data = await r.json();
       if (data.ok) {
         m.hide();
-        alert('✓ Informe enviado a: ' + (data.destinatarios||[]).join(', '));
+        await ilusAlert({
+          title: 'Informe enviado',
+          message: 'Informe enviado a: ' + (data.destinatarios||[]).join(', '),
+          type: 'success',
+        });
       } else {
-        alert('Error: ' + (data.error || 'No se pudo enviar'));
+        ilusToast('Error: ' + (data.error || 'No se pudo enviar'), {type:'error'});
         btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-fill me-1"></i>Enviar';
       }
     } catch (e) {
-      alert('Error de red: ' + e.message);
+      ilusToast('Error de red: ' + e.message, {type:'error'});
       btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-fill me-1"></i>Enviar';
     }
   };
@@ -11856,7 +11867,7 @@ async function cargarAdjuntos(ctid) {
 function mostrarSubirAdjunto() {
   // Obtener el contrato activo
   const ctRow = document.querySelector('.contrato-pro');
-  if (!ctRow) { alert('Sin contrato activo'); return; }
+  if (!ctRow) { ilusToast('Sin contrato activo', {type:'warning'}); return; }
   const ctid = ctRow.id.replace('ct-','');
   const input = document.createElement('input');
   input.type = 'file'; input.accept = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.xlsx';
@@ -11868,7 +11879,7 @@ function mostrarSubirAdjunto() {
     const r = await fetch(`/mantenciones/api/contratos/${ctid}/adjuntos`,{method:'POST',body:fd});
     const data = await r.json();
     if (data.ok) cargarAdjuntos(ctid);
-    else alert('Error: ' + (data.error||'desconocido'));
+    else ilusToast('Error: ' + (data.error||'desconocido'), {type:'error'});
   };
   input.click();
 }
