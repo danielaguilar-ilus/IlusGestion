@@ -264,6 +264,43 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
 
+# ── Cache-busting automático de /static/* por hash de contenido ────────────
+# Problema recurrente: /static/* se sirve con Cache-Control immutable de 30
+# días (ver _perf_static_cache_and_gzip más abajo). Eso es correcto para
+# performance, pero significa que si editamos un .js/.css y el nombre de
+# archivo no cambia, los navegadores con la versión vieja cacheada NO se
+# enteran del cambio — Daniel ve "la UI vieja" días después de un deploy.
+# Hasta ahora el cache-busting era MANUAL (?v=20260610c escrito a mano en
+# cada template, fácil de olvidar). Este hook lo hace automático: cualquier
+# url_for('static', filename=...) recibe un ?v=<hash-del-contenido> sin que
+# el template tenga que declararlo. Cambia SOLO cuando el archivo cambia.
+_STATIC_HASH_CACHE = {}  # filename -> hash corto (se computa 1 vez por archivo por proceso)
+
+def _static_asset_version(filename):
+    """Hash corto del contenido de un asset estatico, cacheado en memoria.
+    Cambia SOLO cuando el archivo cambia -> el navegador re-baja solo lo
+    que cambio. Reemplaza el ?v= manual con fechas escritas a mano."""
+    if filename in _STATIC_HASH_CACHE:
+        return _STATIC_HASH_CACHE[filename]
+    ver = None
+    try:
+        import hashlib
+        fpath = os.path.join(app.static_folder, filename)
+        with open(fpath, "rb") as fh:
+            ver = hashlib.md5(fh.read()).hexdigest()[:10]
+    except Exception:
+        ver = None  # si no se puede leer (archivo remoto/inexistente), no romper
+    _STATIC_HASH_CACHE[filename] = ver
+    return ver
+
+@app.url_defaults
+def _static_cache_buster(endpoint, values):
+    if endpoint == "static" and values.get("filename") and "v" not in values:
+        ver = _static_asset_version(values["filename"])
+        if ver:
+            values["v"] = ver
+
+
 # ── /version: diagnóstico simple — qué commit está corriendo el servidor ──
 # Lee el hash del último commit del filesystem (puesto por el deploy).
 # Útil para diferenciar "no se aplicó el deploy" vs "cache del navegador".

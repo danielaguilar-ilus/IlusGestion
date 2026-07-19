@@ -34,7 +34,7 @@
      versión se invalida automáticamente. Antes el navegador hacía un
      If-Modified-Since round-trip por cada visita; ahora 0 requests si la
      URL versionada ya está en cache. Subir _ASSET_V cuando cambie CSS/JS. #}
-  <link rel="preload" href="{{ url_for('static', filename='style.css') }}?v=20260526h" as="style" fetchpriority="high">
+  <link rel="preload" href="{{ url_for('static', filename='style.css') }}" as="style" fetchpriority="high">
 
   {# ── PREFETCH 2026-05-26 (Daniel — "rapidez para la Sra Milagros") ──
      Carga en background las rutas más visitadas DESPUÉS del login. Cuando
@@ -98,11 +98,11 @@
      PNG multi-tamaño: 16/32/64/192 para navegadores; 180x180 para iOS.
      Cache-busting ?v=20260517a fuerza refresh del cache del navegador
      (sin esto, los navegadores guardan el favicon agresivamente). #}
-  <link rel="icon" type="image/png" sizes="16x16"   href="{{ url_for('static', filename='favicon_16.png') }}?v=20260517a">
-  <link rel="icon" type="image/png" sizes="32x32"   href="{{ url_for('static', filename='favicon_32.png') }}?v=20260517a">
-  <link rel="icon" type="image/png" sizes="64x64"   href="{{ url_for('static', filename='favicon.png') }}?v=20260517a">
-  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}?v=20260517a">
-  <link rel="apple-touch-icon" sizes="180x180"      href="{{ url_for('static', filename='apple-touch-icon.png') }}?v=20260517a">
+  <link rel="icon" type="image/png" sizes="16x16"   href="{{ url_for('static', filename='favicon_16.png') }}">
+  <link rel="icon" type="image/png" sizes="32x32"   href="{{ url_for('static', filename='favicon_32.png') }}">
+  <link rel="icon" type="image/png" sizes="64x64"   href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180"      href="{{ url_for('static', filename='apple-touch-icon.png') }}">
 
   {# ── Open Graph (cómo se ve al compartir en WhatsApp / Facebook / etc.) ── #}
   <meta property="og:type" content="website">
@@ -155,9 +155,9 @@
 
   {# CSS propio bloqueante (necesario para layout completo) — pero ya
      pre-cargado arriba, así que es esencialmente instantáneo. #}
-  <link href="{{ url_for('static', filename='style.css') }}?v=20260526h" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
   {# Mobile-first responsive overrides — debe cargarse DESPUÉS de style.css #}
-  <link href="{{ url_for('static', filename='mobile.css') }}?v=20260531e" rel="stylesheet">
+  <link href="{{ url_for('static', filename='mobile.css') }}" rel="stylesheet">
   {# PWA Manifest — permite "agregar a pantalla de inicio" en iOS/Android #}
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 
@@ -735,8 +735,8 @@
 ══════════════════════════════════════════════════════════ #}
 <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-<script defer src="{{ url_for('static', filename='app.js') }}?v=20260526h"></script>
-<script defer src="{{ url_for('static', filename='ilus_ui.js') }}?v=20260521"></script>
+<script defer src="{{ url_for('static', filename='app.js') }}"></script>
+<script defer src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 
 {# ══════════════════════════════════════════════════════════
    Google Maps Places API — carga LAZY (on-demand).

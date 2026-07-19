@@ -614,7 +614,7 @@ const FORM_DATA = {
 
 {# ── Fotos: grid + subida AJAX comprimida + visor/editor profesional ── #}
 {% if product and permissions.edit %}
-<script defer src="{{ url_for('static', filename='foto_editor.js') }}?v=20260703b"></script>
+<script defer src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   window.ilusFotos.init({

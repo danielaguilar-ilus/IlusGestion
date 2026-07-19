@@ -1925,7 +1925,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   {# Helpers ILUS (ilusToast/ilusAlert/ilusConfirm) — regla #1 del CLAUDE.md #}
-  <script src="{{ url_for('static', filename='ilus_ui.js') }}?v=20260521"></script>
+  <script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
   {% if settings.alert_enabled and settings.alert_message %}<script>window.addEventListener('load',()=>new bootstrap.Modal(document.getElementById('pickupAlertModal')).show());</script>{% endif %}
 
 <script>
