@@ -329,11 +329,16 @@ if not _sk:
 app.secret_key = _sk
 
 # Cookie de sesión segura: HttpOnly + SameSite Lax + Secure (en producción HTTPS).
-# Railway pasa siempre HTTPS por el reverse proxy, así que activamos Secure ahí.
+# Producción real es Google Cloud Run (REGLA #12) — Cloud Run siempre inyecta
+# K_SERVICE/K_REVISION (ver uso idéntico arriba en _get_version_info/app_version).
+# RAILWAY_ENVIRONMENT se mantiene como fallback histórico (ya no aplica en prod,
+# pero no rompe nada dejarlo). FLASK_ENV nunca se setea hoy (ni Dockerfile ni
+# GitHub Actions), así que sin K_SERVICE la cookie quedaba sin Secure en prod.
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=bool(os.environ.get("RAILWAY_ENVIRONMENT") or
+    SESSION_COOKIE_SECURE=bool(os.environ.get("K_SERVICE") or
+                               os.environ.get("RAILWAY_ENVIRONMENT") or
                                os.environ.get("FLASK_ENV") == "production"),
     PERMANENT_SESSION_LIFETIME=60 * 60,  # 1 hora (idle-logout — se renueva en cada request activo)
     # ── PERF 2026-05-18 (audit Daniel) ─────────────────────────────
@@ -4318,10 +4323,18 @@ _rl_cleanup_started = False
 
 
 def _rl_client_ip():
-    """IP del cliente respetando X-Forwarded-For (Railway está detrás de proxy)."""
-    xff = request.headers.get("X-Forwarded-For", "")
-    if xff:
-        return xff.split(",")[0].strip()
+    """IP real del cliente, resistente a X-Forwarded-For falsificado.
+
+    FIX seguridad (peritaje C1): tomar el PRIMER valor de XFF es inseguro
+    -- ese valor lo escribe el cliente HTTP, no el proxy. En Cloud Run el
+    request pasa por el Google Front End, que APPEND-ea (no reemplaza) la
+    IP real al final de la cadena XFF antes de que ProxyFix la vea. Con
+    ProxyFix(x_for=1) (ver arriba, línea ~264) Werkzeug ya extrae ese
+    salto confiable (el más cercano al proxy real) y lo deja en
+    request.remote_addr -- por eso NO debemos volver a parsear el header
+    XFF nosotros mismos (eso reintroduciría el bypass: el atacante rota
+    XFF y "resetea" su identidad de rate-limit en cada intento).
+    """
     return request.remote_addr or "0.0.0.0"
 
 
@@ -4397,27 +4410,33 @@ def _rl_check(scope: str, max_attempts: int, window_seconds: int) -> bool:
     window_start = datetime.utcfromtimestamp(bucket_epoch)
 
     try:
-        conn = get_mysql()
-        try:
-            with conn.cursor() as cur:
-                # UPSERT atómico: si la tupla (scope,identifier,window_start)
-                # existe → +1, si no → insert con count=1.
-                cur.execute(
-                    "INSERT INTO app_rate_limits (scope, identifier, window_start, count) "
-                    "VALUES (%s, %s, %s, 1) "
-                    "ON DUPLICATE KEY UPDATE count = count + 1",
-                    (scope[:64], identifier, window_start)
-                )
-                # Releer el count actualizado
-                cur.execute(
-                    "SELECT count FROM app_rate_limits "
-                    "WHERE scope=%s AND identifier=%s AND window_start=%s",
-                    (scope[:64], identifier, window_start)
-                )
-                row = cur.fetchone()
-                conn.commit()
-        finally:
-            conn.close()
+        # FIX seguridad (peritaje C1/parte-b): antes usaba get_mysql() (conexión
+        # directa nueva por request, fuera del pool) — bajo un pico de intentos
+        # de login (justo el escenario que este limiter debe soportar) eso abre
+        # una conexión TCP nueva a MySQL por cada request en vez de reusar el
+        # pool, fugando conexiones. get_db() reusa la conexión pooleada del
+        # request (mismo patrón que el resto del código, ver get_db() línea
+        # ~1629). NO se llama conn.close() aquí — teardown_appcontext (línea
+        # ~5060) cierra/devuelve la conexión al pool al terminar el request
+        # (mismo patrón documentado en línea ~18300).
+        conn = get_db()
+        with conn.cursor() as cur:
+            # UPSERT atómico: si la tupla (scope,identifier,window_start)
+            # existe → +1, si no → insert con count=1.
+            cur.execute(
+                "INSERT INTO app_rate_limits (scope, identifier, window_start, count) "
+                "VALUES (%s, %s, %s, 1) "
+                "ON DUPLICATE KEY UPDATE count = count + 1",
+                (scope[:64], identifier, window_start)
+            )
+            # Releer el count actualizado
+            cur.execute(
+                "SELECT count FROM app_rate_limits "
+                "WHERE scope=%s AND identifier=%s AND window_start=%s",
+                (scope[:64], identifier, window_start)
+            )
+            row = cur.fetchone()
+            conn.commit()
         # row puede ser dict o tupla según el cursor — handle ambos
         if not row:
             return True
@@ -32921,6 +32940,107 @@ def _ot_evidencia_post_firma(vid, accion):
         print(f"[evidencia_post_firma] vid={vid}: {e}", flush=True)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# FIX seguridad 2026-07-19 (peritaje C2 — IDOR en Levantamiento):
+# Los endpoints de levantamiento (equipos descubiertos en terreno) solo
+# exigían @_mant_required (permiso genérico 'mantenciones', que CUALQUIER
+# rol 'tecnico' tiene) sin verificar que el levantamiento perteneciera a
+# la OT de ESE técnico — un técnico podía editar/eliminar equipos o fotos
+# de la OT de un colega adivinando IDs secuenciales.
+#
+# `_lev_puede_accion` reusa la MISMA matriz de permisos que ya gobierna
+# la OT espejo (`_puede_ot_accion`, línea ~32497): si el levantamiento
+# tiene `visita_id` (caso normal — la OT ya existe), la identidad se
+# valida ahí (superadmin siempre; admin/supervisor/ejecutivo en ventana
+# de corrección; técnico SOLO si es el asignado/colaborador de ESA OT).
+# Si el levantamiento aún no tiene OT espejo (creado "puro", sin
+# promover todavía), se cae a un candado más simple: superadmin/admin/
+# supervisor/ejecutivo, o el propio creador (`created_by`).
+# ══════════════════════════════════════════════════════════════════════
+def _lev_puede_accion(levantamiento_id, accion, user=None, lev_row=None):
+    """True si `user` puede tocar (ver/ejecutar) el levantamiento dado.
+
+    Args:
+      levantamiento_id: id de mant_levantamientos
+      accion: 'ver' (GET) o 'ejecutar' (PATCH/DELETE) — mismos nombres que
+              acepta `_puede_ot_accion`.
+      user:   dict de g.user o None (usa g.user actual)
+      lev_row: dict opcional ya cargado con al menos {visita_id, created_by}
+               — evita una query repetida si el caller ya hizo el SELECT.
+
+    Fail-closed: si el levantamiento no existe o hay error de BD, False.
+    """
+    if user is None:
+        user = getattr(g, "user", None) or {}
+    role_raw = (user.get("role") or "").lower()
+    role = _rol_familia(role_raw)
+
+    if role == "superadmin":
+        return True
+
+    lev = lev_row
+    if lev is None:
+        try:
+            lev = mysql_fetchone(
+                "SELECT visita_id, created_by FROM mant_levantamientos WHERE id=%s",
+                (levantamiento_id,)
+            )
+        except Exception as e:
+            print(f"[SECURITY] _lev_puede_accion BD error lid={levantamiento_id}: {e}", flush=True)
+            return False
+    if not lev:
+        return False  # el propio view devuelve 404 — aquí solo negamos
+
+    visita_id = lev.get("visita_id")
+    if visita_id:
+        # FIX 2026-07-19 (hallazgo de verificación post-fix C2): los propios
+        # endpoints de levantamiento documentan una regla MÁS AMPLIA que la
+        # matriz genérica de OT (Daniel 2026-07-06, endurecida 2026-07-08 —
+        # ver docstring de mant_lev_item_update/mant_lev_foto_del): "mientras
+        # la OT no esté firmada por el técnico, CUALQUIERA CON ACCESO puede
+        # corregir". Delegar 'ejecutar' tal cual a `_puede_ot_accion` habría
+        # sido una REGRESIÓN real: esa matriz, en estado de trabajo normal
+        # (antes de la firma del técnico), deniega a admin/supervisor/
+        # ejecutivo a propósito ("aunque un ejecutivo quede asignado por
+        # error, NO ejecuta físicamente") — correcto para tareas/fotos de la
+        # OT, pero NO para corregir un levantamiento, donde gestión siempre
+        # tuvo (y debe seguir teniendo) acceso.
+        # Por eso: gestión (admin/supervisor/ejecutivo) pasa siempre aquí —
+        # el candado de CUÁNDO (congelado tras la firma, incluso para
+        # superadmin) ya lo aplica `_LEV_ESTADOS_EDITABLES` en el propio
+        # endpoint, así que no se reabre ninguna brecha. El técnico sigue
+        # yendo por `_puede_ot_accion` sin cambios — ahí es donde vivía el
+        # IDOR real (técnico de OTRO colega adivinando IDs), y sigue cerrado.
+        if role in ("admin", "supervisor", "ejecutivo"):
+            return True
+        return _puede_ot_accion(visita_id, accion, user)
+
+    # Sin OT espejo todavía (levantamiento "puro" recién creado): solo
+    # gestión, o el propio creador.
+    if role in ("admin", "supervisor", "ejecutivo"):
+        return True
+    creador = (lev.get("created_by") or "").strip().lower()
+    uname = (user.get("username") or "").strip().lower()
+    unombre = (user.get("nombre") or "").strip().lower()
+    return bool(creador) and (creador == uname or (unombre and creador == unombre))
+
+
+def _lev_403_response(accion="ejecutar"):
+    """Helper común de 403 para los endpoints de levantamiento (mismo
+    estilo que `_ot_403_response`)."""
+    u = getattr(g, "user", None) or {}
+    print(
+        f"[SECURITY] {u.get('id')} ({u.get('username')}) intento {accion} "
+        f"sobre levantamiento sin permiso (role={u.get('role')}, path={request.path})",
+        flush=True
+    )
+    msg = ("No tienes permiso para modificar este levantamiento. "
+           "Solo el técnico asignado a la OT o el equipo de gestión pueden hacerlo.")
+    if accion == "ver":
+        msg = "No tienes permiso para ver este levantamiento."
+    return jsonify({"ok": False, "error": msg, "error_codigo": "LEV_SIN_PERMISO"}), 403
+
+
 def _ot_can_configurar(view_func):
     """Decorador para endpoints que ARMAN la OT antes/durante de la
     ejecución: aplicar plantilla, aplicar protocolo, agregar tareas
@@ -43014,8 +43134,8 @@ def mant_visita_multi(cid):
       fecha_programada: 'YYYY-MM-DD'
       motivo: str (mín 8 chars)
       estado_nuevo: 'critico'|'en_mantencion'|'operativo'  (se aplica a todos)
-      tecnico: str (opcional, nombre libre — DEPRECADO; usar tecnico_id)
-      tecnico_id: int (opcional, FK a mant_tecnicos)
+      tecnico: str (opcional, nombre libre — DEPRECADO; usar tecnico_ids)
+      tecnico_ids / tecnico_id: int|list[int] (opcional, FK a app_users.id, role='tecnico')
       titulo: str (opcional, generado si no viene)
       hora_inicio: 'HH:MM' (opcional)
       hora_fin: 'HH:MM' (opcional)
@@ -43073,17 +43193,22 @@ def mant_visita_multi(cid):
             pass
     tecnico_ids = list(dict.fromkeys(tecnico_ids))[:10]  # dedupe + máx 10
 
-    # Resolver nombres y tarifas desde la tabla. El campo `tecnico` (texto libre)
-    # se conserva por compatibilidad con visitas viejas — se usa nombre concatenado.
+    # FIX 1 (2026-07-19): resolver contra app_users (fuente de verdad desde
+    # 2026-05-13, ver mant_tecnicos_list_api app.py:~43305), NO contra la tabla
+    # legacy mant_tecnicos (congelada/desactualizada). Mismo patrón que
+    # mant_visita_crear (app.py:51841-51863) y el flujo de Levantamiento
+    # (app.py:66080-66352). app_users no tiene columna tarifa_visita -> se usa
+    # el default fijo $50.000 por técnico, igual que en esos dos hermanos.
     tecnicos_data = []
     if tecnico_ids:
         placeholders_t = ",".join(["%s"] * len(tecnico_ids))
         rows_t = mysql_fetchall(
-            f"SELECT id,nombre,tarifa_visita FROM mant_tecnicos WHERE id IN ({placeholders_t}) AND activo=1",
+            f"SELECT id, COALESCE(nombre, username) AS nombre FROM app_users "
+            f"WHERE id IN ({placeholders_t}) AND role='tecnico' AND active=1",
             tuple(tecnico_ids)
         ) or []
         tecnicos_data = [dict(r) for r in rows_t]
-    tecnico_id     = tecnicos_data[0]["id"]     if tecnicos_data else None
+    tecnico_user_id = tecnicos_data[0]["id"] if tecnicos_data else None
     tecnico_nombre = (
         ", ".join(t["nombre"] for t in tecnicos_data)
         if tecnicos_data
@@ -43106,10 +43231,10 @@ def mant_visita_multi(cid):
     except (TypeError, ValueError):
         costo = None
     if costo is None and tecnicos_data:
-        costo_auto = 0.0
-        for t in tecnicos_data:
-            tarifa = float(t.get("tarifa_visita") or 50000)
-            costo_auto += tarifa
+        # app_users no tiene tarifa_visita (esa columna era de mant_tecnicos) ->
+        # tarifa fija por técnico, mismo default usado como fallback en el
+        # resto del módulo (mant_visita_crear, Levantamiento).
+        costo_auto = 50000.0 * len(tecnicos_data)
         costo = costo_auto if costo_auto > 0 else None
 
     observaciones = (d.get("observaciones") or "").strip()[:1000] or None
@@ -43197,12 +43322,12 @@ def mant_visita_multi(cid):
                 cur.execute(
                     """INSERT INTO mant_visitas
                        (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
-                        tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
+                        tipo,estado,descripcion,observaciones,tecnico,tecnico_user_id,
                         costo,modalidad_cobro,cubierto_por,estado_facturacion,
                         created_by,created_by_user_id)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (numero_ot, cid, titulo, fecha_prog, hora_inicio, hora_fin,
-                     tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
+                     tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_user_id,
                      costo, mv_modalidad, mv_cubierto_por, mv_estado_factur,
                      current_username(), _cre_uid_mv)
                 )
@@ -43213,22 +43338,28 @@ def mant_visita_multi(cid):
                 cur.execute(
                     """INSERT INTO mant_visitas
                        (numero_ot,cliente_id,titulo,fecha_programada,hora_inicio,hora_fin,
-                        tipo,estado,descripcion,observaciones,tecnico,tecnico_id,
+                        tipo,estado,descripcion,observaciones,tecnico,tecnico_user_id,
                         costo,created_by)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s)""",
                     (numero_ot, cid, titulo, fecha_prog, hora_inicio, hora_fin,
-                     tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_id,
+                     tipo_visita, descripcion, observaciones, tecnico_nombre, tecnico_user_id,
                      costo, current_username())
                 )
             vid = cur.lastrowid
 
             # 1.b Insertar técnicos asignados (N:N) si hay
+            # Mismo patrón que el flujo de Levantamiento (app.py:66341-66352):
+            # tecnico_id legacy queda NULL, tecnico_user_id (FK app_users.id)
+            # es la fuente de verdad.
             if tecnicos_data:
                 for t in tecnicos_data:
                     cur.execute(
-                        """INSERT INTO mant_visita_tecnicos (visita_id, tecnico_id, costo)
-                           VALUES (%s, %s, %s)""",
-                        (vid, t["id"], float(t.get("tarifa_visita") or 50000))
+                        """INSERT INTO mant_visita_tecnicos
+                           (visita_id, tecnico_id, tecnico_user_id, rol, costo)
+                           VALUES (%s, NULL, %s, %s, %s)""",
+                        (vid, t["id"],
+                         'lider' if t["id"] == tecnico_user_id else 'tecnico',
+                         50000.0)
                     )
 
             # 1.c Insertar repuestos asociados a la visita
@@ -43930,8 +44061,15 @@ def mant_tecnico_externo_invitar(eid):
           </div>
         </div>
         """
-        _send_email_dinamico(row["contacto_email"], subject, html)
-        email_ok = True
+        # FIX seguridad (peritaje: correo de invitar técnico externo esquivaba
+        # el kill switch): antes usaba _send_email_dinamico (camino viejo, sin
+        # kill switch, sin email_log, sin parche anti-spam de From alineado).
+        # Ahora usa _send_ilus_email como el resto de los envíos del sistema
+        # (mismo patrón que mant_email_manual, línea ~65861) — mismo contenido
+        # HTML, solo cambia el transporte.
+        email_ok = _send_ilus_email(row["contacto_email"], subject, html,
+                                    evento="tecnico_externo_invitacion",
+                                    modulo="mantenciones")
     except Exception as ex:
         email_err = str(ex)[:140]
         print(f"[invitar_ext] envío email falló: {email_err}", flush=True)
@@ -44424,6 +44562,7 @@ def mant_sucursales_list(cid):
 
 @app.route("/mantenciones/api/clientes/<int:cid>/sucursales", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_sucursal_add(cid):
     d = request.get_json(silent=True) or {}
     nombre = (d.get("nombre") or "").strip()[:200]
@@ -44481,6 +44620,7 @@ def mant_sucursal_add(cid):
 
 @app.route("/mantenciones/api/sucursales/<int:sid>", methods=["PUT"])
 @_mant_required
+@_no_tecnico
 def mant_sucursal_update(sid):
     d = request.get_json(silent=True) or {}
     fields = ["nombre","direccion","comuna","ciudad","region",
@@ -44540,6 +44680,7 @@ def mant_sucursal_update(sid):
 
 @app.route("/mantenciones/api/sucursales/<int:sid>/marcar-principal", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_sucursal_marcar_principal(sid):
     """Marca una sucursal como principal (desmarca cualquier otra del mismo cliente)."""
     row = mysql_fetchone(
@@ -44568,6 +44709,7 @@ def mant_sucursal_marcar_principal(sid):
 
 @app.route("/mantenciones/api/sucursales/<int:sid>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico
 def mant_sucursal_del(sid):
     """Soft delete: marca activo=0 para preservar histórico."""
     suc_info = mysql_fetchone("SELECT cliente_id, nombre FROM mant_sucursales WHERE id=%s", (sid,))
@@ -64823,6 +64965,7 @@ def mant_repuesto_update(rid):
 
 @app.route("/mantenciones/api/repuestos/<int:rid>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico
 def mant_repuesto_del(rid):
     conn = get_mysql()
     try:
@@ -64982,13 +65125,19 @@ def mant_repuesto_solicitar():
                 print(f"[mant_repuesto_solicitar] no se pudo revertir ticket {ticket_id}: {e_rb}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo crear el repuesto"}), 500
 
-        tk = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (ticket_id,))
-        _mant_log("repuesto", repuesto_id, "solicitar", f"{nombre} -> ticket {tk.get('numero_ticket') if tk else ticket_id}")
+        # FIX 2 (2026-07-19): mismo fix de fondo que tk_api_cotizacion_generar_ticket
+        # (tickets_module.py) -- NO releer numero_ticket por el pool (mysql_fetchone)
+        # despues de un commit hecho en otra conexion (conn de arriba, ya cerrada):
+        # el pool por-request usa REPEATABLE READ y puede devolver NULL aunque el
+        # UPDATE ya este comprometido. El numero es deterministico -> se arma en
+        # Python, mismo formato que el UPDATE de la linea de arriba.
+        numero_ticket = f"TK-{_chile_now_year()}-{ticket_id:05d}"
+        _mant_log("repuesto", repuesto_id, "solicitar", f"{nombre} -> ticket {numero_ticket}")
         return jsonify({
             "ok": True,
             "repuesto_id": repuesto_id,
             "ticket_id": ticket_id,
-            "numero_ticket": tk.get("numero_ticket") if tk else None,
+            "numero_ticket": numero_ticket,
         })
     except Exception as e:
         print(f"[mant_repuesto_solicitar] CRASH: {e}", flush=True)
@@ -65686,6 +65835,7 @@ def mant_cliente_documento_subir(cid):
 
 @app.route("/mantenciones/api/documentos/<kind>/<int:did>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico
 def mant_documento_del(kind, did):
     if kind == "adjunto":
         adj = mysql_fetchone(
@@ -66733,6 +66883,13 @@ def mant_lev_detalle(lid):
     if not lev:
         return jsonify({"ok": False, "error": "Levantamiento no encontrado"}), 404
 
+    # FIX seguridad (peritaje C2 — IDOR): antes solo @_mant_required (permiso
+    # genérico) dejaba a cualquier técnico ver/editar/cancelar el levantamiento
+    # de un colega adivinando el id. Ver `_lev_puede_accion` línea ~32943.
+    _accion_lev = "ver" if request.method == "GET" else "ejecutar"
+    if not _lev_puede_accion(lid, _accion_lev, lev_row=lev):
+        return _lev_403_response(_accion_lev)
+
     if request.method == "DELETE":
         if lev["estado"] == "cerrado":
             return jsonify({"ok": False, "error": "No se puede eliminar un levantamiento cerrado"}), 400
@@ -67007,6 +67164,12 @@ def mant_lev_item_update(iid):
     if not item:
         return jsonify({"ok": False, "error": "Item no encontrado"}), 404
 
+    # FIX seguridad (peritaje C2 — IDOR): antes solo @_mant_required dejaba a
+    # cualquier técnico editar/eliminar equipos descubiertos por OTRO técnico
+    # en su propia OT, adivinando el id. Ver `_lev_puede_accion` línea ~32943.
+    if not _lev_puede_accion(item["levantamiento_id"], "ejecutar"):
+        return _lev_403_response("ejecutar")
+
     v = mysql_fetchone(
         "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",
         (item["levantamiento_id"],)
@@ -67270,6 +67433,12 @@ def mant_lev_foto_del(fid):
     )
     if not foto:
         return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
+
+    # FIX seguridad (peritaje C2 — IDOR): antes solo @_mant_required dejaba a
+    # cualquier técnico borrar evidencia fotográfica de la OT de OTRO técnico
+    # adivinando el id. Ver `_lev_puede_accion` línea ~32943.
+    if not _lev_puede_accion(foto["levantamiento_id"], "ejecutar"):
+        return _lev_403_response("ejecutar")
 
     v = mysql_fetchone(
         "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",

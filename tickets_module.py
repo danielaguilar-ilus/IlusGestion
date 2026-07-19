@@ -2308,8 +2308,13 @@ def register_tickets_routes(app, ctx):
         finally:
             conn.close()
 
-        numero_row = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (tid,))
-        numero = numero_row["numero_ticket"] if numero_row else None
+        # FIX 2 (2026-07-19): mismo fix de fondo que tk_api_cotizacion_generar_ticket
+        # (linea ~1970) -- NO releer numero_ticket por el pool (mysql_fetchone)
+        # despues de un commit hecho en otra conexion (conn de arriba, ya cerrada):
+        # esa conexion pooleada por-request usa REPEATABLE READ y puede devolver
+        # NULL aunque el UPDATE ya este comprometido. El numero es deterministico
+        # (mismo id/anio que el UPDATE de arriba) -> se arma en Python, sin releer.
+        numero = f"TK-{_chile_now_year()}-{tid:05d}"
         _tk_log(tid, "creacion",
                 f"Ticket {numero} creado por {user}"
                 + (f" — tipo: {TIPO_LABEL.get(tipo, tipo)}" if tipo else "")
@@ -5677,9 +5682,14 @@ def register_tickets_routes(app, ctx):
         return True
 
     def _ip_cliente():
-        # Cloud Run va detras de un proxy -- X-Forwarded-For trae la IP real.
-        xff = request.headers.get("X-Forwarded-For", "")
-        return (xff.split(",")[0].strip() if xff else request.remote_addr) or "desconocida"
+        # FIX seguridad (peritaje C1): NO releer X-Forwarded-For a mano --
+        # el primer valor lo escribe el cliente HTTP y un atacante lo rota
+        # en cada request para evadir el rate-limit. app.py ya envuelve
+        # app.wsgi_app con ProxyFix(x_for=1) (ver app.py ~línea 264), que
+        # resuelve el salto confiable (el que agrega el proxy real de Cloud
+        # Run) y lo deja en request.remote_addr -- ese es el único valor
+        # confiable, aquí y en cualquier otro punto del código.
+        return request.remote_addr or "desconocida"
 
     def _tk_upload_key():
         k = app.secret_key
