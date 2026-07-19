@@ -5487,8 +5487,12 @@ function tkdayRenderMine(){
   // marco punteado + fondo translúcido siguen marcando la geometría.
   const nTec = _TKOT.tecnicosSel.size;
   const rangoTxt = (hi || '--') + (hf && !g.sinFin ? '–' + hf : '');
-  mine.innerHTML = '<span class="mine-tag">Tu OT · ' + esc(rangoTxt)
-    + ' · ' + nTec + (nTec === 1 ? ' técnico' : ' técnicos') + '</span>'
+  // Con 0 técnicos NO se escribe "· 0 técnicos" (leía como error alarmante en
+  // rojo): los técnicos se asignan en el Paso 4, así que se muestra una guía
+  // neutra. Con >=1 se muestra el conteo (feedback en vivo al asignar).
+  const tecTxt = nTec === 0 ? ' · asigna técnico en el paso 4'
+                            : ' · ' + nTec + (nTec === 1 ? ' técnico' : ' técnicos');
+  mine.innerHTML = '<span class="mine-tag">Tu OT · ' + esc(rangoTxt) + tecTxt + '</span>'
     + '<div class="mine-body"></div>';
   _tkdayGhostSync();
 }
