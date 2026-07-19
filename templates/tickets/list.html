@@ -399,7 +399,7 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 <div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 
 <!-- ══════════════ MODAL: Nuevo Ticket ══════════════ -->
-<div class="modal fade" id="ntModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="ntModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;">
@@ -1177,7 +1177,25 @@ function ntSelCliente(c){
   if((c.rut||'').trim()) marcarNtOk('fRutWrap');
   if((c.empresa||'').trim()) marcarNtOk('fEmpresaWrap');
   document.querySelector('#ntBuscarCliWrap .nt-search').classList.add('has-tag');
+  // 2026-07-19 (Daniel): si el RUT ya tiene ficha en Clientes, precarga el
+  // contacto conocido -- SOLO en campos vacios (si el usuario ya tipeo algo
+  // en Contacto/Telefono/Correo, no se pisa).
   if(c.ya_es_cliente){
+    const ntContactoEl = document.getElementById('ntContacto');
+    const ntPhoneEl = document.getElementById('ntPhone');
+    const ntEmailEl = document.getElementById('ntEmail');
+    if(c.contacto_nombre && !ntContactoEl.value.trim()){
+      ntContactoEl.value = c.contacto_nombre;
+      limpiarNtErr('fContactoWrap'); marcarNtOk('fContactoWrap');
+    }
+    if(c.contacto_tel && !ntPhoneEl.value.trim()){
+      ntPhoneEl.value = c.contacto_tel;
+      ntPhoneEl.dispatchEvent(new Event('blur'));
+    }
+    if(c.contacto_email && !ntEmailEl.value.trim()){
+      ntEmailEl.value = c.contacto_email;
+      ntEmailEl.dispatchEvent(new Event('blur'));
+    }
     ilusToast('Este RUT ya tiene ficha en el módulo Clientes' + (c.cliente_id ? ' (#'+c.cliente_id+')' : '') + '.', {type:'info'});
   }
 }

@@ -368,12 +368,13 @@
 .dia-badge.completada{background:#dcfce7;color:#166534;}
 .dia-badge.cancelada{background:#f3f4f6;color:#4b5563;}
 .dia-card-prog{font-size:.72rem;color:#6b7280;margin-top:5px;}
-.dia-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px;}
+.dia-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px;}
 .dia-act{
   border:1px solid #e5e7eb;background:#fff;border-radius:8px;
   padding:6px 11px;font-size:.78rem;font-weight:700;cursor:pointer;
   display:inline-flex;align-items:center;gap:5px;transition:all .12s;
   color:#374151;text-decoration:none;
+  min-height:44px;
 }
 .dia-act:hover{background:#f9fafb;border-color:#cbd5e1;}
 .dia-act i{font-size:.85rem;}
@@ -1633,6 +1634,9 @@ async function guardarVisita(){
     descripcion: document.getElementById('vi_descripcion').value.trim(),
     costo:       parseFloat(document.getElementById('vi_costo').value || 0) || 0,
   };
+  const btn = document.getElementById('btnGuardarVisita');
+  const original = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…'; }
   try {
     const url = vid ? `/mantenciones/api/visitas/${vid}` : '/mantenciones/api/visitas';
     const method = vid ? 'PUT' : 'POST';
@@ -1642,10 +1646,11 @@ async function guardarVisita(){
       if (window.ilusToast) ilusToast('Error: ' + (d.error || 'no se pudo guardar'), { type:'error' });
       return;
     }
-    if (window.ilusToast) ilusToast(vid ? 'Visita actualizada' : 'Visita creada', { type:'success' });
+    if (window.ilusToast) ilusToast(vid ? '✓ Visita actualizada' : '✓ Visita creada', { type:'success' });
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
     cargarEventos();
   } catch(e){ if (window.ilusToast) ilusToast('Error de red: '+e.message, { type:'error' }); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = original; } }
 }
 
 async function eliminarVisita(){
@@ -1656,16 +1661,20 @@ async function eliminarVisita(){
     sub:'Esta acción no se puede deshacer.', danger:true, okLabel:'Eliminar',
   });
   if (!ok) return;
+  const btn = document.getElementById('btnEliminarVisita');
+  const original = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Eliminando…'; }
   try {
     const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok){
       ilusToast('Error: '+(d.error||'no se pudo eliminar'), { type:'error' }); return;
     }
-    ilusToast('Visita eliminada', { type:'success' });
+    ilusToast('✓ Visita eliminada', { type:'success' });
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
     cargarEventos();
   } catch(e){ ilusToast('Error de red: '+e.message, { type:'error' }); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = original; } }
 }
 
 function exportarVisitas(){

@@ -3824,7 +3824,7 @@ async function confirmarVisitaMulti() {
           <button class="btn btn-outline-success" onclick="repEnviarEmail()" id="btnRepEnviar" disabled>
             <i class="bi bi-envelope-paper me-1"></i>Enviar email
           </button>
-          <button class="btn btn-ilus fw-bold" onclick="repGuardar()">
+          <button class="btn btn-ilus fw-bold" id="btnRepGuardar" onclick="repGuardar()">
             <i class="bi bi-floppy me-1"></i>Guardar informe
           </button>
         </div>
@@ -8227,7 +8227,7 @@ async function vhGuardar(){
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus fw-bold px-4" onclick="guardarCliente()">
+        <button type="button" class="btn btn-ilus fw-bold px-4" id="btnGuardarCliente" onclick="guardarCliente()">
           <i class="bi bi-floppy me-1"></i>Guardar
         </button>
       </div>
@@ -9824,7 +9824,7 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610c"></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610c" defer></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico

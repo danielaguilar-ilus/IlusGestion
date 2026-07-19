@@ -4253,10 +4253,27 @@ async function rpCargarPlantillas(){
     }
     menu.innerHTML = html;
     menu.querySelectorAll('a.rp-pl-nombre').forEach(function(a){
-      a.addEventListener('click', function(ev){
+      a.addEventListener('click', async function(ev){
         ev.preventDefault();
         const p = pls.find(function(x){ return String(x.id) === a.dataset.pid; });
-        if (p) rpQuill.clipboard.dangerouslyPasteHTML(p.cuerpo || '');
+        if (p){
+          // 2026-07-19 (Daniel): la plantilla no debe pisar en silencio lo que
+          // el usuario ya escribió en el composer -- si el editor tiene texto,
+          // confirmar antes de reemplazar; si está vacío, pegar directo (igual
+          // que antes).
+          const yaHayTexto = (rpQuill.getText() || '').trim().length > 0;
+          if (yaHayTexto){
+            const reemplazar = await ilusConfirm({
+              title: 'Reemplazar texto',
+              message: '¿Reemplazar el texto actual con la plantilla?',
+              sub: 'Se perderá lo que ya escribiste en el mensaje.',
+              okLabel: 'Reemplazar', cancelLabel: 'Cancelar',
+            });
+            if (!reemplazar){ rpPlantillaCerrarDropdown(); return; }
+            rpQuill.setText('');
+          }
+          rpQuill.clipboard.dangerouslyPasteHTML(p.cuerpo || '');
+        }
         rpPlantillaCerrarDropdown();
       });
     });
@@ -4413,17 +4430,17 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
 // "instalación sin ficha" (cliente sin mant_clientes -> se preseleccionan
 // TODOS los equipos del ticket, bloqueados).
 //
-// NOTA IMPORTANTE (alcance de esta tarea = SOLO frontend): el submit
-// sigue apuntando a POST /tickets/api/tickets/<TID>/generar-ot, que HOY
-// (tickets_module.py ~línea 2210) espera un contrato viejo (cliente_id,
-// maquina_ids[], tecnico_user_id ÚNICO, tipo_visita). El payload que arma
-// tkotGenerar() de abajo ya sigue el contrato NUEVO descrito para ese
-// endpoint (arreglo de equipos con maquina_id O datos crudos del ticket,
-// tecnico_ids[] plural, dirección/contacto/acceso/plantillas, etc.) --
-// el backend todavía NO fue adaptado a este contrato (es trabajo aparte,
-// ver "riesgos_abiertos" del contrato). Hasta que se adapte el backend,
-// el submit devolverá error 400 (campos que el backend viejo no reconoce
-// o no encuentra) — es el comportamiento esperado mientras tanto.
+// NOTA (actualizada 2026-07-19 -- Daniel: el comentario anterior quedó
+// obsoleto): el submit apunta a POST /tickets/api/tickets/<TID>/generar-ot
+// (tickets_module.py, endpoint tk_api_generar_ot ~línea 3724), que YA está
+// adaptado al contrato NUEVO que arma tkotGenerar() -- acepta tecnico_ids[]
+// plural (o tecnico_user_id como compat), resuelve cliente_id por RUT del
+// ticket (creando una ficha mínima en mant_clientes si aún no existe),
+// tipo_ot/aplica_garantia/descubrimiento, notas/título con defaults desde
+// el propio ticket, etc. Ya está en producción: hay tickets con estado
+// "OT GENERADA" creados por este flujo. Si a futuro se detecta un campo
+// del payload que el backend no reconoce, es una brecha puntual a
+// reportar -- no asumir que el endpoint completo sigue sin adaptar.
 // ════════════════════════════════════════════════════════════
 
 const _TKOT = {
@@ -6163,7 +6180,13 @@ function tkotRenderEquipos(){
       + '<td><strong>'+esc(nombre)+'</strong>'
       + (sinFicha ? ' <span style="font-size:.63rem;color:#9ca3af;margin-left:5px;font-weight:400">(sin ficha aún)</span>' : '')
       + (e.sku ? '<div class="small text-muted">'+esc(e.sku)+'</div>' : '')
-      + (e.serie ? '<div class="small text-muted">S/N: '+esc(e.serie)+'</div>' : '') + '</td>'
+      + (e.serie ? '<div class="small text-muted">S/N: '+esc(e.serie)+'</div>' : '')
+      // 2026-07-19 (Daniel): la OT hereda el contexto del ticket -- observacion
+      // por equipo (e.notas, ya viaja en memoria via equiposCache) como linea
+      // secundaria, mismo patron/clase que la tabla de equipos de la ficha
+      // (ver eq-name-sub ~linea 3119).
+      + (e.notas ? '<div class="eq-name-sub text-truncate" style="max-width:220px" title="'+esc(e.notas)+'">'+esc(e.notas)+'</div>' : '')
+      + '</td>'
       + '<td onclick="event.stopPropagation()">'
       + (forzado
           ? '<span class="small text-muted"><i class="bi bi-lock me-1"></i>incluido completo</span>'
@@ -6421,7 +6444,13 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   tkotModoSet('equipos');
   tkotTipoChange();
 
-  document.getElementById('levSelectNotas').value = '';
+  // 2026-07-19 (Daniel): la OT hereda el contexto del ticket -- si Notas
+  // está vacío, precargar con la descripción del ticket (no se pisa si ya
+  // hay algo tipeado, ej. reabrir el modal tras editar a mano).
+  const levSelectNotasEl = document.getElementById('levSelectNotas');
+  if(!levSelectNotasEl.value.trim()){
+    levSelectNotasEl.value = (ticketActual || {}).descripcion || '';
+  }
 
   // Dirección: default = la del ticket (jobsite real), no la del cliente.
   const dirInput = document.getElementById('levDireccion');

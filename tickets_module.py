@@ -4884,8 +4884,14 @@ def register_tickets_routes(app, ctx):
         clientes_existentes = {}
         if ruts_erp:
             placeholders = ",".join(["%s"] * len(ruts_erp))
+            # 2026-07-19 (Daniel): el badge "Ya es cliente" consultaba la ficha
+            # pero descartaba el contacto -- se agregan las columnas REALES de
+            # mant_clientes (verificadas contra el CREATE TABLE: contacto_nombre/
+            # contacto_tel/contacto_email, no "telefono"/"email" a secas) para
+            # poder precargar el modal Nuevo Ticket con el contacto ya conocido.
             filas_cli = mysql_fetchall(
-                f"SELECT id, rut, razon_social FROM mant_clientes WHERE rut IN ({placeholders})",
+                f"SELECT id, rut, razon_social, contacto_nombre, contacto_tel, contacto_email "
+                f"FROM mant_clientes WHERE rut IN ({placeholders})",
                 tuple(ruts_erp)) or []
             for fc in filas_cli:
                 clientes_existentes[(fc.get("rut") or "").strip()] = fc
@@ -4909,6 +4915,9 @@ def register_tickets_routes(app, ctx):
                 "comuna": comuna,
                 "ya_es_cliente": bool(cli_existente),
                 "cliente_id": cli_existente.get("id") if cli_existente else None,
+                "contacto_nombre": (cli_existente.get("contacto_nombre") or "").strip() if cli_existente else "",
+                "contacto_tel": (cli_existente.get("contacto_tel") or "").strip() if cli_existente else "",
+                "contacto_email": (cli_existente.get("contacto_email") or "").strip() if cli_existente else "",
             })
         return jsonify({"ok": True, "resultados": resultados})
 

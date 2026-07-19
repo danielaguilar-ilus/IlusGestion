@@ -5403,14 +5403,23 @@ async function guardarCliente() {
     if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Razón social requerida'});
     return;
   }
-  const r = await fetch(`/mantenciones/api/clientes/${CID}`, {
-    method: 'PUT',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(data)
-  });
-  if (r.ok) { location.reload(); }
-  else {
-    if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Error al guardar'});
+  const btn = document.getElementById('btnGuardarCliente');
+  const original = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…'; }
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}`, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    if (r.ok) { location.reload(); }
+    else {
+      if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Error al guardar'});
+    }
+  } catch (e) {
+    ilusToast('Error de red al guardar el cliente. Intenta de nuevo.', { type:'error' });
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = original; }
   }
 }
 
@@ -11373,22 +11382,36 @@ async function repGuardar(silencioso=false) {
   const rid = document.getElementById('repId').value;
   let url = `/mantenciones/api/clientes/${CID}/reportes`, method = 'POST';
   if (rid) { url = `/mantenciones/api/reportes/${rid}`; method = 'PUT'; }
-  const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
-  const resp = await r.json();
-  if (resp.ok) {
-    if (resp.id) {
-      _repCurrentId = resp.id;
-      document.getElementById('repId').value = resp.id;
-      document.getElementById('btnRepIA').style.display = '';
+  // Solo mostramos disable+spinner en el botón "Guardar informe" cuando el
+  // guardado es el explícito del usuario -- las llamadas silenciosas
+  // (repGuardar(true)) ocurren antes de otras acciones (subir foto, IA,
+  // enviar email) que ya manejan su propio botón/spinner.
+  const btn = silencioso ? null : document.getElementById('btnRepGuardar');
+  const original = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…'; }
+  try {
+    const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+    const resp = await r.json();
+    if (resp.ok) {
+      if (resp.id) {
+        _repCurrentId = resp.id;
+        document.getElementById('repId').value = resp.id;
+        document.getElementById('btnRepIA').style.display = '';
+      }
+      if (!silencioso) {
+        _invalidarReportes(); cargarReportes(true);
+        bootstrap.Modal.getInstance(document.getElementById('modalReporte'))?.hide();
+      }
+    } else {
+      ilusToast('Error guardando: ' + (resp.error||'desconocido'), { type:'error' });
     }
-    if (!silencioso) {
-      _invalidarReportes(); cargarReportes(true);
-      bootstrap.Modal.getInstance(document.getElementById('modalReporte'))?.hide();
-    }
-  } else {
-    ilusToast('Error guardando: ' + (resp.error||'desconocido'), { type:'error' });
+    return resp;
+  } catch (e) {
+    ilusToast('Error de red al guardar el informe. Intenta de nuevo.', { type:'error' });
+    return { ok:false, error:'red' };
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = original; }
   }
-  return resp;
 }
 
 /* ── Generar informe DESDE una OT: autollena ticket+OT+cliente+equipos+trabajos ── */
