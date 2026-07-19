@@ -10247,6 +10247,31 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
 .tkday-blk.mine.choque .mine-tag::before{content:'⚠ ';}
 @media (prefers-reduced-motion:reduce){ .tkday-blk.mine.choque{animation:none;} }
 
+/* ── "Tu OT" premium 2026: tarjeta de agendamiento viva (Fable 2026-07-19) ──
+   Cristal esmerilado: el backdrop-blur difumina suave las OT reales que
+   queden debajo → resuelve de raíz el viejo texto superpuesto, sin vaciar
+   el cuerpo. Muestra rango, DURACIÓN calculada y estado de técnico. Conserva
+   TODOS los estados previos (choque gana por especificidad; flash por id). */
+.tkday-blk.mine{
+  background:linear-gradient(158deg,rgba(220,38,38,.14) 0%,rgba(220,38,38,.05) 100%);
+  border-left-width:3px;border-radius:12px;
+  -webkit-backdrop-filter:blur(1.5px) saturate(1.04);backdrop-filter:blur(1.5px) saturate(1.04);
+  box-shadow:0 10px 22px -8px rgba(220,38,38,.42), inset 0 1px 0 rgba(255,255,255,.55);}
+.tkday-blk.mine .mine-tag{display:inline-flex;align-items:center;gap:3px;
+  background:linear-gradient(135deg,#ff3b3b,#dc2626);box-shadow:0 2px 6px rgba(220,38,38,.45);}
+.tkday-blk.mine .mine-body{position:relative;display:flex;flex-direction:column;
+  justify-content:center;gap:2px;padding:1px 9px;pointer-events:none;}
+.tkday-blk.mine .mine-wm{position:absolute;right:6px;bottom:-4px;font-size:2.3rem;line-height:1;
+  color:var(--ilus-red);opacity:.07;pointer-events:none;}
+.tkday-blk.mine .mine-dur{display:flex;align-items:center;gap:5px;font-size:.75rem;font-weight:800;
+  color:#b91c1c;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(255,255,255,.65);}
+.tkday-blk.mine .mine-dur i{font-size:.72rem;opacity:.85;}
+.tkday-blk.mine .mine-tec{display:flex;align-items:center;gap:4px;font-size:.67rem;font-weight:700;
+  color:#7f1d1d;text-shadow:0 1px 2px rgba(255,255,255,.65);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tkday-blk.mine .mine-tec.pendiente{color:#9a6a1f;}
+.tkday-blk.mine .mine-tec i{font-size:.66rem;flex-shrink:0;}
+.tkday-blk.mine.choque{-webkit-backdrop-filter:none;backdrop-filter:none;}
+
 /* ── Estados vacíos (el lienzo con su rejilla NUNCA se oculta) ── */
 .tkday-ghost{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:none;z-index:1;}
 .tkday-ghost > i{font-size:1.35rem;}

@@ -852,6 +852,31 @@
 .tkday-blk.mine.choque .mine-tag::before{content:'⚠ ';}
 @media (prefers-reduced-motion:reduce){ .tkday-blk.mine.choque{animation:none;} }
 
+/* ── "Tu OT" premium 2026: tarjeta de agendamiento viva (Fable 2026-07-19) ──
+   Cristal esmerilado: el backdrop-blur difumina suave las OT reales que
+   queden debajo → resuelve de raíz el viejo texto superpuesto, sin vaciar
+   el cuerpo. Muestra rango, DURACIÓN calculada y estado de técnico. Conserva
+   TODOS los estados previos (choque gana por especificidad; flash por id). */
+.tkday-blk.mine{
+  background:linear-gradient(158deg,rgba(220,38,38,.14) 0%,rgba(220,38,38,.05) 100%);
+  border-left-width:3px;border-radius:12px;
+  -webkit-backdrop-filter:blur(1.5px) saturate(1.04);backdrop-filter:blur(1.5px) saturate(1.04);
+  box-shadow:0 10px 22px -8px rgba(220,38,38,.42), inset 0 1px 0 rgba(255,255,255,.55);}
+.tkday-blk.mine .mine-tag{display:inline-flex;align-items:center;gap:3px;
+  background:linear-gradient(135deg,#ff3b3b,#dc2626);box-shadow:0 2px 6px rgba(220,38,38,.45);}
+.tkday-blk.mine .mine-body{position:relative;display:flex;flex-direction:column;
+  justify-content:center;gap:2px;padding:1px 9px;pointer-events:none;}
+.tkday-blk.mine .mine-wm{position:absolute;right:6px;bottom:-4px;font-size:2.3rem;line-height:1;
+  color:var(--ilus-red);opacity:.07;pointer-events:none;}
+.tkday-blk.mine .mine-dur{display:flex;align-items:center;gap:5px;font-size:.75rem;font-weight:800;
+  color:#b91c1c;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(255,255,255,.65);}
+.tkday-blk.mine .mine-dur i{font-size:.72rem;opacity:.85;}
+.tkday-blk.mine .mine-tec{display:flex;align-items:center;gap:4px;font-size:.67rem;font-weight:700;
+  color:#7f1d1d;text-shadow:0 1px 2px rgba(255,255,255,.65);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tkday-blk.mine .mine-tec.pendiente{color:#9a6a1f;}
+.tkday-blk.mine .mine-tec i{font-size:.66rem;flex-shrink:0;}
+.tkday-blk.mine.choque{-webkit-backdrop-filter:none;backdrop-filter:none;}
+
 /* ── Estados vacíos (el lienzo con su rejilla NUNCA se oculta) ── */
 .tkday-ghost{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:none;z-index:1;}
 .tkday-ghost > i{font-size:1.35rem;}
@@ -5487,13 +5512,29 @@ function tkdayRenderMine(){
   // marco punteado + fondo translúcido siguen marcando la geometría.
   const nTec = _TKOT.tecnicosSel.size;
   const rangoTxt = (hi || '--') + (hf && !g.sinFin ? '–' + hf : '');
-  // Con 0 técnicos NO se escribe "· 0 técnicos" (leía como error alarmante en
-  // rojo): los técnicos se asignan en el Paso 4, así que se muestra una guía
-  // neutra. Con >=1 se muestra el conteo (feedback en vivo al asignar).
-  const tecTxt = nTec === 0 ? ' · asigna técnico en el paso 4'
-                            : ' · ' + nTec + (nTec === 1 ? ' técnico' : ' técnicos');
-  mine.innerHTML = '<span class="mine-tag">Tu OT · ' + esc(rangoTxt) + tecTxt + '</span>'
-    + '<div class="mine-body"></div>';
+  // Tarjeta viva (Fable 2026-07-19): la píldora lleva la identidad + rango
+  // (siempre visible aun en bloques cortos); el cuerpo muestra la DURACIÓN
+  // calculada y el estado de técnico, con densidad según la altura del bloque.
+  let _dmin = 0;
+  if(!g.sinFin && hi && hf && hi.indexOf(':') > 0 && hf.indexOf(':') > 0){
+    const _pa = hi.split(':'), _pb = hf.split(':');
+    _dmin = (parseInt(_pb[0],10)*60 + parseInt(_pb[1],10)) - (parseInt(_pa[0],10)*60 + parseInt(_pa[1],10));
+  }
+  let _durTxt = '';
+  if(_dmin > 0){ const _h = Math.floor(_dmin/60), _m = _dmin % 60;
+    _durTxt = (_h ? _h + ' h' : '') + (_h && _m ? ' ' : '') + (_m ? _m + ' min' : ''); }
+  // 0 técnicos: guía neutra (se asignan en el Paso 4), no un "0" alarmante.
+  const _tecPend = nTec === 0;
+  const _tecTxt = _tecPend ? 'Asigna técnico en el paso 4' : (nTec + (nTec === 1 ? ' técnico' : ' técnicos'));
+  const _tecIco = _tecPend ? 'bi-person-plus' : 'bi-person-check-fill';
+  const _durLine = _durTxt ? '<div class="mine-dur"><i class="bi bi-clock-history"></i>' + esc(_durTxt) + '</div>' : '';
+  const _tecLine = '<div class="mine-tec' + (_tecPend ? ' pendiente' : '') + '"><i class="bi ' + _tecIco + '"></i>' + esc(_tecTxt) + '</div>';
+  const _H = g.height || 0;
+  let _body = '';
+  if(_H >= 48){ _body = '<i class="bi bi-calendar2-check mine-wm" aria-hidden="true"></i>' + _durLine + _tecLine; }
+  else if(_H >= 28){ _body = _tecLine; }
+  mine.innerHTML = '<span class="mine-tag"><i class="bi bi-geo-alt-fill" style="font-size:.5rem"></i>Tu OT · ' + esc(rangoTxt) + '</span>'
+    + '<div class="mine-body">' + _body + '</div>';
   _tkdayGhostSync();
 }
 

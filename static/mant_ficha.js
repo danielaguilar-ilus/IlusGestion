@@ -2539,13 +2539,29 @@ function tkdayRenderMine(){
   // marco punteado + fondo translúcido siguen marcando la geometría.
   const nTec = _LEV_MODAL.tecnicos_seleccionados.size;
   const rangoTxt = (hi || '--') + (hf && !g.sinFin ? '–' + hf : '');
-  // Con 0 técnicos NO se escribe "· 0 técnicos" (leía como error alarmante en
-  // rojo): los técnicos se asignan en el Paso 4, así que se muestra una guía
-  // neutra. Con >=1 se muestra el conteo (feedback en vivo al asignar).
-  const tecTxt = nTec === 0 ? ' · asigna técnico en el paso 4'
-                            : ' · ' + nTec + (nTec === 1 ? ' técnico' : ' técnicos');
-  mine.innerHTML = '<span class="mine-tag">Tu OT · ' + esc(rangoTxt) + tecTxt + '</span>'
-    + '<div class="mine-body"></div>';
+  // Tarjeta viva (Fable 2026-07-19): la píldora lleva la identidad + rango
+  // (siempre visible aun en bloques cortos); el cuerpo muestra la DURACIÓN
+  // calculada y el estado de técnico, con densidad según la altura del bloque.
+  let _dmin = 0;
+  if(!g.sinFin && hi && hf && hi.indexOf(':') > 0 && hf.indexOf(':') > 0){
+    const _pa = hi.split(':'), _pb = hf.split(':');
+    _dmin = (parseInt(_pb[0],10)*60 + parseInt(_pb[1],10)) - (parseInt(_pa[0],10)*60 + parseInt(_pa[1],10));
+  }
+  let _durTxt = '';
+  if(_dmin > 0){ const _h = Math.floor(_dmin/60), _m = _dmin % 60;
+    _durTxt = (_h ? _h + ' h' : '') + (_h && _m ? ' ' : '') + (_m ? _m + ' min' : ''); }
+  // 0 técnicos: guía neutra (se asignan en el Paso 4), no un "0" alarmante.
+  const _tecPend = nTec === 0;
+  const _tecTxt = _tecPend ? 'Asigna técnico en el paso 4' : (nTec + (nTec === 1 ? ' técnico' : ' técnicos'));
+  const _tecIco = _tecPend ? 'bi-person-plus' : 'bi-person-check-fill';
+  const _durLine = _durTxt ? '<div class="mine-dur"><i class="bi bi-clock-history"></i>' + esc(_durTxt) + '</div>' : '';
+  const _tecLine = '<div class="mine-tec' + (_tecPend ? ' pendiente' : '') + '"><i class="bi ' + _tecIco + '"></i>' + esc(_tecTxt) + '</div>';
+  const _H = g.height || 0;
+  let _body = '';
+  if(_H >= 48){ _body = '<i class="bi bi-calendar2-check mine-wm" aria-hidden="true"></i>' + _durLine + _tecLine; }
+  else if(_H >= 28){ _body = _tecLine; }
+  mine.innerHTML = '<span class="mine-tag"><i class="bi bi-geo-alt-fill" style="font-size:.5rem"></i>Tu OT · ' + esc(rangoTxt) + '</span>'
+    + '<div class="mine-body">' + _body + '</div>';
   _tkdayGhostSync();
 }
 
