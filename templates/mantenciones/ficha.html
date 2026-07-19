@@ -9824,7 +9824,7 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
     }
   });
 </script>
-<script src="{{ url_for('static', filename='mant_ficha.js') }}?v=20260610c" defer></script>
+<script src="{{ url_for('static', filename='mant_ficha.js') }}" defer></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Crear OT de Levantamiento Fotográfico
@@ -10222,41 +10222,41 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
    chevron ▲ de recorte. Se resuelve con min-height, que sí funciona.) */
 @media (max-width:767.98px){ .tkday-blk{min-height:22px;} }
 
-/* ── "Tu OT" (la que se está creando) — tarjeta sólida premium (Fable
-   2026-07-19, v2). La v1 con borde punteado + relleno traslúcido leía como
-   "boceto/placeholder" incluso con la info nueva adentro — Daniel: "lo veo
-   igual". Ahora es una tarjeta CON CUERPO: degradado rojo sólido de marca,
-   sin punteado, la duración como cifra protagonista y el estado de técnico
-   como chip real. overlay a ancho completo. ── */
+/* ── "Tu OT" (la que se está creando) — previsualización transparente +
+   punteada (Fable 2026-07-19, v3). Daniel: "me gustaba mas transparente y
+   punteada"; la versión sólida se veía "montada"/pegada sobre la línea de
+   tiempo como una calcomanía. Volvemos al overlay tipo fantasma: fondo
+   translúcido tenue + borde punteado, que lee como "previsualización" y no
+   como bloque pegado. Conserva la duración y el estado de técnico. ── */
 .tkday-blk.mine{left:0;width:100%;z-index:5;cursor:default;pointer-events:none;
-  color:#fff;border:none;border-radius:13px;overflow:visible;
-  background:linear-gradient(155deg,#f04438 0%,#dc2626 45%,#8a1414 100%);
-  box-shadow:0 16px 28px -10px rgba(127,29,29,.55), inset 0 1px 0 rgba(255,255,255,.3);
+  color:#0f172a;border-radius:10px;overflow:visible;
+  background:rgba(220,38,38,.07);
+  border:2px dashed var(--ilus-red);
+  box-shadow:0 6px 16px -8px rgba(220,38,38,.28);
   transition:top .18s var(--ease-out), height .18s var(--ease-out);}
-.tkday-blk.mine .mine-tag{position:absolute;top:-10px;left:8px;display:inline-flex;align-items:center;gap:4px;
-  background:#fff;color:#b91c1c;font-size:.56rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
-  border-radius:50px;padding:2px 9px;box-shadow:0 3px 9px rgba(127,29,29,.45);white-space:nowrap;
-  max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;}
+.tkday-blk.mine .mine-tag{position:absolute;top:-9px;left:8px;display:inline-flex;align-items:center;gap:3px;
+  background:var(--ilus-red);color:#fff;font-size:.55rem;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;border-radius:50px;padding:1px 8px;box-shadow:0 2px 4px rgba(0,0,0,.15);
+  white-space:nowrap;max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;}
 .tkday-blk.mine .mine-body{position:relative;overflow:hidden;height:100%;
-  display:flex;flex-direction:column;justify-content:center;gap:4px;padding:3px 11px;pointer-events:none;}
-/* Si el bloque arranca pegado a las 08:00 (top<12px) la píldora a top:-10px
+  display:flex;flex-direction:column;justify-content:center;gap:2px;padding:2px 10px;pointer-events:none;}
+/* Si el bloque arranca pegado a las 08:00 (top<12px) la píldora a top:-9px
    quedaría recortada por el contenedor de scroll: se mete adentro. */
 .tkday-blk.mine.tag-dentro .mine-tag{top:2px;}
-.tkday-blk.mine .mine-wm{position:absolute;right:2px;bottom:-8px;font-size:2.6rem;line-height:1;
-  color:#fff;opacity:.16;pointer-events:none;}
-.tkday-blk.mine .mine-dur{display:flex;align-items:baseline;gap:6px;font-weight:800;
-  color:#fff;font-variant-numeric:tabular-nums;font-size:1.08rem;text-shadow:0 1px 3px rgba(0,0,0,.3);}
-.tkday-blk.mine .mine-dur i{font-size:.66rem;opacity:.8;font-weight:400;}
-.tkday-blk.mine .mine-tec{display:inline-flex;align-self:flex-start;align-items:center;gap:4px;
-  font-size:.63rem;font-weight:800;color:#fff;background:rgba(255,255,255,.22);
-  padding:2px 9px;border-radius:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
-.tkday-blk.mine .mine-tec.pendiente{background:#fff;color:#92400e;}
-.tkday-blk.mine .mine-tec i{font-size:.62rem;flex-shrink:0;}
-.tkday-blk.mine.choque{background:repeating-linear-gradient(45deg,#b91c1c 0 10px,#7f1d1d 10px 20px);
-  box-shadow:0 16px 28px -10px rgba(127,29,29,.6), inset 0 1px 0 rgba(255,255,255,.3);
+.tkday-blk.mine .mine-wm{position:absolute;right:6px;bottom:-4px;font-size:2.3rem;line-height:1;
+  color:var(--ilus-red);opacity:.08;pointer-events:none;}
+.tkday-blk.mine .mine-dur{display:flex;align-items:center;gap:5px;font-size:.8rem;font-weight:800;
+  color:#b91c1c;font-variant-numeric:tabular-nums;}
+.tkday-blk.mine .mine-dur i{font-size:.72rem;opacity:.85;}
+.tkday-blk.mine .mine-tec{display:flex;align-items:center;gap:4px;font-size:.67rem;font-weight:700;
+  color:#7f1d1d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tkday-blk.mine .mine-tec.pendiente{color:#9a6a1f;}
+.tkday-blk.mine .mine-tec i{font-size:.66rem;flex-shrink:0;}
+.tkday-blk.mine.choque{border-style:dashed;border-color:#b91c1c;
+  background:repeating-linear-gradient(45deg,rgba(220,38,38,.10) 0 8px,rgba(220,38,38,.20) 8px 16px);
   animation:tkChoquePulse 1.6s ease-in-out infinite;}
-@keyframes tkChoquePulse{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.25)}50%{box-shadow:0 0 0 8px rgba(220,38,38,0)}}
-.tkday-blk.mine.choque .mine-tag{background:#fff;color:#7f1d1d;}
+@keyframes tkChoquePulse{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.18)}50%{box-shadow:0 0 0 7px rgba(220,38,38,0)}}
+.tkday-blk.mine.choque .mine-tag{background:#b91c1c;}
 .tkday-blk.mine.choque .mine-tag::before{content:'⚠ ';}
 @media (prefers-reduced-motion:reduce){ .tkday-blk.mine.choque{animation:none;} }
 
