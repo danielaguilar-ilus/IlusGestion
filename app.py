@@ -35207,11 +35207,20 @@ def init_mantenciones_tables():
             """)
 
             # Tabla N:N para múltiples técnicos asignados a una visita
+            # tecnico_user_id: app_users.id (reemplaza tecnico_id legacy, ver
+            # migración 2026-05-16 más arriba). Va DIRECTO en el DDL porque en
+            # una BD nueva ese ALTER TABLE corre ANTES de que esta tabla exista
+            # (falla en silencio) → sin esto la tabla nacía sin la columna y
+            # todo el módulo multi-técnico se rompía (bug confirmado auditoría
+            # 2026-07-18). El ALTER/CREATE INDEX de arriba se dejan intactos:
+            # siguen siendo el mecanismo que repara instalaciones viejas.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_visita_tecnicos (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    visita_id   INT NOT NULL,
-                    tecnico_id  INT NOT NULL,
+                    id                INT AUTO_INCREMENT PRIMARY KEY,
+                    visita_id         INT NOT NULL,
+                    tecnico_id        INT NOT NULL,
+                    tecnico_user_id   INT NULL
+                                      COMMENT 'app_users.id (reemplaza tecnico_id legacy)',
                     rol         VARCHAR(40) DEFAULT 'tecnico'
                                 COMMENT 'tecnico|lider|supervisor',
                     horas       DECIMAL(5,2) DEFAULT 0
@@ -35221,7 +35230,9 @@ def init_mantenciones_tables():
                     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_visita_tecnico (visita_id, tecnico_id),
                     INDEX idx_visita  (visita_id),
-                    INDEX idx_tecnico (tecnico_id)
+                    INDEX idx_tecnico (tecnico_id),
+                    INDEX idx_vt_user (tecnico_user_id),
+                    INDEX idx_vt_visita_user (visita_id, tecnico_user_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
@@ -35735,10 +35746,20 @@ def init_mantenciones_tables():
                 "  COMMENT 'Flag: visita histórica cargada sin tareas/firmas formales'",
                 "ALTER TABLE mant_visitas ADD COLUMN nota_libre TEXT NULL "
                 "  COMMENT 'Nota informal para visitas retroactivas sin tareas'",
-                # Agregar 'retroactiva' al ENUM tipo (preservando los valores existentes)
+                # Agregar 'retroactiva' al ENUM tipo — UNION completa con los
+                # 7 valores del modelo Fracttal agregados en la migración de
+                # arriba (visita_tecnica, visita_correctiva, cambio_equipo,
+                # desinstalacion, capacitacion, repuesto, revision_interna).
+                # Este MODIFY es el ÚLTIMO que corre sobre esta columna en el
+                # boot, así que SÍ preserva los valores existentes (antes no
+                # los listaba y los pisaba con solo 7 → bug confirmado
+                # auditoría 2026-07-18: crear OT de tipo Fracttal fallaba 500).
                 "ALTER TABLE mant_visitas MODIFY COLUMN tipo "
                 "  ENUM('preventiva','correctiva','garantia','inspeccion',"
-                "       'levantamiento','instalacion','retroactiva') "
+                "       'levantamiento','instalacion','retroactiva',"
+                "       'visita_tecnica','visita_correctiva','cambio_equipo',"
+                "       'desinstalacion','capacitacion','repuesto',"
+                "       'revision_interna') "
                 "  NOT NULL DEFAULT 'preventiva'",
 
                 # C. Liga visita ↔ flujo comercial COMPLETO en Random ERP

@@ -6337,7 +6337,8 @@ def register_tickets_routes(app, ctx):
     # Endpoint para Cloud Scheduler (token) o disparo manual (admin logueado)
     # Autorizacion (2026-07-18, Daniel: "la llave debe vivir EN EL SISTEMA" --
     # sin acceso a DNS/infra para setear una env var nueva en Cloud Run):
-    #   1) TK_MAIL_CRON_TOKEN (env var) -- se mantiene como fallback, REGLA #4.2.
+    #   1) TK_MAIL_CRON_TOKEN (env var) -- se mantiene como fallback, REGLA #4.2,
+    #      tambien con comparacion constante-time (secrets.compare_digest).
     #   2) tk_settings.mail_cron_token (_tk_mail_cron_token(), autosembrada en
     #      el arranque) -- comparacion constante-time con secrets.compare_digest.
     #   3) Sesion admin/superadmin/mantenciones logueada (igual que antes).
@@ -6354,7 +6355,7 @@ def register_tickets_routes(app, ctx):
     def tk_cron_leer_correo():
         token = (request.args.get("token") or request.headers.get("X-Cron-Token") or "").strip()
         token_cfg = (os.environ.get("TK_MAIL_CRON_TOKEN") or "").strip()
-        token_ok = bool(token_cfg) and token == token_cfg
+        token_ok = bool(token_cfg) and secrets.compare_digest(token, token_cfg)
         if not token_ok and token:
             token_db = _tk_mail_cron_token()
             if token_db:
