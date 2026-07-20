@@ -1287,8 +1287,13 @@
 /* 2.1 — Escenario + separadores + agrupación */
 .rp-thread{background:linear-gradient(180deg,#f8f9fa 0%,#f4f5f7 100%);
   border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;}
-.rp-msg{max-width:860px;width:100%;margin-left:auto;margin-right:auto;
-  margin-bottom:10px;display:flex;gap:8px;align-items:flex-end;}
+/* Sin contenedor centrado por mensaje (Daniel 2026-07-20: "quítale el
+   contenedor a la caja de mensajes" -- la v1 de esta linea metía cada fila
+   en una caja de 860px centrada, lo que dejaba margenes iguales a ambos
+   lados y opacaba la justificacion izquierda/derecha. Ahora la fila ocupa
+   TODO el ancho del hilo y justify-content (linea 271: .out=flex-end,
+   .in=flex-start por defecto) empuja la burbuja al borde real. */
+.rp-msg{margin-bottom:10px;display:flex;gap:8px;align-items:flex-end;}
 .rp-fecha-sep{position:sticky;top:-8px;z-index:3;display:flex;justify-content:center;
   padding:6px 0 10px;pointer-events:none;}
 /* SIN backdrop-filter: costo de scroll en hilos largos + bug Safari sticky */
