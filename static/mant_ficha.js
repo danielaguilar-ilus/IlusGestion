@@ -611,6 +611,9 @@ const _LEV_MODAL = {
   cal: { anio: null, mes: null, cache: {}, error: {}, diaSel: null },
   day: { fecha: null, rejilla: false, choque: false, choqueFecha: null, choqueKeys: null, visitas: [] },
   choqueToken: 0,
+  // Chips de duración (2026-07-19): espejo numérico del rango real
+  // (1 | 2 | 3 | 5 | 'otro'). Ver levChipsRefresh().
+  durN: 1,
 };
 
 // Plantillas disponibles (cache global del modal)
@@ -824,6 +827,13 @@ async function abrirLevantamientoSelector(tipoPreset, fechaPreset){
   document.getElementById('levFechaFinWrap').style.display = 'none';
   document.getElementById('levHoraIni').value = '09:00';
   document.getElementById('levHoraFin').value = '13:00';
+  // Chips de duración (2026-07-19, P9): el reset original NO limpiaba las
+  // horas del "último día" del rango -- quedaban con el valor de la OT
+  // anterior. Aditivo, no quita nada (REGLA #4.2).
+  document.getElementById('levHoraIniFin').value = '09:00';
+  document.getElementById('levHoraFinFin').value = '13:00';
+  _LEV_MODAL.durN = 1;
+  if (typeof levChipsRefresh === 'function') levChipsRefresh();
 
   // BUG2 — Día preferido del cliente: sugerir la fecha en el día habitual de
   // mantención (este flujo SIEMPRE es "Nueva visita"; #modalLevSelector no se
@@ -1910,6 +1920,10 @@ function tkotCalInit(){
 }
 
 function tkotFechaProgChange(){
+  // Chips de duración (2026-07-19, P4): re-anclaje SILENCIOSO de #levFechaFin
+  // ANTES de cualquier render -- así tkotCalSelDia ya pinta el pill con la
+  // fin correcta (evita el parpadeo fin<inicio del P1/P4).
+  _levReanclarFin();
   const v = document.getElementById('levFechaProg')?.value || '';
   if(v){
     const y = parseInt(v.slice(0, 4)), m = parseInt(v.slice(5, 7));
@@ -1924,6 +1938,7 @@ function tkotFechaProgChange(){
     tkotCalRenderGrid();
     tkdayRender(null, { silencio: true });
   }
+  levChipsRefresh();
   tkotChequearChoqueDebounced();
 }
 
@@ -1940,6 +1955,95 @@ function tkotHoraInput(){
 function tkotRangoChange(){
   tkotCalRenderGrid();
   tkdayRender(_LEV_MODAL.cal.diaSel, { silencio: true });
+  // Chips de duración (2026-07-19): único punto de espejo estado→chips.
+  // Cubre toggle manual, fin manual y chips en un solo lugar (P2).
+  levChipsRefresh();
+}
+
+// ════════════════════════════════════════════════════════════
+// Chips de duración (2026-07-19): [1 día][2 días][3 días][5 días][Otro…]
+// junto al Paso 3 "Agenda". Un tap = extender la OT a N días sin tocar el
+// toggle "¿Se extenderá más de un día?" a mano. Regla única de sincronía:
+// mientras exista un rango válido, la duración SIEMPRE viaja con la fecha
+// de inicio (venga de chip o de "Otro…") -- sin flag de modo aparte (P2).
+// Los chips SOLO escriben en #levRangoDias/#levFechaFin/#levHoraIniFin/
+// #levHoraFinFin, exactamente lo que ya lee levIniciar() -- cero cambios
+// de backend. Portado 1:1 a templates/tickets/ficha.html (_TKOT en vez de
+// _LEV_MODAL, mismo patrón de duplicación documentado en js:1642-1660).
+// ────────────────────────────────────────────────────────────
+
+// NUEVO helper: _fmtYMD no existe en el repo (grep: 0 matches).
+function _levFmtYMD(d){
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Escritura SILENCIOSA de #levFechaFin = #levFechaProg + (durN-1) días
+// corridos. No renderiza nada -- el llamador decide cuándo repintar.
+function _levReanclarFin(){
+  const n = _LEV_MODAL.durN;
+  if(!(typeof n === 'number' && n > 1)) return;
+  const v = document.getElementById('levFechaProg')?.value || '';
+  if(!v) return;
+  const p = v.split('-');
+  const d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+  d.setDate(d.getDate() + (n - 1));   // días CORRIDOS, findes incluidos
+  document.getElementById('levFechaFin').value = _levFmtYMD(d);
+  document.getElementById('levRangoDias').checked = true;
+  document.getElementById('levFechaFinWrap').style.display = '';
+}
+
+// Tap en un chip numérico [1|2|3|5].
+function levDurSet(n){
+  const fp = document.getElementById('levFechaProg');
+  if(!fp || !fp.value){ ilusToast('Elige primero la fecha de inicio', { type: 'warning' }); return; }
+  const chk = document.getElementById('levRangoDias');
+  const wrap = document.getElementById('levFechaFinWrap');
+  const veniaDe1 = !chk.checked;   // P3: solo heredar horas en la transición 1→N
+  _LEV_MODAL.durN = n;
+  if(n <= 1){
+    chk.checked = false; wrap.style.display = 'none';
+    document.getElementById('levFechaFin').value = '';
+  } else {
+    _levReanclarFin();
+    if(veniaDe1){   // heredar horas SOLO al abrir el rango, nunca entre chips N→M (P3)
+      document.getElementById('levHoraIniFin').value = document.getElementById('levHoraIni').value || '09:00';
+      document.getElementById('levHoraFinFin').value = document.getElementById('levHoraFin').value || '13:00';
+    }
+  }
+  tkotRangoChange();               // reusa pill + "Día X de N" + tkdayRenderMine + levChipsRefresh
+  tkotChequearChoqueDebounced();   // el choque ya manda fecha_fin (js:3014/3021 aprox.)
+}
+
+// Tap en "Otro…": abre el panel ámbar existente para que el usuario tipee
+// la fecha de término a mano. No fuerza ninguna duración.
+function levDurOtro(){
+  document.getElementById('levRangoDias').checked = true;
+  document.getElementById('levFechaFinWrap').style.display = '';
+  _LEV_MODAL.durN = 'otro';
+  tkotRangoChange();
+  document.getElementById('levFechaFin').focus();
+}
+
+// Único espejo estado→chips: recalcula durN desde el DOM real y repinta
+// clases/aria-pressed + el texto "→ hasta …". Se llama al final de
+// tkotRangoChange/tkotFechaProgChange/_tkdayIrADia/reset del modal.
+function levChipsRefresh(){
+  const cont = document.getElementById('levDurChips');
+  if(!cont) return;
+  const r = _tkotRangoActivo();
+  let n = 1;
+  if(r) n = Math.round((new Date(r.fin + 'T00:00:00') - new Date(r.ini + 'T00:00:00')) / 86400000) + 1;
+  else if(document.getElementById('levRangoDias')?.checked) n = 'otro';
+  _LEV_MODAL.durN = n;
+  cont.querySelectorAll('.lev-dur-chip').forEach(function(b){
+    const act = String(b.dataset.n) === String(n)
+      || (b.dataset.n === 'otro' && n !== 1 && [2, 3, 5].indexOf(n) === -1);
+    b.classList.toggle('act', act);
+    b.setAttribute('aria-pressed', act ? 'true' : 'false');
+  });
+  const h = document.getElementById('levDurHasta');
+  if(h) h.innerHTML = r ? ('→ hasta <b>' + esc(_tkdayFechaLarga(r.fin)) + '</b>')
+    : (n === 'otro' ? 'elige la fecha de término' : '');
 }
 
 // ── Flechas ‹ › del día: recorren el día que muestra la línea de tiempo SIN
@@ -3122,12 +3226,17 @@ async function _tkdayBuscarHuecoRango(fechaInicio, durMin, tecnicoIds, maxDias){
 async function _tkdayIrADia(fecha){
   const fp = document.getElementById('levFechaProg');
   if(fp) fp.value = fecha;
+  // Chips de duración (2026-07-19, P1): este camino (Sugerir horario) escribe
+  // #levFechaProg DIRECTO y nunca pasaba por tkotFechaProgChange -- el rango
+  // quedaba sin re-anclar (fin < inicio) y los chips no se repintaban.
+  _levReanclarFin();
   const y = parseInt(fecha.slice(0, 4), 10), m = parseInt(fecha.slice(5, 7), 10);
   if(y && m && (y !== _LEV_MODAL.cal.anio || m !== _LEV_MODAL.cal.mes)){
     _LEV_MODAL.cal.anio = y; _LEV_MODAL.cal.mes = m;
     await tkotCalCargarMes();   // repinta grilla del mes nuevo (cache ya tibio por la búsqueda)
   }
   tkotCalSelDia(fecha, { silencio: true });
+  levChipsRefresh();
 }
 
 // ── Punto de entrada único (chip de cabecera + botón del banner de choque).

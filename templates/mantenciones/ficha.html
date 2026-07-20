@@ -10109,6 +10109,17 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
   box-shadow:0 0 0 2px rgba(220,38,38,.14);}
 .tkcal-day.rango-fin .num{color:#991b1b;font-weight:900;}
 .tkcal-day.rango-ini.rango-fin{border-radius:var(--r-sm);}
+
+/* Chips de duración (2026-07-19) -- ver comentario junto al HTML arriba. */
+.lev-dur-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px;}
+.lev-dur-lbl{font-size:.78rem;font-weight:600;color:#6b7280;}
+.lev-dur-chip{min-height:44px;min-width:44px;padding:0 12px;border-radius:999px;
+  border:1.5px solid #e5e7eb;background:#fff;font-size:.8rem;font-weight:700;
+  color:#374151;cursor:pointer;transition:background .15s,border-color .15s,color .15s;}
+.lev-dur-chip:focus-visible{outline:2px solid #dc2626;outline-offset:2px;}
+.lev-dur-chip.act{background:#dc2626;border-color:#dc2626;color:#fff;}
+.lev-dur-hasta{font-size:.75rem;font-weight:600;color:#6b7280;}
+.lev-dur-hasta b{color:#b91c1c;}
 /* Anillo del día que está mirando la línea de tiempo (puede no ser el
    extremo del rango si se usan las flechas ‹ › del día). */
 .tkcal-day.vista::after{content:'';position:absolute;inset:-3px;border-radius:inherit;
@@ -10654,6 +10665,22 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
                 <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00"
                        oninput="tkotHoraInput()" onchange="tkotHoraInput()">
               </div>
+            </div>
+            {# Chips de duración (2026-07-19): 1 tap para extender la OT a N
+               días. Solo escriben en los inputs que levIniciar() ya lee
+               (#levRangoDias/#levFechaFin/#levHoraIniFin/#levHoraFinFin) --
+               cero cambios de backend. Ver static/mant_ficha.js, bloque
+               junto a tkotRangoChange (_levReanclarFin/levDurSet/levDurOtro/
+               levChipsRefresh). Portado 1:1 a templates/tickets/ficha.html
+               con _TKOT en vez de _LEV_MODAL. #}
+            <div class="lev-dur-row" id="levDurChips" role="group" aria-label="Duración de la visita">
+              <span class="lev-dur-lbl">Duración:</span>
+              <button type="button" class="lev-dur-chip act" data-n="1" aria-pressed="true"  onclick="levDurSet(1)">1 día</button>
+              <button type="button" class="lev-dur-chip"     data-n="2" aria-pressed="false" onclick="levDurSet(2)">2 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="3" aria-pressed="false" onclick="levDurSet(3)">3 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="5" aria-pressed="false" onclick="levDurSet(5)">5 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="otro" aria-pressed="false" onclick="levDurOtro()">Otro…</button>
+              <span class="lev-dur-hasta" id="levDurHasta"></span>
             </div>
             <div class="form-check form-switch mt-2">
               <input class="form-check-input" type="checkbox" id="levRangoDias"
