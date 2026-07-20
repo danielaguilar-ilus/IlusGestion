@@ -156,10 +156,20 @@
   </div>
 
   {# ── Búsqueda ── #}
+  {# FIX 2026-07-20 (Daniel — caso Alison): un usuario con home-por-rol
+     (mantenciones/ejecutivo/transporte/técnico) solo ve este catálogo
+     forzando ?ver=etiquetas. Ese parámetro se perdía al buscar/limpiar/
+     paginar (ningún control de esta página lo reenviaba) → cada acción
+     la rebotaba de vuelta a su home de rol. Ahora se preserva en TODO
+     control que dispare una navegación GET dentro de esta página.
+     (El backend en app.py::index() además trata cualquier `q` no vacío
+     como señal de "quedarse", como red de seguridad adicional.) #}
+  {% set _ver_etq = request.args.get('ver') %}
   <form method="get" class="ilus-search mb-3" id="searchForm">
     {# exact=1 lo activa el JS cuando detecta un scanner físico o cámara #}
     <input type="hidden" name="exact" id="exactFlag" value="0">
     {% if ff %}<input type="hidden" name="fotos" value="{{ ff }}">{% endif %}
+    {% if _ver_etq %}<input type="hidden" name="ver" value="{{ _ver_etq }}">{% endif %}
     <div class="input-group shadow-sm">
       <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
       <input type="text" name="q" value="{{ q }}" class="form-control border-start-0"
@@ -170,7 +180,7 @@
         <i class="bi bi-upc-scan"></i>
       </button>
       {% if q %}
-      <a href="{{ url_for('index') }}" class="btn btn-outline-secondary"><i class="bi bi-x-lg"></i></a>
+      <a href="{{ url_for('index', ver=_ver_etq) if _ver_etq else url_for('index') }}" class="btn btn-outline-secondary"><i class="bi bi-x-lg"></i></a>
       {% endif %}
     </div>
   </form>

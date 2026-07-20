@@ -9030,8 +9030,19 @@ def index():
         # con ?ver=etiquetas, NO rebotamos a su home — queremos que entre al
         # catálogo. Útil para roles como "transporte" que tienen permiso
         # etiquetas pero el home natural es /transporte/ (Daniel 2026-06-03).
+        #
+        # FIX 2026-07-20 (Daniel — caso Alison): un usuario con home-por-rol
+        # (ej. mantenciones/ejecutivo) que YA estaba viendo el catálogo vía
+        # ?ver=etiquetas perdía ese "quedarse" al buscar — el formulario de
+        # búsqueda (y los links de paginación/tamaño de página) NO reenvían
+        # el parámetro `ver`, así que CADA búsqueda la rebotaba de vuelta a
+        # su home de rol a mitad de tipear ("la bota" al buscar). Un query
+        # de búsqueda no vacío es intención inequívoca de usar el catálogo:
+        # también cuenta como "quedarse", sin depender de que cada control
+        # de la página reenvíe `ver=etiquetas` (además arreglado en
+        # templates/index.html y _partials/pagination.html).
         forzar_etiquetas = (
-            request.args.get("ver") == "etiquetas"
+            (request.args.get("ver") == "etiquetas" or request.args.get("q", "").strip())
             and (perms.get("etiquetas") or perms.get("print") or perms.get("superadmin"))
         )
         if perm_match and not forzar_etiquetas:
