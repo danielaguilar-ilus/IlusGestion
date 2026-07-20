@@ -10118,6 +10118,53 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
 .tkcal-leyenda span{display:inline-flex;align-items:center;gap:5px;}
 .tkcal-leyenda i.k{width:12px;height:12px;border-radius:4px;display:inline-block;flex-shrink:0;}
 
+/* ── Fix anti-desborde del mini-calendario (2026-07-19): 1fr equivale a
+   minmax(auto,1fr) — el min-content de la celda (num+badge en fila, fix
+   2026-07-15) hacía que la grilla midiera ~334px en una columna de 300px
+   (260px bajo 1200px) y las celdas del domingo se pintaran DEBAJO del
+   panel de la línea de tiempo. Dos capas: (a) la grilla queda FÍSICAMENTE
+   incapaz de desbordar; (b) el contenido se dimensiona para caber en el
+   peor caso (31 días de 2 dígitos, todos con badge). El fix de legibilidad
+   num+badge en fila SE CONSERVA tal cual. ── */
+
+/* (1) Columna A más ancha en desktop: 300→320px. La línea de tiempo
+   conserva ≥368px (modal-lg ~736px útiles − 32 padding − 16 gap − 320). */
+.tksched{grid-template-columns:320px 1fr;}
+/* Re-declarar las media queries: la base nueva está DESPUÉS de las
+   originales y les ganaría por orden en viewports angostos. */
+@media (max-width:1199.98px){ .tksched{grid-template-columns:260px 1fr;} }
+@media (max-width:767.98px){ .tksched{grid-template-columns:1fr;} }
+
+/* (2) Grilla incapaz de desbordar: minmax(0,1fr) permite encoger celdas
+   bajo su min-content; overflow:hidden convierte cualquier px residual en
+   recorte DENTRO de la propia celda, nunca invasión de la vecina.
+   .tkcal-dow acompaña el mismo template y gap para no desalinear columnas. */
+.tkcal-dow{grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;}
+.tkcal-grid{grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;min-width:0;}
+.tkcal-day{min-width:0;overflow:hidden;}
+
+/* (3) El anillo .vista se dibujaba en inset:-3px (fuera de la celda);
+   con overflow:hidden quedaría recortado e invisible. Se dibuja pegado
+   al borde interno — misma función, sigue existiendo (REGLA #4.2). */
+.tkcal-day.vista::after{inset:0;}
+
+/* (4) Compresión SOLO en el breakpoint angosto (col 260px). Bajo 768px la
+   columna es 1fr (celdas anchas) y rigen los tamaños originales. */
+@media (min-width:768px) and (max-width:1199.98px){
+  .tkcal-dow{gap:2px;}
+  .tkcal-grid{gap:2px;}
+  /* aspect-ratio:1/1 (regla base ~10009) peleaba con minmax(0,1fr): al haber
+     min-height:44px (táctil) el motor recalcula el ANCHO desde el alto para
+     mantener el cuadrado, ignorando el encogimiento del track (~35px) y
+     desbordando la grilla ~9px. Igual que ya hace el breakpoint móvil
+     (<768px, línea de arriba), se desactiva el aspect-ratio aquí: el ancho
+     sigue al track (minmax(0,1fr)) y el alto lo da min-height:44px — celda
+     rectangular, no cuadrada, sin desborde y sigue táctil (REGLA #3). */
+  .tkcal-day{gap:2px;padding:0 1px;aspect-ratio:auto;}
+  .tkcal-day .num{font-size:.7rem;}
+  .tkcal-day .cnt{min-width:12px;height:12px;font-size:.5rem;padding:0 2px;}
+}
+
 /* ── Header del día (arriba de la línea de tiempo) ── */
 .tkday-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
 .tkday-fecha{font-weight:900;font-size:.95rem;color:#0f172a;text-transform:capitalize;}
