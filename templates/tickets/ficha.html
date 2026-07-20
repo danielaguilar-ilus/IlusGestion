@@ -1273,6 +1273,154 @@
 .tk-ot-side-num{font-weight:900;font-size:.92rem;line-height:1.2;overflow-wrap:anywhere;}
 .tk-ot-side-sub{font-size:.68rem;font-weight:700;opacity:.75;margin-top:2px;
   text-transform:uppercase;letter-spacing:.04em;}
+
+/* ══ 2026-07-19 (Fable) — Conversación v2 "alto impacto": escenario centrado,
+   avatares, agrupación, separadores de fecha, adjuntos premium, micro-motion.
+   REGLA #4.2: cero funcionalidad quitada — solo re-vestido + Copiar (aditivo).
+   NOTAS: (1) el orden del hilo es COALESCE(message_date,created_at), la fecha
+   mostrada es created_at → los separadores pueden repetirse si un correo entra
+   tarde: es correcto, no "consolidar". (2) el margin -14px de :focus-within en
+   .rp-headers está acoplado al padding 4px 14px del contenedor. (3) los
+   min-height de escritorio (36/38px) se restauran a 44px en el media móvil
+   de este mismo bloque — mobile.css NO alcanza a ganarle a este inline. ══ */
+
+/* 2.1 — Escenario + separadores + agrupación */
+.rp-thread{background:linear-gradient(180deg,#f8f9fa 0%,#f4f5f7 100%);
+  border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;}
+.rp-msg{max-width:860px;width:100%;margin-left:auto;margin-right:auto;
+  margin-bottom:10px;display:flex;gap:8px;align-items:flex-end;}
+.rp-fecha-sep{position:sticky;top:-8px;z-index:3;display:flex;justify-content:center;
+  padding:6px 0 10px;pointer-events:none;}
+/* SIN backdrop-filter: costo de scroll en hilos largos + bug Safari sticky */
+.rp-fecha-sep span{background:rgba(255,255,255,.95);border:1px solid #e5e7eb;
+  border-radius:50px;padding:3px 14px;font-size:.68rem;font-weight:800;
+  letter-spacing:.05em;text-transform:uppercase;color:#64748b;
+  box-shadow:0 1px 4px rgba(15,23,42,.06);}
+.rp-msg.rp-agrupado{margin-top:-6px;}
+.rp-msg.rp-agrupado .rp-avatar{visibility:hidden;}
+.rp-msg.rp-agrupado.out .rp-bubble{border-top-right-radius:6px;}
+.rp-msg.rp-agrupado.in  .rp-bubble{border-top-left-radius:6px;}
+/* Sin opacity extra: .rp-meta ya trae opacity:.85 (línea 296) y apilarla
+   rompía AA sobre la burbuja negra. Solo tamaño. */
+.rp-meta-mini{font-size:.64rem;}
+
+/* 2.2 — Avatares */
+.rp-avatar{width:30px;height:30px;flex:0 0 30px;border-radius:50%;display:flex;
+  align-items:center;justify-content:center;font-size:.68rem;font-weight:800;
+  letter-spacing:.02em;user-select:none;}
+.rp-msg.in .rp-avatar{background:#e2e8f0;color:#475569;}
+.rp-msg.out .rp-avatar{background:linear-gradient(135deg,#1f2937,#0a0a0a);color:#fff;
+  box-shadow:0 0 0 2px #fff,0 0 0 3.5px #dc2626;}
+.rp-msg.out.auto .rp-avatar{background:#fff;border:1.5px solid #e5e7eb;color:#6b7280;
+  box-shadow:none;}
+.rp-msg.interno .rp-avatar{background:#fffbeb;border:1.5px solid #fde68a;color:#92400e;
+  box-shadow:none;}
+.rp-msg.out .rp-avatar{order:2;}
+.rp-meta .rp-who{font-weight:800;font-size:.72rem;opacity:1;}
+.rp-msg.in .rp-meta .rp-who{color:#0f172a;}
+.rp-msg.out .rp-meta .rp-who{color:#e5e7eb;}
+/* (D2: solo .rp-msg.out tiene justify-content:flex-end -- interno queda a la
+   izquierda, es el comportamiento existente y correcto, no "corregir"). */
+
+/* 2.3 — Adjuntos premium (mismas clases/atributos data-* del chip original,
+   solo el interior cambia -- ver JS de renderThread) */
+.rp-adj-chip.es-img{flex-direction:column;align-items:stretch;padding:4px;gap:4px;
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;width:118px;}
+.rp-adj-chip.es-img img{width:110px;height:82px;object-fit:cover;border-radius:7px;}
+.rp-adj-chip.es-img .rp-adj-nom{font-size:.64rem;font-weight:600;color:#475569;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
+.rp-adj-chip.es-doc{background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:7px 12px 7px 8px;gap:8px;color:#0f172a;}
+.rp-adj-tile{width:34px;height:34px;flex:0 0 34px;border-radius:8px;background:#fef2f2;
+  display:flex;align-items:center;justify-content:center;}
+.rp-adj-tile i{color:#dc2626;font-size:1.05rem;}
+.rp-adj-col{display:flex;flex-direction:column;min-width:0;}
+.rp-adj-col .rp-adj-nom{font-size:.74rem;font-weight:700;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;max-width:180px;}
+.rp-adj-col .rp-adj-peso{font-size:.62rem;color:#6b7280;font-weight:600;} /* AA 4.8:1 */
+.rp-adj-lista{gap:6px;margin-top:6px;}
+
+/* 2.4 — Burbujas + acciones (Traducir NUNCA invisible; Copiar sí hover-reveal) */
+.rp-bubble{border-radius:18px;box-shadow:0 1px 2px rgba(15,23,42,.05);}
+.rp-msg.out .rp-bubble{background:linear-gradient(150deg,#252f3f 0%,#0a0a0a 78%);
+  border-bottom-right-radius:5px;
+  box-shadow:0 2px 10px rgba(10,10,10,.22),inset 0 1px 0 rgba(255,255,255,.07);}
+.rp-msg.in .rp-bubble{background:#fff;color:#0f172a;border:1px solid #e8eaee;
+  border-left:3px solid #cbd5e1;border-bottom-left-radius:5px;}
+.rp-estado-ok{color:#86efac;display:inline-flex;align-items:center;gap:3px;}
+.rp-msg.in .rp-estado-ok,.rp-msg.interno .rp-estado-ok{color:#16a34a;}
+/* (.rp-msg.out.auto .rp-estado-ok verde de línea 290 gana por especificidad: OK) */
+.rp-btn-traducir,.rp-btn-copiar{min-height:30px;}
+.rp-btn-copiar{margin-top:6px;margin-left:10px;border:none;background:transparent;
+  color:#64748b;font-size:.72rem;font-weight:700;cursor:pointer;
+  display:inline-flex;align-items:center;gap:4px;}
+.rp-btn-copiar:hover{color:#0f172a;text-decoration:underline;}
+.rp-msg.out .rp-btn-copiar{color:#9ca3af;}
+.rp-msg.out .rp-btn-copiar:hover{color:#e5e7eb;}
+@media (hover:hover){
+  /* REGLA #4.2: Traducir es función EXISTENTE → atenuada, jamás invisible. */
+  .rp-btn-traducir{opacity:.55;transition:opacity .15s ease;}
+  /* Copiar es NUEVO (aditivo) → hover-reveal completo permitido. */
+  .rp-btn-copiar{opacity:0;transition:opacity .15s ease;}
+  .rp-bubble:hover .rp-btn-traducir,.rp-btn-traducir:focus-visible{opacity:1;}
+  .rp-bubble:hover .rp-btn-copiar,.rp-btn-copiar:focus-visible{opacity:1;}
+}
+
+/* 2.5 — Cabecera + compositor: se moderniza manteniendo la distinción "esto es
+   un dato, no el mensaje" (ficha.html ~373-378, pedido explícito Daniel
+   2026-07-12) -- fondo gris tenue y hairline en el chipbox, NO blanco pleno. */
+.rp-headers{background:#f8f9fa;border:1px solid #eef0f3;border-radius:12px;padding:4px 14px;}
+.rp-headers .row-h{margin-bottom:0;padding:7px 0;border-bottom:1px solid #eceef1;}
+.rp-headers .row-h:last-child{border-bottom:none;}
+.rp-headers .row-h label{font-size:.64rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.07em;color:#6b7280;width:44px;}
+.email-chipbox{border:1px solid #e5e7eb;background:#fff;border-radius:8px;padding:3px 6px;}
+.email-chipbox:focus-within{border-color:#dc2626;box-shadow:none;}
+/* inset shadow, no border-left: cero salto de layout al enfocar (F2) */
+.rp-headers .row-h:focus-within{background:#fff;margin:0 -14px;padding-left:14px;
+  padding-right:14px;box-shadow:inset 2px 0 0 #dc2626;}
+.rp-composer{border-radius:14px;transition:border-color .18s,box-shadow .18s;}
+.rp-composer:focus-within{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.08);}
+.rp-mode-tabs{background:#f1f3f5;padding:6px;gap:6px;border-bottom:none;}
+.rp-mode-tab{border:none;background:transparent;box-shadow:none;border-radius:9px;}
+.rp-mode-tab:hover{transform:none;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.08);}
+.rp-toolbar-extra{padding:10px 12px;background:#fbfbfc;}
+.rp-toolbar-extra .btn-outline-secondary{border-color:#e5e7eb;color:#475569;
+  min-height:36px;min-width:36px;border-radius:9px;}
+.rp-toolbar-extra .btn-outline-secondary:hover{background:#f3f4f6;color:#0f172a;
+  border-color:#cbd5e1;}
+#rpBtnEnviar{min-height:38px;padding:6px 22px;border-radius:10px;font-weight:800;
+  box-shadow:0 2px 8px rgba(220,38,38,.28);}
+
+/* 2.6 — Micro-motion (326: #rpBtnDictar.rp-dictando conserva su fondo rojo +
+   rpPulseMic -- esta animación nueva es SOLO para el anillo del mensaje/mic,
+   no reemplaza esa regla existente) */
+@keyframes rpMsgIn{from{opacity:0;transform:translateY(8px) scale(.98);}
+  to{opacity:1;transform:none;}}
+.rp-msg.rp-nuevo{animation:rpMsgIn .35s cubic-bezier(.2,.9,.3,1) both;}
+#rpBtnDictar.rp-dictando{animation:rpMicRing 1.4s ease-in-out infinite;}
+@keyframes rpMicRing{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.45);}
+  50%{box-shadow:0 0 0 7px rgba(220,38,38,0);}}
+@media (prefers-reduced-motion:reduce){
+  .rp-msg.rp-nuevo{animation:none;}
+  #rpBtnDictar.rp-dictando{animation:none;opacity:.85;}
+  .rp-mode-tab,.rp-adj-chip,.rp-composer{transition:none;}
+}
+
+/* 2.7 — Móvil (media query propio, al final; incluye fix F1) */
+@media (max-width:768px){
+  .rp-thread{padding:10px;border-radius:12px;}
+  .rp-avatar{display:none;}
+  .rp-msg{gap:0;}
+  .rp-bubble{max-width:88%;}
+  .rp-adj-chip.es-img{width:96px;} .rp-adj-chip.es-img img{width:88px;height:66px;}
+  .rp-btn-traducir,.rp-btn-copiar{opacity:1;padding:12px 8px;margin:-6px 0 -4px;min-height:44px;}
+  .rp-fecha-sep{top:-10px;}
+  /* REGLA #3: restaurar los 44px que las reglas de escritorio de ESTE bloque
+     (36/38px, con más especificidad que mobile.css) le quitarían al táctil. */
+  .rp-toolbar-extra .btn-outline-secondary{min-height:44px;min-width:44px;}
+  #rpBtnEnviar{min-height:44px;}
+}
 </style>
 
 <div class="tk-hero" id="tkHero">
@@ -3023,6 +3171,19 @@ try{
     }catch(e){ ilusToast('Error de red al traducir', { type: 'error' }); }
     finally{ btn.disabled = false; btn.innerHTML = original; }
   };
+
+  // 2026-07-19 (Fable) — Copiar mensaje (NUEVO, aditivo, Regla #4.2 no afecta
+  // nada existente). innerText de .rp-content: evita copiar HTML crudo (F3)
+  // y no incluye los chips de adjuntos (viven fuera, en .rp-adj-lista).
+  window.tkCopiarMensaje = function(btn){
+    const cont = btn.closest('.rp-bubble');
+    const div = cont && cont.querySelector('.rp-content');
+    const t = div ? div.innerText : '';
+    if(!t.trim()) return;
+    navigator.clipboard.writeText(t).then(
+      function(){ ilusToast('✓ Mensaje copiado', {type:'success'}); },
+      function(){ ilusToast('No se pudo copiar', {type:'error'}); });
+  };
 })();
 
 // ══════════════ Conexión — envío "inteligente" ══════════════
@@ -3552,6 +3713,10 @@ async function tkIdGuardarCampo(key, valor, extra){
   }
 }
 
+// 2026-07-19 (Fable) — Conversación v2: marca de agua del último id renderizado.
+// Vive fuera del DOM (sobrevive al rebuild total de innerHTML) para que solo
+// el/los mensaje(s) NUEVOS desde el último render animen (R1/R2/R3 del encargo).
+let _rpUltimoMsgId = null; // null = aún sin primer render
 function renderThread(mensajes, adjuntos){
   const adjPorMensaje = {};
   (adjuntos||[]).forEach(function(a){
@@ -3569,12 +3734,32 @@ function renderThread(mensajes, adjuntos){
     || (th.scrollHeight - th.scrollTop - th.clientHeight) < 60;
   if(!mensajes.length){
     th.innerHTML = '<div style="color:#9ca3af;font-size:.85rem;text-align:center;padding:20px;">Aún no hay mensajes.</div>';
+    // R1: primer render vacío -- deja la marca en 0 (no null) para que el
+    // primer mensaje real que llegue SÍ anime.
+    _rpUltimoMsgId = 0;
     return;
   }
-  th.innerHTML = mensajes.map(function(m){
+  // 2026-07-19 (Fable): marca de agua anti re-animación (ver _rpUltimoMsgId
+  // arriba de esta función). prevMax es el snapshot de ANTES de este render;
+  // maxId se recalcula recorriendo mensajes y queda grabado al final.
+  const prevMax = _rpUltimoMsgId;
+  let maxId = prevMax || 0;
+  th.innerHTML = mensajes.map(function(m, i){
+    // D1: el orden real del hilo es COALESCE(message_date,created_at), pero la
+    // fecha MOSTRADA es created_at -- un correo ingerido tarde puede romper la
+    // monotonicidad y el separador de fecha puede repetirse. Es correcto, no
+    // "consolidar" fechas.
+    const prev = i > 0 ? mensajes[i-1] : null;
+    const fecha = _rpFechaDe(m), fechaPrev = prev ? _rpFechaDe(prev) : null;
+    const sep = (fecha && fecha !== fechaPrev)
+      ? '<div class="rp-fecha-sep"><span>'+esc(_rpEtiquetaFecha(fecha))+'</span></div>' : '';
+    if(m.id && Number(m.id) > maxId) maxId = Number(m.id);
+    const esNuevo = prevMax !== null && !!m.id && Number(m.id) > prevMax;
+
     const esEvento = !['comentario','mensaje','client_message'].includes(m.tipo);
     if(esEvento){
-      return '<div class="rp-msg evento"><div class="rp-bubble">'+esc(m.contenido||'')+' · '+fmtFechaHora(m.created_at)+'</div></div>';
+      // R2: los eventos NO llevan avatar ni animan (decisión explícita).
+      return sep + '<div class="rp-msg evento"><div class="rp-bubble">'+esc(m.contenido||'')+' · '+fmtFechaHora(m.created_at)+'</div></div>';
     }
     const esCliente = m.tipo === 'client_message';
     const esInterno = !!m.es_interno && m.tipo !== 'client_message';
@@ -3591,24 +3776,52 @@ function renderThread(mensajes, adjuntos){
         ? ' · <span class="rp-estado-fail"><i class="bi bi-exclamation-triangle-fill"></i> no se pudo enviar</span>'
         : ' · <span class="rp-estado-ok"><i class="bi bi-check2-all"></i> enviado</span>';
     }
+
+    // 2026-07-19 (Fable): agrupación -- mismo autor/tipo consecutivo Y misma
+    // fecha colapsa el avatar y redondea el borde superior de la burbuja
+    // (D2: .rp-msg.interno queda a la izquierda al igual que .rp-msg.in --
+    // eso es correcto, no "corregir").
+    const prevEsEvento = prev && !['comentario','mensaje','client_message'].includes(prev.tipo);
+    const prevCls = (prev && !prevEsEvento)
+      ? (prev.tipo==='client_message' ? 'in' : ((prev.es_interno && prev.tipo!=='client_message') ? 'interno'
+          : ('out'+((!prev.usuario)?' auto':'')))) : null;
+    const prevWho = (prev && !prevEsEvento)
+      ? (prev.tipo==='client_message' ? (esc(ticketActual && ticketActual.nombre_contacto || 'Cliente')) : esc(prev.usuario||'Sistema')) : null;
+    const esAgrupado = !!(prev && !prevEsEvento && prevCls===cls && prevWho===who && fecha && fecha===fechaPrev);
+
     const adjs = adjPorMensaje[m.id] || [];
     // Daniel 2026-07-12: "cuando los presione, necesito que salga el modal
     // potente que habiamos hablado" -- antes esto abria en pestaña nueva,
     // inconsistente con el visor universal (#tkLightbox) que YA usa el resto
     // de la pagina. Mismo patron data-lightbox que renderAdjuntosInfo().
+    // 2026-07-19 (Fable): adjuntos premium -- miniatura grande + nombre para
+    // imágenes, "tile" de icono + nombre + peso para documentos. Mismo href/
+    // data-* de siempre (Regla #4.2: el listener más abajo solo lee dataset,
+    // sigue funcionando igual).
     const adjHtml = adjs.map(function(a){
       const url = safeUrl(a.archivo_url);
-      const thumb = esImagen(a.mime_type, a.archivo_nombre) ? '<img src="'+esc(url)+'" loading="lazy">' : '<i class="bi '+iconoAdjunto(a.mime_type, a.archivo_nombre)+'"></i>';
-      return '<a class="rp-adj-chip" href="'+esc(url)+'" data-lightbox="1" data-url="'+esc(url)+'"'
-        + ' data-mime="'+esc(a.mime_type||'')+'" data-nombre="'+esc(a.archivo_nombre||'archivo')+'">'
-        + thumb+esc(a.archivo_nombre||'archivo')+'</a>';
+      const esImg = esImagen(a.mime_type, a.archivo_nombre);
+      const nom = esc(a.archivo_nombre||'archivo');
+      const inner = esImg
+        ? '<img src="'+esc(url)+'" loading="lazy" decoding="async"><span class="rp-adj-nom">'+nom+'</span>'
+        : '<span class="rp-adj-tile"><i class="bi '+iconoAdjunto(a.mime_type,a.archivo_nombre)+'"></i></span>'
+          + '<span class="rp-adj-col"><span class="rp-adj-nom">'+nom+'</span>'
+          + (_rpPesoFmt(a.file_size_kb)?'<span class="rp-adj-peso">'+_rpPesoFmt(a.file_size_kb)+'</span>':'')
+          + '</span>';
+      return '<a class="rp-adj-chip '+(esImg?'es-img':'es-doc')+'" href="'+esc(url)+'" data-lightbox="1" data-url="'+esc(url)+'"'
+        + ' data-mime="'+esc(a.mime_type||'')+'" data-nombre="'+esc(a.archivo_nombre||'archivo')+'">'+inner+'</a>';
     }).join('');
     // 'comentario'/'mensaje' YA pasan por _sanitizar_html_mensaje() en el
     // backend antes de guardarse, por eso se renderizan como HTML crudo.
     // 'client_message' es un tipo RESERVADO para Fase 3 (mensajes entrantes
     // de clientes por correo/whatsapp) que aun no sanitiza nada -- mientras
     // no exista ese sanitizador, se escapa como texto plano (fail-safe).
-    const contenidoHtml = esCliente ? esc(m.contenido||'') : (m.contenido||'');
+    // 2026-07-19 (Fable): en mensajes del cliente, limpiar placeholders tipo
+    // "<Video.mov>" SOLO cuando coinciden con un adjunto real de ESE mensaje
+    // (_rpLimpiarPlaceholders) -- el predicado conservador es obligatorio,
+    // no una regex genérica (ver comentario del helper).
+    const contenidoCrudo = esCliente ? _rpLimpiarPlaceholders(m.contenido||'', adjs) : (m.contenido||'');
+    const contenidoHtml = esCliente ? esc(contenidoCrudo) : contenidoCrudo;
     // client_message es texto plano escapado (sin <p>/<br> de Quill) -- sin
     // white-space:pre-wrap los saltos de linea del correo original se
     // colapsaban en una sola linea visual (Daniel 2026-07-12: "no respeta
@@ -3622,13 +3835,28 @@ function renderThread(mensajes, adjuntos){
         + 'onclick="tkTraducirMensaje(this,'+m.id+')"><i class="bi bi-translate"></i> Traducir</button>'
         + '<div class="rp-traduccion" id="rpTrad_'+m.id+'" style="display:none"></div>'
       : '';
-    return '<div class="rp-msg '+cls+'"><div class="rp-bubble">'
-      + '<div class="rp-meta">'+who+autoTag+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>'
-      + '<div'+(esCliente?' class="rp-content-plano"':'')+'>'+contenidoHtml+'</div>'
+    // 2026-07-19 (Fable): Copiar -- NUEVO, aditivo (ver window.tkCopiarMensaje).
+    const copiarHtml = '<button type="button" class="rp-btn-copiar" onclick="tkCopiarMensaje(this)" aria-label="Copiar mensaje">'
+      + '<i class="bi bi-copy"></i> Copiar</button>';
+    // meta-mini (mensaje agrupado): sin "·" huérfano (F4) -- solo hora + estado.
+    const metaHtml = esAgrupado
+      ? '<div class="rp-meta rp-meta-mini">'+esc(_rpHoraDe(m))+estadoTag+'</div>'
+      : '<div class="rp-meta"><span class="rp-who">'+who+'</span>'+autoTag+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>';
+    return sep + '<div class="rp-msg '+cls+(esAgrupado?' rp-agrupado':'')+(esNuevo?' rp-nuevo':'')+'">'
+      + '<div class="rp-avatar">'+(esAuto?'<i class="bi bi-robot"></i>':_rpIniciales(who))+'</div>'
+      + '<div class="rp-bubble">'
+      + metaHtml
+      + (contenidoHtml ? '<div class="rp-content'+(esCliente?' rp-content-plano':'')+'">'+contenidoHtml+'</div>' : '')
       + (adjHtml? '<div class="rp-adj-lista">'+adjHtml+'</div>':'')
       + tradHtml
+      + copiarHtml
       + '</div></div>';
   }).join('');
+  // R3: por D1, un mensaje nuevo puede insertarse en MEDIO del hilo -- la
+  // marca por id lo anima igual (correcto); si el usuario está scrolleado
+  // arriba leyendo historial, el scroll no se mueve hacia él (aceptable,
+  // yaEstabaAbajo ya decide eso más abajo).
+  _rpUltimoMsgId = maxId;
   // Galería navegable de "Respuestas": Daniel pidió explícitamente "si me
   // envían diez adjuntos, así sean diferentes, pueda pasarlos para verlos
   // todos juntos" — se junta TODAS las imágenes de TODA la conversación
@@ -3666,6 +3894,53 @@ function iconoAdjunto(mime, nombre){
   if(/excel|spreadsheet/.test(mime||'') || ['xls','xlsx','csv'].includes(ext)) return 'bi-file-earmark-excel';
   return 'bi-file-earmark';
 }
+
+/* ══ 2026-07-19 (Fable) — helpers de la conversación v2 (avatares, agrupación,
+   separadores de fecha, limpieza de placeholders de adjuntos). Aditivos: no
+   reemplazan nada existente. ══ */
+function _rpIniciales(who){
+  const p = String(who||'').trim().split(/\s+/);
+  return ((p[0]||'?')[0]+(p[1]?p[1][0]:'')).toUpperCase();
+}
+function _rpPesoFmt(kb){
+  kb = Number(kb)||0;
+  if(!kb) return '';
+  return kb < 1024 ? (kb+' KB') : ((kb/1024).toFixed(1)+' MB');
+}
+// El backend formatea created_at como 'dd/mm/aaaa HH:MM' hora Chile (Regla #6).
+// Si algún día no viniera en ese formato, se degrada sin romper (sin fecha/
+// separador, D1: el orden real del hilo es COALESCE(message_date,created_at)
+// y no siempre es monótono contra el created_at mostrado).
+function _rpFechaDe(m){ // 'dd/mm/yyyy' o '' si el formato no es el esperado
+  const s = String(m.created_at||'');
+  return /^\d{2}\/\d{2}\/\d{4}/.test(s) ? s.slice(0,10) : '';
+}
+function _rpHoraDe(m){
+  const s = String(m.created_at||'');
+  return /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}/.test(s) ? s.slice(11,16) : s;
+}
+function _rpEtiquetaFecha(f){ // f = 'dd/mm/yyyy'
+  const hoy = new Date(), ayer = new Date(Date.now()-86400000);
+  const fmt = function(d){ return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); };
+  if(f === fmt(hoy)) return 'Hoy';
+  if(f === fmt(ayer)) return 'Ayer';
+  const MES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const mi = parseInt(f.slice(3,5),10)-1;
+  return MES[mi] ? (parseInt(f.slice(0,2),10)+' de '+MES[mi]) : f;
+}
+// SOLO borra "<nombre.ext>" si coincide EXACTO con un adjunto de ESE mensaje.
+// NO relajar a una regex genérica: adjuntos rechazados por tamaño/extensión
+// en la ingesta de correo nunca llegan a tk_adjuntos, y en ese caso el
+// placeholder es la ÚNICA evidencia de que el cliente envió algo (ver
+// crítica adversarial, punto 3) -- destruirla sería una pérdida de datos.
+function _rpLimpiarPlaceholders(texto, adjs){
+  if(!adjs.length) return texto;
+  const nombres = new Set(adjs.map(function(a){ return String(a.archivo_nombre||'').toLowerCase(); }));
+  return texto.replace(/<([^<>\n]{1,120}\.[a-z0-9]{2,5})>/gi,
+    function(full, nom){ return nombres.has(nom.toLowerCase()) ? '' : full; })
+    .replace(/\n{3,}/g,'\n\n').trim();
+}
+
 function renderAdjuntosInfo(adjuntos){
   const c = document.getElementById('listaAdjuntosInfo');
   if(!adjuntos || !adjuntos.length){
