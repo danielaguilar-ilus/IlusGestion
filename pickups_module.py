@@ -1906,7 +1906,7 @@ def register_pickup_routes(app, ctx):
                                 ("", "Telefono", phone),
                             ],
                         )
-                        _send_ilus_email(dest, subject, html, evento="pickup_reject_operador", modulo="retiros")
+                        _send_ilus_email(dest, subject, html, evento="pickup_reject_operador", modulo="retiros", asincrono=True)
                 except Exception as exc:
                     try:
                         print(f"[ILUS][PICKUP REJECT NOTIFY OPERADOR] {exc}")
@@ -2134,6 +2134,7 @@ def register_pickup_routes(app, ctx):
                                                 dest, subject, html,
                                                 evento="retiros_equipo",
                                                 modulo="comunicacion_interna",
+                                                asincrono=True,
                                             )
                                         except Exception as _e_m:
                                             print(f"[ILUS][PICKUP TEAM NOTIF] email {_mask_email(dest)}: {_e_m}", flush=True)

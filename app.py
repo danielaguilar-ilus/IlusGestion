@@ -7244,7 +7244,8 @@ def _modulo_desde_evento(evento: str) -> str:
 
 
 def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
-                     evento: str = None, modulo: str = None, **kwargs) -> bool:
+                     evento: str = None, modulo: str = None,
+                     asincrono: bool = False, **kwargs) -> bool:
     """
     Envía un correo HTML usando la configuración SMTP dinámica.
     Prioridad: Resend API (Railway) → SMTP con env vars → SMTP BD → SMTP config.py
@@ -7260,6 +7261,21 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
     attachments= (kwarg opcional, 2026-06-11): lista de adjuntos que se pasa
     tal cual a _send_ilus_email_real (tuplas (filename, bytes, mimetype) o
     dicts {"filename","content","content_type"}).
+
+    asincrono= (kwarg opcional, 2026-07-19 — cola de correo en background,
+    peritaje "palanca #2 de velocidad percibida"): si True, y NO hay
+    'attachments', el correo se ENCOLA en `comm_email_jobs` (origen='cola_v2')
+    y un worker perezoso lo envía segundos después — el request no espera al
+    SMTP. Retorna True apenas queda encolado (no es "se entregó", es "se
+    aceptó para entrega"). SOLO usar en callers fire-and-forget que YA
+    ignoraban el retorno (ver lista en el diseño / CLAUDE.md).
+    Con asincrono=False (default) el comportamiento es IDÉNTICO al de
+    siempre — cero cambios para los ~26 callers existentes.
+    Si el encolado falla por cualquier razón (tabla no existe aún por
+    ILUS_SKIP_MIGRATIONS=1, BD caída, etc.) o si vienen 'attachments'
+    (no se persisten — binarios en MySQL es mala idea), se degrada
+    automáticamente al envío SÍNCRONO de siempre. Un correo JAMÁS se
+    pierde por un fallo de encolado.
     """
     # 1) KILL SWITCH GLOBAL (todo email)
     if not comm_is_enabled("email"):
@@ -7281,6 +7297,30 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
         print(f"[KILLSWITCH] modulo={mod_resolved} canal=email bloqueado por kill switch — no enviado (to={to_addr})")
         return False
 
+    # 2.5) ENCOLADO ASÍNCRONO (opt-in) — vive DENTRO del choke point, después
+    # de las dos llaves de arriba (mismo comportamiento de bloqueo que hoy).
+    if asincrono and not kwargs.get("attachments"):
+        try:
+            kw_persistir = {k: kwargs[k] for k in ("cc", "reply_to") if kwargs.get(k)}
+            kw_json = json.dumps(kw_persistir, ensure_ascii=False) if kw_persistir else None
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO comm_email_jobs "
+                    "(destinatario, asunto, cuerpo, evento, modulo, kwargs_json, "
+                    " origen, status, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,'cola_v2','queued','sistema')",
+                    (str(to_addr)[:300], (subject or "")[:500], html_body,
+                     evento, mod_resolved, kw_json))
+            conn.commit()
+            _email_queue_kick()
+            return True  # True = encolado con éxito (no "entregado")
+        except Exception as exc:
+            # FALLBACK DURO: tabla inexistente (ILUS_SKIP_MIGRATIONS=1 sin
+            # migrar), BD caída, lo que sea → se envía SÍNCRONO como hoy.
+            # Un correo NUNCA se pierde por un fallo de encolado.
+            print(f"[EMAIL][QUEUE] Encolado falló, fallback síncrono: {str(exc)[:200]}", flush=True)
+
     # _send_ilus_email_inner hace el envío real; lo wrappeamos
     sent = False
     err  = None
@@ -7294,6 +7334,228 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
                    error_msg=err, metadata={"modulo": mod_resolved})
     except Exception: pass
     return sent
+
+
+# ══════════════════════════════════════════════════════════════════════
+# COLA DE CORREO EN BACKGROUND — worker perezoso (peritaje 2026-07-19)
+#
+# Patrón idéntico a _rl_cleanup_loop (app.py ~4416): flag global a nivel
+# de módulo (solo datos, CERO hilo arrancado al importar — compatible con
+# --preload), el hilo daemon arranca recién en el primer encolado real.
+#
+# At-least-once: se prefiere un correo DUPLICADO (raro) sobre uno PERDIDO
+# (grave — un cliente que no se entera de su retiro, una OT que no se
+# aprueba). Ver `_email_queue_claim_one` (claim atómico) y
+# `_email_queue_rescue` (jobs huérfanos de una instancia que murió).
+# ══════════════════════════════════════════════════════════════════════
+
+_EMAIL_QW = {"started": False, "lock": threading.Lock()}
+_EMAIL_QUEUE_BACKOFF_MIN = [1, 5, 15, 60, 180]  # minutos, por intento (1-indexado)
+
+
+def _email_queue_kick():
+    """Arranque perezoso del worker daemon. Idempotente — el flag global
+    asegura que el hilo se cree UNA sola vez por proceso, sin importar
+    cuántos encolados concurrentes lo disparen."""
+    if _EMAIL_QW["started"]:
+        return
+    with _EMAIL_QW["lock"]:
+        if _EMAIL_QW["started"]:
+            return
+        try:
+            threading.Thread(target=_email_queue_loop, daemon=True,
+                             name="email-queue-worker").start()
+            _EMAIL_QW["started"] = True
+        except Exception as exc:
+            print(f"[EMAIL][QUEUE] no se pudo arrancar el worker: {exc}", flush=True)
+
+
+def _email_queue_loop():
+    """Bucle del worker: drena hasta 10 jobs / 60s, duerme 5s si trabajó
+    algo (para vaciar backlog rápido) o 15s si no había nada."""
+    while True:
+        n = 0
+        try:
+            with app.app_context():
+                n = _email_queue_drain(max_jobs=10, max_seconds=60)
+        except Exception as exc:
+            print(f"[EMAIL][QUEUE] loop error: {exc}", flush=True)
+        time.sleep(5 if n else 15)
+
+
+def _email_queue_drain(max_jobs: int = 10, max_seconds: int = 30) -> int:
+    """Reclama y envía hasta max_jobs jobs 'cola_v2' pendientes, o hasta
+    max_seconds. Reusado por el worker daemon Y por los crons de respaldo
+    (tk_cron_leer_correo, _mantenciones_scheduler_loop) para drenar
+    backlog aunque la instancia que encoló haya muerto sin tráfico nuevo.
+    Devuelve cuántos jobs procesó (0 = nada pendiente)."""
+    try:
+        _email_queue_rescue()
+    except Exception as exc:
+        print(f"[EMAIL][QUEUE] rescue error: {exc}", flush=True)
+    deadline = time.monotonic() + max_seconds
+    hechos = 0
+    while hechos < max_jobs and time.monotonic() < deadline:
+        try:
+            job = _email_queue_claim_one()
+        except Exception as exc:
+            print(f"[EMAIL][QUEUE] claim error: {exc}", flush=True)
+            break
+        if not job:
+            break
+        try:
+            _email_queue_send_job(job)
+        except Exception as exc:
+            print(f"[EMAIL][QUEUE] send_job error (job_id={job.get('id')}): {exc}", flush=True)
+        hechos += 1
+    return hechos
+
+
+def _email_queue_claim_one():
+    """Claim atómico UPDATE-then-SELECT, seguro para múltiples instancias
+    Cloud Run corriendo el worker en paralelo.
+
+    La transición queued→sending es UN SOLO UPDATE filtrado por status:
+    dos instancias no pueden ganar la misma fila (rowcount=0 para la
+    segunda). El commit() INMEDIATO después del UPDATE (gotcha conocido
+    del proyecto: pool REPEATABLE READ) hace que el SELECT posterior en
+    la MISMA conexión vea su propia escritura sin depender de otra
+    conexión/snapshot."""
+    import socket as _socket
+    import uuid as _uuid
+    token = f"{_socket.gethostname()}-{os.getpid()}-{_uuid.uuid4().hex[:8]}"
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE comm_email_jobs "
+            "   SET status='sending', claimed_by=%s, started_at=NOW(), "
+            "       intentos=intentos+1 "
+            " WHERE origen='cola_v2' AND status='queued' "
+            "   AND (proximo_intento_at IS NULL OR proximo_intento_at <= NOW()) "
+            "   AND intentos < max_intentos "
+            " ORDER BY id LIMIT 1",
+            (token,))
+        rowcount = cur.rowcount
+    conn.commit()  # CLAVE: hace visible el claim antes de re-leer
+    if rowcount != 1:
+        return None
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM comm_email_jobs WHERE claimed_by=%s AND status='sending' LIMIT 1",
+            (token,))
+        return cur.fetchone()
+
+
+def _email_queue_send_job(job):
+    """Envía UN job ya reclamado (status='sending'), respetando el choke
+    point completo: re-chequea kill switch global + llave de módulo AL
+    MOMENTO DE ENVIAR (pudieron cambiar entre el encolado y el drenado).
+    Escribe en email_log el resultado FINAL (enviado/fallido/bloqueado) —
+    igual semántica 1-correo=1-entrada que el flujo síncrono de hoy; los
+    reintentos intermedios quedan solo en comm_email_jobs.ultimo_error."""
+    job_id      = job.get("id")
+    destino     = job.get("destinatario") or ""
+    asunto      = job.get("asunto") or ""
+    cuerpo      = job.get("cuerpo") or ""
+    evento      = job.get("evento")
+    modulo      = job.get("modulo") or "general"
+    intentos    = int(job.get("intentos") or 1)
+    max_int     = int(job.get("max_intentos") or 5)
+
+    if not comm_is_enabled("email") or _modulo_canal_bloqueado(modulo, "email"):
+        try:
+            mysql_execute(
+                "UPDATE comm_email_jobs SET status='failed', completed_at=NOW(), "
+                "ultimo_error=%s WHERE id=%s",
+                ("bloqueado por kill switch al momento de drenar", job_id))
+        except Exception:
+            pass
+        try:
+            _email_log(destino, asunto, evento, 'bloqueado',
+                       error_msg='Bloqueado por kill switch al drenar la cola',
+                       metadata={"modulo": modulo, "job_id": job_id, "async": True})
+        except Exception:
+            pass
+        return
+
+    sent = False
+    err  = None
+    try:
+        kw = json.loads(job.get("kwargs_json") or "{}")
+        sent = _send_ilus_email_real(destino, asunto, cuerpo, **kw)
+        if not sent:
+            err = getattr(g, "_last_email_error", None) or "proveedor devolvió False"
+    except Exception as exc:
+        err = str(exc)
+
+    err = (str(err)[:500] if err else None)
+
+    if sent:
+        try:
+            mysql_execute(
+                "UPDATE comm_email_jobs SET status='sent', completed_at=NOW(), "
+                "ultimo_error=NULL WHERE id=%s",
+                (job_id,))
+        except Exception:
+            pass
+        try:
+            _email_log(destino, asunto, evento, 'enviado',
+                       metadata={"modulo": modulo, "job_id": job_id,
+                                 "async": True, "intento": intentos})
+        except Exception:
+            pass
+        return
+
+    if intentos >= max_int:
+        try:
+            mysql_execute(
+                "UPDATE comm_email_jobs SET status='failed', completed_at=NOW(), "
+                "ultimo_error=%s WHERE id=%s",
+                (err, job_id))
+        except Exception:
+            pass
+        try:
+            _email_log(destino, asunto, evento, 'fallido', error_msg=err,
+                       metadata={"modulo": modulo, "job_id": job_id, "intentos": intentos})
+        except Exception:
+            pass
+    else:
+        backoff_min = _EMAIL_QUEUE_BACKOFF_MIN[min(intentos, len(_EMAIL_QUEUE_BACKOFF_MIN)) - 1]
+        try:
+            mysql_execute(
+                "UPDATE comm_email_jobs SET status='queued', "
+                "proximo_intento_at=NOW() + INTERVAL %s MINUTE, "
+                "ultimo_error=%s WHERE id=%s",
+                (backoff_min, err, job_id))
+        except Exception:
+            pass
+        # Sin email_log aquí: el intento intermedio no es el resultado final.
+
+
+def _email_queue_rescue():
+    """Rescata jobs 'sending' huérfanos — la instancia que los reclamó
+    murió a mitad del envío (Cloud Run puede escalar a cero / recicla
+    instancias). Umbral 10 min: el peor envío real (SMTP + fallback
+    Resend) tarda ~25s, así que 10 min es inequívocamente 'se murió',
+    nunca un falso positivo sobre un envío en curso."""
+    try:
+        mysql_execute(
+            "UPDATE comm_email_jobs SET status='queued', proximo_intento_at=NOW(), "
+            "claimed_by=NULL "
+            "WHERE origen='cola_v2' AND status='sending' "
+            "  AND started_at < (NOW() - INTERVAL 10 MINUTE) AND intentos < max_intentos"
+        )
+    except Exception as exc:
+        print(f"[EMAIL][QUEUE] rescue (requeue) error: {exc}", flush=True)
+    try:
+        mysql_execute(
+            "UPDATE comm_email_jobs SET status='failed', completed_at=NOW(), "
+            "ultimo_error='instancia terminó durante el envío; intentos agotados' "
+            "WHERE origen='cola_v2' AND status='sending' "
+            "  AND started_at < (NOW() - INTERVAL 10 MINUTE) AND intentos >= max_intentos"
+        )
+    except Exception as exc:
+        print(f"[EMAIL][QUEUE] rescue (fail) error: {exc}", flush=True)
 
 
 def _get_brand_cfg() -> dict:
@@ -17961,7 +18223,7 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
     })
     _send_ilus_email(c["email"].strip(), asunto, html,
                      evento=f"tracking_{estado.lower().replace(' ','_')}",
-                     modulo="transporte")
+                     modulo="transporte", asincrono=True)
 
 
 def _ilus_email_html_tracking(titulo, cliente, doc, cuerpo, track_url, comentario=None):
@@ -20458,6 +20720,7 @@ def _mantenciones_cron_run_once(slot_str=""):
                 _send_ilus_email(
                     email, _rec_asunto, _rec_html,
                     evento="mant_recordatorio_visita", modulo="mantenciones",
+                    asincrono=True,
                 )
                 mysql_execute(
                     "UPDATE mant_visitas SET recordatorio_visita_enviado_at=NOW() WHERE id=%s",
@@ -20491,6 +20754,7 @@ def _mantenciones_cron_run_once(slot_str=""):
                     "daniel.aguilar@sphs.cl", _brand_subject(asunto),
                     f"<p>Visita completada sin facturar (>7 días)</p>",
                     evento="mant_recordatorio_factura", modulo="mantenciones",
+                    asincrono=True,
                 )
                 mysql_execute(
                     "UPDATE mant_visitas SET recordatorio_factura_enviado_at=NOW() WHERE id=%s",
@@ -20626,6 +20890,15 @@ def _mantenciones_cron_run_once(slot_str=""):
             _ia_alertas_resumir_diario(metricas)
     except Exception as _e_ia_res:
         print(f"[mant-cron] resumen IA falló (no critico): {_e_ia_res}", flush=True)
+
+    # ── Paso 5: Drenado de respaldo de la cola de correo en background ──
+    # (2026-07-19). Si una instancia murió con jobs 'queued' y no llegó
+    # tráfico que dispare _email_queue_kick(), este cron de 06:00 CL los
+    # drena de todos modos (ya corre dentro del lock mant_cron_lock).
+    try:
+        metricas["email_queue_drenados"] = _email_queue_drain(max_jobs=50, max_seconds=30)
+    except Exception as _e_eq:
+        metricas["errores"].append(f"paso_email_queue: {_e_eq}")
 
     metricas["tiempo_ms"] = int((_time.time() - _t0) * 1000)
     print(
@@ -55547,6 +55820,7 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                             username, subject, cuerpo,
                             evento="ot_pendiente_aprobacion",
                             modulo="mantenciones",
+                            asincrono=True,
                         )
                     except Exception as e_e:
                         print(f"[notif-pend][email] vid={vid} dest={username}: {e_e}",
@@ -71268,6 +71542,91 @@ def _ensure_mant_clientes_tipo_relacion():
         print(f"[ensure_mant_clientes_tipo_relacion] no se aplicó (probablemente ya estaba): {e}", flush=True)
 
 
+def _ensure_comm_email_jobs():
+    """Cola de correo en background (Fase 1 — peritaje 2026-07-19).
+
+    Completa la tabla `comm_email_jobs` (ya existía a medias: la usa el
+    envío MANUAL de /comunicaciones/email/enviar desde 2026-05-21, ver
+    ~app.py:31643) con las columnas necesarias para una SEGUNDA cola,
+    independiente, usada por `_send_ilus_email(..., asincrono=True)`:
+    notificaciones automáticas fire-and-forget (recordatorios, avisos
+    internos) que hoy bloquean el request en SMTP síncrono.
+
+    Discriminador `origen`:
+      - NULL        → fila del flujo MANUAL legacy (comunicaciones). El
+                       drenado de la cola nueva JAMÁS la toca (REGLA #4.2).
+      - 'cola_v2'    → fila de la cola nueva, la única que
+                       _email_queue_drain() reclama y procesa.
+
+    AUNQUE ILUS_SKIP_MIGRATIONS=1 (prod puede correr así) — se llama en
+    boot-always junto a los demás `_ensure_*`. Si por lo que sea la tabla
+    no llega a existir, `_send_ilus_email(asincrono=True)` cae a envío
+    SÍNCRONO (fallback duro, jamás se pierde un correo — ver ese código).
+
+    Idempotente: CREATE TABLE IF NOT EXISTS + ALTER en try/except sueltos.
+    """
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS comm_email_jobs (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                destinatario  VARCHAR(300) NOT NULL,
+                asunto        VARCHAR(500),
+                status        ENUM('queued','sending','sent','failed') DEFAULT 'queued',
+                error_msg     TEXT NULL,
+                elapsed_ms    INT NULL,
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                started_at    DATETIME NULL,
+                completed_at  DATETIME NULL,
+                created_by    VARCHAR(190),
+                cuerpo             LONGTEXT NULL,
+                evento             VARCHAR(190) NULL,
+                modulo             VARCHAR(60) NULL,
+                kwargs_json        TEXT NULL,
+                origen             VARCHAR(20) NULL,
+                intentos           TINYINT NOT NULL DEFAULT 0,
+                max_intentos       TINYINT NOT NULL DEFAULT 5,
+                proximo_intento_at DATETIME NULL,
+                claimed_by         VARCHAR(120) NULL,
+                updated_at         DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                ultimo_error       VARCHAR(600) NULL,
+                INDEX idx_status (status, created_at DESC),
+                INDEX idx_created_by (created_by, created_at DESC)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_comm_email_jobs] CREATE TABLE no se aplicó (probablemente ya existía): {e}", flush=True)
+
+    # Migración idempotente: columnas nuevas para tablas preexistentes
+    # (la tabla original —2026-05-21— no tenía ninguna de estas).
+    for _mig in [
+        "ALTER TABLE comm_email_jobs ADD COLUMN cuerpo LONGTEXT NULL",
+        "ALTER TABLE comm_email_jobs ADD COLUMN evento VARCHAR(190) NULL",
+        "ALTER TABLE comm_email_jobs ADD COLUMN modulo VARCHAR(60) NULL",
+        "ALTER TABLE comm_email_jobs ADD COLUMN kwargs_json TEXT NULL",
+        "ALTER TABLE comm_email_jobs ADD COLUMN origen VARCHAR(20) NULL",
+        "ALTER TABLE comm_email_jobs ADD COLUMN intentos TINYINT NOT NULL DEFAULT 0",
+        "ALTER TABLE comm_email_jobs ADD COLUMN max_intentos TINYINT NOT NULL DEFAULT 5",
+        "ALTER TABLE comm_email_jobs ADD COLUMN proximo_intento_at DATETIME NULL",
+        "ALTER TABLE comm_email_jobs ADD COLUMN claimed_by VARCHAR(120) NULL",
+        "ALTER TABLE comm_email_jobs ADD COLUMN updated_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+        "ALTER TABLE comm_email_jobs ADD COLUMN ultimo_error VARCHAR(600) NULL",
+    ]:
+        try:
+            mysql_execute(_mig)
+        except Exception:
+            pass
+
+    # Índice de drenado (origen, status, proximo_intento_at) — separado
+    # porque MySQL viejo no soporta "ADD COLUMN ... , ADD INDEX ..." en el
+    # mismo ALTER si alguna columna ya existía a medias.
+    try:
+        mysql_execute(
+            "ALTER TABLE comm_email_jobs ADD INDEX idx_drenado (origen, status, proximo_intento_at)"
+        )
+    except Exception:
+        pass
+
+
 def _ensure_comm_template_retiros():
     """Daniel 2026-06-15/17: garantiza que el CORREO de retiros use el diseño
     COLORIDO con el stepper de 5 hitos canónicos (pickups_module.PICKUP_JOURNEY)
@@ -71577,6 +71936,16 @@ try:
         _ensure_mant_clientes_tipo_relacion()
 except Exception as _ensure_tr_err:
     print(f"[ILUS][WARN] _ensure_mant_clientes_tipo_relacion: {_ensure_tr_err}", flush=True)
+
+# COLA DE CORREO EN BACKGROUND (peritaje 2026-07-19, palanca #2 de
+# velocidad percibida): columnas nuevas de comm_email_jobs SIEMPRE,
+# incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto, _send_ilus_email(asincrono=True)
+# cae a envío síncrono (fallback duro, documentado) — degradado, no roto.
+try:
+    with app.app_context():
+        _ensure_comm_email_jobs()
+except Exception as _ensure_ceq_err:
+    print(f"[ILUS][WARN] _ensure_comm_email_jobs: {_ensure_ceq_err}", flush=True)
 
 
 def _reparar_ruts_clientes_corruptos():

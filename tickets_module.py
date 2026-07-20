@@ -389,6 +389,10 @@ def register_tickets_routes(app, ctx):
     normalizar_rut = ctx.get("normalizar_rut")
     _audit = ctx.get("_audit") or (lambda *a, **k: None)
     chile_fmt = ctx.get("chile_fmt")
+    # Cola de correo en background (2026-07-19): drenado de respaldo — este
+    # endpoint ya es golpeado periodicamente por Cloud Scheduler, asi que
+    # reusarlo evita un cron nuevo (ver _email_queue_drain en app.py).
+    _email_queue_drain = ctx.get("_email_queue_drain") or (lambda *a, **k: 0)
     # ERP read-only: reusamos los helpers PROBADOS de app.py (pymssql directo a
     # SQL Server sobre MAEEN/MAEDDO/MAEEDO). NO la REST API (que no responde en prod).
     _erp_buscar_clientes = ctx.get("_erp_buscar_clientes")
@@ -6332,6 +6336,14 @@ def register_tickets_routes(app, ctx):
             resumen = _tk_leer_correo_entrante()
         finally:
             _TK_MAIL_POLL["lock"].release()
+        # Drenado de respaldo de la cola de correo en background (2026-07-19):
+        # este endpoint es el unico golpeado periodicamente por Cloud Scheduler,
+        # asi que aprovechamos la pasada para vaciar backlog aunque no haya
+        # trafico que dispare el arranque perezoso del worker (_email_queue_kick).
+        try:
+            _email_queue_drain(max_jobs=20, max_seconds=10)
+        except Exception as _e_eq:
+            print(f"[tk_cron_leer_correo] email_queue_drain: {_e_eq}", flush=True)
         return jsonify({"ok": True, "resumen": resumen})
 
     # Viewer de superadmin (2026-07-18): Daniel copia la llave/URL completa
