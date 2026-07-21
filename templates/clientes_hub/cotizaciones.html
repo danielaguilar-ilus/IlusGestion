@@ -24,9 +24,16 @@
       las tablas, solo la puerta de entrada.</div>
   </div>
   <div class="d-flex gap-2">
-    <button type="button" id="btnCotNuevaErp" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;">
-      <i class="bi bi-search me-1"></i>Nueva cotización desde ERP
-    </button>
+    {# 2026-07-22 (Daniel: "no veo nada" -- este botón tenía su PROPIA
+       implementación vieja, separada del wizard nuevo de
+       tickets/cotizaciones.html, que abría el ERP directo sin selector de
+       tipo de servicio, sin "Crear cliente", sin revisión de precios ni
+       PDF. Mismo patrón que ya usan dashboard_hub/ordenes_trabajo_hub en
+       este archivo: este hub es "puerta de entrada", delega a la página
+       real en vez de duplicar la lógica. #}
+    <a href="{{ url_for('tk_cotizaciones_list') }}" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;">
+      <i class="bi bi-plus-lg me-1"></i>Crear Cotización
+    </a>
   </div>
 </div>
 
@@ -73,40 +80,6 @@
     </tbody>
   </table>
 </div>
-
-<script>
-// ══════════════ Nueva cotización desde ERP (camino único de creación) ══════════════
-// Reusa el modal compartido tickets/_tka_modal.html (mode:'seleccionar'), mismo
-// contrato que catalogo/repuestos/tickets/cotizaciones.html. ticket_id queda NULL
-// (cotización "suelta", no ligada a ningún ticket) — soportado por el backend.
-(function(){
-  const btn = document.getElementById('btnCotNuevaErp');
-  if (!btn) return;
-  btn.addEventListener('click', function(){
-    tkaOpen({
-      mode: 'seleccionar',
-      onSeleccionar: async function(items){
-        if (!items || !items.length) return;
-        try{
-          const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ items: items })
-          });
-          const d = await r.json();
-          if (!d.ok){
-            ilusToast(d.error || 'No se pudo crear la cotización', {type:'error'});
-            return;
-          }
-          ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada (' + items.length + ' ítems)', {type:'success'});
-          setTimeout(function(){ location.reload(); }, 800);
-        }catch(e){
-          ilusToast('Error de conexión al crear la cotización', {type:'error'});
-        }
-      }
-    });
-  });
-})();
-</script>
 
 {# Modal compartido de búsqueda ERP (mode:'seleccionar'); NO tocar ese
    archivo -- ya está construido y compartido con catálogo/tickets. #}
