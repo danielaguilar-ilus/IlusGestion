@@ -1061,36 +1061,36 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[ILUS][WARN] seed tk_settings.cotiz_ultimo_correlativo: {_e}", flush=True)
 
-        # 2026-07-22 (diagnostico temporal -- el primer boot sembro 0 en
-        # vez de 177, hay que confirmar el dato real antes de corregir a
-        # ciegas). Corre SIEMPRE (no solo si faltaba la clave) y además
-        # AUTO-CORRIGE si encuentra un numero real mayor Y todavia no se
-        # creo ninguna cotizacion nueva (0 filas en tk_cotizaciones) --
-        # asi no hay riesgo de pisar un correlativo ya en uso. Quitar este
-        # bloque una vez confirmado que quedo bien.
+        # 2026-07-22 (hallazgo real vía diagnóstico en producción):
+        # mant_cotizaciones está VACÍA en producción (0 filas) -- por eso
+        # el intento automático de derivar el correlativo desde ahí dio 0
+        # en vez de 177. El commit de jubilación (f1e6473) NO borró datos
+        # (verificado: sin DELETE/DROP/TRUNCATE masivo sobre esa tabla en
+        # ese diff) -- la tabla ya estaba así, causa aún no determinada,
+        # reportado a Daniel por separado (posible pérdida de las 177
+        # cotizaciones históricas, fuera del alcance de este fix).
+        #
+        # Corrección con el número real VERIFICADO por otra vía: el CSV
+        # que Daniel adjuntó el 2026-07-21 (177 filas, COT-000001 a
+        # COT-000177, cruzado contra el PDF real de la cotización
+        # ONE PLUS SPA/COT-000049 -- coincide a la unidad). Solo se aplica
+        # si TODAVÍA no se creó ninguna cotización nueva (0 riesgo de
+        # colisión) y el valor actual es menor -- nunca pisa un
+        # correlativo que ya esté en uso real.
         try:
-            _diag_total = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_cotizaciones")
-            _diag_muestra = mysql_fetchall(
-                "SELECT numero FROM mant_cotizaciones ORDER BY id DESC LIMIT 5")
-            _diag_max = mysql_fetchone(
-                "SELECT COALESCE(MAX(CAST(SUBSTRING(numero,5) AS UNSIGNED)),0) AS ultimo "
-                "FROM mant_cotizaciones WHERE numero REGEXP '^COT-[0-9]{6}$'")
-            _base_real = int((_diag_max or {}).get("ultimo") or 0)
-            print(f"[ILUS][DIAG] mant_cotizaciones total={(_diag_total or {}).get('n')} "
-                  f"muestra_numero={[r.get('numero') for r in (_diag_muestra or [])]} "
-                  f"base_recalculada={_base_real}", flush=True)
             _actual = mysql_fetchone(
                 "SELECT valor FROM tk_settings WHERE clave='cotiz_ultimo_correlativo'")
             _actual_val = int((_actual or {}).get("valor") or 0)
+            _BASE_VERIFICADA_CSV = 177
             _n_cotiz_nuevas = (mysql_fetchone("SELECT COUNT(*) AS n FROM tk_cotizaciones") or {}).get("n") or 0
-            if _base_real > _actual_val and _n_cotiz_nuevas == 0:
+            if _actual_val < _BASE_VERIFICADA_CSV and _n_cotiz_nuevas == 0:
                 mysql_execute(
                     "UPDATE tk_settings SET valor=%s WHERE clave='cotiz_ultimo_correlativo'",
-                    (str(_base_real),))
-                print(f"[ILUS][DIAG] correlativo corregido de {_actual_val} a {_base_real} "
-                      "(0 cotizaciones nuevas creadas todavia -- sin riesgo de colision)", flush=True)
-        except Exception as _e_diag:
-            print(f"[ILUS][DIAG] error: {_e_diag}", flush=True)
+                    (str(_BASE_VERIFICADA_CSV),))
+                print(f"[ILUS] correlativo corregido de {_actual_val} a {_BASE_VERIFICADA_CSV} "
+                      "(numero real verificado por CSV -- mant_cotizaciones estaba vacia)", flush=True)
+        except Exception as _e_fix:
+            print(f"[ILUS][WARN] correccion correlativo: {_e_fix}", flush=True)
 
         # Token del cron de correo entrante (Daniel 2026-07-18): autoseed en
         # el arranque para que la llave "viva en el sistema" sin depender de
