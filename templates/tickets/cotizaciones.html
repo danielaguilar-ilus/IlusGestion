@@ -109,7 +109,12 @@
 .cot-wiz-dd-item strong{font-size:.82rem;color:#0a0a0a;}
 .cot-wiz-dd-item span{font-size:.7rem;color:#6b7280;font-family:'JetBrains Mono',monospace;}
 .cot-wiz-dd-item em{font-size:.64rem;color:#16a34a;font-style:normal;font-weight:800;}
-.cot-wiz-dd-vacio{padding:12px;font-size:.78rem;color:#9ca3af;text-align:center;}
+.cot-wiz-dd-vacio{padding:10px 12px 4px;font-size:.78rem;color:#9ca3af;text-align:center;}
+.cot-wiz-dd-crear{display:block;width:calc(100% - 16px);margin:6px 8px 8px;padding:9px 12px;
+  border:1.5px dashed #dc2626;border-radius:9px;background:#fef2f2;color:#dc2626;font-weight:700;
+  font-size:.8rem;cursor:pointer;text-align:center;}
+.cot-wiz-dd-crear:hover{background:#fee2e2;}
+.cot-wiz-auto{font-weight:400;color:#9ca3af;text-transform:none;letter-spacing:0;font-size:.9em;}
 .cot-wiz-pills{display:flex;gap:6px;}
 .cot-wiz-pill{flex:1;border:1.5px solid #e5e7eb;background:#fff;border-radius:9px;min-height:42px;
   font-size:.8rem;font-weight:800;color:#6b7280;cursor:pointer;transition:.13s;}
@@ -229,10 +234,14 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
         <div class="cot-wiz-campo"><label>RUT</label>
           <input id="cotWizRut" class="form-control"></div>
         <div class="cot-wiz-campo full"><label>Dirección</label>
-          <input id="cotWizDireccion" class="form-control"></div>
-        <div class="cot-wiz-campo"><label>Región</label>
-          <input id="cotWizRegion" class="form-control"></div>
-        <div class="cot-wiz-campo"><label>Comuna</label>
+          <input id="cotWizDireccion" class="form-control" autocomplete="off"
+                 placeholder="Escribe y elige una dirección real del listado…">
+          <div id="cotWizDireccionHint" class="cot-wiz-hint"></div>
+          <input type="hidden" id="cotWizDireccionLat"><input type="hidden" id="cotWizDireccionLng">
+          <input type="hidden" id="cotWizDireccionPlaceId"></div>
+        <div class="cot-wiz-campo"><label>Región <span class="cot-wiz-auto">(automática)</span></label>
+          <input id="cotWizRegion" class="form-control" readonly></div>
+        <div class="cot-wiz-campo"><label>Comuna <span class="cot-wiz-auto">(auto, editable)</span></label>
           <input id="cotWizComuna" class="form-control"></div>
         <div class="cot-wiz-campo"><label>Email</label>
           <input id="cotWizEmail" type="email" class="form-control"></div>
@@ -377,8 +386,9 @@ function cotWizAbrir(){
   document.getElementById('cotWizEjecutivo').value = '';
   document.getElementById('cotWizRutaHint').textContent = 'Se obtiene automáticamente según la comuna del cliente';
   // Fecha LOCAL (no toISOString, que es UTC y cerca de medianoche chilena
-  // se corre un día -- hallazgo de revisión adversarial).
-  const _hoy = new Date(); _hoy.setDate(_hoy.getDate() + 30);
+  // se corre un día -- hallazgo de revisión adversarial). 2026-07-22
+  // (Daniel: "un válido hasta 15 días", igual que Triple A).
+  const _hoy = new Date(); _hoy.setDate(_hoy.getDate() + 15);
   const _p2 = function(n){ return String(n).padStart(2, '0'); };
   document.getElementById('cotWizValidoHasta').value =
     _hoy.getFullYear() + '-' + _p2(_hoy.getMonth() + 1) + '-' + _p2(_hoy.getDate());
@@ -457,7 +467,13 @@ function _wizCliOcultar(){
         const cont = document.getElementById('cotWizCliResultados');
         const res = (d && d.resultados) || [];
         if (!res.length){
-          cont.innerHTML = '<div class="cot-wiz-dd-vacio">Sin resultados en el ERP — puedes escribir los datos a mano</div>';
+          // 2026-07-22 (Daniel: "también existe la posibilidad de crear un
+          // cliente como en Triple A"): accion explicita, no un mensaje
+          // muerto -- igual que el "¿Deseas crear un nuevo cliente?" del
+          // cotizador de Triple A.
+          cont.innerHTML = '<div class="cot-wiz-dd-vacio">Sin resultados en el ERP para "' + _cotEsc(q) + '"</div>' +
+            '<button type="button" class="cot-wiz-dd-crear" onclick="cotWizCrearClienteNuevo(\'' +
+              _cotEsc(q).replace(/'/g, "\\'") + '\')"><i class="bi bi-person-plus-fill me-1"></i>Crear cliente nuevo</button>';
         } else {
           cont.innerHTML = res.map(function(c, i){
             return '<button type="button" class="cot-wiz-dd-item" data-i="' + i + '">' +
@@ -490,6 +506,80 @@ function cotWizElegirCliente(c){
   _wizCliOcultar();
   cotWizBuscarRuta();
 }
+// 2026-07-22 (Daniel: "también existe la posibilidad de crear un cliente
+// como en Triple A"): no hay una tabla de "clientes" separada en este
+// wizard -- los datos del cliente viven directo en la cotización, así
+// que "crear cliente" es habilitar la carga manual con una acción clara
+// en vez de un mensaje de "sin resultados" pasivo.
+function cotWizCrearClienteNuevo(q){
+  _wizCliOcultar();
+  document.getElementById('cotWizCliQ').value = '';
+  const empresaInput = document.getElementById('cotWizEmpresa');
+  // Si lo que tipeó no era un RUT (probable razón social), lo precarga.
+  const pareceRut = /^[\d.\-kK\s]+$/.test(q || '');
+  empresaInput.value = pareceRut ? '' : (q || '');
+  if (pareceRut) document.getElementById('cotWizRut').value = q || '';
+  empresaInput.focus();
+  ilusToast('Completa los datos del cliente nuevo abajo', {type:'info'});
+}
+
+// ── Dirección con Google Places (2026-07-22, Daniel: "verificando la
+//    dirección en el buscador de Google... una vez que validemos la
+//    dirección, se autocompleta la comuna y la región") — mismo patrón
+//    ya usado en mant_ficha.js/_ilusInitDireccionCliente, adaptado al
+//    wizard. Región queda SIEMPRE automática (readonly); Comuna se
+//    autocompleta pero sigue editable por si Google no calza exacto. ──
+function _cotWizLimpiaRegion(r){
+  if (!r) return r;
+  let s = String(r).replace(/^Regi[oó]n\s+(de\s+|del\s+|de\s+la\s+)?/i, '').trim();
+  s = s.replace(/\s+de\s+Santiago$/i, '');
+  return s || String(r);
+}
+function _cotWizInitDireccion(){
+  const input = document.getElementById('cotWizDireccion');
+  if (!input || input.dataset.placesBound === '1') return;
+  if (typeof ilusPlacesAutocomplete !== 'function'){
+    if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(_cotWizInitDireccion);
+    return;
+  }
+  input.dataset.placesBound = '1';
+  ilusPlacesAutocomplete('cotWizDireccion', {
+    country: 'cl',
+    types: ['address'],
+    onPlaceSelected: function(place){
+      document.getElementById('cotWizDireccionLat').value = place.lat || '';
+      document.getElementById('cotWizDireccionLng').value = place.lng || '';
+      document.getElementById('cotWizDireccionPlaceId').value = place.place_id || '';
+      const comps = place.componentes || [];
+      const pick = function(){
+        for (let i = 0; i < arguments.length; i++){
+          const t = arguments[i];
+          const c = comps.find(function(x){ return (x.types || []).indexOf(t) >= 0; });
+          if (c) return c.long_name;
+        }
+        return '';
+      };
+      // CL: level_1=Región · level_3/locality=Comuna
+      const region = pick('administrative_area_level_1');
+      const comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+      document.getElementById('cotWizRegion').value = _cotWizLimpiaRegion(region);
+      if (comuna) document.getElementById('cotWizComuna').value = comuna;
+      const hint = document.getElementById('cotWizDireccionHint');
+      const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
+      const ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
+      hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>' +
+        'Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      if (comuna) cotWizBuscarRuta();
+    },
+    onNoSelection: function(){
+      const hint = document.getElementById('cotWizDireccionHint');
+      hint.innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>' +
+        'Elige una opción de la lista para validar la dirección.';
+    }
+  });
+}
+_cotWizInitDireccion();
+
 async function cotWizBuscarRuta(){
   if (!_WIZ || _WIZ.rutaManual) return;
   const comuna = document.getElementById('cotWizComuna').value.trim();
