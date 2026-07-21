@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Histórico de cotizaciones — ILUS{% endblock %}
+{% block content %}
+<style>
+.hist-table-wrap{overflow-x:auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
+.hist-table{width:100%;border-collapse:collapse;min-width:820px}
+.hist-table th{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;padding:9px 12px;
+  text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap}
+.hist-table td{padding:8px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle;white-space:nowrap}
+.hist-table tr:last-child td{border-bottom:none}
+.hist-num{font-family:'JetBrains Mono',monospace;font-size:.74rem;font-weight:800;color:#92400e;
+  background:#fef3c7;padding:2px 8px;border-radius:6px;}
+.hist-cliente{font-weight:700;color:#0a0a0a;max-width:280px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;display:inline-block;vertical-align:middle;}
+.hist-total{font-family:'JetBrains Mono',monospace;font-weight:800;font-variant-numeric:tabular-nums;}
+.hist-badge{font-size:.62rem;font-weight:800;padding:2px 9px;border-radius:50px;text-transform:uppercase;}
+.hb-borrador{background:#f3f4f6;color:#6b7280;} .hb-sent{background:#dbeafe;color:#1e40af;}
+.hb-approved{background:#dcfce7;color:#166534;} .hb-rejected{background:#fee2e2;color:#991b1b;}
+.hist-aviso{background:#fff8e1;border:1px solid #fde68a;border-radius:12px;padding:14px 18px;
+  font-size:.82rem;color:#78350f;margin-bottom:16px;display:flex;gap:10px;align-items:flex-start;}
+.hist-aviso i{font-size:1.1rem;flex:0 0 auto;margin-top:1px;}
+</style>
+
+<div class="tk-hero">
+  <div>
+    <h4><i class="bi bi-clock-history me-2"></i>Histórico de cotizaciones</h4>
+    <div class="sub">Las 177 cotizaciones de Triple A, restauradas — nivel resumen</div>
+  </div>
+  <a href="{{ url_for('tk_cotizaciones_list') }}" class="btn btn-lg" style="background:#0a0a0a;color:#fff;font-weight:800;border-radius:10px;">
+    <i class="bi bi-arrow-left me-1"></i>Volver a Cotizaciones
+  </a>
+</div>
+
+<div class="hist-aviso">
+  <i class="bi bi-info-circle-fill"></i>
+  <div>Este listado es el respaldo real que compartiste (resumen por cotización) — no incluye el detalle
+    de ítems porque esa exportación nunca lo tuvo. El correlativo de las cotizaciones nuevas ya continúa
+    desde aquí (COT-000178 en adelante).</div>
+</div>
+
+<form method="get" class="mb-3" style="max-width:360px">
+  <div class="input-group">
+    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+    <input type="text" name="q" value="{{ filtro_q }}" class="form-control"
+           placeholder="Buscar por número, cliente o RUT..." style="font-size:16px">
+    {% if filtro_q %}
+    <a href="{{ url_for('tk_cotizaciones_historico') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-x-lg"></i>
+    </a>
+    {% endif %}
+  </div>
+</form>
+
+<div class="hist-table-wrap">
+  <table class="hist-table">
+    <thead>
+      <tr>
+        <th>Número</th><th>Cliente</th><th>RUT</th><th>Estado</th>
+        <th>Subtotal</th><th>Impuesto</th><th>Total</th><th>Válida hasta</th><th>Fecha</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in filas %}
+      <tr>
+        <td><span class="hist-num">{{ f.numero }}</span></td>
+        <td><span class="hist-cliente" title="{{ f.cliente }}">{{ f.cliente or '—' }}</span></td>
+        <td>{{ f.rut or '—' }}</td>
+        <td>
+          {% set _e = (f.estado or '')|lower %}
+          <span class="hist-badge {{ 'hb-sent' if _e=='sent' else ('hb-approved' if _e=='approved' else ('hb-rejected' if _e=='rejected' else 'hb-borrador')) }}">
+            {{ f.estado or '—' }}
+          </span>
+        </td>
+        <td>${{ '{:,}'.format(f.subtotal | int).replace(',', '.') }}</td>
+        <td>${{ '{:,}'.format(f.impuesto | int).replace(',', '.') }}</td>
+        <td class="hist-total">${{ '{:,}'.format(f.total | int).replace(',', '.') }}</td>
+        <td>{{ f.valida_hasta or '—' }}</td>
+        <td style="font-size:.78rem;color:#6b7280;">{{ f.creada_csv or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="text-center text-muted py-4">Sin resultados</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

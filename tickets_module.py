@@ -959,6 +959,30 @@ def register_tickets_routes(app, ctx):
               KEY idx_region (region)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # 2026-07-22 (Daniel confirmó y adjuntó el respaldo real): restaura
+        # las 177 cotizaciones históricas de Triple A. SIN FK a clientes a
+        # propósito -- nivel resumen (igual que el CSV original, sin detalle
+        # de ítems), de solo lectura. Ver _ensure_tk_cotizaciones_historico_triplea.
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_cotizaciones_historico (
+              id                INT PRIMARY KEY,
+              numero            VARCHAR(30) NULL,
+              estado            VARCHAR(30) NULL,
+              cliente           VARCHAR(300) NULL,
+              rut               VARCHAR(20) NULL,
+              ticket_id_legacy  INT NULL,
+              subtotal          INT NOT NULL DEFAULT 0,
+              descuento         INT NOT NULL DEFAULT 0,
+              impuesto          INT NOT NULL DEFAULT 0,
+              total             INT NOT NULL DEFAULT 0,
+              valida_hasta      DATETIME NULL,
+              creada_csv        DATETIME NULL,
+              actualizada_csv   DATETIME NULL,
+              importado_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_numero (numero),
+              KEY idx_rut (rut)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS tk_ticket_documentos (
               id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -1461,6 +1485,84 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[ILUS][WARN] ensanchar tk_cotizacion_items.clase_producto: {_e}", flush=True)
 
+    def _ensure_tk_cotizaciones_historico_triplea():
+        """Restaura las 177 cotizaciones históricas de Triple A (2026-07-22,
+        Daniel confirmó y adjuntó el respaldo real: cotizaciones_2026-07-09.csv,
+        misma exportación con la que ya se verificó al peso la fórmula del
+        motor de precio y el correlativo COT-000177).
+
+        mant_cotizaciones (el destino "natural") está VACÍA en producción
+        (confirmado por diagnóstico en vivo, 2026-07-22) y además exige
+        cliente_id NOT NULL con FK real a mant_clientes -- crear ~150
+        clientes sintéticos solo para satisfacer esa FK sería más riesgoso
+        que útil (contaminaría una tabla EN USO real). Se restaura en cambio
+        a una tabla propia, de solo lectura, sin FKs: tk_cotizaciones_historico
+        (nivel resumen, igual que el CSV -- no tiene detalle de ítems, el CSV
+        nunca lo tuvo).
+
+        El CSV se embarca en el propio repo (cotizaciones_historico_triplea.csv,
+        mismo patrón que contrato_reglas.json -- ruta relativa a este archivo,
+        funciona en Cloud Run porque el Dockerfile hace `COPY . ./`; a
+        diferencia de _ensure_import_rutas_csv_daniel, que apunta a una ruta
+        LOCAL de Downloads y por eso nunca corrió en producción). Idempotente:
+        INSERT IGNORE por id (el id original del CSV/sistema viejo), no se
+        reimporta ni se pisa si ya corrió antes."""
+        try:
+            _ya = mysql_fetchone("SELECT COUNT(*) AS n FROM tk_cotizaciones_historico")
+            if _ya and int(_ya.get("n") or 0) > 0:
+                return 0  # ya importado en un boot anterior
+        except Exception:
+            pass  # tabla recien creada en este mismo boot, sigue
+
+        _csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "cotizaciones_historico_triplea.csv")
+        if not os.path.isfile(_csv_path):
+            return 0
+
+        import csv as _csv
+
+        def _parse_fecha_hist(s):
+            s = (s or "").strip()
+            if not s:
+                return None
+            try:
+                return datetime.strptime(s, "%d-%m-%Y %H:%M")
+            except ValueError:
+                return None
+
+        importados = 0
+        with open(_csv_path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = _csv.DictReader(f, delimiter=";")
+            for row in reader:
+                try:
+                    csv_id = int((row.get("ID") or "").strip())
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    mysql_execute(
+                        "INSERT IGNORE INTO tk_cotizaciones_historico "
+                        "(id, numero, estado, cliente, rut, ticket_id_legacy, "
+                        " subtotal, descuento, impuesto, total, "
+                        " valida_hasta, creada_csv, actualizada_csv) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (csv_id,
+                         (row.get("Número Cotización") or "").strip()[:30] or None,
+                         (row.get("Estado") or "").strip()[:30] or None,
+                         (row.get("Cliente") or "").strip()[:300] or None,
+                         (row.get("RUT") or "").strip()[:20] or None,
+                         int((row.get("Ticket ID") or "").strip()) if (row.get("Ticket ID") or "").strip().isdigit() else None,
+                         int(row.get("Subtotal") or 0),
+                         int(row.get("Descuento") or 0),
+                         int(row.get("Impuesto") or 0),
+                         int(row.get("Total") or 0),
+                         _parse_fecha_hist(row.get("Válida Hasta")),
+                         _parse_fecha_hist(row.get("Fecha Creación")),
+                         _parse_fecha_hist(row.get("Fecha Actualización"))))
+                    importados += 1
+                except Exception as _e_row:
+                    print(f"[ILUS][WARN] importar historico id={csv_id}: {_e_row}", flush=True)
+        return importados
+
     def _ensure_tk_plantillas_columns():
         """Migracion aditiva de tk_plantillas (patron _ensure_tk_cotizaciones_columns):
         agrega es_compartida si falta.
@@ -1506,6 +1608,9 @@ def register_tickets_routes(app, ctx):
             _ensure_tk_zz_instalacion_scan_table()
             _ensure_tk_cotizaciones_columns()
             _ensure_tk_cotizacion_items_columns()
+            _n_historico = _ensure_tk_cotizaciones_historico_triplea()
+            if _n_historico:
+                print(f"[ILUS] Cotizaciones históricas de Triple A restauradas: {_n_historico}", flush=True)
             _ensure_tk_plantillas_columns()
             _ensure_tk_sla_regla()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
@@ -2295,6 +2400,31 @@ def register_tickets_routes(app, ctx):
         _fname = f"Cotizacion_{_emp}_{_fecha_str(_chile_hoy())}.pdf"
         return _Resp(pdf_bytes, mimetype="application/pdf",
                      headers={"Content-Disposition": f'inline; filename="{_fname}"'})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  PAGINA — Histórico de cotizaciones Triple A (2026-07-22, Daniel
+    #  confirmó y adjuntó el respaldo real). Solo lectura, resumen (el CSV
+    #  original nunca tuvo detalle de ítems) -- ver
+    #  _ensure_tk_cotizaciones_historico_triplea para el porqué vive en su
+    #  propia tabla y no en mant_cotizaciones.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/cotizaciones/historico")
+    @_tickets_required
+    def tk_cotizaciones_historico():
+        q = (request.args.get("q") or "").strip()
+        where, params = "1=1", []
+        if q:
+            where = "(numero LIKE %s OR cliente LIKE %s OR rut LIKE %s)"
+            like = f"%{q}%"
+            params = [like, like, like]
+        rows = mysql_fetchall(
+            f"SELECT id, numero, estado, cliente, rut, subtotal, descuento, impuesto, total, "
+            f"       valida_hasta, creada_csv "
+            f"FROM tk_cotizaciones_historico WHERE {where} ORDER BY id DESC LIMIT 300",
+            tuple(params)) or []
+        return render_template("tickets/cotizaciones_historico.html",
+                                filas=[_fmt_row(r, dt_keys=("valida_hasta", "creada_csv")) for r in rows],
+                                filtro_q=q)
 
     # ─────────────────────────────────────────────────────────────────
     #  PAGINA — Cotizaciones (esqueleto, Fase 5 del blueprint)
