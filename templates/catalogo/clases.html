@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Categorías de producto — ILUS{% endblock %}
+{% block content %}
+<style>
+.clc-table-wrap{overflow-x:auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
+.clc-table{width:100%;border-collapse:collapse;min-width:920px}
+.clc-table th{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;padding:10px 12px;
+  text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap}
+.clc-table td{padding:8px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+.clc-table tr:last-child td{border-bottom:none}
+.clc-table tr.inactiva{opacity:.5}
+.clc-grupo{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;
+  padding:2px 0 4px}
+.clc-nombre{font-weight:700;color:#0a0a0a}
+.clc-slug{font-size:.68rem;color:#9ca3af;font-family:ui-monospace,Consolas,monospace}
+.clc-num{width:64px;padding:5px 6px;border:1px solid #e5e7eb;border-radius:7px;font-size:.82rem;
+  text-align:right;font-variant-numeric:tabular-nums}
+.clc-num:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 2px #fee2e2}
+.clc-hh{font-size:.72rem;color:#6b7280;font-variant-numeric:tabular-nums;white-space:nowrap}
+.clc-hh b{color:#0a0a0a}
+.clc-sinDatos{color:#c1c5cc;font-style:italic;font-size:.74rem}
+.clc-badge{font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:50px;white-space:nowrap}
+.clc-badge.on{background:#dcfce7;color:#166534}
+.clc-badge.off{background:#f3f4f6;color:#6b7280}
+.clc-act{border:none;background:transparent;color:#9ca3af;cursor:pointer;font-size:.9rem;padding:4px 6px;
+  border-radius:6px}
+.clc-act:hover{background:#f3f4f6;color:#0a0a0a}
+@media(max-width:640px){.clc-table th:nth-child(4),.clc-table td:nth-child(4){display:none}}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-tags me-2"></i>Categorías de producto</h4>
+    <div class="sub">Mano de obra por categoría — Hora / Cantidad de técnicos, separado por Instalación
+      y Mantención. Sirve para clasificar productos del Catálogo y para el cálculo de Cotizaciones.</div>
+  </div>
+  <button type="button" id="btnClcNueva" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;">
+    <i class="bi bi-plus-lg me-1"></i>Nueva categoría
+  </button>
+</div>
+
+<div class="clc-table-wrap">
+  <table class="clc-table">
+    <thead>
+      <tr>
+        <th>Categoría</th>
+        <th>Instalación<br><span style="font-weight:400;text-transform:none">Hora · Técnicos · HH</span></th>
+        <th>Mantención<br><span style="font-weight:400;text-transform:none">Hora · Técnicos · HH</span></th>
+        <th>Estado</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="clcBody"></tbody>
+  </table>
+</div>
+
+<script>
+let _clcClases = [];
+
+function escH(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function clcCargar(){
+  const r = await fetch('/catalogo/api/clases/admin');
+  const d = await r.json();
+  _clcClases = (d.ok && d.clases) ? d.clases : [];
+  clcRender();
+}
+
+function clcInputsTarifa(c, tipo){
+  const horas = c[tipo+'_horas'];
+  const tecnicos = c[tipo+'_tecnicos'];
+  const hh = c[tipo+'_hh'];
+  const hhTxt = (hh==null) ? '<span class="clc-sinDatos">sin definir</span>' : '<b>'+ (Math.round(hh*100)/100) +'</b> HH';
+  return ''
+    + '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '
+    +   'placeholder="hr" data-id="'+c.id+'" data-tipo="'+tipo+'" data-campo="horas" onchange="clcGuardarTarifa(this)">'
+    + ' <input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '
+    +   'placeholder="téc" data-id="'+c.id+'" data-tipo="'+tipo+'" data-campo="tecnicos" onchange="clcGuardarTarifa(this)">'
+    + ' <span class="clc-hh">'+hhTxt+'</span>';
+}
+
+function clcRender(){
+  const body = document.getElementById('clcBody');
+  if(!_clcClases.length){
+    body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Sin categorías todavía</td></tr>';
+    return;
+  }
+  body.innerHTML = _clcClases.map(c => (
+    '<tr class="'+(c.activo? '':'inactiva')+'">'
+    + '<td><div class="clc-nombre">'+escH(c.nombre)+'</div><div class="clc-slug">'+escH(c.slug)+'</div></td>'
+    + '<td>'+clcInputsTarifa(c,'instalacion')+'</td>'
+    + '<td>'+clcInputsTarifa(c,'mantencion')+'</td>'
+    + '<td><span class="clc-badge '+(c.activo?'on':'off')+'">'+(c.activo?'Activa':'Inactiva')+'</span></td>'
+    + '<td>'
+    +   '<button type="button" class="clc-act" title="Renombrar" onclick="clcRenombrar('+c.id+')"><i class="bi bi-pencil"></i></button>'
+    +   '<button type="button" class="clc-act" title="'+(c.activo?'Desactivar':'Activar')+'" '
+    +     'onclick="clcToggle('+c.id+','+(c.activo?'false':'true')+')">'
+    +     '<i class="bi bi-'+(c.activo?'eye-slash':'eye')+'"></i></button>'
+    + '</td>'
+    + '</tr>'
+  )).join('');
+}
+
+async function clcGuardarTarifa(input){
+  const id = input.dataset.id, tipo = input.dataset.tipo;
+  const fila = _clcClases.find(c => String(c.id) === String(id));
+  if(!fila) return;
+  const horasInput = document.querySelector('input[data-id="'+id+'"][data-tipo="'+tipo+'"][data-campo="horas"]');
+  const tecInput = document.querySelector('input[data-id="'+id+'"][data-tipo="'+tipo+'"][data-campo="tecnicos"]');
+  const horas = horasInput.value === '' ? null : parseFloat(horasInput.value);
+  const tecnicos = tecInput.value === '' ? null : parseInt(tecInput.value, 10);
+  input.disabled = true;
+  try{
+    const r = await fetch('/catalogo/api/clases/'+id+'/tarifas', {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tipo_servicio: tipo, horas: horas, tecnicos: tecnicos})
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); await clcCargar(); return; }
+    fila[tipo+'_horas'] = horas; fila[tipo+'_tecnicos'] = tecnicos;
+    fila[tipo+'_hh'] = (horas!=null && tecnicos!=null) ? horas*tecnicos : null;
+    clcRender();
+    ilusToast('✓ Guardado', {type:'success'});
+  }catch(e){
+    ilusToast('Error de conexión al guardar', {type:'error'});
+  }finally{
+    input.disabled = false;
+  }
+}
+
+async function clcRenombrar(id){
+  const fila = _clcClases.find(c => c.id === id);
+  if(!fila) return;
+  const nuevo = await ilusPrompt({
+    title: 'Renombrar categoría',
+    message: 'Nuevo nombre para "' + fila.nombre + '"',
+    placeholder: 'Ej: Rack de accesorios',
+    defaultValue: fila.nombre,
+    required: true,
+  });
+  if(!nuevo || nuevo.trim() === fila.nombre) return;
+  const r = await fetch('/catalogo/api/clases/'+id, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({nombre: nuevo.trim()})
+  });
+  const d = await r.json();
+  if(!d.ok){ ilusToast(d.error || 'No se pudo renombrar', {type:'error'}); return; }
+  ilusToast('✓ Categoría renombrada', {type:'success'});
+  clcCargar();
+}
+
+async function clcToggle(id, activar){
+  const fila = _clcClases.find(c => c.id === id);
+  if(!fila) return;
+  if(!activar){
+    const ok = await ilusConfirm({
+      title: 'Desactivar categoría',
+      message: '"' + fila.nombre + '" dejará de aparecer para clasificar productos nuevos.',
+      sub: 'Los productos ya clasificados con ella NO pierden el dato — solo se oculta del selector.',
+      okLabel: 'Desactivar', cancelLabel: 'Cancelar', danger: true,
+    });
+    if(!ok) return;
+  }
+  const r = await fetch('/catalogo/api/clases/'+id, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({activo: activar})
+  });
+  const d = await r.json();
+  if(!d.ok){ ilusToast(d.error || 'No se pudo actualizar', {type:'error'}); return; }
+  clcCargar();
+}
+
+async function clcNueva(){
+  const nombre = await ilusPrompt({
+    title: 'Nueva categoría de producto',
+    message: 'Nombre de la categoría (ej: nombre del tipo de equipo)',
+    placeholder: 'Ej: Máquina de poleas',
+    required: true,
+  });
+  if(!nombre) return;
+  const r = await fetch('/catalogo/api/clases', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({nombre: nombre.trim()})
+  });
+  const d = await r.json();
+  if(!d.ok){ ilusToast(d.error || 'No se pudo crear la categoría', {type:'error'}); return; }
+  ilusToast('✓ Categoría creada — completa sus horas de instalación/mantención', {type:'success'});
+  clcCargar();
+}
+
+document.getElementById('btnClcNueva').addEventListener('click', clcNueva);
+clcCargar();
+</script>
+{% endblock %}

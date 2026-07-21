@@ -27,6 +27,7 @@ import re
 import secrets
 import threading
 import time
+from decimal import Decimal, ROUND_HALF_UP
 from email.header import decode_header, make_header
 from email.utils import parseaddr, parsedate_to_datetime
 from functools import wraps
@@ -1013,6 +1014,53 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[ILUS][WARN] seed tk_settings.reply_to: {_e}", flush=True)
 
+        # Constantes de precio de Cotizaciones (2026-07-21, Daniel adjuntó
+        # "Tarifa mantenciones.xlsx" -- "Aplica cotizacion", hoja
+        # "Tarifa mantencion" I1/G1). Verificadas EXACTAS contra 301 ítems
+        # reales de cotizaciones ya emitidas (0 discrepancias, ver
+        # _tk_cotiz_calcular_item). Editable sin deploy (Regla implícita de
+        # Daniel: todo lo que puede cambiar de precio, editable desde la UI)
+        # -- INSERT IGNORE no pisa un valor que ya se haya editado.
+        for _clave, _valor in (
+            ("cotiz_valor_hh", "20000"),   # $/HH (columna I1 del Excel)
+            ("cotiz_margen_pct", "40"),    # % margen sobre costo de mano de obra (G1=0.4)
+            ("cotiz_iva_pct", "19"),       # % IVA Chile
+        ):
+            try:
+                mysql_execute(
+                    "INSERT IGNORE INTO tk_settings (clave, valor) VALUES (%s,%s)",
+                    (_clave, _valor))
+            except Exception as _e:
+                print(f"[ILUS][WARN] seed tk_settings.{_clave}: {_e}", flush=True)
+
+        # Correlativo de cotizaciones (2026-07-21, Daniel: "debemos mantener
+        # el correlativo que tenemos en Triple A"). El formato real
+        # histórico es COT-NNNNNN (6 dígitos, SIN año) -- confirmado en los
+        # datos reales de mant_cotizaciones (numero='COT-000177' etc), que
+        # es DISTINTO del formato COT-YYYY-NNNNN que usaba la función
+        # _next_cotizacion_number() del módulo retirado (esa función nunca
+        # llegó a numerar el histórico real de Triple A, solo se habría
+        # usado para cotizaciones nuevas creadas desde esa UI vieja). Se
+        # siembra UNA sola vez con el último número real usado -- de ahí en
+        # adelante tk_settings.cotiz_ultimo_correlativo es la única fuente
+        # de verdad (incrementado con SELECT...FOR UPDATE, ver
+        # tk_api_cotizacion_desde_erp, mismo patrón anti-carrera que el
+        # flujo "generar ticket desde cotización").
+        try:
+            _tiene_correlativo = mysql_fetchone(
+                "SELECT 1 AS x FROM tk_settings WHERE clave='cotiz_ultimo_correlativo'")
+            if not _tiene_correlativo:
+                _ultimo_real = mysql_fetchone(
+                    "SELECT COALESCE(MAX(CAST(SUBSTRING(numero,5) AS UNSIGNED)),0) AS ultimo "
+                    "FROM mant_cotizaciones WHERE numero REGEXP '^COT-[0-9]{6}$'")
+                _base = int((_ultimo_real or {}).get("ultimo") or 0)
+                mysql_execute(
+                    "INSERT IGNORE INTO tk_settings (clave, valor) VALUES ('cotiz_ultimo_correlativo', %s)",
+                    (str(_base),))
+                print(f"[ILUS] correlativo de cotizaciones sembrado en {_base} (continúa desde Triple A)", flush=True)
+        except Exception as _e:
+            print(f"[ILUS][WARN] seed tk_settings.cotiz_ultimo_correlativo: {_e}", flush=True)
+
         # Token del cron de correo entrante (Daniel 2026-07-18): autoseed en
         # el arranque para que la llave "viva en el sistema" sin depender de
         # una env var que nadie puede setear en produccion sin riesgo. Se
@@ -1301,6 +1349,33 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN email VARCHAR(190) NULL")
         if "telefono" not in existentes:
             alters.append("ADD COLUMN telefono VARCHAR(50) NULL")
+        # 2026-07-21 (Daniel adjuntó "Tarifa mantenciones.xlsx"): la fórmula
+        # real de mano de obra es DISTINTA para instalación vs mantención
+        # (cat_clase_producto_tarifas ya separa por tipo_servicio) -- la
+        # cotización necesita saber cuál aplica. Default 'mantencion' porque
+        # es la única con tarifa REAL confirmada hoy (Regla #4.2: default
+        # seguro, no rompe cotizaciones ya creadas).
+        if "tipo_servicio" not in existentes:
+            alters.append(
+                "ADD COLUMN tipo_servicio ENUM('instalacion','mantencion') "
+                "NOT NULL DEFAULT 'mantencion'")
+        # Comuna del cliente -- necesaria para el costo de ruta (Daniel
+        # 2026-07-21: "tomar el cálculo de tanto el costo de transporte
+        # como el costo de realizarle la mantención"), cruzada contra
+        # tk_cotiz_rutas (ya importada desde el CSV real de Daniel).
+        if "comuna" not in existentes:
+            alters.append("ADD COLUMN comuna VARCHAR(100) NULL")
+        # 2026-07-22 (Daniel, wizard estilo Triple A): el paso 1 "Cliente"
+        # del nuevo modal captura estos campos igual que el cotizador de
+        # Triple A (ilus-front) que Daniel mostró en pantallazos.
+        if "region" not in existentes:
+            alters.append("ADD COLUMN region VARCHAR(100) NULL")
+        if "direccion" not in existentes:
+            alters.append("ADD COLUMN direccion VARCHAR(300) NULL")
+        if "notas_internas" not in existentes:
+            alters.append("ADD COLUMN notas_internas TEXT NULL")
+        if "ejecutivo" not in existentes:
+            alters.append("ADD COLUMN ejecutivo VARCHAR(190) NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
@@ -1323,7 +1398,11 @@ def register_tickets_routes(app, ctx):
             return
         alters = []
         if "clase_producto" not in existentes:
-            alters.append("ADD COLUMN clase_producto VARCHAR(30) NULL")
+            # 2026-07-21: VARCHAR(60) desde el inicio -- mismo ancho que
+            # cat_productos.clase_producto (categorías editables desde
+            # /catalogo/clases pueden slugificar a nombres largos en
+            # español; ver _cat_slugify en catalogo_module.py).
+            alters.append("ADD COLUMN clase_producto VARCHAR(60) NULL")
         if "vaneli_original" not in existentes:
             alters.append("ADD COLUMN vaneli_original INT NULL")
         for a in alters:
@@ -1331,6 +1410,25 @@ def register_tickets_routes(app, ctx):
                 mysql_execute(f"ALTER TABLE tk_cotizacion_items {a}")
             except Exception as _e:
                 print(f"[ILUS][WARN] ALTER tk_cotizacion_items {a}: {_e}", flush=True)
+
+        # 2026-07-21 (revisión adversarial: desalineamiento de esquema
+        # encontrado): en instalaciones donde la columna ya existía como
+        # VARCHAR(30) (antes de la fecha de arriba), se ensancha -- un
+        # slug de categoría nueva de más de 30 caracteres truncaría el
+        # match contra cat_clases_producto.slug (ítem en $0 sin explicación)
+        # o, en modo estricto de MySQL, haría fallar toda la creación de
+        # la cotización. Idempotente vía information_schema.COLUMNS.
+        try:
+            _col_clase = mysql_fetchone(
+                "SELECT CHARACTER_MAXIMUM_LENGTH AS len FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tk_cotizacion_items' "
+                "  AND COLUMN_NAME='clase_producto'")
+            if _col_clase and int(_col_clase.get("len") or 0) < 60:
+                mysql_execute(
+                    "ALTER TABLE tk_cotizacion_items MODIFY COLUMN clase_producto VARCHAR(60) NULL")
+                print("[ensure_tickets] tk_cotizacion_items.clase_producto ensanchada a VARCHAR(60)", flush=True)
+        except Exception as _e:
+            print(f"[ILUS][WARN] ensanchar tk_cotizacion_items.clase_producto: {_e}", flush=True)
 
     def _ensure_tk_plantillas_columns():
         """Migracion aditiva de tk_plantillas (patron _ensure_tk_cotizaciones_columns):
@@ -1661,6 +1759,513 @@ def register_tickets_routes(app, ctx):
         )
 
     # ─────────────────────────────────────────────────────────────────
+    #  Motor de precio de Cotizaciones (2026-07-21, Daniel adjuntó
+    #  "Tarifa mantenciones.xlsx"; corregido el mismo día tras revisión
+    #  adversarial de 3 revisores independientes que encontró que la
+    #  primera versión omitía el transporte por ítem). Fórmula confirmada
+    #  EXACTA contra un caso real de 43 ítems (hoja "Aplica cotizacion":
+    #  Subtotal=$2.296.300, IVA=$436.297, Total=$2.732.597, los tres
+    #  cuadran a la unidad):
+    #
+    #      HH               = horas × técnicos       (por categoría, cat_clase_producto_tarifas)
+    #      Costo             = HH × valor_hh          (tk_settings.cotiz_valor_hh, hoy $20.000)
+    #      Precio unit. ítem = Costo × (1 + margen)   (mano de obra PURA, sin transporte)
+    #      Subtotal ítems    = Σ (Precio unit. × cantidad × (1 − desc. ítem))
+    #      Subtotal          = Subtotal ítems + costo_ruta
+    #      Descuento         = Subtotal × descuento_pct cabecera
+    #      IVA               = (Subtotal − Descuento) × iva_pct   (hoy 19%)
+    #      Total             = Subtotal − Descuento + IVA
+    #
+    #  2026-07-22: se adopta el MISMO modelo del cotizador Triple A
+    #  (ilus-back quotation.service.calculateTotals, verificado leyendo su
+    #  código): el costo de ruta vive como línea separada de la cabecera
+    #  (así lo muestra su Resumen: "Costo Ruta / Costo Items / Subtotal /
+    #  IVA / Total") y SOLO el PDF lo prorratea entre los ítems para la
+    #  presentación (generateQuotePdf.ts hace exactamente eso). Equivale
+    #  al Excel de Daniel al peso: mano de obra $1.982.400 + ruta $313.900
+    #  = subtotal $2.296.300, IVA $436.297, total $2.732.597 (caso real de
+    #  43 ítems, verificado contra ambos). costo_tecnico NO participa
+    #  (sería doble conteo con la mano de obra por ítem; el campo se
+    #  conserva por Regla #4.2). El descuento de cabecera replica a Triple
+    #  A: sobre (ítems + ruta), antes del IVA.
+    #
+    #  Nunca inventa precio: ítem sin categoría clasificada, o categoría
+    #  sin tarifa para el tipo_servicio de la cotización (ej. "Rack Pro"
+    #  hoy, o cualquiera en Instalación mientras esa tabla no exista),
+    #  queda en $0 explícito (nunca con el último valor calculado antes de
+    #  perder su tarifa -- eso dejaría la cabecera desincronizada de lo
+    #  que se ve por línea).
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_money_round(x):
+        """Redondeo comercial 'half up' -- Excel usa ROUND() clásico;
+        round() nativo de Python es 'half to even' (bancario) y puede
+        desviarse ±1 peso en el límite .5 exacto (hallazgo de la revisión
+        adversarial 2026-07-21, relevante ahora que horas/valor_hh/margen
+        son editables y pueden aterrizar en una fracción .5)."""
+        return int(Decimal(str(x)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    def _tk_cotiz_pricing_config():
+        rows = mysql_fetchall(
+            "SELECT clave, valor FROM tk_settings "
+            "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct','cotiz_iva_pct')") or []
+        cfg = {r["clave"]: r["valor"] for r in rows}
+
+        def _f(clave, default):
+            try:
+                return float(cfg.get(clave))
+            except (TypeError, ValueError):
+                return default
+        return {
+            "valor_hh": _f("cotiz_valor_hh", 20000.0),
+            "margen_pct": _f("cotiz_margen_pct", 40.0),
+            "iva_pct": _f("cotiz_iva_pct", 19.0),
+        }
+
+    def _tk_cotiz_calcular_item(clase_producto, tipo_servicio, cantidad, descuento_pct, cfg):
+        """Precio de mano de obra de UN ítem según su categoría (SIN
+        transporte -- el costo de ruta es una línea separada de cabecera,
+        modelo Triple A; el PDF lo prorratea solo para presentación).
+        Devuelve None si la categoría no tiene tarifa cargada para ese
+        tipo_servicio -- el caller debe resetear el ítem a $0 en ese caso,
+        nunca dejar el último valor calculado. `cfg` se recibe ya cargado
+        (evita 1 query de más por ítem, hallazgo de revisión adversarial)."""
+        _cat_tarifa = ctx.get("_cat_obtener_tarifa_clase")
+        if not _cat_tarifa or not clase_producto:
+            return None
+        tarifa = _cat_tarifa(clase_producto, tipo_servicio)
+        if not tarifa:
+            return None
+        hh = tarifa["horas"] * tarifa["tecnicos"]
+        costo = hh * cfg["valor_hh"]
+        precio_unitario = _tk_money_round(costo * (1 + cfg["margen_pct"] / 100.0))
+
+        # cantidad=0 EXPLÍCITO (el ERP/usuario excluyó el ítem) se respeta
+        # tal cual -- `cantidad or 1` colapsaba 0 y None al mismo caso
+        # (hallazgo de la revisión adversarial: un ítem con cantidad=0 real
+        # terminaba cobrándose como si fuera 1).
+        if cantidad is None:
+            cant = 1.0
+        else:
+            try:
+                cant = max(float(cantidad), 0.0)
+            except (TypeError, ValueError):
+                cant = 1.0
+
+        if descuento_pct is None:
+            desc = 0.0
+        else:
+            try:
+                desc = min(max(float(descuento_pct), 0.0), 100.0)
+            except (TypeError, ValueError):
+                desc = 0.0
+
+        subtotal = _tk_money_round(precio_unitario * cant)
+        total = _tk_money_round(subtotal * (1 - desc / 100.0))
+        return {"hh": hh, "precio_unitario": precio_unitario, "subtotal": subtotal, "total": total}
+
+    def _tk_cotiz_recalcular(cid):
+        """Recalcula ítems + totales de una cotización según la
+        clasificación actual de cada ítem. Persiste en tk_cotizacion_items
+        y tk_cotizaciones. Devuelve dict con los totales, o None si la
+        cotización no existe."""
+        cab = mysql_fetchone(
+            "SELECT id, tipo_servicio, comuna, costo_ruta, descuento_pct, iva_pct "
+            "FROM tk_cotizaciones WHERE id=%s", (cid,))
+        if not cab:
+            return None
+        tipo_servicio = cab.get("tipo_servicio") or "mantencion"
+
+        # Costo de ruta TOTAL (2026-07-21/22): el valor GUARDADO manda --
+        # el wizard lo auto-sugiere por comuna contra tk_cotiz_rutas y el
+        # usuario puede corregirlo a mano antes de crear (pantallazo Triple
+        # A: campo editable con hint "se obtiene automáticamente según
+        # región y comuna"). Solo si quedó en 0 se intenta el cruce por
+        # comuna como red de seguridad; nunca se pisa un monto que el
+        # usuario ya fijó explícitamente.
+        comuna = (cab.get("comuna") or "").strip()
+        costo_ruta_total = float(cab.get("costo_ruta") or 0)
+        if costo_ruta_total <= 0 and comuna:
+            ruta = mysql_fetchone(
+                "SELECT precio_final FROM tk_cotiz_rutas "
+                "WHERE activa=1 AND LOWER(comuna)=LOWER(%s) LIMIT 1", (comuna,))
+            if ruta and ruta.get("precio_final") is not None:
+                costo_ruta_total = float(ruta["precio_final"])
+                mysql_execute(
+                    "UPDATE tk_cotizaciones SET costo_ruta=%s WHERE id=%s",
+                    (costo_ruta_total, cid))
+
+        items = mysql_fetchall(
+            "SELECT id, clase_producto, cantidad, descuento_pct, erp_kopr "
+            "FROM tk_cotizacion_items WHERE cotizacion_id=%s", (cid,)) or []
+
+        # Sincroniza clase_producto desde el Catálogo (2026-07-21, bug real
+        # encontrado por revisión adversarial): clasificar un producto
+        # (cotClasifGuardar) SOLO actualiza cat_productos.clase_producto --
+        # el snapshot en tk_cotizacion_items quedaba en NULL para siempre,
+        # y el ítem se cobraba $0 "para siempre" pese a que la UI mostraba
+        # "✓ clasificado". Se refresca ANTES de calcular, por SKU (case-
+        # insensitive: _cat_crear_o_reusar_producto_desde_erp guarda el SKU
+        # en mayúsculas, erp_kopr no necesariamente).
+        _skus_sin_clasificar = list({
+            (it["erp_kopr"] or "").strip().upper()
+            for it in items if not it.get("clase_producto") and it.get("erp_kopr")
+        })
+        if _skus_sin_clasificar:
+            _clasificados = mysql_fetchall(
+                "SELECT sku, clase_producto FROM cat_productos "
+                "WHERE UPPER(sku) IN (" + ",".join(["%s"] * len(_skus_sin_clasificar)) + ") "
+                "AND clase_producto IS NOT NULL",
+                tuple(_skus_sin_clasificar)) or []
+            _clase_por_sku = {(r["sku"] or "").strip().upper(): r["clase_producto"] for r in _clasificados}
+            for it in items:
+                if it.get("clase_producto"):
+                    continue
+                _nueva = _clase_por_sku.get((it.get("erp_kopr") or "").strip().upper())
+                if _nueva:
+                    mysql_execute(
+                        "UPDATE tk_cotizacion_items SET clase_producto=%s WHERE id=%s",
+                        (_nueva, it["id"]))
+                    it["clase_producto"] = _nueva
+
+        # Mano de obra por ítem (SIN transporte -- modelo Triple A, ver
+        # cabecera de sección: la ruta es una línea separada de cabecera).
+        cfg = _tk_cotiz_pricing_config()
+        subtotal_items = 0.0
+        for it in items:
+            calc = _tk_cotiz_calcular_item(
+                it.get("clase_producto"), tipo_servicio,
+                it.get("cantidad"), it.get("descuento_pct"), cfg)
+            if calc:
+                mysql_execute(
+                    "UPDATE tk_cotizacion_items SET precio_unitario=%s, subtotal=%s, total=%s "
+                    "WHERE id=%s",
+                    (calc["precio_unitario"], calc["subtotal"], calc["total"], it["id"]))
+                subtotal_items += calc["total"]
+            else:
+                # 2026-07-21 (revisión adversarial): si el ítem ya tenía un
+                # precio de un cálculo anterior (categoría desclasificada,
+                # tarifa borrada, o cambio de tipo_servicio), se resetea a
+                # $0 explícito -- nunca se deja un total "fantasma" que ya
+                # no suma al total de la cabecera.
+                mysql_execute(
+                    "UPDATE tk_cotizacion_items SET precio_unitario=0, subtotal=0, total=0 "
+                    "WHERE id=%s", (it["id"],))
+
+        # Totales de cabecera -- misma secuencia que Triple A
+        # (calculateTotals): subtotal = ítems + ruta; descuento sobre el
+        # subtotal; IVA sobre (subtotal - descuento).
+        subtotal = subtotal_items + costo_ruta_total
+        descuento_pct = float(cab.get("descuento_pct") or 0)
+        descuento_monto = _tk_money_round(subtotal * descuento_pct / 100.0)
+        iva_pct = float(cab["iva_pct"]) if cab.get("iva_pct") is not None else cfg["iva_pct"]
+        iva_monto = _tk_money_round((subtotal - descuento_monto) * iva_pct / 100.0)
+        total = subtotal - descuento_monto + iva_monto
+        mysql_execute(
+            "UPDATE tk_cotizaciones SET subtotal_items=%s, subtotal=%s, "
+            "descuento_monto=%s, iva_pct=%s, iva_monto=%s, total=%s WHERE id=%s",
+            (_tk_money_round(subtotal_items), _tk_money_round(subtotal), descuento_monto, iva_pct,
+             iva_monto, _tk_money_round(total), cid))
+        return {
+            "subtotal_items": _tk_money_round(subtotal_items), "subtotal": _tk_money_round(subtotal),
+            "descuento_monto": descuento_monto, "costo_ruta_total": costo_ruta_total,
+            "iva_pct": iva_pct, "iva_monto": iva_monto, "total": _tk_money_round(total),
+        }
+
+    def _tk_clasificar_items_erp(items):
+        """Crea/reusa cada ítem en el Catálogo (por SKU) y devuelve
+        (clases_por_sku, sin_clasificar). Factorizado de
+        tk_api_cotizacion_desde_erp para reusarlo también en el preview
+        del modal de revisión (2026-07-22)."""
+        _cat_crear_o_reusar = ctx.get("_cat_crear_o_reusar_producto_desde_erp")
+        clases_por_sku = {}
+        sin_clasificar = []
+        if not _cat_crear_o_reusar:
+            return clases_por_sku, sin_clasificar
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            sku_cls = (it.get("sku") or "").strip().upper()
+            if not sku_cls or sku_cls in clases_por_sku:
+                continue
+            try:
+                res_cat = _cat_crear_o_reusar(sku_cls, (it.get("nombre") or "").strip())
+            except Exception as _e_cat:
+                print(f"[_tk_clasificar_items_erp] sku={sku_cls}: {_e_cat}", flush=True)
+                res_cat = None
+            clase = (res_cat or {}).get("clase_producto")
+            pid_cat = (res_cat or {}).get("id")
+            clases_por_sku[sku_cls] = clase
+            if pid_cat and not clase:
+                sin_clasificar.append({
+                    "sku": sku_cls, "producto_id": pid_cat,
+                    "nombre": (it.get("nombre") or "").strip(),
+                })
+        return clases_por_sku, sin_clasificar
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — modal de revisión de ítems (2026-07-22, Daniel: "no me gustó
+    #  ... necesito que cuando yo seleccione los productos, me abra un
+    #  modal donde vea SKU, descripción, cantidad y qué característica es
+    #  el producto"). Dos endpoints de solo-lectura (no crean la
+    #  cotización todavía) para poblar ese modal ANTES de confirmar:
+    #    1) preview-clasificacion: clasifica/crea en el Catálogo y dice
+    #       la característica actual de cada SKU (o null si aún no tiene).
+    #    2) preview-precio: precio de mano de obra por ítem según
+    #       característica+cantidad (SIN transporte -- eso depende de
+    #       comuna+cantidad TOTAL de la cotización, que todavía no existe
+    #       en este punto; el transporte se ve recién tras crear).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/cotizaciones/preview-clasificacion", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_preview_clasificacion():
+        d = request.get_json(silent=True) or {}
+        items = d.get("items") or []
+        if not isinstance(items, list) or not items:
+            return jsonify({"ok": False, "error": "Sin ítems"}), 400
+        clases_por_sku, _ = _tk_clasificar_items_erp(items)
+        _cat_map = ctx.get("_cat_clases_map")
+        labels = _cat_map() if _cat_map else {}
+        out = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            sku_up = (it.get("sku") or "").strip().upper()
+            clase = clases_por_sku.get(sku_up)
+            out.append({
+                "sku": it.get("sku") or "", "nombre": it.get("nombre") or "",
+                "qty": it.get("qty"), "clase_producto": clase,
+                "clase_producto_label": labels.get(clase) if clase else None,
+            })
+        return jsonify({"ok": True, "items": out})
+
+    @app.route("/tickets/api/cotizaciones/preview-precio", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_preview_precio():
+        d = request.get_json(silent=True) or {}
+        tipo_servicio = (d.get("tipo_servicio") or "mantencion").strip().lower()
+        if tipo_servicio not in ("instalacion", "mantencion"):
+            tipo_servicio = "mantencion"
+        filas = d.get("items") or []
+        if not isinstance(filas, list):
+            return jsonify({"ok": False, "error": "items debe ser una lista"}), 400
+        cfg = _tk_cotiz_pricing_config()
+        out = []
+        for f in filas:
+            if not isinstance(f, dict):
+                out.append(None)
+                continue
+            calc = _tk_cotiz_calcular_item(
+                f.get("clase_producto"), tipo_servicio, f.get("cantidad"),
+                f.get("descuento_pct"), cfg)
+            out.append(calc)
+        return jsonify({"ok": True, "precios": out})
+
+    @app.route("/tickets/api/cotizaciones/costo-ruta", methods=["GET"])
+    @_tickets_required
+    def tk_api_cotizacion_costo_ruta():
+        """Costo de ruta sugerido por comuna (tk_cotiz_rutas, importada del
+        CSV real de Daniel). Para el hint del wizard: "Se obtiene
+        automáticamente según región y comuna del cliente" (Triple A hacía
+        exactamente esto con su tabla route_costs por comuna)."""
+        comuna = (request.args.get("comuna") or "").strip()
+        if not comuna:
+            return jsonify({"ok": True, "encontrado": False, "costo": 0})
+        ruta = mysql_fetchone(
+            "SELECT precio_final, comuna, region FROM tk_cotiz_rutas "
+            "WHERE activa=1 AND LOWER(comuna)=LOWER(%s) LIMIT 1", (comuna,))
+        if not ruta or ruta.get("precio_final") is None:
+            return jsonify({"ok": True, "encontrado": False, "costo": 0})
+        return jsonify({"ok": True, "encontrado": True,
+                        "costo": int(ruta["precio_final"]),
+                        "comuna": ruta.get("comuna"), "region": ruta.get("region")})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  PDF de la cotización (2026-07-22, Daniel: "expresado en el formato
+    #  PDF que te pasé... con un formato exquisito"). Réplica del formato
+    #  real de Triple A (ejemplo COT-000049 ONE PLUS SPA). Igual que su
+    #  generateQuotePdf.ts, el costo de ruta se PRORRATEA entre los ítems
+    #  solo para la presentación -- en la BD sigue como línea separada.
+    # ─────────────────────────────────────────────────────────────────
+    _TK_UNIDADES = ("", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
+                    "diez", "once", "doce", "trece", "catorce", "quince", "dieciséis",
+                    "diecisiete", "dieciocho", "diecinueve", "veinte")
+    _TK_DECENAS = ("", "", "veinti", "treinta", "cuarenta", "cincuenta", "sesenta",
+                   "setenta", "ochenta", "noventa")
+    _TK_CENTENAS = ("", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos",
+                    "seiscientos", "setecientos", "ochocientos", "novecientos")
+
+    def _tk_num_a_palabras_999(n):
+        if n == 0:
+            return ""
+        if n == 100:
+            return "cien"
+        c, resto = divmod(n, 100)
+        partes = []
+        if c:
+            partes.append(_TK_CENTENAS[c])
+        if resto:
+            if resto <= 20:
+                partes.append(_TK_UNIDADES[resto])
+            else:
+                d, u = divmod(resto, 10)
+                if d == 2:
+                    # Formas compuestas con tilde propia (RAE): veintiún,
+                    # veintidós, veintitrés, veintiséis.
+                    _veinti = {1: "veintiún", 2: "veintidós", 3: "veintitrés", 6: "veintiséis"}
+                    partes.append(_veinti.get(u, "veinti" + _TK_UNIDADES[u]) if u else "veinte")
+                else:
+                    partes.append(_TK_DECENAS[d] + (" y " + _TK_UNIDADES[u] if u else ""))
+        return " ".join(partes)
+
+    def _tk_monto_en_palabras(n):
+        """Monto CLP entero a palabras (para la línea "SON: ..." del PDF,
+        igual que la función numeroALetras del generateQuotePdf.ts de
+        Triple A). Devuelve None si n no es un entero positivo razonable."""
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return None
+        if n < 0 or n >= 1_000_000_000_000:
+            return None
+        if n == 0:
+            return "cero pesos"
+        millones, resto_millon = divmod(n, 1_000_000)
+        miles, unidades = divmod(resto_millon, 1000)
+        partes = []
+        if millones:
+            partes.append("un millón" if millones == 1
+                          else _tk_monto_en_palabras_miles(millones) + " millones")
+        if miles:
+            partes.append("mil" if miles == 1 else _tk_num_a_palabras_999(miles) + " mil")
+        if unidades:
+            partes.append(_tk_num_a_palabras_999(unidades))
+        # Millón/millones EXACTOS llevan "de": "un millón de pesos" (no
+        # "un millón pesos"). OJO: nunca usar un replace("un mil","mil")
+        # global -- se come el "un" de "un millón" (bug real encontrado en
+        # el test de este conversor).
+        sufijo = " de pesos" if (millones and not miles and not unidades) else " pesos"
+        return " ".join(partes).strip() + sufijo
+
+    def _tk_monto_en_palabras_miles(n):
+        """0-999.999 a palabras (sub-bloque de millones/miles)."""
+        miles, unidades = divmod(n, 1000)
+        partes = []
+        if miles:
+            partes.append("mil" if miles == 1 else _tk_num_a_palabras_999(miles) + " mil")
+        if unidades:
+            partes.append(_tk_num_a_palabras_999(unidades))
+        return " ".join(partes)
+
+    @app.route("/tickets/cotizaciones/<int:cid>/pdf")
+    @_tickets_required
+    def tk_cotizacion_pdf(cid):
+        cot = mysql_fetchone("SELECT * FROM tk_cotizaciones WHERE id=%s", (cid,))
+        if not cot:
+            return "Cotización no encontrada", 404
+        items_rows = mysql_fetchall(
+            "SELECT erp_kopr, descripcion, cantidad, precio_unitario, total "
+            "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
+
+        # Prorrateo del costo de ruta para PRESENTACIÓN (modelo Triple A:
+        # generateQuotePdf.ts reparte routeCost entre los ítems; la BD lo
+        # mantiene como línea separada). Se reparte por unidad física y el
+        # residuo por redondeo se suma al primer ítem para que la suma de
+        # las líneas calce EXACTA con el subtotal de la cabecera.
+        costo_ruta = float(cot.get("costo_ruta") or 0)
+        total_unidades = 0.0
+        for it in items_rows:
+            try:
+                total_unidades += max(float(it.get("cantidad") or 0), 0.0)
+            except (TypeError, ValueError):
+                pass
+        transporte_unidad = (costo_ruta / total_unidades) if total_unidades > 0 else 0.0
+
+        items = []
+        suma_lineas = 0
+        for it in items_rows:
+            cant = int(float(it.get("cantidad") or 0))
+            pu_base = int(it.get("precio_unitario") or 0)
+            pu = _tk_money_round(pu_base + transporte_unidad) if cant > 0 else pu_base
+            tot = pu * cant
+            suma_lineas += tot
+            items.append({"sku": it.get("erp_kopr") or "", "descripcion": it.get("descripcion") or "",
+                          "cantidad": cant, "precio_unitario": pu, "total": tot})
+        subtotal_cab = int(cot.get("subtotal") or 0)
+        if items and suma_lineas != subtotal_cab and subtotal_cab > 0:
+            delta = subtotal_cab - suma_lineas
+            items[0]["total"] += delta
+            items[0]["precio_unitario"] = (
+                _tk_money_round(items[0]["total"] / items[0]["cantidad"])
+                if items[0]["cantidad"] else items[0]["precio_unitario"])
+
+        _rut_fmt = ctx.get("rut_fmt_filter")
+        rut_mostrar = cot.get("rut") or ""
+        if _rut_fmt and rut_mostrar:
+            try:
+                rut_mostrar = _rut_fmt(rut_mostrar)
+            except Exception:
+                pass
+
+        def _fecha_str(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                return v
+            try:
+                return v.strftime("%d-%m-%Y")
+            except Exception:
+                return str(v)
+
+        ctx_pdf = {
+            "cot": {
+                "numero": cot.get("numero_cotizacion") or f"#{cid}",
+                "fecha_emision": _fecha_str(cot.get("created_at")) or _fecha_str(_chile_hoy()),
+                "valida_hasta": _fecha_str(cot.get("valida_hasta")),
+                "empresa": cot.get("empresa") or "", "rut": rut_mostrar,
+                "direccion": cot.get("direccion") or "", "comuna": cot.get("comuna") or "",
+                "region": cot.get("region") or "", "email": cot.get("email") or "",
+                "telefono": cot.get("telefono") or "", "ejecutivo": cot.get("ejecutivo") or "",
+                "tipo_servicio_label": "Instalación" if (cot.get("tipo_servicio") == "instalacion") else "Mantención",
+                "notas": cot.get("notas"),
+                "subtotal": int(cot.get("subtotal") or 0),
+                "descuento_pct": float(cot.get("descuento_pct") or 0),
+                "descuento_monto": int(cot.get("descuento_monto") or 0),
+                "costo_ruta": int(costo_ruta),
+                "iva_pct": float(cot.get("iva_pct") or 19),
+                "iva_monto": int(cot.get("iva_monto") or 0),
+                "total": int(cot.get("total") or 0),
+            },
+            "items": items,
+            "total_en_palabras": _tk_monto_en_palabras(cot.get("total")),
+        }
+        # Logo pre-encoded (mismo mecanismo que los PDF de OT: static/logo_pdf.txt)
+        logo_b64 = ""
+        try:
+            _logo_path = os.path.join(app.static_folder, "logo_pdf.txt")
+            if os.path.exists(_logo_path):
+                with open(_logo_path, "r", encoding="utf-8") as _f_logo:
+                    logo_b64 = _f_logo.read().strip()
+        except Exception:
+            pass
+        ctx_pdf["logo_b64"] = logo_b64
+        html = render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
+
+        _pw_pdf = ctx.get("_pw_pdf")
+        if not _pw_pdf:
+            return "Generador de PDF no disponible en este entorno", 503
+        try:
+            pdf_bytes = _pw_pdf(html)
+        except Exception as _e_pdf:
+            print(f"[tk_cotizacion_pdf] cid={cid}: {_e_pdf}", flush=True)
+            return ("El generador de PDF no está disponible ahora. "
+                    "Intenta de nuevo en unos minutos."), 503
+        from flask import Response as _Resp
+        _emp = re.sub(r"[^A-Za-z0-9 _-]", "", (cot.get("empresa") or "cliente"))[:60].strip() or "cliente"
+        _fname = f"Cotizacion_{_emp}_{_fecha_str(_chile_hoy())}.pdf"
+        return _Resp(pdf_bytes, mimetype="application/pdf",
+                     headers={"Content-Disposition": f'inline; filename="{_fname}"'})
+
+    # ─────────────────────────────────────────────────────────────────
     #  PAGINA — Cotizaciones (esqueleto, Fase 5 del blueprint)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/cotizaciones")
@@ -1713,6 +2318,44 @@ def register_tickets_routes(app, ctx):
         if email and not _TK_REPLY_EMAIL_RE.match(email):
             email = None  # dato sucio del ERP -- mejor NULL que guardar basura
         telefono = (header.get("telefono") or d.get("telefono") or "").strip()[:50] or None
+        comuna = (header.get("comuna") or d.get("comuna") or "").strip()[:100] or None
+
+        # 2026-07-21 (Daniel: "lo primero que quiero hacer es seleccionar si
+        # es instalación o mantención"): el frontend lo pregunta ANTES de
+        # abrir el modal del ERP y lo manda acá. 'mantencion' por defecto
+        # porque es la única con tarifa real confirmada hoy (Regla #4.2).
+        tipo_servicio = (d.get("tipo_servicio") or "mantencion").strip().lower()
+        if tipo_servicio not in ("instalacion", "mantencion"):
+            tipo_servicio = "mantencion"
+
+        # 2026-07-22 (Daniel, wizard estilo Triple A -- pantallazos del
+        # cotizador de ilus-front): paso 1 "Cliente" completo. Todos
+        # opcionales; el flujo viejo (sin estos campos) sigue funcionando
+        # igual (Regla #4.2).
+        region = (d.get("region") or "").strip()[:100] or None
+        direccion = (d.get("direccion") or "").strip()[:300] or None
+        notas = (d.get("notas") or "").strip() or None
+        notas_internas = (d.get("notas_internas") or "").strip() or None
+        ejecutivo = (d.get("ejecutivo") or "").strip()[:190] or None
+        try:
+            descuento_pct = min(max(float(d.get("descuento_pct") or 0), 0.0), 100.0)
+        except (TypeError, ValueError):
+            descuento_pct = 0.0
+        try:
+            costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
+        except (TypeError, ValueError):
+            costo_ruta_in = 0
+        valida_hasta = None
+        _vh = (d.get("valida_hasta") or "").strip()
+        if _vh:
+            try:
+                valida_hasta = datetime.strptime(_vh, "%Y-%m-%d").date()
+            except ValueError:
+                return jsonify({"ok": False, "error": "Fecha 'Válido hasta' inválida"}), 400
+        if valida_hasta is None:
+            # Mismo default que usaba el cotizador viejo: 30 días de
+            # vigencia, en fecha Chile (Regla #6).
+            valida_hasta = _chile_hoy() + timedelta(days=30)
 
         # 2026-07-15 (Daniel: "generar cotizacion DENTRO del ticket"): si el
         # llamado viene desde la ficha de un ticket abierto (botón "Generar
@@ -1741,71 +2384,111 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass
 
-        # Clasificacion automatica por SKU contra el Catalogo (Daniel:
-        # "los productos, si no tienen clasificacion, tendran que
-        # clasificarse, y eso tambien va a estar en los catalogos"). Reusa
-        # la MISMA funcion de creacion/reuso de producto que ya usa
-        # Catalogo (POST /catalogo/api/productos/desde-erp), inyectada via
-        # ctx -- ver comentario en catalogo_module.py junto a
-        # _cat_crear_o_reusar_producto_desde_erp. Si el modulo Catalogo no
-        # llego a registrar (orden de arranque) o algo falla, se degrada
-        # SIN bloquear la creacion de la cotizacion (Regla #4.2 -- aditivo,
-        # nunca rompe el flujo existente de crear en $0).
-        _cat_crear_o_reusar = ctx.get("_cat_crear_o_reusar_producto_desde_erp")
-        clases_por_sku = {}
-        sin_clasificar = []
-        if _cat_crear_o_reusar:
-            for it in items:
-                if not isinstance(it, dict):
-                    continue
-                sku_cls = (it.get("sku") or "").strip().upper()
-                if not sku_cls or sku_cls in clases_por_sku:
-                    continue
-                try:
-                    res_cat = _cat_crear_o_reusar(sku_cls, (it.get("nombre") or "").strip())
-                except Exception as _e_cat:
-                    print(f"[tk_api_cotizacion_desde_erp] clasificacion sku={sku_cls}: {_e_cat}", flush=True)
-                    res_cat = None
-                clase = (res_cat or {}).get("clase_producto")
-                pid_cat = (res_cat or {}).get("id")
-                clases_por_sku[sku_cls] = clase
-                if pid_cat and not clase:
-                    sin_clasificar.append({
-                        "sku": sku_cls, "producto_id": pid_cat,
-                        "nombre": (it.get("nombre") or "").strip(),
-                    })
+        clases_por_sku, sin_clasificar = _tk_clasificar_items_erp(items)
 
-        _anio_cot = _chile_now_year()
+        # 2026-07-22 (Daniel: "cuando yo seleccione los productos, me abra
+        # un modal donde... pueda ver qué característica es el producto"):
+        # el modal de revisión (frontend) manda la característica elegida
+        # por el usuario para CADA ítem en `it["clase_producto"]` (puede
+        # confirmar la auto-detectada o corregirla). Si difiere de lo que
+        # el Catálogo ya tenía, se persiste en cat_productos AHORA -- así
+        # la próxima vez que aparezca ese SKU en cualquier documento del
+        # ERP ya viene clasificado (Daniel: "esa caracterización se deberá
+        # guardar para que... no haya que hacer ese proceso" más que una
+        # vez). Reusa el mismo helper pooled que la clasificación automática
+        # (mysql_execute), NUNCA la conexión/cursor de la transacción de
+        # abajo -- mismo patrón que _cat_crear_o_reusar_producto_desde_erp.
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            sku_up = (it.get("sku") or "").strip().upper()
+            override = (it.get("clase_producto") or "").strip() or None
+            if sku_up and override and override != clases_por_sku.get(sku_up):
+                try:
+                    mysql_execute(
+                        "UPDATE cat_productos SET clase_producto=%s, updated_by=%s WHERE sku=%s",
+                        (override, user, sku_up))
+                    clases_por_sku[sku_up] = override
+                except Exception as _e_override:
+                    print(f"[tk_api_cotizacion_desde_erp] override clase sku={sku_up}: {_e_override}", flush=True)
+        # Ya no quedan pendientes de clasificar -- el usuario los vio y
+        # eligió en el modal de revisión antes de llegar acá.
+        sin_clasificar = [s for s in sin_clasificar if not clases_por_sku.get(s["sku"])]
+
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
+                # Correlativo real (2026-07-21, Daniel: "debemos mantener el
+                # correlativo que tenemos en Triple A" -- formato COT-NNNNNN,
+                # SIN año). SELECT...FOR UPDATE sobre la fila de
+                # tk_settings serializa creaciones concurrentes: la segunda
+                # request queda esperando aquí hasta que la primera haga
+                # commit/rollback (mismo patrón anti-carrera que "generar
+                # ticket desde cotización" más abajo en este archivo) --
+                # así dos cotizaciones nunca pueden llevarse el mismo número.
+                cur.execute(
+                    "SELECT valor FROM tk_settings WHERE clave='cotiz_ultimo_correlativo' FOR UPDATE")
+                _fila_correlativo = cur.fetchone()
+                if _fila_correlativo is None:
+                    # Blindaje (revisión adversarial 2026-07-22): si la
+                    # semilla del boot no llegó a correr, sembrar AQUI
+                    # mismo dentro de la transacción, desde el último real
+                    # de mant_cotizaciones -- sin esto, cada creación
+                    # intentaría COT-000001 y desde la segunda chocaría con
+                    # el UNIQUE (500 permanente).
+                    cur.execute(
+                        "SELECT COALESCE(MAX(CAST(SUBSTRING(numero,5) AS UNSIGNED)),0) AS ultimo "
+                        "FROM mant_cotizaciones WHERE numero REGEXP '^COT-[0-9]{6}$'")
+                    _base_row = cur.fetchone() or {}
+                    cur.execute(
+                        "INSERT IGNORE INTO tk_settings (clave, valor) VALUES ('cotiz_ultimo_correlativo', %s)",
+                        (str(int(_base_row.get("ultimo") or 0)),))
+                    cur.execute(
+                        "SELECT valor FROM tk_settings WHERE clave='cotiz_ultimo_correlativo' FOR UPDATE")
+                    _fila_correlativo = cur.fetchone()
+                try:
+                    _ultimo = int((_fila_correlativo or {}).get("valor") or 0)
+                except (TypeError, ValueError):
+                    _ultimo = 0
+                _correlativo = _ultimo + 1
+                cur.execute(
+                    "UPDATE tk_settings SET valor=%s WHERE clave='cotiz_ultimo_correlativo'",
+                    (str(_correlativo),))
+                numero = f"COT-{_correlativo:06d}"
+
                 cur.execute(
                     "INSERT INTO tk_cotizaciones "
-                    "(estado, ticket_id, erp_idmaeen, erp_koen, rut, empresa, email, telefono, created_by) "
-                    "VALUES ('draft', %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa, email, telefono, user),
+                    "(numero_cotizacion, estado, ticket_id, erp_idmaeen, erp_koen, rut, empresa, "
+                    " email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta, "
+                    " notas, notas_internas, ejecutivo, descuento_pct, costo_ruta, created_by) "
+                    "VALUES (%s,'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (numero, ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa,
+                     email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta,
+                     notas, notas_internas, ejecutivo, descuento_pct, costo_ruta_in, user),
                 )
                 cot_id = cur.lastrowid
-                # Numeracion race-free derivada del id autoincrement, mismo
-                # patron que TK-{anio}-{id} para tk_tickets (hora Chile,
-                # Regla #6, evita numerar en el limite de anio via UTC).
-                cur.execute(
-                    "UPDATE tk_cotizaciones SET numero_cotizacion = "
-                    "CONCAT('COT-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
-                    (_anio_cot, cot_id),
-                )
                 for it in items:
                     if not isinstance(it, dict):
                         continue
                     sku = (it.get("sku") or "").strip()[:100] or None
                     sku_up = (sku or "").upper()
                     descripcion = (it.get("nombre") or "").strip()[:300] or None
-                    try:
-                        cantidad = int(it.get("qty") or 1)
-                    except Exception:
+                    # 2026-07-21 (revisión adversarial): qty=0 EXPLÍCITO es
+                    # legítimo (_tka_modal.html puede mandarlo cuando
+                    # cantidad_real del ERP es 0) y ahora sí importa -- el
+                    # motor de precio real cobraría por 1 unidad si se
+                    # colapsara a 1 como antes (`qty or 1` no distinguía
+                    # 0 de ausente/None).
+                    _qty_raw = it.get("qty")
+                    if _qty_raw is None:
                         cantidad = 1
-                    if cantidad < 1:
-                        cantidad = 1
+                    else:
+                        try:
+                            cantidad = int(_qty_raw)
+                        except (TypeError, ValueError):
+                            cantidad = 1
+                        if cantidad < 0:
+                            cantidad = 0
                     clase_producto = clases_por_sku.get(sku_up)
                     # vaneli_original: valor de linea real del ERP, si el
                     # item lo trae -- el modal aun no lo expone (fase de
@@ -1839,18 +2522,12 @@ def register_tickets_routes(app, ctx):
         # "pruebas exhaustivas de trafico"): NO releer numero_cotizacion con
         # mysql_fetchone (conexion pooled, autocommit=False) despues del
         # commit de arriba (que corre en una conexion DISTINTA via
-        # get_mysql()). Si ESTA MISMA request ya hizo antes una lectura por
-        # el pool (el chequeo de ticket_id, o cat_productos dentro de la
-        # clasificacion -- ambas ANTES de este punto y CASI SIEMPRE presentes),
-        # esa conexion pooled ya tiene abierto un snapshot REPEATABLE READ
-        # previo al commit de la transaccion -- la relectura no ve la fila
-        # recien commiteada y devuelve numero=None (el dato SI quedo bien
-        # guardado en la BD; solo la respuesta JSON salia vacia, rompiendo el
-        # toast del frontend en CADA cotizacion creada). Confirmado
-        # reproduciendo contra MySQL real. El numero es 100% deterministico
-        # (mismo patron que la UPDATE de arriba) -- se arma en Python sin
-        # volver a tocar la BD, lo que ademas ahorra un round-trip.
-        numero = f"COT-{_anio_cot}-{cot_id:05d}"
+        # get_mysql()) -- puede no ver la fila recien commiteada (mismo
+        # snapshot REPEATABLE READ del pool documentado en todo este
+        # archivo). `numero` YA se conoce desde dentro de la transaccion
+        # (arriba, junto al UPDATE del correlativo) -- sigue vivo aqui
+        # porque Python no scopea variables al bloque `with`, asi que
+        # reusarlo es gratis y evita el mismo bug de raiz.
         try:
             _audit("tk_cotizacion_create", target_type="tk_cotizacion", target_id=cot_id,
                    details={"numero": numero, "items": len(items), "sin_clasificar": len(sin_clasificar),
@@ -1869,7 +2546,26 @@ def register_tickets_routes(app, ctx):
             except Exception:
                 pass
         return jsonify({"ok": True, "id": cot_id, "numero_cotizacion": numero,
-                         "sin_clasificar": sin_clasificar, "ticket_id": ticket_id})
+                         "sin_clasificar": sin_clasificar, "ticket_id": ticket_id,
+                         "tipo_servicio": tipo_servicio})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — recalcular precios (2026-07-21). Ítems por hacer/clasificar
+    #  quedan en $0 -- no se llama desde DENTRO de tk_api_cotizacion_desde_erp
+    #  (mismo bug de conexión pooled REPEATABLE READ ya documentado arriba en
+    #  este archivo: releer por el pool justo después de un commit hecho en
+    #  otra conexión, dentro de LA MISMA request, puede no ver lo recién
+    #  insertado). Se llama SIEMPRE desde una request nueva y separada -- el
+    #  frontend la dispara justo después de crear la cotización y justo
+    #  después de clasificar cada ítem.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/cotizaciones/<int:cid>/recalcular", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_recalcular(cid):
+        totales = _tk_cotiz_recalcular(cid)
+        if totales is None:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        return jsonify({"ok": True, "totales": totales})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — flujo inverso: generar un TICKET a partir de una cotización

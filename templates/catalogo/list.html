@@ -247,6 +247,9 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
        gatea con _catalogo_admin_required). Botón secundario/outline a
        propósito — el CTA principal sigue siendo el rojo. #}
     {% if permissions.superadmin %}
+    <a class="btn btn-ilus-outline" href="{{ url_for('cat_clases_page') }}"
+       title="Editar categorías de producto y sus horas de instalación/mantención">
+      <i class="bi bi-tags me-1"></i>Categorías</a>
     <button class="btn btn-ilus-outline" id="btnFotosEcom" type="button"
             title="Buscar en ilusfitness.com la foto de cada producto sin foto (match por SKU)">
       <i class="bi bi-images me-1"></i>Fotos desde ecommerce</button>

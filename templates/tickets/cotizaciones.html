@@ -10,7 +10,10 @@
 .tk-hero .sub{font-size:.86rem;color:#cfd3da;}
 .tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:14px;padding:40px;text-align:center;color:#9ca3af;}
 .tk-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;margin-bottom:8px;
-  display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;}
+  display:grid;grid-template-columns:auto 1fr auto auto auto auto auto;gap:12px;align-items:center;}
+.tk-row-total{font-family:'JetBrains Mono',monospace;font-size:.86rem;font-weight:800;color:#0a0a0a;
+  white-space:nowrap;font-variant-numeric:tabular-nums;}
+.tk-row-total.cero{color:#c1c5cc;font-weight:600;font-size:.74rem;font-style:italic;}
 .tk-row-ticket-link{font-size:.72rem;font-weight:700;color:#6b7280;white-space:nowrap;text-decoration:none;}
 .tk-row-ticket-link:hover{color:#dc2626;}
 .tk-row-btn-ticket{
@@ -83,15 +86,71 @@
 .cot-clasif-btn:disabled{opacity:.5;cursor:not-allowed;}
 .cot-clasif-ok{grid-area:ok;color:#16a34a;font-size:1.3rem;display:flex;align-items:center;justify-content:center;}
 .cot-clasif-foot{padding:14px 20px 20px;display:flex;justify-content:flex-end;border-top:1px solid #eaecf0;margin-top:6px;}
+
+/* ══ Wizard "Crear Cotización" estilo Triple A (2026-07-22) ══ */
+.cot-wiz-tabs{display:flex;gap:2px;padding:0 20px;border-bottom:1px solid #eaecf0;}
+.cot-wiz-tab{border:none;background:transparent;padding:12px 16px;font-size:.84rem;font-weight:700;
+  color:#9ca3af;cursor:pointer;border-bottom:2.5px solid transparent;display:flex;align-items:center;gap:7px;}
+.cot-wiz-tab.on{color:#dc2626;border-bottom-color:#dc2626;}
+.cot-wiz-campos{padding:16px 20px 4px;display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;}
+@media(max-width:640px){.cot-wiz-campos{grid-template-columns:1fr;}}
+.cot-wiz-campo{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.cot-wiz-campo.full{grid-column:1/-1;}
+.cot-wiz-campo>label{font-size:.68rem;font-weight:800;color:#374151;margin:0;}
+.cot-wiz-campo .form-control,.cot-wiz-campo .form-select{font-size:16px;min-height:42px;}
+.cot-wiz-campo textarea.form-control{min-height:auto;}
+.cot-wiz-hint{font-size:.68rem;color:#9ca3af;margin-top:2px;}
+.cot-wiz-dropdown{position:absolute;top:100%;left:0;right:0;z-index:20;background:#fff;
+  border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 12px 32px -8px rgba(0,0,0,.18);
+  max-height:260px;overflow-y:auto;margin-top:4px;}
+.cot-wiz-dd-item{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;border:none;
+  background:#fff;padding:9px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6;}
+.cot-wiz-dd-item:hover{background:#fef2f2;}
+.cot-wiz-dd-item strong{font-size:.82rem;color:#0a0a0a;}
+.cot-wiz-dd-item span{font-size:.7rem;color:#6b7280;font-family:'JetBrains Mono',monospace;}
+.cot-wiz-dd-item em{font-size:.64rem;color:#16a34a;font-style:normal;font-weight:800;}
+.cot-wiz-dd-vacio{padding:12px;font-size:.78rem;color:#9ca3af;text-align:center;}
+.cot-wiz-pills{display:flex;gap:6px;}
+.cot-wiz-pill{flex:1;border:1.5px solid #e5e7eb;background:#fff;border-radius:9px;min-height:42px;
+  font-size:.8rem;font-weight:800;color:#6b7280;cursor:pointer;transition:.13s;}
+.cot-wiz-pill.on{border-color:#dc2626;background:#fef2f2;color:#dc2626;}
+.cot-wiz-vacio td{text-align:center;color:#9ca3af;font-size:.8rem;padding:26px 10px !important;font-style:italic;}
+.cot-wiz-quitar{border:none;background:transparent;color:#c1c5cc;width:30px;height:30px;border-radius:7px;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;}
+.cot-wiz-quitar:hover{background:#fee2e2;color:#dc2626;}
+.cot-wiz-resumen{margin:8px 20px 4px;margin-left:auto;max-width:320px;background:#f9fafb;
+  border:1px solid #eef0f3;border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:5px;}
+.cot-wiz-resumen>div{display:flex;justify-content:space-between;align-items:center;font-size:.78rem;color:#6b7280;}
+.cot-wiz-resumen>div b{font-family:'JetBrains Mono',monospace;color:#111827;font-variant-numeric:tabular-nums;}
+.cot-wiz-res-total{border-top:2px solid #e5e7eb;padding-top:7px;margin-top:3px;}
+.cot-wiz-res-total span{font-weight:900;color:#0a0a0a;font-size:.86rem !important;}
+.cot-wiz-res-total b{font-size:1.02rem;color:#dc2626 !important;}
+.tk-row-btn-pdf{color:#dc2626;font-size:1.15rem;text-decoration:none;display:inline-flex;
+  align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;transition:.13s;}
+.tk-row-btn-pdf:hover{background:#fee2e2;color:#b91c1c;}
+
+.cot-rev-tabla-wrap{padding:10px 20px;max-height:52vh;overflow-y:auto;overflow-x:auto;}
+table.cot-rev-tabla{width:100%;border-collapse:collapse;min-width:620px;}
+table.cot-rev-tabla th{font-size:.64rem;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;
+  padding:6px 8px;text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap;position:sticky;top:0;background:#fff;}
+table.cot-rev-tabla td{padding:6px 8px;border-bottom:1px solid #f3f4f6;vertical-align:middle;}
+table.cot-rev-tabla tr:last-child td{border-bottom:none;}
+.cot-rev-sku{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;color:#6b7280;white-space:nowrap;}
+.cot-rev-nombre{font-size:.82rem;color:#111827;font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cot-rev-cant{width:56px;min-height:36px;font-size:.82rem;border:1px solid #d1d5db;border-radius:7px;padding:4px 6px;text-align:center;}
+.cot-rev-select{min-height:36px;font-size:.8rem;border:1px solid #d1d5db;border-radius:7px;padding:2px 6px;background:#fff;max-width:190px;}
+.cot-rev-select.sin-clasificar{border-color:#f59e0b;background:#fff8e1;}
+.cot-rev-precio{font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:700;color:#0a0a0a;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.cot-rev-precio.cero{color:#c1c5cc;font-weight:500;font-style:italic;}
 </style>
 
 <div class="tk-hero">
   <div>
     <h4><i class="bi bi-file-earmark-text me-2"></i>Cotizaciones</h4>
-    <div class="sub">Módulo en construcción — se arma de a poco, siguiente fase de Tickets central</div>
+    <div class="sub">Mantención e instalación — cálculo automático por categoría de equipo + costo de ruta por comuna</div>
   </div>
   <button type="button" id="btnCotNuevaErp" class="btn btn-lg" style="background:#dc2626;color:#fff;font-weight:800;border-radius:10px;">
-    <i class="bi bi-search me-1"></i>Nueva cotización desde ERP
+    <i class="bi bi-plus-lg me-1"></i>Crear Cotización
   </button>
 </div>
 
@@ -102,6 +161,13 @@
   <div><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></div>
   <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
   <span style="font-size:.8rem;color:#6b7280;">{{ c.created_at }}</span>
+  {% if c.total %}
+  <span class="tk-row-total">${{ '{:,}'.format(c.total | int).replace(',', '.') }}</span>
+  {% else %}
+  <span class="tk-row-total cero">sin precio</span>
+  {% endif %}
+  <a class="tk-row-btn-pdf" href="/tickets/cotizaciones/{{ c.id }}/pdf" target="_blank" rel="noopener"
+     title="Ver PDF de la cotización"><i class="bi bi-file-earmark-pdf-fill"></i></a>
   {% if c.ticket_id %}
   <a class="tk-row-ticket-link" href="/tickets/{{ c.ticket_id }}" target="_blank" rel="noopener">
     <i class="bi bi-ticket-perforated-fill me-1"></i>{{ c.numero_ticket or ('Ticket #' ~ c.ticket_id) }}
@@ -124,12 +190,141 @@
 </div>
 {% endif %}
 
+{# ══════════════ Wizard "Crear Cotización" (2026-07-22, Daniel: pantallazos
+   del cotizador Triple A -- "primero quiero un modal... el nombre... y una
+   vez que me deje seguir adelante, vengan los productos... el botón
+   [Asignar desde documento] dentro del modal"). DOS pasos con pestañas,
+   réplica del CreateQuotationDialog de ilus-front. Reemplaza (con permiso
+   explícito: "no me gustó para nada... cambiemos esto") a los dos modales
+   sueltos del intento anterior. z-index 1080 A PROPÓSITO: el modal ERP
+   compartido (_tka_modal, 1085/1086) debe flotar ENCIMA de este wizard
+   cuando se usa "Asignar desde documento". Nada de alert()/confirm()
+   nativos (Regla #1). #}
+<div id="cotWizModal" class="cot-clasif-backdrop" style="z-index:1080;">
+  <div class="cot-clasif-panel" style="max-width:880px;">
+    <div class="cot-clasif-head">
+      <h5><i class="bi bi-file-earmark-plus-fill"></i>Crear Cotización</h5>
+      <button type="button" class="cot-clasif-close" onclick="cotWizCerrar()" aria-label="Cerrar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div class="cot-wiz-tabs">
+      <button type="button" id="cotWizTab1" class="cot-wiz-tab on" onclick="cotWizIrPaso(1)">
+        <i class="bi bi-person"></i>Cliente</button>
+      <button type="button" id="cotWizTab2" class="cot-wiz-tab" onclick="cotWizIrPaso(2)">
+        <i class="bi bi-cart3"></i>Servicios y Productos</button>
+    </div>
+
+    {# ── Paso 1: Cliente ── #}
+    <div id="cotWizPaso1">
+      <div class="cot-wiz-campos">
+        <div class="cot-wiz-campo full" style="position:relative;">
+          <label>Identificación del Cliente</label>
+          <input type="text" id="cotWizCliQ" class="form-control" autocomplete="off"
+                 placeholder="Busca por RUT o nombre en el ERP…">
+          <div id="cotWizCliResultados" class="cot-wiz-dropdown" style="display:none;"></div>
+        </div>
+        <div class="cot-wiz-campo"><label>Empresa / Razón social</label>
+          <input id="cotWizEmpresa" class="form-control"></div>
+        <div class="cot-wiz-campo"><label>RUT</label>
+          <input id="cotWizRut" class="form-control"></div>
+        <div class="cot-wiz-campo full"><label>Dirección</label>
+          <input id="cotWizDireccion" class="form-control"></div>
+        <div class="cot-wiz-campo"><label>Región</label>
+          <input id="cotWizRegion" class="form-control"></div>
+        <div class="cot-wiz-campo"><label>Comuna</label>
+          <input id="cotWizComuna" class="form-control"></div>
+        <div class="cot-wiz-campo"><label>Email</label>
+          <input id="cotWizEmail" type="email" class="form-control"></div>
+        <div class="cot-wiz-campo"><label>Teléfono</label>
+          <input id="cotWizTelefono" class="form-control"></div>
+        <div class="cot-wiz-campo"><label>Tipo de servicio</label>
+          <div class="cot-wiz-pills">
+            <button type="button" class="cot-wiz-pill on" data-v="mantencion" onclick="cotWizTipoServ(this)">Mantención</button>
+            <button type="button" class="cot-wiz-pill" data-v="instalacion" onclick="cotWizTipoServ(this)"
+                    title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">Instalación</button>
+          </div>
+        </div>
+        <div class="cot-wiz-campo"><label>Ejecutivo o vendedor solicitante</label>
+          <select id="cotWizEjecutivo" class="form-select"><option value="">Seleccione</option></select></div>
+        <div class="cot-wiz-campo"><label>Válido hasta</label>
+          <input id="cotWizValidoHasta" type="date" class="form-control"></div>
+        <div class="cot-wiz-campo"><label>Descuento General (%)</label>
+          <select id="cotWizDescuento" class="form-select">
+            <option value="0" selected>0%</option><option value="5">5%</option>
+            <option value="10">10%</option><option value="15">15%</option>
+            <option value="20">20%</option><option value="25">25%</option>
+          </select></div>
+        <div class="cot-wiz-campo full"><label>Observaciones (se visualizará en el PDF)</label>
+          <textarea id="cotWizNotas" class="form-control" rows="2"
+                    placeholder="Ej: Precios sujetos a disponibilidad"></textarea></div>
+        <div class="cot-wiz-campo full"><label>Observaciones internas</label>
+          <textarea id="cotWizNotasInt" class="form-control" rows="2"></textarea></div>
+        <div class="cot-wiz-campo full"><label>Costo de Ruta</label>
+          <div class="input-group">
+            <span class="input-group-text">$</span>
+            <input id="cotWizCostoRuta" type="number" min="0" step="1" class="form-control" value="0">
+          </div>
+          <div class="cot-wiz-hint" id="cotWizRutaHint">Se obtiene automáticamente según la comuna del cliente</div>
+        </div>
+      </div>
+      <div class="cot-clasif-foot" style="justify-content:flex-end;gap:8px;">
+        <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotWizCerrar()">
+          <i class="bi bi-x-lg me-1"></i>Cancelar</button>
+        <button type="button" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;border-radius:9px;padding:8px 20px;" onclick="cotWizIrPaso(2)">
+          Siguiente <i class="bi bi-arrow-right ms-1"></i></button>
+      </div>
+    </div>
+
+    {# ── Paso 2: Servicios y Productos ── #}
+    <div id="cotWizPaso2" style="display:none;">
+      <div style="padding:14px 20px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button type="button" id="btnCotWizDoc" class="btn btn-sm fw-bold"
+                style="background:#0a0a0a;color:#fff;border-radius:9px;padding:10px 16px;">
+          <i class="bi bi-file-earmark-arrow-down me-1"></i>Asignar desde documento</button>
+        <span class="text-muted" style="font-size:.74rem;">Trae los productos de un documento del ERP y clasifícalos aquí mismo</span>
+      </div>
+      <div class="cot-rev-tabla-wrap">
+        <table class="cot-rev-tabla" style="min-width:700px;">
+          <thead>
+            <tr><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Característica</th><th>P. Unit.</th><th>Total</th><th></th></tr>
+          </thead>
+          <tbody id="cotWizBody">
+            <tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Asignar desde documento"</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="cot-wiz-resumen">
+        <div><span>Costo Ruta:</span><b id="cotWizResRuta">$0</b></div>
+        <div><span>Costo Ítems (mano de obra):</span><b id="cotWizResItems">$0</b></div>
+        <div><span>Subtotal:</span><b id="cotWizResSubtotal">$0</b></div>
+        <div id="cotWizResDescRow" style="display:none;"><span>Descuento:</span><b id="cotWizResDesc">−$0</b></div>
+        <div><span>IVA (19%):</span><b id="cotWizResIva">$0</b></div>
+        <div class="cot-wiz-res-total"><span>Total:</span><b id="cotWizResTotal">$0</b></div>
+      </div>
+      <div class="cot-clasif-foot" style="justify-content:space-between;gap:8px;">
+        <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotWizIrPaso(1)">
+          <i class="bi bi-arrow-left me-1"></i>Atrás</button>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotWizCerrar()">Cancelar</button>
+          <button type="button" id="btnCotWizCrear" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;border-radius:9px;padding:8px 20px;">
+            <i class="bi bi-save me-1"></i>Crear Cotización</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 {# ══════════════ Panel de clasificación inline (Blueprint Cotizaciones Fase 1,
    2026-07-15): tras crear la cotización, si algún producto quedó sin
    `clase_producto` en el Catálogo, se pide clasificarlo AHORA MISMO sin
    salir del flujo. Cerrar sin completar NO rompe nada -- la cotización ya
    quedó creada en 'draft' (Regla #4.2, aditivo puro). Nada de
-   alert()/confirm() nativos (Regla #1). #}
+   alert()/confirm() nativos (Regla #1). SE CONSERVA como red de
+   seguridad (2026-07-22): el modal de revisión nuevo clasifica ANTES de
+   crear, pero si algún ítem igual llega sin clase (ej. error de red en
+   el preview), este panel sigue funcionando como fallback -- no se borra
+   funcionalidad existente (Regla #4.2). #}
 <div id="cotClasifModal" class="cot-clasif-backdrop">
   <div class="cot-clasif-panel">
     <div class="cot-clasif-head">
@@ -160,35 +355,393 @@
 // (items, header) -- el header trae cliente/rut/email/telefono ya
 // resueltos por el modal al cargar el documento. Se manda al backend para
 // que la cotización nazca con el cliente real (antes quedaba siempre NULL).
+//
+// ══════ Wizard "Crear Cotización" (2026-07-22, réplica Triple A) ══════
+// Paso 1 "Cliente" → Siguiente → Paso 2 "Servicios y Productos" con el
+// botón "Asignar desde documento" DENTRO del modal. La tabla de ítems
+// clasifica cada producto (característica) y el precio se calcula en
+// vivo. La suma del resumen replica al backend (_tk_cotiz_recalcular) y
+// al calculateTotals de Triple A: subtotal = ítems + ruta; descuento
+// sobre subtotal; IVA sobre (subtotal − descuento).
+let _WIZ = null;
+let _wizEjecutivosCargados = false;
+
+function cotWizAbrir(){
+  _WIZ = { items: [], tipo: 'mantencion', rutaManual: false, sumaItems: 0 };
+  ['cotWizCliQ','cotWizEmpresa','cotWizRut','cotWizDireccion','cotWizRegion','cotWizComuna',
+   'cotWizEmail','cotWizTelefono','cotWizNotas','cotWizNotasInt'].forEach(function(id){
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('cotWizDescuento').value = '0';
+  document.getElementById('cotWizCostoRuta').value = '0';
+  document.getElementById('cotWizEjecutivo').value = '';
+  document.getElementById('cotWizRutaHint').textContent = 'Se obtiene automáticamente según la comuna del cliente';
+  // Fecha LOCAL (no toISOString, que es UTC y cerca de medianoche chilena
+  // se corre un día -- hallazgo de revisión adversarial).
+  const _hoy = new Date(); _hoy.setDate(_hoy.getDate() + 30);
+  const _p2 = function(n){ return String(n).padStart(2, '0'); };
+  document.getElementById('cotWizValidoHasta').value =
+    _hoy.getFullYear() + '-' + _p2(_hoy.getMonth() + 1) + '-' + _p2(_hoy.getDate());
+  document.querySelectorAll('.cot-wiz-pill').forEach(function(b){
+    b.classList.toggle('on', b.dataset.v === 'mantencion');
+  });
+  document.getElementById('cotWizBody').innerHTML =
+    '<tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Asignar desde documento"</td></tr>';
+  cotWizCargarEjecutivos();
+  cotWizResumen();
+  cotWizIrPaso(1);
+  const m = document.getElementById('cotWizModal');
+  m.classList.add('is-open'); m.style.display = 'flex';
+}
+function cotWizCerrar(){
+  const m = document.getElementById('cotWizModal');
+  if (m){ m.classList.remove('is-open'); m.style.display = 'none'; }
+  _WIZ = null;
+}
+function cotWizIrPaso(n){
+  if (n === 2 && _WIZ){
+    const empresa = document.getElementById('cotWizEmpresa').value.trim();
+    if (!empresa){
+      ilusToast('Identifica al cliente primero — búscalo en el ERP o escribe la razón social', {type:'warning'});
+      return;
+    }
+  }
+  document.getElementById('cotWizPaso1').style.display = (n === 1) ? '' : 'none';
+  document.getElementById('cotWizPaso2').style.display = (n === 2) ? '' : 'none';
+  document.getElementById('cotWizTab1').classList.toggle('on', n === 1);
+  document.getElementById('cotWizTab2').classList.toggle('on', n === 2);
+}
+function cotWizTipoServ(btn){
+  if (!_WIZ) return;
+  _WIZ.tipo = btn.dataset.v;
+  document.querySelectorAll('.cot-wiz-pill').forEach(function(b){ b.classList.toggle('on', b === btn); });
+  cotWizPrecios();
+}
+async function cotWizCargarEjecutivos(){
+  const sel = document.getElementById('cotWizEjecutivo');
+  if (!sel || _wizEjecutivosCargados) return;
+  try{
+    const r = await fetch('/tickets/api/asignables');
+    const lista = await r.json();
+    if (Array.isArray(lista) && lista.length){
+      lista.forEach(function(u){
+        const o = document.createElement('option');
+        o.value = u.nombre || u.email || '';
+        o.textContent = u.nombre || u.email || '';
+        sel.appendChild(o);
+      });
+      _wizEjecutivosCargados = true;
+    }
+  }catch(e){ /* sin lista: queda "Seleccione", no bloquea */ }
+}
+
+// ── Búsqueda de cliente (ERP read-only; mismo endpoint del modal Nuevo Ticket) ──
+let _wizCliTimer = null, _wizCliSeq = 0;
+function _wizCliOcultar(){
+  const dd = document.getElementById('cotWizCliResultados');
+  if (dd) dd.style.display = 'none';
+}
 (function(){
-  const btn = document.getElementById('btnCotNuevaErp');
+  const inp = document.getElementById('cotWizCliQ');
+  if (!inp) return;
+  inp.addEventListener('input', function(){
+    clearTimeout(_wizCliTimer);
+    const q = inp.value.trim();
+    if (q.length < 2){ _wizCliOcultar(); return; }
+    _wizCliTimer = setTimeout(async function(){
+      const seq = ++_wizCliSeq;
+      try{
+        const r = await fetch('/tickets/api/erp/buscar-cliente?q=' + encodeURIComponent(q));
+        const d = await r.json();
+        if (seq !== _wizCliSeq) return;
+        const cont = document.getElementById('cotWizCliResultados');
+        const res = (d && d.resultados) || [];
+        if (!res.length){
+          cont.innerHTML = '<div class="cot-wiz-dd-vacio">Sin resultados en el ERP — puedes escribir los datos a mano</div>';
+        } else {
+          cont.innerHTML = res.map(function(c, i){
+            return '<button type="button" class="cot-wiz-dd-item" data-i="' + i + '">' +
+              '<strong>' + _cotEsc(c.empresa) + '</strong>' +
+              '<span>' + _cotEsc(c.rut || '') + (c.comuna ? ' · ' + _cotEsc(c.comuna) : '') + '</span>' +
+              (c.ya_es_cliente ? '<em>✓ Ya es cliente</em>' : '') +
+            '</button>';
+          }).join('');
+          cont.querySelectorAll('.cot-wiz-dd-item').forEach(function(b){
+            b.addEventListener('click', function(){ cotWizElegirCliente(res[parseInt(b.dataset.i, 10)]); });
+          });
+        }
+        cont.style.display = 'block';
+      }catch(e){ /* ERP caído: se puede seguir a mano */ }
+    }, 350);
+  });
+  document.addEventListener('click', function(ev){
+    if (ev.target !== inp && !ev.target.closest('#cotWizCliResultados')) _wizCliOcultar();
+  });
+})();
+function cotWizElegirCliente(c){
+  if (!c) return;
+  document.getElementById('cotWizEmpresa').value = c.empresa || '';
+  document.getElementById('cotWizRut').value = c.rut || '';
+  if (c.direccion) document.getElementById('cotWizDireccion').value = c.direccion;
+  if (c.comuna) document.getElementById('cotWizComuna').value = c.comuna;
+  if (c.contacto_email) document.getElementById('cotWizEmail').value = c.contacto_email;
+  if (c.contacto_tel) document.getElementById('cotWizTelefono').value = c.contacto_tel;
+  document.getElementById('cotWizCliQ').value = (c.empresa || '') + (c.rut ? ' — ' + c.rut : '');
+  _wizCliOcultar();
+  cotWizBuscarRuta();
+}
+async function cotWizBuscarRuta(){
+  if (!_WIZ || _WIZ.rutaManual) return;
+  const comuna = document.getElementById('cotWizComuna').value.trim();
+  if (!comuna) return;
+  const hint = document.getElementById('cotWizRutaHint');
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/costo-ruta?comuna=' + encodeURIComponent(comuna));
+    const d = await r.json();
+    if (d.ok && d.encontrado){
+      document.getElementById('cotWizCostoRuta').value = d.costo;
+      hint.textContent = 'Ruta encontrada para ' + (d.comuna || comuna) +
+        (d.region ? ' (' + d.region + ')' : '') + ' — puedes ajustar el monto';
+    } else {
+      hint.textContent = 'Comuna sin ruta cargada — ingresa el costo manualmente';
+    }
+    cotWizResumen();
+  }catch(e){ /* silencioso */ }
+}
+(function(){
+  const cr = document.getElementById('cotWizCostoRuta');
+  if (cr) cr.addEventListener('input', function(){ if (_WIZ) _WIZ.rutaManual = true; cotWizResumen(); });
+  const cm = document.getElementById('cotWizComuna');
+  if (cm) cm.addEventListener('change', cotWizBuscarRuta);
+  const dg = document.getElementById('cotWizDescuento');
+  if (dg) dg.addEventListener('change', cotWizResumen);
+})();
+
+// ── Paso 2: asignar desde documento (el modal ERP compartido flota
+//    ENCIMA del wizard: backdrop del wizard en z-index 1080 vs 1085 del
+//    _tka_modal -- por eso NO se esconde el wizard al abrirlo) ──
+(function(){
+  const btn = document.getElementById('btnCotWizDoc');
   if (!btn) return;
   btn.addEventListener('click', function(){
     tkaOpen({
       mode: 'seleccionar',
       onSeleccionar: async function(items, header){
-        if (!items || !items.length) return;
-        try{
-          const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ items: items, header: header || null })
-          });
-          const d = await r.json();
-          if (!d.ok){
-            ilusToast(d.error || 'No se pudo crear la cotización', {type:'error'});
-            return;
+        if (!_WIZ || !items || !items.length) return;
+        // El header del documento SOLO rellena lo que el usuario dejó
+        // vacío en el paso 1 (lo escrito a mano manda).
+        if (header){
+          if (!document.getElementById('cotWizEmpresa').value.trim() && (header.cliente || header.empresa))
+            document.getElementById('cotWizEmpresa').value = header.cliente || header.empresa;
+          if (!document.getElementById('cotWizRut').value.trim() && header.rut)
+            document.getElementById('cotWizRut').value = header.rut;
+          if (!document.getElementById('cotWizEmail').value.trim() && header.email)
+            document.getElementById('cotWizEmail').value = header.email;
+          if (!document.getElementById('cotWizTelefono').value.trim() && header.telefono)
+            document.getElementById('cotWizTelefono').value = header.telefono;
+          if (!document.getElementById('cotWizComuna').value.trim() && header.comuna){
+            document.getElementById('cotWizComuna').value = header.comuna;
+            cotWizBuscarRuta();
           }
-          ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada (' + items.length + ' ítems)', {type:'success'});
-          if (d.sin_clasificar && d.sin_clasificar.length){
-            cotAbrirClasificacion(d.sin_clasificar);
-          } else {
-            setTimeout(function(){ location.reload(); }, 800);
-          }
-        }catch(e){
-          ilusToast('Error de conexión al crear la cotización', {type:'error'});
         }
+        const nuevos = items.map(function(it){
+          return { sku: it.sku || '', nombre: it.nombre || '', qty: (it.qty == null ? 1 : it.qty),
+                   tido: it.tido, koen: it.koen, clase_producto: null };
+        });
+        _WIZ.items = _WIZ.items.concat(nuevos);
+        await cotWizClasificar();
+        await cotWizRender();
+        await cotWizPrecios();
       }
     });
+  });
+})();
+
+async function cotWizClasificar(){
+  if (!_WIZ || !_WIZ.items.length) return;
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/preview-clasificacion', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ items: _WIZ.items.map(it => ({sku: it.sku, nombre: it.nombre, qty: it.qty})) })
+    });
+    const d = await r.json();
+    if (d.ok && Array.isArray(d.items)){
+      d.items.forEach(function(res, i){
+        if (_WIZ.items[i] && !_WIZ.items[i].clase_producto)
+          _WIZ.items[i].clase_producto = res.clase_producto || null;
+      });
+    }
+  }catch(e){ console.warn('preview-clasificacion:', e); }
+}
+
+async function cotWizRender(){
+  const body = document.getElementById('cotWizBody');
+  if (!_WIZ || !_WIZ.items.length){
+    body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Asignar desde documento"</td></tr>';
+    return;
+  }
+  const clases = await _cotClasifCargarClases();
+  const opts = clases.map(function(c){
+    return '<option value="' + _cotEsc(c.value) + '">' + _cotEsc(c.label) + '</option>';
+  }).join('');
+  body.innerHTML = _WIZ.items.map(function(it, i){
+    return '<tr>' +
+      '<td class="cot-rev-sku">' + _cotEsc(it.sku) + '</td>' +
+      '<td class="cot-rev-nombre" title="' + _cotEsc(it.nombre) + '">' + _cotEsc(it.nombre) + '</td>' +
+      '<td><input type="number" min="0" step="1" class="cot-rev-cant" value="' + _cotEsc(it.qty) + '" onchange="cotWizCantidad(' + i + ', this.value)"></td>' +
+      '<td><select class="cot-rev-select' + (it.clase_producto ? '' : ' sin-clasificar') + '" data-i="' + i + '" onchange="cotWizClase(' + i + ', this)">' +
+        '<option value="">Sin clasificar</option>' + opts + '</select></td>' +
+      '<td class="cot-wiz-pu-cell"><span class="cot-rev-precio cero">…</span></td>' +
+      '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
+      '<td><button type="button" class="cot-wiz-quitar" title="Quitar ítem" onclick="cotWizQuitar(' + i + ')"><i class="bi bi-x-lg"></i></button></td>' +
+    '</tr>';
+  }).join('');
+  _WIZ.items.forEach(function(it, i){
+    if (it.clase_producto){
+      const s = body.querySelector('select[data-i="' + i + '"]');
+      if (s) s.value = it.clase_producto;
+    }
+  });
+}
+function cotWizCantidad(i, v){
+  if (!_WIZ || !_WIZ.items[i]) return;
+  const n = parseInt(v, 10);
+  _WIZ.items[i].qty = isNaN(n) || n < 0 ? 0 : n;
+  cotWizPrecios();
+}
+function cotWizClase(i, sel){
+  if (!_WIZ || !_WIZ.items[i]) return;
+  _WIZ.items[i].clase_producto = sel.value || null;
+  sel.classList.toggle('sin-clasificar', !sel.value);
+  cotWizPrecios();
+}
+async function cotWizQuitar(i){
+  if (!_WIZ) return;
+  _WIZ.items.splice(i, 1);
+  await cotWizRender();
+  await cotWizPrecios();
+}
+
+let _wizPrecioSeq = 0;
+async function cotWizPrecios(){
+  if (!_WIZ) return;
+  if (!_WIZ.items.length){ _WIZ.sumaItems = 0; cotWizResumen(); return; }
+  // Guardia de secuencia: solo la llamada más reciente pinta el resultado
+  // (una respuesta vieja llegando tarde no puede pisar precios nuevos).
+  const miSeq = ++_wizPrecioSeq;
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/preview-precio', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        tipo_servicio: _WIZ.tipo,
+        items: _WIZ.items.map(it => ({clase_producto: it.clase_producto, cantidad: it.qty}))
+      })
+    });
+    const d = await r.json();
+    if (miSeq !== _wizPrecioSeq || !_WIZ) return;
+    const precios = (d.ok && Array.isArray(d.precios)) ? d.precios : [];
+    const filasPu = document.querySelectorAll('#cotWizBody .cot-wiz-pu-cell');
+    const filasTot = document.querySelectorAll('#cotWizBody .cot-wiz-tot-cell');
+    let suma = 0;
+    _WIZ.items.forEach(function(it, i){
+      const p = precios[i];
+      suma += p ? (p.total || 0) : 0;
+      if (filasPu[i]) filasPu[i].innerHTML = p
+        ? '<span class="cot-rev-precio">$' + Math.round(p.precio_unitario).toLocaleString('es-CL') + '</span>'
+        : '<span class="cot-rev-precio cero">—</span>';
+      if (filasTot[i]) filasTot[i].innerHTML = p
+        ? '<span class="cot-rev-precio">$' + Math.round(p.total).toLocaleString('es-CL') + '</span>'
+        : '<span class="cot-rev-precio cero">sin clasificar</span>';
+    });
+    _WIZ.sumaItems = suma;
+    cotWizResumen();
+  }catch(e){ console.warn('preview-precio:', e); }
+}
+
+function _wizCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
+function cotWizResumen(){
+  if (!_WIZ) return;
+  const items = _WIZ.sumaItems || 0;
+  const ruta = Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0);
+  const pct = parseFloat(document.getElementById('cotWizDescuento').value) || 0;
+  const subtotal = items + ruta;
+  const desc = Math.round(subtotal * pct / 100);
+  const iva = Math.round((subtotal - desc) * 0.19);
+  const total = subtotal - desc + iva;
+  document.getElementById('cotWizResRuta').textContent = _wizCLP(ruta);
+  document.getElementById('cotWizResItems').textContent = _wizCLP(items);
+  document.getElementById('cotWizResSubtotal').textContent = _wizCLP(subtotal);
+  document.getElementById('cotWizResDescRow').style.display = desc > 0 ? '' : 'none';
+  document.getElementById('cotWizResDesc').textContent = '−' + _wizCLP(desc);
+  document.getElementById('cotWizResIva').textContent = _wizCLP(iva);
+  document.getElementById('cotWizResTotal').textContent = _wizCLP(total);
+}
+
+(function(){
+  const btnNueva = document.getElementById('btnCotNuevaErp');
+  if (btnNueva) btnNueva.addEventListener('click', cotWizAbrir);
+  const btnCrear = document.getElementById('btnCotWizCrear');
+  if (!btnCrear) return;
+  btnCrear.addEventListener('click', async function(){
+    if (!_WIZ || !_WIZ.items.length){
+      ilusToast('Agrega al menos un producto — usa "Asignar desde documento"', {type:'warning'});
+      return;
+    }
+    const empresa = document.getElementById('cotWizEmpresa').value.trim();
+    if (!empresa){
+      ilusToast('Falta identificar al cliente (paso 1)', {type:'warning'});
+      cotWizIrPaso(1);
+      return;
+    }
+    const _orig = btnCrear.innerHTML;
+    btnCrear.disabled = true;
+    btnCrear.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    try{
+      const payload = {
+        items: _WIZ.items.map(it => ({ sku: it.sku, nombre: it.nombre, qty: it.qty,
+                                       tido: it.tido, koen: it.koen, clase_producto: it.clase_producto })),
+        header: {
+          cliente: empresa,
+          rut: document.getElementById('cotWizRut').value.trim(),
+          email: document.getElementById('cotWizEmail').value.trim(),
+          telefono: document.getElementById('cotWizTelefono').value.trim(),
+          comuna: document.getElementById('cotWizComuna').value.trim(),
+        },
+        tipo_servicio: _WIZ.tipo,
+        region: document.getElementById('cotWizRegion').value.trim(),
+        direccion: document.getElementById('cotWizDireccion').value.trim(),
+        valida_hasta: document.getElementById('cotWizValidoHasta').value,
+        notas: document.getElementById('cotWizNotas').value.trim(),
+        notas_internas: document.getElementById('cotWizNotasInt').value.trim(),
+        descuento_pct: parseFloat(document.getElementById('cotWizDescuento').value) || 0,
+        costo_ruta: Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0),
+        ejecutivo: document.getElementById('cotWizEjecutivo').value,
+      };
+      const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const d = await r.json();
+      if (!d.ok){
+        ilusToast(d.error || 'No se pudo crear la cotización', {type:'error'});
+        btnCrear.disabled = false; btnCrear.innerHTML = _orig;
+        return;
+      }
+      try{
+        const rc = await fetch('/tickets/api/cotizaciones/' + d.id + '/recalcular', {method:'POST'});
+        const dc = await rc.json();
+        if (!dc.ok) console.warn('recalcular falló:', dc.error);
+      }catch(e){ console.warn('recalcular: error de red', e); }
+      ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada', {type:'success'});
+      // Abre el PDF de inmediato (si el navegador bloquea el popup, queda
+      // el botón PDF rojo en la fila del listado).
+      try{ window.open('/tickets/cotizaciones/' + d.id + '/pdf', '_blank'); }catch(e){}
+      cotWizCerrar();
+      setTimeout(function(){ location.reload(); }, 700);
+    }catch(e){
+      ilusToast('Error de conexión al crear la cotización', {type:'error'});
+      btnCrear.disabled = false; btnCrear.innerHTML = _orig;
+    }
   });
 })();
 
@@ -210,7 +763,9 @@ function _cotEsc(s){
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-async function cotAbrirClasificacion(pendientes){
+let _cotClasifCid = null;
+async function cotAbrirClasificacion(pendientes, cid){
+  _cotClasifCid = cid || null;
   const modal = document.getElementById('cotClasifModal');
   const cont = document.getElementById('cotClasifLista');
   if (!modal || !cont) return;
@@ -236,11 +791,20 @@ async function cotAbrirClasificacion(pendientes){
   modal.classList.add('is-open');
   modal.style.display = 'flex';
 }
-function cotClasifCerrar(){
+async function cotClasifCerrar(){
   const modal = document.getElementById('cotClasifModal');
   if (modal){ modal.classList.remove('is-open'); modal.style.display = 'none'; }
   // La cotización ya quedó creada -- cerrar sin terminar de clasificar no
-  // rompe nada (Regla #4.2). Recargamos para reflejarla en el listado.
+  // rompe nada (Regla #4.2). Recalcula precios con lo que sí se alcanzó a
+  // clasificar (request nueva -- ver comentario en tk_api_cotizacion_recalcular)
+  // y recarga para reflejarlo en el listado.
+  if (_cotClasifCid){
+    try{
+      const rc = await fetch('/tickets/api/cotizaciones/' + _cotClasifCid + '/recalcular', {method:'POST'});
+      const dc = await rc.json();
+      if (!dc.ok) console.warn('recalcular falló:', dc.error);
+    }catch(e){ console.warn('recalcular: error de red', e); }
+  }
   location.reload();
 }
 async function cotClasifGuardar(pid, selId, btn){

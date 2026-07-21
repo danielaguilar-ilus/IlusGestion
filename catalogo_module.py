@@ -158,21 +158,60 @@ def register_catalogo_routes(app, ctx):
                            # (foto_editor.js comprime a <300KB en navegador; este es el
                            # tope duro del lado servidor por si llega sin comprimir).
 
-    # Taxonomia FIJA de "clase de producto" (2026-07-13, Daniel: "vamos a
-    # controlar que clase de producto es"). Distinta de `familia` (texto
-    # libre, se deja intacta — Regla #4.2). NULL permitido para productos
-    # viejos sin clasificar; "otro" es el fallback para lo que no calce.
-    CAT_CLASES_PRODUCTO = {
-        "selector_peso": "Selector de peso",
-        "rack": "Rack",
-        "rack_avanzado": "Rack avanzado",
-        "carga_disco": "Carga de disco",
-        "trotadora": "Trotadora",
-        "escaladora": "Escaladora",
-        "eliptica": "Elíptica",
-        "bicicleta": "Bicicleta",
-        "banco": "Banco",
-        "otro": "Otro",
+    # ── Categorías de producto (2026-07-21, Daniel: "esto también tiene
+    # que ser editable... si sale un producto nuevo lo podemos crear") ──
+    # Hasta acá era un ENUM FIJO en el código (10 valores). Ahora vive en
+    # la tabla `cat_clases_producto` (editable desde /catalogo/clases,
+    # solo superadmin) + `cat_clase_producto_tarifas` (Hora / Cantidad de
+    # técnicos por categoría, separado por `tipo_servicio`: instalación vs
+    # mantención — Daniel: "hay que separar si es instalación o
+    # mantención", son tablas de mano de obra DISTINTAS). HH total =
+    # horas×técnicos, no se guarda (se calcula), para que nunca quede
+    # desincronizado. Distinta de `familia` (texto libre — Regla #4.2).
+    #
+    # CORRECCIÓN 2026-07-21 (Daniel adjuntó "Tarifa mantenciones.xlsx"):
+    # la tabla que Daniel dictó por voz es de MANTENCIÓN, no instalación
+    # (confirmado: son los MISMOS valores Hora/Técnicos que la hoja
+    # "Tarifa mantencion" del Excel, verificados exactos contra 301 ítems
+    # reales de cotizaciones ya emitidas — 0 discrepancias). Instalación
+    # NO tiene tarifa propia todavía en ningún documento de Daniel; queda
+    # vacía/editable hasta que la defina. "Rack Pro" existe en el
+    # desplegable de Excel de Daniel pero SIN fila de tarifa ahí tampoco
+    # (gap real en su propia planilla) -- se crea la categoría para que el
+    # dropdown calce, sin inventar horas/técnicos.
+    #
+    # CAT_CLASES_SEED_MANTENCION es SOLO la semilla de arranque (tabla que
+    # Daniel dictó) — una vez en la tabla, la fuente de verdad es la BD;
+    # esta lista NO se vuelve a leer si la fila ya existe (no pisa ediciones).
+    CAT_CLASES_SEED_MANTENCION = [
+        # (slug, nombre, horas, cantidad_tecnicos, orden)
+        ("selectorizador_pesos",      "Selectorizador de pesos",                1.0, 2, 10),
+        ("selectorizador_pesos_4est", "Selectorizador de pesos (4 estaciones)", 2.0, 2, 20),
+        ("bicicleta",                 "Bicicleta",                              1.0, 1, 30),
+        ("trotadora",                 "Trotadora",                              1.5, 2, 40),
+        ("bancos_plano_ajustable",    "Bancos plano / ajustable",               0.3, 1, 50),
+        ("bancos_olimpicos",          "Bancos Olímpicos",                       1.0, 1, 60),
+        ("rack_accesorios",           "Rack de accesorios",                     0.5, 1, 70),
+        ("rack_basico",               "Rack Básico",                            1.0, 1, 80),
+        ("rack_intermedio",           "Rack Intermedio",                        1.5, 1, 90),
+        ("rack_avanzados",            "Rack Avanzados",                         1.0, 2, 100),
+        ("rack_pro",                  "Rack Pro",                               None, None, 105),
+        ("dual_cable_lite",           "Dual Cable Lite",                        1.5, 2, 110),
+        ("dual_cable_cross",          "Dual cable Cross",                       1.5, 2, 120),
+        ("dual_pulley_drax",          "Dual Pulley Drax",                       1.5, 2, 130),
+        ("booty_builder_p",           "Booty Builder P",                        1.0, 1, 140),
+        ("otro",                      "Otro",                                   None, None, 999),
+    ]
+    # Migración de compatibilidad: productos ya clasificados con el ENUM
+    # viejo cuyo significado es INEQUÍVOCO se remapean al slug nuevo.
+    # "banco"/"rack" viejos quedan A PROPÓSITO sin mapear -- el listado
+    # nuevo los abrió en varias categorías distintas y mapear mal
+    # corrompería el dato; el producto sigue guardado (nada se borra),
+    # solo pide reclasificación manual (mismo flujo `sin_clasificar` que
+    # ya existe para SKUs nuevos del ERP).
+    CAT_CLASES_MIGRACION_ENUM_VIEJO = {
+        "selector_peso": "selectorizador_pesos",
+        "rack_avanzado": "rack_avanzados",
     }
 
     # Bodega de sincronizacion ERP (Regla #4.1: SOLO LECTURA, via
@@ -255,6 +294,41 @@ def register_catalogo_routes(app, ctx):
                      REFERENCES cat_productos(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # 2026-07-21 (Daniel, módulo Cotizaciones): categorías de
+            # producto editables (reemplazan el ENUM fijo de arriba) +
+            # tabla de mano de obra (Hora/Técnicos) por categoría y tipo
+            # de servicio. Ver comentario junto a CAT_CLASES_SEED_MANTENCION.
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS cat_clases_producto (
+                  id           INT AUTO_INCREMENT PRIMARY KEY,
+                  slug         VARCHAR(60) NOT NULL,
+                  nombre       VARCHAR(120) NOT NULL,
+                  orden        INT NOT NULL DEFAULT 0,
+                  activo       TINYINT(1) NOT NULL DEFAULT 1,
+                  created_by   VARCHAR(190) NULL,
+                  updated_by   VARCHAR(190) NULL,
+                  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+                                  ON UPDATE CURRENT_TIMESTAMP,
+                  UNIQUE KEY uq_cat_clase_slug (slug),
+                  KEY idx_cat_clase_activo (activo, orden)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS cat_clase_producto_tarifas (
+                  id            INT AUTO_INCREMENT PRIMARY KEY,
+                  clase_id      INT NOT NULL,
+                  tipo_servicio ENUM('instalacion','mantencion') NOT NULL,
+                  horas         DECIMAL(6,2) NULL,
+                  tecnicos      INT NULL,
+                  updated_by    VARCHAR(190) NULL,
+                  updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+                                  ON UPDATE CURRENT_TIMESTAMP,
+                  UNIQUE KEY uq_cat_clase_tarifa (clase_id, tipo_servicio),
+                  CONSTRAINT fk_catclasetarifa_clase FOREIGN KEY (clase_id)
+                     REFERENCES cat_clases_producto(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_catalogo_tables: {_e}", flush=True)
 
@@ -277,15 +351,17 @@ def register_catalogo_routes(app, ctx):
         # Columnas nuevas 2026-07-13 (clase de producto + foto de piola).
         # Idempotente vía information_schema (mismo patron que arriba) para
         # que sobreviva a ILUS_SKIP_MIGRATIONS=1 en produccion.
+        # 2026-07-21: ya nace VARCHAR (editable) en vez de ENUM fijo — ver
+        # CAT_CLASES_MIGRACION_ENUM_VIEJO más abajo para el caso de una BD
+        # que todavía tenga la columna vieja tipo ENUM.
         try:
-            _clase_enum_sql = "ENUM(" + ",".join(f"'{k}'" for k in CAT_CLASES_PRODUCTO.keys()) + ")"
             _col = mysql_fetchone(
                 "SELECT 1 AS x FROM information_schema.COLUMNS "
                 "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cat_productos' "
                 "  AND COLUMN_NAME='clase_producto' LIMIT 1")
             if not _col:
                 mysql_execute(
-                    f"ALTER TABLE cat_productos ADD COLUMN clase_producto {_clase_enum_sql} NULL "
+                    "ALTER TABLE cat_productos ADD COLUMN clase_producto VARCHAR(60) NULL "
                     "AFTER familia")
                 mysql_execute(
                     "ALTER TABLE cat_productos ADD INDEX idx_cat_clase_producto (clase_producto)")
@@ -305,6 +381,55 @@ def register_catalogo_routes(app, ctx):
                 print("[ensure_catalogo] columna foto_key (piolas) creada", flush=True)
         except Exception as _e_foto:
             print(f"[ILUS][WARN] cat_producto_piolas.foto_key: {_e_foto}", flush=True)
+
+        # Semilla de categorías (Daniel, tabla de mano de obra de
+        # Mantención — confirmada contra "Tarifa mantenciones.xlsx",
+        # 2026-07-21) — INSERT solo si el slug no existe todavía:
+        # idempotente, y si Daniel ya editó nombre/horas desde
+        # /catalogo/clases NO se pisa (Regla #4.2 — una vez creada, la UI
+        # manda, esta semilla no vuelve a tocarla).
+        try:
+            for slug, nombre, horas, tecnicos, orden in CAT_CLASES_SEED_MANTENCION:
+                fila = mysql_fetchone(
+                    "SELECT id FROM cat_clases_producto WHERE slug=%s", (slug,))
+                if not fila:
+                    mysql_execute(
+                        "INSERT INTO cat_clases_producto (slug, nombre, orden, created_by, updated_by) "
+                        "VALUES (%s,%s,%s,'sistema','sistema')", (slug, nombre, orden))
+                    fila = mysql_fetchone(
+                        "SELECT id FROM cat_clases_producto WHERE slug=%s", (slug,))
+                if fila and horas is not None and tecnicos is not None:
+                    _tiene_tarifa = mysql_fetchone(
+                        "SELECT id FROM cat_clase_producto_tarifas "
+                        "WHERE clase_id=%s AND tipo_servicio='mantencion'", (fila["id"],))
+                    if not _tiene_tarifa:
+                        mysql_execute(
+                            "INSERT INTO cat_clase_producto_tarifas "
+                            "(clase_id, tipo_servicio, horas, tecnicos, updated_by) "
+                            "VALUES (%s,'mantencion',%s,%s,'sistema')",
+                            (fila["id"], horas, tecnicos))
+            print("[ensure_catalogo] categorías de producto sembradas", flush=True)
+        except Exception as _e_seed:
+            print(f"[ILUS][WARN] seed cat_clases_producto: {_e_seed}", flush=True)
+
+        # Migración clase_producto: ENUM fijo -> VARCHAR editable (Daniel
+        # 2026-07-21). Idempotente vía information_schema.COLUMNS.DATA_TYPE
+        # (una vez migrada la columna es VARCHAR y este bloque no hace nada).
+        try:
+            _tipo_col = mysql_fetchone(
+                "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cat_productos' "
+                "  AND COLUMN_NAME='clase_producto' LIMIT 1")
+            if _tipo_col and (_tipo_col.get("DATA_TYPE") or "").lower() == "enum":
+                mysql_execute(
+                    "ALTER TABLE cat_productos MODIFY COLUMN clase_producto VARCHAR(60) NULL")
+                for _viejo, _nuevo in CAT_CLASES_MIGRACION_ENUM_VIEJO.items():
+                    mysql_execute(
+                        "UPDATE cat_productos SET clase_producto=%s WHERE clase_producto=%s",
+                        (_nuevo, _viejo))
+                print("[ensure_catalogo] clase_producto migrada de ENUM a VARCHAR editable", flush=True)
+        except Exception as _e_mig:
+            print(f"[ILUS][WARN] migración clase_producto ENUM->VARCHAR: {_e_mig}", flush=True)
 
     with app.app_context():
         try:
@@ -349,6 +474,45 @@ def register_catalogo_routes(app, ctx):
             if k in d:
                 d[k] = _fmt_dt(d[k])
         return d
+
+    _CAT_CLASES_CACHE = {"data": None, "ts": 0.0}
+    _CAT_CLASES_CACHE_TTL_S = 30
+
+    def _cat_clases_map(force=False):
+        """{slug: nombre} de categorías ACTIVAS — caché en memoria de
+        proceso 30s (mismo patrón que _shopify_fotos_cache de este mismo
+        archivo) para no pegarle a MySQL en cada carga de un dropdown.
+        Reemplaza al viejo diccionario fijo CAT_CLASES_PRODUCTO."""
+        now = time.time()
+        if not force and _CAT_CLASES_CACHE["data"] is not None and (now - _CAT_CLASES_CACHE["ts"]) < _CAT_CLASES_CACHE_TTL_S:
+            return _CAT_CLASES_CACHE["data"]
+        try:
+            rows = mysql_fetchall(
+                "SELECT slug, nombre FROM cat_clases_producto WHERE activo=1 ORDER BY orden, nombre") or []
+            data = {r["slug"]: r["nombre"] for r in rows}
+        except Exception as _e:
+            print(f"[_cat_clases_map] error: {_e}", flush=True)
+            data = _CAT_CLASES_CACHE["data"] or {}
+        _CAT_CLASES_CACHE["data"] = data
+        _CAT_CLASES_CACHE["ts"] = now
+        return data
+
+    def _cat_slugify(texto):
+        """slug ascii_minusculas_con_guion_bajo, máx 60 chars — para el
+        slug de una categoría nueva creada desde /catalogo/clases."""
+        import unicodedata
+        t = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
+        t = t.strip().lower()
+        out = []
+        prev_us = False
+        for ch in t:
+            if ch.isalnum():
+                out.append(ch)
+                prev_us = False
+            elif not prev_us:
+                out.append("_")
+                prev_us = True
+        return "".join(out).strip("_")[:60]
 
     def _is_ajaxish():
         return (
@@ -419,7 +583,141 @@ def register_catalogo_routes(app, ctx):
     @_catalogo_required
     def cat_api_clases():
         return jsonify({"ok": True, "clases": [
-            {"value": k, "label": v} for k, v in CAT_CLASES_PRODUCTO.items()]})
+            {"value": k, "label": v} for k, v in _cat_clases_map().items()]})
+
+    @app.route("/catalogo/clases")
+    @_catalogo_admin_required
+    def cat_clases_page():
+        return render_template("catalogo/clases.html")
+
+    @app.route("/catalogo/api/clases/admin", methods=["GET"])
+    @_catalogo_admin_required
+    def cat_api_clases_admin():
+        """Listado completo (activas + inactivas) con horas/técnicos por
+        tipo_servicio, para /catalogo/clases (solo superadmin)."""
+        rows = mysql_fetchall(
+            "SELECT id, slug, nombre, orden, activo FROM cat_clases_producto "
+            "ORDER BY activo DESC, orden, nombre") or []
+        tarifas = mysql_fetchall(
+            "SELECT clase_id, tipo_servicio, horas, tecnicos FROM cat_clase_producto_tarifas") or []
+        tmap = {}
+        for t in tarifas:
+            tmap.setdefault(t["clase_id"], {})[t["tipo_servicio"]] = t
+        out = []
+        for r in rows:
+            r = dict(r)
+            for ts in ("instalacion", "mantencion"):
+                info = tmap.get(r["id"], {}).get(ts) or {}
+                horas = info.get("horas")
+                tecnicos = info.get("tecnicos")
+                horas_f = float(horas) if horas is not None else None
+                tecnicos_i = int(tecnicos) if tecnicos is not None else None
+                r[f"{ts}_horas"] = horas_f
+                r[f"{ts}_tecnicos"] = tecnicos_i
+                r[f"{ts}_hh"] = (horas_f * tecnicos_i) if (horas_f is not None and tecnicos_i is not None) else None
+            out.append(r)
+        return jsonify({"ok": True, "clases": out})
+
+    @app.route("/catalogo/api/clases", methods=["POST"])
+    @_catalogo_admin_required
+    def cat_api_clases_create():
+        """Crear categoría nueva (Daniel: "si sale un producto nuevo lo
+        podemos crear"). Sin tarifas iniciales -- se cargan aparte por
+        tipo_servicio desde /catalogo/clases."""
+        d = request.get_json(silent=True) or {}
+        nombre = (d.get("nombre") or "").strip()[:120]
+        if not nombre:
+            return jsonify({"ok": False, "error": "Falta el nombre de la categoría"}), 400
+        slug = _cat_slugify(nombre)
+        if not slug:
+            return jsonify({"ok": False, "error": "Nombre inválido"}), 400
+        user = current_username() or "sistema"
+        try:
+            _max = mysql_fetchone("SELECT COALESCE(MAX(orden),0) AS m FROM cat_clases_producto") or {}
+            orden = int(_max.get("m") or 0) + 10
+            mysql_execute(
+                "INSERT INTO cat_clases_producto (slug, nombre, orden, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s)", (slug, nombre, orden, user, user))
+        except Exception as _e:
+            msg = str(_e)
+            if "Duplicate entry" in msg or "uq_cat_clase_slug" in msg:
+                return jsonify({"ok": False, "error": "Ya existe una categoría equivalente"}), 409
+            print(f"[cat_api_clases_create] error: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo crear la categoría"}), 500
+        _cat_clases_map(force=True)
+        row = mysql_fetchone("SELECT id FROM cat_clases_producto WHERE slug=%s", (slug,))
+        return jsonify({"ok": True, "id": row["id"] if row else None, "slug": slug})
+
+    @app.route("/catalogo/api/clases/<int:clid>", methods=["PATCH"])
+    @_catalogo_admin_required
+    def cat_api_clases_update(clid):
+        """Renombrar / activar / desactivar / reordenar una categoría.
+        Desactivar es SOFT (Regla #5): no se borra, solo deja de ofrecerse
+        en los dropdowns nuevos -- los productos ya clasificados con ella
+        conservan el dato."""
+        if not mysql_fetchone("SELECT id FROM cat_clases_producto WHERE id=%s", (clid,)):
+            return jsonify({"ok": False, "error": "Categoría no encontrada"}), 404
+        d = request.get_json(silent=True) or {}
+        sets, params = [], []
+        if "nombre" in d:
+            nombre = (d.get("nombre") or "").strip()[:120]
+            if not nombre:
+                return jsonify({"ok": False, "error": "El nombre no puede quedar vacío"}), 400
+            sets.append("nombre=%s"); params.append(nombre)
+        if "activo" in d:
+            sets.append("activo=%s"); params.append(1 if d.get("activo") else 0)
+        if "orden" in d:
+            try:
+                params_orden = int(d.get("orden"))
+            except Exception:
+                return jsonify({"ok": False, "error": "orden inválido"}), 400
+            sets.append("orden=%s"); params.append(params_orden)
+        if not sets:
+            return jsonify({"ok": False, "error": "Sin cambios válidos"}), 400
+        sets.append("updated_by=%s")
+        params.append(current_username() or "sistema")
+        params.append(clid)
+        mysql_execute(f"UPDATE cat_clases_producto SET {', '.join(sets)} WHERE id=%s", tuple(params))
+        _cat_clases_map(force=True)
+        return jsonify({"ok": True})
+
+    @app.route("/catalogo/api/clases/<int:clid>/tarifas", methods=["PATCH"])
+    @_catalogo_admin_required
+    def cat_api_clases_tarifas_update(clid):
+        """Fija Hora/Técnicos de UNA categoría para UN tipo_servicio
+        (instalación o mantención — Daniel: "hay que separar"). HH total
+        no se guarda: se calcula (horas × técnicos) en cada lectura."""
+        if not mysql_fetchone("SELECT id FROM cat_clases_producto WHERE id=%s", (clid,)):
+            return jsonify({"ok": False, "error": "Categoría no encontrada"}), 404
+        d = request.get_json(silent=True) or {}
+        tipo_servicio = (d.get("tipo_servicio") or "").strip().lower()
+        if tipo_servicio not in ("instalacion", "mantencion"):
+            return jsonify({"ok": False, "error": "tipo_servicio debe ser 'instalacion' o 'mantencion'"}), 400
+        horas_in = d.get("horas")
+        tecnicos_in = d.get("tecnicos")
+        try:
+            horas_v = round(float(horas_in), 2) if horas_in not in (None, "") else None
+            tecnicos_v = int(tecnicos_in) if tecnicos_in not in (None, "") else None
+        except Exception:
+            return jsonify({"ok": False, "error": "Horas/técnicos inválidos"}), 400
+        # 2026-07-21 (revisión adversarial): horas=0 o técnicos=0 NO se
+        # aceptan como tarifa "válida" -- quedarían indistinguibles de
+        # "categoría sin tarifa cargada" en _cat_obtener_tarifa_clase
+        # (NULL es la única forma de decir "no configurado"; 0 pasaría el
+        # filtro IS NOT NULL y produciría precio $0 silencioso, disfrazado
+        # de tarifa real). Ningún servicio real necesita 0 horas o 0
+        # técnicos -- para "sin definir" se deja el campo vacío (NULL).
+        if horas_v is not None and horas_v <= 0:
+            return jsonify({"ok": False, "error": "Las horas deben ser mayores a 0 (deja el campo vacío si aún no está definida)"}), 400
+        if tecnicos_v is not None and tecnicos_v < 1:
+            return jsonify({"ok": False, "error": "La cantidad de técnicos debe ser al menos 1 (deja el campo vacío si aún no está definida)"}), 400
+        user = current_username() or "sistema"
+        mysql_execute(
+            "INSERT INTO cat_clase_producto_tarifas (clase_id, tipo_servicio, horas, tecnicos, updated_by) "
+            "VALUES (%s,%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE horas=VALUES(horas), tecnicos=VALUES(tecnicos), updated_by=VALUES(updated_by)",
+            (clid, tipo_servicio, horas_v, tecnicos_v, user))
+        return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — listado (paginacion/orden/filtro, mismo contrato que
@@ -471,7 +769,7 @@ def register_catalogo_routes(app, ctx):
             where.append("p.familia=%s")
             params.append(familia)
         if clase_producto:
-            if clase_producto not in CAT_CLASES_PRODUCTO:
+            if clase_producto not in _cat_clases_map():
                 return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
             where.append("p.clase_producto=%s")
             params.append(clase_producto)
@@ -508,7 +806,7 @@ def register_catalogo_routes(app, ctx):
             # cat_api_detalle para las fotos (gcs_key -> URL pública).
             _key = row.pop("foto_thumb_key", None)
             row["foto_thumb_url"] = ("/f/" + _key) if _key else None
-            row["clase_producto_label"] = CAT_CLASES_PRODUCTO.get(row.get("clase_producto") or "")
+            row["clase_producto_label"] = _cat_clases_map().get(row.get("clase_producto") or "")
             # "registrado" (2026-07-12, patron "impreso/no impreso" de Etiquetas
             # aplicado al catalogo): ficha completa = familia + al menos 1 piola +
             # al menos 1 manual (nuevo multi-manual O el legado singular).
@@ -541,7 +839,7 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "Falta el nombre"}), 400
         familia = (d.get("familia") or "").strip()[:150] or None
         clase_producto = (d.get("clase_producto") or "").strip() or None
-        if clase_producto and clase_producto not in CAT_CLASES_PRODUCTO:
+        if clase_producto and clase_producto not in _cat_clases_map():
             return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
         observacion = (d.get("observacion") or "").strip() or None
         user = current_username() or "sistema"
@@ -576,7 +874,7 @@ def register_catalogo_routes(app, ctx):
             "SELECT id, gcs_key, nombre_archivo, size_kb, orden FROM cat_producto_manuales "
             "WHERE producto_id=%s ORDER BY orden", (pid,))
         producto = _fmt_row(p)  # Regla #6: created_at/updated_at a hora Chile
-        producto["clase_producto_label"] = CAT_CLASES_PRODUCTO.get(producto.get("clase_producto") or "")
+        producto["clase_producto_label"] = _cat_clases_map().get(producto.get("clase_producto") or "")
         manual_key = producto.pop("manual_pdf_key", None)
         tiene_manual_alguno = bool(manual_key) or len(manuales) > 0
         producto["registrado"] = bool(
@@ -622,7 +920,7 @@ def register_catalogo_routes(app, ctx):
                 elif key == "nombre":
                     val = val[:300] if val else None
                 elif key == "clase_producto":
-                    if val and val not in CAT_CLASES_PRODUCTO:
+                    if val and val not in _cat_clases_map():
                         return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
             sets.append(f"{key}=%s")
             params.append(val)
@@ -1467,6 +1765,32 @@ def register_catalogo_routes(app, ctx):
     # Visible desde otros módulos (tickets_module.py — Cotizaciones Fase 1)
     # sin pegarle por HTTP a este mismo proceso. Ver comentario arriba.
     ctx["_cat_crear_o_reusar_producto_desde_erp"] = _cat_crear_o_reusar_producto_desde_erp
+
+    def _cat_obtener_tarifa_clase(slug, tipo_servicio):
+        """Hora/Técnicos de una categoría para un tipo_servicio ('instalacion'
+        o 'mantencion'). Reusable desde tickets_module.py vía
+        ctx['_cat_obtener_tarifa_clase'](slug, tipo_servicio) -- mismo patrón
+        que _cat_crear_o_reusar_producto_desde_erp (lookup en tiempo de
+        REQUEST, no de arranque). Devuelve None si la categoría no existe,
+        está inactiva, o no tiene tarifa cargada para ese tipo_servicio
+        (ej. "Rack Pro" hoy, o cualquier categoría en Instalación mientras
+        Daniel no defina esa tabla — 2026-07-21)."""
+        if not slug or tipo_servicio not in ("instalacion", "mantencion"):
+            return None
+        row = mysql_fetchone(
+            "SELECT t.horas, t.tecnicos FROM cat_clase_producto_tarifas t "
+            "JOIN cat_clases_producto c ON c.id=t.clase_id "
+            "WHERE c.slug=%s AND c.activo=1 AND t.tipo_servicio=%s "
+            "  AND t.horas IS NOT NULL AND t.tecnicos IS NOT NULL",
+            (slug, tipo_servicio))
+        if not row:
+            return None
+        return {"horas": float(row["horas"]), "tecnicos": int(row["tecnicos"])}
+
+    ctx["_cat_obtener_tarifa_clase"] = _cat_obtener_tarifa_clase
+    # Visible desde tickets_module.py (modal de revisión de Cotizaciones,
+    # 2026-07-22) para traducir un slug de categoría a su nombre legible.
+    ctx["_cat_clases_map"] = _cat_clases_map
 
     @app.route("/catalogo/api/productos/desde-erp", methods=["POST"])
     @_catalogo_admin_required
