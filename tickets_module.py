@@ -6357,10 +6357,20 @@ def register_tickets_routes(app, ctx):
             }), 403
 
         q = (request.args.get("q") or "").strip()
-        if len(q) < 2:
-            return jsonify({"ok": True, "resultados": []})
-
+        # 2026-07-24 (Daniel, feedback en vivo: "no rellena los datos del
+        # cliente... tampoco rellena los productos"): con q vacío antes se
+        # devolvia lista vacia -- el buscador del wizard ahora pide una
+        # lista por defecto apenas se abre (sin que el usuario escriba
+        # nada), asi que hay que devolver resultados igual, solo sin
+        # filtrar por texto. Mismo WHERE de estado, mismo ORDER/LIMIT.
         q_like = f"%{q}%"
+        where_extra = ""
+        sql_params = [q_like, q_like]
+        if len(q) < 2:
+            where_extra = ""
+            sql_params = []
+        else:
+            where_extra = " AND (c.razon_social LIKE %s OR c.rut LIKE %s) "
         try:
             # n_maquinas y plan_activo van como subquery escalar / EXISTS
             # por fila -- barato para el TOP 15 que devuelve el LIMIT.
@@ -6378,10 +6388,10 @@ def register_tickets_routes(app, ctx):
                 # otras búsquedas de clientes del proyecto (app.py, buscar
                 # clientes con COALESCE(estado,'activo') != 'inactivo').
                 " WHERE COALESCE(c.estado,'activo') <> 'inactivo' "
-                "   AND (c.razon_social LIKE %s OR c.rut LIKE %s) "
+                + where_extra +
                 " ORDER BY c.razon_social "
                 " LIMIT 15",
-                (q_like, q_like)) or []
+                tuple(sql_params)) or []
         except Exception as _e:
             print(f"[tk_clientes_ficha_buscar] error q={q!r}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo buscar clientes", "resultados": []}), 200

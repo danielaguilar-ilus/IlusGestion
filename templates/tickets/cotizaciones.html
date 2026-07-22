@@ -1459,10 +1459,17 @@ function _cotWizFuenteBusqueda(tipo){
   inp.addEventListener('input', function(){
     clearTimeout(_cotWizFuenteBuscTimer);
     const q = inp.value.trim();
-    const res = document.getElementById('cotWizFuenteBuscRes');
-    if (q.length < 2){ if (res) res.innerHTML = ''; return; }
     _cotWizFuenteBuscTimer = setTimeout(function(){ _cotWizFuenteBuscarEjecutar(tipo, q); }, 300);
   });
+  // 2026-07-24 (Daniel, feedback en vivo: "no me trae nada... tampoco
+  // rellena los productos"): antes había que escribir 2+ caracteres para
+  // ver CUALQUIER resultado -- si nunca escribía algo que matcheara, nunca
+  // podía hacer clic en nada, y por eso nunca se rellenaba el cliente ni
+  // los productos (la lógica de relleno en sí ya funciona, el problema era
+  // llegar a poder elegir algo). Ahora se muestra una lista por defecto
+  // (query vacía) apenas se abre cada buscador, igual que el resto de la
+  // app -- el input sigue filtrando esa misma lista al escribir.
+  _cotWizFuenteBuscarEjecutar(tipo, '');
 }
 async function _cotWizFuenteBuscarEjecutar(tipo, q){
   const seq = ++_cotWizFuenteBuscSeq;
