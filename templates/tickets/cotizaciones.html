@@ -199,6 +199,62 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-rev-select.sin-clasificar{border-color:#f59e0b;background:#fff8e1;}
 .cot-rev-precio{font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:700;color:#0a0a0a;white-space:nowrap;font-variant-numeric:tabular-nums;}
 .cot-rev-precio.cero{color:#c1c5cc;font-weight:500;font-style:italic;}
+
+/* ══ Paso 1 en secciones numeradas — réplica del lenguaje visual del modal
+   "Generar OT" de Mantenciones (.lev-step-card/.lev-step-header en
+   templates/mantenciones/ficha.html), duplicado acá con prefijo propio
+   (Daniel 2026-07-23: "que se sienta como Generar OT"). Los ids de los
+   inputs NO cambian -- esto es solo reestructuración visual/jerárquica. */
+.cot-wiz-step-card{border-radius:12px;border:1px solid #e5e7eb;background:#fff;
+  margin:14px 20px 0;overflow:hidden;transition:border-color .2s,box-shadow .2s;}
+.cot-wiz-step-card:first-child{margin-top:14px;}
+.cot-wiz-step-card:hover{border-color:#cbd5e1;}
+.cot-wiz-step-header{display:flex;align-items:center;gap:10px;padding:11px 14px;
+  background:linear-gradient(135deg,#fff,#fafafa);border-bottom:1px solid #f1f5f9;flex-wrap:wrap;}
+.cot-wiz-step-num{width:26px;height:26px;border-radius:50%;
+  background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;flex-shrink:0;}
+.cot-wiz-step-title{font-weight:800;font-size:.9rem;color:#0f172a;}
+.cot-wiz-step-sub{font-size:.72rem;color:#9ca3af;margin-left:4px;}
+.cot-wiz-step-body{padding:14px;}
+.cot-wiz-step-body .cot-wiz-campos{padding:0;}
+.cot-wiz-step-toggle-btn{margin-left:auto;border:1.5px solid #e5e7eb;background:#fff;color:#374151;
+  font-size:.72rem;font-weight:700;border-radius:9px;padding:6px 12px;min-height:34px;cursor:pointer;transition:.13s;}
+.cot-wiz-step-toggle-btn:hover{border-color:#dc2626;color:#dc2626;}
+.cot-wiz-step-toggle-btn:active{transform:scale(.96);}
+/* Sección 1 — origen de la cotización */
+.cot-wiz-origen-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
+.cot-wiz-origen-row .cot-wiz-campo{flex:1 1 260px;min-width:0;}
+.cot-wiz-origen-btn{flex:0 0 auto;border:1.5px solid #0a0a0a;background:#0a0a0a;color:#fff;font-weight:800;
+  font-size:.8rem;border-radius:9px;padding:0 16px;min-height:42px;white-space:nowrap;cursor:pointer;transition:.13s;
+  display:inline-flex;align-items:center;gap:6px;}
+.cot-wiz-origen-btn:hover{background:#dc2626;border-color:#dc2626;}
+.cot-wiz-origen-btn:active{transform:scale(.96);}
+@media(max-width:640px){.cot-wiz-origen-row{flex-direction:column;align-items:stretch;}
+  .cot-wiz-origen-btn{width:100%;justify-content:center;}}
+.cot-wiz-origen-hint{font-size:.72rem;color:#6b7280;margin-top:8px;line-height:1.4;}
+/* Sección 2 — franja de plan/contrato vigente (informativo, NO afecta precio) */
+.cot-wiz-plan-banner{display:none;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #bbf7d0;
+  color:#166534;border-radius:10px;padding:9px 12px;font-size:.78rem;margin-bottom:12px;line-height:1.4;}
+.cot-wiz-plan-banner i{font-size:1rem;flex-shrink:0;}
+/* Sección 3 — contacto colapsable */
+.cot-wiz-step-header-contacto{cursor:default;}
+
+/* ══ Paso 2 — "Traer equipos de la ficha" (sub-panel inline, Daniel
+   2026-07-23: solo visible cuando origen='ficha' y hay equipos activos) ══ */
+.cot-wiz-eqficha-box{border:1.5px solid #bbf7d0;background:#f0fdf4;border-radius:12px;overflow:hidden;}
+.cot-wiz-eqficha-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;
+  font-size:.78rem;font-weight:800;color:#166534;border-bottom:1px solid #bbf7d0;}
+.cot-wiz-eqficha-close{border:none;background:transparent;color:#166534;width:26px;height:26px;border-radius:7px;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
+.cot-wiz-eqficha-close:hover{background:#dcfce7;}
+.cot-wiz-eqficha-list{max-height:180px;overflow-y:auto;padding:6px 12px;display:flex;flex-direction:column;gap:2px;}
+.cot-wiz-eqficha-item{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#14532d;padding:6px 4px;
+  cursor:pointer;border-radius:6px;}
+.cot-wiz-eqficha-item:hover{background:#dcfce7;}
+.cot-wiz-eqficha-item input{width:18px;height:18px;accent-color:#16a34a;flex-shrink:0;}
+.cot-wiz-eqficha-item small{color:#4d7c0f;font-family:'JetBrains Mono',monospace;}
+.cot-wiz-eqficha-foot{padding:8px 12px 12px;}
 </style>
 
 <div class="tk-hero">
@@ -328,85 +384,159 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
         <i class="bi bi-cart3"></i>Servicios y Productos</button>
     </div>
 
-    {# ── Paso 1: Cliente ── #}
+    {# ── Paso 1: Cliente — 4 secciones numeradas, réplica del lenguaje
+       visual del modal "Generar OT" de Mantenciones (Daniel 2026-07-23).
+       Mismos ids de inputs que antes -- solo cambia la estructura/jerarquía
+       visual, no la validación (cotWizValidarPaso1) ni el payload. #}
     <div id="cotWizPaso1">
-      <div class="cot-wiz-campos">
-        <div class="cot-wiz-campo full" style="position:relative;">
-          <label>Identificación del Cliente</label>
-          <input type="text" id="cotWizCliQ" class="form-control" autocomplete="off"
-                 placeholder="Busca por RUT o nombre en el ERP…">
-          <div id="cotWizCliResultados" class="cot-wiz-dropdown" style="display:none;"></div>
+
+      {# ── Sección 1: origen ── #}
+      <div class="cot-wiz-step-card">
+        <div class="cot-wiz-step-header">
+          <span class="cot-wiz-step-num">1</span>
+          <span class="cot-wiz-step-title">¿De dónde nace esta cotización?</span>
         </div>
-        <div class="cot-wiz-campo" id="campoEmpresa"><label>Empresa / Razón social</label>
-          <input id="cotWizEmpresa" class="form-control">
-          <div class="cot-wiz-campo-err">Obligatorio</div></div>
-        <div class="cot-wiz-campo" id="campoRut"><label>RUT</label>
-          <input id="cotWizRut" class="form-control">
-          <div class="cot-wiz-campo-err">Obligatorio</div></div>
-        <div class="cot-wiz-campo full" id="campoDireccion" style="position:relative;">
-          <label>Dirección</label>
-          <input id="cotWizDireccion" class="form-control" autocomplete="off"
-                 placeholder="Escribe y elige una dirección real del listado…">
-          <div id="cotWizDireccionHint" class="cot-wiz-hint"></div>
-          <div class="cot-wiz-campo-err">Escribe la dirección y elige una opción de la lista de Google para validarla</div>
-          <input type="hidden" id="cotWizDireccionLat"><input type="hidden" id="cotWizDireccionLng">
-          <input type="hidden" id="cotWizDireccionPlaceId"></div>
-        <div class="cot-wiz-campo" id="campoRegion"><label>Región <span class="cot-wiz-auto">(automática)</span></label>
-          <input id="cotWizRegion" class="form-control" readonly>
-          <div class="cot-wiz-campo-err">Se completa al validar la dirección</div></div>
-        <div class="cot-wiz-campo" id="campoComuna"><label>Comuna <span class="cot-wiz-auto">(auto, editable)</span></label>
-          <input id="cotWizComuna" class="form-control">
-          <div class="cot-wiz-campo-err">Obligatorio</div></div>
-        <div class="cot-wiz-campo" id="campoEmail"><label>Email</label>
-          <input id="cotWizEmail" type="email" class="form-control">
-          <div class="cot-wiz-campo-err">Email inválido</div></div>
-        <div class="cot-wiz-campo" id="campoTelefono"><label>Teléfono</label>
-          <input id="cotWizTelefono" class="form-control" placeholder="+56 9 1234 5678">
-          <div class="cot-wiz-campo-err">Teléfono chileno inválido (8 o 9 dígitos)</div></div>
-        <div class="cot-wiz-campo full" id="campoTipoServicio"><label>Tipo de servicio</label>
-          <div class="cot-wiz-tiposerv">
-            <div class="cot-wiz-ts-pill on" data-v="mantencion" style="--tc:#f59e0b;--tbg:#fffbeb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button">
-              <i class="bi bi-tools"></i><span>Mantención</span></div>
-            <div class="cot-wiz-ts-pill" data-v="instalacion" style="--tc:#3b82f6;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
-                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
-              <i class="bi bi-house-gear-fill"></i><span>Instalación</span></div>
-            <div class="cot-wiz-ts-pill" data-v="venta_repuesto" style="--tc:#1d4ed8;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
-                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
-              <i class="bi bi-boxes"></i><span>Venta de repuesto</span></div>
-            <div class="cot-wiz-ts-pill" data-v="visita_tecnica" style="--tc:#16a34a;--tbg:#f0fdf4;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
-                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
-              <i class="bi bi-clipboard-check"></i><span>Visita técnica</span></div>
-            <div class="cot-wiz-ts-pill" data-v="otro" style="--tc:#6b7280;--tbg:#f9fafb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
-                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
-              <i class="bi bi-three-dots"></i><span>Otro</span></div>
-            <div class="cot-wiz-ts-hint">Solo Mantención tiene tarifa de mano de obra cargada hoy — los demás tipos cotizan en $0 hasta que se definan.</div>
+        <div class="cot-wiz-step-body">
+          <div class="cot-wiz-origen-row">
+            <div class="cot-wiz-campo full" style="position:relative;margin:0;">
+              <label>Buscar cliente por RUT o nombre (ERP)</label>
+              <input type="text" id="cotWizCliQ" class="form-control" autocomplete="off"
+                     placeholder="Busca por RUT o nombre en el ERP…">
+              <div id="cotWizCliResultados" class="cot-wiz-dropdown" style="display:none;"></div>
+            </div>
+            <button type="button" id="btnCotWizDesdeDocumento" class="cot-wiz-origen-btn">
+              <i class="bi bi-file-earmark-arrow-down"></i>Desde documento ERP</button>
           </div>
-        </div>
-        <div class="cot-wiz-campo" id="campoEjecutivo"><label>Ejecutivo o vendedor solicitante</label>
-          <select id="cotWizEjecutivo" class="form-select"><option value="">Seleccione</option></select>
-          <div class="cot-wiz-campo-err">Obligatorio</div></div>
-        <div class="cot-wiz-campo" id="campoValidoHasta"><label>Válido hasta</label>
-          <input id="cotWizValidoHasta" type="date" class="form-control">
-          <div class="cot-wiz-campo-err">Obligatorio</div></div>
-        <div class="cot-wiz-campo"><label>Descuento General (%)</label>
-          <select id="cotWizDescuento" class="form-select">
-            <option value="0" selected>0%</option><option value="5">5%</option>
-            <option value="10">10%</option><option value="15">15%</option>
-            <option value="20">20%</option><option value="25">25%</option>
-          </select></div>
-        <div class="cot-wiz-campo full"><label>Observaciones (se visualizará en el PDF)</label>
-          <textarea id="cotWizNotas" class="form-control" rows="1"
-                    placeholder="Ej: Precios sujetos a disponibilidad"></textarea></div>
-        <div class="cot-wiz-campo full"><label>Observaciones internas</label>
-          <textarea id="cotWizNotasInt" class="form-control" rows="1"></textarea></div>
-        <div class="cot-wiz-campo full" id="campoCostoRuta"><label>Costo de Ruta</label>
-          <div class="input-group">
-            <span class="input-group-text">$</span>
-            <input id="cotWizCostoRuta" type="number" min="0" step="1" class="form-control" value="0">
+          <div class="cot-wiz-origen-hint" id="cotWizOrigenHint">
+            Busca el cliente, trae un documento del ERP (factura/guía/boleta) con sus productos,
+            o crea un cliente nuevo si aún no existe.
           </div>
-          <div class="cot-wiz-hint" id="cotWizRutaHint">Se obtiene automáticamente según la comuna del cliente</div>
         </div>
       </div>
+
+      {# ── Sección 2: datos del cliente ── #}
+      <div class="cot-wiz-step-card">
+        <div class="cot-wiz-step-header">
+          <span class="cot-wiz-step-num">2</span>
+          <span class="cot-wiz-step-title">Datos del cliente</span>
+          <span class="cot-wiz-step-sub">autocompletados — púlelos</span>
+        </div>
+        <div class="cot-wiz-step-body">
+          <div class="cot-wiz-plan-banner" id="cotWizPlanBanner"></div>
+          <div class="cot-wiz-campos">
+            <div class="cot-wiz-campo" id="campoEmpresa"><label>Empresa / Razón social</label>
+              <input id="cotWizEmpresa" class="form-control">
+              <div class="cot-wiz-campo-err">Obligatorio</div></div>
+            <div class="cot-wiz-campo" id="campoRut"><label>RUT</label>
+              <input id="cotWizRut" class="form-control">
+              <div class="cot-wiz-campo-err">Obligatorio</div></div>
+            <div class="cot-wiz-campo full" id="campoDireccion" style="position:relative;">
+              <label>Dirección</label>
+              <input id="cotWizDireccion" class="form-control" autocomplete="off"
+                     placeholder="Escribe y elige una dirección real del listado…">
+              <div id="cotWizDireccionHint" class="cot-wiz-hint"></div>
+              <div class="cot-wiz-campo-err">Escribe la dirección y elige una opción de la lista de Google para validarla</div>
+              <input type="hidden" id="cotWizDireccionLat"><input type="hidden" id="cotWizDireccionLng">
+              <input type="hidden" id="cotWizDireccionPlaceId"></div>
+            <div class="cot-wiz-campo" id="campoRegion"><label>Región <span class="cot-wiz-auto">(automática)</span></label>
+              <input id="cotWizRegion" class="form-control" readonly>
+              <div class="cot-wiz-campo-err">Se completa al validar la dirección</div></div>
+            <div class="cot-wiz-campo" id="campoComuna"><label>Comuna <span class="cot-wiz-auto">(auto, editable)</span></label>
+              <input id="cotWizComuna" class="form-control">
+              <div class="cot-wiz-campo-err">Obligatorio</div></div>
+            <div class="cot-wiz-campo" id="campoEmail"><label>Email</label>
+              <input id="cotWizEmail" type="email" class="form-control">
+              <div class="cot-wiz-campo-err">Email inválido</div></div>
+            <div class="cot-wiz-campo" id="campoTelefono"><label>Teléfono</label>
+              <input id="cotWizTelefono" class="form-control" placeholder="+56 9 1234 5678">
+              <div class="cot-wiz-campo-err">Teléfono chileno inválido (8 o 9 dígitos)</div></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 3: contacto de la persona (opcional, colapsada) ── #}
+      <div class="cot-wiz-step-card">
+        <div class="cot-wiz-step-header cot-wiz-step-header-contacto">
+          <span class="cot-wiz-step-num">3</span>
+          <span class="cot-wiz-step-title">Contacto del cliente <span class="cot-wiz-auto">(opcional)</span></span>
+          <button type="button" class="cot-wiz-step-toggle-btn" id="cotWizContactoToggleBtn" onclick="cotWizToggleContacto()">
+            <i class="bi bi-plus-lg"></i> Agregar contacto</button>
+        </div>
+        <div class="cot-wiz-step-body" id="cotWizContactoBody" style="display:none;">
+          <div class="cot-wiz-campo full" id="cotWizContactoSelectWrap" style="display:none;margin-bottom:9px;">
+            <label>Contacto conocido de la ficha</label>
+            <select id="cotWizContactoSelect" class="form-select" onchange="cotWizContactoElegir(this.value)">
+              <option value="">Ingresar manualmente</option>
+            </select>
+          </div>
+          <div class="cot-wiz-campos">
+            <div class="cot-wiz-campo"><label>Nombre</label>
+              <input id="cotWizContactoNombre" class="form-control" placeholder="Nombre de la persona"></div>
+            <div class="cot-wiz-campo"><label>Cargo</label>
+              <input id="cotWizContactoCargo" class="form-control" placeholder="Ej: Jefe de operaciones"></div>
+            <div class="cot-wiz-campo"><label>Teléfono</label>
+              <input id="cotWizContactoTel" class="form-control" placeholder="+56 9 1234 5678"></div>
+            <div class="cot-wiz-campo"><label>Email</label>
+              <input id="cotWizContactoEmail" type="email" class="form-control"></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 4: condiciones de la cotización ── #}
+      <div class="cot-wiz-step-card" style="margin-bottom:14px;">
+        <div class="cot-wiz-step-header">
+          <span class="cot-wiz-step-num">4</span>
+          <span class="cot-wiz-step-title">Condiciones de la cotización</span>
+        </div>
+        <div class="cot-wiz-step-body">
+          <div class="cot-wiz-campos">
+            <div class="cot-wiz-campo full" id="campoTipoServicio"><label>Tipo de servicio</label>
+              <div class="cot-wiz-tiposerv">
+                <div class="cot-wiz-ts-pill on" data-v="mantencion" style="--tc:#f59e0b;--tbg:#fffbeb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button">
+                  <i class="bi bi-tools"></i><span>Mantención</span></div>
+                <div class="cot-wiz-ts-pill" data-v="instalacion" style="--tc:#3b82f6;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                     title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+                  <i class="bi bi-house-gear-fill"></i><span>Instalación</span></div>
+                <div class="cot-wiz-ts-pill" data-v="venta_repuesto" style="--tc:#1d4ed8;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                     title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+                  <i class="bi bi-boxes"></i><span>Venta de repuesto</span></div>
+                <div class="cot-wiz-ts-pill" data-v="visita_tecnica" style="--tc:#16a34a;--tbg:#f0fdf4;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                     title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+                  <i class="bi bi-clipboard-check"></i><span>Visita técnica</span></div>
+                <div class="cot-wiz-ts-pill" data-v="otro" style="--tc:#6b7280;--tbg:#f9fafb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                     title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+                  <i class="bi bi-three-dots"></i><span>Otro</span></div>
+                <div class="cot-wiz-ts-hint">Solo Mantención tiene tarifa de mano de obra cargada hoy — los demás tipos cotizan en $0 hasta que se definan.</div>
+              </div>
+            </div>
+            <div class="cot-wiz-campo" id="campoEjecutivo"><label>Ejecutivo o vendedor solicitante</label>
+              <select id="cotWizEjecutivo" class="form-select"><option value="">Seleccione</option></select>
+              <div class="cot-wiz-campo-err">Obligatorio</div></div>
+            <div class="cot-wiz-campo" id="campoValidoHasta"><label>Válido hasta</label>
+              <input id="cotWizValidoHasta" type="date" class="form-control">
+              <div class="cot-wiz-campo-err">Obligatorio</div></div>
+            <div class="cot-wiz-campo"><label>Descuento General (%)</label>
+              <select id="cotWizDescuento" class="form-select">
+                <option value="0" selected>0%</option><option value="5">5%</option>
+                <option value="10">10%</option><option value="15">15%</option>
+                <option value="20">20%</option><option value="25">25%</option>
+              </select></div>
+            <div class="cot-wiz-campo full"><label>Observaciones (se visualizará en el PDF)</label>
+              <textarea id="cotWizNotas" class="form-control" rows="1"
+                        placeholder="Ej: Precios sujetos a disponibilidad"></textarea></div>
+            <div class="cot-wiz-campo full"><label>Observaciones internas</label>
+              <textarea id="cotWizNotasInt" class="form-control" rows="1"></textarea></div>
+            <div class="cot-wiz-campo full" id="campoCostoRuta"><label>Costo de Ruta</label>
+              <div class="input-group">
+                <span class="input-group-text">$</span>
+                <input id="cotWizCostoRuta" type="number" min="0" step="1" class="form-control" value="0">
+              </div>
+              <div class="cot-wiz-hint" id="cotWizRutaHint">Se obtiene automáticamente según la comuna del cliente</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="cot-clasif-foot" style="justify-content:flex-end;gap:8px;">
         <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotWizCerrar()">
           <i class="bi bi-x-lg me-1"></i>Cancelar</button>
@@ -421,15 +551,29 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
         <button type="button" id="btnCotWizDoc" class="btn btn-sm fw-bold"
                 style="background:#0a0a0a;color:#fff;border-radius:9px;padding:10px 16px;">
           <i class="bi bi-file-earmark-arrow-down me-1"></i>Asignar desde documento</button>
-        <span class="text-muted" style="font-size:.74rem;">Trae los productos de un documento del ERP y clasifícalos aquí mismo</span>
+        {# 2026-07-23 (Daniel, rediseño Paso 2): "Agregar de Bodega 02"
+           reemplaza "Asignar desde documento" como entrada PRINCIPAL en
+           todo origen que no sea 'documento'/'ticket' -- ver
+           _cotWizAplicarOrigenPaso2(). #}
+        <button type="button" id="btnCotWizBodega" class="btn btn-sm fw-bold"
+                style="background:#fff;color:#0a0a0a;border:1.5px solid #0a0a0a;border-radius:9px;padding:9px 16px;">
+          <i class="bi bi-boxes me-1"></i>Agregar de Bodega 02</button>
+        {# Solo visible cuando origen='ficha' Y la ficha tiene equipos
+           activos (_WIZ.fichaMaquinas, cargados por _cotWizCargarFichaResumen). #}
+        <button type="button" id="btnCotWizTraerEquipos" class="btn btn-sm fw-bold" style="display:none;
+                background:#f0fdf4;color:#16a34a;border:1.5px solid #16a34a;border-radius:9px;padding:9px 16px;"
+                onclick="cotWizAbrirEquiposFicha()">
+          <i class="bi bi-hdd-stack me-1"></i>Traer equipos de la ficha</button>
+        <span class="text-muted" id="cotWizPaso2Hint" style="font-size:.74rem;">Trae los productos de un documento del ERP y clasifícalos aquí mismo</span>
       </div>
+      <div id="cotWizEquiposFichaPanel" style="display:none;margin:0 20px 4px;"></div>
       <div class="cot-rev-tabla-wrap">
         <table class="cot-rev-tabla" style="min-width:700px;">
           <thead>
             <tr><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Característica</th><th>P. Unit.</th><th>Total</th><th></th></tr>
           </thead>
           <tbody id="cotWizBody">
-            <tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Asignar desde documento"</td></tr>
+            <tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Agregar de Bodega 02"</td></tr>
           </tbody>
         </table>
       </div>
@@ -519,10 +663,19 @@ function cotWizAbrir(){
   // esta llamada es idempotente (guard input.dataset.placesBound) y cubre
   // cualquier caso donde la inicialización de más abajo hubiera fallado.
   _cotWizInitDireccion();
-  _WIZ = { items: [], tipo: 'mantencion', rutaManual: false, sumaItems: 0, direccionValidada: false };
+  // 2026-07-23 (Daniel, rediseño estilo "Generar OT"): máquina de estados
+  // `origen` -- null|'documento'|'erp_cliente'|'ficha'|'manual'|'ticket'
+  // (el deep-link ?desde_cliente=<CID> setea origen='ficha', no un valor
+  // propio) -- controla la botonera del Paso 2 (ver
+  // _cotWizAplicarOrigenPaso2) y viaja en el payload de creación como dato
+  // de trazabilidad (columna tk_cotizaciones.origen, 100% informativo).
+  _WIZ = { items: [], tipo: 'mantencion', rutaManual: false, sumaItems: 0, direccionValidada: false,
+           origen: null, clienteId: null, ticketId: null, planInfo: null, docRef: null,
+           fichaContactos: [], fichaMaquinas: [] };
   ['cotWizCliQ','cotWizEmpresa','cotWizRut','cotWizDireccion','cotWizRegion','cotWizComuna',
    'cotWizEmail','cotWizTelefono','cotWizNotas','cotWizNotasInt',
-   'cotWizDireccionLat','cotWizDireccionLng','cotWizDireccionPlaceId'].forEach(function(id){
+   'cotWizDireccionLat','cotWizDireccionLng','cotWizDireccionPlaceId',
+   'cotWizContactoNombre','cotWizContactoCargo','cotWizContactoTel','cotWizContactoEmail'].forEach(function(id){
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.getElementById('cotWizDescuento').value = '0';
@@ -531,6 +684,10 @@ function cotWizAbrir(){
   document.getElementById('cotWizRutaHint').textContent = 'Se obtiene automáticamente según la comuna del cliente';
   document.getElementById('cotWizDireccionHint').innerHTML = '';
   document.querySelectorAll('.cot-wiz-campo.invalido').forEach(function(c){ c.classList.remove('invalido'); });
+  _cotWizRenderPlanBanner();
+  _cotWizRenderContactos([]);
+  _cotWizSetContactoExpandido(false);
+  _cotWizAplicarOrigenPaso2();
   // Fecha LOCAL (no toISOString, que es UTC y cerca de medianoche chilena
   // se corre un día -- hallazgo de revisión adversarial). 2026-07-22
   // (Daniel: "un válido hasta 15 días", igual que Triple A).
@@ -542,7 +699,7 @@ function cotWizAbrir(){
     b.classList.toggle('on', b.dataset.v === 'mantencion');
   });
   document.getElementById('cotWizBody').innerHTML =
-    '<tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Asignar desde documento"</td></tr>';
+    '<tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Agregar de Bodega 02"</td></tr>';
   cotWizCargarEjecutivos();
   _cotWizCargarUf();
   cotWizResumen();
@@ -554,6 +711,174 @@ function cotWizCerrar(){
   const m = document.getElementById('cotWizModal');
   if (m){ m.classList.remove('is-open'); m.style.display = 'none'; }
   _WIZ = null;
+}
+
+// ── Fecha ISO ("YYYY-MM-DD", columna DATE sin componente horario -- no
+//    aplica conversión de huso Chile, Regla #6 es para DATETIME) a DD/MM/YYYY ──
+function _cotWizFechaCL(iso){
+  if (!iso) return '';
+  const p = String(iso).split('-');
+  return (p.length === 3) ? (p[2] + '/' + p[1] + '/' + p[0]) : String(iso);
+}
+
+// ── Sección 2: franja "Cliente con contrato vigente" (informativo puro --
+//    Daniel: "que el plan afecte el precio es lógica de pricing que
+//    requiere reglas mías, no la inventes" -- NO se toca el cálculo). ──
+function _cotWizRenderPlanBanner(){
+  const banner = document.getElementById('cotWizPlanBanner');
+  if (!banner) return;
+  const plan = _WIZ && _WIZ.planInfo;
+  if (!plan || !plan.activo || !plan.contratos || !plan.contratos.length){
+    banner.style.display = 'none'; banner.innerHTML = '';
+    return;
+  }
+  const c = plan.contratos[0];
+  const venceTxt = c.es_indefinido ? 'contrato indefinido'
+    : (c.fecha_vencimiento ? ('vence ' + _cotWizFechaCL(c.fecha_vencimiento)) : 'sin fecha de vencimiento registrada');
+  const freqTxt = c.frecuencia_meses ? (' · mantención cada ' + c.frecuencia_meses + ' mes' + (c.frecuencia_meses === 1 ? '' : 'es')) : '';
+  banner.innerHTML = '<i class="bi bi-patch-check-fill"></i><span>Cliente con contrato vigente: <strong>' +
+    _cotEsc(c.nombre || 'Contrato') + '</strong> · ' + _cotEsc(venceTxt) + freqTxt + '</span>';
+  banner.style.display = 'flex';
+}
+
+// ── Sección 3: contactos conocidos de la ficha (select) + expandir/colapsar ──
+function _cotWizSetContactoExpandido(open){
+  const body = document.getElementById('cotWizContactoBody');
+  const btn = document.getElementById('cotWizContactoToggleBtn');
+  if (!body) return;
+  body.style.display = open ? '' : 'none';
+  if (btn) btn.innerHTML = open ? '<i class="bi bi-dash-lg"></i> Ocultar' : '<i class="bi bi-plus-lg"></i> Agregar contacto';
+}
+function cotWizToggleContacto(){
+  const body = document.getElementById('cotWizContactoBody');
+  if (!body) return;
+  _cotWizSetContactoExpandido(body.style.display === 'none');
+}
+function _cotWizRenderContactos(contactos){
+  if (_WIZ) _WIZ.fichaContactos = contactos || [];
+  const wrap = document.getElementById('cotWizContactoSelectWrap');
+  const sel = document.getElementById('cotWizContactoSelect');
+  if (!wrap || !sel) return;
+  if (!contactos || !contactos.length){
+    wrap.style.display = 'none';
+    sel.innerHTML = '<option value="">Ingresar manualmente</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">Ingresar manualmente</option>' + contactos.map(function(c, i){
+    return '<option value="' + i + '">' + _cotEsc(c.label || 'Contacto') + ' — ' + _cotEsc(c.nombre || '') + '</option>';
+  }).join('');
+  wrap.style.display = '';
+  // Hay al menos un contacto conocido -- se expande solo (Daniel lo ve de
+  // inmediato, no tiene que acordarse de tocar "+ Agregar contacto").
+  _cotWizSetContactoExpandido(true);
+  sel.value = '0';
+  cotWizContactoElegir('0');
+}
+function cotWizContactoElegir(idx){
+  const nombre = document.getElementById('cotWizContactoNombre');
+  const cargo = document.getElementById('cotWizContactoCargo');
+  const tel = document.getElementById('cotWizContactoTel');
+  const email = document.getElementById('cotWizContactoEmail');
+  if (idx === '' || idx == null){
+    if (nombre) nombre.value = ''; if (cargo) cargo.value = '';
+    if (tel) tel.value = ''; if (email) email.value = '';
+    return;
+  }
+  const c = (_WIZ && _WIZ.fichaContactos || [])[parseInt(idx, 10)];
+  if (!c) return;
+  if (nombre) nombre.value = c.nombre || '';
+  if (cargo) cargo.value = c.cargo || '';
+  if (tel) tel.value = c.tel || '';
+  if (email) email.value = c.email || '';
+}
+
+// ── Resumen de ficha (endpoint 2.2.2) -- trae contactos + plan/contratos +
+//    máquinas activas de un cliente YA reconocido en Mantenciones. Se
+//    llama al elegir un resultado del buscador con cliente_id, y desde el
+//    deep-link ?desde_cliente=<CID> (ver más abajo, PR-5). ──
+async function _cotWizCargarFichaResumen(cid){
+  if (!cid || !_WIZ) return;
+  try{
+    const r = await fetch('/tickets/api/clientes-ficha/' + cid + '/resumen');
+    const d = await r.json();
+    if (!d.ok || !_WIZ) return;
+    _WIZ.planInfo = d.plan || null;
+    _WIZ.fichaMaquinas = d.maquinas || [];
+    _cotWizRenderPlanBanner();
+    _cotWizRenderContactos(d.contactos || []);
+    // La disponibilidad de "Traer equipos de la ficha" depende de
+    // fichaMaquinas, que recién llegó -- refrescar la botonera del Paso 2
+    // (no-op si el usuario todavía está en el Paso 1, los ids existen igual).
+    _cotWizAplicarOrigenPaso2();
+  }catch(e){ /* silencioso -- no bloquea el wizard, el dato es informativo */ }
+}
+
+// ── Paso 2: botonera condicional por origen (Daniel: "ya no hay necesidad
+//    de mostrar ese botón, o déjalo bloqueado" -- para el caso 'documento').
+//    #btnCotWizDoc (el histórico "Asignar desde documento") queda:
+//      · visible pero DESHABILITADO cuando origen ya trajo ítems de un
+//        documento/ticket (evita duplicar la misma acción dos veces);
+//      · oculto en cualquier otro origen -- la capacidad de traer un
+//        documento se movió al Paso 1 ("Desde documento ERP"), sigue
+//        existiendo, solo cambió de lugar (Regla #4.2, confirmado con
+//        Daniel en el resumen de este PR).
+//    El botón "Agregar de Bodega 02" y "Traer equipos de la ficha" se
+//    cablean en la siguiente iteración (Paso 2) -- esta función ya deja
+//    funcionando el estado de btnCotWizDoc desde ahora. ──
+function _cotWizVacioTexto(){
+  // Texto de la fila vacía de la tabla -- cambia según qué botón es la
+  // entrada principal para ESTE origen (Daniel, rediseño Paso 2).
+  const origen = _WIZ ? _WIZ.origen : null;
+  if (origen === 'ficha' && _WIZ && (_WIZ.fichaMaquinas || []).length){
+    return 'Sin productos todavía — usa "Traer equipos de la ficha" o "Agregar de Bodega 02"';
+  }
+  return 'Sin productos todavía — usa "Agregar de Bodega 02"';
+}
+function _cotWizAplicarOrigenPaso2(){
+  const btnDoc = document.getElementById('btnCotWizDoc');
+  const btnTraerEquipos = document.getElementById('btnCotWizTraerEquipos');
+  const hint = document.getElementById('cotWizPaso2Hint');
+  const origen = _WIZ ? _WIZ.origen : null;
+  const esDocumento = (origen === 'documento' || origen === 'ticket');
+  const tieneEquiposFicha = origen === 'ficha' && _WIZ && (_WIZ.fichaMaquinas || []).length > 0;
+  if (btnDoc){
+    if (esDocumento){
+      btnDoc.style.display = '';
+      btnDoc.disabled = true;
+      btnDoc.title = (_WIZ && _WIZ.docRef)
+        ? ('Los productos ya vinieron del documento ' + _WIZ.docRef)
+        : 'Los productos ya vinieron de este ticket';
+    } else {
+      btnDoc.style.display = 'none';
+      btnDoc.disabled = false;
+      btnDoc.title = '';
+    }
+  }
+  if (btnTraerEquipos) btnTraerEquipos.style.display = tieneEquiposFicha ? '' : 'none';
+  if (!tieneEquiposFicha){
+    // Se ocultó el botón -- si el panel de equipos había quedado abierto,
+    // ciérralo (evita un panel huérfano sin botón que lo controle).
+    const panel = document.getElementById('cotWizEquiposFichaPanel');
+    if (panel){ panel.style.display = 'none'; panel.innerHTML = ''; }
+  }
+  if (hint){
+    if (esDocumento){
+      hint.textContent = 'Los productos ya vinieron del documento' +
+        (_WIZ && _WIZ.docRef ? (' ' + _WIZ.docRef) : '') +
+        ' — usa "Agregar de Bodega 02" si necesitas sumar algo extra.';
+    } else if (tieneEquiposFicha){
+      hint.textContent = 'Trae los equipos ya registrados en la ficha del cliente, o suma productos manuales desde Bodega 02.';
+    } else {
+      hint.textContent = 'Busca productos en Bodega 02 y agrégalos a la cotización.';
+    }
+  }
+  // La fila vacía de la tabla (si no hay ítems todavía) también refleja
+  // el origen -- solo se repinta si de verdad está vacía, para no perder
+  // ítems ya cargados.
+  if (_WIZ && !_WIZ.items.length){
+    const body = document.getElementById('cotWizBody');
+    if (body) body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="7">' + _cotWizVacioTexto() + '</td></tr>';
+  }
 }
 
 // ── Validación Paso 1 (2026-07-22, Daniel: "todos los valores obligatorios,
@@ -602,6 +927,7 @@ function cotWizIrPaso(n){
   document.getElementById('cotWizPaso2').style.display = (n === 2) ? '' : 'none';
   document.getElementById('cotWizTab1').classList.toggle('on', n === 1);
   document.getElementById('cotWizTab2').classList.toggle('on', n === 2);
+  if (n === 2) _cotWizAplicarOrigenPaso2();
 }
 function cotWizTipoServ(btn){
   if (!_WIZ) return;
@@ -658,10 +984,15 @@ function _wizCliOcultar(){
               _cotEsc(q).replace(/'/g, "\\'") + '\')"><i class="bi bi-person-plus-fill me-1"></i>Crear cliente nuevo</button>';
         } else {
           cont.innerHTML = res.map(function(c, i){
+            // 2026-07-23 (Daniel, rediseño Paso 1): badge "En plan" junto al
+            // ya existente "Ya es cliente" -- 100% informativo, viene del
+            // endpoint (plan_activo/plan_vence, PR-2), NO afecta el precio.
+            const badges = (c.ya_es_cliente ? '<em>✓ Ya es cliente</em>' : '') +
+              (c.plan_activo ? '<em>🟢 En plan' + (c.plan_vence ? ' · vence ' + _cotWizFechaCL(c.plan_vence) : '') + '</em>' : '');
             return '<button type="button" class="cot-wiz-dd-item" data-i="' + i + '">' +
               '<strong>' + _cotEsc(c.empresa) + '</strong>' +
               '<span>' + _cotEsc(c.rut || '') + (c.comuna ? ' · ' + _cotEsc(c.comuna) : '') + '</span>' +
-              (c.ya_es_cliente ? '<em>✓ Ya es cliente</em>' : '') +
+              badges +
             '</button>';
           }).join('');
           cont.querySelectorAll('.cot-wiz-dd-item').forEach(function(b){
@@ -678,6 +1009,23 @@ function _wizCliOcultar(){
 })();
 function cotWizElegirCliente(c){
   if (!c) return;
+  // 2026-07-23 (Daniel, rediseño Paso 1): máquina de estados `origen` --
+  // si el resultado ya trae cliente_id (tiene ficha en Mantenciones),
+  // origen='ficha' y se carga su resumen (contactos/plan/equipos, PR-2);
+  // si no, origen='erp_cliente' (existe en el ERP pero sin ficha aún).
+  if (_WIZ){
+    _WIZ.clienteId = c.cliente_id || null;
+    if (c.cliente_id){
+      _WIZ.origen = 'ficha';
+      _cotWizCargarFichaResumen(c.cliente_id);
+    } else {
+      _WIZ.origen = 'erp_cliente';
+      _WIZ.planInfo = null;
+      _cotWizRenderPlanBanner();
+      _cotWizRenderContactos([]);
+    }
+    _cotWizAplicarOrigenPaso2();
+  }
   document.getElementById('cotWizEmpresa').value = c.empresa || '';
   document.getElementById('cotWizRut').value = c.rut || '';
   // 2026-07-22 (Daniel: "hay que validar la dirección... colocar
@@ -707,6 +1055,14 @@ function cotWizElegirCliente(c){
 // en vez de un mensaje de "sin resultados" pasivo.
 function cotWizCrearClienteNuevo(q){
   _wizCliOcultar();
+  if (_WIZ){
+    _WIZ.origen = 'manual';
+    _WIZ.clienteId = null;
+    _WIZ.planInfo = null;
+    _cotWizRenderPlanBanner();
+    _cotWizRenderContactos([]);
+    _cotWizAplicarOrigenPaso2();
+  }
   document.getElementById('cotWizCliQ').value = '';
   const empresaInput = document.getElementById('cotWizEmpresa');
   // Si lo que tipeó no era un RUT (probable razón social), lo precarga.
@@ -817,66 +1173,165 @@ async function cotWizBuscarRuta(){
   if (dg) dg.addEventListener('change', cotWizResumen);
 })();
 
-// ── Paso 2: asignar desde documento (el modal ERP compartido flota
-//    ENCIMA del wizard: backdrop del wizard en z-index 1080 vs 1085 del
-//    _tka_modal -- por eso NO se esconde el wizard al abrirlo) ──
+// ── Asignar desde documento ERP -- lógica COMPARTIDA entre el botón
+//    histórico del Paso 2 (#btnCotWizDoc, hoy visible-deshabilitado
+//    cuando origen ya es 'documento'/'ticket' -- ver _cotWizAplicarOrigenPaso2)
+//    y el botón nuevo del Paso 1, Sección 1 ("Desde documento ERP",
+//    #btnCotWizDesdeDocumento -- Daniel 2026-07-23, rediseño estilo
+//    "Generar OT"). Se extrajo a una función única para no duplicar la
+//    validación de "documento de otro cliente" ni el merge de header. ──
+async function _cotWizAsignarDesdeDocumento(items, header){
+  if (!_WIZ || !items || !items.length) return;
+  // 2026-07-23 (Daniel: "los datos tienen que coincidir con el cliente,
+  // porque si no sería una vulneración"): si el Paso 1 YA tiene un RUT
+  // cargado (de una búsqueda previa) y el documento que se está asignando
+  // pertenece a un RUT DISTINTO, avisar antes de traer los ítems -- nunca
+  // mezclar en silencio los datos de dos clientes distintos.
+  const rutActual = document.getElementById('cotWizRut').value.trim();
+  const _rutLimpio = function(v){ return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); };
+  if (header && header.rut && rutActual && _rutLimpio(header.rut) !== _rutLimpio(rutActual)){
+    const continuar = await ilusConfirm({
+      title: 'El documento es de otro cliente',
+      message: 'Este documento pertenece al RUT ' + header.rut + ', pero el Paso 1 ya tiene cargado el RUT ' + rutActual + '.',
+      sub: 'Si continúas, se agregarán los productos igual pero los datos del cliente en el Paso 1 NO se van a tocar.',
+      okLabel: 'Agregar productos igual', cancelLabel: 'Cancelar', danger: true,
+    });
+    if (!continuar) return;
+  }
+  // El header del documento SOLO rellena lo que el usuario dejó vacío en
+  // el paso 1 (lo escrito a mano manda).
+  if (header){
+    const _completados = [];
+    if (!document.getElementById('cotWizEmpresa').value.trim() && (header.cliente || header.empresa)){
+      document.getElementById('cotWizEmpresa').value = header.cliente || header.empresa;
+      _completados.push('empresa');
+    }
+    if (!rutActual && header.rut){
+      document.getElementById('cotWizRut').value = header.rut;
+      _completados.push('RUT');
+    }
+    if (!document.getElementById('cotWizEmail').value.trim() && header.email){
+      document.getElementById('cotWizEmail').value = header.email;
+      _completados.push('email');
+    }
+    if (!document.getElementById('cotWizTelefono').value.trim() && header.telefono){
+      document.getElementById('cotWizTelefono').value = header.telefono;
+      _completados.push('teléfono');
+    }
+    if (!document.getElementById('cotWizComuna').value.trim() && header.comuna){
+      document.getElementById('cotWizComuna').value = header.comuna;
+      _completados.push('comuna');
+      cotWizBuscarRuta();
+    }
+    if (_completados.length){
+      ilusToast('Cliente completado desde el documento (' + _completados.join(', ') + ')', {type:'info'});
+    }
+    // Origen 'documento' + referencia del documento (para el aviso del
+    // Paso 2 -- ver _cotWizAplicarOrigenPaso2). Un cliente_id de una ficha
+    // ya conocida (elegido en el Paso 1) NO se pisa por asignar un doc.
+    if (header.tido && header.nudo){
+      _WIZ.docRef = header.tido + '-' + header.nudo;
+    }
+  }
+  // 2026-07-23 (revisión adversarial): 'manual' (cliente nuevo tipeado a
+  // mano) es tan deliberado como 'ficha'/'erp_cliente' -- no se pisa solo
+  // porque después se le asignen productos de un documento (el dato es
+  // puramente informativo/auditoría, pero debe reflejar de dónde vino
+  // realmente EL CLIENTE, no el último botón que se tocó).
+  if (_WIZ.origen !== 'ficha' && _WIZ.origen !== 'erp_cliente' && _WIZ.origen !== 'manual'){
+    _WIZ.origen = 'documento';
+  }
+  _cotWizAplicarOrigenPaso2();
+  const nuevos = items.map(function(it){
+    return { sku: it.sku || '', nombre: it.nombre || '', qty: (it.qty == null ? 1 : it.qty),
+             tido: it.tido, koen: it.koen, clase_producto: null };
+  });
+  _WIZ.items = _WIZ.items.concat(nuevos);
+  await cotWizClasificar();
+  await cotWizRender();
+  await cotWizPrecios();
+}
+
+// ── Paso 1, Sección 1: "Desde documento ERP" (Daniel 2026-07-23, rediseño
+//    estilo "Generar OT" -- antes vivía solo en el Paso 2). Abre el modal
+//    ERP compartido con las pestañas Documento/RUT (sin Bodega -- acá se
+//    busca el documento del cliente, no un producto suelto). Mismo z-index
+//    del modal compartido (1085) flotando ENCIMA del wizard (1080). ──
+(function(){
+  const btn = document.getElementById('btnCotWizDesdeDocumento');
+  if (!btn) return;
+  btn.addEventListener('click', function(){
+    const rutActual = document.getElementById('cotWizRut').value.trim();
+    tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['doc', 'cli'],
+      rutPrefill: rutActual,
+      onSeleccionar: async function(items, header){
+        if (!items || !items.length) return;
+        // Caso borde (Fable, plan 2.1): la pestaña "Por RUT" puede traer
+        // ítems de VARIOS documentos a la vez -- ahí el modal entrega
+        // header=null (no hay UN documento único). Se rescata el cliente
+        // pidiendo el documento del PRIMER ítem con tido/nudo (el mismo
+        // motor unificado que ya usa el resto de Tickets).
+        if (!header){
+          const first = items.find(function(it){ return it.tido && it.nudo; });
+          if (first){
+            try{
+              const rd = await fetch('/tickets/api/erp/documento/' + encodeURIComponent(first.tido) + '/' + encodeURIComponent(first.nudo));
+              const dd = await rd.json();
+              if (dd.ok && dd.documento){
+                header = {
+                  tido: first.tido, nudo: first.nudo,
+                  cliente: dd.documento.cliente_nombre, rut: dd.documento.cliente_rut,
+                  email: dd.documento.email, telefono: dd.documento.telefono,
+                  comuna: dd.documento.comuna,
+                };
+              }
+            }catch(e){ /* silencioso -- se sigue sin header, el usuario completa a mano */ }
+          }
+        }
+        await _cotWizAsignarDesdeDocumento(items, header);
+      }
+    });
+  });
+})();
+
+// ── Paso 2: botón histórico "Asignar desde documento" -- se mantiene
+//    (Regla #4.2: la capacidad NO se elimina, solo se movió arriba como
+//    entrada principal). Hoy queda visible-deshabilitado cuando el origen
+//    ya es 'documento'/'ticket' y OCULTO en los demás orígenes -- ver
+//    _cotWizAplicarOrigenPaso2(). Si algún día se re-habilita, sigue
+//    funcionando exactamente igual (mismo helper compartido). ──
 (function(){
   const btn = document.getElementById('btnCotWizDoc');
   if (!btn) return;
   btn.addEventListener('click', function(){
+    if (btn.disabled) return;
     tkaOpen({
       mode: 'seleccionar',
       onSeleccionar: async function(items, header){
+        await _cotWizAsignarDesdeDocumento(items, header);
+      }
+    });
+  });
+})();
+
+// ── Paso 2: "Agregar de Bodega 02" -- entrada PRINCIPAL de productos para
+//    cualquier origen que no sea 'documento'/'ticket' (Daniel 2026-07-23).
+//    Los ítems de bodega llegan con tido:null/nudo:null (el modal ya lo
+//    tolera -- ver _tka_modal.html tkaAsociarSeleccion, selBodega). ──
+(function(){
+  const btn = document.getElementById('btnCotWizBodega');
+  if (!btn) return;
+  btn.addEventListener('click', function(){
+    tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['bodega'],
+      onSeleccionar: async function(items){
         if (!_WIZ || !items || !items.length) return;
-        // 2026-07-23 (Daniel: "los datos tienen que coincidir con el
-        // cliente, porque si no sería una vulneración"): si el Paso 1 YA
-        // tiene un RUT cargado (de una búsqueda previa) y el documento que
-        // se está asignando pertenece a un RUT DISTINTO, avisar antes de
-        // traer los ítems -- nunca mezclar en silencio los datos de dos
-        // clientes distintos en la misma cotización.
-        const rutActual = document.getElementById('cotWizRut').value.trim();
-        const _rutLimpio = function(v){ return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); };
-        if (header && header.rut && rutActual && _rutLimpio(header.rut) !== _rutLimpio(rutActual)){
-          const continuar = await ilusConfirm({
-            title: 'El documento es de otro cliente',
-            message: 'Este documento pertenece al RUT ' + header.rut + ', pero el Paso 1 ya tiene cargado el RUT ' + rutActual + '.',
-            sub: 'Si continúas, se agregarán los productos igual pero los datos del cliente en el Paso 1 NO se van a tocar.',
-            okLabel: 'Agregar productos igual', cancelLabel: 'Cancelar', danger: true,
-          });
-          if (!continuar) return;
-        }
-        // El header del documento SOLO rellena lo que el usuario dejó
-        // vacío en el paso 1 (lo escrito a mano manda).
-        if (header){
-          const _completados = [];
-          if (!document.getElementById('cotWizEmpresa').value.trim() && (header.cliente || header.empresa)){
-            document.getElementById('cotWizEmpresa').value = header.cliente || header.empresa;
-            _completados.push('empresa');
-          }
-          if (!rutActual && header.rut){
-            document.getElementById('cotWizRut').value = header.rut;
-            _completados.push('RUT');
-          }
-          if (!document.getElementById('cotWizEmail').value.trim() && header.email){
-            document.getElementById('cotWizEmail').value = header.email;
-            _completados.push('email');
-          }
-          if (!document.getElementById('cotWizTelefono').value.trim() && header.telefono){
-            document.getElementById('cotWizTelefono').value = header.telefono;
-            _completados.push('teléfono');
-          }
-          if (!document.getElementById('cotWizComuna').value.trim() && header.comuna){
-            document.getElementById('cotWizComuna').value = header.comuna;
-            _completados.push('comuna');
-            cotWizBuscarRuta();
-          }
-          if (_completados.length){
-            ilusToast('Cliente completado desde el documento (' + _completados.join(', ') + ')', {type:'info'});
-          }
-        }
         const nuevos = items.map(function(it){
           return { sku: it.sku || '', nombre: it.nombre || '', qty: (it.qty == null ? 1 : it.qty),
-                   tido: it.tido, koen: it.koen, clase_producto: null };
+                   tido: it.tido || null, koen: it.koen || null, clase_producto: null };
         });
         _WIZ.items = _WIZ.items.concat(nuevos);
         await cotWizClasificar();
@@ -886,6 +1341,62 @@ async function cotWizBuscarRuta(){
     });
   });
 })();
+
+// ── Paso 2: "Traer equipos de la ficha" -- sub-panel inline con checkboxes
+//    de las máquinas activas del cliente (_WIZ.fichaMaquinas, cargadas por
+//    _cotWizCargarFichaResumen cuando origen='ficha'). Solo visible/posible
+//    cuando hay al menos un equipo (ver _cotWizAplicarOrigenPaso2). ──
+function cotWizAbrirEquiposFicha(){
+  const panel = document.getElementById('cotWizEquiposFichaPanel');
+  if (!panel) return;
+  const yaAbierto = panel.style.display !== 'none' && panel.innerHTML.trim() !== '';
+  if (yaAbierto){ _cotWizCerrarEquiposFicha(); return; }
+  _cotWizRenderEquiposFichaPanel();
+}
+function _cotWizCerrarEquiposFicha(){
+  const panel = document.getElementById('cotWizEquiposFichaPanel');
+  if (panel){ panel.style.display = 'none'; panel.innerHTML = ''; }
+}
+function _cotWizRenderEquiposFichaPanel(){
+  const panel = document.getElementById('cotWizEquiposFichaPanel');
+  if (!panel || !_WIZ) return;
+  const maquinas = _WIZ.fichaMaquinas || [];
+  if (!maquinas.length){ panel.style.display = 'none'; panel.innerHTML = ''; return; }
+  panel.innerHTML = '<div class="cot-wiz-eqficha-box">' +
+    '<div class="cot-wiz-eqficha-head"><span>Equipos activos de la ficha (' + maquinas.length + ')</span>' +
+      '<button type="button" class="cot-wiz-eqficha-close" onclick="_cotWizCerrarEquiposFicha()"><i class="bi bi-x-lg"></i></button></div>' +
+    '<div class="cot-wiz-eqficha-list">' +
+      maquinas.map(function(m, i){
+        return '<label class="cot-wiz-eqficha-item"><input type="checkbox" data-i="' + i + '">' +
+          '<span>' + _cotEsc(m.nombre || m.sku || 'Equipo') +
+          (m.serie ? ' <small>(' + _cotEsc(m.serie) + ')</small>' : '') + '</span></label>';
+      }).join('') +
+    '</div>' +
+    '<div class="cot-wiz-eqficha-foot">' +
+      '<button type="button" class="btn btn-sm fw-bold" style="background:#16a34a;color:#fff;border-radius:8px;padding:8px 16px;" ' +
+        'onclick="_cotWizAgregarEquiposFicha()"><i class="bi bi-plus-lg me-1"></i>Agregar seleccionados</button>' +
+    '</div>' +
+  '</div>';
+  panel.style.display = '';
+}
+async function _cotWizAgregarEquiposFicha(){
+  const panel = document.getElementById('cotWizEquiposFichaPanel');
+  if (!panel || !_WIZ) return;
+  const maquinas = _WIZ.fichaMaquinas || [];
+  const marcados = Array.prototype.slice.call(panel.querySelectorAll('input[type=checkbox]:checked'));
+  if (!marcados.length){ ilusToast('Selecciona al menos un equipo', {type:'warning'}); return; }
+  const nuevos = marcados.map(function(cb){
+    const m = maquinas[parseInt(cb.dataset.i, 10)] || {};
+    return { sku: m.sku || '', nombre: m.nombre || 'Equipo', qty: m.cantidad || 1,
+             tido: null, koen: null, clase_producto: null };
+  });
+  _WIZ.items = _WIZ.items.concat(nuevos);
+  _cotWizCerrarEquiposFicha();
+  await cotWizClasificar();
+  await cotWizRender();
+  await cotWizPrecios();
+  ilusToast('✓ ' + nuevos.length + ' equipo(s) agregado(s) desde la ficha', {type:'success'});
+}
 
 async function cotWizClasificar(){
   if (!_WIZ || !_WIZ.items.length) return;
@@ -907,7 +1418,7 @@ async function cotWizClasificar(){
 async function cotWizRender(){
   const body = document.getElementById('cotWizBody');
   if (!_WIZ || !_WIZ.items.length){
-    body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Asignar desde documento"</td></tr>';
+    body.innerHTML = '<tr class="cot-wiz-vacio"><td colspan="7">' + _cotWizVacioTexto() + '</td></tr>';
     return;
   }
   const clases = await _cotClasifCargarClases();
@@ -1056,7 +1567,7 @@ function cotWizResumen(){
   if (!btnCrear) return;
   btnCrear.addEventListener('click', async function(){
     if (!_WIZ || !_WIZ.items.length){
-      ilusToast('Agrega al menos un producto — usa "Asignar desde documento"', {type:'warning'});
+      ilusToast('Agrega al menos un producto en el Paso 2', {type:'warning'});
       return;
     }
     const empresa = document.getElementById('cotWizEmpresa').value.trim();
@@ -1097,6 +1608,26 @@ function cotWizResumen(){
         descuento_pct: parseFloat(document.getElementById('cotWizDescuento').value) || 0,
         costo_ruta: Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0),
         ejecutivo: document.getElementById('cotWizEjecutivo').value,
+        // 2026-07-23 (Daniel, rediseño Paso 1 estilo "Generar OT"): contacto
+        // de la persona + coordenadas de la dirección YA validada por
+        // Google Places (antes se pedían pero se descartaban al enviar) +
+        // cliente_id/origen para trazabilidad (PR-2, tk_cotizaciones).
+        contacto: {
+          nombre: document.getElementById('cotWizContactoNombre').value.trim(),
+          cargo: document.getElementById('cotWizContactoCargo').value.trim(),
+          tel: document.getElementById('cotWizContactoTel').value.trim(),
+          email: document.getElementById('cotWizContactoEmail').value.trim(),
+        },
+        direccion_lat: document.getElementById('cotWizDireccionLat').value || null,
+        direccion_lng: document.getElementById('cotWizDireccionLng').value || null,
+        direccion_place_id: document.getElementById('cotWizDireccionPlaceId').value.trim(),
+        cliente_id: (_WIZ && _WIZ.clienteId) || null,
+        origen: (_WIZ && _WIZ.origen) || null,
+        // 2026-07-23 (PR-5, deep-link ?desde_ticket=<TID>): si el wizard se
+        // abrió desde la ficha de un ticket, la cotización nace YA asociada
+        // a él (mismo criterio que el botón viejo de ficha.html -- backend
+        // sin cambios, ticket_id ya era aceptado por /desde-erp).
+        ticket_id: (_WIZ && _WIZ.ticketId) || null,
       };
       const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
         method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1276,6 +1807,99 @@ function cotVerAuditoria(btn){
     sub: sub, subHtml: true, type: 'info', okLabel: 'Cerrar',
   });
 }
+
+// ══════════════ Deep-links: abrir el wizard YA prellenado ══════════════
+// Daniel 2026-07-23 ("todo conectado" -- rediseño estilo "Generar OT"):
+//   /tickets/cotizaciones?desde_ticket=<TID>  -- desde la ficha de un ticket
+//   /tickets/cotizaciones?desde_cliente=<CID> -- desde la ficha de Mantenciones
+// Ambos casos reusan cotWizAbrir() (mismo modal, mismos ids) y solo
+// prellenan datos + fijan el origen -- NO se duplica el wizard.
+async function _cotWizAplicarDeepLinkTicket(tid){
+  if (!tid || !_WIZ) return;
+  try{
+    const r = await fetch('/tickets/api/tickets/' + tid);
+    const d = await r.json();
+    if (!d.ok || !_WIZ){
+      ilusToast(d.error || 'No se pudo cargar el ticket', {type:'error'});
+      return;
+    }
+    const t = d.ticket || {};
+    _WIZ.origen = 'ticket';
+    _WIZ.ticketId = tid;
+    document.getElementById('cotWizEmpresa').value = t.empresa || '';
+    document.getElementById('cotWizRut').value = t.rut || '';
+    document.getElementById('cotWizEmail').value = t.email || '';
+    document.getElementById('cotWizTelefono').value = t.phone || '';
+    if (t.direccion) document.getElementById('cotWizDireccion').value = t.direccion;
+    if (t.comuna_nombre) document.getElementById('cotWizComuna').value = t.comuna_nombre;
+    if (t.direccion){
+      // Mismo criterio que cotWizElegirCliente: la dirección viene de datos
+      // ya guardados, NO recién validada en ESTE formulario -- se exige
+      // re-validar contra Google Places antes de avanzar (cotWizValidarPaso1).
+      document.getElementById('cotWizDireccionHint').innerHTML =
+        '<i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>' +
+        'Dirección del ticket sin validar — vuelve a escribirla y elige una opción de la lista para completar la Región.';
+    }
+    const equipos = d.equipos || [];
+    _WIZ.items = equipos.map(function(eq){
+      return { sku: eq.sku || eq.erp_kopr || '', nombre: eq.nombre || 'Equipo',
+               qty: eq.cantidad || 1, tido: null, koen: null, clase_producto: null };
+    });
+    await cotWizClasificar();
+    await cotWizRender();
+    await cotWizPrecios();
+    _cotWizAplicarOrigenPaso2();
+    if (t.comuna_nombre) cotWizBuscarRuta();
+    if (equipos.length){
+      ilusToast('Ticket cargado con ' + equipos.length + ' equipo(s) — revisa y clasifica antes de crear', {type:'info'});
+    }
+  }catch(e){ ilusToast('Error de conexión al cargar el ticket', {type:'error'}); }
+}
+async function _cotWizAplicarDeepLinkCliente(cid){
+  if (!cid || !_WIZ) return;
+  try{
+    const r = await fetch('/tickets/api/clientes-ficha/' + cid + '/resumen');
+    const d = await r.json();
+    if (!d.ok || !_WIZ){
+      ilusToast(d.error || 'No se pudo cargar el cliente', {type:'error'});
+      return;
+    }
+    const cli = d.cliente || {};
+    _WIZ.origen = 'ficha';
+    _WIZ.clienteId = cli.id || cid;
+    document.getElementById('cotWizEmpresa').value = cli.razon_social || '';
+    document.getElementById('cotWizRut').value = cli.rut || '';
+    if (cli.direccion) document.getElementById('cotWizDireccion').value = cli.direccion;
+    if (cli.comuna) document.getElementById('cotWizComuna').value = cli.comuna;
+    if (cli.region) document.getElementById('cotWizRegion').value = cli.region;
+    if (cli.email_empresa) document.getElementById('cotWizEmail').value = cli.email_empresa;
+    if (cli.tel_empresa) document.getElementById('cotWizTelefono').value = cli.tel_empresa;
+    if (cli.direccion){
+      document.getElementById('cotWizDireccionHint').innerHTML =
+        '<i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>' +
+        'Dirección de la ficha sin validar — vuelve a escribirla y elige una opción de la lista para completar la Región.';
+    }
+    _WIZ.planInfo = d.plan || null;
+    _WIZ.fichaMaquinas = d.maquinas || [];
+    _cotWizRenderPlanBanner();
+    _cotWizRenderContactos(d.contactos || []);
+    _cotWizAplicarOrigenPaso2();
+    if (cli.comuna) cotWizBuscarRuta();
+  }catch(e){ ilusToast('Error de conexión al cargar el cliente', {type:'error'}); }
+}
+(function(){
+  const params = new URLSearchParams(window.location.search);
+  const desdeTicket = params.get('desde_ticket');
+  const desdeCliente = params.get('desde_cliente');
+  if (!desdeTicket && !desdeCliente) return;
+  const _iniciar = function(){
+    cotWizAbrir();
+    if (desdeTicket) _cotWizAplicarDeepLinkTicket(parseInt(desdeTicket, 10));
+    else if (desdeCliente) _cotWizAplicarDeepLinkCliente(parseInt(desdeCliente, 10));
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _iniciar);
+  else _iniciar();
+})();
 </script>
 
 {# Modal compartido de búsqueda ERP (mode:'seleccionar'); NO tocar ese

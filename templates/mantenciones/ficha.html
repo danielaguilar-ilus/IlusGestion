@@ -1590,6 +1590,17 @@
       <button class="ar-btn" onclick="switchTab('contrato'); setTimeout(()=>abrirContratoModal(), 200)">
         <i class="bi bi-file-earmark-arrow-up"></i> Subir documento
       </button>
+      {# 2026-07-23 (Daniel, "todo conectado" -- PR-5 rediseño Cotizaciones):
+         botón NUEVO, aditivo puro (Regla #4.2) -- hoy la ficha de
+         Mantenciones no tenía ningún hook hacia Cotizaciones. Abre el
+         wizard de /tickets/cotizaciones prellenado con los datos de ESTE
+         cliente (empresa/RUT/dirección/comuna/contactos/plan vigente/
+         equipos activos) vía ?desde_cliente=<CID>
+         (_cotWizAplicarDeepLinkCliente en cotizaciones.html). Pestaña
+         nueva para no perder el estado de esta ficha. #}
+      <button class="ar-btn" onclick="window.open('/tickets/cotizaciones?desde_cliente={{ cliente.id }}', '_blank')">
+        <i class="bi bi-file-earmark-text"></i> Generar cotización
+      </button>
       {# Botón "Imprimir ficha" eliminado 2026-05-21 (Daniel) — no es necesario. #}
     </div>
   </div>

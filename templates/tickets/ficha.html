@@ -7223,33 +7223,18 @@ function renderAccionesOT(t){
 
 // ══════════════ Cotización — generar DESDE este ticket ══════════════
 // 2026-07-15 (Daniel: "necesito que... esta se pueda generar DENTRO del
-// ticket"). Mismo modal ERP compartido (mode:'seleccionar') que usa
-// /tickets/cotizaciones, pero mandando ticket_id=TID para que la cotización
-// quede asociada desde que nace (el backend la deja suelta si no llega
-// ticket_id -- ver tk_api_cotizacion_desde_erp, comportamiento sin cambios
-// para el resto de módulos que llaman ese mismo endpoint).
+// ticket"). 2026-07-23 (rediseño estilo "Generar OT" -- PR-5 "todo
+// conectado"): el botón YA NO abre el modal ERP crudo -- ahora navega al
+// wizard completo de /tickets/cotizaciones (4 secciones del Paso 1,
+// contacto, plan/contrato vigente, botonera de Bodega 02, etc.) prellenado
+// con los datos y equipos de ESTE ticket vía ?desde_ticket=<TID>
+// (_cotWizAplicarDeepLinkTicket en cotizaciones.html). La vía "documento
+// ERP" sigue disponible DENTRO del wizard (Sección 1, "Desde documento
+// ERP") -- no se elimina ninguna capacidad, solo cambia dónde se hace
+// (Regla #4.2). Se abre en pestaña nueva para no perder el estado de esta
+// ficha (la tarjeta "Cotización" se actualiza sola al volver/recargar).
 document.getElementById('btnGenerarCotizacionSide').addEventListener('click', function(){
-  tkaOpen({
-    mode: 'seleccionar',
-    onSeleccionar: async function(items, header){
-      if (!items || !items.length) return;
-      try{
-        const r = await fetch('/tickets/api/cotizaciones/desde-erp', {
-          method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ items: items, header: header || null, ticket_id: TID })
-        });
-        const d = await r.json();
-        if (!d.ok){
-          ilusToast(d.error || 'No se pudo crear la cotización', {type:'error'});
-          return;
-        }
-        ilusToast('✓ Cotización ' + (d.numero_cotizacion || '') + ' creada (' + items.length + ' ítem(s))', {type:'success'});
-        cargar();
-      }catch(e){
-        ilusToast('Error de conexión al crear la cotización', {type:'error'});
-      }
-    }
-  });
+  window.open('/tickets/cotizaciones?desde_ticket=' + TID, '_blank');
 });
 
 // Tarjeta lateral "Cotización" -- pinta número/estado/total de cada

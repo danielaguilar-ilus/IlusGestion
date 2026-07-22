@@ -1451,11 +1451,48 @@ def register_tickets_routes(app, ctx):
         # cat_productos.updated_by (catalogo_module.py).
         if "updated_by" not in existentes:
             alters.append("ADD COLUMN updated_by VARCHAR(190) NULL")
+        # 2026-07-22 (Daniel, wizard estilo "Generar OT" -- rediseño Paso 1):
+        # contacto de la PERSONA (no la empresa) que recibe la cotización,
+        # mismo criterio que mant_clientes.contacto_nombre/cargo/tel/email.
+        # Opcional (Regla #4.2: no bloquea nada del flujo viejo).
+        if "contacto_nombre" not in existentes:
+            alters.append("ADD COLUMN contacto_nombre VARCHAR(200) NULL")
+        if "contacto_cargo" not in existentes:
+            alters.append("ADD COLUMN contacto_cargo VARCHAR(120) NULL")
+        if "contacto_tel" not in existentes:
+            alters.append("ADD COLUMN contacto_tel VARCHAR(50) NULL")
+        if "contacto_email" not in existentes:
+            alters.append("ADD COLUMN contacto_email VARCHAR(190) NULL")
+        # Coordenadas/place_id de la dirección validada por Google Places --
+        # el wizard YA las valida y las tenía disponibles en el formulario,
+        # pero las descartaba al enviar el payload (nunca se persistían).
+        # Mismo tipo que tk_tickets.direccion_lat/lng/place_id.
+        if "direccion_lat" not in existentes:
+            alters.append("ADD COLUMN direccion_lat DECIMAL(10,7) NULL")
+        if "direccion_lng" not in existentes:
+            alters.append("ADD COLUMN direccion_lng DECIMAL(10,7) NULL")
+        if "direccion_place_id" not in existentes:
+            alters.append("ADD COLUMN direccion_place_id VARCHAR(200) NULL")
+        # Referencia a mant_clientes (si el origen del wizard fue un cliente
+        # con ficha) -- sin FK dura, mismo criterio que ejecutivo_user_id en
+        # mant_clientes (evita bloquear la creación si el cliente_id llega
+        # de una fuente que luego se borra).
+        if "cliente_id" not in existentes:
+            alters.append("ADD COLUMN cliente_id INT NULL")
+        # Trazabilidad de por dónde nació la cotización (documento ERP,
+        # búsqueda de cliente, ficha de Mantenciones, ticket, manual) --
+        # informativo, no afecta el cálculo de precio.
+        if "origen" not in existentes:
+            alters.append("ADD COLUMN origen VARCHAR(20) NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
             except Exception as _e:
                 print(f"[ILUS][WARN] ALTER tk_cotizaciones {a}: {_e}", flush=True)
+        try:
+            mysql_execute("ALTER TABLE tk_cotizaciones ADD INDEX idx_cliente_id (cliente_id)")
+        except Exception:
+            pass  # ya existe -> ignorar (Regla #5, idempotente)
 
         # 2026-07-22 (Daniel probando el wizard en vivo: "venta de repuesto,
         # visita técnica, podemos cotizar cualquier cosa"): el selector de
@@ -2814,6 +2851,38 @@ def register_tickets_routes(app, ctx):
             if not _t_check:
                 return jsonify({"ok": False, "error": "El ticket indicado no existe"}), 400
 
+        # 2026-07-23 (Daniel, rediseño wizard estilo "Generar OT"): contacto
+        # de la PERSONA (no la empresa), coordenadas de la dirección ya
+        # validada por Google Places (el wizard las tenía disponibles pero
+        # las descartaba al enviar), cliente_id (si el origen fue una ficha
+        # de Mantenciones o un cliente ya reconocido) y origen (trazabilidad
+        # de por dónde nació). TODO opcional -- callers viejos sin estos
+        # campos siguen funcionando exactamente igual (Regla #4.2).
+        contacto_in = d.get("contacto") if isinstance(d.get("contacto"), dict) else {}
+        contacto_nombre = (contacto_in.get("nombre") or "").strip()[:200] or None
+        contacto_cargo = (contacto_in.get("cargo") or "").strip()[:120] or None
+        contacto_tel = (contacto_in.get("tel") or "").strip()[:50] or None
+        contacto_email = (contacto_in.get("email") or "").strip()[:190] or None
+        if contacto_email and not _TK_REPLY_EMAIL_RE.match(contacto_email):
+            contacto_email = None
+        try:
+            direccion_lat = float(d.get("direccion_lat")) if d.get("direccion_lat") not in (None, "") else None
+        except (TypeError, ValueError):
+            direccion_lat = None
+        try:
+            direccion_lng = float(d.get("direccion_lng")) if d.get("direccion_lng") not in (None, "") else None
+        except (TypeError, ValueError):
+            direccion_lng = None
+        direccion_place_id = (d.get("direccion_place_id") or "").strip()[:200] or None
+        cliente_id_in = None
+        _cliente_id_raw = d.get("cliente_id")
+        if _cliente_id_raw not in (None, "", 0, "0"):
+            try:
+                cliente_id_in = int(_cliente_id_raw)
+            except (TypeError, ValueError):
+                cliente_id_in = None
+        origen_in = (d.get("origen") or "").strip()[:20] or None
+
         erp_idmaeen = None
         erp_koen = None
         try:
@@ -2901,11 +2970,16 @@ def register_tickets_routes(app, ctx):
                     "INSERT INTO tk_cotizaciones "
                     "(numero_cotizacion, estado, ticket_id, erp_idmaeen, erp_koen, rut, empresa, "
                     " email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta, "
-                    " notas, notas_internas, ejecutivo, descuento_pct, costo_ruta, created_by) "
-                    "VALUES (%s,'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    " notas, notas_internas, ejecutivo, descuento_pct, costo_ruta, created_by, "
+                    " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
+                    " direccion_lat, direccion_lng, direccion_place_id, cliente_id, origen) "
+                    "VALUES (%s,'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                    "        %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (numero, ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa,
                      email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta,
-                     notas, notas_internas, ejecutivo, descuento_pct, costo_ruta_in, user),
+                     notas, notas_internas, ejecutivo, descuento_pct, costo_ruta_in, user,
+                     contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
+                     direccion_lat, direccion_lng, direccion_place_id, cliente_id_in, origen_in),
                 )
                 cot_id = cur.lastrowid
                 for it in items:
@@ -2972,7 +3046,7 @@ def register_tickets_routes(app, ctx):
         try:
             _audit("tk_cotizacion_create", target_type="tk_cotizacion", target_id=cot_id,
                    details={"numero": numero, "items": len(items), "sin_clasificar": len(sin_clasificar),
-                            "ticket_id": ticket_id})
+                            "ticket_id": ticket_id, "origen": origen_in, "cliente_id": cliente_id_in})
         except Exception:
             pass
         # Si nació desde un ticket, deja rastro en la bitácora de ESE ticket
@@ -6058,6 +6132,28 @@ def register_tickets_routes(app, ctx):
             for fc in filas_cli:
                 clientes_existentes[(fc.get("rut") or "").strip()] = fc
 
+        # 2026-07-23 (Daniel, wizard estilo "Generar OT" -- rediseño Paso 1):
+        # badge "En plan" para reconocer de un vistazo si el cliente ya tiene
+        # un contrato de mantención vigente/indefinido -- SOLO informativo,
+        # NO afecta el cálculo del precio (eso requiere reglas de pricing
+        # que Daniel aún no definió). 1 solo query adicional, agregado con
+        # el mismo criterio que clientes_existentes de arriba (aditivo puro,
+        # cero impacto en callers que ya usan este endpoint).
+        planes_por_cliente = {}
+        _ids_cli = [c["id"] for c in clientes_existentes.values() if c.get("id")]
+        if _ids_cli:
+            try:
+                placeholders_id = ",".join(["%s"] * len(_ids_cli))
+                filas_plan = mysql_fetchall(
+                    f"SELECT cliente_id, COUNT(*) AS n, MAX(fecha_vencimiento) AS vence "
+                    f"FROM mant_contratos WHERE cliente_id IN ({placeholders_id}) "
+                    f"AND estado IN ('vigente','indefinido') GROUP BY cliente_id",
+                    tuple(_ids_cli)) or []
+                for fp in filas_plan:
+                    planes_por_cliente[fp["cliente_id"]] = fp
+            except Exception as _e:
+                print(f"[tk_erp_buscar_cliente] planes_por_cliente: {_e}", flush=True)
+
         resultados = []
         for r in rows:
             if not ((r.get("razon_social") or "").strip() or r.get("rut")):
@@ -6070,6 +6166,7 @@ def register_tickets_routes(app, ctx):
                 except Exception:
                     comuna = ""
             cli_existente = clientes_existentes.get(rut)
+            _plan = planes_por_cliente.get(cli_existente.get("id")) if cli_existente else None
             resultados.append({
                 "empresa": (r.get("razon_social") or "").strip() or "(Sin nombre en el ERP)",
                 "rut": rut,
@@ -6080,8 +6177,147 @@ def register_tickets_routes(app, ctx):
                 "contacto_nombre": (cli_existente.get("contacto_nombre") or "").strip() if cli_existente else "",
                 "contacto_tel": (cli_existente.get("contacto_tel") or "").strip() if cli_existente else "",
                 "contacto_email": (cli_existente.get("contacto_email") or "").strip() if cli_existente else "",
+                "plan_activo": bool(_plan),
+                "plan_vence": str(_plan["vence"]) if (_plan and _plan.get("vence")) else None,
             })
         return jsonify({"ok": True, "resultados": resultados})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — resumen de la FICHA de un cliente de Mantenciones, para
+    #  precargar el wizard de Cotizaciones cuando nace "desde ficha"
+    #  (Daniel, rediseño Paso 1 estilo "Generar OT" -- 2026-07-23):
+    #  cliente + contactos (principal/secundario/sucursales, MISMO patrón
+    #  que /mantenciones/api/clientes/<cid>/contactos en app.py, replicado
+    #  aquí en vez de importarlo para no acoplar tickets_module.py a una
+    #  vista HTML de app.py) + plan/contratos vigentes + máquinas activas.
+    #
+    #  2026-07-23 (revisión adversarial): este endpoint expone datos de
+    #  Mantenciones más sensibles que el resto de Tickets -- TODOS los
+    #  contactos del cliente (principal/secundario/encargados de cada
+    #  sucursal, con teléfono/email) y el detalle de sus contratos
+    #  (vencimiento, si incluye repuestos/mantención gratis), consultables
+    #  por cualquier cid numérico. _tickets_required por sí solo dejaría
+    #  pasar a cualquiera con tk_ver/tk_es_tecnico/tk_es_ejecutivo, sin
+    #  relación real entre ese usuario y ese cliente -- más ancho que lo
+    #  que el buscador de clientes ya expone (solo contacto principal).
+    #  Por eso, ADEMÁS de _tickets_required, se exige el permiso real de
+    #  Mantenciones (o superadmin) -- mismo criterio de "más sensible,
+    #  gate más estricto" que ya usa _catalogo_eliminar_required para
+    #  distinguir acciones dentro de un mismo módulo.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/clientes-ficha/<int:cid>/resumen", methods=["GET"])
+    @_tickets_required
+    def tk_api_cliente_ficha_resumen(cid):
+        _perms_ficha = g.get("permissions") or {}
+        if not (_perms_ficha.get("mantenciones") or _perms_ficha.get("superadmin")):
+            return jsonify({
+                "ok": False,
+                "error": "Se requiere acceso a Mantenciones para ver la ficha del cliente.",
+                "error_codigo": "SIN_PERMISO_MANTENCIONES",
+            }), 403
+        cli = mysql_fetchone(
+            "SELECT id, razon_social, rut, direccion, comuna, region, "
+            "       email_empresa, tel_empresa "
+            "  FROM mant_clientes WHERE id=%s", (cid,))
+        if not cli:
+            return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+        # Contactos: mismo patrón EXACTO que mant_cliente_contactos (app.py
+        # ~44889) -- principal / secundario / encargados de sucursal.
+        # Replicado (no importado) porque tickets_module.py no depende de
+        # vistas HTML de app.py; ambos leen las mismas tablas reales.
+        cli_contactos = mysql_fetchone(
+            "SELECT contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
+            "       contacto2_nombre, contacto2_cargo, contacto2_tel, contacto2_email "
+            "  FROM mant_clientes WHERE id=%s", (cid,)) or {}
+        contactos = []
+        if (cli_contactos.get("contacto_nombre") or "").strip():
+            contactos.append({
+                "nombre": cli_contactos["contacto_nombre"],
+                "cargo": cli_contactos.get("contacto_cargo") or "",
+                "tel": cli_contactos.get("contacto_tel") or "",
+                "email": cli_contactos.get("contacto_email") or "",
+                "origen": "principal", "label": "Contacto principal",
+            })
+        if (cli_contactos.get("contacto2_nombre") or "").strip():
+            contactos.append({
+                "nombre": cli_contactos["contacto2_nombre"],
+                "cargo": cli_contactos.get("contacto2_cargo") or "",
+                "tel": cli_contactos.get("contacto2_tel") or "",
+                "email": cli_contactos.get("contacto2_email") or "",
+                "origen": "secundario", "label": "Contacto secundario",
+            })
+        try:
+            sucs = mysql_fetchall(
+                "SELECT id, nombre, encargado_nombre, encargado_cargo, "
+                "       encargado_tel, encargado_email "
+                "  FROM mant_sucursales WHERE cliente_id=%s AND activo=1 "
+                " ORDER BY nombre", (cid,)) or []
+            for s in sucs:
+                if (s.get("encargado_nombre") or "").strip():
+                    contactos.append({
+                        "nombre": s["encargado_nombre"],
+                        "cargo": s.get("encargado_cargo") or "",
+                        "tel": s.get("encargado_tel") or "",
+                        "email": s.get("encargado_email") or "",
+                        "origen": f"sucursal:{s['id']}",
+                        "label": f"Encargado · {s.get('nombre','')}",
+                    })
+        except Exception as _e:
+            print(f"[tk_cliente_ficha_resumen] sucursales cid={cid}: {_e}", flush=True)
+
+        # Plan / contratos vigentes (mismo criterio que el badge del
+        # buscador de arriba: estado IN ('vigente','indefinido')).
+        try:
+            contratos_rows = mysql_fetchall(
+                "SELECT id, nombre, fecha_vencimiento, es_indefinido, frecuencia_meses, "
+                "       incluye_mant_gratis, incluye_repuestos "
+                "  FROM mant_contratos WHERE cliente_id=%s "
+                "    AND estado IN ('vigente','indefinido') "
+                " ORDER BY fecha_vencimiento IS NULL, fecha_vencimiento DESC", (cid,)) or []
+        except Exception as _e:
+            print(f"[tk_cliente_ficha_resumen] contratos cid={cid}: {_e}", flush=True)
+            contratos_rows = []
+        contratos = [{
+            "id": c["id"],
+            "nombre": c.get("nombre") or "",
+            "fecha_vencimiento": str(c["fecha_vencimiento"]) if c.get("fecha_vencimiento") else None,
+            "es_indefinido": bool(c.get("es_indefinido")),
+            "frecuencia_meses": c.get("frecuencia_meses"),
+            "incluye_mant_gratis": bool(c.get("incluye_mant_gratis")),
+            "incluye_repuestos": bool(c.get("incluye_repuestos")),
+        } for c in contratos_rows]
+
+        # Equipos activos (para el botón "Traer equipos de la ficha" del
+        # Paso 2 -- Daniel: agregarlos como ítems sku/nombre/cantidad).
+        try:
+            maquinas_rows = mysql_fetchall(
+                "SELECT id, sku, nombre, serie, cantidad FROM mant_maquinas "
+                " WHERE cliente_id=%s AND estado='activo' ORDER BY nombre", (cid,)) or []
+        except Exception as _e:
+            print(f"[tk_cliente_ficha_resumen] maquinas cid={cid}: {_e}", flush=True)
+            maquinas_rows = []
+        maquinas = [{
+            "id": m["id"], "sku": m.get("sku") or "", "nombre": m.get("nombre") or "",
+            "serie": m.get("serie") or "", "cantidad": m.get("cantidad") or 1,
+        } for m in maquinas_rows]
+
+        return jsonify({
+            "ok": True,
+            "cliente": {
+                "id": cli["id"],
+                "razon_social": cli.get("razon_social") or "",
+                "rut": cli.get("rut") or "",
+                "direccion": cli.get("direccion") or "",
+                "comuna": cli.get("comuna") or "",
+                "region": cli.get("region") or "",
+                "email_empresa": cli.get("email_empresa") or "",
+                "tel_empresa": cli.get("tel_empresa") or "",
+            },
+            "contactos": contactos,
+            "plan": {"activo": bool(contratos), "contratos": contratos},
+            "maquinas": maquinas,
+        })
 
     # ─────────────────────────────────────────────────────────────────
     #  API — ERP: "Búsqueda avanzada de productos" para TICKETS -- motor B
