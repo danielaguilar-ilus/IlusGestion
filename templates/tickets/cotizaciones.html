@@ -514,6 +514,11 @@ let _WIZ = null;
 let _wizEjecutivosCargados = false;
 
 function cotWizAbrir(){
+  // 2026-07-23 (Daniel: el dropdown de Google nunca aparecía en Dirección).
+  // Cinturón y tirantes -- ver el fix real más abajo en _cotWizInitDireccion();
+  // esta llamada es idempotente (guard input.dataset.placesBound) y cubre
+  // cualquier caso donde la inicialización de más abajo hubiera fallado.
+  _cotWizInitDireccion();
   _WIZ = { items: [], tipo: 'mantencion', rutaManual: false, sumaItems: 0, direccionValidada: false };
   ['cotWizCliQ','cotWizEmpresa','cotWizRut','cotWizDireccion','cotWizRegion','cotWizComuna',
    'cotWizEmail','cotWizTelefono','cotWizNotas','cotWizNotasInt',
@@ -769,7 +774,21 @@ function _cotWizInitDireccion(){
     }
   });
 }
-_cotWizInitDireccion();
+// 2026-07-23 (Daniel, con foto: "no me sale el drop down... powered by
+// Google"). CAUSA REAL: esta llamada corría INLINE durante el parseo del
+// HTML, antes de que static/ilus_ui.js (cargado con `defer`) y
+// window.__ilusGmapsPending (definido en base.html, más abajo en el
+// documento) existieran -- el guard de _cotWizInitDireccion() fallaba en
+// silencio y la función nunca se reintentaba. Los scripts `defer` corren
+// ANTES de DOMContentLoaded, así que esperar ese evento garantiza que
+// ilusPlacesAutocomplete y __ilusGmapsPending ya existan. Comparar con el
+// modal Generar OT (ficha.html), que SÍ funciona porque inicializa Places
+// recién al abrir el modal (show.bs.modal), nunca al parsear la página.
+if (document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', _cotWizInitDireccion);
+} else {
+  _cotWizInitDireccion();
+}
 
 async function cotWizBuscarRuta(){
   if (!_WIZ || _WIZ.rutaManual) return;
