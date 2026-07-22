@@ -146,7 +146,7 @@ def register_catalogo_routes(app, ctx):
     ILUS_SOPORTE_EMAIL = ctx.get("ILUS_SOPORTE_EMAIL") or "soportetec@sphs.cl"
 
     MAX_FOTOS_POR_PRODUCTO = 10
-    MAX_PIOLAS_POR_PRODUCTO = 6  # 2026-07-14 (Daniel): bajado de 10 a 6
+    MAX_PIOLAS_POR_PRODUCTO = 10  # 2026-07-21 (Daniel): vuelve a 10 (lo había bajado a 6 el 2026-07-14)
     MAX_MANUAL_MB = 25  # mismo techo/motivo que MAX_ADJUNTO_MB en tickets_module.py:
                         # Cloud Run limita cada request HTTP a 32MB.
     MAX_MANUALES_POR_PRODUCTO = 5  # 2026-07-12 (Daniel, wizard "Registrar producto"):
@@ -561,6 +561,32 @@ def register_catalogo_routes(app, ctx):
             return view(*a, **k)
         return login_required(wrapped)
 
+    def _catalogo_eliminar_required(view):
+        """2026-07-21 (Daniel, dictado): "eliminarlo solamente para el
+        superadministrador con opciones a agregarlo en los roles" -- gate
+        específico SOLO para cat_api_delete (archivar/soft-delete un
+        producto). Acepta superadmin (siempre) O el flag granular
+        g.permissions['cat_eliminar'] (matriz /admin/roles, módulo
+        "catalogo" -> acción "eliminar", aditivo, nace en False para todos
+        los roles hasta que Daniel lo prenda). El hard-delete definitivo
+        sigue exigiendo superadmin+confirm_text adentro de cat_api_delete
+        (Regla #5) -- este gate solo decide quién puede ENTRAR al endpoint.
+        Resto del CRUD de productos (fotos, manuales, piolas, update, etc.)
+        sigue en _catalogo_admin_required, sin tocar."""
+        @wraps(view)
+        def wrapped(*a, **k):
+            perms = g.get("permissions") or {}
+            if not (perms.get("superadmin") or perms.get("cat_eliminar")):
+                if _is_ajaxish():
+                    return jsonify({
+                        "ok": False,
+                        "error": "No tienes permiso para eliminar productos del Catálogo.",
+                        "error_codigo": "SIN_PERMISO_CATALOGO_ELIMINAR",
+                    }), 403
+                return redirect(url_for("index"))
+            return view(*a, **k)
+        return login_required(wrapped)
+
     SORT_COLS = {
         "sku": "p.sku",
         "nombre": "p.nombre",
@@ -744,22 +770,17 @@ def register_catalogo_routes(app, ctx):
         activo_arg = (request.args.get("activo") or "1").strip()
         activo = 0 if activo_arg == "0" else 1
 
-        # Auto-fill al buscar (gap-fill transparente, contrato ERP sync):
-        # si hay busqueda y no hay resultados locales, se intenta traer
-        # desde el ERP (SOLO LECTURA) los SKUs de la bodega de soporte que
-        # calcen, y se crean los que falten antes de re-ejecutar el SELECT.
-        if q and activo == 1:
-            try:
-                _n_local = int((mysql_fetchone(
-                    "SELECT COUNT(*) AS n FROM cat_productos WHERE activo=1 "
-                    "AND (sku LIKE %s OR nombre LIKE %s OR familia LIKE %s)",
-                    (f"%{q}%", f"%{q}%", f"%{q}%")) or {}).get("n") or 0)
-                if _n_local == 0:
-                    _cat_sync_erp_nuevos(q=q, limit=20)
-            except Exception as _e_gap:
-                print(f"[cat_api_list] gap-fill ERP falló: {_e_gap}", flush=True)
+        # 2026-07-21 (Daniel): el gap-fill silencioso que llamaba a
+        # _cat_sync_erp_nuevos() al buscar sin resultados locales quedó
+        # DESACTIVADO a propósito -- el catálogo se llena solo con
+        # productos elegidos por un humano (alta manual, selección en
+        # cotización, o "+ Nuevo producto" contra el ERP). Buscar en este
+        # listado ya NO crea filas nuevas. La función _cat_sync_erp_nuevos
+        # y el endpoint POST /catalogo/api/sync-erp siguen existiendo
+        # (infraestructura viva, sin botón en la UI hoy) -- solo se quitó
+        # ESTA llamada puntual.
 
-        where = ["p.activo=%s"]
+        where = ["p.activo=%s", "p.created_by <> 'sistema-erp-sync'"]
         params = [activo]
         if q:
             where.append("(p.sku LIKE %s OR p.nombre LIKE %s OR p.familia LIKE %s)")
@@ -782,6 +803,11 @@ def register_catalogo_routes(app, ctx):
         page = min(page, pages)
         offset = (page - 1) * limit
 
+        # 2026-07-21: a propósito NO se seleccionan p.created_by/p.updated_by
+        # acá -- el listado nunca debe exponer el username de quién creó/editó
+        # cada fila (eso vive SOLO en la sección "Auditoría" del modal de
+        # ficha, gateada a superadmin en cat_api_detalle). Si algún día se
+        # agregan a este SELECT, hay que replicar el mismo filtro que ahí.
         rows = mysql_fetchall(
             f"""
             SELECT p.id, p.sku, p.nombre, p.familia, p.clase_producto, p.activo, p.updated_at,
@@ -879,6 +905,14 @@ def register_catalogo_routes(app, ctx):
         tiene_manual_alguno = bool(manual_key) or len(manuales) > 0
         producto["registrado"] = bool(
             (producto.get("familia") or "").strip() and piolas and tiene_manual_alguno)
+        # 2026-07-21 (Daniel, Etapa 2 "acciones unificadas"): la sección
+        # "Auditoría" (quién creó/editó el producto) es SOLO para superadmin.
+        # No alcanza con ocultarla en el frontend -- el network tab expondría
+        # igual el username a cualquier rol con acceso al catálogo -- así que
+        # se quita del payload acá si el que pide no es superadmin.
+        if not bool((g.get("permissions") or {}).get("superadmin")):
+            producto.pop("created_by", None)
+            producto.pop("updated_by", None)
         return jsonify({
             "ok": True,
             "producto": producto,
@@ -940,7 +974,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>", methods=["DELETE"])
-    @_catalogo_admin_required
+    @_catalogo_eliminar_required
     def cat_api_delete(pid):
         p = mysql_fetchone("SELECT sku, manual_pdf_key FROM cat_productos WHERE id=%s", (pid,))
         if not p:
@@ -2023,6 +2057,100 @@ def register_catalogo_routes(app, ctx):
             _audit("cat_manual_enviado", target_type="cat_producto", target_id=pid,
                    details={"email": email, "sku": p.get("sku"), "manual_nombre": manual_nombre,
                              "enviado": bool(enviado)})
+
+        if not enviado:
+            return jsonify({
+                "ok": False,
+                "error": "No se pudo enviar el correo (revisa el correo de destino o el estado del canal de email)",
+            }), 502
+        return jsonify({"ok": True})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  MANUALES (multi) — enviar por correo UNO especifico de los hasta 5
+    #  de cat_producto_manuales (2026-07-21). Mismo gate, mismo payload
+    #  {email, mensaje} y mismo mecanismo real de envio (helpers
+    #  _brand_subject/_ilus_email_master/_send_ilus_email) que el legado
+    #  cat_api_manual_enviar_correo de arriba -- solo cambia de donde sale
+    #  el PDF: la fila puntual de cat_producto_manuales en vez de la
+    #  columna singular manual_pdf_key. Doble filtro id+producto_id, mismo
+    #  patron que cat_api_manuales_delete/cat_api_manuales_descargar (mas
+    #  arriba) para que un manual_id de OTRO producto nunca calce.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/catalogo/api/productos/<int:pid>/manuales/<int:manual_id>/enviar-correo", methods=["POST"])
+    @_catalogo_required
+    def cat_api_manuales_multi_enviar_correo(pid, manual_id):
+        m = mysql_fetchone(
+            "SELECT mm.gcs_key, mm.nombre_archivo, p.sku, p.nombre AS producto_nombre "
+            "FROM cat_producto_manuales mm JOIN cat_productos p ON p.id = mm.producto_id "
+            "WHERE mm.id=%s AND mm.producto_id=%s",
+            (manual_id, pid))
+        if not m:
+            return jsonify({"ok": False, "error": "Manual no encontrado"}), 404
+
+        d = request.get_json(silent=True) or {}
+        email = (d.get("email") or "").strip()
+        mensaje = (d.get("mensaje") or "").strip()[:1000] or None
+
+        if validar_email:
+            ok_email, val_or_err = validar_email(email)
+            if not ok_email:
+                return jsonify({"ok": False, "error": val_or_err or "Correo inválido"}), 400
+            if not val_or_err:
+                return jsonify({"ok": False, "error": "Falta el correo de destino"}), 400
+            email = val_or_err
+        elif not email:
+            return jsonify({"ok": False, "error": "Falta el correo de destino"}), 400
+
+        if not _gcs_bucket:
+            return jsonify({"ok": False, "error": "No se pudo enviar el correo (almacenamiento no disponible)"}), 502
+        b = _gcs_bucket()
+        if not b:
+            return jsonify({"ok": False, "error": "No se pudo enviar el correo (almacenamiento no disponible)"}), 502
+        try:
+            pdf_bytes = b.blob(m["gcs_key"]).download_as_bytes()
+        except Exception as _e:
+            print(f"[cat_manuales_multi_enviar_correo] error lectura GCS pid={pid} manual={manual_id}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo leer el manual"}), 500
+
+        nombre_producto = m.get("producto_nombre") or m.get("sku") or "producto"
+        subject = _brand_subject(f"Manual — {nombre_producto}") if _brand_subject else f"Manual — {nombre_producto}"
+
+        from markupsafe import escape as _esc
+        msg_html = f"<p style=\"margin:0 0 12px\">{_esc(mensaje)}</p>" if mensaje else ""
+        body_html = (
+            f"<p style=\"margin:0 0 12px;font-size:15px;line-height:24px;color:#454b54\">"
+            f"Adjunto encontrarás el manual del producto "
+            f"<strong>{_esc(m.get('sku') or '')}</strong> — {_esc(nombre_producto)}.</p>"
+            f"{msg_html}"
+        )
+        if _ilus_email_master:
+            html = _ilus_email_master({
+                "subject": subject,
+                "title": "Manual de producto",
+                "subtitle": f"{m.get('sku') or ''} · {nombre_producto}",
+                "body_html": body_html,
+                "support_email": ILUS_SOPORTE_EMAIL,
+            })
+        else:
+            html = f"<html><body>{body_html}</body></html>"
+
+        manual_nombre = m.get("nombre_archivo") or f"{m.get('sku') or 'manual'}.pdf"
+        if not _send_ilus_email:
+            return jsonify({"ok": False, "error": "No se pudo enviar el correo (canal de email no disponible)"}), 502
+        try:
+            enviado = _send_ilus_email(
+                email, subject, html,
+                evento="catalogo_manual", modulo="catalogo",
+                attachments=[{"filename": manual_nombre, "content": pdf_bytes, "content_type": "application/pdf"}],
+            )
+        except Exception as _e:
+            print(f"[cat_manuales_multi_enviar_correo] error envío pid={pid} manual={manual_id}: {_e}", flush=True)
+            enviado = False
+
+        if _audit:
+            _audit("cat_manual_multi_enviado", target_type="cat_producto_manual", target_id=manual_id,
+                   details={"email": email, "sku": m.get("sku"), "producto_id": pid,
+                             "manual_nombre": manual_nombre, "enviado": bool(enviado)})
 
         if not enviado:
             return jsonify({

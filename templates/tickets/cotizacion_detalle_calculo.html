@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+{# ════════════════════════════════════════════════════════════════════
+   DETALLE DE CÁLCULO — SOLO SUPERADMIN (2026-07-21, Daniel: "debe haber,
+   para el superadministrador, poder bajar un detalle de cómo se calcula
+   una cotización completa... cuántas horas hombre se le calculan y
+   cuántos técnicos, y eso multiplicado por la zona").
+
+   Documento interno de trazabilidad -- réplica del mismo mecanismo de
+   cotizacion_pdf.html (misma plantilla sirve la vista en pantalla, con
+   toolbar, y la versión PDF vía Playwright/_pw_pdf; @media print oculta
+   el toolbar en ambos casos).
+
+   Contrato de variables (backend: tickets_module.py,
+   _tk_cotizacion_detalle_calculo_ctx):
+     cot: id, numero, empresa, rut, comuna, region, tipo_servicio,
+          tipo_servicio_label, estado, created_at (datetime crudo UTC,
+          Regla #6), created_by, subtotal_items, costo_ruta, subtotal,
+          descuento_pct, descuento_monto, iva_pct, iva_monto, total
+     items: [ {sku, descripcion, clase_producto, clase_nombre, cantidad,
+               horas, tecnicos, hh, costo_mo, precio_unitario,
+               descuento_pct, subtotal, total, sin_tarifa}, ... ]
+     ruta: fila de tk_cotiz_rutas para la comuna (o None)
+     cfg: {valor_hh, margen_pct, iva_pct} -- config vigente HOY
+     uf_info: {valor, fecha} o None (API caída -- se oculta el bloque UF)
+     uf_total: float o None
+     logo_b64 (opcional), base_url (opcional, Playwright set_content)
+   ════════════════════════════════════════════════════════════════════ #}
+{% if base_url %}<base href="{{ base_url }}">{% endif %}
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Detalle de cálculo — {{ cot.numero }} — ILUS Sport &amp; Health</title>
+<style>
+  :root {
+    --ilus-red:   #dc2626;
+    --ilus-red-d: #991b1b;
+    --ilus-black: #0a0a0a;
+    --ilus-ink:   #0f172a;
+    --ilus-mute:  #6b7280;
+    --ilus-line:  #e5e7eb;
+    --ilus-bg:    #f9fafb;
+  }
+  @page { size: A4 landscape; margin: 10mm 10mm 12mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: var(--ilus-ink);
+    font-size: 9.2pt;
+    line-height: 1.42;
+    background: #e7eaf0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .toolbar {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--ilus-black); color: #fff;
+    padding: 12px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,.25);
+  }
+  .toolbar .tb-title { font-size: 13pt; font-weight: 800; letter-spacing: -.01em; }
+  .toolbar .tb-sub { font-size: 9pt; color: #9ca3af; }
+  .tb-actions { display: flex; gap: 8px; }
+  .tb-btn {
+    background: var(--ilus-red); color: #fff;
+    border: 0; padding: 9px 16px; border-radius: 8px;
+    font-weight: 800; font-size: 9.5pt; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none;
+    transition: transform .12s, box-shadow .12s;
+  }
+  .tb-btn:hover { background: var(--ilus-red-d); color: #fff; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(220,38,38,.45); }
+  .tb-btn.ghost { background: rgba(255,255,255,.1); }
+  .tb-btn.ghost:hover { background: rgba(255,255,255,.18); box-shadow: none; transform: none; }
+
+  .sheet {
+    width: 277mm; max-width: 100%;
+    min-height: 190mm;
+    background: #fff;
+    margin: 14px auto;
+    padding: 10mm 12mm;
+    box-shadow: 0 6px 22px rgba(0,0,0,.10);
+  }
+
+  .head {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    margin-bottom: 5mm; border-bottom: 2px solid var(--ilus-red); padding-bottom: 4mm;
+  }
+  .head .logo { height: 40px; display: flex; align-items: center; flex: 0 0 auto; }
+  .head .logo img { max-height: 100%; max-width: 150px; object-fit: contain; }
+  .head .logo .logo-fallback { font-weight: 900; font-size: 15pt; letter-spacing: .02em; color: var(--ilus-black); }
+  .head .logo .logo-fallback .helm { color: var(--ilus-red); }
+  .head .head-mid { flex: 1; min-width: 0; }
+  .head h1 { font-size: 12.5pt; margin: 0 0 2px; font-weight: 900; color: var(--ilus-black); }
+  .head .head-sub { font-size: 8.3pt; color: var(--ilus-mute); }
+  .badge-interno {
+    background: #fef3c7; color: #92400e; font-size: 7.3pt; font-weight: 800;
+    text-transform: uppercase; padding: 4px 10px; border-radius: 20px;
+    letter-spacing: .03em; white-space: nowrap; flex: 0 0 auto;
+  }
+
+  .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 5mm; }
+  .info-card { background: var(--ilus-bg); border: 1px solid var(--ilus-line); border-radius: 8px; padding: 7px 10px; }
+  .info-card .lbl { font-size: 6.6pt; text-transform: uppercase; font-weight: 800; color: #9ca3af; letter-spacing: .03em; margin-bottom: 2px; }
+  .info-card .val { font-size: 9.3pt; font-weight: 700; color: var(--ilus-black); word-break: break-word; }
+
+  h2.sec {
+    font-size: 9.8pt; font-weight: 900; color: var(--ilus-black);
+    margin: 5mm 0 2mm; display: flex; align-items: center; gap: 7px;
+  }
+  h2.sec .n {
+    background: var(--ilus-red); color: #fff; width: 19px; height: 19px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 7.8pt; flex: 0 0 auto;
+  }
+
+  .tabla-wrap { overflow-x: auto; border: 1px solid var(--ilus-line); border-radius: 8px; }
+  table.items { width: 100%; border-collapse: collapse; font-size: 7.8pt; min-width: 880px; }
+  table.items thead th {
+    background: var(--ilus-black); color: #fff; padding: 5px 6px;
+    font-size: 6.9pt; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; white-space: nowrap;
+  }
+  table.items thead th.l { text-align: left; }
+  table.items thead th.r { text-align: right; }
+  table.items thead th.c { text-align: center; }
+  table.items tbody td { padding: 4px 6px; border-bottom: 1px solid var(--ilus-line); vertical-align: middle; white-space: nowrap; }
+  table.items tbody tr:nth-child(even) { background: var(--ilus-bg); }
+  table.items td.l { text-align: left; white-space: normal; }
+  table.items td.r { text-align: right; font-variant-numeric: tabular-nums; }
+  table.items td.c { text-align: center; }
+  table.items tr.sin-tarifa td { background: #fee2e2; }
+  table.items tr.sin-tarifa td.mo { color: #7f1d1d; font-style: italic; white-space: normal; text-align: left; }
+  .chip-sin-tarifa { background: #dc2626; color: #fff; font-size: 6.4pt; font-weight: 800; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; margin-left: 6px; }
+  /* Subtotal del ítem (P.Unit. × Cantidad) -- anotación bajo el precio
+     unitario en vez de una columna aparte, para no ensanchar la tabla
+     de 13 columnas (ya dimensionada exacto al ancho de la hoja A4
+     apaisada del PDF -- ver width/height en la ruta Flask). */
+  .mini-sub { display: block; font-size: 6.3pt; font-weight: 600; color: #9ca3af; white-space: nowrap; margin-top: 1px; }
+
+  .zona-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .zona-card { background: var(--ilus-bg); border: 1px solid var(--ilus-line); border-radius: 8px; padding: 7px 8px; text-align: center; }
+  .zona-card.wide { grid-column: span 4; text-align: left; }
+  .zona-card .lbl { font-size: 6.5pt; text-transform: uppercase; font-weight: 800; color: #9ca3af; }
+  .zona-card .val { font-size: 9.6pt; font-weight: 800; color: var(--ilus-black); margin-top: 2px; }
+
+  .totales-wrap { display: flex; justify-content: flex-end; margin-top: 5mm; }
+  table.totales { width: 100%; max-width: 92mm; border-collapse: collapse; font-size: 8.8pt; }
+  table.totales td { padding: 4px 6px; border-bottom: 1px solid var(--ilus-line); }
+  table.totales td.t-lbl { color: var(--ilus-mute); font-weight: 600; }
+  table.totales td.t-val { text-align: right; font-weight: 800; color: var(--ilus-black); white-space: nowrap; }
+  table.totales tr.total-final td { background: var(--ilus-black); color: #fff; font-weight: 900; font-size: 10.5pt; padding: 7px 6px; border-bottom: 0; }
+  table.totales tr.total-final td:first-child { border-radius: 6px 0 0 6px; }
+  table.totales tr.total-final td:last-child { border-radius: 0 6px 6px 0; }
+  .uf-linea { font-size: 8pt; color: #9ca3af; text-align: right; margin-top: 4px; }
+  .uf-linea b { color: var(--ilus-black); }
+  /* Equivalente en UF de CADA monto de la cabecera (no solo el Total) --
+     Daniel: "el equivalente en UF de cada monto relevante". Sub-línea
+     muda bajo la cifra en CLP, mismo lenguaje visual que .tk-row-uf en
+     cotizaciones.html. Se oculta entera si uf_info no está disponible
+     (ver macro ufeq más abajo -- nunca deja una celda vacía "UF: ").*/
+  .t-uf { display: block; font-size: 6.6pt; font-weight: 600; color: #9ca3af; margin-top: 1px; }
+  tr.total-final .t-uf { color: #d1d5db; }
+
+  .instructivo {
+    background: #fef2f2; border: 1px dashed var(--ilus-red); border-radius: 8px;
+    padding: 9px 12px; font-size: 8pt; color: #7f1d1d; margin-top: 5mm; line-height: 1.55;
+  }
+  .instructivo b { color: var(--ilus-red); }
+  .config-foot { margin-top: 4mm; font-size: 7.4pt; color: var(--ilus-mute); display: flex; gap: 14px; flex-wrap: wrap; }
+  .config-foot b { color: var(--ilus-black); }
+  .nota-vivo { font-size: 6.9pt; color: #9ca3af; margin-top: 4mm; line-height: 1.5; }
+
+  @media print {
+    body { background: #fff; }
+    .no-print, .toolbar { display: none !important; }
+    .sheet { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
+  }
+  @media (max-width: 900px) {
+    .sheet { padding: 5mm 4mm 8mm; }
+    .info-grid { grid-template-columns: repeat(2, 1fr); }
+    .zona-grid { grid-template-columns: repeat(2, 1fr); }
+    .zona-card.wide { grid-column: span 2; }
+  }
+</style>
+</head>
+<body>
+
+{# Formato chileno de pesos: $1.234.567 — seguro con None #}
+{% macro clp(x) -%}{{ "{:,.0f}".format(x or 0)|replace(",", ".") }}{%- endmacro %}
+
+{# Equivalente en UF de un monto CLP -- sub-línea muda bajo la cifra
+   principal. Vacía por completo si no hay UF disponible hoy (nunca
+   deja una etiqueta "UF:" colgada sin valor). #}
+{% macro ufeq(x, neg=False) -%}
+{%- if uf_info and uf_info.valor %}<span class="t-uf">≈ {{ '−' if neg else '' }}{{ ((x or 0) / uf_info.valor) | fkg(2) }} UF</span>{% endif -%}
+{%- endmacro %}
+
+{# ════════════ TOOLBAR (solo pantalla) ════════════ #}
+<div class="toolbar no-print">
+  <div>
+    <div class="tb-title">Detalle de cálculo — {{ cot.numero }}</div>
+    <div class="tb-sub">{{ cot.empresa or 'Sin cliente' }} · {{ items|length }} ítem(s) · Documento interno, solo superadmin</div>
+  </div>
+  <div class="tb-actions">
+    <a class="tb-btn ghost" href="/tickets/cotizaciones">← Volver a Cotizaciones</a>
+    <a class="tb-btn" href="/tickets/cotizaciones/{{ cot.id }}/detalle-calculo/pdf" target="_blank" rel="noopener">
+      ⬇ Descargar PDF
+    </a>
+  </div>
+</div>
+
+<div class="sheet">
+  <div class="head">
+    <div class="logo">
+      {% if logo_b64 %}
+        <img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS Sport &amp; Health">
+      {% else %}
+        <span class="logo-fallback"><span class="helm">⛑</span> ILUS.</span>
+      {% endif %}
+    </div>
+    <div class="head-mid">
+      <h1>Detalle de cálculo de cotización</h1>
+      <div class="head-sub">Trazabilidad interna — horas-hombre, técnicos, tarifa y zona</div>
+    </div>
+    <span class="badge-interno">Documento interno · Solo superadmin</span>
+  </div>
+
+  <div class="info-grid">
+    <div class="info-card"><div class="lbl">Cotización</div><div class="val">{{ cot.numero }}</div></div>
+    <div class="info-card"><div class="lbl">Cliente</div><div class="val">{{ cot.empresa or 'Sin cliente' }}{% if cot.rut %} · {{ cot.rut }}{% endif %}</div></div>
+    <div class="info-card"><div class="lbl">Tipo de servicio</div><div class="val">{{ cot.tipo_servicio_label }}</div></div>
+    <div class="info-card"><div class="lbl">Creada</div>
+      <div class="val">{{ cot.created_at | chile_fmt if cot.created_at else '—' }}{% if cot.created_by %}<br><span style="font-weight:500;color:var(--ilus-mute);font-size:8pt;">por {{ cot.created_by }}</span>{% endif %}</div>
+    </div>
+  </div>
+
+  <h2 class="sec"><span class="n">1</span>Cálculo por ítem (mano de obra)</h2>
+  <div class="tabla-wrap">
+    <table class="items">
+      <thead>
+        <tr>
+          <th class="l">SKU</th>
+          <th class="l">Descripción</th>
+          <th class="l">Categoría</th>
+          <th class="c">Cant.</th>
+          <th class="c">Horas</th>
+          <th class="c">Técnicos</th>
+          <th class="c">HH</th>
+          <th class="r">Valor HH</th>
+          <th class="r">Costo M.O.</th>
+          <th class="c">Margen</th>
+          <th class="r">P. Unit.</th>
+          <th class="c">Desc.</th>
+          <th class="r">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+        <tr class="{{ 'sin-tarifa' if it.sin_tarifa }}">
+          <td class="l">{{ it.sku or '—' }}</td>
+          <td class="l">{{ it.descripcion or '—' }}</td>
+          <td class="l">{{ it.clase_nombre }}</td>
+          <td class="c">{{ it.cantidad }}</td>
+          {% if it.sin_tarifa %}
+          <td class="mo" colspan="9">
+            Sin tarifa cargada para "{{ it.clase_nombre }}" en {{ cot.tipo_servicio_label }} — este ítem queda en $0.
+            <span class="chip-sin-tarifa">Sin tarifa</span>
+          </td>
+          {% else %}
+          <td class="c">{{ it.horas | fkg(2) }}</td>
+          <td class="c">{{ it.tecnicos }}</td>
+          <td class="c"><b>{{ it.hh | fkg(2) }}</b></td>
+          <td class="r">${{ clp(cfg.valor_hh) }}</td>
+          <td class="r">${{ clp(it.costo_mo) }}</td>
+          <td class="c">{{ cfg.margen_pct | fkg(1) }}%</td>
+          <td class="r">
+            <b>${{ clp(it.precio_unitario) }}</b>
+            <span class="mini-sub">×{{ it.cantidad }} = ${{ clp(it.subtotal) }}</span>
+          </td>
+          <td class="c">{{ it.descuento_pct | fkg(1) }}%</td>
+          <td class="r"><b>${{ clp(it.total) }}</b></td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% if not items %}
+        <tr><td colspan="13" style="text-align:center;color:#9ca3af;padding:14px;">Esta cotización no tiene ítems.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="sec"><span class="n">2</span>Costo de ruta / zona</h2>
+  {% if ruta %}
+  <div class="zona-grid">
+    <div class="zona-card"><div class="lbl">Comuna</div><div class="val">{{ ruta.comuna }}</div></div>
+    <div class="zona-card"><div class="lbl">Región</div><div class="val">{{ ruta.region or '—' }}</div></div>
+    <div class="zona-card"><div class="lbl">Distancia</div><div class="val">{{ ruta.km | fkg(1) }} km</div></div>
+    <div class="zona-card"><div class="lbl">Peaje</div><div class="val">${{ clp(ruta.peaje) }}</div></div>
+    <div class="zona-card"><div class="lbl">Tiempo est.</div><div class="val">{{ ruta.tiempo_min }} min</div></div>
+    <div class="zona-card"><div class="lbl">Costo ruta aplicado</div><div class="val">${{ clp(cot.costo_ruta) }}</div></div>
+  </div>
+  {% else %}
+  <div class="zona-grid">
+    <div class="zona-card"><div class="lbl">Comuna</div><div class="val">{{ cot.comuna or '—' }}</div></div>
+    <div class="zona-card"><div class="lbl">Región</div><div class="val">{{ cot.region or '—' }}</div></div>
+    <div class="zona-card wide">
+      <div class="lbl">Costo ruta aplicado</div>
+      <div class="val">${{ clp(cot.costo_ruta) }}</div>
+      {% if cot.costo_ruta %}<div style="font-size:7.3pt;color:var(--ilus-mute);margin-top:2px;">Sin registro en la tabla de rutas para esta comuna — monto ingresado/ajustado manualmente.</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="totales-wrap">
+    <table class="totales">
+      <tr><td class="t-lbl">Subtotal ítems (mano de obra)</td><td class="t-val">${{ clp(cot.subtotal_items) }}{{ ufeq(cot.subtotal_items) }}</td></tr>
+      <tr><td class="t-lbl">Costo de ruta</td><td class="t-val">${{ clp(cot.costo_ruta) }}{{ ufeq(cot.costo_ruta) }}</td></tr>
+      <tr><td class="t-lbl">Subtotal</td><td class="t-val">${{ clp(cot.subtotal) }}{{ ufeq(cot.subtotal) }}</td></tr>
+      {% if cot.descuento_monto %}
+      <tr><td class="t-lbl">Descuento ({{ cot.descuento_pct | fkg(1) }}%)</td><td class="t-val">−${{ clp(cot.descuento_monto) }}{{ ufeq(cot.descuento_monto, neg=True) }}</td></tr>
+      {% endif %}
+      <tr><td class="t-lbl">IVA ({{ cot.iva_pct | fkg(1) }}%)</td><td class="t-val">${{ clp(cot.iva_monto) }}{{ ufeq(cot.iva_monto) }}</td></tr>
+      <tr class="total-final"><td>Total</td><td class="t-val">${{ clp(cot.total) }}{{ ufeq(cot.total) }}</td></tr>
+    </table>
+  </div>
+  {% if uf_info and uf_total is not none %}
+  <div class="uf-linea">
+    Valor UF hoy{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %}: <b>${{ uf_info.valor | fkg(2) }}</b>
+    · Total equivalente: <b>{{ uf_total | fkg(2) }} UF</b>
+  </div>
+  {% endif %}
+
+  <div class="instructivo">
+    <b>Instructivo:</b> el valor en UF que se comparte con el cliente (lo que vale el servicio) viene
+    <b>calculado desde las horas-hombre</b>: por cada ítem, Horas × Técnicos = HH; HH × Valor HH = Costo de
+    mano de obra; Costo × (1 + Margen) = Precio unitario. La suma de todos los ítems más el
+    <b>costo de ruta/zona</b> (peaje y traslado según la comuna del cliente) forma el Subtotal; sobre eso se
+    aplican el descuento general y el IVA para llegar al Total.
+    {% if uf_info %}El Total en UF se obtiene dividiendo el Total en CLP por el valor de la UF del día{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %}.{% endif %}
+  </div>
+  <div class="config-foot">
+    <span>Valor HH vigente: <b>${{ clp(cfg.valor_hh) }}</b></span>
+    <span>Margen vigente: <b>{{ cfg.margen_pct | fkg(1) }}%</b></span>
+    <span>IVA de esta cotización: <b>{{ cot.iva_pct | fkg(1) }}%</b></span>
+    <span>Tipo de servicio: <b>{{ cot.tipo_servicio_label }}</b></span>
+  </div>
+  <p class="nota-vivo">
+    Las horas y técnicos por ítem se recalculan con la tarifa VIGENTE de la categoría (Catálogo → Clasificación)
+    al momento de generar este detalle — no es una foto congelada del día en que se creó la cotización. Si una
+    tarifa cambió después, este reporte refleja la tarifa de hoy; los montos de la cotización (precio unitario,
+    subtotal, total) sí quedaron fijos al calcularla.
+  </p>
+</div>
+
+</body>
+</html>

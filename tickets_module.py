@@ -1991,6 +1991,57 @@ def register_tickets_routes(app, ctx):
             "iva_pct": _f("cotiz_iva_pct", 19.0),
         }
 
+    # ─────────────────────────────────────────────────────────────────
+    #  Equivalente en UF del Total (2026-07-21, Daniel: "ese valor lo
+    #  vamos a expresar en UF, a la UF actual... dividirlo para que eso
+    #  sea el valor de una UF"). El costo de ruta (peaje/traslado) NO
+    #  necesita sumarse aparte -- ya vive dentro de cot.total (ver
+    #  cabecera del motor de precio más arriba: Subtotal = Subtotal ítems
+    #  + costo_ruta), así que expresar el Total en UF ya lo incluye.
+    #
+    #  Reusa el MISMO cache/endpoint de indicadores económicos que ya
+    #  existe en app.py (_UF_CACHE, TTL 1h, /api/uf-actual) en vez de
+    #  inventar un segundo cache paralelo -- ese es el "lugar natural
+    #  para indicadores externos" del proyecto. Totalmente resiliente:
+    #  si mindicador.cl está caído (o el helper no existe todavía en
+    #  algún entorno viejo), devuelve None y el caller simplemente NO
+    #  muestra el equivalente en UF -- nunca rompe la página ni la
+    #  cotización deja de mostrarse.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_uf_actual():
+        """{"valor": float, "fecha": "YYYY-MM-DD"} o None si no hay UF
+        disponible ahora mismo (API externa caída y sin cache previo)."""
+        _helper = ctx.get("_uf_valor_actual")
+        if not _helper:
+            return None
+        try:
+            d = _helper()
+        except Exception as _e:
+            print(f"[_tk_uf_actual] {_e}", flush=True)
+            return None
+        if not d or not d.get("ok") or not d.get("uf"):
+            return None
+        try:
+            return {"valor": float(d["uf"]), "fecha": d.get("fecha")}
+        except (TypeError, ValueError):
+            return None
+
+    def _tk_total_a_uf(total_clp, uf_info=None):
+        """total_clp / valor UF, redondeado a 2 decimales. None si no hay
+        UF disponible o el total no es válido. `uf_info` opcional -- para
+        listar varias cotizaciones sin repetir la consulta del cache por
+        cada fila (ver tk_cotizaciones_list)."""
+        info = uf_info if uf_info is not None else _tk_uf_actual()
+        if not info or not info.get("valor"):
+            return None
+        try:
+            total = float(total_clp or 0)
+        except (TypeError, ValueError):
+            return None
+        if total <= 0:
+            return 0.0
+        return round(total / info["valor"], 2)
+
     def _tk_cotiz_calcular_item(clase_producto, tipo_servicio, cantidad, descuento_pct, cfg):
         """Precio de mano de obra de UN ítem según su categoría (SIN
         transporte -- el costo de ruta es una línea separada de cabecera,
@@ -2265,6 +2316,20 @@ def register_tickets_routes(app, ctx):
     #  generateQuotePdf.ts, el costo de ruta se PRORRATEA entre los ítems
     #  solo para la presentación -- en la BD sigue como línea separada.
     # ─────────────────────────────────────────────────────────────────
+    def _tk_cotiz_logo_b64():
+        """Logo pre-encoded (mismo mecanismo que los PDF de OT:
+        static/logo_pdf.txt). Factorizado (2026-07-21) para reusarlo
+        también en el detalle de cálculo de superadmin -- antes vivía
+        embebido solo en tk_cotizacion_pdf."""
+        try:
+            _logo_path = os.path.join(app.static_folder, "logo_pdf.txt")
+            if os.path.exists(_logo_path):
+                with open(_logo_path, "r", encoding="utf-8") as _f_logo:
+                    return _f_logo.read().strip()
+        except Exception:
+            pass
+        return ""
+
     _TK_UNIDADES = ("", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
                     "diez", "once", "doce", "trece", "catorce", "quince", "dieciséis",
                     "diecisiete", "dieciocho", "diecinueve", "veinte")
@@ -2417,16 +2482,7 @@ def register_tickets_routes(app, ctx):
             "items": items,
             "total_en_palabras": _tk_monto_en_palabras(cot.get("total")),
         }
-        # Logo pre-encoded (mismo mecanismo que los PDF de OT: static/logo_pdf.txt)
-        logo_b64 = ""
-        try:
-            _logo_path = os.path.join(app.static_folder, "logo_pdf.txt")
-            if os.path.exists(_logo_path):
-                with open(_logo_path, "r", encoding="utf-8") as _f_logo:
-                    logo_b64 = _f_logo.read().strip()
-        except Exception:
-            pass
-        ctx_pdf["logo_b64"] = logo_b64
+        ctx_pdf["logo_b64"] = _tk_cotiz_logo_b64()
         html = render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
 
         _pw_pdf = ctx.get("_pw_pdf")
@@ -2441,6 +2497,169 @@ def register_tickets_routes(app, ctx):
         from flask import Response as _Resp
         _emp = re.sub(r"[^A-Za-z0-9 _-]", "", (cot.get("empresa") or "cliente"))[:60].strip() or "cliente"
         _fname = f"Cotizacion_{_emp}_{_fecha_str(_chile_hoy())}.pdf"
+        return _Resp(pdf_bytes, mimetype="application/pdf",
+                     headers={"Content-Disposition": f'inline; filename="{_fname}"'})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Detalle de cálculo — SOLO superadmin (2026-07-21, Daniel: "debe
+    #  haber, para el superadministrador, poder bajar un detalle de cómo
+    #  se calcula una cotización completa... necesito que me indique
+    #  cuántas horas hombre se le calculan y cuántos técnicos, y eso
+    #  multiplicado por la zona -- algo más a detalle"). Trazabilidad
+    #  completa por ítem (horas × técnicos = HH, HH × valor_hh = costo,
+    #  costo × (1+margen) = precio unitario) + el costo de ruta/zona de
+    #  cabecera + el equivalente en UF del total.
+    #
+    #  Recalcula horas/técnicos EN VIVO contra cat_clase_producto_tarifas
+    #  (misma fuente que _tk_cotiz_recalcular) -- tk_cotizacion_items solo
+    #  guarda el resultado final (precio_unitario/subtotal/total), nunca
+    #  un snapshot de horas/técnicos, así que "cómo se calculó" siempre
+    #  se reconstruye con la tarifa VIGENTE (igual criterio que el resto
+    #  del motor de precio). Si una tarifa cambió después de crear la
+    #  cotización, este detalle refleja la tarifa de HOY, no la de ese
+    #  momento -- se avisa explícitamente en la plantilla para no prometer
+    #  algo que el sistema no guarda.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_cotizacion_detalle_calculo_ctx(cid):
+        cot = mysql_fetchone("SELECT * FROM tk_cotizaciones WHERE id=%s", (cid,))
+        if not cot:
+            return None
+        tipo_servicio = cot.get("tipo_servicio") or "mantencion"
+        items_rows = mysql_fetchall(
+            "SELECT id, erp_kopr, descripcion, clase_producto, cantidad, descuento_pct, "
+            "       precio_unitario, subtotal, total "
+            "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
+
+        cfg = _tk_cotiz_pricing_config()
+        _cat_tarifa = ctx.get("_cat_obtener_tarifa_clase")
+        _clases_map_fn = ctx.get("_cat_clases_map")
+        clases_map = {}
+        if _clases_map_fn:
+            try:
+                clases_map = _clases_map_fn() or {}
+            except Exception:
+                clases_map = {}
+
+        items = []
+        for it in items_rows:
+            clase = it.get("clase_producto")
+            tarifa = _cat_tarifa(clase, tipo_servicio) if (_cat_tarifa and clase) else None
+            if tarifa:
+                horas = tarifa["horas"]
+                tecnicos = tarifa["tecnicos"]
+                hh = horas * tecnicos
+                costo_mo = hh * cfg["valor_hh"]
+            else:
+                horas = tecnicos = hh = costo_mo = None
+            items.append({
+                "sku": it.get("erp_kopr") or "",
+                "descripcion": it.get("descripcion") or "",
+                "clase_producto": clase,
+                "clase_nombre": clases_map.get(clase, clase) if clase else "Sin clasificar",
+                "cantidad": int(it.get("cantidad") or 0),
+                "horas": horas,
+                "tecnicos": tecnicos,
+                "hh": hh,
+                "costo_mo": costo_mo,
+                "precio_unitario": int(it.get("precio_unitario") or 0),
+                "descuento_pct": float(it.get("descuento_pct") or 0),
+                "subtotal": int(it.get("subtotal") or 0),
+                "total": int(it.get("total") or 0),
+                "sin_tarifa": tarifa is None,
+            })
+
+        # Zona / costo de ruta (Daniel: "eso multiplicado por la zona") --
+        # el detalle completo de tk_cotiz_rutas para la comuna del cliente,
+        # no solo el monto final ya guardado en cabecera.
+        comuna = (cot.get("comuna") or "").strip()
+        ruta = None
+        if comuna:
+            ruta = mysql_fetchone(
+                "SELECT region, comuna, km, peaje, tag, precio_bruto, precio_final, tiempo_min "
+                "FROM tk_cotiz_rutas WHERE activa=1 AND LOWER(comuna)=LOWER(%s) LIMIT 1", (comuna,))
+
+        uf_info = _tk_uf_actual()
+        total = int(cot.get("total") or 0)
+
+        return {
+            "cot": {
+                "id": cid,
+                "numero": cot.get("numero_cotizacion") or f"#{cid}",
+                "empresa": cot.get("empresa") or "",
+                "rut": cot.get("rut") or "",
+                "comuna": comuna,
+                "region": cot.get("region") or "",
+                "tipo_servicio": tipo_servicio,
+                "tipo_servicio_label": _TK_COTIZ_TIPOS_SERVICIO_LABELS.get(tipo_servicio, tipo_servicio),
+                "estado": cot.get("estado") or "draft",
+                "created_at": cot.get("created_at"),
+                "created_by": cot.get("created_by") or "",
+                "subtotal_items": int(cot.get("subtotal_items") or 0),
+                "costo_ruta": int(cot.get("costo_ruta") or 0),
+                "subtotal": int(cot.get("subtotal") or 0),
+                "descuento_pct": float(cot.get("descuento_pct") or 0),
+                "descuento_monto": int(cot.get("descuento_monto") or 0),
+                "iva_pct": float(cot.get("iva_pct") or 19),
+                "iva_monto": int(cot.get("iva_monto") or 0),
+                "total": total,
+            },
+            "items": items,
+            "ruta": ruta,
+            "cfg": cfg,
+            "uf_info": uf_info,
+            "uf_total": _tk_total_a_uf(total, uf_info),
+            "logo_b64": _tk_cotiz_logo_b64(),
+        }
+
+    def _tk_solo_superadmin():
+        """True si el usuario actual es superadmin. Centraliza el gate de
+        las 2 rutas de detalle de cálculo (HTML + PDF) -- Daniel fue
+        explícito: 'para el superadministrador', no admin ni ejecutivo."""
+        perms = g.get("permissions") or {}
+        return bool(perms.get("superadmin"))
+
+    @app.route("/tickets/cotizaciones/<int:cid>/detalle-calculo")
+    @_tickets_required
+    def tk_cotizacion_detalle_calculo(cid):
+        if not _tk_solo_superadmin():
+            msg = "Solo un superadministrador puede ver el detalle de cálculo."
+            if _is_ajaxish():
+                return jsonify({"ok": False, "error": msg}), 403
+            return msg, 403
+        dcx = _tk_cotizacion_detalle_calculo_ctx(cid)
+        if not dcx:
+            return "Cotización no encontrada", 404
+        return render_template("tickets/cotizacion_detalle_calculo.html", **dcx)
+
+    @app.route("/tickets/cotizaciones/<int:cid>/detalle-calculo/pdf")
+    @_tickets_required
+    def tk_cotizacion_detalle_calculo_pdf(cid):
+        if not _tk_solo_superadmin():
+            return "Solo un superadministrador puede descargar el detalle de cálculo.", 403
+        dcx = _tk_cotizacion_detalle_calculo_ctx(cid)
+        if not dcx:
+            return "Cotización no encontrada", 404
+        html = render_template("tickets/cotizacion_detalle_calculo.html", **dcx)
+
+        _pw_pdf = ctx.get("_pw_pdf")
+        if not _pw_pdf:
+            return "Generador de PDF no disponible en este entorno", 503
+        try:
+            # A4 apaisado explícito (width/height, no page_format) -- la
+            # tabla de ítems tiene 13 columnas y necesita el ancho extra;
+            # @page CSS sola no basta porque _pw_pdf no pasa
+            # prefer_css_page_size a Playwright (mismo motivo por el que
+            # tk_cotizacion_pdf especifica su tamaño desde el backend).
+            pdf_bytes = _pw_pdf(html, width="297mm", height="210mm",
+                                 margin={"top": "10mm", "right": "10mm",
+                                         "bottom": "12mm", "left": "10mm"})
+        except Exception as _e_pdf:
+            print(f"[tk_cotizacion_detalle_calculo_pdf] cid={cid}: {_e_pdf}", flush=True)
+            return ("El generador de PDF no está disponible ahora. "
+                    "Intenta de nuevo en unos minutos."), 503
+        from flask import Response as _Resp
+        _num = re.sub(r"[^A-Za-z0-9_-]", "", (dcx["cot"]["numero"] or str(cid)))[:40] or str(cid)
+        _fname = f"Detalle_Calculo_{_num}.pdf"
         return _Resp(pdf_bytes, mimetype="application/pdf",
                      headers={"Content-Disposition": f'inline; filename="{_fname}"'})
 
@@ -2488,8 +2707,21 @@ def register_tickets_routes(app, ctx):
             "       c.ticket_id, tk.numero_ticket "
             "FROM tk_cotizaciones c LEFT JOIN tk_tickets tk ON tk.id = c.ticket_id "
             "ORDER BY c.created_at DESC LIMIT 100")
+        # Equivalente en UF del Total (Daniel 2026-07-21) -- UNA sola
+        # consulta al cache de UF para las 100 filas, no una por fila
+        # (_tk_uf_actual ya está cacheado 1h de por sí, pero no hay razón
+        # para llamarlo 100 veces si el valor es el mismo para toda la
+        # lista). Si la API externa está caída, uf_info queda en None y
+        # cada fila simplemente no muestra el equivalente -- el listado
+        # nunca se rompe por esto.
+        uf_info = _tk_uf_actual()
+        filas = []
+        for r in rows:
+            fila = _fmt_row(r)
+            fila["uf_total"] = _tk_total_a_uf(r.get("total"), uf_info)
+            filas.append(fila)
         return render_template("tickets/cotizaciones.html",
-                                cotizaciones=[_fmt_row(r) for r in rows])
+                                cotizaciones=filas, uf_info=uf_info)
 
     # ─────────────────────────────────────────────────────────────────
     #  API — crear cotizacion en borrador desde el modal ERP compartido

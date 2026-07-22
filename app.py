@@ -3551,6 +3551,15 @@ PERMS_KEYS = (
     # _tickets_required sigue aceptando "mantenciones" también, así que
     # estos flags solo pueden SUMAR acceso, nunca quitarlo.
     "tk_ver", "tk_es_tecnico", "tk_es_ejecutivo",
+    # cat_eliminar — flag del módulo Catálogo de Productos (aditivo
+    # 2026-07-21, Daniel: "eliminarlo solamente para el superadministrador
+    # con opciones a agregarlo en los roles"). El gate real en
+    # catalogo_module.py (_catalogo_eliminar_required) sigue aceptando
+    # "superadmin" también vía OR, así que este flag solo puede SUMAR
+    # acceso a archivar/eliminar un producto -- nunca al hard-delete
+    # definitivo, que se queda exclusivo de superadmin+confirm_text
+    # (Regla #5, no se toca).
+    "cat_eliminar",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -3627,6 +3636,7 @@ def _build_perms_from_matrix(role):
     com = matrix.get("comunicaciones", {})
     adm = matrix.get("admin", {})
     tk  = matrix.get("tickets", {})
+    cat = matrix.get("catalogo", {})
 
     # Flags de módulo (gates de sidebar)
     # Flag coarse "etiquetas" — simétrico al fix de transporte (caso usuaria
@@ -3687,6 +3697,11 @@ def _build_perms_from_matrix(role):
     base["tk_ver"]         = bool(tk.get("ver"))
     base["tk_es_tecnico"]  = bool(tk.get("es_tecnico"))
     base["tk_es_ejecutivo"] = bool(tk.get("es_ejecutivo"))
+
+    # Catálogo de Productos (aditivo 2026-07-21) — mismo criterio: flag
+    # puramente aditivo, el gate real (_catalogo_eliminar_required en
+    # catalogo_module.py) sigue aceptando "superadmin" también vía OR.
+    base["cat_eliminar"]  = bool(cat.get("eliminar"))
 
     base["superadmin"] = False
     return base
@@ -10977,6 +10992,18 @@ PERMISSIONS_MATRIX = {
     # "mantenciones" vía OR, así que nadie pierde acceso que ya tenía.
     "tickets":        {"label":"Tickets",        "icon":"bi-ticket-perforated",
                        "acciones":["ver","es_tecnico","es_ejecutivo"]},
+    # Catálogo de Productos: aditivo 2026-07-21 (Daniel, "único punto de
+    # entrada... eliminarlo solamente para el superadministrador con
+    # opciones a agregarlo en los roles"). El acceso al módulo en sí sigue
+    # siendo _catalogo_required (permiso "mantenciones" O superadmin, sin
+    # tocar -- Fase 1 deliberadamente no migrada a esta matriz todavía).
+    # Solo la acción "eliminar" (archivar/soft-delete un producto) vive acá,
+    # para que Daniel pueda prender ese permiso por rol sin otro deploy.
+    # Ningún rol tiene fila hoy → nace en False para todos salvo superadmin
+    # (ver get_role_permissions()); el hard-delete definitivo NO usa este
+    # flag, sigue exclusivo de superadmin+confirm_text (Regla #5).
+    "catalogo":       {"label":"Catálogo de Productos", "icon":"bi-box-seam",
+                       "acciones":["eliminar"]},
 }
 
 # Metadata UI de cada acción — Daniel 2026-06-03: la matriz se reorganiza en
@@ -11032,6 +11059,9 @@ PERMISSIONS_META = {
         "ver":           {"label": "Acceso al módulo",                                   "tipo": "submodulo", "icon": "bi-ticket-perforated"},
         "es_tecnico":     {"label": "Es técnico",                                        "tipo": "submodulo", "icon": "bi-person-gear"},
         "es_ejecutivo":   {"label": "Es ejecutivo (ve Tickets + puede cambiar estado)",  "tipo": "submodulo", "icon": "bi-person-badge"},
+    },
+    "catalogo": {
+        "eliminar": {"label": "Eliminar producto (archivar)", "tipo": "bloqueo", "icon": "bi-trash"},
     },
 }
 
@@ -59630,13 +59660,16 @@ _UF_CACHE = {"ts": 0, "uf": None, "fecha": None, "error": None}
 _UF_CACHE_TTL = 3600  # 1 hora
 
 
-@app.route("/api/uf-actual")
-def api_uf_actual():
-    """Devuelve el valor actual de la UF desde mindicador.cl (cacheado 1h)."""
+def _uf_valor_actual():
+    """Valor actual de la UF (mindicador.cl), cacheado en memoria de
+    proceso 1h. Reusable desde cualquier módulo vía ctx['_uf_valor_actual']()
+    -- p.ej. tickets_module.py (Cotizaciones: equivalente en UF del total,
+    2026-07-21). Nunca lanza: si la API externa falla y no hay nada
+    cacheado todavía, devuelve ok=False/uf=None -- el caller decide cómo
+    degradar (mostrar solo CLP, jamás un 500)."""
     now = time.time()
     if _UF_CACHE["uf"] is not None and (now - _UF_CACHE["ts"]) < _UF_CACHE_TTL:
-        return jsonify({"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"],
-                        "ok": True, "cached": True})
+        return {"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"], "ok": True, "cached": True}
     try:
         import urllib.request as _ur
         req = _ur.Request(
@@ -59648,13 +59681,21 @@ def api_uf_actual():
         uf_val = float(data["serie"][0]["valor"])
         fecha  = data["serie"][0]["fecha"][:10]
         _UF_CACHE.update({"ts": now, "uf": uf_val, "fecha": fecha, "error": None})
-        return jsonify({"uf": uf_val, "fecha": fecha, "ok": True})
+        return {"uf": uf_val, "fecha": fecha, "ok": True}
     except Exception as e:
         # Si tenemos un valor cacheado aunque sea viejo, devolverlo en lugar de error
         if _UF_CACHE["uf"] is not None:
-            return jsonify({"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"],
-                            "ok": True, "cached": True, "stale": True})
-        return jsonify({"uf": None, "error": str(e), "ok": False})
+            return {"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"],
+                    "ok": True, "cached": True, "stale": True}
+        _UF_CACHE["error"] = str(e)
+        print(f"[_uf_valor_actual] mindicador.cl no respondió: {e}", flush=True)
+        return {"uf": None, "error": str(e), "ok": False}
+
+
+@app.route("/api/uf-actual")
+def api_uf_actual():
+    """Devuelve el valor actual de la UF desde mindicador.cl (cacheado 1h)."""
+    return jsonify(_uf_valor_actual())
 
 
 # ── BÚSQUEDA PRODUCTOS ERP ───────────────────────────────────────────

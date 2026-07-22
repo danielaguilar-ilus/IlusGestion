@@ -331,6 +331,15 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        {# 2026-07-21: aviso de registro incompleto -- reemplaza a la
+           "varita mágica" que antes era un botón aparte en la fila (ver
+           catAccionesCelda). El asistente guiado (#catwModal) sigue vivo,
+           alcanzable desde acá. Se llena/oculta en catfCargar(). #}
+        <div id="catfAvisoIncompleto" class="alert alert-warning d-none" style="border-radius:10px;display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;">
+          <span><i class="bi bi-exclamation-circle-fill me-1"></i>Este producto tiene el registro incompleto (falta familia, piolas o manual).</span>
+          <button type="button" class="btn btn-sm btn-ilus" id="catfBtnContinuarWizard">
+            <i class="bi bi-magic me-1"></i>Continuar con el asistente guiado</button>
+        </div>
         <div class="catf-datos">
           <div class="catf-campo full" data-campo="sku">
             <label>SKU</label>
@@ -393,6 +402,17 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
           </div>
           <div id="catpAddWrap"></div>
           <input type="file" id="catpFotoInput" accept="image/*" hidden>
+        </div>
+
+        {# 2026-07-21: sección "Auditoría" -- SOLO superadmin (Daniel:
+           "eliminarlo solamente para el superadministrador"). created_by/
+           updated_by ya existen en cat_productos; el backend (cat_api_detalle)
+           los omite del JSON para cualquier rol que no sea superadmin, así
+           que este bloque queda vacío/oculto de forma segura para el resto
+           (no depende solo de este display:none del frontend). #}
+        <div class="catf-section" id="catfAuditoriaSection" style="display:none;">
+          <h6><i class="bi bi-shield-lock me-1"></i>Auditoría</h6>
+          <div id="catfAuditoriaBody" class="text-muted small"></div>
         </div>
       </div>
       <div class="modal-footer" style="justify-content:space-between;">
@@ -509,8 +529,8 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
           </div>
           <div class="mb-2">
             <label class="form-label fw-bold small">¿Cuántas piolas distintas tiene este modelo?</label>
-            <input type="number" id="catwCantPiolas" class="form-control" min="0" max="6" step="1" placeholder="Ej: 2">
-            <div class="form-text">Se usará para pedirte la medida de cada una en el siguiente paso (máximo 6).</div>
+            <input type="number" id="catwCantPiolas" class="form-control" min="0" max="10" step="1" placeholder="Ej: 2">
+            <div class="form-text">Se usará para pedirte la medida de cada una en el siguiente paso (máximo 10).</div>
           </div>
         </div>
 
@@ -564,8 +584,16 @@ const IS_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
 // intacto en el backend, ver catwAbrir() para el detalle de qué pasos del
 // wizard quedan visibles/editables según el rol).
 const CAN_CARGAR_PIOLAS = {{ 'true' if (permissions.mantenciones or permissions.superadmin) else 'false' }};
+// 2026-07-21 (Daniel, "acciones unificadas"): "eliminarlo solamente para el
+// superadministrador con opciones a agregarlo en los roles" -- flag granular
+// nuevo (matriz /admin/roles, módulo "catalogo" -> acción "eliminar", ver
+// PERMISSIONS_MATRIX en app.py). Nace en False para todos los roles hasta
+// que Daniel lo prenda ahí; superadmin siempre lo tiene. Gatea SOLO el
+// archivar/soft-delete (botón "Eliminar producto" del footer de la ficha) --
+// el hard-delete definitivo sigue exclusivo de IS_SUPERADMIN, sin cambios.
+const CAN_ELIMINAR_CATALOGO = {{ 'true' if (permissions.cat_eliminar or permissions.superadmin) else 'false' }};
 const MAX_FOTOS = 10;
-const MAX_PIOLAS = 6;  // 2026-07-14 (Daniel): bajado de 10 a 6
+const MAX_PIOLAS = 10;  // 2026-07-21 (Daniel): vuelve a 10 (ver MAX_PIOLAS_POR_PRODUCTO en catalogo_module.py)
 let _catTimer = null;
 let _catfPiolas = [];
 
@@ -742,36 +770,24 @@ function catFilaHtml(row){
     + '</tr>';
 }
 
+// 2026-07-21 (Daniel, dictado): "En las acciones lo que quiero es un único
+// punto de entrada. Verlo, editarlo, eliminarlo, pero solamente eliminarlo
+// para el superadministrador con opciones a agregarlo en los roles" --
+// antes había hasta 3 botones por fila (ojo=ver ficha, varita=wizard
+// guiado, tacho=eliminar). Se fusionan en UN solo botón por fila: abre
+// SIEMPRE la ficha (#catfModal), que ya es la superficie única de
+// ver+editar (inline, sin modo "solo lectura" artificial) y que ya trae
+// "Eliminar producto" en su footer (gateado a superadmin más abajo, ver
+// catfCargar). El wizard guiado (#catwModal) NO se borra (Regla #4.2) --
+// sigue disponible: si el producto está incompleto, la propia ficha ofrece
+// un aviso con botón "Continuar con el asistente guiado" (ver catfCargar).
 function catAccionesCelda(row){
-  let h = '<button type="button" class="cat-act ver" title="Ver / editar ficha"'
-    + ' onclick="event.stopPropagation();catAbrirFicha('+row.id+')"><i class="bi bi-eye"></i></button>';
-  if(CAN_CARGAR_PIOLAS && !row.registrado){
-    h += '<button type="button" class="cat-act wiz" title="Completar ficha (piolas'+(IS_SUPERADMIN?' + familia + manuales':'')+')"'
-      + ' onclick="event.stopPropagation();catwAbrir('+row.id+')"><i class="bi bi-magic"></i></button>';
-  }
-  h += '<button type="button" class="cat-act del" title="Eliminar producto"'
-    + ' onclick="catEliminarRapido(event,'+row.id+')"><i class="bi bi-trash"></i></button>';
-  return '<div class="cat-acciones">'+h+'</div>';
+  const titulo = row.registrado ? 'Ver / editar ficha' : 'Ver ficha (registro incompleto)';
+  return '<div class="cat-acciones">'
+    + '<button type="button" class="cat-act ver" title="'+titulo+'"'
+    + ' onclick="event.stopPropagation();catAbrirFicha('+row.id+')"><i class="bi bi-eye"></i></button>'
+    + '</div>';
 }
-
-window.catEliminarRapido = async function(ev, id){
-  ev.stopPropagation();
-  const row = _catCache[id] || {};
-  const ok = await ilusConfirm({
-    title: 'Eliminar producto',
-    message: '¿Archivar el producto "'+(row.nombre||row.sku||id)+'"?',
-    sub: 'Queda oculto del catálogo (se puede recuperar activando "Ver archivados").',
-    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
-  });
-  if(!ok) return;
-  try{
-    const r = await fetch('/catalogo/api/productos/'+id, {method:'DELETE'});
-    const d = await r.json();
-    if(!d.ok){ ilusToast(d.error||'No se pudo eliminar el producto', {type:'error'}); return; }
-    ilusToast('✓ Producto eliminado', {type:'success'});
-    cargarCatalogo();
-  }catch(e){ ilusToast('Error de red al eliminar', {type:'error'}); }
-};
 
 // ── Filtros / toolbar ──
 function catFiltroCambio(){ catPage = 1; cargarCatalogo(); }
@@ -962,6 +978,11 @@ async function catfCargar(){
   if(!d.ok){ ilusToast(d.error||'Error al cargar el producto', {type:'error'}); return; }
   const p = d.producto;
   catfProductoActual = p;
+
+  // Aviso de registro incompleto -- punto de entrada al asistente guiado
+  // (ver comentario junto a #catfAvisoIncompleto más arriba).
+  document.getElementById('catfAvisoIncompleto').classList.toggle('d-none', !!p.registrado);
+
   document.getElementById('catfNombre').textContent = p.nombre || p.sku;
   document.getElementById('catfSkuTag').textContent = p.sku || '';
   document.getElementById('catfValSku').textContent = p.sku || '—';
@@ -1038,8 +1059,31 @@ async function catfCargar(){
   }
   catfRenderManualesMulti(d.manuales);
 
-  // Eliminar definitivamente: solo superadmin
+  // Eliminar (archivar/soft-delete): superadmin O el permiso granular
+  // CAN_ELIMINAR_CATALOGO (ver nota junto a su declaración más arriba) --
+  // cat_api_delete ya acepta ambos vía _catalogo_eliminar_required en el
+  // backend, esto solo alinea el botón con lo que el backend permite.
+  // Eliminar DEFINITIVO (hard-delete): siempre solo superadmin, sin cambios.
+  document.getElementById('catfBtnEliminar').style.display = CAN_ELIMINAR_CATALOGO ? 'inline-block' : 'none';
   document.getElementById('catfBtnEliminarDef').style.display = IS_SUPERADMIN ? 'inline-block' : 'none';
+
+  // Auditoría: solo superadmin. El backend (cat_api_detalle) ya omite
+  // created_by/updated_by del JSON para cualquier otro rol -- este bloque
+  // solo decide si se MUESTRA, con esos mismos campos si llegaron.
+  const audSec = document.getElementById('catfAuditoriaSection');
+  if(IS_SUPERADMIN && (p.created_by || p.updated_by)){
+    const creado = p.created_by
+      ? 'Creado por <b>'+esc(p.created_by)+'</b>'+(p.created_at ? ' el '+esc(p.created_at) : '')
+      : (p.created_at ? 'Creado el '+esc(p.created_at) : '');
+    const actualizado = p.updated_by
+      ? 'Última actualización por <b>'+esc(p.updated_by)+'</b>'+(p.updated_at ? ' el '+esc(p.updated_at) : '')
+      : (p.updated_at ? 'Última actualización el '+esc(p.updated_at) : '');
+    document.getElementById('catfAuditoriaBody').innerHTML =
+      (creado ? '<div>'+creado+'</div>' : '') + (actualizado ? '<div>'+actualizado+'</div>' : '');
+    audSec.style.display = '';
+  } else {
+    audSec.style.display = 'none';
+  }
 
   // Piolas: vienen en el mismo payload de detalle (d.piolas), 1 sola llamada.
   _catfPiolas = d.piolas || [];
@@ -1518,6 +1562,7 @@ function catfRenderManualesMulti(manuales){
       + '<div class="nm">'+esc(m.nombre)+'</div>'
       + '<button type="button" class="btn btn-sm btn-outline-primary ver" title="Ver" data-ver-url="'+esc(m.url)+'" data-ver-nombre="'+esc(m.nombre)+'"><i class="bi bi-eye"></i></button>'
       + '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'" title="Descargar"><i class="bi bi-download"></i></a>'
+      + '<button type="button" class="btn btn-sm btn-outline-secondary" title="Enviar por correo" data-enviar-id="'+m.id+'" data-enviar-nombre="'+esc(m.nombre)+'"><i class="bi bi-envelope"></i></button>'
       + '<button type="button" class="btn btn-sm btn-outline-danger" title="Quitar" onclick="catfQuitarManualMulti('+m.id+')"><i class="bi bi-trash"></i></button>'
       + '</div>';
   }).join('');
@@ -1526,6 +1571,39 @@ function catfRenderManualesMulti(manuales){
       catvAbrir(btn.getAttribute('data-ver-url'), btn.getAttribute('data-ver-nombre'));
     });
   });
+  wrap.querySelectorAll('[data-enviar-id]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      catfEnviarManualMultiCorreo(btn.getAttribute('data-enviar-id'), btn.getAttribute('data-enviar-nombre'));
+    });
+  });
+}
+
+// ── Enviar por correo UNO específico de los manuales multi (hasta 5) --
+//    mismo patrón/endpoint que catfEnviarManualCorreo (legado, arriba),
+//    apuntando al manual puntual en vez del manual_pdf_key singular
+//    (Regla #1: ilusPrompt/ilusToast, nunca prompt()/alert() nativos). ──
+async function catfEnviarManualMultiCorreo(manualId, nombre){
+  const email = await ilusPrompt({
+    title: 'Enviar manual por correo',
+    message: 'Correo de destino',
+    sub: nombre ? ('Archivo: '+nombre) : '',
+    placeholder: 'cliente@dominio.cl',
+    required: true,
+  });
+  if(email === null || email === undefined) return;
+  const correo = String(email).trim();
+  const reEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if(!reEmail.test(correo)){ ilusToast('Correo inválido', {type:'warning'}); return; }
+  ilusLoader.show('Enviando manual…');
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/manuales/'+manualId+'/enviar-correo', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: correo})});
+    const d = await r.json();
+    ilusLoader.hide();
+    if(d.ok) ilusToast('✓ Manual enviado a '+correo, {type:'success'});
+    else ilusToast(d.error||'No se pudo enviar el correo', {type:'error'});
+  }catch(e){ ilusLoader.hide(); ilusToast('Sin conexión', {type:'error'}); }
 }
 
 window.catfQuitarManualMulti = async function(manualId){
@@ -1589,6 +1667,16 @@ document.getElementById('catfBtnEliminarDef').addEventListener('click', async fu
       cargarCatalogo();
     } else ilusToast(d.error||'No se pudo eliminar', {type:'error'});
   }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+});
+
+// "Continuar con el asistente guiado" -- puente desde la ficha (#catfModal)
+// hacia el wizard (#catwModal) cuando el producto está incompleto (ver
+// #catfAvisoIncompleto). Mismo patrón de cierre-y-reapertura que
+// _catwAbrirSiguienteDeCola (350ms para que termine la transición de cierre).
+document.getElementById('catfBtnContinuarWizard').addEventListener('click', function(){
+  const id = catfProductoId;
+  catfModal.hide();
+  setTimeout(function(){ catwAbrir(id); }, 350);
 });
 
 // ══════════════ Wizard "Registrar producto" (2026-07-12) ══════════════
@@ -1685,7 +1773,7 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
   }
   if(catwStep === 2){
     const cant = parseInt(document.getElementById('catwCantPiolas').value, 10);
-    if(isNaN(cant) || cant < 0 || cant > 6){ ilusToast('La cantidad de piolas debe ser un número entre 0 y 6', {type:'warning'}); return; }
+    if(isNaN(cant) || cant < 0 || cant > 10){ ilusToast('La cantidad de piolas debe ser un número entre 0 y 10', {type:'warning'}); return; }
     // 2026-07-14: familia/clase (PATCH admin-only) solo se piden/guardan
     // si es superadmin -- para roles ampliados el bloque está oculto
     // (ver catwAbrir) y se salta directo a piolas, que sí es su permiso.

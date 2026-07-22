@@ -32,6 +32,23 @@
 }
 .tk-row-btn-audit:hover{background:#0a0a0a;color:#fff;}
 .tk-row-btn-audit:active{transform:scale(.96);}
+/* 2026-07-21 (Daniel: "ese valor lo vamos a expresar en UF, a la UF
+   actual"): equivalente en UF junto al Total, con instructivo en el
+   title (tooltip nativo -- funciona en desktop y con tap-hold en
+   mobile, sin depender de bootstrap.Tooltip que no está inicializado
+   globalmente en esta página). */
+.tk-row-uf{display:block;font-size:.66rem;font-weight:700;color:#9ca3af;
+  margin-top:1px;cursor:help;white-space:nowrap;}
+.tk-row-uf i{font-size:.6rem;margin-right:2px;}
+/* Botón "Ver cálculo" -- SOLO superadmin (Daniel fue explícito). Mismo
+   lenguaje visual que .tk-row-btn-audit para no inventar un patrón nuevo. */
+.tk-row-btn-calc{
+  border:none;border-radius:8px;background:#f3f4f6;color:#6b7280;font-size:.9rem;
+  width:36px;height:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:.15s;flex:0 0 auto;text-decoration:none;
+}
+.tk-row-btn-calc:hover{background:#dc2626;color:#fff;}
+.tk-row-btn-calc:active{transform:scale(.96);}
 @media(max-width:640px){.tk-row{grid-template-columns:1fr;justify-items:start;}}
 .tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
   font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;white-space:nowrap;}
@@ -159,6 +176,12 @@
 .cot-wiz-res-total{border-top:2px solid #e5e7eb;padding-top:7px;margin-top:3px;}
 .cot-wiz-res-total span{font-weight:900;color:#0a0a0a;font-size:.86rem !important;}
 .cot-wiz-res-total b{font-size:1.02rem;color:#dc2626 !important;}
+/* 2026-07-21 (Daniel: instructivo del equivalente en UF, "para que
+   también a esa formulación se le agregue el peaje del producto, todo
+   eso en los costos de traslado" -- el Total YA incluye costo_ruta). */
+.cot-wiz-res-uf{display:flex;justify-content:flex-end;align-items:center;gap:5px;font-size:.72rem;color:#9ca3af;margin-top:-1px;}
+.cot-wiz-res-uf b{font-weight:800;color:#6b7280;font-family:'JetBrains Mono',monospace;}
+.cot-wiz-res-uf i{cursor:help;font-size:.8rem;color:#9ca3af;}
 .tk-row-btn-pdf{color:#dc2626;font-size:1.15rem;text-decoration:none;display:inline-flex;
   align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;transition:.13s;}
 .tk-row-btn-pdf:hover{background:#fee2e2;color:#b91c1c;}
@@ -211,12 +234,37 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
   <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
   <span style="font-size:.8rem;color:#6b7280;">{{ c.created_at | chile_fmt }}</span>
   {% if c.total %}
-  <span class="tk-row-total">${{ '{:,}'.format(c.total | int).replace(',', '.') }}</span>
+  <span class="tk-row-total">
+    ${{ '{:,}'.format(c.total | int).replace(',', '.') }}
+    {# 2026-07-21 (Daniel: "ese valor lo vamos a expresar en UF, a la UF
+       actual... si sale cuarenta mil ochocientos cuarenta y cuatro con
+       setenta y nueve, que es lo que está la UF, vamos a dividirlo").
+       El total YA incluye el costo de ruta (peaje/traslado) -- no hace
+       falta sumarlo aparte, el "instructivo" solo lo aclara. Si la API
+       de mindicador.cl está caída, uf_total viene None y no se muestra
+       nada -- el CLP nunca deja de verse. #}
+    {% if c.uf_total is not none and uf_info %}
+    <span class="tk-row-uf"
+          title="Valor UF hoy{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %}: ${{ uf_info.valor | fkg(2) }} · Este monto equivale a {{ c.uf_total | fkg(2) }} UF, calculado desde las horas-hombre y el costo de ruta.">
+      <i class="bi bi-info-circle"></i>{{ c.uf_total | fkg(2) }} UF
+    </span>
+    {% endif %}
+  </span>
   {% else %}
   <span class="tk-row-total cero">sin precio</span>
   {% endif %}
   <a class="tk-row-btn-pdf" href="/tickets/cotizaciones/{{ c.id }}/pdf" target="_blank" rel="noopener"
      title="Ver PDF de la cotización"><i class="bi bi-file-earmark-pdf-fill"></i></a>
+  {% if permissions.superadmin %}
+  {# 2026-07-21 (Daniel: "debe haber, para el superadministrador, poder
+     bajar un detalle de cómo se calcula una cotización completa").
+     Estricto superadmin -- NO admin -- a diferencia del botón de
+     auditoría de abajo, porque Daniel lo pidió explícitamente así. #}
+  <a class="tk-row-btn-calc" href="/tickets/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
+     title="Ver detalle de cálculo (horas-hombre, técnicos, zona) — solo superadmin">
+    <i class="bi bi-calculator-fill"></i>
+  </a>
+  {% endif %}
   {% if c.ticket_id %}
   <a class="tk-row-ticket-link" href="/tickets/{{ c.ticket_id }}" target="_blank" rel="noopener">
     <i class="bi bi-ticket-perforated-fill me-1"></i>{{ c.numero_ticket or ('Ticket #' ~ c.ticket_id) }}
@@ -392,6 +440,14 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
         <div id="cotWizResDescRow" style="display:none;"><span>Descuento:</span><b id="cotWizResDesc">−$0</b></div>
         <div><span>IVA (19%):</span><b id="cotWizResIva">$0</b></div>
         <div class="cot-wiz-res-total"><span>Total:</span><b id="cotWizResTotal">$0</b></div>
+        {# 2026-07-21 (Daniel: equivalente en UF + instructivo). Oculto
+           por defecto -- solo aparece cuando llega el valor de la UF
+           (/api/uf-actual) y hay un total > 0; si la API externa falla,
+           esta fila simplemente no se muestra (JS, ver _cotWizActualizarUf). #}
+        <div class="cot-wiz-res-uf" id="cotWizResUfRow" style="display:none;">
+          <b id="cotWizResUf"></b>
+          <i class="bi bi-info-circle" id="cotWizResUfHint" title=""></i>
+        </div>
       </div>
       <div class="cot-clasif-foot" style="justify-content:space-between;gap:8px;">
         <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotWizIrPaso(1)">
@@ -483,6 +539,7 @@ function cotWizAbrir(){
   document.getElementById('cotWizBody').innerHTML =
     '<tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Asignar desde documento"</td></tr>';
   cotWizCargarEjecutivos();
+  _cotWizCargarUf();
   cotWizResumen();
   cotWizIrPaso(1);
   const m = document.getElementById('cotWizModal');
@@ -883,6 +940,47 @@ async function cotWizPrecios(){
 }
 
 function _wizCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
+
+// ── Equivalente en UF del Total (2026-07-21, Daniel: "ese valor lo vamos
+//    a expresar en UF, a la UF actual") ──
+// Se pide UNA vez al abrir el wizard (cotWizAbrir) y se cachea en
+// _wizUf -- cotWizResumen() se dispara en cada tecla del formulario y no
+// tiene sentido pegarle a la red en cada una (el backend /api/uf-actual
+// ya cachea 1h de por sí, pero esto evita hasta esa llamada liviana).
+// Si mindicador.cl está caído, _wizUf queda null y la fila de UF
+// simplemente no se muestra -- el resto del resumen sigue funcionando.
+let _wizUf = null;
+let _wizUfPidiendo = false;
+async function _cotWizCargarUf(){
+  if (_wizUf || _wizUfPidiendo) return;
+  _wizUfPidiendo = true;
+  try{
+    const r = await fetch('/api/uf-actual');
+    const d = await r.json();
+    if (d && d.ok && d.uf) _wizUf = { valor: parseFloat(d.uf), fecha: d.fecha || '' };
+  }catch(e){ /* sin UF disponible: se sigue mostrando solo CLP */ }
+  _wizUfPidiendo = false;
+  cotWizResumen();
+}
+function _cotWizActualizarUf(totalClp){
+  const row = document.getElementById('cotWizResUfRow');
+  const val = document.getElementById('cotWizResUf');
+  const hint = document.getElementById('cotWizResUfHint');
+  if (!row || !val) return;
+  if (!_wizUf || !_wizUf.valor || !(totalClp > 0)){
+    row.style.display = 'none';
+    return;
+  }
+  const uf = totalClp / _wizUf.valor;
+  const ufStr = uf.toLocaleString('es-CL', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  val.textContent = '≈ ' + ufStr + ' UF';
+  if (hint){
+    hint.title = 'Valor UF hoy' + (_wizUf.fecha ? ' (' + _wizUf.fecha + ')' : '') + ': ' +
+      _wizCLP(_wizUf.valor) + ' · Este monto equivale a ' + ufStr +
+      ' UF, calculado desde las horas-hombre y el costo de ruta.';
+  }
+  row.style.display = '';
+}
 function cotWizResumen(){
   if (!_WIZ) return;
   const items = _WIZ.sumaItems || 0;
@@ -899,6 +997,7 @@ function cotWizResumen(){
   document.getElementById('cotWizResDesc').textContent = '−' + _wizCLP(desc);
   document.getElementById('cotWizResIva').textContent = _wizCLP(iva);
   document.getElementById('cotWizResTotal').textContent = _wizCLP(total);
+  _cotWizActualizarUf(total);
 }
 
 (function(){
