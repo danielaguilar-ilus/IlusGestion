@@ -566,7 +566,9 @@
           <label class="form-label small fw-bold text-uppercase" style="letter-spacing:.4px;color:#374151;font-size:11px">
             Fecha despacho <span class="text-danger">*</span>
           </label>
-          <input type="date" id="newFecha" class="form-control" style="min-height:44px">
+          <input type="date" id="newFecha" class="form-control" style="min-height:44px"
+                 lang="es-CL" oninput="_actualizarFechaPreview()">
+          <div id="newFechaPreview" style="font-size:.72rem;color:#6b7280;margin-top:4px"></div>
         </div>
         <div class="mb-2">
           <label class="form-label small fw-bold text-uppercase" style="letter-spacing:.4px;color:#374151;font-size:11px">
@@ -594,7 +596,22 @@ document.addEventListener('DOMContentLoaded', function() {
   var today = new Date().toISOString().split('T')[0];
   var f = document.getElementById('newFecha');
   if (f) f.value = today;
+  _actualizarFechaPreview();
 });
+
+// El <input type="date"> nativo muestra el formato del idioma del navegador/SO
+// (a veces en inglés, mm/dd/aaaa) — no se puede forzar desde el HTML. Daniel
+// 2026-07-22: mostrar SIEMPRE una vista en español (día/mes/año) debajo, sin
+// tocar el valor real que se envía (siempre ISO yyyy-mm-dd, sin cambios).
+function _actualizarFechaPreview(){
+  var f = document.getElementById('newFecha');
+  var prev = document.getElementById('newFechaPreview');
+  if (!f || !prev) return;
+  if (!f.value) { prev.textContent = ''; return; }
+  var partes = f.value.split('-');   // yyyy-mm-dd
+  if (partes.length !== 3) { prev.textContent = ''; return; }
+  prev.textContent = partes[2] + '/' + partes[1] + '/' + partes[0];
+}
 
 function changePageSize(ps){
   var u = new URL(window.location.href);

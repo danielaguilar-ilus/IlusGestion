@@ -860,8 +860,13 @@
             <div class="tel-hint" id="tel-hint"></div>
           </div>
           <div class="client-cell">
-            <div class="client-lbl">Valor Neto</div>
-            <div class="client-val green" id="cli-neto">—</div>
+            <div class="client-lbl">
+              Valor Neto <i class="bi bi-pencil editable-ico"></i>
+              <i class="bi bi-info-circle" style="cursor:help"
+                 title="El ERP trae el valor neto TOTAL de la factura. Si el despacho es parcial, edítalo para que el Seguro (1,2%) refleje solo lo que corresponde a este envío."></i>
+            </div>
+            <input class="client-input" type="number" id="cli-neto" min="0" step="1" placeholder="0"
+                   oninput="actualizarValorNetoManual(this.value)">
           </div>
 
           {# Row 3: Dirección (span2), Seguro #}
@@ -924,14 +929,25 @@
     <div class="ac-card" id="cardCubaje" style="display:none">
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">3</span>Detalle de Cubicaje</div>
-        <button class="btn-detalle" onclick="exportarExcel()" style="padding:5px 12px;font-size:.7rem">
-          <i class="bi bi-file-earmark-excel me-1"></i>Exportar
-        </button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="btnEliminarSeleccionados" onclick="eliminarLineasSeleccionadas()"
+                  style="display:none;background:#dc2626;border:none;color:#fff;font-weight:700;
+                         font-size:.7rem;padding:5px 12px;border-radius:6px;cursor:pointer">
+            <i class="bi bi-trash me-1"></i>Eliminar seleccionados (<span id="cntSeleccionados">0</span>)
+          </button>
+          <button class="btn-detalle" onclick="exportarExcel()" style="padding:5px 12px;font-size:.7rem">
+            <i class="bi bi-file-earmark-excel me-1"></i>Exportar
+          </button>
+        </div>
       </div>
       <div class="cube-wrap" style="overflow-x:auto;max-height:320px;overflow-y:auto">
         <table class="cube-table">
           <thead>
             <tr>
+              <th class="tc" style="width:30px">
+                <input type="checkbox" id="chkTodosCubaje" onchange="toggleSeleccionarTodoCubaje(this.checked)"
+                       title="Seleccionar/deseleccionar todos">
+              </th>
               <th>SKU</th>
               <th>Descripción ERP</th>
               <th class="tc">Cant.</th>
@@ -1538,6 +1554,24 @@ async function guardarZzEnvioSaldo(){
 }
 
 // ════════════════════════════════════════════════════════════
+//  VALOR NETO EDITABLE (Daniel 2026-07-22)
+// ════════════════════════════════════════════════════════════
+// El ERP trae el valor neto TOTAL de la factura. Igual que ZZ Envío, si el
+// despacho es parcial ese total no corresponde al Seguro (1,2%) de ESTE
+// envío. Editar recalcula el Seguro al instante (en pantalla y en el
+// resumen) y actualiza _docData.header.valor_neto para que cualquier otro
+// cálculo que lo use (ej. al re-cotizar) tome el valor corregido.
+function actualizarValorNetoManual(val){
+  if(!_docData || !_docData.header) return;
+  const n = Math.max(0, parseFloat(val) || 0);
+  _docData.header.valor_neto = n;
+  const seguro = n * 0.012;
+  setText('cli-seguro', fClp(seguro));
+  setText('res-neto',   n > 0 ? fClp(n) : '—');
+  setText('res-seguro', fClp(seguro));
+}
+
+// ════════════════════════════════════════════════════════════
 //  BUSCAR DOCUMENTO
 // ════════════════════════════════════════════════════════════
 // Cache JS de documentos buscados (TTL 90s, mismo que backend)
@@ -1947,7 +1981,11 @@ function renderDoc(d, elapsedMs){
   setText('cli-nombre', h.cliente_nombre || 'Cliente no informado por ERP');
   setText('cli-rut',    h.cliente_rut    || '—');
   setText('cli-fecha',  h.fecha          || '—');
-  setText('cli-neto',   fClp(h.valor_neto));
+  // Valor Neto ahora es editable (Daniel 2026-07-22): igual que ZZ Envío, si
+  // el despacho es parcial el total de la factura no corresponde al seguro
+  // de ESTE envío. Ver actualizarValorNetoManual.
+  const _elNeto = document.getElementById('cli-neto');
+  if (_elNeto) _elNeto.value = h.valor_neto > 0 ? Math.round(h.valor_neto) : '';
   // ZZ Envío ahora es editable (Daniel 2026-07-22): input numérico crudo, no
   // texto formateado. Se precarga con el valor del ERP (editable si el
   // despacho es parcial — ver actualizarZzEnvioManual).
@@ -2101,6 +2139,7 @@ function renderCubaje(){
     tBult += (parseInt(l.bultos_tot)   || 0);
 
     rows += `<tr>
+      <td class="tc" data-label=""><input type="checkbox" class="cube-chk" data-idx="${idx}" onchange="actualizarBotonEliminarSeleccionados()"></td>
       <td class="mono" data-label="SKU">${l.sku}</td>
       <td class="cube-desc" data-label="Descripción" style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
       <td class="tc" data-label="Cant.">${parseInt(qty)}</td>
@@ -2122,13 +2161,18 @@ function renderCubaje(){
   });
 
   if(!rows){
-    rows = `<tr class="cube-empty-row"><td colspan="12" class="cube-empty-cell" style="text-align:center;padding:26px 12px;color:#9ca3af">
+    rows = `<tr class="cube-empty-row"><td colspan="13" class="cube-empty-cell" style="text-align:center;padding:26px 12px;color:#9ca3af">
       <div style="font-size:1.4rem">📦</div>
       <div style="font-weight:700;margin-top:4px">Sin productos en la cotización</div>
       <div style="font-size:.78rem;margin-top:2px">Busca un documento para cargar su detalle.</div>
     </td></tr>`;
   }
   tbody.innerHTML = rows;
+  // Cada re-render recrea los checkboxes (todos desmarcados) — resetear el
+  // "seleccionar todos" y ocultar el botón de eliminación masiva.
+  const _chkTodos = document.getElementById('chkTodosCubaje');
+  if(_chkTodos) _chkTodos.checked = false;
+  actualizarBotonEliminarSeleccionados();
 
   // ── Persistir totales recalculados (los lee actualizarTarifas / resumen)
   // Si el operador ya cargó medidas MANUALES (documento sin ficha técnica,
@@ -2183,6 +2227,53 @@ async function eliminarLineaCubaje(idx){
   actualizarTarifas();
 
   ilusToast(`✓ Producto ${l.sku} quitado de la cotización`, { type: 'success' });
+}
+
+// Marca/desmarca TODOS los checkboxes de la tabla de cubicaje de una vez
+// (Daniel 2026-07-22: con 20 productos y solo 1 por enviar, es más rápido
+// "seleccionar todos" y luego destildar el que sí tiene saldo).
+function toggleSeleccionarTodoCubaje(marcar){
+  document.querySelectorAll('#tbodyCubaje .cube-chk').forEach(chk => { chk.checked = marcar; });
+  actualizarBotonEliminarSeleccionados();
+}
+
+// Muestra/oculta el botón "Eliminar seleccionados" y actualiza el contador.
+function actualizarBotonEliminarSeleccionados(){
+  const n = document.querySelectorAll('#tbodyCubaje .cube-chk:checked').length;
+  const btn = document.getElementById('btnEliminarSeleccionados');
+  const cnt = document.getElementById('cntSeleccionados');
+  if(cnt) cnt.textContent = n;
+  if(btn) btn.style.display = n > 0 ? '' : 'none';
+}
+
+// Elimina TODOS los productos marcados de una sola vez (Daniel 2026-07-22):
+// evita repetir "eliminar" producto por producto cuando hay muchos que quitar.
+// Misma lógica que eliminarLineaCubaje pero en lote, con 1 sola confirmación.
+async function eliminarLineasSeleccionadas(){
+  if(!_docData || !Array.isArray(_docData.lineas)) return;
+  const checks = Array.from(document.querySelectorAll('#tbodyCubaje .cube-chk:checked'));
+  if(!checks.length) return;
+  const idxs = checks.map(c => parseInt(c.dataset.idx, 10)).filter(n => !isNaN(n));
+  if(!idxs.length) return;
+
+  const skus = idxs.map(i => _docData.lineas[i]).filter(Boolean).map(l => l.sku);
+  const ok = await ilusConfirm({
+    title: 'Quitar productos seleccionados',
+    message: `¿Quitar ${idxs.length} producto(s) de la cotización?`,
+    sub: skus.slice(0, 6).map(s => escHtml(s)).join(', ') + (skus.length > 6 ? ` +${skus.length - 6} más` : ''),
+    okLabel: 'Quitar todos', cancelLabel: 'Cancelar',
+    danger: true,
+    type: 'danger',
+  });
+  if(!ok) return;
+
+  // Borrar de mayor a menor índice para no desfasar los índices restantes.
+  idxs.sort((a, b) => b - a).forEach(i => _docData.lineas.splice(i, 1));
+
+  renderCubaje();
+  actualizarTarifas();
+
+  ilusToast(`✓ ${idxs.length} producto(s) quitado(s) de la cotización`, { type: 'success' });
 }
 
 // ════════════════════════════════════════════════════════════
