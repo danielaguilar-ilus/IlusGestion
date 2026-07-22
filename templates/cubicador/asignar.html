@@ -893,10 +893,22 @@
             <div class="client-lbl">
               ZZ Envío <i class="bi bi-pencil editable-ico"></i>
               <i class="bi bi-info-circle" style="cursor:help"
-                 title="El ERP trae el ZZ Envío TOTAL de la factura. Si el despacho es parcial, edita este valor para que refleje solo lo que corresponde a este envío — de esto depende el margen mostrado junto a cada courier."></i>
+                 title="El ERP trae el ZZ Envío TOTAL de la factura. Si el despacho es parcial, edita este valor para que refleje solo el saldo disponible — de esto depende el margen mostrado junto a cada courier. Presiona Guardar para que el saldo quede registrado y se recuerde la próxima vez que busques este documento."></i>
             </div>
-            <input class="client-input" type="number" id="cli-zzenvio" min="0" step="1" placeholder="0"
-                   oninput="actualizarZzEnvioManual(this.value)">
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="client-input" type="number" id="cli-zzenvio" min="0" step="1" placeholder="0"
+                     style="flex:1"
+                     oninput="actualizarZzEnvioManual(this.value)">
+              <button type="button" onclick="guardarZzEnvioSaldo()"
+                      style="background:#0a0a0a;border:none;color:#fff;border-radius:6px;
+                             width:34px;height:34px;flex-shrink:0;cursor:pointer;font-size:.85rem"
+                      title="Guardar este saldo — quedará disponible la próxima vez que busques este documento">
+                <i class="bi bi-save2"></i>
+              </button>
+            </div>
+            <div id="zz-saldo-badge" style="font-size:.68rem;color:#b45309;margin-top:2px;display:none">
+              <i class="bi bi-clock-history me-1"></i>Este es un SALDO guardado, no el total del ERP
+            </div>
           </div>
           <div class="client-cell" style="border-bottom:none">
             <div class="client-lbl">Total Bultos <i class="bi bi-pencil editable-ico"></i></div>
@@ -1493,6 +1505,38 @@ function actualizarZzEnvioManual(val){
   }
 }
 
+// Guarda el saldo de ZZ Envío EN EL SERVIDOR (Daniel 2026-07-22): un despacho
+// parcializado deja un saldo que debe recordarse para la próxima vez que se
+// consulte el mismo documento — no solo mientras dure esta pestaña abierta.
+async function guardarZzEnvioSaldo(){
+  if(!_docData || !_docData.header) return;
+  const tido = _docData.header.tido, nudo = _docData.header.nudo;
+  if(!tido || !nudo){
+    if(window.ilusToast) ilusToast('Busca un documento primero', {type:'warning'});
+    return;
+  }
+  const el = document.getElementById('cli-zzenvio');
+  const saldo = Math.max(0, parseFloat(el ? el.value : 0) || 0);
+  try {
+    const r = await fetch('/api/asignar/zzenvio-saldo', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        tido, nudo, saldo,
+        valor_original: _docData._zzenvioValorAlCargar || saldo,
+      }),
+    });
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error || ('HTTP '+r.status));
+    _docData._zzenvioValorAlCargar = saldo;  // ya es el nuevo "punto de partida"
+    const badge = document.getElementById('zz-saldo-badge');
+    if(badge) badge.style.display = '';
+    if(window.ilusToast) ilusToast('✓ Saldo de ZZ Envío guardado — quedará disponible la próxima vez que busques este documento', {type:'success'});
+  } catch(e){
+    if(window.ilusToast) ilusToast('Error al guardar el saldo: '+e.message, {type:'error'});
+  }
+}
+
 // ════════════════════════════════════════════════════════════
 //  BUSCAR DOCUMENTO
 // ════════════════════════════════════════════════════════════
@@ -1909,6 +1953,11 @@ function renderDoc(d, elapsedMs){
   // despacho es parcial — ver actualizarZzEnvioManual).
   const _elZz = document.getElementById('cli-zzenvio');
   if (_elZz) _elZz.value = d.zzenvio_valor > 0 ? Math.round(d.zzenvio_valor) : '';
+  // Referencia para el guardado (Daniel 2026-07-22): lo que se ve AL CARGAR
+  // el documento — sea el total crudo del ERP o un saldo ya guardado antes.
+  _docData._zzenvioValorAlCargar = d.zzenvio_valor || 0;
+  const _zzBadge = document.getElementById('zz-saldo-badge');
+  if (_zzBadge) _zzBadge.style.display = d.zzenvio_es_saldo ? '' : 'none';
   setText('cli-seguro', fClp(h.valor_neto * 0.012));
 
   // ── DIAGNÓSTICO: bloque amarillo + campos crudos SOLO visible a superadmin.

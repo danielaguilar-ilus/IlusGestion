@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manifiesto de entrega · {{ manifiesto.correlativo or manifiesto.id }}</title>
+<style>
+:root {
+  --ilus-red:   #dc2626;
+  --ilus-black: #0a0a0a;
+  --ilus-white: #ffffff;
+  --ilus-gray:  #6b7280;
+}
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+@page { size: A4; margin: 10mm 12mm; }
+html, body {
+  margin: 0; padding: 0;
+  background: #e5e7eb;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #111827;
+  font-size: 12px;
+}
+
+/* ── Barra de acciones (solo pantalla, nunca impresa) ── */
+.toolbar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 12px 16px;
+  background: var(--ilus-black); color: var(--ilus-white);
+}
+.toolbar .tb-title { font-weight: 800; font-size: 15px; }
+.toolbar .tb-actions { display: flex; gap: 8px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 40px; padding: 0 16px; border: 0; border-radius: 8px;
+  font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none;
+  font-family: inherit;
+}
+.btn-print { background: var(--ilus-red); color: #fff; }
+.btn-outline { background: transparent; color: #fff; border: 1.5px solid #444; }
+
+.hoja {
+  width: 186mm;
+  margin: 16px auto;
+  background: #fff;
+  box-shadow: 0 4px 18px rgba(0,0,0,.12);
+}
+.hoja:last-child { margin-bottom: 40px; }
+
+/* ── Header ── */
+.hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--ilus-black); color: #fff;
+  padding: 14px 20px;
+}
+.hdr-logos { display: flex; align-items: center; gap: 14px; }
+.hdr-shs {
+  background: #fff; color: #0a0a0a; border-radius: 4px;
+  padding: 6px 12px; line-height: 1.05; font-weight: 800;
+}
+.hdr-shs .l1 { font-size: 14px; letter-spacing: .5px; }
+.hdr-shs .l2 { font-size: 8px; color: #6b7280; font-weight: 700; letter-spacing: 2px; }
+.hdr-logos img { height: 58px; }
+.hdr-doc { text-align: right; }
+.hdr-doc .tit { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
+.hdr-doc .num { font-size: 20px; font-weight: 800; color: var(--ilus-red); }
+.hdr-doc .fec { font-size: 10px; color: #9ca3af; margin-top: 2px; }
+.accent { height: 6px; background: var(--ilus-red); }
+
+/* ── Cajas de datos ── */
+.datos { display: flex; }
+.datos .col { flex: 1; padding: 14px 20px; }
+.datos .col:first-child { border-right: 1px solid #e5e7eb; }
+.datos h4 {
+  margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .5px;
+}
+.datos .row { display: flex; gap: 6px; margin-bottom: 3px; font-size: 11px; }
+.datos .row b { min-width: 62px; flex-shrink: 0; }
+
+.infobar {
+  display: flex; gap: 24px; background: #f3f4f6;
+  padding: 10px 20px; font-size: 11px;
+}
+.infobar b { color: var(--ilus-red); }
+
+.sec-hdr {
+  background: var(--ilus-black); color: #fff;
+  padding: 8px 20px; font-weight: 800; font-size: 12px;
+  border-left: 5px solid var(--ilus-red);
+  display: flex; justify-content: space-between; align-items: center;
+}
+
+table.detalle { width: 100%; border-collapse: collapse; }
+table.detalle th {
+  background: var(--ilus-black); color: #fff; text-align: left;
+  padding: 6px 20px; font-size: 10px; font-weight: 700;
+}
+table.detalle th:first-child { padding-left: 20px; }
+table.detalle td { padding: 5px 20px; font-size: 11px; border-bottom: 1px solid #f0f0f0; }
+table.detalle tr:nth-child(even) td { background: #fafafa; }
+table.detalle td.num, table.detalle th.num { text-align: right; }
+
+.totales {
+  display: flex; justify-content: flex-end; gap: 26px;
+  padding: 10px 20px; background: #f9fafb; border-top: 2px solid var(--ilus-black);
+}
+.totales .item { text-align: right; }
+.totales .item .lbl { font-size: 9px; color: var(--ilus-gray); letter-spacing: .5px; }
+.totales .item .val { font-size: 14px; font-weight: 800; }
+
+.declaracion {
+  padding: 12px 20px; font-size: 10.5px; color: #374151;
+  background: #fffbeb; border-top: 1px solid #fde68a; border-bottom: 1px solid #fde68a;
+}
+
+.firmas { display: flex; gap: 18px; padding: 18px 20px 22px; }
+.firma-box { flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 12px 14px; }
+.firma-box .cap { font-size: 10.5px; font-weight: 700; text-align: center; margin-bottom: 34px; }
+.firma-linea { border-top: 1px solid #9ca3af; margin-bottom: 6px; }
+.firma-campo { font-size: 9.5px; color: var(--ilus-gray); margin-top: 4px; }
+.firma-campo b { color: #111827; }
+
+.footer-doc {
+  text-align: center; font-size: 9px; color: var(--ilus-gray);
+  padding: 8px 0 14px;
+}
+
+@media print {
+  .toolbar { display: none !important; }
+  body { background: #fff; }
+  .hoja { box-shadow: none; margin: 0; width: auto; }
+  .hoja:not(:last-child) { page-break-after: always; }
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar no-print">
+  <div class="tb-title">📋 Manifiesto de entrega · {{ manifiesto.correlativo or manifiesto.id }} — {{ items|length }} documento(s)</div>
+  <div class="tb-actions">
+    {% if pdf_url %}
+    <a class="btn btn-outline" href="{{ pdf_url }}" target="_blank">⬇ Descargar PDF</a>
+    {% endif %}
+    <button class="btn btn-print" onclick="window.print()">🖨 Imprimir (navegador)</button>
+  </div>
+</div>
+
+{% for it in items %}
+<div class="hoja">
+  <div class="hdr">
+    <div class="hdr-logos">
+      <div class="hdr-shs"><div class="l1">SPORTS<br>HEALTH</div><div class="l2">SOLUTIONS</div></div>
+      {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
+    </div>
+    <div class="hdr-doc">
+      <div class="tit">MANIFIESTO DE ENTREGA</div>
+      <div class="num">N° {{ manifiesto.correlativo or manifiesto.id }}</div>
+      <div class="fec">FECHA EMISIÓN: {{ fecha }}</div>
+    </div>
+  </div>
+  <div class="accent"></div>
+
+  <div class="datos">
+    <div class="col">
+      <h4>DATOS DEL REMITENTE</h4>
+      <div class="row"><b>Razón social:</b> {{ remitente.nombre }}</div>
+      <div class="row"><b>R.U.T.:</b> {{ remitente.rut }}</div>
+      <div class="row"><b>Dirección:</b> {{ remitente.direccion }}</div>
+      <div class="row"><b>Bodega:</b> {{ remitente.bodega }}</div>
+      <div class="row"><b>Fono:</b> {{ remitente.telefono }}</div>
+    </div>
+    <div class="col">
+      <h4>DATOS DEL DESTINATARIO</h4>
+      <div class="row"><b>Nombre:</b> {{ it.cliente_nombre or '—' }}</div>
+      <div class="row"><b>R.U.T.:</b> {{ it.cliente_rut or '—' }}</div>
+      <div class="row"><b>Dirección:</b> {{ it.direccion or '—' }}</div>
+      <div class="row"><b>Comuna:</b> {{ it.comuna or '—' }}</div>
+      <div class="row"><b>Fono:</b> {{ it.telefono or '—' }}</div>
+    </div>
+  </div>
+
+  <div class="infobar">
+    <span><b>Documento:</b> {{ it.tido }} N°{{ it.nudo }}</span>
+    <span><b>Courier:</b> {{ manifiesto.courier or '—' }}</span>
+    <span><b>Bultos:</b> {{ it.n_bultos }}</span>
+    <span><b>Peso a declarar:</b> {{ '%.2f'|format(it.peso_declarar) }} kg</span>
+  </div>
+
+  <div class="sec-hdr">
+    <span>DETALLE DE PRODUCTOS A ENTREGAR</span>
+    <span>{{ it.lineas|length }} línea(s)</span>
+  </div>
+  <table class="detalle">
+    <thead>
+      <tr><th style="width:60px">#</th><th style="width:110px">SKU</th><th>Descripción</th><th class="num" style="width:80px">Cantidad</th></tr>
+    </thead>
+    <tbody>
+      {% if it.lineas %}
+        {% for l in it.lineas %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ l.sku }}</td>
+          <td>{{ l.descripcion }}</td>
+          <td class="num">{{ l.cantidad|int if l.cantidad == l.cantidad|int else l.cantidad }}</td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:14px 20px">Sin detalle de productos disponible para este documento.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  <div class="totales">
+    <div class="item"><div class="lbl">TOTAL BULTOS</div><div class="val">{{ it.n_bultos }}</div></div>
+    <div class="item"><div class="lbl">PESO A DECLARAR (KG)</div><div class="val">{{ '%.2f'|format(it.peso_declarar) }}</div></div>
+  </div>
+
+  <div class="declaracion">
+    Declaro haber recibido conforme los productos detallados arriba, en las cantidades y condiciones indicadas,
+    a entera satisfacción. Cualquier daño, faltante o diferencia debe indicarse por escrito en este mismo documento antes de firmar.
+  </div>
+
+  <div class="firmas">
+    <div class="firma-box">
+      <div class="cap">Firma de quien entrega (ILUS / Courier)</div>
+      <div class="firma-linea"></div>
+      <div class="firma-campo">Nombre: ______________________________</div>
+      <div class="firma-campo">Fecha / Hora: ____________________</div>
+    </div>
+    <div class="firma-box">
+      <div class="cap">Firma de conformidad del cliente</div>
+      <div class="firma-linea"></div>
+      <div class="firma-campo">Nombre: ______________________________</div>
+      <div class="firma-campo">R.U.T.: ________________  Fecha / Hora: ____________</div>
+    </div>
+  </div>
+
+  <div class="footer-doc">Documento {{ loop.index }} de {{ items|length }} · Manifiesto {{ manifiesto.correlativo or manifiesto.id }} · Este comprobante es el respaldo oficial de entrega.</div>
+</div>
+{% endfor %}
+
+</body>
+</html>

@@ -17335,6 +17335,16 @@ def api_asignar_documento():
             zzenvio_valor = float(l.get("vaneli", 0))
             break
 
+    # Saldo editable persistente (2026-07-22, Daniel): si Daniel ya guardó un
+    # saldo para este documento (ej. despacho parcializado — solo queda 1 item
+    # de N por enviar), usar ESE valor en vez del total crudo del ERP. Si nunca
+    # se editó, comportamiento idéntico a hoy (valor del ERP tal cual).
+    zzenvio_es_saldo = False
+    _zz_row = _zz_saldo_get(tido, nudo)
+    if _zz_row is not None:
+        zzenvio_valor    = float(_zz_row.get("zz_envio_saldo") or 0)
+        zzenvio_es_saldo = True
+
     lineas_out = []
     tot_qty = tot_kg = tot_pv = tot_vol = tot_pred = tot_bultos = 0.0
 
@@ -17488,10 +17498,65 @@ def api_asignar_documento():
             "vol_cm3":      round(tot_vol,  1),
             "peso_pred":    round(tot_pred, 3),
         },
-        "tipos_doc":     TIPOS_DOC_CUBICADOR,
-        "zzenvio_valor": round(zzenvio_valor, 0),
-        "from_cache":    _from_cache,
+        "tipos_doc":       TIPOS_DOC_CUBICADOR,
+        "zzenvio_valor":   round(zzenvio_valor, 0),
+        "zzenvio_es_saldo": zzenvio_es_saldo,
+        "from_cache":      _from_cache,
     })
+
+
+@app.route("/api/asignar/zzenvio-saldo", methods=["PUT"])
+@login_required
+def api_asignar_zzenvio_saldo():
+    """Guarda el saldo EDITADO de ZZ Envío para un documento (2026-07-22,
+    Daniel): con despachos parcializados, el ZZ Envío del ERP (total de la
+    factura) deja de representar lo que falta por enviar. Este saldo queda
+    GUARDADO — la próxima vez que se busque el mismo documento (acá o en
+    cualquier otra consulta), _zz_saldo_get() lo devuelve en vez del valor
+    crudo del ERP.
+
+    POST/PUT JSON: { tido, nudo, saldo, valor_original? }
+    valor_original: el zzenvio_valor que traía el ERP en el momento del
+    PRIMER guardado — se preserva como referencia auditable; en guardados
+    posteriores del MISMO documento no se pisa (solo se actualiza el saldo).
+    """
+    if not g.permissions.get("cubicador"):
+        return jsonify({"error": "Sin permiso"}), 403
+
+    data  = request.get_json(silent=True) or {}
+    tido  = (data.get("tido") or "").strip().upper()
+    nudo  = (data.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"error": "tido y nudo son requeridos"}), 400
+    try:
+        saldo = max(0.0, float(data.get("saldo", 0) or 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "saldo inválido"}), 400
+    try:
+        valor_original = float(data.get("valor_original", saldo) or saldo)
+    except (TypeError, ValueError):
+        valor_original = saldo
+
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO transport_zz_saldo "
+                "  (tido, nudo, zz_envio_original, zz_envio_saldo, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE "
+                "  zz_envio_saldo = VALUES(zz_envio_saldo), "
+                "  updated_by     = VALUES(updated_by)",
+                (tido, nudo, round(valor_original, 2), round(saldo, 2), current_username()),
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[zz-saldo] guardar falló {tido}/{nudo}: {e}", flush=True)
+        return jsonify({"error": "No se pudo guardar el saldo"}), 500
+
+    _tr_log("documento", f"{tido}{nudo}", "zz envío saldo editado",
+             f"nuevo saldo={round(saldo,2)}")
+    return jsonify({"ok": True, "saldo": round(saldo, 2)})
 
 
 @app.route("/api/asignar/tarifa-fedex", methods=["POST"])
@@ -26693,6 +26758,53 @@ def tr_asignar_chofer(mid):
     return jsonify({"ok": True, "chofer": drv["nombre"]})
 
 
+# ── ZZ ENVÍO: saldo persistente por documento (2026-07-22, Daniel) ───────────
+# El ERP siempre trae el ZZ Envío TOTAL de la factura. Cuando un despacho se
+# hace de forma PARCIALIZADA (ej. queda 1 solo item con saldo de N que traía
+# el documento), el flete ya cobrado en el ERP no corresponde 1:1 a lo que
+# falta despachar. Daniel necesita EDITAR ese valor Y que quede GUARDADO
+# (no solo en pantalla) para que la próxima vez que se busque el mismo
+# documento — desde Asignar y Cotizar o cualquier otra consulta — se vea el
+# saldo real disponible, no el total original del ERP.
+def _ensure_transport_zz_saldo_table():
+    """Tabla NUEVA — se crea SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 (no
+    depende de init_transporte_tables, que en prod NO corre). Idempotente."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_zz_saldo (
+                    id                 INT AUTO_INCREMENT PRIMARY KEY,
+                    tido               VARCHAR(5)   NOT NULL,
+                    nudo               VARCHAR(15)  NOT NULL,
+                    zz_envio_original  DECIMAL(12,2) DEFAULT 0 COMMENT 'Valor ZZ Envío tal como vino del ERP la 1a vez que se guardó un saldo',
+                    zz_envio_saldo     DECIMAL(12,2) DEFAULT 0 COMMENT 'Saldo actual disponible tras despachos parciales — editable desde Asignar y Cotizar',
+                    notas              VARCHAR(300),
+                    updated_by         VARCHAR(190),
+                    created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_doc (tido, nudo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _zz_saldo_get(tido, nudo):
+    """Devuelve el saldo guardado para (tido,nudo), o None si nunca se editó
+    (en ese caso el caller debe seguir usando el valor crudo del ERP)."""
+    try:
+        return mysql_fetchone(
+            "SELECT zz_envio_original, zz_envio_saldo, updated_at, updated_by "
+            "FROM transport_zz_saldo WHERE tido=%s AND nudo=%s",
+            (tido, nudo)
+        )
+    except Exception as e:
+        print(f"[zz-saldo] lookup falló {tido}/{nudo}: {e}", flush=True)
+        return None
+
+
 # ── MANIFIESTOS: export a Excel de carga masiva (FedEx / SimplyRoute) ─────────
 
 def _tr_sender_cfg():
@@ -26892,6 +27004,118 @@ def _tr_manifiesto_items_export(mid):
     for it in items:
         it["peso_vol_kg"] = round(peso_vol_por_commitment.get(it["commitment_id"], 0.0), 3)
     return items
+
+
+def _tr_manifiesto_items_firma(mid):
+    """Items del manifiesto para el DOCUMENTO DE FIRMA (acta de entrega),
+    2026-07-22 (Daniel): pedido para dejar respaldo firmado por el cliente al
+    recibir. Reusa _tr_manifiesto_items_export (mismo peso predominante,
+    misma fuente de verdad que la carga masiva) y agrega lo que ese export no
+    necesita: RUT del cliente + detalle de líneas (SKU/descripción/cantidad)
+    para la tabla itemizada, en el mismo estilo que las cotizaciones ILUS.
+    """
+    items = _tr_manifiesto_items_export(mid)
+    if not items:
+        return items
+
+    commitment_ids = [it["commitment_id"] for it in items]
+    ph = ",".join(["%s"] * len(commitment_ids))
+
+    ruts = mysql_fetchall(f"""
+        SELECT id, cliente_rut FROM transport_commitments WHERE id IN ({ph})
+    """, tuple(commitment_ids)) or []
+    rut_por_commitment = {r["id"]: (r.get("cliente_rut") or "") for r in ruts}
+
+    lineas = mysql_fetchall(f"""
+        SELECT commitment_id, koprct AS sku, nokopr AS descripcion, cantidad
+          FROM transport_commitment_lines
+         WHERE commitment_id IN ({ph})
+         ORDER BY id
+    """, tuple(commitment_ids)) or []
+    lineas_por_commitment = {}
+    for l in lineas:
+        lineas_por_commitment.setdefault(l["commitment_id"], []).append({
+            "sku":         l.get("sku") or "",
+            "descripcion": l.get("descripcion") or l.get("sku") or "",
+            "cantidad":    float(l.get("cantidad") or 0),
+        })
+
+    for it in items:
+        cid = it["commitment_id"]
+        it["cliente_rut"] = rut_por_commitment.get(cid, "")
+        it["lineas"]      = lineas_por_commitment.get(cid, [])
+        it["peso_declarar"] = round(max(float(it.get("peso_kg") or 0),
+                                         float(it.get("peso_vol_kg") or 0)), 3)
+    return items
+
+
+@app.route("/transporte/manifiestos/<int:mid>/firma")
+@_tr_required
+def tr_manifiesto_firma(mid):
+    """Vista HTML del documento de firma (acta de entrega) — 2026-07-22
+    (Daniel): respaldo firmado por el cliente al recibir. Diseño calcado del
+    estándar de Cotizaciones ILUS (header negro+logo, borde rojo, cajas de
+    datos, tabla itemizada, 2 casillas de firma al pie) que Daniel compartió
+    como referencia. Una página por documento/commitment del manifiesto —
+    cada destinatario firma la suya."""
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        flash("Manifiesto no encontrado", "danger")
+        return redirect(url_for("tr_manifiestos"))
+
+    items = _tr_manifiesto_items_firma(mid)
+    if not items:
+        flash("Este manifiesto no tiene items para generar el documento de firma.", "warning")
+        return redirect(url_for("tr_manifiesto_detalle", mid=mid))
+
+    return render_template(
+        "transporte/manifiesto_firma.html",
+        items       = items,
+        remitente   = ILUS_REMITENTE,
+        manifiesto  = manifiesto,
+        fecha       = _now_chile_str("%d-%m-%Y"),
+        logo_url    = _logo_data_url(),
+        pdf_url     = url_for("tr_manifiesto_firma_pdf", mid=mid),
+    )
+
+
+@app.route("/transporte/manifiestos/<int:mid>/firma/pdf")
+@_tr_required
+def tr_manifiesto_firma_pdf(mid):
+    """Descarga PDF del documento de firma — mismo HTML que la vista, vía
+    Playwright (_pw_pdf, A4). Si Chromium no está disponible, el botón
+    'Imprimir (navegador)' de la vista HTML sigue funcionando como respaldo."""
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        return "Manifiesto no encontrado", 404
+
+    items = _tr_manifiesto_items_firma(mid)
+    if not items:
+        return "Manifiesto sin items para generar el documento de firma", 400
+
+    html = render_template(
+        "transporte/manifiesto_firma.html",
+        items       = items,
+        remitente   = ILUS_REMITENTE,
+        manifiesto  = manifiesto,
+        fecha       = _now_chile_str("%d-%m-%Y"),
+        logo_url    = _logo_data_url(),
+        pdf_url     = "",
+    )
+    try:
+        data = _pw_pdf(html, page_format="A4", margin={"top": "0mm", "right": "0mm",
+                                                        "bottom": "0mm", "left": "0mm"})
+    except PDFEngineUnavailable as e:
+        return (f"Motor PDF no disponible: {e}. Usa el botón 'Imprimir (navegador)' como alternativa.", 503)
+    except Exception as e:
+        print(f"[tr_manifiesto_firma_pdf] error: {type(e).__name__}: {e}", flush=True)
+        return f"Error generando PDF: {type(e).__name__}", 500
+
+    _tr_log("manifest", mid, "documento firma pdf", f"{len(items)} documentos")
+    correlativo = manifiesto.get("correlativo") or mid
+    return Response(data, mimetype="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="manifiesto-firma-{correlativo}.pdf"'
+    })
 
 
 @app.route("/transporte/manifiestos/<int:mid>/export", methods=["GET"])
@@ -72073,6 +72297,13 @@ try:
         _ensure_tickets_killswitch_cerrado()  # Daniel 2026-07-11: llave de tickets nace CERRADA
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
+
+# ZZ Envío saldo persistente (2026-07-22, Daniel) — SIEMPRE, incluso
+# skip-migrations: tabla nueva, no depende de init_transporte_tables.
+try:
+    _ensure_transport_zz_saldo_table()
+except Exception as _ensure_zz_err:
+    print(f"[ILUS][WARN] tabla transport_zz_saldo: {_ensure_zz_err}", flush=True)
 
 # Módulo Clientes central (2026-07-12): amplía tipo_cliente con
 # 'instalacion'/'prospecto'. SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

@@ -108,6 +108,11 @@
     <a href="{{ url_for('tr_manifiesto_export', mid=manifiesto.id) }}" class="btn btn-sm btn-success fw-bold">
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
     </a>
+    <button class="btn btn-sm btn-outline-dark fw-bold"
+            onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/firma', '_blank')"
+            title="Documento imprimible con espacio de firma del cliente — respaldo de entrega">
+      <i class="bi bi-file-earmark-check me-1"></i>Manifiesto de firma
+    </button>
     {% if es_fedex %}
     {# Botón premium destacado: imprimir TODAS las etiquetas FedEx del manifiesto.
        Solo visible si hay al menos 1 OT FedEx emitida (no muestra si todas están "sin OT"). #}
