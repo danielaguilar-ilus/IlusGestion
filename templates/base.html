@@ -504,7 +504,16 @@
     </div>
     {% endif %}
     {% if current_user and current_user.role != 'tecnico' %}
-    <a href="{{ url_for('cotizaciones_hub_list') }}"
+    {# 2026-07-23 (Daniel, feedback en vivo: "le das crear cotizaciones,
+       te lleva como a otra tabla de cotizaciones, y no puedes volver").
+       Causa real: este link apuntaba a cotizaciones_hub_list (un hub
+       resumen aparte, templates/clientes_hub/cotizaciones.html) cuyo
+       propio botón "Crear Cotización" navega de página hacia
+       tk_cotizaciones_list -- dos tablas distintas, sin vuelta. Fix:
+       el menú entra SIEMPRE directo a la página real (tabla + wizard
+       modal). El hub viejo NO se borró (Regla #4.2) -- queda accesible
+       solo por URL directa /cotizaciones si alguien la tenía guardada. #}
+    <a href="{{ url_for('tk_cotizaciones_list') }}"
        class="sidebar-link{% if request.endpoint in ['cotizaciones_hub_list','tk_cotizaciones_list'] %} active{% endif %}">
       <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
     </a>

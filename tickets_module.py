@@ -1443,6 +1443,14 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN notas_internas TEXT NULL")
         if "ejecutivo" not in existentes:
             alters.append("ADD COLUMN ejecutivo VARCHAR(190) NULL")
+        # 2026-07-23 (Daniel, auditoría: "quién lo hizo, cuándo, si se
+        # editó, quién lo editó"). created_by/created_at/updated_at YA
+        # existían desde el CREATE TABLE original (updated_at con ON
+        # UPDATE CURRENT_TIMESTAMP automático) -- solo faltaba quién
+        # hizo la última edición. Mismo nombre/patrón que
+        # cat_productos.updated_by (catalogo_module.py).
+        if "updated_by" not in existentes:
+            alters.append("ADD COLUMN updated_by VARCHAR(190) NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
@@ -2025,11 +2033,20 @@ def register_tickets_routes(app, ctx):
         total = _tk_money_round(subtotal * (1 - desc / 100.0))
         return {"hh": hh, "precio_unitario": precio_unitario, "subtotal": subtotal, "total": total}
 
-    def _tk_cotiz_recalcular(cid):
+    def _tk_cotiz_recalcular(cid, user=None):
         """Recalcula ítems + totales de una cotización según la
         clasificación actual de cada ítem. Persiste en tk_cotizacion_items
         y tk_cotizaciones. Devuelve dict con los totales, o None si la
-        cotización no existe."""
+        cotización no existe.
+
+        `user` (2026-07-23, auditoría): quien disparó este recálculo queda
+        en tk_cotizaciones.updated_by. Ojo -- el frontend llama a este
+        mismo endpoint tanto justo después de crear la cotización (mismo
+        flujo del wizard, ver cotizaciones.html) como después de clasificar
+        un ítem pendiente en un momento posterior real; ambos casos quedan
+        registrados igual (no se distingue "parte de la creación" de
+        "edición posterior" -- hacerlo requeriría un flujo de edición que
+        Daniel no pidió todavía)."""
         cab = mysql_fetchone(
             "SELECT id, tipo_servicio, comuna, costo_ruta, descuento_pct, iva_pct "
             "FROM tk_cotizaciones WHERE id=%s", (cid,))
@@ -2124,9 +2141,9 @@ def register_tickets_routes(app, ctx):
         total = subtotal - descuento_monto + iva_monto
         mysql_execute(
             "UPDATE tk_cotizaciones SET subtotal_items=%s, subtotal=%s, "
-            "descuento_monto=%s, iva_pct=%s, iva_monto=%s, total=%s WHERE id=%s",
+            "descuento_monto=%s, iva_pct=%s, iva_monto=%s, total=%s, updated_by=%s WHERE id=%s",
             (_tk_money_round(subtotal_items), _tk_money_round(subtotal), descuento_monto, iva_pct,
-             iva_monto, _tk_money_round(total), cid))
+             iva_monto, _tk_money_round(total), (user or None), cid))
         return {
             "subtotal_items": _tk_money_round(subtotal_items), "subtotal": _tk_money_round(subtotal),
             "descuento_monto": descuento_monto, "costo_ruta_total": costo_ruta_total,
@@ -2461,9 +2478,14 @@ def register_tickets_routes(app, ctx):
         # LEFT JOIN a tk_tickets para poder pintar "Ver ticket TK-..." cuando
         # ya existe (flujo inverso, Daniel 2026-07-15) y decidir si el boton
         # "Generar ticket" va visible (solo si c.ticket_id es NULL).
+        # 2026-07-23 (auditoría, Daniel: "quién lo hizo, cuándo, si se
+        # editó, quién lo editó"): created_by/updated_by/updated_at viajan
+        # siempre en la fila -- el template solo los MUESTRA si
+        # permissions.superadmin/admin (gate en cotizaciones.html).
         rows = mysql_fetchall(
             "SELECT c.id, c.numero_cotizacion, c.estado, c.empresa, c.rut, c.total, "
-            "       c.created_at, c.ticket_id, tk.numero_ticket "
+            "       c.created_at, c.created_by, c.updated_at, c.updated_by, "
+            "       c.ticket_id, tk.numero_ticket "
             "FROM tk_cotizaciones c LEFT JOIN tk_tickets tk ON tk.id = c.ticket_id "
             "ORDER BY c.created_at DESC LIMIT 100")
         return render_template("tickets/cotizaciones.html",
@@ -2749,7 +2771,8 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/cotizaciones/<int:cid>/recalcular", methods=["POST"])
     @_tickets_required
     def tk_api_cotizacion_recalcular(cid):
-        totales = _tk_cotiz_recalcular(cid)
+        user = current_username() or "sistema"
+        totales = _tk_cotiz_recalcular(cid, user=user)
         if totales is None:
             return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
         return jsonify({"ok": True, "totales": totales})
@@ -2833,9 +2856,13 @@ def register_tickets_routes(app, ctx):
                 # realmente encontro NULL logra el UPDATE -- nunca se deja un
                 # ticket recien creado "huerfano" sin que la cotización apunte
                 # a el ni se avise al caller.
+                # 2026-07-23 (auditoría): generar el ticket ES una edición
+                # real de la cotización ya creada (le agrega ticket_id) --
+                # queda registrado igual que _tk_cotiz_recalcular.
                 cur.execute(
-                    "UPDATE tk_cotizaciones SET ticket_id=%s WHERE id=%s AND ticket_id IS NULL",
-                    (tid, cid))
+                    "UPDATE tk_cotizaciones SET ticket_id=%s, updated_by=%s "
+                    "WHERE id=%s AND ticket_id IS NULL",
+                    (tid, user, cid))
                 if cur.rowcount == 0:
                     conn.rollback()
                     return jsonify({

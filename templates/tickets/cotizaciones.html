@@ -23,6 +23,15 @@
 .tk-row-btn-ticket:hover{background:#0a0a0a;color:#fff;}
 .tk-row-btn-ticket:active{transform:scale(.96);}
 .tk-row-btn-ticket:disabled{opacity:.5;cursor:not-allowed;}
+/* 2026-07-23 (auditoría, visible solo superadmin/admin -- gate en el
+   Jinja de abajo, mismo patrón que permissions.superadmin en list.html) */
+.tk-row-btn-audit{
+  border:none;border-radius:8px;background:#f3f4f6;color:#6b7280;font-size:.9rem;
+  width:36px;height:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:.15s;flex:0 0 auto;
+}
+.tk-row-btn-audit:hover{background:#0a0a0a;color:#fff;}
+.tk-row-btn-audit:active{transform:scale(.96);}
 @media(max-width:640px){.tk-row{grid-template-columns:1fr;justify-items:start;}}
 .tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
   font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;white-space:nowrap;}
@@ -175,10 +184,18 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
     <div class="sub">Mantención e instalación — cálculo automático por categoría de equipo + costo de ruta por comuna</div>
   </div>
   <div class="d-flex gap-2">
-    <a href="{{ url_for('tk_cotizaciones_historico') }}" class="btn btn-lg btn-outline-light"
+    {# 2026-07-23 (Daniel: "antes de crear la cotización, sacar el botón de
+       histórico y colocarle un botón de clasificación"). El histórico
+       (177 cotizaciones de Triple A, tk_cotizaciones_historico) NO se
+       borró -- Daniel se corrigió a media frase ("o bueno, déjalo si es
+       necesario") y son datos reales importados (Regla #4.2). Solo se
+       saca el link visible de este hero; la ruta/plantilla siguen vivas
+       para quien entre por URL directa. En su lugar: acceso directo a
+       /catalogo/clases (categorías/tarifas que ya usa Daniel). #}
+    <a href="{{ url_for('cat_clases_page') }}" class="btn btn-lg btn-outline-light"
        style="border-color:#e5e7eb;color:#374151;font-weight:700;border-radius:10px;"
-       title="Las 177 cotizaciones históricas de Triple A">
-      <i class="bi bi-clock-history me-1"></i>Histórico
+       title="Categorías y tarifas de productos">
+      <i class="bi bi-tags-fill me-1"></i>Clasificación
     </a>
     <button type="button" id="btnCotNuevaErp" class="btn btn-lg" style="background:#dc2626;color:#fff;font-weight:800;border-radius:10px;">
       <i class="bi bi-plus-lg me-1"></i>Crear Cotización
@@ -192,7 +209,7 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
   <span class="tk-num">{{ c.numero_cotizacion or ('#' ~ c.id) }}</span>
   <div><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></div>
   <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
-  <span style="font-size:.8rem;color:#6b7280;">{{ c.created_at }}</span>
+  <span style="font-size:.8rem;color:#6b7280;">{{ c.created_at | chile_fmt }}</span>
   {% if c.total %}
   <span class="tk-row-total">${{ '{:,}'.format(c.total | int).replace(',', '.') }}</span>
   {% else %}
@@ -207,6 +224,22 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
   {% else %}
   <button type="button" class="tk-row-btn-ticket" onclick="cotGenerarTicket({{ c.id }}, this)">
     <i class="bi bi-ticket-perforated me-1"></i>Generar ticket
+  </button>
+  {% endif %}
+  {% if permissions.superadmin or permissions.admin %}
+  {# 2026-07-23 (Daniel: "necesito saber quién lo hizo, cuándo se hizo y
+     si se editó, quién lo editó, con fecha de inicio y fecha de última
+     actualización" -- a nivel jefatura). Mismo gate que
+     permissions.superadmin en tickets/list.html. data-* en vez de
+     onclick con valores directos para no pelear con el escapado HTML de
+     strings dentro de un atributo. #}
+  <button type="button" class="tk-row-btn-audit" title="Ver auditoría"
+          data-creado-por="{{ c.created_by or '' }}"
+          data-creado-at="{{ c.created_at | chile_fmt if c.created_at else '' }}"
+          data-actualizado-por="{{ c.updated_by or '' }}"
+          data-actualizado-at="{{ c.updated_at | chile_fmt if c.updated_at else '' }}"
+          onclick="cotVerAuditoria(this)">
+    <i class="bi bi-clock-history"></i>
   </button>
   {% endif %}
 </div>
@@ -1068,6 +1101,32 @@ async function cotGenerarTicket(cid, btn){
     ilusToast('Error de conexión al generar el ticket', {type:'error'});
     btn.disabled = false; btn.innerHTML = _orig;
   }
+}
+
+// ══════════════ Auditoría (solo superadmin/admin, ver Jinja arriba) ══════════════
+// Daniel 2026-07-23: "necesito saber quién lo hizo, cuándo se hizo y si se
+// editó, quién lo editó, con fecha de inicio y fecha de última actualización".
+// Regla #1: nada de alert() nativo -- se usa ilusAlert con el mismo patrón
+// que cotGenerarTicket de arriba.
+function cotVerAuditoria(btn){
+  const d = btn.dataset;
+  const creadoPor = d.creadoPor || 'sistema';
+  const creadoAt = d.creadoAt || '—';
+  const actPor = d.actualizadoPor || '';
+  const actAt = d.actualizadoAt || '';
+  let sub = '<div><strong>Creada por:</strong> ' + _cotEsc(creadoPor) + '</div>'
+    + '<div style="color:#6b7280;">' + _cotEsc(creadoAt) + '</div>';
+  if (actPor){
+    sub += '<div style="margin-top:10px;"><strong>Última actualización:</strong> ' + _cotEsc(actPor) + '</div>'
+      + '<div style="color:#6b7280;">' + _cotEsc(actAt) + '</div>';
+  } else {
+    sub += '<div style="margin-top:10px;color:#9ca3af;font-style:italic;">Sin ediciones posteriores registradas.</div>';
+  }
+  ilusAlert({
+    title: 'Auditoría de la cotización',
+    message: 'Trazabilidad de creación y edición.',
+    sub: sub, subHtml: true, type: 'info', okLabel: 'Cerrar',
+  });
 }
 </script>
 
