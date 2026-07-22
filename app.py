@@ -12355,10 +12355,19 @@ TIPOS_DOC_CUBICADOR = [
     ("FCV", "Factura"),
     ("BLV", "Boleta"),
     ("GDV", "Guía de Despacho"),
+    ("GDI", "Guía Despacho Interna"),
+    ("GTI", "Guía Traspaso Interno"),
     ("VD",  "Nota de Venta Directa"),
     ("WEB", "Nota de Venta Web"),
+    ("NVI", "Nota de Venta Interna"),
     ("COV", "Cotización"),
 ]
+# NVI/GDI/GTI (2026-06-16, Daniel): el Cubicador tenía MENOS tipos de
+# documento que "Asignar y Cotizar" (templates/cubicador/asignar.html), que
+# ya soporta estos 3. No necesitan mapeo especial de TIDO/NUDO (pasan tal
+# cual al ERP, igual que FCV/BLV/GDV/COV) — solo faltaban en esta lista, que
+# alimenta tanto el <select> del Cubicador como la detección de "pegado
+# inteligente" en _parse_docs_from_form.
 
 # VD y WEB usan TIDO=NVV en el ERP; el NUDO lleva el prefijo dentro (10 chars)
 # NVI puede mapear a NVV también dependiendo del ERP
