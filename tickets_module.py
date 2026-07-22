@@ -2925,6 +2925,16 @@ def register_tickets_routes(app, ctx):
         # eligió en el modal de revisión antes de llegar acá.
         sin_clasificar = [s for s in sin_clasificar if not clases_por_sku.get(s["sku"])]
 
+        # 2026-07-23 (Daniel): una cotización nacida de la FICHA del cliente no
+        # puede ser de instalación (solo mantención/visita técnica). Solo aplica
+        # cuando el frontend declara origen='ficha' -- ningún otro origen cambia,
+        # los callers viejos (sin 'origen') siguen igual (Regla #4.2). Va ANTES
+        # de abrir la conexión/transacción del INSERT (conn = get_mysql() más
+        # abajo) para no dejar nada a medias.
+        if origen_in == "ficha" and tipo_servicio == "instalacion":
+            return jsonify({"ok": False, "error": "Una cotización que nace de la ficha del cliente "
+                            "solo puede ser de mantención o visita técnica, no de instalación."}), 400
+
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
@@ -6318,6 +6328,73 @@ def register_tickets_routes(app, ctx):
             "plan": {"activo": bool(contratos), "contratos": contratos},
             "maquinas": maquinas,
         })
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — Cotizaciones: buscador de fichas de cliente (Mantenciones)
+    #  (Daniel 2026-07-23): el wizard de Cotizaciones necesita poder
+    #  arrancar una cotización DESDE LA FICHA de un cliente ya cargado en
+    #  Mantenciones (no solo desde el ERP). Mismo gate de permiso que
+    #  tk_api_cliente_ficha_resumen de arriba -- si ver el detalle YA
+    #  requiere mantenciones/superadmin, listarlas para elegir una
+    #  también lo requiere (mismo criterio de "más sensible, gate más
+    #  estricto").
+    #
+    #  100% READ-ONLY sobre tablas propias de ILUS (mant_clientes /
+    #  mant_maquinas / mant_contratos en MySQL) -- no toca el ERP Random.
+    #
+    #  Response: {ok, resultados:[{id, razon_social, rut, comuna,
+    #             n_maquinas, plan_activo}]}
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/clientes-ficha/buscar", methods=["GET"])
+    @_tickets_required
+    def tk_api_clientes_ficha_buscar():
+        _perms_buscar = g.get("permissions") or {}
+        if not (_perms_buscar.get("mantenciones") or _perms_buscar.get("superadmin")):
+            return jsonify({
+                "ok": False,
+                "error": "Se requiere acceso a Mantenciones para buscar fichas de clientes.",
+                "error_codigo": "SIN_PERMISO_MANTENCIONES",
+            }), 403
+
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "resultados": []})
+
+        q_like = f"%{q}%"
+        try:
+            # n_maquinas y plan_activo van como subquery escalar / EXISTS
+            # por fila -- barato para el TOP 15 que devuelve el LIMIT.
+            rows = mysql_fetchall(
+                "SELECT c.id, c.razon_social, c.rut, c.comuna, "
+                "       (SELECT COUNT(*) FROM mant_maquinas m "
+                "         WHERE m.cliente_id = c.id AND m.estado='activo') AS n_maquinas, "
+                "       EXISTS (SELECT 1 FROM mant_contratos ct "
+                "                WHERE ct.cliente_id = c.id "
+                "                  AND ct.estado IN ('vigente','indefinido')) AS plan_activo "
+                "  FROM mant_clientes c "
+                # 2026-07-24 (revisión adversarial): != 'inactivo' en vez de
+                # ='activo' -- un PROSPECTO es justo a quien querés cotizarle;
+                # con ='activo' quedaba fuera del buscador. Mismo criterio que
+                # otras búsquedas de clientes del proyecto (app.py, buscar
+                # clientes con COALESCE(estado,'activo') != 'inactivo').
+                " WHERE COALESCE(c.estado,'activo') <> 'inactivo' "
+                "   AND (c.razon_social LIKE %s OR c.rut LIKE %s) "
+                " ORDER BY c.razon_social "
+                " LIMIT 15",
+                (q_like, q_like)) or []
+        except Exception as _e:
+            print(f"[tk_clientes_ficha_buscar] error q={q!r}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo buscar clientes", "resultados": []}), 200
+
+        resultados = [{
+            "id": r["id"],
+            "razon_social": r.get("razon_social") or "",
+            "rut": r.get("rut") or "",
+            "comuna": r.get("comuna") or "",
+            "n_maquinas": int(r.get("n_maquinas") or 0),
+            "plan_activo": bool(r.get("plan_activo")),
+        } for r in rows]
+        return jsonify({"ok": True, "resultados": resultados})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — ERP: "Búsqueda avanzada de productos" para TICKETS -- motor B
