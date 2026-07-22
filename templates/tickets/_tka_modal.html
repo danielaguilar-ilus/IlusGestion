@@ -226,16 +226,6 @@
   .tka-doc-totals .badge-pill.ok{background:#dcfce7;color:#166534;border-color:#86efac}
   .tka-doc-totals .badge-pill.warn{background:#fff8e1;color:#92400e;border-color:#fde68a}
   .tka-doc-totals .badge-pill.lock{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
-  /* Pestañas "Por ticket"/"Por ficha de cliente" (Daniel 2026-07-25):
-     "En plan" tiene que notarse, no ser un detalle chico -- solido verde
-     en vez del outline gris tenue del resto de los badge-pill. */
-  .tka-doc-totals .badge-pill.plan-activo{
-    background:#16a34a;color:#fff;border-color:#16a34a;
-    font-size:.8rem;padding:5px 13px;
-    box-shadow:0 1px 0 rgba(255,255,255,.25) inset, 0 3px 8px -2px rgba(22,163,74,.45);
-  }
-  .tka-doc-card.tka-entity-card .tka-doc-head{cursor:pointer}
-  .tka-doc-card.tka-entity-card:hover{border-color:var(--tka-red);box-shadow:var(--tka-shadow-glow)}
 
   .tka-doc-actions{display:flex;gap:6px;flex-shrink:0;align-items:center}
   .tka-doc-add-btn{
@@ -497,18 +487,6 @@
     <button type="button" class="tka-tab" role="tab" id="tkaTabBodega" onclick="tkaSetTab('bodega')" style="display:none">
       <i class="bi bi-boxes"></i><span>Bodega 02</span>
     </button>
-    {# 2026-07-25 (Daniel, feedback Cotizaciones -- "no quiero la lista,
-       quiero el modal"): 2 pestañas nuevas, OCULTAS por defecto igual que
-       Bodega 02. Solo se muestran cuando un caller las pide explícito vía
-       tkaOpen({tabs:[...,'ticket','ficha']}) -- ver _tkaApplyTabsFilter()
-       más abajo. Ningún otro módulo (Tickets/Catálogo/Repuestos) las pide
-       hoy, así que su modal se ve exactamente igual que antes. #}
-    <button type="button" class="tka-tab" role="tab" id="tkaTabTicket" onclick="tkaSetTab('ticket')" style="display:none">
-      <i class="bi bi-ticket-perforated"></i><span>Por ticket</span>
-    </button>
-    <button type="button" class="tka-tab" role="tab" id="tkaTabFicha" onclick="tkaSetTab('ficha')" style="display:none">
-      <i class="bi bi-person-lines-fill"></i><span>Por ficha de cliente</span>
-    </button>
   </div>
   <div class="tka-body" id="tkaBody">
     <div id="tkaPanelDoc" class="tka-panel">
@@ -600,44 +578,6 @@
         </div>
       </div>
     </div>
-    <div id="tkaPanelTicket" class="tka-panel" style="display:none">
-      <div class="tka-mod-hint">
-        <i class="bi bi-lightbulb"></i>
-        <div>Elige un <strong>ticket</strong> para traer su cliente y equipos declarados. La lista se muestra apenas abres esta pestaña -- escribe para filtrar por número, empresa o RUT.</div>
-      </div>
-      <div class="tka-search-row">
-        <input id="tkaTicketQ" type="search" placeholder="N° de ticket, empresa o RUT… (opcional)" autocomplete="off" oninput="_tkaTicketOnInput()">
-        <button type="button" class="tka-btn-search" id="tkaTicketBtn" onclick="tkaBuscarPorTicket()">
-          <i class="bi bi-search"></i><span>Buscar</span>
-        </button>
-      </div>
-      <div id="tkaTicketResult">
-        <div class="tka-empty">
-          <i class="bi bi-ticket-perforated tka-empty-icon"></i>
-          <h6>Cargando tickets…</h6>
-          <p></p>
-        </div>
-      </div>
-    </div>
-    <div id="tkaPanelFicha" class="tka-panel" style="display:none">
-      <div class="tka-mod-hint">
-        <i class="bi bi-lightbulb"></i>
-        <div>Elige un <strong>cliente</strong> de las fichas de Mantenciones para traer sus datos y equipos activos (los que tienen <strong>plan vigente</strong> destacados en verde). La lista se muestra apenas abres esta pestaña -- escribe para filtrar por razón social o RUT.</div>
-      </div>
-      <div class="tka-search-row">
-        <input id="tkaFichaQ" type="search" placeholder="Razón social o RUT… (opcional)" autocomplete="off" oninput="_tkaFichaOnInput()">
-        <button type="button" class="tka-btn-search" id="tkaFichaBtn" onclick="tkaBuscarPorFicha()">
-          <i class="bi bi-search"></i><span>Buscar</span>
-        </button>
-      </div>
-      <div id="tkaFichaResult">
-        <div class="tka-empty">
-          <i class="bi bi-person-lines-fill tka-empty-icon"></i>
-          <h6>Cargando fichas de clientes…</h6>
-          <p></p>
-        </div>
-      </div>
-    </div>
   </div>
   <div class="tka-foot">
     <div class="tka-counter" id="tkaCounter">
@@ -668,15 +608,9 @@ const _TKA = {
   selCli: new Map(),
   selBodega: new Map(),
   loaded: { docHeader: null, cliQuery: null },
-  ctx: { mode: 'crear', ticketId: null, onDone: null, onSeleccionar: null, onSeleccionarEntidad: null, tabs: null },
+  ctx: { mode: 'crear', ticketId: null, onDone: null, onSeleccionar: null, tabs: null },
   _liveTimer: null,
   _bodegaDebounce: null,
-  _ticketDebounce: null,
-  _fichaDebounce: null,
-  _ticketItems: [],
-  _fichaItems: [],
-  _ticketLoaded: false,
-  _fichaLoaded: false,
   ultimoMotivoSinSaldo: '',
 };
 
@@ -712,18 +646,6 @@ async function _tkaPedirMotivoSinSaldo(nombre){
 function _tkaEsc(s){ return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-
-// Réplica de ESTADO_LABEL (tickets_module.py ~L138) -- self-contenida
-// porque este modal se incluye en páginas que no necesariamente exponen
-// ese dict como variable JS global. Solo para mostrar la pestaña "Por
-// ticket"; el backend sigue siendo la única fuente de verdad del estado.
-const _TKA_ESTADO_LABEL = {
-  open: 'Abierto', in_progress: 'En Curso', pending: 'Pendiente',
-  resolved: 'Resuelto', closed: 'Cerrado',
-  ot_pending_approval: 'OT Pendiente de Aprobación',
-  ot_generated: 'OT Generada', ot_in_progress: 'OT En Curso',
-  cancelado: 'Cancelado',
-};
 
 async function _tkaFetchJsonSafe(url, opts){
   try{
@@ -766,10 +688,6 @@ function _tkaResetEstado(){
   if (selTido) selTido.selectedIndex = 0;
   const inpBodega = document.getElementById('tkaBodegaQ');
   if (inpBodega) inpBodega.value = '';
-  const inpTicket = document.getElementById('tkaTicketQ');
-  if (inpTicket) inpTicket.value = '';
-  const inpFicha = document.getElementById('tkaFichaQ');
-  if (inpFicha) inpFicha.value = '';
 
   const docRes = document.getElementById('tkaDocResult');
   if (docRes){
@@ -798,61 +716,30 @@ function _tkaResetEstado(){
   const bodegaSel = document.getElementById('tkaBodegaSeleccion');
   if (bodegaSel){ bodegaSel.style.display = 'none'; bodegaSel.innerHTML = ''; }
   _TKA._bodegaItems = [];
-  _TKA._ticketItems = [];
-  _TKA._fichaItems = [];
-  _TKA._ticketLoaded = false;
-  _TKA._fichaLoaded = false;
-
-  const ticketRes = document.getElementById('tkaTicketResult');
-  if (ticketRes){
-    ticketRes.innerHTML = `<div class="tka-empty">
-      <i class="bi bi-ticket-perforated tka-empty-icon"></i>
-      <h6>Cargando tickets…</h6>
-      <p></p>
-    </div>`;
-  }
-  const fichaRes = document.getElementById('tkaFichaResult');
-  if (fichaRes){
-    fichaRes.innerHTML = `<div class="tka-empty">
-      <i class="bi bi-person-lines-fill tka-empty-icon"></i>
-      <h6>Cargando fichas de clientes…</h6>
-      <p></p>
-    </div>`;
-  }
 
   const tabDoc = document.getElementById('tkaTabDoc');
   const tabCli = document.getElementById('tkaTabCli');
   const tabDeclarado = document.getElementById('tkaTabDeclarado');
   const tabCotizacion = document.getElementById('tkaTabCotizacion');
   const tabBodega = document.getElementById('tkaTabBodega');
-  const tabTicket = document.getElementById('tkaTabTicket');
-  const tabFicha = document.getElementById('tkaTabFicha');
   const panelDoc = document.getElementById('tkaPanelDoc');
   const panelCli = document.getElementById('tkaPanelCli');
   const panelDeclarado = document.getElementById('tkaPanelDeclarado');
   const panelCotizacion = document.getElementById('tkaPanelCotizacion');
   const panelBodega = document.getElementById('tkaPanelBodega');
-  const panelTicket = document.getElementById('tkaPanelTicket');
-  const panelFicha = document.getElementById('tkaPanelFicha');
   if (tabDoc) tabDoc.classList.add('is-active');
   if (tabCli) tabCli.classList.remove('is-active');
   if (tabDeclarado) tabDeclarado.classList.remove('is-active');
   if (tabCotizacion) tabCotizacion.classList.remove('is-active');
   if (tabBodega) tabBodega.classList.remove('is-active');
-  if (tabTicket) tabTicket.classList.remove('is-active');
-  if (tabFicha) tabFicha.classList.remove('is-active');
   if (panelDoc) panelDoc.style.display = '';
   if (panelCli) panelCli.style.display = 'none';
   if (panelDeclarado) panelDeclarado.style.display = 'none';
   if (panelCotizacion) panelCotizacion.style.display = 'none';
   if (panelBodega) panelBodega.style.display = 'none';
-  if (panelTicket) panelTicket.style.display = 'none';
-  if (panelFicha) panelFicha.style.display = 'none';
 
   if (_TKA._liveTimer){ clearInterval(_TKA._liveTimer); _TKA._liveTimer = null; }
   if (_TKA._bodegaDebounce){ clearTimeout(_TKA._bodegaDebounce); _TKA._bodegaDebounce = null; }
-  if (_TKA._ticketDebounce){ clearTimeout(_TKA._ticketDebounce); _TKA._ticketDebounce = null; }
-  if (_TKA._fichaDebounce){ clearTimeout(_TKA._fichaDebounce); _TKA._fichaDebounce = null; }
   try{ tkaUpdateCounter(); }catch(_){}
 }
 
@@ -876,19 +763,16 @@ function _tkaApplyTabsFilter(){
   const map = {
     doc: 'tkaTabDoc', cli: 'tkaTabCli', declarado: 'tkaTabDeclarado',
     cotizacion: 'tkaTabCotizacion', bodega: 'tkaTabBodega',
-    ticket: 'tkaTabTicket', ficha: 'tkaTabFicha',
   };
   const tabs = _TKA.ctx.tabs;
   if (!Array.isArray(tabs)){
     // Sin filtro: asegurar que todas las pestañas de siempre estén visibles
     // y en su orden natural del DOM (por si una apertura anterior con
     // `tabs` dejó alguna oculta o con `order` reasignado vía CSS).
-    // 'ticket'/'ficha' (2026-07-25, agregadas para Cotizaciones) quedan
-    // OCULTAS igual que 'bodega' -- ningún otro caller existente las pide.
     Object.keys(map).forEach(k => {
       const el = document.getElementById(map[k]);
       if (!el) return;
-      el.style.display = (k === 'bodega' || k === 'ticket' || k === 'ficha') ? 'none' : '';
+      el.style.display = (k === 'bodega') ? 'none' : '';
       el.style.order = '';
     });
     return;
@@ -930,13 +814,6 @@ function tkaOpen(opts){
     ticketId: opts.ticketId || null,
     onDone: (typeof opts.onDone === 'function') ? opts.onDone : null,
     onSeleccionar: (typeof opts.onSeleccionar === 'function') ? opts.onSeleccionar : null,
-    // 2026-07-25 (Cotizaciones -- pestañas "Por ticket"/"Por ficha de
-    // cliente"): callback ADITIVO, independiente de onSeleccionar. Esas 2
-    // pestañas no seleccionan líneas de un documento -- eligen una ENTIDAD
-    // completa (un ticket o una ficha) y el módulo llamador decide qué
-    // hacer con ese id (deep-link propio). Callers que no lo pasan nunca
-    // lo disparan (esas pestañas están ocultas para ellos de todas formas).
-    onSeleccionarEntidad: (typeof opts.onSeleccionarEntidad === 'function') ? opts.onSeleccionarEntidad : null,
     rutPrefill: opts.rutPrefill || '',
     tabs: Array.isArray(opts.tabs) ? opts.tabs : null,
   };
@@ -1020,23 +897,12 @@ function tkaSetTab(tab){
   document.getElementById('tkaTabDeclarado').classList.toggle('is-active', tab === 'declarado');
   document.getElementById('tkaTabCotizacion').classList.toggle('is-active', tab === 'cotizacion');
   document.getElementById('tkaTabBodega').classList.toggle('is-active', tab === 'bodega');
-  document.getElementById('tkaTabTicket').classList.toggle('is-active', tab === 'ticket');
-  document.getElementById('tkaTabFicha').classList.toggle('is-active', tab === 'ficha');
   document.getElementById('tkaPanelDoc').style.display = tab === 'doc' ? '' : 'none';
   document.getElementById('tkaPanelCli').style.display = tab === 'cli' ? '' : 'none';
   document.getElementById('tkaPanelDeclarado').style.display = tab === 'declarado' ? '' : 'none';
   document.getElementById('tkaPanelCotizacion').style.display = tab === 'cotizacion' ? '' : 'none';
   document.getElementById('tkaPanelBodega').style.display = tab === 'bodega' ? '' : 'none';
-  document.getElementById('tkaPanelTicket').style.display = tab === 'ticket' ? '' : 'none';
-  document.getElementById('tkaPanelFicha').style.display = tab === 'ficha' ? '' : 'none';
   if (tab === 'declarado') _tkaRenderDeclarado();
-  // Lista por defecto al abrir la pestaña (Daniel: "por ticket... no me
-  // trae nada" -- la causa era exigir que el usuario escriba algo primero).
-  // Solo se dispara la PRIMERA vez que se entra a la pestaña en esta
-  // apertura del modal (_ticketItems/_fichaItems se limpian en
-  // _tkaResetEstado, así que re-abrir el modal siempre vuelve a cargar).
-  if (tab === 'ticket' && !_TKA._ticketLoaded) tkaBuscarPorTicket();
-  if (tab === 'ficha' && !_TKA._fichaLoaded) tkaBuscarPorFicha();
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1801,193 +1667,6 @@ function _tkaQuitarBodegaSel(sku){
   }
   _tkaRenderBodegaSeleccion();
   tkaUpdateCounter();
-}
-
-// ──────────────────────────────────────────────────────────────
-// TAB "POR TICKET" (2026-07-25, Cotizaciones -- Daniel: "quiero ver la
-// lista de los tickets, con un buscador"). Lista por defecto al abrir la
-// pestaña (ver tkaSetTab) + debounce ~300ms en cada tecla, mismo patrón
-// reqToken que Bodega 02 (descarta respuestas de búsquedas obsoletas).
-// GET /tickets/api/tickets?q=&limit= ya soporta q vacío -- devuelve el
-// listado general (mismo orden inteligente de la bandeja). created_at
-// llega YA formateado a hora Chile por el backend (Regla #6) -- NO
-// reformatear en el front.
-// ──────────────────────────────────────────────────────────────
-function _tkaTicketOnInput(){
-  if (_TKA._ticketDebounce) clearTimeout(_TKA._ticketDebounce);
-  _TKA._ticketDebounce = setTimeout(() => tkaBuscarPorTicket(), 300);
-}
-let _tkaTicketReqToken = 0;
-async function tkaBuscarPorTicket(){
-  const inp = document.getElementById('tkaTicketQ');
-  const q = (inp && inp.value || '').trim();
-  const cont = document.getElementById('tkaTicketResult');
-  if (!cont) return;
-  const myToken = ++_tkaTicketReqToken;
-  _TKA._ticketLoaded = true; // ya se intentó cargar -- tkaSetTab no vuelve a auto-disparar
-  cont.innerHTML = _tkaSkel();
-  try{
-    const d = await _tkaFetchJsonSafe(`/tickets/api/tickets?q=${encodeURIComponent(q)}&limit=15`);
-    if (myToken !== _tkaTicketReqToken) return; // obsoleto: otra búsqueda más nueva ya está en curso/resuelta
-    if (!d.ok){
-      cont.innerHTML = `<div class="tka-empty">
-        <i class="bi bi-x-circle tka-empty-icon" style="color:#dc2626"></i>
-        <h6>No se pudo cargar</h6>
-        <p>${_tkaEsc(d.error || 'Error al listar tickets')}</p>
-      </div>`;
-      return;
-    }
-    const items = d.tickets || [];
-    _TKA._ticketItems = items;
-    if (!items.length){
-      cont.innerHTML = `<div class="tka-empty">
-        <i class="bi bi-search tka-empty-icon"></i>
-        <h6>Sin resultados${q ? ' para "' + _tkaEsc(q) + '"' : ''}</h6>
-        <p>Prueba con otro número de ticket, empresa o RUT.</p>
-      </div>`;
-      return;
-    }
-    tkaRenderTicketResults(items);
-  }catch(e){
-    if (myToken !== _tkaTicketReqToken) return;
-    cont.innerHTML = `<div class="tka-empty">
-      <i class="bi bi-x-circle tka-empty-icon" style="color:#dc2626"></i>
-      <h6>Error de red</h6>
-      <p>${_tkaEsc(e.message)}</p>
-    </div>`;
-  }
-}
-function tkaRenderTicketResults(items){
-  const cont = document.getElementById('tkaTicketResult');
-  if (!cont) return;
-  let html = '<div class="tka-results">';
-  items.forEach((t, i) => {
-    const estadoLbl = _TKA_ESTADO_LABEL[t.estado] || t.estado || '—';
-    html += `<div class="tka-doc-card tka-entity-card" data-ticket-idx="${i}" style="animation-delay:${i*40}ms">
-      <div class="tka-doc-head" onclick="tkaSeleccionarTicket(${i})">
-        <div class="tka-doc-num"><span class="badge-tipo">${_tkaEsc(t.numero_ticket || ('#' + t.id))}</span></div>
-        <div class="tka-doc-info">
-          <div class="td-cli">${_tkaEsc(t.empresa || 'Sin cliente')}</div>
-          <div class="td-meta">
-            ${t.rut ? `<span class="td-rut">${_tkaEsc(t.rut)}</span>` : ''}
-            <span><i class="bi bi-calendar3 me-1"></i>${_tkaEsc(t.created_at || '')}</span>
-          </div>
-        </div>
-        <div class="tka-doc-totals">
-          <span class="badge-pill">${_tkaEsc(estadoLbl)}</span>
-        </div>
-      </div>
-    </div>`;
-  });
-  html += '</div>';
-  cont.innerHTML = html;
-}
-// Selección de un TICKET completo (no líneas de documento) -- cierra el
-// modal e informa al caller vía onSeleccionarEntidad({tipo:'ticket', id}).
-// El caller (Cotizaciones) decide qué hacer con ese id (deep-link propio,
-// ya construido y probado -- ver _cotWizAplicarDeepLinkTicket).
-async function tkaSeleccionarTicket(idx){
-  const t = (_TKA._ticketItems || [])[idx];
-  if (!t) return;
-  tkaClose();
-  if (_TKA.ctx.onSeleccionarEntidad){
-    try{ await _TKA.ctx.onSeleccionarEntidad({ tipo: 'ticket', id: t.id }); }
-    catch(e){ ilusToast('Error: ' + e.message, { type:'error' }); }
-  }
-}
-
-// ──────────────────────────────────────────────────────────────
-// TAB "POR FICHA DE CLIENTE" (2026-07-25, Cotizaciones -- Daniel: "igual
-// para la ficha de cliente... traer los productos, sobre todo los que
-// están con plan"). Mismo patrón de lista por defecto + debounce +
-// reqToken. GET /tickets/api/clientes-ficha/buscar?q= (tickets_module.py)
-// ya devuelve el listado general cuando q viene vacío/<2 caracteres
-// (relajado 2026-07-25 -- antes devolvía [] a propósito).
-// ──────────────────────────────────────────────────────────────
-function _tkaFichaOnInput(){
-  if (_TKA._fichaDebounce) clearTimeout(_TKA._fichaDebounce);
-  _TKA._fichaDebounce = setTimeout(() => tkaBuscarPorFicha(), 300);
-}
-let _tkaFichaReqToken = 0;
-async function tkaBuscarPorFicha(){
-  const inp = document.getElementById('tkaFichaQ');
-  const q = (inp && inp.value || '').trim();
-  const cont = document.getElementById('tkaFichaResult');
-  if (!cont) return;
-  const myToken = ++_tkaFichaReqToken;
-  _TKA._fichaLoaded = true; // ya se intentó cargar -- tkaSetTab no vuelve a auto-disparar
-  cont.innerHTML = _tkaSkel();
-  try{
-    const d = await _tkaFetchJsonSafe(`/tickets/api/clientes-ficha/buscar?q=${encodeURIComponent(q)}`);
-    if (myToken !== _tkaFichaReqToken) return; // obsoleto: otra búsqueda más nueva ya está en curso/resuelta
-    if (!d.ok){
-      // 403 sin permiso de Mantenciones u otro error -- mensaje VISIBLE en
-      // el panel (el usuario puede estar recién explorando pestañas, un
-      // toast que se pierde no sirve acá) y sin reintento automático.
-      cont.innerHTML = `<div class="tka-empty">
-        <i class="bi bi-shield-lock tka-empty-icon" style="color:#dc2626"></i>
-        <h6>No se pudo cargar</h6>
-        <p>${_tkaEsc(d.error || 'Error al listar fichas de clientes')}</p>
-      </div>`;
-      return;
-    }
-    const items = d.resultados || [];
-    _TKA._fichaItems = items;
-    if (!items.length){
-      cont.innerHTML = `<div class="tka-empty">
-        <i class="bi bi-search tka-empty-icon"></i>
-        <h6>Sin resultados${q ? ' para "' + _tkaEsc(q) + '"' : ''}</h6>
-        <p>Prueba con otra razón social o RUT.</p>
-      </div>`;
-      return;
-    }
-    tkaRenderFichaResults(items);
-  }catch(e){
-    if (myToken !== _tkaFichaReqToken) return;
-    cont.innerHTML = `<div class="tka-empty">
-      <i class="bi bi-x-circle tka-empty-icon" style="color:#dc2626"></i>
-      <h6>Error de red</h6>
-      <p>${_tkaEsc(e.message)}</p>
-    </div>`;
-  }
-}
-function tkaRenderFichaResults(items){
-  const cont = document.getElementById('tkaFichaResult');
-  if (!cont) return;
-  let html = '<div class="tka-results">';
-  items.forEach((c, i) => {
-    const nEq = (c.n_maquinas != null) ? c.n_maquinas : 0;
-    html += `<div class="tka-doc-card tka-entity-card" data-ficha-idx="${i}" style="animation-delay:${i*40}ms">
-      <div class="tka-doc-head" onclick="tkaSeleccionarFicha(${i})">
-        <div class="tka-doc-info">
-          <div class="td-cli">${_tkaEsc(c.razon_social || 'Cliente')}</div>
-          <div class="td-meta">
-            ${c.rut ? `<span class="td-rut">${_tkaEsc(c.rut)}</span>` : ''}
-            ${c.comuna ? `<span><i class="bi bi-geo-alt me-1"></i>${_tkaEsc(c.comuna)}</span>` : ''}
-          </div>
-        </div>
-        <div class="tka-doc-totals">
-          <span class="badge-pill">${nEq} equipo${nEq===1?'':'s'}</span>
-          ${c.plan_activo ? '<span class="badge-pill plan-activo">🟢 En plan</span>' : ''}
-        </div>
-      </div>
-    </div>`;
-  });
-  html += '</div>';
-  cont.innerHTML = html;
-}
-// Selección de una FICHA de cliente completa -- cierra el modal e informa
-// al caller vía onSeleccionarEntidad({tipo:'ficha', id}). El caller decide
-// qué hacer (deep-link propio, ya construido -- ver
-// _cotWizAplicarDeepLinkCliente, incluye auto-agregar equipos con plan).
-async function tkaSeleccionarFicha(idx){
-  const c = (_TKA._fichaItems || [])[idx];
-  if (!c) return;
-  tkaClose();
-  if (_TKA.ctx.onSeleccionarEntidad){
-    try{ await _TKA.ctx.onSeleccionarEntidad({ tipo: 'ficha', id: c.id }); }
-    catch(e){ ilusToast('Error: ' + e.message, { type:'error' }); }
-  }
 }
 
 function tkaUpdateCounter(){

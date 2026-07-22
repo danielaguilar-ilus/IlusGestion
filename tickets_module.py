@@ -6357,20 +6357,10 @@ def register_tickets_routes(app, ctx):
             }), 403
 
         q = (request.args.get("q") or "").strip()
-        # 2026-07-25 (Daniel, feedback del modal "Búsqueda avanzada" ->
-        # pestaña "Por ficha de cliente"): antes con q vacío/<2 caracteres
-        # devolvía [] a propósito ("hay que escribir para ver algo"). Daniel
-        # probó la pestaña y reportó "no me trae nada" -- porque nunca
-        # escribió nada, esperaba una LISTA POR DEFECTO al abrir la pestaña
-        # (igual que Bodega 02 o Por RUT muestran resultado apenas se busca).
-        # Se relaja SOLO el filtro LIKE cuando no hay query; el resto del
-        # WHERE/ORDER BY/LIMIT queda idéntico.
-        where_extra = ""
-        sql_params: list = []
-        if len(q) >= 2:
-            where_extra = " AND (c.razon_social LIKE %s OR c.rut LIKE %s) "
-            q_like = f"%{q}%"
-            sql_params = [q_like, q_like]
+        if len(q) < 2:
+            return jsonify({"ok": True, "resultados": []})
+
+        q_like = f"%{q}%"
         try:
             # n_maquinas y plan_activo van como subquery escalar / EXISTS
             # por fila -- barato para el TOP 15 que devuelve el LIMIT.
@@ -6387,10 +6377,11 @@ def register_tickets_routes(app, ctx):
                 # con ='activo' quedaba fuera del buscador. Mismo criterio que
                 # otras búsquedas de clientes del proyecto (app.py, buscar
                 # clientes con COALESCE(estado,'activo') != 'inactivo').
-                " WHERE COALESCE(c.estado,'activo') <> 'inactivo' " + where_extra +
+                " WHERE COALESCE(c.estado,'activo') <> 'inactivo' "
+                "   AND (c.razon_social LIKE %s OR c.rut LIKE %s) "
                 " ORDER BY c.razon_social "
                 " LIMIT 15",
-                tuple(sql_params)) or []
+                (q_like, q_like)) or []
         except Exception as _e:
             print(f"[tk_clientes_ficha_buscar] error q={q!r}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo buscar clientes", "resultados": []}), 200
