@@ -417,15 +417,18 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
                      placeholder="Busca por RUT o nombre en el ERP…">
               <div id="cotWizCliResultados" class="cot-wiz-dropdown" style="display:none;"></div>
             </div>
-            {# 2026-07-24 (Daniel: "un botón de 'desde otra fuente' con un
-               menú... documento, ticket, ficha de cliente"): el histórico
-               "Desde documento ERP" pasa a ser la opción 1 de un menú de 4
-               fuentes -- cero pérdida de funcionalidad (Regla #4.2), solo
-               se reorganiza detrás de un solo botón (ver cotWizFuenteDocumento). #}
+            {# 2026-07-25 (Daniel, feedback en vivo: "no quiero la lista,
+               quiero el modal de búsqueda avanzada... por documento, por
+               RUT, por ticket y por ficha de cliente"): el botón abre
+               DIRECTO el modal COMPARTIDO _tka_modal.html (el mismo de
+               Tickets/Catálogo/Repuestos) con sus 4 pestañas -- ya NO abre
+               un menú/dropdown propio. Cero pérdida de funcionalidad
+               (Regla #4.2): las 4 fuentes siguen todas disponibles, ahora
+               unificadas en el componente real de búsqueda avanzada (ver
+               cotWizFuenteDocumento() más abajo). #}
             <div id="cotWizFuenteWrap" style="position:relative;flex:0 0 auto;">
               <button type="button" id="btnCotWizDesdeDocumento" class="cot-wiz-origen-btn">
-                <i class="bi bi-collection"></i>Desde otra fuente <i class="bi bi-chevron-down"></i></button>
-              <div id="cotWizFuenteDD" class="cot-wiz-dropdown" style="display:none;left:auto;right:0;min-width:320px;"></div>
+                <i class="bi bi-collection"></i>Desde otra fuente</button>
             </div>
           </div>
           <div class="cot-wiz-origen-hint" id="cotWizOrigenHint">
@@ -1361,19 +1364,30 @@ async function _cotWizAsignarDesdeDocumento(items, header){
   await cotWizPrecios();
 }
 
-// ── Sección 1: "Desde otra fuente" -- menú desplegable de 4 fuentes
-//    (Daniel 2026-07-24, sobre el histórico botón "Desde documento ERP"
-//    de 2026-07-23). Opción 1 ("Por documento (ERP)") es EXACTAMENTE el
-//    mismo flujo de siempre, extraído sin cambios de lógica a
-//    cotWizFuenteDocumento() para poder invocarlo desde el menú. Mismo
-//    z-index del modal compartido (1085) flotando ENCIMA del wizard
-//    (1080). Regla #4.2: cero pérdida de funcionalidad, solo se
-//    reorganiza detrás de un botón con más opciones. ──
+// ── Sección 1: "Desde otra fuente" -- abre DIRECTO el modal compartido
+//    _tka_modal.html con sus 4 pestañas (Daniel 2026-07-25, feedback en
+//    vivo: "no quiero la lista, quiero el modal de búsqueda avanzada de
+//    productos y clientes... por documento, por RUT, por ticket y por
+//    ficha de cliente"). Reemplaza el mini-dropdown propio de la ronda
+//    anterior (#cotWizFuenteDD: menú de 4 opciones + búsqueda inline con
+//    debounce para ticket/ficha) -- ese dropdown ERA justo "la lista" que
+//    Daniel rechazó, y su búsqueda solo disparaba con q.length>=2 (abrir
+//    la pestaña sin escribir nada mostraba "no me trae nada"). Las
+//    pestañas 'ticket'/'ficha' del modal compartido ahora traen LISTA POR
+//    DEFECTO al abrirse (ver _tka_modal.html, tkaSetTab) -- resuelve
+//    ambos síntomas de una sola vez, sin duplicar UI.
+//
+//    onSeleccionar (pestañas 'doc'/'cli') es EXACTAMENTE el mismo flujo de
+//    siempre -- su lógica interna NO se tocó (Regla #4.2). onSeleccionarEntidad
+//    (pestañas 'ticket'/'ficha', nuevas en _tka_modal.html) solo reenvía al
+//    deep-link YA CONSTRUIDO y probado la ronda anterior (con sus guardias
+//    ilusConfirm intactas -- ver _cotWizAplicarDeepLinkTicket /
+//    _cotWizAplicarDeepLinkCliente más abajo).
 function cotWizFuenteDocumento(){
   const rutActual = document.getElementById('cotWizRut').value.trim();
   tkaOpen({
     mode: 'seleccionar',
-    tabs: ['doc', 'cli'],
+    tabs: ['doc', 'cli', 'ticket', 'ficha'],
     rutPrefill: rutActual,
     onSeleccionar: async function(items, header){
       if (!items || !items.length) return;
@@ -1400,151 +1414,18 @@ function cotWizFuenteDocumento(){
         }
       }
       await _cotWizAsignarDesdeDocumento(items, header);
+    },
+    onSeleccionarEntidad: async function(sel){
+      if (!sel) return;
+      if (sel.tipo === 'ticket') await _cotWizAplicarDeepLinkTicket(sel.id);
+      else if (sel.tipo === 'ficha') await _cotWizAplicarDeepLinkCliente(sel.id, { autoAgregarEquipos: true });
     }
   });
-}
-// Opción 2 -- foco directo en el buscador de cliente de la Sección 1.
-function cotWizFuenteBuscarErp(){
-  _cotWizFuenteCerrar();
-  document.getElementById('cotWizCliQ').focus();
-  ilusToast('Escribe el RUT o nombre del cliente en el buscador', {type:'info'});
-}
-// Opciones 3/4 -- búsqueda inline dentro del propio dropdown, mismo
-// patrón debounce + guardia de secuencia que _wizCliTimer/_wizCliSeq
-// (arriba, buscador de cliente ERP de la Sección 1).
-let _cotWizFuenteBuscTimer = null, _cotWizFuenteBuscSeq = 0;
-function _cotWizFuenteCerrar(){
-  const dd = document.getElementById('cotWizFuenteDD');
-  if (dd){ dd.style.display = 'none'; dd.innerHTML = ''; }
-}
-function _cotWizFuenteMenu(){
-  const dd = document.getElementById('cotWizFuenteDD');
-  if (!dd) return;
-  const opciones = [
-    { icon: 'bi-file-earmark-arrow-down', title: 'Por documento (ERP)', sub: 'Factura/guía/boleta con sus productos' },
-    { icon: 'bi-search', title: 'Por nombre o RUT (ERP)', sub: 'Buscar el cliente en el ERP' },
-    { icon: 'bi-ticket-perforated', title: 'Por ticket', sub: 'Trae cliente y equipos declarados en un ticket' },
-    { icon: 'bi-person-lines-fill', title: 'Por ficha de cliente', sub: 'Trae datos, contactos y equipos de la ficha' },
-  ];
-  dd.innerHTML = opciones.map(function(o, i){
-    return '<button type="button" class="cot-wiz-dd-item" data-i="' + i + '">' +
-      '<strong><i class="bi ' + o.icon + ' me-1"></i>' + _cotEsc(o.title) + '</strong>' +
-      '<span>' + _cotEsc(o.sub) + '</span></button>';
-  }).join('');
-  dd.querySelectorAll('.cot-wiz-dd-item').forEach(function(b){
-    b.addEventListener('click', function(){
-      const i = parseInt(b.dataset.i, 10);
-      if (i === 0){ _cotWizFuenteCerrar(); cotWizFuenteDocumento(); }
-      else if (i === 1){ cotWizFuenteBuscarErp(); }
-      else if (i === 2){ _cotWizFuenteBusqueda('ticket'); }
-      else { _cotWizFuenteBusqueda('ficha'); }
-    });
-  });
-  dd.style.display = 'block';
-}
-function _cotWizFuenteBusqueda(tipo){
-  const dd = document.getElementById('cotWizFuenteDD');
-  if (!dd) return;
-  const placeholder = tipo === 'ticket' ? 'N° de ticket o empresa…' : 'Razón social o RUT…';
-  dd.innerHTML =
-    '<button type="button" class="cot-wiz-dd-item" data-volver="1" style="border-bottom:1px solid #f3f4f6;">' +
-      '<strong><i class="bi bi-arrow-left me-1"></i>Volver</strong></button>' +
-    '<div style="padding:8px 12px 4px;">' +
-      '<input type="text" id="cotWizFuenteBuscInput" class="form-control form-control-sm" autocomplete="off" placeholder="' + placeholder + '">' +
-    '</div>' +
-    '<div id="cotWizFuenteBuscRes"></div>';
-  dd.querySelector('[data-volver]').addEventListener('click', _cotWizFuenteMenu);
-  const inp = dd.querySelector('#cotWizFuenteBuscInput');
-  inp.focus();
-  inp.addEventListener('input', function(){
-    clearTimeout(_cotWizFuenteBuscTimer);
-    const q = inp.value.trim();
-    const res = document.getElementById('cotWizFuenteBuscRes');
-    if (q.length < 2){ if (res) res.innerHTML = ''; return; }
-    _cotWizFuenteBuscTimer = setTimeout(function(){ _cotWizFuenteBuscarEjecutar(tipo, q); }, 300);
-  });
-}
-async function _cotWizFuenteBuscarEjecutar(tipo, q){
-  const seq = ++_cotWizFuenteBuscSeq;
-  const res = document.getElementById('cotWizFuenteBuscRes');
-  if (!res) return;
-  res.innerHTML = '<div class="cot-wiz-dd-vacio">Buscando…</div>';
-  try{
-    if (tipo === 'ticket'){
-      // Endpoint existente (GET /tickets/api/tickets?q=&limit=), created_at
-      // ya viene formateado a hora Chile por el backend -- NO reformatear.
-      const r = await fetch('/tickets/api/tickets?q=' + encodeURIComponent(q) + '&limit=10');
-      const d = await r.json();
-      if (seq !== _cotWizFuenteBuscSeq) return;
-      const lista = (d && d.tickets) || [];
-      if (!lista.length){ res.innerHTML = '<div class="cot-wiz-dd-vacio">Sin resultados</div>'; return; }
-      res.innerHTML = lista.map(function(t, i){
-        return '<button type="button" class="cot-wiz-dd-item" data-i="' + i + '">' +
-          '<strong>' + _cotEsc(t.numero_ticket || ('#' + t.id)) + ' — ' + _cotEsc(t.empresa || 'Sin cliente') + '</strong>' +
-          '<span>' + _cotEsc(t.estado || '') + ' · ' + _cotEsc(t.created_at || '') + '</span>' +
-        '</button>';
-      }).join('');
-      res.querySelectorAll('.cot-wiz-dd-item').forEach(function(b){
-        b.addEventListener('click', async function(){
-          const t = lista[parseInt(b.dataset.i, 10)];
-          if (!t) return;
-          _cotWizFuenteCerrar();
-          document.getElementById('cotWizCliQ').value = (t.empresa || '') + (t.numero_ticket ? ' — ' + t.numero_ticket : '');
-          await _cotWizAplicarDeepLinkTicket(t.id);
-        });
-      });
-    } else {
-      // Endpoint construido por la RAMA A en paralelo (contrato acordado):
-      // {ok, resultados:[{id, razon_social, rut, comuna, n_maquinas,
-      // plan_activo}]}; 403 con error_codigo SIN_PERMISO_MANTENCIONES si
-      // el usuario no tiene acceso a Mantenciones.
-      const r = await fetch('/tickets/api/clientes-ficha/buscar?q=' + encodeURIComponent(q));
-      const d = await r.json();
-      if (seq !== _cotWizFuenteBuscSeq) return;
-      if (!d.ok){
-        res.innerHTML = '<div class="cot-wiz-dd-vacio">Sin resultados</div>';
-        ilusToast(d.error || 'No se pudo buscar en fichas de clientes', {type:'error'});
-        return;
-      }
-      const lista = d.resultados || [];
-      if (!lista.length){ res.innerHTML = '<div class="cot-wiz-dd-vacio">Sin resultados</div>'; return; }
-      res.innerHTML = lista.map(function(c, i){
-        const badges = '<em>' + _cotEsc(String(c.n_maquinas != null ? c.n_maquinas : 0)) + ' equipos</em>' +
-          (c.plan_activo ? '<em>🟢 En plan</em>' : '');
-        return '<button type="button" class="cot-wiz-dd-item" data-i="' + i + '">' +
-          '<strong>' + _cotEsc(c.razon_social || 'Cliente') + '</strong>' +
-          '<span>' + _cotEsc(c.rut || '') + (c.comuna ? ' · ' + _cotEsc(c.comuna) : '') + '</span>' +
-          badges +
-        '</button>';
-      }).join('');
-      res.querySelectorAll('.cot-wiz-dd-item').forEach(function(b){
-        b.addEventListener('click', async function(){
-          const c = lista[parseInt(b.dataset.i, 10)];
-          if (!c) return;
-          _cotWizFuenteCerrar();
-          document.getElementById('cotWizCliQ').value = c.razon_social || '';
-          await _cotWizAplicarDeepLinkCliente(c.id, { autoAgregarEquipos: true });
-        });
-      });
-    }
-  }catch(e){
-    if (seq !== _cotWizFuenteBuscSeq) return;
-    res.innerHTML = '<div class="cot-wiz-dd-vacio">Error de conexión</div>';
-  }
 }
 (function(){
   const btn = document.getElementById('btnCotWizDesdeDocumento');
   if (!btn) return;
-  btn.addEventListener('click', function(ev){
-    ev.stopPropagation();
-    const dd = document.getElementById('cotWizFuenteDD');
-    if (dd && dd.style.display === 'block'){ _cotWizFuenteCerrar(); return; }
-    _cotWizFuenteMenu();
-  });
-  // Listener de click-afuera PROPIO -- NO reusa el de #cotWizCliResultados.
-  document.addEventListener('click', function(ev){
-    if (!ev.target.closest('#cotWizFuenteWrap')) _cotWizFuenteCerrar();
-  });
+  btn.addEventListener('click', function(){ cotWizFuenteDocumento(); });
 })();
 
 // ── Paso 2: botón histórico "Asignar desde documento" -- se mantiene
@@ -2108,6 +1989,11 @@ async function _cotWizAplicarDeepLinkTicket(tid){
     const t = d.ticket || {};
     _WIZ.origen = 'ticket';
     _WIZ.ticketId = tid;
+    // 2026-07-24 (revisión adversarial): reflejar en el buscador de la
+    // Sección 1 qué quedó cargado -- el dropdown viejo lo hacía, el modal
+    // compartido nuevo no pasa el nombre por onSeleccionarEntidad (solo
+    // {tipo,id}), así que se completa acá donde ya tenemos el dato real.
+    document.getElementById('cotWizCliQ').value = (t.empresa || '') + (t.numero_ticket ? ' — ' + t.numero_ticket : '');
     document.getElementById('cotWizEmpresa').value = t.empresa || '';
     document.getElementById('cotWizRut').value = t.rut || '';
     document.getElementById('cotWizEmail').value = t.email || '';
@@ -2171,6 +2057,10 @@ async function _cotWizAplicarDeepLinkCliente(cid, opts){
     const cli = d.cliente || {};
     _WIZ.origen = 'ficha';
     _WIZ.clienteId = cli.id || cid;
+    // 2026-07-24 (revisión adversarial): mismo criterio que el deep-link
+    // de ticket -- reflejar en el buscador de la Sección 1 qué cliente
+    // quedó cargado desde la ficha.
+    document.getElementById('cotWizCliQ').value = (cli.razon_social || '') + (cli.rut ? ' — ' + cli.rut : '');
     document.getElementById('cotWizEmpresa').value = cli.razon_social || '';
     document.getElementById('cotWizRut').value = cli.rut || '';
     if (cli.direccion) document.getElementById('cotWizDireccion').value = cli.direccion;
