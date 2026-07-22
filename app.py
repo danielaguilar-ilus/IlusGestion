@@ -27026,17 +27026,19 @@ def _tr_manifiesto_export_impl(mid):
         sender_l1    = _trunc(s["line1"])
         sender_l2    = _trunc(s.get("line2", ""))
 
-        # recipientEmail (col 15) — Daniel 2026-06-16: NO se pone el correo
-        # REAL del cliente. FedEx manda notificaciones automáticas a esa
-        # casilla (columnas 32-35: entrega/excepción/alerta de envío); un
-        # cliente que no sabe que su pedido pasa por una carga masiva FedEx
-        # recibiría avisos confusos de un "despacho" que no reconoce. Se usa
-        # un correo interno de logística (quien gestiona el seguimiento real).
-        # Confirmado contra el propio historial de FedEx que Daniel compartió
-        # como referencia: ese registro real también trae recipientEmail =
-        # alison.mellado@sphs.cl, no el correo del cliente. Configurable
-        # (REGLA #4, sin hardcode rígido) — mismo patrón que _tr_sender_cfg().
-        fedex_recipient_notify_email = os.environ.get(
+        # recipientEmail (col 15) — POR DEFECTO es dinámico: el correo REAL
+        # del cliente (igual que siempre). Daniel 2026-06-16 (corrección):
+        # la sustitución por un correo interno es SOLO para las pruebas de
+        # carga masiva de ESTA sesión (evita que un cliente real reciba
+        # notificaciones automáticas de FedEx — cols 32-35 — de un despacho
+        # de prueba que no reconoce). NO es el comportamiento permanente.
+        # Activar con ILUS_FEDEX_TEST_MODE=1 (apagado por defecto — mismo
+        # patrón que ILUS_COMM_TEST_TO); quitar la env var cuando termine la
+        # prueba y el export vuelve a mandar el correo real del cliente.
+        _fedex_test_mode = os.environ.get("ILUS_FEDEX_TEST_MODE", "").strip().lower() in (
+            "1", "true", "on", "yes", "si", "sí"
+        )
+        fedex_test_notify_email = os.environ.get(
             "ILUS_FEDEX_RECIPIENT_NOTIFY_EMAIL", "alison.mellado@sphs.cl"
         ).strip()
 
@@ -27069,13 +27071,16 @@ def _tr_manifiesto_export_impl(mid):
             # sino FREIGHT. (En la macro Daniel usa nbultos como umbral; lo
             # respetamos textualmente).
             service_type = "FEDEX_PRIORITY" if nbult < 68 else "FEDEX_PRIORITY_FREIGHT"
+            # recipientEmail: correo real del cliente por defecto (dinámico);
+            # solo en modo prueba se sustituye por el interno (ver arriba).
+            recipient_email = fedex_test_notify_email if _fedex_test_mode else (it.get("email") or "")
             row = [
                 it.get("nudo") or "",                                 # 1  reference
                 sender_name, s["company"], s["phone"], s["email"],    # 2-5 sender contact
                 sender_l1, sender_l2,                                 # 6-7 sender lines
                 s["postcode"], s["state"], s["city"], s["country"],   # 8-11 sender geo
                 rcp_l12, rcp_l13,                                     # 12-13 recipient name (split)
-                it.get("telefono") or "", fedex_recipient_notify_email,  # 14-15 recipient contact
+                it.get("telefono") or "", recipient_email,            # 14-15 recipient contact
                 rcp_l16, rcp_l17, "",                                 # 16-18 recipient lines
                 cp_dest, "CL",                                        # 19-20 recipient postcode/state
                 _trunc(comuna_dest, 35), "CL",                        # 21-22 recipient city/country
@@ -27087,10 +27092,11 @@ def _tr_manifiesto_export_impl(mid):
             for ci, v in enumerate(row, 1):
                 ws.cell(ri, ci, _xc(v))
             # Resaltar campos críticos faltantes para que Daniel corrija antes de subir.
-            # Nota: la columna 15 (recipientEmail) ya NO es el correo del cliente
-            # (ver fedex_recipient_notify_email arriba) — siempre trae el correo
-            # interno de logística, así que no hace falta marcarla como faltante.
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
+            # El correo faltante solo importa fuera de modo prueba (en modo
+            # prueba la celda siempre trae el correo interno, nunca falta).
+            if not _fedex_test_mode and _falta(it.get("email")):
+                ws.cell(ri, 15).fill = MISS_FILL
             if not cp_dest:                ws.cell(ri, 19).fill = MISS_FILL  # FedEx rechaza sin CP
             if _falta(comuna_dest):        ws.cell(ri, 21).fill = MISS_FILL
 
