@@ -27026,6 +27026,20 @@ def _tr_manifiesto_export_impl(mid):
         sender_l1    = _trunc(s["line1"])
         sender_l2    = _trunc(s.get("line2", ""))
 
+        # recipientEmail (col 15) — Daniel 2026-06-16: NO se pone el correo
+        # REAL del cliente. FedEx manda notificaciones automáticas a esa
+        # casilla (columnas 32-35: entrega/excepción/alerta de envío); un
+        # cliente que no sabe que su pedido pasa por una carga masiva FedEx
+        # recibiría avisos confusos de un "despacho" que no reconoce. Se usa
+        # un correo interno de logística (quien gestiona el seguimiento real).
+        # Confirmado contra el propio historial de FedEx que Daniel compartió
+        # como referencia: ese registro real también trae recipientEmail =
+        # alison.mellado@sphs.cl, no el correo del cliente. Configurable
+        # (REGLA #4, sin hardcode rígido) — mismo patrón que _tr_sender_cfg().
+        fedex_recipient_notify_email = os.environ.get(
+            "ILUS_FEDEX_RECIPIENT_NOTIFY_EMAIL", "alison.mellado@sphs.cl"
+        ).strip()
+
         for ri, it in enumerate(items, 2):
             nbult = max(1, int(it.get("n_bultos") or 1))
             peso_tot  = float(it.get("peso_kg") or 0)
@@ -27036,12 +27050,20 @@ def _tr_manifiesto_export_impl(mid):
             rcp_l12, rcp_l13 = _dividir_texto_inteligente(it.get("cliente_nombre") or "")
             # Dirección: cols 16, 17, 18 — la macro VBA solo divide en 2, no
             # llena la 18. Mantenemos compatibilidad.
-            rcp_l16, rcp_l17 = _dividir_texto_inteligente(it.get("direccion") or "")
+            # 2026-06-16 (Daniel, validado contra el historial real de FedEx):
+            # la comuna va PEGADA a la dirección en recipientLine1/2 (ej.
+            # "Blasia 245, VIÑA DEL MAR"), aunque también viaje aparte en
+            # recipientCity (col 21) — así es como el registro real aceptado
+            # por FedEx lo trae. Antes solo se mandaba la dirección sola.
+            _dir_raw    = (it.get("direccion") or "").strip()
+            _comuna_raw = (it.get("comuna") or "").strip()
+            _dir_con_comuna = f"{_dir_raw}, {_comuna_raw}" if (_dir_raw and _comuna_raw) else (_dir_raw or _comuna_raw)
+            rcp_l16, rcp_l17 = _dividir_texto_inteligente(_dir_con_comuna)
             # Código postal del destinatario: tabla oficial FedEx por comuna
             # (réplica de BuscarCodigoPostal de la macro). Si falla, intenta
             # con cod_postal del item (lo que el ERP haya guardado) como
             # último recurso. Si tampoco, queda vacío y se marca en rojo.
-            comuna_dest = (it.get("comuna") or "").strip()
+            comuna_dest = _comuna_raw
             cp_dest = _codigo_postal_chile(comuna_dest) or (it.get("cod_postal") or "").strip()
             # ServiceType — réplica condición VBA: bultos < 68 → PRIORITY,
             # sino FREIGHT. (En la macro Daniel usa nbultos como umbral; lo
@@ -27053,7 +27075,7 @@ def _tr_manifiesto_export_impl(mid):
                 sender_l1, sender_l2,                                 # 6-7 sender lines
                 s["postcode"], s["state"], s["city"], s["country"],   # 8-11 sender geo
                 rcp_l12, rcp_l13,                                     # 12-13 recipient name (split)
-                it.get("telefono") or "", it.get("email") or "",      # 14-15 recipient contact
+                it.get("telefono") or "", fedex_recipient_notify_email,  # 14-15 recipient contact
                 rcp_l16, rcp_l17, "",                                 # 16-18 recipient lines
                 cp_dest, "CL",                                        # 19-20 recipient postcode/state
                 _trunc(comuna_dest, 35), "CL",                        # 21-22 recipient city/country
@@ -27065,8 +27087,10 @@ def _tr_manifiesto_export_impl(mid):
             for ci, v in enumerate(row, 1):
                 ws.cell(ri, ci, _xc(v))
             # Resaltar campos críticos faltantes para que Daniel corrija antes de subir.
+            # Nota: la columna 15 (recipientEmail) ya NO es el correo del cliente
+            # (ver fedex_recipient_notify_email arriba) — siempre trae el correo
+            # interno de logística, así que no hace falta marcarla como faltante.
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
-            if _falta(it.get("email")):    ws.cell(ri, 15).fill = MISS_FILL
             if not cp_dest:                ws.cell(ri, 19).fill = MISS_FILL  # FedEx rechaza sin CP
             if _falta(comuna_dest):        ws.cell(ri, 21).fill = MISS_FILL
 
