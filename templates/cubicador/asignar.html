@@ -1545,8 +1545,21 @@ async function guardarZzEnvioSaldo(){
     const d = await r.json();
     if(!r.ok || d.error) throw new Error(d.error || ('HTTP '+r.status));
     _docData._zzenvioValorAlCargar = saldo;  // ya es el nuevo "punto de partida"
+    _docData.zzenvio_valor    = saldo;
+    _docData.zzenvio_es_saldo = true;
     const badge = document.getElementById('zz-saldo-badge');
     if(badge) badge.style.display = '';
+    // FIX 2026-07-22 (revisión adversarial): _docCache (TTL 90s) guardaba la
+    // respuesta de ANTES de guardar el saldo. Si se re-busca el mismo
+    // documento dentro de esos 90s, el cache-hit devolvía zzenvio_es_saldo
+    // desactualizado y el badge desaparecía (el número seguía correcto, solo
+    // el aviso visual se perdía). Se actualiza la entrada cacheada también.
+    const _cacheKey = `${tido}|${nudo}`;
+    const _cached = _docCache.get(_cacheKey);
+    if(_cached && _cached.data){
+      _cached.data.zzenvio_valor    = saldo;
+      _cached.data.zzenvio_es_saldo = true;
+    }
     if(window.ilusToast) ilusToast('✓ Saldo de ZZ Envío guardado — quedará disponible la próxima vez que busques este documento', {type:'success'});
   } catch(e){
     if(window.ilusToast) ilusToast('Error al guardar el saldo: '+e.message, {type:'error'});

@@ -26960,6 +26960,7 @@ def _tr_manifiesto_items_export(mid):
         SELECT c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
                c.comuna, c.direccion, c.telefono, c.email,
                c.region, c.cod_postal, c.notas,
+               COALESCE(c.peso_export, 0) AS peso_export,
                COALESCE(NULLIF(c.peso_export, 0),
                         NULLIF(c.peso_real, 0),
                         (SELECT COALESCE(SUM(l.peso_unitario * l.cantidad), 0)
@@ -26967,13 +26968,42 @@ def _tr_manifiesto_items_export(mid):
                           WHERE l.commitment_id = c.id)) AS peso_kg,
                COALESCE(c.peso_vol, 0)          AS peso_vol_kg,
                COALESCE(c.peso_predominante, 0) AS peso_predominante,
-               COALESCE(c.n_bultos, 1) AS n_bultos
+               COALESCE(c.n_bultos, 1) AS n_bultos,
+               COALESCE(c.valor_bruto, 0) AS valor_bruto
           FROM transport_manifest_items mi
           JOIN transport_commitments c ON c.id = mi.commitment_id
          WHERE mi.manifest_id = %s
          ORDER BY mi.orden, mi.id
     """, (mid,)) or []
     return items
+
+
+def _peso_a_declarar(it):
+    """Peso a declarar en la carga masiva / documento de firma. ÚNICA fuente
+    de verdad (2026-07-22, revisión adversarial): antes esta lógica estaba
+    DUPLICADA en _tr_manifiesto_export_impl y _tr_manifiesto_items_firma, y
+    una versión quedó con la prioridad mal ordenada — el override manual del
+    operador (peso_export, "editable en el modal del manifiesto") quedaba
+    invisible detrás de peso_predominante (que no se recalcula cuando se
+    edita peso_export por separado). Ahora hay UN solo lugar:
+
+      1. peso_export (override manual explícito del operador) — máxima
+         prioridad, tal como promete el campo.
+      2. peso_predominante (cubicaje ya calculado — mismo dato que muestra
+         la grilla "Facturas del manifiesto") si no hay override.
+      3. max(peso_kg, peso_vol_kg) — red de seguridad final (regla estándar
+         de fletes: un bulto liviano pero voluminoso igual ocupa espacio
+         real).
+
+    `it` debe venir de _tr_manifiesto_items_export (trae peso_export,
+    peso_kg, peso_vol_kg, peso_predominante)."""
+    override = float(it.get("peso_export") or 0)
+    if override > 0:
+        return override
+    pred = float(it.get("peso_predominante") or 0)
+    if pred > 0:
+        return pred
+    return max(float(it.get("peso_kg") or 0), float(it.get("peso_vol_kg") or 0))
 
 
 def _tr_manifiesto_items_firma(mid):
@@ -27014,14 +27044,7 @@ def _tr_manifiesto_items_firma(mid):
         cid = it["commitment_id"]
         it["cliente_rut"] = rut_por_commitment.get(cid, "")
         it["lineas"]      = lineas_por_commitment.get(cid, [])
-        # Prioridad: peso_predominante ya guardado (misma columna que la
-        # grilla "Facturas del manifiesto"); red de seguridad = max(real,vol).
-        _pred = float(it.get("peso_predominante") or 0)
-        it["peso_declarar"] = round(
-            _pred if _pred > 0 else max(float(it.get("peso_kg") or 0),
-                                         float(it.get("peso_vol_kg") or 0)),
-            3
-        )
+        it["peso_declarar"] = round(_peso_a_declarar(it), 3)
     return items
 
 
@@ -27151,19 +27174,10 @@ def _tr_manifiesto_export_impl(mid):
         flash("Este manifiesto no tiene items para exportar.", "warning")
         return redirect(url_for("tr_manifiesto_detalle", mid=mid))
 
-    def _peso_declarar(it):
-        """Peso a declarar en la carga masiva: el MAYOR entre peso real y peso
-        volumétrico (Daniel — regla estándar de facturación de fletes: un
-        bulto liviano pero voluminoso igual ocupa espacio real).
-
-        Prioridad: c.peso_predominante (ya calculado y guardado por el
-        cubicaje del documento — misma columna que muestra la grilla
-        "Facturas del manifiesto") si es > 0; si no, max(peso_kg, peso_vol_kg)
-        como red de seguridad para documentos viejos sin ese dato."""
-        pred = float(it.get("peso_predominante") or 0)
-        if pred > 0:
-            return pred
-        return max(float(it.get("peso_kg") or 0), float(it.get("peso_vol_kg") or 0))
+    # Peso a declarar: única fuente de verdad en _peso_a_declarar() (módulo),
+    # compartida con _tr_manifiesto_items_firma — ver ese docstring para el
+    # porqué de la prioridad (override manual > predominante > max real/vol).
+    _peso_declarar = _peso_a_declarar
 
     # Defensivo: si la columna formato_export aún no existe (ensure no corrió
     # o falló), no rompemos el export — caemos a la auto-detección por nombre.
