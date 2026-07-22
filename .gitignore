@@ -68,3 +68,4 @@ start.bat
 
 # Scratch de extracción de tarifas del macro (los datos finales viven en tarifas/)
 _macro_extract/
+_render_test.html
