@@ -26941,68 +26941,38 @@ def _codigo_postal_chile(comuna):
 def _tr_manifiesto_items_export(mid):
     """Carga los items del manifiesto con todos los campos de contacto + carga.
 
-    peso_kg = peso_export del modal si está; si no, fallback a SUM(peso_unitario*
-    cantidad) de las líneas (suele ser 0 hasta que se cubica). NO toca el ERP.
+    peso_kg = peso_export del modal si está (override manual, máxima
+    prioridad); si no, c.peso_real (cubicaje declarado del documento); si no,
+    fallback a SUM(peso_unitario*cantidad) de las líneas.
 
-    peso_vol_kg (2026-07-22, Daniel — carga masiva FedEx debe llevar el MAYOR
-    entre peso real y peso volumétrico, igual que el cubicador): se calcula en
-    un 2º paso, en BATCH (no por fila — evitar N subconsultas correlacionadas
-    contra app_products/app_bultos), reusando la misma fórmula que
-    _cubicador_fetch (`largo*ancho*alto/4000`, ver calc_pv). transport_commitment_lines
-    tiene una columna 'volumen_unitario' pero NUNCA se llena en ningún flujo —
-    por eso se recalcula aquí desde la ficha técnica del producto por SKU.
+    peso_vol_kg / peso_declarar (2026-07-22, Daniel — corrección: la 1ª
+    versión de este fix RECALCULABA el peso volumétrico desde cero por SKU
+    contra app_products/app_bultos, y ese join fallaba en silencio para SKUs
+    que no calzaban exacto — el resultado quedaba en 0 y no se notaba. La
+    columna correcta YA EXISTE y está bien poblada: transport_commitments
+    tiene peso_real/peso_vol/peso_predominante ("cubicaje declarado — máxima
+    información, que corre aguas abajo y no se pierde", ver la migración de
+    esas columnas). Es la MISMA fuente que ya muestra la grilla "Facturas del
+    manifiesto" (kg real / kg vol / kg pred). Ahora simplemente se LEE esa
+    columna en vez de recalcularla.
     """
     items = mysql_fetchall("""
         SELECT c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
                c.comuna, c.direccion, c.telefono, c.email,
                c.region, c.cod_postal, c.notas,
                COALESCE(NULLIF(c.peso_export, 0),
+                        NULLIF(c.peso_real, 0),
                         (SELECT COALESCE(SUM(l.peso_unitario * l.cantidad), 0)
                            FROM transport_commitment_lines l
                           WHERE l.commitment_id = c.id)) AS peso_kg,
+               COALESCE(c.peso_vol, 0)          AS peso_vol_kg,
+               COALESCE(c.peso_predominante, 0) AS peso_predominante,
                COALESCE(c.n_bultos, 1) AS n_bultos
           FROM transport_manifest_items mi
           JOIN transport_commitments c ON c.id = mi.commitment_id
          WHERE mi.manifest_id = %s
          ORDER BY mi.orden, mi.id
     """, (mid,)) or []
-    if not items:
-        return items
-
-    commitment_ids = [it["commitment_id"] for it in items]
-    ph = ",".join(["%s"] * len(commitment_ids))
-    lineas = mysql_fetchall(f"""
-        SELECT commitment_id, UPPER(TRIM(koprct)) AS sku_norm, cantidad
-          FROM transport_commitment_lines
-         WHERE commitment_id IN ({ph})
-    """, tuple(commitment_ids)) or []
-
-    skus_set = {l["sku_norm"] for l in lineas if l.get("sku_norm")}
-    peso_vol_por_sku = {}
-    if skus_set:
-        skus_list = list(skus_set)
-        ph_sku = ",".join(["%s"] * len(skus_list))
-        rows_sku = mysql_fetchall(f"""
-            SELECT UPPER(TRIM(p.sku)) AS sku_norm,
-                   ROUND(COALESCE(SUM(b.largo * b.ancho * b.alto) / 4000.0, 0), 4) AS peso_vol
-              FROM `{PRODUCTS_TABLE}` p
-              LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
-             WHERE UPPER(TRIM(p.sku)) IN ({ph_sku})
-             GROUP BY p.id
-        """, tuple(skus_list)) or []
-        peso_vol_por_sku = {r["sku_norm"]: float(r["peso_vol"] or 0) for r in rows_sku}
-
-    peso_vol_por_commitment = {}
-    for l in lineas:
-        pv_u = peso_vol_por_sku.get(l.get("sku_norm") or "", 0.0)
-        if pv_u <= 0:
-            continue
-        cid = l["commitment_id"]
-        qty = float(l.get("cantidad") or 0)
-        peso_vol_por_commitment[cid] = peso_vol_por_commitment.get(cid, 0.0) + pv_u * qty
-
-    for it in items:
-        it["peso_vol_kg"] = round(peso_vol_por_commitment.get(it["commitment_id"], 0.0), 3)
     return items
 
 
@@ -27044,8 +27014,14 @@ def _tr_manifiesto_items_firma(mid):
         cid = it["commitment_id"]
         it["cliente_rut"] = rut_por_commitment.get(cid, "")
         it["lineas"]      = lineas_por_commitment.get(cid, [])
-        it["peso_declarar"] = round(max(float(it.get("peso_kg") or 0),
-                                         float(it.get("peso_vol_kg") or 0)), 3)
+        # Prioridad: peso_predominante ya guardado (misma columna que la
+        # grilla "Facturas del manifiesto"); red de seguridad = max(real,vol).
+        _pred = float(it.get("peso_predominante") or 0)
+        it["peso_declarar"] = round(
+            _pred if _pred > 0 else max(float(it.get("peso_kg") or 0),
+                                         float(it.get("peso_vol_kg") or 0)),
+            3
+        )
     return items
 
 
@@ -27177,8 +27153,16 @@ def _tr_manifiesto_export_impl(mid):
 
     def _peso_declarar(it):
         """Peso a declarar en la carga masiva: el MAYOR entre peso real y peso
-        volumétrico (2026-07-22, Daniel — regla estándar de facturación de
-        fletes: un bulto liviano pero voluminoso igual ocupa espacio real)."""
+        volumétrico (Daniel — regla estándar de facturación de fletes: un
+        bulto liviano pero voluminoso igual ocupa espacio real).
+
+        Prioridad: c.peso_predominante (ya calculado y guardado por el
+        cubicaje del documento — misma columna que muestra la grilla
+        "Facturas del manifiesto") si es > 0; si no, max(peso_kg, peso_vol_kg)
+        como red de seguridad para documentos viejos sin ese dato."""
+        pred = float(it.get("peso_predominante") or 0)
+        if pred > 0:
+            return pred
         return max(float(it.get("peso_kg") or 0), float(it.get("peso_vol_kg") or 0))
 
     # Defensivo: si la columna formato_export aún no existe (ensure no corrió
