@@ -49,13 +49,14 @@
 @media(min-width:768px){.cot-clasif-panel{border-radius:16px;box-shadow:0 24px 70px -16px rgba(0,0,0,.4);}}
 @keyframes cotSlideUp{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
 .cot-clasif-head{
-  padding:18px 20px 8px;display:flex;align-items:center;justify-content:space-between;gap:10px;
-  border-bottom:1px solid #eaecf0;
+  padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:#0a0a0a;border-radius:16px 16px 0 0;
 }
-.cot-clasif-head h5{margin:0;font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px;font-size:1.05rem;}
+@media(max-width:767px){.cot-clasif-head{border-radius:0;}}
+.cot-clasif-head h5{margin:0;font-weight:900;color:#fff;display:flex;align-items:center;gap:8px;font-size:1.05rem;}
 .cot-clasif-head h5 i{color:#dc2626;}
 .cot-clasif-close{
-  width:38px;height:38px;border:none;border-radius:9px;background:#f3f4f6;color:#6b7280;
+  width:34px;height:34px;border:none;border-radius:9px;background:rgba(255,255,255,.1);color:#fff;
   display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.15s;
 }
 .cot-clasif-close:hover{background:#dc2626;color:#fff;}
@@ -92,8 +93,12 @@
 .cot-wiz-tab{border:none;background:transparent;padding:12px 16px;font-size:.84rem;font-weight:700;
   color:#9ca3af;cursor:pointer;border-bottom:2.5px solid transparent;display:flex;align-items:center;gap:7px;}
 .cot-wiz-tab.on{color:#dc2626;border-bottom-color:#dc2626;}
-.cot-wiz-campos{padding:16px 20px 4px;display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;}
+.cot-wiz-campos{padding:14px 20px 2px;display:grid;grid-template-columns:1fr 1fr;gap:9px 14px;}
 @media(max-width:640px){.cot-wiz-campos{grid-template-columns:1fr;}}
+.cot-wiz-campo textarea.form-control{min-height:auto;padding-top:6px;padding-bottom:6px;}
+.cot-wiz-campo.invalido input,.cot-wiz-campo.invalido select{border-color:#dc2626;background:#fef2f2;}
+.cot-wiz-campo-err{font-size:.66rem;color:#dc2626;font-weight:700;margin-top:2px;display:none;}
+.cot-wiz-campo.invalido .cot-wiz-campo-err{display:block;}
 .cot-wiz-campo{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .cot-wiz-campo.full{grid-column:1/-1;}
 .cot-wiz-campo>label{font-size:.68rem;font-weight:800;color:#374151;margin:0;}
@@ -119,6 +124,21 @@
 .cot-wiz-pill{flex:1;border:1.5px solid #e5e7eb;background:#fff;border-radius:9px;min-height:42px;
   font-size:.8rem;font-weight:800;color:#6b7280;cursor:pointer;transition:.13s;}
 .cot-wiz-pill.on{border-color:#dc2626;background:#fef2f2;color:#dc2626;}
+
+/* Tipo de servicio con iconos -- mismo lenguaje visual que .nt-tipo-pill
+   del modal "Nuevo Ticket" (Daniel 2026-07-22: "más dinámico... con
+   monitos... más colorido"). */
+.cot-wiz-tiposerv{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;}
+@media(max-width:760px){.cot-wiz-tiposerv{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:420px){.cot-wiz-tiposerv{grid-template-columns:repeat(2,1fr);}}
+.cot-wiz-ts-pill{border:1.5px solid #e5e7eb;border-radius:10px;padding:9px 5px;text-align:center;cursor:pointer;
+  font-size:.68rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:58px;line-height:1.15;}
+.cot-wiz-ts-pill i{font-size:1.15rem;color:var(--tc,#94a3b8);}
+.cot-wiz-ts-pill:hover{border-color:var(--tc,#dc2626);color:var(--tc,#dc2626);}
+.cot-wiz-ts-pill.on{border-color:var(--tc,#dc2626);background:var(--tbg,#fef2f2);color:var(--tc,#dc2626);
+  box-shadow:inset 0 0 0 1px var(--tc,#dc2626);font-weight:800;}
+.cot-wiz-ts-hint{grid-column:1/-1;font-size:.66rem;color:#9ca3af;margin-top:1px;}
 .cot-wiz-vacio td{text-align:center;color:#9ca3af;font-size:.8rem;padding:26px 10px !important;font-style:italic;}
 .cot-wiz-quitar{border:none;background:transparent;color:#c1c5cc;width:30px;height:30px;border-radius:7px;
   cursor:pointer;display:inline-flex;align-items:center;justify-content:center;}
@@ -213,7 +233,7 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
    cuando se usa "Asignar desde documento". Nada de alert()/confirm()
    nativos (Regla #1). #}
 <div id="cotWizModal" class="cot-clasif-backdrop" style="z-index:1080;">
-  <div class="cot-clasif-panel" style="max-width:880px;">
+  <div class="cot-clasif-panel" style="max-width:980px;max-height:96vh;max-height:96dvh;">
     <div class="cot-clasif-head">
       <h5><i class="bi bi-file-earmark-plus-fill"></i>Crear Cotización</h5>
       <button type="button" class="cot-clasif-close" onclick="cotWizCerrar()" aria-label="Cerrar">
@@ -236,35 +256,57 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
                  placeholder="Busca por RUT o nombre en el ERP…">
           <div id="cotWizCliResultados" class="cot-wiz-dropdown" style="display:none;"></div>
         </div>
-        <div class="cot-wiz-campo"><label>Empresa / Razón social</label>
-          <input id="cotWizEmpresa" class="form-control"></div>
-        <div class="cot-wiz-campo"><label>RUT</label>
-          <input id="cotWizRut" class="form-control"></div>
-        <div class="cot-wiz-campo full"><label>Dirección</label>
+        <div class="cot-wiz-campo" id="campoEmpresa"><label>Empresa / Razón social</label>
+          <input id="cotWizEmpresa" class="form-control">
+          <div class="cot-wiz-campo-err">Obligatorio</div></div>
+        <div class="cot-wiz-campo" id="campoRut"><label>RUT</label>
+          <input id="cotWizRut" class="form-control">
+          <div class="cot-wiz-campo-err">Obligatorio</div></div>
+        <div class="cot-wiz-campo full" id="campoDireccion" style="position:relative;">
+          <label>Dirección</label>
           <input id="cotWizDireccion" class="form-control" autocomplete="off"
                  placeholder="Escribe y elige una dirección real del listado…">
           <div id="cotWizDireccionHint" class="cot-wiz-hint"></div>
+          <div class="cot-wiz-campo-err">Escribe la dirección y elige una opción de la lista de Google para validarla</div>
           <input type="hidden" id="cotWizDireccionLat"><input type="hidden" id="cotWizDireccionLng">
           <input type="hidden" id="cotWizDireccionPlaceId"></div>
-        <div class="cot-wiz-campo"><label>Región <span class="cot-wiz-auto">(automática)</span></label>
-          <input id="cotWizRegion" class="form-control" readonly></div>
-        <div class="cot-wiz-campo"><label>Comuna <span class="cot-wiz-auto">(auto, editable)</span></label>
-          <input id="cotWizComuna" class="form-control"></div>
-        <div class="cot-wiz-campo"><label>Email</label>
-          <input id="cotWizEmail" type="email" class="form-control"></div>
-        <div class="cot-wiz-campo"><label>Teléfono</label>
-          <input id="cotWizTelefono" class="form-control"></div>
-        <div class="cot-wiz-campo"><label>Tipo de servicio</label>
-          <div class="cot-wiz-pills">
-            <button type="button" class="cot-wiz-pill on" data-v="mantencion" onclick="cotWizTipoServ(this)">Mantención</button>
-            <button type="button" class="cot-wiz-pill" data-v="instalacion" onclick="cotWizTipoServ(this)"
-                    title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">Instalación</button>
+        <div class="cot-wiz-campo" id="campoRegion"><label>Región <span class="cot-wiz-auto">(automática)</span></label>
+          <input id="cotWizRegion" class="form-control" readonly>
+          <div class="cot-wiz-campo-err">Se completa al validar la dirección</div></div>
+        <div class="cot-wiz-campo" id="campoComuna"><label>Comuna <span class="cot-wiz-auto">(auto, editable)</span></label>
+          <input id="cotWizComuna" class="form-control">
+          <div class="cot-wiz-campo-err">Obligatorio</div></div>
+        <div class="cot-wiz-campo" id="campoEmail"><label>Email</label>
+          <input id="cotWizEmail" type="email" class="form-control">
+          <div class="cot-wiz-campo-err">Email inválido</div></div>
+        <div class="cot-wiz-campo" id="campoTelefono"><label>Teléfono</label>
+          <input id="cotWizTelefono" class="form-control" placeholder="+56 9 1234 5678">
+          <div class="cot-wiz-campo-err">Teléfono chileno inválido (8 o 9 dígitos)</div></div>
+        <div class="cot-wiz-campo full" id="campoTipoServicio"><label>Tipo de servicio</label>
+          <div class="cot-wiz-tiposerv">
+            <div class="cot-wiz-ts-pill on" data-v="mantencion" style="--tc:#f59e0b;--tbg:#fffbeb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button">
+              <i class="bi bi-tools"></i><span>Mantención</span></div>
+            <div class="cot-wiz-ts-pill" data-v="instalacion" style="--tc:#3b82f6;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+              <i class="bi bi-house-gear-fill"></i><span>Instalación</span></div>
+            <div class="cot-wiz-ts-pill" data-v="venta_repuesto" style="--tc:#1d4ed8;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+              <i class="bi bi-boxes"></i><span>Venta de repuesto</span></div>
+            <div class="cot-wiz-ts-pill" data-v="visita_tecnica" style="--tc:#16a34a;--tbg:#f0fdf4;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+              <i class="bi bi-clipboard-check"></i><span>Visita técnica</span></div>
+            <div class="cot-wiz-ts-pill" data-v="otro" style="--tc:#6b7280;--tbg:#f9fafb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                 title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+              <i class="bi bi-three-dots"></i><span>Otro</span></div>
+            <div class="cot-wiz-ts-hint">Solo Mantención tiene tarifa de mano de obra cargada hoy — los demás tipos cotizan en $0 hasta que se definan.</div>
           </div>
         </div>
-        <div class="cot-wiz-campo"><label>Ejecutivo o vendedor solicitante</label>
-          <select id="cotWizEjecutivo" class="form-select"><option value="">Seleccione</option></select></div>
-        <div class="cot-wiz-campo"><label>Válido hasta</label>
-          <input id="cotWizValidoHasta" type="date" class="form-control"></div>
+        <div class="cot-wiz-campo" id="campoEjecutivo"><label>Ejecutivo o vendedor solicitante</label>
+          <select id="cotWizEjecutivo" class="form-select"><option value="">Seleccione</option></select>
+          <div class="cot-wiz-campo-err">Obligatorio</div></div>
+        <div class="cot-wiz-campo" id="campoValidoHasta"><label>Válido hasta</label>
+          <input id="cotWizValidoHasta" type="date" class="form-control">
+          <div class="cot-wiz-campo-err">Obligatorio</div></div>
         <div class="cot-wiz-campo"><label>Descuento General (%)</label>
           <select id="cotWizDescuento" class="form-select">
             <option value="0" selected>0%</option><option value="5">5%</option>
@@ -272,11 +314,11 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
             <option value="20">20%</option><option value="25">25%</option>
           </select></div>
         <div class="cot-wiz-campo full"><label>Observaciones (se visualizará en el PDF)</label>
-          <textarea id="cotWizNotas" class="form-control" rows="2"
+          <textarea id="cotWizNotas" class="form-control" rows="1"
                     placeholder="Ej: Precios sujetos a disponibilidad"></textarea></div>
         <div class="cot-wiz-campo full"><label>Observaciones internas</label>
-          <textarea id="cotWizNotasInt" class="form-control" rows="2"></textarea></div>
-        <div class="cot-wiz-campo full"><label>Costo de Ruta</label>
+          <textarea id="cotWizNotasInt" class="form-control" rows="1"></textarea></div>
+        <div class="cot-wiz-campo full" id="campoCostoRuta"><label>Costo de Ruta</label>
           <div class="input-group">
             <span class="input-group-text">$</span>
             <input id="cotWizCostoRuta" type="number" min="0" step="1" class="form-control" value="0">
@@ -383,15 +425,18 @@ let _WIZ = null;
 let _wizEjecutivosCargados = false;
 
 function cotWizAbrir(){
-  _WIZ = { items: [], tipo: 'mantencion', rutaManual: false, sumaItems: 0 };
+  _WIZ = { items: [], tipo: 'mantencion', rutaManual: false, sumaItems: 0, direccionValidada: false };
   ['cotWizCliQ','cotWizEmpresa','cotWizRut','cotWizDireccion','cotWizRegion','cotWizComuna',
-   'cotWizEmail','cotWizTelefono','cotWizNotas','cotWizNotasInt'].forEach(function(id){
+   'cotWizEmail','cotWizTelefono','cotWizNotas','cotWizNotasInt',
+   'cotWizDireccionLat','cotWizDireccionLng','cotWizDireccionPlaceId'].forEach(function(id){
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.getElementById('cotWizDescuento').value = '0';
   document.getElementById('cotWizCostoRuta').value = '0';
   document.getElementById('cotWizEjecutivo').value = '';
   document.getElementById('cotWizRutaHint').textContent = 'Se obtiene automáticamente según la comuna del cliente';
+  document.getElementById('cotWizDireccionHint').innerHTML = '';
+  document.querySelectorAll('.cot-wiz-campo.invalido').forEach(function(c){ c.classList.remove('invalido'); });
   // Fecha LOCAL (no toISOString, que es UTC y cerca de medianoche chilena
   // se corre un día -- hallazgo de revisión adversarial). 2026-07-22
   // (Daniel: "un válido hasta 15 días", igual que Triple A).
@@ -399,7 +444,7 @@ function cotWizAbrir(){
   const _p2 = function(n){ return String(n).padStart(2, '0'); };
   document.getElementById('cotWizValidoHasta').value =
     _hoy.getFullYear() + '-' + _p2(_hoy.getMonth() + 1) + '-' + _p2(_hoy.getDate());
-  document.querySelectorAll('.cot-wiz-pill').forEach(function(b){
+  document.querySelectorAll('.cot-wiz-ts-pill').forEach(function(b){
     b.classList.toggle('on', b.dataset.v === 'mantencion');
   });
   document.getElementById('cotWizBody').innerHTML =
@@ -415,11 +460,46 @@ function cotWizCerrar(){
   if (m){ m.classList.remove('is-open'); m.style.display = 'none'; }
   _WIZ = null;
 }
+
+// ── Validación Paso 1 (2026-07-22, Daniel: "todos los valores obligatorios,
+//    que son todos menos las observaciones y el descuento") ──
+function _cotWizEmailValido(v){
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v || '').trim());
+}
+function _cotWizTelValido(v){
+  const d = String(v || '').replace(/\D/g, '');
+  const sinPais = d.startsWith('56') ? d.slice(2) : d;
+  return sinPais.length === 8 || sinPais.length === 9;
+}
+function _cotWizMarcar(id, ok){
+  const campo = document.getElementById(id);
+  if (campo) campo.classList.toggle('invalido', !ok);
+  return ok;
+}
+function cotWizValidarPaso1(){
+  let ok = true;
+  const v = function(id){ return document.getElementById(id).value.trim(); };
+  ok = _cotWizMarcar('campoEmpresa', !!v('cotWizEmpresa')) && ok;
+  ok = _cotWizMarcar('campoRut', !!v('cotWizRut')) && ok;
+  ok = _cotWizMarcar('campoComuna', !!v('cotWizComuna')) && ok;
+  ok = _cotWizMarcar('campoEjecutivo', !!v('cotWizEjecutivo')) && ok;
+  ok = _cotWizMarcar('campoValidoHasta', !!v('cotWizValidoHasta')) && ok;
+  ok = _cotWizMarcar('campoEmail', _cotWizEmailValido(v('cotWizEmail'))) && ok;
+  ok = _cotWizMarcar('campoTelefono', _cotWizTelValido(v('cotWizTelefono'))) && ok;
+  // Dirección: NO basta con que tenga texto -- tiene que haberse VALIDADO
+  // contra Google Places (Daniel: "hay que validar la dirección... y
+  // colocar mensajes"). Un cliente traído del ERP puede traer comuna sin
+  // haber pasado por Places -- igual se exige revalidar.
+  const direccionOk = !!v('cotWizDireccion') && !!v('cotWizDireccionLat');
+  ok = _cotWizMarcar('campoDireccion', direccionOk) && ok;
+  ok = _cotWizMarcar('campoRegion', !!v('cotWizRegion')) && ok;
+  return ok;
+}
+
 function cotWizIrPaso(n){
   if (n === 2 && _WIZ){
-    const empresa = document.getElementById('cotWizEmpresa').value.trim();
-    if (!empresa){
-      ilusToast('Identifica al cliente primero — búscalo en el ERP o escribe la razón social', {type:'warning'});
+    if (!cotWizValidarPaso1()){
+      ilusToast('Completa los campos obligatorios marcados en rojo', {type:'warning'});
       return;
     }
   }
@@ -431,7 +511,7 @@ function cotWizIrPaso(n){
 function cotWizTipoServ(btn){
   if (!_WIZ) return;
   _WIZ.tipo = btn.dataset.v;
-  document.querySelectorAll('.cot-wiz-pill').forEach(function(b){ b.classList.toggle('on', b === btn); });
+  document.querySelectorAll('.cot-wiz-ts-pill').forEach(function(b){ b.classList.toggle('on', b === btn); });
   cotWizPrecios();
 }
 async function cotWizCargarEjecutivos(){
@@ -505,8 +585,20 @@ function cotWizElegirCliente(c){
   if (!c) return;
   document.getElementById('cotWizEmpresa').value = c.empresa || '';
   document.getElementById('cotWizRut').value = c.rut || '';
+  // 2026-07-22 (Daniel: "hay que validar la dirección... colocar
+  // mensajes"): el ERP trae comuna/dirección de texto, pero NUNCA pasó por
+  // Google Places -- no alcanza lat/lng/place_id ni Región. Se deja como
+  // punto de partida (ahorra tipeo) pero SIN marcarla como validada; el
+  // aviso guía a re-escribir y elegir una sugerencia real.
+  document.getElementById('cotWizDireccionLat').value = '';
+  document.getElementById('cotWizDireccionLng').value = '';
+  document.getElementById('cotWizDireccionPlaceId').value = '';
+  document.getElementById('cotWizRegion').value = '';
   if (c.direccion) document.getElementById('cotWizDireccion').value = c.direccion;
   if (c.comuna) document.getElementById('cotWizComuna').value = c.comuna;
+  document.getElementById('cotWizDireccionHint').innerHTML =
+    '<i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>' +
+    'Dirección del ERP sin validar — vuelve a escribirla y elige una opción de la lista para completar la Región.';
   if (c.contacto_email) document.getElementById('cotWizEmail').value = c.contacto_email;
   if (c.contacto_tel) document.getElementById('cotWizTelefono').value = c.contacto_tel;
   document.getElementById('cotWizCliQ').value = (c.empresa || '') + (c.rut ? ' — ' + c.rut : '');
@@ -576,6 +668,8 @@ function _cotWizInitDireccion(){
       const ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
       hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>' +
         'Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      _cotWizMarcar('campoDireccion', true);
+      _cotWizMarcar('campoRegion', !!region);
       if (comuna) cotWizBuscarRuta();
     },
     onNoSelection: function(){
@@ -788,6 +882,15 @@ function cotWizResumen(){
     if (!empresa){
       ilusToast('Falta identificar al cliente (paso 1)', {type:'warning'});
       cotWizIrPaso(1);
+      return;
+    }
+    // 2026-07-22 (Daniel: "creó la cotización incompleta, no tiene ni
+    // precio ni nada" -- bug real encontrado probando en vivo): antes se
+    // podía crear con ítems SIN clasificar (quedaban en $0 para siempre,
+    // sin aviso). Ahora se bloquea hasta que todos tengan característica.
+    const sinClasificar = _WIZ.items.filter(function(it){ return !it.clase_producto; }).length;
+    if (sinClasificar > 0){
+      ilusToast('Faltan ' + sinClasificar + ' producto(s) por clasificar — sin eso no se puede calcular el precio', {type:'warning'});
       return;
     }
     const _orig = btnCrear.innerHTML;

@@ -112,6 +112,18 @@ TK_TIPOS = (
 # ya no exige.
 TK_TIPOS_SIN_CLIENTE = ("control_calidad", "trabajo_bodega", "capacitacion")
 
+# 🧾 Cotizaciones -- tipo de servicio (Daniel 2026-07-22, probando el wizard
+# en vivo: "venta de repuesto, visita técnica, podemos cotizar cualquier
+# cosa... más colorido"). Solo 'instalacion'/'mantencion' tienen tarifa real
+# hoy (cat_clase_producto_tarifas); las otras 3 quedan sin tarifa a propósito
+# -- el selector ya avisa con un title/tooltip, no se inventa un precio.
+_TK_COTIZ_TIPOS_SERVICIO = ("instalacion", "mantencion", "venta_repuesto", "visita_tecnica", "otro")
+_TK_COTIZ_TIPOS_SERVICIO_LABELS = {
+    "instalacion": "Instalación", "mantencion": "Mantención",
+    "venta_repuesto": "Venta de repuesto", "visita_tecnica": "Visita técnica",
+    "otro": "Otro",
+}
+
 # 🗓️ FASE 1 (Daniel 2026-07-15, alcance explícito): "hagamoslo por mientras
 # solamente con mi correo" -- el correo de confirmación tipo "reserva de
 # clínica" que se manda al generar una OT desde un ticket (.ics + botones
@@ -1437,6 +1449,20 @@ def register_tickets_routes(app, ctx):
             except Exception as _e:
                 print(f"[ILUS][WARN] ALTER tk_cotizaciones {a}: {_e}", flush=True)
 
+        # 2026-07-22 (Daniel probando el wizard en vivo: "venta de repuesto,
+        # visita técnica, podemos cotizar cualquier cosa"): el selector de
+        # tipo de servicio ahora tiene 5 opciones, no 2. MODIFY COLUMN con el
+        # ENUM ampliado es idempotente y seguro en TODO boot (mismo patrón
+        # que tk_tickets.tipo mas arriba) -- ensancha el ENUM preservando
+        # filas existentes, nunca las trunca.
+        try:
+            mysql_execute(
+                "ALTER TABLE tk_cotizaciones MODIFY COLUMN tipo_servicio "
+                "  ENUM('instalacion','mantencion','venta_repuesto','visita_tecnica','otro') "
+                "  NOT NULL DEFAULT 'mantencion'")
+        except Exception as _e:
+            print(f"[ILUS][WARN] ALTER tk_cotizaciones MODIFY tipo_servicio (5 tipos): {_e}", flush=True)
+
     def _ensure_tk_cotizacion_items_columns():
         """Migracion aditiva de tk_cotizacion_items: clase_producto (snapshot
         denormalizado de cat_productos.clase_producto al momento de agregar
@@ -2179,7 +2205,7 @@ def register_tickets_routes(app, ctx):
     def tk_api_cotizacion_preview_precio():
         d = request.get_json(silent=True) or {}
         tipo_servicio = (d.get("tipo_servicio") or "mantencion").strip().lower()
-        if tipo_servicio not in ("instalacion", "mantencion"):
+        if tipo_servicio not in _TK_COTIZ_TIPOS_SERVICIO:
             tipo_servicio = "mantencion"
         filas = d.get("items") or []
         if not isinstance(filas, list):
@@ -2361,7 +2387,7 @@ def register_tickets_routes(app, ctx):
                 "direccion": cot.get("direccion") or "", "comuna": cot.get("comuna") or "",
                 "region": cot.get("region") or "", "email": cot.get("email") or "",
                 "telefono": cot.get("telefono") or "", "ejecutivo": cot.get("ejecutivo") or "",
-                "tipo_servicio_label": "Instalación" if (cot.get("tipo_servicio") == "instalacion") else "Mantención",
+                "tipo_servicio_label": _TK_COTIZ_TIPOS_SERVICIO_LABELS.get(cot.get("tipo_servicio"), "Mantención"),
                 "notas": cot.get("notas"),
                 "subtotal": int(cot.get("subtotal") or 0),
                 "descuento_pct": float(cot.get("descuento_pct") or 0),
@@ -2486,7 +2512,7 @@ def register_tickets_routes(app, ctx):
         # abrir el modal del ERP y lo manda acá. 'mantencion' por defecto
         # porque es la única con tarifa real confirmada hoy (Regla #4.2).
         tipo_servicio = (d.get("tipo_servicio") or "mantencion").strip().lower()
-        if tipo_servicio not in ("instalacion", "mantencion"):
+        if tipo_servicio not in _TK_COTIZ_TIPOS_SERVICIO:
             tipo_servicio = "mantencion"
 
         # 2026-07-22 (Daniel, wizard estilo Triple A -- pantallazos del
