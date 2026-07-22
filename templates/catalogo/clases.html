@@ -26,6 +26,12 @@
   border-radius:6px}
 .clc-act:hover{background:#f3f4f6;color:#0a0a0a}
 @media(max-width:640px){.clc-table th:nth-child(4),.clc-table td:nth-child(4){display:none}}
+.clc-precio-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;
+  display:flex;gap:22px;flex-wrap:wrap;margin-bottom:14px;}
+.clc-precio-campo{display:flex;flex-direction:column;gap:4px;min-width:180px;}
+.clc-precio-campo label{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;}
+.clc-precio-campo .input-group{max-width:220px;}
+.clc-precio-hint{font-size:.66rem;color:#9ca3af;margin-top:2px;}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -37,6 +43,31 @@
   <button type="button" id="btnClcNueva" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;">
     <i class="bi bi-plus-lg me-1"></i>Nueva categoría
   </button>
+</div>
+
+{# 2026-07-23 (Daniel: "el precio del técnico y de la hora técnica, y un
+   porcentaje de margen" -- editables desde esta misma pantalla). Son los
+   2 valores GLOBALES que usa el motor de precio de Cotizaciones (antes
+   solo se podían cambiar tocando tk_settings directo). #}
+<div class="clc-precio-wrap">
+  <div class="clc-precio-campo">
+    <label>Valor hora técnica</label>
+    <div class="input-group input-group-sm">
+      <span class="input-group-text">$</span>
+      <input type="number" min="1" step="1" class="form-control" id="clcValorHh"
+             onchange="clcGuardarPrecio()">
+    </div>
+    <div class="clc-precio-hint">Base del costo de mano de obra (HH × este valor).</div>
+  </div>
+  <div class="clc-precio-campo">
+    <label>Margen (%)</label>
+    <div class="input-group input-group-sm">
+      <input type="number" min="0" step="1" class="form-control" id="clcMargenPct"
+             onchange="clcGuardarPrecio()">
+      <span class="input-group-text">%</span>
+    </div>
+    <div class="clc-precio-hint">Se aplica sobre el costo de mano de obra para el precio unitario.</div>
+  </div>
 </div>
 
 <div class="clc-table-wrap">
@@ -64,6 +95,28 @@ async function clcCargar(){
   const d = await r.json();
   _clcClases = (d.ok && d.clases) ? d.clases : [];
   clcRender();
+  if(d.ok && d.config_precio){
+    document.getElementById('clcValorHh').value = d.config_precio.valor_hh;
+    document.getElementById('clcMargenPct').value = d.config_precio.margen_pct;
+  }
+}
+
+async function clcGuardarPrecio(){
+  const valorHh = parseFloat(document.getElementById('clcValorHh').value);
+  const margenPct = parseFloat(document.getElementById('clcMargenPct').value);
+  if(isNaN(valorHh) || valorHh <= 0){ ilusToast('El valor de la hora técnica debe ser mayor a 0', {type:'warning'}); return; }
+  if(isNaN(margenPct) || margenPct < 0){ ilusToast('El porcentaje de margen no puede ser negativo', {type:'warning'}); return; }
+  try{
+    const r = await fetch('/catalogo/api/config-precio', {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({valor_hh: valorHh, margen_pct: margenPct})
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+    ilusToast('✓ Guardado — se aplica a las próximas cotizaciones', {type:'success'});
+  }catch(e){
+    ilusToast('Error de conexión al guardar', {type:'error'});
+  }
 }
 
 function clcInputsTarifa(c, tipo){

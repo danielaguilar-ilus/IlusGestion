@@ -809,20 +809,50 @@ async function cotWizBuscarRuta(){
       mode: 'seleccionar',
       onSeleccionar: async function(items, header){
         if (!_WIZ || !items || !items.length) return;
+        // 2026-07-23 (Daniel: "los datos tienen que coincidir con el
+        // cliente, porque si no sería una vulneración"): si el Paso 1 YA
+        // tiene un RUT cargado (de una búsqueda previa) y el documento que
+        // se está asignando pertenece a un RUT DISTINTO, avisar antes de
+        // traer los ítems -- nunca mezclar en silencio los datos de dos
+        // clientes distintos en la misma cotización.
+        const rutActual = document.getElementById('cotWizRut').value.trim();
+        const _rutLimpio = function(v){ return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); };
+        if (header && header.rut && rutActual && _rutLimpio(header.rut) !== _rutLimpio(rutActual)){
+          const continuar = await ilusConfirm({
+            title: 'El documento es de otro cliente',
+            message: 'Este documento pertenece al RUT ' + header.rut + ', pero el Paso 1 ya tiene cargado el RUT ' + rutActual + '.',
+            sub: 'Si continúas, se agregarán los productos igual pero los datos del cliente en el Paso 1 NO se van a tocar.',
+            okLabel: 'Agregar productos igual', cancelLabel: 'Cancelar', danger: true,
+          });
+          if (!continuar) return;
+        }
         // El header del documento SOLO rellena lo que el usuario dejó
         // vacío en el paso 1 (lo escrito a mano manda).
         if (header){
-          if (!document.getElementById('cotWizEmpresa').value.trim() && (header.cliente || header.empresa))
+          const _completados = [];
+          if (!document.getElementById('cotWizEmpresa').value.trim() && (header.cliente || header.empresa)){
             document.getElementById('cotWizEmpresa').value = header.cliente || header.empresa;
-          if (!document.getElementById('cotWizRut').value.trim() && header.rut)
+            _completados.push('empresa');
+          }
+          if (!rutActual && header.rut){
             document.getElementById('cotWizRut').value = header.rut;
-          if (!document.getElementById('cotWizEmail').value.trim() && header.email)
+            _completados.push('RUT');
+          }
+          if (!document.getElementById('cotWizEmail').value.trim() && header.email){
             document.getElementById('cotWizEmail').value = header.email;
-          if (!document.getElementById('cotWizTelefono').value.trim() && header.telefono)
+            _completados.push('email');
+          }
+          if (!document.getElementById('cotWizTelefono').value.trim() && header.telefono){
             document.getElementById('cotWizTelefono').value = header.telefono;
+            _completados.push('teléfono');
+          }
           if (!document.getElementById('cotWizComuna').value.trim() && header.comuna){
             document.getElementById('cotWizComuna').value = header.comuna;
+            _completados.push('comuna');
             cotWizBuscarRuta();
+          }
+          if (_completados.length){
+            ilusToast('Cliente completado desde el documento (' + _completados.join(', ') + ')', {type:'info'});
           }
         }
         const nuevos = items.map(function(it){

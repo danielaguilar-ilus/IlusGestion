@@ -642,7 +642,64 @@ def register_catalogo_routes(app, ctx):
                 r[f"{ts}_tecnicos"] = tecnicos_i
                 r[f"{ts}_hh"] = (horas_f * tecnicos_i) if (horas_f is not None and tecnicos_i is not None) else None
             out.append(r)
-        return jsonify({"ok": True, "clases": out})
+        return jsonify({"ok": True, "clases": out, "config_precio": _cat_config_precio_leer()})
+
+    # 2026-07-23 (Daniel, misma pantalla "Clasificación" del wizard de
+    # cotizaciones: "el precio del técnico y de la hora técnica, y un
+    # porcentaje de margen"). Son 2 valores GLOBALES (no por categoría) que
+    # ya existían como tk_settings (cotiz_valor_hh/cotiz_margen_pct,
+    # sembrados en tickets_module.py) -- acá solo se exponen para editarlos
+    # desde /catalogo/clases en vez de tener que tocar la base directo.
+    # tk_settings es una tabla clave/valor genérica ya usada cruzada entre
+    # módulos (ver reply_to en app.py), no hace falta wiring especial.
+    def _cat_config_precio_leer():
+        rows = mysql_fetchall(
+            "SELECT clave, valor FROM tk_settings "
+            "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct')") or []
+        vals = {r["clave"]: r["valor"] for r in rows}
+        try:
+            valor_hh = float(vals.get("cotiz_valor_hh", 20000))
+        except (TypeError, ValueError):
+            valor_hh = 20000.0
+        try:
+            margen_pct = float(vals.get("cotiz_margen_pct", 40))
+        except (TypeError, ValueError):
+            margen_pct = 40.0
+        return {"valor_hh": valor_hh, "margen_pct": margen_pct}
+
+    @app.route("/catalogo/api/config-precio", methods=["PATCH"])
+    @_catalogo_admin_required
+    def cat_api_config_precio_actualizar():
+        d = request.get_json(silent=True) or {}
+        user = current_username() or "sistema"
+        updates = []
+        if "valor_hh" in d:
+            try:
+                v = float(d.get("valor_hh"))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "Valor de la hora técnica inválido"}), 400
+            if v <= 0:
+                return jsonify({"ok": False, "error": "El valor de la hora técnica debe ser mayor a 0"}), 400
+            updates.append(("cotiz_valor_hh", str(v)))
+        if "margen_pct" in d:
+            try:
+                v = float(d.get("margen_pct"))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "Porcentaje de margen inválido"}), 400
+            if v < 0:
+                return jsonify({"ok": False, "error": "El porcentaje de margen no puede ser negativo"}), 400
+            updates.append(("cotiz_margen_pct", str(v)))
+        if not updates:
+            return jsonify({"ok": False, "error": "Sin cambios válidos"}), 400
+        for clave, valor in updates:
+            mysql_execute(
+                "INSERT INTO tk_settings (clave, valor, updated_by) VALUES (%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
+                (clave, valor, user))
+        if _audit:
+            _audit("cat_config_precio_actualizado", target_type="tk_settings",
+                   details={"cambios": dict(updates)})
+        return jsonify({"ok": True, "config_precio": _cat_config_precio_leer()})
 
     @app.route("/catalogo/api/clases", methods=["POST"])
     @_catalogo_admin_required

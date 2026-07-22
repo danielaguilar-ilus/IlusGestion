@@ -5992,6 +5992,15 @@ def register_tickets_routes(app, ctx):
             #    (caso RUT 25547065), y devolvia el placeholder 'BOLETA' en
             #    boletas sin entidad. Ahora se elige el primer campo con
             #    contenido real.
+            # 2026-07-23 (Daniel: "la primera opción que me diera es la
+            # comparación de su RUT"): ord_rut va ANTES que ord_tien en el
+            # ORDER BY -- una coincidencia de RUT (el dato menos ambiguo,
+            # a diferencia de una razón social que puede repetirse o
+            # contener la búsqueda como substring) siempre sube al tope,
+            # sin importar el tipo de cliente. q_cuerpo_like ya es el
+            # mismo valor usado para matchear RTEN en el WHERE de abajo
+            # (RUT sin DV, o el texto tal cual si es muy corto para ser
+            # un RUT) -- se reusa, no es una búsqueda nueva.
             rows = _random_sql_query(
                 """
                 SELECT DISTINCT TOP 15
@@ -6005,7 +6014,9 @@ def register_tickets_routes(app, ctx):
                        LTRIM(RTRIM(COALESCE(en.CMEN, '')))                   AS cmen,
                        LTRIM(RTRIM(COALESCE(en.CIEN, '')))                   AS cien,
                        CASE WHEN LTRIM(RTRIM(COALESCE(en.TIEN,''))) IN ('C','A')
-                            THEN 0 ELSE 1 END                                AS ord_tien
+                            THEN 0 ELSE 1 END                                AS ord_tien,
+                       CASE WHEN LTRIM(RTRIM(COALESCE(en.RTEN,''))) LIKE %s
+                            THEN 0 ELSE 1 END                                AS ord_rut
                   FROM MAEEN en
                  WHERE (
                        UPPER(LTRIM(RTRIM(COALESCE(en.NOKOEN,    '')))) LIKE %s
@@ -6013,9 +6024,9 @@ def register_tickets_routes(app, ctx):
                     OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
                     OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
                  )
-                 ORDER BY ord_tien, razon_social
+                 ORDER BY ord_rut, ord_tien, razon_social
                 """,
-                (q_like, q_like, q_like, q_cuerpo_like),
+                (q_cuerpo_like, q_like, q_like, q_like, q_cuerpo_like),
                 max_rows=15,
             ) or []
         except Exception as _e:
