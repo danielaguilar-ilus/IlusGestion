@@ -890,8 +890,13 @@
             </div>
           </div>
           <div class="client-cell">
-            <div class="client-lbl">ZZ Envío</div>
-            <div class="client-val green" id="cli-skus">—</div>
+            <div class="client-lbl">
+              ZZ Envío <i class="bi bi-pencil editable-ico"></i>
+              <i class="bi bi-info-circle" style="cursor:help"
+                 title="El ERP trae el ZZ Envío TOTAL de la factura. Si el despacho es parcial, edita este valor para que refleje solo lo que corresponde a este envío — de esto depende el margen mostrado junto a cada courier."></i>
+            </div>
+            <input class="client-input" type="number" id="cli-zzenvio" min="0" step="1" placeholder="0"
+                   oninput="actualizarZzEnvioManual(this.value)">
           </div>
           <div class="client-cell" style="border-bottom:none">
             <div class="client-lbl">Total Bultos <i class="bi bi-pencil editable-ico"></i></div>
@@ -1467,6 +1472,28 @@ function sincronizarBultos(val){
 }
 
 // ════════════════════════════════════════════════════════════
+//  ZZ ENVÍO EDITABLE (Daniel 2026-07-22)
+// ════════════════════════════════════════════════════════════
+// El ERP trae el ZZ Envío TOTAL de la factura. Si Daniel está despachando
+// solo una PARTE de esa factura (envío parcializado), ese total no
+// corresponde al envío actual — y de ahí sale el margen (zzVal - precio
+// courier) que se muestra junto a cada cotización (ver renderCouriers).
+// Editar este campo corrige _docData.zzenvio_valor y vuelve a pintar el
+// margen al instante, sin pedir una cotización nueva al backend.
+function actualizarZzEnvioManual(val){
+  if(!_docData) return;
+  const n = Math.max(0, parseFloat(val) || 0);
+  _docData.zzenvio_valor = n;
+  const rs = document.getElementById('res-skus');
+  if(rs) rs.textContent = n > 0 ? fClp(n) : '—';
+  // Re-pinta el margen de las cotizaciones YA obtenidas con el nuevo ZZ Envío
+  // (no hace falta re-cotizar: el precio del courier no cambia, solo el margen).
+  if (typeof renderCouriers === 'function' && _cotizaciones && _cotizaciones.length) {
+    renderCouriers();
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 //  BUSCAR DOCUMENTO
 // ════════════════════════════════════════════════════════════
 // Cache JS de documentos buscados (TTL 90s, mismo que backend)
@@ -1877,7 +1904,11 @@ function renderDoc(d, elapsedMs){
   setText('cli-rut',    h.cliente_rut    || '—');
   setText('cli-fecha',  h.fecha          || '—');
   setText('cli-neto',   fClp(h.valor_neto));
-  setText('cli-skus',   d.zzenvio_valor > 0 ? fClp(d.zzenvio_valor) : '—');
+  // ZZ Envío ahora es editable (Daniel 2026-07-22): input numérico crudo, no
+  // texto formateado. Se precarga con el valor del ERP (editable si el
+  // despacho es parcial — ver actualizarZzEnvioManual).
+  const _elZz = document.getElementById('cli-zzenvio');
+  if (_elZz) _elZz.value = d.zzenvio_valor > 0 ? Math.round(d.zzenvio_valor) : '';
   setText('cli-seguro', fClp(h.valor_neto * 0.012));
 
   // ── DIAGNÓSTICO: bloque amarillo + campos crudos SOLO visible a superadmin.

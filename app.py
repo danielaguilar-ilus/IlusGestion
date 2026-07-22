@@ -26700,14 +26700,14 @@ def _tr_sender_cfg():
 
     Configurables por variable de entorno (REGLA #4: sin hardcode rígido);
     defaults = bodega Quilicura tal como en la plantilla maestra de Daniel.
-    El teléfono trae el valor actualizado (+56 9 7640 8650).
+    Teléfono actualizado 2026-07-22 (Daniel): 934975608 → 976408650.
     """
     import os as _os
     g = _os.environ.get
     return {
         "name":     g("ILUS_SHIP_SENDER_NAME",     "Alison Mellado"),
         "company":  g("ILUS_SHIP_SENDER_COMPANY",  "Sport and Healt Solutions"),
-        "phone":    g("ILUS_SHIP_SENDER_PHONE",    "934975608"),
+        "phone":    g("ILUS_SHIP_SENDER_PHONE",    "976408650"),
         "email":    g("ILUS_SHIP_SENDER_EMAIL",    "alison.mellado@sphs.cl"),
         "line1":    g("ILUS_SHIP_SENDER_LINE1",    "Av. Pdte. Eduardo Frei Montalva"),
         "line2":    g("ILUS_SHIP_SENDER_LINE2",    "9770, Bod 30, Quilicura"),
@@ -26831,8 +26831,16 @@ def _tr_manifiesto_items_export(mid):
 
     peso_kg = peso_export del modal si está; si no, fallback a SUM(peso_unitario*
     cantidad) de las líneas (suele ser 0 hasta que se cubica). NO toca el ERP.
+
+    peso_vol_kg (2026-07-22, Daniel — carga masiva FedEx debe llevar el MAYOR
+    entre peso real y peso volumétrico, igual que el cubicador): se calcula en
+    un 2º paso, en BATCH (no por fila — evitar N subconsultas correlacionadas
+    contra app_products/app_bultos), reusando la misma fórmula que
+    _cubicador_fetch (`largo*ancho*alto/4000`, ver calc_pv). transport_commitment_lines
+    tiene una columna 'volumen_unitario' pero NUNCA se llena en ningún flujo —
+    por eso se recalcula aquí desde la ficha técnica del producto por SKU.
     """
-    return mysql_fetchall("""
+    items = mysql_fetchall("""
         SELECT c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
                c.comuna, c.direccion, c.telefono, c.email,
                c.region, c.cod_postal, c.notas,
@@ -26846,6 +26854,44 @@ def _tr_manifiesto_items_export(mid):
          WHERE mi.manifest_id = %s
          ORDER BY mi.orden, mi.id
     """, (mid,)) or []
+    if not items:
+        return items
+
+    commitment_ids = [it["commitment_id"] for it in items]
+    ph = ",".join(["%s"] * len(commitment_ids))
+    lineas = mysql_fetchall(f"""
+        SELECT commitment_id, UPPER(TRIM(koprct)) AS sku_norm, cantidad
+          FROM transport_commitment_lines
+         WHERE commitment_id IN ({ph})
+    """, tuple(commitment_ids)) or []
+
+    skus_set = {l["sku_norm"] for l in lineas if l.get("sku_norm")}
+    peso_vol_por_sku = {}
+    if skus_set:
+        skus_list = list(skus_set)
+        ph_sku = ",".join(["%s"] * len(skus_list))
+        rows_sku = mysql_fetchall(f"""
+            SELECT UPPER(TRIM(p.sku)) AS sku_norm,
+                   ROUND(COALESCE(SUM(b.largo * b.ancho * b.alto) / 4000.0, 0), 4) AS peso_vol
+              FROM `{PRODUCTS_TABLE}` p
+              LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
+             WHERE UPPER(TRIM(p.sku)) IN ({ph_sku})
+             GROUP BY p.id
+        """, tuple(skus_list)) or []
+        peso_vol_por_sku = {r["sku_norm"]: float(r["peso_vol"] or 0) for r in rows_sku}
+
+    peso_vol_por_commitment = {}
+    for l in lineas:
+        pv_u = peso_vol_por_sku.get(l.get("sku_norm") or "", 0.0)
+        if pv_u <= 0:
+            continue
+        cid = l["commitment_id"]
+        qty = float(l.get("cantidad") or 0)
+        peso_vol_por_commitment[cid] = peso_vol_por_commitment.get(cid, 0.0) + pv_u * qty
+
+    for it in items:
+        it["peso_vol_kg"] = round(peso_vol_por_commitment.get(it["commitment_id"], 0.0), 3)
+    return items
 
 
 @app.route("/transporte/manifiestos/<int:mid>/export", methods=["GET"])
@@ -26904,6 +26950,12 @@ def _tr_manifiesto_export_impl(mid):
     if not items:
         flash("Este manifiesto no tiene items para exportar.", "warning")
         return redirect(url_for("tr_manifiesto_detalle", mid=mid))
+
+    def _peso_declarar(it):
+        """Peso a declarar en la carga masiva: el MAYOR entre peso real y peso
+        volumétrico (2026-07-22, Daniel — regla estándar de facturación de
+        fletes: un bulto liviano pero voluminoso igual ocupa espacio real)."""
+        return max(float(it.get("peso_kg") or 0), float(it.get("peso_vol_kg") or 0))
 
     # Defensivo: si la columna formato_export aún no existe (ensure no corrió
     # o falló), no rompemos el export — caemos a la auto-detección por nombre.
@@ -27044,7 +27096,7 @@ def _tr_manifiesto_export_impl(mid):
 
         for ri, it in enumerate(items, 2):
             nbult = max(1, int(it.get("n_bultos") or 1))
-            peso_tot  = float(it.get("peso_kg") or 0)
+            peso_tot  = _peso_declarar(it)
             # PackageWeight (col 25) = peso TOTAL / nbultos = peso por bulto.
             # Mismo cálculo que la macro VBA línea: peso / bultos.
             ppp   = round(peso_tot / nbult, 3) if nbult else peso_tot
@@ -27052,15 +27104,17 @@ def _tr_manifiesto_export_impl(mid):
             rcp_l12, rcp_l13 = _dividir_texto_inteligente(it.get("cliente_nombre") or "")
             # Dirección: cols 16, 17, 18 — la macro VBA solo divide en 2, no
             # llena la 18. Mantenemos compatibilidad.
-            # 2026-06-16 (Daniel, validado contra el historial real de FedEx):
-            # la comuna va PEGADA a la dirección en recipientLine1/2 (ej.
-            # "Blasia 245, VIÑA DEL MAR"), aunque también viaje aparte en
-            # recipientCity (col 21) — así es como el registro real aceptado
-            # por FedEx lo trae. Antes solo se mandaba la dirección sola.
+            # REVERTIDO 2026-07-22 (Daniel): la macro VBA original
+            # (agregarfedexdirecto) llama DividirTextoInteligente SOLO con
+            # frmAgregar.txtDireccion.Value — la dirección va SOLA, sin la
+            # comuna pegada. Un primer Excel de referencia (01-04-2026)
+            # sugería lo contrario ("Blasia 245, VIÑA DEL MAR"), pero un
+            # segundo Excel más reciente (22-07-2026, "Zapallar 664", sin
+            # comuna) y la macro confirman que esa concatenación era un caso
+            # puntual, no la regla — se saca para que quede igual a la macro.
             _dir_raw    = (it.get("direccion") or "").strip()
             _comuna_raw = (it.get("comuna") or "").strip()
-            _dir_con_comuna = f"{_dir_raw}, {_comuna_raw}" if (_dir_raw and _comuna_raw) else (_dir_raw or _comuna_raw)
-            rcp_l16, rcp_l17 = _dividir_texto_inteligente(_dir_con_comuna)
+            rcp_l16, rcp_l17 = _dividir_texto_inteligente(_dir_raw)
             # Código postal del destinatario: tabla oficial FedEx por comuna
             # (réplica de BuscarCodigoPostal de la macro). Si falla, intenta
             # con cod_postal del item (lo que el ERP haya guardado) como
@@ -27115,7 +27169,7 @@ def _tr_manifiesto_export_impl(mid):
             nudo   = it.get("nudo") or ""
             comuna = (it.get("comuna") or "").strip()
             dirc   = (it.get("direccion") or "").strip()
-            peso   = round(float(it.get("peso_kg") or 0), 2)
+            peso   = round(_peso_declarar(it), 2)
             titulo = (f"{nudo} - {nombre}").strip(" -")
             row = [
                 titulo, (f"{dirc} ,{comuna}").strip(" ,"),
@@ -27142,7 +27196,7 @@ def _tr_manifiesto_export_impl(mid):
         seller = s.get("company") or "Sport and Health Solutions SPA"
         for ri, it in enumerate(items, 2):
             nbult = max(1, int(it.get("n_bultos") or 1))
-            peso  = round(float(it.get("peso_kg") or 0), 2)
+            peso  = round(_peso_declarar(it), 2)
             valor = float(it.get("valor_bruto") or 0)
             row = [
                 it.get("cliente_nombre") or "",
@@ -27171,7 +27225,7 @@ def _tr_manifiesto_export_impl(mid):
                 (f"{it.get('tido') or ''} {it.get('nudo') or ''}").strip(),
                 it.get("cliente_nombre") or "", it.get("comuna") or "",
                 it.get("direccion") or "", it.get("telefono") or "",
-                it.get("email") or "", round(float(it.get("peso_kg") or 0), 2),
+                it.get("email") or "", round(_peso_declarar(it), 2),
                 max(1, int(it.get("n_bultos") or 1)),
             ]
             for ci, v in enumerate(row, 1):
