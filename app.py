@@ -5516,16 +5516,21 @@ def get_erp_product_by_sku(sku):
 
 
 def get_erp_stock_by_sku(sku):
-    """Stock GLOBAL de un producto en el ERP Random (READ-ONLY, MAEPR.STFI1).
+    """Stock GLOBAL de un producto en el ERP Random (READ-ONLY, MAEPR).
     Daniel 2026-06-17 ('saber si hay/no hay stock'). Usa el MISMO camino blindado
     (_random_sql_one → solo SELECT, autocommit OFF) que ya usa el flag de preventa
     del Monitor de Transporte. NUNCA escribe al ERP (REGLA #4.1). Devuelve dict o
     None si el SKU no existe en MAEPR.
 
-    Semántica de campos (confirmar con Random antes de BLOQUEAR operaciones):
-      fisico       = STFI1   (stock físico unidad primaria)
-      comprometido = STDV1   (devengado a ventas pendientes de despacho)
-      disponible  ≈ STFI1 - STDV1
+    Semántica de campos (2026-07-23, confirmada contra el diccionario oficial
+    Random -- antes "comprometido" leía STDV1 por error, ver memoria
+    blueprint_piolas_manuales_comunicaciones / conversación con Daniel sobre
+    STFI1/STDV1/STOCNV1):
+      fisico       = STFI1    (stock físico -- lo que hay ahora en bodega)
+      devengado    = STDV1    (compras en camino, aún no llegan)
+      comprometido = STOCNV1  (ya vendido/reservado, pendiente de despachar)
+      disponible   = STFI1 - STOCNV1  (lo que realmente queda para vender;
+                     el devengado NO cuenta como disponible hasta que llega)
     """
     sku_u = (sku or "").strip().upper()
     if not sku_u:
@@ -5536,8 +5541,8 @@ def get_erp_stock_by_sku(sku):
                        LTRIM(RTRIM(KOPR))   AS sku,
                        LTRIM(RTRIM(NOKOPR)) AS nombre,
                        STFI1                AS fisico,
-                       STDV1                AS comprometido,
-                       STOCNV1              AS comprometido_nv
+                       STDV1                AS devengado,
+                       STOCNV1              AS comprometido
                   FROM {ERP_TABLE_PRODUCTS}
                  WHERE UPPER(LTRIM(RTRIM(KOPR))) = %s""",
             (sku_u,),
@@ -5550,12 +5555,14 @@ def get_erp_stock_by_sku(sku):
             except Exception:
                 return 0.0
         fisico = _f(r.get("fisico"))
+        devengado = _f(r.get("devengado"))
         comprometido = _f(r.get("comprometido"))
         disponible = fisico - comprometido
         return {
             "sku":          (r.get("sku") or sku_u).strip().upper(),
             "nombre":       (r.get("nombre") or "").strip(),
             "fisico":       round(fisico, 2),
+            "devengado":    round(devengado, 2),
             "comprometido": round(comprometido, 2),
             "disponible":   round(disponible, 2),
             "hay_stock":    disponible > 0,
@@ -5570,7 +5577,8 @@ def get_erp_stock_by_sku(sku):
 def api_erp_stock():
     """Consulta de stock en vivo de un SKU en el ERP (READ-ONLY). Daniel
     2026-06-17. Útil para picking/preparación de retiros. Solo lectura.
-    GET /api/erp/stock?sku=XXXX → {ok, stock:{fisico,comprometido,disponible,hay_stock}}
+    GET /api/erp/stock?sku=XXXX
+    → {ok, stock:{fisico,devengado,comprometido,disponible,hay_stock}}
     """
     sku = (request.args.get("sku") or "").strip()
     if not sku:
