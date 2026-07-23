@@ -747,6 +747,10 @@ def register_tickets_routes(app, ctx):
     # (bloquea y loguea en email_log) -- esto solo sirve para dar un mensaje
     # de error claro en la UI en vez de un generico "no se pudo enviar".
     _modulo_canal_bloqueado = ctx.get("_modulo_canal_bloqueado")
+    # 2026-07-22 (envío de cotización por correo): kill-switch de canal y el
+    # diseño maestro del correo ILUS. Fallbacks seguros si no están.
+    comm_is_enabled = ctx.get("comm_is_enabled") or (lambda canal: True)
+    _ilus_email_master = ctx.get("_ilus_email_master")
     # Reglas de negocio editables (mant_reglas_negocio, /mantenciones/
     # configuracion) -- para el umbral de SLA de tickets ('tk_sla_horas').
     _reglas_cargar = ctx.get("_reglas_cargar")
@@ -3235,8 +3239,10 @@ def register_tickets_routes(app, ctx):
         rows = mysql_fetchall(
             "SELECT c.id, c.numero_cotizacion, c.estado, c.empresa, c.rut, c.total, "
             "       c.created_at, c.created_by, c.updated_at, c.updated_by, "
-            "       c.ticket_id, tk.numero_ticket "
+            "       c.ticket_id, tk.numero_ticket, "
+            "       c.editada_post_aprobacion, c.valida_hasta "
             "FROM tk_cotizaciones c LEFT JOIN tk_tickets tk ON tk.id = c.ticket_id "
+            "WHERE COALESCE(c.eliminada,0)=0 "
             "ORDER BY c.created_at DESC LIMIT 100")
         # Equivalente en UF del Total (Daniel 2026-07-21) -- UNA sola
         # consulta al cache de UF para las 100 filas, no una por fila
@@ -3246,10 +3252,20 @@ def register_tickets_routes(app, ctx):
         # cada fila simplemente no muestra el equivalente -- el listado
         # nunca se rompe por esto.
         uf_info = _tk_uf_actual()
+        _hoy = _chile_hoy()
         filas = []
         for r in rows:
             fila = _fmt_row(r)
             fila["uf_total"] = _tk_total_a_uf(r.get("total"), uf_info)
+            fila["editada_post_aprobacion"] = bool(r.get("editada_post_aprobacion"))
+            # "Vencida" = pasó la validez y sigue en draft/sent (se calcula,
+            # no se persiste -- evita cron y estados fantasma).
+            _vh = r.get("valida_hasta")
+            try:
+                _vh_d = _vh if hasattr(_vh, "year") else None
+                fila["vencida"] = bool(_vh_d and _vh_d < _hoy and r.get("estado") in ("draft", "sent"))
+            except Exception:
+                fila["vencida"] = False
             filas.append(fila)
         return render_template("tickets/cotizaciones.html",
                                 cotizaciones=filas, uf_info=uf_info)
@@ -3629,6 +3645,11 @@ def register_tickets_routes(app, ctx):
                             "ticket_id": ticket_id, "origen": origen_in, "cliente_id": cliente_id_in})
         except Exception:
             pass
+        try:
+            _tk_cotiz_log(cot_id, "crear",
+                          {"numero": numero, "items": len(items), "origen": origen_in}, user)
+        except Exception:
+            pass
         # Si nació desde un ticket, deja rastro en la bitácora de ESE ticket
         # (mismo patrón que cambio_estado/asignacion -- nunca bloquea el
         # flujo si el log falla).
@@ -3782,7 +3803,390 @@ def register_tickets_routes(app, ctx):
                    details={"cotizacion_id": cid, "numero_cotizacion": numero_cot, "numero_ticket": numero_ticket})
         except Exception:
             pass
+        try:
+            _tk_cotiz_log(cid, "generar_ticket",
+                          {"ticket_id": tid, "numero_ticket": numero_ticket}, user)
+        except Exception:
+            pass
         return jsonify({"ok": True, "id": tid, "numero_ticket": numero_ticket})
+
+    # ═════════════════════════════════════════════════════════════════
+    #  Cotizaciones v3 (2026-07-22): tabla inteligente -- ver/editar,
+    #  aprobar/rechazar (superadmin), eliminar (soft, superadmin), enviar
+    #  por correo multi-destinatario, historial. Todo con evidencia
+    #  (_tk_cotiz_log). Reusa el PDF compartido (_tk_cotizacion_pdf_bytes).
+    # ═════════════════════════════════════════════════════════════════
+    def _tk_cotiz_email_ejecutivo(nombre):
+        """Email del ejecutivo (best-effort): en app_users el username ES el
+        correo de login. Devuelve el correo si existe y es válido, si no None."""
+        if not nombre:
+            return None
+        try:
+            row = mysql_fetchone(
+                "SELECT username FROM app_users WHERE nombre=%s OR username=%s LIMIT 1",
+                (nombre, nombre))
+        except Exception:
+            return None
+        _u = (row or {}).get("username") or ""
+        return _u if (_u and _TK_REPLY_EMAIL_RE.match(_u)) else None
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>", methods=["GET"])
+    @_tickets_required
+    def tk_api_cotizacion_get(cid):
+        """Cotización completa (cabecera + ítems + destinatarios sugeridos)
+        para precargar el wizard en modo edición."""
+        cot = mysql_fetchone("SELECT * FROM tk_cotizaciones WHERE id=%s AND COALESCE(eliminada,0)=0", (cid,))
+        if not cot:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        items = mysql_fetchall(
+            "SELECT id, erp_kopr AS sku, descripcion AS nombre, cantidad AS qty, clase_producto, "
+            "       precio_manual, precio_unitario, erp_tido AS tido, erp_nudo AS nudo "
+            "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
+
+        def _iso(v):
+            if v is None:
+                return None
+            try:
+                return v.strftime("%Y-%m-%d")
+            except Exception:
+                return str(v)[:10]
+
+        _cot = dict(cot)
+        _cot["valida_hasta"] = _iso(cot.get("valida_hasta"))
+        for _k in ("descuento_pct", "iva_pct"):
+            if _cot.get(_k) is not None:
+                _cot[_k] = float(_cot[_k])
+        # Destinatarios sugeridos (cliente + contacto + ejecutivo + yo),
+        # deduplicados y sólo los válidos.
+        _sug, _vistos = [], set()
+        def _add_dest(email, origen):
+            e = (email or "").strip()
+            if e and _TK_REPLY_EMAIL_RE.match(e) and e.lower() not in _vistos:
+                _vistos.add(e.lower())
+                _sug.append({"email": e, "origen": origen})
+        _add_dest(cot.get("email"), "cliente")
+        _add_dest(cot.get("contacto_email"), "contacto")
+        _add_dest(_tk_cotiz_email_ejecutivo(cot.get("ejecutivo")), "ejecutivo")
+        try:
+            _add_dest((g.user or {}).get("username"), "yo")
+        except Exception:
+            pass
+        return jsonify({"ok": True, "cotizacion": _cot, "items": items,
+                        "destinatarios_sugeridos": _sug})
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>/actualizar", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_actualizar(cid):
+        """Guarda la edición de una cotización (cabecera + ítems) y recalcula.
+        NUNCA toca numero_cotizacion, estado, created_by/at ni el snapshot de
+        UF. Deja evidencia en el historial; si estaba aprobada, marca
+        editada_post_aprobacion (Daniel: "editar tras aprobar deja evidencia")."""
+        cab = mysql_fetchone("SELECT * FROM tk_cotizaciones WHERE id=%s AND COALESCE(eliminada,0)=0", (cid,))
+        if not cab:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        d = request.get_json(silent=True) or {}
+        user = current_username() or "sistema"
+
+        # Regla ficha: una cotización de origen 'ficha' no puede ser instalación.
+        tipo_servicio = (d.get("tipo_servicio") or cab.get("tipo_servicio") or "mantencion").strip().lower()
+        if tipo_servicio not in _TK_COTIZ_TIPOS_SERVICIO:
+            tipo_servicio = "mantencion"
+        if (cab.get("origen") == "ficha") and tipo_servicio == "instalacion":
+            return jsonify({"ok": False, "error": "Una cotización que nace de la ficha del cliente "
+                            "solo puede ser de mantención o visita técnica, no de instalación."}), 400
+
+        header = d.get("header") if isinstance(d.get("header"), dict) else {}
+        empresa = (header.get("cliente") or header.get("empresa") or d.get("empresa") or "").strip()[:150] or None
+        rut = (header.get("rut") or d.get("rut") or "").strip()[:12] or None
+        email = (header.get("email") or d.get("email") or "").strip()[:190] or None
+        if email and not _TK_REPLY_EMAIL_RE.match(email):
+            email = None
+        telefono = (header.get("telefono") or d.get("telefono") or "").strip()[:50] or None
+        comuna = (header.get("comuna") or d.get("comuna") or "").strip()[:100] or None
+        region = (d.get("region") or "").strip()[:100] or None
+        direccion = (d.get("direccion") or "").strip()[:300] or None
+        notas = (d.get("notas") or "").strip() or None
+        notas_internas = (d.get("notas_internas") or "").strip() or None
+        ejecutivo = (d.get("ejecutivo") or "").strip()[:190] or None
+        try:
+            descuento_pct = min(max(float(d.get("descuento_pct") or 0), 0.0), 100.0)
+        except (TypeError, ValueError):
+            descuento_pct = 0.0
+        descuento_tipo = (d.get("descuento_tipo") or "pct").strip().lower()
+        if descuento_tipo not in ("pct", "monto"):
+            descuento_tipo = "pct"
+        try:
+            descuento_monto_in = max(int(float(d.get("descuento_monto") or 0)), 0)
+        except (TypeError, ValueError):
+            descuento_monto_in = 0
+        if descuento_tipo == "monto":
+            descuento_pct = 0.0
+        else:
+            descuento_monto_in = 0
+        try:
+            costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
+        except (TypeError, ValueError):
+            costo_ruta_in = 0
+        valida_hasta = None
+        _vh = (d.get("valida_hasta") or "").strip()
+        if _vh:
+            try:
+                valida_hasta = datetime.strptime(_vh, "%Y-%m-%d").date()
+            except ValueError:
+                return jsonify({"ok": False, "error": "Fecha 'Válido hasta' inválida"}), 400
+        contacto_in = d.get("contacto") if isinstance(d.get("contacto"), dict) else {}
+        contacto_nombre = (contacto_in.get("nombre") or "").strip()[:200] or None
+        contacto_cargo = (contacto_in.get("cargo") or "").strip()[:120] or None
+        contacto_tel = (contacto_in.get("tel") or "").strip()[:50] or None
+        contacto_email = (contacto_in.get("email") or "").strip()[:190] or None
+        if contacto_email and not _TK_REPLY_EMAIL_RE.match(contacto_email):
+            contacto_email = None
+        alcance = (d.get("alcance") or "").strip() or None
+        recomendacion = (d.get("recomendacion") or "").strip() or None
+        terminos = (d.get("terminos") or "").strip() or None
+        try:
+            dias_habiles_estimado = int(d.get("dias_habiles_estimado")) if d.get("dias_habiles_estimado") not in (None, "") else None
+        except (TypeError, ValueError):
+            dias_habiles_estimado = None
+        try:
+            frecuencia_anual = int(d.get("frecuencia_anual")) if d.get("frecuencia_anual") not in (None, "") else None
+        except (TypeError, ValueError):
+            frecuencia_anual = None
+        items = d.get("items") or []
+        if not isinstance(items, list) or not items:
+            return jsonify({"ok": False, "error": "La cotización debe tener al menos un ítem"}), 400
+
+        # Reclasifica/crea en el catálogo lo que venga con clase nueva (mismo
+        # criterio que desde-erp: persiste la clase corregida en cat_productos).
+        clases_por_sku, _ = _tk_clasificar_items_erp(items)
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            sku_up = (it.get("sku") or "").strip().upper()
+            override = (it.get("clase_producto") or "").strip() or None
+            if sku_up and override and override != clases_por_sku.get(sku_up):
+                try:
+                    mysql_execute("UPDATE cat_productos SET clase_producto=%s, updated_by=%s WHERE sku=%s",
+                                  (override, user, sku_up))
+                    clases_por_sku[sku_up] = override
+                except Exception:
+                    pass
+
+        _estaba_aprobada = (cab.get("estado") == "approved")
+        _antes = {"empresa": cab.get("empresa"), "total": cab.get("total"),
+                  "tipo_servicio": cab.get("tipo_servicio"),
+                  "items": mysql_fetchone("SELECT COUNT(*) AS n FROM tk_cotizacion_items WHERE cotizacion_id=%s", (cid,)).get("n", 0)}
+
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE tk_cotizaciones SET empresa=%s, rut=%s, email=%s, telefono=%s, comuna=%s, "
+                    " region=%s, direccion=%s, tipo_servicio=%s, valida_hasta=%s, notas=%s, "
+                    " notas_internas=%s, ejecutivo=%s, descuento_pct=%s, descuento_tipo=%s, "
+                    " descuento_monto=%s, costo_ruta=%s, contacto_nombre=%s, contacto_cargo=%s, "
+                    " contacto_tel=%s, contacto_email=%s, alcance=%s, recomendacion=%s, terminos=%s, "
+                    " dias_habiles_estimado=%s, frecuencia_anual=%s, updated_by=%s "
+                    " WHERE id=%s",
+                    (empresa, rut, email, telefono, comuna, region, direccion, tipo_servicio,
+                     valida_hasta, notas, notas_internas, ejecutivo, descuento_pct, descuento_tipo,
+                     descuento_monto_in, costo_ruta_in, contacto_nombre, contacto_cargo, contacto_tel,
+                     contacto_email, alcance, recomendacion, terminos, dias_habiles_estimado,
+                     frecuencia_anual, user, cid))
+                cur.execute("DELETE FROM tk_cotizacion_items WHERE cotizacion_id=%s", (cid,))
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    sku = (it.get("sku") or "").strip()[:100] or None
+                    descripcion = (it.get("nombre") or "").strip()[:300] or None
+                    _qty_raw = it.get("qty")
+                    try:
+                        cantidad = int(_qty_raw) if _qty_raw is not None else 1
+                    except (TypeError, ValueError):
+                        cantidad = 1
+                    if cantidad < 0:
+                        cantidad = 0
+                    clase_producto = clases_por_sku.get((sku or "").upper())
+                    precio_manual = None
+                    try:
+                        _pmv = it.get("precio_manual")
+                        if _pmv not in (None, ""):
+                            precio_manual = max(int(float(_pmv)), 0)
+                    except (TypeError, ValueError):
+                        precio_manual = None
+                    erp_tido_it = (str(it.get("tido") or "").strip().upper())[:10] or None
+                    erp_nudo_it = (str(it.get("nudo") or "").strip())[:30] or None
+                    cur.execute(
+                        "INSERT INTO tk_cotizacion_items "
+                        "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, precio_unitario, "
+                        " subtotal, total, desde_ticket, clase_producto, precio_manual, erp_tido, erp_nudo) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s)",
+                        (cid, sku, descripcion, cantidad, clase_producto, precio_manual, erp_tido_it, erp_nudo_it))
+                if _estaba_aprobada:
+                    cur.execute("UPDATE tk_cotizaciones SET editada_post_aprobacion=1 WHERE id=%s", (cid,))
+            conn.commit()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"[tk_api_cotizacion_actualizar] CRASH cid={cid}: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo guardar la cotización"}), 500
+        finally:
+            conn.close()
+
+        totales = _tk_cotiz_recalcular(cid, user=user)
+        _despues = {"empresa": empresa, "total": (totales or {}).get("total"),
+                    "tipo_servicio": tipo_servicio, "items": len(items)}
+        _diff = {k: [_antes.get(k), _despues.get(k)] for k in _despues if _antes.get(k) != _despues.get(k)}
+        _tk_cotiz_log(cid, "editar_aprobada" if _estaba_aprobada else "editar",
+                      {"cambios": _diff}, user)
+        return jsonify({"ok": True, "id": cid, "totales": totales,
+                        "editada_post_aprobacion": _estaba_aprobada})
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>/estado", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_estado(cid):
+        """Aprobar / rechazar / reabrir una cotización. SOLO superadmin
+        (Daniel: "aprobar y borrar, pero solamente es superadministrador")."""
+        if not _tk_solo_superadmin():
+            return jsonify({"ok": False, "error": "Solo un superadministrador puede aprobar o rechazar cotizaciones."}), 403
+        cot = mysql_fetchone("SELECT id, estado FROM tk_cotizaciones WHERE id=%s AND COALESCE(eliminada,0)=0", (cid,))
+        if not cot:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        d = request.get_json(silent=True) or {}
+        nuevo = (d.get("estado") or "").strip().lower()
+        _mapa = {"approved": "aprobar", "rejected": "rechazar", "draft": "reabrir"}
+        if nuevo not in _mapa:
+            return jsonify({"ok": False, "error": "Estado inválido"}), 400
+        user = current_username() or "sistema"
+        mysql_execute("UPDATE tk_cotizaciones SET estado=%s, updated_by=%s WHERE id=%s", (nuevo, user, cid))
+        _tk_cotiz_log(cid, _mapa[nuevo], {"desde": cot.get("estado"), "a": nuevo}, user)
+        return jsonify({"ok": True, "estado": nuevo})
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>/eliminar", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_eliminar(cid):
+        """Borrado SOFT (Regla #5: el correlativo COT jamás debe desaparecer).
+        SOLO superadmin. La fila deja de aparecer en el listado pero queda en
+        la BD con quién/cuándo la eliminó."""
+        if not _tk_solo_superadmin():
+            return jsonify({"ok": False, "error": "Solo un superadministrador puede eliminar cotizaciones."}), 403
+        cot = mysql_fetchone("SELECT id, numero_cotizacion FROM tk_cotizaciones WHERE id=%s AND COALESCE(eliminada,0)=0", (cid,))
+        if not cot:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        user = current_username() or "sistema"
+        _tk_cotiz_log(cid, "eliminar", {"numero": cot.get("numero_cotizacion")}, user)
+        mysql_execute(
+            "UPDATE tk_cotizaciones SET eliminada=1, eliminada_por=%s, eliminada_at=NOW() WHERE id=%s",
+            (user, cid))
+        return jsonify({"ok": True})
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>/log", methods=["GET"])
+    @_tickets_required
+    def tk_api_cotizacion_log(cid):
+        """Historial de la cotización (Daniel: "evidencia de que alguien hizo
+        algo"). Visible para admin/superadmin."""
+        if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+            return jsonify({"ok": False, "error": "Sin permiso"}), 403
+        rows = mysql_fetchall(
+            "SELECT accion, usuario, detalle, created_at FROM tk_cotizacion_log "
+            "WHERE cotizacion_id=%s ORDER BY created_at DESC, id DESC LIMIT 60", (cid,)) or []
+        out = []
+        for r in rows:
+            out.append({"accion": r.get("accion"), "usuario": r.get("usuario"),
+                        "detalle": r.get("detalle"),
+                        "fecha": (chile_fmt(r.get("created_at")) if chile_fmt else str(r.get("created_at")))})
+        return jsonify({"ok": True, "eventos": out})
+
+    @app.route("/tickets/api/cotizaciones/<int:cid>/enviar", methods=["POST"])
+    @_tickets_required
+    def tk_api_cotizacion_enviar(cid):
+        """Envía el PDF de la cotización a uno o varios destinatarios
+        (cliente, ejecutivo, propio; editables). Daniel: "que se pueda agregar
+        varios correos, verificando los diversos correos"."""
+        cot = mysql_fetchone("SELECT * FROM tk_cotizaciones WHERE id=%s AND COALESCE(eliminada,0)=0", (cid,))
+        if not cot:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        if not comm_is_enabled("email"):
+            return jsonify({"ok": False, "error": "El envío de correos está desactivado globalmente."})
+        d = request.get_json(silent=True) or {}
+        destinatarios_in = d.get("destinatarios") or []
+        if not isinstance(destinatarios_in, list) or not destinatarios_in:
+            return jsonify({"ok": False, "error": "Agrega al menos un destinatario"}), 400
+        buenos, malos, vistos = [], [], set()
+        for e in destinatarios_in[:15]:
+            e = (str(e) or "").strip()
+            if not e:
+                continue
+            if not _TK_REPLY_EMAIL_RE.match(e):
+                malos.append(e)
+            elif e.lower() not in vistos:
+                vistos.add(e.lower())
+                buenos.append(e)
+        if malos:
+            return jsonify({"ok": False, "error": "Hay correos inválidos: " + ", ".join(malos[:5])}), 400
+        if not buenos:
+            return jsonify({"ok": False, "error": "No hay destinatarios válidos"}), 400
+        if not ctx.get("_pw_pdf") or not _send_ilus_email:
+            return jsonify({"ok": False, "error": "El envío no está disponible en este entorno"}), 503
+
+        try:
+            _res = _tk_cotizacion_pdf_bytes(cid)
+        except Exception as _e_pdf:
+            print(f"[tk_api_cotizacion_enviar] PDF cid={cid}: {_e_pdf}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo generar el PDF para adjuntar"}), 503
+        if not _res:
+            return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
+        pdf_bytes, _fname = _res
+
+        numero = cot.get("numero_cotizacion") or f"#{cid}"
+        empresa = cot.get("empresa") or "cliente"
+        _mensaje = (d.get("mensaje") or "").strip()
+        _total_fmt = "$" + "{:,.0f}".format(int(cot.get("total") or 0)).replace(",", ".")
+        _valida = cot.get("valida_hasta")
+        try:
+            _valida_str = _valida.strftime("%d-%m-%Y") if hasattr(_valida, "strftime") else (str(_valida) if _valida else "")
+        except Exception:
+            _valida_str = ""
+        _cuerpo_html = (
+            f"<p>Estimados,</p>"
+            f"<p>Adjuntamos la cotización <b>{_html_mod.escape(numero)}</b> para <b>{_html_mod.escape(empresa)}</b>"
+            f" por un total de <b>{_html_mod.escape(_total_fmt)}</b>"
+            + (f", válida hasta el {_html_mod.escape(_valida_str)}." if _valida_str else ".") + "</p>"
+            + (f"<p>{_html_mod.escape(_mensaje)}</p>" if _mensaje else "")
+            + "<p>Quedamos atentos a sus comentarios.</p>"
+        )
+        if _ilus_email_master:
+            try:
+                html_body = _ilus_email_master({
+                    "subject": f"Cotización {numero}",
+                    "title": f"Cotización {numero}",
+                    "subtitle": empresa,
+                    "message": _cuerpo_html,
+                })
+            except Exception:
+                html_body = _cuerpo_html
+        else:
+            html_body = _cuerpo_html
+        subject = _brand_subject(f"Cotización {numero} · {empresa}")
+        _adj = [(_fname, pdf_bytes, "application/pdf")]
+        enviados, fallidos = [], []
+        for dest in buenos:
+            try:
+                ok = _send_ilus_email(dest, subject, html_body, modulo="tickets", attachments=_adj)
+            except Exception as _e_send:
+                print(f"[tk_api_cotizacion_enviar] {dest}: {_e_send}", flush=True)
+                ok = False
+            (enviados if ok else fallidos).append(dest)
+        user = current_username() or "sistema"
+        if enviados and cot.get("estado") == "draft":
+            mysql_execute("UPDATE tk_cotizaciones SET estado='sent', updated_by=%s WHERE id=%s", (user, cid))
+        _tk_cotiz_log(cid, "enviar_correo",
+                      {"enviados": enviados, "fallidos": fallidos}, user)
+        if not enviados:
+            return jsonify({"ok": False, "error": "No se pudo enviar a ningún destinatario"}), 502
+        return jsonify({"ok": True, "enviados": len(enviados), "fallidos": fallidos})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — listado + KPIs
