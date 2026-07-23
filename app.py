@@ -60096,18 +60096,107 @@ def mant_analisis():
 # a mindicador.cl en cada request (~200-600ms por hit).
 _UF_CACHE = {"ts": 0, "uf": None, "fecha": None, "error": None}
 _UF_CACHE_TTL = 3600  # 1 hora
+# Cache del OVERRIDE manual (tk_settings) — TTL corto para que un cambio del
+# admin propague en segundos sin pegarle a MySQL en cada request. Se
+# invalida al vuelo cuando el admin lo edita (_uf_override_cache_invalidate).
+_UF_OVERRIDE_CACHE = {"ts": 0, "data": None}
+_UF_OVERRIDE_CACHE_TTL = 30
+
+
+def _uf_settings_read(claves):
+    """Lee varias claves de tk_settings de una vez. Defensivo: ante
+    cualquier error de BD (tabla ausente en un entorno viejo, pool caído)
+    devuelve {} -- la UF NUNCA debe romperse por esto."""
+    try:
+        ph = ",".join(["%s"] * len(claves))
+        rows = mysql_fetchall(
+            f"SELECT clave, valor FROM tk_settings WHERE clave IN ({ph})",
+            tuple(claves)) or []
+        return {r["clave"]: r["valor"] for r in rows}
+    except Exception as _e:
+        print(f"[_uf_settings_read] {_e}", flush=True)
+        return {}
+
+
+def _uf_override_cache_invalidate():
+    _UF_OVERRIDE_CACHE.update({"ts": 0, "data": None})
+
+
+def _uf_override_read():
+    """Override manual vigente {valor, fecha, by} o None. Cacheado 30s."""
+    now = time.time()
+    if _UF_OVERRIDE_CACHE["data"] is not None and (now - _UF_OVERRIDE_CACHE["ts"]) < _UF_OVERRIDE_CACHE_TTL:
+        return _UF_OVERRIDE_CACHE["data"] or None
+    vals = _uf_settings_read(("uf_override_valor", "uf_override_fecha", "uf_override_by"))
+    data = None
+    raw = (vals.get("uf_override_valor") or "").strip()
+    if raw:
+        try:
+            valor = float(raw)
+            if valor > 0:
+                data = {"valor": valor,
+                        "fecha": (vals.get("uf_override_fecha") or "").strip() or None,
+                        "by": (vals.get("uf_override_by") or "").strip() or None}
+        except (TypeError, ValueError):
+            data = None
+    _UF_OVERRIDE_CACHE.update({"ts": now, "data": data})
+    return data
+
+
+def _uf_persist_last(uf_val, fecha):
+    """Guarda el último valor bueno de la API en tk_settings para que
+    sobreviva a un reinicio de Cloud Run (cold start) o a una caída de
+    mindicador.cl. Defensivo: nunca rompe la ruta principal."""
+    try:
+        for clave, valor in (("uf_last_valor", str(uf_val)),
+                             ("uf_last_fecha", str(fecha or "")),
+                             ("uf_last_ts", str(int(time.time())))):
+            mysql_execute(
+                "INSERT INTO tk_settings (clave, valor) VALUES (%s,%s) "
+                "ON DUPLICATE KEY UPDATE valor=VALUES(valor)", (clave, valor))
+    except Exception as _e:
+        print(f"[_uf_persist_last] {_e}", flush=True)
+
+
+def _uf_last_persisted():
+    """Último valor bueno guardado en DB {valor, fecha} o None."""
+    vals = _uf_settings_read(("uf_last_valor", "uf_last_fecha"))
+    raw = (vals.get("uf_last_valor") or "").strip()
+    if not raw:
+        return None
+    try:
+        return {"valor": float(raw), "fecha": (vals.get("uf_last_fecha") or "").strip() or None}
+    except (TypeError, ValueError):
+        return None
 
 
 def _uf_valor_actual():
-    """Valor actual de la UF (mindicador.cl), cacheado en memoria de
-    proceso 1h. Reusable desde cualquier módulo vía ctx['_uf_valor_actual']()
-    -- p.ej. tickets_module.py (Cotizaciones: equivalente en UF del total,
-    2026-07-21). Nunca lanza: si la API externa falla y no hay nada
-    cacheado todavía, devuelve ok=False/uf=None -- el caller decide cómo
-    degradar (mostrar solo CLP, jamás un 500)."""
+    """Valor actual de la UF. Reusable desde cualquier módulo vía
+    ctx['_uf_valor_actual']() -- p.ej. tickets_module.py (Cotizaciones).
+    Nunca lanza: si todo falla devuelve ok=False/uf=None -- el caller
+    degrada (solo CLP, jamás un 500).
+
+    Orden de resolución (2026-07-22, Daniel: "actualizar la UF a diario por
+    API... y que se pueda editar en caso de cualquier detalle"):
+      1. OVERRIDE MANUAL fijado por un admin (tk_settings.uf_override_*).
+      2. Cache de proceso del valor de la API (1h) -- la UF cambia 1 vez
+         al día, así que con uso normal siempre está fresca dentro de 1h.
+      3. Fetch a mindicador.cl; en éxito persiste el "último bueno" en DB.
+      4a. Cache viejo en proceso (stale).
+      4b. Último bueno persistido en DB (sobrevive cold start / API caída
+          en frío) -- rehidrata el cache de proceso.
+      5. Sin nada: ok=False."""
+    # 1) Override manual del admin -- gana siempre.
+    ov = _uf_override_read()
+    if ov:
+        return {"uf": ov["valor"], "fecha": ov.get("fecha"), "ok": True,
+                "manual": True, "set_by": ov.get("by")}
+
     now = time.time()
+    # 2) Cache de proceso (1h)
     if _UF_CACHE["uf"] is not None and (now - _UF_CACHE["ts"]) < _UF_CACHE_TTL:
         return {"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"], "ok": True, "cached": True}
+    # 3) Fetch a la API
     try:
         import urllib.request as _ur
         req = _ur.Request(
@@ -60119,20 +60208,49 @@ def _uf_valor_actual():
         uf_val = float(data["serie"][0]["valor"])
         fecha  = data["serie"][0]["fecha"][:10]
         _UF_CACHE.update({"ts": now, "uf": uf_val, "fecha": fecha, "error": None})
+        _uf_persist_last(uf_val, fecha)
         return {"uf": uf_val, "fecha": fecha, "ok": True}
     except Exception as e:
-        # Si tenemos un valor cacheado aunque sea viejo, devolverlo en lugar de error
+        # 4a) cache viejo en proceso
         if _UF_CACHE["uf"] is not None:
             return {"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"],
                     "ok": True, "cached": True, "stale": True}
+        # 4b) último bueno persistido en DB (sobrevive reinicio)
+        last = _uf_last_persisted()
+        if last:
+            _UF_CACHE.update({"ts": now, "uf": last["valor"], "fecha": last["fecha"], "error": None})
+            return {"uf": last["valor"], "fecha": last.get("fecha"),
+                    "ok": True, "cached": True, "stale": True, "from_db": True}
         _UF_CACHE["error"] = str(e)
-        print(f"[_uf_valor_actual] mindicador.cl no respondió: {e}", flush=True)
+        print(f"[_uf_valor_actual] mindicador.cl no respondió y sin cache/DB: {e}", flush=True)
         return {"uf": None, "error": str(e), "ok": False}
 
 
 @app.route("/api/uf-actual")
 def api_uf_actual():
-    """Devuelve el valor actual de la UF desde mindicador.cl (cacheado 1h)."""
+    """Devuelve el valor actual de la UF (override manual > API cacheada 1h
+    > último valor guardado en DB)."""
+    return jsonify(_uf_valor_actual())
+
+
+@app.route("/api/uf-refresh", methods=["POST", "GET"])
+def api_uf_refresh():
+    """Fuerza un refresco de la UF desde la API (salta el cache de proceso).
+    Pensado para un Cloud Scheduler diario (opcional): un GET/POST diario a
+    esta ruta mantiene la UF fresca aunque no haya tráfico. Protegido por un
+    token si UF_CRON_TOKEN está seteado; sin token, requiere sesión admin.
+    Idempotente y seguro (solo LECTURA de la API externa + persiste en DB)."""
+    token_env = (os.environ.get("UF_CRON_TOKEN") or "").strip()
+    token_in = (request.args.get("token") or request.headers.get("X-UF-Token") or "").strip()
+    autorizado = False
+    if token_env and token_in and token_in == token_env:
+        autorizado = True
+    elif g.get("user") and g.permissions.get("superadmin"):
+        autorizado = True
+    if not autorizado:
+        return jsonify({"ok": False, "error": "No autorizado"}), 403
+    # Saltar el cache de proceso para forzar el fetch real.
+    _UF_CACHE.update({"ts": 0})
     return jsonify(_uf_valor_actual())
 
 

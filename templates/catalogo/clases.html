@@ -1,16 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Categorías de producto — ILUS{% endblock %}
+{% block title %}Categorías y tarifas — ILUS{% endblock %}
 {% block content %}
 <style>
 .clc-table-wrap{overflow-x:auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
-.clc-table{width:100%;border-collapse:collapse;min-width:920px}
+.clc-table{width:100%;border-collapse:collapse;min-width:640px}
 .clc-table th{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;padding:10px 12px;
   text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap}
 .clc-table td{padding:8px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
 .clc-table tr:last-child td{border-bottom:none}
 .clc-table tr.inactiva{opacity:.5}
-.clc-grupo{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;
-  padding:2px 0 4px}
 .clc-nombre{font-weight:700;color:#0a0a0a}
 .clc-slug{font-size:.68rem;color:#9ca3af;font-family:ui-monospace,Consolas,monospace}
 .clc-num{width:64px;padding:5px 6px;border:1px solid #e5e7eb;border-radius:7px;font-size:.82rem;
@@ -18,6 +16,8 @@
 .clc-num:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 2px #fee2e2}
 .clc-hh{font-size:.72rem;color:#6b7280;font-variant-numeric:tabular-nums;white-space:nowrap}
 .clc-hh b{color:#0a0a0a}
+.clc-precio-lbl{font-size:.72rem;color:#6b7280;font-variant-numeric:tabular-nums;white-space:nowrap}
+.clc-precio-lbl b{color:#dc2626}
 .clc-sinDatos{color:#c1c5cc;font-style:italic;font-size:.74rem}
 .clc-badge{font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:50px;white-space:nowrap}
 .clc-badge.on{background:#dcfce7;color:#166534}
@@ -25,30 +25,77 @@
 .clc-act{border:none;background:transparent;color:#9ca3af;cursor:pointer;font-size:.9rem;padding:4px 6px;
   border-radius:6px}
 .clc-act:hover{background:#f3f4f6;color:#0a0a0a}
-@media(max-width:640px){.clc-table th:nth-child(4),.clc-table td:nth-child(4){display:none}}
 .clc-precio-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;
   display:flex;gap:22px;flex-wrap:wrap;margin-bottom:14px;}
 .clc-precio-campo{display:flex;flex-direction:column;gap:4px;min-width:180px;}
 .clc-precio-campo label{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;}
-.clc-precio-campo .input-group{max-width:220px;}
 .clc-precio-hint{font-size:.66rem;color:#9ca3af;margin-top:2px;}
+/* Selector de tipo de servicio (pills) */
+.clc-servs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;}
+.clc-serv-pill{border:1.5px solid #e5e7eb;background:#fff;color:#374151;border-radius:50px;
+  padding:7px 16px;font-size:.8rem;font-weight:700;cursor:pointer;transition:all .12s;}
+.clc-serv-pill:hover{border-color:#0a0a0a;}
+.clc-serv-pill.on{background:#0a0a0a;color:#fff;border-color:#0a0a0a;}
+.clc-serv-hint{font-size:.72rem;color:#6b7280;margin:-4px 0 12px;}
+/* Panel UF */
+.clc-uf{background:#0a0a0a;color:#fff;border-radius:12px;padding:14px 18px;margin-bottom:14px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;}
+.clc-uf .uf-val{font-size:1.5rem;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+.clc-uf .uf-meta{font-size:.7rem;color:#9ca3af;}
+.clc-uf .uf-badge{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;
+  padding:2px 9px;border-radius:50px;}
+.clc-uf .uf-badge.auto{background:#164e63;color:#a5f3fc;}
+.clc-uf .uf-badge.manual{background:#78350f;color:#fde68a;}
+.clc-uf .uf-badge.stale{background:#7f1d1d;color:#fecaca;}
+.clc-uf .uf-actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;}
+.clc-uf-btn{border:1.5px solid #374151;background:transparent;color:#e5e7eb;border-radius:8px;
+  padding:7px 14px;font-size:.76rem;font-weight:700;cursor:pointer;}
+.clc-uf-btn:hover{border-color:#dc2626;color:#fff;}
+.clc-uf-btn.primary{background:#dc2626;border-color:#dc2626;color:#fff;}
+.clc-uf-edit{background:#111827;border:1px solid #374151;border-radius:10px;padding:12px 16px;
+  margin-bottom:14px;display:none;gap:14px;flex-wrap:wrap;align-items:flex-end;}
+.clc-uf-edit label{font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;display:block;margin-bottom:3px;}
+.clc-uf-edit input{background:#0a0a0a;border:1px solid #374151;color:#fff;border-radius:7px;padding:7px 10px;font-size:.9rem;}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
-    <h4><i class="bi bi-tags me-2"></i>Categorías de producto</h4>
-    <div class="sub">Mano de obra por categoría — Hora / Cantidad de técnicos, separado por Instalación
-      y Mantención. Sirve para clasificar productos del Catálogo y para el cálculo de Cotizaciones.</div>
+    <h4><i class="bi bi-tags me-2"></i>Categorías y tarifas de servicio</h4>
+    <div class="sub">Mano de obra por categoría (Hora / Cantidad de técnicos) para CADA tipo de servicio.
+      Alimenta la clasificación de productos del Catálogo y el cálculo automático de las Cotizaciones.</div>
   </div>
   <button type="button" id="btnClcNueva" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;">
     <i class="bi bi-plus-lg me-1"></i>Nueva categoría
   </button>
 </div>
 
-{# 2026-07-23 (Daniel: "el precio del técnico y de la hora técnica, y un
-   porcentaje de margen" -- editables desde esta misma pantalla). Son los
-   2 valores GLOBALES que usa el motor de precio de Cotizaciones (antes
-   solo se podían cambiar tocando tk_settings directo). #}
+{# ── Panel UF: valor vigente + override manual editable (2026-07-22) ── #}
+<div class="clc-uf" id="clcUfPanel">
+  <div>
+    <div class="uf-val" id="clcUfVal">—</div>
+    <div class="uf-meta" id="clcUfMeta">Cargando valor de la UF…</div>
+  </div>
+  <span class="uf-badge auto" id="clcUfBadge" style="display:none;"></span>
+  <div class="uf-actions">
+    <button type="button" class="clc-uf-btn" id="clcUfRefrescar" onclick="clcUfRefrescar()"><i class="bi bi-arrow-clockwise"></i> Refrescar</button>
+    <button type="button" class="clc-uf-btn" id="clcUfEditarBtn" onclick="clcUfToggleEdit()">Fijar manual</button>
+    <button type="button" class="clc-uf-btn" id="clcUfQuitar" onclick="clcUfQuitarOverride()" style="display:none;">Volver a automático</button>
+  </div>
+</div>
+<div class="clc-uf-edit" id="clcUfEdit">
+  <div>
+    <label>Valor UF (CLP)</label>
+    <input type="number" min="1" step="0.01" id="clcUfInput" placeholder="40844.79" style="width:150px;">
+  </div>
+  <div>
+    <label>Fecha (opcional)</label>
+    <input type="date" id="clcUfFecha" style="width:160px;">
+  </div>
+  <button type="button" class="clc-uf-btn primary" onclick="clcUfGuardarOverride()">Guardar override</button>
+  <button type="button" class="clc-uf-btn" onclick="clcUfToggleEdit()">Cancelar</button>
+</div>
+
+{# Valores GLOBALES del motor de precio (Daniel 2026-07-23). #}
 <div class="clc-precio-wrap">
   <div class="clc-precio-campo">
     <label>Valor hora técnica</label>
@@ -70,13 +117,16 @@
   </div>
 </div>
 
+{# ── Selector de tipo de servicio: una tarifa por servicio ── #}
+<div class="clc-servs" id="clcServs"></div>
+<div class="clc-serv-hint" id="clcServHint"></div>
+
 <div class="clc-table-wrap">
   <table class="clc-table">
     <thead>
       <tr>
         <th>Categoría</th>
-        <th>Instalación<br><span style="font-weight:400;text-transform:none">Hora · Técnicos · HH</span></th>
-        <th>Mantención<br><span style="font-weight:400;text-transform:none">Hora · Técnicos · HH</span></th>
+        <th id="clcColServ">Hora · Técnicos · HH · Precio unit.</th>
         <th>Estado</th>
         <th></th>
       </tr>
@@ -87,18 +137,90 @@
 
 <script>
 let _clcClases = [];
+let _clcTipos = [];
+let _clcServ = 'mantencion';
+let _clcCfg = {valor_hh: 20000, margen_pct: 40};
 
 function escH(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtCLP(n){ return '$' + (Math.round(n||0)).toLocaleString('es-CL'); }
+function fmtUF(n){ return (n==null?'—':'$' + Number(n).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})); }
 
 async function clcCargar(){
   const r = await fetch('/catalogo/api/clases/admin');
   const d = await r.json();
   _clcClases = (d.ok && d.clases) ? d.clases : [];
-  clcRender();
+  _clcTipos = (d.ok && d.tipos_servicio) ? d.tipos_servicio : [{key:'mantencion',label:'Mantención'}];
+  if(!_clcTipos.find(t => t.key === _clcServ)) _clcServ = _clcTipos[0].key;
   if(d.ok && d.config_precio){
+    _clcCfg = d.config_precio;
     document.getElementById('clcValorHh').value = d.config_precio.valor_hh;
     document.getElementById('clcMargenPct').value = d.config_precio.margen_pct;
   }
+  clcRenderServs();
+  clcRender();
+}
+
+function clcRenderServs(){
+  document.getElementById('clcServs').innerHTML = _clcTipos.map(t =>
+    '<button type="button" class="clc-serv-pill'+(t.key===_clcServ?' on':'')+'" '
+    + 'onclick="clcSelServ(\''+t.key+'\')">'+escH(t.label)+'</button>'
+  ).join('');
+  const lbl = (_clcTipos.find(t => t.key===_clcServ)||{}).label || '';
+  document.getElementById('clcColServ').textContent = lbl + ' — Hora · Técnicos · HH · Precio unit.';
+  const hints = {
+    mantencion: 'Tarifa base de mantención (verificada contra el Excel real de Daniel).',
+    instalacion: 'Instalación: define horas/técnicos cuando tengas la tabla. Sin datos = $0.',
+    visita_tecnica: 'Visita técnica: tarifa propia, independiente de mantención.',
+    venta_repuesto: 'Venta de repuesto: se trabajará más adelante. Sin datos = $0.',
+    otro: 'Otros servicios sin tarifa fija.'
+  };
+  document.getElementById('clcServHint').textContent = hints[_clcServ] || '';
+}
+
+function clcSelServ(key){ _clcServ = key; clcRenderServs(); clcRender(); }
+
+function clcPrecioUnit(hh){
+  if(hh==null) return null;
+  const vh = parseFloat(_clcCfg.valor_hh)||0, mg = parseFloat(_clcCfg.margen_pct)||0;
+  return Math.round(hh * vh * (1 + mg/100));
+}
+
+function clcInputsTarifa(c){
+  const tipo = _clcServ;
+  const horas = c[tipo+'_horas'];
+  const tecnicos = c[tipo+'_tecnicos'];
+  const hh = c[tipo+'_hh'];
+  const pu = clcPrecioUnit(hh);
+  const hhTxt = (hh==null) ? '<span class="clc-sinDatos">sin definir</span>'
+    : '<b>'+ (Math.round(hh*100)/100) +'</b> HH';
+  const puTxt = (pu==null) ? '' : ' · <span class="clc-precio-lbl"><b>'+fmtCLP(pu)+'</b>/u</span>';
+  return ''
+    + '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '
+    +   'placeholder="hr" data-id="'+c.id+'" data-campo="horas" onchange="clcGuardarTarifa(this)">'
+    + ' <input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '
+    +   'placeholder="téc" data-id="'+c.id+'" data-campo="tecnicos" onchange="clcGuardarTarifa(this)">'
+    + ' <span class="clc-hh">'+hhTxt+'</span>' + puTxt;
+}
+
+function clcRender(){
+  const body = document.getElementById('clcBody');
+  if(!_clcClases.length){
+    body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Sin categorías todavía</td></tr>';
+    return;
+  }
+  body.innerHTML = _clcClases.map(c => (
+    '<tr class="'+(c.activo? '':'inactiva')+'">'
+    + '<td><div class="clc-nombre">'+escH(c.nombre)+'</div><div class="clc-slug">'+escH(c.slug)+'</div></td>'
+    + '<td>'+clcInputsTarifa(c)+'</td>'
+    + '<td><span class="clc-badge '+(c.activo?'on':'off')+'">'+(c.activo?'Activa':'Inactiva')+'</span></td>'
+    + '<td>'
+    +   '<button type="button" class="clc-act" title="Renombrar" onclick="clcRenombrar('+c.id+')"><i class="bi bi-pencil"></i></button>'
+    +   '<button type="button" class="clc-act" title="'+(c.activo?'Desactivar':'Activar')+'" '
+    +     'onclick="clcToggle('+c.id+','+(c.activo?'false':'true')+')">'
+    +     '<i class="bi bi-'+(c.activo?'eye-slash':'eye')+'"></i></button>'
+    + '</td>'
+    + '</tr>'
+  )).join('');
 }
 
 async function clcGuardarPrecio(){
@@ -113,53 +235,20 @@ async function clcGuardarPrecio(){
     });
     const d = await r.json();
     if(!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+    _clcCfg = d.config_precio || _clcCfg;
+    clcRender();  // refresca la columna "Precio unit."
     ilusToast('✓ Guardado — se aplica a las próximas cotizaciones', {type:'success'});
   }catch(e){
     ilusToast('Error de conexión al guardar', {type:'error'});
   }
 }
 
-function clcInputsTarifa(c, tipo){
-  const horas = c[tipo+'_horas'];
-  const tecnicos = c[tipo+'_tecnicos'];
-  const hh = c[tipo+'_hh'];
-  const hhTxt = (hh==null) ? '<span class="clc-sinDatos">sin definir</span>' : '<b>'+ (Math.round(hh*100)/100) +'</b> HH';
-  return ''
-    + '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '
-    +   'placeholder="hr" data-id="'+c.id+'" data-tipo="'+tipo+'" data-campo="horas" onchange="clcGuardarTarifa(this)">'
-    + ' <input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '
-    +   'placeholder="téc" data-id="'+c.id+'" data-tipo="'+tipo+'" data-campo="tecnicos" onchange="clcGuardarTarifa(this)">'
-    + ' <span class="clc-hh">'+hhTxt+'</span>';
-}
-
-function clcRender(){
-  const body = document.getElementById('clcBody');
-  if(!_clcClases.length){
-    body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Sin categorías todavía</td></tr>';
-    return;
-  }
-  body.innerHTML = _clcClases.map(c => (
-    '<tr class="'+(c.activo? '':'inactiva')+'">'
-    + '<td><div class="clc-nombre">'+escH(c.nombre)+'</div><div class="clc-slug">'+escH(c.slug)+'</div></td>'
-    + '<td>'+clcInputsTarifa(c,'instalacion')+'</td>'
-    + '<td>'+clcInputsTarifa(c,'mantencion')+'</td>'
-    + '<td><span class="clc-badge '+(c.activo?'on':'off')+'">'+(c.activo?'Activa':'Inactiva')+'</span></td>'
-    + '<td>'
-    +   '<button type="button" class="clc-act" title="Renombrar" onclick="clcRenombrar('+c.id+')"><i class="bi bi-pencil"></i></button>'
-    +   '<button type="button" class="clc-act" title="'+(c.activo?'Desactivar':'Activar')+'" '
-    +     'onclick="clcToggle('+c.id+','+(c.activo?'false':'true')+')">'
-    +     '<i class="bi bi-'+(c.activo?'eye-slash':'eye')+'"></i></button>'
-    + '</td>'
-    + '</tr>'
-  )).join('');
-}
-
 async function clcGuardarTarifa(input){
-  const id = input.dataset.id, tipo = input.dataset.tipo;
+  const id = input.dataset.id, tipo = _clcServ;
   const fila = _clcClases.find(c => String(c.id) === String(id));
   if(!fila) return;
-  const horasInput = document.querySelector('input[data-id="'+id+'"][data-tipo="'+tipo+'"][data-campo="horas"]');
-  const tecInput = document.querySelector('input[data-id="'+id+'"][data-tipo="'+tipo+'"][data-campo="tecnicos"]');
+  const horasInput = document.querySelector('input[data-id="'+id+'"][data-campo="horas"]');
+  const tecInput = document.querySelector('input[data-id="'+id+'"][data-campo="tecnicos"]');
   const horas = horasInput.value === '' ? null : parseFloat(horasInput.value);
   const tecnicos = tecInput.value === '' ? null : parseInt(tecInput.value, 10);
   input.disabled = true;
@@ -179,6 +268,89 @@ async function clcGuardarTarifa(input){
   }finally{
     input.disabled = false;
   }
+}
+
+/* ── UF ── */
+function clcUfPintar(uf){
+  const val = document.getElementById('clcUfVal');
+  const meta = document.getElementById('clcUfMeta');
+  const badge = document.getElementById('clcUfBadge');
+  const btnQuitar = document.getElementById('clcUfQuitar');
+  if(!uf || !uf.ok || uf.uf == null){
+    val.textContent = '—';
+    meta.textContent = 'No disponible ahora (mindicador.cl no respondió y sin valor previo).';
+    badge.style.display = 'none';
+    btnQuitar.style.display = 'none';
+    return;
+  }
+  val.textContent = fmtUF(uf.uf);
+  let fuente, cls;
+  if(uf.manual){ fuente = 'Fijada manualmente' + (uf.set_by ? ' por '+escH(uf.set_by) : ''); cls='manual'; }
+  else if(uf.stale){ fuente = 'Último valor conocido (API no respondió ahora)'; cls='stale'; }
+  else { fuente = 'Automática (mindicador.cl)'; cls='auto'; }
+  meta.textContent = fuente + (uf.fecha ? ' · ' + uf.fecha : '');
+  badge.className = 'uf-badge ' + cls;
+  badge.textContent = uf.manual ? 'Manual' : (uf.stale ? 'En caché' : 'Auto');
+  badge.style.display = '';
+  btnQuitar.style.display = uf.manual ? '' : 'none';
+}
+
+async function clcUfCargar(){
+  try{
+    const r = await fetch('/catalogo/api/uf');
+    const d = await r.json();
+    clcUfPintar(d.ok ? d.uf : null);
+  }catch(e){ clcUfPintar(null); }
+}
+
+async function clcUfRefrescar(){
+  const btn = document.getElementById('clcUfRefrescar');
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/uf-refresh', {method:'POST'});
+    const d = await r.json();
+    clcUfPintar(d);
+    ilusToast('UF actualizada', {type:'success'});
+  }catch(e){ ilusToast('No se pudo refrescar la UF', {type:'error'}); }
+  finally{ btn.disabled = false; }
+}
+
+function clcUfToggleEdit(){
+  const el = document.getElementById('clcUfEdit');
+  el.style.display = (el.style.display === 'flex') ? 'none' : 'flex';
+}
+
+async function clcUfGuardarOverride(){
+  const valor = parseFloat(document.getElementById('clcUfInput').value);
+  if(isNaN(valor) || valor <= 0){ ilusToast('Ingresa un valor de UF válido', {type:'warning'}); return; }
+  const fecha = document.getElementById('clcUfFecha').value || null;
+  try{
+    const r = await fetch('/catalogo/api/uf/override', {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({valor: valor, fecha: fecha})
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'No se pudo fijar la UF', {type:'error'}); return; }
+    clcUfPintar(d.uf);
+    document.getElementById('clcUfEdit').style.display = 'none';
+    ilusToast('✓ UF fijada manualmente — se usará en las próximas cotizaciones', {type:'success'});
+  }catch(e){ ilusToast('Error al fijar la UF', {type:'error'}); }
+}
+
+async function clcUfQuitarOverride(){
+  const ok = await ilusConfirm({
+    title: 'Volver a UF automática',
+    message: 'Se quitará el valor fijado a mano y volverá a tomarse de la API (mindicador.cl).',
+    okLabel: 'Volver a automático', cancelLabel: 'Cancelar',
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/uf/override', {method:'DELETE'});
+    const d = await r.json();
+    if(!d.ok){ ilusToast('No se pudo quitar el override', {type:'error'}); return; }
+    clcUfPintar(d.uf);
+    ilusToast('✓ UF vuelve a ser automática', {type:'success'});
+  }catch(e){ ilusToast('Error al quitar el override', {type:'error'}); }
 }
 
 async function clcRenombrar(id){
@@ -237,11 +409,12 @@ async function clcNueva(){
   });
   const d = await r.json();
   if(!d.ok){ ilusToast(d.error || 'No se pudo crear la categoría', {type:'error'}); return; }
-  ilusToast('✓ Categoría creada — completa sus horas de instalación/mantención', {type:'success'});
+  ilusToast('✓ Categoría creada — completa sus horas por servicio', {type:'success'});
   clcCargar();
 }
 
 document.getElementById('btnClcNueva').addEventListener('click', clcNueva);
 clcCargar();
+clcUfCargar();
 </script>
 {% endblock %}

@@ -752,13 +752,20 @@ function cotWizAbrir(){
   _cotWizRenderContactos([]);
   _cotWizSetContactoExpandido(false);
   _cotWizAplicarOrigenPaso2();
-  // Fecha LOCAL (no toISOString, que es UTC y cerca de medianoche chilena
-  // se corre un día -- hallazgo de revisión adversarial). 2026-07-22
-  // (Daniel: "un válido hasta 15 días", igual que Triple A).
-  const _hoy = new Date(); _hoy.setDate(_hoy.getDate() + 15);
+  // "Válido hasta" = hoy + 15 días HÁBILES de Chile (saltando fines de
+  // semana + feriados), calculado en el backend (2026-07-22, Daniel: "15
+  // días hábiles de Chile... eso va a ser la sugerencia interna"). Queda
+  // editable. Prefill instantáneo con +15 corridos (LOCAL, no UTC) y luego
+  // se refina con la sugerencia real del backend cuando responde -- así el
+  // campo nunca queda vacío aunque el endpoint tarde/falle.
   const _p2 = function(n){ return String(n).padStart(2, '0'); };
-  document.getElementById('cotWizValidoHasta').value =
-    _hoy.getFullYear() + '-' + _p2(_hoy.getMonth() + 1) + '-' + _p2(_hoy.getDate());
+  const _fechaLocal = function(dt){ return dt.getFullYear() + '-' + _p2(dt.getMonth() + 1) + '-' + _p2(dt.getDate()); };
+  const _tmp = new Date(); _tmp.setDate(_tmp.getDate() + 15);
+  document.getElementById('cotWizValidoHasta').value = _fechaLocal(_tmp);
+  fetch('/tickets/api/cotizaciones/valido-hasta-sugerido?dias=15')
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if (d && d.ok && d.fecha) document.getElementById('cotWizValidoHasta').value = d.fecha; })
+    .catch(function(){ /* se queda con el prefill de +15 corridos */ });
   document.querySelectorAll('.cot-wiz-ts-pill').forEach(function(b){
     b.classList.toggle('on', b.dataset.v === 'mantencion');
   });

@@ -219,6 +219,17 @@ def register_catalogo_routes(app, ctx):
     # tickets_module.py, con env var propia para no acoplar ambos modulos).
     CAT_BODEGA_SYNC = os.environ.get("CAT_BODEGA_SYNC", "02").strip()
 
+    # 2026-07-22 (Daniel: "una clasificación para cada servicio"): los 5
+    # tipos de servicio que pueden tener tarifa por categoría. Debe calzar
+    # EXACTO con el ENUM de cat_clase_producto_tarifas.tipo_servicio y con
+    # _TK_COTIZ_TIPOS_SERVICIO de tickets_module.py. Orden = orden de la UI.
+    _CAT_TIPOS_SERVICIO_TARIFA = (
+        "mantencion", "instalacion", "visita_tecnica", "venta_repuesto", "otro")
+    _CAT_TIPOS_SERVICIO_LABEL = {
+        "mantencion": "Mantención", "instalacion": "Instalación",
+        "visita_tecnica": "Visita técnica", "venta_repuesto": "Venta de repuesto",
+        "otro": "Otro"}
+
     # ─────────────────────────────────────────────────────────────────
     #  Migracion idempotente (patron _ensure_tickets_tables). Corre al
     #  registrar el modulo, dentro de app_context.
@@ -329,6 +340,18 @@ def register_catalogo_routes(app, ctx):
                      REFERENCES cat_clases_producto(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # 2026-07-22 (Daniel: "una clasificación para cada servicio que
+            # damos, que sería mantención, visita técnica, y además hacer
+            # editable una opción de venta de repuesto"): ampliar el ENUM de
+            # 2 a 5 tipos de servicio. MODIFY COLUMN que ENSANCHA un ENUM es
+            # idempotente y seguro en TODO boot (preserva filas existentes,
+            # nunca las trunca -- mismo patrón que tk_tickets.tipo /
+            # tk_cotizaciones.tipo_servicio). Los tipos nuevos nacen sin
+            # tarifa (NULL) => calculan $0 hasta que Daniel los defina.
+            mysql_execute(
+                "ALTER TABLE cat_clase_producto_tarifas MODIFY COLUMN tipo_servicio "
+                "  ENUM('instalacion','mantencion','visita_tecnica','venta_repuesto','otro') "
+                "  NOT NULL")
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_catalogo_tables: {_e}", flush=True)
 
@@ -632,7 +655,7 @@ def register_catalogo_routes(app, ctx):
         out = []
         for r in rows:
             r = dict(r)
-            for ts in ("instalacion", "mantencion"):
+            for ts in _CAT_TIPOS_SERVICIO_TARIFA:
                 info = tmap.get(r["id"], {}).get(ts) or {}
                 horas = info.get("horas")
                 tecnicos = info.get("tecnicos")
@@ -642,7 +665,10 @@ def register_catalogo_routes(app, ctx):
                 r[f"{ts}_tecnicos"] = tecnicos_i
                 r[f"{ts}_hh"] = (horas_f * tecnicos_i) if (horas_f is not None and tecnicos_i is not None) else None
             out.append(r)
-        return jsonify({"ok": True, "clases": out, "config_precio": _cat_config_precio_leer()})
+        return jsonify({"ok": True, "clases": out,
+                        "tipos_servicio": [{"key": k, "label": _CAT_TIPOS_SERVICIO_LABEL[k]}
+                                           for k in _CAT_TIPOS_SERVICIO_TARIFA],
+                        "config_precio": _cat_config_precio_leer()})
 
     # 2026-07-23 (Daniel, misma pantalla "Clasificación" del wizard de
     # cotizaciones: "el precio del técnico y de la hora técnica, y un
@@ -700,6 +726,65 @@ def register_catalogo_routes(app, ctx):
             _audit("cat_config_precio_actualizado", target_type="tk_settings",
                    details={"cambios": dict(updates)})
         return jsonify({"ok": True, "config_precio": _cat_config_precio_leer()})
+
+    # ── UF: valor actual + override manual (2026-07-22, Daniel: "actualizar
+    #    el precio de la UF a diario por una API... y que se pueda editar en
+    #    caso de cualquier detalle"). El motor está en app.py
+    #    (_uf_valor_actual con override>API>DB); acá solo se administra el
+    #    override desde la misma pantalla /catalogo/clases. ──
+    @app.route("/catalogo/api/uf", methods=["GET"])
+    @_catalogo_admin_required
+    def cat_api_uf_estado():
+        _uf = ctx.get("_uf_valor_actual")
+        estado = _uf() if _uf else {"ok": False, "uf": None}
+        return jsonify({"ok": True, "uf": estado})
+
+    @app.route("/catalogo/api/uf/override", methods=["PATCH", "DELETE"])
+    @_catalogo_admin_required
+    def cat_api_uf_override():
+        user = current_username() or "sistema"
+        _invalidate = ctx.get("_uf_override_cache_invalidate")
+        if request.method == "DELETE":
+            # Quitar el override -> vuelve a mandar la API/DB.
+            for clave in ("uf_override_valor", "uf_override_fecha", "uf_override_by", "uf_override_at"):
+                mysql_execute("DELETE FROM tk_settings WHERE clave=%s", (clave,))
+            if _invalidate:
+                _invalidate()
+            if _audit:
+                _audit("uf_override_quitado", target_type="tk_settings", details={})
+            _uf = ctx.get("_uf_valor_actual")
+            return jsonify({"ok": True, "uf": (_uf() if _uf else None)})
+        d = request.get_json(silent=True) or {}
+        try:
+            valor = float(d.get("valor"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Valor de UF inválido"}), 400
+        if valor <= 0:
+            return jsonify({"ok": False, "error": "El valor de la UF debe ser mayor a 0"}), 400
+        fecha = (d.get("fecha") or "").strip()[:10] or None
+        from datetime import datetime as _dt
+        ahora = None
+        try:
+            ahora = (chile_fmt(_dt.utcnow()) if chile_fmt else str(_dt.utcnow()))
+        except Exception:
+            ahora = ""
+        pares = [("uf_override_valor", str(valor)), ("uf_override_by", user), ("uf_override_at", ahora or "")]
+        if fecha:
+            pares.append(("uf_override_fecha", fecha))
+        else:
+            mysql_execute("DELETE FROM tk_settings WHERE clave='uf_override_fecha'")
+        for clave, val in pares:
+            mysql_execute(
+                "INSERT INTO tk_settings (clave, valor, updated_by) VALUES (%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
+                (clave, val, user))
+        if _invalidate:
+            _invalidate()
+        if _audit:
+            _audit("uf_override_fijado", target_type="tk_settings",
+                   details={"valor": valor, "fecha": fecha})
+        _uf = ctx.get("_uf_valor_actual")
+        return jsonify({"ok": True, "uf": (_uf() if _uf else None)})
 
     @app.route("/catalogo/api/clases", methods=["POST"])
     @_catalogo_admin_required
@@ -768,14 +853,15 @@ def register_catalogo_routes(app, ctx):
     @_catalogo_admin_required
     def cat_api_clases_tarifas_update(clid):
         """Fija Hora/Técnicos de UNA categoría para UN tipo_servicio
-        (instalación o mantención — Daniel: "hay que separar"). HH total
+        (mantención/instalación/visita técnica/venta de repuesto/otro —
+        Daniel: "una clasificación para cada servicio que damos"). HH total
         no se guarda: se calcula (horas × técnicos) en cada lectura."""
         if not mysql_fetchone("SELECT id FROM cat_clases_producto WHERE id=%s", (clid,)):
             return jsonify({"ok": False, "error": "Categoría no encontrada"}), 404
         d = request.get_json(silent=True) or {}
         tipo_servicio = (d.get("tipo_servicio") or "").strip().lower()
-        if tipo_servicio not in ("instalacion", "mantencion"):
-            return jsonify({"ok": False, "error": "tipo_servicio debe ser 'instalacion' o 'mantencion'"}), 400
+        if tipo_servicio not in _CAT_TIPOS_SERVICIO_TARIFA:
+            return jsonify({"ok": False, "error": "tipo_servicio inválido"}), 400
         horas_in = d.get("horas")
         tecnicos_in = d.get("tecnicos")
         try:
@@ -1789,13 +1875,19 @@ def register_catalogo_routes(app, ctx):
     #  (dentro del handler), momento en el que el arranque ya terminó y
     #  ctx (globals() de app.py) ya la tiene.
     # ─────────────────────────────────────────────────────────────────
-    def _cat_crear_o_reusar_producto_desde_erp(sku, nombre="", familia=None):
+    def _cat_crear_o_reusar_producto_desde_erp(sku, nombre="", familia=None, clase=None):
         """Crea (o reusa, idempotente por SKU) un producto de `cat_productos`
         a partir de datos traídos del ERP. Reusable desde cualquier módulo
         vía ctx['_cat_crear_o_reusar_producto_desde_erp'](sku, nombre).
         NUNCA lanza -- ante error de BD devuelve id=None + 'error'.
-        Devuelve dict: {id, creado, nombre, sku, clase_producto, foto_ecommerce}
-        (clase_producto viene NULL si el producto aún no fue clasificado).
+        Devuelve dict: {id, creado, nombre, sku, clase_producto, foto_ecommerce}.
+
+        `clase` (opcional, 2026-07-22): si se pasa una clase válida y el SKU
+        NO existía, nace YA clasificado (Daniel: "que se puedan guardar la
+        clasificación conjunto con el producto"). Si el SKU YA existía se
+        respeta su clase actual (NO se pisa) -- para cambiarla se usa el
+        override explícito del modal / el PATCH del catálogo. Cierra el gap
+        de que un SKU nuevo nacía siempre con clase NULL.
         """
         try:
             sku_n = (str(sku) if sku is not None else "").strip().upper()
@@ -1806,6 +1898,11 @@ def register_catalogo_routes(app, ctx):
                     "clase_producto": None, "foto_ecommerce": False, "error": "Falta el SKU"}
         nombre_n = (str(nombre) if nombre is not None else "").strip()
         familia_n = (str(familia) if familia is not None else "").strip()[:150] or None
+        # Solo se acepta una clase que exista de verdad en el catálogo de
+        # categorías (evita ensuciar cat_productos con slugs inventados).
+        clase_n = (str(clase) if clase is not None else "").strip() or None
+        if clase_n and clase_n not in _cat_clases_map():
+            clase_n = None
 
         existente = mysql_fetchone(
             "SELECT id, nombre, clase_producto FROM cat_productos WHERE sku=%s", (sku_n,))
@@ -1819,9 +1916,9 @@ def register_catalogo_routes(app, ctx):
         user = current_username() or "sistema"
         try:
             mysql_execute(
-                "INSERT INTO cat_productos (sku, nombre, familia, created_by, updated_by) "
-                "VALUES (%s,%s,%s,%s,%s)",
-                (sku_n[:100], nombre_n[:300], familia_n, user, user))
+                "INSERT INTO cat_productos (sku, nombre, familia, clase_producto, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (sku_n[:100], nombre_n[:300], familia_n, clase_n, user, user))
         except Exception as _e:
             msg = str(_e)
             if "Duplicate entry" in msg or "uq_cat_sku" in msg:
@@ -1851,22 +1948,24 @@ def register_catalogo_routes(app, ctx):
             except Exception as _e_ecom:
                 print(f"[_cat_crear_o_reusar_producto_desde_erp] foto ecommerce sku={sku_n}: {_e_ecom}", flush=True)
         return {"id": nuevo_id, "creado": True, "nombre": nombre_n, "sku": sku_n,
-                 "clase_producto": None, "foto_ecommerce": foto_ecom}
+                 "clase_producto": clase_n, "foto_ecommerce": foto_ecom}
 
     # Visible desde otros módulos (tickets_module.py — Cotizaciones Fase 1)
     # sin pegarle por HTTP a este mismo proceso. Ver comentario arriba.
     ctx["_cat_crear_o_reusar_producto_desde_erp"] = _cat_crear_o_reusar_producto_desde_erp
 
     def _cat_obtener_tarifa_clase(slug, tipo_servicio):
-        """Hora/Técnicos de una categoría para un tipo_servicio ('instalacion'
-        o 'mantencion'). Reusable desde tickets_module.py vía
-        ctx['_cat_obtener_tarifa_clase'](slug, tipo_servicio) -- mismo patrón
-        que _cat_crear_o_reusar_producto_desde_erp (lookup en tiempo de
-        REQUEST, no de arranque). Devuelve None si la categoría no existe,
-        está inactiva, o no tiene tarifa cargada para ese tipo_servicio
-        (ej. "Rack Pro" hoy, o cualquier categoría en Instalación mientras
-        Daniel no defina esa tabla — 2026-07-21)."""
-        if not slug or tipo_servicio not in ("instalacion", "mantencion"):
+        """Hora/Técnicos de una categoría para un tipo_servicio. Reusable
+        desde tickets_module.py vía ctx['_cat_obtener_tarifa_clase'](slug,
+        tipo_servicio) -- mismo patrón que _cat_crear_o_reusar_producto_desde_erp
+        (lookup en tiempo de REQUEST, no de arranque). Devuelve None si la
+        categoría no existe, está inactiva, o no tiene tarifa cargada para
+        ese tipo_servicio (ej. "Rack Pro" hoy, o cualquier categoría en un
+        servicio cuya tabla Daniel aún no definió — 2026-07-21/2026-07-22).
+        Ahora soporta los 5 tipos (instalacion/mantencion/visita_tecnica/
+        venta_repuesto/otro) -- los que Daniel no cargó siguen dando None
+        (=> $0 en el motor de precio, nunca un valor inventado)."""
+        if not slug or tipo_servicio not in _CAT_TIPOS_SERVICIO_TARIFA:
             return None
         row = mysql_fetchone(
             "SELECT t.horas, t.tecnicos FROM cat_clase_producto_tarifas t "
@@ -1879,6 +1978,30 @@ def register_catalogo_routes(app, ctx):
         return {"horas": float(row["horas"]), "tecnicos": int(row["tecnicos"])}
 
     ctx["_cat_obtener_tarifa_clase"] = _cat_obtener_tarifa_clase
+
+    def _cat_tarifas_clases_batch(slugs, tipo_servicio):
+        """Igual que _cat_obtener_tarifa_clase pero para MUCHAS clases en UNA
+        sola query (escalabilidad 2026-07-22: recalcular/preview de una
+        cotización de 200 ítems hacía 200 queries -- N+1). Devuelve
+        {slug: {"horas","tecnicos"}} solo para las que tienen tarifa cargada
+        y la categoría está activa; las demás no aparecen (=> el caller usa
+        None => $0, mismo criterio que la versión de a uno)."""
+        if not slugs or tipo_servicio not in _CAT_TIPOS_SERVICIO_TARIFA:
+            return {}
+        uniq = sorted({(s or "").strip() for s in slugs if s and str(s).strip()})
+        if not uniq:
+            return {}
+        placeholders = ",".join(["%s"] * len(uniq))
+        rows = mysql_fetchall(
+            "SELECT c.slug, t.horas, t.tecnicos FROM cat_clase_producto_tarifas t "
+            "JOIN cat_clases_producto c ON c.id=t.clase_id "
+            f"WHERE c.activo=1 AND t.tipo_servicio=%s AND c.slug IN ({placeholders}) "
+            "  AND t.horas IS NOT NULL AND t.tecnicos IS NOT NULL",
+            tuple([tipo_servicio] + uniq)) or []
+        return {r["slug"]: {"horas": float(r["horas"]), "tecnicos": int(r["tecnicos"])}
+                for r in rows}
+
+    ctx["_cat_tarifas_clases_batch"] = _cat_tarifas_clases_batch
     # Visible desde tickets_module.py (modal de revisión de Cotizaciones,
     # 2026-07-22) para traducir un slug de categoría a su nombre legible.
     ctx["_cat_clases_map"] = _cat_clases_map

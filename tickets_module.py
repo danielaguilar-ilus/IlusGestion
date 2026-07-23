@@ -69,6 +69,77 @@ def _chile_hoy():
     return datetime.utcnow().date()
 
 
+_FERIADOS_CHILE_CACHE = {}
+
+
+def _feriados_chile(anio):
+    """Set de feriados nacionales de Chile para `anio` (fechas date).
+    Combina los feriados de fecha FIJA con los MÓVILES basados en Pascua
+    (Viernes/Sábado Santo), calculada con el algoritmo de Computus (Gauss)
+    -- así funciona para cualquier año sin hardcodear ni depender de una
+    API externa. NO modela los traslados a lunes de la Ley 19.973 (San
+    Pedro/San Pablo, Encuentro de Dos Mundos): mueven a lo sumo 1 día y
+    esto alimenta una SUGERENCIA editable, no un dato vinculante."""
+    if anio in _FERIADOS_CHILE_CACHE:
+        return _FERIADOS_CHILE_CACHE[anio]
+    fijos = [(1, 1), (5, 1), (5, 21), (6, 20), (6, 29), (7, 16), (8, 15),
+             (9, 18), (9, 19), (10, 12), (10, 31), (11, 1), (12, 8), (12, 25)]
+    fer = set()
+    for m, d in fijos:
+        try:
+            fer.add(date(anio, m, d))
+        except ValueError:
+            pass
+    # Pascua (Computus / algoritmo de Gauss-Butcher) -> Viernes y Sábado Santo.
+    a = anio % 19
+    b = anio // 100
+    c = anio % 100
+    dd = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - dd - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    ll = (32 + 2 * e + 2 * i - h - k) % 7
+    m_ = (a + 11 * h + 22 * ll) // 451
+    mes = (h + ll - 7 * m_ + 114) // 31
+    dia = ((h + ll - 7 * m_ + 114) % 31) + 1
+    try:
+        pascua = date(anio, mes, dia)
+        fer.add(pascua - timedelta(days=2))  # Viernes Santo
+        fer.add(pascua - timedelta(days=1))  # Sábado Santo
+    except ValueError:
+        pass
+    _FERIADOS_CHILE_CACHE[anio] = fer
+    return fer
+
+
+def _sumar_dias_habiles_chile(desde, n):
+    """Devuelve la fecha resultante de sumar `n` días hábiles de Chile a
+    `desde` (date), saltando sábados, domingos y feriados nacionales.
+    `n<=0` devuelve `desde`. Usado para sugerir el 'Válido hasta' de una
+    cotización (Daniel 2026-07-22: '15 días hábiles de Chile')."""
+    if not isinstance(desde, date):
+        desde = _chile_hoy()
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 0
+    fecha = desde
+    sumados = 0
+    guardia = 0
+    while sumados < n and guardia < 400:
+        guardia += 1
+        fecha = fecha + timedelta(days=1)
+        if fecha.weekday() >= 5:  # 5=sábado, 6=domingo
+            continue
+        if fecha in _feriados_chile(fecha.year):
+            continue
+        sumados += 1
+    return fecha
+
+
 # ─────────────────────────────────────────────────────────────────────────
 #  Enums (fuente unica — tomados del modelo ilus-back ticket_details_*_enum)
 # ─────────────────────────────────────────────────────────────────────────
@@ -1499,6 +1570,18 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN dias_habiles_estimado INT NULL")
         if "frecuencia_anual" not in existentes:
             alters.append("ADD COLUMN frecuencia_anual INT NULL")
+        # 2026-07-22 (Daniel: "el monto de la cotización en UF"): snapshot de
+        # la UF al momento de emitir. Una cotización es un compromiso de
+        # precio a UNA UF concreta (igual que "VALOR UF: $40.844,79" fijo en
+        # el PDF real de Triple A); guardarla evita que el total en UF cambie
+        # si mañana sube la UF o si mindicador.cl está caído. NULL en las
+        # viejas -> el PDF cae al cálculo en vivo como antes (Regla #4.2).
+        if "uf_valor" not in existentes:
+            alters.append("ADD COLUMN uf_valor DECIMAL(12,4) NULL")
+        if "uf_fecha" not in existentes:
+            alters.append("ADD COLUMN uf_fecha DATE NULL")
+        if "uf_total" not in existentes:
+            alters.append("ADD COLUMN uf_total DECIMAL(14,4) NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
@@ -2094,18 +2177,25 @@ def register_tickets_routes(app, ctx):
             return 0.0
         return round(total / info["valor"], 2)
 
-    def _tk_cotiz_calcular_item(clase_producto, tipo_servicio, cantidad, descuento_pct, cfg):
+    def _tk_cotiz_calcular_item(clase_producto, tipo_servicio, cantidad, descuento_pct, cfg,
+                                tarifa=None):
         """Precio de mano de obra de UN ítem según su categoría (SIN
         transporte -- el costo de ruta es una línea separada de cabecera,
         modelo Triple A; el PDF lo prorratea solo para presentación).
         Devuelve None si la categoría no tiene tarifa cargada para ese
         tipo_servicio -- el caller debe resetear el ítem a $0 en ese caso,
         nunca dejar el último valor calculado. `cfg` se recibe ya cargado
-        (evita 1 query de más por ítem, hallazgo de revisión adversarial)."""
-        _cat_tarifa = ctx.get("_cat_obtener_tarifa_clase")
-        if not _cat_tarifa or not clase_producto:
-            return None
-        tarifa = _cat_tarifa(clase_producto, tipo_servicio)
+        (evita 1 query de más por ítem, hallazgo de revisión adversarial).
+
+        `tarifa` (2026-07-22, escalabilidad): si el caller ya cargó la
+        tarifa (p.ej. _tk_cotiz_recalcular la trae en batch para toda la
+        cotización), se pasa acá y se evita 1 query por ítem (N+1). Si es
+        None se busca de a uno como antes."""
+        if tarifa is None:
+            _cat_tarifa = ctx.get("_cat_obtener_tarifa_clase")
+            if not _cat_tarifa or not clase_producto:
+                return None
+            tarifa = _cat_tarifa(clase_producto, tipo_servicio)
         if not tarifa:
             return None
         hh = tarifa["horas"] * tarifa["tecnicos"]
@@ -2151,7 +2241,7 @@ def register_tickets_routes(app, ctx):
         "edición posterior" -- hacerlo requeriría un flujo de edición que
         Daniel no pidió todavía)."""
         cab = mysql_fetchone(
-            "SELECT id, tipo_servicio, comuna, costo_ruta, descuento_pct, iva_pct "
+            "SELECT id, tipo_servicio, comuna, costo_ruta, descuento_pct, iva_pct, uf_valor "
             "FROM tk_cotizaciones WHERE id=%s", (cid,))
         if not cab:
             return None
@@ -2212,11 +2302,28 @@ def register_tickets_routes(app, ctx):
         # Mano de obra por ítem (SIN transporte -- modelo Triple A, ver
         # cabecera de sección: la ruta es una línea separada de cabecera).
         cfg = _tk_cotiz_pricing_config()
+        # Escalabilidad (2026-07-22): cargar TODAS las tarifas de las clases
+        # presentes en UNA query (batch) en vez de 1 query por ítem (N+1).
+        # Una cotización de 200 ítems pasaba de 200 queries a 1.
+        _tarifas_batch_fn = ctx.get("_cat_tarifas_clases_batch")
+        _tarifas_map = {}
+        if _tarifas_batch_fn:
+            _slugs_presentes = [it.get("clase_producto") for it in items if it.get("clase_producto")]
+            _tarifas_map = _tarifas_batch_fn(_slugs_presentes, tipo_servicio) or {}
         subtotal_items = 0.0
         for it in items:
-            calc = _tk_cotiz_calcular_item(
-                it.get("clase_producto"), tipo_servicio,
-                it.get("cantidad"), it.get("descuento_pct"), cfg)
+            _clase = it.get("clase_producto")
+            if _tarifas_batch_fn:
+                # Batch es autoritativo: si la clase no está en el map, no
+                # tiene tarifa -> $0, SIN una query de fallback por ítem.
+                _tarifa = _tarifas_map.get(_clase)
+                calc = _tk_cotiz_calcular_item(
+                    _clase, tipo_servicio, it.get("cantidad"),
+                    it.get("descuento_pct"), cfg, tarifa=_tarifa) if _tarifa else None
+            else:
+                # Defensivo (batch fn no disponible): camino viejo de a uno.
+                calc = _tk_cotiz_calcular_item(
+                    _clase, tipo_servicio, it.get("cantidad"), it.get("descuento_pct"), cfg)
             if calc:
                 mysql_execute(
                     "UPDATE tk_cotizacion_items SET precio_unitario=%s, subtotal=%s, total=%s "
@@ -2241,16 +2348,27 @@ def register_tickets_routes(app, ctx):
         descuento_monto = _tk_money_round(subtotal * descuento_pct / 100.0)
         iva_pct = float(cab["iva_pct"]) if cab.get("iva_pct") is not None else cfg["iva_pct"]
         iva_monto = _tk_money_round((subtotal - descuento_monto) * iva_pct / 100.0)
-        total = subtotal - descuento_monto + iva_monto
+        total = _tk_money_round(subtotal - descuento_monto + iva_monto)
+        # Snapshot del total en UF: contra la UF FIJADA al emitir (cab.uf_valor),
+        # no la de hoy -- así el equivalente en UF de la cotización no cambia
+        # cuando mañana sube la UF (2026-07-22). NULL si la cotización es vieja
+        # (sin snapshot) -> el PDF cae al cálculo en vivo (Regla #4.2).
+        uf_total = None
+        try:
+            _ufv = float(cab.get("uf_valor") or 0)
+            if _ufv > 0:
+                uf_total = round(total / _ufv, 4)
+        except (TypeError, ValueError):
+            uf_total = None
         mysql_execute(
             "UPDATE tk_cotizaciones SET subtotal_items=%s, subtotal=%s, "
-            "descuento_monto=%s, iva_pct=%s, iva_monto=%s, total=%s, updated_by=%s WHERE id=%s",
+            "descuento_monto=%s, iva_pct=%s, iva_monto=%s, total=%s, uf_total=%s, updated_by=%s WHERE id=%s",
             (_tk_money_round(subtotal_items), _tk_money_round(subtotal), descuento_monto, iva_pct,
-             iva_monto, _tk_money_round(total), (user or None), cid))
+             iva_monto, total, uf_total, (user or None), cid))
         return {
             "subtotal_items": _tk_money_round(subtotal_items), "subtotal": _tk_money_round(subtotal),
             "descuento_monto": descuento_monto, "costo_ruta_total": costo_ruta_total,
-            "iva_pct": iva_pct, "iva_monto": iva_monto, "total": _tk_money_round(total),
+            "iva_pct": iva_pct, "iva_monto": iva_monto, "total": total, "uf_total": uf_total,
         }
 
     def _tk_clasificar_items_erp(items):
@@ -2341,6 +2459,21 @@ def register_tickets_routes(app, ctx):
                 f.get("descuento_pct"), cfg)
             out.append(calc)
         return jsonify({"ok": True, "precios": out})
+
+    @app.route("/tickets/api/cotizaciones/valido-hasta-sugerido", methods=["GET"])
+    @_tickets_required
+    def tk_api_cotizacion_valido_hasta_sugerido():
+        """Sugerencia de 'Válido hasta' = hoy + N días HÁBILES de Chile
+        (saltando fines de semana + feriados nacionales). Default N=15
+        (Daniel 2026-07-22). El wizard lo usa para pre-rellenar el campo,
+        que queda editable."""
+        try:
+            dias = int(request.args.get("dias") or 15)
+        except (TypeError, ValueError):
+            dias = 15
+        dias = max(1, min(dias, 120))
+        fecha = _sumar_dias_habiles_chile(_chile_hoy(), dias)
+        return jsonify({"ok": True, "fecha": fecha.strftime("%Y-%m-%d"), "dias_habiles": dias})
 
     @app.route("/tickets/api/cotizaciones/costo-ruta", methods=["GET"])
     @_tickets_required
@@ -2476,7 +2609,25 @@ def register_tickets_routes(app, ctx):
                 pass
         transporte_unidad = (costo_ruta / total_unidades) if total_unidades > 0 else 0.0
 
-        uf_info = _tk_uf_actual()
+        # UF: prioriza el SNAPSHOT guardado al emitir (cot.uf_valor) sobre el
+        # valor de hoy -- así el "VALOR UF" y los "Precio UF" del PDF son
+        # estables y reproducibles (una cotización reimpresa en 3 meses
+        # muestra la MISMA UF con la que se calculó). Solo cae al valor en
+        # vivo si la cotización es vieja y no tiene snapshot (Regla #4.2).
+        uf_info = None
+        _uf_snap_v = cot.get("uf_valor")
+        if _uf_snap_v is not None:
+            try:
+                _uf_snap_v = float(_uf_snap_v)
+                if _uf_snap_v > 0:
+                    _uf_snap_f = cot.get("uf_fecha")
+                    uf_info = {"valor": _uf_snap_v,
+                               "fecha": (_uf_snap_f.strftime("%Y-%m-%d")
+                                         if hasattr(_uf_snap_f, "strftime") else (str(_uf_snap_f) if _uf_snap_f else None))}
+            except (TypeError, ValueError):
+                uf_info = None
+        if uf_info is None:
+            uf_info = _tk_uf_actual()
         uf_valor = uf_info["valor"] if uf_info else None
 
         def _precio_uf_str(monto_clp):
@@ -2984,9 +3135,11 @@ def register_tickets_routes(app, ctx):
             except ValueError:
                 return jsonify({"ok": False, "error": "Fecha 'Válido hasta' inválida"}), 400
         if valida_hasta is None:
-            # Mismo default que usaba el cotizador viejo: 30 días de
-            # vigencia, en fecha Chile (Regla #6).
-            valida_hasta = _chile_hoy() + timedelta(days=30)
+            # 2026-07-22 (Daniel: "15 días hábiles de Chile... y eso va a ser
+            # la sugerencia interna"): default = hoy + 15 días HÁBILES
+            # (saltando fines de semana + feriados nacionales), no 15
+            # corridos. Igual que la sugerencia que pre-rellena el wizard.
+            valida_hasta = _sumar_dias_habiles_chile(_chile_hoy(), 15)
 
         # 2026-07-15 (Daniel: "generar cotizacion DENTRO del ticket"): si el
         # llamado viene desde la ficha de un ticket abierto (botón "Generar
@@ -3106,6 +3259,25 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "Una cotización que nace de la ficha del cliente "
                             "solo puede ser de mantención o visita técnica, no de instalación."}), 400
 
+        # Snapshot de la UF al momento de emitir (2026-07-22): la cotización
+        # se compromete a UNA UF concreta. Best-effort -- si mindicador/DB
+        # no responden, queda NULL y el PDF cae al cálculo en vivo. Se toma
+        # ANTES de abrir la transacción (no la contamina si la API tarda).
+        _uf_snap = _tk_uf_actual()
+        uf_valor_snap = None
+        uf_fecha_snap = None
+        if _uf_snap and _uf_snap.get("valor"):
+            try:
+                uf_valor_snap = round(float(_uf_snap["valor"]), 4)
+            except (TypeError, ValueError):
+                uf_valor_snap = None
+            _f = _uf_snap.get("fecha")
+            if _f:
+                try:
+                    uf_fecha_snap = datetime.strptime(str(_f)[:10], "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    uf_fecha_snap = None
+
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
@@ -3154,16 +3326,19 @@ def register_tickets_routes(app, ctx):
                     " notas, notas_internas, ejecutivo, descuento_pct, costo_ruta, created_by, "
                     " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
                     " direccion_lat, direccion_lng, direccion_place_id, cliente_id, origen, "
-                    " alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual) "
+                    " alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual, "
+                    " uf_valor, uf_fecha) "
                     "VALUES (%s,'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                     "        %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                    "        %s, %s, %s, %s, %s)",
+                    "        %s, %s, %s, %s, %s, "
+                    "        %s, %s)",
                     (numero, ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa,
                      email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta,
                      notas, notas_internas, ejecutivo, descuento_pct, costo_ruta_in, user,
                      contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
                      direccion_lat, direccion_lng, direccion_place_id, cliente_id_in, origen_in,
-                     alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual),
+                     alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual,
+                     uf_valor_snap, uf_fecha_snap),
                 )
                 cot_id = cur.lastrowid
                 for it in items:
