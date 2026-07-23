@@ -612,11 +612,17 @@ let _catClases = null;        // cache de GET /catalogo/api/clases (se pide 1 so
 // ── Clases de producto: fetch único + cache, reusado en filtro + wizard ──
 async function catObtenerClases(){
   if(_catClases) return _catClases;
+  // Mismo resguardo de timeout que cargarCatalogo() (2026-07-23) -- un fetch
+  // colgado sin resolver ni rechazar dejaría el <select> de Clase vacío
+  // para siempre sin ningún aviso.
+  const _ctrl = new AbortController();
+  const _timeoutId = setTimeout(() => _ctrl.abort(), 12000);
   try{
-    const r = await fetch('/catalogo/api/clases');
+    const r = await fetch('/catalogo/api/clases', {signal: _ctrl.signal});
     const d = await r.json();
     _catClases = (d.ok && d.clases) ? d.clases : [];
   }catch(e){ _catClases = []; }
+  finally{ clearTimeout(_timeoutId); }
   return _catClases;
 }
 async function catPoblarSelectClase(){
@@ -696,13 +702,29 @@ async function cargarCatalogo(){
   p.set('page', String(catPage));
   p.set('limit', String(catLimit));
   let data;
+  // 2026-07-23 (Daniel: "queda puro cargando y no pasa nada"): sin timeout,
+  // si el fetch se queda colgado (bloqueador de anuncios/extensión filtrando
+  // "/api/productos", proxy, red inestable) la promesa nunca resuelve NI
+  // rechaza -- el catch de abajo nunca se alcanza y "Cargando…" queda pegado
+  // para siempre, sin ningún error visible. AbortController fuerza un límite
+  // de 12s: pasado ese tiempo, se cancela y se muestra un error accionable
+  // en vez de girar eternamente.
+  const _ctrl = new AbortController();
+  const _timeoutId = setTimeout(() => _ctrl.abort(), 12000);
   try{
-    const r = await fetch('/catalogo/api/productos?'+p.toString());
+    const r = await fetch('/catalogo/api/productos?'+p.toString(), {signal: _ctrl.signal});
     data = await r.json();
   }catch(err){
+    const esTimeout = err && err.name === 'AbortError';
     document.getElementById('catLista').innerHTML =
-      '<div class="empty-state"><i class="bi bi-wifi-off"></i>No se pudo cargar. Reintenta.</div>';
+      '<div class="empty-state"><i class="bi bi-wifi-off"></i>'
+      + (esTimeout
+          ? 'La carga está tardando demasiado — revisa tu conexión o un bloqueador de anuncios/extensión, y '
+          : 'No se pudo cargar. ')
+      + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="cargarCatalogo()">Reintentar</button></div>';
     return;
+  }finally{
+    clearTimeout(_timeoutId);
   }
   if(!data.ok){ ilusToast(data.error||'Error al cargar', {type:'error'}); return; }
 
