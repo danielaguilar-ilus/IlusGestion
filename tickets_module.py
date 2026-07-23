@@ -2487,14 +2487,22 @@ def register_tickets_routes(app, ctx):
 
     def _tk_clasificar_items_erp(items):
         """Crea/reusa cada ítem en el Catálogo (por SKU) y devuelve
-        (clases_por_sku, sin_clasificar). Factorizado de
+        (clases_por_sku, sin_clasificar, pids_por_sku). Factorizado de
         tk_api_cotizacion_desde_erp para reusarlo también en el preview
-        del modal de revisión (2026-07-22)."""
+        del modal de revisión (2026-07-22).
+
+        pids_por_sku (2026-07-23, Daniel: "necesito ver los movimientos que
+        he hecho de alimentar la clasificación de productos... y quiero ver
+        esos cambios en el catálogo") -- el id de cat_productos por SKU, para
+        que el frontend pueda guardar la clase EN EL ACTO (PATCH) cuando el
+        usuario la cambia en el dropdown del wizard, en vez de esperar a que
+        la cotización completa se cree/guarde."""
         _cat_crear_o_reusar = ctx.get("_cat_crear_o_reusar_producto_desde_erp")
         clases_por_sku = {}
+        pids_por_sku = {}
         sin_clasificar = []
         if not _cat_crear_o_reusar:
-            return clases_por_sku, sin_clasificar
+            return clases_por_sku, sin_clasificar, pids_por_sku
         for it in items:
             if not isinstance(it, dict):
                 continue
@@ -2514,12 +2522,14 @@ def register_tickets_routes(app, ctx):
             clase = (res_cat or {}).get("clase_producto")
             pid_cat = (res_cat or {}).get("id")
             clases_por_sku[sku_cls] = clase
+            if pid_cat:
+                pids_por_sku[sku_cls] = pid_cat
             if pid_cat and not clase:
                 sin_clasificar.append({
                     "sku": sku_cls, "producto_id": pid_cat,
                     "nombre": (it.get("nombre") or "").strip(),
                 })
-        return clases_por_sku, sin_clasificar
+        return clases_por_sku, sin_clasificar, pids_por_sku
 
     # ─────────────────────────────────────────────────────────────────
     #  API — modal de revisión de ítems (2026-07-22, Daniel: "no me gustó
@@ -2541,7 +2551,7 @@ def register_tickets_routes(app, ctx):
         items = d.get("items") or []
         if not isinstance(items, list) or not items:
             return jsonify({"ok": False, "error": "Sin ítems"}), 400
-        clases_por_sku, _ = _tk_clasificar_items_erp(items)
+        clases_por_sku, _, pids_por_sku = _tk_clasificar_items_erp(items)
         _cat_map = ctx.get("_cat_clases_map")
         labels = _cat_map() if _cat_map else {}
         out = []
@@ -2554,6 +2564,10 @@ def register_tickets_routes(app, ctx):
                 "sku": it.get("sku") or "", "nombre": it.get("nombre") or "",
                 "qty": it.get("qty"), "clase_producto": clase,
                 "clase_producto_label": labels.get(clase) if clase else None,
+                # 2026-07-23: id del catálogo -- el frontend lo usa para
+                # guardar la clase EN EL ACTO (PATCH) cuando el usuario la
+                # cambia en el dropdown del wizard.
+                "producto_id": pids_por_sku.get(sku_up),
             })
         return jsonify({"ok": True, "items": out})
 
@@ -3493,7 +3507,7 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass
 
-        clases_por_sku, sin_clasificar = _tk_clasificar_items_erp(items)
+        clases_por_sku, sin_clasificar, _ = _tk_clasificar_items_erp(items)
 
         # 2026-07-22 (Daniel: "cuando yo seleccione los productos, me abra
         # un modal donde... pueda ver qué característica es el producto"):
@@ -4012,7 +4026,7 @@ def register_tickets_routes(app, ctx):
 
         # Reclasifica/crea en el catálogo lo que venga con clase nueva (mismo
         # criterio que desde-erp: persiste la clase corregida en cat_productos).
-        clases_por_sku, _ = _tk_clasificar_items_erp(items)
+        clases_por_sku, _, _ = _tk_clasificar_items_erp(items)
         for it in items:
             if not isinstance(it, dict):
                 continue

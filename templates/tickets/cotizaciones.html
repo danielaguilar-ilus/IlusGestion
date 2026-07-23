@@ -1843,8 +1843,14 @@ async function cotWizClasificar(){
     const d = await r.json();
     if (d.ok && Array.isArray(d.items)){
       d.items.forEach(function(res, i){
-        if (_WIZ.items[i] && !_WIZ.items[i].clase_producto)
+        if (!_WIZ.items[i]) return;
+        if (!_WIZ.items[i].clase_producto)
           _WIZ.items[i].clase_producto = res.clase_producto || null;
+        // 2026-07-23 (Daniel: "necesito ver los movimientos... en el
+        // catálogo de productos"): id de cat_productos por ítem -- lo usa
+        // cotWizClase() para guardar la clase EN EL ACTO, sin esperar a
+        // que la cotización completa se cree/guarde.
+        _WIZ.items[i].pid = res.producto_id || null;
       });
     }
   }catch(e){ console.warn('preview-clasificacion:', e); }
@@ -1887,9 +1893,32 @@ function cotWizCantidad(i, v){
 }
 function cotWizClase(i, sel){
   if (!_WIZ || !_WIZ.items[i]) return;
-  _WIZ.items[i].clase_producto = sel.value || null;
+  const it = _WIZ.items[i];
+  it.clase_producto = sel.value || null;
   sel.classList.toggle('sin-clasificar', !sel.value);
   cotWizPrecios();
+  _cotWizGuardarClaseEnCatalogo(it);
+}
+// 2026-07-23 (Daniel: "necesito ver los movimientos que he hecho de
+// alimentar la clasificación de productos desde la cotización, y quiero
+// ver esos cambios en el catálogo de productos"): antes, cambiar la clase
+// acá era puramente local -- solo llegaba al catálogo si la cotización
+// completa se creaba/guardaba. Ahora, si el ítem ya tiene un producto
+// resuelto en el catálogo (pid, viene de preview-clasificacion), la clase
+// se guarda EN EL ACTO. Fire-and-forget con feedback -- nunca bloquea el
+// wizard ni revierte la selección si falla (el override sigue viajando
+// también al crear/guardar la cotización, como red de respaldo).
+async function _cotWizGuardarClaseEnCatalogo(it){
+  if (!it || !it.pid) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/' + it.pid, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ clase_producto: it.clase_producto || '' })
+    });
+    const d = await r.json();
+    if (d.ok) ilusToast('✓ Clase guardada en el catálogo', {type:'success'});
+    else ilusToast(d.error || 'No se pudo guardar la clase en el catálogo', {type:'warning'});
+  }catch(e){ ilusToast('Sin conexión — la clase no se guardó en el catálogo', {type:'warning'}); }
 }
 async function cotWizQuitar(i){
   if (!_WIZ) return;
