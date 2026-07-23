@@ -2188,8 +2188,13 @@ def register_catalogo_routes(app, ctx):
     #  via _random_sql_query.
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/erp/bodega-buscar", methods=["GET"])
-    @_catalogo_admin_required
+    @_catalogo_required
     def cat_api_erp_bodega_buscar():
+        # 2026-07-23: era _catalogo_admin_required (solo superadmin) -- pero
+        # es una búsqueda de SOLO LECTURA que técnico/ejecutivo necesitan
+        # para "Agregar de Bodega 02" desde el wizard de Cotizaciones (ya
+        # habilitado hoy a escribir en el catálogo). Sin este cambio, ese
+        # botón les tiraba 403 antes de siquiera poder buscar.
         q = (request.args.get("q") or "").strip()
         if len(q) < 2:
             return jsonify({"ok": True, "items": []})
@@ -2228,6 +2233,40 @@ def register_catalogo_routes(app, ctx):
             "nombre": (r.get("nombre") or "").strip(),
             "stock": _stock_num(r.get("stock")),
         } for r in rows if (r.get("sku") or "").strip() and (r.get("nombre") or "").strip()]
+
+        # 2026-07-23 (Daniel: "que se vea colorido... que venda"): enriquece
+        # con lo que YA existe en el catálogo (clase + primera foto), para
+        # que el buscador de Bodega 02 se vea vivo -- no solo texto plano --
+        # y de paso conecta con el pedido de "ver los productos que ya tengo
+        # gestionado". Un solo query batch por SKU (no N+1); ante cualquier
+        # error se degrada a la lista simple (nunca rompe la búsqueda).
+        if items:
+            try:
+                skus = [it["sku"].upper() for it in items]
+                ph = ",".join(["%s"] * len(skus))
+                cat_rows = mysql_fetchall(
+                    f"""
+                    SELECT p.sku, p.clase_producto,
+                           (SELECT f.gcs_key FROM cat_producto_fotos f
+                              WHERE f.producto_id=p.id ORDER BY f.orden LIMIT 1) AS foto_key
+                    FROM cat_productos p WHERE p.sku IN ({ph})
+                    """,
+                    tuple(skus)) or []
+                _cat_map2 = _cat_clases_map()
+                por_sku = {row["sku"].upper(): row for row in cat_rows}
+                for it in items:
+                    cat_row = por_sku.get(it["sku"].upper())
+                    it["en_catalogo"] = bool(cat_row)
+                    it["clase_producto_label"] = (
+                        _cat_map2.get(cat_row.get("clase_producto") or "") if cat_row else None)
+                    _fkey = cat_row.get("foto_key") if cat_row else None
+                    it["foto_url"] = ("/f/" + _fkey) if _fkey else None
+            except Exception as _e_enr:
+                print(f"[cat_api_erp_bodega_buscar] enriquecimiento catálogo: {_e_enr}", flush=True)
+                for it in items:
+                    it.setdefault("en_catalogo", False)
+                    it.setdefault("clase_producto_label", None)
+                    it.setdefault("foto_url", None)
         return jsonify({"ok": True, "items": items})
 
     # ─────────────────────────────────────────────────────────────────
