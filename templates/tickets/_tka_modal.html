@@ -1226,6 +1226,13 @@ async function tkaBuscarPorDoc(){
       rut: hdr.cliente_rut || hdr.rut || '',
       email: hdr.email || '',
       telefono: hdr.telefono || '',
+      // 2026-07-23 (Daniel: "cuando se llama un documento por RUT o por
+      // número es necesario traer la dirección, tlf y mail") -- el
+      // backend (_cubicador_fetch/hdr) SIEMPRE trae direccion/comuna,
+      // pero se quedaban afuera de este objeto -- se perdían camino a
+      // cotizaciones.html (header.direccion).
+      direccion: hdr.direccion || '',
+      comuna: hdr.comuna || '',
       fecha: hdr.fecha || ''
     };
     const t1 = Math.round(performance.now() - t0);
@@ -1512,6 +1519,27 @@ async function tkaToggleDocCli(idx){
       body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(dd.error || 'Error consultando ERP')}</div>`;
       return;
     }
+    // 2026-07-23 (Daniel: "cuando se llama un documento por RUT... es
+    // necesario traer la dirección, tlf y mail"): a diferencia de
+    // tkaBuscarPorDoc (pestaña "por número"), este camino (buscar cliente
+    // por RUT/razón social → expandir uno de sus documentos) NUNCA seteaba
+    // _TKA.loaded.docHeader -- tkaAsociarSeleccion() lo manda tal cual a
+    // onSeleccionar(items, header), así que el header viajaba SIEMPRE null
+    // para cotizaciones.html, sin importar cuántos datos trajera el ERP.
+    // Se setea aquí con el mismo shape que tkaBuscarPorDoc (último
+    // documento expandido/seleccionado gana -- informativo, no crítico).
+    const ddHdr = dd.hdr || {};
+    _TKA.loaded.docHeader = {
+      tido: ddHdr.tido || doc.tido_display,
+      nudo: ddHdr.nudo || doc.nudo_display,
+      cliente: ddHdr.cliente_nombre || ddHdr.razon_social || doc.razon_social || '',
+      rut: ddHdr.cliente_rut || ddHdr.rut || doc.rut || '',
+      email: ddHdr.email || '',
+      telefono: ddHdr.telefono || '',
+      direccion: ddHdr.direccion || '',
+      comuna: ddHdr.comuna || '',
+      fecha: ddHdr.fecha || doc.fecha || ''
+    };
     const lineas = (dd.lineas || []).filter(l => !l.es_zz);
     if (!lineas.length){
       body.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-info-circle me-1"></i>Sin productos (solo servicios).</div>';

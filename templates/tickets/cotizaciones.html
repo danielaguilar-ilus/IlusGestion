@@ -2615,12 +2615,25 @@ async function _cotWizAplicarDeepLinkCliente(cid, opts){
     // como ítems automáticamente. El deep-link ?desde_cliente=<CID> (más
     // abajo) sigue llamando esta función SIN el flag -- comportamiento
     // intacto (Regla #4.2).
+    // 2026-07-23 (Daniel: "que solo reconozca si es de ficha de cliente y
+    // agregue solo los productos del plan"): mant_maquinas no tiene un
+    // vínculo por equipo a un contrato específico -- lo único que separa
+    // "equipos del plan" de "cualquier máquina activa" es que el cliente
+    // tenga un plan/contrato VIGENTE (_WIZ.planInfo.activo, mismo criterio
+    // que el badge "🟢 En plan" del buscador). Sin plan vigente, no se
+    // auto-agrega nada -- el usuario sigue pudiendo sumarlos a mano con
+    // "Traer equipos de la ficha" si igual corresponde.
+    const _tienePlanVigente = !!(_WIZ.planInfo && _WIZ.planInfo.activo);
     if (opts && opts.autoAgregarEquipos && _WIZ.fichaMaquinas.length){
-      // Reemplazo (no concat) cuando el usuario ya confirmó arriba: vaciar
-      // primero para que el helper (que concatena, lo correcto para el panel
-      // de checkboxes) termine reemplazando en este camino.
-      if (_reemplazarFicha) _WIZ.items = [];
-      await _cotWizAgregarMaquinasComoItems(_WIZ.fichaMaquinas);
+      if (!_tienePlanVigente){
+        ilusToast('Este cliente no tiene un plan/contrato vigente — agrega los equipos manualmente con "Traer equipos de la ficha" si corresponde', {type:'warning'});
+      } else {
+        // Reemplazo (no concat) cuando el usuario ya confirmó arriba: vaciar
+        // primero para que el helper (que concatena, lo correcto para el panel
+        // de checkboxes) termine reemplazando en este camino.
+        if (_reemplazarFicha) _WIZ.items = [];
+        await _cotWizAgregarMaquinasComoItems(_WIZ.fichaMaquinas);
+      }
     }
   }catch(e){ ilusToast('Error de conexión al cargar el cliente', {type:'error'}); }
 }
