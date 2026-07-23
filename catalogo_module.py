@@ -1489,20 +1489,42 @@ def register_catalogo_routes(app, ctx):
         if not prod:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         d = request.get_json(silent=True) or {}
-        diametro_mm, _err_d = _piola_validar_diametro(d)
-        if _err_d:
-            return jsonify({"ok": False, "error": _err_d}), 400
-        largo_m, _err_l = _piola_validar_largo(d)
-        if _err_l:
-            return jsonify({"ok": False, "error": _err_l}), 400
-        # 2026-07-23 (blueprint piolas): la "descripción" (ubicación) es
-        # ahora el campo obligatorio para distinguir cuál piola es --
-        # "observación" pasa a opcional.
-        descripcion = (d.get("descripcion") or "").strip()
-        if not descripcion:
-            return jsonify({"ok": False, "error": "La descripción (ubicación) es obligatoria para distinguir cuál piola es"}), 400
-        descripcion = descripcion[:300]
-        observacion = (d.get("observacion") or "").strip()[:300] or None
+        # 2026-07-23 (blueprint piolas, Regla #4.2): el wizard "Registrar
+        # producto" (catw* en list.html) TODAVIA crea piolas mandando solo
+        # {medida_cm, observacion} -- no se toca su JS todavia (eso es
+        # Paso 2). Si el payload no trae diametro_mm/largo_m, se crea en
+        # formato LEGADO (igual que una piola vieja): diametro_mm/largo_m/
+        # descripcion quedan NULL, se guarda medida_cm+observacion. La UI
+        # nueva (acordeón) SI mandará diametro_mm/largo_m y entra por la
+        # rama nueva.
+        es_legado = "diametro_mm" not in d and "largo_m" not in d
+        if es_legado:
+            try:
+                medida_cm = float(d.get("medida_cm"))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "Medida inválida"}), 400
+            if medida_cm <= 0:
+                return jsonify({"ok": False, "error": "La medida debe ser mayor que 0"}), 400
+            observacion = (d.get("observacion") or "").strip()
+            if not observacion:
+                return jsonify({"ok": False, "error": "La observación es obligatoria (para distinguir cuál piola es)"}), 400
+            observacion = observacion[:300]
+            diametro_mm = largo_m = descripcion = None
+        else:
+            medida_cm = None
+            diametro_mm, _err_d = _piola_validar_diametro(d)
+            if _err_d:
+                return jsonify({"ok": False, "error": _err_d}), 400
+            largo_m, _err_l = _piola_validar_largo(d)
+            if _err_l:
+                return jsonify({"ok": False, "error": _err_l}), 400
+            # La "descripción" (ubicación) es el campo obligatorio para
+            # distinguir cuál piola es -- "observación" pasa a opcional.
+            descripcion = (d.get("descripcion") or "").strip()
+            if not descripcion:
+                return jsonify({"ok": False, "error": "La descripción (ubicación) es obligatoria para distinguir cuál piola es"}), 400
+            descripcion = descripcion[:300]
+            observacion = (d.get("observacion") or "").strip()[:300] or None
 
         total = int((mysql_fetchone(
             "SELECT COUNT(*) AS n FROM cat_producto_piolas WHERE producto_id=%s AND activo=1",
@@ -1514,9 +1536,9 @@ def register_catalogo_routes(app, ctx):
         try:
             mysql_execute(
                 "INSERT INTO cat_producto_piolas "
-                "(producto_id, diametro_mm, largo_m, descripcion, observacion, orden, created_by, updated_by) "
-                "VALUES (%s,%s,%s,%s,%s, (SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m FROM cat_producto_piolas WHERE producto_id=%s) t), %s,%s)",
-                (pid, diametro_mm, largo_m, descripcion, observacion, pid, user, user))
+                "(producto_id, medida_cm, diametro_mm, largo_m, descripcion, observacion, orden, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s, (SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m FROM cat_producto_piolas WHERE producto_id=%s) t), %s,%s)",
+                (pid, medida_cm, diametro_mm, largo_m, descripcion, observacion, pid, user, user))
         except Exception as _e:
             print(f"[cat_piolas_crear] error pid={pid}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo crear la piola"}), 500
@@ -1529,7 +1551,7 @@ def register_catalogo_routes(app, ctx):
             _audit("cat_piola_crear", target_type="cat_producto_piola", target_id=nuevo_id,
                    details={"producto_id": pid, "sku": prod.get("sku"),
                              "orden": row.get("orden") if row else None,
-                             "diametro_mm": diametro_mm, "largo_m": largo_m,
+                             "medida_cm": medida_cm, "diametro_mm": diametro_mm, "largo_m": largo_m,
                              "descripcion_despues": descripcion, "observacion_despues": observacion})
         return jsonify({"ok": True, "id": nuevo_id})
 
