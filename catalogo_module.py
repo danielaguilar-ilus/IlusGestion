@@ -405,6 +405,40 @@ def register_catalogo_routes(app, ctx):
         except Exception as _e_foto:
             print(f"[ILUS][WARN] cat_producto_piolas.foto_key: {_e_foto}", flush=True)
 
+        # 2026-07-23 (Daniel, blueprint piolas -- plan con Fable, ver memoria
+        # "blueprint_piolas_manuales_comunicaciones"): la piola pasa de una
+        # sola "medida_cm" a diámetro (mm) + largo (m) + descripción de
+        # ubicación (ahora el campo obligatorio -- "observacion" pasa a
+        # opcional) + una SEGUNDA foto. medida_cm NO se borra ni se
+        # renombra (piolas legadas la conservan como fallback de
+        # visualización, Regla #4.2) -- solo deja de ser NOT NULL para que
+        # las filas nuevas puedan omitirla.
+        _piola_cols_nuevas = {
+            "diametro_mm": "DECIMAL(4,1) NULL COMMENT 'mm, rango valido 3.0-10.0'",
+            "largo_m":     "DECIMAL(7,2) NULL COMMENT 'metros'",
+            "descripcion": "VARCHAR(300) NULL COMMENT 'ubicacion de la piola en la maquina'",
+            "foto_key2":   "VARCHAR(500) NULL COMMENT 'segunda foto'",
+        }
+        for _col_name, _col_def in _piola_cols_nuevas.items():
+            try:
+                _existe = mysql_fetchone(
+                    "SELECT 1 AS x FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cat_producto_piolas' "
+                    "  AND COLUMN_NAME=%s LIMIT 1", (_col_name,))
+                if not _existe:
+                    mysql_execute(f"ALTER TABLE cat_producto_piolas ADD COLUMN {_col_name} {_col_def}")
+                    print(f"[ensure_catalogo] columna {_col_name} (piolas) creada", flush=True)
+            except Exception as _e_pcol:
+                print(f"[ILUS][WARN] cat_producto_piolas.{_col_name}: {_e_pcol}", flush=True)
+        try:
+            mysql_execute("ALTER TABLE cat_producto_piolas MODIFY medida_cm DECIMAL(6,1) NULL")
+        except Exception as _e_med:
+            print(f"[ILUS][WARN] cat_producto_piolas.medida_cm NULL: {_e_med}", flush=True)
+        try:
+            mysql_execute("ALTER TABLE cat_producto_piolas MODIFY observacion VARCHAR(300) NULL")
+        except Exception as _e_obs:
+            print(f"[ILUS][WARN] cat_producto_piolas.observacion NULL: {_e_obs}", flush=True)
+
         # Semilla de categorías (Daniel, tabla de mano de obra de
         # Mantención — confirmada contra "Tarifa mantenciones.xlsx",
         # 2026-07-21) — INSERT solo si el slug no existe todavía:
@@ -1103,7 +1137,7 @@ def register_catalogo_routes(app, ctx):
             "SELECT id, gcs_key, orden FROM cat_producto_fotos WHERE producto_id=%s ORDER BY orden",
             (pid,))
         piolas = mysql_fetchall(
-            "SELECT id, medida_cm, observacion, orden, foto_key FROM cat_producto_piolas "
+            f"SELECT {_PIOLA_SELECT_COLS} FROM cat_producto_piolas "
             "WHERE producto_id=%s AND activo=1 ORDER BY orden", (pid,))
         manuales = mysql_fetchall(
             "SELECT id, gcs_key, nombre_archivo, size_kb, orden FROM cat_producto_manuales "
@@ -1128,10 +1162,7 @@ def register_catalogo_routes(app, ctx):
             "ok": True,
             "producto": producto,
             "fotos": [{"id": f["id"], "url": "/f/" + f["gcs_key"], "orden": f["orden"]} for f in fotos],
-            "piolas": [{"id": pl["id"], "medida_cm": float(pl["medida_cm"]),
-                        "observacion": pl["observacion"], "orden": pl["orden"],
-                        "foto_url": ("/f/" + pl["foto_key"]) if pl.get("foto_key") else None}
-                       for pl in piolas],
+            "piolas": [_piola_serializar(pl) for pl in piolas],
             "manual": {
                 "tiene": bool(manual_key),
                 "nombre": p.get("manual_pdf_nombre"),
@@ -1395,18 +1426,61 @@ def register_catalogo_routes(app, ctx):
     #  obligatoria (Daniel: "distinguir cual cable es"). Auditoria via
     #  app_audit_log (Regla #5), soft-delete siempre, max 10 activas.
     # ─────────────────────────────────────────────────────────────────
+    # Rango válido del diámetro en mm (Daniel: "el diámetro... lo pondría
+    # a un límite de diez milímetros hasta tres" -- 3.0 a 10.0 inclusive).
+    PIOLA_DIAMETRO_MIN_MM = 3.0
+    PIOLA_DIAMETRO_MAX_MM = 10.0
+    PIOLA_LARGO_MAX_M = 200.0  # techo sano anti-typo, no un límite real de negocio
+    _PIOLA_SELECT_COLS = ("id, medida_cm, observacion, descripcion, diametro_mm, largo_m, "
+                          "orden, foto_key, foto_key2")
+
+    def _piola_serializar(r):
+        """Shape único de una fila de cat_producto_piolas -> dict de API.
+        Compartido por cat_api_piolas_list y cat_api_detalle (Regla: un
+        solo lugar que decide el shape, no duplicar la lógica).
+        2026-07-23 (blueprint piolas): filas legadas (creadas antes del
+        esquema nuevo) no tienen diametro_mm/largo_m/descripcion -- se
+        exponen igual con "legado": True para que el front lo muestre con
+        un aviso en vez de romper, sin inventar datos."""
+        es_legado = r.get("diametro_mm") is None and r.get("largo_m") is None
+        return {
+            "id": r["id"], "orden": r["orden"], "legado": es_legado,
+            "diametro_mm": float(r["diametro_mm"]) if r.get("diametro_mm") is not None else None,
+            "largo_m": float(r["largo_m"]) if r.get("largo_m") is not None else None,
+            "descripcion": r.get("descripcion") or (r.get("observacion") if es_legado else None),
+            "observacion": r.get("observacion"),
+            "medida_cm_legada": float(r["medida_cm"]) if es_legado and r.get("medida_cm") is not None else None,
+            "foto_url": ("/f/" + r["foto_key"]) if r.get("foto_key") else None,
+            "foto_url2": ("/f/" + r["foto_key2"]) if r.get("foto_key2") else None,
+        }
+
     @app.route("/catalogo/api/productos/<int:pid>/piolas", methods=["GET"])
     @_catalogo_required
     def cat_api_piolas_list(pid):
         if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         rows = mysql_fetchall(
-            "SELECT id, medida_cm, observacion, orden, foto_key FROM cat_producto_piolas "
+            f"SELECT {_PIOLA_SELECT_COLS} FROM cat_producto_piolas "
             "WHERE producto_id=%s AND activo=1 ORDER BY orden", (pid,))
-        return jsonify({"ok": True, "piolas": [
-            {"id": r["id"], "medida_cm": float(r["medida_cm"]),
-             "observacion": r["observacion"], "orden": r["orden"],
-             "foto_url": ("/f/" + r["foto_key"]) if r.get("foto_key") else None} for r in rows]})
+        return jsonify({"ok": True, "piolas": [_piola_serializar(r) for r in rows]})
+
+    def _piola_validar_diametro(d):
+        try:
+            v = float(d.get("diametro_mm"))
+        except (TypeError, ValueError):
+            return None, "El diámetro es inválido"
+        if v < PIOLA_DIAMETRO_MIN_MM or v > PIOLA_DIAMETRO_MAX_MM:
+            return None, f"El diámetro debe estar entre {PIOLA_DIAMETRO_MIN_MM:g} y {PIOLA_DIAMETRO_MAX_MM:g} mm"
+        return v, None
+
+    def _piola_validar_largo(d):
+        try:
+            v = float(d.get("largo_m"))
+        except (TypeError, ValueError):
+            return None, "El largo es inválido"
+        if v <= 0 or v > PIOLA_LARGO_MAX_M:
+            return None, f"El largo debe ser mayor a 0 y hasta {PIOLA_LARGO_MAX_M:g} m"
+        return v, None
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas", methods=["POST"])
     @_catalogo_required
@@ -1415,16 +1489,20 @@ def register_catalogo_routes(app, ctx):
         if not prod:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         d = request.get_json(silent=True) or {}
-        try:
-            medida_cm = float(d.get("medida_cm"))
-        except (TypeError, ValueError):
-            return jsonify({"ok": False, "error": "Medida inválida"}), 400
-        if medida_cm <= 0:
-            return jsonify({"ok": False, "error": "La medida debe ser mayor que 0"}), 400
-        observacion = (d.get("observacion") or "").strip()
-        if not observacion:
-            return jsonify({"ok": False, "error": "La observación es obligatoria (para distinguir cuál piola es)"}), 400
-        observacion = observacion[:300]
+        diametro_mm, _err_d = _piola_validar_diametro(d)
+        if _err_d:
+            return jsonify({"ok": False, "error": _err_d}), 400
+        largo_m, _err_l = _piola_validar_largo(d)
+        if _err_l:
+            return jsonify({"ok": False, "error": _err_l}), 400
+        # 2026-07-23 (blueprint piolas): la "descripción" (ubicación) es
+        # ahora el campo obligatorio para distinguir cuál piola es --
+        # "observación" pasa a opcional.
+        descripcion = (d.get("descripcion") or "").strip()
+        if not descripcion:
+            return jsonify({"ok": False, "error": "La descripción (ubicación) es obligatoria para distinguir cuál piola es"}), 400
+        descripcion = descripcion[:300]
+        observacion = (d.get("observacion") or "").strip()[:300] or None
 
         total = int((mysql_fetchone(
             "SELECT COUNT(*) AS n FROM cat_producto_piolas WHERE producto_id=%s AND activo=1",
@@ -1435,9 +1513,10 @@ def register_catalogo_routes(app, ctx):
         user = current_username() or "sistema"
         try:
             mysql_execute(
-                "INSERT INTO cat_producto_piolas (producto_id, medida_cm, observacion, orden, created_by, updated_by) "
-                "VALUES (%s,%s,%s, (SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m FROM cat_producto_piolas WHERE producto_id=%s) t), %s,%s)",
-                (pid, medida_cm, observacion, pid, user, user))
+                "INSERT INTO cat_producto_piolas "
+                "(producto_id, diametro_mm, largo_m, descripcion, observacion, orden, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s, (SELECT t.m FROM (SELECT COALESCE(MAX(orden),0)+1 AS m FROM cat_producto_piolas WHERE producto_id=%s) t), %s,%s)",
+                (pid, diametro_mm, largo_m, descripcion, observacion, pid, user, user))
         except Exception as _e:
             print(f"[cat_piolas_crear] error pid={pid}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo crear la piola"}), 500
@@ -1450,8 +1529,8 @@ def register_catalogo_routes(app, ctx):
             _audit("cat_piola_crear", target_type="cat_producto_piola", target_id=nuevo_id,
                    details={"producto_id": pid, "sku": prod.get("sku"),
                              "orden": row.get("orden") if row else None,
-                             "medida_cm_antes": None, "medida_cm_despues": medida_cm,
-                             "observacion_antes": None, "observacion_despues": observacion})
+                             "diametro_mm": diametro_mm, "largo_m": largo_m,
+                             "descripcion_despues": descripcion, "observacion_despues": observacion})
         return jsonify({"ok": True, "id": nuevo_id})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>", methods=["PATCH"])
@@ -1461,16 +1540,44 @@ def register_catalogo_routes(app, ctx):
         if not prod:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         prev = mysql_fetchone(
-            "SELECT medida_cm, observacion FROM cat_producto_piolas "
-            "WHERE id=%s AND producto_id=%s AND activo=1", (piola_id, pid))
+            "SELECT medida_cm, observacion, descripcion, diametro_mm, largo_m "
+            "FROM cat_producto_piolas WHERE id=%s AND producto_id=%s AND activo=1", (piola_id, pid))
         if not prev:
             return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
 
         d = request.get_json(silent=True) or {}
         sets, params = [], []
-        medida_despues = float(prev["medida_cm"])
-        obs_despues = prev["observacion"]
+        detalle = {}
 
+        if "diametro_mm" in d:
+            diametro_mm, _err = _piola_validar_diametro(d)
+            if _err:
+                return jsonify({"ok": False, "error": _err}), 400
+            sets.append("diametro_mm=%s"); params.append(diametro_mm)
+            detalle["diametro_mm_antes"] = prev.get("diametro_mm")
+            detalle["diametro_mm_despues"] = diametro_mm
+        if "largo_m" in d:
+            largo_m, _err = _piola_validar_largo(d)
+            if _err:
+                return jsonify({"ok": False, "error": _err}), 400
+            sets.append("largo_m=%s"); params.append(largo_m)
+            detalle["largo_m_antes"] = prev.get("largo_m")
+            detalle["largo_m_despues"] = largo_m
+        if "descripcion" in d:
+            descripcion = (d.get("descripcion") or "").strip()
+            if not descripcion:
+                return jsonify({"ok": False, "error": "La descripción (ubicación) es obligatoria"}), 400
+            descripcion = descripcion[:300]
+            sets.append("descripcion=%s"); params.append(descripcion)
+            detalle["descripcion_antes"] = prev.get("descripcion")
+            detalle["descripcion_despues"] = descripcion
+        if "observacion" in d:
+            observacion = (d.get("observacion") or "").strip()[:300] or None
+            sets.append("observacion=%s"); params.append(observacion)
+            detalle["observacion_antes"] = prev.get("observacion")
+            detalle["observacion_despues"] = observacion
+        # medida_cm: legado, ya no se edita desde la UI nueva -- se acepta
+        # igual por si algún caller viejo la manda, sin exigirla.
         if "medida_cm" in d:
             try:
                 medida_cm = float(d.get("medida_cm"))
@@ -1478,17 +1585,9 @@ def register_catalogo_routes(app, ctx):
                 return jsonify({"ok": False, "error": "Medida inválida"}), 400
             if medida_cm <= 0:
                 return jsonify({"ok": False, "error": "La medida debe ser mayor que 0"}), 400
-            sets.append("medida_cm=%s")
-            params.append(medida_cm)
-            medida_despues = medida_cm
-        if "observacion" in d:
-            observacion = (d.get("observacion") or "").strip()
-            if not observacion:
-                return jsonify({"ok": False, "error": "La observación es obligatoria"}), 400
-            observacion = observacion[:300]
-            sets.append("observacion=%s")
-            params.append(observacion)
-            obs_despues = observacion
+            sets.append("medida_cm=%s"); params.append(medida_cm)
+            detalle["medida_cm_antes"] = float(prev["medida_cm"]) if prev.get("medida_cm") is not None else None
+            detalle["medida_cm_despues"] = medida_cm
         if not sets:
             return jsonify({"ok": False, "error": "Sin cambios válidos"}), 400
 
@@ -1505,9 +1604,7 @@ def register_catalogo_routes(app, ctx):
 
         if _audit:
             _audit("cat_piola_editar", target_type="cat_producto_piola", target_id=piola_id,
-                   details={"producto_id": pid, "sku": prod.get("sku"),
-                             "medida_cm_antes": float(prev["medida_cm"]), "medida_cm_despues": medida_despues,
-                             "observacion_antes": prev["observacion"], "observacion_despues": obs_despues})
+                   details={"producto_id": pid, "sku": prod.get("sku"), **detalle})
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>", methods=["DELETE"])
@@ -1540,11 +1637,18 @@ def register_catalogo_routes(app, ctx):
         # 2026-07-13 (Daniel: "las piolas van a requerir fotos"). Reusa
         # EXACTAMENTE el mismo mecanismo de subida que fotos de producto
         # (_uploader_upload -> GCS -> "/f/<key>", ver cat_api_upload_foto).
+        # 2026-07-23 (blueprint piolas): ?slot=1|2 -- dos fotos por piola
+        # (dos columnas, no tabla hija, cardinalidad fija). slot=1 por
+        # default -> retrocompatible con callers viejos que no lo mandan.
+        slot = (request.args.get("slot") or request.form.get("slot") or "1").strip()
+        if slot not in ("1", "2"):
+            return jsonify({"ok": False, "error": "Slot de foto inválido"}), 400
+        col_foto = "foto_key" if slot == "1" else "foto_key2"
         prod = mysql_fetchone("SELECT sku FROM cat_productos WHERE id=%s", (pid,))
         if not prod:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         prev = mysql_fetchone(
-            "SELECT foto_key FROM cat_producto_piolas WHERE id=%s AND producto_id=%s AND activo=1",
+            f"SELECT {col_foto} AS foto_key FROM cat_producto_piolas WHERE id=%s AND producto_id=%s AND activo=1",
             (piola_id, pid))
         if not prev:
             return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
@@ -1587,10 +1691,12 @@ def register_catalogo_routes(app, ctx):
         # que se leyó minutos/segundos antes) — mismo connection/sesión que
         # mysql_fetchone porque get_db() reutiliza la conexión del request.
         try:
+            # col_foto sale del whitelist slot in ("1","2") de arriba --
+            # nunca de input crudo, seguro de interpolar.
             mysql_execute(
-                "UPDATE cat_producto_piolas "
-                "SET foto_key=@cat_old_foto_key:=foto_key, foto_key=%s, updated_by=%s "
-                "WHERE id=%s AND producto_id=%s",
+                f"UPDATE cat_producto_piolas "
+                f"SET {col_foto}=@cat_old_foto_key:={col_foto}, {col_foto}=%s, updated_by=%s "
+                f"WHERE id=%s AND producto_id=%s",
                 (key, current_username() or "sistema", piola_id, pid))
             old_key = (mysql_fetchone("SELECT @cat_old_foto_key AS k") or {}).get("k")
         except Exception as _e:
@@ -1612,14 +1718,19 @@ def register_catalogo_routes(app, ctx):
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>/foto", methods=["DELETE"])
     @_catalogo_admin_required
     def cat_api_piolas_foto_delete(pid, piola_id):
+        # 2026-07-23 (blueprint piolas): ?slot=1|2, default 1 (retrocompatible).
+        slot = (request.args.get("slot") or "1").strip()
+        if slot not in ("1", "2"):
+            return jsonify({"ok": False, "error": "Slot de foto inválido"}), 400
+        col_foto = "foto_key" if slot == "1" else "foto_key2"
         prev = mysql_fetchone(
-            "SELECT foto_key FROM cat_producto_piolas WHERE id=%s AND producto_id=%s AND activo=1",
+            f"SELECT {col_foto} AS foto_key FROM cat_producto_piolas WHERE id=%s AND producto_id=%s AND activo=1",
             (piola_id, pid))
         if not prev:
             return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
         key = prev.get("foto_key")
         mysql_execute(
-            "UPDATE cat_producto_piolas SET foto_key=NULL, updated_by=%s WHERE id=%s AND producto_id=%s",
+            f"UPDATE cat_producto_piolas SET {col_foto}=NULL, updated_by=%s WHERE id=%s AND producto_id=%s",
             (current_username() or "sistema", piola_id, pid))
         if key and _uploader_destroy:
             try:
