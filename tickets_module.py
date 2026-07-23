@@ -2502,7 +2502,12 @@ def register_tickets_routes(app, ctx):
             if not sku_cls or sku_cls in clases_por_sku:
                 continue
             try:
-                res_cat = _cat_crear_o_reusar(sku_cls, (it.get("nombre") or "").strip())
+                # traer_foto=False (2026-07-23): en Cotizaciones la foto del
+                # ecommerce va en background -- el fetch síncrono a Shopify
+                # colgaba el request (gunicorn --timeout 90) y Daniel veía
+                # "cargando y no me entrega nada".
+                res_cat = _cat_crear_o_reusar(sku_cls, (it.get("nombre") or "").strip(),
+                                              traer_foto=False)
             except Exception as _e_cat:
                 print(f"[_tk_clasificar_items_erp] sku={sku_cls}: {_e_cat}", flush=True)
                 res_cat = None

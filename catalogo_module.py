@@ -610,6 +610,35 @@ def register_catalogo_routes(app, ctx):
             return view(*a, **k)
         return login_required(wrapped)
 
+    def _catalogo_producto_write_required(view):
+        """2026-07-23 (Daniel, dictado): "ya es momento de que este módulo,
+        el técnico pueda llamar a un producto nuevo y agregar las medidas de
+        las piolas, y además los catálogos o manuales". REVIERTE la decisión
+        del 2026-07-12 (que dejaba el CRUD de productos SOLO en superadmin,
+        ver _catalogo_admin_required) para el flujo de terreno: crear/editar/
+        clasificar un producto y subir fotos/manuales/medidas de piola ahora
+        lo puede hacer cualquiera con acceso a Servicio Técnico (permiso
+        'mantenciones' -> técnico y ejecutivo lo tienen) o superadmin.
+        MISMA lógica que _catalogo_required, pero nombre propio para dejar
+        explícito que es un gate de ESCRITURA de producto (no de solo lectura)
+        y auditar el cambio de política. ELIMINAR productos/fotos/manuales/
+        piolas sigue en su gate estricto (_catalogo_admin_required /
+        _catalogo_eliminar_required) -- Daniel abrió crear/clasificar/cargar,
+        NO borrar."""
+        @wraps(view)
+        def wrapped(*a, **k):
+            perms = g.get("permissions") or {}
+            if not (perms.get("mantenciones") or perms.get("superadmin")):
+                if _is_ajaxish():
+                    return jsonify({
+                        "ok": False,
+                        "error": "Tu usuario no tiene permiso para editar el Catálogo.",
+                        "error_codigo": "SIN_PERMISO_CATALOGO",
+                    }), 403
+                return redirect(url_for("index"))
+            return view(*a, **k)
+        return login_required(wrapped)
+
     SORT_COLS = {
         "sku": "p.sku",
         "nombre": "p.nombre",
@@ -997,7 +1026,7 @@ def register_catalogo_routes(app, ctx):
     #  API — CRUD producto
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/productos", methods=["POST"])
-    @_catalogo_admin_required
+    @_catalogo_producto_write_required
     def cat_api_create():
         d = request.get_json(silent=True) or {}
         sku = (d.get("sku") or "").strip().upper()
@@ -1076,7 +1105,7 @@ def register_catalogo_routes(app, ctx):
         })
 
     @app.route("/catalogo/api/productos/<int:pid>", methods=["PATCH"])
-    @_catalogo_admin_required
+    @_catalogo_producto_write_required
     def cat_api_update(pid):
         prev = mysql_fetchone("SELECT id, sku FROM cat_productos WHERE id=%s", (pid,))
         if not prev:
@@ -1163,7 +1192,7 @@ def register_catalogo_routes(app, ctx):
     #  mecanismo que tk_api_upload_adjunto de tickets_module.py)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/productos/<int:pid>/fotos", methods=["POST"])
-    @_catalogo_admin_required
+    @_catalogo_producto_write_required
     def cat_api_upload_foto(pid):
         if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
@@ -1227,7 +1256,7 @@ def register_catalogo_routes(app, ctx):
     #  API — manual PDF
     # ─────────────────────────────────────────────────────────────────
     @app.route("/catalogo/api/productos/<int:pid>/manual", methods=["POST"])
-    @_catalogo_admin_required
+    @_catalogo_producto_write_required
     def cat_api_upload_manual(pid):
         prev = mysql_fetchone("SELECT manual_pdf_key FROM cat_productos WHERE id=%s", (pid,))
         if not prev:
@@ -1387,7 +1416,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True, "id": nuevo_id})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>", methods=["PATCH"])
-    @_catalogo_admin_required
+    @_catalogo_producto_write_required
     def cat_api_piolas_editar(pid, piola_id):
         prod = mysql_fetchone("SELECT sku FROM cat_productos WHERE id=%s", (pid,))
         if not prod:
@@ -1467,7 +1496,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>/foto", methods=["POST"])
-    @_catalogo_admin_required
+    @_catalogo_producto_write_required
     def cat_api_piolas_foto_upload(pid, piola_id):
         # 2026-07-13 (Daniel: "las piolas van a requerir fotos"). Reusa
         # EXACTAMENTE el mismo mecanismo de subida que fotos de producto
@@ -1613,7 +1642,7 @@ def register_catalogo_routes(app, ctx):
             for r in rows]})
 
     @app.route("/catalogo/api/productos/<int:pid>/manuales", methods=["POST"])
-    @_catalogo_admin_required
+    @_catalogo_producto_write_required
     def cat_api_manuales_upload(pid):
         if not mysql_fetchone("SELECT id FROM cat_productos WHERE id=%s", (pid,)):
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
@@ -1875,7 +1904,28 @@ def register_catalogo_routes(app, ctx):
     #  (dentro del handler), momento en el que el arranque ya terminó y
     #  ctx (globals() de app.py) ya la tiene.
     # ─────────────────────────────────────────────────────────────────
-    def _cat_crear_o_reusar_producto_desde_erp(sku, nombre="", familia=None, clase=None):
+    def _cat_foto_ecommerce_background(producto_id, sku):
+        """Resuelve la foto del ecommerce en un HILO DE FONDO (best-effort).
+        2026-07-23 (fix "queda cargando"): _shopify_fotos_cache() hace un GET
+        síncrono a ilusfitness.com paginando hasta 10 páginas -- con caché
+        fría puede tardar ~100s y superar el gunicorn --timeout 90, matando
+        el worker y dejando el request de cotizaciones colgado ("cargando y
+        no me entrega nada"). La foto es puramente decorativa, así que se
+        saca del hilo del request: el producto se crea al instante y la foto
+        aparece sola segundos después. Daemon thread + app_context; jamás
+        propaga (el catálogo nunca depende de esto)."""
+        def _run():
+            try:
+                with app.app_context():
+                    _intentar_foto_ecommerce(producto_id, sku)
+            except Exception as _e_bg:
+                print(f"[_cat_foto_ecommerce_background] pid={producto_id} sku={sku}: {_e_bg}", flush=True)
+        try:
+            threading.Thread(target=_run, daemon=True).start()
+        except Exception as _e_th:
+            print(f"[_cat_foto_ecommerce_background] no se pudo lanzar hilo: {_e_th}", flush=True)
+
+    def _cat_crear_o_reusar_producto_desde_erp(sku, nombre="", familia=None, clase=None, traer_foto=True):
         """Crea (o reusa, idempotente por SKU) un producto de `cat_productos`
         a partir de datos traídos del ERP. Reusable desde cualquier módulo
         vía ctx['_cat_crear_o_reusar_producto_desde_erp'](sku, nombre).
@@ -1888,6 +1938,14 @@ def register_catalogo_routes(app, ctx):
         respeta su clase actual (NO se pisa) -- para cambiarla se usa el
         override explícito del modal / el PATCH del catálogo. Cierra el gap
         de que un SKU nuevo nacía siempre con clase NULL.
+
+        `traer_foto` (2026-07-23): True (default) = foto del ecommerce
+        SÍNCRONA (para la UI "+ Nuevo producto" del catálogo, donde el
+        usuario espera y quiere ver la foto). False = foto en HILO DE FONDO
+        (para Cotizaciones, donde el fetch a Shopify colgaba el request y
+        Daniel veía "cargando y nada"). En ambos casos foto_ecommerce del
+        retorno refleja solo el intento SÍNCRONO (en background va como
+        best-effort silencioso).
         """
         try:
             sku_n = (str(sku) if sku is not None else "").strip().upper()
@@ -1943,10 +2001,17 @@ def register_catalogo_routes(app, ctx):
         # producto queda sin foto y la creación NO se ve afectada.
         foto_ecom = False
         if nuevo_id:
-            try:
-                foto_ecom = _intentar_foto_ecommerce(nuevo_id, sku_n) == "ok"
-            except Exception as _e_ecom:
-                print(f"[_cat_crear_o_reusar_producto_desde_erp] foto ecommerce sku={sku_n}: {_e_ecom}", flush=True)
+            if traer_foto:
+                # Camino síncrono (UI catálogo "+ Nuevo producto"): el usuario
+                # espera y quiere la foto ahí mismo.
+                try:
+                    foto_ecom = _intentar_foto_ecommerce(nuevo_id, sku_n) == "ok"
+                except Exception as _e_ecom:
+                    print(f"[_cat_crear_o_reusar_producto_desde_erp] foto ecommerce sku={sku_n}: {_e_ecom}", flush=True)
+            else:
+                # Camino de Cotizaciones: foto en background para no colgar el
+                # request con el fetch a Shopify (fix "queda cargando").
+                _cat_foto_ecommerce_background(nuevo_id, sku_n)
         return {"id": nuevo_id, "creado": True, "nombre": nombre_n, "sku": sku_n,
                  "clase_producto": clase_n, "foto_ecommerce": foto_ecom}
 

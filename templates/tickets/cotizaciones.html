@@ -1923,7 +1923,16 @@ async function cotWizPrecios(){
       it._precioCalc = p ? p.precio_unitario : null;
     });
     cotWizRecalcLocal();
-  }catch(e){ console.warn('preview-precio:', e); }
+  }catch(e){
+    console.warn('preview-precio:', e);
+    // 2026-07-23 (fix "queda cargando"): si el preview de precio falla, NO
+    // dejar las celdas pegadas en "…" para siempre -- caer al cálculo local
+    // (precio_manual o "sin clasificar") para que la UI SIEMPRE resuelva.
+    // Guardado por miSeq: una respuesta vieja no pisa una más nueva.
+    if (miSeq === _wizPrecioSeq && _WIZ) {
+      try { cotWizRecalcLocal(); } catch(_e2){ /* nunca romper el wizard */ }
+    }
+  }
 }
 
 // Recalcula los totales de la tabla y del resumen SIN pegarle al backend,
