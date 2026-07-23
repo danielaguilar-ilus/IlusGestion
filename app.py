@@ -3927,6 +3927,38 @@ def normalizar_telefono(tel):
     return s_clean
 
 
+_TEL_CL_RE = re.compile(r"^\+56\d{9}$")
+
+
+def validar_telefono_chileno(tel):
+    """Valida que sea un teléfono chileno con formato correcto — DISTINTO de
+    normalizar_telefono() (que hace best-effort y nunca rechaza). Se usa donde
+    el teléfono es OBLIGATORIO y debe ser válido antes de continuar (ej.
+    asignar a manifiesto en Transporte — Daniel 2026-07-22: 'validar que sea
+    chileno y obligatorio, porque si no, después la otra llamada [a FedEx] da
+    error').
+
+    Cubre móvil (+56 9 XXXXXXXX) y fijo con código de área (+56 2/32/41/... +
+    resto) — ambos quedan en 9 dígitos después de +56.
+
+    Devuelve (True, telefono_normalizado) o (False, mensaje_error)."""
+    norm = normalizar_telefono(tel)
+    # normalizar_telefono() no antepone '+' a números que YA traen el código de
+    # país "56" pero sin el '+' (ej. "56912345678" → lo devuelve tal cual y
+    # fallaría el match de abajo). Parche local: si empieza con "56" y mide 11
+    # dígitos, es inequívocamente el mismo número con el '+' faltante.
+    if norm and not norm.startswith("+") and norm.startswith("56") and len(norm) == 11:
+        norm = "+" + norm
+    if not norm:
+        return False, "Teléfono requerido"
+    if not _TEL_CL_RE.match(norm):
+        return False, (
+            f"'{tel}' no parece un teléfono chileno válido "
+            f"(formato esperado: +56 9 XXXX XXXX)"
+        )
+    return True, norm
+
+
 def delete_photo_file(filename):
     """Elimina foto local o de Cloudinary según el contenido de filename."""
     _cloud_delete(filename)
@@ -26805,6 +26837,36 @@ def _zz_saldo_get(tido, nudo):
         return None
 
 
+# ── DIRECCIÓN GEORREFERENCIADA: lat/lng/place_id en transport_commitments ────
+# Daniel 2026-07-22 (siguiendo la misma regla que Mantenciones): antes de
+# "asignar a manifiesto" la dirección debe venir validada con Google Places
+# (evita direcciones mal escritas/incompletas que después fallan al crear la
+# guía en FedEx). Se guarda lat/lng/place_id igual que mant_clientes/
+# mant_visitas (ver skill direcciones-google-places).
+def _ensure_transport_commitments_geo_columns():
+    """Columnas NUEVAS en transport_commitments — se agregan SIEMPRE, incluso
+    con ILUS_SKIP_MIGRATIONS=1 (init_transporte_tables no corre en prod).
+    Idempotente: ALTER TABLE envuelto en try/except, no falla si ya existen."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for _mig in (
+                "ALTER TABLE transport_commitments ADD COLUMN direccion_lat DECIMAL(10,7) NULL "
+                "COMMENT 'Latitud de la dirección, validada con Google Places'",
+                "ALTER TABLE transport_commitments ADD COLUMN direccion_lng DECIMAL(10,7) NULL "
+                "COMMENT 'Longitud de la dirección, validada con Google Places'",
+                "ALTER TABLE transport_commitments ADD COLUMN direccion_place_id VARCHAR(200) NULL "
+                "COMMENT 'place_id de Google — referencia para re-geocodificar si hace falta'",
+            ):
+                try:
+                    cur.execute(_mig)
+                except Exception:
+                    pass  # columna ya existe — esperado en cada boot posterior
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ── MANIFIESTOS: export a Excel de carga masiva (FedEx / SimplyRoute) ─────────
 
 def _tr_sender_cfg():
@@ -27652,6 +27714,45 @@ def tr_cubicador_enviar_manifiesto():
     if not courier:
         return jsonify({"error": "Selecciona un courier antes de enviar"}), 400
 
+    # ── Validaciones OBLIGATORIAS antes de asignar a manifiesto (Daniel
+    # 2026-07-22): "validar que el teléfono sea chileno y obligatorio, porque
+    # si no, después la otra llamada [a FedEx] da error". Se exigen recién en
+    # este paso (asignar a manifiesto), NO al buscar/cotizar el documento —
+    # así no se traba la cotización exploratoria, solo el envío real.
+    telefono_in  = (data.get("telefono") or "").strip()
+    email_in     = (data.get("email") or "").strip()
+    direccion_in = (data.get("direccion") or "").strip()
+    lat_in       = data.get("direccion_lat")
+    lng_in       = data.get("direccion_lng")
+
+    if not telefono_in:
+        return jsonify({"error": "El teléfono de contacto es obligatorio para asignar a manifiesto."}), 400
+    _tel_ok, _tel_res = validar_telefono_chileno(telefono_in)
+    if not _tel_ok:
+        return jsonify({"error": _tel_res}), 400
+    telefono_in = _tel_res  # normalizado (+56...)
+
+    if not email_in:
+        return jsonify({"error": "El correo de contacto es obligatorio para asignar a manifiesto."}), 400
+    _email_ok, _email_res = validar_email(email_in)
+    if not _email_ok:
+        return jsonify({"error": _email_res}), 400
+    email_in = _email_res or email_in
+
+    if not direccion_in:
+        return jsonify({"error": "La dirección es obligatoria para asignar a manifiesto."}), 400
+    try:
+        _lat_f = float(lat_in) if lat_in not in (None, "") else None
+        _lng_f = float(lng_in) if lng_in not in (None, "") else None
+    except (TypeError, ValueError):
+        _lat_f = _lng_f = None
+    if _lat_f is None or _lng_f is None:
+        return jsonify({
+            "error": "La dirección debe validarse con el buscador de Google (selecciona una "
+                     "sugerencia de la lista) antes de asignar a manifiesto — evita direcciones "
+                     "mal escritas o incompletas que después fallan al generar la guía."
+        }), 400
+
     # 0) Validar coherencia courier ↔ manifiesto destino.
     #    Decisión Daniel (2026-05-31): un manifiesto = un solo courier. Si el
     #    operador elige FedEx pero apunta a un manifiesto de Clickex, rechazar
@@ -27756,14 +27857,22 @@ def tr_cubicador_enviar_manifiesto():
         _hdr_map = {
             "cliente_nombre": (data.get("cliente_nombre") or "").strip()[:200],
             "cliente_rut":    (data.get("cliente_rut") or "").strip()[:20],
-            "email":          (data.get("email") or "").strip()[:150],
-            "telefono":       (data.get("telefono") or "").strip()[:50],
-            "direccion":      (data.get("direccion") or "").strip()[:300],
+            # email/telefono/direccion: usar los valores YA validados/normalizados
+            # arriba (validar_telefono_chileno / validar_email), no los crudos de
+            # data — así el commitment guarda el teléfono en formato +56... .
+            "email":          email_in[:150],
+            "telefono":       telefono_in[:50],
+            "direccion":      direccion_in[:300],
             "comuna":         (data.get("comuna") or "").strip()[:100],
+            # Dirección georreferenciada (Daniel 2026-07-22): ya se exigió arriba
+            # que _lat_f/_lng_f existan antes de llegar hasta acá.
+            "direccion_lat":      _lat_f,
+            "direccion_lng":      _lng_f,
+            "direccion_place_id": (data.get("direccion_place_id") or "").strip()[:200] or None,
         }
         _hs, _hv = [], []
         for col, val in _hdr_map.items():
-            if val:
+            if val not in (None, ""):
                 _hs.append(f"{col}=%s"); _hv.append(val)
         _vn = data.get("valor_neto")
         if _vn not in (None, "") and float(_vn) > 0:
@@ -72302,6 +72411,13 @@ try:
     _ensure_transport_zz_saldo_table()
 except Exception as _ensure_zz_err:
     print(f"[ILUS][WARN] tabla transport_zz_saldo: {_ensure_zz_err}", flush=True)
+
+# Columnas geo (lat/lng/place_id) en transport_commitments (2026-07-22,
+# Daniel) — SIEMPRE, incluso skip-migrations.
+try:
+    _ensure_transport_commitments_geo_columns()
+except Exception as _ensure_geo_err:
+    print(f"[ILUS][WARN] columnas geo transport_commitments: {_ensure_geo_err}", flush=True)
 
 # Módulo Clientes central (2026-07-12): amplía tipo_cliente con
 # 'instalacion'/'prospecto'. SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

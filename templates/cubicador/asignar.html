@@ -872,7 +872,15 @@
           {# Row 3: Dirección (span2), Seguro #}
           <div class="client-cell span2">
             <div class="client-lbl">Dirección <i class="bi bi-pencil editable-ico"></i></div>
-            <input class="client-input" type="text" id="cli-dir" placeholder="Calle, número, depto…">
+            <input class="client-input" type="text" id="cli-dir" placeholder="Calle, número, depto…"
+                   autocomplete="off">
+            <input type="hidden" id="cli-dir-lat">
+            <input type="hidden" id="cli-dir-lng">
+            <input type="hidden" id="cli-dir-place-id">
+            <div id="cli-dir-hint" style="font-size:.68rem;color:#9ca3af;margin-top:2px">
+              <i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para validar la dirección
+              — obligatorio para asignar a manifiesto.
+            </div>
           </div>
           <div class="client-cell">
             <div class="client-lbl">Seguro (1,2%)</div>
@@ -2057,6 +2065,15 @@ function renderDoc(d, elapsedMs){
   setInput('cli-email', h.email     || '');
   setInput('cli-tel',   h.telefono  || '');
   setInput('cli-dir',   h.direccion || '');
+  // Nuevo documento → la dirección del ERP aún NO está georreferenciada
+  // (Daniel 2026-07-22: obligatorio validarla con Google antes de asignar a
+  // manifiesto). Limpiar cualquier lat/lng que hubiera quedado del documento anterior.
+  setInput('cli-dir-lat', '');
+  setInput('cli-dir-lng', '');
+  setInput('cli-dir-place-id', '');
+  const _dirHint0 = document.getElementById('cli-dir-hint');
+  if (_dirHint0) _dirHint0.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para validar la dirección — obligatorio para asignar a manifiesto.';
+  if (document.getElementById('cli-dir')) document.getElementById('cli-dir').dataset.validatedValue = '';
   setInput('cli-obs',   h.observaciones || '');
   setInput('cli-notas', '');   // notas de entrega: las escribe el usuario, no vienen del ERP
 
@@ -3212,10 +3229,14 @@ function exportarAuditDoc(){
 
 // ════════════════════════════════════════════════════════════
 //  VALIDACIÓN MANIFIESTO
-//  Decisión Daniel 2026-05-31: tel/email NO bloquean (boletas a consumidor
-//  final pueden no traer datos del ERP). Solo bloquean dirección/comuna/
-//  bultos (necesarios para el courier). Si hay tel/email pero está mal
-//  formateado, advertimos pero permitimos avanzar.
+//  ACTUALIZADO 2026-07-22 (Daniel, reemplaza la decisión de 2026-05-31):
+//  "validar que el teléfono sea chileno y que sea obligatorio, porque si no
+//  después la otra llamada [a FedEx] da error". Teléfono, email y dirección
+//  georreferenciada (lat/lng vía Google Places) AHORA BLOQUEAN — antes
+//  tel/email solo advertían. La validación real y definitiva vive en el
+//  backend (POST /transporte/api/cubicador/enviar-manifiesto); esta función
+//  es la primera línea de defensa para dar feedback inmediato sin esperar
+//  el viaje de red.
 // ════════════════════════════════════════════════════════════
 
 // Validadores chilenos reusables
@@ -3259,19 +3280,75 @@ function _wireValidacionVivo(){
 }
 document.addEventListener('DOMContentLoaded', _wireValidacionVivo);
 
+// ── Google Places para la dirección (Daniel 2026-07-22) ──────────────────
+// Llena cli-dir-lat/lng/place-id — validarParaManifiesto() los exige antes
+// de asignar a manifiesto (ver skill direcciones-google-places, ya usado en
+// Mantenciones con el mismo patrón). Si el operador edita el texto DESPUÉS
+// de elegir una sugerencia, se invalida la geolocalización (para no dejar
+// un lat/lng viejo pegado a un texto que ya no es el mismo).
+function _wireDireccionPlaces(){
+  const dirInput = document.getElementById('cli-dir');
+  if (!dirInput || dirInput.dataset.placesWired) return;
+  function initDir(){
+    if (typeof ilusPlacesAutocomplete !== 'function'){
+      if (window.__ilusGmapsPending) window.__ilusGmapsPending.push(initDir);
+      return;
+    }
+    dirInput.dataset.placesWired = '1';
+    ilusPlacesAutocomplete('cli-dir', {
+      country: 'cl',
+      types: ['address'],
+      onPlaceSelected: function(place){
+        document.getElementById('cli-dir-lat').value      = place.lat;
+        document.getElementById('cli-dir-lng').value      = place.lng;
+        document.getElementById('cli-dir-place-id').value = place.place_id || '';
+        dirInput.dataset.validatedValue = dirInput.value;
+        const hint = document.getElementById('cli-dir-hint');
+        if (hint){
+          hint.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>' +
+            'Dirección verificada · <small>' + place.lat.toFixed(4) + ', ' + place.lng.toFixed(4) + '</small>';
+        }
+        // Auto-llenar comuna si Google la trae y el campo está vacío.
+        if (place.componentes){
+          var comunaComp = place.componentes.find(function(c){
+            return c.types.indexOf('locality') >= 0 || c.types.indexOf('administrative_area_level_3') >= 0;
+          });
+          var comunaInput = document.getElementById('cli-comuna');
+          if (comunaComp && comunaInput && !comunaInput.value) comunaInput.value = comunaComp.long_name;
+        }
+      }
+    });
+  }
+  initDir();
+  dirInput.addEventListener('input', function(){
+    if (dirInput.dataset.validatedValue && dirInput.value !== dirInput.dataset.validatedValue){
+      document.getElementById('cli-dir-lat').value      = '';
+      document.getElementById('cli-dir-lng').value      = '';
+      document.getElementById('cli-dir-place-id').value = '';
+      const hint = document.getElementById('cli-dir-hint');
+      if (hint){
+        hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para ' +
+          'validar la dirección — obligatorio para asignar a manifiesto.';
+      }
+    }
+  });
+}
+document.addEventListener('DOMContentLoaded', _wireDireccionPlaces);
+
 async function validarParaManifiesto(){
   if(!_docData){
     await ilusAlert({title:'Documento requerido', message:'Carga un documento primero.', type:'warning'});
     return false;
   }
 
-  // Solo dirección/comuna/bultos son obligatorios (los necesita el courier).
-  // Tel/email pueden venir vacíos en boletas a consumidor final — el courier
-  // los pide nice-to-have pero el sistema acepta el envío igual.
+  // Dirección/comuna/bultos/teléfono/email — TODOS obligatorios ahora
+  // (Daniel 2026-07-22: sin esto la llamada a FedEx falla después).
   const campos = [
     { id:'cli-dir',    nombre:'Dirección' },
     { id:'cli-bultos', nombre:'Total Bultos' },
     { id:'cli-comuna', nombre:'Comuna' },
+    { id:'cli-tel',    nombre:'Teléfono' },
+    { id:'cli-email',  nombre:'Email' },
   ];
   const vacios = campos.filter(c => !(document.getElementById(c.id)?.value||'').trim());
   if(vacios.length){
@@ -3286,28 +3363,50 @@ async function validarParaManifiesto(){
     return false;
   }
 
-  // Validación SUAVE de formato: si hay valor pero formato malo, pedir confirmación
-  // (no bloquear). Si no hay valor, OK.
+  // Validación DURA de formato (Daniel 2026-07-22): ya no se puede "avanzar
+  // igual" — si el teléfono no es chileno o el email no tiene formato
+  // válido, se bloquea (antes solo advertía).
   const tel  = document.getElementById('cli-tel').value.trim();
   const mail = document.getElementById('cli-email').value.trim();
-  const avisos = [];
-  if (tel && _esTelChileno(tel) === false){
-    avisos.push('• El teléfono <strong>' + tel + '</strong> no parece chileno (formato esperado +56 9 XXXX XXXX)');
-  }
-  if (mail && _esEmailValido(mail) === false){
-    avisos.push('• El email <strong>' + mail + '</strong> no tiene formato válido');
-  }
-  if (avisos.length){
-    const ok = await ilusConfirm({
-      title: 'Datos del cliente con formato sospechoso',
-      message: 'Detectamos los siguientes problemas:',
-      sub: avisos.join('<br>') + '<br><br>¿Avanzar igual? El courier puede rechazar el envío si los datos son incorrectos.',
-      subHtml: true,
-      type: 'warning',
-      okLabel: 'Sí, enviar igual',
-      cancelLabel: 'Volver a corregir',
+  if (_esTelChileno(tel) === false){
+    await ilusAlert({
+      title: 'Teléfono inválido',
+      message: `El teléfono "${tel}" no parece un número chileno válido.`,
+      sub: 'Formato esperado: +56 9 XXXX XXXX (móvil) o +56 X XXXX XXXX (fijo).',
+      type: 'error',
     });
-    if (!ok) return false;
+    document.getElementById('cli-tel')?.focus();
+    return false;
+  }
+  if (_esEmailValido(mail) === false){
+    await ilusAlert({
+      title: 'Email inválido',
+      message: `El email "${mail}" no tiene un formato válido.`,
+      type: 'error',
+    });
+    document.getElementById('cli-email')?.focus();
+    return false;
+  }
+
+  // Dirección GEORREFERENCIADA obligatoria (Daniel 2026-07-22): la única
+  // forma de garantizar esto es exigir que el operador haya elegido una
+  // sugerencia del autocomplete de Google (eso llena cli-dir-lat/lng). Si el
+  // texto de la dirección cambió después de seleccionar la sugerencia, se
+  // pierde la validación y hay que volver a elegir.
+  const lat = document.getElementById('cli-dir-lat')?.value;
+  const lng = document.getElementById('cli-dir-lng')?.value;
+  if (!lat || !lng){
+    await ilusAlert({
+      title: 'Dirección sin validar',
+      message: 'La dirección debe validarse con el buscador de Google antes de asignar a manifiesto.',
+      sub: 'Escribe la dirección en el campo y elige una de las sugerencias del listado ' +
+           '(no basta con escribirla y no seleccionar nada) — evita direcciones mal escritas ' +
+           'que después fallan al generar la guía con el courier.',
+      subHtml: true,
+      type: 'error',
+    });
+    document.getElementById('cli-dir')?.focus();
+    return false;
   }
 
   if(!_courierSel || !_courierSel.id){
@@ -3468,6 +3567,12 @@ async function enviarAManifiesto(){
     comuna:         _gv('cli-comuna') || _h.comuna || '',
     valor_neto:     _h.valor_neto || 0,
     productos:      _productos,
+    // Dirección georreferenciada (Daniel 2026-07-22): el backend la exige
+    // antes de asignar a manifiesto. Se llenan al elegir una sugerencia del
+    // autocomplete de Google (ver _wireDireccionPlaces).
+    direccion_lat:      _gv('cli-dir-lat')      || null,
+    direccion_lng:      _gv('cli-dir-lng')      || null,
+    direccion_place_id: _gv('cli-dir-place-id') || '',
   };
 
   if (modo === 'existente') {
@@ -3623,8 +3728,10 @@ function _resetCubicadorParaSiguiente(info){
   const nudoInput = document.getElementById('docNudo');
   if (nudoInput){ nudoInput.value = ''; setTimeout(() => nudoInput.focus(), 200); }
   // 6) Limpiar inputs del cliente que el operador pudo haber tocado
-  ['cli-tel','cli-email','cli-dir','cli-comuna','cli-bultos','cli-notas']
+  ['cli-tel','cli-email','cli-dir','cli-comuna','cli-bultos','cli-notas',
+   'cli-dir-lat','cli-dir-lng','cli-dir-place-id']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  if (document.getElementById('cli-dir')) document.getElementById('cli-dir').dataset.validatedValue = '';
   // 7) Scroll suave al input para que se vea bien en mobile
   if (nudoInput) nudoInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
