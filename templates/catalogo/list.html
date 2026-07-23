@@ -295,6 +295,31 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
 </div>
 
 <div id="catLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
+<script>
+// 2026-07-23 (Daniel, incidente en vivo: "sigo sin ver los cambios... queda
+// cargando"): guardián INDEPENDIENTE del fetch de cargarCatalogo(). El
+// AbortController de 12s dentro de cargarCatalogo() ya cubre el caso "el
+// fetch nunca resuelve ni rechaza" -- pero si por lo que sea el hilo
+// principal queda ocupado (carga en frío, muchos recursos compitiendo) y
+// ese setTimeout interno no llega a dispararse a tiempo, o si el script
+// grande de más abajo ni siquiera llega a ejecutar cargarCatalogo(), este
+// script chico y AISLADO (se ejecuta en cuanto el parser llega aquí, antes
+// del resto de la página) queda armado igual y no depende de nada de eso.
+// Si a los 15s el bloque sigue mostrando el reloj de arena original, fuerza
+// el aviso accionable -- nunca deja "Cargando…" pegado para siempre en
+// silencio.
+(function(){
+  setTimeout(function(){
+    var el = document.getElementById('catLista');
+    if (el && el.querySelector('.bi-hourglass-split')){
+      el.innerHTML = '<div class="empty-state"><i class="bi bi-wifi-off"></i>'
+        + 'La carga está tardando demasiado — revisa tu conexión o un bloqueador de anuncios/extensión, y '
+        + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" '
+        + 'onclick="if(typeof cargarCatalogo===\'function\'){cargarCatalogo();}else{location.reload();}">Reintentar</button></div>';
+    }
+  }, 15000);
+})();
+</script>
 
 <!-- ══════════════ MODAL: Nuevo producto ══════════════ -->
 <div class="modal fade" id="catnModal" tabindex="-1" aria-hidden="true">
@@ -1016,7 +1041,7 @@ document.getElementById('catnBtnCrear').addEventListener('click', async function
       document.getElementById('catnNombre').value = '';
       document.getElementById('catnFamilia').value = '';
       document.getElementById('catnObservacion').value = '';
-      bootstrap.Modal.getOrCreateInstance(document.getElementById('catnModal')).hide();
+      if (typeof bootstrap !== 'undefined') bootstrap.Modal.getOrCreateInstance(document.getElementById('catnModal')).hide();
       ilusToast('✓ Producto creado', {type:'success'});
       cargarCatalogo();
     } else ilusToast(d.error||'No se pudo crear el producto', {type:'error'});
