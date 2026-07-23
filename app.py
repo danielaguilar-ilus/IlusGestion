@@ -32689,38 +32689,30 @@ def comm_email_preview():
 def comm_client_save():
     d = request.get_json(silent=True) or {}
 
-    # ── Logo: si llega como data:image/...;base64,xxx, subirlo a Cloudinary ──
+    # ── Logo: si llega como data:image/...;base64,xxx, subirlo a almacenamiento ──
     # 2026-05-21 (Daniel): Gmail bloquea imágenes embebidas como data URL.
     # Antes guardábamos el base64 directo en BD → el logo no se veía en Gmail
-    # (solo en Outlook). Ahora interceptamos: si llega data URL, lo subimos a
-    # Cloudinary y guardamos la URL pública https://res.cloudinary.com/...
-    # que SÍ funciona en TODOS los clientes (Gmail, Outlook, Yahoo, etc.)
+    # (solo en Outlook). Se sube con _uploader_upload (2026-07-23: ya es
+    # GCS-first -- ver definición arriba: si GCS está activo sube ahí y
+    # solo cae a Cloudinary si GCS no está disponible). El bloque manual de
+    # `cloudinary.config(...)` que vivía acá antes de _uploader_upload era
+    # vestigial (nunca se llamaba a cloudinary.uploader.upload directo) --
+    # se retira para no sugerir que esto sigue siendo Cloudinary-first.
     logo_input = (d.get("logo_url") or "").strip()
     if logo_input.startswith("data:image/"):
         try:
-            import base64 as _b64, cloudinary, cloudinary.uploader
-            cld_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
-            cld_key  = os.environ.get("CLOUDINARY_API_KEY", "").strip()
-            cld_sec  = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
-            if cld_name and cld_key and cld_sec:
-                cloudinary.config(
-                    cloud_name=cld_name, api_key=cld_key, api_secret=cld_sec, secure=True
-                )
-                header, b64 = logo_input.split(",", 1)
-                img_bytes = _b64.b64decode(b64)
-                resp = _uploader_upload(
-                    img_bytes, folder="ilus/branding",
-                    public_id="company_logo", overwrite=True,
-                    resource_type="image", format="png",
-                )
-                logo_input = resp.get("secure_url") or resp.get("url") or logo_input
-                print(f"[comm-save-logo] base64 → Cloudinary: {logo_input}", flush=True)
-            else:
-                print("[comm-save-logo][WARN] Cloudinary no configurado — "
-                      "guardando base64 (Gmail no lo verá). Setear CLOUDINARY_* en Railway.",
-                      flush=True)
+            import base64 as _b64
+            header, b64 = logo_input.split(",", 1)
+            img_bytes = _b64.b64decode(b64)
+            resp = _uploader_upload(
+                img_bytes, folder="ilus/branding",
+                public_id="company_logo", overwrite=True,
+                resource_type="image", format="png",
+            )
+            logo_input = resp.get("secure_url") or resp.get("url") or logo_input
+            print(f"[comm-save-logo] base64 subido: {logo_input}", flush=True)
         except Exception as _e:
-            print(f"[comm-save-logo][WARN] Falló upload Cloudinary: {_e} — "
+            print(f"[comm-save-logo][WARN] Falló la subida: {_e} — "
                   "guardando data URL como fallback (no funciona en Gmail)", flush=True)
 
     conn = get_db()
@@ -71723,6 +71715,31 @@ def _ensure_levantamiento_target_field():
     return faltaron
 
 
+def _ensure_comm_client_config_logo_gcp():
+    """Auto-repara comm_client_config.logo_url si quedó apuntando a
+    Cloudinary (2026-07-23, Daniel: "no queríamos dejarle Cloudinary...
+    dejar todo centralizado en Google"). El logo se subió a Cloudinary
+    ANTES del cutover a GCS (mayo 2026) y esa fila nunca se volvió a tocar
+    -- el correo de Cotizaciones lo expuso porque es el primer correo que
+    Daniel revisó de cerca desde entonces. Fix: apuntar al logo servido
+    por la propia app en Cloud Run (self-hosted, cero dependencia externa,
+    ni Cloudinary ni un bucket aparte) -- SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1, e idempotente (solo toca la fila si sigue en
+    Cloudinary; una vez arreglada no vuelve a escribir)."""
+    try:
+        row = mysql_fetchone("SELECT logo_url FROM comm_client_config WHERE id=1")
+        actual = (row or {}).get("logo_url") or ""
+        if "cloudinary.com" not in actual:
+            return
+        nuevo = (os.environ.get("ILUS_PUBLIC_BASE_URL")
+                 or "https://ilus-app-469212710544.southamerica-west1.run.app").rstrip("/") + "/static/Logo.png"
+        mysql_execute("UPDATE comm_client_config SET logo_url=%s WHERE id=1", (nuevo,))
+        _invalidate_client_cfg_cache()
+        print(f"[ensure_comm_logo] logo_url reparado (Cloudinary -> Cloud Run): {nuevo}", flush=True)
+    except Exception as _e:
+        print(f"[ILUS][WARN] _ensure_comm_client_config_logo_gcp: {_e}", flush=True)
+
+
 def _ensure_email_log_estado_bloqueado():
     """Garantiza que email_log.estado acepte 'bloqueado' AUNQUE
     ILUS_SKIP_MIGRATIONS=1.
@@ -72568,6 +72585,14 @@ try:
         _ensure_comm_email_jobs()
 except Exception as _ensure_ceq_err:
     print(f"[ILUS][WARN] _ensure_comm_email_jobs: {_ensure_ceq_err}", flush=True)
+
+# Logo del correo apuntando a Cloudinary (leftover pre-GCS) -> Cloud Run
+# (2026-07-23, Daniel). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_comm_client_config_logo_gcp()
+except Exception as _ensure_logo_err:
+    print(f"[ILUS][WARN] _ensure_comm_client_config_logo_gcp: {_ensure_logo_err}", flush=True)
 
 
 def _reparar_ruts_clientes_corruptos():
