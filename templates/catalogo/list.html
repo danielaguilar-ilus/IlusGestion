@@ -28,10 +28,10 @@
 
 /* ── Tabla (idéntica mecánica a tk-table: sticky, ordenable, fila clicable) ── */
 table.cat-table thead th.cat-th-sort{cursor:pointer;user-select:none;transition:background .12s,color .12s;}
-table.cat-table thead th.cat-th-sort:hover{background:#eef1f5;color:#374151;}
-table.cat-table thead th.cat-th-sort i{font-size:.7rem;opacity:.4;margin-left:3px;}
-table.cat-table thead th.cat-th-sort.on{color:#dc2626;}
-table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#dc2626;}
+table.cat-table thead th.cat-th-sort:hover{background:#1c1c1c;color:#fff;}
+table.cat-table thead th.cat-th-sort i{font-size:.7rem;opacity:.5;margin-left:3px;}
+table.cat-table thead th.cat-th-sort.on{color:#f87171;}
+table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#f87171;}
 .cat-acciones{display:flex;gap:3px;align-items:center;white-space:nowrap;}
 .cat-act{border:none;background:transparent;width:30px;height:30px;min-height:30px;border-radius:8px;
   display:inline-flex;align-items:center;justify-content:center;font-size:.88rem;cursor:pointer;
@@ -67,9 +67,14 @@ table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#dc2626;}
 .cat-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;
   overflow:auto;max-height:calc(100vh - 300px);box-shadow:0 1px 3px rgba(0,0,0,.04);}
 table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:900px;}
-table.cat-table thead th{position:sticky;top:0;z-index:2;background:#f8f9fb;color:#6b7280;font-size:.66rem;
-  font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
-  border-bottom:1px solid #eaecf0;white-space:nowrap;}
+{# 2026-07-23 (Daniel, insiste: "quiero ver una tabla con el diseño...
+   estandarizado que tenemos en la página"): el thead vivía en gris claro
+   (#f8f9fb) -- el mismo patrón "Triple A" viejo que ya se reemplazó en
+   Cotizaciones y Usuarios y roles por el header negro. Se actualiza acá
+   también para que el Catálogo deje de ser la excepción. #}
+table.cat-table thead th{position:sticky;top:0;z-index:2;background:#0a0a0a;color:#fff;font-size:.68rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:12px 14px;
+  border-bottom:1px solid #0a0a0a;white-space:nowrap;}
 table.cat-table tbody tr{cursor:pointer;transition:background .1s;}
 table.cat-table tbody tr:hover{background:#fafbfc;}
 table.cat-table tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6;}
@@ -273,10 +278,18 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
       </select></div>
   </div>
   <div class="cat-toolbar">
+    {# 2026-07-23 (Daniel, insiste: "necesito que me muestre todos los
+       productos trabajados... así tenga al menos una de las tres
+       solicitudes"). Default ON -- ver catSoloTrabajados/solo_trabajados
+       arriba y en catalogo_module.py cat_api_list. #}
+    <label class="cat-archivados">
+      <input type="checkbox" id="catSoloTrabajados" class="form-check-input" style="margin:0;" checked>
+      Solo trabajados</label>
     <label class="cat-archivados">
       <input type="checkbox" id="catVerArchivados" class="form-check-input" style="margin:0;">
       Ver archivados</label>
     <span class="spacer"></span>
+    <span id="catTrabajadosHint" class="text-muted" style="font-size:.72rem;"></span>
     <button class="btn btn-sm btn-ilus-outline" id="catBtnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
   </div>
 </div>
@@ -603,6 +616,13 @@ let catDir = 'desc';
 let catPage = 1;
 let catLimit = 50;
 let catVerArchivados = false;
+// 2026-07-23 (Daniel, insiste: "necesito que me muestre todos los
+// productos trabajados... así tenga al menos una de las tres
+// solicitudes"): default ON -- oculta los SKU 100% en blanco que se
+// auto-crean al pasar por una cotización, para que la lista muestre lo
+// que de verdad tiene trabajo encima. Se puede apagar (checkbox) para
+// auditar/ver todo.
+let catSoloTrabajados = true;
 let _catCache = {};          // id → producto de la última carga
 let _catFamilias = new Set(); // acumulado best-effort para el <select> Familia
                                // (el contrato no define un endpoint de "familias
@@ -653,6 +673,7 @@ function catParamsFiltros(conOrden){
   const fam = document.getElementById('catFFamilia').value; if(fam) p.set('familia', fam);
   const clase = document.getElementById('catFClase').value; if(clase) p.set('clase_producto', clase);
   p.set('activo', catVerArchivados ? '0' : '1');
+  p.set('solo_trabajados', catSoloTrabajados ? '1' : '0');
   if(conOrden && catSort){ p.set('sort', catSort); p.set('dir', catDir); }
   return p;
 }
@@ -728,6 +749,18 @@ async function cargarCatalogo(){
   }
   if(!data.ok){ ilusToast(data.error||'Error al cargar', {type:'error'}); return; }
 
+  // 2026-07-23 (Daniel: "necesito que me muestre todos los productos
+  // trabajados"): transparencia -- si "Solo trabajados" ocultó filas,
+  // decirlo explícito (nunca esconder un filtro en silencio).
+  const hintEl = document.getElementById('catTrabajadosHint');
+  if(hintEl){
+    const ocultos = (data.solo_trabajados && data.total_sin_filtro > data.total)
+      ? (data.total_sin_filtro - data.total) : 0;
+    hintEl.textContent = ocultos > 0
+      ? `${data.total} trabajado${data.total===1?'':'s'} · ${ocultos} sin clasificación/foto/manual (ocultos)`
+      : '';
+  }
+
   if(!data.rows.length && (data.total||0) > 0 && catPage > 1){
     catPage = Math.max(1, data.pages||1);
     return cargarCatalogo();
@@ -742,7 +775,13 @@ async function cargarCatalogo(){
 
   const cont = document.getElementById('catLista');
   if(!data.rows.length){
-    cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay productos con estos filtros.</div>';
+    const hayOcultosPorFiltro = data.solo_trabajados && (data.total_sin_filtro||0) > 0;
+    cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay productos con estos filtros.'
+      + (hayOcultosPorFiltro
+          ? ' Tienes ' + data.total_sin_filtro + ' producto(s) sin clasificación/foto/manual — '
+            + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="document.getElementById(\'catSoloTrabajados\').click()">Ver todos</button>'
+          : '')
+      + '</div>';
     return;
   }
   cont.innerHTML = '<div class="cat-table-wrap table-responsive"><table class="cat-table"><thead>'
@@ -820,12 +859,17 @@ document.getElementById('catFClase').addEventListener('change', catFiltroCambio)
 document.getElementById('catVerArchivados').addEventListener('change', function(){
   catVerArchivados = this.checked; catFiltroCambio();
 });
+document.getElementById('catSoloTrabajados').addEventListener('change', function(){
+  catSoloTrabajados = this.checked; catFiltroCambio();
+});
 document.getElementById('catBtnLimpiar').addEventListener('click', function(){
   document.getElementById('catFQ').value = '';
   document.getElementById('catFFamilia').value = '';
   document.getElementById('catFClase').value = '';
   document.getElementById('catVerArchivados').checked = false;
   catVerArchivados = false;
+  document.getElementById('catSoloTrabajados').checked = true;
+  catSoloTrabajados = true;
   catSort = 'updated_at'; catDir = 'desc'; catPage = 1;
   cargarCatalogo();
 });

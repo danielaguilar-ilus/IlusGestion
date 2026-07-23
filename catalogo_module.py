@@ -941,6 +941,16 @@ def register_catalogo_routes(app, ctx):
         clase_producto = (request.args.get("clase_producto") or "").strip()
         activo_arg = (request.args.get("activo") or "1").strip()
         activo = 0 if activo_arg == "0" else 1
+        # 2026-07-23 (Daniel, insiste: "necesito que me muestre todos los
+        # productos trabajados... así tenga al menos una de las tres
+        # solicitudes"): cada SKU que pasa por una cotización nace en
+        # cat_productos aunque nadie lo haya clasificado ni le haya
+        # cargado nada (_cat_crear_o_reusar_producto_desde_erp) -- esas
+        # filas 100% en blanco inundaban la lista y tapaban los productos
+        # con trabajo real encima. Default ON (solo_trabajados=1 salvo que
+        # el front mande explícitamente "0"): mismo criterio OR que el
+        # badge "Registrado" (clase O fotos O manual).
+        solo_trabajados = (request.args.get("solo_trabajados") or "1").strip() != "0"
 
         # 2026-07-21 (Daniel): el gap-fill silencioso que llamaba a
         # _cat_sync_erp_nuevos() al buscar sin resultados locales quedó
@@ -952,20 +962,32 @@ def register_catalogo_routes(app, ctx):
         # (infraestructura viva, sin botón en la UI hoy) -- solo se quitó
         # ESTA llamada puntual.
 
-        where = ["p.activo=%s", "p.created_by <> 'sistema-erp-sync'"]
-        params = [activo]
+        # where_base/params_base: TODOS los filtros excepto solo_trabajados
+        # -- separados para poder calcular el total SIN ese filtro también
+        # (transparencia, ver más abajo) sin desalinear params con where.
+        where_base = ["p.activo=%s", "p.created_by <> 'sistema-erp-sync'"]
+        params_base = [activo]
         if q:
-            where.append("(p.sku LIKE %s OR p.nombre LIKE %s OR p.familia LIKE %s)")
+            where_base.append("(p.sku LIKE %s OR p.nombre LIKE %s OR p.familia LIKE %s)")
             like = f"%{q}%"
-            params += [like, like, like]
+            params_base += [like, like, like]
         if familia:
-            where.append("p.familia=%s")
-            params.append(familia)
+            where_base.append("p.familia=%s")
+            params_base.append(familia)
         if clase_producto:
             if clase_producto not in _cat_clases_map():
                 return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
-            where.append("p.clase_producto=%s")
-            params.append(clase_producto)
+            where_base.append("p.clase_producto=%s")
+            params_base.append(clase_producto)
+
+        _clausula_trabajados = """(
+                (p.clase_producto IS NOT NULL AND p.clase_producto <> '')
+                OR p.manual_pdf_key IS NOT NULL
+                OR EXISTS (SELECT 1 FROM cat_producto_fotos f WHERE f.producto_id=p.id)
+                OR EXISTS (SELECT 1 FROM cat_producto_manuales m WHERE m.producto_id=p.id)
+            )"""
+        where = list(where_base) + ([_clausula_trabajados] if solo_trabajados else [])
+        params = list(params_base)
         where_sql = " AND ".join(where)
 
         total = int((mysql_fetchone(
@@ -974,6 +996,16 @@ def register_catalogo_routes(app, ctx):
         pages = max(1, math.ceil(total / limit))
         page = min(page, pages)
         offset = (page - 1) * limit
+
+        # Transparencia (no silenciar un filtro): si "solo_trabajados" está
+        # activo, cuántos hay en total SIN ese filtro -- para que el front
+        # pueda decir "127 de 340" en vez de esconder que hay más filas.
+        total_sin_filtro = total
+        if solo_trabajados:
+            where_sql_base = " AND ".join(where_base)
+            total_sin_filtro = int((mysql_fetchone(
+                f"SELECT COUNT(*) AS n FROM cat_productos p WHERE {where_sql_base}",
+                tuple(params_base)) or {}).get("n") or 0)
 
         # 2026-07-21: a propósito NO se seleccionan p.created_by/p.updated_by
         # acá -- el listado nunca debe exponer el username de quién creó/editó
@@ -1023,6 +1055,8 @@ def register_catalogo_routes(app, ctx):
             "ok": True,
             "rows": rows_out,
             "total": total, "pages": pages, "page": page, "limit": limit,
+            "solo_trabajados": solo_trabajados,
+            "total_sin_filtro": total_sin_filtro,
         })
 
     # ─────────────────────────────────────────────────────────────────
