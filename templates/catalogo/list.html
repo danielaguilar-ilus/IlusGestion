@@ -1602,11 +1602,22 @@ async function catfEnviarManualCorreo(){
   const correo = String(email).trim();
   const reEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if(!reEmail.test(correo)){ ilusToast('Correo inválido', {type:'warning'}); return; }
+  // 2026-07-23 (blueprint piolas/manuales, Daniel: "se puede agregar una
+  // copia"): segundo prompt opcional para CC -- cancelarlo NO aborta el
+  // envío al destinatario principal, solo se manda sin copia.
+  const ccRaw = await ilusPrompt({
+    title: 'Copia (CC) — opcional',
+    message: '¿Agregar un correo en copia?',
+    placeholder: 'copia@dominio.cl',
+    required: false,
+  });
+  const cc = (ccRaw !== null && ccRaw !== undefined) ? String(ccRaw).trim() : '';
+  if(cc && !reEmail.test(cc)){ ilusToast('El correo de copia (CC) es inválido', {type:'warning'}); return; }
   ilusLoader.show('Enviando manual…');
   try{
     const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/manual/enviar-correo', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({email: correo})});
+      body: JSON.stringify({email: correo, cc: cc || undefined})});
     const d = await r.json();
     ilusLoader.hide();
     if(d.ok) ilusToast('✓ Manual enviado a '+correo, {type:'success'});
@@ -1853,11 +1864,19 @@ async function catfEnviarManualMultiCorreo(manualId, nombre){
   const correo = String(email).trim();
   const reEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if(!reEmail.test(correo)){ ilusToast('Correo inválido', {type:'warning'}); return; }
+  const ccRaw = await ilusPrompt({
+    title: 'Copia (CC) — opcional',
+    message: '¿Agregar un correo en copia?',
+    placeholder: 'copia@dominio.cl',
+    required: false,
+  });
+  const cc = (ccRaw !== null && ccRaw !== undefined) ? String(ccRaw).trim() : '';
+  if(cc && !reEmail.test(cc)){ ilusToast('El correo de copia (CC) es inválido', {type:'warning'}); return; }
   ilusLoader.show('Enviando manual…');
   try{
     const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/manuales/'+manualId+'/enviar-correo', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({email: correo})});
+      body: JSON.stringify({email: correo, cc: cc || undefined})});
     const d = await r.json();
     ilusLoader.hide();
     if(d.ok) ilusToast('✓ Manual enviado a '+correo, {type:'success'});

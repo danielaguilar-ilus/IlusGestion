@@ -2452,6 +2452,15 @@ def register_catalogo_routes(app, ctx):
         d = request.get_json(silent=True) or {}
         email = (d.get("email") or "").strip()
         mensaje = (d.get("mensaje") or "").strip()[:1000] or None
+        # 2026-07-23 (blueprint piolas/manuales, Daniel: "se puede agregar
+        # una copia" al enviar un manual): CC opcional, mismo validador que
+        # el destinatario principal.
+        cc = (d.get("cc") or "").strip() or None
+        if cc and validar_email:
+            ok_cc, val_or_err_cc = validar_email(cc)
+            if not ok_cc:
+                return jsonify({"ok": False, "error": "Correo de copia (CC) inválido: " + (val_or_err_cc or "")}), 400
+            cc = val_or_err_cc
 
         if validar_email:
             ok_email, val_or_err = validar_email(email)
@@ -2502,7 +2511,7 @@ def register_catalogo_routes(app, ctx):
         try:
             enviado = _send_ilus_email(
                 email, subject, html,
-                evento="catalogo_manual", modulo="catalogo",
+                evento="catalogo_manual", modulo="catalogo", cc=cc,
                 attachments=[{"filename": manual_nombre, "content": pdf_bytes, "content_type": "application/pdf"}],
             )
         except Exception as _e:
@@ -2511,7 +2520,7 @@ def register_catalogo_routes(app, ctx):
 
         if _audit:
             _audit("cat_manual_enviado", target_type="cat_producto", target_id=pid,
-                   details={"email": email, "sku": p.get("sku"), "manual_nombre": manual_nombre,
+                   details={"email": email, "cc": cc, "sku": p.get("sku"), "manual_nombre": manual_nombre,
                              "enviado": bool(enviado)})
 
         if not enviado:
@@ -2546,6 +2555,12 @@ def register_catalogo_routes(app, ctx):
         d = request.get_json(silent=True) or {}
         email = (d.get("email") or "").strip()
         mensaje = (d.get("mensaje") or "").strip()[:1000] or None
+        cc = (d.get("cc") or "").strip() or None
+        if cc and validar_email:
+            ok_cc, val_or_err_cc = validar_email(cc)
+            if not ok_cc:
+                return jsonify({"ok": False, "error": "Correo de copia (CC) inválido: " + (val_or_err_cc or "")}), 400
+            cc = val_or_err_cc
 
         if validar_email:
             ok_email, val_or_err = validar_email(email)
@@ -2596,7 +2611,7 @@ def register_catalogo_routes(app, ctx):
         try:
             enviado = _send_ilus_email(
                 email, subject, html,
-                evento="catalogo_manual", modulo="catalogo",
+                evento="catalogo_manual", modulo="catalogo", cc=cc,
                 attachments=[{"filename": manual_nombre, "content": pdf_bytes, "content_type": "application/pdf"}],
             )
         except Exception as _e:
@@ -2605,7 +2620,7 @@ def register_catalogo_routes(app, ctx):
 
         if _audit:
             _audit("cat_manual_multi_enviado", target_type="cat_producto_manual", target_id=manual_id,
-                   details={"email": email, "sku": m.get("sku"), "producto_id": pid,
+                   details={"email": email, "cc": cc, "sku": m.get("sku"), "producto_id": pid,
                              "manual_nombre": manual_nombre, "enviado": bool(enviado)})
 
         if not enviado:
