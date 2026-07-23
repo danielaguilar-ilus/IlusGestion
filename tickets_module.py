@@ -1014,6 +1014,21 @@ def register_tickets_routes(app, ctx):
                  REFERENCES tk_cotizaciones(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # 2026-07-22 (Cotizaciones v3, Daniel: "tiene que dejar evidencia de
+        # que alguien hizo algo"): historial por cotización -- crear, editar,
+        # aprobar, rechazar, enviar correo, generar OT/ticket, eliminar. Se
+        # muestra en la UI (modal Historial) además del audit central.
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS tk_cotizacion_log (
+              id             INT AUTO_INCREMENT PRIMARY KEY,
+              cotizacion_id  INT NOT NULL,
+              accion         VARCHAR(40) NOT NULL,
+              usuario        VARCHAR(190) NULL,
+              detalle        TEXT NULL,
+              created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_cotiz_fecha (cotizacion_id, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
         # 2026-07-13 (Daniel, URGENTE): tabla de rutas a nivel nacional
         # (origen QUILICURA -> comuna destino), para calcular el "costo_ruta"
         # de tk_cotizaciones automaticamente segun la comuna del cliente.
@@ -1590,6 +1605,19 @@ def register_tickets_routes(app, ctx):
         # subtotal). Las cotizaciones viejas quedan 'pct' -> sin cambios.
         if "descuento_tipo" not in existentes:
             alters.append("ADD COLUMN descuento_tipo ENUM('pct','monto') NOT NULL DEFAULT 'pct'")
+        # 2026-07-22 (Cotizaciones v3, Daniel): tabla inteligente con
+        # aprobación + edición auditada + borrado. editada_post_aprobacion
+        # marca (sin JOIN al log) que una cotización YA aprobada fue editada
+        # después. Borrado es SOFT (Regla #5: el correlativo COT jamás debe
+        # "desaparecer"); el listado filtra eliminada=0.
+        if "editada_post_aprobacion" not in existentes:
+            alters.append("ADD COLUMN editada_post_aprobacion TINYINT(1) NOT NULL DEFAULT 0")
+        if "eliminada" not in existentes:
+            alters.append("ADD COLUMN eliminada TINYINT(1) NOT NULL DEFAULT 0")
+        if "eliminada_por" not in existentes:
+            alters.append("ADD COLUMN eliminada_por VARCHAR(190) NULL")
+        if "eliminada_at" not in existentes:
+            alters.append("ADD COLUMN eliminada_at DATETIME NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
@@ -1644,6 +1672,15 @@ def register_tickets_routes(app, ctx):
         # cálculo -- para casos especiales que no salen de la tarifa.
         if "precio_manual" not in existentes:
             alters.append("ADD COLUMN precio_manual INT NULL")
+        # 2026-07-22 (Cotizaciones v3, multidocumento): documento ERP de
+        # origen de cada línea (Daniel: "una cotización puede tener productos
+        # de varios documentos... columna que diga el número del documento").
+        # tido=tipo de documento, nudo=número. El PDF muestra la columna solo
+        # si la cotización mezcla >1 documento.
+        if "erp_tido" not in existentes:
+            alters.append("ADD COLUMN erp_tido VARCHAR(10) NULL")
+        if "erp_nudo" not in existentes:
+            alters.append("ADD COLUMN erp_nudo VARCHAR(30) NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizacion_items {a}")
@@ -2241,6 +2278,29 @@ def register_tickets_routes(app, ctx):
         total = _tk_money_round(subtotal * (1 - desc / 100.0))
         return {"hh": hh, "precio_unitario": precio_unitario, "subtotal": subtotal, "total": total}
 
+    def _tk_cotiz_log(cid, accion, detalle=None, user=None):
+        """Registra un evento de una cotización en tk_cotizacion_log Y en el
+        audit central (_audit). Nunca lanza -- una falla de log jamás debe
+        tumbar la acción real (crear/editar/enviar). `detalle` se guarda como
+        JSON. Eventos: crear, editar, editar_aprobada, aprobar, rechazar,
+        reabrir, enviar_correo, generar_ticket, generar_ot, eliminar."""
+        _u = user or (current_username() or "sistema")
+        try:
+            _det_json = json.dumps(detalle, ensure_ascii=False, default=str) if detalle is not None else None
+        except Exception:
+            _det_json = None
+        try:
+            mysql_execute(
+                "INSERT INTO tk_cotizacion_log (cotizacion_id, accion, usuario, detalle) "
+                "VALUES (%s,%s,%s,%s)", (cid, accion[:40], _u[:190], _det_json))
+        except Exception as _e:
+            print(f"[_tk_cotiz_log] {accion} cid={cid}: {_e}", flush=True)
+        try:
+            _audit(f"tk_cotizacion_{accion}", target_type="tk_cotizacion",
+                   target_id=cid, details=(detalle or {}))
+        except Exception:
+            pass
+
     def _tk_cotiz_recalcular(cid, user=None):
         """Recalcula ítems + totales de una cotización según la
         clasificación actual de cada ítem. Persiste en tk_cotizacion_items
@@ -2565,6 +2625,26 @@ def register_tickets_routes(app, ctx):
             pass
         return ""
 
+    def _tk_logo_shs_html(alto_mm=12):
+        """Logo cuadrado "SPORTS HEALTH SOLUTIONS" recreado en HTML/CSS con
+        estilos INLINE (2026-07-22, Daniel: "replica el de Sport & Health
+        Solutions"). Inline obligatorio: los header_template de Playwright se
+        renderizan en un contexto aislado sin acceso al CSS del documento.
+        Va a la izquierda del espartano ILUS en el header del PDF, igual que
+        el formato real de referencia. Si Daniel pasa el PNG exacto, se
+        cambia por un <img> data-URI sin tocar nada más."""
+        return (
+            f'<div style="width:{alto_mm}mm;height:{alto_mm}mm;background:#fff;'
+            'border:0.5mm solid #1e3a8a;box-sizing:border-box;display:flex;'
+            'flex-direction:column;align-items:center;justify-content:center;'
+            'line-height:1;padding:0.5mm;font-family:Arial,Helvetica,sans-serif;">'
+            '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">SPORTS</span>'
+            '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">HEALTH</span>'
+            '<span style="display:block;width:75%;border-top:0.3mm solid #1e3a8a;margin:0.4mm 0;"></span>'
+            '<span style="font-weight:700;font-size:3.4px;color:#1e3a8a;letter-spacing:.14em;">SOLUTIONS</span>'
+            '</div>'
+        )
+
     _TK_UNIDADES = ("", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve",
                     "diez", "once", "doce", "trece", "catorce", "quince", "dieciséis",
                     "diecisiete", "dieciocho", "diecinueve", "veinte")
@@ -2635,14 +2715,18 @@ def register_tickets_routes(app, ctx):
             partes.append(_tk_num_a_palabras_999(unidades))
         return " ".join(partes)
 
-    @app.route("/tickets/cotizaciones/<int:cid>/pdf")
-    @_tickets_required
-    def tk_cotizacion_pdf(cid):
+    def _tk_cotizacion_pdf_ctx(cid):
+        """Arma el contexto del PDF de una cotización (cabecera + ítems +
+        multidoc + rico + snapshot UF). Devuelve (ctx_pdf, cot) o None si no
+        existe. COMPARTIDO por /pdf (Playwright), el visor /ver (HTML
+        instantáneo) y el envío por correo -- una sola fuente de verdad
+        (Daniel: "código muy reciclado")."""
         cot = mysql_fetchone("SELECT * FROM tk_cotizaciones WHERE id=%s", (cid,))
         if not cot:
-            return "Cotización no encontrada", 404
+            return None
         items_rows = mysql_fetchall(
-            "SELECT erp_kopr, descripcion, cantidad, precio_unitario, total, clase_producto "
+            "SELECT erp_kopr, descripcion, cantidad, precio_unitario, total, clase_producto, "
+            "       erp_tido, erp_nudo "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
         # Prorrateo del costo de ruta para PRESENTACIÓN (modelo Triple A:
@@ -2685,6 +2769,15 @@ def register_tickets_routes(app, ctx):
                 return None
             return "{:,.3f}".format(monto_clp / uf_valor).replace(",", "X").replace(".", ",").replace("X", ".")
 
+        # Multidocumento (2026-07-22, Daniel): cada línea recuerda su
+        # documento ERP de origen. La columna "Documento" del PDF se muestra
+        # SOLO si la cotización mezcla >1 documento (si es de uno solo, no
+        # ensucia). doc_label = número del documento (el tido se conserva por
+        # si más adelante se quiere el nombre del tipo).
+        _docs_presentes = {(it.get("erp_nudo") or "").strip()
+                           for it in items_rows if (it.get("erp_nudo") or "").strip()}
+        mostrar_col_documento = len(_docs_presentes) > 1
+
         items = []
         suma_lineas = 0
         for it in items_rows:
@@ -2693,10 +2786,12 @@ def register_tickets_routes(app, ctx):
             pu = _tk_money_round(pu_base + transporte_unidad) if cant > 0 else pu_base
             tot = pu * cant
             suma_lineas += tot
+            _nudo = (it.get("erp_nudo") or "").strip()
             items.append({"sku": it.get("erp_kopr") or "", "descripcion": it.get("descripcion") or "",
                           "cantidad": cant, "precio_unitario": pu, "total": tot,
                           "precio_uf": _precio_uf_str(pu),
-                          "clase_producto": it.get("clase_producto") or None})
+                          "clase_producto": it.get("clase_producto") or None,
+                          "documento": _nudo or "—"})
         subtotal_cab = int(cot.get("subtotal") or 0)
         if items and suma_lineas != subtotal_cab and subtotal_cab > 0:
             delta = subtotal_cab - suma_lineas
@@ -2793,6 +2888,7 @@ def register_tickets_routes(app, ctx):
 
         ctx_pdf = {
             "cot": {
+                "id": cid,
                 "numero": numero_mostrar,
                 "fecha_emision": _fecha_str(cot.get("created_at")) or _fecha_str(_chile_hoy()),
                 "valida_hasta": _fecha_str(cot.get("valida_hasta")),
@@ -2820,13 +2916,25 @@ def register_tickets_routes(app, ctx):
             "alcance_lineas": alcance_lineas,
             "recomendacion_lineas": recomendacion_lineas,
             "terminos_pares": terminos_pares,
+            "mostrar_col_documento": mostrar_col_documento,
         }
         ctx_pdf["logo_b64"] = _tk_cotiz_logo_b64()
+        return (ctx_pdf, cot)
+
+    def _tk_cotizacion_pdf_bytes(cid):
+        """Genera los bytes del PDF (Playwright). Devuelve (pdf_bytes,
+        filename) o None si la cotización no existe. Lanza si el motor no
+        está disponible (el caller lo convierte a 503)."""
+        _res = _tk_cotizacion_pdf_ctx(cid)
+        if not _res:
+            return None
+        ctx_pdf, cot = _res
+        numero_mostrar = ctx_pdf["cot"]["numero"]
         html_doc = render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
 
         _pw_pdf = ctx.get("_pw_pdf")
         if not _pw_pdf:
-            return "Generador de PDF no disponible en este entorno", 503
+            raise RuntimeError("pdf_engine_unavailable")
 
         # Header + footer NATIVOS de Playwright: se repiten en TODAS las
         # páginas sin importar cuántas tenga la cotización (independiente
@@ -2839,10 +2947,9 @@ def register_tickets_routes(app, ctx):
         # padding de 12mm que "simula" el margen lo pone cada template
         # (y el propio body en cotizacion_pdf.html vía .sheet-pad).
         _footer_numero = _html_mod.escape(numero_mostrar)
+        _valida_str = ctx_pdf["cot"].get("valida_hasta") or ""
         _footer_vigencia = (
-            f' · válida hasta el {_html_mod.escape(_fecha_str(cot.get("valida_hasta")) or "")}'
-            if cot.get("valida_hasta") else ""
-        )
+            f' · válida hasta el {_html_mod.escape(_valida_str)}' if _valida_str else "")
         footer_tpl = (
             '<div style="width:100%;font-size:7px;font-family:Arial,Helvetica,sans-serif;'
             'color:#6b7280;padding:3px 12mm 0;box-sizing:border-box;display:flex;'
@@ -2853,19 +2960,22 @@ def register_tickets_routes(app, ctx):
             'Página <span class="pageNumber"></span> de <span class="totalPages"></span></span>'
             '</div>'
         )
+        # Header con 2 logos (Daniel: "replica el de Sport & Health
+        # Solutions"): SPHS cuadrado (CSS) + espartano ILUS, igual que el
+        # formato real de referencia.
         _logo_b64_val = ctx_pdf.get("logo_b64")
-        _header_logo = (
+        _header_ilus = (
             f'<img src="data:image/png;base64,{_logo_b64_val}" style="height:11mm;max-width:42mm;object-fit:contain;">'
             if _logo_b64_val else
             '<span style="font-weight:900;font-size:16px;color:#ffffff;letter-spacing:.02em;">'
             '<span style="color:#dc2626;">&#9650;</span> ILUS<span style="color:#dc2626;">.</span></span>'
         )
-        _header_fecha = _html_mod.escape(_fecha_str(cot.get("created_at")) or _fecha_str(_chile_hoy()) or "")
+        _header_fecha = _html_mod.escape(ctx_pdf["cot"].get("fecha_emision") or "")
         header_tpl = (
             '<div style="width:100%;font-family:Arial,Helvetica,sans-serif;">'
             '<div style="background:#0a0a0a;padding:5mm 12mm;box-sizing:border-box;'
             'display:flex;justify-content:space-between;align-items:center;">'
-            f'<div>{_header_logo}</div>'
+            f'<div style="display:flex;align-items:center;gap:5mm;">{_tk_logo_shs_html(12)}{_header_ilus}</div>'
             '<div style="text-align:right;">'
             '<div style="font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-.01em;">COTIZACIÓN</div>'
             f'<div style="font-size:19px;font-weight:900;color:#dc2626;line-height:1.15;">N&#176; {_footer_numero}</div>'
@@ -2875,21 +2985,51 @@ def register_tickets_routes(app, ctx):
             '</div>'
         )
 
+        pdf_bytes = _pw_pdf(
+            html_doc, page_format="A4",
+            margin={"top": "30mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
+            header_template=header_tpl, footer_template=footer_tpl,
+        )
+        _emp = re.sub(r"[^A-Za-z0-9 _-]", "", (cot.get("empresa") or "cliente"))[:60].strip() or "cliente"
+        _fname = f"Cotizacion_{numero_mostrar}_{_emp}.pdf".replace(" ", "_")
+        return (pdf_bytes, _fname)
+
+    @app.route("/tickets/cotizaciones/<int:cid>/pdf")
+    @_tickets_required
+    def tk_cotizacion_pdf(cid):
+        """PDF de la cotización (Playwright). ?descargar=1 fuerza la descarga
+        (attachment) en vez de abrir inline en el navegador."""
+        if not mysql_fetchone("SELECT id FROM tk_cotizaciones WHERE id=%s", (cid,)):
+            return "Cotización no encontrada", 404
+        if not ctx.get("_pw_pdf"):
+            return "Generador de PDF no disponible en este entorno", 503
         try:
-            pdf_bytes = _pw_pdf(
-                html_doc, page_format="A4",
-                margin={"top": "30mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
-                header_template=header_tpl, footer_template=footer_tpl,
-            )
+            _res = _tk_cotizacion_pdf_bytes(cid)
         except Exception as _e_pdf:
             print(f"[tk_cotizacion_pdf] cid={cid}: {_e_pdf}", flush=True)
             return ("El generador de PDF no está disponible ahora. "
                     "Intenta de nuevo en unos minutos."), 503
+        if not _res:
+            return "Cotización no encontrada", 404
+        pdf_bytes, _fname = _res
         from flask import Response as _Resp
-        _emp = re.sub(r"[^A-Za-z0-9 _-]", "", (cot.get("empresa") or "cliente"))[:60].strip() or "cliente"
-        _fname = f"Cotizacion_{_emp}_{_fecha_str(_chile_hoy())}.pdf"
+        _disp = "attachment" if request.args.get("descargar") else "inline"
         return _Resp(pdf_bytes, mimetype="application/pdf",
-                     headers={"Content-Disposition": f'inline; filename="{_fname}"'})
+                     headers={"Content-Disposition": f'{_disp}; filename="{_fname}"'})
+
+    @app.route("/tickets/cotizaciones/<int:cid>/ver")
+    @_tickets_required
+    def tk_cotizacion_ver(cid):
+        """Visor rápido: la MISMA plantilla del PDF renderizada como HTML al
+        instante (sin Playwright), con toolbar de Descargar/Imprimir/Enviar.
+        Daniel: "una ventana bien espectacular... carga superrápida"."""
+        _res = _tk_cotizacion_pdf_ctx(cid)
+        if not _res:
+            return "Cotización no encontrada", 404
+        ctx_pdf, cot = _res
+        ctx_pdf["modo_visor"] = True
+        ctx_pdf["logo_shs_html"] = _tk_logo_shs_html(14)
+        return render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
 
     # ─────────────────────────────────────────────────────────────────
     #  Detalle de cálculo — SOLO superadmin (2026-07-21, Daniel: "debe
@@ -3449,12 +3589,18 @@ def register_tickets_routes(app, ctx):
                             precio_manual = max(int(float(_pmv)), 0)
                     except (TypeError, ValueError):
                         precio_manual = None
+                    # Multidocumento (2026-07-22): documento ERP de origen de
+                    # la línea (el modal ERP compartido ya conoce tido/nudo).
+                    erp_tido_it = (str(it.get("tido") or "").strip().upper())[:10] or None
+                    erp_nudo_it = (str(it.get("nudo") or "").strip())[:30] or None
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, "
-                        " precio_unitario, subtotal, total, desde_ticket, clase_producto, vaneli_original, precio_manual) "
-                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s)",
-                        (cot_id, sku, descripcion, cantidad, clase_producto, vaneli_original, precio_manual),
+                        " precio_unitario, subtotal, total, desde_ticket, clase_producto, vaneli_original, "
+                        " precio_manual, erp_tido, erp_nudo) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s,%s)",
+                        (cot_id, sku, descripcion, cantidad, clase_producto, vaneli_original,
+                         precio_manual, erp_tido_it, erp_nudo_it),
                     )
             conn.commit()
         except Exception as e:

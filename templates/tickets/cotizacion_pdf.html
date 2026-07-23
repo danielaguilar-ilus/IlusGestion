@@ -91,6 +91,24 @@
   }
   .tb-btn:hover { background: var(--ilus-red-d); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(220,38,38,.45); }
 
+  /* ───── Banner del visor (solo /ver, replica el header del PDF) ───── */
+  .visor-head {
+    width: 210mm; max-width: 100%; margin: 14px auto 0; box-sizing: border-box;
+    background: var(--ilus-black); padding: 5mm 12mm;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .visor-head .vh-logos { display: flex; align-items: center; gap: 5mm; }
+  .visor-head .vh-ilus { height: 11mm; max-width: 42mm; object-fit: contain; }
+  .visor-head .vh-doc { text-align: right; color: #fff; }
+  .visor-head .vh-cot { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+  .visor-head .vh-num { font-size: 19px; font-weight: 900; color: var(--ilus-red); line-height: 1.15; }
+  .visor-head .vh-fecha { font-size: 7.5px; color: #9ca3af; margin-top: 1px; }
+  .visor-head-bar {
+    width: 210mm; max-width: 100%; margin: 0 auto; height: 2mm;
+    background: linear-gradient(90deg, var(--ilus-red) 0 25%, var(--ilus-black) 25% 100%);
+  }
+  .visor-head-bar + .sheet { margin-top: 0; }
+
   /* ───── Hoja (preview pantalla) ───── */
   .sheet {
     width: 210mm;
@@ -184,6 +202,7 @@
     line-height: 1.35;
   }
   table.items td.num  { width: 9mm; color: var(--ilus-mute); }
+  table.items td.doc  { width: 20mm; font-family: ui-monospace, Consolas, monospace; font-size: 7pt; color: var(--ilus-ink); white-space: nowrap; }
   table.items td.cant { width: 16mm; text-align: center; }
   table.items td.puf  { width: 20mm; text-align: right; white-space: nowrap; color: var(--ilus-mute); }
   table.items td.tot  { width: 26mm; text-align: right; font-weight: 700; white-space: nowrap; }
@@ -272,18 +291,45 @@
 {% macro clp(x) -%}{{ "{:,.0f}".format(x or 0)|replace(",", ".") }}{%- endmacro %}
 {% macro clp2(x) -%}{{ "{:,.2f}".format(x or 0)|replace(",", "X")|replace(".", ",")|replace("X", ".") }}{%- endmacro %}
 
-{# ════════════ TOOLBAR (solo pantalla) ════════════ #}
+{# ════════════ TOOLBAR (solo pantalla — visible en el visor /ver) ════════════ #}
 <div class="toolbar no-print">
   <div>
     <div class="tb-title">Cotización {{ cot.numero }} — {{ cot.empresa }}</div>
     <div class="tb-sub">{{ items|length }} ítem(s) · Emitida el {{ cot.fecha_emision }} · Total ${{ clp(cot.total) }}</div>
   </div>
-  <button class="tb-btn" onclick="window.print()">
-    <span style="font-size:13pt;line-height:1">🖨</span> Imprimir / Guardar PDF
-  </button>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    {% if modo_visor and cot.id %}
+    <a class="tb-btn" href="/tickets/cotizaciones/{{ cot.id }}/pdf?descargar=1" target="_blank" rel="noopener"
+       style="text-decoration:none;">
+      <span style="font-size:13pt;line-height:1">⬇</span> Descargar PDF
+    </a>
+    {% endif %}
+    <button class="tb-btn" onclick="window.print()"
+            style="background:#374151;">
+      <span style="font-size:13pt;line-height:1">🖨</span> Imprimir
+    </button>
+  </div>
 </div>
 
 <section class="sheet">
+{# En el VISOR (HTML), el header negro con logos NO viene de Playwright, así
+   que se pinta acá para que la vista se vea idéntica al PDF. En el PDF real
+   este banner se OCULTA (no-print) porque el header nativo de Playwright ya
+   lo dibuja repetido en cada página. #}
+{% if modo_visor %}
+<div class="visor-head no-print">
+  <div class="vh-logos">
+    {% if logo_shs_html %}{{ logo_shs_html|safe }}{% endif %}
+    {% if logo_b64 %}<img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS" class="vh-ilus">{% endif %}
+  </div>
+  <div class="vh-doc">
+    <div class="vh-cot">COTIZACIÓN</div>
+    <div class="vh-num">N° {{ cot.numero }}</div>
+    <div class="vh-fecha">FECHA EMISIÓN: {{ cot.fecha_emision }}</div>
+  </div>
+</div>
+<div class="visor-head-bar no-print"></div>
+{% endif %}
 <div class="sheet-pad">
 
   {# ════════════ DATOS DE LA EMPRESA / DATOS DEL CLIENTE ════════════ #}
@@ -357,7 +403,7 @@
   <table class="items">
     <thead>
       <tr class="label-row">
-        <th colspan="5">
+        <th colspan="{{ 6 if mostrar_col_documento else 5 }}">
           <div class="lr-flex">
           {% if modo_rico %}
             <span>Detalle Económico de una Mantención</span>
@@ -371,6 +417,7 @@
       </tr>
       <tr class="col-row">
         <th class="l">#</th>
+        {% if mostrar_col_documento %}<th class="l">Documento</th>{% endif %}
         <th class="l">Descripción</th>
         <th class="c">Unidades</th>
         <th class="r">Precio UF</th>
@@ -381,6 +428,7 @@
       {% for it in items %}
       <tr>
         <td class="num">{{ loop.index }}</td>
+        {% if mostrar_col_documento %}<td class="doc">{{ it.documento or '—' }}</td>{% endif %}
         <td>{{ it.descripcion }}</td>
         <td class="cant">{{ it.cantidad or 0 }}</td>
         <td class="puf">{{ it.precio_uf or '—' }}</td>

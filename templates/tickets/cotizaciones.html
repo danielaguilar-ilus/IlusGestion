@@ -1415,7 +1415,9 @@ async function _cotWizAsignarDesdeDocumento(items, header){
   _cotWizAplicarOrigenPaso2();
   const nuevos = items.map(function(it){
     return { sku: it.sku || '', nombre: it.nombre || '', qty: (it.qty == null ? 1 : it.qty),
-             tido: it.tido, koen: it.koen, clase_producto: null };
+             // Multidocumento (2026-07-22): cada ítem conserva su documento
+             // ERP de origen (tido+nudo) para la columna "Documento".
+             tido: it.tido || null, nudo: it.nudo || null, koen: it.koen, clase_producto: null };
   });
   _WIZ.items = _WIZ.items.concat(nuevos);
   await cotWizClasificar();
