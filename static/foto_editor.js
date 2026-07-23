@@ -974,5 +974,5 @@
     v.ed.open(cfg.photo);
   }
 
-  window.ilusFotos = { init: init, view: view };
+  window.ilusFotos = { init: init, view: view, compressForUpload: compressForUpload };
 })();

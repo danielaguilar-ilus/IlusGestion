@@ -99,12 +99,6 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .cat-badge-clase{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.68rem;font-weight:800;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;}
 .catf-badge-clase{background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:50px;font-size:.7rem;font-weight:800;vertical-align:middle;margin-left:8px;}
 
-/* ── Piolas: thumbnail de foto + botones cámara/borrar (2026-07-13) ── */
-.catp-foto-thumb{width:60px;height:60px;border-radius:8px;object-fit:cover;border:1px solid #eaecf0;cursor:pointer;background:#f3f4f6;}
-.catp-foto-ph{width:60px;height:60px;border-radius:8px;background:#f8f9fb;border:1px dashed #d1d5db;
-  display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:1.1rem;cursor:pointer;}
-.catp-foto-cell{display:flex;align-items:center;gap:6px;}
-
 /* ── Visor de PDF en modal (manuales) ── */
 .catv-frame{width:100%;height:70vh;border:none;border-radius:0 0 10px 10px;background:#525659;}
 @media(max-width:768px){.catv-frame{height:60vh;}}
@@ -179,37 +173,87 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .catf-drop .t1{font-weight:700;font-size:.8rem;color:#374151;}
 .catf-drop .t2{font-size:.7rem;color:#9ca3af;margin-top:2px;}
 
-/* ── Piolas (cables de máquinas) ── */
+/* ── Piolas (cables de máquinas) — acordeón con 2 fotos por piola
+   (2026-07-23: reemplaza la tabla vieja de 1 sola foto + medida_cm, ver
+   CLAUDE.md tarea "acordeón piolas"). ── */
 .catp-badge{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.7rem;font-weight:800;white-space:nowrap;}
 .catp-badge.full{background:#fee2e2;color:#991b1b;}
-.catp-table-wrap{overflow-x:auto;border:1px solid #eaecf0;border-radius:10px;}
-table.catp-table{width:100%;border-collapse:collapse;font-size:.83rem;min-width:420px;}
-table.catp-table thead th{background:#f8f9fb;color:#6b7280;font-size:.64rem;font-weight:800;
-  text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:8px 10px;border-bottom:1px solid #eaecf0;white-space:nowrap;}
-table.catp-table td{padding:7px 10px;vertical-align:middle;border-bottom:1px solid #f1f3f6;}
-table.catp-table tbody tr:last-child td{border-bottom:none;}
-.catp-medida{font-weight:800;color:#0f172a;white-space:nowrap;}
-.catp-obs{color:#374151;}
-.catp-acciones{display:flex;gap:3px;align-items:center;white-space:nowrap;}
-.catp-act{border:none;background:transparent;width:30px;height:30px;min-height:30px;border-radius:8px;
-  display:inline-flex;align-items:center;justify-content:center;font-size:.85rem;cursor:pointer;padding:0;transition:background .12s;}
-.catp-act.edit{color:#6b7280;} .catp-act.edit:hover{background:#f3f4f6;}
-.catp-act.del{color:#dc2626;} .catp-act.del:hover{background:#fee2e2;}
 .catp-empty{padding:16px;text-align:center;color:#9ca3af;font-size:.82rem;}
-.catp-add-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;padding:10px;
+
+/* Fila-item del acordeón */
+.catp-acc-item{border:1px solid #eaecf0;border-radius:10px;margin-bottom:8px;overflow:hidden;background:#fff;}
+.catp-acc-item:last-child{margin-bottom:0;}
+.catp-acc-header{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none;transition:background .12s;}
+.catp-acc-header:hover{background:#fafbfc;}
+.catp-acc-num{width:26px;height:26px;border-radius:50%;background:#0a0a0a;color:#fff;font-weight:800;font-size:.72rem;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.catp-acc-summary{flex:1;min-width:0;font-size:.85rem;font-weight:700;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.catp-acc-summary .desc{font-weight:500;color:#6b7280;}
+.catp-acc-legado-badge{background:#fff8e1;color:#92400e;padding:2px 8px;border-radius:50px;font-size:.64rem;font-weight:800;white-space:nowrap;margin-right:6px;}
+.catp-fbadge{background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:50px;font-size:.66rem;font-weight:800;white-space:nowrap;flex-shrink:0;}
+.catp-fbadge.half{background:#fff8e1;color:#b45309;}
+.catp-fbadge.full{background:#dcfce7;color:#166534;}
+.catp-acc-chevron{color:#9ca3af;font-size:.8rem;transition:transform .15s;flex-shrink:0;}
+.catp-acc-chevron.open{transform:rotate(180deg);}
+.catp-acc-body{display:none;padding:14px 16px 16px;border-top:1px solid #f1f3f6;background:#fafbfc;}
+.catp-acc-body.open{display:block;}
+
+/* Campos en modo vista */
+.catp-acc-campos{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:14px;}
+.catp-acc-campo.full{grid-column:1/-1;}
+.catp-acc-campo label{font-size:.6rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:2px;}
+.catp-acc-campo .v{font-size:.85rem;color:#0f172a;font-weight:600;}
+.catp-acc-legado-note{background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 10px;
+  font-size:.78rem;margin-bottom:12px;display:flex;gap:6px;align-items:flex-start;}
+.catp-acc-legado-note i{margin-top:1px;flex-shrink:0;}
+
+/* Campos en modo edición */
+.catp-acc-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;margin-bottom:12px;}
+.catp-acc-edit-grid .fld.full{grid-column:1/-1;}
+.catp-acc-edit-grid label{font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:3px;}
+.catp-acc-actions,.catp-acc-edit-actions{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;}
+
+/* Fotos: 2 slots cuadrados con ficha numerada + kebab de opciones
+   (mismo lenguaje visual que .catf-foto/.catf-foto-add del producto) */
+.catp-fotos-wrap{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
+.catp-foto-slot{position:relative;width:110px;height:110px;border-radius:10px;overflow:hidden;border:1px solid #eaecf0;background:#f8f9fb;flex-shrink:0;}
+.catp-foto-slot img{width:100%;height:100%;object-fit:cover;cursor:pointer;display:block;}
+.catp-foto-slot.empty{border:2px dashed #d1d5db;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;color:#9ca3af;cursor:pointer;transition:all .12s;}
+.catp-foto-slot.empty:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}
+.catp-foto-slot.empty.disabled{cursor:default;}
+.catp-foto-slot.empty.disabled:hover{border-color:#d1d5db;color:#9ca3af;background:#f8f9fb;}
+.catp-foto-slot.empty i{font-size:1.2rem;}
+.catp-foto-slot.empty span{font-size:.6rem;font-weight:700;text-align:center;padding:0 4px;}
+.catp-foto-slot-num{position:absolute;top:5px;left:5px;width:20px;height:20px;border-radius:50%;background:#0a0a0a;color:#fff;
+  font-size:.62rem;font-weight:800;display:flex;align-items:center;justify-content:center;z-index:1;}
+.catp-foto-kebab{position:absolute;top:4px;right:4px;width:26px;height:26px;border-radius:50%;border:none;
+  background:rgba(10,10,10,.55);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2;padding:0;}
+.catp-foto-kebab:hover{background:rgba(220,38,38,.85);}
+.catp-menu-disabled{opacity:.45;cursor:not-allowed !important;}
+.catp-menu-disabled:hover{background:transparent !important;color:inherit !important;}
+
+/* Fila para agregar una piola nueva */
+.catp-add-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:4px;padding:12px;
   background:#fafbfc;border:1px dashed #d1d5db;border-radius:10px;}
 .catp-add-row .fld{display:flex;flex-direction:column;gap:2px;}
 .catp-add-row .fld label{font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;}
-.catp-add-row .fld.medida{width:110px;}
+.catp-add-row .fld.diametro{width:110px;}
+.catp-add-row .fld.largo{width:110px;}
+.catp-add-row .fld.desc{flex:1 1 200px;}
 .catp-add-row .fld.obs{flex:1 1 200px;}
-.catp-edit-row input{font-size:.83rem;}
 @media(max-width:560px){
+  .catp-acc-campos,.catp-acc-edit-grid{grid-template-columns:1fr;}
   .catp-add-row{flex-direction:column;align-items:stretch;}
-  .catp-add-row .fld.medida{width:100%;}
+  .catp-add-row .fld.diametro,.catp-add-row .fld.largo{width:100%;}
 }
 @media(max-width:768px){
-  .catp-act{width:38px;height:38px;min-height:38px;min-width:38px;}
-  .catp-add-row input,.catp-add-row textarea{font-size:16px;}
+  .catp-add-row input,.catp-add-row textarea,.catp-acc-edit-grid input{font-size:16px;}
+  .catp-acc-header{min-height:44px;}
+  .catp-acc-num{width:30px;height:30px;font-size:.78rem;}
+  .catp-acc-actions .btn,.catp-acc-edit-actions .btn{min-height:44px;}
+  .catp-foto-kebab{width:44px;height:44px;}
+  .catp-foto-slot-num{width:24px;height:24px;font-size:.7rem;}
 }
 .catp-hist-item{border-bottom:1px solid #f1f3f6;padding:10px 2px;font-size:.83rem;}
 .catp-hist-item:last-child{border-bottom:none;}
@@ -432,12 +476,7 @@ table.catp-table tbody tr:last-child td{border-bottom:none;}
               <span class="catp-badge" id="catpBadge">0/10</span>
             </span>
           </h6>
-          <div class="catp-table-wrap">
-            <table class="catp-table">
-              <thead><tr><th>Foto</th><th>Medida (cm)</th><th>Observación</th><th>Acciones</th></tr></thead>
-              <tbody id="catpTbody"></tbody>
-            </table>
-          </div>
+          <div id="catpAcc"></div>
           <div id="catpAddWrap"></div>
           <input type="file" id="catpFotoInput" accept="image/*" hidden>
         </div>
@@ -1182,79 +1221,150 @@ async function catfCargar(){
 }
 
 // ══════════════ Piolas ══════════════
+// 2026-07-23: acordeón con diametro_mm/largo_m/descripcion/observacion +
+// 2 fotos por piola, reemplaza la tabla vieja de 1 sola foto + medida_cm.
+let _catpAccOpen = new Set();   // ids de piolas con el acordeón expandido
+let _catpEditingId = null;      // id de la piola en modo edición (null = ninguna)
+let _catpSlotActivo = null;     // {piolaId, slot} que está llenando el input de foto compartido
+
 function catpRender(){
-  const tbody = document.getElementById('catpTbody');
+  const acc = document.getElementById('catpAcc');
   document.getElementById('catpBadge').textContent = _catfPiolas.length + '/' + MAX_PIOLAS;
   const cls = _catfPiolas.length >= MAX_PIOLAS ? ' full' : '';
   document.getElementById('catpBadge').className = 'catp-badge' + cls;
 
   if(!_catfPiolas.length){
-    tbody.innerHTML = '<tr><td colspan="4" class="catp-empty">Sin piolas registradas.</td></tr>';
+    acc.innerHTML = '<div class="catp-empty">Sin piolas registradas.</div>';
   } else {
-    tbody.innerHTML = _catfPiolas.map(function(p){
-      const fotoCell = p.foto_url
-        ? '<img class="catp-foto-thumb" src="'+esc(p.foto_url)+'" alt="Foto de la piola" onclick="catpVerFoto('+p.id+')">'
-        : '<div class="catp-foto-ph" title="Sin foto" onclick="catpFotoSubir('+p.id+')"><i class="bi bi-camera"></i></div>';
-      return '<tr data-piola-id="'+p.id+'">'
-        + '<td><div class="catp-foto-cell">'+fotoCell+'</div></td>'
-        + '<td class="catp-medida">'+esc(String(p.medida_cm))+' cm</td>'
-        + '<td class="catp-obs">'+esc(p.observacion||'')+'</td>'
-        + '<td><div class="catp-acciones">'
-        +   '<button type="button" class="catp-act edit" title="'+(p.foto_url?'Reemplazar foto':'Agregar foto')+'" onclick="catpFotoSubir('+p.id+')"><i class="bi bi-camera"></i></button>'
-        +   (p.foto_url ? '<button type="button" class="catp-act del" title="Quitar foto" onclick="catpFotoQuitar('+p.id+')"><i class="bi bi-image-alt"></i></button>' : '')
-        +   '<button type="button" class="catp-act edit" title="Editar" onclick="catpEditarFila('+p.id+')"><i class="bi bi-pencil"></i></button>'
-        +   '<button type="button" class="catp-act del" title="Eliminar" onclick="catpEliminar('+p.id+')"><i class="bi bi-trash"></i></button>'
-        + '</div></td></tr>';
-    }).join('');
+    acc.innerHTML = _catfPiolas.map(catpRenderItem).join('');
   }
   catpRenderAddRow();
 }
 
-// ── Piolas: foto (2026-07-13, Daniel: "las piolas van a requerir fotos") ──
-// Comprime en el navegador antes de subir (misma técnica que foto_editor.js
-// -- max 1600px, JPEG q0.85 -- pero replicada localmente porque
-// compressForUpload() es una función privada del closure de foto_editor.js,
-// no expuesta en window.ilusFotos; no había forma de reusarla sin editar
-// ese archivo, así que se copia el mismo criterio para no inventar uno nuevo).
-function catpComprimirFoto(file){
-  return new Promise(function(resolve){
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = function(){
-      URL.revokeObjectURL(url);
-      const MAXD = 1600;
-      let w = img.naturalWidth, h = img.naturalHeight;
-      const sc = Math.min(1, MAXD / Math.max(w, h));
-      w = Math.round(w * sc); h = Math.round(h * sc);
-      const cv = document.createElement('canvas');
-      cv.width = w; cv.height = h;
-      cv.getContext('2d').drawImage(img, 0, 0, w, h);
-      cv.toBlob(function(blob){
-        resolve(blob || file);
-      }, 'image/jpeg', 0.85);
-    };
-    img.onerror = function(){ URL.revokeObjectURL(url); resolve(file); };
-    img.src = url;
-  });
+function catpFotoBadge(p){
+  const n = (p.foto_url ? 1 : 0) + (p.foto_url2 ? 1 : 0);
+  const cls = n === 0 ? '' : (n === 1 ? ' half' : ' full');
+  const ic = n >= 2 ? '<i class="bi bi-check-lg me-1"></i>' : '';
+  return '<span class="catp-fbadge'+cls+'">'+ic+n+'/2</span>';
 }
 
-let _catpFotoPiolaId = null;
-window.catpFotoSubir = function(piolaId){
-  _catpFotoPiolaId = piolaId;
+function catpRenderItem(p){
+  const abierto = _catpAccOpen.has(p.id);
+  const editando = _catpEditingId === p.id;
+  const resumen = p.legado
+    ? '<span class="catp-acc-legado-badge">Legado · '+esc(p.medida_cm_legada!=null?String(p.medida_cm_legada)+' cm':'—')+'</span>'
+      + '<span class="desc">'+esc(p.descripcion||'')+'</span>'
+    : 'Ø '+esc(String(p.diametro_mm))+' mm × '+esc(String(p.largo_m))+' m — <span class="desc">'+esc(p.descripcion||'')+'</span>';
+
+  return '<div class="catp-acc-item" data-piola-id="'+p.id+'">'
+    + '<div class="catp-acc-header" onclick="catpToggle('+p.id+')">'
+    +   '<span class="catp-acc-num">'+(p.orden!=null?esc(String(p.orden)):'')+'</span>'
+    +   '<span class="catp-acc-summary">'+resumen+'</span>'
+    +   catpFotoBadge(p)
+    +   '<i class="bi bi-chevron-down catp-acc-chevron'+(abierto?' open':'')+'"></i>'
+    + '</div>'
+    + '<div class="catp-acc-body'+(abierto?' open':'')+'">'
+    +   (editando ? catpRenderEditBody(p) : catpRenderViewBody(p))
+    +   catpRenderFotosSlots(p)
+    +   (editando ? '' : catpRenderAcciones(p))
+    + '</div>'
+    + '</div>';
+}
+
+function catpRenderViewBody(p){
+  if(p.legado){
+    return '<div class="catp-acc-legado-note"><i class="bi bi-info-circle"></i>'
+      + '<span>Esta piola es antigua y no tiene diámetro/largo registrados todavía — edítala para completarlos.</span></div>'
+      + '<div class="catp-acc-campos">'
+      +   '<div class="catp-acc-campo full"><label>Descripción</label><div class="v">'+esc(p.descripcion||'—')+'</div></div>'
+      +   (p.observacion ? '<div class="catp-acc-campo full"><label>Observación</label><div class="v">'+esc(p.observacion)+'</div></div>' : '')
+      + '</div>';
+  }
+  return '<div class="catp-acc-campos">'
+    + '<div class="catp-acc-campo"><label>Diámetro</label><div class="v">'+esc(String(p.diametro_mm))+' mm</div></div>'
+    + '<div class="catp-acc-campo"><label>Largo</label><div class="v">'+esc(String(p.largo_m))+' m</div></div>'
+    + '<div class="catp-acc-campo full"><label>Descripción</label><div class="v">'+esc(p.descripcion||'—')+'</div></div>'
+    + (p.observacion ? '<div class="catp-acc-campo full"><label>Observación</label><div class="v">'+esc(p.observacion)+'</div></div>' : '')
+    + '</div>';
+}
+
+function catpRenderEditBody(p){
+  const diam = p.diametro_mm!=null ? p.diametro_mm : '';
+  const largo = p.largo_m!=null ? p.largo_m : '';
+  return '<div class="catp-acc-edit-grid">'
+    + '<div class="fld"><label>Diámetro (mm)</label>'
+    +   '<input type="number" step="0.1" min="3" max="10" class="form-control form-control-sm" id="catpEdDiam_'+p.id+'" value="'+esc(String(diam))+'"></div>'
+    + '<div class="fld"><label>Largo (m)</label>'
+    +   '<input type="number" step="0.1" min="0.1" max="200" class="form-control form-control-sm" id="catpEdLargo_'+p.id+'" value="'+esc(String(largo))+'"></div>'
+    + '<div class="fld full"><label>Descripción *</label>'
+    +   '<input type="text" class="form-control form-control-sm" id="catpEdDesc_'+p.id+'" maxlength="300" value="'+esc(p.descripcion||'')+'"></div>'
+    + '<div class="fld full"><label>Observación</label>'
+    +   '<input type="text" class="form-control form-control-sm" id="catpEdObs_'+p.id+'" maxlength="300" value="'+esc(p.observacion||'')+'"></div>'
+    + '</div>'
+    + '<div class="catp-acc-edit-actions">'
+    +   '<button type="button" class="btn btn-sm btn-ilus" onclick="catpGuardarFila('+p.id+')"><i class="bi bi-check-lg me-1"></i>Guardar</button>'
+    +   '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="catpCancelarEdicion('+p.id+')">Cancelar</button>'
+    + '</div>';
+}
+
+function catpRenderAcciones(p){
+  return '<div class="catp-acc-actions">'
+    + '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="catpEditarFila('+p.id+')"><i class="bi bi-pencil me-1"></i>Editar</button>'
+    + '<button type="button" class="btn btn-sm btn-outline-danger" onclick="catpEliminar('+p.id+')"><i class="bi bi-trash me-1"></i>Eliminar piola</button>'
+    + '</div>';
+}
+
+// ── Fotos: 2 slots (1/2) por piola, input compartido + kebab de opciones ──
+function catpRenderFotoSlot(p, slot){
+  const url = slot === 1 ? p.foto_url : p.foto_url2;
+  if(!url){
+    const puedeSubir = CAN_CARGAR_PIOLAS;
+    const cls = 'catp-foto-slot empty' + (puedeSubir ? '' : ' disabled');
+    const onclick = puedeSubir ? ' onclick="catpFotoSlotClick('+p.id+','+slot+')"' : '';
+    return '<div class="'+cls+'"'+onclick+'>'
+      + '<span class="catp-foto-slot-num">'+slot+'</span>'
+      + '<i class="bi bi-camera-plus"></i><span>Foto '+slot+'</span>'
+      + '</div>';
+  }
+  const canDel = IS_SUPERADMIN;
+  return '<div class="catp-foto-slot">'
+    + '<span class="catp-foto-slot-num">'+slot+'</span>'
+    + '<img src="'+esc(url)+'" alt="Foto '+slot+' de la piola" onclick="catpFotoVer('+p.id+','+slot+')">'
+    + '<div class="dropdown" style="position:absolute;top:4px;right:4px;">'
+    +   '<button type="button" class="catp-foto-kebab" data-bs-toggle="dropdown" aria-expanded="false" title="Opciones"><i class="bi bi-three-dots-vertical"></i></button>'
+    +   '<ul class="dropdown-menu dropdown-menu-end">'
+    +     '<li><a class="dropdown-item" href="#" onclick="event.preventDefault();catpFotoVer('+p.id+','+slot+')"><i class="bi bi-eye me-2"></i>Ver en grande</a></li>'
+    +     (CAN_CARGAR_PIOLAS ? '<li><a class="dropdown-item" href="#" onclick="event.preventDefault();catpFotoSlotClick('+p.id+','+slot+')"><i class="bi bi-arrow-repeat me-2"></i>Reemplazar</a></li>' : '')
+    +     '<li><a class="dropdown-item'+(canDel?'':' catp-menu-disabled')+'" href="#" onclick="event.preventDefault();catpFotoEliminar('+p.id+','+slot+','+canDel+')"><i class="bi bi-trash me-2"></i>Eliminar</a></li>'
+    +   '</ul>'
+    + '</div>'
+    + '</div>';
+}
+
+function catpRenderFotosSlots(p){
+  return '<div class="catp-fotos-wrap">' + catpRenderFotoSlot(p, 1) + catpRenderFotoSlot(p, 2) + '</div>';
+}
+
+window.catpFotoSlotClick = function(piolaId, slot){
+  if(!CAN_CARGAR_PIOLAS) return;
+  _catpSlotActivo = {piolaId: piolaId, slot: slot};
   document.getElementById('catpFotoInput').click();
 };
 document.getElementById('catpFotoInput').addEventListener('change', async function(e){
   const file = e.target.files && e.target.files[0];
   this.value = '';
-  if(!file || !_catpFotoPiolaId) return;
+  if(!file || !_catpSlotActivo) return;
   if(!/^image\//.test(file.type)){ ilusToast('El archivo no es una imagen', {type:'warning'}); return; }
-  const piolaId = _catpFotoPiolaId;
+  const piolaId = _catpSlotActivo.piolaId;
+  const slot = _catpSlotActivo.slot;
   ilusLoader.show('Subiendo foto…');
   try{
-    const blob = await catpComprimirFoto(file);
+    // Reusa el compresor compartido de foto_editor.js (ilusFotos.compressForUpload)
+    // en vez de duplicar la lógica localmente.
+    const comp = await ilusFotos.compressForUpload(file);
     const fd = new FormData();
-    fd.append('file', new File([blob], (file.name||'piola.jpg').replace(/\.\w+$/, '.jpg'), {type:'image/jpeg'}));
-    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId+'/foto', {method:'POST', body: fd});
+    fd.append('file', new File([comp.blob], comp.name || 'piola.jpg', {type: comp.blob.type || 'image/jpeg'}));
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId+'/foto?slot='+slot, {method:'POST', body: fd});
     const d = await r.json();
     ilusLoader.hide();
     if(d.ok){ ilusToast('✓ Foto de la piola guardada', {type:'success'}); await catpRecargar(); }
@@ -1262,32 +1372,41 @@ document.getElementById('catpFotoInput').addEventListener('change', async functi
   }catch(err){ ilusLoader.hide(); ilusToast('Sin conexión al subir la foto', {type:'error'}); }
 });
 
-window.catpFotoQuitar = async function(piolaId){
-  const ok = await ilusConfirm({
-    title: 'Quitar foto de la piola', message: '¿Quitar la foto de esta piola?',
-    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
-  });
-  if(!ok) return;
-  try{
-    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId+'/foto', {method:'DELETE'});
-    const d = await r.json();
-    if(d.ok){ ilusToast('✓ Foto eliminada', {type:'success'}); await catpRecargar(); }
-    else ilusToast(d.error||'No se pudo quitar la foto', {type:'error'});
-  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
-};
-
-window.catpVerFoto = function(piolaId){
+window.catpFotoVer = function(piolaId, slot){
   const p = _catfPiolas.find(function(x){ return x.id === piolaId; });
-  if(!p || !p.foto_url) return;
+  const url = p ? (slot === 1 ? p.foto_url : p.foto_url2) : null;
+  if(!url) return;
   // Visor de zoom reutilizado (mismo patrón que las fotos del producto),
-  // solo lectura -- reemplazar/quitar corre por los botones propios de la fila.
+  // solo lectura -- reemplazar/eliminar corre por el menú propio del slot.
   ilusFotos.view({
-    key: 'catalogo-piola-'+piolaId,
-    photo: {id: piolaId, url: p.foto_url},
+    key: 'catalogo-piola-'+piolaId+'-s'+slot,
+    photo: {id: piolaId, url: url},
     canEdit: false, canDelete: false,
   });
 };
 
+window.catpFotoEliminar = async function(piolaId, slot, puede){
+  // 2026-07-23 (hallazgo de revisión): no confiar solo en "puede" (horneado
+  // en el onclick al renderizar) -- la función queda en window y cualquiera
+  // podría invocarla desde la consola saltándose ese argumento. Se revisa
+  // IS_SUPERADMIN acá mismo, igual que hace catpFotoSlotClick con
+  // CAN_CARGAR_PIOLAS. El backend igual lo bloquea (_catalogo_admin_required),
+  // esto es defensa en profundidad en el cliente.
+  if(!puede || !IS_SUPERADMIN){ ilusToast('Solo el superadministrador puede eliminar fotos', {type:'info'}); return; }
+  const ok = await ilusConfirm({
+    title: 'Eliminar foto', message: '¿Eliminar la foto '+slot+' de esta piola?',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId+'/foto?slot='+slot, {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){ ilusToast('✓ Foto eliminada', {type:'success'}); await catpRecargar(); }
+    else ilusToast(d.error||'No se pudo eliminar la foto', {type:'error'});
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+};
+
+// ── Agregar piola nueva (fila al fondo del acordeón) ──
 function catpRenderAddRow(){
   const wrap = document.getElementById('catpAddWrap');
   if(_catfPiolas.length >= MAX_PIOLAS){
@@ -1295,28 +1414,39 @@ function catpRenderAddRow(){
     return;
   }
   wrap.innerHTML = '<div class="catp-add-row">'
-    + '<div class="fld medida"><label>Medida (cm)</label>'
-    +   '<input type="number" step="0.1" min="0.1" class="form-control form-control-sm" id="catpNuevaMedida"></div>'
+    + '<div class="fld diametro"><label>Diámetro (mm)</label>'
+    +   '<input type="number" step="0.1" min="3" max="10" class="form-control form-control-sm" id="catpNuevaDiam"></div>'
+    + '<div class="fld largo"><label>Largo (m)</label>'
+    +   '<input type="number" step="0.1" min="0.1" max="200" class="form-control form-control-sm" id="catpNuevaLargo"></div>'
+    + '<div class="fld desc"><label>Descripción</label>'
+    +   '<input type="text" class="form-control form-control-sm" id="catpNuevaDesc" placeholder="Ej: cable de la polea alta" maxlength="300"></div>'
     + '<div class="fld obs"><label>Observación</label>'
-    +   '<input type="text" class="form-control form-control-sm" id="catpNuevaObs" placeholder="Ej: cable lateral izquierdo, polea alta" maxlength="300"></div>'
+    +   '<input type="text" class="form-control form-control-sm" id="catpNuevaObs" placeholder="Opcional" maxlength="300"></div>'
     + '<button type="button" class="btn btn-sm btn-ilus" id="catpBtnAgregar"><i class="bi bi-plus-lg me-1"></i>Agregar piola</button>'
     + '</div>';
   document.getElementById('catpBtnAgregar').addEventListener('click', catpAgregar);
 }
 
 async function catpAgregar(){
-  const medidaEl = document.getElementById('catpNuevaMedida');
+  const diamEl = document.getElementById('catpNuevaDiam');
+  const largoEl = document.getElementById('catpNuevaLargo');
+  const descEl = document.getElementById('catpNuevaDesc');
   const obsEl = document.getElementById('catpNuevaObs');
-  const medida = parseFloat(medidaEl.value);
+  const diam = parseFloat(diamEl.value);
+  const largo = parseFloat(largoEl.value);
+  const desc = descEl.value.trim();
   const obs = obsEl.value.trim();
-  if(!medida || medida <= 0){ ilusToast('Ingresa una medida válida (cm)', {type:'warning'}); return; }
-  if(!obs){ ilusToast('La observación es obligatoria (para distinguir el cable)', {type:'warning'}); return; }
+  if(isNaN(diam) || diam < 3 || diam > 10){ ilusToast('Ingresa un diámetro válido (3.0 a 10.0 mm)', {type:'warning'}); return; }
+  if(isNaN(largo) || largo <= 0 || largo > 200){ ilusToast('Ingresa un largo válido (mayor a 0 m)', {type:'warning'}); return; }
+  if(!desc){ ilusToast('La descripción es obligatoria (para ubicar el cable en la máquina)', {type:'warning'}); return; }
   const btn = document.getElementById('catpBtnAgregar');
   btn.disabled = true;
+  const body = {diametro_mm: diam, largo_m: largo, descripcion: desc};
+  if(obs) body.observacion = obs;
   try{
     const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({medida_cm: medida, observacion: obs})});
+      body: JSON.stringify(body)});
     const d = await r.json();
     if(d.ok){
       ilusToast('✓ Piola agregada', {type:'success'});
@@ -1336,36 +1466,58 @@ async function catpRecargar(){
   }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
 }
 
+window.catpToggle = function(piolaId){
+  if(_catpAccOpen.has(piolaId)) _catpAccOpen.delete(piolaId);
+  else _catpAccOpen.add(piolaId);
+  catpRender();
+};
+
 window.catpEditarFila = function(piolaId){
-  const tr = document.querySelector('tr[data-piola-id="'+piolaId+'"]');
-  if(!tr || tr.classList.contains('catp-edit-row')) return;
-  const p = _catfPiolas.find(function(x){ return x.id === piolaId; });
-  if(!p) return;
-  tr.classList.add('catp-edit-row');
-  const fotoCellEd = p.foto_url
-    ? '<img class="catp-foto-thumb" src="'+esc(p.foto_url)+'" alt="Foto de la piola">'
-    : '<div class="catp-foto-ph"><i class="bi bi-camera"></i></div>';
-  tr.innerHTML = '<td><div class="catp-foto-cell">'+fotoCellEd+'</div></td>'
-    + '<td><input type="number" step="0.1" min="0.1" class="form-control form-control-sm" id="catpEdMedida" value="'+esc(String(p.medida_cm))+'"></td>'
-    + '<td><input type="text" class="form-control form-control-sm" id="catpEdObs" maxlength="300" value="'+esc(p.observacion||'')+'"></td>'
-    + '<td><div class="catp-acciones">'
-    +   '<button type="button" class="catp-act edit" title="Guardar" onclick="catpGuardarFila('+piolaId+')"><i class="bi bi-check-lg"></i></button>'
-    +   '<button type="button" class="catp-act del" title="Cancelar" onclick="catpRender()"><i class="bi bi-x-lg"></i></button>'
-    + '</div></td>';
+  _catpEditingId = piolaId;
+  _catpAccOpen.add(piolaId);
+  catpRender();
+};
+
+window.catpCancelarEdicion = function(piolaId){
+  _catpEditingId = null;
+  catpRender();
 };
 
 window.catpGuardarFila = async function(piolaId){
-  const medida = parseFloat(document.getElementById('catpEdMedida').value);
-  const obs = document.getElementById('catpEdObs').value.trim();
-  if(!medida || medida <= 0){ ilusToast('Ingresa una medida válida (cm)', {type:'warning'}); return; }
-  if(!obs){ ilusToast('La observación es obligatoria', {type:'warning'}); return; }
+  const diamEl = document.getElementById('catpEdDiam_'+piolaId);
+  const largoEl = document.getElementById('catpEdLargo_'+piolaId);
+  const descEl = document.getElementById('catpEdDesc_'+piolaId);
+  const obsEl = document.getElementById('catpEdObs_'+piolaId);
+  const desc = descEl.value.trim();
+  if(!desc){ ilusToast('La descripción es obligatoria', {type:'warning'}); return; }
+  const body = {descripcion: desc};
+  const diamRaw = diamEl.value.trim();
+  if(diamRaw !== ''){
+    const diam = parseFloat(diamRaw);
+    if(isNaN(diam) || diam < 3 || diam > 10){ ilusToast('El diámetro debe estar entre 3.0 y 10.0 mm', {type:'warning'}); return; }
+    body.diametro_mm = diam;
+  }
+  const largoRaw = largoEl.value.trim();
+  if(largoRaw !== ''){
+    const largo = parseFloat(largoRaw);
+    if(isNaN(largo) || largo <= 0 || largo > 200){ ilusToast('El largo debe ser mayor a 0 y hasta 200 m', {type:'warning'}); return; }
+    body.largo_m = largo;
+  }
+  // 2026-07-23 (hallazgo de revisión): siempre se manda "observacion",
+  // incluso vacía -- si no, borrar el texto del campo no tenía forma de
+  // limpiar el valor guardado (el backend solo toca la columna cuando la
+  // llave está presente en el body).
+  body.observacion = obsEl.value.trim();
   try{
     const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId, {method:'PATCH',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({medida_cm: medida, observacion: obs})});
+      body: JSON.stringify(body)});
     const d = await r.json();
-    if(d.ok){ ilusToast('✓ Piola actualizada', {type:'success'}); await catpRecargar(); }
-    else ilusToast(d.error||'No se pudo guardar', {type:'error'});
+    if(d.ok){
+      ilusToast('✓ Piola actualizada', {type:'success'});
+      _catpEditingId = null;
+      await catpRecargar();
+    } else ilusToast(d.error||'No se pudo guardar', {type:'error'});
   }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
 };
 
@@ -1380,7 +1532,12 @@ window.catpEliminar = async function(piolaId){
   try{
     const r = await fetch('/catalogo/api/productos/'+catfProductoId+'/piolas/'+piolaId, {method:'DELETE'});
     const d = await r.json();
-    if(d.ok){ ilusToast('✓ Piola eliminada', {type:'success'}); await catpRecargar(); }
+    if(d.ok){
+      ilusToast('✓ Piola eliminada', {type:'success'});
+      _catpAccOpen.delete(piolaId);
+      if(_catpEditingId === piolaId) _catpEditingId = null;
+      await catpRecargar();
+    }
     else ilusToast(d.error||'No se pudo eliminar', {type:'error'});
   }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
 };
@@ -1410,7 +1567,18 @@ document.getElementById('catpBtnHistorial').addEventListener('click', async func
         +' → '+esc(det.medida_cm_despues!=null?String(det.medida_cm_despues)+' cm':'—')+'. ';
     }
     if(det.observacion_antes != null || det.observacion_despues != null){
-      diff += 'Observación: "'+esc(det.observacion_antes||'—')+'" → "'+esc(det.observacion_despues||'—')+'".';
+      diff += 'Observación: "'+esc(det.observacion_antes||'—')+'" → "'+esc(det.observacion_despues||'—')+'". ';
+    }
+    if(det.diametro_mm_antes != null || det.diametro_mm_despues != null){
+      diff += 'Diámetro: '+esc(det.diametro_mm_antes!=null?String(det.diametro_mm_antes)+' mm':'—')
+        +' → '+esc(det.diametro_mm_despues!=null?String(det.diametro_mm_despues)+' mm':'—')+'. ';
+    }
+    if(det.largo_m_antes != null || det.largo_m_despues != null){
+      diff += 'Largo: '+esc(det.largo_m_antes!=null?String(det.largo_m_antes)+' m':'—')
+        +' → '+esc(det.largo_m_despues!=null?String(det.largo_m_despues)+' m':'—')+'. ';
+    }
+    if(det.descripcion_antes != null || det.descripcion_despues != null){
+      diff += 'Descripción: "'+esc(det.descripcion_antes||'—')+'" → "'+esc(det.descripcion_despues||'—')+'".';
     }
     const accion = ev.accion || '';
     return '<div class="catp-hist-item">'
@@ -1954,7 +2122,7 @@ function catwRenderPiolasInputs(){
     html += '<div class="catw-piola-row" data-piola-id="'+(existente ? existente.id : '')+'" data-label="'+label+'">'
       + '<span class="lbl">'+label+(bloqueada ? ' <i class="bi bi-lock-fill text-muted" style="font-size:.7rem;"></i>' : '')+'</span>'
       + '<input type="number" class="form-control form-control-sm catw-piola-medida" style="max-width:110px;" min="0.1" step="0.1" '+dis+' '
-      +   'placeholder="Medida (cm)" value="'+(existente ? existente.medida_cm : '')+'">'
+      +   'placeholder="Medida (cm)" value="'+(existente && existente.medida_cm_legada != null ? existente.medida_cm_legada : '')+'">'
       + '<input type="text" class="form-control form-control-sm catw-piola-obs" placeholder="Observación (ej: cable de polea alta)" '+dis+' '
       +   'value="'+esc(existente ? (existente.observacion||'') : '')+'">'
       + '</div>';
