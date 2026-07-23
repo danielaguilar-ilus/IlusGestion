@@ -296,7 +296,16 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 <div class="tk-hero">
   <div>
     <h4><i class="bi bi-file-earmark-text me-2"></i>Cotizaciones</h4>
-    <div class="sub">Mantención e instalación — cálculo automático por categoría de equipo + costo de ruta por comuna</div>
+    <div class="sub">Mantención e instalación — cálculo automático por categoría de equipo + costo de ruta por comuna
+      {% if uf_info and uf_info.valor %}
+      {# UF VISIBLE (Daniel: "la API de la UF ¿eso quedó?"): el valor se
+         extrae solo de internet (mindicador.cl) y alimenta los montos. #}
+      <span style="display:inline-flex;align-items:center;gap:5px;background:#0a0a0a;color:#fff;border-radius:50px;padding:3px 12px;font-size:.7rem;font-weight:800;margin-left:8px;vertical-align:middle;"
+            title="Valor de la UF obtenido automáticamente desde mindicador.cl{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %} — se congela en cada cotización al emitirla. Editable en Clasificación.">
+        <i class="bi bi-arrow-repeat" style="color:#4ade80;"></i>UF ${{ uf_info.valor | fkg(2) }}
+      </span>
+      {% endif %}
+    </div>
   </div>
   <div class="d-flex gap-2">
     {# 2026-07-23 (Daniel: "antes de crear la cotización, sacar el botón de
@@ -435,7 +444,9 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
    Productos) se eliminaron -- ahora es un único scroll continuo con 5
    secciones numeradas. #}
 <div id="cotWizModal" class="cot-clasif-backdrop" style="z-index:1080;">
-  <div class="cot-clasif-panel" style="max-width:980px;max-height:96vh;max-height:96dvh;">
+  {# 2026-07-22 (Daniel: "un poquito más ancho el modal para que quepa la
+     información"): 980 → 1120px. #}
+  <div class="cot-clasif-panel" style="max-width:1120px;max-height:96vh;max-height:96dvh;">
     <div class="cot-clasif-head">
       <h5><i class="bi bi-file-earmark-plus-fill"></i><span id="cotWizTitulo">Crear Cotización</span></h5>
       <button type="button" class="cot-clasif-close" onclick="cotWizCerrar()" aria-label="Cerrar">
@@ -923,6 +934,14 @@ async function _cotWizCargarEdicion(cid){
     _WIZ.origen = c.origen || null;
     _WIZ.clienteId = c.cliente_id || null;
     _WIZ.ticketId = c.ticket_id || null;
+    // Botonera/reglas de la Sección 5 coherentes con el origen precargado
+    // (revisión Fable: sin esto, editar una cotización de ficha dejaba
+    // habilitada la pill Instalación).
+    _cotWizAplicarOrigenPaso2();
+    // Espera el catálogo de ejecutivos ANTES de setear el valor (revisión
+    // Fable: carrera en la primera apertura -- el select aún no tenía la
+    // <option> y el ejecutivo guardado se descartaba, bloqueando el guardado).
+    try{ await cotWizCargarEjecutivos(); }catch(e){}
     const setV = function(id, v){ const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
     setV('cotWizEmpresa', c.empresa); setV('cotWizRut', c.rut); setV('cotWizEmail', c.email);
     setV('cotWizTelefono', c.telefono); setV('cotWizComuna', c.comuna); setV('cotWizRegion', c.region);
@@ -950,6 +969,7 @@ async function _cotWizCargarEdicion(cid){
       return { sku: it.sku || '', nombre: it.nombre || '', qty: (it.qty == null ? 1 : it.qty),
                tido: it.tido || null, nudo: it.nudo || null, koen: null,
                clase_producto: it.clase_producto || null,
+               vaneli_original: (it.vaneli_original != null ? it.vaneli_original : null),
                precio_manual: (it.precio_manual != null ? it.precio_manual : null) };
     });
     _WIZ.rutaManual = (parseInt(c.costo_ruta, 10) || 0) > 0;
@@ -1316,9 +1336,11 @@ function _wizCliOcultar(){
           // cliente como en Triple A"): accion explicita, no un mensaje
           // muerto -- igual que el "¿Deseas crear un nuevo cliente?" del
           // cotizador de Triple A.
+          {# data-q en vez de argumento inline (revisión Fable): un nombre
+             con apóstrofe ("D'ANGELO") rompía el onclick generado. #}
           cont.innerHTML = '<div class="cot-wiz-dd-vacio">Sin resultados en el ERP para "' + _cotEsc(q) + '"</div>' +
-            '<button type="button" class="cot-wiz-dd-crear" onclick="cotWizCrearClienteNuevo(\'' +
-              _cotEsc(q).replace(/'/g, "\\'") + '\')"><i class="bi bi-person-plus-fill me-1"></i>Crear cliente nuevo</button>';
+            '<button type="button" class="cot-wiz-dd-crear" data-q="' + _cotEsc(q) +
+              '" onclick="cotWizCrearClienteNuevo(this.dataset.q)"><i class="bi bi-person-plus-fill me-1"></i>Crear cliente nuevo</button>';
         } else {
           cont.innerHTML = res.map(function(c, i){
             // 2026-07-23 (Daniel, rediseño Paso 1): badge "En plan" junto al
@@ -1560,6 +1582,10 @@ async function _cotWizAsignarDesdeDocumento(items, header){
       _completados.push('comuna');
       cotWizBuscarRuta();
     }
+    if (!document.getElementById('cotWizDireccion').value.trim() && header.direccion){
+      document.getElementById('cotWizDireccion').value = header.direccion;
+      _completados.push('dirección');
+    }
     if (_completados.length){
       ilusToast('Cliente completado desde el documento (' + _completados.join(', ') + ')', {type:'info'});
     }
@@ -1635,6 +1661,10 @@ function cotWizFuenteDocumento(){
                 cliente: dd.documento.cliente_nombre, rut: dd.documento.cliente_rut,
                 email: dd.documento.email, telefono: dd.documento.telefono,
                 comuna: dd.documento.comuna,
+                // 2026-07-22 (Daniel: "la dirección no la está trayendo y
+                // ese motor ya estaba listo para traer todo"): el endpoint
+                // SIEMPRE devolvió direccion -- solo faltaba pasarla.
+                direccion: dd.documento.direccion,
               };
             }
           }catch(e){ /* silencioso -- se sigue sin header, el usuario completa a mano */ }
@@ -2016,7 +2046,11 @@ function cotWizResumen(){
       const _desc = _cotWizDesc();
       const payload = {
         items: _WIZ.items.map(it => ({ sku: it.sku, nombre: it.nombre, qty: it.qty,
-                                       tido: it.tido, koen: it.koen, clase_producto: it.clase_producto,
+                                       // nudo (revisión Fable): sin él la columna
+                                       // "Documento" del PDF multidoc quedaba muerta.
+                                       tido: it.tido, nudo: it.nudo || null, koen: it.koen,
+                                       clase_producto: it.clase_producto,
+                                       vaneli_original: (it.vaneli_original != null ? it.vaneli_original : null),
                                        // precio unitario editado a mano (null = automático)
                                        precio_manual: (it.precio_manual != null ? it.precio_manual : null) })),
         header: {

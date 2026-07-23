@@ -276,6 +276,11 @@
   @media print {
     body { background: #fff; }
     .no-print, .toolbar { display: none !important; }
+    /* El banner del visor SÍ se imprime (revisión Fable: sin él, imprimir
+       desde el navegador salía sin logos ni N° de cotización). En el PDF
+       de Playwright no existe (modo_visor=False) -- cero duplicación. */
+    .visor-head { display: flex !important; width: auto; margin: 0; }
+    .visor-head-bar { display: block !important; width: auto; }
     .sheet { width: auto; min-height: auto; margin: 0; box-shadow: none; }
   }
 

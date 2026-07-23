@@ -2869,9 +2869,14 @@ def register_tickets_routes(app, ctx):
             _previas = 0
             if _rut_cli:
                 try:
+                    # RUT normalizado a ambos lados (revisión Fable): el ERP
+                    # trae "77123456-7", la ficha "77.123.456-7" -- comparar
+                    # crudo contra crudo hacía que un cliente recurrente
+                    # saliera como "Primera mantención" en el PDF.
                     _pr = mysql_fetchone(
                         "SELECT COUNT(*) AS n FROM tk_cotizaciones "
-                        "WHERE rut=%s AND id<>%s AND tipo_servicio='mantencion' AND COALESCE(eliminada,0)=0",
+                        "WHERE REPLACE(REPLACE(rut,'.',''),'-','') = REPLACE(REPLACE(%s,'.',''),'-','') "
+                        "  AND id<>%s AND tipo_servicio='mantencion' AND COALESCE(eliminada,0)=0",
                         (_rut_cli, cid))
                     _previas = int((_pr or {}).get("n") or 0)
                 except Exception:
@@ -3882,7 +3887,7 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
         items = mysql_fetchall(
             "SELECT id, erp_kopr AS sku, descripcion AS nombre, cantidad AS qty, clase_producto, "
-            "       precio_manual, precio_unitario, erp_tido AS tido, erp_nudo AS nudo "
+            "       precio_manual, precio_unitario, erp_tido AS tido, erp_nudo AS nudo, vaneli_original "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
         def _iso(v):
@@ -4058,12 +4063,21 @@ def register_tickets_routes(app, ctx):
                         precio_manual = None
                     erp_tido_it = (str(it.get("tido") or "").strip().upper())[:10] or None
                     erp_nudo_it = (str(it.get("nudo") or "").strip())[:30] or None
+                    # vaneli_original se PRESERVA en la edición (revisión
+                    # Fable: el DELETE+INSERT lo dejaba NULL y se perdía la
+                    # trazabilidad del valor ERP).
+                    vaneli_it = None
+                    try:
+                        _vv = it.get("vaneli_original")
+                        vaneli_it = int(float(_vv)) if _vv not in (None, "") else None
+                    except (TypeError, ValueError):
+                        vaneli_it = None
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, precio_unitario, "
-                        " subtotal, total, desde_ticket, clase_producto, precio_manual, erp_tido, erp_nudo) "
-                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s)",
-                        (cid, sku, descripcion, cantidad, clase_producto, precio_manual, erp_tido_it, erp_nudo_it))
+                        " subtotal, total, desde_ticket, clase_producto, precio_manual, erp_tido, erp_nudo, vaneli_original) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s,%s,%s)",
+                        (cid, sku, descripcion, cantidad, clase_producto, precio_manual, erp_tido_it, erp_nudo_it, vaneli_it))
                 if _estaba_aprobada:
                     cur.execute("UPDATE tk_cotizaciones SET editada_post_aprobacion=1 WHERE id=%s", (cid,))
             conn.commit()
@@ -4077,6 +4091,18 @@ def register_tickets_routes(app, ctx):
         finally:
             conn.close()
 
+        # CRÍTICO (revisión Fable 2026-07-22, mismo patrón "pool REPEATABLE
+        # READ vs conexión separada" confirmado 3 veces en este proyecto):
+        # la edición se commiteó en una conexión DIRECTA, pero recalcular lee
+        # por el pool (autocommit=False) cuyo snapshot quedó abierto ANTES
+        # del commit -> vería los ítems VIEJOS y dejaría los nuevos en $0.
+        # Cerrar la transacción del pool fuerza un snapshot fresco.
+        try:
+            _get_db = ctx.get("get_db")
+            if _get_db:
+                _get_db().rollback()
+        except Exception:
+            pass
         totales = _tk_cotiz_recalcular(cid, user=user)
         _despues = {"empresa": empresa, "total": (totales or {}).get("total"),
                     "tipo_servicio": tipo_servicio, "items": len(items)}
