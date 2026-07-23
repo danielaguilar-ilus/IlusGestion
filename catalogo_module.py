@@ -1005,15 +1005,18 @@ def register_catalogo_routes(app, ctx):
             _key = row.pop("foto_thumb_key", None)
             row["foto_thumb_url"] = ("/f/" + _key) if _key else None
             row["clase_producto_label"] = _cat_clases_map().get(row.get("clase_producto") or "")
-            # "registrado" (2026-07-12, patron "impreso/no impreso" de Etiquetas
-            # aplicado al catalogo): ficha completa = familia + al menos 1 piola +
-            # al menos 1 manual (nuevo multi-manual O el legado singular).
+            # "registrado" (2026-07-23, Daniel: "se debería mostrar los
+            # archivos que ya tengo gestionado, bien sea por clasificación,
+            # bien sea por foto, bien sea por PDF... al menos tiene que
+            # tener una de esas tres"). ANTES exigía family + piola + manual
+            # LAS TRES juntas (2026-07-12) -- con eso casi ningún producto
+            # se veía "gestionado" aunque ya tuviera trabajo real encima.
+            # Ahora basta con UNA: clasificación (clase_producto) O fotos
+            # O manual/PDF.
             tiene_manual_alguno = bool(row.get("tiene_manual")) or int(row.get("total_manuales") or 0) > 0
-            row["registrado"] = bool(
-                (row.get("familia") or "").strip()
-                and int(row.get("total_piolas") or 0) > 0
-                and tiene_manual_alguno
-            )
+            tiene_clasificacion = bool((row.get("clase_producto") or "").strip())
+            tiene_fotos = int(row.get("total_fotos") or 0) > 0
+            row["registrado"] = tiene_clasificacion or tiene_fotos or tiene_manual_alguno
             rows_out.append(row)
 
         return jsonify({
@@ -1075,8 +1078,10 @@ def register_catalogo_routes(app, ctx):
         producto["clase_producto_label"] = _cat_clases_map().get(producto.get("clase_producto") or "")
         manual_key = producto.pop("manual_pdf_key", None)
         tiene_manual_alguno = bool(manual_key) or len(manuales) > 0
-        producto["registrado"] = bool(
-            (producto.get("familia") or "").strip() and piolas and tiene_manual_alguno)
+        # 2026-07-23 (Daniel): mismo criterio OR que cat_api_list -- basta
+        # clasificación O fotos O manual, no las tres juntas.
+        tiene_clasificacion = bool((producto.get("clase_producto") or "").strip())
+        producto["registrado"] = tiene_clasificacion or bool(fotos) or tiene_manual_alguno
         # 2026-07-21 (Daniel, Etapa 2 "acciones unificadas"): la sección
         # "Auditoría" (quién creó/editó el producto) es SOLO para superadmin.
         # No alcanza con ocultarla en el frontend -- el network tab expondría
