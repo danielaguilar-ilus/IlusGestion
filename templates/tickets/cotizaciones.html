@@ -340,85 +340,105 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
     <option value="rejected">Rechazada</option>
   </select>
 </div>
-{% for c in cotizaciones %}
-<div class="tk-row cot-row" onclick="cotRowClick(event, {{ c.id }})" style="cursor:pointer;"
-     data-num="{{ (c.numero_cotizacion or '')|lower }}" data-emp="{{ (c.empresa or c.rut or '')|lower }}"
-     data-estado="{{ c.estado }}" title="Clic para ver / editar esta cotización">
-  <span class="tk-num">{{ c.numero_cotizacion or ('#' ~ c.id) }}</span>
-  <div><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></div>
-  <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
-  {% if c.vencida %}<span class="tk-badge cb-vencida" title="La validez ya pasó">Vencida</span>{% endif %}
-  {% if c.editada_post_aprobacion %}<i class="bi bi-pencil-fill" style="color:#f59e0b;font-size:.8rem;" title="Editada después de aprobarse — revisa el historial"></i>{% endif %}
-  <span style="font-size:.8rem;color:#6b7280;">{{ c.created_at | chile_fmt }}</span>
-  {% if c.total %}
-  <span class="tk-row-total">
-    ${{ '{:,}'.format(c.total | int).replace(',', '.') }}
-    {# 2026-07-21 (Daniel: "ese valor lo vamos a expresar en UF, a la UF
-       actual... si sale cuarenta mil ochocientos cuarenta y cuatro con
-       setenta y nueve, que es lo que está la UF, vamos a dividirlo").
-       El total YA incluye el costo de ruta (peaje/traslado) -- no hace
-       falta sumarlo aparte, el "instructivo" solo lo aclara. Si la API
-       de mindicador.cl está caída, uf_total viene None y no se muestra
-       nada -- el CLP nunca deja de verse. #}
-    {% if c.uf_total is not none and uf_info %}
-    <span class="tk-row-uf"
-          title="Valor UF hoy{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %}: ${{ uf_info.valor | fkg(2) }} · Este monto equivale a {{ c.uf_total | fkg(2) }} UF, calculado desde las horas-hombre y el costo de ruta.">
-      <i class="bi bi-info-circle"></i>{{ c.uf_total | fkg(2) }} UF
-    </span>
-    {% endif %}
-  </span>
-  {% else %}
-  <span class="tk-row-total cero">sin precio</span>
-  {% endif %}
-  <a class="tk-row-btn-pdf" href="/tickets/cotizaciones/{{ c.id }}/ver" target="_blank" rel="noopener"
-     title="Ver / descargar el PDF de la cotización"><i class="bi bi-file-earmark-pdf-fill"></i></a>
-  <button type="button" class="tk-row-btn-send" title="Enviar por correo"
-          onclick="cotAbrirEnviar({{ c.id }})"><i class="bi bi-envelope-fill"></i></button>
-  {% if permissions.superadmin %}
-  {% if c.estado != 'approved' %}
-  <button type="button" class="tk-row-btn-ok" title="Aprobar cotización"
-          onclick="cotCambiarEstado({{ c.id }}, 'approved', this)"><i class="bi bi-check-circle-fill"></i></button>
-  {% endif %}
-  {% if c.estado not in ['rejected'] %}
-  <button type="button" class="tk-row-btn-no" title="Rechazar cotización"
-          onclick="cotCambiarEstado({{ c.id }}, 'rejected', this)"><i class="bi bi-x-circle"></i></button>
-  {% endif %}
-  <button type="button" class="tk-row-btn-del" title="Eliminar cotización"
-          onclick="cotEliminar({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')"><i class="bi bi-trash"></i></button>
-  {% endif %}
-  {% if permissions.superadmin %}
-  {# 2026-07-21 (Daniel: "debe haber, para el superadministrador, poder
-     bajar un detalle de cómo se calcula una cotización completa").
-     Estricto superadmin -- NO admin -- a diferencia del botón de
-     auditoría de abajo, porque Daniel lo pidió explícitamente así. #}
-  <a class="tk-row-btn-calc" href="/tickets/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
-     title="Ver detalle de cálculo (horas-hombre, técnicos, zona) — solo superadmin">
-    <i class="bi bi-calculator-fill"></i>
-  </a>
-  {% endif %}
-  {% if c.ticket_id %}
-  <a class="tk-row-ticket-link" href="/tickets/{{ c.ticket_id }}" target="_blank" rel="noopener">
-    <i class="bi bi-ticket-perforated-fill me-1"></i>{{ c.numero_ticket or ('Ticket #' ~ c.ticket_id) }}
-  </a>
-  {% else %}
-  <button type="button" class="tk-row-btn-ticket" onclick="cotGenerarTicket({{ c.id }}, this)">
-    <i class="bi bi-ticket-perforated me-1"></i>Generar ticket
-  </button>
-  {% endif %}
-  {% if permissions.superadmin or permissions.admin %}
-  {# 2026-07-23 (Daniel: "necesito saber quién lo hizo, cuándo se hizo y
-     si se editó, quién lo editó, con fecha de inicio y fecha de última
-     actualización" -- a nivel jefatura). Mismo gate que
-     permissions.superadmin en tickets/list.html. data-* en vez de
-     onclick con valores directos para no pelear con el escapado HTML de
-     strings dentro de un atributo. #}
-  <button type="button" class="tk-row-btn-audit" title="Ver historial (quién hizo qué y cuándo)"
-          onclick="cotVerHistorial({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')">
-    <i class="bi bi-clock-history"></i>
-  </button>
-  {% endif %}
+{# 2026-07-23 (Daniel, con screenshot de Usuarios y roles: "¿puedes dejar
+   la tabla y header como lo teníamos ahí?"): tabla real .ilus-card +
+   .ilus-card-header (banda negra) + .ilus-table (columnas sobre negro),
+   el MISMO patrón compartido de users.html. Se conservan TODOS los
+   botones/acciones y el click-fila-para-editar (Regla #4.2) -- solo
+   cambió el layout de tarjetas sueltas a tabla con columnas. #}
+<div class="ilus-card">
+  <div class="ilus-card-header">
+    <span><i class="bi bi-file-earmark-text me-2"></i>Gestión de cotizaciones</span>
+    <span class="small fw-normal" style="color:#9ca3af;">{{ cotizaciones|length }} cotización(es) listada(s)</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table ilus-table mb-0 table-mobile-cards">
+      <thead>
+        <tr>
+          <th>Número</th>
+          <th>Cliente</th>
+          <th>Estado</th>
+          <th>Fecha</th>
+          <th class="text-end">Total</th>
+          <th>Ticket</th>
+          <th class="text-center">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cotizaciones %}
+        <tr class="cot-row" onclick="cotRowClick(event, {{ c.id }})" style="cursor:pointer;"
+            data-num="{{ (c.numero_cotizacion or '')|lower }}" data-emp="{{ (c.empresa or c.rut or '')|lower }}"
+            data-estado="{{ c.estado }}" title="Clic para ver / editar esta cotización">
+          <td data-label="Número"><span class="tk-num">{{ c.numero_cotizacion or ('#' ~ c.id) }}</span></td>
+          <td data-label="Cliente"><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></td>
+          <td data-label="Estado" style="white-space:nowrap;">
+            <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
+            {% if c.vencida %}<span class="tk-badge cb-vencida" title="La validez ya pasó">Vencida</span>{% endif %}
+            {% if c.editada_post_aprobacion %}<i class="bi bi-pencil-fill" style="color:#f59e0b;font-size:.8rem;" title="Editada después de aprobarse — revisa el historial"></i>{% endif %}
+          </td>
+          <td data-label="Fecha" style="font-size:.8rem;color:#6b7280;white-space:nowrap;">{{ c.created_at | chile_fmt }}</td>
+          <td data-label="Total" class="text-end">
+            {% if c.total %}
+            <span class="tk-row-total">
+              ${{ '{:,}'.format(c.total | int).replace(',', '.') }}
+              {# El total YA incluye el costo de ruta; UF solo si la API respondió. #}
+              {% if c.uf_total is not none and uf_info %}
+              <span class="tk-row-uf"
+                    title="Valor UF hoy{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %}: ${{ uf_info.valor | fkg(2) }} · Este monto equivale a {{ c.uf_total | fkg(2) }} UF, calculado desde las horas-hombre y el costo de ruta.">
+                <i class="bi bi-info-circle"></i>{{ c.uf_total | fkg(2) }} UF
+              </span>
+              {% endif %}
+            </span>
+            {% else %}
+            <span class="tk-row-total cero">sin precio</span>
+            {% endif %}
+          </td>
+          <td data-label="Ticket" style="white-space:nowrap;">
+            {% if c.ticket_id %}
+            <a class="tk-row-ticket-link" href="/tickets/{{ c.ticket_id }}" target="_blank" rel="noopener">
+              <i class="bi bi-ticket-perforated-fill me-1"></i>{{ c.numero_ticket or ('Ticket #' ~ c.ticket_id) }}
+            </a>
+            {% else %}
+            <button type="button" class="tk-row-btn-ticket" onclick="cotGenerarTicket({{ c.id }}, this)">
+              <i class="bi bi-ticket-perforated me-1"></i>Generar ticket
+            </button>
+            {% endif %}
+          </td>
+          <td data-label="Acciones" class="text-center" style="white-space:nowrap;">
+            <a class="tk-row-btn-pdf" href="/tickets/cotizaciones/{{ c.id }}/ver" target="_blank" rel="noopener"
+               title="Ver / descargar el PDF de la cotización"><i class="bi bi-file-earmark-pdf-fill"></i></a>
+            <button type="button" class="tk-row-btn-send" title="Enviar por correo"
+                    onclick="cotAbrirEnviar({{ c.id }})"><i class="bi bi-envelope-fill"></i></button>
+            {% if permissions.superadmin %}
+            {% if c.estado != 'approved' %}
+            <button type="button" class="tk-row-btn-ok" title="Aprobar cotización"
+                    onclick="cotCambiarEstado({{ c.id }}, 'approved', this)"><i class="bi bi-check-circle-fill"></i></button>
+            {% endif %}
+            {% if c.estado not in ['rejected'] %}
+            <button type="button" class="tk-row-btn-no" title="Rechazar cotización"
+                    onclick="cotCambiarEstado({{ c.id }}, 'rejected', this)"><i class="bi bi-x-circle"></i></button>
+            {% endif %}
+            <button type="button" class="tk-row-btn-del" title="Eliminar cotización"
+                    onclick="cotEliminar({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')"><i class="bi bi-trash"></i></button>
+            {# Detalle de cálculo: estricto superadmin (Daniel lo pidió así). #}
+            <a class="tk-row-btn-calc" href="/tickets/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
+               title="Ver detalle de cálculo (horas-hombre, técnicos, zona) — solo superadmin">
+              <i class="bi bi-calculator-fill"></i>
+            </a>
+            {% endif %}
+            {% if permissions.superadmin or permissions.admin %}
+            <button type="button" class="tk-row-btn-audit" title="Ver historial (quién hizo qué y cuándo)"
+                    onclick="cotVerHistorial({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')">
+              <i class="bi bi-clock-history"></i>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
-{% endfor %}
 {% else %}
 <div class="tk-soon">
   <i class="bi bi-file-earmark-plus" style="font-size:2.2rem;display:block;margin-bottom:10px;"></i>
