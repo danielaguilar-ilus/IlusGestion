@@ -309,9 +309,20 @@ async function clcUfRefrescar(){
   try{
     const r = await fetch('/api/uf-refresh', {method:'POST'});
     const d = await r.json();
-    clcUfPintar(d);
-    ilusToast('UF actualizada', {type:'success'});
-  }catch(e){ ilusToast('No se pudo refrescar la UF', {type:'error'}); }
+    // 2026-07-23 (Daniel: "aprieto el boton y no pasa nada"): el bug real
+    // era que este toast de exito se disparaba SIEMPRE, incluso cuando
+    // r.ok era false (403 sin sesion superadmin, CSRF invalido, etc) --
+    // clcUfPintar(d) ademas pintaba "No disponible ahora" (mensaje pensado
+    // para cuando mindicador.cl no responde), ocultando el error real.
+    // Ahora: solo se repinta/celebra si d.ok es realmente true; si no, se
+    // deja el ultimo valor bueno en pantalla y se avisa el motivo real.
+    if(d && d.ok){
+      clcUfPintar(d);
+      ilusToast('✓ UF actualizada', {type:'success'});
+    } else {
+      ilusToast(d && d.error ? d.error : 'No se pudo refrescar la UF', {type:'error'});
+    }
+  }catch(e){ ilusToast('No se pudo refrescar la UF (error de conexión)', {type:'error'}); }
   finally{ btn.disabled = false; }
 }
 

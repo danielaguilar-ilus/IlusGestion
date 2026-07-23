@@ -72043,6 +72043,23 @@ def _tickets_tpl_seed():
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Te asignaron el ticket "
             "<strong>{{numero_ticket}}</strong>.{{extracto}}</div></div>"),
+        # 2026-07-23 (Daniel): "no se si esta parte tiene una parte en las
+        # plantillas de comunicaciones, el envio de esta plantilla... si no,
+        # creala" -- el envio de Cotizaciones (tk_api_cotizacion_enviar)
+        # armaba el HTML a mano, sin pasar por el motor editable. Variables:
+        # {{numero_cotizacion}}, {{empresa}}, {{total}} (ya formateado en
+        # $), {{valida_hasta}} (dd-mm-aaaa o vacio), {{mensaje}} (nota
+        # opcional del remitente, ya escapada).
+        'cotizacion_envio': (
+            "Cotización {{numero_cotizacion}} · {{empresa}}",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Estimados,</p>"
+            "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Adjuntamos la cotización "
+            "<strong>{{numero_cotizacion}}</strong> para <strong>{{empresa}}</strong> por un total de "
+            "<strong>{{total}}</strong>{{valida_hasta}}.{{mensaje}}</div></div>"
+            "<p style=\"font-size:14px;color:#374151;margin:16px 0 0\">Quedamos atentos a sus "
+            "comentarios.</p>"),
     }
 
 

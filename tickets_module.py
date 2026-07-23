@@ -2771,7 +2771,9 @@ def register_tickets_routes(app, ctx):
         def _precio_uf_str(monto_clp):
             if not uf_valor:
                 return None
-            return "{:,.3f}".format(monto_clp / uf_valor).replace(",", "X").replace(".", ",").replace("X", ".")
+            # 2026-07-23 (Daniel): "manejemos los precios UF en un decimal
+            # nomás, para que no haya mucho enredo" -- antes .3f.
+            return "{:,.1f}".format(monto_clp / uf_valor).replace(",", "X").replace(".", ",").replace("X", ".")
 
         # Multidocumento (2026-07-22, Daniel): cada línea recuerda su
         # documento ERP de origen. La columna "Documento" del PDF se muestra
@@ -4225,19 +4227,43 @@ def register_tickets_routes(app, ctx):
             + (f"<p>{_html_mod.escape(_mensaje)}</p>" if _mensaje else "")
             + "<p>Quedamos atentos a sus comentarios.</p>"
         )
+        subject_default = f"Cotización {numero} · {empresa}"
+        subject, cuerpo_para_master = subject_default, _cuerpo_html
+        # 2026-07-23 (Daniel): "no se si esta parte tiene una parte en las
+        # plantillas de comunicaciones... si no, creala" -- mismo motor
+        # editable que ya usan asignacion/en_curso/etc (comm_templates,
+        # modulo='tickets', estado='cotizacion_envio'). El HTML de arriba
+        # es SOLO el fallback si la plantilla no existe/esta apagada.
+        if _render_comm_template:
+            try:
+                tpl = _render_comm_template(
+                    "cotizacion_envio", "email",
+                    {"numero_cotizacion": numero, "empresa": empresa,
+                     "total": _total_fmt,
+                     "valida_hasta": (f", válida hasta el {_valida_str}" if _valida_str else ""),
+                     "mensaje": (f"<p>{_html_mod.escape(_mensaje)}</p>" if _mensaje else "")},
+                    modulo="tickets")
+                if tpl:
+                    _asu, _cue = tpl
+                    if (_asu or "").strip():
+                        subject = _asu.strip()
+                    if (_cue or "").strip():
+                        cuerpo_para_master = _cue
+            except Exception as _e_tpl:
+                print(f"[tk_api_cotizacion_enviar] plantilla no usada cid={cid}: {_e_tpl}", flush=True)
         if _ilus_email_master:
             try:
                 html_body = _ilus_email_master({
-                    "subject": f"Cotización {numero}",
+                    "subject": subject,
                     "title": f"Cotización {numero}",
                     "subtitle": empresa,
-                    "message": _cuerpo_html,
+                    "message": cuerpo_para_master,
                 })
             except Exception:
-                html_body = _cuerpo_html
+                html_body = cuerpo_para_master
         else:
-            html_body = _cuerpo_html
-        subject = _brand_subject(f"Cotización {numero} · {empresa}")
+            html_body = cuerpo_para_master
+        subject = _brand_subject(subject)
         _adj = [(_fname, pdf_bytes, "application/pdf")]
         enviados, fallidos = [], []
         for dest in buenos:
