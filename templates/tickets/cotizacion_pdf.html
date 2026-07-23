@@ -3,48 +3,61 @@
 <head>
 <meta charset="utf-8">
 {# ════════════════════════════════════════════════════════════════════
-   PDF DE COTIZACIÓN ILUS — réplica del formato ERP clásico
-   (referencia: Cotizacion_ONE PLUS SPA_24-06-2026.pdf, COT-000049).
-   Renderizado por Playwright/Chromium igual que ot_pdf.html.
+   PDF DE COTIZACIÓN ILUS — réplica exacta del formato real Sport and
+   Health Solutions (referencia: Cotizacion N° 0125 "La Dehesa" y
+   N° 0126 "Parque Estadio Nacional", adjuntadas por Daniel 2026-07-22).
+   Renderizado por Playwright/Chromium.
 
-   Contrato de variables (las provee el backend):
-     cot: numero, fecha_emision, valida_hasta, empresa, rut, direccion,
-          comuna, region, email, telefono, ejecutivo, tipo_servicio_label,
-          notas, subtotal, descuento_pct, descuento_monto, costo_ruta,
-          iva_pct, iva_monto, total
-     items: [ {sku, descripcion, cantidad, precio_unitario, total}, ... ]
+   El header de marca (logo+COTIZACIÓN+N°+fecha) y el footer (marca+
+   página X de Y) NO viven en este archivo -- se inyectan vía
+   page.pdf(header_template=..., footer_template=...) en
+   tk_cotizacion_pdf() (tickets_module.py), que es el ÚNICO mecanismo
+   que Chromium repite en TODAS las páginas sin importar cuántas tenga
+   la cotización. Por eso @page margin=0 acá: los márgenes reales los
+   define esa llamada (top/bottom grandes para el header/footer,
+   left/right en 0 para que el fondo negro del header sea full-bleed;
+   `.sheet-pad` recrea visualmente el margen lateral del CONTENIDO).
+
+   Contrato de variables (las provee tk_cotizacion_pdf):
+     cot: numero, fecha_emision, valida_hasta, validez_dias, empresa,
+          rut, direccion, comuna, region, email, telefono, ejecutivo,
+          contacto_nombre, tipo_servicio_label, notas, subtotal,
+          descuento_pct, descuento_monto, costo_ruta, iva_pct,
+          iva_monto, total
+     items: [ {sku, descripcion, cantidad, precio_unitario, precio_uf, total}, ... ]
      total_en_palabras: string o None (línea "SON: ...")
+     uf_info: {"valor": float, "fecha": str} o None
+     modo_rico: bool -- activa la sección "Propuesta de Mantención
+          Preventiva" (solo tipo_servicio='mantencion' CON alcance u
+          recomendación cargados; toda cotización vieja o sin estos
+          campos se ve como el formato simple -- Regla #4.2)
+     kpis: {"equipos","categorias","mantenciones_anio","dias_habiles"} o None
+     alcance_lineas / recomendacion_lineas: list[str] (bullets)
+     terminos_pares: list[(clave, valor)]
      logo_b64 (opcional): PNG base64 del logo para fondo claro
      base_url (opcional): base absoluta para rutas relativas en Playwright
    ════════════════════════════════════════════════════════════════════ #}
-{# Playwright renderiza con set_content() → documento en about:blank SIN
-   base URL. Sin esto, toda imagen con ruta relativa sale en blanco. #}
 {% if base_url %}<base href="{{ base_url }}">{% endif %}
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cotización {{ cot.numero }} — ILUS Sport &amp; Health</title>
 <style>
-  /* ════════════════════════════════════════════════════════════
-     PDF ILUS — Cotización (impresión + preview pantalla)
-     A4 vertical, contenido fluido: la tabla de ítems pagina sola
-     y su thead se repite en cada página (table-header-group).
-     ════════════════════════════════════════════════════════════ */
   :root {
     --ilus-red:   #dc2626;
     --ilus-red-d: #991b1b;
-    --ilus-red-l: #fee2e2;
     --ilus-black: #0a0a0a;
     --ilus-ink:   #0f172a;
     --ilus-mute:  #6b7280;
     --ilus-line:  #e5e7eb;
     --ilus-bg:    #f9fafb;
+    --ilus-panel: #f0f0f0;
   }
 
-  /* Márgenes en @page (no en .sheet) para que el contenido que fluye
-     a la página 2+ respete el margen superior automáticamente. */
-  @page {
-    size: A4;
-    margin: 11mm 12mm 13mm;
-  }
+  /* Los márgenes reales los pone page.pdf() (header/footer_template) --
+     ver nota arriba. Acá SOLO el tamaño de hoja: declarar "margin" en este
+     @page (aunque sea 0) hace que Chromium lo use en vez del margin que
+     manda page.pdf() -- overlap real comprobado empíricamente (el
+     contenido se pintaba encima del header). NO agregar margin acá. */
+  @page { size: A4; }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -84,103 +97,83 @@
     min-height: 297mm;
     background: #fff;
     margin: 14px auto;
-    padding: 11mm 12mm 13mm;
     box-shadow: 0 6px 22px rgba(0,0,0,.10);
   }
+  /* Recrea el margen lateral de 12mm dentro del contenido (el @page real
+     va con margin 0 para que el header/footer de Playwright sea full-bleed). */
+  .sheet-pad { padding: 6mm 12mm 4mm; }
 
-  /* ───── Encabezado: emisor + caja roja ───── */
-  .head {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 16px;
-    align-items: start;
-    margin-bottom: 4mm;
-  }
-  .emisor .logo {
-    height: 58px;
-    display: flex; align-items: center;
-    margin-bottom: 4px;
-  }
-  .emisor .logo img { max-height: 100%; max-width: 170px; object-fit: contain; }
-  .emisor .logo .logo-fallback {
-    font-weight: 900; font-size: 20pt; letter-spacing: .02em;
-    color: var(--ilus-black);
-  }
-  .emisor .logo .logo-fallback .helm { color: var(--ilus-red); }
-  .emisor .razon {
-    font-size: 12.5pt; font-weight: 900; color: var(--ilus-black);
-    letter-spacing: -.01em; text-transform: uppercase;
-  }
-  .emisor .linea {
-    font-size: 8pt; color: var(--ilus-ink);
-    line-height: 1.5;
-  }
-  /* Caja roja clásica (RUT · COTIZACIÓN · Nro.) */
-  .caja-roja {
-    border: 2.5px solid var(--ilus-red);
-    border-radius: 4px;
-    min-width: 62mm;
-    padding: 10px 14px;
-    text-align: center;
-  }
-  .caja-roja .cr-rut {
-    font-size: 10.5pt; font-weight: 900; color: var(--ilus-black);
-    margin-bottom: 5px;
-  }
-  .caja-roja .cr-doc {
-    font-size: 12pt; font-weight: 900; color: var(--ilus-black);
-    letter-spacing: .06em; margin-bottom: 5px;
-  }
-  .caja-roja .cr-num {
-    font-size: 10.5pt; font-weight: 900; color: var(--ilus-red);
-  }
+  /* ───── DATOS DE LA EMPRESA / DATOS DEL CLIENTE (solo pág. 1) ───── */
+  .datos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin-bottom: 4mm; page-break-inside: avoid; }
+  .datos-box { background: var(--ilus-panel); border-radius: 2px; padding: 3mm 4mm; }
+  .datos-box .dt-title { font-size: 8.5pt; font-weight: 800; color: var(--ilus-black); margin-bottom: 2mm; text-transform: uppercase; letter-spacing: .02em; }
+  .datos-box .dt-row { display: flex; gap: 2mm; font-size: 7.8pt; padding: .8px 0; }
+  .datos-box .dt-lbl { font-weight: 700; color: var(--ilus-black); min-width: 20mm; flex-shrink: 0; }
+  .datos-box .dt-val { color: var(--ilus-ink); font-weight: 600; }
 
-  /* ───── Bloque de identificación del cliente ───── */
-  .cliente-box {
-    border: 1.4px solid var(--ilus-black);
-    border-radius: 3px;
-    margin-bottom: 4mm;
-    page-break-inside: avoid;
+  .franja-meta {
+    display: flex; flex-wrap: wrap; gap: 6mm;
+    background: var(--ilus-bg); border: 1px solid var(--ilus-line); border-radius: 2px;
+    padding: 2.5mm 4mm; font-size: 8pt; margin-bottom: 4mm; page-break-inside: avoid;
   }
-  table.cliente {
-    width: 100%; border-collapse: collapse;
-    font-size: 8.5pt;
+  .franja-meta b { color: var(--ilus-black); }
+
+  /* ───── Bloque rico: Propuesta de Mantención Preventiva ───── */
+  .barra-titulo {
+    background: var(--ilus-black); color: #fff; padding: 2.5mm 4mm;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 9pt; font-weight: 800; text-transform: uppercase; letter-spacing: .02em;
+    margin-bottom: 3mm; page-break-inside: avoid;
   }
-  table.cliente td {
-    padding: 3px 8px;
-    vertical-align: top;
-    border-bottom: 1px solid var(--ilus-line);
-  }
-  table.cliente tr:last-child td { border-bottom: 0; }
-  table.cliente td.lbl {
-    font-weight: 800; color: var(--ilus-black);
-    white-space: nowrap; width: 34mm;
-    text-transform: uppercase; font-size: 7.5pt;
-    letter-spacing: .02em;
-  }
-  table.cliente td.lbl2 { width: 26mm; }
-  table.cliente td.val { font-weight: 600; }
+  .barra-titulo .bt-sub { font-size: 7.5pt; font-weight: 700; color: #d1d5db; text-transform: none; letter-spacing: 0; }
+  .parrafo-propuesta { font-size: 8.3pt; color: var(--ilus-ink); margin: 0 0 4mm; line-height: 1.6; }
+  .kpi-row { display: flex; gap: 3mm; margin-bottom: 4mm; page-break-inside: avoid; }
+  .kpi-card { flex: 1; border: 1px solid #d1d5db; border-radius: 3px; padding: 3mm; text-align: center; }
+  .kpi-card .kpi-num { font-size: 15pt; font-weight: 900; color: var(--ilus-black); }
+  .kpi-card .kpi-lbl { font-size: 6.3pt; font-weight: 700; color: var(--ilus-mute); text-transform: uppercase; letter-spacing: .03em; margin-top: 1mm; }
+  .rico-grid { display: grid; grid-template-columns: 1fr 62mm; gap: 4mm; margin-bottom: 4mm; page-break-inside: avoid; }
+  .alcance-box { border: 1px solid var(--ilus-line); border-radius: 3px; padding: 3mm 4mm; }
+  .alcance-box .ab-title { font-size: 8pt; font-weight: 800; text-transform: uppercase; margin-bottom: 2mm; color: var(--ilus-black); }
+  .alcance-box ul { margin: 0; padding-left: 4mm; }
+  .alcance-box li { font-size: 7.8pt; margin-bottom: 1.2mm; line-height: 1.4; }
+  .valor-unit-box { background: var(--ilus-black); color: #fff; border-radius: 3px; padding: 4mm; }
+  .valor-unit-box .vu-title { font-size: 7.5pt; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; color: #d1d5db; margin-bottom: 2mm; }
+  .valor-unit-box .vu-monto { font-size: 17pt; font-weight: 900; }
+  .valor-unit-box .vu-neto { font-size: 6.5pt; color: #9ca3af; text-transform: uppercase; margin-bottom: 2mm; }
+  .valor-unit-box hr { border: 0; border-top: 1.5px solid var(--ilus-red); margin: 2mm 0; }
+  .valor-unit-box .vu-line { display: flex; justify-content: space-between; gap: 2mm; font-size: 7.5pt; margin-top: 1mm; }
+  .valor-unit-box .vu-line span:last-child { white-space: nowrap; }
+  .valor-unit-box .vu-total { font-weight: 900; font-size: 8pt; margin-top: 1.5mm; }
+  .recomendacion-box ul { margin: 0 0 4mm; padding-left: 4mm; }
+  .recomendacion-box li { font-size: 7.8pt; margin-bottom: 1.2mm; line-height: 1.4; }
 
   /* ───── Tabla de ítems ───── */
-  table.items {
-    width: 100%; border-collapse: collapse;
-    font-size: 8.5pt;
-    margin-bottom: 0;
-  }
+  table.items { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-bottom: 0; }
   /* El thead se repite en cada página al paginar (requisito) */
   table.items thead { display: table-header-group; }
-  table.items thead th {
-    background: var(--ilus-black);
-    color: #fff;
-    padding: 5px 6px;
-    font-size: 7.5pt; font-weight: 800;
+  table.items thead tr.label-row th {
+    background: var(--ilus-black); color: #fff; padding: 0;
+    text-align: left;
+  }
+  /* display:flex directo en un <th> rompe el algoritmo de ancho de tabla
+     de Chromium (el texto se comprime a una columna angosta) -- el flex
+     va en un <div> interno, el <th> mantiene su comportamiento normal. */
+  table.items thead tr.label-row .lr-flex {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 2.5mm 4mm;
+    font-size: 8.5pt; font-weight: 800; text-transform: uppercase; letter-spacing: .02em;
+  }
+  table.items thead tr.label-row .lr-sub { font-size: 7pt; font-weight: 700; color: #d1d5db; text-transform: none; white-space: nowrap; }
+  table.items thead tr.col-row th {
+    background: var(--ilus-black); color: #fff;
+    padding: 5px 6px; font-size: 7.5pt; font-weight: 800;
     text-transform: uppercase; letter-spacing: .03em;
     border: 1px solid var(--ilus-black);
   }
-  table.items thead th.l { text-align: left; }
-  table.items thead th.c { text-align: center; }
-  table.items thead th.r { text-align: right; }
-  table.items tbody tr { page-break-inside: avoid; }
+  table.items thead tr.col-row th.l { text-align: left; }
+  table.items thead tr.col-row th.c { text-align: center; }
+  table.items thead tr.col-row th.r { text-align: right; }
+  table.items tbody tr { page-break-inside: avoid; break-inside: avoid; }
   table.items tbody tr:nth-child(even) { background: var(--ilus-bg); }
   table.items tbody td {
     padding: 4px 6px;
@@ -190,13 +183,10 @@
     vertical-align: top;
     line-height: 1.35;
   }
-  table.items td.codigo { width: 24mm; font-weight: 700; color: var(--ilus-black); white-space: nowrap; }
-  table.items td.cant   { width: 11mm; text-align: center; }
-  table.items td.unid   { width: 11mm; text-align: center; color: var(--ilus-mute); }
-  table.items td.punit  { width: 21mm; text-align: right; white-space: nowrap; }
-  table.items td.dpct   { width: 15mm; text-align: center; color: var(--ilus-mute); }
-  table.items td.dmon   { width: 15mm; text-align: center; color: var(--ilus-mute); }
-  table.items td.valor  { width: 22mm; text-align: right; font-weight: 700; white-space: nowrap; }
+  table.items td.num  { width: 9mm; color: var(--ilus-mute); }
+  table.items td.cant { width: 16mm; text-align: center; }
+  table.items td.puf  { width: 20mm; text-align: right; white-space: nowrap; color: var(--ilus-mute); }
+  table.items td.tot  { width: 26mm; text-align: right; font-weight: 700; white-space: nowrap; }
 
   /* ───── Franja "SON: monto en palabras" ───── */
   .son-strip {
@@ -216,45 +206,20 @@
     flex: 1; border-bottom: 1.5px dashed #9ca3af;
     transform: translateY(-2px); min-width: 10mm;
   }
-  .items-cierre { /* cierre inferior de la tabla cuando NO hay "SON:" */
-    border-top: 1.4px solid var(--ilus-black);
-    margin-bottom: 5mm;
-  }
+  .items-cierre { border-top: 1.4px solid var(--ilus-black); margin-bottom: 5mm; }
 
-  /* ───── Bloque inferior: despacho + totales ───── */
-  .bottom-grid {
-    display: grid;
-    grid-template-columns: 1fr 62mm;
-    gap: 10mm;
-    align-items: start;
-    page-break-inside: avoid;
-    margin-bottom: 5mm;
+  /* ───── Cierre: Términos + Totales ───── */
+  .cierre-grid {
+    display: grid; grid-template-columns: 1fr 62mm; gap: 10mm;
+    align-items: start; page-break-inside: avoid; margin: 0 0 5mm;
   }
-  table.despacho {
-    width: 100%; border-collapse: collapse;
-    font-size: 8pt;
-  }
-  table.despacho td {
-    border: 1px solid var(--ilus-black);
-    padding: 4px 8px;
-    vertical-align: top;
-  }
-  table.despacho td.lbl {
-    font-weight: 800; text-transform: uppercase;
-    font-size: 7.5pt; letter-spacing: .02em;
-    white-space: nowrap; width: 40mm;
-    background: var(--ilus-bg);
-  }
-  table.despacho td.val { font-weight: 600; }
+  .terminos-box { border: 1px solid var(--ilus-black); border-radius: 3px; padding: 3mm 4mm; font-size: 7.8pt; }
+  .terminos-box .tm-title { font-weight: 800; margin-bottom: 2mm; color: var(--ilus-black); }
+  .terminos-box .tm-row { margin-bottom: 1.3mm; line-height: 1.4; }
+  .terminos-box .tm-clave { font-weight: 800; text-transform: capitalize; }
 
-  table.totales {
-    width: 100%; border-collapse: collapse;
-    font-size: 8.5pt;
-  }
-  table.totales td {
-    padding: 3px 6px;
-    border-bottom: 1px solid #9ca3af;
-  }
+  table.totales { width: 100%; border-collapse: collapse; font-size: 8.5pt; background: var(--ilus-bg); }
+  table.totales td { padding: 3px 6px; border-bottom: 1px solid #9ca3af; }
   table.totales td.t-lbl { font-weight: 700; color: var(--ilus-ink); }
   table.totales td.t-sig { width: 8mm; text-align: center; color: var(--ilus-mute); }
   table.totales td.t-val { width: 24mm; text-align: right; font-weight: 700; white-space: nowrap; }
@@ -271,33 +236,33 @@
   table.totales tr.total-final td:first-child { border-radius: 4px 0 0 4px; }
   table.totales tr.total-final td:last-child  { border-radius: 0 4px 4px 0; }
 
-  /* ───── Pie de documento ───── */
-  .doc-foot {
-    border-top: 2px solid var(--ilus-red);
-    padding-top: 5px;
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 7pt; color: var(--ilus-mute);
-    page-break-inside: avoid;
+  /* ───── Despacho (info operativa -- se conserva, Regla #4.2) ───── */
+  .despacho-wrap { margin-bottom: 5mm; page-break-inside: avoid; }
+  table.despacho { width: 100%; border-collapse: collapse; font-size: 8pt; }
+  table.despacho td { border: 1px solid var(--ilus-black); padding: 4px 8px; vertical-align: top; }
+  table.despacho td.lbl {
+    font-weight: 800; text-transform: uppercase;
+    font-size: 7.5pt; letter-spacing: .02em;
+    white-space: nowrap; width: 40mm;
+    background: var(--ilus-bg);
   }
-  .doc-foot b { color: var(--ilus-black); }
+  table.despacho td.val { font-weight: 600; }
+
+  /* ───── Firmas ───── */
+  .firmas-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; page-break-inside: avoid; margin-bottom: 4mm; }
+  .firma-box { border: 1px solid #9ca3af; border-radius: 2px; min-height: 28mm; padding: 3mm; }
+  .firma-box .fb-title { font-size: 7.5pt; font-weight: 700; text-align: center; color: var(--ilus-ink); }
 
   /* ═════ @media print ═════ */
   @media print {
     body { background: #fff; }
     .no-print, .toolbar { display: none !important; }
-    .sheet {
-      width: auto;
-      min-height: auto;
-      margin: 0;
-      padding: 0;       /* los márgenes reales los pone @page */
-      box-shadow: none;
-    }
+    .sheet { width: auto; min-height: auto; margin: 0; box-shadow: none; }
   }
 
   @media (max-width: 768px) {
-    .sheet { width: auto; padding: 6mm 4mm 10mm; min-height: auto; }
-    .head, .bottom-grid { grid-template-columns: 1fr; }
-    .caja-roja { min-width: 0; }
+    .sheet { width: auto; }
+    .datos-grid, .rico-grid, .cierre-grid, .firmas-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -305,6 +270,7 @@
 
 {# Formato chileno de pesos: $1.234.567 — seguro con None #}
 {% macro clp(x) -%}{{ "{:,.0f}".format(x or 0)|replace(",", ".") }}{%- endmacro %}
+{% macro clp2(x) -%}{{ "{:,.2f}".format(x or 0)|replace(",", "X")|replace(".", ",")|replace("X", ".") }}{%- endmacro %}
 
 {# ════════════ TOOLBAR (solo pantalla) ════════════ #}
 <div class="toolbar no-print">
@@ -318,95 +284,107 @@
 </div>
 
 <section class="sheet">
+<div class="sheet-pad">
 
-  {# ════════════ ENCABEZADO: emisor + caja roja ════════════ #}
-  <div class="head">
-    <div class="emisor">
-      <div class="logo">
-        {% if logo_b64 %}
-          <img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS">
-        {% else %}
-          <div class="logo-fallback"><span class="helm">▲</span> ILUS<span class="helm">.</span></div>
-        {% endif %}
-      </div>
-      <div class="razon">Sport and Health Solution SpA</div>
-      <div class="linea">76.996.964-0</div>
-      <div class="linea">IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS</div>
-      <div class="linea">AV. APOQUINDO 4499, LAS CONDES</div>
-      <div class="linea">+56229465970</div>
+  {# ════════════ DATOS DE LA EMPRESA / DATOS DEL CLIENTE ════════════ #}
+  <div class="datos-grid">
+    <div class="datos-box">
+      <div class="dt-title">Datos de la Empresa</div>
+      <div class="dt-row"><span class="dt-lbl">Razón social:</span><span class="dt-val">Sport and Health Solutions SPA</span></div>
+      <div class="dt-row"><span class="dt-lbl">Dirección:</span><span class="dt-val">Av. Apoquindo 4499 OF 601, Las Condes</span></div>
+      <div class="dt-row"><span class="dt-lbl">R.U.T.:</span><span class="dt-val">76.996.964-0</span></div>
+      <div class="dt-row"><span class="dt-lbl">Fono:</span><span class="dt-val">56 995 77 1895</span></div>
+      <div class="dt-row"><span class="dt-lbl">Contacto:</span><span class="dt-val">contacto@sphs.cl</span></div>
     </div>
-    <div class="caja-roja">
-      <div class="cr-rut">R.U.T. : 76.996.964-0</div>
-      <div class="cr-doc">COTIZACIÓN</div>
-      <div class="cr-num">Nro.: {{ cot.numero }}</div>
+    <div class="datos-box">
+      <div class="dt-title">Datos del Cliente</div>
+      <div class="dt-row"><span class="dt-lbl">Nombre:</span><span class="dt-val">{{ cot.empresa or '—' }}</span></div>
+      {% if cot.contacto_nombre %}<div class="dt-row"><span class="dt-lbl">Contacto:</span><span class="dt-val">{{ cot.contacto_nombre }}</span></div>{% endif %}
+      <div class="dt-row"><span class="dt-lbl">Dirección:</span><span class="dt-val">{{ cot.direccion or '—' }}{% if cot.comuna %}, {{ cot.comuna }}{% endif %}</span></div>
+      <div class="dt-row"><span class="dt-lbl">R.U.T.:</span><span class="dt-val">{{ cot.rut or '—' }}</span></div>
+      <div class="dt-row"><span class="dt-lbl">E-mail:</span><span class="dt-val">{{ cot.email or '—' }}</span></div>
     </div>
   </div>
 
-  {# ════════════ IDENTIFICACIÓN DEL CLIENTE ════════════ #}
-  <div class="cliente-box">
-    <table class="cliente">
-      <tr>
-        <td class="lbl">Fecha Emisión:</td>
-        <td class="val">{{ cot.fecha_emision }}</td>
-        <td class="lbl lbl2">Fono:</td>
-        <td class="val">{{ cot.telefono or '—' }}</td>
-      </tr>
-      <tr>
-        <td class="lbl">Señor(es):</td>
-        <td class="val">{{ cot.empresa }}</td>
-        <td class="lbl lbl2">R.U.T.:</td>
-        <td class="val">{{ cot.rut or '—' }}</td>
-      </tr>
-      <tr>
-        <td class="lbl">Dirección:</td>
-        <td class="val">{{ cot.direccion or '—' }}</td>
-        <td class="lbl lbl2">Comuna:</td>
-        <td class="val">{{ cot.comuna or '—' }}</td>
-      </tr>
-      <tr>
-        <td class="lbl">Región:</td>
-        <td class="val">{{ cot.region or '—' }}</td>
-        <td class="lbl lbl2">Email:</td>
-        <td class="val">{{ cot.email or '—' }}</td>
-      </tr>
-      <tr>
-        <td class="lbl">Vendedor:</td>
-        <td class="val">{{ cot.ejecutivo or '—' }}</td>
-        <td class="lbl lbl2">Válida hasta:</td>
-        <td class="val">{{ cot.valida_hasta or '—' }}</td>
-      </tr>
-    </table>
+  {# ════════════ FECHA PRESUPUESTO / VALOR UF / VALIDEZ ════════════ #}
+  <div class="franja-meta">
+    <span><b>FECHA PRESUPUESTO:</b> {{ cot.fecha_emision }}</span>
+    {% if uf_info %}<span><b>VALOR UF:</b> $ {{ clp2(uf_info.valor) }}</span>{% endif %}
+    <span><b>VALIDEZ:</b> {% if cot.validez_dias is not none %}{{ cot.validez_dias }} días{% else %}{{ cot.valida_hasta or '—' }}{% endif %}</span>
   </div>
+
+  {# ════════════ BLOQUE RICO: Propuesta de Mantención Preventiva ════════════
+     Solo si modo_rico=True (tipo_servicio='mantencion' Y alcance/recomendación
+     cargados) -- cualquier otra cotización (incluidas TODAS las creadas antes
+     de este cambio) salta directo a la tabla, igual que el Formato A simple. #}
+  {% if modo_rico %}
+  <div class="barra-titulo"><span>Propuesta de Mantención Preventiva</span><span class="bt-sub">Valor Unitario</span></div>
+  <p class="parrafo-propuesta">
+    Se recomienda ejecutar {{ kpis.mantenciones_anio }} mantenciones preventivas al año{% if kpis.mantenciones_anio == 2 %}, idealmente con una separación aproximada de seis meses{% endif %}.
+    Esta frecuencia permite anticipar fallas, preservar la operatividad de los equipos y mantener una adecuada trazabilidad técnica.
+    La presente cotización corresponde al valor unitario de una mantención de los equipos individualizados en el detalle adjunto.
+    {% if uf_info %}Las mantenciones posteriores se calcularán utilizando los mismos precios expresados en UF y la UF vigente a la fecha del servicio.{% endif %}
+  </p>
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="kpi-num">{{ kpis.equipos }}</div><div class="kpi-lbl">Equipos considerados</div></div>
+    <div class="kpi-card"><div class="kpi-num">{{ kpis.categorias }}</div><div class="kpi-lbl">Categorías de equipos</div></div>
+    <div class="kpi-card"><div class="kpi-num">{{ kpis.mantenciones_anio }}</div><div class="kpi-lbl">Mantenciones al año</div></div>
+    {% if kpis.dias_habiles %}<div class="kpi-card"><div class="kpi-num">{{ kpis.dias_habiles }}</div><div class="kpi-lbl">Días hábiles estimados</div></div>{% endif %}
+  </div>
+  <div class="rico-grid">
+    <div class="alcance-box">
+      <div class="ab-title">Alcance de la Mantención</div>
+      <ul>{% for l in alcance_lineas %}<li>{{ l }}</li>{% endfor %}</ul>
+    </div>
+    <div class="valor-unit-box">
+      <div class="vu-title">Valor Unitario Mantención</div>
+      <div class="vu-monto">$ {{ clp(cot.subtotal - cot.descuento_monto) }}</div>
+      <div class="vu-neto">Valor Neto</div>
+      <hr>
+      <div class="vu-line"><span>IVA {{ "%g"|format(cot.iva_pct or 19) }}%</span><span>$ {{ clp(cot.iva_monto) }}</span></div>
+      <div class="vu-line vu-total"><span>Total IVA incluido</span><span>$ {{ clp(cot.total) }}</span></div>
+    </div>
+  </div>
+  {% if recomendacion_lineas %}
+  <div class="barra-titulo"><span>Recomendación de Servicio</span></div>
+  <div class="recomendacion-box"><ul>{% for l in recomendacion_lineas %}<li>{{ l }}</li>{% endfor %}</ul></div>
+  {% endif %}
+  {% endif %}
 
   {# ════════════ TABLA DE ÍTEMS ════════════
-     Mismas columnas y alineaciones que el formato original:
-     CÓDIGO | DESCRIPCIÓN | CANT. | UNID. | P.UNITARIO | DESCTO % | DESCTO $ | VALOR
-     (el descuento del contrato es GLOBAL → las columnas por línea van en 0,
-     igual que en la cotización de referencia). #}
+     5 columnas (igual a las 2 cotizaciones reales de referencia):
+     # | DESCRIPCIÓN | UNIDADES | PRECIO UF | TOTAL #}
   <table class="items">
     <thead>
-      <tr>
-        <th class="l">Código</th>
+      <tr class="label-row">
+        <th colspan="5">
+          <div class="lr-flex">
+          {% if modo_rico %}
+            <span>Detalle Económico de una Mantención</span>
+            <span class="lr-sub">{{ kpis.equipos }} equipos · precios unitarios en UF</span>
+          {% else %}
+            <span>Detalle de la Cotización</span>
+            <span class="lr-sub">{{ items|length }} ítem(s)</span>
+          {% endif %}
+          </div>
+        </th>
+      </tr>
+      <tr class="col-row">
+        <th class="l">#</th>
         <th class="l">Descripción</th>
-        <th class="c">Cant.</th>
-        <th class="c">Unid.</th>
-        <th class="r">P.Unitario</th>
-        <th class="c">Descto %</th>
-        <th class="c">Descto $</th>
-        <th class="r">Valor</th>
+        <th class="c">Unidades</th>
+        <th class="r">Precio UF</th>
+        <th class="r">Total</th>
       </tr>
     </thead>
     <tbody>
       {% for it in items %}
       <tr>
-        <td class="codigo">{{ it.sku or '—' }}</td>
+        <td class="num">{{ loop.index }}</td>
         <td>{{ it.descripcion }}</td>
         <td class="cant">{{ it.cantidad or 0 }}</td>
-        <td class="unid">un</td>
-        <td class="punit">{{ clp(it.precio_unitario) }}</td>
-        <td class="dpct">0</td>
-        <td class="dmon">0</td>
-        <td class="valor">{{ clp(it.total) }}</td>
+        <td class="puf">{{ it.precio_uf or '—' }}</td>
+        <td class="tot">$ {{ clp(it.total) }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -424,8 +402,43 @@
   <div class="items-cierre"></div>
   {% endif %}
 
-  {# ════════════ BLOQUE INFERIOR: despacho + totales ════════════ #}
-  <div class="bottom-grid">
+  {# ════════════ CIERRE: Términos + Totales ════════════ #}
+  <div class="cierre-grid">
+    <div class="terminos-box">
+      <div class="tm-title">Términos:</div>
+      {% for clave, valor in terminos_pares %}
+      <div class="tm-row"><span class="tm-clave">{{ clave }}{% if valor %}:{% endif %}</span> {{ valor }}</div>
+      {% endfor %}
+    </div>
+    <table class="totales">
+      <tr>
+        <td class="t-lbl">Subtotal Neto</td>
+        <td class="t-sig">$</td>
+        <td class="t-val">{{ clp(cot.subtotal) }}</td>
+      </tr>
+      <tr>
+        <td class="t-lbl">Descto. Global{% if cot.descuento_pct %} ({{ "%g"|format(cot.descuento_pct) }}%){% endif %}</td>
+        <td class="t-sig">$</td>
+        <td class="t-val">{{ clp(cot.descuento_monto) }}</td>
+      </tr>
+      {# Costo de Ruta NO se muestra como línea aparte: ya viene PRORRATEADO
+         dentro del P.Unitario de cada línea (igual que el PDF real de
+         Triple A) -- el Subtotal Neto ya lo incluye. #}
+      <tr>
+        <td class="t-lbl">IVA ({{ "%g"|format(cot.iva_pct or 19) }}%)</td>
+        <td class="t-sig">$</td>
+        <td class="t-val">{{ clp(cot.iva_monto) }}</td>
+      </tr>
+      <tr class="total-final">
+        <td class="t-lbl">Monto Total</td>
+        <td class="t-sig">$</td>
+        <td class="t-val">{{ clp(cot.total) }}</td>
+      </tr>
+    </table>
+  </div>
+
+  {# ════════════ DESPACHO (info operativa existente -- se conserva) ════════════ #}
+  <div class="despacho-wrap">
     <table class="despacho">
       <tr>
         <td class="lbl">Dirección de Despacho:</td>
@@ -448,42 +461,15 @@
         <td class="val">{{ cot.tipo_servicio_label or '—' }}</td>
       </tr>
     </table>
-
-    <table class="totales">
-      <tr>
-        <td class="t-lbl">Subtotal Neto</td>
-        <td class="t-sig">$</td>
-        <td class="t-val">{{ clp(cot.subtotal) }}</td>
-      </tr>
-      <tr>
-        <td class="t-lbl">Descto. Global{% if cot.descuento_pct %} ({{ "%g"|format(cot.descuento_pct) }}%){% endif %}</td>
-        <td class="t-sig">$</td>
-        <td class="t-val">{{ clp(cot.descuento_monto) }}</td>
-      </tr>
-      {# Costo de Ruta NO se muestra como línea aparte: ya viene PRORRATEADO
-         dentro del P.Unitario de cada línea (igual que el PDF real de
-         Triple A / COT-000049) -- mostrarlo de nuevo aquí haría que la
-         caja de totales no cuadre a simple vista (hallazgo de revisión
-         adversarial 2026-07-22). El Subtotal Neto ya lo incluye. #}
-      <tr>
-        <td class="t-lbl">IVA ({{ "%g"|format(cot.iva_pct or 19) }}%)</td>
-        <td class="t-sig">$</td>
-        <td class="t-val">{{ clp(cot.iva_monto) }}</td>
-      </tr>
-      <tr class="total-final">
-        <td class="t-lbl">Monto Total</td>
-        <td class="t-sig">$</td>
-        <td class="t-val">{{ clp(cot.total) }}</td>
-      </tr>
-    </table>
   </div>
 
-  {# ════════════ PIE DE DOCUMENTO ════════════ #}
-  <div class="doc-foot">
-    <span><b>ILUS Sport &amp; Health</b> · www.ilusfitness.com · +56 2 3276 4600 · servicio.tecnico@ilusfitness.com</span>
-    <span>Cotización <b>{{ cot.numero }}</b>{% if cot.valida_hasta %} · válida hasta el {{ cot.valida_hasta }}{% endif %}</span>
+  {# ════════════ FIRMAS ════════════ #}
+  <div class="firmas-grid">
+    <div class="firma-box"><div class="fb-title">Firma de la persona que confecciona el presupuesto</div></div>
+    <div class="firma-box"><div class="fb-title">Firma de aceptación del cliente</div></div>
   </div>
 
+</div>
 </section>
 
 <script>

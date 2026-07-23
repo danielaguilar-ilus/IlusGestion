@@ -1484,6 +1484,21 @@ def register_tickets_routes(app, ctx):
         # informativo, no afecta el cálculo de precio.
         if "origen" not in existentes:
             alters.append("ADD COLUMN origen VARCHAR(20) NULL")
+        # 2026-07-22 (Daniel adjuntó 2 PDF reales de Triple A como formato a
+        # replicar): contenido opcional del PDF "rico" para cotizaciones de
+        # mantención por valor unitario (propuesta + alcance + recomendación +
+        # KPIs). Todos NULL -- una cotización sin estos campos se ve igual
+        # que antes (Regla #4.2, ver tk_cotizacion_pdf).
+        if "alcance" not in existentes:
+            alters.append("ADD COLUMN alcance TEXT NULL")
+        if "recomendacion" not in existentes:
+            alters.append("ADD COLUMN recomendacion TEXT NULL")
+        if "terminos" not in existentes:
+            alters.append("ADD COLUMN terminos TEXT NULL")
+        if "dias_habiles_estimado" not in existentes:
+            alters.append("ADD COLUMN dias_habiles_estimado INT NULL")
+        if "frecuencia_anual" not in existentes:
+            alters.append("ADD COLUMN frecuencia_anual INT NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
@@ -2444,7 +2459,7 @@ def register_tickets_routes(app, ctx):
         if not cot:
             return "Cotización no encontrada", 404
         items_rows = mysql_fetchall(
-            "SELECT erp_kopr, descripcion, cantidad, precio_unitario, total "
+            "SELECT erp_kopr, descripcion, cantidad, precio_unitario, total, clase_producto "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
         # Prorrateo del costo de ruta para PRESENTACIÓN (modelo Triple A:
@@ -2461,6 +2476,14 @@ def register_tickets_routes(app, ctx):
                 pass
         transporte_unidad = (costo_ruta / total_unidades) if total_unidades > 0 else 0.0
 
+        uf_info = _tk_uf_actual()
+        uf_valor = uf_info["valor"] if uf_info else None
+
+        def _precio_uf_str(monto_clp):
+            if not uf_valor:
+                return None
+            return "{:,.3f}".format(monto_clp / uf_valor).replace(",", "X").replace(".", ",").replace("X", ".")
+
         items = []
         suma_lineas = 0
         for it in items_rows:
@@ -2470,7 +2493,9 @@ def register_tickets_routes(app, ctx):
             tot = pu * cant
             suma_lineas += tot
             items.append({"sku": it.get("erp_kopr") or "", "descripcion": it.get("descripcion") or "",
-                          "cantidad": cant, "precio_unitario": pu, "total": tot})
+                          "cantidad": cant, "precio_unitario": pu, "total": tot,
+                          "precio_uf": _precio_uf_str(pu),
+                          "clase_producto": it.get("clase_producto") or None})
         subtotal_cab = int(cot.get("subtotal") or 0)
         if items and suma_lineas != subtotal_cab and subtotal_cab > 0:
             delta = subtotal_cab - suma_lineas
@@ -2478,6 +2503,7 @@ def register_tickets_routes(app, ctx):
             items[0]["precio_unitario"] = (
                 _tk_money_round(items[0]["total"] / items[0]["cantidad"])
                 if items[0]["cantidad"] else items[0]["precio_unitario"])
+            items[0]["precio_uf"] = _precio_uf_str(items[0]["precio_unitario"])
 
         _rut_fmt = ctx.get("rut_fmt_filter")
         rut_mostrar = cot.get("rut") or ""
@@ -2497,15 +2523,84 @@ def register_tickets_routes(app, ctx):
             except Exception:
                 return str(v)
 
+        def _fecha_date(v):
+            """Fecha (date, sin hora) para restar días -- None si no hay
+            valor o no se puede interpretar."""
+            if v is None:
+                return None
+            if hasattr(v, "date") and callable(getattr(v, "date")):
+                try:
+                    return v.date()
+                except Exception:
+                    pass
+            if hasattr(v, "year"):
+                return v
+            if isinstance(v, str):
+                for _fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+                    try:
+                        return datetime.strptime(v, _fmt).date()
+                    except ValueError:
+                        continue
+            return None
+
+        # ── Contenido "rico" (Propuesta de Mantención Preventiva) ──
+        # Solo para tipo_servicio='mantencion' Y si Daniel cargó alcance u
+        # recomendación en el wizard -- cualquier otro caso (incluidas TODAS
+        # las cotizaciones ya creadas antes de este cambio) se ve exactamente
+        # como el Formato A simple (Regla #4.2: aditivo, nunca rompe lo viejo).
+        def _lineas(texto):
+            if not texto:
+                return []
+            return [l.strip() for l in str(texto).split("\n") if l.strip()]
+
+        alcance_lineas = _lineas(cot.get("alcance"))
+        recomendacion_lineas = _lineas(cot.get("recomendacion"))
+        modo_rico = (cot.get("tipo_servicio") == "mantencion") and bool(alcance_lineas or recomendacion_lineas)
+
+        kpis = None
+        if modo_rico:
+            equipos = sum(it["cantidad"] for it in items)
+            clases = {it["clase_producto"] for it in items if it["clase_producto"]}
+            categorias = len(clases) if clases else len(items)
+            kpis = {
+                "equipos": equipos,
+                "categorias": categorias,
+                "mantenciones_anio": int(cot.get("frecuencia_anual") or 2),
+                "dias_habiles": cot.get("dias_habiles_estimado"),
+            }
+
+        terminos_pares = []
+        _terminos_raw = _lineas(cot.get("terminos"))
+        for _linea in _terminos_raw:
+            if ":" in _linea:
+                _clave, _valor = _linea.split(":", 1)
+                terminos_pares.append((_clave.strip(), _valor.strip()))
+            else:
+                terminos_pares.append((_linea, ""))
+        if not terminos_pares:
+            terminos_pares = [
+                ("Precio", "valores netos en UF, convertidos a CLP con la UF vigente a la fecha de emisión."),
+                ("Plazo", "según coordinación con el cliente."),
+                ("Excluye", "repuestos y trabajos correctivos no listados en el detalle."),
+            ]
+
+        _fecha_emision_date = _fecha_date(cot.get("created_at")) or _chile_hoy()
+        _valida_hasta_date = _fecha_date(cot.get("valida_hasta"))
+        validez_dias = (_valida_hasta_date - _fecha_emision_date).days if _valida_hasta_date else None
+
+        numero_mostrar = cot.get("numero_cotizacion") or f"#{cid}"
+
         ctx_pdf = {
             "cot": {
-                "numero": cot.get("numero_cotizacion") or f"#{cid}",
+                "numero": numero_mostrar,
                 "fecha_emision": _fecha_str(cot.get("created_at")) or _fecha_str(_chile_hoy()),
                 "valida_hasta": _fecha_str(cot.get("valida_hasta")),
+                "validez_dias": validez_dias,
                 "empresa": cot.get("empresa") or "", "rut": rut_mostrar,
                 "direccion": cot.get("direccion") or "", "comuna": cot.get("comuna") or "",
                 "region": cot.get("region") or "", "email": cot.get("email") or "",
                 "telefono": cot.get("telefono") or "", "ejecutivo": cot.get("ejecutivo") or "",
+                "contacto_nombre": cot.get("contacto_nombre") or "",
                 "tipo_servicio_label": _TK_COTIZ_TIPOS_SERVICIO_LABELS.get(cot.get("tipo_servicio"), "Mantención"),
                 "notas": cot.get("notas"),
                 "subtotal": int(cot.get("subtotal") or 0),
@@ -2518,15 +2613,73 @@ def register_tickets_routes(app, ctx):
             },
             "items": items,
             "total_en_palabras": _tk_monto_en_palabras(cot.get("total")),
+            "uf_info": uf_info,
+            "modo_rico": modo_rico,
+            "kpis": kpis,
+            "alcance_lineas": alcance_lineas,
+            "recomendacion_lineas": recomendacion_lineas,
+            "terminos_pares": terminos_pares,
         }
         ctx_pdf["logo_b64"] = _tk_cotiz_logo_b64()
-        html = render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
+        html_doc = render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
 
         _pw_pdf = ctx.get("_pw_pdf")
         if not _pw_pdf:
             return "Generador de PDF no disponible en este entorno", 503
+
+        # Header + footer NATIVOS de Playwright: se repiten en TODAS las
+        # páginas sin importar cuántas tenga la cotización (independiente
+        # del flujo del documento -- a diferencia de un <div> normal, que
+        # solo aparece donde el contenido fluido lo deja). pageNumber/
+        # totalPages son variables especiales que Chromium resuelve por
+        # página. Sin acceso al CSS del documento -> estilos inline.
+        # margin left/right=0 para que el fondo negro del header sea
+        # full-bleed (borde a borde) igual que el PDF de referencia -- el
+        # padding de 12mm que "simula" el margen lo pone cada template
+        # (y el propio body en cotizacion_pdf.html vía .sheet-pad).
+        _footer_numero = _html_mod.escape(numero_mostrar)
+        _footer_vigencia = (
+            f' · válida hasta el {_html_mod.escape(_fecha_str(cot.get("valida_hasta")) or "")}'
+            if cot.get("valida_hasta") else ""
+        )
+        footer_tpl = (
+            '<div style="width:100%;font-size:7px;font-family:Arial,Helvetica,sans-serif;'
+            'color:#6b7280;padding:3px 12mm 0;box-sizing:border-box;display:flex;'
+            'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
+            f'<span><b style="color:#0a0a0a">ILUS Sport &amp; Health</b> · www.ilusfitness.com · '
+            f'servicio.tecnico@ilusfitness.com</span>'
+            f'<span>Cotización <b style="color:#0a0a0a">{_footer_numero}</b>{_footer_vigencia} · '
+            'Página <span class="pageNumber"></span> de <span class="totalPages"></span></span>'
+            '</div>'
+        )
+        _logo_b64_val = ctx_pdf.get("logo_b64")
+        _header_logo = (
+            f'<img src="data:image/png;base64,{_logo_b64_val}" style="height:11mm;max-width:42mm;object-fit:contain;">'
+            if _logo_b64_val else
+            '<span style="font-weight:900;font-size:16px;color:#ffffff;letter-spacing:.02em;">'
+            '<span style="color:#dc2626;">&#9650;</span> ILUS<span style="color:#dc2626;">.</span></span>'
+        )
+        _header_fecha = _html_mod.escape(_fecha_str(cot.get("created_at")) or _fecha_str(_chile_hoy()) or "")
+        header_tpl = (
+            '<div style="width:100%;font-family:Arial,Helvetica,sans-serif;">'
+            '<div style="background:#0a0a0a;padding:5mm 12mm;box-sizing:border-box;'
+            'display:flex;justify-content:space-between;align-items:center;">'
+            f'<div>{_header_logo}</div>'
+            '<div style="text-align:right;">'
+            '<div style="font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-.01em;">COTIZACIÓN</div>'
+            f'<div style="font-size:19px;font-weight:900;color:#dc2626;line-height:1.15;">N&#176; {_footer_numero}</div>'
+            f'<div style="font-size:7.5px;color:#9ca3af;margin-top:1px;">FECHA EMISIÓN: {_header_fecha}</div>'
+            '</div></div>'
+            '<div style="height:2mm;background:linear-gradient(90deg,#dc2626 0 25%,#0a0a0a 25% 100%);"></div>'
+            '</div>'
+        )
+
         try:
-            pdf_bytes = _pw_pdf(html)
+            pdf_bytes = _pw_pdf(
+                html_doc, page_format="A4",
+                margin={"top": "30mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
+                header_template=header_tpl, footer_template=footer_tpl,
+            )
         except Exception as _e_pdf:
             print(f"[tk_cotizacion_pdf] cid={cid}: {_e_pdf}", flush=True)
             return ("El generador de PDF no está disponible ahora. "
@@ -2874,6 +3027,24 @@ def register_tickets_routes(app, ctx):
         except (TypeError, ValueError):
             direccion_lng = None
         direccion_place_id = (d.get("direccion_place_id") or "").strip()[:200] or None
+
+        # 2026-07-22 (Daniel adjuntó 2 cotizaciones reales de Triple A como
+        # formato a replicar): contenido opcional del PDF "rico" -- solo
+        # aplica cuando tipo_servicio='mantencion' (ver modo_rico en
+        # tk_cotizacion_pdf). Todos opcionales, sin tocar el flujo viejo
+        # (Regla #4.2).
+        alcance = (d.get("alcance") or "").strip() or None
+        recomendacion = (d.get("recomendacion") or "").strip() or None
+        terminos = (d.get("terminos") or "").strip() or None
+        try:
+            dias_habiles_estimado = int(d.get("dias_habiles_estimado")) if d.get("dias_habiles_estimado") not in (None, "") else None
+        except (TypeError, ValueError):
+            dias_habiles_estimado = None
+        try:
+            frecuencia_anual = int(d.get("frecuencia_anual")) if d.get("frecuencia_anual") not in (None, "") else None
+        except (TypeError, ValueError):
+            frecuencia_anual = None
+
         cliente_id_in = None
         _cliente_id_raw = d.get("cliente_id")
         if _cliente_id_raw not in (None, "", 0, "0"):
@@ -2982,14 +3153,17 @@ def register_tickets_routes(app, ctx):
                     " email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta, "
                     " notas, notas_internas, ejecutivo, descuento_pct, costo_ruta, created_by, "
                     " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
-                    " direccion_lat, direccion_lng, direccion_place_id, cliente_id, origen) "
+                    " direccion_lat, direccion_lng, direccion_place_id, cliente_id, origen, "
+                    " alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual) "
                     "VALUES (%s,'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                    "        %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    "        %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                    "        %s, %s, %s, %s, %s)",
                     (numero, ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa,
                      email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta,
                      notas, notas_internas, ejecutivo, descuento_pct, costo_ruta_in, user,
                      contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
-                     direccion_lat, direccion_lng, direccion_place_id, cliente_id_in, origen_in),
+                     direccion_lat, direccion_lng, direccion_place_id, cliente_id_in, origen_in,
+                     alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual),
                 )
                 cot_id = cur.lastrowid
                 for it in items:

@@ -565,13 +565,18 @@ class PDFEngineUnavailable(Exception):
 
 def _pw_pdf(html: str, *, width: str = None, height: str = None,
             page_format: str = None, margin: dict = None,
-            wait_fn: str = None, wait_timeout: int = 5000) -> bytes:
+            wait_fn: str = None, wait_timeout: int = 5000,
+            header_template: str = None, footer_template: str = None) -> bytes:
     """
     Genera PDF con el browser pool compartido.
     - width/height → tamaño personalizado (etiquetas)
     - page_format  → 'A4', 'Letter', etc.
     - wait_fn      → JS expression string para page.wait_for_function()
     - margin       → dict top/right/bottom/left en mm ('0mm')
+    - header_template/footer_template → HTML que Playwright repite en CADA
+      página impresa (mecanismo nativo, independiente del flujo del
+      documento -- ver tk_cotizacion_pdf). Si ninguno se pasa, el
+      comportamiento es IDÉNTICO al de antes (callers existentes intactos).
 
     Si Playwright/Chromium no está instalado (problema de deploy), lanza
     PDFEngineUnavailable con mensaje útil — el endpoint que llama debe
@@ -611,6 +616,15 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
             pdf_kw.update(width=width, height=height, margin=mrg)
         elif page_format:
             pdf_kw.update(format=page_format, margin=mrg)
+        if header_template or footer_template:
+            # Chromium exige AMBOS templates si display_header_footer=True;
+            # un <span></span> vacío suprime el header/footer default (URL,
+            # fecha, "Página X") que Chromium agregaría solo.
+            pdf_kw.update(
+                display_header_footer=True,
+                header_template=header_template or "<span></span>",
+                footer_template=footer_template or "<span></span>",
+            )
         return page.pdf(**pdf_kw)
     finally:
         page.close()

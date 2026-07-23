@@ -559,6 +559,31 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
               </div>
               <div class="cot-wiz-hint" id="cotWizRutaHint">Se obtiene automáticamente según la comuna del cliente</div>
             </div>
+            {# 2026-07-22 (Daniel adjuntó 2 cotizaciones reales de Triple A
+               como formato a replicar): contenido opcional para el PDF
+               "rico" (Propuesta de Mantención Preventiva). Todo opcional --
+               si se deja vacío, el PDF se ve igual que antes (Regla #4.2).
+               alcance/recomendación/días/frecuencia solo tienen sentido en
+               Mantención -- se ocultan para los demás tipos de servicio
+               (ver cotWizTipoServ). "Términos" queda visible siempre. #}
+            <div class="cot-wiz-campo full" id="campoContenidoPdfMantencion">
+              <label>Alcance de la mantención (un punto por línea, opcional)</label>
+              <textarea id="cotWizAlcance" class="form-control" rows="3"
+                        placeholder="Ej: Mantención preventiva de los equipos.&#10;Inspección funcional, ajustes, limpieza y lubricación."></textarea>
+            </div>
+            <div class="cot-wiz-campo full" id="campoContenidoPdfMantencion2">
+              <label>Recomendación de servicio (un punto por línea, opcional)</label>
+              <textarea id="cotWizRecomendacion" class="form-control" rows="3"
+                        placeholder="Ej: Programar dos intervenciones anuales.&#10;Emitir un informe técnico al cierre de cada mantención."></textarea>
+            </div>
+            <div class="cot-wiz-campo" id="campoContenidoPdfMantencion3"><label>Días hábiles estimados (opcional)</label>
+              <input id="cotWizDiasHabiles" type="number" min="0" step="1" class="form-control"></div>
+            <div class="cot-wiz-campo" id="campoContenidoPdfMantencion4"><label>Mantenciones al año (opcional)</label>
+              <input id="cotWizFrecuenciaAnual" type="number" min="1" step="1" class="form-control" placeholder="2"></div>
+            <div class="cot-wiz-campo full"><label>Términos del PDF (uno por línea, formato "Clave: valor", opcional)</label>
+              <textarea id="cotWizTerminos" class="form-control" rows="2"
+                        placeholder="Ej: Precio: valores netos en UF.&#10;Plazo: según coordinación."></textarea>
+            </div>
           </div>
         </div>
       </div>
@@ -712,12 +737,14 @@ function cotWizAbrir(){
   ['cotWizCliQ','cotWizEmpresa','cotWizRut','cotWizDireccion','cotWizRegion','cotWizComuna',
    'cotWizEmail','cotWizTelefono','cotWizNotas','cotWizNotasInt',
    'cotWizDireccionLat','cotWizDireccionLng','cotWizDireccionPlaceId',
-   'cotWizContactoNombre','cotWizContactoCargo','cotWizContactoTel','cotWizContactoEmail'].forEach(function(id){
+   'cotWizContactoNombre','cotWizContactoCargo','cotWizContactoTel','cotWizContactoEmail',
+   'cotWizAlcance','cotWizRecomendacion','cotWizTerminos','cotWizDiasHabiles','cotWizFrecuenciaAnual'].forEach(function(id){
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.getElementById('cotWizDescuento').value = '0';
   document.getElementById('cotWizCostoRuta').value = '0';
   document.getElementById('cotWizEjecutivo').value = '';
+  _cotWizToggleContenidoPdf();
   document.getElementById('cotWizRutaHint').textContent = 'Se obtiene automáticamente según la comuna del cliente';
   document.getElementById('cotWizDireccionHint').innerHTML = '';
   document.querySelectorAll('.cot-wiz-campo.invalido, .cot-wiz-campo.valido').forEach(function(c){ c.classList.remove('invalido', 'valido'); });
@@ -1046,6 +1073,19 @@ function cotWizTipoServ(btn){
   _WIZ.tipo = btn.dataset.v;
   document.querySelectorAll('.cot-wiz-ts-pill').forEach(function(b){ b.classList.toggle('on', b === btn); });
   cotWizPrecios();
+  _cotWizToggleContenidoPdf();
+}
+// 2026-07-22: alcance/recomendación/días/frecuencia solo aplican al PDF
+// "rico" de Mantención (ver modo_rico en tk_cotizacion_pdf) -- se ocultan
+// para el resto de los tipos de servicio, igual criterio visual que el
+// resto del wizard (Regla #4.2: campos opcionales, nunca obligatorios).
+function _cotWizToggleContenidoPdf(){
+  const on = !!(_WIZ && _WIZ.tipo === 'mantencion');
+  ['campoContenidoPdfMantencion', 'campoContenidoPdfMantencion2',
+   'campoContenidoPdfMantencion3', 'campoContenidoPdfMantencion4'].forEach(function(id){
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';
+  });
 }
 async function cotWizCargarEjecutivos(){
   const sel = document.getElementById('cotWizEjecutivo');
@@ -1758,6 +1798,13 @@ function cotWizResumen(){
         descuento_pct: parseFloat(document.getElementById('cotWizDescuento').value) || 0,
         costo_ruta: Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0),
         ejecutivo: document.getElementById('cotWizEjecutivo').value,
+        // 2026-07-22: contenido opcional del PDF "rico" de Mantención (ver
+        // _cotWizToggleContenidoPdf / modo_rico en tk_cotizacion_pdf).
+        alcance: document.getElementById('cotWizAlcance').value.trim(),
+        recomendacion: document.getElementById('cotWizRecomendacion').value.trim(),
+        terminos: document.getElementById('cotWizTerminos').value.trim(),
+        dias_habiles_estimado: document.getElementById('cotWizDiasHabiles').value || null,
+        frecuencia_anual: document.getElementById('cotWizFrecuenciaAnual').value || null,
         // 2026-07-23 (Daniel, rediseño Paso 1 estilo "Generar OT"): contacto
         // de la persona + coordenadas de la dirección YA validada por
         // Google Places (antes se pedían pero se descartaban al enviar) +
