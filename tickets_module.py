@@ -2855,6 +2855,48 @@ def register_tickets_routes(app, ctx):
 
         alcance_lineas = _lineas(cot.get("alcance"))
         recomendacion_lineas = _lineas(cot.get("recomendacion"))
+        # Auto-recomendación inteligente (2026-07-22, Daniel: "algo
+        # inteligente que no dependa mucho del usuario... la gente tiene que
+        # saber si tiene visitas previas o si es la primera vez"). Si es
+        # mantención y el usuario NO cargó alcance/recomendación a mano, se
+        # generan por defecto -- distinguiendo primera mantención vs
+        # recurrente (cuenta cotizaciones/OT previas del mismo RUT). Así el
+        # PDF de mantención SIEMPRE sale con el bloque rico, sin trabajo del
+        # usuario, pero si escribe algo, lo suyo manda.
+        if cot.get("tipo_servicio") == "mantencion" and not alcance_lineas and not recomendacion_lineas:
+            _n_equipos = sum(it["cantidad"] for it in items) or len(items)
+            _rut_cli = (cot.get("rut") or "").strip()
+            _previas = 0
+            if _rut_cli:
+                try:
+                    _pr = mysql_fetchone(
+                        "SELECT COUNT(*) AS n FROM tk_cotizaciones "
+                        "WHERE rut=%s AND id<>%s AND tipo_servicio='mantencion' AND COALESCE(eliminada,0)=0",
+                        (_rut_cli, cid))
+                    _previas = int((_pr or {}).get("n") or 0)
+                except Exception:
+                    _previas = 0
+            alcance_lineas = [
+                f"Mantención preventiva de {_n_equipos} equipo(s) del cliente.",
+                "Inspección funcional, ajustes, limpieza y lubricación.",
+                "Revisión de elementos mecánicos y eléctricos accesibles.",
+                "Registro de observaciones y recomendaciones técnicas por equipo.",
+                "Coordinación del servicio para reducir interrupciones operativas.",
+            ]
+            if _previas > 0:
+                recomendacion_lineas = [
+                    f"Cliente recurrente: ya registra {_previas} mantención(es) previa(s) con nosotros — se dará continuidad a la trazabilidad de cada equipo.",
+                    "Comparar hallazgos con la visita anterior para anticipar desgaste y repuestos.",
+                    "Mantener la frecuencia recomendada de dos intervenciones al año.",
+                    "Cotizar previamente repuestos o trabajos correctivos que requieran autorización.",
+                ]
+            else:
+                recomendacion_lineas = [
+                    "Primera mantención registrada para este cliente: se levantará la línea base del estado de cada equipo.",
+                    "Programar dos intervenciones anuales, separadas aproximadamente cada seis meses.",
+                    "Emitir un informe técnico al cierre con hallazgos y recomendaciones.",
+                    "Cotizar previamente repuestos o trabajos correctivos que requieran autorización.",
+                ]
         modo_rico = (cot.get("tipo_servicio") == "mantencion") and bool(alcance_lineas or recomendacion_lineas)
 
         kpis = None
