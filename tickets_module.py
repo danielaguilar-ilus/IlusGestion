@@ -1582,6 +1582,14 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN uf_fecha DATE NULL")
         if "uf_total" not in existentes:
             alters.append("ADD COLUMN uf_total DECIMAL(14,4) NULL")
+        # 2026-07-22 (Daniel: "descuento en $ además de %"): cómo se
+        # interpreta el descuento de cabecera. 'pct' (default, comportamiento
+        # actual) = descuento_monto se CALCULA como subtotal×descuento_pct.
+        # 'monto' = descuento_monto es un valor FIJO en pesos que el usuario
+        # escribió y _tk_cotiz_recalcular NO lo pisa (solo lo topea al
+        # subtotal). Las cotizaciones viejas quedan 'pct' -> sin cambios.
+        if "descuento_tipo" not in existentes:
+            alters.append("ADD COLUMN descuento_tipo ENUM('pct','monto') NOT NULL DEFAULT 'pct'")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizaciones {a}")
@@ -1629,6 +1637,13 @@ def register_tickets_routes(app, ctx):
             alters.append("ADD COLUMN clase_producto VARCHAR(60) NULL")
         if "vaneli_original" not in existentes:
             alters.append("ADD COLUMN vaneli_original INT NULL")
+        # 2026-07-22 (Daniel: "el precio unitario de cada producto editable
+        # a mano"): override manual del precio unitario de una línea. NULL =
+        # usar el precio calculado por el motor (comportamiento actual). Si
+        # trae un valor, _tk_cotiz_recalcular lo respeta y NO lo pisa con el
+        # cálculo -- para casos especiales que no salen de la tarifa.
+        if "precio_manual" not in existentes:
+            alters.append("ADD COLUMN precio_manual INT NULL")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_cotizacion_items {a}")
@@ -2241,7 +2256,8 @@ def register_tickets_routes(app, ctx):
         "edición posterior" -- hacerlo requeriría un flujo de edición que
         Daniel no pidió todavía)."""
         cab = mysql_fetchone(
-            "SELECT id, tipo_servicio, comuna, costo_ruta, descuento_pct, iva_pct, uf_valor "
+            "SELECT id, tipo_servicio, comuna, costo_ruta, descuento_pct, descuento_tipo, "
+            "       descuento_monto, iva_pct, uf_valor "
             "FROM tk_cotizaciones WHERE id=%s", (cid,))
         if not cab:
             return None
@@ -2267,7 +2283,7 @@ def register_tickets_routes(app, ctx):
                     (costo_ruta_total, cid))
 
         items = mysql_fetchall(
-            "SELECT id, clase_producto, cantidad, descuento_pct, erp_kopr "
+            "SELECT id, clase_producto, cantidad, descuento_pct, erp_kopr, precio_manual "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s", (cid,)) or []
 
         # Sincroniza clase_producto desde el Catálogo (2026-07-21, bug real
@@ -2313,17 +2329,41 @@ def register_tickets_routes(app, ctx):
         subtotal_items = 0.0
         for it in items:
             _clase = it.get("clase_producto")
-            if _tarifas_batch_fn:
-                # Batch es autoritativo: si la clase no está en el map, no
-                # tiene tarifa -> $0, SIN una query de fallback por ítem.
-                _tarifa = _tarifas_map.get(_clase)
-                calc = _tk_cotiz_calcular_item(
-                    _clase, tipo_servicio, it.get("cantidad"),
-                    it.get("descuento_pct"), cfg, tarifa=_tarifa) if _tarifa else None
-            else:
-                # Defensivo (batch fn no disponible): camino viejo de a uno.
-                calc = _tk_cotiz_calcular_item(
-                    _clase, tipo_servicio, it.get("cantidad"), it.get("descuento_pct"), cfg)
+            # 2026-07-22 (Daniel: "precio unitario editable a mano"): si la
+            # línea tiene un precio_manual, MANDA sobre el cálculo de tarifa
+            # -- ni siquiera se consulta la tarifa. Respeta cantidad y el
+            # descuento por ítem igual que el cálculo normal.
+            _pm = it.get("precio_manual")
+            calc = None
+            if _pm is not None:
+                try:
+                    _pu = int(_pm)
+                except (TypeError, ValueError):
+                    _pu = None
+                if _pu is not None and _pu >= 0:
+                    try:
+                        _cant = max(int(float(it.get("cantidad") or 0)), 0)
+                    except (TypeError, ValueError):
+                        _cant = 1
+                    try:
+                        _di = min(max(float(it.get("descuento_pct") or 0), 0.0), 100.0)
+                    except (TypeError, ValueError):
+                        _di = 0.0
+                    _sub = _tk_money_round(_pu * _cant)
+                    calc = {"precio_unitario": _pu, "subtotal": _sub,
+                            "total": _tk_money_round(_sub * (1 - _di / 100.0))}
+            if calc is None:
+                if _tarifas_batch_fn:
+                    # Batch es autoritativo: si la clase no está en el map, no
+                    # tiene tarifa -> $0, SIN una query de fallback por ítem.
+                    _tarifa = _tarifas_map.get(_clase)
+                    calc = _tk_cotiz_calcular_item(
+                        _clase, tipo_servicio, it.get("cantidad"),
+                        it.get("descuento_pct"), cfg, tarifa=_tarifa) if _tarifa else None
+                else:
+                    # Defensivo (batch fn no disponible): camino viejo de a uno.
+                    calc = _tk_cotiz_calcular_item(
+                        _clase, tipo_servicio, it.get("cantidad"), it.get("descuento_pct"), cfg)
             if calc:
                 mysql_execute(
                     "UPDATE tk_cotizacion_items SET precio_unitario=%s, subtotal=%s, total=%s "
@@ -2345,7 +2385,17 @@ def register_tickets_routes(app, ctx):
         # subtotal; IVA sobre (subtotal - descuento).
         subtotal = subtotal_items + costo_ruta_total
         descuento_pct = float(cab.get("descuento_pct") or 0)
-        descuento_monto = _tk_money_round(subtotal * descuento_pct / 100.0)
+        # 2026-07-22 (Daniel: "descuento en $ además de %"): si el descuento
+        # es un MONTO fijo, se respeta el valor guardado (topeado al
+        # subtotal, nunca negativo el neto); si es por PORCENTAJE, se calcula.
+        if (cab.get("descuento_tipo") or "pct") == "monto":
+            try:
+                descuento_monto = max(min(int(cab.get("descuento_monto") or 0),
+                                          int(_tk_money_round(subtotal))), 0)
+            except (TypeError, ValueError):
+                descuento_monto = 0
+        else:
+            descuento_monto = _tk_money_round(subtotal * descuento_pct / 100.0)
         iva_pct = float(cab["iva_pct"]) if cab.get("iva_pct") is not None else cfg["iva_pct"]
         iva_monto = _tk_money_round((subtotal - descuento_monto) * iva_pct / 100.0)
         total = _tk_money_round(subtotal - descuento_monto + iva_monto)
@@ -3123,6 +3173,21 @@ def register_tickets_routes(app, ctx):
             descuento_pct = min(max(float(d.get("descuento_pct") or 0), 0.0), 100.0)
         except (TypeError, ValueError):
             descuento_pct = 0.0
+        # 2026-07-22 (Daniel: "descuento en $ además de %"): tipo de descuento
+        # + monto fijo cuando aplica. 'pct' por defecto (comportamiento
+        # actual). Cuando 'monto', el % se ignora en el cálculo pero se
+        # guarda 0 para no confundir; descuento_monto_in es el valor fijo.
+        descuento_tipo = (d.get("descuento_tipo") or "pct").strip().lower()
+        if descuento_tipo not in ("pct", "monto"):
+            descuento_tipo = "pct"
+        try:
+            descuento_monto_in = max(int(float(d.get("descuento_monto") or 0)), 0)
+        except (TypeError, ValueError):
+            descuento_monto_in = 0
+        if descuento_tipo == "monto":
+            descuento_pct = 0.0
+        else:
+            descuento_monto_in = 0
         try:
             costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
         except (TypeError, ValueError):
@@ -3327,18 +3392,18 @@ def register_tickets_routes(app, ctx):
                     " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
                     " direccion_lat, direccion_lng, direccion_place_id, cliente_id, origen, "
                     " alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual, "
-                    " uf_valor, uf_fecha) "
+                    " uf_valor, uf_fecha, descuento_tipo, descuento_monto) "
                     "VALUES (%s,'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                     "        %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                     "        %s, %s, %s, %s, %s, "
-                    "        %s, %s)",
+                    "        %s, %s, %s, %s)",
                     (numero, ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa,
                      email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta,
                      notas, notas_internas, ejecutivo, descuento_pct, costo_ruta_in, user,
                      contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
                      direccion_lat, direccion_lng, direccion_place_id, cliente_id_in, origen_in,
                      alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual,
-                     uf_valor_snap, uf_fecha_snap),
+                     uf_valor_snap, uf_fecha_snap, descuento_tipo, descuento_monto_in),
                 )
                 cot_id = cur.lastrowid
                 for it in items:
@@ -3374,12 +3439,22 @@ def register_tickets_routes(app, ctx):
                         vaneli_original = int(float(_v)) if _v not in (None, "") else None
                     except Exception:
                         vaneli_original = None
+                    # 2026-07-22 (Daniel: "precio unitario editable a mano"):
+                    # si el ítem trae precio_manual, se guarda; recalcular lo
+                    # respetará sobre la tarifa. None/'' = precio calculado.
+                    precio_manual = None
+                    try:
+                        _pmv = it.get("precio_manual")
+                        if _pmv not in (None, ""):
+                            precio_manual = max(int(float(_pmv)), 0)
+                    except (TypeError, ValueError):
+                        precio_manual = None
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, "
-                        " precio_unitario, subtotal, total, desde_ticket, clase_producto, vaneli_original) "
-                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s)",
-                        (cot_id, sku, descripcion, cantidad, clase_producto, vaneli_original),
+                        " precio_unitario, subtotal, total, desde_ticket, clase_producto, vaneli_original, precio_manual) "
+                        "VALUES (%s,'producto',%s,%s,%s,0,0,0,0,%s,%s,%s)",
+                        (cot_id, sku, descripcion, cantidad, clase_producto, vaneli_original, precio_manual),
                     )
             conn.commit()
         except Exception as e:

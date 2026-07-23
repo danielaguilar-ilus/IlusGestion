@@ -541,12 +541,22 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
             <div class="cot-wiz-campo" id="campoValidoHasta"><label>Válido hasta</label>
               <input id="cotWizValidoHasta" type="date" class="form-control">
               <div class="cot-wiz-campo-err">Obligatorio</div></div>
-            <div class="cot-wiz-campo"><label>Descuento General (%)</label>
-              <select id="cotWizDescuento" class="form-select">
-                <option value="0" selected>0%</option><option value="5">5%</option>
-                <option value="10">10%</option><option value="15">15%</option>
-                <option value="20">20%</option><option value="25">25%</option>
-              </select></div>
+            {# Descuento general: por PORCENTAJE o por MONTO fijo en $
+               (Daniel 2026-07-22: "descuento en $ además de %"). El selector
+               de la izquierda cambia el modo; el input de la derecha es el
+               valor (editable). #}
+            <div class="cot-wiz-campo"><label>Descuento General</label>
+              <div class="input-group input-group-sm">
+                <select id="cotWizDescModo" class="form-select" style="max-width:64px;flex:0 0 64px;"
+                        onchange="cotWizDescModoCambio()">
+                  <option value="pct" selected>%</option>
+                  <option value="monto">$</option>
+                </select>
+                <input id="cotWizDescValor" type="number" min="0" step="1" class="form-control"
+                       value="0" oninput="cotWizResumen()">
+              </div>
+              <div class="cot-wiz-hint" id="cotWizDescHint">Se aplica sobre el subtotal (ítems + ruta).</div>
+            </div>
             <div class="cot-wiz-campo full"><label>Observaciones (se visualizará en el PDF)</label>
               <textarea id="cotWizNotas" class="form-control" rows="1"
                         placeholder="Ej: Precios sujetos a disponibilidad"></textarea></div>
@@ -741,7 +751,9 @@ function cotWizAbrir(){
    'cotWizAlcance','cotWizRecomendacion','cotWizTerminos','cotWizDiasHabiles','cotWizFrecuenciaAnual'].forEach(function(id){
     const el = document.getElementById(id); if (el) el.value = '';
   });
-  document.getElementById('cotWizDescuento').value = '0';
+  document.getElementById('cotWizDescModo').value = 'pct';
+  document.getElementById('cotWizDescValor').value = '0';
+  cotWizDescModoCambio();
   document.getElementById('cotWizCostoRuta').value = '0';
   document.getElementById('cotWizEjecutivo').value = '';
   _cotWizToggleContenidoPdf();
@@ -1328,8 +1340,8 @@ async function cotWizBuscarRuta(){
   if (cr) cr.addEventListener('input', function(){ if (_WIZ) _WIZ.rutaManual = true; cotWizResumen(); });
   const cm = document.getElementById('cotWizComuna');
   if (cm) cm.addEventListener('change', cotWizBuscarRuta);
-  const dg = document.getElementById('cotWizDescuento');
-  if (dg) dg.addEventListener('change', cotWizResumen);
+  // El descuento (modo + valor) ya dispara cotWizResumen via onchange/oninput
+  // inline en el HTML -- no hace falta un listener extra aquí.
 })();
 
 // ── Asignar desde documento ERP -- lógica COMPARTIDA entre el botón
@@ -1619,7 +1631,7 @@ async function cotWizRender(){
       '<td><input type="number" min="0" step="1" class="cot-rev-cant" value="' + _cotEsc(it.qty) + '" onchange="cotWizCantidad(' + i + ', this.value)"></td>' +
       '<td><select class="cot-rev-select' + (it.clase_producto ? '' : ' sin-clasificar') + '" data-i="' + i + '" onchange="cotWizClase(' + i + ', this)">' +
         '<option value="">Sin clasificar</option>' + opts + '</select></td>' +
-      '<td class="cot-wiz-pu-cell"><span class="cot-rev-precio cero">…</span></td>' +
+      '<td class="cot-wiz-pu-cell"><input type="number" min="0" step="1" class="cot-rev-pu-input" data-i="' + i + '" placeholder="auto" title="Precio unitario — déjalo vacío para el precio automático o escribe uno a mano" onchange="cotWizPrecioManual(' + i + ', this.value)"></td>' +
       '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
       '<td><button type="button" class="cot-wiz-quitar" title="Quitar ítem" onclick="cotWizQuitar(' + i + ')"><i class="bi bi-x-lg"></i></button></td>' +
     '</tr>';
@@ -1668,22 +1680,52 @@ async function cotWizPrecios(){
     const d = await r.json();
     if (miSeq !== _wizPrecioSeq || !_WIZ) return;
     const precios = (d.ok && Array.isArray(d.precios)) ? d.precios : [];
-    const filasPu = document.querySelectorAll('#cotWizBody .cot-wiz-pu-cell');
-    const filasTot = document.querySelectorAll('#cotWizBody .cot-wiz-tot-cell');
-    let suma = 0;
+    // Guarda el precio AUTOMÁTICO (calculado) de cada ítem; el render local
+    // decide si mostrar ese o el precio_manual que el usuario haya escrito.
     _WIZ.items.forEach(function(it, i){
       const p = precios[i];
-      suma += p ? (p.total || 0) : 0;
-      if (filasPu[i]) filasPu[i].innerHTML = p
-        ? '<span class="cot-rev-precio">$' + Math.round(p.precio_unitario).toLocaleString('es-CL') + '</span>'
-        : '<span class="cot-rev-precio cero">—</span>';
-      if (filasTot[i]) filasTot[i].innerHTML = p
-        ? '<span class="cot-rev-precio">$' + Math.round(p.total).toLocaleString('es-CL') + '</span>'
-        : '<span class="cot-rev-precio cero">sin clasificar</span>';
+      it._precioCalc = p ? p.precio_unitario : null;
     });
-    _WIZ.sumaItems = suma;
-    cotWizResumen();
+    cotWizRecalcLocal();
   }catch(e){ console.warn('preview-precio:', e); }
+}
+
+// Recalcula los totales de la tabla y del resumen SIN pegarle al backend,
+// respetando el precio_manual por línea (Daniel 2026-07-22). precio efectivo
+// = precio_manual si está seteado, si no el calculado. total línea = pu × qty.
+function cotWizRecalcLocal(){
+  if (!_WIZ) return;
+  const inputsPu = document.querySelectorAll('#cotWizBody .cot-rev-pu-input');
+  const filasTot = document.querySelectorAll('#cotWizBody .cot-wiz-tot-cell');
+  let suma = 0;
+  _WIZ.items.forEach(function(it, i){
+    const auto = (it._precioCalc != null) ? Math.round(it._precioCalc) : null;
+    const pu = (it.precio_manual != null) ? it.precio_manual : auto;
+    const qty = it.qty || 0;
+    const tot = (pu != null) ? Math.round(pu * qty) : null;
+    suma += tot || 0;
+    const inp = inputsPu[i];
+    if (inp && document.activeElement !== inp){
+      inp.value = (pu != null) ? pu : '';
+      inp.classList.toggle('manual', it.precio_manual != null);
+    }
+    if (filasTot[i]) filasTot[i].innerHTML = (tot != null)
+      ? '<span class="cot-rev-precio">$' + tot.toLocaleString('es-CL') + '</span>'
+      : '<span class="cot-rev-precio cero">sin clasificar</span>';
+  });
+  _WIZ.sumaItems = suma;
+  cotWizResumen();
+}
+
+// El usuario escribió un precio unitario a mano. Vacío o igual al calculado
+// = vuelve a "auto" (sin override). Cualquier otro valor = override manual.
+function cotWizPrecioManual(i, v){
+  if (!_WIZ || !_WIZ.items[i]) return;
+  const it = _WIZ.items[i];
+  const n = (v === '' || v == null) ? null : Math.max(parseInt(v, 10) || 0, 0);
+  const auto = (it._precioCalc != null) ? Math.round(it._precioCalc) : null;
+  it.precio_manual = (n === null || (auto != null && n === auto)) ? null : n;
+  cotWizRecalcLocal();
 }
 
 function _wizCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
@@ -1728,13 +1770,30 @@ function _cotWizActualizarUf(totalClp){
   }
   row.style.display = '';
 }
+// Devuelve {modo:'pct'|'monto', valor:Number} del descuento del formulario.
+function _cotWizDesc(){
+  const modo = (document.getElementById('cotWizDescModo') || {}).value || 'pct';
+  const valor = Math.max(parseFloat((document.getElementById('cotWizDescValor') || {}).value) || 0, 0);
+  return {modo: modo, valor: valor};
+}
+function cotWizDescModoCambio(){
+  const d = _cotWizDesc();
+  const hint = document.getElementById('cotWizDescHint');
+  if (hint) hint.textContent = d.modo === 'monto'
+    ? 'Monto fijo en pesos a descontar del subtotal.'
+    : 'Porcentaje aplicado sobre el subtotal (ítems + ruta).';
+  cotWizResumen();
+}
 function cotWizResumen(){
   if (!_WIZ) return;
   const items = _WIZ.sumaItems || 0;
   const ruta = Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0);
-  const pct = parseFloat(document.getElementById('cotWizDescuento').value) || 0;
   const subtotal = items + ruta;
-  const desc = Math.round(subtotal * pct / 100);
+  const dsc = _cotWizDesc();
+  // Descuento por % o por monto fijo (topeado al subtotal, nunca negativo).
+  const desc = (dsc.modo === 'monto')
+    ? Math.min(Math.round(dsc.valor), subtotal)
+    : Math.round(subtotal * Math.min(dsc.valor, 100) / 100);
   const iva = Math.round((subtotal - desc) * 0.19);
   const total = subtotal - desc + iva;
   document.getElementById('cotWizResRuta').textContent = _wizCLP(ruta);
@@ -1786,9 +1845,12 @@ function cotWizResumen(){
     btnCrear.disabled = true;
     btnCrear.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     try{
+      const _desc = _cotWizDesc();
       const payload = {
         items: _WIZ.items.map(it => ({ sku: it.sku, nombre: it.nombre, qty: it.qty,
-                                       tido: it.tido, koen: it.koen, clase_producto: it.clase_producto })),
+                                       tido: it.tido, koen: it.koen, clase_producto: it.clase_producto,
+                                       // precio unitario editado a mano (null = automático)
+                                       precio_manual: (it.precio_manual != null ? it.precio_manual : null) })),
         header: {
           cliente: empresa,
           rut: document.getElementById('cotWizRut').value.trim(),
@@ -1802,7 +1864,10 @@ function cotWizResumen(){
         valida_hasta: document.getElementById('cotWizValidoHasta').value,
         notas: document.getElementById('cotWizNotas').value.trim(),
         notas_internas: document.getElementById('cotWizNotasInt').value.trim(),
-        descuento_pct: parseFloat(document.getElementById('cotWizDescuento').value) || 0,
+        // Descuento por % o por monto fijo en $ (Daniel 2026-07-22).
+        descuento_tipo: _desc.modo,
+        descuento_pct: (_desc.modo === 'pct' ? _desc.valor : 0),
+        descuento_monto: (_desc.modo === 'monto' ? Math.round(_desc.valor) : 0),
         costo_ruta: Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0),
         ejecutivo: document.getElementById('cotWizEjecutivo').value,
         // 2026-07-22: contenido opcional del PDF "rico" de Mantención (ver
