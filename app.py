@@ -11475,7 +11475,18 @@ def admin_roles_diagnostico():
 @app.route("/admin/users/<int:user_id>/password-link", methods=["POST"])
 @require_permission("admin")
 def user_password_link(user_id):
-    """Envia un enlace seguro para que el usuario cambie su propia clave."""
+    """Envia un enlace seguro para que el usuario cambie su propia clave.
+
+    Fallback correo caído (SOLO superadmin): si NINGÚN canal logró salir,
+    la respuesta incluye el enlace generado (`reset_link`) + `email_fallo`
+    para que el front lo muestre con botón "Copiar enlace" y el superadmin
+    se lo mande al usuario por WhatsApp u otro canal. El enlace ya es de
+    un solo uso y expira en 60 min por diseño, así que entregárselo SOLO
+    al superadmin que lo pidió no degrada la seguridad. Si el envío
+    funciona, el enlace NUNCA viaja en la respuesta (comportamiento
+    original intacto). El detalle crudo del error SMTP va al log del
+    backend, no al cliente (REGLA #4).
+    """
     user = get_auth_user_by_id(user_id)
     if not user:
         return jsonify({"error": "Usuario no encontrado"}), 404
@@ -11490,10 +11501,37 @@ def user_password_link(user_id):
         if result.get("email") or result.get("whatsapp"):
             msg, _level = _access_notification_flash(result, token_mode=True)
             return jsonify({"ok": True, "message": msg})
-        detalle = " ".join(result.get("errors") or []) or "Revisa la configuracion SMTP o WhatsApp en Comunicaciones."
-        return jsonify({"error": f"No se pudo enviar el enlace seguro. {detalle}"}), 500
+
+        # ── Envío FALLIDO en todos los canales ──
+        # Detalle técnico (SMTP/Resend crudo) SOLO al log del backend.
+        detalle = " ".join(str(e) for e in (result.get("errors") or []) if e)
+        print(f"[password-link] envio fallido user_id={user_id}: {detalle}", flush=True)
+        amigable = ("No se pudo enviar el correo con el enlace seguro. "
+                    "Revisa la configuración de correo en Comunicaciones.")
+
+        # Fallback SOLO superadmin: entregar el enlace para envío manual.
+        if (g.permissions or {}).get("superadmin"):
+            _audit("password_link_fallback_revelado",
+                   target_type="user", target_id=user_id,
+                   details={"username": user["username"],
+                            "motivo": "correo_caido_todos_los_canales"},
+                   status="warn")
+            return jsonify({
+                "ok": False,
+                "email_fallo": True,
+                "reset_link": reset_url,
+                "usuario_email": user["username"],
+                "vigencia_min": 60,
+                "error": amigable,
+            }), 200
+
+        # Admin no-superadmin: mensaje amigable, sin enlace ni detalle interno.
+        return jsonify({"ok": False, "email_fallo": True, "error": amigable}), 500
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        print(f"[password-link] error user_id={user_id}: {exc}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo generar el enlace seguro. "
+                                 "Reintenta en unos segundos."}), 500
 
 
 @app.route("/admin/users/<int:user_id>/set-password", methods=["POST"])

@@ -291,20 +291,33 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-wiz-eqficha-item input{width:18px;height:18px;accent-color:#16a34a;flex-shrink:0;}
 .cot-wiz-eqficha-item small{color:#4d7c0f;font-family:'JetBrains Mono',monospace;}
 .cot-wiz-eqficha-foot{padding:8px 12px 12px;}
+/* Giro del ícono del chip UF mientras refresca (no existe un keyframe
+   'spin' global en el proyecto -- se declara acá). */
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+#cotUfChip:disabled{opacity:.7;cursor:wait;}
 </style>
 
 <div class="tk-hero">
   <div>
     <h4><i class="bi bi-file-earmark-text me-2"></i>Cotizaciones</h4>
     <div class="sub">Mantención e instalación — cálculo automático por categoría de equipo + costo de ruta por comuna
-      {% if uf_info and uf_info.valor %}
-      {# UF VISIBLE (Daniel: "la API de la UF ¿eso quedó?"): el valor se
-         extrae solo de internet (mindicador.cl) y alimenta los montos. #}
-      <span style="display:inline-flex;align-items:center;gap:5px;background:#0a0a0a;color:#fff;border-radius:50px;padding:3px 12px;font-size:.7rem;font-weight:800;margin-left:8px;vertical-align:middle;"
-            title="Valor de la UF obtenido automáticamente desde mindicador.cl{% if uf_info.fecha %} ({{ uf_info.fecha }}){% endif %} — se congela en cada cotización al emitirla. Editable en Clasificación.">
-        <i class="bi bi-arrow-repeat" style="color:#4ade80;"></i>UF ${{ uf_info.valor | fkg(2) }}
-      </span>
-      {% endif %}
+      {# UF VISIBLE + REFRESCABLE (Daniel 2026-07-23: "aprieto el botón para
+         actualizarla y no pasa nada... necesito trazabilidad de dónde la
+         estamos sacando y el día"). El chip anterior era un <span> estático
+         con un ícono ↻ que INVITABA a hacer clic pero no hacía nada -- ese
+         era el "botón que no funciona". Ahora es un botón real: clic →
+         POST /api/uf-refresh (fuerza el fetch a mindicador.cl saltando el
+         cache) y repinta valor + fecha + fuente en el propio chip. La
+         trazabilidad (fuente · fecha) queda SIEMPRE visible, no solo en
+         el tooltip. Si uf_info venía vacío del render (API caída al cargar
+         la página), el chip igual existe y el fetch on-load lo puebla. #}
+      <button type="button" id="cotUfChip" onclick="cotUfChipRefrescar()"
+              style="display:inline-flex;align-items:center;gap:6px;background:#0a0a0a;color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:50px;padding:3px 12px;font-size:.7rem;font-weight:800;margin-left:8px;vertical-align:middle;cursor:pointer;"
+              title="Clic para actualizar la UF ahora desde mindicador.cl. Se congela en cada cotización al emitirla; editable en Clasificación.">
+        <i class="bi bi-arrow-repeat" id="cotUfChipIco" style="color:#4ade80;"></i>
+        <span id="cotUfChipVal">{% if uf_info and uf_info.valor %}UF ${{ uf_info.valor | fkg(2) }}{% else %}UF —{% endif %}</span>
+        <span id="cotUfChipMeta" style="font-weight:600;color:#9ca3af;font-size:.62rem;">{% if uf_info and uf_info.fecha %}{{ uf_info.fecha }} · mindicador.cl{% endif %}</span>
+      </button>
     </div>
   </div>
   <div class="d-flex gap-2">
@@ -315,10 +328,15 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
        necesario") y son datos reales importados (Regla #4.2). Solo se
        saca el link visible de este hero; la ruta/plantilla siguen vivas
        para quien entre por URL directa. En su lugar: acceso directo a
-       /catalogo/clases (categorías/tarifas que ya usa Daniel). #}
-    <a href="{{ url_for('cat_clases_page') }}" class="btn btn-lg btn-outline-light"
-       style="border-color:#e5e7eb;color:#374151;font-weight:700;border-radius:10px;"
-       title="Categorías y tarifas de productos">
+       /catalogo/clases (categorías/tarifas que ya usa Daniel).
+       2026-07-23 (2, Daniel: "el botón de clasificación está mal"): tenía
+       color:#374151 (gris oscuro) sobre el hero negro -- se veía como
+       DESHABILITADO. Ahora blanco con borde translúcido, mismo lenguaje
+       que el botón oscuro de Usuarios y roles. #}
+    <a href="{{ url_for('cat_clases_page') }}" class="btn btn-lg"
+       style="border:1.5px solid rgba(255,255,255,.45);color:#fff;background:transparent;font-weight:700;border-radius:10px;"
+       title="Categorías y tarifas de productos"
+       onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='transparent'">
       <i class="bi bi-tags-fill me-1"></i>Clasificación
     </a>
     <button type="button" id="btnCotNuevaErp" class="btn btn-lg" style="background:#dc2626;color:#fff;font-weight:800;border-radius:10px;">
@@ -2308,6 +2326,52 @@ function cotRowClick(e, id){
   cotEditar(id);
 }
 function cotEditar(id){ cotWizAbrir(id); }
+
+// ── Chip UF del hero (2026-07-23, Daniel: "que la UF quede automática y
+//    que tenga trazabilidad de dónde la estamos sacando y el día"). ──
+function _cotUfChipPintar(d){
+  const val = document.getElementById('cotUfChipVal');
+  const meta = document.getElementById('cotUfChipMeta');
+  if (!val) return;
+  if (!d || !d.ok || d.uf == null){
+    val.textContent = 'UF —';
+    if (meta) meta.textContent = 'sin conexión';
+    return;
+  }
+  val.textContent = 'UF $' + Number(d.uf).toLocaleString('es-CL', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  // Trazabilidad visible: fecha + fuente real del valor (no solo tooltip).
+  let fuente = 'mindicador.cl';
+  if (d.manual) fuente = 'manual' + (d.set_by ? ' · ' + d.set_by : '');
+  else if (d.stale) fuente = 'último conocido';
+  if (meta) meta.textContent = (d.fecha ? d.fecha + ' · ' : '') + fuente;
+}
+async function cotUfChipRefrescar(){
+  const chip = document.getElementById('cotUfChip');
+  const ico = document.getElementById('cotUfChipIco');
+  if (chip) chip.disabled = true;
+  if (ico) ico.style.animation = 'spin .8s linear infinite';
+  try{
+    const r = await fetch('/api/uf-refresh', {method:'POST'});
+    const d = await r.json();
+    if (d && d.ok){
+      _cotUfChipPintar(d);
+      ilusToast('✓ UF actualizada' + (d.fecha ? ' (' + d.fecha + ')' : ''), {type:'success'});
+    } else {
+      ilusToast(d && d.error ? d.error : 'No se pudo actualizar la UF', {type:'error'});
+    }
+  }catch(e){ ilusToast('No se pudo actualizar la UF (error de conexión)', {type:'error'}); }
+  finally{
+    if (chip) chip.disabled = false;
+    if (ico) ico.style.animation = '';
+  }
+}
+// Al cargar la página, refrescar el chip con el valor VIVO (el render del
+// servidor puede venir de un worker con cache de hasta 1h). GET liviano,
+// no fuerza fetch a mindicador si el cache del server está fresco.
+(function(){
+  fetch('/api/uf-actual').then(function(r){ return r.json(); })
+    .then(_cotUfChipPintar).catch(function(){});
+})();
 
 // Filtro client-side (número/empresa/RUT + estado). Barato para LIMIT 100.
 function cotFiltrarLista(){

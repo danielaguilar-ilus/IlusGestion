@@ -371,6 +371,11 @@ async function enviarPasswordLink(uid, nombre, email, btn) {
       btn.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
       ilusToast('Enlace de cambio enviado a ' + email, { type: 'success' });
       setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+    } else if (d.email_fallo && d.reset_link) {
+      // Correo caído: el backend generó igual el enlace seguro y lo devolvió
+      // SOLO porque quien pide es superadmin. Se muestra para envío manual.
+      btn.innerHTML = orig; btn.disabled = false;
+      await mostrarEnlaceResetManual(d, email);
     } else {
       await ilusAlert({
         title: 'No se pudo enviar',
@@ -386,6 +391,55 @@ async function enviarPasswordLink(uid, nombre, email, btn) {
       type: 'error',
     });
     btn.innerHTML = orig; btn.disabled = false;
+  }
+}
+
+// ── Fallback correo caído: mostrar enlace seguro para envío manual ─────
+// El backend incluye reset_link SOLO si el envío falló en todos los
+// canales Y quien pide es superadmin. El enlace es de un solo uso y
+// vence en 60 min, así que mostrarlo aquí no degrada la seguridad.
+// REGLA #1 CLAUDE.md — modal ILUS (ilusAlert), nunca alert() nativo.
+async function mostrarEnlaceResetManual(d, email) {
+  const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const destino = escH(email || d.usuario_email || 'el usuario');
+  const minutos = parseInt(d.vigencia_min, 10) || 60;
+  await ilusAlert({
+    title: 'Correo caído — envío manual',
+    message: 'No se pudo enviar el correo, pero el enlace seguro quedó generado.',
+    type: 'warning',
+    okLabel: 'Listo',
+    subHtml: true,
+    sub: `Cópialo y envíaselo a <strong>${destino}</strong> por WhatsApp u otro canal. ` +
+         `Es de <strong>un solo uso</strong> y vence en <strong>${minutos} min</strong>.` +
+         `<div style="display:flex;gap:6px;margin-top:10px">` +
+           `<input id="ilusResetLinkInput" type="text" readonly value="${escH(d.reset_link)}" onclick="this.select()" ` +
+             `style="flex:1;min-width:0;font-family:monospace;font-size:.78rem;padding:7px 9px;border:1px solid #d1d5db;border-radius:8px;background:#f9fafb;color:#111827">` +
+           `<button type="button" onclick="ilusCopiarResetLink(this)" ` +
+             `style="white-space:nowrap;padding:7px 12px;border:1px solid #0a0a0a;border-radius:8px;background:#0a0a0a;color:#fff;font-size:.8rem;font-weight:600;cursor:pointer">` +
+             `<i class="bi bi-clipboard me-1"></i>Copiar enlace</button>` +
+         `</div>`,
+  });
+}
+
+// OJO: el botón de copiar NO lleva clase .ilus-btn a propósito — ilusAlert
+// engancha su cierre al primer .ilus-btn del modal y lo cerraría al copiar.
+function ilusCopiarResetLink(btn) {
+  const inp = document.getElementById('ilusResetLinkInput');
+  if (!inp) return;
+  const done = () => {
+    btn.innerHTML = '<i class="bi bi-clipboard-check me-1"></i>Copiado';
+    ilusToast('Enlace copiado al portapapeles', { type: 'success' });
+    setTimeout(() => { btn.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copiar enlace'; }, 2200);
+  };
+  const copiaManual = () => {
+    inp.focus(); inp.select();
+    try { document.execCommand('copy'); done(); }
+    catch (e) { ilusToast('No se pudo copiar automáticamente — selecciona el enlace y usa Ctrl+C', { type: 'warning' }); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(inp.value).then(done).catch(copiaManual);
+  } else {
+    copiaManual();
   }
 }
 
