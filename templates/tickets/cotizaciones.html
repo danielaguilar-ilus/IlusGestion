@@ -826,6 +826,15 @@ function cotWizAbrir(editCid){
   // editCid (2026-07-22, Daniel: "si selecciono la fila, me deje entrar a la
   // edición"): si viene un id, el wizard entra en MODO EDICIÓN -- precarga la
   // cotización y guarda con /actualizar en vez de /desde-erp.
+  // BLINDAJE (bug real en producción 2026-07-22): el botón "Crear Cotización"
+  // está enlazado con addEventListener('click', cotWizAbrir) -- el navegador
+  // le pasa el PointerEvent como primer argumento, que aquí se disfrazaba de
+  // editCid y disparaba GET /cotizaciones/[object PointerEvent] → 404
+  // "Recurso no encontrado" + cierre inmediato del modal. Solo un entero
+  // positivo cuenta como id de edición; cualquier otra cosa = crear.
+  editCid = (typeof editCid === 'number' && isFinite(editCid) && editCid > 0)
+    ? Math.floor(editCid)
+    : ((typeof editCid === 'string' && /^\d+$/.test(editCid)) ? parseInt(editCid, 10) : null);
   // 2026-07-23 (Daniel: el dropdown de Google nunca aparecía en Dirección).
   // Cinturón y tirantes -- ver el fix real más abajo en _cotWizInitDireccion();
   // esta llamada es idempotente (guard input.dataset.placesBound) y cubre
