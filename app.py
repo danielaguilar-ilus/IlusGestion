@@ -7203,6 +7203,7 @@ _MODULOS_KILLSWITCH_VALIDOS = (
     "comunicacion_interna",
     "general",
     "tickets",
+    "catalogo",
 )
 
 _KILLSWITCH_CACHE = {"data": None, "ts": 0}
@@ -7309,6 +7310,9 @@ def _modulo_desde_evento(evento: str) -> str:
     if any(t in e for t in ("pedido", "courier", "despacho", "programado",
                             "en_ruta", "en_camino", "entregado", "fallido")):
         return "transporte"
+    # Catálogo (envío de manuales PDF)
+    if any(t in e for t in ("catalogo_manual", "catalogo_")):
+        return "catalogo"
     return "general"
 
 
@@ -31027,7 +31031,7 @@ def init_comunicaciones_tables():
             """)
             # Seed: todos los módulos habilitados por default
             for _ks_mod in ("transporte", "retiros", "mantenciones",
-                            "comunicacion_interna", "general"):
+                            "comunicacion_interna", "general", "catalogo"):
                 try:
                     cur.execute(
                         "INSERT IGNORE INTO comm_killswitch "
@@ -32913,6 +32917,7 @@ _COMM_MODULOS_VALIDOS = (
     "comunicacion_interna",
     "general",
     "tickets",
+    "catalogo",
 )
 
 
@@ -33025,6 +33030,7 @@ def comm_killswitch_get():
         "comunicacion_interna": "Comunicación interna",
         "general":              "General",
         "tickets":              "Tickets",
+        "catalogo":             "Catálogo",
     }
     modulos = []
     for mod in _MODULOS_KILLSWITCH_VALIDOS:
@@ -72163,6 +72169,49 @@ def _ensure_comm_template_tickets():
         return 0
 
 
+def _catalogo_tpl_seed():
+    """Source of truth de las plantillas EDITABLES del módulo CATÁLOGO
+    (email). Daniel 2026-07-23: el envío de manuales PDF de producto debe
+    poder editarse desde /comunicaciones sin tocar código — mismo patrón
+    que 'tickets'/'general'. Placeholders: {{sku}}, {{producto}},
+    {{manual_nombre}}, {{mensaje}} (nota opcional del remitente, ya
+    escapada — vacía si no hay)."""
+    return {
+        'manual_envio': (
+            "Manual — {{producto}}",
+            "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola,</p>"
+            "<div style=\"border-left:4px solid #dc2626;background:#fafafa;border-radius:0 10px 10px 0;"
+            "padding:18px 20px;margin:0 0 6px\">"
+            "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Adjunto encontrarás el manual del "
+            "producto <strong>{{sku}}</strong> — {{producto}}.{{mensaje}}</div></div>"),
+    }
+
+
+def _ensure_comm_template_catalogo():
+    """Siembra idempotente de la plantilla del módulo 'catalogo' (email)
+    AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → no pisa ediciones de Daniel
+    (UNIQUE modulo+estado+canal)."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _catalogo_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='catalogo' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('catalogo',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de catalogo sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar catalogo: {e}", flush=True)
+        return 0
+
+
 def _ensure_tickets_killswitch_cerrado():
     """Daniel 2026-07-11: la llave de paso del módulo 'tickets' debe nacer
     CERRADA (bloqueada) hasta que el revise las plantillas nuevas — a
@@ -72613,6 +72662,7 @@ try:
         _ensure_comm_template_general()
         _ensure_comm_template_retiros()  # Daniel 2026-06-15: stepper de correo al canónico
         _ensure_comm_template_tickets()  # Daniel 2026-07-11: set completo de plantillas de tickets
+        _ensure_comm_template_catalogo()  # Daniel 2026-07-23: envío de manuales PDF editable
         _ensure_tickets_killswitch_cerrado()  # Daniel 2026-07-11: llave de tickets nace CERRADA
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)

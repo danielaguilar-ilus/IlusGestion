@@ -143,6 +143,7 @@ def register_catalogo_routes(app, ctx):
     _send_ilus_email = ctx.get("_send_ilus_email")
     _brand_subject = ctx.get("_brand_subject")
     _ilus_email_master = ctx.get("_ilus_email_master")
+    _render_comm_template = ctx.get("_render_comm_template")
     ILUS_SOPORTE_EMAIL = ctx.get("ILUS_SOPORTE_EMAIL") or "soportetec@sphs.cl"
 
     MAX_FOTOS_POR_PRODUCTO = 10
@@ -2494,6 +2495,27 @@ def register_catalogo_routes(app, ctx):
             f"<strong>{_esc(p.get('sku') or '')}</strong> — {_esc(nombre_producto)}.</p>"
             f"{msg_html}"
         )
+        # 2026-07-23 (Comunicaciones: modulo "catalogo"): si hay plantilla
+        # editable activa para modulo='catalogo' estado='manual_envio', se
+        # usa esa (asunto y cuerpo) en vez del hardcodeado de arriba. El
+        # bloque de arriba queda como FALLBACK si no hay plantilla o esta
+        # apagada -- nunca se omite el envio (Regla: degradar, no omitir).
+        if _render_comm_template:
+            try:
+                _tpl = _render_comm_template(
+                    "manual_envio", "email",
+                    {"sku": p.get("sku") or "", "producto": nombre_producto,
+                     "manual_nombre": p.get("manual_pdf_nombre") or "",
+                     "mensaje": msg_html},
+                    modulo="catalogo")
+                if _tpl:
+                    _asu, _cue = _tpl
+                    if (_asu or "").strip():
+                        subject = _asu.strip()
+                    if (_cue or "").strip():
+                        body_html = _cue
+            except Exception as _e_tpl:
+                print(f"[cat_manual_enviar_correo] plantilla no usada pid={pid}: {_e_tpl}", flush=True)
         if _ilus_email_master:
             html = _ilus_email_master({
                 "subject": subject,
@@ -2594,6 +2616,27 @@ def register_catalogo_routes(app, ctx):
             f"<strong>{_esc(m.get('sku') or '')}</strong> — {_esc(nombre_producto)}.</p>"
             f"{msg_html}"
         )
+        # 2026-07-23 (Comunicaciones: modulo "catalogo"): si hay plantilla
+        # editable activa para modulo='catalogo' estado='manual_envio', se
+        # usa esa (asunto y cuerpo) en vez del hardcodeado de arriba. El
+        # bloque de arriba queda como FALLBACK si no hay plantilla o esta
+        # apagada -- nunca se omite el envio (Regla: degradar, no omitir).
+        if _render_comm_template:
+            try:
+                _tpl = _render_comm_template(
+                    "manual_envio", "email",
+                    {"sku": m.get("sku") or "", "producto": nombre_producto,
+                     "manual_nombre": m.get("nombre_archivo") or "",
+                     "mensaje": msg_html},
+                    modulo="catalogo")
+                if _tpl:
+                    _asu, _cue = _tpl
+                    if (_asu or "").strip():
+                        subject = _asu.strip()
+                    if (_cue or "").strip():
+                        body_html = _cue
+            except Exception as _e_tpl:
+                print(f"[cat_manuales_multi_enviar_correo] plantilla no usada pid={pid} manual={manual_id}: {_e_tpl}", flush=True)
         if _ilus_email_master:
             html = _ilus_email_master({
                 "subject": subject,

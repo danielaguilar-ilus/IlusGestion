@@ -607,6 +607,13 @@
           <div class="tmc-titulo">Tickets</div>
           <div class="tmc-sub">Soporte técnico, garantías</div>
         </button>
+        <button type="button" class="tpl-modulo-card" data-modulo="catalogo"
+                onclick="seleccionarModulo('catalogo', this)">
+          <span class="tmc-warn" id="tmcWarn-catalogo" title=""><i class="bi bi-exclamation-lg"></i></span>
+          <div class="tmc-icon"><i class="bi bi-box-seam"></i></div>
+          <div class="tmc-titulo">Catálogo</div>
+          <div class="tmc-sub">Manuales PDF de producto</div>
+        </button>
         <button type="button" class="tpl-modulo-card" data-modulo="comunicacion_interna"
                 onclick="seleccionarModulo('comunicacion_interna', this)">
           <span class="tmc-warn" id="tmcWarn-comunicacion_interna" title=""><i class="bi bi-exclamation-lg"></i></span>
@@ -1413,6 +1420,7 @@ function poblarPlantillasManual() {
     { label:'Mantenciones',         lista:TPL_ESTADOS_MANTENCIONES },
     { label:'Comunicación interna', lista:TPL_ESTADOS_COMUNICACION_INTERNA },
     { label:'Tickets',              lista:TPL_ESTADOS_TICKETS },
+    { label:'Catálogo',             lista:TPL_ESTADOS_CATALOGO },
   ];
   grupos.forEach(g => {
     if (!g.lista || !g.lista.length) return;
@@ -1672,6 +1680,11 @@ const TPL_ESTADOS_TICKETS = [
     color:'#dc2626', desc:'Correo al enviar una cotización (adjunta el PDF) — variables: {{numero_cotizacion}}, {{empresa}}, {{total}}, {{valida_hasta}}, {{mensaje}}' },
 ];
 
+const TPL_ESTADOS_CATALOGO = [
+  { key:'manual_envio', label:'Envío de manual', icon:'bi-file-earmark-pdf-fill', grupo:'catalogo',
+    color:'#dc2626', desc:'Correo al enviar el manual PDF de un producto (adjunta el PDF) — variables: {{sku}}, {{producto}}, {{manual_nombre}}, {{mensaje}}' },
+];
+
 const TPL_ESTADOS_GENERAL = [
   { key:'comunicado',   label:'Comunicado',    icon:'bi-megaphone',   grupo:'general',
     color:'#dc2626', desc:'Comunicado general a clientes (texto libre con el diseño ILUS)' },
@@ -1692,6 +1705,7 @@ function getEstadosForModulo(){
   if (m === 'mantenciones')         return TPL_ESTADOS_MANTENCIONES;
   if (m === 'comunicacion_interna') return TPL_ESTADOS_COMUNICACION_INTERNA;
   if (m === 'tickets')              return TPL_ESTADOS_TICKETS;
+  if (m === 'catalogo')             return TPL_ESTADOS_CATALOGO;
   if (m === 'general')              return TPL_ESTADOS_GENERAL;
   return TPL_ESTADOS_TRANSPORTE;
 }
@@ -2081,6 +2095,7 @@ const KS_MODULOS_LABELS = {
   comunicacion_interna: { label:'Comunicación interna', icon:'bi-people' },
   general:              { label:'General',              icon:'bi-folder' },
   tickets:              { label:'Tickets',              icon:'bi-ticket-perforated' },
+  catalogo:             { label:'Catálogo',             icon:'bi-box-seam' },
 };
 const KS_CANAL_LABELS = {
   email:    'Email',
@@ -2392,6 +2407,7 @@ const GRUPO_LABELS = {
   interna:    { label:'Comunicación interna', icon:'bi-people' },
   general:    { label:'General',              icon:'bi-megaphone' },
   tickets:    { label:'Tickets',              icon:'bi-ticket-perforated' },
+  catalogo:   { label:'Catálogo',             icon:'bi-box-seam' },
 };
 
 function renderTplEstados() {
