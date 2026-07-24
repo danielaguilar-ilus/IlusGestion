@@ -6377,7 +6377,7 @@ def register_tickets_routes(app, ctx):
 
         tecnico = mysql_fetchone(
             "SELECT COALESCE(nombre, username) AS nm FROM app_users "
-            "WHERE id=%s AND role LIKE 'tecnico%' AND active=1", (tecnico_principal,))
+            "WHERE id=%s AND role LIKE %s AND active=1", (tecnico_principal, "tecnico%"))
         if not tecnico:
             return jsonify({"ok": False, "error": "El técnico indicado no existe o no está activo."}), 400
 

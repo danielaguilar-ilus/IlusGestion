@@ -44083,8 +44083,8 @@ def mant_visita_multi(cid):
         placeholders_t = ",".join(["%s"] * len(tecnico_ids))
         rows_t = mysql_fetchall(
             f"SELECT id, COALESCE(nombre, username) AS nombre FROM app_users "
-            f"WHERE id IN ({placeholders_t}) AND role LIKE 'tecnico%' AND active=1",
-            tuple(tecnico_ids)
+            f"WHERE id IN ({placeholders_t}) AND role LIKE %s AND active=1",
+            tuple(tecnico_ids) + ("tecnico%",)
         ) or []
         tecnicos_data = [dict(r) for r in rows_t]
     tecnico_user_id = tecnicos_data[0]["id"] if tecnicos_data else None
@@ -44335,11 +44335,11 @@ def mant_tecnicos_list_api():
            "       NULL AS tarifa_visita, "
            "       active AS activo, "
            "       0 AS es_externo "
-           "  FROM app_users WHERE role LIKE 'tecnico%'")
+           "  FROM app_users WHERE role LIKE %s")
     if not incluir_inactivos:
         sql += " AND active=1"
     sql += " ORDER BY nombre"
-    rows = mysql_fetchall(sql, ()) or []
+    rows = mysql_fetchall(sql, ("tecnico%",)) or []
     return jsonify([dict(r) for r in rows])
 
 
@@ -52872,8 +52872,8 @@ def mant_visita_crear():
             if not tecnico_txt:
                 u = mysql_fetchone(
                     "SELECT COALESCE(nombre, username) AS nm FROM app_users "
-                    "WHERE id=%s AND role LIKE 'tecnico%' AND active=1",
-                    (tecnico_user_id,)
+                    "WHERE id=%s AND role LIKE %s AND active=1",
+                    (tecnico_user_id, "tecnico%")
                 )
                 if u:
                     tecnico_txt = u["nm"]
@@ -53160,8 +53160,8 @@ def mant_visita_update(vid):
         try:
             tuid = int(d["tecnico_user_id"])
             u = mysql_fetchone(
-                "SELECT 1 FROM app_users WHERE id=%s AND role LIKE 'tecnico%' AND active=1",
-                (tuid,)
+                "SELECT 1 FROM app_users WHERE id=%s AND role LIKE %s AND active=1",
+                (tuid, "tecnico%")
             )
             if not u:
                 d["tecnico_user_id"] = None
