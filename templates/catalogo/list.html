@@ -157,6 +157,12 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .catf-campo:hover .lapiz{opacity:1;}
 @media(max-width:768px),(hover:none){.catf-campo .lapiz{opacity:1;}}
 .catf-campo input,.catf-campo textarea{font-size:.9rem;}
+/* 2026-07-24 (Daniel: "el SKU y el nombre... eso no se edita, se deja
+   bloqueado"): sin lápiz, sin hover-affordance de "esto se puede tocar"
+   -- candado junto al label explica por qué (viene del ERP). */
+.catf-campo-lock .val{cursor:default;padding-right:0;}
+.catf-campo-lock:hover .val{border-bottom-color:transparent;}
+.catf-campo-lock label .bi-lock-fill{font-size:.62rem;color:#c3c8cf;margin-left:3px;}
 .catf-section{margin-top:18px;}
 .catf-section h6{font-weight:800;color:#0f172a;font-size:.85rem;margin-bottom:10px;display:flex;align-items:center;gap:8px;justify-content:space-between;}
 .catf-fotos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px;}
@@ -518,15 +524,13 @@ table.cat-table tbody tr.archivado{opacity:.55;}
             </header>
             <div class="catf-etapa-body">
               <div class="catf-datos">
-                <div class="catf-campo full" data-campo="sku">
-                  <label>SKU</label>
+                <div class="catf-campo catf-campo-lock full" data-campo="sku">
+                  <label>SKU <i class="bi bi-lock-fill" title="No editable — es la clave de match con el ERP"></i></label>
                   <div class="val" id="catfValSku">—</div>
-                  <i class="bi bi-pencil lapiz" onclick="catfEditar('sku')"></i>
                 </div>
-                <div class="catf-campo full" data-campo="nombre">
-                  <label>Nombre</label>
+                <div class="catf-campo catf-campo-lock full" data-campo="nombre">
+                  <label>Nombre <i class="bi bi-lock-fill" title="No editable — viene del ERP"></i></label>
                   <div class="val" id="catfValNombre">—</div>
-                  <i class="bi bi-pencil lapiz" onclick="catfEditar('nombre')"></i>
                 </div>
                 <div class="catf-campo" data-campo="familia">
                   <label>Familia</label>

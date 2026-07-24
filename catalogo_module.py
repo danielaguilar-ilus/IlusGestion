@@ -1196,20 +1196,24 @@ def register_catalogo_routes(app, ctx):
         if not prev:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         d = request.get_json(silent=True) or {}
-        allowed = ("sku", "nombre", "familia", "clase_producto", "observacion")
+        # 2026-07-24 (Daniel: "el SKU y el nombre... eso no se edita, se deja
+        # bloqueado"): sku es la clave de match con el ERP Random
+        # (_cat_crear_o_reusar_producto_desde_erp) y ademas el "confirm_text"
+        # de hard-delete lo compara literal (ver cat_api_delete) -- editarlo
+        # a mano desincroniza el catalogo del ERP y rompe ese candado. nombre
+        # queda bloqueado por la misma razon (viene del ERP al crear). Ambos
+        # se quitan de "allowed" -- si algun dia hace falta corregir uno,
+        # se corrige desde el ERP (Regla #4.1) o se re-sincroniza el producto.
+        allowed = ("familia", "clase_producto", "observacion")
         sets, params = [], []
         for key in allowed:
             if key not in d:
                 continue
             val = d[key]
-            if key == "sku":
-                val = (val or "").strip().upper()[:100] or None
-            elif isinstance(val, str):
+            if isinstance(val, str):
                 val = val.strip() or None
                 if key == "familia":
                     val = val[:150] if val else None
-                elif key == "nombre":
-                    val = val[:300] if val else None
                 elif key == "clase_producto":
                     if val and val not in _cat_clases_map():
                         return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
