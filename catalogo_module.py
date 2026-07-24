@@ -1651,7 +1651,7 @@ def register_catalogo_routes(app, ctx):
         if not prod:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         prev = mysql_fetchone(
-            "SELECT medida_cm, observacion FROM cat_producto_piolas "
+            f"SELECT {_PIOLA_SELECT_COLS} FROM cat_producto_piolas "
             "WHERE id=%s AND producto_id=%s AND activo=1", (piola_id, pid))
         if not prev:
             return jsonify({"ok": False, "error": "Piola no encontrada"}), 404
@@ -1662,10 +1662,14 @@ def register_catalogo_routes(app, ctx):
             (current_username() or "sistema", piola_id, pid))
 
         if _audit:
+            # 2026-07-24: usar _piola_serializar (mismo shape que list/detalle)
+            # en vez de asumir medida_cm -- esa columna es NULL en toda piola
+            # nueva (diametro_mm/largo_m/descripcion), y el float() directo
+            # tiraba 500 acá DESPUÉS de que el soft-delete ya se había hecho
+            # (bug real: el borrado ocurría igual, pero el usuario veía
+            # "Error interno del servidor" y un reintento daba 404 confuso).
             _audit("cat_piola_eliminar", target_type="cat_producto_piola", target_id=piola_id,
-                   details={"producto_id": pid, "sku": prod.get("sku"),
-                             "medida_cm_antes": float(prev["medida_cm"]), "medida_cm_despues": None,
-                             "observacion_antes": prev["observacion"], "observacion_despues": None})
+                   details={"producto_id": pid, "sku": prod.get("sku"), "antes": _piola_serializar(prev)})
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>/piolas/<int:piola_id>/foto", methods=["POST"])
