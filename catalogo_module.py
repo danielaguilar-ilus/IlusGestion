@@ -1000,7 +1000,21 @@ def register_catalogo_routes(app, ctx):
         # where_base/params_base: TODOS los filtros excepto solo_trabajados
         # -- separados para poder calcular el total SIN ese filtro también
         # (transparencia, ver más abajo) sin desalinear params con where.
-        where_base = ["p.activo=%s", "p.created_by <> 'sistema-erp-sync'"]
+        # 2026-07-24 (Daniel, insiste toda la noche: "necesito ver los
+        # productos que gestiono en cotización con la clasificación... lo
+        # quiero ver allí"): el filtro "p.created_by <> 'sistema-erp-sync'"
+        # que vivía acá ocultaba PARA SIEMPRE cualquier producto creado por
+        # _cat_crear_o_reusar_producto_desde_erp -- es decir, TODOS los que
+        # nacen desde Cotizaciones/Bodega 02 -- sin importar que después se
+        # clasificaran. Era un intento más viejo y más bruto de resolver el
+        # mismo problema que ya resuelve bien la cláusula
+        # _clausula_trabajados de abajo (clase O fotos O manual): esa sí
+        # distingue "nunca se tocó" de "ya se trabajó", esta no distinguía
+        # nada, solo tapaba TODO lo sincronizado del ERP. Con
+        # solo_trabajados=1 por defecto, sacar este filtro no vuelve a
+        # inundar la lista de cascarones en blanco -- sigue igual de limpia
+        # -- pero ahora SÍ deja ver los que ya tienen trabajo real encima.
+        where_base = ["p.activo=%s"]
         params_base = [activo]
         if q:
             where_base.append("(p.sku LIKE %s OR p.nombre LIKE %s OR p.familia LIKE %s)")
