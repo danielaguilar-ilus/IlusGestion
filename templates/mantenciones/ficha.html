@@ -8600,9 +8600,18 @@ async function vhGuardar(){
           </style>
 
           <div class="ft-hero-pro">
-            {# Foto grande izq #}
+            {# Foto grande izq -- 2026-07-24 (Daniel: "quiero verla en un modal
+               que no me abra otra página, como el de Etiquetas"): reusa el
+               lightbox ya construido para la pestaña "Fotografías" de este
+               mismo modal (ftLightboxAbrir/Cerrar/Prev/Next, más abajo en
+               este archivo) en vez de window.open. Esta foto grande es
+               fotos_galeria[0] cuando hay galería (ver _ftRender en
+               mant_ficha.js), o sea el mismo índice 0 del lightbox -- por
+               eso basta con abrir en idx 0. Fallback a window.open SOLO
+               si no hay galería (equipo con foto legacy suelta, sin fotos
+               en mant_maquinas_fotos todavía). #}
             <div id="ft_foto_principal" class="ft-photo-big"
-                 onclick="if(this.dataset.fullUrl)window.open(this.dataset.fullUrl,'_blank')">
+                 onclick="if((window._ftFotos||[]).length){ftLightboxAbrir(0);}else if(this.dataset.fullUrl){window.open(this.dataset.fullUrl,'_blank');}">
               <div class="ft-photo-placeholder-inner">
                 <i class="bi bi-camera" style="font-size:3rem;color:#cbd5e1"></i>
                 <div style="font-size:.76rem;color:#94a3b8;margin-top:10px;font-weight:700">SIN FOTO PRINCIPAL</div>
