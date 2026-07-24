@@ -353,6 +353,7 @@
           'peso': (item.peso_export or 0)|float,
           'bultos': (item.n_bultos or 1)|int,
           'tracking': item.master_tracking_number or '',
+          'ot_cancelada': (1 if item.ship_cancelled_at else 0),
           'peso_real': (item.peso_real or 0)|float,
           'peso_vol': (item.peso_vol or 0)|float,
           'peso_pred': (item.peso_predominante or 0)|float,
@@ -670,6 +671,7 @@
       'peso': (item.peso_export or 0)|float,
       'bultos': (item.n_bultos or 1)|int,
       'tracking': item.master_tracking_number or '',
+          'ot_cancelada': (1 if item.ship_cancelled_at else 0),
       'peso_real': (item.peso_real or 0)|float,
       'peso_vol': (item.peso_vol or 0)|float,
       'peso_pred': (item.peso_predominante or 0)|float,
@@ -949,6 +951,7 @@
           <div class="col-6">
             <label class="form-label small fw-semibold mb-1">Nº de bultos</label>
             <input type="number" step="1" min="1" id="edBultos" class="form-control form-control-sm">
+            <div id="edBultosLock" style="display:none;font-size:.7rem;color:#b45309;margin-top:3px"></div>
           </div>
         </div>
         <div class="form-text">Estos datos alimentan el Excel de carga masiva (FedEx / SimplyRoute).</div>
@@ -2059,6 +2062,29 @@ function abrirEditar(data) {
   document.getElementById('edCodPostal').value  = data.cod_postal || '';
   document.getElementById('edPeso').value       = data.peso || '';
   document.getElementById('edBultos').value     = data.bultos || 1;
+  // BLOQUEO DE BULTOS (Daniel 2026-07-22): con la OT FedEx ya emitida (y no
+  // cancelada), los bultos quedan cerrados — cambiarlos acá descuadraría ILUS
+  // vs FedEx, donde la guía ya salió con N etiquetas. El backend también lo
+  // rechaza (409): esto es solo para que se vea claro y no se intente.
+  (function _bloquearBultosSiOT(){
+    var elB = document.getElementById('edBultos');
+    if (!elB) return;
+    var hint = document.getElementById('edBultosLock');
+    var bloqueado = !!(data.tracking && !data.ot_cancelada);
+    elB.disabled = bloqueado;
+    elB.style.background = bloqueado ? '#f3f4f6' : '';
+    elB.style.cursor     = bloqueado ? 'not-allowed' : '';
+    elB.title = bloqueado
+      ? 'Bloqueado: la OT FedEx ' + data.tracking + ' ya fue emitida con ' +
+        (data.bultos || 1) + ' bulto(s). Para cambiarlos, cancela la OT en FedEx y re-emítela.'
+      : '';
+    if (hint){
+      hint.style.display = bloqueado ? '' : 'none';
+      hint.innerHTML = bloqueado
+        ? '<i class="bi bi-lock-fill me-1"></i>Cerrado: OT ' + data.tracking + ' ya emitida'
+        : '';
+    }
+  })();
   var _eTrack = document.getElementById('edTracking');
   if (_eTrack) { _eTrack.value = data.tracking || ''; _eTrack.dataset.original = data.tracking || ''; }
   document.getElementById('edMsg').innerHTML    = '';

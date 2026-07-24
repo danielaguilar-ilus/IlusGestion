@@ -901,6 +901,12 @@
                      onfocus="acFilter(this.value)">
               <div class="ac-dropdown" id="acDropdown"></div>
             </div>
+            {# Región (Daniel 2026-07-22): se completa sola al validar la
+               dirección con Google. Editable por si Google se equivoca. #}
+            <input class="client-input" type="text" id="cli-region"
+                   placeholder="Región — se completa al validar la dirección"
+                   autocomplete="off"
+                   style="font-size:.76rem;margin-top:4px;color:#4b5563">
           </div>
           <div class="client-cell">
             <div class="client-lbl">
@@ -2071,6 +2077,9 @@ function renderDoc(d, elapsedMs){
   setInput('cli-dir-lat', '');
   setInput('cli-dir-lng', '');
   setInput('cli-dir-place-id', '');
+  // Región: la trae el ERP si existe; si no, queda vacía y se completa sola
+  // cuando el operador valide la dirección con Google.
+  setInput('cli-region', h.region || '');
   const _dirHint0 = document.getElementById('cli-dir-hint');
   if (_dirHint0) _dirHint0.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para validar la dirección — obligatorio para asignar a manifiesto.';
   if (document.getElementById('cli-dir')) document.getElementById('cli-dir').dataset.validatedValue = '';
@@ -3280,6 +3289,41 @@ function _wireValidacionVivo(){
 }
 document.addEventListener('DOMContentLoaded', _wireValidacionVivo);
 
+// Extrae Comuna + Región de los address_components de Google y los aplica a
+// los campos (Daniel 2026-07-22). Heurística de comuna PORTADA de
+// _edParseComponentes (manifiesto_detalle.html): en Chile ni 'locality' ni
+// 'administrative_area_level_3' son confiables por sí solos —
+// Providencia llega como locality, Viña del Mar a veces como level_3 — así
+// que se prefiere el que NO sea la provincia (level_2), comparando sin
+// acentos. Región = administrative_area_level_1.
+function _aplicarComunaRegionDeGoogle(componentes){
+  if (!Array.isArray(componentes)) return;
+  var loc = '', l3 = '', l2 = '', region = '';
+  componentes.forEach(function(c){
+    var t = c.types || [], n = c.long_name || '';
+    if (t.indexOf('locality') !== -1 && !loc) loc = n;
+    if (t.indexOf('administrative_area_level_3') !== -1 && !l3) l3 = n;
+    if (t.indexOf('administrative_area_level_2') !== -1 && !l2) l2 = n;
+    if (t.indexOf('administrative_area_level_1') !== -1) region = n;
+  });
+  function _norm(s){
+    return (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();
+  }
+  var comuna = '';
+  if (loc && _norm(loc) !== _norm(l2))     comuna = loc;
+  else if (l3 && _norm(l3) !== _norm(l2))  comuna = l3;
+  else                                     comuna = loc || l3 || l2;
+
+  var elComuna = document.getElementById('cli-comuna');
+  var elRegion = document.getElementById('cli-region');
+  // Se PISA el valor existente a propósito: si el operador validó con Google,
+  // Google manda (el dato del ERP puede venir con código o mal escrito).
+  if (elComuna && comuna) elComuna.value = comuna;
+  if (elRegion && region) elRegion.value = region;
+  // La comuna cambió → el margen/cotización de couriers depende de ella.
+  if (comuna && typeof actualizarTarifas === 'function') actualizarTarifas();
+}
+
 // ── Google Places para la dirección (Daniel 2026-07-22) ──────────────────
 // Llena cli-dir-lat/lng/place-id — validarParaManifiesto() los exige antes
 // de asignar a manifiesto (ver skill direcciones-google-places, ya usado en
@@ -3308,14 +3352,14 @@ function _wireDireccionPlaces(){
           hint.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>' +
             'Dirección verificada · <small>' + place.lat.toFixed(4) + ', ' + place.lng.toFixed(4) + '</small>';
         }
-        // Auto-llenar comuna si Google la trae y el campo está vacío.
-        if (place.componentes){
-          var comunaComp = place.componentes.find(function(c){
-            return c.types.indexOf('locality') >= 0 || c.types.indexOf('administrative_area_level_3') >= 0;
-          });
-          var comunaInput = document.getElementById('cli-comuna');
-          if (comunaComp && comunaInput && !comunaInput.value) comunaInput.value = comunaComp.long_name;
-        }
+        // Comuna + Región desde Google (FIX 2026-07-22, reportado por Daniel:
+        // "valido la dirección y no me cambió la comuna"). La versión anterior
+        // solo llenaba la comuna SI el campo estaba vacío (`!comunaInput.value`)
+        // — y el ERP casi siempre trae una comuna, así que la validación de
+        // Google nunca la corregía. Ahora SIEMPRE se pisa con lo que dice
+        // Google (es la fuente autoritativa cuando el operador valida) y
+        // además se completa la Región.
+        _aplicarComunaRegionDeGoogle(place.componentes);
       }
     });
   }
@@ -3565,6 +3609,7 @@ async function enviarAManifiesto(){
     telefono:       _gv('cli-tel')   || _h.telefono || '',
     direccion:      _gv('cli-dir')   || _h.direccion || '',
     comuna:         _gv('cli-comuna') || _h.comuna || '',
+    region:         _gv('cli-region') || _h.region || '',
     valor_neto:     _h.valor_neto || 0,
     productos:      _productos,
     // Dirección georreferenciada (Daniel 2026-07-22): el backend la exige
@@ -3729,7 +3774,7 @@ function _resetCubicadorParaSiguiente(info){
   if (nudoInput){ nudoInput.value = ''; setTimeout(() => nudoInput.focus(), 200); }
   // 6) Limpiar inputs del cliente que el operador pudo haber tocado
   ['cli-tel','cli-email','cli-dir','cli-comuna','cli-bultos','cli-notas',
-   'cli-dir-lat','cli-dir-lng','cli-dir-place-id']
+   'cli-dir-lat','cli-dir-lng','cli-dir-place-id','cli-region']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   if (document.getElementById('cli-dir')) document.getElementById('cli-dir').dataset.validatedValue = '';
   // 7) Scroll suave al input para que se vea bien en mobile

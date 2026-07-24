@@ -18213,6 +18213,33 @@ def _tr_ship_snapshot(item_id, accion, data=None):
         print(f"[_tr_ship_snapshot] item {item_id}: {e}", flush=True)
 
 
+def _tr_fedex_ot_activa(commitment_id):
+    """¿Este documento ya tiene una OT/guía FedEx emitida y vigente?
+
+    Daniel 2026-07-22: una vez generada la OT en FedEx, los bultos NO se
+    pueden cambiar desde ILUS — habría que cambiarlos también en FedEx y
+    quedarían descuadrados (la guía ya se emitió con N bultos). Se bloquea
+    la edición en vez de solo marcar la etiqueta como desfasada.
+
+    Devuelve el master_tracking_number (str) si hay OT activa, o None.
+    Una OT cancelada (ship_cancelled_at) NO cuenta: ahí sí se puede editar.
+    """
+    try:
+        row = mysql_fetchone(
+            "SELECT master_tracking_number FROM transport_manifest_items "
+            "WHERE commitment_id=%s AND master_tracking_number IS NOT NULL "
+            "  AND master_tracking_number<>'' AND ship_cancelled_at IS NULL "
+            "LIMIT 1",
+            (commitment_id,))
+        return (row or {}).get("master_tracking_number") or None
+    except Exception as e:
+        # Ante un fallo de consulta NO bloqueamos la edición (degradar abierto):
+        # es preferible permitir editar que dejar al operador trabado por un
+        # error transitorio de BD. Queda el log para diagnóstico.
+        print(f"[tr_fedex_ot_activa] cid={commitment_id}: {e}", flush=True)
+        return None
+
+
 def _tr_fedex_mark_stale(commitment_id, old_bultos, new_bultos):
     """Si cambian los bultos de una factura con OT FedEx activa, marca su etiqueta
     como DESFASADA (no la re-emite: el operador decide con el botón 'Re-emitir').
@@ -21662,6 +21689,30 @@ def tr_update_compromiso(cid):
     if "n_bultos" in data:
         try: campos["n_bultos"] = max(1, int(float(data["n_bultos"] or 1)))
         except: pass
+        # BLOQUEO (Daniel 2026-07-22): con la OT FedEx ya emitida, los bultos
+        # quedan CERRADOS. Cambiarlos acá dejaría ILUS y FedEx descuadrados
+        # (la guía ya salió con N bultos y N etiquetas impresas). Solo se
+        # rechaza si el valor REALMENTE cambia — guardar el mismo número (ej.
+        # al editar solo el teléfono en el mismo modal) sigue permitido.
+        if "n_bultos" in campos:
+            _tn_activa = _tr_fedex_ot_activa(cid)
+            if _tn_activa:
+                _row_nb = mysql_fetchone(
+                    "SELECT COALESCE(n_bultos,1) AS nb FROM transport_commitments WHERE id=%s",
+                    (cid,)) or {}
+                if int(_row_nb.get("nb") or 1) != int(campos["n_bultos"]):
+                    return jsonify({
+                        "error": (
+                            f"Los bultos no se pueden cambiar: este documento ya tiene la OT "
+                            f"FedEx {_tn_activa} emitida. La guía se generó con "
+                            f"{int(_row_nb.get('nb') or 1)} bulto(s) y cambiarlos acá dejaría "
+                            f"ILUS y FedEx descuadrados. Si de verdad cambió la carga, cancela "
+                            f"la OT en FedEx y vuelve a emitirla."
+                        ),
+                        "bloqueado_por": "ot_fedex_emitida",
+                        "tracking_number": _tn_activa,
+                    }), 409
+                campos.pop("n_bultos")  # mismo valor: nada que actualizar
     # ── Coordenadas de la dirección (2026-07-22) ────────────────────────────
     # BUG que esto corrige: este endpoint permite editar `direccion`/`comuna`
     # desde el modal del manifiesto, pero NO tocaba direccion_lat/lng. Si el
@@ -27964,6 +28015,11 @@ def tr_cubicador_enviar_manifiesto():
             "telefono":       telefono_in[:50],
             "direccion":      direccion_in[:300],
             "comuna":         (data.get("comuna") or "").strip()[:100],
+            # Región (2026-07-22): antes NO se guardaba desde el cubicador —
+            # el campo existía en la tabla y lo usa el export de carga masiva,
+            # pero solo se llenaba editando el modal del manifiesto. Ahora el
+            # front la completa al validar la dirección con Google.
+            "region":         (data.get("region") or "").strip()[:80],
             # Dirección georreferenciada (Daniel 2026-07-22): ya se exigió arriba
             # que _lat_f/_lng_f existan antes de llegar hasta acá.
             "direccion_lat":      _lat_f,
