@@ -27330,6 +27330,258 @@ def tr_manifiesto_firma_pdf(mid):
     })
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  SIMPLIROUTE — integración por API (Daniel 2026-07-22)
+#  Sube las facturas de un manifiesto como "visitas" a SimpliRoute, para que
+#  el transportista (Felca / Milling) ya las tenga cargadas y solo asigne la
+#  ruta — antes tenía que subir el Excel a mano.
+#  Contrato y builder de payloads: simpliroute_client.py (módulo puro).
+# ══════════════════════════════════════════════════════════════════════════
+
+# Cada transportista tiene su PROPIA cuenta de SimpliRoute → un token por
+# courier (verificado 2026-07-22: Milling id 371237, Felca id 491482 son
+# cuentas distintas). REGLA #4: nunca hardcodear — se leen de env vars, con
+# los nombres que Daniel ya configuró en Cloud Run.
+SIMPLIROUTE_TOKENS_ENV = {
+    "milling": "SIMPLIROUTE_API_TOKEN_MILLING",
+    "felca":   "SIMPLIROUTE_API_TOKEN_RAFA",   # la cuenta de Felca es de Rafael
+}
+
+
+def _simpliroute_token_for_courier(courier_nombre):
+    """Token de SimpliRoute del courier, o None si ese courier no integra.
+
+    Match por SUBSTRING en minúsculas para tolerar las variantes del nombre
+    ('Transportes Milling', 'Milling', 'transportes felca'…), igual criterio
+    que la auto-detección de formato del export Excel.
+    """
+    nom = (courier_nombre or "").strip().lower()
+    if not nom:
+        return None
+    for clave, env_var in SIMPLIROUTE_TOKENS_ENV.items():
+        if clave in nom:
+            return (os.environ.get(env_var) or "").strip() or None
+    return None
+
+
+def _simpliroute_courier_integra(courier_nombre):
+    """¿Este courier trabaja con SimpliRoute? (independiente de si hay token)"""
+    nom = (courier_nombre or "").strip().lower()
+    return any(clave in nom for clave in SIMPLIROUTE_TOKENS_ENV)
+
+
+def _simpliroute_request(method, path, token, *, payload=None, timeout=30):
+    """Llamada HTTP a SimpliRoute. NUNCA lanza: siempre devuelve dict con `ok`.
+
+    Mismo contrato defensivo que _fedex_create_shipment: el caller nunca tiene
+    que envolver esto en try/except.
+    """
+    import requests as _req
+    import simpliroute_client as _src
+
+    if not token:
+        return {"ok": False, "error": "Falta el token de SimpliRoute para este courier.",
+                "status": 0}
+    url = _src.BASE_URL + path
+    headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
+    try:
+        resp = _req.request(method, url, headers=headers, json=payload, timeout=timeout)
+    except Exception as e:
+        return {"ok": False, "status": 0,
+                "error": f"No se pudo conectar con SimpliRoute: {type(e).__name__}"}
+    try:
+        body = resp.json()
+    except Exception:
+        body = resp.text
+    if resp.status_code >= 400:
+        return {"ok": False, "status": resp.status_code,
+                "error": _src.extract_error_message(resp.status_code, body),
+                "raw": body}
+    return {"ok": True, "status": resp.status_code, "data": body}
+
+
+def _tr_manifiesto_items_simpliroute(mid):
+    """Items del manifiesto con lo que necesita SimpliRoute.
+
+    Helper PARALELO a _tr_manifiesto_items_export (no lo modifica) para no
+    arriesgar el formato del Excel que el transportista ya usa. Agrega: el id
+    del item (para mapear la respuesta), el estado de sincronización previo
+    (evitar duplicados) y las coordenadas con fallback dest_lat/dest_lng.
+    """
+    return mysql_fetchall("""
+        SELECT mi.id AS item_id,
+               mi.simpliroute_visit_id, mi.simpliroute_tracking_id,
+               c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
+               c.comuna, c.region, c.direccion, c.telefono, c.email, c.notas,
+               COALESCE(c.peso_export, 0)       AS peso_export,
+               COALESCE(NULLIF(c.peso_export, 0),
+                        NULLIF(c.peso_real, 0), 0) AS peso_kg,
+               COALESCE(c.peso_vol, 0)          AS peso_vol_kg,
+               COALESCE(c.peso_predominante, 0) AS peso_predominante,
+               COALESCE(c.n_bultos, 1)          AS n_bultos,
+               COALESCE(c.direccion_lat, c.dest_lat) AS direccion_lat,
+               COALESCE(c.direccion_lng, c.dest_lng) AS direccion_lng
+          FROM transport_manifest_items mi
+          JOIN transport_commitments c ON c.id = mi.commitment_id
+         WHERE mi.manifest_id = %s
+         ORDER BY mi.orden, mi.id
+    """, (mid,)) or []
+
+
+@app.route("/transporte/api/diagnostico/simpliroute", methods=["GET"])
+@_tr_required
+def tr_simpliroute_diagnostico():
+    """Estado de la integración por courier. ?probar=1 hace un GET real a
+    /v1/accounts/me/ para confirmar que el token está vivo."""
+    import simpliroute_client as _src
+    probar = (request.args.get("probar") or "").strip() == "1"
+    out = []
+    for clave, env_var in SIMPLIROUTE_TOKENS_ENV.items():
+        tok = (os.environ.get(env_var) or "").strip()
+        fila = {
+            "courier": clave, "env_var": env_var,
+            "token_configurado": bool(tok),
+            # Nunca exponer el token completo (REGLA #4)
+            "token_preview": (tok[:4] + "…" + tok[-4:]) if len(tok) > 12 else ("—" if not tok else "…"),
+        }
+        if probar and tok:
+            r = _simpliroute_request("GET", _src.EP_ME, tok, timeout=15)
+            fila["conexion_ok"] = r.get("ok", False)
+            if r.get("ok"):
+                d = r.get("data") or {}
+                fila["cuenta"] = {"id": d.get("id"), "email": d.get("email")}
+            else:
+                fila["error"] = r.get("error")
+        out.append(fila)
+    return jsonify({"ok": True, "couriers": out})
+
+
+@app.route("/transporte/api/manifiestos/<int:mid>/subir-simpliroute", methods=["POST"])
+@_tr_required
+def tr_manifiesto_subir_simpliroute(mid):
+    """Sube TODAS las facturas del manifiesto a SimpliRoute como visitas.
+
+    Idempotente: los items que ya tienen simpliroute_visit_id se saltan (no se
+    duplican si se presiona el botón dos veces).
+
+    Estrategia de envío: la API acepta un array (bulk nativo), PERO no está
+    documentado qué pasa si una visita del lote es inválida. Por eso se replica
+    el patrón `auto_fallback_individual` de FedEx: se intenta el lote completo
+    y, si falla o vuelven menos visitas de las enviadas, se reintenta 1×1 para
+    aislar al culpable y guardar el error por item.
+    """
+    import simpliroute_client as _src
+
+    man = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not man:
+        return jsonify({"error": "Manifiesto no encontrado"}), 404
+
+    courier = (man.get("courier") or "").strip()
+    if not _simpliroute_courier_integra(courier):
+        return jsonify({
+            "error": f"El courier «{courier}» no trabaja con SimpliRoute. "
+                     f"Esta subida es solo para Transportes Felca y Transportes Milling."
+        }), 400
+    token = _simpliroute_token_for_courier(courier)
+    if not token:
+        return jsonify({
+            "error": f"Falta configurar el token de SimpliRoute de «{courier}» "
+                     f"(variable de entorno). Avisa al administrador."
+        }), 503
+
+    # planned_date: la fecha del manifiesto es OBLIGATORIA para SimpliRoute
+    # (el Excel la dejaba vacía y la ponía el transportista).
+    _fecha = man.get("fecha")
+    planned_date = _fecha.isoformat() if hasattr(_fecha, "isoformat") else str(_fecha or "").strip()
+    if not planned_date:
+        return jsonify({"error": "El manifiesto no tiene fecha de despacho — "
+                                 "SimpliRoute la exige para crear las visitas."}), 400
+
+    items = _tr_manifiesto_items_simpliroute(mid)
+    if not items:
+        return jsonify({"error": "El manifiesto no tiene facturas para subir."}), 400
+
+    pendientes = [it for it in items if not (it.get("simpliroute_visit_id") or "").strip()]
+    ya_subidos = len(items) - len(pendientes)
+    if not pendientes:
+        return jsonify({"ok": True, "total": len(items), "creadas": 0,
+                        "ya_estaban": ya_subidos, "errores": 0, "resultados": [],
+                        "mensaje": "Todas las facturas de este manifiesto ya estaban en SimpliRoute."})
+
+    payloads, saltados = _src.build_visits_batch(pendientes, planned_date=planned_date)
+
+    resultados = []
+    for iid, motivo in saltados:
+        resultados.append({"item_id": iid, "ok": False, "error": f"Datos incompletos: {motivo}"})
+        try:
+            mysql_execute("UPDATE transport_manifest_items SET simpliroute_error=%s WHERE id=%s",
+                          (f"Datos incompletos: {motivo}"[:500], iid))
+        except Exception:
+            pass
+
+    def _persistir_ok(item_id, visita):
+        try:
+            mysql_execute(
+                "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+                "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW(), "
+                "simpliroute_error=NULL WHERE id=%s",
+                (str(visita.get("id") or "")[:40], str(visita.get("tracking_id") or "")[:60], item_id))
+        except Exception as e:
+            print(f"[simpliroute] no se pudo persistir item {item_id}: {e}", flush=True)
+
+    def _persistir_error(item_id, msg):
+        try:
+            mysql_execute("UPDATE transport_manifest_items SET simpliroute_error=%s WHERE id=%s",
+                          (str(msg)[:500], item_id))
+        except Exception:
+            pass
+
+    # ── Envío por lotes de 25 (tamaño máximo no documentado por SimpliRoute) ──
+    CHUNK = 25
+    for i in range(0, len(payloads), CHUNK):
+        lote = payloads[i:i + CHUNK]
+        r = _simpliroute_request("POST", _src.EP_VISITS, token,
+                                 payload=[p for _, p in lote],
+                                 timeout=60 if len(lote) > 10 else 30)
+        visitas = _src.parse_visits_response(r.get("data")) if r.get("ok") else []
+
+        if r.get("ok") and len(visitas) == len(lote):
+            for (iid, _p), visita in zip(lote, visitas):
+                _persistir_ok(iid, visita)
+                resultados.append({"item_id": iid, "ok": True,
+                                   "visit_id": visita.get("id"),
+                                   "tracking_id": visita.get("tracking_id")})
+            continue
+
+        # Fallback 1×1: el lote falló o vino incompleto → aislar al culpable.
+        print(f"[simpliroute] lote de {len(lote)} falló o vino incompleto "
+              f"(ok={r.get('ok')}, recibidas={len(visitas)}) → reintento individual",
+              flush=True)
+        for iid, p in lote:
+            r1 = _simpliroute_request("POST", _src.EP_VISITS, token, payload=p, timeout=30)
+            if r1.get("ok"):
+                v = (_src.parse_visits_response(r1.get("data")) or [{}])[0]
+                _persistir_ok(iid, v)
+                resultados.append({"item_id": iid, "ok": True,
+                                   "visit_id": v.get("id"),
+                                   "tracking_id": v.get("tracking_id")})
+            else:
+                msg = r1.get("error") or "Error desconocido"
+                _persistir_error(iid, msg)
+                resultados.append({"item_id": iid, "ok": False, "error": msg})
+
+    creadas = sum(1 for x in resultados if x.get("ok"))
+    errores = sum(1 for x in resultados if not x.get("ok"))
+    _tr_log("manifest", mid, "subida a SimpliRoute",
+            f"courier={courier}; creadas={creadas}; errores={errores}; ya_estaban={ya_subidos}")
+
+    return jsonify({
+        "ok": True, "total": len(items), "creadas": creadas,
+        "ya_estaban": ya_subidos, "errores": errores, "resultados": resultados,
+        "courier": courier, "fecha": planned_date,
+    })
+
+
 @app.route("/transporte/manifiestos/<int:mid>/export", methods=["GET"])
 @_tr_required
 def tr_manifiesto_export(mid):
@@ -70650,6 +70902,14 @@ def _ensure_transport_tracking_tables():
         "ship_label_outdated":    "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=los bultos cambiaron tras emitir; etiqueta FedEx desfasada, requiere re-emisión'",
         "ship_history_json":      "LONGTEXT NULL COMMENT 'Respaldo append-only de OTs FedEx (TN viejo/nuevo, bultos, usuario, ts)'",
         "ship_labels_json":       "LONGTEXT NULL COMMENT 'JSON [{tracking_number,label_b64}] de TODAS las etiquetas por bulto (multi-piece). ship_label_b64 = master/1er bulto'",
+        # SimpliRoute (2026-07-22): al subir el manifiesto por API, cada item
+        # se convierte en una "visita". Columnas PROPIAS — NO reusar las ship_*
+        # ni tracking_number (están ocupadas por FedEx/AfterShip y las lee el
+        # poller de tracking).
+        "simpliroute_visit_id":    "VARCHAR(40) NULL COMMENT 'ID de la visita creada en SimpliRoute'",
+        "simpliroute_tracking_id": "VARCHAR(60) NULL COMMENT 'tracking_id de SimpliRoute (link de seguimiento)'",
+        "simpliroute_synced_at":   "DATETIME NULL COMMENT 'Cuándo se subió la visita a SimpliRoute'",
+        "simpliroute_error":       "TEXT NULL COMMENT 'Último error al subir a SimpliRoute (debug)'",
     }
     try:
         existing_it = {
