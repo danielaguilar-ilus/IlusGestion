@@ -1731,6 +1731,14 @@
 .rev-chip-falla_detectada{background:#fee2e2;color:#991b1b;border-color:#fecaca}
 .rev-chip-empty{background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb}
 .rev-meta{display:block;font-size:.62rem;color:#9ca3af;margin-top:2px;line-height:1.2}
+/* 2026-07-24 (Daniel, por voz) — Desglose de técnicos por tarea cuando
+   más de uno trabajó el mismo equipo (revisado_por solo guarda al
+   último). Solo se pinta si hay >1 técnico distinto. */
+.rev-multi-tec{display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-top:3px;max-width:180px;}
+.rev-multi-tec-label{font-size:.6rem;color:#9ca3af;display:flex;align-items:center;gap:2px;width:100%;}
+.rev-multi-tec-item{display:inline-flex;align-items:center;gap:3px;
+          font-size:.62rem;font-weight:600;color:#374151;background:#f3f4f6;
+          border:1px solid #e5e7eb;border-radius:50px;padding:1px 7px;white-space:nowrap;}
 </style>
 
 {# ── Variables de cálculo ─────────────────────────────── #}
@@ -2047,6 +2055,19 @@
                   {% if ur.revisado_at %}{{ ur.revisado_at | chile_fmt('%d/%m/%Y') }}{% elif ur.fecha %}{{ ur.fecha.strftime('%d/%m/%Y') }}{% endif %}
                   {% if ur.revisado_por %} · {{ ur.revisado_por }}{% endif %}
                 </small>
+                {# 2026-07-24 (Daniel, por voz): si más de un técnico completó
+                   tareas de ESTE equipo en la misma OT, desglosar quién hizo
+                   qué (revisado_por de arriba solo guarda al último). Con 1
+                   solo técnico no se muestra nada extra -- el chip ya alcanza. #}
+                {% set _tecs = ur.tecnicos_tareas or [] %}
+                {% if _tecs|length > 1 %}
+                <div class="rev-multi-tec" title="Tareas de este equipo en esta OT, por técnico">
+                  <span class="rev-multi-tec-label"><i class="bi bi-people-fill"></i> {{ _tecs|length }} técnicos en esta OT:</span>
+                  {% for t in _tecs %}
+                  <span class="rev-multi-tec-item">{{ t.tecnico }} · {{ t.tareas_completadas }}</span>
+                  {% endfor %}
+                </div>
+                {% endif %}
               {% else %}
                 <span class="rev-chip rev-chip-empty" title="Aún no revisado">
                   <i class="bi bi-dash-circle"></i>Sin revisar

@@ -42445,6 +42445,59 @@ def _mant_ficha_impl(cid):
         except Exception as _e_ur:
             print(f"[MANT][ficha] ultima_revision load error: {_e_ur}", flush=True)
 
+    # ── 2026-07-24 (Daniel, por voz) — Desglose de técnicos por tarea ──
+    # "Si le asignamos una OT a cinco técnicos, quiero saber quién hizo
+    # qué." ultima_revision (arriba) es un UPSERT por (visita_id,
+    # maquina_id) en mant_visita_equipos: si varios técnicos tocan el
+    # MISMO equipo, revisado_por solo guarda al ÚLTIMO. Para no perder
+    # esa info agregamos aquí el desglose por técnico a nivel TAREA
+    # (mant_visita_tareas.completada_por), que sí registra a cada uno
+    # por separado. Ámbito: misma visita_id que la última revisión de
+    # cada equipo (el mismo OT que originó el chip de arriba).
+    #
+    # Bloque independiente y defensivo a propósito: si esto falla, el
+    # chip "ultima_revision" de arriba sigue funcionando igual (no lo
+    # tocamos ni dependemos de su try/except).
+    if maquinas:
+        try:
+            _pares_mv = []
+            for _m in maquinas:
+                _ur_m = _m.get("ultima_revision")
+                if _ur_m and _ur_m.get("visita_id"):
+                    _pares_mv.append((int(_m["id"]), int(_ur_m["visita_id"])))
+            if _pares_mv:
+                _where_tec = " OR ".join(
+                    ["(maquina_id=%s AND visita_id=%s)"] * len(_pares_mv))
+                _params_tec = []
+                for _mid_p, _vid_p in _pares_mv:
+                    _params_tec.extend([_mid_p, _vid_p])
+                _tec_rows = mysql_fetchall(
+                    f"""
+                    SELECT maquina_id, visita_id, completada_por,
+                           COUNT(*) AS n_tareas
+                      FROM mant_visita_tareas
+                     WHERE completada=1
+                       AND completada_por IS NOT NULL AND completada_por <> ''
+                       AND ({_where_tec})
+                     GROUP BY maquina_id, visita_id, completada_por
+                     ORDER BY n_tareas DESC
+                    """,
+                    tuple(_params_tec)
+                ) or []
+                _idx_tec = {}
+                for _r in _tec_rows:
+                    _mid_r = int(_r["maquina_id"])
+                    _idx_tec.setdefault(_mid_r, []).append({
+                        "tecnico":            _r.get("completada_por") or "",
+                        "tareas_completadas": int(_r.get("n_tareas") or 0),
+                    })
+                for _m in maquinas:
+                    _ur_m = _m.get("ultima_revision")
+                    if _ur_m is not None:
+                        _ur_m["tecnicos_tareas"] = _idx_tec.get(int(_m["id"]), [])
+        except Exception as _e_tec:
+            print(f"[MANT][ficha] tecnicos_tareas load error: {_e_tec}", flush=True)
+
     # ── ESTADÍSTICAS PARA SIDEBAR / GRÁFICOS ──────────────────────────────
     hoy = datetime.now().date()
     fecha_corte_12m = hoy - timedelta(days=365)
