@@ -160,6 +160,40 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .catf-section{margin-top:18px;}
 .catf-section h6{font-weight:800;color:#0f172a;font-size:.85rem;margin-bottom:10px;display:flex;align-items:center;gap:8px;justify-content:space-between;}
 .catf-fotos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px;}
+
+/* ── Ficha: 3 etapas tipo "capítulo" (1 Características · 2 Piolas · 3
+   Manuales — 2026-07-24, Daniel: "segmentada para saber que son 3 etapas
+   distintas"). La banda negra es sticky DENTRO de su card: se queda
+   arriba mientras scrolleas esa etapa y la empuja la siguiente al llegar. ── */
+.catf-etapas{display:flex;flex-direction:column;gap:16px;margin-top:14px;}
+.catf-etapa{border:1px solid #e5e7eb;border-radius:12px;background:#fff;
+  box-shadow:0 1px 2px rgba(10,10,10,.04);}
+/* OJO: NUNCA overflow:hidden en .catf-etapa (mata el sticky de la banda);
+   las esquinas se redondean en la banda misma. */
+.catf-etapa-header{position:sticky;top:-1px;z-index:5;display:flex;align-items:center;gap:10px;
+  background:#0a0a0a;color:#fff;padding:9px 12px;border-radius:11px 11px 0 0;}
+.catf-etapa-num{width:28px;height:28px;border-radius:50%;background:#dc2626;color:#fff;
+  font-weight:800;font-size:.8rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.catf-etapa-tit{display:flex;flex-direction:column;min-width:0;line-height:1.15;}
+.catf-etapa-tit .t{font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+  color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.catf-etapa-tit .s{font-size:.66rem;font-weight:600;color:rgba(255,255,255,.55);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.catf-etapa-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.catf-etapa-tools .btn-outline-secondary{color:#fff;border-color:rgba(255,255,255,.35);}
+.catf-etapa-tools .btn-outline-secondary:hover{background:rgba(255,255,255,.14);color:#fff;
+  border-color:rgba(255,255,255,.55);}
+.catf-etapa-body{padding:14px;}
+.catf-etapa-body .catf-section{border-top:1px dashed #eef0f3;padding-top:14px;}
+.catf-etapa-body > .catf-section:first-child,.catf-etapa-body > .catf-datos:first-child{border-top:none;padding-top:0;margin-top:0;}
+@media(max-width:768px){
+  .catf-etapa-body{padding:12px;}
+  .catf-etapa-tools .btn{min-height:44px;display:inline-flex;align-items:center;}
+}
+/* Auditoría: metadata secundaria, NO es una etapa (Daniel: "eliminarlo
+   solamente para el superadministrador") — queda discreta al final. */
+.catf-section-meta{margin-top:18px;padding-top:10px;border-top:1px dashed #e5e7eb;}
+.catf-section-meta h6{font-size:.7rem;color:#9ca3af;margin-bottom:4px;}
 .catf-foto{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid #eaecf0;background:#f8f9fb;}
 .catf-foto img{width:100%;height:100%;object-fit:cover;cursor:pointer;display:block;}
 .catf-foto .x{position:absolute;top:3px;right:3px;background:rgba(10,10,10,.65);color:#fff;border:none;
@@ -206,7 +240,35 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .catp-acc-chevron{color:#9ca3af;font-size:.8rem;transition:transform .15s;flex-shrink:0;}
 .catp-acc-chevron.open{transform:rotate(180deg);}
 .catp-acc-body{display:none;padding:14px 16px 16px;border-top:1px solid #f1f3f6;background:#fafbfc;}
-.catp-acc-body.open{display:block;}
+@keyframes catpBodyIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+.catp-acc-body.open{display:block;animation:catpBodyIn .18s ease;}
+
+/* ── Piolas: mini-galería en la cabecera colapsada (2026-07-24, Daniel:
+   "asociar la piola a la foto... algo entretenido, dinámico") — se VE qué
+   fotos tiene cada piola sin abrirla. Tap en miniatura = visor; tap en
+   fantasma = subir. Reemplaza a .catp-fbadge en la cabecera (esa clase
+   queda sin uso, no se borra — Regla #4.2). ── */
+.catp-acc-thumbs{display:flex;align-items:center;flex-shrink:0;position:relative;padding:2px 4px 2px 0;}
+.catp-acc-thumb{width:34px;height:34px;border-radius:8px;border:2px solid #fff;
+  box-shadow:0 0 0 1px #e5e7eb;overflow:hidden;background:#f8f9fb;padding:0;cursor:zoom-in;
+  transition:transform .15s ease,margin .15s ease;}
+.catp-acc-thumb + .catp-acc-thumb{margin-left:-12px;}
+.catp-acc-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+.catp-acc-thumb.ghost{border:2px dashed #d1d5db;box-shadow:none;background:#fff;
+  display:inline-flex;align-items:center;justify-content:center;color:#c3c8cf;
+  font-size:.72rem;cursor:pointer;}
+.catp-acc-thumb.ghost.noclick{cursor:default;}
+@media(hover:hover){
+  .catp-acc-thumbs:hover .catp-acc-thumb + .catp-acc-thumb{margin-left:3px;}
+  .catp-acc-thumbs:hover .catp-acc-thumb{transform:scale(1.12);}
+  .catp-acc-thumb.ghost:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}
+}
+.catp-acc-thumbs .dot{position:absolute;right:-3px;top:-2px;width:12px;height:12px;
+  border-radius:50%;border:2px solid #fff;z-index:2;}
+.catp-acc-thumbs .dot.full{background:#16a34a;}
+.catp-acc-thumbs .dot.half{background:#f59e0b;}
+.catp-acc-item.is-open .catp-acc-thumbs{opacity:.4;filter:grayscale(.5);}
+.catp-acc-item.is-open .catp-acc-thumbs:hover{opacity:1;filter:none;}
 
 /* Campos en modo vista */
 .catp-acc-campos{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:14px;}
@@ -264,6 +326,8 @@ table.cat-table tbody tr.archivado{opacity:.55;}
   .catp-acc-actions .btn,.catp-acc-edit-actions .btn{min-height:44px;}
   .catp-foto-kebab{width:44px;height:44px;}
   .catp-foto-slot-num{width:24px;height:24px;font-size:.7rem;}
+  .catp-acc-thumb{width:44px;height:44px;border-radius:9px;}
+  .catp-acc-thumb + .catp-acc-thumb{margin-left:-14px;}
 }
 .catp-hist-item{border-bottom:1px solid #f1f3f6;padding:10px 2px;font-size:.83rem;}
 .catp-hist-item:last-child{border-bottom:none;}
@@ -441,63 +505,99 @@ table.cat-table tbody tr.archivado{opacity:.55;}
           <button type="button" class="btn btn-sm btn-ilus" id="catfBtnContinuarWizard">
             <i class="bi bi-magic me-1"></i>Continuar con el asistente guiado</button>
         </div>
-        <div class="catf-datos">
-          <div class="catf-campo full" data-campo="sku">
-            <label>SKU</label>
-            <div class="val" id="catfValSku">—</div>
-            <i class="bi bi-pencil lapiz" onclick="catfEditar('sku')"></i>
-          </div>
-          <div class="catf-campo full" data-campo="nombre">
-            <label>Nombre</label>
-            <div class="val" id="catfValNombre">—</div>
-            <i class="bi bi-pencil lapiz" onclick="catfEditar('nombre')"></i>
-          </div>
-          <div class="catf-campo" data-campo="familia">
-            <label>Familia</label>
-            <div class="val" id="catfValFamilia">—</div>
-            <i class="bi bi-pencil lapiz" onclick="catfEditar('familia')"></i>
-          </div>
-          <div class="catf-campo" data-campo="clase_producto">
-            <label>Clase de producto</label>
-            <div class="val" id="catfValClaseProducto">—</div>
-            <i class="bi bi-pencil lapiz" onclick="catfEditarClase()"></i>
-          </div>
-          <div class="catf-campo full" data-campo="observacion">
-            <label>Observación</label>
-            <div class="val" id="catfValObservacion">—</div>
-            <i class="bi bi-pencil lapiz" onclick="catfEditar('observacion')"></i>
-          </div>
-        </div>
+        <div class="catf-etapas">
 
-        <div class="catf-section">
-          <h6><span><i class="bi bi-images me-1"></i>Fotos</span>
-            <span class="cat-badge-fotos" id="catfFotosBadge">0/10</span></h6>
-          <div class="catf-fotos-grid" id="catfFotosGrid"></div>
-          <input type="file" id="catfFotoInput" accept="image/*" hidden>
-        </div>
+          <!-- ═══ ETAPA 1 · Características ═══ -->
+          <section class="catf-etapa">
+            <header class="catf-etapa-header">
+              <span class="catf-etapa-num">1</span>
+              <span class="catf-etapa-tit">
+                <span class="t"><i class="bi bi-card-checklist me-1"></i>Características</span>
+                <span class="s">Datos generales y fotos del producto</span>
+              </span>
+            </header>
+            <div class="catf-etapa-body">
+              <div class="catf-datos">
+                <div class="catf-campo full" data-campo="sku">
+                  <label>SKU</label>
+                  <div class="val" id="catfValSku">—</div>
+                  <i class="bi bi-pencil lapiz" onclick="catfEditar('sku')"></i>
+                </div>
+                <div class="catf-campo full" data-campo="nombre">
+                  <label>Nombre</label>
+                  <div class="val" id="catfValNombre">—</div>
+                  <i class="bi bi-pencil lapiz" onclick="catfEditar('nombre')"></i>
+                </div>
+                <div class="catf-campo" data-campo="familia">
+                  <label>Familia</label>
+                  <div class="val" id="catfValFamilia">—</div>
+                  <i class="bi bi-pencil lapiz" onclick="catfEditar('familia')"></i>
+                </div>
+                <div class="catf-campo" data-campo="clase_producto">
+                  <label>Clase de producto</label>
+                  <div class="val" id="catfValClaseProducto">—</div>
+                  <i class="bi bi-pencil lapiz" onclick="catfEditarClase()"></i>
+                </div>
+                <div class="catf-campo full" data-campo="observacion">
+                  <label>Observación</label>
+                  <div class="val" id="catfValObservacion">—</div>
+                  <i class="bi bi-pencil lapiz" onclick="catfEditar('observacion')"></i>
+                </div>
+              </div>
 
-        <div class="catf-section">
-          <h6><i class="bi bi-file-earmark-pdf me-1"></i>Manual (PDF)</h6>
-          <div id="catfManualWrap"></div>
-          <input type="file" id="catfManualInput" accept="application/pdf" hidden>
-        </div>
+              <div class="catf-section">
+                <h6><span><i class="bi bi-images me-1"></i>Fotos</span>
+                  <span class="cat-badge-fotos" id="catfFotosBadge">0/10</span></h6>
+                <div class="catf-fotos-grid" id="catfFotosGrid"></div>
+                <input type="file" id="catfFotoInput" accept="image/*" hidden>
+              </div>
+            </div>
+          </section>
 
-        <div class="catf-section" id="catfManualesMultiSection" style="display:none;">
-          <h6><i class="bi bi-files me-1"></i>Manuales (hasta 5)</h6>
-          <div id="catfManualesMultiLista"></div>
-        </div>
+          <!-- ═══ ETAPA 2 · Piolas ═══ -->
+          <section class="catf-etapa">
+            <header class="catf-etapa-header">
+              <span class="catf-etapa-num">2</span>
+              <span class="catf-etapa-tit">
+                <span class="t"><i class="bi bi-cable me-1"></i>Piolas</span>
+                <span class="s">Cables de la máquina · 2 fotos por piola</span>
+              </span>
+              <span class="catf-etapa-tools">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="catpBtnHistorial" title="Ver historial">
+                  <i class="bi bi-clock-history me-1"></i>Historial</button>
+                <span class="catp-badge" id="catpBadge">0/10</span>
+              </span>
+            </header>
+            <div class="catf-etapa-body">
+              <div id="catpAcc"></div>
+              <div id="catpAddWrap"></div>
+              <input type="file" id="catpFotoInput" accept="image/*" hidden>
+            </div>
+          </section>
 
-        <div class="catf-section">
-          <h6><span><i class="bi bi-cable me-1"></i>Piolas</span>
-            <span>
-              <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="catpBtnHistorial" title="Ver historial">
-                <i class="bi bi-clock-history me-1"></i>Historial</button>
-              <span class="catp-badge" id="catpBadge">0/10</span>
-            </span>
-          </h6>
-          <div id="catpAcc"></div>
-          <div id="catpAddWrap"></div>
-          <input type="file" id="catpFotoInput" accept="image/*" hidden>
+          <!-- ═══ ETAPA 3 · Manuales ═══ -->
+          <section class="catf-etapa">
+            <header class="catf-etapa-header">
+              <span class="catf-etapa-num">3</span>
+              <span class="catf-etapa-tit">
+                <span class="t"><i class="bi bi-file-earmark-pdf me-1"></i>Manuales</span>
+                <span class="s">PDF del fabricante · hasta 5 por producto</span>
+              </span>
+            </header>
+            <div class="catf-etapa-body">
+              <div class="catf-section">
+                <h6><i class="bi bi-file-earmark-pdf me-1"></i>Manual (PDF)</h6>
+                <div id="catfManualWrap"></div>
+                <input type="file" id="catfManualInput" accept="application/pdf" hidden>
+              </div>
+
+              <div class="catf-section" id="catfManualesMultiSection" style="display:none;">
+                <h6><i class="bi bi-files me-1"></i>Manuales (hasta 5)</h6>
+                <div id="catfManualesMultiLista"></div>
+              </div>
+            </div>
+          </section>
+
         </div>
 
         {# 2026-07-21: sección "Auditoría" -- SOLO superadmin (Daniel:
@@ -505,8 +605,9 @@ table.cat-table tbody tr.archivado{opacity:.55;}
            updated_by ya existen en cat_productos; el backend (cat_api_detalle)
            los omite del JSON para cualquier rol que no sea superadmin, así
            que este bloque queda vacío/oculto de forma segura para el resto
-           (no depende solo de este display:none del frontend). #}
-        <div class="catf-section" id="catfAuditoriaSection" style="display:none;">
+           (no depende solo de este display:none del frontend). NO es una
+           de las 3 etapas -- es metadata secundaria (2026-07-24). #}
+        <div class="catf-section catf-section-meta" id="catfAuditoriaSection" style="display:none;">
           <h6><i class="bi bi-shield-lock me-1"></i>Auditoría</h6>
           <div id="catfAuditoriaBody" class="text-muted small"></div>
         </div>
@@ -1357,6 +1458,38 @@ function catpFotoBadge(p){
   return '<span class="catp-fbadge'+cls+'">'+ic+n+'/2</span>';
 }
 
+// 2026-07-24 (Daniel: "asociar la piola a la foto... algo entretenido,
+// dinámico de manejar y ordenado"): reemplaza a catpFotoBadge en la
+// cabecera colapsada -- en vez de un badge de texto "2/2", muestra las
+// fotos REALES de la piola como miniaturas apiladas, para reconocer la
+// pieza a simple vista sin tener que abrir cada fila. Tap en miniatura
+// abre el visor directo (stopPropagation, no expande el acordeón); tap
+// en el slot fantasma sube la foto a ese slot directo desde la cabecera.
+function catpRenderHeaderThumbs(p){
+  const n = (p.foto_url ? 1 : 0) + (p.foto_url2 ? 1 : 0);
+  const dot = n === 2 ? '<span class="dot full" title="Fotos completas (2 de 2)"></span>'
+            : n === 1 ? '<span class="dot half" title="Falta 1 foto"></span>' : '';
+  function slot(num){
+    const url = num === 1 ? p.foto_url : p.foto_url2;
+    if(url){
+      return '<button type="button" class="catp-acc-thumb" title="Ver foto '+num+'" '
+        + 'aria-label="Ver en grande la foto '+num+' de la piola" '
+        + 'onclick="event.stopPropagation();catpFotoVer('+p.id+','+num+')">'
+        + '<img src="'+esc(url)+'" alt="" loading="lazy" decoding="async">'
+        + '</button>';
+    }
+    if(CAN_CARGAR_PIOLAS){
+      return '<button type="button" class="catp-acc-thumb ghost" title="Agregar foto '+num+'" '
+        + 'aria-label="Agregar la foto '+num+' a la piola" '
+        + 'onclick="event.stopPropagation();catpFotoSlotClick('+p.id+','+num+')">'
+        + '<i class="bi bi-camera"></i></button>';
+    }
+    return '<span class="catp-acc-thumb ghost noclick" title="Sin foto '+num+'"><i class="bi bi-camera"></i></span>';
+  }
+  return '<span class="catp-acc-thumbs" role="group" aria-label="Fotos de la piola: '+n+' de 2">'
+    + slot(1) + slot(2) + dot + '</span>';
+}
+
 function catpRenderItem(p){
   const abierto = _catpAccOpen.has(p.id);
   const editando = _catpEditingId === p.id;
@@ -1365,11 +1498,11 @@ function catpRenderItem(p){
       + '<span class="desc">'+esc(p.descripcion||'')+'</span>'
     : 'Ø '+esc(String(p.diametro_mm))+' mm × '+esc(String(p.largo_m))+' m — <span class="desc">'+esc(p.descripcion||'')+'</span>';
 
-  return '<div class="catp-acc-item" data-piola-id="'+p.id+'">'
+  return '<div class="catp-acc-item'+(abierto?' is-open':'')+'" data-piola-id="'+p.id+'">'
     + '<div class="catp-acc-header" onclick="catpToggle('+p.id+')">'
     +   '<span class="catp-acc-num">'+(p.orden!=null?esc(String(p.orden)):'')+'</span>'
     +   '<span class="catp-acc-summary">'+resumen+'</span>'
-    +   catpFotoBadge(p)
+    +   catpRenderHeaderThumbs(p)
     +   '<i class="bi bi-chevron-down catp-acc-chevron'+(abierto?' open':'')+'"></i>'
     + '</div>'
     + '<div class="catp-acc-body'+(abierto?' open':'')+'">'
