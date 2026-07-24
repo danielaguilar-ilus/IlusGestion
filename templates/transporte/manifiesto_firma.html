@@ -217,7 +217,26 @@ table.detalle td.num, table.detalle th.num { text-align: right; }
   <div class="totales">
     <div class="item"><div class="lbl">TOTAL BULTOS</div><div class="val">{{ it.n_bultos }}</div></div>
     <div class="item"><div class="lbl">PESO A DECLARAR (KG)</div><div class="val">{{ '%.2f'|format(it.peso_declarar) }}</div></div>
+    {# Valorización del flete (Daniel 2026-07-22): lo que ILUS paga al
+       transportista por ESTE despacho (transport_commitments.costo_courier).
+       Se omite si es 0 para no mostrar "$0" en documentos sin costo cargado. #}
+    {% if it.costo_courier and it.costo_courier|float > 0 %}
+    <div class="item">
+      <div class="lbl">VALOR FLETE</div>
+      <div class="val">${{ "{:,.0f}".format(it.costo_courier|float).replace(",", ".") }}</div>
+    </div>
+    {% endif %}
   </div>
+
+  {% set _total_flete = items|sum(attribute='costo_courier')|float %}
+  {% if _total_flete > 0 %}
+  <div style="display:flex;justify-content:space-between;align-items:center;
+              padding:8px 20px;background:#0a0a0a;color:#fff;font-size:11px">
+    <span style="letter-spacing:.5px">VALOR TOTAL DEL FLETE · MANIFIESTO COMPLETO
+      ({{ items|length }} documento{{ 's' if items|length != 1 else '' }})</span>
+    <span style="font-weight:800;font-size:13px">${{ "{:,.0f}".format(_total_flete).replace(",", ".") }}</span>
+  </div>
+  {% endif %}
 
   <div class="declaracion">
     Declaro haber recibido conforme los productos detallados arriba, en las cantidades y condiciones indicadas,

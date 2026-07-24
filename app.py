@@ -27095,7 +27095,8 @@ def _tr_manifiesto_items_export(mid):
                COALESCE(c.peso_vol, 0)          AS peso_vol_kg,
                COALESCE(c.peso_predominante, 0) AS peso_predominante,
                COALESCE(c.n_bultos, 1) AS n_bultos,
-               COALESCE(c.valor_bruto, 0) AS valor_bruto
+               COALESCE(c.valor_bruto, 0) AS valor_bruto,
+               COALESCE(c.costo_courier, 0) AS costo_courier
           FROM transport_manifest_items mi
           JOIN transport_commitments c ON c.id = mi.commitment_id
          WHERE mi.manifest_id = %s
