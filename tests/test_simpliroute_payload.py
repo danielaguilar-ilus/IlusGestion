@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from simpliroute_client import (  # noqa: E402
     build_visit_payload, build_visits_batch, parse_visits_response,
-    extract_error_message,
+    extract_error_message, estado_ilus_from_visit, extract_pod,
 )
 
 ITEM_OK = {
@@ -131,3 +131,81 @@ def test_error_400_por_campo():
 def test_error_nunca_lanza():
     for body in (None, "", [], {}, 123, [{"address": ["req"]}]):
         assert isinstance(extract_error_message(400, body), str)
+
+
+# ── Tracking: traducción de estados ──────────────────────────────────────
+
+def test_estado_completed_es_entregado():
+    est, com = estado_ilus_from_visit({"status": "completed", "checkout_comment": "Recibido conforme"})
+    assert est == "Entregado"
+    assert "conforme" in com
+
+
+def test_estado_failed_incluye_motivo():
+    est, com = estado_ilus_from_visit({"status": "failed", "checkout_comment": "Cliente ausente"})
+    assert est == "Entrega fallida"
+    assert "Cliente ausente" in com
+
+
+def test_estado_partial_avisa_que_es_parcial():
+    """Parcial se marca Entregado pero el comentario NO puede ocultarlo."""
+    est, com = estado_ilus_from_visit({"status": "partial", "checkout_comment": "Faltó 1 bulto"})
+    assert est == "Entregado"
+    assert "PARCIAL" in com
+
+
+def test_estado_pending_con_on_its_way_es_en_ruta():
+    est, _ = estado_ilus_from_visit({"status": "pending", "on_its_way": "2026-07-25T08:31:00Z"})
+    assert est == "En ruta"
+
+
+def test_estado_pending_sin_movimiento_no_cambia():
+    est, _ = estado_ilus_from_visit({"status": "pending", "on_its_way": None})
+    assert est is None
+
+
+def test_estado_canceled_no_cambia_estado_ilus():
+    """Cancelar en SimpliRoute no decide el estado comercial en ILUS."""
+    est, com = estado_ilus_from_visit({"status": "canceled"})
+    assert est is None
+    assert com
+
+
+def test_estado_nunca_lanza_con_basura():
+    for v in (None, {}, "texto", 123, {"status": None}):
+        est, com = estado_ilus_from_visit(v)
+        assert est is None or isinstance(est, str)
+        assert isinstance(com, str)
+
+
+# ── Tracking: prueba de entrega ──────────────────────────────────────────
+
+VISITA_ENTREGADA = {
+    "status": "completed",
+    "contact_name": "Bulls Gym",
+    "checkout_time": "2026-07-25T14:40:45Z",
+    "checkout_latitude": "-23.6509",
+    "checkout_longitude": "-70.3975",
+    "checkout_comment": "Recibido conforme",
+    "signature": "https://s3.amazonaws.com/firma.png",
+    "pictures": ["https://s3.amazonaws.com/f1.jpg", "https://s3.amazonaws.com/f2.jpg"],
+}
+
+
+def test_pod_extrae_todo():
+    pod = extract_pod(VISITA_ENTREGADA)
+    assert pod["firma_url"].endswith("firma.png")
+    assert len(pod["fotos"]) == 2
+    assert pod["lat"] == -23.6509 and pod["lng"] == -70.3975
+    assert pod["entregado_at"].startswith("2026-07-25")
+    assert pod["receptor_nombre"] == "Bulls Gym"
+
+
+def test_pod_sin_datos_devuelve_none():
+    assert extract_pod({"status": "pending"}) is None
+    assert extract_pod(None) is None
+
+
+def test_pod_receptor_por_defecto():
+    pod = extract_pod({"checkout_time": "2026-07-25T14:40:45Z"})
+    assert pod["receptor_nombre"] == "Recibido en destino"

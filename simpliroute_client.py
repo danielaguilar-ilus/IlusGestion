@@ -188,6 +188,91 @@ def parse_visits_response(data):
     return out
 
 
+# ── TRACKING: traducir una visita de SimpliRoute al estado interno de ILUS ──
+# Estados de SimpliRoute (doc oficial): pending | partial | completed | failed
+# | canceled.  NO existe "in_progress": que el chofer va en camino se infiere
+# de que `on_its_way` tenga timestamp.
+# Estados internos de ILUS (ESTADOS_ENTREGA en app.py):
+#   'En preparación' · 'Entregado a transporte' · 'En ruta' · 'Entregado'
+#   · 'Entrega fallida' · 'Devolución'
+SR_STATUS_COMPLETED = "completed"
+SR_STATUS_FAILED = "failed"
+SR_STATUS_PARTIAL = "partial"
+SR_STATUS_CANCELED = "canceled"
+SR_STATUS_PENDING = "pending"
+
+
+def estado_ilus_from_visit(visit):
+    """Traduce una visita de SimpliRoute a (estado_ilus, comentario).
+
+    Devuelve (None, comentario) cuando NO hay que cambiar el estado — es el
+    caso de una visita todavía pendiente sin movimiento, o cancelada en
+    SimpliRoute (cancelar allá no significa que ILUS deba marcar devolución:
+    eso es una decisión operativa, no automática).
+
+    Nunca lanza: ante datos raros devuelve (None, "").
+    """
+    if not isinstance(visit, dict):
+        return None, ""
+    status = _s(visit.get("status")).lower()
+    comentario_chofer = _s(visit.get("checkout_comment"))
+
+    if status == SR_STATUS_COMPLETED:
+        return "Entregado", comentario_chofer or "Entrega confirmada por el transportista"
+
+    if status == SR_STATUS_FAILED:
+        base = "No se pudo entregar"
+        return "Entrega fallida", f"{base}: {comentario_chofer}" if comentario_chofer else base
+
+    if status == SR_STATUS_PARTIAL:
+        # Entregó parte de la carga. Se marca Entregado (sí hubo entrega) pero
+        # el comentario deja constancia explícita de que fue parcial, para que
+        # nadie lo lea como una entrega completa.
+        base = "Entrega PARCIAL"
+        return "Entregado", f"{base}: {comentario_chofer}" if comentario_chofer else base
+
+    if status == SR_STATUS_CANCELED:
+        # No se toca el estado: que el transportista cancele la visita en su
+        # sistema no define el estado comercial del despacho en ILUS.
+        return None, "La visita fue cancelada en el sistema del transportista"
+
+    # pending → el único avance automático es "va en camino".
+    if _s(visit.get("on_its_way")):
+        return "En ruta", "El conductor va en camino al destino"
+
+    return None, ""
+
+
+def extract_pod(visit):
+    """Extrae la prueba de entrega (POD) de una visita completada.
+
+    Devuelve dict listo para transport_delivery_proof, o None si la visita no
+    trae nada aprovechable. `signature` viene como URL en el GET de la visita;
+    `pictures` como array de URLs absolutas (S3 firmadas).
+    """
+    if not isinstance(visit, dict):
+        return None
+    firma = _s(visit.get("signature"))
+    fotos = [_s(u) for u in (visit.get("pictures") or []) if _s(u)]
+    lat = _f(visit.get("checkout_latitude"))
+    lng = _f(visit.get("checkout_longitude"))
+    hora = _s(visit.get("checkout_time"))
+    comentario = _s(visit.get("checkout_comment"))
+    if not any((firma, fotos, lat, lng, hora)):
+        return None
+    return {
+        # SimpliRoute no entrega el nombre de quien firmó; se usa el contacto
+        # de la visita como referencia y, si no hay, un texto neutro.
+        "receptor_nombre": _s(visit.get("contact_name"), 180) or "Recibido en destino",
+        "firma_url": firma or None,
+        "fotos": fotos,
+        "lat": lat,
+        "lng": lng,
+        "entregado_at": hora or None,
+        "notas": comentario or None,
+    }
+
+
 def extract_error_message(status_code, body):
     """Convierte un error de la API en un mensaje corto y accionable.
 

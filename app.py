@@ -25655,6 +25655,304 @@ except Exception as _e_fxpoll:
     print(f"[fedex-autopoll] startup error: {_e_fxpoll}", flush=True)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  POLLER SIMPLIROUTE — trae el estado de entrega de vuelta (Daniel 2026-07-24)
+#  -------------------------------------------------------------------------
+#  Cierra el círculo de la integración: hasta acá ILUS SUBÍA las visitas, pero
+#  nadie escribía el estado de vuelta. Este poller consulta SimpliRoute y
+#  actualiza el estado del item + guarda la prueba de entrega (firma, fotos,
+#  GPS, hora) para que la trazabilidad la brinde ILUS y no el transportista.
+#
+#  Se mantiene SEPARADO del poller de FedEx a propósito: distinta credencial
+#  (una por courier vs una global), distinta clave de consulta, y así un 401
+#  de un transportista no deja sin actualizar a FedEx ni al revés.
+#
+#  Eficiencia: 1 sola llamada por (cuenta, fecha) usando
+#  GET /v1/routes/visits/?planned_date=... — la doc de SimpliRoute recomienda
+#  ese endpoint justamente para trackear en tiempo real. Un día con 2
+#  manifiestos = 2 requests, no 1 por factura.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _ensure_simpliroute_poll_lock_table():
+    """Lease lock propio (NO se comparte con FedEx). Idempotente."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS simpliroute_poll_lock (
+                    id           INT PRIMARY KEY,
+                    locked_until DATETIME     DEFAULT NULL,
+                    worker_id    INT          DEFAULT 0,
+                    last_run     DATETIME     DEFAULT NULL,
+                    last_result  VARCHAR(255) DEFAULT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("INSERT IGNORE INTO simpliroute_poll_lock (id) VALUES (1)")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[sr-autopoll] no se pudo asegurar simpliroute_poll_lock: {e}", flush=True)
+
+
+def _sr_poll_acquire_lease(lease_seconds=600):
+    """UPDATE condicional atómico: solo un worker corre el ciclo."""
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE simpliroute_poll_lock
+                SET locked_until = DATE_ADD(NOW(), INTERVAL %s SECOND),
+                    worker_id    = %s,
+                    last_run     = NOW()
+                WHERE id = 1
+                  AND (locked_until IS NULL OR locked_until < NOW())
+            """, (lease_seconds, os.getpid()))
+            won = (cur.rowcount == 1)
+        conn.commit()
+        conn.close()
+        return won
+    except Exception as e:
+        print(f"[sr-autopoll] lease error: {e}", flush=True)
+        return False
+
+
+def _sr_poll_release_lease(result_msg=""):
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE simpliroute_poll_lock SET locked_until=NULL, last_result=%s "
+                "WHERE id=1 AND worker_id=%s",
+                ((result_msg or "")[:255], os.getpid()))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[sr-autopoll] release error: {e}", flush=True)
+
+
+def _sr_ingest_pod(item_id, commitment_id, visit):
+    """Guarda la prueba de entrega que entrega SimpliRoute (firma, fotos, GPS,
+    hora) en transport_delivery_proof. Upsert por manifest_item_id (esa tabla
+    tiene UNIQUE uq_dp_item), así re-pollear no duplica filas.
+
+    NO pisa una prueba cargada a mano por el chofer de ILUS: si ya existe una
+    fila con firma y esta viene sin firma, se conserva la existente.
+    """
+    import simpliroute_client as _src
+    import json as _json
+    pod = _src.extract_pod(visit)
+    if not pod:
+        return False
+    try:
+        prev = mysql_fetchone(
+            "SELECT id, firma_url FROM transport_delivery_proof WHERE manifest_item_id=%s",
+            (item_id,))
+        if prev and (prev.get("firma_url") or "").strip() and not pod.get("firma_url"):
+            pod["firma_url"] = prev["firma_url"]   # no degradar una firma existente
+        # checkout_time viene ISO-8601 con Z; MySQL DATETIME no acepta la 'T'/'Z'.
+        entregado = (pod.get("entregado_at") or "").replace("T", " ").replace("Z", "")[:19] or None
+        mysql_execute("""
+            INSERT INTO transport_delivery_proof
+              (manifest_item_id, commitment_id, receptor_nombre, receptor_relacion,
+               firma_url, fotos_json, lat, lng, entregado_at, usuario, notas)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE
+              firma_url    = COALESCE(VALUES(firma_url), firma_url),
+              fotos_json   = VALUES(fotos_json),
+              lat          = COALESCE(VALUES(lat), lat),
+              lng          = COALESCE(VALUES(lng), lng),
+              entregado_at = COALESCE(VALUES(entregado_at), entregado_at),
+              notas        = VALUES(notas)
+        """, (item_id, commitment_id, pod["receptor_nombre"][:180], "Transportista",
+              pod.get("firma_url"),
+              _json.dumps(pod.get("fotos") or [], ensure_ascii=False),
+              pod.get("lat"), pod.get("lng"), entregado,
+              "simpliroute", (pod.get("notas") or "")[:2000] or None))
+        return True
+    except Exception as e:
+        print(f"[sr-poll] no se pudo guardar POD item={item_id}: {e}", flush=True)
+        return False
+
+
+def _simpliroute_poll_batch(limit=400, dry=False):
+    """Un ciclo de polling. Devuelve dict con el resumen (nunca lanza).
+
+    dry=True → solo reporta qué haría, no escribe nada.
+    """
+    import simpliroute_client as _src
+    out = {"ok": True, "consultados": 0, "actualizados": 0, "pod": 0,
+           "grupos": 0, "errores": [], "items": []}
+    try:
+        cands = mysql_fetchall("""
+            SELECT mi.id AS item_id, mi.commitment_id, mi.simpliroute_visit_id,
+                   mi.estado_entrega, tm.fecha, tm.courier
+              FROM transport_manifest_items mi
+              JOIN transport_manifests tm ON tm.id = mi.manifest_id
+             WHERE mi.simpliroute_visit_id IS NOT NULL
+               AND mi.simpliroute_visit_id <> ''
+               AND (mi.estado_entrega IS NULL
+                    OR mi.estado_entrega NOT IN ('Entregado','Devolución'))
+               AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+             ORDER BY tm.fecha DESC, mi.id ASC
+             LIMIT %s
+        """, (int(limit),)) or []
+    except Exception as e:
+        return {"ok": False, "error": f"consulta de candidatos falló: {e}"}
+
+    if not cands:
+        out["msg"] = "Sin visitas pendientes de actualizar."
+        return out
+    out["consultados"] = len(cands)
+
+    # Agrupar por (courier, fecha) → 1 request por grupo
+    grupos = {}
+    for c in cands:
+        f = c.get("fecha")
+        fecha_s = f.isoformat() if hasattr(f, "isoformat") else str(f or "")[:10]
+        grupos.setdefault(((c.get("courier") or "").strip(), fecha_s), []).append(c)
+    out["grupos"] = len(grupos)
+
+    for (courier, fecha_s), items in grupos.items():
+        token = _simpliroute_token_for_courier(courier)
+        if not token or not fecha_s:
+            out["errores"].append(f"{courier or '(sin courier)'}: sin token o sin fecha")
+            continue
+        r = _simpliroute_request(
+            "GET", f"{_src.EP_VISITS}?planned_date={fecha_s}", token, timeout=45)
+        if not r.get("ok"):
+            out["errores"].append(f"{courier} {fecha_s}: {r.get('error')}")
+            continue
+        data = r.get("data")
+        visitas = data if isinstance(data, list) else []
+        por_id = {str(v.get("id")): v for v in visitas if isinstance(v, dict) and v.get("id")}
+
+        for it in items:
+            vid = str(it.get("simpliroute_visit_id") or "")
+            visita = por_id.get(vid)
+            if not visita:
+                # La visita ya no está en esa fecha (reprogramada o borrada en
+                # SimpliRoute). No es error fatal: se reintenta el próximo ciclo.
+                continue
+            estado_ilus, comentario = _src.estado_ilus_from_visit(visita)
+            registro = {"item_id": it["item_id"], "visit_id": vid,
+                        "sr_status": visita.get("status"),
+                        "estado_ilus": estado_ilus, "comentario": comentario}
+            if dry:
+                out["items"].append(registro)
+                continue
+            if estado_ilus:
+                res = _tr_apply_carrier_status(
+                    it["item_id"], estado_ilus,
+                    fuente="simpliroute",
+                    tracking_number=None,   # NO tocar: esa columna es de FedEx
+                    comentario=comentario,
+                    notify_cliente=True,    # el cliente SÍ recibe el aviso
+                )
+                if res.get("changed"):
+                    out["actualizados"] += 1
+                    registro["changed"] = True
+            # La prueba de entrega se guarda cuando la visita ya terminó,
+            # incluso si el estado no cambió (ej. re-poll del mismo entregado).
+            if (visita.get("status") or "").lower() in ("completed", "partial"):
+                if _sr_ingest_pod(it["item_id"], it.get("commitment_id"), visita):
+                    out["pod"] += 1
+            out["items"].append(registro)
+
+    return out
+
+
+def _simpliroute_autopoll_enabled():
+    """Activo si hay al menos un token configurado y no se apagó por env."""
+    flag = (os.environ.get("SIMPLIROUTE_AUTOPOLL", "on") or "on").strip().lower()
+    if flag in ("0", "off", "false", "no"):
+        return False
+    return any((os.environ.get(v) or "").strip() for v in SIMPLIROUTE_TOKENS_ENV.values())
+
+
+def _simpliroute_poll_loop():
+    """Hilo daemon: cada SIMPLIROUTE_AUTOPOLL_INTERVAL_MIN (default 10) trae
+    los estados. Intervalo más corto que FedEx porque una ruta de reparto se
+    mueve mucho más rápido que un envío internacional."""
+    import time as _time
+    try:
+        interval_min = int(os.environ.get("SIMPLIROUTE_AUTOPOLL_INTERVAL_MIN", "10"))
+    except Exception:
+        interval_min = 10
+    interval_min = max(5, min(interval_min, 60))
+
+    _ensure_simpliroute_poll_lock_table()
+    print(f"[sr-autopoll] arrancado pid={os.getpid()} (cada {interval_min} min · "
+          f"enabled={_simpliroute_autopoll_enabled()})", flush=True)
+    _time.sleep(150)   # deja que la app levante (y desfasa del poller FedEx)
+
+    while True:
+        try:
+            if _simpliroute_autopoll_enabled() and _sr_poll_acquire_lease(600):
+                msg = "ciclo interrumpido"   # si el batch revienta, el lease
+                                             # igual se libera con este texto
+                try:
+                    res = _simpliroute_poll_batch()
+                    msg = (f"consultados={res.get('consultados', 0)} "
+                           f"actualizados={res.get('actualizados', 0)} "
+                           f"pod={res.get('pod', 0)} grupos={res.get('grupos', 0)}")
+                    if res.get("errores"):
+                        msg += f" errores={len(res['errores'])}"
+                    print(f"[sr-autopoll] {msg}", flush=True)
+                finally:
+                    _sr_poll_release_lease(msg)
+        except Exception as e:
+            print(f"[sr-autopoll] ciclo falló: {e}", flush=True)
+        _time.sleep(interval_min * 60)
+
+
+def _start_simpliroute_poll_scheduler_once():
+    import threading as _th
+    nombre = "simpliroute-autopoll"
+    for t in _th.enumerate():
+        if t.name == nombre and t.is_alive():
+            return
+    try:
+        _th.Thread(target=_simpliroute_poll_loop, daemon=True, name=nombre).start()
+    except Exception as e:
+        print(f"[sr-autopoll] no se pudo arrancar: {e}", flush=True)
+
+
+# NOTA: el arranque del hilo NO va aquí. Este bloque usa funciones que se
+# definen más abajo en el archivo (_simpliroute_token_for_courier,
+# _simpliroute_request, SIMPLIROUTE_TOKENS_ENV, ~27650). En runtime ya existen,
+# pero para no depender de eso el scheduler se arranca al FINAL del archivo,
+# cuando todo el módulo está cargado. Ver _start_simpliroute_poll_scheduler_once().
+
+
+@app.route("/transporte/cron/simpliroute-poll", methods=["GET", "POST"])
+def tr_cron_simpliroute_poll():
+    """Polling de estados SimpliRoute. Invocable por Cloud Scheduler externo
+    (para garantizar 24/7 aunque Cloud Run escale a 0) o a mano.
+
+    Seguridad: mismo token que el cron de FedEx (FEDEX_CRON_TOKEN) o
+    ILUS_CRON_TOKEN. Sin token configurado, solo acepta desde localhost.
+
+    Query: ?dry=1 (no escribe) · ?limit=N
+    """
+    tok = (request.headers.get("X-Cron-Token")
+           or request.args.get("token") or "").strip()
+    esperado = ((os.environ.get("ILUS_CRON_TOKEN") or "").strip()
+                or (os.environ.get("FEDEX_CRON_TOKEN") or "").strip())
+    if esperado:
+        if tok != esperado:
+            return jsonify({"error": "forbidden"}), 403
+    elif request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
+        return jsonify({"error": "forbidden"}), 403
+
+    try:
+        limit = min(int(request.args.get("limit") or 400), 800)
+    except Exception:
+        limit = 400
+    dry = (request.args.get("dry") or "") in ("1", "true", "yes")
+    res = _simpliroute_poll_batch(limit=limit, dry=dry)
+    return jsonify(res), (200 if res.get("ok") else 502)
+
+
 @app.route("/transporte/api/items/<int:item_id>/refrescar-tracking", methods=["POST"])
 @_tr_required
 def tr_refrescar_tracking_item(item_id):
@@ -73109,6 +73407,16 @@ try:
     _ensure_transport_commitments_geo_columns()
 except Exception as _ensure_geo_err:
     print(f"[ILUS][WARN] columnas geo transport_commitments: {_ensure_geo_err}", flush=True)
+
+# Poller SimpliRoute (2026-07-24) — se arranca ACÁ, al final del módulo, y no
+# junto a su definición: el loop usa _simpliroute_token_for_courier /
+# _simpliroute_request / SIMPLIROUTE_TOKENS_ENV, que se definen más abajo que
+# el poller. Arrancándolo al final, todas existen sí o sí (no dependemos del
+# sleep inicial del hilo para que el orden funcione).
+try:
+    _start_simpliroute_poll_scheduler_once()
+except Exception as _e_srpoll:
+    print(f"[sr-autopoll] startup error: {_e_srpoll}", flush=True)
 
 # Módulo Clientes central (2026-07-12): amplía tipo_cliente con
 # 'instalacion'/'prospecto'. SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
