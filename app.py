@@ -18370,11 +18370,14 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
     tok = _tr_ensure_public_token(commitment_id)
     if not tok:
         return
-    try:
-        track_url = url_for("tr_public_tracking", token=tok, _external=True)
-    except Exception:
-        # Fuera de contexto request (cron) → URL relativa
-        track_url = f"/t/{tok}"
+    # FIX 2026-07-24: el fallback anterior devolvía "/t/<tok>" RELATIVO cuando
+    # esto corre fuera de un request (cron / hilo daemon) — y un link relativo
+    # dentro de un correo NO funciona: el cliente hacía clic y no llegaba a
+    # ninguna parte. _public_base_url() ya resuelve esto (usa request.url_root
+    # si hay request, y si no, ILUS_PUBLIC_BASE_URL con default a la URL de
+    # Cloud Run). Mismo patrón que ya usa Retiros para su link de seguimiento.
+    # Crítico ahora que el estado lo va a actualizar un poller en background.
+    track_url = f"{_public_base_url()}/t/{tok}"
     doc = f"{c.get('tido') or ''} {c.get('nudo') or ''}".strip()
     cliente = c.get("cliente_nombre") or ""
     from markupsafe import escape as _esc
