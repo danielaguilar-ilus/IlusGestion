@@ -349,9 +349,14 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 // grande de más abajo ni siquiera llega a ejecutar cargarCatalogo(), este
 // script chico y AISLADO (se ejecuta en cuanto el parser llega aquí, antes
 // del resto de la página) queda armado igual y no depende de nada de eso.
-// Si a los 15s el bloque sigue mostrando el reloj de arena original, fuerza
-// el aviso accionable -- nunca deja "Cargando…" pegado para siempre en
-// silencio.
+// 2026-07-23 (2): cargarCatalogo() ahora se reintenta SOLA una vez si la
+// primera demora es por timeout (instancia de Cloud Run recién levantada --
+// Daniel eligió esto en vez de pagar una segunda instancia siempre lista),
+// así que el ciclo interno normal puede tardar hasta ~24s (2x12s) antes de
+// mostrar su propio aviso. Este guardián queda a 28s para nunca disparar
+// ANTES que el reintento automático interno tenga su oportunidad -- sigue
+// siendo el respaldo de último recurso si ni siquiera ese reintento llega a
+// correr (hilo principal realmente trabado).
 (function(){
   setTimeout(function(){
     var el = document.getElementById('catLista');
@@ -361,7 +366,7 @@ table.cat-table tbody tr.archivado{opacity:.55;}
         + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" '
         + 'onclick="if(typeof cargarCatalogo===\'function\'){cargarCatalogo();}else{location.reload();}">Reintentar</button></div>';
     }
-  }, 15000);
+  }, 28000);
 })();
 </script>
 
@@ -782,7 +787,7 @@ function catFooterHtml(data){
 window.catPagina = function(d){ catPage = Math.max(1, catPage + d); cargarCatalogo(); };
 window.catCambiarLimit = function(v){ catLimit = parseInt(v,10)||50; catPage = 1; cargarCatalogo(); };
 
-async function cargarCatalogo(){
+async function cargarCatalogo(_reintentoAuto){
   const p = catParamsFiltros(true);
   p.set('page', String(catPage));
   p.set('limit', String(catLimit));
@@ -800,7 +805,20 @@ async function cargarCatalogo(){
     const r = await fetch('/catalogo/api/productos?'+p.toString(), {signal: _ctrl.signal});
     data = await r.json();
   }catch(err){
+    clearTimeout(_timeoutId);
     const esTimeout = err && err.name === 'AbortError';
+    // 2026-07-23 (Daniel: la demora real es una instancia de Cloud Run
+    // recién levantada -- decidió NO pagar una segunda instancia siempre
+    // lista, "mejor ahorrarnos ese dinero" -- que la página se reintente
+    // SOLA en su lugar). Si es la primera demora (todavía no es un
+    // reintento automático), la página se recarga sola una vez sin
+    // mostrarle ningún error a Daniel: para cuando este segundo intento
+    // sale, la instancia ya está tibia y casi siempre responde rápido.
+    // Solo si el reintento automático TAMBIÉN se cuelga se muestra el
+    // aviso con el botón manual.
+    if(esTimeout && !_reintentoAuto){
+      return cargarCatalogo(true);
+    }
     document.getElementById('catLista').innerHTML =
       '<div class="empty-state"><i class="bi bi-wifi-off"></i>'
       + (esTimeout
@@ -808,9 +826,8 @@ async function cargarCatalogo(){
           : 'No se pudo cargar. ')
       + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="cargarCatalogo()">Reintentar</button></div>';
     return;
-  }finally{
-    clearTimeout(_timeoutId);
   }
+  clearTimeout(_timeoutId);
   if(!data.ok){ ilusToast(data.error||'Error al cargar', {type:'error'}); return; }
 
   // 2026-07-23 (Daniel: "necesito que me muestre todos los productos
