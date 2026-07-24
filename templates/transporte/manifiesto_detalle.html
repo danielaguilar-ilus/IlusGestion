@@ -1950,6 +1950,15 @@ function _edInitPlaces() {
     onPlaceSelected: function(place){
       if (place && place.direccion) input.value = place.direccion;
       if (place && place.componentes) _edParseComponentes(place.componentes);
+      // Guardar las COORDENADAS (2026-07-22): antes se descartaban y, al
+      // guardar, las lat/lng del compromiso quedaban apuntando a la dirección
+      // anterior. Ahora viajan en el PUT (ver guardarEdicion) y el backend
+      // las persiste; si se edita a mano sin elegir sugerencia, se limpian.
+      if (place && place.lat != null && place.lng != null) {
+        input.dataset.lat     = place.lat;
+        input.dataset.lng     = place.lng;
+        input.dataset.placeId = place.place_id || '';
+      }
       if (hint) hint.innerHTML = '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i> '
                                + '<span style="color:#16a34a">Dirección verificada en Google</span>';
     },
@@ -1972,6 +1981,9 @@ function _edInitPlaces() {
     if (elC) elC.value = '';
     if (elR) elR.value = '';
     if (elP) elP.value = '';
+    // Las coordenadas también quedan inválidas al teclear a mano: se limpian
+    // para que el backend NO reciba las de la dirección anterior.
+    input.dataset.lat = ''; input.dataset.lng = ''; input.dataset.placeId = '';
     input.dataset.addrDirty = '1';
     if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle" style="color:#f59e0b"></i> '
                              + '<span style="color:#92400e">Elige una sugerencia para verificar '
@@ -2054,7 +2066,12 @@ function abrirEditar(data) {
   var hint = document.getElementById('edDirHint');
   if (hint) hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para autocompletar';
   var _edDir = document.getElementById('edDireccion');
-  if (_edDir) _edDir.dataset.autoVerif = '';
+  if (_edDir) {
+    _edDir.dataset.autoVerif = '';
+    // Coordenadas: arrancan vacías en cada apertura del modal. Solo se llenan
+    // si el operador elige una sugerencia de Google AHORA (ver _edInitPlaces).
+    _edDir.dataset.lat = ''; _edDir.dataset.lng = ''; _edDir.dataset.placeId = '';
+  }
   // Ficha read-only: pesos, tarifa, bultos
   _edFillFicha(data);
   // Botón "Ver seguimiento": solo si hay OT FedEx
@@ -2250,6 +2267,15 @@ function guardarEdicion() {
     peso_export: parseFloat(document.getElementById('edPeso').value) || 0,
     n_bultos:    parseInt(document.getElementById('edBultos').value, 10) || 1
   };
+  // Coordenadas de Google (2026-07-22): solo si el operador eligió una
+  // sugerencia en ESTA edición. Si no van, y la dirección cambió, el backend
+  // invalida las viejas (no deja coords apuntando a la dirección anterior).
+  var _edDirEl = document.getElementById('edDireccion');
+  if (_edDirEl && _edDirEl.dataset.lat && _edDirEl.dataset.lng) {
+    payload.direccion_lat      = _edDirEl.dataset.lat;
+    payload.direccion_lng      = _edDirEl.dataset.lng;
+    payload.direccion_place_id = _edDirEl.dataset.placeId || '';
+  }
   fetch('/transporte/api/compromisos/' + cid, {
     method: 'PUT',
     headers: {'Content-Type':'application/json'},

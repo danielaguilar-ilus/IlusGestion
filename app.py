@@ -21662,6 +21662,41 @@ def tr_update_compromiso(cid):
     if "n_bultos" in data:
         try: campos["n_bultos"] = max(1, int(float(data["n_bultos"] or 1)))
         except: pass
+    # ── Coordenadas de la dirección (2026-07-22) ────────────────────────────
+    # BUG que esto corrige: este endpoint permite editar `direccion`/`comuna`
+    # desde el modal del manifiesto, pero NO tocaba direccion_lat/lng. Si el
+    # operador cambiaba la dirección, las coordenadas seguían apuntando a la
+    # dirección ANTERIOR — en silencio. Eso manda al courier (y a futuro a
+    # SimpliRoute) a la ubicación equivocada.
+    # Regla: si vienen coords nuevas (el front las manda al elegir una
+    # sugerencia de Google), se guardan. Si la dirección CAMBIA y no vienen
+    # coords, se INVALIDAN las viejas (NULL) en vez de dejar un dato mentiroso.
+    _lat_raw = data.get("direccion_lat")
+    _lng_raw = data.get("direccion_lng")
+    _tiene_coords_nuevas = False
+    if _lat_raw not in (None, "") and _lng_raw not in (None, ""):
+        try:
+            campos["direccion_lat"] = float(_lat_raw)
+            campos["direccion_lng"] = float(_lng_raw)
+            _tiene_coords_nuevas = True
+            if "direccion_place_id" in data:
+                campos["direccion_place_id"] = (str(data["direccion_place_id"] or "").strip() or None)[:200] \
+                    if data["direccion_place_id"] else None
+        except (TypeError, ValueError):
+            _tiene_coords_nuevas = False
+    if "direccion" in campos and not _tiene_coords_nuevas:
+        try:
+            _dir_prev = mysql_fetchone(
+                "SELECT direccion FROM transport_commitments WHERE id=%s", (cid,)) or {}
+            if (_dir_prev.get("direccion") or "").strip() != (campos.get("direccion") or "").strip():
+                campos["direccion_lat"] = None
+                campos["direccion_lng"] = None
+                campos["direccion_place_id"] = None
+                print(f"[tr_update_compromiso] cid={cid}: dirección cambió sin coords nuevas "
+                      f"→ se invalidan lat/lng previas (evita coords de la dirección anterior)",
+                      flush=True)
+        except Exception as _e_geo:
+            print(f"[tr_update_compromiso] chequeo de coords falló cid={cid}: {_e_geo}", flush=True)
     # 2026-06-14 (Daniel) — C4 (red de seguridad del validador de dirección):
     # si llega comuna pero el código postal viene vacío, lo derivamos de la
     # comuna para que NUNCA quede un CP desfasado respecto a la comuna (caso
