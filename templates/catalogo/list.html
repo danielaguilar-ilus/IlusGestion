@@ -141,6 +141,20 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 #catBtnActualizar:disabled i{animation:catGiro .8s linear infinite;}
 @keyframes catGiro{to{transform:rotate(360deg);}}
 
+/* ── Selección múltiple + borrado masivo (2026-07-24, solo superadmin) ── */
+.cat-th-chk{width:36px;text-align:center;}
+table.cat-table tbody tr.seleccionada{background:#fee2e2;}
+table.cat-table tbody tr.seleccionada:hover{background:#fecaca;}
+.cat-barra-sel{display:flex;align-items:center;gap:10px;background:#0a0a0a;color:#fff;
+  border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:.82rem;font-weight:700;
+  flex-wrap:wrap;}
+.cat-barra-sel .cnt{background:#dc2626;border-radius:50px;padding:2px 10px;font-size:.76rem;}
+.cat-barra-sel .spacer{flex:1;}
+@media(max-width:768px){
+  .cat-barra-sel .btn{min-height:44px;}
+  .cat-th-chk input,.cat-chk-fila{width:20px;height:20px;}
+}
+
 /* ── Modal Nuevo Producto ── */
 .catn-field label{font-size:.72rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
 
@@ -422,6 +436,13 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 </div>
 
 <div id="catRefrescoBar" class="cat-refresco-bar" aria-hidden="true"><span class="inner"></span></div>
+{# 2026-07-24 (Daniel, voz: "quiero tener un checkbox... para seleccionar
+   y borrar rápido... como super administrador"): barra de selección,
+   FUERA de #catLista a propósito (ese div se reemplaza entero en cada
+   carga -- ponerla ahí la haría parpadear/perderse en cada refresco). #}
+{% if permissions.superadmin %}
+<div id="catBarraSeleccion" class="cat-barra-sel" style="display:none;"></div>
+{% endif %}
 <div id="catLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 <script>
 // 2026-07-23 (Daniel, incidente en vivo: "sigo sin ver los cambios... queda
@@ -831,6 +852,17 @@ let _catSeq = 0;
 // que igual será descartada por _catSeq).
 let _catCtrlVuelo = null;
 
+// ── Selección múltiple para borrado masivo (2026-07-24, Daniel: "quiero
+// tener un checkbox... para seleccionar y borrar rápido... como super
+// administrador") -- solo se renderiza para IS_SUPERADMIN (ver
+// catTheadHtml/catFilaHtml). Se limpia si el usuario cambia filtro/orden/
+// página (_catUltimaFirma distinto), pero NO en un simple refresco de la
+// misma vista (botón Actualizar / reintento automático) -- mismo espíritu
+// que el resto de esta pantalla: nunca perder trabajo en curso por un
+// refresco de fondo.
+let _catSeleccionados = new Set();
+let _catUltimaFirma = null;
+
 // ── Clases de producto: fetch único + cache, reusado en filtro + wizard ──
 async function catObtenerClases(){
   if(_catClases) return _catClases;
@@ -891,7 +923,14 @@ const CAT_COLS = [
   ['Fotos','total_fotos'], ['Manual',''], ['Estado',''], ['Actualizado','updated_at'], ['Acciones',''],
 ];
 function catTheadHtml(){
-  return '<tr>' + CAT_COLS.map(function(c){
+  // 2026-07-24 (Daniel, voz: "quiero tener un checkbox... para
+  // seleccionar y borrar rápido... como super administrador"): columna
+  // de selección SOLO para superadmin -- para cualquier otro rol la
+  // tabla se ve exactamente igual que antes, cero cambio visual.
+  const chkTh = IS_SUPERADMIN
+    ? '<th class="cat-th-chk"><input type="checkbox" id="catChkTodos" title="Seleccionar todos los visibles" onclick="catToggleSeleccionarTodo(this.checked)"></th>'
+    : '';
+  return '<tr>' + chkTh + CAT_COLS.map(function(c){
     if(!c[1]) return '<th>'+c[0]+'</th>';
     let cls = 'cat-th-sort', ic = 'bi-arrow-down-up';
     if(catSort === c[1]){ cls += ' on'; ic = (catDir === 'asc' ? 'bi-sort-up' : 'bi-sort-down'); }
@@ -936,6 +975,13 @@ async function cargarCatalogo(_reintentoAuto){
   const p = catParamsFiltros(true);
   p.set('page', String(catPage));
   p.set('limit', String(catLimit));
+  // Filtro/orden/página distinto de la última consulta -> las filas que se
+  // ven ya no son las mismas, la selección de borrado masivo pierde
+  // sentido. Un refresco de la MISMA vista (Actualizar / reintento auto)
+  // no cambia la firma -- no borra lo que el usuario ya venía marcando.
+  const _firma = p.toString();
+  if (_catUltimaFirma !== null && _catUltimaFirma !== _firma) _catSeleccionados.clear();
+  _catUltimaFirma = _firma;
   let data;
   // 2026-07-23 (Daniel: "queda puro cargando y no pasa nada"): sin timeout,
   // si el fetch se queda colgado (bloqueador de anuncios/extensión filtrando
@@ -1072,7 +1118,12 @@ function catFilaHtml(row){
   const clase = row.clase_producto_label
     ? '<span class="cat-badge-clase"><i class="bi bi-tag-fill"></i>'+esc(row.clase_producto_label)+'</span>'
     : '<span class="text-muted">—</span>';
-  return '<tr class="'+(row.activo===0?'archivado':'')+'" onclick="catAbrirFicha('+row.id+')">'
+  const chkTd = IS_SUPERADMIN
+    ? '<td onclick="event.stopPropagation();"><input type="checkbox" class="cat-chk-fila" data-id="'+row.id+'"'
+      + (_catSeleccionados.has(row.id)?' checked':'') + ' onchange="catToggleSeleccion('+row.id+',this.checked)"></td>'
+    : '';
+  return '<tr class="'+(row.activo===0?'archivado':'')+(_catSeleccionados.has(row.id)?' seleccionada':'')+'" onclick="catAbrirFicha('+row.id+')">'
+    + chkTd
     + '<td>'+foto+'</td>'
     + '<td><span class="cat-sku">'+esc(row.sku)+'</span></td>'
     + '<td><div class="cat-nombre">'+esc(row.nombre)+'</div></td>'
@@ -1104,6 +1155,71 @@ function catAccionesCelda(row){
     + ' onclick="event.stopPropagation();catAbrirFicha('+row.id+')"><i class="bi bi-eye"></i></button>'
     + '</div>';
 }
+
+// ══════════════ Selección múltiple + borrado masivo (2026-07-24) ══════════════
+// Daniel (voz): "quiero tener un checkbox... para seleccionar y borrar
+// rápido, en caso de que quiera... como super administrador". Solo se
+// renderiza para IS_SUPERADMIN (catTheadHtml/catFilaHtml) y el backend
+// (cat_api_bulk_eliminar) vuelve a exigir superadmin igual -- nunca confiar
+// solo en que el botón esté oculto en el frontend.
+window.catToggleSeleccion = function(id, checked){
+  if(checked) _catSeleccionados.add(id); else _catSeleccionados.delete(id);
+  const tr = document.querySelector('.cat-chk-fila[data-id="'+id+'"]')?.closest('tr');
+  if(tr) tr.classList.toggle('seleccionada', checked);
+  const todos = document.getElementById('catChkTodos');
+  if(todos){
+    const visibles = document.querySelectorAll('.cat-chk-fila').length;
+    const marcadosVisibles = document.querySelectorAll('.cat-chk-fila:checked').length;
+    todos.checked = visibles > 0 && marcadosVisibles === visibles;
+    todos.indeterminate = marcadosVisibles > 0 && marcadosVisibles < visibles;
+  }
+  catRenderBarraSeleccion();
+};
+window.catToggleSeleccionarTodo = function(checked){
+  document.querySelectorAll('.cat-chk-fila').forEach(function(chk){
+    const id = parseInt(chk.dataset.id, 10);
+    chk.checked = checked;
+    if(checked) _catSeleccionados.add(id); else _catSeleccionados.delete(id);
+    const tr = chk.closest('tr');
+    if(tr) tr.classList.toggle('seleccionada', checked);
+  });
+  catRenderBarraSeleccion();
+};
+function catRenderBarraSeleccion(){
+  const bar = document.getElementById('catBarraSeleccion');
+  if(!bar) return;   // no-superadmin: el bloque ni existe en el HTML
+  const n = _catSeleccionados.size;
+  if(!n){ bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = 'flex';
+  bar.innerHTML = '<i class="bi bi-check-square-fill"></i>'
+    + '<span class="cnt">'+n+'</span> producto'+(n===1?'':'s')+' seleccionado'+(n===1?'':'s')
+    + '<span class="spacer"></span>'
+    + '<button type="button" class="btn btn-sm btn-outline-light" onclick="catToggleSeleccionarTodo(false)">Quitar selección</button>'
+    + '<button type="button" class="btn btn-sm btn-danger" onclick="catBorrarSeleccionados()"><i class="bi bi-trash me-1"></i>Eliminar seleccionados</button>';
+}
+window.catBorrarSeleccionados = async function(){
+  const ids = Array.from(_catSeleccionados);
+  if(!ids.length) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar '+ids.length+' producto'+(ids.length===1?'':'s'),
+    message: '¿Archivar '+ids.length+' producto'+(ids.length===1?'':'s')+' del catálogo?',
+    sub: 'Se archivan (soft-delete), no se borran para siempre — dejan de listarse pero quedan en la base de datos. Puedes restaurarlos activando "Ver archivados" y editándolos uno por uno si hiciera falta.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if(!ok) return;
+  try{
+    const r = await fetch('/catalogo/api/productos/bulk-eliminar', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ids: ids}),
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'No se pudo eliminar', {type:'error'}); return; }
+    ilusToast('✓ ' + d.eliminados + ' producto'+(d.eliminados===1?'':'s')+' eliminado'+(d.eliminados===1?'':'s'), {type:'success'});
+    _catSeleccionados.clear();
+    catRenderBarraSeleccion();
+    cargarCatalogo();
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+};
 
 // ── Filtros / toolbar ──
 function catFiltroCambio(){ catPage = 1; cargarCatalogo(); }

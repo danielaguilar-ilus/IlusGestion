@@ -1029,10 +1029,16 @@ def register_catalogo_routes(app, ctx):
             where_base.append("p.clase_producto=%s")
             params_base.append(clase_producto)
 
+        # 2026-07-24 (Daniel: "no es buena idea lo de las fotos del
+        # ecommerce... lo veo impreciso" -- match automático por SKU exacto
+        # contra ilusfitness.com, no es trabajo real de nadie): "foto" sale
+        # de esta cláusula, entra "piola" en su lugar. Un producto con SOLO
+        # una foto auto-traída (sin clase, sin piola, sin manual) ya NO
+        # cuenta como "trabajado" -- déjalo con clase, piola, o manual.
         _clausula_trabajados = """(
                 (p.clase_producto IS NOT NULL AND p.clase_producto <> '')
                 OR p.manual_pdf_key IS NOT NULL
-                OR EXISTS (SELECT 1 FROM cat_producto_fotos f WHERE f.producto_id=p.id)
+                OR EXISTS (SELECT 1 FROM cat_producto_piolas pi WHERE pi.producto_id=p.id AND pi.activo=1)
                 OR EXISTS (SELECT 1 FROM cat_producto_manuales m WHERE m.producto_id=p.id)
             )"""
         where = list(where_base) + ([_clausula_trabajados] if solo_trabajados else [])
@@ -1092,12 +1098,14 @@ def register_catalogo_routes(app, ctx):
             # tener una de esas tres"). ANTES exigía family + piola + manual
             # LAS TRES juntas (2026-07-12) -- con eso casi ningún producto
             # se veía "gestionado" aunque ya tuviera trabajo real encima.
-            # Ahora basta con UNA: clasificación (clase_producto) O fotos
-            # O manual/PDF.
+            # Ahora basta con UNA: clasificación (clase_producto) O manual/PDF
+            # O piola. 2026-07-24 (Daniel: "no es buena idea lo de las fotos
+            # del ecommerce... lo veo impreciso" -- match automático, no es
+            # trabajo real): "foto" sale de este criterio, entra "piola".
             tiene_manual_alguno = bool(row.get("tiene_manual")) or int(row.get("total_manuales") or 0) > 0
             tiene_clasificacion = bool((row.get("clase_producto") or "").strip())
-            tiene_fotos = int(row.get("total_fotos") or 0) > 0
-            row["registrado"] = tiene_clasificacion or tiene_fotos or tiene_manual_alguno
+            tiene_piola = int(row.get("total_piolas") or 0) > 0
+            row["registrado"] = tiene_clasificacion or tiene_piola or tiene_manual_alguno
             rows_out.append(row)
 
         return jsonify({
@@ -1162,9 +1170,11 @@ def register_catalogo_routes(app, ctx):
         manual_key = producto.pop("manual_pdf_key", None)
         tiene_manual_alguno = bool(manual_key) or len(manuales) > 0
         # 2026-07-23 (Daniel): mismo criterio OR que cat_api_list -- basta
-        # clasificación O fotos O manual, no las tres juntas.
+        # clasificación O piola O manual, no las tres juntas. 2026-07-24:
+        # "foto" (auto-match ecommerce, no es trabajo real) sale, entra
+        # "piola".
         tiene_clasificacion = bool((producto.get("clase_producto") or "").strip())
-        producto["registrado"] = tiene_clasificacion or bool(fotos) or tiene_manual_alguno
+        producto["registrado"] = tiene_clasificacion or len(piolas) > 0 or tiene_manual_alguno
         # 2026-07-21 (Daniel, Etapa 2 "acciones unificadas"): la sección
         # "Auditoría" (quién creó/editó el producto) es SOLO para superadmin.
         # No alcanza con ocultarla en el frontend -- el network tab expondría
@@ -1275,6 +1285,51 @@ def register_catalogo_routes(app, ctx):
             "UPDATE cat_productos SET activo=0, updated_by=%s WHERE id=%s",
             (current_username() or "sistema", pid))
         return jsonify({"ok": True, "hard_delete": False})
+
+    @app.route("/catalogo/api/productos/bulk-eliminar", methods=["POST"])
+    @_catalogo_admin_required
+    def cat_api_bulk_eliminar():
+        """Borrado masivo por selección (Daniel, voz: "quiero tener un
+        checkbox... para seleccionar y borrar rápido... como super
+        administrador... las que no tienen clase y solo tienen una foto").
+
+        A propósito MÁS estricto que el borrado individual: _catalogo_admin_
+        required exige superadmin siempre (el individual acepta también
+        permiso cat_eliminar) -- un borrado masivo es más riesgoso, Daniel
+        pidió explícitamente "solamente yo". Y a propósito SIEMPRE soft-delete
+        (Regla #5) -- nunca hard-delete en bloque, ni con confirm_text: si
+        de verdad quiere purgar alguno para siempre, sigue existiendo el
+        flujo individual (SKU exacto) desde la ficha, uno por uno."""
+        d = request.get_json(silent=True) or {}
+        ids_in = d.get("ids") or []
+        if not isinstance(ids_in, list) or not ids_in:
+            return jsonify({"ok": False, "error": "No se enviaron productos para eliminar"}), 400
+        try:
+            ids = list({int(x) for x in ids_in})
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "IDs inválidos"}), 400
+        if len(ids) > 500:
+            return jsonify({"ok": False, "error": "Máximo 500 productos por operación"}), 400
+
+        placeholders = ",".join(["%s"] * len(ids))
+        rows = mysql_fetchall(
+            f"SELECT id, sku FROM cat_productos WHERE id IN ({placeholders}) AND activo=1",
+            tuple(ids))
+        if not rows:
+            return jsonify({"ok": False, "error": "Ninguno de esos productos existe o ya estaba eliminado"}), 404
+        ids_reales = [r["id"] for r in rows]
+        user = current_username() or "sistema"
+        ph2 = ",".join(["%s"] * len(ids_reales))
+        mysql_execute(
+            f"UPDATE cat_productos SET activo=0, updated_by=%s WHERE id IN ({ph2})",
+            tuple([user] + ids_reales))
+
+        if _audit:
+            for r in rows:
+                _audit("cat_bulk_eliminar", target_type="cat_producto", target_id=r["id"],
+                       details={"sku": r.get("sku")})
+
+        return jsonify({"ok": True, "eliminados": len(ids_reales), "omitidos": len(ids) - len(ids_reales)})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — fotos (reusa _uploader_upload/_uploader_destroy, mismo
