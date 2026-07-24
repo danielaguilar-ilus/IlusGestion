@@ -1416,17 +1416,23 @@ def register_tickets_routes(app, ctx):
         de un guardado previo en una codificacion distinta a UTF-8. Se
         corrige con un reemplazo literal antes de insertar.
 
-        Ruta configurable via env RUTAS_CSV_PATH; si no existe el archivo
-        (ej. en Cloud Run), no hace nada -- mismo patron que el import de
-        repuestos (corre en el proximo boot donde el archivo este presente)."""
+        Ruta configurable via env RUTAS_CSV_PATH; por defecto lee
+        data/rutas_2026-07-13.csv (commiteado al repo -- 2026-07-24: el
+        default anterior era la ruta local de Windows de Daniel
+        (C:\\Users\\DANIE\\Downloads\\...), que JAMAS existe en Cloud Run
+        -- por eso tk_cotiz_rutas llevaba semanas vacia en produccion y el
+        costo de ruta nunca se calculaba. RUTAS_CSV_PATH sigue disponible
+        para apuntar a otro archivo si hiciera falta."""
         import csv as _csv
         import os as _os
         from datetime import datetime as _dt
 
-        path = _os.environ.get(
-            "RUTAS_CSV_PATH", r"C:\Users\DANIE\Downloads\rutas_2026-07-13.csv"
-        )
+        _default_path = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)),
+            "data", "rutas_2026-07-13.csv")
+        path = _os.environ.get("RUTAS_CSV_PATH", _default_path)
         if not _os.path.isfile(path):
+            print(f"[rutas_import] archivo no encontrado en {path} -- se reintenta en el proximo boot", flush=True)
             return 0
 
         def _fix_enye(s):
