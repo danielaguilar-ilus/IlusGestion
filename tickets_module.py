@@ -2632,17 +2632,18 @@ def register_tickets_routes(app, ctx):
     @app.route("/tickets/api/cotizaciones/valido-hasta-sugerido", methods=["GET"])
     @_tickets_required
     def tk_api_cotizacion_valido_hasta_sugerido():
-        """Sugerencia de 'Válido hasta' = hoy + N días HÁBILES de Chile
-        (saltando fines de semana + feriados nacionales). Default N=15
-        (Daniel 2026-07-22). El wizard lo usa para pre-rellenar el campo,
-        que queda editable."""
+        """Sugerencia de 'Válido hasta' = hoy + N días CORRIDOS. Default
+        N=15 (Daniel 2026-07-24: la franja del PDF debe leer "VALIDEZ: 15
+        días" -- antes se sumaban 15 días HÁBILES de Chile, que caen 21
+        días corridos después y por eso el PDF mostraba "21 días"). El
+        wizard lo usa para pre-rellenar el campo, que queda editable."""
         try:
             dias = int(request.args.get("dias") or 15)
         except (TypeError, ValueError):
             dias = 15
         dias = max(1, min(dias, 120))
-        fecha = _sumar_dias_habiles_chile(_chile_hoy(), dias)
-        return jsonify({"ok": True, "fecha": fecha.strftime("%Y-%m-%d"), "dias_habiles": dias})
+        fecha = _chile_hoy() + timedelta(days=dias)
+        return jsonify({"ok": True, "fecha": fecha.strftime("%Y-%m-%d"), "dias": dias})
 
     @app.route("/tickets/api/cotizaciones/costo-ruta", methods=["GET"])
     @_tickets_required
@@ -2691,12 +2692,24 @@ def register_tickets_routes(app, ctx):
         renderizan en un contexto aislado sin acceso al CSS del documento.
         Va a la izquierda del espartano ILUS en el header del PDF, igual que
         el formato real de referencia. Si Daniel pasa el PNG exacto, se
-        cambia por un <img> data-URI sin tocar nada más."""
+        cambia por un <img> data-URI sin tocar nada más.
+
+        -webkit-print-color-adjust/print-color-adjust: exact INLINE (2026-07-24,
+        fix bug reportado por Daniel "el logo SPHS se ve mal"): confirmado
+        renderizando el PDF real con Playwright que SIN esta propiedad
+        Chromium descarta los `background` de los header/footer templates al
+        imprimir (no heredan el `-webkit-print-color-adjust:exact` del body
+        del documento -- están aislados, ver nota arriba). Efecto real: la
+        franja negra del header entero desaparecía y este logo quedaba
+        flotando como un cuadro blanco suelto sobre la hoja en blanco, sin el
+        fondo de marca detrás. Mismo fix aplicado al fondo negro del header
+        en _tk_cotizacion_pdf_bytes."""
         return (
             f'<div style="width:{alto_mm}mm;height:{alto_mm}mm;background:#fff;'
             'border:0.5mm solid #1e3a8a;box-sizing:border-box;display:flex;'
             'flex-direction:column;align-items:center;justify-content:center;'
-            'line-height:1;padding:0.5mm;font-family:Arial,Helvetica,sans-serif;">'
+            'line-height:1;padding:0.5mm;font-family:Arial,Helvetica,sans-serif;'
+            '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
             '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">SPORTS</span>'
             '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">HEALTH</span>'
             '<span style="display:block;width:75%;border-top:0.3mm solid #1e3a8a;margin:0.4mm 0;"></span>'
@@ -2995,7 +3008,85 @@ def register_tickets_routes(app, ctx):
                     "Emitir un informe técnico al cierre con hallazgos y recomendaciones.",
                     "Cotizar previamente repuestos o trabajos correctivos que requieran autorización.",
                 ]
-        modo_rico = (cot.get("tipo_servicio") == "mantencion") and bool(alcance_lineas or recomendacion_lineas)
+        # 2026-07-24 (Daniel, mensaje de voz: "para cada visita, instalación o
+        # mantención deberás tener un texto inteligente para que vaya en la
+        # cotización"). Mismo patrón que mantención de arriba (NO tocado),
+        # ahora extendido a los otros 2 tipos_servicio que sí representan una
+        # visita en terreno con equipos asociados: visita_tecnica e
+        # instalacion (venta_repuesto/otro quedan fuera a propósito -- no son
+        # visitas técnicas con equipos, y Daniel no las mencionó; se agregan
+        # igual de fácil el día que se pidan, siguiendo este mismo patrón).
+        elif cot.get("tipo_servicio") == "visita_tecnica" and not alcance_lineas and not recomendacion_lineas:
+            _n_equipos = sum(it["cantidad"] for it in items) or len(items)
+            _rut_cli = (cot.get("rut") or "").strip()
+            _previas = 0
+            if _rut_cli:
+                try:
+                    _pr = mysql_fetchone(
+                        "SELECT COUNT(*) AS n FROM tk_cotizaciones "
+                        "WHERE REPLACE(REPLACE(rut,'.',''),'-','') = REPLACE(REPLACE(%s,'.',''),'-','') "
+                        "  AND id<>%s AND tipo_servicio='visita_tecnica' AND COALESCE(eliminada,0)=0",
+                        (_rut_cli, cid))
+                    _previas = int((_pr or {}).get("n") or 0)
+                except Exception:
+                    _previas = 0
+            alcance_lineas = [
+                f"Visita técnica para revisión y diagnóstico de {_n_equipos} equipo(s) del cliente.",
+                "Diagnóstico funcional y evaluación del estado general de cada equipo.",
+                "Detección de fallas, desgaste o condiciones que requieran intervención.",
+                "Registro fotográfico y técnico de los hallazgos encontrados.",
+                "Entrega de recomendaciones y presupuesto de los trabajos que se requieran.",
+            ]
+            if _previas > 0:
+                recomendacion_lineas = [
+                    f"Cliente recurrente: ya registra {_previas} visita(s) técnica(s) previa(s) con nosotros — se dará continuidad al historial de revisiones de cada equipo.",
+                    "Comparar los hallazgos actuales con visitas anteriores para anticipar fallas repetitivas.",
+                    "Evaluar si corresponde avanzar a un plan de mantención preventiva periódica.",
+                    "Cotizar por separado cualquier repuesto o reparación que se detecte durante la visita.",
+                ]
+            else:
+                recomendacion_lineas = [
+                    "Primera visita técnica registrada para este cliente: se levantará un diagnóstico inicial del estado de cada equipo.",
+                    "Documentar el estado base de los equipos como referencia para futuras revisiones.",
+                    "Emitir un informe con hallazgos y recomendaciones al término de la visita.",
+                    "Cotizar por separado cualquier repuesto o reparación que se detecte durante la visita.",
+                ]
+        elif cot.get("tipo_servicio") == "instalacion" and not alcance_lineas and not recomendacion_lineas:
+            _n_equipos = sum(it["cantidad"] for it in items) or len(items)
+            _rut_cli = (cot.get("rut") or "").strip()
+            _previas = 0
+            if _rut_cli:
+                try:
+                    _pr = mysql_fetchone(
+                        "SELECT COUNT(*) AS n FROM tk_cotizaciones "
+                        "WHERE REPLACE(REPLACE(rut,'.',''),'-','') = REPLACE(REPLACE(%s,'.',''),'-','') "
+                        "  AND id<>%s AND tipo_servicio='instalacion' AND COALESCE(eliminada,0)=0",
+                        (_rut_cli, cid))
+                    _previas = int((_pr or {}).get("n") or 0)
+                except Exception:
+                    _previas = 0
+            alcance_lineas = [
+                f"Instalación de {_n_equipos} equipo(s) en las dependencias del cliente.",
+                "Desembalaje, armado y posicionamiento final según las condiciones del recinto.",
+                "Nivelación, fijación y ajustes técnicos según especificación del fabricante.",
+                "Pruebas de funcionamiento y calibración antes de la entrega.",
+                "Retiro de embalajes y despeje del área de trabajo.",
+            ]
+            if _previas > 0:
+                recomendacion_lineas = [
+                    f"Cliente recurrente: ya registra {_previas} instalación(es) previa(s) con nosotros — se mantiene el mismo estándar técnico en la puesta en marcha de los equipos.",
+                    "Registrar número de serie y fecha de puesta en marcha de cada equipo instalado.",
+                    "Programar la primera mantención preventiva dentro de los primeros meses de uso.",
+                    "Capacitar al personal del cliente en el uso y cuidado básico del equipo.",
+                ]
+            else:
+                recomendacion_lineas = [
+                    "Primera instalación registrada para este cliente: se documentará la puesta en marcha de cada equipo como referencia técnica.",
+                    "Registrar número de serie y fecha de puesta en marcha de cada equipo instalado.",
+                    "Programar la primera mantención preventiva dentro de los primeros meses de uso.",
+                    "Capacitar al personal del cliente en el uso y cuidado básico del equipo.",
+                ]
+        modo_rico = (cot.get("tipo_servicio") in ("mantencion", "visita_tecnica", "instalacion")) and bool(alcance_lineas or recomendacion_lineas)
 
         kpis = None
         if modo_rico:
@@ -3005,9 +3096,80 @@ def register_tickets_routes(app, ctx):
             kpis = {
                 "equipos": equipos,
                 "categorias": categorias,
-                "mantenciones_anio": int(cot.get("frecuencia_anual") or 2),
+                # "Mantenciones al año" solo tiene sentido para mantención
+                # (servicio recurrente) -- una visita técnica o instalación no
+                # se repiten "N veces al año", así que el KPI queda en None y
+                # la plantilla oculta esa tarjeta (ver cotizacion_pdf.html).
+                "mantenciones_anio": int(cot.get("frecuencia_anual") or 2) if cot.get("tipo_servicio") == "mantencion" else None,
                 "dias_habiles": cot.get("dias_habiles_estimado"),
             }
+
+        # Textos de cabecera del bloque rico (barra-título, párrafo
+        # introductorio, títulos de caja) -- uno por tipo_servicio. Se arman
+        # acá en Python (no en el template) para poder reusar exactamente las
+        # mismas palabras que ya existían para mantención (Regla #4.2: el PDF
+        # de una cotización de mantención se ve IDÉNTICO a como se veía antes
+        # de este cambio) y a la vez dar redacción propia y apropiada a
+        # visita_tecnica/instalacion en vez de reciclar el texto de
+        # mantención en una cotización que no lo es.
+        rico_textos = None
+        if modo_rico:
+            _tipo_rico = cot.get("tipo_servicio")
+            if _tipo_rico == "mantencion":
+                _frecuencia = kpis["mantenciones_anio"]
+                _parrafo = (
+                    f"Se recomienda ejecutar {_frecuencia} mantenciones preventivas al año"
+                    + (", idealmente con una separación aproximada de seis meses" if _frecuencia == 2 else "")
+                    + ". Esta frecuencia permite anticipar fallas, preservar la operatividad de los equipos y "
+                      "mantener una adecuada trazabilidad técnica. La presente cotización corresponde al valor "
+                      "unitario de una mantención de los equipos individualizados en el detalle adjunto."
+                    + (" Las mantenciones posteriores se calcularán utilizando los mismos precios expresados en "
+                       "UF y la UF vigente a la fecha del servicio." if uf_info else "")
+                )
+                rico_textos = {
+                    "titulo": "Propuesta de Mantención Preventiva",
+                    "bt_sub": "Valor Unitario",
+                    "parrafo": _parrafo,
+                    "alcance_titulo": "Alcance de la Mantención",
+                    "valor_unitario_titulo": "Valor Unitario Mantención",
+                    "detalle_titulo": "Detalle Económico de una Mantención",
+                }
+            elif _tipo_rico == "visita_tecnica":
+                _parrafo = (
+                    "La presente propuesta corresponde a una visita técnica para la revisión y diagnóstico de "
+                    "los equipos individualizados en el detalle adjunto. Esta visita permite evaluar el estado "
+                    "real de cada equipo, detectar fallas o desgaste, y definir con precisión los trabajos, "
+                    "repuestos o mantenciones que puedan requerirse a futuro. El valor cotizado corresponde a la "
+                    "visita técnica puntual; cualquier reparación o repuesto detectado se presupuestará por "
+                    "separado antes de ejecutarse."
+                    + (" Los precios están expresados en UF y se calculan con la UF vigente a la fecha del "
+                       "servicio." if uf_info else "")
+                )
+                rico_textos = {
+                    "titulo": "Propuesta de Visita Técnica",
+                    "bt_sub": "Valor de la Visita",
+                    "parrafo": _parrafo,
+                    "alcance_titulo": "Alcance de la Visita Técnica",
+                    "valor_unitario_titulo": "Valor de la Visita Técnica",
+                    "detalle_titulo": "Detalle Económico de la Visita Técnica",
+                }
+            elif _tipo_rico == "instalacion":
+                _parrafo = (
+                    "La presente propuesta corresponde a la instalación de los equipos individualizados en el "
+                    "detalle adjunto, incluyendo armado, nivelación y pruebas de funcionamiento antes de la "
+                    "entrega. Una instalación correcta asegura la operatividad y seguridad del equipo desde el "
+                    "primer uso, y facilita la trazabilidad técnica para futuras mantenciones."
+                    + (" Los precios están expresados en UF y se calculan con la UF vigente a la fecha del "
+                       "servicio." if uf_info else "")
+                )
+                rico_textos = {
+                    "titulo": "Propuesta de Instalación",
+                    "bt_sub": "Valor de la Instalación",
+                    "parrafo": _parrafo,
+                    "alcance_titulo": "Alcance de la Instalación",
+                    "valor_unitario_titulo": "Valor de la Instalación",
+                    "detalle_titulo": "Detalle Económico de la Instalación",
+                }
 
         terminos_pares = []
         _terminos_raw = _lineas(cot.get("terminos"))
@@ -3057,6 +3219,7 @@ def register_tickets_routes(app, ctx):
             "uf_info": uf_info,
             "modo_rico": modo_rico,
             "kpis": kpis,
+            "rico_textos": rico_textos,
             "alcance_lineas": alcance_lineas,
             "recomendacion_lineas": recomendacion_lineas,
             "terminos_pares": terminos_pares,
@@ -3108,30 +3271,49 @@ def register_tickets_routes(app, ctx):
         # Solutions"): SPHS cuadrado (CSS) + espartano ILUS, igual que el
         # formato real de referencia.
         _logo_b64_val = ctx_pdf.get("logo_b64")
+        # Tamaño del espartano ILUS +60% (2026-07-24, Daniel: "agrandar el
+        # espartano... un 60% más grande") -- antes 11mm/42mm, ahora
+        # 17.6mm/67.2mm (11*1.6 / 42*1.6). Ver margin.top más abajo: se subió
+        # de 30mm a 36mm para que el header más alto no tape el contenido
+        # (verificado renderizando el PDF real con Playwright).
         _header_ilus = (
-            f'<img src="data:image/png;base64,{_logo_b64_val}" style="height:11mm;max-width:42mm;object-fit:contain;">'
+            f'<img src="data:image/png;base64,{_logo_b64_val}" style="height:17.6mm;max-width:67.2mm;object-fit:contain;">'
             if _logo_b64_val else
-            '<span style="font-weight:900;font-size:16px;color:#ffffff;letter-spacing:.02em;">'
+            '<span style="font-weight:900;font-size:25.6px;color:#ffffff;letter-spacing:.02em;">'
             '<span style="color:#dc2626;">&#9650;</span> ILUS<span style="color:#dc2626;">.</span></span>'
         )
         _header_fecha = _html_mod.escape(ctx_pdf["cot"].get("fecha_emision") or "")
         header_tpl = (
             '<div style="width:100%;font-family:Arial,Helvetica,sans-serif;">'
+            # -webkit-print-color-adjust/print-color-adjust: exact INLINE (2026-07-24,
+            # fix bug "logo SPHS se ve mal"): sin esto Chromium descartaba el
+            # `background` de este header_template completo al imprimir (header/
+            # footer templates NO heredan el color-adjust del <body> del
+            # documento -- corren aislados). Efecto real confirmado renderizando
+            # el PDF: la franja negra entera desaparecía y ambos logos quedaban
+            # flotando sueltos sobre la hoja en blanco, sin fondo de marca detrás
+            # -- eso era el "bug" que Daniel veía en el logo SPHS.
             '<div style="background:#0a0a0a;padding:5mm 12mm;box-sizing:border-box;'
-            'display:flex;justify-content:space-between;align-items:center;">'
+            'display:flex;justify-content:space-between;align-items:center;'
+            '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
             f'<div style="display:flex;align-items:center;gap:5mm;">{_tk_logo_shs_html(12)}{_header_ilus}</div>'
             '<div style="text-align:right;">'
             '<div style="font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-.01em;">COTIZACIÓN</div>'
             f'<div style="font-size:19px;font-weight:900;color:#dc2626;line-height:1.15;">N&#176; {_footer_numero}</div>'
             f'<div style="font-size:7.5px;color:#9ca3af;margin-top:1px;">FECHA EMISIÓN: {_header_fecha}</div>'
             '</div></div>'
-            '<div style="height:2mm;background:linear-gradient(90deg,#dc2626 0 25%,#0a0a0a 25% 100%);"></div>'
+            '<div style="height:2mm;background:linear-gradient(90deg,#dc2626 0 25%,#0a0a0a 25% 100%);'
+            '-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>'
             '</div>'
         )
 
         pdf_bytes = _pw_pdf(
             html_doc, page_format="A4",
-            margin={"top": "30mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
+            # top 36mm (antes 30mm): headroom extra para el espartano +60%
+            # (17.6mm de alto) -- verificado renderizando el PDF real que a
+            # 30mm el header nuevo se solapaba con la primera línea del
+            # contenido; a 36mm queda con margen limpio.
+            margin={"top": "36mm", "right": "0mm", "bottom": "16mm", "left": "0mm"},
             header_template=header_tpl, footer_template=footer_tpl,
         )
         _emp = re.sub(r"[^A-Za-z0-9 _-]", "", (cot.get("empresa") or "cliente"))[:60].strip() or "cliente"
@@ -3522,11 +3704,13 @@ def register_tickets_routes(app, ctx):
             except ValueError:
                 return jsonify({"ok": False, "error": "Fecha 'Válido hasta' inválida"}), 400
         if valida_hasta is None:
-            # 2026-07-22 (Daniel: "15 días hábiles de Chile... y eso va a ser
-            # la sugerencia interna"): default = hoy + 15 días HÁBILES
-            # (saltando fines de semana + feriados nacionales), no 15
-            # corridos. Igual que la sugerencia que pre-rellena el wizard.
-            valida_hasta = _sumar_dias_habiles_chile(_chile_hoy(), 15)
+            # 2026-07-24 (Daniel, viendo el PDF: "la validez debe ser 15
+            # días"): default = hoy + 15 días CORRIDOS. Antes eran 15 días
+            # HÁBILES de Chile (2026-07-22), pero saltar fines de semana +
+            # feriados hace que la franja "VALIDEZ" del PDF (días corridos
+            # entre fecha_emision y valida_hasta) muestre 21 días en vez de
+            # 15 -- igual que la sugerencia que pre-rellena el wizard.
+            valida_hasta = _chile_hoy() + timedelta(days=15)
 
         # 2026-07-15 (Daniel: "generar cotizacion DENTRO del ticket"): si el
         # llamado viene desde la ficha de un ticket abierto (botón "Generar

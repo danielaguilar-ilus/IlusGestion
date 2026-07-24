@@ -27,11 +27,16 @@
      items: [ {sku, descripcion, cantidad, precio_unitario, precio_uf, total}, ... ]
      total_en_palabras: string o None (línea "SON: ...")
      uf_info: {"valor": float, "fecha": str} o None
-     modo_rico: bool -- activa la sección "Propuesta de Mantención
-          Preventiva" (solo tipo_servicio='mantencion' CON alcance u
-          recomendación cargados; toda cotización vieja o sin estos
-          campos se ve como el formato simple -- Regla #4.2)
-     kpis: {"equipos","categorias","mantenciones_anio","dias_habiles"} o None
+     modo_rico: bool -- activa la sección "Propuesta de ..." (solo
+          tipo_servicio en mantencion/visita_tecnica/instalacion CON
+          alcance u recomendación cargados; toda cotización vieja, de
+          otro tipo_servicio, o sin estos campos se ve como el formato
+          simple -- Regla #4.2)
+     kpis: {"equipos","categorias","mantenciones_anio","dias_habiles"} o
+          None -- mantenciones_anio solo viene con valor para mantención
+     rico_textos: {"titulo","bt_sub","parrafo","alcance_titulo",
+          "valor_unitario_titulo","detalle_titulo"} o None -- textos del
+          bloque rico, redactados por tipo_servicio (2026-07-24)
      alcance_lineas / recomendacion_lineas: list[str] (bullets)
      terminos_pares: list[(clave, valor)]
      logo_b64 (opcional): PNG base64 del logo para fondo claro
@@ -98,7 +103,9 @@
     display: flex; justify-content: space-between; align-items: center;
   }
   .visor-head .vh-logos { display: flex; align-items: center; gap: 5mm; }
-  .visor-head .vh-ilus { height: 11mm; max-width: 42mm; object-fit: contain; }
+  /* Espartano ILUS +60% (2026-07-24, Daniel) -- antes 11mm/42mm, replica el
+     mismo tamaño que el header real del PDF (tickets_module.py, _header_ilus). */
+  .visor-head .vh-ilus { height: 17.6mm; max-width: 67.2mm; object-fit: contain; }
   .visor-head .vh-doc { text-align: right; color: #fff; }
   .visor-head .vh-cot { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
   .visor-head .vh-num { font-size: 19px; font-weight: 900; color: var(--ilus-red); line-height: 1.15; }
@@ -130,7 +137,7 @@
   .datos-box .dt-val { color: var(--ilus-ink); font-weight: 600; }
 
   .franja-meta {
-    display: flex; flex-wrap: wrap; gap: 6mm;
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 6mm;
     background: var(--ilus-bg); border: 1px solid var(--ilus-line); border-radius: 2px;
     padding: 2.5mm 4mm; font-size: 8pt; margin-bottom: 4mm; page-break-inside: avoid;
   }
@@ -364,31 +371,31 @@
     <span><b>VALIDEZ:</b> {% if cot.validez_dias is not none %}{{ cot.validez_dias }} días{% else %}{{ cot.valida_hasta or '—' }}{% endif %}</span>
   </div>
 
-  {# ════════════ BLOQUE RICO: Propuesta de Mantención Preventiva ════════════
-     Solo si modo_rico=True (tipo_servicio='mantencion' Y alcance/recomendación
-     cargados) -- cualquier otra cotización (incluidas TODAS las creadas antes
-     de este cambio) salta directo a la tabla, igual que el Formato A simple. #}
+  {# ════════════ BLOQUE RICO: Propuesta (Mantención / Visita Técnica / Instalación) ════════════
+     Solo si modo_rico=True (tipo_servicio en mantencion/visita_tecnica/
+     instalacion Y alcance/recomendación cargados) -- cualquier otra
+     cotización (incluidas TODAS las creadas antes de este cambio, y las de
+     venta_repuesto/otro) salta directo a la tabla, igual que el Formato A
+     simple. Todos los textos visibles salen de rico_textos (armado en
+     tickets_module.py por tipo_servicio) -- para mantención son EXACTAMENTE
+     los mismos strings que antes de 2026-07-24 (Regla #4.2: cero cambio
+     visual en cotizaciones de mantención). #}
   {% if modo_rico %}
-  <div class="barra-titulo"><span>Propuesta de Mantención Preventiva</span><span class="bt-sub">Valor Unitario</span></div>
-  <p class="parrafo-propuesta">
-    Se recomienda ejecutar {{ kpis.mantenciones_anio }} mantenciones preventivas al año{% if kpis.mantenciones_anio == 2 %}, idealmente con una separación aproximada de seis meses{% endif %}.
-    Esta frecuencia permite anticipar fallas, preservar la operatividad de los equipos y mantener una adecuada trazabilidad técnica.
-    La presente cotización corresponde al valor unitario de una mantención de los equipos individualizados en el detalle adjunto.
-    {% if uf_info %}Las mantenciones posteriores se calcularán utilizando los mismos precios expresados en UF y la UF vigente a la fecha del servicio.{% endif %}
-  </p>
+  <div class="barra-titulo"><span>{{ rico_textos.titulo }}</span><span class="bt-sub">{{ rico_textos.bt_sub }}</span></div>
+  <p class="parrafo-propuesta">{{ rico_textos.parrafo }}</p>
   <div class="kpi-row">
     <div class="kpi-card"><div class="kpi-num">{{ kpis.equipos }}</div><div class="kpi-lbl">Equipos considerados</div></div>
     <div class="kpi-card"><div class="kpi-num">{{ kpis.categorias }}</div><div class="kpi-lbl">Categorías de equipos</div></div>
-    <div class="kpi-card"><div class="kpi-num">{{ kpis.mantenciones_anio }}</div><div class="kpi-lbl">Mantenciones al año</div></div>
+    {% if kpis.mantenciones_anio %}<div class="kpi-card"><div class="kpi-num">{{ kpis.mantenciones_anio }}</div><div class="kpi-lbl">Mantenciones al año</div></div>{% endif %}
     {% if kpis.dias_habiles %}<div class="kpi-card"><div class="kpi-num">{{ kpis.dias_habiles }}</div><div class="kpi-lbl">Días hábiles estimados</div></div>{% endif %}
   </div>
   <div class="rico-grid">
     <div class="alcance-box">
-      <div class="ab-title">Alcance de la Mantención</div>
+      <div class="ab-title">{{ rico_textos.alcance_titulo }}</div>
       <ul>{% for l in alcance_lineas %}<li>{{ l }}</li>{% endfor %}</ul>
     </div>
     <div class="valor-unit-box">
-      <div class="vu-title">Valor Unitario Mantención</div>
+      <div class="vu-title">{{ rico_textos.valor_unitario_titulo }}</div>
       <div class="vu-monto">$ {{ clp(cot.subtotal - cot.descuento_monto) }}</div>
       <div class="vu-neto">Valor Neto</div>
       <hr>
@@ -411,7 +418,7 @@
         <th colspan="{{ 6 if mostrar_col_documento else 5 }}">
           <div class="lr-flex">
           {% if modo_rico %}
-            <span>Detalle Económico de una Mantención</span>
+            <span>{{ rico_textos.detalle_titulo }}</span>
             <span class="lr-sub">{{ kpis.equipos }} equipos · precios unitarios en UF</span>
           {% else %}
             <span>Detalle de la Cotización</span>
