@@ -1011,6 +1011,18 @@ async function _cotWizCargarEdicion(cid){
                precio_manual: (it.precio_manual != null ? it.precio_manual : null) };
     });
     _WIZ.rutaManual = (parseInt(c.costo_ruta, 10) || 0) > 0;
+    // 2026-07-24 (Daniel, insiste: "quiero ver los productos que gestiono
+    // en cotización con la clasificación... lo quiero ver allí [en el
+    // catálogo]"): a diferencia de "agregar desde ficha"/"desde otra
+    // fuente", este camino (abrir una cotización YA GUARDADA para editar)
+    // nunca llamaba a cotWizClasificar() -- los ítems quedaban sin "pid"
+    // (el id de cat_productos), así que cotWizClase() → _cotWizGuardarClaseEnCatalogo()
+    // se abortaba en silencio (`if (!it.pid) return;`) cada vez que Daniel
+    // cambiaba una clasificación en una cotización existente: nunca
+    // llegaba al catálogo, sin ningún error visible. cotWizClasificar() no
+    // pisa clase_producto si ya viene seteada (solo rellena "pid"), así
+    // que es seguro llamarla acá también.
+    await cotWizClasificar();
     await cotWizRender();
     await cotWizPrecios();
   }catch(e){
