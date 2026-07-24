@@ -1176,11 +1176,31 @@ document.getElementById('catnBtnCrear').addEventListener('click', async function
   }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }
 });
 
+// 2026-07-24 (bug real en vivo: "catAbrirFicha is not defined" -- la
+// ficha del producto no abría con NADA, ni clic en la fila ni en el ícono
+// de ver). Causa raíz: bootstrap (la librería, cargada desde un CDN
+// externo -- cdn.jsdelivr.net) a veces no está lista todavía cuando el
+// parser llega a este <script> inline, y "new bootstrap.Modal(...)" a
+// nivel superior (fuera de cualquier función) tira ReferenceError ahí
+// mismo -- eso corta en seco TODO el resto del script que viene después
+// en el archivo (catAbrirFicha, el wizard completo, el visor de PDF, el
+// historial de piolas), aunque lo de ANTES de esta línea (buscador,
+// filtros, la tabla misma) siga funcionando bien. _bsModalLazy() nunca
+// toca "bootstrap" al definirse -- solo la primera vez que de verdad se
+// llama a .show()/.hide() (un clic real del usuario, momento en el que
+// el CDN ya tuvo tiempo de sobra para cargar) -- así esta línea nunca
+// puede volver a tumbar el resto del script.
+function _bsModalLazy(el){
+  let _inst = null;
+  function _get(){ return _inst || (_inst = bootstrap.Modal.getOrCreateInstance(el)); }
+  return { show: function(){ _get().show(); }, hide: function(){ _get().hide(); } };
+}
+
 // ══════════════ Modal: Ficha de producto ══════════════
 let catfProductoId = null;
 let catfProductoActual = null;
 const catfModalEl = document.getElementById('catfModal');
-const catfModal = new bootstrap.Modal(catfModalEl);
+const catfModal = _bsModalLazy(catfModalEl);
 
 window.catAbrirFicha = async function(id){
   catfProductoId = id;
@@ -1633,7 +1653,7 @@ window.catpEliminar = async function(piolaId){
 
 // ── Historial de piolas (modal Bootstrap: lista puede ser larga, Regla #8) ──
 const catpHistModalEl = document.getElementById('catpHistModal');
-const catpHistModal = new bootstrap.Modal(catpHistModalEl);
+const catpHistModal = _bsModalLazy(catpHistModalEl);
 document.getElementById('catpBtnHistorial').addEventListener('click', async function(){
   catpHistModal.show();
   const body = document.getElementById('catpHistBody');
@@ -1866,7 +1886,7 @@ async function catfQuitarManual(){
 
 // ══════════════ Visor de PDF en modal (manuales, hasta 5 + legado) ══════════════
 const catvModalEl = document.getElementById('catvModal');
-const catvModal = new bootstrap.Modal(catvModalEl);
+const catvModal = _bsModalLazy(catvModalEl);
 let _catvBlobUrl = null;
 let _catvAbortCtrl = null;
 let _catvReqToken = 0;
@@ -2064,7 +2084,7 @@ let catwProducto = null;
 let catwPiolasExistentes = []; // piolas ya guardadas (con id) para el producto
 let catwManuales = [];
 const catwModalEl = document.getElementById('catwModal');
-const catwModal = new bootstrap.Modal(catwModalEl);
+const catwModal = _bsModalLazy(catwModalEl);
 
 window.catwAbrir = async function(id){
   catwProductoId = id;
