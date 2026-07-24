@@ -53348,10 +53348,19 @@ def mant_visita_del(vid):
 @app.route("/mantenciones/api/clientes/<int:cid>/maquinas-list", methods=["GET"])
 @_mant_required
 def mant_cliente_maquinas_list(cid):
-    """Lista máquinas del cliente — para el selector en ticket nuevo."""
+    """Lista máquinas del cliente — para el selector en ticket nuevo.
+
+    FIX 2026-07-24 (Daniel, por voz — "al dar de baja los equipos, estos
+    siguen saliendo"): faltaba excluir estado='baja'. Este endpoint
+    alimenta el selector de "Solicitar repuesto" (repuestos.html) y
+    "Traer equipos de la ficha" del Informe Post-Servicio (mant_ficha.js)
+    -- ambos usados para proyectar qué accesorios/repuestos comprar, así
+    que un equipo dado de baja no debe aparecer como opción.
+    """
     rows = mysql_fetchall(
         "SELECT id, nombre, sku, serie, estado_op, COALESCE(aplica_mantencion,1) AS aplica_mantencion "
-        "  FROM mant_maquinas WHERE cliente_id=%s ORDER BY nombre", (cid,)
+        "  FROM mant_maquinas WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
+        " ORDER BY nombre", (cid,)
     ) or []
     return jsonify([dict(r) for r in rows])
 
@@ -54462,9 +54471,15 @@ def mant_ot_ficha(vid):
     tecnicos = [dict(t) for t in tecnicos]
 
     # Máquinas del cliente (para asignar a tareas)
+    # FIX 2026-07-24 (Daniel, por voz — equipos de baja seguían saliendo):
+    # esta lista alimenta el badge "N máquina(s) del cliente", el contador
+    # "Genera N tarea(s)" de los protocolos rápidos y el selector de
+    # "Cambio por garantía" — sin excluir 'baja' inflaba el total y
+    # ofrecía equipos dados de baja como opción seleccionable.
     maquinas = mysql_fetchall(
         "SELECT id, nombre, serie, sku FROM mant_maquinas "
-        " WHERE cliente_id=%s ORDER BY nombre",
+        " WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
+        " ORDER BY nombre",
         (visita["cliente_id"],)
     ) or []
     maquinas = [dict(m) for m in maquinas]
@@ -58152,6 +58167,11 @@ def mant_visita_protocolo(vid, protocolo):
         return jsonify({"ok": False, "error": "Protocolo desconocido"}), 400
 
     # Obtener máquinas del cliente
+    # FIX 2026-07-24 (Daniel, por voz — equipos de baja seguían saliendo):
+    # la rama sin maquinas_ids (protocolos "1 click" como Levantamiento
+    # fotográfico) tomaba TODAS las máquinas del cliente y generaba una
+    # tarea real por cada una -- incluidas las dadas de baja. Se agrega el
+    # mismo filtro que ya usa mant_ot_ficha para armar esta misma lista.
     if maquinas_ids:
         placeholders = ",".join(["%s"] * len(maquinas_ids))
         maquinas = mysql_fetchall(
@@ -58162,7 +58182,8 @@ def mant_visita_protocolo(vid, protocolo):
     else:
         maquinas = mysql_fetchall(
             "SELECT id, nombre, serie, sku FROM mant_maquinas "
-            "WHERE cliente_id=%s ORDER BY nombre",
+            "WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
+            "ORDER BY nombre",
             (cliente_id,)
         ) or []
     maquinas = [dict(m) for m in maquinas]
