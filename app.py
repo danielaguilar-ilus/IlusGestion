@@ -44083,7 +44083,7 @@ def mant_visita_multi(cid):
         placeholders_t = ",".join(["%s"] * len(tecnico_ids))
         rows_t = mysql_fetchall(
             f"SELECT id, COALESCE(nombre, username) AS nombre FROM app_users "
-            f"WHERE id IN ({placeholders_t}) AND role='tecnico' AND active=1",
+            f"WHERE id IN ({placeholders_t}) AND role LIKE 'tecnico%' AND active=1",
             tuple(tecnico_ids)
         ) or []
         tecnicos_data = [dict(r) for r in rows_t]
@@ -44335,7 +44335,7 @@ def mant_tecnicos_list_api():
            "       NULL AS tarifa_visita, "
            "       active AS activo, "
            "       0 AS es_externo "
-           "  FROM app_users WHERE role='tecnico'")
+           "  FROM app_users WHERE role LIKE 'tecnico%'")
     if not incluir_inactivos:
         sql += " AND active=1"
     sql += " ORDER BY nombre"
@@ -52872,7 +52872,7 @@ def mant_visita_crear():
             if not tecnico_txt:
                 u = mysql_fetchone(
                     "SELECT COALESCE(nombre, username) AS nm FROM app_users "
-                    "WHERE id=%s AND role='tecnico' AND active=1",
+                    "WHERE id=%s AND role LIKE 'tecnico%' AND active=1",
                     (tecnico_user_id,)
                 )
                 if u:
@@ -53160,7 +53160,7 @@ def mant_visita_update(vid):
         try:
             tuid = int(d["tecnico_user_id"])
             u = mysql_fetchone(
-                "SELECT 1 FROM app_users WHERE id=%s AND role='tecnico' AND active=1",
+                "SELECT 1 FROM app_users WHERE id=%s AND role LIKE 'tecnico%' AND active=1",
                 (tuid,)
             )
             if not u:
