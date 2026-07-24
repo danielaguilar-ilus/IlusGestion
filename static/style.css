@@ -1020,6 +1020,19 @@ body {
     background: #94a3b8;
   }
 
+  /* 2026-07-24 (Daniel: "el header no hace fit con las columnas de
+     abajo"): <table> hereda border-collapse:collapse del reboot de
+     Bootstrap (se aplica a TODO elemento <table>, no solo a .table).
+     position:sticky en un <th> dentro de una tabla con celdas colapsadas
+     es una combinación con bug conocido entre navegadores -- el header
+     "flota" separado del grid real de columnas del body, sobre todo con
+     zoom/escalado fraccional de Windows. Mismo fix ya probado en
+     table.cat-table (ver templates/catalogo/list.html). Solo afecta esta
+     tabla (.ilus-table-fullview no se usa en ninguna otra página). */
+  .ilus-table-fullview .ilus-table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
   /* Header sticky de la tabla */
   .ilus-table-fullview .ilus-table thead th {
     position: sticky;

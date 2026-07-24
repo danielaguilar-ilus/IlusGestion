@@ -92,8 +92,15 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .cat-manual-ic.off{color:#cbd5e1;}
 .cat-badge-reg{padding:3px 10px;border-radius:50px;font-size:.68rem;font-weight:800;white-space:nowrap;
   display:inline-flex;align-items:center;gap:4px;}
-.cat-badge-reg.si{background:#dcfce7;color:#166534;}
-.cat-badge-reg.no{background:#fee2e2;color:#991b1b;}
+{# 2026-07-24 (Daniel, voz: "la tabla de etiquetas... más colorida...
+   replicarle en el catálogo... ponle un poco de color pero no mucho"):
+   el badge de Estado pasa de pastel a solido, tomando los MISMOS colores
+   ya probados en produccion para el Estado de Etiquetas (.badge-confirmado
+   / .badge-pendiente en static/style.css) -- una sola columna, el resto
+   de la tabla (Fotos, Clase) se queda en su pastel actual a proposito,
+   para no pasarse. #}
+.cat-badge-reg.si{background:#1a7a1a;color:#fff;}
+.cat-badge-reg.no{background:#b35a00;color:#fff;}
 .cat-act.wiz{color:#dc2626;}
 .cat-act.wiz:hover{background:#fee2e2;}
 .cat-badge-clase{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.68rem;font-weight:800;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;}
