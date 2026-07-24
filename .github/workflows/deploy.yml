@@ -95,6 +95,10 @@ jobs:
           # aqui. Por eso los tokens deben vivir en GitHub Secrets.
           SIMPLIROUTE_API_TOKEN_MILLING: ${{ secrets.SIMPLIROUTE_API_TOKEN_MILLING }}
           SIMPLIROUTE_API_TOKEN_RAFA:    ${{ secrets.SIMPLIROUTE_API_TOKEN_RAFA }}
+          # Token que autentica a Cloud Scheduler contra los endpoints /cron/*.
+          # Sin el, esos endpoints solo aceptan llamadas desde localhost — y
+          # Cloud Scheduler llama desde fuera, asi que quedarian en 403.
+          ILUS_CRON_TOKEN:               ${{ secrets.ILUS_CRON_TOKEN }}
         run: |
           # Heredoc: el contenido NO aparece en los logs de Actions
           cat > /tmp/env.yaml <<'EOF_ENV_YAML'
@@ -104,7 +108,7 @@ jobs:
           # --- Inyectar credenciales FedEx desde secrets separados ---
           # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
           # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
-          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA):' \
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN):' \
             /tmp/env.yaml > /tmp/env.clean || true
           mv /tmp/env.clean /tmp/env.yaml
           # Garantizar salto de linea final antes de anexar
@@ -125,6 +129,8 @@ jobs:
           echo "Tokens SimpliRoute:"
           append_env SIMPLIROUTE_API_TOKEN_MILLING "$SIMPLIROUTE_API_TOKEN_MILLING"
           append_env SIMPLIROUTE_API_TOKEN_RAFA    "$SIMPLIROUTE_API_TOKEN_RAFA"
+          echo "Cron (Cloud Scheduler 24/7):"
+          append_env ILUS_CRON_TOKEN               "$ILUS_CRON_TOKEN"
 
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)
