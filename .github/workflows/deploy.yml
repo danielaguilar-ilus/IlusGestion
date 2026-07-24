@@ -87,6 +87,14 @@ jobs:
           FEDEX_RATE_CLIENT_ID:     ${{ secrets.FEDEX_RATE_CLIENT_ID }}
           FEDEX_RATE_CLIENT_SECRET: ${{ secrets.FEDEX_RATE_CLIENT_SECRET }}
           FEDEX_ACCOUNT:            ${{ secrets.FEDEX_ACCOUNT }}
+          # Tokens SimpliRoute — uno por transportista (Milling y Felca son
+          # cuentas SEPARADAS en SimpliRoute). Mismo patron que FedEx.
+          # IMPORTANTE: este deploy usa --env-vars-file, que REEMPLAZA todas
+          # las variables del servicio. Cualquier variable seteada a mano en la
+          # consola de Cloud Run se PIERDE en el siguiente deploy si no esta
+          # aqui. Por eso los tokens deben vivir en GitHub Secrets.
+          SIMPLIROUTE_API_TOKEN_MILLING: ${{ secrets.SIMPLIROUTE_API_TOKEN_MILLING }}
+          SIMPLIROUTE_API_TOKEN_RAFA:    ${{ secrets.SIMPLIROUTE_API_TOKEN_RAFA }}
         run: |
           # Heredoc: el contenido NO aparece en los logs de Actions
           cat > /tmp/env.yaml <<'EOF_ENV_YAML'
@@ -96,12 +104,12 @@ jobs:
           # --- Inyectar credenciales FedEx desde secrets separados ---
           # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
           # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
-          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT):' \
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA):' \
             /tmp/env.yaml > /tmp/env.clean || true
           mv /tmp/env.clean /tmp/env.yaml
           # Garantizar salto de linea final antes de anexar
           [ -n "$(tail -c1 /tmp/env.yaml 2>/dev/null)" ] && echo "" >> /tmp/env.yaml
-          append_fedex() {
+          append_env() {
             key="$1"; val="$2"
             if [ -n "$val" ]; then
               printf '%s: "%s"\n' "$key" "$val" >> /tmp/env.yaml
@@ -111,9 +119,12 @@ jobs:
             fi
           }
           echo "Credenciales FedEx:"
-          append_fedex FEDEX_RATE_CLIENT_ID     "$FEDEX_RATE_CLIENT_ID"
-          append_fedex FEDEX_RATE_CLIENT_SECRET "$FEDEX_RATE_CLIENT_SECRET"
-          append_fedex FEDEX_ACCOUNT            "$FEDEX_ACCOUNT"
+          append_env FEDEX_RATE_CLIENT_ID     "$FEDEX_RATE_CLIENT_ID"
+          append_env FEDEX_RATE_CLIENT_SECRET "$FEDEX_RATE_CLIENT_SECRET"
+          append_env FEDEX_ACCOUNT            "$FEDEX_ACCOUNT"
+          echo "Tokens SimpliRoute:"
+          append_env SIMPLIROUTE_API_TOKEN_MILLING "$SIMPLIROUTE_API_TOKEN_MILLING"
+          append_env SIMPLIROUTE_API_TOKEN_RAFA    "$SIMPLIROUTE_API_TOKEN_RAFA"
 
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)
