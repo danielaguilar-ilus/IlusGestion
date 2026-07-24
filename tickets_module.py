@@ -1580,6 +1580,13 @@ def register_tickets_routes(app, ctx):
         # informativo, no afecta el cálculo de precio.
         if "origen" not in existentes:
             alters.append("ADD COLUMN origen VARCHAR(20) NULL")
+        # 2026-07-24 (Daniel: "con check para excluirlo en caso de que me
+        # soliciten comercial no incluirlo"): el monto detectado/editado en
+        # `costo_ruta` se CONSERVA siempre (trazabilidad, vista Detalle) --
+        # este flag solo decide si se SUMA al subtotal/PDF o no. Default 0
+        # (comportamiento actual sin cambios para toda cotización existente).
+        if "ruta_excluida" not in existentes:
+            alters.append("ADD COLUMN ruta_excluida TINYINT(1) NOT NULL DEFAULT 0")
         # 2026-07-22 (Daniel adjuntó 2 PDF reales de Triple A como formato a
         # replicar): contenido opcional del PDF "rico" para cotizaciones de
         # mantención por valor unitario (propuesta + alcance + recomendación +
@@ -2223,6 +2230,17 @@ def register_tickets_routes(app, ctx):
         except (TypeError, ValueError):
             return None
 
+    def _uf_fecha_cl(iso):
+        """"YYYY-MM-DD" (formato que devuelve mindicador.cl) -> "DD/MM/YYYY"
+        (Regla #6). 2026-07-24 (Daniel: "la fecha nuevamente es gringa,
+        necesito día, mes, año") -- SOLO para mostrar en pantalla; el resto
+        del sistema (cache, tk_settings, snapshot de la cotización) sigue
+        guardando/comparando el ISO tal cual, esto no lo toca."""
+        s = (iso or "").strip()
+        if len(s) != 10 or s[4] != "-" or s[7] != "-":
+            return s or None
+        return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
+
     def _tk_total_a_uf(total_clp, uf_info=None):
         """total_clp / valor UF, redondeado a 2 decimales. None si no hay
         UF disponible o el total no es válido. `uf_info` opcional -- para
@@ -2326,7 +2344,7 @@ def register_tickets_routes(app, ctx):
         "edición posterior" -- hacerlo requeriría un flujo de edición que
         Daniel no pidió todavía)."""
         cab = mysql_fetchone(
-            "SELECT id, tipo_servicio, comuna, costo_ruta, descuento_pct, descuento_tipo, "
+            "SELECT id, tipo_servicio, comuna, costo_ruta, ruta_excluida, descuento_pct, descuento_tipo, "
             "       descuento_monto, iva_pct, uf_valor "
             "FROM tk_cotizaciones WHERE id=%s", (cid,))
         if not cab:
@@ -2351,6 +2369,15 @@ def register_tickets_routes(app, ctx):
                 mysql_execute(
                     "UPDATE tk_cotizaciones SET costo_ruta=%s WHERE id=%s",
                     (costo_ruta_total, cid))
+
+        # 2026-07-24 (Daniel: checkbox "excluir costo de ruta... en caso de
+        # que me soliciten comercial no incluirlo"): costo_ruta_total sigue
+        # siendo el monto DETECTADO/EDITADO (se conserva para la vista
+        # Detalle y para que, si se destilda el check más adelante, el
+        # monto siga ahí listo). costo_ruta_aplicado es lo que de verdad
+        # entra al subtotal -- $0 si el flag está activo.
+        ruta_excluida = bool(cab.get("ruta_excluida"))
+        costo_ruta_aplicado = 0.0 if ruta_excluida else costo_ruta_total
 
         items = mysql_fetchall(
             "SELECT id, clase_producto, cantidad, descuento_pct, erp_kopr, precio_manual "
@@ -2452,8 +2479,10 @@ def register_tickets_routes(app, ctx):
 
         # Totales de cabecera -- misma secuencia que Triple A
         # (calculateTotals): subtotal = ítems + ruta; descuento sobre el
-        # subtotal; IVA sobre (subtotal - descuento).
-        subtotal = subtotal_items + costo_ruta_total
+        # subtotal; IVA sobre (subtotal - descuento). Usa el monto
+        # APLICADO (respeta el checkbox "excluir costo de ruta"), no el
+        # monto crudo detectado.
+        subtotal = subtotal_items + costo_ruta_aplicado
         descuento_pct = float(cab.get("descuento_pct") or 0)
         # 2026-07-22 (Daniel: "descuento en $ además de %"): si el descuento
         # es un MONTO fijo, se respeta el valor guardado (topeado al
@@ -2488,6 +2517,7 @@ def register_tickets_routes(app, ctx):
         return {
             "subtotal_items": _tk_money_round(subtotal_items), "subtotal": _tk_money_round(subtotal),
             "descuento_monto": descuento_monto, "costo_ruta_total": costo_ruta_total,
+            "costo_ruta_aplicado": costo_ruta_aplicado, "ruta_excluida": ruta_excluida,
             "iva_pct": iva_pct, "iva_monto": iva_monto, "total": total, "uf_total": uf_total,
         }
 
@@ -2761,9 +2791,16 @@ def register_tickets_routes(app, ctx):
         # Prorrateo del costo de ruta para PRESENTACIÓN (modelo Triple A:
         # generateQuotePdf.ts reparte routeCost entre los ítems; la BD lo
         # mantiene como línea separada). Se reparte por unidad física y el
-        # residuo por redondeo se suma al primer ítem para que la suma de
-        # las líneas calce EXACTA con el subtotal de la cabecera.
-        costo_ruta = float(cot.get("costo_ruta") or 0)
+        # residuo por redondeo se suma al primer ítem CON cantidad > 0 (no
+        # ciegamente a items[0]) para que la suma de las líneas calce
+        # EXACTA con el subtotal de la cabecera.
+        #
+        # 2026-07-24 (Daniel: checkbox "excluir costo de ruta" + "sé
+        # meticuloso a nivel matemático"): si ruta_excluida está activo,
+        # costo_ruta se trata como $0 acá aunque la columna guarde el
+        # monto detectado (ese monto se conserva SOLO para la vista
+        # Detalle -- ver tk_api_cotizacion_detalle_calculo).
+        costo_ruta = 0.0 if cot.get("ruta_excluida") else float(cot.get("costo_ruta") or 0)
         total_unidades = 0.0
         for it in items_rows:
             try:
@@ -2824,13 +2861,42 @@ def register_tickets_routes(app, ctx):
                           "clase_producto": it.get("clase_producto") or None,
                           "documento": _nudo or "—"})
         subtotal_cab = int(cot.get("subtotal") or 0)
-        if items and suma_lineas != subtotal_cab and subtotal_cab > 0:
+        # 2026-07-24 (fix edge case documentado como deuda conocida: "si
+        # TODOS los ítems tienen cantidad 0 y hay ruta, el prorrateo cae
+        # entero en el ítem [0]" -- items[0]["cantidad"]==0 volvía un
+        # total>0 con cantidad 0, fila sin sentido). El residuo de
+        # redondeo va al primer ítem con cantidad > 0.
+        _idx_residuo = next((i for i, it in enumerate(items) if it["cantidad"] > 0), None)
+        # 2026-07-24 (hallazgo confirmado en revisión adversarial, severidad
+        # media): dejar el bloque de abajo sin ejecutar cuando NINGÚN ítem
+        # tiene cantidad>0 resolvía la "fila sin sentido" pero rompía algo
+        # peor -- el documento queda SIN CUADRAR (suma de líneas != Total
+        # de cabecera) cada vez que hay costo_ruta_aplicado>0 sin ningún
+        # producto real. Eso es más grave y más visible para un cliente que
+        # revisa el PDF que una fila con cantidad "sintética". Se sintetiza
+        # cantidad=1 SOLO para esta presentación (nunca se toca la BD) en el
+        # primer ítem de la lista -- mismo espíritu del resto del
+        # prorrateo: el costo de ruta viaja invisible dentro de un ítem,
+        # nunca como línea propia (pedido explícito de Daniel).
+        if _idx_residuo is None and items and subtotal_cab != suma_lineas:
+            items[0]["cantidad"] = 1
+            _idx_residuo = 0
+        if items and _idx_residuo is not None and suma_lineas != subtotal_cab and subtotal_cab > 0:
             delta = subtotal_cab - suma_lineas
-            items[0]["total"] += delta
-            items[0]["precio_unitario"] = (
-                _tk_money_round(items[0]["total"] / items[0]["cantidad"])
-                if items[0]["cantidad"] else items[0]["precio_unitario"])
-            items[0]["precio_uf"] = _precio_uf_str(items[0]["precio_unitario"])
+            items[_idx_residuo]["total"] += delta
+            # NOTA (hallazgo confirmado, severidad baja, aceptado a
+            # propósito): precio_unitario se deriva de total/cantidad
+            # DESPUÉS del ajuste -- para cantidades altas esto puede dejar
+            # precio_unitario×cantidad a lo sumo ±1 peso de total en ESTA
+            # fila puntual (redondeo). Se prioriza que la SUMA del
+            # documento cuadre exacto con el subtotal de cabecera (lo que
+            # el cliente realmente puede verificar sumando el PDF) sobre
+            # el descalce de 1 peso invisible en una columna que ni
+            # siquiera se imprime en CLP (el PDF solo muestra Precio UF y
+            # Total, nunca precio unitario en pesos -- cotizacion_pdf.html).
+            items[_idx_residuo]["precio_unitario"] = _tk_money_round(
+                items[_idx_residuo]["total"] / items[_idx_residuo]["cantidad"])
+            items[_idx_residuo]["precio_uf"] = _precio_uf_str(items[_idx_residuo]["precio_unitario"])
 
         _rut_fmt = ctx.get("rut_fmt_filter")
         rut_mostrar = cot.get("rut") or ""
@@ -3186,9 +3252,27 @@ def register_tickets_routes(app, ctx):
             ruta = mysql_fetchone(
                 "SELECT region, comuna, km, peaje, tag, precio_bruto, precio_final, tiempo_min "
                 "FROM tk_cotiz_rutas WHERE activa=1 AND LOWER(comuna)=LOWER(%s) LIMIT 1", (comuna,))
+            if ruta:
+                # 2026-07-24 (Daniel: "desglosadito, qué es bencina, qué es
+                # peaje"): tk_cotiz_rutas NO trae combustible como columna
+                # propia -- solo peaje/tag por separado y precio_bruto ya
+                # agregado. "Combustible y otros" = el resto del bruto una
+                # vez restados los 2 componentes que SÍ conocemos por
+                # separado. Nunca negativo (si algún día peaje+tag > bruto
+                # por un dato manual raro, se muestra 0, no un número raro).
+                _peaje = int(ruta.get("peaje") or 0)
+                _tag = int(ruta.get("tag") or 0)
+                _bruto = int(ruta.get("precio_bruto") or 0)
+                ruta["combustible_otros"] = max(_bruto - _peaje - _tag, 0)
 
         uf_info = _tk_uf_actual()
         total = int(cot.get("total") or 0)
+        uf_total = _tk_total_a_uf(total, uf_info)
+        # Regla #6 (Daniel: "la fecha nuevamente es gringa"): uf_info.fecha
+        # se muestra tal cual en esta plantilla (HTML y PDF) -- se reformatea
+        # SOLO para pantalla, después de calcular uf_total (que usa .valor,
+        # no .fecha, así que el orden no afecta el cálculo).
+        uf_info_disp = dict(uf_info, fecha=_uf_fecha_cl(uf_info.get("fecha"))) if uf_info else None
 
         return {
             "cot": {
@@ -3205,6 +3289,7 @@ def register_tickets_routes(app, ctx):
                 "created_by": cot.get("created_by") or "",
                 "subtotal_items": int(cot.get("subtotal_items") or 0),
                 "costo_ruta": int(cot.get("costo_ruta") or 0),
+                "ruta_excluida": bool(cot.get("ruta_excluida")),
                 "subtotal": int(cot.get("subtotal") or 0),
                 "descuento_pct": float(cot.get("descuento_pct") or 0),
                 "descuento_monto": int(cot.get("descuento_monto") or 0),
@@ -3215,8 +3300,8 @@ def register_tickets_routes(app, ctx):
             "items": items,
             "ruta": ruta,
             "cfg": cfg,
-            "uf_info": uf_info,
-            "uf_total": _tk_total_a_uf(total, uf_info),
+            "uf_info": uf_info_disp,
+            "uf_total": uf_total,
             "logo_b64": _tk_cotiz_logo_b64(),
         }
 
@@ -3341,8 +3426,11 @@ def register_tickets_routes(app, ctx):
             except Exception:
                 fila["vencida"] = False
             filas.append(fila)
+        # uf_info_chip: SOLO para el texto visible del chip (Regla #6, fecha
+        # dd/mm/yyyy) -- uf_info (ISO) sigue intacto para uf_total de cada fila.
+        uf_info_chip = dict(uf_info, fecha=_uf_fecha_cl(uf_info.get("fecha"))) if uf_info else None
         return render_template("tickets/cotizaciones.html",
-                                cotizaciones=filas, uf_info=uf_info)
+                                cotizaciones=filas, uf_info=uf_info_chip)
 
     # ─────────────────────────────────────────────────────────────────
     #  API — crear cotizacion en borrador desde el modal ERP compartido
@@ -3422,6 +3510,10 @@ def register_tickets_routes(app, ctx):
             costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
         except (TypeError, ValueError):
             costo_ruta_in = 0
+        # 2026-07-24 (Daniel: checkbox "excluir costo de ruta"): costo_ruta_in
+        # se guarda IGUAL (referencia/Detalle); este flag decide si entra al
+        # subtotal (ver _tk_cotiz_recalcular).
+        ruta_excluida_in = 1 if d.get("ruta_excluida") else 0
         valida_hasta = None
         _vh = (d.get("valida_hasta") or "").strip()
         if _vh:
@@ -3622,18 +3714,18 @@ def register_tickets_routes(app, ctx):
                     " contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
                     " direccion_lat, direccion_lng, direccion_place_id, cliente_id, origen, "
                     " alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual, "
-                    " uf_valor, uf_fecha, descuento_tipo, descuento_monto) "
+                    " uf_valor, uf_fecha, descuento_tipo, descuento_monto, ruta_excluida) "
                     "VALUES (%s,'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                     "        %s, %s, %s, %s, %s, %s, %s, %s, %s, "
                     "        %s, %s, %s, %s, %s, "
-                    "        %s, %s, %s, %s)",
+                    "        %s, %s, %s, %s, %s)",
                     (numero, ticket_id, erp_idmaeen, (erp_koen or "")[:50] or None, rut, empresa,
                      email, telefono, comuna, region, direccion, tipo_servicio, valida_hasta,
                      notas, notas_internas, ejecutivo, descuento_pct, costo_ruta_in, user,
                      contacto_nombre, contacto_cargo, contacto_tel, contacto_email,
                      direccion_lat, direccion_lng, direccion_place_id, cliente_id_in, origen_in,
                      alcance, recomendacion, terminos, dias_habiles_estimado, frecuencia_anual,
-                     uf_valor_snap, uf_fecha_snap, descuento_tipo, descuento_monto_in),
+                     uf_valor_snap, uf_fecha_snap, descuento_tipo, descuento_monto_in, ruta_excluida_in),
                 )
                 cot_id = cur.lastrowid
                 for it in items:
@@ -4001,6 +4093,10 @@ def register_tickets_routes(app, ctx):
             costo_ruta_in = max(int(float(d.get("costo_ruta") or 0)), 0)
         except (TypeError, ValueError):
             costo_ruta_in = 0
+        # 2026-07-24 (Daniel: checkbox "excluir costo de ruta"): costo_ruta_in
+        # se guarda IGUAL (referencia/Detalle); este flag decide si entra al
+        # subtotal (ver _tk_cotiz_recalcular).
+        ruta_excluida_in = 1 if d.get("ruta_excluida") else 0
         valida_hasta = None
         _vh = (d.get("valida_hasta") or "").strip()
         if _vh:
@@ -4058,13 +4154,13 @@ def register_tickets_routes(app, ctx):
                     "UPDATE tk_cotizaciones SET empresa=%s, rut=%s, email=%s, telefono=%s, comuna=%s, "
                     " region=%s, direccion=%s, tipo_servicio=%s, valida_hasta=%s, notas=%s, "
                     " notas_internas=%s, ejecutivo=%s, descuento_pct=%s, descuento_tipo=%s, "
-                    " descuento_monto=%s, costo_ruta=%s, contacto_nombre=%s, contacto_cargo=%s, "
+                    " descuento_monto=%s, costo_ruta=%s, ruta_excluida=%s, contacto_nombre=%s, contacto_cargo=%s, "
                     " contacto_tel=%s, contacto_email=%s, alcance=%s, recomendacion=%s, terminos=%s, "
                     " dias_habiles_estimado=%s, frecuencia_anual=%s, updated_by=%s "
                     " WHERE id=%s",
                     (empresa, rut, email, telefono, comuna, region, direccion, tipo_servicio,
                      valida_hasta, notas, notas_internas, ejecutivo, descuento_pct, descuento_tipo,
-                     descuento_monto_in, costo_ruta_in, contacto_nombre, contacto_cargo, contacto_tel,
+                     descuento_monto_in, costo_ruta_in, ruta_excluida_in, contacto_nombre, contacto_cargo, contacto_tel,
                      contacto_email, alcance, recomendacion, terminos, dias_habiles_estimado,
                      frecuencia_anual, user, cid))
                 cur.execute("DELETE FROM tk_cotizacion_items WHERE cotizacion_id=%s", (cid,))

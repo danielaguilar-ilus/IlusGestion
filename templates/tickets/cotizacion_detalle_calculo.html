@@ -293,21 +293,35 @@
   </div>
 
   <h2 class="sec"><span class="n">2</span>Costo de ruta / zona</h2>
+  {% if cot.ruta_excluida %}
+  <div style="background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 10px;font-size:7.8pt;margin-bottom:8px;">
+    <b>Excluido de esta cotización.</b> El monto de abajo es el detectado/ajustado
+    para referencia — NO está sumado al subtotal ni aparece en el PDF que ve el cliente
+    (checkbox "No incluir el costo de ruta" marcado).
+  </div>
+  {% endif %}
   {% if ruta %}
   <div class="zona-grid">
     <div class="zona-card"><div class="lbl">Comuna</div><div class="val">{{ ruta.comuna }}</div></div>
     <div class="zona-card"><div class="lbl">Región</div><div class="val">{{ ruta.region or '—' }}</div></div>
     <div class="zona-card"><div class="lbl">Distancia</div><div class="val">{{ ruta.km | fkg(1) }} km</div></div>
-    <div class="zona-card"><div class="lbl">Peaje</div><div class="val">${{ clp(ruta.peaje) }}</div></div>
     <div class="zona-card"><div class="lbl">Tiempo est.</div><div class="val">{{ ruta.tiempo_min }} min</div></div>
-    <div class="zona-card"><div class="lbl">Costo ruta aplicado</div><div class="val">${{ clp(cot.costo_ruta) }}</div></div>
+    {# 2026-07-24 (Daniel: "desglosadito, qué es bencina, qué es peaje" --
+       SOLO acá, en Detalle interno de superadmin, nunca en el PDF del
+       cliente). Peaje y TAG son columnas reales de tk_cotiz_rutas;
+       "Combustible y otros" es lo que queda del bruto una vez restados
+       esos dos (la tabla no trae combustible como columna propia). #}
+    <div class="zona-card"><div class="lbl">Peaje</div><div class="val">${{ clp(ruta.peaje) }}</div></div>
+    <div class="zona-card"><div class="lbl">TAG</div><div class="val">${{ clp(ruta.tag) }}</div></div>
+    <div class="zona-card"><div class="lbl">Combustible y otros</div><div class="val">${{ clp(ruta.combustible_otros) }}</div></div>
+    <div class="zona-card wide"><div class="lbl">Costo ruta aplicado{% if cot.ruta_excluida %} (excluido — no suma){% endif %}</div><div class="val">${{ clp(cot.costo_ruta) }}</div></div>
   </div>
   {% else %}
   <div class="zona-grid">
     <div class="zona-card"><div class="lbl">Comuna</div><div class="val">{{ cot.comuna or '—' }}</div></div>
     <div class="zona-card"><div class="lbl">Región</div><div class="val">{{ cot.region or '—' }}</div></div>
     <div class="zona-card wide">
-      <div class="lbl">Costo ruta aplicado</div>
+      <div class="lbl">Costo ruta aplicado{% if cot.ruta_excluida %} (excluido — no suma){% endif %}</div>
       <div class="val">${{ clp(cot.costo_ruta) }}</div>
       {% if cot.costo_ruta %}<div style="font-size:7.3pt;color:var(--ilus-mute);margin-top:2px;">Sin registro en la tabla de rutas para esta comuna — monto ingresado/ajustado manualmente.</div>{% endif %}
     </div>

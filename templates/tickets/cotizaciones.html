@@ -666,6 +666,16 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
                 <input id="cotWizCostoRuta" type="number" min="0" step="1" class="form-control" value="0">
               </div>
               <div class="cot-wiz-hint" id="cotWizRutaHint">Se obtiene automáticamente según la comuna del cliente</div>
+              {# 2026-07-24 (Daniel: "con check para excluirlo en caso de que
+                 me soliciten comercial no incluirlo"): el monto detectado
+                 sigue ahí (se ve en el Detalle interno), pero no entra al
+                 subtotal/PDF si se marca este check. #}
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" id="cotWizRutaExcluida">
+                <label class="form-check-label small text-muted" for="cotWizRutaExcluida">
+                  No incluir el costo de ruta en esta cotización (excluido a pedido del cliente)
+                </label>
+              </div>
             </div>
             {# 2026-07-22 (Daniel adjuntó 2 cotizaciones reales de Triple A
                como formato a replicar): contenido opcional para el PDF
@@ -909,6 +919,7 @@ function cotWizAbrir(editCid){
   document.getElementById('cotWizDescValor').value = '0';
   cotWizDescModoCambio();
   document.getElementById('cotWizCostoRuta').value = '0';
+  document.getElementById('cotWizRutaExcluida').checked = false;
   document.getElementById('cotWizEjecutivo').value = '';
   _cotWizToggleContenidoPdf();
   document.getElementById('cotWizRutaHint').textContent = 'Se obtiene automáticamente según la comuna del cliente';
@@ -991,6 +1002,7 @@ async function _cotWizCargarEdicion(cid){
     setV('cotWizAlcance', c.alcance); setV('cotWizRecomendacion', c.recomendacion);
     setV('cotWizTerminos', c.terminos); setV('cotWizDiasHabiles', c.dias_habiles_estimado);
     setV('cotWizFrecuenciaAnual', c.frecuencia_anual); setV('cotWizCostoRuta', c.costo_ruta || 0);
+    document.getElementById('cotWizRutaExcluida').checked = !!c.ruta_excluida;
     setV('cotWizEjecutivo', c.ejecutivo);
     if (c.valida_hasta) setV('cotWizValidoHasta', c.valida_hasta);
     // Descuento (modo + valor)
@@ -1578,6 +1590,8 @@ async function cotWizBuscarRuta(){
   if (cr) cr.addEventListener('input', function(){ if (_WIZ) _WIZ.rutaManual = true; cotWizResumen(); });
   const cm = document.getElementById('cotWizComuna');
   if (cm) cm.addEventListener('change', cotWizBuscarRuta);
+  const cre = document.getElementById('cotWizRutaExcluida');
+  if (cre) cre.addEventListener('change', cotWizResumen);
   // El descuento (modo + valor) ya dispara cotWizResumen via onchange/oninput
   // inline en el HTML -- no hace falta un listener extra aquí.
 })();
@@ -2015,19 +2029,35 @@ function cotWizPrecioManual(i, v){
 }
 
 function _wizCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
+// 2026-07-24 (Daniel: "la fecha nuevamente es gringa, necesito día, mes,
+// año" -- Regla #6): "YYYY-MM-DD" (lo que devuelve /api/uf-actual, tal
+// cual viene de mindicador.cl) -> "DD/MM/YYYY". Defensivo: cualquier otra
+// cosa se devuelve intacta en vez de mostrar basura.
+function _ufFechaCl(iso){
+  if (!iso || iso.length !== 10 || iso[4] !== '-' || iso[7] !== '-') return iso || '';
+  return iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4);
+}
 
 // ── Equivalente en UF del Total (2026-07-21, Daniel: "ese valor lo vamos
 //    a expresar en UF, a la UF actual") ──
-// Se pide UNA vez al abrir el wizard (cotWizAbrir) y se cachea en
-// _wizUf -- cotWizResumen() se dispara en cada tecla del formulario y no
-// tiene sentido pegarle a la red en cada una (el backend /api/uf-actual
-// ya cachea 1h de por sí, pero esto evita hasta esa llamada liviana).
-// Si mindicador.cl está caído, _wizUf queda null y la fila de UF
-// simplemente no se muestra -- el resto del resumen sigue funcionando.
+// Se pide cada vez que se ABRE el wizard (cotWizAbrir) y se cachea en
+// _wizUf SOLO para no pegarle a la red en cada tecla dentro de esa misma
+// apertura (cotWizResumen se dispara en cada tecla del formulario). El
+// backend /api/uf-actual ya cachea 1h de por sí, así que esto es barato.
+//
+// 2026-07-24 (Daniel: "cada vez que yo entre a crear una cotización,
+// entregue la última actualización... para evitar errores de cálculo"):
+// ANTES, una vez que _wizUf se poblaba la primera vez, quedaba fijo para
+// el resto de la sesión del navegador -- si Daniel dejaba la pestaña
+// abierta todo el día y abría el wizard 10 veces, las 10 usaban la UF
+// del primer fetch. Ahora cada apertura vuelve a pedirla (el guard
+// _wizUfPidiendo solo evita 2 fetch simultáneos, no reemplaza el valor
+// ya bueno mientras el nuevo está en camino). Si mindicador.cl está
+// caído, se mantiene el último _wizUf conocido en vez de perderlo.
 let _wizUf = null;
 let _wizUfPidiendo = false;
 async function _cotWizCargarUf(){
-  if (_wizUf || _wizUfPidiendo) return;
+  if (_wizUfPidiendo) return;
   _wizUfPidiendo = true;
   try{
     const r = await fetch('/api/uf-actual');
@@ -2050,7 +2080,7 @@ function _cotWizActualizarUf(totalClp){
   const ufStr = uf.toLocaleString('es-CL', {minimumFractionDigits: 2, maximumFractionDigits: 2});
   val.textContent = '≈ ' + ufStr + ' UF';
   if (hint){
-    hint.title = 'Valor UF hoy' + (_wizUf.fecha ? ' (' + _wizUf.fecha + ')' : '') + ': ' +
+    hint.title = 'Valor UF hoy' + (_wizUf.fecha ? ' (' + _ufFechaCl(_wizUf.fecha) + ')' : '') + ': ' +
       _wizCLP(_wizUf.valor) + ' · Este monto equivale a ' + ufStr +
       ' UF, calculado desde las horas-hombre y el costo de ruta.';
   }
@@ -2073,7 +2103,12 @@ function cotWizDescModoCambio(){
 function cotWizResumen(){
   if (!_WIZ) return;
   const items = _WIZ.sumaItems || 0;
-  const ruta = Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0);
+  const rutaDetectada = Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0);
+  // 2026-07-24 (checkbox "excluir costo de ruta"): el resumen en vivo
+  // debe reflejar EXACTAMENTE lo que se va a guardar -- si está marcado,
+  // $0 acá también (el monto detectado sigue en el input, solo no suma).
+  const rutaExcluidaEl = document.getElementById('cotWizRutaExcluida');
+  const ruta = (rutaExcluidaEl && rutaExcluidaEl.checked) ? 0 : rutaDetectada;
   const subtotal = items + ruta;
   const dsc = _cotWizDesc();
   // Descuento por % o por monto fijo (topeado al subtotal, nunca negativo).
@@ -2159,6 +2194,11 @@ function cotWizResumen(){
         descuento_pct: (_desc.modo === 'pct' ? _desc.valor : 0),
         descuento_monto: (_desc.modo === 'monto' ? Math.round(_desc.valor) : 0),
         costo_ruta: Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0),
+        // 2026-07-24 (Daniel: checkbox "excluir costo de ruta... en caso
+        // de que me soliciten comercial no incluirlo"): el monto de arriba
+        // se guarda igual (Detalle/trazabilidad); este flag decide si
+        // entra al subtotal/PDF.
+        ruta_excluida: !!document.getElementById('cotWizRutaExcluida').checked,
         ejecutivo: document.getElementById('cotWizEjecutivo').value,
         // 2026-07-22: contenido opcional del PDF "rico" de Mantención (ver
         // _cotWizToggleContenidoPdf / modo_rico en tk_cotizacion_pdf).
@@ -2393,7 +2433,7 @@ function _cotUfChipPintar(d){
   let fuente = 'mindicador.cl';
   if (d.manual) fuente = 'manual' + (d.set_by ? ' · ' + d.set_by : '');
   else if (d.stale) fuente = 'último conocido';
-  if (meta) meta.textContent = (d.fecha ? d.fecha + ' · ' : '') + fuente;
+  if (meta) meta.textContent = (d.fecha ? _ufFechaCl(d.fecha) + ' · ' : '') + fuente;
 }
 async function cotUfChipRefrescar(){
   const chip = document.getElementById('cotUfChip');
@@ -2405,7 +2445,7 @@ async function cotUfChipRefrescar(){
     const d = await r.json();
     if (d && d.ok){
       _cotUfChipPintar(d);
-      ilusToast('✓ UF actualizada' + (d.fecha ? ' (' + d.fecha + ')' : ''), {type:'success'});
+      ilusToast('✓ UF actualizada' + (d.fecha ? ' (' + _ufFechaCl(d.fecha) + ')' : ''), {type:'success'});
     } else {
       ilusToast(d && d.error ? d.error : 'No se pudo actualizar la UF', {type:'error'});
     }

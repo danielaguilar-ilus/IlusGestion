@@ -271,6 +271,13 @@ async function clcGuardarTarifa(input){
 }
 
 /* ── UF ── */
+// 2026-07-24 (mismo bug que Daniel reportó en Cotizaciones -- "la fecha
+// nuevamente es gringa" -- encontrado acá por revisión adversarial, Regla
+// #6): mindicador.cl devuelve "YYYY-MM-DD" -> se muestra "DD/MM/YYYY".
+function _ufFechaCl(iso){
+  if (!iso || iso.length !== 10 || iso[4] !== '-' || iso[7] !== '-') return iso || '';
+  return iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4);
+}
 function clcUfPintar(uf){
   const val = document.getElementById('clcUfVal');
   const meta = document.getElementById('clcUfMeta');
@@ -288,7 +295,7 @@ function clcUfPintar(uf){
   if(uf.manual){ fuente = 'Fijada manualmente' + (uf.set_by ? ' por '+escH(uf.set_by) : ''); cls='manual'; }
   else if(uf.stale){ fuente = 'Último valor conocido (API no respondió ahora)'; cls='stale'; }
   else { fuente = 'Automática (mindicador.cl)'; cls='auto'; }
-  meta.textContent = fuente + (uf.fecha ? ' · ' + uf.fecha : '');
+  meta.textContent = fuente + (uf.fecha ? ' · ' + _ufFechaCl(uf.fecha) : '');
   badge.className = 'uf-badge ' + cls;
   badge.textContent = uf.manual ? 'Manual' : (uf.stale ? 'En caché' : 'Auto');
   badge.style.display = '';

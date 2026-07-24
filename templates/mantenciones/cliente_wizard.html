@@ -3029,7 +3029,13 @@ function poblarPanelIA(r){
             div.id='ai_uf_ref';
             div.className='erp-info mt-2';
             div.style.fontSize='.78rem';
-            div.innerHTML=`<i class="bi bi-calculator me-1"></i><strong>${costoUF} UF</strong> = <strong>$${clp.toLocaleString('es-CL')}</strong> CLP (UF al ${uf.fecha}: $${Math.round(uf.uf).toLocaleString('es-CL')})`;
+            // 2026-07-24 (mismo bug reportado por Daniel en Cotizaciones --
+            // "la fecha nuevamente es gringa" -- Regla #6): mindicador.cl
+            // devuelve "YYYY-MM-DD", se muestra "DD/MM/YYYY". Regex inline
+            // (único uso en este archivo) en vez de un helper nuevo --
+            // no-op si el formato no calza (defensivo).
+            const _ufFechaCl = (uf.fecha||'').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1');
+            div.innerHTML=`<i class="bi bi-calculator me-1"></i><strong>${costoUF} UF</strong> = <strong>$${clp.toLocaleString('es-CL')}</strong> CLP (UF al ${_ufFechaCl}: $${Math.round(uf.uf).toLocaleString('es-CL')})`;
             document.getElementById('ai_costo_mensual').closest('.ai-box')?.prepend(div)
               || document.getElementById('ai_panel').prepend(div);
           }
