@@ -131,6 +131,16 @@ table.cat-table tbody tr.archivado{opacity:.55;}
 .empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 30px;text-align:center;}
 .empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
 
+/* ── Barra de refresco no disruptivo (2026-07-23) ── */
+.cat-refresco-bar{height:3px;margin:0 0 5px;border-radius:3px;overflow:hidden;position:relative;background:transparent;}
+.cat-refresco-bar.on{background:#fee2e2;}
+.cat-refresco-bar .inner{display:none;position:absolute;top:0;left:0;height:100%;width:38%;
+  background:#dc2626;border-radius:3px;animation:catRefrescoSlide 1.1s ease-in-out infinite;}
+.cat-refresco-bar.on .inner{display:block;}
+@keyframes catRefrescoSlide{0%{left:-38%;}100%{left:100%;}}
+#catBtnActualizar:disabled i{animation:catGiro .8s linear infinite;}
+@keyframes catGiro{to{transform:rotate(360deg);}}
+
 /* ── Modal Nuevo Producto ── */
 .catn-field label{font-size:.72rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
 
@@ -334,10 +344,14 @@ table.cat-table tbody tr.archivado{opacity:.55;}
       Ver archivados</label>
     <span class="spacer"></span>
     <span id="catTrabajadosHint" class="text-muted" style="font-size:.72rem;"></span>
+    <button class="btn btn-sm btn-ilus-outline" id="catBtnActualizar" type="button"
+            title="Volver a cargar el catálogo con los filtros y la página actuales">
+      <i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
     <button class="btn btn-sm btn-ilus-outline" id="catBtnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
   </div>
 </div>
 
+<div id="catRefrescoBar" class="cat-refresco-bar" aria-hidden="true"><span class="inner"></span></div>
 <div id="catLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 <script>
 // 2026-07-23 (Daniel, incidente en vivo: "sigo sin ver los cambios... queda
@@ -698,6 +712,20 @@ let _catFamilias = new Set(); // acumulado best-effort para el <select> Familia
                                // distintas" — se completa con lo que se va viendo).
 let _catClases = null;        // cache de GET /catalogo/api/clases (se pide 1 sola vez)
 
+// ── Estado de carga/refresco (2026-07-23, Daniel: "no me agrada que la
+// tabla deba recargar") ──
+// true desde la PRIMERA vez que cargarCatalogo() renderizó con éxito
+// (filas o estado-vacío legítimo). A partir de ahí, un fallo de red JAMÁS
+// vuelve a destruir #catLista: la tabla vieja queda intacta + toast.
+let _catUltimaCargaOk = false;
+// Guardia de carrera (mismo patrón que _wizPrecioSeq en cotizaciones.html):
+// cada llamada toma ++_catSeq; solo la más reciente puede pintar el DOM.
+let _catSeq = 0;
+// AbortController de la petición EN VUELO: una llamada nueva aborta la
+// anterior de inmediato (no tiene sentido esperarle 12s a una respuesta
+// que igual será descartada por _catSeq).
+let _catCtrlVuelo = null;
+
 // ── Clases de producto: fetch único + cache, reusado en filtro + wizard ──
 async function catObtenerClases(){
   if(_catClases) return _catClases;
@@ -728,6 +756,12 @@ function esc(s){ return (s==null?'':String(s))
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments,c=this; t=setTimeout(()=>fn.apply(c,a),ms); }; }
+function catRefrescoIndicador(on){
+  const bar = document.getElementById('catRefrescoBar');
+  if (bar) bar.classList.toggle('on', !!on);
+  const btn = document.getElementById('catBtnActualizar');
+  if (btn) btn.disabled = !!on;
+}
 // El servidor ya envía las fechas formateadas en hora Chile (Regla #6).
 function fmtFecha(s){ return s || '—'; }
 function fmtKb(kb){
@@ -788,6 +822,12 @@ window.catPagina = function(d){ catPage = Math.max(1, catPage + d); cargarCatalo
 window.catCambiarLimit = function(v){ catLimit = parseInt(v,10)||50; catPage = 1; cargarCatalogo(); };
 
 async function cargarCatalogo(_reintentoAuto){
+  // ── Guardia de carrera: esta llamada toma su turno y mata a la anterior ──
+  const miSeq = ++_catSeq;
+  if (_catCtrlVuelo){ try{ _catCtrlVuelo.abort(); }catch(_e){} }
+  const esRefresco = _catUltimaCargaOk;   // ¿ya hay datos buenos en pantalla?
+  catRefrescoIndicador(true);
+
   const p = catParamsFiltros(true);
   p.set('page', String(catPage));
   p.set('limit', String(catLimit));
@@ -800,77 +840,106 @@ async function cargarCatalogo(_reintentoAuto){
   // de 12s: pasado ese tiempo, se cancela y se muestra un error accionable
   // en vez de girar eternamente.
   const _ctrl = new AbortController();
+  _catCtrlVuelo = _ctrl;
   const _timeoutId = setTimeout(() => _ctrl.abort(), 12000);
   try{
-    const r = await fetch('/catalogo/api/productos?'+p.toString(), {signal: _ctrl.signal});
-    data = await r.json();
-  }catch(err){
-    clearTimeout(_timeoutId);
-    const esTimeout = err && err.name === 'AbortError';
-    // 2026-07-23 (Daniel: la demora real es una instancia de Cloud Run
-    // recién levantada -- decidió NO pagar una segunda instancia siempre
-    // lista, "mejor ahorrarnos ese dinero" -- que la página se reintente
-    // SOLA en su lugar). Si es la primera demora (todavía no es un
-    // reintento automático), la página se recarga sola una vez sin
-    // mostrarle ningún error a Daniel: para cuando este segundo intento
-    // sale, la instancia ya está tibia y casi siempre responde rápido.
-    // Solo si el reintento automático TAMBIÉN se cuelga se muestra el
-    // aviso con el botón manual.
-    if(esTimeout && !_reintentoAuto){
-      return cargarCatalogo(true);
+    try{
+      const r = await fetch('/catalogo/api/productos?'+p.toString(), {signal: _ctrl.signal});
+      data = await r.json();
+    }catch(err){
+      clearTimeout(_timeoutId);
+      // Respuesta superada por una llamada más nueva (incluye el abort por
+      // supersede de arriba): morir en silencio, la nueva es quien manda.
+      if (miSeq !== _catSeq) return;
+      const esTimeout = err && err.name === 'AbortError';
+      if (esRefresco){
+        // Había datos buenos en pantalla: NO tocar #catLista. La tabla
+        // vieja sigue siendo válida; solo avisar y dejar el reintento
+        // manual (botón Actualizar de la toolbar).
+        ilusToast('No se pudo actualizar el catálogo — sigues viendo los datos anteriores. Usa “Actualizar” para reintentar.', {type:'warning'});
+        return;
+      }
+      // 2026-07-23 (Daniel: la demora real es una instancia de Cloud Run
+      // recién levantada -- decidió NO pagar una segunda instancia siempre
+      // lista, "mejor ahorrarnos ese dinero" -- que la página se reintente
+      // SOLA en su lugar). Si es la primera demora (todavía no es un
+      // reintento automático), la página se recarga sola una vez sin
+      // mostrarle ningún error a Daniel: para cuando este segundo intento
+      // sale, la instancia ya está tibia y casi siempre responde rápido.
+      // Solo si el reintento automático TAMBIÉN se cuelga se muestra el
+      // aviso con el botón manual.
+      if(esTimeout && !_reintentoAuto){
+        return cargarCatalogo(true);
+      }
+      document.getElementById('catLista').innerHTML =
+        '<div class="empty-state"><i class="bi bi-wifi-off"></i>'
+        + (esTimeout
+            ? 'La carga está tardando demasiado — revisa tu conexión o un bloqueador de anuncios/extensión, y '
+            : 'No se pudo cargar. ')
+        + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="cargarCatalogo()">Reintentar</button></div>';
+      return;
     }
-    document.getElementById('catLista').innerHTML =
-      '<div class="empty-state"><i class="bi bi-wifi-off"></i>'
-      + (esTimeout
-          ? 'La carga está tardando demasiado — revisa tu conexión o un bloqueador de anuncios/extensión, y '
-          : 'No se pudo cargar. ')
-      + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="cargarCatalogo()">Reintentar</button></div>';
-    return;
-  }
-  clearTimeout(_timeoutId);
-  if(!data.ok){ ilusToast(data.error||'Error al cargar', {type:'error'}); return; }
+    clearTimeout(_timeoutId);
+    if (miSeq !== _catSeq) return;  // respuesta vieja: descartada
+    if (!data.ok){
+      if (esRefresco){ ilusToast(data.error||'Error al actualizar — sigues viendo los datos anteriores.', {type:'warning'}); return; }
+      // Primera carga con error del backend: panel completo (antes esto
+      // dejaba el "Cargando…" pegado hasta el guardián de 28s).
+      document.getElementById('catLista').innerHTML =
+        '<div class="empty-state"><i class="bi bi-wifi-off"></i>No se pudo cargar. '
+        + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="cargarCatalogo()">Reintentar</button></div>';
+      return;
+    }
 
-  // 2026-07-23 (Daniel: "necesito que me muestre todos los productos
-  // trabajados"): transparencia -- si "Solo trabajados" ocultó filas,
-  // decirlo explícito (nunca esconder un filtro en silencio).
-  const hintEl = document.getElementById('catTrabajadosHint');
-  if(hintEl){
-    const ocultos = (data.solo_trabajados && data.total_sin_filtro > data.total)
-      ? (data.total_sin_filtro - data.total) : 0;
-    hintEl.textContent = ocultos > 0
-      ? `${data.total} trabajado${data.total===1?'':'s'} · ${ocultos} sin clasificación/foto/manual (ocultos)`
-      : '';
-  }
+    // 2026-07-23 (Daniel: "necesito que me muestre todos los productos
+    // trabajados"): transparencia -- si "Solo trabajados" ocultó filas,
+    // decirlo explícito (nunca esconder un filtro en silencio).
+    const hintEl = document.getElementById('catTrabajadosHint');
+    if(hintEl){
+      const ocultos = (data.solo_trabajados && data.total_sin_filtro > data.total)
+        ? (data.total_sin_filtro - data.total) : 0;
+      hintEl.textContent = ocultos > 0
+        ? `${data.total} trabajado${data.total===1?'':'s'} · ${ocultos} sin clasificación/foto/manual (ocultos)`
+        : '';
+    }
 
-  if(!data.rows.length && (data.total||0) > 0 && catPage > 1){
-    catPage = Math.max(1, data.pages||1);
-    return cargarCatalogo();
-  }
+    if(!data.rows.length && (data.total||0) > 0 && catPage > 1){
+      catPage = Math.max(1, data.pages||1);
+      return cargarCatalogo();   // la recursión toma su propio ++_catSeq
+    }
 
-  _catCache = {};
-  (data.rows||[]).forEach(function(row){
-    _catCache[row.id] = row;
-    if(row.familia) _catFamilias.add(row.familia);
-  });
-  catPoblarSelectFamilia();
+    _catCache = {};
+    (data.rows||[]).forEach(function(row){
+      _catCache[row.id] = row;
+      if(row.familia) _catFamilias.add(row.familia);
+    });
+    catPoblarSelectFamilia();
 
-  const cont = document.getElementById('catLista');
-  if(!data.rows.length){
-    const hayOcultosPorFiltro = data.solo_trabajados && (data.total_sin_filtro||0) > 0;
-    cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay productos con estos filtros.'
-      + (hayOcultosPorFiltro
-          ? ' Tienes ' + data.total_sin_filtro + ' producto(s) sin clasificación/foto/manual — '
-            + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="document.getElementById(\'catSoloTrabajados\').click()">Ver todos</button>'
-          : '')
-      + '</div>';
-    return;
+    const cont = document.getElementById('catLista');
+    if(!data.rows.length){
+      const hayOcultosPorFiltro = data.solo_trabajados && (data.total_sin_filtro||0) > 0;
+      cont.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay productos con estos filtros.'
+        + (hayOcultosPorFiltro
+            ? ' Tienes ' + data.total_sin_filtro + ' producto(s) sin clasificación/foto/manual — '
+              + '<button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="document.getElementById(\'catSoloTrabajados\').click()">Ver todos</button>'
+            : '')
+        + '</div>';
+      _catUltimaCargaOk = true;   // vacío legítimo = carga exitosa
+      return;
+    }
+    cont.innerHTML = '<div class="cat-table-wrap table-responsive"><table class="cat-table"><thead>'
+      + catTheadHtml()
+      + '</thead><tbody>'
+      + data.rows.map(catFilaHtml).join('')
+      + '</tbody></table></div>'
+      + catFooterHtml(data);
+    _catUltimaCargaOk = true;
+  } finally {
+    // Solo la llamada más reciente apaga el indicador; si esta llamada fue
+    // superada (o se relanzó a sí misma: reintento auto / corrección de
+    // página), la nueva sigue en vuelo y la barra debe seguir encendida.
+    if (miSeq === _catSeq) catRefrescoIndicador(false);
   }
-  cont.innerHTML = '<div class="cat-table-wrap table-responsive"><table class="cat-table"><thead>'
-    + catTheadHtml()
-    + '</thead><tbody>'
-    + data.rows.map(catFilaHtml).join('')
-    + '</tbody></table></div>'
-    + catFooterHtml(data);
 }
 
 function catPoblarSelectFamilia(){
@@ -942,6 +1011,9 @@ document.getElementById('catVerArchivados').addEventListener('change', function(
 });
 document.getElementById('catSoloTrabajados').addEventListener('change', function(){
   catSoloTrabajados = this.checked; catFiltroCambio();
+});
+document.getElementById('catBtnActualizar').addEventListener('click', function(){
+  cargarCatalogo();   // NO resetea catPage: refresca exactamente la vista actual
 });
 document.getElementById('catBtnLimpiar').addEventListener('click', function(){
   document.getElementById('catFQ').value = '';
