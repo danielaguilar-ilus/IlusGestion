@@ -25392,11 +25392,18 @@ def tr_pickup_fedex_cancelar(pickup_id):
 
 
 def _fedex_cron_token_required(token_received):
-    """Permite proteger el cron con FEDEX_CRON_TOKEN. Si no se setea, solo
-    permite localhost (más estricto)."""
-    expected = (os.environ.get("FEDEX_CRON_TOKEN") or "").strip()
-    if expected:
-        return token_received and token_received == expected
+    """Permite proteger el cron con ILUS_CRON_TOKEN (token único de los crons
+    de ILUS) o el histórico FEDEX_CRON_TOKEN. Si no se setea ninguno, solo
+    permite localhost (más estricto).
+
+    2026-07-24: se agregó ILUS_CRON_TOKEN porque Cloud Scheduler quedó
+    configurado con ese token único para TODOS los crons (SimpliRoute y FedEx)
+    y este endpoint respondía 403 al job de FedEx. Se acepta cualquiera de los
+    dos: quien tenga FEDEX_CRON_TOKEN puesto sigue funcionando igual."""
+    esperados = [t for t in ((os.environ.get("ILUS_CRON_TOKEN") or "").strip(),
+                             (os.environ.get("FEDEX_CRON_TOKEN") or "").strip()) if t]
+    if esperados:
+        return bool(token_received) and token_received in esperados
     # Sin token configurado: solo aceptar desde 127.0.0.1
     return request.remote_addr in ("127.0.0.1", "::1", "localhost")
 
