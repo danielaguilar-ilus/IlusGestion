@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 import os
@@ -17962,10 +17963,29 @@ def api_asignar_cotizar_couriers():
         # 'estimado' de verdad = proyección sin tabla NI regla detrás.
         estimado = bool(r.get("estimado")) and not es_regla
 
+        # ── CONFIDENCIALIDAD DE LA POLÍTICA DE PRECIOS (Daniel, 2026-07-25) ──
+        # El monto que se COBRA sigue saliendo del regla_pct REAL (5%/10%,
+        # exacto) — eso no cambia un peso. Lo que cambia es lo que se MUESTRA
+        # en pantalla si alguien abre "Auditar": antes se veía literalmente
+        # "Derivado de FedEx Directo −10%", que revela la fórmula de margen de
+        # ILUS frente a cualquiera con acceso a este panel. Daniel pidió que
+        # esto quede interno y que, si se expresa un %, no sea el número exacto
+        # (para que no se lea como "tomamos el precio de FedEx y le restamos
+        # X"). Se usa un % MOSTRADO con una variación estable por documento
+        # (mismo documento = mismo % cada vez que se abre; otro documento =
+        # otro %) — nunca al azar en cada render, porque eso sí parecería un
+        # error. El precio en pesos (base/seguro/total) es siempre el real.
+        pct_mostrado = None
         if es_regla and regla_pct:
-            servicio_txt = f"Derivado de {derivado_de} −{regla_pct}%"
+            _seed = f"{doc_tido or ''}|{doc_nudo or ''}|{comuna or ''}|{slug}".encode("utf-8")
+            _h = int(hashlib.sha256(_seed).hexdigest(), 16)
+            _jitter = 0.8 + (_h % 41) / 100.0   # banda estable 0,80–1,20
+            pct_mostrado = max(1, round(regla_pct * _jitter))
+
+        if es_regla and pct_mostrado:
+            servicio_txt = f"~{pct_mostrado}% más económico"
         elif es_regla:
-            servicio_txt = f"Derivado de {derivado_de}"
+            servicio_txt = "Tarifa preferencial ILUS"
         elif estimado:
             servicio_txt = "Estimado (sin tarifa cargada)"
         else:
@@ -17976,7 +17996,12 @@ def api_asignar_cotizar_couriers():
             "margen_pct": 0, "margen_clp": 0, "iva_pct": 0, "iva_clp": 0,
             "seguro_clp": seguro,
         }
-        formula = f"Tabla SPHS: {r['tramo']} → ${base:,}".replace(",", ".")
+        # Para 'regla' el detalle NUNCA menciona el tramo interno (que sí dice
+        # "FedEx Directo −X%" — ver transporte_tarifas.py): solo pesos.
+        if es_regla:
+            formula = f"Tarifa preferencial ILUS → ${base:,}".replace(",", ".")
+        else:
+            formula = f"Tabla SPHS: {r['tramo']} → ${base:,}".replace(",", ".")
         if seguro:
             formula += f" + seguro 1,2% ${seguro:,}".replace(",", ".")
         formula += f" = ${precio:,}".replace(",", ".")
@@ -17986,26 +18011,11 @@ def api_asignar_cotizar_couriers():
         nota = None
         if estimado:
             advertencias.append("Tarifa estimada: aún sin tabla propia para esta comuna/peso")
-        elif es_regla:
-            tiene_propia = bool(r.get("tiene_tabla_propia"))
-            _pct_txt = f" −{regla_pct}%" if regla_pct else ""
-            nota = (
-                f"Precio derivado de {derivado_de}{_pct_txt} "
-                f"(política comercial ILUS, 2026-07-25). "
-                + ("La tarifa propia del courier queda como respaldo."
-                   if tiene_propia else
-                   "El courier no tiene tabla propia para esta comuna: la regla da la cobertura.")
-            )
-            brecha = r.get("brecha_vs_propia_pct")
-            propia = r.get("precio_tabla_propia")
-            if propia and brecha is not None and abs(brecha) >= _BRECHA_REGLA_AVISO_PCT:
-                brecha_txt = f"{abs(brecha):.1f}".replace(".", ",")
-                propia_txt = f"{int(propia):,}".replace(",", ".")
-                lado = "bajo" if brecha < 0 else "sobre"
-                advertencias.append(
-                    f"La regla deja el precio {brecha_txt}% {lado} la tarifa propia de "
-                    f"{nombre} para esta comuna (su tabla marca ${propia_txt})."
-                )
+        # Nota: para 'regla' NO se agrega nota ni advertencia de brecha —
+        # Daniel: "no evidencie eso, a menos de que lo pregunte o me indique
+        # agregarlo". El detalle completo (courier, %, comparación) sigue
+        # existiendo en la base de datos y en transporte_tarifas.py para
+        # quien lo necesite consultar directamente.
 
         if es_regla:
             fuente_top, fuente_trace = "regla", "regla_comercial"
@@ -18021,18 +18031,26 @@ def api_asignar_cotizar_couriers():
             "tiempo_transito": _ETD_MACRO.get(slug, "—"),
             "servicio": servicio_txt,
             "subtotal": precio, "desglose": desglose, "mensaje": None,
-            # Claves nuevas: la UI ya no tiene que adivinar el porcentaje ni
-            # inventar el motivo (antes decía "−10%" fijo, también para Milling).
             "es_regla_comercial": es_regla,
             "es_estimado": estimado,
-            "regla_pct": (regla_pct if es_regla else None),
-            "derivado_de": (derivado_de if es_regla else None),
-            "tiene_tabla_propia": bool(r.get("tiene_tabla_propia")) if es_regla else None,
-            "precio_tabla_propia": (r.get("precio_tabla_propia") if es_regla else None),
-            "brecha_vs_propia_pct": (r.get("brecha_vs_propia_pct") if es_regla else None),
+            # OJO — confidencialidad (Daniel, 2026-07-25): este JSON lo puede
+            # inspeccionar cualquiera con la pestaña de Red del navegador
+            # abierta, así que lo que NO deba evidenciarse tiene que faltar
+            # ACÁ, no solo estar ausente del HTML. Por eso:
+            #  · se manda `pct_mostrado` (jitter estable), nunca el
+            #    `regla_pct` real (5/10 exacto).
+            #  · NO se manda `derivado_de` — nombrar "FedEx Directo" ya
+            #    confirma la fórmula aunque el % venga difuminado.
+            #  · NO se manda `precio_tabla_propia` — junto con `precio` deja
+            #    reconstruir el % exacto con una simple división.
+            "regla_pct": (pct_mostrado if es_regla else None),
             "nota_precio": nota,
             "trace": {
-                "bracket": r["tramo"], "bracket_upper": None, "formula": formula,
+                # `r["tramo"]` en el camino 'regla' es el texto interno de
+                # transporte_tarifas.py ("regla ILUS: FedEx Directo −10%") —
+                # útil para depurar por consola, pero NUNCA al navegador.
+                "bracket": ("Tarifa preferencial" if es_regla else r["tramo"]),
+                "bracket_upper": None, "formula": formula,
                 "fuente": fuente_trace,
                 "validado": (not estimado and not es_regla),
                 "advertencias": advertencias,

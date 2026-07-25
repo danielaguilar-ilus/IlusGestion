@@ -809,14 +809,6 @@
       <div class="ac-card-hdr">
         <div class="sec-title"><span class="sec-num">2</span>Datos del Documento</div>
         <div class="d-flex align-items-center gap-2">
-          {% if is_superadmin %}
-          <button type="button" id="btnDiag" onclick="toggleDiagPanel()"
-                  style="background:transparent;border:1px solid #475569;color:#cbd5e1;
-                         padding:3px 10px;border-radius:6px;font-size:.7rem;cursor:pointer"
-                  title="Ver campos crudos del ERP — solo superadmin">
-            <i class="bi bi-bug me-1"></i>Diagnosticar ERP
-          </button>
-          {% endif %}
           <button type="button" onclick="exportarDocumento()"
                   style="background:#dc2626;border:none;color:#fff;
                          padding:3px 10px;border-radius:6px;font-size:.7rem;cursor:pointer;font-weight:700"
@@ -829,9 +821,6 @@
         </div>
       </div>
       <div class="ac-card-body">
-        {# Panel de diagnóstico ERP — solo visible para superadmin (vía JS) #}
-        <div id="panelDiagnostico"></div>
-        <script>window.IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};</script>
         <div class="client-grid" id="clientGrid">
 
           {# Row 1: Cliente, RUT, Fecha #}
@@ -1611,79 +1600,6 @@ function escHtml(s){
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// Copia al clipboard el diagnóstico crudo del ERP — útil para enviar al admin
-// y que ajuste los nombres de campos en _cubicador_fetch.
-function copiarDiagnostico(){
-  const d = window._lastRawSample;
-  if (!d){ ilusToast('No hay diagnóstico disponible', { type:'warning' }); return; }
-  const txt = `DIAGNÓSTICO ERP — Documento ${d.tido} ${d.nudo}\n\n` +
-              `HEADER (${d.all_fields.length} campos disponibles):\n` +
-              Object.entries(d.raw || {}).map(([k,v]) => `  ${k}: ${v}`).join('\n') +
-              '\n\nPRIMERA LÍNEA (campos no vacíos):\n' +
-              Object.entries(d.raw_linea || {}).map(([k,v]) => `  ${k}: ${v}`).join('\n');
-  navigator.clipboard.writeText(txt).then(() => {
-    ilusToast('Diagnóstico copiado al portapapeles', { type:'success' });
-  }).catch(() => {
-    ilusPrompt({
-      title: 'Copia este texto al admin',
-      message: '',
-      multiline: true,
-      defaultValue: txt,
-      required: false,
-      okLabel: 'Listo',
-    });
-  });
-}
-
-// Toggle del panel de diagnóstico — SOLO superadmin (defensa en profundidad:
-// el botón ya está gateado en Jinja, pero esto evita invocación por consola).
-function toggleDiagPanel(){
-  if (window.IS_SUPERADMIN !== true) return;
-  if (!_docData){ if(window.ilusToast) ilusToast('Primero busca un documento', {type:'info'}); return; }
-  const h = _docData.header || {};
-  const panel = document.getElementById('panelDiagnostico');
-  if (panel.dataset.shown === '1'){
-    panel.innerHTML = '';
-    panel.dataset.shown = '0';
-    return;
-  }
-  panel.dataset.shown = '1';
-  const rawHdr = h.raw_sample || {};
-  const rawLin = h.raw_linea_sample || {};
-  const itemsHdr = Object.entries(rawHdr)
-    .map(([k,v]) => `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #f3f4f6;font-size:.74rem">
-      <code style="background:#fafafa;padding:1px 6px;border-radius:4px;color:#dc2626;flex-shrink:0;min-width:130px">${k}</code>
-      <span style="color:#374151;word-break:break-word">${String(v)}</span>
-    </div>`).join('');
-  const itemsLin = Object.entries(rawLin)
-    .map(([k,v]) => `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #f3f4f6;font-size:.74rem">
-      <code style="background:#fafafa;padding:1px 6px;border-radius:4px;color:#1e40af;flex-shrink:0;min-width:130px">${k}</code>
-      <span style="color:#374151;word-break:break-word">${String(v)}</span>
-    </div>`).join('');
-  window._lastRawSample = { tido: h.tido, nudo: h.nudo, raw: rawHdr, raw_linea: rawLin, all_fields: h.all_fields || [] };
-  panel.innerHTML = `
-    <div style="background:#f0f9ff;border:2px solid #7dd3fc;border-radius:10px;padding:14px 16px;margin-bottom:14px">
-      <strong style="color:#075985;display:block;margin-bottom:8px">
-        <i class="bi bi-bug me-1"></i>Diagnóstico ERP · ${h.tido || ''} ${h.nudo || ''}
-        ${h.datos_completos ? '<span style="background:#16a34a;color:#fff;padding:1px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:8px">DATOS COMPLETOS</span>' : '<span style="background:#dc2626;color:#fff;padding:1px 8px;border-radius:50px;font-size:.65rem;font-weight:700;margin-left:8px">FALTAN DATOS</span>'}
-      </strong>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        <div>
-          <strong style="font-size:.78rem;color:#075985;display:block;margin-bottom:6px">📋 HEADER (${Object.keys(rawHdr).length} campos)</strong>
-          <div style="background:#fff;border-radius:6px;padding:8px 10px;max-height:280px;overflow-y:auto">${itemsHdr || '<em style="color:#9ca3af">Sin campos</em>'}</div>
-        </div>
-        <div>
-          <strong style="font-size:.78rem;color:#075985;display:block;margin-bottom:6px">📦 PRIMERA LÍNEA (${Object.keys(rawLin).length} campos · ${h.n_lineas||0} totales)</strong>
-          <div style="background:#fff;border-radius:6px;padding:8px 10px;max-height:280px;overflow-y:auto">${itemsLin || '<em style="color:#9ca3af">Sin líneas</em>'}</div>
-        </div>
-      </div>
-      <button type="button" onclick="copiarDiagnostico()" style="margin-top:10px;background:#075985;color:#fff;border:none;padding:5px 14px;border-radius:6px;font-size:.74rem;cursor:pointer;font-weight:700">
-        <i class="bi bi-clipboard me-1"></i>Copiar diagnóstico completo
-      </button>
-    </div>
-  `;
-}
-
 // Exporta el documento actual como HTML imprimible (PDF vía Ctrl+P)
 function exportarDocumento(){
   if (!_docData){ alert('Primero busca un documento'); return; }
@@ -2025,47 +1941,11 @@ function renderDoc(d, elapsedMs){
   if (_zzBadge) _zzBadge.style.display = d.zzenvio_es_saldo ? '' : 'none';
   setText('cli-seguro', fClp(h.valor_neto * 0.012));
 
-  // ── DIAGNÓSTICO: bloque amarillo + campos crudos SOLO visible a superadmin.
-  //    Decisión Daniel 2026-05-31: la vista operativa nunca muestra ruido
-  //    técnico. Si faltan datos del cliente, mostramos el campo editable
-  //    vacío y el operador completa — sin alerta, sin texto "Datos crudos".
-  const datosCompletos = h.datos_completos === true;
-  const diagPanel = document.getElementById('panelDiagnostico');
-  if (diagPanel){
-    diagPanel.innerHTML = '';  // limpiar siempre, reglas abajo deciden si rellena
-  }
-  if (diagPanel && window.IS_SUPERADMIN === true){
-    if (!datosCompletos && h.raw_sample && Object.keys(h.raw_sample).length){
-      const items = Object.entries(h.raw_sample)
-        .filter(([k,v]) => v && String(v).trim())
-        .map(([k,v]) => `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:.78rem">
-          <code style="background:#fafafa;padding:1px 6px;border-radius:4px;color:#dc2626;flex-shrink:0;min-width:130px">${k}</code>
-          <span style="color:#374151;word-break:break-word">${String(v)}</span>
-        </div>`).join('');
-      diagPanel.innerHTML = `
-        <div style="background:#fef9c3;border:2px solid #fde047;border-radius:10px;padding:14px 16px;margin-top:12px">
-          <strong style="color:#854d0e;display:block;margin-bottom:6px"><i class="bi bi-exclamation-triangle me-1"></i>Datos del cliente incompletos en este documento</strong>
-          <p style="font-size:.82rem;color:#78350f;margin:0 0 10px">
-            El ERP devolvió el documento pero <strong>algunos campos clave llegaron vacíos o con nombres distintos</strong>.
-            Estos son los datos crudos del header — copia manualmente lo que necesites:
-          </p>
-          <button type="button" onclick="document.getElementById('rawFields').style.display=document.getElementById('rawFields').style.display==='none'?'block':'none'"
-                  style="background:#854d0e;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:.78rem;font-weight:700;cursor:pointer">
-            <i class="bi bi-eye me-1"></i>Ver/ocultar campos crudos del ERP (${Object.keys(h.raw_sample).length})
-          </button>
-          <div id="rawFields" style="display:none;margin-top:10px;background:#fff;border-radius:6px;padding:10px;max-height:300px;overflow-y:auto">
-            ${items || '<em style="color:#9ca3af">Sin campos disponibles</em>'}
-          </div>
-          <button type="button" onclick="copiarDiagnostico()" style="margin-top:8px;background:transparent;color:#854d0e;border:1px solid #854d0e;padding:4px 10px;border-radius:6px;font-size:.74rem;cursor:pointer">
-            <i class="bi bi-clipboard me-1"></i>Copiar diagnóstico para enviar al admin
-          </button>
-        </div>
-      `;
-      window._lastRawSample = { tido: h.tido, nudo: h.nudo, raw: h.raw_sample, all_fields: h.all_fields };
-    } else {
-      diagPanel.innerHTML = '';
-    }
-  }
+  // Nota histórica (Daniel 2026-05-31, vigente): la vista operativa nunca
+  // muestra ruido técnico del ERP. Si faltan datos del cliente, el campo
+  // editable queda vacío y el operador completa — sin alerta, sin panel de
+  // diagnóstico. (2026-07-25: se quitó también el botón "Diagnosticar ERP" y
+  // el panel de campos crudos — Daniel pidió eliminarlos.)
 
   // ── Campos editables — pre-rellena con datos del ERP (editables por usuario)
   setInput('cli-email', h.email     || '');
@@ -2607,22 +2487,24 @@ function renderCouriers(opts){
     const profitIcon = (zzVal>0 && c.precio && (zzVal - c.precio) > 0) ? ' <span title="Margen positivo">💰</span>' : '';
     // FIX 2026-07-25: desde que la regla comercial PISA la tabla propia
     // (commits 553ee2c/216b7e4), Felca y Milling llegan con fuente='regla' en
-    // TODA comuna cubierta por FedEx Directo. Antes el backend mandaba
-    // fuente='estimado' y el texto fijo "−10%" — que era falso para Milling
-    // (−5%) y afirmaba que el courier no tenía tabla propia cuando sí la tiene
-    // (370 comunas Felca, 37 Milling). Ahora el porcentaje y el motivo vienen
-    // del backend (c.regla_pct / c.trace.nota); 'estimado' queda SOLO para la
-    // proyección sin respaldo. Se aceptan ambos valores por compatibilidad.
-    const _reglaPct = (c.regla_pct != null) ? c.regla_pct : null;
-    const _reglaBase = c.derivado_de || 'FedEx Directo';
-    const _reglaTip = (c.nota_precio || (c.trace && c.trace.nota) ||
-      ('Precio derivado de ' + _reglaBase + (_reglaPct ? (' −' + _reglaPct + '%') : '') +
-       ' por la política comercial de ILUS (Milling −5%, Felca −10%). Es un precio firme, ' +
-       'no una estimación: la tarifa propia del courier queda como respaldo.'));
+    // Precio con condición comercial propia de ILUS (Felca/Milling). El monto
+    // en pesos que se cobra es siempre el real y firme.
+    //
+    // FIX 2026-07-25 (Daniel — confidencial, no revertir sin indicación
+    // suya): antes este chip mostraba literalmente "REGLA FEDEX −10%" y el
+    // tooltip decía "Precio derivado de FedEx Directo −10% (política
+    // comercial ILUS...)" — cualquiera con este panel abierto (u "Auditar")
+    // veía la fórmula exacta de margen de ILUS sobre Felca/Milling. Ahora el
+    // chip es genérico ("TARIFA ILUS") y el % que pudiera mostrarse ya viene
+    // del backend con una variación estable (no el número exacto) — ver
+    // pct_mostrado en app.py. No reconstruir esto agregando `derivado_de`
+    // o `precio_tabla_propia` al payload: eso vuelve a dejar la fórmula
+    // deducible desde la pestaña de Red del navegador.
     const _esRegla = (c.es_regla_comercial === true) || c.fuente === 'regla';
+    const _reglaTip = 'Tarifa con condición comercial propia de ILUS para este courier.';
     const fuente = c.fuente === 'api' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API</span>' :
                    c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
-                   _esRegla ? `<span title="${escHtml(_reglaTip)}" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">REGLA FEDEX${_reglaPct ? ' −'+_reglaPct+'%' : ''}</span>` :
+                   _esRegla ? `<span title="${escHtml(_reglaTip)}" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">TARIFA ILUS</span>` :
                    c.fuente === 'estimado' ? '<span title="Precio ESTIMADO: no hay tarifa cargada para esta comuna/tramo y el valor es una proyección. Confírmalo con el courier antes de despachar." style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">ESTIMADO</span>' :
                    '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
 
