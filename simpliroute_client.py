@@ -98,11 +98,18 @@ def build_visit_payload(item, *, planned_date, window_start=None, window_end=Non
 
     # Coordenadas: opcionales. Si no van, SimpliRoute geocodifica el address
     # (es como funciona hoy el Excel, que manda Latitud/Longitud vacías).
+    #
+    # FIX 2026-07-25 — SimpliRoute RECHAZA más de 6 decimales:
+    #   "latitude: Ensure that there are no more than 6 decimal places."
+    # Google Places devuelve 13+ decimales, así que toda dirección validada con
+    # el autocompletado hacía fallar la subida entera del manifiesto. Las
+    # pruebas no lo detectaron porque usaban coordenadas escritas a mano de 4
+    # decimales. 6 decimales son ~11 cm de precisión: no se pierde nada útil.
     lat = _f(item.get("direccion_lat"))
     lng = _f(item.get("direccion_lng"))
     if lat is not None and lng is not None:
-        payload["latitude"] = lat
-        payload["longitude"] = lng
+        payload["latitude"] = round(lat, 6)
+        payload["longitude"] = round(lng, 6)
 
     # load  = bultos   (paridad con la columna "Carga" del Excel)
     # load_2 = peso    (paridad con "Habilidades KILOS" del Excel)

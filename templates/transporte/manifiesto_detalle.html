@@ -3066,6 +3066,17 @@ function fallbackCopy(txt) {
 // ══════════════════════════════════════════════════════════════════
 //  SIMPLIROUTE — subir las facturas del manifiesto como visitas
 // ══════════════════════════════════════════════════════════════════
+
+// Escapa texto que va dentro de `sub` con subHtml:true. Se define acá con
+// nombre propio (_srEsc) en vez de escHtml: escHtml existe en OTRAS pantallas
+// del proyecto pero nunca en esta, y llamarlo tiraba "escHtml is not defined"
+// justo cuando SimpliRoute devolvía un error — tapando el motivo real.
+function _srEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
 async function subirASimpliRoute() {
   var btn = document.getElementById('btnSubirSR');
   var ok = await ilusConfirm({
@@ -3109,7 +3120,7 @@ async function subirASimpliRoute() {
         title: 'Subida parcial',
         message: d.creadas + ' visita(s) creada(s), ' + d.errores + ' con problema.',
         sub: fallidos.slice(0, 5).map(function(f){
-               return '• Item ' + f.item_id + ': ' + escHtml(f.error || '');
+               return '• Item ' + f.item_id + ': ' + _srEsc(f.error || 'sin detalle');
              }).join('<br>') + (fallidos.length > 5 ? '<br>…y ' + (fallidos.length - 5) + ' más' : ''),
         subHtml: true,
         type: 'warning',
@@ -3117,6 +3128,12 @@ async function subirASimpliRoute() {
       setTimeout(function(){ location.reload(); }, 1200);
     }
   } catch (e) {
+    // FIX 2026-07-25: esta pantalla NUNCA definió escHtml (vive en otros
+    // templates), así que la rama de "subida parcial" lanzaba
+    // "escHtml is not defined", caía acá y mostraba ese error de JavaScript
+    // EN LUGAR del motivo real que devolvió SimpliRoute. Daniel veía
+    // "No se pudo subir a SimpliRoute: escHtml is not defined" y se quedaba
+    // sin saber qué estaba mal con la factura.
     await ilusAlert({
       title: 'No se pudo subir a SimpliRoute',
       message: e.message || 'Error de conexión',

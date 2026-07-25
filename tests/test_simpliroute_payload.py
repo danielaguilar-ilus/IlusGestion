@@ -52,6 +52,27 @@ def test_coordenadas_cuando_existen():
     assert p["longitude"] == -70.3975
 
 
+def test_coordenadas_se_redondean_a_6_decimales():
+    """SimpliRoute rechaza >6 decimales con
+    "latitude: Ensure that there are no more than 6 decimal places."
+
+    Google Places devuelve 13+ decimales, asi que TODA direccion validada con
+    el autocompletado hacia fallar la subida del manifiesto completo. Este test
+    faltaba: los demas usan coordenadas a mano de 4 decimales y por eso pasaban.
+    Caso real que fallo en produccion: manifiesto MAN-2026-0010 (Felca).
+    """
+    item = dict(ITEM_OK,
+                direccion_lat=-33.41234567890123,
+                direccion_lng=-70.56789012345678)
+    p, err = build_visit_payload(item, planned_date="2026-07-25")
+    assert err == []
+    for campo in ("latitude", "longitude"):
+        decimales = str(p[campo])[::-1].find(".")
+        assert decimales <= 6, f"{campo}={p[campo]} tiene {decimales} decimales"
+    assert p["latitude"] == -33.412346
+    assert p["longitude"] == -70.56789
+
+
 def test_sin_coordenadas_no_rompe():
     """Documentos viejos no tienen lat/lng: SimpliRoute geocodifica el address."""
     item = dict(ITEM_OK, direccion_lat=None, direccion_lng=None)
