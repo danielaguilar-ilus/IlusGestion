@@ -2423,6 +2423,14 @@ def init_transporte_tables():
                 "ALTER TABLE transport_commitments ADD INDEX idx_nudo (nudo)",
                 "ALTER TABLE transport_commitments ADD INDEX idx_cliente_nombre (cliente_nombre)",
                 "ALTER TABLE transport_commitments ADD INDEX idx_comuna (comuna)",
+                # MIGRACIÓN 2026-07-25: borrar manifiestos desde la app (Daniel pidió
+                # "habilítame borrar los manifiestos"). Soft-delete por REGLA #5
+                # (tabla con datos críticos): se marca eliminado, nunca se hace
+                # DROP de la fila. Ver tr_manifiesto_eliminar().
+                "ALTER TABLE transport_manifests ADD COLUMN eliminado TINYINT(1) DEFAULT 0",
+                "ALTER TABLE transport_manifests ADD COLUMN eliminado_at DATETIME NULL",
+                "ALTER TABLE transport_manifests ADD COLUMN eliminado_by VARCHAR(190) NULL",
+                "ALTER TABLE transport_manifests ADD INDEX idx_eliminado (eliminado)",
             ]:
                 try: cur.execute(_mig)
                 except Exception: pass
@@ -22025,7 +22033,9 @@ def tr_manifiestos():
     except Exception:
         page = 1
 
-    where, params = ["1=1"], []
+    # Los eliminados (soft-delete, 2026-07-25) nunca aparecen en el listado
+    # normal — solo quedan en la BD para poder auditar/restaurar a mano.
+    where, params = ["(eliminado IS NULL OR eliminado=0)"], []
     if filtros["courier"]:
         where.append("courier=%s"); params.append(filtros["courier"])
     if filtros["estado"]:
@@ -22144,7 +22154,7 @@ def tr_manifiesto_detalle(mid):
         manifiesto = mysql_fetchone(
             "SELECT * FROM transport_manifests WHERE id=%s", (mid,)
         )
-        if not manifiesto:
+        if not manifiesto or manifiesto.get("eliminado"):
             flash("Manifiesto no encontrado", "danger")
             return redirect(url_for("tr_manifiestos"))
 
@@ -22511,6 +22521,44 @@ def _tr_upsert_labels(facturas, manifest_id=None, courier=""):
             print(f"[tr_labels] qr asignación falló (no bloquea): {e_qr}", flush=True)
     except Exception as e_lbl:
         print(f"[tr_labels] upsert falló (no bloquea impresión): {e_lbl}", flush=True)
+
+
+@app.route("/transporte/manifiestos/<int:mid>/eliminar", methods=["POST"])
+@_tr_required
+def tr_manifiesto_eliminar(mid):
+    """Borra (soft-delete) un manifiesto — Daniel 2026-07-25: "habilítame
+    borrar los manifiestos" para poder ir limpiando el Monitor él mismo,
+    sin pedirme un script cada vez.
+
+    REGLA #5: tabla con datos críticos → soft-delete, nunca DROP de la fila.
+    Solo superadmin. NO toca transport_manifest_items ni las commitments
+    asociadas — el manifiesto desaparece de la lista, pero los despachos que
+    agrupaba y su historial de tracking siguen intactos (a proposito: borrar
+    la agrupación no debe borrar el despacho real). Si en el futuro Daniel
+    quiere que también libere los items para poder re-agruparlos en un
+    manifiesto nuevo, es un cambio aparte y explícito.
+    """
+    if not bool(g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un superadministrador puede eliminar manifiestos."}), 403
+
+    m = mysql_fetchone(
+        "SELECT id, correlativo, eliminado FROM transport_manifests WHERE id=%s", (mid,))
+    if not m:
+        return jsonify({"ok": False, "error": "Manifiesto no encontrado."}), 404
+    if m.get("eliminado"):
+        return jsonify({"ok": True, "mensaje": "Ya estaba eliminado."})
+
+    try:
+        mysql_execute(
+            "UPDATE transport_manifests SET eliminado=1, eliminado_at=NOW(), "
+            "eliminado_by=%s WHERE id=%s",
+            (current_username(), mid))
+        _tr_log("manifest", mid, "eliminado",
+                f"Manifiesto {m.get('correlativo') or mid} eliminado por {current_username()}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[tr_manifiesto_eliminar] mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo eliminar el manifiesto. Intenta de nuevo."}), 500
 
 
 @app.route("/transporte/manifiestos/<int:mid>/etiquetas")
