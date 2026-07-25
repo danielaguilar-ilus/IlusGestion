@@ -1626,6 +1626,15 @@ const TPL_ESTADOS_RETIROS = [
     color:'#7c3aed', desc:'Cuando se reagenda y se propone nueva fecha' },
   { key:'rechazada',          label:'Rechazada / Cancelada',  icon:'bi-x-circle',       grupo:'retiro',
     color:'#dc2626', desc:'Cuando la solicitud queda anulada' },
+  // 2026-07-25 (auditoría Comunicaciones): estos 2 estados SÍ existen y se
+  // envían de verdad (ver pickups_module._build_retiro_email_templates /
+  // _KIND_TO_ESTADO) pero faltaban en esta lista -- Daniel nunca podía
+  // verlos ni editarlos desde /comunicaciones aunque el correo real ya
+  // usaba su contenido sembrado en BD.
+  { key:'informacion_incompleta', label:'Información incompleta', icon:'bi-exclamation-triangle', grupo:'retiro',
+    color:'#f59e0b', desc:'Cuando faltan datos de documento/contacto/persona autorizada para avanzar' },
+  { key:'recordatorio_24h',   label:'Recordatorio 24h antes', icon:'bi-alarm',          grupo:'retiro',
+    color:'#fb923c', desc:'Recordatorio automático el día antes de la fecha confirmada' },
 ];
 
 const TPL_ESTADOS_MANTENCIONES = [
@@ -1645,6 +1654,13 @@ const TPL_ESTADOS_MANTENCIONES = [
     color:'#eab308', desc:'Aviso cuando la garantía del equipo se acerca al vencimiento' },
   { key:'contrato_por_vencer',  label:'Contrato por vencer',    icon:'bi-file-earmark-text',grupo:'mantencion',
     color:'#7c3aed', desc:'Aviso cuando el contrato de servicio se acerca al término' },
+  // 2026-07-25 (auditoría Comunicaciones): 'plan_propuesto' SÍ se envía de
+  // verdad (POST /mantenciones/api/clientes/<cid>/proponer-plan-email, ver
+  // _mant_plan_propuesto_seed en app.py) y ya tiene su propio
+  // _ensure_comm_template_plan_propuesto -- pero faltaba en esta lista, así
+  // que Daniel no podía verla ni editarla desde /comunicaciones.
+  { key:'plan_propuesto',      label:'Propuesta de plan anual', icon:'bi-calendar2-week', grupo:'mantencion',
+    color:'#0a0a0a', desc:'Propuesta de fechas de mantención del año enviada desde la ficha del cliente' },
 ];
 
 const TPL_ESTADOS_COMUNICACION_INTERNA = [

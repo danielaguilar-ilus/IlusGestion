@@ -5700,6 +5700,42 @@ def _logo_data_url():
     return ""
 
 
+def _logo_ilus_black_data_url():
+    """Logo ILUS en NEGRO sobre transparente, para headers de fondo CLARO
+    (ej. la etiqueta de despacho, que es blanca). `_logo_data_url()` de arriba
+    devuelve la versión blanca+roja pensada para fondos oscuros (sidebar,
+    modales) — puesta sobre blanco el texto "ILUS" quedaría casi invisible.
+    Daniel compartió el logo negro 2026-07-25 para usar en documentos
+    formales de transporte. Si el archivo no existe, cae a la versión
+    original antes que dejar el header sin logo."""
+    path = os.path.join(BASE_DIR, "static", "logo_ilus_black.png")
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+    return _logo_data_url()
+
+
+def _logo_shs_data_url():
+    """Logo 'SPORTS HEALTH SOLUTIONS' (razón social) en negro/transparente.
+    Se muestra junto al logo ILUS en la etiqueta de despacho (Daniel
+    2026-07-25: quiere ambos lado a lado, como en las facturas formales).
+    Devuelve '' si el archivo no existe — el template ya tiene un fallback
+    de texto para ese caso."""
+    path = os.path.join(BASE_DIR, "static", "logo_shs.png")
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+    return ""
+
+
 def _label_format(fmt):
     """Formatos FÍSICOS de etiqueta soportados.
 
@@ -8086,6 +8122,7 @@ def _send_password_access_email(
     mode: str = "reset",
     minutes: int = 60,
     skip_diagnose: bool = False,
+    tpl_estado: str = None,
 ) -> bool:
     """Envía correo para crear o cambiar clave con token seguro.
 
@@ -8095,16 +8132,39 @@ def _send_password_access_email(
     Resend configurado este email NO se enviara — el diagnose SMTP timeaba
     en Railway y Resend nunca se intentaba. El parámetro `skip_diagnose`
     se mantiene por retrocompatibilidad pero ya no controla nada.
-    """
+
+    `tpl_estado` (FIX 2026-07-25, auditoría Comunicaciones): antes esta
+    función SIEMPRE mapeaba mode=="reset" -> estado 'olvido_contrasena',
+    tanto para el self-service "olvidé mi clave" (correcto) COMO para el
+    cambio de clave INICIADO POR UN ADMIN (_notify_user_access,
+    email_purpose="change") -- que en /comunicaciones tiene su PROPIA
+    plantilla editable separada, 'cambio_clave' ("Solicitud para cambiar la
+    contraseña del usuario"). Resultado: 'cambio_clave' quedaba huérfana --
+    Daniel podía editarla en la UI y el cambio NUNCA se reflejaba en el
+    correo real, que siempre usaba el texto de 'olvido_contrasena'. Con este
+    parámetro opcional, el caller puede fijar el estado exacto; si no se
+    pasa, se conserva el comportamiento histórico (setup/reset) para no
+    romper otros callers."""
     _ = skip_diagnose  # noqa: F841 (mantener firma para callers existentes)
 
     is_setup     = mode == "setup"
     # ── Plantilla editable desde /comunicaciones (con respaldo hardcodeado) ──
-    _tpl_estado = "usuario_nuevo" if is_setup else "olvido_contrasena"
+    _tpl_estado = tpl_estado or ("usuario_nuevo" if is_setup else "olvido_contrasena")
+    # FIX 2026-07-25 (auditoría Comunicaciones): 'olvido_contrasena' y
+    # 'cambio_clave' declaran {{ip_acceso}} pero nunca se pasaba -- quedaba
+    # blanco (barrido de seguridad). Best-effort: esta función también corre
+    # en threads daemon SIN contexto de request (ver _notify_user_access ->
+    # _send_bg con solo app_context), así que `request.remote_addr` puede
+    # no existir; degradamos a "" en ese caso (nunca rompe el envío).
+    try:
+        _ip_acceso = request.remote_addr or ""
+    except Exception:
+        _ip_acceso = ""
     _db = _render_comm_template(_tpl_estado, "email", {
         "nombre_usuario": to_name, "email_usuario": to_addr, "rol": "",
         "link_acceso": action_url, "creado_por": actor_name,
         "fecha_hora": _now_chile().strftime("%d/%m/%Y %H:%M"),
+        "ip_acceso": _ip_acceso,
     })
     if _db:
         _asunto, _cuerpo = _db
@@ -8264,10 +8324,14 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
     try:
         if mode == "token" and action_url:
             if email_purpose == "change":
-                # Email de cambio de contraseña — subject y CTA distintos a los de invitación
+                # Email de cambio de contraseña — subject y CTA distintos a los de invitación.
+                # FIX 2026-07-25: usa la plantilla 'cambio_clave' (admin-iniciado),
+                # NO 'olvido_contrasena' (self-service) -- ver docstring de
+                # _send_password_access_email. Antes 'cambio_clave' era huérfana.
                 result["email"] = _send_password_access_email(
                     username, nombre, action_url,
-                    actor_name=actor, mode="reset", minutes=60
+                    actor_name=actor, mode="reset", minutes=60,
+                    tpl_estado="cambio_clave",
                 )
             else:
                 result["email"] = _send_invitation_email(username, nombre, action_url, actor)
@@ -21047,9 +21111,17 @@ def _mantenciones_cron_run_once(slot_str=""):
     # ── Paso 3: Email recordatorio (DRY-RUN o real según flag) ──────
     try:
         # 3a — Visitas próximas: email al cliente (si tiene email + flag ON)
+        # FIX 2026-07-25 (auditoría Comunicaciones): la plantilla editable
+        # 'recordatorio_visita' (comm_templates) usa {{horario}}, {{tecnico}}
+        # y {{direccion}} además de {{cliente}}/{{fecha}}/{{ot}} -- pero antes
+        # esta query NO traía esas 3 columnas, así que el "barrido de
+        # seguridad" de _render_comm_template las borraba en silencio (mismo
+        # patrón de bug que _tr_notificar_cliente en transporte: el correo
+        # se veía "pobre", con esas filas en blanco, sin ningún error visible).
         rows = mysql_fetchall(
             "SELECT v.id, v.cliente_id, v.fecha_programada, v.titulo, "
-            "       c.razon_social, c.contacto_email, "
+            "       v.hora_inicio, v.hora_fin, v.tecnico, "
+            "       c.razon_social, c.contacto_email, c.direccion, c.comuna, "
             "       v.recordatorio_visita_enviado_at "
             "FROM mant_visitas v "
             "JOIN mant_clientes c ON c.id = v.cliente_id "
@@ -21075,11 +21147,36 @@ def _mantenciones_cron_run_once(slot_str=""):
                 _rec_asunto = _brand_subject(asunto)
                 _rec_body = (f"<p>Recordatorio: visita programada para "
                              f"{f.strftime('%d/%m/%Y')}</p>")
+                # Horario (hora_inicio/hora_fin), técnico(s) y dirección --
+                # completan los placeholders reales de la plantilla (ver fix
+                # de la query arriba). Técnico: igual criterio que
+                # visita_agendada (multi-técnico si existe, si no la columna
+                # legacy v.tecnico).
+                _rec_horario = ""
+                if r.get("hora_inicio"):
+                    _h_ini = str(r["hora_inicio"])[:5]
+                    _h_fin = str(r["hora_fin"])[:5] if r.get("hora_fin") else ""
+                    _rec_horario = f"{_h_ini}{(' – ' + _h_fin) if _h_fin else ''}"
+                try:
+                    _tecs_rec = mysql_fetchall(
+                        "SELECT t.nombre FROM mant_visita_tecnicos vt "
+                        "JOIN mant_tecnicos t ON t.id=vt.tecnico_id "
+                        "WHERE vt.visita_id=%s", (r["id"],)
+                    ) or []
+                    _rec_tecnico = ", ".join(t["nombre"] for t in _tecs_rec) if _tecs_rec else (r.get("tecnico") or "Por asignar")
+                except Exception:
+                    _rec_tecnico = r.get("tecnico") or "Por asignar"
+                _rec_direccion = ", ".join(
+                    p for p in [(r.get("direccion") or "").strip(), (r.get("comuna") or "").strip()] if p
+                ) or "—"
                 try:
                     _rt = _render_comm_template("recordatorio_visita", "email", {
                         "cliente": r.get("razon_social") or "",
                         "fecha": f.strftime('%d/%m/%Y'),
                         "ot": r.get("titulo") or "",
+                        "horario": _rec_horario or "por confirmar",
+                        "tecnico": _rec_tecnico,
+                        "direccion": _rec_direccion,
                     }, modulo="mantenciones")
                     if _rt and (_rt[1] or "").strip():
                         if (_rt[0] or "").strip():
@@ -22435,6 +22532,22 @@ def _tr_filtrar_bultos(facturas, seleccion):
     return out
 
 
+def _tr_courier_permite_editar_bultos(courier):
+    """Solo Felca y Milling pueden corregir el total de bultos ("X de N")
+    desde la pantalla de etiquetas (Daniel 2026-07-25, textual: "quiero
+    controlarlo, pero SOLO con Milling y Felca — FedEx es otro proceso").
+
+    FedEx se gestiona por OT/API propia con su propio flujo de "Re-emitir"
+    (ver _tr_fedex_mark_stale) — ese control NO debe estar disponible desde
+    acá para evitar que alguien cambie bultos de una OT FedEx ya generada
+    por un camino que no sabe re-emitirla. Cualquier otro courier no listado
+    explícitamente también queda afuera a propósito (allow-list, no
+    blacklist) — ante la duda, se oculta el control en vez de arriesgar.
+    """
+    c = (courier or "").strip().lower()
+    return ("felca" in c) or ("milling" in c) or ("melling" in c)
+
+
 def _tr_etiqueta_facturas(commitment_ids):
     """Construye la estructura de etiquetas para una lista de commitment_ids.
 
@@ -22490,7 +22603,17 @@ def _tr_attach_qr_codes(facturas, manifest_id=None):
 
     Lee transport_labels y mapea (commitment_id, bulto_num) → qr_code, para que
     la plantilla de etiquetas pueda imprimir el QR único de cada bulto.
-    """
+
+    AUTO-REPARACIÓN (fix 2026-07-25): antes, si _tr_upsert_labels() no había
+    corrido todavía para este commitment/manifest (o su backfill de qr_code
+    fallaba en silencio — por ejemplo la tabla/columna aún no existía en ese
+    worker), esta función simplemente dejaba b["qr"]="" y la etiqueta salía
+    SIN código QR, sin ningún error visible. Ahora, cualquier bulto que quede
+    sin qr_code después de leer la BD se genera y persiste AQUÍ MISMO (mismo
+    patrón INSERT...ON DUPLICATE KEY que usa _tr_upsert_labels), y si por lo
+    que sea el guardado en BD también falla, igual se usa el código recién
+    generado para ESTA impresión (mejor un QR que no quedó grabado en BD que
+    una etiqueta sin ningún código escaneable)."""
     if not facturas:
         return facturas
     cids = [f["commitment_id"] for f in facturas]
@@ -22503,12 +22626,46 @@ def _tr_attach_qr_codes(facturas, manifest_id=None):
             f"WHERE manifest_id=%s AND commitment_id IN ({_ph})",
             tuple([manifest_id or 0] + cids)
         ) or []
-    except Exception:
+    except Exception as e:
+        print(f"[tr_qr] lectura de transport_labels falló (se auto-repara abajo): {e}", flush=True)
         rows = []
     qmap = {(r["commitment_id"], r["bulto_num"]): (r.get("qr_code") or "") for r in rows}
+
+    faltantes = []  # [(commitment_id, bulto_num, bulto_total)]
     for f in facturas:
         for b in f["bultos"]:
-            b["qr"] = qmap.get((f["commitment_id"], b["num"]), "")
+            code = qmap.get((f["commitment_id"], b["num"]), "")
+            b["qr"] = code
+            if not code:
+                faltantes.append((f["commitment_id"], b["num"], b["total"]))
+
+    for cid, num, total in faltantes:
+        nuevo = _tr_label_qr_code()
+        try:
+            mysql_execute(
+                "INSERT INTO transport_labels "
+                "  (commitment_id, manifest_id, bulto_num, bulto_total, estado, qr_code) "
+                "VALUES (%s,%s,%s,%s,'generada',%s) "
+                "ON DUPLICATE KEY UPDATE "
+                "  qr_code = COALESCE(NULLIF(qr_code,''), VALUES(qr_code))",
+                (cid, manifest_id or 0, num, total, nuevo),
+            )
+            row = mysql_fetchone(
+                "SELECT qr_code FROM transport_labels "
+                "WHERE commitment_id=%s AND manifest_id=%s AND bulto_num=%s",
+                (cid, manifest_id or 0, num)
+            )
+            nuevo = (row.get("qr_code") if row else "") or nuevo
+        except Exception as e:
+            print(f"[tr_qr] auto-reparación falló para commitment_id={cid} "
+                  f"bulto={num} (se usa el código generado solo para esta "
+                  f"impresión, sin persistir): {e}", flush=True)
+        for f in facturas:
+            if f["commitment_id"] != cid:
+                continue
+            for b in f["bultos"]:
+                if b["num"] == num:
+                    b["qr"] = nuevo
     return facturas
 
 
@@ -22669,7 +22826,9 @@ def tr_manifiesto_etiquetas(mid):
         courier     = courier,
         total_etiquetas = total_etiquetas,
         pdf_url     = url_for('tr_manifiesto_etiquetas_pdf', mid=mid),
-        logo_url    = _logo_data_url(),
+        logo_url    = _logo_ilus_black_data_url(),
+        logo_shs_url = _logo_shs_data_url(),
+        bultos_editable = _tr_courier_permite_editar_bultos(courier),
     )
 
 
@@ -22682,13 +22841,21 @@ def tr_factura_etiquetas(commitment_id):
         flash("Factura no encontrada", "danger")
         return redirect(url_for("transporte_index"))
 
-    # Si la factura está asociada a un manifiesto, lo guardamos para el tracking.
+    # Si la factura está asociada a un manifiesto, lo guardamos para el tracking
+    # y para saber el courier real (necesario para decidir si se puede corregir
+    # el total de bultos desde acá — ver _tr_courier_permite_editar_bultos).
     mrow = mysql_fetchone(
         "SELECT manifest_id FROM transport_manifest_items "
         "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1", (commitment_id,)
     )
     manifest_id = mrow["manifest_id"] if mrow else None
-    _tr_upsert_labels(facturas, manifest_id=manifest_id, courier="")
+    courier = ""
+    if manifest_id:
+        mfrow = mysql_fetchone(
+            "SELECT courier FROM transport_manifests WHERE id=%s", (manifest_id,)
+        )
+        courier = (mfrow.get("courier") if mfrow else "") or ""
+    _tr_upsert_labels(facturas, manifest_id=manifest_id, courier=courier)
     _tr_attach_qr_codes(facturas, manifest_id=manifest_id)
 
     total_etiquetas = sum(f["total_bultos"] for f in facturas)
@@ -22701,10 +22868,12 @@ def tr_factura_etiquetas(commitment_id):
         remitente   = ILUS_REMITENTE,
         fecha       = _now_chile_str("%d-%m-%Y %H:%M"),
         titulo      = f"Etiquetas · {facturas[0]['doc_full'] or commitment_id}",
-        courier     = "",
+        courier     = courier,
         total_etiquetas = total_etiquetas,
         pdf_url     = url_for('tr_factura_etiquetas_pdf', commitment_id=commitment_id),
-        logo_url    = _logo_data_url(),
+        logo_url    = _logo_ilus_black_data_url(),
+        logo_shs_url = _logo_shs_data_url(),
+        bultos_editable = _tr_courier_permite_editar_bultos(courier),
     )
 
 
@@ -22725,7 +22894,8 @@ def _tr_render_etiquetas_pdf(facturas, *, fecha, titulo, courier, individual=Fal
         "}"
     )
 
-    logo_url_cached = _logo_data_url()
+    logo_url_cached = _logo_ilus_black_data_url()
+    logo_shs_url_cached = _logo_shs_data_url()
     def render_one(fac_subset):
         total = sum(len(f["bultos"]) for f in fac_subset)
         html = render_template(
@@ -22738,6 +22908,7 @@ def _tr_render_etiquetas_pdf(facturas, *, fecha, titulo, courier, individual=Fal
             total_etiquetas = total,
             pdf_mode        = True,
             logo_url        = logo_url_cached,
+            logo_shs_url    = logo_shs_url_cached,
         )
         return _pw_pdf(html, width="100mm", height="150mm", wait_fn=wait_fn, wait_timeout=8000)
 
@@ -23364,6 +23535,32 @@ def tr_factura_set_bultos(commitment_id):
     if not fac:
         return jsonify({"ok": False, "error": "Factura no encontrada"}), 404
 
+    # GATE (Daniel 2026-07-25): la corrección de bultos desde acá SOLO aplica
+    # a Felca/Milling. FedEx es un proceso aparte (OT/API con su propio
+    # "Re-emitir") y esta corrección no debe tocarlo. Defensa en profundidad:
+    # el botón ya se oculta en el HTML si el courier no califica, pero el
+    # backend valida igual por si llega la petición por otra vía.
+    mrow = mysql_fetchone(
+        "SELECT manifest_id FROM transport_manifest_items "
+        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1",
+        (commitment_id,)
+    )
+    manifest_id = mrow["manifest_id"] if mrow else None
+    courier = ""
+    if manifest_id:
+        mfrow = mysql_fetchone(
+            "SELECT courier FROM transport_manifests WHERE id=%s", (manifest_id,)
+        )
+        courier = (mfrow.get("courier") if mfrow else "") or ""
+    if not _tr_courier_permite_editar_bultos(courier):
+        return jsonify({
+            "ok": False,
+            "error": ("La corrección de bultos desde acá solo está disponible "
+                      "para Felca y Milling. " +
+                      (f"Esta factura es de {courier}: " if courier else "Esta factura aún no tiene courier asignado: ") +
+                      "usa el proceso correspondiente."),
+        }), 403
+
     actual = int(fac.get("n_bultos") or 1)
     if nuevo == actual:
         return jsonify({"ok": True, "n_bultos": nuevo, "previo": actual, "sin_cambio": True})
@@ -23413,26 +23610,14 @@ def tr_factura_set_bultos(commitment_id):
         print(f"[tr_factura_set_bultos] DB error: {e}", flush=True)
         return jsonify({"ok": False, "error": "Error al guardar"}), 500
 
-    # Crear las filas nuevas en transport_labels (si subimos)
-    mrow = mysql_fetchone(
-        "SELECT manifest_id FROM transport_manifest_items "
-        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1",
-        (commitment_id,)
-    )
-    manifest_id = mrow["manifest_id"] if mrow else None
-    courier = ""
-    if manifest_id:
-        mfrow = mysql_fetchone(
-            "SELECT courier FROM transport_manifests WHERE id=%s", (manifest_id,)
-        )
-        courier = (mfrow.get("courier") if mfrow else "") or ""
-
+    # Crear las filas nuevas en transport_labels (si subimos) — manifest_id
+    # y courier ya se resolvieron arriba, para el gate de Felca/Milling.
     fac_struct = _tr_etiqueta_facturas([commitment_id])
     if fac_struct:
         _tr_upsert_labels(fac_struct, manifest_id=manifest_id, courier=courier)
 
     _tr_log("commitment", commitment_id, "n_bultos capturado",
-            f"{actual} → {nuevo}")
+            f"{actual} → {nuevo} (courier: {courier or 's/asignar'}) por {current_username()}")
 
     # Si la factura ya tiene OT FedEx activa, su etiqueta quedó desfasada.
     n_desfasadas = _tr_fedex_mark_stale(commitment_id, actual, nuevo)
@@ -66454,10 +66639,38 @@ def mant_reporte_enviar(rid):
         f"<p>Saludos,<br><strong>Equipo {ILUS_BRAND}</strong></p>"
     )
     try:
+        # FIX 2026-07-25 (auditoría Comunicaciones): la plantilla real de
+        # 'ot_completada' (comm_templates) usa {{tipo_mantencion}}, {{tecnico}}
+        # y {{maquina}} además de {{ot}}/{{cliente}} -- antes esta llamada NO
+        # las pasaba, así que _render_comm_template las borraba en silencio
+        # (barrido de seguridad) y el correo llegaba con esas 3 filas vacías
+        # (mismo patrón de bug que _tr_notificar_cliente en transporte).
+        _tipo_rep_label = {
+            "mantencion":     "Mantención",
+            "instalacion":    "Instalación",
+            "inspeccion":     "Inspección",
+            "visita_tecnica": "Visita técnica",
+            "garantia":       "Garantía",
+            "otro":           "Servicio",
+        }.get(rep.get("tipo"), rep.get("tipo") or "Servicio")
+        _tecs_rep = ", ".join(
+            t for t in [rep.get("tecnico_junior"), rep.get("tecnico_senior")] if (t or "").strip()
+        ) or "—"
+        try:
+            _maqs_rep = rep.get("maquinas_json") or []
+            _maq_rep_str = ", ".join(
+                (m.get("descripcion") or m.get("sku") or "").strip()
+                for m in _maqs_rep if isinstance(m, dict) and (m.get("descripcion") or m.get("sku"))
+            ) or "—"
+        except Exception:
+            _maq_rep_str = "—"
         _it = _render_comm_template("ot_completada", "email", {
             "cliente": cliente.get("contacto_nombre") or cliente.get("razon_social") or "",
             "ot": rep.get("ticket_num") or f"#{rid}",
             "mensaje_extra": mensaje_extra,
+            "tipo_mantencion": _tipo_rep_label,
+            "tecnico": _tecs_rep,
+            "maquina": _maq_rep_str,
         }, modulo="mantenciones")
         if _it and (_it[1] or "").strip():
             if (_it[0] or "").strip():
@@ -73211,6 +73424,216 @@ def _ensure_comm_template_catalogo():
         return 0
 
 
+def _mantenciones_tpl_seed():
+    """Source of truth de las plantillas EDITABLES del módulo MANTENCIONES
+    (email) para _ensure_comm_template_mantenciones().
+
+    FIX 2026-07-25 (auditoría Comunicaciones): estas 4 plantillas
+    (visita_agendada/ot_asignada/recordatorio_visita/ot_completada) hasta
+    ahora SOLO se sembraban dentro del bloque _MANT_TPL de
+    init_comunicaciones_tables() — función que se SALTA por completo en
+    producción (ILUS_SKIP_MIGRATIONS=1, ver REGLA de CLAUDE.md sobre
+    columnas/filas que deben sobrevivir al skip). Si la fila alguna vez no
+    existe (BD nueva, entorno de recuperación, fila borrada a mano), el
+    módulo mantenciones se queda SIN plantilla editable y sin forma
+    automática de recuperarla — mismo patrón de riesgo ya resuelto para
+    retiros/tickets/catalogo/transporte/general (_ensure_comm_template_*).
+    Contenido IDÉNTICO al de _MANT_TPL (init_comunicaciones_tables), solo
+    extraído a función standalone para poder re-sembrarlo siempre.
+    Placeholders: {{ot}}, {{cliente}}, {{tecnico}}, {{fecha}}, {{horario}},
+    {{direccion}}, {{tipo_mantencion}}, {{maquina}}, {{link_ot}}."""
+    return {
+        'visita_agendada': (
+            'Visita técnica programada — {{ot}} ({{fecha}})',
+            '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+            'Te informamos que se ha programado una visita técnica en tus dependencias.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Orden:</strong>&nbsp; '
+            '<span style="color:#dc2626;font-weight:700">{{ot}}</span></td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Tipo:</strong>&nbsp; {{tipo_mantencion}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha:</strong>&nbsp; <strong>{{fecha}}</strong> · {{horario}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; {{tecnico}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion}}</td></tr>'
+            '</table>'
+            '<p style="margin:0;font-size:13px;color:#888;line-height:1.5">'
+            'Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo.</p>'),
+        'ot_asignada': (
+            'Nueva OT asignada — {{ot}}',
+            '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola {{tecnico}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+            'Se te asignó una nueva orden de trabajo. Revisa los detalles abajo.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #f59e0b;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">OT:</strong>&nbsp; '
+            '<span style="color:#dc2626;font-weight:700">{{ot}}</span></td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cliente:</strong>&nbsp; {{cliente}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Tipo:</strong>&nbsp; {{tipo_mantencion}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha visita:</strong>&nbsp; {{fecha}} · {{horario}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>'
+            '</table>'
+            '<p style="margin:14px 0 0;font-size:13px"><a href="{{link_ot}}" style="background:#dc2626;color:#fff;'
+            'padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block">'
+            'Ver orden de trabajo</a></p>'),
+        'recordatorio_visita': (
+            'Recordatorio — Visita mañana ({{fecha}})',
+            '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+            'Te recordamos que mañana tienes agendada una visita técnica.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff7ed;border-left:4px solid #fb923c;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">📅 Fecha:</strong>&nbsp; '
+            '<strong>{{fecha}}</strong> · {{horario}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">📋 OT:</strong>&nbsp; {{ot}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">👷 Técnico:</strong>&nbsp; {{tecnico}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">📍 Dirección:</strong>&nbsp; {{direccion}}</td></tr>'
+            '</table>'
+            '<p style="margin:0;font-size:13px;color:#888;line-height:1.5">'
+            'Por favor asegúrate de que alguien pueda recibir al técnico en el horario indicado.</p>'),
+        'ot_completada': (
+            'OT {{ot}} completada — Reporte adjunto',
+            '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+            'El servicio de mantención se ha completado exitosamente. Encontrarás el detalle a continuación.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#dcfce7;border-left:4px solid #16a34a;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">OT:</strong>&nbsp; '
+            '<span style="color:#16a34a;font-weight:700">{{ot}}</span></td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Tipo:</strong>&nbsp; {{tipo_mantencion}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; {{tecnico}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>'
+            '</table>'
+            '<p style="margin:0;font-size:13px;color:#444;line-height:1.6">'
+            'Gracias por confiar en ILUS Sport & Health para el cuidado de tus equipos. '
+            'Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.</p>'),
+    }
+
+
+def _ensure_comm_template_mantenciones():
+    """Siembra idempotente de las plantillas del módulo 'mantenciones' (email)
+    AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → no pisa ediciones de Daniel
+    (UNIQUE modulo+estado+canal). Ver docstring de _mantenciones_tpl_seed."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _mantenciones_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='mantenciones' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('mantenciones',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de mantenciones sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar mantenciones: {e}", flush=True)
+        return 0
+
+
+def _comunicacion_interna_tpl_seed():
+    """Source of truth de las plantillas EDITABLES del módulo COMUNICACIÓN
+    INTERNA (email) para _ensure_comm_template_comunicacion_interna().
+
+    FIX 2026-07-25 (auditoría Comunicaciones): mismo gap que mantenciones —
+    'usuario_nuevo'/'cambio_clave'/'olvido_contrasena' solo se sembraban
+    dentro de init_comunicaciones_tables() (bloque _INTERNA_TPL), que se
+    SALTA en producción. Contenido idéntico al de _INTERNA_TPL, extraído a
+    función standalone para re-sembrarlo siempre. ('inicio_sesion' y
+    'cambio_pass' quedan FUERA a propósito: existen como estados editables en
+    la UI pero ningún flujo real los envía hoy — inicio_sesion está
+    deshabilitado por decisión de Daniel 2026-06-08 y cambio_pass no tiene
+    caller; sembrarlos aquí sin un envío real detrás sería más confuso, no
+    menos. Ver auditoría 2026-07-25 para el detalle.)
+    Placeholders: {{nombre_usuario}}, {{email_usuario}}, {{rol}},
+    {{link_acceso}}, {{fecha_hora}}, {{ip_acceso}}, {{creado_por}}."""
+    return {
+        'usuario_nuevo': (
+            'Tu cuenta ILUS está lista — Crea tu contraseña',
+            '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola, {{nombre_usuario}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+            '<strong>{{creado_por}}</strong> creó una cuenta para ti en el sistema ILUS Sport & Health.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Rol asignado:</strong>&nbsp; {{rol}}</td></tr>'
+            '</table>'
+            '<p style="margin:14px 0 0;font-size:13px"><a href="{{link_acceso}}" style="background:#dc2626;color:#fff;'
+            'padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block">'
+            'Crear mi contraseña</a></p>'
+            '<p style="margin:18px 0 0;font-size:12px;color:#888;line-height:1.5">'
+            'Por seguridad, la contraseña no se envía. Debes crearla desde el botón. '
+            'Este enlace vence en 7 días y solo puede usarse una vez.</p>'),
+        'cambio_clave': (
+            'Cambio seguro de contraseña — ILUS',
+            '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Recibimos una solicitud para '
+            '<strong>cambiar la contraseña</strong> de tu cuenta en el sistema de gestión ILUS. '
+            'Si fuiste tú, haz click en el botón para establecer una nueva.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #fd7e14;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0 20px">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de origen:</strong>&nbsp; {{ip_acceso}}</td></tr>'
+            '</table>'
+            '<div style="text-align:center;margin:24px 0 20px">'
+            '<a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;'
+            'font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Cambiar contraseña →</a>'
+            '</div>'
+            '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;'
+            'color:#664d03;margin-top:4px">🔒 El enlace es válido por <strong>60 minutos</strong>. '
+            'Si <strong>no solicitaste</strong> este cambio, ignora este mensaje — tu contraseña actual sigue siendo válida.</div>'),
+        'olvido_contrasena': (
+            'Recupera el acceso a tu cuenta — ILUS',
+            '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Indicaste que '
+            '<strong>olvidaste tu contraseña</strong>. Para recuperar el acceso al sistema de gestión ILUS, '
+            'haz click en el botón para crear una nueva.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #6f42c1;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0 20px">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Solicitado el:</strong>&nbsp; {{fecha_hora}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de origen:</strong>&nbsp; {{ip_acceso}}</td></tr>'
+            '</table>'
+            '<div style="text-align:center;margin:24px 0 20px">'
+            '<a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;'
+            'font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Recuperar mi contraseña →</a>'
+            '</div>'
+            '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;'
+            'color:#664d03;margin-top:4px">🔒 El enlace es válido por <strong>60 minutos</strong>. '
+            'Si <strong>no solicitaste</strong> recuperar tu contraseña, ignora este mensaje — tu contraseña actual no fue modificada.</div>'),
+    }
+
+
+def _ensure_comm_template_comunicacion_interna():
+    """Siembra idempotente de las plantillas del módulo 'comunicacion_interna'
+    (email) AUNQUE ILUS_SKIP_MIGRATIONS=1. INSERT IGNORE → no pisa ediciones
+    de Daniel. Ver docstring de _comunicacion_interna_tpl_seed."""
+    try:
+        sembradas = 0
+        for slug, (asunto, cuerpo) in _comunicacion_interna_tpl_seed().items():
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo='comunicacion_interna' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if existe:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                "VALUES ('comunicacion_interna',%s,'email',%s,%s)", (slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de comunicacion_interna sembradas",
+                  flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar comunicacion_interna: {e}", flush=True)
+        return 0
+
+
 def _ensure_tickets_killswitch_cerrado():
     """Daniel 2026-07-11: la llave de paso del módulo 'tickets' debe nacer
     CERRADA (bloqueada) hasta que el revise las plantillas nuevas — a
@@ -73662,6 +74085,14 @@ try:
         _ensure_comm_template_retiros()  # Daniel 2026-06-15: stepper de correo al canónico
         _ensure_comm_template_tickets()  # Daniel 2026-07-11: set completo de plantillas de tickets
         _ensure_comm_template_catalogo()  # Daniel 2026-07-23: envío de manuales PDF editable
+        # FIX 2026-07-25 (auditoría Comunicaciones): mantenciones y comunicación
+        # interna tenían el MISMO gap que ya se había resuelto para
+        # retiros/tickets/catalogo/transporte/general — sus plantillas solo
+        # vivían en init_comunicaciones_tables() (saltado en prod). Sin esto,
+        # una BD nueva o una fila borrada dejaba esos módulos sin plantilla
+        # editable y sin forma de recuperarla sola.
+        _ensure_comm_template_mantenciones()
+        _ensure_comm_template_comunicacion_interna()
         _ensure_tickets_killswitch_cerrado()  # Daniel 2026-07-11: llave de tickets nace CERRADA
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)

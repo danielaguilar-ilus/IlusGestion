@@ -185,6 +185,13 @@
 /* Ítems */
 .lc-items-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;}
 .lc-items-hint{font-size:.74rem;color:#6b7280;}
+.lc-bulk-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;padding:8px 12px;margin-bottom:10px;}
+.lc-bulk-txt{font-size:.8rem;color:#7f1d1d;}
+.lc-bulk-txt strong{color:#dc2626;}
+.lc-btn-danger-soft{background:#dc2626;color:#fff;min-height:36px;padding:6px 14px;font-size:.76rem;
+  border:none;border-radius:8px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+.lc-btn-danger-soft:hover{background:#b91c1c;}
 .lc-tabla-wrap{overflow-x:auto;border:1px solid #eef0f3;border-radius:10px;}
 table.lc-tabla{width:100%;border-collapse:collapse;min-width:960px;}
 table.lc-tabla th{font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;
@@ -432,6 +439,28 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
             </button>
             <span class="lc-items-hint">Notas de venta, notas de venta interna, cotizaciones, facturas o boletas — puedes traer varios documentos. Solo las líneas marcadas entran al cálculo.</span>
           </div>
+
+          {# ── Eliminación masiva de productos (Daniel, captura 2026-07-25:
+             "quiero poder eliminar productos de manera masiva") ──
+             Reusa el checkbox por fila que YA existe ("incluido" en el
+             cálculo) como selección: desmarcar una fila la deja fuera del
+             total (comportamiento de siempre, sin cambios) Y ahora también
+             la marca como candidata a remover de la lista con un solo
+             click, en vez de tener que usar el botón "Quitar" (✕) fila por
+             fila. 100% en el navegador: _LC.items es el mismo array que ya
+             se reenvía completo al guardar (crear = INSERT de todo el
+             array; editar = DELETE+INSERT de todo el array en
+             lc_actualizar/app.py) — no hace falta ningún endpoint nuevo. #}
+          <div class="lc-bulk-toolbar" id="lcBulkToolbar" style="display:none">
+            <span class="lc-bulk-txt">
+              <i class="bi bi-check2-square me-1"></i>
+              <strong id="lcBulkCount">0</strong> producto(s) desmarcado(s) (fuera del cálculo)
+            </span>
+            <button type="button" class="lc-btn lc-btn-danger-soft" id="lcBulkDeleteBtn" onclick="lcEliminarDesmarcados()">
+              <i class="bi bi-trash me-1"></i>Eliminar de la lista
+            </button>
+          </div>
+
           <div class="lc-tabla-wrap">
             <table class="lc-tabla">
               <thead>
@@ -1022,6 +1051,7 @@ function lcRenderItems(){
   }).join('');
   var todosMarcados = _LC.items.every(function(it){ return it.incluido; });
   $('lcCheckAll').checked = todosMarcados;
+  _lcActualizarBulkToolbar();
 }
 
 function lcItemToggle(i, checked){
@@ -1031,6 +1061,7 @@ function lcItemToggle(i, checked){
   if (row) row.classList.toggle('lc-excluida', !checked);
   var todosMarcados = _LC.items.every(function(it){ return it.incluido; });
   $('lcCheckAll').checked = todosMarcados;
+  _lcActualizarBulkToolbar();
   lcRecalcular();
 }
 function lcCheckAllToggle(checked){
@@ -1041,8 +1072,46 @@ function lcCheckAllToggle(checked){
     if (chk) chk.checked = !!checked;
     row.classList.toggle('lc-excluida', !checked);
   });
+  _lcActualizarBulkToolbar();
   lcRecalcular();
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   ELIMINACIÓN MASIVA — Daniel (captura 2026-07-25): "quiero poder eliminar
+   productos de manera masiva". El checkbox por fila (ya existente, usado
+   para incluir/excluir del cálculo) dobla como selección: desmarcar una o
+   varias filas y usar "Eliminar de la lista" las saca del arreglo _LC.items
+   de una vez, en vez de tener que tocar el botón "Quitar" (✕) una por una.
+   Todo en el navegador -- _LC.items YA se reenvía completo al guardar
+   (crear = INSERT de todo el array; editar = DELETE+INSERT de todo el
+   array, ver lc_actualizar en logistica_cotizaciones.py), así que no hace
+   falta ningún endpoint nuevo para que esto quede persistido.
+   ══════════════════════════════════════════════════════════════════════ */
+function _lcActualizarBulkToolbar(){
+  var tb = $('lcBulkToolbar');
+  if (!tb || !_LC) return;
+  var n = _LC.items.filter(function(it){ return !it.incluido; }).length;
+  var cont = $('lcBulkCount');
+  if (cont) cont.textContent = String(n);
+  tb.style.display = n > 0 ? '' : 'none';
+}
+async function lcEliminarDesmarcados(){
+  if (!_LC) return;
+  var candidatos = _LC.items.filter(function(it){ return !it.incluido; });
+  if (!candidatos.length) return;
+  var ok = await ilusConfirm({
+    title: 'Eliminar productos de la lista',
+    message: '¿Quitar ' + candidatos.length + ' producto(s) desmarcado(s) de esta cotización?',
+    sub: 'Dejan de aparecer en la tabla y en el cálculo. Puedes volver a traerlos desde el ERP si te equivocas.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  _LC.items = _LC.items.filter(function(it){ return it.incluido; });
+  lcRenderItems();
+  lcRecalcular();
+  toast('✓ ' + candidatos.length + ' producto(s) eliminado(s) de la lista', 'success');
+}
+window.lcEliminarDesmarcados = lcEliminarDesmarcados;
 function lcCantidad(i, v){
   if (!_LC || !_LC.items[i]) return;
   var it = _LC.items[i];

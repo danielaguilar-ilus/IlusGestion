@@ -3425,7 +3425,13 @@ async function abrirEnvioManifiesto(){
       // Columnas: correlativo · fecha · ítems · estado
       sel.innerHTML = items.map(m => {
         const corr   = (m.correlativo || '').padEnd(14, ' ');
-        const fecha  = (m.fecha || '').padEnd(10, ' ');
+        // La API devuelve la fecha en ISO (YYYY-MM-DD) para uso interno;
+        // acá se muestra en formato chileno DD-MM-YYYY (Daniel, Regla #6).
+        const _fISO  = m.fecha || '';
+        const _fDMY  = /^\d{4}-\d{2}-\d{2}$/.test(_fISO)
+          ? _fISO.slice(8, 10) + '-' + _fISO.slice(5, 7) + '-' + _fISO.slice(0, 4)
+          : _fISO;
+        const fecha  = _fDMY.padEnd(10, ' ');
         const items_ = String(m.total_items || 0).padStart(3, ' ');
         const estado = m.estado || '';
         return `<option value="${m.id}" data-courier="${m.courier || ''}" data-estado="${estado}">`

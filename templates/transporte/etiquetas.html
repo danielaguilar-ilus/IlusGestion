@@ -156,65 +156,101 @@ html, body { background: #fff; }
 .etiqueta:last-child { page-break-after: auto; break-after: auto; }
 {% endif %}
 
-/* HEADER ILUS — logo + datos del remitente (estilo factura formal) */
+/* HEADER ILUS — logos (SPORTS HEALTH SOLUTIONS + ILUS) + datos del
+   remitente (estilo factura formal). Rediseño 2026-07-25: antes solo se
+   mostraba el logo ILUS; Daniel pidió mostrar ambas marcas lado a lado
+   separadas por una línea vertical, igual que en los documentos formales. */
 .lbl-head {
-  display: grid;
-  grid-template-columns: 38mm 1fr;
-  gap: 2mm;
-  padding: 2.5mm 3mm;
+  display: flex;
+  flex-direction: column;
+  padding: 2mm 3mm 1.6mm;
   background: var(--ilus-white);
   border-bottom: .7mm solid var(--ilus-black);
+  gap: 1mm;
+}
+.lbl-head .brand-logos {
+  display: flex;
   align-items: center;
+  justify-content: center;
+  gap: 2.5mm;
 }
 .lbl-head .brand-logo {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+  min-width: 0;
 }
-.lbl-head .brand-logo img {
-  max-width: 36mm;
-  max-height: 16mm;
+.lbl-head .brand-logo-shs img {
+  max-width: 32mm;
+  max-height: 10mm;
   width: auto;
   height: auto;
   display: block;
   object-fit: contain;
 }
-/* Fallback texto si no hay logo */
-.lbl-head .brand-logo .brand-text {
-  font-size: 5mm;
+.lbl-head .brand-logo-ilus img {
+  max-width: 30mm;
+  max-height: 9mm;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+.lbl-head .brand-divider {
+  width: .5mm;
+  height: 9mm;
+  background: var(--ilus-black);
+  flex-shrink: 0;
+}
+/* Fallback texto si algún logo no está disponible */
+.lbl-head .brand-text-shs {
+  font-size: 2.6mm;
+  font-weight: 950;
+  line-height: 1.05;
+  text-align: center;
+  background: var(--ilus-black);
+  color: #fff;
+  padding: 1mm 2mm;
+  letter-spacing: .2mm;
+}
+.lbl-head .brand-text {
+  font-size: 4.4mm;
   font-weight: 950;
   letter-spacing: .3mm;
   line-height: 1;
   color: var(--ilus-black);
 }
-.lbl-head .brand-logo .brand-text .red {
+.lbl-head .brand-text .red {
   color: var(--ilus-red);
 }
 .lbl-head .brand-info {
   display: flex;
-  flex-direction: column;
-  gap: .25mm;
-  padding-left: 2mm;
-  border-left: .35mm solid var(--ilus-black);
-  font-size: 2.4mm;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: .6mm 1.6mm;
+  padding-top: .8mm;
+  border-top: .3mm solid #e5e7eb;
+  font-size: 2.1mm;
   font-weight: 700;
-  line-height: 1.18;
+  line-height: 1.25;
   color: var(--ilus-black);
+  text-align: center;
 }
 .lbl-head .brand-info .rut {
-  font-size: 2.7mm;
+  font-size: 2.3mm;
   font-weight: 900;
 }
 .lbl-head .brand-info .giro {
-  font-size: 2.3mm;
-  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: .15mm;
+  letter-spacing: .1mm;
 }
-.lbl-head .brand-info .addr,
-.lbl-head .brand-info .tel {
-  font-size: 2.3mm;
-  font-weight: 600;
+.lbl-head .brand-info .dot {
+  color: var(--ilus-gray);
+}
+.lbl-head .brand-info .brand-info-break {
+  flex-basis: 100%;
+  height: 0;
 }
 
 /* Banda Courier / N° Courier / Fecha — campos de captura del transportista */
@@ -289,17 +325,31 @@ html, body { background: #fff; }
   color: var(--ilus-gray);
   margin-top: .3mm;
 }
+/* Código de barras — respaldo SECUNDARIO. El código principal, escaneable
+   y prioritario para el chofer/bodega es el QR de cada bulto (ver .qr-box
+   más abajo); Daniel 2026-07-25: "el código de barra no es muy necesario,
+   el QR sí" — se deja más chico pero NUNCA se quita: si algún bulto llegara
+   sin QR asignado, este sigue siendo un código escaneable de respaldo. */
 .barcode-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 1.6mm;
-  min-height: 14mm;
+  margin-top: 1mm;
+  min-height: 8mm;
 }
 .barcode {
-  width: 92%;
-  height: 14mm;
-  max-height: 14mm;
+  width: 78%;
+  height: 8mm;
+  max-height: 8mm;
+  opacity: .85;
+}
+.barcode-hint {
+  font-size: 1.7mm;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .3mm;
+  color: var(--ilus-gray);
+  margin-top: .3mm;
 }
 
 /* DESTINATARIO + caja BULTOS */
@@ -405,25 +455,44 @@ html, body { background: #fff; }
   line-height: .9;
   color: var(--ilus-black);
 }
-/* QR único por bulto — el chofer lo escanea para capturar el bulto */
+/* QR único por bulto — código PRINCIPAL (Daniel 2026-07-25: "el código de
+   barra no es muy necesario, el QR sí"). El chofer/bodega lo escanea para
+   capturar el bulto — por eso es más grande que el barcode secundario de
+   arriba. */
 .bultos-box .qr-box {
-  width: 22mm;
-  height: 22mm;
+  width: 28mm;
+  height: 28mm;
   margin-top: .8mm;
 }
 .bultos-box .qr-box img,
 .bultos-box .qr-box canvas {
-  width: 22mm !important;
-  height: 22mm !important;
+  width: 28mm !important;
+  height: 28mm !important;
   display: block;
 }
 .bultos-box .qr-code-txt {
   font-family: 'Courier New', monospace;
-  font-size: 2.4mm;
-  font-weight: 700;
+  font-size: 2.6mm;
+  font-weight: 800;
   letter-spacing: .3mm;
   color: var(--ilus-black);
-  margin-top: .3mm;
+  margin-top: .5mm;
+}
+/* Edge case: si por algo un bulto se quedara sin qr_code (no debería —
+   ver auto-reparación en _tr_attach_qr_codes), nunca dejamos la caja vacía
+   sin explicación: se avisa que el código de barra de abajo sigue siendo
+   válido para ese bulto puntual. */
+.bultos-box .qr-fallback {
+  max-width: 28mm;
+  margin-top: 2mm;
+  padding: 1.5mm;
+  border: .35mm dashed var(--ilus-red);
+  border-radius: 1.2mm;
+  font-size: 2mm;
+  font-weight: 800;
+  color: var(--ilus-red);
+  text-align: center;
+  line-height: 1.2;
 }
 
 /* STATUS DE SALIDA (caja vacía visible para sello/firma) */
@@ -612,6 +681,11 @@ html, body { background: #fff; }
   color: #6b7280;
   margin-left: 4px;
 }
+/* Estado "bloqueado": courier no es Felca/Milling (ej. FedEx, que tiene su
+   propio proceso de re-emisión y no debe tocarse desde acá). */
+.sp-bultos-locked .sp-bultos-head i { color: #9ca3af; }
+.sp-bultos-locked .sp-bultos-head { color: #6b7280; }
+.sp-bultos-locked .sp-bultos-hint { color: #6b7280; }
 .sp-bultos-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -856,11 +930,12 @@ html, body { background: #fff; }
     <button type="button" id="sp-aplicar"><i class="bi bi-funnel-fill"></i> Aplicar</button>
   </div>
 
+  {% if bultos_editable|default(false) %}
   <div class="sp-bultos">
     <div class="sp-bultos-head">
       <i class="bi bi-box-seam"></i>
       <span>Bultos por factura</span>
-      <span class="sp-bultos-hint">Capturá cu&aacute;ntos bultos tiene cada factura. Si es 1 quiere decir que el ERP no trajo el dato.</span>
+      <span class="sp-bultos-hint">Captura cu&aacute;ntos bultos tiene cada factura. Si es 1 quiere decir que el ERP no trajo el dato.</span>
     </div>
     <div class="sp-bultos-grid">
       {% for f in facturas %}
@@ -885,6 +960,22 @@ html, body { background: #fff; }
       {% endfor %}
     </div>
   </div>
+  {% else %}
+  <div class="sp-bultos sp-bultos-locked">
+    <div class="sp-bultos-head">
+      <i class="bi bi-lock-fill"></i>
+      <span>Bultos por factura</span>
+      <span class="sp-bultos-hint">
+        La corrección del total de bultos desde acá solo está disponible para
+        Felca y Milling.
+        {% if courier %}Esta{{ 's' if facturas|length != 1 else '' }} factura{{ 's' if facturas|length != 1 else '' }}
+        {{ 'son' if facturas|length != 1 else 'es' }} de <strong>{{ courier }}</strong>: usa el proceso correspondiente
+        {%- if 'fedex' in (courier|lower) %} (botón "Re-emitir" del manifiesto para FedEx){% endif %}.
+        {% else %}Esta factura aún no tiene courier asignado.{% endif %}
+      </span>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="sp-downloads">
     <button type="button" class="sp-dl primary" id="sp-pdf" title="Descarga UN PDF con todas las etiquetas seleccionadas">
@@ -921,20 +1012,33 @@ html, body { background: #fff; }
       {% endif %}
     <article class="etiqueta">
 
-      {# ─── HEADER: logo ILUS + datos formales del remitente ─── #}
+      {# ─── HEADER: logos SPORTS HEALTH SOLUTIONS + ILUS, datos formales ─── #}
       <header class="lbl-head">
-        <div class="brand-logo">
-          {% if logo_url %}
-            <img src="{{ logo_url }}" alt="ILUS">
-          {% else %}
-            <div class="brand-text">IL<span class="red">U</span>S</div>
-          {% endif %}
+        <div class="brand-logos">
+          <div class="brand-logo brand-logo-shs">
+            {% if logo_shs_url %}
+              <img src="{{ logo_shs_url }}" alt="Sports Health Solutions">
+            {% else %}
+              <div class="brand-text-shs">SPORTS HEALTH<br>SOLUTIONS</div>
+            {% endif %}
+          </div>
+          <div class="brand-divider"></div>
+          <div class="brand-logo brand-logo-ilus">
+            {% if logo_url %}
+              <img src="{{ logo_url }}" alt="ILUS">
+            {% else %}
+              <div class="brand-text">IL<span class="red">U</span>S</div>
+            {% endif %}
+          </div>
         </div>
         <div class="brand-info">
-          <div class="rut">{{ remitente.rut or '76.996.964-0' }}</div>
-          <div class="giro">{{ remitente.giro or 'IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS' }}</div>
-          <div class="addr">{{ remitente.direccion }}</div>
-          <div class="tel">{{ remitente.telefono or '+56229465970' }}</div>
+          <span class="rut">{{ remitente.rut or '76.996.964-0' }}</span>
+          <span class="dot">&middot;</span>
+          <span class="giro">{{ remitente.giro or 'IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS' }}</span>
+          <span class="brand-info-break"></span>
+          <span class="addr">{{ remitente.direccion }}</span>
+          <span class="dot">&middot;</span>
+          <span class="tel">{{ remitente.telefono or '+56229465970' }}</span>
         </div>
       </header>
 
@@ -954,7 +1058,7 @@ html, body { background: #fff; }
         </div>
       </div>
 
-      {# ─── N° DOCUMENTO + BARCODE ─── #}
+      {# ─── N° DOCUMENTO + BARCODE (código de respaldo, secundario) ─── #}
       <div class="lbl-doc">
         <div class="doc-title">N&deg; Documento / Orden</div>
         <div class="doc-number">{{ f.doc_numero or '—' }}</div>
@@ -962,6 +1066,7 @@ html, body { background: #fff; }
         <div class="barcode-wrap">
           <svg class="barcode" data-code="{{ f.doc_numero }}"></svg>
         </div>
+        <div class="barcode-hint">C&oacute;digo de respaldo del documento</div>
       </div>
 
       {# ─── DESTINATARIO + BULTOS (con QR debajo del número) ─── #}
@@ -989,6 +1094,13 @@ html, body { background: #fff; }
           {% if b.qr %}
           <div class="qr-box" data-qr="{{ b.qr }}" title="Escanea para registrar este bulto"></div>
           <div class="qr-code-txt">{{ b.qr }}</div>
+          {% else %}
+          {# Edge case: bulto sin qr_code asignado (no debería pasar — ver
+             auto-reparación en _tr_attach_qr_codes — pero si igual llegara
+             a pasar, NUNCA se deja la etiqueta sin código escaneable: se
+             indica usar el código de barra del documento, que siempre se
+             imprime). #}
+          <div class="qr-fallback">Usa el c&oacute;digo de barra de abajo</div>
           {% endif %}
         </div>
       </div>
@@ -1027,6 +1139,11 @@ html, body { background: #fff; }
 </div>
 {% endif %}
 
+{# ilus_ui.js: helpers ilusConfirm/ilusAlert/ilusToast (Regla #1, CLAUDE.md).
+   Esta página es standalone (no extiende base.html) por eso antes NO se
+   cargaba — el JS de más abajo ya tenía un fallback a alert()/confirm()
+   nativos por si acaso. Se agrega acá para dejar de depender del fallback. #}
+<script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
@@ -1300,15 +1417,40 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   async function guardarBultos(card) {
-    const cid   = card.dataset.cid;
-    const doc   = card.dataset.doc;
-    const input = card.querySelector('.bf-input');
-    const nuevo = parseInt(input.value, 10);
+    const cid      = card.dataset.cid;
+    const doc      = card.dataset.doc;
+    const input    = card.querySelector('.bf-input');
+    const nuevo    = parseInt(input.value, 10);
+    const original = parseInt(input.dataset.original, 10) || 1;
     if (isNaN(nuevo) || nuevo < 1) {
       if (typeof ilusToast !== "undefined")
         ilusToast("Ingresa un número válido (1-999)", { type: "error" });
       return;
     }
+
+    // Confirmación DELIBERADA (Daniel 2026-07-25): corregir el total de
+    // bultos cambia TODAS las etiquetas ya emitidas de esta factura (el "de
+    // N" que se repite en cada una) — nunca se dispara sin que quede claro
+    // el impacto. Regla #1: SIEMPRE ilusConfirm, jamás confirm() nativo.
+    if (typeof ilusConfirm === "undefined") {
+      if (typeof ilusToast !== "undefined") {
+        ilusToast("No se pudo cargar el diálogo de confirmación. Recarga la página e intenta de nuevo.",
+                  { type: "error" });
+      }
+      return;
+    }
+    const confirmado = await ilusConfirm({
+      title: "Corregir total de bultos",
+      message: `${doc}: vas a cambiar de ${original} a ${nuevo} bulto${nuevo !== 1 ? 's' : ''}.`,
+      sub: `Esto cambia TODAS las etiquetas de esta factura — de ahora en adelante todas van a decir `
+         + `"de ${nuevo}" en vez de "de ${original}". Si ya imprimiste etiquetas con el número viejo, `
+         + `tendrás que reimprimirlas.`,
+      okLabel: "Sí, corregir",
+      cancelLabel: "Cancelar",
+      danger: true,
+    });
+    if (!confirmado) return;
+
     card.classList.add('is-saving');
     try {
       const r = await fetch(`/transporte/factura/${cid}/n-bultos`, {
