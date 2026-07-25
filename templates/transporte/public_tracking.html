@@ -53,15 +53,22 @@ body{
   display:flex; align-items:center; gap:.75rem;
   position:sticky; top:0; z-index:40;
 }
-.hd img{ height:44px; width:auto; display:block; }
-.hd-txt{ line-height:1.12; }
-.hd-n{
-  font-family:var(--display); font-weight:800; font-size:1.05rem;
-  letter-spacing:.06em; text-transform:uppercase; color:#fff;
+/* Logo: se usa el lockup HORIZONTAL "ILUS FITNESS" en blanco (el mismo de los
+   correos). El Logo.png cuadrado se veía diminuto porque su marca ocupa poca
+   altura relativa — Daniel: "el logo está sobredimensionado muy pequeño,
+   que vaya un 70% más grande". */
+.hd-lock{ display:flex; align-items:center; gap:.45rem; }
+.hd img{ height:44px; width:auto; max-width:44vw; display:block; }
+.hd-fit{
+  font-family:var(--display); font-weight:800; font-size:1.75rem;
+  letter-spacing:.02em; text-transform:uppercase; color:#fff;
+  line-height:1; white-space:nowrap;
 }
+.hd-txt{ line-height:1.12; min-width:0; }
 .hd-s{
-  font-size:.63rem; letter-spacing:.22em; text-transform:uppercase;
-  color:var(--gray-2); font-weight:600;
+  margin-top:.2rem;
+  font-size:.63rem; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--gray-2); font-weight:700; white-space:nowrap;
 }
 .hd-act{
   margin-left:auto; display:flex; gap:.4rem;
@@ -88,14 +95,21 @@ body{
     rgba(255,255,255,.03) 0 1px, transparent 1px 12px);
   pointer-events:none;
 }
-.hero::after{       /* halo del color del estado */
+/* Halo del estado. VERDE mientras el pedido avanza normalmente (Daniel: "el
+   avance debe ser en verde, en ruta debe estar en verde, no en rojo, con
+   sombreado verde"). El rojo queda reservado para cuando algo salió mal —
+   así el color significa algo en vez de ser decoración. */
+.hero::after{
   content:''; position:absolute; top:-40%; right:-25%;
-  width:88vw; height:88vw; max-width:460px; max-height:460px;
-  background:radial-gradient(circle, rgba(220,38,38,.34) 0%, transparent 62%);
+  width:92vw; height:92vw; max-width:480px; max-height:480px;
+  background:radial-gradient(circle, rgba(22,163,74,.34) 0%, transparent 62%);
   pointer-events:none; transition:background .6s ease;
 }
-#tkState.s-success ~ .hero-halo, .hero.is-ok::after{
-  background:radial-gradient(circle, rgba(22,163,74,.32) 0%, transparent 62%);
+.hero.is-ok::after{
+  background:radial-gradient(circle, rgba(22,163,74,.42) 0%, transparent 64%);
+}
+.hero.is-bad::after{
+  background:radial-gradient(circle, rgba(220,38,38,.34) 0%, transparent 62%);
 }
 .hero > *{ position:relative; z-index:1; }
 
@@ -119,16 +133,17 @@ body{
 .estado-wrap{ margin-top:1.5rem; }
 .estado-top{ display:flex; align-items:center; gap:.7rem; }
 .estado-ico{
-  flex-shrink:0; width:46px; height:46px; border-radius:14px;
-  display:grid; place-items:center; font-size:1.35rem;
-  background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16);
-  color:#fff;
+  flex-shrink:0; width:54px; height:54px; border-radius:16px;
+  display:grid; place-items:center; font-size:1.75rem;   /* el camión se veía
+     como una silueta delgada e ilegible: más grande y con más peso */
+  background:rgba(22,163,74,.2); border:1px solid rgba(22,163,74,.5);
+  color:var(--green-lt);
 }
-#tkState.s-success .estado-ico{ background:rgba(22,163,74,.2);  border-color:rgba(22,163,74,.5);  color:var(--green-lt); }
+.estado-ico i{ line-height:1; -webkit-text-stroke:.4px currentColor; }
+#tkState.s-success .estado-ico{ background:rgba(22,163,74,.24); border-color:rgba(22,163,74,.6);  color:var(--green-lt); }
 #tkState.s-danger  .estado-ico{ background:rgba(220,38,38,.2);  border-color:rgba(220,38,38,.55); color:var(--red-lt); }
 #tkState.s-warning .estado-ico{ background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5); color:#fbbf24; }
-#tkState.s-info    .estado-ico,
-#tkState.s-primary .estado-ico{ background:rgba(220,38,38,.18); border-color:rgba(220,38,38,.45); color:#fff; }
+#tkState.s-secondary .estado-ico{ background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.18); color:#fff; }
 
 .estado-kicker{
   font-size:.66rem; letter-spacing:.24em; text-transform:uppercase;
@@ -136,12 +151,15 @@ body{
 }
 #tkStateLabel{
   display:block; font-family:var(--display); font-weight:900;
-  font-size:clamp(2.5rem,13.5vw,3.6rem); line-height:.93;
-  letter-spacing:-.012em; text-transform:uppercase; color:#fff;
+  font-size:clamp(2.7rem,14.5vw,3.9rem); line-height:.93;
+  letter-spacing:-.012em; text-transform:uppercase; color:var(--green-lt);
   margin-top:.1rem;
 }
 #tkState.s-success #tkStateLabel{ color:var(--green-lt); }
 #tkState.s-danger  #tkStateLabel{ color:var(--red-lt); }
+#tkState.s-warning #tkStateLabel{ color:#fbbf24; }
+#tkState.s-secondary #tkStateLabel{ color:#fff; }   /* "En preparación": aún no
+   hay avance real que celebrar, va en blanco */
 #tkStateSub{
   margin-top:.6rem; font-size:1rem; color:#d4d4d8;
   line-height:1.45; font-weight:500;
@@ -155,40 +173,50 @@ body{
   color:var(--gray-2); font-weight:700;
 }
 .prog-pct{
-  font-family:var(--display); font-weight:900; font-size:1.9rem;
-  line-height:1; color:#fff; font-variant-numeric:tabular-nums;
+  font-family:var(--display); font-weight:900; font-size:2.15rem;
+  line-height:1; color:var(--green-lt); font-variant-numeric:tabular-nums;
 }
-#tkState.s-success ~ .prog .prog-pct{ color:var(--green-lt); }
 .prog-track{
-  margin-top:.5rem; height:9px; border-radius:99px;
+  margin-top:.55rem; height:12px; border-radius:99px;
   background:rgba(255,255,255,.11); overflow:hidden;
 }
 .prog-fill{
   height:100%; border-radius:99px; width:0;
-  background:linear-gradient(90deg,var(--red),#ef4444);
+  background:linear-gradient(90deg,var(--green),#22c55e);
   transition:width 1.1s cubic-bezier(.2,.8,.25,1);
-  box-shadow:0 0 14px rgba(220,38,38,.55);
+  box-shadow:0 0 16px rgba(22,163,74,.6);
 }
-.prog-fill.is-ok{ background:linear-gradient(90deg,var(--green),#22c55e); box-shadow:0 0 14px rgba(22,163,74,.5); }
-.prog-fill.is-bad{ background:linear-gradient(90deg,#991b1b,var(--red)); }
+.prog-fill.is-ok{ background:linear-gradient(90deg,#15803d,#22c55e); box-shadow:0 0 18px rgba(22,163,74,.7); }
+.prog-fill.is-bad{ background:linear-gradient(90deg,#991b1b,var(--red)); box-shadow:0 0 16px rgba(220,38,38,.55); }
+.prog-pct.is-bad{ color:var(--red-lt); }
 
 /* Stepper */
 .steps{ display:flex; align-items:flex-start; margin-top:1.35rem; }
 .step{ flex:0 0 auto; width:62px; text-align:center; opacity:.34; transition:opacity .5s ease; }
 .step.done,.step.active{ opacity:1; }
 .step-dot{
-  width:34px; height:34px; margin:0 auto; border-radius:50%;
-  display:grid; place-items:center; font-size:.92rem;
+  width:38px; height:38px; margin:0 auto; border-radius:50%;
+  display:grid; place-items:center; font-size:1.08rem;   /* iconos más legibles:
+     el camión se perdía a .92rem */
   background:#27272a; color:var(--gray-2);
   border:2px solid #3f3f46; transition:all .5s ease;
 }
+.step-dot i{ line-height:1; }
 .step.done .step-dot{ background:var(--green); border-color:var(--green); color:#fff; }
-.step.active .step-dot{
-  background:var(--red); border-color:var(--red); color:#fff;
-  box-shadow:0 0 0 0 rgba(220,38,38,.65); animation:pulse 2s infinite;
+.step.active .step-dot{      /* el paso en curso pulsa en VERDE, no en rojo */
+  background:var(--green); border-color:var(--green); color:#fff;
+  box-shadow:0 0 0 0 rgba(22,163,74,.7); animation:pulse 2s infinite;
+}
+.steps.is-bad .step.active .step-dot{
+  background:var(--red); border-color:var(--red);
+  box-shadow:0 0 0 0 rgba(220,38,38,.7); animation:pulse-bad 2s infinite;
 }
 @keyframes pulse{
-  70%{ box-shadow:0 0 0 13px rgba(220,38,38,0); }
+  70%{ box-shadow:0 0 0 14px rgba(22,163,74,0); }
+  100%{ box-shadow:0 0 0 0 rgba(22,163,74,0); }
+}
+@keyframes pulse-bad{
+  70%{ box-shadow:0 0 0 14px rgba(220,38,38,0); }
   100%{ box-shadow:0 0 0 0 rgba(220,38,38,0); }
 }
 .step-label{
@@ -287,15 +315,19 @@ a.kv:active{ background:#fafafa; }
   width:14px; height:14px; border-radius:50%;
   background:#fff; border:3px solid var(--gray-2);
 }
+/* El último movimiento marca "vas bien" → verde. El rojo se reserva para
+   los estados que de verdad son un problema. */
 .tl-row.is-last::after{
-  border-color:var(--red); background:var(--red);
-  box-shadow:0 0 0 5px rgba(220,38,38,.14);
+  border-color:var(--green); background:var(--green);
+  box-shadow:0 0 0 5px rgba(22,163,74,.16);
 }
-.tl-row.c-success.is-last::after{ border-color:var(--green); background:var(--green); box-shadow:0 0 0 5px rgba(22,163,74,.16); }
+.tl-row.c-danger.is-last::after,
+.tl-row.c-warning.is-last::after{ border-color:var(--red); background:var(--red); box-shadow:0 0 0 5px rgba(220,38,38,.14); }
 .tl-est{ font-weight:700; font-size:1.02rem; display:flex; align-items:center; gap:.45rem; line-height:1.3; }
 .tl-est i{ color:var(--gray); font-size:1rem; }
-.tl-row.is-last .tl-est i{ color:var(--red); }
-.tl-row.c-success.is-last .tl-est i{ color:var(--green); }
+.tl-row.is-last .tl-est i{ color:var(--green); }
+.tl-row.c-danger.is-last .tl-est i,
+.tl-row.c-warning.is-last .tl-est i{ color:var(--red); }
 .tl-ts{ font-size:.82rem; color:var(--gray); margin-top:.14rem; font-variant-numeric:tabular-nums; font-weight:500; }
 .tl-com{ font-size:.88rem; color:#3f3f46; margin-top:.28rem; line-height:1.42; }
 .tl-row.is-hidden{ display:none; }
@@ -319,15 +351,15 @@ a.kv:active{ background:#fafafa; }
 .fotos img:active{ transform:scale(.95); }
 
 /* Live map */
-.live-card{ border-color:#fecaca; box-shadow:0 6px 20px -14px rgba(220,38,38,.6); }
+.live-card{ border-color:#a7f3c4; box-shadow:0 6px 20px -14px rgba(22,163,74,.6); }
 .live-head{
   display:flex; align-items:center; gap:.55rem; padding:.9rem 1rem;
-  background:linear-gradient(135deg,#fff,#fef2f2); border-bottom:1px solid #fee2e2;
+  background:linear-gradient(135deg,#fff,#f0fdf4); border-bottom:1px solid #dcfce7;
 }
 .live-head strong{ font-size:1rem; }
 .live-eta{
   margin-left:auto; font-family:var(--display); font-weight:800;
-  font-size:1.05rem; color:var(--red); white-space:nowrap;
+  font-size:1.15rem; color:#15803d; white-space:nowrap;
 }
 .live-dot{
   width:9px; height:9px; border-radius:50%; background:var(--green); flex-shrink:0;
@@ -356,10 +388,15 @@ a.kv:active{ background:#fafafa; }
 .ft-btn:active{ transform:scale(.975); }
 .ft-btn.alt{ background:#fff; color:var(--ink); border-color:var(--line); }
 .ft-mark{
-  margin-top:1.5rem; font-family:var(--display); font-weight:800;
-  font-size:.78rem; letter-spacing:.2em; text-transform:uppercase; color:var(--gray);
+  margin-top:1.6rem; font-family:var(--display); font-weight:800;
+  font-size:1.5rem; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--ink); line-height:1;
 }
-.ft-mark b{ color:var(--ink); }
+.ft-mark b{ color:var(--red); font-weight:900; }
+.ft-sub{
+  margin-top:.3rem; font-size:.64rem; letter-spacing:.28em;
+  text-transform:uppercase; color:var(--gray); font-weight:700;
+}
 
 /* Toast */
 .toast{
@@ -403,9 +440,15 @@ a.kv:active{ background:#fafafa; }
 <div class="shell">
 
 <header class="hd">
-  <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS">
   <div class="hd-txt">
-    <div class="hd-n">Sport &amp; Health</div>
+    {# El logo oficial dice "ILUS": "FITNESS" se compone al lado para que la
+       marca se lea completa (Daniel: "debe decir ILUS Fitness"). #}
+    <div class="hd-lock">
+      <img src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}"
+           alt="ILUS Fitness"
+           onerror="this.onerror=null;this.src='{{ url_for('static', filename='Logo.png') }}'">
+      <span class="hd-fit">Fitness</span>
+    </div>
     <div class="hd-s">Seguimiento de despacho</div>
   </div>
   <div class="hd-act">
@@ -419,7 +462,7 @@ a.kv:active{ background:#fafafa; }
 </header>
 <div class="accent"></div>
 
-<section class="hero{% if entregado %} is-ok{% endif %}" id="tkHero">
+<section class="hero{% if entregado %} is-ok{% elif terminal_danger %} is-bad{% endif %}" id="tkHero">
   <button class="doc" id="btnDoc" type="button" title="Copiar número de documento">
     <i class="bi bi-receipt"></i>{{ data.doc }}
   </button>
@@ -447,7 +490,7 @@ a.kv:active{ background:#fafafa; }
   <div class="prog">
     <div class="prog-top">
       <span class="prog-lb">Avance del envío</span>
-      <span class="prog-pct" id="tkPct">{{ pct }}%</span>
+      <span class="prog-pct{% if terminal_danger %} is-bad{% endif %}" id="tkPct">{{ pct }}%</span>
     </div>
     <div class="prog-track">
       <div class="prog-fill{% if entregado %} is-ok{% elif terminal_danger %} is-bad{% endif %}"
@@ -455,10 +498,12 @@ a.kv:active{ background:#fafafa; }
     </div>
   </div>
 
-  <div class="steps" id="tkSteps" aria-hidden="true">
+  <div class="steps{% if terminal_danger %} is-bad{% endif %}" id="tkSteps" aria-hidden="true">
+    {# bi-truck-flatbed es una silueta muy delgada: a este tamaño se perdía.
+       Se usan iconos macizos que se leen en un celular. #}
     {% set steps = [
-      ('Preparación','bi-box-seam'),
-      ('Retirado','bi-truck-flatbed'),
+      ('Preparación','bi-box-seam-fill'),
+      ('Retirado','bi-box-arrow-right'),
       ('En ruta','bi-truck'),
       ('Entregado','bi-check-lg'),
     ] %}
@@ -628,7 +673,10 @@ a.kv:active{ background:#fafafa; }
         <i class="bi bi-envelope"></i> Escríbenos
       </a>
     </div>
-    <div class="ft-mark">&copy; <b>ILUS</b> Sport &amp; Health</div>
+    {# Footer sin el casco: a este tamaño la marca se veía sucia (Daniel).
+       Solo el nombre, bien tipografiado. #}
+    <div class="ft-mark"><b>ILUS</b> Fitness</div>
+    <div class="ft-sub">Sport &amp; Health</div>
   </div>
 </main>
 
@@ -746,14 +794,18 @@ a.kv:active{ background:#fafafa; }
 
     // Avance %
     const pct = entregado ? 100 : Math.round((cur - 1) / 3 * 100);
+    const malo  = data.estado === 'Entrega fallida' || data.estado === 'Devolución';
     const pctEl = document.getElementById('tkPct');
-    if (pctEl) pctEl.textContent = pct + '%';
+    if (pctEl) { pctEl.textContent = pct + '%'; pctEl.classList.toggle('is-bad', malo); }
     if (fill) {
       fill.style.width = pct + '%';
       fill.classList.toggle('is-ok', entregado);
-      fill.classList.toggle('is-bad', data.estado === 'Entrega fallida' || data.estado === 'Devolución');
+      fill.classList.toggle('is-bad', malo);
     }
-    document.getElementById('tkHero').classList.toggle('is-ok', entregado);
+    const hero = document.getElementById('tkHero');
+    hero.classList.toggle('is-ok', entregado);
+    hero.classList.toggle('is-bad', malo);
+    if (stepsRoot) stepsRoot.classList.toggle('is-bad', malo);
 
     // Si el estado cambió, recargar para traer timeline + prueba de entrega
     if (data.estado && data.estado !== lastEstado) {

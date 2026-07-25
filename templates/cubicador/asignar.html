@@ -2605,8 +2605,16 @@ function renderCouriers(opts){
 
     const recIcon  = isRec ? ' <span title="Más económico" style="font-size:.75rem">🏆</span>' : '';
     const profitIcon = (zzVal>0 && c.precio && (zzVal - c.precio) > 0) ? ' <span title="Margen positivo">💰</span>' : '';
+    // FIX 2026-07-24 (Daniel: "no inventar datos que no existen"): cuando
+    // Felca/Milling NO tienen tarifa propia para la comuna, el motor ESTIMA el
+    // precio como FedEx Directo −10% y lo marca fuente='estimado'
+    // (transporte_tarifas.py:125-137). Ese caso caía en el último ternario y
+    // se mostraba con el chip gris "Tabla" — afirmando que el número salía de
+    // un tarifario cuando en realidad nadie lo negoció. Milling, por ejemplo,
+    // solo tiene 37 comunas cargadas y todas son de Santiago.
     const fuente = c.fuente === 'api' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API</span>' :
                    c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
+                   c.fuente === 'estimado' ? '<span title="Este courier no tiene tarifa cargada para esta comuna. El precio es una estimación del sistema (FedEx Directo menos 10%), NO una tarifa negociada. Confírmalo antes de comprometerlo con el cliente." style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">⚠ ESTIMADO</span>' :
                    '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
 
     // ── AUDIT/TRACE indicators ─────────────────────────────────
