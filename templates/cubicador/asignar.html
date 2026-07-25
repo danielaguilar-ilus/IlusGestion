@@ -2614,7 +2614,7 @@ function renderCouriers(opts){
     // solo tiene 37 comunas cargadas y todas son de Santiago.
     const fuente = c.fuente === 'api' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API</span>' :
                    c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
-                   c.fuente === 'estimado' ? '<span title="Este courier no tiene tarifa cargada para esta comuna. El precio es una estimación del sistema (FedEx Directo menos 10%), NO una tarifa negociada. Confírmalo antes de comprometerlo con el cliente." style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">⚠ ESTIMADO</span>' :
+                   c.fuente === 'estimado' ? '<span title="Este courier no tiene tarifa propia cargada para esta comuna, así que el precio sale de la regla comercial ILUS sobre FedEx Directo (Milling −5%, Felca −10%). Es un precio válido, pero derivado: no viene de un tarifario negociado comuna por comuna." style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">REGLA FEDEX</span>' :
                    '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
 
     // ── AUDIT/TRACE indicators ─────────────────────────────────

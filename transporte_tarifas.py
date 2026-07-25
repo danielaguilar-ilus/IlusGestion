@@ -37,8 +37,25 @@ TIERS = {
 }
 LIGHT_MAX = {"clickex": 130}  # resto = 100
 
-# Felca/Milling sin tabla propia → estimar como FedEx Directo un poco más barato.
-FALLBACK_FACTOR = 0.90
+# ── Regla comercial de ILUS (Daniel, 2026-07-25) ──────────────────────────
+# Cuando Felca o Milling no tienen tarifa propia para una comuna, el precio se
+# deriva de FedEx Directo con un descuento fijo. NO es una estimación técnica:
+# es la regla de negocio que definió el dueño, y con ella la cobertura queda
+# completa en todas las comunas donde FedEx tiene tarifa.
+#
+#   Milling → FedEx Directo −5%
+#   Felca   → FedEx Directo −10%   (Rafael)
+#
+# Contexto medido el 2026-07-25 sobre las tablas reales:
+#   fedex_directo 370 comunas · felca 370 · milling 37 · clickex 757
+# O sea Felca casi no usa esta regla (tiene tabla propia); Milling la usa en
+# 334 de las 370 comunas. La tarifa propia SIEMPRE manda sobre la regla: si la
+# comuna está en la tabla del courier, se usa esa (es la negociada).
+FALLBACK_FACTOR = {
+    "milling": 0.95,
+    "felca":   0.90,
+}
+FALLBACK_FACTOR_DEFAULT = 0.90
 
 # Etiqueta amigable por slug (para la UI / trace)
 NOMBRE = {
@@ -116,24 +133,40 @@ def _parse_heavy(raw, peso):
 
 
 def cotizar(slug, comuna, peso, valor=0.0):
-    """Cotiza un courier. Si Felca/Milling no tienen tarifa propia para la
-    comuna/peso, ESTIMA como FedEx Directo un poco más barato (criterio Daniel,
-    cobertura hasta 20.000 kg)."""
+    """Cotiza un courier.
+
+    Orden de prioridad:
+      1. Tarifa PROPIA del courier para esa comuna/peso (la negociada) — manda
+         siempre que exista.
+      2. Si no existe y el courier es Felca o Milling, se aplica la REGLA
+         COMERCIAL de ILUS sobre FedEx Directo (ver FALLBACK_FACTOR): Milling
+         −5%, Felca −10%. Así la cobertura queda completa.
+      3. Si FedEx Directo tampoco tiene la comuna, no hay precio (None). No se
+         inventa nada.
+    """
     r = _cotizar_tabla(slug, comuna, peso, valor)
     if r is not None:
         return r
-    if slug in ("felca", "milling"):
+    if slug in FALLBACK_FACTOR:
         ref = _cotizar_tabla("fedex_directo", comuna, peso, valor)
         if ref is not None:
+            factor = FALLBACK_FACTOR.get(slug, FALLBACK_FACTOR_DEFAULT)
             seguro = round(float(valor or 0) * 0.012)
-            base_est = round(ref["base"] * FALLBACK_FACTOR)
-            pct = int(round((1 - FALLBACK_FACTOR) * 100))
+            base_est = round(ref["base"] * factor)
+            pct = int(round((1 - factor) * 100))
             return {
                 "precio": base_est + seguro, "base": base_est, "seguro": seguro,
-                "modo": "estimado_fedex", "factor": None,
-                "tramo": f"estimado (~{pct}% bajo FedEx Directo)",
-                "comuna_tabla": ref["comuna_tabla"], "fuente": "estimado",
+                "modo": "regla_fedex", "factor": None,
+                "tramo": f"regla ILUS: FedEx Directo −{pct}%",
+                "comuna_tabla": ref["comuna_tabla"], "fuente": "regla",
+                # Se mantiene 'estimado' por compatibilidad con app.py, que ya
+                # lee esta clave. Lo que cambia es el SIGNIFICADO: antes era una
+                # aproximación técnica sin respaldo; ahora es la regla de precios
+                # que definió Daniel. La UI lo muestra como derivado, no como
+                # dato dudoso.
                 "estimado": True,
+                "regla_pct": pct,
+                "derivado_de": "FedEx Directo",
             }
     return None
 
