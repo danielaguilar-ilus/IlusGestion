@@ -403,5 +403,38 @@ Google Cloud Run vía merge a `main`. Railway NUNCA. No tocar `Procfile`/
 
 ---
 
-_Última actualización: 2026-05-17_
+## 📧 REGLA #13 — Envío de correos: SMTP es el método principal, NUNCA Resend por defecto
+
+**Todo correo de ILUS debe salir por SMTP (Gmail, cuenta `daniel.aguilar@sphs.cl`)
+como método principal.** Resend queda ÚNICAMENTE como red de respaldo automática
+si SMTP falla (`_send_ilus_email_real`, app.py) — nunca como método principal,
+salvo que Daniel lo pida explícitamente.
+
+### Por qué
+
+- Decisión original 2026-05-21 (ya vigente en código y en producción vía
+  `ILUS_EMAIL_PROVIDER=smtp`): el dominio `ilusfitness.com` no tiene DNS
+  (SPF/DKIM/DMARC) verificado en Resend. Sin eso, Resend manda como
+  `onboarding@resend.dev` (cae a spam) o, peor, **una cuenta Resend sin
+  dominio verificado SOLO puede enviar al correo con el que se registró la
+  cuenta** — a un cliente real el correo simplemente no le llega, sin error
+  visible para Daniel.
+- SMTP (Gmail) sí entrega a cualquier destinatario, pero puede fallar desde
+  IPs de datacenter (Cloud Run) si Gmail lo bloquea — por eso el fallback a
+  Resend existe (mejor que no salga nada), no al revés.
+
+### Qué hacer
+
+- **NUNCA** cambiar `ILUS_EMAIL_PROVIDER` a `resend` o `auto` en producción
+  sin que Daniel lo pida explícitamente en ese mensaje.
+- Si un correo "no llega", diagnosticar en este orden: (1) ¿SMTP falló y
+  cayó a Resend? (revisar logs `[ILUS][EMAIL]`) (2) si cayó a Resend, ¿el
+  destinatario es distinto al correo de la cuenta Resend y el dominio sigue
+  sin verificar? — ese es el síntoma más probable de "no se envía".
+- La solución definitiva (verificar dominio propio en Resend) depende de
+  Joaquín/DNS — mientras tanto, SMTP sigue siendo la regla.
+
+---
+
+_Última actualización: 2026-07-25_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

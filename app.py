@@ -6763,7 +6763,7 @@ def _ilus_email_master(ctx: dict) -> str:
 <tr><td align="center" style="padding:32px 12px">
 <table role="presentation" class="email-shell" width="620" cellspacing="0" cellpadding="0" border="0" style="width:620px;max-width:620px;background:#ffffff;border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;box-shadow:0 12px 35px rgba(15,23,42,.10)">
 <tr><td align="center" style="background:#050505;padding:25px 32px 22px;border-bottom:4px solid #e30613">
-<img src="{logo_url}" width="180" alt="ILUS Fitness" style="display:block;width:180px;max-width:180px;height:auto;border:0;outline:none;text-decoration:none"></td></tr>
+<a href="https://ilusfitness.com" target="_blank" style="display:inline-block"><img src="{logo_url}" width="306" alt="ILUS Fitness" style="display:block;width:306px;max-width:306px;height:auto;border:0;outline:none;text-decoration:none"></a></td></tr>
 <tr><td class="email-pad" style="padding:34px 44px 12px">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">{badge_html}
 <tr><td class="email-title" style="padding-top:17px;font-size:30px;line-height:36px;font-weight:800;color:#111111">{title}</td></tr>{subtitle_html}
@@ -18456,13 +18456,39 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
     cache[key] = now
 
     c = mysql_fetchone(
-        "SELECT id, tido, nudo, cliente_nombre, email, public_token "
+        "SELECT id, tido, nudo, cliente_nombre, email, public_token, "
+        "       comuna, direccion, fecha_entrega, costo_envio "
         "FROM transport_commitments WHERE id=%s", (commitment_id,))
     if not c or not (c.get("email") or "").strip():
         return
     tok = _tr_ensure_public_token(commitment_id)
     if not tok:
         return
+    # FIX 2026-07-25 (Daniel: "los correos de transporte... no está asociado
+    # a la realidad"): antes esta función armaba las variables del correo con
+    # datos fijos/incompletos -- courier SIEMPRE "FedEx" (mal para Felca/
+    # Milling/otros) y sin tracking/direccion/fecha/costo reales. Las
+    # plantillas editables en /comunicaciones (TPL_DEFAULTS del front)
+    # muestran placeholders como {{numero_seguimiento}}, {{fecha_entrega}},
+    # {{direccion_entrega}}, {{costo_envio}}, {{nombre_cliente}} -- si Daniel
+    # los usó al editar, salían LITERALES sin reemplazar porque esas keys no
+    # existían en `_vars`. Se resuelve el courier/tracking real con la MISMA
+    # consulta que ya usa _tracking_payload() para el seguimiento público.
+    _mi = mysql_fetchone("""
+        SELECT tm.courier, COALESCE(tmi.master_tracking_number, tmi.tracking_number) AS tracking
+        FROM transport_manifest_items tmi
+        LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
+        WHERE tmi.commitment_id=%s
+        ORDER BY tmi.id DESC LIMIT 1
+    """, (commitment_id,))
+    # Sin manifiesto todavía (ej: recién "En preparación") no sabemos el
+    # courier real -- mejor un texto neutro que afirmar "FedEx" a ciegas.
+    courier_real = ((_mi or {}).get("courier") or "").strip() or "nuestro equipo de despacho"
+    tracking_real = ((_mi or {}).get("tracking") or "").strip()
+    direccion_real = ", ".join(x for x in [c.get("direccion"), c.get("comuna")] if (x or "").strip())
+    fecha_entrega_real = str(c.get("fecha_entrega") or "")[:10]
+    costo_envio_real = (f"${int(c['costo_envio']):,}".replace(",", ".")
+                        if c.get("costo_envio") else "")
     # FIX 2026-07-24: el fallback anterior devolvía "/t/<tok>" RELATIVO cuando
     # esto corre fuera de un request (cron / hilo daemon) — y un link relativo
     # dentro de un correo NO funciona: el cliente hacía clic y no llegaba a
@@ -18523,12 +18549,18 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
     }.get(estado, 'entregado')
     try:
         _vars = {
-            "cliente":    cliente,
-            "documento":  doc,
-            "id_pedido":  doc,
-            "track_url":  track_url,
-            "courier":    "FedEx",
-            "comentario": comentario or "",
+            "cliente":            cliente,
+            "nombre_cliente":     cliente,
+            "documento":          doc,
+            "id_pedido":          doc,
+            "track_url":          track_url,
+            "courier":            courier_real,
+            "comentario":         comentario or "",
+            "fecha_entrega":      fecha_entrega_real,
+            "direccion_entrega":  direccion_real,
+            "costo_envio":        costo_envio_real,
+            "numero_seguimiento": tracking_real,
+            "motivo_falla":       comentario or "El courier no pudo completar la entrega",
         }
         _tpl = _render_comm_template(_slug, "email", _vars, modulo="transporte")
         if _tpl:
@@ -18550,7 +18582,13 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         "subtitle":          "Actualización de despacho · ILUS Fitness",
         "customer_name":     cliente,
         "message":           _message_html,
-        "detail_rows_html":  _ilus_email_rows([("N° de documento", doc), ("Courier", "FedEx")]),
+        "detail_rows_html":  _ilus_email_rows([r for r in [
+                                 ("N° de documento", doc),
+                                 ("Courier", courier_real),
+                                 ("N° de seguimiento", tracking_real) if tracking_real else None,
+                                 ("Dirección de entrega", direccion_real) if direccion_real else None,
+                                 ("Entrega estimada", fecha_entrega_real) if fecha_entrega_real else None,
+                             ] if r]),
         "primary_cta_url":   track_url,
         "primary_cta_label": cta_label,
         "closing_message":   _closing,
@@ -32847,8 +32885,8 @@ def _email_header_ilus(title, subtitle="", corp_color="#CC0000", logo_url=None, 
   <tr><td style="height:5px;background:#E20F2E;font-size:0;line-height:0">&nbsp;</td></tr>
   <tr>
     <td align="center" style="padding:38px 28px 14px 28px;text-align:center">
-      <img src="{logo_url}" alt="{company}" height="140"
-           style="height:140px;width:auto;max-width:440px;display:block;margin:0 auto;border:0;object-fit:contain">
+      <a href="https://ilusfitness.com" target="_blank" style="display:inline-block"><img src="{logo_url}" alt="{company}" height="238"
+           style="height:238px;width:auto;max-width:440px;display:block;margin:0 auto;border:0;object-fit:contain"></a>
     </td>
   </tr>
   {bottom_row}
