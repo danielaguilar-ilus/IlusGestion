@@ -135,18 +135,18 @@ def _parse_heavy(raw, peso):
 def cotizar(slug, comuna, peso, valor=0.0):
     """Cotiza un courier.
 
-    Orden de prioridad:
-      1. Tarifa PROPIA del courier para esa comuna/peso (la negociada) — manda
-         siempre que exista.
-      2. Si no existe y el courier es Felca o Milling, se aplica la REGLA
-         COMERCIAL de ILUS sobre FedEx Directo (ver FALLBACK_FACTOR): Milling
-         −5%, Felca −10%. Así la cobertura queda completa.
-      3. Si FedEx Directo tampoco tiene la comuna, no hay precio (None). No se
-         inventa nada.
+    Para Felca y Milling (los que tienen regla comercial):
+      1. REGLA sobre FedEx Directo — manda SIEMPRE. Milling −5%, Felca −10%.
+      2. Si FedEx Directo no cubre esa comuna, se usa la tabla propia del
+         courier como respaldo, para no quedarse sin precio.
+      3. Si no hay ninguna de las dos, None. No se inventa nada.
+
+    Para el resto de couriers: solo su tabla propia.
     """
-    r = _cotizar_tabla(slug, comuna, peso, valor)
-    if r is not None:
-        return r
+    # Daniel 2026-07-25: "los descuentos deben ser absolutos -5%". La regla
+    # manda SIEMPRE para Felca y Milling, también donde tienen tabla propia.
+    # Antes la tabla propia tenía prioridad; se invirtió a pedido suyo, porque
+    # el descuento sobre FedEx es la política comercial, no una aproximación.
     if slug in FALLBACK_FACTOR:
         ref = _cotizar_tabla("fedex_directo", comuna, peso, valor)
         if ref is not None:
@@ -168,7 +168,14 @@ def cotizar(slug, comuna, peso, valor=0.0):
                 "regla_pct": pct,
                 "derivado_de": "FedEx Directo",
             }
-    return None
+        # FedEx no cubre la comuna → respaldo con la tabla propia del courier.
+        # Se marca 'respaldo' para distinguirla de la regla en la UI.
+        propia = _cotizar_tabla(slug, comuna, peso, valor)
+        if propia is not None:
+            propia["fuente"] = "tabla_propia"
+            return propia
+        return None
+    return _cotizar_tabla(slug, comuna, peso, valor)
 
 
 def _cotizar_tabla(slug, comuna, peso, valor=0.0):
