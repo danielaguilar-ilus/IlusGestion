@@ -6693,8 +6693,24 @@ def _ilus_email_master(ctx: dict) -> str:
                   f'{status_label}</span></td></tr>') if status_label else ''
     subtitle_html = (f'<tr><td style="padding-top:10px;font-size:14px;line-height:21px;'
                      f'color:#68707c">{subtitle}</td></tr>') if subtitle else ''
+    # ── FIX 2026-07-24 (Daniel, captura de Gmail) — el correo saludaba DOS veces ──
+    # El maestro SIEMPRE pintaba "Hola {cliente}," y además casi todas las
+    # plantillas editables (transporte, retiros, mantenciones, catálogo…) abren
+    # su cuerpo con "Hola {{cliente}},". Resultado visible: "Hola Juan Cardona,"
+    # y justo debajo "Hola,". Es sistémico, así que se corrige UNA vez acá en
+    # vez de editar plantilla por plantilla — que además no aguantaría que
+    # Daniel vuelva a escribir un saludo al editarlas desde /comunicaciones.
+    # Regla: si el CUERPO ya saluda, el maestro se calla.
+    def _abre_con_saludo(html_msg: str) -> bool:
+        import html as _html
+        txt = re.sub(r"<[^>]+>", " ", html_msg or "")
+        txt = _html.unescape(txt).replace("\xa0", " ").strip().lower()
+        return bool(re.match(
+            r"^[¡!\s]*(hola|estimad[oa]s?|buen[oa]s?\s+(d[ií]as|tardes|noches))\b", txt))
+
     saludo_html = (f'<p style="margin:0 0 18px;font-size:15px;line-height:24px;color:#24272c">'
-                   f'Hola <strong style="color:#d90012">{customer_name}</strong>,</p>') if customer_name else ''
+                   f'Hola <strong style="color:#d90012">{customer_name}</strong>,</p>'
+                   ) if (customer_name and not _abre_con_saludo(message)) else ''
     detail_html = (f'<tr><td class="email-pad" style="padding:24px 44px 0">'
                    f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
                    f'style="background:#f6f7f9;border-left:4px solid #e30613;border-radius:5px">'
@@ -23637,7 +23653,8 @@ def _tracking_payload(token):
     Devuelve dict o None si el token no existe."""
     c = mysql_fetchone("""
         SELECT id, tido, nudo, cliente_nombre, comuna, direccion, region,
-               estado, delivered_at, fecha_emision, fecha_entrega
+               estado, delivered_at, fecha_emision, fecha_entrega,
+               COALESCE(n_bultos, 1) AS n_bultos
         FROM transport_commitments WHERE public_token=%s LIMIT 1
     """, (token,))
     if not c:
@@ -23715,6 +23732,12 @@ def _tracking_payload(token):
         "eventos":       eventos,
         "proof":         proof,
         "entregado_at":  str(c.get("delivered_at") or "")[:19],
+        # Resumen de un vistazo (Daniel 2026-07-24: "que me entregue un resumen,
+        # con letras más grandes, lo que importa"). Ya se leían de la tabla pero
+        # no llegaban al template.
+        "bultos":        int(c.get("n_bultos") or 1),
+        "fecha_emision": str(c.get("fecha_emision") or "")[:10],
+        "fecha_entrega": str(c.get("fecha_entrega") or "")[:10],
         # Live driver location (Uber-style): solo si está "En ruta" y hay
         # chofer asignado con ping reciente. Privacidad: solo lat/lng + ETA
         # estimada, nunca nombre/RUT/patente del chofer.
