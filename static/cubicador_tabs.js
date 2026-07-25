@@ -907,6 +907,15 @@
     aplicarMedidasEnFilas(sku, pid, t);
     cubicadorRefrescarTotales();
     actualizarPayloadExcel(sku, t);
+    // Evento genérico para páginas con su PROPIA tabla/estado (ej.
+    // templates/cubicador/asignar.html, que arma _docData.lineas en vez de
+    // leer .cub-row del DOM) -- así se enteran del guardado sin que este
+    // archivo tenga que conocerlas. Sin listener, es un no-op.
+    try {
+      document.dispatchEvent(new CustomEvent('cubicador:medidas-guardadas', {
+        detail: { sku: sku, pid: pid, t: t },
+      }));
+    } catch (e) { /* CustomEvent no disponible: nunca romper el guardado */ }
 
     toast('✓ Medidas guardadas · ' + t.n + ' bulto(s) · ' + fkg(t.pred) + ' kg predominante', 'success');
     closeModal(true);

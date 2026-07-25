@@ -17566,6 +17566,11 @@ def api_asignar_documento():
             "bultos_tot":      bultos_total,       # bultos totales
             "tiene_ficha":     l["tiene_ficha"],
             "tiene_bultos":    l["tiene_bultos"],
+            # id interno del producto (ya resuelto en _cubicador_fetch via
+            # join con la tabla de productos) -- faltaba reenviarlo al front.
+            # Sin esto, la fila "sin ficha" no puede abrir el editor de
+            # medidas (necesita el pid para crear/actualizar la ficha).
+            "app_id":          l.get("app_id"),
             "peso_kg_u":       round(peso_kg_u,  3),
             "peso_vol_u":      round(peso_vol_u, 3),
             "vol_u":           round(l["vol_u"], 1),   # cm³/u
