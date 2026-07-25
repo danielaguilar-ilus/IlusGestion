@@ -11,6 +11,33 @@
   </div>
 </div>
 
+{# ══════════════════════════════════════════════════════════════════════
+   PESTAÑAS (2026-07-25) — el Cubicador pasa a convivir con el Cotizador y
+   el Packing List en la MISMA dirección /cubicador.
+   REGLA 4.2: el contenido del Cubicador NO se movió ni se renombró; solo
+   quedó envuelto en #tabCubicador. Los ids cubicadorForm, docsContainer,
+   excelPayloadInput y pdfExportForm siguen exactamente donde estaban —
+   de ellos dependen el reporte de Excel y el PDF.
+   ══════════════════════════════════════════════════════════════════════ #}
+{# El marcado sigue la convención de static/cubicador_tabs.js:
+   botón .cubtab-btn[data-tab="x"] ↔ panel #cubtab-x.cubtab-pane
+   Los estilos los inyecta ese mismo archivo, por eso acá no hay <style>. #}
+<div class="cubtabs-wrap">
+  <div class="cubtabs">
+    <button type="button" class="cubtab-btn active" data-tab="cubicador">
+      <i class="bi bi-calculator"></i>Cubicador
+    </button>
+    <button type="button" class="cubtab-btn" data-tab="cotizador">
+      <i class="bi bi-cash-coin"></i>Cotizador
+    </button>
+    <button type="button" class="cubtab-btn" data-tab="packing">
+      <i class="bi bi-box-seam"></i>Packing List
+    </button>
+  </div>
+</div>
+
+<div id="cubtab-cubicador" class="cubtab-pane active">
+
 {# ── Formulario multi-documento ── #}
 <div class="ilus-card mb-3">
   <div class="ilus-card-header">
@@ -831,6 +858,16 @@
   </div>
 </div>
 
+</div>{# /#cubtab-cubicador — fin del Cubicador original, intacto #}
+
+<div id="cubtab-cotizador" class="cubtab-pane">
+  {% include "cubicador/_tab_cotizador.html" %}
+</div>
+
+<div id="cubtab-packing" class="cubtab-pane">
+  {% include "cubicador/_tab_packing.html" %}
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -1402,4 +1439,9 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
   if (excelInput) excelInput.dataset.original = excelInput.value;
 })();
 </script>
+
+{# Pestañas + modal de medidas + botón etiquetas. Va al final y es defensivo:
+   si este archivo fallara, el Cubicador de arriba sigue funcionando igual.
+   Sin ?v= — el proyecto tiene cache-busting automático por hash. #}
+<script src="{{ url_for('static', filename='cubicador_tabs.js') }}"></script>
 {% endblock %}

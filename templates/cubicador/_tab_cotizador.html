@@ -1,0 +1,1348 @@
+{# ════════════════════════════════════════════════════════════════════════
+   COTIZADOR DE ENVÍOS — pestaña "Cotizador" del Cubicador
+   ────────────────────────────────────────────────────────────────────────
+   FRAGMENTO. Se incluye desde templates/cubicador/index.html con:
+
+       {% include "cubicador/_tab_cotizador.html" %}
+
+   REQUISITOS DE INCLUSIÓN (leer antes de mover el include):
+     1. Debe quedar FUERA de <form id="cubicadorForm"> (y de cualquier otro
+        <form>). Este fragmento tiene inputs propios pero NO usa <form>
+        justamente para poder convivir con los formularios del Cubicador
+        (excelExportForm / pdfExportForm) sin anidar formularios.
+     2. Va como panel hermano del wrapper de la pestaña "Cubicaje"
+        (id="cubtab-cotizador" según la convención de la barra de pestañas).
+     3. El botón "Traer desde el ERP" usa el modal multidocumento. Para que
+        funcione, index.html debe incluir UNA vez, al final del bloque de
+        contenido:  {% include "tickets/_tka_modal.html" %}
+        ⚠ El modal se abre SIEMPRE con tabs:['doc'] — es la única pestaña
+        que no exige permisos de Tickets/Catálogo (las demás devuelven 403
+        a un usuario que solo tiene el permiso "cubicador").
+        Si el modal no está presente, hay un fallback con ilusPrompt.
+     4. No renombra ni toca NADA del Cubicador (Regla #4.2). Solo lee, en
+        modo solo-lectura, los data-* de las filas ya existentes
+        (#cubicadorTbody .cub-row) para el botón "Usar el cubicaje de
+        pantalla", y los hidden tido_N/nudo_N de #pdfExportForm.
+
+   ENDPOINTS QUE USA (ninguno inventado):
+     · POST /cubicador/api/cotizar        → cotización de todos los couriers
+     · POST /api/erp/documento            → cabecera + líneas del documento
+                                            (solo @login_required)
+   Todo lo demás que haría falta y NO existe queda anotado como comentario
+   HTML, nunca inventado.
+
+   CSS: todas las clases van prefijadas .cot- y las variables --cot-* para
+   no pisar los estilos del Cubicador ni de base.html.
+   ════════════════════════════════════════════════════════════════════════ #}
+
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   COTIZADOR — estilos propios (prefijo cot-). Mobile-first.
+   Paleta ILUS: rojo #dc2626 · negro #0a0a0a · blanco.
+   ══════════════════════════════════════════════════════════════════ */
+.cot-wrap{
+  --cot-red:#dc2626; --cot-red-d:#991b1b; --cot-red-50:#fef2f2; --cot-red-100:#fee2e2;
+  --cot-black:#0a0a0a; --cot-ink:#0f172a; --cot-mute:#6b7280; --cot-line:#e5e7eb;
+  --cot-bg:#f9fafb; --cot-green:#16a34a; --cot-green-50:#dcfce7; --cot-amber:#f59e0b;
+  --cot-amber-50:#fff8e1; --cot-blue:#3b82f6; --cot-blue-50:#dbeafe;
+  color:var(--cot-ink);
+}
+.cot-hide{display:none !important;}
+
+/* ───────── Hero ───────── */
+.cot-hero{
+  position:relative; overflow:hidden;
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);
+  color:#fff; border-radius:16px; padding:18px 18px 20px; margin-bottom:14px;
+  box-shadow:0 8px 26px -10px rgba(0,0,0,.55);
+}
+.cot-hero::after{
+  content:''; position:absolute; right:-60px; top:-70px; width:210px; height:210px;
+  background:radial-gradient(circle,rgba(220,38,38,.42) 0%,rgba(220,38,38,0) 68%);
+  pointer-events:none;
+}
+.cot-hero-inner{position:relative; z-index:1; display:flex; flex-direction:column; gap:14px;}
+.cot-kicker{
+  font-size:.62rem; font-weight:800; letter-spacing:.16em; text-transform:uppercase;
+  color:#fca5a5; display:flex; align-items:center; gap:7px;
+}
+.cot-kicker::before{content:''; width:22px; height:2px; background:var(--cot-red); border-radius:2px;}
+.cot-hero h5{margin:6px 0 4px; font-size:1.42rem; font-weight:900; letter-spacing:-.02em; line-height:1.1;}
+.cot-hero p{margin:0; font-size:.84rem; color:#c9cdd4; line-height:1.45; max-width:56ch;}
+.cot-hero-acts{display:flex; gap:8px; flex-wrap:wrap;}
+
+/* ───────── Botones ───────── */
+.cot-btn{
+  border:none; border-radius:11px; font-weight:800; font-size:.86rem;
+  min-height:44px; padding:11px 18px; cursor:pointer; display:inline-flex;
+  align-items:center; justify-content:center; gap:8px; line-height:1.1;
+  transition:transform .12s, background .15s, box-shadow .15s, color .15s;
+  text-decoration:none;
+}
+.cot-btn:active{transform:scale(.97);}
+.cot-btn:disabled{opacity:.45; cursor:not-allowed; transform:none;}
+.cot-btn-primary{background:var(--cot-red); color:#fff; box-shadow:0 6px 18px -8px rgba(220,38,38,.9);}
+.cot-btn-primary:hover:not(:disabled){background:var(--cot-red-d); color:#fff;}
+.cot-btn-dark{background:var(--cot-black); color:#fff;}
+.cot-btn-dark:hover:not(:disabled){background:#262626; color:#fff;}
+.cot-btn-ghost{background:rgba(255,255,255,.10); color:#fff; border:1.5px solid rgba(255,255,255,.24);}
+.cot-btn-ghost:hover:not(:disabled){background:rgba(255,255,255,.20); color:#fff;}
+.cot-btn-soft{background:#f3f4f6; color:#374151; border:1.5px solid var(--cot-line);}
+.cot-btn-soft:hover:not(:disabled){background:var(--cot-black); color:#fff; border-color:var(--cot-black);}
+.cot-btn-outline{background:#fff; color:var(--cot-red); border:1.6px solid var(--cot-red);}
+.cot-btn-outline:hover:not(:disabled){background:var(--cot-red); color:#fff;}
+.cot-btn-block{width:100%;}
+
+/* ───────── Panel de entrada ───────── */
+.cot-panel{
+  background:#fff; border:1px solid var(--cot-line); border-radius:16px;
+  box-shadow:0 2px 12px -6px rgba(15,23,42,.16); overflow:hidden; margin-bottom:14px;
+}
+.cot-panel-head{
+  background:var(--cot-black); color:#fff; padding:12px 16px;
+  display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+}
+.cot-panel-head .cot-ph-title{
+  font-size:.8rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em;
+  display:inline-flex; align-items:center; gap:8px;
+}
+.cot-panel-head .cot-ph-title i{color:var(--cot-red); font-size:1rem;}
+.cot-panel-body{padding:16px;}
+
+.cot-grid{display:grid; grid-template-columns:1fr; gap:14px;}
+@media(min-width:720px){
+  .cot-grid{grid-template-columns:1fr 1fr;}
+  .cot-col-full{grid-column:1/-1;}
+}
+.cot-field label, .cot-lbl{
+  display:block; font-size:.64rem; font-weight:800; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--cot-mute); margin-bottom:5px;
+}
+.cot-input, .cot-inputwrap input{
+  width:100%; border:1.6px solid var(--cot-line); border-radius:11px;
+  padding:12px 14px; font-size:16px; /* 16px: anti auto-zoom iOS (Regla #3) */
+  font-weight:700; color:var(--cot-ink); background:#fff; min-height:48px;
+  transition:border-color .15s, box-shadow .15s;
+}
+.cot-input::placeholder{color:#c3c8d0; font-weight:500;}
+.cot-input:focus{outline:none; border-color:var(--cot-red); box-shadow:0 0 0 4px var(--cot-red-100);}
+.cot-inputwrap{position:relative;}
+.cot-inputwrap .cot-affix{
+  position:absolute; top:50%; transform:translateY(-50%); font-weight:800;
+  font-size:.86rem; color:var(--cot-mute); pointer-events:none;
+}
+.cot-inputwrap.pre .cot-affix{left:14px;}
+.cot-inputwrap.pre input{padding-left:30px;}
+.cot-inputwrap.suf .cot-affix{right:14px;}
+.cot-inputwrap.suf input{padding-right:44px;}
+.cot-hint{font-size:.72rem; color:var(--cot-mute); margin-top:6px; line-height:1.4;}
+.cot-hint b{color:var(--cot-ink);}
+.cot-hint.ok{color:#15803d;}
+.cot-hint.warn{color:#b45309;}
+
+/* Switch residencial */
+.cot-switch{
+  display:flex; align-items:center; gap:12px; background:var(--cot-bg);
+  border:1.5px solid var(--cot-line); border-radius:12px; padding:10px 14px;
+  min-height:52px; cursor:pointer; user-select:none;
+}
+.cot-switch:hover{border-color:#cbd5e1;}
+.cot-switch input{
+  width:22px; height:22px; accent-color:var(--cot-red); flex:0 0 auto; cursor:pointer; margin:0;
+}
+/* El label del switch NO hereda el estilo de etiqueta chica en mayúsculas */
+.cot-switch .cot-sw-txt{
+  font-size:.86rem; font-weight:700; color:var(--cot-ink); line-height:1.25;
+  text-transform:none; letter-spacing:normal; margin:0;
+}
+.cot-switch .cot-sw-sub{
+  font-size:.72rem; font-weight:500; color:var(--cot-mute); display:block; margin-top:2px;
+  text-transform:none; letter-spacing:normal; line-height:1.35;
+}
+
+/* Origen del dato (documento ERP) */
+.cot-origen{
+  display:flex; align-items:center; gap:9px; flex-wrap:wrap;
+  background:linear-gradient(90deg,#f8fafc 0%,#fff 100%);
+  border:1px dashed #cbd5e1; border-radius:11px; padding:9px 12px; margin-top:14px;
+  font-size:.76rem; color:var(--cot-mute);
+}
+.cot-origen b{color:var(--cot-black);}
+.cot-doc-pill{
+  background:var(--cot-black); color:#fff; border-radius:50px; padding:3px 11px;
+  font-family:ui-monospace,'JetBrains Mono',monospace; font-size:.72rem; font-weight:800;
+  letter-spacing:.02em;
+}
+.cot-actions{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;}
+.cot-actions .cot-btn{flex:1 1 190px;}
+
+/* ───────── Franja resumen del cálculo ───────── */
+.cot-summary{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:1px;
+  background:var(--cot-line); border:1px solid var(--cot-line); border-radius:14px;
+  overflow:hidden; margin-bottom:14px;
+}
+.cot-sum-cell{background:#fff; padding:12px 14px;}
+.cot-sum-cell .cot-sum-val{
+  font-size:1.14rem; font-weight:900; color:var(--cot-black); letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; line-height:1.15; word-break:break-word;
+}
+.cot-sum-cell .cot-sum-val small{font-size:.72rem; font-weight:800; color:var(--cot-mute);}
+
+/* ───────── Aviso global de estimados ───────── */
+.cot-alert-est{
+  display:flex; gap:11px; align-items:flex-start;
+  background:var(--cot-red-50); border:1.6px solid var(--cot-red);
+  border-radius:13px; padding:12px 14px; margin-bottom:14px;
+}
+.cot-alert-est i{color:var(--cot-red); font-size:1.15rem; line-height:1.2; flex:0 0 auto;}
+.cot-alert-est .cot-ae-t{font-size:.84rem; font-weight:900; color:#7f1d1d; text-transform:uppercase; letter-spacing:.03em;}
+.cot-alert-est .cot-ae-s{font-size:.79rem; color:#991b1b; margin-top:2px; line-height:1.45;}
+
+/* ───────── Grilla de resultados ───────── */
+.cot-results{display:grid; grid-template-columns:1fr; gap:12px;}
+@media(min-width:760px){.cot-results{grid-template-columns:repeat(auto-fill,minmax(272px,1fr));}}
+
+.cot-card{
+  position:relative; background:#fff; border:1.6px solid var(--cot-line);
+  border-radius:16px; overflow:hidden; display:flex; flex-direction:column;
+  box-shadow:0 2px 10px -6px rgba(15,23,42,.18); transition:transform .14s, box-shadow .14s;
+}
+.cot-card:hover{transform:translateY(-2px); box-shadow:0 10px 24px -12px rgba(15,23,42,.35);}
+
+/* Franja roja de PRECIO ESTIMADO — visible de un vistazo, sin hover */
+.cot-flag-est{
+  background:var(--cot-red); color:#fff; padding:8px 12px;
+  font-size:.68rem; font-weight:900; letter-spacing:.05em; text-transform:uppercase;
+  display:flex; align-items:center; gap:7px; line-height:1.3;
+}
+.cot-flag-est i{font-size:.9rem;}
+.cot-card.is-est{border-color:var(--cot-red); border-style:dashed; background:#fffcfc;}
+
+/* La más barata (nunca puede ser una estimada) */
+.cot-card.is-best{
+  grid-column:1/-1;
+  background:linear-gradient(155deg,#0a0a0a 0%,#171717 55%,#241010 100%);
+  border-color:var(--cot-black); color:#fff;
+  box-shadow:0 14px 34px -16px rgba(0,0,0,.8);
+}
+.cot-card.is-best .cot-name{color:#fff;}
+.cot-card.is-best .cot-lbl{color:#9ca3af;}
+.cot-card.is-best .cot-price{color:#fff;}
+.cot-card.is-best .cot-eta-val{color:#fff;}
+.cot-card.is-best .cot-card-body{border-top:none;}
+.cot-card.is-best .cot-foot{background:rgba(255,255,255,.06); border-top-color:rgba(255,255,255,.12);}
+.cot-ribbon{
+  background:var(--cot-red); color:#fff; padding:7px 12px; font-size:.66rem; font-weight:900;
+  letter-spacing:.13em; text-transform:uppercase; display:flex; align-items:center; gap:7px;
+}
+
+.cot-card-body{padding:14px;}
+.cot-card-top{display:flex; align-items:center; gap:10px; margin-bottom:12px; min-height:26px;}
+.cot-logo{
+  flex:0 0 auto; min-width:44px; height:26px; display:flex; align-items:center;
+  justify-content:flex-start; overflow:hidden;
+}
+.cot-logo img{max-height:26px; max-width:96px; object-fit:contain;}
+/* En la tarjeta destacada (fondo negro) los logos de marca se pintan sobre
+   una pastilla blanca: si no, el morado de FedEx o el gris de Felca quedan
+   ilegibles contra el negro. */
+.cot-card.is-best .cot-logo{
+  background:#fff; border-radius:8px; padding:3px 8px; height:auto; min-height:26px;
+  align-items:center;
+}
+.cot-name{font-size:.98rem; font-weight:900; color:var(--cot-black); letter-spacing:-.01em; line-height:1.15;}
+.cot-svc{font-size:.68rem; font-weight:700; color:var(--cot-mute); text-transform:uppercase; letter-spacing:.05em; margin-top:2px;}
+.cot-card.is-best .cot-svc{color:#9ca3af;}
+
+.cot-price-row{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+.cot-price{
+  font-size:clamp(1.75rem,7.5vw,2.15rem); font-weight:900; letter-spacing:-.035em;
+  color:var(--cot-black); font-variant-numeric:tabular-nums; line-height:1;
+}
+.cot-price small{font-size:.68rem; font-weight:800; color:var(--cot-mute); letter-spacing:.04em; margin-left:5px;}
+.cot-card.is-est .cot-price{color:var(--cot-red-d);}
+.cot-eta{text-align:right; flex:0 0 auto;}
+.cot-eta-val{font-size:1rem; font-weight:900; color:var(--cot-black); line-height:1.15; white-space:nowrap;}
+.cot-ahorro{
+  margin-top:10px; font-size:.8rem; font-weight:800; color:#4ade80;
+  display:inline-flex; align-items:center; gap:6px;
+}
+
+.cot-foot{
+  border-top:1px solid var(--cot-line); background:var(--cot-bg);
+  padding:9px 14px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+}
+.cot-chip{
+  font-size:.6rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase;
+  padding:3px 9px; border-radius:50px; white-space:nowrap;
+}
+.cot-chip.gris{background:#f3f4f6; color:#4b5563;}
+.cot-chip.roja{background:var(--cot-red); color:#fff;}
+.cot-chip.verde{background:var(--cot-green-50); color:#15803d;}
+.cot-chip.ambar{background:var(--cot-amber-50); color:#92400e;}
+.cot-chip.azul{background:var(--cot-blue-50); color:#1e40af;}
+.cot-card.is-best .cot-chip.gris{background:rgba(255,255,255,.14); color:#e5e7eb;}
+
+/* Sin cobertura */
+.cot-card.is-nocov{background:#fbfbfc; border-style:dashed; border-color:#d7dbe0;}
+.cot-card.is-nocov .cot-name{color:#6b7280;}
+.cot-nocov-msg{font-size:.8rem; color:var(--cot-mute); line-height:1.45; margin-top:8px;}
+
+/* ───────── Estado vacío / carga / error ───────── */
+.cot-empty{
+  background:#fff; border:2px dashed #d7dbe0; border-radius:16px;
+  padding:34px 20px; text-align:center;
+}
+.cot-empty .cot-emoji{
+  width:64px; height:64px; border-radius:20px; margin:0 auto 14px;
+  background:linear-gradient(140deg,#0a0a0a,#2a0d0d); color:#fff;
+  display:flex; align-items:center; justify-content:center; font-size:1.7rem;
+  box-shadow:0 10px 24px -12px rgba(0,0,0,.7);
+}
+.cot-empty h6{font-size:1.02rem; font-weight:900; color:var(--cot-black); margin:0 0 6px;}
+.cot-empty p{font-size:.85rem; color:var(--cot-mute); margin:0 auto; max-width:44ch; line-height:1.5;}
+.cot-empty .cot-steps{
+  display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:16px;
+}
+.cot-step{
+  background:var(--cot-bg); border:1px solid var(--cot-line); border-radius:50px;
+  padding:6px 13px; font-size:.72rem; font-weight:700; color:#4b5563;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.cot-step span{
+  width:18px; height:18px; border-radius:50%; background:var(--cot-red); color:#fff;
+  font-size:.62rem; font-weight:900; display:inline-flex; align-items:center; justify-content:center;
+}
+.cot-error{
+  background:var(--cot-red-50); border:1.6px solid var(--cot-red); border-radius:14px;
+  padding:16px; display:flex; gap:11px; align-items:flex-start;
+}
+.cot-error i{color:var(--cot-red); font-size:1.2rem; flex:0 0 auto;}
+.cot-error b{display:block; color:#7f1d1d; font-size:.9rem;}
+.cot-error span{font-size:.8rem; color:#991b1b; line-height:1.45;}
+
+/* Skeleton de carga */
+.cot-skel{
+  background:#fff; border:1.6px solid var(--cot-line); border-radius:16px; padding:16px;
+  overflow:hidden; position:relative;
+}
+.cot-skel-line{background:#eef0f3; border-radius:7px; height:12px; margin-bottom:10px;}
+.cot-skel-line.big{height:30px; width:62%; margin-top:14px;}
+.cot-skel-line.w40{width:40%;} .cot-skel-line.w70{width:70%;} .cot-skel-line.w30{width:30%;}
+.cot-skel::after{
+  content:''; position:absolute; inset:0; transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent);
+  animation:cotShimmer 1.25s infinite;
+}
+@keyframes cotShimmer{100%{transform:translateX(100%);}}
+.cot-loading-note{
+  grid-column:1/-1; text-align:center; font-size:.82rem; color:var(--cot-mute);
+  font-weight:700; padding-top:4px;
+}
+.cot-loading-note i{color:var(--cot-red); animation:cotSpin 1s linear infinite; display:inline-block;}
+@keyframes cotSpin{100%{transform:rotate(360deg);}}
+
+/* Nota al pie: de dónde sale cada precio */
+.cot-legend{
+  margin-top:16px; background:var(--cot-bg); border:1px solid var(--cot-line);
+  border-radius:13px; padding:13px 15px;
+}
+.cot-legend .cot-lg-t{
+  font-size:.66rem; font-weight:900; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--cot-mute); margin-bottom:9px;
+}
+.cot-legend ul{margin:0; padding:0; list-style:none; display:grid; gap:7px;}
+.cot-legend li{display:flex; gap:9px; align-items:flex-start; font-size:.77rem; color:#4b5563; line-height:1.45;}
+
+/* La franja del Cubicador ya usa .no-print para su impresión; acá el botón
+   "Imprimir comparación" abre una ventana propia, así que este bloque solo
+   evita que el cotizador ensucie una impresión de la pestaña Cubicaje. */
+@media print{ .cot-wrap{display:none !important;} }
+</style>
+
+<div class="cot-wrap" id="cotWrap">
+
+  <!-- ═══════════ HERO ═══════════ -->
+  <div class="cot-hero">
+    <div class="cot-hero-inner">
+      <div>
+        <div class="cot-kicker">Logística ILUS</div>
+        <h5>Cotizador de envíos</h5>
+        <p>Compara en una sola pantalla lo que cobra cada courier por este envío.
+           El precio más bajo con tarifa confirmada queda destacado; las estimaciones
+           del sistema se muestran marcadas y nunca se recomiendan.</p>
+      </div>
+      <div class="cot-hero-acts">
+        <button type="button" class="cot-btn cot-btn-ghost" id="cotPrintBtn" disabled>
+          <i class="bi bi-printer"></i>Imprimir comparación
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ ENTRADA ═══════════ -->
+  <div class="cot-panel">
+    <div class="cot-panel-head">
+      <span class="cot-ph-title"><i class="bi bi-sliders2"></i>Datos del envío</span>
+      <button type="button" class="cot-btn cot-btn-primary" id="cotErpBtn"
+              style="min-height:38px;padding:8px 14px;font-size:.78rem">
+        <i class="bi bi-file-earmark-text"></i>Traer desde el ERP
+      </button>
+    </div>
+
+    <div class="cot-panel-body">
+      <div class="cot-grid">
+
+        <div class="cot-field cot-col-full">
+          <label for="cotCliente">Cliente</label>
+          <input type="text" id="cotCliente" class="cot-input"
+                 placeholder="Nombre o razón social del destinatario"
+                 autocomplete="off" autocorrect="off">
+        </div>
+
+        <div class="cot-field">
+          <label for="cotComuna">Comuna destino <span style="color:#dc2626">*</span></label>
+          <input type="text" id="cotComuna" class="cot-input"
+                 placeholder="Ej: Lo Barnechea"
+                 autocomplete="off" autocorrect="off" spellcheck="false">
+          <div class="cot-hint" id="cotComunaHint">
+            Escribe y elige la comuna sugerida por Google para evitar errores de tipeo.
+          </div>
+          <input type="hidden" id="cotComunaRegion" value="">
+          <input type="hidden" id="cotComunaLat" value="">
+          <input type="hidden" id="cotComunaLng" value="">
+          <input type="hidden" id="cotComunaPlaceId" value="">
+        </div>
+
+        <div class="cot-field">
+          <label for="cotPeso">Peso a cotizar</label>
+          <div class="cot-inputwrap suf">
+            <input type="text" id="cotPeso" class="cot-input" inputmode="decimal"
+                   placeholder="0,0" autocomplete="off">
+            <span class="cot-affix">kg</span>
+          </div>
+          <div class="cot-hint" id="cotPesoHint">
+            Peso facturable (el mayor entre el real y el volumétrico).
+          </div>
+        </div>
+
+        <div class="cot-field">
+          <label for="cotValorNeto">Valor neto de la mercadería</label>
+          <div class="cot-inputwrap pre">
+            <input type="text" id="cotValorNeto" class="cot-input" inputmode="numeric"
+                   placeholder="0" autocomplete="off">
+            <span class="cot-affix">$</span>
+          </div>
+          <div class="cot-hint">Se usa para calcular el seguro de la carga.</div>
+        </div>
+
+        <div class="cot-field">
+          <label>Tipo de destino</label>
+          <label class="cot-switch" for="cotResid">
+            <input type="checkbox" id="cotResid">
+            <span class="cot-sw-txt">Es domicilio residencial
+              <span class="cot-sw-sub">Varios couriers cobran recargo por entrega en casa particular.</span>
+            </span>
+          </label>
+        </div>
+
+      </div>
+
+      <div class="cot-origen cot-hide" id="cotOrigen">
+        <i class="bi bi-link-45deg"></i>
+        <span>Datos tomados de</span>
+        <span class="cot-doc-pill" id="cotOrigenPill">—</span>
+        <span id="cotOrigenTxt"></span>
+      </div>
+
+      <div class="cot-actions">
+        <button type="button" class="cot-btn cot-btn-primary" id="cotSubmitBtn">
+          <i class="bi bi-truck"></i>Cotizar con todos los couriers
+        </button>
+        <button type="button" class="cot-btn cot-btn-soft" id="cotUsarCubicajeBtn"
+                title="Toma el peso facturable de las líneas que están cargadas en la pestaña Cubicaje">
+          <i class="bi bi-box-seam"></i>Usar el cubicaje de pantalla
+        </button>
+        <button type="button" class="cot-btn cot-btn-soft" id="cotLimpiarBtn">
+          <i class="bi bi-eraser"></i>Limpiar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ RESUMEN DEL CÁLCULO ═══════════ -->
+  <div class="cot-summary cot-hide" id="cotSummary"></div>
+
+  <!-- ═══════════ RESULTADOS ═══════════ -->
+  <div id="cotResultados"></div>
+
+  <!-- ═══════════ LEYENDA ═══════════ -->
+  <div class="cot-legend">
+    <div class="cot-lg-t">De dónde sale cada precio</div>
+    <ul>
+      <li><span class="cot-chip gris">Tarifa ILUS</span>
+          <span>Sale del tarifario negociado que ILUS tiene cargado para esa comuna.</span></li>
+      <li><span class="cot-chip azul">API</span>
+          <span>El courier respondió en línea con su propio precio para este envío.</span></li>
+      <li><span class="cot-chip roja">Estimado</span>
+          <span><b>No es una tarifa confirmada.</b> El courier no tiene precio cargado para
+          esa comuna y el sistema calcula una referencia. Confírmala antes de comprometerla
+          con el cliente — por eso jamás aparece como recomendada.</span></li>
+      <li><span class="cot-chip verde">Validada</span>
+          <span>La tarifa fue contrastada a mano contra el Excel maestro.</span></li>
+    </ul>
+  </div>
+
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   COTIZADOR DE ENVÍOS — lógica de la pestaña.
+   Todo vive dentro de un IIFE: no define globales (salvo el hook
+   window.cotizadorTabReady para la carga perezosa de la pestaña) y no
+   toca ninguna variable/función del Cubicador.
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  // ── Endpoints (contrato fijo, NO inventar otros) ───────────────────
+  var EP_COTIZAR = '/cubicador/api/cotizar';   // POST JSON
+  var EP_DOC     = '/api/erp/documento';       // POST JSON (solo login_required)
+  var LOGO_URL   = '{{ url_for("static", filename="Logo.png") }}';
+
+  // ── Estado ─────────────────────────────────────────────────────────
+  var state = {
+    tido: '', nudo: '',
+    docs: [],                // [{tido,nudo}] — viaja como `documentos` al backend
+    pesoReal: null,          // kg reales del documento (si vinieron del ERP)
+    pesoVol:  null,          // kg volumétricos del documento
+    ultima:   null,          // última respuesta normalizada
+    cargando: false
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ── Utilidades de formato ─────────────────────────────────────────
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function fClp(n) {
+    var v = Number(n);
+    if (!isFinite(v)) return '—';
+    return '$' + Math.round(v).toLocaleString('es-CL');
+  }
+  function fKg(n) {
+    var v = Number(n);
+    if (!isFinite(v)) return '—';
+    return v.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' kg';
+  }
+  // Acepta "1.571.566", "173,89", "173.89" y devuelve Number.
+  function parseNum(txt) {
+    var s = String(txt == null ? '' : txt).trim().replace(/\s|\$/g, '');
+    if (!s) return 0;
+    if (s.indexOf(',') >= 0) {                 // coma = decimal chileno
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) { // 1.571.566 = miles
+      s = s.replace(/\./g, '');
+    }
+    var v = parseFloat(s);
+    return isFinite(v) ? v : 0;
+  }
+  function toast(msg, type) {
+    if (typeof window.ilusToast === 'function') window.ilusToast(msg, { type: type || 'info' });
+    else console.log('[cotizador]', msg);
+  }
+
+  // ── Normalización de la respuesta del backend ─────────────────────
+  // Contrato de POST /cubicador/api/cotizar (cubicador_plus.py): devuelve lo
+  // mismo que el comparador de couriers y agrega, por courier, es_estimado /
+  // motivo_estimado / tarifa_validada, y en la raíz recomendado_id (SIEMPRE
+  // no estimado), recomendado_id_comparador, aviso_recomendacion y
+  // hay_estimados. Igual se toleran los alias del motor (courier_id/id,
+  // precio/subtotal, fuente 'estimado') por si se llama al comparador crudo.
+  function normItem(c) {
+    var precio = (c.precio != null) ? c.precio
+               : (c.subtotal != null) ? c.subtotal
+               : (c.precio_venta != null) ? c.precio_venta : null;
+    var trace = c.trace || {};
+    var fuenteTrace = String(trace.fuente || '').toLowerCase();
+    var estimado = (c.es_estimado === true) ||
+                   (String(c.fuente || '').toLowerCase() === 'estimado') ||
+                   (fuenteTrace.indexOf('estim') === 0);
+    var cobertura = (c.tiene_cobertura === false) ? false
+                  : (c.tiene_cobertura === true) ? true
+                  : (precio != null);
+    return {
+      id:        (c.courier_id != null) ? c.courier_id : (c.id != null ? c.id : null),
+      nombre:    c.courier_nombre || c.nombre || 'Courier',
+      logo:      c.logo_url || '',
+      servicio:  c.servicio || '',
+      transito:  c.tiempo_transito || '',
+      precio:    (precio != null && isFinite(Number(precio))) ? Number(precio) : null,
+      estimado:  estimado,
+      motivo:    c.motivo_estimado || '',
+      cobertura: cobertura && (precio != null),
+      fuente:    c.fuente || '',
+      mensaje:   c.mensaje || '',
+      validado:  !!(c.tarifa_validada || trace.validado),
+      advertencias: Array.isArray(trace.advertencias) ? trace.advertencias : []
+    };
+  }
+  function normResp(d) {
+    var raw = d.cotizaciones || d.couriers || d.resultados || [];
+    var items = (Array.isArray(raw) ? raw : []).map(normItem);
+    return {
+      items: items,
+      comuna: d.comuna_resuelta || '',
+      pesoFact: (d.peso_facturable != null) ? Number(d.peso_facturable) : null,
+      mensaje: d.mensaje || '',
+      aviso: d.aviso_recomendacion || '',
+      tiempo: (d.tiempo_seg != null) ? Number(d.tiempo_seg) : null,
+      // recomendado_id del backend ya viene garantizado como NO estimado; el
+      // front igual recalcula el destacado para que la promesa se cumpla aunque
+      // se llame a otro comparador.
+      recomendadoBackend: (d.recomendado_id != null) ? d.recomendado_id : null
+    };
+  }
+
+  // ── Logos de respaldo (mismo criterio que asignar.html) ───────────
+  var LOGOS = {
+    'fedex':               '<b style="color:#4D148C;font-size:1rem">Fed<span style="color:#FF6200">Ex</span></b>',
+    'fedex directo':       '<b style="color:#4D148C;font-size:1rem">Fed<span style="color:#FF6200">Ex</span></b>',
+    'starken':             '<b style="color:#e53e3e;font-size:.92rem">★ Starken</b>',
+    'blue express':        '<b style="color:#2563eb;font-size:.92rem">blue</b>',
+    'chilexpress':         '<b style="color:#e5a900;font-size:.84rem">//chilexpress</b>',
+    'clickex':             '<b style="color:#0ea5e9;font-size:.92rem">⚡ Clickex</b>',
+    'felca':               '<b style="color:#6b7280;font-size:.84rem">Felca</b>',
+    'transporte felca':    '<b style="color:#6b7280;font-size:.84rem">Trans. Felca</b>',
+    'milling':             '<b style="color:#6b7280;font-size:.84rem">Milling</b>',
+    'transportes milling': '<b style="color:#6b7280;font-size:.84rem">Trans. Milling</b>',
+    'enviame':             '<b style="color:#16a34a;font-size:.92rem">Envíame</b>',
+    'envíame':             '<b style="color:#16a34a;font-size:.92rem">Envíame</b>'
+  };
+  function logoHtml(it, dark) {
+    if (it.logo) return '<img src="' + esc(it.logo) + '" alt="' + esc(it.nombre) + '">';
+    var k = (it.nombre || '').trim().toLowerCase();
+    if (LOGOS[k]) return LOGOS[k];
+    return '<b style="color:' + (dark ? '#fff' : '#374151') + ';font-size:.92rem">' + esc(it.nombre) + '</b>';
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────
+  function chipFuente(it) {
+    if (it.estimado) return '<span class="cot-chip roja"><i class="bi bi-exclamation-triangle-fill"></i> Estimado</span>';
+    if (it.fuente === 'api') return '<span class="cot-chip azul">API del courier</span>';
+    if (it.fuente === 'tabla_fallback') return '<span class="cot-chip ambar">Tarifa (API caída)</span>';
+    return '<span class="cot-chip gris">Tarifa ILUS</span>';
+  }
+
+  function cardHtml(it, opts) {
+    opts = opts || {};
+    var cls = 'cot-card';
+    if (opts.best) cls += ' is-best';
+    if (it.estimado) cls += ' is-est';
+    if (!it.cobertura) cls += ' is-nocov';
+
+    var h = '<article class="' + cls + '">';
+
+    // Franja de transparencia — SIEMPRE visible, sin hover, arriba de todo.
+    if (it.estimado) {
+      h += '<div class="cot-flag-est"><i class="bi bi-exclamation-octagon-fill"></i>' +
+           '<span>Precio estimado — no es una tarifa confirmada con el courier</span></div>';
+    }
+    if (opts.best) {
+      h += '<div class="cot-ribbon"><i class="bi bi-trophy-fill"></i>La más conveniente</div>';
+    }
+
+    h += '<div class="cot-card-body">';
+    h += '<div class="cot-card-top"><div class="cot-logo">' + logoHtml(it, !!opts.best) + '</div>' +
+         '<div style="min-width:0"><div class="cot-name">' + esc(it.nombre) + '</div>' +
+         (it.servicio ? '<div class="cot-svc">' + esc(it.servicio) + '</div>' : '') +
+         '</div></div>';
+
+    if (it.cobertura) {
+      h += '<div class="cot-price-row">' +
+             '<div><div class="cot-lbl">Precio</div>' +
+               '<div class="cot-price">' + fClp(it.precio) + '<small>IVA incl.</small></div>' +
+             '</div>' +
+             '<div class="cot-eta"><div class="cot-lbl">Tránsito</div>' +
+               '<div class="cot-eta-val">' + esc(it.transito || '—') + '</div>' +
+             '</div>' +
+           '</div>';
+      if (opts.best && opts.ahorro > 0) {
+        h += '<div class="cot-ahorro"><i class="bi bi-graph-down-arrow"></i>' +
+             'Ahorra ' + fClp(opts.ahorro) + ' frente a la alternativa más cara</div>';
+      }
+      if (it.estimado) {
+        h += '<div class="cot-hint warn" style="margin-top:10px">' +
+             '<i class="bi bi-info-circle me-1"></i>' +
+             esc(it.motivo || ('Este courier no tiene tarifa cargada para esta comuna. ' +
+                 'Confirma el valor antes de comprometerlo con el cliente.')) + '</div>';
+      }
+    } else {
+      h += '<div class="cot-lbl">Sin cobertura</div>' +
+           '<div class="cot-nocov-msg">' +
+             esc(it.mensaje || 'Este courier no cubre la comuna destino con los datos entregados.') +
+           '</div>';
+    }
+    h += '</div>'; // /body
+
+    var chips = '';
+    if (it.cobertura) chips += chipFuente(it);
+    if (it.validado)  chips += '<span class="cot-chip verde">Validada</span>';
+    if (it.advertencias.length) {
+      chips += '<span class="cot-chip ambar" title="' + esc(it.advertencias.join(' | ')) + '">Revisar</span>';
+    }
+    if (!it.cobertura) chips += '<span class="cot-chip gris">No cotiza</span>';
+    if (chips) h += '<div class="cot-foot">' + chips + '</div>';
+
+    h += '</article>';
+    return h;
+  }
+
+  function renderVacio() {
+    $('cotResultados').innerHTML =
+      '<div class="cot-empty">' +
+        '<div class="cot-emoji"><i class="bi bi-truck"></i></div>' +
+        '<h6>Todavía no hay comparación</h6>' +
+        '<p>Completa la comuna destino y el peso del envío, o trae los datos directamente ' +
+        'desde un documento del ERP. En segundos verás lo que cobra cada courier.</p>' +
+        '<div class="cot-steps">' +
+          '<span class="cot-step"><span>1</span>Comuna destino</span>' +
+          '<span class="cot-step"><span>2</span>Peso</span>' +
+          '<span class="cot-step"><span>3</span>Cotizar</span>' +
+        '</div>' +
+      '</div>';
+    $('cotSummary').classList.add('cot-hide');
+    $('cotSummary').innerHTML = '';
+    setPrintEnabled(false);
+  }
+
+  function renderCargando() {
+    var skel = '';
+    for (var i = 0; i < 3; i++) {
+      skel += '<div class="cot-skel">' +
+                '<div class="cot-skel-line w40"></div>' +
+                '<div class="cot-skel-line big"></div>' +
+                '<div class="cot-skel-line w70"></div>' +
+                '<div class="cot-skel-line w30"></div>' +
+              '</div>';
+    }
+    $('cotResultados').innerHTML =
+      '<div class="cot-results">' + skel +
+      '<div class="cot-loading-note"><i class="bi bi-arrow-repeat"></i> ' +
+      'Consultando a todos los couriers…</div></div>';
+    $('cotSummary').classList.add('cot-hide');
+    setPrintEnabled(false);
+  }
+
+  function renderError(msg) {
+    $('cotResultados').innerHTML =
+      '<div class="cot-error"><i class="bi bi-exclamation-triangle-fill"></i>' +
+      '<div><b>No se pudo cotizar</b><span>' + esc(msg || 'Error desconocido.') + '</span></div></div>';
+    $('cotSummary').classList.add('cot-hide');
+    setPrintEnabled(false);
+  }
+
+  function renderResultado(r) {
+    state.ultima = r;
+
+    if (!r.items.length) {
+      $('cotResultados').innerHTML =
+        '<div class="cot-empty">' +
+          '<div class="cot-emoji"><i class="bi bi-question-circle"></i></div>' +
+          '<h6>Sin cotizaciones para mostrar</h6>' +
+          '<p>' + esc(r.mensaje || 'El sistema no devolvió cotizaciones para estos datos.') + '</p>' +
+        '</div>';
+      $('cotSummary').classList.add('cot-hide');
+      setPrintEnabled(false);
+      return;
+    }
+
+    // Orden: (1) con tarifa real, (2) estimadas, (3) sin cobertura.
+    var reales = r.items.filter(function (i) { return i.cobertura && !i.estimado; })
+                        .sort(function (a, b) { return a.precio - b.precio; });
+    var estim  = r.items.filter(function (i) { return i.cobertura && i.estimado; })
+                        .sort(function (a, b) { return a.precio - b.precio; });
+    var nocov  = r.items.filter(function (i) { return !i.cobertura; });
+
+    // ⚠ TRANSPARENCIA (no negociable): el destacado se elige SOLO entre
+    // tarifas confirmadas. Una estimada nunca puede ser "la recomendada",
+    // aunque el backend la mande como recomendado_id.
+    var best = reales.length ? reales[0] : null;
+    var ahorro = 0;
+    if (best && reales.length > 1) ahorro = reales[reales.length - 1].precio - best.precio;
+
+    var html = '';
+
+    if (estim.length) {
+      // Si el backend mandó su propio aviso (ej. "el más bajo es estimado…"),
+      // manda ese texto: es la explicación autoritativa del cálculo.
+      var sub = r.aviso
+        ? esc(r.aviso)
+        : ('Ese courier no tiene tarifa cargada para esta comuna, así que el valor ' +
+           'lo calcula el sistema como referencia. <b>No está confirmado con el courier</b> ' +
+           'y por eso no se muestra como recomendado.');
+      html += '<div class="cot-alert-est"><i class="bi bi-exclamation-octagon-fill"></i><div>' +
+              '<div class="cot-ae-t">' + estim.length + ' precio' + (estim.length === 1 ? '' : 's') +
+              ' de esta comparación ' + (estim.length === 1 ? 'es una estimación' : 'son estimaciones') + '</div>' +
+              '<div class="cot-ae-s">' + sub + '</div></div></div>';
+    }
+    if (!reales.length && (estim.length || nocov.length)) {
+      html += '<div class="cot-alert-est" style="background:var(--cot-amber-50);border-color:var(--cot-amber)">' +
+              '<i class="bi bi-info-circle-fill" style="color:#b45309"></i><div>' +
+              '<div class="cot-ae-t" style="color:#7c2d12">Ninguna tarifa confirmada para esta comuna</div>' +
+              '<div class="cot-ae-s" style="color:#92400e">No hay courier con precio negociado cargado. ' +
+              'Cotiza directamente con el courier antes de comprometer un valor.</div></div></div>';
+    }
+
+    html += '<div class="cot-results">';
+    if (best) html += cardHtml(best, { best: true, ahorro: ahorro });
+    reales.slice(best ? 1 : 0).forEach(function (i) { html += cardHtml(i); });
+    estim.forEach(function (i) { html += cardHtml(i); });
+    nocov.forEach(function (i) { html += cardHtml(i); });
+    html += '</div>';
+
+    $('cotResultados').innerHTML = html;
+
+    // Franja resumen
+    var sum = '';
+    sum += celda('Comuna destino', esc(r.comuna || $('cotComuna').value || '—'));
+    sum += celda('Peso facturable', (r.pesoFact != null ? fKg(r.pesoFact) : fKg(parseNum($('cotPeso').value))));
+    sum += celda('Couriers comparados', r.items.length +
+      (nocov.length ? ' <small>' + nocov.length + ' sin cobertura</small>' : ''));
+    sum += celda('Tarifas confirmadas', reales.length + (estim.length ? ' <small>+' + estim.length + ' estimadas</small>' : ''));
+    if (best) sum += celda('Mejor precio', fClp(best.precio) + ' <small>' + esc(best.nombre) + '</small>');
+    $('cotSummary').innerHTML = sum;
+    $('cotSummary').classList.remove('cot-hide');
+
+    setPrintEnabled(true);
+  }
+
+  function celda(lbl, val) {
+    return '<div class="cot-sum-cell"><div class="cot-lbl">' + lbl + '</div>' +
+           '<div class="cot-sum-val">' + val + '</div></div>';
+  }
+
+  function setPrintEnabled(on) {
+    var b = $('cotPrintBtn');
+    if (b) b.disabled = !on;
+  }
+
+  // ── Cotizar ────────────────────────────────────────────────────────
+  async function cotizar() {
+    if (state.cargando) return;
+
+    var comuna = ($('cotComuna').value || '').trim();
+    var peso   = parseNum($('cotPeso').value);
+    var valor  = parseNum($('cotValorNeto').value);
+
+    if (!comuna) {
+      toast('Ingresa la comuna destino para cotizar', 'warning');
+      $('cotComuna').focus();
+      return;
+    }
+    if (!(peso > 0)) {
+      toast('Ingresa el peso del envío (kg)', 'warning');
+      $('cotPeso').focus();
+      return;
+    }
+
+    var btn = $('cotSubmitBtn');
+    var htmlOrig = btn.innerHTML;
+    state.cargando = true;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>Cotizando…';
+    renderCargando();
+
+    try {
+      // CSRF: el wrapper global de fetch (base.html) inyecta X-CSRF-Token.
+      var r = await fetch(EP_COTIZAR, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          comuna:         comuna,
+          peso_kg:        (state.pesoReal != null ? state.pesoReal : peso),
+          peso_pred_kg:   peso,
+          valor_neto:     valor,
+          es_residencial: !!$('cotResid').checked,
+          cliente:        ($('cotCliente').value || '').trim(),
+          // `documentos` es opcional: el backend lo usa para el audit trail y
+          // para completar comuna/valor_neto si faltaran.
+          documentos:     state.docs.slice()
+        })
+      });
+      var d = await r.json();
+      if (!r.ok || d.error || d.ok === false) throw new Error(d.error || ('HTTP ' + r.status));
+      if (d.aviso_documento) toast(d.aviso_documento, 'warning');
+      renderResultado(normResp(d));
+    } catch (e) {
+      console.warn('[cotizador] error:', e);
+      renderError(e.message);
+      toast('No se pudo cotizar: ' + e.message, 'error');
+    } finally {
+      state.cargando = false;
+      btn.disabled = false;
+      btn.innerHTML = htmlOrig;
+    }
+  }
+
+  // ── Traer datos desde un documento del ERP ────────────────────────
+  async function cargarDoc(tido, nudo) {
+    if (!tido || !nudo) return;
+    toast('Consultando ' + tido + ' ' + nudo + ' en el ERP…', 'info');
+    try {
+      var r = await fetch(EP_DOC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tido: tido, nudo: nudo })
+      });
+      var d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+
+      var hdr = d.hdr || {};
+      var lineas = (d.lineas || []).filter(function (l) { return !l.es_zz; });
+
+      var pesoReal = 0, pesoPred = 0;
+      lineas.forEach(function (l) {
+        pesoReal += Number(l.peso_kg_tot) || 0;
+        pesoPred += Number(l.pred_tot)    || 0;
+      });
+
+      if (hdr.cliente_nombre) $('cotCliente').value = hdr.cliente_nombre;
+      if (hdr.comuna)         setComuna(hdr.comuna, '');
+      if (hdr.valor_neto != null) setValorNeto(Number(hdr.valor_neto) || 0);
+
+      state.tido = hdr.tido || tido;
+      state.nudo = hdr.nudo_display || hdr.nudo || nudo;
+      state.docs = [{ tido: state.tido, nudo: state.nudo }];
+      state.pesoReal = pesoReal > 0 ? pesoReal : null;
+      state.pesoVol  = null;
+
+      var pesoUsar = pesoPred > 0 ? pesoPred : pesoReal;
+      $('cotPeso').value = pesoUsar > 0
+        ? pesoUsar.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+        : '';
+
+      if (pesoUsar > 0 && pesoReal > 0 && Math.abs(pesoPred - pesoReal) > 0.05) {
+        $('cotPesoHint').className = 'cot-hint ok';
+        $('cotPesoHint').innerHTML =
+          '<i class="bi bi-check-circle-fill me-1"></i>Peso real <b>' + fKg(pesoReal) +
+          '</b> · se cotiza con el facturable <b>' + fKg(pesoUsar) + '</b>.';
+      } else if (pesoUsar > 0) {
+        $('cotPesoHint').className = 'cot-hint ok';
+        $('cotPesoHint').innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Peso tomado del documento.';
+      } else {
+        $('cotPesoHint').className = 'cot-hint warn';
+        $('cotPesoHint').innerHTML =
+          '<i class="bi bi-exclamation-triangle-fill me-1"></i>El documento no tiene fichas con peso: ' +
+          'escribe el peso real a mano.';
+      }
+
+      marcarOrigen(state.tido + ' ' + state.nudo,
+                   lineas.length + ' línea' + (lineas.length === 1 ? '' : 's') + ' de producto');
+      toast('✓ Datos cargados desde ' + state.tido + ' ' + state.nudo, 'success');
+
+      if (!$('cotComuna').value) {
+        toast('El documento no trae comuna: complétala antes de cotizar', 'warning');
+        $('cotComuna').focus();
+      }
+    } catch (e) {
+      console.warn('[cotizador] ERP:', e);
+      toast('No se pudo leer el documento: ' + e.message, 'error');
+    }
+  }
+
+  function marcarOrigen(pill, txt) {
+    $('cotOrigenPill').textContent = pill;
+    $('cotOrigenTxt').textContent = txt || '';
+    $('cotOrigen').classList.remove('cot-hide');
+  }
+
+  function abrirModalErp() {
+    if (typeof window.tkaOpen === 'function') {
+      // tabs:['doc'] es OBLIGATORIO: es la única pestaña del modal cuyo
+      // endpoint (/api/erp/documento) no exige permisos de Tickets/Catálogo.
+      // Con el permiso "cubicador" a secas, las demás devuelven 403.
+      window.tkaOpen({
+        mode: 'seleccionar',
+        tabs: ['doc'],
+        onSeleccionar: function (items, header) {
+          var tido = (header && header.tido) || (items && items[0] && items[0].tido) || '';
+          var nudo = (header && header.nudo) || (items && items[0] && items[0].nudo) || '';
+          if (!tido || !nudo) { toast('No se pudo identificar el documento seleccionado', 'warning'); return; }
+          cargarDoc(tido, nudo);
+        }
+      });
+      return;
+    }
+    // Fallback si index.html todavía no incluye tickets/_tka_modal.html.
+    if (typeof window.ilusPrompt !== 'function') {
+      toast('El buscador de documentos no está disponible en esta pantalla', 'warning');
+      return;
+    }
+    window.ilusPrompt({
+      title: 'Traer datos desde el ERP',
+      message: 'Escribe el tipo y el número del documento',
+      placeholder: 'Ej: FCV 8598',
+      required: true
+    }).then(function (val) {
+      if (!val) return;
+      var p = String(val).trim().split(/[\s\-\/]+/);
+      if (p.length < 2) { toast('Formato esperado: TIPO NÚMERO (ej: FCV 8598)', 'warning'); return; }
+      cargarDoc(p[0].toUpperCase(), p[1]);
+    });
+  }
+
+  // ── Usar el cubicaje que ya está en pantalla ──────────────────────
+  // SOLO LECTURA de los data-* de las filas del Cubicador. No las toca,
+  // no las renombra y no depende de su JS (que vive en un scope cerrado).
+  function usarCubicajeDePantalla() {
+    var filas = document.querySelectorAll('#cubicadorTbody .cub-row');
+    if (!filas.length) filas = document.querySelectorAll('#cubicadorMobileWrap .cub-row');
+    if (!filas.length) {
+      toast('No hay líneas cubicadas en pantalla. Cubica un documento primero.', 'warning');
+      return;
+    }
+    var kg = 0, pred = 0;
+    Array.prototype.forEach.call(filas, function (f) {
+      kg   += parseFloat(f.getAttribute('data-kg-tot'))   || 0;
+      pred += parseFloat(f.getAttribute('data-pred-tot')) || 0;
+    });
+    var usar = pred > 0 ? pred : kg;
+    if (!(usar > 0)) {
+      toast('Las líneas en pantalla no tienen peso cargado en su ficha', 'warning');
+      return;
+    }
+    state.pesoReal = kg > 0 ? kg : null;
+    $('cotPeso').value = usar.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    $('cotPesoHint').className = 'cot-hint ok';
+    $('cotPesoHint').innerHTML =
+      '<i class="bi bi-check-circle-fill me-1"></i>' + filas.length + ' línea' +
+      (filas.length === 1 ? '' : 's') + ' de la pestaña Cubicaje · real <b>' + fKg(kg) +
+      '</b> · facturable <b>' + fKg(usar) + '</b>.';
+
+    // Cliente / comuna / valor neto: se piden al ERP con los documentos que
+    // están cargados en la pantalla (hidden tido_N/nudo_N de #pdfExportForm).
+    var form = document.getElementById('pdfExportForm');
+    if (form) {
+      var tidos = form.querySelectorAll('input[name^="tido_"]');
+      var nudos = form.querySelectorAll('input[name^="nudo_"]');
+      if (tidos.length && nudos.length) {
+        cargarDocsDePantalla(tidos, nudos, usar, kg, filas.length);
+        return;
+      }
+    }
+    toast('✓ Peso tomado del cubicaje de pantalla', 'success');
+  }
+
+  async function cargarDocsDePantalla(tidos, nudos, pesoUsar, pesoKg, nFilas) {
+    var docs = [];
+    for (var i = 0; i < tidos.length && i < nudos.length; i++) {
+      if (tidos[i].value && nudos[i].value) docs.push({ tido: tidos[i].value, nudo: nudos[i].value });
+    }
+    if (!docs.length) { toast('✓ Peso tomado del cubicaje de pantalla', 'success'); return; }
+
+    try {
+      var resp = await Promise.all(docs.map(function (d) {
+        return fetch(EP_DOC, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tido: d.tido, nudo: d.nudo })
+        }).then(function (r) { return r.json(); }).catch(function () { return {}; });
+      }));
+
+      var valor = 0, primero = null;
+      resp.forEach(function (d) {
+        var h = (d && d.hdr) || null;
+        if (!h) return;
+        if (!primero) primero = h;
+        valor += Number(h.valor_neto) || 0;
+      });
+
+      if (primero) {
+        if (primero.cliente_nombre) $('cotCliente').value = primero.cliente_nombre;
+        if (primero.comuna)         setComuna(primero.comuna, '');
+        if (valor > 0)              setValorNeto(valor);
+        state.tido = primero.tido || docs[0].tido;
+        state.nudo = primero.nudo_display || primero.nudo || docs[0].nudo;
+      }
+      state.docs = docs.slice();   // todos los documentos cubicados en pantalla
+      // El peso ya lo puso usarCubicajeDePantalla() con las filas VIVAS
+      // (respeta las líneas que el operador eliminó en la sesión).
+      state.pesoReal = pesoKg > 0 ? pesoKg : null;
+
+      var etiqueta = docs.map(function (d) { return d.tido + ' ' + d.nudo; }).join(' · ');
+      marcarOrigen(etiqueta, nFilas + ' línea' + (nFilas === 1 ? '' : 's') + ' en pantalla · ' + fKg(pesoUsar));
+      toast('✓ Datos tomados del cubicaje de pantalla', 'success');
+    } catch (e) {
+      console.warn('[cotizador] docs de pantalla:', e);
+      toast('✓ Peso tomado del cubicaje (no se pudo leer la cabecera del ERP)', 'warning');
+    }
+  }
+
+  // ── Setters con formato ───────────────────────────────────────────
+  function setComuna(txt, region) {
+    $('cotComuna').value = txt || '';
+    $('cotComunaRegion').value = region || '';
+    var hint = $('cotComunaHint');
+    if (txt) {
+      hint.className = 'cot-hint ok';
+      hint.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Comuna: <b>' + esc(txt) + '</b>' +
+                       (region ? ' · ' + esc(region) : '');
+    } else {
+      hint.className = 'cot-hint';
+      hint.textContent = 'Escribe y elige la comuna sugerida por Google para evitar errores de tipeo.';
+    }
+  }
+  function setValorNeto(n) {
+    $('cotValorNeto').value = (Number(n) || 0) > 0 ? Math.round(Number(n)).toLocaleString('es-CL') : '';
+  }
+
+  // ── Google Places para la comuna (mismo helper del proyecto) ──────
+  function initPlaces() {
+    if (typeof window.ilusPlacesAutocomplete !== 'function') return;
+    window.ilusPlacesAutocomplete('cotComuna', {
+      country: 'cl',
+      types: ['(cities)'],
+      onPlaceSelected: function (place) {
+        var comps = place.componentes || [];
+        var loc = '', l3 = '', l2 = '', region = '';
+        comps.forEach(function (c) {
+          var t = c.types || [], n = c.long_name || '';
+          if (t.indexOf('locality') !== -1 && !loc) loc = n;
+          if (t.indexOf('administrative_area_level_3') !== -1 && !l3) l3 = n;
+          if (t.indexOf('administrative_area_level_2') !== -1 && !l2) l2 = n;
+          if (t.indexOf('administrative_area_level_1') !== -1) region = n;
+        });
+        function norm(s) {
+          return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+        }
+        var comuna = '';
+        if (loc && norm(loc) !== norm(l2)) comuna = loc;
+        else if (l3 && norm(l3) !== norm(l2)) comuna = l3;
+        else comuna = loc || l3 || l2 || (place.raw && place.raw.name) || '';
+        // El helper deja el formatted_address ("X, Región, Chile"): el backend
+        // espera SOLO el nombre de la comuna.
+        setComuna(comuna, region);
+        $('cotComunaLat').value = place.lat || '';
+        $('cotComunaLng').value = place.lng || '';
+        $('cotComunaPlaceId').value = place.place_id || '';
+      },
+      onNoSelection: function () { /* texto libre: se cotiza igual */ }
+    });
+  }
+
+  // ── Imprimir comparación ──────────────────────────────────────────
+  // Abre una ventana propia con la hoja ILUS. No usa @media print sobre la
+  // página del Cubicador para no interferir con su impresión existente.
+  function imprimirComparacion() {
+    var r = state.ultima;
+    if (!r || !r.items.length) { toast('Primero cotiza para poder imprimir', 'warning'); return; }
+
+    var reales = r.items.filter(function (i) { return i.cobertura && !i.estimado; })
+                        .sort(function (a, b) { return a.precio - b.precio; });
+    var estim  = r.items.filter(function (i) { return i.cobertura && i.estimado; })
+                        .sort(function (a, b) { return a.precio - b.precio; });
+    var nocov  = r.items.filter(function (i) { return !i.cobertura; });
+    var best   = reales.length ? reales[0] : null;
+
+    var fecha = new Date().toLocaleString('es-CL', { dateStyle: 'long', timeStyle: 'short' });
+    var logoAbs = new URL(LOGO_URL, window.location.origin).href;
+
+    function fila(it, esBest) {
+      var td = 'padding:9px 10px;border-bottom:1px solid #e5e7eb;font-size:10.5pt;';
+      var bg = esBest ? 'background:#f8fafc;' : (it.estimado ? 'background:#fff5f5;' : '');
+      var marca = esBest ? '<b style="color:#dc2626">★ </b>' : '';
+      var fuente = !it.cobertura ? 'Sin cobertura'
+                 : it.estimado ? '<b style="color:#dc2626">ESTIMADO — no confirmado</b>'
+                 : (it.fuente === 'api' ? 'API del courier' : 'Tarifa ILUS');
+      return '<tr style="' + bg + '">' +
+        '<td style="' + td + 'font-weight:800">' + marca + esc(it.nombre) +
+          (it.servicio ? '<div style="font-weight:500;color:#6b7280;font-size:8.5pt">' + esc(it.servicio) + '</div>' : '') +
+        '</td>' +
+        '<td style="' + td + 'text-align:right;font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap">' +
+          (it.cobertura ? fClp(it.precio) : '—') + '</td>' +
+        '<td style="' + td + 'text-align:center;white-space:nowrap">' + esc(it.transito || '—') + '</td>' +
+        '<td style="' + td + 'font-size:9pt">' + fuente + '</td>' +
+      '</tr>';
+    }
+
+    var filas = '';
+    if (best) filas += fila(best, true);
+    reales.slice(best ? 1 : 0).forEach(function (i) { filas += fila(i, false); });
+    estim.forEach(function (i) { filas += fila(i, false); });
+    nocov.forEach(function (i) { filas += fila(i, false); });
+
+    var avisoEst = estim.length
+      ? '<div style="border:2px solid #dc2626;background:#fef2f2;color:#991b1b;border-radius:6px;' +
+        'padding:10px 12px;margin:12px 0;font-size:10pt;line-height:1.45">' +
+        '<b style="text-transform:uppercase;letter-spacing:.03em">Atención — precios estimados</b><br>' +
+        estim.length + ' de estos valores NO son tarifas confirmadas con el courier: los calcula el ' +
+        'sistema como referencia porque no hay tarifa cargada para la comuna. Confírmalos antes de ' +
+        'comprometerlos con el cliente.</div>'
+      : '';
+
+    var meta = [
+      ['Cliente', ($('cotCliente').value || '—')],
+      ['Comuna destino', (r.comuna || $('cotComuna').value || '—')],
+      ['Peso facturable', (r.pesoFact != null ? fKg(r.pesoFact) : fKg(parseNum($('cotPeso').value)))],
+      ['Valor mercadería', fClp(parseNum($('cotValorNeto').value))],
+      ['Destino residencial', ($('cotResid').checked ? 'Sí' : 'No')],
+      ['Documento', (state.tido && state.nudo) ? (state.tido + ' ' + state.nudo) : '—']
+    ].map(function (p) {
+      return '<div style="border:1px solid #e5e7eb;border-radius:5px;padding:7px 9px">' +
+        '<div style="font-size:7.5pt;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;font-weight:800">' +
+        esc(p[0]) + '</div><div style="font-size:10.5pt;font-weight:800;color:#0f172a">' + esc(p[1]) + '</div></div>';
+    }).join('');
+
+    var doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">' +
+      '<title>Comparación de couriers — ILUS</title>' +
+      '<style>@page{size:A4;margin:14mm 12mm}' +
+      'body{font-family:Helvetica,Arial,sans-serif;color:#0f172a;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+      'table{width:100%;border-collapse:collapse}' +
+      'th{background:#0a0a0a;color:#fff;padding:8px 10px;font-size:8.5pt;text-transform:uppercase;letter-spacing:.05em;text-align:left}' +
+      '</style></head><body>' +
+      '<div style="background:#0a0a0a;padding:14px 16px;display:flex;justify-content:space-between;align-items:center">' +
+        '<img src="' + esc(logoAbs) + '" alt="ILUS" style="height:42px;max-width:200px;object-fit:contain">' +
+        '<div style="text-align:right;color:#fff">' +
+          '<div style="font-size:13pt;font-weight:900;letter-spacing:-.01em">COMPARACIÓN DE COURIERS</div>' +
+          '<div style="font-size:8pt;color:#9ca3af">' + esc(fecha) + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="height:4px;background:linear-gradient(90deg,#dc2626 0 25%,#0a0a0a 25% 100%)"></div>' +
+      '<div style="padding:14px 2px">' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:12px">' + meta + '</div>' +
+        avisoEst +
+        '<table><thead><tr><th>Courier</th><th style="text-align:right">Precio (IVA incl.)</th>' +
+        '<th style="text-align:center">Tránsito</th><th>Origen del precio</th></tr></thead>' +
+        '<tbody>' + filas + '</tbody></table>' +
+        (best ? '<div style="margin-top:12px;font-size:10pt"><b>★ Recomendado:</b> ' + esc(best.nombre) +
+                ' — ' + fClp(best.precio) + (best.transito ? ' · ' + esc(best.transito) : '') +
+                '<div style="font-size:8.5pt;color:#6b7280;margin-top:2px">Es el precio más bajo entre las ' +
+                'tarifas confirmadas. Las estimaciones quedan fuera de la recomendación a propósito.</div></div>'
+              : '') +
+        '<div style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:8px;font-size:8pt;color:#6b7280">' +
+        'ILUS Sport &amp; Health · Cotizador de envíos · Documento de trabajo interno, ' +
+        'los valores no constituyen una oferta comercial.</div>' +
+      '</div></body></html>';
+
+    var w = window.open('', '_blank');
+    if (!w) { toast('El navegador bloqueó la ventana de impresión', 'warning'); return; }
+    w.document.open();
+    w.document.write(doc);
+    w.document.close();
+    w.focus();
+    setTimeout(function () { try { w.print(); } catch (e) { /* el usuario imprime a mano */ } }, 350);
+  }
+
+  // ── Limpiar ────────────────────────────────────────────────────────
+  async function limpiar() {
+    var ok = true;
+    if (typeof window.ilusConfirm === 'function') {
+      ok = await window.ilusConfirm({
+        title: 'Limpiar el cotizador',
+        message: '¿Borrar los datos ingresados y la comparación actual?',
+        okLabel: 'Limpiar', cancelLabel: 'Cancelar'
+      });
+    }
+    if (!ok) return;
+    ['cotCliente', 'cotComuna', 'cotPeso', 'cotValorNeto',
+     'cotComunaRegion', 'cotComunaLat', 'cotComunaLng', 'cotComunaPlaceId'].forEach(function (id) {
+      var el = $(id); if (el) el.value = '';
+    });
+    $('cotResid').checked = false;
+    $('cotOrigen').classList.add('cot-hide');
+    setComuna('', '');
+    $('cotPesoHint').className = 'cot-hint';
+    $('cotPesoHint').textContent = 'Peso facturable (el mayor entre el real y el volumétrico).';
+    state.tido = ''; state.nudo = ''; state.docs = [];
+    state.pesoReal = null; state.pesoVol = null; state.ultima = null;
+    renderVacio();
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────
+  var inicializado = false;
+  function init() {
+    if (inicializado) return;
+    if (!$('cotWrap')) return;
+    inicializado = true;
+
+    $('cotSubmitBtn').addEventListener('click', cotizar);
+    $('cotErpBtn').addEventListener('click', abrirModalErp);
+    $('cotUsarCubicajeBtn').addEventListener('click', usarCubicajeDePantalla);
+    $('cotLimpiarBtn').addEventListener('click', limpiar);
+    $('cotPrintBtn').addEventListener('click', imprimirComparacion);
+
+    // Enter en cualquier campo = cotizar (sin <form>, no hay submit nativo).
+    ['cotCliente', 'cotComuna', 'cotPeso', 'cotValorNeto'].forEach(function (id) {
+      $(id).addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); cotizar(); }
+      });
+    });
+
+    // Si el operador edita el peso a mano, el "peso real" del documento deja
+    // de aplicar (se cotiza con lo que él escribió, sin datos heredados).
+    $('cotPeso').addEventListener('input', function () {
+      state.pesoReal = null;
+      $('cotPesoHint').className = 'cot-hint';
+      $('cotPesoHint').textContent = 'Peso facturable (el mayor entre el real y el volumétrico).';
+    });
+    $('cotComuna').addEventListener('input', function () {
+      var h = $('cotComunaHint');
+      h.className = 'cot-hint';
+      h.textContent = 'Escribe y elige la comuna sugerida por Google para evitar errores de tipeo.';
+    });
+    $('cotValorNeto').addEventListener('blur', function () {
+      var v = parseNum(this.value);
+      if (v > 0) setValorNeto(v);
+    });
+
+    initPlaces();
+    renderVacio();
+  }
+
+  // Hook para la barra de pestañas (carga perezosa). init() es idempotente.
+  window.cotizadorTabReady = init;
+
+  // static/cubicador_tabs.js emite 'cubicador:tab' al cambiar de pestaña:
+  // red de seguridad por si el fragmento se inyectara después del load.
+  document.addEventListener('cubicador:tab', function (ev) {
+    if (ev && ev.detail && ev.detail.tab === 'cotizador') init();
+  });
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+
+{# ────────────────────────────────────────────────────────────────────────
+   PENDIENTES / COSAS QUE NO EXISTEN Y NO SE INVENTARON:
+
+   · POST /cubicador/api/cotizar (cubicador_plus.py) — contrato usado:
+       envía  {cliente, comuna, peso_kg, peso_pred_kg, valor_neto,
+               es_residencial, documentos:[{tido,nudo}]}
+       recibe {ok, comuna_resuelta, peso_facturable, recomendado_id,
+               recomendado_id_comparador, aviso_recomendacion, hay_estimados,
+               cotizaciones:[{courier_id, courier_nombre, logo_url, servicio,
+                              tiempo_transito, precio|subtotal, tiene_cobertura,
+                              es_estimado, motivo_estimado, tarifa_validada,
+                              fuente, mensaje, trace{validado,advertencias}}]}
+     El front tolera los alias del comparador crudo (precio/subtotal,
+     fuente=='estimado', trace.validado). `recomendado_id` ya viene
+     garantizado como NO estimado; el destacado igual se recalcula en el
+     navegador para que la promesa se cumpla pase lo que pase.
+
+   · No existe endpoint para GUARDAR la cotización de envío elegida
+     (equivalente a "asignar courier" del manifiesto). Cuando Daniel lo
+     pida, hace falta crearlo — acá no se inventó ningún botón "Guardar".
+
+   · Tampoco se envía la cotización por correo: reusar el estándar
+     _ilus_email_master / plantillas de comm_templates cuando se defina.
+
+   · El modal multidocumento se abre con tabs:['doc'] a propósito. Si algún
+     día el permiso "cubicador" implicara tk_ver/mantenciones, se pueden
+     habilitar las otras pestañas ('cli','bodega'); hoy devuelven 403.
+   ──────────────────────────────────────────────────────────────────────── #}

@@ -75404,6 +75404,23 @@ function toggleDiagDetail(id){
     return render_template_string(html, diags=diags)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  CUBICADOR PLUS (2026-07-25) — pestañas Cotizador y Packing List.
+#  Vive en cubicador_plus.py (módulo aparte) para no seguir engordando
+#  este archivo y para no chocar con otras sesiones que lo editan.
+#  Se registra al FINAL, cuando `app` y todos los helpers que el módulo
+#  resuelve por getattr ya existen. Best-effort: si el módulo falla, la
+#  app completa debe seguir levantando (el Cubicador actual no depende
+#  de esto).
+# ══════════════════════════════════════════════════════════════════════
+try:
+    from cubicador_plus import register_cubicador_plus as _register_cubicador_plus
+    _register_cubicador_plus(app, globals())
+    print("[cubicador_plus] rutas registradas", flush=True)
+except Exception as _e_cubplus:
+    print(f"[cubicador_plus] NO se pudo registrar: {_e_cubplus}", flush=True)
+
+
 if __name__ == "__main__":
     # ⚠️  ATENCIÓN: este bloque SOLO se ejecuta en desarrollo local
     # (`python app.py`). En Railway/producción debe correr Gunicorn vía

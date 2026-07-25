@@ -1,0 +1,273 @@
+{#
+  ══════════════════════════════════════════════════════════════════════
+  CUBICADOR · PESTAÑA "PACKING LIST"  (fragmento)
+  ══════════════════════════════════════════════════════════════════════
+
+  Qué es: el contenido de la pestaña "Packing List" dentro de /cubicador.
+  Solo elige el documento y abre la hoja A4 imprimible
+  (templates/cubicador/packing_list.html) en una pestaña nueva.
+
+  CÓMO SE INCLUYE (una sola línea, sin parámetros), dentro del panel:
+
+      <div class="cubtab-pane" id="cubtab-packing">
+        {% raw %}{% include "cubicador/_tab_packing.html" %}{% endraw %}
+      </div>
+
+  REQUISITOS DE INCLUSIÓN (mismos que _tab_cotizador.html):
+    1. El fragmento NO trae el <div class="cubtab-pane">: lo pone index.html,
+       igual que con el cotizador. Así el marcado de las pestañas queda en un
+       solo lugar. Convención de static/cubicador_tabs.js:
+         botón ->  <button class="cubtab-btn" data-tab="packing"
+                           onclick="cubSwitchTab('packing')">
+         panel ->  <div class="cubtab-pane" id="cubtab-packing">
+       (el CSS .cubtab-pane/.cubtab-btn lo inyecta cubicador_tabs.js, no hay
+        que declararlo acá).
+    2. Va FUERA de <form id="cubicadorForm"> y de cualquier otro <form>. Sus
+       inputs además NO llevan name= para no viajar jamás en un POST ajeno.
+    3. Como panel hermano del wrapper de "Cubicaje", dentro del
+       {% raw %}{% if resultado %}{% endraw %} o fuera: funciona igual, ver "CONTEXTO".
+    4. No renombra ni toca NADA del Cubicador (REGLA #4.2): no usa ningún id
+       ni clase existente, y jamás la clase d-none (checkEmpty() la manipula).
+
+  CONTEXTO QUE USA (todo opcional, todo con guarda `is defined`):
+    resultado.docs   lista [(tido, nudo), ...] de los documentos ya cubicados.
+                     Si no hay, se muestran los campos manuales.
+    tipos_doc        lista [(codigo, nombre), ...] del selector del cubicador
+    pl_page_base     base de la URL de la hoja. Default '/cubicador/packing-list'.
+                     Va como STRING a propósito: un url_for() a un endpoint que
+                     todavía no existe lanza BuildError y tumbaría TODA la
+                     página del Cubicador.
+
+  ENDPOINTS (ninguno inventado):
+    · La hoja  ->  <pl_page_base>/<tido>/<nudo>   (página HTML, pestaña nueva)
+    · Los datos los pide la propia hoja a
+      GET /cubicador/api/packing-list/<tido>/<nudo>  (cubicador_plus.py:1190)
+
+  REGLA #1: nada de alert()/confirm()/prompt() nativos — se usa ilusToast.
+#}
+
+{% set _pl_base  = pl_page_base if pl_page_base is defined else '/cubicador/packing-list' %}
+{% set _pl_docs  = resultado.docs if (resultado is defined and resultado and resultado.docs) else [] %}
+{% set _pl_tipos = tipos_doc if tipos_doc is defined else [] %}
+
+<style>
+/* Estilos propios, todos con prefijo .pl- para no pisar nada del Cubicador
+   ni de base.html. El CSS de las pestañas (.cubtab-*) lo inyecta
+   static/cubicador_tabs.js: acá NO se declara. */
+.pl-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);
+  color:#fff;border-left:4px solid #dc2626;border-radius:10px;
+  padding:16px 18px;margin-bottom:14px;
+}
+.pl-hero h5{ margin:0 0 4px;font-weight:800;font-size:1.05rem; }
+.pl-hero p{ margin:0;color:#9ca3af;font-size:.85rem;line-height:1.45; }
+
+.pl-warn{
+  background:#fff8e1;border:1px solid #fde68a;border-left:4px solid #f59e0b;
+  border-radius:10px;padding:12px 14px;margin-bottom:14px;
+  font-size:.85rem;color:#78350f;line-height:1.5;
+}
+.pl-warn b{ color:#92400e; }
+.pl-warn ul{ margin:6px 0 0 18px;padding:0; }
+
+.pl-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  background:#f3f4f6;border:1px solid #e5e7eb;border-radius:50px;
+  padding:4px 12px;font-size:.75rem;font-weight:600;color:#374151;
+}
+
+/* Mobile-first: todo a 100% y con blanco táctil de 44px (REGLA #3) */
+.pl-wrap .form-select,
+.pl-wrap .form-control{ min-height:44px; }
+.pl-wrap .pl-btn{
+  min-height:44px;display:inline-flex;align-items:center;justify-content:center;
+  gap:8px;font-weight:700;padding:0 20px;border-radius:8px;
+}
+.pl-wrap .pl-btn-main{ background:#dc2626;color:#fff;border:none; }
+.pl-wrap .pl-btn-main:hover{ background:#b91c1c;color:#fff; }
+@media (max-width:575.98px){
+  .pl-wrap .pl-btn{ width:100%; }
+  /* Anti auto-zoom iOS */
+  .pl-wrap .form-select,
+  .pl-wrap .form-control{ font-size:16px; }
+}
+/* El Cubicador se imprime (hay .no-print en su tabla): esta pestaña no. */
+@media print{ .pl-wrap{ display:none !important; } }
+</style>
+
+<div class="pl-wrap" id="plWrap">
+
+  <div class="pl-hero">
+    <h5><i class="bi bi-box-seam me-2" style="color:#dc2626"></i>Packing List de exportación</h5>
+    <p>
+      Hoja A4 lista para aduana: exportador, consignatario, datos de embarque y el
+      detalle <b>bulto a bulto</b> con medidas, volumen y pesos. Se abre en una
+      pestaña nueva y se puede imprimir desde el navegador o descargar en PDF.
+    </p>
+  </div>
+
+  <div class="pl-warn">
+    <b>⚠ Antes de emitir:</b> hay datos que el sistema todavía <u>no</u> guarda y que
+    debes completar a mano en la hoja (aparecen con fondo amarillo):
+    <ul>
+      <li><b>Marca</b> y <b>país de origen</b> de cada producto</li>
+      <li><b>Partida arancelaria</b> (código HS)</li>
+      <li><b>Peso neto</b> por bulto (el sistema solo conoce el peso bruto)</li>
+      <li><b>Incoterm</b>, <b>puerto/lugar de destino</b> y <b>medio de transporte</b></li>
+    </ul>
+    Nunca se rellenan con valores de ejemplo: si no están, van vacíos.
+  </div>
+
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-file-earmark-text me-2"></i>Documento del packing list</span>
+      <span class="text-muted small fw-normal">Uno por documento de venta</span>
+    </div>
+    <div class="card-body p-3">
+
+      {% if _pl_docs %}
+      <div class="mb-3">
+        <label class="form-label fw-semibold small mb-1" for="plDocSelect">
+          Documentos ya cubicados
+        </label>
+        <select class="form-select form-select-sm" id="plDocSelect">
+          {% for d in _pl_docs %}
+          <option value="{{ d[0]|e }}|{{ d[1]|e }}">{{ d[0] }} N° {{ d[1] }}</option>
+          {% endfor %}
+          <option value="__manual__">✎ Otro documento…</option>
+        </select>
+        <div class="form-text">Se toma el mismo documento que estás cubicando.</div>
+      </div>
+      {% endif %}
+
+      <div class="row g-2 align-items-end" id="plManualWrap"
+           {% if _pl_docs %}style="display:none"{% endif %}>
+        <div class="col-12 col-sm-5">
+          <label class="form-label fw-semibold small mb-1" for="plTido">Tipo de documento</label>
+          <select class="form-select form-select-sm" id="plTido">
+            {% if _pl_tipos %}
+              {% for cod, nom in _pl_tipos %}
+              <option value="{{ cod }}" {% if cod == 'FCV' %}selected{% endif %}>{{ nom }} ({{ cod }})</option>
+              {% endfor %}
+            {% else %}
+              <option value="FCV" selected>Factura de venta (FCV)</option>
+              <option value="GDD">Guía de despacho (GDD)</option>
+              <option value="NVV">Nota de venta (NVV)</option>
+            {% endif %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-5">
+          <label class="form-label fw-semibold small mb-1" for="plNudo">N° de documento</label>
+          <input type="text" class="form-control form-control-sm font-monospace"
+                 id="plNudo" placeholder="Ej: 8598"
+                 inputmode="numeric" autocomplete="off" autocorrect="off">
+        </div>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
+        <span class="pl-chip" id="plChipDoc"><i class="bi bi-upc-scan"></i><span>—</span></span>
+        <a class="pl-btn pl-btn-main ms-sm-auto" id="plGoBtn"
+           href="#" target="_blank" rel="noopener">
+          <i class="bi bi-box-seam"></i>Generar Packing List
+        </a>
+      </div>
+
+      <div class="form-text mt-2">
+        <i class="bi bi-info-circle me-1"></i>
+        Se abre en una pestaña nueva. Las líneas de servicio (ZZ Envío, descuentos)
+        no se listan: no son cajas.
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   Pestaña Packing List — selector de documento.
+   Aislado en un IIFE: no toca ni una variable del cubicador.
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+  /* Defensivo: si el fragmento no está en la página, no se hace nada. El
+     Cubicador tiene que seguir funcionando aunque este bloque falle entero. */
+  var wrap = document.getElementById('plWrap');
+  if (!wrap) return;
+
+  var PL_BASE  = {{ _pl_base|tojson }};
+  var selDoc   = document.getElementById('plDocSelect');
+  var manual   = document.getElementById('plManualWrap');
+  var selTido  = document.getElementById('plTido');
+  var inpNudo  = document.getElementById('plNudo');
+  var goBtn    = document.getElementById('plGoBtn');
+  var chip     = document.getElementById('plChipDoc');
+
+  function esManual(){
+    return !selDoc || selDoc.value === '__manual__';
+  }
+
+  function actual(){
+    if (!esManual()) {
+      var partes = String(selDoc.value || '').split('|');
+      return { tido: (partes[0] || '').trim(), nudo: (partes[1] || '').trim() };
+    }
+    return {
+      tido: (selTido && selTido.value ? selTido.value : '').trim(),
+      nudo: (inpNudo && inpNudo.value ? inpNudo.value : '').trim()
+    };
+  }
+
+  function urlHoja(d){
+    return PL_BASE.replace(/\/+$/, '')
+         + '/' + encodeURIComponent(d.tido)
+         + '/' + encodeURIComponent(d.nudo);
+  }
+
+  function refrescar(){
+    var d = actual();
+    var ok = !!(d.tido && d.nudo);
+    if (chip) {
+      chip.querySelector('span').textContent = ok ? (d.tido + ' N° ' + d.nudo)
+                                                  : 'Elige o escribe un documento';
+    }
+    if (goBtn) {
+      goBtn.setAttribute('href', ok ? urlHoja(d) : '#');
+      goBtn.style.opacity = ok ? '1' : '.55';
+    }
+    if (manual) manual.style.display = esManual() ? '' : 'none';
+  }
+
+  if (selDoc)  selDoc.addEventListener('change', refrescar);
+  if (selTido) selTido.addEventListener('change', refrescar);
+  if (inpNudo) {
+    inpNudo.addEventListener('input', refrescar);
+    inpNudo.addEventListener('keydown', function(ev){
+      if (ev.key === 'Enter') { ev.preventDefault(); goBtn && goBtn.click(); }
+    });
+  }
+
+  if (goBtn) {
+    goBtn.addEventListener('click', function(ev){
+      var d = actual();
+      if (!d.tido || !d.nudo) {
+        ev.preventDefault();
+        /* REGLA #1: nada de alert() nativo */
+        if (window.ilusToast) {
+          ilusToast('Indica el tipo y el número de documento.', { type:'warning' });
+        } else if (window.ilusAlert) {
+          ilusAlert({ title:'Falta el documento',
+                      message:'Indica el tipo y el número de documento.',
+                      type:'warning' });
+        }
+        if (esManual() && inpNudo) inpNudo.focus();
+        return;
+      }
+      /* href ya apunta a la hoja: dejamos que el navegador abra la pestaña
+         (un <a target="_blank"> real no lo bloquea el popup blocker). */
+    });
+  }
+
+  refrescar();
+})();
+</script>

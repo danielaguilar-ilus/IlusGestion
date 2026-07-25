@@ -1,0 +1,1135 @@
+{#
+  ══════════════════════════════════════════════════════════════════════
+  PACKING LIST (ADUANA / EXPORTACIÓN) — hoja A4 imprimible
+  ══════════════════════════════════════════════════════════════════════
+  Diseño calcado de templates/transporte/manifiesto_firma.html (header negro
+  ILUS + franja roja + cajas de datos + tabla + firmas), que ya está aprobado.
+
+  ── CONTEXTO JINJA (todo opcional, todo con guarda `is defined`) ──────
+    pl          dict con el payload del packing list. MISMA forma que devuelve
+                GET /cubicador/api/packing-list/<tido>/<nudo> (ver contrato
+                abajo). Si viene, la hoja se dibuja SIN tocar la red.
+    api_url     URL del endpoint JSON. Solo se usa como respaldo cuando `pl`
+                no viene (navegación normal). Si tampoco viene, se arma con
+                /cubicador/api/packing-list/<tido>/<nudo>.
+    tido, nudo  strings del documento (para armar api_url y los defaults).
+    logo_url    data-url del logo ILUS  → _logo_data_url()
+    exportador  dict del exportador     → ILUS_REMITENTE (app.py:22251)
+    pdf_url     URL de descarga PDF. Si no viene, el botón no se muestra.
+    volver_url  link "volver". Default '/cubicador'.
+
+  ⚠ PARA EL PDF (Playwright): _pw_pdf() usa page.set_content(), o sea el HTML
+    NO tiene origin y CUALQUIER fetch() relativo falla. Si vas a generar el
+    PDF de esta hoja DEBES pasar `pl` como contexto (semilla inline). El
+    respaldo por API solo sirve en el navegador.
+    El botón "Imprimir (navegador)" existe justamente para que la hoja nunca
+    quede sin salida si Chromium/Playwright no está disponible en el deploy.
+
+  ── CONTRATO DE DATOS (el real, cubicador_plus.py:1190) ───────────────
+  GET /cubicador/api/packing-list/<tido>/<nudo>  →  200
+  {
+    "ok": true,
+    "documento": { tido, nudo, nudo_display, fecha, valor_neto, valor_bruto },
+    "cliente":   { nombre, rut, direccion, comuna, email, telefono },
+    "filas": [ {
+        "linea": 1,                  // n° de línea del documento (1..N)
+        "sku": "TR-9500", "descripcion": "...", "nombre_app": "...",
+        "cantidad": 3,               // unidades VENDIDAS de esa línea
+        "producto_id": 412,
+        "bulto_num": 1,              // qué bulto del producto es esta fila…
+        "bultos_por_unidad": 2,      // …de un total de N bultos por unidad
+        "cajas": 3,                  // ⚠ CAJAS FÍSICAS de ESTE bulto = cantidad
+        "largo_cm": 210, "ancho_cm": 95, "alto_cm": 60,     // POR CAJA
+        "volumen_m3_unitario": 1.197, "volumen_m3_total": 3.591,
+        "peso_bruto_kg_unitario": 185.4, "peso_bruto_kg_total": 556.2,
+        "sin_medidas": false,
+        // Los 4 campos de aduana vienen SIEMPRE vacíos (no existen en la BD):
+        "marca": "", "pais_origen": "", "partida_arancelaria": "",
+        "peso_neto_kg": null
+    } ],
+    "lineas_excluidas": [ { sku, descripcion, cantidad, motivo } ],
+    "advertencias": [ "SKU X: sin medidas registradas…" ],
+    "totales": { productos, filas, total_cajas, peso_bruto_kg, volumen_m3 },
+    "campos_aduana": [ { campo, label, tipo, valor_defecto, nota } ],
+    "nota_aduana": "…"
+  }
+  ⚠ OJO CON `cajas`: una fila NO es una caja, es un TIPO de bulto repetido
+    `cajas` veces (línea de 3 unidades de un producto de 2 bultos = 2 filas de
+    3 cajas c/u = 6 cajas). Por eso los totales usan *_total / cajas y las
+    unidades se suman UNA sola vez por `linea`.
+
+  Alias aceptados por el front (por si algún día cambia el backend):
+    filas|bultos|lineas|items · documento|doc · cliente|consignatario
+    largo|largo_cm · ancho|ancho_cm · alto|alto_cm
+    volumen_m3_total|volumen_m3|vol_m3 · peso_bruto_kg_total|peso_bruto_kg|peso
+    peso_neto_kg_total|peso_neto_kg · partida|hs_code|partida_arancelaria
+    advertencias|avisos · lineas_excluidas|excluidas
+
+  ⚠ HONESTIDAD CON LOS DATOS (pedido explícito de Daniel):
+    marca, país de origen, partida arancelaria y peso neto NO existen hoy en
+    ninguna tabla del sistema. Llegan VACÍOS, se editan a mano y se pintan de
+    amarillo mientras estén vacíos. JAMÁS se rellenan con un valor de ejemplo.
+
+  Lo escrito a mano se guarda en localStorage por documento
+  (ilus_packing_v1_<tido>_<nudo>) para que un F5 no lo borre. No se envía a
+  ninguna tabla: el sistema no tiene dónde guardarlo todavía.
+#}
+{% set pl         = pl         if pl         is defined else None %}
+{% set api_url    = api_url    if api_url    is defined else '' %}
+{% set tido       = tido       if tido       is defined else '' %}
+{% set nudo       = nudo       if nudo       is defined else '' %}
+{% set pdf_url    = pdf_url    if pdf_url    is defined else '' %}
+{% set volver_url = volver_url if volver_url is defined else '/cubicador' %}
+{% set logo_url   = logo_url   if logo_url   is defined else '' %}
+{% set exportador = exportador if exportador is defined else None %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packing List{% if tido %} · {{ tido }} N° {{ nudo }}{% endif %}</title>
+<style>
+:root {
+  --ilus-red:   #dc2626;
+  --ilus-black: #0a0a0a;
+  --ilus-white: #ffffff;
+  --ilus-gray:  #6b7280;
+  --pl-amber:   #fff8e1;
+  --pl-amber-b: #f59e0b;
+}
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+@page { size: A4; margin: 10mm 12mm; }
+html, body {
+  margin: 0; padding: 0;
+  background: #e5e7eb;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #111827;
+  font-size: 12px;
+}
+
+/* ── Barra de acciones (solo pantalla, nunca impresa) ── */
+.toolbar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 12px 16px;
+  background: var(--ilus-black); color: var(--ilus-white);
+}
+.toolbar .tb-title { font-weight: 800; font-size: 15px; }
+.toolbar .tb-sub { font-size: 11px; color: #9ca3af; font-weight: 600; }
+.toolbar .tb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; padding: 0 16px; border: 0; border-radius: 8px;
+  font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none;
+  font-family: inherit;
+}
+.btn-print { background: var(--ilus-red); color: #fff; }
+.btn-outline { background: transparent; color: #fff; border: 1.5px solid #444; }
+.btn-outline:hover { border-color: #777; }
+
+.hoja-scroll { overflow-x: auto; }
+.hoja {
+  width: 186mm;
+  margin: 16px auto;
+  background: #fff;
+  box-shadow: 0 4px 18px rgba(0,0,0,.12);
+}
+.hoja:last-child { margin-bottom: 40px; }
+
+/* ── Header ── */
+.hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--ilus-black); color: #fff;
+  padding: 14px 20px;
+}
+.hdr-logos { display: flex; align-items: center; gap: 14px; }
+.hdr-shs {
+  background: #fff; color: #0a0a0a; border-radius: 4px;
+  padding: 6px 12px; line-height: 1.05; font-weight: 800;
+}
+.hdr-shs .l1 { font-size: 14px; letter-spacing: .5px; }
+.hdr-shs .l2 { font-size: 8px; color: #6b7280; font-weight: 700; letter-spacing: 2px; }
+.hdr-logos img { height: 58px; }
+.hdr-doc { text-align: right; }
+.hdr-doc .tit { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
+.hdr-doc .tit small { display:block; font-size: 9px; color: #9ca3af; letter-spacing: 2px; font-weight: 700; }
+.hdr-doc .num { font-size: 20px; font-weight: 800; color: var(--ilus-red); }
+.hdr-doc .fec { font-size: 10px; color: #9ca3af; margin-top: 2px; }
+.hdr-doc input {
+  font-family: inherit; text-align: right; background: transparent;
+  border: 1px dashed rgba(255,255,255,.28); border-radius: 4px;
+  padding: 1px 6px; outline: none;
+}
+.hdr-doc .num input { color: var(--ilus-red); font-size: 20px; font-weight: 800; width: 160px; }
+.hdr-doc .fec input { color: #e5e7eb; font-size: 10px; font-weight: 600; width: 110px; }
+.accent { height: 6px; background: var(--ilus-red); }
+
+/* ── Cajas de datos ── */
+.datos { display: flex; }
+.datos .col { flex: 1; padding: 12px 20px; }
+.datos .col:first-child { border-right: 1px solid #e5e7eb; }
+.datos h4 {
+  margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .5px;
+}
+.datos h4 span { color: var(--ilus-gray); font-weight: 700; font-size: 9px; letter-spacing: 1px; }
+.datos .row { display: flex; gap: 6px; margin-bottom: 3px; font-size: 11px; align-items: baseline; }
+.datos .row b { min-width: 74px; flex-shrink: 0; }
+.datos .row .v { flex: 1; word-break: break-word; }
+
+/* ── Datos de embarque (editables) ── */
+.embarque { background: #f9fafb; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; padding: 10px 20px; }
+.embarque h4 { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .5px; }
+.emb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 14px; }
+.emb-item .lbl { font-size: 8.5px; color: var(--ilus-gray); text-transform: uppercase; letter-spacing: .06em; font-weight: 800; margin-bottom: 2px; }
+
+/* ── Campos editables ── */
+.pl-edit {
+  font-family: inherit; font-size: 11px; color: #111827;
+  width: 100%; border: 1px solid #d1d5db; border-radius: 4px;
+  padding: 3px 6px; background: #fff; outline: none;
+}
+.pl-edit:focus { border-color: var(--ilus-red); box-shadow: 0 0 0 2px rgba(220,38,38,.14); }
+.pl-edit.pl-vacio { background: var(--pl-amber); border-color: var(--pl-amber-b); }
+/* Numérico con texto que no es número: no suma en los totales, se avisa. */
+.pl-edit.pl-mal { background: #fee2e2; border-color: var(--ilus-red); color: var(--ilus-red); font-weight: 700; }
+.pl-edit::placeholder { color: #b8a06a; font-style: italic; }
+td .pl-edit { font-size: 8.6px; padding: 2px 3px; }
+td .pl-edit.num { text-align: right; }
+td .pl-edit.ctr { text-align: center; font-weight: 800; }
+.pl-dim { display: flex; align-items: center; gap: 2px; }
+.pl-dim .pl-edit { width: 30px; text-align: center; padding: 2px 1px; }
+.pl-dim span { color: #9ca3af; font-size: 8px; }
+
+/* ── Aviso de campos incompletos ── */
+.aviso {
+  background: var(--pl-amber); border-top: 1px solid #fde68a; border-bottom: 1px solid #fde68a;
+  border-left: 5px solid var(--pl-amber-b);
+  padding: 9px 20px; font-size: 10.5px; color: #78350f; line-height: 1.45;
+}
+.aviso b { color: #92400e; }
+.aviso[hidden] { display: none; }
+
+.sec-hdr {
+  background: var(--ilus-black); color: #fff;
+  padding: 8px 20px; font-weight: 800; font-size: 12px;
+  border-left: 5px solid var(--ilus-red);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.sec-hdr .sub { font-weight: 600; font-size: 10px; color: #9ca3af; }
+
+/* ── Tabla bulto a bulto ── */
+table.detalle { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.detalle th {
+  background: var(--ilus-black); color: #fff; text-align: left;
+  padding: 5px 4px; font-size: 8.4px; font-weight: 700; line-height: 1.2;
+  vertical-align: middle;
+}
+table.detalle th:first-child { padding-left: 20px; }
+table.detalle th:last-child  { padding-right: 20px; }
+table.detalle th .man { color: #fca5a5; font-size: 8px; }
+table.detalle td {
+  padding: 3px 4px; font-size: 8.8px; border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle; word-break: break-word;
+}
+table.detalle td:first-child { padding-left: 20px; }
+table.detalle td:last-child  { padding-right: 20px; }
+table.detalle tr:nth-child(even) td { background: #fafafa; }
+table.detalle td.num, table.detalle th.num { text-align: right; }
+table.detalle td.ctr, table.detalle th.ctr { text-align: center; }
+table.detalle td.sku { font-family: "Courier New", monospace; font-weight: 700; font-size: 8.4px; }
+table.detalle td.nb  { font-weight: 800; }
+/* Fila cuyo producto no tiene medidas cargadas en el sistema */
+table.detalle tr[data-sin-medidas="1"] td:first-child { box-shadow: inset 4px 0 0 var(--pl-amber-b); }
+.sin-dato { color: #9ca3af; }
+
+.totales {
+  display: flex; justify-content: flex-end; gap: 22px; flex-wrap: wrap;
+  padding: 10px 20px; background: #f9fafb; border-top: 2px solid var(--ilus-black);
+}
+.totales .item { text-align: right; }
+.totales .item .lbl { font-size: 9px; color: var(--ilus-gray); letter-spacing: .5px; }
+.totales .item .val { font-size: 14px; font-weight: 800; }
+.totales .item.rojo .val { color: var(--ilus-red); }
+.totales .item .warn { font-size: 8px; color: #92400e; font-weight: 700; }
+
+.declaracion {
+  padding: 11px 20px; font-size: 10px; color: #374151;
+  background: #fff; border-top: 1px solid #e5e7eb;
+}
+.obs-box { padding: 10px 20px 0; }
+.obs-box .lbl { font-size: 8.5px; color: var(--ilus-gray); text-transform: uppercase; letter-spacing: .06em; font-weight: 800; margin-bottom: 3px; }
+
+.firmas { display: flex; gap: 18px; padding: 14px 20px 20px; }
+.firma-box { flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 12px 14px; }
+.firma-box.timbre { flex: 0 0 34%; }
+.firma-box .cap { font-size: 10.5px; font-weight: 700; text-align: center; margin-bottom: 34px; }
+.firma-box .cap small { display: block; font-weight: 600; color: var(--ilus-gray); font-size: 8.5px; }
+.firma-linea { border-top: 1px solid #9ca3af; margin-bottom: 6px; }
+.firma-campo { font-size: 9.5px; color: var(--ilus-gray); margin-top: 4px; }
+.firma-campo b { color: #111827; }
+
+.footer-doc {
+  text-align: center; font-size: 9px; color: var(--ilus-gray);
+  padding: 8px 0 14px;
+}
+
+/* ── Estados (solo pantalla) ── */
+.pl-estado {
+  width: 186mm; max-width: 100%; margin: 16px auto; background: #fff;
+  border-radius: 10px; box-shadow: 0 4px 18px rgba(0,0,0,.12);
+  padding: 26px 24px; text-align: center;
+}
+.pl-estado .ico { font-size: 34px; }
+.pl-estado h3 { margin: 8px 0 6px; font-size: 16px; }
+.pl-estado p { margin: 0 auto 14px; font-size: 12px; color: var(--ilus-gray); max-width: 460px; line-height: 1.5; }
+.pl-estado.err { border-top: 5px solid var(--ilus-red); }
+.pl-estado .btn { background: var(--ilus-black); color: #fff; margin: 0 4px; }
+.spin {
+  width: 26px; height: 26px; border: 3px solid #e5e7eb; border-top-color: var(--ilus-red);
+  border-radius: 50%; margin: 0 auto 10px; animation: plspin .8s linear infinite;
+}
+@keyframes plspin { to { transform: rotate(360deg); } }
+
+/* ── Modal propio (respaldo si ilus_ui.js no cargó — REGLA #1: nunca
+      confirm()/alert() nativos) ── */
+.plm-ovl {
+  position: fixed; inset: 0; background: rgba(15,23,42,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 16px;
+}
+.plm-box { background: #fff; border-radius: 14px; max-width: 430px; width: 100%; overflow: hidden; border: 2px solid var(--ilus-red); }
+.plm-head { background: var(--ilus-black); color: #fff; padding: 12px 16px; font-weight: 800; font-size: 14px; border-bottom: 3px solid var(--ilus-red); }
+.plm-body { padding: 16px; font-size: 13px; color: #374151; line-height: 1.5; }
+.plm-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; background: #fafafa; border-top: 1px solid #e5e7eb; }
+.plm-foot .btn { min-height: 40px; }
+.plm-foot .btn.sec { background: #f3f4f6; color: #374151; }
+.plm-foot .btn.pri { background: var(--ilus-red); color: #fff; }
+
+/* ── Mobile (REGLA #3): la hoja es A4, se deja scrollear en horizontal ── */
+@media (max-width: 900px) {
+  .hoja { margin: 12px; }
+}
+@media (max-width: 767.98px) {
+  .toolbar { padding: 10px 12px; }
+  .toolbar .tb-actions { width: 100%; }
+  .toolbar .tb-actions .btn { flex: 1 1 auto; }
+  /* 16px = anti auto-zoom de iOS al enfocar un input */
+  .pl-edit, .hdr-doc input { font-size: 16px; }
+  td .pl-edit { font-size: 16px; padding: 3px 4px; }
+  .pl-dim .pl-edit { width: 44px; }
+}
+
+@media print {
+  .toolbar, .no-print, .pl-estado { display: none !important; }
+  body { background: #fff; }
+  .hoja-scroll { overflow: visible; }
+  .hoja { box-shadow: none; margin: 0; width: auto; }
+  /* Los inputs se imprimen como texto plano… */
+  .pl-edit, td .pl-edit, .pl-dim .pl-edit, .hdr-doc input {
+    border: none; background: transparent; padding: 2px 0; font-size: 8.8px;
+  }
+  .emb-item .pl-edit, .datos .pl-edit { font-size: 11px; }
+  .hdr-doc .num input { font-size: 20px; }
+  .hdr-doc .fec input { font-size: 10px; }
+  .pl-edit::placeholder { color: transparent; }
+  /* … salvo los que siguen vacíos: se imprimen en amarillo para que salte a
+     la vista que el documento se emitió incompleto. */
+  .pl-edit.pl-vacio { background: var(--pl-amber) !important; border-bottom: 1px dotted var(--pl-amber-b); }
+  .pl-edit.pl-mal   { background: #fee2e2 !important; color: var(--ilus-red); }
+  /* La tabla no se corta mal: cabecera repetida y filas indivisibles */
+  table.detalle { page-break-inside: auto; }
+  table.detalle thead { display: table-header-group; }
+  table.detalle tr { page-break-inside: avoid; page-break-after: auto; }
+  .totales, .firmas, .declaracion { page-break-inside: avoid; }
+  .sec-hdr { page-break-after: avoid; }
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar no-print">
+  <div>
+    <div class="tb-title">📦 Packing List · <span id="tbDoc">—</span></div>
+    <div class="tb-sub" id="tbSub">Documento de exportación · completa los campos en amarillo antes de emitir</div>
+  </div>
+  <div class="tb-actions">
+    <a class="btn btn-outline" href="{{ volver_url }}">← Volver</a>
+    <button class="btn btn-outline" type="button" id="btnLimpiar">🧹 Limpiar campos manuales</button>
+    {% if pdf_url %}
+    <a class="btn btn-outline" id="btnPdf" href="{{ pdf_url }}" target="_blank" rel="noopener">⬇ Descargar PDF</a>
+    {% endif %}
+    <button class="btn btn-print" type="button" onclick="window.print()">🖨 Imprimir (navegador)</button>
+  </div>
+</div>
+
+<noscript>
+  <div class="pl-estado err">
+    <div class="ico">⚠</div>
+    <h3>Esta hoja necesita JavaScript</h3>
+    <p>El packing list se arma en pantalla para poder completar a mano los datos
+       que el sistema todavía no guarda. Activa JavaScript y recarga.</p>
+  </div>
+</noscript>
+
+<div class="pl-estado" id="plCargando">
+  <div class="spin"></div>
+  <h3>Armando el packing list…</h3>
+  <p>Leyendo el documento y sus bultos.</p>
+</div>
+
+<div class="pl-estado err" id="plError" hidden>
+  <div class="ico">🚫</div>
+  <h3>No se pudo armar el packing list</h3>
+  <p id="plErrorMsg">—</p>
+  <button class="btn" type="button" id="btnReintentar">↻ Reintentar</button>
+  <a class="btn" href="{{ volver_url }}">← Volver al cubicador</a>
+</div>
+
+<div class="hoja-scroll">
+<div class="hoja" id="plHoja" hidden>
+
+  <div class="hdr">
+    <div class="hdr-logos">
+      <div class="hdr-shs"><div class="l1">SPORTS<br>HEALTH</div><div class="l2">SOLUTIONS</div></div>
+      {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
+    </div>
+    <div class="hdr-doc">
+      <div class="tit">PACKING LIST<small>LISTA DE EMPAQUE</small></div>
+      <div class="num">N° <input type="text" id="plNumero" data-plk="hdr.numero" aria-label="Número del packing list"></div>
+      <div class="fec">FECHA EMISIÓN: <input type="text" id="plFecha" data-plk="hdr.fecha" aria-label="Fecha de emisión"></div>
+    </div>
+  </div>
+  <div class="accent"></div>
+
+  <div class="datos">
+    <div class="col">
+      <h4>EXPORTADOR <span>/ SHIPPER</span></h4>
+      <div class="row"><b>Razón social:</b><span class="v" id="expNombre">—</span></div>
+      <div class="row"><b>R.U.T.:</b><span class="v" id="expRut">—</span></div>
+      <div class="row"><b>Giro:</b><span class="v" id="expGiro">—</span></div>
+      <div class="row"><b>Dirección:</b><span class="v" id="expDireccion">—</span></div>
+      <div class="row"><b>Fono:</b><span class="v" id="expTelefono">—</span></div>
+      <div class="row"><b>Contacto:</b><span class="v"><input type="text" class="pl-edit" id="expContacto" data-plk="exp.contacto" placeholder="completar" aria-label="Contacto del exportador"></span></div>
+    </div>
+    <div class="col">
+      <h4>CONSIGNATARIO <span>/ CONSIGNEE</span></h4>
+      <div class="row"><b>Nombre:</b><span class="v" id="conNombre">—</span></div>
+      <div class="row"><b>R.U.T. / Tax ID:</b><span class="v" id="conRut">—</span></div>
+      <div class="row"><b>Dirección:</b><span class="v" id="conDireccion">—</span></div>
+      <div class="row"><b>Ciudad / Comuna:</b><span class="v" id="conCiudad">—</span></div>
+      <div class="row"><b>País:</b><span class="v"><input type="text" class="pl-edit" id="conPais" data-plk="con.pais" placeholder="completar" aria-label="País del consignatario"></span></div>
+      <div class="row"><b>Fono / Email:</b><span class="v" id="conContacto">—</span></div>
+    </div>
+  </div>
+
+  <div class="embarque">
+    <h4>DATOS DE EMBARQUE <span style="color:#6b7280;font-weight:700;font-size:9px;letter-spacing:1px">/ SHIPMENT DETAILS</span></h4>
+    <div class="emb-grid">
+      <div class="emb-item">
+        <div class="lbl">Documento de referencia</div>
+        <input type="text" class="pl-edit" id="embDoc" data-plk="emb.documento_ref" placeholder="completar" aria-label="Documento de referencia">
+      </div>
+      <div class="emb-item">
+        <div class="lbl">Incoterm</div>
+        <input type="text" class="pl-edit" id="embIncoterm" data-plk="emb.incoterm" list="dlIncoterm" placeholder="completar" aria-label="Incoterm">
+      </div>
+      <div class="emb-item">
+        <div class="lbl">Puerto / lugar de destino</div>
+        <input type="text" class="pl-edit" id="embPuerto" data-plk="emb.puerto_destino" placeholder="completar" aria-label="Puerto o lugar de destino">
+      </div>
+      <div class="emb-item">
+        <div class="lbl">País de destino</div>
+        <input type="text" class="pl-edit" id="embPais" data-plk="emb.pais_destino" placeholder="completar" aria-label="País de destino">
+      </div>
+      <div class="emb-item">
+        <div class="lbl">Medio de transporte</div>
+        <input type="text" class="pl-edit" id="embMedio" data-plk="emb.medio_transporte" list="dlMedio" placeholder="completar" aria-label="Medio de transporte">
+      </div>
+    </div>
+    <datalist id="dlIncoterm">
+      <option value="EXW"></option><option value="FCA"></option><option value="FAS"></option>
+      <option value="FOB"></option><option value="CFR"></option><option value="CIF"></option>
+      <option value="CPT"></option><option value="CIP"></option><option value="DAP"></option>
+      <option value="DPU"></option><option value="DDP"></option>
+    </datalist>
+    <datalist id="dlMedio">
+      <option value="Marítimo"></option><option value="Aéreo"></option>
+      <option value="Terrestre"></option><option value="Courier"></option>
+      <option value="Multimodal"></option>
+    </datalist>
+  </div>
+
+  <div class="aviso" id="plAviso" hidden>
+    <b>⚠ Los campos en amarillo no están en el sistema todavía: complétalos antes de emitir.</b>
+    <span id="plAvisoDetalle"></span>
+    <span id="plNotaAduana"></span>
+  </div>
+
+  <div class="aviso no-print" id="plAvisosApi" hidden style="background:#dbeafe;border-color:#bfdbfe;border-left-color:#3b82f6;color:#1e3a8a"></div>
+
+  <div class="sec-hdr">
+    <span>DETALLE BULTO A BULTO <span class="sub">/ PACKING DETAILS</span></span>
+    <span class="sub" id="plSecInfo">—</span>
+  </div>
+
+  <table class="detalle" id="plTabla">
+    <colgroup>
+      <col style="width:24px"><col style="width:64px"><col>
+      <col style="width:32px"><col style="width:32px">
+      <col style="width:60px"><col style="width:54px"><col style="width:58px">
+      <col style="width:80px"><col style="width:46px">
+      <col style="width:50px"><col style="width:50px">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="ctr">N°</th>
+        <th>SKU</th>
+        <th>Descripción</th>
+        <th class="ctr">Bulto</th>
+        <th class="ctr">Cajas</th>
+        <th>Marca <span class="man">✎</span></th>
+        <th>País origen <span class="man">✎</span></th>
+        <th>Partida arancel. <span class="man">✎</span></th>
+        <th class="ctr">Medidas por caja<br>L × A × A (cm)</th>
+        <th class="num">Vol. total<br>(m³)</th>
+        <th class="num">Peso neto<br>total (kg) <span class="man">✎</span></th>
+        <th class="num">Peso bruto<br>total (kg)</th>
+      </tr>
+    </thead>
+    <tbody id="plTbody"></tbody>
+  </table>
+
+  <div class="totales">
+    <div class="item"><div class="lbl">TOTAL UNIDADES</div><div class="val" id="totUnidades">0</div></div>
+    <div class="item"><div class="lbl">TOTAL BULTOS (CAJAS)</div><div class="val" id="totBultos">0</div></div>
+    <div class="item"><div class="lbl">VOLUMEN TOTAL (M³)</div><div class="val" id="totVol">0,000</div></div>
+    <div class="item">
+      <div class="lbl">PESO NETO TOTAL (KG)</div>
+      <div class="val" id="totNeto">—</div>
+      <div class="warn" id="totNetoWarn"></div>
+    </div>
+    <div class="item rojo"><div class="lbl">PESO BRUTO TOTAL (KG)</div><div class="val" id="totBruto">0,0</div></div>
+  </div>
+
+  <div class="obs-box">
+    <div class="lbl">Observaciones / Remarks</div>
+    <input type="text" class="pl-edit" id="embObs" data-plk="emb.observaciones" placeholder="completar" aria-label="Observaciones">
+  </div>
+
+  <div class="declaracion">
+    Declaramos que la información contenida en este Packing List corresponde fiel y exactamente
+    a la mercancía embarcada, en las cantidades, medidas y pesos indicados.
+    <span id="plNotaManual" class="no-print" style="color:#92400e"></span>
+  </div>
+
+  <div class="firmas">
+    <div class="firma-box">
+      <div class="cap">Firma del exportador<small>Exporter's signature</small></div>
+      <div class="firma-linea"></div>
+      <div class="firma-campo">Nombre: ______________________________</div>
+      <div class="firma-campo">Cargo: ____________________  R.U.T.: ________________</div>
+      <div class="firma-campo">Fecha: ____________________</div>
+    </div>
+    <div class="firma-box timbre">
+      <div class="cap">Timbre<small>Company stamp</small></div>
+      <div class="firma-linea"></div>
+      <div class="firma-campo">&nbsp;</div>
+    </div>
+  </div>
+
+  <div class="footer-doc" id="plFooter">Packing List · ILUS Sport &amp; Health</div>
+</div>
+</div>
+
+<script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
+<script>
+/* Semilla server-side (obligatoria para el PDF por Playwright: page.set_content()
+   no tiene origin y un fetch relativo fallaría). */
+{% if pl %}window.__PL_DATA__ = {{ pl|tojson }};{% else %}window.__PL_DATA__ = null;{% endif %}
+{% if exportador %}window.__PL_EXPORTADOR__ = {{ exportador|tojson }};{% endif %}
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   PACKING LIST — render, edición manual y totales.
+   Todo dentro de un IIFE: la hoja es standalone, no ensucia el global.
+   ════════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  var TIDO    = {{ (tido or '')|tojson }};
+  var NUDO    = {{ (nudo or '')|tojson }};
+  var API_URL = {{ (api_url or '')|tojson }};
+  var PDF_URL = {{ (pdf_url or '')|tojson }};
+
+  if (!API_URL && TIDO && NUDO) {
+    API_URL = '/cubicador/api/packing-list/'
+            + encodeURIComponent(TIDO) + '/' + encodeURIComponent(NUDO);
+  }
+
+  /* Exportador: ILUS. Si el backend no lo manda usamos los datos propios de
+     la empresa (ILUS_REMITENTE, app.py:22251) — son datos reales de ILUS, no
+     un relleno inventado. */
+  var EXP_FALLBACK = {
+    nombre:    'SPORT AND HEALTH SOLUTION SPA',
+    rut:       '76.996.964-0',
+    giro:      'IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS',
+    direccion: 'AV. APOQUINDO 4499, LAS CONDES',
+    telefono:  '+56229465970'
+  };
+
+  var LS_KEY = 'ilus_packing_v1_' + (TIDO || 'x') + '_' + (NUDO || 'x');
+
+  var $ = function(id){ return document.getElementById(id); };
+
+  /* ── Utilidades ─────────────────────────────────────────────────── */
+  function pick(obj){
+    if (!obj) return null;
+    for (var i = 1; i < arguments.length; i++) {
+      var v = obj[arguments[i]];
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+    return null;
+  }
+  function toNum(v){
+    if (v === null || v === undefined || v === '') return null;
+    var n = parseFloat(String(v).replace(',', '.'));
+    return isNaN(n) ? null : n;
+  }
+  function fmt(n, dec){
+    if (n === null || n === undefined || isNaN(n)) return '';
+    return Number(n).toLocaleString('es-CL', {
+      minimumFractionDigits: dec, maximumFractionDigits: dec
+    });
+  }
+  function esc(s){
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function hoyChile(){
+    try {
+      return new Date().toLocaleDateString('es-CL', {
+        timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric'
+      });
+    } catch (e) {
+      var d = new Date();
+      return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear();
+    }
+  }
+
+  /* Líneas de servicio: NO son cajas (ZZ Envío, descuentos, fletes…). */
+  function esServicio(b){
+    if (b && b.es_zz === true) return true;
+    var sku = String(pick(b, 'sku') || '').toUpperCase().replace(/[\s._\-]/g, '');
+    if (!sku) return false;
+    if (sku.indexOf('ZZ') === 0) return true;
+    return ['DESCUENTO','DCTO','DESCTO','FLETE','ENVIO','DESPACHO','SERVICIO',
+            'ANTICIPO','ABONO','REDONDEO'].indexOf(sku) >= 0;
+  }
+
+  /* ── Confirmación (REGLA #1: jamás confirm() nativo) ─────────────── */
+  function plConfirm(opts){
+    if (window.ilusConfirm) return window.ilusConfirm(opts);
+    return new Promise(function(resolve){
+      var ovl = document.createElement('div');
+      ovl.className = 'plm-ovl';
+      ovl.innerHTML =
+        '<div class="plm-box">' +
+          '<div class="plm-head">' + esc(opts.title || 'Confirmar') + '</div>' +
+          '<div class="plm-body">' + esc(opts.message || '') +
+            (opts.sub ? '<div style="color:#6b7280;font-size:12px;margin-top:6px">' + esc(opts.sub) + '</div>' : '') +
+          '</div>' +
+          '<div class="plm-foot">' +
+            '<button type="button" class="btn sec" data-r="0">' + esc(opts.cancelLabel || 'Cancelar') + '</button>' +
+            '<button type="button" class="btn pri" data-r="1">' + esc(opts.okLabel || 'Aceptar') + '</button>' +
+          '</div>' +
+        '</div>';
+      ovl.addEventListener('click', function(ev){
+        var b = ev.target.closest('button[data-r]');
+        if (!b && ev.target !== ovl) return;
+        var r = b ? b.dataset.r === '1' : false;
+        ovl.remove();
+        resolve(r);
+      });
+      document.body.appendChild(ovl);
+    });
+  }
+  function plToast(msg, type){
+    if (window.ilusToast) { window.ilusToast(msg, { type: type || 'info' }); }
+  }
+
+  /* ── Persistencia local de lo escrito a mano ─────────────────────── */
+  var saveTimer = null;
+  function guardar(){
+    try {
+      var data = {};
+      document.querySelectorAll('[data-plk]').forEach(function(el){
+        var k = el.dataset.plk;
+        if (k && String(el.value || '').trim() !== '') data[k] = el.value;
+      });
+      localStorage.setItem(LS_KEY, JSON.stringify({ v: 1, campos: data }));
+    } catch (e) { /* modo privado / cuota llena: no es crítico */ }
+  }
+  function guardarDebounce(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(guardar, 350);
+  }
+  /* Lo escrito a mano MANDA sobre lo que trae el sistema (si el usuario
+     corrigió un peso, al recargar debe seguir corregido). Para volver a los
+     datos del sistema está el botón "Limpiar campos manuales".
+     Se recorre el DOM en vez de armar un selector con la clave: los SKU
+     pueden traer caracteres que romperían el querySelector. */
+  function restaurar(){
+    var raw;
+    try { raw = localStorage.getItem(LS_KEY); } catch (e) { return; }
+    if (!raw) return;
+    var campos;
+    try { campos = (JSON.parse(raw) || {}).campos || {}; } catch (e) { return; }
+    document.querySelectorAll('[data-plk]').forEach(function(el){
+      var v = campos[el.dataset.plk];
+      if (v !== undefined && v !== null && String(v) !== '') el.value = v;
+    });
+  }
+
+  /* ── Normalización del payload ───────────────────────────────────── */
+  function normalizar(p){
+    p = p || {};
+    var doc  = p.documento || p.doc || {};
+    var tido = pick(doc, 'tido') || TIDO || '';
+    var nudo = pick(doc, 'nudo_display', 'nudo') || NUDO || '';
+    var crudas = p.filas || p.bultos || p.lineas || p.items || [];
+    if (!Array.isArray(crudas)) crudas = [];
+
+    var omitidas = 0;
+    var filas = [];
+    crudas.forEach(function(f){
+      /* El backend ya excluye las líneas de servicio; este filtro es un
+         segundo cinturón por si alguna se cuela (no son cajas). */
+      if (esServicio(f)) { omitidas++; return; }
+
+      var L = toNum(pick(f, 'largo_cm', 'largo'));
+      var A = toNum(pick(f, 'ancho_cm', 'ancho'));
+      var H = toNum(pick(f, 'alto_cm', 'alto'));
+
+      /* `cajas` = cuántas cajas físicas representa ESTA fila.
+         · Si el payload NO trae la clave → contrato simple: la fila es 1 caja.
+         · Si la trae en 0 → el sistema NO sabe (producto sin bultos cargados).
+           Se deja VACÍO y editable: inventar "1 caja" falsearía el total de
+           bultos del embarque, que en aduana es un dato duro. */
+      var cajas;
+      if (f.cajas === undefined || f.cajas === null) {
+        cajas = 1;
+      } else {
+        cajas = toNum(f.cajas);
+        if (cajas !== null && cajas <= 0) cajas = null;
+      }
+
+      var vol = toNum(pick(f, 'volumen_m3_total'));
+      if (vol === null && cajas !== null) {
+        var volU = toNum(pick(f, 'volumen_m3_unitario', 'volumen_m3', 'vol_m3', 'volumen'));
+        if (volU === null && L && A && H) volU = (L * A * H) / 1000000;
+        if (volU !== null) vol = volU * cajas;
+      }
+
+      var bruto = toNum(pick(f, 'peso_bruto_kg_total'));
+      if (bruto === null && cajas !== null) {
+        var brutoU = toNum(pick(f, 'peso_bruto_kg_unitario', 'peso_bruto_kg',
+                                  'peso_bruto', 'peso_kg', 'peso'));
+        if (brutoU !== null) bruto = brutoU * cajas;
+      }
+
+      var neto = toNum(pick(f, 'peso_neto_kg_total'));
+      if (neto === null && cajas !== null) {
+        var netoU = toNum(pick(f, 'peso_neto_kg', 'peso_neto'));
+        if (netoU !== null) neto = netoU * cajas;
+      }
+
+      filas.push({
+        linea:    toNum(pick(f, 'linea')),
+        bultoNum: toNum(pick(f, 'bulto_num', 'n_bulto', 'num')),
+        bultosXu: toNum(pick(f, 'bultos_por_unidad')),
+        sku:      pick(f, 'sku', 'codigo') || '',
+        desc:     pick(f, 'descripcion', 'nombre_app', 'nombre', 'descripcion_erp') || '',
+        cant:     toNum(pick(f, 'cantidad', 'cant', 'qty')),
+        cajas:    cajas,
+        marca:    pick(f, 'marca') || '',
+        pais:     pick(f, 'pais_origen', 'pais') || '',
+        partida:  pick(f, 'partida_arancelaria', 'partida', 'hs_code') || '',
+        largo: L, ancho: A, alto: H, vol: vol,
+        neto: neto, bruto: bruto,
+        sinMedidas: f.sin_medidas === true || !(L && A && H)
+      });
+    });
+
+    var exp = p.exportador || window.__PL_EXPORTADOR__ || EXP_FALLBACK;
+    var avisos = p.advertencias || p.avisos || [];
+    var excl   = p.lineas_excluidas || p.excluidas || [];
+    return {
+      numero:   pick(p, 'numero', 'correlativo') || ('PL-' + (tido || 'DOC') + '-' + (nudo || '')),
+      fecha:    pick(p, 'fecha') || pick(doc, 'fecha') || hoyChile(),
+      tido: tido, nudo: nudo,
+      exportador:    exp || {},
+      consignatario: p.consignatario || p.cliente || {},
+      embarque:      p.embarque || {},
+      avisos:        Array.isArray(avisos) ? avisos : [],
+      excluidas:     Array.isArray(excl) ? excl : [],
+      notaAduana:    pick(p, 'nota_aduana') || '',
+      filas: filas,
+      omitidas: omitidas
+    };
+  }
+
+  /* ── Render ──────────────────────────────────────────────────────── */
+  function txt(id, v){
+    var el = $(id);
+    if (!el) return;
+    if (v === null || v === undefined || v === '') {
+      el.innerHTML = '<span class="sin-dato">—</span>';
+    } else {
+      el.textContent = v;
+    }
+  }
+
+  function filaHtml(b, i){
+    /* N° de fila SIEMPRE correlativo 1..N sobre lo que SÍ se embala. El
+       bulto_num del sistema es POR PRODUCTO (cada SKU numera sus bultos desde
+       1) y además las líneas de servicio ya se filtraron: usarlo dejaría
+       huecos o números repetidos, y en aduana eso se lee como "faltan cajas".
+       El bulto_num real se muestra aparte, en la columna "Bulto" (1/2). */
+    var n   = i + 1;
+    /* Clave de persistencia: índice + SKU. No usa bulto_num porque se repite
+       entre productos y chocarían los campos manuales de filas distintas. */
+    var key = 'row.' + i + '.' + (b.sku || 'x');
+
+    var med =
+      '<div class="pl-dim">' +
+        '<input type="text" class="pl-edit num" inputmode="decimal" data-plk="' + esc(key) + '.largo" data-dim="L" value="' + esc(b.largo !== null ? fmt(b.largo, 0) : '') + '" placeholder="L" aria-label="Largo en cm, fila ' + n + '">' +
+        '<span>×</span>' +
+        '<input type="text" class="pl-edit num" inputmode="decimal" data-plk="' + esc(key) + '.ancho" data-dim="A" value="' + esc(b.ancho !== null ? fmt(b.ancho, 0) : '') + '" placeholder="A" aria-label="Ancho en cm, fila ' + n + '">' +
+        '<span>×</span>' +
+        '<input type="text" class="pl-edit num" inputmode="decimal" data-plk="' + esc(key) + '.alto" data-dim="H" value="' + esc(b.alto !== null ? fmt(b.alto, 0) : '') + '" placeholder="A" aria-label="Alto en cm, fila ' + n + '">' +
+      '</div>';
+
+    /* "1/2" = bulto 1 de los 2 que arma ese producto. Si el sistema no sabe
+       cuántos bultos tiene, no se inventa: va "—". */
+    var bulto = (b.bultoNum !== null)
+      ? (esc(b.bultoNum) + (b.bultosXu ? '/' + esc(b.bultosXu) : ''))
+      : '<span class="sin-dato">—</span>';
+
+    return '<tr data-row="' + i + '"' +
+             (b.linea !== null ? ' data-linea="' + esc(b.linea) + '"' : '') +
+             (b.sinMedidas ? ' data-sin-medidas="1"' : '') + '>' +
+      '<td class="ctr nb">' + esc(n) + '</td>' +
+      '<td class="sku">' + (b.sku ? esc(b.sku) : '<span class="sin-dato">—</span>') + '</td>' +
+      '<td>' + (b.desc ? esc(b.desc) : '<span class="sin-dato">—</span>') + '</td>' +
+      '<td class="ctr">' + bulto + '</td>' +
+      '<td class="ctr"><input type="text" class="pl-edit ctr" inputmode="numeric" data-plk="' + esc(key) + '.cajas" data-cajas="1" value="' + esc(b.cajas !== null ? fmt(b.cajas, b.cajas % 1 === 0 ? 0 : 2) : '') + '" placeholder="n°" aria-label="Cajas, fila ' + n + '"></td>' +
+      '<td><input type="text" class="pl-edit" data-plk="' + esc(key) + '.marca" value="' + esc(b.marca) + '" placeholder="completar" aria-label="Marca, fila ' + n + '"></td>' +
+      '<td><input type="text" class="pl-edit" data-plk="' + esc(key) + '.pais" value="' + esc(b.pais) + '" placeholder="completar" aria-label="País de origen, fila ' + n + '"></td>' +
+      '<td><input type="text" class="pl-edit" data-plk="' + esc(key) + '.partida" value="' + esc(b.partida) + '" placeholder="completar" aria-label="Partida arancelaria, fila ' + n + '"></td>' +
+      '<td class="ctr">' + med + '</td>' +
+      '<td class="num" data-vol="' + i + '">' + (b.vol !== null ? esc(fmt(b.vol, 3)) : '<span class="sin-dato">—</span>') + '</td>' +
+      '<td class="num"><input type="text" class="pl-edit num" inputmode="decimal" data-plk="' + esc(key) + '.neto" data-peso="neto" value="' + esc(b.neto !== null ? fmt(b.neto, 1) : '') + '" placeholder="kg" aria-label="Peso neto total, fila ' + n + '"></td>' +
+      '<td class="num"><input type="text" class="pl-edit num" inputmode="decimal" data-plk="' + esc(key) + '.bruto" data-peso="bruto" value="' + esc(b.bruto !== null ? fmt(b.bruto, 1) : '') + '" placeholder="kg" aria-label="Peso bruto total, fila ' + n + '"></td>' +
+    '</tr>';
+  }
+
+  var MODEL = null;
+
+  function render(p){
+    MODEL = normalizar(p);
+
+    /* Cabecera */
+    var titulo = (MODEL.tido ? MODEL.tido + ' N° ' + MODEL.nudo : (MODEL.numero || '—'));
+    document.title = 'Packing List · ' + titulo;
+    txt('tbDoc', titulo);
+    $('plNumero').value = MODEL.numero || '';
+    $('plFecha').value  = MODEL.fecha || '';
+
+    /* Exportador */
+    var e = MODEL.exportador || {};
+    txt('expNombre',    pick(e, 'nombre', 'razon_social'));
+    txt('expRut',       pick(e, 'rut'));
+    txt('expGiro',      pick(e, 'giro'));
+    txt('expDireccion', [pick(e, 'direccion'), pick(e, 'comuna'), pick(e, 'ciudad'), pick(e, 'pais')].filter(Boolean).join(', '));
+    txt('expTelefono',  pick(e, 'telefono', 'fono'));
+    if (pick(e, 'contacto')) $('expContacto').value = pick(e, 'contacto');
+
+    /* Consignatario */
+    var c = MODEL.consignatario || {};
+    txt('conNombre',    pick(c, 'nombre', 'cliente_nombre', 'razon_social'));
+    txt('conRut',       pick(c, 'rut', 'cliente_rut', 'tax_id'));
+    txt('conDireccion', pick(c, 'direccion'));
+    txt('conCiudad',    [pick(c, 'comuna'), pick(c, 'ciudad')].filter(Boolean).join(' / '));
+    txt('conContacto',  [pick(c, 'telefono', 'fono'), pick(c, 'email')].filter(Boolean).join(' · '));
+    if (pick(c, 'pais')) $('conPais').value = pick(c, 'pais');
+
+    /* Embarque */
+    var em = MODEL.embarque || {};
+    $('embDoc').value      = pick(em, 'documento_ref', 'documento') ||
+                             (MODEL.tido ? MODEL.tido + ' N° ' + MODEL.nudo : '');
+    $('embIncoterm').value = pick(em, 'incoterm') || '';
+    $('embPuerto').value   = pick(em, 'puerto_destino', 'lugar_destino', 'destino') || '';
+    $('embPais').value     = pick(em, 'pais_destino', 'pais') || '';
+    $('embMedio').value    = pick(em, 'medio_transporte', 'transporte') || '';
+    $('embObs').value      = pick(em, 'observaciones', 'obs') || '';
+
+    /* Tabla */
+    var tb = $('plTbody');
+    if (!MODEL.filas.length) {
+      tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#9ca3af;padding:16px 20px">' +
+                     'El documento no tiene productos para embalar.</td></tr>';
+    } else {
+      tb.innerHTML = MODEL.filas.map(filaHtml).join('');
+    }
+
+    /* Info de sección */
+    var omitidas = MODEL.excluidas.length + MODEL.omitidas;
+    var info = MODEL.filas.length + ' fila(s)';
+    if (omitidas) info += ' · ' + omitidas + ' línea(s) de servicio omitida(s)';
+    txt('plSecInfo', info);
+    txt('plFooter', 'Packing List ' + (MODEL.numero || '') + ' · ' +
+        (MODEL.tido ? MODEL.tido + ' N° ' + MODEL.nudo + ' · ' : '') +
+        'ILUS Sport & Health — SPORT AND HEALTH SOLUTION SPA');
+
+    /* Avisos del backend + detalle de lo que se dejó fuera. Se muestra en
+       pantalla (no se imprime): sirve para que nadie descubra a última hora
+       que le falta una caja. */
+    var partes = [];
+    if (MODEL.avisos.length) {
+      partes.push('<b>ℹ Notas del sistema:</b> ' + MODEL.avisos.map(esc).join(' · '));
+    }
+    if (MODEL.excluidas.length) {
+      partes.push('<b>Líneas omitidas (no son cajas):</b> ' +
+        MODEL.excluidas.map(function(x){
+          return esc(x.sku || '?') + (x.motivo ? ' — ' + esc(x.motivo) : '');
+        }).join(' · '));
+    }
+    var av = $('plAvisosApi');
+    if (partes.length) {
+      av.innerHTML = partes.join('<br>');
+      av.hidden = false;
+    } else {
+      av.hidden = true;
+    }
+
+    /* Nota que manda el propio backend sobre los campos de aduana */
+    var na = $('plNotaAduana');
+    if (na) na.textContent = MODEL.notaAduana ? (' ' + MODEL.notaAduana) : '';
+
+    restaurar();
+    cablearEdicion();
+    marcarVacios();
+    recalcular();
+
+    $('plCargando').hidden = true;
+    $('plError').hidden    = true;
+    $('plHoja').hidden     = false;
+    window.__PL_READY__ = true;   /* Playwright puede esperar esta bandera */
+  }
+
+  /* ── Edición ─────────────────────────────────────────────────────── */
+  function cablearEdicion(){
+    document.querySelectorAll('.pl-edit, #plNumero, #plFecha').forEach(function(el){
+      if (el.dataset.plWired) return;
+      el.dataset.plWired = '1';
+      el.addEventListener('input', function(){
+        marcarVacios();
+        recalcular();
+        guardarDebounce();
+      });
+      el.addEventListener('change', guardar);
+    });
+  }
+
+  function marcarVacios(){
+    var vacios = 0, malos = 0;
+    document.querySelectorAll('.pl-edit').forEach(function(el){
+      var v = String(el.value || '').trim();
+      var vacio = !v;
+      /* Campo numérico con texto que no es número: se marca en rojo. Si no,
+         la fila desaparecería de los totales sin que nadie lo note. */
+      var malo = !vacio && !!el.getAttribute('inputmode') && toNum(v) === null;
+      el.classList.toggle('pl-vacio', vacio);
+      el.classList.toggle('pl-mal', malo);
+      if (vacio) vacios++;
+      if (malo) malos++;
+    });
+
+    var detalle = '';
+    if (vacios) {
+      detalle += ' Quedan ' + vacios + ' campo(s) sin completar (marca, país de ' +
+                 'origen, partida arancelaria, peso neto, incoterm, destino…). ' +
+                 'El sistema todavía no los guarda, por eso llegan vacíos.';
+    }
+    if (malos) {
+      detalle += ' ⚠ Hay ' + malos + ' campo(s) numérico(s) con un valor que no es ' +
+                 'un número: esas filas NO se están sumando en los totales.';
+    }
+    $('plAvisoDetalle').textContent = detalle;
+    $('plAviso').hidden = !(vacios || malos);
+
+    var nota = $('plNotaManual');
+    if (nota) {
+      nota.textContent = (vacios || malos)
+        ? ' — Faltan ' + vacios + ' campo(s) manuales por completar' +
+          (malos ? ' y hay ' + malos + ' con un número no válido' : '') + '.'
+        : '';
+    }
+    return vacios;
+  }
+
+  function recalcular(){
+    var tUnid = 0, tCajas = 0, tVol = 0, tNeto = 0, tBruto = 0;
+    var nFilas = 0, sinNeto = 0;
+    var lineasVistas = {};
+
+    (MODEL ? MODEL.filas : []).forEach(function(b, i){
+      nFilas++;
+
+      /* Unidades: se suman UNA sola vez por línea del documento. Un producto
+         de 2 bultos genera 2 filas con la misma cantidad — sumarlas todas
+         duplicaría las unidades vendidas. */
+      var lk = (b.linea !== null) ? ('L' + b.linea) : ('i' + i);
+      if (!lineasVistas[lk]) {
+        lineasVistas[lk] = true;
+        if (b.cant !== null) tUnid += b.cant;
+      }
+
+      var fila = document.querySelector('tr[data-row="' + i + '"]');
+      if (!fila) return;
+
+      /* Cajas: se lee del input (el usuario puede completarlo cuando el
+         sistema no lo sabe). Sin cajas no hay volumen de fila que valga. */
+      var elCajas = fila.querySelector('[data-cajas]');
+      var cajas = elCajas ? toNum(elCajas.value) : b.cajas;
+      if (cajas !== null && cajas > 0) tCajas += cajas; else cajas = null;
+
+      var elL = fila.querySelector('[data-dim="L"]');
+      var elA = fila.querySelector('[data-dim="A"]');
+      var elH = fila.querySelector('[data-dim="H"]');
+      var L = elL ? toNum(elL.value) : null;
+      var A = elA ? toNum(elA.value) : null;
+      var H = elH ? toNum(elH.value) : null;
+      /* Las medidas son POR CAJA → el volumen de la fila es × cajas. */
+      var vol = (L && A && H && cajas) ? ((L * A * H) / 1000000) * cajas : null;
+
+      var celdaVol = fila.querySelector('[data-vol]');
+      if (celdaVol) {
+        celdaVol.innerHTML = vol !== null ? esc(fmt(vol, 3)) : '<span class="sin-dato">—</span>';
+      }
+      if (vol !== null) tVol += vol;
+
+      var elNeto  = fila.querySelector('[data-peso="neto"]');
+      var elBruto = fila.querySelector('[data-peso="bruto"]');
+      var neto  = elNeto  ? toNum(elNeto.value)  : null;
+      var bruto = elBruto ? toNum(elBruto.value) : null;
+      if (neto !== null) tNeto += neto; else sinNeto++;
+      if (bruto !== null) tBruto += bruto;
+    });
+
+    txt('totUnidades', fmt(tUnid, tUnid % 1 === 0 ? 0 : 2) || '0');
+    txt('totBultos',   fmt(tCajas, tCajas % 1 === 0 ? 0 : 2) || '0');
+    txt('totVol',      fmt(tVol, 3));
+    txt('totBruto',    fmt(tBruto, 1));
+
+    /* Peso neto: NUNCA se inventa. Si falta alguno, se dice explícitamente. */
+    if (sinNeto === nFilas) {
+      $('totNeto').innerHTML = '<span class="sin-dato">—</span>';
+      $('totNetoWarn').textContent = nFilas ? 'sin datos: completar a mano' : '';
+    } else {
+      $('totNeto').textContent = fmt(tNeto, 1);
+      $('totNetoWarn').textContent = sinNeto ? ('parcial: falta(n) ' + sinNeto + ' fila(s)') : '';
+    }
+  }
+
+  /* ── Carga ───────────────────────────────────────────────────────── */
+  function mostrarError(msg){
+    $('plCargando').hidden = true;
+    $('plHoja').hidden     = true;
+    $('plError').hidden    = false;
+    $('plErrorMsg').textContent = msg || 'Error desconocido.';
+    window.__PL_READY__ = true;
+  }
+
+  function cargar(){
+    if (window.__PL_DATA__) {
+      /* Semilla server-side: sin red, funciona dentro de Playwright. */
+      try { render(window.__PL_DATA__); }
+      catch (err) { mostrarError('Error armando la hoja: ' + err.message); }
+      return;
+    }
+    if (!API_URL) {
+      mostrarError('No se indicó el documento (tipo y número) para armar el packing list.');
+      return;
+    }
+    $('plCargando').hidden = false;
+    $('plError').hidden    = true;
+    fetch(API_URL, { headers: { 'Accept': 'application/json' } })
+      .then(function(r){
+        return r.json().catch(function(){ return { error: 'Respuesta no válida del servidor (HTTP ' + r.status + ')' }; })
+          .then(function(j){
+            if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+            if (j && j.ok === false) throw new Error(j.error || 'El servidor no pudo armar el packing list.');
+            return j;
+          });
+      })
+      .then(function(j){ render(j.packing_list || j.data || j); })
+      .catch(function(err){ mostrarError(err.message || 'No se pudo consultar el documento.'); });
+  }
+
+  /* ── Botones de la barra ─────────────────────────────────────────── */
+  var btnLimpiar = $('btnLimpiar');
+  if (btnLimpiar) {
+    btnLimpiar.addEventListener('click', function(){
+      plConfirm({
+        title: 'Limpiar campos manuales',
+        message: '¿Borrar todo lo que escribiste a mano en esta hoja?',
+        sub: 'Se vuelve a los datos que entrega el sistema. No afecta al documento del ERP.',
+        okLabel: 'Borrar', cancelLabel: 'Cancelar', danger: true, type: 'warning'
+      }).then(function(ok){
+        if (!ok) return;
+        try { localStorage.removeItem(LS_KEY); } catch (e) {}
+        if (window.__PL_DATA__) { render(window.__PL_DATA__); }
+        else { cargar(); }
+        plToast('Campos manuales borrados', 'success');
+      });
+    });
+  }
+
+  var btnPdf = $('btnPdf');
+  if (btnPdf) {
+    btnPdf.addEventListener('click', function(ev){
+      /* El PDF lo arma el servidor con los datos del sistema: lo escrito a
+         mano en pantalla NO viaja. Se avisa antes, en vez de entregar un PDF
+         incompleto sin explicación. */
+      var manuales = 0;
+      document.querySelectorAll('.pl-edit').forEach(function(el){
+        if (String(el.value || '').trim()) manuales++;
+      });
+      if (!manuales) return;   /* nada escrito → PDF directo */
+      ev.preventDefault();
+      plConfirm({
+        title: 'Descargar PDF del servidor',
+        message: 'El PDF se genera en el servidor y NO incluye los ' + manuales +
+                 ' campo(s) que completaste a mano en pantalla.',
+        sub: 'Para conservarlos usa "Imprimir (navegador)" y guarda como PDF desde ahí.',
+        okLabel: 'Descargar igual', cancelLabel: 'Mejor imprimo', type: 'warning'
+      }).then(function(ok){
+        if (ok) window.open(PDF_URL, '_blank', 'noopener');
+      });
+    });
+  }
+
+  var btnRe = $('btnReintentar');
+  if (btnRe) btnRe.addEventListener('click', cargar);
+
+  /* Arranque — síncrono cuando hay semilla (importante para el PDF). */
+  cargar();
+})();
+</script>
+</body>
+</html>
