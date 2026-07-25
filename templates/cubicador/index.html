@@ -926,6 +926,12 @@
   {% include "cubicador/_tab_packing.html" %}
 </div>
 
+{# Requisito documentado en el propio _tab_cotizador.html (encabezado del
+   archivo, punto 3): sin este include el botón "Traer desde el ERP" cae al
+   fallback ilusPrompt en vez de abrir el modal multidocumento real.
+   Se agrega UNA sola vez, fuera de los formularios del Cubicador. #}
+{% include "tickets/_tka_modal.html" %}
+
 {% endblock %}
 
 {% block scripts %}

@@ -485,10 +485,9 @@
           <span>Sale del tarifario negociado que ILUS tiene cargado para esa comuna.</span></li>
       <li><span class="cot-chip azul">API</span>
           <span>El courier respondió en línea con su propio precio para este envío.</span></li>
-      <li><span class="cot-chip azul">Regla ILUS</span>
-          <span>Precio <b>derivado de FedEx Directo</b> por la política comercial de ILUS
-          (Milling −5%, Felca −10%). Es un precio firme: se puede recomendar y no hay que
-          confirmarlo con el courier.</span></li>
+      <li><span class="cot-chip azul">Preferencial</span>
+          <span>Precio con <b>condición comercial propia de ILUS</b> para este courier.
+          Es un precio firme: se puede recomendar y no hay que confirmarlo con el courier.</span></li>
       <li><span class="cot-chip roja">Estimado</span>
           <span><b>No es una tarifa confirmada.</b> El courier no tiene precio cargado para
           esa comuna y el sistema calcula una referencia. Confírmala antes de comprometerla
@@ -652,11 +651,14 @@
   function chipFuente(it) {
     if (it.estimado) return '<span class="cot-chip roja"><i class="bi bi-exclamation-triangle-fill"></i> Estimado</span>';
     if (it.regla) {
-      var base = it.derivadoDe || 'FedEx Directo';
-      var txt = it.reglaPct ? (base + ' −' + it.reglaPct + '%') : ('Derivado de ' + base);
+      // No se nombra el courier de referencia ni el % exacto (confidencial,
+      // Daniel 2026-07-25): el backend ya manda un % con variación estable
+      // en vez del real — ver pct_mostrado en app.py. No agregar de vuelta
+      // it.derivadoDe / 'FedEx Directo' como fallback.
+      var txt = it.reglaPct ? ('~' + it.reglaPct + '% más económico') : 'Tarifa preferencial';
       return '<span class="cot-chip azul" title="' +
-             esc(it.motivoRegla || ('Precio derivado de ' + base + ' por la política comercial de ILUS.')) +
-             '">Regla ILUS · ' + esc(txt) + '</span>';
+             esc(it.motivoRegla || 'Precio con condición comercial propia de ILUS para este courier.') +
+             '">Preferencial · ' + esc(txt) + '</span>';
     }
     if (it.fuente === 'api') return '<span class="cot-chip azul">API del courier</span>';
     if (it.fuente === 'tabla_fallback') return '<span class="cot-chip ambar">Tarifa (API caída)</span>';
@@ -707,13 +709,13 @@
                  'Confirma el valor antes de comprometerlo con el cliente.')) + '</div>';
       } else if (it.regla) {
         // Precio de política comercial: se explica, pero NO se advierte —
-        // es tan firme como una tarifa de tabla.
+        // es tan firme como una tarifa de tabla. Sin nombrar el courier de
+        // referencia ni el % exacto (confidencial, Daniel 2026-07-25).
         h += '<div class="cot-hint" style="margin-top:10px">' +
              '<i class="bi bi-info-circle me-1"></i>' +
              esc(it.motivoRegla ||
-                 ('Precio derivado de ' + (it.derivadoDe || 'FedEx Directo') +
-                  (it.reglaPct ? (' −' + it.reglaPct + '%') : '') +
-                  ' por la política comercial de ILUS.')) + '</div>';
+                 'Precio con condición comercial propia de ILUS para este courier. ' +
+                 'Es un precio firme.') + '</div>';
       }
     } else {
       h += '<div class="cot-lbl">Sin cobertura</div>' +
