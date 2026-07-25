@@ -116,6 +116,16 @@
   }
   .visor-head-bar + .sheet { margin-top: 0; }
 
+  /* Footer del visor — replica el footer_template del PDF real (mismo
+     texto/estilo que tickets_module.py::_tk_cotizacion_pdf_bytes). */
+  .visor-foot {
+    width: 210mm; max-width: 100%; margin: 4mm auto 14px; box-sizing: border-box;
+    font-size: 10px; color: #6b7280; padding: 3mm 12mm 0;
+    display: flex; justify-content: space-between; align-items: center;
+    border-top: 1.5px solid var(--ilus-red);
+  }
+  .visor-foot b { color: var(--ilus-black); }
+
   /* ───── Hoja (preview pantalla) ───── */
   .sheet {
     width: 210mm;
@@ -528,6 +538,19 @@
     <div class="firma-box"><div class="fb-title">Firma de la persona que confecciona el presupuesto</div></div>
     <div class="firma-box"><div class="fb-title">Firma de aceptación del cliente</div></div>
   </div>
+
+  {# ════════════ FOOTER (solo visor) ════════════
+     En el PDF real esto lo pinta Playwright via footer_template (ver
+     tk_cotizacion_pdf_bytes en tickets_module.py) en CADA página — acá se
+     replica UNA vez para que el visor en navegador se vea igual que el PDF
+     de verdad (mismo motivo que el header de arriba). #}
+  {% if modo_visor %}
+  <div class="visor-foot no-print">
+    <span><b>ILUS Sport &amp; Health</b> · www.ilusfitness.com ·
+      {{ footer_email or 'servicio.tecnico@ilusfitness.com' }}</span>
+    <span>Cotización <b>{{ cot.numero }}</b>{% if cot.valida_hasta %} · válida hasta el {{ cot.valida_hasta }}{% endif %}</span>
+  </div>
+  {% endif %}
 
 </div>
 </section>
