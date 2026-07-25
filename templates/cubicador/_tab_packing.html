@@ -83,8 +83,15 @@
   min-height:44px;display:inline-flex;align-items:center;justify-content:center;
   gap:8px;font-weight:700;padding:0 20px;border-radius:8px;
 }
-.pl-wrap .pl-btn-main{ background:#dc2626;color:#fff;border:none; }
-.pl-wrap .pl-btn-main:hover{ background:#b91c1c;color:#fff; }
+.pl-wrap .pl-btn-main{ background:#dc2626;color:#fff;border:none;text-decoration:none; }
+.pl-wrap .pl-btn-main:hover{ background:#b91c1c;color:#fff;text-decoration:none; }
+/* Estado deshabilitado explícito (2026-07-25, revisión diseño): antes el
+   CTA era un <a> salmón subrayado que parecía un link muerto — ahora es
+   claramente un botón rojo ILUS, pálido y sin click solo cuando falta el
+   N° de documento. */
+.pl-wrap .pl-btn-main.disabled{
+  background:#f3f4f6;color:#9ca3af;pointer-events:none;cursor:not-allowed;
+}
 @media (max-width:575.98px){
   .pl-wrap .pl-btn{ width:100%; }
   /* Anti auto-zoom iOS */
@@ -121,7 +128,7 @@
   <div class="ilus-card mb-3">
     <div class="ilus-card-header">
       <span><i class="bi bi-file-earmark-text me-2"></i>Documento del packing list</span>
-      <span class="text-muted small fw-normal">Uno por documento de venta</span>
+      <span class="small fw-normal" style="color:rgba(255,255,255,.65)">Uno por documento de venta</span>
     </div>
     <div class="card-body p-3">
 
@@ -166,10 +173,15 @@
 
       <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
         <span class="pl-chip" id="plChipDoc"><i class="bi bi-upc-scan"></i><span>—</span></span>
-        <a class="pl-btn pl-btn-main ms-sm-auto" id="plGoBtn"
-           href="#" target="_blank" rel="noopener">
-          <i class="bi bi-box-seam"></i>Generar Packing List
-        </a>
+        <div class="ms-sm-auto text-sm-end">
+          <a class="pl-btn pl-btn-main disabled" id="plGoBtn"
+             href="#" target="_blank" rel="noopener" aria-disabled="true">
+            <i class="bi bi-box-seam"></i>Generar Packing List
+          </a>
+          <div class="small mt-1" id="plGoHint" style="color:#9ca3af">
+            Ingresa el N° de documento para generar
+          </div>
+        </div>
       </div>
 
       <div class="form-text mt-2">
@@ -201,6 +213,7 @@
   var selTido  = document.getElementById('plTido');
   var inpNudo  = document.getElementById('plNudo');
   var goBtn    = document.getElementById('plGoBtn');
+  var goHint   = document.getElementById('plGoHint');
   var chip     = document.getElementById('plChipDoc');
 
   function esManual(){
@@ -233,8 +246,10 @@
     }
     if (goBtn) {
       goBtn.setAttribute('href', ok ? urlHoja(d) : '#');
-      goBtn.style.opacity = ok ? '1' : '.55';
+      goBtn.classList.toggle('disabled', !ok);
+      goBtn.setAttribute('aria-disabled', ok ? 'false' : 'true');
     }
+    if (goHint) goHint.style.display = ok ? 'none' : '';
     if (manual) manual.style.display = esManual() ? '' : 'none';
   }
 

@@ -11,6 +11,24 @@
   </div>
 </div>
 
+{# 2026-07-25 — revisión de diseño (4 personas):
+   1) El subtítulo del header quedaba con poco contraste y a veces se veía
+      recortado por el borde inferior en mobile → override local, más
+      opaco y con más altura de línea (item 8).
+   2) Algunas capturas "mobile" usan un viewport CSS de ~768-800px (el
+      breakpoint exacto de Bootstrap .d-md-*), lo que mostraba la tabla
+      desktop en vez de las tarjetas mobile ya existentes
+      (#cubicadorMobileWrap, ver más abajo). Blindaje explícito con
+      !important para que en ≤767.98px SIEMPRE gane la vista de tarjetas,
+      sin depender de que .d-none/.d-md-block se resuelvan bien (item 1). #}
+<style>
+.page-header .sub{ color:rgba(255,255,255,.7); line-height:1.4; padding-bottom:2px; }
+@media (max-width:767.98px){
+  #cubicadorTableCard, #cubicadorDesktopTotals{ display:none !important; }
+  #cubicadorMobileWrap{ display:block !important; }
+}
+</style>
+
 {# ══════════════════════════════════════════════════════════════════════
    PESTAÑAS (2026-07-25) — el Cubicador pasa a convivir con el Cotizador y
    el Packing List en la MISMA dirección /cubicador.
@@ -42,7 +60,7 @@
 <div class="ilus-card mb-3">
   <div class="ilus-card-header">
     <span><i class="bi bi-file-earmark-text me-2"></i>Documentos a cubicar</span>
-    <span class="text-muted small fw-normal">Puedes agregar varios documentos para combinarlos</span>
+    <span class="small fw-normal" style="color:rgba(255,255,255,.65)">Puedes agregar varios documentos para combinarlos</span>
   </div>
   <div class="card-body p-3">
     <form method="post" id="cubicadorForm">
@@ -290,7 +308,8 @@
     <div class="ilus-info-grid">
       <div class="ilus-info-card span2">
         <div class="lbl">👤 Cliente</div>
-        <div class="val">{{ h.cliente_nombre or '⚠ Sin nombre' }}</div>
+        {# id de lectura para el puente Cubicador → Cotizador (_tab_cotizador.html) #}
+        <div class="val" id="cubHeaderClienteNombre">{{ h.cliente_nombre or '⚠ Sin nombre' }}</div>
       </div>
       <div class="ilus-info-card">
         <div class="lbl">🆔 RUT</div>
@@ -400,6 +419,20 @@
 }
 @media (max-width:767.98px){
   .btn-row-del{ min-height:36px; min-width:36px; padding:.35rem .55rem; }
+}
+/* Separar visualmente el basurero del resto de acciones (evita mis-tap:
+   antes quedaba pegado al botón de Etiquetas). Desktop: fila horizontal
+   de íconos → separador vertical a la izquierda. Mobile: columna de
+   badges + basurero → separador horizontal arriba. */
+.d-inline-flex.gap-1 > .btn-row-del{
+  margin-left:10px;
+  padding-left:10px;
+  border-left:1px solid #e5e7eb;
+}
+.d-flex.flex-column.align-items-end.gap-1 > .btn-row-del{
+  margin-top:8px;
+  padding-top:8px;
+  border-top:1px solid #e5e7eb;
 }
 
 /* Fila resaltada cuando está checkeada */
@@ -514,7 +547,7 @@
 <div class="ilus-card d-none d-md-block mb-3" id="cubicadorTableCard">
   <div class="ilus-card-header">
     <span><i class="bi bi-table me-2"></i>Detalle de cubicaje{% if multi %} combinado{% endif %}</span>
-    <span class="text-muted small fw-normal"><span id="skuCount">{{ lineas|length }}</span> SKU(s)</span>
+    <span class="small fw-normal" style="color:rgba(255,255,255,.65)"><span id="skuCount">{{ lineas|length }}</span> SKU(s)</span>
   </div>
   <div class="table-responsive">
     <table class="table ilus-table mb-0" id="cubicadorTable" style="font-size:.82rem">
@@ -530,8 +563,8 @@
           <th class="text-end">Kg/u</th>
           <th class="text-end">PV/u</th>
           <th class="text-end">Vol m³/u</th>
-          <th class="text-end">Predom/u</th>
-          <th class="text-end" style="color:var(--ilus-red)">Total Predom</th>
+          <th class="text-end" title="Peso predominante: el mayor entre el peso real y el volumétrico — es el que cobra el courier">Predom/u</th>
+          <th class="text-end" style="color:var(--ilus-red)" title="Peso predominante: el mayor entre el peso real y el volumétrico — es el que cobra el courier">Total Predom</th>
           <th class="text-center no-print" style="width:160px">Acciones</th>
         </tr>
       </thead>
@@ -556,9 +589,19 @@
           <td>
             <div class="fw-bold font-monospace">{{ l.sku }}</div>
             {% if not l.tiene_ficha %}
-            <div style="font-size:.68rem;color:#888">
-              <i class="bi bi-exclamation-circle text-warning me-1"></i>Sin ficha
-            </div>
+            {# Chip clicable: dispara el mismo modal de Medidas (delegación
+               data-action en static/cubicador_tabs.js) — antes era texto
+               inerte y la operadora no sabía que había que hacer clic. #}
+            <button type="button"
+                    style="font-size:.68rem;color:#b45309;background:none;border:none;padding:0;cursor:pointer;text-decoration:underline dotted"
+                    title="Faltan medidas — click para cargarlas"
+                    data-action="cub-medidas"
+                    data-sku="{{ l.sku|e }}"
+                    data-app-id="{{ l.app_id or '' }}"
+                    data-nombre="{{ l.nombre_app|e }}"
+                    data-bultos="{{ l.total_bultos }}">
+              <i class="bi bi-exclamation-circle text-warning me-1"></i>Sin ficha · Cargar medidas
+            </button>
             {% elif not l.tiene_bultos %}
             <div style="font-size:.68rem;color:#888">
               <i class="bi bi-info-circle me-1"></i>Sin bultos
@@ -1330,10 +1373,14 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
     }
   }
 
-  /* ── Eliminar UNA línea (sin confirmar — criterio del usuario) ──
+  /* ── Eliminar UNA línea ──
      2026-05-20: Daniel pidió que se borre directo sin distinción de
-     predominio. La acción es sólo client-side (no toca ERP ni BD),
-     así que confiamos en el criterio del usuario. */
+     predominio (acción sólo client-side, no toca ERP ni BD).
+     2026-07-25: revisión de diseño (4 personas) marcó la inconsistencia
+     de que el borrado masivo SÍ confirma y el de una fila no — y que el
+     botón queda pegado al de Etiquetas (riesgo de mis-tap). Se agrega
+     confirmación también acá; la separación visual del botón está en el
+     CSS de arriba (.btn-row-del). eliminarFila() en sí sigue igual. */
   function eliminarFila(sku){
     var rows = allRows().filter(function(r){ return r.dataset.sku === sku; });
     if (!rows.length) return;
@@ -1397,7 +1444,14 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
   if (tbody)      tbody.addEventListener('change', onCheckChange);
   if (mobileWrap) mobileWrap.addEventListener('change', onCheckChange);
 
-  /* ── Event delegation: botón eliminar fila individual ── */
+  /* ── Event delegation: botón eliminar fila individual ──
+     2026-07-25: la revisión de diseño había agregado una confirmación acá
+     "para igualar el criterio del borrado masivo" — pero eso CONTRADICE la
+     decisión explícita de Daniel del 2026-05-20 ("que se borre directo sin
+     distinción de predominio"), que los revisores no tenían como contexto.
+     Se revierte a borrado directo. Lo que SÍ queda de esa revisión es la
+     separación visual del botón (CSS .btn-row-del arriba) — evita el
+     mis-tap con "Etiquetas" sin agregar un paso extra al flujo. */
   function onRowDelClick(e){
     var btn = e.target.closest('[data-action="del-row"]');
     if (!btn) return;

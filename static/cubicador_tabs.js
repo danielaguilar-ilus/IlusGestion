@@ -366,6 +366,10 @@
       '.cubm-btn-sec:hover{background:#f3f4f6;}',
       '.cubm-btn-pri{background:#dc2626;color:#fff;border-color:#dc2626;}',
       '.cubm-btn-pri:hover{background:#b91c1c;}',
+      /* Antes el disabled quedaba rojo desaturado (parecía activo pero
+         "raro"). Estado disabled explícito, mismo criterio que el resto
+         de la app (gris claro + texto gris). */
+      '.cubm-btn-pri:disabled{background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb;cursor:not-allowed;opacity:1;}',
       '.cubm-state{padding:26px 10px;text-align:center;color:#6b7280;font-size:.88rem;}',
       '.cubm-state .spin{display:inline-block;width:26px;height:26px;border:3px solid #e5e7eb;',
       '  border-top-color:#dc2626;border-radius:50%;animation:cubmspin .8s linear infinite;}',
@@ -379,6 +383,10 @@
       '  .cubm-totals{grid-template-columns:repeat(2,1fr);gap:10px;}',
       '  .cubm-foot{position:sticky;bottom:0;}',
       '  .cubm-btn{flex:1;justify-content:center;}',
+      /* Estado de error/carga centrado verticalmente: antes quedaba
+         pegado arriba con un desierto blanco hasta el footer. */
+      '  .cubm-body{display:flex;flex-direction:column;}',
+      '  .cubm-state{display:flex;flex-direction:column;justify-content:center;flex:1;}',
       '}',
       '@media (prefers-reduced-motion:reduce){',
       '  .cubm-overlay,.cubm-modal{transition-duration:.01ms !important;}',
@@ -581,30 +589,41 @@
     wireModalEvents(overlay);
 
     // ── Precarga: NUNCA abrir vacío un producto que ya tiene bultos ──
-    if (M.pid) {
-      fetchJson(urlFor(CFG.medidasTpl, M.pid), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
-        .then(function (r) {
-          if (!M) return;                            // Cerraron mientras cargaba.
-          if (r.status === 403) { showError('No tienes permiso para ver las medidas de este producto.'); return; }
-          if (r.status === 404 || !r.data) {
-            // El endpoint aún no existe o el producto no está: arrancamos limpio.
-            hydrate([], (r.data && (r.data.nombre || (r.data.producto && r.data.producto.nombre))) || M.nombre);
-            return;
-          }
-          if (!r.ok && r.data && r.data.error) { showError(String(r.data.error)); return; }
-          var d = r.data || {};
-          var prod = d.producto || d.product || d;
-          hydrate(normalizeBultos(d), prod.nombre || prod.nombre_app || M.nombre);
-        })
-        .catch(function () {
-          if (!M) return;
-          showError('No pude cargar las medidas (problema de red). Puedes reintentar o cargarlas a mano.');
-        });
-    } else {
+    cargarMedidas();
+    return Promise.resolve(true);
+  }
+
+  /* Extraído de cubAbrirMedidas() (2026-07-25) para poder reintentar sin
+     cerrar el modal: el botón "↻ Reintentar" del estado de error llama a
+     esta misma función. */
+  function cargarMedidas() {
+    if (!M) return;
+    if (!M.pid) {
       // Sin ficha local todavía → no hay bultos que precargar.
       hydrate([], M.nombre);
+      return;
     }
-    return Promise.resolve(true);
+    var l = $('.cubm-loading', M.overlay); if (l) l.style.display = '';
+    var e = $('.cubm-error', M.overlay); if (e) e.style.display = 'none';
+    var c = $('.cubm-content', M.overlay); if (c) c.style.display = 'none';
+    fetchJson(urlFor(CFG.medidasTpl, M.pid), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+      .then(function (r) {
+        if (!M) return;                            // Cerraron mientras cargaba.
+        if (r.status === 403) { showError('No tienes permiso para ver las medidas de este producto.'); return; }
+        if (r.status === 404 || !r.data) {
+          // El endpoint aún no existe o el producto no está: arrancamos limpio.
+          hydrate([], (r.data && (r.data.nombre || (r.data.producto && r.data.producto.nombre))) || M.nombre);
+          return;
+        }
+        if (!r.ok && r.data && r.data.error) { showError(String(r.data.error)); return; }
+        var d = r.data || {};
+        var prod = d.producto || d.product || d;
+        hydrate(normalizeBultos(d), prod.nombre || prod.nombre_app || M.nombre);
+      })
+      .catch(function () {
+        if (!M) return;
+        showError('No pude cargar las medidas (problema de red). Puedes reintentar o cargarlas a mano.');
+      });
   }
 
   function normalizeBultos(d) {
@@ -649,10 +668,17 @@
     var e = $('.cubm-error', M.overlay);
     if (e) {
       e.style.display = '';
+      // El texto de error promete "reintentar": antes solo existía el botón
+      // manual y la promesa quedaba incumplida (2026-07-25, revisión diseño).
       e.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>' + esc(msg)
-        + '<div style="margin-top:12px"><button type="button" class="cubm-btn cubm-btn-sec cubm-manual">Cargar medidas a mano</button></div>';
+        + '<div style="margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'
+        + '<button type="button" class="cubm-btn cubm-btn-sec cubm-retry"><i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button>'
+        + '<button type="button" class="cubm-btn cubm-btn-sec cubm-manual">Cargar medidas a mano</button>'
+        + '</div>';
       var b = $('.cubm-manual', e);
       if (b) b.addEventListener('click', function () { hydrate([], M ? M.nombre : ''); });
+      var rt = $('.cubm-retry', e);
+      if (rt) rt.addEventListener('click', function () { cargarMedidas(); });
     }
     var c = $('.cubm-content', M.overlay); if (c) c.style.display = 'none';
   }

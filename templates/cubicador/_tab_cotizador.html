@@ -70,6 +70,14 @@
 .cot-hero h5{margin:6px 0 4px; font-size:1.42rem; font-weight:900; letter-spacing:-.02em; line-height:1.1;}
 .cot-hero p{margin:0; font-size:.84rem; color:#c9cdd4; line-height:1.45; max-width:56ch;}
 .cot-hero-acts{display:flex; gap:8px; flex-wrap:wrap;}
+/* Mobile: el caso de uso real es responder un precio en 10 segundos desde
+   el auto — el párrafo del hero le come pantalla a Comuna/Peso, que son
+   los campos que Daniel necesita ver sin scroll (revisión diseño 2026-07-25). */
+@media(max-width:576px){
+  .cot-hero{ padding:14px 14px 16px; }
+  .cot-hero p{ display:none; }
+  .cot-hero h5{ margin:4px 0 0; font-size:1.2rem; }
+}
 
 /* ───────── Botones ───────── */
 .cot-btn{
@@ -374,7 +382,8 @@
            del sistema se muestran marcadas y nunca se recomiendan.</p>
       </div>
       <div class="cot-hero-acts">
-        <button type="button" class="cot-btn cot-btn-ghost" id="cotPrintBtn" disabled>
+        <button type="button" class="cot-btn cot-btn-ghost" id="cotPrintBtn" disabled
+                title="Primero cotiza para poder imprimir">
           <i class="bi bi-printer"></i>Imprimir comparación
         </button>
       </div>
@@ -392,6 +401,21 @@
     </div>
 
     <div class="cot-panel-body">
+
+      {# ── Puente Cubicador → Cotizador (2026-07-25, revisión diseño) ──
+         Solo lectura de #cubicadorTbody/#cubicadorMobileWrap .cub-row —
+         se muestra/oculta y actualiza vía JS (refrescarPuenteCubicaje) cada
+         vez que se activa esta pestaña, porque las filas pueden cambiar en
+         la sesión (el usuario puede borrar líneas). #}
+      <div class="cot-origen cot-hide" id="cotBridgeBanner" style="border-style:solid;border-color:var(--cot-red);background:var(--cot-red-50);margin-top:0;margin-bottom:14px">
+        <i class="bi bi-box-seam-fill" style="color:var(--cot-red)"></i>
+        <span>Tienes <span class="cot-doc-pill" id="cotBridgeDoc">—</span> <span id="cotBridgeCliente"></span> abierto en el Cubicador</span>
+        <button type="button" class="cot-btn cot-btn-primary" id="cotBridgeUsarBtn"
+                style="min-height:34px;padding:6px 14px;font-size:.76rem;margin-left:auto">
+          Usar estos datos
+        </button>
+      </div>
+
       <div class="cot-grid">
 
         <div class="cot-field cot-col-full">
@@ -416,7 +440,7 @@
         </div>
 
         <div class="cot-field">
-          <label for="cotPeso">Peso a cotizar</label>
+          <label for="cotPeso">Peso a cotizar <span style="color:#dc2626">*</span></label>
           <div class="cot-inputwrap suf">
             <input type="text" id="cotPeso" class="cot-input" inputmode="decimal"
                    placeholder="0,0" autocomplete="off">
@@ -462,7 +486,7 @@
         </button>
         <button type="button" class="cot-btn cot-btn-soft" id="cotUsarCubicajeBtn"
                 title="Toma el peso facturable de las líneas que están cargadas en la pestaña Cubicaje">
-          <i class="bi bi-box-seam"></i>Usar el cubicaje de pantalla
+          <i class="bi bi-box-seam"></i><span id="cotUsarCubicajeTxt">Usar el peso del Cubicador</span>
         </button>
         <button type="button" class="cot-btn cot-btn-soft" id="cotLimpiarBtn">
           <i class="bi bi-eraser"></i>Limpiar
@@ -480,20 +504,23 @@
   <!-- ═══════════ LEYENDA ═══════════ -->
   <div class="cot-legend">
     <div class="cot-lg-t">De dónde sale cada precio</div>
+    {# Orden de mayor a menor confianza (revisión diseño 2026-07-25) — sin
+       agregar fórmula ni % (la confidencialidad de la regla comercial se
+       mantiene, ver comentario de chipFuente() más abajo). #}
     <ul>
+      <li><span class="cot-chip verde">Validada</span>
+          <span>La tarifa fue contrastada a mano contra el Excel maestro.</span></li>
       <li><span class="cot-chip gris">Tarifa ILUS</span>
           <span>Sale del tarifario negociado que ILUS tiene cargado para esa comuna.</span></li>
-      <li><span class="cot-chip azul">API</span>
-          <span>El courier respondió en línea con su propio precio para este envío.</span></li>
       <li><span class="cot-chip azul">Preferencial</span>
           <span>Precio con <b>condición comercial propia de ILUS</b> para este courier.
           Es un precio firme: se puede recomendar y no hay que confirmarlo con el courier.</span></li>
+      <li><span class="cot-chip gris">API</span>
+          <span>El courier respondió en línea con su propio precio para este envío.</span></li>
       <li><span class="cot-chip roja">Estimado</span>
           <span><b>No es una tarifa confirmada.</b> El courier no tiene precio cargado para
           esa comuna y el sistema calcula una referencia. Confírmala antes de comprometerla
           con el cliente — por eso jamás aparece como recomendada.</span></li>
-      <li><span class="cot-chip verde">Validada</span>
-          <span>La tarifa fue contrastada a mano contra el Excel maestro.</span></li>
     </ul>
   </div>
 
@@ -660,7 +687,9 @@
              esc(it.motivoRegla || 'Precio con condición comercial propia de ILUS para este courier.') +
              '">Preferencial · ' + esc(txt) + '</span>';
     }
-    if (it.fuente === 'api') return '<span class="cot-chip azul">API del courier</span>';
+    // Gris en vez de azul (2026-07-25, revisión diseño): API y Preferencial
+    // competían por el mismo color y se confundían de un vistazo.
+    if (it.fuente === 'api') return '<span class="cot-chip gris">API del courier</span>';
     if (it.fuente === 'tabla_fallback') return '<span class="cot-chip ambar">Tarifa (API caída)</span>';
     return '<span class="cot-chip gris">Tarifa ILUS</span>';
   }
@@ -882,6 +911,8 @@
     }
     if (!(peso > 0)) {
       toast('Ingresa el peso del envío (kg)', 'warning');
+      $('cotPesoHint').className = 'cot-hint warn';
+      $('cotPesoHint').innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>Falta el peso del envío';
       $('cotPeso').focus();
       return;
     }
@@ -1032,16 +1063,53 @@
     });
   }
 
+  // ── Filas vivas del Cubicador en pantalla (solo lectura) ───────────
+  function filasCubicadorEnPantalla() {
+    var filas = document.querySelectorAll('#cubicadorTbody .cub-row');
+    if (!filas.length) filas = document.querySelectorAll('#cubicadorMobileWrap .cub-row');
+    return filas;
+  }
+
   // ── Usar el cubicaje que ya está en pantalla ──────────────────────
   // SOLO LECTURA de los data-* de las filas del Cubicador. No las toca,
   // no las renombra y no depende de su JS (que vive en un scope cerrado).
   function usarCubicajeDePantalla() {
-    var filas = document.querySelectorAll('#cubicadorTbody .cub-row');
-    if (!filas.length) filas = document.querySelectorAll('#cubicadorMobileWrap .cub-row');
+    var filas = filasCubicadorEnPantalla();
     if (!filas.length) {
       toast('No hay líneas cubicadas en pantalla. Cubica un documento primero.', 'warning');
       return;
     }
+
+    // ⚠ RIESGO FINANCIERO (2026-07-25, revisión diseño): si hay filas sin
+    // ficha (peso predominante = 0), el peso que se lleva al Cotizador
+    // queda subestimado y la factura del courier llega más cara que lo
+    // cotizado. Antes se cotizaba con el peso incompleto sin ningún aviso.
+    var sinFicha = [];
+    Array.prototype.forEach.call(filas, function (f) {
+      var pred = parseFloat(f.getAttribute('data-pred-tot')) || 0;
+      if (pred <= 0) {
+        var sku = f.getAttribute('data-sku') || '?';
+        if (sinFicha.indexOf(sku) === -1) sinFicha.push(sku);
+      }
+    });
+
+    if (sinFicha.length) {
+      var ejemplos = sinFicha.slice(0, 3).join(', ') + (sinFicha.length > 3 ? '…' : '');
+      var conf = (typeof window.ilusConfirm === 'function')
+        ? window.ilusConfirm({
+            title: 'Peso posiblemente incompleto',
+            message: 'Hay ' + sinFicha.length + ' producto(s) sin medidas (' + ejemplos + '). El peso puede quedar subestimado.',
+            sub: 'La factura del courier puede salir más cara si el peso real termina siendo mayor al calculado.',
+            okLabel: 'Cotizar igual', cancelLabel: 'Cargar medidas primero', danger: false,
+          })
+        : Promise.resolve(true);
+      conf.then(function (ok) { if (ok) aplicarCubicajeDePantalla(filas); });
+      return;
+    }
+    aplicarCubicajeDePantalla(filas);
+  }
+
+  function aplicarCubicajeDePantalla(filas) {
     var kg = 0, pred = 0;
     Array.prototype.forEach.call(filas, function (f) {
       kg   += parseFloat(f.getAttribute('data-kg-tot'))   || 0;
@@ -1299,6 +1367,57 @@
     renderVacio();
   }
 
+  // ── Puente Cubicador → Cotizador: banner + texto del botón ─────────
+  // Solo lectura de las filas .cub-row del Cubicador y de los hidden
+  // tido_N/nudo_N de #pdfExportForm. Se recalcula cada vez que se activa
+  // esta pestaña porque el usuario puede haber borrado líneas en la sesión.
+  function refrescarPuenteCubicaje() {
+    var banner = $('cotBridgeBanner');
+    var btnTxt = $('cotUsarCubicajeTxt');
+    var filas  = filasCubicadorEnPantalla();
+
+    if (!filas.length) {
+      if (banner) banner.classList.add('cot-hide');
+      if (btnTxt) btnTxt.textContent = 'Usar el peso del Cubicador';
+      return;
+    }
+
+    var kg = 0, pred = 0;
+    Array.prototype.forEach.call(filas, function (f) {
+      kg   += parseFloat(f.getAttribute('data-kg-tot'))   || 0;
+      pred += parseFloat(f.getAttribute('data-pred-tot')) || 0;
+    });
+    var peso = pred > 0 ? pred : kg;
+
+    var form = document.getElementById('pdfExportForm');
+    var doc = '';
+    if (form) {
+      var tido0 = form.querySelector('input[name="tido_0"]');
+      var nudo0 = form.querySelector('input[name="nudo_0"]');
+      if (tido0 && nudo0 && tido0.value && nudo0.value) {
+        var nDocs = form.querySelectorAll('input[name^="tido_"]').length;
+        doc = tido0.value + ' ' + nudo0.value + (nDocs > 1 ? ' +' + (nDocs - 1) : '');
+      }
+    }
+
+    if (btnTxt) {
+      btnTxt.textContent = 'Usar el peso del Cubicador' +
+        (doc ? (' · ' + doc) : '') + (peso > 0 ? (' — ' + fKg(peso)) : '');
+    }
+
+    if (banner) {
+      var pill = $('cotBridgeDoc');
+      var cli  = $('cotBridgeCliente');
+      if (pill) pill.textContent = doc || (filas.length + ' línea(s)');
+      if (cli) {
+        var nombreEl = document.getElementById('cubHeaderClienteNombre');
+        var nombre = nombreEl ? (nombreEl.textContent || '').trim() : '';
+        cli.textContent = (nombre && nombre.indexOf('Sin nombre') === -1) ? ('(' + nombre + ')') : '';
+      }
+      banner.classList.remove('cot-hide');
+    }
+  }
+
   // ── Init ───────────────────────────────────────────────────────────
   var inicializado = false;
   function init() {
@@ -1309,6 +1428,7 @@
     $('cotSubmitBtn').addEventListener('click', cotizar);
     $('cotErpBtn').addEventListener('click', abrirModalErp);
     $('cotUsarCubicajeBtn').addEventListener('click', usarCubicajeDePantalla);
+    $('cotBridgeUsarBtn').addEventListener('click', usarCubicajeDePantalla);
     $('cotLimpiarBtn').addEventListener('click', limpiar);
     $('cotPrintBtn').addEventListener('click', imprimirComparacion);
 
@@ -1338,15 +1458,18 @@
 
     initPlaces();
     renderVacio();
+    refrescarPuenteCubicaje();
   }
 
   // Hook para la barra de pestañas (carga perezosa). init() es idempotente.
   window.cotizadorTabReady = init;
 
   // static/cubicador_tabs.js emite 'cubicador:tab' al cambiar de pestaña:
-  // red de seguridad por si el fragmento se inyectara después del load.
+  // red de seguridad por si el fragmento se inyectara después del load, y
+  // también el momento de refrescar el puente (las filas del Cubicador
+  // pueden haber cambiado desde la última vez que se vio esta pestaña).
   document.addEventListener('cubicador:tab', function (ev) {
-    if (ev && ev.detail && ev.detail.tab === 'cotizador') init();
+    if (ev && ev.detail && ev.detail.tab === 'cotizador') { init(); refrescarPuenteCubicaje(); }
   });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
