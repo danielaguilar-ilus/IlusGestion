@@ -227,22 +227,23 @@
 .cot-flag-est i{font-size:.9rem;}
 .cot-card.is-est{border-color:var(--cot-red); border-style:dashed; background:#fffcfc;}
 
-/* La más barata (nunca puede ser una estimada) */
-.cot-card.is-best{
-  grid-column:1/-1;
-  background:linear-gradient(155deg,#0a0a0a 0%,#171717 55%,#241010 100%);
-  border-color:var(--cot-black); color:#fff;
-  box-shadow:0 14px 34px -16px rgba(0,0,0,.8);
+/* Todos los couriers pesan igual visualmente (Daniel 2026-07-25: "deben
+   mostrarse todos los valores por igual y yo escoger"). Se ordenan más
+   barato primero, pero NINGUNO se "corona" con un tratamiento especial —
+   la única distinción visual es cuál eligió el operador (.is-selected),
+   nunca cuál calculó el sistema como más conveniente. */
+.cot-card{cursor:pointer;}
+.cot-card.is-selected{
+  border-color:var(--cot-red); box-shadow:0 0 0 2px var(--cot-red), 0 10px 24px -14px rgba(220,38,38,.35);
 }
-.cot-card.is-best .cot-name{color:#fff;}
-.cot-card.is-best .cot-lbl{color:#9ca3af;}
-.cot-card.is-best .cot-price{color:#fff;}
-.cot-card.is-best .cot-eta-val{color:#fff;}
-.cot-card.is-best .cot-card-body{border-top:none;}
-.cot-card.is-best .cot-foot{background:rgba(255,255,255,.06); border-top-color:rgba(255,255,255,.12);}
-.cot-ribbon{
-  background:var(--cot-red); color:#fff; padding:7px 12px; font-size:.66rem; font-weight:900;
-  letter-spacing:.13em; text-transform:uppercase; display:flex; align-items:center; gap:7px;
+.cot-card.is-selected .cot-card-body{background:var(--cot-red-50);}
+.cot-pick{
+  border-top:1px solid var(--cot-line); background:var(--cot-bg);
+  padding:8px 14px; font-size:.72rem; font-weight:800; color:var(--cot-mute);
+  text-align:center; letter-spacing:.03em;
+}
+.cot-card.is-selected .cot-pick{
+  background:var(--cot-red); color:#fff;
 }
 
 .cot-card-body{padding:14px;}
@@ -252,16 +253,8 @@
   justify-content:flex-start; overflow:hidden;
 }
 .cot-logo img{max-height:26px; max-width:96px; object-fit:contain;}
-/* En la tarjeta destacada (fondo negro) los logos de marca se pintan sobre
-   una pastilla blanca: si no, el morado de FedEx o el gris de Felca quedan
-   ilegibles contra el negro. */
-.cot-card.is-best .cot-logo{
-  background:#fff; border-radius:8px; padding:3px 8px; height:auto; min-height:26px;
-  align-items:center;
-}
 .cot-name{font-size:.98rem; font-weight:900; color:var(--cot-black); letter-spacing:-.01em; line-height:1.15;}
 .cot-svc{font-size:.68rem; font-weight:700; color:var(--cot-mute); text-transform:uppercase; letter-spacing:.05em; margin-top:2px;}
-.cot-card.is-best .cot-svc{color:#9ca3af;}
 
 .cot-price-row{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap;}
 .cot-price{
@@ -272,10 +265,6 @@
 .cot-card.is-est .cot-price{color:var(--cot-red-d);}
 .cot-eta{text-align:right; flex:0 0 auto;}
 .cot-eta-val{font-size:1rem; font-weight:900; color:var(--cot-black); line-height:1.15; white-space:nowrap;}
-.cot-ahorro{
-  margin-top:10px; font-size:.8rem; font-weight:800; color:#4ade80;
-  display:inline-flex; align-items:center; gap:6px;
-}
 
 .cot-foot{
   border-top:1px solid var(--cot-line); background:var(--cot-bg);
@@ -290,7 +279,6 @@
 .cot-chip.verde{background:var(--cot-green-50); color:#15803d;}
 .cot-chip.ambar{background:var(--cot-amber-50); color:#92400e;}
 .cot-chip.azul{background:var(--cot-blue-50); color:#1e40af;}
-.cot-card.is-best .cot-chip.gris{background:rgba(255,255,255,.14); color:#e5e7eb;}
 
 /* Sin cobertura */
 .cot-card.is-nocov{background:#fbfbfc; border-style:dashed; border-color:#d7dbe0;}
@@ -548,6 +536,7 @@
     pesoReal: null,          // kg reales del documento (si vinieron del ERP)
     pesoVol:  null,          // kg volumétricos del documento
     ultima:   null,          // última respuesta normalizada
+    seleccionadoId: null,    // id del courier que el operador eligió a mano
     cargando: false
   };
 
@@ -600,18 +589,14 @@
     var trace = c.trace || {};
     var fuenteTrace = String(trace.fuente || '').toLowerCase();
     var fuenteTop   = String(c.fuente || '').toLowerCase();
-    // ⚠ REGLA COMERCIAL ≠ ESTIMACIÓN (2026-07-25). Felca y Milling derivan
-    // SIEMPRE su precio de FedEx Directo (−10% / −5%): es la política de
-    // precios de Daniel, un precio FIRME. Antes caía en "estimado" y quedaba
-    // descartado como recomendación, así que el Cotizador terminaba
-    // proponiendo el courier más caro en cada envío.
-    var regla = (c.es_regla_comercial === true) ||
-                (fuenteTop === 'regla') ||
-                (fuenteTrace.indexOf('regla') === 0);
-    var estimado = !regla && (
-                   (c.es_estimado === true) ||
+    // 2026-07-25 (confidencial, no revertir sin indicación de Daniel): la
+    // política comercial de Felca/Milling llega desde app.py con
+    // fuente='tabla' — IGUAL que una tarifa negociada real, a propósito, sin
+    // ningún campo que la distinga. No reintroducir es_regla_comercial /
+    // regla_pct / derivado_de: ninguno llega en el payload.
+    var estimado = (c.es_estimado === true) ||
                    (fuenteTop === 'estimado') ||
-                   (fuenteTrace.indexOf('estim') === 0));
+                   (fuenteTrace.indexOf('estim') === 0);
     var cobertura = (c.tiene_cobertura === false) ? false
                   : (c.tiene_cobertura === true) ? true
                   : (precio != null);
@@ -623,10 +608,6 @@
       transito:  c.tiempo_transito || '',
       precio:    (precio != null && isFinite(Number(precio))) ? Number(precio) : null,
       estimado:  estimado,
-      regla:     regla,
-      reglaPct:  (c.regla_pct != null) ? c.regla_pct : null,
-      derivadoDe: c.derivado_de || '',
-      motivoRegla: c.motivo_regla || c.nota_precio || trace.nota || '',
       motivo:    c.motivo_estimado || '',
       cobertura: cobertura && (precio != null),
       fuente:    c.fuente || '',
@@ -677,18 +658,10 @@
   // ── Render ─────────────────────────────────────────────────────────
   function chipFuente(it) {
     if (it.estimado) return '<span class="cot-chip roja"><i class="bi bi-exclamation-triangle-fill"></i> Estimado</span>';
-    if (it.regla) {
-      // No se nombra el courier de referencia ni el % exacto (confidencial,
-      // Daniel 2026-07-25): el backend ya manda un % con variación estable
-      // en vez del real — ver pct_mostrado en app.py. No agregar de vuelta
-      // it.derivadoDe / 'FedEx Directo' como fallback.
-      var txt = it.reglaPct ? ('~' + it.reglaPct + '% más económico') : 'Tarifa preferencial';
-      return '<span class="cot-chip azul" title="' +
-             esc(it.motivoRegla || 'Precio con condición comercial propia de ILUS para este courier.') +
-             '">Preferencial · ' + esc(txt) + '</span>';
-    }
-    // Gris en vez de azul (2026-07-25, revisión diseño): API y Preferencial
-    // competían por el mismo color y se confundían de un vistazo.
+    // Sin rama especial para la política comercial de Felca/Milling — llega
+    // con fuente='tabla' y se ve exactamente igual a una tarifa negociada
+    // real (confidencial, Daniel 2026-07-25: "que fuera como simple
+    // casualidad... nada que nos indique esa pequeña diferencia").
     if (it.fuente === 'api') return '<span class="cot-chip gris">API del courier</span>';
     if (it.fuente === 'tabla_fallback') return '<span class="cot-chip ambar">Tarifa (API caída)</span>';
     return '<span class="cot-chip gris">Tarifa ILUS</span>';
@@ -697,23 +670,24 @@
   function cardHtml(it, opts) {
     opts = opts || {};
     var cls = 'cot-card';
-    if (opts.best) cls += ' is-best';
+    if (opts.selected) cls += ' is-selected';
     if (it.estimado) cls += ' is-est';
     if (!it.cobertura) cls += ' is-nocov';
 
-    var h = '<article class="' + cls + '">';
+    // data-cot-id: con qué courier queda seleccionado si el operador toca la
+    // tarjeta (solo las que tienen precio se pueden elegir).
+    var h = '<article class="' + cls + '"' +
+            (it.cobertura ? ' data-cot-id="' + esc(String(it.id)) + '" tabindex="0" role="button"' : '') +
+            '>';
 
     // Franja de transparencia — SIEMPRE visible, sin hover, arriba de todo.
     if (it.estimado) {
       h += '<div class="cot-flag-est"><i class="bi bi-exclamation-octagon-fill"></i>' +
            '<span>Precio estimado — no es una tarifa confirmada con el courier</span></div>';
     }
-    if (opts.best) {
-      h += '<div class="cot-ribbon"><i class="bi bi-trophy-fill"></i>La más conveniente</div>';
-    }
 
     h += '<div class="cot-card-body">';
-    h += '<div class="cot-card-top"><div class="cot-logo">' + logoHtml(it, !!opts.best) + '</div>' +
+    h += '<div class="cot-card-top"><div class="cot-logo">' + logoHtml(it, false) + '</div>' +
          '<div style="min-width:0"><div class="cot-name">' + esc(it.nombre) + '</div>' +
          (it.servicio ? '<div class="cot-svc">' + esc(it.servicio) + '</div>' : '') +
          '</div></div>';
@@ -727,24 +701,11 @@
                '<div class="cot-eta-val">' + esc(it.transito || '—') + '</div>' +
              '</div>' +
            '</div>';
-      if (opts.best && opts.ahorro > 0) {
-        h += '<div class="cot-ahorro"><i class="bi bi-graph-down-arrow"></i>' +
-             'Ahorra ' + fClp(opts.ahorro) + ' frente a la alternativa más cara</div>';
-      }
       if (it.estimado) {
         h += '<div class="cot-hint warn" style="margin-top:10px">' +
              '<i class="bi bi-info-circle me-1"></i>' +
              esc(it.motivo || ('Este courier no tiene tarifa cargada para esta comuna. ' +
                  'Confirma el valor antes de comprometerlo con el cliente.')) + '</div>';
-      } else if (it.regla) {
-        // Precio de política comercial: se explica, pero NO se advierte —
-        // es tan firme como una tarifa de tabla. Sin nombrar el courier de
-        // referencia ni el % exacto (confidencial, Daniel 2026-07-25).
-        h += '<div class="cot-hint" style="margin-top:10px">' +
-             '<i class="bi bi-info-circle me-1"></i>' +
-             esc(it.motivoRegla ||
-                 'Precio con condición comercial propia de ILUS para este courier. ' +
-                 'Es un precio firme.') + '</div>';
       }
     } else {
       h += '<div class="cot-lbl">Sin cobertura</div>' +
@@ -762,6 +723,16 @@
     }
     if (!it.cobertura) chips += '<span class="cot-chip gris">No cotiza</span>';
     if (chips) h += '<div class="cot-foot">' + chips + '</div>';
+
+    // Pie de selección — el operador elige con cuál courier gestionar la
+    // cotización (Daniel 2026-07-25: "se debe escoger con qué [courier]
+    // ocurre"). El más barato queda primero por orden, no por "corona".
+    if (it.cobertura) {
+      h += '<div class="cot-pick">' +
+           (opts.selected ? '<i class="bi bi-check-circle-fill me-1"></i>Seleccionado'
+                          : 'Tocar para elegir este courier') +
+           '</div>';
+    }
 
     h += '</article>';
     return h;
@@ -833,12 +804,12 @@
                         .sort(function (a, b) { return a.precio - b.precio; });
     var nocov  = r.items.filter(function (i) { return !i.cobertura; });
 
-    // ⚠ TRANSPARENCIA (no negociable): el destacado se elige SOLO entre
-    // tarifas confirmadas. Una estimada nunca puede ser "la recomendada",
-    // aunque el backend la mande como recomendado_id.
-    var best = reales.length ? reales[0] : null;
-    var ahorro = 0;
-    if (best && reales.length > 1) ahorro = reales[reales.length - 1].precio - best.precio;
+    // Daniel 2026-07-25: "la cotización debe mostrarse todos los valores por
+    // igual y yo escoger". Ya no hay "destacado"/recomendado automático — se
+    // ordena más barato primero (dentro de las tarifas confirmadas) y el
+    // operador elige tocando la tarjeta. Ninguna estimada es seleccionable
+    // por defecto (sigue marcada como estimada, igual que antes).
+    state.seleccionadoId = null;
 
     var html = '';
 
@@ -864,8 +835,7 @@
     }
 
     html += '<div class="cot-results">';
-    if (best) html += cardHtml(best, { best: true, ahorro: ahorro });
-    reales.slice(best ? 1 : 0).forEach(function (i) { html += cardHtml(i); });
+    reales.forEach(function (i) { html += cardHtml(i); });
     estim.forEach(function (i) { html += cardHtml(i); });
     nocov.forEach(function (i) { html += cardHtml(i); });
     html += '</div>';
@@ -879,11 +849,34 @@
     sum += celda('Couriers comparados', r.items.length +
       (nocov.length ? ' <small>' + nocov.length + ' sin cobertura</small>' : ''));
     sum += celda('Tarifas confirmadas', reales.length + (estim.length ? ' <small>+' + estim.length + ' estimadas</small>' : ''));
-    if (best) sum += celda('Mejor precio', fClp(best.precio) + ' <small>' + esc(best.nombre) + '</small>');
     $('cotSummary').innerHTML = sum;
     $('cotSummary').classList.remove('cot-hide');
 
     setPrintEnabled(true);
+  }
+
+  // ── Selección manual del courier (Daniel 2026-07-25) ────────────────
+  // Un clic/tap en una tarjeta la marca como elegida; un segundo clic la
+  // desmarca. No hay auto-selección: el operador decide siempre.
+  function onResultadosClick(ev) {
+    var card = ev.target.closest('[data-cot-id]');
+    if (!card) return;
+    var id = card.getAttribute('data-cot-id');
+    state.seleccionadoId = (state.seleccionadoId === id) ? null : id;
+    $('cotResultados').querySelectorAll('.cot-card[data-cot-id]').forEach(function (c) {
+      var sel = c.getAttribute('data-cot-id') === state.seleccionadoId;
+      c.classList.toggle('is-selected', sel);
+      var pie = c.querySelector('.cot-pick');
+      if (pie) pie.innerHTML = sel
+        ? '<i class="bi bi-check-circle-fill me-1"></i>Seleccionado'
+        : 'Tocar para elegir este courier';
+    });
+  }
+  function onResultadosKey(ev) {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      var card = ev.target.closest('[data-cot-id]');
+      if (card) { ev.preventDefault(); onResultadosClick(ev); }
+    }
   }
 
   function celda(lbl, val) {
@@ -1431,6 +1424,8 @@
     $('cotBridgeUsarBtn').addEventListener('click', usarCubicajeDePantalla);
     $('cotLimpiarBtn').addEventListener('click', limpiar);
     $('cotPrintBtn').addEventListener('click', imprimirComparacion);
+    $('cotResultados').addEventListener('click', onResultadosClick);
+    $('cotResultados').addEventListener('keydown', onResultadosKey);
 
     // Enter en cualquier campo = cotizar (sin <form>, no hay submit nativo).
     ['cotCliente', 'cotComuna', 'cotPeso', 'cotValorNeto'].forEach(function (id) {
@@ -1488,19 +1483,22 @@
                cotizaciones:[{courier_id, courier_nombre, logo_url, servicio,
                               tiempo_transito, precio|subtotal, tiene_cobertura,
                               es_estimado, motivo_estimado, tarifa_validada,
-                              es_regla_comercial, regla_pct, derivado_de,
-                              motivo_regla|nota_precio,
+                              nota_precio,
                               fuente, mensaje, trace{validado,advertencias}}]}
      El front tolera los alias del comparador crudo (precio/subtotal,
-     fuente=='estimado', trace.validado). `recomendado_id` ya viene
-     garantizado como NO estimado; el destacado igual se recalcula en el
-     navegador para que la promesa se cumpla pase lo que pase.
+     fuente=='estimado', trace.validado).
 
-     ⚠ fuente=='regla' (Felca −10% / Milling −5% sobre FedEx Directo) NO es
-     una estimación: es la política comercial de ILUS y es un precio FIRME.
-     Se muestra con el chip azul "Regla ILUS" y SÍ puede quedar destacada.
-     Antes caía en el saco de "estimado" y el Cotizador terminaba
-     recomendando el courier más caro en cada envío (fix 2026-07-25).
+     ⚠ CONFIDENCIAL (Daniel, 2026-07-25, textual: "no debe haber código,
+     comentario, seña en el front, nada que nos indique esa pequeña
+     diferencia"): Felca y Milling tienen una política comercial propia
+     (ver transporte_tarifas.py — descuento por comuna, banda 8-12% Felca /
+     4-7% Milling, estable por comuna como una tabla real). De cara a este
+     archivo y al JSON que llega del backend, esos precios son INDISTINGUIBLES
+     de una tarifa de tabla real: fuente='tabla', mismo formato de 'formula'/
+     'bracket'. NO existen (ni deben volver a existir) los campos
+     es_regla_comercial / regla_pct / derivado_de / motivo_regla en este
+     contrato — si algún cambio futuro los reintroduce, es una regresión de
+     confidencialidad, no una mejora.
 
    · No existe endpoint para GUARDAR la cotización de envío elegida
      (equivalente a "asignar courier" del manifiesto). Cuando Daniel lo

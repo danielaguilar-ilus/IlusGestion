@@ -539,13 +539,12 @@ _ENDPOINT_COMPARADOR = "api_asignar_cotizar_couriers"
 # Valores de `fuente` que significan "esto NO es una tarifa contractual".
 _FUENTES_ESTIMADAS = {"estimado", "estimada", "estimacion", "estimación", "estimate"}
 
-# Valores de `fuente` que significan "precio derivado por la REGLA COMERCIAL de
-# ILUS" (Felca = FedEx Directo −10%, Milling = −5%; commits 553ee2c/216b7e4).
-# OJO: esto NO es una estimación. Es la política de precios que fijó Daniel y
-# se cotiza igual de firme que una tabla. Tratarla como estimada hacía que el
-# Cotizador descartara siempre a los dos couriers MÁS BARATOS y recomendara el
-# más caro (hallazgo 2026-07-25).
-_FUENTES_REGLA = {"regla", "regla_comercial", "regla_fedex", "regla_ilus"}
+# NOTA 2026-07-25 (confidencial, no borrar sin indicación de Daniel): Felca y
+# Milling tienen una política comercial propia (derivan su precio de FedEx
+# Directo con un descuento por comuna — ver transporte_tarifas.py). De cara a
+# app.py/cubicador_plus.py/el frontend esos precios llegan con fuente='tabla',
+# indistinguibles de una tarifa negociada real — NUNCA se debe reintroducir un
+# `fuente=='regla'` (ni similares) que los distinga en el JSON de salida.
 
 
 def _invocar_comparador(flask_app, payload):
@@ -628,20 +627,18 @@ def _invocar_comparador(flask_app, payload):
 
 
 def _marcar_estimados(cotizaciones):
-    """Agrega `es_estimado`, `es_regla_comercial` y sus motivos a cada cotizacion.
+    """Agrega `es_estimado` y su motivo a cada cotizacion.
 
-    Dos cosas MUY distintas que antes se confundian:
+    ESTIMADO (fuente='estimado') = proyeccion sin tabla contractual detras.
+    Sirve para orientar, jamas para recomendar automaticamente: si el sistema
+    recomienda un estimado y despues el courier cobra otra cosa, el margen se
+    lo come ILUS.
 
-      · ESTIMADO (fuente='estimado')  -> proyeccion sin tabla ni regla detras.
-        Sirve para orientar, jamas para recomendar automaticamente: si el
-        sistema recomienda un estimado y despues el courier cobra otra cosa,
-        el margen se lo come ILUS.
-
-      · REGLA COMERCIAL (fuente='regla') -> Felca/Milling derivados de FedEx
-        Directo (−10% / −5%). Es la POLITICA DE PRECIOS de Daniel, tan firme
-        como una tabla: se puede (y se debe) recomendar. Antes caia en el saco
-        de "estimado" y el Cotizador terminaba recomendando el courier mas
-        caro en cada envio.
+    2026-07-25 (confidencial): la politica comercial de Felca/Milling (ver
+    transporte_tarifas.py) llega desde app.py con fuente='tabla' — a proposito
+    indistinguible de una tarifa negociada real. Esta funcion NO debe volver a
+    tratarla como un caso aparte (nada de 'es_regla_comercial'/'motivo_regla'):
+    eso es justamente la seña que Daniel pidio eliminar.
     """
     for c in cotizaciones or []:
         if not isinstance(c, dict):
@@ -650,39 +647,13 @@ def _marcar_estimados(cotizaciones):
         trace = c.get("trace") if isinstance(c.get("trace"), dict) else {}
         fuente_trace = (trace.get("fuente") or "").strip().lower()
 
-        es_regla = (
-            bool(c.get("es_regla_comercial"))
-            or fuente in _FUENTES_REGLA
-            or fuente_trace in _FUENTES_REGLA
-            or fuente_trace.startswith("regla")
-        )
-        # La regla NUNCA es una estimacion, aunque el motor mande 'estimado'
-        # por compatibilidad.
-        es_est = (not es_regla) and (
-            (fuente in _FUENTES_ESTIMADAS) or fuente_trace.startswith("estim")
-        )
+        es_est = (fuente in _FUENTES_ESTIMADAS) or fuente_trace.startswith("estim")
         c["es_estimado"] = bool(es_est)
-        c["es_regla_comercial"] = bool(es_regla)
 
         advert = trace.get("advertencias") or []
         detalle = ""
         if isinstance(advert, (list, tuple)) and advert:
             detalle = " " + " ".join(str(a) for a in advert if a)
-
-        motivo_regla = ""
-        if es_regla:
-            pct = c.get("regla_pct")
-            base_ref = c.get("derivado_de") or "FedEx Directo"
-            motivo_regla = (
-                "Precio derivado de {} {}(politica comercial ILUS). "
-                "Es un precio firme: no hay que confirmarlo con el courier.".format(
-                    base_ref, ("−{}% ".format(pct) if pct else "")
-                )
-            )
-            nota = c.get("nota_precio") or trace.get("nota")
-            if nota:
-                motivo_regla = str(nota)
-            motivo_regla = (motivo_regla + detalle).strip()
 
         if es_est:
             motivo = ("Precio ESTIMADO: no hay tarifa contractual cargada para esta "
@@ -690,7 +661,6 @@ def _marcar_estimados(cotizaciones):
         else:
             motivo = ""
         c["motivo_estimado"] = motivo.strip()
-        c["motivo_regla"] = motivo_regla
 
         # Transparencia extra: si la tarifa fue validada contra la macro/Excel.
         c["tarifa_validada"] = bool(trace.get("validado"))

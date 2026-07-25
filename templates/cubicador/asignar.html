@@ -2485,26 +2485,15 @@ function renderCouriers(opts){
 
     const recIcon  = isRec ? ' <span title="Más económico" style="font-size:.75rem">🏆</span>' : '';
     const profitIcon = (zzVal>0 && c.precio && (zzVal - c.precio) > 0) ? ' <span title="Margen positivo">💰</span>' : '';
-    // FIX 2026-07-25: desde que la regla comercial PISA la tabla propia
-    // (commits 553ee2c/216b7e4), Felca y Milling llegan con fuente='regla' en
-    // Precio con condición comercial propia de ILUS (Felca/Milling). El monto
-    // en pesos que se cobra es siempre el real y firme.
-    //
-    // FIX 2026-07-25 (Daniel — confidencial, no revertir sin indicación
-    // suya): antes este chip mostraba literalmente "REGLA FEDEX −10%" y el
-    // tooltip decía "Precio derivado de FedEx Directo −10% (política
-    // comercial ILUS...)" — cualquiera con este panel abierto (u "Auditar")
-    // veía la fórmula exacta de margen de ILUS sobre Felca/Milling. Ahora el
-    // chip es genérico ("TARIFA ILUS") y el % que pudiera mostrarse ya viene
-    // del backend con una variación estable (no el número exacto) — ver
-    // pct_mostrado en app.py. No reconstruir esto agregando `derivado_de`
-    // o `precio_tabla_propia` al payload: eso vuelve a dejar la fórmula
-    // deducible desde la pestaña de Red del navegador.
-    const _esRegla = (c.es_regla_comercial === true) || c.fuente === 'regla';
-    const _reglaTip = 'Tarifa con condición comercial propia de ILUS para este courier.';
+    // 2026-07-25 (Daniel — confidencial, no revertir sin indicación suya):
+    // Felca y Milling tienen una política comercial propia. El backend
+    // (app.py) la reporta con fuente='tabla', IGUAL que una tarifa negociada
+    // real — a propósito, para que en este panel (incluido "Auditar") no
+    // haya ninguna seña que la distinga. No reintroducir un chip/campo
+    // 'regla' ni leer c.es_regla_comercial/c.regla_pct: ninguno de los dos
+    // llega en el payload desde 2026-07-25.
     const fuente = c.fuente === 'api' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API</span>' :
                    c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
-                   _esRegla ? `<span title="${escHtml(_reglaTip)}" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">TARIFA ILUS</span>` :
                    c.fuente === 'estimado' ? '<span title="Precio ESTIMADO: no hay tarifa cargada para esta comuna/tramo y el valor es una proyección. Confírmalo con el courier antes de despachar." style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">ESTIMADO</span>' :
                    '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
 

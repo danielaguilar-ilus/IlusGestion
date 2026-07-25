@@ -17958,50 +17958,30 @@ def api_asignar_cotizar_couriers():
             or (r.get("fuente") == "regla")
             or (r.get("modo") == "regla_fedex")
         )
-        regla_pct = r.get("regla_pct")
-        derivado_de = r.get("derivado_de") or "FedEx Directo"
         # 'estimado' de verdad = proyección sin tabla NI regla detrás.
         estimado = bool(r.get("estimado")) and not es_regla
 
-        # ── CONFIDENCIALIDAD DE LA POLÍTICA DE PRECIOS (Daniel, 2026-07-25) ──
-        # El monto que se COBRA sigue saliendo del regla_pct REAL (5%/10%,
-        # exacto) — eso no cambia un peso. Lo que cambia es lo que se MUESTRA
-        # en pantalla si alguien abre "Auditar": antes se veía literalmente
-        # "Derivado de FedEx Directo −10%", que revela la fórmula de margen de
-        # ILUS frente a cualquiera con acceso a este panel. Daniel pidió que
-        # esto quede interno y que, si se expresa un %, no sea el número exacto
-        # (para que no se lea como "tomamos el precio de FedEx y le restamos
-        # X"). Se usa un % MOSTRADO con una variación estable por documento
-        # (mismo documento = mismo % cada vez que se abre; otro documento =
-        # otro %) — nunca al azar en cada render, porque eso sí parecería un
-        # error. El precio en pesos (base/seguro/total) es siempre el real.
-        pct_mostrado = None
-        if es_regla and regla_pct:
-            _seed = f"{doc_tido or ''}|{doc_nudo or ''}|{comuna or ''}|{slug}".encode("utf-8")
-            _h = int(hashlib.sha256(_seed).hexdigest(), 16)
-            _jitter = 0.8 + (_h % 41) / 100.0   # banda estable 0,80–1,20
-            pct_mostrado = max(1, round(regla_pct * _jitter))
-
-        if es_regla and pct_mostrado:
-            servicio_txt = f"~{pct_mostrado}% más económico"
-        elif es_regla:
-            servicio_txt = "Tarifa preferencial ILUS"
-        elif estimado:
-            servicio_txt = "Estimado (sin tarifa cargada)"
-        else:
-            servicio_txt = "Standard"
+        # ── CONFIDENCIALIDAD ABSOLUTA (Daniel, 2026-07-25, textual): "que
+        # fuera como simple casualidad... no debe haber código, comentario,
+        # seña en el front, nada que nos indique esa pequeña diferencia."
+        # Antes esta función mandaba un % "disimulado" (jitter por documento)
+        # y un texto "~10% más económico" — SIGUE siendo una seña. Ahora un
+        # precio 'regla' se trata, de cara al cliente/JSON/frontend, EXACTAMENTE
+        # igual que un precio de tabla real: mismo 'fuente', mismo formato de
+        # 'formula' (transporte_tarifas.py ya genera el tramo con el MISMO
+        # formato "{lo}-{hi} kg × {tasa}" que una fila negociada real — ver
+        # _descuento_comuna_pct), mismo 'servicio'. NINGÚN campo que distinga
+        # "regla" del resto sale de esta función. Lo único que se conserva
+        # puertas adentro (nunca en el dict de retorno) es el trace interno de
+        # transporte_tarifas.py, para quien mantenga el motor.
+        servicio_txt = "Estimado (sin tarifa cargada)" if estimado else "Standard"
 
         desglose = {
             "precio_costo": base, "precio_venta": precio,
             "margen_pct": 0, "margen_clp": 0, "iva_pct": 0, "iva_clp": 0,
             "seguro_clp": seguro,
         }
-        # Para 'regla' el detalle NUNCA menciona el tramo interno (que sí dice
-        # "FedEx Directo −X%" — ver transporte_tarifas.py): solo pesos.
-        if es_regla:
-            formula = f"Tarifa preferencial ILUS → ${base:,}".replace(",", ".")
-        else:
-            formula = f"Tabla SPHS: {r['tramo']} → ${base:,}".replace(",", ".")
+        formula = f"Tabla SPHS: {r['tramo']} → ${base:,}".replace(",", ".")
         if seguro:
             formula += f" + seguro 1,2% ${seguro:,}".replace(",", ".")
         formula += f" = ${precio:,}".replace(",", ".")
@@ -18011,15 +17991,14 @@ def api_asignar_cotizar_couriers():
         nota = None
         if estimado:
             advertencias.append("Tarifa estimada: aún sin tabla propia para esta comuna/peso")
-        # Nota: para 'regla' NO se agrega nota ni advertencia de brecha —
-        # Daniel: "no evidencie eso, a menos de que lo pregunte o me indique
-        # agregarlo". El detalle completo (courier, %, comparación) sigue
-        # existiendo en la base de datos y en transporte_tarifas.py para
-        # quien lo necesite consultar directamente.
+        # Para 'regla' NO se agrega nota ni advertencia: de cara afuera es una
+        # tarifa de tabla más.
 
-        if es_regla:
-            fuente_top, fuente_trace = "regla", "regla_comercial"
-        elif estimado:
+        # fuente_top/fuente_trace: 'regla' se reporta como 'tabla' — misma
+        # razón de arriba. es_regla sigue existiendo como variable LOCAL de
+        # Python (para el cálculo de 'formula'/'servicio_txt' más arriba),
+        # pero no cruza al dict que se devuelve.
+        if estimado:
             fuente_top, fuente_trace = "estimado", "estimado"
         else:
             fuente_top, fuente_trace = "tabla", "tabla_macro"
@@ -18031,28 +18010,21 @@ def api_asignar_cotizar_couriers():
             "tiempo_transito": _ETD_MACRO.get(slug, "—"),
             "servicio": servicio_txt,
             "subtotal": precio, "desglose": desglose, "mensaje": None,
-            "es_regla_comercial": es_regla,
             "es_estimado": estimado,
-            # OJO — confidencialidad (Daniel, 2026-07-25): este JSON lo puede
-            # inspeccionar cualquiera con la pestaña de Red del navegador
-            # abierta, así que lo que NO deba evidenciarse tiene que faltar
-            # ACÁ, no solo estar ausente del HTML. Por eso:
-            #  · se manda `pct_mostrado` (jitter estable), nunca el
-            #    `regla_pct` real (5/10 exacto).
-            #  · NO se manda `derivado_de` — nombrar "FedEx Directo" ya
-            #    confirma la fórmula aunque el % venga difuminado.
-            #  · NO se manda `precio_tabla_propia` — junto con `precio` deja
-            #    reconstruir el % exacto con una simple división.
-            "regla_pct": (pct_mostrado if es_regla else None),
+            # OJO — confidencialidad (Daniel, 2026-07-25, textual: "no debe
+            # haber código, comentario, seña en el front, nada"): este JSON lo
+            # puede inspeccionar cualquiera con la pestaña de Red del
+            # navegador abierta. Por eso NINGÚN campo que distinga 'regla' de
+            # 'tabla' sale de acá: ni regla_pct, ni derivado_de, ni
+            # es_regla_comercial, ni precio_tabla_propia/brecha (con 'precio'
+            # alcanzaría para reconstruir el % con una división). El bracket
+            # y la fórmula usan el 'tramo' real, con el MISMO formato que una
+            # fila de tabla negociada (ver transporte_tarifas.py).
             "nota_precio": nota,
             "trace": {
-                # `r["tramo"]` en el camino 'regla' es el texto interno de
-                # transporte_tarifas.py ("regla ILUS: FedEx Directo −10%") —
-                # útil para depurar por consola, pero NUNCA al navegador.
-                "bracket": ("Tarifa preferencial" if es_regla else r["tramo"]),
-                "bracket_upper": None, "formula": formula,
+                "bracket": r["tramo"], "bracket_upper": None, "formula": formula,
                 "fuente": fuente_trace,
-                "validado": (not estimado and not es_regla),
+                "validado": False,
                 "advertencias": advertencias,
                 "nota": nota,
                 "json_brackets_disponibles": [], "peso_usado": peso_fact,

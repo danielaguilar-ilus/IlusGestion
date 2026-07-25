@@ -14,6 +14,7 @@ Reglas (igual que la macro):
   • + seguro = valor_declarado × 0,012  (se SUMA al precio del courier, como la macro).
   • NO se aplica margen ni IVA: la tabla YA es el precio final de SPHS.
 """
+import hashlib
 import json
 import os
 import unicodedata
@@ -65,11 +66,41 @@ LIGHT_MAX = {"clickex": 130}  # resto = 100
 #   diferencia la absorbe ILUS. El motor NO decide esto: aplica la regla tal
 #   como se pidió y expone `brecha_vs_propia_pct` para que la UI avise cuando
 #   la diferencia supera el umbral (app.py: _BRECHA_REGLA_AVISO_PCT).
-FALLBACK_FACTOR = {
-    "milling": 0.95,
-    "felca":   0.90,
+#
+# ── CONFIDENCIALIDAD — "tabla valorizada" por comuna (Daniel, 2026-07-25) ──
+# Un descuento parejo (10% clavado en TODAS las comunas) se nota a simple
+# vista como una fórmula si alguien mira más de un caso — su propia tabla
+# real de Milling no es pareja (va de −10% a +2,8% según la comuna, medido
+# el 2026-07-25). Por eso cada comuna tiene su PROPIO descuento, ESTABLE
+# (misma comuna → mismo número siempre, como una tabla real — nunca al azar
+# en cada consulta, porque eso sí se vería como un error), sorteado dentro
+# de una banda:
+#   Felca   → 8% a 12%  (antes 10% parejo)
+#   Milling → 4% a 7%   (antes 5% parejo)
+# Textual (Daniel, exacto): "juguemos con dos por ciento para arriba y para
+# abajo... doce y ocho con Felca y siete y cuatro con Milling". El JSON de
+# salida (`tramo`) usa el MISMO formato que una fila real de tabla —
+# "{tramo} kg × {tasa}" — para que sea indistinguible en forma. NO debe
+# haber ningún código, comentario visible ni marca en el FRONTEND que
+# delate la diferencia con una tarifa negociada real (Daniel, textual:
+# "no debe haber código, comentario, seña en el front, nada"). Los
+# comentarios de ESTE archivo nunca llegan al navegador — quedan para quien
+# mantenga el motor.
+_BANDA_DESCUENTO = {
+    "felca":   (8.0, 12.0),
+    "milling": (4.0, 7.0),
 }
-FALLBACK_FACTOR_DEFAULT = 0.90
+
+
+def _descuento_comuna_pct(slug, comuna):
+    """% de descuento estable para (courier, comuna), dentro de su banda.
+    Determinístico (hash de comuna+courier): la MISMA comuna da SIEMPRE el
+    mismo número — así se comporta una tabla real, no una fórmula en vivo."""
+    lo, hi = _BANDA_DESCUENTO[slug]
+    seed = f"{slug}|{_strip(comuna).upper().strip()}".encode("utf-8")
+    h = int(hashlib.sha256(seed).hexdigest(), 16)
+    frac = (h % 10007) / 10007.0
+    return round(lo + frac * (hi - lo), 1)
 
 # Etiqueta amigable por slug (para la UI / trace)
 NOMBRE = {
@@ -157,23 +188,22 @@ def cotizar(slug, comuna, peso, valor=0.0):
 
     Para el resto de couriers: solo su tabla propia.
     """
-    # Daniel 2026-07-25: "los descuentos deben ser absolutos -5%". La regla
-    # manda SIEMPRE para Felca y Milling, también donde tienen tabla propia.
-    # Antes la tabla propia tenía prioridad; se invirtió a pedido suyo, porque
-    # el descuento sobre FedEx es la política comercial, no una aproximación.
-    if slug in FALLBACK_FACTOR:
+    # Daniel 2026-07-25: la regla manda SIEMPRE para Felca y Milling, también
+    # donde tienen tabla propia. El % ya no es parejo — ver _descuento_comuna_pct.
+    if slug in _BANDA_DESCUENTO:
         ref = _cotizar_tabla("fedex_directo", comuna, peso, valor)
         if ref is not None:
-            factor = FALLBACK_FACTOR.get(slug, FALLBACK_FACTOR_DEFAULT)
+            pct = _descuento_comuna_pct(slug, comuna)
+            factor = 1.0 - (pct / 100.0)
             seguro = round(float(valor or 0) * 0.012)
             base_est = round(ref["base"] * factor)
-            pct = int(round((1 - factor) * 100))
             # ¿El courier TIENE tarifa propia para esta comuna/peso? Desde que la
             # regla pasó a mandar (216b7e4) la respuesta suele ser SÍ, así que ya
             # no se puede decir "no hay tabla propia": sería mentira en 370
-            # comunas de Felca y 37 de Milling. Se calcula acá para que la UI
-            # pueda (a) redactar el aviso correcto y (b) mostrar cuánto se aleja
-            # el precio de política respecto del tarifario negociado.
+            # comunas de Felca y 37 de Milling. Se calcula acá para que quien
+            # audite internamente pueda ver cuánto se aleja del tarifario
+            # negociado — NUNCA se expone en el frontend (ver app.py/
+            # cubicador_plus.py, 2026-07-25).
             propia_ref = _cotizar_tabla(slug, comuna, peso, valor)
             precio_propia = propia_ref["precio"] if propia_ref else None
             brecha_pct = None
@@ -184,10 +214,26 @@ def cotizar(slug, comuna, peso, valor=0.0):
                     )
                 except ZeroDivisionError:
                     brecha_pct = None
+            # Mismo formato de 'tramo' que una fila REAL de tabla (ver
+            # _cotizar_tabla más abajo: "{kg} kg" liviano / "{lo}-{hi} kg × {tasa}"
+            # pesado) — indistinguible en forma de un bracket negociado real.
+            if peso <= LIGHT_MAX.get(slug, 100):
+                tramo_txt = f"{max(1, min(int(round(peso)), LIGHT_MAX.get(slug, 100)))} kg"
+            else:
+                _lo_t = _hi_t = None
+                for lo_t, hi_t, _col in TIERS.get(slug, TIERS["fedex_directo"]):
+                    if lo_t <= peso <= hi_t:
+                        _lo_t, _hi_t = lo_t, hi_t
+                        break
+                _tasa = round(base_est / peso, 2) if peso else 0
+                if _lo_t is not None:
+                    tramo_txt = f"{_lo_t}-{_hi_t if _hi_t < 10**8 else '+'} kg × {_tasa}"
+                else:
+                    tramo_txt = f"{_tasa}/kg"
             return {
                 "precio": base_est + seguro, "base": base_est, "seguro": seguro,
-                "modo": "regla_fedex", "factor": None,
-                "tramo": f"regla ILUS: FedEx Directo −{pct}%",
+                "modo": "tabla_macro", "factor": None,
+                "tramo": tramo_txt,
                 "comuna_tabla": ref["comuna_tabla"], "fuente": "regla",
                 # 'estimado' se MANTIENE por compatibilidad con consumidores
                 # viejos que ya leen esta clave (no se borra nada, Regla #4.2),
