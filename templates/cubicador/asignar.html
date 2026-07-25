@@ -2605,16 +2605,25 @@ function renderCouriers(opts){
 
     const recIcon  = isRec ? ' <span title="Más económico" style="font-size:.75rem">🏆</span>' : '';
     const profitIcon = (zzVal>0 && c.precio && (zzVal - c.precio) > 0) ? ' <span title="Margen positivo">💰</span>' : '';
-    // FIX 2026-07-24 (Daniel: "no inventar datos que no existen"): cuando
-    // Felca/Milling NO tienen tarifa propia para la comuna, el motor ESTIMA el
-    // precio como FedEx Directo −10% y lo marca fuente='estimado'
-    // (transporte_tarifas.py:125-137). Ese caso caía en el último ternario y
-    // se mostraba con el chip gris "Tabla" — afirmando que el número salía de
-    // un tarifario cuando en realidad nadie lo negoció. Milling, por ejemplo,
-    // solo tiene 37 comunas cargadas y todas son de Santiago.
+    // FIX 2026-07-25: desde que la regla comercial PISA la tabla propia
+    // (commits 553ee2c/216b7e4), Felca y Milling llegan con fuente='regla' en
+    // TODA comuna cubierta por FedEx Directo. Antes el backend mandaba
+    // fuente='estimado' y el texto fijo "−10%" — que era falso para Milling
+    // (−5%) y afirmaba que el courier no tenía tabla propia cuando sí la tiene
+    // (370 comunas Felca, 37 Milling). Ahora el porcentaje y el motivo vienen
+    // del backend (c.regla_pct / c.trace.nota); 'estimado' queda SOLO para la
+    // proyección sin respaldo. Se aceptan ambos valores por compatibilidad.
+    const _reglaPct = (c.regla_pct != null) ? c.regla_pct : null;
+    const _reglaBase = c.derivado_de || 'FedEx Directo';
+    const _reglaTip = (c.nota_precio || (c.trace && c.trace.nota) ||
+      ('Precio derivado de ' + _reglaBase + (_reglaPct ? (' −' + _reglaPct + '%') : '') +
+       ' por la política comercial de ILUS (Milling −5%, Felca −10%). Es un precio firme, ' +
+       'no una estimación: la tarifa propia del courier queda como respaldo.'));
+    const _esRegla = (c.es_regla_comercial === true) || c.fuente === 'regla';
     const fuente = c.fuente === 'api' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API</span>' :
                    c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
-                   c.fuente === 'estimado' ? '<span title="Este courier no tiene tarifa propia cargada para esta comuna, así que el precio sale de la regla comercial ILUS sobre FedEx Directo (Milling −5%, Felca −10%). Es un precio válido, pero derivado: no viene de un tarifario negociado comuna por comuna." style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">REGLA FEDEX</span>' :
+                   _esRegla ? `<span title="${escHtml(_reglaTip)}" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">REGLA FEDEX${_reglaPct ? ' −'+_reglaPct+'%' : ''}</span>` :
+                   c.fuente === 'estimado' ? '<span title="Precio ESTIMADO: no hay tarifa cargada para esta comuna/tramo y el valor es una proyección. Confírmalo con el courier antes de despachar." style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">ESTIMADO</span>' :
                    '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
 
     // ── AUDIT/TRACE indicators ─────────────────────────────────

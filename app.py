@@ -17936,9 +17936,41 @@ def api_asignar_cotizar_couriers():
     _ETD_MACRO = {'felca': '2-4 días', 'milling': '2-4 días',
                   'clickex': '24-48 h', 'fedex_directo': '1-2 días'}
 
+    # A partir de esta brecha (%) contra la tarifa PROPIA del courier, la regla
+    # comercial se avisa en pantalla. No cambia el precio: solo transparenta
+    # cuánto está resignando ILUS en ese envío (hallazgo 2026-07-25).
+    _BRECHA_REGLA_AVISO_PCT = 15.0
+
     def _macro_cotizacion_dict(cid, nombre, logo, slug, r):
         base, seguro, precio = r["base"], r["seguro"], r["precio"]
-        estimado = bool(r.get("estimado"))
+
+        # ── REGLA COMERCIAL ≠ ESTIMACIÓN (2026-07-25) ────────────────────
+        # Felca y Milling derivan SIEMPRE su precio de FedEx Directo
+        # (Milling −5%, Felca −10%, commits 553ee2c/216b7e4). Eso NO es una
+        # proyección técnica: es la política de precios que fijó Daniel y es
+        # tan firme como una tabla. transporte_tarifas sigue enviando
+        # 'estimado': True por compatibilidad, así que acá distinguimos por
+        # 'es_regla_comercial'/'fuente'/'modo'. Si se tratan como estimación,
+        # el Cotizador descarta justo a los dos couriers más baratos.
+        es_regla = (
+            bool(r.get("es_regla_comercial"))
+            or (r.get("fuente") == "regla")
+            or (r.get("modo") == "regla_fedex")
+        )
+        regla_pct = r.get("regla_pct")
+        derivado_de = r.get("derivado_de") or "FedEx Directo"
+        # 'estimado' de verdad = proyección sin tabla NI regla detrás.
+        estimado = bool(r.get("estimado")) and not es_regla
+
+        if es_regla and regla_pct:
+            servicio_txt = f"Derivado de {derivado_de} −{regla_pct}%"
+        elif es_regla:
+            servicio_txt = f"Derivado de {derivado_de}"
+        elif estimado:
+            servicio_txt = "Estimado (sin tarifa cargada)"
+        else:
+            servicio_txt = "Standard"
+
         desglose = {
             "precio_costo": base, "precio_venta": precio,
             "margen_pct": 0, "margen_clp": 0, "iva_pct": 0, "iva_clp": 0,
@@ -17948,19 +17980,63 @@ def api_asignar_cotizar_couriers():
         if seguro:
             formula += f" + seguro 1,2% ${seguro:,}".replace(",", ".")
         formula += f" = ${precio:,}".replace(",", ".")
+
+        # ── Advertencias: solo las que son CIERTAS ───────────────────────
+        advertencias = []
+        nota = None
+        if estimado:
+            advertencias.append("Tarifa estimada: aún sin tabla propia para esta comuna/peso")
+        elif es_regla:
+            tiene_propia = bool(r.get("tiene_tabla_propia"))
+            _pct_txt = f" −{regla_pct}%" if regla_pct else ""
+            nota = (
+                f"Precio derivado de {derivado_de}{_pct_txt} "
+                f"(política comercial ILUS, 2026-07-25). "
+                + ("La tarifa propia del courier queda como respaldo."
+                   if tiene_propia else
+                   "El courier no tiene tabla propia para esta comuna: la regla da la cobertura.")
+            )
+            brecha = r.get("brecha_vs_propia_pct")
+            propia = r.get("precio_tabla_propia")
+            if propia and brecha is not None and abs(brecha) >= _BRECHA_REGLA_AVISO_PCT:
+                brecha_txt = f"{abs(brecha):.1f}".replace(".", ",")
+                propia_txt = f"{int(propia):,}".replace(",", ".")
+                lado = "bajo" if brecha < 0 else "sobre"
+                advertencias.append(
+                    f"La regla deja el precio {brecha_txt}% {lado} la tarifa propia de "
+                    f"{nombre} para esta comuna (su tabla marca ${propia_txt})."
+                )
+
+        if es_regla:
+            fuente_top, fuente_trace = "regla", "regla_comercial"
+        elif estimado:
+            fuente_top, fuente_trace = "estimado", "estimado"
+        else:
+            fuente_top, fuente_trace = "tabla", "tabla_macro"
+
         return {
             "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
-            "tiene_cobertura": True, "fuente": ("estimado" if estimado else "tabla"),
+            "tiene_cobertura": True, "fuente": fuente_top,
             "precio": precio, "precio_costo": base, "moneda": "CLP",
             "tiempo_transito": _ETD_MACRO.get(slug, "—"),
-            "servicio": ("Estimado (~FedEx −10%)" if estimado else "Standard"),
+            "servicio": servicio_txt,
             "subtotal": precio, "desglose": desglose, "mensaje": None,
+            # Claves nuevas: la UI ya no tiene que adivinar el porcentaje ni
+            # inventar el motivo (antes decía "−10%" fijo, también para Milling).
+            "es_regla_comercial": es_regla,
+            "es_estimado": estimado,
+            "regla_pct": (regla_pct if es_regla else None),
+            "derivado_de": (derivado_de if es_regla else None),
+            "tiene_tabla_propia": bool(r.get("tiene_tabla_propia")) if es_regla else None,
+            "precio_tabla_propia": (r.get("precio_tabla_propia") if es_regla else None),
+            "brecha_vs_propia_pct": (r.get("brecha_vs_propia_pct") if es_regla else None),
+            "nota_precio": nota,
             "trace": {
                 "bracket": r["tramo"], "bracket_upper": None, "formula": formula,
-                "fuente": ("estimado" if estimado else "tabla_macro"),
-                "validado": (not estimado),
-                "advertencias": (["Tarifa estimada: aún sin tabla propia para esta comuna/peso"]
-                                 if estimado else []),
+                "fuente": fuente_trace,
+                "validado": (not estimado and not es_regla),
+                "advertencias": advertencias,
+                "nota": nota,
                 "json_brackets_disponibles": [], "peso_usado": peso_fact,
                 "comuna_db": r["comuna_tabla"], "desglose": desglose,
             },

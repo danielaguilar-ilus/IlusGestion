@@ -532,13 +532,18 @@
           <th class="text-end">Vol m³/u</th>
           <th class="text-end">Predom/u</th>
           <th class="text-end" style="color:var(--ilus-red)">Total Predom</th>
-          <th class="text-center no-print" style="width:90px">Acciones</th>
+          <th class="text-center no-print" style="width:160px">Acciones</th>
         </tr>
       </thead>
       <tbody id="cubicadorTbody">
         {% for l in lineas %}
         <tr class="cub-row"
             data-sku="{{ l.sku|e }}"
+            {# data-app-id: lo lee cubicador_tabs.js para saber si la línea ya
+               tiene ficha local. Sin él, el modal de medidas guardaba por el
+               endpoint legacy (que borra y reinserta sin red de seguridad). #}
+            data-app-id="{{ l.app_id or '' }}"
+            data-nombre="{{ l.nombre_app|e }}"
             data-kg-tot="{{ l.peso_kg_tot }}"
             data-pv-tot="{{ l.peso_vol_tot }}"
             data-vol-tot="{{ l.vol_tot }}"
@@ -625,6 +630,31 @@
                 <i class="bi bi-eye"></i>
               </button>
               {% endif %}
+              {# Medidas y Etiquetas: los maneja static/cubicador_tabs.js por
+                 delegación (data-action). El guardado pasa por el endpoint con
+                 red de seguridad del Cubicador, no por el legacy. #}
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      title="Cargar o editar las medidas (bultos) de este SKU"
+                      aria-label="Medidas de {{ l.sku }}"
+                      data-action="cub-medidas"
+                      data-sku="{{ l.sku|e }}"
+                      data-app-id="{{ l.app_id or '' }}"
+                      data-nombre="{{ l.nombre_app|e }}"
+                      data-bultos="{{ l.total_bultos }}">
+                <i class="bi bi-rulers"></i>
+              </button>
+              {% if permissions.print %}
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      title="Imprimir etiquetas de este SKU"
+                      aria-label="Etiquetas de {{ l.sku }}"
+                      data-action="cub-etiquetas"
+                      data-sku="{{ l.sku|e }}"
+                      data-app-id="{{ l.app_id or '' }}"
+                      data-nombre="{{ l.nombre_app|e }}"
+                      data-bultos="{{ l.total_bultos }}">
+                <i class="bi bi-tags"></i>
+              </button>
+              {% endif %}
               <button type="button" class="btn btn-sm btn-row-del"
                       title="Eliminar línea"
                       aria-label="Eliminar línea {{ l.sku }}"
@@ -705,6 +735,8 @@
   {% for l in lineas %}
   <div class="ilus-card mb-2 cub-row"
        data-sku="{{ l.sku|e }}"
+       data-app-id="{{ l.app_id or '' }}"
+       data-nombre="{{ l.nombre_app|e }}"
        data-kg-tot="{{ l.peso_kg_tot }}"
        data-pv-tot="{{ l.peso_vol_tot }}"
        data-vol-tot="{{ l.vol_tot }}"
@@ -764,6 +796,32 @@
           <div style="color:var(--ilus-red);font-weight:700">Pred</div>
           <div class="fw-bold" style="color:var(--ilus-red)">{% if l.tiene_bultos %}{{ l.pred_tot|fkg }}{% else %}—{% endif %}</div>
         </div>
+      </div>
+      {# Medidas / Etiquetas — mismos data-action que la tabla desktop
+         (los engancha static/cubicador_tabs.js por delegación). #}
+      <div class="mt-2 d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary flex-fill"
+                style="min-height:44px"
+                aria-label="Medidas de {{ l.sku }}"
+                data-action="cub-medidas"
+                data-sku="{{ l.sku|e }}"
+                data-app-id="{{ l.app_id or '' }}"
+                data-nombre="{{ l.nombre_app|e }}"
+                data-bultos="{{ l.total_bultos }}">
+          <i class="bi bi-rulers me-1"></i>Medidas
+        </button>
+        {% if permissions.print %}
+        <button type="button" class="btn btn-sm btn-outline-secondary flex-fill"
+                style="min-height:44px"
+                aria-label="Etiquetas de {{ l.sku }}"
+                data-action="cub-etiquetas"
+                data-sku="{{ l.sku|e }}"
+                data-app-id="{{ l.app_id or '' }}"
+                data-nombre="{{ l.nombre_app|e }}"
+                data-bultos="{{ l.total_bultos }}">
+          <i class="bi bi-tags me-1"></i>Etiquetas
+        </button>
+        {% endif %}
       </div>
       {% if l.tiene_ficha and l.app_id %}
       <div class="mt-2">
@@ -1443,5 +1501,13 @@ document.querySelectorAll('.sync-btn').forEach(function(btn) {
 {# Pestañas + modal de medidas + botón etiquetas. Va al final y es defensivo:
    si este archivo fallara, el Cubicador de arriba sigue funcionando igual.
    Sin ?v= — el proyecto tiene cache-busting automático por hash. #}
+<script>
+/* URLs reales generadas por Flask (mismo patrón "pid=0 y reemplazo" que
+   QUICK_TPL). Si algún endpoint se renombra, esto sigue apuntando bien.
+   Debe declararse ANTES de cargar cubicador_tabs.js. */
+window.CUBICADOR_TABS_CFG = {
+  printSetupTpl: "{{ url_for('print_setup', pid=0) }}"
+};
+</script>
 <script src="{{ url_for('static', filename='cubicador_tabs.js') }}"></script>
 {% endblock %}

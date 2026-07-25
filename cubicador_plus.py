@@ -24,6 +24,7 @@ RUTAS QUE EXPONE (todas con el gate del Cubicador: login + g.permissions['cubica
     POST  /cubicador/api/producto/por-sku/medidas     -> idem, resolviendo/creando por SKU
     POST  /cubicador/api/cotizar                      -> envoltorio del comparador de couriers
     GET   /cubicador/api/packing-list/<tido>/<nudo>   -> packing list de exportacion (bulto a bulto)
+    GET   /cubicador/packing-list/<tido>/<nudo>       -> LA HOJA A4 imprimible (HTML, pestana nueva)
 
 POR QUE EXISTE EL ENDPOINT DE MEDIDAS SI YA HAY /transporte/api/inline-bulto
 ---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ import json
 import traceback
 from functools import wraps
 
-from flask import request, jsonify, g
+from flask import request, jsonify, g, flash, redirect, url_for, render_template
 
 # ──────────────────────────────────────────────────────────────────────
 #  Acceso a los helpers de app.py — IMPORT DIFERIDO
@@ -196,6 +197,25 @@ def _cub_api(fn):
 
     # login_required se aplica POR FUERA (igual que en tickets_module.py), asi
     # un usuario sin sesion nunca llega al check de permisos.
+    login_required = _h("login_required")
+    return login_required(wrapped) if callable(login_required) else wrapped
+
+
+def _cub_page(fn):
+    """Gate para las PAGINAS HTML del Cubicador Plus.
+
+    Mismo criterio que la vista `cubicador()` de app.py (15366-15371): si el
+    usuario no tiene el permiso, flash + redirect al home — NO un JSON, que en
+    una pestana nueva se veria como texto crudo.
+    """
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        permisos = getattr(g, "permissions", None) or {}
+        if not permisos.get("cubicador"):
+            flash("No tienes acceso al modulo Cubicador.", "danger")
+            return redirect(url_for("index"))
+        return fn(*args, **kwargs)
+
     login_required = _h("login_required")
     return login_required(wrapped) if callable(login_required) else wrapped
 
@@ -519,6 +539,14 @@ _ENDPOINT_COMPARADOR = "api_asignar_cotizar_couriers"
 # Valores de `fuente` que significan "esto NO es una tarifa contractual".
 _FUENTES_ESTIMADAS = {"estimado", "estimada", "estimacion", "estimación", "estimate"}
 
+# Valores de `fuente` que significan "precio derivado por la REGLA COMERCIAL de
+# ILUS" (Felca = FedEx Directo −10%, Milling = −5%; commits 553ee2c/216b7e4).
+# OJO: esto NO es una estimación. Es la política de precios que fijó Daniel y
+# se cotiza igual de firme que una tabla. Tratarla como estimada hacía que el
+# Cotizador descartara siempre a los dos couriers MÁS BARATOS y recomendara el
+# más caro (hallazgo 2026-07-25).
+_FUENTES_REGLA = {"regla", "regla_comercial", "regla_fedex", "regla_ilus"}
+
 
 def _invocar_comparador(flask_app, payload):
     """Llama a la vista /api/asignar/cotizar-couriers SIN duplicar su logica.
@@ -600,12 +628,20 @@ def _invocar_comparador(flask_app, payload):
 
 
 def _marcar_estimados(cotizaciones):
-    """Agrega `es_estimado` y `motivo_estimado` a cada cotizacion.
+    """Agrega `es_estimado`, `es_regla_comercial` y sus motivos a cada cotizacion.
 
-    Regla de Daniel: una tarifa con fuente='estimado' es una PROYECCION (no hay
-    tabla contractual para esa comuna/tramo). Sirve para orientar, jamas para
-    recomendar automaticamente — si el sistema recomienda un estimado y despues
-    el courier cobra otra cosa, el margen se lo come ILUS.
+    Dos cosas MUY distintas que antes se confundian:
+
+      · ESTIMADO (fuente='estimado')  -> proyeccion sin tabla ni regla detras.
+        Sirve para orientar, jamas para recomendar automaticamente: si el
+        sistema recomienda un estimado y despues el courier cobra otra cosa,
+        el margen se lo come ILUS.
+
+      · REGLA COMERCIAL (fuente='regla') -> Felca/Milling derivados de FedEx
+        Directo (−10% / −5%). Es la POLITICA DE PRECIOS de Daniel, tan firme
+        como una tabla: se puede (y se debe) recomendar. Antes caia en el saco
+        de "estimado" y el Cotizador terminaba recomendando el courier mas
+        caro en cada envio.
     """
     for c in cotizaciones or []:
         if not isinstance(c, dict):
@@ -614,21 +650,47 @@ def _marcar_estimados(cotizaciones):
         trace = c.get("trace") if isinstance(c.get("trace"), dict) else {}
         fuente_trace = (trace.get("fuente") or "").strip().lower()
 
-        es_est = (fuente in _FUENTES_ESTIMADAS) or fuente_trace.startswith("estim")
+        es_regla = (
+            bool(c.get("es_regla_comercial"))
+            or fuente in _FUENTES_REGLA
+            or fuente_trace in _FUENTES_REGLA
+            or fuente_trace.startswith("regla")
+        )
+        # La regla NUNCA es una estimacion, aunque el motor mande 'estimado'
+        # por compatibilidad.
+        es_est = (not es_regla) and (
+            (fuente in _FUENTES_ESTIMADAS) or fuente_trace.startswith("estim")
+        )
         c["es_estimado"] = bool(es_est)
+        c["es_regla_comercial"] = bool(es_regla)
+
+        advert = trace.get("advertencias") or []
+        detalle = ""
+        if isinstance(advert, (list, tuple)) and advert:
+            detalle = " " + " ".join(str(a) for a in advert if a)
+
+        motivo_regla = ""
+        if es_regla:
+            pct = c.get("regla_pct")
+            base_ref = c.get("derivado_de") or "FedEx Directo"
+            motivo_regla = (
+                "Precio derivado de {} {}(politica comercial ILUS). "
+                "Es un precio firme: no hay que confirmarlo con el courier.".format(
+                    base_ref, ("−{}% ".format(pct) if pct else "")
+                )
+            )
+            nota = c.get("nota_precio") or trace.get("nota")
+            if nota:
+                motivo_regla = str(nota)
+            motivo_regla = (motivo_regla + detalle).strip()
 
         if es_est:
-            advert = trace.get("advertencias") or []
-            detalle = ""
-            if isinstance(advert, (list, tuple)) and advert:
-                detalle = " " + " ".join(str(a) for a in advert if a)
             motivo = ("Precio ESTIMADO: no hay tarifa contractual cargada para esta "
                       "comuna/tramo de peso, el valor es una proyeccion." + detalle)
-        elif not c.get("tiene_cobertura"):
-            motivo = ""
         else:
             motivo = ""
         c["motivo_estimado"] = motivo.strip()
+        c["motivo_regla"] = motivo_regla
 
         # Transparencia extra: si la tarifa fue validada contra la macro/Excel.
         c["tarifa_validada"] = bool(trace.get("validado"))
@@ -660,7 +722,12 @@ def _clp(valor):
 
 
 def _recomendar_no_estimado(cotizaciones):
-    """Devuelve (recomendado_id, aviso). Solo recomienda tarifas FIRMES."""
+    """Devuelve (recomendado_id, aviso). Solo recomienda tarifas FIRMES.
+
+    FIRME = tarifa de tabla O precio derivado por la regla comercial de ILUS
+    (ver _marcar_estimados). Lo unico que queda fuera del recomendado es la
+    ESTIMACION sin respaldo.
+    """
     con_cobertura = [c for c in (cotizaciones or [])
                      if isinstance(c, dict) and c.get("tiene_cobertura")
                      and _precio_comparable(c) is not None]
@@ -1076,9 +1143,13 @@ def register_cubicador_plus(app, ctx=None):
             }
 
         Devuelve lo MISMO que /api/asignar/cotizar-couriers mas, por courier:
-            es_estimado       (bool)  — el precio no viene de tarifa contractual
-            motivo_estimado   (str)   — por que, en castellano
-            tarifa_validada   (bool)  — si la tarifa fue validada contra la macro
+            es_estimado        (bool) — proyeccion sin tabla NI regla detras
+            motivo_estimado    (str)  — por que, en castellano
+            es_regla_comercial (bool) — precio derivado por la politica de ILUS
+                                        (Felca −10% / Milling −5% sobre FedEx).
+                                        Es FIRME: cuenta como recomendable.
+            motivo_regla       (str)  — explicacion del precio derivado
+            tarifa_validada    (bool) — si la tarifa fue validada contra la macro
         y a nivel raiz:
             recomendado_id                — SIEMPRE una tarifa NO estimada (o null)
             recomendado_id_comparador     — lo que habria recomendado el comparador
@@ -1183,6 +1254,56 @@ def register_cubicador_plus(app, ctx=None):
             data["aviso_documento"] = aviso_documento
 
         return jsonify(data), 200
+
+    # ──────────────────────────────────────────────────────────────
+    #  GET /cubicador/packing-list/<tido>/<nudo>  — LA HOJA (HTML)
+    # ──────────────────────────────────────────────────────────────
+    @app.route("/cubicador/packing-list/<string:tido>/<path:nudo>", methods=["GET"])
+    @_cub_page
+    def cubicador_plus_packing_list_page(tido, nudo):
+        """Hoja A4 imprimible del packing list.
+
+        Es la URL que abre el boton "Generar Packing List" de la pestana
+        (templates/cubicador/_tab_packing.html:49). Sin esta ruta el boton daba
+        404: existia el endpoint JSON y existia la plantilla, pero nadie
+        renderizaba la pagina.
+
+        La hoja pide sus propios datos a
+        GET /cubicador/api/packing-list/<tido>/<nudo> (mismo gate de permiso),
+        por eso aca NO se consulta el ERP: abrir la pestana es instantaneo y un
+        ERP lento no deja la pagina en blanco, sino con su propio mensaje.
+        """
+        tido = (tido or "").strip().upper()
+        nudo = (nudo or "").strip()
+
+        logo_url = ""
+        try:
+            _logo = _h("_logo_data_url")
+            if callable(_logo):
+                logo_url = _logo() or ""
+        except Exception as e_logo:
+            print(f"[cubicador_plus] logo del packing list no disponible: {e_logo}", flush=True)
+
+        exportador = _h("ILUS_REMITENTE") or None
+
+        try:
+            api_url = url_for("cubicador_plus_packing_list", tido=tido, nudo=nudo)
+        except Exception:
+            api_url = f"/cubicador/api/packing-list/{tido}/{nudo}"
+        try:
+            volver_url = url_for("cubicador")
+        except Exception:
+            volver_url = "/cubicador"
+
+        return render_template(
+            "cubicador/packing_list.html",
+            tido=tido,
+            nudo=nudo,
+            api_url=api_url,
+            volver_url=volver_url,
+            logo_url=logo_url,
+            exportador=exportador,
+        )
 
     # ──────────────────────────────────────────────────────────────
     #  GET /cubicador/api/packing-list/<tido>/<nudo>

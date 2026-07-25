@@ -485,6 +485,10 @@
           <span>Sale del tarifario negociado que ILUS tiene cargado para esa comuna.</span></li>
       <li><span class="cot-chip azul">API</span>
           <span>El courier respondió en línea con su propio precio para este envío.</span></li>
+      <li><span class="cot-chip azul">Regla ILUS</span>
+          <span>Precio <b>derivado de FedEx Directo</b> por la política comercial de ILUS
+          (Milling −5%, Felca −10%). Es un precio firme: se puede recomendar y no hay que
+          confirmarlo con el courier.</span></li>
       <li><span class="cot-chip roja">Estimado</span>
           <span><b>No es una tarifa confirmada.</b> El courier no tiene precio cargado para
           esa comuna y el sistema calcula una referencia. Confírmala antes de comprometerla
@@ -569,9 +573,19 @@
                : (c.precio_venta != null) ? c.precio_venta : null;
     var trace = c.trace || {};
     var fuenteTrace = String(trace.fuente || '').toLowerCase();
-    var estimado = (c.es_estimado === true) ||
-                   (String(c.fuente || '').toLowerCase() === 'estimado') ||
-                   (fuenteTrace.indexOf('estim') === 0);
+    var fuenteTop   = String(c.fuente || '').toLowerCase();
+    // ⚠ REGLA COMERCIAL ≠ ESTIMACIÓN (2026-07-25). Felca y Milling derivan
+    // SIEMPRE su precio de FedEx Directo (−10% / −5%): es la política de
+    // precios de Daniel, un precio FIRME. Antes caía en "estimado" y quedaba
+    // descartado como recomendación, así que el Cotizador terminaba
+    // proponiendo el courier más caro en cada envío.
+    var regla = (c.es_regla_comercial === true) ||
+                (fuenteTop === 'regla') ||
+                (fuenteTrace.indexOf('regla') === 0);
+    var estimado = !regla && (
+                   (c.es_estimado === true) ||
+                   (fuenteTop === 'estimado') ||
+                   (fuenteTrace.indexOf('estim') === 0));
     var cobertura = (c.tiene_cobertura === false) ? false
                   : (c.tiene_cobertura === true) ? true
                   : (precio != null);
@@ -583,6 +597,10 @@
       transito:  c.tiempo_transito || '',
       precio:    (precio != null && isFinite(Number(precio))) ? Number(precio) : null,
       estimado:  estimado,
+      regla:     regla,
+      reglaPct:  (c.regla_pct != null) ? c.regla_pct : null,
+      derivadoDe: c.derivado_de || '',
+      motivoRegla: c.motivo_regla || c.nota_precio || trace.nota || '',
       motivo:    c.motivo_estimado || '',
       cobertura: cobertura && (precio != null),
       fuente:    c.fuente || '',
@@ -633,6 +651,13 @@
   // ── Render ─────────────────────────────────────────────────────────
   function chipFuente(it) {
     if (it.estimado) return '<span class="cot-chip roja"><i class="bi bi-exclamation-triangle-fill"></i> Estimado</span>';
+    if (it.regla) {
+      var base = it.derivadoDe || 'FedEx Directo';
+      var txt = it.reglaPct ? (base + ' −' + it.reglaPct + '%') : ('Derivado de ' + base);
+      return '<span class="cot-chip azul" title="' +
+             esc(it.motivoRegla || ('Precio derivado de ' + base + ' por la política comercial de ILUS.')) +
+             '">Regla ILUS · ' + esc(txt) + '</span>';
+    }
     if (it.fuente === 'api') return '<span class="cot-chip azul">API del courier</span>';
     if (it.fuente === 'tabla_fallback') return '<span class="cot-chip ambar">Tarifa (API caída)</span>';
     return '<span class="cot-chip gris">Tarifa ILUS</span>';
@@ -680,6 +705,15 @@
              '<i class="bi bi-info-circle me-1"></i>' +
              esc(it.motivo || ('Este courier no tiene tarifa cargada para esta comuna. ' +
                  'Confirma el valor antes de comprometerlo con el cliente.')) + '</div>';
+      } else if (it.regla) {
+        // Precio de política comercial: se explica, pero NO se advierte —
+        // es tan firme como una tarifa de tabla.
+        h += '<div class="cot-hint" style="margin-top:10px">' +
+             '<i class="bi bi-info-circle me-1"></i>' +
+             esc(it.motivoRegla ||
+                 ('Precio derivado de ' + (it.derivadoDe || 'FedEx Directo') +
+                  (it.reglaPct ? (' −' + it.reglaPct + '%') : '') +
+                  ' por la política comercial de ILUS.')) + '</div>';
       }
     } else {
       h += '<div class="cot-lbl">Sin cobertura</div>' +
@@ -1329,11 +1363,19 @@
                cotizaciones:[{courier_id, courier_nombre, logo_url, servicio,
                               tiempo_transito, precio|subtotal, tiene_cobertura,
                               es_estimado, motivo_estimado, tarifa_validada,
+                              es_regla_comercial, regla_pct, derivado_de,
+                              motivo_regla|nota_precio,
                               fuente, mensaje, trace{validado,advertencias}}]}
      El front tolera los alias del comparador crudo (precio/subtotal,
      fuente=='estimado', trace.validado). `recomendado_id` ya viene
      garantizado como NO estimado; el destacado igual se recalcula en el
      navegador para que la promesa se cumpla pase lo que pase.
+
+     ⚠ fuente=='regla' (Felca −10% / Milling −5% sobre FedEx Directo) NO es
+     una estimación: es la política comercial de ILUS y es un precio FIRME.
+     Se muestra con el chip azul "Regla ILUS" y SÍ puede quedar destacada.
+     Antes caía en el saco de "estimado" y el Cotizador terminaba
+     recomendando el courier más caro en cada envío (fix 2026-07-25).
 
    · No existe endpoint para GUARDAR la cotización de envío elegida
      (equivalente a "asignar courier" del manifiesto). Cuando Daniel lo

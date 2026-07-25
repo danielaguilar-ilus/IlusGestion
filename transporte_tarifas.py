@@ -38,19 +38,33 @@ TIERS = {
 LIGHT_MAX = {"clickex": 130}  # resto = 100
 
 # ── Regla comercial de ILUS (Daniel, 2026-07-25) ──────────────────────────
-# Cuando Felca o Milling no tienen tarifa propia para una comuna, el precio se
-# deriva de FedEx Directo con un descuento fijo. NO es una estimación técnica:
-# es la regla de negocio que definió el dueño, y con ella la cobertura queda
-# completa en todas las comunas donde FedEx tiene tarifa.
+# El precio de Felca y Milling se deriva SIEMPRE de FedEx Directo con un
+# descuento fijo. NO es una estimación técnica: es la regla de negocio que
+# definió el dueño, y con ella la cobertura queda completa en todas las comunas
+# donde FedEx tiene tarifa.
 #
 #   Milling → FedEx Directo −5%
 #   Felca   → FedEx Directo −10%   (Rafael)
 #
+# ⚠ ORDEN DE PRIORIDAD (cambió el 2026-07-25, commit 216b7e4):
+#   1º la REGLA — manda siempre, también donde el courier tiene tabla propia;
+#   2º la tabla propia — solo como RESPALDO cuando FedEx no cubre la comuna.
+#   (Antes era al revés. El comentario viejo decía "cuando no tienen tarifa
+#    propia": quedó obsoleto y por eso la UI mostraba avisos falsos.)
+#
 # Contexto medido el 2026-07-25 sobre las tablas reales:
 #   fedex_directo 370 comunas · felca 370 · milling 37 · clickex 757
-# O sea Felca casi no usa esta regla (tiene tabla propia); Milling la usa en
-# 334 de las 370 comunas. La tarifa propia SIEMPRE manda sobre la regla: si la
-# comuna está en la tabla del courier, se usa esa (es la negociada).
+# Como la regla pisa la tabla, hoy Felca y Milling cotizan por regla en ~todas
+# las comunas que cubre FedEx: 3.330 de 3.339 combinaciones comuna/peso.
+#
+# ⚠ EFECTO ECONÓMICO (medido, PENDIENTE de confirmación de Daniel):
+#   en tramos pesados la regla deja el precio MUY por debajo de la tarifa que
+#   el courier tiene negociada (Felca queda bajo su tabla en 2.096 de 2.952
+#   combinaciones; peor caso PUERTO NATALES 4.000 kg: tabla $5.281.458 vs
+#   $2.840.292 por regla, −46,2%). Si el courier factura por su tabla, esa
+#   diferencia la absorbe ILUS. El motor NO decide esto: aplica la regla tal
+#   como se pidió y expone `brecha_vs_propia_pct` para que la UI avise cuando
+#   la diferencia supera el umbral (app.py: _BRECHA_REGLA_AVISO_PCT).
 FALLBACK_FACTOR = {
     "milling": 0.95,
     "felca":   0.90,
@@ -154,19 +168,42 @@ def cotizar(slug, comuna, peso, valor=0.0):
             seguro = round(float(valor or 0) * 0.012)
             base_est = round(ref["base"] * factor)
             pct = int(round((1 - factor) * 100))
+            # ¿El courier TIENE tarifa propia para esta comuna/peso? Desde que la
+            # regla pasó a mandar (216b7e4) la respuesta suele ser SÍ, así que ya
+            # no se puede decir "no hay tabla propia": sería mentira en 370
+            # comunas de Felca y 37 de Milling. Se calcula acá para que la UI
+            # pueda (a) redactar el aviso correcto y (b) mostrar cuánto se aleja
+            # el precio de política respecto del tarifario negociado.
+            propia_ref = _cotizar_tabla(slug, comuna, peso, valor)
+            precio_propia = propia_ref["precio"] if propia_ref else None
+            brecha_pct = None
+            if precio_propia:
+                try:
+                    brecha_pct = round(
+                        ((base_est + seguro) - precio_propia) / float(precio_propia) * 100.0, 1
+                    )
+                except ZeroDivisionError:
+                    brecha_pct = None
             return {
                 "precio": base_est + seguro, "base": base_est, "seguro": seguro,
                 "modo": "regla_fedex", "factor": None,
                 "tramo": f"regla ILUS: FedEx Directo −{pct}%",
                 "comuna_tabla": ref["comuna_tabla"], "fuente": "regla",
-                # Se mantiene 'estimado' por compatibilidad con app.py, que ya
-                # lee esta clave. Lo que cambia es el SIGNIFICADO: antes era una
-                # aproximación técnica sin respaldo; ahora es la regla de precios
-                # que definió Daniel. La UI lo muestra como derivado, no como
-                # dato dudoso.
+                # 'estimado' se MANTIENE por compatibilidad con consumidores
+                # viejos que ya leen esta clave (no se borra nada, Regla #4.2),
+                # pero desde 2026-07-25 NO significa "precio dudoso": este valor
+                # es la política comercial de Daniel. Quien quiera distinguir
+                # política de proyección debe mirar 'es_regla_comercial' /
+                # 'fuente' == 'regla', que es lo que hacen app.py y
+                # cubicador_plus.py.
                 "estimado": True,
+                "es_regla_comercial": True,
                 "regla_pct": pct,
                 "derivado_de": "FedEx Directo",
+                # Contexto para la UI (nunca para decidir el precio):
+                "tiene_tabla_propia": bool(propia_ref),
+                "precio_tabla_propia": precio_propia,
+                "brecha_vs_propia_pct": brecha_pct,
             }
         # FedEx no cubre la comuna → respaldo con la tabla propia del courier.
         # Se marca 'respaldo' para distinguirla de la regla en la UI.

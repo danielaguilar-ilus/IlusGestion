@@ -50,7 +50,12 @@
   var DEFAULTS = {
     // GET/POST de medidas. El 0 se reemplaza por el product_id real.
     medidasTpl: '/cubicador/api/producto/0/medidas',
-    // Fallback de guardado si el endpoint nuevo aún no existe (404/405).
+    // Guardado cuando la línea NO tiene ficha local (app_id nulo): resuelve o
+    // crea el producto por SKU y aplica las MISMAS redes de seguridad.
+    medidasPorSkuUrl: '/cubicador/api/producto/por-sku/medidas',
+    // Endpoint LEGACY de transporte. Sigue existiendo y funcionando, pero
+    // borra y reinserta sin 409, sin auditoría y sin tope de 0 bultos: solo se
+    // usa si el usuario lo confirma explícitamente (ver guardarMedidas).
     inlineBultoUrl: '/transporte/api/inline-bulto',
     // Pantalla de impresión de etiquetas (HTML, se abre con window.open).
     printSetupTpl: '/products/0/print-setup',
@@ -746,8 +751,10 @@
       };
     });
 
-    var usarFallback = !M.pid;   // Sin product_id sólo sirve el endpoint por SKU.
-    var url = usarFallback ? CFG.inlineBultoUrl : urlFor(CFG.medidasTpl, M.pid);
+    // Sin product_id NO se usa el endpoint legacy: para eso existe el de
+    // por-SKU, que resuelve/crea la ficha y mantiene las redes de seguridad
+    // (nunca 0 bultos, 409 si reduce, audit log).
+    var url = M.pid ? urlFor(CFG.medidasTpl, M.pid) : CFG.medidasPorSkuUrl;
     var payload = {
       sku: M.sku,
       nombre: M.nombre || '',
@@ -764,19 +771,47 @@
     }).then(function (r) {
       if (!M) return;
 
-      // El endpoint nuevo todavía no está desplegado → reintento por SKU.
-      if ((r.status === 404 || r.status === 405) && !usarFallback) {
-        return fetchJson(CFG.inlineBultoUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify(payload),
-        }).then(function (r2) { return handleSaveResponse(r2, payloadBultos, true); });
+      // El módulo nuevo no está desplegado (404/405). NO se reintenta solo
+      // contra /transporte/api/inline-bulto: ese endpoint borra los bultos
+      // existentes y reinserta lo que llegue, sin aviso ni vuelta atrás — que
+      // es justo el accidente que este modal evita. Se pregunta primero.
+      if (r.status === 404 || r.status === 405) {
+        return guardarPorLegacy(payload, payloadBultos);
       }
-      return handleSaveResponse(r, payloadBultos, usarFallback);
+      return handleSaveResponse(r, payloadBultos, false);
     }).catch(function () {
       setSaving(false);
       toast('Error de red al guardar las medidas. Intenta de nuevo.', 'error');
+    });
+  }
+
+  /* Camino LEGACY (/transporte/api/inline-bulto). Se conserva porque es el
+     único que queda vivo si el módulo nuevo no está registrado, pero exige un
+     "sí" explícito: no tiene red de seguridad de ninguna clase. */
+  function guardarPorLegacy(payload, payloadBultos) {
+    var pendientes = (M && M.originales) || 0;
+    return confirmar({
+      title: 'Guardar por la vía antigua',
+      message: 'El guardado seguro del Cubicador no está disponible en este servidor.',
+      sub: 'La vía antigua REEMPLAZA todos los bultos de ' + (M ? M.sku : 'el producto') +
+           (pendientes ? (' (hoy tiene ' + pendientes + ')') : '') +
+           ' por los ' + payloadBultos.length + ' que estás guardando, sin confirmación ni ' +
+           'forma de deshacerlo. ¿Continuamos?',
+      subHtml: false,
+      okLabel: 'Sí, guardar igual', cancelLabel: 'Cancelar', danger: true,
+    }).then(function (ok) {
+      if (!ok) {
+        setSaving(false);
+        toast('Guardado cancelado. No se modificó nada.', 'info');
+        return;
+      }
+      setSaving(true);
+      return fetchJson(CFG.inlineBultoUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      }).then(function (r2) { return handleSaveResponse(r2, payloadBultos, true); });
     });
   }
 
@@ -805,8 +840,20 @@
     }
 
     if (r.status === 403) { toast('No tienes permiso para editar medidas.', 'error'); return; }
-    if (!r.ok || (r.data && r.data.ok === false) || (r.data && r.data.error)) {
-      toast('No se pudo guardar: ' + ((r.data && (r.data.error || r.data.mensaje)) || ('HTTP ' + r.status)), 'error');
+
+    // ── Éxito SOLO con ok:true ─────────────────────────────────────────
+    // Antes bastaba con que el cuerpo no fuera JSON parseable (data === null)
+    // para caer en la rama de éxito: un redirect a /login, un flash+redirect
+    // por falta de permiso o un 502 HTML de Cloud Run devolvían 200 con HTML,
+    // y el modal decía "✓ Medidas guardadas" sin haber guardado nada — y
+    // encima parcheaba la fila, los totales y el payload del Excel.
+    if (r.data === null) {
+      toast('No se pudo guardar: el servidor no respondió datos (puede haber expirado tu sesión). ' +
+            'Recarga la página y vuelve a intentar.', 'error');
+      return;
+    }
+    if (!r.ok || r.data.ok !== true || r.data.error) {
+      toast('No se pudo guardar: ' + ((r.data.error || r.data.mensaje) || ('HTTP ' + r.status)), 'error');
       return;
     }
 
