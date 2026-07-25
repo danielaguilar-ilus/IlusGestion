@@ -644,20 +644,43 @@ document.addEventListener('click', function(){
 });
 
 // Eliminar manifiesto (soft-delete, solo superadmin — 2026-07-25).
-// REGLA #1: nunca confirm() nativo.
-async function eliminarManifiesto(mid, correlativo) {
-  const ok = await ilusConfirm({
-    title: 'Eliminar manifiesto',
-    message: '¿Eliminar el manifiesto ' + correlativo + '?',
-    sub: 'Desaparece del listado. Los despachos que agrupa y su historial de ' +
-         'seguimiento NO se borran — solo se deja de mostrar esta agrupación.',
-    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
-    danger: true,
-  });
-  if (!ok) return;
+// REGLA #1: nunca confirm() nativo. Si ya tiene actividad real (subido a un
+// courier o con prueba de entrega), el backend responde 409 pidiendo que se
+// escriba el correlativo — un solo clic no alcanza para borrar algo con
+// trazabilidad real (Daniel: "si ya hay un compromiso de trazabilidad...").
+async function eliminarManifiesto(mid, correlativo, confirmText) {
+  if (!confirmText) {
+    const ok = await ilusConfirm({
+      title: 'Eliminar manifiesto',
+      message: '¿Eliminar el manifiesto ' + correlativo + '?',
+      sub: 'Desaparece del listado. Los despachos que agrupa y su historial de ' +
+           'seguimiento NO se borran — solo se deja de mostrar esta agrupación.',
+      okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+      danger: true,
+    });
+    if (!ok) return;
+  }
   try {
-    const r = await fetch('/transporte/manifiestos/' + mid + '/eliminar', { method: 'POST' });
+    const r = await fetch('/transporte/manifiestos/' + mid + '/eliminar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(confirmText ? { confirm_text: confirmText } : {}),
+    });
     const d = await r.json();
+    if (r.status === 409 && d.requiere_confirmacion) {
+      const texto = await ilusPrompt({
+        title: 'Confirmación adicional requerida',
+        message: d.error,
+        placeholder: d.correlativo,
+        required: true,
+      });
+      if (texto === null) return;
+      if (texto.trim() !== d.correlativo) {
+        ilusToast('No coincide con "' + d.correlativo + '" — no se eliminó.', { type: 'warning' });
+        return;
+      }
+      return eliminarManifiesto(mid, correlativo, texto.trim());
+    }
     if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
     ilusToast('Manifiesto eliminado', { type: 'success' });
     setTimeout(function(){ location.reload(); }, 700);

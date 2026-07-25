@@ -22548,6 +22548,38 @@ def tr_manifiesto_eliminar(mid):
     if m.get("eliminado"):
         return jsonify({"ok": True, "mensaje": "Ya estaba eliminado."})
 
+    # ── GUARDA DE TRAZABILIDAD (Daniel 2026-07-25): "si ya hay un compromiso
+    # de trazabilidad, el manifiesto ya no se puede borrar, a menos que sea
+    # el superadministrador". El superadmin SIEMPRE puede — pero si el
+    # manifiesto ya tiene actividad real (se subió a un courier o hay prueba
+    # de entrega firmada), exige escribir el correlativo para confirmar, en
+    # vez de un solo clic. Mismo patrón que un hard-delete con confirm_text
+    # (REGLA #5), aplicado acá porque soft-delete + actividad real es
+    # igual de sensible.
+    activo = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM transport_manifest_items "
+        "WHERE manifest_id=%s AND (tracking_number IS NOT NULL "
+        "OR simpliroute_visit_id IS NOT NULL)", (mid,))
+    tiene_courier = bool(activo and activo.get("n"))
+    tiene_pod = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM transport_delivery_proof dp "
+        "JOIN transport_manifest_items mi ON mi.commitment_id = dp.commitment_id "
+        "WHERE mi.manifest_id=%s", (mid,))
+    tiene_pod = bool(tiene_pod and tiene_pod.get("n"))
+
+    if tiene_courier or tiene_pod:
+        body = request.get_json(silent=True) or {}
+        confirm_text = (body.get("confirm_text") or "").strip()
+        if confirm_text != (m.get("correlativo") or ""):
+            motivo = ("tiene prueba de entrega firmada" if tiene_pod
+                       else "ya se subió a un courier")
+            return jsonify({
+                "ok": False,
+                "requiere_confirmacion": True,
+                "correlativo": m.get("correlativo"),
+                "error": f"Este manifiesto {motivo}. Escribe \"{m.get('correlativo')}\" para confirmar la eliminación.",
+            }), 409
+
     try:
         mysql_execute(
             "UPDATE transport_manifests SET eliminado=1, eliminado_at=NOW(), "
