@@ -637,12 +637,17 @@ body {
      chiquitito, agrándalo". Antes 38px dentro de un topbar de 60px
      (casi sin aire). Se sube el topbar a 68px y el logo a 58px —
      +52% de tamaño real, con margen para no tocar los bordes ni
-     apretar el botón de menú/campana que comparten la barra. */
-  :root { --topbar-h: 68px; }
-  .mobile-topbar { height: 68px; padding: 0 10px; gap: 10px; }
+     apretar el botón de menú/campana que comparten la barra.
+     2026-07-25 (Daniel, otra vez en el celular): "el logo de ILUS Fitness
+     se ve muy pequeñito en el menú, auméntenlo un 70%". 58px × 1,7 ≈ 99px.
+     El topbar sube en la misma proporción (68 → 110px) para que el logo
+     quepa con el mismo aire que tenía antes, sin apretar el botón de
+     menú ni la campana. */
+  :root { --topbar-h: 110px; }
+  .mobile-topbar { height: 110px; padding: 0 10px; gap: 10px; }
 
-  /* Logo proporcional al topbar compacto (antes 80px desktop → 38px). */
-  .mobile-logo { height: 58px; }
+  /* Logo proporcional al topbar compacto (antes 80px desktop → 38px → 58px). */
+  .mobile-logo { height: 99px; }
   .mobile-brand-name { font-size: 1.4rem; }
 
   /* Botón menú (hamburguesa): touch target Apple HIG 44px. */
