@@ -24,16 +24,29 @@ _CACHE = {}
 
 # Tramos pesados por courier: (peso_min, peso_max, col_index). Tomados del CÓDIGO
 # de la macro (no de las etiquetas de header, que a veces no coinciden).
+#
+# FIX 2026-07-25 — hueco de "sin cobertura" entre el peso liviano y el primer
+# tramo pesado: _cotizar_tabla usa el liviano cuando peso<=LIGHT_MAX y busca
+# un tramo con lo<=peso<=hi para el resto. fedex_directo YA estaba bien
+# (su primer tramo empieza en 100, igual que su LIGHT_MAX) — los demás
+# empezaban en LIGHT_MAX+1 (101 / 131), dejando sin cobertura cualquier peso
+# no entero entre el liviano y el pesado (ej. 100,5 kg en Starken/Blue,
+# 130,5 kg en Clickex — el caso que reportó la revisión de esta noche).
+# Se corrige alineando el lo del primer tramo con LIGHT_MAX (mismo criterio
+# que ya usa fedex_directo): un peso exactamente en LIGHT_MAX igual entra por
+# el camino liviano primero (peso<=LIGHT_MAX), así que este cambio no mueve
+# ningún precio ya validado — solo cierra el hueco de los pesos fraccionarios
+# justo arriba del límite.
 TIERS = {
-    "starken_enviame": [(101, 130, "107"), (131, 500, "108"), (501, 10**9, "109")],
-    "fedex_enviame":   [(101, 10**9, "107")],
+    "starken_enviame": [(100, 130, "107"), (131, 500, "108"), (501, 10**9, "109")],
+    "fedex_enviame":   [(100, 10**9, "107")],
     "fedex_directo":   [(100, 499, "105"), (500, 1999, "106"), (2000, 3999, "107"),
                         (4000, 5999, "108"), (6000, 10**9, "109")],
-    "blue_enviame":    [(101, 10**9, "105")],
-    "starken_directo": [(101, 10**9, "104")],
-    "milling":         [(101, 3999, "105")],
-    "felca":           [(101, 3999, "105"), (4000, 5999, "106"), (6000, 20000, "107")],
-    "clickex":         [(131, 500, "140"), (501, 1000, "141"), (1001, 5000, "142"),
+    "blue_enviame":    [(100, 10**9, "105")],
+    "starken_directo": [(100, 10**9, "104")],
+    "milling":         [(100, 3999, "105")],
+    "felca":           [(100, 3999, "105"), (4000, 5999, "106"), (6000, 20000, "107")],
+    "clickex":         [(130, 500, "140"), (501, 1000, "141"), (1001, 5000, "142"),
                         (5001, 10000, "143"), (10001, 20000, "144")],
 }
 LIGHT_MAX = {"clickex": 130}  # resto = 100
