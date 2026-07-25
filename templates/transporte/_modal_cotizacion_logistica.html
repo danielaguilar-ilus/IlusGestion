@@ -1,0 +1,1512 @@
+{# ══════════════════════════════════════════════════════════════════════
+   MODAL "Crear / Editar Cotización de Transporte" (2026-07-25)
+   ──────────────────────────────────────────────────────────────────────
+   Pieza que templates/transporte/cotizaciones.html deja explícitamente
+   pendiente ("el wizard... es una pieza aparte, todavía no existe").
+   Diseño visual CALCADO del modal multidocumento de Servicio Técnico
+   (templates/tickets/cotizaciones.html, #cotWizModal / .cot-clasif-*):
+   mismo lenguaje de tarjeta-hoja con header negro, mismas tarjetas
+   numeradas, mismo patrón ilusConfirm/ilusToast (Regla #1), misma paleta
+   (Regla #2). Prefijo propio "lc-" (Logística • Cotización) para no
+   chocar con las clases "cot-"/"tka-" ya existentes.
+
+   A diferencia del wizard de Servicio Técnico, ACÁ no hay "clase de
+   producto" ni tarifa de mano de obra: el precio de cada línea sale de
+   PRORRATEAR el costo del flete (cotizado con un courier) por el peso
+   facturable de cada ítem, más el margen % y el descuento % (global y
+   por línea) — ver _lcRecalcular() más abajo, es el corazón del archivo.
+
+   ── REQUISITOS DE INCLUSIÓN (leer antes de mover este include) ──
+     1) Incluir UNA vez en la página que lo use, dentro de {% block
+        content %} (no dentro de ningún <form>):
+            {% include "transporte/_modal_cotizacion_logistica.html" %}
+     2) La página debe incluir TAMBIÉN, una sola vez, el modal compartido
+        de búsqueda ERP (si no está ya incluido para otra cosa):
+            {% include "tickets/_tka_modal.html" %}
+        Lo usa el botón "Traer documento(s) del ERP" (multidocumento).
+     3) La página debe cargar static/cubicador_tabs.js (una vez, en
+        {% block scripts %} o donde corresponda):
+            <script src="{{ url_for('static', filename='cubicador_tabs.js') }}"></script>
+        De ahí salen, SIN reescribir nada, los botones "Medidas" y
+        "Etiquetas" de cada línea (delegación por data-action="cub-medidas"
+        / "cub-etiquetas" sobre filas <tr class="cub-row" data-sku=...
+        data-app-id=...> — exactamente el mismo contrato que usa
+        templates/cubicador/index.html). ilus_ui.js (ilusToast/ilusConfirm/
+        ilusAlert/ilusPrompt) y ilusPlacesAutocomplete ya son globales
+        (base.html), no hace falta incluirlos.
+     4) Abrir el modal desde JS:
+            lcAbrir()        // crear
+            lcAbrir(123)     // editar la cotización id=123
+        (mismo contrato que cotWizAbrir(editCid) de Servicio Técnico).
+
+   ── ENDPOINTS REALES usados (confirmados en el código ya existente,
+      NO inventados) ──
+     POST /api/erp/documento                  → cabecera+líneas de UN
+                                                 documento ERP (motor único,
+                                                 ya trae peso/bultos por SKU
+                                                 si el producto tiene ficha)
+     GET  /tickets/api/erp/buscar-cliente?q=  → búsqueda de cliente en el
+                                                 ERP por RUT/nombre (genérica,
+                                                 ya reusada fuera de Tickets)
+     GET  /tickets/api/asignables             → lista de usuarios asignables
+                                                 (genérica, para "Ejecutivo")
+     POST /cubicador/api/cotizar              → comparador de couriers
+                                                 (el mismo motor de la
+                                                 pestaña "Cotizador" del
+                                                 Cubicador)
+     GET  /api/uf-actual                      → UF vigente (equivalente
+                                                 informativo del Total)
+
+   ── ENDPOINTS DEL MÓDULO NUEVO (logistica_cotizaciones.py) ──
+     GET  /transporte/cotizaciones/api/<id>            → YA REAL, ya lo usa
+       templates/transporte/cotizaciones.html (modal "Enviar"). Se reusa
+       ACÁ TAL CUAL para precargar el modo edición: {ok, cotizacion:{...
+       columnas de transport_cotizaciones}, items:[...columnas de
+       transport_cotizacion_items], destinatarios_sugeridos:[...]}.
+     POST /transporte/cotizaciones/api/crear             → YA REAL (Fase 2,
+       lc_crear en logistica_cotizaciones.py). El payload de este modal
+       coincide 1:1 con lo que ese endpoint espera (incl. contacto_nombre/
+       contacto_cargo/contacto_tel/contacto_email a nivel raíz — NO
+       anidados bajo una clave "contacto", ver lcGuardar()).
+     POST /transporte/cotizaciones/api/<id>/actualizar   → agregado en la
+       integración final (2026-07-25) junto con este modal: cabecera
+       (cliente/contacto/dirección/notas) siempre editable; courier/
+       margen/descuento/ítems solo se reemplazan si la cotización sigue
+       en 'draft' (si no, se ignoran en silencio y queda
+       editada_post_aprobacion=1 + log 'editar_aprobada' — la advertencia
+       de lcGuardar() para cotizaciones aprobadas sigue teniendo sentido:
+       informa que el cambio de cabecera SÍ queda y se audita).
+       Si algún día el backend cambia de nombre, AJÚSTALO ACÁ en una sola
+       línea sin tocar el resto del archivo:
+            window.LC_MODAL_CFG = { epCrear: '/otra/ruta', ... };
+       (definir esa variable ANTES de que este <script> corra).
+
+   Reglas aplicadas: #1 (cero alert/confirm/prompt nativos), #2 (paleta),
+   #3 (mobile-first: header/footer fijos, botones 44px, inputs 16px,
+   tabla con scroll propio), #4.1 (el ERP solo se LEE, nunca se escribe),
+   #4.2 (no toca nada de Servicio Técnico/Cubicador/Transporte, solo
+   agrega este archivo + 2 líneas de integración documentadas en el
+   comentario de arriba).
+   ══════════════════════════════════════════════════════════════════════ #}
+<style>
+.lc-backdrop{
+  position:fixed;inset:0;z-index:1080;background:rgba(10,10,10,.55);
+  backdrop-filter:blur(6px) saturate(1.2);-webkit-backdrop-filter:blur(6px) saturate(1.2);
+  display:none;align-items:flex-end;justify-content:center;padding:0;
+}
+.lc-backdrop.is-open{display:flex;}
+@media(min-width:768px){.lc-backdrop{align-items:center;padding:20px;}}
+
+/* Panel = columna flex (header / scroll / footer). El header y el footer
+   NUNCA scrollean, sin importar cuánto contenido tenga el medio — es el
+   requisito explícito de Daniel, resuelto con flex en vez de position:
+   sticky (más robusto: no depende de que el header sea "el primer hijo"
+   del contenedor que scrollea). */
+.lc-panel{
+  width:100%;max-width:1180px;height:100dvh;max-height:100dvh;
+  background:#fff;display:flex;flex-direction:column;overflow:hidden;
+  border-radius:20px 20px 0 0;box-shadow:0 -20px 60px -12px rgba(0,0,0,.35);
+}
+@media(min-width:768px){
+  .lc-panel{height:auto;max-height:94vh;max-height:94dvh;border-radius:16px;
+    box-shadow:0 24px 70px -16px rgba(0,0,0,.4);}
+}
+.lc-head{
+  flex:0 0 auto;padding:16px 20px;display:flex;align-items:center;
+  justify-content:space-between;gap:10px;background:#0a0a0a;
+}
+.lc-head h5{margin:0;font-weight:900;color:#fff;display:flex;align-items:center;gap:8px;font-size:1.05rem;}
+.lc-head h5 i{color:#dc2626;}
+.lc-head .lc-sub{font-size:.72rem;color:#9ca3af;font-weight:600;margin-top:2px;}
+.lc-close{
+  width:34px;height:34px;border:none;border-radius:9px;background:rgba(255,255,255,.1);color:#fff;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.15s;flex:0 0 auto;
+}
+.lc-close:hover{background:#dc2626;}
+.lc-scroll{flex:1 1 auto;overflow-y:auto;min-height:0;-webkit-overflow-scrolling:touch;background:#f9fafb;}
+.lc-foot{
+  flex:0 0 auto;padding:12px 20px;display:flex;justify-content:flex-end;gap:8px;
+  border-top:1px solid #eaecf0;background:#fff;flex-wrap:wrap;
+}
+
+/* Tarjetas numeradas — mismo lenguaje visual que .cot-wiz-step-card de
+   Servicio Técnico (Daniel: "que se sienta como Generar OT"). */
+.lc-card{border-radius:12px;border:1px solid #e5e7eb;background:#fff;margin:14px 20px 0;}
+.lc-card:first-child{margin-top:14px;}
+.lc-card-head{display:flex;align-items:center;gap:10px;padding:11px 14px;
+  background:linear-gradient(135deg,#fff,#fafafa);border-bottom:1px solid #f1f5f9;flex-wrap:wrap;
+  border-radius:11px 11px 0 0;}
+.lc-card-num{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#991b1b);
+  color:#fff;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;flex-shrink:0;}
+.lc-card-title{font-weight:800;font-size:.9rem;color:#0f172a;}
+.lc-card-sub{font-size:.72rem;color:#9ca3af;margin-left:4px;}
+.lc-card-body{padding:14px;}
+.lc-card-toggle{margin-left:auto;border:1.5px solid #e5e7eb;background:#fff;color:#374151;
+  font-size:.72rem;font-weight:700;border-radius:9px;padding:6px 12px;min-height:34px;cursor:pointer;}
+.lc-card-toggle:hover{border-color:#dc2626;color:#dc2626;}
+
+.lc-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px 14px;}
+@media(max-width:640px){.lc-grid{grid-template-columns:1fr;}}
+.lc-campo{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.lc-campo.full{grid-column:1/-1;}
+.lc-campo>label{font-size:.68rem;font-weight:800;color:#374151;margin:0;}
+.lc-campo .form-control,.lc-campo .form-select{font-size:16px;min-height:42px;}
+.lc-campo textarea.form-control{min-height:auto;}
+.lc-hint{font-size:.68rem;color:#9ca3af;margin-top:2px;}
+.lc-hint.ok{color:#16a34a;}
+.lc-hint.warn{color:#b45309;}
+.lc-campo.invalido input,.lc-campo.invalido select{border-color:#dc2626;background:#fef2f2;}
+.lc-campo-err{font-size:.66rem;color:#dc2626;font-weight:700;margin-top:2px;display:none;}
+.lc-campo.invalido .lc-campo-err{display:block;}
+.lc-campo.valido input{border-color:#16a34a;background:#f0fdf4;}
+
+.lc-btn{border:none;border-radius:9px;font-weight:800;font-size:.8rem;min-height:42px;padding:9px 16px;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:.13s;}
+.lc-btn:active{transform:scale(.97);}
+.lc-btn:disabled{opacity:.5;cursor:not-allowed;}
+.lc-btn-dark{background:#0a0a0a;color:#fff;} .lc-btn-dark:hover:not(:disabled){background:#262626;}
+.lc-btn-red{background:#dc2626;color:#fff;} .lc-btn-red:hover:not(:disabled){background:#b91c1c;}
+.lc-btn-soft{background:#f3f4f6;color:#374151;} .lc-btn-soft:hover:not(:disabled){background:#e5e7eb;}
+.lc-btn-outline{background:#fff;color:#dc2626;border:1.5px solid #dc2626;}
+.lc-btn-outline:hover:not(:disabled){background:#fef2f2;}
+
+.lc-origen-row{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;}
+.lc-origen-row .lc-campo{flex:1 1 260px;min-width:0;position:relative;}
+.lc-dropdown{position:absolute;top:100%;left:0;right:0;z-index:20;background:#fff;
+  border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 12px 32px -8px rgba(0,0,0,.18);
+  max-height:240px;overflow-y:auto;margin-top:4px;}
+.lc-dd-item{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;border:none;
+  background:#fff;padding:9px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6;}
+.lc-dd-item:hover{background:#fef2f2;}
+.lc-dd-item strong{font-size:.82rem;color:#0a0a0a;}
+.lc-dd-item span{font-size:.7rem;color:#6b7280;font-family:'JetBrains Mono',monospace;}
+.lc-dd-vacio{padding:10px 12px;font-size:.78rem;color:#9ca3af;text-align:center;}
+
+/* Ítems */
+.lc-items-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;}
+.lc-items-hint{font-size:.74rem;color:#6b7280;}
+.lc-tabla-wrap{overflow-x:auto;border:1px solid #eef0f3;border-radius:10px;}
+table.lc-tabla{width:100%;border-collapse:collapse;min-width:960px;}
+table.lc-tabla th{font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;
+  padding:8px;text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap;background:#fff;
+  position:sticky;top:0;z-index:1;}
+table.lc-tabla td{padding:6px 8px;border-bottom:1px solid #f3f4f6;vertical-align:middle;font-size:.82rem;}
+table.lc-tabla tr.lc-excluida{opacity:.42;}
+table.lc-tabla tr:last-child td{border-bottom:none;}
+.lc-sku{font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:700;color:#6b7280;white-space:nowrap;}
+.lc-doc-pill{background:#0a0a0a;color:#fff;border-radius:50px;padding:2px 9px;font-size:.64rem;font-weight:800;
+  font-family:ui-monospace,'JetBrains Mono',monospace;white-space:nowrap;}
+.lc-nombre{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lc-sinficha{font-size:.64rem;color:#b45309;background:none;border:none;padding:0;cursor:pointer;
+  text-decoration:underline dotted;margin-top:2px;display:block;}
+.lc-input-cant{width:58px;min-height:36px;font-size:.82rem;border:1px solid #d1d5db;border-radius:7px;
+  padding:4px 6px;text-align:center;}
+.lc-input-desc{width:64px;min-height:36px;font-size:.82rem;border:1px solid #d1d5db;border-radius:7px;
+  padding:4px 6px;text-align:center;}
+.lc-money{font-family:'JetBrains Mono',monospace;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.lc-money.total{color:#0a0a0a;font-weight:800;}
+.lc-money.cero{color:#c1c5cc;font-weight:500;font-style:italic;}
+.lc-acciones-cel{white-space:nowrap;}
+.lc-mini-btn{border:1px solid #e5e7eb;background:#fff;color:#374151;width:30px;height:30px;border-radius:7px;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:.82rem;margin-right:3px;}
+.lc-mini-btn:hover{background:#0a0a0a;color:#fff;border-color:#0a0a0a;}
+.lc-mini-btn.quitar:hover{background:#fee2e2;color:#dc2626;border-color:#dc2626;}
+.lc-vacio td{text-align:center;color:#9ca3af;font-size:.82rem;padding:26px 10px !important;font-style:italic;}
+.lc-check{width:18px;height:18px;accent-color:#dc2626;cursor:pointer;}
+
+/* Flete */
+.lc-flete-panel{background:#f9fafb;border:1px dashed #cbd5e1;border-radius:11px;padding:12px;}
+.lc-flete-resultados{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
+.lc-flete-opt{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff;
+  border:1.5px solid #e5e7eb;border-radius:10px;padding:9px 12px;cursor:pointer;transition:.12s;flex-wrap:wrap;}
+.lc-flete-opt:hover{border-color:#dc2626;}
+.lc-flete-opt.is-elegida{border-color:#dc2626;background:#fef2f2;box-shadow:0 0 0 1px #dc2626;}
+.lc-flete-opt .nombre{font-weight:800;font-size:.86rem;color:#0a0a0a;}
+.lc-flete-opt .precio{font-family:'JetBrains Mono',monospace;font-weight:800;font-size:.94rem;}
+.lc-chip{font-size:.6rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase;padding:2px 8px;
+  border-radius:50px;white-space:nowrap;}
+.lc-chip.roja{background:#dc2626;color:#fff;} .lc-chip.gris{background:#f3f4f6;color:#4b5563;}
+.lc-chip.verde{background:#dcfce7;color:#15803d;}
+.lc-courier-elegido{display:none;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #bbf7d0;
+  color:#166534;border-radius:10px;padding:9px 12px;font-size:.82rem;margin-top:10px;}
+
+/* Resumen */
+.lc-resumen{margin:8px 20px 4px;margin-left:auto;max-width:340px;background:#fff;
+  border:1px solid #eef0f3;border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:5px;}
+.lc-resumen>div{display:flex;justify-content:space-between;align-items:center;font-size:.78rem;color:#6b7280;}
+.lc-resumen>div b{font-family:'JetBrains Mono',monospace;color:#111827;font-variant-numeric:tabular-nums;}
+.lc-res-total{border-top:2px solid #e5e7eb;padding-top:7px;margin-top:3px;}
+.lc-res-total span{font-weight:900;color:#0a0a0a;font-size:.86rem !important;}
+.lc-res-total b{font-size:1.02rem;color:#dc2626 !important;}
+.lc-res-uf{display:flex;justify-content:flex-end;align-items:center;gap:5px;font-size:.72rem;color:#9ca3af;margin-top:-1px;}
+.lc-res-uf b{font-weight:800;color:#6b7280;font-family:'JetBrains Mono',monospace;}
+@media(max-width:640px){.lc-resumen{margin:8px 20px 4px;max-width:none;}}
+</style>
+
+<div id="lcBackdrop" class="lc-backdrop" aria-hidden="true">
+  <div class="lc-panel" role="dialog" aria-modal="true" aria-labelledby="lcTitulo">
+    <div class="lc-head">
+      <div>
+        <h5><i class="bi bi-truck"></i><span id="lcTitulo">Crear cotización de transporte</span></h5>
+        <div class="lc-sub" id="lcNumeroSub">Numeración CTR- · flete + margen + descuento</div>
+      </div>
+      <button type="button" class="lc-close" onclick="lcCerrar()" aria-label="Cerrar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+
+    <div class="lc-scroll" id="lcScroll">
+
+      {# ── Sección 1: cliente / origen ── #}
+      <div class="lc-card">
+        <div class="lc-card-head">
+          <span class="lc-card-num">1</span>
+          <span class="lc-card-title">Cliente</span>
+          <span class="lc-card-sub">búscalo en el ERP o completa a mano abajo</span>
+        </div>
+        <div class="lc-card-body">
+          <div class="lc-origen-row">
+            <div class="lc-campo">
+              <label>Buscar cliente por RUT o nombre (ERP)</label>
+              <input type="text" id="lcCliQ" class="form-control" autocomplete="off"
+                     placeholder="Busca por RUT o nombre en el ERP…">
+              <div id="lcCliResultados" class="lc-dropdown" style="display:none;"></div>
+            </div>
+          </div>
+          <div class="lc-hint">También puedes traer los datos directamente desde un documento con el botón
+            "Traer documento(s) del ERP" de la Sección 6 — completa lo que esté vacío acá.</div>
+        </div>
+      </div>
+
+      {# ── Sección 2: datos del cliente ── #}
+      <div class="lc-card">
+        <div class="lc-card-head">
+          <span class="lc-card-num">2</span>
+          <span class="lc-card-title">Datos del cliente</span>
+          <span class="lc-card-sub">autocompletados — púlelos</span>
+        </div>
+        <div class="lc-card-body">
+          <div class="lc-grid">
+            <div class="lc-campo" id="lcCampoEmpresa"><label>Empresa / Razón social</label>
+              <input id="lcEmpresa" class="form-control">
+              <div class="lc-campo-err">Obligatorio</div></div>
+            <div class="lc-campo" id="lcCampoRut"><label>RUT</label>
+              <input id="lcRut" class="form-control">
+              <div class="lc-campo-err">Obligatorio</div></div>
+            <div class="lc-campo full" id="lcCampoDireccion" style="position:relative;">
+              <label>Dirección de despacho</label>
+              <input id="lcDireccion" class="form-control" autocomplete="off"
+                     placeholder="Escribe y elige una dirección real del listado…">
+              <div id="lcDireccionHint" class="lc-hint"></div>
+              <div class="lc-campo-err">Escribe la dirección y elige una opción de la lista de Google para validarla</div>
+              <input type="hidden" id="lcDireccionLat"><input type="hidden" id="lcDireccionLng">
+              <input type="hidden" id="lcDireccionPlaceId"></div>
+            <div class="lc-campo" id="lcCampoRegion"><label>Región <span style="color:#9ca3af;font-weight:400;">(automática)</span></label>
+              <input id="lcRegion" class="form-control" readonly>
+              <div class="lc-campo-err">Se completa al validar la dirección</div></div>
+            <div class="lc-campo" id="lcCampoComuna"><label>Comuna <span style="color:#9ca3af;font-weight:400;">(auto, editable)</span></label>
+              <input id="lcComuna" class="form-control">
+              <div class="lc-campo-err">Obligatorio — se usa para cotizar el flete</div></div>
+            <div class="lc-campo" id="lcCampoEmail"><label>Email</label>
+              <input id="lcEmail" type="email" class="form-control">
+              <div class="lc-campo-err">Email inválido</div></div>
+            <div class="lc-campo" id="lcCampoTelefono"><label>Teléfono</label>
+              <input id="lcTelefono" class="form-control" placeholder="+56 9 1234 5678">
+              <div class="lc-campo-err">Teléfono chileno inválido (8 o 9 dígitos)</div></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 3: contacto (opcional, colapsable) ── #}
+      <div class="lc-card">
+        <div class="lc-card-head">
+          <span class="lc-card-num">3</span>
+          <span class="lc-card-title">Contacto <span style="color:#9ca3af;font-weight:400;">(opcional)</span></span>
+          <button type="button" class="lc-card-toggle" id="lcContactoToggleBtn" onclick="lcToggleContacto()">
+            <i class="bi bi-plus-lg"></i> Agregar contacto</button>
+        </div>
+        <div class="lc-card-body" id="lcContactoBody" style="display:none;">
+          <div class="lc-grid">
+            <div class="lc-campo"><label>Nombre</label>
+              <input id="lcContactoNombre" class="form-control" placeholder="Nombre de la persona"></div>
+            <div class="lc-campo"><label>Cargo</label>
+              <input id="lcContactoCargo" class="form-control" placeholder="Ej: Jefe de bodega"></div>
+            <div class="lc-campo"><label>Teléfono</label>
+              <input id="lcContactoTel" class="form-control" placeholder="+56 9 1234 5678"></div>
+            <div class="lc-campo"><label>Email</label>
+              <input id="lcContactoEmail" type="email" class="form-control"></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 4: condiciones ── #}
+      <div class="lc-card">
+        <div class="lc-card-head">
+          <span class="lc-card-num">4</span>
+          <span class="lc-card-title">Condiciones de la cotización</span>
+        </div>
+        <div class="lc-card-body">
+          <div class="lc-grid">
+            <div class="lc-campo" id="lcCampoEjecutivo"><label>Ejecutivo o vendedor solicitante</label>
+              <select id="lcEjecutivo" class="form-select"><option value="">Seleccione</option></select>
+              <div class="lc-campo-err">Obligatorio</div></div>
+            <div class="lc-campo" id="lcCampoValidoHasta"><label>Válido hasta</label>
+              <input id="lcValidoHasta" type="date" class="form-control">
+              <div class="lc-campo-err">Obligatorio</div></div>
+            <div class="lc-campo"><label>Margen % <span style="color:#9ca3af;font-weight:400;">(global)</span></label>
+              <input id="lcMargenPct" type="number" min="0" step="0.1" value="30" class="form-control" oninput="lcRecalcular()">
+              <div class="lc-hint">Se aplica sobre el costo del flete cotizado con el courier.</div></div>
+            <div class="lc-campo"><label>Descuento % <span style="color:#9ca3af;font-weight:400;">(global)</span></label>
+              <input id="lcDescuentoPct" type="number" min="0" max="100" step="0.1" value="0" class="form-control" oninput="lcRecalcular()">
+              <div class="lc-hint">Se aplica sobre el subtotal de ítems (flete + margen, ya con el descuento de cada línea).</div></div>
+            <div class="lc-campo full"><label>Observaciones (se visualizará en el PDF)</label>
+              <textarea id="lcNotas" class="form-control" rows="1" placeholder="Ej: Precios sujetos a disponibilidad del courier"></textarea></div>
+            <div class="lc-campo full"><label>Observaciones internas</label>
+              <textarea id="lcNotasInt" class="form-control" rows="1"></textarea></div>
+            <div class="lc-campo full"><label>Términos del PDF (uno por línea, formato "Clave: valor", opcional)</label>
+              <textarea id="lcTerminos" class="form-control" rows="2"
+                        placeholder="Ej: Precio: valores netos.&#10;Plazo: según coordinación con el courier."></textarea></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 5: costo del flete (courier) ── #}
+      <div class="lc-card">
+        <div class="lc-card-head">
+          <span class="lc-card-num">5</span>
+          <span class="lc-card-title">Costo del flete</span>
+          <span class="lc-card-sub">se cotiza con la comuna y el peso de los ítems marcados</span>
+        </div>
+        <div class="lc-card-body">
+          <div class="lc-flete-panel">
+            <div class="lc-grid">
+              <div class="lc-campo"><label>Peso facturable a cotizar</label>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="lcFletePesoTxt" class="lc-money" style="font-size:1rem;">0,0 kg</span>
+                  <span class="lc-hint" id="lcFletePesoHint" style="margin:0;">suma de las líneas marcadas</span>
+                </div>
+              </div>
+              <div class="lc-campo"><label>Valor neto de la mercadería</label>
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text">$</span>
+                  <input id="lcFleteValorNeto" type="number" min="0" step="1" class="form-control" value="0">
+                </div>
+                <div class="lc-hint">Se usa para el seguro de la carga (opcional).</div></div>
+              <div class="lc-campo full">
+                <label class="form-check-label" style="display:flex;align-items:center;gap:8px;font-size:.82rem;font-weight:700;color:#374151;">
+                  <input class="form-check-input" type="checkbox" id="lcFleteResidencial" style="width:18px;height:18px;">
+                  Es domicilio residencial (recargo de algunos couriers)
+                </label>
+              </div>
+            </div>
+            <button type="button" class="lc-btn lc-btn-dark" id="lcBtnCotizarFlete" onclick="lcCotizarFlete()" style="margin-top:10px;">
+              <i class="bi bi-truck"></i>Cotizar con los couriers
+            </button>
+            <div id="lcFleteResultados" class="lc-flete-resultados"></div>
+            <div class="lc-courier-elegido" id="lcCourierElegido">
+              <i class="bi bi-check-circle-fill"></i>
+              <span id="lcCourierElegidoTxt"></span>
+            </div>
+            <div class="lc-campo full" style="margin-top:10px;">
+              <label>Costo del flete (editable — se prorratea entre los ítems marcados)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input id="lcCostoCourier" type="number" min="0" step="1" class="form-control" value="0" oninput="lcRecalcular()">
+              </div>
+              <div class="lc-hint" id="lcCostoCourierHint">Elige un courier arriba o escribe el valor a mano.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 6: productos (multidocumento) ── #}
+      <div class="lc-card">
+        <div class="lc-card-head">
+          <span class="lc-card-num">6</span>
+          <span class="lc-card-title">Productos y documentos</span>
+        </div>
+        <div class="lc-card-body">
+          <div class="lc-items-toolbar">
+            <button type="button" id="lcBtnTraerDocumento" class="lc-btn lc-btn-dark" onclick="lcAbrirDocumentoErp()">
+              <i class="bi bi-file-earmark-arrow-down"></i>Traer documento(s) del ERP
+            </button>
+            <span class="lc-items-hint">Notas de venta, notas de venta interna, cotizaciones, facturas o boletas — puedes traer varios documentos. Solo las líneas marcadas entran al cálculo.</span>
+          </div>
+          <div class="lc-tabla-wrap">
+            <table class="lc-tabla">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="lcCheckAll" class="lc-check" onchange="lcCheckAllToggle(this.checked)"></th>
+                  <th>Documento</th>
+                  <th>SKU</th>
+                  <th>Descripción</th>
+                  <th>Cant.</th>
+                  <th class="text-end">Peso pred.</th>
+                  <th>Medidas</th>
+                  <th class="text-end">Desc. línea %</th>
+                  <th class="text-end">Flete</th>
+                  <th class="text-end">Margen</th>
+                  <th class="text-end">Total línea</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="lcItemsBody">
+                <tr class="lc-vacio"><td colspan="12">Sin productos todavía — usa "Traer documento(s) del ERP"</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {# ── Resumen ── #}
+      <div class="lc-resumen">
+        <div><span>Costo flete (marcados):</span><b id="lcResFlete">$0</b></div>
+        <div><span>Margen:</span><b id="lcResMargen">$0</b></div>
+        <div id="lcResDescLineaRow" style="display:none;"><span>Descuento por línea:</span><b id="lcResDescLinea">−$0</b></div>
+        <div><span>Subtotal ítems:</span><b id="lcResSubtotalItems">$0</b></div>
+        <div id="lcResDescGlobalRow" style="display:none;"><span>Descuento general:</span><b id="lcResDescGlobal">−$0</b></div>
+        <div><span>IVA (19%):</span><b id="lcResIva">$0</b></div>
+        <div class="lc-res-total"><span>Total:</span><b id="lcResTotal">$0</b></div>
+        <div class="lc-res-uf" id="lcResUfRow" style="display:none;">
+          <b id="lcResUf"></b>
+          <i class="bi bi-info-circle" id="lcResUfHint" title=""></i>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="lc-foot">
+      <button type="button" class="lc-btn lc-btn-soft" onclick="lcCerrar()">Cancelar</button>
+      <button type="button" id="lcBtnGuardar" class="lc-btn lc-btn-red" onclick="lcGuardar()">
+        <i class="bi bi-save"></i>Crear cotización
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ── Configuración de endpoints — ver comentario de cabecera del archivo.
+   window.LC_MODAL_CFG (si existe, definido ANTES de este <script>) puede
+   sobreescribir cualquier clave sin tocar el resto del código, mismo
+   patrón que window.CUBICADOR_TABS_CFG (static/cubicador_tabs.js). ── */
+var CFG = Object.assign({
+  epDocumento:      '/api/erp/documento',
+  epBuscarCliente:  '/tickets/api/erp/buscar-cliente',
+  epAsignables:     '/tickets/api/asignables',
+  epCotizarFlete:   '/cubicador/api/cotizar',
+  epUfActual:       '/api/uf-actual',
+  epDetalle:        '/transporte/cotizaciones/api/{id}',
+  epCrear:          '/transporte/cotizaciones/api/crear',
+  epActualizar:     '/transporte/cotizaciones/api/{id}/actualizar',
+}, window.LC_MODAL_CFG || {});
+
+// Tipos de documento ERP permitidos para "Traer documento(s) del ERP"
+// (Daniel: notas de venta, notas de venta interna, cotizaciones, facturas,
+// boletas — SIN guías). Coinciden con los value= del <select id="tkaDocTido">
+// de tickets/_tka_modal.html (FCV, BLV, VD, WEB, NVI, GDV, COV) — se deja
+// afuera GDV (guía de despacho) y WEB (no está en la lista que dio Daniel).
+var LC_TIDOS_PERMITIDOS = ['FCV', 'BLV', 'VD', 'NVI', 'COV'];
+
+// Gate real del botón "Etiquetas" — mismo permiso que ya usa
+// templates/cubicador/index.html (permissions.print). Solo se fija si
+// nadie lo fijó antes (si otra pantalla ya declaró su propio CAN_PRINT,
+// esa manda) y solo si `permissions` está en el contexto de ESTA página;
+// si no está, se deja sin definir y cubicador_tabs.js aplica su propio
+// default "fail-open" (permite imprimir) — ver cubAbrirEtiquetas().
+{% if permissions is defined %}
+if (typeof window.CAN_PRINT !== 'boolean') window.CAN_PRINT = {{ 'true' if permissions.print else 'false' }};
+{% endif %}
+
+var $ = function(id){ return document.getElementById(id); };
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function clp(n){
+  var v = Number(n);
+  if (!isFinite(v)) return '$0';
+  return '$' + Math.round(v).toLocaleString('es-CL');
+}
+function fkg(n){
+  var v = Number(n) || 0;
+  return v.toLocaleString('es-CL', {minimumFractionDigits:1, maximumFractionDigits:1}) + ' kg';
+}
+function toast(msg, type){
+  if (typeof window.ilusToast === 'function') window.ilusToast(msg, {type: type || 'info'});
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ESTADO
+   ══════════════════════════════════════════════════════════════════════ */
+var _LC = null;
+function _lcEstadoNuevo(){
+  return {
+    editId: null,
+    editEstado: null,
+    clienteId: null,
+    items: [],          // ver _lcItemNuevo()
+    courier: { id: null, nombre: null, comunaResuelta: null },
+    ufValor: null,
+    ufFecha: null,
+    docCache: {},        // 'TIDO|NUDO' -> lineas normalizadas, evita refetch
+  };
+}
+function _lcItemNuevo(base){
+  return Object.assign({
+    tido: null, nudo: null, sku: '', nombre: '', qty: 1, koen: null,
+    appId: null, tieneFicha: false,
+    // predTot = peso predominante TOTAL de la línea (pred_u × qty, mismo
+    // criterio que dataset.predTot de cubicador_tabs.js) — es lo que se
+    // usa para prorratear el flete. predU es el peso POR UNIDAD: se
+    // guarda aparte para poder recalcular predTot en el acto cuando el
+    // usuario cambia la cantidad a mano (ver lcCantidad), sin depender de
+    // que reabra el modal de Medidas solo para refrescar el total.
+    predTot: 0, predU: 0, bultos: 0,
+    incluido: true, descuentoPct: 0,
+  }, base || {});
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ABRIR / CERRAR
+   ══════════════════════════════════════════════════════════════════════ */
+function lcAbrir(editId){
+  editId = (typeof editId === 'number' && isFinite(editId) && editId > 0) ? Math.floor(editId)
+    : ((typeof editId === 'string' && /^\d+$/.test(editId)) ? parseInt(editId, 10) : null);
+
+  _LC = _lcEstadoNuevo();
+  _lcInitDireccion();
+  _lcWrapTkaClose();
+
+  ['lcCliQ','lcEmpresa','lcRut','lcDireccion','lcRegion','lcComuna','lcEmail','lcTelefono',
+   'lcDireccionLat','lcDireccionLng','lcDireccionPlaceId',
+   'lcContactoNombre','lcContactoCargo','lcContactoTel','lcContactoEmail',
+   'lcNotas','lcNotasInt','lcTerminos'].forEach(function(id){
+    var el = $(id); if (el) el.value = '';
+  });
+  $('lcMargenPct').value = '30';
+  $('lcDescuentoPct').value = '0';
+  $('lcFleteValorNeto').value = '0';
+  $('lcFleteResidencial').checked = false;
+  $('lcCostoCourier').value = '0';
+  $('lcCostoCourierHint').textContent = 'Elige un courier arriba o escribe el valor a mano.';
+  $('lcCourierElegido').style.display = 'none';
+  $('lcFleteResultados').innerHTML = '';
+  $('lcEjecutivo').value = '';
+  $('lcContactoBody').style.display = 'none';
+  $('lcContactoToggleBtn').innerHTML = '<i class="bi bi-plus-lg"></i> Agregar contacto';
+  document.querySelectorAll('#lcBackdrop .lc-campo.invalido, #lcBackdrop .lc-campo.valido')
+    .forEach(function(c){ c.classList.remove('invalido','valido'); });
+
+  var tmp = new Date(); tmp.setDate(tmp.getDate() + 15);
+  var p2 = function(n){ return String(n).padStart(2,'0'); };
+  $('lcValidoHasta').value = tmp.getFullYear() + '-' + p2(tmp.getMonth()+1) + '-' + p2(tmp.getDate());
+
+  lcRenderItems();
+  lcRecalcular();
+  _lcCargarEjecutivos();
+  _lcCargarUf();
+
+  $('lcTitulo').textContent = editId ? 'Editar cotización de transporte' : 'Crear cotización de transporte';
+  $('lcNumeroSub').textContent = editId ? 'Cargando…' : 'Numeración CTR- · flete + margen + descuento';
+  $('lcBtnGuardar').innerHTML = editId
+    ? '<i class="bi bi-save"></i>Guardar cambios'
+    : '<i class="bi bi-check-lg"></i>Crear cotización';
+
+  var bd = $('lcBackdrop');
+  bd.classList.add('is-open');
+  bd.setAttribute('aria-hidden', 'false');
+  $('lcScroll').scrollTop = 0;
+
+  if (editId){
+    _LC.editId = editId;
+    _lcCargarEdicion(editId);
+  }
+}
+function lcCerrar(){
+  var bd = $('lcBackdrop');
+  bd.classList.remove('is-open');
+  bd.setAttribute('aria-hidden', 'true');
+}
+document.addEventListener('keydown', function(ev){
+  if (ev.key === 'Escape' && $('lcBackdrop') && $('lcBackdrop').classList.contains('is-open')) lcCerrar();
+});
+
+function lcToggleContacto(){
+  var body = $('lcContactoBody');
+  var abierto = body.style.display !== 'none';
+  body.style.display = abierto ? 'none' : '';
+  $('lcContactoToggleBtn').innerHTML = abierto
+    ? '<i class="bi bi-plus-lg"></i> Agregar contacto'
+    : '<i class="bi bi-dash-lg"></i> Ocultar';
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   VALIDACIÓN (mismo criterio que Servicio Técnico: email/teléfono/
+   dirección validada por Google Places).
+   ══════════════════════════════════════════════════════════════════════ */
+function _lcEmailValido(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v||'').trim()); }
+function _lcTelValido(v){
+  var d = String(v||'').replace(/\D/g,'');
+  var sinPais = d.indexOf('56') === 0 ? d.slice(2) : d;
+  return sinPais.length === 8 || sinPais.length === 9;
+}
+function _lcMarcar(id, ok){
+  var campo = $(id);
+  if (campo) campo.classList.toggle('invalido', !ok);
+  return ok;
+}
+function lcValidarCliente(){
+  var v = function(id){ return $(id).value.trim(); };
+  var ok = true;
+  ok = _lcMarcar('lcCampoEmpresa', !!v('lcEmpresa')) && ok;
+  ok = _lcMarcar('lcCampoRut', !!v('lcRut')) && ok;
+  ok = _lcMarcar('lcCampoComuna', !!v('lcComuna')) && ok;
+  ok = _lcMarcar('lcCampoEjecutivo', !!v('lcEjecutivo')) && ok;
+  ok = _lcMarcar('lcCampoValidoHasta', !!v('lcValidoHasta')) && ok;
+  var email = v('lcEmail');
+  ok = _lcMarcar('lcCampoEmail', !email || _lcEmailValido(email)) && ok;
+  var tel = v('lcTelefono');
+  ok = _lcMarcar('lcCampoTelefono', !tel || _lcTelValido(tel)) && ok;
+  var direccionOk = !!v('lcDireccion') && !!v('lcDireccionLat');
+  ok = _lcMarcar('lcCampoDireccion', direccionOk) && ok;
+  ok = _lcMarcar('lcCampoRegion', !!v('lcRegion')) && ok;
+  return ok;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   DIRECCIÓN (Google Places) — mismo patrón que _cotWizInitDireccion de
+   tickets/cotizaciones.html.
+   ══════════════════════════════════════════════════════════════════════ */
+function _lcLimpiaRegion(r){
+  if (!r) return r;
+  var s = String(r).replace(/^Regi[oó]n\s+(de\s+|del\s+|de\s+la\s+)?/i, '').trim();
+  s = s.replace(/\s+de\s+Santiago$/i, '');
+  return s || String(r);
+}
+function _lcInitDireccion(){
+  var input = $('lcDireccion');
+  if (!input || input.dataset.placesBound === '1') return;
+  if (typeof window.ilusPlacesAutocomplete !== 'function'){
+    window.__ilusGmapsPending = window.__ilusGmapsPending || [];
+    window.__ilusGmapsPending.push(_lcInitDireccion);
+    return;
+  }
+  input.dataset.placesBound = '1';
+  window.ilusPlacesAutocomplete('lcDireccion', {
+    country: 'cl', types: ['address'],
+    onPlaceSelected: function(place){
+      $('lcDireccionLat').value = place.lat || '';
+      $('lcDireccionLng').value = place.lng || '';
+      $('lcDireccionPlaceId').value = place.place_id || '';
+      var comps = place.componentes || [];
+      var pick = function(){
+        for (var i = 0; i < arguments.length; i++){
+          var t = arguments[i];
+          var c = comps.find(function(x){ return (x.types||[]).indexOf(t) >= 0; });
+          if (c) return c.long_name;
+        }
+        return '';
+      };
+      var region = pick('administrative_area_level_1');
+      var comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
+      $('lcRegion').value = _lcLimpiaRegion(region);
+      if (comuna) $('lcComuna').value = comuna;
+      var hint = $('lcDireccionHint');
+      var la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
+      var ln = (typeof place.lng === 'number') ? place.lng.toFixed(4) : '?';
+      hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada · <small>' + la + ', ' + ln + '</small>';
+      _lcMarcar('lcCampoDireccion', true);
+      _lcMarcar('lcCampoRegion', !!region);
+    },
+    onNoSelection: function(){
+      $('lcDireccionHint').innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>Elige una opción de la lista para validar la dirección.';
+    }
+  });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _lcInitDireccion);
+else _lcInitDireccion();
+
+/* ══════════════════════════════════════════════════════════════════════
+   BÚSQUEDA DE CLIENTE (ERP, reusa el endpoint genérico ya usado fuera de
+   Tickets — ver cabecera del archivo).
+   ══════════════════════════════════════════════════════════════════════ */
+var _lcCliTimer = null, _lcCliSeq = 0;
+(function(){
+  var inp = $('lcCliQ');
+  if (!inp) return;
+  inp.addEventListener('input', function(){
+    clearTimeout(_lcCliTimer);
+    var q = inp.value.trim();
+    if (q.length < 2){ $('lcCliResultados').style.display = 'none'; return; }
+    _lcCliTimer = setTimeout(async function(){
+      var seq = ++_lcCliSeq;
+      try{
+        var r = await fetch(CFG.epBuscarCliente + '?q=' + encodeURIComponent(q));
+        var d = await r.json();
+        if (seq !== _lcCliSeq) return;
+        var cont = $('lcCliResultados');
+        var res = (d && d.resultados) || [];
+        if (!res.length){
+          cont.innerHTML = '<div class="lc-dd-vacio">Sin resultados en el ERP para "' + esc(q) + '" — completa los datos a mano abajo.</div>';
+        } else {
+          cont.innerHTML = res.map(function(c, i){
+            return '<button type="button" class="lc-dd-item" data-i="' + i + '">' +
+              '<strong>' + esc(c.empresa) + '</strong>' +
+              '<span>' + esc(c.rut || '') + (c.comuna ? ' · ' + esc(c.comuna) : '') + '</span></button>';
+          }).join('');
+          cont.querySelectorAll('.lc-dd-item').forEach(function(b){
+            b.addEventListener('click', function(){ lcElegirCliente(res[parseInt(b.dataset.i,10)]); });
+          });
+        }
+        cont.style.display = 'block';
+      }catch(e){ /* ERP caído: se sigue a mano */ }
+    }, 350);
+  });
+  document.addEventListener('click', function(ev){
+    if (ev.target !== inp && !ev.target.closest('#lcCliResultados')) $('lcCliResultados').style.display = 'none';
+  });
+})();
+function lcElegirCliente(c){
+  if (!c || !_LC) return;
+  _LC.clienteId = c.cliente_id || null;
+  $('lcEmpresa').value = c.empresa || '';
+  $('lcRut').value = c.rut || '';
+  $('lcDireccionLat').value = ''; $('lcDireccionLng').value = ''; $('lcDireccionPlaceId').value = '';
+  $('lcRegion').value = '';
+  if (c.direccion) $('lcDireccion').value = c.direccion;
+  if (c.comuna) $('lcComuna').value = c.comuna;
+  $('lcDireccionHint').innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>Dirección del ERP sin validar — vuelve a escribirla y elige una opción de la lista.';
+  if (c.contacto_email) $('lcEmail').value = c.contacto_email;
+  if (c.contacto_tel) $('lcTelefono').value = c.contacto_tel;
+  $('lcCliQ').value = (c.empresa || '') + (c.rut ? ' — ' + c.rut : '');
+  $('lcCliResultados').style.display = 'none';
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   EJECUTIVOS (lista genérica de usuarios asignables)
+   ══════════════════════════════════════════════════════════════════════ */
+var _lcEjecutivosCargados = false;
+async function _lcCargarEjecutivos(){
+  var sel = $('lcEjecutivo');
+  if (!sel || _lcEjecutivosCargados) return;
+  try{
+    var r = await fetch(CFG.epAsignables);
+    var lista = await r.json();
+    if (Array.isArray(lista) && lista.length){
+      lista.forEach(function(u){
+        var o = document.createElement('option');
+        o.value = u.nombre || u.email || '';
+        o.textContent = u.nombre || u.email || '';
+        sel.appendChild(o);
+      });
+      _lcEjecutivosCargados = true;
+    }
+  }catch(e){ /* sin lista: no bloquea */ }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   UF (equivalente informativo del Total, Regla de negocio replicada de
+   Servicio Técnico: "expresarlo en UF, a la UF actual").
+   ══════════════════════════════════════════════════════════════════════ */
+async function _lcCargarUf(){
+  try{
+    var r = await fetch(CFG.epUfActual);
+    var d = await r.json();
+    if (d && d.ok && d.uf){ _LC.ufValor = parseFloat(d.uf); _LC.ufFecha = d.fecha || ''; }
+  }catch(e){ /* sin UF: solo se muestra CLP */ }
+  lcRecalcular();
+}
+function _lcFechaCl(iso){
+  if (!iso || iso.length !== 10 || iso[4] !== '-' || iso[7] !== '-') return iso || '';
+  return iso.slice(8,10) + '/' + iso.slice(5,7) + '/' + iso.slice(0,4);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TRAER DOCUMENTO(S) DEL ERP — multidocumento, tipos limitados (sin
+   guías). Reusa tickets/_tka_modal.html tal cual (mode:'seleccionar').
+   ══════════════════════════════════════════════════════════════════════ */
+function _lcFiltrarTiposDocErp(){
+  var sel = document.getElementById('tkaDocTido');
+  if (!sel) return;
+  Array.prototype.forEach.call(sel.options, function(o){
+    var permitido = LC_TIDOS_PERMITIDOS.indexOf(o.value) !== -1;
+    o.disabled = !permitido;
+    o.style.display = permitido ? '' : 'none';
+  });
+  if (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].disabled){
+    for (var i = 0; i < sel.options.length; i++){
+      if (!sel.options[i].disabled){ sel.selectedIndex = i; break; }
+    }
+  }
+  sel.dataset.lcFiltrado = '1';
+}
+function _lcRestaurarTiposDocErp(){
+  var sel = document.getElementById('tkaDocTido');
+  if (!sel || sel.dataset.lcFiltrado !== '1') return;
+  Array.prototype.forEach.call(sel.options, function(o){ o.disabled = false; o.style.display = ''; });
+  delete sel.dataset.lcFiltrado;
+}
+// El modal ERP es un singleton compartido por toda la página: filtrar sus
+// opciones y NO restaurarlas dejaría a cualquier otro botón de la misma
+// página con la lista recortada. tkaClose() es el único punto por el que
+// pasan TODOS los caminos de cierre (X, backdrop, Escape, Cancelar y toda
+// selección exitosa) — se envuelve una sola vez, de forma aditiva.
+function _lcWrapTkaClose(){
+  if (typeof window.tkaClose !== 'function' || window.tkaClose.__lcWrapped) return;
+  var orig = window.tkaClose;
+  var wrapped = function(){
+    try{ _lcRestaurarTiposDocErp(); }catch(e){}
+    return orig.apply(this, arguments);
+  };
+  wrapped.__lcWrapped = true;
+  window.tkaClose = wrapped;
+}
+
+function lcAbrirDocumentoErp(){
+  if (typeof window.tkaOpen !== 'function'){
+    toast('Falta incluir tickets/_tka_modal.html en esta página.', 'error');
+    return;
+  }
+  _lcWrapTkaClose();
+  var rutActual = $('lcRut').value.trim();
+  window.tkaOpen({
+    mode: 'seleccionar',
+    tabs: ['doc', 'cli'],
+    rutPrefill: rutActual,
+    onSeleccionar: async function(items, header){
+      if (!items || !items.length) return;
+      _lcFiltrarTiposDocErp();
+      await _lcAsignarDesdeDocumento(items, header);
+    }
+  });
+  // El filtro también se aplica al abrir (por si 'doc' es la pestaña
+  // inicial) — tkaOpen ya corrió _tkaResetEstado() de forma síncrona.
+  _lcFiltrarTiposDocErp();
+}
+
+async function _lcAsignarDesdeDocumento(items, header){
+  if (!_LC) return;
+  var rutActual = $('lcRut').value.trim();
+  var rutLimpio = function(v){ return String(v||'').replace(/[^0-9kK]/g,'').toUpperCase(); };
+  if (header && header.rut && rutActual && rutLimpio(header.rut) !== rutLimpio(rutActual)){
+    var continuar = await window.ilusConfirm({
+      title: 'El documento es de otro cliente',
+      message: 'Este documento pertenece al RUT ' + header.rut + ', pero los Datos del cliente ya tienen cargado el RUT ' + rutActual + '.',
+      sub: 'Si continúas, se agregan los productos igual pero los Datos del cliente NO se van a tocar.',
+      okLabel: 'Agregar productos igual', cancelLabel: 'Cancelar', danger: true,
+    });
+    if (!continuar) return;
+  }
+  if (header){
+    var completados = [];
+    if (!$('lcEmpresa').value.trim() && (header.cliente || header.empresa)){ $('lcEmpresa').value = header.cliente || header.empresa; completados.push('empresa'); }
+    if (!rutActual && header.rut){ $('lcRut').value = header.rut; completados.push('RUT'); }
+    if (!$('lcEmail').value.trim() && header.email){ $('lcEmail').value = header.email; completados.push('email'); }
+    if (!$('lcTelefono').value.trim() && header.telefono){ $('lcTelefono').value = header.telefono; completados.push('teléfono'); }
+    if (!$('lcComuna').value.trim() && header.comuna){ $('lcComuna').value = header.comuna; completados.push('comuna'); }
+    if (!$('lcDireccion').value.trim() && header.direccion){ $('lcDireccion').value = header.direccion; completados.push('dirección'); }
+    if (completados.length) toast('Cliente completado desde el documento (' + completados.join(', ') + ')', 'info');
+  }
+
+  // Agrupa por documento único (tido|nudo) para no pedir el mismo doc dos
+  // veces si el usuario ya lo había traído antes en esta misma sesión del
+  // modal (_LC.docCache).
+  var porDoc = {};
+  items.forEach(function(it){
+    if (!it.tido || !it.nudo) return;
+    var k = it.tido + '|' + it.nudo;
+    (porDoc[k] = porDoc[k] || []).push(it);
+  });
+
+  var nuevos = [], zzOmitidas = 0;
+  var claves = Object.keys(porDoc);
+  for (var i = 0; i < claves.length; i++){
+    var k = claves[i];
+    var lote = porDoc[k];
+    var partes = k.split('|'); var tido = partes[0], nudo = partes[1];
+    var lineas = _LC.docCache[k];
+    if (!lineas){
+      try{
+        var r = await fetch(CFG.epDocumento, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({tido: tido, nudo: nudo})
+        });
+        var d = await r.json();
+        lineas = (d && d.lineas) || [];
+        _LC.docCache[k] = lineas;
+      }catch(e){ lineas = []; }
+    }
+    lote.forEach(function(it){
+      var ln = lineas.find(function(l){ return l.sku === it.sku; }) || {};
+      if (ln.es_zz){ zzOmitidas++; return; }
+      nuevos.push(_lcItemNuevo({
+        tido: tido, nudo: nudo, sku: it.sku || ln.sku || '', nombre: it.nombre || ln.nombre || ln.descripcion_erp || '',
+        qty: (it.qty == null ? 1 : it.qty), koen: it.koen || null,
+        appId: ln.app_id || null, tieneFicha: !!ln.tiene_ficha,
+        predTot: Number(ln.pred_tot) || 0, predU: Number(ln.pred_u) || 0, bultos: Number(ln.total_bultos) || 0,
+      }));
+    });
+  }
+
+  if (!nuevos.length){
+    if (zzOmitidas) toast('Solo había línea(s) de envío (ZZ) en ese documento — no aplican a este cálculo.', 'warning');
+    return;
+  }
+  _LC.items = _LC.items.concat(nuevos);
+  lcRenderItems();
+  lcRecalcular();
+  var msg = '✓ ' + nuevos.length + ' producto(s) agregado(s)';
+  if (zzOmitidas) msg += ' · ' + zzOmitidas + ' línea(s) de envío omitida(s)';
+  toast(msg, 'success');
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TABLA DE ÍTEMS — checkbox por línea (masiva e individual), Medidas/
+   Etiquetas EXACTAMENTE con el mecanismo del Cubicador (cub-row + data-*
+   + data-action, ver static/cubicador_tabs.js — no se reescribe nada de
+   esa lógica, solo se le dan filas con el contrato correcto).
+   ══════════════════════════════════════════════════════════════════════ */
+function lcRenderItems(){
+  var body = $('lcItemsBody');
+  if (!_LC || !_LC.items.length){
+    body.innerHTML = '<tr class="lc-vacio"><td colspan="12">Sin productos todavía — usa "Traer documento(s) del ERP"</td></tr>';
+    $('lcCheckAll').checked = false;
+    return;
+  }
+  body.innerHTML = _LC.items.map(function(it, i){
+    var doc = it.nudo ? (esc(it.tido || '') + ' ' + esc(it.nudo)) : '—';
+    return '<tr class="cub-row' + (it.incluido ? '' : ' lc-excluida') + '"' +
+      ' data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '"' +
+      ' data-qty="' + esc(it.qty) + '" data-bultos="' + esc(it.bultos) + '" data-pred-tot="' + esc(it.predTot) + '"' +
+      ' data-kg-tot="0" data-pv-tot="0" data-vol-tot="0" data-i="' + i + '">' +
+      '<td><input type="checkbox" class="lc-check" ' + (it.incluido ? 'checked' : '') + ' onchange="lcItemToggle(' + i + ', this.checked)"></td>' +
+      '<td><span class="lc-doc-pill">' + doc + '</span></td>' +
+      '<td data-cell="sku"><span class="lc-sku">' + esc(it.sku) + '</span>' +
+        (!it.tieneFicha ? '<button type="button" class="lc-sinficha" data-action="cub-medidas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '"><i class="bi bi-exclamation-circle me-1"></i>Sin ficha · cargar medidas</button>' : '') +
+        /* FIX 2026-07-25 (revisión adversarial, hallazgo ALTA): marcadores
+           data-cell ocultos para bultos/kg-u/pv-u/vol-u/pred-u. Sin esto,
+           celda() en static/cubicador_tabs.js (aplicarMedidasEnFilas) no
+           encuentra estos nombres por atributo y cae al ÍNDICE FIJO de la
+           tabla de escritorio del Cubicador (td[4]/[5]/[6]/[7]/[8]) -- en
+           ESTA tabla esos índices son Cantidad(4)/pred-tot(5, ya tiene su
+           propio data-cell)/botones Medidas-Etiquetas(6)/Descuento%(7)/
+           Flete(8), así que "Guardar medidas" destruía el input de
+           Cantidad, los botones de la fila y el input de Descuento%. Esta
+           tabla no muestra bultos/kg-u/pv-u/vol-u/pred-u como columnas
+           propias (solo pred-tot), por eso van ocultos -- celda() los
+           encuentra por atributo y ya no necesita el fallback por índice. */
+        '<span data-cell="bultos" style="display:none"></span>' +
+        '<span data-cell="kg-u" style="display:none"></span>' +
+        '<span data-cell="pv-u" style="display:none"></span>' +
+        '<span data-cell="vol-u" style="display:none"></span>' +
+        '<span data-cell="pred-u" style="display:none"></span>' +
+      '</td>' +
+      '<td class="lc-nombre" title="' + esc(it.nombre) + '">' + esc(it.nombre) + '</td>' +
+      '<td><input type="number" min="0" step="1" class="lc-input-cant" value="' + esc(it.qty) + '" onchange="lcCantidad(' + i + ', this.value)"></td>' +
+      '<td class="text-end" data-cell="pred-tot">' + (it.predTot > 0 ? fkg(it.predTot) : '<span class="text-muted">—</span>') + '</td>' +
+      '<td class="lc-acciones-cel">' +
+        '<button type="button" class="lc-mini-btn" title="Medidas" data-action="cub-medidas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '" data-bultos="' + esc(it.bultos) + '"><i class="bi bi-rulers"></i></button>' +
+        (window.CAN_PRINT === false ? '' : '<button type="button" class="lc-mini-btn" title="Etiquetas" data-action="cub-etiquetas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '" data-bultos="' + esc(it.bultos) + '"><i class="bi bi-tags"></i></button>') +
+      '</td>' +
+      '<td><input type="number" min="0" max="100" step="1" class="lc-input-desc" value="' + esc(it.descuentoPct) + '" onchange="lcDescLinea(' + i + ', this.value)"></td>' +
+      '<td class="text-end lc-money lc-cell-flete">…</td>' +
+      '<td class="text-end lc-money lc-cell-margen">…</td>' +
+      '<td class="text-end lc-money total lc-cell-total">…</td>' +
+      '<td><button type="button" class="lc-mini-btn quitar" title="Quitar" onclick="lcQuitarItem(' + i + ')"><i class="bi bi-x-lg"></i></button></td>' +
+    '</tr>';
+  }).join('');
+  var todosMarcados = _LC.items.every(function(it){ return it.incluido; });
+  $('lcCheckAll').checked = todosMarcados;
+}
+
+function lcItemToggle(i, checked){
+  if (!_LC || !_LC.items[i]) return;
+  _LC.items[i].incluido = !!checked;
+  var row = document.querySelector('#lcItemsBody tr[data-i="' + i + '"]');
+  if (row) row.classList.toggle('lc-excluida', !checked);
+  var todosMarcados = _LC.items.every(function(it){ return it.incluido; });
+  $('lcCheckAll').checked = todosMarcados;
+  lcRecalcular();
+}
+function lcCheckAllToggle(checked){
+  if (!_LC) return;
+  _LC.items.forEach(function(it){ it.incluido = !!checked; });
+  document.querySelectorAll('#lcItemsBody tr.cub-row').forEach(function(row){
+    var chk = row.querySelector('.lc-check');
+    if (chk) chk.checked = !!checked;
+    row.classList.toggle('lc-excluida', !checked);
+  });
+  lcRecalcular();
+}
+function lcCantidad(i, v){
+  if (!_LC || !_LC.items[i]) return;
+  var it = _LC.items[i];
+  var n = parseInt(v, 10);
+  it.qty = isNaN(n) || n < 0 ? 0 : n;
+  // Recalcula el peso TOTAL de la línea con el peso POR UNIDAD ya
+  // conocido — así el cambio de cantidad se refleja en el prorrateo del
+  // flete al instante, sin depender de que el usuario reabra "Medidas".
+  if (it.predU > 0) it.predTot = Math.round(it.predU * it.qty * 10000) / 10000;
+  var row = document.querySelector('#lcItemsBody tr[data-i="' + i + '"]');
+  if (row){
+    // cubicador_tabs.js lee data-qty al recalcular los totales de un
+    // guardado de Medidas — hay que mantenerlo sincronizado.
+    row.dataset.qty = String(it.qty);
+    row.dataset.predTot = String(it.predTot);
+    var celda = row.querySelector('[data-cell="pred-tot"]');
+    if (celda) celda.innerHTML = it.predTot > 0 ? fkg(it.predTot) : '<span class="text-muted">—</span>';
+  }
+  lcRecalcular();
+}
+function lcDescLinea(i, v){
+  if (!_LC || !_LC.items[i]) return;
+  var n = parseFloat(v);
+  _LC.items[i].descuentoPct = isNaN(n) ? 0 : Math.max(0, Math.min(100, n));
+  lcRecalcular();
+}
+function lcQuitarItem(i){
+  if (!_LC) return;
+  _LC.items.splice(i, 1);
+  lcRenderItems();
+  lcRecalcular();
+}
+
+/* cubicador_tabs.js guarda Medidas y escribe directo en el dataset de la
+   fila (data-bultos/data-pred-tot/...) sin avisar a nadie — es un
+   contrato "silencioso" a propósito (Regla #4.2: no se le pide agregar un
+   callback nuevo). Un MutationObserver sobre esos atributos es la forma
+   no invasiva de enterarse y volver a prorratear el flete. */
+var _lcObserverListo = false;
+function _lcObservarCambiosDeMedidas(){
+  if (_lcObserverListo || typeof MutationObserver === 'undefined') return;
+  var body = $('lcItemsBody');
+  if (!body) return;
+  var obs = new MutationObserver(function(muts){
+    var tocoAlgo = muts.some(function(m){
+      return m.type === 'attributes' && ['data-pred-tot','data-bultos','data-qty','data-app-id'].indexOf(m.attributeName) !== -1;
+    });
+    if (tocoAlgo) _lcSincronizarPesoDesdeDom();
+  });
+  obs.observe(body, {attributes:true, subtree:true, attributeFilter:['data-pred-tot','data-bultos','data-qty','data-app-id']});
+  _lcObserverListo = true;
+}
+function _lcSincronizarPesoDesdeDom(){
+  if (!_LC) return;
+  document.querySelectorAll('#lcItemsBody tr.cub-row').forEach(function(row){
+    var i = parseInt(row.dataset.i, 10);
+    if (isNaN(i) || !_LC.items[i]) return;
+    _LC.items[i].predTot = Number(row.dataset.predTot) || 0;
+    _LC.items[i].bultos = Number(row.dataset.bultos) || 0;
+    // Deriva el peso POR UNIDAD del total recién guardado — así, si el
+    // usuario cambia la cantidad DESPUÉS de guardar Medidas, lcCantidad()
+    // puede seguir recalculando el total sin volver a abrir ese modal.
+    _LC.items[i].predU = _LC.items[i].qty > 0 ? (_LC.items[i].predTot / _LC.items[i].qty) : 0;
+    if (row.dataset.appId) _LC.items[i].appId = row.dataset.appId;
+    var celda = row.querySelector('[data-cell="pred-tot"]');
+    if (celda) celda.innerHTML = _LC.items[i].predTot > 0 ? fkg(_LC.items[i].predTot) : '<span class="text-muted">—</span>';
+  });
+  lcRecalcular();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   COTIZAR FLETE — reusa el comparador real del Cubicador
+   (/cubicador/api/cotizar), mismo contrato que la pestaña "Cotizador".
+   ══════════════════════════════════════════════════════════════════════ */
+function _lcPesoFacturableMarcados(){
+  if (!_LC) return 0;
+  // it.predTot ya viene TOTALIZADO por línea (pred_u × qty, mismo criterio
+  // que dataset.predTot de cubicador_tabs.js) — no se vuelve a multiplicar.
+  return _LC.items.reduce(function(acc, it){ return it.incluido ? acc + (it.predTot || 0) : acc; }, 0);
+}
+function _lcActualizarPesoTxt(){
+  var peso = _lcPesoFacturableMarcados();
+  $('lcFletePesoTxt').textContent = fkg(peso);
+  $('lcFletePesoHint').textContent = peso > 0
+    ? 'suma de las líneas marcadas'
+    : 'sin medidas cargadas todavía — carga "Medidas" en al menos una línea';
+  return peso;
+}
+async function lcCotizarFlete(){
+  if (!_LC) return;
+  var comuna = $('lcComuna').value.trim();
+  if (!comuna){
+    toast('Completa la comuna del cliente (Sección 2) antes de cotizar el flete', 'warning');
+    $('lcComuna').focus();
+    return;
+  }
+  var peso = _lcActualizarPesoTxt();
+  if (!(peso > 0)){
+    toast('Ninguna línea marcada tiene peso cargado — usa el botón Medidas primero', 'warning');
+    return;
+  }
+  var btn = $('lcBtnCotizarFlete');
+  var orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>Cotizando…';
+  $('lcFleteResultados').innerHTML = '<div class="lc-hint">Consultando a los couriers…</div>';
+  try{
+    var documentos = [];
+    var vistos = {};
+    _LC.items.forEach(function(it){
+      if (it.tido && it.nudo && !vistos[it.tido+'|'+it.nudo]){ vistos[it.tido+'|'+it.nudo] = 1; documentos.push({tido: it.tido, nudo: it.nudo}); }
+    });
+    var r = await fetch(CFG.epCotizarFlete, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        comuna: comuna,
+        peso_kg: peso,
+        peso_pred_kg: peso,
+        valor_neto: parseInt($('lcFleteValorNeto').value, 10) || 0,
+        es_residencial: !!$('lcFleteResidencial').checked,
+        cliente: $('lcEmpresa').value.trim(),
+        documentos: documentos,
+      })
+    });
+    var d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    var raw = d.cotizaciones || d.couriers || d.resultados || [];
+    _lcRenderFleteResultados(Array.isArray(raw) ? raw : [], d.comuna_resuelta || comuna);
+  }catch(e){
+    $('lcFleteResultados').innerHTML = '<div class="lc-hint warn"><i class="bi bi-exclamation-triangle-fill me-1"></i>No se pudo cotizar: ' + esc(e.message) + '</div>';
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+var _lcFleteOpciones = [];
+function _lcRenderFleteResultados(items, comunaResuelta){
+  _lcFleteOpciones = items.map(function(c){
+    var precio = (c.precio != null) ? c.precio : (c.subtotal != null) ? c.subtotal : (c.precio_venta != null ? c.precio_venta : null);
+    return {
+      id: (c.courier_id != null) ? c.courier_id : c.id,
+      nombre: c.courier_nombre || c.nombre || 'Courier',
+      precio: (precio != null && isFinite(Number(precio))) ? Number(precio) : null,
+      estimado: !!(c.es_estimado === true || String(c.fuente||'').toLowerCase() === 'estimado'),
+      cobertura: (c.tiene_cobertura !== false) && precio != null,
+    };
+  });
+  var conCobertura = _lcFleteOpciones.filter(function(c){ return c.cobertura; })
+    .sort(function(a,b){ return (a.precio||0) - (b.precio||0); });
+  if (!conCobertura.length){
+    $('lcFleteResultados').innerHTML = '<div class="lc-hint warn"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ningún courier cotizó para esta comuna.</div>';
+    return;
+  }
+  $('lcFleteResultados').innerHTML = conCobertura.map(function(c, i){
+    return '<div class="lc-flete-opt" onclick="lcElegirCourier(' + _lcFleteOpciones.indexOf(c) + ')">' +
+      '<span class="nombre">' + esc(c.nombre) + (c.estimado ? ' <span class="lc-chip roja">Estimado</span>' : '') + '</span>' +
+      '<span class="precio">' + clp(c.precio) + '</span>' +
+    '</div>';
+  }).join('');
+  _LC.courier.comunaResuelta = comunaResuelta;
+}
+function lcElegirCourier(idx){
+  var c = _lcFleteOpciones[idx];
+  if (!c || !_LC) return;
+  _LC.courier.id = c.id;
+  _LC.courier.nombre = c.nombre;
+  // Cada tarjeta lleva su índice ORIGINAL de _lcFleteOpciones en el
+  // onclick (ver _lcRenderFleteResultados) — comparar contra ese string
+  // es más simple y correcto que reconstruir el índice visual.
+  var marcador = 'lcElegirCourier(' + idx + ')';
+  document.querySelectorAll('#lcFleteResultados .lc-flete-opt').forEach(function(el){
+    el.classList.toggle('is-elegida', el.getAttribute('onclick') === marcador);
+  });
+  $('lcCostoCourier').value = Math.round(c.precio || 0);
+  $('lcCostoCourierHint').textContent = 'Tomado de ' + c.nombre + (c.estimado ? ' (estimado — confírmalo antes de comprometerlo)' : '') + '. Puedes editarlo a mano.';
+  $('lcCourierElegido').style.display = 'flex';
+  $('lcCourierElegidoTxt').textContent = 'Courier elegido: ' + c.nombre + ' · ' + clp(c.precio);
+  lcRecalcular();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   RECÁLCULO EN VIVO — el corazón del modal. Se dispara con cada tilde/
+   destilde de checkbox, cada cambio de cantidad/porcentaje y cada cambio
+   de medidas (vía el MutationObserver de arriba). Fórmula (coincide con
+   las columnas de transport_cotizacion_items / transport_cotizaciones):
+
+     por línea (solo si incluido):
+       peso_i              = predTot_i (ya viene multiplicado por qty)
+       costo_flete_i       = costo_courier_total × peso_i / Σ peso marcados
+                              (reparto por partes iguales si nadie tiene
+                              peso cargado todavía, para no dividir por 0)
+       margen_i            = costo_flete_i × margen_pct / 100
+       subtotal_i          = costo_flete_i + margen_i
+       descuento_i         = subtotal_i × descuento_pct_linea_i / 100
+       total_i             = subtotal_i − descuento_i
+
+     cabecera:
+       subtotal_items      = Σ total_i               (líneas marcadas)
+       descuento_global    = subtotal_items × descuento_pct_global / 100
+       subtotal            = subtotal_items − descuento_global
+       iva                 = subtotal × 19%
+       total                = subtotal + iva
+   ══════════════════════════════════════════════════════════════════════ */
+function lcRecalcular(){
+  if (!_LC) return;
+  _lcObservarCambiosDeMedidas();
+  _lcActualizarPesoTxt();
+
+  var costoCourierTotal = Math.max(parseInt($('lcCostoCourier').value, 10) || 0, 0);
+  var margenPct = Math.max(parseFloat($('lcMargenPct').value) || 0, 0);
+  var descuentoGlobalPct = Math.max(Math.min(parseFloat($('lcDescuentoPct').value) || 0, 100), 0);
+
+  var incluidos = _LC.items.filter(function(it){ return it.incluido; });
+  var pesoTotal = incluidos.reduce(function(acc, it){ return acc + (it.predTot || 0); }, 0);
+  var nIncluidos = incluidos.length;
+
+  var sumaFlete = 0, sumaMargen = 0, sumaDescLinea = 0, subtotalItems = 0;
+  _LC.items.forEach(function(it, i){
+    var celdaFlete = document.querySelector('#lcItemsBody tr[data-i="' + i + '"] .lc-cell-flete');
+    var celdaMargen = document.querySelector('#lcItemsBody tr[data-i="' + i + '"] .lc-cell-margen');
+    var celdaTotal = document.querySelector('#lcItemsBody tr[data-i="' + i + '"] .lc-cell-total');
+    if (!it.incluido){
+      if (celdaFlete) celdaFlete.innerHTML = '<span class="lc-money cero">excluida</span>';
+      if (celdaMargen) celdaMargen.innerHTML = '<span class="lc-money cero">—</span>';
+      if (celdaTotal) celdaTotal.innerHTML = '<span class="lc-money cero">—</span>';
+      return;
+    }
+    var propor = pesoTotal > 0 ? (it.predTot || 0) / pesoTotal : (nIncluidos > 0 ? 1 / nIncluidos : 0);
+    var costoFleteLinea = Math.round(costoCourierTotal * propor);
+    var margenLinea = Math.round(costoFleteLinea * margenPct / 100);
+    var subtotalLinea = costoFleteLinea + margenLinea;
+    var descLinea = Math.round(subtotalLinea * (it.descuentoPct || 0) / 100);
+    var totalLinea = subtotalLinea - descLinea;
+
+    sumaFlete += costoFleteLinea;
+    sumaMargen += margenLinea;
+    sumaDescLinea += descLinea;
+    subtotalItems += totalLinea;
+
+    if (celdaFlete) celdaFlete.textContent = clp(costoFleteLinea);
+    if (celdaMargen) celdaMargen.textContent = clp(margenLinea);
+    if (celdaTotal) celdaTotal.textContent = clp(totalLinea);
+  });
+
+  var descuentoGlobalMonto = Math.round(subtotalItems * descuentoGlobalPct / 100);
+  var subtotal = subtotalItems - descuentoGlobalMonto;
+  var ivaMonto = Math.round(subtotal * 0.19);
+  var total = subtotal + ivaMonto;
+
+  $('lcResFlete').textContent = clp(sumaFlete);
+  $('lcResMargen').textContent = clp(sumaMargen);
+  $('lcResDescLineaRow').style.display = sumaDescLinea > 0 ? '' : 'none';
+  $('lcResDescLinea').textContent = '−' + clp(sumaDescLinea);
+  $('lcResSubtotalItems').textContent = clp(subtotalItems);
+  $('lcResDescGlobalRow').style.display = descuentoGlobalMonto > 0 ? '' : 'none';
+  $('lcResDescGlobal').textContent = '−' + clp(descuentoGlobalMonto);
+  $('lcResIva').textContent = clp(ivaMonto);
+  $('lcResTotal').textContent = clp(total);
+  _lcActualizarUf(total);
+
+  _LC._ultimoCalculo = {
+    costoCourierTotal: costoCourierTotal, margenPct: margenPct, descuentoGlobalPct: descuentoGlobalPct,
+    sumaFlete: sumaFlete, sumaMargen: sumaMargen, sumaDescLinea: sumaDescLinea,
+    subtotalItems: subtotalItems, descuentoGlobalMonto: descuentoGlobalMonto,
+    subtotal: subtotal, ivaMonto: ivaMonto, total: total, pesoTotal: pesoTotal,
+  };
+}
+function _lcActualizarUf(totalClp){
+  var row = $('lcResUfRow'), val = $('lcResUf'), hint = $('lcResUfHint');
+  if (!row || !val) return;
+  if (!_LC || !_LC.ufValor || !(totalClp > 0)){ row.style.display = 'none'; return; }
+  var uf = totalClp / _LC.ufValor;
+  var ufStr = uf.toLocaleString('es-CL', {minimumFractionDigits:2, maximumFractionDigits:2});
+  val.textContent = '≈ ' + ufStr + ' UF';
+  if (hint) hint.title = 'Valor UF' + (_LC.ufFecha ? ' (' + _lcFechaCl(_LC.ufFecha) + ')' : '') + ': ' + clp(_LC.ufValor);
+  row.style.display = '';
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   GUARDAR — crea o actualiza (mismo criterio dual de Servicio Técnico).
+   ══════════════════════════════════════════════════════════════════════ */
+function _lcUrlConId(tpl, id){ return tpl.replace('{id}', id); }
+
+async function lcGuardar(){
+  if (!_LC) return;
+  if (!lcValidarCliente()){
+    toast('Completa los campos obligatorios marcados en rojo', 'warning');
+    var bad = document.querySelector('#lcBackdrop .lc-campo.invalido');
+    if (bad) bad.scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
+  var incluidos = _LC.items.filter(function(it){ return it.incluido; });
+  if (!incluidos.length){
+    toast('Marca al menos un producto en la Sección 6', 'warning');
+    return;
+  }
+  if (!(Math.max(parseInt($('lcCostoCourier').value, 10) || 0, 0) > 0)){
+    var seguir = await window.ilusConfirm({
+      title: 'Sin costo de flete',
+      message: 'Todavía no cotizaste (o no cargaste a mano) el costo del flete — la cotización quedaría en $0.',
+      sub: '¿Guardar igual como borrador?',
+      okLabel: 'Guardar igual', cancelLabel: 'Volver', danger: false,
+    });
+    if (!seguir) return;
+  }
+
+  lcRecalcular();
+  var calc = _LC._ultimoCalculo || {};
+  var btn = $('lcBtnGuardar');
+  var orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+  var payload = {
+    cliente_id: _LC.clienteId || null,
+    empresa: $('lcEmpresa').value.trim(),
+    rut: $('lcRut').value.trim(),
+    email: $('lcEmail').value.trim(),
+    telefono: $('lcTelefono').value.trim(),
+    direccion: $('lcDireccion').value.trim(),
+    direccion_lat: $('lcDireccionLat').value || null,
+    direccion_lng: $('lcDireccionLng').value || null,
+    direccion_place_id: $('lcDireccionPlaceId').value.trim(),
+    comuna: $('lcComuna').value.trim(),
+    region: $('lcRegion').value.trim(),
+    contacto_nombre: $('lcContactoNombre').value.trim(), contacto_cargo: $('lcContactoCargo').value.trim(),
+    contacto_tel: $('lcContactoTel').value.trim(), contacto_email: $('lcContactoEmail').value.trim(),
+    ejecutivo: $('lcEjecutivo').value,
+    valida_hasta: $('lcValidoHasta').value,
+    notas: $('lcNotas').value.trim(),
+    notas_internas: $('lcNotasInt').value.trim(),
+    terminos: $('lcTerminos').value.trim(),
+
+    courier_id: _LC.courier.id, courier_nombre: _LC.courier.nombre,
+    comuna_resuelta: _LC.courier.comunaResuelta || $('lcComuna').value.trim(),
+    peso_kg: calc.pesoTotal || 0, peso_vol_kg: null, peso_facturable_kg: calc.pesoTotal || 0,
+    costo_courier: Math.max(parseInt($('lcCostoCourier').value, 10) || 0, 0),
+
+    margen_pct: Math.max(parseFloat($('lcMargenPct').value) || 0, 0),
+    margen_monto: calc.sumaMargen || 0,
+    subtotal_items: calc.subtotalItems || 0,
+    descuento_pct: Math.max(Math.min(parseFloat($('lcDescuentoPct').value) || 0, 100), 0),
+    descuento_monto: calc.descuentoGlobalMonto || 0,
+    subtotal: calc.subtotal || 0,
+    iva_pct: 19, iva_monto: calc.ivaMonto || 0, total: calc.total || 0,
+
+    items: incluidos.map(function(it){
+      var propor = calc.pesoTotal > 0 ? (it.predTot || 0) / calc.pesoTotal : (incluidos.length > 0 ? 1 / incluidos.length : 0);
+      var costoFleteLinea = Math.round((calc.costoCourierTotal || 0) * propor);
+      var margenLinea = Math.round(costoFleteLinea * (calc.margenPct || 0) / 100);
+      var subtotalLinea = costoFleteLinea + margenLinea;
+      var descLinea = Math.round(subtotalLinea * (it.descuentoPct || 0) / 100);
+      return {
+        erp_tido: it.tido, erp_nudo: it.nudo, erp_kopr: it.sku, descripcion: it.nombre,
+        app_id: it.appId || null, cantidad: it.qty, total_bultos: it.bultos || 0,
+        peso_kg: it.predTot || 0, volumen_cm3: 0,
+        costo_courier_prorrateo: costoFleteLinea, margen_pct_aplicado: calc.margenPct || 0,
+        margen_monto: margenLinea, descuento_pct: it.descuentoPct || 0,
+        subtotal: subtotalLinea, total: subtotalLinea - descLinea,
+      };
+    }),
+  };
+
+  try{
+    var esEdicion = !!_LC.editId;
+    if (esEdicion && _LC.editEstado === 'approved'){
+      var okAprob = await window.ilusConfirm({
+        title: 'Cotización aprobada', message: 'Vas a editar una cotización que YA está aprobada.',
+        sub: 'Quedará registro en el historial de quién y qué cambió.',
+        okLabel: 'Editar igual', cancelLabel: 'Cancelar', danger: true,
+      });
+      if (!okAprob){ btn.disabled = false; btn.innerHTML = orig; return; }
+    }
+    var url = esEdicion ? _lcUrlConId(CFG.epActualizar, _LC.editId) : CFG.epCrear;
+    var r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    var d = await r.json();
+    if (!d.ok){
+      toast(d.error || 'No se pudo guardar la cotización', 'error');
+      btn.disabled = false; btn.innerHTML = orig;
+      return;
+    }
+    toast('✓ Cotización ' + (esEdicion ? 'actualizada' : 'creada') + (d.numero ? ' · ' + d.numero : ''), 'success');
+    lcCerrar();
+    setTimeout(function(){ location.reload(); }, 700);
+  }catch(e){
+    toast('Error de conexión al guardar', 'error');
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MODO EDICIÓN — precarga desde GET /transporte/cotizaciones/api/<id>
+   (endpoint YA real, reusado tal cual del modal "Enviar" de la lista).
+   ══════════════════════════════════════════════════════════════════════ */
+async function _lcCargarEdicion(cid){
+  try{
+    var r = await fetch(_lcUrlConId(CFG.epDetalle, cid));
+    var d = await r.json();
+    if (!d.ok || !d.cotizacion){
+      toast(d.error || 'No se pudo cargar la cotización', 'error');
+      lcCerrar();
+      return;
+    }
+    var c = d.cotizacion;
+    _LC.editEstado = c.estado || null;
+    $('lcNumeroSub').textContent = (c.numero || ('#' + cid)) + ' · ' + (c.estado || 'draft');
+    $('lcEmpresa').value = c.empresa || ''; $('lcRut').value = c.rut || '';
+    $('lcEmail').value = c.email || ''; $('lcTelefono').value = c.telefono || '';
+    $('lcDireccion').value = c.direccion || ''; $('lcRegion').value = c.region || ''; $('lcComuna').value = c.comuna || '';
+    $('lcDireccionLat').value = c.direccion_lat || ''; $('lcDireccionLng').value = c.direccion_lng || '';
+    $('lcDireccionPlaceId').value = c.direccion_place_id || '';
+    if (c.direccion_lat) $('lcDireccionHint').innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección guardada.';
+    $('lcContactoNombre').value = c.contacto_nombre || ''; $('lcContactoCargo').value = c.contacto_cargo || '';
+    $('lcContactoTel').value = c.contacto_tel || ''; $('lcContactoEmail').value = c.contacto_email || '';
+    if (c.contacto_nombre || c.contacto_email || c.contacto_tel) lcToggleContacto();
+    $('lcEjecutivo').value = c.ejecutivo || '';
+    if (c.valida_hasta) $('lcValidoHasta').value = String(c.valida_hasta).slice(0, 10);
+    $('lcMargenPct').value = c.margen_pct != null ? c.margen_pct : 30;
+    $('lcDescuentoPct').value = c.descuento_pct != null ? c.descuento_pct : 0;
+    $('lcNotas').value = c.notas || ''; $('lcNotasInt').value = c.notas_internas || ''; $('lcTerminos').value = c.terminos || '';
+    $('lcFleteValorNeto').value = 0;
+    $('lcCostoCourier').value = c.costo_courier || 0;
+    _LC.clienteId = c.cliente_id || null;
+    _LC.courier = {id: c.courier_id || null, nombre: c.courier_nombre || null, comunaResuelta: c.comuna_resuelta || null};
+    if (c.courier_nombre){
+      $('lcCourierElegido').style.display = 'flex';
+      $('lcCourierElegidoTxt').textContent = 'Courier elegido: ' + c.courier_nombre + ' · ' + clp(c.costo_courier || 0);
+    }
+
+    var items = Array.isArray(d.items) ? d.items : [];
+    _LC.items = items.map(function(it){
+      var qty = it.cantidad != null ? it.cantidad : 1;
+      var predTot = Number(it.peso_kg) || 0;
+      return _lcItemNuevo({
+        tido: it.erp_tido || null, nudo: it.erp_nudo || null, sku: it.erp_kopr || '', nombre: it.descripcion || '',
+        qty: qty, appId: it.app_id || null,
+        tieneFicha: !!it.app_id, predTot: predTot, predU: qty > 0 ? predTot / qty : 0,
+        bultos: Number(it.total_bultos) || 0,
+        incluido: true, descuentoPct: Number(it.descuento_pct) || 0,
+      });
+    });
+    lcRenderItems();
+    lcRecalcular();
+  }catch(e){
+    toast('Error de conexión al cargar la cotización', 'error');
+    lcCerrar();
+  }
+}
+
+/* ── API pública ── */
+window.lcAbrir = lcAbrir;
+window.lcCerrar = lcCerrar;
+window.lcToggleContacto = lcToggleContacto;
+window.lcAbrirDocumentoErp = lcAbrirDocumentoErp;
+window.lcElegirCliente = lcElegirCliente;
+window.lcItemToggle = lcItemToggle;
+window.lcCheckAllToggle = lcCheckAllToggle;
+window.lcCantidad = lcCantidad;
+window.lcDescLinea = lcDescLinea;
+window.lcQuitarItem = lcQuitarItem;
+window.lcCotizarFlete = lcCotizarFlete;
+window.lcElegirCourier = lcElegirCourier;
+window.lcRecalcular = lcRecalcular;
+window.lcGuardar = lcGuardar;
+
+})();
+</script>

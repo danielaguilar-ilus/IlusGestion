@@ -23,7 +23,8 @@ RUTAS QUE EXPONE (todas con el gate del Cubicador: login + g.permissions['cubica
     POST  /cubicador/api/producto/<pid>/medidas       -> guarda bultos CON RED DE SEGURIDAD
     POST  /cubicador/api/producto/por-sku/medidas     -> idem, resolviendo/creando por SKU
     POST  /cubicador/api/cotizar                      -> envoltorio del comparador de couriers
-    GET   /cubicador/api/packing-list/<tido>/<nudo>   -> packing list de exportacion (bulto a bulto)
+    GET   /cubicador/api/packing-list/<tido>/<nudo>   -> lineas del documento (sku/descripcion/cantidad),
+                                                          POR PALLET, sin campos de aduana
     GET   /cubicador/packing-list/<tido>/<nudo>       -> LA HOJA A4 imprimible (HTML, pestana nueva)
 
 POR QUE EXISTE EL ENDPOINT DE MEDIDAS SI YA HAY /transporte/api/inline-bulto
@@ -39,21 +40,41 @@ pero el Cubicador nuevo usa ESTE, que:
   - reporta explicitamente los bultos DESCARTADOS por incompletos/invalidos
     (hoy `tr_inline_bulto` los descarta en silencio).
 
-CAMPOS DE ADUANA DEL PACKING LIST — SUPUESTO DOCUMENTADO
---------------------------------------------------------
-El packing list de EXPORTACION necesita 4 datos que HOY NO EXISTEN en ninguna
-tabla de ILUS ni en el ERP Random consultado por el Cubicador:
+PACKING LIST POR PALLET — CORRECCION 2026-07-25 (spec real, no aduana)
+-----------------------------------------------------------------------
+La primera version de este modulo asumio una spec de ADUANA (bulto a bulto,
+con marca/pais de origen/partida arancelaria/peso neto). Esa spec era
+incorrecta: se verifico contra los 3 documentos reales de Daniel (PL_COLOMBIA.pdf
+y los 2 Excel "PACKING LIST CHILE...") y el packing list real de ILUS es POR
+PALLET, sin ninguno de esos 4 campos. Ver
+`SPEC_PACKING_LIST.md` (scratchpad de la investigacion) para el detalle linea
+por linea.
 
-    marca                 (marca comercial del producto)
-    pais_origen           (pais de fabricacion, para el certificado de origen)
-    peso_neto_kg          (peso sin embalaje; en `app_bultos.peso` guardamos el BRUTO)
-    partida_arancelaria   (codigo HS / SACH de 6-8 digitos)
+Lo que SI sale del sistema (una fila por LINEA del documento, no por bulto):
+    sku, descripcion, cantidad          -> ERP, via `_cubicador_fetch`
+Lo que NO existe en ninguna tabla y se arma 100% A MANO en bodega:
+    Nro. Pallet    (que SKU/linea va en que pallet)
+    Medidas        (largo x ancho x alto del PALLET armado, no del producto)
+    Kilo           (peso del pallet completo)
+    Tipo Embalaje  (Carton / Woden Box / Woden Box and Carton / otro)
+    Volumen (Mts3) -> se CALCULA solo (largo*ancho*alto/1.000.000), nunca se
+                      escribe a mano.
 
-Se devuelven VACIOS ("" o null) y marcados como editables a mano en el front
-(ver `campos_aduana` en la respuesta). No se inventan valores: un dato aduanero
-fabricado es un problema legal, no un detalle cosmetico. Cuando exista una tabla
-para persistirlos (p.ej. `cub_aduana_producto`), esta es la unica funcion que hay
-que tocar: `_packing_list_filas()`.
+DECISION DE PERSISTENCIA (documentada, no hay tabla nueva por ahora): la
+agrupacion de pallets se guarda en `localStorage` del navegador, en la MISMA
+clave que usan tanto `_tab_packing.html` (el "armador de pallets" dentro del
+Cubicador) como `packing_list.html` (la hoja imprimible) — asi lo armado en
+una pestana aparece ya cargado en la otra, siempre que sea el mismo navegador.
+Es el MISMO patron que esta pagina ya usaba para el resto de los campos
+manuales (ver `LS_KEY` en packing_list.html) — no se inventa un patron nuevo.
+Se eligio esto y no una tabla MySQL porque: (a) es un dato de una sola persona
+armando UN embarque puntual, no algo que varios usuarios deban ver a la vez;
+(b) evita otro `_ensure_*` con su propio riesgo de migracion en produccion
+para un dato que hoy nadie pidio que sobreviva entre computadores. Si mas
+adelante Daniel pide que la asignacion de pallets se comparta entre usuarios
+o alimente la hoja de "Cuadratura", ahi si conviene una tabla
+(`transport_pallets` / `transport_pallet_items`, con su `_ensure_*` idempotente
+— Regla #5). Por ahora: NO se agrega tabla nueva.
 
 Autor: agente Claude — 2026-07-24. Reglas aplicadas: #1 (sin alert/confirm en el
 front que consuma esto), #2 (paleta), #3 (mobile), #4 (SQL parametrizado, sin
@@ -754,22 +775,6 @@ def _sin_acentos(txt):
     except Exception:
         return str(txt or "").strip().upper()
 
-# Los 4 datos aduaneros que hoy NO viven en ninguna tabla. Ver docstring del
-# modulo. Se devuelven vacios + esta metadata para que el front los pinte como
-# celdas editables (y para que quede documentado en la propia respuesta).
-_CAMPOS_ADUANA = [
-    {"campo": "marca", "label": "Marca", "tipo": "texto", "valor_defecto": "",
-     "nota": "No existe en la BD de ILUS ni en el ERP: se completa a mano."},
-    {"campo": "pais_origen", "label": "Pais de origen", "tipo": "texto", "valor_defecto": "",
-     "nota": "Requerido por aduana / certificado de origen. Se completa a mano."},
-    {"campo": "peso_neto_kg", "label": "Peso neto (kg)", "tipo": "numero", "valor_defecto": None,
-     "nota": "app_bultos.peso es el peso BRUTO (con embalaje). El neto se completa a mano."},
-    {"campo": "partida_arancelaria", "label": "Partida arancelaria", "tipo": "texto",
-     "valor_defecto": "",
-     "nota": "Codigo HS/SACH. No existe en la BD: se completa a mano."},
-]
-
-
 def _es_linea_servicio(sku, descripcion, es_zz):
     """(bool, motivo). Conservador a proposito: ante la duda, la linea SE
     EMBALA (mejor una fila de mas que una caja olvidada en el embarque)."""
@@ -787,35 +792,18 @@ def _es_linea_servicio(sku, descripcion, es_zz):
 
 
 def _packing_list_filas(lineas):
-    """Convierte las lineas del documento en filas BULTO A BULTO.
+    """Convierte las lineas del documento en filas del Packing List.
 
-    Una linea de 3 unidades de un producto con 2 bultos genera 2 filas
-    (bulto 1 y bulto 2), cada una con `cajas`=3 — que es como se arma un
-    packing list real: se agrupa por tipo de bulto, no se repite 6 veces.
+    Contrato correcto (spec por PALLET, ver docstring del modulo): UNA fila
+    por LINEA del documento — sin explotar por bulto y sin campos de aduana.
+    Las medidas/volumen/kilo/tipo de embalaje YA NO se calculan aqui: son del
+    PALLET armado en bodega (varias lineas pueden compartir un pallet), un
+    dato 100% manual que el front arma y persiste (ver `_tab_packing.html` /
+    `packing_list.html`). Esta funcion NO toca `app_bultos`: esa tabla mide
+    CAJAS de producto, no pallets de embarque, y mezclar ambos conceptos fue
+    justamente el error de la spec de aduana anterior.
     """
-    mysql_fetchall = _h("mysql_fetchall")
-    BULTOS_TABLE = _tabla("BULTOS_TABLE", "app_bultos")
-
-    # Un solo round-trip para todos los productos del documento.
-    ids = []
-    for l in lineas:
-        pid = l.get("app_id")
-        if pid and pid not in ids:
-            ids.append(pid)
-
-    bultos_por_pid = {}
-    if ids:
-        placeholders = ",".join(["%s"] * len(ids))   # solo comas y %s: parametrizado
-        rows = mysql_fetchall(
-            f"SELECT product_id, bulto_num, largo, ancho, alto, peso "
-            f"FROM `{BULTOS_TABLE}` WHERE product_id IN ({placeholders}) "
-            f"ORDER BY product_id, bulto_num",
-            tuple(ids),
-        ) or []
-        for r in rows:
-            bultos_por_pid.setdefault(r["product_id"], []).append(r)
-
-    filas, excluidas, advertencias = [], [], []
+    filas, excluidas = [], []
     n_linea = 0
 
     for l in lineas:
@@ -833,64 +821,16 @@ def _packing_list_filas(lineas):
             continue
 
         n_linea += 1
-        pid = l.get("app_id")
-        bultos = bultos_por_pid.get(pid) or []
-
-        base = {
+        filas.append({
             "linea":       n_linea,
             "sku":         sku,
             "descripcion": desc or sku,
             "nombre_app":  (l.get("nombre_app") or "").strip(),
             "cantidad":    qty,
-            "producto_id": pid,
-        }
-        # Los 4 campos de aduana van VACIOS y editables (ver docstring).
-        aduana = {c["campo"]: c["valor_defecto"] for c in _CAMPOS_ADUANA}
+            "producto_id": l.get("app_id"),
+        })
 
-        if not bultos:
-            advertencias.append(
-                f"{sku}: sin medidas registradas — el packing list queda incompleto "
-                f"para esa linea. Cargalas desde la tabla del Cubicador."
-            )
-            fila = dict(base)
-            fila.update(aduana)
-            fila.update({
-                "bulto_num": None,
-                "bultos_por_unidad": 0,
-                "cajas": 0,
-                "largo_cm": None, "ancho_cm": None, "alto_cm": None,
-                "volumen_m3_unitario": None, "volumen_m3_total": None,
-                "peso_bruto_kg_unitario": None, "peso_bruto_kg_total": None,
-                "sin_medidas": True,
-            })
-            filas.append(fila)
-            continue
-
-        n_bultos = len(bultos)
-        for b in bultos:
-            largo, ancho, alto = _f(b["largo"]), _f(b["ancho"]), _f(b["alto"])
-            peso = _f(b["peso"])
-            vol_m3 = (largo * ancho * alto) / 1_000_000.0
-
-            fila = dict(base)
-            fila.update(aduana)
-            fila.update({
-                "bulto_num":              int(b["bulto_num"]),
-                "bultos_por_unidad":      n_bultos,
-                # Cuantas cajas de ESTE bulto salen: 1 por cada unidad vendida.
-                "cajas":                  qty,
-                "largo_cm":               _r(largo),
-                "ancho_cm":               _r(ancho),
-                "alto_cm":                _r(alto),
-                "volumen_m3_unitario":    _r(vol_m3, 6),
-                "volumen_m3_total":       _r(vol_m3 * qty, 6),
-                "peso_bruto_kg_unitario": _r(peso),
-                "peso_bruto_kg_total":    _r(peso * qty),
-                "sin_medidas":            False,
-            })
-            filas.append(fila)
-
-    return filas, excluidas, advertencias
+    return filas, excluidas
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1281,17 +1221,15 @@ def register_cubicador_plus(app, ctx=None):
     @app.route("/cubicador/api/packing-list/<string:tido>/<path:nudo>", methods=["GET"])
     @_cub_api
     def cubicador_plus_packing_list(tido, nudo):
-        """Packing list de EXPORTACION, bulto a bulto.
+        """Packing list POR PALLET: una fila por LINEA del documento.
 
-        Una fila por (linea del documento x bulto del producto), con numero de
-        bulto, SKU, descripcion, cantidad, largo/ancho/alto, volumen y peso.
-        Las lineas de servicio (ZZ ENVIO, descuentos, fletes) se excluyen — no
-        son cajas — pero se listan en `lineas_excluidas` con el motivo.
-
-        Los 4 campos de aduana (marca, pais_origen, peso_neto_kg,
-        partida_arancelaria) NO existen hoy en ninguna tabla de ILUS: se
-        devuelven vacios y el front los pinta editables. Ver `campos_aduana`
-        en la respuesta y el docstring del modulo.
+        Devuelve sku/descripcion/cantidad de cada linea, tal como salen del
+        ERP. Las lineas de servicio (ZZ ENVIO, descuentos, fletes) se
+        excluyen — no son cajas — pero se listan en `lineas_excluidas` con el
+        motivo. El Nro. de pallet, las medidas, el kilo y el tipo de embalaje
+        NO vienen en esta respuesta: son 100% manuales, se arman en
+        `_tab_packing.html` y se guardan en localStorage del navegador (ver
+        docstring del modulo — DECISION DE PERSISTENCIA).
         """
         tido = (tido or "").strip().upper()
         nudo = (nudo or "").strip()
@@ -1331,15 +1269,9 @@ def register_cubicador_plus(app, ctx=None):
                             "error": f"No se encontro {tido} N° {nudo} en el ERP.",
                             "error_codigo": "DOC_NO_ENCONTRADO"}), 404
 
-        filas, excluidas, advertencias = _packing_list_filas(lineas or [])
+        filas, excluidas = _packing_list_filas(lineas or [])
 
-        total_cajas = 0.0
-        peso_total = 0.0
-        vol_total = 0.0
-        for f in filas:
-            total_cajas += _f(f.get("cajas"))
-            peso_total += _f(f.get("peso_bruto_kg_total"))
-            vol_total += _f(f.get("volumen_m3_total"))
+        total_unidades = sum(_f(f.get("cantidad")) for f in filas)
 
         return jsonify({
             "ok": True,
@@ -1361,20 +1293,15 @@ def register_cubicador_plus(app, ctx=None):
             },
             "filas":            filas,
             "lineas_excluidas": excluidas,
-            "advertencias":     advertencias,
             "totales": {
-                # productos distintos a embalar (una fila por bulto, varias filas por SKU)
-                "productos":     len({f["sku"] for f in filas}) if filas else 0,
-                "filas":         len(filas),
-                "total_cajas":   _r(total_cajas, 2),
-                "peso_bruto_kg": _r(peso_total, 2),
-                "volumen_m3":    _r(vol_total, 6),
+                "productos":      len({f["sku"] for f in filas}) if filas else 0,
+                "filas":          len(filas),
+                "total_unidades": _r(total_unidades, 2),
             },
-            # Metadata de los campos que hay que completar a mano.
-            "campos_aduana": _CAMPOS_ADUANA,
-            "nota_aduana": ("Marca, pais de origen, peso neto y partida arancelaria NO "
-                            "estan registrados en ILUS ni en el ERP: complétalos a mano "
-                            "antes de enviar el packing list a la agencia de aduana."),
+            "nota_pallets": ("El Nro. de pallet, las medidas, el kilo y el tipo de embalaje "
+                             "no estan registrados en ningun sistema: se arman a mano por "
+                             "pallet (varias lineas pueden compartir un pallet) y se guardan "
+                             "en este navegador."),
         }), 200
 
     # ── Schema: se verifica SIEMPRE al registrar (Regla #5 —

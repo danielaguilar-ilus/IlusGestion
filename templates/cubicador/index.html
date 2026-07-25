@@ -51,6 +51,9 @@
     <button type="button" class="cubtab-btn" data-tab="packing">
       <i class="bi bi-box-seam"></i>Packing List
     </button>
+    <button type="button" class="cubtab-btn" data-tab="cuadratura">
+      <i class="bi bi-clipboard2-check"></i>Cuadratura
+    </button>
   </div>
 </div>
 
@@ -967,6 +970,10 @@
 
 <div id="cubtab-packing" class="cubtab-pane">
   {% include "cubicador/_tab_packing.html" %}
+</div>
+
+<div id="cubtab-cuadratura" class="cubtab-pane">
+  {% include "cubicador/_tab_cuadratura.html" %}
 </div>
 
 {# Requisito documentado en el propio _tab_cotizador.html (encabezado del

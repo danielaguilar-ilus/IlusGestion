@@ -1,0 +1,491 @@
+{#
+  ══════════════════════════════════════════════════════════════════════
+  CUBICADOR · PESTAÑA "CUADRATURA"  (fragmento)
+  ══════════════════════════════════════════════════════════════════════
+
+  Qué es: cuadratura factura (u otro documento del ERP) vs picking real,
+  por SKU. Elige un documento, trae las cantidades del ERP y permite a
+  bodega ingresar el conteo REAL por SKU — que hoy no existe guardado en
+  ningún lado del sistema (ver docstring de logistica_cuadratura.py).
+
+  CÓMO SE INCLUYE, dentro del panel (mismo patrón que _tab_packing.html):
+
+      <div class="cubtab-pane" id="cubtab-cuadratura">
+        {% raw %}{% include "cubicador/_tab_cuadratura.html" %}{% endraw %}
+      </div>
+
+  REQUISITOS DE INCLUSIÓN (mismos que _tab_packing.html):
+    1. El fragmento NO trae el <div class="cubtab-pane">: lo pone index.html.
+    2. Va FUERA de <form id="cubicadorForm"> y de cualquier otro <form>.
+       Sus inputs NO llevan name= para no viajar jamás en un POST ajeno.
+    3. No renombra ni toca NADA del Cubicador (REGLA #4.2): no usa ningún
+       id ni clase existente.
+
+  CONTEXTO QUE USA (todo opcional, todo con guarda `is defined`):
+    resultado.docs   lista [(tido, nudo), ...] de los documentos ya cubicados.
+    tipos_doc        lista [(codigo, nombre), ...] del selector del cubicador
+
+  ENDPOINTS (logistica_cuadratura.py):
+    GET  /cubicador/api/cuadratura/<tido>/<nudo>
+    POST /cubicador/api/cuadratura/<tido>/<nudo>/picking
+
+  REGLA #1: nada de alert()/confirm()/prompt() nativos — se usa ilusToast.
+#}
+
+{% set _cq_docs  = resultado.docs if (resultado is defined and resultado and resultado.docs) else [] %}
+{% set _cq_tipos = tipos_doc if tipos_doc is defined else [] %}
+
+<style>
+/* Prefijo .cq- para no pisar nada del Cubicador. El CSS de las pestañas
+   (.cubtab-*) lo inyecta static/cubicador_tabs.js: acá NO se declara. */
+.cq-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);
+  color:#fff;border-left:4px solid #dc2626;border-radius:10px;
+  padding:16px 18px;margin-bottom:14px;
+}
+.cq-hero h5{ margin:0 0 4px;font-weight:800;font-size:1.05rem; }
+.cq-hero p{ margin:0;color:#9ca3af;font-size:.85rem;line-height:1.45; }
+
+.cq-note{
+  background:#dbeafe;border:1px solid #bfdbfe;border-left:4px solid #3b82f6;
+  border-radius:10px;padding:12px 14px;margin-bottom:14px;
+  font-size:.83rem;color:#1e3a5f;line-height:1.5;
+}
+.cq-note b{ color:#1e40af; }
+
+.cq-wrap .form-select,
+.cq-wrap .form-control{ min-height:44px; }
+.cq-wrap .cq-btn{
+  min-height:44px;display:inline-flex;align-items:center;justify-content:center;
+  gap:8px;font-weight:700;padding:0 20px;border-radius:8px;border:none;cursor:pointer;
+}
+.cq-wrap .cq-btn-main{ background:#dc2626;color:#fff; }
+.cq-wrap .cq-btn-main:hover{ background:#b91c1c; }
+.cq-wrap .cq-btn-main:disabled{ background:#f3f4f6;color:#9ca3af;cursor:not-allowed; }
+.cq-wrap .cq-btn-sec{ background:#fff;color:#374151;border:1px solid #d1d5db; }
+.cq-wrap .cq-btn-sec:hover{ background:#f3f4f6; }
+
+.cq-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  background:#f3f4f6;border:1px solid #e5e7eb;border-radius:50px;
+  padding:4px 12px;font-size:.75rem;font-weight:600;color:#374151;
+}
+
+/* Semáforo */
+.cq-sema{
+  display:inline-flex;align-items:center;gap:8px;font-weight:800;font-size:.85rem;
+  padding:8px 14px;border-radius:10px;
+}
+.cq-sema.verde{ background:#dcfce7;color:#16a34a; }
+.cq-sema.amarillo{ background:#fff8e1;color:#b45309; }
+.cq-sema.rojo{ background:#fee2e2;color:#dc2626; }
+.cq-sema.gris{ background:#f3f4f6;color:#6b7280; }
+.cq-sema .dot{ width:10px;height:10px;border-radius:50%;background:currentColor; }
+
+.cq-table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+#cqTable{ width:100%;border-collapse:collapse;font-size:.85rem; }
+#cqTable th{
+  text-align:left;padding:8px 10px;background:#0a0a0a;color:#fff;
+  font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;
+  white-space:nowrap;position:sticky;top:0;
+}
+#cqTable td{ padding:8px 10px;border-bottom:1px solid #e5e7eb;vertical-align:middle; }
+#cqTable tr.cq-row-ok td{ background:#f0fdf4; }
+#cqTable tr.cq-row-diferencia td{ background:#fef2f2; }
+#cqTable tr.cq-row-sin_documento td{ background:#f9fafb;color:#6b7280; }
+.cq-badge{
+  display:inline-block;padding:2px 9px;border-radius:50px;font-size:.68rem;font-weight:700;
+}
+.cq-badge.ok{ background:#dcfce7;color:#16a34a; }
+.cq-badge.diferencia{ background:#fee2e2;color:#dc2626; }
+.cq-badge.pendiente{ background:#fff8e1;color:#b45309; }
+.cq-badge.sin_documento{ background:#f3f4f6;color:#6b7280; }
+.cq-pick-input{
+  width:90px;padding:6px 8px;border:1.5px solid #d1d5db;border-radius:6px;
+  font-size:16px;text-align:right;
+}
+.cq-pick-input:focus{ border-color:#dc2626;outline:none;box-shadow:0 0 0 3px rgba(220,38,38,.15); }
+.cq-pick-input.dirty{ border-color:#f59e0b;background:#fffbeb; }
+
+@media (max-width:575.98px){
+  .cq-wrap .cq-btn{ width:100%; }
+  .cq-wrap .form-select,
+  .cq-wrap .form-control{ font-size:16px; }
+}
+@media print{ .cq-wrap{ display:none !important; } }
+</style>
+
+<div class="cq-wrap" id="cqWrap">
+
+  <div class="cq-hero">
+    <h5><i class="bi bi-clipboard2-check me-2" style="color:#dc2626"></i>Cuadratura factura vs picking</h5>
+    <p>
+      Trae el documento del ERP y compara, SKU a SKU, la cantidad facturada contra
+      lo que bodega realmente picoteó. El conteo de picking se guarda — no se pierde
+      al recargar.
+    </p>
+  </div>
+
+  <div class="cq-note">
+    <b>Cómo se lee esto:</b> "Facturado" viene del documento del ERP tal cual lo
+    registra Random. "Picking" es un conteo <b>manual</b> que carga bodega acá mismo:
+    hoy no existe en ningún otro lugar del sistema un conteo real de lo picoteado
+    (el checklist de Retiros solo marca sí/no, no cuenta unidades). Random es
+    <b>solo lectura</b>: nada de lo que se hace acá modifica el ERP.
+  </div>
+
+  <div class="ilus-card mb-3">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-file-earmark-text me-2"></i>Documento a cuadrar</span>
+      <span class="small fw-normal" style="color:rgba(255,255,255,.65)">Normalmente la factura</span>
+    </div>
+    <div class="card-body p-3">
+
+      {% if _cq_docs %}
+      <div class="mb-3">
+        <label class="form-label fw-semibold small mb-1" for="cqDocSelect">
+          Documentos ya cubicados
+        </label>
+        <select class="form-select form-select-sm" id="cqDocSelect">
+          {% for d in _cq_docs %}
+          <option value="{{ d[0]|e }}|{{ d[1]|e }}">{{ d[0] }} N° {{ d[1] }}</option>
+          {% endfor %}
+          <option value="__manual__">✎ Otro documento…</option>
+        </select>
+      </div>
+      {% endif %}
+
+      <div class="row g-2 align-items-end" id="cqManualWrap"
+           {% if _cq_docs %}style="display:none"{% endif %}>
+        <div class="col-12 col-sm-5">
+          <label class="form-label fw-semibold small mb-1" for="cqTido">Tipo de documento</label>
+          <select class="form-select form-select-sm" id="cqTido">
+            {% if _cq_tipos %}
+              {% for cod, nom in _cq_tipos %}
+              <option value="{{ cod }}" {% if cod == 'FCV' %}selected{% endif %}>{{ nom }} ({{ cod }})</option>
+              {% endfor %}
+            {% else %}
+              <option value="FCV" selected>Factura (FCV)</option>
+              <option value="BLV">Boleta (BLV)</option>
+              <option value="GDV">Guía de Despacho (GDV)</option>
+            {% endif %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-5">
+          <label class="form-label fw-semibold small mb-1" for="cqNudo">N° de documento</label>
+          <input type="text" class="form-control form-control-sm font-monospace"
+                 id="cqNudo" placeholder="Ej: 8598"
+                 inputmode="numeric" autocomplete="off" autocorrect="off">
+        </div>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
+        <span class="cq-chip" id="cqChipDoc"><i class="bi bi-upc-scan"></i><span>—</span></span>
+        <div class="ms-sm-auto">
+          <button type="button" class="cq-btn cq-btn-main" id="cqLoadBtn" disabled>
+            <i class="bi bi-search"></i>Cargar cuadratura
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="cqResultCard" style="display:none">
+    <div class="ilus-card mb-3">
+      <div class="ilus-card-header d-flex flex-wrap align-items-center gap-2">
+        <span><i class="bi bi-list-check me-2"></i><span id="cqResultTitle">Resultado</span></span>
+        <span id="cqSemaforo" class="cq-sema gris ms-sm-auto"><span class="dot"></span><span>—</span></span>
+      </div>
+      <div class="card-body p-3">
+
+        <div id="cqLoading" class="text-center py-4" style="display:none">
+          <div class="spinner-border text-danger" role="status"></div>
+          <div class="small text-muted mt-2">Consultando el ERP…</div>
+        </div>
+
+        <div id="cqError" class="alert alert-danger small" style="display:none"></div>
+
+        <div id="cqContent" style="display:none">
+          <div class="cq-table-wrap">
+            <table id="cqTable">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Descripción</th>
+                  <th class="text-end">Facturado</th>
+                  <th class="text-end">Picking</th>
+                  <th class="text-end">Diferencia</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="cqTbody"></tbody>
+            </table>
+          </div>
+
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
+            <div class="small text-muted" id="cqResumenTxt"></div>
+            <button type="button" class="cq-btn cq-btn-main" id="cqSaveBtn" disabled>
+              <i class="bi bi-save"></i>Guardar conteo de picking
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   Pestaña Cuadratura — carga + edición del conteo de picking.
+   Aislado en un IIFE: no toca ni una variable del cubicador.
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+  var wrap = document.getElementById('cqWrap');
+  if (!wrap) return;
+
+  var API_BASE = '/cubicador/api/cuadratura';
+
+  var selDoc   = document.getElementById('cqDocSelect');
+  var manual   = document.getElementById('cqManualWrap');
+  var selTido  = document.getElementById('cqTido');
+  var inpNudo  = document.getElementById('cqNudo');
+  var chip     = document.getElementById('cqChipDoc');
+  var loadBtn  = document.getElementById('cqLoadBtn');
+  var saveBtn  = document.getElementById('cqSaveBtn');
+
+  var resultCard = document.getElementById('cqResultCard');
+  var resultTitle = document.getElementById('cqResultTitle');
+  var elLoading = document.getElementById('cqLoading');
+  var elError   = document.getElementById('cqError');
+  var elContent = document.getElementById('cqContent');
+  var tbody     = document.getElementById('cqTbody');
+  var semEl     = document.getElementById('cqSemaforo');
+  var resumenEl = document.getElementById('cqResumenTxt');
+
+  var actualDoc = null;   // {tido, nudo}
+  var dirty = {};         // sku -> cantidad ingresada (pendiente de guardar)
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
+  function num(v){
+    if (v == null || v === '') return null;
+    var n = Number(String(v).replace(/\s/g,'').replace(',', '.'));
+    return isFinite(n) ? n : null;
+  }
+  function fnum(n, dec){
+    if (n == null) return '—';
+    dec = (dec == null) ? 2 : dec;
+    return Number(n).toLocaleString('es-CL', {minimumFractionDigits: dec, maximumFractionDigits: dec});
+  }
+  function toast(msg, type){
+    if (typeof window.ilusToast === 'function') { window.ilusToast(msg, {type: type || 'info'}); return; }
+    try { console.log('[cuadratura]', msg); } catch(e) {}
+  }
+
+  function esManual(){ return !selDoc || selDoc.value === '__manual__'; }
+
+  function docSeleccionado(){
+    if (!esManual()) {
+      var partes = String(selDoc.value || '').split('|');
+      return { tido: (partes[0]||'').trim().toUpperCase(), nudo: (partes[1]||'').trim() };
+    }
+    return {
+      tido: (selTido && selTido.value ? selTido.value : '').trim().toUpperCase(),
+      nudo: (inpNudo && inpNudo.value ? inpNudo.value : '').trim()
+    };
+  }
+
+  function refrescarSelector(){
+    var d = docSeleccionado();
+    var ok = !!(d.tido && d.nudo);
+    if (chip) chip.querySelector('span').textContent = ok ? (d.tido + ' N° ' + d.nudo) : 'Elige o escribe un documento';
+    if (loadBtn) loadBtn.disabled = !ok;
+    if (manual) manual.style.display = esManual() ? '' : 'none';
+  }
+
+  if (selDoc)  selDoc.addEventListener('change', refrescarSelector);
+  if (selTido) selTido.addEventListener('change', refrescarSelector);
+  if (inpNudo) {
+    inpNudo.addEventListener('input', refrescarSelector);
+    inpNudo.addEventListener('keydown', function(ev){
+      if (ev.key === 'Enter') { ev.preventDefault(); if (!loadBtn.disabled) cargar(); }
+    });
+  }
+
+  function fetchJson(url, opts){
+    return fetch(url, opts || {}).then(function(res){
+      return res.text().then(function(txt){
+        var data = null;
+        try { data = txt ? JSON.parse(txt) : null; } catch(e) { data = null; }
+        return { status: res.status, ok: res.ok, data: data };
+      });
+    });
+  }
+
+  function urlDoc(d, sufijo){
+    var base = API_BASE + '/' + encodeURIComponent(d.tido) + '/' + encodeURIComponent(d.nudo);
+    return sufijo ? (base + '/' + sufijo) : base;
+  }
+
+  function setSemaforo(nombre, texto){
+    if (!semEl) return;
+    semEl.className = 'cq-sema ms-sm-auto ' + (nombre || 'gris');
+    var span = semEl.querySelector('span:last-child');
+    if (span) span.textContent = texto || '—';
+  }
+
+  var ESTADO_TXT = {
+    ok: 'Cuadra', diferencia: 'Diferencia', pendiente: 'Falta contar',
+    sin_documento: 'Sin factura',
+  };
+
+  function renderFilas(data){
+    var filas = (data.filas || []).concat(data.huerfanos || []);
+    if (!filas.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">'
+        + 'Este documento no tiene líneas de producto (solo servicios/flete).</td></tr>';
+      return;
+    }
+    tbody.innerHTML = filas.map(function(f){
+      var editable = f.estado !== 'sin_documento';
+      var valorInput = (f.cantidad_picking != null) ? f.cantidad_picking : '';
+      return [
+        '<tr class="cq-row-' + f.estado + '" data-sku="' + esc(f.sku) + '">',
+        '  <td class="font-monospace">' + esc(f.sku) + '</td>',
+        '  <td>' + esc(f.descripcion) + '</td>',
+        '  <td class="text-end">' + (f.cantidad_facturada != null ? fnum(f.cantidad_facturada) : '<span class="text-muted">—</span>') + '</td>',
+        '  <td class="text-end">' + (editable
+              ? '<input type="number" inputmode="decimal" step="0.01" min="0" class="cq-pick-input" data-sku="' + esc(f.sku) + '" value="' + esc(valorInput) + '">'
+              : fnum(f.cantidad_picking)) + '</td>',
+        '  <td class="text-end">' + (f.diferencia != null
+              ? '<span style="color:' + (Math.abs(f.diferencia) < 0.001 ? '#16a34a' : '#dc2626') + ';font-weight:700">' + fnum(f.diferencia) + '</span>'
+              : '<span class="text-muted">—</span>') + '</td>',
+        '  <td><span class="cq-badge ' + f.estado + '">' + (ESTADO_TXT[f.estado] || f.estado) + '</span></td>',
+        '</tr>'
+      ].join('');
+    }).join('');
+  }
+
+  function renderResumen(data){
+    var r = data.resumen || {};
+    var partes = [
+      r.total_skus + ' SKU(s)',
+      r.ok + ' cuadran',
+      r.pendientes + ' sin contar',
+      r.con_diferencia + ' con diferencia',
+    ];
+    if (r.huerfanos) partes.push(r.huerfanos + ' picking sin factura');
+    resumenEl.textContent = partes.join(' · ');
+  }
+
+  function mostrarResultado(data){
+    resultCard.style.display = '';
+    resultTitle.textContent = (data.documento && (data.documento.tido + ' N° ' + (data.documento.nudo_display || data.documento.nudo))) || 'Resultado';
+    elLoading.style.display = 'none';
+    elError.style.display = 'none';
+    elContent.style.display = '';
+    var semTxt = { verde: 'Cuadra todo', amarillo: 'Falta contar', rojo: 'Hay diferencias', gris: 'Sin datos' };
+    setSemaforo(data.semaforo, semTxt[data.semaforo] || '—');
+    renderFilas(data);
+    renderResumen(data);
+    dirty = {};
+    if (saveBtn) saveBtn.disabled = true;
+  }
+
+  function mostrarError(msg){
+    resultCard.style.display = '';
+    elLoading.style.display = 'none';
+    elContent.style.display = 'none';
+    elError.style.display = '';
+    elError.textContent = msg;
+  }
+
+  function cargar(){
+    var d = docSeleccionado();
+    if (!d.tido || !d.nudo) {
+      toast('Indica el tipo y el número de documento.', 'warning');
+      return;
+    }
+    actualDoc = d;
+    resultCard.style.display = '';
+    elLoading.style.display = '';
+    elError.style.display = 'none';
+    elContent.style.display = 'none';
+
+    fetchJson(urlDoc(d), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+      .then(function(r){
+        if (!r.data) { mostrarError('El servidor no respondió datos. Recarga la página e intenta de nuevo.'); return; }
+        if (!r.ok || r.data.ok !== true) {
+          mostrarError(r.data.error || ('No se pudo cargar la cuadratura (HTTP ' + r.status + ').'));
+          return;
+        }
+        mostrarResultado(r.data);
+      })
+      .catch(function(){ mostrarError('Error de red al consultar el documento.'); });
+  }
+
+  if (loadBtn) loadBtn.addEventListener('click', cargar);
+
+  // Edición en vivo de los inputs de picking
+  tbody && tbody.addEventListener('input', function(ev){
+    var inp = ev.target;
+    if (!inp || !inp.classList || !inp.classList.contains('cq-pick-input')) return;
+    var sku = inp.getAttribute('data-sku');
+    var v = num(inp.value);
+    if (v == null || v < 0) {
+      inp.classList.remove('dirty');
+      delete dirty[sku];
+    } else {
+      inp.classList.add('dirty');
+      dirty[sku] = v;
+    }
+    if (saveBtn) saveBtn.disabled = !Object.keys(dirty).length;
+  });
+
+  function guardarPicking(){
+    if (!actualDoc) return;
+    var skus = Object.keys(dirty);
+    if (!skus.length) { toast('No hay conteos nuevos para guardar.', 'info'); return; }
+
+    var items = skus.map(function(sku){
+      var row = tbody.querySelector('tr[data-sku="' + sku.replace(/"/g, '') + '"]');
+      var desc = row ? (row.children[1] ? row.children[1].textContent : '') : '';
+      return { sku: sku, cantidad_picking: dirty[sku], descripcion: desc };
+    });
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando…';
+
+    fetchJson(urlDoc(actualDoc, 'picking'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ items: items }),
+    }).then(function(r){
+      saveBtn.innerHTML = '<i class="bi bi-save"></i>Guardar conteo de picking';
+      if (!r.data) { toast('No se pudo guardar: el servidor no respondió datos.', 'error'); saveBtn.disabled = false; return; }
+      if (!r.ok || r.data.ok !== true) {
+        toast('No se pudo guardar: ' + (r.data.error || ('HTTP ' + r.status)), 'error');
+        saveBtn.disabled = false;
+        return;
+      }
+      toast('✓ Conteo de picking guardado (' + (r.data.items_guardados || items.length) + ' SKU(s))', 'success');
+      mostrarResultado(r.data);
+    }).catch(function(){
+      toast('Error de red al guardar. Intenta de nuevo.', 'error');
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="bi bi-save"></i>Guardar conteo de picking';
+    });
+  }
+
+  if (saveBtn) saveBtn.addEventListener('click', guardarPicking);
+
+  refrescarSelector();
+})();
+</script>

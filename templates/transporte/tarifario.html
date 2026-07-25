@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+{% block title %}Tarifario de Couriers — ILUS Transporte{% endblock %}
+
+{% block content %}
+<style>
+.tf-wrap{ max-width:1180px; margin:0 auto; padding:1.25rem 1rem 3rem; }
+.tf-head{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);
+  border-radius:16px; padding:1.5rem 1.5rem; margin-bottom:1.25rem;
+  color:#fff; position:relative; overflow:hidden;
+}
+.tf-head::after{
+  content:""; position:absolute; top:-40%; right:-8%; width:220px; height:220px;
+  background:radial-gradient(circle,rgba(220,38,38,.35) 0%,rgba(220,38,38,0) 70%);
+}
+.tf-head h1{ font-size:1.35rem; font-weight:800; margin:0 0 .3rem; letter-spacing:-.01px; }
+.tf-head p{ margin:0; color:#c9c9c9; font-size:.86rem; max-width:60ch; }
+
+.tf-card{
+  background:#fff; border:1px solid #e8e8e8; border-radius:14px;
+  overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03); margin-bottom:1rem;
+}
+.tf-card-head{
+  display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+  padding:1rem 1.15rem; border-bottom:1px solid #f0f0f0; flex-wrap:wrap;
+}
+.tf-name{ font-weight:800; font-size:1rem; color:#0a0a0a; }
+.tf-badge{
+  font-size:.66rem; font-weight:700; padding:.22rem .6rem; border-radius:20px;
+  letter-spacing:.2px; white-space:nowrap;
+}
+.tf-badge-db{ background:#dcfce7; color:#166534; }
+.tf-badge-file{ background:#fff8e1; color:#92400e; }
+.tf-badge-none{ background:#f3f4f6; color:#6b7280; }
+
+.tf-card-body{ padding:.9rem 1.15rem 1.05rem; }
+.tf-meta{ display:flex; flex-wrap:wrap; gap:1.4rem; margin-bottom:.85rem; }
+.tf-meta-item{ min-width:110px; }
+.tf-meta-label{ font-size:.66rem; text-transform:uppercase; letter-spacing:.4px; color:#9ca3af; font-weight:700; }
+.tf-meta-val{ font-size:.92rem; font-weight:700; color:#0a0a0a; }
+
+.tf-actions{ display:flex; flex-wrap:wrap; gap:.5rem; }
+.tf-btn{
+  border:none; border-radius:9px; font-weight:700; font-size:.82rem;
+  padding:.5rem .9rem; min-height:38px; cursor:pointer;
+  display:inline-flex; align-items:center; gap:.4rem;
+  transition:transform .1s, box-shadow .15s;
+}
+.tf-btn:active{ transform:scale(.97); }
+.tf-btn-primary{ background:#dc2626; color:#fff; }
+.tf-btn-primary:hover{ background:#b91c1c; }
+.tf-btn-dark{ background:#0a0a0a; color:#fff; }
+.tf-btn-dark:hover{ background:#1a1a1a; }
+.tf-btn-ghost{ background:#f3f4f6; color:#374151; }
+.tf-btn-ghost:hover{ background:#e5e7eb; }
+.tf-btn[disabled]{ opacity:.5; cursor:not-allowed; }
+
+.tf-loading, .tf-empty{ text-align:center; padding:2.5rem 1rem; color:#9ca3af; font-size:.9rem; }
+
+/* Modal propio (sin Bootstrap): historial de versiones */
+.tf-modal-overlay{
+  position:fixed; inset:0; background:rgba(10,10,10,.55); z-index:2000;
+  display:none; align-items:center; justify-content:center; padding:1rem;
+}
+.tf-modal-overlay.tf-open{ display:flex; }
+.tf-modal{
+  background:#fff; border-radius:14px; max-width:640px; width:100%;
+  max-height:82vh; overflow:auto; padding:1.25rem 1.35rem 1.4rem;
+}
+.tf-modal-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:.9rem; }
+.tf-modal-head h3{ margin:0; font-size:1.05rem; font-weight:800; color:#0a0a0a; }
+.tf-modal-close{
+  border:none; background:#f3f4f6; border-radius:8px; width:32px; height:32px;
+  font-size:1rem; cursor:pointer; color:#374151;
+}
+.tf-hist-row{
+  display:flex; justify-content:space-between; align-items:center; gap:.75rem;
+  padding:.65rem .1rem; border-bottom:1px solid #f3f4f6; font-size:.84rem;
+}
+.tf-hist-row:last-child{ border-bottom:none; }
+.tf-hist-meta{ color:#6b7280; font-size:.76rem; }
+
+@media (max-width: 640px){
+  .tf-card-head{ flex-direction:column; align-items:flex-start; }
+  .tf-actions{ width:100%; }
+  .tf-actions .tf-btn{ flex:1 1 auto; justify-content:center; }
+}
+</style>
+
+<div class="tf-wrap">
+  <div class="tf-head">
+    <h1>Tarifario de Couriers</h1>
+    <p>Sube el Excel corregido para actualizar una tarifa sin depender de un deploy, o descarga el
+       tarifario vigente para editarlo offline. Cada subida reemplaza la tarifa activa, pero la
+       versión anterior queda guardada — nunca se pierde sin poder deshacerla.</p>
+  </div>
+
+  <div id="tfLista" class="tf-loading">Cargando tarifario…</div>
+</div>
+
+<!-- Modal historial -->
+<div class="tf-modal-overlay" id="tfModalOverlay">
+  <div class="tf-modal">
+    <div class="tf-modal-head">
+      <h3 id="tfModalTitle">Historial</h3>
+      <button type="button" class="tf-modal-close" onclick="tfCerrarModal()">✕</button>
+    </div>
+    <div id="tfModalBody"></div>
+  </div>
+</div>
+
+<input type="file" id="tfFileInput" accept=".xlsx,.xlsm,.csv" style="display:none">
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  "use strict";
+
+  var LISTA_URL = "{{ url_for('logistica_tarifario_lista') }}";
+  var slugSubiendo = null;
+
+  function fmtFecha(iso){
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    var pad = function(n){ return String(n).padStart(2,'0'); };
+    return pad(d.getDate())+"/"+pad(d.getMonth()+1)+"/"+d.getFullYear()+" "+pad(d.getHours())+":"+pad(d.getMinutes());
+  }
+
+  function badgeInfo(fuente){
+    if (fuente === "base_de_datos") return {cls:"tf-badge-db", label:"Editado desde admin"};
+    if (fuente === "archivo_local") return {cls:"tf-badge-file", label:"Archivo del repo"};
+    return {cls:"tf-badge-none", label:"Sin tarifario"};
+  }
+
+  function urlSubir(slug){ return "/transporte/tarifario/api/" + slug + "/subir"; }
+  function urlDescargar(slug){ return "/transporte/tarifario/api/" + slug + "/descargar"; }
+  function urlSembrar(slug){ return "/transporte/tarifario/api/" + slug + "/sembrar-archivo-local"; }
+  function urlHistorial(slug){ return "/transporte/tarifario/api/" + slug + "/historial"; }
+  function urlRestaurar(slug, id){ return "/transporte/tarifario/api/" + slug + "/restaurar/" + id; }
+
+  function render(couriers){
+    var cont = document.getElementById("tfLista");
+    if (!couriers || !couriers.length){
+      cont.innerHTML = '<div class="tf-empty">No hay couriers configurados.</div>';
+      return;
+    }
+    var html = "";
+    couriers.forEach(function(c){
+      var b = badgeInfo(c.fuente);
+      html += '<div class="tf-card" data-slug="'+c.slug+'">'
+        + '<div class="tf-card-head">'
+        +   '<span class="tf-name">'+c.nombre+'</span>'
+        +   '<span class="tf-badge '+b.cls+'">'+b.label+'</span>'
+        + '</div>'
+        + '<div class="tf-card-body">'
+        +   '<div class="tf-meta">'
+        +     '<div class="tf-meta-item"><div class="tf-meta-label">Comunas</div><div class="tf-meta-val">'+(c.comunas||0)+'</div></div>'
+        +     '<div class="tf-meta-item"><div class="tf-meta-label">Versión</div><div class="tf-meta-val">'+(c.version||'—')+'</div></div>'
+        +     '<div class="tf-meta-item"><div class="tf-meta-label">Actualizado por</div><div class="tf-meta-val">'+(c.actualizado_por||'—')+'</div></div>'
+        +     '<div class="tf-meta-item"><div class="tf-meta-label">Última actualización</div><div class="tf-meta-val">'+fmtFecha(c.actualizado_en)+'</div></div>'
+        +   '</div>'
+        +   '<div class="tf-actions">'
+        +     '<button type="button" class="tf-btn tf-btn-ghost" data-accion="descargar" data-slug="'+c.slug+'">⬇ Descargar Excel</button>'
+        +     '<button type="button" class="tf-btn tf-btn-primary" data-accion="subir" data-slug="'+c.slug+'">⬆ Subir Excel/CSV</button>'
+        +     (c.fuente === "archivo_local"
+                ? '<button type="button" class="tf-btn tf-btn-dark" data-accion="sembrar" data-slug="'+c.slug+'">Migrar a base de datos</button>'
+                : '')
+        +     (c.fuente === "base_de_datos"
+                ? '<button type="button" class="tf-btn tf-btn-ghost" data-accion="historial" data-slug="'+c.slug+'">Historial</button>'
+                : '')
+        +   '</div>'
+        + '</div>'
+        + '</div>';
+    });
+    cont.innerHTML = html;
+  }
+
+  function cargar(){
+    fetch(LISTA_URL, {headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (!data.ok){
+          document.getElementById("tfLista").innerHTML =
+            '<div class="tf-empty">'+(data.error || 'No se pudo cargar el tarifario.')+'</div>';
+          return;
+        }
+        render(data.couriers);
+      })
+      .catch(function(){
+        document.getElementById("tfLista").innerHTML =
+          '<div class="tf-empty">No se pudo conectar con el servidor. Intenta recargar la página.</div>';
+      });
+  }
+
+  function tfCerrarModal(){
+    document.getElementById("tfModalOverlay").classList.remove("tf-open");
+  }
+  window.tfCerrarModal = tfCerrarModal;
+
+  function abrirHistorial(slug, nombre){
+    document.getElementById("tfModalTitle").textContent = "Historial — " + nombre;
+    document.getElementById("tfModalBody").innerHTML = '<div class="tf-empty">Cargando…</div>';
+    document.getElementById("tfModalOverlay").classList.add("tf-open");
+
+    fetch(urlHistorial(slug), {headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var body = document.getElementById("tfModalBody");
+        if (!data.ok){
+          body.innerHTML = '<div class="tf-empty">'+(data.error||'No se pudo cargar el historial.')+'</div>';
+          return;
+        }
+        if (!data.historial || !data.historial.length){
+          body.innerHTML = '<div class="tf-empty">Todavía no hay versiones anteriores respaldadas.</div>';
+          return;
+        }
+        var html = "";
+        data.historial.forEach(function(h){
+          html += '<div class="tf-hist-row">'
+            + '<div>'
+            +   '<strong>Versión '+h.version+'</strong> · '+(h.filas||0)+' comunas'
+            +   '<div class="tf-hist-meta">'+(h.actualizado_por||'—')+' · reemplazada el '+fmtFecha(h.reemplazado_en)+'</div>'
+            + '</div>'
+            + '<button type="button" class="tf-btn tf-btn-dark" data-restaurar-slug="'+slug+'" data-restaurar-id="'+h.id+'">Restaurar</button>'
+            + '</div>';
+        });
+        body.innerHTML = html;
+      })
+      .catch(function(){
+        document.getElementById("tfModalBody").innerHTML =
+          '<div class="tf-empty">No se pudo conectar con el servidor.</div>';
+      });
+  }
+
+  function subirArchivo(slug, file){
+    var fd = new FormData();
+    fd.append("file", file);
+    ilusToast("Subiendo tarifario…", {type:"info"});
+
+    fetch(urlSubir(slug), {method:"POST", body: fd})
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); })
+      .then(function(res){
+        var data = res.data;
+        if (!data.ok){
+          return ilusAlert({
+            title: "No se pudo subir el tarifario",
+            message: data.error || "Revisa el archivo e intenta nuevamente.",
+            type: "error",
+          });
+        }
+        ilusToast("✓ " + data.mensaje, {type:"success"});
+        cargar();
+      })
+      .catch(function(){
+        ilusAlert({title:"Error de conexión", message:"No se pudo subir el archivo. Intenta nuevamente.", type:"error"});
+      });
+  }
+
+  document.addEventListener("click", function(ev){
+    var btn = ev.target.closest("[data-accion]");
+    if (btn){
+      var accion = btn.getAttribute("data-accion");
+      var slug = btn.getAttribute("data-slug");
+      var card = btn.closest(".tf-card");
+      var nombre = card ? card.querySelector(".tf-name").textContent : slug;
+
+      if (accion === "descargar"){
+        window.location.href = urlDescargar(slug);
+        return;
+      }
+      if (accion === "subir"){
+        slugSubiendo = slug;
+        document.getElementById("tfFileInput").click();
+        return;
+      }
+      if (accion === "sembrar"){
+        ilusConfirm({
+          title: "Migrar a base de datos",
+          message: "Se copiará el tarifario actual de " + nombre + " (archivo del repo) a la " +
+                    "base de datos, sin cambiar ningún precio. Desde ahí ya se podrá editar sin deploy.",
+          okLabel: "Migrar", cancelLabel: "Cancelar",
+        }).then(function(ok){
+          if (!ok) return;
+          fetch(urlSembrar(slug), {method:"POST"})
+            .then(function(r){ return r.json(); })
+            .then(function(data){
+              if (!data.ok){
+                return ilusAlert({title:"No se pudo migrar", message: data.error || "Intenta nuevamente.", type:"error"});
+              }
+              ilusToast("✓ " + data.mensaje, {type:"success"});
+              cargar();
+            })
+            .catch(function(){
+              ilusAlert({title:"Error de conexión", message:"Intenta nuevamente.", type:"error"});
+            });
+        });
+        return;
+      }
+      if (accion === "historial"){
+        abrirHistorial(slug, nombre);
+        return;
+      }
+    }
+
+    var rbtn = ev.target.closest("[data-restaurar-slug]");
+    if (rbtn){
+      var rslug = rbtn.getAttribute("data-restaurar-slug");
+      var rid = rbtn.getAttribute("data-restaurar-id");
+      ilusConfirm({
+        title: "Restaurar versión anterior",
+        message: "Esto reemplazará el tarifario vigente por esta versión anterior. La versión " +
+                  "actual también quedará respaldada, así que se puede deshacer de nuevo si hace falta.",
+        okLabel: "Restaurar", cancelLabel: "Cancelar", danger: true,
+      }).then(function(ok){
+        if (!ok) return;
+        fetch(urlRestaurar(rslug, rid), {method:"POST"})
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            if (!data.ok){
+              return ilusAlert({title:"No se pudo restaurar", message: data.error || "Intenta nuevamente.", type:"error"});
+            }
+            ilusToast("✓ " + data.mensaje, {type:"success"});
+            tfCerrarModal();
+            cargar();
+          })
+          .catch(function(){
+            ilusAlert({title:"Error de conexión", message:"Intenta nuevamente.", type:"error"});
+          });
+      });
+    }
+  });
+
+  document.getElementById("tfFileInput").addEventListener("change", function(ev){
+    var file = ev.target.files && ev.target.files[0];
+    ev.target.value = "";
+    if (!file || !slugSubiendo) return;
+    subirArchivo(slugSubiendo, file);
+    slugSubiendo = null;
+  });
+
+  document.getElementById("tfModalOverlay").addEventListener("click", function(ev){
+    if (ev.target === this) tfCerrarModal();
+  });
+
+  cargar();
+})();
+</script>
+{% endblock %}

@@ -135,18 +135,46 @@ def _strip(s):
 
 def _load(slug):
     if slug not in _CACHE:
-        path = os.path.join(_BASE, slug + ".json")
-        if not os.path.exists(path):
-            _CACHE[slug] = None
-        else:
+        d = None
+
+        # 2026-07-25 (logistica_tarifario.py): primero se intenta MySQL, para
+        # poder editar el tarifario desde la UI sin deploy — Cloud Run tiene
+        # disco efímero por instancia, así que un archivo escrito en runtime
+        # se perdería en el próximo deploy/escalado. Si no hay fila (courier
+        # aún no editado desde el admin) o la DB no responde, se cae al
+        # archivo local del repo como red de seguridad — NUNCA rompe el motor.
+        # El resto de este archivo (TIERS, cotizar(), la regla comercial) no
+        # cambia: solo cambia de dónde vienen los bytes crudos del JSON.
+        try:
+            import sys as _sys
+            _appmod = _sys.modules.get("app") or _sys.modules.get("__main__")
+            _mysql_fetchone = getattr(_appmod, "mysql_fetchone", None) if _appmod else None
+            if callable(_mysql_fetchone):
+                _row = _mysql_fetchone(
+                    "SELECT json_data FROM transport_tarifas_json WHERE courier_slug=%s",
+                    (slug,),
+                )
+                if _row and _row.get("json_data"):
+                    d = json.loads(_row["json_data"])
+        except Exception as _e_db:
+            print(f"[transporte_tarifas] no se pudo leer '{slug}' desde MySQL, "
+                  f"se usa el archivo local: {_e_db}", flush=True)
+            d = None
+
+        if d is None:
+            path = os.path.join(_BASE, slug + ".json")
+            if not os.path.exists(path):
+                _CACHE[slug] = None
+                return _CACHE[slug]
             with open(path, encoding="utf-8") as fh:
                 d = json.load(fh)
-            # índice de comunas normalizado (sin acentos, upper) → key original
-            idx = {}
-            for k in d.get("rows", {}):
-                idx[_strip(k).upper().strip()] = k
-            d["_idx"] = idx
-            _CACHE[slug] = d
+
+        # índice de comunas normalizado (sin acentos, upper) → key original
+        idx = {}
+        for k in d.get("rows", {}):
+            idx[_strip(k).upper().strip()] = k
+        d["_idx"] = idx
+        _CACHE[slug] = d
     return _CACHE[slug]
 
 

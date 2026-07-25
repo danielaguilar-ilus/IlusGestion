@@ -75,6 +75,11 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
       <i class="bi bi-clipboard-check"></i>
       <span>Manifiestos</span>
     </a>
+    <a href="{{ url_for('lc_cotizaciones_lista') }}" class="tr-btn tr-btn-dark"
+       title="Cotizaciones de transporte y distribución para clientes">
+      <i class="bi bi-file-earmark-text"></i>
+      <span>Cotizaciones</span>
+    </a>
     {% if permissions.superadmin or permissions.admin %}
     {# Acciones destructivas — agrupadas en dropdown para no saturar la barra #}
     <div class="dropdown">

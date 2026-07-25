@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}Historial de Despachos — ILUS{% endblock %}
+
+{% block content %}
+<style>
+/* ════════════════════════════════════════════════════════════
+   HISTORIAL DE DESPACHOS + KPI — Transporte
+   Mismo patron visual que Mantenciones/analytics.html (kpi-card),
+   paleta ILUS (rojo #dc2626 / negro #0a0a0a / blanco).
+════════════════════════════════════════════════════════════ */
+.hist-hero{
+  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;
+  border-left:6px solid var(--ilus-red);
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+  position:relative;overflow:hidden;
+}
+.hist-hero::before{
+  content:'';position:absolute;right:-50px;top:-50px;
+  width:280px;height:280px;border-radius:50%;
+  background:radial-gradient(circle,rgba(220,38,38,.18),transparent 70%);
+  pointer-events:none;
+}
+.hist-hero h4{margin:0;font-weight:800;font-size:1.4rem;position:relative;z-index:1;letter-spacing:-.01em;}
+.hist-hero h4 i{color:var(--ilus-red);margin-right:8px;}
+.hist-hero .hh-sub{color:#cbd5e1;font-size:.84rem;margin-top:3px;position:relative;z-index:1;}
+.hist-hero-actions{display:flex;gap:8px;flex-wrap:wrap;position:relative;z-index:1;}
+
+.kpi-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:14px;margin-bottom:18px;
+}
+.kpi-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  padding:18px 20px;position:relative;overflow:hidden;
+}
+.kpi-card::before{
+  content:'';position:absolute;right:-20px;top:-20px;
+  width:80px;height:80px;border-radius:50%;
+  opacity:.08;pointer-events:none;
+}
+.kpi-card.fill    ::before{background:#2563eb;}
+.kpi-card.entrega ::before{background:#16a34a;}
+.kpi-card.incid   ::before{background:#dc2626;}
+.kpi-card.lead    ::before{background:#f59e0b;}
+.kpi-icon{
+  width:42px;height:42px;border-radius:10px;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:1.3rem;margin-bottom:8px;
+}
+.kpi-card.fill    .kpi-icon{background:#dbeafe;color:#1e40af;}
+.kpi-card.entrega .kpi-icon{background:#dcfce7;color:#166534;}
+.kpi-card.incid   .kpi-icon{background:#fee2e2;color:#991b1b;}
+.kpi-card.lead    .kpi-icon{background:#fef3c7;color:#92400e;}
+.kpi-label{
+  font-size:.72rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.06em;color:#6b7280;margin-bottom:4px;
+}
+.kpi-value{font-size:2rem;font-weight:900;color:#0f172a;line-height:1;letter-spacing:-.02em;}
+.kpi-value small{font-size:1rem;font-weight:700;color:#6b7280;margin-left:4px;}
+.kpi-sub{font-size:.78rem;color:#6b7280;margin-top:6px;}
+.kpi-empty{color:#9ca3af;font-style:italic;}
+
+/* Filtros */
+.hist-filters{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  padding:16px 18px;margin-bottom:16px;
+}
+.hist-filters form{
+  display:grid;gap:10px;
+  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  align-items:end;
+}
+.hist-filters label{
+  font-size:.68rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.05em;color:#6b7280;margin-bottom:4px;display:block;
+}
+.hist-filters .form-control,
+.hist-filters .form-select{
+  font-size:16px;min-height:44px;border-radius:8px;
+}
+.hist-filters .hist-filters-actions{
+  grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;
+  padding-top:4px;border-top:1px solid #f3f4f6;margin-top:4px;
+}
+.chip-periodo{
+  display:inline-flex;gap:6px;flex-wrap:wrap;margin-bottom:2px;
+}
+.chip-periodo a{
+  font-size:.76rem;font-weight:700;padding:6px 12px;border-radius:50px;
+  border:1px solid #e5e7eb;color:#374151;text-decoration:none;
+  min-height:32px;display:inline-flex;align-items:center;
+}
+.chip-periodo a.active{
+  background:var(--ilus-red);color:#fff;border-color:var(--ilus-red);
+}
+
+/* Tabla */
+.hist-table-wrap{
+  background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+  overflow:hidden;
+}
+.hist-table-head{
+  padding:14px 18px;border-bottom:1px solid #f3f4f6;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+}
+.hist-table-head h6{margin:0;font-weight:800;font-size:.92rem;color:#0f172a;}
+.hist-table-head .htot{font-size:.78rem;color:#6b7280;}
+.hist-scroll{overflow-x:auto;}
+.hist-table{width:100%;border-collapse:collapse;font-size:.84rem;min-width:820px;}
+.hist-table thead th{
+  background:#fafafa;font-size:.64rem;font-weight:800;
+  text-transform:uppercase;color:#6b7280;letter-spacing:.05em;
+  padding:9px 12px;border-bottom:2px solid #e5e7eb;text-align:left;white-space:nowrap;
+}
+.hist-table tbody td{padding:10px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle;}
+.hist-table tbody tr:hover{background:#fafafa;}
+.hist-table tbody tr:last-child td{border-bottom:none;}
+.hist-doc{font-weight:700;color:#0f172a;}
+.hist-cliente{color:#0f172a;}
+.hist-comuna{color:#6b7280;font-size:.78rem;}
+.badge-estado{
+  display:inline-block;padding:3px 10px;border-radius:50px;
+  font-size:.7rem;font-weight:800;white-space:nowrap;color:#fff;
+}
+.badge-estado.bg-warning,.badge-estado.bg-info,.badge-estado.bg-light{color:#0f172a;}
+.badge-entrega{
+  display:inline-block;padding:2px 9px;border-radius:50px;
+  font-size:.66rem;font-weight:700;white-space:nowrap;background:#f3f4f6;color:#6b7280;
+}
+.badge-entrega.ok{background:#dcfce7;color:#166534;}
+.badge-entrega.bad{background:#fee2e2;color:#991b1b;}
+.badge-entrega.ruta{background:#dbeafe;color:#1e40af;}
+.hist-actions a{
+  font-size:.72rem;font-weight:700;text-decoration:none;
+  padding:5px 10px;border-radius:7px;border:1px solid #e5e7eb;color:#374151;
+  display:inline-flex;align-items:center;gap:4px;white-space:nowrap;
+}
+.hist-actions a:hover{background:#f3f4f6;}
+.hist-actions{display:flex;gap:6px;flex-wrap:wrap;}
+
+.hist-pager{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  padding:14px 18px;border-top:1px solid #f3f4f6;
+}
+.hist-pager a, .hist-pager span{
+  font-size:.8rem;font-weight:700;padding:6px 12px;border-radius:8px;
+  border:1px solid #e5e7eb;text-decoration:none;color:#374151;min-height:36px;
+  display:inline-flex;align-items:center;
+}
+.hist-pager a:hover{background:#f3f4f6;}
+.hist-pager .cur{background:#0a0a0a;color:#fff;border-color:#0a0a0a;}
+
+.hist-empty{text-align:center;padding:40px 16px;color:#9ca3af;}
+.hist-empty i{font-size:2.4rem;opacity:.4;display:block;margin-bottom:10px;}
+
+@media (max-width:575px){
+  .hist-hero{padding:14px 16px;}
+  .hist-hero h4{font-size:1.15rem;}
+  .kpi-value{font-size:1.6rem;}
+}
+</style>
+
+<div class="hist-hero">
+  <div>
+    <h4><i class="bi bi-clock-history"></i>Historial de Despachos</h4>
+    <div class="hh-sub">Compromisos de transporte · KPI operacional del periodo seleccionado</div>
+  </div>
+  <div class="hist-hero-actions">
+    <a href="{{ url_for('transporte_index') }}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-display me-1"></i>Volver al Monitor
+    </a>
+  </div>
+</div>
+
+{# ─────────── KPIs ─────────── #}
+<div class="kpi-grid">
+  <div class="kpi-card fill">
+    <div class="kpi-icon"><i class="bi bi-box-seam"></i></div>
+    <div class="kpi-label">Fill rate por linea</div>
+    {% if kpis.fill_rate.valor is not none %}
+      <div class="kpi-value">{{ "%.1f"|format(kpis.fill_rate.valor) }}<small>%</small></div>
+    {% else %}
+      <div class="kpi-value kpi-empty">Sin dato</div>
+    {% endif %}
+    <div class="kpi-sub">{{ kpis.fill_rate.sub }}</div>
+  </div>
+  <div class="kpi-card entrega">
+    <div class="kpi-icon"><i class="bi bi-check-circle"></i></div>
+    <div class="kpi-label">Entrega exitosa</div>
+    {% if kpis.tasa_entrega.valor is not none %}
+      <div class="kpi-value">{{ "%.1f"|format(kpis.tasa_entrega.valor) }}<small>%</small></div>
+    {% else %}
+      <div class="kpi-value kpi-empty">Sin dato</div>
+    {% endif %}
+    <div class="kpi-sub">{{ kpis.tasa_entrega.sub }}</div>
+  </div>
+  <div class="kpi-card incid">
+    <div class="kpi-icon"><i class="bi bi-exclamation-octagon"></i></div>
+    <div class="kpi-label">Tasa de incidencias</div>
+    {% if kpis.tasa_incidencias.valor is not none %}
+      <div class="kpi-value">{{ "%.1f"|format(kpis.tasa_incidencias.valor) }}<small>%</small></div>
+    {% else %}
+      <div class="kpi-value kpi-empty">Sin dato</div>
+    {% endif %}
+    <div class="kpi-sub">{{ kpis.tasa_incidencias.sub }}</div>
+  </div>
+  <div class="kpi-card lead">
+    <div class="kpi-icon"><i class="bi bi-stopwatch"></i></div>
+    <div class="kpi-label">Lead time promedio</div>
+    {% if kpis.lead_time.dias is not none %}
+      <div class="kpi-value">{{ "%.1f"|format(kpis.lead_time.dias) }}<small>dias</small></div>
+    {% else %}
+      <div class="kpi-value kpi-empty">Sin dato</div>
+    {% endif %}
+    <div class="kpi-sub">{{ kpis.lead_time.sub }}</div>
+  </div>
+</div>
+<div class="text-muted small mb-3" style="font-size:.74rem;">
+  <i class="bi bi-info-circle me-1"></i>
+  Lead time = días entre emisión del documento y la primera confirmación de
+  entrega. No incluye OTIF "a tiempo" ni SLA por courier: ninguno de los dos
+  tiene hoy una fecha-compromiso ni un umbral de negocio confiablemente
+  poblado — se deja fuera a propósito, no es un dato perdido.
+</div>
+
+{# ─────────── FILTROS ─────────── #}
+<div class="hist-filters">
+  <div class="chip-periodo">
+    <a href="{{ url_for('tr_historial_kpi', periodo='mes') }}"
+       class="{{ 'active' if filtros.periodo=='mes' or not filtros.periodo else '' }}">Último mes</a>
+    <a href="{{ url_for('tr_historial_kpi', periodo='3m') }}"
+       class="{{ 'active' if filtros.periodo=='3m' else '' }}">Últimos 3 meses</a>
+    <a href="{{ url_for('tr_historial_kpi', periodo='año') }}"
+       class="{{ 'active' if filtros.periodo=='año' else '' }}">Este año</a>
+    <a href="{{ url_for('tr_historial_kpi', periodo='todo') }}"
+       class="{{ 'active' if filtros.periodo=='todo' else '' }}">Todo</a>
+  </div>
+  <form method="get" action="{{ url_for('tr_historial_kpi') }}">
+    <div>
+      <label>Desde</label>
+      <input type="date" name="desde" class="form-control" value="{{ filtros.desde }}">
+    </div>
+    <div>
+      <label>Hasta</label>
+      <input type="date" name="hasta" class="form-control" value="{{ filtros.hasta }}">
+    </div>
+    <div>
+      <label>Estado</label>
+      <select name="estado" class="form-select">
+        <option value="">Todos</option>
+        {% for e in estados %}
+        <option value="{{ e }}" {{ 'selected' if filtros.estado==e else '' }}>{{ e }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Courier</label>
+      <select name="courier" class="form-select">
+        <option value="">Todos</option>
+        {% for c in couriers %}
+        <option value="{{ c }}" {{ 'selected' if filtros.courier==c else '' }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Comuna</label>
+      <input type="text" name="comuna" class="form-control" placeholder="Ej: Providencia"
+             value="{{ filtros.comuna }}">
+    </div>
+    <div>
+      <label>Buscar (documento o cliente)</label>
+      <input type="text" name="q" class="form-control" placeholder="N° doc o nombre"
+             value="{{ filtros.q }}">
+    </div>
+    <div class="hist-filters-actions">
+      <button type="submit" class="btn btn-ilus fw-bold" style="min-height:44px;">
+        <i class="bi bi-funnel-fill me-1"></i>Filtrar
+      </button>
+      <a href="{{ url_for('tr_historial_kpi') }}" class="btn btn-outline-secondary"
+         style="min-height:44px;">
+        <i class="bi bi-x-lg me-1"></i>Limpiar
+      </a>
+    </div>
+  </form>
+</div>
+
+{# ─────────── TABLA ─────────── #}
+<div class="hist-table-wrap">
+  <div class="hist-table-head">
+    <h6><i class="bi bi-list-ul me-1" style="color:var(--ilus-red)"></i>Compromisos de despacho</h6>
+    <div class="htot">{{ total }} resultado{{ 's' if total != 1 else '' }}</div>
+  </div>
+
+  {% if compromisos %}
+  <div class="hist-scroll">
+    <table class="hist-table">
+      <thead>
+        <tr>
+          <th>Documento</th>
+          <th>Cliente</th>
+          <th>Comuna</th>
+          <th>Courier</th>
+          <th>Estado</th>
+          <th>Entrega</th>
+          <th>Fecha emisión</th>
+          <th>Entregado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in compromisos %}
+        <tr>
+          <td class="hist-doc">{{ c.tido }} {{ c.nudo_display }}</td>
+          <td class="hist-cliente">{{ c.cliente_nombre or '—' }}</td>
+          <td class="hist-comuna">{{ c.comuna or '—' }}</td>
+          <td>{{ c.courier or '—' }}</td>
+          <td>
+            <span class="badge-estado bg-{{ estado_colors.get(c.estado, 'secondary') }}">
+              {{ c.estado or '—' }}
+            </span>
+          </td>
+          <td>
+            {% if c.estado_entrega == 'Entregado' %}
+              <span class="badge-entrega ok"><i class="bi bi-check-lg"></i> Entregado</span>
+            {% elif c.estado_entrega in ('Entrega fallida', 'Devolución') %}
+              <span class="badge-entrega bad"><i class="bi bi-x-lg"></i> {{ c.estado_entrega }}</span>
+            {% elif c.estado_entrega == 'En ruta' %}
+              <span class="badge-entrega ruta"><i class="bi bi-truck"></i> En ruta</span>
+            {% elif c.estado_entrega %}
+              <span class="badge-entrega">{{ c.estado_entrega }}</span>
+            {% else %}
+              <span class="badge-entrega">Sin manifiesto</span>
+            {% endif %}
+          </td>
+          <td>{{ c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision else '—' }}</td>
+          <td>{{ c.delivered_at | chile_fmt if c.delivered_at else '—' }}</td>
+          <td class="hist-actions">
+            <a href="{{ url_for('transporte_index', q=c.nudo) }}" target="_blank" rel="noopener"
+               title="Ver en el Monitor de Transporte">
+              <i class="bi bi-display"></i>Monitor
+            </a>
+            {% if c.public_token %}
+            <a href="{{ url_for('tr_public_tracking', token=c.public_token) }}" target="_blank" rel="noopener"
+               title="Tracking publico del cliente">
+              <i class="bi bi-geo-alt"></i>Tracking
+            </a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if total_pages > 1 %}
+  <div class="hist-pager">
+    {% set base_args = filtros.copy() %}
+    {% if page > 1 %}
+    <a href="{{ url_for('tr_historial_kpi', page=page-1, **base_args) }}">
+      <i class="bi bi-chevron-left"></i>
+    </a>
+    {% endif %}
+    <span class="cur">Página {{ page }} de {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="{{ url_for('tr_historial_kpi', page=page+1, **base_args) }}">
+      <i class="bi bi-chevron-right"></i>
+    </a>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% else %}
+  <div class="hist-empty">
+    <i class="bi bi-inbox"></i>
+    <div>No hay compromisos que coincidan con estos filtros.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

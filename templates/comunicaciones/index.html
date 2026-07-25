@@ -586,6 +586,13 @@
           <div class="tmc-titulo">Transporte</div>
           <div class="tmc-sub">Pedidos, courier, despachos</div>
         </button>
+        <button type="button" class="tpl-modulo-card" data-modulo="transporte_cotizaciones"
+                onclick="seleccionarModulo('transporte_cotizaciones', this)">
+          <span class="tmc-warn" id="tmcWarn-transporte_cotizaciones" title=""><i class="bi bi-exclamation-lg"></i></span>
+          <div class="tmc-icon"><i class="bi bi-file-earmark-text"></i></div>
+          <div class="tmc-titulo">Cotizaciones Transporte</div>
+          <div class="tmc-sub">Envío de cotización al cliente</div>
+        </button>
         <button type="button" class="tpl-modulo-card" data-modulo="retiros"
                 onclick="seleccionarModulo('retiros', this)">
           <span class="tmc-warn" id="tmcWarn-retiros" title=""><i class="bi bi-exclamation-lg"></i></span>
@@ -1416,6 +1423,7 @@ function poblarPlantillasManual() {
 
   const grupos = [
     { label:'Transporte',           lista:TPL_ESTADOS_TRANSPORTE },
+    { label:'Cotizaciones Transporte', lista:TPL_ESTADOS_COTIZACIONES_TRANSPORTE },
     { label:'Retiros',              lista:TPL_ESTADOS_RETIROS },
     { label:'Mantenciones',         lista:TPL_ESTADOS_MANTENCIONES },
     { label:'Comunicación interna', lista:TPL_ESTADOS_COMUNICACION_INTERNA },
@@ -1598,6 +1606,11 @@ const TPL_ESTADOS_TRANSPORTE = [
     color:'#dc3545', desc:'Se envía cuando el courier no pudo entregar el pedido' },
 ];
 
+const TPL_ESTADOS_COTIZACIONES_TRANSPORTE = [
+  { key:'cotizacion_envio', label:'Envío de cotización',    icon:'bi-file-earmark-text', grupo:'cotizacion_transporte',
+    color:'#dc2626', desc:'Se envía al cliente con la cotización de transporte adjunta en PDF' },
+];
+
 const TPL_ESTADOS_RETIROS = [
   { key:'solicitud_recibida', label:'Solicitud recibida',     icon:'bi-send-check',     grupo:'retiro',
     color:'#3b82f6', desc:'Confirma al cliente que recibimos su solicitud (al crearse)' },
@@ -1701,6 +1714,7 @@ function getCurrentModulo(){
 }
 function getEstadosForModulo(){
   const m = getCurrentModulo();
+  if (m === 'transporte_cotizaciones') return TPL_ESTADOS_COTIZACIONES_TRANSPORTE;
   if (m === 'retiros')              return TPL_ESTADOS_RETIROS;
   if (m === 'mantenciones')         return TPL_ESTADOS_MANTENCIONES;
   if (m === 'comunicacion_interna') return TPL_ESTADOS_COMUNICACION_INTERNA;
@@ -2348,6 +2362,7 @@ function tplSetVisible(id, visible, displayValue='block') {
 // Etiquetas legibles por módulo (mostradas en panel y help)
 const MODULO_LABELS = {
   transporte:           { name:'Transporte',           help:'Plantillas que se envían al cliente por cada estado del despacho' },
+  transporte_cotizaciones: { name:'Cotizaciones Transporte', help:'Plantilla de correo al enviar una cotización de transporte y distribución' },
   retiros:              { name:'Retiros',              help:'Plantillas que se envían al cliente en cada estado de su solicitud de retiro' },
   mantenciones:         { name:'Mantenciones',         help:'Plantillas operacionales: OTs, visitas técnicas y notificaciones al cliente' },
   comunicacion_interna: { name:'Comunicación interna', help:'Plantillas del ciclo de vida del usuario: bienvenida, claves y accesos' },

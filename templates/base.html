@@ -601,6 +601,10 @@
          class="sidebar-link{% if request.endpoint in ['transporte_index'] %} active{% endif %}">
         <i class="bi bi-display"></i><span>Monitor</span>
       </a>
+      <a href="{{ url_for('tr_historial_kpi') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_historial_kpi'] %} active{% endif %}">
+        <i class="bi bi-clock-history"></i><span>Historial + KPI</span>
+      </a>
       <a href="{{ url_for('tr_manifiestos') }}"
          class="sidebar-link{% if request.endpoint in ['tr_manifiestos','tr_manifiesto_detalle'] %} active{% endif %}">
         <i class="bi bi-clipboard-check"></i><span>Manifiestos</span>

@@ -1,11 +1,22 @@
 {#
   ══════════════════════════════════════════════════════════════════════
-  CUBICADOR · PESTAÑA "PACKING LIST"  (fragmento)
+  CUBICADOR · PESTAÑA "PACKING LIST"  (fragmento) — v2, POR PALLET
   ══════════════════════════════════════════════════════════════════════
 
   Qué es: el contenido de la pestaña "Packing List" dentro de /cubicador.
-  Solo elige el documento y abre la hoja A4 imprimible
-  (templates/cubicador/packing_list.html) en una pestaña nueva.
+  1) Elige el documento (igual que antes).
+  2) "Armador de pallets": trae las líneas del documento (SKU/Descripción/
+     Cantidad, eso SÍ sale del sistema) y el usuario las AGRUPA en pallets a
+     mano — Nro. de pallet, medidas, kilo y tipo de embalaje NO existen en
+     ninguna tabla, se arman en bodega.
+  3) "Generar Packing List" abre la hoja A4 (packing_list.html) en pestaña
+     nueva, que YA trae los pallets armados aquí (misma clave localStorage).
+
+  ⚠ CORRECCIÓN 2026-07-25: la version anterior de este fragmento describía
+  una spec de ADUANA (marca/país origen/partida arancelaria/peso neto) que
+  era incorrecta. El packing list real de ILUS es POR PALLET y no lleva esos
+  4 campos. Ver SPEC_PACKING_LIST.md (investigación) y el docstring de
+  cubicador_plus.py.
 
   CÓMO SE INCLUYE (una sola línea, sin parámetros), dentro del panel:
 
@@ -14,36 +25,36 @@
       </div>
 
   REQUISITOS DE INCLUSIÓN (mismos que _tab_cotizador.html):
-    1. El fragmento NO trae el <div class="cubtab-pane">: lo pone index.html,
-       igual que con el cotizador. Así el marcado de las pestañas queda en un
-       solo lugar. Convención de static/cubicador_tabs.js:
-         botón ->  <button class="cubtab-btn" data-tab="packing"
-                           onclick="cubSwitchTab('packing')">
-         panel ->  <div class="cubtab-pane" id="cubtab-packing">
-       (el CSS .cubtab-pane/.cubtab-btn lo inyecta cubicador_tabs.js, no hay
-        que declararlo acá).
+    1. El fragmento NO trae el <div class="cubtab-pane">: lo pone index.html.
     2. Va FUERA de <form id="cubicadorForm"> y de cualquier otro <form>. Sus
-       inputs además NO llevan name= para no viajar jamás en un POST ajeno.
-    3. Como panel hermano del wrapper de "Cubicaje", dentro del
-       {% raw %}{% if resultado %}{% endraw %} o fuera: funciona igual, ver "CONTEXTO".
-    4. No renombra ni toca NADA del Cubicador (REGLA #4.2): no usa ningún id
+       inputs NO llevan name= para no viajar jamás en un POST ajeno.
+    3. No renombra ni toca NADA del Cubicador (REGLA #4.2): no usa ningún id
        ni clase existente, y jamás la clase d-none (checkEmpty() la manipula).
 
   CONTEXTO QUE USA (todo opcional, todo con guarda `is defined`):
     resultado.docs   lista [(tido, nudo), ...] de los documentos ya cubicados.
-                     Si no hay, se muestran los campos manuales.
     tipos_doc        lista [(codigo, nombre), ...] del selector del cubicador
     pl_page_base     base de la URL de la hoja. Default '/cubicador/packing-list'.
-                     Va como STRING a propósito: un url_for() a un endpoint que
-                     todavía no existe lanza BuildError y tumbaría TODA la
-                     página del Cubicador.
 
   ENDPOINTS (ninguno inventado):
-    · La hoja  ->  <pl_page_base>/<tido>/<nudo>   (página HTML, pestaña nueva)
-    · Los datos los pide la propia hoja a
-      GET /cubicador/api/packing-list/<tido>/<nudo>  (cubicador_plus.py:1190)
+    · Líneas del documento -> GET /cubicador/api/packing-list/<tido>/<nudo>
+      (cubicador_plus.py) — ahora devuelve UNA fila por LÍNEA (sku/
+      descripcion/cantidad), sin explotar por bulto y sin campos de aduana.
+    · La hoja final          -> <pl_page_base>/<tido>/<nudo>  (pestaña nueva)
 
-  REGLA #1: nada de alert()/confirm()/prompt() nativos — se usa ilusToast.
+  PERSISTENCIA DE LOS PALLETS (decisión documentada, ver cubicador_plus.py):
+    localStorage, clave `ilus_pl_pallets_v1_<TIDO>_<NUDO>` — MISMA clave que
+    usa packing_list.html, para que lo armado acá aparezca ya cargado allá.
+    Forma:
+      { v:1,
+        asignacion: { "<numero_de_linea>": <numero_de_pallet>, ... },
+        pallets: { "<numero_de_pallet>": { largo, ancho, alto, kilo,
+                                            embalaje } , ... } }
+    No hay tabla MySQL nueva: es un dato de una sola persona armando un
+    embarque puntual, no algo que deba verse entre navegadores/usuarios hoy.
+
+  REGLA #1: nada de alert()/confirm()/prompt() nativos — se usa ilusToast/
+  ilusConfirm/ilusPrompt.
 #}
 
 {% set _pl_base  = pl_page_base if pl_page_base is defined else '/cubicador/packing-list' %}
@@ -85,44 +96,105 @@
 }
 .pl-wrap .pl-btn-main{ background:#dc2626;color:#fff;border:none;text-decoration:none; }
 .pl-wrap .pl-btn-main:hover{ background:#b91c1c;color:#fff;text-decoration:none; }
-/* Estado deshabilitado explícito (2026-07-25, revisión diseño): antes el
-   CTA era un <a> salmón subrayado que parecía un link muerto — ahora es
-   claramente un botón rojo ILUS, pálido y sin click solo cuando falta el
-   N° de documento. */
 .pl-wrap .pl-btn-main.disabled{
   background:#f3f4f6;color:#9ca3af;pointer-events:none;cursor:not-allowed;
 }
+.pl-wrap .pl-btn-dark{ background:#0a0a0a;color:#fff;border:none; }
+.pl-wrap .pl-btn-dark:hover{ background:#1c1c1c;color:#fff; }
+.pl-wrap .pl-btn-outline{ background:#fff;color:#374151;border:1.5px solid #d1d5db; }
+.pl-wrap .pl-btn-outline:hover{ border-color:#9ca3af; }
 @media (max-width:575.98px){
   .pl-wrap .pl-btn{ width:100%; }
-  /* Anti auto-zoom iOS */
   .pl-wrap .form-select,
   .pl-wrap .form-control{ font-size:16px; }
 }
-/* El Cubicador se imprime (hay .no-print en su tabla): esta pestaña no. */
 @media print{ .pl-wrap{ display:none !important; } }
+
+/* ── Armador de pallets ─────────────────────────────────────────── */
+.plb-card{ margin-top:16px; }
+.plb-tabla-wrap{ overflow-x:auto; border:1px solid #e5e7eb; border-radius:8px; }
+table.plb-tabla{ width:100%; border-collapse:collapse; font-size:.82rem; min-width:520px; }
+table.plb-tabla th{
+  background:#0a0a0a; color:#fff; text-align:left; font-weight:700;
+  padding:8px 10px; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em;
+}
+table.plb-tabla td{ padding:7px 10px; border-bottom:1px solid #f0f0f0; vertical-align:middle; }
+table.plb-tabla tr:last-child td{ border-bottom:none; }
+table.plb-tabla td.sku{ font-family:"Courier New",monospace; font-weight:700; }
+table.plb-tabla td.ctr{ text-align:center; }
+table.plb-tabla tr.plb-asignada{ background:#f0fdf4; }
+table.plb-tabla tr.plb-asignada td{ color:#166534; }
+.plb-badge-pallet{
+  display:inline-block; background:#dc2626; color:#fff; font-weight:800;
+  font-size:.72rem; border-radius:50px; padding:2px 9px;
+}
+.plb-check{ width:20px; height:20px; cursor:pointer; }
+
+.plb-crear{
+  display:flex; flex-wrap:wrap; align-items:end; gap:10px;
+  background:#f9fafb; border:1px dashed #d1d5db; border-radius:10px;
+  padding:12px; margin-top:12px;
+}
+.plb-crear .grp{ display:flex; flex-direction:column; gap:3px; }
+.plb-crear label{ font-size:.72rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; }
+.plb-crear input, .plb-crear select{
+  min-height:40px; border:1px solid #d1d5db; border-radius:6px; padding:0 8px; font-size:.85rem;
+}
+.plb-crear .dim{ width:64px; text-align:center; }
+.plb-crear .num{ width:90px; }
+.plb-crear .emb{ min-width:160px; }
+
+.plb-pallets{ display:flex; flex-direction:column; gap:10px; margin-top:14px; }
+.plb-pallet{
+  border:1.5px solid #e5e7eb; border-left:5px solid #dc2626; border-radius:8px;
+  padding:10px 12px; background:#fff;
+}
+.plb-pallet .plb-pallet-hdr{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.plb-pallet .plb-pallet-tit{ font-weight:800; font-size:.9rem; }
+.plb-pallet .plb-pallet-vol{ font-size:.78rem; color:#6b7280; }
+.plb-pallet .plb-pallet-skus{ font-size:.78rem; color:#374151; margin-top:6px; line-height:1.6; }
+.plb-pallet .plb-sku-chip{
+  display:inline-flex; align-items:center; gap:6px; background:#f3f4f6; border-radius:50px;
+  padding:2px 4px 2px 10px; margin:2px 4px 2px 0; font-size:.74rem;
+}
+.plb-pallet .plb-sku-chip button{
+  border:none; background:#e5e7eb; color:#6b7280; border-radius:50%; width:18px; height:18px;
+  line-height:1; font-size:.7rem; cursor:pointer;
+}
+.plb-pallet .plb-datos{ display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; }
+.plb-pallet .plb-datos .grp{ display:flex; flex-direction:column; gap:3px; }
+.plb-pallet .plb-datos label{ font-size:.68rem; font-weight:700; color:#9ca3af; text-transform:uppercase; }
+.plb-pallet .plb-datos input, .plb-pallet .plb-datos select{
+  min-height:38px; border:1px solid #d1d5db; border-radius:6px; padding:0 8px; font-size:.82rem;
+}
+.plb-pallet .plb-datos .dim{ width:60px; text-align:center; }
+.plb-pallet .plb-datos .num{ width:84px; }
+.plb-vacio-msg{ text-align:center; color:#9ca3af; font-size:.85rem; padding:20px 10px; }
+.plb-sin-asignar{ font-size:.78rem; color:#92400e; background:#fff8e1; border-radius:8px; padding:8px 10px; margin-top:10px; }
 </style>
 
 <div class="pl-wrap" id="plWrap">
 
   <div class="pl-hero">
-    <h5><i class="bi bi-box-seam me-2" style="color:#dc2626"></i>Packing List de exportación</h5>
+    <h5><i class="bi bi-box-seam me-2" style="color:#dc2626"></i>Packing List de exportación (por pallet)</h5>
     <p>
-      Hoja A4 lista para aduana: exportador, consignatario, datos de embarque y el
-      detalle <b>bulto a bulto</b> con medidas, volumen y pesos. Se abre en una
-      pestaña nueva y se puede imprimir desde el navegador o descargar en PDF.
+      Elige el documento, arma los pallets con las líneas del ERP y genera la hoja
+      A4 lista para el exportador y el consignatario. Se abre en una pestaña nueva
+      y se puede imprimir desde el navegador.
     </p>
   </div>
 
   <div class="pl-warn">
-    <b>⚠ Antes de emitir:</b> hay datos que el sistema todavía <u>no</u> guarda y que
-    debes completar a mano en la hoja (aparecen con fondo amarillo):
+    <b>⚠ Datos que arma bodega (no salen del sistema):</b>
     <ul>
-      <li><b>Marca</b> y <b>país de origen</b> de cada producto</li>
-      <li><b>Partida arancelaria</b> (código HS)</li>
-      <li><b>Peso neto</b> por bulto (el sistema solo conoce el peso bruto)</li>
-      <li><b>Incoterm</b>, <b>puerto/lugar de destino</b> y <b>medio de transporte</b></li>
+      <li><b>Nro. Pallet</b>: qué SKU/línea va en cada pallet</li>
+      <li><b>Medidas</b> del pallet armado (largo × ancho × alto, en cm)</li>
+      <li><b>Kilo</b> del pallet completo</li>
+      <li><b>Tipo de Embalaje</b> (Carton, Woden Box, Woden Box and Carton…)</li>
     </ul>
-    Nunca se rellenan con valores de ejemplo: si no están, van vacíos.
+    El <b>Volumen (Mts3)</b> se calcula solo a partir de las medidas — nunca se
+    escribe a mano. Nada de esto se rellena con valores de ejemplo: si no está,
+    va vacío hasta que lo completes.
   </div>
 
   <div class="ilus-card mb-3">
@@ -173,23 +245,90 @@
 
       <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
         <span class="pl-chip" id="plChipDoc"><i class="bi bi-upc-scan"></i><span>—</span></span>
-        <div class="ms-sm-auto text-sm-end">
+        <div class="ms-sm-auto d-flex flex-wrap gap-2">
+          <button type="button" class="pl-btn pl-btn-outline disabled" id="plCargarBtn" disabled>
+            <i class="bi bi-boxes"></i>Cargar líneas / armar pallets
+          </button>
           <a class="pl-btn pl-btn-main disabled" id="plGoBtn"
              href="#" target="_blank" rel="noopener" aria-disabled="true">
             <i class="bi bi-box-seam"></i>Generar Packing List
           </a>
-          <div class="small mt-1" id="plGoHint" style="color:#9ca3af">
-            Ingresa el N° de documento para generar
-          </div>
         </div>
+      </div>
+      <div class="small mt-1" id="plGoHint" style="color:#9ca3af">
+        Ingresa el N° de documento para continuar
       </div>
 
       <div class="form-text mt-2">
         <i class="bi bi-info-circle me-1"></i>
-        Se abre en una pestaña nueva. Las líneas de servicio (ZZ Envío, descuentos)
-        no se listan: no son cajas.
+        Las líneas de servicio (ZZ Envío, descuentos) no se listan: no son cajas.
       </div>
 
+    </div>
+  </div>
+
+  <!-- ── Armador de pallets ─────────────────────────────────────── -->
+  <div class="ilus-card plb-card" id="plbCard" style="display:none">
+    <div class="ilus-card-header">
+      <span><i class="bi bi-grid-3x3-gap me-2"></i>Armador de pallets</span>
+      <span class="small fw-normal" id="plbDocLabel" style="color:rgba(255,255,255,.65)">—</span>
+    </div>
+    <div class="card-body p-3">
+
+      <div id="plbEstado" class="plb-vacio-msg">Cargando líneas del documento…</div>
+
+      <div id="plbContenido" style="display:none">
+        <div class="plb-tabla-wrap">
+          <table class="plb-tabla" id="plbTabla">
+            <thead>
+              <tr>
+                <th style="width:36px"></th>
+                <th>SKU</th>
+                <th>Descripción</th>
+                <th class="ctr" style="width:60px">Cant.</th>
+                <th class="ctr" style="width:90px">Pallet</th>
+              </tr>
+            </thead>
+            <tbody id="plbTbody"></tbody>
+          </table>
+        </div>
+
+        <div class="plb-crear">
+          <div class="grp">
+            <label>Medidas del pallet (cm)</label>
+            <div class="d-flex align-items-center gap-1">
+              <input type="text" class="dim" id="plbLargo" inputmode="decimal" placeholder="L">
+              <span>×</span>
+              <input type="text" class="dim" id="plbAncho" inputmode="decimal" placeholder="A">
+              <span>×</span>
+              <input type="text" class="dim" id="plbAlto" inputmode="decimal" placeholder="H">
+            </div>
+          </div>
+          <div class="grp">
+            <label>Kilo</label>
+            <input type="text" class="num" id="plbKilo" inputmode="decimal" placeholder="kg">
+          </div>
+          <div class="grp">
+            <label>Tipo de embalaje</label>
+            <input type="text" class="emb" id="plbEmbalaje" list="plbDlEmbalaje" placeholder="Carton">
+            <datalist id="plbDlEmbalaje">
+              <option value="Carton"></option>
+              <option value="Woden Box"></option>
+              <option value="Woden Box and Carton"></option>
+            </datalist>
+          </div>
+          <div class="grp">
+            <label>&nbsp;</label>
+            <button type="button" class="pl-btn pl-btn-dark" id="plbCrearBtn" style="min-height:40px">
+              <i class="bi bi-plus-lg"></i>Crear pallet con seleccionados
+            </button>
+          </div>
+        </div>
+
+        <div id="plbSinAsignar" class="plb-sin-asignar" style="display:none"></div>
+
+        <div class="plb-pallets" id="plbPallets"></div>
+      </div>
     </div>
   </div>
 
@@ -197,17 +336,17 @@
 
 <script>
 /* ════════════════════════════════════════════════════════════════════
-   Pestaña Packing List — selector de documento.
+   Pestaña Packing List — selector de documento + armador de pallets.
    Aislado en un IIFE: no toca ni una variable del cubicador.
    ════════════════════════════════════════════════════════════════════ */
 (function(){
   'use strict';
-  /* Defensivo: si el fragmento no está en la página, no se hace nada. El
-     Cubicador tiene que seguir funcionando aunque este bloque falle entero. */
   var wrap = document.getElementById('plWrap');
   if (!wrap) return;
 
   var PL_BASE  = {{ _pl_base|tojson }};
+  var API_BASE = '/cubicador/api/packing-list';
+
   var selDoc   = document.getElementById('plDocSelect');
   var manual   = document.getElementById('plManualWrap');
   var selTido  = document.getElementById('plTido');
@@ -215,11 +354,38 @@
   var goBtn    = document.getElementById('plGoBtn');
   var goHint   = document.getElementById('plGoHint');
   var chip     = document.getElementById('plChipDoc');
+  var cargarBtn = document.getElementById('plCargarBtn');
 
-  function esManual(){
-    return !selDoc || selDoc.value === '__manual__';
+  var plbCard    = document.getElementById('plbCard');
+  var plbDocLbl  = document.getElementById('plbDocLabel');
+  var plbEstado  = document.getElementById('plbEstado');
+  var plbCont    = document.getElementById('plbContenido');
+  var plbTbody   = document.getElementById('plbTbody');
+  var plbCrearBtn = document.getElementById('plbCrearBtn');
+  var plbLargo = document.getElementById('plbLargo');
+  var plbAncho = document.getElementById('plbAncho');
+  var plbAlto  = document.getElementById('plbAlto');
+  var plbKilo  = document.getElementById('plbKilo');
+  var plbEmb   = document.getElementById('plbEmbalaje');
+  var plbPallets = document.getElementById('plbPallets');
+  var plbSinAsignar = document.getElementById('plbSinAsignar');
+
+  function esc(s){
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function toNum(v){
+    if (v === null || v === undefined || v === '') return null;
+    var n = parseFloat(String(v).replace(',', '.'));
+    return isNaN(n) ? null : n;
+  }
+  function fmt(n, dec){
+    if (n === null || n === undefined || isNaN(n)) return '';
+    return Number(n).toLocaleString('es-CL', { minimumFractionDigits: dec, maximumFractionDigits: dec });
   }
 
+  function esManual(){ return !selDoc || selDoc.value === '__manual__'; }
   function actual(){
     if (!esManual()) {
       var partes = String(selDoc.value || '').split('|');
@@ -230,36 +396,42 @@
       nudo: (inpNudo && inpNudo.value ? inpNudo.value : '').trim()
     };
   }
-
   function urlHoja(d){
-    return PL_BASE.replace(/\/+$/, '')
-         + '/' + encodeURIComponent(d.tido)
-         + '/' + encodeURIComponent(d.nudo);
+    return PL_BASE.replace(/\/+$/, '') + '/' + encodeURIComponent(d.tido) + '/' + encodeURIComponent(d.nudo);
   }
+
+  var DOC_ACTUAL = null;   // { tido, nudo } del ultimo documento cargado en el armador
 
   function refrescar(){
     var d = actual();
     var ok = !!(d.tido && d.nudo);
-    if (chip) {
-      chip.querySelector('span').textContent = ok ? (d.tido + ' N° ' + d.nudo)
-                                                  : 'Elige o escribe un documento';
-    }
+    if (chip) chip.querySelector('span').textContent = ok ? (d.tido + ' N° ' + d.nudo) : 'Elige o escribe un documento';
     if (goBtn) {
       goBtn.setAttribute('href', ok ? urlHoja(d) : '#');
       goBtn.classList.toggle('disabled', !ok);
       goBtn.setAttribute('aria-disabled', ok ? 'false' : 'true');
     }
+    if (cargarBtn) {
+      cargarBtn.classList.toggle('disabled', !ok);
+      cargarBtn.disabled = !ok;
+    }
     if (goHint) goHint.style.display = ok ? 'none' : '';
     if (manual) manual.style.display = esManual() ? '' : 'none';
+
+    // Si cambia el documento, el armador ya cargado queda obsoleto: se oculta
+    // hasta que el usuario pida cargarlo de nuevo (evita mezclar pallets de
+    // un documento con líneas de otro).
+    if (DOC_ACTUAL && (!ok || DOC_ACTUAL.tido !== d.tido || DOC_ACTUAL.nudo !== d.nudo)) {
+      plbCard.style.display = 'none';
+      DOC_ACTUAL = null;
+    }
   }
 
   if (selDoc)  selDoc.addEventListener('change', refrescar);
   if (selTido) selTido.addEventListener('change', refrescar);
   if (inpNudo) {
     inpNudo.addEventListener('input', refrescar);
-    inpNudo.addEventListener('keydown', function(ev){
-      if (ev.key === 'Enter') { ev.preventDefault(); goBtn && goBtn.click(); }
-    });
+    inpNudo.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') { ev.preventDefault(); cargarBtn.click(); } });
   }
 
   if (goBtn) {
@@ -267,21 +439,236 @@
       var d = actual();
       if (!d.tido || !d.nudo) {
         ev.preventDefault();
-        /* REGLA #1: nada de alert() nativo */
-        if (window.ilusToast) {
-          ilusToast('Indica el tipo y el número de documento.', { type:'warning' });
-        } else if (window.ilusAlert) {
-          ilusAlert({ title:'Falta el documento',
-                      message:'Indica el tipo y el número de documento.',
-                      type:'warning' });
-        }
+        if (window.ilusToast) ilusToast('Indica el tipo y el número de documento.', { type:'warning' });
         if (esManual() && inpNudo) inpNudo.focus();
-        return;
       }
-      /* href ya apunta a la hoja: dejamos que el navegador abra la pestaña
-         (un <a target="_blank"> real no lo bloquea el popup blocker). */
     });
   }
+
+  /* ── Estado de pallets (localStorage, misma clave que packing_list.html) ── */
+  var PSTATE = { v: 1, asignacion: {}, pallets: {} };
+  var LINEAS = [];   // filas del documento: {linea, sku, desc, cant}
+
+  function palletKey(d){ return 'ilus_pl_pallets_v1_' + (d.tido || 'x') + '_' + (d.nudo || 'x'); }
+
+  function cargarEstado(d){
+    try {
+      var raw = localStorage.getItem(palletKey(d));
+      if (!raw) return { v: 1, asignacion: {}, pallets: {} };
+      var j = JSON.parse(raw);
+      return { v: 1, asignacion: j.asignacion || {}, pallets: j.pallets || {} };
+    } catch (e) { return { v: 1, asignacion: {}, pallets: {} }; }
+  }
+  function guardarEstado(d){
+    try { localStorage.setItem(palletKey(d), JSON.stringify(PSTATE)); } catch (e) { /* cuota / privado */ }
+  }
+
+  function siguienteNumeroPallet(){
+    var max = 0;
+    Object.keys(PSTATE.pallets).forEach(function(k){
+      var n = parseInt(k, 10);
+      if (!isNaN(n) && n > max) max = n;
+    });
+    Object.keys(PSTATE.asignacion).forEach(function(k){
+      var n = parseInt(PSTATE.asignacion[k], 10);
+      if (!isNaN(n) && n > max) max = n;
+    });
+    return max + 1;
+  }
+
+  /* ── Carga de líneas ─────────────────────────────────────────── */
+  function cargarLineas(){
+    var d = actual();
+    if (!d.tido || !d.nudo) return;
+    DOC_ACTUAL = d;
+    PSTATE = cargarEstado(d);
+
+    plbCard.style.display = '';
+    plbDocLbl.textContent = d.tido + ' N° ' + d.nudo;
+    plbCont.style.display = 'none';
+    plbEstado.style.display = '';
+    plbEstado.textContent = 'Cargando líneas del documento…';
+
+    var url = API_BASE + '/' + encodeURIComponent(d.tido) + '/' + encodeURIComponent(d.nudo);
+    fetch(url, { headers: { 'Accept': 'application/json' } })
+      .then(function(r){
+        return r.json().catch(function(){ return { ok:false, error:'Respuesta no válida del servidor (HTTP ' + r.status + ')' }; });
+      })
+      .then(function(j){
+        if (!j || j.ok === false) throw new Error((j && j.error) || 'No se pudo leer el documento.');
+        LINEAS = (j.filas || []).map(function(f){
+          return {
+            linea: f.linea,
+            sku: f.sku || '',
+            desc: f.descripcion || '',
+            cant: f.cantidad
+          };
+        });
+        if (!LINEAS.length) {
+          plbEstado.textContent = 'El documento no tiene líneas para embalar (o son todas de servicio).';
+          plbEstado.style.display = '';
+          plbCont.style.display = 'none';
+          return;
+        }
+        plbEstado.style.display = 'none';
+        plbCont.style.display = '';
+        renderTabla();
+        renderPallets();
+        if (window.ilusToast) ilusToast(LINEAS.length + ' línea(s) cargada(s).', { type:'success' });
+      })
+      .catch(function(err){
+        plbEstado.textContent = err.message || 'No se pudo consultar el documento.';
+        plbEstado.style.display = '';
+        plbCont.style.display = 'none';
+      });
+  }
+
+  if (cargarBtn) cargarBtn.addEventListener('click', function(){
+    var d = actual();
+    if (!d.tido || !d.nudo) {
+      if (window.ilusToast) ilusToast('Indica el tipo y el número de documento.', { type:'warning' });
+      return;
+    }
+    cargarLineas();
+  });
+
+  /* ── Render de la tabla de líneas (con checkbox) ─────────────── */
+  function renderTabla(){
+    plbTbody.innerHTML = LINEAS.map(function(f){
+      var num = PSTATE.asignacion[String(f.linea)];
+      var asignada = num !== undefined && num !== null;
+      return '<tr data-linea="' + esc(f.linea) + '"' + (asignada ? ' class="plb-asignada"' : '') + '>' +
+        '<td class="ctr">' + (asignada ? '' : '<input type="checkbox" class="plb-check" data-linea="' + esc(f.linea) + '">') + '</td>' +
+        '<td class="sku">' + esc(f.sku) + '</td>' +
+        '<td>' + esc(f.desc) + '</td>' +
+        '<td class="ctr">' + esc(f.cant) + '</td>' +
+        '<td class="ctr">' + (asignada ? '<span class="plb-badge-pallet">#' + esc(num) + '</span>' : '<span style="color:#9ca3af">—</span>') + '</td>' +
+      '</tr>';
+    }).join('');
+
+    var sinAsignar = LINEAS.filter(function(f){ return PSTATE.asignacion[String(f.linea)] === undefined; });
+    if (sinAsignar.length) {
+      plbSinAsignar.style.display = '';
+      plbSinAsignar.innerHTML = '<b>⚠ ' + sinAsignar.length + ' línea(s) sin pallet asignado:</b> selecciónalas arriba y crea su pallet.';
+    } else {
+      plbSinAsignar.style.display = 'none';
+    }
+  }
+
+  /* ── Crear pallet con las líneas seleccionadas ───────────────── */
+  if (plbCrearBtn) plbCrearBtn.addEventListener('click', function(){
+    var checks = Array.prototype.slice.call(plbTbody.querySelectorAll('.plb-check:checked'));
+    if (!checks.length) {
+      if (window.ilusToast) ilusToast('Selecciona al menos una línea para armar el pallet.', { type:'warning' });
+      return;
+    }
+    var num = siguienteNumeroPallet();
+    checks.forEach(function(chk){
+      PSTATE.asignacion[chk.dataset.linea] = num;
+    });
+    PSTATE.pallets[String(num)] = {
+      largo: toNum(plbLargo.value), ancho: toNum(plbAncho.value), alto: toNum(plbAlto.value),
+      kilo: toNum(plbKilo.value), embalaje: (plbEmb.value || '').trim()
+    };
+    plbLargo.value = ''; plbAncho.value = ''; plbAlto.value = ''; plbKilo.value = ''; plbEmb.value = '';
+    guardarEstado(DOC_ACTUAL);
+    renderTabla();
+    renderPallets();
+    if (window.ilusToast) ilusToast('Pallet #' + num + ' creado con ' + checks.length + ' línea(s).', { type:'success' });
+  });
+
+  /* ── Lista de pallets ya armados (editable) ──────────────────── */
+  function volumenPallet(p){
+    if (!p || !p.largo || !p.ancho || !p.alto) return null;
+    return (p.largo * p.ancho * p.alto) / 1000000;
+  }
+
+  function renderPallets(){
+    var numeros = Object.keys(PSTATE.pallets).map(function(n){ return parseInt(n, 10); })
+      .filter(function(n){ return !isNaN(n); }).sort(function(a,b){ return a-b; });
+
+    if (!numeros.length) {
+      plbPallets.innerHTML = '<div class="plb-vacio-msg">Todavía no armaste ningún pallet.</div>';
+      return;
+    }
+
+    plbPallets.innerHTML = numeros.map(function(num){
+      var p = PSTATE.pallets[String(num)] || {};
+      var lineasDelPallet = LINEAS.filter(function(f){ return PSTATE.asignacion[String(f.linea)] === num; });
+      var vol = volumenPallet(p);
+      var chips = lineasDelPallet.map(function(f){
+        return '<span class="plb-sku-chip">' + esc(f.sku) + ' ×' + esc(f.cant) +
+          '<button type="button" class="plb-quitar" data-linea="' + esc(f.linea) + '" title="Quitar del pallet">✕</button></span>';
+      }).join('');
+      return '<div class="plb-pallet" data-pallet="' + num + '">' +
+        '<div class="plb-pallet-hdr">' +
+          '<span class="plb-pallet-tit"><span class="plb-badge-pallet">#' + num + '</span> ' + lineasDelPallet.length + ' línea(s)</span>' +
+          '<span class="plb-pallet-vol">Volumen: <b>' + (vol !== null ? fmt(vol, 4) + ' m³' : '—') + '</b></span>' +
+          '<button type="button" class="pl-btn pl-btn-outline plb-eliminar" data-pallet="' + num + '" style="min-height:34px;padding:0 12px">' +
+            '<i class="bi bi-trash3"></i>Eliminar pallet</button>' +
+        '</div>' +
+        '<div class="plb-pallet-skus">' + (chips || '<span style="color:#9ca3af">(sin líneas)</span>') + '</div>' +
+        '<div class="plb-datos">' +
+          '<div class="grp"><label>Largo</label><input type="text" class="dim" data-pf="largo" data-pallet="' + num + '" value="' + esc(p.largo != null ? p.largo : '') + '" inputmode="decimal" placeholder="cm"></div>' +
+          '<div class="grp"><label>Ancho</label><input type="text" class="dim" data-pf="ancho" data-pallet="' + num + '" value="' + esc(p.ancho != null ? p.ancho : '') + '" inputmode="decimal" placeholder="cm"></div>' +
+          '<div class="grp"><label>Alto</label><input type="text" class="dim" data-pf="alto" data-pallet="' + num + '" value="' + esc(p.alto != null ? p.alto : '') + '" inputmode="decimal" placeholder="cm"></div>' +
+          '<div class="grp"><label>Kilo</label><input type="text" class="num" data-pf="kilo" data-pallet="' + num + '" value="' + esc(p.kilo != null ? p.kilo : '') + '" inputmode="decimal" placeholder="kg"></div>' +
+          '<div class="grp"><label>Tipo embalaje</label><input type="text" class="emb" data-pf="embalaje" data-pallet="' + num + '" value="' + esc(p.embalaje || '') + '" list="plbDlEmbalaje" placeholder="Carton"></div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  plbPallets.addEventListener('input', function(ev){
+    var el = ev.target.closest('[data-pf]');
+    if (!el) return;
+    var num = String(el.dataset.pallet);
+    var campo = el.dataset.pf;
+    if (!PSTATE.pallets[num]) PSTATE.pallets[num] = {};
+    PSTATE.pallets[num][campo] = (campo === 'embalaje') ? el.value : toNum(el.value);
+    guardarEstado(DOC_ACTUAL);
+    // Solo se re-pinta el volumen de ESTE pallet (no toda la lista, para no
+    // perder el foco del input mientras el usuario sigue tipeando).
+    var box = el.closest('.plb-pallet');
+    if (box) {
+      var volEl = box.querySelector('.plb-pallet-vol b');
+      if (volEl) {
+        var vol = volumenPallet(PSTATE.pallets[num]);
+        volEl.textContent = vol !== null ? fmt(vol, 4) + ' m³' : '—';
+      }
+    }
+  });
+
+  plbPallets.addEventListener('click', function(ev){
+    var btnQuitar = ev.target.closest('.plb-quitar');
+    if (btnQuitar) {
+      delete PSTATE.asignacion[btnQuitar.dataset.linea];
+      guardarEstado(DOC_ACTUAL);
+      renderTabla();
+      renderPallets();
+      return;
+    }
+    var btnEliminar = ev.target.closest('.plb-eliminar');
+    if (btnEliminar) {
+      var num = parseInt(btnEliminar.dataset.pallet, 10);
+      var conf = (window.ilusConfirm ? window.ilusConfirm({
+        title: 'Eliminar pallet #' + num,
+        message: 'Las líneas de este pallet vuelven a quedar sin asignar. No se borra nada del ERP.',
+        okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+      }) : Promise.resolve(true));
+      conf.then(function(ok){
+        if (!ok) return;
+        Object.keys(PSTATE.asignacion).forEach(function(lk){
+          if (PSTATE.asignacion[lk] === num) delete PSTATE.asignacion[lk];
+        });
+        delete PSTATE.pallets[String(num)];
+        guardarEstado(DOC_ACTUAL);
+        renderTabla();
+        renderPallets();
+        if (window.ilusToast) ilusToast('Pallet #' + num + ' eliminado.', { type:'success' });
+      });
+    }
+  });
 
   refrescar();
 })();

@@ -127,9 +127,12 @@
   }
   function confirmar(opts) {
     if (typeof global.ilusConfirm === 'function') return global.ilusConfirm(opts);
-    // Fallback mínimo (mismo criterio que el template actual) — sólo si
-    // ilus_ui.js no cargó por algún motivo.
-    return Promise.resolve(global.confirm((opts && opts.message) || '¿Continuar?'));
+    // REGLA #1: prohibido confirm() nativo, incluso como fallback. Si
+    // ilus_ui.js no cargó por algún motivo, no bloqueamos con un popup gris:
+    // avisamos por consola y devolvemos false (no continuar) para no
+    // ejecutar por accidente una acción que el usuario no pudo confirmar.
+    try { console.warn('[cubicador] ilusConfirm no disponible — se cancela la accion'); } catch (e) {}
+    return Promise.resolve(false);
   }
 
   /* fetch + parseo tolerante (una respuesta HTML de login no debe explotar) */

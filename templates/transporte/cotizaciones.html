@@ -1,0 +1,565 @@
+{% extends "base.html" %}
+{% block title %}Cotizaciones de Transporte — ILUS{% endblock %}
+{% block content %}
+
+{#
+  ═══════════════════════════════════════════════════════════════════════
+  Cotizaciones de Transporte y Distribución — LISTA (primera pestaña)
+  ═══════════════════════════════════════════════════════════════════════
+  Diseño visual clonado de templates/tickets/cotizaciones.html (hero oscuro
+  + tabla .ilus-card/.ilus-table + badges de estado) y las acciones de fila
+  clonadas de templates/transporte/manifiestos.html, en particular el patrón
+  nuevo de "eliminar" con ilusConfirm + escalamiento a confirm_text ante un
+  409 (agregado 2026-07-25 en tr_manifiesto_eliminar). Numeración propia
+  CTR- (nunca COT-, esa es de Servicio Técnico). Solo se construye ACÁ el
+  template de la lista — el wizard "Crear Cotización" (calcado del de
+  Servicio Técnico: cliente + documentos ERP multidocumento + courier +
+  margen/descuento) es una pieza aparte, todavía no existe.
+
+  ── Variables de contexto que este template espera del backend
+     (logistica_cotizaciones.py) ──
+    cotizaciones: lista de dicts, uno por fila de transport_cotizaciones
+      (JOIN nada por ahora — ticket_id queda reservado a futuro, el diseño
+      dice explícito "NO se conecta lógica ahora", por eso NO hay columna
+      Ticket acá aunque tickets/cotizaciones.html sí la tenga):
+        id, numero (CTR-000001), estado (draft|sent|approved|rejected|expired),
+        empresa, rut, total, created_at, created_by, updated_at, updated_by,
+        editada_post_aprobacion (bool), valida_hasta,
+        reutilizada_en_id (int|None), reutilizada_en_numero (str|None) —
+        columna agregada por la regla de negocio adicional de Daniel
+        (cotización cuyos items/documento de origen se reutilizaron en otra).
+    permissions: el dict plano de siempre (g.permissions). Se usan
+      permissions.superadmin (aprobar/cancelar/eliminar/detalle de cálculo)
+      y permissions.superadmin/permissions.admin (historial) — mismo gate
+      que ya usa tickets/cotizaciones.html. Ajustar si Daniel pide un
+      permiso propio más fino (el diseño menciona "un permiso propio al
+      módulo" pero no da el nombre de la clave — placeholder sugerido:
+      permissions.transporte_cotizaciones, a confirmar con quien conecte
+      app.py).
+
+  ── Contrato de endpoints (2026-07-25, integración final — ya verificado
+     1:1 contra logistica_cotizaciones.py, no queda nada "asumido") ──
+    GET  /transporte/cotizaciones                      esta pantalla (lista)
+    GET  /transporte/cotizaciones/<id>/ver              visor de solo lectura ("Ver") —
+                                                         misma plantilla que el PDF,
+                                                         Fase 1, ya real
+    GET  /transporte/cotizaciones/<id>/pdf              PDF imprimible (target=_blank),
+                                                         mismo diseño que el PDF de
+                                                         Servicio Técnico (logo + firmas)
+    GET  /transporte/cotizaciones/<id>/detalle-calculo  desglose interno del cálculo
+                                                         (courier, peso, margen,
+                                                         descuento) — solo superadmin
+    GET  /transporte/cotizaciones/api/<id>              JSON de la cotización, usado
+                                                         para precargar destinatarios
+                                                         del modal "Enviar por correo"
+    POST /transporte/cotizaciones/api/<id>/estado       body {estado:'approved'|'rejected'}
+    POST /transporte/cotizaciones/api/<id>/eliminar     soft-delete. Guardas de negocio:
+                                                         - estado='approved' → 409 SIN
+                                                           bypass posible (ni confirm_text,
+                                                           ni superadmin) — por eso el
+                                                           botón ni siquiera se pinta acá.
+                                                         - reutilizada_en_id no nulo → 409
+                                                           SIN bypass, mismo motivo — el
+                                                           botón tampoco se pinta.
+                                                         - actividad real futura (enviada,
+                                                           etc.) → 409 {requiere_confirmacion:
+                                                           true, correlativo/numero} y el
+                                                           front escala con ilusPrompt,
+                                                           MISMO patrón que
+                                                           tr_manifiesto_eliminar (app.py).
+    POST /transporte/cotizaciones/api/<id>/enviar       body {destinatarios:[...], mensaje}
+    GET  /transporte/cotizaciones/api/<id>/log          historial (transport_cotizacion_log)
+
+  El botón "+ Crear Cotización" abre el wizard real (window.lcAbrir(), ver
+  templates/transporte/_modal_cotizacion_logistica.html). Solo cae al
+  ilusToast de aviso si por algún motivo ese include no cargó en la
+  página (defensivo, Regla #1: nunca alert nativo).
+#}
+
+<style>
+.trc-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.trc-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;display:flex;align-items:center;gap:10px;}
+.trc-hero .sub{font-size:.86rem;color:#cfd3da;margin-top:2px;}
+.trc-btn-crear{background:#dc2626;color:#fff;font-weight:800;border:none;border-radius:10px;
+  padding:0 20px;min-height:44px;display:inline-flex;align-items:center;gap:8px;transition:.15s;}
+.trc-btn-crear:hover{background:#b91c1c;color:#fff;}
+.trc-btn-crear:active{transform:scale(.97);}
+
+.trc-filtros{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px;align-items:center;}
+.trc-filtros input, .trc-filtros select{min-height:40px;font-size:.86rem;}
+
+.trc-empty{background:#f9fafb;border:1px dashed #d1d5db;border-radius:14px;padding:40px;text-align:center;color:#9ca3af;}
+.trc-empty i{font-size:2.2rem;display:block;margin-bottom:10px;}
+.trc-empty b{display:block;color:#6b7280;font-weight:700;}
+
+.trc-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;white-space:nowrap;}
+.trc-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;white-space:nowrap;}
+.trc-cb-draft{background:#f3f4f6;color:#6b7280;}
+.trc-cb-sent{background:#dbeafe;color:#1e40af;}
+.trc-cb-approved{background:#dcfce7;color:#166534;}
+.trc-cb-rejected{background:#fee2e2;color:#991b1b;}
+.trc-cb-expired{background:#fef3c7;color:#92400e;}
+.trc-cb-reused{background:#eef2ff;color:#3730a3;}
+
+.trc-row-total{font-family:'JetBrains Mono',monospace;font-size:.86rem;font-weight:800;color:#0a0a0a;
+  white-space:nowrap;font-variant-numeric:tabular-nums;}
+.trc-row-total.cero{color:#c1c5cc;font-weight:600;font-size:.74rem;font-style:italic;}
+
+.trc-row-btn{border:none;background:transparent;width:34px;height:34px;border-radius:8px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;font-size:1.02rem;transition:all .12s;
+  text-decoration:none;}
+.trc-row-btn:active{transform:scale(.94);}
+.trc-row-btn-ver{color:#374151;} .trc-row-btn-ver:hover{background:#f3f4f6;color:#0a0a0a;}
+.trc-row-btn-pdf{color:#dc2626;} .trc-row-btn-pdf:hover{background:#fee2e2;color:#b91c1c;}
+.trc-row-btn-send{color:#1e40af;} .trc-row-btn-send:hover{background:#dbeafe;}
+.trc-row-btn-ok{color:#16a34a;} .trc-row-btn-ok:hover{background:#dcfce7;}
+.trc-row-btn-no{color:#b45309;} .trc-row-btn-no:hover{background:#fef3c7;}
+.trc-row-btn-del{color:#dc2626;} .trc-row-btn-del:hover{background:#fee2e2;}
+.trc-row-btn-calc{color:#6b7280;} .trc-row-btn-calc:hover{background:#dc2626;color:#fff;}
+.trc-row-btn-audit{color:#6b7280;} .trc-row-btn-audit:hover{background:#0a0a0a;color:#fff;}
+.trc-row-btn[disabled], .trc-row-btn.disabled{opacity:.35;cursor:not-allowed;pointer-events:none;}
+
+.trc-reused-tag{display:inline-flex;align-items:center;gap:4px;font-size:.66rem;font-weight:700;
+  color:#3730a3;margin-top:3px;text-decoration:none;}
+.trc-reused-tag:hover{color:#1e1b4b;text-decoration:underline;}
+
+/* Modal ENVIAR — chips de destinatarios (mismo lenguaje visual que
+   tickets/cotizaciones.html .cot-chip). */
+.trc-chip{display:inline-flex;align-items:center;gap:6px;background:#eef2ff;color:#3730a3;border-radius:50px;
+  padding:5px 8px 5px 12px;font-size:.8rem;font-weight:600;margin:3px;}
+.trc-chip button{border:none;background:transparent;color:#6366f1;cursor:pointer;font-size:.9rem;line-height:1;
+  display:inline-flex;padding:0 2px;}
+.trc-chip button:hover{color:#dc2626;}
+
+.trc-hist-item{display:flex;gap:10px;padding:8px 4px;border-bottom:1px solid #f3f4f6;font-size:.82rem;}
+.trc-hist-item:last-child{border-bottom:none;}
+.trc-hist-ico{width:26px;height:26px;border-radius:7px;background:#f3f4f6;color:#374151;display:inline-flex;
+  align-items:center;justify-content:center;flex-shrink:0;}
+.trc-hist-body b{color:#0a0a0a;} .trc-hist-body small{color:#9ca3af;display:block;font-family:ui-monospace,monospace;}
+
+@media(max-width:640px){
+  .trc-hero{padding:16px 18px;}
+  .trc-hero h4{font-size:1.15rem;}
+  .trc-filtros{flex-direction:column;align-items:stretch;}
+  .trc-filtros input, .trc-filtros select{max-width:none !important;width:100%;}
+}
+</style>
+
+<div class="trc-hero">
+  <div>
+    <h4><i class="bi bi-truck"></i>Cotizaciones de Transporte</h4>
+    <div class="sub">Flete cotizado con los couriers + margen y descuento — numeración CTR-</div>
+  </div>
+  <button type="button" class="trc-btn-crear" id="btnTrcCrear" onclick="trcAbrirCrear()">
+    <i class="bi bi-plus-lg"></i>Crear Cotización
+  </button>
+</div>
+
+{% if cotizaciones %}
+<div class="trc-filtros">
+  <input type="text" id="trcFiltroTexto" class="form-control form-control-sm" placeholder="Buscar por número, empresa o RUT…"
+         oninput="trcFiltrarLista()" style="max-width:320px;">
+  <select id="trcFiltroEstado" class="form-select form-select-sm" onchange="trcFiltrarLista()" style="max-width:190px;">
+    <option value="">Todos los estados</option>
+    <option value="draft">Borrador</option>
+    <option value="sent">Enviada</option>
+    <option value="approved">Aprobada</option>
+    <option value="rejected">Cancelada</option>
+    <option value="expired">Vencida</option>
+  </select>
+</div>
+
+<div class="ilus-card">
+  <div class="ilus-card-header">
+    <span><i class="bi bi-file-earmark-text me-2"></i>Gestión de cotizaciones de transporte</span>
+    <span class="small fw-normal" style="color:#9ca3af;">{{ cotizaciones|length }} cotización(es) listada(s)</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table ilus-table mb-0 table-mobile-cards">
+      <thead>
+        <tr>
+          <th>Número</th>
+          <th>Cliente</th>
+          <th>Estado</th>
+          <th>Fecha</th>
+          <th class="text-end">Total</th>
+          <th class="text-center">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cotizaciones %}
+        {% set puede_eliminar = permissions.superadmin and c.estado != 'approved' and not c.reutilizada_en_id %}
+        <tr class="trc-row" data-num="{{ (c.numero or '')|lower }}" data-emp="{{ (c.empresa or c.rut or '')|lower }}"
+            data-estado="{{ c.estado }}">
+          <td data-label="Número"><span class="trc-num">{{ c.numero or ('#' ~ c.id) }}</span></td>
+          <td data-label="Cliente">
+            <strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong>
+            {% if c.reutilizada_en_id %}
+            <a class="trc-reused-tag" href="/transporte/cotizaciones/{{ c.reutilizada_en_id }}/ver" target="_blank" rel="noopener" title="Sus datos/documento de origen se reutilizaron en otra cotización — no se puede eliminar mientras exista ese vínculo">
+              <i class="bi bi-link-45deg"></i>Reutilizada en {{ c.reutilizada_en_numero or ('#' ~ c.reutilizada_en_id) }}
+            </a>
+            {% endif %}
+          </td>
+          <td data-label="Estado" style="white-space:nowrap;">
+            <span class="trc-badge trc-cb-{{ c.estado }}">
+              {{ {'draft':'Borrador','sent':'Enviada','approved':'Aprobada','rejected':'Cancelada','expired':'Vencida'}.get(c.estado, c.estado) }}
+            </span>
+            {% if c.editada_post_aprobacion %}<i class="bi bi-pencil-fill" style="color:#f59e0b;font-size:.8rem;margin-left:4px;" title="Editada después de aprobarse — revisa el historial"></i>{% endif %}
+          </td>
+          <td data-label="Fecha" style="font-size:.8rem;color:#6b7280;white-space:nowrap;">{{ c.created_at | chile_fmt }}</td>
+          <td data-label="Total" class="text-end">
+            {% if c.total %}
+            <span class="trc-row-total">${{ '{:,}'.format(c.total | int).replace(',', '.') }}</span>
+            {% else %}
+            <span class="trc-row-total cero">sin calcular</span>
+            {% endif %}
+          </td>
+          <td data-label="Acciones" class="text-center" style="white-space:nowrap;">
+            <a class="trc-row-btn trc-row-btn-ver" href="/transporte/cotizaciones/{{ c.id }}/ver" target="_blank" rel="noopener" title="Ver ficha completa de esta cotización">
+              <i class="bi bi-eye-fill"></i>
+            </a>
+            {# "Ver" abre el visor de solo-lectura (GET .../<id>/ver, ya
+               real desde Fase 1 — misma plantilla que el PDF). Editar es
+               una acción aparte: abre el wizard en modo edición, ver
+               trcAbrirEditar/window.lcAbrir. Ambos botones conviven
+               (Regla #4.2: se agrega, no se quita). #}
+            <button type="button" class="trc-row-btn trc-row-btn-ver" title="Editar esta cotización"
+                    onclick="trcAbrirEditar({{ c.id }})">
+              <i class="bi bi-pencil-fill"></i>
+            </button>
+            <a class="trc-row-btn trc-row-btn-pdf" href="/transporte/cotizaciones/{{ c.id }}/pdf" target="_blank" rel="noopener" title="Ver / descargar el PDF de la cotización">
+              <i class="bi bi-file-earmark-pdf-fill"></i>
+            </a>
+            <button type="button" class="trc-row-btn trc-row-btn-send" title="Enviar por correo"
+                    onclick="trcAbrirEnviar({{ c.id }})"><i class="bi bi-envelope-fill"></i></button>
+            {% if permissions.superadmin %}
+              {% if c.estado != 'approved' %}
+              <button type="button" class="trc-row-btn trc-row-btn-ok" title="Aprobar cotización"
+                      onclick="trcCambiarEstado({{ c.id }}, 'approved', '{{ (c.numero or ('#' ~ c.id))|e }}')"><i class="bi bi-check-circle-fill"></i></button>
+              {% endif %}
+              {% if c.estado != 'rejected' %}
+              <button type="button" class="trc-row-btn trc-row-btn-no" title="Cancelar cotización"
+                      onclick="trcCambiarEstado({{ c.id }}, 'rejected', '{{ (c.numero or ('#' ~ c.id))|e }}')"><i class="bi bi-x-circle"></i></button>
+              {% endif %}
+              {# Eliminar: NUNCA se pinta si está aprobada o fue reutilizada — esas
+                 dos condiciones son bloqueo absoluto (ni con confirm_text, ni
+                 superadmin) según la regla de negocio adicional de Daniel, así
+                 que ni siquiera tiene sentido ofrecer el botón. #}
+              {% if puede_eliminar %}
+              <button type="button" class="trc-row-btn trc-row-btn-del" title="Eliminar cotización"
+                      onclick="trcEliminar({{ c.id }}, '{{ (c.numero or ('#' ~ c.id))|e }}')"><i class="bi bi-trash"></i></button>
+              {% else %}
+              <button type="button" class="trc-row-btn trc-row-btn-del disabled" disabled
+                      title="{% if c.estado == 'approved' %}Cotización aprobada — no se puede eliminar bajo ninguna circunstancia{% elif c.reutilizada_en_id %}Reutilizada en otra cotización — no se puede eliminar mientras exista ese vínculo{% else %}No se puede eliminar{% endif %}">
+                <i class="bi bi-trash"></i>
+              </button>
+              {% endif %}
+              <a class="trc-row-btn trc-row-btn-calc" href="/transporte/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
+                 title="Ver detalle de cálculo (courier, peso, margen, descuento) — solo superadmin">
+                <i class="bi bi-calculator-fill"></i>
+              </a>
+            {% endif %}
+            {% if permissions.superadmin or permissions.admin %}
+            <button type="button" class="trc-row-btn trc-row-btn-audit" title="Ver historial (quién hizo qué y cuándo)"
+                    onclick="trcVerHistorial({{ c.id }}, '{{ (c.numero or ('#' ~ c.id))|e }}')">
+              <i class="bi bi-clock-history"></i>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="trc-empty">
+  <i class="bi bi-file-earmark-plus"></i>
+  <b>Todavía no hay cotizaciones de transporte</b>
+  <div style="font-size:.84rem;margin-top:4px;">
+    Crea la primera con el botón "Crear Cotización" de arriba.
+  </div>
+</div>
+{% endif %}
+
+{# ══════════════ Modal ENVIAR cotización por correo (multi-destinatario) ══════════════ #}
+<div class="modal fade" id="trcEnviarModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:16px;border:none;">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:16px 16px 0 0;">
+        <h6 class="modal-title fw-bold"><i class="bi bi-envelope-fill me-2"></i>Enviar cotización <span id="trcEnvNum"></span></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label fw-bold" style="font-size:.78rem;">Destinatarios</label>
+        <div id="trcEnvChips" style="min-height:38px;border:1px solid #e5e7eb;border-radius:10px;padding:4px;margin-bottom:6px;"></div>
+        <div class="input-group input-group-sm mb-1">
+          <input type="email" id="trcEnvInput" class="form-control" placeholder="Agregar otro correo y presionar Enter"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();trcEnvAgregar();}" oninput="trcEnvValidarInput()">
+          <button type="button" class="btn" style="background:#0a0a0a;color:#fff;font-weight:700;" onclick="trcEnvAgregar()">Agregar</button>
+        </div>
+        <div style="font-size:.7rem;color:#9ca3af;">Se precarga el cliente si tiene correo registrado. Puedes agregar o quitar.</div>
+        <label class="form-label fw-bold mt-3" style="font-size:.78rem;">Mensaje (opcional)</label>
+        <textarea id="trcEnvMensaje" class="form-control" rows="2" placeholder="Ej: Estimado, adjuntamos la cotización de transporte solicitada."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm fw-bold" id="trcEnvSubmit" style="background:#dc2626;color:#fff;" onclick="trcEnviarSubmit()">
+          <i class="bi bi-send-fill me-1"></i>Enviar (<span id="trcEnvCount">0</span>)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════ Modal HISTORIAL (evidencia) ══════════════ #}
+<div class="modal fade" id="trcHistModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:16px;border:none;">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:16px 16px 0 0;">
+        <h6 class="modal-title fw-bold"><i class="bi bi-clock-history me-2"></i>Historial <span id="trcHistNum"></span></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" id="trcHistBody" style="max-height:60vh;overflow-y:auto;">
+        <div class="text-center text-muted py-3">Cargando…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════ Modal "Crear / Editar Cotización" (wizard multidocumento
+   — ver el propio archivo para el contrato completo de endpoints/includes
+   que exige) + modal compartido de búsqueda ERP que ese wizard necesita
+   para el botón "Traer documento(s) del ERP". Ambos, UNA sola vez. ══ #}
+{% include "transporte/_modal_cotizacion_logistica.html" %}
+{% include "tickets/_tka_modal.html" %}
+
+{% endblock %}
+
+{% block scripts %}
+{# Botones "Medidas"/"Etiquetas" de la tabla de ítems del wizard (Sección 6
+   de _modal_cotizacion_logistica.html) delegan en este archivo — mismo
+   mecanismo EXACTO que templates/cubicador/index.html, sin reescribir nada
+   de esa lógica (data-action="cub-medidas"/"cub-etiquetas" sobre filas
+   <tr class="cub-row">). #}
+<script src="{{ url_for('static', filename='cubicador_tabs.js') }}"></script>
+<script>
+// ══════════════ Filtro client-side (número/empresa/RUT + estado) ══════════════
+function trcFiltrarLista(){
+  const q = (document.getElementById('trcFiltroTexto').value || '').toLowerCase().trim();
+  const est = document.getElementById('trcFiltroEstado').value || '';
+  document.querySelectorAll('.trc-row').forEach(function(row){
+    const okTxt = !q || (row.dataset.num||'').includes(q) || (row.dataset.emp||'').includes(q);
+    const okEst = !est || row.dataset.estado === est;
+    row.style.display = (okTxt && okEst) ? '' : 'none';
+  });
+}
+
+function _trcEsc(s){
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+// ══════════════ Crear / Editar Cotización — abre el wizard multidocumento
+// de templates/transporte/_modal_cotizacion_logistica.html (window.lcAbrir).
+// Defensivo: si por algún motivo ese include faltara en esta página, avisa
+// en vez de romper (Regla #1: nunca alert() nativo). ══════════════
+function trcAbrirCrear(){
+  if (typeof window.lcAbrir !== 'function'){
+    ilusToast('El asistente de cotizaciones no cargó — recarga la página e intenta de nuevo.', {type:'error'});
+    return;
+  }
+  window.lcAbrir();
+}
+function trcAbrirEditar(cid){
+  if (typeof window.lcAbrir !== 'function'){
+    ilusToast('El asistente de cotizaciones no cargó — recarga la página e intenta de nuevo.', {type:'error'});
+    return;
+  }
+  window.lcAbrir(cid);
+}
+
+// ══════════════ Aprobar / Cancelar (superadmin) ══════════════
+async function trcCambiarEstado(cid, estado, numero){
+  const _txt = estado === 'approved' ? 'aprobar' : 'cancelar';
+  const ok = await ilusConfirm({
+    title: (estado === 'approved' ? 'Aprobar' : 'Cancelar') + ' cotización',
+    message: '¿Seguro que quieres ' + _txt + ' ' + (numero || 'esta cotización') + '?',
+    sub: 'Queda registrado en el historial quién y cuándo.',
+    okLabel: estado === 'approved' ? 'Aprobar' : 'Cancelar cotización',
+    cancelLabel: 'Volver', danger: estado === 'rejected',
+  });
+  if (!ok) return;
+  try{
+    const r = await fetch('/transporte/cotizaciones/api/' + cid + '/estado', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({estado: estado})
+    });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo cambiar el estado', {type:'error'}); return; }
+    ilusToast('✓ Cotización ' + (estado === 'approved' ? 'aprobada' : 'cancelada'), {type:'success'});
+    location.reload();
+  }catch(e){ ilusToast('Error de conexión', {type:'error'}); }
+}
+
+// ══════════════ Eliminar (soft-delete, superadmin) ══════════════
+// Mismo patrón que eliminarManifiesto() en templates/transporte/manifiestos.html
+// (agregado 2026-07-25): si el backend responde 409 con requiere_confirmacion,
+// se escala a ilusPrompt pidiendo escribir el número exacto. Si el 409 viene
+// SIN requiere_confirmacion (ej: estado='approved' o reutilizada_en_id), es un
+// bloqueo absoluto — no hay prompt de escalamiento, solo se informa por qué.
+async function trcEliminar(cid, numero, confirmText){
+  if (!confirmText){
+    const ok = await ilusConfirm({
+      title: 'Eliminar cotización',
+      message: '¿Quitar la cotización ' + numero + '?',
+      sub: 'Deja de aparecer en el listado. Queda registro de quién la eliminó (no se borra de la base).',
+      okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+    });
+    if (!ok) return;
+  }
+  try{
+    const r = await fetch('/transporte/cotizaciones/api/' + cid + '/eliminar', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(confirmText ? {confirm_text: confirmText} : {})
+    });
+    const d = await r.json();
+    if (r.status === 409 && d.requiere_confirmacion){
+      const texto = await ilusPrompt({
+        title: 'Confirmación adicional requerida',
+        message: d.error,
+        placeholder: d.numero || numero,
+        required: true,
+      });
+      if (texto === null) return;
+      if (texto.trim() !== (d.numero || numero)){
+        ilusToast('No coincide con "' + (d.numero || numero) + '" — no se eliminó.', {type:'warning'});
+        return;
+      }
+      return trcEliminar(cid, numero, texto.trim());
+    }
+    if (!d.ok){
+      await ilusAlert({ title: 'No se pudo eliminar', message: d.error || ('HTTP ' + r.status), type: 'error' });
+      return;
+    }
+    ilusToast('✓ Cotización eliminada', {type:'success'});
+    location.reload();
+  }catch(e){ ilusToast('Error de conexión', {type:'error'}); }
+}
+
+// ══════════════ Historial ══════════════
+const _TRC_HIST_ICONOS = {
+  crear:'bi-plus-circle', editar:'bi-pencil', editar_aprobada:'bi-pencil-fill',
+  aprobar:'bi-check-circle', rechazar:'bi-x-circle', reabrir:'bi-arrow-counterclockwise',
+  enviar_correo:'bi-envelope', eliminar:'bi-trash', cotizar_courier:'bi-truck'
+};
+const _TRC_HIST_LABEL = {
+  crear:'Creada', editar:'Editada', editar_aprobada:'Editada (estaba aprobada)',
+  aprobar:'Aprobada', rechazar:'Cancelada', reabrir:'Reabierta',
+  enviar_correo:'Enviada por correo', eliminar:'Eliminada', cotizar_courier:'Flete cotizado con courier'
+};
+async function trcVerHistorial(cid, numero){
+  document.getElementById('trcHistNum').textContent = numero || '';
+  document.getElementById('trcHistBody').innerHTML = '<div class="text-center text-muted py-3">Cargando…</div>';
+  const modal = new bootstrap.Modal(document.getElementById('trcHistModal'));
+  modal.show();
+  try{
+    const r = await fetch('/transporte/cotizaciones/api/' + cid + '/log');
+    const d = await r.json();
+    if (!d.ok){ document.getElementById('trcHistBody').innerHTML = '<div class="text-danger py-3">' + _trcEsc(d.error||'Sin permiso') + '</div>'; return; }
+    if (!d.eventos || !d.eventos.length){ document.getElementById('trcHistBody').innerHTML = '<div class="text-muted py-3">Sin eventos registrados.</div>'; return; }
+    document.getElementById('trcHistBody').innerHTML = d.eventos.map(function(ev){
+      const ico = _TRC_HIST_ICONOS[ev.accion] || 'bi-dot';
+      const lbl = _TRC_HIST_LABEL[ev.accion] || ev.accion;
+      return '<div class="trc-hist-item"><span class="trc-hist-ico"><i class="bi ' + ico + '"></i></span>'
+        + '<div class="trc-hist-body"><b>' + _trcEsc(lbl) + '</b>'
+        + '<small>' + _trcEsc(ev.usuario || 'sistema') + ' · ' + _trcEsc(ev.fecha || '') + '</small></div></div>';
+    }).join('');
+  }catch(e){ document.getElementById('trcHistBody').innerHTML = '<div class="text-danger py-3">Error de conexión</div>'; }
+}
+
+// ══════════════ Enviar por correo (multi-destinatario) ══════════════
+let _trcEnvCid = null, _trcEnvDest = [];
+async function trcAbrirEnviar(cid){
+  _trcEnvCid = cid; _trcEnvDest = [];
+  document.getElementById('trcEnvMensaje').value = '';
+  document.getElementById('trcEnvInput').value = '';
+  document.getElementById('trcEnvNum').textContent = '';
+  document.getElementById('trcEnvChips').innerHTML = '<span class="text-muted" style="font-size:.78rem;padding:6px;">Cargando destinatarios…</span>';
+  const modal = new bootstrap.Modal(document.getElementById('trcEnviarModal'));
+  modal.show();
+  try{
+    const r = await fetch('/transporte/cotizaciones/api/' + cid);
+    const d = await r.json();
+    if (d.ok && d.cotizacion){
+      document.getElementById('trcEnvNum').textContent = d.cotizacion.numero || ('#' + cid);
+      if (d.cotizacion.email) _trcEnvAdd(d.cotizacion.email, 'cliente');
+      (d.destinatarios_sugeridos || []).forEach(function(s){ _trcEnvAdd(s.email, s.origen); });
+    }
+  }catch(e){}
+  _trcEnvRender();
+}
+const _TRC_ORIGEN_LBL = {cliente:'Cliente', contacto:'Contacto', ejecutivo:'Ejecutivo', yo:'Yo', manual:''};
+function _trcEnvAdd(email, origen){
+  email = (email||'').trim();
+  if (!email) return false;
+  if (_trcEnvDest.some(function(x){ return x.email.toLowerCase() === email.toLowerCase(); })) return false;
+  _trcEnvDest.push({email: email, origen: origen || 'manual'});
+  return true;
+}
+function _trcEnvRender(){
+  const box = document.getElementById('trcEnvChips');
+  if (!_trcEnvDest.length){ box.innerHTML = '<span class="text-muted" style="font-size:.78rem;padding:6px;">Sin destinatarios — agrega al menos uno.</span>'; }
+  else {
+    box.innerHTML = _trcEnvDest.map(function(x, i){
+      const lbl = _TRC_ORIGEN_LBL[x.origen];
+      return '<span class="trc-chip">' + (lbl ? '<small>' + _trcEsc(lbl) + '</small> ' : '') + _trcEsc(x.email)
+        + '<button type="button" onclick="trcEnvQuitar(' + i + ')" title="Quitar">&times;</button></span>';
+    }).join('');
+  }
+  document.getElementById('trcEnvCount').textContent = _trcEnvDest.length;
+  document.getElementById('trcEnvSubmit').disabled = _trcEnvDest.length === 0;
+}
+function trcEnvQuitar(i){ _trcEnvDest.splice(i, 1); _trcEnvRender(); }
+function _trcEnvEmailOk(e){ return /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test((e||'').trim()); }
+function trcEnvValidarInput(){
+  const inp = document.getElementById('trcEnvInput');
+  const v = inp.value.trim();
+  inp.style.borderColor = !v ? '' : (_trcEnvEmailOk(v) ? '#16a34a' : '#dc2626');
+}
+function trcEnvAgregar(){
+  const inp = document.getElementById('trcEnvInput');
+  const v = inp.value.trim();
+  if (!v) return;
+  if (!_trcEnvEmailOk(v)){ ilusToast('Ese correo no es válido', {type:'warning'}); return; }
+  if (_trcEnvAdd(v, 'manual')){ inp.value = ''; inp.style.borderColor = ''; _trcEnvRender(); }
+  else { ilusToast('Ese correo ya está en la lista', {type:'info'}); }
+}
+async function trcEnviarSubmit(){
+  if (!_trcEnvCid || !_trcEnvDest.length) return;
+  const btn = document.getElementById('trcEnvSubmit');
+  const _orig = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando…';
+  try{
+    const r = await fetch('/transporte/cotizaciones/api/' + _trcEnvCid + '/enviar', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        destinatarios: _trcEnvDest.map(function(x){ return x.email; }),
+        mensaje: document.getElementById('trcEnvMensaje').value.trim()
+      })
+    });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo enviar', {type:'error'}); btn.disabled = false; btn.innerHTML = _orig; return; }
+    let msg = '✓ Enviada a ' + (d.enviados != null ? d.enviados : _trcEnvDest.length) + ' destinatario(s)';
+    if (d.fallidos && d.fallidos.length) msg += ' · ' + d.fallidos.length + ' falló(aron)';
+    ilusToast(msg, {type:'success'});
+    bootstrap.Modal.getInstance(document.getElementById('trcEnviarModal')).hide();
+    setTimeout(function(){ location.reload(); }, 800);
+  }catch(e){ ilusToast('Error de conexión', {type:'error'}); btn.disabled = false; btn.innerHTML = _orig; }
+}
+</script>
+{% endblock %}

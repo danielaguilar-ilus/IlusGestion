@@ -18055,7 +18055,10 @@ def api_asignar_cotizar_couriers():
 
     # 2) Función worker que cotiza UN courier — TODO con tabla del macro.
     #    FedEx usa la tabla "FedEx Directo" (Daniel: sin API por ahora).
-    #    Solo se muestran: FedEx, Felca, Milling, Clickex (Envíame vendrá pronto).
+    #    Solo se muestran: FedEx, Felca, Milling, Clickex. Starken y Blue
+    #    Express tienen tabla real cargada (148 y 342 comunas) pero Daniel
+    #    pidió explícitamente dejarlos apagados (2026-07-25) — no destrabar
+    #    sin que lo pida de nuevo.
     def _cotizar_uno(c):
         cid      = c['id']
         nombre   = c['nombre'] or ''
@@ -18064,7 +18067,7 @@ def api_asignar_cotizar_couriers():
         slug     = 'fedex_directo' if is_fedex else _ttar.slug_para_courier(nombre)
 
         if slug not in ('felca', 'milling', 'clickex', 'fedex_directo'):
-            return None  # Starken / Blue / Envíame / etc.: ocultos por ahora
+            return None
 
         try:
             r = _ttar.cotizar(slug, comuna, peso_fact, valor_neto)
@@ -23424,9 +23427,54 @@ def _tr_recalc_totales_manifiesto(cur, mid):
     """, (mid,))
 
 
+def _tr_manifiesto_guard_actividad(mid):
+    """Guarda compartida de tr_agregar_item / tr_quitar_item (FIX 2026-07-25,
+    revisión adversarial, hallazgo ALTA): antes, un manifiesto ya subido a
+    un courier (o con prueba de entrega firmada) podía recibir un POST/
+    DELETE de items SIN ningún chequeo, desincronizando el seguimiento que
+    ya ve el cliente. Replica el mismo patrón 403/409-con-aviso que ya usa
+    tr_manifiesto_eliminar (arriba en este archivo): bloquea para
+    no-superadmin, y para superadmin deja pasar pero deja un aviso
+    logueado (visible en el historial del manifiesto, `logs` en
+    manifiesto_detalle.html) y devuelto en la respuesta JSON.
+
+    Reusa el motor de SOLO LECTURA _lc_manifiesto_tiene_actividad de
+    logistica_cotizaciones.py -- Regla #4.2: no duplica la consulta, y el
+    import es perezoso (mismo criterio que usa logistica_cotizaciones.py
+    para leer helpers de app.py) porque ese módulo se registra al final de
+    app.py, después de que estas rutas ya quedaron definidas.
+
+    Devuelve (bloqueo, aviso):
+      - bloqueo: tupla (response, status) lista para `return`, o None si
+        puede seguir.
+      - aviso: string a incluir en la respuesta JSON si un superadmin
+        pasó por encima de la guarda, o None si no aplica.
+    """
+    try:
+        from logistica_cotizaciones import _lc_manifiesto_tiene_actividad
+        tiene, motivo = _lc_manifiesto_tiene_actividad(mid)
+    except Exception:
+        tiene, motivo = False, None
+    if not tiene:
+        return None, None
+    if not bool(g.permissions.get("superadmin")):
+        return (jsonify({
+            "ok": False,
+            "error": f"Este manifiesto {motivo}: solo un superadministrador puede "
+                     "agregar o quitar facturas.",
+        }), 403), None
+    aviso = (f"Editado por superadministrador aunque el manifiesto {motivo} "
+             "— puede desincronizar el seguimiento que ya ve el cliente.")
+    _tr_log("manifest", mid, "aviso", aviso)
+    return None, aviso
+
+
 @app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
 @_tr_required
 def tr_agregar_item(mid):
+    _bloqueo, _aviso = _tr_manifiesto_guard_actividad(mid)
+    if _bloqueo:
+        return _bloqueo
     cid = request.get_json(silent=True, force=True).get("commitment_id")
     if not cid:
         return jsonify({"error": "commitment_id requerido"}), 400
@@ -23450,12 +23498,18 @@ def tr_agregar_item(mid):
     else:
         _detalle = f"commitment_id={cid}"
     _tr_log("manifest", mid, "factura agregada", _detalle)
-    return jsonify({"ok": True})
+    resp = {"ok": True}
+    if _aviso:
+        resp["aviso"] = _aviso
+    return jsonify(resp)
 
 
 @app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>", methods=["DELETE"])
 @_tr_required
 def tr_quitar_item(mid, item_id):
+    _bloqueo, _aviso = _tr_manifiesto_guard_actividad(mid)
+    if _bloqueo:
+        return _bloqueo
     # Capturar datos del item ANTES de borrar, para una trazabilidad legible
     # (qué factura, de qué cliente, cuánto flete, cuántos bultos se quitaron).
     info = mysql_fetchone(
@@ -23492,11 +23546,14 @@ def tr_quitar_item(mid, item_id):
     else:
         detalle = f"item_id={item_id}"
     _tr_log("manifest", mid, "factura quitada", detalle)
-    return jsonify({
+    resp = {
         "ok": True,
         "total_items": (_tot.get("total_items") if _tot else None),
         "costo_total": float(_tot.get("costo_total") or 0) if _tot else None,
-    })
+    }
+    if _aviso:
+        resp["aviso"] = _aviso
+    return jsonify(resp)
 
 
 @app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>/estado", methods=["PUT"])
@@ -33733,6 +33790,7 @@ def comm_wa_test():
 # Módulos válidos para plantillas — mantener sincronizado con el frontend
 _COMM_MODULOS_VALIDOS = (
     "transporte",
+    "transporte_cotizaciones",
     "retiros",
     "mantenciones",
     "comunicacion_interna",
@@ -75565,6 +75623,63 @@ try:
     print("[cubicador_plus] rutas registradas", flush=True)
 except Exception as _e_cubplus:
     print(f"[cubicador_plus] NO se pudo registrar: {_e_cubplus}", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  COTIZACIONES DE TRANSPORTE Y DISTRIBUCION (2026-07-25) — PDF (reusa
+#  templates/tickets/cotizacion_pdf.html) + plantilla de correo propia.
+#  Vive en logistica_cotizaciones.py (módulo aparte, mismo criterio que
+#  cubicador_plus.py). Best-effort: si el módulo falla, la app completa
+#  debe seguir levantando.
+# ══════════════════════════════════════════════════════════════════════
+try:
+    from logistica_cotizaciones import register_logistica_cotizaciones as _register_logistica_cotizaciones
+    _register_logistica_cotizaciones(app, globals())
+    print("[logistica_cotizaciones] módulo registrado", flush=True)
+except Exception as _e_lc:
+    print(f"[logistica_cotizaciones] NO se pudo registrar: {_e_lc}", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  CUADRATURA (2026-07-25) — factura vs picking real, por SKU, 4ta pestaña
+#  del Cubicador. Vive en logistica_cuadratura.py (módulo aparte, mismo
+#  criterio que cubicador_plus.py / logistica_cotizaciones.py). Best-effort:
+#  si el módulo falla, la app completa debe seguir levantando.
+# ══════════════════════════════════════════════════════════════════════
+try:
+    from logistica_cuadratura import register_logistica_cuadratura as _register_logistica_cuadratura
+    _register_logistica_cuadratura(app)
+    print("[logistica_cuadratura] rutas registradas", flush=True)
+except Exception as _e_cuad:
+    print(f"[logistica_cuadratura] NO se pudo registrar: {_e_cuad}", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  TARIFARIO EDITABLE DE COURIERS (2026-07-25) — subir/descargar/restaurar
+#  el tarifario (JSON) que usa transporte_tarifas.py, sin depender del
+#  disco efímero de Cloud Run. Solo superadmin. Vive en
+#  logistica_tarifario.py (módulo aparte, mismo criterio que cubicador_plus.py).
+# ══════════════════════════════════════════════════════════════════════
+try:
+    from logistica_tarifario import register_logistica_tarifario as _register_logistica_tarifario
+    _register_logistica_tarifario(app, globals())
+    print("[logistica_tarifario] módulo registrado", flush=True)
+except Exception as _e_lt:
+    print(f"[logistica_tarifario] NO se pudo registrar: {_e_lt}", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  HISTORIAL DE DESPACHOS + KPI DE TRANSPORTE (2026-07-25) — /transporte/historial
+#  Solo lectura sobre transport_commitments/transport_commitment_lines/
+#  transport_manifests/transport_manifest_items (sin ERP, sin escritura).
+#  Vive en logistica_kpi.py (módulo aparte, mismo criterio que cubicador_plus.py).
+# ══════════════════════════════════════════════════════════════════════
+try:
+    from logistica_kpi import register_logistica_kpi as _register_logistica_kpi
+    _register_logistica_kpi(app)
+    print("[logistica_kpi] módulo registrado", flush=True)
+except Exception as _e_lk:
+    print(f"[logistica_kpi] NO se pudo registrar: {_e_lk}", flush=True)
 
 
 if __name__ == "__main__":
