@@ -42,6 +42,8 @@
     var el = elements();
     if (!el.modal || !el.frame) return;
 
+    // Las celdas de acciones detienen el bubbling para no desplegar la fila.
+    // Capturamos antes para que sus botones de etiquetas sigan abriendo el modal.
     document.addEventListener('click', function (event) {
       var trigger = event.target.closest('.js-open-etiquetas-modal');
       if (!trigger) return;
@@ -51,7 +53,7 @@
         trigger.dataset.etiquetasTitle,
         trigger
       );
-    });
+    }, true);
 
     el.frame.addEventListener('load', function () {
       if (el.frame.src !== 'about:blank') el.loading.hidden = true;
