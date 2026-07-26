@@ -28990,27 +28990,36 @@ def tr_choferes_toggle(did):
 # genera un PIN aleatorio interno que nunca se muestra ni se usa para
 # login desde este flujo. Sirve para autocompletar nombre/RUT/teléfono/
 # patente al capturar un retiro (modal interno y link público del chofer).
-def _tr_courier_chofer_upsert(courier_id, nombre, rut, telefono=None, patente=None):
+def _tr_courier_chofer_upsert(courier_id, nombre, rut, telefono=None, patente=None,
+                              peso_max_kg=None, volumen_max_m3=None):
     """Agrega (o reactiva) un chofer al roster de un courier. Si el RUT ya
     existe (UNIQUE KEY uq_driver_rut), actualiza sus datos y lo reactiva en
     vez de fallar — así el mismo chofer puede aparecer en el roster aunque
-    haya estado inactivo o pertenezca a otro courier legacy."""
+    haya estado inactivo o pertenezca a otro courier legacy.
+
+    peso_max_kg/volumen_max_m3 (2026-07-27, Daniel: "comparativa con el
+    camión, para restringir el manifiesto según su límite de peso/
+    volumen"): capacidad del camión, guardada en el perfil del chofer
+    (patente = 1 camión fijo, confirmado con él) — None/0 = sin límite."""
     rut_norm = normalizar_rut(rut) if rut else rut
     existente = mysql_fetchone(
         "SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
     if existente:
         mysql_execute(
             "UPDATE transport_drivers SET nombre=%s, courier_id=%s, telefono=%s, "
-            "patente=%s, activo=1 WHERE id=%s",
-            (nombre, courier_id, telefono or None, patente or None, existente["id"])
+            "patente=%s, peso_max_kg=%s, volumen_max_m3=%s, activo=1 WHERE id=%s",
+            (nombre, courier_id, telefono or None, patente or None,
+             peso_max_kg or None, volumen_max_m3 or None, existente["id"])
         )
         return existente["id"]
     pin_auto = secrets.token_hex(4)  # nunca se expone; este roster no hace login
     mysql_execute(
-        "INSERT INTO transport_drivers (nombre, rut, pin_hash, courier_id, telefono, patente, created_by) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        "INSERT INTO transport_drivers (nombre, rut, pin_hash, courier_id, telefono, patente, "
+        "peso_max_kg, volumen_max_m3, created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (nombre, rut_norm, generate_password_hash(pin_auto), courier_id,
-         telefono or None, patente or None, current_username() or "roster-courier")
+         telefono or None, patente or None, peso_max_kg or None, volumen_max_m3 or None,
+         current_username() or "roster-courier")
     )
     row = mysql_fetchone("SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
     return row["id"] if row else None
@@ -29022,8 +29031,8 @@ def tr_courier_choferes_listar(cid):
     """Lista los choferes activos del roster de un courier (para el selector
     de 'chofer guardado' en la captura de retiro, interno y público)."""
     choferes = mysql_fetchall(
-        "SELECT id, nombre, rut, telefono, patente FROM transport_drivers "
-        "WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
+        "SELECT id, nombre, rut, telefono, patente, peso_max_kg, volumen_max_m3 "
+        "FROM transport_drivers WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
     ) or []
     return jsonify({"ok": True, "choferes": choferes})
 
@@ -29041,10 +29050,18 @@ def tr_courier_choferes_crear(cid):
     rut    = (f.get("rut") or "").strip()
     tel    = (f.get("telefono") or "").strip() or None
     patente = (f.get("patente") or "").strip() or None
+    try:
+        peso_max = float(f["peso_max_kg"]) if f.get("peso_max_kg") not in (None, "") else None
+    except (TypeError, ValueError):
+        peso_max = None
+    try:
+        vol_max = float(f["volumen_max_m3"]) if f.get("volumen_max_m3") not in (None, "") else None
+    except (TypeError, ValueError):
+        vol_max = None
     if not nombre or not rut:
         return jsonify({"ok": False, "error": "Nombre y RUT son obligatorios"}), 400
     try:
-        chofer_id = _tr_courier_chofer_upsert(cid, nombre, rut, tel, patente)
+        chofer_id = _tr_courier_chofer_upsert(cid, nombre, rut, tel, patente, peso_max, vol_max)
     except Exception as e:
         print(f"[tr_courier_choferes_crear] cid={cid}: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo agregar el chofer."}), 500
@@ -29905,11 +29922,21 @@ def tr_manifiesto_retiro(mid):
         courier_row = _tr_find_courier_row(manifiesto.get("courier"))
         tok = _tr_ensure_manifest_retiro_token(mid)
         link_firma = (_public_base_url() + "/firma-retiro/" + tok) if tok else None
+        # FIX 2026-07-27 (Daniel: "comparativa con el camión, para restringir
+        # el manifiesto según su límite de peso/volumen"): se manda el total
+        # real del manifiesto para que el frontend compare contra la
+        # capacidad del chofer/camión elegido (peso_max_kg/volumen_max_m3 en
+        # su perfil del roster) antes de dejar confirmar el retiro.
+        _mi_items = _tr_manifiesto_items_export(mid) or []
+        peso_total_kg = round(sum(_peso_a_declarar(it) for it in _mi_items), 2)
+        volumen_total_m3 = round(sum(float(it.get("volumen_m3") or 0) for it in _mi_items), 3)
         return jsonify({
             "ok": True,
             "retiro": retiro,
             "courier_id": courier_row["id"] if courier_row else None,
             "link_firma": link_firma,
+            "peso_total_kg": peso_total_kg,
+            "volumen_total_m3": volumen_total_m3,
         })
 
     body = request.get_json(silent=True) or {}
@@ -31852,8 +31879,8 @@ def tr_courier_ficha(cid):
     ) or []
 
     choferes = mysql_fetchall(
-        "SELECT id, nombre, rut, telefono, patente FROM transport_drivers "
-        "WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
+        "SELECT id, nombre, rut, telefono, patente, peso_max_kg, volumen_max_m3 "
+        "FROM transport_drivers WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
     ) or []
 
     return render_template("transporte/courier_ficha.html",
@@ -74099,6 +74126,16 @@ def _ensure_transport_drivers_table():
             mysql_execute("ALTER TABLE transport_drivers ADD COLUMN courier_id INT NULL "
                           "COMMENT 'Transporte al que pertenece (multi-tenant)'")
             mysql_execute("ALTER TABLE transport_drivers ADD INDEX idx_driver_courier (courier_id)")
+        # FIX 2026-07-27 (Daniel: "comparativa con el camión, para restringir
+        # el manifiesto según su límite de peso/volumen"): confirmado con él
+        # que la capacidad vive en el perfil del chofer (patente = 1 camión
+        # fijo), no como entidad de vehículo aparte.
+        if "peso_max_kg" not in existing:
+            mysql_execute("ALTER TABLE transport_drivers ADD COLUMN peso_max_kg DECIMAL(10,2) NULL "
+                          "COMMENT 'Capacidad máxima de carga del camión, en kg (0/NULL = sin límite)'")
+        if "volumen_max_m3" not in existing:
+            mysql_execute("ALTER TABLE transport_drivers ADD COLUMN volumen_max_m3 DECIMAL(10,3) NULL "
+                          "COMMENT 'Capacidad máxima de carga del camión, en m³ (0/NULL = sin límite)'")
     except Exception:
         pass
     # Config de PRUEBA DE ENTREGA por transporte (estilo DispatchTrack):

@@ -674,6 +674,7 @@
               <th>RUT</th>
               <th>Teléfono</th>
               <th>Patente</th>
+              <th>Capacidad camión</th>
               <th class="text-end">Acciones</th>
             </tr>
           </thead>
@@ -684,6 +685,12 @@
               <td>{{ ch.rut }}</td>
               <td>{{ ch.telefono or '—' }}</td>
               <td>{{ ch.patente or '—' }}</td>
+              <td class="small text-muted">
+                {% if ch.peso_max_kg %}{{ ch.peso_max_kg|int }} kg{% endif %}
+                {% if ch.peso_max_kg and ch.volumen_max_m3 %} · {% endif %}
+                {% if ch.volumen_max_m3 %}{{ ch.volumen_max_m3 }} m³{% endif %}
+                {% if not ch.peso_max_kg and not ch.volumen_max_m3 %}—{% endif %}
+              </td>
               <td class="text-end">
                 <button class="btn btn-sm btn-outline-danger" style="min-height:44px"
                         onclick="eliminarChoferCourier({{ ch.id }})">
@@ -693,7 +700,7 @@
             </tr>
             {% else %}
             <tr id="choferesEmptyRow">
-              <td colspan="5" class="text-center text-muted py-4">
+              <td colspan="6" class="text-center text-muted py-4">
                 <i class="bi bi-person-badge fs-3 d-block mb-2"></i>
                 Sin choferes guardados todavía. Agrega el primero con el botón de arriba.
               </td>
@@ -1246,11 +1253,27 @@ async function agregarChoferCourier() {
     title: 'Agregar chofer', message: 'Patente (opcional):',
     placeholder: 'Ej: ABCD12', required: false,
   });
+  // FIX 2026-07-27 (Daniel: "comparativa con el camión, para restringir el
+  // manifiesto según su límite de peso/volumen"): capacidad del camión,
+  // guardada en el perfil del chofer (patente = 1 camión fijo).
+  const pesoMax = await ilusPrompt({
+    title: 'Agregar chofer', message: 'Capacidad máxima de carga del camión, en KG (opcional):',
+    placeholder: 'Ej: 2000', required: false, inputType: 'number',
+    sub: 'Déjalo en blanco si no quieres restringir por peso.',
+  });
+  const volMax = await ilusPrompt({
+    title: 'Agregar chofer', message: 'Capacidad máxima de carga del camión, en M³ (opcional):',
+    placeholder: 'Ej: 12', required: false, inputType: 'number',
+    sub: 'Déjalo en blanco si no quieres restringir por volumen.',
+  });
   try {
     const r = await fetch(`/transporte/couriers/${COURIER_ID}/choferes`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ nombre, rut, telefono: telefono || '', patente: patente || '' }),
+      body: JSON.stringify({
+        nombre, rut, telefono: telefono || '', patente: patente || '',
+        peso_max_kg: pesoMax || '', volumen_max_m3: volMax || '',
+      }),
     });
     const d = await r.json();
     if (d.ok) {

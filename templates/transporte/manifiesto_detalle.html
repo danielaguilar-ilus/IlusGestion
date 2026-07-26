@@ -1996,6 +1996,7 @@
                         onchange="mrAplicarChoferGuardado(this.value)">
                   <option value="">+ Nuevo chofer (escribir a mano)</option>
                 </select>
+                <div id="mrCapacidadAviso" class="mt-2"></div>
               </div>
               <div class="col-md-4">
                 <label class="form-label" style="font-size:12px;font-weight:700">Nombre del chofer *</label>
@@ -4071,6 +4072,8 @@ function abrirManifiestoFirma() {
 var _mrLinkFirma = null;
 var _mrCourierId = null;
 var _mrChoferesRoster = [];
+var _mrPesoTotalKg = 0;
+var _mrVolumenTotalM3 = 0;
 
 async function mrCargarRetiro() {
   document.getElementById('mrLoading').style.display = '';
@@ -4082,6 +4085,8 @@ async function mrCargarRetiro() {
     document.getElementById('mrLoading').style.display = 'none';
     _mrLinkFirma = d.link_firma || null;
     _mrCourierId = d.courier_id || null;
+    _mrPesoTotalKg = d.peso_total_kg || 0;
+    _mrVolumenTotalM3 = d.volumen_total_m3 || 0;
     mrCargarChoferesRoster();
     if (d.ok && d.retiro) {
       mrMostrarReadonly(d.retiro);
@@ -4117,14 +4122,35 @@ async function mrCargarChoferesRoster() {
   }
 }
 
+var _mrChoferSeleccionado = null;
+
 function mrAplicarChoferGuardado(choferId) {
-  if (!choferId) return;
+  var aviso = document.getElementById('mrCapacidadAviso');
+  if (!choferId) { _mrChoferSeleccionado = null; if (aviso) aviso.innerHTML = ''; return; }
   var c = _mrChoferesRoster.find(function(x){ return String(x.id) === String(choferId); });
   if (!c) return;
+  _mrChoferSeleccionado = c;
   document.getElementById('mrChoferNombre').value = c.nombre || '';
   document.getElementById('mrChoferRut').value = c.rut || '';
   document.getElementById('mrChoferTelefono').value = c.telefono || '';
   document.getElementById('mrPatente').value = c.patente || '';
+  // FIX 2026-07-27 (Daniel: "comparativa con el camión, para restringir el
+  // manifiesto según su límite de peso/volumen"): capacidad guardada en el
+  // perfil del chofer/camión (peso_max_kg/volumen_max_m3), comparada contra
+  // el total real del manifiesto (ya calculado por el backend).
+  if (!aviso) return;
+  var excedePeso = c.peso_max_kg && _mrPesoTotalKg > parseFloat(c.peso_max_kg);
+  var excedeVol  = c.volumen_max_m3 && _mrVolumenTotalM3 > parseFloat(c.volumen_max_m3);
+  if (excedePeso || excedeVol) {
+    var msgs = [];
+    if (excedePeso) msgs.push('Peso: ' + _mrPesoTotalKg + ' kg vs. máximo ' + c.peso_max_kg + ' kg');
+    if (excedeVol) msgs.push('Volumen: ' + _mrVolumenTotalM3 + ' m³ vs. máximo ' + c.volumen_max_m3 + ' m³');
+    aviso.innerHTML = '<div class="alert alert-warning py-2 px-3 mb-0" style="font-size:.85rem">'
+      + '<i class="bi bi-exclamation-triangle-fill me-1"></i><b>Este manifiesto excede la capacidad del camión de ' + (c.patente || c.nombre) + ':</b><br>'
+      + msgs.join(' · ') + '</div>';
+  } else {
+    aviso.innerHTML = '';
+  }
 }
 
 async function mrCopiarLinkFirma() {
@@ -4208,6 +4234,25 @@ async function mrGuardar(ev) {
   if (!payload.chofer_nombre || !payload.chofer_rut || !payload.patente || !payload.firma_nombre) {
     ilusToast('Completa los campos obligatorios (*)', { type: 'warning' });
     return false;
+  }
+  // FIX 2026-07-27 (Daniel: "restrinja el manifiesto según el límite del
+  // camión"): si el chofer elegido del roster tiene capacidad cargada y el
+  // manifiesto la excede, no se bloquea en silencio -- se exige una
+  // confirmación explícita antes de guardar.
+  if (_mrChoferSeleccionado) {
+    var c = _mrChoferSeleccionado;
+    var excedePeso = c.peso_max_kg && _mrPesoTotalKg > parseFloat(c.peso_max_kg);
+    var excedeVol  = c.volumen_max_m3 && _mrVolumenTotalM3 > parseFloat(c.volumen_max_m3);
+    if (excedePeso || excedeVol) {
+      var ok = await ilusConfirm({
+        title: 'El manifiesto excede la capacidad del camión',
+        message: 'El camión de ' + (c.patente || c.nombre) + ' tiene un límite cargado y este manifiesto lo excede.',
+        sub: (excedePeso ? ('Peso: ' + _mrPesoTotalKg + ' kg vs. máximo ' + c.peso_max_kg + ' kg. ') : '')
+           + (excedeVol ? ('Volumen: ' + _mrVolumenTotalM3 + ' m³ vs. máximo ' + c.volumen_max_m3 + ' m³.') : ''),
+        okLabel: 'Confirmar igual', cancelLabel: 'Cancelar', danger: true,
+      });
+      if (!ok) return false;
+    }
   }
   btn.disabled = true;
   btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Guardando…';
