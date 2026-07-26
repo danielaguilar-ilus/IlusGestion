@@ -7,14 +7,24 @@ FedEx (OT), Observación]. El módulo:
   1) Hace match contra `transport_commitments` (nudo + tido opcional) y
      localiza el `transport_manifest_items.id` correspondiente.
   2) Detecta inteligentemente la situación de cada fila:
-     · ok_nuevo    → item sin tracking previo, listo para asignar.
-     · ok_re_envio → item ya tenía OTRA OT (re-envío legítimo, requiere
-                     confirmación explícita del operador para sobrescribir).
-     · ya_existe   → item ya tiene EXACTAMENTE este tracking — se omite
-                     idempotentemente.
-     · no_encontrada → la factura no existe en BD (necesita sync ERP).
-     · ot_duplicada  → ese tracking ya está asignado a OTRA factura.
-     · invalido      → datos malformados (sin nº de factura/tracking, etc.).
+     · ok_nuevo       → item sin tracking previo, listo para asignar.
+     · ok_re_envio    → item ya tenía OTRA OT (re-envío legítimo, requiere
+                        confirmación explícita del operador para sobrescribir).
+     · ya_existe      → item ya tiene EXACTAMENTE este tracking — se omite
+                        idempotentemente.
+     · no_encontrada  → la factura no existe ni siquiera en
+                        `transport_commitments` (necesita sync ERP primero).
+     · sin_manifiesto → la factura SÍ existe en `transport_commitments` pero
+                        no está asociada a NINGÚN manifiesto todavía. Caso
+                        pedido por Daniel 2026-07-25: nunca dejarlo pasar en
+                        silencio — el preview lo marca aparte (no junto con
+                        "no_encontrada", que es un problema distinto) y el
+                        front ofrece agregarlo a un manifiesto ahí mismo
+                        (existente o nuevo) reusando
+                        `/transporte/manifiestos/<mid>/items` y
+                        `/transporte/manifiestos/nuevo`.
+     · ot_duplicada   → ese tracking ya está asignado a OTRA factura.
+     · invalido       → datos malformados (sin nº de factura/tracking, etc.).
   3) En el paso "aplicar": llama a `_tr_apply_carrier_status` que
      persiste el tracking, dispara una consulta best-effort a FedEx
      (vía `_fedex_track_lookup`) y deja el estado del item al día.
@@ -93,6 +103,7 @@ def register_ot_routes(app, ctx):
     _tr_apply_carrier_status = ctx["_tr_apply_carrier_status"]
     _fedex_track_lookup = ctx["_fedex_track_lookup"]
     _tr_log = ctx.get("_tr_log") or (lambda *a, **kw: None)
+    COURIERS = ctx.get("COURIERS") or []
 
     # ───────────────────────────────────────────────────────────────────
     # Helper interno: match de una fila contra BD.
@@ -155,13 +166,18 @@ def register_ot_routes(app, ctx):
             (comm["id"],)
         )
         if not item:
+            # Caso pedido por Daniel: no es "no_encontrada" (ese es un problema
+            # de sync ERP) — acá el documento SÍ existe pero quedó fuera de
+            # todo manifiesto. Se marca aparte para que el front ofrezca
+            # agregarlo a un manifiesto ahí mismo, en vez de solo advertir.
             return {
                 "factura": factura, "tido": comm["tido"], "ot": tracking, "obs": obs,
-                "status": "no_encontrada",
+                "status": "sin_manifiesto",
                 "commitment_id": comm["id"],
                 "cliente": comm.get("cliente_nombre") or "",
-                "msg": "La factura existe pero no está en ningún manifiesto. "
-                       "Agregala a un manifiesto antes de asignar OT.",
+                "msg": "La factura existe pero no está en ningún manifiesto "
+                       "activo. Agrégala a un manifiesto para poder asignarle "
+                       "la OT.",
             }
 
         # ── Conflicto: el tracking ya está en OTRO item ──
@@ -216,7 +232,7 @@ def register_ot_routes(app, ctx):
     @app.route("/transporte/ot-masivo", methods=["GET"])
     @_tr_required
     def tr_ot_masivo_ui():
-        return render_template("transporte/ot_masivo.html")
+        return render_template("transporte/ot_masivo.html", couriers=COURIERS)
 
     # ───────────────────────────────────────────────────────────────────
     # GET /transporte/ot-masivo/plantilla → descarga .xlsx
@@ -324,9 +340,13 @@ def register_ot_routes(app, ctx):
             wb = load_workbook(f, data_only=True)
             ws = wb.active
         except Exception as e:
+            # Regla #4: nunca exponer el detalle interno del error al cliente.
+            print(f"[tr_ot_masivo_preview] Excel inválido: {e}", flush=True)
             return jsonify({
                 "ok": False,
-                "error": f"No se pudo leer el Excel: {e}",
+                "error": "No se pudo leer el archivo. Verificá que sea un "
+                         ".xlsx válido (no corrupto, no protegido con "
+                         "contraseña) y volvé a intentar.",
             }), 400
 
         # Pre-cargar mapa tracking → item_id (1 sola query, evita N+1 en preview).
@@ -359,49 +379,83 @@ def register_ot_routes(app, ctx):
 
         seen_in_file = {}  # tracking → primera fila donde apareció (intra-archivo)
 
-        for row_idx, row in enumerate(
-            ws.iter_rows(min_row=start_row, values_only=True),
-            start=start_row,
-        ):
-            if not row or all(c is None or str(c).strip() == "" for c in row[:4]):
-                continue
-            factura = _clean_factura(row[0] if len(row) > 0 else None)
-            tido = _clean_tido(row[1] if len(row) > 1 else None)
-            tracking = _clean_tracking(row[2] if len(row) > 2 else None)
-            obs = _clean_obs(row[3] if len(row) > 3 else None)
+        # Filas malformadas de openpyxl (celdas fusionadas raras, tipos
+        # inesperados, etc.) no deben tumbar todo el preview con un 500 HTML
+        # — se degradan a "invalido" fila por fila (Regla #4: siempre JSON).
+        MAX_FILAS = 5000  # tope defensivo: evita procesar Excels gigantes/errados
+        try:
+            for row_idx, row in enumerate(
+                ws.iter_rows(min_row=start_row, values_only=True),
+                start=start_row,
+            ):
+                if row_idx - start_row > MAX_FILAS:
+                    filas.append({
+                        "row": row_idx, "factura": "", "tido": "", "ot": "", "obs": "",
+                        "status": "invalido",
+                        "msg": f"Se alcanzó el máximo de {MAX_FILAS} filas "
+                               "procesables. Dividí el archivo en lotes más chicos.",
+                    })
+                    break
+                try:
+                    if not row or all(
+                        c is None or str(c).strip() == "" for c in row[:4]
+                    ):
+                        continue
+                    factura = _clean_factura(row[0] if len(row) > 0 else None)
+                    tido = _clean_tido(row[1] if len(row) > 1 else None)
+                    tracking = _clean_tracking(row[2] if len(row) > 2 else None)
+                    obs = _clean_obs(row[3] if len(row) > 3 else None)
+                except Exception as e:
+                    print(f"[tr_ot_masivo_preview] fila {row_idx} malformada: {e}",
+                          flush=True)
+                    filas.append({
+                        "row": row_idx, "factura": "", "tido": "", "ot": "", "obs": "",
+                        "status": "invalido",
+                        "msg": "Fila con datos malformados, no se pudo leer.",
+                    })
+                    continue
 
-            # Dup dentro del mismo archivo: mismo tracking en 2 filas distintas
-            if tracking and tracking in seen_in_file:
-                filas.append({
-                    "row": row_idx,
-                    "factura": factura, "tido": tido, "ot": tracking, "obs": obs,
-                    "status": "ot_duplicada",
-                    "msg": (f"El tracking {tracking} aparece en 2 filas del "
-                            f"mismo archivo (fila {seen_in_file[tracking]} y "
-                            f"esta). Revisá antes de aplicar."),
-                })
-                continue
-            if tracking:
-                seen_in_file[tracking] = row_idx
+                # Dup dentro del mismo archivo: mismo tracking en 2 filas distintas
+                if tracking and tracking in seen_in_file:
+                    filas.append({
+                        "row": row_idx,
+                        "factura": factura, "tido": tido, "ot": tracking, "obs": obs,
+                        "status": "ot_duplicada",
+                        "msg": (f"El tracking {tracking} aparece en 2 filas del "
+                                f"mismo archivo (fila {seen_in_file[tracking]} y "
+                                f"esta). Revisá antes de aplicar."),
+                    })
+                    continue
+                if tracking:
+                    seen_in_file[tracking] = row_idx
 
-            res = _match_row(factura, tido, tracking, obs, tracking_to_existing)
-            res["row"] = row_idx
-            filas.append(res)
+                res = _match_row(factura, tido, tracking, obs, tracking_to_existing)
+                res["row"] = row_idx
+                filas.append(res)
+        except Exception as e:
+            print(f"[tr_ot_masivo_preview] CRASH procesando filas: {e}", flush=True)
+            return jsonify({
+                "ok": False,
+                "error": "Ocurrió un error inesperado analizando el archivo. "
+                         "Verificá el formato de las columnas e intentá de nuevo.",
+            }), 500
 
         # Resumen
         resumen = {
             "total": len(filas),
-            "ok_nuevo":      sum(1 for r in filas if r["status"] == "ok_nuevo"),
-            "ok_re_envio":   sum(1 for r in filas if r["status"] == "ok_re_envio"),
-            "ya_existe":     sum(1 for r in filas if r["status"] == "ya_existe"),
-            "no_encontrada": sum(1 for r in filas if r["status"] == "no_encontrada"),
-            "ot_duplicada":  sum(1 for r in filas if r["status"] == "ot_duplicada"),
-            "invalido":      sum(1 for r in filas if r["status"] == "invalido"),
+            "ok_nuevo":       sum(1 for r in filas if r["status"] == "ok_nuevo"),
+            "ok_re_envio":    sum(1 for r in filas if r["status"] == "ok_re_envio"),
+            "ya_existe":      sum(1 for r in filas if r["status"] == "ya_existe"),
+            "no_encontrada":  sum(1 for r in filas if r["status"] == "no_encontrada"),
+            "sin_manifiesto": sum(1 for r in filas if r["status"] == "sin_manifiesto"),
+            "ot_duplicada":   sum(1 for r in filas if r["status"] == "ot_duplicada"),
+            "invalido":       sum(1 for r in filas if r["status"] == "invalido"),
         }
         resumen["aplicables_directas"] = resumen["ok_nuevo"]
         resumen["aplicables_re_envio"] = resumen["ok_re_envio"]
         resumen["requieren_revision"] = (
-            resumen["no_encontrada"] + resumen["ot_duplicada"] + resumen["invalido"]
+            resumen["no_encontrada"] + resumen["sin_manifiesto"]
+            + resumen["ot_duplicada"] + resumen["invalido"]
         )
 
         return jsonify({
@@ -416,6 +470,20 @@ def register_ot_routes(app, ctx):
     @app.route("/transporte/ot-masivo/aplicar", methods=["POST"])
     @_tr_required
     def tr_ot_masivo_aplicar():
+        # Anti-HTML-500 (Regla #4): cualquier excepción no prevista cae acá,
+        # nunca se le devuelve un stacktrace/HTML al operador.
+        try:
+            return _tr_ot_masivo_aplicar_impl()
+        except Exception as e:
+            print(f"[tr_ot_masivo_aplicar] CRASH: {e}", flush=True)
+            return jsonify({
+                "ok": False,
+                "error": "Error interno al aplicar las OT. No se garantiza "
+                         "qué filas se guardaron — revisá el monitor de "
+                         "Transporte antes de reintentar.",
+            }), 500
+
+    def _tr_ot_masivo_aplicar_impl():
         body = request.get_json(silent=True, force=True) or {}
         filas_in = body.get("filas") or []
         confirm_re_envio = bool(body.get("confirm_re_envio"))
@@ -515,9 +583,13 @@ def register_ot_routes(app, ctx):
                 except Exception:
                     pass
             except Exception as e:
+                # Regla #4: log detallado en backend, mensaje amigable al cliente.
+                print(f"[tr_ot_masivo_aplicar] UPDATE item {item_id} falló: {e}",
+                      flush=True)
                 errores.append({
                     "factura": factura, "ot": tracking,
-                    "error": str(e)[:200],
+                    "error": "No se pudo guardar el tracking (error interno). "
+                             "Reintentá esta fila o avisá a Daniel.",
                 })
 
         # ── Llamar a FedEx en lote (hasta 30 trackings por request).
@@ -564,9 +636,13 @@ def register_ot_routes(app, ctx):
                         )
                         fedex_aplicado += 1
                     except Exception as e:
+                        print(f"[tr_ot_masivo_aplicar] _tr_apply_carrier_status "
+                              f"tracking={tn} falló: {e}", flush=True)
                         errores.append({
                             "ot": tn,
-                            "error": f"_tr_apply_carrier_status: {str(e)[:200]}",
+                            "error": "El tracking quedó guardado, pero no se "
+                                     "pudo actualizar el estado vía FedEx "
+                                     "(error interno). El cron lo reintentará.",
                         })
 
         return jsonify({

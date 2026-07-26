@@ -76,6 +76,7 @@
   .otm-chip.c-ok_re_envio  {background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
   .otm-chip.c-ya_existe    {background:#f3f4f6;color:#374151;border-color:#e5e7eb}
   .otm-chip.c-no_encontrada{background:#fef3c7;color:#92400e;border-color:#fde68a}
+  .otm-chip.c-sin_manifiesto{background:#fef3c7;color:#92400e;border-color:#fde68a}
   .otm-chip.c-ot_duplicada {background:#fee2e2;color:#991b1b;border-color:#fecaca}
   .otm-chip.c-invalido     {background:#fee2e2;color:#991b1b;border-color:#fecaca}
   .otm-chip.c-total        {background:#0a0a0a;color:#fff;border-color:#0a0a0a}
@@ -93,6 +94,7 @@
   .otm-table tr.r-ok_re_envio  {background:#eff6ff}
   .otm-table tr.r-ya_existe    {background:#f9fafb;color:#6b7280}
   .otm-table tr.r-no_encontrada{background:#fffbeb}
+  .otm-table tr.r-sin_manifiesto{background:#fffbeb}
   .otm-table tr.r-ot_duplicada {background:#fef2f2}
   .otm-table tr.r-invalido     {background:#fef2f2}
 
@@ -104,8 +106,39 @@
   .otm-badge.b-ok_re_envio  {background:#3b82f6;color:#fff}
   .otm-badge.b-ya_existe    {background:#6b7280;color:#fff}
   .otm-badge.b-no_encontrada{background:#f59e0b;color:#000}
+  .otm-badge.b-sin_manifiesto{background:#f59e0b;color:#000}
   .otm-badge.b-ot_duplicada {background:#dc2626;color:#fff}
   .otm-badge.b-invalido     {background:#dc2626;color:#fff}
+
+  /* ── Botón inline "Agregar a manifiesto" (fila sin_manifiesto) ──── */
+  .otm-btn-fix{
+    display:inline-flex;align-items:center;gap:.3rem;margin-top:.35rem;
+    background:var(--otm-black);color:#fff;border:none;
+    padding:.3rem .6rem;border-radius:8px;font-size:.72rem;font-weight:600;
+    min-height:32px;cursor:pointer;
+  }
+  .otm-btn-fix:hover{background:#222}
+  .otm-btn-fix:disabled{opacity:.6;cursor:not-allowed}
+
+  /* ── Modal "agregar a manifiesto" ─────────────────────────────────── */
+  .otm-modal-overlay{
+    position:fixed;inset:0;background:rgba(10,10,10,.55);
+    display:none;align-items:center;justify-content:center;z-index:2000;
+    padding:1rem;backdrop-filter:blur(2px);
+  }
+  .otm-modal-overlay.show{display:flex}
+  .otm-modal-box{
+    background:#fff;border-radius:14px;max-width:480px;width:100%;
+    padding:1.25rem;max-height:90dvh;overflow-y:auto;
+    box-shadow:0 20px 50px rgba(0,0,0,.3);
+  }
+  .otm-modal-box h6{font-weight:700;color:#0a0a0a;margin-bottom:.75rem}
+  .otm-modal-box .form-label{font-size:.82rem;font-weight:600;color:#374151}
+  .otm-modal-box select, .otm-modal-box input[type=date], .otm-modal-box input[type=text]{
+    font-size:16px; /* anti-zoom iOS */
+  }
+  .otm-modal-radio{display:flex;gap:1rem;margin-bottom:.75rem;flex-wrap:wrap}
+  .otm-modal-radio label{font-size:.85rem;display:flex;align-items:center;gap:.35rem;cursor:pointer}
 
   .otm-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem}
   .otm-msg-cell{font-size:.78rem;color:var(--otm-gray);max-width:340px}
@@ -265,6 +298,46 @@
     </div>
   </div>
 
+  {# ── Modal: agregar factura sin manifiesto ──────────────────────── #}
+  <div id="mfmOverlay" class="otm-modal-overlay">
+    <div class="otm-modal-box">
+      <h6><i class="bi bi-signpost-2-fill me-1" style="color:#f59e0b"></i>Agregar a un manifiesto</h6>
+      <div class="otm-sub mb-2" id="mfmResumen" style="font-size:.85rem"></div>
+
+      <div class="otm-modal-radio">
+        <label><input type="radio" name="mfmModo" value="existente" checked> Manifiesto existente</label>
+        <label><input type="radio" name="mfmModo" value="nuevo"> Crear uno nuevo</label>
+      </div>
+
+      <div id="mfmBoxExistente">
+        <label class="form-label">Manifiesto abierto (FedEx primero)</label>
+        <select id="mfmSelectExistente" class="form-select mb-2"></select>
+      </div>
+
+      <div id="mfmBoxNuevo" style="display:none">
+        <label class="form-label">Courier</label>
+        <select id="mfmCourier" class="form-select mb-2">
+          {% for c in couriers %}
+          <option value="{{ c }}" {% if c and 'fedex' in c|lower %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+        <label class="form-label">Fecha</label>
+        <input type="date" id="mfmFecha" class="form-control mb-2">
+        <label class="form-label">Notas (opcional)</label>
+        <input type="text" id="mfmNotas" class="form-control mb-2" maxlength="200">
+      </div>
+
+      <div id="mfmAlert" class="alert alert-warning small" style="display:none"></div>
+
+      <div class="d-flex gap-2 mt-3">
+        <button type="button" class="otm-btn-secondary" id="mfmBtnCancelar">Cancelar</button>
+        <button type="button" class="otm-btn-primary ms-auto" id="mfmBtnConfirmar">
+          <i class="bi bi-check2-circle"></i> Agregar
+        </button>
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
 
@@ -276,6 +349,7 @@
   // ── Estado global del wizard ─────────────────────────────────────
   let filasPreview = [];   // array que vino del /preview
   let resumenPreview = {}; // resumen del /preview
+  let lastFile = null;     // último archivo subido (para re-analizar tras fix)
 
   // ── Util: leer cookie CSRF si existe (Flask-WTF no la usa acá, pero
   // por consistencia con otros endpoints) ──
@@ -290,6 +364,7 @@
     'ok_re_envio':   { label:'Re-envío',      color:'primary', icon:'bi-arrow-repeat' },
     'ya_existe':     { label:'Idéntica',      color:'secondary', icon:'bi-dash-circle' },
     'no_encontrada': { label:'No encontrada', color:'warning', icon:'bi-question-circle-fill' },
+    'sin_manifiesto':{ label:'Sin manifiesto',color:'warning', icon:'bi-signpost-2-fill' },
     'ot_duplicada':  { label:'OT duplicada',  color:'danger', icon:'bi-exclamation-triangle-fill' },
     'invalido':      { label:'Inválido',      color:'danger', icon:'bi-exclamation-octagon-fill' },
   };
@@ -298,6 +373,7 @@
     ['ok_re_envio','Re-envíos detectados'],
     ['ya_existe','Idénticas (se omiten)'],
     ['no_encontrada','Facturas no encontradas'],
+    ['sin_manifiesto','Sin manifiesto (agregables)'],
     ['ot_duplicada','OT duplicadas'],
     ['invalido','Inválidas'],
   ];
@@ -375,6 +451,7 @@
     }
     fileName.textContent = file.name + ' · ' + Math.round((file.size||0)/1024) + ' KB';
     fileStatus.style.display = '';
+    lastFile = file;
     await doPreview(file);
   }
 
@@ -437,6 +514,14 @@
       let msg = esc(f.msg || '');
       if (f.status === 'ok_re_envio' && f.ot_anterior) {
         msg += `<span class="otm-ot-anterior">OT anterior: <code>${esc(f.ot_anterior)}</code></span>`;
+      }
+      if (f.status === 'sin_manifiesto' && f.commitment_id) {
+        msg += `<br><button type="button" class="otm-btn-fix"
+                    data-commitment="${esc(f.commitment_id)}"
+                    data-factura="${esc(f.factura)}" data-tido="${esc(f.tido)}"
+                    data-cliente="${esc(f.cliente||'')}"
+                    onclick="window._otmAbrirModalManifiesto(this)">
+                  <i class="bi bi-plus-circle"></i> Agregar a manifiesto</button>`;
       }
       return `<tr class="r-${f.status}" data-row="${esc(f.row)}">
         <td class="otm-mono">${esc(f.row)}</td>
@@ -628,6 +713,7 @@
     fileInput.value = '';
     fileStatus.style.display = 'none';
     fileName.textContent = '—';
+    lastFile = null;
     filasPreview = [];
     resumenPreview = {};
     filasBody.innerHTML = '';
@@ -638,6 +724,180 @@
     confirmReEnvio.checked = false;
     dropZone.scrollIntoView({ behavior:'smooth', block:'start' });
   }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Modal "Agregar a manifiesto" — caso factura sin manifiesto.
+  // Reutiliza los endpoints ya existentes de Transporte (mismo patrón que
+  // el cubicador en asignar.html): /transporte/api/manifiestos/abiertos,
+  // /transporte/manifiestos/nuevo y /transporte/manifiestos/<id>/items.
+  // Nunca deja pasar el caso en silencio: si falla, avisa con ilusAlert.
+  // ══════════════════════════════════════════════════════════════════
+  const mfmOverlay   = document.getElementById('mfmOverlay');
+  const mfmResumen   = document.getElementById('mfmResumen');
+  const mfmSelExist  = document.getElementById('mfmSelectExistente');
+  const mfmCourier   = document.getElementById('mfmCourier');
+  const mfmFecha     = document.getElementById('mfmFecha');
+  const mfmNotas     = document.getElementById('mfmNotas');
+  const mfmAlert     = document.getElementById('mfmAlert');
+  const mfmBtnCancel = document.getElementById('mfmBtnCancelar');
+  const mfmBtnOk     = document.getElementById('mfmBtnConfirmar');
+  let mfmCommitmentId = null;
+
+  function _mfmModo() {
+    const el = document.querySelector('input[name=mfmModo]:checked');
+    return el ? el.value : 'existente';
+  }
+  document.querySelectorAll('input[name=mfmModo]').forEach(r => {
+    r.addEventListener('change', () => {
+      const modo = _mfmModo();
+      document.getElementById('mfmBoxExistente').style.display = modo === 'existente' ? '' : 'none';
+      document.getElementById('mfmBoxNuevo').style.display     = modo === 'nuevo'     ? '' : 'none';
+    });
+  });
+
+  window._otmAbrirModalManifiesto = async function(btn) {
+    mfmCommitmentId = btn.getAttribute('data-commitment');
+    const factura = btn.getAttribute('data-factura') || '';
+    const tido    = btn.getAttribute('data-tido') || '';
+    const cliente = btn.getAttribute('data-cliente') || '';
+    mfmResumen.innerHTML = `<strong>${esc(tido)} ${esc(factura)}</strong>` +
+      (cliente ? ` · ${esc(cliente)}` : '') +
+      `<br>Esta factura existe pero no está en ningún manifiesto. Elegí uno existente o creá uno nuevo.`;
+    mfmAlert.style.display = 'none';
+    mfmFecha.value = new Date().toISOString().slice(0,10);
+    mfmNotas.value = '';
+    document.querySelector('input[name=mfmModo][value=existente]').checked = true;
+    document.getElementById('mfmBoxExistente').style.display = '';
+    document.getElementById('mfmBoxNuevo').style.display = 'none';
+
+    mfmSelExist.innerHTML = '<option value="">— Cargando… —</option>';
+    try {
+      // FedEx primero (este módulo es de OT FedEx) pero sin bloquear otros
+      // couriers — a diferencia del cubicador, acá el documento ya existe
+      // y puede necesitar ir a cualquier manifiesto abierto.
+      const r = await fetch('/transporte/api/manifiestos/abiertos?courier=FedEx&strict=0');
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+      const items = d.manifiestos || [];
+      if (!items.length) {
+        mfmSelExist.innerHTML = '<option value="">— No hay manifiestos abiertos —</option>';
+        document.querySelector('input[name=mfmModo][value=nuevo]').checked = true;
+        document.getElementById('mfmBoxExistente').style.display = 'none';
+        document.getElementById('mfmBoxNuevo').style.display = '';
+      } else {
+        mfmSelExist.innerHTML = items.map(m => {
+          const fISO = m.fecha || '';
+          const fDMY = /^\d{4}-\d{2}-\d{2}$/.test(fISO)
+            ? fISO.slice(8,10) + '-' + fISO.slice(5,7) + '-' + fISO.slice(0,4) : fISO;
+          return `<option value="${m.id}">${esc(m.correlativo||'')} · ${esc(m.courier||'')} · ${esc(fDMY)} · ${m.total_items||0} ítems</option>`;
+        }).join('');
+      }
+    } catch (e) {
+      mfmSelExist.innerHTML = '<option value="">(error cargando)</option>';
+      mfmAlert.textContent = 'No se pudo cargar la lista de manifiestos: ' + esc(String(e).slice(0,160));
+      mfmAlert.style.display = '';
+    }
+    mfmOverlay.classList.add('show');
+  };
+
+  mfmBtnCancel.addEventListener('click', () => mfmOverlay.classList.remove('show'));
+
+  async function _mfmAgregarItem(mid) {
+    const resp = await fetch(`/transporte/manifiestos/${mid}/items`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type':'application/json', 'X-CSRF-Token': _csrf() },
+      body: JSON.stringify({ commitment_id: mfmCommitmentId }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 409 && data.error === 'duplicado') {
+      // Mismo criterio de aviso-no-bloqueo que tr_agregar_item en app.py:
+      // avisa la duplicidad pero deja decidir al operador, nunca en silencio.
+      const ok = await ilusConfirm({
+        title: 'La factura ya está en otro manifiesto',
+        message: data.msg || 'Este documento ya figura en otro manifiesto activo.',
+        sub: 'Se agregó a propósito (ej. despacho dividido) o fue un error.',
+        okLabel: 'Agregar igual', cancelLabel: 'Cancelar', danger: true,
+      });
+      if (!ok) return false;
+      const resp2 = await fetch(`/transporte/manifiestos/${mid}/items`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type':'application/json', 'X-CSRF-Token': _csrf() },
+        body: JSON.stringify({ commitment_id: mfmCommitmentId, confirm_dup: true }),
+      });
+      const data2 = await resp2.json().catch(() => ({}));
+      if (!resp2.ok || !data2.ok) {
+        await ilusAlert({ title:'No se pudo agregar', message: esc(data2.error || data2.msg || 'Error desconocido'), type:'error' });
+        return false;
+      }
+      return true;
+    }
+    if (!resp.ok || !data.ok) {
+      await ilusAlert({ title:'No se pudo agregar', message: esc(data.error || data.msg || ('HTTP '+resp.status)), type:'error' });
+      return false;
+    }
+    return true;
+  }
+
+  mfmBtnOk.addEventListener('click', async () => {
+    if (!mfmCommitmentId) return;
+    mfmBtnOk.disabled = true;
+    const oldHtml = mfmBtnOk.innerHTML;
+    mfmBtnOk.innerHTML = '<span class="otm-spin"></span> Agregando…';
+    mfmAlert.style.display = 'none';
+    try {
+      const modo = _mfmModo();
+      let mid = null;
+      if (modo === 'existente') {
+        mid = mfmSelExist.value;
+        if (!mid) {
+          mfmAlert.textContent = 'Elegí un manifiesto de la lista.';
+          mfmAlert.style.display = '';
+          return;
+        }
+      } else {
+        const courier = mfmCourier.value;
+        const fecha = mfmFecha.value;
+        if (!courier || !fecha) {
+          mfmAlert.textContent = 'Courier y fecha son obligatorios para crear el manifiesto.';
+          mfmAlert.style.display = '';
+          return;
+        }
+        const fd = new URLSearchParams();
+        fd.set('courier', courier); fd.set('fecha', fecha); fd.set('notas', mfmNotas.value || '');
+        const rC = await fetch('{{ url_for("tr_crear_manifiesto") }}', {
+          method:'POST', credentials:'same-origin',
+          headers:{ 'Content-Type':'application/x-www-form-urlencoded', 'X-CSRF-Token': _csrf() },
+          body: fd.toString(),
+        });
+        const dC = await rC.json().catch(() => ({}));
+        if (!rC.ok || !dC.ok) {
+          mfmAlert.textContent = dC.error || 'No se pudo crear el manifiesto.';
+          mfmAlert.style.display = '';
+          return;
+        }
+        mid = dC.id;
+      }
+
+      const okAdd = await _mfmAgregarItem(mid);
+      if (!okAdd) return;
+
+      mfmOverlay.classList.remove('show');
+      ilusToast('✓ Factura agregada al manifiesto. Re-analizando archivo…', { type:'success' });
+      // Re-correr el preview sobre el mismo archivo para que la fila pase
+      // de "sin_manifiesto" a "ok_nuevo" automáticamente.
+      if (lastFile) await doPreview(lastFile);
+    } catch (e) {
+      await ilusAlert({
+        title:'Error de red',
+        message:'No se pudo completar la operación.',
+        sub: esc(String(e).slice(0,180)),
+        type:'error',
+      });
+    } finally {
+      mfmBtnOk.disabled = false;
+      mfmBtnOk.innerHTML = oldHtml;
+    }
+  });
 })();
 </script>
 {% endblock %}

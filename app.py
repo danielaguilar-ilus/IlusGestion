@@ -26879,9 +26879,25 @@ def _simpliroute_poll_batch(limit=400, dry=False):
             vid = str(it.get("simpliroute_visit_id") or "")
             visita = por_id.get(vid)
             if not visita:
-                # La visita ya no está en esa fecha (reprogramada o borrada en
-                # SimpliRoute). No es error fatal: se reintenta el próximo ciclo.
-                continue
+                # BUG REAL (Daniel 2026-07-25, caso VD 6371 / MAN-2026-0011):
+                # el listado GET /v1/routes/visits/?planned_date=<fecha del
+                # MANIFIESTO> deja de encontrar la visita en cuanto el
+                # despachador la REPROGRAMA a otra fecha dentro de SimpliRoute
+                # (ej. al asignarle chofer/vehículo con "Rafael 4000"). Antes
+                # esto se trataba como "no está, reintentar el próximo ciclo"
+                # y quedaba en loop infinito porque planned_date nunca vuelve
+                # a coincidir. Fallback: pedir la visita DIRECTO por su id
+                # (retrieve de DRF), que no depende de qué fecha tenga hoy.
+                r_uno = _simpliroute_request(
+                    "GET", f"{_src.EP_VISITS}{vid}/", token, timeout=20)
+                if r_uno.get("ok") and isinstance(r_uno.get("data"), dict):
+                    visita = r_uno["data"]
+                else:
+                    # Ahora sí: no existe / fue borrada / token sin acceso.
+                    if r_uno.get("status") not in (404, 0):
+                        out["errores"].append(
+                            f"{courier} visita {vid}: {r_uno.get('error')}")
+                    continue
             estado_ilus, comentario = _src.estado_ilus_from_visit(visita)
             registro = {"item_id": it["item_id"], "visit_id": vid,
                         "sr_status": visita.get("status"),
@@ -28903,6 +28919,23 @@ def tr_manifiesto_subir_simpliroute(mid):
     errores = sum(1 for x in resultados if not x.get("ok"))
     _tr_log("manifest", mid, "subida a SimpliRoute",
             f"courier={courier}; creadas={creadas}; errores={errores}; ya_estaban={ya_subidos}")
+
+    # 2026-07-25 (fix Daniel: MAN-2026-0011 se quedaba en "En preparación" pese
+    # a que SimpliRoute ya mostraba la visita asignada a chofer/vehículo).
+    # Mismo patrón que FedEx (línea ~25517): al subir la visita con éxito el
+    # pedido pasa a "Entregado a transporte" (delegado al transportista) y se
+    # avisa al cliente. Antes de este fix, el item quedaba en "En preparación"
+    # hasta que el poller viera on_its_way/completed/failed/partial — es decir,
+    # el estado NUNCA reflejaba que ya estaba asignado/en manos del courier.
+    for x in resultados:
+        if not x.get("ok"):
+            continue
+        try:
+            _tr_apply_carrier_status(x["item_id"], 'Entregado a transporte', fuente='sistema',
+                                     comentario='Visita creada en SimpliRoute',
+                                     notify_cliente=True)
+        except Exception as _e_sr_ev:
+            print(f"[tr_event sr_subida] item={x.get('item_id')}: {_e_sr_ev}", flush=True)
 
     return jsonify({
         "ok": True, "total": len(items), "creadas": creadas,
