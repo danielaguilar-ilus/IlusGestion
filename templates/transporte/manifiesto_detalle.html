@@ -2509,7 +2509,14 @@ function trkSwitchTab(which) {
 //  (2026-07-27). Reusa los endpoints genéricos/generic existentes — no
 //  duplica la llamada HTTP al courier.
 // ══════════════════════════════════════════════════════════════════════
-var _srModal = null;
+// FIX 2026-07-27 (Daniel: "el botón de seguimiento no abre ningún modal"):
+// esta variable se llamaba _srModal, IGUAL que la del modal viejo "Subir a
+// SimpliRoute" (más abajo, ~línea 3489). Al ser ambas "var" en el mismo
+// scope global, la que se cargaba/asignaba después pisaba a la otra — quien
+// hiciera clic en "Ver seguimiento y acciones" después de haber abierto (o
+// cargado) el otro modal terminaba mostrando/reusando la instancia
+// equivocada de Bootstrap. Se renombra a _srAccionesModal, único.
+var _srAccionesModal = null;
 window._srItemData = null;
 
 function _srEsc(s) {
@@ -2530,7 +2537,7 @@ async function abrirSimpliRouteModal(data, force) {
   data = data || {};
   if (!data.id) return; // data.id = commitment_id
   window._srItemData = data;
-  if (!_srModal) _srModal = new bootstrap.Modal(document.getElementById('simpliRouteModal'));
+  if (!_srAccionesModal) _srAccionesModal = new bootstrap.Modal(document.getElementById('simpliRouteModal'));
   document.getElementById('srDoc').textContent = data.doc || '';
   document.getElementById('srStateLabel').textContent = data.estado || 'Cargando…';
   document.getElementById('srSub').textContent = data.cliente || '';
@@ -2541,7 +2548,7 @@ async function abrirSimpliRouteModal(data, force) {
   var fEl = document.getElementById('srFechaInput');
   if (fEl && !fEl.value) fEl.value = new Date().toISOString().slice(0, 10);
   srSwitchTab('timeline');
-  _srModal.show();
+  _srAccionesModal.show();
 
   try {
     var r = await fetch('/transporte/api/compromisos/' + data.id + '/trazabilidad');
