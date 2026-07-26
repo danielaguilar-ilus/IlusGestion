@@ -6,7 +6,14 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#0a0a0a">
 <title>Seguimiento {{ data.doc }} · ILUS</title>
-<link rel="icon" type="image/png" href="{{ url_for('static', filename='Logo.png') }}">
+{# FIX 2026-07-27 (Daniel: "tiene el espartano antiguo en la pestaña de
+   Chrome"): esta página es standalone (no extiende base.html) y se había
+   quedado con Logo.png viejo -- se usa el MISMO set de favicons ya
+   actualizado que usa el resto del sitio (templates/base.html). #}
+<link rel="icon" type="image/png" sizes="16x16"   href="{{ url_for('static', filename='favicon_16.png') }}">
+<link rel="icon" type="image/png" sizes="32x32"   href="{{ url_for('static', filename='favicon_32.png') }}">
+<link rel="icon" type="image/png" sizes="64x64"   href="{{ url_for('static', filename='favicon.png') }}">
+<link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -140,10 +147,29 @@ body{
   color:var(--green-lt);
 }
 .estado-ico i{ line-height:1; -webkit-text-stroke:.4px currentColor; }
-#tkState.s-success .estado-ico{ background:rgba(22,163,74,.24); border-color:rgba(22,163,74,.6);  color:var(--green-lt); }
+/* "Entregado" es el único estado con un ícono SÓLIDO (Daniel: "el entregado
+   arriba... debería ser verde" -- el verde clarito sobre fondo oscuro no se
+   percibía a simple vista). Fondo verde macizo + check en blanco = lectura
+   inequívoca en 1 vistazo, en vez del mismo tratamiento tenue de los demás
+   estados "en curso". */
+#tkState.s-success .estado-ico{
+  background:linear-gradient(155deg,#16a34a,#15803d);
+  border-color:#22c55e; color:#fff;
+  box-shadow:0 0 0 4px rgba(22,163,74,.22), 0 8px 20px -6px rgba(22,163,74,.65);
+}
 #tkState.s-danger  .estado-ico{ background:rgba(220,38,38,.2);  border-color:rgba(220,38,38,.55); color:var(--red-lt); }
 #tkState.s-warning .estado-ico{ background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5); color:#fbbf24; }
 #tkState.s-secondary .estado-ico{ background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.18); color:#fff; }
+/* Chip "ENTREGADO" -- refuerzo adicional junto al kicker para que el verde
+   se note incluso antes de leer el título grande. */
+#tkState.s-success .estado-kicker{
+  display:inline-flex; align-items:center; gap:.3rem;
+  color:var(--green-lt);
+}
+#tkState.s-success .estado-kicker::before{
+  content:''; width:7px; height:7px; border-radius:50%;
+  background:#22c55e; box-shadow:0 0 8px 1px rgba(34,197,94,.9);
+}
 
 .estado-kicker{
   font-size:.66rem; letter-spacing:.24em; text-transform:uppercase;
@@ -387,15 +413,24 @@ a.kv:active{ background:#fafafa; }
 }
 .ft-btn:active{ transform:scale(.975); }
 .ft-btn.alt{ background:#fff; color:var(--ink); border-color:var(--line); }
-.ft-mark{
-  margin-top:1.6rem; font-family:var(--display); font-weight:800;
-  font-size:1.5rem; letter-spacing:.12em; text-transform:uppercase;
-  color:var(--ink); line-height:1;
+/* Firma de marca del footer -- compacta y estructurada, no un segundo
+   wordmark gigante repitiendo el header (Daniel 2026-07-27). */
+.ft-brand{ margin-top:1.7rem; }
+.ft-brand-line{
+  height:1px; background:linear-gradient(90deg,transparent,var(--line) 18%,var(--line) 82%,transparent);
+  margin-bottom:1.1rem;
 }
-.ft-mark b{ color:var(--red); font-weight:900; }
-.ft-sub{
-  margin-top:.3rem; font-size:.64rem; letter-spacing:.28em;
-  text-transform:uppercase; color:var(--gray); font-weight:700;
+.ft-brand-row{ display:flex; align-items:center; justify-content:center; gap:.6rem; }
+.ft-brand-ico{ height:22px; width:auto; opacity:.85; flex-shrink:0; }
+.ft-brand-txt{ text-align:left; line-height:1.25; }
+.ft-brand-name{
+  display:block; font-family:var(--display); font-weight:800;
+  font-size:.82rem; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--ink);
+}
+.ft-brand-tag{
+  display:block; margin-top:.05rem; font-size:.66rem;
+  color:var(--gray); font-weight:600;
 }
 
 /* Toast */
@@ -423,6 +458,83 @@ a.kv:active{ background:#fafafa; }
   position:absolute; top:calc(1rem + env(safe-area-inset-top)); right:1rem;
   width:44px; height:44px; border-radius:50%; border:0;
   background:rgba(255,255,255,.14); color:#fff; font-size:1.3rem; cursor:pointer;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ESCRITORIO (2026-07-27, Daniel: "que la responsiva considere de verdad
+   pantallas grandes, no solo que técnicamente se adapte"). Hasta acá todo
+   el CSS de arriba es la versión celular — se deja INTACTA (sigue siendo
+   lo que ve la mayoría: el link llega por WhatsApp/correo y se abre en el
+   teléfono). Desde ~960px se reorganiza en un panel de estado FIJO a la
+   izquierda (el hero + avance + stepper, que es la información que
+   importa mientras se lee el resto) y el contenido (resumen, historial,
+   destino, footer) a la derecha, como un dashboard — no una columna
+   angosta de celular estirada con espacio vacío a los lados.
+   ══════════════════════════════════════════════════════════════════════ */
+@media (min-width:960px){
+  :root{ --shell:1180px; }
+  body{ background:linear-gradient(180deg,#f4f4f6 0%,var(--paper) 340px); }
+
+  .accent{ height:4px; }
+
+  /* El "shell" deja de ser una columna: pasa a ser el grid de 2 paneles. */
+  .shell{
+    display:grid;
+    grid-template-columns:392px 1fr;
+    column-gap:1.75rem;
+    align-items:start;
+    padding:1.75rem 1.5rem 0;
+  }
+  .hd,.accent{ grid-column:1 / -1; }
+  .hd{ padding:1.1rem 1.5rem; }
+
+  /* Panel izquierdo: el hero se vuelve una tarjeta propia, pegajosa, con
+     esquinas y sombra — ya no es la franja negra de borde a borde de
+     celular. Todo su contenido interno no se toca (mismos elementos). */
+  .hero{
+    border-radius:22px;
+    padding:2rem 1.85rem 2.2rem;
+    position:sticky; top:1.75rem;
+    box-shadow:0 24px 48px -20px rgba(10,10,10,.38);
+  }
+  #tkStateLabel{ font-size:3rem; }
+
+  /* Panel derecho: el resumen de 3 tiles, el aviso de auto-actualización
+     y las tarjetas quedan en una columna más ancha, con más aire. */
+  .board{
+    grid-column:2; margin-top:0; padding:0;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:.85rem;
+  }
+  .tile{ padding:1.1rem .75rem 1rem; }
+  .tile-n{ font-size:2.05rem; }
+
+  .autobar{ grid-column:2; justify-content:flex-start; padding:1rem 0 0; }
+
+  .wrap{ grid-column:2; padding:1.15rem 0 3rem; }
+
+  /* Con más ancho, Destino + Historial conviven lado a lado -- son las 2
+     tarjetas que más se leen juntas (dónde va y cómo va el avance). Prueba
+     de entrega y el mapa en vivo, al ser las más "evento especial", se
+     mantienen a todo el ancho arriba para que no pasen desapercibidas. */
+  .wrap{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:0 1rem;
+  }
+  .wrap > .live-card,
+  .wrap > .proof,
+  .wrap > .ft{ grid-column:1 / -1; }
+  .card-b{ padding:.35rem 1.2rem 1rem; }
+  .card-h{ padding:1rem 1.2rem; }
+
+  .ft{ margin-top:.4rem; padding:1.9rem 0 2.4rem; border-top:1px solid var(--line); }
+  .ft-btns{ flex-direction:row; justify-content:center; max-width:560px; margin:0 auto; }
+  .ft-btn{ flex:1; }
+
+  /* Las tarjetas ya no necesitan la entrada escalonada "en cascada" de
+     celular (se ve rara en 2 columnas) -- una sola aparición pareja. */
+  .card{ animation-delay:.12s !important; }
 }
 
 @media (prefers-reduced-motion:reduce){
@@ -673,10 +785,21 @@ a.kv:active{ background:#fafafa; }
         <i class="bi bi-envelope"></i> Escríbenos
       </a>
     </div>
-    {# Footer sin el casco: a este tamaño la marca se veía sucia (Daniel).
-       Solo el nombre, bien tipografiado. #}
-    <div class="ft-mark"><b>ILUS</b> Fitness</div>
-    <div class="ft-sub">Sport &amp; Health</div>
+    {# FIX 2026-07-27 (Daniel: "elimina el footer y coloca algo más bonito,
+       que no sea 'ILUS Fitness', algo más estructurado"): el wordmark
+       gigante repetía lo mismo que ya se lee arriba en el header. Se
+       reemplaza por una firma de marca compacta -- casco + nombre + rubro,
+       con una línea divisoria fina, en vez de un segundo logo enorme. #}
+    <div class="ft-brand">
+      <div class="ft-brand-line"></div>
+      <div class="ft-brand-row">
+        <img src="{{ url_for('static', filename='logo_ilus_black.png') }}" alt="ILUS" class="ft-brand-ico">
+        <div class="ft-brand-txt">
+          <span class="ft-brand-name">ILUS Sport &amp; Health</span>
+          <span class="ft-brand-tag">Equipamiento y servicio técnico fitness</span>
+        </div>
+      </div>
+    </div>
   </div>
 </main>
 

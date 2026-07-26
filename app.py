@@ -18442,6 +18442,21 @@ ESTADOS_ENTREGA_META = {
     'Devolución':             {'color': 'warning',   'icon': 'bi-arrow-return-left',   'step': 4},
 }
 
+# Traducción de comentarios OPERATIVOS internos a texto apto para el cliente
+# final en el timeline público (ver _tracking_payload). Un valor None oculta
+# el comentario del todo (no aporta valor al cliente verlo). Estas frases
+# EXACTAS son las que hoy escriben _tr_event(...) / el poller de SimpliRoute /
+# simpliroute_client.estado_ilus_from_visit() -- si se agrega un comentario
+# técnico nuevo en algún callsite, súmalo acá (NO edites el dato real en la
+# tabla, esto es solo la traducción para la vista pública).
+_COMENTARIO_PUBLICO_MAP = {
+    "Visita creada en SimpliRoute":        "Tu pedido fue coordinado con el transportista",
+    "Visita re-creada en SimpliRoute":     "Tu pedido fue recoordinado con el transportista",
+    "Entrega confirmada por el transportista": None,   # el estado "Entregado" ya lo dice
+    "Etiqueta FedEx generada":             None,
+    "Etiqueta FedEx generada (masivo)":    None,
+}
+
 ESTADO_COLORS = {
     'Pendiente':              'warning',
     'En proceso':             'primary',
@@ -18723,46 +18738,63 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
     # Cloud Run). Mismo patrón que ya usa Retiros para su link de seguimiento.
     # Crítico ahora que el estado lo va a actualizar un poller en background.
     track_url = f"{_public_base_url()}/t/{tok}"
-    doc = f"{c.get('tido') or ''} {c.get('nudo') or ''}".strip()
+    # FIX 2026-07-26 (Daniel: "el número de seguimiento debería ser 22703" +
+    # "para que no nos pisemos con las facturas que vienen con el mismo
+    # correlativo"): tido-nudo (mismo patrón de simpliroute_client.py
+    # campo "reference") identifica el documento SIEMPRE, con guion -- igual
+    # formato que usa ahora _tracking_payload() para el tracking público.
+    doc = f"{c.get('tido') or ''}-{c.get('nudo') or ''}".strip("-")
+    # Identificador de seguimiento que se muestra al cliente: el tracking
+    # REAL del courier si existe: si no (caso normal para Felca/Milling, que
+    # no emiten guía clásica sino visita SimpliRoute), cae al mismo doc
+    # tipo+número -- nunca se deja vacío.
+    seguimiento_display = tracking_real or doc
     cliente = c.get("cliente_nombre") or ""
     from markupsafe import escape as _esc
+    # ── Copywriting (Daniel 2026-07-26): cada estado con su propio momento
+    # narrativo -- nunca la misma estructura de frase repetida, y sin nombrar
+    # sistemas/couriers internos salvo que sea información realmente útil
+    # para el cliente (el nombre del courier SÍ se conserva en la fila de
+    # detalle "Courier", pero no en el cuerpo prosa). Tono ILUS: directo,
+    # cálido, profesional -- mismo que cotizaciones/retiros.
     if estado == 'En preparación':
         asunto = _brand_subject(f"Tu pedido {doc} está en preparación")
-        status_label = "Pedido programado"
-        titulo = "Tu pedido está en preparación"
-        cuerpo = ("Recibimos tu pedido y ya lo estamos preparando para el despacho. "
-                  "Te avisaremos apenas salga de nuestra bodega.")
-        cta_label = "Revisar estado del pedido"
+        status_label = "Pedido en preparación"
+        titulo = "Estamos alistando tu pedido"
+        cuerpo = ("Ya tenemos tu pedido en bodega y lo estamos preparando con cuidado "
+                  "para el despacho. Apenas esté listo para salir, te avisamos.")
+        cta_label = "Seguir mi pedido"
     elif estado == 'Entregado a transporte':
-        asunto = _brand_subject(f"Entregamos tu pedido {doc} al courier")
-        status_label = "En camino al courier"
-        titulo = "Tu pedido va en manos del courier"
-        cuerpo = ("Preparamos tu pedido y lo entregamos a FedEx para su despacho. "
-                  "Desde aquí FedEx lo lleva hasta tu dirección; te seguimos avisando los cambios.")
+        asunto = _brand_subject(f"Tu pedido {doc} ya salió de bodega")
+        status_label = "Pedido despachado"
+        titulo = "Tu pedido salió de bodega"
+        cuerpo = ("Tu pedido ya salió de nuestras instalaciones y quedó en camino a ti. "
+                  "Desde aquí iremos actualizando cada avance en tu seguimiento.")
         cta_label = "Ver seguimiento en vivo"
     elif estado == 'En ruta':
-        asunto = _brand_subject(f"Tu despacho {doc} va en camino")
-        status_label = "En ruta"
-        titulo = "Tu despacho va en camino"
-        cuerpo = "Buenas noticias: tu pedido salió a ruta y va camino a tu dirección."
+        asunto = _brand_subject(f"Tu pedido {doc} va en camino")
+        status_label = "En camino"
+        titulo = "Tu pedido va en camino"
+        cuerpo = ("Buenas noticias: tu pedido salió a reparto y viene en camino "
+                  "hacia tu dirección.")
         cta_label = "Ver seguimiento en vivo"
     elif estado in ('Entrega fallida', 'Problema'):
-        asunto = _brand_subject(f"Hubo un problema con la entrega de tu despacho {doc}")
+        asunto = _brand_subject(f"No pudimos entregar tu pedido {doc}")
         status_label = "Problema con la entrega"
-        titulo = "Hubo un problema con tu entrega"
+        titulo = "No pudimos completar tu entrega"
         _motivo_txt = (comentario or "").strip()
         cuerpo = ("Tuvimos un inconveniente al intentar entregar tu pedido"
-                  + (f": {_motivo_txt}." if _motivo_txt else ". ")
-                  + " Estamos pendientes para resolverlo y reprogramar la entrega. "
-                    "Si tienes dudas, contáctanos.")
+                  + (f": {_motivo_txt}." if _motivo_txt else ".")
+                  + " Ya estamos coordinando una nueva fecha contigo. "
+                    "Si tienes dudas, escríbenos.")
         cta_label = "Ver detalle"
     else:   # Entregado
-        asunto = _brand_subject(f"Tu despacho {doc} fue entregado")
+        asunto = _brand_subject(f"¡Tu pedido {doc} llegó a destino!")
         status_label = "Entregado"
-        titulo = "¡Tu despacho fue entregado!"
-        cuerpo = ("Confirmamos la entrega de tu pedido. Si tienes alguna observación "
-                  "sobre el producto recibido, contáctanos.")
-        cta_label = "Ver detalle de entrega"
+        titulo = "¡Tu pedido llegó a destino!"
+        cuerpo = ("Confirmamos la entrega de tu pedido. Si algo no calza con lo "
+                  "recibido, escríbenos y lo resolvemos.")
+        cta_label = "Ver comprobante de entrega"
     # ── Plantilla EDITABLE (comm_templates / módulo 'transporte') ─────────
     # Si Daniel editó la plantilla en /comunicaciones, su ASUNTO y MENSAJE
     # mandan; si no existe / está apagada / vacía, cae al texto de arriba
@@ -18789,7 +18821,7 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
             "fecha_entrega":      fecha_entrega_real,
             "direccion_entrega":  direccion_real,
             "costo_envio":        costo_envio_real,
-            "numero_seguimiento": tracking_real,
+            "numero_seguimiento": seguimiento_display,
             "motivo_falla":       comentario or "El courier no pudo completar la entrega",
         }
         _tpl = _render_comm_template(_slug, "email", _vars, modulo="transporte")
@@ -18801,9 +18833,22 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
                 _message_html = _cue   # HTML editable → NO escapar
     except Exception as _e_tpl:
         print(f"[tr_notify] plantilla editable no usada: {_e_tpl}", flush=True)
-    _closing = (f"«{_esc(comentario)}»" if comentario else
-                "Conserva este correo como referencia. El enlace de seguimiento es personal "
-                "y contiene información asociada a tu pedido.")
+    # FIX 2026-07-26: el "comentario" que dispara este correo casi siempre es
+    # texto OPERATIVO interno (ej. "Reenvío manual solicitado" del botón de
+    # reenvío, o el status crudo de FedEx/SimpliRoute) -- no algo que el
+    # cliente deba leer entre comillas. Solo en un estado de FALLA el
+    # comentario es el motivo real que el cliente necesita conocer.
+    if estado in ('Entrega fallida', 'Problema') and (comentario or "").strip():
+        _closing = f"«{_esc(comentario)}»"
+    else:
+        _closing = ("Conserva este correo como referencia. El enlace de seguimiento es personal "
+                    "y contiene información asociada a tu pedido.")
+    # FIX 2026-07-26 (Daniel: "el número de seguimiento debería ser 22703"):
+    # una sola fila de identificador -- si hay tracking real del courier se
+    # muestra como "N° de seguimiento"; si no, "N° de documento" con el mismo
+    # tido-nudo que ya se usa en el asunto/título (nunca se duplica el mismo
+    # dato con dos etiquetas distintas).
+    _id_row = ("N° de seguimiento", seguimiento_display) if tracking_real else ("N° de documento", doc)
     html = _ilus_email_master({
         "subject":           asunto,
         "preheader":         cuerpo[:100],
@@ -18813,9 +18858,8 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
         "customer_name":     cliente,
         "message":           _message_html,
         "detail_rows_html":  _ilus_email_rows([r for r in [
-                                 ("N° de documento", doc),
+                                 _id_row,
                                  ("Courier", courier_real),
-                                 ("N° de seguimiento", tracking_real) if tracking_real else None,
                                  ("Dirección de entrega", direccion_real) if direccion_real else None,
                                  ("Entrega estimada", fecha_entrega_real) if fecha_entrega_real else None,
                              ] if r]),
@@ -22669,7 +22713,14 @@ def tr_reenviar_notificacion(cid):
     estado_envio = estado_actual if estado_actual in _ESTADOS_NOTIFICABLES else 'En preparación'
 
     try:
-        _tr_notificar_cliente(cid, estado_envio, comentario="Reenvío manual solicitado", forzar=True)
+        # No se pasa un comentario ficticio: "Reenvío manual solicitado" es un
+        # detalle OPERATIVO (quién pidió el reenvío), no el motivo real de una
+        # entrega fallida -- si se pasara como comentario, un reenvío en
+        # estado "Problema" mostraría esa frase entre comillas como si fuera
+        # la causa de la falla. Sin comentario, el correo usa su copy default
+        # por estado (y el motivo real de falla, si lo hay, ya quedó guardado
+        # como comentario del evento original en transport_tracking_events).
+        _tr_notificar_cliente(cid, estado_envio, comentario=None, forzar=True)
     except Exception as e:
         print(f"[tr_reenviar_notificacion] error: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo enviar el correo, intenta de nuevo"}), 500
@@ -25025,6 +25076,20 @@ def _tracking_payload(token):
     for e in eventos_raw:
         est = e.get("estado") or ""
         meta = ESTADOS_ENTREGA_META.get(est, {})
+        com_raw = (e.get("comentario") or "").strip()
+        # FIX 2026-07-26 (Daniel: timeline "certero" para el cliente, no ruido
+        # operativo interno): el comentario que guarda _tr_event puede traer
+        # jerga de sistemas internos (nombres de couriers, "visita creada en
+        # SimpliRoute", etc.) útil para auditoría pero irrelevante -o
+        # confuso- para el cliente final. Se traduce/oculta SOLO acá (en el
+        # payload público) -- la fila real en transport_tracking_events NO se
+        # toca, sigue completa para el equipo (manifiesto_detalle.html).
+        # El motivo real de una entrega fallida/Problema SÍ debe verse
+        # siempre: ahí el cliente necesita saber qué pasó.
+        if est in ('Problema', 'Entrega fallida'):
+            com_public = com_raw
+        else:
+            com_public = _COMENTARIO_PUBLICO_MAP.get(com_raw, com_raw)
         eventos.append({
             "estado":     est,
             "color":      meta.get("color", "secondary"),
@@ -25039,8 +25104,24 @@ def _tracking_payload(token):
             # Se manda el datetime object tal cual para que Jinja SÍ pueda
             # convertirlo. NO pre-formatear a string acá.
             "ts":         e.get("ts_utc"),
-            "comentario": e.get("comentario") or "",
+            "comentario": com_public,
         })
+    # FIX 2026-07-26 (Daniel: "se repite el mensaje" -- 'En preparación' dos
+    # veces con fechas distintas): cada reasignación de manifiesto dispara un
+    # evento nuevo vía _tr_event -- dato real e importante para auditoría,
+    # pero al cliente solo le importa el AVANCE real de su pedido, no que
+    # internamente se haya reasignado dos veces. Se colapsan entradas
+    # CONSECUTIVAS con el mismo estado, quedándonos con la más reciente (para
+    # que la fecha mostrada sea la vigente). NO se borra nada de la tabla
+    # transport_tracking_events -- esto es solo la lista que se arma para
+    # mostrar (la comparten tanto la vista HTML como /t/<token>/status).
+    _deduped = []
+    for _ev in eventos:
+        if _deduped and _deduped[-1]["estado"] == _ev["estado"]:
+            _deduped[-1] = _ev   # conserva el más reciente de la racha
+        else:
+            _deduped.append(_ev)
+    eventos = _deduped
     # Prueba de entrega (si existe)
     proof = None
     if mi:
@@ -25072,9 +25153,16 @@ def _tracking_payload(token):
             }
     estado_actual = (mi or {}).get("estado_entrega") or "En preparación"
     meta_actual = ESTADOS_ENTREGA_META.get(estado_actual, {})
+    # FIX 2026-07-26 (Daniel: "el número de seguimiento debería ser 22703" --
+    # para Felca/Milling casi nunca hay tracking number real de courier, usan
+    # visita SimpliRoute en vez de guía clásica). tido-nudo (mismo patrón que
+    # simpliroute_client.py campo "reference") identifica el pedido SIEMPRE,
+    # y evita pisarse entre tipos de documento con el mismo correlativo (una
+    # factura 22703 y una boleta 22703 son cosas distintas).
+    _doc_id = f"{c.get('tido') or ''}-{c.get('nudo') or ''}".strip("-")
     return {
         "ok": True,
-        "doc":           f"{c.get('tido') or ''} {c.get('nudo') or ''}".strip(),
+        "doc":           _doc_id,
         "cliente":       c.get("cliente_nombre") or "",
         "destino":       _mask_address(c.get("direccion"), c.get("comuna")),
         "region":        c.get("region") or "",
