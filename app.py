@@ -25030,7 +25030,15 @@ def _tracking_payload(token):
             "color":      meta.get("color", "secondary"),
             "icon":       meta.get("icon", "bi-circle"),
             "fuente":     e.get("fuente") or "manual",
-            "ts":         str(e.get("ts_utc") or "")[:19],
+            # FIX 2026-07-27 (Daniel: "dice que fue entregado a las 15:28,
+            # son las 11:30 en Santiago"): antes se mandaba str(ts_utc)[:19]
+            # -- un STRING crudo en UTC. El template público (public_tracking.
+            # html línea ~648) le aplica "| chile_fmt", que SOLO convierte
+            # objetos datetime reales (un string ya no tiene tzinfo y el
+            # filtro lo devuelve intacto) -- por eso se veía la hora UTC.
+            # Se manda el datetime object tal cual para que Jinja SÍ pueda
+            # convertirlo. NO pre-formatear a string acá.
+            "ts":         e.get("ts_utc"),
             "comentario": e.get("comentario") or "",
         })
     # Prueba de entrega (si existe)
@@ -25058,7 +25066,9 @@ def _tracking_payload(token):
                 "relacion":      p.get("receptor_relacion") or "",
                 "firma_url":     p.get("firma_url") or "",
                 "fotos":         fotos,
-                "entregado_at":  str(p.get("entregado_at") or "")[:19],
+                # Igual que arriba: datetime real, NO string -- lo convierte
+                # el "| chile_fmt" del template (public_tracking.html).
+                "entregado_at":  p.get("entregado_at"),
             }
     estado_actual = (mi or {}).get("estado_entrega") or "En preparación"
     meta_actual = ESTADOS_ENTREGA_META.get(estado_actual, {})
@@ -25076,7 +25086,8 @@ def _tracking_payload(token):
         "estado_step":   meta_actual.get("step", 1),
         "eventos":       eventos,
         "proof":         proof,
-        "entregado_at":  str(c.get("delivered_at") or "")[:19],
+        # Datetime real (no string) -- el template lo convierte con "| chile_fmt".
+        "entregado_at":  c.get("delivered_at"),
         # Resumen de un vistazo (Daniel 2026-07-24: "que me entregue un resumen,
         # con letras más grandes, lo que importa"). Ya se leían de la tabla pero
         # no llegaban al template.
@@ -26148,7 +26159,9 @@ def tr_item_tracking_detalle(item_id):
             "color":      m.get("color", "secondary"),
             "icon":       m.get("icon", "bi-circle"),
             "fuente":     e.get("fuente") or "manual",
-            "ts":         str(e.get("ts_utc") or "")[:19],
+            # FIX 2026-07-27: mismo bug de hora UTC cruda que en
+            # _tracking_payload -- convertir a Chile antes de mostrar.
+            "ts":         chile_fmt_filter(e.get("ts_utc"), "%Y-%m-%d %H:%M:%S") if e.get("ts_utc") else "",
             "comentario": e.get("comentario") or "",
         })
 
@@ -28500,7 +28513,11 @@ def _tr_buscar_detalle(commitment_id):
         if p:
             try: fotos = json.loads(p.get("fotos_json") or "[]")
             except Exception: fotos = []
-            proof = {**dict(p), "fotos": fotos, "fotos_json": None}
+            proof = {**dict(p), "fotos": fotos, "fotos_json": None,
+                     # FIX 2026-07-27: entregado_at venía en UTC crudo (naive)
+                     # -- .tojson lo serializaba sin convertir a Chile.
+                     "entregado_at": (chile_fmt_filter(p.get("entregado_at"), "%Y-%m-%d %H:%M:%S")
+                                       if p.get("entregado_at") else None)}
     return {
         "commitment": dict(c),
         "manifest_item": dict(mi) if mi else None,
@@ -28509,7 +28526,9 @@ def _tr_buscar_detalle(commitment_id):
         "eventos": [{
             "estado":     e.get("estado") or "",
             "fuente":     e.get("fuente") or "",
-            "ts":         str(e.get("ts_utc") or "")[:19],
+            # FIX 2026-07-27: mismo bug de hora UTC cruda del resto del
+            # módulo -- convertir a Chile antes de mandarlo al frontend.
+            "ts":         chile_fmt_filter(e.get("ts_utc"), "%Y-%m-%d %H:%M:%S") if e.get("ts_utc") else "",
             "comentario": e.get("comentario") or "",
             "usuario":    e.get("usuario") or "",
             "lat":        float(e["lat"]) if e.get("lat") else None,

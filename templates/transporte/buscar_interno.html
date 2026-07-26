@@ -127,7 +127,18 @@ async function cargarDetalle(cid){
   }
 }
 
-function _fmtTs(t){ if(!t) return '—'; try{ return new Date(t.replace(' ','T')+'-04:00').toLocaleString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'America/Santiago'}); }catch(e){ return t; } }
+// FIX 2026-07-27 (Daniel: "dice 15:28, son las 11:30 en Santiago"): esta
+// función asumía que el string venía en UTC y le restaba -04:00 a mano
+// (sin manejar bien el cambio de horario de verano/invierno chileno).
+// Ahora el backend (chile_fmt_filter, con zoneinfo real) ya manda la hora
+// convertida a Chile -- acá solo se formatea el string tal cual, sin volver
+// a desplazarlo (evita el doble desfase).
+function _fmtTs(t){
+  if(!t) return '—';
+  const m = String(t).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if(!m) return t;
+  return `${m[3]}-${m[2]}-${m[1]} ${m[4]}:${m[5]}`;
+}
 function _ageTxt(s){ if(s<60) return 'ahora'; if(s<3600) return 'hace '+Math.round(s/60)+' min'; return 'hace '+Math.round(s/3600)+'h'; }
 function _badgeClass(e){ return ({'En preparación':'b-prep','Entregado a transporte':'b-trans','En ruta':'b-ruta','Entregado':'b-entreg','Problema':'b-fallida','Entrega fallida':'b-fallida','Devolución':'b-fallida'}[e] || 'b-prep'); }
 
