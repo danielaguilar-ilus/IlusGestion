@@ -107,8 +107,10 @@
        removidos. Los endpoints backend /choferes-disponibles y
        /asignar-chofer en app.py quedaron sin caller desde este template. #}
     {% if not es_fedex %}
-    <button class="btn btn-sm mfd-btn-labels"
-            onclick="abrirEtiquetasManifiestoModal(this)">
+    <button type="button"
+            class="btn btn-sm mfd-btn-labels js-open-etiquetas-modal"
+            data-etiquetas-url="{{ url_for('tr_manifiesto_etiquetas', mid=manifiesto.id) }}"
+            data-etiquetas-title="Etiquetas · {{ manifiesto.correlativo }}">
       <i class="bi bi-tags-fill me-1"></i>Etiquetas del manifiesto
     </button>
     {% endif %}
@@ -526,9 +528,11 @@
             {# Ver/reimprimir siempre debe estar disponible. La política de
                etiquetas bloquea dentro del modal únicamente la edición del
                total de bultos cuando el proceso ya avanzó. #}
-            <button class="btn btn-sm btn-outline-dark mfd-act-btn"
+            <button type="button"
+                    class="btn btn-sm btn-outline-dark mfd-act-btn js-open-etiquetas-modal"
                     title="{% if _en_gestion_courier %}Ver/reimprimir etiquetas (edición bloqueada por estado){% else %}Ver/imprimir etiquetas ILUS de esta factura{% endif %}"
-                    onclick="abrirEtiquetasModal({{ item.commitment_id }}, this)">
+                    data-etiquetas-url="{{ url_for('tr_factura_etiquetas', commitment_id=item.commitment_id, mid=manifiesto.id) }}"
+                    data-etiquetas-title="Etiquetas de la factura">
               <i class="bi bi-tags"></i>
             </button>
             {% endif %}
@@ -755,9 +759,11 @@
         </div>
         <div class="d-flex gap-1 no-print">
           {% if not es_fedex %}
-          <button class="btn btn-sm btn-outline-dark mfd-act-btn"
+          <button type="button"
+                  class="btn btn-sm btn-outline-dark mfd-act-btn js-open-etiquetas-modal"
                   title="{% if _en_gestion_courier %}Ver/reimprimir etiquetas (edición bloqueada por estado){% else %}Ver/imprimir etiquetas de esta factura{% endif %}"
-                  onclick="abrirEtiquetasModal({{ item.commitment_id }}, this)">
+                  data-etiquetas-url="{{ url_for('tr_factura_etiquetas', commitment_id=item.commitment_id, mid=manifiesto.id) }}"
+                  data-etiquetas-title="Etiquetas de la factura">
             <i class="bi bi-tags"></i>
           </button>
           {% endif %}

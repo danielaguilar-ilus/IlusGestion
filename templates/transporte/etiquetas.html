@@ -117,7 +117,7 @@ html, body {
   height: var(--label-h);
   background: var(--ilus-white);
   border: 1.6mm solid var(--ilus-black);
-  border-radius: 4mm;
+  border-radius: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -132,7 +132,7 @@ html, body {
   .sheet { padding: 0; gap: 0; }
   .etiqueta {
     box-shadow: none;
-    border-radius: 4mm;
+    border-radius: 0;
     page-break-after: always;
     break-after: page;
   }
@@ -153,7 +153,7 @@ html, body { background: #fff; }
 .sheet { padding: 0; gap: 0; }
 .etiqueta {
   box-shadow: none;
-  border-radius: 4mm;
+  border-radius: 0;
   page-break-after: always;
   break-after: page;
 }
@@ -167,49 +167,50 @@ html, body { background: #fff; }
 .lbl-head {
   display: flex;
   flex-direction: column;
-  padding: 2mm 3mm 1.6mm;
+  padding: 1.4mm 0 1.2mm;
   background: var(--ilus-white);
   border-bottom: .7mm solid var(--ilus-black);
-  gap: 1mm;
+  gap: 0;
   flex-shrink: 0;
 }
 .lbl-head .brand-logos {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) .55mm minmax(0, 1fr);
   align-items: center;
-  /* FIX Daniel 2026-07-26: "sepáralos hacia las esquinas, pero medio
-     centrado" -- cada logo va pegado a su lado del header (SHS izquierda,
-     ILUS derecha) con el divisor quedando naturalmente al centro, en vez
-     de los dos logos apretados juntos en el medio. */
-  justify-content: space-between;
-  gap: 2mm;
+  /* El divisor queda al 50% y cada logo centrado en una mitad equivalente. */
+  width: 100%;
+  min-height: 13mm;
+  gap: 0;
 }
 .lbl-head .brand-logo {
   display: flex;
   align-items: center;
   justify-content: center;
   min-width: 0;
+  min-height: 13mm;
+  padding: 0 3mm;
 }
 .lbl-head .brand-logo-shs img {
-  max-width: 34mm;
-  max-height: 11mm;
+  max-width: 36mm;
+  max-height: 12mm;
   width: auto;
   height: auto;
   display: block;
   object-fit: contain;
 }
 .lbl-head .brand-logo-ilus img {
-  max-width: 32mm;
-  max-height: 10mm;
+  max-width: 35mm;
+  max-height: 11.5mm;
   width: auto;
   height: auto;
   display: block;
   object-fit: contain;
 }
 .lbl-head .brand-divider {
-  width: .5mm;
-  height: 9mm;
+  width: .55mm;
+  height: 13mm;
   background: var(--ilus-black);
-  flex-shrink: 0;
+  justify-self: center;
 }
 /* Fallback texto si algún logo no está disponible */
 .lbl-head .brand-text-shs {
@@ -343,7 +344,7 @@ html, body { background: #fff; }
    orden; se mueve acá como sección propia antes del footer. */
 .lbl-scan {
   border-bottom: .5mm solid #000;
-  padding: 2mm 3mm 2.4mm;
+  padding: 1.1mm 3mm 1.3mm;
   text-align: center;
   flex-shrink: 0;
   position: relative;
@@ -351,61 +352,50 @@ html, body { background: #fff; }
   z-index: 1;
 }
 .lbl-scan .scan-title {
-  font-size: 2mm;
+  font-size: 1.7mm;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .3mm;
   color: var(--ilus-gray);
-  margin-bottom: 1mm;
+  margin-bottom: .5mm;
 }
 .barcode-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 8mm;
+  min-height: 6mm;
 }
 .barcode {
-  width: 78%;
-  height: 8mm;
-  max-height: 8mm;
+  width: 70%;
+  height: 6mm;
+  max-height: 6mm;
 }
 .lbl-scan .scan-number {
   font-family: 'Courier New', monospace;
-  font-size: 3mm;
+  font-size: 2.5mm;
   font-weight: 800;
   letter-spacing: .3mm;
   color: var(--ilus-black);
-  margin-top: .8mm;
+  margin-top: .4mm;
 }
 
-/* DESTINATARIO + caja BULTOS
-   FIX Daniel 2026-07-26 (bug real reportado con captura): el texto de
-   "Comuna/Región" aparecía duplicado/superpuesto justo encima de la sección
-   del código de barras (.lbl-scan). Causa raíz: este bloque es un flex-item
-   con "flex: 1 1 auto" dentro de la columna de .etiqueta, pero su contenido
-   (grid con dest-info + bultos-box) no tenía un límite de altura ni
-   overflow propio -- cuando el contenido interno (dirección larga, etc.)
-   crecía más que el espacio disponible en los 150mm de la etiqueta, el
-   texto se desbordaba visualmente sobre la sección siguiente en vez de
-   recortarse. Se agrega overflow:hidden acá (además del que ya tenía
-   dest-info) para que el bloque JAMÁS invada .lbl-scan, y flex-shrink:0 a
-   las secciones de alto fijo para que no sean ellas las que se compriman
-   de forma inconsistente entre pantalla e impresión. */
+/* Destinatario y bultos arriba; direccion y comuna a todo el ancho abajo. */
 .lbl-dest {
   display: grid;
-  grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   border-bottom: .5mm solid #000;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
 .dest-info {
-  padding: 2.4mm 3mm;
+  padding: 2mm 2.5mm 1.8mm;
   border-right: .4mm solid #000;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 1.1mm;
+  gap: .8mm;
   min-height: 0;
 }
 .dest-info .dest-label {
@@ -463,16 +453,33 @@ html, body { background: #fff; }
   line-height: 1.16;
   word-break: break-word;
 }
-/* FIX Daniel 2026-07-26: una dirección larga podía crecer sin límite y
-   empujar el bloque completo fuera de su espacio (causa raíz del texto
-   superpuesto sobre .lbl-scan). Se limita a 2 líneas con elipsis -- el
-   dato completo sigue disponible en el sistema, la etiqueta solo necesita
-   lo suficiente para que el chofer ubique la dirección. */
-.dest-row .v.direccion {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+.dest-route {
+  grid-column: 1 / -1;
+  min-height: 0;
+  padding: 1mm 2.5mm 1.3mm;
+  border-top: .4mm solid var(--ilus-black);
   overflow: hidden;
+  display: grid;
+  align-content: start;
+}
+.dest-route .dest-line {
+  grid-template-columns: 7mm minmax(0, 1fr);
+  align-items: start;
+  gap: 1.5mm;
+  padding: 1mm 0 1.2mm;
+}
+.dest-route .dest-icon {
+  width: 7mm;
+  height: 7mm;
+  font-size: 4mm;
+}
+.dest-row .v.direccion {
+  display: block;
+  font-size: 4.7mm;
+  font-weight: 950;
+  line-height: 1.06;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 .dest-row .v.big {
   font-size: 6.2mm;
@@ -481,30 +488,32 @@ html, body { background: #fff; }
 /* FIX Daniel: "que destaque también la comuna" -- antes iba igual que
    fono/dirección; el chofer la necesita a simple vista para ordenar rutas. */
 .dest-row .v.comuna {
-  font-size: 5mm;
+  font-size: 5.5mm;
   font-weight: 950;
+  line-height: 1.05;
   color: var(--ilus-black);
   display: block;
 }
 .dest-row .v.region {
-  font-size: 2.8mm;
-  font-weight: 700;
+  font-size: 3mm;
+  font-weight: 800;
+  line-height: 1.05;
   color: var(--ilus-gray);
   display: block;
   text-transform: uppercase;
   margin-top: .3mm;
 }
 
-/* Caja BULTOS X de N — número grande arriba, QR debajo */
+/* Caja BULTOS X de N, ubicada en la fila superior del destino. */
 .bultos-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   text-align: center;
-  padding: 2mm 1mm 2mm;
+  padding: 2mm 1mm 1.6mm;
   background: #fff;
-  gap: 1mm;
+  gap: 1.4mm;
 }
 .bultos-box .b-title {
   display: flex;
@@ -529,17 +538,14 @@ html, body { background: #fff; }
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 2mm;
-  margin-top: 1mm;
+  gap: 1mm;
+  margin-top: .4mm;
   padding-bottom: 0;
-  width: 90%;
+  width: 96%;
 }
 .bultos-box .b-x {
-  /* FIX Daniel 2026-07-26: al quitar el QR de esta columna quedaba mucho
-     espacio vacío abajo -- se sube de 13mm a 17mm para que "Bultos" ocupe
-     bien el alto libre y quede a la par del bloque Destinatario, sin dejar
-     de respetar el límite anterior ("un poco más medianos" que 22mm). */
-  font-size: 17mm;
+  /* Grande para lectura a distancia, con margen para cantidades de dos dígitos. */
+  font-size: 15mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
@@ -550,7 +556,7 @@ html, body { background: #fff; }
   color: var(--ilus-gray);
 }
 .bultos-box .b-n {
-  font-size: 17mm;
+  font-size: 15mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
@@ -587,18 +593,23 @@ html, body { background: #fff; }
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 1.4mm;
-  padding: 2mm 1.2mm;
+  gap: 1.5mm;
+  padding: 2.4mm 1mm;
   text-align: center;
 }
 .foot-icon + .foot-icon { border-left: .35mm solid var(--ilus-black); }
-.foot-icon i { font-size: 6.5mm; line-height: 1; color: var(--ilus-black); }
+.foot-icon .handling-symbol {
+  width: 9mm;
+  height: 9mm;
+  flex: 0 0 9mm;
+  color: var(--ilus-black);
+}
 .foot-icon span {
-  font-size: 2.1mm;
-  font-weight: 900;
+  font-size: 2.6mm;
+  font-weight: 950;
   text-transform: uppercase;
-  letter-spacing: .2mm;
-  line-height: 1.05;
+  letter-spacing: 0;
+  line-height: 1.08;
   color: var(--ilus-black);
 }
 
@@ -1158,7 +1169,7 @@ html, body { background: #fff; }
         {% if f.doc_tipo %}<div class="doc-type">{{ f.doc_tipo }}</div>{% endif %}
       </div>
 
-      {# ─── DESTINATARIO + BULTOS (con QR debajo del número) ─── #}
+      {# ─── DESTINATARIO + BULTOS arriba; ruta completa debajo ─── #}
       <div class="lbl-dest">
         <div class="dest-info">
           <div class="dest-label">
@@ -1170,6 +1181,19 @@ html, body { background: #fff; }
             <span class="dest-icon"><i class="bi bi-telephone-fill"></i></span>
             <div class="dest-row"><span class="k">Tel&eacute;fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
           </div>
+        </div>
+        <div class="bultos-box">
+          <div class="b-title">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16.5c0 .38-.21.71-.53.88l-7.9 4.44c-.16.12-.36.18-.57.18-.21 0-.41-.06-.57-.18l-7.9-4.44A.991.991 0 013 16.5v-9c0-.38.21-.71.53-.88l7.9-4.44c.16-.12.36-.18.57-.18.21 0 .41.06.57.18l7.9 4.44c.32.17.53.5.53.88v9zM12 4.15L6.04 7.5 12 10.85l5.96-3.35L12 4.15zM5 15.91l6 3.38v-6.71L5 9.21v6.7zm14 0v-6.7l-6 3.37v6.71l6-3.38z"/></svg>
+            Bultos
+          </div>
+          <div class="b-main">
+            <span class="b-x">{{ b.num }}</span>
+            <span class="b-de">de</span>
+            <span class="b-n">{{ b.total }}</span>
+          </div>
+        </div>
+        <div class="dest-route">
           <div class="dest-line">
             <span class="dest-icon"><i class="bi bi-geo-alt-fill"></i></span>
             <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v direccion">{{ f.direccion or '—' }}</span></div>
@@ -1181,17 +1205,6 @@ html, body { background: #fff; }
               <span class="v comuna">{{ f.comuna or '—' }}</span>
               <span class="v region">{{ f.region or '' }}</span>
             </div>
-          </div>
-        </div>
-        <div class="bultos-box">
-          <div class="b-title">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16.5c0 .38-.21.71-.53.88l-7.9 4.44c-.16.12-.36.18-.57.18-.21 0-.41-.06-.57-.18l-7.9-4.44A.991.991 0 013 16.5v-9c0-.38.21-.71.53-.88l7.9-4.44c.16-.12.36-.18.57-.18.21 0 .41.06.57.18l7.9 4.44c.32.17.53.5.53.88v9zM12 4.15L6.04 7.5 12 10.85l5.96-3.35L12 4.15zM5 15.91l6 3.38v-6.71L5 9.21v6.7zm14 0v-6.7l-6 3.37v6.71l6-3.38z"/></svg>
-            Bultos
-          </div>
-          <div class="b-main">
-            <span class="b-x">{{ b.num }}</span>
-            <span class="b-de">de</span>
-            <span class="b-n">{{ b.total }}</span>
           </div>
         </div>
       </div>
@@ -1207,15 +1220,22 @@ html, body { background: #fff; }
 
       <footer class="lbl-foot">
         <div class="foot-icon">
-          <i class="bi bi-cup-straw"></i>
+          <svg class="handling-symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M6 2h12v5a6 6 0 0 1-5 5.92V20h4v2H7v-2h4v-7.08A6 6 0 0 1 6 7V2zm2 2v3a4 4 0 0 0 8 0V4H8z"/>
+          </svg>
           <span>Fr&aacute;gil</span>
         </div>
         <div class="foot-icon">
-          <i class="bi bi-umbrella"></i>
+          <svg class="handling-symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M11 2h2v1.08A10.02 10.02 0 0 1 22 12c-1.5-1.2-3.5-1.2-5 0-1.5-1.2-3.5-1.2-5 0-1.5-1.2-3.5-1.2-5 0-1.5-1.2-3.5-1.2-5 0a10.02 10.02 0 0 1 9-8.92V2zm0 10h2v6a2 2 0 1 0 4 0h2a4 4 0 1 1-8 0v-6z"/>
+          </svg>
           <span>Mantener seco</span>
         </div>
         <div class="foot-icon">
-          <i class="bi bi-arrow-up-square"></i>
+          <svg class="handling-symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="2.2" d="M2.5 2.5h19v19h-19z"/>
+            <path fill="currentColor" d="m7 5-4 5h2.7v7H8.3v-7H11L7 5zm10 0-4 5h2.7v7h2.6v-7H21l-4-5zM4 19h16v2H4z"/>
+          </svg>
           <span>Este lado arriba</span>
         </div>
       </footer>
@@ -1246,7 +1266,7 @@ document.addEventListener("DOMContentLoaded", function () {
         lineColor: "#000",
         background: "#fff",
         width: lineWidth,
-        height: 46,
+        height: 34,
         margin: 0
       });
     } catch (e) {
@@ -1255,6 +1275,54 @@ document.addEventListener("DOMContentLoaded", function () {
     barcode.dataset.rendered = "1";
   }
   document.querySelectorAll(".barcode").forEach(renderBarcode);
+
+  function fitDestinationRoute(route) {
+    const address = route.querySelector(".direccion");
+    const commune = route.querySelector(".comuna");
+    const region = route.querySelector(".region");
+    if (!address || !commune || route.clientHeight <= 0) return;
+
+    let addressMm = 4.7;
+    let communeMm = 5.5;
+    let regionMm = 3;
+    const applySizes = function () {
+      address.style.fontSize = addressMm.toFixed(2) + "mm";
+      commune.style.fontSize = communeMm.toFixed(2) + "mm";
+      if (region) region.style.fontSize = regionMm.toFixed(2) + "mm";
+    };
+
+    applySizes();
+    for (let step = 0; step < 12 && route.scrollHeight > route.clientHeight + 1; step += 1) {
+      addressMm = Math.max(3.3, addressMm - .15);
+      communeMm = Math.max(4.1, communeMm - .12);
+      regionMm = Math.max(2.4, regionMm - .06);
+      applySizes();
+    }
+  }
+
+  function fitPackageCount(main) {
+    const current = main.querySelector(".b-x");
+    const total = main.querySelector(".b-n");
+    if (!current || !total || main.clientWidth <= 0) return;
+
+    let numberMm = 15;
+    current.style.fontSize = numberMm + "mm";
+    total.style.fontSize = numberMm + "mm";
+    for (let step = 0; step < 12 && main.scrollWidth > main.clientWidth + 1; step += 1) {
+      numberMm = Math.max(9, numberMm - .5);
+      current.style.fontSize = numberMm + "mm";
+      total.style.fontSize = numberMm + "mm";
+    }
+  }
+
+  function fitLabelDetails() {
+    document.querySelectorAll(".dest-route").forEach(fitDestinationRoute);
+    document.querySelectorAll(".b-main").forEach(fitPackageCount);
+  }
+
+  fitLabelDetails();
+  requestAnimationFrame(fitLabelDetails);
+  window.addEventListener("load", fitLabelDetails, { once: true });
 });
 
 /* ══════════════════════════════════════════════════════════════════════
