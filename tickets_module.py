@@ -2685,35 +2685,41 @@ def register_tickets_routes(app, ctx):
             pass
         return ""
 
-    def _tk_logo_shs_html(alto_mm=12):
-        """Logo cuadrado "SPORTS HEALTH SOLUTIONS" recreado en HTML/CSS con
-        estilos INLINE (2026-07-22, Daniel: "replica el de Sport & Health
-        Solutions"). Inline obligatorio: los header_template de Playwright se
-        renderizan en un contexto aislado sin acceso al CSS del documento.
-        Va a la izquierda del espartano ILUS en el header del PDF, igual que
-        el formato real de referencia. Si Daniel pasa el PNG exacto, se
-        cambia por un <img> data-URI sin tocar nada más.
+    def _tk_cotiz_logo_shs_b64():
+        """PNG real del logo SPORTS HEALTH SOLUTIONS (static/logo_shs.png),
+        pre-codificado en static/logo_shs_pdf.txt -- mismo mecanismo que
+        _tk_cotiz_logo_b64() para el logo ILUS."""
+        try:
+            _logo_path = os.path.join(app.static_folder, "logo_shs_pdf.txt")
+            if os.path.exists(_logo_path):
+                with open(_logo_path, "r", encoding="utf-8") as _f_logo:
+                    return _f_logo.read().strip()
+        except Exception:
+            pass
+        return ""
 
-        -webkit-print-color-adjust/print-color-adjust: exact INLINE (2026-07-24,
-        fix bug reportado por Daniel "el logo SPHS se ve mal"): confirmado
-        renderizando el PDF real con Playwright que SIN esta propiedad
-        Chromium descarta los `background` de los header/footer templates al
-        imprimir (no heredan el `-webkit-print-color-adjust:exact` del body
-        del documento -- están aislados, ver nota arriba). Efecto real: la
-        franja negra del header entero desaparecía y este logo quedaba
-        flotando como un cuadro blanco suelto sobre la hoja en blanco, sin el
-        fondo de marca detrás. Mismo fix aplicado al fondo negro del header
-        en _tk_cotizacion_pdf_bytes."""
+    def _tk_logo_shs_html(alto_mm=17.6):
+        """Logo real SPORTS HEALTH SOLUTIONS (PNG, static/logo_shs.png) en el
+        header del PDF de cotización. FIX 2026-07-27 (Daniel compartió el PNG
+        exacto, ver comentario histórico de esta función): se reemplaza la
+        reconstrucción en HTML/CSS con texto azul navy (no calzaba con la
+        marca real blanco y negro) por la imagen real, al mismo alto que el
+        logo ILUS (antes 12mm, chico y desproporcionado frente a los 17.6mm
+        de ILUS)."""
+        _b64 = _tk_cotiz_logo_shs_b64()
+        if not _b64:
+            return ""
+        # El PNG real tiene fondo transparente y el texto "HEALTH SOLUTIONS"
+        # en negro -- sobre el header oscuro del PDF quedaría ilegible. Se
+        # mantiene el mismo tratamiento que la versión anterior (caja blanca
+        # redondeada detrás), ahora con la imagen real adentro.
+        _caja_alto = alto_mm + 2.4
         return (
-            f'<div style="width:{alto_mm}mm;height:{alto_mm}mm;background:#fff;'
-            'border:0.5mm solid #1e3a8a;box-sizing:border-box;display:flex;'
-            'flex-direction:column;align-items:center;justify-content:center;'
-            'line-height:1;padding:0.5mm;font-family:Arial,Helvetica,sans-serif;'
-            '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
-            '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">SPORTS</span>'
-            '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">HEALTH</span>'
-            '<span style="display:block;width:75%;border-top:0.3mm solid #1e3a8a;margin:0.4mm 0;"></span>'
-            '<span style="font-weight:700;font-size:3.4px;color:#1e3a8a;letter-spacing:.14em;">SOLUTIONS</span>'
+            f'<div style="height:{_caja_alto}mm;background:#fff;border-radius:1mm;'
+            'box-sizing:border-box;display:flex;align-items:center;justify-content:center;'
+            'padding:1.2mm 2.4mm;-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
+            f'<img src="data:image/png;base64,{_b64}" '
+            f'style="height:{alto_mm}mm;width:auto;object-fit:contain;display:block;">'
             '</div>'
         )
 
@@ -3296,7 +3302,7 @@ def register_tickets_routes(app, ctx):
             '<div style="background:#0a0a0a;padding:5mm 12mm;box-sizing:border-box;'
             'display:flex;justify-content:space-between;align-items:center;'
             '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
-            f'<div style="display:flex;align-items:center;gap:5mm;">{_tk_logo_shs_html(12)}{_header_ilus}</div>'
+            f'<div style="display:flex;align-items:center;gap:5mm;">{_tk_logo_shs_html()}{_header_ilus}</div>'
             '<div style="text-align:right;">'
             '<div style="font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-.01em;">COTIZACIÓN</div>'
             f'<div style="font-size:19px;font-weight:900;color:#dc2626;line-height:1.15;">N&#176; {_footer_numero}</div>'
@@ -3354,7 +3360,7 @@ def register_tickets_routes(app, ctx):
             return "Cotización no encontrada", 404
         ctx_pdf, cot = _res
         ctx_pdf["modo_visor"] = True
-        ctx_pdf["logo_shs_html"] = _tk_logo_shs_html(14)
+        ctx_pdf["logo_shs_html"] = _tk_logo_shs_html()
         return render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
 
     # ─────────────────────────────────────────────────────────────────

@@ -251,21 +251,45 @@ def _lc_cotiz_logo_b64():
     return ""
 
 
-def _lc_logo_shs_html(alto_mm=12):
-    """Logo cuadrado "SPORTS HEALTH SOLUTIONS" recreado en HTML/CSS inline
-    -- copia EXACTA de _tk_logo_shs_html (tickets_module.py) para que el
-    header del PDF de Transporte sea visualmente identico al de Servicio
-    Tecnico (diseno "calcado", pedido explicito)."""
+def _lc_cotiz_logo_shs_b64():
+    """PNG real del logo SPORTS HEALTH SOLUTIONS (static/logo_shs.png),
+    pre-codificado en static/logo_shs_pdf.txt -- mismo patrón que
+    _lc_cotiz_logo_b64() para el logo ILUS."""
+    try:
+        _app = _flask_app()
+        _static_folder = getattr(_app, "static_folder", None) if _app else None
+        if not _static_folder:
+            return ""
+        _logo_path = os.path.join(_static_folder, "logo_shs_pdf.txt")
+        if os.path.exists(_logo_path):
+            with open(_logo_path, "r", encoding="utf-8") as _f_logo:
+                return _f_logo.read().strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _lc_logo_shs_html(alto_mm=17.6):
+    """Logo real SPORTS HEALTH SOLUTIONS (PNG, static/logo_shs.png) en el
+    header del PDF de cotización. FIX 2026-07-27 (Daniel compartió el PNG
+    exacto): antes era una reconstrucción en HTML/CSS con texto azul navy
+    que no calzaba con la marca real (blanco y negro) -- se reemplaza por
+    la imagen real, del mismo alto que el logo ILUS para que ambos queden
+    a la par (antes 12mm, chico y desproporcionado frente al de ILUS)."""
+    _b64 = _lc_cotiz_logo_shs_b64()
+    if not _b64:
+        return ""
+    # El PNG real tiene fondo transparente y el texto "HEALTH SOLUTIONS" en
+    # negro -- sobre el header oscuro del PDF quedaría ilegible. Se mantiene
+    # el mismo tratamiento que la versión anterior (caja blanca redondeada
+    # detrás), ahora con la imagen real adentro en vez del texto CSS.
+    _caja_alto = alto_mm + 2.4
     return (
-        f'<div style="width:{alto_mm}mm;height:{alto_mm}mm;background:#fff;'
-        'border:0.5mm solid #1e3a8a;box-sizing:border-box;display:flex;'
-        'flex-direction:column;align-items:center;justify-content:center;'
-        'line-height:1;padding:0.5mm;font-family:Arial,Helvetica,sans-serif;'
-        '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
-        '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">SPORTS</span>'
-        '<span style="font-weight:900;font-size:5px;color:#1e3a8a;letter-spacing:.02em;">HEALTH</span>'
-        '<span style="display:block;width:75%;border-top:0.3mm solid #1e3a8a;margin:0.4mm 0;"></span>'
-        '<span style="font-weight:700;font-size:3.4px;color:#1e3a8a;letter-spacing:.14em;">SOLUTIONS</span>'
+        f'<div style="height:{_caja_alto}mm;background:#fff;border-radius:1mm;'
+        'box-sizing:border-box;display:flex;align-items:center;justify-content:center;'
+        'padding:1.2mm 2.4mm;-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
+        f'<img src="data:image/png;base64,{_b64}" '
+        f'style="height:{alto_mm}mm;width:auto;object-fit:contain;display:block;">'
         '</div>'
     )
 
@@ -1268,7 +1292,7 @@ def _lc_cotizacion_pdf_bytes(cid):
         '<div style="background:#0a0a0a;padding:5mm 12mm;box-sizing:border-box;'
         'display:flex;justify-content:space-between;align-items:center;'
         '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
-        f'<div style="display:flex;align-items:center;gap:5mm;">{_lc_logo_shs_html(12)}{_header_ilus}</div>'
+        f'<div style="display:flex;align-items:center;gap:5mm;">{_lc_logo_shs_html()}{_header_ilus}</div>'
         '<div style="text-align:right;">'
         '<div style="font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-.01em;">COTIZACIÓN</div>'
         f'<div style="font-size:19px;font-weight:900;color:#dc2626;line-height:1.15;">N&#176; {_footer_numero}</div>'
@@ -2359,7 +2383,7 @@ def register_logistica_cotizaciones(app, ctx=None):
         valida_str = _lc_fecha_str(cot.get("valida_hasta")) or ""
 
         subject_default = f"Cotización {numero} · {empresa}"
-        subject, html_body = subject_default, None
+        subject, cuerpo_para_master = subject_default, None
         if callable(_render_comm_template):
             try:
                 tpl = _render_comm_template(
@@ -2373,11 +2397,11 @@ def register_logistica_cotizaciones(app, ctx=None):
                     if (asu or "").strip():
                         subject = asu.strip()
                     if (cue or "").strip():
-                        html_body = cue
+                        cuerpo_para_master = cue
             except Exception as e:
                 print(f"[logistica_cotizaciones] plantilla no usada cid={cid}: {e}", flush=True)
-        if html_body is None:
-            html_body = (
+        if cuerpo_para_master is None:
+            cuerpo_para_master = (
                 f"<p>Estimados,</p>"
                 f"<p>Adjuntamos la cotización de transporte y distribución "
                 f"<strong>{_html_mod.escape(numero)}</strong> para "
@@ -2389,6 +2413,26 @@ def register_logistica_cotizaciones(app, ctx=None):
             )
         if callable(_brand_subject):
             subject = _brand_subject(subject)
+
+        # FIX 2026-07-27 (Daniel: "los correos llegan sin ningún diseño"):
+        # antes `html_body` quedaba con el fragmento crudo de la plantilla
+        # (un <p> + un div de color), sin el header/logo/footer de marca.
+        # Se envuelve con _ilus_email_master, igual que hace el envío de
+        # cotizaciones de Mantenciones (tk_api_cotizacion_enviar).
+        _ilus_email_master = _h("_ilus_email_master")
+        if callable(_ilus_email_master):
+            try:
+                html_body = _ilus_email_master({
+                    "subject": subject,
+                    "title": f"Cotización {numero}",
+                    "subtitle": empresa,
+                    "message": cuerpo_para_master,
+                })
+            except Exception as e:
+                print(f"[logistica_cotizaciones] _ilus_email_master falló cid={cid}: {e}", flush=True)
+                html_body = cuerpo_para_master
+        else:
+            html_body = cuerpo_para_master
 
         adj = [(fname, pdf_bytes, "application/pdf")]
         enviados, fallidos = [], []
@@ -2459,7 +2503,7 @@ def register_logistica_cotizaciones(app, ctx=None):
                 return "Cotización no encontrada", 404
             ctx_pdf, cot = _res
             ctx_pdf["modo_visor"] = True
-            ctx_pdf["logo_shs_html"] = _lc_logo_shs_html(14)
+            ctx_pdf["logo_shs_html"] = _lc_logo_shs_html()
             return render_template("tickets/cotizacion_pdf.html", **ctx_pdf)
 
         @app.route("/transporte/cotizaciones")
