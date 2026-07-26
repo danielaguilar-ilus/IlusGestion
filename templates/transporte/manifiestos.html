@@ -455,7 +455,9 @@
                   <i class="bi bi-file-earmark-pdf"></i> PDF FedEx (todas)
                 </a>
                 {% else %}
-                <a href="{{ url_for('tr_manifiesto_etiquetas', mid=m.id) }}" target="_blank">
+                <a href="{{ url_for('tr_manifiesto_etiquetas', mid=m.id) }}"
+                   class="js-open-etiquetas-modal"
+                   data-etiquetas-title="Etiquetas · {{ m.correlativo }}">
                   <i class="bi bi-tags-fill"></i> Etiquetas ILUS
                 </a>
                 <a href="{{ url_for('tr_manifiesto_etiquetas_pdf', mid=m.id) }}" target="_blank">
@@ -594,9 +596,12 @@
     </div>
   </div>
 </div>
+
+{% include 'transporte/_etiquetas_modal.html' %}
 {% endblock %}
 
 {% block scripts %}
+<script defer src="{{ url_for('static', filename='transporte_etiquetas_modal.js') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   var today = new Date().toISOString().split('T')[0];

@@ -22464,6 +22464,8 @@ def tr_update_compromiso(cid):
     """Actualiza campos operativos: estado, costo_zz, notas, fecha_agenda."""
     data   = request.get_json(silent=True) or {}
     campos = {}
+    _labels_manifest_id = None
+    _labels_courier = ""
     if "estado" in data and data["estado"] in ESTADOS_COMPROMISO:
         campos["estado"] = data["estado"]
     if "costo_zz" in data:
@@ -22511,6 +22513,28 @@ def tr_update_compromiso(cid):
                         "tracking_number": _tn_activa,
                     }), 409
                 campos.pop("n_bultos")  # mismo valor: nada que actualizar
+        if "n_bultos" in campos:
+            _mi_bultos = mysql_fetchone(
+                "SELECT mi.manifest_id, m.courier "
+                "FROM transport_manifest_items mi "
+                "JOIN transport_manifests m ON m.id=mi.manifest_id "
+                "WHERE mi.commitment_id=%s "
+                "ORDER BY mi.id DESC LIMIT 1",
+                (cid,),
+            )
+            if _mi_bultos:
+                _labels_manifest_id = _mi_bultos.get("manifest_id")
+                _labels_courier = (_mi_bultos.get("courier") or "").strip()
+                _policy_bultos = _tr_bultos_edit_policy(
+                    cid,
+                    courier=_labels_courier,
+                    manifest_id=_labels_manifest_id,
+                )
+                if not _policy_bultos["editable"]:
+                    return jsonify({
+                        "error": _policy_bultos["reason"],
+                        "bloqueado_por": "estado_etiquetas",
+                    }), 409
     # ── Coordenadas de la dirección (2026-07-22) ────────────────────────────
     # BUG que esto corrige: este endpoint permite editar `direccion`/`comuna`
     # desde el modal del manifiesto, pero NO tocaba direccion_lat/lng. Si el
@@ -22575,6 +22599,29 @@ def tr_update_compromiso(cid):
     with conn.cursor() as cur:
         cur.execute(f"UPDATE transport_commitments SET {sets} WHERE id=%s", vals)
     conn.commit()
+
+    # Mantener las etiquetas locales alineadas cuando el editor operativo
+    # cambia bultos antes de que el manifiesto salga de En preparación.
+    if "n_bultos" in campos and _labels_manifest_id:
+        _nuevo_nb = int(campos["n_bultos"])
+        if _old_bultos is not None and _nuevo_nb < _old_bultos:
+            mysql_execute(
+                "DELETE FROM transport_labels "
+                "WHERE commitment_id=%s AND manifest_id=%s AND bulto_num>%s "
+                "  AND COALESCE(estado,'generada')='generada'",
+                (cid, _labels_manifest_id, _nuevo_nb),
+            )
+        mysql_execute(
+            "UPDATE transport_labels SET bulto_total=%s "
+            "WHERE commitment_id=%s AND manifest_id=%s",
+            (_nuevo_nb, cid, _labels_manifest_id),
+        )
+        _fac_labels = _tr_etiqueta_facturas([cid])
+        _tr_upsert_labels(
+            _fac_labels,
+            manifest_id=_labels_manifest_id,
+            courier=_labels_courier,
+        )
 
     # Si cambiaron los bultos y hay OT FedEx activa, marcar etiqueta desfasada.
     _fedex_desfasada = False
@@ -23403,6 +23450,112 @@ def _tr_courier_permite_editar_bultos(courier):
     return ("felca" in c) or ("milling" in c) or ("melling" in c)
 
 
+def _tr_bultos_edit_policy(commitment_id, courier="", manifest_id=None):
+    """Politica unica para corregir bultos desde las etiquetas ILUS.
+
+    La UI consume el motivo para explicar el bloqueo, pero el POST vuelve a
+    evaluar todo en servidor. Reimprimir sigue permitido en cualquier estado;
+    lo restringido es alterar el total "X de N" de etiquetas ya operativas.
+    """
+    policy = {
+        "editable": False,
+        "reason": "",
+        "manifest_estado": "",
+        "estado_entrega": "",
+        "labels_procesadas": 0,
+    }
+    if not _tr_courier_permite_editar_bultos(courier):
+        policy["reason"] = (
+            "La corrección de bultos solo está habilitada para Felca y Milling."
+        )
+        return policy
+
+    if manifest_id:
+        estado_row = mysql_fetchone(
+            "SELECT m.estado AS manifest_estado, mi.estado_entrega "
+            "FROM transport_manifest_items mi "
+            "JOIN transport_manifests m ON m.id=mi.manifest_id "
+            "WHERE mi.commitment_id=%s AND mi.manifest_id=%s "
+            "ORDER BY mi.id DESC LIMIT 1",
+            (commitment_id, manifest_id),
+        )
+    else:
+        estado_row = mysql_fetchone(
+            "SELECT m.id AS manifest_id, m.estado AS manifest_estado, "
+            "       mi.estado_entrega "
+            "FROM transport_manifest_items mi "
+            "JOIN transport_manifests m ON m.id=mi.manifest_id "
+            "WHERE mi.commitment_id=%s "
+            "ORDER BY mi.id DESC LIMIT 1",
+            (commitment_id,),
+        )
+        if estado_row:
+            manifest_id = estado_row.get("manifest_id")
+
+    if not estado_row:
+        policy["reason"] = (
+            "La factura debe pertenecer a un manifiesto antes de editar sus etiquetas."
+        )
+        return policy
+
+    manifest_estado = (estado_row.get("manifest_estado") or "").strip()
+    estado_entrega = (estado_row.get("estado_entrega") or "").strip()
+    policy["manifest_estado"] = manifest_estado
+    policy["estado_entrega"] = estado_entrega
+
+    if manifest_estado != "En preparación":
+        policy["reason"] = (
+            f"El manifiesto está en '{manifest_estado}'. "
+            "Solo se corrigen bultos mientras está En preparación."
+        )
+        return policy
+    if estado_entrega != "En preparación":
+        policy["reason"] = (
+            f"La factura está en '{estado_entrega}'. "
+            "La cantidad de bultos ya quedó cerrada para el proceso de transporte."
+        )
+        return policy
+
+    try:
+        procesadas = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM transport_labels "
+            "WHERE commitment_id=%s AND manifest_id=%s "
+            "  AND COALESCE(estado,'generada') <> 'generada'",
+            (commitment_id, manifest_id or 0),
+        )
+        policy["labels_procesadas"] = int((procesadas or {}).get("n") or 0)
+    except Exception:
+        policy["reason"] = (
+            "No se pudo verificar la trazabilidad de las etiquetas. "
+            "La edición queda bloqueada por seguridad."
+        )
+        return policy
+
+    if policy["labels_procesadas"]:
+        policy["reason"] = (
+            f"{policy['labels_procesadas']} etiqueta(s) ya fueron procesadas. "
+            "Puedes reimprimir, pero no cambiar el total de bultos."
+        )
+        return policy
+
+    policy["editable"] = True
+    return policy
+
+
+def _tr_attach_bultos_edit_policies(facturas, courier="", manifest_id=None):
+    """Adjunta la politica de edicion a cada factura renderizada."""
+    for factura in facturas or []:
+        policy = _tr_bultos_edit_policy(
+            factura["commitment_id"], courier=courier, manifest_id=manifest_id
+        )
+        factura["bultos_editable"] = policy["editable"]
+        factura["bultos_edit_reason"] = policy["reason"]
+        factura["manifest_estado"] = policy["manifest_estado"]
+        factura["estado_entrega"] = policy["estado_entrega"]
+        factura["labels_procesadas"] = policy["labels_procesadas"]
+    return facturas
+
+
 def _tr_etiqueta_facturas(commitment_ids):
     """Construye la estructura de etiquetas para una lista de commitment_ids.
 
@@ -23671,6 +23824,7 @@ def tr_manifiesto_etiquetas(mid):
     courier = manifiesto.get("courier") or ""
     _tr_upsert_labels(facturas, manifest_id=mid, courier=courier)
     _tr_attach_qr_codes(facturas, manifest_id=mid)
+    _tr_attach_bultos_edit_policies(facturas, courier=courier, manifest_id=mid)
 
     total_etiquetas = sum(f["total_bultos"] for f in facturas)
     _tr_log("manifest", mid, "etiquetas generadas",
@@ -23690,6 +23844,8 @@ def tr_manifiesto_etiquetas(mid):
         logo_url    = _logo_ilus_black_data_url(),
         logo_shs_url = _logo_shs_data_url(),
         bultos_editable = _tr_courier_permite_editar_bultos(courier),
+        embed_mode  = request.args.get("embed") == "1",
+        manifest_id = mid,
     )
 
 
@@ -23705,10 +23861,22 @@ def tr_factura_etiquetas(commitment_id):
     # Si la factura está asociada a un manifiesto, lo guardamos para el tracking
     # y para saber el courier real (necesario para decidir si se puede corregir
     # el total de bultos desde acá — ver _tr_courier_permite_editar_bultos).
-    mrow = mysql_fetchone(
-        "SELECT manifest_id FROM transport_manifest_items "
-        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1", (commitment_id,)
-    )
+    requested_mid = request.args.get("mid", type=int)
+    if requested_mid:
+        mrow = mysql_fetchone(
+            "SELECT manifest_id FROM transport_manifest_items "
+            "WHERE commitment_id=%s AND manifest_id=%s "
+            "ORDER BY id DESC LIMIT 1",
+            (commitment_id, requested_mid),
+        )
+        if not mrow:
+            flash("La factura no pertenece a ese manifiesto", "warning")
+            return redirect(url_for("tr_manifiesto_detalle", mid=requested_mid))
+    else:
+        mrow = mysql_fetchone(
+            "SELECT manifest_id FROM transport_manifest_items "
+            "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1", (commitment_id,)
+        )
     manifest_id = mrow["manifest_id"] if mrow else None
     courier = ""
     if manifest_id:
@@ -23718,6 +23886,9 @@ def tr_factura_etiquetas(commitment_id):
         courier = (mfrow.get("courier") if mfrow else "") or ""
     _tr_upsert_labels(facturas, manifest_id=manifest_id, courier=courier)
     _tr_attach_qr_codes(facturas, manifest_id=manifest_id)
+    _tr_attach_bultos_edit_policies(
+        facturas, courier=courier, manifest_id=manifest_id
+    )
 
     total_etiquetas = sum(f["total_bultos"] for f in facturas)
     _tr_log("commitment", commitment_id, "etiquetas generadas",
@@ -23731,10 +23902,16 @@ def tr_factura_etiquetas(commitment_id):
         titulo      = f"Etiquetas · {facturas[0]['doc_full'] or commitment_id}",
         courier     = courier,
         total_etiquetas = total_etiquetas,
-        pdf_url     = url_for('tr_factura_etiquetas_pdf', commitment_id=commitment_id),
+        pdf_url     = url_for(
+            'tr_factura_etiquetas_pdf',
+            commitment_id=commitment_id,
+            mid=manifest_id or None,
+        ),
         logo_url    = _logo_ilus_black_data_url(),
         logo_shs_url = _logo_shs_data_url(),
         bultos_editable = _tr_courier_permite_editar_bultos(courier),
+        embed_mode  = request.args.get("embed") == "1",
+        manifest_id = manifest_id,
     )
 
 
@@ -23849,10 +24026,21 @@ def tr_factura_etiquetas_pdf(commitment_id):
     if not facturas:
         return "Factura no encontrada", 404
 
-    mrow = mysql_fetchone(
-        "SELECT manifest_id FROM transport_manifest_items "
-        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1", (commitment_id,)
-    )
+    requested_mid = request.args.get("mid", type=int)
+    if requested_mid:
+        mrow = mysql_fetchone(
+            "SELECT manifest_id FROM transport_manifest_items "
+            "WHERE commitment_id=%s AND manifest_id=%s "
+            "ORDER BY id DESC LIMIT 1",
+            (commitment_id, requested_mid),
+        )
+        if not mrow:
+            return "La factura no pertenece al manifiesto indicado", 409
+    else:
+        mrow = mysql_fetchone(
+            "SELECT manifest_id FROM transport_manifest_items "
+            "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1", (commitment_id,)
+        )
     manifest_id = mrow["manifest_id"] if mrow else None
     _tr_upsert_labels(facturas, manifest_id=manifest_id, courier="")
     _tr_attach_qr_codes(facturas, manifest_id=manifest_id)
@@ -24387,6 +24575,14 @@ def tr_factura_set_bultos(commitment_id):
         return jsonify({"ok": False, "error": "n_bultos inválido"}), 400
     if nuevo < 1 or nuevo > 999:
         return jsonify({"ok": False, "error": "Debe estar entre 1 y 999"}), 400
+    try:
+        requested_manifest_id = int(body.get("manifest_id") or 0)
+    except Exception:
+        return jsonify({"ok": False, "error": "manifest_id inválido"}), 400
+    try:
+        expected_n_bultos = int(body.get("expected_n_bultos") or 0)
+    except Exception:
+        return jsonify({"ok": False, "error": "expected_n_bultos inválido"}), 400
 
     fac = mysql_fetchone(
         "SELECT id, COALESCE(n_bultos,1) AS n_bultos, nudo "
@@ -24401,11 +24597,24 @@ def tr_factura_set_bultos(commitment_id):
     # "Re-emitir") y esta corrección no debe tocarlo. Defensa en profundidad:
     # el botón ya se oculta en el HTML si el courier no califica, pero el
     # backend valida igual por si llega la petición por otra vía.
-    mrow = mysql_fetchone(
-        "SELECT manifest_id FROM transport_manifest_items "
-        "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1",
-        (commitment_id,)
-    )
+    if requested_manifest_id:
+        mrow = mysql_fetchone(
+            "SELECT manifest_id FROM transport_manifest_items "
+            "WHERE commitment_id=%s AND manifest_id=%s "
+            "ORDER BY id DESC LIMIT 1",
+            (commitment_id, requested_manifest_id),
+        )
+        if not mrow:
+            return jsonify({
+                "ok": False,
+                "error": "La factura no pertenece al manifiesto indicado.",
+            }), 409
+    else:
+        mrow = mysql_fetchone(
+            "SELECT manifest_id FROM transport_manifest_items "
+            "WHERE commitment_id=%s ORDER BY id DESC LIMIT 1",
+            (commitment_id,),
+        )
     manifest_id = mrow["manifest_id"] if mrow else None
     courier = ""
     if manifest_id:
@@ -24422,7 +24631,27 @@ def tr_factura_set_bultos(commitment_id):
                       "usa el proceso correspondiente."),
         }), 403
 
+    policy = _tr_bultos_edit_policy(
+        commitment_id, courier=courier, manifest_id=manifest_id
+    )
+    if not policy["editable"]:
+        return jsonify({
+            "ok": False,
+            "error": policy["reason"] or "Las etiquetas ya no se pueden editar.",
+            "manifest_estado": policy["manifest_estado"],
+            "estado_entrega": policy["estado_entrega"],
+        }), 409
+
     actual = int(fac.get("n_bultos") or 1)
+    if expected_n_bultos and expected_n_bultos != actual:
+        return jsonify({
+            "ok": False,
+            "error": (
+                f"Otro usuario cambió los bultos de {expected_n_bultos} a {actual}. "
+                "Recarga las etiquetas antes de volver a editar."
+            ),
+            "n_bultos_actual": actual,
+        }), 409
     if nuevo == actual:
         return jsonify({"ok": True, "n_bultos": nuevo, "previo": actual, "sin_cambio": True})
 
@@ -24431,9 +24660,9 @@ def tr_factura_set_bultos(commitment_id):
         try:
             ocupados = mysql_fetchall(
                 "SELECT bulto_num, estado FROM transport_labels "
-                "WHERE commitment_id=%s AND bulto_num > %s "
+                "WHERE commitment_id=%s AND manifest_id=%s AND bulto_num > %s "
                 "  AND estado IS NOT NULL AND estado <> 'generada'",
-                (commitment_id, nuevo)
+                (commitment_id, manifest_id or 0, nuevo),
             ) or []
         except Exception:
             ocupados = []
@@ -24451,20 +24680,31 @@ def tr_factura_set_bultos(commitment_id):
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE transport_commitments SET n_bultos=%s WHERE id=%s",
-                (nuevo, commitment_id)
+                "UPDATE transport_commitments SET n_bultos=%s "
+                "WHERE id=%s AND COALESCE(n_bultos,1)=%s",
+                (nuevo, commitment_id, actual),
             )
+            if cur.rowcount != 1:
+                conn.rollback()
+                return jsonify({
+                    "ok": False,
+                    "error": (
+                        "Los bultos cambiaron mientras estabas editando. "
+                        "Recarga las etiquetas e intenta nuevamente."
+                    ),
+                }), 409
             # Borrar excedentes si bajamos
             if nuevo < actual:
                 cur.execute(
                     "DELETE FROM transport_labels "
-                    "WHERE commitment_id=%s AND bulto_num > %s",
-                    (commitment_id, nuevo)
+                    "WHERE commitment_id=%s AND manifest_id=%s AND bulto_num > %s",
+                    (commitment_id, manifest_id or 0, nuevo),
                 )
             # Actualizar bulto_total en las filas existentes
             cur.execute(
-                "UPDATE transport_labels SET bulto_total=%s WHERE commitment_id=%s",
-                (nuevo, commitment_id)
+                "UPDATE transport_labels SET bulto_total=%s "
+                "WHERE commitment_id=%s AND manifest_id=%s",
+                (nuevo, commitment_id, manifest_id or 0),
             )
         conn.commit()
     except Exception as e:
@@ -24478,7 +24718,8 @@ def tr_factura_set_bultos(commitment_id):
         _tr_upsert_labels(fac_struct, manifest_id=manifest_id, courier=courier)
 
     _tr_log("commitment", commitment_id, "n_bultos capturado",
-            f"{actual} → {nuevo} (courier: {courier or 's/asignar'}) por {current_username()}")
+            f"{actual} → {nuevo} (manifiesto: {manifest_id or 's/asignar'}, "
+            f"courier: {courier or 's/asignar'}) por {current_username()}")
 
     # Si la factura ya tiene OT FedEx activa, su etiqueta quedó desfasada.
     n_desfasadas = _tr_fedex_mark_stale(commitment_id, actual, nuevo)

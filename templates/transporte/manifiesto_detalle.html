@@ -108,7 +108,7 @@
        /asignar-chofer en app.py quedaron sin caller desde este template. #}
     {% if not es_fedex %}
     <button class="btn btn-sm mfd-btn-labels"
-            onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/etiquetas', '_blank')">
+            onclick="abrirEtiquetasManifiestoModal(this)">
       <i class="bi bi-tags-fill me-1"></i>Etiquetas del manifiesto
     </button>
     {% endif %}
@@ -1896,25 +1896,7 @@
    URL, más botón para descargar PDF y enviar por correo sin salir de
    la ficha del manifiesto.
    ════════════════════════════════════════════════════════════════════ #}
-{# FIX 2026-07-27 (Daniel: "las etiquetas quiero que las hagas en un
-   modal"): antes abría /transporte/factura/<cid>/etiquetas en pestaña
-   nueva; ahora modal con iframe, mismo patrón que Manifiesto de firma. #}
-<div class="modal fade" id="etiquetasFacturaModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
-    <div class="modal-content" style="border-radius:14px;overflow:hidden">
-      <div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:14px 20px">
-        <h5 class="modal-title"><i class="bi bi-tags-fill me-2"></i>Etiquetas de la factura</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-      </div>
-      <div class="modal-body p-0">
-        <iframe id="etiquetasFacturaFrame" src="about:blank" style="width:100%;height:75vh;border:0"></iframe>
-      </div>
-      <div class="modal-footer" style="padding:12px 20px">
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
-      </div>
-    </div>
-  </div>
-</div>
+{% include 'transporte/_etiquetas_modal.html' %}
 
 <div class="modal fade" id="pruebaEntregaModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -2048,6 +2030,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script defer src="{{ url_for('static', filename='transporte_etiquetas_modal.js') }}"></script>
 <script>
 var MID    = {{ manifiesto.id }};
 var SIN_OT = {{ sin_ot | tojson | safe }};
@@ -2094,15 +2077,13 @@ function cambiarEstado(mid, itemId, nuevoEstado, selectEl) {
       if (window.ilusToast) ilusToast('✓ Estado actualizado', { type: 'success' });
       actualizarResumen();
     } else {
-      if (window.ilusToast) ilusToast(d.error || 'No se pudo guardar', { type: 'error' });
-      else alert('Error: ' + (d.error||'No se pudo guardar'));
+      ilusToast(d.error || 'No se pudo guardar', { type: 'error' });
       location.reload();
     }
   })
   .catch(function() {
     selectEl.disabled = false;
-    if (window.ilusToast) ilusToast('Error de conexión', { type: 'error' });
-    else alert('Error de conexión');
+    ilusToast('Error de conexión', { type: 'error' });
   });
 }
 
@@ -2214,8 +2195,14 @@ async function mostrarLinkCliente(itemId) {
     await navigator.clipboard.writeText(url);
     if (window.ilusToast) ilusToast('✓ Link copiado al portapapeles', { type: 'success' });
   } catch (e) {
-    // Fallback: si el navegador bloquea clipboard, abrir prompt para copia manual
-    window.prompt('Copia el link manualmente (Ctrl+C):', url);
+    await ilusPrompt({
+      title: 'Copiar link manualmente',
+      message: 'El navegador bloqueó el portapapeles. Copia el enlace con Ctrl+C.',
+      defaultValue: url,
+      okLabel: 'Listo',
+      cancelLabel: 'Cerrar',
+      required: false,
+    });
   }
 }
 
@@ -3864,7 +3851,6 @@ function descargarPdfEtiquetasFedex() {
 // multi-pieza). Cancela la vieja en FedEx → crea una nueva → guarda todas las
 // etiquetas por bulto. El TN master cambia.
 async function actualizarEtiquetasFedex() {
-  if (typeof ilusConfirm === 'undefined') { alert('ilusConfirm no cargado'); return; }
   var ok = await ilusConfirm({
     title: 'Actualizar etiquetas multi-bulto',
     message: '¿Re-emitir las OTs que sólo tienen 1 etiqueta para obtener todas las piezas por bulto?',
@@ -3918,18 +3904,21 @@ async function actualizarEtiquetasFedex() {
 // ═══════════════════════════════════════════════════════════════════
 var _manifiestoFirmaModal = null;
 var _pruebaEntregaModal = null;
-var _etiquetasFacturaModal = null;
 
-// FIX 2026-07-27 (Daniel: "las etiquetas quiero que las hagas en un
-// modal"): antes window.open a pestaña nueva. Mismo patrón iframe-en-modal
-// que abrirManifiestoFirma()/abrirPruebaEntrega().
-function abrirEtiquetasModal(commitmentId) {
-  var url = '/transporte/factura/' + commitmentId + '/etiquetas';
-  document.getElementById('etiquetasFacturaFrame').src = url;
-  if (!_etiquetasFacturaModal) {
-    _etiquetasFacturaModal = new bootstrap.Modal(document.getElementById('etiquetasFacturaModal'));
-  }
-  _etiquetasFacturaModal.show();
+// Una sola superficie para factura y manifiesto: cualquier ajuste visual
+// hecho en etiquetas.html llega al modal sin mantener una segunda version.
+function abrirEtiquetasModal(commitmentId, trigger) {
+  var url = '/transporte/factura/' + commitmentId + '/etiquetas?mid={{ manifiesto.id }}';
+  ilusEtiquetasModal.open(url, 'Etiquetas de la factura', trigger || document.activeElement);
+}
+
+function abrirEtiquetasManifiestoModal(trigger) {
+  var url = '/transporte/manifiestos/{{ manifiesto.id }}/etiquetas';
+  ilusEtiquetasModal.open(
+    url,
+    'Etiquetas · {{ manifiesto.correlativo }}',
+    trigger || document.activeElement
+  );
 }
 
 // FIX 2026-07-27 (Daniel: "quiero ver la firma, la foto, la entrega, todo
@@ -4172,7 +4161,14 @@ async function mrCopiarLinkFirma() {
     await navigator.clipboard.writeText(_mrLinkFirma);
     ilusToast('✓ Link copiado al portapapeles', { type: 'success' });
   } catch (e) {
-    window.prompt('Copia el link manualmente (Ctrl+C):', _mrLinkFirma);
+    await ilusPrompt({
+      title: 'Copiar link manualmente',
+      message: 'El navegador bloqueó el portapapeles. Copia el enlace con Ctrl+C.',
+      defaultValue: _mrLinkFirma,
+      okLabel: 'Listo',
+      cancelLabel: 'Cerrar',
+      required: false,
+    });
   }
 }
 
