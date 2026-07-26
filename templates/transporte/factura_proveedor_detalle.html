@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% block title %}Factura {{ factura.numero_factura }} — ILUS Transporte{% endblock %}
+
+{% block content %}
+<style>
+.fpd-summary{ display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#f0f0f0;
+  border:1px solid #e8e8e8; border-radius:14px; overflow:hidden; margin-bottom:1rem; }
+.fpd-summary-cell{ background:#fff; padding:1rem 1.1rem; }
+.fpd-summary-lbl{ font-size:.66rem; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:.4px; }
+.fpd-summary-val{ font-size:1.3rem; font-weight:800; color:#0a0a0a; margin-top:.2rem; }
+.fpd-summary-val.neg{ color:#dc2626; }
+.fpd-summary-val.pos{ color:#16a34a; }
+@media (max-width:700px){ .fpd-summary{ grid-template-columns:repeat(2,1fr); } }
+
+.fpd-table-wrap{ background:#fff; border:1px solid #e8e8e8; border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03); margin-bottom:1.2rem; }
+.fpd-table{ width:100%; border-collapse:collapse; font-size:.84rem; }
+.fpd-table thead th{ background:#0a0a0a; color:#fff; font-size:.66rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.4px; padding:.65rem .8rem; text-align:left; }
+.fpd-table tbody td{ padding:.6rem .8rem; border-top:1px solid #f0f0f0; vertical-align:middle; }
+.fpd-margen-pos{ color:#16a34a; font-weight:700; }
+.fpd-margen-neg{ color:#dc2626; font-weight:700; }
+.fpd-obs{ font-size:.76rem; color:#6b7280; max-width:220px; }
+.fpd-empty{ text-align:center; padding:2.4rem 1rem; color:#9ca3af; }
+.fpd-empty i{ font-size:2rem; display:block; margin-bottom:.4rem; color:#d1d5db; }
+
+.fpd-search-box{ background:#fff; border:1px solid #e8e8e8; border-radius:14px; padding:1rem; }
+.fpd-doc-row{ display:flex; align-items:center; gap:.7rem; padding:.6rem .5rem; border-bottom:1px solid #f3f4f6; flex-wrap:wrap; }
+.fpd-doc-row:last-child{ border-bottom:none; }
+.fpd-doc-info{ flex:1 1 220px; min-width:0; }
+.fpd-doc-costo{ width:120px; }
+.fpd-doc-badge{ font-size:.62rem; font-weight:700; padding:.15rem .5rem; border-radius:20px; background:#fff8e1; color:#f59e0b; }
+input.fpd-input{ font-size:16px; }
+</style>
+<div class="container-fluid py-3 px-3 px-md-4">
+
+  <div class="mod-hero">
+    <div>
+      <h4><i class="bi bi-receipt-cutoff me-2"></i>{{ factura.courier }} · Factura {{ factura.numero_factura }}</h4>
+      <div class="mod-sub">
+        {{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }}
+        · Monto total ${{ '{:,.0f}'.format(factura.monto_total or 0) }}
+        {% if factura.notas %} · {{ factura.notas }}{% endif %}
+      </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('tr_facturas_proveedor') }}" class="btn btn-outline-light btn-sm fw-bold">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+    </div>
+  </div>
+
+  {% set total_asignado = items | sum(attribute='costo_real') if items else 0 %}
+  {% set total_margen = items | sum(attribute='margen_monto') if items else 0 %}
+  <div class="fpd-summary mt-3">
+    <div class="fpd-summary-cell">
+      <div class="fpd-summary-lbl">Documentos asignados</div>
+      <div class="fpd-summary-val">{{ items|length }}</div>
+    </div>
+    <div class="fpd-summary-cell">
+      <div class="fpd-summary-lbl">Costo real asignado</div>
+      <div class="fpd-summary-val">${{ '{:,.0f}'.format(total_asignado) }}</div>
+    </div>
+    <div class="fpd-summary-cell">
+      <div class="fpd-summary-lbl">Monto factura</div>
+      <div class="fpd-summary-val">${{ '{:,.0f}'.format(factura.monto_total or 0) }}</div>
+    </div>
+    <div class="fpd-summary-cell">
+      <div class="fpd-summary-lbl">Margen total</div>
+      <div class="fpd-summary-val {{ 'pos' if total_margen >= 0 else 'neg' }}">
+        {{ '+' if total_margen >= 0 else '' }}${{ '{:,.0f}'.format(total_margen) }}
+      </div>
+    </div>
+  </div>
+
+  {# ── DOCUMENTOS YA ASIGNADOS ── #}
+  <div class="fpd-table-wrap">
+    {% if items %}
+    <div style="overflow-x:auto">
+      <table class="fpd-table">
+        <thead>
+          <tr>
+            <th>Documento</th>
+            <th>Cliente</th>
+            <th>Cobrado (ZZ)</th>
+            <th>Costo real</th>
+            <th>Margen</th>
+            <th>Observación</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="fpdItemsBody">
+          {% for it in items %}
+          <tr id="fpdRow{{ it.commitment_id }}">
+            <td>{{ it.tido }}{{ it.nudo }}</td>
+            <td>{{ it.cliente_nombre or '—' }}<br><small class="text-muted">{{ it.comuna or '' }}</small></td>
+            <td>${{ '{:,.0f}'.format(it.costo_zz or 0) }}</td>
+            <td>${{ '{:,.0f}'.format(it.costo_real or 0) }}</td>
+            <td class="{{ 'fpd-margen-pos' if (it.margen_monto or 0) >= 0 else 'fpd-margen-neg' }}">
+              {{ '+' if (it.margen_monto or 0) >= 0 else '' }}${{ '{:,.0f}'.format(it.margen_monto or 0) }}
+              {% if it.margen_pct is not none %}<br><small>{{ it.margen_pct }}%</small>{% endif %}
+            </td>
+            <td class="fpd-obs">{{ it.observacion or '—' }}</td>
+            <td>
+              <button class="btn btn-sm btn-outline-danger" onclick="fpdDesasignar({{ it.commitment_id }})" title="Quitar de esta factura">
+                <i class="bi bi-x-lg"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="fpd-empty">
+      <i class="bi bi-inbox"></i>
+      <div class="fw-bold mb-1">Aún no hay documentos asignados a esta factura</div>
+      <div>Busca abajo los documentos que despachó {{ factura.courier }} y asígnales su costo real.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── BUSCAR Y ASIGNAR NUEVOS DOCUMENTOS ── #}
+  <div class="fpd-search-box">
+    <div class="fw-bold mb-2"><i class="bi bi-search me-1"></i>Asignar documentos de {{ factura.courier }}</div>
+    <div class="d-flex gap-2 flex-wrap mb-2">
+      <input type="text" class="form-control form-control-sm fpd-input" id="fpdQ" style="max-width:220px"
+             placeholder="Buscar por N° doc o cliente...">
+      <input type="date" class="form-control form-control-sm fpd-input" id="fpdDesde" style="max-width:160px">
+      <input type="date" class="form-control form-control-sm fpd-input" id="fpdHasta" style="max-width:160px">
+      <button class="btn btn-outline-dark btn-sm" onclick="fpdBuscarDocs()">
+        <i class="bi bi-search me-1"></i>Buscar
+      </button>
+    </div>
+    <div id="fpdDocsResult"><div class="text-muted small">Usa el buscador para ver documentos disponibles.</div></div>
+  </div>
+</div>
+
+<script>
+const FPD_FID = {{ factura.id }};
+const FPD_URL_DOCS = "{{ url_for('tr_factura_proveedor_documentos_disponibles', fid=factura.id) }}";
+const FPD_URL_ASIGNAR = "{{ url_for('tr_factura_proveedor_asignar', fid=factura.id) }}";
+
+async function fpdBuscarDocs(){
+  const q = document.getElementById('fpdQ').value.trim();
+  const desde = document.getElementById('fpdDesde').value;
+  const hasta = document.getElementById('fpdHasta').value;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (desde) params.set('desde', desde);
+  if (hasta) params.set('hasta', hasta);
+
+  const cont = document.getElementById('fpdDocsResult');
+  cont.innerHTML = '<div class="text-muted small">Buscando...</div>';
+  try {
+    const resp = await fetch(FPD_URL_DOCS + '?' + params.toString());
+    const d = await resp.json();
+    if (!resp.ok || !d.ok) {
+      cont.innerHTML = '<div class="text-danger small">' + (d.error || 'Error al buscar documentos.') + '</div>';
+      return;
+    }
+    if (!d.documentos.length) {
+      cont.innerHTML = '<div class="text-muted small">No se encontraron documentos con esos filtros.</div>';
+      return;
+    }
+    cont.innerHTML = d.documentos.map(doc => {
+      const asignadoBadge = doc.asignado_a_id
+        ? `<span class="fpd-doc-badge">Ya asignado a factura #${doc.asignado_a_id}${doc.asignado_a_numero ? ' (' + doc.asignado_a_numero + ')' : ''}</span>`
+        : '';
+      return `
+        <div class="fpd-doc-row" data-commitment="${doc.id}">
+          <div class="fpd-doc-info">
+            <strong>${doc.tido}${doc.nudo}</strong> — ${doc.cliente_nombre || '—'}
+            <div class="small text-muted">${doc.comuna || ''} · Cobrado (ZZ): $${Number(doc.costo_zz || 0).toLocaleString('es-CL')}</div>
+            ${asignadoBadge}
+          </div>
+          <div class="fpd-doc-costo">
+            <input type="number" step="1" class="form-control form-control-sm fpd-input"
+                   placeholder="Costo real" id="fpdCosto${doc.id}">
+          </div>
+          <button class="btn btn-ilus btn-sm fw-bold" onclick="fpdAsignar(${doc.id}, ${Number(doc.costo_zz || 0)})">
+            <i class="bi bi-check-lg me-1"></i>Asignar
+          </button>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    cont.innerHTML = '<div class="text-danger small">Error de conexión al buscar documentos.</div>';
+  }
+}
+
+async function fpdAsignar(commitmentId, costoZz, observacionPrevia){
+  const input = document.getElementById('fpdCosto' + commitmentId);
+  const costoReal = parseFloat(input.value);
+  if (!input.value || isNaN(costoReal)) {
+    ilusToast('Ingresa el costo real cobrado por el courier.', {type:'warning'});
+    return;
+  }
+
+  let observacion = observacionPrevia || '';
+  const margenEstimado = costoZz - costoReal;
+  if (margenEstimado < 0 && !observacion) {
+    observacion = await ilusPrompt({
+      title: 'Este pedido queda con pérdida',
+      message: `El courier cobró $${costoReal.toLocaleString('es-CL')} y a este documento se le cobró al cliente $${costoZz.toLocaleString('es-CL')}. Explica por qué antes de guardar.`,
+      placeholder: 'Ej: garantía, error de cotización, cliente VIP...',
+      required: true,
+    });
+    if (!observacion) return;
+  }
+
+  try {
+    const resp = await fetch(FPD_URL_ASIGNAR, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ commitment_id: commitmentId, costo_real: costoReal, observacion: observacion })
+    });
+    const d = await resp.json();
+    if (!resp.ok || !d.ok) {
+      // Si el backend rechaza por falta de observación (pérdida detectada
+      // en backend aunque el front no lo haya visto), pedirla y reintentar.
+      if (resp.status === 400 && /p.rdida/i.test(d.error || '')) {
+        const obs = await ilusPrompt({
+          title: 'Este pedido queda con pérdida',
+          message: d.error,
+          required: true,
+        });
+        if (obs) return fpdAsignar(commitmentId, costoZz, obs);
+      }
+      ilusToast(d.error || 'No se pudo asignar el documento.', {type:'error'});
+      return;
+    }
+    ilusToast('Documento asignado correctamente.', {type:'success'});
+    setTimeout(() => window.location.reload(), 600);
+  } catch (e) {
+    ilusToast('Error de conexión al asignar el documento.', {type:'error'});
+  }
+}
+
+async function fpdDesasignar(commitmentId){
+  const ok = await ilusConfirm({
+    title: 'Quitar documento',
+    message: '¿Quitar este documento de la factura #' + FPD_FID + '?',
+    sub: 'Podrás volver a asignarlo a esta u otra factura después.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const resp = await fetch(`/transporte/api/facturas-proveedor/${FPD_FID}/items/${commitmentId}`, {method:'DELETE'});
+    const d = await resp.json();
+    if (!resp.ok || !d.ok) {
+      ilusToast(d.error || 'No se pudo quitar el documento.', {type:'error'});
+      return;
+    }
+    ilusToast('Documento quitado de la factura.', {type:'success'});
+    setTimeout(() => window.location.reload(), 500);
+  } catch (e) {
+    ilusToast('Error de conexión.', {type:'error'});
+  }
+}
+</script>
+{% endblock %}

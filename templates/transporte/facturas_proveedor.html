@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Facturas Proveedor — ILUS Transporte{% endblock %}
+
+{% block content %}
+<style>
+.fp-table-wrap{ background:#fff; border:1px solid #e8e8e8; border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03); }
+.fp-table{ width:100%; border-collapse:collapse; font-size:.86rem; }
+.fp-table thead th{
+  background:#0a0a0a; color:#fff; font-size:.68rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:.4px; padding:.7rem .9rem; text-align:left;
+}
+.fp-table tbody td{ padding:.75rem .9rem; border-top:1px solid #f0f0f0; vertical-align:middle; }
+.fp-table tbody tr{ cursor:pointer; transition:background .12s; }
+.fp-table tbody tr:hover{ background:#fafafa; }
+.fp-badge{
+  font-size:.68rem; font-weight:700; padding:.2rem .55rem; border-radius:20px;
+  display:inline-flex; align-items:center; gap:.25rem;
+}
+.fp-badge-ok{ background:#dcfce7; color:#16a34a; }
+.fp-badge-warn{ background:#fee2e2; color:#dc2626; }
+.fp-badge-muted{ background:#f3f4f6; color:#6b7280; }
+.fp-empty{ text-align:center; padding:3rem 1rem; color:#9ca3af; }
+.fp-empty i{ font-size:2.2rem; display:block; margin-bottom:.5rem; color:#d1d5db; }
+@media (max-width: 700px){
+  .fp-table thead{ display:none; }
+  .fp-table, .fp-table tbody, .fp-table tr, .fp-table td{ display:block; width:100%; }
+  .fp-table tbody tr{ border:1px solid #f0f0f0; border-radius:12px; margin-bottom:.6rem; padding:.4rem 0; }
+  .fp-table tbody td{ border-top:none; padding:.35rem .9rem; }
+  .fp-table tbody td[data-label]::before{
+    content: attr(data-label); display:block; font-size:.62rem; font-weight:700;
+    color:#9ca3af; text-transform:uppercase; letter-spacing:.4px; margin-bottom:.1rem;
+  }
+}
+</style>
+<div class="container-fluid py-3 px-3 px-md-4">
+
+  <div class="mod-hero">
+    <div>
+      <h4><i class="bi bi-receipt-cutoff me-2"></i>Facturas Proveedor</h4>
+      <div class="mod-sub">Conciliación financiera: costo real del courier vs. lo cobrado al cliente (ZZ Envío)</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-ilus btn-sm fw-bold" onclick="fpAbrirNueva()">
+        <i class="bi bi-plus-lg me-1"></i>Nueva factura
+      </button>
+    </div>
+  </div>
+
+  <div class="fp-table-wrap mt-3">
+    {% if facturas %}
+    <div style="overflow-x:auto">
+      <table class="fp-table">
+        <thead>
+          <tr>
+            <th>Courier</th>
+            <th>N° Factura</th>
+            <th>Fecha</th>
+            <th>Monto total</th>
+            <th>Documentos</th>
+            <th>Asignado</th>
+            <th>Margen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in facturas %}
+          <tr onclick="window.location='{{ url_for('tr_factura_proveedor_detalle', fid=f.id) }}'">
+            <td data-label="Courier"><strong>{{ f.courier }}</strong></td>
+            <td data-label="N° Factura">{{ f.numero_factura }}</td>
+            <td data-label="Fecha">{{ f.fecha | chile_fmt('%d/%m/%Y') if f.fecha else '—' }}</td>
+            <td data-label="Monto total">${{ '{:,.0f}'.format(f.monto_total or 0) }}</td>
+            <td data-label="Documentos">
+              <span class="fp-badge {{ 'fp-badge-ok' if f.n_docs else 'fp-badge-muted' }}">
+                <i class="bi bi-file-earmark-text"></i>{{ f.n_docs or 0 }}
+              </span>
+            </td>
+            <td data-label="Asignado">${{ '{:,.0f}'.format(f.total_asignado or 0) }}</td>
+            <td data-label="Margen">
+              <span class="fp-badge {{ 'fp-badge-ok' if (f.total_margen or 0) >= 0 else 'fp-badge-warn' }}">
+                {{ '+' if (f.total_margen or 0) >= 0 else '' }}${{ '{:,.0f}'.format(f.total_margen or 0) }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="fp-empty">
+      <i class="bi bi-receipt"></i>
+      <div class="fw-bold mb-1">Aún no hay facturas de proveedor registradas</div>
+      <div class="mb-3">Registra la primera factura que te emitió un courier para empezar a conciliar costos.</div>
+      <button class="btn btn-ilus btn-sm fw-bold" onclick="fpAbrirNueva()">
+        <i class="bi bi-plus-lg me-1"></i>Nueva factura
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+async function fpAbrirNueva(){
+  const courier = await ilusPrompt({
+    title: 'Nueva factura de proveedor',
+    message: 'Nombre del courier (ej: Felca, Milling, FedEx)',
+    placeholder: 'Felca',
+    required: true,
+  });
+  if (!courier) return;
+
+  const numero = await ilusPrompt({
+    title: 'Nueva factura de proveedor',
+    message: 'N° de factura del courier',
+    placeholder: 'F-000123',
+    required: true,
+  });
+  if (!numero) return;
+
+  const fecha = await ilusPrompt({
+    title: 'Nueva factura de proveedor',
+    message: 'Fecha de la factura (AAAA-MM-DD)',
+    placeholder: new Date().toISOString().slice(0,10),
+    required: true,
+  });
+  if (!fecha) return;
+
+  const montoStr = await ilusPrompt({
+    title: 'Nueva factura de proveedor',
+    message: 'Monto total de la factura ($)',
+    placeholder: '0',
+    required: true,
+  });
+  if (!montoStr) return;
+
+  try {
+    const resp = await fetch('{{ url_for("tr_facturas_proveedor_crear") }}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        courier: courier, numero_factura: numero, fecha: fecha,
+        monto_total: parseFloat((montoStr || '0').replace(/[^\d.-]/g,'')) || 0,
+      })
+    });
+    const d = await resp.json();
+    if (!resp.ok || !d.ok) {
+      ilusToast(d.error || 'No se pudo crear la factura.', {type:'error'});
+      return;
+    }
+    ilusToast('Factura creada correctamente.', {type:'success'});
+    window.location = '/transporte/facturas-proveedor/' + d.id;
+  } catch (e) {
+    ilusToast('Error de conexión al crear la factura.', {type:'error'});
+  }
+}
+</script>
+{% endblock %}

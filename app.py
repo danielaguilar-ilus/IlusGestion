@@ -2521,6 +2521,10 @@ def init_transporte_tables():
                     INDEX idx_user   (usuario)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # ── FACTURAS DE PROVEEDOR (conciliación financiera con couriers) ──
+            # Ver _ensure_transport_facturas_proveedor_tables() — se llama SIEMPRE
+            # en boot (incluso con ILUS_SKIP_MIGRATIONS=1), por eso las tablas no
+            # se repiten acá; init_transporte_tables no corre en prod.
             # ── COURIERS ──────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS transport_couriers (
@@ -28496,6 +28500,232 @@ def _tr_buscar_detalle(commitment_id):
     }
 
 
+# ── FACTURAS DE PROVEEDOR: conciliación financiera con couriers ──────────
+# Confirmado con Daniel 2026-07-26: cada factura que el courier (Felca/
+# Milling/FedEx) le emite a ILUS cubre VARIOS documentos a la vez. Acá se
+# registra esa factura y se le asigna, documento por documento
+# (transport_commitments), el costo REAL cobrado — nunca un prorrateo
+# automático del total. margen_monto = costo_zz - costo_real. Si el margen
+# es negativo (pérdida) se exige observación obligatoria antes de guardar.
+
+@app.route("/transporte/facturas-proveedor")
+@_tr_required
+def tr_facturas_proveedor():
+    """Listado de facturas de proveedor (courier) con resumen de asignación."""
+    facturas = mysql_fetchall(
+        """SELECT f.*,
+             COUNT(i.id) AS n_docs,
+             COALESCE(SUM(i.costo_real), 0) AS total_asignado,
+             COALESCE(SUM(i.margen_monto), 0) AS total_margen
+           FROM transport_facturas_proveedor f
+           LEFT JOIN transport_factura_proveedor_items i
+             ON i.factura_proveedor_id = f.id
+           GROUP BY f.id
+           ORDER BY f.fecha DESC, f.id DESC""",
+        ()
+    ) or []
+    couriers = mysql_fetchall(
+        "SELECT nombre FROM transport_couriers WHERE activo=1 ORDER BY nombre", ()
+    ) or []
+    return render_template("transporte/facturas_proveedor.html",
+                            facturas=facturas, couriers=couriers)
+
+
+@app.route("/transporte/facturas-proveedor", methods=["POST"])
+@_tr_required
+def tr_facturas_proveedor_crear():
+    """Crea una factura de proveedor nueva.
+
+    Body JSON: {courier, numero_factura, fecha, monto_total, notas}
+    La subida de archivo (PDF/foto de la factura) queda PENDIENTE — no se
+    encontró un endpoint genérico de subida a GCS reutilizable a tiempo;
+    archivo_url queda nullable y se puede completar después.
+    """
+    d = request.get_json(silent=True, force=True) or {}
+    courier = (d.get("courier") or "").strip()
+    numero_factura = (d.get("numero_factura") or "").strip()
+    fecha = (d.get("fecha") or "").strip()
+    if not courier or not numero_factura or not fecha:
+        return jsonify({"ok": False, "error": "Courier, N° de factura y fecha son obligatorios."}), 400
+    try:
+        monto_total = float(d.get("monto_total") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Monto total inválido."}), 400
+    notas = (d.get("notas") or "").strip()
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO transport_facturas_proveedor
+                   (courier, numero_factura, fecha, monto_total, notas, usuario)
+                   VALUES (%s,%s,%s,%s,%s,%s)""",
+                (courier, numero_factura, fecha, monto_total, notas, current_username())
+            )
+            fid = cur.lastrowid
+        conn.commit()
+        _tr_log("factura_proveedor", fid, "creada",
+                f"{courier} · factura {numero_factura} · ${monto_total:,.0f}")
+        return jsonify({"ok": True, "id": fid})
+    except Exception as e:
+        print(f"[tr_facturas_proveedor_crear] CRASH: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear la factura.", "error_codigo": "INTERNAL_CRASH"}), 500
+
+
+@app.route("/transporte/facturas-proveedor/<int:fid>")
+@_tr_required
+def tr_factura_proveedor_detalle(fid):
+    """Detalle de una factura de proveedor: datos + documentos asignados."""
+    factura = mysql_fetchone("SELECT * FROM transport_facturas_proveedor WHERE id=%s", (fid,))
+    if not factura:
+        flash("Factura de proveedor no encontrada.", "danger")
+        return redirect(url_for("tr_facturas_proveedor"))
+    items = mysql_fetchall(
+        """SELECT i.*, tc.tido, tc.nudo, tc.cliente_nombre, tc.comuna,
+                  tc.costo_zz, tc.fecha_emision
+           FROM transport_factura_proveedor_items i
+           JOIN transport_commitments tc ON tc.id = i.commitment_id
+           WHERE i.factura_proveedor_id=%s
+           ORDER BY i.created_at DESC""",
+        (fid,)
+    ) or []
+    return render_template("transporte/factura_proveedor_detalle.html",
+                            factura=factura, items=items)
+
+
+@app.route("/transporte/api/facturas-proveedor/<int:fid>/documentos-disponibles")
+@_tr_required
+def tr_factura_proveedor_documentos_disponibles(fid):
+    """Documentos de transport_commitments candidatos a asignar a esta
+    factura: se filtran por el courier que los despachó (via
+    transport_manifest_items → transport_manifests.courier). Se muestran
+    aunque ya estén asignados a OTRA factura (con badge), para permitir
+    reasignar — nunca se ocultan."""
+    factura = mysql_fetchone("SELECT * FROM transport_facturas_proveedor WHERE id=%s", (fid,))
+    if not factura:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    q = (request.args.get("q") or "").strip()
+    desde = (request.args.get("desde") or "").strip()
+    hasta = (request.args.get("hasta") or "").strip()
+
+    sql = """SELECT DISTINCT tc.id, tc.tido, tc.nudo, tc.cliente_nombre, tc.comuna,
+                    tc.costo_zz, tc.fecha_emision, m.courier,
+                    fpi.factura_proveedor_id AS asignado_a_id,
+                    fp.numero_factura AS asignado_a_numero
+             FROM transport_commitments tc
+             JOIN transport_manifest_items mi ON mi.commitment_id = tc.id
+             JOIN transport_manifests m ON m.id = mi.manifest_id AND m.courier = %s
+             LEFT JOIN transport_factura_proveedor_items fpi ON fpi.commitment_id = tc.id
+             LEFT JOIN transport_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id
+             WHERE 1=1"""
+    params = [factura["courier"]]
+    if q:
+        sql += " AND (tc.nudo LIKE %s OR tc.cliente_nombre LIKE %s)"
+        like = f"%{q}%"
+        params += [like, like]
+    if desde:
+        sql += " AND tc.fecha_emision >= %s"
+        params.append(desde)
+    if hasta:
+        sql += " AND tc.fecha_emision <= %s"
+        params.append(hasta)
+    sql += " ORDER BY tc.fecha_emision DESC LIMIT 200"
+    docs = mysql_fetchall(sql, tuple(params)) or []
+    return jsonify({"ok": True, "documentos": docs})
+
+
+@app.route("/transporte/api/facturas-proveedor/<int:fid>/asignar", methods=["POST"])
+@_tr_required
+def tr_factura_proveedor_asignar(fid):
+    """Asigna un documento puntual a la factura de proveedor con su costo
+    real. Calcula margen_monto/margen_pct SIEMPRE en backend. Si el margen
+    es negativo (pérdida) exige observación no vacía — 400 si falta.
+
+    Body JSON: {commitment_id, costo_real, observacion}
+    Reasignar (documento ya asignado a otra/la misma factura) es válido:
+    INSERT ... ON DUPLICATE KEY UPDATE sobre uq_commitment.
+    """
+    factura = mysql_fetchone("SELECT * FROM transport_facturas_proveedor WHERE id=%s", (fid,))
+    if not factura:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+
+    d = request.get_json(silent=True, force=True) or {}
+    try:
+        commitment_id = int(d.get("commitment_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Documento inválido."}), 400
+    try:
+        costo_real = float(d.get("costo_real"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Costo real inválido."}), 400
+    observacion = (d.get("observacion") or "").strip()
+
+    tc = mysql_fetchone("SELECT id, costo_zz, tido, nudo FROM transport_commitments WHERE id=%s",
+                         (commitment_id,))
+    if not tc:
+        return jsonify({"ok": False, "error": "Documento no encontrado."}), 404
+
+    costo_zz = float(tc.get("costo_zz") or 0)
+    margen_monto = round(costo_zz - costo_real, 2)
+    margen_pct = round((margen_monto / costo_zz) * 100, 1) if costo_zz > 0 else None
+
+    if margen_monto < 0 and not observacion:
+        return jsonify({
+            "ok": False,
+            "error": "Este pedido queda con pérdida — agrega una observación explicando por qué antes de guardar."
+        }), 400
+
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO transport_factura_proveedor_items
+                   (factura_proveedor_id, commitment_id, costo_real, margen_monto,
+                    margen_pct, observacion, usuario)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)
+                   ON DUPLICATE KEY UPDATE
+                     factura_proveedor_id=VALUES(factura_proveedor_id),
+                     costo_real=VALUES(costo_real),
+                     margen_monto=VALUES(margen_monto),
+                     margen_pct=VALUES(margen_pct),
+                     observacion=VALUES(observacion),
+                     usuario=VALUES(usuario)""",
+                (fid, commitment_id, costo_real, margen_monto, margen_pct,
+                 observacion, current_username())
+            )
+        conn.commit()
+        _tr_log("factura_proveedor", fid, "documento asignado",
+                f"doc {tc.get('tido')}{tc.get('nudo')} · costo_real=${costo_real:,.0f} · margen=${margen_monto:,.0f}"
+                + (" (PÉRDIDA)" if margen_monto < 0 else ""))
+        return jsonify({"ok": True, "margen_monto": margen_monto, "margen_pct": margen_pct})
+    except Exception as e:
+        print(f"[tr_factura_proveedor_asignar] CRASH: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo asignar el documento.", "error_codigo": "INTERNAL_CRASH"}), 500
+
+
+@app.route("/transporte/api/facturas-proveedor/<int:fid>/items/<int:commitment_id>", methods=["DELETE"])
+@_tr_required
+def tr_factura_proveedor_desasignar(fid, commitment_id):
+    """Quita la asignación de un documento a esta factura (por si Daniel se
+    equivocó de factura). No borra el documento ni la factura, solo el
+    vínculo entre ambos."""
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM transport_factura_proveedor_items "
+                "WHERE factura_proveedor_id=%s AND commitment_id=%s",
+                (fid, commitment_id)
+            )
+            afectados = cur.rowcount
+        conn.commit()
+        if afectados:
+            _tr_log("factura_proveedor", fid, "documento desasignado", f"commitment_id={commitment_id}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[tr_factura_proveedor_desasignar] CRASH: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo desasignar el documento.", "error_codigo": "INTERNAL_CRASH"}), 500
+
+
 # ── Admin: gestión de choferes + asignación a manifiestos ────────────────
 
 @app.route("/transporte/choferes")
@@ -28596,6 +28826,57 @@ def tr_choferes_toggle(did):
 # (no solo en pantalla) para que la próxima vez que se busque el mismo
 # documento — desde Asignar y Cotizar o cualquier otra consulta — se vea el
 # saldo real disponible, no el total original del ERP.
+def _ensure_transport_facturas_proveedor_tables():
+    """Tablas NUEVAS (conciliación financiera con couriers) — se crean SIEMPRE,
+    incluso con ILUS_SKIP_MIGRATIONS=1 (init_transporte_tables no corre en
+    prod). Idempotente. Ver módulo 'Facturas Proveedor' en Transporte."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_facturas_proveedor (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    courier         VARCHAR(120) NOT NULL,
+                    numero_factura  VARCHAR(80)  NOT NULL,
+                    fecha           DATE NOT NULL,
+                    monto_total     DECIMAL(12,2) DEFAULT 0,
+                    archivo_url     VARCHAR(400),
+                    notas           TEXT,
+                    usuario         VARCHAR(190),
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_courier_fecha (courier, fecha)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_factura_proveedor_items (
+                    id                   INT AUTO_INCREMENT PRIMARY KEY,
+                    factura_proveedor_id INT NOT NULL,
+                    commitment_id        INT NOT NULL,
+                    costo_real           DECIMAL(10,2) NOT NULL,
+                    margen_monto         DECIMAL(10,2),
+                    margen_pct           DECIMAL(6,2),
+                    observacion          TEXT,
+                    usuario              VARCHAR(190),
+                    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_commitment (commitment_id),
+                    FOREIGN KEY (factura_proveedor_id) REFERENCES transport_facturas_proveedor(id) ON DELETE CASCADE,
+                    INDEX idx_factura (factura_proveedor_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            try:
+                cur.execute("""ALTER TABLE transport_logs
+                    MODIFY COLUMN entity_type
+                    ENUM('commitment','manifest','manifest_item','factura_proveedor')
+                    NOT NULL""")
+            except Exception:
+                pass
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _ensure_transport_zz_saldo_table():
     """Tabla NUEVA — se crea SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 (no
     depende de init_transporte_tables, que en prod NO corre). Idempotente."""
@@ -75079,6 +75360,15 @@ try:
         _ensure_courier_comunas_updated_at()
 except Exception as _ccu_err:
     print(f"[ILUS][WARN] _ensure_courier_comunas_updated_at: {_ccu_err}", flush=True)
+
+# CRÍTICO: garantizar tablas de Facturas Proveedor SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1 (init_transporte_tables no corre en prod). Sin esto
+# el módulo nuevo de conciliación financiera con couriers da 500 en Cloud Run.
+try:
+    with app.app_context():
+        _ensure_transport_facturas_proveedor_tables()
+except Exception as _fp_err:
+    print(f"[ILUS][WARN] _ensure_transport_facturas_proveedor_tables: {_fp_err}", flush=True)
 
 # FASE 1 TRACKING: garantizar tablas/columnas de tracking + prueba de entrega
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. CREATE TABLE IF NOT EXISTS es
