@@ -236,8 +236,11 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
   </table>
 
   {# ── SECCIÓN 2: detalle de productos por factura (lo que el transportista
-     retira físicamente de cada una). #}
-  <div class="sec-hdr">
+     retira físicamente de cada una). FIX 2026-07-27 (Daniel: "en la primera
+     hoja el detalle de facturas, y en la siguiente el detalle de cada
+     producto"): salto de página forzado antes de esta sección, para que
+     quede en su propia hoja separada de la Sección 1. #}
+  <div class="sec-hdr" style="page-break-before: always; break-before: page;">
     <span>DETALLE DE PRODUCTOS POR FACTURA</span>
   </div>
   {% for it in items %}
