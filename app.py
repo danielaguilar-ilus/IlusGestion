@@ -29359,42 +29359,55 @@ def _tr_manifiesto_items_firma(mid):
     ph = ",".join(["%s"] * len(commitment_ids))
 
     ruts = mysql_fetchall(f"""
-        SELECT id, cliente_rut FROM transport_commitments WHERE id IN ({ph})
+        SELECT id, cliente_rut, productos_json FROM transport_commitments WHERE id IN ({ph})
     """, tuple(commitment_ids)) or []
     rut_por_commitment = {r["id"]: (r.get("cliente_rut") or "") for r in ruts}
+    # FIX 2026-07-27 (Daniel: "aún no veo los productos"): transport_
+    # commitment_lines SOLO guarda las líneas ZZ (servicio de envío/retiro/
+    # instalación) -- lo confirma _tr_fetch_from_erp, que la puebla
+    # exclusivamente con `zz_lines` (filtradas a ZZ_SKUS). Los PRODUCTOS
+    # reales (mercadería física) viven en transport_commitments.
+    # productos_json (árbol manifiesto → factura → productos, el mismo que
+    # usa tr_manifiesto_detalle para "Facturas del manifiesto"). El filtro
+    # "excluye ZZ%" del fix anterior dejaba la tabla vacía porque estaba
+    # filtrando la ÚNICA fuente que sí tenía filas (todas ZZ), no la fuente
+    # real de productos.
+    prods_json_por_commitment = {r["id"]: (r.get("productos_json") or "") for r in ruts}
 
-    # FIX 2026-07-27 (Daniel: "excluye el ZZPO... agrega los productos en
-    # cuanto a kilo"): las líneas ZZ* (envío/retiro/instalación/servicio
-    # técnico — nunca productos físicos) no deben aparecer en el detalle de
-    # productos que retira el transportista. Se filtran por prefijo "ZZ"
-    # (mismo criterio que ZZ_SKUS/_ZZ_SKUS ya usados en el resto del
-    # proyecto) en vez de listar códigos exactos, para cubrir cualquier
-    # variante (ZZPO incluido). Se agrega peso_unitario*cantidad por línea
-    # (columna ya existente en transport_commitment_lines, no hay que
-    # calcularla desde otro lado).
-    lineas = mysql_fetchall(f"""
-        SELECT commitment_id, koprct AS sku, nokopr AS descripcion, cantidad,
-               peso_unitario
+    # Fallback: si un commitment no tiene productos_json declarado (nunca
+    # pasó por el cubicador), se cae a transport_commitment_lines igual que
+    # tr_manifiesto_detalle -- aunque en la práctica esas filas sean ZZ, es
+    # mejor mostrar ESO a mostrar la tabla vacía sin explicación.
+    lineas_raw = mysql_fetchall(f"""
+        SELECT commitment_id, koprct AS sku, nokopr AS descripcion, cantidad
           FROM transport_commitment_lines
          WHERE commitment_id IN ({ph})
-           AND UPPER(koprct) NOT LIKE 'ZZ%%'
          ORDER BY id
     """, tuple(commitment_ids)) or []
-    lineas_por_commitment = {}
-    for l in lineas:
-        cantidad = float(l.get("cantidad") or 0)
-        peso_unitario = float(l.get("peso_unitario") or 0)
-        lineas_por_commitment.setdefault(l["commitment_id"], []).append({
+    lineas_fallback_por_commitment = {}
+    for l in lineas_raw:
+        lineas_fallback_por_commitment.setdefault(l["commitment_id"], []).append({
             "sku":         l.get("sku") or "",
             "descripcion": l.get("descripcion") or l.get("sku") or "",
-            "cantidad":    cantidad,
-            "peso_kg":     round(peso_unitario * cantidad, 2),
+            "cantidad":    float(l.get("cantidad") or 0),
         })
 
+    import json as _jp_firma
     for it in items:
         cid = it["commitment_id"]
         it["cliente_rut"] = rut_por_commitment.get(cid, "")
-        it["lineas"]      = lineas_por_commitment.get(cid, [])
+        _prods = []
+        _raw_json = prods_json_por_commitment.get(cid)
+        if _raw_json:
+            try:
+                _prods = [{
+                    "sku":         p.get("koprct") or "",
+                    "descripcion": p.get("nokopr") or p.get("koprct") or "",
+                    "cantidad":    float(p.get("cantidad") or 0),
+                } for p in (_jp_firma.loads(_raw_json) or []) if isinstance(p, dict)]
+            except Exception:
+                _prods = []
+        it["lineas"] = _prods if _prods else lineas_fallback_por_commitment.get(cid, [])
         it["peso_declarar"] = round(_peso_a_declarar(it), 3)
     return items
 

@@ -258,7 +258,7 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
   </div>
   <table class="detalle">
     <thead>
-      <tr><th style="width:60px">#</th><th style="width:110px">SKU</th><th>Descripción</th><th class="num" style="width:80px">Cantidad</th><th class="num" style="width:90px">Peso (kg)</th></tr>
+      <tr><th style="width:60px">#</th><th style="width:110px">SKU</th><th>Descripción</th><th class="num" style="width:80px">Cantidad</th></tr>
     </thead>
     <tbody>
       {% if it.lineas %}
@@ -268,11 +268,10 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
           <td>{{ l.sku }}</td>
           <td>{{ l.descripcion }}</td>
           <td class="num">{{ l.cantidad|int if l.cantidad == l.cantidad|int else l.cantidad }}</td>
-          <td class="num">{{ '%.2f'|format(l.peso_kg or 0) }}</td>
         </tr>
         {% endfor %}
       {% else %}
-        <tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:14px 20px">Sin detalle de productos disponible para este documento.</td></tr>
+        <tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:14px 20px">Sin detalle de productos disponible para este documento.</td></tr>
       {% endif %}
     </tbody>
   </table>
